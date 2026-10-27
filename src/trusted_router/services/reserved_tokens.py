@@ -135,8 +135,7 @@ def handle_reservation_event(event: dict[str, Any], settings: Settings, backgrou
             and metadata["grade"] in {"AAA", "A", "B", "C"}
             and all(metadata[key] == value for key, value in WINDOW.items() if key not in {"terms_version", "resale_fee_bps"})
             and metadata["terms_version"] in {"2026-10-27-v3", TERMS_VERSION}
-            and 0 <= int(metadata["resale_fee_bps"]) < 10_000
-            and (metadata["terms_version"] != "2026-10-27-v3" or metadata["resale_fee_bps"] == "500")
+            and metadata["resale_fee_bps"] == "500"
             and int(metadata["list_price_cents"]) > 0
             and 0 <= int(metadata["discount_bps"]) < 10_000
             and isinstance(metadata["index_as_of"], str)
@@ -150,15 +149,16 @@ def handle_reservation_event(event: dict[str, Any], settings: Settings, backgrou
     position_id = reservation_position_id(session_id)
     owner = uuid.uuid4().hex
     claim, purchase_timestamp = STORE.claim_reserved_notification(session_id, owner, now=int(_utc_now().timestamp()))
-    from trusted_router.services.resale import record_purchase, retry_buyer_refunds
+    if settings.resale_enabled:
+        from trusted_router.services.resale import record_purchase, retry_buyer_refunds
 
-    position = record_purchase(obj, event["id"], None if claim == "sent" else purchase_timestamp, settings, backfill=claim == "sent")
-    # Allocation is already durable. Refund transport/alert failures cannot
-    # roll it back or send the purchase into a credit handler.
-    if background is not None:
-        background.add_task(retry_buyer_refunds, position, settings)
-    else:
-        retry_buyer_refunds(position, settings)
+        position = record_purchase(obj, event["id"], None if claim == "sent" else purchase_timestamp, settings, backfill=claim == "sent")
+        # Allocation is already durable. Refund transport/alert failures cannot
+        # roll it back or send the purchase into a credit handler.
+        if background is not None:
+            background.add_task(retry_buyer_refunds, position, settings)
+        else:
+            retry_buyer_refunds(position, settings)
     if claim == "sent":
         return {**result, "duplicate": True}
     if claim == "busy":

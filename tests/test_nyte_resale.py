@@ -141,9 +141,10 @@ def test_signed_link_expiry_single_use_and_uniform_http(settings: Settings, monk
 
 
 @pytest.mark.usefixtures("reservation_mail")
-def test_webhook_position_created_when_sales_disabled_and_legacy_terms(client, settings) -> None:
+def test_webhook_position_created_when_sales_disabled_and_legacy_terms(client, test_settings) -> None:
     from tests.test_reserved_tokens import event
     data = event()
+    test_settings.resale_enabled = True
     data["data"]["object"]["metadata"]["terms_version"] = "2026-10-27-v3"
     data["data"]["object"]["payment_intent"] = "pi_original"
     assert client.post("/v1/internal/stripe/webhook", json=data).status_code == 200
@@ -183,6 +184,7 @@ def test_backfill_uses_first_paid_timestamp_and_never_allocates_history(settings
     obj["id"] = "cs_refunded"
     obj["payment_intent"] = "pi_refunded_import"
     monkeypatch.setattr(resale.stripe.PaymentIntent, "retrieve", lambda *args, **kwargs: {"status": "succeeded", "latest_charge": {"paid": True, "amount_refunded": 1600}})
+    monkeypatch.setattr(resale.stripe.Refund, "list", lambda **kw: SimpleNamespace(auto_paging_iter=lambda: iter([])))
     resale.backfill_email("private@example.com", holder, settings)
     imported = resale.command("positions", holder=holder)["positions"][0]
     assert imported["status"] == "needs_review" and imported["purchase_completed_at"] is None
@@ -198,25 +200,67 @@ def test_full_refund_is_ops_request_and_reconciles_original_payment_only(setting
     with pytest.raises(ValueError, match="does not match"):
         resale.acknowledge_full_refund("holder", "re_full", settings)
     refund["payment_intent"] = "pi_holder"
+    call(store, "reconcile_payment", payment_intent="pi_holder", payment_state={"amount_refunded": 300})
+    assert call(store, "position", position="holder")["status"] == "refund_requested"
     resale.acknowledge_full_refund("holder", "re_full", settings)
     resale.acknowledge_full_refund("holder", "re_full", settings)
     assert call(store, "position", position="holder")["status"] == "refunded"
     assert not call(store, "pending", queue="full_refunds")["rows"]
 
 
-def test_resale_flag_disables_list_but_not_withdrawal(settings, monkeypatch):
-    from trusted_router.storage_resale import reference
+@pytest.mark.parametrize("action", ["email", "redeem", "positions", "backfill", "list", "withdraw", "request_refund"])
+def test_resale_disabled_routes_are_inert_without_email_or_ledger(action, settings, monkeypatch):
+    from copy import deepcopy
     store = InMemoryStore()
     monkeypatch.setattr(resale, "STORE", store)
     purchase(store, "holder")
-    lid = listing(store, "holder", lots=1)
-    resale.command("token_create", key="link", holder="holder")
-    resale.command("token_consume", key="link", session=reference("session"))
+    listing(store, "holder", lots=1)
+    before = deepcopy(store.resale_entities)
+    ledger = Mock(side_effect=AssertionError("Disabled route touched ledger"))
+    mail = Mock(side_effect=AssertionError("Disabled route sent email"))
+    monkeypatch.setattr(InMemoryStore, "reserved_resale", ledger)
+    monkeypatch.setattr(resale, "send_holder_link", mail)
     settings.resale_enabled = False
-    with pytest.raises(ValueError, match="not enabled"):
-        routes.handle(routes.HolderRequest(action="list", position="holder", lots=1, session="session", request_id="list"), settings)
-    result = routes.handle(routes.HolderRequest(action="withdraw", position="holder", listing=lid, session="session", request_id="withdraw"), settings)
-    assert result["status"] == "withdrawn"
+    app = FastAPI()
+    routes.register(app, settings)
+    client = TestClient(app)
+    headers = {"Origin": "https://nytokenexchange.com"}
+    response = client.post(routes.PATH, json={"action": action, "email": "known@example.com"}, headers=headers)
+    assert response.status_code == 200 and response.json() == {"message": resale.GENERIC_RESPONSE}
+    assert client.options(routes.PATH, headers=headers).json() == response.json()
+    assert routes.handle(routes.HolderRequest(action=action), settings) == response.json()
+    assert store.resale_entities == before
+    ledger.assert_not_called()
+    mail.assert_not_called()
+
+
+@pytest.mark.usefixtures("reservation_mail")
+def test_disabled_paid_webhook_uses_original_notification_path_even_with_broken_ledger(client, test_settings, monkeypatch):
+    from tests.test_reserved_tokens import event
+    from trusted_router.storage import STORE
+    test_settings.resale_enabled = False
+    ledger = Mock(side_effect=AssertionError("Disabled webhook touched resale ledger"))
+    monkeypatch.setattr(InMemoryStore, "reserved_resale", ledger)
+    first = client.post("/v1/internal/stripe/webhook", json=event())
+    assert first.status_code == 200 and first.json()["data"]["recorded"] is True
+    state, timestamp = STORE.claim_reserved_notification("cs_reserved", "probe", now=9999999999)
+    assert state == "sent"
+    retry = client.post("/v1/internal/stripe/webhook", json=event())
+    assert retry.status_code == 200 and retry.json()["data"]["duplicate"] is True
+    assert STORE.claim_reserved_notification("cs_reserved", "probe", now=9999999999) == ("sent", timestamp)
+    assert not STORE.record_webhook_event_once("reserved_tokens_2027", "cs_reserved")
+    ledger.assert_not_called()
+
+
+@pytest.mark.parametrize("fee", [-1, 0, 499, 501, 10000])
+def test_resale_fee_change_requires_new_terms_version(fee, monkeypatch):
+    from pydantic import ValidationError
+    monkeypatch.setenv("TR_RESALE_FEE_BPS", str(fee))
+    with pytest.raises(ValidationError, match="fee change needs a new terms version"):
+        Settings(environment="test")
+    with pytest.raises(ValidationError, match="fee change needs a new terms version"):
+        Settings(environment="test", resale_fee_bps=fee)
+    assert Settings(environment="test", resale_fee_bps=500).resale_fee_bps == 500
 
 
 def test_postgres_transaction_implementation_on_sql_fake():
@@ -227,6 +271,11 @@ def test_postgres_transaction_implementation_on_sql_fake():
         store = postgres_store_on(conn)
         contract.test_nyte_fifo_partial_fill_and_session_event_idempotency(store, "postgresunique")
         contract.test_nyte_relist_goes_to_tail_and_refund_lease_fencing(store, "postgreslease")
+        contract.test_nyte_external_payment_change_blocks_existing_position_and_listings(store, "pgrefund0000", {"amount_refunded": 1})
+        contract.test_nyte_external_payment_change_blocks_existing_position_and_listings(store, "pgdispute000", {"disputed": True})
+        contract.test_nyte_own_refund_before_worker_commit_is_exempt_but_external_excess_blocks(store, "pgownrefund0")
+        contract.test_nyte_timestamped_import_still_allocates_after_webhook_claim(store, "pgimportrace")
+        contract.test_nyte_completed_legacy_notification_import_is_historical(store, "pglegacy0000")
     finally:
         conn._raw.close()
 
@@ -259,14 +308,17 @@ def test_paid_webhook_allocates_and_refund_failure_never_fails_buyer(settings, m
 
 @pytest.mark.usefixtures("reservation_mail")
 @pytest.mark.parametrize("kind", ["refund.created", "refund.updated", "refund.failed", "charge.refunded", "charge.refund.updated"])
-def test_reserved_refunds_without_metadata_never_reach_credit_handlers(client, kind):
+def test_reserved_refunds_without_metadata_never_reach_credit_handlers(client, kind, monkeypatch, test_settings):
+    test_settings.resale_enabled = True
     from tests.test_reserved_tokens import event
     data = event()
     data["data"]["object"]["payment_intent"] = "pi_original"
     assert client.post("/v1/internal/stripe/webhook", json=data).status_code == 200
+    monkeypatch.setattr(resale.stripe.PaymentIntent, "retrieve", lambda *a, **k: {"latest_charge": {"paid": True, "amount_refunded": 100}})
+    monkeypatch.setattr(resale.stripe.Refund, "list", lambda **kw: SimpleNamespace(auto_paging_iter=lambda: iter([])))
     response = client.post("/v1/internal/stripe/webhook", json={
         "id": "evt_refund", "type": kind, "data": {"object": {
-            "id": "re_card", "payment_intent": "pi_original", "amount": 100, "status": "succeeded",
+            "id": "re_card", "payment_intent": "pi_original", "amount": 100, "status": "succeeded", "paid": True, "amount_refunded": 100,
             "metadata": {}, "refunds": {"data": [{"id": "re_card", "amount": 100}]},
         }},
     })
@@ -345,3 +397,66 @@ def test_memory_ledger_never_aliases_caller_input_or_result():
     result["lots"] = 200
     saved = call(store, "position", position="cs_copy")
     assert saved["lots"] == 2 and saved["purchase_completed_at"] == 100
+
+
+@pytest.mark.parametrize("kind,metadata", [("charge.refunded", {}), ("charge.refunded", {"kind": "reserved_tokens_2027"}),
+                                         ("charge.dispute.created", {}), ("charge.dispute.closed", {})])
+def test_external_payment_webhook_blocks_and_withdraws_before_allocation(client, test_settings, monkeypatch, kind, metadata):
+    from trusted_router.storage import STORE
+    test_settings.resale_enabled = True
+    purchase(STORE, "seller")
+    listing(STORE, "seller")
+    monkeypatch.setattr(resale.stripe.Refund, "list", lambda **kw: SimpleNamespace(auto_paging_iter=lambda: iter([])))
+    response = client.post("/v1/internal/stripe/webhook", json={"id": "evt_external", "type": kind, "data": {"object": {
+        "id": "ch_seller", "payment_intent": "pi_seller", "paid": True, "amount_refunded": 1, "metadata": metadata,
+    }}})
+    assert response.status_code == 200
+    p = call(STORE, "positions", holder="seller")["positions"][0]
+    assert p["status"] == "needs_review" and p["listed_lots"] == 0
+    assert p["listing_rows"][0]["status"] == "withdrawn"
+    with pytest.raises(ValueError, match="review"):
+        listing(STORE, "seller", lots=1, request="new")
+    assert purchase(STORE, "buyer", allocate=True)["new_lots"] == 3
+
+
+def test_own_refund_webhook_and_reimport_keep_unsold_lots_sellable(client, test_settings, monkeypatch):
+    from trusted_router.storage import STORE
+    test_settings.resale_enabled = True
+    purchase(STORE, "seller")
+    listing(STORE, "seller")
+    p = purchase(STORE, "buyer", lots=1, allocate=True)
+    fid = p["fills"][0]
+    refund = {"id": "re_own", "payment_intent": "pi_seller", "amount": 95,
+              "status": "succeeded", "metadata": {"nyte_fill_id": fid}}
+    monkeypatch.setattr(resale.stripe.Refund, "list", lambda **kw: SimpleNamespace(auto_paging_iter=lambda: iter([refund])))
+    response = client.post("/v1/internal/stripe/webhook", json={"id": "evt_own", "type": "charge.refunded", "data": {"object": {
+        "id": "ch_seller", "payment_intent": "pi_seller", "paid": True, "amount_refunded": 95,
+        "metadata": {"kind": "reserved_tokens_2027"},
+    }}})
+    assert response.status_code == 200
+    seller = call(STORE, "position", position="seller")
+    assert seller["status"] == "held" and seller["listed_lots"] == 2
+    state = resale.payment_state("pi_seller", {"paid": True, "amount_refunded": 95}, test_settings)
+    result = call(STORE, "purchase", position=seller, event_id="backfill:seller", backfill=True, payment_state=state)
+    assert result["status"] == "held" and result["listed_lots"] == 2
+    assert purchase(STORE, "next", lots=2, allocate=True)["new_lots"] == 0
+
+
+def test_reimport_existing_refunded_position_is_blocked(settings, monkeypatch):
+    from tests.test_reserved_tokens import event
+    store = InMemoryStore()
+    monkeypatch.setattr(resale, "STORE", store)
+    obj = event()["data"]["object"]
+    obj["payment_intent"] = "pi_external"
+    # Historical paid purchase was already imported and listed.
+    store.claim_reserved_notification(obj["id"], "legacy", now=100)
+    store.finish_reserved_notification(obj["id"], "legacy", sent=True)
+    p = resale.record_purchase(obj, "backfill:" + obj["id"], None, settings, backfill=True)
+    call(store, "list", holder=p["holder"], position=obj["id"], lots=1, request_id="list")
+    monkeypatch.setattr(resale.stripe.Customer, "list", lambda **kw: SimpleNamespace(auto_paging_iter=lambda: iter([{"id": "cus_old"}])))
+    monkeypatch.setattr(resale.stripe.checkout.Session, "list", lambda **kw: SimpleNamespace(auto_paging_iter=lambda: iter([obj])))
+    monkeypatch.setattr(resale.stripe.PaymentIntent, "retrieve", lambda *a, **kw: {"status": "succeeded", "latest_charge": {"paid": True, "amount_refunded": 1600}})
+    monkeypatch.setattr(resale.stripe.Refund, "list", lambda **kw: SimpleNamespace(auto_paging_iter=lambda: iter([])))
+    resale.backfill_email("private@example.com", p["holder"], settings)
+    saved = call(store, "positions", holder=p["holder"])["positions"][0]
+    assert saved["status"] == "needs_review" and saved["listing_rows"][0]["status"] == "withdrawn"

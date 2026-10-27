@@ -21,7 +21,7 @@ A higher-volume rollout should partition by grade with a reviewed lock order.
 
 | Entity kind / key | Durable fields |
 | --- | --- |
-| `nyte_position` / Stripe Checkout Session | Stable position ID, grade, original lots, per-lot cents, original PaymentIntent, first `purchase_completed_at`, holder hash, terms version, sold/listed lots, status, listing/fill IDs, new-inventory lots, holder-next pointer, event ID |
+| `nyte_position` / Stripe Checkout Session | Stable position ID, grade, original lots, per-lot cents, original PaymentIntent, first `purchase_completed_at`, holder hash, terms version, sold/listed lots, status, payment-review marker, allocation status (pending/complete/historical), listing/fill IDs, new-inventory lots, holder-next pointer, event ID |
 | `nyte_payment` / original PaymentIntent | Session reference; isolates Dashboard refunds without inherited metadata from credit/adverse handlers |
 | `nyte_holder` / domain-separated normalized email hash | Head of the holder's position list; no plaintext email |
 | `nyte_listing` / hash of holder + request ID | Position session, lots listed/sold, listed_at, active/sold/withdrawn status, FIFO previous/next |
@@ -55,8 +55,11 @@ The CI emulator image/gate is in `.github/workflows/ci.yml`, job
 ## Purchase, allocation and payouts
 
 The signed reserved-token webhook validates paid USD totals and locked metadata
-before any credit handling. Positions are written even while resale is disabled,
-and before the notification's already-sent return. A successful notification
+before any credit handling. With `TR_RESALE_ENABLED=false`, the webhook follows
+the original #2125 notification path and never calls the resale ledger. Every
+holder API action (including link requests and preflight) returns the inert
+generic response without email or ledger access. With the flag enabled, positions
+are written before the notification's already-sent return. A successful notification
 from before resale storage existed imports that position without allocating
 historical sales. New paid purchases consume active grade listings in FIFO order,
 then new inventory. One transaction writes all fills and the buyer position;
@@ -102,7 +105,14 @@ ops and refuses another create. This deliberately favors reconciliation over a
 possible duplicate payment. The seller's original charge and per-lot cap remain
 the only payout source; no Connect account, transfer, cash payout or balance
 credit is created. Manual external refunds/disputes must be reconciled by ops
-before listing affected holdings; imports flag refunded/disputed charges.
+before selling can resume. Refund/dispute webhooks and Stripe imports reconcile
+existing positions atomically: an external refund or dispute marks holdings for
+review and withdraws every active listing. Already requested/completed full
+refunds keep their blocking status so ops can still acknowledge them. Allocation
+also checks seller status. Stripe refunds are exempt only when their payment,
+amount, fill metadata and (when recorded) refund ID match a durable NYTE fill.
+The match works before the refund worker commits success; repeated evidence
+counts once per fill. Refund listing reads are bounded and payment-scoped.
 
 ## Holder and operational access
 
@@ -110,7 +120,7 @@ before listing affected holdings; imports flag refunded/disputed charges.
 `POST /token-exchange/reservations`, runs on **control**, not the memory-only
 actions bulkhead. The Python and Terraform URL maps include that route.
 
-Email requests always return the exact same generic message. Valid addresses get
+When enabled, email requests always return the exact same generic message. Valid addresses get
 a capability regardless of whether holdings exist, avoiding lookup-dependent
 responses/timing. Tokens use the shared OAuth domain-separated HMAC helper with
 the existing Stripe secret, a random nonce, a 15-minute signed expiry and an
@@ -130,9 +140,13 @@ exact-email customer listing (enter the original email capitalization) and
 customer-scoped completed sessions, bounded to
 100 customers and 1,000 sessions per customer. It compares each session's actual
 purchase email. No entity scan is permitted. Missing historical completion time
-stays unknown and blocks self-service mutations pending ops reconciliation. An
-import racing a new first webhook is completed by that webhook without duplicate
-holder indexing or allocation.
+stays unknown and blocks self-service mutations pending ops reconciliation. Allocation completion has its own durable
+`allocation_status`, independent of `purchase_completed_at`. An import racing a
+webhook that has already persisted the purchase timestamp remains `pending`;
+the webhook must allocate it before setting `complete`. Only an already completed
+legacy notification establishes `historical`, which never consumes today's
+listings. Pending positions cannot list or request refunds before allocation.
+Neither interleaving duplicates the holder index or allocation.
 
 Before enabling, Joseph/operator must:
 
@@ -140,12 +154,16 @@ Before enabling, Joseph/operator must:
    holder/terms/buy assets through normal reviewed gates. Nothing was deployed
    during this task. Keep `TR_RESALE_ENABLED=false` until native emulator validation
    and a Stripe test-mode purchase/resale/refund cycle pass.
-2. Keep `TR_RESALE_FEE_BPS=500` for these approved 5% terms. Checkout retains its
+2. Keep `TR_RESALE_FEE_BPS=500` for these approved 5% terms. Config loading
+   rejects every other integer with “a fee change needs a new terms version.”
+   Every fill persists the applied `fee_bps`. Checkout retains its
    separate existing enable/discount settings. Rotating `TR_STRIPE_SECRET_KEY`
    invalidates outstanding holder links; new links use the new key.
 3. Verify the existing Stripe key can read Customers, Checkout Sessions,
    PaymentIntents and Refunds, and create refunds. No new Stripe Connect or
-   webhook endpoint is needed. Existing paid-checkout events remain required.
+   webhook endpoint is needed. Existing paid-checkout events remain required. Ensure this endpoint also
+   receives `charge.refunded` and `charge.dispute.*` events for prompt external
+   payment reconciliation; refund lifecycle events are also handled.
 4. Verify SES sends holder links and ops alerts from the control service.
    `TR_PARTNER_INQUIRY_EMAIL` is the ops recipient (enterprise fallback).
 5. Arrange periodic execution of `uv run python -m scripts.retry_nyte_resale_refunds`
@@ -203,7 +221,7 @@ amounts never enter these events.
 - `tests/test_nyte_resale.py`
 - `tests/test_reserved_tokens.py`
 
-## Validation
+## Original implementation validation (before review round 1)
 
 All changes are uncommitted; no push, publication, migration or live Stripe
 charge/refund was performed.
@@ -234,3 +252,46 @@ symlinks system executables into a temporary `PATH`; Apple's `shasum` exits 255
 there with “perl version 5.34.1 can't run …/bin/shasum.” Run the full repository
 gate on its supported Linux CI environment (or repair that independent local
 harness compatibility issue) before treating the full suite as passed.
+
+## PR #2129 review round 1
+
+These changes are based on `b5df8e76e` and remain uncommitted. No push,
+publication, deployment, or live Stripe mutation was performed.
+
+| Fix | Implementation | Regression tests |
+| --- | --- | --- |
+| External refunds/disputes block existing holdings | `src/trusted_router/storage_resale.py:88` withdraws active listings and marks payment review atomically; `:102` matches original payment, amount and refund identity against durable fills. Reimports reconcile before the existing-position return. `src/trusted_router/services/resale.py:254` gathers bounded payment-scoped evidence; `:270` handles refund/dispute events, routed before the reserved-kind early return at `src/trusted_router/routes/internal/webhook.py:100`. | `tests/conformance/test_nyte_resale_ledger.py:131` covers external refunds/disputes, listing rejection, withdrawal and FIFO skipping; `:154` covers own refunds before worker completion and external excess. `tests/test_nyte_resale.py:404`, `:422`, and `:445` cover HTTP events, own refunds and reimport of existing refunded holdings. Full-refund acknowledgement remains covered at `:193`. |
+| Disabled flag isolates the feature | `src/trusted_router/routes/resale.py:34`, `:62`, and `:74` return the inert generic response before ledger/email work for direct handling, OPTIONS and POST. `src/trusted_router/services/reserved_tokens.py:152` gates all resale allocation/refund work; the original notification and first-write timestamp path remains active. Refund/dispute interception is also gated at `src/trusted_router/routes/internal/webhook.py:100`. | `tests/test_nyte_resale.py:212` tests every public action and preflight with a ledger that raises, no email, and unchanged state. `:238` proves a paid webhook and retry succeed with a broken resale ledger and retain the old notification timestamp/dedup behavior. |
+| Timestamped imports still allocate | `src/trusted_router/storage_resale.py:134` tracks allocation separately as pending/complete/historical. Importing after the notification claim does not complete allocation. The paid webhook allocates once and preserves the first completion time and holder index. | `tests/conformance/test_nyte_resale_ledger.py:174` reproduces claim → timestamped import → allocation → retry on every registered backend; `:194` separately proves historical purchases never consume current listings. The original import-before-claim contract remains. |
+| Fee locked to approved terms | `src/trusted_router/config.py:1435` rejects non-500 fees with the required new-terms-version explanation. Checkout metadata validation also requires 500. `src/trusted_router/storage_resale.py:184` retains the applied `fee_bps` on each fill. Terms remain v4 because the approved fee/rules did not change. | `tests/test_nyte_resale.py:256` checks environment and constructor validation for -1, 0, 499, 501 and 10000, and accepts 500. `tests/conformance/test_nyte_resale_ledger.py:23` checks the applied fee on both FIFO fills. |
+
+The new non-threaded contracts also run through the actual Postgres transaction
+implementation on the offline SQL adapter in `tests/test_nyte_resale.py:266`.
+They do not replace validation against a live server.
+
+| Round 1 validation | Result |
+| --- | --- |
+| Requested seven pytest files, with the two conformance paths grouped first | **235 passed, 39 skipped**, 83.21% coverage across the three resale modules |
+| Final resale unit rerun after preflight and offline Postgres assertions | **44 passed** |
+| Standalone conformance files | **26 passed, 39 skipped**; skips are unconfigured Postgres, Spanner-PG and native Spanner backends |
+| Site unittests | **94 passed** |
+| `node --test tests/js/nyte_holder.test.cjs` | **3 passed** |
+| Ruff / mypy | Passed; repository-wide ruff and mypy (551 source files), including all changed source |
+| Explicit native Spanner gate | **Blocked**: 11 setup errors, connection refused at `127.0.0.1:9010`; Docker remains unavailable |
+| Full repository attempt (`uv run pytest -q --ff -x --tb=short`) | **Blocked** by the same unchanged macOS `shasum` deployment-harness failure documented above. Failed-first stopped on that one failure; the remaining suite was not run and no full-suite pass is claimed. |
+
+The initial interleaved pytest path order lost the nested `store` fixture for
+`test_reserved_notifications.py`. Grouping the conformance files first resolved
+collection without changing their fixtures or weakening tests. The successful
+requested run used:
+
+```sh
+uv run pytest -q --tb=short \
+  tests/conformance/test_nyte_resale_ledger.py \
+  tests/conformance/test_reserved_notifications.py \
+  tests/test_nyte_resale.py tests/test_reserved_tokens.py \
+  tests/test_billing.py tests/test_stripe_processing_fees.py \
+  tests/test_service_surfaces.py \
+  --cov=trusted_router.storage_resale --cov=trusted_router.services.resale \
+  --cov=trusted_router.routes.resale --cov-report=term --cov-fail-under=70
+```

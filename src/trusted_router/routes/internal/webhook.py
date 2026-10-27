@@ -97,19 +97,14 @@ def register(router: APIRouter) -> None:
         event_type = event.get("type")
 
         obj = event.get("data", {}).get("object", {})
+        if settings.resale_enabled and (event_type in {"charge.refunded", "charge.refund.updated", "refund.created", "refund.updated", "refund.failed"}
+                                        or str(event_type).startswith("charge.dispute.")):
+            from trusted_router.services.resale import reconcile_payment_event
+
+            if await run_in_threadpool(reconcile_payment_event, event, settings):
+                return {"data": {"reserved_tokens": True, "credited": False, "ignored": True}}
         if (obj.get("metadata") or {}).get("kind") == KIND:
             return {"data": await run_in_threadpool(handle_reservation_event, event, settings, background)}
-
-        # Dashboard refunds need not inherit PaymentIntent metadata. Keep
-        # refunds of NYTE payments out of balance/adverse-credit handling too.
-        if event_type in {"charge.refunded", "charge.refund.updated", "refund.created", "refund.updated", "refund.failed"}:
-            payment_intent = _object_id(obj.get("payment_intent"))
-            if payment_intent:
-                reserved_payment = await run_in_threadpool(STORE.reserved_resale, {
-                    "op": "payment", "now": 0, "payment_intent": payment_intent,
-                })
-                if reserved_payment:
-                    return {"data": {"reserved_tokens": True, "credited": False, "ignored": True}}
 
         adverse_events = _stripe_adverse_events(event, event_id=event_id)
         if adverse_events:

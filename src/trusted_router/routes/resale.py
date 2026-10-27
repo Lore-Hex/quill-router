@@ -31,6 +31,8 @@ class HolderRequest(BaseModel):
 
 
 def handle(body: HolderRequest, settings: Settings) -> dict:
+    if not settings.resale_enabled:
+        return {"message": resale.GENERIC_RESPONSE}
     if body.action == "redeem":
         return resale.redeem_link(body.token, settings)
     holder = resale.command("session", key=reference(body.session))["holder"]
@@ -45,8 +47,6 @@ def handle(body: HolderRequest, settings: Settings) -> dict:
             {**{key: p[key] for key in ("id", "session_id", "grade", "lots", "per_lot_cents", "purchase_completed_at", "listed_lots", "sold_lots", "status")}, "listing_rows": [{key: row[key] for key in ("id", "lots_listed", "lots_sold", "listed_at", "status")} for row in p["listing_rows"]]}
             for p in result["positions"]
         ]}
-    if body.action == "list" and not settings.resale_enabled:
-        raise ValueError("Resale listing is not enabled yet")
     if not body.request_id:
         raise ValueError("An action request ID is required")
     result = resale.command(body.action, holder=holder, position=body.position,
@@ -59,6 +59,11 @@ def handle(body: HolderRequest, settings: Settings) -> dict:
 def register(app: FastAPI, settings: Settings) -> None:
     @app.options(PATH, include_in_schema=False)
     async def preflight(request: Request) -> JSONResponse:
+        if not settings.resale_enabled:
+            return JSONResponse({"message": resale.GENERIC_RESPONSE}, headers={
+                **(_headers(request) or HEADERS), "Access-Control-Allow-Methods": "POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type",
+            })
         headers = _headers(request)
         if headers is None:
             return JSONResponse({"error": "invalid_origin"}, status_code=403, headers=HEADERS)
@@ -66,6 +71,8 @@ def register(app: FastAPI, settings: Settings) -> None:
 
     @app.post(PATH, include_in_schema=False)
     async def action(request: Request, background: BackgroundTasks) -> JSONResponse:
+        if not settings.resale_enabled:
+            return JSONResponse({"message": resale.GENERIC_RESPONSE}, headers=_headers(request) or HEADERS)
         from trusted_router.routes.public import _inquiry_client_identity, _inquiry_rate_ok
 
         headers = _headers(request)

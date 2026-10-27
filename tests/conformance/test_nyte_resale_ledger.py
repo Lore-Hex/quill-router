@@ -20,6 +20,7 @@ def test_nyte_fifo_partial_fill_and_session_event_idempotency(store: Store, uniq
     assert len(result["fills"]) == 2
     for fid, lid, count, refund in zip(result["fills"], (l1, l2), (3, 2), (240, 190), strict=True):
         fill = call(store, "fill_claim", fill=fid, owner="worker")
+        assert fill["fee_bps"] == 500
         assert (fill["listing"], fill["lots"], fill["fee_cents"], fill["refund_amount_cents"]) == (lid, count, count * 5, refund)
         call(store, "fill_finish", fill=fid, owner="worker", status="refunded", stripe_refund_id="re_" + fid)
     assert purchase(store, buyer, lots=5, allocate=True) == result
@@ -124,3 +125,82 @@ def test_nyte_import_before_webhook_completes_timestamp_once(store: Store, uniqu
     result = call(store, "positions", holder=name)
     assert len(result["positions"]) == 1 and result["cursor"] is None
     assert result["positions"][0]["purchase_completed_at"] == 200
+
+
+@pytest.mark.parametrize("state", [{"amount_refunded": 1}, {"disputed": True}])
+def test_nyte_external_payment_change_blocks_existing_position_and_listings(store: Store, unique: str, state: dict) -> None:
+    seller, other, buyer = (unique + name for name in ("seller", "other", "buyer"))
+    original = purchase(store, seller)
+    lid = listing(store, seller, lots=2)
+    purchase(store, other)
+    other_lid = listing(store, other)
+    # Reimporting an existing position must reconcile before its early return.
+    blocked = call(store, "purchase", position=original, event_id="backfill:" + seller,
+                   backfill=True, payment_state=state)
+    assert blocked["status"] == "needs_review" and blocked["listed_lots"] == 0
+    rows = call(store, "positions", holder=seller)["positions"][0]["listing_rows"]
+    assert rows[0]["id"] == lid and rows[0]["status"] == "withdrawn"
+    with pytest.raises(ValueError, match="review"):
+        listing(store, seller, lots=1, request="after-refund")
+    # A stale retry of the original listing cannot advertise it as active.
+    with pytest.raises(ValueError, match="review"):
+        listing(store, seller, lots=2)
+    result = purchase(store, buyer, lots=4, allocate=True)
+    assert result["new_lots"] == 1 and len(result["fills"]) == 1
+    assert call(store, "fill_claim", fill=result["fills"][0], owner="worker")["listing"] == other_lid
+    assert call(store, "position", position=seller)["sold_lots"] == 0
+
+
+def test_nyte_own_refund_before_worker_commit_is_exempt_but_external_excess_blocks(store: Store, unique: str) -> None:
+    seller, buyer = unique + "seller", unique + "buyer"
+    purchase(store, seller)
+    listing(store, seller)
+    p = purchase(store, buyer, lots=1, allocate=True)
+    fid = p["fills"][0]
+    evidence = {"id": "re_" + unique, "payment_intent": "pi_" + seller, "amount": 95,
+                "status": "succeeded", "metadata": {"nyte_fill_id": fid}}
+    # The charge webhook can precede fill_finish; the durable fill is sufficient.
+    state = {"amount_refunded": 95, "refunds": [evidence]}
+    for _ in range(2):
+        result = call(store, "reconcile_payment", payment_intent="pi_" + seller, payment_state=state)
+        assert result["status"] == "held" and result["listed_lots"] == 2
+    # Duplicated metadata/evidence cannot conceal an extra external refund.
+    state = {"amount_refunded": 96, "refunds": [evidence, evidence]}
+    result = call(store, "reconcile_payment", payment_intent="pi_" + seller, payment_state=state)
+    assert result["status"] == "needs_review" and result["listed_lots"] == 0
+    assert purchase(store, unique + "after", lots=1, allocate=True)["new_lots"] == 1
+
+
+def test_nyte_timestamped_import_still_allocates_after_webhook_claim(store: Store, unique: str) -> None:
+    seller, buyer = unique + "seller", unique + "buyer"
+    purchase(store, seller)
+    listing(store, seller)
+    # Critical interleaving: webhook persists completion time, then importer
+    # writes the position, then webhook finally executes its allocation.
+    store.claim_reserved_notification(buyer, "webhook", now=200)
+    p = {"session_id": buyer, "holder": buyer, "lots": 2, "grade": unique[:12],
+         "per_lot_cents": 100, "payment_intent": "pi_" + buyer, "purchase_completed_at": None}
+    imported = call(store, "purchase", position=p, event_id="backfill:" + buyer, backfill=True)
+    assert imported["purchase_completed_at"] == 200 and imported["allocation_status"] == "pending"
+    result = call(store, "purchase", position={**p, "purchase_completed_at": 999},
+                  event_id="evt_" + buyer, allocate=True, fee_bps=500)
+    assert result["purchase_completed_at"] == 200 and result["allocation_status"] == "complete"
+    assert result["new_lots"] == 0 and len(result["fills"]) == 1
+    assert call(store, "purchase", position=p, event_id="evt_retry_" + buyer, allocate=True) == result
+    assert call(store, "position", position=seller)["sold_lots"] == 2
+    assert len(call(store, "positions", holder=buyer)["positions"]) == 1
+
+
+def test_nyte_completed_legacy_notification_import_is_historical(store: Store, unique: str) -> None:
+    seller, buyer = unique + "seller", unique + "buyer"
+    purchase(store, seller)
+    listing(store, seller)
+    store.claim_reserved_notification(buyer, "legacy", now=200)
+    store.finish_reserved_notification(buyer, "legacy", sent=True)
+    p = {"session_id": buyer, "holder": buyer, "lots": 2, "grade": unique[:12],
+         "per_lot_cents": 100, "payment_intent": "pi_" + buyer, "purchase_completed_at": None}
+    imported = call(store, "purchase", position=p, event_id="backfill:" + buyer, backfill=True)
+    assert imported["allocation_status"] == "historical"
+    result = call(store, "purchase", position=p, event_id="evt_" + buyer, allocate=True)
+    assert result["fills"] == [] and result["new_lots"] == 2
+    assert call(store, "position", position=seller)["sold_lots"] == 0

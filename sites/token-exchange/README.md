@@ -261,8 +261,9 @@ handling, even if a session contains workspace/refill metadata. It verifies the
 paid USD amount against locked metadata, logs `acquisition.reserved_tokens_recorded`
 and emails the existing enterprise inquiry recipient: `TR_PARTNER_INQUIRY_EMAIL`
 (`joseph@jperla.com` in rollout), falling back to `enterprise@trustedrouter.com`
-just like the enterprise brief. No buyer email/name is included. Stripe remains the payment/contact record. Every completed purchase also
-creates a durable NYTE position, independent of the resale feature flag. No token
+just like the enterprise brief. No buyer email/name is included. Stripe remains the payment/contact record. When resale is enabled, every completed purchase also
+creates a durable NYTE position. With resale disabled, checkout retains the
+original notification-only path without accessing the resale ledger. No token
 allowance, current balance credit or fulfillment is created. Full refunds
 requested within 30 days of purchase are recorded for ops and handled in Stripe.
 Checkout Session and PaymentIntent metadata lock `refund_window_days=30`, the
@@ -307,7 +308,9 @@ webhook establishes the paid reservation.
 **control**, with canonical NYTE-origin CORS, bounded JSON requests and rate
 limits. No account or credit workspace is created. The HTTP email response is
 always “if we have reservations for that address, we sent a link”; valid addresses
-receive a link even if no position exists. Email is used only for sending and
+receive a link even if no position exists when resale is enabled. With resale
+disabled, all holder API actions return the inert generic response without
+sending email or touching the ledger. Email is used only for sending and
 Stripe lookup, never included in analytics or application logs. Stripe retains
 contact data; NYTE's holder index contains only a domain-separated email hash.
 
@@ -321,10 +324,10 @@ losing the session requires another link. Rotating the Stripe secret invalidates
 outstanding links. Repeated mutations use stable request IDs.
 
 `TR_RESALE_ENABLED=false` and `TR_RESALE_FEE_BPS=500` are the defaults and are
-pinned in `scripts/deploy/rollout.sh`. The flag controls listing and new purchase
-allocation; position writes, refunds already owed and withdrawals continue when
-it is off. The approved public terms charge 5%; changing the fee configuration
-requires corresponding approved terms/copy. v4 is the new checkout terms version;
+pinned in `scripts/deploy/rollout.sh`. The flag gates every holder API action
+and all resale webhook work. The explicit ops refund CLI remains available for
+obligations already owed. Config loading rejects any fee other than 500 with an
+error explaining that a fee change requires a new terms version. v4 is the new checkout terms version;
 already-created v3 sessions remain accepted by the webhook.
 
 Listed lots sell FIFO within each grade before new inventory at the buyer's
@@ -344,8 +347,11 @@ sessions without allocating historical sales against today's listings. The
 existing `reserved_notification` row supplies `purchase_completed_at`. Missing
 completion timestamps remain unknown and cannot list or request a self-service
 refund; ops must reconcile them, never substitute `session.created`. Refunded or
-disputed imported payments are flagged for review. A first webhook racing an
-import completes the provisional position and allocates once.
+disputed payments are reconciled into existing positions as well as new imports;
+external changes block selling and atomically withdraw active listings. Refund
+evidence matching NYTE fills is exempt. Allocation status is independent of
+purchase time: an import racing the first webhook stays pending and that webhook
+allocates once; a completed legacy notification establishes historical status.
 
 Storage reuses #2125's `Store` protocol and entity transaction pattern across
 memory, native Spanner and Postgres. No new physical table or schema migration is

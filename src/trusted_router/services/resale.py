@@ -83,7 +83,7 @@ def holder_key(email: str) -> str:
     return reference("nyte-holder:" + email.strip().lower())
 
 
-def record_purchase(obj: dict[str, Any], event_id: str, purchased_at: int | None, settings: Settings, *, backfill: bool = False, needs_review: bool = False) -> dict[str, Any]:
+def record_purchase(obj: dict[str, Any], event_id: str, purchased_at: int | None, settings: Settings, *, backfill: bool = False, needs_review: bool = False, payment_state: dict[str, Any] | None = None) -> dict[str, Any]:
     from trusted_router.services.reserved_tokens import reservation_position_id
 
     metadata = obj["metadata"]
@@ -97,7 +97,7 @@ def record_purchase(obj: dict[str, Any], event_id: str, purchased_at: int | None
         "payment_intent": obj.get("payment_intent"), "holder": holder_key(email),
         "terms_version": metadata["terms_version"], "status": "needs_review" if needs_review else "held",
     }, event_id=event_id, backfill=backfill, allocate=settings.resale_enabled and not backfill,
-        fee_bps=settings.resale_fee_bps)
+        fee_bps=settings.resale_fee_bps, payment_state=payment_state)
 
 
 def alert_ops(settings: Settings, subject: str, body: str) -> None:
@@ -180,6 +180,8 @@ def send_holder_link(email: str, settings: Settings) -> None:
     No lookup-dependent HTTP status, body, or synchronous Stripe work. The email
     itself is transient contact data, never stored on an analytics/event row.
     """
+    if not settings.resale_enabled:
+        return
     try:
         email = validate_email(email, check_deliverability=False).normalized.lower()
         nonce, expires = secrets.token_urlsafe(32), int(time.time()) + 900
@@ -244,8 +246,52 @@ def backfill_email(email: str, holder: str, settings: Settings) -> None:
             # charge before importing; a refunded/disputed order needs review.
             payment = _stripe_dict(stripe.PaymentIntent.retrieve(obj["payment_intent"], expand=["latest_charge"], api_key=settings.stripe_secret_key))
             charge = payment.get("latest_charge") or {}
-            needs_review = payment.get("status") != "succeeded" or not isinstance(charge, dict) or not charge.get("paid") or charge.get("refunded") or charge.get("amount_refunded", 0) > 0 or charge.get("disputed")
-            record_purchase(obj, "backfill:" + obj["id"], None, settings, backfill=True, needs_review=bool(needs_review))
+            state = payment_state(obj["payment_intent"], charge, settings)
+            state["unpaid"] = state["unpaid"] or payment.get("status") != "succeeded"
+            record_purchase(obj, "backfill:" + obj["id"], None, settings, backfill=True, payment_state=state)
+
+
+def payment_state(payment_intent: str, charge: Any, settings: Settings) -> dict[str, Any]:
+    """Bounded Stripe refund evidence, verified against durable fills in the transaction."""
+    if not isinstance(charge, dict):
+        return {"unpaid": True}
+    state: dict[str, Any] = {"unpaid": not charge.get("paid"), "disputed": bool(charge.get("disputed")),
+                             "amount_refunded": int(charge.get("amount_refunded", 0)), "refunds": []}
+    if state["amount_refunded"] and not state["disputed"]:
+        for count, refund in enumerate(stripe.Refund.list(payment_intent=payment_intent, limit=100,
+                                                          api_key=settings.stripe_secret_key).auto_paging_iter()):
+            if count >= 1000:
+                raise ValueError("Refund reconciliation requires ops")
+            state["refunds"].append(_stripe_dict(refund))
+    return state
+
+
+@_private_stripe_reads()
+def reconcile_payment_event(event: dict[str, Any], settings: Settings) -> bool:
+    """Reconcile external card changes before the generic credit webhook handlers."""
+    obj = event["data"]["object"]
+    payment_intent = obj.get("payment_intent")
+    if isinstance(payment_intent, dict):
+        payment_intent = payment_intent.get("id")
+    charge = None
+    if not payment_intent and obj.get("charge"):
+        charge = _stripe_dict(stripe.Charge.retrieve(obj["charge"], api_key=settings.stripe_secret_key))
+        payment_intent = charge.get("payment_intent")
+    if not payment_intent or not command("payment", payment_intent=payment_intent):
+        return False
+    if event["type"].startswith("charge.dispute."):
+        state = {"disputed": True}
+    else:
+        if event["type"] == "charge.refunded":
+            charge = obj
+        if charge is None:
+            payment = _stripe_dict(stripe.PaymentIntent.retrieve(payment_intent, expand=["latest_charge"],
+                                                                 api_key=settings.stripe_secret_key))
+            charge = payment.get("latest_charge")
+        state = payment_state(payment_intent, charge, settings)
+    command("reconcile_payment", payment_intent=payment_intent, payment_state=state)
+    return True
+
 
 
 def _stripe_dict(value: Any) -> dict[str, Any]:
