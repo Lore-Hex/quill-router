@@ -25,7 +25,8 @@ def test_release_leaves_immediately_next_slot_publishable(monkeypatch, reason):
     accounting(svc)
 
 
-def test_early_next_wake_waits_for_actual_start_cadence(monkeypatch):
+@pytest.mark.parametrize("early", [0., .1, .3])
+def test_early_next_wake_waits_for_actual_start_cadence(monkeypatch, early):
     svc, wall, mono, job, waits = timed_owner(monkeypatch)
     # Receipt 896295396: published start 8,633 us into the slot, cycle 97,787 us.
     mono[0] += .008633
@@ -34,14 +35,23 @@ def test_early_next_wake_waits_for_actual_start_cadence(monkeypatch):
     svc.submit_publisher(job.slot, wall[0])
     outcome(svc, job, 'published')
     first_start = svc.state.last_actual_start
-    next_job = advance(svc, wall, mono, job.slot+1)
-    assert next_job.earliest_start_mono > mono[0]
+    wall[0], mono[0] = (job.slot+1)*lifecycle.SLOT_US, 102.-early
+    svc.store.database.server_ns = wall[0]*1000
+    svc.tick(wall[0])
+    next_job = svc.state.job
+    # Forward wall steps/early monotonic wakes wait for the reserved boundary;
+    # the previous worker's 8.633ms jitter is not carried forward.
+    assert next_job.earliest_start_mono == pytest.approx(102.)
     svc.submit_publisher(next_job.slot, wall[0])
-    trace = outcome(svc, next_job, 'published')
-    assert waits == pytest.approx([.008633])
-    assert svc.state.last_actual_start-first_start >= 2
-    assert trace['claim_start_us'] % lifecycle.SLOT_US == 8633
-    assert trace['cycle_us'] == 0  # Cadence wait precedes the actual admitted start.
+    trace = outcome(svc, next_job, 'missed' if early > .25 else 'published')
+    assert waits == pytest.approx([early] if 0 < early <= .25 else [])
+    if early > .25:
+        assert trace['rpc_count'] == 0
+        assert svc.state.last_actual_start == first_start
+    else:
+        assert svc.state.last_actual_start-first_start >= 1.75
+        assert trace['claim_start_us'] % lifecycle.SLOT_US == round(early*1e6)
+    assert trace['cycle_us'] == (None if early > .25 else 0)  # Wait precedes actual admission.
 
 
 @pytest.mark.parametrize('change', ['revoke', 'late'])
@@ -169,3 +179,34 @@ def test_scope_setup_does_not_accumulate_after_cadence_wait(monkeypatch):
         starts.append(trace["claim_start_us"]-current.slot*lifecycle.SLOT_US)
     # Previously 5, 10, 15, 20, 25ms: each setup followed the cadence wait.
     assert starts == [5000]*5
+
+
+@pytest.mark.parametrize("forward", [True, False])
+def test_wall_steps_cannot_compress_cadence_or_replay_slots(forward):
+    state = lifecycle.State()
+    stamp = 1_792_590_792_000_000
+    starts = []
+    for index in range(20):
+        # Wall advances two seconds while monotonic advances only 100ms.
+        wall = stamp+index*lifecycle.SLOT_US if forward else stamp-index*lifecycle.SLOT_US
+        state, effects = lifecycle.step(state, lifecycle.Tick(wall, 100.+index*.1))
+        jobs = [e.job for e in effects if isinstance(e, lifecycle.StartPublisherCycle)]
+        if not jobs:
+            continue
+        job = jobs[0]
+        if job.earliest_start_mono <= job.latest_start_mono:
+            starts.append(job.earliest_start_mono)
+            state, _ = lifecycle.step(state, lifecycle.SlotOutcome(wall, job.slot, "failed",
+                generation=job.generation, actual_start_mono=job.earliest_start_mono))
+        else:
+            state, _ = lifecycle.step(state, lifecycle.SlotOutcome(wall, job.slot, "missed",
+                generation=job.generation))
+    assert starts == ([100., 102.] if forward else [100.])
+    assert state.last_start_boundary == starts[-1]
+    # After impossible early windows, the next feasible window can run.
+    # Reserving those impossible jobs would incorrectly push Q to 140s.
+    state, effects = lifecycle.step(state, lifecycle.Tick(stamp+20*lifecycle.SLOT_US, 104.))
+    job = next(e.job for e in effects if isinstance(e, lifecycle.StartPublisherCycle))
+    assert job.earliest_start_mono == 104. <= job.latest_start_mono
+    assert lifecycle.accounted_once(state)
+    assert lifecycle.conservation(state)

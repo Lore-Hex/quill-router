@@ -73,7 +73,7 @@ def test_controls_resolve_baseline_in_shallow_checkout(monkeypatch, base):
     if base:
         with pytest.raises(pytest.skip.Exception, match="source blobs are byte-identical to the worktree"):
             modules("baseline")
-        assert len(loaded) == 2
+        assert len(loaded) == len(simulation.MODULE_SOURCES) == 3
     else:
         with pytest.raises(pytest.skip.Exception, match="baseline unavailable"):
             modules("baseline")

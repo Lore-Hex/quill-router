@@ -54,7 +54,8 @@ from trusted_router.storage_gcp_shadow_io import _RECORDER
 ROOT = Path(__file__).resolve().parents[1]
 START = 896313600
 MODULE_SOURCES = (("observation", "storage_gcp_shadow_observation.py"),
-                  ("publisher", "services/async_settle_shadow_health.py"))
+                  ("publisher", "services/async_settle_shadow_health.py"),
+                  ("lifecycle", "async_settle_shadow_lifecycle.py"))
 
 
 def baseline_ref():
@@ -106,7 +107,8 @@ def modules(ref=None):
             sys.modules[key] = module
             spec.loader.exec_module(module)
             result.append(module)
-    storage, publisher = result
+    storage, publisher, lifecycle = result
+    publisher.lifecycle = lifecycle
     # The copied publisher must catch exceptions from the copied store too.
     for name in ("Budget", "ContentionLoss", "UnknownCommit", "ObservationStore"):
         setattr(publisher, name, getattr(storage, name))
@@ -605,7 +607,8 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
                        stall_from=None, patch=None, stale_holder=None,
                        microsecond_reads=False, bound_wait_probability=0.,
                        fail_observations=None, unknown_claim_at=None, fail_claim_reads=None,
-                       publication_fault=None, boots=None, fixed_rpc_costs=False):
+                       publication_fault=None, boots=None, fixed_rpc_costs=False,
+                       tick_offset_seconds=0., admission_overshoot_seconds=0., skip_holder_slots=()):
     """Execute actual owner/worker admission, not a synthesized busy outcome.
 
     Clock offsets are server minus each boot's local wall in milliseconds;
@@ -638,6 +641,9 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
     """
     from trusted_router.config import Settings
 
+    # Admission overshoot is a calibrated MODEL of the measured ~1 ms/slot
+    # drift, not a replay of production timestamps. It runs after cadence sleep.
+    # Tick phase models Service.run's first poll after the boundary.
     storage, publisher = modules(ref)
     if patch is not None:
         patch(storage, publisher)
@@ -742,6 +748,25 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
             settings.async_settle_shadow_health_region = settings.effective_serving_region
             svc = publisher.Service(settings, store)
             svc.journal.boot = boot
+            if admission_overshoot_seconds:
+                lock = svc.admission_lock
+                class AdmissionDelay:
+                    def __init__(self, lock):
+                        self.lock = lock
+                        self.delayed_slot = None
+                    def __enter__(self):
+                        return self.lock.__enter__()
+                    def __exit__(self, *args):
+                        return self.lock.__exit__(*args)
+                    def acquire(self, *, timeout):
+                        slot = getattr(clock.local, "slot", None)
+                        if slot != self.delayed_slot:
+                            self.delayed_slot = slot
+                            clock.sleep(admission_overshoot_seconds)
+                        return self.lock.acquire(timeout=timeout)
+                    def release(self):
+                        self.lock.release()
+                svc.admission_lock = AdmissionDelay(lock)
             accept = svc.accept
             def capture_release(event, *, accept=accept, boot=boot, **kwargs):
                 # Observe real failure events, including on origin/main where
@@ -786,6 +811,10 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
                     svc.observer.health = {"body": body} if body else None
             for index in indexes:
                 svc = services[index]
+                if index == 0 and slot-START in skip_holder_slots:
+                    # Model a missed host wake without inventing a claim or
+                    # mutating durable timestamps; account it on the next tick.
+                    continue
                 stamp = round(svc.store.wall()*1e6)
                 for effect in svc.tick(stamp):
                     if isinstance(effect, publisher.lifecycle.StartPublisherCycle):
@@ -794,7 +823,7 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
             slot = START+offset
             for clock_offset in sorted(set(offsets)):
                 indexes = tuple(i for i, value in enumerate(offsets) if value == clock_offset)
-                clock.schedule(slot*2.+clock_offset,
+                clock.schedule(slot*2.+clock_offset+tick_offset_seconds,
                     lambda slot=slot, indexes=indexes: tick(slot, True, indexes))
                 # Each owner's watchdog also uses that boot's local wall.
                 clock.schedule(slot*2.+clock_offset+.750001,

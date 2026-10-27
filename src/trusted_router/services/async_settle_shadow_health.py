@@ -567,7 +567,7 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
             reason = "session_unavailable"
             return
         # Establish scopes before the cadence wait: setup time can fit inside
-        # the mandatory two-second cadence instead of shifting every next start.
+        # the scheduled two-second cadence without delaying admission.
         # Admission still follows both setup and waiting, with revocation checks.
         with rpc_scope(budget.deadline, CYCLE_SECONDS, store.clock), observe_spanner_rpcs(record):
             delay = job.earliest_start_mono - store.clock()
