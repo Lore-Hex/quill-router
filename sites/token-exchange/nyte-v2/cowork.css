@@ -38,12 +38,12 @@ ol.cw-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:28px;
   .cw-rules>div:nth-child(3){padding-left:0;border-left:0}
 }
 @media(max-width:600px){
-  .cw-hero{display:block;min-height:0;padding:0}
-  .cw-banner{position:relative;inset:auto;z-index:auto;height:160px;background-position:60% 60%;background-size:cover}
+  .cw-hero{--cw-banner-height:clamp(32px,calc(var(--cw-viewport,100svh) - 536px),160px);display:block;min-height:0;padding:0}
+  .cw-banner{position:relative;inset:auto;z-index:auto;height:var(--cw-banner-height);background-position:60% 60%;background-size:cover}
   .cw-banner::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,transparent 60%,var(--bg))}
   .cw-hero::before{content:none}
   .cw-hero .inner{padding:0 0 32px}
-  .cw-intro{display:flex;flex-direction:column;min-height:calc(var(--cw-viewport,100svh) - var(--header) - 160px);padding:12px 0 24px}
+  .cw-intro{display:flex;flex-direction:column;min-height:calc(var(--cw-viewport,100svh) - var(--header) - var(--cw-banner-height));padding:12px 0 24px}
   .cw-hero .cw-intro h1{margin-top:auto}
   .cw-hero .cw-intro .btns{margin-top:0}
   .cw-meta{margin-top:24px}
