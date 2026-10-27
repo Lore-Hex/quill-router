@@ -666,9 +666,10 @@ published switch turns it on:
    - `async_python_admitted` (both populations) zero: admission off
      throughout; a Python rollout that changes admission restarts the
      sample (§3.6);
-   - the cohort's own I2 bars still met, over the sync requests the span
-     compares (the contract's "I2 gates": every bar but its
-     3,000-comparable minimum, which this gate's minimums replace).
+   - the cohort's own I2 bars still met over all the span's comparable
+     requests, sync and async-v1 alike as the shadow counts them (the
+     contract's "I2 gates": every bar but its 3,000-comparable minimum,
+     which this gate's minimums replace).
 
    This gate is I2's too (decided 2026-10-27; the contract, "With G15c
    pinned, I3's gate is I2's"): the sync-only I2 sample did not accrue

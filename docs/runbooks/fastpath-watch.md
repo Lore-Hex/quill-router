@@ -143,6 +143,9 @@ restarted, so the last node's restart is the change. The report's
 `-since` on. The gates are a sample, not a calendar: at least 3,000
 comparable requests over at least 24 hours and at least three policy and
 two snapshot digests among them, and the ratios and zero counts below.
+On a release with G15c the `i3` figures' minimums take the place of the
+3,000 (`fast-admission-e2-decide.md`, "With G15c pinned, I3's gate is
+I2's"); the span, digest, ratio and zero-count rules stay.
 
 Each minute every node logs one line of its decide path's counts
 (`fastpath edge decide: ...`, with `-edge-decide`) and, with
