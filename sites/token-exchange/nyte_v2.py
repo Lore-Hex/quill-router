@@ -57,7 +57,8 @@ def render_nyte(
         "api": ("/confidential", "Confidential API · New York Token Exchange", "Frontier AI for sensitive work. Confidential compute, end-to-end encryption and live evidence."),
         "sup": ("/suppliers", "Suppliers · New York Token Exchange", "Sell your inference to enterprise buyers. List your models and prices once."),
         "accelerator": ("/neocloud-accelerator", "Neocloud accelerator | New York Token Exchange", "Pre-sell reserved tokens from a planned facility to help finance the build. Explore the open-source neocloud stack and demand through NYTE."),
-        "buy": ("/buy", "Reserved tokens | New York Token Exchange", "Plan reserved tokens in billion-token blocks or tokens per second. Choose an NYTE Index grade or model and discuss pricing on a 15-minute call."),
+        "reserved-terms": ("/reserved-tokens-terms", "Reserved tokens terms | New York Token Exchange", "Terms for prepaid NYTE Index-grade tokens usable during 2027."),
+        "buy": ("/buy", "Reserved tokens | New York Token Exchange", "Reserve NYTE Index-grade tokens by card for January–December 2027, or discuss models, throughput and facilities on a 15-minute call."),
         "providers": ("/providers", "For inference providers | New York Token Exchange", "Bring your available inference capacity to the New York Token Exchange. Request the updated private seven-page provider deck and explore joining the exchange."),
         "cowork": ("/trusted-cowork", "Trusted Cowork · New York Token Exchange", "Trusted Cowork by NYTE. A desktop agent for your Mac using only trusted tokens: confidential inference, explicit tool approvals, and no standard-provider fallback."),
         "index": ("/index", "NYTE Token Index | New York Token Exchange", "Compare AI inference prices across four capability grades. List spare GPU capacity under your own brand on the New York Token Exchange."),
@@ -112,7 +113,7 @@ def build_nyte(output: Path) -> None:
     shutil.copyfile(HERE / "live-evidence.js", assets / "live-evidence.js")
     for name in ("styles.css", "app.js", "fonts.css", "providers.css", "cowork.css", "buy.css", "buy.js", "accelerator.css"):
         shutil.copyfile(SOURCE / name, assets / name)
-    for page, route in (("api", "confidential"), ("sup", "suppliers"), ("providers", "providers"), ("cowork", "trusted-cowork"), ("buy", "buy"), ("accelerator", "neocloud-accelerator")):
+    for page, route in (("reserved-terms", "reserved-tokens-terms"), ("api", "confidential"), ("sup", "suppliers"), ("providers", "providers"), ("cowork", "trusted-cowork"), ("buy", "buy"), ("accelerator", "neocloud-accelerator")):
         content = render_nyte(page)
         for name in (route, route + ".html"):
             (output / name).write_text(content)

@@ -5,7 +5,7 @@ const vm = require('node:vm');
 const html = fs.readFileSync(process.argv[2], 'utf8');
 const source = fs.readFileSync(process.argv[3] || `${__dirname}/nyte-v2/buy.js`, 'utf8');
 
-function setup(search = '') {
+function setup(search = '', options = {}) {
   const nodes = new Map(), radios = [], buttons = new Map(), events = [], handlers = {};
   class Node {
     constructor(attrs = {}) {
@@ -32,9 +32,11 @@ function setup(search = '') {
     }
     setCustomValidity(error) { this.error = error; }
     checkValidity() { return this.validity.valid; }
-    reportValidity() { this.reported = true; }
+    reportValidity() { this.reported = true; return this.type === 'checkbox' ? this.checked : this.validity.valid; }
     setAttribute(key, value) { this[key] = value; }
     removeAttribute(key) { delete this[key]; }
+    addEventListener(event, handler) { this[event] = handler; }
+    get dateTime() { return this.datetime; }
     focus() {}
     scrollIntoView() {}
     replaceChildren(...children) { this.children = children; }
@@ -79,7 +81,7 @@ function setup(search = '') {
     throw Error(selector);
   };
   flow.addEventListener = (event, handler) => { handlers[event] = handler; };
-  const location = {search, pathname:'/buy', origin:'https://nytokenexchange.com'};
+  const location = {search, pathname:'/buy', origin:'https://nytokenexchange.com', assign(url) { this.redirect = url; }};
   const history = Object.fromEntries(['pushState', 'replaceState'].map(key => [key, (_, __, url) => {
     location.search = url.search;
   }]));
@@ -91,13 +93,17 @@ function setup(search = '') {
   const window = {addEventListener: (event, handler) => { handlers[event] = handler; },
     TokenExchangeAnalytics: {track: (event, properties) => events.push({event, ...properties})},
     NYTECatalog: {read: async () => ({data:[]})}};
-  vm.runInNewContext(source, {document, window, location, history, URL, URLSearchParams, Intl, Date});
+  const timers = new Map(); let timerId = 0;
+  vm.runInNewContext(source, {document, window, location, history, URL, URLSearchParams, Intl, Date,
+    setTimeout(fn) { timers.set(++timerId, fn); return timerId; }, clearTimeout(id) { timers.delete(id); },
+    fetch: options.fetch || (async () => ({ok:false})),
+  });
   const radio = (name, value) => radios.find(node => node.name === name && node.value === value);
   const change = (name, value) => { radio(name, value).checked = true; handlers.change(); };
   const input = value => { get('blocks').value = value; handlers.input({target:get('blocks')}); };
   const click = attr => handlers.click({target: {closest: () => ({hasAttribute: key => key === attr})}});
   const delta = value => handlers.click({target: {closest: () => ({hasAttribute: key => key === 'data-block-delta', dataset:{blockDelta:String(value)}})}});
-  return {get, radio, change, input, click, delta, prices, steps, events, location, buttons};
+  return {get, radio, change, input, click, delta, prices, steps, events, location, buttons, timers, handlers};
 }
 
 for (const query of ['', '?facility=unlisted', '?facility=__proto__', '?facility=underwater%22%5D']) {
@@ -191,3 +197,5 @@ switched.input('50000');
 switched.change('facility', 'solar');
 assert.equal(switched.get('blocks').value, '1000');
 console.log('Facility wizard: preselection, caps, units, pricing, timing, Calendly and analytics passed.');
+
+module.exports = {setup};

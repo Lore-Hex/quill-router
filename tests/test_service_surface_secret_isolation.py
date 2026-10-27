@@ -224,6 +224,7 @@ _SENSITIVE_TEST_VALUES: dict[str, object] = {
 
 _EXPECTED_OWNER_GROUPS: tuple[tuple[frozenset[str], tuple[str, ...]], ...] = (
     (frozenset({"actions"}), ("ops_chat_webhook_secret",)),
+    (frozenset({"actions", "control"}), ("stripe_secret_key",)),
     (
         frozenset({"public", "control", "internal", "observer"}),
         (
@@ -250,7 +251,6 @@ _EXPECTED_OWNER_GROUPS: tuple[tuple[frozenset[str], tuple[str, ...]], ...] = (
             "byok_envelope_key_b64",
             "google_data_manager_kms_key_name",
             "stripe_webhook_secret",
-            "stripe_secret_key",
             "paypal_client_id",
             "paypal_client_secret",
             "paypal_webhook_id",
@@ -675,7 +675,6 @@ def test_actions_production_rejects_non_form_credentials_and_clients(
         ("attribution_cookie_secret", _ATTRIBUTION_SECRET),
         ("internal_gateway_token", _GATEWAY_SECRET),
         ("stripe_webhook_secret", "whsec-test"),
-        ("stripe_secret_key", "sk-test"),
         ("sentry_dsn", "https://example@example.ingest.sentry.io/1"),
         ("byok_kms_key_name", "projects/test/cryptoKeys/byok"),
     ),

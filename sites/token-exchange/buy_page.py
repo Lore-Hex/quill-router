@@ -1,4 +1,4 @@
-"""Build the reserved tokens inquiry flow from the public, dated index snapshot."""
+"""Build card reservations and call inquiries from the public, dated index snapshot."""
 from __future__ import annotations
 
 import html

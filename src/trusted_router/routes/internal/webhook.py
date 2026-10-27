@@ -23,6 +23,7 @@ from typing import Any
 
 import stripe
 from fastapi import APIRouter, HTTPException, Request
+from starlette.concurrency import run_in_threadpool
 
 from trusted_router.acquisition import (
     record_credit_purchase,
@@ -32,6 +33,7 @@ from trusted_router.auth import SettingsDep
 from trusted_router.errors import api_error
 from trusted_router.money import MICRODOLLARS_PER_CENT
 from trusted_router.routes.helpers import json_body
+from trusted_router.services.reserved_tokens import KIND, handle_reservation_event
 from trusted_router.services.x402_billing import X402_PAYMENT_METHOD, credit_x402_payment_intent
 from trusted_router.storage import STORE
 from trusted_router.storage_models import AdverseTrustEvent, CreditProvenance
@@ -93,6 +95,10 @@ def register(router: APIRouter) -> None:
             )
         event_id = str(event.get("id") or uuid.uuid4())
         event_type = event.get("type")
+
+        obj = event.get("data", {}).get("object", {})
+        if (obj.get("metadata") or {}).get("kind") == KIND:
+            return {"data": await run_in_threadpool(handle_reservation_event, event, settings)}
 
         adverse_events = _stripe_adverse_events(event, event_id=event_id)
         if adverse_events:

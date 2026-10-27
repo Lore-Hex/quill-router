@@ -167,6 +167,11 @@ from trusted_router.scopes import KNOWN_SCOPES
 from trusted_router.serialization import user_model_public_shape
 from trusted_router.services.email import EmailMessage, get_email_service
 from trusted_router.services.ops_chat import OpsChatSupportMessage, fanout_support_message
+from trusted_router.services.reserved_tokens import (
+    ReservationRequest,
+    create_reservation_checkout,
+    reservation_quote,
+)
 from trusted_router.services.trust_release import (
     ResolvedTrustRelease,
     TrustReleaseResolver,
@@ -964,8 +969,74 @@ async def _handle_enterprise_brief(settings: Settings, request: Request) -> Resp
     )
 
 
+async def _handle_reservation(settings: Settings, request: Request, *, checkout: bool) -> Response:
+    origin = _exchange_origin(request)
+    headers = _brief_headers(origin)
+
+    def error(message: str, status: int) -> JSONResponse:
+        return JSONResponse({"error": message}, status_code=status, headers=headers)
+
+    # Same canonical exchange origins and same-origin allowance as the brief.
+    if origin is None:
+        raw_origin = request.headers.get("origin")
+        try:
+            parsed = urlparse(raw_origin) if raw_origin is not None else None
+        except ValueError:
+            return error("invalid_origin", 403)
+        if request.headers.get("sec-fetch-site") == "cross-site" or (
+            parsed is not None and (parsed.scheme not in {"http", "https"} or parsed.netloc != request.url.netloc)
+        ):
+            return error("invalid_origin", 403)
+    identity = _inquiry_client_identity(request, settings)
+    namespace = "reserve-checkout" if checkout else "reserve-quote"
+    allowed = _inquiry_rate_ok(f"{namespace}:{identity}") if checkout else accept_event(f"{namespace}:{identity}")
+    if not allowed:
+        return error("rate_limited", 429)
+    try:
+        if checkout:
+            if request.headers.get("content-type", "").split(";", 1)[0] != "application/json":
+                return error("invalid_request", 415)
+            body = bytearray()
+            async for chunk in request.stream():
+                if len(body) + len(chunk) > 2048:
+                    return error("request_too_large", 413)
+                body.extend(chunk)
+            parsed_body = ReservationRequest.model_validate_json(body)
+            result = await run_in_threadpool(create_reservation_checkout, settings, parsed_body)
+        else:
+            grade = request.query_params.get("grade", "")
+            lots_raw = request.query_params.get("lots", "")
+            if not lots_raw.isascii() or not lots_raw.isdigit() or len(lots_raw) > 9:
+                return error("invalid_lots", 422)
+            result = reservation_quote(settings, grade, int(lots_raw))
+    except ValidationError:
+        return error("Supply a grade, integer lots and terms_accepted=true", 422)
+    except HTTPException as exc:
+        return JSONResponse(exc.detail, status_code=exc.status_code, headers=headers)
+    except Exception:  # noqa: BLE001 - do not expose Stripe internals or submitted data
+        log.error("reserved_tokens.checkout_unavailable")
+        return error("Card checkout is temporarily unavailable; book a call or try again", 503)
+    return JSONResponse(result, headers=headers)
+
+
 def register_public_action_routes(app: FastAPI, settings: Settings) -> None:
     """Register anonymous actions on their credential-minimal bulkhead."""
+
+    @app.post("/token-exchange/reserve/checkout", include_in_schema=False)
+    async def reserve_checkout(request: Request) -> Response:
+        return await _handle_reservation(settings, request, checkout=True)
+
+    @app.get("/token-exchange/reserve/quote", include_in_schema=False)
+    async def reserve_quote(request: Request) -> Response:
+        return await _handle_reservation(settings, request, checkout=False)
+
+    @app.options("/token-exchange/reserve/checkout", include_in_schema=False)
+    @app.options("/token-exchange/reserve/quote", include_in_schema=False)
+    async def reserve_preflight(request: Request) -> Response:
+        response = await _handle_enterprise_brief_preflight(request)
+        if response.status_code == 204:
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        return response
 
     @app.post("/token-exchange/events", include_in_schema=False)
     async def exchange_event(request: Request) -> Response:

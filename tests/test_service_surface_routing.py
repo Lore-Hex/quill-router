@@ -384,6 +384,8 @@ def test_anonymous_actions_leave_the_public_renderer(path: str) -> None:
 def test_enterprise_download_is_an_action_not_a_static_asset() -> None:
     assert URL_MAP.route_surface("/token-exchange") == "public"
     assert URL_MAP.route_surface("/token-exchange/brief") == "actions"
+    assert URL_MAP.route_surface("/token-exchange/reserve/checkout") == "actions"
+    assert URL_MAP.route_surface("/token-exchange/reserve/quote") == "actions"
 
 
 def test_entire_group_buy_stays_on_the_t2_legacy_control_slot() -> None:

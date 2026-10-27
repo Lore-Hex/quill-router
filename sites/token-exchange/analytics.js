@@ -27,6 +27,13 @@
   window.TokenExchangeAnalytics = {context, track};
   const sent = new Set();
   function track(event, properties = {}) {
+    if (event.startsWith('nyte.reserve_')) {
+      if (!['nyte.reserve_checkout_started', 'nyte.reserve_checkout_succeeded'].includes(event)) return;
+      if (event === 'nyte.reserve_checkout_started') {
+        if (properties.unit !== 'blocks' || properties.underlying_kind !== 'index' || !['AAA', 'A', 'B', 'C'].includes(properties.grade)) return;
+        properties = {unit:'blocks', underlying_kind:'index', grade:properties.grade};
+      } else properties = {};
+    }
     const payload = context();
     if (payload.tracking_disabled || (event.startsWith("exchange.") && sent.has(event))) return;
     sent.add(event);
@@ -34,7 +41,7 @@
       Promise.resolve(fetch('https://trustedrouter.com/token-exchange/events', {
         method:'POST', mode:'cors', credentials:'omit', keepalive:true,
         headers:{'Content-Type':'application/json'}, body:JSON.stringify({event, ...payload, ...properties,
-          page: ['/providers', '/badge', '/confidential', '/trusted-cowork', '/suppliers', '/index', '/buy', '/neocloud-accelerator'].includes(location.pathname.replace(/\.html$/, ''))
+          page: ['/providers', '/badge', '/confidential', '/trusted-cowork', '/suppliers', '/index', '/buy', '/neocloud-accelerator', '/reserved-tokens-terms'].includes(location.pathname.replace(/\.html$/, ''))
             ? location.pathname.replace(/\.html$/, '') : '/'}),
       })).catch(() => {});
     } catch { /* Analytics never blocks the page or brochure download. */ }
