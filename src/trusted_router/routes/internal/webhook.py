@@ -103,6 +103,10 @@ def register(router: APIRouter) -> None:
 
             if await run_in_threadpool(reconcile_payment_event, event, settings):
                 return {"data": {"reserved_tokens": True, "credited": False, "ignored": True}}
+        if (obj.get("metadata") or {}).get("kind") in {"resale_fill", "full_refund"}:
+            # Typed NYTE refund metadata must never enter credit handlers,
+            # including while the resale feature is disabled.
+            return {"data": {"reserved_tokens": True, "credited": False, "ignored": True}}
         if (obj.get("metadata") or {}).get("kind") == KIND:
             return {"data": await run_in_threadpool(handle_reservation_event, event, settings, background)}
 

@@ -27,12 +27,13 @@ A higher-volume rollout should partition by grade with a reviewed lock order.
 | `nyte_holder` / domain-separated normalized email hash | Head of the holder's position list; no plaintext email |
 | `nyte_listing` / hash of holder + request ID | Position session, lots listed/sold, listed_at, active/sold/withdrawn status, FIFO previous/next |
 | `nyte_fill` / hash of buyer session + listing | Buyer session/event, listing, lots, resale price per lot, fee bps/total cents, capped refund total cents, seller PaymentIntent, Stripe refund ID, pending/in_flight/retry/refunded/needs_ops status, transition and stale-write history, seller position ID, failure status, first attempt, lease owner/expiry, refund-queue previous/next |
-| `nyte_refund` / Stripe refund ID | Fill reference, verified against the original payment and amount before accepting failure events |
-| `nyte_queue` / `grade:{grade}`, `refunds`, `refunds_needs_ops`, `full_refunds` | Linked queue head/tail; completed entries are unlinked; issued refunds needing manual reconciliation have a separate queue |
+| `nyte_refund` / Stripe refund ID | Typed obligation reference (`resale_fill` or `full_refund`), original PaymentIntent and amount; legacy fill-only bindings remain readable |
+| `nyte_refund_failure` / Stripe refund ID | First unmatched failure/cancellation: PaymentIntent, amount, status, timestamp and optional typed identifiers; replayed when the obligation is bound, with no raw provider payload |
+| `nyte_queue` / `grade:{grade}`, `refunds`, `refunds_needs_ops`, `full_refunds`, `full_refunds_needs_ops` | Linked queue head/tail; completed entries are unlinked; issued refunds needing manual reconciliation have a separate queue |
 | `nyte_event` / Stripe event ID | Buyer session; session identity also prevents duplicates across different event IDs |
 | `nyte_action` / hash of holder + request ID | Original command and result; rejects reusing an ID for a different action |
 | `nyte_access` / hash of capability | Holder hash, expiry, consumed marker or session purpose; never raw capability |
-| `nyte_refund_request` / original session | Accepted request time, position, ops queue links |
+| `nyte_refund_request` / original session | Full-refund obligation: accepted request time, position ID, original payment/amount, bound refund ID, pending/in_flight/refunded/needs_ops status, transition/stale-write history, queue links |
 
 Lists of holder positions and refund work paginate at 100. Grade queues and
 holder indexes do not grow into one history-sized JSON row. Per-position
@@ -99,22 +100,34 @@ or credit a balance. Each fill has a durable lease and a stable idempotency key
 `nyte-resale-{fill_id}`. Before creating, the worker searches only refunds on
 that original PaymentIntent for `metadata.fill_id` (also accepting legacy
 `nyte_fill_id`). Created refunds carry only kind, fill ID and seller position ID
-metadata, with no description or contact data. Known refunds are
+metadata (`kind=resale_fill`), with no description or contact data. The existing
+fill-derived idempotency key is unchanged. Full refunds are still issued by ops,
+not this worker; acknowledgement binds their ID, original payment and full amount.
+Programmatic ops issuance should use `kind=full_refund`, the public `position_id`,
+and an idempotency key derived from that position (for example
+`nyte-full-refund-{position_id}`). Metadata-free Dashboard refunds are supported
+through the verified binding at acknowledgement. Known refunds are
 retrieved until Stripe reports `succeeded`; pending refunds remain retryable.
 Failed/canceled issued refunds move to `needs_ops`, retaining their Stripe refund
 ID. A timeout after Stripe acceptance is reconciled to the same refund.
 
-A later `refund.failed` or `refund.updated` with failed/canceled status reopens
-even a previously successful fill into `needs_ops`. The transaction validates
-metadata `fill_id`, original PaymentIntent and amount against the durable fill,
-even if the worker has not yet recorded the Stripe refund ID. Legacy
-`nyte_fill_id` metadata and the refund index remain compatibility fallbacks.
-An unknown fill or mismatched payment/amount is ignored. The event retains its
-refund ID and moves the fill to `needs_ops`, removing retry work and clearing
-the lease. This state is terminal for automation. Claims explicitly enter
-`in_flight`; worker completion is conditional on that state and its lease owner.
+All `refund.created`, `refund.updated`, `refund.failed` and
+`charge.refund.updated` events use the same lifecycle processor as worker results
+and full-refund acknowledgements. Failed/canceled status reopens even a
+previously successful obligation into `needs_ops`. The transaction resolves a
+bound refund ID or typed metadata (`fill_id` / `position_id`) and validates the
+original PaymentIntent and amount against the durable obligation. Metadata can
+resolve it before the worker records the refund ID; a binding remains authoritative
+if metadata later changes. Legacy `nyte_fill_id` metadata remains supported.
+Mismatched payment/amount is rejected; unmatched failures are retained for later
+verified binding without changing an unrelated obligation. The event retains its
+refund ID and moves the obligation to `needs_ops`, removing retry work and
+clearing the lease. Full-refund failure also blocks the associated position.
+This state is terminal for automation for both kinds. Claims explicitly enter
+`in_flight`; success is conditional on that state, and worker completion also
+checks its lease owner.
 A late success cannot overwrite `needs_ops`, and is recorded as a `stale_write`
-in the fill history. Both failure-before-success and success-before-failure
+in the obligation history. Both failure-before-success and success-before-failure
 therefore end in manual reconciliation without a second refund. Ops alerts
 contain only fill/refund identifiers, never Stripe descriptions or buyer email.
 
@@ -205,14 +218,18 @@ Before enabling, Joseph/operator must:
    not installed by this local change. Continue with the printed `--cursor`.
 6. Review `--full-refunds`. Issue each full refund in Stripe against its original
    PaymentIntent, then run `--ack-full-refund-session cs_... --refund-id re_...`.
-   The script verifies full amount, original payment and successful status before
-   closing the request. Do not grant balance credits. Review old ambiguous or
+   The script verifies refund ID, full amount and original payment, then applies
+   the shared monotonic transition. It prints the actual resulting status; a
+   stale success cannot close failed work. Pending refunds remain visible, and
+   failed/canceled refunds move to the full-refund ops queue. Do not grant balance credits. Review old ambiguous or
    failed resale refunds against `nyte_fill_id` before any manual repair.
 7. Inspect `uv run python -m scripts.retry_nyte_resale_refunds --needs-ops` after
    an issued-refund failure alert. This command only lists identifiers and never
    creates refunds. Reconcile Stripe's failure with the retained original refund
    ID before a separately reviewed manual repair; there is no automatic reset or
-   reissue for these fills.
+   reissue for these obligations. Use `--needs-ops --full-refunds` for failed
+   full refunds; the same command without `--full-refunds` shows failed resale
+   fills. Both views are read-only.
 
 Browser analytics `nyte.resale_listed` / `nyte.resale_withdrawn` contain only a
 bounded grade, existing visitor/campaign metadata and `/manage-reservation` page.
@@ -420,4 +437,98 @@ ran against memory and Spanner-fake, and the offline SQL adapter exercised the
 actual Postgres implementation. These do not replace native server validation.
 The final requested-run output is `/tmp/nyte-r3-requested.log`; coverage used
 `COVERAGE_FILE=/tmp/nyte-r3-coverage` and all uv commands used the writable cache
+`UV_CACHE_DIR=/tmp/nyte-uv-cache`.
+
+
+## PR #2129 review round 4
+
+Based on `369000d6b`; all changes remain uncommitted. No push, publication,
+deployment or live Stripe mutation was performed. Terms remain v5 and the fee
+remains 500 bps; this round changes reconciliation, not product rules.
+
+### Shared mechanism
+
+`storage_resale.py` uses `apply_refund` to verify the PaymentIntent and amount,
+bind the refund ID to a typed obligation, and call the single `transition`
+function. Both `nyte_fill` and `nyte_refund_request` use this mechanism. Success
+is conditional on `in_flight`; `needs_ops` is terminal for automation; a late
+completion records `stale_write` without unlinking ops work. A valid failure
+wins regardless of the worker lease or prior successful completion.
+
+Bindings take priority over later metadata edits. Without a binding, typed
+`fill_id` or `position_id` metadata resolves the obligation using exact keys.
+Legacy `nyte_fill_id` metadata and fill-only indexes are still accepted. Old
+completed full refunds are recovered from the exact PaymentIntent mapping and
+stored position refund ID. No production body search or table scan is needed.
+
+A failure without an existing binding is stored by refund ID. Binding checks
+its immutable payment/amount and any supplied obligation identity before
+replaying it. Successful events cannot erase this evidence. This closes the
+metadata-free ops race: failure → stale Stripe retrieve response → acknowledgement
+ends in `needs_ops`, with the full-refund obligation retained in its ops queue.
+No new DDL is required; the existing entity table and backend transaction locks
+cover the evidence, binding, obligation, position and queue writes atomically.
+
+### Completion-site audit
+
+| Site reviewed | Final handling |
+| --- | --- |
+| Resale worker `Refund.create` response | Verified response enters `fill_finish` → `apply_refund` → `transition`; creation carries `kind=resale_fill`, fill/position IDs and the existing fill-derived idempotency key. |
+| Resale worker `Refund.retrieve` and payment-scoped `Refund.list` reconciliation | The same path as create, including failures discovered after another worker's lease. A mismatched response cannot bind a refund ID. |
+| Zero-cent fill completion and transport retry completion | Both use `transition`; zero-cent completion makes no Stripe call, and a nonzero success requires a refund ID. Neither path can overwrite `needs_ops`. |
+| Full-refund CLI acknowledgement | `refund_acknowledge` validates and binds the retrieved refund, replays earlier failure evidence, claims the obligation only if eligible, and uses `apply_refund`. The old unconditional `refund_complete` command was removed. The CLI reports the actual status instead of always saying reconciled. |
+| Refund lifecycle webhooks: created/updated/failed and charge.refund.updated | All enter `refund_lifecycle` → `apply_refund`; both kinds share identity checks, conditional success, terminal failure and identifier-only ops alerts. |
+| Legacy already-completed full refunds | Existing durable completion is preserved during schema hydration; a later failure resolves the old saved refund ID and enters the same transition. Hydration does not infer a new payout from a Stripe response. |
+
+The sweep found no other NYTE payout-completion writer. Purchase allocation,
+listing sale counts and receipt-notification completion are separate durable
+facts; they do not assert that a seller refund was paid. Credit/balance APIs
+remain outside the NYTE path. Typed refund metadata is explicitly isolated from
+credit handling even when resale is disabled.
+
+### Regression coverage
+
+- `tests/conformance/test_nyte_resale_ledger.py:354`: both obligation kinds,
+  both failure/success orders, failed/canceled status, metadata and bound-ID
+  matching, payment/amount mismatch rejection, stale-write history, ops-queue
+  membership exactly once, and no reissuance. Registered for every backend.
+- `tests/conformance/test_nyte_resale_ledger.py:428`: metadata-free failure before
+  binding for both kinds; a later successful event cannot erase it.
+- `tests/test_nyte_resale.py:688`: real HTTP lifecycle events during the Stripe
+  retrieve inside acknowledgement, and after completed acknowledgement; all four
+  event types, persistent full-refund ops work, no creation and email privacy.
+- `tests/test_nyte_resale.py:727`: previously completed full refunds without the
+  new index reopen through the original payment mapping.
+- `tests/test_nyte_resale.py:745`: both typed refund kinds remain isolated from
+  the ledger and credit handlers when resale is disabled.
+- The offline Postgres SQL adapter runs the complete new kind/order/status/match
+  matrix as well as unbound failures. This supplements memory and Spanner-fake
+  tests but does not replace live-backend transaction validation.
+
+Implementation references: `src/trusted_router/storage_resale.py:326`
+(`transition`), `:357` (`bind`), `:377` (`apply_refund`), `:388`
+(lifecycle dispatch), `:429` (full acknowledgement), `:451` (worker completion);
+`src/trusted_router/services/resale.py:118` (worker), `:288` (webhook service),
+`:340` (full-refund tool); `scripts/retry_nyte_resale_refunds.py:18` (ops views
+and actual acknowledgement status).
+
+### Round 4 validation
+
+| Gate | Result |
+| --- | --- |
+| Requested seven pytest files, final code | **322 passed, 123 skipped**; **87.46%** combined coverage across the three resale modules (70% gate passed) |
+| Initial ledger/resale focused run after the shared mechanism | **150 passed, 117 skipped** |
+| Site unittests | **94 passed** |
+| `node --test tests/js/nyte_holder.test.cjs` | **3 passed** |
+| Site build | Passed; 13 markets / 30 domains in `/tmp/nyte-r4-site` |
+| Repository-wide ruff / mypy and CLI mypy, final code | Passed; 551 source files plus CLI |
+| `git diff --check` | Passed |
+| Explicit native Spanner emulator gate | **Blocked**: 39 setup errors, connection refused at `127.0.0.1:9010`; emulator unavailable. Not counted as a pass. |
+| Full repository attempt (`uv run pytest -q --ff -x --tb=short`) | **Blocked** by the unchanged macOS `shasum` deployment-harness failure documented above: 1 failed, 1,846 deselected. Failed-first stopped there; no full-suite pass or coverage claimed. |
+
+The ordinary run's skips are unconfigured Postgres, Spanner-PG and native Spanner
+cases. Memory, Spanner-fake and the offline Postgres adapter ran the contracts;
+these do not prove native server behavior. Final output is in
+`/tmp/nyte-r4-requested-final.log`; coverage used
+`COVERAGE_FILE=/tmp/nyte-r4-coverage` and uv used the writable cache
 `UV_CACHE_DIR=/tmp/nyte-uv-cache`.

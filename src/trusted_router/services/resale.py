@@ -149,22 +149,23 @@ def process_fill(fill_id: str, settings: Settings) -> None:
                         raise ValueError("Ambiguous old attempt requires ops reconciliation")
                     refund = stripe.Refund.create(
                         payment_intent=fill["payment_intent"], amount=fill["refund_amount_cents"],
-                        metadata={"kind": "reserved_tokens_2027", "fill_id": fill_id,
+                        metadata={"kind": "resale_fill", "fill_id": fill_id,
                                   "position_id": fill["position_id"], "nyte_fill_id": fill_id},
                         idempotency_key="nyte-resale-" + fill_id,
                         **options,
                     )
             refund = _stripe_dict(refund)
-            refund_id = refund["id"]
             if refund.get("amount") != fill["refund_amount_cents"] or refund.get("payment_intent") != fill["payment_intent"]:
                 raise ValueError("Refund reconciliation mismatch")
+            refund_id = refund["id"]
             status = "refunded" if refund.get("status") == "succeeded" else "needs_ops" if refund.get("status") in {"failed", "canceled"} else "retry"
     except Exception:  # noqa: BLE001 - preserve retryability without PII/error bodies
         status = "retry"
     finished = command("fill_finish", fill=fill_id, owner=owner, status=status, stripe_refund_id=refund_id,
                        failure_status=refund.get("status") if status == "needs_ops" else None)
-    if status == "needs_ops" and finished:
-        alert_failed_refund(finished, settings)
+    observed = finished or command("refund_obligation", kind="resale_fill", id=fill_id)
+    if observed.get("status") == "needs_ops":
+        alert_failed_refund(observed, settings)
     elif status != "refunded":
         alert_ops(settings, "NYTE resale refund needs retry", f"Fill {fill_id} is pending. Run python -m scripts.retry_nyte_resale_refunds. Never issue a second refund without reconciling this fill's Stripe metadata.")
 
@@ -299,11 +300,13 @@ def reconcile_payment_event(event: dict[str, Any], settings: Settings) -> bool:
     if event["type"] in {"refund.failed", "refund.updated", "refund.created", "charge.refund.updated"}:
         refund = {**obj, "payment_intent": payment_intent,
                   "status": "failed" if event["type"] == "refund.failed" else obj.get("status")}
+        obligation = command("refund_lifecycle", refund=refund)
+        if obligation:
+            if obligation["status"] == "needs_ops":
+                alert_failed_refund(obligation, settings)
+            return True
         if refund["status"] in {"failed", "canceled"}:
-            reopened = command("refund_failed", refund=refund)
-            if reopened:
-                alert_failed_refund(reopened, settings)
-            return bool(reopened or command("payment", payment_intent=payment_intent)) or (obj.get("metadata") or {}).get("kind") == "reserved_tokens_2027"
+            return bool(command("payment", payment_intent=payment_intent)) or (obj.get("metadata") or {}).get("kind") in {"reserved_tokens_2027", "resale_fill", "full_refund"}
         if refund["status"] not in {"pending", "succeeded", "requires_action"}:
             return False
         # Use the signed event itself: a successful early refund must survive
@@ -321,10 +324,12 @@ def reconcile_payment_event(event: dict[str, Any], settings: Settings) -> bool:
     return bool(position) or (obj.get("metadata") or {}).get("kind") == "reserved_tokens_2027"
 
 
-def alert_failed_refund(fill: dict[str, Any], settings: Settings) -> None:
-    alert_ops(settings, "NYTE resale refund failed after issuance",
-              f"Fill {fill['id']}, Stripe refund {fill['stripe_refund_id']} needs ops reconciliation. "
-              "Automatic re-issuance is blocked. Inspect python -m scripts.retry_nyte_resale_refunds --needs-ops.")
+def alert_failed_refund(obligation: dict[str, Any], settings: Settings) -> None:
+    kind = obligation.get("kind", "resale_fill")
+    extra = " --full-refunds" if kind == "full_refund" else ""
+    alert_ops(settings, "NYTE refund failed after issuance",
+              f"{kind} {obligation['id']}, Stripe refund {obligation['stripe_refund_id']} needs ops reconciliation. "
+              f"Automatic re-issuance is blocked. Inspect python -m scripts.retry_nyte_resale_refunds --needs-ops{extra}.")
 
 
 def _stripe_dict(value: Any) -> dict[str, Any]:
@@ -332,10 +337,12 @@ def _stripe_dict(value: Any) -> dict[str, Any]:
 
 
 @_private_stripe_reads()
-def acknowledge_full_refund(session_id: str, refund_id: str, settings: Settings) -> None:
-    """Ops-only CLI reconciliation, after issuing the original-card refund."""
-    p = command("position", position=session_id)
+def acknowledge_full_refund(session_id: str, refund_id: str, settings: Settings) -> dict[str, Any]:
+    """Bind ops-issued refunds and reconcile through the shared monotonic rule."""
     refund = _stripe_dict(stripe.Refund.retrieve(refund_id, api_key=settings.stripe_secret_key))
-    if not p or refund.get("status") != "succeeded" or refund.get("payment_intent") != p.get("payment_intent") or refund.get("amount") != p["lots"] * p["per_lot_cents"]:
-        raise ValueError("Stripe refund does not match a successful full original-payment refund")
-    command("refund_complete", position=session_id, stripe_refund_id=refund_id)
+    if refund.get("id") != refund_id or refund.get("status") not in {"succeeded", "pending", "requires_action", "failed", "canceled"}:
+        raise ValueError("Stripe refund does not match acknowledgement")
+    obligation = command("refund_acknowledge", position=session_id, refund=refund, owner=secrets.token_hex(16))
+    if obligation["status"] == "needs_ops":
+        alert_failed_refund(obligation, settings)
+    return obligation

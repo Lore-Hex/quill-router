@@ -88,7 +88,7 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
     def block_position(p: Row) -> None:
         # Full-refund requests and completed refunds already block selling;
         # preserve their ops acknowledgement lifecycle when Stripe reports it.
-        if p["status"] not in {"refund_requested", "refunded"}:
+        if p["status"] not in {"refund_requested", "refunded", "needs_ops"}:
             p["status"] = "needs_review"
         p["payment_review"] = True
         for lid in p["listings"]:
@@ -193,7 +193,7 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
                 count = min(remaining, listing["lots_listed"] - listing["lots_sold"])
                 fee, refund = refund_cents(p["per_lot_cents"], seller["per_lot_cents"], c["fee_bps"])
                 fill_id = reference("nyte-fill:" + session + ":" + key)
-                fill = {"id": fill_id, "listing": key, "buyer_session": session,
+                fill = {"id": fill_id, "kind": "resale_fill", "listing": key, "buyer_session": session,
                         "position_id": seller["id"],
                         "event_id": c["event_id"], "lots": count, "resale_price_cents": p["per_lot_cents"],
                         "fee_bps": c["fee_bps"], "fee_cents": fee * count,
@@ -271,23 +271,11 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
             if purchased is None or not purchased <= now <= purchased + REFUND_WINDOW or p["status"] != "held" or p["sold_lots"] or p["listed_lots"]:
                 raise ValueError("Full refund window has closed or reservation is unavailable")
             p.update(status="refund_requested", refund_requested_at=now)
-            queue_append("nyte_refund_request", "full_refunds", c["position"], {"position": c["position"], "requested_at": now})
+            queue_append("nyte_refund_request", "full_refunds", c["position"], {"position": c["position"], "requested_at": now, "status": "pending"})
             result = {"status": "refund_requested"}
         put("nyte_position", c["position"], p)
         put("nyte_action", receipt, {"command": {k: v for k, v in c.items() if k != "now"}, "result": result})
         return result
-
-    if op == "refund_complete":
-        p = get("nyte_position", c["position"])
-        if p.get("status") == "refunded" and p.get("stripe_refund_id") == c["stripe_refund_id"]:
-            return p
-        if p.get("status") != "refund_requested":
-            raise ValueError("No full refund request")
-        request = get("nyte_refund_request", c["position"])
-        p.update(status="refunded", stripe_refund_id=c["stripe_refund_id"])
-        queue_remove("nyte_refund_request", "full_refunds", c["position"], request)
-        put("nyte_position", c["position"], p)
-        return p
 
     if op == "payment":
         return get("nyte_payment", c["payment_intent"])
@@ -306,74 +294,176 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
             key = row.get("next")
         return {"rows": rows, "cursor": key}
 
-    def fill_history(fill: Row, action: str, target: str) -> None:
-        fill.setdefault("history", []).append({"at": now, "action": action, "from": fill["status"], "to": target})
-        put("nyte_fill", fill["id"], fill)
+    def obligation(kind: str, key: str) -> Row:
+        if kind not in {"resale_fill", "full_refund"}:
+            return {}
+        row = get("nyte_fill" if kind == "resale_fill" else "nyte_refund_request", key)
+        if not row:
+            return {}
+        row.update(id=key, kind=kind)
+        if kind == "full_refund":
+            p = get("nyte_position", key)
+            row.setdefault("status", "refunded" if p["status"] == "refunded" else "pending")
+            row.update(payment_intent=p["payment_intent"], refund_amount_cents=p["lots"] * p["per_lot_cents"],
+                       position_id=p.get("id", key))
+            row.setdefault("stripe_refund_id", p.get("stripe_refund_id"))
+        elif "position_id" not in row:
+            listing = get("nyte_listing", row["listing"])
+            row["position_id"] = get("nyte_position", listing["position"])["id"]
+        return row
 
-    def needs_ops(fill: Row, reason: str) -> Row:
-        if fill["status"] != "needs_ops":
-            fill_history(fill, "refund_failure", "needs_ops")
-            if fill["status"] != "refunded":
-                queue_remove("nyte_fill", "refunds", fill["id"], fill)
-            queue_append("nyte_fill", "refunds_needs_ops", fill["id"], fill)
-        fill.update(status="needs_ops", failure_status=reason, owner=None, lease_until=0)
-        put("nyte_fill", fill["id"], fill)
-        return fill
+    def location(row: Row) -> tuple[str, str, str]:
+        return (("nyte_fill", "refunds", "refunds_needs_ops") if row["kind"] == "resale_fill"
+                else ("nyte_refund_request", "full_refunds", "full_refunds_needs_ops"))
 
-    if op == "refund_failed":
-        refund = c["refund"]
+    def save(row: Row) -> None:
+        put(location(row)[0], row["id"], row)
+
+    def history(row: Row, action: str, target: str) -> None:
+        row.setdefault("history", []).append({"at": now, "action": action, "from": row["status"], "to": target})
+        save(row)
+
+    def transition(row: Row, target: str, *, owner: str | None = None, reason: str | None = None) -> Row:
+        """The sole completion rule for every NYTE refund obligation."""
+        entity, active, ops = location(row)
+        if target == "needs_ops":
+            if row["status"] != "needs_ops":
+                history(row, "refund_failure", target)
+                if row["status"] != "refunded":
+                    queue_remove(entity, active, row["id"], row)
+                queue_append(entity, ops, row["id"], row)
+            row.update(status=target, failure_status=reason, owner=None, lease_until=0)
+        else:
+            if row["status"] != "in_flight" or (owner is not None and row.get("owner") != owner):
+                history(row, "stale_write", target)
+                return {}
+            if target not in {"refunded", "retry"}:
+                raise ValueError("Invalid refund transition")
+            history(row, "worker_finish", target)
+            row.update(status=target, owner=None, lease_until=0)
+            if target == "refunded":
+                queue_remove(entity, active, row["id"], row)
+        save(row)
+        if row["kind"] == "full_refund" and target in {"refunded", "needs_ops"}:
+            p = get("nyte_position", row["id"])
+            p.update(status=target, stripe_refund_id=row["stripe_refund_id"])
+            put("nyte_position", row["id"], p)
+        return row
+
+    def indexed_identity(index: Row) -> tuple[str, str]:
+        # Compatibility with the old fill-only refund index.
+        return ("resale_fill", index["fill"]) if "fill" in index else (index.get("kind", ""), index.get("id", ""))
+
+    def bind(row: Row, refund: Row) -> bool:
         rid = refund.get("id")
-        if not rid or refund.get("status") not in {"failed", "canceled"}:
+        if (not rid or refund.get("payment_intent") != row["payment_intent"]
+                or refund.get("amount") != row["refund_amount_cents"]):
+            return False
+        index = get("nyte_refund", rid)
+        if index and indexed_identity(index) != (row["kind"], row["id"]):
+            return False
+        put("nyte_refund", rid, {"kind": row["kind"], "id": row["id"],
+                                "payment_intent": row["payment_intent"], "amount": row["refund_amount_cents"]})
+        row["stripe_refund_id"] = rid
+        save(row)
+        # A metadata-free Dashboard failure can precede acknowledgement/binding.
+        failure = get("nyte_refund_failure", rid)
+        if (failure and failure["payment_intent"] == row["payment_intent"] and failure["amount"] == row["refund_amount_cents"]
+                and (not failure.get("fill_id") or (row["kind"] == "resale_fill" and failure["fill_id"] == row["id"]))
+                and (not failure.get("position_id") or (row["kind"] == "full_refund" and failure["position_id"] == row["position_id"]))):
+            transition(row, "needs_ops", reason=failure["status"])
+        return True
+
+    def apply_refund(row: Row, refund: Row, *, owner: str | None = None) -> Row:
+        """Verify identity, bind and apply any API response or lifecycle event."""
+        if not bind(row, refund):
             return {}
-        indexed = get("nyte_refund", rid)
-        # Metadata identifies the fill even before the worker's first commit.
-        # The index is only a compatibility fallback for older Stripe objects.
+        status = refund.get("status")
+        if status in {"failed", "canceled"}:
+            return transition(row, "needs_ops", reason=status)
+        if status == "succeeded":
+            return transition(row, "refunded", owner=owner)
+        return row
+
+    if op in {"refund_lifecycle", "refund_failed"}:
+        refund = c["refund"]
+        rid, status = refund.get("id"), refund.get("status")
+        if not rid or status not in {"pending", "requires_action", "succeeded", "failed", "canceled"}:
+            return {}
+        if op == "refund_failed" and status not in {"failed", "canceled"}:
+            return {}
+        index = get("nyte_refund", rid)
         metadata = refund.get("metadata") or {}
-        fid = metadata.get("fill_id") or metadata.get("nyte_fill_id") or indexed.get("fill")
-        fill = get("nyte_fill", fid) if fid else {}
-        if (not fill or (indexed and indexed["fill"] != fid)
-                or fill["payment_intent"] != refund.get("payment_intent")
-                or fill["refund_amount_cents"] != refund.get("amount")):
+        kind, key = indexed_identity(index)
+        if not key and metadata.get("kind") == "full_refund" and metadata.get("position_id"):
+            payment = get("nyte_payment", refund.get("payment_intent", ""))
+            p = get("nyte_position", payment["session_id"]) if payment else {}
+            kind, key = ("full_refund", p["session_id"]) if p.get("id") == metadata["position_id"] else ("", "")
+        elif not key and (metadata.get("fill_id") or metadata.get("nyte_fill_id")):
+            kind, key = "resale_fill", metadata.get("fill_id") or metadata["nyte_fill_id"]
+        elif not key:
+            # Previously acknowledged full refunds predate the shared index.
+            payment = get("nyte_payment", refund.get("payment_intent", ""))
+            p = get("nyte_position", payment["session_id"]) if payment else {}
+            if p.get("stripe_refund_id") == rid:
+                kind, key = "full_refund", p["session_id"]
+        row = obligation(kind, key)
+        if not row:
+            if (status in {"failed", "canceled"} and refund.get("payment_intent")
+                    and type(refund.get("amount")) is int and not get("nyte_refund_failure", rid)):
+                put("nyte_refund_failure", rid, {"payment_intent": refund["payment_intent"],
+                                               "amount": refund["amount"], "status": status, "observed_at": now,
+                                               "fill_id": metadata.get("fill_id") or metadata.get("nyte_fill_id"),
+                                               "position_id": metadata.get("position_id") if metadata.get("kind") == "full_refund" else None})
             return {}
-        put("nyte_refund", rid, {"fill": fid})
-        fill["stripe_refund_id"] = rid
-        return needs_ops(fill, refund["status"])
+        result = apply_refund(row, refund)
+        # A validated stale success is handled, but cannot close ops work.
+        if not result and get("nyte_refund", rid) and indexed_identity(get("nyte_refund", rid)) == (kind, key):
+            if refund.get("payment_intent") == row["payment_intent"] and refund.get("amount") == row["refund_amount_cents"]:
+                return row
+        return result
+
+    if op == "refund_obligation":
+        return obligation(c["kind"], c["id"])
+
+    if op == "refund_acknowledge":
+        row = obligation("full_refund", c["position"])
+        refund = c["refund"]
+        if not row or not bind(row, refund):
+            raise ValueError("Stripe refund does not match a full original-payment refund request")
+        if row["status"] in {"pending", "retry"}:
+            history(row, "claim", "in_flight")
+            row.update(status="in_flight", owner=c["owner"], lease_until=now + 120)
+            save(row)
+        apply_refund(row, refund)
+        return row
 
     if op == "fill_claim":
-        fill = get("nyte_fill", c["fill"])
-        if not fill or fill["status"] in {"refunded", "needs_ops"} or fill.get("lease_until", 0) > now:
+        row = obligation("resale_fill", c["fill"])
+        if not row or row["status"] in {"refunded", "needs_ops"} or row.get("lease_until", 0) > now:
             return {}
-        fill_history(fill, "claim", "in_flight")
-        fill.update(status="in_flight", owner=c["owner"], lease_until=now + 120)
-        if "position_id" not in fill:
-            listing = get("nyte_listing", fill["listing"])
-            fill["position_id"] = get("nyte_position", listing["position"])["id"]
-        fill.setdefault("first_attempt_at", now)
-        put("nyte_fill", c["fill"], fill)
-        return fill
+        history(row, "claim", "in_flight")
+        row.update(status="in_flight", owner=c["owner"], lease_until=now + 120)
+        row.setdefault("first_attempt_at", now)
+        save(row)
+        return row
 
     if op == "fill_finish":
-        fill = get("nyte_fill", c["fill"])
-        if not fill:
+        row = obligation("resale_fill", c["fill"])
+        if not row:
             return {}
-        if fill.get("owner") != c["owner"] or fill["status"] != "in_flight":
-            fill_history(fill, "stale_write", c["status"])
-            return {}
-        rid = c.get("stripe_refund_id") or fill.get("stripe_refund_id")
+        rid = c.get("stripe_refund_id") or row.get("stripe_refund_id")
+        target = c["status"]
         if rid:
-            indexed = get("nyte_refund", rid)
-            if indexed and indexed["fill"] != c["fill"]:
-                raise ValueError("Stripe refund already belongs to another fill")
-            put("nyte_refund", rid, {"fill": c["fill"]})
-        fill.update(stripe_refund_id=rid, lease_until=0)
-        if c["status"] == "needs_ops":
-            return needs_ops(fill, c["failure_status"])
-        fill_history(fill, "worker_finish", c["status"])
-        fill.update(status=c["status"], owner=None)
-        if c["status"] == "refunded":
-            queue_remove("nyte_fill", "refunds", c["fill"], fill)
-        put("nyte_fill", c["fill"], fill)
-        return fill
+            status = "succeeded" if target == "refunded" else c.get("failure_status") if target == "needs_ops" else "pending"
+            result = apply_refund(row, {"id": rid, "payment_intent": row["payment_intent"],
+                                       "amount": row["refund_amount_cents"], "status": status}, owner=c["owner"])
+            if target != "retry" or not result:
+                return result
+        # Transport retries and zero-cent capped fills still obey the same CAS.
+        if target == "refunded" and row["refund_amount_cents"] != 0 and row["status"] == "in_flight" and row.get("owner") == c["owner"]:
+            raise ValueError("A paid refund requires its Stripe refund ID")
+        return transition(row, target, owner=c["owner"])
 
     if op == "token_create":
         put("nyte_access", c["key"], {"holder": c["holder"], "expires_at": now + 900, "used": False})

@@ -345,3 +345,105 @@ def test_nyte_refund_failure_and_success_commit_are_order_independent(store: Sto
     monkeypatch.setattr(resale.stripe.Refund, "create", create)
     resale.process_fill(fid, Settings(environment="test"))
     create.assert_not_called()
+
+
+@pytest.mark.parametrize("kind", ["resale_fill", "full_refund"])
+@pytest.mark.parametrize("failure_first", [True, False])
+@pytest.mark.parametrize("by_metadata", [True, False])
+@pytest.mark.parametrize("failure", ["failed", "canceled"])
+def test_nyte_shared_refund_obligations_are_monotonic(store: Store, unique: str, monkeypatch, kind: str, failure_first: bool, by_metadata: bool, failure: str) -> None:
+    from unittest.mock import Mock
+
+    from trusted_router.config import Settings
+    from trusted_router.services import resale
+
+    seller = unique + "seller"
+    purchase(store, seller)
+    if kind == "resale_fill":
+        listing(store, seller)
+        key = purchase(store, unique + "buyer", lots=1, allocate=True)["fills"][0]
+        call(store, "fill_claim", fill=key, owner="worker")
+        amount = 95
+    else:
+        call(store, "request_refund", position=seller, holder=seller, request_id="full", now=101)
+        key, amount = seller, 300
+    metadata = {"kind": kind, "fill_id": key} if kind == "resale_fill" else {"kind": kind, "position_id": seller}
+    refund = {"id": "re_" + unique, "payment_intent": "pi_" + seller, "amount": amount, "status": "succeeded"}
+
+    def success():
+        if kind == "resale_fill":
+            return call(store, "fill_finish", fill=key, owner="worker", stripe_refund_id=refund["id"], status="refunded")
+        return call(store, "refund_acknowledge", position=key, owner="worker", refund=refund)
+
+    if not by_metadata:
+        if kind == "resale_fill":
+            call(store, "fill_finish", fill=key, owner="worker", stripe_refund_id=refund["id"], status="retry")
+            call(store, "fill_claim", fill=key, owner="worker")
+        else:
+            call(store, "refund_acknowledge", position=key, owner="worker", refund={**refund, "status": "pending"})
+    if not failure_first:
+        assert success()["status"] == "refunded"
+    event = {**refund, "status": failure, "metadata": metadata if by_metadata else {}}
+    for altered in ({"payment_intent": "pi_wrong"}, {"amount": amount + 1}):
+        assert call(store, "refund_lifecycle", refund={**event, **altered}) == {}
+    for _ in range(2):
+        blocked = call(store, "refund_lifecycle", refund=event)
+        assert blocked["status"] == "needs_ops" and blocked["stripe_refund_id"] == refund["id"]
+    success()
+    # Every lifecycle event, including stale success, uses the same rule.
+    call(store, "refund_lifecycle", refund={**event, "status": "succeeded"})
+    row = call(store, "refund_obligation", kind=kind, id=key)
+    assert row["status"] == "needs_ops" and row["history"][-1]["action"] == "stale_write"
+    assert sum(h["to"] == "needs_ops" for h in row["history"]) == 1
+
+    def queue_ids(queue):
+        cursor, ids, seen = None, [], set()
+        while True:
+            page = call(store, "pending", queue=queue, cursor=cursor)
+            ids.extend(r.get("id", r.get("position")) for r in page["rows"])
+            cursor = page["cursor"]
+            if not cursor:
+                return ids
+            assert cursor not in seen
+            seen.add(cursor)
+    queue = "refunds" if kind == "resale_fill" else "full_refunds"
+    assert key not in queue_ids(queue)
+    assert queue_ids(queue + "_needs_ops").count(key) == 1
+    monkeypatch.setattr(resale, "STORE", store)
+    monkeypatch.setattr(resale, "alert_ops", Mock())
+    create = Mock(side_effect=AssertionError("Terminal obligation reissued"))
+    monkeypatch.setattr(resale.stripe.Refund, "create", create)
+    settings = Settings(environment="test")
+    if kind == "resale_fill":
+        resale.process_fill(key, settings)
+    else:
+        assert call(store, "position", position=key)["status"] == "needs_ops"
+        monkeypatch.setattr(resale.stripe.Refund, "retrieve", lambda *a, **kw: refund)
+        assert resale.acknowledge_full_refund(key, refund["id"], settings)["status"] == "needs_ops"
+        assert resale.alert_ops.called
+    create.assert_not_called()
+
+
+@pytest.mark.parametrize("kind", ["resale_fill", "full_refund"])
+def test_nyte_unbound_refund_failure_survives_acknowledgement(store: Store, unique: str, kind: str) -> None:
+    seller = unique + "seller"
+    purchase(store, seller)
+    if kind == "resale_fill":
+        listing(store, seller)
+        key = purchase(store, unique + "buyer", lots=1, allocate=True)["fills"][0]
+        call(store, "fill_claim", fill=key, owner="worker")
+        amount = 95
+    else:
+        call(store, "request_refund", position=seller, holder=seller, request_id="full", now=101)
+        key, amount = seller, 300
+    refund = {"id": "re_" + unique, "payment_intent": "pi_" + seller, "amount": amount, "status": "failed"}
+    assert call(store, "refund_lifecycle", refund=refund) == {}
+    # An out-of-order successful event must not erase the retained failure.
+    assert call(store, "refund_lifecycle", refund={**refund, "status": "succeeded"}) == {}
+    if kind == "resale_fill":
+        call(store, "fill_finish", fill=key, owner="worker", status="refunded", stripe_refund_id=refund["id"])
+    else:
+        call(store, "refund_acknowledge", position=key, owner="worker", refund={**refund, "status": "succeeded"})
+    row = call(store, "refund_obligation", kind=kind, id=key)
+    assert row["status"] == "needs_ops" and row["stripe_refund_id"] == refund["id"]
+    assert row["history"][-1]["action"] == "stale_write"

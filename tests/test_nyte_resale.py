@@ -295,6 +295,15 @@ def test_postgres_transaction_implementation_on_sql_fake(monkeypatch):
             for failure in ("failed", "canceled"):
                 contract.test_nyte_refund_failure_and_success_commit_are_order_independent(
                     store, f"pgrace{failure_first}{failure}", monkeypatch, failure_first, failure)
+        for kind in ("resale_fill", "full_refund"):
+            contract.test_nyte_unbound_refund_failure_survives_acknowledgement(store, "pgunbound" + kind, kind)
+            for failure_first in (True, False):
+                for by_metadata in (True, False):
+                    for failure in ("failed", "canceled"):
+                        contract.test_nyte_shared_refund_obligations_are_monotonic(
+                            store, contract.reference(f"pgshared{kind}{failure_first}{by_metadata}{failure}")[:20], monkeypatch,
+                            kind, failure_first, by_metadata, failure)
+
     finally:
         conn._raw.close()
 
@@ -588,7 +597,7 @@ def test_refund_failure_webhook_before_create_returns_is_terminal(client, test_s
     monkeypatch.setattr(resale, "alert_ops", Mock())
     monkeypatch.setattr(resale.stripe.Refund, "list", lambda **kw: SimpleNamespace(auto_paging_iter=lambda: iter([])))
     def create(**kwargs):
-        assert kwargs["metadata"] == {"kind": "reserved_tokens_2027", "fill_id": fid, "position_id": "seller", "nyte_fill_id": fid}
+        assert kwargs["metadata"] == {"kind": "resale_fill", "fill_id": fid, "position_id": "seller", "nyte_fill_id": fid}
         assert kwargs["idempotency_key"] == "nyte-resale-" + fid
         assert "description" not in kwargs
         refund = {"id": "re_raced", "payment_intent": kwargs["payment_intent"], "amount": kwargs["amount"],
@@ -672,3 +681,74 @@ def test_refund_calls_refuse_console_diagnostics(settings, monkeypatch, setting,
     command.assert_not_called()
     captured = capsys.readouterr()
     assert not captured.out and not captured.err
+
+
+@pytest.mark.parametrize("event_type", ["refund.created", "refund.updated", "refund.failed", "charge.refund.updated"])
+@pytest.mark.parametrize("failure_first", [True, False])
+def test_full_refund_acknowledgement_and_failure_share_monotonic_rule(client, test_settings, monkeypatch, event_type, failure_first):
+    from trusted_router.storage import STORE
+    test_settings.resale_enabled = True
+    purchase(STORE, "holder")
+    call(STORE, "request_refund", position="holder", holder="holder", now=101, request_id="full")
+    refund = {"id": "re_full_lifecycle", "amount": 300, "payment_intent": "pi_holder", "status": "succeeded"}
+    mail = Mock(return_value=True)
+    monkeypatch.setattr(resale, "get_email_service", lambda _: SimpleNamespace(send=mail))
+    create = Mock(side_effect=AssertionError("Full refunds must not be reissued"))
+    monkeypatch.setattr(resale.stripe.Refund, "create", create)
+
+    def failure_event():
+        failed = {**refund, "status": "failed", "description": "private-full@example.com"}
+        result = client.post("/v1/internal/stripe/webhook", json={"id": "evt_full_failed", "type": event_type, "data": {"object": failed}})
+        assert result.status_code == 200
+
+    def retrieve(*args, **kwargs):
+        if failure_first:
+            failure_event()  # Before the ops tool has ever bound the refund ID.
+        return refund
+    monkeypatch.setattr(resale.stripe.Refund, "retrieve", retrieve)
+    first = resale.acknowledge_full_refund("holder", refund["id"], test_settings)
+    assert first["status"] == ("needs_ops" if failure_first else "refunded")
+    if not failure_first:
+        failure_event()
+    repeated = resale.acknowledge_full_refund("holder", refund["id"], test_settings)
+    assert repeated["status"] == "needs_ops"
+    assert repeated["history"][-1]["action"] == "stale_write"
+    assert call(STORE, "position", position="holder")["status"] == "needs_ops"
+    assert call(STORE, "pending", queue="full_refunds")["rows"] == []
+    queued = call(STORE, "pending", queue="full_refunds_needs_ops")["rows"]
+    assert len(queued) == 1 and queued[0]["stripe_refund_id"] == refund["id"]
+    create.assert_not_called()
+    assert mail.called
+    body = mail.call_args.args[0].text_body
+    assert "--needs-ops --full-refunds" in body and refund["id"] in body
+    assert "private-full@example.com" not in body
+
+
+def test_legacy_completed_full_refund_is_reopened_by_exact_payment_mapping(settings, monkeypatch):
+    store = InMemoryStore()
+    monkeypatch.setattr(resale, "STORE", store)
+    purchase(store, "oldfull")
+    call(store, "request_refund", position="oldfull", holder="oldfull", request_id="full", now=101)
+    refund = {"id": "re_legacy_full", "amount": 300, "payment_intent": "pi_oldfull", "status": "succeeded"}
+    call(store, "refund_acknowledge", position="oldfull", owner="ops", refund=refund)
+    # Model the pre-round-4 schema: no index, no status on the saved request.
+    store.resale_entities.pop(("nyte_refund", refund["id"]))
+    store.resale_entities["nyte_refund_request", "oldfull"] = {"position": "oldfull", "requested_at": 101}
+    alert = Mock()
+    monkeypatch.setattr(resale, "alert_ops", alert)
+    assert resale.reconcile_payment_event({"type": "refund.failed", "data": {"object": {**refund, "status": "failed"}}}, settings)
+    assert call(store, "pending", queue="full_refunds_needs_ops")["rows"][0]["status"] == "needs_ops"
+    alert.assert_called_once()
+
+
+@pytest.mark.parametrize("kind", ["resale_fill", "full_refund"])
+def test_disabled_resale_typed_refunds_do_not_touch_ledger_or_credits(client, test_settings, monkeypatch, kind):
+    test_settings.resale_enabled = False
+    def forbidden(*args, **kwargs):
+        pytest.fail("Disabled NYTE refund reached ledger or credits")
+    monkeypatch.setattr(InMemoryStore, "reserved_resale", forbidden)
+    monkeypatch.setattr(InMemoryStore, "credit_workspace_typed_direct", forbidden)
+    response = client.post("/v1/internal/stripe/webhook", json={"id": "evt_disabled_refund", "type": "refund.created", "data": {"object": {
+        "id": "re_disabled", "payment_intent": "pi_disabled", "amount": 100, "status": "succeeded", "metadata": {"kind": kind},
+    }}})
+    assert response.status_code == 200 and response.json()["data"]["credited"] is False
