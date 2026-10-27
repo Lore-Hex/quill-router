@@ -11,6 +11,7 @@ from scripts.pricing.providers import (
     arcee,
     crusoe,
     deepinfra,
+    inception,
     novita,
     scaleway,
     telnyx,
@@ -31,6 +32,10 @@ class Case:
 
 
 _CASES = [
+    Case("inception", "inception/mercury-2", "mercury-2",
+         datetime(2026, 11, 15, tzinfo=UTC), "inception/mercury-3"),
+    Case("inception", "inception/mercury-2.5", "mercury-2.5",
+         datetime(2026, 11, 15, tzinfo=UTC), "inception/mercury-3"),
     Case("telnyx", "meta-llama/llama-3.1-70b-instruct", "meta-llama/Meta-Llama-3.1-70B-Instruct",
          datetime(2026, 11, 2, tzinfo=UTC), "meta-llama/llama-3.3-70b-instruct"),
     Case("telnyx", "meta-llama/llama-3.1-8b-instruct", "meta-llama/Meta-Llama-3.1-8B-Instruct",
@@ -91,6 +96,7 @@ _CASES = [
          datetime(2026, 10, 14, 10, tzinfo=UTC), "xiaomi/mimo-v2.6-flash"),
 ]
 _MANIFESTS = {
+    "inception": inception.MANIFEST_PATH,
     "telnyx": telnyx.MANIFEST_PATH,
     "together": together.MANIFEST_PATH,
     "crusoe": crusoe.MANIFEST_PATH,

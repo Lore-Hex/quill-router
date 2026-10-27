@@ -129,7 +129,7 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
     assert "<loc>https://trustedrouter.com/badge</loc>" in core.text
     assert "<loc>https://trustedrouter.com/customers/robot-robot-human</loc>" in core.text
     assert "<loc>https://trustedrouter.com/careers</loc>" in core.text
-    assert "<loc>https://trustedrouter.com/confidential-cowork</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/confidential-cowork</loc>" not in core.text
 
     models = client.get("/sitemap-models.xml")
     assert models.status_code == 200
@@ -372,7 +372,7 @@ def test_openrouter_non_experiment_campaign_keeps_canonical_page(
     )
 
     assert response.status_code == 200
-    assert "OpenRouter Alternatives: 10 AI Gateways Compared (2026)" in response.text
+    assert "OpenRouter Alternatives 2026: 10 Gateways by Price &amp; Privacy" in response.text
 
 
 def test_openrouter_experiment_assignment_reaches_every_arm() -> None:
@@ -1747,7 +1747,7 @@ def test_openrouter_alternatives_page_matches_comparison_intent(
 
     assert response.status_code == 200
     assert (
-        "<title>OpenRouter Alternatives: 10 AI Gateways Compared (2026)</title>"
+        "<title>OpenRouter Alternatives 2026: 10 Gateways by Price &amp; Privacy</title>"
         in response.text
     )
     assert "TrustedRouter | TrustedRouter" not in response.text
@@ -1755,10 +1755,11 @@ def test_openrouter_alternatives_page_matches_comparison_intent(
         '<link rel="canonical" href="https://trustedrouter.com/openrouter-alternative">'
         in response.text
     )
-    assert "<h1>OpenRouter Alternatives: 10 AI Gateways Compared (2026)</h1>" in response.text
-    assert "Reviewed August 17, 2026" in response.text
-    assert "The best OpenRouter alternative depends on why you are changing." in response.text
-    assert "10 OpenRouter alternatives compared" in response.text
+    assert "<h1>OpenRouter Alternatives: TrustedRouter vs 9 AI Gateways (2026)</h1>" in response.text
+    assert 'class="v2-dates"' not in response.text
+    assert 'class="v2-section-date"' not in response.text
+    assert "TrustedRouter is a hosted, OpenAI-compatible AI gateway" in response.text
+    assert "TrustedRouter vs 9 OpenRouter alternatives" in response.text
     for path in [
         "/compare/openrouter",
         "/compare/litellm",
@@ -1772,16 +1773,37 @@ def test_openrouter_alternatives_page_matches_comparison_intent(
         "/providers",
     ]:
         assert f'href="{path}"' in response.text
-    for official_source in [
-        "https://openrouter.ai/docs/faq",
-        "https://docs.litellm.ai/",
-        "https://portkey.ai/docs/product/ai-gateway",
-        "https://vercel.com/docs/ai-gateway",
-        "https://developers.cloudflare.com/ai-gateway/",
-        "https://docs.helicone.ai/gateway/overview",
-        "https://www.requesty.ai/pricing",
-    ]:
-        assert f'href="{official_source}"' in response.text
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(response.text, "html.parser")
+    main = soup.select_one("main")
+    assert main is not None
+    assert len(main.select("h1")) == 1
+    assert main.select_one("#quick-answer-heading").get_text() == (
+        "What is the best OpenRouter alternative in 2026?"
+    )
+    assert "What the Stripe deal means for OpenRouter users" in main.get_text()
+    assert "$6.75" in main.get_text()
+    assert len(main.select("table.v2-stack")) == 4
+    forbidden_domains = (
+        "openrouter.ai", "requesty.ai", "portkey.ai", "litellm.ai", "vercel.com",
+        "cloudflare.com", "helicone.ai", "amazon.com", "google.com",
+        "mintlify.com", "paloaltonetworks.com",
+    )
+    for link in main.select("a[href]"):
+        hostname = urlsplit(link["href"]).hostname or ""
+        assert not any(
+            hostname == domain or hostname.endswith("." + domain)
+            for domain in forbidden_domains
+        ), link["href"]
+    for link in main.select('[aria-labelledby="sources-heading"] a[rel]'):
+        assert {"nofollow", "noopener"}.issubset(link["rel"])
+    assert main.select_one(".seo-evidence") is not None
+    assert main.select_one(".seo-evidence").find_next_sibling("section").get(
+        "aria-label"
+    ) == "Frequently asked questions"
+    assert '/static/openrouter-alternative.css?v=' in response.text
+    assert '/static/openrouter-alternative.css?v=' not in client.get("/eu").text
 
     payload = _json_ld(response.text)
     graph = payload["@graph"]
@@ -1793,9 +1815,18 @@ def test_openrouter_alternatives_page_matches_comparison_intent(
         if item["@type"] == "ItemList"
         and item["name"] == "OpenRouter alternatives compared by TrustedRouter"
     )
+    faq = next(item for item in graph if item["@type"] == "FAQPage")
+    visible_faq = main.select(".faq-panel details")
+    assert len(faq["mainEntity"]) == len(visible_faq) == 11
+    for entry, visible in zip(faq["mainEntity"], visible_faq, strict=True):
+        assert entry["name"] == visible.summary.get_text()
+        assert entry["acceptedAnswer"]["text"] == visible.p.get_text()
+    page = next(item for item in graph if item["@type"] == "WebPage")
+    assert page["dateModified"] == "2026-10-26"
+    assert alternatives["itemListElement"][1]["name"] == "Requesty"
     assert alternatives["numberOfItems"] == 10
     assert "Which OpenRouter alternative can I self-host?" in response.text
-    assert response.text.count("Create my API key") == 2
+    assert response.text.count("Create my API key") == 3
 
 
 def test_exact_intent_search_landings_are_message_matched(client: TestClient) -> None:
@@ -2235,3 +2266,17 @@ def test_organization_same_as_only_lists_profiles_we_own() -> None:
     assert "https://x.com/trustedrouter" in same_as
     assert not any("wikipedia.org" in url for url in same_as)
     assert not any("wikidata.org" in url for url in same_as)
+
+
+def test_openrouter_catalog_omits_measurement_columns_without_changing_other_pages(client: TestClient) -> None:
+    response = client.get("/openrouter-alternative")
+    assert response.status_code == 200
+    assert "Measured route</th>" not in response.text
+    assert "No measurements yet" not in response.text
+    assert "Live catalog evidence</span>" not in response.text
+    assert ">All resources</a>" not in response.text
+    assert ">Read the migration guide" not in response.text
+    assert 'href="/docs/migrate-from-openrouter">Migration guide</a>' in response.text
+    other = client.get("/litellm-alternative")
+    assert other.status_code == 200
+    assert "Measured route</th>" in other.text

@@ -4,7 +4,7 @@ const nav=document.getElementById('nav'), menu=document.getElementById('menuBtn'
 menu.addEventListener('click',()=>{const open=nav.classList.toggle('open');menu.setAttribute('aria-expanded',String(open));});
 document.addEventListener('keydown',e=>{if(e.key==='Escape' && nav.classList.contains('open')){nav.classList.remove('open');menu.setAttribute('aria-expanded','false');menu.focus();}});
 document.addEventListener('click',e=>{if(!e.target.closest('header')){nav.classList.remove('open');menu.setAttribute('aria-expanded','false');}});
-const active={home:'/',api:'/confidential',sup:'/suppliers',providers:'/providers',index:'/index',buy:'/buy'}[document.body.dataset.nytePage];
+const active={home:'/',api:'/confidential',cowork:'/trusted-cowork',sup:'/suppliers',providers:'/providers',index:'/index',buy:'/buy'}[document.body.dataset.nytePage];
 document.querySelectorAll('nav a').forEach(a=>{if(a.getAttribute('href')===active){a.setAttribute('aria-current','page');a.classList.add('on');}});
 const dialog=document.getElementById('m-deck');
 document.querySelectorAll('[data-open="deck"]').forEach(b=>b.addEventListener('click',()=>dialog.showModal()));
@@ -13,11 +13,11 @@ dialog?.addEventListener('click',e=>{if(e.target===dialog)dialog.close();});
 const video=document.getElementById('filmVid');
 document.getElementById('filmPlay')?.addEventListener('click',()=>{video.controls=true;video.play().catch(()=>{document.getElementById('film').classList.remove('playing');});});
 video?.addEventListener('playing',()=>{document.getElementById('film').classList.add('playing');window.TokenExchangeAnalytics?.track('nyte.video_played');},{once:true});
-const ctas={'Start building':'api_quick_start','Get the buyer deck':'buyer_deck','Get the provider deck':'provider_deck','Get your API key':'api_key','Read documentation':'documentation','Apply as a provider':'apply_provider','List spare capacity':'spare_capacity','Get the open-source stack':'open_source_stack','Operator guide':'operator_guide','Explore the index':'index'};
+const ctas={'Download for Apple silicon':'download_apple_silicon','Download for Intel Mac':'download_intel_mac','Start building':'api_quick_start','Get the buyer deck':'buyer_deck','Get the provider deck':'provider_deck','Get your API key':'api_key','Read documentation':'documentation','Apply as a provider':'apply_provider','List spare capacity':'spare_capacity','Get the open-source stack':'open_source_stack','Operator guide':'operator_guide','Explore the index':'index'};
 document.addEventListener('click',e=>{
  const el=e.target.closest('a,button');if(!el)return;
  const cta=ctas[el.textContent.trim()];
- const position=el.closest('header')?'header':el.closest('.close-photo')?'close':el.closest('[class^="hero"]')?'hero':'section';
+ const position=el.closest('header')?'header':el.closest('.close-photo,.cw-download')?'close':el.closest('[class^="hero"]')?'hero':'section';
  if(cta)window.TokenExchangeAnalytics?.track('nyte.cta_clicked',{cta,position});
  if(el.tagName==='A'){const url=new URL(el.href,location.href);if(['trustedrouter.com','github.com'].includes(url.hostname))window.TokenExchangeAnalytics?.track('nyte.outbound_clicked',{destination_host:url.hostname,cta:cta||'source'});}
 });
@@ -201,4 +201,19 @@ window.NYTECatalog = {
     if (!document.hidden) void refresh();
   });
   void refresh();
+})();
+
+/* Keep the mobile Cowork hero steady when browser chrome changes viewport height.
+   Width changes still refresh its size for rotation and responsive previews. */
+(() => {
+  if (document.body.dataset.nytePage !== 'cowork') return;
+  let width;
+  const sizeHero = () => {
+    const nextWidth = document.documentElement.clientWidth;
+    if (nextWidth === width) return;
+    width = nextWidth;
+    document.documentElement.style.setProperty('--cw-viewport', `${window.innerHeight}px`);
+  };
+  sizeHero();
+  window.addEventListener('resize', sizeHero, {passive: true});
 })();

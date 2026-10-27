@@ -64,7 +64,7 @@ async function localHtml(context) {
         };
         await check(1);
         assert.equal(await page.title(), 'Reserved tokens | New York Token Exchange');
-        if (width < 1000) {
+        if (width <= 1280) {
           const wizard = await page.locator('.buy-workspace').boundingBox();
           const brand = await page.locator('.buy-brand').boundingBox();
           assert(wizard.y + wizard.height <= brand.y, 'wizard precedes brand on mobile');
@@ -110,7 +110,9 @@ async function localHtml(context) {
           await page.getByRole('button',{name:'Add one block'}).click();
           await page.getByRole('button',{name:'Add one block'}).click();
           assert.equal(await page.locator('#buy-blocks').inputValue(),'3');
-          assert((await page.locator('#buy-total').innerText()).includes('$2,670'));
+          const blockPrice = Number(await page.locator('[name="grade"]:checked').getAttribute('data-price'));
+          const expectedTotal = new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0}).format(3 * blockPrice);
+          assert((await page.locator('#buy-total').innerText()).includes(expectedTotal));
           await page.locator('#buy-blocks').fill('0');
           await page.getByRole('button',{name:'Continue to contact'}).click();
           assert.equal(new URL(page.url()).searchParams.get('step'),'2');

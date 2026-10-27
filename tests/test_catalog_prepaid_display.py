@@ -180,9 +180,14 @@ def test_dark_authoritative_manifest_rows_cannot_return_through_shared_snapshot(
         for endpoint in catalog_vehicles.registry_endpoints().values()
     }
     for provider_slug in _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS:
-        raw = json.loads(
-            (_PROVIDER_MODELS_DIR / f"{provider_slug}.json").read_text(encoding="utf-8")
-        )
+        manifest = _PROVIDER_MODELS_DIR / f"{provider_slug}.json"
+        if not manifest.exists():
+            # Registered providers can remain unpublished before their first
+            # verified catalog. No shared snapshot may activate them instead.
+            assert not _authoritative_provider_model_ids(provider_slug)
+            assert not any(provider == provider_slug for provider, _ in endpoint_pairs)
+            continue
+        raw = json.loads(manifest.read_text(encoding="utf-8"))
         dark_models = {
             row["id"]
             for row in raw.get("models", [])

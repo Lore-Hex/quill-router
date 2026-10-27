@@ -6,7 +6,7 @@ from nyte_v2 import index_panel, render_nyte
 
 class NyteV2Tests(unittest.TestCase):
     def test_navigation_and_ctas(self):
-        for name in ('home', 'api', 'sup'):
+        for name in ('home', 'api', 'sup', 'providers', 'cowork'):
             page = render_nyte(name)
             self.assertEqual(page.count('>Confidential API</a>'), 1)
             self.assertNotIn('Plan a pilot', page)

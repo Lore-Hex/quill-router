@@ -70,6 +70,7 @@ TOGETHER_NOVEMBER_6_RETIREMENT_AT = datetime(2026, 11, 6, 0, 0, tzinfo=UTC)
 # 2026-10-30 10:00 PDT: Crusoe redirects four serverless models to replacements.
 CRUSOE_OCTOBER_30_RETIREMENT_AT = datetime(2026, 10, 30, 17, 0, tzinfo=UTC)
 TELNYX_NOVEMBER_2_RETIREMENT_AT = datetime(2026, 11, 2, 0, 0, tzinfo=UTC)
+INCEPTION_MERCURY_2_RETIREMENT_AT = datetime(2026, 11, 15, 0, 0, tzinfo=UTC)
 # 2027-01-19 10:00 UTC+8: Model Studio stops serving legacy Qwen3.5 models.
 ALIBABA_QWEN35_RETIREMENT_AT = datetime(2027, 1, 19, 2, 0, tzinfo=UTC)
 # 2026-10-14 18:00 UTC+8: Xiaomi starts serving V2.6 weights at V2.6 prices.
@@ -1003,6 +1004,24 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"thinkingmachines/Inkling"}),
         effective_at=TOGETHER_NOVEMBER_6_RETIREMENT_AT,
         replacement_model_ids=("meta-models/muse-spark-open",),
+    ),
+    # Inception's October 26 notice: Mercury 2 and 2.5 stay available until
+    # 2026-11-15 (date only; 00:00 UTC conservatively), after which callers
+    # are moved to the different Mercury 3 model. Retire instead of accepting
+    # the substitution.
+    _Retirement(
+        provider="inception",
+        model_ids=frozenset({"inception/mercury-2"}),
+        upstream_ids=frozenset({"mercury-2"}),
+        effective_at=INCEPTION_MERCURY_2_RETIREMENT_AT,
+        replacement_model_ids=("inception/mercury-3",),
+    ),
+    _Retirement(
+        provider="inception",
+        model_ids=frozenset({"inception/mercury-2.5"}),
+        upstream_ids=frozenset({"mercury-2.5"}),
+        effective_at=INCEPTION_MERCURY_2_RETIREMENT_AT,
+        replacement_model_ids=("inception/mercury-3",),
     ),
     # Telnyx's Inference API notice (reminder received October 26) deprecates
     # these models from 2026-11-02 (date only; 00:00 UTC conservatively);

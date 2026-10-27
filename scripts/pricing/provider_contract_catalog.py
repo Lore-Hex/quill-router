@@ -217,7 +217,7 @@ def discover_provider_contract_catalog(
 ) -> tuple[dict[str, ModelPrice], dict[str, dict[str, Any]]]:
     """Validate and normalize one canonical provider `/v1/models` response."""
 
-    is_v2 = isinstance(payload, dict) and payload.get("contract_version") == "2.0"
+    is_v2 = isinstance(payload, dict) and payload.get("contract_version") in ("2.0", "2.1")
     top = _require_exact_fields(
         payload,
         _TOP_LEVEL_V2_FIELDS if is_v2 else _TOP_LEVEL_FIELDS,
@@ -458,7 +458,7 @@ def discover_provider_contract_catalog(
                 "completion_timeout_seconds": _require_positive_number(
                     reliability["completion_timeout_seconds"],
                     label=f"{label}.reliability.completion_timeout_seconds",
-                    maximum=900,
+                maximum=3600 if top["contract_version"] == "2.1" else 900,
                 ),
                 "stream_idle_timeout_seconds": _require_positive_number(
                     reliability["stream_idle_timeout_seconds"],

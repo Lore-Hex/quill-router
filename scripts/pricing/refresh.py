@@ -171,6 +171,7 @@ PROVIDER_SLUGS = [
     "lyceum",
     "amazon_bedrock",
     "greenference",
+    "hixtube",
     "muna",
     "coralbricks",
     "boundless",
@@ -1468,6 +1469,11 @@ def _write_provider_manifests(
             if not isinstance(after_rows, list) or not after_rows:
                 raise ValueError("manifest writer produced no model rows")
             if before_rows is not None:
+                confirm = getattr(module, "confirmed_manifest_quarantines", None)
+                confirmed_ids = (
+                    confirm(result, before_rows, after_rows)
+                    if result.source == "api" and callable(confirm) else ()
+                )
                 guarded = guard_manifest_prune(
                     before_rows,
                     after_rows,
@@ -1475,6 +1481,7 @@ def _write_provider_manifests(
                     allow_confirmed_delistings=bool(
                         getattr(module, "ALLOW_CONFIRMED_MASS_DELISTINGS", False)
                     ),
+                    confirmed_disabled_ids=confirmed_ids,
                 )
                 if guarded is before_rows:
                     raise ValueError("manifest writer triggered mass-prune guard")
