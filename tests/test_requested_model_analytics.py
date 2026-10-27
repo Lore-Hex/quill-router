@@ -190,6 +190,8 @@ def test_oracle_extension_requires_exact_new_metadata_and_all_old_effects(id_fie
     for wrong in (
         {**right, "balance": 959}, {**right, "rpc_count": 4}, left,
         {**right, "payload": json.dumps({**expected, "total_cost_microdollars": 41})},
+        {**right, "payload": json.dumps({**expected, "total_cost_microdollars": 42.0})},
+        {**right, "payload": json.dumps({**expected, "tokens_prompt": 10.0})},
         {**right, "payload": json.dumps({**expected, "requested_model": "spoofed"})},
         {**right, "payload": json.dumps({**expected, "tokens_prompt": 11})},
         {**right, "payload": json.dumps({**expected, "extra": True})},

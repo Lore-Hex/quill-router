@@ -26,6 +26,10 @@ def compare_with_requested_model(
             assert "requested_model" not in payload, "frozen baseline already has this extension"
             left = {**payload, "requested_model": requested_model}
             right = json.loads(right)
+            # Preserve JSON number/boolean types as well as values: Python's
+            # equality would otherwise accept 42.0 for integer microdollars.
+            assert json.dumps(left, sort_keys=True) == json.dumps(right, sort_keys=True), (path, left, right)
+            return
     if isinstance(left, dict) and isinstance(right, dict) and left.keys() == right.keys():
         for key in left:
             compare_with_requested_model(
