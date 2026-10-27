@@ -289,7 +289,7 @@ def safe_path(value):
 
 
 PUBLIC_LANDINGS = frozenset(('/' + p) for p in (
-    'confidential', 'suppliers', 'index', 'badge', 'buy',
+    'confidential', 'trusted-cowork', 'suppliers', 'index', 'badge', 'buy', 'neocloud-accelerator',
     '', 'pricing', 'models', 'providers', 'leaderboard', 'blog', 'docs', 'trust', 'status',
     'choose', 'marketplace', 'support', 'vibe-coders', 'agents', 'quickstart',
     'openrouter-alternative', 'compare', 'eu', 'token-exchange', 'green-tokens',

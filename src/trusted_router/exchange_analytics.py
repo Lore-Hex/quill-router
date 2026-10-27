@@ -13,7 +13,7 @@ class ExchangeEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
     event: Literal["exchange.landing_viewed", "exchange.landing_engaged", "nyte.cta_clicked", "nyte.video_played", "nyte.form_submitted", "nyte.outbound_clicked", "nyte.buy_step_1_viewed", "nyte.buy_step_2_viewed", "nyte.buy_step_3_viewed", "nyte.buy_step_4_viewed", "nyte.buy_completed"]
     visitor_id: UUID4
-    page: Literal["/trusted-cowork", "/", "/providers", "/badge", "/confidential", "/suppliers", "/index", "/buy"] = "/"
+    page: Literal["/", "/providers", "/badge", "/confidential", "/trusted-cowork", "/suppliers", "/index", "/buy", "/neocloud-accelerator"] = "/"
     campaign: dict[str, str] = Field(default_factory=dict, max_length=5)
 
     cta: Literal["download_apple_silicon", "download_intel_mac", "api_quick_start", "buyer_deck", "provider_deck", "api_key", "documentation", "apply_provider", "spare_capacity", "open_source_stack", "operator_guide", "index", "source"] | None = None
@@ -22,7 +22,7 @@ class ExchangeEvent(BaseModel):
     destination_host: Literal["trustedrouter.com", "github.com"] | None = None
 
     unit: Literal["blocks", "throughput", "unsure"] | None = None
-    underlying_kind: Literal["index", "model"] | None = None
+    underlying_kind: Literal["index", "model", "facility"] | None = None
     grade: Literal["AAA", "A", "B", "C", "none"] | None = None
 
     @model_validator(mode="after")
@@ -45,7 +45,9 @@ class ExchangeEvent(BaseModel):
         if supplied != required:
             raise ValueError("Invalid event properties")
         if self.event.startswith("nyte.buy_"):
-            if self.page != "/buy" or (self.underlying_kind == "model") != (self.grade == "none"):
+            if self.underlying_kind == "facility" and self.unit != "blocks":
+                raise ValueError("Facility requests use token lots")
+            if self.page != "/buy" or (self.underlying_kind in {"model", "facility"}) != (self.grade == "none"):
                 raise ValueError("Invalid capacity request metadata")
         return self
 

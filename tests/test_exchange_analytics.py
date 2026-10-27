@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import subprocess
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -52,9 +54,9 @@ def test_visits_and_downloads_share_only_a_site_scoped_fingerprint(
     }).status_code == 200
     events = [r for r in caplog.records if getattr(r, "site_domain", "") == "nytokenexchange.com"]
     assert len(events) == 3
-    assert len({r.anonymous_fingerprint for r in events}) == 1
-    assert events[0].anonymous_fingerprint != visitor
-    assert all(r.creative_id == "homepage-banner" for r in events)
+    assert len({r.__dict__["anonymous_fingerprint"] for r in events}) == 1
+    assert events[0].__dict__["anonymous_fingerprint"] != visitor
+    assert all(r.__dict__["creative_id"] == "homepage-banner" for r in events)
     assert all(not hasattr(r, "email") and not hasattr(r, "visitor_id") for r in events)
     from scripts.axiom_growth.model import project_event
     from trusted_router.main import _ApplicationConsoleFormatter
@@ -69,7 +71,7 @@ def test_visits_and_downloads_share_only_a_site_scoped_fingerprint(
     client.post("/token-exchange/events", headers={**HEADERS, "Origin": other}, json={
         "event": "exchange.landing_viewed", "visitor_id": visitor,
     })
-    assert caplog.records[-1].anonymous_fingerprint != events[0].anonymous_fingerprint
+    assert caplog.records[-1].__dict__["anonymous_fingerprint"] != events[0].__dict__["anonymous_fingerprint"]
 
 
 @pytest.mark.parametrize("signal", [{"DNT": "1"}, {"Sec-GPC": "1"}])
@@ -121,12 +123,18 @@ def test_collector_memory_and_rate_caps_reset() -> None:
 @pytest.mark.parametrize(('name', 'properties'), [
     ('nyte.cta_clicked', {'cta': 'api_quick_start', 'position': 'hero'}),
     ('nyte.video_played', {}),
+    *[('nyte.cta_clicked', {'cta': cta, 'position': position})
+      for cta in ('download_apple_silicon', 'download_intel_mac')
+      for position in ('hero', 'close')],
     ('nyte.buy_step_1_viewed', {'unit': 'blocks', 'underlying_kind': 'index', 'grade': 'A'}),
     ('nyte.buy_step_2_viewed', {'unit': 'blocks', 'underlying_kind': 'index', 'grade': 'A'}),
     ('nyte.buy_step_3_viewed', {'unit': 'blocks', 'underlying_kind': 'index', 'grade': 'A'}),
     ('nyte.buy_step_4_viewed', {'unit': 'blocks', 'underlying_kind': 'index', 'grade': 'A'}),
     ('nyte.buy_completed', {'unit': 'blocks', 'underlying_kind': 'index', 'grade': 'A'}),
     ('nyte.buy_completed', {'unit': 'throughput', 'underlying_kind': 'model', 'grade': 'none'}),
+    *[(name, {'unit': 'blocks', 'underlying_kind': 'facility', 'grade': 'none'})
+      for name in ['nyte.buy_step_1_viewed', 'nyte.buy_step_2_viewed', 'nyte.buy_step_3_viewed',
+                   'nyte.buy_step_4_viewed', 'nyte.buy_completed']],
     ('nyte.form_submitted', {'form': 'buyer_deck'}),
     ('nyte.outbound_clicked', {'destination_host': 'trustedrouter.com', 'cta': 'api_key'}),
 ])
@@ -165,6 +173,10 @@ def test_nyte_event_properties_are_bounded(client: TestClient, properties: dict[
 
 
 @pytest.mark.parametrize('extra', [
+    {'underlying_kind': 'facility'}, {'underlying_kind': 'solar'},
+    {'underlying_kind': 'facility', 'grade': 'none', 'unit': 'throughput'},
+    {'underlying_kind': 'facility', 'grade': 'none', 'unit': 'unsure'},
+    {'facility': 'solar'}, {'facility_name': 'Underwater Datacenter'},
     {'unit': 'someone@example.com'}, {'underlying_kind': 'free text'},
     {'grade': 'private model'}, {'name': 'Private Name'}, {'email': 'person@example.com'},
     {'company': 'Private Company'}, {'model': 'private model'}, {'grade': 'none'},
@@ -175,3 +187,44 @@ def test_capacity_metadata_rejects_private_or_inconsistent_fields(client: TestCl
         'unit': 'blocks', 'underlying_kind': 'index', 'grade': 'A', **extra,
     })
     assert response.status_code == 422
+
+
+@pytest.mark.parametrize("pathname", [
+    route + suffix for route in ("/neocloud-accelerator", "/trusted-cowork", "/buy")
+    for suffix in ("", ".html")
+])
+def test_nyte_browser_payloads_survive_collector_logging_and_export(
+    client: TestClient, caplog: pytest.LogCaptureFixture, pathname: str,
+) -> None:
+    from scripts.axiom_growth.model import project_event
+    from scripts.axiom_growth.provision import source_filter
+    from trusted_router.main import _ApplicationConsoleFormatter
+
+    canonical = pathname.removesuffix(".html")
+    harness = Path(__file__).parent / "js" / "exchange_analytics_harness.cjs"
+    result = subprocess.run(  # noqa: S603
+        ["node", str(harness), pathname],  # noqa: S607
+        check=True, capture_output=True, text=True, timeout=10,
+    )
+    payloads = json.loads(result.stdout)
+    assert [payload["event"] for payload in payloads] == [
+        "exchange.landing_viewed", "exchange.landing_engaged",
+    ]
+    caplog.set_level(logging.INFO, logger="trusted_router.acquisition")
+    for payload in payloads:
+        assert payload["page"] == canonical
+        assert collector.ExchangeEvent.model_validate(payload).page == canonical
+        response = client.post("/token-exchange/events", headers=HEADERS, json=payload)
+        assert response.status_code == 204
+        event = "acquisition." + payload["event"]
+        record = next(r for r in caplog.records if getattr(r, "event", "") == event)
+        assert record.__dict__["page_path"] == canonical
+        serialized = json.loads(_ApplicationConsoleFormatter().format(record))
+        assert serialized["page_path"] == canonical
+        assert f'jsonPayload.event="{event}"' in source_filter()
+        exported = project_event(
+            {**serialized, "_time": "2026-10-26T17:00:00Z"}, source="cloud_logging",
+        )
+        assert exported["event"] == event
+        assert exported["site_domain"] == "nytokenexchange.com"
+        assert exported["page_path"] == canonical
