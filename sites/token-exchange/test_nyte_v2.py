@@ -207,6 +207,7 @@ class NavigationRegistryTests(unittest.TestCase):
 
     def test_creation_date_uses_real_history(self):
         import os
+        import shutil
         import subprocess
         import tempfile
         from datetime import date
@@ -216,12 +217,14 @@ class NavigationRegistryTests(unittest.TestCase):
         from nyte_v2 import page_added
 
         self.addCleanup(page_added.cache_clear)
+        git_executable = shutil.which("git")
+        self.assertIsNotNone(git_executable)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
 
             def git(*args, day="2026-09-01"):
-                return subprocess.run(
-                    ["git", *args], cwd=root, check=True, capture_output=True, text=True,
+                return subprocess.run(  # noqa: S603 — fixed test arguments in an isolated repository
+                    [git_executable, *args], cwd=root, check=True, capture_output=True, text=True,
                     env={**os.environ, "GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "test@example.com",
                          "GIT_COMMITTER_NAME": "Test", "GIT_COMMITTER_EMAIL": "test@example.com",
                          "GIT_AUTHOR_DATE": day + "T12:00:00Z", "GIT_COMMITTER_DATE": day + "T12:00:00Z"},
