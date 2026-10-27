@@ -3114,17 +3114,20 @@ class PostgresStore(OperationalAnalyticsReads):
 
         return self._run_transaction(txn)
 
-    def claim_reserved_notification(self, session_id: str, owner: str, *, now: int) -> str:
-        def txn(tx: Any) -> str:
+    def claim_reserved_notification(self, session_id: str, owner: str, *, now: int) -> tuple[str, int]:
+        def txn(tx: Any) -> tuple[str, int]:
             self._insert_entity_once_tx(tx, "reserved_notification", session_id, {"sent": False})
             row = self._read_entity_tx(tx, "reserved_notification", session_id, dict, for_update=True) or {}
+            purchase_completed_at = int(row.get("purchase_completed_at", now))
             if row.get("sent"):
-                return "sent"
+                return "sent", purchase_completed_at
             if row.get("lease_until", 0) > now:
-                return "busy"
-            self._write_entity_tx(tx, "reserved_notification", session_id,
-                                  {"owner": owner, "lease_until": now + 120, "sent": False})
-            return "claimed"
+                return "busy", purchase_completed_at
+            self._write_entity_tx(tx, "reserved_notification", session_id, {
+                "owner": owner, "lease_until": now + 120, "sent": False,
+                "purchase_completed_at": purchase_completed_at,
+            })
+            return "claimed", purchase_completed_at
 
         return self._run_transaction(txn)
 

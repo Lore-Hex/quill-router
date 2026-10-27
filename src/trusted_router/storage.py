@@ -3876,15 +3876,20 @@ class InMemoryStore:
             notices.update(dict.fromkeys(claimed, occurred_at))
             return claimed
 
-    def claim_reserved_notification(self, session_id: str, owner: str, *, now: int) -> str:
+    def claim_reserved_notification(self, session_id: str, owner: str, *, now: int) -> tuple[str, int]:
+        """Atomically claim delivery and preserve the first paid-webhook timestamp."""
         with self._lock:
             row = self.reserved_notifications.get(session_id, {})
+            purchase_completed_at = int(row.get("purchase_completed_at", now))
             if row.get("sent"):
-                return "sent"
+                return "sent", purchase_completed_at
             if row.get("lease_until", 0) > now:
-                return "busy"
-            self.reserved_notifications[session_id] = {"owner": owner, "lease_until": now + 120, "sent": False}
-            return "claimed"
+                return "busy", purchase_completed_at
+            self.reserved_notifications[session_id] = {
+                "owner": owner, "lease_until": now + 120, "sent": False,
+                "purchase_completed_at": purchase_completed_at,
+            }
+            return "claimed", purchase_completed_at
 
     def finish_reserved_notification(self, session_id: str, owner: str, *, sent: bool) -> None:
         with self._lock:

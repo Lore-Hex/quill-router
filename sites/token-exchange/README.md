@@ -205,12 +205,16 @@ four grades AAA/A/B/C. The existing call path remains available for every
 selection. Specific models, throughput and facilities have no card option.
 The fixed card window is January 1 through December 31, 2027, with unused tokens
 expiring December 31 and a full refund on request within 30 days of purchase.
-After 30 days, the only exit is NYTE’s resale program. Reservations are transferable
+The first successful-payment webhook records the purchase time durably; retries
+preserve it. The ops notification includes that time and the 30-day deadline.
+After 30 days, the only exit is NYTE’s resale program. NYTE is the only buyer of
+listed lots; holders do not sell to or contract with each other, and there is no
+peer-to-peer transfer. Reservations are transferable
 only through that program: holders list lots, NYTE resells them to new buyers ahead
 of new inventory, and each sale returns the resale price minus a 5% resale fee to
 the original card, capped at what the holder paid for those lots. Until self-service
 resale launches in a separate PR, refund and resale requests go to
-`enterprise@trustedrouter.com`. The terms version is `2026-10-27-v2`.
+`enterprise@trustedrouter.com`. The terms version is `2026-10-27-v3`.
 Delivery is through a TrustedRouter account via the NYTE API. The terms live at
 `/reserved-tokens-terms` and its `.html` alias, in the shared NYTE shell and New
 York sitemap. These are prepaid inference services, not securities or investments.
@@ -239,6 +243,8 @@ Configuration, kept dark in `scripts/deploy/rollout.sh`:
   The checkout flag remains `false`; an absent discount still refuses sales.
 - `TR_RESERVED_TOKENS_MAX_LOTS_PER_CHECKOUT` defaults to 100. Larger orders go to
   the call. Stripe amount limits also fail closed.
+- `TR_RESERVED_TOKENS_MAX_PRICE_AGE_DAYS` defaults to 45 and must be at least 1.
+  Invalid, future, or older snapshot dates (UTC) refuse quotes and checkout.
 - The existing `TR_STRIPE_SECRET_KEY`, signed webhook secret and SES configuration
   are reused. The actions surface may now hold the Stripe key, but still no
   webhook signing secret, credit store or other billing credentials.

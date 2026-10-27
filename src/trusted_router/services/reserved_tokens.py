@@ -4,9 +4,8 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import time
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Literal
 
@@ -21,7 +20,7 @@ from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
 
 KIND = "reserved_tokens_2027"
-TERMS_VERSION = "2026-10-27-v2"
+TERMS_VERSION = "2026-10-27-v3"
 WINDOW = {
     "usable_from": "2027-01-01",
     "usable_until": "2027-12-31",
@@ -43,6 +42,10 @@ class ReservationRequest(BaseModel):
     terms_accepted: StrictBool
 
 
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
 def reservation_quote(settings: Settings, grade: str, lots: int) -> dict[str, Any]:
     discount = settings.reserved_tokens_discount_bps
     if not settings.reserved_tokens_checkout_enabled or discount is None:
@@ -51,6 +54,12 @@ def reservation_quote(settings: Settings, grade: str, lots: int) -> dict[str, An
         raise api_error(422, "Choose an NYTE Index grade: AAA, A, B or C", ErrorType.BAD_REQUEST)
     if type(lots) is not int or not 1 <= lots <= settings.reserved_tokens_max_lots_per_checkout:
         raise api_error(422, f"Choose 1–{settings.reserved_tokens_max_lots_per_checkout} lots; book a call for larger orders", ErrorType.BAD_REQUEST)
+    try:
+        price_age_days = (_utc_now().date() - date.fromisoformat(token_index.AS_OF_ISO)).days
+    except (TypeError, ValueError):
+        price_age_days = -1
+    if not 0 <= price_age_days <= settings.reserved_tokens_max_price_age_days:
+        raise api_error(503, "Reserved token prices are being updated; book a call", ErrorType.SERVICE_UNAVAILABLE)
     list_cents = Decimal(str(token_index.QUOTES[grade]["value"])) * 100
     per_lot = int((list_cents * (10_000 - discount) / 10_000).quantize(Decimal(1), rounding=ROUND_HALF_UP))
     if per_lot <= 0 or not 50 <= per_lot * lots <= 99_999_999:
@@ -118,10 +127,6 @@ def handle_reservation_event(event: dict[str, Any], settings: Settings) -> dict[
     metadata = obj.get("metadata") or {}
     try:
         lots, per_lot = int(metadata["lots"]), int(metadata["per_lot_cents"])
-        created = obj["created"]
-        if type(created) is not int or created <= 0:
-            raise ValueError("Invalid Stripe session creation time")
-        refund_deadline = datetime.fromtimestamp(created, UTC) + timedelta(days=int(WINDOW["refund_window_days"]))
         valid = (
             lots > 0 and per_lot > 0 and obj.get("amount_total") == lots * per_lot
             and obj.get("currency") == "usd" and obj.get("mode") == "payment"
@@ -139,13 +144,15 @@ def handle_reservation_event(event: dict[str, Any], settings: Settings) -> dict[
     session_id = obj["id"]
     position_id = reservation_position_id(session_id)
     owner = uuid.uuid4().hex
-    claim = STORE.claim_reserved_notification(session_id, owner, now=int(time.time()))
+    claim, purchase_timestamp = STORE.claim_reserved_notification(session_id, owner, now=int(_utc_now().timestamp()))
     if claim == "sent":
         return {**result, "duplicate": True}
     if claim == "busy":
         raise api_error(503, "Reservation notification is being processed; retry", ErrorType.SERVICE_UNAVAILABLE)
+    purchased_at = datetime.fromtimestamp(purchase_timestamp, UTC)
+    refund_deadline = purchased_at + timedelta(days=int(WINDOW["refund_window_days"]))
     details = {key: metadata[key] for key in ("grade", "lots", "per_lot_cents", "list_price_cents", "discount_bps", "index_as_of", *WINDOW)}
-    details.update(position_id=position_id, refund_deadline_at=refund_deadline.isoformat(), stripe_session_id=session_id, stripe_customer_id=obj.get("customer") if isinstance(obj.get("customer"), str) else None)
+    details.update(position_id=position_id, purchase_completed_at=purchased_at.isoformat(), refund_deadline_at=refund_deadline.isoformat(), stripe_session_id=session_id, stripe_customer_id=obj.get("customer") if isinstance(obj.get("customer"), str) else None)
     try:
         if STORE.record_webhook_event_once(KIND, session_id):
             log.info("acquisition.reserved_tokens_recorded", extra={"event": "acquisition.reserved_tokens_recorded", **details})

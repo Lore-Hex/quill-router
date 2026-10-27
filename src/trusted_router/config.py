@@ -877,6 +877,7 @@ class Settings(BaseSettings):
     reserved_tokens_checkout_enabled: bool = False
     reserved_tokens_discount_bps: int | None = Field(default=None, ge=0, lt=10_000)
     reserved_tokens_max_lots_per_checkout: int = Field(default=100, ge=1)
+    reserved_tokens_max_price_age_days: int = Field(default=45, ge=1)
     stablecoin_checkout_enabled: bool = True
     x402_enabled: bool = False
     x402_allow_mock_payments: bool = False
