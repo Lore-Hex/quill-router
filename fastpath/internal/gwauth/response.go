@@ -77,7 +77,10 @@ func providerMembers(c Candidate, location pyjson.Object) pyjson.Object {
 // responseData is _gateway_authorize_response's data for the cohort
 // (gateway.py, §6), every member in insertion order, but timing, which
 // the timing decorator appends last.
-func responseData(in ComposeInput, generationID string, tags []ComposeTag) (pyjson.Object, error) {
+//
+// The async-v1 additions (async.go) go between stage_d and tags, where
+// _gateway_authorize_response splices **async_additions (G15 §2.1).
+func responseData(in ComposeInput, generationID string, tags []ComposeTag, async Async) (pyjson.Object, error) {
 	locations := make([]pyjson.Object, len(in.Candidates))
 	for i, c := range in.Candidates {
 		loc, err := inferenceLocation(c.InferenceLocation)
@@ -143,6 +146,9 @@ func responseData(in ComposeInput, generationID string, tags []ComposeTag) (pyjs
 			{Key: "eligible", Value: false},
 			{Key: "reason", Value: in.StageDReason},
 		}},
+	)
+	d = append(d, async.Members...)
+	d = append(d,
 		pyjson.Member{Key: "tags", Value: tagsObject(tags)},
 		pyjson.Member{Key: "custom_model", Value: nil},
 	)

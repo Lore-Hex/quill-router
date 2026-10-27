@@ -18,6 +18,7 @@ type Staged struct {
 	payload      pyjson.Object // without the two front-door keys
 	inserted     []byte
 	readBack     []byte
+	async        Async
 }
 
 // Stage builds the rows' fields and encodes the 200 body but its timing.
@@ -44,9 +45,21 @@ func Stage(in ComposeInput) (Staged, error) {
 	in.Candidates = slices.Clone(in.Candidates)
 	in.Regions = slices.Clone(in.Regions)
 
+	if in.Async != nil {
+		a := *in.Async
+		a.Request.RequestedParameters = slices.Clone(a.Request.RequestedParameters)
+		in.Async = &a
+	}
+	// The async-v1 additions, priced at the same instant as the estimate:
+	// the evaluator's price epoch is chosen by the instant's unix seconds.
+	async, err := asyncAdditions(in.Async, in.Candidates, in.At.Unix())
+	if err != nil {
+		return Staged{}, err
+	}
+
 	generationID := GenerationID(in.AuthorizationID)
 	tags := mergeTags(in.KeyTags, in.RequestTags)
-	data, err := responseData(in, generationID, tags)
+	data, err := responseData(in, generationID, tags, async)
 	if err != nil {
 		return Staged{}, err
 	}
@@ -75,11 +88,16 @@ func Stage(in ComposeInput) (Staged, error) {
 		payload:      payloadMembers(in, tags),
 		inserted:     inserted,
 		readBack:     readBack,
+		async:        async,
 	}, nil
 }
 
 // Input is what Stage was given, its instant as Python holds it.
 func (s Staged) Input() ComposeInput { return s.in }
+
+// Async is the async-v1 additions Stage spliced into the 200: AsyncNone
+// for an input without them.
+func (s Staged) Async() Async { return s.async }
 
 // Finish adds the front door's envelope and end of life to the payload,
 // encodes it as json_body does (sorted, ASCII, compact) and returns the two

@@ -145,6 +145,13 @@ func loadSnapshot(t *testing.T) snapshotFacts {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return snapshotFactsOf(t, raw)
+}
+
+// snapshotFactsOf is loadSnapshot for a body given as bytes (P6's file
+// carries its own).
+func snapshotFactsOf(t testing.TB, raw []byte) snapshotFacts {
+	t.Helper()
 	snap, err := routingsnapshot.Parse(raw)
 	if err != nil {
 		t.Fatal(err)
@@ -264,20 +271,31 @@ func inputOf(t *testing.T, f goldenFile, snap snapshotFacts, c goldenCase) Compo
 	}
 	// The evaluator's candidates, in its order: the endpoint ids Python
 	// recorded; each endpoint's facts are the snapshot's.
+	if c.Expect.AuthorizationRow == nil {
+		return in // a case without a row: the caller names the candidates
+	}
 	var payload struct {
 		Endpoints []string `json:"candidate_endpoint_ids"`
 	}
 	if err := json.Unmarshal([]byte(c.Expect.AuthorizationRow["payload"].(string)), &payload); err != nil {
 		t.Fatalf("%s: %v", c.Name, err)
 	}
-	for _, id := range payload.Endpoints {
+	in.Candidates = candidatesOf(t, snap, c.Name, payload.Endpoints)
+	return in
+}
+
+// candidatesOf is each endpoint's facts, the snapshot's, in the order given.
+func candidatesOf(t *testing.T, snap snapshotFacts, name string, ids []string) []Candidate {
+	t.Helper()
+	out := make([]Candidate, 0, len(ids))
+	for _, id := range ids {
 		e, ok := snap.endpoints[id]
 		if !ok {
-			t.Fatalf("%s: endpoint %q is not in the snapshot", c.Name, id)
+			t.Fatalf("%s: endpoint %q is not in the snapshot", name, id)
 		}
-		in.Candidates = append(in.Candidates, e)
+		out = append(out, e)
 	}
-	return in
+	return out
 }
 
 // regionsOf is the region payload of the snapshot the edge would hold for
