@@ -40,7 +40,7 @@ def facility_cards(*, selectable: bool = False) -> str:
         cards.append(f'''<article class="facility-card">
   {heading}
   <span class="facility-badge">Planned</span>
-  <p>A planned {facility.description} data center operated by {facility.operator}.</p>
+  <p>A planned {facility.description} data center operated by {facility.operator.rstrip('.')}.</p>
   <p>{facility.power} · Planned on NVIDIA B200/B300-class GPUs.</p>
   <p>Targeted launch: {facility.launch}.</p>
   <p>First offering: {facility.lots:,} lots.</p>
