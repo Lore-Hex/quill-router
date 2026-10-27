@@ -130,15 +130,17 @@ PAGES = {
 
 @cache
 def page_added(source: str) -> str:
-    """Read a body file's creation date; reject incomplete history instead of inventing it."""
+    """Read a body file's creation date, or omit chips when Git is unavailable."""
     git = shutil.which("git")
     if git is None:
-        raise ValueError("NYTE NEW chips require Git and full repository history.")
+        return ""
     # The executable is resolved locally; arguments are fixed and paths follow --.
     shallow = subprocess.run(  # noqa: S603
         [git, "rev-parse", "--is-shallow-repository"], cwd=HERE,
-        capture_output=True, text=True, check=True,
+        capture_output=True, text=True,
     )
+    if shallow.returncode != 0:
+        return ""
     if shallow.stdout.strip() == "true":
         raise ValueError("NYTE NEW chips require full Git history; run git fetch --unshallow before building.")
     history = subprocess.run(  # noqa: S603
@@ -157,8 +159,9 @@ def render_nav() -> str:
             if entry.get("group") != group or not entry["label"]:
                 continue
             added = page_added(entry.get("body", f"nyte-v2/{key}.html"))
+            date_attribute = f' data-added="{added}"' if added else ""
             items.append(
-                f'<a href="{html.escape(entry["route"], quote=True)}" data-added="{added}" '
+                f'<a href="{html.escape(entry["route"], quote=True)}"{date_attribute} '
                 f'aria-labelledby="nav-label-{key}"><span class="nav-label" id="nav-label-{key}">'
                 f'{html.escape(entry["label"])}</span> <span class="tag cc" hidden>NEW</span>'
                 f'<span class="nav-description">{html.escape(entry["menu_description"])}</span></a>'

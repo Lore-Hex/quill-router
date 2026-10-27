@@ -227,6 +227,10 @@ assert.deepEqual(await visibleChips(),['/sample-0','/sample-1','/sample-2']);
 await page.clock.setSystemTime(new Date('2026-11-12T12:00:00'));
 await page.evaluate(()=>document.dispatchEvent(new Event('visibilitychange')));
 assert.deepEqual(await visibleChips(),[]);
+// Builds without Git omit dates, so every chip stays hidden.
+sampleDates=Array(4).fill(null);
+await page.reload();
+assert.deepEqual(await visibleChips(),[]);
 await page.clock.resume();await page.unroute(base+'/');
 // Both direct and same-page deck links open the existing dialog.
 await page.goto(base+'/#deck');await page.locator('#m-deck').waitFor({state:'visible'});

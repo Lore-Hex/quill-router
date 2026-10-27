@@ -255,16 +255,18 @@ class NavigationRegistryTests(unittest.TestCase):
 
             with tempfile.TemporaryDirectory() as archive, patch("nyte_v2.HERE", Path(archive)):
                 page_added.cache_clear()
-                with self.assertRaises(subprocess.CalledProcessError):
-                    page_added("sample.html")
+                self.assertEqual(page_added("sample.html"), "")
 
-    def test_missing_git_cannot_mark_old_pages_new(self):
+    def test_missing_git_builds_without_new_chip_dates(self):
         from unittest.mock import patch
 
-        from nyte_v2 import page_added
+        from nyte_v2 import page_added, render_nyte
 
         page_added.cache_clear()
         self.addCleanup(page_added.cache_clear)
         with patch("nyte_v2.shutil.which", return_value=None):
-            with self.assertRaisesRegex(ValueError, "require Git"):
-                page_added("sample.html")
+            self.assertEqual(page_added("sample.html"), "")
+            page = render_nyte()
+            self.assertNotIn("data-added=", page)
+            self.assertIn('href="/confidential"', page)
+            self.assertIn('class="tag cc" hidden>NEW', page)

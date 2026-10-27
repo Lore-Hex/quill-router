@@ -81,10 +81,11 @@ The header always has Buy, Sell and Exchange. Labels and menu descriptions
 live in the registry. NEW chips appear automatically for 14 days from the body
 file's first Git commit, capped at the three newest pages. The browser handles
 expiration without another deployment. There are no manual dates or overrides.
-Site builds require full Git history (`fetch-depth: 0` in CI); shallow builds
+Git-backed builds require full history (`fetch-depth: 0` in CI); shallow builds
 stop with an instruction to fetch history rather than mark old pages as new.
-Git and repository history are required; source archives cannot supply creation
-dates. A new, uncommitted body uses today for local previews. New standard pages use `nyte-v2/<key>.html`; separately rendered pages
+If Git or repository metadata is unavailable (for example, a source archive),
+the site still builds with no NEW chips. A new, uncommitted body in a Git checkout
+uses today for local previews. New standard pages use `nyte-v2/<key>.html`; separately rendered pages
 can specify their body file with `body`.
 Adding a registered page does not require updating navigation test lists or counts.
 The terms utility page remains outside the menu; Media kit stays in the footer
