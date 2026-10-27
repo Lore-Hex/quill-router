@@ -55,8 +55,12 @@ ssh tr-fastpath-9 --zone=us-central1-a --project=quill-cloud-proxy
    per node (`fastpath-watch.md`, "The edge's decide counts"). In the
    report: `periods` counting one line a minute for every node over the
    span;
-   `i2.comparable` at least 3,000 over at least 24 hours;
-   `i2.agree_full_ratio` at least 0.995 with every `i2.differ_by_field`
+   on a release with G15c, the I3 gate (`fastpath-watch.md`, the `i3`
+   figures; `fast-admission-e2-g15-async.md` §6.2) over at least 24
+   hours, which takes the place of `i2.comparable` at least 3,000 (the
+   contract's "With G15c pinned, I3's gate is I2's"); before G15c,
+   `i2.comparable` at least 3,000 over at least 24 hours; either way
+   `i2.agree_full_ratio` at least 0.995 when `i2.comparable` is not zero with every `i2.differ_by_field`
    explained; `i2.differ_estimate`, `i2.row_idempotency_fingerprint` and
    `i2.fields_other` zero; `i2.would_admit_python_refused` zero beyond
    key-revocation lag (decision 17); `i2.cohort_by_class` accounted for;

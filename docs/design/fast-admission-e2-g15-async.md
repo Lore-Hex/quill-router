@@ -666,7 +666,13 @@ published switch turns it on:
    - `async_python_admitted` (both populations) zero: admission off
      throughout; a Python rollout that changes admission restarts the
      sample (§3.6);
-   - the cohort's own I2 bars still met.
+   - the cohort's own I2 bars still met, over the sync requests the span
+     compares (the contract's "I2 gates": every bar but its
+     3,000-comparable minimum, which this gate's minimums replace).
+
+   This gate is I2's too (decided 2026-10-27; the contract, "With G15c
+   pinned, I3's gate is I2's"): the sync-only I2 sample did not accrue
+   on traffic that is mostly async-v1 or from the other planes.
 
    Why 250 plain: the async members come from one builder over the
    composed candidates in both populations, so the 2,000 test the builder;
@@ -694,7 +700,12 @@ published switch turns it on:
    not requests Go would compose and compare (most followed results pass
    `evaluate.pass` before the compose, and the settlement-header passes
    include `sync`).
-4. I4: `fastpath_edge_decide_async=true` through a Python deploy. The
+4. I2 and I4 together, once the gate above is green: first
+   `fastpath_edge_decide_async=true` through a Python deploy, which
+   decides nothing while no workspace's decide row is on; then the
+   decide runbook's `decide on`, an operator-owned workspace first, then
+   the pilot workspace, each answering both its sync and its async-v1
+   requests from then on. The
    edge takes it from the first policy it verifies from a new instance;
    during the rollout some fresh policies still say off, which only
    passes (§3.6), and if every fetch fails the held copy expires within

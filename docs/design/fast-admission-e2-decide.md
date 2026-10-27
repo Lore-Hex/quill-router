@@ -1752,3 +1752,21 @@ does not cover
 ([`fast-admission-e2-g15-async.md`](fast-admission-e2-g15-async.md) §5, §6.2).
 `decide on` for an operator-owned workspace first, then the pilot
 workspace.
+
+**With G15c pinned, I3's gate is I2's** (decided 2026-10-27). The
+comparable requests above are sync requests, and on the 892bd7593 soak
+none of the shadow's followed requests was one: they passed with
+`header.settlement_async`, `boot.signature` (the AWS and Azure planes,
+E5), `body.stream` or `evaluate.pass`. The I2 sample could not reach
+3,000 on that traffic at any edge weight. So the I3 gate of
+[`fast-admission-e2-g15-async.md`](fast-admission-e2-g15-async.md) §6.2,
+read over the same span and digest rules, gates I2 and I4 together, and
+the 3,000-comparable minimum above no longer applies. Every other I2 bar
+still holds over the sync requests the span does compare: `agree_full`
+at least 99.5% of them when there are any, every difference explained,
+zero `differ.estimate*`, zero `row.idempotency_fingerprint`, no field
+counted `other`, zero `would_admit_python_refused` beyond key-revocation
+lag, `cohort_by_class` accounted for and the stale-pass rate recorded.
+Once the gate is green the switches go in §6.2's step 4 order: the async
+setting first (it changes nothing while no decide row is on), then
+`decide on` for an operator-owned workspace, then the pilot workspace.
