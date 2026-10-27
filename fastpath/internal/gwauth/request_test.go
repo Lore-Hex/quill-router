@@ -122,6 +122,13 @@ func TestTheReasons(t *testing.T) {
 		{"header partner", ReasonIdempotencyKey, bodyOf(`"idempotency_key":"k"`),
 			Headers{ContentType: []string{"application/json"}, IdempotencyKey: []string{"partner:x"}}},
 		{"settlement", ReasonSettlementAsync, bodyOf(),
+			Headers{ContentType: []string{"application/json"}, SettlementMode: []string{"sync"}}},
+		{"settlement repeated", ReasonSettlementAsync, bodyOf(),
+			Headers{ContentType: []string{"application/json"}, SettlementMode: []string{"async-v1", "async-v1"}}},
+		{"settlement spaced", ReasonSettlementAsync, bodyOf(),
+			Headers{ContentType: []string{"application/json"}, SettlementMode: []string{" async-v1"}}},
+		// Exactly ["async-v1"] is composed (G15c), not passed here.
+		{"settlement async-v1", "", bodyOf(),
 			Headers{ContentType: []string{"application/json"}, SettlementMode: []string{"async-v1"}}},
 		{"video header", ReasonVideoProviders, bodyOf(),
 			Headers{ContentType: []string{"application/json"}, VideoAllowedProviders: true}},
@@ -155,6 +162,22 @@ func TestACacheAffinityKeyParsesAndIsFlagged(t *testing.T) {
 	}
 }
 
+// TestACohortPassKeepsTheParse: a body that parsed whole and then passes a
+// cohort reason returns its parse, so the shadow can count an async-v1
+// request's population (G15 §4.4); a body the parse refuses returns none.
+func TestACohortPassKeepsTheParse(t *testing.T) {
+	key := `"cache_affinity_key":"` + strings.Repeat("a", 64) + `"`
+	async := Headers{ContentType: []string{"application/json"}, SettlementMode: []string{"async-v1"}}
+	r, p := ParseRequest(bodyOf(key, `"stream":true`), async)
+	if p.Reason != ReasonStream || !r.CacheAffinity || !r.Async.V1 {
+		t.Errorf("a stream: pass %q, affinity %v, async-v1 %v", p.Reason, r.CacheAffinity, r.Async.V1)
+	}
+	r, p = ParseRequest(bodyOf(key, `"max_tokens":"64"`), async)
+	if p.Reason != ReasonLaxType || r.CacheAffinity || r.Async.V1 {
+		t.Errorf("a lax type: pass %q, affinity %v, async-v1 %v", p.Reason, r.CacheAffinity, r.Async.V1)
+	}
+}
+
 // TestACacheAffinityKeyChangesNoPass: a body naming a cache_affinity_key
 // passes with the reason its tags, attribution, routing inputs, key
 // identifier, cohort fields, headers or schema give; the key adds none of
@@ -176,7 +199,7 @@ func TestACacheAffinityKeyChangesNoPass(t *testing.T) {
 		{"no key identifier", []byte(`{"model":"z-ai/glm-5.3",` + key + `}`), jsonHeaders, ReasonRefused},
 		{"stream", bodyOf(key, `"stream":true`), jsonHeaders, ReasonStream},
 		{"settlement header", bodyOf(key),
-			Headers{ContentType: []string{"application/json"}, SettlementMode: []string{"async-v1"}}, ReasonSettlementAsync},
+			Headers{ContentType: []string{"application/json"}, SettlementMode: []string{"sync"}}, ReasonSettlementAsync},
 		{"before the key: lax type", bodyOf(key, `"max_tokens":"64"`), jsonHeaders, ReasonLaxType},
 		{"before the key: dict key", bodyOf(key, `"tags":{" k":"v"}`), jsonHeaders, ReasonDictKeyStrip},
 		{"before the key: refused field", bodyOf(key, `"region":5`), jsonHeaders, ReasonRefused},

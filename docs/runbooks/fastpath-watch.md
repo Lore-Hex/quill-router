@@ -170,12 +170,53 @@ lines, summed, are its counts. It prints JSON:
   the line's bound are counted `other`, so a non-zero `fields_other` means
   the two zero gates cannot be read as zero. Then
   `would_admit_python_refused` and its classes; `stale` by cache,
-  `followed` (every request the shadow compared) and `stale_rate`; and the
-  decide path's `unavailable` answers by the insert's gRPC code. Lines of a
+  `followed` (every request the shadow compared) and `stale_rate`; the
+  decide path's `unavailable` answers by the insert's gRPC code; and
+  `settlement_header_passes` and `settlement_header_pass_share`, the
+  results passed `header.settlement_async` (any `X-TR-Settlement-Mode` but
+  exactly `async-v1`, `sync` and repeated values included) over `followed`:
+  a pass share under one reason, not the async-v1 share of traffic
+  (`docs/design/fast-admission-e2-g15-async.md` §5). Lines of a
   release before this one also carried `affinity=` (the requests naming a
   `cache_affinity_key`, then measured apart); the report sums it under
   `decide_shadow.by_name.affinity` and no figure reads it, so read a span
   from the first line of a node on this release.
+- `i3`: the I3 gate's figures (`docs/design/fast-admission-e2-g15-async.md`
+  §4.4, §6.2), each one number. From G15c the shadow composes every
+  request whose `X-TR-Settlement-Mode` is exactly `async-v1` and, while
+  the policy's `async_settle.edge_decide` is false, passes it after the
+  compose with `async.off` (counted in `decide` beside the decide row's
+  gates), so Python answers it and the shadow compares it; with no
+  `async_settle` in the policy or no `billing_valid` in the snapshot it
+  passes `async.unpublished`, and with Python's admission on
+  `policy.async_admission`, both before the key is looked up. Its line
+  carries five maps, each keyed by population first (`plain`, `affinity`
+  for a body naming a `cache_affinity_key`, and for `async_seen`
+  `unparsed`, a body the edge did not parse): `async_seen` (every such
+  request followed, whatever it passed with), `async_compared`
+  (`<pop>.agree` or `<pop>.differ`: Go composed it and Python's 200 was
+  read, by whether the async members alone matched, an affinity request's
+  against the candidates its comparison used), `async_fields`
+  (`<pop>.differ.async_eligible`, `.differ.billing_snapshot`,
+  `.differ.billing_snapshot_hash`, `.differ.async_shape`), `async_shape`
+  (Go's composed shape, `snapshot` or `false_only.<reason>`) and
+  `async_python_admitted` (Python answered with a ticket: its admission
+  was on, so the members are not compared and the sample restarts). The
+  report prints `async_seen` and `async_seen_share` (over `followed`),
+  `async_compared` with `async_compared_per_day`, `async_compared_plain`
+  with `async_compared_plain_per_day` (the two daily rates, over the span
+  from `-since` to `-until`, that project the soak's end),
+  `async_compared_plain_agree_ratio`, `async_compared_affinity` and
+  `async_compared_affinity_agree_ratio` (each at least 99.5%),
+  `async_fields_billing_snapshot_hash` (zero),
+  `async_fields_billing_snapshot`, `async_fields_async_eligible` and
+  `async_fields_async_shape` (zero beyond the explained price-epoch
+  boundary cases), each over both populations, and
+  `async_python_admitted` (zero). The I3 bars: `async_compared` at least
+  2,000 and `async_compared_plain` at least 250, read with `-since` the
+  last node's restart onto G15c as for I2. A line of a release before G15c
+  has none of these maps: its figures are zero, and a ratio of nothing is
+  `null`.
 - `decide_shadow` and `decide`: every count of the lines, summed.
 - `periods`: each node's lines that come once a minute, the decide line and
   the shadow's line of the requests it did not follow. A node that ran the

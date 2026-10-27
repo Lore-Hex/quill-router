@@ -92,6 +92,23 @@ const (
 	PassRegionsMismatch    = "policy.regions_mismatch"
 	PassDecideOff          = "decide.off"
 
+	// The async-v1 gates (docs/design/fast-admission-e2-g15-async.md §4.1,
+	// §6.1), for a request whose X-TR-Settlement-Mode is exactly
+	// ["async-v1"]. PassAsyncUnpublished and PassAsyncAdmission are keyless
+	// policy gates: the policy carries no async_settle object or the
+	// snapshot no billing_valid, so Go cannot build Python's answer; or
+	// Python's admission is on, so the ticket is Python's. PassAsyncOff is a
+	// decision gate after the compose, beside the decide row's: the policy's
+	// edge_decide is false, so the request is composed (and compared by the
+	// shadow) but never answered.
+	PassAsyncUnpublished = "async.unpublished"
+	PassAsyncAdmission   = "policy.async_admission"
+	PassAsyncOff         = "async.off"
+	// PassSettlementHeader is gwauth's request reason for any other present
+	// X-TR-Settlement-Mode, named here for the watch's settlement-header
+	// pass share (only the edge uses gwauth's request side).
+	PassSettlementHeader = gwauth.ReasonSettlementAsync
+
 	// PassEvaluate is any evaluator pass not named below (the request's
 	// shape or a snapshot input Go does not reproduce); PassEvaluateRefused
 	// any refusal, which Python makes itself.
@@ -243,13 +260,15 @@ func (d *Decision) Restage(authorizationID, reservationID, idempotencyKey string
 
 // Decided is Decide's answer. Pass is "" when the edge would answer the
 // request itself, else the first §3 reason it goes to Python. ForShadow is
-// the decision when every gate but the decide row passed, so the shadow
+// the decision when every gate but the decision gates passed, so the shadow
 // compares what the edge would answer for a workspace it does not yet
-// decide; DecideGate is then that row's reason ("" for on, PassDecideOff
-// or PassCacheDecide), and Pass is it. Only Admit hands out a decision to
-// admit, and only when Pass is "". LookupHash and Workspace are what the
-// request named and what the cache said of its key, "" when not known:
-// the shadow and the decide path evict them when Python refuses the key.
+// decide; DecideGate is then the decision gate's reason ("" for on; the
+// decide row's PassDecideOff or PassCacheDecide; else, for an async-v1
+// request while the policy's edge_decide is false, PassAsyncOff), and Pass
+// is it. Only Admit hands out a decision to admit, and only when Pass is
+// "". LookupHash and Workspace are what the request named and what the
+// cache said of its key, "" when not known: the shadow and the decide path
+// evict them when Python refuses the key.
 type Decided struct {
 	Pass string
 	// shadowOnly is the decision for comparison: read through ForShadow,
@@ -262,7 +281,20 @@ type Decided struct {
 	// Read is what the cache held for the lookup hash (zero when not
 	// looked up).
 	Read gwstate.Read
+	// AsyncPop is the shadow's async-v1 population (§4.4) of a request
+	// whose X-TR-Settlement-Mode is exactly ["async-v1"], whatever it passes
+	// with: AsyncPlain or AsyncAffinity (whether the body names a
+	// cache_affinity_key) once the strict parse has read the body whole,
+	// else AsyncUnparsed; "" for any other request.
+	AsyncPop string
 }
+
+// The async-v1 populations (Decided.AsyncPop).
+const (
+	AsyncPlain    = "plain"
+	AsyncAffinity = "affinity"
+	AsyncUnparsed = "unparsed"
+)
 
 // Admit is the decision the edge may admit: one, and true, only when every
 // gate passed, the decide row's included.
@@ -278,30 +310,39 @@ func (d Decided) Admit() (*Decision, bool) {
 // alone, and never admitted (Admit is).
 func (d Decided) ForShadow() *Decision { return d.shadowOnly }
 
-func passDecided(reason string) Decided { return Decided{Pass: reason} }
-
 // Decide runs the pipeline: the boot, the request, the caches, the key's
 // and workspace's facts, the policy, the evaluator, the identity and the
 // compose, in §3's order (the boot first: the edge reads nothing else of a
-// request whose boot fails), and the decide row last.
+// request whose boot fails), and the decision gates last.
 func Decide(in DecideInputs) Decided {
-	if q := in.Request; q.Method != http.MethodPost || !authorizeRoutes[q.Path] || q.EscapedPath != q.Path {
-		return passDecided(PassRequestPath)
-	}
-	if reason := bootPass(in.Request.Boot); reason != "" {
-		return passDecided(reason)
-	}
-	h := headersOf(in.Request.Header)
-	r, p := gwauth.ParseRequest(in.Request.Body, h)
-	if p.Passed() {
-		return passDecided(p.Reason)
-	}
-	at := in.Request.At
-	out := Decided{LookupHash: r.APIKeyLookupHash}
+	var out Decided
 	pass := func(reason string) Decided {
 		out.Pass = reason
 		return out
 	}
+	h := headersOf(in.Request.Header)
+	if v := h.SettlementMode; len(v) == 1 && v[0] == gwauth.SettlementModeAsyncV1 {
+		out.AsyncPop = AsyncUnparsed
+	}
+	if q := in.Request; q.Method != http.MethodPost || !authorizeRoutes[q.Path] || q.EscapedPath != q.Path {
+		return pass(PassRequestPath)
+	}
+	if reason := bootPass(in.Request.Boot); reason != "" {
+		return pass(reason)
+	}
+	r, p := gwauth.ParseRequest(in.Request.Body, h)
+	if r.Async.V1 {
+		// The body parsed whole (a cohort reason may still pass it).
+		out.AsyncPop = AsyncPlain
+		if r.CacheAffinity {
+			out.AsyncPop = AsyncAffinity
+		}
+	}
+	if p.Passed() {
+		return pass(p.Reason)
+	}
+	at := in.Request.At
+	out.LookupHash = r.APIKeyLookupHash
 	policy, snap := in.Policy, in.Snapshot
 	if policy == nil || at.Unix()+policySkew < policy.IssuedAt || at.Unix() >= policy.NotAfter {
 		return pass(PassCachePolicy)
@@ -320,6 +361,9 @@ func Decide(in DecideInputs) Decided {
 		return pass(PassNotPilotWorkspace)
 	case !slices.Contains(policy.FastpathPilotRegions, policy.Plane.Region):
 		return pass(PassPilotRegion)
+	}
+	if reason := asyncPolicyPass(r, policy, snap); reason != "" {
+		return pass(reason)
 	}
 	if in.Lookup == nil || r.APIKeyLookupHash == "" {
 		return pass(PassCacheKey)
@@ -452,6 +496,11 @@ func Decide(in DecideInputs) Decided {
 		}, key.WorkspaceID, in.Request.Boot.Boot.DeclaresUsageHeartbeat),
 		BootKid: in.Request.Boot.Kid,
 	}
+	if r.Async.V1 {
+		// The additions Python splices in (shape A or B); the policy's
+		// object is present and admission off (asyncPolicyPass).
+		compose.Async = &gwauth.AsyncInput{Request: r.Async, Policy: *policy.AsyncSettle}
+	}
 	staged, err := gwauth.Stage(compose)
 	if err != nil {
 		return pass(PassCompose)
@@ -463,8 +512,29 @@ func Decide(in DecideInputs) Decided {
 		Affinity: r.CacheAffinity, Routing: req, Snapshot: snap,
 	}
 	out.DecideGate = in.Decide.gate(key.WorkspaceID, policy.Plane.Cloud, region, at)
+	if out.DecideGate == "" && r.Async.V1 && !policy.AsyncSettle.EdgeDecide {
+		// Composed for the shadow, answered by Python, even for a workspace
+		// whose decide row is on (§6.2, the dark sequence).
+		out.DecideGate = PassAsyncOff
+	}
 	out.Pass = out.DecideGate
 	return out
+}
+
+// asyncPolicyPass is an async-v1 request's keyless policy gate: "" when the
+// edge can compose Python's admission-off answer, PassAsyncUnpublished when
+// the policy or the snapshot does not carry what it reads, and
+// PassAsyncAdmission when Python's admission is on (a ticket is Python's).
+func asyncPolicyPass(r gwauth.Request, p *routingsnapshot.EdgePolicy, s *routingsnapshot.Snapshot) string {
+	switch {
+	case !r.Async.V1:
+		return ""
+	case p.AsyncSettle == nil || !s.BillingValidPublished():
+		return PassAsyncUnpublished
+	case p.AsyncSettle.AdmissionEnabled:
+		return PassAsyncAdmission
+	}
+	return ""
 }
 
 func composeTags(tags []gwauth.Tag) []gwauth.ComposeTag {
