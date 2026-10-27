@@ -122,8 +122,12 @@ type Config struct {
 	// command sets os.Exit; nil leaves the process to its parts.
 	Exit func(code int)
 
-	// failStop, when set, is FailStop for a test.
-	failStop time.Duration
+	// failStop, when set, is FailStop for a test; startDeadline and
+	// startStall are StartDeadline and StartStall.
+	failStop, startDeadline, startStall time.Duration
+	// ringStore, when set, is the ring's store, the membership's, for a
+	// test.
+	ringStore ring.Membership
 	// edgeMade, when set, is given the edge once it is made: the tests'
 	// view of it.
 	edgeMade func(*edge.Edge)
@@ -329,7 +333,7 @@ func Run(ctx context.Context, cfg Config, c Clients) error {
 		log.Printf("fastpath: the owner's clock readings offset by %v", cfg.ClockOffset)
 	}
 	return lifecycle(ctx, func(p *parts) {
-		p.exit, p.failStop = cfg.Exit, cmp.Or(cfg.failStop, FailStop)
+		defer p.begin(cfg)()
 		// The edge first: one that cannot listen or has no upstream fails
 		// the process before the node takes its ring row.
 		if cfg.Edge.Address != "" {
@@ -645,6 +649,89 @@ func (p *parts) fail(err error) {
 	p.cancel()
 }
 
+// StartDeadline bounds each Spanner call a process makes as it starts,
+// before its parts run: its ring row's join, the first read of the members
+// and the first read of the switch. Run's context has no deadline, nor have
+// Spanner's reads, so one that stalled would hold the start for good: the
+// auditor would never start, nor the admission node serve, while the edge,
+// which serves before them, answered the balancer serving all the while.
+// Each is one small transaction or strong read, well under a second; the
+// auditor's StoreDeadline, 15 s, leaves as much room here. A join or a read
+// of the members that runs out of time fails the process, which exits and
+// systemd starts again five seconds later with a Spanner client of its own:
+// the restart is the retry, so there is no loop here. A join that landed
+// after all does no harm, as the next start's join takes a newer epoch
+// still. The switch's read that fails is logged, as before, and the node
+// admits for no workspace until a later read succeeds.
+const StartDeadline = auditor.StoreDeadline
+
+// StartStall bounds a process's whole start: one still under way then,
+// held by a call deaf to its deadline, fails the process with
+// ErrStartStalled, and the process then exits within FailStop. It is four
+// times StartDeadline, as the auditor's CommitStall is its StoreDeadline's,
+// so a start whose three calls each take nearly their deadline still
+// finishes.
+const StartStall = auditor.CommitStall
+
+// ErrStartStalled is Run's failure when its start has run past StartStall.
+var ErrStartStalled = errors.New("service: the process had not started within its limit, a Spanner call's " +
+	"deadline notwithstanding")
+
+// begin sets the process's exit and starts its start's watchdog, which
+// fails the process once StartStall has passed; what it returns notes the
+// start ended. The exit is set first, so that the watchdog's failure arms
+// it.
+func (p *parts) begin(cfg Config) (started func()) {
+	p.exit, p.failStop = cfg.Exit, cmp.Or(cfg.failStop, FailStop)
+	stall := cmp.Or(cfg.startStall, StartStall)
+	t := time.AfterFunc(stall, func() { p.fail(fmt.Errorf("%w (%v)", ErrStartStalled, stall)) })
+	return func() { t.Stop() }
+}
+
+// startCall runs one of the start's Spanner calls under StartDeadline.
+func startCall[T any](p *parts, cfg Config, what string, f func(context.Context) (T, error)) (T, error) {
+	ctx, cancel := context.WithTimeout(p.ctx, cmp.Or(cfg.startDeadline, StartDeadline))
+	defer cancel()
+	v, err := f(ctx)
+	if err != nil {
+		err = fmt.Errorf("service: %s as the process started: %w", what, err)
+	}
+	return v, err
+}
+
+// join takes the process's ring row, its join under StartDeadline; its
+// heartbeats then run until it is stopped.
+func (p *parts) join(cfg Config, s *store.Store) (*ring.Node, error) {
+	return startCall(p, cfg, "joining the ring", func(ctx context.Context) (*ring.Node, error) {
+		return ring.Start(ctx, cfg.membership(s), cfg.Address, roles(cfg), cfg.Ring)
+	})
+}
+
+// watchMembers reads the members, the first read under StartDeadline; the
+// later reads then run until it is stopped.
+func (p *parts) watchMembers(cfg Config, s *store.Store) (*ring.Watcher, error) {
+	return startCall(p, cfg, "reading the members", func(ctx context.Context) (*ring.Watcher, error) {
+		return ring.Watch(ctx, cfg.membership(s), cfg.Ring)
+	})
+}
+
+// membership is the ring's store: the process's, unless a test gives its
+// own.
+func (c Config) membership(s *store.Store) ring.Membership {
+	if c.ringStore != nil {
+		return c.ringStore
+	}
+	return s
+}
+
+// readSwitch reads the switch before the node serves, under StartDeadline.
+func (p *parts) readSwitch(cfg Config, sw *workspaceSwitch) error {
+	_, err := startCall(p, cfg, "reading the fast path's switch", func(ctx context.Context) (struct{}, error) {
+		return struct{}{}, sw.refresh(ctx)
+	})
+	return err
+}
+
 // startFailed ends a process whose part could not start: a failure, unless
 // the caller's ctx ending is why.
 func (p *parts) startFailed(ctx context.Context, err error) {
@@ -722,12 +809,12 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 			}
 		}()
 	}
-	node, err := ring.Start(p.ctx, s, cfg.Address, roles(cfg), cfg.Ring)
+	node, err := p.join(cfg, s)
 	if err != nil {
 		return err
 	}
 	p.stop(node.Stop)
-	members, err := ring.Watch(p.ctx, s, cfg.Ring)
+	members, err := p.watchMembers(cfg, s)
 	if err != nil {
 		return err
 	}
@@ -737,8 +824,8 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 	// node that cannot read it admits for no workspace. The owner asks it
 	// as it makes each hold, and the front door before it routes.
 	sw := &workspaceSwitch{read: s.EnabledWorkspaces, every: cfg.Switch, clock: time.Now}
-	if err := sw.refresh(p.ctx); err != nil {
-		log.Printf("service: reading the fast path's switch: %v", err)
+	if err := p.readSwitch(cfg, sw); err != nil {
+		log.Print(err)
 	}
 	p.run("switch", func(ctx context.Context) error {
 		sw.run(ctx)
@@ -891,7 +978,7 @@ func roles(cfg Config) []string {
 // deploy sees it live; one beside an admission node is on the node's row.
 func (p *parts) auditor(cfg Config, c Clients, s *store.Store, settle *settlelog.Log, records *settlelog.Records) error {
 	if !cfg.Admission {
-		node, err := ring.Start(p.ctx, s, cfg.Address, roles(cfg), cfg.Ring)
+		node, err := p.join(cfg, s)
 		if err != nil {
 			return err
 		}

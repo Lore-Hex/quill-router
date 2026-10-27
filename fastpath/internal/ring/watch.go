@@ -28,7 +28,8 @@ type Watcher struct {
 	done chan struct{}
 }
 
-// Watch reads the members once, and then every interval until stopped.
+// Watch reads the members once, and then every interval until stopped. ctx
+// is the first read's alone.
 func Watch(ctx context.Context, m Membership, interval time.Duration) (*Watcher, error) {
 	return watch(ctx, m, interval, nil)
 }

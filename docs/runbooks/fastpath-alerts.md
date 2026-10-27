@@ -166,6 +166,30 @@ A member that restarts again and again, a call stuck each time, points
 at Spanner from that node: compare with the other nodes'
 lines, and take a dump before the next restart.
 
+### A start that stalls
+
+The Spanner calls a process makes as it starts, before its parts run
+(its ring row's join, the first read of the members, the first read of
+the switch), each have a 15 s deadline (`service.StartDeadline`); the
+whole start has a minute (`service.StartStall`). Without them a stalled
+read held the start for good: the auditor never started, and the edge,
+which serves before the node's other parts, answered the balancer serving
+all the while. A join or a read of the members that runs out of time
+fails the process, which logs
+
+```
+fastpath: service: joining the ring as the process started: ...
+```
+
+(or `reading the members as the process started`) and exits; systemd
+starts it again five seconds later, with a Spanner client of its own. A
+start still under way after a minute, a call deaf to its deadline holding
+it, fails with `service: the process had not started within its limit`
+and exits within `service.FailStop`, as above. A switch read that runs out
+of time is logged and the node starts, admitting for no workspace until a
+later read succeeds. A node that restarts again and again this way points
+at Spanner from that node, as above.
+
 ### The auditor's own lines
 
 On a node, the auditor's lines in its journal:
