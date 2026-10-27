@@ -50,13 +50,32 @@ def test_published_catalog_has_one_qwen_listing_with_all_existing_routes() -> No
     from trusted_router.public_catalog_aliases import canonical_public_model_id
     from trusted_router.routes.catalog import _public_catalog_payload
 
-    canonical = "qwen/qwen3.8-27b"
     rows = _public_catalog_payload((0, "listing-alias-regression")).shapes
-    assert sum(row["id"] == canonical for row in rows) == 1
+    assert sum(row["id"] == "qwen/qwen3.8-27b" for row in rows) == 1
     assert not set(MODEL_LISTING_ALIASES).intersection(row["id"] for row in rows)
-    routes = {(e.provider, e.usage_type, e.upstream_id) for e in endpoints_for_model(canonical)}
-    for alias in MODEL_LISTING_ALIASES:
+    for alias, canonical in MODEL_LISTING_ALIASES.items():
+        if alias not in MODELS or canonical not in MODELS:
+            continue
+        assert sum(row["id"] == canonical for row in rows) == 1
+        routes = {(e.provider, e.usage_type, e.upstream_id) for e in endpoints_for_model(canonical)}
         assert canonical_public_model_id(alias, MODELS) == canonical
         for endpoint in endpoints_for_model(alias):
             assert (endpoint.provider, endpoint.usage_type, endpoint.upstream_id) in routes
             assert MODEL_ENDPOINTS[endpoint.id] == endpoint
+
+
+def test_published_catalog_lists_no_ids_differing_only_in_case() -> None:
+    from trusted_router.routes.catalog import _public_catalog_payload
+
+    rows = _public_catalog_payload((0, "case-duplicate-regression")).shapes
+    folded = [row["id"].casefold() for row in rows]
+    assert len(folded) == len(set(folded))
+
+
+def test_published_cache_read_never_exceeds_the_headline_prompt() -> None:
+    from trusted_router.routes.catalog import _public_catalog_payload
+
+    for row in _public_catalog_payload((0, "cache-price-regression")).shapes:
+        pricing = row["pricing"]
+        if "input_cache_read" in pricing and "prompt" in pricing:
+            assert float(pricing["input_cache_read"]) <= float(pricing["prompt"]), row["id"]

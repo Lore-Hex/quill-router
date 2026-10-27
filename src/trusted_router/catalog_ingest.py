@@ -1408,6 +1408,9 @@ def _supplemental_provider_models_and_endpoints(
             else:
                 models[model_id] = replace(
                     existing,
+                    # The row that created the model may state no window while
+                    # a later route's does; 0 would publish an unusable window.
+                    context_length=existing.context_length or model.context_length,
                     input_modalities=tuple(
                         dict.fromkeys((*existing.input_modalities, *model.input_modalities))
                     ),
