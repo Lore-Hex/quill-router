@@ -495,8 +495,9 @@ def test_takeover_reader_bound_with_healthy_survivors(n, exhausted):
     print("TAKEOVER_SURVIVORS", n-1, exhausted, resumed-(START+29), metrics)
 
 
+@pytest.mark.parametrize("ref", [TAKEOVER_BASELINE, None], ids=["pinned-head", "worktree"])
 @pytest.mark.parametrize("kind", [None, "order", "refused", "post_commit"])
-def test_four_contender_long_gap_positive_control(kind):
+def test_four_contender_long_gap_positive_control(kind, ref):
     import hashlib
 
     # Deterministic adverse ranks, not a changed protocol or a random search at
@@ -512,16 +513,15 @@ def test_four_contender_long_gap_positive_control(kind):
             break
     assert len(boots) == 4
     kwargs = dict(publication_fault=(30, 2, kind), stall_from=32) if kind else dict(stall_from=30)
-    for ref in (TAKEOVER_BASELINE, None):
-        result = simulate_lifecycle(ref=ref, warm=True, n=4, boots=boots, slots=130,
-                                    microsecond_reads=True, **kwargs)
-        anchor = START+(31 if kind == "post_commit" else 29)
-        resumed = min(s for s in result["durable_publication_slots"] if s > anchor)
-        gap = resumed-anchor
-        assert gap > 30 if ref else gap <= (4 if kind in ("order", "refused") else 2)
-        metrics = takeover_measurements(result)
-        assert metrics["share"] < .8 if ref else metrics["share"] >= .95
-        print("TAKEOVER_LONG_GAP", ref or "worktree", kind, gap, metrics)
+    result = simulate_lifecycle(ref=ref, warm=True, n=4, boots=boots, slots=130,
+                                microsecond_reads=True, **kwargs)
+    anchor = START+(31 if kind == "post_commit" else 29)
+    resumed = min(s for s in result["durable_publication_slots"] if s > anchor)
+    gap = resumed-anchor
+    assert gap > 30 if ref else gap <= (4 if kind in ("order", "refused") else 2)
+    metrics = takeover_measurements(result)
+    assert metrics["share"] < .8 if ref else metrics["share"] >= .95
+    print("TAKEOVER_LONG_GAP", ref or "worktree", kind, gap, metrics)
 
 
 def test_only_process_gone_cannot_publish():
@@ -667,4 +667,144 @@ def test_age_two_claim_does_not_race_a_healthy_reclaiming_holder():
     assert all(t["outcome"] == "published" for t in result["worker_traces"] if t["boot"] == "boot-0")
     assert result["claim_lock_wait_seconds"] == result["aborts"] == 0
     assert len(claims) == len(set(claims))
-    print("AGE_TWO", len(skipped), "extra_claim_transactions", 0, "max_claim_ms", max(stamps))
+    extra_claims = sum(boot != 0 and slot-START-1 in skipped for boot, slot in claims)
+    assert extra_claims == 0
+    print("AGE_TWO", len(skipped), "extra_claim_transactions", extra_claims, "max_claim_ms", max(stamps))
+
+
+@pytest.mark.parametrize("delay", [.12, .2])
+@pytest.mark.parametrize("late_sampling", [True, False], ids=["round2-order", "pre-wall-order"])
+def test_tick_prelude_pause_costs_only_its_slot(delay, late_sampling):
+    pause_slot = START+30
+    pauses, admissions = [], {}
+
+    def patch(storage, publisher):
+        tick = publisher.Service.tick
+        record_breaker = publisher.Service.record_breaker
+        worker = publisher.publish_cycle
+
+        def delayed_breaker(self):
+            clock = self.store.database.clock
+            if not pauses and int(clock.now//2) == pause_slot:
+                pauses.append(clock.now)
+                # Owner callback, with n=1 and no outstanding worker/event in
+                # this interval: advance time inside tick's actual prelude.
+                clock.now += delay
+            return record_breaker(self)
+
+        def old_order(self, stamp, *, mono=None, publisher=None):
+            # CURRENT source, only discard the pre-wall sample. This control
+            # survives squash merges and never needs a historical git object.
+            return tick(self, stamp, publisher=publisher)
+
+        def measured_worker(*args):
+            reply = worker(*args)
+            admissions[reply.trace["slot"]] = reply.actual_start_mono
+            return reply
+
+        publisher.Service.record_breaker = delayed_breaker
+        publisher.publish_cycle = measured_worker
+        if late_sampling:
+            publisher.Service.tick = old_order
+
+    result = simulate_lifecycle(n=1, warm=True, slots=330, fixed_rpc_costs=True,
+        tick_offset_seconds=.020, admission_overshoot_seconds=.0007, patch=patch)
+    assert len(pauses) == 1
+    traces = {t["slot"]: t for t in result["worker_traces"]}
+    later = range(pause_slot+1, START+330)
+    starts = [(admissions[s]-s*2)*1e6 for s in later]
+    late = [traces[s] for s in later if traces[s]["outcome"] == "failed"]
+    if late_sampling:
+        assert all(start >= delay*1e6 for start in starts)
+        if delay == .2:
+            assert late
+            assert all(t["observed_at_ns"] > t["slot"]*2_000_000_000+250_000_000
+                       and t["rpc_count"] == 6 and not t["late_cycle"]
+                       and not t["unknown_outcome"] and "observation_failure" not in t for t in late)
+        else:
+            assert all(traces[s]["outcome"] == "published" for s in later)
+    else:
+        assert 20_699 <= min(starts) <= max(starts) <= 20_702
+        assert all(traces[s]["outcome"] == "published" for s in later)
+        paused = traces[pause_slot]
+        # S3 may reject a late admitted observation; that costs only this slot.
+        assert paused["outcome"] == ("published" if delay == .12 else "failed")
+        assert paused["claim_start_us"]-pause_slot*2_000_000 >= delay*1e6
+        if paused["outcome"] == "failed":
+            assert paused["observed_at_ns"] > pause_slot*2_000_000_000+250_000_000
+        assert result["max_published_observation_ms"] <= 250
+        assert result["max_published_cycle_ms"] <= 500
+    print("SAMPLING_PAUSE", "round2" if late_sampling else "pre-wall", delay,
+          "pause", traces[pause_slot]["outcome"],
+          "pause_start_us", (admissions[pause_slot]-pause_slot*2)*1e6,
+          "pause_observation_ms", (traces[pause_slot]["observed_at_ns"]-pause_slot*2_000_000_000)/1e6,
+          "later_start_us", min(starts), max(starts),
+          "later_outcomes", {outcome: sum(traces[s]["outcome"] == outcome for s in later)
+                             for outcome in ("published", "failed", "lost_claim", "missed")},
+          "late_observation_ms", [(t["observed_at_ns"]-t["slot"]*2_000_000_000)/1e6 for t in late])
+
+
+@pytest.mark.parametrize("site", ["run", "start", "_flush", "schedule_cycle", "publish_cycle", "observer_bootstrap"])
+def test_job_creating_tick_samples_monotonic_before_wall(monkeypatch, site):
+    import asyncio
+
+    from tests.test_async_settle_shadow_observation import NOW_US, service
+
+    svc = service()
+    svc.settings.async_settle_shadow_health_region = svc.settings.effective_serving_region
+    at, reads, ticks = [100.], {}, []
+
+    def clock():
+        at[0] += .001
+        return at[0]
+
+    def wall():
+        at[0] += .001
+        value = NOW_US/1e6 + at[0]-100
+        reads[int(value*1e6)] = at[0]
+        return value
+
+    class ReachedTick(Exception):
+        pass
+
+    accept = svc.accept
+    def capture(event):
+        if isinstance(event, shell.lifecycle.Tick):
+            ticks.append(event)
+            raise ReachedTick
+        return accept(event)
+
+    monkeypatch.setattr(svc.store, "clock", clock)
+    monkeypatch.setattr(svc.store, "wall", wall)
+    monkeypatch.setattr(svc.observer, "evidence_wall", wall)
+    monkeypatch.setattr(svc, "accept", capture)
+    monkeypatch.setattr(svc, "trap_sigterm", lambda: None)
+    monkeypatch.setattr(svc.runtime_stop, "poll", lambda: True)
+    monkeypatch.setattr(svc.runtime_stop, "start", lambda *args: None)
+    monkeypatch.setattr(svc.store, "session_recovery_due", lambda: False)
+
+    async def drive():
+        with pytest.raises(ReachedTick):
+            if site == "run":
+                await svc.run()
+            elif site == "start":
+                svc.start()
+            elif site == "_flush":
+                next(svc._flush(200.))
+            elif site == "observer_bootstrap":
+                svc.observer._count("health_reads")
+                svc.observer.inflight_ticks[None] = 100.
+            else:
+                getattr(svc, site)(NOW_US//2_000_000, NOW_US)
+
+    try:
+        asyncio.run(drive())
+        tick, = ticks
+        assert tick.admit
+        assert tick.mono <= reads[tick.stamp], (site, tick.mono, reads[tick.stamp])
+        # The chosen stamp is the immediately following wall read, not one of
+        # enabled()/pin()'s later policy reads inside the real tick prelude.
+        assert reads[tick.stamp]-tick.mono == pytest.approx(.001)
+    finally:
+        for executor in (svc.publisher_executor, svc.evidence_executor, svc.session_executor):
+            executor.shutdown(wait=True, cancel_futures=True)

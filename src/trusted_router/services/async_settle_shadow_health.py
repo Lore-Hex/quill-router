@@ -99,6 +99,7 @@ class HealthObserver(Observer):
         self.outcome = type("Outcome", (), {"owner": None})()
         self.service: Service | None = None
         self.scheduled_owner: tuple[str, int] | None = None
+        self.scheduled_mono: float | None = None
         observer = self
         class Ticks(dict[str | None, float]):
             def __setitem__(self, key: str | None, value: float) -> None:
@@ -108,7 +109,7 @@ class HealthObserver(Observer):
                 if observer.service is not None:
                     svc = observer.service
                     if not svc.state.days:
-                        svc.tick(owner[1])
+                        svc.tick(owner[1], mono=observer.scheduled_mono)
                     effects = svc.accept(lifecycle.ObserverEnqueued(owner[1], f"{key}:{value}"))
                     if any(isinstance(e, lifecycle.Fault) for e in effects):
                         raise _ObserverQuiesced
@@ -121,6 +122,7 @@ class HealthObserver(Observer):
         owner = getattr(self.outcome, "owner", None)
         scheduled = field in ("health_reads", "workspace_reads")
         if scheduled:
+            self.scheduled_mono = self.service.store.clock() if self.service is not None else self.clock()
             stamp = int(self.evidence_wall()*1_000_000)
             owner = self.scheduled_owner = (day_at(stamp), stamp)
             if self.service is not None:
@@ -873,7 +875,9 @@ class Service:
             target = self.counters[day]["publisher"]
             self._counter_cells(day, target, {name: target[name]+count})
 
-    def tick(self, stamp: int, *, publisher: bool | None = None) -> tuple[lifecycle.Effect, ...]:
+    def tick(self, stamp: int, *, mono: float | None = None, publisher: bool | None = None) -> tuple[lifecycle.Effect, ...]:
+        # Job-creating callers pair mono BEFORE the wall stamp. Sampling here
+        # after the prelude would let one pause shift every later reservation.
         self.assert_owner()
         self.record_breaker()
         self.enabled()  # Publish any changed admission generation before dispatch.
@@ -889,12 +893,15 @@ class Service:
                 slot = start//SLOT_US
                 days.append(lifecycle.Day(day, slot, slot-1, (start//lifecycle.DAY_US+1)*lifecycle.DAY_US//SLOT_US-1))
             self._state = lifecycle.State(days=tuple(days), publisher_enabled=enabled, generation=self.generation)
-        return effects + self.accept(lifecycle.Tick(stamp, self.store.clock(), self.enabled() and not self.stopped.is_set()
+        return effects + self.accept(lifecycle.Tick(stamp, self.store.clock() if mono is None else mono, self.enabled() and not self.stopped.is_set()
                                                      and (publisher is True or self.contender())))
 
     def schedule_cycle(self, slot: int, claim_us: int) -> None:
         self.assert_owner()
-        self.tick(claim_us, publisher=True)
+        # Refresh the offline driver's caller stamp as a paired sample too.
+        mono = self.store.clock()
+        stamp = int(self.store.wall()*1_000_000)
+        self.tick(stamp, mono=mono, publisher=True)
         if any(slot in d.publishers for d in self.state.days):
             self.publishing.add(day_at(claim_us))
 
@@ -1390,8 +1397,9 @@ class Service:
                 self.tick(self.interval_end_us, publisher=False)
             self.accept(lifecycle.ShutdownRequested(self.interval_end_us or int(self.store.wall()*1_000_000)))
         if not self.state.shutdown:
+            mono = self.store.clock()
             stamp = int(self.store.wall()*1_000_000)
-            effects = self.tick(stamp)
+            effects = self.tick(stamp, mono=mono)
             for effect in effects:
                 if isinstance(effect, lifecycle.StartPublisherCycle):
                     self.submit_publisher(effect.slot, stamp)
@@ -1690,7 +1698,7 @@ class Service:
                 self.session_job = self.session_executor.submit(self.store.prepare_session, self.journal.boot)
             now = self.store.clock()
             now_us = int(self.store.wall()*1_000_000)
-            for effect in self.tick(now_us):
+            for effect in self.tick(now_us, mono=now):
                 if isinstance(effect, lifecycle.StartPublisherCycle):
                     self.submit_publisher(effect.slot, now_us)
             if now >= self.next_flush and (self.flush_job is None or self.flush_job.done()):
@@ -1738,8 +1746,9 @@ class Service:
         if self.enabled() and self.task is None:
             self.loop = asyncio.get_running_loop()
             self.trap_sigterm()
+            mono = self.store.clock()
             stamp = int(self.store.wall()*1_000_000)
-            for effect in self.tick(stamp):
+            for effect in self.tick(stamp, mono=mono):
                 if isinstance(effect, lifecycle.StartPublisherCycle):
                     self.submit_publisher(effect.slot, stamp)
             self.observer.start()

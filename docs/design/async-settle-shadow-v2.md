@@ -306,6 +306,13 @@ Each recovery attempt shares one five-second deadline across its RPCs.
 
 **Cadence amendment (2026-10-27):** reserve a monotonic slot boundary Q for each
 issued job: `Q = max(tick_mono - wall_slot_phase, previous_Q + 2 s)`.
+Sample tick_mono immediately BEFORE its wall stamp, at every job-creating call
+site (including the offline driver), and carry it through the tick prelude.
+With stable clock rates, the estimated boundary is then no later than the true
+monotonic boundary (apart from at most 1 us of stamp truncation). Sampling after
+the wall stamp instead adds a nonnegative delay: the max retains the largest
+such error in every subsequent reservation. Pre-wall sampling makes that error
+nonpositive, so one sampling or prelude delay cannot shift a later slot.
 The earliest start is `max(tick_mono, Q)`; the latest remains the original
 `tick_mono + (250 ms - wall_slot_phase)`. Reserve Q if it lies within that
 window, even for a later missed or released job. If Q exceeds the latest start,
@@ -320,6 +327,11 @@ With stable wall/monotonic rate and an aligned reservation, a tick at B+h and
 per-cycle admission/scheduling overhead e starts at B+h+e, independent of every
 previous e. For h in [0,H] and e in [0,E], the band is [B,B+H+E], subject to the
 unchanged B+250 ms admission cutoff (microsecond sampling adds at most 1 us).
+This band also holds in later slots after a sampling/prelude pause: the pause
+costs only its own slot, which may publish late, fail its own S3 observation
+window, or miss without RPCs. A gap between the paired reads may conservatively
+shorten that slot's admission window; it never extends it or delays a later
+reservation.
 There is no finite host-latency guarantee: an unbounded pause causes a miss, not
 an expanded window. The calibrated regression uses h=20 ms and e=0.7 ms:
 20.699–20.702 ms over at least 1,000 slots; it is a model, not a production SLA.

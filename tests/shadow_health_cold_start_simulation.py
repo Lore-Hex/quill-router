@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import heapq
 import importlib.util
+import inspect
 import json
 import os
 import random
@@ -647,6 +648,7 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
     storage, publisher = modules(ref)
     if patch is not None:
         patch(storage, publisher)
+    paired_tick = "mono" in inspect.signature(publisher.Service.tick).parameters
     clock = Clock()
     # Offset means server minus local wall time. A negative boot's local
     # boundary happens before the server boundary. The DB uses one common
@@ -815,8 +817,11 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
                     # Model a missed host wake without inventing a claim or
                     # mutating durable timestamps; account it on the next tick.
                     continue
-                stamp = round(svc.store.wall()*1e6)
-                for effect in svc.tick(stamp):
+                # Mirror Service.run: monotonic immediately before wall, then
+                # the real tick prelude and lifecycle. Historical sources lack mono.
+                mono = svc.store.clock()
+                stamp = int(svc.store.wall()*1e6)
+                for effect in svc.tick(stamp, **({"mono": mono} if paired_tick else {})):
                     if isinstance(effect, publisher.lifecycle.StartPublisherCycle):
                         svc.submit_publisher(effect.slot, stamp)
         for offset in range(slots):
