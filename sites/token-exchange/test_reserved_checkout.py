@@ -18,7 +18,7 @@ class ReservedCheckoutTests(unittest.TestCase):
             for text in ['1 billion tokens', 'AAA, A, B or C', 'January 1, 2027 through December 31, 2027',
                          'Unused tokens expire December 31, 2027', 'full refund within 30 days of purchase',
                          'TrustedRouter account via the NYTE API', 'price is locked at purchase',
-                         'prepaid inference service, not a security or investment', '2026-10-27-v4', '10% early-reservation discount',
+                         'prepaid inference service, not a security or investment', '2026-10-27-v5', '10% early-reservation discount',
                          'transferable only through NYTE’s resale program', 'ahead of new inventory',
                          'resale price minus a 5% resale fee', 'refunded to the original card',
                          'capped at what the holder paid for those lots', 'Manage my reservation',

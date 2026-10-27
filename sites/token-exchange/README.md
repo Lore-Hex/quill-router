@@ -214,7 +214,7 @@ only through that program: holders list lots, NYTE resells them to new buyers ah
 of new inventory, and each sale returns the resale price minus a 5% resale fee to
 the original card, capped at what the holder paid for those lots. The `/manage-reservation` page emails a signed, single-use, 15-minute link.
 Full refund requests are recorded durably for ops to refund in Stripe; resale
-listing and withdrawal use the same holder session. The terms version is `2026-10-27-v4`.
+listing and withdrawal use the same holder session. The terms version is `2026-10-27-v5`.
 Delivery is through a TrustedRouter account via the NYTE API. The terms live at
 `/reserved-tokens-terms` and its `.html` alias, in the shared NYTE shell and New
 York sitemap. These are prepaid inference services, not securities or investments.
@@ -327,8 +327,10 @@ outstanding links. Repeated mutations use stable request IDs.
 pinned in `scripts/deploy/rollout.sh`. The flag gates every holder API action
 and all resale webhook work. The explicit ops refund CLI remains available for
 obligations already owed. Config loading rejects any fee other than 500 with an
-error explaining that a fee change requires a new terms version. v4 is the new checkout terms version;
-already-created v3 sessions remain accepted by the webhook.
+error explaining that a fee change requires a new terms version. v5 is the new checkout terms version;
+already-created v3/v4 sessions remain accepted by the webhook. The v5 terms keep
+email requests to enterprise@trustedrouter.com visible while self-service is
+unavailable; include the position ID or Stripe payment reference.
 
 Listed lots sell FIFO within each grade before new inventory at the buyer's
 locked checkout price. Allocation, seller lot counts, buyer position, event/session

@@ -64,7 +64,7 @@ def _private_stripe_reads() -> Iterator[None]:
     from stripe import _util
 
     # Stripe's optional console logger writes directly to stderr, bypassing
-    # Python filters. Refuse contact lookups under that diagnostic setting.
+    # Python filters. Refuse private Stripe calls under that diagnostic setting.
     if stripe.log in {"debug", "info"} or _util.STRIPE_LOG in {"debug", "info"}:
         raise ValueError("Private receipt lookup unavailable while Stripe console diagnostics are enabled")
     with _private_provider_logs():
@@ -114,6 +114,7 @@ def alert_ops(settings: Settings, subject: str, body: str) -> None:
         log.error("nyte.resale_ops_email_unavailable")
 
 
+@_private_stripe_reads()
 def process_fill(fill_id: str, settings: Settings) -> None:
     owner = secrets.token_hex(16)
     fill = command("fill_claim", fill=fill_id, owner=owner)
@@ -139,7 +140,8 @@ def process_fill(fill_id: str, settings: Settings) -> None:
                     if count >= 1000:
                         raise ValueError("Refund reconciliation requires ops")
                     candidate_row = _stripe_dict(candidate)
-                    if (candidate_row.get("metadata") or {}).get("nyte_fill_id") == fill_id:
+                    metadata = candidate_row.get("metadata") or {}
+                    if (metadata.get("fill_id") or metadata.get("nyte_fill_id")) == fill_id:
                         refund = candidate_row
                         break
                 if refund is None:
@@ -147,7 +149,9 @@ def process_fill(fill_id: str, settings: Settings) -> None:
                         raise ValueError("Ambiguous old attempt requires ops reconciliation")
                     refund = stripe.Refund.create(
                         payment_intent=fill["payment_intent"], amount=fill["refund_amount_cents"],
-                        metadata={"kind": "reserved_tokens_2027", "nyte_fill_id": fill_id}, idempotency_key="nyte-resale-" + fill_id,
+                        metadata={"kind": "reserved_tokens_2027", "fill_id": fill_id,
+                                  "position_id": fill["position_id"], "nyte_fill_id": fill_id},
+                        idempotency_key="nyte-resale-" + fill_id,
                         **options,
                     )
             refund = _stripe_dict(refund)
@@ -327,6 +331,7 @@ def _stripe_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else value._to_dict_recursive()
 
 
+@_private_stripe_reads()
 def acknowledge_full_refund(session_id: str, refund_id: str, settings: Settings) -> None:
     """Ops-only CLI reconciliation, after issuing the original-card refund."""
     p = command("position", position=session_id)

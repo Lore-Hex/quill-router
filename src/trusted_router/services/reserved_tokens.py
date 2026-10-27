@@ -21,7 +21,7 @@ from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
 
 KIND = "reserved_tokens_2027"
-TERMS_VERSION = "2026-10-27-v4"
+TERMS_VERSION = "2026-10-27-v5"
 WINDOW = {
     "usable_from": "2027-01-01",
     "usable_until": "2027-12-31",
@@ -134,7 +134,8 @@ def handle_reservation_event(event: dict[str, Any], settings: Settings, backgrou
             and obj.get("currency") == "usd" and obj.get("mode") == "payment"
             and metadata["grade"] in {"AAA", "A", "B", "C"}
             and all(metadata[key] == value for key, value in WINDOW.items() if key not in {"terms_version", "resale_fee_bps"})
-            and metadata["terms_version"] in {"2026-10-27-v3", TERMS_VERSION}
+            # Already-paid sessions retain the terms accepted at checkout.
+            and metadata["terms_version"] in {"2026-10-27-v3", "2026-10-27-v4", TERMS_VERSION}
             and metadata["resale_fee_bps"] == "500"
             and int(metadata["list_price_cents"]) > 0
             and 0 <= int(metadata["discount_bps"]) < 10_000

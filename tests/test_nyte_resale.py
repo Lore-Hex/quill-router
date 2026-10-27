@@ -291,6 +291,10 @@ def test_postgres_transaction_implementation_on_sql_fake(monkeypatch):
         contract.test_nyte_old_purchase_checks_current_stripe_before_held(store, "pgoldimport0", monkeypatch, "historical_import")
         contract.test_nyte_successful_refund_later_fails_without_reissuance(store, "pgfailedref0", monkeypatch, "failed")
         contract.test_nyte_successful_refund_later_fails_without_reissuance(store, "pgcancelref0", monkeypatch, "canceled")
+        for failure_first in (True, False):
+            for failure in ("failed", "canceled"):
+                contract.test_nyte_refund_failure_and_success_commit_are_order_independent(
+                    store, f"pgrace{failure_first}{failure}", monkeypatch, failure_first, failure)
     finally:
         conn._raw.close()
 
@@ -545,7 +549,7 @@ def test_unknown_failed_refund_cannot_reopen_fill(client, test_settings, monkeyp
     alert = Mock()
     monkeypatch.setattr(resale, "alert_ops", alert)
     result = client.post("/v1/internal/stripe/webhook", json={"id": "evt_unknown", "type": "refund.failed", "data": {"object": {
-        "id": "re_unknown", "payment_intent": "pi_seller", "amount": 95, "status": "failed", "metadata": {"nyte_fill_id": fid},
+        "id": "re_unknown", "payment_intent": "pi_seller", "amount": 95, "status": "failed", "metadata": {"fill_id": "unknown_fill"},
     }}})
     assert result.status_code == 200
     assert call(STORE, "pending", queue="refunds_needs_ops")["rows"] == []
@@ -572,3 +576,99 @@ def test_worker_observing_failed_refund_uses_ops_queue(settings, monkeypatch):
     create.assert_not_called()
     assert call(store, "pending")["rows"] == []
     assert call(store, "pending", queue="refunds_needs_ops")["rows"][0]["status"] == "needs_ops"
+
+
+def test_refund_failure_webhook_before_create_returns_is_terminal(client, test_settings, monkeypatch):
+    from trusted_router.storage import STORE
+    test_settings.resale_enabled = True
+    test_settings.stripe_secret_key = "sk_test_fixture"  # noqa: S105
+    purchase(STORE, "seller")
+    listing(STORE, "seller")
+    fid = purchase(STORE, "buyer", lots=1, allocate=True)["fills"][0]
+    monkeypatch.setattr(resale, "alert_ops", Mock())
+    monkeypatch.setattr(resale.stripe.Refund, "list", lambda **kw: SimpleNamespace(auto_paging_iter=lambda: iter([])))
+    def create(**kwargs):
+        assert kwargs["metadata"] == {"kind": "reserved_tokens_2027", "fill_id": fid, "position_id": "seller", "nyte_fill_id": fid}
+        assert kwargs["idempotency_key"] == "nyte-resale-" + fid
+        assert "description" not in kwargs
+        refund = {"id": "re_raced", "payment_intent": kwargs["payment_intent"], "amount": kwargs["amount"],
+                  "metadata": kwargs["metadata"], "status": "failed"}
+        result = client.post("/v1/internal/stripe/webhook", json={"id": "evt_raced", "type": "refund.failed", "data": {"object": refund}})
+        assert result.status_code == 200
+        return {**refund, "status": "succeeded"}  # Earlier API response arrives last.
+    create_mock = Mock(side_effect=create)
+    monkeypatch.setattr(resale.stripe.Refund, "create", create_mock)
+    resale.process_fill(fid, test_settings)
+    resale.process_fill(fid, test_settings)
+    create_mock.assert_called_once()
+    fill = call(STORE, "pending", queue="refunds_needs_ops")["rows"][0]
+    assert fill["status"] == "needs_ops" and fill["stripe_refund_id"] == "re_raced"
+    assert fill["history"][-1]["action"] == "stale_write"
+    assert call(STORE, "pending")["rows"] == []
+    assert resale.alert_ops.called
+
+
+def test_refund_worker_and_full_ack_hide_stripe_debug_payloads(settings, monkeypatch, caplog):
+    import logging
+
+    from stripe import _util
+
+    store = InMemoryStore()
+    monkeypatch.setattr(resale, "STORE", store)
+    monkeypatch.setattr(resale.stripe, "log", None)
+    monkeypatch.setattr(_util, "STRIPE_LOG", None)
+    purchase(store, "seller")
+    listing(store, "seller")
+    fid = purchase(store, "buyer", lots=1, allocate=True)["fills"][0]
+    email = "private-refund@example.com"
+    def log_payload():
+        for logger in ("stripe", "stripe.http_client", "urllib3.connectionpool", "httpx"):
+            logging.getLogger(logger).debug("API response description=%s metadata.email=%s", email, email)
+    def refund_list(**kwargs):
+        log_payload()
+        return SimpleNamespace(auto_paging_iter=lambda: iter([]))
+    def create(**kwargs):
+        log_payload()
+        assert email not in str(kwargs)
+        assert set(kwargs["metadata"]) == {"kind", "fill_id", "nyte_fill_id", "position_id"}
+        assert "description" not in kwargs
+        return {"id": "re_private", "payment_intent": "pi_seller", "amount": 95, "status": "pending", "description": email}
+    def retrieve(rid, **kwargs):
+        log_payload()
+        return {"id": rid, "payment_intent": "pi_full" if rid == "re_full" else "pi_seller",
+                "amount": 300 if rid == "re_full" else 95, "status": "succeeded", "metadata": {"email": email}}
+    listing_mock, create_mock, retrieve_mock = Mock(side_effect=refund_list), Mock(side_effect=create), Mock(side_effect=retrieve)
+    monkeypatch.setattr(resale.stripe.Refund, "list", listing_mock)
+    monkeypatch.setattr(resale.stripe.Refund, "create", create_mock)
+    monkeypatch.setattr(resale.stripe.Refund, "retrieve", retrieve_mock)
+    monkeypatch.setattr(resale, "alert_ops", Mock())
+    purchase(store, "full")
+    call(store, "request_refund", position="full", holder="full", request_id="full", now=101)
+    with caplog.at_level(logging.DEBUG):
+        resale.process_fill(fid, settings)
+        resale.process_fill(fid, settings)
+        resale.acknowledge_full_refund("full", "re_full", settings)
+        logging.getLogger("stripe").debug("outside-private-call")
+    listing_mock.assert_called_once()
+    create_mock.assert_called_once()
+    assert retrieve_mock.call_count == 2
+    assert email not in caplog.text and "outside-private-call" in caplog.text
+    assert store.resale_entities["nyte_fill", fid]["status"] == "refunded"
+    assert call(store, "position", position="full")["status"] == "refunded"
+
+
+@pytest.mark.parametrize("setting", ["log", "STRIPE_LOG"])
+@pytest.mark.parametrize("level", ["debug", "info"])
+def test_refund_calls_refuse_console_diagnostics(settings, monkeypatch, setting, level, capsys):
+    from stripe import _util
+    monkeypatch.setattr(resale.stripe, "log", None)
+    monkeypatch.setattr(_util, "STRIPE_LOG", None)
+    monkeypatch.setattr(resale.stripe if setting == "log" else _util, setting, level)
+    command = Mock(side_effect=AssertionError("Guard must run before ledger changes"))
+    monkeypatch.setattr(resale, "command", command)
+    for action in (lambda: resale.process_fill("fill", settings), lambda: resale.acknowledge_full_refund("session", "refund", settings)):
+        with pytest.raises(ValueError, match="console diagnostics"):
+            action()
+    command.assert_not_called()
+    captured = capsys.readouterr()
+    assert not captured.out and not captured.err

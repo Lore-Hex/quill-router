@@ -105,7 +105,8 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
         own_refunds = 0
         seen: set[str] = set()
         for refund in state.get("refunds", []):
-            fid = (refund.get("metadata") or {}).get("nyte_fill_id")
+            metadata = refund.get("metadata") or {}
+            fid = metadata.get("fill_id") or metadata.get("nyte_fill_id")
             if not fid or fid in seen:
                 continue
             fill = get("nyte_fill", fid)
@@ -193,6 +194,7 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
                 fee, refund = refund_cents(p["per_lot_cents"], seller["per_lot_cents"], c["fee_bps"])
                 fill_id = reference("nyte-fill:" + session + ":" + key)
                 fill = {"id": fill_id, "listing": key, "buyer_session": session,
+                        "position_id": seller["id"],
                         "event_id": c["event_id"], "lots": count, "resale_price_cents": p["per_lot_cents"],
                         "fee_bps": c["fee_bps"], "fee_cents": fee * count,
                         "refund_amount_cents": refund * count, "payment_intent": seller["payment_intent"],
@@ -304,8 +306,13 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
             key = row.get("next")
         return {"rows": rows, "cursor": key}
 
+    def fill_history(fill: Row, action: str, target: str) -> None:
+        fill.setdefault("history", []).append({"at": now, "action": action, "from": fill["status"], "to": target})
+        put("nyte_fill", fill["id"], fill)
+
     def needs_ops(fill: Row, reason: str) -> Row:
         if fill["status"] != "needs_ops":
+            fill_history(fill, "refund_failure", "needs_ops")
             if fill["status"] != "refunded":
                 queue_remove("nyte_fill", "refunds", fill["id"], fill)
             queue_append("nyte_fill", "refunds_needs_ops", fill["id"], fill)
@@ -319,29 +326,38 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
         if not rid or refund.get("status") not in {"failed", "canceled"}:
             return {}
         indexed = get("nyte_refund", rid)
-        # Older fills predate the index; Stripe metadata supplies an exact-key
-        # fallback, but never authorizes an unknown or mismatched refund ID.
-        fid = indexed.get("fill") or (refund.get("metadata") or {}).get("nyte_fill_id")
+        # Metadata identifies the fill even before the worker's first commit.
+        # The index is only a compatibility fallback for older Stripe objects.
+        metadata = refund.get("metadata") or {}
+        fid = metadata.get("fill_id") or metadata.get("nyte_fill_id") or indexed.get("fill")
         fill = get("nyte_fill", fid) if fid else {}
-        if (not fill or fill.get("stripe_refund_id") != rid
+        if (not fill or (indexed and indexed["fill"] != fid)
                 or fill["payment_intent"] != refund.get("payment_intent")
                 or fill["refund_amount_cents"] != refund.get("amount")):
             return {}
         put("nyte_refund", rid, {"fill": fid})
+        fill["stripe_refund_id"] = rid
         return needs_ops(fill, refund["status"])
 
     if op == "fill_claim":
         fill = get("nyte_fill", c["fill"])
         if not fill or fill["status"] in {"refunded", "needs_ops"} or fill.get("lease_until", 0) > now:
             return {}
-        fill.update(owner=c["owner"], lease_until=now + 120)
+        fill_history(fill, "claim", "in_flight")
+        fill.update(status="in_flight", owner=c["owner"], lease_until=now + 120)
+        if "position_id" not in fill:
+            listing = get("nyte_listing", fill["listing"])
+            fill["position_id"] = get("nyte_position", listing["position"])["id"]
         fill.setdefault("first_attempt_at", now)
         put("nyte_fill", c["fill"], fill)
         return fill
 
     if op == "fill_finish":
         fill = get("nyte_fill", c["fill"])
-        if fill.get("owner") != c["owner"] or fill["status"] == "needs_ops":
+        if not fill:
+            return {}
+        if fill.get("owner") != c["owner"] or fill["status"] != "in_flight":
+            fill_history(fill, "stale_write", c["status"])
             return {}
         rid = c.get("stripe_refund_id") or fill.get("stripe_refund_id")
         if rid:
@@ -352,7 +368,8 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
         fill.update(stripe_refund_id=rid, lease_until=0)
         if c["status"] == "needs_ops":
             return needs_ops(fill, c["failure_status"])
-        fill["status"] = c["status"]
+        fill_history(fill, "worker_finish", c["status"])
+        fill.update(status=c["status"], owner=None)
         if c["status"] == "refunded":
             queue_remove("nyte_fill", "refunds", c["fill"], fill)
         put("nyte_fill", c["fill"], fill)

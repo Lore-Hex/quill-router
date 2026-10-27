@@ -306,3 +306,42 @@ def test_nyte_successful_refund_later_fails_without_reissuance(store: Store, uni
     monkeypatch.setattr(resale.stripe.Refund, "create", create)
     resale.process_fill(fid, Settings(environment="test"))
     create.assert_not_called()
+
+
+@pytest.mark.parametrize("failure_first", [True, False])
+@pytest.mark.parametrize("failure", ["failed", "canceled"])
+def test_nyte_refund_failure_and_success_commit_are_order_independent(store: Store, unique: str, monkeypatch, failure_first: bool, failure: str) -> None:
+    from unittest.mock import Mock
+
+    from trusted_router.config import Settings
+    from trusted_router.services import resale
+
+    seller, buyer = unique + "seller", unique + "buyer"
+    purchase(store, seller)
+    listing(store, seller)
+    fid = purchase(store, buyer, lots=1, allocate=True)["fills"][0]
+    claimed = call(store, "fill_claim", fill=fid, owner="worker")
+    assert claimed["status"] == "in_flight" and claimed["stripe_refund_id"] is None
+    assert claimed["position_id"] == seller
+    refund = {"id": "re_" + unique, "payment_intent": "pi_" + seller, "amount": 95,
+              "status": failure, "metadata": {"fill_id": fid, "position_id": seller}}
+    for invalid in ({"payment_intent": "pi_wrong"}, {"amount": 94}, {"metadata": {"fill_id": "unknown"}}):
+        assert call(store, "refund_failed", refund={**refund, **invalid}) == {}
+
+    def success():
+        return call(store, "fill_finish", fill=fid, owner="worker", status="refunded", stripe_refund_id=refund["id"])
+
+    if not failure_first:
+        assert success()["status"] == "refunded"
+    blocked = call(store, "refund_failed", refund=refund)
+    assert blocked["status"] == "needs_ops" and blocked["stripe_refund_id"] == refund["id"]
+    assert success() == {}  # Includes a late duplicate success in the reverse ordering.
+    repeated = call(store, "refund_failed", refund=refund)
+    assert repeated["history"][-1] == {"at": REFUND_WINDOW + 101, "action": "stale_write", "from": "needs_ops", "to": "refunded"}
+    assert sum(row["to"] == "needs_ops" for row in repeated["history"]) == 1
+    assert not call(store, "fill_claim", fill=fid, owner="later", now=REFUND_WINDOW * 3)
+    monkeypatch.setattr(resale, "STORE", store)
+    create = Mock(side_effect=AssertionError("Terminal fill created another refund"))
+    monkeypatch.setattr(resale.stripe.Refund, "create", create)
+    resale.process_fill(fid, Settings(environment="test"))
+    create.assert_not_called()
