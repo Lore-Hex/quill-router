@@ -1389,8 +1389,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         return public_page_html(settings, "trustedos")
 
     @public_html_route("/confidential-cowork")
-    async def confidential_cowork() -> str:
-        return public_page_html(settings, "confidential-cowork")
+    async def confidential_cowork() -> RedirectResponse:
+        return RedirectResponse(
+            url="https://nytokenexchange.com/trusted-cowork", status_code=301
+        )
 
     # ── SEO landing pages ────────────────────────────────────────────
     # Top-level slugs targeting high-intent buyer queries. Each is a

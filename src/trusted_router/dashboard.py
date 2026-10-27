@@ -195,7 +195,6 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/latest-model-apis",
     "/eu-ai-act-llm-compliance",
     "/x402-llm-api",
-    "/confidential-cowork",
     # Jurisdiction directories, one path each. MODEL_REGION_SLUGS is the single
     # source, so adding a region adds its sitemap entry with it.
     *(f"/{slug}" for slug in MODEL_REGION_SLUGS),
@@ -1678,35 +1677,6 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
                 "capacity and models online.",
             ),
         ),
-    ),
-    "confidential-cowork": PublicPage(
-        template="public/confidential_cowork.html",
-        title="Trusted Cowork",
-        description=(
-            "Download Trusted Cowork, an OpenCode-based desktop agent for macOS. "
-            "Sign in with TrustedRouter, use confidential models, and approve local tools."
-        ),
-        faq_items=(
-            (
-                "Can Confidential Cowork fall back to a normal model provider?",
-                "TrustedRouter requests deny data collection and require confidential "
-                "providers. If no eligible provider is available, they fail closed. "
-                "This app does not allow other inference backends.",
-            ),
-            (
-                "Is this the earlier QuillCode desktop app?",
-                "No. Trusted Cowork is an OpenCode-based desktop app with browser sign-in. "
-                "Install the signed app directly and select Sign in with TrustedRouter. "
-                "Updates are manual; earlier app credentials and sessions are not imported.",
-            ),
-            (
-                "Can an enterprise use its own models and token capacity?",
-                "Yes. The self-serve app starts on TrustedRouter. Enterprise deployments "
-                "can be designed around approved private capacity, internal model access, "
-                "identity controls, and organization policy.",
-            ),
-        ),
-        og_alt="Trusted Cowork desktop agent with confidential TrustedRouter models",
     ),
     "security": PublicPage(
         template="public/security.html",
