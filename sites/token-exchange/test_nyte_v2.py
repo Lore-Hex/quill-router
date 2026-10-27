@@ -5,6 +5,23 @@ from nyte_v2 import index_panel, render_nyte
 
 
 class NyteV2Tests(unittest.TestCase):
+    def test_evidence_script_is_scoped_to_nyte_release(self):
+        import tempfile
+        from pathlib import Path
+
+        from nyte_v2 import HERE, build_nyte
+
+        page = render_nyte('api')
+        self.assertIn('/assets/nyte-v2/live-evidence.js?v=', page)
+        self.assertNotIn('src="/assets/live-evidence.js', page)
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            build_nyte(output)
+            self.assertEqual(
+                (output / 'assets/nyte-v2/live-evidence.js').read_bytes(),
+                (HERE / 'live-evidence.js').read_bytes(),
+            )
+
     def test_navigation_and_ctas(self):
         for name in ('home', 'api', 'sup', 'providers', 'cowork'):
             page = render_nyte(name)

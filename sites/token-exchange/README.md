@@ -72,6 +72,14 @@ New York's homepage, `/confidential`, `/trusted-cowork`, `/suppliers`, `/provide
 `/index`, `/buy`, and `/neocloud-accelerator`; its shared
 assets are under `assets/nyte-v2/`. Back up live objects before an authorized
 release and preserve concurrent content and unrelated market pages.
+The NYTE Confidential API page loads `assets/nyte-v2/live-evidence.js`, a
+byte-identical build copy of the approved evidence renderer. A New York-only
+release must not overwrite `assets/live-evidence.js`, which other markets use.
+The Token Exchange Sites workflow builds and tests but does not publish. A
+redesign release must publish its complete HTML and asset dependency set,
+including both extensionless and `.html` page objects. Do not preserve obsolete
+live HTML by applying navigation-only replacements when deploying the approved
+redesign. `/index.html` still maps to `new-york/index.html`, not the Index page.
 
 ### NYTE Token Index and open-source supplier stack
 
