@@ -126,6 +126,8 @@ def test_collector_memory_and_rate_caps_reset() -> None:
     *[('nyte.cta_clicked', {'cta': cta, 'position': position})
       for cta in ('download_apple_silicon', 'download_intel_mac')
       for position in ('hero', 'close')],
+    ('nyte.reserve_checkout_started', {'unit': 'blocks', 'underlying_kind': 'index', 'grade': 'A'}),
+    ('nyte.reserve_checkout_succeeded', {}),
     ('nyte.buy_step_1_viewed', {'unit': 'blocks', 'underlying_kind': 'index', 'grade': 'A'}),
     ('nyte.buy_step_2_viewed', {'unit': 'blocks', 'underlying_kind': 'index', 'grade': 'A'}),
     ('nyte.buy_step_3_viewed', {'unit': 'blocks', 'underlying_kind': 'index', 'grade': 'A'}),
@@ -142,18 +144,20 @@ def test_nyte_events_survive_logging_and_export(
     client: TestClient, caplog: pytest.LogCaptureFixture, name: str, properties: dict[str, str],
 ) -> None:
     from scripts.axiom_growth.model import project_event
+    from scripts.axiom_growth.provision import source_filter
     from trusted_router.main import _ApplicationConsoleFormatter
 
     caplog.set_level(logging.INFO, logger='trusted_router.acquisition')
     response = client.post('/token-exchange/events', headers=HEADERS, json={
-        'event': name, 'visitor_id': str(uuid4()), 'page': '/buy' if name.startswith('nyte.buy_') else '/confidential', **properties,
+        'event': name, 'visitor_id': str(uuid4()), 'page': '/buy' if name.startswith(('nyte.buy_', 'nyte.reserve_')) else '/confidential', **properties,
     })
     assert response.status_code == 204
     record = next(r for r in caplog.records if getattr(r, 'event', '') == 'acquisition.' + name)
     serialized = json.loads(_ApplicationConsoleFormatter().format(record))
     exported = project_event({**serialized, '_time': '2026-10-21T17:00:00Z'}, source='cloud_logging')
+    assert f'jsonPayload.event="acquisition.{name}"' in source_filter()
     assert exported['site_domain'] == 'nytokenexchange.com'
-    assert exported['page_path'] == ('/buy' if name.startswith('nyte.buy_') else '/confidential')
+    assert exported['page_path'] == ('/buy' if name.startswith(('nyte.buy_', 'nyte.reserve_')) else '/confidential')
     for key, value in properties.items():
         assert exported[key] == value
 

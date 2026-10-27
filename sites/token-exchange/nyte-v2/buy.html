@@ -2,7 +2,7 @@
   <aside class="buy-brand" aria-label="About reserved tokens">
     <p class="buy-kicker">New York Token Exchange</p>
     <h1>Reserve your next<br><em>billion tokens.</em></h1>
-    <p class="lede">Start with your workload. Shape a reservation request, then discuss availability and pricing with Joseph.</p>
+    <p class="lede">Reserve index-grade tokens by card for 2027 delivery, or shape a reservation request to discuss with Joseph.</p>
     <div class="buy-notes"><h2>For buyers</h2><p>Choose a capability grade or a model and your timing, or request lots from a planned facility with a targeted launch. A 15-minute call helps define the next step.</p>
     <h2>For providers</h2><p>Have inference capacity to offer? <a href="/suppliers">Explore supplying NYTE</a> or <a href="/providers">request the provider deck</a>.</p></div>
     <details class="buy-contract"><summary>What we’ll discuss</summary><dl>
@@ -11,9 +11,10 @@
       <dt>Service requirements</dt><dd>Availability, time to first token and generation speed for your workload.</dd>
       <dt>Term and delivery</dt><dd>Start date, duration, unused tokens and the provider responsible for delivery, subject to agreement.</dd>
     </dl></details>
-    <p class="buy-fine">This is a request to discuss a reservation, not an order. Capacity futures and derivatives are planned offerings, not live products. This is an inference service, not a securities or cryptocurrency exchange.</p>
+    <p class="buy-fine">Card checkout purchases a reservation for 2027 delivery. The call path is a request to discuss a reservation, not an order. Capacity futures and derivatives are planned offerings, not live products. This is an inference service, not a securities or cryptocurrency exchange.</p>
   </aside>
   <div class="buy-workspace" id="buy-flow">
+    <p id="buy-reserved-success" class="buy-total" role="status" hidden>Thank you for your reservation. Stripe handles your payment confirmation. Your reserved tokens are for use January 1 through December 31, 2027; unused tokens expire December 31, 2027. Full refund on request before January 1, 2027.</p>
     <ol class="buy-steps" aria-label="Request progress">
       <li aria-current="step"><span>1</span> Tokens</li><li><span>2</span> Details</li><li><span>3</span> Contact</li><li><span>4</span> Book a call</li>
     </ol>
@@ -58,6 +59,16 @@
         <label class="buy-field" for="buy-start" id="buy-start-field">Desired start month<input id="buy-start" type="month"></label>
       </div></fieldset>
       <p class="buy-total" id="buy-total" aria-live="polite">For index-grade token blocks, an indicative total is the number of blocks × the dated grade price. Pricing for throughput or a specific model is discussed on the call.</p>
+      <section id="buy-reserve" class="buy-reserve" aria-labelledby="buy-reserve-title" hidden>
+        <h3 id="buy-reserve-title">Reserve now by card</h3>
+        <p id="buy-reserve-price" aria-live="polite">Loading the current reservation quote…</p>
+        <p>Each lot is 1 billion tokens of your selected NYTE Index grade. This is a reservation for 2027 delivery through a TrustedRouter account via the NYTE API. Your price is locked at purchase.</p>
+        <p><strong>Card reservation window: January 1, 2027 through December 31, 2027.</strong> Unused tokens expire December 31, 2027. Full refund on request any time before January 1, 2027. The desired start and term above apply to the call request only.</p>
+        <label class="buy-reserve-terms"><input id="buy-reserve-terms" type="checkbox" required> I accept the <a href="/reserved-tokens-terms" target="_blank" rel="noopener">reserved tokens terms</a>.</label>
+        <button id="buy-reserve-button" class="btn btn-primary" type="button" disabled>Reserve now by card</button>
+        <p id="buy-reserve-error" role="status"></p>
+        <p class="buy-fine">Prefer to discuss your order, or need more lots? Continue below to book a call. Specific models, throughput and facilities are available by call only.</p>
+      </section>
       <div class="buy-actions" data-js hidden><button class="btn btn-secondary" type="button" data-back>Back</button><button class="btn btn-primary" type="button" data-next>Continue to contact →</button></div>
     </section>
     <section class="buy-step" data-step="3" aria-labelledby="buy-title-3">

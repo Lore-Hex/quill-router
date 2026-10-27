@@ -120,6 +120,9 @@ _storage_error_logger = logging.getLogger(__name__)
 
 _APP_CONSOLE_HANDLER_MARKER = "_trusted_router_app_console"
 _ACQUISITION_CLOUD_FIELDS = (
+    "stripe_session_id", "stripe_customer_id", "lots", "per_lot_cents",
+    "list_price_cents", "discount_bps", "index_as_of", "usable_from",
+    "usable_until", "refundable_until", "terms_version",
     "anonymous_fingerprint",
     "account_fingerprint",
     "workspace_fingerprint",

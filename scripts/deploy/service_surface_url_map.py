@@ -46,6 +46,8 @@ ACTIONS_PATH_PATTERNS = (
     "/support/inquiry",
     "/token-exchange/brief",
     "/token-exchange/events",
+    "/token-exchange/reserve/checkout",
+    "/token-exchange/reserve/quote",
     "/trustedos/inquiry",
 )
 

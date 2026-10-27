@@ -28,7 +28,7 @@ picker and footer share one ordered directory and highlight the current market.
 - Static pages fetch the public `/token-exchange/evidence/{profile}.json` feed
   from TrustedRouter on load and every minute. There is no direct Spanner
   access, inference, cookie, or third-party pixel on these sites. The brochure form
-  is the only submitted form; the separate NYTE `/buy` wizard keeps request
+  submits a resource request; NYTE `/buy` can also post a bounded card reservation request. The call wizard keeps request
   fields in memory and hands them directly to Calendly. Allowlisted UTM fields pass to intake. The first-party
   `/token-exchange/events` collector records visible visits and ten-second
   engagement. A random 30-minute per-tab identifier joins brochure downloads
@@ -69,7 +69,7 @@ DNS records to bypass qualification.
 
 The redesign is built from `nyte-v2/` through `nyte_v2.py`. Its pages are
 New York's homepage, `/confidential`, `/trusted-cowork`, `/suppliers`, `/providers`,
-`/index`, `/buy`, and `/neocloud-accelerator`; its shared
+`/index`, `/buy`, `/reserved-tokens-terms`, and `/neocloud-accelerator`; its shared
 assets are under `assets/nyte-v2/`. Back up live objects before an authorized
 release and preserve concurrent content and unrelated market pages.
 The NYTE Confidential API page loads `assets/nyte-v2/live-evidence.js`, a
@@ -139,9 +139,11 @@ one-month term, next month in local time, and NYTE Index grade A. Allowlisted
 clicks reach scheduling without editing a field; contact details can be entered
 in Calendly, and a supplied email is validated before handoff. Index-grade token blocks show blocks × the
 published dated grade price; throughput, named models and undecided requests
-show no price. This is a request to discuss a reservation, not an order or executable quote. Capacity derivatives remain roadmap offerings.
+show no price. These call-request estimates are not orders or executable quotes.
+The separate card panel below uses the authoritative discounted quote and fixed
+2027 window described below. Capacity derivatives remain roadmap offerings.
 
-The wizard never submits a form or writes request data to browser storage.
+The call wizard never submits contact fields to TrustedRouter or writes request data to browser storage. Card checkout submits only grade, lots and explicit terms acceptance.
 Only step, unit, grade and the allowlisted facility ID are written to page history. Contact details and the
 request summary go directly to Calendly's iframe/link prefill, without its widget
 script. Without JavaScript, the offer, editable model/provider text fields and
@@ -195,6 +197,77 @@ conflict requires a fresh download and reconciliation, never an unconditional
 retry. Preserve DNS, certificates, URL maps and other bucket objects. Verify the
 public routes, aliases, navigation, catalogue CORS, Calendly handoff, and privacy
 signals after the separately authorized publish.
+
+### 2027 card reservations (local implementation; publish separately)
+
+Step 2 of `/buy` offers card checkout only for index-grade 1B-token lots, all
+four grades AAA/A/B/C. The existing call path remains available for every
+selection. Specific models, throughput and facilities have no card option.
+The fixed card window is January 1 through December 31, 2027, with unused tokens
+expiring December 31 and a full refund on request before January 1, 2027.
+Delivery is through a TrustedRouter account via the NYTE API. The terms live at
+`/reserved-tokens-terms` and its `.html` alias, in the shared NYTE shell and New
+York sitemap. These are prepaid inference services, not securities or investments.
+
+The anonymous actions are `GET /token-exchange/reserve/quote?grade=&lots=` and
+`POST /token-exchange/reserve/checkout` on trustedrouter.com. They reuse the
+brief's canonical-origin CORS policy. Checkout uses the brief rate limiter;
+quote reads use the bounded metadata collector limiter so editing the quantity
+does not consume the five-per-hour checkout limit. No customer email is posted
+by the page: Stripe-hosted Checkout collects it.
+
+The quote returns the current discount, snapshot date, per-lot cents and total.
+The page computes the discounted cents from its published index and the returned
+discount, checks agreement with the authoritative quote and refuses stale pages.
+This avoids embedding a potentially stale discount in a static build. The server
+recomputes the authoritative price at session creation from `content/token_index.py`:
+`ROUND_HALF_UP(index USD × 100 × (10000 − discount_bps) / 10000)`, then multiplies
+by lots. There are no credit top-up processing-fee line items, promotions or
+automatic tax additions; the exact displayed amount is charged. Stripe's final
+checkout price is the price locked at purchase.
+
+Configuration, kept dark in `scripts/deploy/rollout.sh`:
+
+- `TR_RESERVED_TOKENS_CHECKOUT_ENABLED=true` enables sales.
+- `TR_RESERVED_TOKENS_DISCOUNT_BPS` must be explicitly approved and set (0–9999;
+  absent refuses sales). Do not invent a default discount.
+- `TR_RESERVED_TOKENS_MAX_LOTS_PER_CHECKOUT` defaults to 100. Larger orders go to
+  the call. Stripe amount limits also fail closed.
+- The existing `TR_STRIPE_SECRET_KEY`, signed webhook secret and SES configuration
+  are reused. The actions surface may now hold the Stripe key, but still no
+  webhook signing secret, credit store or other billing credentials.
+
+Before enabling, Joseph must approve the discount, confirm Stripe's account
+settings for this 2027 pre-sale, customer receipts, statement descriptor and tax
+handling, and confirm the existing webhook receives `checkout.session.completed`.
+Keep release gates intact; this local implementation does not authorize publish.
+Add the approved discount to config-as-code before switching the flag. Release
+both action paths in the Python/Terraform URL maps, backend, growth worker/source
+filter and static assets/terms/sitemap together in their reviewed workflows.
+
+The signed webhook intercepts `kind=reserved_tokens_2027` before all credit
+handling, even if a session contains workspace/refill metadata. It verifies the
+paid USD amount against locked metadata, logs `acquisition.reserved_tokens_recorded`
+and emails the existing enterprise inquiry recipient: `TR_PARTNER_INQUIRY_EMAIL`
+(`joseph@jperla.com` in rollout), falling back to `enterprise@trustedrouter.com`
+just like the enterprise brief. No buyer email/name is included. Stripe remains
+the order record; no token allowance, current balance credit or fulfillment is
+created. Refunds are handled manually in Stripe until fulfillment is built.
+
+Notification leases and completion markers are persisted by session ID in the
+isolated `reserved_notification` entity kind, with an existing webhook dedup key
+for the log. Concurrent/repeated events do not send another completed notification;
+unpaid or invalid payments cannot claim it. Failed sends return a retryable 503;
+an abandoned lease expires after 120 seconds. SES offers no idempotency key, so a
+crash after email acceptance but before committing the sent marker can repeat an
+email on retry. This cannot duplicate a charge or create credits. Stripe delivery
+retries/manual replay recover temporary notification failures.
+
+`nyte.reserve_checkout_started` carries only bounded unit/index/grade values.
+`nyte.reserve_checkout_succeeded` is a browser-return funnel signal with no order
+details; it is not payment verification. Both honor GPC/DNT and flow through the
+collector, structured log fields and growth source filter. Only the signed
+webhook establishes the paid reservation.
 
 ### Neocloud accelerator (local implementation; publish separately)
 

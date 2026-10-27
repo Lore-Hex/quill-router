@@ -3114,6 +3114,29 @@ class PostgresStore(OperationalAnalyticsReads):
 
         return self._run_transaction(txn)
 
+    def claim_reserved_notification(self, session_id: str, owner: str, *, now: int) -> str:
+        def txn(tx: Any) -> str:
+            self._insert_entity_once_tx(tx, "reserved_notification", session_id, {"sent": False})
+            row = self._read_entity_tx(tx, "reserved_notification", session_id, dict, for_update=True) or {}
+            if row.get("sent"):
+                return "sent"
+            if row.get("lease_until", 0) > now:
+                return "busy"
+            self._write_entity_tx(tx, "reserved_notification", session_id,
+                                  {"owner": owner, "lease_until": now + 120, "sent": False})
+            return "claimed"
+
+        return self._run_transaction(txn)
+
+    def finish_reserved_notification(self, session_id: str, owner: str, *, sent: bool) -> None:
+        def txn(tx: Any) -> None:
+            row = self._read_entity_tx(tx, "reserved_notification", session_id, dict, for_update=True) or {}
+            if row.get("owner") == owner:
+                row.update(sent=sent, lease_until=0)
+                self._write_entity_tx(tx, "reserved_notification", session_id, row)
+
+        self._run_transaction(txn)
+
     def record_webhook_event_once(self, source: str, event_id: str) -> bool:
         return self._run_transaction(
             lambda conn: self._insert_entity_once_tx(

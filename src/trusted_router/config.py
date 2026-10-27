@@ -285,7 +285,7 @@ SERVICE_SURFACE_SECRET_OWNERS: dict[str, frozenset[str]] = {
     # still select internal_gateway_token by path.
     "observer_internal_token": frozenset({"internal", "observer"}),
     "stripe_webhook_secret": frozenset({"control"}),
-    "stripe_secret_key": frozenset({"control"}),
+    "stripe_secret_key": frozenset({"control", "actions"}),
     "paypal_client_id": frozenset({"control"}),
     "paypal_client_secret": frozenset({"control"}),
     "paypal_webhook_id": frozenset({"control"}),
@@ -874,6 +874,9 @@ class Settings(BaseSettings):
     retirement_notices_mode: Literal["off", "preview", "send"] = "off"
     retirement_notices_preview_email: str | None = None
 
+    reserved_tokens_checkout_enabled: bool = False
+    reserved_tokens_discount_bps: int | None = Field(default=None, ge=0, lt=10_000)
+    reserved_tokens_max_lots_per_checkout: int = Field(default=100, ge=1)
     stablecoin_checkout_enabled: bool = True
     x402_enabled: bool = False
     x402_allow_mock_payments: bool = False

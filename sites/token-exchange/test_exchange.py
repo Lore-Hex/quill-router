@@ -597,7 +597,7 @@ class ExchangeTests(unittest.TestCase):
                 namespace = {"s": "http://www.sitemaps.org/schemas/sitemap/0.9"}
                 paths = ["/"]
                 if market["slug"] == "new-york":
-                    paths += ["/confidential", "/suppliers", "/providers", "/badge", "/media-kit", "/index", "/trusted-cowork", "/buy", "/neocloud-accelerator"]
+                    paths += ["/confidential", "/suppliers", "/providers", "/badge", "/media-kit", "/index", "/trusted-cowork", "/buy", "/reserved-tokens-terms", "/neocloud-accelerator"]
                 self.assertEqual(
                     [node.text for node in sitemap.findall("s:url/s:loc", namespace)],
                     [f'https://{market["domain"]}{path}' for path in paths],
