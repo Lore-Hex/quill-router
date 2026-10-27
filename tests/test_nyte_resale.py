@@ -298,6 +298,20 @@ def test_postgres_transaction_implementation_on_sql_fake(monkeypatch):
                 for failure_first in (True, False):
                     contract.test_nyte_refund_failure_and_success_commit_are_order_independent(
                         store, unique(f"race{failure_first}{failure}"), monkeypatch, failure_first, failure, enabled)
+            for path in ("checkout", "historical_import"):
+                contract.test_nyte_pending_purchase_retries_after_stripe_failure(
+                    store, unique("pending" + path), monkeypatch, enabled, path)
+                for timing in ("before_mapping", "during_snapshot"):
+                    for event_type in ("refund.created", "charge.refunded", "charge.dispute.created"):
+                        contract.test_nyte_purchase_adverse_interleaving(
+                            store, unique("early" + path + timing + event_type), monkeypatch, enabled, path, timing, event_type)
+            for expanded in (True, False):
+                for event_type in ("refund.created", "charge.refunded", "charge.dispute.created"):
+                    contract.test_nyte_unmapped_nonreservation_payment_stays_inert(
+                        store, unique("other" + str(expanded) + event_type), monkeypatch, enabled, expanded, event_type)
+            for failure in ("failed", "canceled"):
+                contract.test_nyte_early_refund_failure_retained_until_binding(
+                    store, unique("earlyfailure" + failure), monkeypatch, enabled, failure)
             for kind in ("resale_fill", "full_refund"):
                 contract.test_nyte_existing_metadata_obligation_reconciles_in_both_modes(
                     store, unique("metadata" + kind), monkeypatch, kind, enabled)
@@ -498,10 +512,15 @@ def test_reimport_existing_refunded_position_is_blocked(settings, monkeypatch):
 
 @pytest.mark.usefixtures("reservation_mail")
 @pytest.mark.parametrize("kind", ["charge.refunded", "charge.dispute.created", "refund.created"])
-def test_checkout_checks_current_stripe_after_ignoring_unmapped_adverse_event(client, test_settings, monkeypatch, kind):
+def test_checkout_retains_early_reservation_adverse_event(client, test_settings, monkeypatch, kind):
     from tests.test_reserved_tokens import event
     from trusted_router.storage import STORE
     test_settings.resale_enabled = True
+    # Even a stale healthy retrieval must not erase the earlier signed event.
+    monkeypatch.setattr(resale.stripe.PaymentIntent, "retrieve", lambda payment, **kw: {
+        "id": payment, "metadata": {"kind": "reserved_tokens_2027"},
+        "status": "succeeded", "latest_charge": {"paid": True, "amount_refunded": 0},
+    })
     monkeypatch.setattr(resale.stripe.Refund, "list", lambda **kw: SimpleNamespace(auto_paging_iter=lambda: iter([])))
     response = client.post("/v1/internal/stripe/webhook", json={"id": "evt_early", "type": kind, "data": {"object": {
         "id": "ch_early", "payment_intent": "pi_early", "paid": True, "amount_refunded": 1600, "amount": 1600, "status": "succeeded",
@@ -509,10 +528,7 @@ def test_checkout_checks_current_stripe_after_ignoring_unmapped_adverse_event(cl
     }}})
     assert response.status_code == 200
     assert call(STORE, "payment", payment_intent="pi_early") == {}
-    assert not any(key[0] in {"nyte_payment_review", "nyte_refund_failure"} for key in STORE.target.resale_entities)
-    monkeypatch.setattr(resale.stripe.PaymentIntent, "retrieve", lambda *a, **kw: {
-        "status": "succeeded", "latest_charge": {"paid": True, "amount_refunded": 1600, "disputed": kind == "charge.dispute.created"},
-    })
+    assert ("nyte_payment_review", "pi_early") in STORE.target.resale_entities
     data = event()
     data["data"]["object"]["payment_intent"] = "pi_early"
     assert client.post("/v1/internal/stripe/webhook", json=data).status_code == 200
@@ -685,7 +701,8 @@ def test_refund_calls_refuse_console_diagnostics(settings, monkeypatch, setting,
     monkeypatch.setattr(resale.stripe if setting == "log" else _util, setting, level)
     command = Mock(side_effect=AssertionError("Guard must run before ledger changes"))
     monkeypatch.setattr(resale, "command", command)
-    for action in (lambda: resale.process_fill("fill", settings), lambda: resale.acknowledge_full_refund("session", "refund", settings)):
+    for action in (lambda: resale.process_fill("fill", settings), lambda: resale.acknowledge_full_refund("session", "refund", settings),
+                   lambda: resale.reconcile_payment_event({"type": "refund.created", "data": {"object": {"payment_intent": "pi_private"}}}, settings)):
         with pytest.raises(ValueError, match="console diagnostics"):
             action()
     command.assert_not_called()
@@ -826,3 +843,25 @@ def test_existing_refund_failure_survives_resale_flag_toggle(client, test_settin
     assert create.call_count == issued
     assert call(STORE, "refund_obligation", kind=kind, id=key)["status"] == "needs_ops"
     assert len(call(STORE, "pending", queue=queue)["rows"]) == 1
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_unmapped_payment_ownership_lookup_is_private(settings, monkeypatch, caplog, enabled):
+    import logging
+
+    settings.resale_enabled = enabled
+    store = InMemoryStore()
+    monkeypatch.setattr(resale, "STORE", store)
+    email = "private-ownership@example.com"
+    def retrieve(payment, **kwargs):
+        logging.getLogger("stripe").debug("PaymentIntent metadata %s", email)
+        return {"id": payment, "metadata": {"kind": "reserved_tokens_2027", "email": email}}
+    monkeypatch.setattr(resale.stripe.PaymentIntent, "retrieve", retrieve)
+    with caplog.at_level(logging.DEBUG):
+        assert resale.reconcile_payment_event({"type": "refund.created", "data": {"object": {
+            "id": "re_private", "payment_intent": "pi_private", "amount": 100, "status": "succeeded",
+        }}}, settings)
+        logging.getLogger("stripe").debug("outside-private-ownership")
+    assert email not in caplog.text and "outside-private-ownership" in caplog.text
+    assert ("nyte_payment_review", "pi_private") in store.resale_entities
+    assert email not in str(store.resale_entities)

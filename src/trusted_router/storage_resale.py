@@ -133,15 +133,18 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
             block_position(p)
 
     if op == "reconcile_payment":
-        # The durable mapping, not a feature flag or metadata, owns event scope.
         owner = get("nyte_payment", c["payment_intent"])
         if not owner:
-            return {}
+            # The service verified the PaymentIntent's own reservation metadata.
+            if not c.get("reservation_payment"):
+                return {}
+            remember_payment_review(c["payment_intent"], c["payment_state"])
+            return {"retained": True}
         p = get("nyte_position", owner["session_id"])
         reconcile(p, c["payment_state"])
         return p
 
-    if op == "purchase":
+    if op in {"purchase_prepare", "purchase"}:
         p = c["position"]
         session = p["session_id"]
         event = get("nyte_event", c["event_id"])
@@ -161,7 +164,7 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
                 if owner and owner["session_id"] != session:
                     raise ValueError("Stripe payment already belongs to a position")
                 put("nyte_payment", payment, {"session_id": session})
-            p.update(sold_lots=0, listed_lots=0, status=p.get("status", "held"), fills=[], listings=[], new_lots=p["lots"])
+            p.update(sold_lots=0, listed_lots=0, status="pending" if op == "purchase_prepare" else p.get("status", "held"), fills=[], listings=[], new_lots=p["lots"])
             holder = get("nyte_holder", p["holder"])
             p["holder_next"] = holder.get("head")
             put("nyte_holder", p["holder"], {"head": session})
@@ -170,6 +173,13 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
             p["purchase_completed_at"] = notification.get("purchase_completed_at", c["position"].get("purchase_completed_at"))
         if c["position"].get("status") == "needs_review":
             block_position(p)
+        if op == "purchase_prepare":
+            # Apply already-retained evidence, but never finish or allocate here.
+            reconcile(p, {})
+            put("nyte_position", session, p)
+            return p
+        if p["status"] == "pending":
+            p["status"] = "held"
         reconcile(p, c.get("payment_state") or {})
         put("nyte_event", c["event_id"], {"session_id": session})
         put("nyte_position", session, p)
@@ -230,7 +240,7 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
         p = get("nyte_position", c["position"])
         if not p or p["holder"] != c["holder"]:
             raise ValueError("Reservation unavailable")
-        if op in {"list", "request_refund"} and (p["status"] == "needs_review" or p.get("allocation_status") == "pending"):
+        if op in {"list", "request_refund"} and (p["status"] in {"pending", "needs_review"} or p.get("allocation_status") == "pending"):
             raise ValueError("Reservation needs ops review or allocation completion")
         receipt = reference(c["holder"] + ":" + c["request_id"])
         previous = get("nyte_action", receipt)
@@ -387,7 +397,7 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
         refund = c["refund"]
         rid, status = refund.get("id"), refund.get("status")
         payment = get("nyte_payment", refund.get("payment_intent") or "")
-        if not payment:
+        if not payment and not c.get("reservation_payment"):
             return {}
         if not rid or status not in {"pending", "requires_action", "succeeded", "failed", "canceled"}:
             return {}
@@ -397,13 +407,13 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
         metadata = refund.get("metadata") or {}
         kind, key = indexed_identity(index)
         if not key and metadata.get("kind") == "full_refund" and metadata.get("position_id"):
-            p = get("nyte_position", payment["session_id"])
+            p = get("nyte_position", payment["session_id"]) if payment else {}
             kind, key = ("full_refund", p["session_id"]) if p.get("id") == metadata["position_id"] else ("", "")
         elif not key and (metadata.get("fill_id") or metadata.get("nyte_fill_id")):
             kind, key = "resale_fill", metadata.get("fill_id") or metadata["nyte_fill_id"]
         elif not key:
             # Previously acknowledged full refunds predate the shared index.
-            p = get("nyte_position", payment["session_id"])
+            p = get("nyte_position", payment["session_id"]) if payment else {}
             if p.get("stripe_refund_id") == rid:
                 kind, key = "full_refund", p["session_id"]
         row = obligation(kind, key)

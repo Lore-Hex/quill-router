@@ -23,7 +23,7 @@ A higher-volume rollout should partition by grade with a reviewed lock order.
 | --- | --- |
 | `nyte_position` / Stripe Checkout Session | Stable position ID, grade, original lots, per-lot cents, original PaymentIntent, first `purchase_completed_at`, holder hash, terms version, sold/listed lots, status, payment-review marker, allocation status (pending/complete/historical), listing/fill IDs, new-inventory lots, holder-next pointer, event ID |
 | `nyte_payment` / original PaymentIntent | Session reference; isolates Dashboard refunds without inherited metadata from credit/adverse handlers |
-| `nyte_payment_review` / original PaymentIntent | Sticky disputed/unpaid flags, maximum observed external refund cents, observation time; retains adverse state for mapped payments, without raw Stripe payloads or PII |
+| `nyte_payment_review` / original PaymentIntent | Sticky disputed/unpaid flags, maximum observed external refund cents, observation time; retains adverse state for mapped or independently verified reservation payments, including before position creation, without raw Stripe payloads or PII |
 | `nyte_holder` / domain-separated normalized email hash | Head of the holder's position list; no plaintext email |
 | `nyte_listing` / hash of holder + request ID | Position session, lots listed/sold, listed_at, active/sold/withdrawn status, FIFO previous/next |
 | `nyte_fill` / hash of buyer session + listing | Buyer session/event, listing, lots, resale price per lot, fee bps/total cents, capped refund total cents, seller PaymentIntent, Stripe refund ID, pending/in_flight/retry/refunded/needs_ops status, transition and stale-write history, seller position ID, failure status, first attempt, lease owner/expiry, refund-queue previous/next |
@@ -63,12 +63,18 @@ the original #2125 notification path and never calls the resale ledger. Every
 holder API action (including link requests and preflight) returns the inert
 generic response without email or ledger access. Existing refund obligations
 continue to reconcile lifecycle events and alert ops regardless of the sales
-flag. The sole event scope is the existing PaymentIntent-to-NYTE-position mapping.
-For mapped payments, even metadata-free, unbound failures are retained in either
-mode. Unmapped payments create no NYTE state, regardless of metadata or flag.
-Charge/dispute reconciliation uses the same mapping scope and is not flag-gated.
-With the flag enabled, positions
-are written before the notification's already-sent return. A successful notification
+flag. Ownership comes from the existing PaymentIntent-to-position mapping or,
+when that mapping is absent, the PaymentIntent's own reservation-kind metadata.
+An expanded PaymentIntent in the signed event can supply that metadata; otherwise
+it is retrieved under the private-provider logging/console-diagnostics guard.
+Refund/charge metadata alone never establishes early ownership. Other payments
+create no NYTE state. Charge/dispute reconciliation uses the same ownership rule
+and is not flag-gated.
+With the flag enabled, positions and payment mappings are created idempotently
+in non-sellable `pending` state before fetching current Stripe state. Finalization
+applies retained adverse evidence and the fetched state in one transaction;
+only a healthy position becomes held and consumes listings. The same ordering
+applies to replay and historical import, before the notification's already-sent return. A successful notification
 from before resale storage existed imports that position without allocating
 historical sales. New paid purchases consume active grade listings in FIFO order,
 then new inventory. One transaction writes all fills and the buyer position;
@@ -152,20 +158,22 @@ amount, fill metadata and (when recorded) refund ID match a durable NYTE fill.
 The match works before the refund worker commits success; repeated evidence
 counts once per fill. Refund listing reads are bounded and payment-scoped.
 
-Adverse webhook evidence is retained only when the PaymentIntent already maps
-to a NYTE position. Mapped evidence is sticky: healthy/stale observations cannot
-erase it. Unmapped events are inert, including events delivered before checkout
-creates that mapping. Every enabled paid webhook, including replays, and every
-historical import still reads current Stripe PaymentIntent and charge state
-before writing a held position. External refunded amounts and disputes block it,
-while verified resale refunds are exempt. Stripe read failure leaves the webhook
-retryable instead of assuming a healthy payment. Disabled paid checkout keeps
-the original #2125 path and does not touch the resale ledger.
+Adverse webhook evidence is retained for mapped or independently verified
+reservation PaymentIntents, including events before the pending position exists.
+Healthy/stale observations cannot erase that evidence. Every enabled paid webhook,
+including replays, and every historical import creates the pending position and
+mapping before reading current Stripe state. Finalization checks both sources of
+evidence before marking held or allocating. External refunds and disputes block
+it; verified resale refunds remain exempt. A failed Stripe read leaves a durable,
+non-sellable pending position for retry without consuming listings or changing
+its first-write purchase time. Disabled paid checkout still keeps the original
+#2125 path and does not touch the resale ledger.
 
-Refund failure/cancellation evidence for a mapped payment is retained even when
-there is no refund-ID binding or refund metadata yet. A later acknowledgement
-checks and applies that evidence before it can complete the obligation. Refund
-lifecycle, evidence retention and acknowledgement contain no sales-flag branch.
+Refund failure/cancellation evidence for a verified reservation payment is
+retained even before the mapping, refund-ID binding or refund metadata exists.
+A later acknowledgement checks and applies that evidence before it can complete
+the obligation. Refund lifecycle, evidence retention and acknowledgement contain
+no sales-flag branch.
 
 ## Holder and operational access
 
@@ -686,3 +694,101 @@ Logs: `/tmp/nyte-r6-requested.log`, `/tmp/nyte-r6-full.log`,
 `/tmp/nyte-r6-emulator.log`, `/tmp/nyte-r6-site-tests.log`,
 `/tmp/nyte-r6-js.log` and `/tmp/nyte-r6-site-build.log`. Coverage used
 `COVERAGE_FILE=/tmp/nyte-r6-coverage`; uv used `UV_CACHE_DIR=/tmp/nyte-uv-cache`.
+
+
+## PR #2129 review round 7
+
+Based on `9d73986c6`; all changes remain uncommitted. No push, publication,
+deployment or live Stripe mutation was performed. Terms remain v5. This round
+supersedes round 6's mapping-only event scope, as requested by the reviewer.
+
+### Ordering and early evidence
+
+Checkout and historical import now share `purchase_prepare` → Stripe read →
+`purchase` finalization. Preparation atomically creates the session-keyed pending
+position, holder index and PaymentIntent mapping, preserving first-write purchase
+time. Repeated preparation does not reset completed/review/refund state, consume
+listings or finish the allocation. A pending position cannot list or request a
+full refund, including a historical position whose allocation status is already
+`historical`. Stripe read failure leaves that pending position available for retry.
+
+The final transaction combines sticky payment-review evidence with the fetched
+Stripe snapshot before marking the position held and allocating. An adverse event
+between preparation and commit therefore wins over a stale healthy snapshot.
+Historical imports no longer perform an earlier separate payment-state read.
+
+For events before preparation, existing mappings still establish ownership. If
+there is no mapping, only the PaymentIntent's own `metadata.kind` of
+`reserved_tokens_2027` establishes it. Use the expanded PaymentIntent from the
+signed event when its metadata is present; otherwise retrieve that exact PI under
+the privacy wrapper and console-diagnostics guard. Charge/refund metadata alone
+cannot authorize evidence writes. Unrelated payments stay inert. Verified early
+refund/dispute evidence is retained by PI; failed/canceled refund evidence also
+survives by refund ID until acknowledgement. Both flag modes use the same rule.
+No schema migration is needed: pending status and the existing review/failure
+entity kinds use the portable transaction engine shared by all backends.
+
+Holder/link gates and disabled paid checkout remain unchanged. Tests call the
+purchase service with both flag settings to cover in-flight work and imports;
+the separate broken-ledger HTTP regression still proves a normal disabled paid
+checkout follows #2125 without consulting the resale ledger.
+
+### Regression coverage
+
+Backend contracts run in both flag modes for checkout and real historical import,
+with refund-created, charge-refunded and dispute-created events before mapping or
+during the provider snapshot read. They verify the mapping precedes the read,
+pending/review positions cannot list or request refunds, stale healthy finalization
+stays `needs_review`, and no listed lots are consumed. Pending retries preserve the
+first purchase time and allocate at most once. Non-reservation PI tests cover both
+expanded and retrieved metadata, even when refund metadata falsely claims NYTE.
+Early failure/cancellation tests also verify expanded reservation metadata,
+retention until binding, terminal ops state, one queue entry, alerts and no reissue.
+The offline Postgres adapter runs these same cases, alongside every registered
+backend's contracts. HTTP tests cover early evidence followed by stale healthy
+checkout reads. New PI-ownership lookups are tested under Stripe debug logging
+and the existing console-diagnostics guard.
+
+| Round 7 change | Implementation / regression |
+| --- | --- |
+| Prepare before Stripe reads | `src/trusted_router/services/resale.py:86` creates the pending row/mapping before reading; `:233` routes historical imports through that same ordering without a separate earlier snapshot. |
+| Atomic finalization and pending exclusion | `src/trusted_router/storage_resale.py:147` implements idempotent preparation and finalization with sticky evidence before allocation; `:243` excludes pending positions from holder mutations. |
+| Ownership and early evidence in both modes | `src/trusted_router/services/resale.py:292` validates mapped ownership or the PaymentIntent's own metadata under the privacy wrapper; `src/trusted_router/storage_resale.py:135` retains verified early payment-review evidence, and `:396` retains unbound refund failure/cancellation evidence. |
+| Checkout/import interleavings | `tests/conformance/test_nyte_resale_ledger.py:586` runs both flag modes, both paths, both event timings and three adverse event types. `:656` covers pending retries and exactly-once finalization. |
+| Non-reservation isolation and early failure binding | `tests/conformance/test_nyte_resale_ledger.py:696` asserts non-reservation payments issue no write commands, regardless of misleading event metadata; `:722` covers early failed/canceled refunds retained until acknowledgement. |
+| HTTP, privacy and backend coverage | `tests/test_nyte_resale.py:515` verifies early evidence survives stale healthy checkout reads; `:849` verifies private ownership lookups; `:275` runs the new contracts through the offline Postgres adapter. The broken-ledger checkout test at `:247` remains unchanged. |
+
+Generic billing webhook tests now explicitly mock a non-reservation PaymentIntent
+for the newly required ownership lookup. The fixture in `tests/conftest.py` is
+opt-in for eight existing cases in `tests/test_trust_p1_operability.py`,
+`tests/test_trust_recovery_slice1b.py` and `tests/test_x402_billing.py`; their
+money/recovery assertions are unchanged. No production credit path was modified.
+
+| Round 7 validation | Result |
+| --- | --- |
+| Requested seven pytest files | **538 passed, 369 skipped**, in 222.11 seconds; **88.17%** combined coverage across the three resale modules (70% gate passed) |
+| Final focused ledger/resale run | **366 passed, 363 skipped** |
+| Generic billing/recovery compatibility | **89 passed** across `test_trust_p1_operability.py`, `test_trust_recovery_slice1b.py` and `test_x402_billing.py` (`-k 'not install'`) |
+| Regression check against pre-change code | All **24** new memory-backend purchase/import interleavings fail against the HEAD service and ledger loaded in an isolated test process; they pass with this change. The working tree was not reverted or modified for this check. |
+| Site unittests | **94 passed** |
+| `node --test tests/js/nyte_holder.test.cjs` | **3 passed** |
+| Site build | Passed; 13 markets / 30 domains in `/tmp/nyte-r7-site` |
+| Repository-wide ruff / mypy, plus refund CLI mypy | Passed; 551 source files plus CLI |
+| `git diff --check` | Passed |
+| Explicit native Spanner emulator gate | **Blocked**: 121 setup errors, connection refused at `127.0.0.1:9010`; emulator unavailable. Not counted as a pass. |
+| Full repository attempt (`uv run pytest -q --ff -x --tb=short`) | **Blocked** by the unchanged macOS `shasum` deployment-harness failure in `tests/test_aws_postgres_delivery_verifier_install.py:432`: 1 failed, 1,846 deselected. Failed-first stopped there; no full-suite pass or coverage claimed. |
+
+The requested run includes `tests/test_nyte_resale.py`,
+`tests/conformance/test_nyte_resale_ledger.py`, `tests/test_reserved_tokens.py`,
+`tests/conformance/test_reserved_notifications.py`, `tests/test_billing.py`,
+`tests/test_stripe_processing_fees.py` and `tests/test_service_surfaces.py`.
+Ordinary skips are unconfigured Postgres, Spanner-PG and native Spanner cases.
+Memory, Spanner-fake and the offline Postgres adapter passed the new contracts;
+they do not substitute for native-server validation.
+
+Logs: `/tmp/nyte-r7-requested.log`, `/tmp/nyte-r7-focused-final.log`,
+`/tmp/nyte-r7-generic-final.log`, `/tmp/nyte-r7-baseline-regression.log`,
+`/tmp/nyte-r7-full.log`, `/tmp/nyte-r7-emulator.log`,
+`/tmp/nyte-r7-site-tests.log`, `/tmp/nyte-r7-js.log` and
+`/tmp/nyte-r7-site-build.log`. Coverage used `COVERAGE_FILE=/tmp/nyte-r7-coverage`;
+uv used `UV_CACHE_DIR=/tmp/nyte-uv-cache`.

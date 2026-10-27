@@ -444,3 +444,13 @@ def _p5_cache_lifetime(request, _p5_cache_counts):
                                item.get_closest_marker('proof_oracle')
                                for item in request.session.items)
         release_data_caches(shared=oracle_selection)
+
+
+@pytest.fixture
+def nonreservation_stripe_payment(monkeypatch):
+    """Keep generic refund/dispute webhook ownership checks explicit and offline."""
+    from trusted_router.services import resale
+
+    monkeypatch.setattr(resale.stripe.PaymentIntent, "retrieve", lambda payment, **kw: {
+        "id": payment, "metadata": {"kind": "billing"},
+    })

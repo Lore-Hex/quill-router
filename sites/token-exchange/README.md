@@ -327,8 +327,11 @@ outstanding links. Repeated mutations use stable request IDs.
 pinned in `scripts/deploy/rollout.sh`. The flag gates every holder API action
 and new checkout position/allocation work. Existing refund obligations still
 reconcile lifecycle webhooks while the flag is off. Both modes retain unbound
-refund failure evidence for payments mapped to NYTE positions; payments without
-that mapping create no NYTE state. The explicit ops refund CLI remains available for
+refund failure evidence for mapped NYTE payments and for unmapped payments whose
+own PaymentIntent metadata identifies a reservation; other payments create no
+NYTE state. Checkout/import first creates a non-sellable pending position and
+payment mapping, then reads Stripe, then atomically applies retained evidence and
+the snapshot before marking held or allocating. The explicit ops refund CLI remains available for
 obligations already owed. Config loading rejects any fee other than 500 with an
 error explaining that a fee change requires a new terms version. v5 is the new checkout terms version;
 already-created v3/v4 sessions remain accepted by the webhook. The v5 terms keep

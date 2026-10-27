@@ -97,8 +97,8 @@ def register(router: APIRouter) -> None:
         event_type = event.get("type")
 
         obj = event.get("data", {}).get("object", {})
-        # Card reconciliation is scoped by the durable NYTE payment mapping,
-        # never by the sales flag. Paid checkout retains its separate gate.
+        # Card reconciliation verifies NYTE payment ownership independently of
+        # the sales flag. Paid checkout retains its separate gate.
         if (event_type in {"charge.refunded", "charge.refund.updated", "refund.created", "refund.updated", "refund.failed"}
                 or str(event_type).startswith("charge.dispute.")):
             from trusted_router.services.resale import reconcile_payment_event

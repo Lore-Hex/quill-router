@@ -236,6 +236,7 @@ def test_nyte_adverse_events_require_a_mapped_position(store: Store, unique: str
              "data": {"object": {"id": "re_" + unique, "payment_intent": "pi_" + buyer, "amount": 100,
                                  "status": "succeeded", "metadata": {"kind": "reserved_tokens_2027"}}}}
     settings = Settings(environment="test", resale_enabled=resale_enabled)
+    monkeypatch.setattr(resale.stripe.PaymentIntent, "retrieve", lambda payment, **kw: {"id": payment, "metadata": {"kind": "other_product"}})
     assert not resale.reconcile_payment_event(early, settings)
     assert call(store, "payment", payment_intent="pi_" + buyer) == {}
     assert call(store, "reconcile_payment", payment_intent="pi_" + buyer, payment_state=state) == {}
@@ -562,6 +563,7 @@ def test_nyte_unmapped_refund_evidence_is_inert(store: Store, unique: str, monke
     from trusted_router.services import resale
 
     settings = Settings(environment="test", resale_enabled=resale_enabled)
+    monkeypatch.setattr(resale.stripe.PaymentIntent, "retrieve", lambda payment, **kw: {"id": payment, "metadata": {"kind": "other_product"}})
     monkeypatch.setattr(resale, "STORE", store)
     alert = Mock()
     monkeypatch.setattr(resale, "alert_ops", alert)
@@ -576,3 +578,171 @@ def test_nyte_unmapped_refund_evidence_is_inert(store: Store, unique: str, monke
     assert resale.acknowledge_full_refund(unique, refund["id"], settings)["status"] == "refunded"
     assert unique not in refund_queue_ids(store, "full_refunds_needs_ops")
     alert.assert_not_called()
+
+
+@pytest.mark.parametrize("path", ["checkout", "historical_import"])
+@pytest.mark.parametrize("timing", ["before_mapping", "during_snapshot"])
+@pytest.mark.parametrize("event_type", ["refund.created", "charge.refunded", "charge.dispute.created"])
+def test_nyte_purchase_adverse_interleaving(store: Store, unique: str, monkeypatch, resale_enabled: bool, path: str, timing: str, event_type: str) -> None:
+    from types import SimpleNamespace
+
+    from tests.test_reserved_tokens import event
+    from trusted_router.config import Settings
+    from trusted_router.services import resale, reserved_tokens
+
+    settings = Settings(environment="test", resale_enabled=resale_enabled)
+    monkeypatch.setattr(resale, "STORE", store)
+    obj = event()["data"]["object"]
+    obj.update(id="cs_" + unique, payment_intent="pi_" + unique)
+    holder = resale.holder_key(obj["customer_details"]["email"])
+    seller = unique + "seller"
+    purchase(store, seller, grade="A")
+    lid = listing(store, seller)
+    if path == "historical_import":
+        store.claim_reserved_notification(obj["id"], "old", now=100)
+        store.finish_reserved_notification(obj["id"], "old", sent=True)
+    healthy = {"id": obj["payment_intent"], "metadata": {"kind": reserved_tokens.KIND},
+               "status": "succeeded", "latest_charge": {"paid": True, "amount_refunded": 0}}
+    adverse = {"type": event_type, "data": {"object": {
+        "id": "re_" + unique, "payment_intent": obj["payment_intent"], "status": "succeeded",
+        "paid": True, "amount": 1600, "amount_refunded": 1600,
+    }}}
+    monkeypatch.setattr(resale.stripe.Refund, "list", lambda **kw: SimpleNamespace(auto_paging_iter=lambda: iter([])))
+    snapshot_reads = []
+
+    def retrieve(payment, **kwargs):
+        assert payment == obj["payment_intent"]
+        if kwargs.get("expand"):
+            # The provider snapshot is healthy, but is stale by final commit.
+            pending = call(store, "position", position=obj["id"])
+            assert call(store, "payment", payment_intent=payment)["session_id"] == obj["id"]
+            assert pending["status"] == ("needs_review" if timing == "before_mapping" else "pending")
+            assert pending["fills"] == []
+            for op in ("list", "request_refund"):
+                with pytest.raises(ValueError, match="review"):
+                    call(store, op, position=obj["id"], holder=holder, lots=1, request_id="pending-" + op)
+            snapshot_reads.append(payment)
+            if timing == "during_snapshot":
+                assert resale.reconcile_payment_event(adverse, settings)
+        return healthy
+
+    monkeypatch.setattr(resale.stripe.PaymentIntent, "retrieve", retrieve)
+    if timing == "before_mapping":
+        # Model the old read-before-write interleaving / an already captured
+        # healthy snapshot: the signed adverse event precedes any mapping.
+        assert call(store, "payment", payment_intent=obj["payment_intent"]) == {}
+        assert resale.reconcile_payment_event(adverse, settings)
+        assert call(store, "payment", payment_intent=obj["payment_intent"]) == {}
+    if path == "historical_import":
+        monkeypatch.setattr(resale.stripe.Customer, "list", lambda **kw: SimpleNamespace(auto_paging_iter=lambda: iter([{"id": "cus_old"}])))
+        monkeypatch.setattr(resale.stripe.checkout.Session, "list", lambda **kw: SimpleNamespace(auto_paging_iter=lambda: iter([obj])))
+        resale.backfill_email(obj["customer_details"]["email"], holder, settings)
+    else:
+        # Exercise finalization even if the flag changes while work is in flight.
+        # Disabled public checkout still bypasses this service (separate contract).
+        resale.record_purchase(obj, "evt_" + unique, 100, settings)
+    assert snapshot_reads == [obj["payment_intent"]]
+    p = call(store, "position", position=obj["id"])
+    assert p["status"] == "needs_review" and p["payment_review"]
+    assert p["fills"] == [] and p["purchase_completed_at"] == 100
+    assert p["allocation_status"] == ("historical" if path == "historical_import" else "complete")
+    assert call(store, "position", position=seller)["sold_lots"] == 0
+    with pytest.raises(ValueError, match="review"):
+        call(store, "list", position=obj["id"], holder=holder, lots=1, request_id="after")
+    call(store, "withdraw", position=seller, holder=seller, listing=lid, request_id="cleanup")
+
+
+@pytest.mark.parametrize("path", ["checkout", "historical_import"])
+def test_nyte_pending_purchase_retries_after_stripe_failure(store: Store, unique: str, monkeypatch, resale_enabled: bool, path: str) -> None:
+    from tests.test_reserved_tokens import event
+    from trusted_router.config import Settings
+    from trusted_router.services import resale
+
+    settings = Settings(environment="test", resale_enabled=resale_enabled)
+    monkeypatch.setattr(resale, "STORE", store)
+    obj = event()["data"]["object"]
+    obj.update(id="cs_" + unique, payment_intent="pi_" + unique)
+    if path == "historical_import":
+        store.claim_reserved_notification(obj["id"], "old", now=100)
+        store.finish_reserved_notification(obj["id"], "old", sent=True)
+    seller = unique + "seller"
+    purchase(store, seller, grade="A")
+    lid = listing(store, seller)
+
+    def unavailable(*args, **kwargs):
+        raise RuntimeError("Stripe unavailable")
+    monkeypatch.setattr(resale.stripe.PaymentIntent, "retrieve", unavailable)
+    for timestamp in (100, 200):
+        with pytest.raises(RuntimeError, match="unavailable"):
+            resale.record_purchase(obj, "evt_" + unique, timestamp, settings, backfill=path == "historical_import")
+        p = call(store, "position", position=obj["id"])
+        assert p["status"] == "pending" and p["fills"] == [] and p["purchase_completed_at"] == 100
+        assert call(store, "payment", payment_intent=obj["payment_intent"])["session_id"] == obj["id"]
+        assert call(store, "position", position=seller)["sold_lots"] == 0
+        with pytest.raises(ValueError, match="review"):
+            call(store, "list", position=obj["id"], holder=p["holder"], lots=1, request_id="pending")
+    monkeypatch.setattr(resale.stripe.PaymentIntent, "retrieve", lambda *a, **kw: {
+        "status": "succeeded", "latest_charge": {"paid": True, "amount_refunded": 0},
+    })
+    result = resale.record_purchase(obj, "evt_" + unique, 300, settings, backfill=path == "historical_import")
+    assert result["status"] == "held" and result["purchase_completed_at"] == 100
+    assert bool(result["fills"]) == (resale_enabled and path == "checkout")
+    assert resale.record_purchase(obj, "evt_" + unique, 400, settings, backfill=path == "historical_import") == result
+    call(store, "withdraw", position=seller, holder=seller, listing=lid, request_id="cleanup")
+
+
+@pytest.mark.parametrize("expanded", [True, False])
+@pytest.mark.parametrize("event_type", ["refund.created", "charge.refunded", "charge.dispute.created"])
+def test_nyte_unmapped_nonreservation_payment_stays_inert(store: Store, unique: str, monkeypatch, resale_enabled: bool, expanded: bool, event_type: str) -> None:
+    from unittest.mock import Mock
+
+    from trusted_router.config import Settings
+    from trusted_router.services import resale
+
+    monkeypatch.setattr(resale, "STORE", store)
+    settings = Settings(environment="test", resale_enabled=resale_enabled)
+    payment = {"id": "pi_" + unique, "metadata": {"kind": "other_product"}}
+    retrieve = Mock(return_value=payment)
+    monkeypatch.setattr(resale.stripe.PaymentIntent, "retrieve", retrieve)
+    command = Mock(wraps=resale.command)
+    adverse = {"type": event_type, "data": {"object": {
+        "id": "re_" + unique, "payment_intent": payment if expanded else payment["id"],
+        "metadata": {"kind": "reserved_tokens_2027"}, "status": "succeeded", "paid": True,
+        "amount": 300, "amount_refunded": 300,
+    }}}
+    with monkeypatch.context() as patch:
+        patch.setattr(resale, "command", command)
+        assert not resale.reconcile_payment_event(adverse, settings)
+    assert [call.args[0] for call in command.call_args_list] == ["payment"]
+    assert retrieve.call_count == (0 if expanded else 1)
+    assert purchase(store, unique)["status"] == "held"  # No sticky evidence.
+
+
+@pytest.mark.parametrize("failure", ["failed", "canceled"])
+def test_nyte_early_refund_failure_retained_until_binding(store: Store, unique: str, monkeypatch, resale_enabled: bool, failure: str) -> None:
+    from unittest.mock import Mock
+
+    from trusted_router.config import Settings
+    from trusted_router.services import resale
+
+    monkeypatch.setattr(resale, "STORE", store)
+    settings = Settings(environment="test", resale_enabled=resale_enabled)
+    # Expanded PI metadata is authoritative; refund metadata is unnecessary.
+    refund = {"id": "re_" + unique, "payment_intent": {"id": "pi_" + unique, "metadata": {"kind": "reserved_tokens_2027"}},
+              "amount": 300, "status": failure}
+    retrieve = Mock(side_effect=AssertionError("Expanded PaymentIntent needs no lookup"))
+    monkeypatch.setattr(resale.stripe.PaymentIntent, "retrieve", retrieve)
+    assert resale.reconcile_payment_event({"type": "refund.updated", "data": {"object": refund}}, settings)
+    retrieve.assert_not_called()
+    assert call(store, "payment", payment_intent="pi_" + unique) == {}
+    purchase(store, unique)
+    call(store, "request_refund", position=unique, holder=unique, now=101, request_id="full")
+    monkeypatch.setattr(resale.stripe.Refund, "retrieve", lambda *a, **kw: {**refund, "payment_intent": "pi_" + unique, "status": "succeeded"})
+    alert, create = Mock(), Mock(side_effect=AssertionError("Failed refund reissued"))
+    monkeypatch.setattr(resale, "alert_ops", alert)
+    monkeypatch.setattr(resale.stripe.Refund, "create", create)
+    assert resale.acknowledge_full_refund(unique, refund["id"], settings)["status"] == "needs_ops"
+    assert refund_queue_ids(store, "full_refunds_needs_ops").count(unique) == 1
+    assert resale.acknowledge_full_refund(unique, refund["id"], settings)["status"] == "needs_ops"
+    assert alert.called
+    create.assert_not_called()

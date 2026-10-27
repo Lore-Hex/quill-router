@@ -83,23 +83,29 @@ def holder_key(email: str) -> str:
     return reference("nyte-holder:" + email.strip().lower())
 
 
-def record_purchase(obj: dict[str, Any], event_id: str, purchased_at: int | None, settings: Settings, *, backfill: bool = False, needs_review: bool = False, payment_state: dict[str, Any] | None = None) -> dict[str, Any]:
+def record_purchase(obj: dict[str, Any], event_id: str, purchased_at: int | None, settings: Settings, *, backfill: bool = False, needs_review: bool = False) -> dict[str, Any]:
     from trusted_router.services.reserved_tokens import reservation_position_id
 
-    if payment_state is None:
-        payment_state = current_payment_state(obj.get("payment_intent"), settings)
     metadata = obj["metadata"]
     email = (obj.get("customer_details") or {}).get("email") or obj.get("customer_email") or ""
     # Missing contact/payment data still creates the paid position. It cannot
     # be listed until reconciled; Stripe's normal completed event has both.
-    return command("purchase", position={
+    payment = obj.get("payment_intent")
+    payment = payment.get("id") if isinstance(payment, dict) else payment
+    position = {
         "id": reservation_position_id(obj["id"]), "session_id": obj["id"],
         "grade": metadata["grade"], "lots": int(metadata["lots"]),
         "per_lot_cents": int(metadata["per_lot_cents"]), "purchase_completed_at": purchased_at,
-        "payment_intent": obj.get("payment_intent"), "holder": holder_key(email),
+        "payment_intent": payment, "holder": holder_key(email),
         "terms_version": metadata["terms_version"], "status": "needs_review" if needs_review else "held",
-    }, event_id=event_id, backfill=backfill, allocate=settings.resale_enabled and not backfill,
-        fee_bps=settings.resale_fee_bps, payment_state=payment_state)
+    }
+    # Publish the non-sellable position and mapping before any provider read.
+    # A failed read leaves it pending; retries reuse the session-keyed row.
+    command("purchase_prepare", position=position, event_id=event_id, backfill=backfill)
+    state = current_payment_state(payment, settings)
+    return command("purchase", position=position, event_id=event_id, backfill=backfill,
+                   allocate=settings.resale_enabled and not backfill,
+                   fee_bps=settings.resale_fee_bps, payment_state=state)
 
 
 def alert_ops(settings: Settings, subject: str, body: str) -> None:
@@ -252,10 +258,8 @@ def backfill_email(email: str, holder: str, settings: Settings) -> None:
                 continue
             if int(m["lots"]) <= 0 or int(m["per_lot_cents"]) <= 0 or obj.get("amount_total") != int(m["lots"]) * int(m["per_lot_cents"]):
                 continue
-            # Checkout stays paid after refunds. Reconcile the original card
-            # charge before importing; a refunded/disputed order needs review.
-            state = current_payment_state(obj.get("payment_intent"), settings)
-            record_purchase(obj, "backfill:" + obj["id"], None, settings, backfill=True, payment_state=state)
+            # The shared path creates the mapping before reading Stripe state.
+            record_purchase(obj, "backfill:" + obj["id"], None, settings, backfill=True)
 
 
 @_private_stripe_reads()
@@ -288,28 +292,38 @@ def payment_state(payment_intent: str, charge: Any, settings: Settings) -> dict[
 def reconcile_payment_event(event: dict[str, Any], settings: Settings) -> bool:
     """Reconcile external card changes before the generic credit webhook handlers."""
     obj = event["data"]["object"]
-    payment_intent = obj.get("payment_intent")
-    if isinstance(payment_intent, dict):
-        payment_intent = payment_intent.get("id")
+    payment = obj.get("payment_intent")
+    payment_intent = payment.get("id") if isinstance(payment, dict) else payment
     charge = None
     if not payment_intent and obj.get("charge"):
         charge = _stripe_dict(stripe.Charge.retrieve(obj["charge"], api_key=settings.stripe_secret_key))
         payment_intent = charge.get("payment_intent")
-    if not payment_intent or not command("payment", payment_intent=payment_intent):
+    if not payment_intent:
         return False
+    reservation_payment = False
+    if not command("payment", payment_intent=payment_intent):
+        from trusted_router.services.reserved_tokens import KIND
+
+        # Only the PaymentIntent's own metadata establishes early ownership;
+        # refund/charge metadata can describe unrelated products or obligations.
+        if not isinstance(payment, dict) or "metadata" not in payment:
+            payment = _stripe_dict(stripe.PaymentIntent.retrieve(payment_intent, api_key=settings.stripe_secret_key))
+        reservation_payment = payment.get("id") == payment_intent and (payment.get("metadata") or {}).get("kind") == KIND
+        if not reservation_payment:
+            return False
     if event["type"] in {"refund.failed", "refund.updated", "refund.created", "charge.refund.updated"}:
         refund = {**obj, "payment_intent": payment_intent,
                   "status": "failed" if event["type"] == "refund.failed" else obj.get("status")}
-        obligation = command("refund_lifecycle", refund=refund)
+        obligation = command("refund_lifecycle", refund=refund, reservation_payment=reservation_payment)
         if obligation:
             if obligation["status"] == "needs_ops":
                 alert_failed_refund(obligation, settings)
             return True
         if refund["status"] in {"failed", "canceled"}:
-            return True  # Mapped payment; unbound evidence is durable.
+            return True  # Verified reservation payment; unbound evidence is durable.
         if refund["status"] not in {"pending", "succeeded", "requires_action"}:
             return False
-        # Use the signed event itself: a successful mapped refund must survive
+        # Use the signed event itself: a successful reservation refund must survive
         # even if a subsequent charge read is stale or temporarily unavailable.
         state = {"amount_refunded": refund["amount"], "refunds": [refund]}
     elif event["type"].startswith("charge.dispute."):
@@ -318,9 +332,9 @@ def reconcile_payment_event(event: dict[str, Any], settings: Settings) -> bool:
         if event["type"] == "charge.refunded":
             charge = obj
         state = payment_state(payment_intent, charge, settings)
-    position = command("reconcile_payment", payment_intent=payment_intent, payment_state=state)
-    # Only mapped NYTE payments are intercepted; other payments stay inert here.
-    return bool(position)
+    result = command("reconcile_payment", payment_intent=payment_intent, payment_state=state,
+                     reservation_payment=reservation_payment)
+    return bool(result)
 
 
 def alert_failed_refund(obligation: dict[str, Any], settings: Settings) -> None:
