@@ -361,6 +361,54 @@ def test_the_half_microdollar_request_price_publishes_as_zero() -> None:
     assert billing.raw_prices_valid(half) is False
 
 
+def test_the_shape_check_names_exactly_what_the_raw_checks_read() -> None:
+    """_raw_price_shape's lists are the attributes _require_raw_prices reads,
+    and real fields: a misspelling in either fails here, not as a silent
+    false on every endpoint."""
+    from dataclasses import fields
+
+    class Recording:
+        def __init__(self, target: Any, seen: list[str]) -> None:
+            self._target, self._seen = target, seen
+
+        def __getattr__(self, name: str) -> Any:
+            self._seen.append(name)
+            value = getattr(self._target, name)
+            if name == "price_tiers":
+                return tuple(Recording(tier, tier_seen) for tier in value)
+            return value
+
+    endpoint_seen: list[str] = []
+    tier_seen: list[str] = []
+    base = endpoint_from_candidate(CASES[4]["snapshot"]["candidates"][0])
+    assert base.price_tiers
+    billing._require_raw_prices(Recording(base, endpoint_seen))
+    assert set(endpoint_seen) == {*billing.RAW_ENDPOINT_PRICE_FIELDS, "price_tiers"}
+    assert set(tier_seen) == set(billing.RAW_TIER_PRICE_FIELDS)
+    assert set(billing.RAW_ENDPOINT_PRICE_FIELDS) <= {f.name for f in fields(ModelEndpoint)}
+    assert set(billing.RAW_TIER_PRICE_FIELDS) <= {f.name for f in fields(PriceTier)}
+
+
+def test_a_defect_in_the_raw_checks_propagates() -> None:
+    """Only the ValidationError the checks raise on purpose is a refusal: a
+    programming error inside them is not turned into a false."""
+    base = endpoint_from_candidate(CASES[4]["snapshot"]["candidates"][0])
+    assert billing.raw_prices_valid(base) is True  # positive control
+
+    class Broken:
+        def validate_python(self, value: Any) -> Any:
+            raise KeyError("a defect in the checker")
+
+    with patch.object(billing, "TypeAdapter", lambda _type: Broken()), pytest.raises(KeyError):
+        billing.raw_prices_valid(base)
+
+    def misspelled(endpoint: Any) -> None:
+        TypeAdapter(billing.UInt).validate_python(endpoint.request_price_microdollar)
+
+    with patch.object(billing, "_require_raw_prices", misspelled), pytest.raises(AttributeError):
+        billing.raw_prices_valid(base)
+
+
 def test_raw_prices_valid_matches_build_snapshot_on_every_live_endpoint() -> None:
     from trusted_router.catalog import effective_endpoint
     from trusted_router.catalog_registry import CATALOG_RESOLVED_AT, MODEL_ENDPOINTS

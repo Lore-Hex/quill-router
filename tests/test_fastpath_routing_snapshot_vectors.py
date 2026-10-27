@@ -496,3 +496,21 @@ def test_one_malformed_endpoint_cannot_stop_publication() -> None:
             assert all(epoch.price.tiers == () for epoch in entry.epochs)
         else:
             assert entry == baseline[entry.id]
+
+
+def test_a_defect_in_the_raw_checks_fails_the_compile(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A programming error in the checks (here a misspelled field) must fail
+    compilation, so the publisher reports it and backs off, rather than
+    publish billing_valid false on every epoch."""
+    from trusted_router import billing_snapshot
+
+    inputs = GENERATOR.fixture_inputs()
+    assert all(epoch.billing_valid for entry in _compile_fixture(inputs).endpoints
+               for epoch in entry.epochs)  # positive control
+
+    def misspelled(endpoint):  # type: ignore[no-untyped-def]
+        return endpoint.request_price_microdollar
+
+    monkeypatch.setattr(billing_snapshot, "_require_raw_prices", misspelled)
+    with pytest.raises(AttributeError, match="request_price_microdollar"):
+        _compile_fixture(inputs)

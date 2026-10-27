@@ -28,6 +28,7 @@ from pydantic import (
     Field,
     ModelWrapValidatorHandler,
     TypeAdapter,
+    ValidationError,
     ValidationInfo,
     model_validator,
 )
@@ -462,15 +463,46 @@ def raw_prices_valid(endpoint: ModelEndpoint) -> bool:
     request price of ``0.5`` publishes as ``0``), so without this fact the edge
     could not see that ``build_snapshot`` refuses the endpoint.
 
-    Total: any exception from the checks (``price_tiers=None`` raises
-    TypeError) is a refusal, so one malformed endpoint publishes false rather
-    than stopping the snapshot's compilation.
+    A malformed shape is a refusal, checked first and explicitly
+    (``_raw_price_shape``), so one endpoint with ``price_tiers=None`` publishes
+    false rather than stopping the snapshot's compilation. After it, only the
+    ValidationError the checks raise on purpose is a refusal: anything else is
+    a defect in the checks and propagates, failing the compilation (and so the
+    publisher's error reporting) instead of publishing a false fact.
     """
+    if not _raw_price_shape(endpoint):
+        return False
     try:
         _require_raw_prices(endpoint)
-    except Exception:
+    except ValidationError:
         return False
     return True
+
+
+# The attributes _require_raw_prices reads, per endpoint and per tier.
+RAW_ENDPOINT_PRICE_FIELDS: tuple[str, ...] = (
+    "prompt_price_microdollars_per_million_tokens",
+    "completion_price_microdollars_per_million_tokens",
+    "request_price_microdollars",
+)
+RAW_TIER_PRICE_FIELDS: tuple[str, ...] = (
+    "max_prompt_tokens",
+    "prompt_price_microdollars_per_million_tokens",
+    "completion_price_microdollars_per_million_tokens",
+    "prompt_cached_price_microdollars_per_million_tokens",
+)
+
+
+def _raw_price_shape(endpoint: Any) -> bool:
+    """Whether ``_require_raw_prices`` can walk this endpoint: it has every
+    price attribute, and ``price_tiers`` is a sequence of objects that have
+    every tier price attribute."""
+    if not all(hasattr(endpoint, name) for name in (*RAW_ENDPOINT_PRICE_FIELDS, "price_tiers")):
+        return False
+    tiers = endpoint.price_tiers
+    if not isinstance(tiers, Sequence) or isinstance(tiers, str | bytes):
+        return False
+    return all(hasattr(tier, name) for tier in tiers for name in RAW_TIER_PRICE_FIELDS)
 
 
 def build_snapshot(endpoints: Iterable[ModelEndpoint], requested: Eligibility) -> BillingSnapshot:
