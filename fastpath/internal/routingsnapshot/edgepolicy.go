@@ -35,8 +35,9 @@ var (
 // EdgePolicy is a parsed v1 edge policy body: the live control-plane facts
 // the edge gates on before it would answer an authorize itself. Every
 // exported field is a wire field; ParseEdgePolicy refuses any other field, a
-// missing one, a float, a duplicate key, null anywhere but
-// monitor_lookup_hash, and a body that is not its own canonical encoding.
+// missing one (async_settle alone may be absent), a float, a duplicate key,
+// null anywhere but monitor_lookup_hash, and a body that is not its own
+// canonical encoding.
 type EdgePolicy struct {
 	V                                 int64         `json:"v"`
 	Kind                              string        `json:"kind"`
@@ -58,6 +59,28 @@ type EdgePolicy struct {
 	PrimaryRegion                     string        `json:"primary_region"`
 	MultiRegionEnabled                bool          `json:"multi_region_enabled"`
 	InternalModels                    []string      `json:"internal_models"`
+	// AsyncSettle is optional: nil when the publisher does not carry it
+	// (unknown, docs/design/fast-admission-e2-g15-async.md section 6.1).
+	AsyncSettle *AsyncSettle `json:"async_settle,omitempty"`
+}
+
+// AsyncSettle is the policy's async_settle object, four booleans the
+// publishing Python process reads from its settings and its async-settle
+// runtime when it signs (docs/design/fast-admission-e2-g15-async.md section
+// 3.4). Each is required inside the object; no other member is allowed.
+// Nothing reads them yet.
+type AsyncSettle struct {
+	// AdmissionEnabled is settings.async_settle_admission_enabled.
+	AdmissionEnabled bool `json:"admission_enabled"`
+	// TicketAuthority is whether the publisher holds a ticket signer, an
+	// authority epoch of at least 1 and a non-empty journal region.
+	TicketAuthority bool `json:"ticket_authority"`
+	// TypedRecords is whether the publisher writes typed records, the
+	// expression gateway.py's async-v1 branch gates on.
+	TypedRecords bool `json:"typed_records"`
+	// EdgeDecide is fastpath_edge_decide_async: whether the edge may answer
+	// an async-v1 authorize itself.
+	EdgeDecide bool `json:"edge_decide"`
 }
 
 // PolicyClaims are an edge-policy manifest's claims; the canonical encoding

@@ -47,7 +47,7 @@
       "output_token_price_per_m": 280000,
       "cached_input_token_price_per_m": 28000,
       "missing_since": "2026-08-22",
-      "routable_reason": "delisted-upstream"
+      "routable_reason": "provider-access-unavailable"
     },
     {
       "display_name": "DeepSeek V4 Pro",
@@ -180,7 +180,9 @@
       "id": "deepseek/deepseek-v4-flash",
       "upstream_id": "deepseek/deepseek-v4-flash-latest",
       "context_length": 1048576,
-      "routable": true,
+      "routable": false,
+      "routable_reason": "provider-access-unavailable",
+      "missing_since": "2026-10-25",
       "input_token_price_per_m": 140000,
       "output_token_price_per_m": 280000,
       "cached_input_token_price_per_m": 28000
@@ -276,7 +278,7 @@
   ],
   "source": "https://api.arcee.ai/api/v1/models",
   "pricing_source": "https://api.arcee.ai/api/v1/models",
-  "generated_at": "2026-10-20T12:05:14Z",
+  "generated_at": "2026-10-26T06:59:20Z",
   "price_scale": "microdollars_per_million",
   "model_count": 12
 }

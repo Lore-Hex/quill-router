@@ -286,8 +286,9 @@ func TestEveryGoldenCaseThroughTheDecidePath(t *testing.T) {
 			if len(rows) != 1 || !rowsAreGoldens(t, c, rows[0]) {
 				t.Errorf("%s: %d inserts", c.Name, len(rows))
 			}
+			// The lease is asked for the reservation, not the rows' estimate.
 			want := frontdoor.AuthorizeOf{Workspace: c.Facts.Key.WorkspaceID, Request: c.IDs.AuthorizationID,
-				Estimate: c.Expect.Estimate, Boot: []byte(c.Boot.Kid)}
+				Estimate: c.Expect.Reservation, Boot: []byte(c.Boot.Kid)}
 			if len(asked) != 1 || asked[0].Workspace != want.Workspace || asked[0].Request != want.Request ||
 				asked[0].Estimate != want.Estimate || string(asked[0].Boot) != string(want.Boot) || asked[0].Stream ||
 				asked[0].OpenHeartbeat {
@@ -345,7 +346,7 @@ func TestEveryGoldenCaseThroughTheDecidePath(t *testing.T) {
 		}
 	}
 	t.Logf("%d answered, %d unavailable, %d passed (%d refunded)", answered, unavailable, passed, refunded)
-	if answered != 161 || unavailable != 3 || refunded != 7 {
+	if answered != 174 || unavailable != 3 || refunded != 7 {
 		t.Fatalf("answered %d, unavailable %d, refunded %d: not the goldens' counts", answered, unavailable, refunded)
 	}
 	// The goldens' three unavailable answers, a code each: the clock ahead

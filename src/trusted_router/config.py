@@ -29,9 +29,10 @@ from trusted_router.trust_ownership import (
 
 logger = logging.getLogger(__name__)
 
-# Longest a shadow canary expiry may lie ahead of process start-up: one UTC
-# evidence day plus a day of margin. A typo cannot leave the shadow on for weeks.
-SHADOW_CANARY_MAX_SECONDS = 48 * 3600
+# One expiry covers the whole evidence window; renewal deploys are unacceptable.
+# Stop early via the runtime stop marker / CLI (#2053) or an opt-out PR; this
+# upper bound turns a forgotten canary off.
+SHADOW_CANARY_MAX_SECONDS = 14 * 86400
 _LOGGED_SHADOW_EXPIRY_ERRORS: set[str] = set()
 
 
@@ -1005,6 +1006,7 @@ class Settings(BaseSettings):
     # v1 still installs when workspaces are set and the raw policy is empty.
     async_settle_shadow_expires_at: str = ""
     _async_settle_shadow_expiry: float | None = PrivateAttr(default=None)
+    _async_settle_shadow_stopped: bool = PrivateAttr(default=False)
     async_settle_pilot_workspaces: str = ""
     _async_settle_pilot_workspace_ids: frozenset[str] = PrivateAttr(default=frozenset())
     async_settle_enabled: bool = False
@@ -1467,12 +1469,18 @@ class Settings(BaseSettings):
                 logger.warning("async settle shadow expiry invalid; shadow pins are off reason=%s", reason)
         return self
 
+    def stop_async_settle_shadow(self) -> None:
+        """Process-local terminal latch shared by every shadow entry point."""
+        self._async_settle_shadow_stopped = True
+
     def async_settle_shadow_live(self, now: float | None = None) -> bool:
         """Whether shadow pins may act now. Monotone: once False, never True again.
 
         Local and test environments without an expiry run unbounded; every
         deployed environment needs an unexpired ``async_settle_shadow_expires_at``.
         """
+        if self._async_settle_shadow_stopped:
+            return False
         expiry = self._async_settle_shadow_expiry
         if expiry is None:
             return self.environment.lower() in {"local", "test"}

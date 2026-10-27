@@ -1,4 +1,4 @@
-"""E2 routing snapshot v1; no gateway imports or activation side effects.
+"""E2 routing snapshot v3; no gateway imports or activation side effects.
 
 Compiles the catalog facts Go needs to reproduce Python's authorize candidates
 and prices (docs/design/fast-admission-enclave-direct.md, E2 and §4.1) into one
@@ -39,6 +39,7 @@ from trusted_router.catalog import effective_endpoint
 from trusted_router.catalog_data import (
     AUTO_MODEL_ID,
     META_MODEL_IDS,
+    PRIVACY_TIER_ALIASES,
     PRIVACY_TIER_CONFIDENTIAL,
     PRIVACY_TIER_NO_STORE,
     PRIVACY_TIER_STANDARD,
@@ -76,7 +77,7 @@ from trusted_router.stage_d import PRICING_ROUNDING, endpoint_pricing_candidate
 if TYPE_CHECKING:
     from trusted_router.config import Settings
 
-SNAPSHOT_VERSION: Final = 1
+SNAPSHOT_VERSION: Final = 3
 SNAPSHOT_KIND: Final = "tr-routing-snapshot"
 EPOCH_SECONDS: Final = 3_600
 MAX_HORIZON_SECONDS = 24 * 3_600
@@ -239,6 +240,7 @@ class EndpointEntry(Frozen):
     upstream_model: Identity
     supported_parameters: Identities
     input_modalities: Identities = Field(min_length=1)
+    context_length: UInt
     privacy: Privacy
     gateway_regions: GatewayRegions
     catalog_valid_until: Int64 | None
@@ -282,10 +284,47 @@ class Aliases(Frozen):
     provider_aliases: dict[Identity, Identity]
     provider_group_aliases: dict[Identity, Identities]
     router_provider_slugs: Identities
+    # provider.min_privacy's accepted spellings (catalog_data.PRIVACY_TIER_ALIASES),
+    # each to the requirement value it asks for; 0 asks for nothing. Any
+    # other spelling is a 400.
+    privacy_tiers: dict[Identity, UInt]
 
     @model_validator(mode="after")
     def sorted_router_slugs(self) -> Self:
         _sorted_unique(self.router_provider_slugs, "router_provider_slugs")
+        if set(self.privacy_tiers.values()) - set(PRIVACY_REQUIREMENTS):
+            raise ValueError("privacy_tiers must name requirement values")
+        return self
+
+
+class ParameterRules(Frozen):
+    """routing's request-parameter tables, as data.
+
+    ``capability_required`` is CAPABILITY_REQUIRED_PARAMETERS: each parameter
+    that decides the kind of answer, to the route declarations that take it.
+    ``aliases`` is _PARAMETER_CAPABILITY_ALIASES, what provider.require_parameters
+    accepts for a requested name. ``route_declared`` is
+    _ROUTE_DECLARED_CAPABILITIES: the declaration sets a route is held to when
+    another route of its model declares them.
+    """
+
+    capability_required: dict[Identity, Identities]
+    aliases: dict[Identity, Identities]
+    route_declared: tuple[Identities, ...]
+
+    @model_validator(mode="after")
+    def sorted_sets(self) -> Self:
+        for name, table in (("capability_required", self.capability_required),
+                            ("aliases", self.aliases)):
+            for key, values in table.items():
+                if not values:
+                    raise ValueError(f"{name}[{key}] must not be empty")
+                _sorted_unique(values, f"{name}[{key}]")
+        for values in self.route_declared:
+            if not values:
+                raise ValueError("route_declared sets must not be empty")
+            _sorted_unique(values, "route_declared")
+        _sorted_unique(self.route_declared, "route_declared")
         return self
 
 
@@ -351,8 +390,8 @@ class Fees(Frozen):
     token_rounding: Literal["half_up_per_million"]
 
 
-class RoutingSnapshotV1(Frozen):
-    v: Literal[1]
+class RoutingSnapshotV3(Frozen):
+    v: Literal[3]
     kind: Literal["tr-routing-snapshot"]
     compiled_at: UInt
     not_after: UInt
@@ -364,6 +403,7 @@ class RoutingSnapshotV1(Frozen):
     models: tuple[ModelEntry, ...]
     endpoints: tuple[EndpointEntry, ...]
     aliases: Aliases
+    parameters: ParameterRules
     requested_models: tuple[RequestedModel, ...]
     decision_chains: dict[Identity, Identities]
     ranking: Ranking
@@ -423,6 +463,7 @@ class CatalogInputs:
     catalog_resolved_at: int
     expansions_clock: tuple[int, int]
     aliases: Aliases
+    parameter_rules: ParameterRules
     decision_chains: Mapping[str, Sequence[str]]
     ranking_evidence: Mapping[str, Any]
     prepaid_min_rank: Mapping[str, int]
@@ -447,6 +488,7 @@ class CatalogInputs:
             catalog_resolved_at=_floor_seconds(CATALOG_RESOLVED_AT),
             expansions_clock=(before, after),
             aliases=live_aliases(),
+            parameter_rules=live_parameter_rules(),
             decision_chains=dict(catalog_data.NAMED_DECISION_MODEL_PROVIDERS),
             ranking_evidence=json.loads(evidence_path.read_text()),
             prepaid_min_rank=dict(routing._PREPAID_PROVIDER_MIN_RANK),
@@ -478,6 +520,25 @@ def live_aliases() -> Aliases:
             alias: tuple(slugs) for alias, slugs in routing._PROVIDER_GROUP_ALIASES.items()
         },
         router_provider_slugs=tuple(sorted(routing._ROUTER_PROVIDER_SLUGS)),
+        privacy_tiers=dict(PRIVACY_TIER_ALIASES),
+    )
+
+
+def live_parameter_rules() -> ParameterRules:
+    from trusted_router import routing
+
+    return ParameterRules(
+        capability_required={
+            name: tuple(sorted(accepted))
+            for name, accepted in routing.CAPABILITY_REQUIRED_PARAMETERS.items()
+        },
+        aliases={
+            name: tuple(sorted(alternatives))
+            for name, alternatives in routing._PARAMETER_CAPABILITY_ALIASES.items()
+        },
+        route_declared=tuple(sorted(
+            tuple(sorted(capability)) for capability in routing._ROUTE_DECLARED_CAPABILITIES
+        )),
     )
 
 
@@ -708,6 +769,7 @@ def _endpoint_entry(endpoint: ModelEndpoint, starts: list[int]) -> EndpointEntry
         upstream_model=endpoint.upstream_id or endpoint.model_id,
         supported_parameters=tuple(sorted(set(endpoint.supported_parameters))),
         input_modalities=tuple(sorted(set(endpoint.input_modalities or ("text",)))),
+        context_length=endpoint.context_length,
         privacy=Privacy(
             stores_content=endpoint_stores_content(endpoint),
             meets=tuple(
@@ -847,7 +909,7 @@ def compile_routing_snapshot(
     source_revision: str,
     plane: Plane,
     inputs: CatalogInputs,
-) -> RoutingSnapshotV1:
+) -> RoutingSnapshotV3:
     """Freeze the catalog for [at, not_after); refuse rather than approximate."""
     if type(at) is not int or type(horizon) is not int or at < 0:
         raise SnapshotRefused("at and horizon must be integer seconds")
@@ -857,7 +919,7 @@ def compile_routing_snapshot(
     not_after = _not_after(at, horizon, inputs)
     starts = _epoch_starts(at, not_after)
     _refuse_off_hour_price_changes(inputs.endpoints, starts, not_after)
-    return RoutingSnapshotV1(
+    return RoutingSnapshotV3(
         v=SNAPSHOT_VERSION,
         kind=SNAPSHOT_KIND,
         compiled_at=at,
@@ -885,6 +947,7 @@ def compile_routing_snapshot(
         ),
         endpoints=tuple(_endpoint_entry(endpoint, starts) for endpoint in inputs.endpoints),
         aliases=inputs.aliases,
+        parameters=inputs.parameter_rules,
         requested_models=tuple(sorted(inputs.requested_models, key=lambda r: r.id)),
         decision_chains={model: tuple(chain) for model, chain in inputs.decision_chains.items()},
         ranking=_ranking(inputs),
@@ -897,14 +960,14 @@ def compile_routing_snapshot(
     )
 
 
-def canonical_snapshot_bytes(snapshot: RoutingSnapshotV1) -> bytes:
+def canonical_snapshot_bytes(snapshot: RoutingSnapshotV3) -> bytes:
     """ASCII JSON, lexical keys, compact separators, no trailing newline."""
     return canonical_bytes(snapshot)
 
 
-def snapshot_digest(snapshot: RoutingSnapshotV1) -> str:
+def snapshot_digest(snapshot: RoutingSnapshotV3) -> str:
     return hashlib.sha256(canonical_snapshot_bytes(snapshot)).hexdigest()
 
 
-def parse_routing_snapshot(raw: bytes | str) -> RoutingSnapshotV1:
-    return RoutingSnapshotV1.model_validate_json(raw)
+def parse_routing_snapshot(raw: bytes | str) -> RoutingSnapshotV3:
+    return RoutingSnapshotV3.model_validate_json(raw)

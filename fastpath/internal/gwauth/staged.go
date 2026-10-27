@@ -78,6 +78,9 @@ func Stage(in ComposeInput) (Staged, error) {
 	}, nil
 }
 
+// Input is what Stage was given, its instant as Python holds it.
+func (s Staged) Input() ComposeInput { return s.in }
+
 // Finish adds the front door's envelope and end of life to the payload,
 // encodes it as json_body does (sorted, ASCII, compact) and returns the two
 // rows and the body. An error, after Admitted, refunds and passes.

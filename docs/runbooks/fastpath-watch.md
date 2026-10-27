@@ -125,8 +125,24 @@ the I2 gates of `docs/design/fast-admission-e2-decide.md` (§11) are judged
 by. It stops nothing, and needs logging read access only:
 
 ```bash
-fastpathwatch edge -project quill-cloud-proxy -since 2026-10-17T00:00:00Z -until 2026-10-24T00:00:00Z
+fastpathwatch edge -project quill-cloud-proxy -since 2026-10-24T00:00:00Z
 ```
+
+`-since` is the start of the sample the gates read, in RFC 3339, and
+`-until` is now when not given. The counts from before a node re-pin or a
+route weight change are kept apart and do not count (§11), and `-since`
+selects lines by their timestamp while each line carries the period (a
+minute) before it, so the period that crosses a change is not the
+sample's: on every node, find the first count line that is a full period
+after the last change (the node's restart onto the release, or the
+weight's apply), from the lines' timestamps per node (the read below, by
+`resource_name`), and give `-since` the latest of those. During a rolling
+re-pin the nodes still on the old release keep logging until each is
+restarted, so the last node's restart is the change. The report's
+`periods` then shows every node contributing one line a minute from
+`-since` on. The gates are a sample, not a calendar: at least 3,000
+comparable requests over at least 24 hours and at least three policy and
+two snapshot digests among them, and the ratios and zero counts below.
 
 Each minute every node logs one line of its decide path's counts
 (`fastpath edge decide: ...`, with `-edge-decide`) and, with
@@ -149,8 +165,19 @@ lines, summed, are its counts. It prints JSON:
   the line's bound are counted `other`, so a non-zero `fields_other` means
   the two zero gates cannot be read as zero. Then
   `would_admit_python_refused` and its classes; `stale` by cache,
-  `followed` (every request the shadow compared) and `stale_rate`; and the
-  decide path's `unavailable` answers by the insert's gRPC code.
+  `followed` (every request the shadow compared whose body did not name a
+  `cache_affinity_key`; those are counted under `affinity` alone, wherever
+  they passed, so neither `stale` nor `followed` moves for them) and
+  `stale_rate`; the
+  decide path's `unavailable` answers by the insert's gRPC code; and
+  `affinity_by_class` with `affinity_warm_share`: the requests naming a
+  `cache_affinity_key`, which Go composes in the cold order to measure and
+  never admits, by class (`affinity_cold`: Python's bytes are Go's;
+  `affinity_warm`: Go's with a remembered endpoint promoted; `differ`,
+  `would_admit_python_refused.*` and the rest as for the cohort), and
+  `affinity_warm` over cold plus warm, the figure the design's §1 item 5
+  revisit reads. They are not cohort-eligible, and no row is read back for
+  them.
 - `decide_shadow` and `decide`: every count of the lines, summed.
 - `periods`: each node's lines that come once a minute, the decide line and
   the shadow's line of the requests it did not follow. A node that ran the
@@ -166,6 +193,29 @@ the API's 60 reads a minute, and backs off (doubling, six tries) on a 429
 or a 5xx: a week of three nodes is about 90 pages. Exit
 2 is its usage: `-project` and `-since` (RFC 3339) are needed, `-until` is
 now when not given.
+
+The report sums the shadow's lines over their digests and does not print
+them. The distinct digests of the span, which the gate counts, are read
+from the lines themselves, each line's `snapshot=` and `policy=` (one line
+a minute a node for each pair the minute compared under), counted only
+among the lines with comparable requests (`agree_full` plus `differ`
+above 0): a pair whose lines carried affinity results alone, or none, is
+no evidence, and a line of a minute with no snapshot or policy held says
+`snapshot=none` or `policy=none` and compares nothing. Each dimension is
+counted apart, over the report's exact window:
+
+```bash
+gcloud logging read 'logName="projects/quill-cloud-proxy/logs/fastpath_journal" AND jsonPayload.MESSAGE:"fastpath edge decide shadow: snapshot=" AND timestamp>="2026-10-24T00:00:00Z" AND timestamp<"2026-10-26T00:00:00Z"' \
+  --project=quill-cloud-proxy --format='value(jsonPayload.MESSAGE)' \
+  | awk '{ split("", f); for (i = 1; i <= NF; i++) { n = index($i, "="); if (n) f[substr($i, 1, n - 1)] = substr($i, n + 1) }
+           if (f["agree_full"] + f["differ"] > 0) { s[f["snapshot"]] += f["agree_full"] + f["differ"]; p[f["policy"]] += f["agree_full"] + f["differ"] } }
+         END { for (d in s) print "snapshot", d, s[d]; for (d in p) print "policy", d, p[d] }'
+```
+
+It prints each snapshot digest and each policy digest with the comparable
+requests compared under it; the gate wants at least two of the first and
+three of the second. The `timestamp` bounds are the report's `since` and
+`until`.
 
 The lines themselves, to read a minute's by eye:
 

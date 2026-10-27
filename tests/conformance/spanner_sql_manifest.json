@@ -134,7 +134,7 @@
       ]
     },
     "storage_gcp:txn:1": {
-      "fingerprint": "d0d1045d40b6dfbd25458bdace3723b596bba4387581942a1f5876f0b8116cde",
+      "fingerprint": "3f952879b42888a5d0e0d00045371ec9e6dcc5dbb136a6db082372d9a592c558",
       "scenarios": [
         {
           "bindings": {},
@@ -157,13 +157,13 @@
       ]
     },
     "storage_gcp:txn:2": {
-      "fingerprint": "3f952879b42888a5d0e0d00045371ec9e6dcc5dbb136a6db082372d9a592c558",
+      "fingerprint": "6cff4ba3431aa50e4184cdaf60e214d9fb839c55eec909ef832e926ee8a7729f",
       "scenarios": [
         {
           "bindings": {},
           "types": {
-            "pk": "STRING",
-            "shard_count": "INT64"
+            "adverse_ref": "STRING",
+            "provider": "STRING"
           }
         }
       ]
@@ -186,8 +186,8 @@
         {
           "bindings": {},
           "types": {
-            "adverse_ref": "STRING",
-            "provider": "STRING"
+            "pk": "STRING",
+            "shard_count": "INT64"
           }
         }
       ]
@@ -199,19 +199,19 @@
           "bindings": {},
           "types": {
             "pk": "STRING",
-            "shard_count": "INT64"
+            "shard_count": "INT64",
+            "causes": "ARRAY<STRING>",
+            "now": "TIMESTAMP"
           }
         }
       ]
     },
     "storage_gcp:txn:5": {
-      "fingerprint": "6cff4ba3431aa50e4184cdaf60e214d9fb839c55eec909ef832e926ee8a7729f",
+      "fingerprint": "14dcdb42362bfe7c3b3b1bd3d951035e41367416d01770d9a45c47f239df85ad",
       "scenarios": [
         {
           "bindings": {},
           "types": {
-            "causes": "ARRAY<STRING>",
-            "now": "TIMESTAMP",
             "pk": "STRING",
             "shard_count": "INT64"
           }
@@ -225,22 +225,19 @@
           "bindings": {},
           "types": {
             "pk": "STRING",
-            "shard_count": "INT64"
+            "shard_count": "INT64",
+            "causes": "ARRAY<STRING>",
+            "now": "TIMESTAMP"
           }
         }
       ]
     },
     "storage_gcp:txn:7": {
-      "fingerprint": "14dcdb42362bfe7c3b3b1bd3d951035e41367416d01770d9a45c47f239df85ad",
+      "fingerprint": "154bb298464bdc8cbc241fb69c784a168d9221877465632758442a69823d8040",
       "scenarios": [
         {
           "bindings": {},
-          "types": {
-            "causes": "ARRAY<STRING>",
-            "now": "TIMESTAMP",
-            "pk": "STRING",
-            "shard_count": "INT64"
-          }
+          "types": {}
         }
       ]
     },
@@ -254,11 +251,14 @@
       ]
     },
     "storage_gcp:txn:9": {
-      "fingerprint": "154bb298464bdc8cbc241fb69c784a168d9221877465632758442a69823d8040",
+      "fingerprint": "17473222e40b3b33bf3cd55d8cabb1b5ef17305e28ddef1d57b3dae49bf4cf9a",
       "scenarios": [
         {
           "bindings": {},
-          "types": {}
+          "types": {
+            "owner": "STRING",
+            "workspace": "STRING"
+          }
         }
       ]
     },
@@ -279,8 +279,7 @@
         {
           "bindings": {},
           "types": {
-            "owner": "STRING",
-            "workspace": "STRING"
+            "pk": "STRING"
           }
         }
       ]
@@ -291,19 +290,21 @@
         {
           "bindings": {},
           "types": {
-            "pk": "STRING"
+            "pk": "STRING",
+            "shard_count": "INT64"
           }
         }
       ]
     },
     "storage_gcp:txn:12": {
-      "fingerprint": "17473222e40b3b33bf3cd55d8cabb1b5ef17305e28ddef1d57b3dae49bf4cf9a",
+      "fingerprint": "9334664b8f68347efb4e59669e7eea1b396c33d1536241622d0916a675a5a128",
       "scenarios": [
         {
           "bindings": {},
           "types": {
-            "pk": "STRING",
-            "shard_count": "INT64"
+            "amount": "INT64",
+            "now": "TIMESTAMP",
+            "user_id": "STRING"
           }
         }
       ]
@@ -424,19 +425,6 @@
       ]
     },
     "storage_gcp:txn:14": {
-      "fingerprint": "9334664b8f68347efb4e59669e7eea1b396c33d1536241622d0916a675a5a128",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "amount": "INT64",
-            "now": "TIMESTAMP",
-            "user_id": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp:txn:15": {
       "fingerprint": "e49d54606767135d65da27c5523a8a88802780567fb64bb217324b736bca7d54",
       "scenarios": [
         {
@@ -449,6 +437,24 @@
         }
       ]
     },
+    "storage_gcp:txn:15": {
+      "fingerprint": "a24c106bfe26d891731cd0f9fcef3a65259d8a3a0aa1879d1e9e9f12d0574ccb",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "amount": "INT64",
+            "account_id": "STRING",
+            "authorization_id": "STRING",
+            "counterparty": "STRING",
+            "created_at": "TIMESTAMP",
+            "custom_model_id": "STRING",
+            "kind": "STRING",
+            "movement_id": "STRING"
+          }
+        }
+      ]
+    },
     "storage_gcp:txn:16": {
       "fingerprint": "a24c106bfe26d891731cd0f9fcef3a65259d8a3a0aa1879d1e9e9f12d0574ccb",
       "scenarios": [
@@ -456,12 +462,6 @@
           "bindings": {},
           "types": {
             "account_id": "STRING",
-            "amount": "INT64",
-            "authorization_id": "STRING",
-            "counterparty": "STRING",
-            "created_at": "TIMESTAMP",
-            "custom_model_id": "STRING",
-            "kind": "STRING",
             "movement_id": "STRING"
           }
         }
@@ -473,20 +473,21 @@
         {
           "bindings": {},
           "types": {
-            "account_id": "STRING",
-            "movement_id": "STRING"
+            "shard_count": "INT64",
+            "workspace_id": "STRING"
           }
         }
       ]
     },
     "storage_gcp:txn:18": {
-      "fingerprint": "a24c106bfe26d891731cd0f9fcef3a65259d8a3a0aa1879d1e9e9f12d0574ccb",
+      "fingerprint": "c9bb2c5a837c6a90cae7533db1eca0eb04a70fba0690783a89f27bdc7ae22ebc",
       "scenarios": [
         {
           "bindings": {},
           "types": {
-            "shard_count": "INT64",
-            "workspace_id": "STRING"
+            "amount": "INT64",
+            "now": "TIMESTAMP",
+            "user_id": "STRING"
           }
         }
       ]
@@ -504,19 +505,6 @@
       ]
     },
     "storage_gcp:txn:19": {
-      "fingerprint": "c9bb2c5a837c6a90cae7533db1eca0eb04a70fba0690783a89f27bdc7ae22ebc",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "amount": "INT64",
-            "now": "TIMESTAMP",
-            "user_id": "STRING"
-          }
-        }
-      ]
-    },
-    "storage_gcp:txn:20": {
       "fingerprint": "446039cd7c42b0b03d335359e589f28eefa2697b2cb5b6a231cc775b997c6d33",
       "scenarios": [
         {
@@ -529,7 +517,7 @@
         }
       ]
     },
-    "storage_gcp:txn:21": {
+    "storage_gcp:txn:20": {
       "fingerprint": "388a70c4eb9250f38b3c0de6fd47ef656942e170b28cbc44f2aded31a08cbddd",
       "scenarios": [
         {
@@ -542,7 +530,7 @@
         }
       ]
     },
-    "storage_gcp:txn:22": {
+    "storage_gcp:txn:21": {
       "fingerprint": "3b8b24a33d9fd21c48fd2874d95cdb2180d64242ecb2319c151d41603bf75a20",
       "scenarios": [
         {
@@ -553,14 +541,27 @@
         }
       ]
     },
-    "storage_gcp:txn:23": {
+    "storage_gcp:txn:22": {
       "fingerprint": "3b8b24a33d9fd21c48fd2874d95cdb2180d64242ecb2319c151d41603bf75a20",
       "scenarios": [
         {
           "bindings": {},
           "types": {
-            "now": "TIMESTAMP",
-            "user_id": "STRING"
+            "user_id": "STRING",
+            "now": "TIMESTAMP"
+          }
+        }
+      ]
+    },
+    "storage_gcp:txn:23": {
+      "fingerprint": "85683da9c98e0d338df286358ddabd4130fbcf122e9e2f5ea70c5e051e0142e0",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "after": "STRING",
+            "kind": "STRING",
+            "limit": "INT64"
           }
         }
       ]
@@ -750,19 +751,6 @@
           "types": {
             "after_att_sha256": "STRING",
             "after_kid": "STRING",
-            "kind": "STRING",
-            "limit": "INT64"
-          }
-        }
-      ]
-    },
-    "storage_gcp:txn:24": {
-      "fingerprint": "85683da9c98e0d338df286358ddabd4130fbcf122e9e2f5ea70c5e051e0142e0",
-      "scenarios": [
-        {
-          "bindings": {},
-          "types": {
-            "after": "STRING",
             "kind": "STRING",
             "limit": "INT64"
           }
@@ -2793,7 +2781,7 @@
       ]
     },
     "storage_gcp_stage_d:txn:1": {
-      "fingerprint": "ba31910f3432ef5cfb4835333e9ace9eaaeb75742d6136c96760571b3aa3a7ec",
+      "fingerprint": "af5f169e891b953615380206eefda76cf7bc9a5398614f680feabba85006bf37",
       "scenarios": [
         {
           "bindings": {},
@@ -2804,7 +2792,7 @@
       ]
     },
     "storage_gcp_stage_d:txn:2": {
-      "fingerprint": "ba31910f3432ef5cfb4835333e9ace9eaaeb75742d6136c96760571b3aa3a7ec",
+      "fingerprint": "af5f169e891b953615380206eefda76cf7bc9a5398614f680feabba85006bf37",
       "scenarios": [
         {
           "bindings": {},
@@ -2821,7 +2809,7 @@
       ]
     },
     "storage_gcp_stage_d:txn:3": {
-      "fingerprint": "ba31910f3432ef5cfb4835333e9ace9eaaeb75742d6136c96760571b3aa3a7ec",
+      "fingerprint": "af5f169e891b953615380206eefda76cf7bc9a5398614f680feabba85006bf37",
       "scenarios": [
         {
           "bindings": {},
@@ -4632,6 +4620,43 @@
           }
         }
       ]
+    },
+    "storage_account_closure:rows:1": {
+      "fingerprint": "d17299f98937c19aed4e65bd1f5ff91cfab3d1ee93c558fe9df621d3bf5ddde1",
+      "scenarios": [
+        {
+          "bindings": {
+            "predicate": "STARTS_WITH(id, @prefix)"
+          },
+          "types": {
+            "kind": "STRING",
+            "limit": "INT64",
+            "prefix": "STRING"
+          }
+        },
+        {
+          "bindings": {
+            "predicate": "ENDS_WITH(id, @suffix)"
+          },
+          "types": {
+            "kind": "STRING",
+            "limit": "INT64",
+            "suffix": "STRING"
+          }
+        }
+      ]
+    },
+    "storage_gcp:_update_workspace_tx:1": {
+      "fingerprint": "621d1f16006a6075cafc6dc8a6243ac906a43772044dec1223d34b33c01bb7fd",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "pk": "STRING",
+            "shard_count": "INT64"
+          }
+        }
+      ]
     }
   },
   "sinks": {
@@ -4682,7 +4707,6 @@
     "storage_gcp:SpannerStore.typed_credit_trust_snapshot": "f8eade775ad9fbd7196e47c0c12ebe0466e170abd249359d2332b18d7dd25ad0",
     "storage_gcp:SpannerStore._read_outbox_heartbeat_row": "b146d6a9f64d9504bf4948f7d6c40ec3fc279b3c25d09aa5a17c5153211deb03",
     "storage_gcp:SpannerStore.process_trust_demotion_remainders.txn": "17473222e40b3b33bf3cd55d8cabb1b5ef17305e28ddef1d57b3dae49bf4cf9a",
-    "storage_gcp:SpannerStore.update_workspace.txn": "d0d1045d40b6dfbd25458bdace3723b596bba4387581942a1f5876f0b8116cde",
     "storage_gcp_analytics_outbox:SpannerAnalyticsOutbox.enqueue_tx": "6a13bf3f98fc189b689c291137614aae25e03db076359d4f5846644d53b41920",
     "storage_gcp_async_admission:_query": "57e467a3381665d4f2c5eb9799af358381851b9b59b2610b7cd051586bc57142",
     "storage_gcp_async_admission:_snapshot_rows": "36aee785c37c3fda2426050b3fe7e8da518fa09df0df2f6b5e5a831aafe629c4",
@@ -4691,7 +4715,7 @@
     "storage_gcp_authorize:_apply_user_model_payout_tx": "87282c76b37fb351b3ae5a7572ff8d6c835affc98e9d3a3b24f976fa471421f8",
     "storage_gcp_authorize:_apply_app_markup_payout_tx": "bf69f4d4f5445dbb97dcf22507d8651974f2430dc5d845fe68c2daab72dfc2c6",
     "storage_gcp_authorize:_apply_custom_model_markup_payout_tx": "a1a06d4c1dcc22a836e086dc1700440a90dad6d8c8966466902930955a34e3f0",
-    "storage_gcp_authorize:authorize_atomic.txn": "e5288bdecf407431b46d41b566e301b9b1b5f649e2ffc25ea089060d3c74964a",
+    "storage_gcp_authorize:authorize_atomic.txn": "37002b308853018c3eb0d515605b8c3b4326b15251b5fe9ff6dfd3382f270fdf",
     "storage_gcp_authorize:typed_finalize_atomic.speculative_batch": "d5ec6f537d513b1b627c55e57e00db0a64e7d8c02d384b4705f56cd386b5ff39",
     "storage_gcp_authorize:key_window_limit_decision": "5a317b9f2927443ca6d6686b5cb1d1b6ff036c6d744d511a3b5f24c63e3b2ad7",
     "storage_gcp_authorize:reap_expired_reservations_result": "792c0c08242dcd713034dd26eb9821673662536d20a3af9b1a2308dfe186a7d1",
@@ -4786,7 +4810,7 @@
     "storage_gcp_shadow_observation:ObservationStore.snapshot_query": "3ba01c37908cd1a6cb113ac4bb5302961cc207a7d9b0c1ea8a4405999e1988b5",
     "storage_gcp_shadow_v2_export:open_page": "9f96c5fe6fb1fa21be6fe58d56f4c8dffed10a376870b43a940086010b0773e1",
     "storage_gcp_speculation_shadow:SpannerSpeculationShadow.resolve": "44e5026c99ada85fbe44dd62f53501c4509d2f8489e4231f87fe146e70496889",
-    "storage_gcp_stage_d:heartbeat_gateway_atomic.txn": "ba31910f3432ef5cfb4835333e9ace9eaaeb75742d6136c96760571b3aa3a7ec",
+    "storage_gcp_stage_d:heartbeat_gateway_atomic.txn": "af5f169e891b953615380206eefda76cf7bc9a5398614f680feabba85006bf37",
     "storage_gcp_stage_d_policy:advance_stage_d_policy_watermark.txn": "f8692a3d8d16677e42220de0981b22ff0872777f5a80f690e3a91236d0874df8",
     "storage_gcp_stage_d_policy:get_stage_d_policy_watermark": "8a15b7d23674a778d0b3a0267e0a8ed3080f8e99d94c926c79bbcee32f13839d",
     "storage_gcp_strict_budget:reserve_strict_key": "7a35098cb2a910de9879df22182c34dae76c643340d9ddf306436a8e786b1f25",
@@ -4818,7 +4842,9 @@
     "trust_owner_budget:recompute_owner_budget": "959e550c803a9b12ebf91949eab221a57f4991b513a300a74725c0395c6e51a4",
     "trust_tier_bulk:_read_entities": "7bd389ba33373db6b0e2aec54ee25bfaa56b40ed18e1ec38befa06df2d943f65",
     "trust_tier_bulk:iter_trust_tier_bulk": "846b000f05dbc96b50d63bfe4627e9f72b6a21d9103315b740330286a5f9cfe5",
-    "trust_tier_bulk:select_trust_tier_candidates": "2047f3a799e1b13534cceb2c4e19dd904a12c244704184e7b9cc629fc5ff8bc2"
+    "trust_tier_bulk:select_trust_tier_candidates": "2047f3a799e1b13534cceb2c4e19dd904a12c244704184e7b9cc629fc5ff8bc2",
+    "storage_account_closure:close_spanner.txn.rows": "d17299f98937c19aed4e65bd1f5ff91cfab3d1ee93c558fe9df621d3bf5ddde1",
+    "storage_gcp:SpannerStore._update_workspace_tx": "621d1f16006a6075cafc6dc8a6243ac906a43772044dec1223d34b33c01bb7fd"
   },
   "non_google_sql": {
     "analytics_sink:_post_rows:1": {
@@ -5012,6 +5038,14 @@
     "storage_legacy_trust:recover_released_postgres:7": {
       "fingerprint": "43e491950abee08510a26f9f7935c2bc12ca5335ef4f5d0e8c21d3be34ca11af",
       "reason": "PostgreSQL adapter SQL (positional bindings / PostgreSQL backend)"
+    },
+    "storage_account_closure:rows:2": {
+      "fingerprint": "cb315da66eea159af4d7df899ef86845cdce3cb145d4240643f3bb6e5ed454a3",
+      "reason": "PostgreSQL-only account closure transaction; positional bindings and row locks, exercised by PostgreSQL conformance."
+    },
+    "storage_account_closure:txn:1": {
+      "fingerprint": "f881176c215bb568ebcb767fb98a043b6bf2d5c29750a5fd10038cb48fda79d9",
+      "reason": "PostgreSQL-only account closure transaction; positional bindings and row locks, exercised by PostgreSQL conformance."
     }
   }
 }

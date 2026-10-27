@@ -245,6 +245,7 @@ _SNAPSHOT_ATTRIBUTES = (
     "fastpath-edge-shadow",
     "fastpath-edge-policy-url",
     "fastpath-edge-decide-shadow",
+    "fastpath-edge-decide",
 )
 
 
@@ -268,7 +269,7 @@ def test_the_snapshot_flags_wait_for_metadata_and_a_release_that_takes_them() ->
     flags = _snapshot_flags(script)
     assert flags == {
         "edge-snapshot-url", "edge-snapshot-public-key", "edge-snapshot-kid", "edge-snapshot-plane", "edge-shadow",
-        "edge-policy-url", "edge-decide-shadow",
+        "edge-policy-url", "edge-decide-shadow", "edge-decide",
     }
     for attribute in _SNAPSHOT_ATTRIBUTES:
         assert f"$(attribute {attribute})" in script, attribute
@@ -377,11 +378,30 @@ def test_the_script_passes_the_edge_policy_and_decide_shadow_only_with_what_they
         polled = _run_snapshot_block(script, **snapshot, **policy, **{"fastpath-edge-decide-shadow": off})
         assert polled.returncode == 0, polled.stderr
         assert polled.stdout == f"{flags} -edge-policy-url {upstream}/internal/fastpath/edge-policy"
+    # The decide path (I2) rides the same way: after the shadow's flag, with
+    # the policy, true, false or absent.
+    decide = _run_snapshot_block(script, **snapshot, **policy, **{"fastpath-edge-decide": "true"})
+    assert decide.returncode == 0, decide.stderr
+    assert decide.stdout == f"{flags} -edge-policy-url {upstream}/internal/fastpath/edge-policy -edge-decide"
+    both_on = _run_snapshot_block(
+        script, **snapshot, **policy, **{"fastpath-edge-decide-shadow": "true", "fastpath-edge-decide": "true"},
+    )
+    assert both_on.returncode == 0, both_on.stderr
+    assert both_on.stdout == (
+        f"{flags} -edge-policy-url {upstream}/internal/fastpath/edge-policy -edge-decide-shadow -edge-decide"
+    )
+    for off in ("false", ""):
+        polled = _run_snapshot_block(script, **snapshot, **policy, **{"fastpath-edge-decide": off})
+        assert polled.returncode == 0, polled.stderr
+        assert polled.stdout == f"{flags} -edge-policy-url {upstream}/internal/fastpath/edge-policy"
     refusals = [
         ({**snapshot, "fastpath-edge-decide-shadow": "true"}, "needs the edge policy's URL"),
         ({**snapshot, **policy, "fastpath-edge-decide-shadow": "yes"}, "fastpath-edge-decide-shadow is true, false"),
         ({**policy}, "need the routing snapshot"),
         ({"fastpath-edge-decide-shadow": "true"}, "need the routing snapshot"),
+        ({**snapshot, "fastpath-edge-decide": "true"}, "decide path needs the edge policy's URL"),
+        ({**snapshot, **policy, "fastpath-edge-decide": "yes"}, "fastpath-edge-decide is true, false"),
+        ({"fastpath-edge-decide": "true"}, "need the routing snapshot"),
         ({**snapshot, "fastpath-edge-policy-url": f"{upstream}/internal/fastpath/edge-policy x"},
          "a routing snapshot or edge policy attribute holds a character the unit cannot carry"),
     ]
@@ -435,6 +455,7 @@ def test_the_snapshot_attributes_terraform_sets_pass_the_startup_script() -> Non
     key = rendered["fastpath-edge-snapshot-public-key"]
     assert len(base64.urlsafe_b64decode(key + "=" * (-len(key) % 4))) == 32, key
     assert rendered["fastpath-edge-decide-shadow"] in {"true", "false"}
+    assert rendered["fastpath-edge-decide"] in {"true", "false"}
     ran = _run_snapshot_block(script, upstream=upstream.group(1), **rendered)
     assert ran.returncode == 0, ran.stderr
     assert ran.stdout == (
@@ -443,6 +464,7 @@ def test_the_snapshot_attributes_terraform_sets_pass_the_startup_script() -> Non
         f"-edge-snapshot-kid {rendered['fastpath-edge-snapshot-kid']} -edge-snapshot-plane gcp/us-central1 -edge-shadow "
         f"-edge-policy-url {upstream.group(1)}/internal/fastpath/edge-policy"
         + (" -edge-decide-shadow" if rendered["fastpath-edge-decide-shadow"] == "true" else "")
+        + (" -edge-decide" if rendered["fastpath-edge-decide"] == "true" else "")
     )
     # Every node: the for_each declares at least one, and the metadata merges
     # the snapshot's attributes in with no condition on the node's name.

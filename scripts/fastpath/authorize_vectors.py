@@ -50,6 +50,7 @@ import os
 import random
 import re
 import sys
+import time
 import types
 import uuid
 from collections.abc import Callable, Iterator
@@ -75,10 +76,12 @@ from google.api_core.exceptions import (  # noqa: E402
 )
 from pydantic import ValidationError  # noqa: E402
 
+from scripts.fastpath import affinity_rule  # noqa: E402
 from tests.fakes.spanner import _SpannerModule, make_fake_store  # noqa: E402
 from tests.test_fastpath_frontdoor import _Door, _transport  # noqa: E402
 from trusted_router import gateway_timing, storage_gcp, storage_gcp_keys  # noqa: E402
 from trusted_router.auth import is_api_key_expired  # noqa: E402
+from trusted_router.authorize_candidates import HOLD_OUTPUT_TOKENS  # noqa: E402
 from trusted_router.catalog_data import MONITOR_MODEL_ID, Model, ModelEndpoint  # noqa: E402
 from trusted_router.catalog_registry import MODEL_ENDPOINTS, MODELS  # noqa: E402
 from trusted_router.config import Settings  # noqa: E402
@@ -89,6 +92,7 @@ from trusted_router.pricing import PriceTier  # noqa: E402
 from trusted_router.receipt_keys import b64url_encode, normalize_receipt_jwk, receipt_kid  # noqa: E402
 from trusted_router.regions import configured_regions  # noqa: E402
 from trusted_router.routes.internal import gateway  # noqa: E402
+from trusted_router.routing_state import RoutingState  # noqa: E402
 from trusted_router.schemas import GatewayAuthorizeRequest  # noqa: E402
 from trusted_router.scopes import SCOPE_INFERENCE  # noqa: E402
 from trusted_router.services import fastpath_frontdoor as fd  # noqa: E402
@@ -101,7 +105,7 @@ from trusted_router.storage_models import CreditAccount, GatewayBoot, Workspace 
 CASES_OUTPUT = "fastpath/testdata/authorize_cases_v1.json"
 FINGERPRINT_OUTPUT = "fastpath/testdata/authorize_fingerprint_v1.json"
 GENERATOR = "scripts/fastpath/authorize_vectors.py"
-SNAPSHOT = "fastpath/testdata/routing_snapshot_v1.body.json"
+SNAPSHOT = "fastpath/testdata/routing_snapshot_v3.body.json"
 PATH = "/internal/gateway/authorize"
 # A reservation row's created_at in the goldens: the commit's timestamp (§5).
 RESERVATION_CREATED_AT = "commit_timestamp"
@@ -642,13 +646,78 @@ def _reservation_row(row: dict[str, Any]) -> dict[str, Any]:
     return {**_row_timestamps(written, ("expires_at",)), "created_at": RESERVATION_CREATED_AT}
 
 
+def _session_key(world: dict[str, Any], body: dict[str, Any], region: str) -> tuple[str, str, str, str]:
+    """The route's affinity session (gateway.py, ``rerank``): the key's hash,
+    body.model, the region it chose and the cache affinity key."""
+    return (world["key"]["hash"], body["model"], region, body["cache_affinity_key"])
+
+
+def _seeded_routing_state(case: dict[str, Any], sessions: tuple[tuple[str, float], ...],
+                          region: str | None) -> RoutingState:
+    """A fresh process-local routing state (the route's is per process and
+    seeded only by settle), remembering each (endpoint, age in seconds) under
+    the case's session. ``rank`` reads the monotonic clock, so an age past
+    600 s is an expired session."""
+    state = RoutingState()
+    if sessions:
+        body = json.loads(case["request"]["body"])
+        assert region is not None
+        for endpoint_id, age in sessions:
+            state.remember(_session_key(case["_world"], body, region), endpoint_id, now=time.monotonic() - age)
+    return state
+
+
 def run_case(case: dict[str, Any]) -> dict[str, Any]:
+    if case["_affinity"] is None:
+        return {k: v for k, v in _run_case(case, ()).items() if k != "_models"}
+    # A cache affinity key: Python's order with no session (the cold order,
+    # which Go composes) and then with the case's sessions remembered.
+    cold = _run_case(case, ())
+    if cold["expect"]["outcome"] != "answer":
+        raise AssertionError(f"{case['name']}: an affinity case Python did not answer: {cold['expect']}")
+    data = json.loads(cold["expect"]["response"])["data"]
+    warm = _run_case(case, case["_affinity"], region=data["region"])
+    if warm["expect"]["outcome"] != "answer":
+        raise AssertionError(f"{case['name']}: a seeded affinity case Python did not answer: {warm['expect']}")
+    cold_ids = [c["endpoint_id"] for c in data["route_candidates"]]
+    warm_data = json.loads(warm["expect"]["response"])["data"]
+    warm_ids = [c["endpoint_id"] for c in warm_data["route_candidates"]]
+    # The class, or a refusal: Python's warm candidates must be rank's
+    # re-rank of the cold order (provider.order and the sort partition
+    # respected, the session's age too), with nothing but the first
+    # candidate's members (and, with fallbacks off, the estimate) changed.
+    affinity_class = affinity_rule.affinity_class(
+        case["name"], json.loads(case["request"]["body"]), cold["expect"]["response"], warm["expect"]["response"],
+        case["_affinity"], cold["_models"].__getitem__)
+    for field in ("fingerprint", "fingerprint_material", "idempotency_scope", "decide_region"):
+        if cold["expect"][field] != warm["expect"][field]:
+            raise AssertionError(f"{case['name']}: the session changed {field}")
+    expect = {"outcome": "pass", "reason": "body.cache_affinity",
+              "python": {"status": 200, "type": None, "leased": True},
+              "affinity": {"class": affinity_class, "sessions": [list(s) for s in case["_affinity"]],
+                           **{field: cold["expect"][field] for field in
+                              ("fingerprint", "fingerprint_material", "idempotency_scope", "decide_region")},
+                           "response": warm["expect"]["response"], "cold_response": cold["expect"]["response"],
+                           "timing": warm["expect"]["timing"], "cold_timing": cold["expect"]["timing"],
+                           "candidates": warm_ids, "cold_candidates": cold_ids,
+                           "estimate_microdollars": warm_data["estimated_cost_microdollars"],
+                           "cold_estimate_microdollars": data["estimated_cost_microdollars"],
+                           # The lease's hold (§5, "The two figures") in each run.
+                           "reservation_microdollars": warm["expect"]["reservation_microdollars"],
+                           "cold_reservation_microdollars": cold["expect"]["reservation_microdollars"]}}
+    return {**{k: v for k, v in cold.items() if k not in ("expect", "_models")}, "expect": expect}
+
+
+def _run_case(case: dict[str, Any], sessions: tuple[tuple[str, float], ...], *,
+              region: str | None = None) -> dict[str, Any]:
     at = ROUTING._instant(case["_at"])
     world, policy = case["_world"], case["_policy"]
     with pinned(at, case["name"]), contextlib.ExitStack() as stack:
         for model, endpoint in (_catalog_addition(model_id) for model_id in case["_catalog"]):
             MODELS[model.id] = model
             MODEL_ENDPOINTS[endpoint.id] = endpoint
+        # The route's process-local routing state, fresh for every case.
+        stack.enter_context(patched(gateway, "ROUTING_STATE", _seeded_routing_state(case, sessions, region)))
         store, database = build_world(world, policy)
         if case["_stored_key_tags"] is not None:
             # Tags as a corrupt row holds them: writes validate, this does not.
@@ -670,6 +739,9 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
         stack.enter_context(given_ids(case["ids"]))
         stack.enter_context(leased_insert(case["insert"]))
         authorizations_before, reservations_before = set(database.gateway_authorizations), set(database.reservations)
+        # The fixture catalog's endpoint models (installed by pinned), for
+        # the affinity rule, which run_case applies outside it.
+        models = {endpoint_id: endpoint.model_id for endpoint_id, endpoint in MODEL_ENDPOINTS.items()}
         response = send(client, case["request"])
         authorizations = [row for k, row in database.gateway_authorizations.items() if k not in authorizations_before]
         reservations = [row for k, row in database.reservations.items() if k not in reservations_before]
@@ -677,11 +749,20 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
         raise AssertionError("the response was compressed")
     body = response.content.decode()
     leased = bool(authorizations and json.loads(authorizations[0]["payload"]).get("fastpath_envelope"))
-    reason = case["_reason"]
+    # An affinity case is an answer inside: run_case records its pass.
+    reason = case["_reason"] if case["_affinity"] is None else None
     if reason is not None:
         error = _error(body) if response.status_code != 200 else {}
-        return {**world_rows, "expect": {"outcome": "pass", "reason": reason, "python": {
-            "status": response.status_code, "type": error.get("type"), "leased": leased}}}
+        # The credit reservation Python's typed store wrote for a request it
+        # answered without a lease (a stream, say): at most HOLD_OUTPUT_TOKENS
+        # of the output budget, or the whole budget for a stream (§5, "The
+        # two figures").
+        reserved = (
+            {"reservation_microdollars": reservations[0]["credit_reserved_micro"]}
+            if len(reservations) == 1 and not leased else {}
+        )
+        return {**world_rows, "_models": models, "expect": {"outcome": "pass", "reason": reason, "python": {
+            "status": response.status_code, "type": error.get("type"), "leased": leased, **reserved}}}
     if case["insert"] == "failed_precondition" and response.status_code != 503:
         # Python counts this code permanent and fails the request; Go cannot
         # tell it from the refusal of a re-sent commit whose first applied
@@ -689,13 +770,13 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
         # Python's own 503 for the same request, recorded with what Python
         # answered here.
         error = _error(body) if response.status_code != 200 else {}
-        unknown = run_case({**case, "insert": "unknown_not_landed"})
+        unknown = _run_case({**case, "insert": "unknown_not_landed"}, sessions, region=region)
         unknown["expect"]["python"] = {"status": response.status_code, "type": error.get("type"), "leased": leased}
         return unknown
     if response.status_code == 503:
         if authorizations or [path for path, _sent in door.seen] != ["/v1/authorize"]:
             raise AssertionError(f"{case['name']}: a 503 that wrote or refunded")
-        return {**world_rows, "expect": {"outcome": "unavailable", "status": 503,
+        return {**world_rows, "_models": models, "expect": {"outcome": "unavailable", "status": 503,
                                          "headers": [["retry-after", response.headers["retry-after"]]],
                                          "response": body, "timing": json.loads(body)["data"]["timing"]}}
     if not (response.status_code == 200 and leased):
@@ -706,10 +787,14 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
         raise AssertionError(f"{case['name']}: the route minted other ids")
     data = json.loads(body)["data"]
     fingerprint, material = recorder.seen[-1]
-    return {**world_rows, "expect": {
+    return {**world_rows, "_models": models, "expect": {
         "outcome": "answer", "status": 200, "response": body,
         "generation_id": data["generation_id"],
         "estimate_microdollars": data["estimated_cost_microdollars"],
+        # The credit reservation the lease held (the front door's Estimate):
+        # at most HOLD_OUTPUT_TOKENS of the output budget, where the estimate
+        # above prices the whole budget (authorize_candidates.hold_output_tokens).
+        "reservation_microdollars": door.seen[0][1]["Estimate"],
         "decide_region": data["region"],
         "fingerprint": fingerprint,
         "fingerprint_material": material,
@@ -740,6 +825,8 @@ def _catalog_addition(model_id: str) -> tuple[Model, ModelEndpoint]:
 def case_labels(case: dict[str, Any], expect: dict[str, Any]) -> list[str]:
     """§10.1's labels."""
     if expect["outcome"] == "pass":
+        if "affinity" in expect:
+            return sorted([f"pass.{expect['reason']}", expect["affinity"]["class"].replace("_", ".", 1)])
         return [f"pass.{expect['reason']}"]
     labels = {f"insert.{case['insert']}"}
     if expect["outcome"] == "unavailable":
@@ -831,7 +918,12 @@ def cases() -> list[dict[str, Any]]:
             prior: tuple[tuple[dict[str, Any], dict[str, Any]], ...] = (),
             catalog: tuple[str, ...] = (), content_type: str | None = "application/json",
             stored_key_tags: Any = None, workspace_row: bool = True,
-            body_expand: dict[str, Any] | None = None) -> None:
+            body_expand: dict[str, Any] | None = None,
+            affinity: tuple[tuple[str, float], ...] | None = None) -> None:
+        # affinity: a body with cache_affinity_key, run cold and then with
+        # these (endpoint, age in seconds) sessions remembered; () is cold.
+        if (affinity is not None) != ("cache_affinity_key" in (body if isinstance(body, dict) else {})):
+            raise AssertionError(f"{name}: an affinity case is one with cache_affinity_key, and vice versa")
         case_world = _merge(DEFAULT_WORLD, world)
         admitted = door if door is not None and "Envelope" in door else ADMIT
         request_body = body if isinstance(body, str) else {**BASE_BODY, **(body or {})}
@@ -849,6 +941,7 @@ def cases() -> list[dict[str, Any]]:
             "_front_door": door, "_reason": reason, "_catalog": catalog,
             "_stored_key_tags": stored_key_tags, "_workspace_row": workspace_row,
             "_prior": [(_request(case_world, {**BASE_BODY, **p}), answer) for p, answer in prior],
+            "_affinity": affinity,
         })
 
     # Answers: every fixture model at every instant, as Python leases it.
@@ -885,6 +978,23 @@ def cases() -> list[dict[str, Any]]:
         for tokens_out in (1_000_000_000, 1_562_500, 15_625_000):
             add(f"answer:estimate:{FLASH}:0+{tokens_out}@{at}", at=at,
                 body={"model": FLASH, "estimated_input_tokens": 0, "max_output_tokens": tokens_out})
+    # The reservation (reservation_microdollars, the lease's hold) prices at
+    # most HOLD_OUTPUT_TOKENS of the budget while the estimate prices it all:
+    # both sides of the bound, and the production shape that motivated it, a
+    # max_tokens of 131,072 (which counts toward the window, so only Gemini's
+    # unknown window admits it).
+    for tokens_out in (HOLD_OUTPUT_TOKENS - 1, HOLD_OUTPUT_TOKENS, HOLD_OUTPUT_TOKENS + 1, 131_072):
+        add(f"answer:estimate:hold_cap:{FLASH}:1000+{tokens_out}",
+            body={"model": FLASH, "estimated_input_tokens": 1_000, "max_output_tokens": tokens_out})
+    add(f"answer:estimate:hold_cap:{GEMINI}:8000+max_tokens:131072",
+        body={"model": GEMINI, "estimated_input_tokens": 8_000, "max_output_tokens": None, "max_tokens": 131_072})
+    # A stream's reservation is its estimate for now (finish_candidates,
+    # stream): Go passes a stream to Python (body.stream), whose typed store
+    # writes the whole budget's price into the reservation row, recorded as
+    # the pass case's python.reservation_microdollars.
+    for tokens_out in (HOLD_OUTPUT_TOKENS, 131_072):
+        add(f"pass:body.stream:hold_cap:{FLASH}:1000+{tokens_out}", "body.stream",
+            body={"model": FLASH, "stream": True, "estimated_input_tokens": 1_000, "max_output_tokens": tokens_out})
     for field in ("max_tokens", "max_completion_tokens", "max_output_tokens"):
         add(f"answer:output_field:{field}", body={"max_output_tokens": None, field: 2_048})
     add("answer:output_default_512", body={"max_output_tokens": None})
@@ -908,6 +1018,17 @@ def cases() -> list[dict[str, Any]]:
     add("answer:image_input", body={"model": TENCENT_FLASH, "input_modalities": ["text", "image"]})
     add("answer:required_parameters",
         body={"model": GEMINI, "requested_parameters": ["tools"], "provider": {"require_parameters": True}})
+    # G14: the snapshot carries the parameter tables and the privacy
+    # spellings, so these are answered: a capability-required parameter drops
+    # the GLM 5.3 route that does not declare it; require_parameters holds
+    # every route to the requested names through their aliases; min_privacy
+    # keeps the hosts of its tier.
+    add("answer:requested_parameters:tools", body={"requested_parameters": ["tools"]})
+    add("answer:require_parameters:structured_alias",
+        body={"requested_parameters": ["response_format"], "provider": {"require_parameters": True}})
+    for spelling in ("zdr", "confidential", "trusted", " E2E "):
+        add(f"answer:provider:min_privacy:{spelling.strip().lower()}", body={"provider": {"min_privacy": spelling}})
+    add("answer:provider:min_privacy_and_order", body={"provider": {"min_privacy": "zdr", "order": ["chutes", "together"]}})
     # The region a request routes to, and the regions payload.
     for region in ("us-east4", "europe-west4", "us-west1", " us-east4 ", "", "unknown-region"):
         add(f"answer:region:{region.strip() or 'empty'}{':spaced' if region != region.strip() else ''}",
@@ -979,7 +1100,50 @@ def cases() -> list[dict[str, Any]]:
     add("pass:body.stream:stage_d_ok", "body.stream", body={"stream": True, "model": GEMINI})
     for tier in ("auto", "priority", "flex", "default"):
         add(f"pass:body.service_tier:{tier}", "body.service_tier", body={"model": GEMINI, "service_tier": tier})
-    add("pass:body.cache_affinity", "body.cache_affinity", body={"cache_affinity_key": "c" * 64})
+    # A cache affinity key (G13): Python's order comes from a per-process
+    # session table that only settle seeds, so Go composes the cold order
+    # and the shadow measures it against Python's. Each case records both
+    # Python's cold bytes and its bytes with the sessions remembered.
+    key = {"cache_affinity_key": "c" * 64}
+    glm_wafer, glm_together, glm_fireworks = (f"{GLM}@{p}/prepaid" for p in ("wafer", "together", "fireworks"))
+    add("pass:body.cache_affinity", "body.cache_affinity", body=key, affinity=())
+    add("pass:body.cache_affinity:cold:fallback_models", "body.cache_affinity",
+        body={**key, "model": FLASH, "models": [GLM, GEMINI]}, affinity=())
+    add("pass:body.cache_affinity:cold:explicit", "body.cache_affinity",
+        body={**key, "cache_affinity_explicit": True}, affinity=())
+    add("pass:body.cache_affinity:cold:expired", "body.cache_affinity", body=key,
+        affinity=((glm_fireworks, 601.0),))
+    add("pass:body.cache_affinity:cold:other_key", "body.cache_affinity", body=key,
+        affinity=((f"{FLASH}@deepseek/prepaid", 1.0),))
+    add("pass:body.cache_affinity:cold:order", "body.cache_affinity",
+        body={**key, "provider": {"order": ["fireworks", "together"]}}, affinity=((glm_together, 1.0),))
+    add("pass:body.cache_affinity:warm", "body.cache_affinity", body=key, affinity=((glm_fireworks, 1.0),))
+    add("pass:body.cache_affinity:warm:second", "body.cache_affinity", body=key, affinity=((glm_together, 599.0),))
+    add("pass:body.cache_affinity:cold:already_first", "body.cache_affinity", body=key, affinity=((glm_wafer, 1.0),))
+    add("pass:body.cache_affinity:warm:fallback_models", "body.cache_affinity",
+        body={**key, "model": FLASH, "models": [GLM, GEMINI]}, affinity=((glm_fireworks, 1.0),))
+    add("pass:body.cache_affinity:warm:no_fallbacks", "body.cache_affinity",
+        body={**key, "provider": {"allow_fallbacks": False}}, affinity=((glm_fireworks, 1.0),))
+    add("pass:body.cache_affinity:warm:top_level_no_fallbacks", "body.cache_affinity",
+        body={**key, "allow_fallbacks": False}, affinity=((glm_together, 1.0),))
+    add("pass:body.cache_affinity:warm:sort_price", "body.cache_affinity",
+        body={**key, "provider": {"sort": "price"}}, affinity=((glm_together, 1.0),))
+    # An empty provider.order names no provider: Python re-ranks as with none.
+    add("pass:body.cache_affinity:warm:empty_order", "body.cache_affinity",
+        body={**key, "provider": {"order": []}}, affinity=((glm_fireworks, 1.0),))
+    add("pass:body.cache_affinity:warm:no_fallbacks:empty_order", "body.cache_affinity",
+        body={**key, "provider": {"allow_fallbacks": False, "order": []}}, affinity=((glm_fireworks, 1.0),))
+    add("pass:body.cache_affinity:warm:top_level_no_fallbacks:empty_order", "body.cache_affinity",
+        body={**key, "allow_fallbacks": False, "provider": {"order": []}}, affinity=((glm_together, 1.0),))
+    # The sort partitioned by model (the default) keeps the remembered
+    # endpoint within its model's run; partition none moves it to the front
+    # of the whole list.
+    add("pass:body.cache_affinity:warm:partition_none:fallback_models", "body.cache_affinity",
+        body={**key, "model": FLASH, "models": [GLM, GEMINI], "provider": {"sort": {"sort": "price", "partition": "none"}}},
+        affinity=((glm_together, 1.0),))
+    add("pass:body.cache_affinity:warm:partition_model:fallback_models", "body.cache_affinity",
+        body={**key, "model": FLASH, "models": [GLM, GEMINI], "provider": {"sort": {"sort": "price", "partition": "model"}}},
+        affinity=((glm_together, 1.0),))
     add("pass:body.priced_extra:additional_cost", "body.priced_extra",
         body={"additional_cost_reservation_microdollars": 5_000})
     add("pass:body.priced_extra:inference_receipt", "body.priced_extra", body={"inference_receipt": True})
@@ -1044,6 +1208,13 @@ def cases() -> list[dict[str, Any]]:
     add("pass:evaluate.refused:no_origin", "evaluate.refused", body={"model": BEDROCK})
     add("pass:evaluate.refused:context", "evaluate.refused", body={"model": FLASH, "estimated_input_tokens": 70_000})
     add("pass:evaluate.refused:unknown_provider", "evaluate.refused", body={"provider": {"only": ["nope-provider"]}})
+    add("pass:evaluate.refused:min_privacy_spelling", "evaluate.refused", body={"provider": {"min_privacy": "secret"}})
+    add("pass:evaluate.refused:min_privacy_empties", "evaluate.refused",
+        body={"model": FLASH, "provider": {"min_privacy": "confidential"}})
+    add("pass:evaluate.refused:unsupported_parameter", "evaluate.refused",
+        body={"requested_parameters": ["tools"], "provider": {"only": ["together"]}})
+    add("pass:evaluate.refused:require_parameters_not_boolean", "evaluate.refused",
+        body={"provider": {"require_parameters": "true"}})
     add("pass:candidates.byok", "candidates.byok", body={"model": GEMINI}, world={"byok_providers": ["google-ai-studio"]})
     add("pass:candidates.byok:only", "candidates.byok", body={"model": GEMINI, "provider": {"usage": "byok"}},
         world={"byok_providers": ["google-ai-studio"]})

@@ -682,6 +682,24 @@ def test_sentry_floodgate_groups_logs_after_scrubbing_secret_values() -> None:
     reset_sentry_floodgate_for_tests()
 
 
+def test_sentry_log_budget_does_not_consume_error_event_budget() -> None:
+    reset_sentry_floodgate_for_tests(
+        settings=Settings(
+            environment="test",
+            sentry_floodgate_max_events_per_window=2,
+        ),
+    )
+    try:
+        for name in ("warning-one", "warning-two"):
+            assert before_send_log({"level": "warning", "message": name}) is not None
+        assert before_send_log({"level": "warning", "message": "warning-three"}) is None
+        assert before_send({"level": "error", "message": "settlement failed"}) is not None
+        assert before_send({"level": "error", "message": "authorization failed"}) is not None
+        assert before_send({"level": "error", "message": "over-budget"}) is None
+    finally:
+        reset_sentry_floodgate_for_tests()
+
+
 def test_sentry_init_is_noop_under_pytest_even_with_local_dsn(monkeypatch) -> None:
     """Importing trusted_router.main creates the module-level ASGI app.
 

@@ -84,8 +84,30 @@ The flow, per request, in this order:
    rewrites, or a native-batch or partner idempotency key. G10's row
    read-back compares fingerprints live.
 5. **Health rank and affinity.** Go answers the cold order. A request with
-   `cache_affinity_key` passes in E2; revisit if that is more than about
-   30% of the cohort.
+   `cache_affinity_key` passes in E2 (`body.cache_affinity`), after the
+   compose rather than before it (G13): the enclave attaches an implicit
+   key to nearly every non-streaming chat authorize, so the revisit's
+   threshold (about 30% of the cohort) was met at once, with the cohort
+   comparing nothing. Python's order for such a request is
+   `routing_state.rank` over a session table (`ROUTING_STATE._sessions`:
+   key hash, `body.model`, region, key) that lives in each Python
+   process's memory, is seeded only by that process's settle of a request
+   with a discounted cache hit (or `cache_affinity_explicit`), expires
+   after 600 s and is never stored: no Spanner row, no snapshot field, no
+   shared cache. Go cannot read it, and Python's own answer is the
+   instance's: another instance answers the cold order. So byte parity
+   for a warm session is not reproducible from Go, and Go does not
+   approximate it. Instead the decide pipeline composes the cold order
+   (which is Python's own answer with no session, byte for byte: §10.1's
+   affinity cases) and the full shadow measures Python's answer against
+   it, `affinity_cold` or `affinity_warm` (§11), apart from the cohort;
+   `fastpathwatch edge` prints the warm share. The revisit then decides
+   between the two ways out, on that share: accept the cold order for
+   decided requests (affinity off for the cohort: a cache miss, never a
+   wrong answer, since any Python instance without the session answers
+   it), or move the session table to shared storage written by settle and
+   read by both, which changes Python's own routing and is a design of its
+   own. Neither is taken here.
 6. **Broadcast and BYOK.** Any broadcast destination pointer for the
    workspace passes; otherwise `broadcast_destinations` is `[]`. BYOK
    presence comes from entity ids alone; any BYOK candidate passes.
@@ -184,8 +206,13 @@ The flow, per request, in this order:
     deciding off after 60 s (availability only). Eviction is sooner when Python answers
     the key a 401, 402 or 403, or the workspace a pause 503, on any request
     the edge passes. The cohort is pilot workspaces only, and the operator's
-    immediate lever is `fastpathctl decide-off-all` (honoured within one
-    5 s copy interval). Before I2, `docs/runbooks/fastpath-turn-off.md`
+    immediate lever is `fastpathctl decide-off-all`: a node whose reads
+    succeed sees the change within 10 s of the commit, up to 5 s until its
+    next read and the read's 5 s budget (`DecideEvery`, `decideCopy.run`);
+    a node whose read fails keeps the copy it held, and decides nothing
+    (`cache.decide`) once that copy is 15 s old, measured from the start
+    of its last successful read (`DecideView.gate`). Before I2,
+    `docs/runbooks/fastpath-turn-off.md`
     (G2's paragraph) makes `fastpathctl decide off` the first step of any
     abuse pause or key revocation for a decided workspace. A revocation feed
     (a change stream or a Python-published epoch) is E4's, with capped keys.
@@ -238,13 +265,23 @@ order:
 6. The rest of the policy, the evaluation (the requested models first for
    `candidates.private_proxy` and `candidates.estimated_usage`), the
    identity, the compose.
-7. The decide row last (`cache.decide`, `decide.off`).
+7. The decide row last (`cache.decide`, `decide.off`), and a cache
+   affinity key after it (`body.cache_affinity`).
 
 The decide row is checked after everything else so the shadow can compare
 a complete decision for a workspace that does not yet decide: `Decide`
 returns it in `Decided.Shadow` with `decide.off` or `cache.decide` as the
 pass. Only `Decided.Admit()` hands out a decision to admit, and only when
 nothing passed; G11 admits only through it.
+
+**Decision gates** (after the compose, G13): `body.cache_affinity`, a
+body naming a `cache_affinity_key` (`Request.CacheAffinity`; the key
+itself is excluded from the dump, the fingerprint and the 200, as the
+schema excludes it). The decision is composed in the cold order and is
+the shadow's alone (`Decision.Affinity`), compared as §11's
+`affinity_cold` or `affinity_warm` and never admitted, whatever the decide
+row says (§1 item 5): where `decide.off` and `cache.decide` pass after
+the compose for the row's state, this passes for the request's.
 
 **Request** (no I/O, G5):
 
@@ -261,7 +298,6 @@ nothing passed; G11 admits only through it.
 | `body.api_key_hash` | `api_key_hash` present (the lookup hash alone identifies the key in the cohort) |
 | `body.stream` | `stream` true |
 | `body.service_tier` | `service_tier` present |
-| `body.cache_affinity` | `cache_affinity_key` present |
 | `body.priced_extra` | `additional_cost_reservation_microdollars` nonzero, `inference_receipt` true, `video_resolution`, `speech_input_characters` or `transcription_duration_ms` present |
 | `body.canonical_model` | `model` or a `models` entry not identity under `canonical_router_model_id` (`model_aliases.py:70-80`, applied by the schema at `schemas.py:440`) |
 | `body.custom_model` | a custom or user-provided model in `model` or `models` |
@@ -270,7 +306,7 @@ nothing passed; G11 admits only through it.
 | `body.referer` | `http_referer` with no `app` that fails the strict ASCII URL rule (§7) |
 | `body.evaluator_input` | anything `routing-snapshot-v1.md` "What Go evaluates" sends to Python (`shadow.go:927`, `requestOf`) |
 | `header.idempotency_key` | an idempotency key (body or header) over 256 characters after strip, or with a native-batch or partner prefix; an `Idempotency-Key` header sent more than once (Starlette reads the first) or with a byte outside 0x20 to 0x7E (Starlette decodes latin-1 and `str.strip` strips Unicode whitespace) |
-| `header.settlement_async` | `X-TR-Settlement-Mode: async-v1` (`gateway.py:2976`) |
+| `header.settlement_async` | `X-TR-Settlement-Mode` present (`gateway.py:3179-3180`); G15 decides exactly one `async-v1` instead ([`fast-admission-e2-g15-async.md`](fast-admission-e2-g15-async.md)) |
 | `header.video_providers` | `X-Quill-Video-Allowed-Providers` present |
 
 **Caches:** `cache.policy`, `cache.snapshot`, `cache.key`,
@@ -310,7 +346,7 @@ snapshot's `settings`), `decide.off`.
 `evaluate.refused` for an evaluator refusal (Python refuses it too) and
 `evaluate.pass` for any other evaluator pass (a
 provider preference or snapshot input Go does not reproduce, such as
-`provider.max_price` or `provider.require_parameters`; P1's goldens label
+`provider.max_price` or `provider.preferred_max_latency`; P1's goldens label
 a refusal Go passes this way `evaluate.refused`, and either goes to
 Python), `evaluate.estimate_overflow` (the estimate
 in microdollars is beyond int64: Python's leased path would write a value
@@ -450,7 +486,7 @@ the policy only with `-edge-policy-url` set (`fastpath/internal/edge/policy.go`,
 **Golden files** (P2): `fastpath/testdata/edge_policy_v1.body.json` (exact
 canonical bytes, no trailing newline, synthetic workspace ids and digests)
 and `fastpath/testdata/edge_policy_v1.manifest.json`, shaped exactly like
-`routing_snapshot_v1.manifest.json`: `{aud, generator, iss, jws, kid,
+`routing_snapshot_v3.manifest.json`: `{aud, generator, iss, jws, kid,
 public_key_b64url, purpose, test_key: true}`, signed with the same test key
 (`routing-snapshot-test-key-1`, derived in
 `scripts/fastpath/routing_snapshot_vectors.py`), generated by
@@ -504,7 +540,7 @@ always written. For the cohort (`storage_models.py:887-990`), every key:
 | `workspace_id`, `key_hash` | the key's |
 | `model_id`, `provider`, `endpoint_id` | the first candidate's |
 | `usage_type` | `"Credits"` |
-| `estimated_microdollars` | the model estimate |
+| `estimated_microdollars` | the model estimate, the spend ceiling: the largest candidate's price of `estimated_input_tokens` prompt tokens plus the whole `output_estimate`. The credit reservation is a second figure, the same price at `min(output_estimate, HOLD_OUTPUT_TOKENS)` output tokens: see "The two figures" below |
 | `credit_reservation_id` | the reservation id |
 | `settled` | `false` |
 | `created_at` | the clock reading, `isoformat()` with `+00:00` as `Z`: no fraction when the microseconds are 0, else six digits |
@@ -525,6 +561,59 @@ always written. For the cohort (`storage_models.py:887-990`), every key:
 | `invocation_nonce` | when the body sends one |
 | `fastpath_envelope` | `Authorized.Envelope` |
 | `fastpath_end_of_life` | `Authorized.EndOfLife` truncated to microseconds and written with its own UTC offset, exactly what Python's `_parse_time` and `isoformat` make of Go's JSON for that value today (`fastpath_frontdoor.py:359-376`): `+00:00` becomes `Z`, any other offset stays `±HH:MM`; no fraction when the microseconds are 0 |
+
+**The two figures.** An authorization carries an estimate and a
+reservation (`authorize_candidates.hold_output_tokens`,
+`CandidateOutcome.model_estimate` and `model_reservation`;
+`routingsnapshot.Result.ModelEstimate` and `Result.Reservation`). The
+estimate is the spend ceiling: the priciest candidate's price of the prompt
+and the client's whole output budget. The reservation is the credit hold:
+the same price at `min(budget, HOLD_OUTPUT_TOKENS)` output tokens,
+`HOLD_OUTPUT_TOKENS` being 16,384 in Python and in the evaluator's
+`HoldOutputTokens`. They are equal for user-provided models, partner
+billing, videos (whose settle is held to the ceiling), streams (for now:
+see "Streams" below), and whenever the budget is at most 16,384. Every
+reader of either, and which it reads:
+
+| Reader | Figure |
+|---|---|
+| Workspace credit admission against the available balance (`reserve_credit`, `reserve_credit_with_pause`, `credit_exhaustion_precheck`, the memory and Postgres `reserve`), the typed credit counters' `reserved`, the reservation row's `credit_reserved_micro`, and its release at settle, refund and reap (`storage_gcp_counter_dml`, `storage_gcp_authorize` settle; the outbox resolves the reservation by id and releases the recorded hold) | reservation |
+| Key admission: the lifetime cap, the spend windows and the strict windows (`reserve_key`, `reserve_strict_key`, `key_window_limit_decision`, `key_lifetime_cap_precheck`, the memory and Postgres `reserve_key_limit`), the key counters' reserved and the reservation row's `key_reserved_micro`, released at settle, refund and reap as recorded | estimate: a key cap is a promise to the key's owner that outstanding spend ceilings count against it (docs/routing-controls-20260927.md, "Strict spending"); the key counter carries what it admitted, so its release is the recorded hold, symmetric as before. The edge has no key gate: a capped, windowed or strict key passes to Python (`key.key_cap`, `key.key_window`, `key.budget_strict`) |
+| The fast path's lease: `_fastpath_admission` and the edge's admit (`frontdoor.AuthorizeOf.Estimate`, the owner's `Admission.Estimate`, the hold row's `Estimate`, the signed envelope), the drain's raise (`max(charge - hold, 0)`), the owner's and the record's bound on a heartbeat's running charge, and the Go reaper's cap on an abandoned hold's charge | reservation. The owner accepts no heartbeat whose running charge passes the hold, so a stream admitted under a lease would be cut at the reservation: both front doors keep streams out of the lease cohort (Python `fastpath_frontdoor` reason `stream`, Go `gwauth.ReasonStream`) until an admission carries the ceiling beside the hold; an abandoned hold is charged its last accepted snapshot, at most the reservation (Python's snapshot reaper charges the recorded running charge and releases the recorded hold) |
+| The insufficient-credits 402 and its `billing.insufficient_credits` line (`reserved_microdollars`, beside the estimate) | reservation |
+| The authorization row's `estimated_microdollars` (Python and `gwauth.AuthorizationRow`; `storage_gcp_request_records` readback), the payload's `estimated_microdollars`, the 200's `estimated_cost` and `estimated_cost_microdollars` (Python and `gwauth/response.go`, so the shadow's byte comparison of the 200 and of the rows is unchanged; the shadow compares no reservation, the goldens' `reservation_microdollars` does), the replay of a stored authorization, the fast path settle's full-record money metadata (`fastpath_settle`), and the `billing.authorize_contention` and `authorize_conflict_after_escrow` diagnostics | estimate |
+| Stage D: the gateway's `cap_micro` (`_gateway_stage_d_payload`), the heartbeat's `cap_micro` and its `usage_exceeds_cap` refusal (`storage_gcp_stage_d._cap_micro`), which cut a stream whose running charge passes it | estimate |
+| A video's settle ceiling (`Video token cost exceeds the authorized reservation`), a user-provided model's settle cap, the Polyphemus mixed-rollout clamp, the Fetch fee check, the token-billed transcription and speech ceilings, and the `billing.settlement_exceeded_reservation` log | estimate (equal to the reservation for every one of these but the log) |
+| The fixed-quote transcription and speech checks | `additional_cost_reservation_microdollars`, the frozen quote, neither figure (it can differ from both: a quote with app markup) |
+| The deferred (federated) outstanding counter on the Postgres plane, incremented by the row value and released by it at settle, refund and reap | estimate (conservative; no row carries the reservation). The in-memory store increments its counter and has no matching adjustment, which predates this change |
+| Counter reconciliation and resharding (`storage_gcp_counter_reconcile`) | the recorded holds, old full-estimate ones included |
+| `stage_d_max_output_tokens` and the token ceiling `_usage_exceeds_authorized_tokens` | the whole budget, as before |
+
+A catalog text route's settle is capped at neither figure (the video,
+user-provided and Polyphemus settles above are held to the estimate), and
+nothing in authorize bounds the actual charge: cache-creation premiums,
+provider-reported counts above the budget and a price tier the prompt
+estimate missed all settle in full, so an exact prompt with an output
+within the budget can still settle above the estimate. An in-flight
+request's uncovered cost is `max(0, actual - reservation)`, with no bound
+of its own. What the split changes is bounded: against a single hold at
+the estimate it was `max(0, actual - estimate)`, so the split raises the
+uncovered cost of a request by at most the estimate minus the reservation,
+whatever makes up the charge. The reservation is not in the 200 body or on the authorization row;
+the goldens (§10.1) record it as `reservation_microdollars` from what the
+front door was asked.
+
+**Streams.** A stream's reservation is its estimate for now, in
+`finish_candidates` (`stream`) and in the evaluator (`Request.Stream`)
+alike: the Stage D heartbeat reader deployed before this change bounds a
+stream's running charge by the reservation row's `credit_reserved_micro`,
+so during a mixed-version deploy or a rollback a stream admitted with a
+lower reservation would be cut at `usage_exceeds_cap` by an instance
+running that reader. Non-stream requests take the reduced reservation now.
+Follow-up: lower stream reservations once every plane runs the reader that
+caps at the estimate (`storage_gcp_stage_d._cap_micro` here); the change
+is the one `or stream` in `finish_candidates` and the `req.Stream` branch
+in `Evaluate`, with the `hold_cap` goldens' stream cases.
 
 Absent, because `None` with a `None` default: `key_reserved_microdollars`,
 `custom_model_id`, `custom_model_revision`, `user_provided_model_id`,
@@ -1154,7 +1243,7 @@ fake counted it. About 300 cases.
 
 ```
 {"generator": "scripts/fastpath/authorize_vectors.py",
- "snapshot": "fastpath/testdata/routing_snapshot_v1.body.json",
+ "snapshot": "fastpath/testdata/routing_snapshot_v3.body.json",
  "snapshot_sha256": HEX,
  "plane": {"cloud": "gcp", "region": "us-central1"},
  "policy": EDGE_POLICY_BODY,            // §4 body, as an object
@@ -1235,6 +1324,18 @@ EXPECT =
  | {"outcome": "pass", "reason": STR,   // §3 vocabulary
     "python": {"status": INT, "type": STR | null,
                "leased": BOOL}}         // whether Python took the pilot's lease
+ | {"outcome": "pass", "reason": "body.cache_affinity",   // G13
+    "python": {"status": 200, "type": null, "leased": true},
+    "affinity": {
+      "class": "affinity_cold" | "affinity_warm",   // §11
+      "sessions": [[STR, NUMBER]],      // (endpoint id, age in seconds) remembered
+      "fingerprint": HEX, "idempotency_scope": STR, "fingerprint_material": STR,
+      "decide_region": STR,             // the same with or without a session
+      "cold_response": STR, "cold_timing": TIMING,  // Python's 200 with no session: Go's bytes
+      "cold_candidates": [STR], "cold_estimate_microdollars": INT,
+      "response": STR, "timing": TIMING,            // Python's 200 with the sessions remembered
+      "candidates": [STR], "estimate_microdollars": INT,
+      "reservation_microdollars": INT, "cold_reservation_microdollars": INT}}  // the lease's hold in each run (§5)
 ```
 
 **Signatures.** Every request whose `boot.signature_ok` is true carries
@@ -1278,7 +1379,45 @@ every pass reason has at least one case, `body.content_type`,
 
 The test fake keeps any integer, so a case whose estimate is beyond int64
 (`evaluate.estimate_overflow`) records Python's 200 from the fake, where
-real Spanner refuses the commit.
+real Spanner refuses the commit. An answered case also records
+`reservation_microdollars`, the credit reservation the front door was asked
+to hold (§5, "The two figures"), which the edge's admit must ask for.
+
+**Affinity cases** (`pass:body.cache_affinity*`, G13). The generator runs
+each twice in its own world, against a fresh `RoutingState` in the
+route's place: with no session, then with the case's `sessions`
+remembered under the route's session key (the key's hash, `body.model`,
+the region the cold answer chose, the affinity key), each at its age
+(`rank` reads the monotonic clock; past 600 s is expired). The class is
+what the second answer compares as: the same bytes (`affinity_cold`: no
+session, an expired one, one for an endpoint not among the candidates, a
+`provider.order` naming a provider, under which Python does not re-rank,
+or the remembered endpoint already first), or the remembered endpoint
+moved to the front of its model's run (the default partition) or of the
+list (`provider.sort.partition` none), or, with fallbacks off, kept as the
+one candidate at its own estimate (`affinity_warm`). The generator
+holds Python's answer with the sessions remembered to
+`routing_state.rank`'s rule, written once, without side effects, in
+`scripts/fastpath/affinity_rule.py`: the candidates must be exactly the
+cold order re-ranked for the last session remembered (`remember`
+overwrites) when it is younger than 600 s, among the cold candidates (or,
+with fallbacks off, of the primary model) and `provider.order` names no
+provider: a stable sort by the model's first-seen rank (unless
+`provider.sort.partition` is none), the remembered endpoint first; else
+the cold order itself. It refuses any other candidates, and any answer
+in which a member outside the first candidate's (`model`,
+`upstream_model`, `endpoint_id`, `provider`, `provider_name`,
+`inference_location`, `wafer_zdr_required`, `route_candidates`; with
+fallbacks off the estimate too) differs from the cold answer's.
+`tests/test_fastpath_affinity_rule.py` feeds it the goldens' own answers
+and forbidden ones (a promotion under a `provider.order`, a move across
+models under the default partition, an expired or overwritten session, a
+changed tag or estimate) and sees the refusals. Go's tests hold the
+decision's 200 to `cold_response` byte for byte and Python's `response`
+to the case's class through the shadow's comparison (`checkAffinity`,
+`TestAffinityIsMeasuredNeverAdmitted`, `TestAffinityWarmIsPythonsRerank`),
+and that no such decision is admittable. Labels:
+`pass.body.cache_affinity` and `affinity.cold` or `affinity.warm`.
 
 ### 10.2 `fastpath/testdata/authorize_fingerprint_v1.json` (P1)
 
@@ -1429,11 +1568,12 @@ letter: disjoint files, built in parallel.
 | G9 | 2 | `store/gatewayauth.go`: §8.4 | G2 |
 | P3 | 2 | Python settles Go-shaped rows (test only): settle, refund, disposition, reaper, replay (same key and fingerprint replays, another body 409s), drain | P1 |
 | G10 | 3 | `edge/decide.go` pipeline and full-response shadow, `-edge-decide-shadow` (false) | G4 to G9 |
-| I1 | 3 | Shadow on: node attributes, `TR_EDGE_POLICY_PUBLISH_ENABLED=true`; then at least 7 days of soak | G10 |
+| I1 | 3 | Shadow on: node attributes, `TR_EDGE_POLICY_PUBLISH_ENABLED=true`; then the shadow's sample ("I2 gates" below) | G10 |
 | G11 | 4 | Decide path (`edge/decide_path.go`): admit, insert, answer; per-lookup-hash in-flight limit (`edge/inflight.go`); `-edge-decide` (false); the store's one read-back and drain (§8.4); emulator end-to-end test | G10 |
 | G12 | 4 | fastpathwatch: decisions, passes by reason, unknown outcomes, `would_admit_python_refused`; runbook; alerts | G11 |
 | P4 | 4 | Optional: an `X-TR-Edge-Fastpath` hint (`busy` or `off`, any client copy stripped) so Python skips its own pilot call | G11 |
-| I2 | 5 | Decide on for the pilot, node attribute `fastpath-edge-decide=true`, `docs/runbooks/fastpath-edge-decide.md`; the `decide off` first step of decision 17 in place | G12, soak |
+| I2 | 5 | Decide on for the pilot, node attribute `fastpath-edge-decide=true`, `docs/runbooks/fastpath-edge-decide.md`; the `decide off` first step of decision 17 in place | G12, the I2 gates |
+| G15a to G15c, P5, P6, I3, I4 | 6 | The edge decides async-v1 requests with Python's admission-off answer: [`fast-admission-e2-g15-async.md`](fast-admission-e2-g15-async.md) §6 | G13 |
 
 **The shadow (G10)** (`fastpath/internal/edge/shadow_full.go`,
 `-edge-decide-shadow`, off by default) runs `Decide` for each authorize the
@@ -1460,6 +1600,39 @@ counts, per snapshot and policy digest:
   (not by rule from Python's id), `differ.timing` (its shape),
   `differ.key_order`, `differ.ids` (Python's ids are not ones Go would
   write), `differ.shape`.
+- `affinity_cold` and `affinity_warm` (G13, §1 item 5): a request naming
+  a `cache_affinity_key`, which Go composes in the cold order and never
+  admits (`body.cache_affinity`). `affinity_cold`: Python's 200 is Go's,
+  byte for byte as `agree_full` reads it (Python's re-rank changed
+  nothing: no session, or one it does not apply, such as an expired one,
+  one for an endpoint not among the candidates, one under a
+  `provider.order`, or one already first). `affinity_warm`: Python's 200
+  is Go's decision staged again with Python's candidates where those are
+  the order `routing_state.rank` gives Go's cold order for some endpoint
+  of it remembered: a stable sort by the model's first-seen rank (unless
+  `provider.sort.partition` is none) and then the remembered endpoint
+  first, never under a `provider.order` naming a provider (an empty order
+  names none), at the same estimate; or, with fallbacks off, one endpoint
+  of the primary model that Go admits with fallbacks on, at the estimate
+  Go names pinned to its provider (`Decision.warmOf`,
+  `fastpath/internal/edge/affinity.go`). The bytes must match whole, so
+  nothing but the first candidate's members (and that estimate) differs.
+  Any other difference is `differ` with its fields. Every result of a
+  request naming a `cache_affinity_key` (as the strict parse reads it:
+  `Decided.Affinity`, known from the parse on) is counted apart, by
+  class, under `affinity=` on the count line, wherever the request
+  passed: `stale.<cache>`, `passed.<reason>`,
+  `python_answered_go_passed.<reason>`, `would_admit_python_refused.*`,
+  `python_error.*` and the rest included; and in none of the cohort's
+  counts: not `classes`, `fields`, `rows`, `decide`, `cohort` or
+  `read_back`, so none of the I2 figures below, `stale` and `followed`
+  among them, reads it. A body the strict parse refuses before it reads
+  the key (a `body.*` pass) is nobody's: counted with the cohort's
+  passes. No row is read back for an affinity request, whatever its
+  class: the read-back budget (at most 5 reads a second) is the cohort's
+  alone, so the `row.idempotency_fingerprint` gate reads the cohort's
+  rows and nothing else. The would-admit alert fires for them as for any
+  decision: Go's gates are the same, only the order is not comparable.
 - `would_admit_python_refused.<status>.<type>` (critical, a `CRITICAL` log
   line at once): Go would answer, Python answered a 4xx or its pause 503.
 - `python_answered_go_passed.<reason>`: Go would pass with the §3 reason,
@@ -1513,10 +1686,17 @@ failed reads; no line carries a body, an id, a key or a message.
 shadow counts its period alone, so a span's lines sum to its counts;
 `fastpathwatch edge` sums them from Cloud Logging and prints the I2
 figures below; the shadow's line counts the requests Go would decide by
-class too (`cohort`) (`docs/runbooks/fastpath-watch.md`). The decide path counts
+class too (`cohort`), and the cache affinity requests it measured by class
+(`affinity`; the report's `affinity_by_class` and `affinity_warm_share`,
+`affinity_warm` over `affinity_cold` plus `affinity_warm`, the figure §1
+item 5's revisit reads) (`docs/runbooks/fastpath-watch.md`). The decide path counts
 its unavailable answers by the insert's gRPC code (`store` returns it with
-the outcome), so a clock ahead of Spanner's (`failed_precondition`, §8.4)
-or a Spanner incident is told from a lost commit answer. A period with an
+the outcome): the code is the transaction's error as `ClassifyInsert`
+read it, not a cause, and no code says whether the commit applied (§8.4);
+`failed_precondition` can follow a re-sent commit Spanner no longer
+remembers, and `deadline_exceeded` the local deadline or the
+transaction's own, so several nodes answering unavailable at once point
+at what they share, Spanner among it, without proving it. A period with an
 unavailable answer raises `edge_decide_unavailable`, three such periods
 with no 200 between them `edge_decide_unavailable_sustained` (a period
 that answered nothing neither adds to the run nor ends it), and a pass past decision 12's 1 s at
@@ -1524,9 +1704,33 @@ the edge or 25 s in all `edge_decide_pass_slow`; each kind has its policy
 (`infra/fastpath_alerts.tf`) and runbook row
 (`docs/runbooks/fastpath-alerts.md`).
 
-**I2 gates:** at least 7 days of shadow; `agree_full` at least 99.5% of
-the comparable requests (`agree_full` plus `differ`: Go would answer and
-Python answered a 200 that is not a replay) with every difference
+**I2 gates:** a sample, not a calendar. The shadow has compared at least
+3,000 comparable requests (`agree_full` plus `differ`: Go would answer
+and Python answered a 200 that is not a replay; `affinity_cold` and
+`affinity_warm` are not comparable), spanning at least 24 hours of wall
+clock and at least three distinct policy digests and two distinct
+snapshot digests, all read with `fastpathwatch edge -since` the start of
+the current release's soak: the counts from before a node re-pin or a
+route weight change are kept apart and do not count. The bar is 3,000 because I2
+begins with one workspace and widens one group at a time, each widening
+read against the same ratio and zero-count gates on its own traffic: the
+sample proves Go's answer matches Python's on the cohort, and at 3,000
+a defect on 0.2% of requests is seen at least once with probability
+99.75% (1 - 0.998^3000), while a defect on 0.1% is seen with 95%. Each count line
+carries the period (a minute) before its timestamp, and `-since` selects
+lines by timestamp, so the sample starts at the first count line on every
+node that is a full period after the last change, the last node's restart
+onto the release or the weight's apply, found from the lines' timestamps
+per node (`docs/runbooks/fastpath-watch.md`): `-since` is the latest of
+those, the period that crosses a change is before it, and during a rolling
+re-pin so is every line of a node still on the old release. The sample
+starts over from there. The calendar bound measured time, not evidence;
+the sample bound measures what the gate reads. `fastpathwatch edge` does
+not print the digests: it sums the shadow's lines over them, so the
+distinct digests of the span are counted from the lines' `snapshot=` and
+`policy=` among the lines with comparable requests, with the `gcloud
+logging read` of `fastpath-watch.md`, for now. Then `agree_full` at least 99.5% of
+the comparable requests with every difference
 explained; every other cohort-eligible request (Go would answer, each
 counted by its decide row's gate) accounted for by class
 (`cohort_by_class`: Python's errors, unavailable answers and unread
@@ -1534,6 +1738,18 @@ answers, the scope taken, replays); zero `differ.estimate*` and zero
 `row.idempotency_fingerprint`, with no field counted `other` (a period's
 fields past the line's bound, which could hide either); zero
 `would_admit_python_refused` beyond key-revocation lag; the stale-pass rate
-(`stale` over every request the shadow followed) recorded. `fastpathwatch
-edge` prints each figure. `decide on` for an operator-owned workspace first, then the pilot
+(`stale` over `followed`: every request the shadow compared whose body did
+not name a `cache_affinity_key`, those being `affinity`'s) recorded. `fastpathwatch
+edge` prints each figure. Requests carrying `X-TR-Settlement-Mode` pass with
+`header.settlement_async` and are not comparable until G15c is pinned;
+the I2 decision records two settlement-header pass shares,
+`settlement_header_pass_share` (those passes in `classes` over
+`followed`) and `affinity_settlement_header_pass_share` (those passes in
+`affinity` over all of `affinity`), read from the shadow's count lines
+until G15c's watch prints them. They are pass shares under one reason
+(any header value counts, and a request tripping an earlier reason is
+counted there), not the async-v1 share of traffic and not the share I2
+does not cover
+([`fast-admission-e2-g15-async.md`](fast-admission-e2-g15-async.md) §5, §6.2).
+`decide on` for an operator-owned workspace first, then the pilot
 workspace.

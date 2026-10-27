@@ -9,6 +9,7 @@ the same way `checkout.session.completed` already does.
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Iterator
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -62,6 +63,24 @@ def test_auto_refill_skips_when_disabled(stripe_settings: Settings) -> None:
     workspace = STORE.list_workspaces_for_user(user.id)[0]
     outcome = maybe_charge_after_settle(workspace.id, settings=stripe_settings)
     assert outcome == AutoRefillOutcome(fired=False, reason="disabled")
+
+
+def test_account_closure_stops_refill_even_with_a_stale_enabled_account(
+    configured_workspace: str, stripe_settings: Settings, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router.storage import InMemoryStore
+
+    workspace = STORE.get_workspace(configured_workspace)
+    reservation = STORE.reserve(configured_workspace, "close-key", 9_000_000)
+    STORE.settle(reservation.id, 9_000_000)
+    stale_account = copy.deepcopy(STORE.get_credit_account(configured_workspace))
+    assert stale_account.auto_refill_enabled
+    STORE.close_user_account(workspace.owner_user_id)
+    monkeypatch.setattr(InMemoryStore, "get_credit_account", lambda self, wid: stale_account)
+    with patch("stripe.PaymentIntent.create") as create:
+        outcome = maybe_charge_after_settle(configured_workspace, settings=stripe_settings)
+    assert outcome == AutoRefillOutcome(fired=False, reason="account_closed")
+    create.assert_not_called()
 
 
 def test_auto_refill_skips_when_above_threshold(

@@ -115,8 +115,8 @@
         "top_logprobs"
       ],
       "routable": true,
-      "input_token_price_per_m": 100000,
-      "output_token_price_per_m": 175000,
+      "input_token_price_per_m": 75000,
+      "output_token_price_per_m": 150000,
       "cached_input_token_price_per_m": 50000
     },
     {
@@ -273,7 +273,7 @@
         "top_logprobs"
       ],
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "input_token_price_per_m": 650000,
       "output_token_price_per_m": 750000,
       "missing_since": "2026-10-21"
@@ -314,14 +314,14 @@
         "top_logprobs"
       ],
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "input_token_price_per_m": 450000,
       "output_token_price_per_m": 650000,
       "missing_since": "2026-10-21"
     }
   ],
   "source": "https://eu.api.nextbit256.com/v1/models",
-  "generated_at": "2026-10-21T18:24:36Z",
+  "generated_at": "2026-10-26T06:59:20Z",
   "price_scale": "microdollars_per_million",
   "model_count": 8
 }

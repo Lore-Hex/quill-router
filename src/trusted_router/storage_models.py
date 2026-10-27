@@ -204,6 +204,9 @@ class User:
     suspended: bool = False
     disabled: bool = False
 
+    # Self-service access closure. This is not an assertion of data erasure.
+    account_closed_at: str | None = None
+
     @property
     def identity_verified(self) -> bool:
         return self.identity_status == "approved"

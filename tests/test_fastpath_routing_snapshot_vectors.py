@@ -1,7 +1,7 @@
 """The routing-snapshot golden files are what the Python compiler and signer write now.
 
 fastpath/internal/routingsnapshot holds the Go reader to
-fastpath/testdata/routing_snapshot_v1.{body,manifest}.json; this test holds the
+fastpath/testdata/routing_snapshot_v3.{body,manifest}.json; this test holds the
 files to `trusted_router.routing_snapshot`, so a change to the schema, the
 compiler or a catalog rule it reads fails here until the files follow.
 """
@@ -69,7 +69,7 @@ def _manifest() -> dict:
 
 def test_the_golden_files_are_what_the_python_compiler_writes_now() -> None:
     stale = (
-        "fastpath/testdata/routing_snapshot_v1.*.json is stale: run "
+        "fastpath/testdata/routing_snapshot_v3.*.json is stale: run "
         "`uv run python scripts/fastpath/routing_snapshot_vectors.py` and check the Go reader"
     )
     assert _body() == GENERATOR.render_body(), stale
@@ -80,6 +80,19 @@ def test_the_body_is_canonical_ascii_without_a_trailing_newline() -> None:
     body = _body()
     assert body.isascii() and not body.endswith(b"\n")
     assert canonical_snapshot_bytes(parse_routing_snapshot(body)) == body
+
+
+@pytest.mark.parametrize("mutation", ["v1", "missing", "negative"])
+def test_host_windows_are_required_by_the_versioned_schema(mutation: str) -> None:
+    document = json.loads(_body())
+    if mutation == "v1":
+        document["v"] = 1
+    elif mutation == "missing":
+        del document["endpoints"][0]["context_length"]
+    else:
+        document["endpoints"][0]["context_length"] = -1
+    with pytest.raises(ValueError):
+        parse_routing_snapshot(json.dumps(document))
 
 
 def test_the_manifest_verifies_and_binds_the_body() -> None:

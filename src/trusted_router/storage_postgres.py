@@ -1265,7 +1265,9 @@ class PostgresStore(OperationalAnalyticsReads):
     ) -> list[tuple[str, int]]:
         # The owner row serializes count-and-insert on ordinary PostgreSQL.
         # Aurora DSQL/PGAdapter may abort instead; _run_transaction retries it.
-        self._read_entity_tx(conn, "user", owner_user_id, User, for_update=True)
+        owner = self._read_entity_tx(conn, "user", owner_user_id, User, for_update=True)
+        if owner is not None and owner.disabled:
+            raise ValueError("account_closed")
         owned = self._owner_workspace_shards_tx(conn, owner_user_id)
         if enforce_count and len(owned) >= self.max_workspaces_per_owner:
             raise WorkspaceOwnerLimitExceeded(
@@ -1743,78 +1745,85 @@ class PostgresStore(OperationalAnalyticsReads):
         billing_paused: bool | None = None,
         billing_pause_reason: str | None = None,
     ) -> Workspace | None:
-        def txn(conn: Any) -> Workspace | None:
-            workspace = self._read_entity_tx(
-                conn, "workspace", workspace_id, Workspace, for_update=True
-            )
-            if workspace is None:
-                return None
-            owner = self._read_entity_tx(
-                conn, "user", workspace.owner_user_id, User, for_update=True
-            )
-            if deleted is not None and deleted != workspace.deleted:
-                credit = self._read_entity_tx(
-                    conn, "credit", workspace_id, CreditAccount, for_update=True
-                )
-                if credit is None:
-                    raise RuntimeError("workspace is missing its credit account")
-                if deleted:
-                    removed = conn.execute(
-                        "DELETE FROM tr_owner_workspace "
-                        "WHERE owner_user_id = %s AND workspace_id = %s",
-                        (workspace.owner_user_id, workspace_id),
-                    )
-                    if removed.rowcount != 1:
-                        raise RuntimeError(
-                            "active workspace is missing from tr_owner_workspace"
-                        )
-                    changed = conn.execute(
-                        "UPDATE tr_credit_balance SET trust_tier = 0, "
-                        "trust_latched_at = COALESCE(trust_latched_at, CURRENT_TIMESTAMP), "
-                        "updated_at = CURRENT_TIMESTAMP WHERE workspace_id = %s",
-                        (workspace_id,),
-                    )
-                    if changed.rowcount != credit_shard_count(credit):
-                        raise RuntimeError(
-                            "archive trust latch did not cover every active shard"
-                        )
-                else:
-                    owned = self._require_owner_growth_tx(
-                        conn,
-                        workspace.owner_user_id,
-                        added_shards=credit_shard_count(credit),
-                        enforce_count=True,
-                    )
-                    self._insert_owner_inventory_tx(
-                        conn, workspace.owner_user_id, workspace_id
-                    )
-                    if owner is not None:
-                        owner.owner_workspace_count = len(owned) + 1
-                if deleted and owner is not None:
-                    owner.owner_workspace_count = len(
-                        self._owner_workspace_shards_tx(
-                            conn, workspace.owner_user_id
-                        )
-                    )
-                workspace.deleted = deleted
-            if name is not None:
-                workspace.name = name
-            if billing_paused is not None:
-                causes = set(workspace.billing_pause_causes)
-                if billing_paused:
-                    causes.add("migration")
-                else:
-                    causes.discard("migration")
-                workspace.billing_pause_causes = sorted(causes)
-                workspace.billing_paused = bool(causes)
-            if billing_pause_reason is not None:
-                workspace.billing_pause_reason = billing_pause_reason
-            if owner is not None:
-                self._write_entity_tx(conn, "user", owner.id, owner)
-            self._write_entity_tx(conn, "workspace", workspace_id, workspace)
-            return None if workspace.deleted else workspace
+        return self._run_transaction(lambda conn: self._update_workspace_tx(
+            conn, workspace_id, name=name, deleted=deleted,
+            billing_paused=billing_paused, billing_pause_reason=billing_pause_reason,
+        ))
 
-        return self._run_transaction(txn)
+    def _update_workspace_tx(
+        self, conn: Any, workspace_id: str, *, name: str | None = None,
+        deleted: bool | None = None, billing_paused: bool | None = None,
+        billing_pause_reason: str | None = None,
+    ) -> Workspace | None:
+        workspace = self._read_entity_tx(
+            conn, "workspace", workspace_id, Workspace, for_update=True
+        )
+        if workspace is None:
+            return None
+        owner = self._read_entity_tx(
+            conn, "user", workspace.owner_user_id, User, for_update=True
+        )
+        if deleted is not None and deleted != workspace.deleted:
+            credit = self._read_entity_tx(
+                conn, "credit", workspace_id, CreditAccount, for_update=True
+            )
+            if credit is None:
+                raise RuntimeError("workspace is missing its credit account")
+            if deleted:
+                removed = conn.execute(
+                    "DELETE FROM tr_owner_workspace "
+                    "WHERE owner_user_id = %s AND workspace_id = %s",
+                    (workspace.owner_user_id, workspace_id),
+                )
+                if removed.rowcount != 1:
+                    raise RuntimeError(
+                        "active workspace is missing from tr_owner_workspace"
+                    )
+                changed = conn.execute(
+                    "UPDATE tr_credit_balance SET trust_tier = 0, "
+                    "trust_latched_at = COALESCE(trust_latched_at, CURRENT_TIMESTAMP), "
+                    "updated_at = CURRENT_TIMESTAMP WHERE workspace_id = %s",
+                    (workspace_id,),
+                )
+                if changed.rowcount != credit_shard_count(credit):
+                    raise RuntimeError(
+                        "archive trust latch did not cover every active shard"
+                    )
+            else:
+                owned = self._require_owner_growth_tx(
+                    conn,
+                    workspace.owner_user_id,
+                    added_shards=credit_shard_count(credit),
+                    enforce_count=True,
+                )
+                self._insert_owner_inventory_tx(
+                    conn, workspace.owner_user_id, workspace_id
+                )
+                if owner is not None:
+                    owner.owner_workspace_count = len(owned) + 1
+            if deleted and owner is not None:
+                owner.owner_workspace_count = len(
+                    self._owner_workspace_shards_tx(
+                        conn, workspace.owner_user_id
+                    )
+                )
+            workspace.deleted = deleted
+        if name is not None:
+            workspace.name = name
+        if billing_paused is not None:
+            causes = set(workspace.billing_pause_causes)
+            if billing_paused:
+                causes.add("migration")
+            else:
+                causes.discard("migration")
+            workspace.billing_pause_causes = sorted(causes)
+            workspace.billing_paused = bool(causes)
+        if billing_pause_reason is not None:
+            workspace.billing_pause_reason = billing_pause_reason
+        if owner is not None:
+            self._write_entity_tx(conn, "user", owner.id, owner)
+        self._write_entity_tx(conn, "workspace", workspace_id, workspace)
+        return None if workspace.deleted else workspace
 
     def set_workspace_trust_override(
         self,
@@ -2164,7 +2173,12 @@ class PostgresStore(OperationalAnalyticsReads):
         emails: list[str],
         role: str = "member",
     ) -> list[Member]:
-        self._not_implemented("add_members")
+        members = [Member(workspace_id, self.ensure_user(email).id, role) for email in emails]
+        def txn(conn: Any) -> list[Member]:
+            for member in members:
+                self._write_entity_tx(conn, "member", member_id(workspace_id, member.user_id), member)
+            return members
+        return self._run_transaction(txn)
 
     def remove_members(self, workspace_id: str, user_ids: list[str]) -> None:
         self._not_implemented("remove_members")
@@ -2191,6 +2205,10 @@ class PostgresStore(OperationalAnalyticsReads):
 
     def get_user(self, user_id: str) -> User | None:
         return self._read_entity("user", user_id, User)
+
+    def close_user_account(self, user_id: str) -> User | None:
+        from trusted_router.storage_account_closure import close_postgres
+        return close_postgres(self, user_id)
 
     def find_user_by_email(self, email: str) -> User | None:
         record = self._read_entity("email_user", normalize_email(email), dict)
@@ -2616,7 +2634,8 @@ class PostgresStore(OperationalAnalyticsReads):
                 self._delete_entity_tx(conn, "auth_session_lookup", lookup_hash)
                 return None
             if verify_api_key(raw_token, session.salt, session.secret_hash):
-                return session
+                user = self._read_entity_tx(conn, "user", session.user_id, User)
+                return session if user and not user.disabled else None
             return None
 
         return self._run_transaction(get)
@@ -4612,7 +4631,7 @@ class PostgresStore(OperationalAnalyticsReads):
     # Credit ledger ----------------------------------------------------------
 
     def get_credit_account(self, workspace_id: str) -> CreditAccount | None:
-        self._not_implemented("get_credit_account")
+        return self._read_entity("credit", workspace_id, CreditAccount)
 
     @staticmethod
     def _insert_credit_trust_event_tx(

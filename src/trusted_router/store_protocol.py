@@ -126,6 +126,7 @@ class Store(Protocol):
     def claim_user_username(self, user_id: str, username: str) -> User: ...
     def set_user_email(self, user_id: str, email: str) -> User | None: ...
     def mark_user_email_verified(self, user_id: str) -> User | None: ...
+    def close_user_account(self, user_id: str) -> User | None: ...
     def set_user_identity_status(
         self,
         user_id: str,
@@ -1166,6 +1167,10 @@ class TypedBillingStore(Protocol):
         key_hash: str,
         authorization_id: str | None = ...,
         estimate: int,
+        # The credit hold the counters take when it differs from the
+        # estimate, the spend ceiling the authorization row keeps
+        # (authorize_candidates.hold_output_tokens); None holds the estimate.
+        reservation: int | None = ...,
         has_credit_candidate: bool,
         reservation_usage_type: UsageType | str,
         model_id: str,

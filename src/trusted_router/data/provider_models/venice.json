@@ -2,8 +2,8 @@
   "_about": "Provider-native supplement for Venice models whose live /v1/models feed is ahead of the shared snapshot. Verified against https://api.venice.ai/api/v1/models on 2026-06-22.",
   "provider": "venice",
   "source": "https://api.venice.ai/api/v1/models?type=text",
-  "generated_at": "2026-10-20T12:05:14Z",
-  "model_count": 46,
+  "generated_at": "2026-10-26T06:59:20Z",
+  "model_count": 49,
   "models": [
     {
       "id": "z-ai/glm-5.2",
@@ -867,7 +867,10 @@
       "context_length": 256000,
       "max_output_tokens": 32768,
       "input_token_price_per_m": 100000,
-      "output_token_price_per_m": 150000
+      "output_token_price_per_m": 150000,
+      "missing_since": "2026-10-25",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Qwen 3.6 27B",
@@ -976,7 +979,9 @@
       "input_token_price_per_m": 60000,
       "output_token_price_per_m": 400000,
       "cached_input_token_price_per_m": 10000,
-      "missing_since": "2026-10-20"
+      "missing_since": "2026-10-20",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "GLM 5",
@@ -1251,6 +1256,90 @@
       "input_token_price_per_m": 187500,
       "output_token_price_per_m": 750000,
       "cached_input_token_price_per_m": 18750
+    },
+    {
+      "display_name": "DeepSeek V4.1 Flash Uncensored",
+      "title": "deepseek-v4-1-flash-uncensored",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-1-flash-uncensored",
+      "upstream_id": "deepseek-v4-1-flash-uncensored",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "structured-outputs"
+      ],
+      "context_length": 1000000,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 330000,
+      "output_token_price_per_m": 1320000,
+      "cached_input_token_price_per_m": 8250
+    },
+    {
+      "display_name": "Kimi K3.1 Pro",
+      "title": "kimi-k3-1-pro",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k3-1-pro",
+      "upstream_id": "kimi-k3-1-pro",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "structured-outputs"
+      ],
+      "context_length": 1000000,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 3000000,
+      "output_token_price_per_m": 15000000,
+      "cached_input_token_price_per_m": 300000
+    },
+    {
+      "display_name": "Kimi K3.1 Pro Highspeed",
+      "title": "kimi-k3-1-pro-highspeed",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k3-1-pro-highspeed",
+      "upstream_id": "kimi-k3-1-pro-highspeed",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "structured-outputs"
+      ],
+      "context_length": 1000000,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 6000000,
+      "output_token_price_per_m": 30000000,
+      "cached_input_token_price_per_m": 600000
     }
   ],
   "price_scale": "microdollars_per_million"

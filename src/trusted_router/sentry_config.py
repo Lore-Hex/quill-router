@@ -201,6 +201,9 @@ class _SentryFloodgate:
 
 
 _floodgate = _SentryFloodgate(SentryFloodgateConfig())
+# Logs and error events are separate Sentry products. A noisy log stream must
+# not consume the error budget before an actual exception can be reported.
+_log_floodgate = _SentryFloodgate(SentryFloodgateConfig())
 _CONTRACT_WARNING_LIMITS = SentryFloodgateConfig(
     max_events_per_fingerprint=1,
     max_events_per_window=10,
@@ -327,6 +330,7 @@ def before_send(event: dict[str, Any], hint: dict[str, Any] | None = None) -> di
         return None
     event = _scrub(event)
     _fingerprint_method_not_allowed(event)
+    _fingerprint_router_error(event, hint)
     request = event.get("request")
     if isinstance(request, MutableMapping):
         request.pop("data", None)
@@ -336,13 +340,40 @@ def before_send(event: dict[str, Any], hint: dict[str, Any] | None = None) -> di
     return event
 
 
+def _fingerprint_router_error(event: dict[str, Any], hint: dict[str, Any] | None) -> None:
+    """Group our HTTP errors by cause, not per-request timing/ID metadata."""
+    if event.get("fingerprint") or not hint:
+        return
+    from starlette.exceptions import HTTPException
+
+    info = hint.get("exc_info")
+    if not isinstance(info, tuple) or len(info) != 3 or not isinstance(info[1], HTTPException):
+        return
+    exc = info[1]
+    detail = exc.detail
+    error = detail.get("error") if isinstance(detail, dict) else None
+    if (
+        not isinstance(error, dict)
+        or error.get("source") != "router"
+        or error.get("code") != exc.status_code
+    ):
+        return
+    route = _safe_route_identity(event)
+    if route == "unresolved-route":
+        return
+    # Keep different causes distinct; never ship the hint's raw fields as
+    # fingerprint text. The original scrubbed event remains available.
+    identity = _hash_identity(json.dumps(_scrub(error), sort_keys=True, default=str))
+    event["fingerprint"] = ["router-http-error", route, str(exc.status_code), identity]
+
+
 def before_send_log(
     event: dict[str, Any], hint: dict[str, Any] | None = None
 ) -> dict[str, Any] | None:
     if _is_dropped_noise(event):
         return None
     event = _scrub(event)
-    if not _floodgate.allow(event):
+    if not _log_floodgate.allow(event):
         return None
     return event
 
@@ -475,8 +506,9 @@ def _safe_route_identity(event: Mapping[str, Any]) -> str:
 
 
 def configure_sentry_floodgate(settings: Settings) -> None:
-    global _floodgate, _contract_warning_floodgate, _recovered_failover_floodgate
+    global _floodgate, _log_floodgate, _contract_warning_floodgate, _recovered_failover_floodgate
     _floodgate = _SentryFloodgate(_floodgate_config(settings))
+    _log_floodgate = _SentryFloodgate(_floodgate_config(settings))
     _contract_warning_floodgate = _SentryFloodgate(_CONTRACT_WARNING_LIMITS)
     _recovered_failover_floodgate = _SentryFloodgate(_RECOVERED_FAILOVER_LIMITS)
 
@@ -486,13 +518,15 @@ def reset_sentry_floodgate_for_tests(
     settings: Settings | None = None,
     clock: Callable[[], float] = time.monotonic,
 ) -> None:
-    global _floodgate, _contract_warning_floodgate, _recovered_failover_floodgate
+    global _floodgate, _log_floodgate, _contract_warning_floodgate, _recovered_failover_floodgate
     _contract_warning_floodgate = _SentryFloodgate(_CONTRACT_WARNING_LIMITS, clock=clock)
     _recovered_failover_floodgate = _SentryFloodgate(_RECOVERED_FAILOVER_LIMITS, clock=clock)
     if settings is None:
         _floodgate = _SentryFloodgate(SentryFloodgateConfig(), clock=clock)
+        _log_floodgate = _SentryFloodgate(SentryFloodgateConfig(), clock=clock)
         return
     _floodgate = _SentryFloodgate(_floodgate_config(settings), clock=clock)
+    _log_floodgate = _SentryFloodgate(_floodgate_config(settings), clock=clock)
 
 
 def _floodgate_config(settings: Settings) -> SentryFloodgateConfig:

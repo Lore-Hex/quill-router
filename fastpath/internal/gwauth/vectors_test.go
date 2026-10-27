@@ -20,7 +20,7 @@ import (
 const (
 	fingerprintFile = "../../testdata/authorize_fingerprint_v1.json"
 	casesFile       = "../../testdata/authorize_cases_v1.json"
-	snapshotFile    = "../../testdata/routing_snapshot_v1.body.json"
+	snapshotFile    = "../../testdata/routing_snapshot_v3.body.json"
 	aliasFile       = "../../testdata/model_alias_vectors_v1.json"
 )
 
@@ -281,6 +281,14 @@ type casesFileT struct {
 			Fingerprint      string `json:"fingerprint"`
 			Material         string `json:"fingerprint_material"`
 			IdempotencyScope string `json:"idempotency_scope"`
+			// Affinity is a body.cache_affinity case's record (G13):
+			// Python's identity, the same with or without a session.
+			Affinity *struct {
+				Class            string `json:"class"`
+				Fingerprint      string `json:"fingerprint"`
+				Material         string `json:"fingerprint_material"`
+				IdempotencyScope string `json:"idempotency_scope"`
+			} `json:"affinity"`
 		} `json:"expect"`
 	} `json:"cases"`
 }
@@ -325,7 +333,7 @@ func storedTags(t *testing.T, keyBody *string) ([]Tag, bool) {
 func TestEveryAuthorizeCase(t *testing.T) {
 	var file casesFileT
 	readJSON(t, casesFile, &file)
-	requestReasons, answers := 0, 0
+	requestReasons, answers, affinityAnswers := 0, 0, 0
 	for _, c := range file.Cases {
 		body := c.Request.Body
 		if e := c.Request.BodyExpand; e != nil {
@@ -341,7 +349,7 @@ func TestEveryAuthorizeCase(t *testing.T) {
 			_, p = MergeTags(keyTags, usable, r)
 		}
 		want := ""
-		if c.Expect.Outcome == "pass" && (strings.HasPrefix(c.Expect.Reason, "body.") ||
+		if c.Expect.Outcome == "pass" && c.Expect.Affinity == nil && (strings.HasPrefix(c.Expect.Reason, "body.") ||
 			strings.HasPrefix(c.Expect.Reason, "header.") || c.Expect.Reason == ReasonTagsMergedInvalid) {
 			want = c.Expect.Reason
 			requestReasons++
@@ -350,7 +358,21 @@ func TestEveryAuthorizeCase(t *testing.T) {
 			t.Errorf("%s: request side passes %q, want %q", c.Name, p.Reason, want)
 			continue
 		}
-		if c.Expect.Outcome != "answer" || p.Passed() {
+		// A body.cache_affinity case (G13) is the request side's to
+		// answer, flagged, with Python's identity (the key is excluded
+		// from the material, so a session changes none of it).
+		material, fingerprint, scope := c.Expect.Material, c.Expect.Fingerprint, c.Expect.IdempotencyScope
+		if a := c.Expect.Affinity; a != nil {
+			if p.Passed() || !r.CacheAffinity {
+				t.Errorf("%s: pass %q, affinity %v", c.Name, p.Reason, r.CacheAffinity)
+				continue
+			}
+			material, fingerprint, scope = a.Material, a.Fingerprint, a.IdempotencyScope
+			affinityAnswers++
+		} else if c.Expect.Outcome != "answer" || p.Passed() {
+			continue
+		} else if r.CacheAffinity {
+			t.Errorf("%s: flagged for affinity without a key", c.Name)
 			continue
 		}
 		answers++
@@ -359,12 +381,11 @@ func TestEveryAuthorizeCase(t *testing.T) {
 			t.Errorf("%s: %s", c.Name, p.Reason)
 			continue
 		}
-		if string(id.Material) != c.Expect.Material || id.Fingerprint != c.Expect.Fingerprint ||
-			id.Scope != c.Expect.IdempotencyScope {
+		if string(id.Material) != material || id.Fingerprint != fingerprint || id.Scope != scope {
 			t.Errorf("%s: material %s fingerprint %s scope %s\nwant %s %s %s", c.Name, id.Material, id.Fingerprint,
-				id.Scope, c.Expect.Material, c.Expect.Fingerprint, c.Expect.IdempotencyScope)
+				id.Scope, material, fingerprint, scope)
 		}
-		if c.Insert != "inserted" {
+		if c.Insert != "inserted" || c.Expect.Affinity != nil {
 			continue // after a read-back Python sorts the tags (§6)
 		}
 		merged, _ := MergeTags(keyTags, usable, r)

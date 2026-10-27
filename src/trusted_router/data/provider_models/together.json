@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Together AI routes that are live ahead of the shared OpenRouter snapshot. Verified against https://api.together.xyz/v1/models on 2026-06-22.",
   "provider": "together",
   "source": "https://api.together.xyz/v1/endpoints?type=serverless",
-  "generated_at": "2026-10-20T12:05:14Z",
+  "generated_at": "2026-10-26T06:59:20Z",
   "model_count": 25,
   "models": [
     {
@@ -15,10 +15,18 @@
       "output_token_price_per_m": 600000,
       "cached_input_token_price_per_m": 15000,
       "model_type": "chat",
-      "input_modalities": ["text"],
-      "output_modalities": ["text"],
-      "endpoints": ["chat/completions"],
-      "features": ["serverless", "function-calling", "reasoning"],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "features": [
+        "serverless"
+      ],
       "status": 1
     },
     {
@@ -150,7 +158,10 @@
       ],
       "context_length": 131072,
       "input_token_price_per_m": 1040000,
-      "output_token_price_per_m": 1040000
+      "output_token_price_per_m": 1040000,
+      "missing_since": "2026-10-25",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "MiniMax M2.7 FP4",
@@ -539,7 +550,10 @@
       "context_length": 1048576,
       "input_token_price_per_m": 140000,
       "output_token_price_per_m": 280000,
-      "cached_input_token_price_per_m": 30000
+      "cached_input_token_price_per_m": 30000,
+      "missing_since": "2026-10-25",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Muse Glimmer 30B",

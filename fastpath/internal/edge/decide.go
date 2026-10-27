@@ -197,16 +197,28 @@ type DecideInputs struct {
 // Input is what Staged was built from, kept so the shadow can stage the
 // same decision under Python's ids (Restage).
 type Decision struct {
-	Staged     gwauth.Staged
-	Input      gwauth.ComposeInput
-	Identity   gwauth.Identity
-	Estimate   int64
-	Workspace  string
-	KeyHash    string
-	LookupHash string
-	Kid        string
-	Region     string
-	Candidates []string
+	Staged   gwauth.Staged
+	Input    gwauth.ComposeInput
+	Identity gwauth.Identity
+	// Estimate is the spend ceiling (Result.ModelEstimate: the rows and the
+	// 200 carry it); Reservation is the credit hold the owner's lease takes
+	// (Result.Reservation, at most HoldOutputTokens of the output budget).
+	Estimate    int64
+	Reservation int64
+	Workspace   string
+	KeyHash     string
+	LookupHash  string
+	Kid         string
+	Region      string
+	Candidates  []string
+	// Affinity is whether the body names a cache_affinity_key: the
+	// candidates are Go's cold order, and the decision is the shadow's
+	// alone (body.cache_affinity; G13). Routing is the evaluator's request
+	// and Snapshot the snapshot it answered from, for the shadow's warm
+	// comparison (affinity.go).
+	Affinity bool
+	Routing  routingsnapshot.Request
+	Snapshot *routingsnapshot.Snapshot
 }
 
 // Finish is the decision admitted: the front door's envelope and end of
@@ -220,7 +232,15 @@ func (d *Decision) Finish(envelope string, endOfLife time.Time) (gwauth.Composed
 // shadow's substitution of Python's per-request values, §10.1): the same
 // candidates, estimate, request and facts.
 func (d *Decision) Restage(authorizationID, reservationID, idempotencyKey string, at time.Time) (gwauth.Staged, error) {
+	return d.RestageWith(d.Input.Candidates, d.Input.Estimate, authorizationID, reservationID, idempotencyKey, at)
+}
+
+// RestageWith is Restage with other candidates and estimate: the shadow's
+// rendering of Python's warm order over Go's decision (affinity.go).
+func (d *Decision) RestageWith(candidates []gwauth.Candidate, estimate int64, authorizationID, reservationID,
+	idempotencyKey string, at time.Time) (gwauth.Staged, error) {
 	in := d.Input
+	in.Candidates, in.Estimate = candidates, estimate
 	in.AuthorizationID, in.ReservationID, in.At = authorizationID, reservationID, at
 	if idempotencyKey != in.IdempotencyKey {
 		in.IdempotencyKey = idempotencyKey
@@ -250,6 +270,12 @@ type Decided struct {
 	// Read is what the cache held for the lookup hash (zero when not
 	// looked up).
 	Read gwstate.Read
+	// Affinity is whether the body, as the strict parse read it, names a
+	// cache_affinity_key: known from the parse on (Pass.Affinity for the
+	// request half's own passes), so a pass after it (a cohort or header
+	// reason, a cold cache, a key's facts, the evaluator) is counted under
+	// the shadow's affinity tally, never with the cohort's (§11, G13).
+	Affinity bool
 }
 
 // Admit is the decision the edge may admit: one, and true, only when every
@@ -282,10 +308,10 @@ func Decide(in DecideInputs) Decided {
 	h := headersOf(in.Request.Header)
 	r, p := gwauth.ParseRequest(in.Request.Body, h)
 	if p.Passed() {
-		return passDecided(p.Reason)
+		return Decided{Pass: p.Reason, Affinity: p.Affinity}
 	}
 	at := in.Request.At
-	out := Decided{LookupHash: r.APIKeyLookupHash}
+	out := Decided{LookupHash: r.APIKeyLookupHash, Affinity: r.CacheAffinity}
 	pass := func(reason string) Decided {
 		out.Pass = reason
 		return out
@@ -445,12 +471,20 @@ func Decide(in DecideInputs) Decided {
 		return pass(PassCompose)
 	}
 	out.shadowOnly = &Decision{
-		Staged: staged, Input: compose, Identity: identity, Estimate: res.ModelEstimate,
+		Staged: staged, Input: compose, Identity: identity, Estimate: res.ModelEstimate, Reservation: res.Reservation,
 		Workspace: key.WorkspaceID, KeyHash: key.Hash, LookupHash: r.APIKeyLookupHash, Kid: in.Request.Boot.Kid,
 		Region: region, Candidates: slices.Clone(res.Candidates),
+		Affinity: r.CacheAffinity, Routing: req, Snapshot: snap,
 	}
 	out.DecideGate = in.Decide.gate(key.WorkspaceID, policy.Plane.Cloud, region, at)
 	out.Pass = out.DecideGate
+	if r.CacheAffinity {
+		// body.cache_affinity (G13): Python's order may be a session's
+		// warm endpoint, remembered in its own process by its settle,
+		// which Go cannot read. The decision is composed for the shadow to
+		// measure the cold order against Python's, and never admitted.
+		out.Pass = gwauth.ReasonCacheAffinity
+	}
 	return out
 }
 

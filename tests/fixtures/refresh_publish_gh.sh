@@ -76,6 +76,29 @@ elif [ "${command}" = run ] && [ "${subcommand}" = list ]; then
   fi
   record_event poll "${poll}" "${answer}" "${main_sha}"
   printf '%s\n' "${answer}"
+elif [ "${command}" = run ] && [ "${subcommand}" = view ]; then
+  # The run selected by id: the scenario's answer for this poll whose
+  # databaseId is the requested one, whatever else the listing holds.
+  poll=0
+  if [ -f "${TMPDIR}/poll-count" ]; then read -r poll < "${TMPDIR}/poll-count"; fi
+  poll=$((poll + 1))
+  printf '%s\n' "${poll}" > "${TMPDIR}/poll-count"
+  answer=$(jq -c --argjson index "$((poll - 1))" --arg id "${third}" \
+    '.polls[([$index, (.polls | length) - 1] | min)] | map(select((.databaseId | tostring) == $id))[0] // empty' \
+    "${scenario}")
+  main_sha=''
+  if [ -n "${answer}" ]; then
+    main_sha=$("${REAL_GIT}" --git-dir="${TMPDIR}/origin.git" rev-parse refs/heads/main)
+  fi
+  record_event poll "${poll}" "${answer}" "${main_sha}"
+  printf '%s\n' "${answer}"
+elif [ "${command}" = run ] && [ "${subcommand}" = cancel ]; then
+  # Only the run the poll found may be cancelled, and only once the poll has
+  # found it: the scenario's run id, never a guess.
+  if [ "${third}" != "$(jq -r '.polls[0][0].databaseId' "${scenario}")" ]; then
+    echo "Unexpected run cancel: ${third}" >&2
+    exit 1
+  fi
 elif [ "${command}" = api ] && [ -n "${endpoint}" ]; then
   fault=$(jq -r '.status_fault // empty' "${scenario}")
   if [ ! -f "${statuses}" ]; then printf '[]' > "${statuses}"; fi

@@ -15,7 +15,7 @@ The marketing homepage ported into the application, served at `/` for every bran
 | `src/trusted_router/homepage.py` | Template context: live catalog rows and prices from the model directory, pricing comparison, asset digest for cache busting. |
 | `src/trusted_router/dashboard.py` | `dashboard_html` renders the homepage for the requested brand and sets the social image. |
 | `src/trusted_router/routes/acquisition.py` | Allowlist of `home.*` analytics event names. |
-| `docs/homepage/social-card.html` | Source of `static/homepage/social-card-v1.jpg` (1200×630). |
+| `docs/homepage/social-card.html` | Source of `static/homepage/social-card-v2.jpg` (1200×630). |
 | `docs/homepage/evidence/2026-09-30-gateway/` | Gateway attestation capture behind the request module. |
 | `docs/homepage/MOCKUP-AUDIT.md` | September 29 audit of the port against the mock. |
 

@@ -34,7 +34,7 @@
       Promise.resolve(fetch('https://trustedrouter.com/token-exchange/events', {
         method:'POST', mode:'cors', credentials:'omit', keepalive:true,
         headers:{'Content-Type':'application/json'}, body:JSON.stringify({event, ...payload, ...properties,
-          page: ['/providers', '/badge', '/confidential', '/suppliers', '/index'].includes(location.pathname.replace(/\.html$/, ''))
+          page: ['/providers', '/badge', '/confidential', '/suppliers', '/index', '/buy'].includes(location.pathname.replace(/\.html$/, ''))
             ? location.pathname.replace(/\.html$/, '') : '/'}),
       })).catch(() => {});
     } catch { /* Analytics never blocks the page or brochure download. */ }

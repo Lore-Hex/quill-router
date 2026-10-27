@@ -39,6 +39,7 @@ from trusted_router.async_settle_shadow_journal import (
     Reservation,
     Row,
 )
+from trusted_router.async_settle_shadow_stop import RuntimeStop
 from trusted_router.async_settle_shadow_v2_a1_evidence import validate_close_result
 from trusted_router.async_settle_shadow_v2_a1_health import (
     PUBLISHER_OPERATIONS,
@@ -179,7 +180,12 @@ class HealthObserver(Observer):
         self._owned(None, started, self.health_read)
 
     def _workspace(self, key: str, started: float) -> None:
-        self._owned(key, started, partial(self.read, key))
+        def read() -> Any:
+            if self.service is not None and not self.service.store.session_ready(workspace=True):
+                raise SessionUnavailable("shadow_session_unavailable")
+            with rpc_scope(self.clock()+OBSERVER_READ_RPC_SECONDS, OBSERVER_READ_RPC_SECONDS, self.clock):
+                return self.read(key)
+        self._owned(key, started, read)
 
     async def run(self) -> None:
         enabled = self.enabled
@@ -289,6 +295,13 @@ class Port:
             require(svc.policy_enabled() and not svc.journal.stopped, "quiesced")
             require(day in svc.counters, "day_not_ready")
             require(not svc.journal.days[day].sealing, "closed_day")
+            # Signal demand only; the evidence worker owns all cap I/O. Keep
+            # the existing refusal/loss path when this request has no permits.
+            if svc.allocation_day != day:
+                svc.allocation_day = day
+                svc.allocation_failures = 0
+                svc.next_allocate = svc.store.clock()
+            svc.allocation_requested = True
             if terminal:
                 require(svc.journal.terminal_permits.get(day, 0) > 0, "terminal_permits")
                 svc.journal.terminal_permits[day] -= 1
@@ -480,22 +493,21 @@ def follower_stagger(boot: str, slot: int, incumbent_present: bool = True) -> fl
 #   S4 liveness: when the holder stops publishing, some follower claims within a
 #      bounded number of slots.
 #   S5 an aborted or lost claim is never retried within its slot.
-# Only the holder may write the claim row every slot. Followers read it with a
-# lock-free snapshot and stand down; they open a read-write transaction only for
-# a takeover. Two rules keep that row from becoming hot (2026-10-23 incident:
-# 1,915 s/h of lock wait on it):
-#   * Durable incumbency (Service.is_incumbent): a boot whose publication is the
-#     installed fleet health for slot-1/slot-2 is the holder, even when its owner
-#     never accepted that reply. Before this, a rejected reply made the actual
-#     holder a follower; the claim then aged out every third slot and every
-#     contender raced read-write transactions on the row.
-#   * Spread takeover (takeover_due): once a follower has seen fleet health, a
-#     stale claim is taken over by at most a hash-selected quarter of followers
-#     per slot, widening by one quarter each slot, so a holder's death costs one
-#     small race instead of a fleet-wide one. Cold starts (no health seen, or no
-#     claim row) keep the original immediate behaviour.
-TAKEOVER_SPREAD = 4
-TAKEOVER_MIN_AGE = 3  # Fleet health protects its publisher for two slots.
+# Only the holder may write the claim row every slot. A recent acknowledged
+# publication is a fast path; otherwise storage must name this boot before it
+# renews. K=3 permits recovery after two failed cycles, but a boot with three
+# consecutive unpublished slots yields. A holder can recover even if failed
+# claim reads left its row three slots old. Followers start at age four, so
+# renewal and takeover windows never overlap, including unknown commits.
+# Takeover uses 64 fixed hash buckets, one bucket per slot, without widening.
+# For 8-20 boots this is 0.125-0.3125 candidates per slot in expectation, not a
+# cardinality guarantee (there is no roster). Even a lone survivor gets a turn
+# within 67 slots of the final claim. S1's transaction fence handles collisions;
+# S5 forbids retry. A continuously failing holder yields after K, so S4 is
+# bounded by K+TAKEOVER_MIN_AGE+TAKEOVER_SPREAD-1 slots after last publication.
+HOLDER_FAILURE_SLOTS = 3
+TAKEOVER_SPREAD = 64
+TAKEOVER_MIN_AGE = HOLDER_FAILURE_SLOTS + 1
 
 
 def takeover_rank(boot: str, claim_slot: int) -> int:
@@ -507,12 +519,13 @@ def takeover_due(boot: str, slot: int, claim: dict[str, Any] | None) -> bool:
     """Warm followers take over a stale claim in hash-ranked waves, one per slot.
 
     Every follower reads the same stale claim, so ranks are fixed for the whole
-    takeover. Rank r becomes eligible at age TAKEOVER_MIN_AGE+r; from age
-    TAKEOVER_MIN_AGE+TAKEOVER_SPREAD-1 every follower is eligible (S4).
+    takeover. Rank r gets age TAKEOVER_MIN_AGE+r, repeating every spread
+    slots. Missed turns never accumulate into a later fleet-wide wave (S4).
     """
     if claim is None:
         return True
-    return slot - claim["slot"] >= TAKEOVER_MIN_AGE + takeover_rank(boot, claim["slot"])
+    age = slot - claim["slot"] - TAKEOVER_MIN_AGE
+    return age >= 0 and age % TAKEOVER_SPREAD == takeover_rank(boot, claim["slot"])
 
 
 def own_publication(body: dict[str, Any] | None, boot: str, slot: int) -> bool:
@@ -527,8 +540,9 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
                   warm: bool = False) -> PublisherReply:
     """Worker I/O only. All inputs are captured by the owner before submission.
 
-    ``warm`` means this boot has installed fleet health at least once, so a
-    stale claim is a takeover (spread across slots), not a cold start.
+    ``warm`` records whether this boot has installed fleet health. An existing
+    claim always requires spread takeover, even for a newly started follower;
+    only an absent claim row permits immediate cold election.
     """
     started = store.clock()
     slot = job.slot
@@ -552,13 +566,13 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
         if not store.session_ready():
             reason = "session_unavailable"
             return
-        # A timer can wake before the previous actual start plus two seconds.
-        # Wait within this slot instead of discarding an otherwise valid window.
-        delay = job.earliest_start_mono - store.clock()
-        if delay > 0 and job.earliest_start_mono <= job.latest_start_mono:
-            sleep(delay)
-        # Scope setup may sample time or be delayed. Admission happens AFTER it.
+        # Establish scopes before the cadence wait: setup time can fit inside
+        # the mandatory two-second cadence instead of shifting every next start.
+        # Admission still follows both setup and waiting, with revocation checks.
         with rpc_scope(budget.deadline, CYCLE_SECONDS, store.clock), observe_spanner_rpcs(record):
+            delay = job.earliest_start_mono - store.clock()
+            if delay > 0 and job.earliest_start_mono <= job.latest_start_mono:
+                sleep(delay)
             if not admission.admission_lock.acquire(timeout=budget.remaining(CYCLE_SECONDS)):
                 raise TimeoutError("publisher_admission")
             try:
@@ -574,13 +588,19 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
                 budget = Budget(started + CYCLE_SECONDS, store.clock)
             finally:
                 admission.admission_lock.release()
-            # This process committed the claim for slot-1/slot-2 (worker-local
-            # fact, independent of reply acceptance and the observer cache):
-            # check storage for a same-owner renewal at once, without a stagger.
-            won = getattr(store, "won", None)
-            holder = not incumbent and won is not None and won[0] == boot and won[1] in (slot-1, slot-2)
-            if not incumbent and not holder:
-                stagger = follower_stagger(boot, slot, incumbent_present)
+            # Only a won claim or an unknown commit skips the follower delay.
+            # A definite loser remains a follower; neither hint proves ownership.
+            previous_attempt = store.claim_attempt if store.claim_unknown else store.won
+            # A known abort can retain the recent-publication fast path. Only
+            # an unknown commit needs storage reconciliation before that path.
+            fast_incumbent = incumbent and not store.claim_unknown
+            holder = (not fast_incumbent and previous_attempt is not None
+                      and previous_attempt[0] == boot and slot-HOLDER_FAILURE_SLOTS <= previous_attempt[1] < slot)
+            if not fast_incumbent and not holder:
+                # A warm takeover is already spread across slots. Keep its
+                # follower delay in the 60-120ms band; the cold 0-210ms spread
+                # can otherwise consume the observation window before claiming.
+                stagger = follower_stagger(boot, slot, incumbent_present or warm)
                 sleep(stagger)
                 # The admitted start and budget include the stagger. Recheck the
                 # owner before any I/O; a retired job remains a missed slot.
@@ -601,24 +621,31 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
                 reason = "session_unavailable"
                 return
             attempted, outcome = True, "failures"
-            if not incumbent:
+            if not fast_incumbent:
                 current = store.read_shadow_claim(budget)
                 seen_claim_slot = current["slot"] if current is not None else None
-                # A visible publication from slot-1/slot-2 protects its owner.
-                # Even without that cache, a claim newer than slot-2 forbids
-                # takeover. Followers pay zero Commit RPCs in steady state.
-                # Recheck in claim() too, since this snapshot can race a winner.
-                # A warm takeover waits for this boot's rank (takeover_due).
-                # Same-owner renewal: storage, not a possibly stale observer
-                # cache, says this boot holds the claim and published within
-                # two slots. A holder that claims but never publishes still
-                # yields (S4), because its publication ages out.
-                renew = (current is not None and current["owner_boot_id"] == boot
-                         and slot-2 <= current["slot"] < slot
-                         and store.clock() <= job.latest_start_mono
-                         and own_publication(store.read_shadow_publication(budget), boot, slot))
-                if not renew and (incumbent_present or current is not None and current["slot"] > slot-2
-                        or warm and not takeover_due(boot, slot, current)
+                # Followers pay one lock-free read and no Commit RPC. A local
+                # attempt/won hint is never authority, especially after timeout.
+                owner = current is not None and current["owner_boot_id"] == boot
+                renew = False
+                if owner and current is not None and slot-HOLDER_FAILURE_SLOTS <= current["slot"] < slot:
+                    publication = store.read_shadow_publication(budget)
+                    published = store.last_publication
+                    if publication is not None and publication["publisher_boot_id"] == boot:
+                        if published is None or published[0] != boot or publication["slot"] > published[1]:
+                            published = store.last_publication = (boot, publication["slot"])
+                    # Publication evidence outranks any claim/tenure anchor:
+                    # missed slots consume the allowance too. Only a boot with
+                    # no publication uses the start of its initial claim tenure.
+                    since = (published[1] + 1 if published is not None and published[0] == boot
+                             else store.unpublished_since)
+                    if since is None:
+                        since = current["slot"]
+                    store.unpublished_since = since
+                    renew = slot < since + HOLDER_FAILURE_SLOTS and store.clock() <= job.latest_start_mono
+                if not renew and (owner or incumbent_present
+                        or current is not None and current["slot"] > slot-2
+                        or (warm or current is not None) and not takeover_due(boot, slot, current)
                         or store.clock() > job.latest_start_mono):
                     outcome = "lost_claims"
                     return
@@ -742,6 +769,11 @@ class Service:
         self.unknown_batches: set[Reservation] = set()
         self.unknown: tuple[str, list[Row], Row, Row | None] | None = None
         self.next_allocate = float("-inf")
+        self.allocation_day: str | None = None
+        self.allocation_requested = False
+        self.allocation_failures = 0
+        # The first owner tick must provision permits before cohort traffic.
+        # Only contention retries are dephased; refills remain demand-gated.
         self.next_flush = float("-inf")
         self.previous_closure: str | None = None
         self.last_closure_ack: dict[str, Any] | None = None
@@ -757,6 +789,24 @@ class Service:
         self.close_finished = False
         self.close_done = asyncio.Event()
         self.ensure_day(int(store.wall()*1_000_000))
+        self.runtime_stop = RuntimeStop(store, self.journal.boot, self.latch_stop)
+        self.breaker_recorded = False
+
+    def latch_stop(self) -> None:
+        # Worker-safe terminal latches: block requests and publisher starts now.
+        # The owner publishes the generation change through the expiry path.
+        self.settings.stop_async_settle_shadow()
+        self.revocation_epoch = 1
+
+    def record_breaker(self) -> None:
+        row = self.runtime_stop.tripped
+        if row is not None and not self.breaker_recorded:
+            day = self.ensure_day(row.value()["stopped_at_us"])
+            if day in self.counters:
+                target = self.counters[day]["diagnostics"]
+                self._counter_cells(day, target, {"runtime_breaker_trips": 1,
+                    "runtime_breaker_api_failures": row.value()["failure_count"]})
+                self.breaker_recorded = True
 
     def pin(self) -> tuple[Any, ...]:
         # The effective policy includes the canary expiry: when it passes, the
@@ -823,6 +873,7 @@ class Service:
 
     def tick(self, stamp: int, *, publisher: bool | None = None) -> tuple[lifecycle.Effect, ...]:
         self.assert_owner()
+        self.record_breaker()
         self.enabled()  # Publish any changed admission generation before dispatch.
         effects: tuple[lifecycle.Effect, ...] = ()
         job = self.state.job
@@ -1247,6 +1298,7 @@ class Service:
                 value, error = operation(), None
             except Exception as caught:
                 value, error = None, caught
+            self.record_breaker()  # Include a trip from drain IO before resuming closure.
 
     async def drive_async(self, work: Generator[Callable[[], Any], Any, None]) -> None:
         self.assert_owner()
@@ -1267,6 +1319,7 @@ class Service:
                 loop.call_soon_threadsafe(deliver, result.value, result.error)
             self.evidence_executor.submit(execute)
             value, error = await reply
+            self.record_breaker()
 
     def flush(self, deadline: float) -> None:
         self.drive(self._flush(min(deadline, self.termination_deadline or deadline)))
@@ -1506,6 +1559,18 @@ class Service:
     def maintain(self) -> None:
         self.drive(self.maintenance())
 
+    def allocation_jitter(self, seconds: float) -> float:
+        # A distinct boot UUID spreads a simultaneous fleet restart. Include
+        # the day and attempt so retries and midnight do not repeat one phase.
+        # Eager first attempts still burst. In the simultaneous 26/40-process
+        # lock witness, a 60 s ceiling gave 170/255 s last-grant tails; 40 s
+        # gives 165/230 s with 89/183 aborts (baseline: 350/819). These tails
+        # remain longer than baseline lock-step retries (130/200 s). Jitter
+        # reduces contention; it neither bounds fleet writes/s nor avoids all
+        # retry collisions after five-second maintenance quantization.
+        seed = f"{self.journal.boot}/{self.allocation_day}/{self.allocation_failures}"
+        return seconds*int.from_bytes(hashlib.sha256(seed.encode()).digest()[:8], "big")/2**64
+
     def maintenance(self) -> Generator[Callable[[], Any], Any, None]:
         self.assert_owner()
         deadline = self.store.clock()+FLUSH_SECONDS
@@ -1517,21 +1582,34 @@ class Service:
         with self.lock:
             if self.journal.stopped:
                 return
+            if self.allocation_day != day:
+                # Startup and rollover supply demand for the day's first block.
+                # Preserve next_allocate's throttle; same-day refills need port demand.
+                self.allocation_day = day
+                self.allocation_requested = True
+                self.allocation_failures = 0
             terminal = self.journal.terminal_permits.get(day, 0) < RESERVATION_BLOCK
             event = self.journal.permits.get(day, 0) < RESERVATION_BLOCK
-            allocate = self.store.clock() >= self.next_allocate and (terminal or event)
+            allocate = (self.allocation_requested and self.allocation_day == day
+                        and self.store.clock() >= self.next_allocate and (terminal or event))
             if allocate:
                 self.next_allocate = self.store.clock()+5
         if allocate:
             try:
                 yield partial(self.store.allocate, day, terminal=terminal, event=event, budget=Budget(deadline, self.store.clock))
                 with self.lock:
+                    self.allocation_requested = False
+                    self.allocation_failures = 0
                     if event:
                         self.journal.grant(day, RESERVATION_BLOCK)
                     if terminal:
                         self.journal.terminal_permits[day] = self.journal.terminal_permits.get(day, 0)+RESERVATION_BLOCK
-            except Exception:
+            except Exception as error:
                 with self.lock:
+                    if isinstance(error, ContentionLoss):
+                        self.allocation_failures += 1
+                        self.next_allocate = self.store.clock()+5+self.allocation_jitter(
+                            min(40., 5.*2**min(4, self.allocation_failures)))
                     target = self.counters[day]["diagnostics"]
                     self._counter_cells(day, target, {"cap_unavailable": target.get("cap_unavailable", 0)+1})
         yield from self._flush(deadline)
@@ -1596,6 +1674,10 @@ class Service:
     async def run(self) -> None:
         self.assert_owner()
         self.loop = asyncio.get_running_loop()
+        if self.policy_enabled():
+            await asyncio.to_thread(self.runtime_stop.poll)
+        self.runtime_stop.start(lambda: self.policy_enabled() and not self.stopped.is_set(),
+                                lambda: not self.close_finished)
         while not self.stopped.is_set() and self.enabled():
             if self.store.session_recovery_due() and (self.session_job is None or self.session_job.done()):
                 self.session_job = self.session_executor.submit(self.store.prepare_session, self.journal.boot)
@@ -1608,6 +1690,7 @@ class Service:
                 self.next_flush = now+5
                 self.flush_job = self.loop.create_task(self.drive_async(self.maintenance()))
             await asyncio.sleep(.01)
+        self.record_breaker()
         if not self.stopped.is_set():
             await self.close("opt_out", from_loop=True)
 
@@ -1643,6 +1726,8 @@ class Service:
         signal.signal(signal.SIGTERM, stop)
 
     def start(self) -> None:
+        if self.enabled() and not self.runtime_stop.poll():
+            return
         if self.enabled() and self.task is None:
             self.loop = asyncio.get_running_loop()
             self.trap_sigterm()
@@ -1727,6 +1812,8 @@ class Service:
             self.session_executor.shutdown(wait=False, cancel_futures=True)
             self.publisher_executor.shutdown(wait=False, cancel_futures=True)
             self.evidence_executor.shutdown(wait=False, cancel_futures=True)
+            if reason != "opt_out" or self.runtime_stop.tripped is None or self.runtime_stop.persisted:
+                await self.runtime_stop.close()
 
 
 def install(app: Any, settings: Settings, backend: Any) -> None:
@@ -1736,6 +1823,11 @@ def install(app: Any, settings: Settings, backend: Any) -> None:
     store = ObservationStore(backend._database)
     service = Service(settings, store)
     store.prepare_session(service.journal.boot)
+    if not service.runtime_stop.poll():
+        service.session_executor.shutdown(wait=False, cancel_futures=True)
+        service.publisher_executor.shutdown(wait=False, cancel_futures=True)
+        service.evidence_executor.shutdown(wait=False, cancel_futures=True)
+        return
     app.state.async_settle_shadow_observation = service
     @app.on_event("startup")
     async def start() -> None:
@@ -1743,3 +1835,4 @@ def install(app: Any, settings: Settings, backend: Any) -> None:
     @app.on_event("shutdown")
     async def stop() -> None:
         await service.close()
+        await service.runtime_stop.close()

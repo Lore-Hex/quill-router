@@ -26,7 +26,8 @@ var edgeEntries = []logEntry{
 		`differ=4 would_admit_python_refused=1 read_back=3 classes={"agree_full":990,"differ":4,"stale.key":5,` +
 		`"would_admit_python_refused.403.forbidden":1} fields={"differ.estimate_float":1,"differ.timing":3,` +
 		`"other":3,"row.idempotency_fingerprint":2} rows={"agree":40,"differ":2} decide={"decide.off":995} ` +
-		`cohort={"agree_full":990,"differ":4,"would_admit_python_refused.403.forbidden":1}`},
+		`cohort={"agree_full":990,"differ":4,"would_admit_python_refused.403.forbidden":1} ` +
+		`affinity={"affinity_cold":30,"affinity_warm":10,"differ":2}`},
 	{"2", "tr-fastpath-5", `2026/10/24 12:00:00 fastpath edge decide shadow: dropped=0 evictions=1 cache_unrefreshed=0 ` +
 		`cache_dropped=0 cache_read_failures=0`},
 	{"3", "tr-fastpath-5", `2026/10/24 12:00:00 fastpath edge decide: answered=7 read_back=1 unavailable=2 refunded=1 ` +
@@ -95,7 +96,9 @@ func TestTheEdgeReportSumsTheSpansLines(t *testing.T) {
 		*g.StaleRate != 6.0/1008 || g.Unavailable != 3 ||
 		!maps.Equal(g.UnavailableByCode, map[string]int64{"failed_precondition": 2, "deadline_exceeded": 1}) ||
 		!maps.Equal(g.DifferByField, map[string]int64{"differ.estimate_float": 1, "differ.timing": 3, "other": 3,
-			"row.idempotency_fingerprint": 2}) {
+			"row.idempotency_fingerprint": 2}) ||
+		!maps.Equal(g.AffinityByClass, map[string]int64{"affinity_cold": 30, "affinity_warm": 10, "differ": 2}) ||
+		g.AffinityWarmShare == nil || *g.AffinityWarmShare != 0.25 {
 		t.Fatalf("the I2 figures: %s", out.Bytes())
 	}
 	if r.Decide.Counts["answered"] != 7 || r.Decide.ByName["passed"]["owner.busy"] != 3 ||

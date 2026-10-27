@@ -27,7 +27,11 @@ locals {
   # commit timestamp (#2038) and G12's per-period counts (#2039); it takes
   # -edge-policy-url and -edge-decide-shadow, which the nodes' policy
   # attributes below pass (stage I1).
-  fastpath_release        = "2d90fa113678233b9edcdf9d0ea833ace37b6c94"
+  # 7f392e79d: main after #2061 (G13), with #2065's hold split: the decide
+  # shadow keeps requests carrying a cache affinity key, composes the cold
+  # order and measures Python's answer as affinity_cold or affinity_warm,
+  # so the soak compares the cohort instead of passing nearly all of it.
+  fastpath_release        = "7f392e79d87d797ebac70edc4dcebe2fcdd80916"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
@@ -62,10 +66,20 @@ locals {
   # section 4): Python's signed live facts, polled on the same upstream and
   # verified with the same key, kid and plane. Only a script from I1 on
   # reads the policy's two attributes, which nodes 7 and 8 run.
-  # The decide shadow (G10) stays off until the policy has been held
-  # through a measured soak (the I1 runbook); it is turned on here, then
-  # each node in turn is drained, its unit stopped and its startup script
-  # run again (a reset alone keeps the unit's old arguments).
+  # The decide shadow (G10) is on, once the policy had been held through a
+  # measured soak (the I1 runbook); each node in turn took it drained, its
+  # unit stopped and its startup script run again (a reset alone keeps the
+  # unit's old arguments). Python still decides.
+  # The decide path (G11, stage I2): fastpath-edge-decide "true" has the
+  # edge answer the authorizes of the workspaces the decide table names
+  # (docs/runbooks/fastpath-edge-decide.md); "false", the default, answers
+  # nothing. It is a flag the unit takes, so a node takes a change to it as
+  # it took the shadow's: drained, its unit stopped and its startup script
+  # run again, one node at a time. Only a script that reads the attribute
+  # passes the flag: a node from before that script carries the attribute
+  # and passes nothing, so the script reaches the fleet first, as I1's did,
+  # through nodes added under new names: 9 and 10 beside 7 and 8, which
+  # then leave the backend and are removed.
   fastpath_edge_snapshot = tomap({
     fastpath-edge-snapshot-url        = "${local.fastpath_edge_upstream}/internal/fastpath/routing-snapshot"
     fastpath-edge-snapshot-public-key = "oTQF4Efsi6G7_38Nca4HjiB7QUoNDkNSzaOw26Kt9IM"
@@ -73,7 +87,8 @@ locals {
     fastpath-edge-snapshot-plane      = "gcp/${local.fastpath_region}"
     fastpath-edge-shadow              = "true"
     fastpath-edge-policy-url          = "${local.fastpath_edge_upstream}/internal/fastpath/edge-policy"
-    fastpath-edge-decide-shadow       = "false"
+    fastpath-edge-decide-shadow       = "true"
+    fastpath-edge-decide              = "false"
   })
 }
 
@@ -307,10 +322,20 @@ resource "google_compute_instance" "fastpath_node" {
   # leaving and drained, left the edge backend (local.fastpath_edge_retiring)
   # one apply before its removal, then was removed. 7 and 8 took the places
   # of 5 and 6 the same way, with the edge policy's attributes (stage I1),
-  # which the script 5 and 6 ran, from before I1, read neither of.
+  # which the script 5 and 6 ran, from before I1, read neither of. 9 and 10
+  # take the places of 7 and 8 the same way, with the decide attribute
+  # (stage I2, "false" until the I2 switch), which the script 7 and 8 run,
+  # from before I2, does not read. Each of 9 and 10 has an edge instance
+  # group and a backend entry from the apply that makes it
+  # (infra/fastpath_edge_backend.tf); the health check keeps the balancer
+  # off it until its edge serves, and the pilot's watches and audit loop
+  # are started on it by hand before 7 or 8 is drained
+  # (docs/runbooks/fastpath-deploy.md, "Turning the edge on").
   for_each = {
-    "tr-fastpath-7" = "us-central1-a"
-    "tr-fastpath-8" = "us-central1-b"
+    "tr-fastpath-7"  = "us-central1-a"
+    "tr-fastpath-8"  = "us-central1-b"
+    "tr-fastpath-9"  = "us-central1-a"
+    "tr-fastpath-10" = "us-central1-b"
   }
 
   project      = local.gcp_project_id

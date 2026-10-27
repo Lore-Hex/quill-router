@@ -448,6 +448,10 @@ def test_oauth_app_id_is_stable_for_callback_url(
         "https://localhost:3000/callback",
         "http://localhost:3000/callback",
         "http://127.0.0.1:3000/callback",
+        # RFC 8252 loopback redirects: any port the native app bound.
+        "http://127.0.0.1:51234/oauth/callback/abc",
+        "http://localhost:8765/callback",
+        "http://[::1]:49152/callback",
     ],
 )
 def test_oauth_code_creation_accepts_openrouter_allowed_callback_ports(
@@ -505,6 +509,10 @@ def test_oauth_code_creation_requires_s256_for_native_callback(
         ("", "callback_url is required"),
         ("http://app.example.com/callback", "callback_url must be an https URL"),
         ("https://app.example.com:444/callback", "callback_url port must be 443 or 3000"),
+        # The loopback exemption is http on a loopback host only.
+        ("https://localhost:8765/callback", "callback_url port must be 443 or 3000"),
+        ("http://127.0.0.2:8765/callback", "callback_url must be an https URL"),
+        ("http://localhost.example.com:8765/callback", "callback_url must be an https URL"),
         ("https://user:pass@app.example.com/callback", "callback_url cannot contain credentials"),
         ("javascript://callback", "callback_url must be an https URL"),
         ("file://callback", "callback_url must be an https URL"),

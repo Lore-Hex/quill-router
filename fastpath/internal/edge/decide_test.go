@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -113,6 +114,7 @@ type authorizeExpect struct {
 	Response            string           `json:"response"`
 	GenerationID        string           `json:"generation_id"`
 	Estimate            int64            `json:"estimate_microdollars"`
+	Reservation         int64            `json:"reservation_microdollars"`
 	DecideRegion        string           `json:"decide_region"`
 	Fingerprint         string           `json:"fingerprint"`
 	IdempotencyScope    string           `json:"idempotency_scope"`
@@ -124,14 +126,42 @@ type authorizeExpect struct {
 		Status int     `json:"status"`
 		Type   *string `json:"type"`
 		Leased bool    `json:"leased"`
+		// Reservation is the credit reservation Python's typed store wrote
+		// for a request it answered without a lease (§10.1): nil when it
+		// wrote none.
+		Reservation *int64 `json:"reservation_microdollars"`
 	} `json:"python"`
+	// Affinity is a body.cache_affinity case's record of Python's bytes
+	// with its sessions remembered and with none (G13, §10.1).
+	Affinity *affinityExpect `json:"affinity"`
 }
 
-func (e authorizeExpect) timing() gwauth.Timing {
-	t := e.Timing
+type affinityExpect struct {
+	Class          string           `json:"class"`
+	Fingerprint    string           `json:"fingerprint"`
+	Material       string           `json:"fingerprint_material"`
+	Scope          string           `json:"idempotency_scope"`
+	DecideRegion   string           `json:"decide_region"`
+	Sessions       [][]any          `json:"sessions"`
+	Response       string           `json:"response"`
+	ColdResponse   string           `json:"cold_response"`
+	Timing         map[string]int64 `json:"timing"`
+	ColdTiming     map[string]int64 `json:"cold_timing"`
+	Candidates     []string         `json:"candidates"`
+	ColdCandidates []string         `json:"cold_candidates"`
+	Estimate       int64            `json:"estimate_microdollars"`
+	ColdEstimate   int64            `json:"cold_estimate_microdollars"`
+	// The lease's hold (§5, "The two figures") in each run.
+	Reservation     int64 `json:"reservation_microdollars"`
+	ColdReservation int64 `json:"cold_reservation_microdollars"`
+}
+
+func timingOfMap(t map[string]int64) gwauth.Timing {
 	return gwauth.Timing{TotalMS: t["total_ms"], SpannerRPCs: t["spanner_rpcs"], KeyLookupMS: t["key_lookup_ms"],
 		RoutingMS: t["routing_ms"], StoreMS: t["store_ms"], PostCommitMS: t["post_commit_ms"]}
 }
+
+func (e authorizeExpect) timing() gwauth.Timing { return timingOfMap(e.Timing) }
 
 func (c authorizeCase) at() time.Time { return time.UnixMicro(c.AtUS) }
 
@@ -208,7 +238,7 @@ func policyOf(t *testing.T, f authorizeFile, c authorizeCase) *routingsnapshot.E
 }
 
 var parsedSnapshot = sync.OnceValues(func() (*routingsnapshot.Snapshot, error) {
-	raw, err := readTestdata("routing_snapshot_v1.body.json")
+	raw, err := readTestdata("routing_snapshot_v3.body.json")
 	if err != nil {
 		return nil, err
 	}
@@ -444,6 +474,7 @@ func endOfLifeOf(t *testing.T, c authorizeCase) time.Time {
 func TestEveryGoldenCaseThroughThePipeline(t *testing.T) {
 	f := authorizeGoldens(t)
 	answered, passes, admitted, evaluatorPassed := 0, 0, 0, 0
+	affinity := map[string]int{}
 	seen := map[string]bool{}
 	for _, c := range f.Cases {
 		in, _ := caseInputs(t, f, c)
@@ -471,6 +502,22 @@ func TestEveryGoldenCaseThroughThePipeline(t *testing.T) {
 			answered++
 		case "pass":
 			seen[c.Expect.Reason] = true
+			if c.Expect.Affinity != nil {
+				// G13: composed for the shadow, passed with its reason,
+				// never admittable.
+				if d.Pass != gwauth.ReasonCacheAffinity || d.ForShadow() == nil {
+					t.Errorf("%s: passed %q, shadow %v", c.Name, d.Pass, d.ForShadow() != nil)
+					continue
+				}
+				if _, ok := d.Admit(); ok {
+					t.Errorf("%s: an affinity decision is admittable", c.Name)
+					continue
+				}
+				if checkAffinity(t, c, d) {
+					affinity[c.Expect.Affinity.Class]++
+				}
+				continue
+			}
 			if postAdmission(c.Expect.Reason) {
 				if d.Pass != "" || d.ForShadow() == nil {
 					t.Errorf("%s: passed %q before the admit; Python's reason is %s", c.Name, d.Pass, c.Expect.Reason)
@@ -502,6 +549,58 @@ func TestEveryGoldenCaseThroughThePipeline(t *testing.T) {
 	if answered < 160 || passes < 90 || admitted < 10 {
 		t.Fatalf("answered %d, passes %d, admitted %d: fewer than the goldens hold", answered, passes, admitted)
 	}
+	if affinity[ClassAffinityCold] < 6 || affinity[ClassAffinityWarm] < 10 {
+		t.Fatalf("affinity %v: fewer than the goldens hold", affinity)
+	}
+}
+
+// checkAffinity holds a decision to a body.cache_affinity case (G13): Go's
+// 200 is Python's cold bytes (no session in its process), its candidates
+// and estimate the cold ones, and Python's bytes with its sessions
+// remembered compare as the case's class: affinity_cold when they are the
+// same, affinity_warm when they are Go's decision with the remembered
+// endpoint promoted (its own estimate with fallbacks off).
+func checkAffinity(t *testing.T, c authorizeCase, d Decided) bool {
+	t.Helper()
+	a, dec := c.Expect.Affinity, d.ForShadow()
+	ok := true
+	check := func(what string, got, want any) {
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: %s %v, want %v", c.Name, what, got, want)
+			ok = false
+		}
+	}
+	check("affinity", dec.Affinity, true)
+	check("region", dec.Region, a.DecideRegion)
+	check("fingerprint", dec.Identity.Fingerprint, a.Fingerprint)
+	check("scope", dec.Identity.Scope, a.Scope)
+	check("material", string(dec.Identity.Material), a.Material)
+	check("estimate", dec.Estimate, a.ColdEstimate)
+	check("reservation", dec.Reservation, a.ColdReservation)
+	check("candidates", dec.Candidates, a.ColdCandidates)
+	check("workspace", dec.Workspace, c.Facts.Key.WorkspaceID)
+	if !ok {
+		return false
+	}
+	composed, err := dec.Finish(c.Admitted.Envelope, endOfLifeOf(t, c))
+	if err != nil {
+		t.Errorf("%s: Finish: %v", c.Name, err)
+		return false
+	}
+	if got := composed.Render(timingOfMap(a.ColdTiming), false); string(got) != a.ColdResponse {
+		t.Errorf("%s: the cold 200 differs\n got %s\nwant %s", c.Name, got, a.ColdResponse)
+		return false
+	}
+	r := compareFull(d, pyAnswer{status: 200, body: []byte(a.Response)})
+	if r.class != a.Class || len(r.fields) != 0 || r.decided || !r.affinity {
+		t.Errorf("%s: Python's warm bytes compare as %+v, want %s", c.Name, r, a.Class)
+		return false
+	}
+	if (a.Class == ClassAffinityWarm) == slices.Equal(a.Candidates, a.ColdCandidates) {
+		t.Errorf("%s: class %s with candidates %v over %v", c.Name, a.Class, a.Candidates, a.ColdCandidates)
+		return false
+	}
+	return true
 }
 
 // evaluatorPasses are the answered goldens whose provider preferences the
@@ -509,8 +608,7 @@ func TestEveryGoldenCaseThroughThePipeline(t *testing.T) {
 // routing-snapshot-v1.md, "What Go evaluates"): Go passes them, which is
 // always safe; the shadow counts them python_answered_go_passed.evaluate.pass.
 var evaluatorPasses = map[string]string{
-	"answer:provider:max_price":  "provider.max_price",
-	"answer:required_parameters": "provider.require_parameters",
+	"answer:provider:max_price": "provider.max_price",
 }
 
 // checkAnswered holds a decision to an answered case: what the pipeline
@@ -531,6 +629,7 @@ func checkAnswered(t *testing.T, c authorizeCase, d *Decision) bool {
 	check("scope", d.Identity.Scope, e.IdempotencyScope)
 	check("material", string(d.Identity.Material), e.FingerprintMaterial)
 	check("estimate", d.Estimate, e.Estimate)
+	check("reservation", d.Reservation, e.Reservation)
 	check("workspace", d.Workspace, c.Facts.Key.WorkspaceID)
 	if !ok {
 		return false
@@ -1178,5 +1277,92 @@ func TestTheKeylessPolicyGatesAreBeforeTheLookup(t *testing.T) {
 	}
 	if Decide(in); looked != 1 {
 		t.Fatalf("positive control: %d lookups", looked)
+	}
+}
+
+// TestTheReservationPricesAtMostHoldOutputTokens: through the pipeline, the
+// production shape (a max_tokens of 131,072) and the budgets either side of
+// routingsnapshot.HoldOutputTokens decide what the regenerated goldens
+// record: a reservation (the lease's hold) of 16,384 output tokens at and
+// above the bound and of the budget itself below it, while the estimate
+// (the rows' and the 200's ceiling) prices the whole budget.
+func TestTheReservationPricesAtMostHoldOutputTokens(t *testing.T) {
+	f := authorizeGoldens(t)
+	figures := func(name string) (estimate, reservation int64) {
+		t.Helper()
+		for _, c := range f.Cases {
+			if c.Name != name {
+				continue
+			}
+			in, _ := caseInputs(t, f, c)
+			d := Decide(in)
+			if d.Pass != "" || d.ForShadow() == nil {
+				t.Fatalf("%s: passed %q, want a decision", name, d.Pass)
+			}
+			got := d.ForShadow()
+			if got.Estimate != c.Expect.Estimate || got.Reservation != c.Expect.Reservation {
+				t.Fatalf("%s: estimate %d and reservation %d, the golden's %d and %d",
+					name, got.Estimate, got.Reservation, c.Expect.Estimate, c.Expect.Reservation)
+			}
+			return got.Estimate, got.Reservation
+		}
+		t.Fatalf("%s: not a golden case", name)
+		return 0, 0
+	}
+	flash := "answer:estimate:hold_cap:deepseek/deepseek-v4-flash:1000+"
+	atBound, bound := figures(flash + "16384")
+	if atBound != bound {
+		t.Errorf("at the bound the estimate %d and the reservation %d differ", atBound, bound)
+	}
+	for _, budget := range []string{"16385", "131072"} {
+		if estimate, reservation := figures(flash + budget); reservation != bound || estimate <= atBound {
+			t.Errorf("a %s budget: reservation %d, want the bound's %d; estimate %d, want above %d",
+				budget, reservation, bound, estimate, atBound)
+		}
+	}
+	if estimate, reservation := figures(flash + "16383"); reservation >= bound || estimate != reservation {
+		t.Errorf("a 16,383 budget: reservation %d, want below %d; estimate %d, want the reservation", reservation, bound, estimate)
+	}
+	if estimate, reservation := figures("answer:estimate:hold_cap:google/gemini-3.1-pro-preview:8000+max_tokens:131072"); reservation >= estimate {
+		t.Errorf("max_tokens 131,072: reservation %d, want below the estimate %d", reservation, estimate)
+	}
+}
+
+// TestPythonsReservationOnPassedGoldens: a golden Go passes that Python
+// answered without a lease records the credit reservation Python wrote
+// (python.reservation_microdollars, §10.1). Where the evaluator reads the
+// body, it is the evaluator's reservation: the whole budget's price for a
+// stream (for now), at most HoldOutputTokens of it otherwise.
+func TestPythonsReservationOnPassedGoldens(t *testing.T) {
+	f := authorizeGoldens(t)
+	checked, streams := 0, 0
+	for _, c := range f.Cases {
+		if c.Expect.Outcome != "pass" || c.Expect.Python.Reservation == nil {
+			continue
+		}
+		req, _, why := requestOf(c.body(), &shadowCall{})
+		if why != "" {
+			continue // a body the evaluator does not read (§3's body.* reasons)
+		}
+		in, _ := caseInputs(t, f, c)
+		req.At = c.at()
+		r := in.Snapshot.Evaluate(req)
+		if r.Outcome != routingsnapshot.Answered {
+			continue
+		}
+		if req.Stream != nil && *req.Stream {
+			streams++
+			if r.Reservation != r.ModelEstimate {
+				t.Errorf("%s: a stream's reservation %d, want its estimate %d", c.Name, r.Reservation, r.ModelEstimate)
+			}
+		}
+		if got := *c.Expect.Python.Reservation; got != r.Reservation {
+			t.Errorf("%s: Python reserved %d, the evaluator %d (estimate %d)", c.Name, got, r.Reservation, r.ModelEstimate)
+		}
+		checked++
+	}
+	t.Logf("%d passed goldens' reservations checked, %d of them streams", checked, streams)
+	if streams < 2 || checked < 4 {
+		t.Fatalf("checked %d (%d streams): fewer than the goldens hold", checked, streams)
 	}
 }

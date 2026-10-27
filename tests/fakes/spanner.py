@@ -2366,7 +2366,11 @@ class _FakeSnapshot:
         **rpc_options: Any,
     ) -> list[list[str]]:
         if rpc_options:
-            assert 0 < rpc_options["timeout"] <= 0.5
+            # Runtime stop is a distinct complete-key control read with the
+            # reviewed one-second budget. Money reads retain their 500 ms cap.
+            runtime_stop = (sql == "SELECT body FROM tr_entities WHERE kind=@kind AND id=@id"
+                            and params == {"kind": "async_settle_shadow_control_v2", "id": "stop-v2"})
+            assert 0 < rpc_options["timeout"] <= (1.0 if runtime_stop else 0.5)
             assert rpc_options["retry"] is None
             options = dict(rpc_options["request_options"])
             tag = options.pop("request_tag", None)

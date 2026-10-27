@@ -9,8 +9,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -38,12 +40,12 @@ func testdata(t *testing.T, name string) []byte {
 func golden(t *testing.T) (manifestFile, []byte) {
 	t.Helper()
 	var m manifestFile
-	decoder := json.NewDecoder(bytes.NewReader(testdata(t, "routing_snapshot_v1.manifest.json")))
+	decoder := json.NewDecoder(bytes.NewReader(testdata(t, "routing_snapshot_v3.manifest.json")))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&m); err != nil {
 		t.Fatal(err)
 	}
-	return m, testdata(t, "routing_snapshot_v1.body.json")
+	return m, testdata(t, "routing_snapshot_v3.body.json")
 }
 
 // goldenKey is the manifest's key as a verifier configured with it holds it.
@@ -138,7 +140,7 @@ func (s signer) claimsFor(body []byte) Claims {
 	return Claims{
 		Aud: s.key.Aud, CompiledAt: snapshot.CompiledAt, Iss: s.key.Iss, NotAfter: snapshot.NotAfter,
 		Plane: snapshot.Plane, SHA256: hex.EncodeToString(sum[:]), Size: int64(len(body)),
-		SourceRevision: snapshot.SourceRevision, V: 1,
+		SourceRevision: snapshot.SourceRevision, V: snapshotVersion,
 	}
 }
 
@@ -226,15 +228,22 @@ func TestVerifyRefusals(t *testing.T) {
 	ok("production key", s.sign(s.header(), canonical(claims)), sKeys, raw, prod)
 	refused("typ", "type", s.sign(canonical(jwsHeader{Alg: "EdDSA", Kid: s.key.Kid, Typ: "tr-other"}), canonical(claims)), sKeys, raw, prod)
 	refused("alg", "algorithm", s.sign(canonical(jwsHeader{Alg: "HS256", Kid: s.key.Kid, Typ: Typ}), canonical(claims)), sKeys, raw, prod)
-	refused("header spacing", "canonical_header", s.sign([]byte(`{"alg": "EdDSA","kid":"routing-snapshot-key-2","typ":"tr-routing-snapshot-v1"}`), canonical(claims)), sKeys, raw, prod)
-	refused("header field", "fields", s.sign([]byte(`{"alg":"EdDSA","kid":"routing-snapshot-key-2","typ":"tr-routing-snapshot-v1","x":"y"}`), canonical(claims)), sKeys, raw, prod)
-	extra := strings.Replace(string(canonical(claims)), `"v":1}`, `"v":1,"x":1}`, 1)
+	refused("header spacing", "canonical_header", s.sign([]byte(`{"alg": "EdDSA","kid":"routing-snapshot-key-2","typ":"tr-routing-snapshot-v3"}`), canonical(claims)), sKeys, raw, prod)
+	refused("header field", "fields", s.sign([]byte(`{"alg":"EdDSA","kid":"routing-snapshot-key-2","typ":"tr-routing-snapshot-v3","x":"y"}`), canonical(claims)), sKeys, raw, prod)
+	refused("v1 type", "type", s.sign(canonical(jwsHeader{Alg: "EdDSA", Kid: s.key.Kid, Typ: "tr-routing-snapshot-v1"}), canonical(claims)), sKeys, raw, prod)
+	refused("v2 type", "type", s.sign(canonical(jwsHeader{Alg: "EdDSA", Kid: s.key.Kid, Typ: "tr-routing-snapshot-v2"}), canonical(claims)), sKeys, raw, prod)
+	for _, v := range []int64{1, 2} {
+		oldClaims := claims
+		oldClaims.V = v
+		refused(fmt.Sprintf("v%d claims", v), "claims", s.sign(s.header(), canonical(oldClaims)), sKeys, raw, prod)
+	}
+	extra := strings.Replace(string(canonical(claims)), `"v":3}`, `"v":3,"x":1}`, 1)
 	refused("claims field", "claims", s.sign(s.header(), []byte(extra)), sKeys, raw, prod)
-	float := strings.Replace(string(canonical(claims)), `"v":1}`, `"v":1.0}`, 1)
+	float := strings.Replace(string(canonical(claims)), `"v":3}`, `"v":3.0}`, 1)
 	refused("float claim", "json", s.sign(s.header(), []byte(float)), sKeys, raw, prod)
-	duplicate := strings.Replace(string(canonical(claims)), `"v":1}`, `"v":1,"v":1}`, 1)
+	duplicate := strings.Replace(string(canonical(claims)), `"v":3}`, `"v":3,"v":3}`, 1)
 	refused("duplicate claim", "json", s.sign(s.header(), []byte(duplicate)), sKeys, raw, prod)
-	spaced := strings.Replace(string(canonical(claims)), `"v":1}`, `"v": 1}`, 1)
+	spaced := strings.Replace(string(canonical(claims)), `"v":3}`, `"v": 3}`, 1)
 	refused("claims spacing", "manifest issuer or encoding", s.sign(s.header(), []byte(spaced)), sKeys, raw, prod)
 	wrongIss := claims
 	wrongIss.Iss = "tr-someone-else"
@@ -248,8 +257,8 @@ func TestVerifyRefusals(t *testing.T) {
 	padded := strings.Replace(s.sign(s.header(), canonical(claims)), ".", "=.", 1)
 	refused("padding", "base64", padded, sKeys, raw, prod)
 
-	// A body the claims bind exactly but that is not a v1 snapshot.
-	notSnapshot := []byte(`{"v":1}`)
+	// A body the claims bind exactly but that is not a v3 snapshot.
+	notSnapshot := []byte(`{"v":3}`)
 	bound := claims
 	sum := sha256.Sum256(notSnapshot)
 	bound.SHA256, bound.Size = hex.EncodeToString(sum[:]), int64(len(notSnapshot))
@@ -277,21 +286,37 @@ func TestParseRefusals(t *testing.T) {
 		"unknown field":  mutate(`"epoch_seconds":3600`, `"epoch_seconds":3600,"extra":1`),
 		"unknown nested": mutate(`"stores_content":true`, `"stores_content":true,"zdr":true`),
 		// A snapshot compiled before models carried context_length.
-		"no context_length": mutate(`"context_length":65536,`, ``),
-		"negative window":   mutate(`"context_length":65536,`, `"context_length":-1,`),
-		"missing field":     mutate(`"epoch_seconds":3600,`, ``),
-		"float":             mutate(`"epoch_seconds":3600`, `"epoch_seconds":3600.0`),
-		"exponent":          mutate(`"epoch_seconds":3600`, `"epoch_seconds":36e2`),
-		"duplicate key":     mutate(`"epoch_seconds":3600`, `"epoch_seconds":3600,"epoch_seconds":3600`),
-		"null required":     mutate(`"epoch_seconds":3600`, `"epoch_seconds":null`),
-		"string for int":    mutate(`"epoch_seconds":3600`, `"epoch_seconds":"3600"`),
-		"lone surrogate":    mutate(`"golden-fixture"`, `"golden-\ud800"`),
-		"trailing newline":  append(bytes.Clone(raw), '\n'),
-		"two values":        append(bytes.Clone(raw), []byte(` {}`)...),
-		"unknown pattern":   mutate(`"dated_suffix_pattern":"-\\d{4}-\\d{2}-\\d{2}$"`, `"dated_suffix_pattern":"-\\d{8}$"`),
-		"unknown rounding":  mutate(`"rounding":"half_up_per_million"`, `"rounding":"half_even"`),
-		"unknown usage":     mutate(`"usage_type":"Credits"`, `"usage_type":"Prepaid"`),
-		"too long a window": mutate(`"not_after":1792387800`, `"not_after":1792454401`),
+		"no context_length":      mutate(`"context_length":65536,`, ``),
+		"negative window":        mutate(`"context_length":65536,`, `"context_length":-1,`),
+		"v1 without host bounds": mutate(`"v":3}`, `"v":1}`),
+		"v2":                     mutate(`"v":3}`, `"v":2}`),
+		// v2's shape: no parameter tables, no privacy-tier spellings.
+		"no parameter tables": mutate(`"parameters":{"aliases":{"max_tokens":["max_completion_tokens","max_tokens"],`+
+			`"reasoning":["reasoning","reasoning_effort"],"response_format":["response_format","structured_outputs"]},`+
+			`"capability_required":{"response_format":["response_format","structured_outputs"],`+
+			`"structured_outputs":["response_format","structured_outputs"],"tool_choice":["tools"],"tools":["tools"]},`+
+			`"route_declared":[["tools"]]},`, ``),
+		"no privacy tiers":            mutate(`,"privacy_tiers":{"any":0,`, `,"x":{"any":0,`),
+		"unknown privacy requirement": mutate(`"trusted":4,`, `"trusted":5,`),
+		"unsorted alternatives":       mutate(`"max_tokens":["max_completion_tokens","max_tokens"]`, `"max_tokens":["max_tokens","max_completion_tokens"]`),
+		"empty capability":            mutate(`"tool_choice":["tools"]`, `"tool_choice":[]`),
+		"empty route declaration":     mutate(`"route_declared":[["tools"]]`, `"route_declared":[[]]`),
+		"repeated route declaration":  mutate(`"route_declared":[["tools"]]`, `"route_declared":[["tools"],["tools"]]`),
+		"no host context":             mutate(`"context_length":0,`, ``),
+		"negative host context":       mutate(`"context_length":0,`, `"context_length":-1,`),
+		"missing field":               mutate(`"epoch_seconds":3600,`, ``),
+		"float":                       mutate(`"epoch_seconds":3600`, `"epoch_seconds":3600.0`),
+		"exponent":                    mutate(`"epoch_seconds":3600`, `"epoch_seconds":36e2`),
+		"duplicate key":               mutate(`"epoch_seconds":3600`, `"epoch_seconds":3600,"epoch_seconds":3600`),
+		"null required":               mutate(`"epoch_seconds":3600`, `"epoch_seconds":null`),
+		"string for int":              mutate(`"epoch_seconds":3600`, `"epoch_seconds":"3600"`),
+		"lone surrogate":              mutate(`"golden-fixture"`, `"golden-\ud800"`),
+		"trailing newline":            append(bytes.Clone(raw), '\n'),
+		"two values":                  append(bytes.Clone(raw), []byte(` {}`)...),
+		"unknown pattern":             mutate(`"dated_suffix_pattern":"-\\d{4}-\\d{2}-\\d{2}$"`, `"dated_suffix_pattern":"-\\d{8}$"`),
+		"unknown rounding":            mutate(`"rounding":"half_up_per_million"`, `"rounding":"half_even"`),
+		"unknown usage":               mutate(`"usage_type":"Credits"`, `"usage_type":"Prepaid"`),
+		"too long a window":           mutate(`"not_after":1792387800`, `"not_after":1792454401`),
 	} {
 		if _, err := Parse(body); err == nil {
 			t.Errorf("%s: parsed", name)
@@ -316,10 +341,96 @@ func TestTheCasesNameTheGoldenSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	sum := sha256.Sum256(raw)
-	if cases.SnapshotSHA256 != hex.EncodeToString(sum[:]) || cases.Snapshot != "fastpath/testdata/routing_snapshot_v1.body.json" {
+	if cases.SnapshotSHA256 != hex.EncodeToString(sum[:]) || cases.Snapshot != "fastpath/testdata/routing_snapshot_v3.body.json" {
 		t.Fatalf("the cases name %s %s, not the golden body", cases.Snapshot, cases.SnapshotSHA256)
 	}
 	if len(cases.Cases) < 100 {
 		t.Fatalf("%d cases", len(cases.Cases))
+	}
+}
+
+// TestBillingValidIsOptionalPerEpoch: G15a (docs/design/
+// fast-admission-e2-g15-async.md section 6.1). The golden body, which has no
+// billing_valid, parses with every epoch's nil (unknown); a body that
+// publishes it on some epochs parses and exposes each as published, the
+// others nil; null and a non-boolean are refused; and nothing the evaluator
+// answers changes when every epoch carries it.
+func TestBillingValidIsOptionalPerEpoch(t *testing.T) {
+	_, raw := golden(t)
+	at := []byte(`"epochs":[{"headline":`)
+	if bytes.Contains(raw, []byte(`"billing_valid"`)) || bytes.Count(raw, at) < 2 {
+		t.Fatal("the golden body must have no billing_valid and several endpoints")
+	}
+	plain, err := Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range plain.Endpoints {
+		for _, epoch := range e.Epochs {
+			if epoch.BillingValid != nil {
+				t.Fatalf("%s: absent billing_valid parsed as %v", e.ID, *epoch.BillingValid)
+			}
+		}
+	}
+	// The first endpoint's first epoch false, the second's true, the rest
+	// unpublished.
+	first := bytes.Index(raw, at)
+	second := first + len(at) + bytes.Index(raw[first+len(at):], at)
+	splice := func(value string) []byte {
+		out := bytes.Clone(raw[:first])
+		out = append(out, `"epochs":[{"billing_valid":false,"headline":`...)
+		out = append(out, raw[first+len(at):second]...)
+		out = append(out, `"epochs":[{"billing_valid":`+value+`,"headline":`...)
+		return append(out, raw[second+len(at):]...)
+	}
+	s, err := Parse(splice("true"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	published := 0
+	for i, e := range s.Endpoints {
+		for j, epoch := range e.Epochs {
+			if epoch.BillingValid == nil {
+				continue
+			}
+			published++
+			if j != 0 || i > 1 || *epoch.BillingValid != (i == 1) {
+				t.Errorf("%s epoch %d: billing_valid %v", e.ID, j, *epoch.BillingValid)
+			}
+		}
+	}
+	if published != 2 {
+		t.Fatalf("%d epochs carry billing_valid, want 2", published)
+	}
+	for _, value := range []string{"null", `"true"`, "1", "{}"} {
+		if _, err := Parse(splice(value)); err == nil {
+			t.Errorf("billing_valid %s: parsed", value)
+		}
+	}
+
+	// Every epoch false: the evaluator's answers are the golden body's.
+	every := bytes.ReplaceAll(raw, []byte(`{"headline":{`), []byte(`{"billing_valid":false,"headline":{`))
+	flagged, err := Parse(every)
+	if err != nil {
+		t.Fatal(err)
+	}
+	epochs := 0
+	for _, e := range flagged.Endpoints {
+		for _, epoch := range e.Epochs {
+			if epoch.BillingValid == nil || *epoch.BillingValid {
+				t.Fatalf("%s: an epoch without billing_valid false", e.ID)
+			}
+			epochs++
+		}
+	}
+	base := goldenSnapshot(t)
+	cases := loadCases(t).Cases
+	if epochs < 2 || len(cases) < 100 {
+		t.Fatalf("%d epochs, %d cases: the comparison is vacuous", epochs, len(cases))
+	}
+	for _, c := range cases {
+		if got, want := flagged.Evaluate(c.request(t)), base.Evaluate(c.request(t)); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: %+v with billing_valid, %+v without", c.Name, got, want)
+		}
 	}
 }

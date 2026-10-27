@@ -67,10 +67,16 @@ type Stager struct {
 // NewStager is the consumer, which tells alert of a message no retry makes
 // a record of.
 func NewStager(s StagingStore, alert func(authorization, what string)) (*Stager, error) {
+	return newStager(s, alert, processCalls)
+}
+
+// newStager is NewStager noting its calls under way in calls.
+func newStager(s StagingStore, alert func(authorization, what string), calls *inFlight) (*Stager, error) {
 	if s == nil || alert == nil {
 		return nil, errors.New("auditor: a stager needs a store and someone to tell")
 	}
-	return &Stager{store: s, alert: alert}, nil
+	return &Stager{store: boundStagingStore{s: s, bound: bound{d: StoreDeadline, j: newJournal(nil), calls: calls}},
+		alert: alert}, nil
 }
 
 // Run stages what src delivers until ctx ends or src fails.

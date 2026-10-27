@@ -92,6 +92,11 @@ type i2 struct {
 	StaleRate                 *float64         `json:"stale_rate"`
 	Unavailable               int64            `json:"unavailable"`
 	UnavailableByCode         map[string]int64 `json:"unavailable_by_code"`
+	// The cache affinity requests Go composed for comparison alone (G13),
+	// by class, and affinity_warm's share of those that compared cold or
+	// warm: the measure of §1 item 5's revisit.
+	AffinityByClass   map[string]int64 `json:"affinity_by_class"`
+	AffinityWarmShare *float64         `json:"affinity_warm_share"`
 }
 
 // edgeReport is the report's answer.
@@ -145,13 +150,21 @@ func (r *edgeReport) gates() {
 	g := i2{AgreeFull: sh.Counts["agree_full"], Differ: sh.Counts["differ"],
 		WouldAdmitPythonRefused: sh.Counts["would_admit_python_refused"], DifferByField: map[string]int64{},
 		WouldAdmitByClass: map[string]int64{}, StaleByCache: map[string]int64{}, CohortByClass: map[string]int64{},
-		Unavailable: r.Decide.Counts["unavailable"], UnavailableByCode: map[string]int64{}}
+		AffinityByClass: map[string]int64{},
+		Unavailable:     r.Decide.Counts["unavailable"], UnavailableByCode: map[string]int64{}}
 	g.Comparable = g.AgreeFull + g.Differ
 	for _, n := range sh.ByName["decide"] {
 		g.CohortEligible += n
 	}
 	for class, n := range sh.ByName["cohort"] {
 		g.CohortByClass[class] = n
+	}
+	for class, n := range sh.ByName["affinity"] {
+		g.AffinityByClass[class] = n
+	}
+	if cold, warm := g.AffinityByClass[edge.ClassAffinityCold], g.AffinityByClass[edge.ClassAffinityWarm]; cold+warm > 0 {
+		share := float64(warm) / float64(cold+warm)
+		g.AffinityWarmShare = &share
 	}
 	for field, n := range sh.ByName["fields"] {
 		g.DifferByField[field] = n

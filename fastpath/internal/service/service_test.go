@@ -1213,6 +1213,10 @@ func TestASubscriptionThatFailsFailsTheProcess(t *testing.T) {
 					})
 				}
 			}
+			// The callback held is a part wedged: the failed process exits
+			// within its bound all the same, though Run has not returned.
+			exited := make(chan int, 1)
+			cfg.Exit, cfg.failStop = func(code int) { exited <- code }, 2*time.Second
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			done := make(chan error, 1)
@@ -1237,6 +1241,19 @@ func TestASubscriptionThatFailsFailsTheProcess(t *testing.T) {
 				_ = conn.Close()
 				return false, nil
 			})
+			select {
+			case code := <-exited:
+				if code != 1 {
+					t.Fatalf("the failed process exited with %d", code)
+				}
+			case <-time.After(30 * time.Second):
+				t.Fatal("the failed process did not exit while its callback held")
+			}
+			select {
+			case err := <-done:
+				t.Fatalf("Run returned %v while its callback held", err)
+			default:
+			}
 			cancel()
 			letGo()
 			select {
@@ -1703,26 +1720,66 @@ func TestARotationsPhasesTakeEachOthersEnvelopes(t *testing.T) {
 // TestAMemberRowSaysWhatAProcessRuns: an admission node that runs an
 // auditor member too is a member with every role, and an auditor member of
 // its own, with no listener, is a member live with the auditor role alone,
-// so a deploy sees what each process runs.
+// so a deploy sees what each process runs. Before a restarted process's
+// Join commits, readers may still see its predecessor at the old epoch.
 func TestAMemberRowSaysWhatAProcessRuns(t *testing.T) {
 	if emulator == nil {
 		t.Skip(skipped)
 	}
+	for _, previous := range []bool{false, true} {
+		name := "new-address"
+		if previous {
+			name = "reused-address"
+		}
+		t.Run(name, func(t *testing.T) { memberRowSaysWhatAProcessRuns(t, previous) })
+	}
+}
+
+func memberRowSaysWhatAProcessRuns(t *testing.T, previous bool) {
+	t.Helper()
+	const previousEpoch = int64(41)
+	previousRoles := []string{"owner", "frontdoor"}
 	ctx := context.Background()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	// A database per case keeps unrelated members out; the reused case
+	// deliberately leaves the predecessor's row at the same address.
+	db, err := emulator.Database(ctx, storetest.UniqueID("member"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(db.Close)
+	ln := listen(t)
 	both := config(ln)
 	alone := config(ln)
 	alone.Admission, alone.Address, alone.Listener = false, storetest.UniqueID("auditor"), nil
+	if previous {
+		old := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+		for _, address := range []string{both.Address, alone.Address} {
+			if _, err := db.Apply(ctx, []*spanner.Mutation{spanner.InsertMap("tr_fastpath_member", map[string]any{
+				"address": address, "epoch": previousEpoch, "roles": previousRoles,
+				"state": store.Leaving, "started_at": old, "heartbeat_at": old,
+			})}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	ps := pubSub(t)
-	start(t, both, Clients{Spanner: shared, PubSub: ps})
-	start(t, alone, Clients{Spanner: shared, PubSub: ps})
-	s, err := store.New(shared, both.Store)
+	s, err := store.New(db, both.Store)
 	if err != nil {
 		t.Fatal(err)
 	}
+	wantEpoch := int64(1)
+	if previous {
+		wantEpoch = previousEpoch + 1
+		for _, address := range []string{both.Address, alone.Address} {
+			st, err := s.NodeStatus(ctx, address)
+			if err != nil || !st.Found || st.Epoch != previousEpoch || st.State != store.Leaving || st.Live ||
+				!slices.Equal(st.Roles, previousRoles) {
+				t.Fatalf("the predecessor: %+v, %v", st, err)
+			}
+		}
+	}
+	start(t, both, Clients{Spanner: db, PubSub: ps})
+	start(t, alone, Clients{Spanner: db, PubSub: ps})
 	for _, c := range []struct {
 		address string
 		roles   []string
@@ -1732,7 +1789,15 @@ func TestAMemberRowSaysWhatAProcessRuns(t *testing.T) {
 			if err != nil || !st.Found {
 				return false, err
 			}
-			if !slices.Equal(st.Roles, c.roles) || st.State != store.Serving {
+			// start launches Run asynchronously. Join replaces the old
+			// incarnation atomically, not when the goroutine is launched.
+			if previous && st.Epoch == wantEpoch-1 {
+				if st.State != store.Leaving || st.Live || !slices.Equal(st.Roles, previousRoles) {
+					return false, fmt.Errorf("the predecessor changed before Join: %+v", st)
+				}
+				return false, nil
+			}
+			if st.Epoch != wantEpoch || !slices.Equal(st.Roles, c.roles) || st.State != store.Serving {
 				return false, fmt.Errorf("the row: %+v", st)
 			}
 			return st.Live, nil
@@ -1766,5 +1831,42 @@ func TestAnAlertIsALineOfJSON(t *testing.T) {
 		if err := json.Unmarshal([]byte(body), &got); err != nil || !reflect.DeepEqual(got, want) {
 			t.Fatalf("line %d: %q: %v, want %v", i, lines[i], err, want)
 		}
+	}
+}
+
+// TestAFailedProcessExitsThoughAPartIsWedged: a part's failure, the
+// auditor's stalled commits here, exits the process with code 1 within
+// FailStop though another part is wedged in a call that does not heed its
+// context, so that systemd starts the unit again.
+func TestAFailedProcessExitsThoughAPartIsWedged(t *testing.T) {
+	wedge := make(chan struct{})
+	defer close(wedge)
+	exited := make(chan int, 2)
+	done := make(chan error, 1)
+	go func() {
+		done <- lifecycle(context.Background(), func(p *parts) {
+			p.exit, p.failStop = func(code int) { exited <- code }, 100*time.Millisecond
+			p.run("pending work", func(context.Context) error {
+				<-wedge // as a call that does not heed its context
+				return nil
+			})
+			p.run("auditor", func(context.Context) error { return auditor.ErrCommitStalled })
+		})
+	}()
+	select {
+	case code := <-exited:
+		if code != 1 {
+			t.Fatalf("exited with %d", code)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the failed process did not exit")
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("the parts stopped though one is wedged: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if FailStop != 30*time.Second {
+		t.Fatalf("FailStop is %v", FailStop)
 	}
 }

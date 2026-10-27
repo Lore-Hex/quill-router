@@ -577,7 +577,7 @@ func (sh *shadow) compare(c comparison) result {
 		estimated := true
 		if !slices.Equal(goAnswer.Candidates, py.candidates) {
 			switch {
-			case affinityKey && h.promotedWithinItsModel(goAnswer.Candidates, py.candidates):
+			case affinityKey && h.pythonsWarm(req, goAnswer.Candidates, py.candidates):
 				affinity = true
 			case affinityKey && h.warmInsteadOfFirst(req, goAnswer.Candidates, py.candidates):
 				// Python re-ranked, then kept one: its candidate and its
@@ -662,31 +662,16 @@ func (h *held) impliedBYOK(candidates []string) []string {
 	return out
 }
 
-// promotedWithinItsModel: py is cold with one endpoint moved to the front of
-// its model's run, or to the front of the list, which is the order
-// routing_state.rank gives a session's sticky endpoint (the warm cache)
-// with the sort partitioned by model or not at all.
-func (h *held) promotedWithinItsModel(cold, py []string) bool {
-	if len(cold) != len(py) {
+// pythonsWarm is affinity.go's rule over the snapshot's endpoint models:
+// py is the order routing_state.rank gives Go's cold order for some
+// endpoint of it remembered, under the request's provider preferences.
+func (h *held) pythonsWarm(req routingsnapshot.Request, cold, py []string) bool {
+	ordered, byModel, ok := h.snapshot.Rerank(req)
+	if !ok {
 		return false
 	}
-	i := 0
-	for i < len(cold) && cold[i] == py[i] {
-		i++
-	}
-	if i == len(cold) {
-		return false
-	}
-	j := slices.Index(cold, py[i])
-	if j <= i {
-		return false
-	}
-	moved := slices.Concat(cold[:i], []string{cold[j]}, cold[i:j], cold[j+1:])
-	if !slices.Equal(moved, py) {
-		return false
-	}
-	model := h.endpointModel[cold[j]]
-	return i == 0 || (h.endpointModel[cold[i-1]] != model && h.endpointModel[cold[i]] == model)
+	_, warm := pythonsWarm(ordered, byModel, cold, py, func(id string) string { return h.endpointModel[id] })
+	return warm
 }
 
 // warmInsteadOfFirst: with fallbacks off Python re-ranks and then keeps
@@ -698,7 +683,7 @@ func (h *held) warmInsteadOfFirst(req routingsnapshot.Request, cold, py []string
 	if len(cold) != 1 || len(py) != 1 || h.endpointModel[py[0]] == "" || h.endpointModel[py[0]] != h.endpointModel[cold[0]] {
 		return false
 	}
-	on, ok := withFallbacks(req)
+	on, ok := withFallbacks(h.snapshot, req)
 	if !ok {
 		return false
 	}
@@ -713,50 +698,16 @@ func (h *held) warmInsteadOfFirst(req routingsnapshot.Request, cold, py []string
 // false unless Go then answers exactly that endpoint, when its estimate is
 // not one Go can name.
 func (h *held) warmEstimate(req routingsnapshot.Request, endpoint string) (int64, bool) {
-	fields := map[string]json.RawMessage{}
-	if !isJSONNull(req.Provider) && (json.Unmarshal(req.Provider, &fields) != nil || fields == nil) {
+	pinned, ok := withProviderOnly(req, h.endpointProvider[endpoint])
+	if !ok {
 		return 0, false
 	}
-	only, err := json.Marshal([]string{h.endpointProvider[endpoint]})
-	if err != nil {
-		return 0, false
-	}
-	fields["only"] = only
-	provider, err := json.Marshal(fields)
-	if err != nil {
-		return 0, false
-	}
-	pinned := req
-	pinned.Provider = provider
 	pinned.BYOKProviders = append(slices.Clone(req.BYOKProviders), h.impliedBYOK([]string{endpoint})...)
 	r := h.snapshot.Evaluate(pinned)
 	if r.Outcome != routingsnapshot.Answered || !slices.Equal(r.Candidates, []string{endpoint}) {
 		return 0, false
 	}
 	return r.ModelEstimate, true
-}
-
-// withFallbacks is req with allow_fallbacks unset, top-level and in
-// provider; ok is false when provider names an order, or is not an object.
-func withFallbacks(req routingsnapshot.Request) (routingsnapshot.Request, bool) {
-	req.AllowFallbacks = nil
-	if isJSONNull(req.Provider) {
-		return req, true
-	}
-	var fields map[string]json.RawMessage
-	if json.Unmarshal(req.Provider, &fields) != nil || fields == nil {
-		return req, false
-	}
-	if order, ok := fields["order"]; ok && !isJSONNull(order) {
-		return req, false
-	}
-	delete(fields, "allow_fallbacks")
-	provider, err := json.Marshal(fields)
-	if err != nil {
-		return req, false
-	}
-	req.Provider = provider
-	return req, true
 }
 
 // markupBPS is the smallest integer basis points in 1..30000 that, as an
@@ -1090,9 +1041,10 @@ func jsonBool(raw json.RawMessage) (*bool, bool) {
 var knownProviderReasons = map[string]bool{}
 
 func init() {
-	for _, name := range []string{"min_privacy", "max_price", "preferred_max_latency", "preferred_min_throughput",
-		"require_parameters", "data_collection spelling", "sort shape", "sort is not printable ASCII", "sort spelling",
-		"usage spelling", "jurisdiction spelling", "zdr is not a boolean"} {
+	for _, name := range []string{"min_privacy is not printable ASCII", "min_privacy is not a string",
+		"max_price", "preferred_max_latency", "preferred_min_throughput", "data_collection spelling",
+		"sort shape", "sort is not printable ASCII", "sort spelling", "usage spelling",
+		"jurisdiction spelling", "zdr is not a boolean"} {
 		knownProviderReasons["provider."+name] = true
 	}
 	for _, field := range []string{"order", "only", "ignore"} {

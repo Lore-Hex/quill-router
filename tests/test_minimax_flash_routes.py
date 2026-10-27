@@ -7,6 +7,7 @@ from typing import Any
 
 import httpx
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from scripts.pricing.providers import gmi, novita, together, venice
@@ -14,22 +15,60 @@ from trusted_router import provider_lifecycle
 from trusted_router.catalog import MODELS, endpoints_for_model
 from trusted_router.catalog_data import _PROVIDER_UNSERVED_CREDITS_MODELS
 from trusted_router.request_capabilities import endpoint_capabilities
-from trusted_router.routing import canonical_model_id
+from trusted_router.routing import candidates_fitting_context, canonical_model_id
 
 MODEL = "minimax/minimax-m3.1-flash"
 ALIAS = "minimax/minimax-m3-1-flash"
 NATIVE = "MiniMaxAI/MiniMax-M3.1-Flash"
 
 
+def test_featherless_shared_context_is_enforced_without_capping_other_hosts() -> None:
+    model = MODELS[MODEL]
+    routes = {e.provider: e for e in endpoints_for_model(MODEL) if e.usage_type == "Credits"}
+    featherless = (model, routes["featherless"])
+    minimax = (model, routes["minimax"])
+    assert routes["featherless"].context_length == 262_144
+    assert routes["minimax"].effective_context_length(model) > 262_144
+    assert candidates_fitting_context(
+        [featherless], prompt_tokens=262_143, completion_tokens=1,
+    ) == [featherless]
+    assert candidates_fitting_context(
+        [featherless, minimax], prompt_tokens=262_144, completion_tokens=1,
+    ) == [minimax]
+    with pytest.raises(HTTPException) as exc:
+        candidates_fitting_context([featherless], prompt_tokens=262_144, completion_tokens=1)
+    assert exc.value.status_code == 400
+    assert "262144" in str(exc.value.detail)
+
+
 def test_flash_has_verified_prepaid_routes_and_preserves_native_ids() -> None:
     routes = {e.provider: e for e in endpoints_for_model(MODEL) if e.usage_type == "Credits"}
-    assert set(routes) == {"gmi", "minimax", "novita", "parasail", "together", "venice"}
+    # The 2026-10-25 refresh added six prepaid hosts that price and canary
+    # the launch model; each keeps its own native id.
     assert {p: e.upstream_id for p, e in routes.items()} == {
-        "gmi": NATIVE, "minimax": "MiniMax-M3.1-Flash", "novita": MODEL,
-        "parasail": NATIVE, "together": NATIVE, "venice": "minimax-m3-1-flash",
+        "boundless": MODEL,  # Boundless lists the canonical id at the launch price
+        "featherless": NATIVE,  # Featherless serves the HF id with tools
+        "gmi": NATIVE,
+        "minimax": "MiniMax-M3.1-Flash",
+        "nebius": NATIVE,  # Nebius serves the HF id at the launch price
+        "novita": MODEL,
+        "nvidia-nim": "minimaxai/minimax-m3.1-flash",  # NIM lowercases the HF id
+        "parasail": NATIVE,
+        "together": NATIVE,
+        "venice": "minimax-m3-1-flash",
+        "wafer": "MiniMax-M3.1-Flash",  # Wafer serves MiniMax's own id
+        "zro": "minimax-m3.1-flash",  # ZRO serves the bare model name
     }
-    for endpoint in routes.values():
-        assert endpoint_capabilities(MODELS[MODEL], endpoint)["tools"] is True
+    # NIM declares no tool support and carries NVIDIA's conservative hosted
+    # rate, so it never wins cheapest-route selection for this model.
+    assert {p: endpoint_capabilities(MODELS[MODEL], e)["tools"] for p, e in routes.items()} == {
+        p: p != "nvidia-nim" for p in routes
+    }
+    nim_prompt = routes["nvidia-nim"].price_tiers[0].prompt_price_microdollars_per_million_tokens
+    assert all(
+        e.price_tiers[0].prompt_price_microdollars_per_million_tokens < nim_prompt
+        for p, e in routes.items() if p != "nvidia-nim"
+    )
     assert MODEL not in _PROVIDER_UNSERVED_CREDITS_MODELS["novita"]
     assert MODEL in gmi._VERIFIED_PREPAID_MODELS
     assert any(e.provider == "gmi" and e.usage_type == "BYOK" for e in endpoints_for_model(MODEL))

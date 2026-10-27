@@ -964,6 +964,8 @@ class SpannerStore(OperationalAnalyticsReads):
             )
         require_owner_trust_budget([*shard_counts, added_shards])
         owner = self._read_entity_tx(transaction, "user", owner_user_id, User)
+        if owner is not None and owner.disabled:
+            raise ValueError("account_closed")
         return workspace_ids, owner
 
     def _insert_owner_inventory_tx(
@@ -1002,7 +1004,9 @@ class SpannerStore(OperationalAnalyticsReads):
         return self.auth_session_store.set_workspace(raw_token, workspace_id)
 
     def get_auth_session_by_raw(self, raw_token: str) -> AuthSession | None:
-        return self.auth_session_store.get_by_raw(raw_token)
+        session = self.auth_session_store.get_by_raw(raw_token)
+        user = self.get_user(session.user_id) if session else None
+        return session if user and not user.disabled else None
 
     def delete_auth_session_by_raw(self, raw_token: str) -> bool:
         return self.auth_session_store.delete_by_raw(raw_token)
@@ -1132,98 +1136,105 @@ class SpannerStore(OperationalAnalyticsReads):
         billing_paused: bool | None = None,
         billing_pause_reason: str | None = None,
     ) -> Workspace | None:
-        def txn(transaction: Any) -> Workspace | None:
-            workspace = self._read_entity_tx(transaction, "workspace", workspace_id, Workspace)
-            if workspace is None:
-                return None
-            owner: User | None = None
-            account: CreditAccount | None = None
-            owned: list[str] = []
-            if deleted is not None and deleted != workspace.deleted:
-                account = self._read_entity_tx(
-                    transaction, "credit", workspace_id, CreditAccount
-                )
-                if account is None:
-                    raise RuntimeError("workspace is missing its credit account")
-                if deleted:
-                    owned = self._owner_workspace_ids_tx(
-                        transaction, workspace.owner_user_id
-                    )
-                    owner = self._read_entity_tx(
-                        transaction, "user", workspace.owner_user_id, User
-                    )
-                    transaction.delete(
-                        "tr_owner_workspace",
-                        self._spanner.KeySet(
-                            keys=[(workspace.owner_user_id, workspace_id)]
-                        ),
-                    )
-                    now = dt.datetime.now(dt.UTC)
-                    shard_rows = list(
-                        transaction.execute_sql(
-                            "SELECT shard, trust_latched_at FROM tr_credit_balance "
-                            "WHERE workspace_id=@pk AND shard>=0 AND shard<@shard_count "
-                            "ORDER BY shard",
-                            params={
-                                "pk": workspace_id,
-                                "shard_count": credit_shard_count(account),
-                            },
-                            param_types={
-                                "pk": self._param_types.STRING,
-                                "shard_count": self._param_types.INT64,
-                            },
-                        )
-                    )
-                    if len(shard_rows) != credit_shard_count(account):
-                        raise RuntimeError(
-                            "configured tr_credit_balance shard set is incomplete"
-                        )
-                    transaction.insert_or_update(
-                        table=CREDIT_BALANCE_TABLE,
-                        columns=(
-                            "workspace_id",
-                            "shard",
-                            "trust_tier",
-                            "trust_latched_at",
-                        ),
-                        values=[
-                            (workspace_id, int(shard), 0, latched_at or now)
-                            for shard, latched_at in shard_rows
-                        ],
-                    )
-                else:
-                    owned, owner = self._require_owner_growth_tx(
-                        transaction,
-                        workspace.owner_user_id,
-                        added_shards=credit_shard_count(account),
-                        enforce_count=True,
-                    )
-                    self._insert_owner_inventory_tx(
-                        transaction, workspace.owner_user_id, workspace_id
-                    )
-            if name is not None:
-                workspace.name = name
-            if deleted is not None:
-                workspace.deleted = deleted
-            if billing_paused is not None:
-                causes = set(workspace.billing_pause_causes)
-                if billing_paused:
-                    causes.add("migration")
-                else:
-                    causes.discard("migration")
-                workspace.billing_pause_causes = sorted(causes)
-                workspace.billing_paused = bool(causes)
-            if billing_pause_reason is not None:
-                workspace.billing_pause_reason = billing_pause_reason
-            if owner is not None and deleted is not None:
-                owner.owner_workspace_count = (
-                    max(0, len(owned) - 1) if deleted else len(owned) + 1
-                )
-                self._write_entity_tx(transaction, "user", owner.id, owner)
-            self._write_entity_tx(transaction, "workspace", workspace.id, workspace)
-            return None if workspace.deleted else workspace
+        return self._run_in_transaction(lambda transaction: self._update_workspace_tx(
+            transaction, workspace_id, name=name, deleted=deleted,
+            billing_paused=billing_paused, billing_pause_reason=billing_pause_reason,
+        ))
 
-        return self._run_in_transaction(txn)
+    def _update_workspace_tx(
+        self, transaction: Any, workspace_id: str, *, name: str | None = None,
+        deleted: bool | None = None, billing_paused: bool | None = None,
+        billing_pause_reason: str | None = None,
+    ) -> Workspace | None:
+        workspace = self._read_entity_tx(transaction, "workspace", workspace_id, Workspace)
+        if workspace is None:
+            return None
+        owner: User | None = None
+        account: CreditAccount | None = None
+        owned: list[str] = []
+        if deleted is not None and deleted != workspace.deleted:
+            account = self._read_entity_tx(
+                transaction, "credit", workspace_id, CreditAccount
+            )
+            if account is None:
+                raise RuntimeError("workspace is missing its credit account")
+            if deleted:
+                owned = self._owner_workspace_ids_tx(
+                    transaction, workspace.owner_user_id
+                )
+                owner = self._read_entity_tx(
+                    transaction, "user", workspace.owner_user_id, User
+                )
+                transaction.delete(
+                    "tr_owner_workspace",
+                    self._spanner.KeySet(
+                        keys=[(workspace.owner_user_id, workspace_id)]
+                    ),
+                )
+                now = dt.datetime.now(dt.UTC)
+                shard_rows = list(
+                    transaction.execute_sql(
+                        "SELECT shard, trust_latched_at FROM tr_credit_balance "
+                        "WHERE workspace_id=@pk AND shard>=0 AND shard<@shard_count "
+                        "ORDER BY shard",
+                        params={
+                            "pk": workspace_id,
+                            "shard_count": credit_shard_count(account),
+                        },
+                        param_types={
+                            "pk": self._param_types.STRING,
+                            "shard_count": self._param_types.INT64,
+                        },
+                    )
+                )
+                if len(shard_rows) != credit_shard_count(account):
+                    raise RuntimeError(
+                        "configured tr_credit_balance shard set is incomplete"
+                    )
+                transaction.insert_or_update(
+                    table=CREDIT_BALANCE_TABLE,
+                    columns=(
+                        "workspace_id",
+                        "shard",
+                        "trust_tier",
+                        "trust_latched_at",
+                    ),
+                    values=[
+                        (workspace_id, int(shard), 0, latched_at or now)
+                        for shard, latched_at in shard_rows
+                    ],
+                )
+            else:
+                owned, owner = self._require_owner_growth_tx(
+                    transaction,
+                    workspace.owner_user_id,
+                    added_shards=credit_shard_count(account),
+                    enforce_count=True,
+                )
+                self._insert_owner_inventory_tx(
+                    transaction, workspace.owner_user_id, workspace_id
+                )
+        if name is not None:
+            workspace.name = name
+        if deleted is not None:
+            workspace.deleted = deleted
+        if billing_paused is not None:
+            causes = set(workspace.billing_pause_causes)
+            if billing_paused:
+                causes.add("migration")
+            else:
+                causes.discard("migration")
+            workspace.billing_pause_causes = sorted(causes)
+            workspace.billing_paused = bool(causes)
+        if billing_pause_reason is not None:
+            workspace.billing_pause_reason = billing_pause_reason
+        if owner is not None and deleted is not None:
+            owner.owner_workspace_count = (
+                max(0, len(owned) - 1) if deleted else len(owned) + 1
+            )
+            self._write_entity_tx(transaction, "user", owner.id, owner)
+        self._write_entity_tx(transaction, "workspace", workspace.id, workspace)
+        return None if workspace.deleted else workspace
 
     def transfer_workspace_ownership(
         self, workspace_id: str, new_owner_user_id: str
@@ -1997,6 +2008,10 @@ class SpannerStore(OperationalAnalyticsReads):
 
     def get_user(self, user_id: str) -> User | None:
         return self._read_entity("user", user_id, User)
+
+    def close_user_account(self, user_id: str) -> User | None:
+        from trusted_router.storage_account_closure import close_spanner
+        return close_spanner(self, user_id)
 
     def find_user_by_email(self, email: str) -> User | None:
         record = self._read_entity("email_user", _normalize_email(email), dict)
@@ -5455,6 +5470,7 @@ class SpannerStore(OperationalAnalyticsReads):
         key_hash: str,
         authorization_id: str | None = None,
         estimate: int,
+        reservation: int | None = None,
         has_credit_candidate: bool,
         reservation_usage_type: UsageType | str,
         model_id: str,
@@ -5520,6 +5536,11 @@ class SpannerStore(OperationalAnalyticsReads):
         )
 
         usage = UsageType.coerce(reservation_usage_type)
+        # The credit counters take the reservation (the credit hold); the key
+        # caps, windows and counters take the estimate (a key cap counts
+        # outstanding spend ceilings); the authorization row keeps the
+        # estimate (the spend ceiling).
+        hold = estimate if reservation is None else reservation
         key_counter_shards = key_usage_shard_count({"usage_shard_count": key_usage_shards})
         key_shard_candidates = randomized_credit_shards(key_counter_shards)
         scope = (
@@ -5677,7 +5698,7 @@ class SpannerStore(OperationalAnalyticsReads):
                 self._database,
                 self._param_types,
                 workspace_id=workspace_id,
-                estimate=estimate,
+                estimate=hold,
                 idempotency_scope=scope,
             )
             if credit_verdict == EXHAUSTED:
@@ -5702,6 +5723,7 @@ class SpannerStore(OperationalAnalyticsReads):
                     workspace_id=workspace_id,
                     key_hash=key_hash,
                     estimate=estimate,
+                    reservation=reservation,
                     trust_settings=self.trust_settings,
                     has_credit_candidate=has_credit_candidate,
                     reservation_usage_type=str(usage),
@@ -5816,7 +5838,8 @@ class SpannerStore(OperationalAnalyticsReads):
                     workspace_id=workspace_id,
                     shard_count=len(candidates),
                     target_shard=candidates[0],
-                    estimate=estimate,
+                    # The credit shards are consolidated for the credit hold.
+                    estimate=hold,
                 )
 
             # A concurrent request can consume the newly consolidated target
@@ -5835,7 +5858,8 @@ class SpannerStore(OperationalAnalyticsReads):
                     workspace_id=workspace_id,
                     shard_count=len(credit_shard_candidates),
                     shard_candidates=credit_shard_candidates,
-                    estimate=estimate,
+                    # Aggregate credit headroom is judged for the credit hold.
+                    estimate=hold,
                 )
                 verdict = precheck.outcome
                 if verdict == rebalance_mod.RebalanceOutcome.INSUFFICIENT:

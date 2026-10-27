@@ -226,6 +226,48 @@ attributes: a reset leaves the unit systemd started from disk running
 with its old arguments, as "Taking a pinned release" explains for the
 binary.
 
+## Raising the edge route weight
+
+`fastpath_edge_route_weight` (`infra/fastpath_edge_backend.tf`) is the
+share of every enclave's authorize that the control balancer's url map
+sends through the edge; the rest keeps going to the control plane
+directly. It moves one step at a time, `1 -> 5 -> 50 -> 100`, each step
+a one-line change whose plan is `0 to add, 1 to change, 0 to destroy`
+(the url map only; the route's 24 s timeout in
+`infra/control_lb_url_map.tf` is untouched). The steps are wide because
+the edge only proxies until stage I2 and the decide shadow's sample grows
+with the share: at 5 it compares a few hundred requests a day, at 50 a
+few thousand. What the share changes is retry exposure: the enclave
+makes up to three attempts (two retries) at authorize within 28 s, and
+the weighted split picks a backend per attempt without failing over, so
+all three reaching the edge backend is the share cubed, 0.01% of
+requests at 5 and 12.5% at 50; such a request fails only if each attempt
+also lands on a node that is unhealthy in the seconds before the health
+check (every 5 s, two failures) takes it out of the backend. The gates
+below read that as 5xx on the edge backend. The split is global: the edge's nodes and their upstream
+are in us-central1 only, so that share of European and Asian enclaves'
+authorizes crosses to us-central1 while the weight holds.
+
+Gates, read after 1 h and again after 24 h at the new weight, against the
+same hours at the previous one, read from the balancer's metrics
+(`loadbalancing.googleapis.com/https/request_count` and
+`https/backend_latencies`, grouped by `backend_name`,
+`response_code_class` and `proxy_continent`):
+
+- Hard: no `500`-class rows on the edge backend beyond control's own
+  authorize 5xx rate in the same hours.
+- Latency, edge against control's authorize route in the same window
+  and the same proxy continent: edge p50 within 1.2x control's p50, edge
+  p99 within 1.5x control's p99.
+- Request counts on the edge backend rise about in proportion to the
+  weight; both nodes `HEALTHY`; no `TR Fast path` alert; the decide
+  shadow's `dropped` stays 0.
+
+A gate failing means the previous weight (or 0, which is R0), the same
+one-line change merged and applied; the balancer takes it at once. Keep
+the shadow's comparison counts from before the step apart from those
+after it.
+
 ## Turning the edge policy and the decide shadow on
 
 The edge polls Python's signed edge policy
@@ -239,6 +281,18 @@ the shadow). Only a script from stage I1 on reads them, so they reach the
 fleet as the snapshot's did: nodes 7 and 8 added beside 5 and 6, which are
 then drained, leave the backend one apply before their removal, and are
 removed.
+From stage I2's script on, `fastpath-edge-decide` is read the same way and
+passes `-edge-decide`, the decide path (`fastpath-edge-decide.md`); nodes
+7 and 8 run I1's script, which does not read it, so it reaches the fleet
+as I1's attributes did: nodes 9 and 10 added beside 7 and 8 with the
+attribute `false`, 7 and 8 then drained, out of the backend one apply
+before their removal, and removed. A node added under a new name has its
+edge instance group and its backend entry from the apply that adds it,
+and the balancer sends to it only once the health check reports it
+`HEALTHY`, which it does once the node's edge serves: check that, and start
+the pilot's watches and audit loop on the new node ("Turning the edge
+on"), before the old node is marked leaving. The switch to `true` is a
+later metadata change, taken as the shadow's is (below).
 Python publishes the policy first (`EDGE_POLICY_PUBLISH_ENABLED` in
 `rollout.sh`); until then the poll answers 404 and the edge keeps polling,
 admission unaffected. The shadow is turned on only once the policy has been

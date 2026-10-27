@@ -89,7 +89,11 @@ fi
 # is polled when fastpath-edge-policy-url names it, on the same upstream and
 # verified with the snapshot's key, kid and plane, so it needs the snapshot;
 # fastpath-edge-decide-shadow "true" adds the full-response decide shadow
-# (G10), which needs both.
+# (G10), which needs both. fastpath-edge-decide "true" adds the decide path
+# (G11, -edge-decide: the edge answers the authorizes of the workspaces the
+# decide table names, stage I2, docs/runbooks/fastpath-edge-decide.md),
+# which needs the policy too; absent or "false", the default, the edge
+# answers nothing.
 snapshot_url="$(attribute fastpath-edge-snapshot-url)" || exit 1
 snapshot_public_key="$(attribute fastpath-edge-snapshot-public-key)" || exit 1
 snapshot_kid="$(attribute fastpath-edge-snapshot-kid)" || exit 1
@@ -97,6 +101,7 @@ snapshot_plane="$(attribute fastpath-edge-snapshot-plane)" || exit 1
 edge_shadow="$(attribute fastpath-edge-shadow)" || exit 1
 policy_url="$(attribute fastpath-edge-policy-url)" || exit 1
 decide_shadow="$(attribute fastpath-edge-decide-shadow)" || exit 1
+decide="$(attribute fastpath-edge-decide)" || exit 1
 snapshot_flags=""
 if [ -n "$snapshot_url$snapshot_public_key$snapshot_kid$snapshot_plane" ]; then
   if [ -z "$edge_flags" ] || [ -z "$snapshot_url" ] || [ -z "$snapshot_public_key" ] || [ -z "$snapshot_kid" ] || [ -z "$snapshot_plane" ]; then
@@ -152,11 +157,23 @@ if [ -n "$snapshot_url$snapshot_public_key$snapshot_kid$snapshot_plane" ]; then
       echo "fastpath: fastpath-edge-decide-shadow is true, false or absent; the startup script stops here" | systemd-cat -t fastpath -p err
       exit 1 ;;
   esac
+  case "$decide" in
+    true)
+      if [ -z "$policy_url" ]; then
+        echo "fastpath: the edge's decide path needs the edge policy's URL; the startup script stops here" | systemd-cat -t fastpath -p err
+        exit 1
+      fi
+      snapshot_flags="$snapshot_flags -edge-decide" ;;
+    ""|false) ;;
+    *)
+      echo "fastpath: fastpath-edge-decide is true, false or absent; the startup script stops here" | systemd-cat -t fastpath -p err
+      exit 1 ;;
+  esac
 elif [ -n "$edge_shadow" ] && [ "$edge_shadow" != "false" ]; then
   echo "fastpath: the edge's shadow needs the routing snapshot; the startup script stops here" | systemd-cat -t fastpath -p err
   exit 1
-elif [ -n "$policy_url" ] || { [ -n "$decide_shadow" ] && [ "$decide_shadow" != "false" ]; }; then
-  echo "fastpath: the edge policy and the decide shadow need the routing snapshot; the startup script stops here" | systemd-cat -t fastpath -p err
+elif [ -n "$policy_url" ] || { [ -n "$decide_shadow" ] && [ "$decide_shadow" != "false" ]; } || { [ -n "$decide" ] && [ "$decide" != "false" ]; }; then
+  echo "fastpath: the edge policy, the decide shadow and the decide path need the routing snapshot; the startup script stops here" | systemd-cat -t fastpath -p err
   exit 1
 fi
 install -d /opt/fastpath

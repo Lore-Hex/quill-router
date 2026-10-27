@@ -140,6 +140,7 @@ def _endpoint(
         provider=provider_slug,
         usage_type="BYOK" if usage_type.lower() == "byok" else "Credits",
         upstream_id=upstream_id or model.upstream_id,
+        context_length=model.context_length,
         supported_parameters=union_supported_parameters(
             model.supported_parameters,
             manifest_supported_parameters(
@@ -1010,6 +1011,9 @@ def _ingested_models_and_endpoints(
 
         for prompt_price, completion_price, tiers, slug, raw_ep in per_endpoint_prices:
             upstream_id = str(raw_ep.get("model_id") or model_id)
+            host_window = api_windows.get((slug, model_id), 0) or _context_window(
+                raw_ep.get("context_length")
+            )
             # A model-wide architecture is not proof that each host accepts
             # images. Keep missing endpoint declarations conservative.
             if slug in GATEWAY_PREPAID_PROVIDER_SLUGS:
@@ -1021,6 +1025,7 @@ def _ingested_models_and_endpoints(
                     usage_type="Credits",
                     upstream_id=upstream_id,
                     supported_parameters=endpoint_capabilities(slug, model_id, raw_ep),
+                    context_length=host_window,
                     input_modalities=_modalities(
                         raw_ep.get("input_modalities"),
                         default=("text",),
@@ -1041,6 +1046,7 @@ def _ingested_models_and_endpoints(
                     usage_type="BYOK",
                     upstream_id=upstream_id,
                     supported_parameters=endpoint_capabilities(slug, model_id, raw_ep),
+                    context_length=host_window,
                     input_modalities=_modalities(
                         raw_ep.get("input_modalities"),
                         default=("text",),
@@ -1421,6 +1427,7 @@ def _supplemental_provider_models_and_endpoints(
                     upstream_id=upstream_id,
                     supported_parameters=supported_parameters,
                     input_modalities=model.input_modalities,
+                    context_length=context_length,
                     prompt_price_microdollars_per_million_tokens=prompt_price,
                     completion_price_microdollars_per_million_tokens=completion_price,
                     published_prompt_price_microdollars_per_million_tokens=prompt_price,
@@ -1450,6 +1457,7 @@ def _supplemental_provider_models_and_endpoints(
                     upstream_id=upstream_id,
                     supported_parameters=supported_parameters,
                     input_modalities=model.input_modalities,
+                    context_length=context_length,
                     prompt_price_microdollars_per_million_tokens=prompt_price,
                     completion_price_microdollars_per_million_tokens=completion_price,
                     published_prompt_price_microdollars_per_million_tokens=prompt_price,

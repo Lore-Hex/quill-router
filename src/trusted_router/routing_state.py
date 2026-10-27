@@ -10,7 +10,7 @@ import math
 import threading
 import time
 from collections import OrderedDict, deque
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from trusted_router.errors import api_error
 from trusted_router.types import ErrorType
@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 Thresholds = tuple[tuple[str, float], ...]
 SessionKey = tuple[str, str, str, str]
+Affinity = Literal["none", "cold", "warm_same", "warm_promoted"]
 PERCENTILES = {"p50": 0.50, "p75": 0.75, "p90": 0.90, "p99": 0.99}
 
 
@@ -120,10 +121,31 @@ class RoutingState:
         session: SessionKey | None = None,
         now: float | None = None,
     ) -> list[tuple[Model, ModelEndpoint]]:
+        ranked, _ = self.rank_with_affinity(
+            candidates, prefs, region=region, session=session, now=now
+        )
+        return ranked
+
+    def rank_with_affinity(
+        self,
+        candidates: list[tuple[Model, ModelEndpoint]],
+        prefs: RoutePreferences,
+        *,
+        region: str,
+        session: SessionKey | None = None,
+        now: float | None = None,
+    ) -> tuple[list[tuple[Model, ModelEndpoint]], Affinity]:
+        """``rank``, plus what session affinity did to it (measurement only).
+
+        none: affinity was not consulted (no session, or an explicit provider
+        order). cold: no live session. warm_same: a live session left the
+        first candidate where it was without one. warm_promoted: a live
+        session moved a different candidate first.
+        """
         now = time.monotonic() if now is None else now
         performance = bool(prefs.preferred_max_latency or prefs.preferred_min_throughput)
         if not performance and (session is None or prefs.order):
-            return candidates
+            return candidates, "none"
         sticky = None
         snapshots = {}
         with self._lock:
@@ -173,7 +195,13 @@ class RoutingState:
                 index,
             )
             ranked.append((rank, (model, endpoint)))
-        return [candidate for _, candidate in sorted(ranked, key=lambda row: row[0])]
+        ordered = sorted(ranked, key=lambda row: row[0])
+        affinity: Affinity = "none" if session is None or prefs.order else "cold"
+        if sticky is not None:
+            # The order without a session is the same key minus its stickiness.
+            cold_first = min(ranked, key=lambda row: row[0][:3] + row[0][4:], default=None)
+            affinity = "warm_same" if not ordered or ordered[0] is cold_first else "warm_promoted"
+        return [candidate for _, candidate in ordered], affinity
 
 
 ROUTING_STATE = RoutingState()

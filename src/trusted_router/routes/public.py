@@ -843,7 +843,7 @@ async def _handle_exchange_event(settings: Settings, request: Request) -> Respon
     log_exchange_site_funnel_event(
         request, event.event, touch,
         visitor_id=str(event.visitor_id),
-        properties=event.model_dump(include={"cta", "position", "form", "destination_host"}, exclude_none=True),
+        properties=event.model_dump(include={"cta", "position", "form", "destination_host", "unit", "underlying_kind", "grade"}, exclude_none=True),
     )
     return Response(status_code=204, headers=headers)
 

@@ -69,6 +69,7 @@ DEEPINFRA_MYTHOMAX_RETIREMENT_AT = datetime(2026, 10, 29, 0, 0, tzinfo=UTC)
 TOGETHER_NOVEMBER_6_RETIREMENT_AT = datetime(2026, 11, 6, 0, 0, tzinfo=UTC)
 # 2026-10-30 10:00 PDT: Crusoe redirects four serverless models to replacements.
 CRUSOE_OCTOBER_30_RETIREMENT_AT = datetime(2026, 10, 30, 17, 0, tzinfo=UTC)
+TELNYX_NOVEMBER_2_RETIREMENT_AT = datetime(2026, 11, 2, 0, 0, tzinfo=UTC)
 # 2027-01-19 10:00 UTC+8: Model Studio stops serving legacy Qwen3.5 models.
 ALIBABA_QWEN35_RETIREMENT_AT = datetime(2027, 1, 19, 2, 0, tzinfo=UTC)
 # 2026-10-14 18:00 UTC+8: Xiaomi starts serving V2.6 weights at V2.6 prices.
@@ -103,6 +104,9 @@ STREAMLAKE_QWEN3_235B_INSTRUCT_RETIREMENT_AT = datetime(2026, 10, 10, 19, 39, tz
 # the confirmed production rejection observation rather than inventing one.
 NVIDIA_NIM_KIMI_K3_RETIREMENT_AT = datetime(2026, 10, 15, 8, 0, tzinfo=UTC)
 STREAMLAKE_QWEN3_VL_235B_RETIREMENT_AT = datetime(2026, 10, 16, 22, 1, tzinfo=UTC)
+# Direct authenticated inference confirmed UnavailableModel at this time.
+# This is our enforcement observation, not an announced upstream cutover.
+STREAMLAKE_QWEN3_30B_THINKING_RETIREMENT_AT = datetime(2026, 10, 25, 17, 17, tzinfo=UTC)
 DEEPSEEK_V4_PRICING_EFFECTIVE_AT = datetime(2026, 8, 16, 16, 0, tzinfo=UTC)
 DEEPSEEK_V41_FLASH_EFFECTIVE_AT = datetime(2026, 9, 10, 4, 0, tzinfo=UTC)
 # The launch-day pricing page supersedes the earlier email: Pro remains
@@ -376,6 +380,12 @@ _RETIREMENTS = (
             "Qwen3-30B-A3B-Instruct-2507",
         }),
         effective_at=STREAMLAKE_QWEN3_VL_235B_RETIREMENT_AT,
+    ),
+    _Retirement(
+        provider="streamlake",
+        model_ids=frozenset({"qwen/qwen3-30b-a3b-thinking-2507"}),
+        upstream_ids=frozenset({"Qwen3-30B-A3B-Thinking-2507"}),
+        effective_at=STREAMLAKE_QWEN3_30B_THINKING_RETIREMENT_AT,
     ),
     _Retirement(
         provider="nvidia-nim",
@@ -993,6 +1003,59 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"thinkingmachines/Inkling"}),
         effective_at=TOGETHER_NOVEMBER_6_RETIREMENT_AT,
         replacement_model_ids=("meta-models/muse-spark-open",),
+    ),
+    # Telnyx's Inference API notice (reminder received October 26) deprecates
+    # these models from 2026-11-02 (date only; 00:00 UTC conservatively);
+    # requests then error. Retire only Telnyx's routes. The notice gives two
+    # different replacements for Qwen3-235B (GLM 5.3 Flash in its table, Kimi
+    # K2.6 in its notes), so that route quotes none.
+    _Retirement(
+        provider="telnyx",
+        model_ids=frozenset({"meta-llama/llama-3.1-70b-instruct"}),
+        upstream_ids=frozenset({"meta-llama/Meta-Llama-3.1-70B-Instruct"}),
+        effective_at=TELNYX_NOVEMBER_2_RETIREMENT_AT,
+        replacement_model_ids=("meta-llama/llama-3.3-70b-instruct",),
+    ),
+    _Retirement(
+        provider="telnyx",
+        model_ids=frozenset({"meta-llama/llama-3.1-8b-instruct"}),
+        upstream_ids=frozenset({"meta-llama/Meta-Llama-3.1-8B-Instruct"}),
+        effective_at=TELNYX_NOVEMBER_2_RETIREMENT_AT,
+        replacement_model_ids=("meta-llama/llama-3.3-70b-instruct",),
+    ),
+    _Retirement(
+        provider="telnyx",
+        model_ids=frozenset({"google/gemma-2b-it"}),
+        upstream_ids=frozenset({"google/gemma-2b-it"}),
+        effective_at=TELNYX_NOVEMBER_2_RETIREMENT_AT,
+        replacement_model_ids=("meta-llama/llama-3.3-70b-instruct",),
+    ),
+    _Retirement(
+        provider="telnyx",
+        model_ids=frozenset({"minimax/minimax-m2.7"}),
+        upstream_ids=frozenset({"MiniMaxAI/MiniMax-M2.7"}),
+        effective_at=TELNYX_NOVEMBER_2_RETIREMENT_AT,
+        replacement_model_ids=("minimax/minimax-m3",),
+    ),
+    _Retirement(
+        provider="telnyx",
+        model_ids=frozenset({"moonshotai/kimi-k2.5"}),
+        upstream_ids=frozenset({"moonshotai/Kimi-K2.5"}),
+        effective_at=TELNYX_NOVEMBER_2_RETIREMENT_AT,
+        replacement_model_ids=("moonshotai/kimi-k2.6",),
+    ),
+    _Retirement(
+        provider="telnyx",
+        model_ids=frozenset({"z-ai/glm-5.1"}),
+        upstream_ids=frozenset({"zai-org/GLM-5.1-FP8"}),
+        effective_at=TELNYX_NOVEMBER_2_RETIREMENT_AT,
+        replacement_model_ids=("z-ai/glm-5.3-flash",),
+    ),
+    _Retirement(
+        provider="telnyx",
+        model_ids=frozenset({"qwen/qwen3-235b-a22b"}),
+        upstream_ids=frozenset({"Qwen/Qwen3-235B-A22B"}),
+        effective_at=TELNYX_NOVEMBER_2_RETIREMENT_AT,
     ),
     # Crusoe's October 23 notice deprecates these serverless models at
     # 2026-10-30 10:00 PT and then routes requests to different replacement
