@@ -53,11 +53,13 @@ func (r *stallingRing) Members(ctx context.Context) ([]store.Member, time.Time, 
 }
 
 // startConfig is a process's configuration for the start's tests: its
-// ring's store the one given, its Spanner calls' deadline short.
+// ring's store the one given, its Spanner calls' deadline short, and its
+// session warm at once.
 func startConfig(t *testing.T, admission bool, r *stallingRing) Config {
 	cfg := Defaults()
 	cfg.Admission, cfg.Auditor, cfg.Address = admission, !admission, "127.0.0.1:1"
 	cfg.ringStore, cfg.startDeadline = r, 100*time.Millisecond
+	cfg.warm = func() error { return nil }
 	if admission {
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
@@ -69,20 +71,11 @@ func startConfig(t *testing.T, admission bool, r *stallingRing) Config {
 	return cfg
 }
 
-// startPart starts the admission node or the auditor member as Run does,
-// with no Spanner client or Pub/Sub behind it: a start that gets past its
-// ring calls would fail, so these tests stall one of them.
+// startPart starts the process as Run does, with no Spanner client or
+// Pub/Sub behind it: a start that gets past its session and its ring calls
+// would fail, so these tests stall one of them.
 func startPart(p *parts, cfg Config) {
-	defer p.begin(cfg)()
-	var err error
-	if cfg.Admission {
-		err = p.admission(cfg, nil, nil, nil)
-	} else {
-		err = p.auditor(cfg, Clients{}, nil, nil, nil)
-	}
-	if err != nil {
-		p.startFailed(p.caller, err)
-	}
+	p.start(p.caller, cfg, Clients{}, nil, nil, nil)
 }
 
 // TestAStartWhoseRingCallStallsFails: the ring row's join, the auditor
@@ -162,14 +155,15 @@ func TestAStartDeafToItsDeadlineExits(t *testing.T) {
 	}
 }
 
-// TestAStartWhoseCallsAnswerRuns is the positive control: a ring that
-// answers at once and a switch read at once start the parts, which run on
-// well past StartStall, serving, and stop cleanly when the process does.
+// TestAStartWhoseCallsAnswerRuns is the positive control: a session, a
+// ring and a switch read that answer at once start the parts, which run on
+// well past WarmStall and StartStall, serving, and stop cleanly when the
+// process does.
 func TestAStartWhoseCallsAnswerRuns(t *testing.T) {
 	cfg := startConfig(t, false, &stallingRing{})
 	exited := make(chan int, 2)
-	cfg.Exit, cfg.failStop, cfg.startStall = func(code int) { exited <- code }, 100*time.Millisecond,
-		200*time.Millisecond
+	cfg.Exit, cfg.failStop, cfg.startStall, cfg.warmStall = func(code int) { exited <- code },
+		100*time.Millisecond, 200*time.Millisecond, 200*time.Millisecond
 	sw := &workspaceSwitch{every: time.Second, clock: time.Now,
 		read: func(context.Context) (map[string]bool, time.Time, error) {
 			return map[string]bool{"w": true}, time.Now(), nil
@@ -179,7 +173,12 @@ func TestAStartWhoseCallsAnswerRuns(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		done <- lifecycle(ctx, func(p *parts) {
-			defer p.begin(cfg)()
+			p.exit, p.failStop = cfg.Exit, cfg.failStop
+			if err := p.watch(cfg.warmStall, ErrWarmStalled, cfg.warm); err != nil {
+				p.startFailed(ctx, err)
+				return
+			}
+			defer p.watching(cfg.startStall, ErrStartStalled)()
 			node, err := p.join(cfg, nil)
 			if err != nil {
 				p.startFailed(ctx, err)
@@ -225,6 +224,55 @@ func TestAStartWhoseCallsAnswerRuns(t *testing.T) {
 	cancel()
 	if err := <-done; err != nil {
 		t.Fatalf("a process that started stopped with %v", err)
+	}
+}
+
+// TestADeafWarmupExits: warming the Spanner client's session, Run's first
+// call, deaf to its own deadline, fails the process past WarmStall, so the
+// node answers that it does not serve, and the process exits with code 1
+// within FailStop though the warming still holds it.
+func TestADeafWarmupExits(t *testing.T) {
+	release := make(chan struct{})
+	cfg := startConfig(t, true, &stallingRing{})
+	cfg.warm = func() error {
+		<-release // as a read that does not heed its deadline
+		return errors.New("released")
+	}
+	exited := make(chan int, 2)
+	cfg.Exit, cfg.failStop, cfg.warmStall = func(code int) { exited <- code }, 100*time.Millisecond,
+		300*time.Millisecond
+	started := make(chan *parts, 1)
+	done := make(chan error, 1)
+	go func() {
+		done <- lifecycle(context.Background(), func(p *parts) {
+			started <- p
+			startPart(p, cfg)
+		})
+	}()
+	p := <-started
+	select {
+	case code := <-exited:
+		if code != 1 {
+			t.Fatalf("exited with %d", code)
+		}
+	case <-time.After(10 * time.Second):
+		close(release)
+		t.Fatal("the process did not exit: its session's warming had no limit")
+	}
+	if p.serving() {
+		t.Fatal("the node answers serving with its session's warming stalled past its limit")
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("the start ended though its warming is deaf: %v", err)
+	default:
+	}
+	close(release)
+	if err := <-done; !errors.Is(err, ErrWarmStalled) {
+		t.Fatalf("a stalled warming: %v", err)
+	}
+	if WarmStall != store.WarmSessionWait+StartDeadline || WarmStall+StartStall+FailStop >= 4*time.Minute {
+		t.Fatalf("WarmStall is %v", WarmStall)
 	}
 }
 

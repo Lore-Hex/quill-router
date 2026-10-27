@@ -122,9 +122,12 @@ type Config struct {
 	// command sets os.Exit; nil leaves the process to its parts.
 	Exit func(code int)
 
-	// failStop, when set, is FailStop for a test; startDeadline and
-	// startStall are StartDeadline and StartStall.
-	failStop, startDeadline, startStall time.Duration
+	// failStop, when set, is FailStop for a test; startDeadline, startStall
+	// and warmStall are StartDeadline, StartStall and WarmStall.
+	failStop, startDeadline, startStall, warmStall time.Duration
+	// warm, when set, warms the Spanner client's session in place of the
+	// store's WarmSession, for a test.
+	warm func() error
 	// ringStore, when set, is the ring's store, the membership's, for a
 	// test.
 	ringStore ring.Membership
@@ -309,15 +312,6 @@ func Run(ctx context.Context, cfg Config, c Clients) error {
 	if err != nil {
 		return err
 	}
-	// The client's session before anything else uses it: no session take
-	// of the process's ever waits, so none is served on an ended context
-	// (which ends the client's session worker for good) and none blocks the
-	// client's close (store.WarmSession). Bounded by the client's own
-	// session creations, past Run's context: a node that cannot get a
-	// session does not start.
-	if err := s.WarmSession(); err != nil {
-		return fmt.Errorf("service: the Spanner client's session: %w", err)
-	}
 	settle, err := settlelog.OpenLog(c.PubSub, cfg.SettleTopic, cfg.publish())
 	if err != nil {
 		return err
@@ -332,26 +326,48 @@ func Run(ctx context.Context, cfg Config, c Clients) error {
 	if cfg.ClockOffset != 0 {
 		log.Printf("fastpath: the owner's clock readings offset by %v", cfg.ClockOffset)
 	}
-	return lifecycle(ctx, func(p *parts) {
-		defer p.begin(cfg)()
-		// The edge first: one that cannot listen or has no upstream fails
-		// the process before the node takes its ring row.
-		if cfg.Edge.Address != "" {
-			if err := p.edge(cfg, s); err != nil {
-				p.startFailed(ctx, err)
-			}
+	return lifecycle(ctx, func(p *parts) { p.start(ctx, cfg, c, s, settle, records) })
+}
+
+// start starts the process's parts, ctx being Run's: the Spanner client's
+// session under WarmStall, then the edge, the admission node and the
+// auditor member under StartStall. A watchdog that fires fails the process,
+// which arms its exit (FailStop).
+func (p *parts) start(ctx context.Context, cfg Config, c Clients, s *store.Store, settle *settlelog.Log,
+	records *settlelog.Records) {
+	p.exit, p.failStop = cfg.Exit, cmp.Or(cfg.failStop, FailStop)
+	// The client's session before anything else uses it: no session take
+	// of the process's ever waits, so none is served on an ended context
+	// (which ends the client's session worker for good) and none blocks the
+	// client's close (store.WarmSession). Bounded by the client's own
+	// session creations, past Run's context: a node that cannot get a
+	// session does not start.
+	warm := s.WarmSession
+	if cfg.warm != nil {
+		warm = cfg.warm
+	}
+	if err := p.watch(cmp.Or(cfg.warmStall, WarmStall), ErrWarmStalled, warm); err != nil {
+		p.startFailed(ctx, fmt.Errorf("service: the Spanner client's session: %w", err))
+		return
+	}
+	defer p.watching(cmp.Or(cfg.startStall, StartStall), ErrStartStalled)()
+	// The edge first: one that cannot listen or has no upstream fails
+	// the process before the node takes its ring row.
+	if cfg.Edge.Address != "" {
+		if err := p.edge(cfg, s); err != nil {
+			p.startFailed(ctx, err)
 		}
-		if cfg.Admission && p.ctx.Err() == nil {
-			if err := p.admission(cfg, s, settle, records); err != nil {
-				p.startFailed(ctx, err)
-			}
+	}
+	if cfg.Admission && p.ctx.Err() == nil {
+		if err := p.admission(cfg, s, settle, records); err != nil {
+			p.startFailed(ctx, err)
 		}
-		if cfg.Auditor && p.ctx.Err() == nil {
-			if err := p.auditor(cfg, c, s, settle, records); err != nil {
-				p.startFailed(ctx, err)
-			}
+	}
+	if cfg.Auditor && p.ctx.Err() == nil {
+		if err := p.auditor(cfg, c, s, settle, records); err != nil {
+			p.startFailed(ctx, err)
 		}
-	})
+	}
 }
 
 // edge starts the edge's server: the enclave's control-plane calls, checked
@@ -665,27 +681,47 @@ func (p *parts) fail(err error) {
 // admits for no workspace until a later read succeeds.
 const StartDeadline = auditor.StoreDeadline
 
-// StartStall bounds a process's whole start: one still under way then,
-// held by a call deaf to its deadline, fails the process with
-// ErrStartStalled, and the process then exits within FailStop. It is four
-// times StartDeadline, as the auditor's CommitStall is its StoreDeadline's,
-// so a start whose three calls each take nearly their deadline still
-// finishes.
+// StartStall bounds the start of a process's parts, once its session is
+// warm: one still under way then, held by a call deaf to its deadline,
+// fails the process with ErrStartStalled, and the process then exits
+// within FailStop. It is four times StartDeadline, as the auditor's
+// CommitStall is its StoreDeadline's, so a start whose three calls each
+// take nearly their deadline still finishes.
 const StartStall = auditor.CommitStall
 
-// ErrStartStalled is Run's failure when its start has run past StartStall.
-var ErrStartStalled = errors.New("service: the process had not started within its limit, a Spanner call's " +
-	"deadline notwithstanding")
+// WarmStall bounds the warming of the Spanner client's session, the
+// start's first call, which has a budget of its own: its read waits behind
+// the client's session creations, so its deadline (store.WarmSessionWait,
+// 2 min) is longer than any of the parts' calls, and it runs before
+// StartStall's clock. A warming still under way StartDeadline past its
+// deadline, deaf to it, fails the process with ErrWarmStalled, and the
+// process then exits within FailStop. So a process exits within
+// WarmStall, StartStall and FailStop, under four minutes, however its
+// start stalls.
+const WarmStall = store.WarmSessionWait + StartDeadline
 
-// begin sets the process's exit and starts its start's watchdog, which
-// fails the process once StartStall has passed; what it returns notes the
-// start ended. The exit is set first, so that the watchdog's failure arms
-// it.
-func (p *parts) begin(cfg Config) (started func()) {
-	p.exit, p.failStop = cfg.Exit, cmp.Or(cfg.failStop, FailStop)
-	stall := cmp.Or(cfg.startStall, StartStall)
-	t := time.AfterFunc(stall, func() { p.fail(fmt.Errorf("%w (%v)", ErrStartStalled, stall)) })
+// ErrStartStalled is Run's failure when its parts' start has run past
+// StartStall; ErrWarmStalled when warming the client's session has run past
+// WarmStall.
+var (
+	ErrStartStalled = errors.New("service: the process had not started within its limit, a Spanner call's " +
+		"deadline notwithstanding")
+	ErrWarmStalled = errors.New("service: the Spanner client's session was not warm within its limit, its " +
+		"deadline notwithstanding")
+)
+
+// watching fails the process with why once stall has passed; what it
+// returns notes the work watched ended. Set p.exit first, so that the
+// failure arms the process's exit.
+func (p *parts) watching(stall time.Duration, why error) (ended func()) {
+	t := time.AfterFunc(stall, func() { p.fail(fmt.Errorf("%w (%v)", why, stall)) })
 	return func() { t.Stop() }
+}
+
+// watch runs f, watching it as watching does.
+func (p *parts) watch(stall time.Duration, why error, f func() error) error {
+	defer p.watching(stall, why)()
+	return f()
 }
 
 // startCall runs one of the start's Spanner calls under StartDeadline.
