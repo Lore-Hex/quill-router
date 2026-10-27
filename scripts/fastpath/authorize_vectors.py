@@ -692,8 +692,7 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
     for field in ("fingerprint", "fingerprint_material", "idempotency_scope", "decide_region"):
         if cold["expect"][field] != warm["expect"][field]:
             raise AssertionError(f"{case['name']}: the session changed {field}")
-    expect = {"outcome": "pass", "reason": "body.cache_affinity",
-              "python": {"status": 200, "type": None, "leased": True},
+    expect = {**cold["expect"],
               "affinity": {"class": affinity_class, "sessions": [list(s) for s in case["_affinity"]],
                            **{field: cold["expect"][field] for field in
                               ("fingerprint", "fingerprint_material", "idempotency_scope", "decide_region")},
@@ -749,8 +748,7 @@ def _run_case(case: dict[str, Any], sessions: tuple[tuple[str, float], ...], *,
         raise AssertionError("the response was compressed")
     body = response.content.decode()
     leased = bool(authorizations and json.loads(authorizations[0]["payload"]).get("fastpath_envelope"))
-    # An affinity case is an answer inside: run_case records its pass.
-    reason = case["_reason"] if case["_affinity"] is None else None
+    reason = case["_reason"]
     if reason is not None:
         error = _error(body) if response.status_code != 200 else {}
         # The credit reservation Python's typed store wrote for a request it
@@ -825,10 +823,10 @@ def _catalog_addition(model_id: str) -> tuple[Model, ModelEndpoint]:
 def case_labels(case: dict[str, Any], expect: dict[str, Any]) -> list[str]:
     """§10.1's labels."""
     if expect["outcome"] == "pass":
-        if "affinity" in expect:
-            return sorted([f"pass.{expect['reason']}", expect["affinity"]["class"].replace("_", ".", 1)])
         return [f"pass.{expect['reason']}"]
     labels = {f"insert.{case['insert']}"}
+    if "affinity" in expect:
+        labels.add(expect["affinity"]["class"].replace("_", ".", 1))
     if expect["outcome"] == "unavailable":
         return sorted(labels)
     data = json.loads(expect["response"])["data"]
@@ -1100,48 +1098,50 @@ def cases() -> list[dict[str, Any]]:
     add("pass:body.stream:stage_d_ok", "body.stream", body={"stream": True, "model": GEMINI})
     for tier in ("auto", "priority", "flex", "default"):
         add(f"pass:body.service_tier:{tier}", "body.service_tier", body={"model": GEMINI, "service_tier": tier})
-    # A cache affinity key (G13): Python's order comes from a per-process
-    # session table that only settle seeds, so Go composes the cold order
-    # and the shadow measures it against Python's. Each case records both
-    # Python's cold bytes and its bytes with the sessions remembered.
+    # A cache affinity key (G13, §1 item 5): Python's order comes from a
+    # per-process session table that only settle seeds, so Go decides the
+    # cold order, Python's answer with no session (the case's answer), and
+    # the shadow compares Python's bytes with the sessions remembered
+    # against it (agree_full when they are the same, a differ named
+    # differ.affinity_warm when they are a re-rank).
     key = {"cache_affinity_key": "c" * 64}
     glm_wafer, glm_together, glm_fireworks = (f"{GLM}@{p}/prepaid" for p in ("wafer", "together", "fireworks"))
-    add("pass:body.cache_affinity", "body.cache_affinity", body=key, affinity=())
-    add("pass:body.cache_affinity:cold:fallback_models", "body.cache_affinity",
+    add("answer:cache_affinity", body=key, affinity=())
+    add("answer:cache_affinity:cold:fallback_models",
         body={**key, "model": FLASH, "models": [GLM, GEMINI]}, affinity=())
-    add("pass:body.cache_affinity:cold:explicit", "body.cache_affinity",
+    add("answer:cache_affinity:cold:explicit",
         body={**key, "cache_affinity_explicit": True}, affinity=())
-    add("pass:body.cache_affinity:cold:expired", "body.cache_affinity", body=key,
+    add("answer:cache_affinity:cold:expired", body=key,
         affinity=((glm_fireworks, 601.0),))
-    add("pass:body.cache_affinity:cold:other_key", "body.cache_affinity", body=key,
+    add("answer:cache_affinity:cold:other_key", body=key,
         affinity=((f"{FLASH}@deepseek/prepaid", 1.0),))
-    add("pass:body.cache_affinity:cold:order", "body.cache_affinity",
+    add("answer:cache_affinity:cold:order",
         body={**key, "provider": {"order": ["fireworks", "together"]}}, affinity=((glm_together, 1.0),))
-    add("pass:body.cache_affinity:warm", "body.cache_affinity", body=key, affinity=((glm_fireworks, 1.0),))
-    add("pass:body.cache_affinity:warm:second", "body.cache_affinity", body=key, affinity=((glm_together, 599.0),))
-    add("pass:body.cache_affinity:cold:already_first", "body.cache_affinity", body=key, affinity=((glm_wafer, 1.0),))
-    add("pass:body.cache_affinity:warm:fallback_models", "body.cache_affinity",
+    add("answer:cache_affinity:warm", body=key, affinity=((glm_fireworks, 1.0),))
+    add("answer:cache_affinity:warm:second", body=key, affinity=((glm_together, 599.0),))
+    add("answer:cache_affinity:cold:already_first", body=key, affinity=((glm_wafer, 1.0),))
+    add("answer:cache_affinity:warm:fallback_models",
         body={**key, "model": FLASH, "models": [GLM, GEMINI]}, affinity=((glm_fireworks, 1.0),))
-    add("pass:body.cache_affinity:warm:no_fallbacks", "body.cache_affinity",
+    add("answer:cache_affinity:warm:no_fallbacks",
         body={**key, "provider": {"allow_fallbacks": False}}, affinity=((glm_fireworks, 1.0),))
-    add("pass:body.cache_affinity:warm:top_level_no_fallbacks", "body.cache_affinity",
+    add("answer:cache_affinity:warm:top_level_no_fallbacks",
         body={**key, "allow_fallbacks": False}, affinity=((glm_together, 1.0),))
-    add("pass:body.cache_affinity:warm:sort_price", "body.cache_affinity",
+    add("answer:cache_affinity:warm:sort_price",
         body={**key, "provider": {"sort": "price"}}, affinity=((glm_together, 1.0),))
     # An empty provider.order names no provider: Python re-ranks as with none.
-    add("pass:body.cache_affinity:warm:empty_order", "body.cache_affinity",
+    add("answer:cache_affinity:warm:empty_order",
         body={**key, "provider": {"order": []}}, affinity=((glm_fireworks, 1.0),))
-    add("pass:body.cache_affinity:warm:no_fallbacks:empty_order", "body.cache_affinity",
+    add("answer:cache_affinity:warm:no_fallbacks:empty_order",
         body={**key, "provider": {"allow_fallbacks": False, "order": []}}, affinity=((glm_fireworks, 1.0),))
-    add("pass:body.cache_affinity:warm:top_level_no_fallbacks:empty_order", "body.cache_affinity",
+    add("answer:cache_affinity:warm:top_level_no_fallbacks:empty_order",
         body={**key, "allow_fallbacks": False, "provider": {"order": []}}, affinity=((glm_together, 1.0),))
     # The sort partitioned by model (the default) keeps the remembered
     # endpoint within its model's run; partition none moves it to the front
     # of the whole list.
-    add("pass:body.cache_affinity:warm:partition_none:fallback_models", "body.cache_affinity",
+    add("answer:cache_affinity:warm:partition_none:fallback_models",
         body={**key, "model": FLASH, "models": [GLM, GEMINI], "provider": {"sort": {"sort": "price", "partition": "none"}}},
         affinity=((glm_together, 1.0),))
-    add("pass:body.cache_affinity:warm:partition_model:fallback_models", "body.cache_affinity",
+    add("answer:cache_affinity:warm:partition_model:fallback_models",
         body={**key, "model": FLASH, "models": [GLM, GEMINI], "provider": {"sort": {"sort": "price", "partition": "model"}}},
         affinity=((glm_together, 1.0),))
     add("pass:body.priced_extra:additional_cost", "body.priced_extra",

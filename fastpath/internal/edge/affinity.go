@@ -19,10 +19,11 @@ import (
 // settle with a discounted cache hit within the last 600 s; with fallbacks
 // off the first candidate of that order is then the one kept. The table is
 // per Python process, seeded only by settle, never stored: Go cannot read
-// it, so Go composes the cold order and the full shadow measures Python's
-// against it, cold (the same bytes) or warm (Python's bytes are Go's
-// decision rendered in that order for some remembered endpoint among the
-// candidates). Neither admits.
+// it, and Go decides such a request in the cold order, which is Python's
+// own answer with no session. The full shadow compares Python's 200 with
+// Go's like any other; when it is Go's decision rendered in rank's order
+// for some remembered endpoint among the candidates (warmOf), the differ
+// is named differ.affinity_warm, so a warm re-rank is told from a defect.
 
 // rerankOrder is routing_state.rank's order over cold with sticky
 // remembered: a stable sort by the model's first-seen rank (unless byModel
@@ -68,14 +69,27 @@ func pythonsWarm(ordered, byModel bool, cold, py []string, modelOf func(string) 
 	return "", false
 }
 
-// warmOf is Python's warm order over Go's decision: the candidates and
-// the estimate Go would have composed had it held Python's session. ok is
-// false unless py is that order for some remembered endpoint (pythonsWarm:
-// the estimate, the largest over the same candidates, unchanged), or, with
-// fallbacks off, one endpoint of the primary model that Go admits with
-// fallbacks on (Python re-ranks the model's endpoints and keeps the first),
-// at the estimate Go names when pinned to that endpoint's provider.
-func (d *Decision) warmOf(py []string) (candidates []gwauth.Candidate, estimate int64, ok bool) {
+// warmOf is Go's decision in Python's warm order: the candidates and the
+// estimate Go would have composed had it held Python's session, for the
+// shadow's comparison alone (never admitted). ok is false unless py is
+// that order for some remembered endpoint (pythonsWarm: the estimate, the
+// largest over the same candidates, unchanged), or, with fallbacks off,
+// one endpoint of the primary model that Go admits with fallbacks on
+// (Python re-ranks the model's endpoints and keeps the first), at the
+// estimate Go names when pinned to that endpoint's provider.
+func (d *Decision) warmOf(py []string) (*Decision, bool) {
+	candidates, estimate, ok := d.warmCandidates(py)
+	if !ok {
+		return nil, false
+	}
+	warm := *d
+	warm.Input.Candidates, warm.Input.Estimate, warm.Estimate = candidates, estimate, estimate
+	warm.Candidates = slices.Clone(py)
+	return &warm, true
+}
+
+// warmCandidates are warmOf's candidates and estimate.
+func (d *Decision) warmCandidates(py []string) (candidates []gwauth.Candidate, estimate int64, ok bool) {
 	if !d.Affinity || d.Snapshot == nil || len(py) == 0 {
 		return nil, 0, false
 	}

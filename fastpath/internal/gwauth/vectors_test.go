@@ -281,13 +281,11 @@ type casesFileT struct {
 			Fingerprint      string `json:"fingerprint"`
 			Material         string `json:"fingerprint_material"`
 			IdempotencyScope string `json:"idempotency_scope"`
-			// Affinity is a body.cache_affinity case's record (G13):
-			// Python's identity, the same with or without a session.
+			// Affinity is a cache affinity case's record of Python's
+			// answer with sessions remembered (§1 item 5): an answer
+			// whose body names a cache_affinity_key.
 			Affinity *struct {
-				Class            string `json:"class"`
-				Fingerprint      string `json:"fingerprint"`
-				Material         string `json:"fingerprint_material"`
-				IdempotencyScope string `json:"idempotency_scope"`
+				Class string `json:"class"`
 			} `json:"affinity"`
 		} `json:"expect"`
 	} `json:"cases"`
@@ -329,7 +327,8 @@ func storedTags(t *testing.T, keyBody *string) ([]Tag, bool) {
 // a pass case whose reason is a request reason (or tags.merged_invalid)
 // passes with exactly that reason; every other case passes no request
 // reason; an answer has Python's exact fingerprint material, fingerprint
-// and scope, and its merged tags are the response's, in order.
+// and scope, is flagged for affinity exactly when its body names a
+// cache_affinity_key, and its merged tags are the response's, in order.
 func TestEveryAuthorizeCase(t *testing.T) {
 	var file casesFileT
 	readJSON(t, casesFile, &file)
@@ -349,7 +348,7 @@ func TestEveryAuthorizeCase(t *testing.T) {
 			_, p = MergeTags(keyTags, usable, r)
 		}
 		want := ""
-		if c.Expect.Outcome == "pass" && c.Expect.Affinity == nil && (strings.HasPrefix(c.Expect.Reason, "body.") ||
+		if c.Expect.Outcome == "pass" && (strings.HasPrefix(c.Expect.Reason, "body.") ||
 			strings.HasPrefix(c.Expect.Reason, "header.") || c.Expect.Reason == ReasonTagsMergedInvalid) {
 			want = c.Expect.Reason
 			requestReasons++
@@ -358,24 +357,20 @@ func TestEveryAuthorizeCase(t *testing.T) {
 			t.Errorf("%s: request side passes %q, want %q", c.Name, p.Reason, want)
 			continue
 		}
-		// A body.cache_affinity case (G13) is the request side's to
-		// answer, flagged, with Python's identity (the key is excluded
-		// from the material, so a session changes none of it).
-		material, fingerprint, scope := c.Expect.Material, c.Expect.Fingerprint, c.Expect.IdempotencyScope
-		if a := c.Expect.Affinity; a != nil {
-			if p.Passed() || !r.CacheAffinity {
-				t.Errorf("%s: pass %q, affinity %v", c.Name, p.Reason, r.CacheAffinity)
-				continue
-			}
-			material, fingerprint, scope = a.Material, a.Fingerprint, a.IdempotencyScope
-			affinityAnswers++
-		} else if c.Expect.Outcome != "answer" || p.Passed() {
-			continue
-		} else if r.CacheAffinity {
-			t.Errorf("%s: flagged for affinity without a key", c.Name)
+		if c.Expect.Outcome != "answer" || p.Passed() {
 			continue
 		}
+		// The key is excluded from the material, so Python's identity is
+		// the same with or without a session.
+		if r.CacheAffinity != (c.Expect.Affinity != nil) {
+			t.Errorf("%s: flagged for affinity %v", c.Name, r.CacheAffinity)
+			continue
+		}
+		if c.Expect.Affinity != nil {
+			affinityAnswers++
+		}
 		answers++
+		material, fingerprint, scope := c.Expect.Material, c.Expect.Fingerprint, c.Expect.IdempotencyScope
 		id, p := IdentityOf(r, h, c.Facts.Key.WorkspaceID, c.Facts.Key.Hash, func() string { return c.IDs.Minted })
 		if p.Passed() {
 			t.Errorf("%s: %s", c.Name, p.Reason)
@@ -385,7 +380,7 @@ func TestEveryAuthorizeCase(t *testing.T) {
 			t.Errorf("%s: material %s fingerprint %s scope %s\nwant %s %s %s", c.Name, id.Material, id.Fingerprint,
 				id.Scope, material, fingerprint, scope)
 		}
-		if c.Insert != "inserted" || c.Expect.Affinity != nil {
+		if c.Insert != "inserted" {
 			continue // after a read-back Python sorts the tags (§6)
 		}
 		merged, _ := MergeTags(keyTags, usable, r)
@@ -407,9 +402,10 @@ func TestEveryAuthorizeCase(t *testing.T) {
 		}
 	}
 	// Positive control: every request reason has a case, and so does the
-	// answered path.
-	if requestReasons < 50 || answers < 100 {
-		t.Fatalf("%d request-reason cases, %d answers", requestReasons, answers)
+	// answered path, a cache affinity key's included.
+	if requestReasons < 50 || answers < 100 || affinityAnswers < 18 {
+		t.Fatalf("%d request-reason cases, %d answers, %d with a cache affinity key", requestReasons, answers,
+			affinityAnswers)
 	}
 }
 

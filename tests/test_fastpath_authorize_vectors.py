@@ -49,7 +49,7 @@ CONTRACT = ROOT / "docs" / "design" / "fast-admission-e2-decide.md"
 SECTION_3 = {
     "body.content_type", "body.unparseable", "body.duplicate_key", "body.float", "body.lax_type",
     "body.strip_ambiguous", "body.dict_key_strip", "body.refused", "body.api_key_hash", "body.stream",
-    "body.service_tier", "body.cache_affinity", "body.priced_extra", "body.canonical_model",
+    "body.service_tier", "body.priced_extra", "body.canonical_model",
     "body.custom_model", "body.internal_model", "body.tags", "body.referer", "body.evaluator_input",
     "header.idempotency_key", "header.settlement_async", "header.video_providers",
     "key.missing", "key.disabled", "key.expired", "key.scope", "key.federated", "key.app", "key.key_cap",
@@ -246,7 +246,8 @@ def test_the_answers_cover_every_label_section_10_1_names() -> None:
                   "tags.key_only", "tags.request_only", "tags.merge_overwrite", "float.exponent",
                   "float.integral", "idempotency.presented_body", "idempotency.presented_header",
                   "idempotency.minted", "invocation_nonce", "region.requested", "region.default",
-                  "insert.inserted", "insert.unknown_landed", "read_back.sorted_tags", "end_of_life.offset"):
+                  "insert.inserted", "insert.unknown_landed", "read_back.sorted_tags", "end_of_life.offset",
+                  "affinity.cold", "affinity.warm"):
         assert labels[label] > 0, label
 
 
@@ -256,13 +257,7 @@ def test_every_section_3_reason_records_pythons_answer() -> None:
     assert set(reasons) == SECTION_3, (sorted(SECTION_3 - set(reasons)), sorted(set(reasons) - SECTION_3))
     for case in passes:
         expect = case["expect"]
-        if "affinity" in expect:
-            # G13: labelled by the class Python's warm bytes compare as.
-            assert expect["reason"] == "body.cache_affinity", case["name"]
-            assert case["labels"] == sorted(["pass.body.cache_affinity",
-                                             expect["affinity"]["class"].replace("_", ".", 1)]), case["name"]
-        else:
-            assert case["labels"] == [f"pass.{expect['reason']}"], case["name"]
+        assert case["labels"] == [f"pass.{expect['reason']}"], case["name"]
         python = expect["python"]
         assert python["status"] >= 200, case["name"]
         assert (python["status"] == 200) <= (python["type"] is None), case["name"]
@@ -281,21 +276,24 @@ def test_every_section_3_reason_records_pythons_answer() -> None:
     # Positive control: some passes Python leases, so only the edge's own
     # predicate keeps them out of the cohort.
     leased = {case["expect"]["reason"] for case in passes if case["expect"]["python"]["leased"]}
-    assert {"body.float", "body.tags", "body.dict_key_strip", "candidates.estimated_usage", "body.cache_affinity",
+    assert {"body.float", "body.tags", "body.dict_key_strip", "candidates.estimated_usage",
             "workspace.broadcast", "header.settlement_async", "body.unparseable"} <= leased
 
 
 def test_affinity_cases_record_pythons_cold_and_warm_orders() -> None:
-    """G13 (§1 item 5): Python's order for a cache_affinity_key comes from
-    a per-process session table only settle seeds. Each affinity case
-    records Python's 200 with no session (the cold order, which Go
-    composes) and with the case's sessions remembered: the same bytes
-    (affinity_cold: no session, an expired one, one for another endpoint,
-    a provider.order, the remembered endpoint already first) or the
-    remembered endpoint moved to the front of its model's run, or kept as
-    the one candidate with fallbacks off, and nothing else changed
-    (affinity_warm)."""
-    cases = [case for case in _cases("pass") if "affinity" in case["expect"]]
+    """§1 item 5: Python's order for a cache_affinity_key comes from a
+    per-process session table only settle seeds, so Go decides the cold
+    order. Each affinity case is an answer: Python's 200 with no session
+    (the cold order, which Go decides and the case expects), and beside it
+    Python's 200 with the case's sessions remembered: the same bytes
+    (affinity_cold, which the shadow compares agree_full: no session, an
+    expired one, one for another endpoint, a provider.order, the remembered
+    endpoint already first) or the remembered endpoint moved to the front of
+    its model's run, or kept as the one candidate with fallbacks off, and
+    nothing else changed (affinity_warm, a differ named
+    differ.affinity_warm)."""
+    cases = [case for case in _cases("answer") if "affinity" in case["expect"]]
+    assert len(cases) == 18 and all(case["name"].startswith("answer:cache_affinity") for case in cases)
     classes = Counter(case["expect"]["affinity"]["class"] for case in cases)
     assert classes["affinity_cold"] >= 6 and classes["affinity_warm"] >= 10, classes
     # The 200's members written from the first candidate (gwauth/response.go, responseData).
@@ -303,10 +301,13 @@ def test_affinity_cases_record_pythons_cold_and_warm_orders() -> None:
                                "inference_location", "wafer_zdr_required", "route_candidates"}
     missing = object()
     for case in cases:
-        name, a, python = case["name"], case["expect"]["affinity"], case["expect"]["python"]
+        name, a = case["name"], case["expect"]["affinity"]
         body = json.loads(case["request"]["body"])
         assert re.fullmatch(r"[0-9a-f]{64}", body["cache_affinity_key"]), name
-        assert python == {"status": 200, "type": None, "leased": True}, name
+        # The case's answer is Python's with no session: Go's to decide.
+        assert (case["expect"]["response"], case["expect"]["timing"]) == (a["cold_response"], a["cold_timing"]), name
+        assert (case["expect"]["estimate_microdollars"], case["expect"]["reservation_microdollars"]) == (
+            a["cold_estimate_microdollars"], a["cold_reservation_microdollars"]), name
         cold, warm = json.loads(a["cold_response"])["data"], json.loads(a["response"])["data"]
         cold_ids = [c["endpoint_id"] for c in cold["route_candidates"]]
         warm_ids = [c["endpoint_id"] for c in warm["route_candidates"]]
@@ -348,20 +349,20 @@ def test_affinity_cases_record_pythons_cold_and_warm_orders() -> None:
     # Positive controls: a promotion within the second model, and a session
     # kept in place of the first with fallbacks off.
     by_name = {case["name"]: case["expect"]["affinity"] for case in cases}
-    fallback = by_name["pass:body.cache_affinity:warm:fallback_models"]
+    fallback = by_name["answer:cache_affinity:warm:fallback_models"]
     assert fallback["candidates"][0] == fallback["cold_candidates"][0] and fallback["class"] == "affinity_warm"
-    assert by_name["pass:body.cache_affinity:warm:no_fallbacks"]["candidates"] != by_name[
-        "pass:body.cache_affinity:warm:no_fallbacks"]["cold_candidates"]
-    assert by_name["pass:body.cache_affinity:cold:expired"]["sessions"][0][1] > 600
+    assert by_name["answer:cache_affinity:warm:no_fallbacks"]["candidates"] != by_name[
+        "answer:cache_affinity:warm:no_fallbacks"]["cold_candidates"]
+    assert by_name["answer:cache_affinity:cold:expired"]["sessions"][0][1] > 600
     # Partition none moves the remembered endpoint of the second model to
     # the front of the list; the default partition keeps it in its run; an
     # empty provider.order is no order.
-    none, model = (by_name[f"pass:body.cache_affinity:warm:partition_{p}:fallback_models"] for p in ("none", "model"))
+    none, model = (by_name[f"answer:cache_affinity:warm:partition_{p}:fallback_models"] for p in ("none", "model"))
     assert none["candidates"][0] != none["cold_candidates"][0] and none["class"] == "affinity_warm"
     assert model["candidates"][0] == model["cold_candidates"][0] and model["class"] == "affinity_warm"
     for case in ("warm:empty_order", "warm:no_fallbacks:empty_order", "warm:top_level_no_fallbacks:empty_order"):
-        assert by_name[f"pass:body.cache_affinity:{case}"]["class"] == "affinity_warm", case
-    assert by_name["pass:body.cache_affinity:cold:order"]["class"] == "affinity_cold"
+        assert by_name[f"answer:cache_affinity:{case}"]["class"] == "affinity_warm", case
+    assert by_name["answer:cache_affinity:cold:order"]["class"] == "affinity_cold"
 
 
 def test_an_insert_whose_outcome_is_unknown_and_not_landed_is_pythons_exact_503() -> None:

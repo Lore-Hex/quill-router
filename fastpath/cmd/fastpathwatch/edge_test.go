@@ -23,11 +23,10 @@ import (
 // one entry handed over twice, and lines that are not counts.
 var edgeEntries = []logEntry{
 	{"1", "tr-fastpath-5", `2026/10/24 12:00:00 fastpath edge decide shadow: snapshot=s1 policy=p1 agree_full=990 ` +
-		`differ=4 would_admit_python_refused=1 read_back=3 classes={"agree_full":990,"differ":4,"stale.key":5,` +
-		`"would_admit_python_refused.403.forbidden":1} fields={"differ.estimate_float":1,"differ.timing":3,` +
-		`"other":3,"row.idempotency_fingerprint":2} rows={"agree":40,"differ":2} decide={"decide.off":995} ` +
-		`cohort={"agree_full":990,"differ":4,"would_admit_python_refused.403.forbidden":1} ` +
-		`affinity={"affinity_cold":30,"affinity_warm":10,"differ":2}`},
+		`differ=6 would_admit_python_refused=1 read_back=3 classes={"agree_full":990,"differ":6,"stale.key":5,` +
+		`"would_admit_python_refused.403.forbidden":1} fields={"differ.affinity_warm":2,"differ.estimate_float":1,` +
+		`"differ.timing":3,"other":3,"row.idempotency_fingerprint":2} rows={"agree":40,"differ":2} ` +
+		`decide={"decide.off":997} cohort={"agree_full":990,"differ":6,"would_admit_python_refused.403.forbidden":1}`},
 	{"2", "tr-fastpath-5", `2026/10/24 12:00:00 fastpath edge decide shadow: dropped=0 evictions=1 cache_unrefreshed=0 ` +
 		`cache_dropped=0 cache_read_failures=0`},
 	{"3", "tr-fastpath-5", `2026/10/24 12:00:00 fastpath edge decide: answered=7 read_back=1 unavailable=2 refunded=1 ` +
@@ -65,7 +64,8 @@ func edgeDeps(entries []logEntry, failWith error) (deps, *[]string) {
 
 // TestTheEdgeReportSumsTheSpansLines: the span's count lines summed, each
 // entry once, with the I2 figures: agree_full over the comparable requests
-// (agree_full and differ), the requests Go would answer by class, the
+// (agree_full and differ, Python's warm re-ranks among the differs and
+// counted by name), the requests Go would answer by class, the
 // differences by field, the estimate's and the fingerprint's, the fields
 // past the line's bound,
 // would_admit_python_refused by class, the stale passes over every request
@@ -88,17 +88,16 @@ func TestTheEdgeReportSumsTheSpansLines(t *testing.T) {
 		t.Fatalf("%v: %s", err, out.Bytes())
 	}
 	g := r.I2
-	if g.Comparable != 999 || g.AgreeFull != 995 || g.AgreeFullRatio == nil || *g.AgreeFullRatio != 995.0/999 ||
-		g.CohortEligible != 1000 || !maps.Equal(g.CohortByClass, map[string]int64{"agree_full": 995, "differ": 4,
-		"would_admit_python_refused.403.forbidden": 1}) || g.FieldsOther != 3 || g.Differ != 4 || g.DifferEstimate != 1 || g.RowIdempotencyFingerprint != 2 || g.WouldAdmitPythonRefused != 1 ||
-		!maps.Equal(g.WouldAdmitByClass, map[string]int64{"403.forbidden": 1}) || g.Stale != 6 ||
-		!maps.Equal(g.StaleByCache, map[string]int64{"key": 6}) || g.Followed != 1008 || g.StaleRate == nil ||
-		*g.StaleRate != 6.0/1008 || g.Unavailable != 3 ||
+	if g.Comparable != 1001 || g.AgreeFull != 995 || g.AgreeFullRatio == nil || *g.AgreeFullRatio != 995.0/1001 ||
+		g.CohortEligible != 1002 || !maps.Equal(g.CohortByClass, map[string]int64{"agree_full": 995, "differ": 6,
+		"would_admit_python_refused.403.forbidden": 1}) || g.FieldsOther != 3 || g.Differ != 6 ||
+		g.DifferAffinityWarm != 2 || g.DifferEstimate != 1 || g.RowIdempotencyFingerprint != 2 ||
+		g.WouldAdmitPythonRefused != 1 || !maps.Equal(g.WouldAdmitByClass, map[string]int64{"403.forbidden": 1}) ||
+		g.Stale != 6 || !maps.Equal(g.StaleByCache, map[string]int64{"key": 6}) || g.Followed != 1010 ||
+		g.StaleRate == nil || *g.StaleRate != 6.0/1010 || g.Unavailable != 3 ||
 		!maps.Equal(g.UnavailableByCode, map[string]int64{"failed_precondition": 2, "deadline_exceeded": 1}) ||
-		!maps.Equal(g.DifferByField, map[string]int64{"differ.estimate_float": 1, "differ.timing": 3, "other": 3,
-			"row.idempotency_fingerprint": 2}) ||
-		!maps.Equal(g.AffinityByClass, map[string]int64{"affinity_cold": 30, "affinity_warm": 10, "differ": 2}) ||
-		g.AffinityWarmShare == nil || *g.AffinityWarmShare != 0.25 {
+		!maps.Equal(g.DifferByField, map[string]int64{"differ.affinity_warm": 2, "differ.estimate_float": 1,
+			"differ.timing": 3, "other": 3, "row.idempotency_fingerprint": 2}) {
 		t.Fatalf("the I2 figures: %s", out.Bytes())
 	}
 	if r.Decide.Counts["answered"] != 7 || r.Decide.ByName["passed"]["owner.busy"] != 3 ||

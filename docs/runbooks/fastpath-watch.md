@@ -153,31 +153,29 @@ lines, summed, are its counts. It prints JSON:
 
 - `i2`: the gates' figures. `comparable` is `agree_full` plus `differ`, the
   requests whose answers were compared (Go would answer, Python answered a
-  200 that is not a replay), and `agree_full_ratio` is `agree_full` over
-  it: the 99.5% gate. `cohort_eligible` is every request Go would have
+  200 that is not a replay; a request naming a `cache_affinity_key` is
+  compared like any other, since Go decides it in the cold order), and
+  `agree_full_ratio` is `agree_full` over it: the 99.5% gate. `cohort_eligible` is every request Go would have
   answered (each counts its decide row's gate) and `cohort_by_class` the
   same requests by class, the comparable ones and the rest the gate
   accounts for (`would_admit_python_refused.*`, `python_error.*`,
   `python_unavailable`, `unread.*`, the scope taken, replays). Then
   `differ` and `differ_by_field` (every `differ.*` and `row.*` field),
+  `differ_affinity_warm` (the differs whose Python 200 is Go's decision
+  re-ranked for an endpoint a Python process remembered for the request's
+  `cache_affinity_key`, `differ.affinity_warm`: a warm session Go does not
+  reproduce, counted in `differ` and against the 99.5% like any differ),
   `differ_estimate` (the `differ.estimate*` fields),
   `row_idempotency_fingerprint` and `fields_other`: a period's fields past
   the line's bound are counted `other`, so a non-zero `fields_other` means
   the two zero gates cannot be read as zero. Then
   `would_admit_python_refused` and its classes; `stale` by cache,
-  `followed` (every request the shadow compared whose body did not name a
-  `cache_affinity_key`; those are counted under `affinity` alone, wherever
-  they passed, so neither `stale` nor `followed` moves for them) and
-  `stale_rate`; the
-  decide path's `unavailable` answers by the insert's gRPC code; and
-  `affinity_by_class` with `affinity_warm_share`: the requests naming a
-  `cache_affinity_key`, which Go composes in the cold order to measure and
-  never admits, by class (`affinity_cold`: Python's bytes are Go's;
-  `affinity_warm`: Go's with a remembered endpoint promoted; `differ`,
-  `would_admit_python_refused.*` and the rest as for the cohort), and
-  `affinity_warm` over cold plus warm, the figure the design's §1 item 5
-  revisit reads. They are not cohort-eligible, and no row is read back for
-  them.
+  `followed` (every request the shadow compared) and `stale_rate`; and the
+  decide path's `unavailable` answers by the insert's gRPC code. Lines of a
+  release before this one also carried `affinity=` (the requests naming a
+  `cache_affinity_key`, then measured apart); the report sums it under
+  `decide_shadow.by_name.affinity` and no figure reads it, so read a span
+  from the first line of a node on this release.
 - `decide_shadow` and `decide`: every count of the lines, summed.
 - `periods`: each node's lines that come once a minute, the decide line and
   the shadow's line of the requests it did not follow. A node that ran the
@@ -199,8 +197,7 @@ them. The distinct digests of the span, which the gate counts, are read
 from the lines themselves, each line's `snapshot=` and `policy=` (one line
 a minute a node for each pair the minute compared under), counted only
 among the lines with comparable requests (`agree_full` plus `differ`
-above 0): a pair whose lines carried affinity results alone, or none, is
-no evidence, and a line of a minute with no snapshot or policy held says
+above 0): a pair whose lines carried none is no evidence, and a line of a minute with no snapshot or policy held says
 `snapshot=none` or `policy=none` and compares nothing. Each dimension is
 counted apart, over the report's exact window:
 
