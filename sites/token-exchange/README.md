@@ -73,11 +73,11 @@ The page registry is `PAGES` in `nyte_v2.py`. A new page needs one word: its
 ```text
 # Who is this page for?
 #   buying tokens     -> buy
-#   selling capacity  -> supply
+#   selling capacity  -> sell
 #   anything else     -> exchange
 ```
 
-The header always has Buy, Supply and Exchange. Labels and menu descriptions
+The header always has Buy, Sell and Exchange. Labels and menu descriptions
 live in the registry. `new_until` optionally overrides the 14-day NEW window;
 otherwise the build reads the body file's added date from git and the browser
 shows at most three newest chips. The terms utility page remains outside the
@@ -316,7 +316,7 @@ webhook establishes the paid reservation.
 ### Neocloud accelerator (local implementation; publish separately)
 
 `/neocloud-accelerator` and `/neocloud-accelerator.html` render the NYTE shell
-with page key `accelerator`. The navigation lists it under Supply; `/buy`’s
+with page key `accelerator`. The navigation lists it under Sell; `/buy`’s
 seller line and `/suppliers#open-stack` link here. Only New York’s sitemap lists
 it. The page describes capacity reservations for inference service from planned
 facilities: 1B-token lots of Grade B · Professional (DeepSeek-class models),

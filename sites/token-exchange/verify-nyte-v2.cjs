@@ -150,10 +150,10 @@ for (const path of ['/', '/confidential', '/suppliers', '/providers', '/trusted-
   assert.equal(await page.locator('#menuBtn').isVisible(),width<=800);
   if(width<=800){
    await page.locator('#menuBtn').click();
-   assert.deepEqual(await page.locator('.nav-heading').allTextContents(),['Buy','Supply','Exchange']);
+   assert.deepEqual(await page.locator('.nav-heading').allTextContents(),['Buy','Sell','Exchange']);
    for(const item of await page.locator('#nav a').all())assert(await item.isVisible());
   }else{
-   for(const group of ['buy','supply','exchange']){
+   for(const group of ['buy','sell','exchange']){
     const button=page.locator(`[data-group=${group}] button`);
     await button.focus();await page.keyboard.press('Enter');
     assert.equal(await button.getAttribute('aria-expanded'),'true');
@@ -237,7 +237,7 @@ const noJs=await browser.newContext({javaScriptEnabled:false,viewport:{width:110
 const noJsPage=await noJs.newPage();
 await noJsPage.goto(base+'/trusted-cowork');
 assert.equal(await noJsPage.locator('#menuBtn').isVisible(),false);
-for(const group of ['buy','supply','exchange']){
+for(const group of ['buy','sell','exchange']){
  await noJsPage.locator(`[data-group=${group}] button`).focus();
  assert(await noJsPage.locator(`#nav-${group}`).isVisible());
 }

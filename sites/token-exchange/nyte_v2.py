@@ -19,17 +19,17 @@ HERE = Path(__file__).resolve().parent
 SOURCE = HERE / "nyte-v2"
 
 
-GROUPS = {"buy": "Buy", "supply": "Supply", "exchange": "Exchange"}
+GROUPS = {"buy": "Buy", "sell": "Sell", "exchange": "Exchange"}
 GROUP_GUIDANCE = "\n".join((
     "# Who is this page for?",
     "#   buying tokens     -> buy",
-    "#   selling capacity  -> supply",
+    "#   selling capacity  -> sell",
     "#   anything else     -> exchange",
 ))
 
 # Who is this page for?
 #   buying tokens     -> buy
-#   selling capacity  -> supply
+#   selling capacity  -> sell
 #   anything else     -> exchange
 PAGES = {
     "home": {
@@ -73,7 +73,7 @@ PAGES = {
         "label": "Suppliers",
         "title": "Suppliers · New York Token Exchange",
         "description": "Sell your inference to enterprise buyers. List your models and prices once.",
-        "group": "supply",
+        "group": "sell",
         "menu_description": "Sell your inference to enterprise buyers",
         "source": "nyte-v2/sup.html",
     },
@@ -82,7 +82,7 @@ PAGES = {
         "label": "Providers",
         "title": "For inference providers | New York Token Exchange",
         "description": "Bring your available inference capacity to the New York Token Exchange. Request the updated private seven-page provider deck and explore joining the exchange.",
-        "group": "supply",
+        "group": "sell",
         "menu_description": "More demand, same GPUs",
         "source": "nyte-v2/providers.html",
     },
@@ -91,7 +91,7 @@ PAGES = {
         "label": "Neocloud accelerator",
         "title": "Neocloud accelerator | New York Token Exchange",
         "description": "Pre-sell reserved tokens from a planned facility to help finance the build. Explore the open-source neocloud stack and demand through NYTE.",
-        "group": "supply",
+        "group": "sell",
         "menu_description": "Pre-sell tokens, build your neocloud",
         "source": "nyte-v2/accelerator.html",
     },
