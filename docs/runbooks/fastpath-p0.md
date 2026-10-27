@@ -32,8 +32,8 @@ the default network behind the project's NAT with no external address.
    checks the release its process runs, not the file that names it:
 
    ```bash
-   gcloud compute instances reset tr-fastpath-7 --zone=us-central1-a --project=quill-cloud-proxy
-   gcloud compute instances reset tr-fastpath-8 --zone=us-central1-b --project=quill-cloud-proxy
+   gcloud compute instances reset tr-fastpath-9 --zone=us-central1-a --project=quill-cloud-proxy
+   gcloud compute instances reset tr-fastpath-10 --zone=us-central1-b --project=quill-cloud-proxy
    ```
 
    A node with no release pinned stays stopped and says so in its journal.

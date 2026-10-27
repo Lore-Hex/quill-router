@@ -31,7 +31,11 @@ locals {
   # shadow keeps requests carrying a cache affinity key, composes the cold
   # order and measures Python's answer as affinity_cold or affinity_warm,
   # so the soak compares the cohort instead of passing nearly all of it.
-  fastpath_release        = "7f392e79d87d797ebac70edc4dcebe2fcdd80916"
+  # 892bd7593: main after #2098, with G14's v3 routing snapshot (privacy
+  # tiers and parameter tables, so the evaluator answers min_privacy and
+  # requested_parameters), G15a's optional async_settle and billing_valid,
+  # and the auditor's call deadlines and stall watchdog.
+  fastpath_release        = "892bd7593c948b58587ef281dd703cc24a044623"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
@@ -323,17 +327,11 @@ resource "google_compute_instance" "fastpath_node" {
   # one apply before its removal, then was removed. 7 and 8 took the places
   # of 5 and 6 the same way, with the edge policy's attributes (stage I1),
   # which the script 5 and 6 ran, from before I1, read neither of. 9 and 10
-  # take the places of 7 and 8 the same way, with the decide attribute
-  # (stage I2, "false" until the I2 switch), which the script 7 and 8 run,
-  # from before I2, does not read. Each of 9 and 10 has an edge instance
-  # group and a backend entry from the apply that makes it
-  # (infra/fastpath_edge_backend.tf); the health check keeps the balancer
-  # off it until its edge serves, and the pilot's watches and audit loop
-  # are started on it by hand before 7 or 8 is drained
-  # (docs/runbooks/fastpath-deploy.md, "Turning the edge on").
+  # took the places of 7 and 8 the same way, with the decide attribute
+  # (stage I2, "false" until the I2 switch), which the script 7 and 8 ran,
+  # from before I2, did not read; 7 and 8 were drained, left the edge
+  # backend one apply before their removal, then were removed.
   for_each = {
-    "tr-fastpath-7"  = "us-central1-a"
-    "tr-fastpath-8"  = "us-central1-b"
     "tr-fastpath-9"  = "us-central1-a"
     "tr-fastpath-10" = "us-central1-b"
   }
