@@ -83,8 +83,8 @@ document.addEventListener('DOMContentLoaded', () => {
       : [get('name'), get('email')];
     for (const field of fields) {
       field.setCustomValidity('');
-      if (!clean(field.value)) field.setCustomValidity('Please complete this field.');
-      if (field.id === 'buy-email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(field.value.trim())) {
+      if (field.required && !clean(field.value)) field.setCustomValidity('Please complete this field.');
+      if (field.id === 'buy-email' && clean(field.value) && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(field.value.trim())) {
         field.setCustomValidity('Please enter a valid work email address.');
       }
       if (!field.checkValidity()) {
@@ -118,7 +118,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function show(number, push = false) {
-    // A copied step URL cannot skip the required request or contact fields.
+    // A copied step URL cannot skip required request fields or an invalid contact prefill.
     if (number >= 3 && !fieldsValid(2)) number = 2;
     else if (number === 4 && !fieldsValid(3)) number = 3;
     step = number;

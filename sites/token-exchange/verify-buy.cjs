@@ -64,6 +64,12 @@ async function localHtml(context) {
         };
         await check(1);
         assert.equal(await page.title(), 'Reserved tokens | New York Token Exchange');
+        assert.equal(await page.locator('.buy-unit-list li').count(), 3);
+        assert.equal(await page.locator('[data-step="1"] .buy-choice, [data-step="1"] .buy-grid').count(), 0);
+        assert.equal(await page.locator('#buy-blocks').inputValue(), '1');
+        assert.equal(await page.locator('#buy-rate').inputValue(), '300');
+        assert.equal(await page.locator('#buy-term').inputValue(), '1');
+        assert(await page.locator('[name="underlying"][value="index"]').isChecked());
         if (width < 1000) {
           const wizard = await page.locator('.buy-workspace').boundingBox();
           const brand = await page.locator('.buy-brand').boundingBox();
@@ -72,7 +78,7 @@ async function localHtml(context) {
         assert.equal(new URL(page.url()).searchParams.has('name'), false);
         assert(await page.locator('[name="grade"][value="A"]').isChecked());
         assert.equal(await page.locator('.buy-seller a').first().getAttribute('href'),'/suppliers');
-        assert.equal(await page.locator('.buy-seller a').last().getAttribute('href'),'/providers');
+        assert.equal(await page.locator('.buy-seller a[href="/providers"]').getAttribute('href'),'/providers');
         if (index === 0 && [390,1440].includes(width)) {
           for (const [destination, kind] of [['suppliers','sup'], ['providers','providers']]) {
             await page.locator(`.buy-seller a[href="/${destination}"]`).click();
@@ -95,7 +101,7 @@ async function localHtml(context) {
           return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2,'0')}`;
         });
         assert.equal(await page.locator('#buy-start').inputValue(), expectedStart);
-        if (path.unit !== 'throughput') {
+        {
           await page.getByRole('button',{name:'Continue to contact'}).click();
           await check(3); // The default date allows the first Continue to succeed.
           await page.getByRole('button',{name:'Back',exact:true}).click();
@@ -173,15 +179,19 @@ async function localHtml(context) {
         assert.equal(await page.locator('#buy-name').inputValue(),name);
         await page.goForward();
         await check(4);
-        // Back/forward keeps in-memory fields, but reload cannot retain contact data or skip validation.
+        const completionsBeforeReload = events.filter(event => event.event === 'nyte.buy_completed');
+        assert.equal(completionsBeforeReload.length, 1);
+        // Reload clears contact details and returns to valid reservation defaults.
         await page.reload();
         await page.waitForFunction(expected => new URLSearchParams(location.search).get('step') === expected,
-          path.unit === 'throughput' ? '2' : '3');
+          '4');
         assert.equal(await page.locator('#buy-name').inputValue(),'');
-        assert.equal(await page.locator('#buy-calendar iframe').count(),0);
+        assert.equal(await page.locator('#buy-calendar iframe').count(),1);
+        const reloadedBooking = new URL(await page.locator('#buy-calendar iframe').getAttribute('src'));
+        assert.equal(reloadedBooking.searchParams.get('email'), '');
+        assert.equal(reloadedBooking.searchParams.get('name'), '');
         const buyEvents = events.filter(event => event.event.startsWith('nyte.buy_'));
         assert(buyEvents.some(event => event.event === 'nyte.buy_completed'));
-        assert.equal(buyEvents.filter(event => event.event === 'nyte.buy_completed').length,1);
         for (const event of buyEvents) {
           assert.equal(event.page,'/buy');
           assert(['blocks','throughput','unsure'].includes(event.unit));
@@ -225,8 +235,17 @@ async function localHtml(context) {
       assert(await page.locator(`[name="grade"][value="${grade}"]`).isChecked());
       assert.equal(await page.locator('.buy-step:visible').getAttribute('data-step'),'2');
     }
+    await context.route('https://calendly.com/**', route => route.fulfill({contentType:'text/html', body:'Calendly fixture'}));
+    for (const unit of ['blocks', 'throughput', 'unsure']) {
+      await page.goto(`${base}/buy?unit=${unit}`);
+      for (const label of ['Continue to details', 'Continue to contact', 'Continue to scheduling']) {
+        await page.getByRole('button', {name:label}).click();
+      }
+      assert.equal(new URL(page.url()).searchParams.get('step'), '4');
+      assert.equal(await page.locator('#buy-calendar iframe').count(), 1);
+    }
     await page.goto(`${base}/buy?grade=INVALID&unit=INVALID&step=99`);
-    assert(await page.locator('[name="grade"][value="AAA"]').isChecked());
+    assert(await page.locator('[name="grade"][value="A"]').isChecked());
     assert.equal(new URL(page.url()).searchParams.get('step'),'1');
     await page.locator('[name="unit"][value="blocks"]').focus();
     await page.keyboard.press('ArrowRight');

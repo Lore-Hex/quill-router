@@ -106,8 +106,15 @@ does not verify an authenticated confidential inference request or its attestati
 ### Reserved tokens flow (local implementation; publish separately)
 
 `/buy` and `/buy.html` use the NYTE shell and four steps: reservation unit,
-underlying and timing, contact, then a 15-minute Calendly call. Sellers leave
-for `/suppliers` or `/providers`. Index-grade token blocks show blocks × the
+underlying and timing, optional contact prefill, then a 15-minute Calendly call.
+Step 1 is a plain radio list: “1 billion tokens (a block to draw on over a term)”,
+“300 tokens per second (a reserved rate)”, and “Not sure yet”. A short seller
+line links to `/suppliers` and `/providers`; keep these repository links intact
+when reconciling live-link rewrites. Defaults are one block, 300 tok/s, a
+one-month term, next month in local time, and NYTE Index grade A. Allowlisted
+`grade` and `unit` query parameters override their defaults. Three Continue
+clicks reach scheduling without editing a field; contact details can be entered
+in Calendly, and a supplied email is validated before handoff. Index-grade token blocks show blocks × the
 published dated grade price; throughput, named models and undecided requests
 show no price. This is a request to discuss a reservation, not an order or executable quote. Capacity derivatives remain roadmap offerings.
 

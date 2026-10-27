@@ -20,12 +20,12 @@
     <section class="buy-step" data-step="1" aria-labelledby="buy-title-1">
       <p class="buy-kicker">Step 1 of 4</p><h2 id="buy-title-1" tabindex="-1">What are you buying?</h2>
       <p>Tell us how you’d like to plan your inference use.</p>
-      <fieldset><legend>Reservation unit</legend><div class="buy-grid">
-        <label class="buy-choice"><input type="radio" name="unit" value="blocks" checked><span><strong>Token blocks</strong><small>Chunks of 1 billion tokens to draw on over your chosen term.</small></span></label>
-        <label class="buy-choice"><input type="radio" name="unit" value="throughput"><span><strong>Throughput</strong><small>A reserved rate, measured in tokens per second.</small></span></label>
-        <div class="buy-choice buy-seller"><strong>Selling capacity</strong><small>Bring your inference to the supply side.</small><a href="/suppliers">Continue as a supplier →</a><a href="/providers">Request the provider deck →</a></div>
-        <label class="buy-choice"><input type="radio" name="unit" value="unsure"><span><strong>Not sure</strong><small>Outline your workload and work through the options on the call.</small></span></label>
-      </div></fieldset>
+      <fieldset><legend>Reservation unit</legend><ul class="buy-unit-list">
+        <li><label><input type="radio" name="unit" value="blocks" checked> <span>1 billion tokens (a block to draw on over a term)</span></label></li>
+        <li><label><input type="radio" name="unit" value="throughput"> <span>300 tokens per second (a reserved rate)</span></label></li>
+        <li><label><input type="radio" name="unit" value="unsure"> <span>Not sure yet</span></label></li>
+      </ul></fieldset>
+      <p class="buy-seller">Selling capacity? See <a href="/suppliers">/suppliers</a> or <a href="/providers">/providers</a>.</p>
       <div class="buy-actions" data-js hidden><button class="btn btn-primary" type="button" data-next>Continue to details →</button></div>
     </section>
     <section class="buy-step" data-step="2" aria-labelledby="buy-title-2">
@@ -45,8 +45,8 @@
         <p class="buy-fine" id="buy-catalog-status">Type a model and, optionally, a provider. Catalogue suggestions load when available; availability for your request is discussed on the call.</p>
       </fieldset>
       <fieldset><legend>Size and timing</legend><div class="buy-grid">
-        <div id="buy-block-fields"><label class="buy-field" for="buy-blocks">Number of 1B-token blocks</label><div class="buy-counter"><button type="button" data-block-delta="-1" aria-label="Remove one block" data-js hidden>−</button><input id="buy-blocks" type="number" min="1" max="1000000" step="1" value="1" required><button type="button" data-block-delta="1" aria-label="Add one block" data-js hidden>+</button></div></div>
-        <label class="buy-field" id="buy-rate-field" for="buy-rate">Tokens per second<input id="buy-rate" type="number" min="1" max="1000000000" step="1" placeholder="e.g. 1000" required></label>
+        <div id="buy-block-fields"><label class="buy-field" for="buy-blocks">1 billion tokens per block</label><div class="buy-counter"><button type="button" data-block-delta="-1" aria-label="Remove one block" data-js hidden>−</button><input id="buy-blocks" type="number" min="1" max="1000000" step="1" value="1" required><button type="button" data-block-delta="1" aria-label="Add one block" data-js hidden>+</button></div></div>
+        <label class="buy-field" id="buy-rate-field" for="buy-rate">Tokens per second<input id="buy-rate" type="number" min="1" max="1000000000" step="1" value="300" aria-describedby="buy-rate-example" required><small id="buy-rate-example">300 tok/s</small></label>
         <label class="buy-field" for="buy-term">Term<select id="buy-term"><option value="1">1 month</option><option value="3">3 months</option><option value="6">6 months</option><option value="12">12 months</option></select></label>
         <label class="buy-field" for="buy-start">Desired start month<input id="buy-start" type="month"></label>
       </div></fieldset>
@@ -55,10 +55,10 @@
     </section>
     <section class="buy-step" data-step="3" aria-labelledby="buy-title-3">
       <p class="buy-kicker">Step 3 of 4</p><h2 id="buy-title-3" tabindex="-1">How do we reach you?</h2>
-      <p>Your name and work email prefill your booking. We’ll discuss the details together.</p>
+      <p>Add your details to prefill your booking, or continue and enter them in Calendly.</p>
       <fieldset><legend>Contact details</legend>
-        <label class="buy-field" for="buy-name">Full name<input id="buy-name" type="text" autocomplete="name" maxlength="120" required></label>
-        <label class="buy-field" for="buy-email">Work email<input id="buy-email" type="email" autocomplete="email" maxlength="254" required></label>
+        <label class="buy-field" for="buy-name">Full name (optional)<input id="buy-name" type="text" autocomplete="name" maxlength="120"></label>
+        <label class="buy-field" for="buy-email">Work email (optional)<input id="buy-email" type="email" autocomplete="email" maxlength="254"></label>
         <label class="buy-field" for="buy-company">Company (optional)<input id="buy-company" type="text" autocomplete="organization" maxlength="160"></label>
       </fieldset>
       <p class="buy-fine">Continuing sends these details and your request summary directly to Calendly to prefill your call. They are not saved by this page or included in our analytics.</p>

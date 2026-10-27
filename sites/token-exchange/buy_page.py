@@ -16,7 +16,7 @@ def buy_content() -> str:
         price = data["QUOTES"][code]["value"]
         cards.append(
             f'<label class="buy-choice"><input type="radio" name="grade" value="{code}"'
-            f' data-price="{price}"' + (' checked' if code == 'AAA' else '') + '>'
+            f' data-price="{price}"' + (' checked' if code == 'A' else '') + '>'
             f'<span><strong>{code} {html.escape(grade["name"])}</strong>'
             f'<span class="buy-price">${price:,}<small> / billion tokens</small></span>'
             f'<small>{html.escape(grade["use"])}</small></span></label>'

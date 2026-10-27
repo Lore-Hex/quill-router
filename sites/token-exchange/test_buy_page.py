@@ -61,6 +61,62 @@ class BuyPageTests(unittest.TestCase):
         for grade in ['AAA', 'A', 'B', 'C']:
             self.assertIn(f'/buy?grade={grade}&amp;unit=blocks">Reserve {grade} tokens</a>', (self.root / 'index').read_text())
 
+    def test_plain_unit_list_and_defaults(self) -> None:
+        first = self.page.split('data-step="1"', 1)[1].split('data-step="2"', 1)[0]
+        self.assertIn('<ul class="buy-unit-list">', first)
+        self.assertEqual(first.count('<li><label>'), 3)
+        self.assertNotIn('buy-grid', first)
+        self.assertNotIn('buy-choice', first)
+        for label in ['1 billion tokens (a block to draw on over a term)',
+                      '300 tokens per second (a reserved rate)', 'Not sure yet']:
+            self.assertIn(label, first)
+        self.assertIn('Selling capacity? See <a href="/suppliers">/suppliers</a> or <a href="/providers">/providers</a>', first)
+        self.assertRegex(self.page, r'id="buy-blocks"[^>]*value="1"')
+        self.assertRegex(self.page, r'id="buy-rate"[^>]*value="300"')
+        self.assertIn('300 tok/s', self.page)
+        self.assertIn('<select id="buy-term"><option value="1">1 month</option>', self.page)
+        self.assertRegex(self.page, r'name="grade" value="A"[^>]* checked')
+        self.assertIn('name="underlying" value="index" checked', self.page)
+        for field in ['name', 'email']:
+            self.assertNotRegex(self.page, rf'id="buy-{field}"[^>]*required')
+
+    def test_optional_contact_and_required_quantity_validation(self) -> None:
+        script = (HERE / 'nyte-v2/buy.js').read_text()
+        validate = script.split('  function fieldsValid(number, report = false) {', 1)[1].split('\n  function scheduling(', 1)[0]
+        harness = r'''
+const assert = require('node:assert/strict');
+const fields = {};
+for (const [key, value, required] of [
+  ['start', '2027-01', true], ['blocks', '1', true], ['rate', '300', true],
+  ['name', '', false], ['email', '', false]
+]) fields[key] = {id:`buy-${key}`, value, required,
+  setCustomValidity(message) { this.error = message; },
+  checkValidity() { return !this.error; }};
+const get = key => fields[key];
+let unit = 'blocks';
+const selected = key => ({value: key === 'unit' ? unit : 'index'});
+const clean = value => value.trim().replace(/\s+/g, ' ');
+'''
+        harness += 'function fieldsValid(number, report = false) {' + validate
+        harness += r'''
+for (unit of ['blocks', 'throughput', 'unsure']) {
+  assert.equal(fieldsValid(2), true, `${unit} defaults proceed`);
+  assert.equal(fieldsValid(3), true, 'blank contact proceeds');
+}
+fields.email.value = 'invalid@work';
+assert.equal(fieldsValid(3), false);
+fields.email.value = 'buyer@example.com';
+assert.equal(fieldsValid(3), true);
+fields.start.value = '';
+assert.equal(fieldsValid(2), false);
+fields.start.value = '2027-01';
+for (unit of ['blocks', 'throughput']) {
+  fields[unit === 'blocks' ? 'blocks' : 'rate'].value = '';
+  assert.equal(fieldsValid(2), false, 'cleared quantity cannot proceed');
+}
+'''
+        subprocess.run(['node', '-e', harness], check=True, capture_output=True, text=True)  # noqa: S603,S607 — fixed local test harness
+
     def test_prices_and_dated_non_executable_offer(self) -> None:
         data = runpy.run_path(str(HERE.parents[1] / 'src/trusted_router/content/token_index.py'))
         for grade in data['GRADES']:
