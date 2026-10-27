@@ -125,7 +125,7 @@ PAGES = {
 
 @cache
 def page_added(source: str) -> str:
-    """Read a body file's creation date, or omit chips when Git is unavailable."""
+    """Use a recorded creation date only when full Git history is available."""
     git = shutil.which("git")
     if git is None:
         return ""
@@ -134,16 +134,16 @@ def page_added(source: str) -> str:
         [git, "rev-parse", "--is-shallow-repository"], cwd=HERE,
         capture_output=True, text=True,
     )
-    if shallow.returncode != 0:
+    if shallow.returncode != 0 or shallow.stdout.strip() != "false":
         return ""
-    if shallow.stdout.strip() == "true":
-        raise ValueError("NYTE NEW chips require full Git history; run git fetch --unshallow before building.")
     history = subprocess.run(  # noqa: S603
         [git, "log", "--diff-filter=A", "--format=%cs", "--", source], cwd=HERE,
-        capture_output=True, text=True, check=True,
+        capture_output=True, text=True,
     )
+    if history.returncode != 0:
+        return ""
     dates = history.stdout.splitlines()
-    return dates[-1] if dates else date.today().isoformat()
+    return dates[-1] if dates else ""
 
 
 def render_nav() -> str:

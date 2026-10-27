@@ -210,7 +210,6 @@ class NavigationRegistryTests(unittest.TestCase):
         import shutil
         import subprocess
         import tempfile
-        from datetime import date
         from pathlib import Path
         from unittest.mock import patch
 
@@ -247,14 +246,14 @@ class NavigationRegistryTests(unittest.TestCase):
                 page_added.cache_clear()
                 self.assertEqual(page_added("sample.html"), "2026-09-01")
                 (root / "new.html").write_text("Uncommitted preview")
-                self.assertEqual(page_added("new.html"), date.today().isoformat())
+                self.assertEqual(page_added("new.html"), "")
+                self.assertEqual(page_added("missing.html"), "")
 
             shallow = root / "shallow"
             git("clone", "--depth=1", root.as_uri(), str(shallow))
             with patch("nyte_v2.HERE", shallow):
                 page_added.cache_clear()
-                with self.assertRaisesRegex(ValueError, "full Git history"):
-                    page_added("sample.html")
+                self.assertEqual(page_added("sample.html"), "")
 
             with tempfile.TemporaryDirectory() as archive, patch("nyte_v2.HERE", Path(archive)):
                 page_added.cache_clear()
@@ -273,3 +272,17 @@ class NavigationRegistryTests(unittest.TestCase):
             self.assertNotIn("data-added=", page)
             self.assertIn('href="/confidential"', page)
             self.assertIn('class="tag cc" hidden>NEW', page)
+
+    def test_unreadable_history_has_no_creation_date(self):
+        from subprocess import CompletedProcess
+        from unittest.mock import patch
+
+        from nyte_v2 import page_added
+
+        page_added.cache_clear()
+        self.addCleanup(page_added.cache_clear)
+        with patch("nyte_v2.shutil.which", return_value="/usr/bin/git"), patch(
+            "nyte_v2.subprocess.run",
+            side_effect=[CompletedProcess([], 0, "false\n"), CompletedProcess([], 1, "")],
+        ):
+            self.assertEqual(page_added("sample.html"), "")
