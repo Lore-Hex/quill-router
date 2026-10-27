@@ -783,9 +783,10 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
     # re-rank of the cold order (provider.order and the sort partition
     # respected, the session's age too), with nothing but the first
     # candidate's members (and, with fallbacks off, the estimate) changed.
+    facts = async_facts(case, json.loads(cold["expect"]["authorization_row"]["payload"]), data)
     affinity_class = affinity_rule.affinity_class(
         case["name"], json.loads(case["request"]["body"]), cold["expect"]["response"], warm["expect"]["response"],
-        case["_affinity"], cold["_models"].__getitem__, snapshot_of(cold["_effective"]))
+        case["_affinity"], cold["_models"].__getitem__, snapshot_of(cold["_effective"]), facts)
     for field in ("fingerprint", "fingerprint_material", "idempotency_scope", "decide_region"):
         if cold["expect"][field] != warm["expect"][field]:
             raise AssertionError(f"{case['name']}: the session changed {field}")
@@ -802,7 +803,28 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
                            # The lease's hold (§5, "The two figures") in each run.
                            "reservation_microdollars": warm["expect"]["reservation_microdollars"],
                            "cold_reservation_microdollars": cold["expect"]["reservation_microdollars"]}}
-    return {**{k: v for k, v in cold.items() if k not in ("expect", "_models", "_effective")}, "expect": expect}
+    return {**{k: v for k, v in cold.items() if k not in ("expect", "_models", "_effective")},
+            "_async_facts": facts, "expect": expect}
+
+
+def async_facts(case: dict[str, Any], payload: dict[str, Any], data: dict[str, Any]) -> affinity_rule.AsyncFacts:
+    """The facts authorize_additions reads besides the body and the
+    candidates (affinity_rule.request_exclusion), from the case's world and
+    policy and the cold answer's authorization row."""
+    world, facts = case["_world"], async_settle_of(case["_policy"])
+    return {
+        "replay": data["idempotent_replay"], "typed": facts["typed_records"],
+        "federated": bool(world["key"]["federated_home"] or world["workspace"]["federated_home"]),
+        "ticket_authority": facts["ticket_authority"], "admission_enabled": facts["admission_enabled"],
+        "usage_type": payload["usage_type"], "settlement": payload["settlement"],
+        "app_markup_basis_points": payload.get("app_markup_basis_points") or 0,
+        "custom_model_markup_basis_points": payload.get("custom_model_markup_basis_points") or 0,
+        "receipt_fee_basis_points": payload.get("receipt_fee_basis_points") or 0,
+        "custom_model": bool(payload.get("custom_model_id")),
+        "user_model": bool(payload.get("user_provided_model_id")),
+        "tool_cost": bool(payload.get("additional_cost_reservation_microdollars")),
+        "native_batch": bool(payload.get("native_batch_eligible")),
+    }
 
 
 def snapshot_of(effective: dict[str, ModelEndpoint]) -> affinity_rule.SnapshotOf:
@@ -1644,6 +1666,8 @@ def run_async_case(case: dict[str, Any]) -> dict[str, Any]:
     elif "affinity" in expect:
         expect["affinity"]["async_shape"] = async_shape(expect["affinity"]["response"])
         expect["affinity"]["cold_async_shape"] = async_shape(expect["affinity"]["cold_response"])
+        # What the affinity rule decided the request's eligibility from.
+        expect["affinity"]["async_facts"] = result["_async_facts"]
     elif expect["outcome"] == "pass":
         response, python = result["_response"], expect["python"]
         if python["status"] != 200:
