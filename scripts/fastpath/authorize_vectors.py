@@ -98,6 +98,8 @@ from tests.test_fastpath_frontdoor import _Door, _transport  # noqa: E402
 from trusted_router import gateway_timing, storage_gcp, storage_gcp_keys  # noqa: E402
 from trusted_router.auth import is_api_key_expired  # noqa: E402
 from trusted_router.authorize_candidates import HOLD_OUTPUT_TOKENS  # noqa: E402
+from trusted_router.billing_snapshot import Eligibility, build_snapshot  # noqa: E402
+from trusted_router.catalog import effective_endpoint  # noqa: E402
 from trusted_router.catalog_data import MONITOR_MODEL_ID, PROVIDERS, Model, ModelEndpoint  # noqa: E402
 from trusted_router.catalog_registry import MODEL_ENDPOINTS, MODELS  # noqa: E402
 from trusted_router.config import Settings  # noqa: E402
@@ -764,7 +766,7 @@ def _seeded_routing_state(case: dict[str, Any], sessions: tuple[tuple[str, float
 
 def run_case(case: dict[str, Any]) -> dict[str, Any]:
     if case["_affinity"] is None:
-        return {k: v for k, v in _run_case(case, ()).items() if k != "_models"}
+        return {k: v for k, v in _run_case(case, ()).items() if k not in ("_models", "_effective")}
     # A cache affinity key: Python's order with no session (the cold order,
     # which Go composes) and then with the case's sessions remembered.
     cold = _run_case(case, ())
@@ -783,7 +785,7 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
     # candidate's members (and, with fallbacks off, the estimate) changed.
     affinity_class = affinity_rule.affinity_class(
         case["name"], json.loads(case["request"]["body"]), cold["expect"]["response"], warm["expect"]["response"],
-        case["_affinity"], cold["_models"].__getitem__)
+        case["_affinity"], cold["_models"].__getitem__, snapshot_of(cold["_effective"]))
     for field in ("fingerprint", "fingerprint_material", "idempotency_scope", "decide_region"):
         if cold["expect"][field] != warm["expect"][field]:
             raise AssertionError(f"{case['name']}: the session changed {field}")
@@ -800,7 +802,21 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
                            # The lease's hold (§5, "The two figures") in each run.
                            "reservation_microdollars": warm["expect"]["reservation_microdollars"],
                            "cold_reservation_microdollars": cold["expect"]["reservation_microdollars"]}}
-    return {**{k: v for k, v in cold.items() if k not in ("expect", "_models")}, "expect": expect}
+    return {**{k: v for k, v in cold.items() if k not in ("expect", "_models", "_effective")}, "expect": expect}
+
+
+def snapshot_of(effective: dict[str, ModelEndpoint]) -> affinity_rule.SnapshotOf:
+    """The affinity rule's rebuild: build_snapshot over these candidates as
+    priced at the case's instant, for an eligible request (the request's own
+    eligibility is the cold answer's, which the rule reads), or None where
+    it refuses one (async_settle.projection answers shape A there)."""
+
+    def of(ids: Any) -> dict[str, Any] | None:
+        try:
+            return build_snapshot([effective[i] for i in ids], Eligibility()).model_dump(mode="json")
+        except ValueError:
+            return None
+    return of
 
 
 def _run_case(case: dict[str, Any], sessions: tuple[tuple[str, float], ...], *,
@@ -852,6 +868,10 @@ def _run_case(case: dict[str, Any], sessions: tuple[tuple[str, float], ...], *,
         # The fixture catalog's endpoint models (installed by pinned), for
         # the affinity rule, which run_case applies outside it.
         models = {endpoint_id: endpoint.model_id for endpoint_id, endpoint in MODEL_ENDPOINTS.items()}
+        # And each endpoint as priced at the instant (the authorization's
+        # price instant), from which the rule rebuilds a billing snapshot.
+        effective = {endpoint_id: effective_endpoint(endpoint, at=at)
+                     for endpoint_id, endpoint in MODEL_ENDPOINTS.items()} if case["_affinity"] is not None else {}
         response = send(client, case["request"])
         authorizations = [row for k, row in database.gateway_authorizations.items() if k not in authorizations_before]
         reservations = [row for k, row in database.reservations.items() if k not in reservations_before]
@@ -897,7 +917,7 @@ def _run_case(case: dict[str, Any], sessions: tuple[tuple[str, float], ...], *,
         raise AssertionError(f"{case['name']}: the route minted other ids")
     data = json.loads(body)["data"]
     fingerprint, material = recorder.seen[-1]
-    return {**world_rows, "_models": models, "expect": {
+    return {**world_rows, "_models": models, "_effective": effective, "expect": {
         "outcome": "answer", "status": 200, "response": body,
         "generation_id": data["generation_id"],
         "estimate_microdollars": data["estimated_cost_microdollars"],
@@ -1535,10 +1555,12 @@ def async_cases() -> list[dict[str, Any]]:
     add(f"answer:async.B:tiered:{SONNET}:over_first_tier", body={"model": SONNET, "estimated_input_tokens": 250_000})
     # Several candidates, and the mixed-provider set build_snapshot accepts
     # (each candidate is validated alone); the snapshot lists them sorted by
-    # endpoint_id, not in route order.
+    # endpoint_id, not in route order: openai first in the route, anthropic
+    # first in the snapshot. The route_order_sorted case is the same set
+    # routed anthropic first, where both orders agree.
     add(f"answer:async.B:mixed_provider:{GPT41}+{SONNET}", body={"models": [SONNET]})
     add(f"answer:async.B:several:{GPT41}+{GPT41_MINI}+{SONNET}", body={"models": [GPT41_MINI, SONNET]})
-    add(f"answer:async.B:out_of_route_order:{SONNET}+{GPT41}", body={"model": SONNET, "models": [GPT41]})
+    add(f"answer:async.B:route_order_sorted:{SONNET}+{GPT41}", body={"model": SONNET, "models": [GPT41]})
     add("answer:async.B:invocation_nonce", body={"invocation_nonce": "nonce-e2-async-1"})
     add("answer:async.B:route_type:responses", body={"route_type": "responses"})
     add("answer:async.B:ordinary_parameters", body={"requested_parameters": sorted(ORDINARY_PARAMETERS)})
@@ -1547,6 +1569,8 @@ def async_cases() -> list[dict[str, Any]]:
     add("answer:async.A:undeclared_member", body={"x_extra": "v"})
     add("answer:async.A:route_type:messages", body={"route_type": "messages"})
     add("answer:async.A:route_type:absent", body={"route_type": None})
+    add("answer:async.A:route_type:embeddings", body={"route_type": "embeddings"})
+    add("answer:async.A:route_type:decide", body={"route_type": "decide"})
     add("answer:async.A:input_modalities:text", body={"input_modalities": ["text"]})
     add("answer:async.A:input_modalities:null", None, raw_body(
         lookup, f'"model":"{GPT41}"', '"estimated_input_tokens":1000', '"input_modalities":null', PLAIN_TAIL))
@@ -1559,11 +1583,14 @@ def async_cases() -> list[dict[str, Any]]:
     add(f"answer:async.A:billing_valid_false:{GPT41_NANO}", body={"model": GPT41_NANO})
     add(f"answer:async.A:billing_valid_false:{GPT41}+{GPT41_NANO}", body={"models": [GPT41_NANO]})
     add("answer:async.A:ticket_authority_false", policy={"async_settle": {"ticket_authority": False}})
-    # typed_records false has no case: Python leases only with typed request
-    # records (storage_gcp._authorize_gateway_leased raises without them, a
-    # 500), so no leased answer exists for the edge to match.
     # Shape A where the edge passes: Python's answer is recorded with its
-    # bytes. A replay, and authorization facts Eligibility excludes.
+    # bytes. typed_records false (Eligibility's untyped): Python leases only
+    # with typed request records (storage_gcp._authorize_gateway_leased raises
+    # without them), so the case runs with the pilot off, which the edge
+    # passes as policy.pilot_off, and Python answers unleased.
+    add("pass:policy.pilot_off:async.A:typed_records_false", "policy.pilot_off",
+        policy={"async_settle": {"typed_records": False}, "fastpath_pilot_enabled": False})
+    # A replay, and authorization facts Eligibility excludes.
     add("pass:insert.scope_taken:async.A:replay", "insert.scope_taken", body={"idempotency_key": "async-replayed"},
         prior=(({"idempotency_key": "async-replayed"}, ADMIT),))
     add("pass:body.priced_extra:async.A:receipt_fee", "body.priced_extra", body={"inference_receipt": True})
@@ -1583,9 +1610,12 @@ def async_cases() -> list[dict[str, Any]]:
     add("pass:policy.async_admission:async.A:no_invocation_nonce", "policy.async_admission",
         policy={"async_settle": {"admission_enabled": True}})
     add("pass:async.off:async.B", "async.off", policy={"async_settle": {"edge_decide": False}})
-    # Any header list but exactly ["async-v1"] adds nothing (§2.1).
+    # Any header list but exactly ["async-v1"] adds nothing (§2.1). With no
+    # header the edge answers; any present header but exactly async-v1 it
+    # passes (header.settlement_async, which G15c keeps for these), and the
+    # case records Python's no-additions bytes.
+    add("answer:async.none:header:absent", headers=())
     for label, headers in (
-        ("absent", ()),
         ("sync", ((SETTLEMENT_MODE, "sync"),)),
         ("repeated", (*ASYNC_V1, *ASYNC_V1)),
         ("repeated_with_sync", (*ASYNC_V1, (SETTLEMENT_MODE, "sync"))),
@@ -1597,7 +1627,7 @@ def async_cases() -> list[dict[str, Any]]:
         ("async-v2", ((SETTLEMENT_MODE, "async-v2"),)),
         ("empty", ((SETTLEMENT_MODE, ""),)),
     ):
-        add(f"answer:async.none:header:{label}", headers=headers)
+        add(f"pass:header.settlement_async:async.none:{label}", "header.settlement_async", headers=headers)
     # The header's name is case-insensitive; only its value is exact.
     add("answer:async.B:header_name_case", headers=(("X-TR-Settlement-Mode", "async-v1"),))
     return out

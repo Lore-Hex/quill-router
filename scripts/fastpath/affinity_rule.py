@@ -18,6 +18,7 @@ request's other filters exclude is not a case the goldens hold.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Callable, Sequence
 from typing import Any
@@ -36,10 +37,54 @@ ESTIMATE_MEMBERS = frozenset({"estimated_cost", "estimated_cost_microdollars"})
 # §2.2): built from the candidates kept, sorted by endpoint id, so a re-rank
 # that keeps the same set leaves them as they were, and one that changes the
 # set (fallbacks off, a remembered endpoint) can change them in kind (§4.4).
+# Admission is off in the goldens, so an answer carries shape A or B only.
 ASYNC_MEMBERS = frozenset({
     "async_eligible", "billing_snapshot", "billing_snapshot_hash", "settlement_ticket", "settlement_status_url",
 })
+SHAPE_A, SHAPE_B = ("async_eligible",), ("async_eligible", "billing_snapshot", "billing_snapshot_hash")
 _MISSING = object()
+
+# The billing snapshot build_snapshot freezes from these candidates (its
+# model_dump, mode json), or None where it refuses one of them.
+SnapshotOf = Callable[[Sequence[str]], "dict[str, Any] | None"]
+
+
+def snapshot_hash(snapshot: dict[str, Any]) -> str:
+    """billing_snapshot.canonical_hash over a snapshot's JSON form."""
+    canonical = json.dumps(snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False)
+    return hashlib.sha256(canonical.encode("ascii")).hexdigest()
+
+
+def _async_shape(data: dict[str, Any]) -> tuple[str, ...]:
+    return tuple(k for k in data if k in ASYNC_MEMBERS)
+
+
+def check_warm_async(name: str, cold: dict[str, Any], warm: dict[str, Any], cold_ids: Sequence[str],
+                     warm_ids: Sequence[str], snapshot_of: SnapshotOf | None) -> None:
+    """A warm answer whose candidate set differs from the cold one: its
+    async members must be Python's for its own candidates. Both answers'
+    shapes are A or B with async_eligible false; a B snapshot is exactly
+    the one its candidates freeze, under its hash; A where the candidates
+    freeze a snapshot only when the request itself is ineligible, which the
+    cold answer shows (A over candidates that freeze one)."""
+    cold_shape, warm_shape = _async_shape(cold), _async_shape(warm)
+    if not cold_shape and not warm_shape:
+        return
+    if snapshot_of is None:
+        raise AssertionError(f"{name}: async members, and no way to rebuild them")
+    for label, data, shape in (("cold", cold, cold_shape), ("warm", warm, warm_shape)):
+        if shape not in (SHAPE_A, SHAPE_B) or data["async_eligible"] is not False:
+            raise AssertionError(f"{name}: the {label} answer's async members are not shape A or B")
+    request_ineligible = cold_shape == SHAPE_A and snapshot_of(cold_ids) is not None
+    expected = None if request_ineligible else snapshot_of(warm_ids)
+    if warm_shape == SHAPE_A:
+        if expected is not None:
+            raise AssertionError(f"{name}: shape A, where the warm candidates freeze a snapshot")
+        return
+    if expected is None or warm["billing_snapshot"] != expected:
+        raise AssertionError(f"{name}: the warm billing_snapshot is not the warm candidates' snapshot")
+    if warm["billing_snapshot_hash"] != snapshot_hash(expected):
+        raise AssertionError(f"{name}: the warm billing_snapshot_hash is not its snapshot's")
 
 
 def provider_orders(body: dict[str, Any]) -> bool:
@@ -89,10 +134,13 @@ def expected_candidates(body: dict[str, Any], cold: Sequence[str], sessions: Seq
 
 
 def affinity_class(name: str, body: dict[str, Any], cold_response: str, warm_response: str,
-                   sessions: Sequence[tuple[str, float]], model_of: Callable[[str], str]) -> str:
+                   sessions: Sequence[tuple[str, float]], model_of: Callable[[str], str],
+                   snapshot_of: SnapshotOf | None = None) -> str:
     """The class Python's warm answer compares as against its cold one, or
     an AssertionError for an answer that is not rank's re-rank of the cold
-    order with nothing else changed."""
+    order with nothing else changed. An async-v1 answer's members may change
+    only with the candidate set, and only to the warm candidates' own
+    (check_warm_async, which needs snapshot_of)."""
     cold, warm = json.loads(cold_response)["data"], json.loads(warm_response)["data"]
     cold_ids = [c["endpoint_id"] for c in cold["route_candidates"]]
     warm_ids = [c["endpoint_id"] for c in warm["route_candidates"]]
@@ -103,9 +151,12 @@ def affinity_class(name: str, body: dict[str, Any], cold_response: str, warm_res
         if warm_response != cold_response:
             raise AssertionError(f"{name}: the same order, other bytes")
         return "affinity_cold"
+    set_changed = set(warm_ids) != set(cold_ids)
     allowed = (FIRST_CANDIDATE_MEMBERS | (ESTIMATE_MEMBERS if len(cold_ids) == 1 else frozenset())
-               | (ASYNC_MEMBERS if set(warm_ids) != set(cold_ids) else frozenset()))
+               | (ASYNC_MEMBERS if set_changed else frozenset()))
     changed = {k for k in set(cold) | set(warm) if cold.get(k, _MISSING) != warm.get(k, _MISSING)}
     if not changed <= allowed:
         raise AssertionError(f"{name}: the session changed {sorted(changed - allowed)}")
+    if set_changed:
+        check_warm_async(name, cold, warm, cold_ids, warm_ids, snapshot_of)
     return "affinity_warm"

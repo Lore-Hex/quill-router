@@ -599,13 +599,22 @@ def test_every_async_case_has_the_shape_its_name_claims() -> None:
 
 def test_the_async_cases_send_exactly_async_v1_unless_they_add_nothing() -> None:
     """§2.1: only the header list exactly ["async-v1"] (one value, that case,
-    no surrounding whitespace; the name case-insensitive) adds members."""
+    no surrounding whitespace; the name case-insensitive) adds members. The
+    edge answers with no header and passes any other present header list
+    (header.settlement_async, which G15c keeps for these)."""
+    absent = 0
     for case in _load(ASYNC_CASES)["cases"]:
         modes = [v for k, v in case["request"]["headers"] if k.lower() == "x-tr-settlement-mode"]
-        if ":async.none:" in case["name"]:
-            assert modes != ["async-v1"], case["name"]
-        else:
+        if ":async.none:" not in case["name"]:
             assert modes == ["async-v1"], case["name"]
+        elif not modes:
+            absent += 1
+            assert case["expect"]["outcome"] == "answer", case["name"]
+        else:
+            assert modes != ["async-v1"], case["name"]
+            assert (case["expect"]["outcome"], case["expect"]["reason"]) == (
+                "pass", "header.settlement_async"), case["name"]
+    assert absent == 1
 
 
 def test_the_async_header_carries_pythons_sets_snapshot_and_policy() -> None:
@@ -627,6 +636,11 @@ def test_the_async_header_carries_pythons_sets_snapshot_and_policy() -> None:
     # The edge's async switch off is a pass with Python's admission-off answer.
     (off,) = [case for case in vectors["cases"] if case["expect"].get("reason") == "async.off"]
     assert off["policy_patch"]["async_settle"]["edge_decide"] is False
+    # typed_records false: Python leases nothing without typed records, so
+    # the pilot is off too (the edge passes) and Python answers shape A.
+    (untyped,) = [case for case in vectors["cases"] if case["policy_patch"].get("async_settle", {}).get(
+        "typed_records") is False]
+    assert untyped["expect"]["reason"] == "policy.pilot_off" and untyped["expect"]["python"]["async_shape"] == "A"
 
 
 def test_a_shape_b_snapshot_is_the_composed_candidates_epoch_prices() -> None:
