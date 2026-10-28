@@ -3276,6 +3276,8 @@
       "status": 1,
       "id": "stepfun-ai/step-5-preview",
       "upstream_id": "stepfun-ai/Step-5-Preview",
+      "retirement_at": "2026-11-04T00:00:00Z",
+      "replacement_model_id": "z-ai/glm-5.3-flash",
       "supported_features": [
         "tools",
         "structured-outputs",

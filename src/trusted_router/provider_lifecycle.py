@@ -72,6 +72,7 @@ CRUSOE_OCTOBER_30_RETIREMENT_AT = datetime(2026, 10, 30, 17, 0, tzinfo=UTC)
 TELNYX_NOVEMBER_2_RETIREMENT_AT = datetime(2026, 11, 2, 0, 0, tzinfo=UTC)
 INCEPTION_MERCURY_2_RETIREMENT_AT = datetime(2026, 11, 15, 0, 0, tzinfo=UTC)
 DEEPINFRA_LLAMA_31_70B_TURBO_RETIREMENT_AT = datetime(2026, 11, 3, 0, 0, tzinfo=UTC)
+DEEPINFRA_STEP_5_PREVIEW_RETIREMENT_AT = datetime(2026, 11, 4, 0, 0, tzinfo=UTC)
 # 2027-01-19 10:00 UTC+8: Model Studio stops serving legacy Qwen3.5 models.
 ALIBABA_QWEN35_RETIREMENT_AT = datetime(2027, 1, 19, 2, 0, tzinfo=UTC)
 # 2026-10-14 18:00 UTC+8: Xiaomi starts serving V2.6 weights at V2.6 prices.
@@ -1005,6 +1006,16 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"thinkingmachines/Inkling"}),
         effective_at=TOGETHER_NOVEMBER_6_RETIREMENT_AT,
         replacement_model_ids=("meta-models/muse-spark-open",),
+    ),
+    # DeepInfra's October 28 notice deprecates Step 5 Preview on 2026-11-04
+    # and redirects later requests to the different GLM 5.3 Flash model.
+    # Retire DeepInfra's route at 00:00 UTC (date only).
+    _Retirement(
+        provider="deepinfra",
+        model_ids=frozenset({"stepfun-ai/step-5-preview"}),
+        upstream_ids=frozenset({"stepfun-ai/Step-5-Preview"}),
+        effective_at=DEEPINFRA_STEP_5_PREVIEW_RETIREMENT_AT,
+        replacement_model_ids=("z-ai/glm-5.3-flash",),
     ),
     # DeepInfra's October 27 notice deprecates Llama 3.1 70B Instruct Turbo
     # on 2026-11-03 and redirects later requests to the different Llama 3.3
