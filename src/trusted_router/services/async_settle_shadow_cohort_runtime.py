@@ -310,7 +310,8 @@ class Runtime:
                        endpoints: list[Any], *, typed: bool, federated: bool, replay: bool) -> None:
         inputs: AuthorizeInput | None = None
         try:
-            startup_ready = self.startup_admission.ready
+            startup_unprovisioned = getattr(self.startup_admission, "unprovisioned", False)
+            startup_ready = self.startup_admission.ready or startup_unprovisioned
             observed_us = time.time_ns()//1000
             capability = tuple(request.headers.getlist("X-TR-Settlement-Shadow-Policy"))
             capable = has_v2_capability(capability)
@@ -351,6 +352,8 @@ class Runtime:
             self.port.lost.set()
         finally:
             if inputs is not None and inputs.started:
+                if capable and startup_unprovisioned:
+                    self.port.record_startup_unprovisioned(inputs.observed_us)
                 self.defer_input(inputs, capable)
 
     def retain_startup_attempts(self, harness: Any) -> None:

@@ -124,55 +124,59 @@ def without_observation(response):
 @pytest.mark.parametrize('echo', [False, True], ids=['ordinary', 'spend-lease-echo'])
 def test_literal_enclave_probe_compares(monkeypatch, registered_apps, name, echo):  # noqa: F811
     with probe_context(monkeypatch, registered_apps, name, echo=echo) as env:
-        before = env.save()
-        env.cfg.async_settle_shadow_policy = ''
-        baseline = authorize(env)
-        baseline_money = env.save()
-        env.restore(before)
-        env.cfg.async_settle_shadow_policy = 'shadow-v2'
-        response = authorize(env)
-        events = env.events()
-        data = response.json()['data']
-        assert without_observation(response) == without_observation(baseline)
-        for field in ('gateway_authorizations', 'reservations', 'typed', 'generation_records', 'settle_outbox'):
-            assert env.save()[field] == baseline_money[field], field
-        assert events[0]['eligibility'] == 'eligible', events[0]['diagnostic']
-        assert env.mapped[0].reason is None and env.mapped[0].server_facts is not None
-        assert env.mapped[0].complete_candidates and env.mapped[0].complete_supported_context
-        assert data['billing_snapshot'] and data['billing_shadow_binding']
-        assert data['invocation_nonce'] == env.payload['invocation_nonce']
-        assert data['async_eligible'] is False
-        route, stream = env.payload['route_type'], env.payload['stream']
-        handoff = enclave_handoff(env.provider, route, stream)
-        envelope = copy.deepcopy(handoff['object'])
-        envelope.update(billing_snapshot=data['billing_snapshot'], billing_shadow_binding=data['billing_shadow_binding'])
-        evaluated = billing.evaluate(billing.parse_snapshot(canonical(data['billing_snapshot'])),
-            data['endpoint_id'], billing.RawUsage(**envelope['raw_usage']), billing.Eligibility(**envelope['observed']))
-        envelope['terminal'].update(authorization_id=data['authorization_id'], generation_id=data['generation_id'],
-            workspace_id='ws-rpc', key_id=env.key.hash, invocation_nonce=data['invocation_nonce'],
-            selected_endpoint=data['endpoint_id'], snapshot_hash=data['billing_snapshot_hash'],
-            charge_micro=evaluated.charge_micro, usage=evaluated.usage.model_dump())
-        envelope['payload_hash'] = hashlib.sha256(canonical(envelope['terminal'])).hexdigest()
-        terminal = {**handoff['body'], 'authorization_id': data['authorization_id'],
-                    'selected_endpoint': data['endpoint_id'], 'selected_model': env.payload['model']}
-        headers = {'X-TR-Settlement-Shadow': b64encode(canonical(envelope))}
-        authorized = env.save()
-        outcome = env.client.post('/v1/internal/gateway/settle', json=terminal, headers=headers)
-        assert outcome.status_code == 200, outcome.text
-        events = env.events()
-        settled = env.save()
-        env.restore(authorized)
-        env.cfg.async_settle_shadow_policy = ''
-        baseline_terminal = env.client.post('/v1/internal/gateway/settle', json=terminal, headers=headers)
-        assert (outcome.status_code, list(outcome.headers.multi_items()), outcome.content) == (
-            baseline_terminal.status_code, list(baseline_terminal.headers.multi_items()), baseline_terminal.content)
-        for field in ('gateway_authorizations', 'reservations', 'typed', 'generation_records', 'settle_outbox'):
-            assert env.save()[field] == settled[field], field
-        assert events[-1]['partition'] == 'A', events[-1]['diagnostic']
-        counter = env.service.counters[events[-1]['authorization_day']]
-        for field in ('requested_eligible', 'proof_compared', 'A'):
-            assert counter[field] == 1, (field, counter)
-        assert counter['B'] == counter['C'] == counter['requested_unknown'] == 0
+        assert_probe_compares(env)
+
+
+def assert_probe_compares(env):
+    before = env.save()
+    env.cfg.async_settle_shadow_policy = ''
+    baseline = authorize(env)
+    baseline_money = env.save()
+    env.restore(before)
+    env.cfg.async_settle_shadow_policy = 'shadow-v2'
+    response = authorize(env)
+    events = env.events()
+    data = response.json()['data']
+    assert without_observation(response) == without_observation(baseline)
+    for field in ('gateway_authorizations', 'reservations', 'typed', 'generation_records', 'settle_outbox'):
+        assert env.save()[field] == baseline_money[field], field
+    assert events[0]['eligibility'] == 'eligible', events[0]['diagnostic']
+    assert env.mapped[0].reason is None and env.mapped[0].server_facts is not None
+    assert env.mapped[0].complete_candidates and env.mapped[0].complete_supported_context
+    assert data['billing_snapshot'] and data['billing_shadow_binding']
+    assert data['invocation_nonce'] == env.payload['invocation_nonce']
+    assert data['async_eligible'] is False
+    route, stream = env.payload['route_type'], env.payload['stream']
+    handoff = enclave_handoff(env.provider, route, stream)
+    envelope = copy.deepcopy(handoff['object'])
+    envelope.update(billing_snapshot=data['billing_snapshot'], billing_shadow_binding=data['billing_shadow_binding'])
+    evaluated = billing.evaluate(billing.parse_snapshot(canonical(data['billing_snapshot'])),
+        data['endpoint_id'], billing.RawUsage(**envelope['raw_usage']), billing.Eligibility(**envelope['observed']))
+    envelope['terminal'].update(authorization_id=data['authorization_id'], generation_id=data['generation_id'],
+        workspace_id='ws-rpc', key_id=env.key.hash, invocation_nonce=data['invocation_nonce'],
+        selected_endpoint=data['endpoint_id'], snapshot_hash=data['billing_snapshot_hash'],
+        charge_micro=evaluated.charge_micro, usage=evaluated.usage.model_dump())
+    envelope['payload_hash'] = hashlib.sha256(canonical(envelope['terminal'])).hexdigest()
+    terminal = {**handoff['body'], 'authorization_id': data['authorization_id'],
+                'selected_endpoint': data['endpoint_id'], 'selected_model': env.payload['model']}
+    headers = {'X-TR-Settlement-Shadow': b64encode(canonical(envelope))}
+    authorized = env.save()
+    outcome = env.client.post('/v1/internal/gateway/settle', json=terminal, headers=headers)
+    assert outcome.status_code == 200, outcome.text
+    events = env.events()
+    settled = env.save()
+    env.restore(authorized)
+    env.cfg.async_settle_shadow_policy = ''
+    baseline_terminal = env.client.post('/v1/internal/gateway/settle', json=terminal, headers=headers)
+    assert (outcome.status_code, list(outcome.headers.multi_items()), outcome.content) == (
+        baseline_terminal.status_code, list(baseline_terminal.headers.multi_items()), baseline_terminal.content)
+    for field in ('gateway_authorizations', 'reservations', 'typed', 'generation_records', 'settle_outbox'):
+        assert env.save()[field] == settled[field], field
+    assert events[-1]['partition'] == 'A', events[-1]['diagnostic']
+    counter = env.service.counters[events[-1]['authorization_day']]
+    for field in ('requested_eligible', 'proof_compared', 'A'):
+        assert counter[field] == 1, (field, counter)
+    assert counter['B'] == counter['C'] == counter['requested_unknown'] == 0
 
 
 @pytest.mark.parametrize('changes', [

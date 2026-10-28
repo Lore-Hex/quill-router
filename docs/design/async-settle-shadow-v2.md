@@ -1077,6 +1077,16 @@ the whole fleet's clock. Its opted traffic may count only after its own prerequi
 maximum. Provision startup/readiness integration so it accepts no opted requests
 before ready; do not turn workspace opt-in off locally to erase a denominator.
 If safe readiness cannot be enforced, count early traffic and block that day.
+
+**Operational evidence amendment (2026-10-28): BEFORE**, an empty/unset router
+startup manifest held the latch closed indefinitely. **AFTER**, that unprovisioned
+mode evaluates opted shadow traffic normally, matching the enclave's absent-harness
+admission, to collect billing-agreement comparisons before a bounded money pilot.
+Each opted authorize increments retained `diagnostics.startup_unprovisioned`;
+readiness remains unproven and the missing per-boot ledger still blocks certification
+(`boot_prerequisite_gap`). A configured manifest, including an unreadable or invalid
+one, retains the strict readiness latch. No certified seven-day window is claimed.
+
 Startup observer intervals and resource load remain in exports even when there
 was no traffic. Idle boots still need closure; no revision-only substitution.
 Readiness uses a bounded boot-local timer/transport check plus the already approved

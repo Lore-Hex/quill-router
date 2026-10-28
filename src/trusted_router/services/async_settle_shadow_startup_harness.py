@@ -81,6 +81,8 @@ IDLE_OBSERVER_REASON = "no observer ran in this process"
 @dataclass
 class Admission:
     ready: bool = False
+    # Observation without a provisioned harness is not certified readiness.
+    unprovisioned: bool = False
 
 
 @dataclass(frozen=True)
@@ -559,7 +561,8 @@ def install(app: Any, settings: Any, runtime: Any = None) -> None:
     if getattr(app.state, "async_settle_shadow_startup", None) is not None:
         return
     service = getattr(app.state, "async_settle_shadow_observation", None)
-    admission = Admission()
+    manifest_path = os.environ.get(MANIFEST_ENV, "")
+    admission = Admission(unprovisioned=not manifest_path)
     if runtime is not None:
         runtime.startup_admission = admission
     harness = Harness(service.journal.boot if service is not None else str(uuid4()), admission)
@@ -574,7 +577,7 @@ def install(app: Any, settings: Any, runtime: Any = None) -> None:
                 descriptor = await startup_call(read_fd, .3)
                 if descriptor is not None:
                     require(await startup_call(partial(harness.correlate, descriptor), .3))
-                manifest = await startup_call(partial(load_manifest, os.environ.get(MANIFEST_ENV, "")), 1.)
+                manifest = await startup_call(partial(load_manifest, manifest_path), 1.)
                 if descriptor is None:
                     descriptor = await startup_call(partial(instance_descriptor, manifest["launch"]), 1.1)
                     require(await startup_call(partial(harness.correlate, descriptor), .3))
