@@ -263,6 +263,14 @@ same hours at the previous one, read from the balancer's metrics
   weight; both nodes `HEALTHY`; no `TR Fast path` alert; the decide
   shadow's `dropped` stays 0.
 
+At 100 control's authorize route has no direct requests of its own in the
+window, so the step to 100 reads control's side from before the step: its
+authorize 5xx rate and its p50 and p99 by proxy continent over the same
+hours of the day before, at 50 (the 1 h read against the same hour 24 h
+earlier, the 24 h read against the 24 h before the step). The edge's own
+read at 50 over those hours is beside it, so a change in the edge and a
+change in the day's traffic are told apart.
+
 A gate failing means the previous weight (or 0, which is R0), the same
 one-line change merged and applied; the balancer takes it at once. Keep
 the shadow's comparison counts from before the step apart from those
