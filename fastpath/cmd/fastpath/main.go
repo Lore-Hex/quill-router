@@ -139,7 +139,13 @@ func run() error {
 	// From here to service.Run the process reads its secrets and makes its
 	// clients, before the service's own watchdogs run: one of those stalled
 	// would leave the node down with no exit for systemd to restart.
-	unwatch := startWatch(service.StartStall, os.Exit)
+	reads := 0
+	for _, name := range append(strings.Split(*acceptSecrets, ","), *keySecret, *edgeTokenSecret) {
+		if name != "" {
+			reads++
+		}
+	}
+	unwatch := startWatch(startBudget(reads), os.Exit)
 	defer unwatch()
 	var err error
 	if cfg.Key, cfg.AcceptKeys, err = keysOf(context.Background(), *keyPath, *keySecret, *acceptSecrets); err != nil {
@@ -204,6 +210,14 @@ func run() error {
 	err = service.Run(ctx, cfg, service.Clients{Spanner: sp, PubSub: ps})
 	fmt.Fprintf(os.Stderr, "fastpath: stopped after %v\n", time.Since(began).Round(time.Second))
 	return err
+}
+
+// startBudget is how long the start before service.Run may take: each of
+// its secret reads up to its deadline, one after another, and then
+// service.StartStall for the clients' construction, so a start whose every
+// read nearly runs out still reaches the service.
+func startBudget(reads int) time.Duration {
+	return time.Duration(reads)*secretDeadline + service.StartStall
 }
 
 // startWatch exits the process with code 1 unless the stop it returns is
