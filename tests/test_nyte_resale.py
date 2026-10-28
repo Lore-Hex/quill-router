@@ -341,6 +341,19 @@ def test_postgres_transaction_implementation_on_sql_fake(monkeypatch):
                         contract.test_nyte_finalization_invariant_repairs_pending(
                             store, contract.reference(f"pg-invariant-{notified}-{backfill}-{allocate}-{adverse}")[:20],
                             notified, backfill, allocate, adverse)
+        for recovery in ("holder", "sweep", "request_refund"):
+            for provider in ("healthy", "unavailable", "adverse_race"):
+                with monkeypatch.context() as patch:
+                    contract.test_nyte_interrupted_checkout_repairs_without_replay(
+                        store, contract.reference(f"pg-repair-{recovery}-{provider}")[:20], patch, recovery, provider)
+        for notified in (True, False):
+            with monkeypatch.context() as patch:
+                contract.test_nyte_repair_checks_legacy_session_and_sweep_age(
+                    store, contract.reference(f"pg-repair-age-{notified}")[:20], patch, notified)
+        for decision in ("list", "withdraw", "allocation", "ops_queue", "worker"):
+            with monkeypatch.context() as patch:
+                contract.test_nyte_all_position_decisions_repair_legacy_rows(
+                    store, contract.reference(f"pg-repair-decision-{decision}")[:20], patch, decision)
         # Read-committed Postgres must lock the completion fact until allocation
         # commits. SQLite cannot model the lock, but verifies the shipped SQL.
         completion_reads = [sql for sql, params in conn.statements
@@ -887,3 +900,58 @@ def test_unmapped_payment_ownership_lookup_is_private(settings, monkeypatch, cap
     assert email not in caplog.text and "outside-private-ownership" in caplog.text
     assert ("nyte_payment_review", "pi_private") in store.resale_entities
     assert email not in str(store.resale_entities)
+
+
+def test_position_repair_provider_reads_are_private(settings, monkeypatch, caplog):
+    import logging
+
+    store = InMemoryStore()
+    monkeypatch.setattr(resale, "STORE", store)
+    call(store, "purchase_prepare", position={"id": "repair", "session_id": "repair", "holder": "repair", "lots": 1,
+         "grade": "A", "per_lot_cents": 100, "purchase_completed_at": 100, "payment_intent": "pi_repair"}, event_id="repair", now=100)
+    email = "private-repair@example.com"
+
+    def retrieve_session(*args, **kwargs):
+        logging.getLogger("stripe").debug("session metadata email=%s", email)
+        return {"id": "repair", "payment_intent": "pi_repair", "payment_status": "paid", "status": "complete"}
+
+    def retrieve_payment(*args, **kwargs):
+        logging.getLogger("stripe").debug("payment metadata email=%s", email)
+        return {"status": "succeeded", "latest_charge": {"paid": True, "amount_refunded": 0}}
+    monkeypatch.setattr(resale.stripe.checkout.Session, "retrieve", retrieve_session)
+    monkeypatch.setattr(resale.stripe.PaymentIntent, "retrieve", retrieve_payment)
+    with caplog.at_level(logging.DEBUG):
+        p = resale.command("position", settings=settings, position="repair", now=101)
+        logging.getLogger("stripe").debug("outside-repair")
+    assert p["status"] == "held" and p["allocation_status"] == "historical"
+    assert email not in caplog.text and "outside-repair" in caplog.text
+
+
+def test_position_repair_console_guard_keeps_manual_refund_available(settings, monkeypatch):
+    store = InMemoryStore()
+    monkeypatch.setattr(resale, "STORE", store)
+    call(store, "purchase_prepare", position={"id": "repair", "session_id": "repair", "holder": "repair", "lots": 1,
+         "grade": "A", "per_lot_cents": 100, "purchase_completed_at": 100, "payment_intent": "pi_repair"}, event_id="repair", now=100)
+    retrieve = Mock(side_effect=AssertionError("Unsafe Stripe console diagnostics"))
+    monkeypatch.setattr(resale.stripe.checkout.Session, "retrieve", retrieve)
+    monkeypatch.setattr(resale.stripe.PaymentIntent, "retrieve", retrieve)
+    monkeypatch.setattr(resale.stripe, "log", "debug")
+    result = resale.command("request_refund", settings=settings, position="repair", holder="repair", request_id="refund", now=101)
+    assert result["status"] == "refund_requested"
+    assert call(store, "pending", queue="full_refunds")["rows"][0]["verification_pending"]
+    retrieve.assert_not_called()
+
+
+def test_refund_cli_always_sweeps_pending_positions(settings, monkeypatch, capsys):
+    from scripts import retry_nyte_resale_refunds as script
+
+    settings.resale_enabled = False
+    monkeypatch.setattr(script, "get_settings", lambda: settings)
+    monkeypatch.setattr(script, "create_app", Mock())
+    sweep = Mock(return_value={"checked": 3, "repaired": 1, "pending": 0})
+    monkeypatch.setattr(script, "sweep_pending_positions", sweep)
+    monkeypatch.setattr(script, "command", Mock(return_value={"rows": [], "cursor": None}))
+    monkeypatch.setattr("sys.argv", ["retry_nyte_resale_refunds", "--needs-ops"])
+    script.main()
+    sweep.assert_called_once_with(settings)
+    assert "checked 3, repaired 1, pending 0" in capsys.readouterr().out

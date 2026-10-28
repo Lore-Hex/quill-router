@@ -14,11 +14,11 @@ import sentry_sdk
 import stripe
 from email_validator import validate_email
 
-from trusted_router.config import Settings
+from trusted_router.config import Settings, get_settings
 from trusted_router.security import constant_time_equal, signed_token_signature
 from trusted_router.services.email import EmailMessage, get_email_service
 from trusted_router.storage import STORE
-from trusted_router.storage_resale import reference
+from trusted_router.storage_resale import PositionRepairRequired, reference
 
 _PRIVATE_STRIPE_READ: ContextVar[bool] = ContextVar("nyte_private_stripe_read", default=False)
 
@@ -75,8 +75,51 @@ log = logging.getLogger(__name__)
 GENERIC_RESPONSE = "if we have reservations for that address, we sent a link"
 
 
-def command(op: str, **kwargs: Any) -> dict[str, Any]:
-    return STORE.reserved_resale({"op": op, "now": int(time.time()), **kwargs})
+def command(op: str, *, settings: Settings | None = None, **kwargs: Any) -> dict[str, Any]:
+    request = {"op": op, "now": int(time.time()), **kwargs}
+    observations: dict[str, Any] = {}
+    for _ in range(1001):
+        try:
+            return STORE.reserved_resale({**request, "_position_states": observations})
+        except PositionRepairRequired as repair:
+            if repair.session_id in observations:
+                raise RuntimeError("Reservation repair did not converge") from None
+            observations[repair.session_id] = position_repair_state(repair, settings or get_settings())
+    raise ValueError("Contact ops to reconcile additional reservations")
+
+
+@_private_stripe_reads()
+def _position_repair_state(repair: PositionRepairRequired, settings: Settings) -> dict[str, Any]:
+    complete = repair.complete
+    if not complete:
+        session = _stripe_dict(stripe.checkout.Session.retrieve(repair.session_id, api_key=settings.stripe_secret_key))
+        payment = session.get("payment_intent")
+        payment = payment.get("id") if isinstance(payment, dict) else payment
+        if session.get("id") != repair.session_id or payment != repair.payment_intent:
+            raise ValueError("Reservation payment mismatch")
+        complete = session.get("status") == "complete" and session.get("payment_status") == "paid"
+    return {"payment_intent": repair.payment_intent, "session_complete": complete,
+            "payment_state": current_payment_state(repair.payment_intent, settings)}
+
+
+def position_repair_state(repair: PositionRepairRequired, settings: Settings) -> dict[str, Any] | None:
+    try:
+        return _position_repair_state(repair, settings)
+    except Exception:  # noqa: BLE001 - unavailable is non-sellable; never log SDK/PII
+        return None
+
+
+def sweep_pending_positions(settings: Settings, *, limit: int = 100) -> dict[str, int]:
+    """Bounded primary-key sweep, including pre-fix rows without a repair index."""
+    cursor = command("repair_cursor", settings=settings).get("cursor")
+    page = STORE.reserved_resale_position_page(cursor=cursor, limit=limit)
+    repaired = pending = 0
+    for session in page["ids"]:
+        row = command("repair_position", position=session, settings=settings)
+        repaired += int(row["repair_performed"])
+        pending += int(bool(row.get("payment_verification_pending") or row.get("status") == "pending" or row.get("allocation_status") == "pending"))
+    command("repair_cursor", cursor=page["cursor"], settings=settings)
+    return {"checked": len(page["ids"]), "repaired": repaired, "pending": pending}
 
 
 def holder_key(email: str) -> str:
@@ -98,12 +141,13 @@ def record_purchase(obj: dict[str, Any], event_id: str, purchased_at: int | None
         "per_lot_cents": int(metadata["per_lot_cents"]), "purchase_completed_at": purchased_at,
         "payment_intent": payment, "holder": holder_key(email),
         "terms_version": metadata["terms_version"], "status": "needs_review" if needs_review else "held",
+        "stripe_session_complete": obj.get("payment_status") == "paid",
     }
     # Publish the non-sellable position and mapping before any provider read.
     # A failed read leaves it pending; retries reuse the session-keyed row.
-    command("purchase_prepare", position=position, event_id=event_id, backfill=backfill)
+    command("purchase_prepare", settings=settings, position=position, event_id=event_id, backfill=backfill)
     state = current_payment_state(payment, settings)
-    return command("purchase", position=position, event_id=event_id, backfill=backfill,
+    return command("purchase", settings=settings, position=position, event_id=event_id, backfill=backfill,
                    allocate=settings.resale_enabled and not backfill,
                    fee_bps=settings.resale_fee_bps, payment_state=state)
 
@@ -123,7 +167,7 @@ def alert_ops(settings: Settings, subject: str, body: str) -> None:
 @_private_stripe_reads()
 def process_fill(fill_id: str, settings: Settings) -> None:
     owner = secrets.token_hex(16)
-    fill = command("fill_claim", fill=fill_id, owner=owner)
+    fill = command("fill_claim", settings=settings, fill=fill_id, owner=owner)
     if not fill:
         return
     refund_id = fill.get("stripe_refund_id")
@@ -167,9 +211,9 @@ def process_fill(fill_id: str, settings: Settings) -> None:
             status = "refunded" if refund.get("status") == "succeeded" else "needs_ops" if refund.get("status") in {"failed", "canceled"} else "retry"
     except Exception:  # noqa: BLE001 - preserve retryability without PII/error bodies
         status = "retry"
-    finished = command("fill_finish", fill=fill_id, owner=owner, status=status, stripe_refund_id=refund_id,
+    finished = command("fill_finish", settings=settings, fill=fill_id, owner=owner, status=status, stripe_refund_id=refund_id,
                        failure_status=refund.get("status") if status == "needs_ops" else None)
-    observed = finished or command("refund_obligation", kind="resale_fill", id=fill_id)
+    observed = finished or command("refund_obligation", settings=settings, kind="resale_fill", id=fill_id)
     if observed.get("status") == "needs_ops":
         alert_failed_refund(observed, settings)
     elif status != "refunded":
@@ -203,7 +247,7 @@ def send_holder_link(email: str, settings: Settings) -> None:
         nonce, expires = secrets.token_urlsafe(32), int(time.time()) + 900
         payload = f"{nonce}.{expires}"
         token = payload + "." + _signature(settings, payload)
-        command("token_create", key=reference(token), holder=holder_key(email))
+        command("token_create", settings=settings, key=reference(token), holder=holder_key(email))
         # Fragment never reaches access logs, Referer, or analytics. Redemption
         # requires an explicit button so mail link scanners cannot consume it.
         link = "https://nytokenexchange.com/manage-reservation#" + token
@@ -225,7 +269,7 @@ def redeem_link(token: str, settings: Settings) -> dict[str, str]:
     except (ValueError, TypeError) as exc:
         raise ValueError("Link expired or invalid; request a new link") from exc
     session = secrets.token_urlsafe(32)
-    command("token_consume", key=reference(token), session=reference(session))
+    command("token_consume", settings=settings, key=reference(token), session=reference(session))
     return {"session": session}
 
 
@@ -301,7 +345,7 @@ def reconcile_payment_event(event: dict[str, Any], settings: Settings) -> bool:
     if not payment_intent:
         return False
     reservation_payment = False
-    if not command("payment", payment_intent=payment_intent):
+    if not command("payment", settings=settings, payment_intent=payment_intent):
         from trusted_router.services.reserved_tokens import KIND
 
         # Only the PaymentIntent's own metadata establishes early ownership;
@@ -314,7 +358,7 @@ def reconcile_payment_event(event: dict[str, Any], settings: Settings) -> bool:
     if event["type"] in {"refund.failed", "refund.updated", "refund.created", "charge.refund.updated"}:
         refund = {**obj, "payment_intent": payment_intent,
                   "status": "failed" if event["type"] == "refund.failed" else obj.get("status")}
-        obligation = command("refund_lifecycle", refund=refund, reservation_payment=reservation_payment)
+        obligation = command("refund_lifecycle", settings=settings, refund=refund, reservation_payment=reservation_payment)
         if obligation:
             if obligation["status"] == "needs_ops":
                 alert_failed_refund(obligation, settings)
@@ -332,7 +376,7 @@ def reconcile_payment_event(event: dict[str, Any], settings: Settings) -> bool:
         if event["type"] == "charge.refunded":
             charge = obj
         state = payment_state(payment_intent, charge, settings)
-    result = command("reconcile_payment", payment_intent=payment_intent, payment_state=state,
+    result = command("reconcile_payment", settings=settings, payment_intent=payment_intent, payment_state=state,
                      reservation_payment=reservation_payment)
     return bool(result)
 
@@ -355,7 +399,7 @@ def acknowledge_full_refund(session_id: str, refund_id: str, settings: Settings)
     refund = _stripe_dict(stripe.Refund.retrieve(refund_id, api_key=settings.stripe_secret_key))
     if refund.get("id") != refund_id or refund.get("status") not in {"succeeded", "pending", "requires_action", "failed", "canceled"}:
         raise ValueError("Stripe refund does not match acknowledgement")
-    obligation = command("refund_acknowledge", position=session_id, refund=refund, owner=secrets.token_hex(16))
+    obligation = command("refund_acknowledge", settings=settings, position=session_id, refund=refund, owner=secrets.token_hex(16))
     if obligation["status"] == "needs_ops":
         alert_failed_refund(obligation, settings)
     return obligation

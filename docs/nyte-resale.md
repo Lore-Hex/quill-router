@@ -14,14 +14,15 @@ ledger, workspace or balance method is called.
 
 A single `nyte_mutex/v1` row serializes this low-volume program. Postgres seeds
 and locks it; native Spanner reads and writes a revision in the transaction.
-All state reads use complete primary keys. No body search, table scan or
+Decision reads use complete primary keys; the repair sweep pages a bounded
+`nyte_position` primary-key range. No body search, table scan or
 cross-cloud transaction is introduced. This simple serialization prioritizes
 correctness for step 1; throughput is intentionally bounded by one NYTE mutex.
 A higher-volume rollout should partition by grade with a reviewed lock order.
 
 | Entity kind / key | Durable fields |
 | --- | --- |
-| `nyte_position` / Stripe Checkout Session | Stable position ID, grade, original lots, per-lot cents, original PaymentIntent, first `purchase_completed_at`, holder hash, terms version, sold/listed lots, status, payment-review marker, allocation status (pending/complete/historical), listing/fill IDs, new-inventory lots, holder-next pointer, event ID |
+| `nyte_position` / Stripe Checkout Session | Preparation time, known session-completion flag, verification-pending marker, last repair/attempt time, stable position ID, grade, original lots, per-lot cents, original PaymentIntent, first `purchase_completed_at`, holder hash, terms version, sold/listed lots, status, payment-review marker, allocation status (pending/complete/historical), listing/fill IDs, new-inventory lots, holder-next pointer, event ID |
 | `nyte_payment` / original PaymentIntent | Session reference; isolates Dashboard refunds without inherited metadata from credit/adverse handlers |
 | `nyte_payment_review` / original PaymentIntent | Sticky disputed/unpaid flags, maximum observed external refund cents, observation time; retains adverse state for mapped or independently verified reservation payments, including before position creation, without raw Stripe payloads or PII |
 | `nyte_holder` / domain-separated normalized email hash | Head of the holder's position list; no plaintext email |
@@ -31,6 +32,7 @@ A higher-volume rollout should partition by grade with a reviewed lock order.
 | `nyte_refund_failure` / Stripe refund ID | First unmatched failure/cancellation: PaymentIntent, amount, status, timestamp and optional typed identifiers; replayed when the obligation is bound, with no raw provider payload |
 | `nyte_queue` / `grade:{grade}`, `refunds`, `refunds_needs_ops`, `full_refunds`, `full_refunds_needs_ops` | Linked queue head/tail; completed entries are unlinked; issued refunds needing manual reconciliation have a separate queue |
 | `nyte_event` / Stripe event ID | Buyer session; session identity also prevents duplicates across different event IDs |
+| `nyte_maintenance` / `position_repair` | Durable primary-key cursor for the bounded background repair sweep |
 | `nyte_action` / hash of holder + request ID | Original command and result; rejects reusing an ID for a different action |
 | `nyte_access` / hash of capability | Holder hash, expiry, consumed marker or session purpose; never raw capability |
 | `nyte_refund_request` / original session | Full-refund obligation: accepted request time, position ID, original payment/amount, bound refund ID, pending/in_flight/refunded/needs_ops status, transition/stale-write history, queue links |
@@ -76,8 +78,8 @@ applies retained adverse evidence and the fetched state in one transaction;
 only a healthy position becomes held. Listings may be consumed only by an
 unfinished allocation with the flag on, outside import/backfill, and before its
 notification is sent. Every other unfinished finalization becomes `historical`
-new inventory. Replay/import repairs previously stranded pending allocation using
-this same rule, preserving purchase time and adverse evidence. Existing completed
+new inventory. Replay/import and repair-on-read finalize previously stranded
+pending allocation using this same rule, preserving purchase time and adverse evidence. Existing completed
 allocations are never repeated or rewritten. Eligible new paid purchases consume
 active grade listings in FIFO order, then new inventory. One transaction writes all fills and the buyer position;
 competing purchases and withdrawals cannot oversell. Withdrawal removes only
@@ -192,7 +194,8 @@ session. Both are stored hashed. Contact-bearing Stripe and SES calls suppress S
 their own thread context, and disable Sentry outbound-query tracing in that
 scope. Stripe direct console diagnostics must be off for
 all private Stripe calls; that mode bypasses Python logging filters, so calls
-refuse it before changing the ledger. The same context protects refund worker
+refuse provider I/O in that mode. Repair treats this as unavailable verification
+and can still accept a timely manual refund request. The same context protects refund worker
 create/list/retrieve calls and full-refund acknowledgement, including SDK DEBUG
 response payloads, child transport logs and Sentry tracing.
 Email links put the token in the fragment, and
@@ -211,11 +214,57 @@ stays unknown and blocks self-service mutations pending ops reconciliation. Allo
 finalizes unfinished allocation as `historical`, including an import racing a
 webhook that already persisted the purchase timestamp. A later webhook cannot
 retroactively allocate that purchase. Disabled finalization and replay of an
-already-notified purchase follow the same rule. Pending positions cannot list or
-request refunds while Stripe verification is incomplete; successful finalization
-never leaves either position status or allocation status pending. Historical
-positions remain refundable/listable under the usual purchase-time rules.
+already-notified purchase follow the same rule. Pending positions cannot list
+while Stripe verification is incomplete. A full-refund request with a known
+purchase time inside 30 days is still accepted into the manual ops queue, with a
+verification-pending marker; ops must check the payment and existing refunds
+before issuing anything. The holder page exposes this server eligibility even
+when the position remains pending. Successful finalization never leaves either
+position status or allocation status pending. Historical positions remain
+refundable/listable under the usual purchase-time rules.
 Neither interleaving duplicates the holder index or allocation.
+
+### Repair-on-read and unattended recovery (review round 9)
+
+`storage_resale._execute.load_position` is the single position-read choke point.
+It covers holder position pages, direct position lookup, listing, withdrawal,
+full-refund requests, allocation candidate scans, both active and needs-ops
+refund queues, refund obligation lookup/claim/finish, lifecycle matching and
+full-refund acknowledgement. The purchase finalizer uses its own freshly verified
+Stripe state with the same allocation invariant; adverse-payment reconciliation
+can always retain blocking evidence without needing another provider read.
+
+For an unfinished position the loader signals `PositionRepairRequired`, aborting
+the transaction before any writes. `services.resale.command` retrieves the exact
+Checkout Session when completion is not already known, then current payment
+state under the private-provider logging and console-diagnostics guard. It retries
+with that observation. Under the backend transaction lock, the loader rechecks
+the current position, notification and retained adverse evidence; only an
+unfinished position is repaired. A sent notification or verified completed paid
+session finalizes it as **historical inventory**, never consuming a listing.
+Adverse evidence still produces `needs_review`; a failed Stripe lookup leaves
+it non-sellable and permits a timely manual refund request. No raw provider data
+or contact information is persisted in repair state or action receipts. Existing
+refund-request/refunded/needs-ops states are preserved.
+
+Every refund CLI invocation also calls `sweep_pending_positions`, independent of
+the sales flag. Each invocation reads at most 100 position IDs (plus one paging
+sentinel), using `kind = nyte_position AND id > cursor ORDER BY id LIMIT ...`.
+It repairs pending rows at least **five minutes** old through the same loader;
+it includes legacy rows without requiring a new index or backfill. A durable
+cursor resumes on the next invocation and wraps after the last page. Completed
+rows need no Stripe calls. The CLI prints counts only. Arrange periodic runs;
+large ledgers may need multiple invocations for a full pass. This makes recovery
+independent of holder visits, webhook replays and historical imports. Disabled
+paid-checkout processing itself remains the unchanged #2125 no-ledger path.
+
+The backend contracts cover the exact failed-read / disabled-completion /
+re-enabled-access sequence without replay or backfill, unattended recovery,
+direct refund requests, continued Stripe unavailability, adverse evidence racing
+a healthy repair snapshot, legacy session verification, sweep age/pagination,
+and all position decision callers. Memory and native Spanner adapters execute
+them directly; the offline Postgres transaction harness also runs these contracts.
+Server-backed acceptance still requires the configured Postgres/Spanner emulators.
 
 Before enabling, Joseph/operator must:
 
@@ -239,21 +288,23 @@ Before enabling, Joseph/operator must:
 5. Arrange periodic execution of `uv run python -m scripts.retry_nyte_resale_refunds`
    with the **control** deployment configuration, and run it after any refund
    alert. The durable queue survives process exits; scheduled infrastructure is
-   not installed by this local change. Continue with the printed `--cursor`.
+   not installed by this local change. Each invocation also advances the durable
+   pending-position repair cursor. Continue refund work with the printed `--cursor`.
 6. Review `--full-refunds`. Issue each full refund in Stripe against its original
    PaymentIntent, then run `--ack-full-refund-session cs_... --refund-id re_...`.
-   The script verifies refund ID, full amount and original payment, then applies
+   Check current payment state and already-issued refunds first, especially for
+   requests marked verification pending. The script verifies refund ID, full amount and original payment, then applies
    the shared monotonic transition. It prints the actual resulting status; a
    stale success cannot close failed work. Pending refunds remain visible, and
    failed/canceled refunds move to the full-refund ops queue. Do not grant balance credits. Review old ambiguous or
    failed resale refunds against `nyte_fill_id` before any manual repair.
 7. Inspect `uv run python -m scripts.retry_nyte_resale_refunds --needs-ops` after
    an issued-refund failure alert. This command only lists identifiers and never
-   creates refunds. Reconcile Stripe's failure with the retained original refund
+   creates refunds; it also advances pending-position repair. Reconcile Stripe's failure with the retained original refund
    ID before a separately reviewed manual repair; there is no automatic reset or
    reissue for these obligations. Use `--needs-ops --full-refunds` for failed
    full refunds; the same command without `--full-refunds` shows failed resale
-   fills. Both views are read-only.
+   fills. Neither view issues a refund; position reads may persist a safe repair.
 
 Browser analytics `nyte.resale_listed` / `nyte.resale_withdrawn` contain only a
 bounded grade, existing visitor/campaign metadata and `/manage-reservation` page.
@@ -894,3 +945,79 @@ Logs: `/tmp/nyte-r8-requested.log`, `/tmp/nyte-r8-focused.log`,
 `/tmp/nyte-r8-site-tests.log`, `/tmp/nyte-r8-js.log` and
 `/tmp/nyte-r8-site-build.log`. Coverage used `COVERAGE_FILE=/tmp/nyte-r8-coverage`;
 uv used `UV_CACHE_DIR=/tmp/nyte-uv-cache`.
+
+## PR #2129 review round 9
+
+The interrupted purchase now recovers on an ordinary holder read or the refund
+CLI's sweep. Neither path replays a webhook or imports a purchase. With Stripe
+unavailable, a timely full-refund request still enters the manual ops queue;
+selling remains blocked. The original purchase time and retained adverse
+payment evidence survive every repair. No configuration or terms change is
+needed; no new refund issuance or balance-credit path was added.
+
+| Choke point / caller | Implementation |
+| --- | --- |
+| Single conditional position loader | `src/trusted_router/storage_resale.py:159` (`load_position`); private Stripe observation and transaction retry in `src/trusted_router/services/resale.py:78` |
+| Allocation candidates | `src/trusted_router/storage_resale.py:276`; an unavailable seller is removed from the active listing queue without fabricating adverse payment evidence |
+| Holder display | `src/trusted_router/storage_resale.py:307`; browser response and server refund eligibility in `src/trusted_router/routes/resale.py:42` |
+| List / withdraw / timely full-refund request | `src/trusted_router/storage_resale.py:318`; `refund_request_allowed` at `:207` permits manual requests while verification is unavailable |
+| Direct position lookup / sweep | `src/trusted_router/storage_resale.py:372`; `services/resale.py:112` pages primary-key IDs through the same loader |
+| All active and needs-ops queue views | `src/trusted_router/storage_resale.py:381`; loads full-refund positions, or both seller and buyer for fills |
+| Refund worker / obligation lookup / acknowledgement | `src/trusted_router/storage_resale.py:398` loads positions for `refund_obligation`, `fill_claim`, `fill_finish` and `refund_acknowledge`; the shared terminal transition loads through it at `:450` |
+| Refund lifecycle matching | `src/trusted_router/storage_resale.py:490`; typed/bound obligation resolution also uses the loader |
+| Purchase finalization / adverse-payment ingestion | `src/trusted_router/storage_resale.py:221` and `:231` use the same read choke point in finalizing mode: their own verified snapshot or sticky adverse evidence is applied in that transaction; they never promote a pending position on an unverified read |
+| Unattended CLI integration | `scripts/retry_nyte_resale_refunds.py:34`; every invocation advances the bounded repair sweep, including while sales are disabled |
+| Portable primary-key paging | `storage.py:3881`, `storage_postgres.py:3117`, `storage_gcp.py:6703`, protocol `store_protocol.py:410`; new GoogleSQL expression and sink registered in `tests/conformance/spanner_sql_manifest.json` |
+
+Contract regressions in `tests/conformance/test_nyte_resale_ledger.py:952` cross
+holder read, sweep and direct refund request with healthy/unavailable Stripe and
+adverse evidence arriving before repair commits. `:1053` checks legacy session
+completion, minimum sweep age, no repeated provider read, and later listing
+eligibility. `:1086` exercises listing, withdrawal, allocation, ops queue and
+worker reads against the old held/pending shape. The offline Postgres runner
+executes these same contracts at `tests/test_nyte_resale.py:344`; native adapters
+are registered in the ordinary conformance matrix. Privacy/console-guard and
+CLI integration tests start at `tests/test_nyte_resale.py:905`. The holder JS
+regression verifies a pending position offers only the timely manual-refund
+button when the server authorizes it.
+
+Earlier race tests now distinguish passive test observations of persisted state
+from application reads, which intentionally repair it. Their exactly-once,
+first-write timestamp, adverse-state and no-allocation assertions remain. The
+old pending-full-refund rejection expectation is replaced by the new explicit
+manual-queue contract. The disabled paid-checkout broken-ledger assertion still
+passes without changing the checkout webhook handler.
+
+| Round 9 validation | Result |
+| --- | --- |
+| Requested seven pytest files, conformance files grouped first | **627 passed, 498 skipped** in 229.73 seconds; **89.89%** coverage across the three resale modules; 70% coverage gate passed |
+| Schema / Store protocol checks | **13 passed** |
+| Spanner SQL inventory, acceptance guards and acceptance cases | **146 passed, 591 skipped**; skipped cases require native infrastructure |
+| Regression against pre-change ledger and holder handler | New healthy-holder/no-replay contract **fails** on `pending != held`; current code passes. Baseline modules were loaded only in an isolated test process; no tree reversion. |
+| Site unittests | **99 passed** |
+| `node --test tests/js/nyte_holder.test.cjs` | **4 passed** |
+| Site build | Passed: 13 markets / 30 domains in `/tmp/nyte-r9-site` |
+| Repository-wide ruff / mypy, changed source and CLI mypy | Passed: 551 source files plus the refund CLI |
+| `git diff --check` | Passed |
+| Explicit native Spanner emulator gate | **Blocked**: setup connection refused at `127.0.0.1:9010`; Docker unavailable. Fail-fast stopped after one setup error, with 656 deselected. Not a pass. |
+| Full repository attempt (`uv run pytest -q --ff -x --tb=short`) | **Blocked** at unchanged `tests/test_aws_postgres_delivery_verifier_install.py:432`: the copied macOS `shasum` cannot run with the installed Perl setup. 1 failed, 1,846 deselected; no full-suite pass claimed. |
+
+The final requested run includes both conformance modules first, followed by
+`test_nyte_resale.py`, `test_reserved_tokens.py`, `test_billing.py`,
+`test_stripe_processing_fees.py` and `test_service_surfaces.py`. An earlier mixed
+collection order produced 623 passes and two missing-`store` fixture setup errors
+in the notification module; grouping the conformance modules resolved collection
+and all seven files passed together. The 498 ordinary skips are unconfigured
+Postgres, Spanner-PG and native Spanner cases. Adapter fakes do not substitute for
+native-server acceptance.
+
+Final logs: `/tmp/nyte-r9-requested.log`, `/tmp/nyte-r9-schema.log`,
+`/tmp/nyte-r9-sql.log`, `/tmp/nyte-r9-baseline-regression.log`,
+`/tmp/nyte-r9-site-tests.log`, `/tmp/nyte-r9-js.log`,
+`/tmp/nyte-r9-site-build.log`, `/tmp/nyte-r9-ruff.log`,
+`/tmp/nyte-r9-mypy-full.log`, `/tmp/nyte-r9-mypy-script.log`,
+`/tmp/nyte-r9-emulator.log` and `/tmp/nyte-r9-full.log`.
+Coverage used `/tmp/nyte-r9-coverage`. No Stripe configuration change is needed
+for this round. Continue running the refund CLI periodically under the control
+service configuration so its repair cursor advances without holder visits.
+All edits remain uncommitted; nothing was pushed or published.

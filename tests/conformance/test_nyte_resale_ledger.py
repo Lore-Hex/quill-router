@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from tests.nyte_resale_helpers import call, listing, purchase
+from tests.nyte_resale_helpers import call, inspect_position, listing, purchase
 from trusted_router.storage_resale import REFUND_WINDOW, reference
 from trusted_router.store_protocol import Store
 
@@ -612,15 +612,17 @@ def test_nyte_purchase_adverse_interleaving(store: Store, unique: str, monkeypat
 
     def retrieve(payment, **kwargs):
         assert payment == obj["payment_intent"]
-        if kwargs.get("expand"):
+        if kwargs.get("expand") and not snapshot_reads:
+            # Inject one concurrent event; its repair may also read Stripe.
             # The provider snapshot is healthy, but is stale by final commit.
-            pending = call(store, "position", position=obj["id"])
+            pending = inspect_position(store, obj["id"])
             assert call(store, "payment", payment_intent=payment)["session_id"] == obj["id"]
             assert pending["status"] == ("needs_review" if timing == "before_mapping" else "pending")
             assert pending["fills"] == []
-            for op in ("list", "request_refund"):
-                with pytest.raises(ValueError, match="review"):
-                    call(store, op, position=obj["id"], holder=holder, lots=1, request_id="pending-" + op)
+            with pytest.raises(ValueError, match="review"):
+                call(store, "list", position=obj["id"], holder=holder, lots=1, request_id="pending-list")
+            # Pending full refunds are now accepted for manual verification;
+            # the dedicated repair contract covers that path.
             snapshot_reads.append(payment)
             if timing == "during_snapshot":
                 assert resale.reconcile_payment_event(adverse, settings)
@@ -642,10 +644,11 @@ def test_nyte_purchase_adverse_interleaving(store: Store, unique: str, monkeypat
         # Disabled public checkout still bypasses this service (separate contract).
         resale.record_purchase(obj, "evt_" + unique, 100, settings)
     assert snapshot_reads == [obj["payment_intent"]]
-    p = call(store, "position", position=obj["id"])
+    p = inspect_position(store, obj["id"])
     assert p["status"] == "needs_review" and p["payment_review"]
     assert p["fills"] == [] and p["purchase_completed_at"] == 100
-    assert p["allocation_status"] == ("complete" if resale_enabled and path == "checkout" else "historical")
+    repaired_by_event = timing == "during_snapshot" and event_type == "refund.created"
+    assert p["allocation_status"] == ("complete" if resale_enabled and path == "checkout" and not repaired_by_event else "historical")
     assert call(store, "position", position=seller)["sold_lots"] == 0
     with pytest.raises(ValueError, match="review"):
         call(store, "list", position=obj["id"], holder=holder, lots=1, request_id="after")
@@ -675,7 +678,7 @@ def test_nyte_pending_purchase_retries_after_stripe_failure(store: Store, unique
     for timestamp in (100, 200):
         with pytest.raises(RuntimeError, match="unavailable"):
             resale.record_purchase(obj, "evt_" + unique, timestamp, settings, backfill=path == "historical_import")
-        p = call(store, "position", position=obj["id"])
+        p = inspect_position(store, obj["id"])
         assert p["status"] == "pending" and p["fills"] == [] and p["purchase_completed_at"] == 100
         assert call(store, "payment", payment_intent=obj["payment_intent"])["session_id"] == obj["id"]
         assert call(store, "position", position=seller)["sold_lots"] == 0
@@ -849,20 +852,20 @@ def test_nyte_purchase_completion_ordering_matrix(store: Store, unique: str, mon
         def deliver(enabled: bool, stripe_ok: bool, at: int, *, obj=obj, data=data, case=case, seller=seller) -> None:
             nonlocal completed
             settings.resale_enabled, provider_ok[0], clock[0] = enabled, stripe_ok, at
-            before = call(store, "position", position=obj["id"])
+            before = inspect_position(store, obj["id"])
             before_fills = before.get("fills", [])
             if enabled and not stripe_ok:
                 with pytest.raises(RuntimeError, match="unavailable"):
                     reserved_tokens.handle_reservation_event(data, settings)
             else:
                 reserved_tokens.handle_reservation_event(data, settings)
-                after = call(store, "position", position=obj["id"])
+                after = inspect_position(store, obj["id"])
                 if enabled:
                     assert after["status"] == "held" and after["allocation_status"] != "pending", (case, at)
                 if completed:
                     assert after.get("fills", []) == before_fills, (case, at, "allocated after notification")
                 completed = True
-            p = call(store, "position", position=obj["id"])
+            p = inspect_position(store, obj["id"])
             assert len(p.get("fills", [])) <= 1, case
             assert call(store, "position", position=seller)["sold_lots"] <= 2, case
 
@@ -872,7 +875,7 @@ def test_nyte_purchase_completion_ordering_matrix(store: Store, unique: str, mon
         # A disabled replay intentionally keeps #2125's no-ledger path. Once
         # enabled, every interrupted/imported position must be finalized.
         deliver(True, True, 3000)
-        p = call(store, "position", position=obj["id"])
+        p = inspect_position(store, obj["id"])
         should_allocate = create_enabled and (read_ok or completion_enabled)
         assert p["allocation_status"] == ("complete" if should_allocate else "historical"), case
         assert p["status"] == "held" and p["purchase_completed_at"] == 100, case
@@ -882,7 +885,7 @@ def test_nyte_purchase_completion_ordering_matrix(store: Store, unique: str, mon
         # Further imports/replays preserve the completed allocation and timestamp.
         assert resale.record_purchase(obj, "backfill:" + case, None, settings, backfill=True) == p
         deliver(True, True, 4000)
-        assert call(store, "position", position=obj["id"]) == p
+        assert inspect_position(store, obj["id"]) == p
         call(store, "withdraw", position=seller, holder=seller, listing=lid, request_id="cleanup")
 
 
@@ -942,3 +945,195 @@ def test_nyte_completed_legacy_held_pending_is_repaired(store: Store, unique: st
     assert repaired["status"] == "held" and repaired["allocation_status"] == "historical"
     assert repaired["purchase_completed_at"] == 100 and repaired["new_lots"] == 2 and repaired["fills"] == []
     assert call(store, "request_refund", position=buyer, holder=buyer, now=101, request_id="refund")["status"] == "refund_requested"
+
+
+@pytest.mark.parametrize("recovery", ["holder", "sweep", "request_refund"])
+@pytest.mark.parametrize("provider", ["healthy", "unavailable", "adverse_race"])
+def test_nyte_interrupted_checkout_repairs_without_replay(store: Store, unique: str, monkeypatch, recovery: str, provider: str) -> None:
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from tests.test_reserved_tokens import event
+    from trusted_router.config import Settings
+    from trusted_router.routes.resale import HolderRequest, handle
+    from trusted_router.services import resale, reserved_tokens
+
+    settings = Settings(environment="test", resale_enabled=True, stripe_secret_key="sk_test")  # noqa: S106
+    monkeypatch.setattr(resale, "STORE", store)
+    monkeypatch.setattr(reserved_tokens, "STORE", store)
+    monkeypatch.setattr(reserved_tokens, "get_email_service", lambda _: SimpleNamespace(send=lambda _: True))
+    monkeypatch.setattr(resale, "retry_buyer_refunds", lambda *a: None)
+    clock = [100]
+    monkeypatch.setattr(resale.time, "time", lambda: clock[0])
+    monkeypatch.setattr(reserved_tokens, "_utc_now", lambda: datetime.fromtimestamp(clock[0], UTC))
+    data = event()
+    obj = data["data"]["object"]
+    data["id"] = "evt_" + unique
+    obj.update(id="cs_" + unique, payment_intent="pi_" + unique)
+    holder = resale.holder_key(obj["customer_details"]["email"])
+    seller = unique + "seller"
+    purchase(store, seller, grade="A")
+    lid = listing(store, seller)
+    retrieve = Mock(side_effect=RuntimeError("Stripe unavailable"))
+    monkeypatch.setattr(resale.stripe.PaymentIntent, "retrieve", retrieve)
+    with pytest.raises(RuntimeError, match="unavailable"):
+        reserved_tokens.handle_reservation_event(data, settings)
+    assert inspect_position(store, obj["id"])["status"] == "pending"
+    settings.resale_enabled, clock[0] = False, 1000
+    with monkeypatch.context() as patch:
+        # Exactly #2125 on disabled completion, including a broken ledger.
+        patch.setattr(type(store), "reserved_resale", Mock(side_effect=AssertionError("Disabled checkout touched resale")))
+        assert reserved_tokens.handle_reservation_event(data, settings)["recorded"]
+    assert store.claim_reserved_notification(obj["id"], "probe", now=1001) == ("sent", 100)
+    assert inspect_position(store, obj["id"])["status"] == "pending"
+    settings.resale_enabled = True
+    alert, create = Mock(), Mock(side_effect=AssertionError("Manual full refund must not be issued"))
+    monkeypatch.setattr(resale, "alert_ops", alert)
+    monkeypatch.setattr(resale.stripe.Refund, "create", create)
+
+    def current(*args, **kwargs):
+        if provider == "unavailable":
+            raise RuntimeError("Stripe still unavailable")
+        if provider == "adverse_race":
+            # Retained after the healthy snapshot, before its conditional commit.
+            resale.command("reconcile_payment", settings=settings, payment_intent=obj["payment_intent"], payment_state={"disputed": True})
+        return {"status": "succeeded", "latest_charge": {"paid": True, "amount_refunded": 0}}
+    retrieve.side_effect = current
+    retrieve.reset_mock()
+    # Issue an authenticated session without a link/backfill or webhook replay.
+    resale.command("token_create", key=unique, holder=holder)
+    resale.command("token_consume", key=unique, session=reference(unique))
+    if recovery == "sweep":
+        # The background job works even with the public feature disabled.
+        settings.resale_enabled = False
+        resale.command("repair_cursor", cursor=None)
+        totals = {"checked": 0, "repaired": 0, "pending": 0}
+        for _ in range(10000):
+            stats = resale.sweep_pending_positions(settings, limit=1)
+            assert stats["checked"] <= 1
+            for key in totals:
+                totals[key] += stats[key]
+            if resale.command("repair_cursor").get("cursor") is None:
+                break
+        else:
+            pytest.fail("Repair sweep did not finish its bounded pages")
+        assert retrieve.called  # No holder access has occurred.
+        assert totals["repaired"] >= int(provider != "unavailable")
+        settings.resale_enabled = True
+    elif recovery == "holder":
+        result = handle(HolderRequest(action="positions", session=unique), settings)
+        view = next(p for p in result["positions"] if p["session_id"] == obj["id"])
+        assert view["status"] == {"healthy": "held", "unavailable": "pending", "adverse_race": "needs_review"}[provider]
+        assert view["refund_request_allowed"] == (provider != "adverse_race")
+    else:
+        if provider == "adverse_race":
+            with pytest.raises(ValueError, match="unavailable"):
+                handle(HolderRequest(action="request_refund", session=unique, position=obj["id"], request_id=unique), settings)
+            # A rejected decision rolls back; an ordinary view persists repair.
+            handle(HolderRequest(action="positions", session=unique), settings)
+        else:
+            assert handle(HolderRequest(action="request_refund", session=unique, position=obj["id"], request_id=unique), settings)["status"] == "refund_requested"
+    repaired = inspect_position(store, obj["id"])
+    assert repaired["allocation_status"] == "historical" and repaired["purchase_completed_at"] == 100
+    assert repaired["fills"] == [] and repaired["new_lots"] == repaired["lots"]
+    assert inspect_position(store, seller)["sold_lots"] == 0
+    if provider == "adverse_race":
+        assert repaired["status"] == "needs_review" and repaired["payment_review"]
+    else:
+        assert handle(HolderRequest(action="request_refund", session=unique, position=obj["id"], request_id=unique), settings)["status"] == "refund_requested"
+        assert obj["id"] in refund_queue_ids(store, "full_refunds")
+        assert alert.called
+        assert inspect_position(store, obj["id"])["payment_verification_pending"] == (provider == "unavailable")
+    create.assert_not_called()
+    call(store, "withdraw", position=seller, holder=seller, listing=lid, request_id="cleanup")
+
+
+@pytest.mark.parametrize("notified", [True, False])
+def test_nyte_repair_checks_legacy_session_and_sweep_age(store: Store, unique: str, monkeypatch, notified: bool) -> None:
+    from unittest.mock import Mock
+
+    from trusted_router.config import Settings
+    from trusted_router.services import resale
+
+    settings = Settings(environment="test")
+    monkeypatch.setattr(resale, "STORE", store)
+    p = {"id": unique, "session_id": unique, "holder": unique, "lots": 2, "grade": unique[:12],
+         "per_lot_cents": 100, "payment_intent": "pi_" + unique, "purchase_completed_at": 100}
+    call(store, "purchase_prepare", position=p, event_id=unique, now=100)
+    if notified:
+        store.claim_reserved_notification(unique, "worker", now=100)
+        store.finish_reserved_notification(unique, "worker", sent=True)
+    session = Mock(return_value={"id": unique, "payment_intent": p["payment_intent"], "status": "complete", "payment_status": "paid"})
+    payment = Mock(return_value={"status": "succeeded", "latest_charge": {"paid": True, "amount_refunded": 0}})
+    monkeypatch.setattr(resale.stripe.checkout.Session, "retrieve", session)
+    monkeypatch.setattr(resale.stripe.PaymentIntent, "retrieve", payment)
+    assert not resale.command("repair_position", settings=settings, position=unique, now=399)["repair_performed"]
+    session.assert_not_called()
+    payment.assert_not_called()
+    repaired = resale.command("repair_position", settings=settings, position=unique, now=400)
+    assert repaired["repair_performed"] and repaired["allocation_status"] == "historical" and repaired["status"] == "held"
+    assert session.call_count == int(not notified)
+    assert payment.call_count == 1
+    assert not resale.command("repair_position", settings=settings, position=unique, now=401)["repair_performed"]
+    assert payment.call_count == 1
+    # Repaired historical inventory is listable after the original deadline.
+    assert resale.command("list", settings=settings, position=unique, holder=unique, lots=1,
+                          request_id=unique, now=101 + REFUND_WINDOW)["status"] == "active"
+
+
+@pytest.mark.parametrize("decision", ["list", "withdraw", "allocation", "ops_queue", "worker"])
+def test_nyte_all_position_decisions_repair_legacy_rows(store: Store, unique: str, monkeypatch, decision: str) -> None:
+    from trusted_router import storage_resale
+    from trusted_router.config import Settings
+    from trusted_router.services import resale
+
+    settings = Settings(environment="test")
+    monkeypatch.setattr(resale, "STORE", store)
+    seller, buyer = unique + "seller", unique + "buyer"
+    purchase(store, seller)
+    lid = listing(store, seller)
+    fill = purchase(store, buyer, lots=1, allocate=True)["fills"][0]
+    store.claim_reserved_notification(seller, "worker", now=100)
+    store.finish_reserved_notification(seller, "worker", sent=True)
+    original = storage_resale.execute
+
+    def legacy(read, write, command):
+        def old_write(kind, key, row):
+            if kind == "nyte_position" and key == seller:
+                row = {**row, "allocation_status": "pending"}
+            write(kind, key, row)
+        return original(read, old_write, command)
+    with monkeypatch.context() as patch:
+        patch.setattr(storage_resale, "execute", legacy)
+        call(store, "purchase_prepare", position={"session_id": seller}, event_id="legacy_" + unique)
+    monkeypatch.setattr(resale.stripe.PaymentIntent, "retrieve", lambda *a, **kw: {
+        "status": "succeeded", "latest_charge": {"paid": True, "amount_refunded": 0},
+    })
+    if decision in {"list", "withdraw"}:
+        # Make room for another listing before seeding the legacy shape again.
+        if decision == "list":
+            resale.command("withdraw", settings=settings, position=seller, holder=seller, listing=lid, request_id="prepare")
+            with monkeypatch.context() as patch:
+                patch.setattr(storage_resale, "execute", legacy)
+                call(store, "purchase_prepare", position={"session_id": seller}, event_id="legacy2_" + unique)
+        resale.command(decision, settings=settings, position=seller, holder=seller, listing=lid, lots=1,
+                       request_id=unique, now=REFUND_WINDOW + 101)
+    elif decision == "allocation":
+        resale.command("purchase", settings=settings, position={"id": unique, "session_id": unique, "holder": unique,
+                       "lots": 1, "grade": seller[:12], "per_lot_cents": 100, "payment_intent": "pi_" + unique,
+                       "purchase_completed_at": 100}, event_id=unique, allocate=True, fee_bps=500)
+    elif decision == "ops_queue":
+        cursor = None
+        while True:
+            page = resale.command("pending", settings=settings, cursor=cursor)
+            if any(row["id"] == fill for row in page["rows"]):
+                break
+            cursor = page["cursor"]
+            assert cursor is not None
+    else:
+        resale.command("fill_claim", settings=settings, fill=fill, owner="worker")
+    p = inspect_position(store, seller)
+    assert p["allocation_status"] == "historical" and p["status"] == "held" and p["purchase_completed_at"] == 100
+    assert p["sold_lots"] == (2 if decision == "allocation" else 1)
+    call(store, "withdraw", position=seller, holder=seller, listing=lid, request_id="cleanup")

@@ -3114,6 +3114,18 @@ class PostgresStore(OperationalAnalyticsReads):
 
         return self._run_transaction(txn)
 
+    def reserved_resale_position_page(self, *, cursor: str | None = None, limit: int = 100) -> dict[str, Any]:
+        if not 1 <= limit <= 100:
+            raise ValueError("Invalid reservation page size")
+
+        def txn(tx: Any) -> dict[str, Any]:
+            rows = tx.execute("SELECT id FROM tr_entities WHERE kind=%s AND id>%s ORDER BY id LIMIT %s",
+                              ("nyte_position", cursor or "", limit + 1)).fetchall()
+            ids = [row[0] for row in rows]
+            return {"ids": ids[:limit], "cursor": ids[limit - 1] if len(ids) > limit else None}
+
+        return self._run_transaction(txn)
+
     def reserved_resale(self, command: dict[str, Any]) -> dict[str, Any]:
         from trusted_router.storage_resale import execute
 

@@ -3878,6 +3878,13 @@ class InMemoryStore:
             notices.update(dict.fromkeys(claimed, occurred_at))
             return claimed
 
+    def reserved_resale_position_page(self, *, cursor: str | None = None, limit: int = 100) -> dict[str, Any]:
+        if not 1 <= limit <= 100:
+            raise ValueError("Invalid reservation page size")
+        with self._lock:
+            ids = sorted(key for kind, key in self.resale_entities if kind == "nyte_position" and key > (cursor or ""))[:limit + 1]
+            return {"ids": ids[:limit], "cursor": ids[limit - 1] if len(ids) > limit else None}
+
     def reserved_resale(self, command: dict[str, Any]) -> dict[str, Any]:
         from trusted_router.storage_resale import execute
 

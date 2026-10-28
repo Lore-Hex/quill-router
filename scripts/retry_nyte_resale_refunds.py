@@ -13,7 +13,12 @@ import argparse
 
 from trusted_router.config import get_settings
 from trusted_router.main import create_app
-from trusted_router.services.resale import acknowledge_full_refund, command, process_fill
+from trusted_router.services.resale import (
+    acknowledge_full_refund,
+    command,
+    process_fill,
+    sweep_pending_positions,
+)
 
 
 def main() -> None:
@@ -26,6 +31,8 @@ def main() -> None:
     args = parser.parse_args()
     settings = get_settings()
     create_app(settings)
+    repaired = sweep_pending_positions(settings)
+    print(f"Position repair sweep: checked {repaired['checked']}, repaired {repaired['repaired']}, pending {repaired['pending']}")
     if args.ack_full_refund_session:
         if not args.refund_id:
             parser.error("--refund-id is required")
@@ -35,7 +42,7 @@ def main() -> None:
     queue = "full_refunds" if args.full_refunds else "refunds"
     if args.needs_ops:
         queue += "_needs_ops"
-    result = command("pending", queue=queue, cursor=args.cursor)
+    result = command("pending", settings=settings, queue=queue, cursor=args.cursor)
     for row in result["rows"]:
         if args.needs_ops:
             kind = row.get("kind", "full_refund" if args.full_refunds else "resale_fill")

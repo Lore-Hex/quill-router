@@ -80,3 +80,17 @@ test('refund window and withdrawal UI use the server position, and escape displa
   assert.deepEqual(card.children.filter(child=>child.tag==='button').map(child=>child.textContent),['Request full refund','Withdraw 1 unsold lots']);
   assert.equal(card.children[0].textContent,'Grade <script>private</script> · 3 lots');
 });
+test('a pending reservation can request a timely manual refund while verification is unavailable',async()=>{
+  const p={...position(),status:'pending',refund_request_allowed:true,purchase_completed_at:Math.floor(Date.now()/1000)};
+  const s=setup(body=>{
+    if(body.action==='redeem') return {session:'session'};
+    if(body.action==='request_refund') return {status:'refund_requested'};
+    return {resale_enabled:true,positions:[p],cursor:null};
+  });
+  s.ids['holder-redeem'].fire('click');await tick();
+  const buttons=s.ids['holder-positions'].children[0].children.filter(child=>child.tag==='button');
+  assert.deepEqual(buttons.map(child=>child.textContent),['Request full refund']);
+  buttons[0].fire('click');await tick();
+  assert.equal(s.requests.filter(request=>request.body.action==='request_refund').length,1);
+  assert.equal(s.analytics.length,0);
+});

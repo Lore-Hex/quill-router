@@ -16,6 +16,14 @@ Row = dict[str, Any]
 REFUND_WINDOW = 30 * 86400
 
 
+class PositionRepairRequired(Exception):
+    """Internal retry signal; carries only exact provider keys, never contact data."""
+
+    def __init__(self, session_id: str, payment_intent: str | None, complete: bool) -> None:
+        super().__init__("Reservation payment verification required")
+        self.session_id, self.payment_intent, self.complete = session_id, payment_intent, complete
+
+
 def reference(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
@@ -85,19 +93,22 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
         put("nyte_queue", queue, head)
         put(kind, key, row)
 
+    def withdraw_position_listings(p: Row, reason: str) -> None:
+        for lid in p["listings"]:
+            listing = get("nyte_listing", lid)
+            if listing["status"] == "active":
+                listing.update(status="withdrawn", withdrawal_reason=reason)
+                queue_remove("nyte_listing", "grade:" + p["grade"], lid, listing)
+        p["listed_lots"] = 0
+        put("nyte_position", p["session_id"], p)
+
     def block_position(p: Row) -> None:
         # Full-refund requests and completed refunds already block selling;
         # preserve their ops acknowledgement lifecycle when Stripe reports it.
         if p["status"] not in {"refund_requested", "refunded", "needs_ops"}:
             p["status"] = "needs_review"
         p["payment_review"] = True
-        for lid in p["listings"]:
-            listing = get("nyte_listing", lid)
-            if listing["status"] == "active":
-                listing.update(status="withdrawn", withdrawal_reason="payment_review")
-                queue_remove("nyte_listing", "grade:" + p["grade"], lid, listing)
-        p["listed_lots"] = 0
-        put("nyte_position", p["session_id"], p)
+        withdraw_position_listings(p, "payment_review")
 
     def remember_payment_review(payment: str, state: Row) -> Row:
         # Stripe may deliver charge.refunded before the refund worker's final
@@ -132,6 +143,73 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
         if remember_payment_review(p.get("payment_intent") or "missing:" + p["session_id"], state):
             block_position(p)
 
+    def repair_purchase_allocation(p: Row, notification: Row, *, force_historical: bool = False) -> bool:
+        """Enforce finalization's invariant, including old held/pending imports.
+
+        Only an unfinished, enabled purchase may consume listings. A historical
+        finalization is permanent: later flag changes cannot allocate it again.
+        """
+        eligible = not force_historical and c.get("allocate") and not c.get("backfill") and not notification.get("sent")
+        if p["allocation_status"] == "pending" and not eligible:
+            p.update(allocation_status="historical", new_lots=p["lots"])
+        return p["allocation_status"] == "pending"
+
+    repaired_sessions: set[str] = set()
+
+    def load_position(session: str, *, finalizing: bool = False) -> Row:
+        """The only position read: repair before any display or decision.
+
+        Provider I/O is requested by exception, outside the transaction. The
+        command retries with that observation, then rechecks this row, notification
+        and sticky evidence under the same lock before conditionally repairing.
+        """
+        p = get("nyte_position", session)
+        if not p or finalizing:
+            return p
+        if op in {"positions", "list", "withdraw", "request_refund"} and p.get("holder") != c["holder"]:
+            raise ValueError("Reservation unavailable")
+        pending = p.get("allocation_status") == "pending" or p.get("status") == "pending" or p.get("payment_verification_pending")
+        if not pending:
+            return p
+        if op == "repair_position" and now - p.get("prepared_at", p.get("purchase_completed_at") or 0) < 300:
+            return p
+        notification = get("reserved_notification", session)
+        if p.get("purchase_completed_at") is None and notification.get("purchase_completed_at") is not None:
+            p["purchase_completed_at"] = notification["purchase_completed_at"]
+        observations = c.get("_position_states", {})
+        if session not in observations:
+            raise PositionRepairRequired(session, p.get("payment_intent"),
+                                         bool(notification.get("sent") or p.get("stripe_session_complete")))
+        observation = observations[session]
+        complete = notification.get("sent") or p.get("stripe_session_complete")
+        if observation is not None and observation.get("payment_intent") == p.get("payment_intent"):
+            complete = complete or observation["session_complete"]
+            reconcile(p, observation["payment_state"])
+            if complete:
+                repair_purchase_allocation(p, notification, force_historical=True)
+                if p["status"] == "pending" and not p.get("payment_review"):
+                    p["status"] = "held"
+                repaired_sessions.add(session)
+                p.update(payment_verification_pending=False, repaired_at=now)
+                put("nyte_position", session, p)
+                return p
+        # No healthy assumption on a failed provider read. A timely refund
+        # request may still enter the manual ops queue while selling is blocked.
+        reconcile(p, {})
+        if complete:
+            repair_purchase_allocation(p, notification, force_historical=True)
+        if p["status"] == "held":
+            p["status"] = "pending"
+        p.update(payment_verification_pending=True, repair_attempted_at=now)
+        put("nyte_position", session, p)
+        return p
+
+    def refund_request_allowed(p: Row) -> bool:
+        purchased = p.get("purchase_completed_at")
+        allowed_status = p["status"] in {"held", "pending"} or (p["status"] == "needs_review" and p.get("payment_verification_pending"))
+        return bool(purchased is not None and purchased <= now <= purchased + REFUND_WINDOW
+                    and allowed_status and not p["sold_lots"] and not p["listed_lots"])
+
     if op == "reconcile_payment":
         owner = get("nyte_payment", c["payment_intent"])
         if not owner:
@@ -140,20 +218,9 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
                 return {}
             remember_payment_review(c["payment_intent"], c["payment_state"])
             return {"retained": True}
-        p = get("nyte_position", owner["session_id"])
+        p = load_position(owner["session_id"], finalizing=True)
         reconcile(p, c["payment_state"])
         return p
-
-    def repair_purchase_allocation(p: Row, notification: Row) -> bool:
-        """Enforce finalization's invariant, including old held/pending imports.
-
-        Only an unfinished, enabled purchase may consume listings. A historical
-        finalization is permanent: later flag changes cannot allocate it again.
-        """
-        eligible = c.get("allocate") and not c.get("backfill") and not notification.get("sent")
-        if p["allocation_status"] == "pending" and not eligible:
-            p.update(allocation_status="historical", new_lots=p["lots"])
-        return p["allocation_status"] == "pending"
 
     if op in {"purchase_prepare", "purchase"}:
         p = c["position"]
@@ -161,7 +228,7 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
         event = get("nyte_event", c["event_id"])
         if event and event["session_id"] != session:
             raise ValueError("Stripe event already allocated")
-        existing = get("nyte_position", session)
+        existing = load_position(session, finalizing=True)
         notification = get("reserved_notification", session)
         if existing:
             p = existing
@@ -174,7 +241,7 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
                 if owner and owner["session_id"] != session:
                     raise ValueError("Stripe payment already belongs to a position")
                 put("nyte_payment", payment, {"session_id": session})
-            p.update(sold_lots=0, listed_lots=0, status="pending" if op == "purchase_prepare" else p.get("status", "held"), fills=[], listings=[], new_lots=p["lots"])
+            p.update(prepared_at=now, sold_lots=0, listed_lots=0, status="pending" if op == "purchase_prepare" else p.get("status", "held"), fills=[], listings=[], new_lots=p["lots"])
             holder = get("nyte_holder", p["holder"])
             p["holder_next"] = holder.get("head")
             put("nyte_holder", p["holder"], {"head": session})
@@ -191,6 +258,7 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
         if p["status"] == "pending":
             p["status"] = "held"
         reconcile(p, c.get("payment_state") or {})
+        p["payment_verification_pending"] = False
         allocation_due = repair_purchase_allocation(p, notification)
         put("nyte_event", c["event_id"], {"session_id": session})
         put("nyte_position", session, p)
@@ -205,9 +273,9 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
                 if not key:
                     break
                 listing = get("nyte_listing", key)
-                seller = get("nyte_position", listing["position"])
-                if seller["status"] != "held":
-                    block_position(seller)
+                seller = load_position(listing["position"])
+                if seller["status"] != "held" or seller.get("allocation_status") == "pending":
+                    withdraw_position_listings(seller, "position_unavailable")
                     continue
                 count = min(remaining, listing["lots_listed"] - listing["lots_sold"])
                 fee, refund = refund_cents(p["per_lot_cents"], seller["per_lot_cents"], c["fee_bps"])
@@ -240,23 +308,24 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
         key = c.get("cursor") or get("nyte_holder", c["holder"]).get("head")
         positions: list[Row] = []
         while key and len(positions) < 100:
-            p = get("nyte_position", key)
+            p = load_position(key)
             if p.get("holder") != c["holder"]:
                 raise ValueError("Invalid position cursor")
-            positions.append({**p, "listing_rows": [get("nyte_listing", lid) for lid in p["listings"]]})
+            positions.append({**p, "refund_request_allowed": refund_request_allowed(p), "listing_rows": [get("nyte_listing", lid) for lid in p["listings"]]})
             key = p.get("holder_next")
         return {"positions": positions, "cursor": key}
 
     if op in {"list", "withdraw", "request_refund"}:
-        p = get("nyte_position", c["position"])
+        p = load_position(c["position"])
         if not p or p["holder"] != c["holder"]:
             raise ValueError("Reservation unavailable")
-        if op in {"list", "request_refund"} and (p["status"] in {"pending", "needs_review"} or p.get("allocation_status") == "pending"):
+        if op == "list" and (p["status"] in {"pending", "needs_review"} or p.get("allocation_status") == "pending"):
             raise ValueError("Reservation needs ops review or allocation completion")
         receipt = reference(c["holder"] + ":" + c["request_id"])
+        action = {k: v for k, v in c.items() if k not in {"now", "_position_states"}}
         previous = get("nyte_action", receipt)
         if previous:
-            if previous["command"] != {k: v for k, v in c.items() if k != "now"}:
+            if previous["command"] != action:
                 raise ValueError("Request ID already used")
             return previous["result"]
         purchased = p.get("purchase_completed_at")
@@ -287,20 +356,27 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
         else:
             if p["status"] == "refund_requested":
                 return {"status": "refund_requested"}
-            if purchased is None or not purchased <= now <= purchased + REFUND_WINDOW or p["status"] != "held" or p["sold_lots"] or p["listed_lots"]:
+            if not refund_request_allowed(p):
                 raise ValueError("Full refund window has closed or reservation is unavailable")
             p.update(status="refund_requested", refund_requested_at=now)
-            queue_append("nyte_refund_request", "full_refunds", c["position"], {"position": c["position"], "requested_at": now, "status": "pending"})
+            queue_append("nyte_refund_request", "full_refunds", c["position"], {"position": c["position"], "requested_at": now, "status": "pending",
+                         "verification_pending": bool(p.get("payment_verification_pending"))})
             result = {"status": "refund_requested"}
         put("nyte_position", c["position"], p)
-        put("nyte_action", receipt, {"command": {k: v for k, v in c.items() if k != "now"}, "result": result})
+        put("nyte_action", receipt, {"command": action, "result": result})
         return result
 
     if op == "payment":
         return get("nyte_payment", c["payment_intent"])
 
-    if op == "position":
-        return get("nyte_position", c["position"])
+    if op in {"position", "repair_position"}:
+        result = load_position(c["position"])
+        return {**result, "repair_performed": c["position"] in repaired_sessions} if op == "repair_position" else result
+
+    if op == "repair_cursor":
+        if "cursor" in c:
+            put("nyte_maintenance", "position_repair", {"cursor": c["cursor"]})
+        return get("nyte_maintenance", "position_repair")
 
     if op == "pending":
         queue = c.get("queue", "refunds")
@@ -309,6 +385,12 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
         rows: list[Row] = []
         while key and len(rows) < 100:
             row = get(kind, key)
+            if kind == "nyte_fill":
+                listing = get("nyte_listing", row["listing"])
+                load_position(listing["position"])
+                load_position(row["buyer_session"])
+            else:
+                load_position(row["position"])
             rows.append(row)
             key = row.get("next")
         return {"rows": rows, "cursor": key}
@@ -321,14 +403,15 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
             return {}
         row.update(id=key, kind=kind)
         if kind == "full_refund":
-            p = get("nyte_position", key)
+            p = load_position(key)
             row.setdefault("status", "refunded" if p["status"] == "refunded" else "pending")
             row.update(payment_intent=p["payment_intent"], refund_amount_cents=p["lots"] * p["per_lot_cents"],
                        position_id=p.get("id", key))
             row.setdefault("stripe_refund_id", p.get("stripe_refund_id"))
-        elif "position_id" not in row:
+        else:
             listing = get("nyte_listing", row["listing"])
-            row["position_id"] = get("nyte_position", listing["position"])["id"]
+            row.setdefault("position_id", load_position(listing["position"])["id"])
+            load_position(row["buyer_session"])
         return row
 
     def location(row: Row) -> tuple[str, str, str]:
@@ -364,7 +447,7 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
                 queue_remove(entity, active, row["id"], row)
         save(row)
         if row["kind"] == "full_refund" and target in {"refunded", "needs_ops"}:
-            p = get("nyte_position", row["id"])
+            p = load_position(row["id"])
             p.update(status=target, stripe_refund_id=row["stripe_refund_id"])
             put("nyte_position", row["id"], p)
         return row
@@ -418,13 +501,13 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
         metadata = refund.get("metadata") or {}
         kind, key = indexed_identity(index)
         if not key and metadata.get("kind") == "full_refund" and metadata.get("position_id"):
-            p = get("nyte_position", payment["session_id"]) if payment else {}
+            p = load_position(payment["session_id"]) if payment else {}
             kind, key = ("full_refund", p["session_id"]) if p.get("id") == metadata["position_id"] else ("", "")
         elif not key and (metadata.get("fill_id") or metadata.get("nyte_fill_id")):
             kind, key = "resale_fill", metadata.get("fill_id") or metadata["nyte_fill_id"]
         elif not key:
             # Previously acknowledged full refunds predate the shared index.
-            p = get("nyte_position", payment["session_id"]) if payment else {}
+            p = load_position(payment["session_id"]) if payment else {}
             if p.get("stripe_refund_id") == rid:
                 kind, key = "full_refund", p["session_id"]
         row = obligation(kind, key)

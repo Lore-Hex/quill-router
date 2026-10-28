@@ -1,13 +1,27 @@
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import patch
 
-from trusted_router.storage_resale import REFUND_WINDOW
+from trusted_router.storage_resale import REFUND_WINDOW, PositionRepairRequired
 from trusted_router.store_protocol import Store
 
 
 def call(store: Store, op: str, **args: Any) -> dict[str, Any]:
-    return store.reserved_resale({"op": op, "now": REFUND_WINDOW + 101, **args})
+    observations = {}
+    while True:
+        try:
+            return store.reserved_resale({"op": op, "now": REFUND_WINDOW + 101, **args, "_position_states": observations})
+        except PositionRepairRequired as repair:
+            assert repair.session_id not in observations
+            observations[repair.session_id] = None  # Transaction-only helper: no provider I/O.
+
+
+
+def inspect_position(store: Store, session: str) -> dict[str, Any]:
+    """Observe persisted test state without invoking an application repair read."""
+    with patch("trusted_router.storage_resale.execute", side_effect=lambda read, write, command: dict(read("nyte_position", session))):
+        return store.reserved_resale({"op": "test_observation", "now": 0})
 
 
 def purchase(store: Store, name: str, *, lots: int = 3, price: int = 100, allocate: bool = False, grade: str | None = None) -> dict[str, Any]:

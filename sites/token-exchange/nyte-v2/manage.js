@@ -53,7 +53,7 @@
       if (deadline === null) card.append(element('p', 'Purchase completion time needs review. Contact enterprise@trustedrouter.com with your Stripe receipt.'));
       else {
         card.append(element('p', `Purchased ${new Date(p.purchase_completed_at * 1000).toLocaleString()}. Full refund deadline: ${new Date(deadline).toLocaleString()}.`));
-        if (p.status === 'held' && Date.now() <= deadline) actionButton(card, 'Request full refund', 'request_refund', p, () => ({}));
+        if ((p.refund_request_allowed ?? p.status === 'held') && Date.now() <= deadline) actionButton(card, 'Request full refund', 'request_refund', p, () => ({}));
         const available = p.lots - p.sold_lots - p.listed_lots;
         if (p.status === 'held' && Date.now() > deadline && available > 0 && data.resale_enabled) {
           const label = element('label', 'Lots to list '), input = document.createElement('input');

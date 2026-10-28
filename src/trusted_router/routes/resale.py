@@ -35,24 +35,24 @@ def handle(body: HolderRequest, settings: Settings) -> dict:
         return {"message": resale.GENERIC_RESPONSE}
     if body.action == "redeem":
         return resale.redeem_link(body.token, settings)
-    holder = resale.command("session", key=reference(body.session))["holder"]
+    holder = resale.command("session", settings=settings, key=reference(body.session))["holder"]
     if body.action == "backfill":
         resale.backfill_email(body.email, holder, settings)
         return {"status": "reconciled"}
     if body.action == "positions":
-        result = resale.command("positions", holder=holder, cursor=body.cursor)
+        result = resale.command("positions", settings=settings, holder=holder, cursor=body.cursor)
         # No Stripe payment reference, contact identity, fill data, or other
         # holder identifiers in the browser representation.
         return {"resale_enabled": settings.resale_enabled, "cursor": result["cursor"], "positions": [
-            {**{key: p[key] for key in ("id", "session_id", "grade", "lots", "per_lot_cents", "purchase_completed_at", "listed_lots", "sold_lots", "status")}, "listing_rows": [{key: row[key] for key in ("id", "lots_listed", "lots_sold", "listed_at", "status")} for row in p["listing_rows"]]}
+            {"refund_request_allowed": p["refund_request_allowed"], **{key: p[key] for key in ("id", "session_id", "grade", "lots", "per_lot_cents", "purchase_completed_at", "listed_lots", "sold_lots", "status")}, "listing_rows": [{key: row[key] for key in ("id", "lots_listed", "lots_sold", "listed_at", "status")} for row in p["listing_rows"]]}
             for p in result["positions"]
         ]}
     if not body.request_id:
         raise ValueError("An action request ID is required")
-    result = resale.command(body.action, holder=holder, position=body.position,
+    result = resale.command(body.action, settings=settings, holder=holder, position=body.position,
                             listing=body.listing, lots=body.lots, request_id=body.request_id)
     if body.action == "request_refund":
-        resale.alert_ops(settings, "NYTE full refund requested", f"Reservation {body.position} has a durable full-refund request. Refund its original Stripe payment in full; no balance credits. Run python -m scripts.retry_nyte_resale_refunds --full-refunds to list requests.")
+        resale.alert_ops(settings, "NYTE full refund requested", f"Reservation {body.position} has a durable full-refund request. Verify the current Stripe payment and existing refunds before issuing a full original-card refund; no balance credits. Run python -m scripts.retry_nyte_resale_refunds --full-refunds to list requests.")
     return result
 
 
