@@ -32,4 +32,3 @@ def stall_dump_fd(stderr_fd: int) -> int:
         logger.warning("serve.stall_dump_blocking reason=shared_description")
         return stderr_fd
     return fd
-

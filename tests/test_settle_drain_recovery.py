@@ -3,15 +3,25 @@
 from __future__ import annotations
 
 import copy
+from types import SimpleNamespace
 
 import pytest
 
 from tests.test_async_settle_drain import seed
 from tests.test_async_settle_handler import call, env, prepare, row_for
+from tests.test_settle_outbox_apply import (
+    _make_key,
+    _row,
+    _seed_credit,
+    _typed_authorization,
+    _TypedStoreProxy,
+)
 from tests.test_settle_outbox_drain import fake_store
 from trusted_router.config import Settings
+from trusted_router.services import settle_outbox_apply as apply
 from trusted_router.services import settle_outbox_drain as drain
 from trusted_router.services.settle_outbox_apply import ApplyOutcome
+from trusted_router.storage_gcp_authorize import SettleOutcome
 
 
 def test_mixed_sibling_keeps_open_reservation_pending(env, monkeypatch):
@@ -33,6 +43,29 @@ def test_mixed_sibling_keeps_open_reservation_pending(env, monkeypatch):
     assert outcome == ApplyOutcome.PARK_TYPED_UNAVAILABLE
     assert db.settle_outbox[(auth.id, 'settle')]['status'] == 'pending'
     assert alerts == []
+
+
+@pytest.mark.parametrize('protection,expected', [
+    (False, ApplyOutcome.ALREADY_RELEASED_FREE),
+    (True, ApplyOutcome.PARK_TYPED_UNAVAILABLE),
+])
+def test_null_open_classification_flag_boundary(fake_store, monkeypatch, protection, expected):
+    # Classifier contract: inject ALREADY_SETTLED while the reservation reads
+    # open. Normal unprotected Spanner execution need not produce this pair.
+    store, db = fake_store
+    workspace = 'flag-boundary'
+    _seed_credit(store, workspace)
+    key = _make_key(store, workspace)
+    auth = _typed_authorization(store, workspace_id=workspace, key_hash=key.hash)
+    row = _row(auth, cost=777_777)
+    assert row.async_version is None and row.actual_cost_micro > 0
+    reservation = db.reservations[auth.credit_reservation_id]
+    assert not reservation['settled']
+    assert int(reservation.get('actual_micro') or 0) == 0
+    proxy = _TypedStoreProxy(store, finalize_result={'outcome': SettleOutcome.ALREADY_SETTLED})
+    proxy.trust_settings = SimpleNamespace(async_settle_protection=protection)
+    monkeypatch.setattr(apply, 'typed_billing_store', lambda: proxy)
+    assert apply.apply_frozen_settle(row) == expected
 
 
 def test_legacy_async_prefix_cannot_hide_null_version(fake_store):
