@@ -31,8 +31,10 @@ zero upstream cost or add this model to token-price-only customer settlement.
 
 Create a dedicated ordinary account at <https://app.maple.ai/> and put its
 inference key in the operator keyfile as `MAPLE_API_KEY`. Share only the account
-email or ID with `support@maple.ai`, never the key. No Maple key was present in
-the operator keyfile during the initial check.
+email or ID with `support@maple.ai`, never the key. The operator supplied
+`MAPLE_API_KEY` after the initial check. Authenticated encrypted discovery and
+JSON/SSE PONG probes passed for the requested uncensored model, with integer
+usage. The key was used locally only; it is not provisioned to serving clouds.
 
 The proposed grant is one calendar month of Pro, 20,000 credits (about USD 20),
 with no automatic renewal or charge. It has not been confirmed or applied.
@@ -82,7 +84,7 @@ and therefore cannot simply be dropped into a multi-tenant gateway unchanged.
 
 ## Promotion checklist
 
-1. Obtain the dedicated key and verify the non-renewing grant, model entitlement,
+1. Confirm the dedicated account identity and verify the non-renewing grant,
    reseller terms and API content-retention commitment.
 2. Run positive and changed-PCR negative qualification, then reproduce the
    front enclave measurement and review the downstream dedicated worker pins.
