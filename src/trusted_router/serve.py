@@ -19,8 +19,8 @@ It also exits a process whose event loop has stopped. On 2026-10-28 two
 europe-west4 instances went silent for one and two minutes with CPU and memory
 flat; every request routed to them hung for up to two minutes and failed
 (two "billing path 5xx" alerts), and nothing said where the process was
-waiting. With ``TR_LOOP_STALL_EXIT_SECONDS`` set, each second of uvicorn ticks
-re-arms ``faulthandler``'s watchdog, a C thread that needs neither the loop nor
+waiting. With ``TR_LOOP_STALL_EXIT_SECONDS`` set, the first uvicorn tick each
+second re-arms ``faulthandler``'s watchdog, a C thread that needs neither the loop nor
 the GIL. If the loop goes that long without a tick, the watchdog writes every
 thread's stack to stderr and exits the process, so Cloud Run replaces it and
 the stacks name the call it was blocked in. The watchdog writes the stacks
@@ -60,9 +60,10 @@ DEFAULT_DRAIN_SECONDS = 3.0
 # shutdown that follows the drain.
 MAX_DRAIN_SECONDS = 3.0
 LOOP_STALL_ENV = "TR_LOOP_STALL_EXIT_SECONDS"
-# uvicorn ticks every 0.1 s; re-arming starts a new watchdog thread, so do it
-# once a second. A stall budget must exceed that second.
-_TICKS_PER_REARM = 10
+# Re-arming starts a new watchdog thread, so it happens on the first tick a
+# second after the last arm (by the clock, not a tick count: a slow loop still
+# ticking must not run out the budget). A stall budget must exceed that second.
+_REARM_SECONDS = 1.0
 MIN_LOOP_STALL_SECONDS = 2.0
 
 # Named explicitly: the container runs this module as `python -m`, where
@@ -142,6 +143,7 @@ class DrainingServer(uvicorn.Server):
         self.drain_deadline: float | None = None
         self.stall_seconds = stall_seconds
         self._stall_dump_fd: int | None = None
+        self._stall_armed_at: float | None = None
 
     async def startup(self, sockets: list | None = None) -> None:
         await super().startup(sockets=sockets)
@@ -169,10 +171,14 @@ class DrainingServer(uvicorn.Server):
         super().handle_exit(sig, frame)
 
     async def on_tick(self, counter: int) -> bool:
-        if self.stall_seconds is not None and counter % _TICKS_PER_REARM == 0:
+        now = monotonic()
+        if self.stall_seconds is not None and (
+            self._stall_armed_at is None or now - self._stall_armed_at >= _REARM_SECONDS
+        ):
             if self._stall_dump_fd is None:
                 self._stall_dump_fd = stall_dump_fd(sys.stderr.fileno())
             faulthandler.dump_traceback_later(self.stall_seconds, exit=True, file=self._stall_dump_fd)
+            self._stall_armed_at = now
         if self.drain_deadline is not None and not self.should_exit:
             if monotonic() >= self.drain_deadline:
                 logger.info("serve.sigterm_drain_complete")

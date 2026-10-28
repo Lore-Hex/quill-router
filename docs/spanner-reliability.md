@@ -64,8 +64,9 @@ policy:
   (two in europe-west4 on 2026-10-28, silent for one and two minutes). With
   `TR_LOOP_STALL_EXIT_SECONDS=30`, which `scripts/deploy/rollout.sh` sets
   for this service because it keeps CPU allocated between requests, the same
-  runner ends such a process once its loop has gone 30 seconds without a
-  tick. `faulthandler` first writes every thread's stack to stderr under a
+  runner ends such a process once its loop has gone about 30 seconds (29
+  at the least) without a tick. `faulthandler` first writes every thread's
+  stack to stderr under a
   `Timeout (0:00:30)!` line and exits with status 1. It writes them through a
   non-blocking descriptor of its own, so a backed-up stderr loses the stacks
   rather than holding the exit. Read the stacks from the instance's stderr:

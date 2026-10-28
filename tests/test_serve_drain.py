@@ -424,13 +424,30 @@ def test_each_second_of_ticks_rearms_the_stall_watchdog(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = _record_arming(monkeypatch)
+    clock = [1000.0]
+    monkeypatch.setattr(serve, "monotonic", lambda: clock[0])
     server = _stall_server(monkeypatch, 30.0)
 
     for counter in range(21):
         asyncio.run(server.on_tick(counter))
+        clock[0] += 0.1
 
     arm = ("dump", (30.0, True, 99))
     assert calls == [("dump_fd", sys.stderr.fileno()), arm, arm, arm]
+
+
+def test_slow_ticks_rearm_the_stall_watchdog_on_every_tick(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Ten ticks 3.1 s apart would outlast a 30 s budget; each one re-arms.
+    calls = _record_arming(monkeypatch)
+    clock = [1000.0]
+    monkeypatch.setattr(serve, "monotonic", lambda: clock[0])
+    server = _stall_server(monkeypatch, 30.0)
+
+    for counter in range(10):
+        asyncio.run(server.on_tick(counter))
+        clock[0] += 3.1
+
+    assert calls.count(("dump", (30.0, True, 99))) == 10
 
 
 def test_without_a_stall_budget_ticks_arm_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -504,16 +521,21 @@ async def block(request):
 async def health(request):
     return PlainTextResponse("ok")
 
+async def slow(request):
+    # Holds the loop for a while on each request: ticks slow, never stop.
+    time.sleep(0.4)
+    return PlainTextResponse("ok")
+
 config = serve.build_config({})
-config.app = Starlette(routes=[Route("/block", block), Route("/health", health)])
+config.app = Starlette(routes=[Route("/block", block), Route("/health", health), Route("/slow", slow)])
 server = serve.DrainingServer(config, drain_seconds=0, stall_seconds=2.5)
 server.run(sockets=[socket.socket(fileno=int(sys.argv[1]))])
 """
 
 
 def _run_stalled_server(tmp_path: Path, *, fill_stderr: bool) -> tuple[int, str]:
-    # A healthy loop outlives several stall budgets; a loop blocked in a call
-    # then ends the process within one budget plus the backstop.
+    # A loop whose ticks are slowed by every request outlives several stall
+    # budgets; a loop blocked in a call then ends the process within one.
     out_path = tmp_path / "stdout.log"
     err_path = tmp_path / "stderr.log"
     env = dict(os.environ, PYTHONPATH=str(ROOT / "src"))
@@ -555,8 +577,7 @@ def _run_stalled_server(tmp_path: Path, *, fill_stderr: bool) -> tuple[int, str]
 
             healthy_until = time.monotonic() + 6
             while time.monotonic() < healthy_until:
-                assert get("/health") == 200
-                time.sleep(0.2)
+                assert get("/slow") == 200
             assert process.poll() is None, out_path.read_text()
 
             with pytest.raises((OSError, http.client.HTTPException)):
