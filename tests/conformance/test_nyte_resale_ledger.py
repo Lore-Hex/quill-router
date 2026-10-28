@@ -9,6 +9,118 @@ from tests.nyte_resale_helpers import call, inspect_position, listing, purchase
 from trusted_router.storage_resale import REFUND_WINDOW, reference
 from trusted_router.store_protocol import Store
 
+# Native acceptance proves transaction/SQL behavior, not the service routing
+# Cartesian product. Every omitted tuple still runs unchanged on ALL other
+# backends (including the offline Postgres adapter). Values are exact matches;
+# the reason beside each retained tuple names its storage proof obligation.
+# Collection deselects the others BEFORE store/emulator resource setup.
+EMULATOR_CASES = {
+    "external_payment_change_blocks_existing_position_and_listings": [
+        ({"state": {"amount_refunded": 1}}, "External refund withdraws listings atomically; allocation skips them"),
+    ],
+    "adverse_events_require_a_mapped_position": [
+        ({"state": {"disputed": True}}, "Unrelated PI is inert; mapped dispute persists blocking evidence"),
+    ],
+    "old_purchase_checks_current_stripe_before_held": [
+        ({"path": "webhook_replay"}, "Old paid replay applies live refund evidence before held"),
+    ],
+    "successful_refund_later_fails_without_reissuance": [
+        ({"failure": "failed"}, "Bound refund identity/amount guards; refunded -> needs_ops; no second claim"),
+    ],
+    "refund_failure_and_success_commit_are_order_independent": [
+        ({"failure_first": True, "failure": "failed"}, "Legacy fill metadata binds before success; stale-write history is durable"),
+    ],
+    "shared_refund_obligations_are_monotonic": [
+        ({"kind": "resale_fill", "failure_first": True, "by_metadata": True, "failure": "failed"},
+         "Fill in-flight -> needs_ops by metadata; late worker/event success is a no-op"),
+        ({"kind": "resale_fill", "failure_first": False, "by_metadata": False, "failure": "canceled"},
+         "Fill retry/reclaim and bound ID; refunded -> needs_ops; active/ops queue moves"),
+        ({"kind": "full_refund", "failure_first": True, "by_metadata": False, "failure": "canceled"},
+         "Full refund pending acknowledgement binds ID; in-flight -> needs_ops fences stale acknowledgement"),
+        ({"kind": "full_refund", "failure_first": False, "by_metadata": True, "failure": "failed"},
+         "Full refund completes then fails by metadata; position/ops queue reopen once, success stays fenced"),
+    ],
+    "unbound_refund_failure_survives_acknowledgement": [
+        ({"kind": "resale_fill", "failure": "failed"}, "Unbound failure retained then applied when worker binds fill refund"),
+        ({"kind": "full_refund", "failure": "canceled"}, "Unbound cancellation retained then applied at full-refund acknowledgement"),
+    ],
+    "existing_metadata_obligation_reconciles_in_both_modes": [
+        ({"kind": "full_refund"}, "Unbound full-refund metadata moves pending obligation directly to needs_ops"),
+    ],
+    "unmapped_refund_evidence_is_inert": [
+        ({"failure": "failed"}, "Unknown payment writes no evidence that could poison later acknowledgement"),
+    ],
+    "purchase_adverse_interleaving": [
+        ({"path": "checkout", "timing": "before_mapping", "event_type": "charge.refunded"},
+         "Early external refund retained by PI; prepare/finalize applies it without allocating"),
+        ({"path": "checkout", "timing": "before_mapping", "event_type": "charge.dispute.created"},
+         "Early dispute retains its own sticky flag before mapping and blocks later healthy finalization"),
+        ({"path": "historical_import", "timing": "during_snapshot", "event_type": "refund.created"},
+         "Mapped event repairs during import snapshot; stale healthy finalizer cannot erase adverse evidence"),
+    ],
+    "pending_purchase_retries_after_stripe_failure": [
+        ({"path": "checkout"}, "Pending mapping survives failed Stripe reads; enabled retry allocates exactly once"),
+    ],
+    "unmapped_nonreservation_payment_stays_inert": [
+        ({"expanded": False, "event_type": "charge.dispute.created"}, "Nonreservation ownership lookup leaves no ledger evidence"),
+    ],
+    "early_refund_failure_retained_until_binding": [
+        ({"failure": "failed"}, "Reservation PI failure before mapping survives purchase and later refund binding"),
+    ],
+    "completed_toggle_repairs_pending": [
+        ({"initial_enabled": True, "reconcile_path": "replay", "action": "list"},
+         "Sent notification fences allocation; repaired historical position supports list and withdraw"),
+    ],
+    "finalization_invariant_repairs_pending": [
+        ({"notified": True, "backfill": False, "allocate": True, "adverse": False},
+         "Notification read in finalization transaction forces pending -> historical"),
+        ({"notified": False, "backfill": True, "allocate": True, "adverse": False},
+         "Import forces historical even before notification; later event remains idempotent"),
+        ({"notified": False, "backfill": False, "allocate": True, "adverse": True},
+         "Eligible finalization completes allocation bookkeeping but retained dispute forbids fills"),
+        ({"notified": False, "backfill": False, "allocate": False, "adverse": False},
+         "Explicit non-allocation finalization is historical without relying on a notification"),
+    ],
+    "completed_legacy_held_pending_is_repaired": [
+        ({"backfill": True}, "Persisted legacy held/pending shape repairs conditionally; original refund deadline survives"),
+    ],
+    "interrupted_checkout_repairs_without_replay": [
+        ({"recovery": "holder", "provider": "adverse_race"}, "Read repair cannot overwrite adverse evidence committed during its snapshot"),
+        ({"recovery": "sweep", "provider": "healthy"}, "Primary-key paging/cursor and unattended conditional historical repair"),
+        ({"recovery": "request_refund", "provider": "unavailable"}, "Unavailable verification still atomically queues a timely manual refund"),
+    ],
+    "repair_checks_legacy_session_and_sweep_age": [
+        ({"notified": False}, "Sweep age guard, completed-session fallback, repair-once guard and later listing"),
+    ],
+    "all_position_decisions_repair_legacy_rows": [
+        ({"decision": "allocation"}, "FIFO candidate repair and buyer allocation commit together, preserving already sold lots"),
+    ],
+}
+
+
+def emulator_case_reason(name: str, params: dict) -> str | None:
+    """None deselects native-only duplicates; other backend cases are untouched."""
+    if params.get("store") != "spanner-emulator":
+        return "Full backend contract"
+    if params.get("resale_enabled") is False:
+        return None  # Sales flag affects service routing, not storage semantics.
+    matrix = {key: value for key, value in params.items() if key not in {"store", "resale_enabled"}}
+    representatives = EMULATOR_CASES.get(name.removeprefix("test_nyte_"))
+    if representatives is None:
+        assert not matrix, f"Register native representatives for new NYTE matrix: {name}"
+        # Keep every unparametrized contract: FIFO/partial fills, list/withdraw
+        # races, two buyers, single-use tokens, refund leases and import races.
+        return "Unparametrized storage contract"
+    for expected, reason in representatives:
+        assert expected.keys() == matrix.keys(), f"Update native matrix columns: {name}"
+        if expected == matrix:
+            return reason
+    return None
+
+
+def native_emulator(request: pytest.FixtureRequest | None) -> bool:
+    return request is not None and request.node.callspec.params.get("store") == "spanner-emulator"
+
 
 @pytest.fixture(params=[True, False], ids=["sales-on", "sales-off"])
 def resale_enabled(request) -> bool:
@@ -815,7 +927,7 @@ def test_nyte_completed_toggle_repairs_pending(store: Store, unique: str, monkey
     call(store, "withdraw", position=seller, holder=seller, listing=lid, request_id="cleanup-seller")
 
 
-def test_nyte_purchase_completion_ordering_matrix(store: Store, unique: str, monkeypatch) -> None:
+def test_nyte_purchase_completion_ordering_matrix(store: Store, unique: str, monkeypatch, request: pytest.FixtureRequest | None) -> None:
     from datetime import UTC, datetime
     from itertools import product
     from types import SimpleNamespace
@@ -838,6 +950,11 @@ def test_nyte_purchase_completion_ordering_matrix(store: Store, unique: str, mon
         return {"status": "succeeded", "latest_charge": {"paid": True, "amount_refunded": 0}}
     monkeypatch.setattr(resale.stripe.PaymentIntent, "retrieve", retrieve)
     cases = list(product((True, False), repeat=4))
+    if native_emulator(request):
+        cases = [
+            (True, False, True, True),  # Pending retry allocates once; subsequent notified replay/import cannot allocate.
+            (True, False, False, True),  # Disabled notification completion fences later enabled allocation.
+        ]  # All 16 service flag/read orderings remain on every other backend.
     for index, (create_enabled, read_ok, completion_enabled, replay_enabled) in enumerate(cases):
         case = f"{unique}-{index}"
         data = event()
@@ -949,7 +1066,7 @@ def test_nyte_completed_legacy_held_pending_is_repaired(store: Store, unique: st
 
 @pytest.mark.parametrize("recovery", ["holder", "sweep", "request_refund"])
 @pytest.mark.parametrize("provider", ["healthy", "unavailable", "adverse_race"])
-def test_nyte_interrupted_checkout_repairs_without_replay(store: Store, unique: str, monkeypatch, recovery: str, provider: str) -> None:
+def test_nyte_interrupted_checkout_repairs_without_replay(store: Store, unique: str, monkeypatch, recovery: str, provider: str, request: pytest.FixtureRequest | None) -> None:
     from datetime import UTC, datetime
     from types import SimpleNamespace
     from unittest.mock import Mock
@@ -971,6 +1088,11 @@ def test_nyte_interrupted_checkout_repairs_without_replay(store: Store, unique: 
     obj = data["data"]["object"]
     data["id"] = "evt_" + unique
     obj.update(id="cs_" + unique, payment_intent="pi_" + unique)
+    sweep_start = obj["id"]
+    if native_emulator(request):
+        # Exact test-owned key range: exercise real pagination without walking
+        # every position accumulated by unrelated native contracts.
+        obj["id"] += "-stuck"
     holder = resale.holder_key(obj["customer_details"]["email"])
     seller = unique + "seller"
     purchase(store, seller, grade="A")
@@ -1007,13 +1129,18 @@ def test_nyte_interrupted_checkout_repairs_without_replay(store: Store, unique: 
     if recovery == "sweep":
         # The background job works even with the public feature disabled.
         settings.resale_enabled = False
-        resale.command("repair_cursor", cursor=None)
+        resale.command("repair_cursor", cursor=sweep_start if native_emulator(request) else None)
         totals = {"checked": 0, "repaired": 0, "pending": 0}
         for _ in range(10000):
             stats = resale.sweep_pending_positions(settings, limit=1)
             assert stats["checked"] <= 1
             for key in totals:
                 totals[key] += stats[key]
+            if native_emulator(request):
+                assert stats["checked"] == 1
+                # The page repaired our first key; later unrelated keys need no
+                # repeat acceptance. Other backends still exercise full wrap.
+                break
             if resale.command("repair_cursor").get("cursor") is None:
                 break
         else:

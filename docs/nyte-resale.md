@@ -1021,3 +1021,122 @@ Coverage used `/tmp/nyte-r9-coverage`. No Stripe configuration change is needed
 for this round. Continue running the refund CLI periodically under the control
 service configuration so its repair cursor advances without holder visits.
 All edits remain uncommitted; nothing was pushed or published.
+
+## PR #2129 native emulator cost reduction (head 5ec38c2c0)
+
+Only tests and this report change. Production code and `.github` workflows are
+unchanged; all edits remain uncommitted.
+
+`EMULATOR_CASES` in `tests/conformance/test_nyte_resale_ledger.py` lists exact
+representative parameter dictionaries, each with its storage proof obligation.
+`emulator_case_reason` excludes the sales-off fixture variants only for
+`store=spanner-emulator`. A dedicated collection hook in
+`tests/conformance/conftest.py` deselects redundant native cases **before any
+store/schema fixture runs**, reports them through `pytest_deselected`, and puts
+the retained reason in the test's user properties. It does not weaken assertions,
+mark failures as expected, or alter another module's native tests. Unknown matrix
+columns require an explicit policy update.
+
+All **164 cases per backend** remain on memory, Spanner-fake, Postgres and
+Spanner-PG. The offline Postgres adapter still invokes all the same contracts and
+all 16 internal purchase orderings; its two updated calls explicitly pass
+`request=None` to disable the native-only bounds.
+
+### Retained native proofs
+
+Nine unparametrized contracts remain intact: FIFO/multiple partial fills and
+session/event idempotency; listing/purchase/withdrawal races; refund-window,
+first-write and single-use access; relisting order and refund lease fencing; two
+buyers racing the same lots; import timestamp completion; own-resale-refund
+exemption versus external excess; import-before-webhook finalization; and
+already-notified historical import.
+
+The following matrices retain these exact combinations. Names omit the common
+`test_nyte_` prefix; every fixture-driven sales-flag case uses **sales-on**.
+
+| Matrix | Kept | Native storage proof / selected variants |
+| --- | ---: | --- |
+| `external_payment_change_blocks_existing_position_and_listings` | 1 | External refund of 1 cent: atomic listing withdrawal and allocation skips blocked seller |
+| `adverse_events_require_a_mapped_position` | 1 | Dispute: unrelated PI stays inert, mapped PI retains blocking evidence |
+| `old_purchase_checks_current_stripe_before_held` | 1 | Webhook replay: current refund evidence blocks old purchase |
+| `successful_refund_later_fails_without_reissuance` | 1 | Failed: bound ID/payment/amount guards, refunded → needs_ops and no reclaim |
+| `refund_failure_and_success_commit_are_order_independent` | 1 | Failure first, failed: legacy fill metadata and durable stale-write history |
+| `shared_refund_obligations_are_monotonic` | 4 | Fill/failure-first/metadata/failed; fill/success-first/bound-ID/canceled; full/failure-first/bound-ID/canceled; full/success-first/metadata/failed. Covers both obligation kinds, completion and retry/reclaim, active-to-ops queue moves, terminal guards and late success no-ops |
+| `unbound_refund_failure_survives_acknowledgement` | 2 | Fill failed; full canceled: metadata-free evidence survives until worker/acknowledgement binding |
+| `existing_metadata_obligation_reconciles_in_both_modes` | 1 | Full refund: pending unbound obligation moves directly to terminal needs_ops |
+| `unmapped_refund_evidence_is_inert` | 1 | Failed: unrelated payment cannot poison a later refund binding |
+| `purchase_adverse_interleaving` | 3 | Checkout/before-mapping/charge.refunded; checkout/before-mapping/dispute; import/during-snapshot/refund.created. Retains each adverse evidence shape and fences stale healthy finalization |
+| `pending_purchase_retries_after_stripe_failure` | 1 | Checkout: durable pending mapping, successful retry, exactly-once allocation |
+| `unmapped_nonreservation_payment_stays_inert` | 1 | Unexpanded PI/dispute: ownership lookup leaves no ledger state |
+| `early_refund_failure_retained_until_binding` | 1 | Failed: reservation PI evidence precedes mapping, purchase and refund binding |
+| `completed_toggle_repairs_pending` | 1 | Initially enabled/replay/list: sent notification fences allocation; repaired historical inventory lists and withdraws |
+| `finalization_invariant_repairs_pending` | 4 | Notified healthy; unnotified import; unnotified eligible adverse; unnotified healthy non-allocation. Tests each independent finalization guard and retained dispute |
+| `completed_legacy_held_pending_is_repaired` | 1 | Import: conditional repair of the persisted legacy shape preserves refund deadline |
+| `interrupted_checkout_repairs_without_replay` | 3 | Holder/adverse race; sweep/healthy; direct refund/unavailable. Covers transactional read repair, paging/cursor, and manual-queue fallback |
+| `repair_checks_legacy_session_and_sweep_age` | 1 | Not notified: age guard, completed-session fallback, repair-once guard and later listing |
+| `all_position_decisions_repair_legacy_rows` | 1 | Allocation: FIFO candidate repair and buyer allocation preserve previously sold lots |
+
+These 30 matrix cases plus the nine basic contracts and one internal ordering
+contract total **40**. The internal ordering contract runs two native scenarios:
+enabled preparation/read failure followed by enabled completion (allocates once),
+and the same preparation followed by disabled notification completion (historical,
+no later allocation). Both include subsequent replay/import checks. Other backends
+still run all 16 scenarios.
+
+The native sweep case starts immediately before its unique test-owned session
+key and processes one page. It still exercises the real primary-key query,
+durable maintenance cursor and conditional repair, without rescanning every
+position left by earlier native contracts. The other backends retain the complete
+one-row-page sweep/wrap loop. This removes hidden work that case counts alone
+would miss.
+
+`tests/test_nyte_emulator_selection.py` checks the 40-case budget, live/exact
+representatives, sales-on restriction, preservation of all 164 cases on each
+other backend, isolation from other test modules, both internal ordering outcomes,
+and the bounded native sweep.
+
+### Collection counts
+
+Command, before and after:
+
+```sh
+uv run pytest --collect-only -q tests/conformance -k spanner-emulator
+```
+
+| Scope | Before | After |
+| --- | ---: | ---: |
+| NYTE resale native cases | 164 | **40** |
+| Other native conformance cases | 419 | **419**, identical node IDs |
+| Total selected native cases | 583 | **459** |
+| Total discovered conformance cases | 3,974 | **3,974** |
+| Deselected cases | 3,391 | **3,515** |
+
+This removes 124 native executions (75.6% of resale case count), 14 internal
+ordering scenarios and the native sweep's unrelated-history walk. The under-two-
+minute added-time target needs a CI/emulator measurement; local fake timing is
+not evidence of native RPC/schema cost.
+
+### Local validation
+
+| Check | Result |
+| --- | --- |
+| Resale/notification contracts, resale tests, selection guards, reserved-token, billing, Stripe-fee and service-surface tests | **631 passed, 374 skipped, 124 deselected**, 235.05 seconds; **89.89%** coverage of the resale modules, above the 70% gate |
+| Native selection executed over Spanner-fake | **40 passed, 780 deselected**; exercises the real selection and native-only test bounds, **not** a real-emulator run or a native performance measurement |
+| Conformance acceptance guards | **135 passed** |
+| Selection-policy guards alone | **4 passed**; also included in the 631-test run |
+| Repository-wide ruff / mypy | Passed; mypy checked 551 source files |
+| Diff check and production/workflow scope check | Passed; no `src` or `.github` changes |
+| Opted-in native gate | Blocked: connection refused at `127.0.0.1:9010`; Docker unavailable. Fail-fast stopped at one setup error, 780 deselected. Native runtime target must be verified in CI. |
+| Full repository attempt (`uv run pytest -q --ff -x --tb=short`) | Stopped at unchanged `tests/test_aws_postgres_delivery_verifier_install.py:432`, copied macOS `shasum`/Perl execution failure: 1 failed, 1,970 deselected. No full-suite pass claimed. |
+
+The local contract run covers every case on memory and Spanner-fake, and the
+existing offline Postgres adapter runner. Postgres and Spanner-PG server DSNs
+are unset; these and the unavailable native emulator account for the 374 skips
+(including the notification contracts). No case was removed from those other
+backends. No production code or workflow was changed to accommodate the timeout.
+
+Logs: `/tmp/nyte-cost-before.log`, `/tmp/nyte-cost-after.log`,
+`/tmp/nyte-cost-local.log`, `/tmp/nyte-cost-selection.log`,
+`/tmp/nyte-cost-native-profile-fake.log`, `/tmp/nyte-cost-guards.log`,
+`/tmp/nyte-cost-native.log`, `/tmp/nyte-cost-full.log`,
+`/tmp/nyte-cost-ruff.log` and `/tmp/nyte-cost-mypy.log`.

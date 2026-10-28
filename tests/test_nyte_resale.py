@@ -330,7 +330,7 @@ def test_postgres_transaction_implementation_on_sql_fake(monkeypatch):
                     contract.test_nyte_completed_toggle_repairs_pending(
                         store, contract.reference(f"pg-toggle-{initial_enabled}-{reconcile_path}-{action}")[:20],
                         monkeypatch, initial_enabled, reconcile_path, action)
-        contract.test_nyte_purchase_completion_ordering_matrix(store, "pg-ordering-matrix", monkeypatch)
+        contract.test_nyte_purchase_completion_ordering_matrix(store, "pg-ordering-matrix", monkeypatch, request=None)
         for backfill in (True, False):
             contract.test_nyte_completed_legacy_held_pending_is_repaired(
                 store, contract.reference(f"pg-legacy-pending-{backfill}")[:20], monkeypatch, backfill)
@@ -345,7 +345,7 @@ def test_postgres_transaction_implementation_on_sql_fake(monkeypatch):
             for provider in ("healthy", "unavailable", "adverse_race"):
                 with monkeypatch.context() as patch:
                     contract.test_nyte_interrupted_checkout_repairs_without_replay(
-                        store, contract.reference(f"pg-repair-{recovery}-{provider}")[:20], patch, recovery, provider)
+                        store, contract.reference(f"pg-repair-{recovery}-{provider}")[:20], patch, recovery, provider, request=None)
         for notified in (True, False):
             with monkeypatch.context() as patch:
                 contract.test_nyte_repair_checks_legacy_session_and_sweep_age(
