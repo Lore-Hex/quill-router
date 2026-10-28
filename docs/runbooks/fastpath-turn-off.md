@@ -128,7 +128,18 @@ not finish, and says why.
 ## 4. Only then stop nodes
 
 Once every enabled workspace has been turned off and checked done, the nodes
-may stop.
+may stop, but only after the enclave's authorize route no longer sends
+through them. A workspace's switch does not move that route: at
+`fastpath_edge_route_weight` 100 (`infra/fastpath_edge_backend.tf`) every
+authorize, the pilot's and everyone else's, reaches the control plane
+through the nodes' edge, so stopping them all stops authorize. First apply
+the weight 0, the way back that comment names (a one-line change whose plan
+changes the url map only), and wait until the edge's request count
+(`loadbalancing.googleapis.com/https/backend_request_count` for
+`tr-fastpath-edge-backend`) has fallen to none for a few minutes, plus the
+route's 24 s timeout; then stop the nodes. Stopping one node at a time, the
+other serving, as `fastpath-deploy.md` does for a release, needs no change
+to the route.
 
 ## A lease that does not end
 

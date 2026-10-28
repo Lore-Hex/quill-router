@@ -36,10 +36,11 @@ locals {
   # once every call of the auditor's running loop has a deadline and a
   # watchdog fails a wedged loop (in 892bd7593 and since, on both nodes).
   # 100 from 2026-10-28, after 50's gates held, once both nodes run
-  # fc1ed83bb (#2130): each startup call, the ring join and first
-  # membership scan among them, has a deadline, and a watchdog on the start
-  # exits a stalled node for systemd to restart. The control backend stays
-  # in the route at 0, so the way back is this line.
+  # 0f0b1829a: each call of a start has a deadline, the secret reads
+  # (#2133) and the ring join and first membership scan (#2130) among them,
+  # and watchdogs on the start exit a stalled node for systemd to restart.
+  # The control backend stays in the route at 0, so the way back is this
+  # line.
   fastpath_edge_route_weight = 100
   # Google's health checkers and the global external proxies, the only
   # sources outside the network the edge's port admits (the enclave's calls
