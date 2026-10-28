@@ -140,7 +140,9 @@ func run() error {
 	cfg.RecordSubscription = "projects/" + *project + "/subscriptions/" + subNames[1]
 	// From here to service.Run the process reads its secrets and makes its
 	// clients, before the service's own watchdogs run: one of those stalled
-	// would leave the node down with no exit for systemd to restart.
+	// would leave the node down with no exit for systemd to restart. The
+	// watch stays armed through a start that fails, so writing its error
+	// to a blocked stderr cannot hold the process either.
 	reads := 0
 	for _, name := range append(strings.Split(*acceptSecrets, ","), *keySecret, *edgeTokenSecret) {
 		if name != "" {
@@ -148,7 +150,6 @@ func run() error {
 		}
 	}
 	unwatch := startWatch(startBudget(reads), os.Exit)
-	defer unwatch()
 	var err error
 	if cfg.Key, cfg.AcceptKeys, err = keysOf(context.Background(), *keyPath, *keySecret, *acceptSecrets); err != nil {
 		return err
