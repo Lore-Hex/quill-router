@@ -32,6 +32,8 @@ class Case:
 
 
 _CASES = [
+    Case("deepinfra", "stepfun-ai/step-5-preview", "stepfun-ai/Step-5-Preview",
+         datetime(2026, 11, 4, tzinfo=UTC), "z-ai/glm-5.3-flash"),
     Case("deepinfra", "meta-llama/llama-3.1-70b-instruct", "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
          datetime(2026, 11, 3, tzinfo=UTC), "meta-llama/llama-3.3-70b-instruct"),
     Case("inception", "inception/mercury-2", "mercury-2",
