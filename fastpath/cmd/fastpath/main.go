@@ -16,9 +16,11 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -205,7 +207,9 @@ func run() error {
 		return err
 	}
 	defer ps.Close()
-	unwatch()
+	if !unwatch() {
+		return errors.New("the start stalled before its parts began")
+	}
 	began := time.Now()
 	err = service.Run(ctx, cfg, service.Clients{Spanner: sp, PubSub: ps})
 	fmt.Fprintf(os.Stderr, "fastpath: stopped after %v\n", time.Since(began).Round(time.Second))
@@ -220,12 +224,36 @@ func startBudget(reads int) time.Duration {
 	return time.Duration(reads)*secretDeadline + service.StartStall
 }
 
+// watchLog is where the watch says why it exits; a test's writer that
+// never returns stands in for a stderr that blocks.
+var watchLog io.Writer = os.Stderr
+
 // startWatch exits the process with code 1 unless the stop it returns is
-// called within d. A stop called after it fired changes nothing.
-func startWatch(d time.Duration, exit func(int)) (stop func()) {
+// called within d. Its line is written at most a second before the exit,
+// so a blocked stderr cannot hold the exit back. stop reports whether it
+// disarmed the watch in time; once the watch has fired, stop waits for the
+// exit, which in the process never returns, so nothing after a late stop
+// runs. Every call of stop after the first answers as the first.
+func startWatch(d time.Duration, exit func(int)) (stop func() bool) {
+	fired, w := make(chan struct{}), watchLog
 	t := time.AfterFunc(d, func() {
-		fmt.Fprintf(os.Stderr, "fastpath: the start stalled before its parts began, after %v; exiting\n", d)
+		defer close(fired)
+		logged := make(chan struct{})
+		go func() {
+			fmt.Fprintf(w, "fastpath: the start stalled before its parts began, after %v; exiting\n", d)
+			close(logged)
+		}()
+		select {
+		case <-logged:
+		case <-time.After(time.Second):
+		}
 		exit(1)
 	})
-	return func() { t.Stop() }
+	return sync.OnceValue(func() bool {
+		if t.Stop() {
+			return true
+		}
+		<-fired
+		return false
+	})
 }
