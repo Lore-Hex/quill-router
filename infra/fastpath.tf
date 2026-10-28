@@ -96,7 +96,8 @@ locals {
   # passes the flag: a node from before that script carries the attribute
   # and passes nothing, so the script reaches the fleet first, as I1's did,
   # through nodes added under new names: 9 and 10 beside 7 and 8, which
-  # then leave the backend and are removed.
+  # then leave the backend and are removed. On since the I3 soak was green;
+  # with every decide row off it still answers nothing.
   fastpath_edge_snapshot = tomap({
     fastpath-edge-snapshot-url        = "${local.fastpath_edge_upstream}/internal/fastpath/routing-snapshot"
     fastpath-edge-snapshot-public-key = "oTQF4Efsi6G7_38Nca4HjiB7QUoNDkNSzaOw26Kt9IM"
@@ -105,7 +106,7 @@ locals {
     fastpath-edge-shadow              = "true"
     fastpath-edge-policy-url          = "${local.fastpath_edge_upstream}/internal/fastpath/edge-policy"
     fastpath-edge-decide-shadow       = "true"
-    fastpath-edge-decide              = "false"
+    fastpath-edge-decide              = "true"
   })
 }
 
