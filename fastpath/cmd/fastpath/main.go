@@ -141,8 +141,11 @@ func run() error {
 	// From here to service.Run the process reads its secrets and makes its
 	// clients, before the service's own watchdogs run: one of those stalled
 	// would leave the node down with no exit for systemd to restart. The
-	// watch stays armed through a start that fails, so writing its error
-	// to a blocked stderr cannot hold the process either.
+	// watch stays armed through a start that fails here, so writing its
+	// error to a blocked stderr cannot hold the process either. A flag
+	// refused above is not watched: it fails the same way on every start,
+	// so a restart would not bring the node back, and a stderr that blocks
+	// holds the running service's every log line as much as the start's.
 	reads := 0
 	for _, name := range append(strings.Split(*acceptSecrets, ","), *keySecret, *edgeTokenSecret) {
 		if name != "" {
