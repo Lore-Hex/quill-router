@@ -44,7 +44,11 @@ locals {
   # startup calls (its ring join and first membership scan among them) and
   # a watchdog on its start and the session's warming that marks the node
   # unhealthy and exits, so systemd restarts it.
-  fastpath_release        = "fc1ed83bb4d0f872b31c0c8154e857af8485e163"
+  # 0f0b1829a: the merge of #2133, the start before the service runs
+  # bounded too: a deadline on each secret read, and a watch that exits the
+  # process if it has not reached the service within 15 s per secret read
+  # plus a minute.
+  fastpath_release        = "0f0b1829ac399cc0b4fc83d2c52b4697d86d66f2"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
