@@ -714,7 +714,11 @@ Fleet health follows completed drain work, including inside busy passes; no
 independent heartbeat or exception-path publication exists. Separate local RPC
 progress keeps the in-process stall monitor from mistaking multiple bounded
 transactions for a wedge. At 26 s without progress it dumps stacks and exits;
-HTTP health uses the same threshold. The monitor never writes fleet health.
+HTTP health uses the same threshold. The immediate all-thread dump uses the
+listener's shared nonblocking stderr helper and leaves its delayed faulthandler
+timer untouched. The worker-only deployment draft pins the event-loop watchdog
+to 30 s with always-allocated CPU; only the listener owns that process-wide
+timer. The monitor never writes fleet health.
 Purge/reap stays exclusively on the existing bounded legacy scheduler.
 
 The legacy bulk candidate SQL excludes async versions before its limit. A

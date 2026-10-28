@@ -405,11 +405,12 @@ def test_monitor_dumps_all_stacks_then_exits_without_shutdown_delay(monkeypatch)
     calls = []
     cfg = config().model_copy(update={'settle_outbox_stall_seconds': .02})
     cadence = worker.WorkerCadence(progress_at=time.monotonic() - 1)
+    monkeypatch.setattr(worker, 'stall_dump_fd', lambda fd: 99)
     monkeypatch.setattr(worker.faulthandler, 'dump_traceback', lambda **kw: calls.append(('stacks', kw)))
     monkeypatch.setattr(worker.os, '_exit', lambda code: calls.append(('exit', code)))
     monkeypatch.setattr(worker, 'MONITOR_INTERVAL_SECONDS', .001)
     worker.monitor_worker(cfg, threading.Event(), cadence)
-    assert calls == [('stacks', {'all_threads': True}), ('exit', 70)]
+    assert calls == [('stacks', {'file': 99, 'all_threads': True}), ('exit', 70)]
 
 
 def test_rpc_progress_only_updates_liveness_not_fleet_health(fake_store, monkeypatch):

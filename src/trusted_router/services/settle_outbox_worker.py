@@ -5,9 +5,10 @@ available executor slots, never a queue. Health publication follows completed
 scan/apply progress, including inside busy passes; a wedged loop cannot renew
 admission evidence. Purge/reap stays solely on the legacy watchdog, which also
 recovers async work under short leases when fleet ownership is stale. A local
-RPC-progress monitor dumps stacks and exits a wedged process; it never publishes
-health. Handler filters sanitize primitive logs; allowlisted Sentry money pages
-retain the router's alert classes. Deployment is separate from this code change.
+RPC-progress monitor dumps stacks through the listener's nonblocking descriptor
+helper and exits a wedged process; it never publishes health or changes the
+listener's faulthandler timer. Handler filters sanitize primitive logs; allowlisted
+Sentry money pages retain the router's alert classes. Deployment is separate from this code change.
 """
 from __future__ import annotations
 
@@ -15,6 +16,7 @@ import datetime as dt
 import faulthandler
 import logging
 import os
+import sys
 import threading
 import time
 from collections import Counter
@@ -30,6 +32,7 @@ from fastapi.responses import JSONResponse
 from trusted_router.config import Settings
 from trusted_router.services import settle_outbox_drain as drain
 from trusted_router.services.settle_outbox_apply import ApplyOutcome
+from trusted_router.stall_dump import stall_dump_fd
 from trusted_router.storage_gcp_async_admission import (
     claim_health_publish,
     publish_health,
@@ -248,10 +251,10 @@ MONITOR_INTERVAL_SECONDS = 0.1
 
 
 def _exit_stalled_worker() -> None:
-    """Single replacement point for composition with the listener watchdog (#2145)."""
+    """Immediate dump and exit; never change the listener's faulthandler timer."""
     try:
         # Code stacks only: no locals, exception payloads or row identifiers.
-        faulthandler.dump_traceback(all_threads=True)
+        faulthandler.dump_traceback(file=stall_dump_fd(sys.stderr.fileno()), all_threads=True)
     finally:
         os._exit(70)  # No shutdown/probe delay; durable leases/fences recover.
 

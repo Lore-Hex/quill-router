@@ -859,19 +859,29 @@ A monitor checks every 0.1 s; at `STALL_SECONDS` without local progress it dumps
 all thread stacks (no locals) and calls `os._exit(70)`. `/health` uses the same
 threshold. Caught fast failures stay live, never refresh fleet evidence, and do
 not cause restart storms. Persistent blocking can still cause repeated exits.
-The dump/exit is one function for later composition with listener watchdog
-#2145 after rebase; this PR does not install a second faulthandler watchdog.
+The dump uses the shared `stall_dump_fd` helper: on Cloud Run's Linux /proc,
+its separate nonblocking stderr descriptor cannot wait on a full logging pipe.
+It never cancels or re-arms the listener's faulthandler timer. The worker deploy
+draft also pins `TR_LOOP_STALL_EXIT_SECONDS=30` because CPU stays allocated:
+that C watchdog covers an event-loop/GIL wedge even when the drain's Python
+monitor cannot run. Only the listener owns the process-wide delayed timer.
 
 Crash/wedge arithmetic, measured from a claim immediately followed by failure:
 `max(30, 26.1 + E + R) + 1 + 0.8 + A` seconds, where E is stack-dump/exit
 time, R is measured replacement startup and A is claim/apply/resolve time.
 Lease expiry runs concurrently with detection/startup, not afterward. With
-illustrative E≈0, R=10 and A=5 this is **42.9 s**; these are acceptance-budget
+illustrative E≤1, R=10 and A=5 this is **43.9 s**; these are acceptance-budget
 placeholders, not measurements. With those A/E values, startup must be under
-about 27 s to fit 60. Ordinary process death omits the 26.1 s detection term.
+about 26 s to fit 60. Ordinary process death omits the 26.1 s detection term.
+If a GIL wedge prevents the Python monitor running, use the listener's 30 s
+threshold in place of 26.1 s: the same illustrative budgets total **47.8 s**.
 Late stalls add time already spent since acceptance. Outages, large backlogs,
-park retries and unbounded stack-output blocking cannot prove a universal 60 s
-bound. Measure cold start and compose #2145's nonblocking dump before rollout;
+park retries and OS scheduling cannot prove a universal 60 s bound. E≤1 s is
+an operational budget to verify, not a hard real-time guarantee: nonblocking
+writes remove the unbounded stderr-backpressure wait, but do not bound CPU
+scheduling. On platforms without /proc the shared helper retains #2145's logged
+blocking fallback, so that budget does not apply. Measure exit and cold start
+and verify the nonblocking descriptor in the Linux image before rollout;
 if the measured sum fails, the smallest timing change is shortening replacement
 startup (or a separately reviewed tighter RPC budget to lower STALL), not
 lengthening leases or weakening fencing.
