@@ -774,11 +774,11 @@ ENV_VARS=(
   "TR_ROUTING_SNAPSHOT_PUBLIC_KEY=${ROUTING_SNAPSHOT_PUBLIC_KEY}"
   # E2 edge policy publication: the literal of the block above.
   "TR_EDGE_POLICY_PUBLISH_ENABLED=${EDGE_POLICY_PUBLISH_ENABLED}"
-  # The edge policy's async_settle.edge_decide: the edge does not decide
-  # async-v1 authorizes until the I4 step of
-  # docs/design/fast-admission-e2-g15-async.md section 6.2. A literal, so no
-  # revision inherits it.
-  "TR_FASTPATH_EDGE_DECIDE_ASYNC=false"
+  # The edge policy's async_settle.edge_decide: on since the I4 step of
+  # docs/design/fast-admission-e2-g15-async.md section 6.2. It decides
+  # nothing for a workspace whose decide row is off; false here is the
+  # off switch of step 5. A literal, so no revision inherits it.
+  "TR_FASTPATH_EDGE_DECIDE_ASYNC=true"
   # trusted_router.serve exits a process whose event loop has gone this many
   # seconds without a tick, after dumping every thread's stack. Safe only
   # because the deploy below keeps CPU allocated between requests
