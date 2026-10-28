@@ -1,6 +1,8 @@
 # Managed OpenAI and Vertex retention review
 
-Reviewed October 28, 2026. Account inspection was read-only. No PSP setting,
+Reviewed October 28, 2026. Configuration inspection was read-only. One minimal
+inference request used a fixed test prompt, `store=false`, and a four-output-token
+limit to verify the credential's project binding. No PSP setting,
 Google addendum, storage bucket, cache setting or credential was changed.
 
 ## Account evidence
@@ -8,10 +10,13 @@ Google addendum, storage bucket, cache setting or credential was changed.
 - OpenAI organization **Lore Hex Corp**, Data controls > Data retention:
   modified retention Active; organization default Zero Data Retention;
   Default project Zero Data Retention. PSP was not enabled in this dashboard.
-- The managed production OpenAI credential could list models (HTTP 200).
-  That response did not identify its project or organization, so the probe
-  alone does **not** independently prove its binding to the displayed project.
-  This change narrows, rather than expands, the existing reviewed account claim.
+- The managed production OpenAI credential could list models (HTTP 200), but
+  that response did not identify its project. A subsequent minimal GPT-4.1
+  request returned HTTP 200 and an `openai-project` header matching the Default
+  project inspected in the dashboard. Request ID:
+  `req_6178c8426fd34dea992e69a3f848240c`; 10 input and 2 output tokens. No user
+  content was sent. This ties the managed credential to the audited settings;
+  it is not cryptographic proof of the provider's internal retention behavior.
 - OpenAI's October 28 enterprise notice explicitly says existing models can
   continue ordinary ZDR. Future models may require PSP; no universal cutover is
   inferred from a recommended test date.
