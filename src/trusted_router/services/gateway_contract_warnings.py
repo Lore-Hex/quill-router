@@ -33,6 +33,7 @@ PARAMETER_CATEGORIES = frozenset(
         "top_p",
         "reasoning",
         "reasoning_effort",
+        "include_reasoning",
         "provider",
         "metadata",
         "tags",
