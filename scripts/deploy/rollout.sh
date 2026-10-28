@@ -772,6 +772,11 @@ ENV_VARS=(
   # docs/design/fast-admission-e2-g15-async.md section 6.2. A literal, so no
   # revision inherits it.
   "TR_FASTPATH_EDGE_DECIDE_ASYNC=false"
+  # trusted_router.serve exits a process whose event loop has gone this many
+  # seconds without a tick, after dumping every thread's stack. Safe only
+  # because the deploy below keeps CPU allocated between requests
+  # (--no-cpu-throttling); a throttled idle instance would see no ticks.
+  "TR_LOOP_STALL_EXIT_SECONDS=30"
 )
 SET_ENV_VARS="$(IFS='|'; echo "^|^${ENV_VARS[*]}")"
 

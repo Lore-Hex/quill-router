@@ -399,3 +399,243 @@ def test_real_sigterm_serves_fresh_connection_during_drain(tmp_path: Path) -> No
             if process.poll() is None:
                 process.kill()
                 process.wait(timeout=5)
+
+
+
+def _stall_server(monkeypatch: pytest.MonkeyPatch, stall: float | None) -> serve.DrainingServer:
+    server = serve.DrainingServer(
+        serve.build_config({"PORT": "8080"}), drain_seconds=3.0, stall_seconds=stall,
+    )
+    monkeypatch.setattr(server.config, "callback_notify", None, raising=False)
+    return server
+
+
+def _record_arming(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, object]]:
+    calls: list[tuple[str, object]] = []
+    monkeypatch.setattr(serve, "stall_dump_fd", lambda fd: calls.append(("dump_fd", fd)) or 99)
+    monkeypatch.setattr(serve.faulthandler, "dump_traceback_later",
+                        lambda timeout, exit=False, file=None: calls.append(("dump", (timeout, exit, file))))
+    monkeypatch.setattr(serve.faulthandler, "cancel_dump_traceback_later",
+                        lambda: calls.append(("cancel", None)))
+    return calls
+
+
+def test_each_second_of_ticks_rearms_the_stall_watchdog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _record_arming(monkeypatch)
+    clock = [1000.0]
+    monkeypatch.setattr(serve, "monotonic", lambda: clock[0])
+    server = _stall_server(monkeypatch, 30.0)
+
+    for counter in range(21):
+        asyncio.run(server.on_tick(counter))
+        clock[0] += 0.1
+
+    arm = ("dump", (30.0, True, 99))
+    assert calls == [("dump_fd", sys.stderr.fileno()), arm, arm, arm]
+
+
+def test_slow_ticks_rearm_the_stall_watchdog_on_every_tick(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Ten ticks 3.1 s apart would outlast a 30 s budget; each one re-arms.
+    calls = _record_arming(monkeypatch)
+    clock = [1000.0]
+    monkeypatch.setattr(serve, "monotonic", lambda: clock[0])
+    server = _stall_server(monkeypatch, 30.0)
+
+    for counter in range(10):
+        asyncio.run(server.on_tick(counter))
+        clock[0] += 3.1
+
+    assert calls.count(("dump", (30.0, True, 99))) == 10
+
+
+def test_without_a_stall_budget_ticks_arm_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _record_arming(monkeypatch)
+    server = _stall_server(monkeypatch, None)
+
+    for counter in range(21):
+        asyncio.run(server.on_tick(counter))
+
+    assert calls == []
+
+
+def test_shutdown_disarms_the_stall_watchdog(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _record_arming(monkeypatch)
+
+    async def stock_shutdown(self: object, sockets: object = None) -> None:
+        calls.append(("stock_shutdown", None))
+
+    monkeypatch.setattr(serve.uvicorn.Server, "shutdown", stock_shutdown)
+    server = _stall_server(monkeypatch, 30.0)
+
+    asyncio.run(server.shutdown())
+
+    assert calls == [("cancel", None), ("stock_shutdown", None)]
+
+
+@pytest.mark.parametrize(("raw", "expected"), [
+    (None, None), ("", None), (" ", None), ("30", 30.0), ("2", 2.0),
+    ("1.9", None), ("0", None), ("-5", None), ("nan", None), ("inf", None), ("thirty", None),
+])
+def test_stall_budget_comes_from_env(raw: str | None, expected: float | None) -> None:
+    env = {} if raw is None else {serve.LOOP_STALL_ENV: raw}
+    assert serve.loop_stall_seconds_from_env(env) == expected
+
+
+def test_trusted_router_rollout_sets_the_stall_budget_with_continuous_cpu() -> None:
+    rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
+    assert f'"{serve.LOOP_STALL_ENV}=30"' in rollout
+    assert "--no-cpu-throttling" in rollout
+
+
+_STALL_SCRIPT = """
+import os
+import socket
+import sys
+import time
+
+from starlette.applications import Starlette
+from starlette.responses import PlainTextResponse
+from starlette.routing import Route
+from trusted_router import serve
+
+FILL_STDERR = sys.argv[2] == "fill"
+
+def wedged_call():
+    time.sleep(30)
+
+async def block(request):
+    print("blocking", flush=True)
+    if FILL_STDERR:
+        os.set_blocking(2, False)
+        try:
+            while True:
+                os.write(2, b"x" * 4096)
+        except BlockingIOError:
+            pass
+        os.set_blocking(2, True)
+    wedged_call()
+    return PlainTextResponse("unreachable")
+
+async def health(request):
+    return PlainTextResponse("ok")
+
+async def slow(request):
+    # Holds the loop for a while on each request: ticks slow, never stop.
+    time.sleep(0.4)
+    return PlainTextResponse("ok")
+
+config = serve.build_config({})
+config.app = Starlette(routes=[Route("/block", block), Route("/health", health), Route("/slow", slow)])
+server = serve.DrainingServer(config, drain_seconds=0, stall_seconds=2.5)
+server.run(sockets=[socket.socket(fileno=int(sys.argv[1]))])
+"""
+
+
+def _run_stalled_server(tmp_path: Path, *, fill_stderr: bool) -> tuple[int, str]:
+    # A loop whose ticks are slowed by every request outlives several stall
+    # budgets; a loop blocked in a call then ends the process within one.
+    out_path = tmp_path / "stdout.log"
+    err_path = tmp_path / "stderr.log"
+    env = dict(os.environ, PYTHONPATH=str(ROOT / "src"))
+    read_end = write_end = None
+    if fill_stderr:
+        # A pipe nobody reads stands for a backed-up log collector.
+        read_end, write_end = os.pipe()
+    with socket.socket() as listener, out_path.open("w") as out, err_path.open("w") as err:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+        process = subprocess.Popen(  # noqa: S603 - fixed local test program
+            [sys.executable, "-c", _STALL_SCRIPT, str(listener.fileno()), "fill" if fill_stderr else "drain"],
+            cwd=tmp_path, env=env, pass_fds=(listener.fileno(),), stdout=out,
+            stderr=write_end if write_end is not None else err,
+        )
+        if write_end is not None:
+            os.close(write_end)
+
+        def get(path: str) -> int:
+            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
+            try:
+                connection.request("GET", path)
+                response = connection.getresponse()
+                response.read()
+                return response.status
+            finally:
+                connection.close()
+
+        try:
+            deadline = time.monotonic() + 10
+            while True:
+                assert process.poll() is None, out_path.read_text()
+                try:
+                    if get("/health") == 200:
+                        break
+                except (OSError, http.client.HTTPException):
+                    time.sleep(0.05)
+                assert time.monotonic() < deadline, out_path.read_text()
+
+            healthy_until = time.monotonic() + 6
+            while time.monotonic() < healthy_until:
+                assert get("/slow") == 200
+            assert process.poll() is None, out_path.read_text()
+
+            with pytest.raises((OSError, http.client.HTTPException)):
+                get("/block")
+            returncode = process.wait(timeout=8)
+            assert "blocking" in out_path.read_text()
+            return returncode, err_path.read_text()
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+            if read_end is not None:
+                os.close(read_end)
+
+
+def test_real_stalled_loop_exits_with_every_stack(tmp_path: Path) -> None:
+    returncode, logs = _run_stalled_server(tmp_path, fill_stderr=False)
+    assert returncode == 1, logs
+    assert "Timeout (0:00:02.500000)!" in logs
+    assert "in wedged_call" in logs
+
+
+@pytest.mark.skipif(not Path("/proc/self/fd").is_dir(), reason="the dump descriptor reopens stderr through /proc")
+def test_real_stalled_loop_exits_when_stderr_is_backed_up(tmp_path: Path) -> None:
+    # The dump cannot be written, but the exit is not held behind it.
+    returncode, _ = _run_stalled_server(tmp_path, fill_stderr=True)
+    assert returncode == 1
+
+
+@pytest.mark.skipif(not Path("/proc/self/fd").is_dir(), reason="the dump descriptor reopens stderr through /proc")
+def test_dump_descriptor_is_nonblocking_without_changing_stderr() -> None:
+    read_end, write_end = os.pipe()
+    try:
+        fd = serve.stall_dump_fd(write_end)
+        assert fd != write_end
+        assert os.get_blocking(write_end) is True
+        assert os.get_blocking(fd) is False
+        os.write(fd, b"stack")
+        assert os.read(read_end, 16) == b"stack"
+        os.close(fd)
+    finally:
+        os.close(read_end)
+        os.close(write_end)
+
+
+def test_dump_descriptor_falls_back_to_stderr_when_it_cannot_reopen(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    def refuse(*args: object, **kwargs: object) -> int:
+        raise FileNotFoundError("no /proc")
+
+    monkeypatch.setattr(serve.os, "open", refuse)
+    read_end, write_end = os.pipe()
+    try:
+        with caplog.at_level(logging.WARNING, logger="trusted_router.serve"):
+            assert serve.stall_dump_fd(write_end) == write_end
+        assert os.get_blocking(write_end) is True
+        assert "serve.stall_dump_blocking reason=FileNotFoundError" in caplog.text
+    finally:
+        os.close(read_end)
+        os.close(write_end)

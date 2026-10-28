@@ -15,6 +15,22 @@ request timeout. Cloud Run's SIGKILL is the only hard deadline; neither request
 completion nor process exit before it is guaranteed. A second SIGTERM, or any
 SIGINT, starts ordinary graceful shutdown without waiting for the drain window.
 
+It also exits a process whose event loop has stopped. On 2026-10-28 two
+europe-west4 instances went silent for one and two minutes with CPU and memory
+flat; every request routed to them hung for up to two minutes and failed
+(two "billing path 5xx" alerts), and nothing said where the process was
+waiting. With ``TR_LOOP_STALL_EXIT_SECONDS`` set, the first uvicorn tick each
+second re-arms ``faulthandler``'s watchdog, a C thread that needs neither the loop nor
+the GIL. If the loop goes that long without a tick, the watchdog writes every
+thread's stack to stderr and exits the process, so Cloud Run replaces it and
+the stacks name the call it was blocked in. The watchdog writes the stacks
+before it exits, so it writes them through a non-blocking descriptor of its
+own (``stall_dump_fd``): a backed-up stderr then costs the stacks, never the
+exit. (No signal can be the backstop: the process is the container's PID 1,
+which a signal's default action does not end.) Only set it for a service whose CPU stays allocated between requests
+(``--no-cpu-throttling``): a throttled idle instance sees no ticks and would
+exit when CPU returns.
+
 Usage: ``python -m trusted_router.serve`` (host 0.0.0.0, port from ``PORT``).
 """
 
@@ -25,6 +41,7 @@ from trusted_router import launch_descriptor_state
 if __name__ == "__main__":
     launch_descriptor_state.claim()
 
+import faulthandler
 import logging
 import math
 import os
@@ -42,6 +59,12 @@ DEFAULT_DRAIN_SECONDS = 3.0
 # Cloud Run sends SIGKILL 10 s after SIGTERM; leave room for the graceful
 # shutdown that follows the drain.
 MAX_DRAIN_SECONDS = 3.0
+LOOP_STALL_ENV = "TR_LOOP_STALL_EXIT_SECONDS"
+# Re-arming starts a new watchdog thread, so it happens on the first tick a
+# second after the last arm (by the clock, not a tick count: a slow loop still
+# ticking must not run out the budget). A stall budget must exceed that second.
+_REARM_SECONDS = 1.0
+MIN_LOOP_STALL_SECONDS = 2.0
 
 # Named explicitly: the container runs this module as `python -m`, where
 # `__name__` is "__main__" and a `__name__`-based logger would sit outside the
@@ -67,13 +90,60 @@ def drain_seconds_from_env(environ: dict[str, str] | None = None) -> float:
     return min(value, MAX_DRAIN_SECONDS)
 
 
+def loop_stall_seconds_from_env(environ: dict[str, str] | None = None) -> float | None:
+    """The stall budget, or None (no watchdog) when unset or invalid."""
+    env = os.environ if environ is None else environ
+    raw = env.get(LOOP_STALL_ENV, "").strip()
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        value = math.nan
+    if not (math.isfinite(value) and value >= MIN_LOOP_STALL_SECONDS):
+        logger.warning("serve.invalid_loop_stall_seconds value=%r watchdog off", raw)
+        return None
+    return value
+
+
+def stall_dump_fd(stderr_fd: int) -> int:
+    """A descriptor on stderr whose writes fail rather than wait when it is full.
+
+    Reopening the descriptor through /proc gives the same pipe or file a file
+    description of its own, so it can be non-blocking (and appending) without
+    changing how anything else writes to stderr. Where that is not possible,
+    stderr itself, logged.
+    """
+    was_blocking = os.get_blocking(stderr_fd)
+    try:
+        fd = os.open(
+            f"/proc/self/fd/{stderr_fd}",
+            os.O_WRONLY | os.O_APPEND | os.O_NONBLOCK | os.O_CLOEXEC,
+        )
+    except OSError as exc:
+        logger.warning("serve.stall_dump_blocking reason=%s", type(exc).__name__)
+        return stderr_fd
+    if os.get_blocking(stderr_fd) != was_blocking:
+        # One shared description after all: put stderr back as it was.
+        os.close(fd)
+        os.set_blocking(stderr_fd, was_blocking)
+        logger.warning("serve.stall_dump_blocking reason=shared_description")
+        return stderr_fd
+    return fd
+
+
 class DrainingServer(uvicorn.Server):
     """uvicorn.Server that keeps its listener open for a drain window after SIGTERM."""
 
-    def __init__(self, config: uvicorn.Config, *, drain_seconds: float) -> None:
+    def __init__(
+        self, config: uvicorn.Config, *, drain_seconds: float, stall_seconds: float | None = None,
+    ) -> None:
         super().__init__(config)
         self.drain_seconds = max(0.0, min(drain_seconds, MAX_DRAIN_SECONDS))
         self.drain_deadline: float | None = None
+        self.stall_seconds = stall_seconds
+        self._stall_dump_fd: int | None = None
+        self._stall_armed_at: float | None = None
 
     async def startup(self, sockets: list | None = None) -> None:
         await super().startup(sockets=sockets)
@@ -101,11 +171,26 @@ class DrainingServer(uvicorn.Server):
         super().handle_exit(sig, frame)
 
     async def on_tick(self, counter: int) -> bool:
+        now = monotonic()
+        if self.stall_seconds is not None and (
+            self._stall_armed_at is None or now - self._stall_armed_at >= _REARM_SECONDS
+        ):
+            if self._stall_dump_fd is None:
+                self._stall_dump_fd = stall_dump_fd(sys.stderr.fileno())
+            faulthandler.dump_traceback_later(self.stall_seconds, exit=True, file=self._stall_dump_fd)
+            self._stall_armed_at = now
         if self.drain_deadline is not None and not self.should_exit:
             if monotonic() >= self.drain_deadline:
                 logger.info("serve.sigterm_drain_complete")
                 self.should_exit = True
         return await super().on_tick(counter)
+
+    async def shutdown(self, sockets: list | None = None) -> None:
+        # Ticks stop here while shutdown waits on in-flight requests; Cloud
+        # Run's SIGKILL bounds that wait instead.
+        if self.stall_seconds is not None:
+            faulthandler.cancel_dump_traceback_later()
+        await super().shutdown(sockets=sockets)
 
 
 def build_config(environ: dict[str, str] | None = None) -> uvicorn.Config:
@@ -135,7 +220,9 @@ def build_config(environ: dict[str, str] | None = None) -> uvicorn.Config:
 def main() -> int:
     try:
         config = build_config()
-        server = DrainingServer(config, drain_seconds=drain_seconds_from_env())
+        server = DrainingServer(
+            config, drain_seconds=drain_seconds_from_env(), stall_seconds=loop_stall_seconds_from_env(),
+        )
         server.run()
         return 0
     finally:
