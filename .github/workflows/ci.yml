@@ -390,7 +390,7 @@ jobs:
           --cov=trusted_router --cov-report=
       - name: Upload this shard's durations
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: durations-default-${{ matrix.shard }}
           path: durations-${{ matrix.shard }}.json
@@ -402,7 +402,7 @@ jobs:
         # make the combine job compute the floor from fewer shards than it
         # thinks it has.
         run: mv .coverage coverage-${{ matrix.shard }}.dat
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: coverage-${{ matrix.shard }}
           path: coverage-${{ matrix.shard }}.dat
@@ -550,7 +550,7 @@ jobs:
           --store-durations --durations-path=durations-${{ matrix.shard }}.json --clean-durations
       - name: Upload this shard's durations
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: durations-post-cutover-${{ matrix.shard }}
           path: durations-${{ matrix.shard }}.json
@@ -607,7 +607,7 @@ jobs:
           --store-durations --durations-path=durations-${{ matrix.shard }}.json --clean-durations
       - name: Upload oracle durations separately from the full suites
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: durations-oracle-${{ matrix.clock }}-${{ matrix.shard }}
           path: durations-${{ matrix.shard }}.json
