@@ -65,7 +65,22 @@ def main() -> None:
         )
         wordmark_path = OUTPUT / f"nyte-wordmark-{variant}.svg"
         wordmark_path.write_text(wordmark)
-        for path, width, height in ((mark_path, 2048, 1024), (wordmark_path, 2400, 480)):
+        group = ET.tostring(next(iter(root)), encoding="unicode").replace("currentColor", color)
+        exports = [(mark_path, 2048, 1024), (wordmark_path, 2400, 480)]
+        for kind, height, globe_transform, text_transform in (
+            ("lockup", 450, "translate(240 15) scale(.52)", "translate(20 270) scale(1.6)"),
+            ("horizontal", 200, "translate(0 20) scale(.32)", "translate(330 42) scale(1.1)"),
+        ):
+            combined = (
+                f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 {height}" '
+                f'width="1000" height="{height}" role="img" aria-label="NY Token Exchange">'
+                f'<g transform="{globe_transform}">{group}</g>'
+                f'<g transform="{text_transform}"><path fill="{color}" d="{title}"/></g></svg>'
+            )
+            combined_path = OUTPUT / f"nyte-{kind}-{variant}.svg"
+            combined_path.write_text(combined)
+            exports.append((combined_path, 2400, int(height * 2.4)))
+        for path, width, height in exports:
             subprocess.run(  # noqa: S603 - fixed renderer arguments and local asset paths
                 [renderer, "--width", str(width), "--height", str(height), "--output", str(path.with_suffix(".png")), str(path)],
                 check=True,

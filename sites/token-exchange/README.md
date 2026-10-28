@@ -452,6 +452,9 @@ The video remains available separately at its existing public URL.
 by Joseph on October 28, 2026, as outlined SVGs and transparent PNGs. These are
 NYTE assets, not the TrustedRouter routing mark. The globe source is
 `nyte-globe-source.svg`; black and white exports preserve its 2:1 aspect ratio.
+Combined globe-and-name exports come first in the kit: `nyte-horizontal-*` is the
+primary one-line 2400 x 480 logo; `nyte-lockup-*` is the alternate stacked 2400 x 1080 version.
+Both include outlined lettering and transparent backgrounds in each color variant.
 The separate homepage capture remains an explicitly dated October 15 illustration.
 Regenerate the logos with `uv run --no-project --with fonttools --with brotli
 sites/token-exchange/export_press_logos.py` and `rsvg-convert` installed.
