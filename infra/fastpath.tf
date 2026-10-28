@@ -40,7 +40,11 @@ locals {
   # carrying a cache affinity key in the cold order; Python's warm re-rank
   # counts as differ.affinity_warm) and G15c's async admission, dark while
   # edge_decide is false, with the shadow's per-population async counts.
-  fastpath_release        = "620e0ca00f77707f0ad56f656a049adbe4fa84dd"
+  # fc1ed83bb: the merge of #2130, a deadline on each of the process's
+  # startup calls (its ring join and first membership scan among them) and
+  # a watchdog on its start and the session's warming that marks the node
+  # unhealthy and exits, so systemd restarts it.
+  fastpath_release        = "fc1ed83bb4d0f872b31c0c8154e857af8485e163"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
