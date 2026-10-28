@@ -1295,6 +1295,40 @@ jobs:
             done
           done
 
+  settle-drain-worker:
+    # Follow every successful router rollout with the same serving image/SA.
+    # The parent reservation spans this job and its verification; never acquire
+    # or release an independent lease for the worker.
+    needs: [rollout-secondaries, admit-cloud]
+    if: github.repository == 'Lore-Hex/quill-router'
+    continue-on-error: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TR_DEPLOY_MUTEX_OPERATION: ${{ needs.admit-cloud.outputs.TR_DEPLOY_MUTEX_OPERATION }}
+      TR_DEPLOY_MUTEX_CLOUD: gcp
+      TR_DEPLOY_HOLD_REGIONS: ${{ vars.TR_DEPLOY_HOLD_REGIONS }}
+      GH_TOKEN: ${{ github.token }}
+      PROJECT_ID: quill-cloud-proxy
+      REGION: us-central1
+      SERVICE: trusted-router
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.sha }}
+
+      - name: Authenticate to GCP via WIF
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Deploy and verify dedicated settle-drain worker
+        run: bash scripts/deploy/settle_drain_worker.sh
+
   # ---------------------------------------------------------------------------
   # Did the CLOUD end up working, or did only the deploy finish?
   #
@@ -1327,7 +1361,7 @@ jobs:
   # execution -- not a mention of one.
   #
   # Read-only completion gate after rollout-secondaries. The outer cloud
-  # reservation remains held until this and the public companion both finish.
+  # reservation remains held until this, the public companion and worker finish.
   #
   # `if: always()` is load-bearing and was missing. With a bare `needs:
   # [rollout-secondaries]`, GitHub SKIPS this job when the follow-on fails --
@@ -1360,7 +1394,7 @@ jobs:
         run: bash scripts/deploy/verify_gcp_complete.sh
 
   finalize-cloud:
-    needs: [admit-cloud, migrate-schema, sync-runtime-secrets, confirm-current-main, confirm-still-on-main, deploy, rollout-secondaries, public-surface-companion, verify-cloud-complete]
+    needs: [admit-cloud, migrate-schema, sync-runtime-secrets, confirm-current-main, confirm-still-on-main, deploy, rollout-secondaries, public-surface-companion, settle-drain-worker, verify-cloud-complete]
     if: ${{ always() && github.repository == 'Lore-Hex/quill-router' && needs.admit-cloud.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5

@@ -808,13 +808,37 @@ against a baseline of 6.
 
 ## <a id="settle-outbox"></a>Settle outbox: flip, verify, monitor, roll back
 
-### Dedicated warm worker (code available; deployment separate)
+### Dedicated warm worker (GCP release companion)
 
-Run the router image as `TR_SERVICE_SURFACE=settle-drain` on **one** always-CPU
-Cloud Run instance in **us-central1**. Keep the five-minute legacy scheduler.
-Only the worker enables fast drain; router pins and the shadow-v2 window stay
-unchanged. The only HTTP route is `GET /health`, with private ingress/invocation.
-The separate deployment must use the reviewed release gates.
+Every GCP production release runs `settle-drain-worker` in
+`.github/workflows/deploy-production.yml` after `rollout-secondaries` succeeds.
+It invokes `scripts/deploy/settle_drain_worker.sh` under the parent's
+`TR_DEPLOY_MUTEX_OPERATION`; finalization waits for the worker as well as the
+other release jobs. The script honours `TR_DEPLOY_HOLD_REGIONS` (including
+`us-central1` and `all`), requires the GCP lease, checks the bake gate and CI,
+and uses the **serving router revision's image and service account**. A held
+worker region or a failed verification fails the job and retains the parent's
+reservation; no independent lease is acquired or released.
+
+The service `trusted-router-settle-drain` runs `TR_SERVICE_SURFACE=settle-drain`
+in **us-central1**, with min=max=1, always-allocated 1 CPU and 2 GiB memory.
+The only HTTP route is `GET /health`, used by startup/liveness probes, with
+internal ingress and no unauthenticated invoker. Direct VPC egress uses the
+router's `TR_CLOUD_RUN_NETWORK` / `TR_CLOUD_RUN_SUBNET` (default `default`)
+and `private-ranges-only`, so fastpath-envelope retries can reach private
+front doors. Image, runtime identity, exact env/secret bindings, absence of
+volumes and invoker IAM are checked after each deploy.
+
+First deployment enables fast drain on this service. Router fast drain,
+async admission and protection stay **false**; fresh fleet health alone cannot
+open admission. The worker drains NULL-version retry rows and publishes fleet-v1.
+Keep the five-minute legacy scheduler and existing shadow-v2 router pins.
+
+An enabled worker can be replaced directly. During revision overlap, row claims
+remain conditional on lease expiry; reservation first-writer claims prevent a
+second money apply, health writes reject an older observation, and the shared
+publish cadence admits one winner per interval. Service min=max=1 remains the
+steady-state limit; a brief old/new overlap does not require stopping the worker.
 
 Worker-only pins (prefix `TR_SETTLE_OUTBOX_`):
 
@@ -861,8 +885,8 @@ threshold. Caught fast failures stay live, never refresh fleet evidence, and do
 not cause restart storms. Persistent blocking can still cause repeated exits.
 The dump uses the shared `stall_dump_fd` helper: on Cloud Run's Linux /proc,
 its separate nonblocking stderr descriptor cannot wait on a full logging pipe.
-It never cancels or re-arms the listener's faulthandler timer. The worker deploy
-draft also pins `TR_LOOP_STALL_EXIT_SECONDS=30` because CPU stays allocated:
+It never cancels or re-arms the listener's faulthandler timer. The worker deployment
+also pins `TR_LOOP_STALL_EXIT_SECONDS=30` because CPU stays allocated:
 that C watchdog covers an event-loop/GIL wedge even when the drain's Python
 monitor cannot run. Only the listener owns the process-wide delayed timer.
 
@@ -926,17 +950,52 @@ message, customer tags, breadcrumbs or exception data. Idle logs are a minute
 summary; fleet snapshots are DEBUG. Confirm a test money alert reaches paging
 before enabling admission.
 
-Disable router async admission first, resolve accepted rows, then set worker
-fast=false through reviewed configuration. Off stays healthy, logs once and
-initializes no Spanner store. SIGTERM stops new claims and joins for at most
-eight seconds; running work retains its fences and claimed-but-not-started rows
-expire normally. Do not clear leases manually. Retain the watchdog on rollback.
+The config-as-code off switch is the single
+`"TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED": "true"` pin in
+`scripts/deploy/settle_drain_config.py`. Change it to `"false"` and release to
+keep the service deployed, idle and healthy. No other pin needs to change.
+A normal stop should disable async admission first if it has subsequently been
+enabled and resolve accepted rows. Off logs once and initializes no Spanner
+store. SIGTERM stops new claims and joins for at most eight seconds; in-flight
+work retains its fences and abandoned claims expire normally. Never clear leases
+manually; retain the legacy watchdog.
 
-Before the pilot: verify one instance, private invocation, observed_at age every
-few seconds via complete-PK reads, expected idle operation rates, Spanner alarms
-OK, real money paging, and booking/outbox latency on any rows. Rehearse crash,
-wedge and worker-absent recovery. Require measured p95 <=5 s and <=60 s within
-the declared healthy-worker/restart envelope.
+For an emergency stop, update **only** the worker service, then land the idle
+literal so the next release preserves the stop:
+
+```bash
+gcloud run services update trusted-router-settle-drain \
+  --project=quill-cloud-proxy --region=us-central1 \
+  --update-env-vars=TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED=false
+```
+
+This temporary update takes effect as the idle revision replaces the active one;
+it does not revoke in-flight work. The next release reapplies the literal, so an
+enabled literal will turn the worker back on. Confirm the serving worker has
+fast drain false and `/health` is idle, and that fleet-v1 stops refreshing.
+
+Post-deploy acceptance (before opening any async pilot):
+
+- Verify the deployed image/service account match the serving router, min=max=1
+  with one steady-state instance, always-allocated CPU, private ingress/invocation,
+  expected network/subnet/egress, probes and sole Sentry binding. Allow only brief
+  revision overlap and confirm the old revision drains away.
+- Sample fleet-v1 `observed_at` age every few seconds using complete-primary-key
+  reads; verify cadence while enabled and no publication while idle. Routers
+  must still have async admission/protection/fast drain false.
+- Verify the idle Spanner operation rate above and that existing Spanner alerts
+  stay OK; do not change the 45% CPU alarm. Check booking/outbox latency on any rows.
+- Retry one real due NULL-version fastpath-envelope row through the worker:
+  confirm it reaches its private front door, receives a terminal decision and
+  resolves durably instead of repeatedly parking as leased-undecided. Verify
+  network/firewall/IAM reachability with authorized evidence; do not add customer
+  identifiers to worker logs.
+- Confirm a test money alert reaches Sentry paging. Rehearse crash, wedge and
+  worker-absent recovery; verify Linux's nonblocking dump/exit and **measure
+  replacement-start timing**, dump/exit E and apply A against the arithmetic above.
+  Require measured p95 <=5 s and <=60 s within the declared healthy-worker/restart
+  envelope before opening admission; the documented timing examples are budgets,
+  not production measurements.
 
 
 Durably recover completed charges whose settle intent was recorded but whose
