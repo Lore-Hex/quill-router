@@ -39,6 +39,9 @@
         <tr><th>Verified confidential inference</th><td><span class="pill {% if provider.confidential_inference_verified %}good{% endif %}">{{ provider.confidential_inference_label }}</span></td></tr>
         {% endif %}
         <tr><th>Policy note</th><td>{{ provider.policy }}{% if provider.policy_url %}<br><a href="{{ provider.policy_url }}">Policy source</a>{% endif %}</td></tr>
+        {% if provider.retention_notice %}
+        <tr><th>Strict ZDR and safety retention</th><td>{{ provider.retention_notice }} Use <code>provider.min_privacy="zdr"</code> to reject retained or unverified routes, including during fallback.</td></tr>
+        {% endif %}
       </tbody>
     </table>
     {% if provider.profile and provider.profile.resources %}
@@ -156,6 +159,9 @@
         <tr>
           <td>
             <a href="{{ model.detail_href }}"><code>{{ model.id }}</code></a><br>{{ model.name }}
+            {% for retention in model.retention_policies %}
+            <div><span class="pill {{ 'good' if retention.strict_zdr_eligible else 'warn' }}" data-retention="{{ retention.mode }}" title="{{ retention.detail }}">{{ retention.label }}</span></div>
+            {% endfor %}
             {% if model.benchmarks_href or model.providers_href or model.pricing_href %}
             <div class="mini-links">
               {% if model.benchmarks_href %}<a href="{{ model.benchmarks_href }}">benchmarks</a>{% endif %}

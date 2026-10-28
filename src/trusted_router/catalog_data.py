@@ -599,8 +599,13 @@ PROVIDERS: dict[str, Provider] = {
             "Contracted Zero Data Retention is active for TrustedRouter's managed "
             "OpenAI account, effective July 28, 2026, and live enforcement was "
             "verified on July 29, 2026. This guarantee applies only to "
-            "TrustedRouter-funded routes; customer BYOK credentials use the "
-            "data controls on the customer's own OpenAI organization or project."
+            "reviewed TrustedRouter-funded routes; customer BYOK credentials use the "
+            "data controls on the customer's own OpenAI organization or project. "
+            "The organization and Default project were rechecked on October 28, 2026: "
+            "ordinary ZDR, not Private Safety Processing (PSP). PSP retains encrypted "
+            "safety records and never qualifies for TrustedRouter's strict ZDR filter. "
+            "Models with persistent cache state are also excluded from strict ZDR. "
+            "New models do not automatically inherit ZDR approval."
         ),
         provider_policy_url=(
             "https://developers.openai.com/api/docs/guides/your-data"
@@ -632,8 +637,12 @@ PROVIDERS: dict[str, Provider] = {
         prepaid_zero_data_retention_effective_on="2026-07-28",
         provider_policy=(
             "TrustedRouter's managed Vertex AI account is covered by contractual "
-            "Zero Data Retention. This guarantee applies only to TrustedRouter-funded "
-            "routes. TrustedRouter does not invoke Google Search or Maps "
+            "Zero Data Retention, but eligibility is reviewed per model and feature. "
+            "Durable caching was found enabled on October 28, 2026; affected Gemini "
+            "routes are excluded from strict ZDR. Safety-retention and unreviewed "
+            "routes are also excluded, even when described upstream as ZDR-aligned. "
+            "This guarantee applies only to reviewed TrustedRouter-funded routes. "
+            "TrustedRouter does not invoke Google Search or Maps "
             "grounding or Gemini Live session resumption on these routes. Google AI "
             "Studio is classified separately."
         ),
