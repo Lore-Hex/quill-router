@@ -28,7 +28,7 @@ from trusted_router.billing_snapshot import (
     require_eligible,
 )
 from trusted_router.catalog_data import ModelEndpoint
-from trusted_router.config import Settings
+from trusted_router.config import Settings, in_v2_cohort
 from trusted_router.detached_jws import TrustedKey, b64encode
 from trusted_router.storage_models import GatewayAuthorization, generation_id_for_authorization
 
@@ -293,6 +293,19 @@ ORDINARY_PARAMETERS: frozenset[str] = frozenset({
 })
 
 
+def has_authorize_feature_extras(body: Any, *, shadow_v2: bool = False) -> bool:
+    """Separate the enclave's advisory lease echo from inference features.
+
+    spend_lease.go adds this observation after chatAuthorizeBody. It supplies
+    no billing authority or eligibility facts here. Consequential admission
+    and every other unknown member remain unsupported. Keep v1 unchanged.
+    """
+    extras = body.model_extra
+    if shadow_v2 and extras:
+        return bool(extras.keys() - {"spend_lease_echo"})
+    return bool(extras)
+
+
 def authorize_additions(*, request: Any, body: Any, authorization: GatewayAuthorization,
                         endpoints: list[ModelEndpoint], settings: Settings, typed: bool,
                         federated: bool, replay: bool, effective_at: Any) -> dict[str, Any]:
@@ -304,7 +317,12 @@ def authorize_additions(*, request: Any, body: Any, authorization: GatewayAuthor
 
         # Replays lack a persisted async snapshot in PR B. Never re-freeze a
         # newer catalog against an older authorization. PR C owns retry storage.
-        if replay or body.model_extra or body.route_type not in {"chat.completions", "responses"}:
+        shadow_v2 = (
+            in_v2_cohort(settings.effective_async_settle_shadow_policy(), authorization.workspace_id,
+                         settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids)
+            and request.headers.getlist("X-TR-Settlement-Shadow-Policy") == ["shadow-v2"]
+        )
+        if replay or has_authorize_feature_extras(body, shadow_v2=shadow_v2) or body.route_type not in {"chat.completions", "responses"}:
             return {"async_eligible": False}
         # Recognizing the enclave's modality field must not expand the
         # text-only settlement optimization's previous eligibility boundary.

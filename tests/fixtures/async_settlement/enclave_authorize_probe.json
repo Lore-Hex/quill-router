@@ -1,0 +1,211 @@
+{
+  "enclave_revision": "7c2082f1",
+  "provenance": "Source-derived literals from enclave 7c2082f1014d1bf2778979677ed76f6c8e081bc8; not production captures. Public shapes: quill-router shadow_probe_contract.py:24-55. chatAuthorizeBody client.go:842-930; final wire seam spend_lease.go:238-273. Runtime lookup digest, idempotency UUID, cache-affinity HMAC, invocation nonce, configured region are fixture values.",
+  "shapes": {
+    "openai_chat_buffered": {
+      "api_key_lookup_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "model": "openai/gpt-4.1-mini",
+      "estimated_input_tokens": 6,
+      "max_output_tokens": 8,
+      "max_tokens": 8,
+      "region": "us",
+      "route_type": "chat.completions",
+      "idempotency_key": "async-settle-probe-00000000-0000-4000-8000-000000000001",
+      "stream": false,
+      "cache_affinity_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "cache_affinity_explicit": false,
+      "provider": {
+        "only": [
+          "openai"
+        ],
+        "allow_fallbacks": false
+      },
+      "requested_parameters": [
+        "max_tokens"
+      ],
+      "invocation_nonce": "00112233445566778899aabbccddeeff"
+    },
+    "openai_chat_stream": {
+      "api_key_lookup_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "model": "openai/gpt-4.1-mini",
+      "estimated_input_tokens": 6,
+      "max_output_tokens": 8,
+      "max_tokens": 8,
+      "region": "us",
+      "route_type": "chat.completions",
+      "idempotency_key": "async-settle-probe-00000000-0000-4000-8000-000000000001",
+      "stream": true,
+      "cache_affinity_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "cache_affinity_explicit": false,
+      "provider": {
+        "only": [
+          "openai"
+        ],
+        "allow_fallbacks": false
+      },
+      "requested_parameters": [
+        "max_tokens"
+      ],
+      "invocation_nonce": "00112233445566778899aabbccddeeff"
+    },
+    "openai_responses_buffered": {
+      "api_key_lookup_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "model": "openai/gpt-4.1-mini",
+      "estimated_input_tokens": 6,
+      "max_output_tokens": 8,
+      "max_tokens": 8,
+      "region": "us",
+      "route_type": "responses",
+      "idempotency_key": "async-settle-probe-00000000-0000-4000-8000-000000000001",
+      "stream": false,
+      "cache_affinity_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "cache_affinity_explicit": false,
+      "provider": {
+        "only": [
+          "openai"
+        ],
+        "allow_fallbacks": false
+      },
+      "requested_parameters": [
+        "max_tokens"
+      ],
+      "invocation_nonce": "00112233445566778899aabbccddeeff"
+    },
+    "openai_responses_stream": {
+      "api_key_lookup_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "model": "openai/gpt-4.1-mini",
+      "estimated_input_tokens": 6,
+      "max_output_tokens": 8,
+      "max_tokens": 8,
+      "region": "us",
+      "route_type": "responses",
+      "idempotency_key": "async-settle-probe-00000000-0000-4000-8000-000000000001",
+      "stream": true,
+      "cache_affinity_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "cache_affinity_explicit": false,
+      "provider": {
+        "only": [
+          "openai"
+        ],
+        "allow_fallbacks": false
+      },
+      "requested_parameters": [
+        "max_tokens"
+      ],
+      "invocation_nonce": "00112233445566778899aabbccddeeff"
+    },
+    "anthropic_chat_buffered": {
+      "api_key_lookup_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "model": "anthropic/claude-haiku-4.5",
+      "estimated_input_tokens": 6,
+      "max_output_tokens": 8,
+      "max_tokens": 8,
+      "region": "us",
+      "route_type": "chat.completions",
+      "idempotency_key": "async-settle-probe-00000000-0000-4000-8000-000000000001",
+      "stream": false,
+      "cache_affinity_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "cache_affinity_explicit": false,
+      "provider": {
+        "only": [
+          "anthropic"
+        ],
+        "allow_fallbacks": false
+      },
+      "requested_parameters": [
+        "max_tokens"
+      ],
+      "invocation_nonce": "00112233445566778899aabbccddeeff"
+    },
+    "anthropic_chat_stream": {
+      "api_key_lookup_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "model": "anthropic/claude-haiku-4.5",
+      "estimated_input_tokens": 6,
+      "max_output_tokens": 8,
+      "max_tokens": 8,
+      "region": "us",
+      "route_type": "chat.completions",
+      "idempotency_key": "async-settle-probe-00000000-0000-4000-8000-000000000001",
+      "stream": true,
+      "cache_affinity_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "cache_affinity_explicit": false,
+      "provider": {
+        "only": [
+          "anthropic"
+        ],
+        "allow_fallbacks": false
+      },
+      "requested_parameters": [
+        "max_tokens"
+      ],
+      "invocation_nonce": "00112233445566778899aabbccddeeff"
+    },
+    "anthropic_responses_buffered": {
+      "api_key_lookup_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "model": "anthropic/claude-haiku-4.5",
+      "estimated_input_tokens": 6,
+      "max_output_tokens": 8,
+      "max_tokens": 8,
+      "region": "us",
+      "route_type": "responses",
+      "idempotency_key": "async-settle-probe-00000000-0000-4000-8000-000000000001",
+      "stream": false,
+      "cache_affinity_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "cache_affinity_explicit": false,
+      "provider": {
+        "only": [
+          "anthropic"
+        ],
+        "allow_fallbacks": false
+      },
+      "requested_parameters": [
+        "max_tokens"
+      ],
+      "invocation_nonce": "00112233445566778899aabbccddeeff"
+    },
+    "anthropic_responses_stream": {
+      "api_key_lookup_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "model": "anthropic/claude-haiku-4.5",
+      "estimated_input_tokens": 6,
+      "max_output_tokens": 8,
+      "max_tokens": 8,
+      "region": "us",
+      "route_type": "responses",
+      "idempotency_key": "async-settle-probe-00000000-0000-4000-8000-000000000001",
+      "stream": true,
+      "cache_affinity_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "cache_affinity_explicit": false,
+      "provider": {
+        "only": [
+          "anthropic"
+        ],
+        "allow_fallbacks": false
+      },
+      "requested_parameters": [
+        "max_tokens"
+      ],
+      "invocation_nonce": "00112233445566778899aabbccddeeff"
+    }
+  },
+  "lease_shadow_condition": "plan == nil && c.spendLease != nil && c.shadow == nil; spend_lease.go:256-260. Not established by operator aggregates. Other ordinary paths add only invocation_nonce (line 262).",
+  "lease_shadow_additions": {
+    "spend_lease_echo": {
+      "lease_id": null,
+      "state": "dormant",
+      "remaining_micro": null,
+      "enclave_estimate_micro": null,
+      "catalog_version": null,
+      "would_admit": null
+    }
+  },
+  "field_sources": {
+    "base": "client.go:843-853",
+    "requested_parameters": "chat_request.go:65-67,95-154; main.go:1562-1580; responses.go:270-302,348-349",
+    "provider": "client.go:897-899; types.go:712-735",
+    "estimated_input_tokens": "client.go:1849-1857; types/content.go:80-108; responses.go:377-383",
+    "cache_affinity": "client.go:879-882; cache_affinity.go:25-67",
+    "idempotency_key": "shadow_probe.py:165-168; authorization_retry.go:126-135,147-151",
+    "invocation_nonce": "spend_lease.go:251-262; authorization_retry.go:77-87",
+    "spend_lease_echo": "spend_lease.go:256-260; spendlease/state.go:66-76; spendlease/types.go:98-105"
+  }
+}

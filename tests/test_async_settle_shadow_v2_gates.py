@@ -202,6 +202,19 @@ def positive_results(passing: Bundle) -> dict[str, Any]:
     return {stage: evaluate(passing, ports(passing), gate=stage) for stage in ('shadow-serving', 'pre-flip')}
 
 
+def test_unprovisioned_boot_day_without_ledger_cannot_certify(passing: Bundle) -> None:
+    observed = change_row(passing, p1.KINDS[3],
+        lambda c: c['diagnostics'].update(startup_unprovisioned=c['authorize_attempts']))
+    candidate = replace(observed, ledgers=())
+    counter = next(json.loads(row.raw) for row in candidate.rows if row.key.kind == p1.KINDS[3])
+    assert counter['diagnostics']['startup_unprovisioned'] > 0
+    assert counter['A'] > 0
+    result = evaluate(candidate, ports(passing), gate='shadow-serving')
+    assert result.verdict == 'BLOCKED'
+    assert 'boot_prerequisite_gap' in result.gaps
+    assert any(f.gap == 'boot_prerequisite_gap' for f in result.failures)
+
+
 # The same 58 predicates have traced original-byte witnesses; retain this
 # independent typed-view differential grid under the exhaustive convention.
 @exhaustive
