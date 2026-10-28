@@ -188,23 +188,23 @@ def test_nyte_own_refund_before_worker_commit_is_exempt_but_external_excess_bloc
     assert purchase(store, unique + "after", lots=1, allocate=True)["new_lots"] == 1
 
 
-def test_nyte_timestamped_import_still_allocates_after_webhook_claim(store: Store, unique: str) -> None:
+def test_nyte_timestamped_import_finalizes_historical_before_webhook(store: Store, unique: str) -> None:
     seller, buyer = unique + "seller", unique + "buyer"
     purchase(store, seller)
     listing(store, seller)
-    # Critical interleaving: webhook persists completion time, then importer
-    # writes the position, then webhook finally executes its allocation.
+    # An import finalizes as new inventory even if a webhook claimed it first.
+    # A later webhook cannot retroactively allocate that completed import.
     store.claim_reserved_notification(buyer, "webhook", now=200)
     p = {"session_id": buyer, "holder": buyer, "lots": 2, "grade": unique[:12],
          "per_lot_cents": 100, "payment_intent": "pi_" + buyer, "purchase_completed_at": None}
     imported = call(store, "purchase", position=p, event_id="backfill:" + buyer, backfill=True)
-    assert imported["purchase_completed_at"] == 200 and imported["allocation_status"] == "pending"
+    assert imported["purchase_completed_at"] == 200 and imported["allocation_status"] == "historical"
     result = call(store, "purchase", position={**p, "purchase_completed_at": 999},
                   event_id="evt_" + buyer, allocate=True, fee_bps=500)
-    assert result["purchase_completed_at"] == 200 and result["allocation_status"] == "complete"
-    assert result["new_lots"] == 0 and len(result["fills"]) == 1
+    assert result["purchase_completed_at"] == 200 and result["allocation_status"] == "historical"
+    assert result["new_lots"] == 2 and result["fills"] == []
     assert call(store, "purchase", position=p, event_id="evt_retry_" + buyer, allocate=True) == result
-    assert call(store, "position", position=seller)["sold_lots"] == 2
+    assert call(store, "position", position=seller)["sold_lots"] == 0
     assert len(call(store, "positions", holder=buyer)["positions"]) == 1
 
 
@@ -645,7 +645,7 @@ def test_nyte_purchase_adverse_interleaving(store: Store, unique: str, monkeypat
     p = call(store, "position", position=obj["id"])
     assert p["status"] == "needs_review" and p["payment_review"]
     assert p["fills"] == [] and p["purchase_completed_at"] == 100
-    assert p["allocation_status"] == ("historical" if path == "historical_import" else "complete")
+    assert p["allocation_status"] == ("complete" if resale_enabled and path == "checkout" else "historical")
     assert call(store, "position", position=seller)["sold_lots"] == 0
     with pytest.raises(ValueError, match="review"):
         call(store, "list", position=obj["id"], holder=holder, lots=1, request_id="after")
@@ -746,3 +746,199 @@ def test_nyte_early_refund_failure_retained_until_binding(store: Store, unique: 
     assert resale.acknowledge_full_refund(unique, refund["id"], settings)["status"] == "needs_ops"
     assert alert.called
     create.assert_not_called()
+
+
+@pytest.mark.parametrize("initial_enabled", [True, False], ids=["on-off-on", "off-on-on"])
+@pytest.mark.parametrize("reconcile_path", ["replay", "import"])
+@pytest.mark.parametrize("action", ["request_refund", "list"])
+def test_nyte_completed_toggle_repairs_pending(store: Store, unique: str, monkeypatch, initial_enabled: bool, reconcile_path: str, action: str) -> None:
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+
+    from tests.test_reserved_tokens import event
+    from trusted_router.config import Settings
+    from trusted_router.services import resale, reserved_tokens
+
+    settings = Settings(environment="test", resale_enabled=initial_enabled)
+    monkeypatch.setattr(resale, "STORE", store)
+    monkeypatch.setattr(reserved_tokens, "STORE", store)
+    monkeypatch.setattr(reserved_tokens, "get_email_service", lambda _: SimpleNamespace(send=lambda _: True))
+    monkeypatch.setattr(resale, "retry_buyer_refunds", lambda *a: None)
+    clock = [100]
+    monkeypatch.setattr(reserved_tokens, "_utc_now", lambda: datetime.fromtimestamp(clock[0], UTC))
+    data = event()
+    obj = data["data"]["object"]
+    data["id"] = "evt_" + unique
+    obj.update(id="cs_" + unique, payment_intent="pi_" + unique)
+    seller = unique + "seller"
+    purchase(store, seller, grade="A")
+    lid = listing(store, seller)
+
+    def unavailable(*args, **kwargs):
+        raise RuntimeError("Stripe unavailable")
+    monkeypatch.setattr(resale.stripe.PaymentIntent, "retrieve", unavailable)
+    if initial_enabled:
+        with pytest.raises(RuntimeError, match="unavailable"):
+            reserved_tokens.handle_reservation_event(data, settings)
+        assert call(store, "position", position=obj["id"])["status"] == "pending"
+    else:
+        assert reserved_tokens.handle_reservation_event(data, settings)["recorded"]
+        assert call(store, "position", position=obj["id"]) == {}
+    settings.resale_enabled = not initial_enabled
+    clock[0] = 1000  # The failed first attempt's notification lease has expired.
+    monkeypatch.setattr(resale.stripe.PaymentIntent, "retrieve", lambda *a, **kw: {
+        "status": "succeeded", "latest_charge": {"paid": True, "amount_refunded": 0},
+    })
+    reserved_tokens.handle_reservation_event(data, settings)
+    assert store.claim_reserved_notification(obj["id"], "probe", now=1100) == ("sent", 100)
+    settings.resale_enabled = True
+    clock[0] = 2000
+    if reconcile_path == "replay":
+        reserved_tokens.handle_reservation_event(data, settings)
+    else:
+        holder = resale.holder_key(obj["customer_details"]["email"])
+        monkeypatch.setattr(resale.stripe.Customer, "list", lambda **kw: SimpleNamespace(auto_paging_iter=lambda: iter([{"id": "cus_old"}])))
+        monkeypatch.setattr(resale.stripe.checkout.Session, "list", lambda **kw: SimpleNamespace(auto_paging_iter=lambda: iter([obj])))
+        resale.backfill_email(obj["customer_details"]["email"], holder, settings)
+    p = call(store, "position", position=obj["id"])
+    assert (p["status"], p["allocation_status"], p["purchase_completed_at"]) == ("held", "historical", 100)
+    assert p["fills"] == [] and p["new_lots"] == p["lots"]
+    assert call(store, "position", position=seller)["sold_lots"] == 0
+    result = call(store, action, position=obj["id"], holder=p["holder"], lots=1,
+                  now=101 if action == "request_refund" else 100 + REFUND_WINDOW + 1, request_id=unique + action)
+    assert result["status"] == ("refund_requested" if action == "request_refund" else "active")
+    if action == "list":
+        call(store, "withdraw", position=obj["id"], holder=p["holder"], listing=result["listing_id"], request_id=unique + "cleanup-buyer")
+    call(store, "withdraw", position=seller, holder=seller, listing=lid, request_id="cleanup-seller")
+
+
+def test_nyte_purchase_completion_ordering_matrix(store: Store, unique: str, monkeypatch) -> None:
+    from datetime import UTC, datetime
+    from itertools import product
+    from types import SimpleNamespace
+
+    from tests.test_reserved_tokens import event
+    from trusted_router.config import Settings
+    from trusted_router.services import resale, reserved_tokens
+
+    settings = Settings(environment="test")
+    monkeypatch.setattr(resale, "STORE", store)
+    monkeypatch.setattr(reserved_tokens, "STORE", store)
+    monkeypatch.setattr(reserved_tokens, "get_email_service", lambda _: SimpleNamespace(send=lambda _: True))
+    monkeypatch.setattr(resale, "retry_buyer_refunds", lambda *a: None)
+    clock, provider_ok = [100], [True]
+    monkeypatch.setattr(reserved_tokens, "_utc_now", lambda: datetime.fromtimestamp(clock[0], UTC))
+
+    def retrieve(*args, **kwargs):
+        if not provider_ok[0]:
+            raise RuntimeError("Stripe unavailable")
+        return {"status": "succeeded", "latest_charge": {"paid": True, "amount_refunded": 0}}
+    monkeypatch.setattr(resale.stripe.PaymentIntent, "retrieve", retrieve)
+    cases = list(product((True, False), repeat=4))
+    for index, (create_enabled, read_ok, completion_enabled, replay_enabled) in enumerate(cases):
+        case = f"{unique}-{index}"
+        data = event()
+        obj = data["data"]["object"]
+        data["id"] = "evt_" + case
+        obj.update(id="cs_" + case, payment_intent="pi_" + case)
+        seller = case + "seller"
+        purchase(store, seller, grade="A")
+        lid = listing(store, seller)
+        completed = False
+
+        def deliver(enabled: bool, stripe_ok: bool, at: int, *, obj=obj, data=data, case=case, seller=seller) -> None:
+            nonlocal completed
+            settings.resale_enabled, provider_ok[0], clock[0] = enabled, stripe_ok, at
+            before = call(store, "position", position=obj["id"])
+            before_fills = before.get("fills", [])
+            if enabled and not stripe_ok:
+                with pytest.raises(RuntimeError, match="unavailable"):
+                    reserved_tokens.handle_reservation_event(data, settings)
+            else:
+                reserved_tokens.handle_reservation_event(data, settings)
+                after = call(store, "position", position=obj["id"])
+                if enabled:
+                    assert after["status"] == "held" and after["allocation_status"] != "pending", (case, at)
+                if completed:
+                    assert after.get("fills", []) == before_fills, (case, at, "allocated after notification")
+                completed = True
+            p = call(store, "position", position=obj["id"])
+            assert len(p.get("fills", [])) <= 1, case
+            assert call(store, "position", position=seller)["sold_lots"] <= 2, case
+
+        deliver(create_enabled, read_ok, 100)
+        deliver(completion_enabled, True, 1000)
+        deliver(replay_enabled, True, 2000)
+        # A disabled replay intentionally keeps #2125's no-ledger path. Once
+        # enabled, every interrupted/imported position must be finalized.
+        deliver(True, True, 3000)
+        p = call(store, "position", position=obj["id"])
+        should_allocate = create_enabled and (read_ok or completion_enabled)
+        assert p["allocation_status"] == ("complete" if should_allocate else "historical"), case
+        assert p["status"] == "held" and p["purchase_completed_at"] == 100, case
+        assert p["new_lots"] == (0 if should_allocate else 2), case
+        assert len(p["fills"]) == int(should_allocate), case
+        assert call(store, "position", position=seller)["sold_lots"] == (2 if should_allocate else 0), case
+        # Further imports/replays preserve the completed allocation and timestamp.
+        assert resale.record_purchase(obj, "backfill:" + case, None, settings, backfill=True) == p
+        deliver(True, True, 4000)
+        assert call(store, "position", position=obj["id"]) == p
+        call(store, "withdraw", position=seller, holder=seller, listing=lid, request_id="cleanup")
+
+
+@pytest.mark.parametrize("notified", [True, False])
+@pytest.mark.parametrize("backfill", [True, False])
+@pytest.mark.parametrize("allocate", [True, False])
+@pytest.mark.parametrize("adverse", [True, False])
+def test_nyte_finalization_invariant_repairs_pending(store: Store, unique: str, notified: bool, backfill: bool, allocate: bool, adverse: bool) -> None:
+    seller, buyer = unique + "seller", unique + "buyer"
+    purchase(store, seller)
+    listing(store, seller)
+    p = {"id": buyer, "session_id": buyer, "holder": buyer, "lots": 2, "grade": unique[:12],
+         "per_lot_cents": 100, "payment_intent": "pi_" + buyer, "purchase_completed_at": None}
+    store.claim_reserved_notification(buyer, "webhook", now=200)
+    call(store, "purchase_prepare", position=p, event_id="evt_" + buyer)
+    if adverse:
+        call(store, "reconcile_payment", payment_intent=p["payment_intent"], payment_state={"disputed": True})
+    if notified:
+        store.finish_reserved_notification(buyer, "webhook", sent=True)
+    result = call(store, "purchase", position=p, event_id="finish_" + buyer, backfill=backfill,
+                  allocate=allocate, fee_bps=500, payment_state={"unpaid": False, "amount_refunded": 0})
+    eligible = allocate and not backfill and not notified
+    assert result["status"] == ("needs_review" if adverse else "held")
+    assert result["allocation_status"] == ("complete" if eligible else "historical")
+    assert result["purchase_completed_at"] == 200
+    assert bool(result.get("payment_review")) == adverse
+    assert len(result["fills"]) == int(eligible and not adverse)
+    assert result["new_lots"] == (0 if eligible and not adverse else 2)
+    assert call(store, "purchase", position=p, event_id="replay_" + buyer, allocate=True, fee_bps=500) == result
+    assert call(store, "position", position=seller)["sold_lots"] == (2 if eligible and not adverse else 0)
+
+
+@pytest.mark.parametrize("backfill", [True, False], ids=["import", "replay"])
+def test_nyte_completed_legacy_held_pending_is_repaired(store: Store, unique: str, monkeypatch, backfill: bool) -> None:
+    from trusted_router import storage_resale
+
+    buyer = unique + "buyer"
+    p = {"id": buyer, "session_id": buyer, "holder": buyer, "lots": 2, "grade": unique[:12],
+         "per_lot_cents": 100, "payment_intent": "pi_" + buyer, "purchase_completed_at": 100}
+    original_execute = storage_resale.execute
+
+    def old_import(read, write, command):
+        def legacy_write(kind, key, row):
+            if kind == "nyte_position" and key == buyer:
+                row = {**row, "status": "held", "allocation_status": "pending"}
+            write(kind, key, row)
+        return original_execute(read, legacy_write, command)
+    # Seed the exact persisted pre-fix shape through each backend transaction.
+    with monkeypatch.context() as patch:
+        patch.setattr(storage_resale, "execute", old_import)
+        call(store, "purchase_prepare", position=p, event_id="old_" + buyer)
+    assert call(store, "position", position=buyer)["allocation_status"] == "pending"
+    store.claim_reserved_notification(buyer, "old", now=100)
+    store.finish_reserved_notification(buyer, "old", sent=True)
+    repaired = call(store, "purchase", position=p, event_id="repair_" + buyer,
+                    backfill=backfill, allocate=True, fee_bps=500, payment_state={"unpaid": False})
+    assert repaired["status"] == "held" and repaired["allocation_status"] == "historical"
+    assert repaired["purchase_completed_at"] == 100 and repaired["new_lots"] == 2 and repaired["fills"] == []
+    assert call(store, "request_refund", position=buyer, holder=buyer, now=101, request_id="refund")["status"] == "refund_requested"

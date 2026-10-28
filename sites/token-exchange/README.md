@@ -331,7 +331,12 @@ refund failure evidence for mapped NYTE payments and for unmapped payments whose
 own PaymentIntent metadata identifies a reservation; other payments create no
 NYTE state. Checkout/import first creates a non-sellable pending position and
 payment mapping, then reads Stripe, then atomically applies retained evidence and
-the snapshot before marking held or allocating. The explicit ops refund CLI remains available for
+the snapshot before marking held or allocating. Allocation is allowed only for
+an unfinished purchase with the flag on and its notification not yet sent;
+imports, backfills, disabled finalization and already-notified replays finalize
+unfinished allocation as historical new inventory. Replay/import also repairs
+older pending allocation without changing purchase time or adverse evidence.
+The explicit ops refund CLI remains available for
 obligations already owed. Config loading rejects any fee other than 500 with an
 error explaining that a fee change requires a new terms version. v5 is the new checkout terms version;
 already-created v3/v4 sessions remain accepted by the webhook. The v5 terms keep

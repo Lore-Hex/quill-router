@@ -73,11 +73,13 @@ and is not flag-gated.
 With the flag enabled, positions and payment mappings are created idempotently
 in non-sellable `pending` state before fetching current Stripe state. Finalization
 applies retained adverse evidence and the fetched state in one transaction;
-only a healthy position becomes held and consumes listings. The same ordering
-applies to replay and historical import, before the notification's already-sent return. A successful notification
-from before resale storage existed imports that position without allocating
-historical sales. New paid purchases consume active grade listings in FIFO order,
-then new inventory. One transaction writes all fills and the buyer position;
+only a healthy position becomes held. Listings may be consumed only by an
+unfinished allocation with the flag on, outside import/backfill, and before its
+notification is sent. Every other unfinished finalization becomes `historical`
+new inventory. Replay/import repairs previously stranded pending allocation using
+this same rule, preserving purchase time and adverse evidence. Existing completed
+allocations are never repeated or rewritten. Eligible new paid purchases consume
+active grade listings in FIFO order, then new inventory. One transaction writes all fills and the buyer position;
 competing purchases and withdrawals cannot oversell. Withdrawal removes only
 unsold lots. Relisting joins the tail. New buyers pay the same grade price for
 resold and newly issued lots and own a new position.
@@ -205,11 +207,14 @@ customer-scoped completed sessions, bounded to
 100 customers and 1,000 sessions per customer. It compares each session's actual
 purchase email. No entity scan is permitted. Missing historical completion time
 stays unknown and blocks self-service mutations pending ops reconciliation. Allocation completion has its own durable
-`allocation_status`, independent of `purchase_completed_at`. An import racing a
-webhook that has already persisted the purchase timestamp remains `pending`;
-the webhook must allocate it before setting `complete`. Only an already completed
-legacy notification establishes `historical`, which never consumes today's
-listings. Pending positions cannot list or request refunds before allocation.
+`allocation_status`, independent of `purchase_completed_at`. Every import
+finalizes unfinished allocation as `historical`, including an import racing a
+webhook that already persisted the purchase timestamp. A later webhook cannot
+retroactively allocate that purchase. Disabled finalization and replay of an
+already-notified purchase follow the same rule. Pending positions cannot list or
+request refunds while Stripe verification is incomplete; successful finalization
+never leaves either position status or allocation status pending. Historical
+positions remain refundable/listable under the usual purchase-time rules.
 Neither interleaving duplicates the holder index or allocation.
 
 Before enabling, Joseph/operator must:
@@ -791,4 +796,101 @@ Logs: `/tmp/nyte-r7-requested.log`, `/tmp/nyte-r7-focused-final.log`,
 `/tmp/nyte-r7-full.log`, `/tmp/nyte-r7-emulator.log`,
 `/tmp/nyte-r7-site-tests.log`, `/tmp/nyte-r7-js.log` and
 `/tmp/nyte-r7-site-build.log`. Coverage used `COVERAGE_FILE=/tmp/nyte-r7-coverage`;
+uv used `UV_CACHE_DIR=/tmp/nyte-uv-cache`.
+
+
+## PR #2129 review round 8
+
+Based on `74350306e`; all changes remain uncommitted. No push, publication,
+deployment or live Stripe mutation was performed. No schema/config/terms change.
+This round supersedes the earlier rule allowing an import to leave allocation
+pending for a later webhook.
+
+### One finalization rule
+
+`repair_purchase_allocation` checks the durable notification inside the purchase
+transaction. Only an unfinished allocation with allocation enabled, outside
+backfill/import, and with notification not sent may consume listings. Every
+other unfinished allocation becomes `historical` with all lots attributed to new
+inventory. A completed or historical allocation is permanent: retries, imports
+and flag changes cannot allocate it again or discard its existing fills.
+
+The check runs after retained adverse evidence and current Stripe state are
+applied, before any finalization return or allocation. It also repairs the old
+`held` + `allocation_status=pending` shape on import/replay. Purchase time stays
+first-write-wins; payment-review evidence and refund/ops statuses are preserved.
+Pending preparation still precedes Stripe reads. A failed read remains retryable;
+every successful finalization ends with non-pending position/allocation status.
+
+Disabled paid checkout keeps the original #2125 notification-only path and never
+calls the resale ledger. If it completes a notification after an earlier enabled
+attempt failed its Stripe read, the next successful enabled replay or import
+verifies Stripe and repairs the prepared position to historical new inventory.
+It cannot allocate against today's listings after that notification was sent.
+The reverse off→on ordering follows the same rule. Healthy historical positions
+can request a refund inside 30 days or list after 30 days.
+
+Postgres now locks the exact notification row while the ledger transaction reads
+its completion state. This serializes eligibility with notification completion
+under read-committed isolation. Memory already uses a common lock; native Spanner
+already validates the notification read in its transaction. No production scans
+or new tables are needed.
+
+### Regression coverage
+
+Contracts on every backend cover both toggle directions, actual checkout
+notification handling, replay and actual historical import, with separate
+refund/list actions after repair. A property-style test enumerates all 16
+combinations of flag at first delivery, first Stripe read success/failure, flag
+at completion and flag at replay, then performs an enabled reconciliation and
+additional import/replay. It asserts preserved purchase time, no pending final
+state, no double consumption and no new allocation after notification completion.
+
+A separate 16-case finalization matrix crosses notification sent/not sent,
+backfill/not backfill, allocation enabled/disabled and retained adverse/healthy
+state. It proves historical fallback and adverse blocking share the same rule.
+Two additional contracts seed the exact legacy held/pending shape through each
+backend and repair it through import or replay. The earlier timestamped-import
+test now expects historical inventory under this review's explicitly revised
+policy. The offline Postgres adapter executes every new contract and checks that
+notification reads use `FOR UPDATE`; it does not claim to prove native isolation.
+
+| Round 8 change | Implementation / regression |
+| --- | --- |
+| Unified completion invariant | `src/trusted_router/storage_resale.py:147` defines `repair_purchase_allocation`; `:194` invokes it after Stripe/evidence reconciliation and before any finalization return. Imports, disabled finalization and notified replays become historical; completed allocations stay unchanged. |
+| Notification/finalization serialization | `src/trusted_router/storage_postgres.py:3117` holds the notification row lock through allocation. The offline Postgres test in `tests/test_nyte_resale.py:275` checks the shipped lock SQL and runs all new contracts. |
+| Both toggle directions and holder actions | `tests/conformance/test_nyte_resale_ledger.py:754` covers on→failed read→off completion→on reconciliation and off→on ordering, with replay/import and refund/list actions. |
+| Ordering matrix | `tests/conformance/test_nyte_resale_ledger.py:815` enumerates the 16 flag/read/completion/replay combinations and verifies exactly-once allocation, no allocation after notification, no pending final state and preserved timestamp. |
+| Adverse evidence and legacy repair | `tests/conformance/test_nyte_resale_ledger.py:893` crosses notification/backfill/flag/adverse state; `:919` seeds and repairs the exact old held/pending shape through each backend. |
+
+The disabled paid-checkout broken-ledger regression remains unchanged. The older
+claim→import→webhook contract now asserts historical inventory, as required by
+this round's revised finalization rule; its idempotency/timestamp assertions remain.
+
+| Round 8 validation | Result |
+| --- | --- |
+| Requested seven pytest files | **592 passed, 450 skipped**, in 225.63 seconds; **88.26%** combined coverage across the three resale modules (70% gate passed) |
+| Initial focused ledger/resale run | **416 passed, 438 skipped**; subsequent legacy-repair/offline-Postgres selection **5 passed, 6 skipped**; final requested run includes all additions |
+| Regression check against pre-change ledger | **21 failed, 6 passed** among the 27 selected new memory-backend cases. The flag-toggle bug, finalization fallback and legacy repair fail under the old ledger and pass with this change. Baseline code was loaded only in an isolated test process; the working tree was not reverted. |
+| Site unittests | **94 passed** |
+| `node --test tests/js/nyte_holder.test.cjs` | **3 passed** |
+| Site build | Passed; 13 markets / 30 domains in `/tmp/nyte-r8-site` |
+| Repository-wide ruff / mypy, plus refund CLI mypy | Passed; 551 source files plus CLI |
+| `git diff --check` | Passed |
+| Explicit native Spanner emulator gate | **Blocked**: 148 setup errors, connection refused at `127.0.0.1:9010`; emulator unavailable. Not counted as a pass. |
+| Full repository attempt (`uv run pytest -q --ff -x --tb=short`) | **Blocked** by the unchanged macOS `shasum` deployment-harness failure in `tests/test_aws_postgres_delivery_verifier_install.py:432`: 1 failed, 1,846 deselected. Failed-first stopped there; no full-suite pass or coverage claimed. |
+
+The requested run includes `tests/test_nyte_resale.py`,
+`tests/conformance/test_nyte_resale_ledger.py`, `tests/test_reserved_tokens.py`,
+`tests/conformance/test_reserved_notifications.py`, `tests/test_billing.py`,
+`tests/test_stripe_processing_fees.py` and `tests/test_service_surfaces.py`.
+Ordinary skips are unconfigured Postgres, Spanner-PG and native Spanner cases.
+Memory, Spanner-fake and the offline Postgres adapter passed the new contracts;
+they do not substitute for native-server validation.
+
+Logs: `/tmp/nyte-r8-requested.log`, `/tmp/nyte-r8-focused.log`,
+`/tmp/nyte-r8-legacy.log`, `/tmp/nyte-r8-baseline-regression.log`,
+`/tmp/nyte-r8-full.log`, `/tmp/nyte-r8-emulator.log`,
+`/tmp/nyte-r8-site-tests.log`, `/tmp/nyte-r8-js.log` and
+`/tmp/nyte-r8-site-build.log`. Coverage used `COVERAGE_FILE=/tmp/nyte-r8-coverage`;
 uv used `UV_CACHE_DIR=/tmp/nyte-uv-cache`.

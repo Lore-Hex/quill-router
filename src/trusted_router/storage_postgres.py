@@ -3121,7 +3121,9 @@ class PostgresStore(OperationalAnalyticsReads):
             self._insert_entity_once_tx(tx, "nyte_mutex", "v1", {})
             self._read_entity_tx(tx, "nyte_mutex", "v1", dict, for_update=True)
             return execute(
-                lambda kind, key: self._read_entity_tx(tx, kind, key, dict) or {},
+                # Serialize eligibility with notification completion as well
+                # as competing NYTE ledger commands (ordinary Postgres is RC).
+                lambda kind, key: self._read_entity_tx(tx, kind, key, dict, for_update=kind == "reserved_notification") or {},
                 lambda kind, key, row: self._write_entity_tx(tx, kind, key, row),
                 command,
             )

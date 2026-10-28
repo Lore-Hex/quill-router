@@ -144,6 +144,17 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
         reconcile(p, c["payment_state"])
         return p
 
+    def repair_purchase_allocation(p: Row, notification: Row) -> bool:
+        """Enforce finalization's invariant, including old held/pending imports.
+
+        Only an unfinished, enabled purchase may consume listings. A historical
+        finalization is permanent: later flag changes cannot allocate it again.
+        """
+        eligible = c.get("allocate") and not c.get("backfill") and not notification.get("sent")
+        if p["allocation_status"] == "pending" and not eligible:
+            p.update(allocation_status="historical", new_lots=p["lots"])
+        return p["allocation_status"] == "pending"
+
     if op in {"purchase_prepare", "purchase"}:
         p = c["position"]
         session = p["session_id"]
@@ -155,8 +166,7 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
         if existing:
             p = existing
             # Compatibility for positions written before allocation_status.
-            p.setdefault("allocation_status", "historical" if notification.get("sent") and p.get("event_id", "").startswith("backfill:")
-                         else "pending" if p.get("event_id", "").startswith("backfill:") else "complete")
+            p.setdefault("allocation_status", "pending" if p.get("status") == "pending" or p.get("event_id", "").startswith("backfill:") else "complete")
         else:
             payment = p.get("payment_intent")
             if isinstance(payment, str) and payment:
@@ -168,7 +178,7 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
             holder = get("nyte_holder", p["holder"])
             p["holder_next"] = holder.get("head")
             put("nyte_holder", p["holder"], {"head": session})
-            p["allocation_status"] = "historical" if c.get("backfill") and notification.get("sent") else "pending"
+            p["allocation_status"] = "pending"
         if not existing or p.get("purchase_completed_at") is None:
             p["purchase_completed_at"] = notification.get("purchase_completed_at", c["position"].get("purchase_completed_at"))
         if c["position"].get("status") == "needs_review":
@@ -181,13 +191,14 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
         if p["status"] == "pending":
             p["status"] = "held"
         reconcile(p, c.get("payment_state") or {})
+        allocation_due = repair_purchase_allocation(p, notification)
         put("nyte_event", c["event_id"], {"session_id": session})
         put("nyte_position", session, p)
-        if p["allocation_status"] != "pending" or c.get("backfill"):
+        if not allocation_due:
             p.setdefault("event_id", c["event_id"])
             return p
         remaining = p["lots"]
-        if c.get("allocate") and p["status"] == "held":
+        if p["status"] == "held":
             queue = "grade:" + p["grade"]
             while remaining:
                 key = get("nyte_queue", queue).get("head")

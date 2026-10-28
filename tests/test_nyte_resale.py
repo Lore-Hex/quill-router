@@ -283,7 +283,7 @@ def test_postgres_transaction_implementation_on_sql_fake(monkeypatch):
         contract.test_nyte_external_payment_change_blocks_existing_position_and_listings(store, "pgrefund0000", {"amount_refunded": 1})
         contract.test_nyte_external_payment_change_blocks_existing_position_and_listings(store, "pgdispute000", {"disputed": True})
         contract.test_nyte_own_refund_before_worker_commit_is_exempt_but_external_excess_blocks(store, "pgownrefund0")
-        contract.test_nyte_timestamped_import_still_allocates_after_webhook_claim(store, "pgimportrace")
+        contract.test_nyte_timestamped_import_finalizes_historical_before_webhook(store, "pgimportrace")
         contract.test_nyte_completed_legacy_notification_import_is_historical(store, "pglegacy0000")
         contract.test_nyte_old_purchase_checks_current_stripe_before_held(store, "pgoldstripe0", monkeypatch, "webhook_replay")
         contract.test_nyte_old_purchase_checks_current_stripe_before_held(store, "pgoldimport0", monkeypatch, "historical_import")
@@ -324,6 +324,28 @@ def test_postgres_transaction_implementation_on_sql_fake(monkeypatch):
                                 store, unique(f"shared{kind}{failure_first}{by_metadata}{failure}"), monkeypatch,
                                 kind, failure_first, by_metadata, failure, enabled)
 
+        for initial_enabled in (True, False):
+            for reconcile_path in ("replay", "import"):
+                for action in ("request_refund", "list"):
+                    contract.test_nyte_completed_toggle_repairs_pending(
+                        store, contract.reference(f"pg-toggle-{initial_enabled}-{reconcile_path}-{action}")[:20],
+                        monkeypatch, initial_enabled, reconcile_path, action)
+        contract.test_nyte_purchase_completion_ordering_matrix(store, "pg-ordering-matrix", monkeypatch)
+        for backfill in (True, False):
+            contract.test_nyte_completed_legacy_held_pending_is_repaired(
+                store, contract.reference(f"pg-legacy-pending-{backfill}")[:20], monkeypatch, backfill)
+        for notified in (True, False):
+            for backfill in (True, False):
+                for allocate in (True, False):
+                    for adverse in (True, False):
+                        contract.test_nyte_finalization_invariant_repairs_pending(
+                            store, contract.reference(f"pg-invariant-{notified}-{backfill}-{allocate}-{adverse}")[:20],
+                            notified, backfill, allocate, adverse)
+        # Read-committed Postgres must lock the completion fact until allocation
+        # commits. SQLite cannot model the lock, but verifies the shipped SQL.
+        completion_reads = [sql for sql, params in conn.statements
+                            if sql.startswith("SELECT") and params and params[0] == "reserved_notification"]
+        assert completion_reads and all("FOR UPDATE" in sql for sql in completion_reads)
     finally:
         conn._raw.close()
 
