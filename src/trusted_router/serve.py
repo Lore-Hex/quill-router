@@ -15,6 +15,16 @@ request timeout. Cloud Run's SIGKILL is the only hard deadline; neither request
 completion nor process exit before it is guaranteed. A second SIGTERM, or any
 SIGINT, starts ordinary graceful shutdown without waiting for the drain window.
 
+It also exits a process whose event loop has stopped. On 2026-10-28 two
+europe-west4 instances went silent for one and two minutes with CPU and memory
+flat; every request routed to them hung for up to two minutes and failed
+(two "billing path 5xx" alerts), and nothing said where the process was
+waiting. Once serving, each uvicorn tick re-arms ``faulthandler``'s watchdog,
+a C thread that needs neither the loop nor the GIL. If the loop goes
+``LOOP_STALL_EXIT_SECONDS`` without a tick, the watchdog writes every thread's
+stack to stderr and exits the process, so Cloud Run replaces it and the stacks
+name the call it was blocked in.
+
 Usage: ``python -m trusted_router.serve`` (host 0.0.0.0, port from ``PORT``).
 """
 
@@ -25,6 +35,7 @@ from trusted_router import launch_descriptor_state
 if __name__ == "__main__":
     launch_descriptor_state.claim()
 
+import faulthandler
 import logging
 import math
 import os
@@ -42,6 +53,12 @@ DEFAULT_DRAIN_SECONDS = 3.0
 # Cloud Run sends SIGKILL 10 s after SIGTERM; leave room for the graceful
 # shutdown that follows the drain.
 MAX_DRAIN_SECONDS = 3.0
+# Handlers run storage in worker threads under five-second budgets, so the loop
+# itself never legitimately waits this long; the front end cuts a request at 60 s.
+LOOP_STALL_EXIT_SECONDS = 30.0
+# uvicorn ticks every 0.1 s; re-arming starts a new watchdog thread, so do it
+# once a second.
+_TICKS_PER_REARM = 10
 
 # Named explicitly: the container runs this module as `python -m`, where
 # `__name__` is "__main__" and a `__name__`-based logger would sit outside the
@@ -101,11 +118,19 @@ class DrainingServer(uvicorn.Server):
         super().handle_exit(sig, frame)
 
     async def on_tick(self, counter: int) -> bool:
+        if counter % _TICKS_PER_REARM == 0:
+            faulthandler.dump_traceback_later(LOOP_STALL_EXIT_SECONDS, exit=True)
         if self.drain_deadline is not None and not self.should_exit:
             if monotonic() >= self.drain_deadline:
                 logger.info("serve.sigterm_drain_complete")
                 self.should_exit = True
         return await super().on_tick(counter)
+
+    async def shutdown(self, sockets: list | None = None) -> None:
+        # Ticks stop here while shutdown waits on in-flight requests; Cloud
+        # Run's SIGKILL bounds that wait instead.
+        faulthandler.cancel_dump_traceback_later()
+        await super().shutdown(sockets=sockets)
 
 
 def build_config(environ: dict[str, str] | None = None) -> uvicorn.Config:

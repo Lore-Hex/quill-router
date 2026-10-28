@@ -399,3 +399,112 @@ def test_real_sigterm_serves_fresh_connection_during_drain(tmp_path: Path) -> No
             if process.poll() is None:
                 process.kill()
                 process.wait(timeout=5)
+
+
+def test_each_second_of_ticks_rearms_the_stall_watchdog(monkeypatch: pytest.MonkeyPatch) -> None:
+    armed: list[tuple[float, bool]] = []
+    monkeypatch.setattr(serve.faulthandler, "dump_traceback_later",
+                        lambda timeout, exit=False: armed.append((timeout, exit)))
+    server = _server(monkeypatch)
+
+    for counter in range(21):
+        asyncio.run(server.on_tick(counter))
+
+    assert armed == [(serve.LOOP_STALL_EXIT_SECONDS, True)] * 3
+
+
+def test_shutdown_disarms_the_stall_watchdog(monkeypatch: pytest.MonkeyPatch) -> None:
+    cancelled: list[bool] = []
+    monkeypatch.setattr(serve.faulthandler, "cancel_dump_traceback_later", lambda: cancelled.append(True))
+
+    async def stock_shutdown(self: object, sockets: object = None) -> None:
+        assert cancelled == [True]
+
+    monkeypatch.setattr(serve.uvicorn.Server, "shutdown", stock_shutdown)
+    server = _server(monkeypatch)
+
+    asyncio.run(server.shutdown())
+
+    assert cancelled == [True]
+
+
+def test_real_stalled_loop_exits_with_every_stack(tmp_path: Path) -> None:
+    # A healthy loop outlives several stall budgets; a loop blocked in a call
+    # exits within one, and the dump names the call.
+    script = """
+import socket
+import sys
+import time
+
+from starlette.applications import Starlette
+from starlette.responses import PlainTextResponse
+from starlette.routing import Route
+from trusted_router import serve
+
+# Above the one-second re-arm, as the production budget is.
+serve.LOOP_STALL_EXIT_SECONDS = 2.5
+
+def wedged_call():
+    time.sleep(30)
+
+async def block(request):
+    print("blocking", flush=True)
+    wedged_call()
+    return PlainTextResponse("unreachable")
+
+async def health(request):
+    return PlainTextResponse("ok")
+
+config = serve.build_config({})
+config.app = Starlette(routes=[Route("/block", block), Route("/health", health)])
+server = serve.DrainingServer(config, drain_seconds=0)
+server.run(sockets=[socket.socket(fileno=int(sys.argv[1]))])
+"""
+    log_path = tmp_path / "stall.log"
+    env = dict(os.environ, PYTHONPATH=str(ROOT / "src"))
+    with socket.socket() as listener, log_path.open("w") as log:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+        process = subprocess.Popen(  # noqa: S603 - fixed local test program
+            [sys.executable, "-c", script, str(listener.fileno())],
+            cwd=tmp_path, env=env, pass_fds=(listener.fileno(),), stdout=log, stderr=log,
+        )
+
+        def get(path: str) -> int:
+            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
+            try:
+                connection.request("GET", path)
+                response = connection.getresponse()
+                response.read()
+                return response.status
+            finally:
+                connection.close()
+
+        try:
+            deadline = time.monotonic() + 10
+            while True:
+                assert process.poll() is None, log_path.read_text()
+                try:
+                    if get("/health") == 200:
+                        break
+                except (OSError, http.client.HTTPException):
+                    time.sleep(0.05)
+                assert time.monotonic() < deadline, log_path.read_text()
+
+            healthy_until = time.monotonic() + 6
+            while time.monotonic() < healthy_until:
+                assert get("/health") == 200
+                time.sleep(0.2)
+            assert process.poll() is None, log_path.read_text()
+
+            with pytest.raises((OSError, http.client.HTTPException)):
+                get("/block")
+            assert process.wait(timeout=5) == 1
+            logs = log_path.read_text()
+            assert "blocking" in logs
+            assert "Timeout (0:00:02.500000)!" in logs
+            assert "in wedged_call" in logs
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)

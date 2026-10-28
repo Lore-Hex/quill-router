@@ -58,6 +58,15 @@ policy:
   A second SIGTERM or any SIGINT starts ordinary graceful shutdown without
   waiting for the drain window. If one recurs, check the serving revision's
   entry point before anything else.
+- A run of `503`s from one instance id, each with tens of seconds of latency
+  and "connection to the instance had an error", while that instance's own
+  output stops and its CPU stays flat, is a process whose event loop stopped
+  (two in europe-west4 on 2026-10-28, silent for one and two minutes). The
+  same runner exits such a process once its loop has gone 30 seconds without
+  a tick, after `faulthandler` writes every thread's stack to stderr under a
+  `Timeout (0:00:30)!` line. Read those stacks from the instance's stderr:
+  the frame each thread is waiting in is the cause, and it belongs in the
+  follow-up.
 - Successful billing calls taking at least 10 seconds are counted. More than
   two per minute for three consecutive minutes opens one incident.
 - The general Spanner contention policy has three independent gates: more than
