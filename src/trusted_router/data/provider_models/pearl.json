@@ -175,10 +175,12 @@
         "seed",
         "max_tokens"
       ],
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 90000,
       "output_token_price_per_m": 340000,
-      "cached_input_token_price_per_m": 50000
+      "cached_input_token_price_per_m": 50000,
+      "missing_since": "2026-10-28",
+      "routable_reason": "provider-model-not-found"
     },
     {
       "display_name": "Z.AI: GLM-5.2",
@@ -522,6 +524,6 @@
       "cached_input_token_price_per_m": 3000
     }
   ],
-  "generated_at": "2026-10-26T06:59:20Z",
+  "generated_at": "2026-10-28T13:15:53Z",
   "model_count": 12
 }

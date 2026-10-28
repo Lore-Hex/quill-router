@@ -129,6 +129,24 @@ def test_regolo_decision_catalog_routes_and_markup(served_clef):
     assert {(e.provider, e.upstream_id) for e in endpoints.values()} == {("regolo", "clef-flash")}
 
 
+def test_generic_chat_listing_cannot_inherit_clef_decision_protocol(monkeypatch, tmp_path):
+    from trusted_router import catalog_ingest
+
+    row = {
+        **manifest_row(), "model_type": "chat", "endpoints": ["chat/completions"],
+        "upstream_id": "cloudflare/clef-flash", "output_token_price_per_m": 100_000,
+    }
+    path = tmp_path / "makora.json"
+    path.write_text(json.dumps({
+        "provider": "makora", "generated_at": CATALOG_CLOCK.isoformat(),
+        "price_scale": "microdollars_per_million", "models": [row],
+    }))
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
+    models, endpoints = catalog_ingest._supplemental_provider_models_and_endpoints()
+    assert regolo.DECISION_MODEL_ID not in models
+    assert not endpoints
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("region", ["us-central1", "us-east4", "us-west1", "europe-west4"])
 async def test_decide_authorizes_regolo_and_chat_is_rejected(served_clef, region):

@@ -110,6 +110,8 @@ STREAMLAKE_QWEN3_VL_235B_RETIREMENT_AT = datetime(2026, 10, 16, 22, 1, tzinfo=UT
 # Direct authenticated inference confirmed UnavailableModel at this time.
 # This is our enforcement observation, not an announced upstream cutover.
 STREAMLAKE_QWEN3_30B_THINKING_RETIREMENT_AT = datetime(2026, 10, 25, 17, 17, tzinfo=UTC)
+# Direct authenticated inference returned UnavailableModel at this observation.
+STREAMLAKE_QWEN3_VL_THINKING_RETIREMENT_AT = datetime(2026, 10, 28, 13, 3, tzinfo=UTC)
 DEEPSEEK_V4_PRICING_EFFECTIVE_AT = datetime(2026, 8, 16, 16, 0, tzinfo=UTC)
 DEEPSEEK_V41_FLASH_EFFECTIVE_AT = datetime(2026, 9, 10, 4, 0, tzinfo=UTC)
 # The launch-day pricing page supersedes the earlier email: Pro remains
@@ -395,6 +397,12 @@ _RETIREMENTS = (
         model_ids=frozenset({"moonshotai/kimi-k3"}),
         upstream_ids=frozenset({"moonshotai/kimi-k3"}),
         effective_at=NVIDIA_NIM_KIMI_K3_RETIREMENT_AT,
+    ),
+    _Retirement(
+        provider="streamlake",
+        model_ids=frozenset({"qwen/qwen3-vl-235b-a22b-thinking"}),
+        upstream_ids=frozenset({"Qwen3-VL-235B-A22B-Thinking"}),
+        effective_at=STREAMLAKE_QWEN3_VL_THINKING_RETIREMENT_AT,
     ),
     # W&B's September notice gives October 5 without a time zone. Stop at
     # 00:00 UTC conservatively, only for these exact Serverless Inference ids.

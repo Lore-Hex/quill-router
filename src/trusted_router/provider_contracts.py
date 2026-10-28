@@ -15,6 +15,8 @@ NEXTBIT_UNAVAILABLE_MODEL_IDS = frozenset({
 })
 STREAMLAKE_KIMI_K2_0905_MODEL_ID = "moonshotai/kimi-k2-instruct-0905"
 STREAMLAKE_KIMI_K2_0905_HOLD_REASON = "provider-model-not-found"
+PEARL_GEMMA_4_31B_MODEL_ID = "google/gemma-4-31b-it"
+PEARL_GEMMA_4_31B_HOLD_REASON = "provider-model-not-found"
 THIRD_PARTY_PASSTHROUGH_HOLD_REASON = "third-party-passthrough-disabled"
 # These providers also advertise third-party API wrappers. Only their native
 # hosted namespaces may route here; the original providers serve passthroughs.
@@ -55,6 +57,9 @@ OPERATOR_HELD_PROVIDER_MODELS = frozenset(
         # Public catalog/pricing still list this ID. Require a reviewed live
         # recovery before re-enabling; no official retirement date is known.
         ("streamlake", STREAMLAKE_KIMI_K2_0905_MODEL_ID),
+        # October 28: authenticated inference returns 404 model_not_found for
+        # the catalog's exact native ID. Discovery alone cannot restore it.
+        ("pearl", PEARL_GEMMA_4_31B_MODEL_ID),
         # September 20: discovery admits these standard RedPill IDs, but the
         # enclave's reviewed Phala dispatch map does not. Keep them out of
         # routing until a reviewed adapter release, not an attestation bypass.

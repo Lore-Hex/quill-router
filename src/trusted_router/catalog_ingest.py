@@ -1234,6 +1234,10 @@ def _supplemental_provider_models_and_endpoints(
                 continue
             embedding = raw_model.get("model_type") == "embedding"
             decision = raw_model.get("model_type") == "decision"
+            # Clef's hosted decision protocol is not chat. A generic /models
+            # listing must not inherit Regolo's adapter or regional admission.
+            if model_id == "cloudflare/clef-flash" and not decision:
+                continue
             if decision and (
                 not (
                     (provider_slug in {"decisionmodelsio", "decisionmodelsio-eu"} and model_id.startswith(provider_slug + "/s1-"))
