@@ -965,7 +965,7 @@ def test_nyte_interrupted_checkout_repairs_without_replay(store: Store, unique: 
     monkeypatch.setattr(reserved_tokens, "get_email_service", lambda _: SimpleNamespace(send=lambda _: True))
     monkeypatch.setattr(resale, "retry_buyer_refunds", lambda *a: None)
     clock = [100]
-    monkeypatch.setattr(resale.time, "time", lambda: clock[0])
+    monkeypatch.setattr(resale, "time", SimpleNamespace(time=lambda: clock[0]))  # patch only resale's clock; a global time.time patch breaks gRPC deadlines
     monkeypatch.setattr(reserved_tokens, "_utc_now", lambda: datetime.fromtimestamp(clock[0], UTC))
     data = event()
     obj = data["data"]["object"]

@@ -115,7 +115,7 @@ def test_signed_link_expiry_single_use_and_uniform_http(settings: Settings, monk
     store = InMemoryStore()
     monkeypatch.setattr(resale, "STORE", store)
     clock = [100]
-    monkeypatch.setattr(resale.time, "time", lambda: clock[0])
+    monkeypatch.setattr(resale, "time", SimpleNamespace(time=lambda: clock[0]))  # patch only resale's clock; a global time.time patch breaks gRPC deadlines
     mail = Mock(return_value=True)
     monkeypatch.setattr(resale, "get_email_service", lambda _: SimpleNamespace(send=mail))
     app = FastAPI()
