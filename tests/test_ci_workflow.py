@@ -122,6 +122,7 @@ def test_ci_runs_the_suite_again_past_every_scheduled_cutover() -> None:
 def test_native_spanner_job_runs_both_focused_server_gates() -> None:
     jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
     job = jobs["spanner-emulator"]
+    assert job["timeout-minutes"] == 40
     assert job["env"]["TR_CONFORMANCE_EMULATOR_SCHEMA"] == "1"
     assert job["env"]["SPANNER_EMULATOR_HOST"] == "127.0.0.1:9010"
     assert job["services"]["spanner"]["image"] == "gcr.io/cloud-spanner-emulator/emulator@sha256:c6f3402f2599684f295a0fdefb6fbbbfb18a0e43e309ff5456ccb452a4570a79"
@@ -152,7 +153,7 @@ def test_p5_object_budgets_run_in_a_fresh_package_only_session() -> None:
     ]
     assert {path.name for path in ROOT.glob("tests/test_async_settle_shadow_v2_gate*.py")} == PACKAGE_MODULES
     assert step["if"] == "${{ !cancelled() }}"
-    assert step["timeout-minutes"] == 12
+    assert step["timeout-minutes"] == 22
     assert "continue-on-error" not in step
 
 
