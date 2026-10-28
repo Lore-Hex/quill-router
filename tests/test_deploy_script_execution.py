@@ -686,7 +686,7 @@ def test_rollout_supplies_full_source_revision_for_shadow_evidence(
 
 @pytest.mark.parametrize("region", ["us-central1", "us-east4", "europe-west4", "southamerica-east1"])
 @pytest.mark.parametrize("no_traffic", ["0", "1"])
-def test_rollout_opts_the_probe_workspace_into_shadow_v2_canary_4_without_enabling_money_paths(
+def test_rollout_scopes_probe_and_pilot_shadow_v2_without_enabling_money_paths(
     harness: DeployScriptHarness, region: str, monkeypatch: pytest.MonkeyPatch,
     no_traffic: str,
 ) -> None:
@@ -708,6 +708,7 @@ def test_rollout_opts_the_probe_workspace_into_shadow_v2_canary_4_without_enabli
                    "TR_DEPLOY_NO_TRAFFIC": no_traffic,
                    "TR_ASYNC_SETTLE_SHADOW_WORKSPACES": "stale-opt-in",
                    "TR_ASYNC_SETTLE_SHADOW_POLICY": "stale-policy",
+                   "TR_ASYNC_SETTLE_SHADOW_REGIONS": "southamerica-east1",
                    "TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION": "stale-region",
                    "TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT": "2026-10-25T20:00:00Z"},
     )
@@ -715,7 +716,10 @@ def test_rollout_opts_the_probe_workspace_into_shadow_v2_canary_4_without_enabli
     deploy = next(call for call in run.calls if call[3:5] == ["run", "deploy"])
     rendered = _cloud_run_job_env(deploy)
     assert rendered["TR_SERVING_REGION"] == region
-    assert rendered["TR_ASYNC_SETTLE_SHADOW_WORKSPACES"] == "162e441a-5d13-414f-92bd-7c6cd805faa3"
+    assert rendered["TR_ASYNC_SETTLE_SHADOW_WORKSPACES"] == (
+        "162e441a-5d13-414f-92bd-7c6cd805faa3,45819281-0ce9-4811-a0cd-c660ab3a116d"
+    )
+    assert rendered["TR_ASYNC_SETTLE_SHADOW_REGIONS"] == "us-central1,us-east4,europe-west4"
     assert rendered["TR_ASYNC_SETTLE_SHADOW_POLICY"] == "shadow-v2"
     assert rendered["TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION"] == "us-central1"
     assert rendered["TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT"] == "2026-11-04T12:00:00Z"
@@ -727,6 +731,8 @@ def test_rollout_opts_the_probe_workspace_into_shadow_v2_canary_4_without_enabli
     assert rendered["TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED"] == "false"
     config = Settings(
         environment="test",
+        serving_region=rendered["TR_SERVING_REGION"],
+        async_settle_shadow_regions=rendered["TR_ASYNC_SETTLE_SHADOW_REGIONS"],
         async_settle_shadow_policy=rendered["TR_ASYNC_SETTLE_SHADOW_POLICY"],
         async_settle_shadow_workspaces=rendered["TR_ASYNC_SETTLE_SHADOW_WORKSPACES"],
         async_settle_shadow_health_region=rendered["TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION"],
@@ -755,17 +761,99 @@ def test_rollout_opts_the_probe_workspace_into_shadow_v2_canary_4_without_enabli
 
     app = main.create_app(config, configure_store_arg=False, init_observability=False)
     v1_install.assert_not_called()
-    health_install.assert_called_once_with(app, config, backend)
-    cohort_install.assert_called_once_with(app, config, backend)
+    active = region in {"us-central1", "us-east4", "europe-west4"}
+    if active:
+        health_install.assert_called_once_with(app, config, backend)
+        cohort_install.assert_called_once_with(app, config, backend)
+    else:
+        health_install.assert_not_called()
+        cohort_install.assert_not_called()
     assert not hasattr(app.state, "async_settle_shadow")
     assert not config.async_settle_enabled
     assert not config.async_settle_protection
     assert not config.settle_outbox_fast_drain_enabled
-    assert config.async_settle_shadow_workspace_ids == {"162e441a-5d13-414f-92bd-7c6cd805faa3"}
-    assert in_v2_cohort(config.async_settle_shadow_policy, "162e441a-5d13-414f-92bd-7c6cd805faa3",
-                        config.async_settle_enabled, config.async_settle_shadow_workspace_ids)
-    assert not in_v2_cohort(config.async_settle_shadow_policy, "stale-opt-in",
+    assert config.async_settle_shadow_workspace_ids == {
+        "162e441a-5d13-414f-92bd-7c6cd805faa3", "45819281-0ce9-4811-a0cd-c660ab3a116d",
+    }
+    for workspace in config.async_settle_shadow_workspace_ids:
+        assert in_v2_cohort(config.regional_async_settle_shadow_policy(), workspace,
+                           config.async_settle_enabled, config.async_settle_shadow_workspace_ids) is active
+    assert not in_v2_cohort(config.regional_async_settle_shadow_policy(), "stale-opt-in",
                            config.async_settle_enabled, config.async_settle_shadow_workspace_ids)
+
+
+@pytest.mark.parametrize("region", ["us-central1", "us-east4", "europe-west4", "southamerica-east1"])
+def test_rendered_shadow_pins_install_only_in_serving_regions(
+    harness: DeployScriptHarness, monkeypatch: pytest.MonkeyPatch, region: str,
+) -> None:
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from tests.test_async_settle_shadow_observation import fake_store
+    from tests.test_async_settle_ticket import runtime
+    from trusted_router import main, storage
+    from trusted_router.config import in_v2_cohort
+    from trusted_router.services import (
+        async_settle,
+        async_settle_shadow,
+        async_settle_shadow_cohort_runtime,
+        async_settle_shadow_health,
+    )
+
+    run = harness.run("scripts/deploy/rollout.sh", extra_env={"TR_DEPLOY_TARGET_REGIONS": region})
+    assert run.returncode == 0, summarise(run)
+    deploy = next(call for call in run.calls if call[3:5] == ["run", "deploy"])
+    # Parse the rendered shadow and serving pins through Settings' env loader.
+    # Other deployment secrets/backends are outside this installation test.
+    for name, value in _cloud_run_job_env(deploy).items():
+        if name.startswith("TR_ASYNC_SETTLE_SHADOW_") or name in {
+            "TR_SERVING_REGION", "TR_SOURCE_REVISION", "TR_ASYNC_SETTLE_ENABLED",
+            "TR_ASYNC_SETTLE_PROTECTION", "TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED",
+        }:
+            monkeypatch.setenv(name, value)
+    config = Settings(environment="test", service_surface="internal")
+    config = config.model_copy(update={"environment": "production"})
+    assert config.serving_region == region
+    active = region in {"us-central1", "us-east4", "europe-west4"}
+    assert config.effective_async_settle_shadow_policy() == ("shadow-v2" if active else "")
+    assert config.async_settle_shadow_workspace_ids == {
+        "162e441a-5d13-414f-92bd-7c6cd805faa3", "45819281-0ce9-4811-a0cd-c660ab3a116d",
+    }
+    for workspace in config.async_settle_shadow_workspace_ids:
+        assert in_v2_cohort(config.regional_async_settle_shadow_policy(), workspace,
+                           config.async_settle_enabled, config.async_settle_shadow_workspace_ids) is active
+    assert not config.async_settle_admission_enabled
+    assert not config.async_settle_protection
+    assert not config.settle_outbox_fast_drain_enabled
+
+    store, database = fake_store()
+    observation = Mock(return_value=store)
+    evidence = Mock(return_value=SimpleNamespace())
+    monkeypatch.setattr(async_settle_shadow_health, "ObservationStore", observation)
+    monkeypatch.setattr(async_settle_shadow_cohort_runtime, "EvidenceStore", evidence)
+    backend = SimpleNamespace(_database=database, request_record_write_mode="typed")
+    monkeypatch.setattr(storage, "typed_billing_store", lambda _: backend)
+    monkeypatch.setattr(async_settle, "load_runtime", Mock(return_value=runtime()))
+    v1 = Mock(side_effect=AssertionError("region exclusion must not fall back to v1"))
+    monkeypatch.setattr(async_settle_shadow, "install", v1)
+    app = main.create_app(config, configure_store_arg=False, init_observability=False)
+    worker = getattr(app.state, "async_settle_shadow_cohort", None)
+    service = getattr(app.state, "async_settle_shadow_observation", None)
+    try:
+        inventory = sorted(name for name in vars(app.state)["_state"] if name.startswith("async_settle_shadow"))
+        assert inventory == (["async_settle_shadow_cohort", "async_settle_shadow_observation",
+                              "async_settle_shadow_startup", "async_settle_shadow_startup_begin"] if active else [])
+        assert observation.call_count == evidence.call_count == int(active)
+        if active:
+            assert service.publisher_eligible() is (region == "us-central1")
+        v1.assert_not_called()
+    finally:
+        if worker is not None:
+            worker.close()
+            worker.worker.join(2)
+        if service is not None:
+            for executor in (service.session_executor, service.publisher_executor, service.evidence_executor):
+                executor.shutdown(wait=True, cancel_futures=True)
 
 
 @pytest.mark.parametrize("revision", ["abc12345", "not-a-commit", "f" * 40])
