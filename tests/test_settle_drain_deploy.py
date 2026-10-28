@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import json
 import runpy
+import shutil
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ from tests.deploy_script_harness import (
     ScriptFixture,
     summarise,
 )
+from tests.test_superseded_deploy import _finalize_outcome, _needs
 from trusted_router.config import Settings
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -66,11 +68,12 @@ def test_worker_plan_rejects_ambiguous_or_unreleased_router(mutation):
         worker_plan(revision)
 
 
+@pytest.mark.parametrize("hotfix", [None, "false", "true"])
 @pytest.mark.parametrize("failure,network,subnet", [
     ("", None, None), ("", "worker-network", "worker-subnet"), ("", "", ""),
-    *((failure, None, None) for failure in ("ci", "bake", "mutex", "held", "public", "enabled_worker", "idle", "missing_mutex", "wrong_cloud", "held_region", "other_region")),
+    *((failure, None, None) for failure in ("ci", "ci_pending", "bake", "mutex", "held", "public", "enabled_worker", "idle", "missing_mutex", "wrong_cloud", "held_region", "other_region")),
 ])
-def test_deploy_executes_gates_and_worker_only_commands(tmp_path, monkeypatch, failure, network, subnet):
+def test_deploy_executes_gates_and_worker_only_commands(tmp_path, monkeypatch, failure, network, subnet, hotfix):
     harness = DeployScriptHarness(tmp_path)
     for relative in [SCRIPT, "scripts/deploy/settle_drain_config.py"]:
         harness.write_script(relative, (ROOT / relative).read_text())
@@ -101,8 +104,8 @@ def test_deploy_executes_gates_and_worker_only_commands(tmp_path, monkeypatch, f
         (r"run services describe trusted-router-settle-drain ", service("drain-active")),
         (r"run revisions describe drain-active ", json.dumps(actual)),
         (r"run services list ", json.dumps([{"metadata": {"name": "trusted-router-settle-drain"}}]) if failure == "enabled_worker" else "[]"),
-        (r"gh run list ", json.dumps([{"headSha": "a" * 40, "status": "completed",
-                                      "conclusion": "failure" if failure == "ci" else "success"}])),
+        (r"gh run list ", json.dumps([{"headSha": "a" * 40, "status": "in_progress" if failure == "ci_pending" else "completed",
+                                      "conclusion": None if failure == "ci_pending" else ("failure" if failure == "ci" else "success")}])),
         (r"run services get-iam-policy ", json.dumps({"bindings": [{"members": ["allUsers"]}]}) if failure == "public" else "{}"),
     )
     failures = (f"worker-test-{failure}",) if failure in {"bake", "mutex"} else ()
@@ -111,18 +114,35 @@ def test_deploy_executes_gates_and_worker_only_commands(tmp_path, monkeypatch, f
         "TR_CLOUD_RUN_NETWORK": network, "TR_CLOUD_RUN_SUBNET": subnet,
     }
     run = harness.run(SCRIPT, extra_env={**network_env,
+        **({"TR_SETTLE_DRAIN_HOTFIX": hotfix} if hotfix is not None else {}),
         "TR_DEPLOY_MUTEX_OPERATION": "" if failure == "missing_mutex" else "a" * 32,
         "TR_DEPLOY_MUTEX_CLOUD": "aws" if failure == "wrong_cloud" else "gcp",
         "TR_DEPLOY_HOLD_REGIONS": {"held": "all", "held_region": " us-east4, us-central1 ",
                                  "other_region": "us-east4"}.get(failure, "")})
     deploys = [c for c in run.calls if c[3:5] == ["run", "deploy"]]
-    if failure in {"ci", "bake", "mutex", "held", "public", "missing_mutex", "wrong_cloud", "held_region"}:
+    if failure in {"held", "held_region"}:
+        assert run.returncode == 0, summarise(run)
+        assert "held: settle-drain worker not deployed" in run.stdout
+        assert not run.calls, summarise(run)
+        return
+    if failure in {"bake", "mutex", "public", "missing_mutex", "wrong_cloud"} or (
+        failure in {"ci", "ci_pending"} and hotfix != "true"
+    ):
         assert run.returncode != 0, summarise(run)
         assert len(deploys) == (1 if failure == "public" else 0)
-        if failure in {"held", "held_region", "missing_mutex", "wrong_cloud"}:
+        if failure in {"missing_mutex", "wrong_cloud"}:
             assert not run.calls, summarise(run)
         return
     assert run.returncode == 0, summarise(run)
+    ci_calls = [c for c in run.calls if c[:3] == ["gh", "run", "list"]]
+    warning = "::warning::HOTFIX MODE — skipping the CI-green gate."
+    if hotfix == "true":
+        assert not ci_calls
+        assert warning in run.stdout
+    else:
+        assert len(ci_calls) == 1
+        assert ci_calls[0][ci_calls[0].index("--commit") + 1] == "a" * 40
+        assert warning not in run.stdout
     [call] = deploys
     assert call[5] == "trusted-router-settle-drain"
     assert plan["env"]["TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED"] == ("false" if failure == "idle" else "true")
@@ -142,3 +162,18 @@ def test_deploy_executes_gates_and_worker_only_commands(tmp_path, monkeypatch, f
     assert any("worker-test-bake" in c for c in run.calls[:run.calls.index(call)])
     assert sum("worker-test-mutex" in c for c in run.calls[:run.calls.index(call)]) == 2
     assert not any("scheduler" in c or "update-traffic" in c for c in run.calls)
+
+
+@pytest.mark.skipif(shutil.which("jq") is None or shutil.which("bash") is None, reason="the step needs bash and jq")
+@pytest.mark.parametrize("hold", ["all", "us-central1"])
+def test_held_worker_and_healthy_parent_release_reservation(tmp_path, hold):
+    harness = DeployScriptHarness(tmp_path)
+    harness.write_script(SCRIPT, (ROOT / SCRIPT).read_text())
+    run = harness.run(SCRIPT, extra_env={"TR_DEPLOY_HOLD_REGIONS": hold})
+    assert run.returncode == 0, summarise(run)
+    assert not run.calls, summarise(run)
+    assert "held: settle-drain worker not deployed" in run.stdout
+    worker_result = "success" if run.returncode == 0 else "failure"
+    assert _finalize_outcome(_needs(**{
+        "settle-drain-worker": {"result": worker_result, "outputs": {}},
+    })) == ("success", 0)

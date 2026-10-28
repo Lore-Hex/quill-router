@@ -1,18 +1,24 @@
 #!/usr/bin/env bash
 # Dedicated worker only. Invoke within the reviewed GCP release coordinator,
-# after the router image has passed CI/attestation/rollout gates and is serving.
+# after the parent's CI decision and attestation/rollout gates; router is serving.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/_deploy_hold.sh"
 REGION=us-central1
 WORKER_SERVICE=trusted-router-settle-drain
 if deploy_region_is_held "$REGION"; then
-  echo 'settle worker region is held' >&2
-  exit 1
+  echo 'held: settle-drain worker not deployed'
+  exit 0
 fi
 # Never acquire an independent release scope or bypass the parent's gates.
 : "${TR_DEPLOY_MUTEX_OPERATION:?run inside the reviewed GCP release coordinator}"
 [ "${TR_DEPLOY_MUTEX_CLOUD:-}" = gcp ]
+# Only the same release's boolean workflow input can waive the CI check.
+HOTFIX="${TR_SETTLE_DRAIN_HOTFIX:-false}"
+case "$HOTFIX" in
+  true|false) ;;
+  *) echo 'TR_SETTLE_DRAIN_HOTFIX must be true or false' >&2; exit 1 ;;
+esac
 source "${SCRIPT_DIR}/_lib.sh"
 source "${SCRIPT_DIR}/deploy_mutex.sh"
 source "${SCRIPT_DIR}/cloud_bake_gate.sh"
@@ -27,14 +33,18 @@ plan_field() {
 IMAGE="$(plan_field image)"
 RUNTIME_SA="$(plan_field service_account)"
 SOURCE_REVISION="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["env"]["TR_SOURCE_REVISION"])' <<<"$PLAN")"
-CI_RUNS="$(gh run list --repo Lore-Hex/quill-router --workflow ci.yml \
-  --commit "$SOURCE_REVISION" --limit 1 --json headSha,status,conclusion)"
-python3 -c '
+if [ "$HOTFIX" = true ]; then
+  echo "::warning::HOTFIX MODE — skipping the CI-green gate."
+else
+  CI_RUNS="$(gh run list --repo Lore-Hex/quill-router --workflow ci.yml \
+    --commit "$SOURCE_REVISION" --limit 1 --json headSha,status,conclusion)"
+  python3 -c '
 import json,sys
 runs=json.load(sys.stdin)
 assert len(runs)==1 and runs[0]["headSha"]==sys.argv[1]
 assert runs[0]["status"]=="completed" and runs[0]["conclusion"]=="success"
 ' "$SOURCE_REVISION" <<<"$CI_RUNS"
+fi
 # Revision overlap is safe under the existing row/reservation and publisher
 # fences. Do not require the serving worker to be disabled before replacement.
 SET_ENV_VARS="$(python3 -c 'import json,sys; print("^|^"+"|".join(k+"="+v for k,v in json.load(sys.stdin)["env"].items()))' <<<"$PLAN")"

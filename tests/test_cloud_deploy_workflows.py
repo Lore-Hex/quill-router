@@ -120,3 +120,26 @@ def test_settle_worker_release_job_inherits_parent_fence_and_prepared_checkout()
     assert "deploy_mutex_acquire" not in script and "deploy_mutex_release" not in script
     assert script.index('cloud_bake_gate gcp') < script.index('gc run deploy')
     assert script.count("\ndeploy_mutex_assert\n") == 2
+
+
+@pytest.mark.parametrize("hotfix", [False, True])
+def test_worker_uses_same_release_hotfix_decision_as_parent(hotfix: bool) -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-production.yml").read_text())
+    # PyYAML's YAML 1.1 parser reads the workflow's `on` key as True.
+    assert workflow[True]["workflow_call"]["inputs"]["hotfix"] == {
+        "type": "boolean", "default": False,
+    }
+    jobs = workflow["jobs"]
+    assert jobs["settle-drain-worker"]["env"]["TR_SETTLE_DRAIN_HOTFIX"] == "${{ inputs.hotfix == true }}"
+    parent = jobs["gate-on-ci"]["steps"][0]["run"]
+    # Execute the parent's decision prefix: hotfix exits before CI; normal
+    # releases fall through to CI. The script harness covers pending CI in both.
+    prefix = parent[:parent.index('echo "waiting for CI')]
+    script = prefix.replace("${{ inputs.hotfix }}", str(hotfix).lower()) + "echo CI_REQUIRED\n"
+    result = subprocess.run(  # noqa: S603 - local workflow decision, no cloud commands
+        [shutil.which("bash") or "/bin/bash", "-c", script], capture_output=True, text=True, check=True,
+    )
+    warning = "::warning::HOTFIX MODE — skipping the CI-green gate."
+    assert (warning in result.stdout) is hotfix
+    assert ("CI_REQUIRED" in result.stdout) is not hotfix
+    assert warning in (ROOT / "scripts/deploy/settle_drain_worker.sh").read_text()

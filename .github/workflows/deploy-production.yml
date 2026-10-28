@@ -1307,6 +1307,7 @@ jobs:
     env:
       TR_DEPLOY_MUTEX_OPERATION: ${{ needs.admit-cloud.outputs.TR_DEPLOY_MUTEX_OPERATION }}
       TR_DEPLOY_MUTEX_CLOUD: gcp
+      TR_SETTLE_DRAIN_HOTFIX: ${{ inputs.hotfix == true }}
       TR_DEPLOY_HOLD_REGIONS: ${{ vars.TR_DEPLOY_HOLD_REGIONS }}
       GH_TOKEN: ${{ github.token }}
       PROJECT_ID: quill-cloud-proxy

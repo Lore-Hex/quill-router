@@ -367,19 +367,10 @@ cloud, without changing it:
 bash scripts/deploy/deploy_mutex.sh status
 ```
 
-Break glass only after running `status`, checking that the recorded owner is no
-longer active, and confirming that no GitHub Actions or manual production deploy
-is still running. Use the generation printed by `status`; the precondition keeps
-this command from deleting a replacement lock acquired after the inspection:
-
-```bash
-gcloud storage rm \
-  gs://tr-deploy-mutex-quill-cloud-proxy/locks/trusted-router-production.json \
-  --if-generation-match=GENERATION
-```
-
-Normal recovery does not require manual removal: locks expire after 90 minutes,
-and the next acquirer can take over an expired generation safely.
+For a retained reservation, follow the [coordinator recovery procedure](design/two-cloud-rollouts.md#recovery).
+Verify the exact owner has stopped, outstanding cloud operations have completed,
+and cloud health has been checked before explicit recovery. Do not delete the
+coordinator object or rely on elapsed time to release it.
 
 In deploy workflow status, **deployed** now means the primary is live: all four
 regional revisions are warm, and `us-central1` has completed its 10/50/100 ramp
@@ -814,11 +805,18 @@ Every GCP production release runs `settle-drain-worker` in
 `.github/workflows/deploy-production.yml` after `rollout-secondaries` succeeds.
 It invokes `scripts/deploy/settle_drain_worker.sh` under the parent's
 `TR_DEPLOY_MUTEX_OPERATION`; finalization waits for the worker as well as the
-other release jobs. The script honours `TR_DEPLOY_HOLD_REGIONS` (including
-`us-central1` and `all`), requires the GCP lease, checks the bake gate and CI,
-and uses the **serving router revision's image and service account**. A held
-worker region or a failed verification fails the job and retains the parent's
-reservation; no independent lease is acquired or released.
+other release jobs. A `TR_DEPLOY_HOLD_REGIONS` hold covering `us-central1` or
+`all` logs `held: settle-drain worker not deployed` and exits successfully before
+any cloud call. With a healthy parent, finalization can then release the reservation.
+
+The script requires the inherited GCP lease, checks the bake gate, and uses the
+**serving router revision's image and service account**. Normally it requires
+successful CI for that exact source commit. Only the same release's reviewed
+`hotfix=true` workflow input skips that CI check, with the parent's hotfix warning;
+lease, bake, image/source validation and post-deploy verification still run.
+A real worker deployment or verification failure retains the parent's GCP
+reservation. Follow the [coordinator recovery procedure](design/two-cloud-rollouts.md#recovery)
+for that case; no independent lease is acquired or released.
 
 The service `trusted-router-settle-drain` runs `TR_SERVICE_SURFACE=settle-drain`
 in **us-central1**, with min=max=1, always-allocated 1 CPU and 2 GiB memory.
