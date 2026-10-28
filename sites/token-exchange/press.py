@@ -13,12 +13,12 @@ from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 HERE = Path(__file__).resolve().parent
 ASSET_URL = "/assets/press"
 ASSETS = (
-    ("nyte-lockup-light", "Combined logo on light", "light", "svg", "png"),
-    ("nyte-lockup-dark", "Combined logo on dark", "dark", "svg", "png"),
-    ("nyte-lockup-mono", "Monochrome combined logo", "light", "svg", "png"),
     ("nyte-horizontal-light", "Horizontal logo on light", "light", "svg", "png"),
     ("nyte-horizontal-dark", "Horizontal logo on dark", "dark", "svg", "png"),
     ("nyte-horizontal-mono", "Monochrome horizontal logo", "light", "svg", "png"),
+    ("nyte-lockup-light", "Stacked logo on light", "light", "svg", "png"),
+    ("nyte-lockup-dark", "Stacked logo on dark", "dark", "svg", "png"),
+    ("nyte-lockup-mono", "Monochrome stacked logo", "light", "svg", "png"),
     ("nyte-wordmark-light", "Wordmark on light", "light", "svg", "png"),
     ("nyte-wordmark-dark", "Wordmark on dark", "dark", "svg", "png"),
     ("nyte-wordmark-mono", "Monochrome wordmark", "light", "svg", "png"),
@@ -33,8 +33,9 @@ USAGE = (
     "stretch, recolor, crop or add effects to the logos. Leave clear space at least "
     "half the mark's height around each lockup. Use a contrasting background. "
     "The globe mark and NY Token Exchange wordmark are NYTE's brand assets. "
-    "Use the combined globe-and-name logo on first reference; choose the horizontal "
-    "version for wide placements. Write NY Token Exchange (NYTE), then NYTE. "
+    "Use the horizontal globe-and-name logo on first reference, with the globe "
+    "on the left and name on one line. A stacked version is available for taller "
+    "placements. Write NY Token Exchange (NYTE), then NYTE. "
     "Link to https://nytokenexchange.com. Logos are not certifications or endorsements. "
     "All trademark rights remain with Lore Hex Corp. Credit screenshots and social "
     "artwork to NY Token Exchange. The river image in historical screenshots is symbolic "
@@ -67,8 +68,8 @@ def build_press(output: Path) -> None:
     (assets / "README.txt").write_text(
         f"NY TOKEN EXCHANGE - PUBLIC PRESS KIT\nUpdated: {data['updated']}\n\n"
         "Source: https://nytokenexchange.com/media-kit\nContact: help@trustedrouter.com\n\n"
-        "Combined logos: outlined SVG and transparent 2400 x 1080 PNG.\n"
-        "Horizontal logos: outlined SVG and transparent 2400 x 480 PNG.\n"
+        "Primary horizontal logos: outlined SVG and transparent 2400 x 480 PNG.\n"
+        "Alternate stacked logos: outlined SVG and transparent 2400 x 1080 PNG.\n"
         "Wordmarks: outlined SVG and transparent 2400 x 480 PNG.\n"
         "Globe marks: SVG and transparent 2048 x 1024 PNG.\n"
         "Social image: 1200 x 630 PNG. Homepage: 1920 x 1080 PNG, captured 2026-10-15.\n"

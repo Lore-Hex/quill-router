@@ -120,7 +120,7 @@ class PressTests(unittest.TestCase):
 
     def test_combined_logos_include_globe_and_outlined_name_and_appear_first(self):
         assets = self.root / "assets/press"
-        self.assertEqual(ASSETS[0][0], "nyte-lockup-light")
+        self.assertEqual(ASSETS[0][0], "nyte-horizontal-light")
         for kind, height in (("lockup", 450), ("horizontal", 200)):
             for variant, color in (("light", "#000000"), ("dark", "#ffffff"), ("mono", "#000000")):
                 root = ET.parse(assets / f"nyte-{kind}-{variant}.svg").getroot()  # noqa: S314
