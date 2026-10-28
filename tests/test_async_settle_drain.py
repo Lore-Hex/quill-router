@@ -175,7 +175,7 @@ def test_control_claim_transaction_deadline(fake_store, claim):
     assert db.last_timeout_secs == .5
 
 
-def test_housekeeping_cadence_over_fast_polls(fake_store, monkeypatch):
+def test_housekeeping_only_on_legacy_watchdog(fake_store, monkeypatch):
     counts = []
     clock = [1000.]
     monkeypatch.setattr(time, 'time', lambda: clock[0])
@@ -190,7 +190,12 @@ def test_housekeeping_cadence_over_fast_polls(fake_store, monkeypatch):
     for poll in range(31):
         clock[0] = 1000 + poll * 10
         worker.drain_pass(1, settings=settings())
-    assert counts == reaps == [1000, 1300]
+    assert counts == reaps == []
+    # The scheduler's unchanged legacy pass owns purge/reap, bounded to 200.
+    for now in (1300, 1600):
+        clock[0] = now
+        drain.drain_settle_outbox(1)
+    assert counts == reaps == [1300, 1600]
     # Independent replicas race on the same complete PK; only one wins.
     clock[0] = 1600
     with ThreadPoolExecutor(max_workers=6) as pool:
@@ -324,7 +329,6 @@ def test_health_publish_cadence_across_workers(fake_store, monkeypatch, replicas
         return original(self, sql, **kwargs)
     monkeypatch.setattr(_FakeSnapshot, 'execute_sql', query)
     monkeypatch.setattr(time, 'time', lambda: clock[0])
-    monkeypatch.setattr(worker, 'claim_housekeeping', lambda db: False)
     cfg = settings(settle_outbox_health_publish_interval_seconds=interval)
     with ThreadPoolExecutor(max_workers=replicas) as pool:
         for tick in range(polls):
@@ -348,7 +352,6 @@ def test_health_claim_loss_or_failure_preserves_apply(fake_store, monkeypatch, f
     seed(store, 1)
     assert claim_health_publish(db, 2)
     assert not claim_health_publish(db, 2)
-    monkeypatch.setattr(worker, 'claim_housekeeping', lambda db: False)
     if failure:
         def fail(*args):
             raise TimeoutError
@@ -475,7 +478,6 @@ def test_shutdown_after_claim_leaves_row_leased(fake_store, monkeypatch, concurr
         return result
     monkeypatch.setattr(SpannerSettleOutbox, 'claim_shard', claim)
     monkeypatch.setattr(drain, 'apply_frozen_settle', lambda row: applies.append(row) or ApplyOutcome.SETTLED_NOW)
-    monkeypatch.setattr(worker, 'claim_housekeeping', lambda db: False)
     monkeypatch.setattr(worker, 'claim_health_publish', lambda *args: False)
     started = time.monotonic()
     worker.run_worker(settings(settle_outbox_worker_concurrency=concurrency), stop)
@@ -603,7 +605,6 @@ def test_shutdown_finishes_all_four_inflight_applies(fake_store, monkeypatch):
         applied.append(row.authorization_id)
         return ApplyOutcome.SETTLED_NOW
     monkeypatch.setattr(drain, 'apply_frozen_settle', apply)
-    monkeypatch.setattr(worker, 'claim_housekeeping', lambda db: False)
     monkeypatch.setattr(worker, 'claim_health_publish', lambda *args: False)
     worker.run_worker(settings(settle_outbox_worker_concurrency=4), stop)
     assert set(applied) == {f'fast-{i}' for i in range(4)}

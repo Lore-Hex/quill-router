@@ -274,7 +274,7 @@ SERVICE_SURFACE_SECRET_OWNERS: dict[str, frozenset[str]] = {
     "operational_analytics_clickhouse_password": frozenset(
         {"public", "control", "internal", "observer"}
     ),
-    "sentry_dsn": frozenset({"public", "control", "internal", "observer"}),
+    "sentry_dsn": frozenset({"public", "control", "internal", "observer", "settle-drain"}),
     "google_data_manager_kms_key_name": frozenset({"control"}),
     "attribution_cookie_key": frozenset({"public", "control"}),
     "attribution_cookie_secret": frozenset({"public", "control"}),
@@ -1136,6 +1136,9 @@ class Settings(BaseSettings):
     # a billing prod-behavior change — flip deliberately, per the design's
     # rollout section, after the shadow metrics are clean.
     settle_outbox_fast_drain_enabled: bool = False
+    # Exceeds the unchanged 20s RPC cap plus at most 5s front-door work
+    # between RPC starts, with one second scheduling margin.
+    settle_outbox_stall_seconds: float = Field(default=26, ge=26, le=30)
     settle_outbox_poll_interval_seconds: float = Field(default=300, gt=0, le=300)
     settle_outbox_health_publish_interval_seconds: float = Field(default=2, gt=0, le=5)
     settle_outbox_claim_batch: int = Field(default=500, ge=1, le=500)
@@ -2127,7 +2130,7 @@ class Settings(BaseSettings):
         # the legacy service's complete authority and therefore its complete
         # pre-split startup requirements.
         gateway_surfaces = {"internal"}
-        sentry_surfaces = {"combined", "control", "internal", "observer"}
+        sentry_surfaces = {"combined", "control", "internal", "observer", "settle-drain"}
         account_surfaces = {"combined", "control"}
         email_surfaces = {"combined", "control", "actions"}
         if (surface in gateway_surfaces or deployed_combined_bridge) and not (

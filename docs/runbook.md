@@ -810,15 +810,15 @@ against a baseline of 6.
 
 ### Dedicated warm worker (code available; deployment separate)
 
-Run the router image as `TR_SERVICE_SURFACE=settle-drain` on **one** warm,
-always-CPU Cloud Run instance in **us-central1**, alongside the existing
-five-minute scheduler. Do not start this loop on router instances. The only
-HTTP route is `GET /health`; ingress and invocation must be private.
-The separate worker deploy must go through the reviewed release gates.
+Run the router image as `TR_SERVICE_SURFACE=settle-drain` on **one** always-CPU
+Cloud Run instance in **us-central1**. Keep the five-minute legacy scheduler.
+Only the worker enables fast drain; router pins and the shadow-v2 window stay
+unchanged. The only HTTP route is `GET /health`, with private ingress/invocation.
+The separate deployment must use the reviewed release gates.
 
-Worker-only pins (router pins remain unchanged):
+Worker-only pins (prefix `TR_SETTLE_OUTBOX_`):
 
-| Setting (prefix `TR_SETTLE_OUTBOX_`) | Value |
+| Setting | Value |
 | --- | ---: |
 | `FAST_DRAIN_ENABLED` | `true` |
 | `POLL_INTERVAL_SECONDS` | `1` |
@@ -827,73 +827,106 @@ Worker-only pins (router pins remain unchanged):
 | `WORKER_CONCURRENCY` | `4` |
 | `CLAIM_BATCH` | `4` |
 | `HEALTH_PUBLISH_INTERVAL_SECONDS` | `1` |
+| `STALL_SECONDS` | `26` |
 
-Use the router's Spanner database and service-account identity, with
-`TR_ASYNC_SETTLE_PROTECTION=true`, `TR_SETTLE_OUTBOX_ENABLED=true`, typed
-request records, generation records, benchmark analytics outbox and operational
-analytics outbox enabled, and `TR_OPERATIONAL_ANALYTICS_SINK=outbox`.
-No application secrets, ClickHouse reader/writer credentials, gateway token,
-Stripe credentials or signing keys are needed. Application logs go to stdout/stderr.
-No analytics drain, auto-refill, shadow observer, startup harness, routing/edge
-publisher, synthetic monitor or other normal app starter is installed.
+Use the router's Spanner database/service account, protection=true, settle
+outbox enabled, typed/generation records and both durable analytics outboxes,
+with operational sink=outbox. The sole application secret is `TR_SENTRY_DSN`,
+using the router's Secret Manager binding. No gateway/provider/payment/signing
+or ClickHouse credentials are mounted. No analytics drains, auto-refill,
+shadows, startup harness, routing/edge publishers or synthetic starters run.
+**No purge or reaping runs on the worker.** The legacy scheduler retains its
+existing purge and limit-200 reaper, once per pass.
 
-The loop publishes the existing `settle_drain_control / fleet-v1` record from
-real unresolved-row snapshots. Completed shard scans/applies trigger due
-publication **inside** a pass, so a busy pass does not wait until its end.
-Leased and dead rows remain in the age distribution; bounded/truncated or
-unknown-age evidence remains unhealthy. There is no independent heartbeat
-publisher. A stuck/dead loop cannot refresh evidence, and router admission
-closes when the last observation reaches five seconds old. Publication is due
-at the configured interval, serviced by the next completed unit of work;
-if work or Spanner cannot progress promptly, freshness fails closed.
+Completed scan/apply units service due publication of
+`settle_drain_control / fleet-v1`. The existing bounded snapshot includes all
+unresolved versions, leased and dead rows; its ages/completeness remain honest.
+A busy pass can publish at completed slots. There is no timer heartbeat and no
+publication from failed claims. If useful drain progress stops, evidence ages
+out and new admission closes at five seconds. Local timers suppress not-due
+cadence transactions. The worker drains both NULL and async versions: an open
+reservation blocked by an accepted async sibling parks under protection; once
+terminal, the NULL row has the same outcome/alert/state as an ordinary loser.
 
-Liveness is separate from admission: `/health` reports `idle` with fast mode
-off, `ok` while the thread responds, and HTTP 503 if it dies or has no progress
-for 60 seconds. Caught pass failures count as responsiveness but never publish
-health. This prevents ordinary database failures from causing restart storms;
-the longer threshold tolerates bounded housekeeping/apply delays. Configure an
-HTTP liveness probe, and alert on stale fleet health independently of restarts.
-A persistent blocking dependency can still cause repeated restarts: disable fast
-mode and investigate rather than loosening admission freshness.
+Liveness uses completed units and the existing **local** Spanner RPC counters.
+RPC starts only refresh process liveness; they never publish fleet health.
+An apply can span multiple transactions, so these counters distinguish useful
+I/O from a wedged unit. The existing per-RPC cap is 20 s; retry backoff is at
+most 4 s, cleanup at most 2 s, and a leased front-door call between Spanner RPCs
+is bounded to 5 s (normally 1.5 s). The 26 s minimum allows the longest 20+5 s
+gap plus one second scheduling margin. No money RPC bound or priority changes.
+A monitor checks every 0.1 s; at `STALL_SECONDS` without local progress it dumps
+all thread stacks (no locals) and calls `os._exit(70)`. `/health` uses the same
+threshold. Caught fast failures stay live, never refresh fleet evidence, and do
+not cause restart storms. Persistent blocking can still cause repeated exits.
+The dump/exit is one function for later composition with listener watchdog
+#2145 after rebase; this PR does not install a second faulthandler watchdog.
 
-To stop, disable async admission on routers first, drain accepted work, then
-set **only this service's** `TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED=false` through
-its reviewed config. Off is healthy, logs once and does not initialize Spanner.
-SIGTERM skips the router listener delay, stops new claims, and joins the loop
-for at most eight seconds. A claim returned after stop is left leased; running
-applies retain existing fencing and RPC bounds. Cloud Run can kill a transaction
-at the grace deadline; do not clear its lease manually.
+Crash/wedge arithmetic, measured from a claim immediately followed by failure:
+`max(30, 26.1 + E + R) + 1 + 0.8 + A` seconds, where E is stack-dump/exit
+time, R is measured replacement startup and A is claim/apply/resolve time.
+Lease expiry runs concurrently with detection/startup, not afterward. With
+illustrative E≈0, R=10 and A=5 this is **42.9 s**; these are acceptance-budget
+placeholders, not measurements. With those A/E values, startup must be under
+about 27 s to fit 60. Ordinary process death omits the 26.1 s detection term.
+Late stalls add time already spent since acceptance. Outages, large backlogs,
+park retries and unbounded stack-output blocking cannot prove a universal 60 s
+bound. Measure cold start and compose #2145's nonblocking dump before rollout;
+if the measured sum fails, the smallest timing change is shortening replacement
+startup (or a separately reviewed tighter RPC budget to lower STALL), not
+lengthening leases or weakening fencing.
 
-Legacy bulk claims now skip non-NULL `async_version` rows, even if worker health
-is absent. Otherwise its 500-row, 300-second lease can strand an async batch
-tail past 60 seconds, including during worker recovery. The five-minute watchdog
-still claims sync-fallback rows exactly as before; it is **not** async failover.
-Keep the warm worker enabled until accepted async rows are resolved. Do not
-roll back this exclusion to recover async work; restore the warm worker.
+Legacy bulk candidate SQL adds `AND async_version IS NULL` **before** its
+`LIMIT @limit` (`2 * caller_limit`, at most 1000), retaining
+`FORCE_INDEX=tr_settle_outbox_due_v2`, sparse predicates and ordering. An async
+prefix can no longer hide NULL-version candidates. Bulk leases remain 300 s.
+After the NULL-row loop, a bounded recovery phase uses the pass's remaining
+240 s budget. It scans the 16 shards with the same low-priority, no-retry,
+200 ms, limit-2 query mechanics, restricted to async versions. It reads
+`settle_drain_control / fleet-v1` by complete primary key only when needed.
+Ownership is fresh only if strict parsing succeeds and **both** observation
+and heartbeat ages satisfy `0 <= age < 5`; p95 and completeness are not part of
+ownership. Missing/invalid/unreadable/future/stale health permits recovery.
+Each recovery claim takes at most one row, with `min(configured lease, 30 s)`,
+and immediately applies it before another claim. It never publishes health.
+Protection off leaves async rows untouched and logs only a bounded due count.
 
-With four slots, a full empty sweep takes four waves of four shard queries.
-At the existing 200 ms query bound this is about 0.8 s, excluding overhead.
-Start-to-start polling is one second; 30 s lease + 1 s poll + 0.8 s sweep
-leaves about 28 s of the 60 s target for claim/apply and replacement startup
-beyond lease expiry. Normal acceptance-to-finalization within 5 s requires
-measured capacity and short applies, not just these pins. The 60 s objective
-cannot be guaranteed through an outage, backlog, slow recovery or retry/park.
+For a worker that stays absent, last-resort recovery is one watchdog interval
+(300 s) plus at most one short lease (30 s) plus apply time, provided the row
+fits the pass's remaining budget/capacity. The 60 s objective applies to the
+healthy worker and crash reclaim, not the five-minute backup. An arbitrarily
+large backlog or a pass whose NULL work consumes its budget can require more
+watchdog passes; alert on accepted-row age rather than claiming a hard bound.
 
-Idle steady-state upper rates (excluding SDK session setup/retries): 16
-read-only shard queries/s; one health cadence read-write transaction/s;
-one unresolved snapshot scan/s (at most 10,001 rows); one fleet publication
-read-write transaction/s. Housekeeping cadence is one read-write transaction
-per 300 s, plus the existing bounded purge/reap work once per 300 s. No
-cadence transaction runs on a warm pass where its local timer is not due.
-Slow work lowers these rates. Budget this new load alongside the unchanged
-scheduler; do not relax Spanner's 45% CPU alarm.
+Idle worker upper rates, excluding session/retry overhead: **16 read-only
+shard queries/s + 1 unresolved snapshot scan/s + 1 health-cadence transaction/s
++ 1 fleet-publish transaction/s**. No housekeeping cadence transaction. The
+watchdog adds at most **16** bounded read-only recovery queries per idle pass
+(16/300 = **0.0533/s**), no health read or new writes when empty. Existing
+NULL candidate/reaper operations remain. SQL limits bound returned rows;
+version filtering on the existing due index does not promise a physical scan
+bound under an arbitrarily large version-skewed backlog. Keep the 45% CPU alarm.
 
-Before enabling the pilot, verify one instance, no public invocation, fresh
-`observed_at` via complete-primary-key reads every few seconds, expected idle
-operation rates, Spanner alerts OK, and booking plus outbox-completion latency
-on any rows. Measure a crash/reclaim rehearsal and p95 <=5 s / all <=60 s in
-the operating envelope. INFO emits work/failure events and a minute summary;
-per-publication snapshots are DEBUG, avoiding idle per-second INFO logs.
+Worker handlers replace non-worker records with logger, severity and exception
+class only, removing message, args, exception/stack text and every extra field.
+Worker events contain fixed codes, aggregate counts and exception classes.
+Other surfaces retain their logging. Direct `ops_alert` pages reach the same
+Sentry destination with the existing allowlisted alarm fingerprints, but no raw
+message, customer tags, breadcrumbs or exception data. Idle logs are a minute
+summary; fleet snapshots are DEBUG. Confirm a test money alert reaches paging
+before enabling admission.
+
+Disable router async admission first, resolve accepted rows, then set worker
+fast=false through reviewed configuration. Off stays healthy, logs once and
+initializes no Spanner store. SIGTERM stops new claims and joins for at most
+eight seconds; running work retains its fences and claimed-but-not-started rows
+expire normally. Do not clear leases manually. Retain the watchdog on rollback.
+
+Before the pilot: verify one instance, private invocation, observed_at age every
+few seconds via complete-PK reads, expected idle operation rates, Spanner alarms
+OK, real money paging, and booking/outbox latency on any rows. Rehearse crash,
+wedge and worker-absent recovery. Require measured p95 <=5 s and <=60 s within
+the declared healthy-worker/restart envelope.
 
 
 Durably recover completed charges whose settle intent was recorded but whose

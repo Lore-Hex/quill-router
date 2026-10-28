@@ -3,19 +3,24 @@
 One leader-region process, never a loop on router instances. Claims run inside
 available executor slots, never a queue. Health publication follows completed
 scan/apply progress, including inside busy passes; a wedged loop cannot renew
-admission evidence. Deployment is separate from this code change.
+admission evidence. Purge/reap stays solely on the legacy watchdog, which also
+recovers async work under short leases when fleet ownership is stale. A local
+RPC-progress monitor dumps stacks and exits a wedged process; it never publishes
+health. Handler filters sanitize primitive logs; allowlisted Sentry money pages
+retain the router's alert classes. Deployment is separate from this code change.
 """
 from __future__ import annotations
 
 import datetime as dt
+import faulthandler
 import logging
+import os
 import threading
 import time
 from collections import Counter
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
-from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -27,50 +32,12 @@ from trusted_router.services import settle_outbox_drain as drain
 from trusted_router.services.settle_outbox_apply import ApplyOutcome
 from trusted_router.storage_gcp_async_admission import (
     claim_health_publish,
-    claim_housekeeping,
     publish_health,
 )
+from trusted_router.storage_gcp_io import SpannerRpcCounter, count_spanner_rpcs
 from trusted_router.storage_gcp_settle_outbox import SpannerSettleOutbox
 
 logger = logging.getLogger(__name__)
-
-# Reused apply/resolve/reap helpers log identifiers on their legacy path. Keep
-# those diagnostics out of warm-worker logs without changing the primitives or
-# suppressing their severity. The context is local to the calling thread/task;
-# router/watchdog log records are byte-for-byte untouched.
-_primitive_log_scope: ContextVar[bool] = ContextVar("settle_drain_primitive_logs", default=False)
-_log_factory_lock = threading.Lock()
-_log_factory_users = 0
-_original_log_factory: Callable[..., logging.LogRecord] = logging.getLogRecordFactory()
-_worker_log_factory: Callable[..., logging.LogRecord] | None = None
-
-
-@contextmanager
-def _aggregate_primitive_logs() -> Iterator[None]:
-    global _log_factory_users, _original_log_factory, _worker_log_factory
-    with _log_factory_lock:
-        if _log_factory_users == 0:
-            previous = logging.getLogRecordFactory()
-            def factory(*args: Any, **kwargs: Any) -> logging.LogRecord:
-                record = previous(*args, **kwargs)
-                if _primitive_log_scope.get() and record.name != __name__:
-                    record.msg = "async_drain.primitive logger=%s severity=%s"
-                    record.args = (record.name, record.levelname)
-                    record.exc_info = record.exc_text = record.stack_info = None
-                return record
-            _original_log_factory, _worker_log_factory = previous, factory
-            logging.setLogRecordFactory(factory)
-        _log_factory_users += 1
-    token = _primitive_log_scope.set(True)
-    try:
-        yield
-    finally:
-        _primitive_log_scope.reset(token)
-        with _log_factory_lock:
-            _log_factory_users -= 1
-            if _log_factory_users == 0 and logging.getLogRecordFactory() is _worker_log_factory:
-                logging.setLogRecordFactory(_original_log_factory)
-
 
 class _ObservedOutbox(SpannerSettleOutbox):
     """Observe existing fenced return values without changing resolution SQL."""
@@ -91,8 +58,7 @@ class _ObservedOutbox(SpannerSettleOutbox):
 
 def _apply_slot(outbox: SpannerSettleOutbox, shard: int, lease: int,
                 deadline: float, stop: threading.Event | None = None) -> tuple[int, str, int]:
-    with _aggregate_primitive_logs():
-        return _apply_slot_inner(outbox, shard, lease, deadline, stop)
+    return _apply_slot_inner(outbox, shard, lease, deadline, stop)
 
 
 def _apply_slot_inner(outbox: SpannerSettleOutbox, shard: int, lease: int,
@@ -118,12 +84,14 @@ def _apply_slot_inner(outbox: SpannerSettleOutbox, shard: int, lease: int,
     try:
         outcome = drain.apply_frozen_settle(row)
     except Exception as exc:
+        logger.warning("async_drain.apply_failed error_class=%s", type(exc).__name__)
         outcome, apply_error = ApplyOutcome.ERROR, exc
         error_note = f"{type(exc).__name__}: {exc}"
     observed = _ObservedOutbox(outbox._database, outbox._pt, async_fence=outbox._async_fence)
     try:
         drain._resolve_row(observed, row, outcome, error_note=error_note, apply_error=apply_error)
-    except Exception:
+    except Exception as exc:
+        logger.warning("async_drain.resolve_failed error_class=%s", type(exc).__name__)
         outcome = "resolve_error"
     # Aggregate only: never emit authorization/key/workspace IDs here.
     if observed.resolution == "done" and row.created_at is not None:
@@ -148,11 +116,37 @@ class WorkerCadence:
     """
 
     next_health: float = 0
-    next_housekeeping: float = 0
     next_summary: float = 0
     progress_at: float = field(default_factory=time.monotonic)
     passes: int = 0
     claimed: int = 0
+    _rpc_lock: Any = field(default_factory=threading.Lock)
+    _rpc_counters: list[SpannerRpcCounter] = field(default_factory=list)
+    _finished_rpcs: int = 0
+    _observed_rpcs: int = 0
+
+    @contextmanager
+    def observe_io(self) -> Iterator[None]:
+        # Observe the existing instrumentation only. No RPC deadline, retry,
+        # priority or money primitive changes. RPC starts are local liveness,
+        # never evidence for fleet health publication.
+        with count_spanner_rpcs() as counter:
+            with self._rpc_lock:
+                self._rpc_counters.append(counter)
+            try:
+                yield
+            finally:
+                with self._rpc_lock:
+                    self._finished_rpcs += counter.value()
+                    self._rpc_counters.remove(counter)
+
+    def stall_age(self) -> float:
+        with self._rpc_lock:
+            count = self._finished_rpcs + sum(c.value() for c in self._rpc_counters)
+            if count != self._observed_rpcs:
+                self._observed_rpcs = count
+                self.progress_at = time.monotonic()
+            return time.monotonic() - self.progress_at
 
     def progressed(self, database: Any, settings: Settings, stop: threading.Event | None) -> None:
         self.progress_at = time.monotonic()
@@ -165,24 +159,14 @@ class WorkerCadence:
         try:
             if claim_health_publish(database, interval):
                 publish_health(database)
-        except Exception:
+        except Exception as exc:
             # Failed/slow publication ages out; never manufacture evidence.
-            logger.warning("async_drain.health_publish_failed")
+            logger.warning("async_drain.health_publish_failed error_class=%s", type(exc).__name__)
 
-    def housekeeping(self, outbox: SpannerSettleOutbox, settings: Settings,
-                     stop: threading.Event | None) -> tuple[int, int]:
-        now = time.monotonic()
-        if now < self.next_housekeeping or (stop is not None and stop.is_set()):
-            return 0, 0
-        self.next_housekeeping = now + 300
-        try:
-            if claim_housekeeping(outbox._database):
-                with _aggregate_primitive_logs():
-                    return drain.housekeeping(outbox,
-                        reap_snapshot_booking_enabled=settings.reap_snapshot_booking_enabled)
-        except Exception:
-            logger.warning("async_drain.housekeeping_failed")
-        return 0, 0
+
+def _observed_slot(cadence: WorkerCadence, *args: Any) -> tuple[int, str, int]:
+    with cadence.observe_io():
+        return _apply_slot(*args)
 
 
 def drain_pass(limit: int, *, settings: Settings, start_shard: int = 0,
@@ -210,7 +194,7 @@ def drain_pass(limit: int, *, settings: Settings, start_shard: int = 0,
                and not (stop is not None and stop.is_set())):
             # At most one row per running slot, even when claim_batch is large.
             width = min(concurrency, limit - claimed)
-            futures = [pool.submit(_apply_slot, outbox, (shard + i) % 16, lease, deadline, stop)
+            futures = [pool.submit(_observed_slot, cadence, outbox, (shard + i) % 16, lease, deadline, stop)
                        for i in range(width)]
             shard = (shard + width) % 16
             for future in as_completed(futures):
@@ -221,10 +205,9 @@ def drain_pass(limit: int, *, settings: Settings, start_shard: int = 0,
                 empty = 0 if count else empty + 1
                 if outcome:
                     outcomes[outcome] += 1
-    purged, reaped = cadence.housekeeping(outbox, settings, stop)
     cadence.passes += 1
     cadence.claimed += claimed
-    if claimed or outcomes or purged or reaped:
+    if claimed or outcomes:
         logger.info("async_drain.pass claimed=%s outcomes=%s elapsed_seconds=%.6f",
                     claimed, dict(outcomes), time.monotonic() - started)
     if time.monotonic() >= cadence.next_summary:
@@ -232,7 +215,7 @@ def drain_pass(limit: int, *, settings: Settings, start_shard: int = 0,
         cadence.passes = cadence.claimed = 0
         cadence.next_summary = time.monotonic() + 60
     return dict(claimed=claimed, outcomes=dict(outcomes), recovered_micro=recovered,
-                purged=purged, reaped=reaped, deferred=outcomes.get("deferred", 0))
+                purged=0, reaped=0, deferred=outcomes.get("deferred", 0))
 
 
 def run_worker(settings: Settings, stop: threading.Event, *, limit: int = 500,
@@ -250,9 +233,10 @@ def run_worker(settings: Settings, stop: threading.Event, *, limit: int = 500,
     while not stop.is_set():
         started = time.monotonic()
         try:
-            drain_pass(limit, settings=settings, start_shard=shard, stop=stop, cadence=cadence)
-        except Exception:
-            logger.warning("async_drain.pass_failed")
+            with cadence.observe_io():
+                drain_pass(limit, settings=settings, start_shard=shard, stop=stop, cadence=cadence)
+        except Exception as exc:
+            logger.warning("async_drain.pass_failed error_class=%s", type(exc).__name__)
             # An exception proves the loop is responsive, but does NOT publish.
             cadence.progress_at = time.monotonic()
         shard = (shard + 1) % 16
@@ -260,7 +244,24 @@ def run_worker(settings: Settings, stop: threading.Event, *, limit: int = 500,
 
 
 SHUTDOWN_JOIN_SECONDS = 8.0
-LIVENESS_STALL_SECONDS = 60.0
+MONITOR_INTERVAL_SECONDS = 0.1
+
+
+def _exit_stalled_worker() -> None:
+    """Single replacement point for composition with the listener watchdog (#2145)."""
+    try:
+        # Code stacks only: no locals, exception payloads or row identifiers.
+        faulthandler.dump_traceback(all_threads=True)
+    finally:
+        os._exit(70)  # No shutdown/probe delay; durable leases/fences recover.
+
+
+def monitor_worker(settings: Settings, stop: threading.Event, cadence: WorkerCadence) -> None:
+    while not stop.wait(MONITOR_INTERVAL_SECONDS):
+        if cadence.stall_age() < settings.settle_outbox_stall_seconds:
+            continue
+        _exit_stalled_worker()
+        return  # reached only by test doubles
 
 
 def create_worker_app(settings: Settings) -> FastAPI:
@@ -270,21 +271,48 @@ def create_worker_app(settings: Settings) -> FastAPI:
     stop = threading.Event()
     cadence = WorkerCadence()
     thread: threading.Thread | None = None
+    monitor: threading.Thread | None = None
+    cleanup_lock = threading.Lock()
+    cleanups: list[Any] = []
+
+    def cleanup() -> None:
+        with cleanup_lock:
+            while cleanups:
+                cleanups.pop()()
+
+    def loop() -> None:
+        try:
+            run_worker(settings, stop, cadence=cadence)
+        finally:
+            if stop.is_set():
+                cleanup()
+
 
     @app.on_event("startup")
     async def _start_settle_drain() -> None:
-        nonlocal thread
+        nonlocal thread, monitor
+        from trusted_router.services.settle_drain_observability import (
+            init_alerting,
+            install_logging,
+        )
+
+        cleanups.append(install_logging())
+        cleanups.append(init_alerting(settings))
         if not settings.settle_outbox_fast_drain_enabled:
             logger.info("async_drain.idle fast mode disabled")
             return
         cadence.progress_at = time.monotonic()
-        thread = threading.Thread(target=run_worker, args=(settings, stop),
-                                  kwargs={"cadence": cadence}, name="settle-drain-loop", daemon=True)
+        thread = threading.Thread(target=loop, name="settle-drain-loop", daemon=True)
         thread.start()
+        monitor = threading.Thread(target=monitor_worker, args=(settings, stop, cadence),
+                                   name="settle-drain-monitor", daemon=True)
+        monitor.start()
 
     @app.on_event("shutdown")
     async def _stop_settle_drain() -> None:
         stop.set()
+        if monitor is not None:
+            monitor.join(MONITOR_INTERVAL_SECONDS * 2)
         if thread is not None:
             # Bound the lifecycle wait below Cloud Run's SIGTERM grace. Active
             # money RPCs keep their existing deadlines/fences; SIGKILL may
@@ -292,12 +320,14 @@ def create_worker_app(settings: Settings) -> FastAPI:
             thread.join(SHUTDOWN_JOIN_SECONDS)
             if thread.is_alive():
                 logger.warning("async_drain.shutdown_inflight")
+        if thread is None or not thread.is_alive():
+            cleanup()
 
     @app.get("/health")
     async def health() -> JSONResponse:
         idle = not settings.settle_outbox_fast_drain_enabled
         responsive = (thread is not None and thread.is_alive()
-                      and time.monotonic() - cadence.progress_at < LIVENESS_STALL_SECONDS)
+                      and cadence.stall_age() < settings.settle_outbox_stall_seconds)
         healthy = idle or responsive
         return JSONResponse({"status": "idle" if idle else "ok" if healthy else "stalled"},
                             status_code=200 if healthy else 503)

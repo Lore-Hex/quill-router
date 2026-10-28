@@ -44,7 +44,7 @@ def production_config(**overrides):
         async_settle_protection=True, settle_outbox_enabled=True,
         generation_records_enabled=True, request_record_write_mode="typed",
         analytics_outbox_enabled=True, operational_analytics_outbox_enabled=True,
-        operational_analytics_sink="outbox"), **overrides))
+        operational_analytics_sink="outbox", sentry_dsn="https://public@example.com/1"), **overrides))
 
 
 def inventory_settings(surface, enabled):
@@ -102,13 +102,13 @@ def test_worker_surface_excludes_every_other_starter(monkeypatch):
     assert not app.user_middleware
 
 
-def test_worker_production_pins_need_no_application_secrets():
+def test_worker_production_pins_need_only_alerting_secret():
     cfg = production_config()
     assert cfg.settle_outbox_pass_budget_seconds < cfg.settle_outbox_lease_seconds
-    assert not any("settle-drain" in owners for owners in SERVICE_SURFACE_SECRET_OWNERS.values())
+    assert {name for name, owners in SERVICE_SURFACE_SECRET_OWNERS.items() if "settle-drain" in owners} == {"sentry_dsn"}
 
 
-@pytest.mark.parametrize("name,value", _SENSITIVE_TEST_VALUES.items())
+@pytest.mark.parametrize("name,value", [(k, v) for k, v in _SENSITIVE_TEST_VALUES.items() if k != "sentry_dsn"])
 def test_worker_rejects_other_surface_credentials(name, value):
     with pytest.raises(ValueError):
         production_config(**{name: value})
@@ -116,6 +116,7 @@ def test_worker_rejects_other_surface_credentials(name, value):
 
 @pytest.mark.parametrize("overrides", [dict(settle_outbox_poll_interval_seconds=300),
     dict(settle_outbox_lease_seconds=60), dict(settle_outbox_health_publish_interval_seconds=5),
+    dict(settle_outbox_stall_seconds=25), dict(settle_outbox_stall_seconds=31),
     dict(settle_outbox_pass_budget_seconds=30), dict(settle_outbox_pass_budget_seconds=31)])
 def test_worker_rejects_incompatible_pins(overrides):
     with pytest.raises(ValueError):
@@ -142,7 +143,6 @@ def test_worker_runs_publishes_and_shutdown_is_prompt(fake_store, monkeypatch):
         published.set()
         return result
     monkeypatch.setattr(worker, "publish_health", publish)
-    monkeypatch.setattr(worker, "claim_housekeeping", lambda db: False)
     with TestClient(create_app(config(), configure_store_arg=False, init_observability=False)) as client:
         assert published.wait(2)
         assert time.time() - read_health(fake_store[1])["observed_at"] < 2
@@ -155,7 +155,6 @@ def test_failed_pass_recovers_without_publishing_failure(fake_store, monkeypatch
     stop = threading.Event()
     calls = []
     original = worker.drain_pass
-    monkeypatch.setattr(worker, "claim_housekeeping", lambda db: False)
     def run(*args, **kwargs):
         calls.append(1)
         if len(calls) == 1:
@@ -174,7 +173,6 @@ def test_busy_pass_publishes_without_hiding_backlog(fake_store, monkeypatch):
     seed(fake_store[0], 32)
     for row in fake_store[1].settle_outbox.values():
         row["created_at"] = "2020-01-01T00:00:00Z"
-    monkeypatch.setattr(worker, "claim_housekeeping", lambda db: False)
     original = worker.publish_health
     observations = []
     def publish(db):
@@ -206,10 +204,9 @@ def test_stalled_apply_stops_publication_and_bounded_shutdown(fake_store, monkey
             assert release.wait(5)
         return ApplyOutcome.SETTLED_NOW
     monkeypatch.setattr(drain, "apply_frozen_settle", apply)
-    monkeypatch.setattr(worker, "claim_housekeeping", lambda db: False)
     monkeypatch.setattr(worker, "SHUTDOWN_JOIN_SECONDS", .05)
-    monkeypatch.setattr(worker, "LIVENESS_STALL_SECONDS", .1)
-    app = create_app(config(settle_outbox_worker_concurrency=1), configure_store_arg=False, init_observability=False)
+    monkeypatch.setattr(worker, "monitor_worker", lambda *args: None)
+    app = create_app(config(settle_outbox_worker_concurrency=1).model_copy(update={"settle_outbox_stall_seconds": .1}), configure_store_arg=False, init_observability=False)
     try:
         with TestClient(app) as client:
             assert entered.wait(2)
@@ -236,16 +233,18 @@ def test_stalled_apply_stops_publication_and_bounded_shutdown(fake_store, monkey
 def test_local_cadence_avoids_transactions_when_not_due(fake_store, monkeypatch, caplog):
     ticks = [0.]
     monkeypatch.setattr(worker.time, "monotonic", lambda: ticks[0])
-    health, housekeeping = [], []
+    health = []
+    def forbidden(*a, **kw):
+        raise AssertionError("worker ran housekeeping")
+    monkeypatch.setattr(drain, "housekeeping", forbidden)
+    monkeypatch.setattr(SpannerSettleOutbox, "purge_done", forbidden)
     monkeypatch.setattr(worker, "claim_health_publish", lambda *a: health.append(ticks[0]) or False)
-    monkeypatch.setattr(worker, "claim_housekeeping", lambda *a: housekeeping.append(ticks[0]) or False)
     cadence = worker.WorkerCadence()
     with caplog.at_level(logging.INFO):
         for tick in range(21):
             ticks[0] = tick / 10
             worker.drain_pass(1, settings=config(), cadence=cadence)
     assert health == [0., 1., 2.]
-    assert housekeeping == [0.]
     queries = fake_store[1].snapshot_sql_params
     assert sum("shard" in params for params in queries) == 21 * 16
     assert not any("async_drain.pass " in r.message for r in caplog.records)
@@ -325,8 +324,11 @@ def test_worker_primitive_logs_have_no_identifiers(fake_store, monkeypatch, capl
         return outcome
     monkeypatch.setattr(drain, "apply_frozen_settle", apply)
     factory = logging.getLogRecordFactory()
+    from trusted_router.services.settle_drain_observability import install_logging
+    cleanup = install_logging()
     with caplog.at_level(logging.INFO):
         assert worker._apply_slot(box, 0, 30, time.monotonic() + 2)[0] == 1
+    cleanup()
     assert logging.getLogRecordFactory() is factory
     assert caplog.records
     assert not any(value in caplog.text for value in ["fast-0", "private-key", "private-workspace"])
@@ -336,17 +338,108 @@ def test_worker_primitive_logs_have_no_identifiers(fake_store, monkeypatch, capl
     assert "legacy watchdog diagnostic remains unchanged" in caplog.text
 
 
-def test_primitive_log_scope_is_thread_local_and_restored():
-    from concurrent.futures import ThreadPoolExecutor
-    barrier = threading.Barrier(4)
-    original = logging.getLogRecordFactory()
-    def enter(_):
-        with worker._aggregate_primitive_logs():
-            barrier.wait(timeout=2)
-            record = logging.getLogRecordFactory()("primitive", logging.INFO, __file__, 1,
-                                                   "private-key", (), None)
-            barrier.wait(timeout=2)
-            return record.getMessage()
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        assert list(pool.map(enter, range(4))) == ["async_drain.primitive logger=primitive severity=INFO"] * 4
-    assert logging.getLogRecordFactory() is original
+
+
+def test_stall_across_multiple_intervals_never_publishes(fake_store, monkeypatch):
+    seed(fake_store[0], 1)
+    next(iter(fake_store[1].settle_outbox.values()))['queue_shard'] = 0
+    entered, release, stop = threading.Event(), threading.Event(), threading.Event()
+    worker.publish_health(fake_store[1])
+    before = read_health(fake_store[1])
+    def apply(row):
+        entered.set()
+        assert release.wait(5)
+        return ApplyOutcome.SETTLED_NOW
+    monkeypatch.setattr(drain, 'apply_frozen_settle', apply)
+    cfg = config(settle_outbox_health_publish_interval_seconds=.03,
+                 settle_outbox_poll_interval_seconds=.01, settle_outbox_worker_concurrency=1)
+    thread = threading.Thread(target=worker.run_worker, args=(cfg, stop))
+    thread.start()
+    try:
+        assert entered.wait(2)
+        # Six publication intervals, while a real claimed row remains in apply.
+        time.sleep(.18)
+        assert read_health(fake_store[1]) == before
+    finally:
+        stop.set()
+        release.set()
+        thread.join(3)
+    assert not thread.is_alive()
+
+
+def test_repeated_claim_failures_cannot_refresh_durable_health(fake_store, monkeypatch):
+    failed, recover, stop = threading.Event(), threading.Event(), threading.Event()
+    worker.publish_health(fake_store[1])
+    before = read_health(fake_store[1])
+    original = SpannerSettleOutbox.claim_shard
+    calls = []
+    def claim(self, **kw):
+        if not recover.is_set():
+            calls.append(1)
+            if len(calls) >= 3:
+                failed.set()
+            raise TimeoutError('private-reservation')
+        return original(self, **kw)
+    monkeypatch.setattr(SpannerSettleOutbox, 'claim_shard', claim)
+    cfg = config(settle_outbox_health_publish_interval_seconds=.03,
+                 settle_outbox_poll_interval_seconds=.01, settle_outbox_worker_concurrency=1)
+    thread = threading.Thread(target=worker.run_worker, args=(cfg, stop))
+    thread.start()
+    try:
+        assert failed.wait(2)
+        time.sleep(.18)
+        assert len(calls) >= 3
+        assert read_health(fake_store[1]) == before
+        recover.set()
+        deadline = time.monotonic() + 2
+        while read_health(fake_store[1]) == before and time.monotonic() < deadline:
+            time.sleep(.01)
+        assert read_health(fake_store[1]) != before
+    finally:
+        stop.set()
+        thread.join(3)
+    assert not thread.is_alive()
+
+
+def test_monitor_dumps_all_stacks_then_exits_without_shutdown_delay(monkeypatch):
+    calls = []
+    cfg = config().model_copy(update={'settle_outbox_stall_seconds': .02})
+    cadence = worker.WorkerCadence(progress_at=time.monotonic() - 1)
+    monkeypatch.setattr(worker.faulthandler, 'dump_traceback', lambda **kw: calls.append(('stacks', kw)))
+    monkeypatch.setattr(worker.os, '_exit', lambda code: calls.append(('exit', code)))
+    monkeypatch.setattr(worker, 'MONITOR_INTERVAL_SECONDS', .001)
+    worker.monitor_worker(cfg, threading.Event(), cadence)
+    assert calls == [('stacks', {'all_threads': True}), ('exit', 70)]
+
+
+def test_rpc_progress_only_updates_liveness_not_fleet_health(fake_store, monkeypatch):
+    ticks = [0.]
+    monkeypatch.setattr(worker.time, 'monotonic', lambda: ticks[0])
+    from trusted_router.storage_gcp_io import _SPANNER_RPC_COUNTER
+    cadence = worker.WorkerCadence()
+    with cadence.observe_io():
+        counter = _SPANNER_RPC_COUNTER.get()
+        assert counter is not None
+        for tick in (20., 40., 60.):
+            ticks[0] = tick
+            counter.increment()
+            assert cadence.stall_age() == 0
+            assert read_health(fake_store[1]) is None
+        ticks[0] += 25
+        assert cadence.stall_age() == 25
+
+
+def test_fast_failures_keep_monitor_alive_without_publication(fake_store, monkeypatch):
+    exits = []
+    monkeypatch.setattr(worker, '_exit_stalled_worker', lambda: exits.append(1))
+    monkeypatch.setattr(worker, 'MONITOR_INTERVAL_SECONDS', .005)
+    def fail(*a, **kw):
+        raise TimeoutError('private-reservation')
+    monkeypatch.setattr(SpannerSettleOutbox, 'claim_shard', fail)
+    cfg = config(settle_outbox_poll_interval_seconds=.005).model_copy(
+        update={'settle_outbox_stall_seconds': .05})
+    with TestClient(create_app(cfg, configure_store_arg=False, init_observability=False)) as client:
+        time.sleep(.2)
+        assert client.get('/health').status_code == 200
+        assert exits == []
+        assert read_health(fake_store[1]) is None

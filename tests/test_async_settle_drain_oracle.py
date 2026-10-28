@@ -11,6 +11,7 @@ import ast
 import copy
 import datetime as dt
 import json
+from itertools import chain, repeat
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -83,7 +84,7 @@ def test_flag_off_frozen_drain_sql_state_response(env, monkeypatch, scenario):
             for method in ('execute_sql', 'execute_update', 'batch_update', 'insert_or_update'):
                 record(_FakeTransaction, method)
             record(_FakeSnapshot, 'execute_sql')
-            ticks = iter([0., 241.] if scenario == 'budget' else [0.] * 1000)
+            ticks = chain([0.], repeat(241.)) if scenario == 'budget' else repeat(0.)
             monotonic = lambda ticks=ticks: next(ticks)  # noqa: E731
             patch.setattr(drain, '_monotonic', monotonic)
             old_drain['_monotonic'] = monotonic
@@ -99,9 +100,35 @@ def test_flag_off_frozen_drain_sql_state_response(env, monkeypatch, scenario):
             function = old_drain['drain_settle_outbox'] if frozen else drain.drain_settle_outbox
             result = function(999 if scenario == 'clamp' else 100,
                               **({} if frozen else {'settings': Settings(environment='test')}))
+            rpc_counts = [getattr(db, n)-v for n, v in zip(rpc, before, strict=True)]
+            if not frozen:
+                # Round 2 explicitly permits the candidate exclusion and a
+                # bounded recovery read per shard. Compare every OTHER SQL byte,
+                # parameter, type, mutation, response and durable state unchanged.
+                recovery = [entry for entry in trace if 'AND async_version IS NOT NULL' in str(entry[2])]
+                assert len(recovery) == (0 if scenario == 'budget' else 16)
+                for cls, method, call_args, call_kwargs in recovery:
+                    assert cls == '_FakeSnapshot' and method == 'execute_sql'
+                    assert call_args[0] == storage.shard_due_statement(store._param_types,
+                        call_kwargs['params']['shard'], call_kwargs['params']['now'], async_only=True)[0]
+                    assert call_kwargs['params']['limit'] == 2
+                    assert call_kwargs['timeout'] == .2 and call_kwargs['retry'] is None
+                    assert call_kwargs['request_options'] == {'priority': 'PRIORITY_LOW'}
+                trace = [entry for entry in trace if entry not in recovery]
+                rpc_counts[0] -= len(recovery)
+                normalized = []
+                candidate_count = 0
+                for cls, method, call_args, call_kwargs in trace:
+                    if call_args and isinstance(call_args[0], str) and 'AND async_version IS NULL' in call_args[0]:
+                        assert cls == '_FakeSnapshot' and method == 'execute_sql'
+                        assert 'FORCE_INDEX=tr_settle_outbox_due_v2' in call_args[0]
+                        candidate_count += 1
+                        call_args = (call_args[0].replace('AND async_version IS NULL ', ''), *call_args[1:])
+                    normalized.append((cls, method, call_args, call_kwargs))
+                assert candidate_count == 1
+                trace = normalized
             outputs.append((json.dumps(result, separators=(',', ':')),
-                {n: copy.deepcopy(getattr(db, n)) for n in names}, trace,
-                [getattr(db, n)-v for n, v in zip(rpc, before, strict=True)]))
+                {n: copy.deepcopy(getattr(db, n)) for n in names}, trace, rpc_counts))
     assert outputs[0] == outputs[1]
     assert not any('settle_drain_control' in str(call) for call in outputs[1][2])
     if scenario == 'apply':

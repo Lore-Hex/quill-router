@@ -702,20 +702,38 @@ it alerts on mismatch, never reprices an accepted intent. The first-writer
 reservation gate, not the lease alone, prevents double booking. Competing
 settle/refund intents retain the existing winner semantics.
 
-**Dedicated worker decision (dormant code change, October 2026).** The warm
-loop runs only on the `settle-drain` service surface: one always-CPU Cloud Run
-instance in us-central1, using the router image. Only its environment enables
-fast drain; routers retain fast=false and their five-minute legacy watchdog,
-so the current shadow-v2 window is unchanged. Fleet health is published from
-completed drain progress inside busy passes, never by an independent heartbeat.
-Local due timers avoid read-write cadence transactions on every poll. The
-legacy bulk claim excludes accepted async-version rows unconditionally; its
-300-second batch leases cannot own async work, even during stale-health recovery.
-Sync-fallback rows retain the legacy path. Proposed worker pins are poll=1 s,
-pass=2 s, lease=30 s, concurrency=4, claim batch=4, health interval=1 s; the
-pass remains below the lease. See the [runbook](../runbook.md#settle-outbox) for
-cost/recovery arithmetic, shutdown, secret isolation, enable/disable order and
-measurement gates. No deploy wiring or router pin changes accompany this code.
+**Dedicated worker decision (dormant code change, October 2026).** Only the
+`settle-drain` surface runs the warm loop: one always-CPU Cloud Run instance in
+us-central1, using the router image. Only its environment enables fast drain;
+routers retain fast=false, their five-minute watchdog and unchanged shadow-v2
+pins. Worker pins: poll=1 s, pass=2 s, lease=30 s, concurrency=4, claim batch=4,
+health interval=1 s, stall=26 s; pass remains below lease. No deployment or
+router pin changes accompany this code.
+
+Fleet health follows completed drain work, including inside busy passes; no
+independent heartbeat or exception-path publication exists. Separate local RPC
+progress keeps the in-process stall monitor from mistaking multiple bounded
+transactions for a wedge. At 26 s without progress it dumps stacks and exits;
+HTTP health uses the same threshold. The monitor never writes fleet health.
+Purge/reap stays exclusively on the existing bounded legacy scheduler.
+
+The legacy bulk candidate SQL excludes async versions before its limit. A
+separate short-lease recovery phase owns async work only when strict fleet
+health has observation or heartbeat age outside `[0,5)`, or is missing, invalid
+or unreadable. p95/completeness affect admission, not recovery ownership.
+Recovery requires protection, applies each claim immediately, uses the remaining
+pass budget and never publishes health. Its last-resort worker-absent envelope
+is one watchdog interval plus one short lease plus apply time, subject to pass
+capacity. It does not claim the healthy-worker/crash-reclaim 60 s target.
+
+The warm worker applies both versions. A protected NULL-version row rejected
+while an async sibling still owns an open reservation parks; terminal losing
+classification and paging match the unprotected NULL-sibling case. The only
+worker secret is Sentry DSN. Handler sanitization removes primitive payloads
+and extras while retaining logger/severity/exception class; direct money pages
+retain only the established alarm fingerprint. See the
+[runbook](../runbook.md#settle-outbox) for recovery arithmetic, cost, credential
+isolation, shutdown, paging and measured enablement gates.
 
 The current worker is a recovery mechanism: `docs/runbook.md#settle-outbox`
 describes a **five-minute** scheduler; `drain_settle_outbox` loops sequentially,
@@ -1088,8 +1106,10 @@ best-effort cleanup past 500 ms; it never extends the acceptance deadline.
 
 ### PR D dormant drain and health implementation
 
-The unchanged scheduler path is frozen against main
-`ecb794597f32b0775594f8944f40f935b7f07278`. Defaults preserve its SQL/parameters,
+The original scheduler path was frozen against main
+`ecb794597f32b0775594f8944f40f935b7f07278`. The dedicated-worker amendment above
+adds only NULL-version candidate filtering and bounded short-lease async recovery;
+the differential explicitly accounts for those advisory reads and preserves other SQL/parameters,
 response, 500-row limit clamp, sequential apply, 240-second pass budget,
 300-second lease and per-tick purge/reap. No scheduler, cron, warm-worker service
 or job is deployed by PR D. PR G/operators must measure and approve enablement.
@@ -1099,14 +1119,17 @@ admission rollback, through the same frozen-money apply and resolution helpers.
 | Setting (`TR_` environment prefix) | Default | Meaning and read point |
 |---|---:|---|
 | `settle_outbox_fast_drain_enabled` | false | Select fast pass at the drain entry; required by the callable warm loop. |
-| `settle_outbox_poll_interval_seconds` | 300 | Warm-loop interruptible delay after a pass; unused in legacy mode. |
+| `settle_outbox_poll_interval_seconds` | 300 | Warm-loop interruptible start-to-start poll interval; unused in legacy mode. |
 | `settle_outbox_health_publish_interval_seconds` | 2 | Fleet publisher cadence; validated positive and at most `CACHE_SECONDS=5`. Fast mode only. |
 | `settle_outbox_claim_batch` | 500 | Upper bound on a claim wave; fast mode further clamps to available worker slots. Unused in legacy mode, which retains the caller's limit and 500 clamp. |
 | `settle_outbox_worker_concurrency` | 1 | Maximum independent running apply slots per pass, validated 1–32; fast mode only. |
-| `settle_outbox_lease_seconds` | 300 | Lease assigned by each running slot; fast mode only. |
+| `settle_outbox_lease_seconds` | 300 | Fast-slot lease; watchdog async recovery clamps it to at most 30 s. |
+| `settle_outbox_stall_seconds` | 26 | Worker process exit/HTTP liveness threshold; validated 26–30 s. |
 | `settle_outbox_pass_budget_seconds` | 240 | Deadline for starting new work; must be below the lease in fast mode. Does not cancel in-flight money transactions. |
 
-Rollout pins all seven defaults explicitly, never copying ambient/live settings.
+Router rollout retains the original seven cadence pins explicitly. The separate
+worker deployment supplies its own cadence and stall threshold; router pins do
+not change with this code.
 `run_worker(settings, stop)` exposes the warm loop without installing a schedule.
 It passes `stop` into `drain_pass` and every executor slot. The wave loop and
 slots check it before starting claims; claims already in flight and their
@@ -1221,15 +1244,11 @@ index/read remains bounded to 1,001 rows and retains its independent five-second
 freshness rule. Turning admission off stops health reads, including already
 constructed consumers; enabling it is a settings/application rollout.
 
-Housekeeping has its own fixed control key, `housekeeping-v1`, containing the
-last claimed UTC `observed_at`. A transaction admits at most one fast-mode
-purge/reap pass per 300 seconds across replicas. A crashed claimant delays the
-next pass until that interval ends. It does not change reaper SQL, the claim
-fence, retention, purge semantics, or the legacy scheduler path. The unit proof
-runs 31 polls over 300 seconds and observes only the passes at 0 and 300, then
-races six independent callers for the next interval and observes one winner.
-During mixed-mode rollout, the unchanged scheduler can still perform its
-ordinary housekeeping; this gate bounds additional fast-worker housekeeping.
+The existing `housekeeping-v1` cadence primitive remains available and tested,
+but the warm worker no longer calls it or runs purge/reap. The five-minute
+legacy pass alone retains its existing bounded housekeeping (including the
+limit-200 reaper). Fast polls add no housekeeping transactions or long reaping
+phases to the latency-critical loop.
 
 Structured aggregate logs add fleet pending age p50/p95/max, backlog frozen
 micro/count and dead count with completeness, per-row apply-plus-resolution

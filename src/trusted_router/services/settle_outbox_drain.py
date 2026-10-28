@@ -5,6 +5,8 @@ import json
 import logging
 import time
 from collections import Counter
+from collections.abc import Iterator
+from itertools import chain
 from typing import Any, cast
 
 from trusted_router.config import Settings
@@ -69,6 +71,61 @@ def spanner_settle_outbox() -> SpannerSettleOutbox:
     )
 
 
+def _recover_async(outbox: SpannerSettleOutbox, *, limit: int, deadline: float,
+                   settings: Settings | None) -> Iterator[SettleOutboxRow]:
+    """Last-resort watchdog: short leases, immediately consumed, never health writes."""
+    from trusted_router.services.async_settle import CACHE_SECONDS
+    from trusted_router.storage_gcp_async_admission import read_health
+
+    protection = outbox._async_fence
+    lease = min(30, settings.settle_outbox_lease_seconds if settings is not None else 30)
+    health_checked = False
+    claimed = blocked = 0
+    # One sweep when empty. Under backlog repeat bounded sweeps within this
+    # pass's remaining budget; a yielded row is applied before the next claim.
+    try:
+        while claimed < limit:
+            sweep_claimed = 0
+            for shard in range(16):
+                if _monotonic() >= deadline or claimed >= limit:
+                    return
+                try:
+                    candidates = outbox.due_shard(shard=shard, async_only=True)
+                    if not candidates:
+                        continue
+                    if not protection:
+                        blocked += len(candidates)
+                        continue
+                    if not health_checked:
+                        health_checked = True
+                        try:
+                            health = read_health(outbox._database)
+                        except Exception as exc:
+                            logger.warning("async_recovery.health_read_failed error_class=%s", type(exc).__name__)
+                            health = None
+                        now = time.time()
+                        if health is not None and all(
+                            0 <= now - health[field] < CACHE_SECONDS
+                            for field in ("observed_at", "worker_heartbeat")
+                        ):
+                            return
+                    if _monotonic() >= deadline:
+                        return
+                    rows = outbox.claim_candidates(candidates, lease_seconds=lease)
+                except Exception as exc:
+                    logger.warning("async_recovery.claim_failed error_class=%s", type(exc).__name__)
+                    continue
+                for row in rows:
+                    claimed += 1
+                    sweep_claimed += 1
+                    yield row
+            if not sweep_claimed:
+                return
+    finally:
+        if blocked:
+            logger.warning("async_recovery.protection_disabled due_count_at_least=%s", blocked)
+
+
 def drain_settle_outbox(
     limit: int,
     *,
@@ -86,7 +143,9 @@ def drain_settle_outbox(
     recovered_micro = 0
     deferred = 0
 
-    for row in rows:
+    async_claimed = 0
+    for row in chain(rows, _recover_async(outbox, limit=limit, deadline=deadline, settings=settings)):
+        async_claimed += int(row.async_version is not None)
         if _monotonic() >= deadline:
             # Out of budget: leave the row leased and untouched. Its lease
             # outlives this request, so the next tick reclaims it cleanly.
@@ -183,7 +242,7 @@ def drain_settle_outbox(
         )
 
     return {
-        "claimed": len(rows),
+        "claimed": len(rows) + async_claimed,
         "outcomes": dict(outcomes),
         "recovered_micro": recovered_micro,
         "purged": purged,

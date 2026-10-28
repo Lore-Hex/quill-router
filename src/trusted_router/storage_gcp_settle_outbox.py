@@ -606,7 +606,7 @@ class SpannerSettleOutbox:
         return ENQ_EXISTS_TERMINAL
 
     # ── due / claim / mark ───────────────────────────────────────────────────
-    def due(self, *, limit: int = 100) -> list[SettleOutboxRow]:
+    def due(self, *, limit: int = 100, legacy_only: bool = False) -> list[SettleOutboxRow]:
         now = _iso_now()
         with self._database.snapshot() as snapshot:
             rows = list(
@@ -617,7 +617,8 @@ class SpannerSettleOutbox:
                     "WHERE queue_shard IS NOT NULL "
                     "AND next_attempt_at IS NOT NULL "
                     "AND status='pending' AND next_attempt_at <= @now "
-                    "ORDER BY next_attempt_at LIMIT @limit",
+                    + ("AND async_version IS NULL " if legacy_only else "")
+                    + "ORDER BY next_attempt_at LIMIT @limit",
                     params={"now": now, "limit": int(limit)},
                     param_types={"now": self._pt.TIMESTAMP, "limit": self._pt.INT64},
                 )
@@ -628,12 +629,7 @@ class SpannerSettleOutbox:
         owner = f"soworker_{uuid.uuid4().hex}"
         lease_until = _iso_after_seconds(lease_seconds)
         claimed: list[SettleOutboxRow] = []
-        for candidate in self.due(limit=limit * 2):
-            # Accepted async work belongs to the warm worker, even if its
-            # health expired. A legacy batch can otherwise strand its tail
-            # under a 300-second lease. Sync fallback has async_version=NULL.
-            if candidate.async_version is not None:
-                continue
+        for candidate in self.due(limit=limit * 2, legacy_only=True):
             if len(claimed) >= limit:
                 break
             if self._claim_one(candidate, owner=owner, lease_until=lease_until):
@@ -642,14 +638,22 @@ class SpannerSettleOutbox:
                 claimed.append(candidate)
         return claimed
 
-    def claim_shard(self, *, shard: int, lease_seconds: int) -> list[SettleOutboxRow]:
-        """Fast mode: only one row for an already-running worker slot."""
-        sql, params, types = shard_due_statement(self._pt, shard, _iso_now())
+    def due_shard(self, *, shard: int, async_only: bool = False) -> list[SettleOutboxRow]:
+        """Bounded advisory scan; recovery can inspect without taking a lease."""
+        sql, params, types = shard_due_statement(self._pt, shard, _iso_now(), async_only=async_only)
         with self._database.snapshot() as snapshot:
             candidates = list(snapshot.execute_sql(sql, params=params, param_types=types,
                 timeout=0.2, retry=None, request_options={"priority": "PRIORITY_LOW"}))
-        for values in candidates:
-            row = _row_from_tuple(values)
+        return [_row_from_tuple(values) for values in candidates]
+
+    def claim_shard(self, *, shard: int, lease_seconds: int) -> list[SettleOutboxRow]:
+        """Fast mode: only one row for an already-running worker slot."""
+        return self.claim_candidates(self.due_shard(shard=shard), lease_seconds=lease_seconds)
+
+    def claim_candidates(self, candidates: list[SettleOutboxRow], *,
+                         lease_seconds: int) -> list[SettleOutboxRow]:
+        """Claim at most one advisory candidate with the existing owner fence."""
+        for row in candidates:
             owner = f"soworker_{uuid.uuid4().hex}"
             lease_until = _iso_after_seconds(lease_seconds)
             if self._claim_one(row, owner=owner, lease_until=lease_until):
@@ -1156,14 +1160,15 @@ def _is_already_exists(exc: Exception) -> bool:
     return isinstance(exc, AlreadyExists)
 
 
-def shard_due_statement(pt: Any, shard: int, now: str) -> tuple[str, dict[str, Any], dict[str, Any]]:
+def shard_due_statement(pt: Any, shard: int, now: str, *, async_only: bool = False) -> tuple[str, dict[str, Any], dict[str, Any]]:
     return (
         f"SELECT {', '.join(OUTBOX_COLUMNS)} FROM tr_settle_outbox"  # noqa: S608
         "@{FORCE_INDEX=tr_settle_outbox_due_v2} "
         "WHERE queue_shard IS NOT NULL AND queue_shard=@shard "
         "AND next_attempt_at IS NOT NULL AND status='pending' AND next_attempt_at <= @now "
         "AND (leased_until IS NULL OR leased_until < @now) "
-        "ORDER BY next_attempt_at LIMIT @limit",
+        + ("AND async_version IS NOT NULL " if async_only else "")
+        + "ORDER BY next_attempt_at LIMIT @limit",
         {"shard": shard, "now": now, "limit": 2},
         {"shard": pt.INT64, "now": pt.TIMESTAMP, "limit": pt.INT64},
     )
