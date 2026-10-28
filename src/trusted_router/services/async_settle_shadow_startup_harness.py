@@ -558,6 +558,9 @@ async def retain_object(bucket: str, key: str, raw: bytes) -> Acknowledgement:
 
 def install(app: Any, settings: Any, runtime: Any = None) -> None:
     """Install only the latch here. The serving listener starts the task later."""
+    if (settings.async_settle_shadow_policy == "shadow-v2"
+            and not settings.async_settle_shadow_region_allowed()):
+        return
     if getattr(app.state, "async_settle_shadow_startup", None) is not None:
         return
     service = getattr(app.state, "async_settle_shadow_observation", None)

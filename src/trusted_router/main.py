@@ -220,7 +220,7 @@ def _configure_application_logging() -> None:
 
 
 def _v2_install_hook(app: Any, settings: Settings, backend: Any, workspace: str) -> None:
-    if not in_v2_cohort(settings.async_settle_shadow_policy, workspace,
+    if not in_v2_cohort(settings.regional_async_settle_shadow_policy(), workspace,
                         settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
         return None
     from trusted_router.services.async_settle_shadow_cohort_runtime import install
@@ -326,7 +326,7 @@ def create_app(
         from trusted_router.services.async_settle import load_runtime
         from trusted_router.storage import typed_billing_store
         app.state.async_settle = load_runtime(settings, typed_billing_store(STORE))
-        # An expired v2 canary installs nothing: not v2, and not v1 either,
+        # An expired or region-excluded v2 canary installs neither v2 nor v1,
         # because v1 still requires the raw policy pin to be empty.
         if settings.effective_async_settle_shadow_policy() == "shadow-v2" and settings.async_settle_shadow_workspace_ids and not settings.async_settle_enabled:
             from trusted_router.services.async_settle_shadow_health import (

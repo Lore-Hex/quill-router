@@ -82,6 +82,14 @@ def probe(monkeypatch, adapter, route, streamed, *, marker=True, kind='settle', 
         cfg.async_settle_enabled = True
     if dormant == 'nonmember':
         cfg._async_settle_shadow_workspace_ids = frozenset({'other'})
+    if dormant in {'region', 'missing_region'}:
+        cfg.async_settle_shadow_regions = 'us-central1,us-east4,europe-west4'
+        cfg.parse_shadow_regions()
+        cfg.serving_region = 'southamerica-east1' if dormant == 'region' else ''
+        # Detect even a failed reservation, not just committed evidence/counters.
+        def forbidden_reservation(*args, **kwargs):
+            pytest.fail('excluded process attempted a shadow reservation')
+        monkeypatch.setattr(service.port, 'reserve', forbidden_reservation)
     active_pin = '' if dormant == 'empty' else 'shadow-v2'
     payload = dict(api_key_hash=key.hash, model=e.model_id, route_type=route, stream=streamed,
         requested_parameters=['max_tokens'], estimated_input_tokens=1, max_tokens=2, invocation_nonce='nonce-v1')
@@ -226,7 +234,7 @@ def test_noneligible_authorize_no_fields_and_c_terminal(monkeypatch, changes):
     probe(monkeypatch, 'openai', 'chat.completions', False, changes=changes)
 
 
-@pytest.mark.parametrize('dormant', ['empty', 'nonmember', 'money'])
+@pytest.mark.parametrize('dormant', ['empty', 'nonmember', 'money', 'region', 'missing_region'])
 def test_installed_worker_dormant_http_bytes_money_and_counts(monkeypatch, dormant):
     probe(monkeypatch, 'openai', 'chat.completions', False, dormant=dormant)
 

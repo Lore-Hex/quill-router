@@ -3808,7 +3808,7 @@ def _record_refund_benchmark_safely(
 
 def _v2_authorize_hook(settings: Settings, request: Any, body: Any, authorization: GatewayAuthorization,
                        additions: dict, candidates: Any, federated: bool, replay: bool) -> None:
-    if not in_v2_cohort(settings.async_settle_shadow_policy, authorization.workspace_id,
+    if not in_v2_cohort(settings.regional_async_settle_shadow_policy(), authorization.workspace_id,
                         settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
         return None
     try:
@@ -3847,7 +3847,7 @@ def _terminal_once(hook: Any, callback: Any) -> Any:
 
 def _v2_settle_hook(settings: Settings, request: Any, body: Any, authorization: GatewayAuthorization,
                     callback: Any) -> Any:
-    if not in_v2_cohort(settings.async_settle_shadow_policy, authorization.workspace_id,
+    if not in_v2_cohort(settings.regional_async_settle_shadow_policy(), authorization.workspace_id,
                         settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
         return callback()
     def invoke(once: Any) -> Any:
@@ -3858,7 +3858,7 @@ def _v2_settle_hook(settings: Settings, request: Any, body: Any, authorization: 
 
 def _v2_refund_hook(settings: Settings, request: Any, body: Any, authorization: GatewayAuthorization,
                     callback: Any, *, success: bool) -> Any:
-    if not in_v2_cohort(settings.async_settle_shadow_policy, authorization.workspace_id,
+    if not in_v2_cohort(settings.regional_async_settle_shadow_policy(), authorization.workspace_id,
                         settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
         return callback()
     def invoke(once: Any) -> Any:
@@ -3869,7 +3869,7 @@ def _v2_refund_hook(settings: Settings, request: Any, body: Any, authorization: 
 
 def _v2_capture_hook(settings: Settings, authorization: GatewayAuthorization, body: Any,
                     endpoint: Any, document: Any, *, replay: bool) -> None:
-    if not in_v2_cohort(settings.async_settle_shadow_policy, authorization.workspace_id,
+    if not in_v2_cohort(settings.regional_async_settle_shadow_policy(), authorization.workspace_id,
                         settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
         return None
     try:
@@ -3902,7 +3902,7 @@ def _settle_gateway_with_admission_sync(
     boot_auth_outcome = _boot_auth_outcome or _terminal_boot_auth_outcome(
         _boot_auth, authorization, kind="settle"
     )
-    if _shadow_request is not None and in_v2_cohort(settings.async_settle_shadow_policy,
+    if _shadow_request is not None and in_v2_cohort(settings.regional_async_settle_shadow_policy(),
             authorization.workspace_id, settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
         return _terminal_once(
             lambda once: _v2_settle_hook(settings, _shadow_request, body, authorization, once),
@@ -3970,7 +3970,7 @@ def _settle_gateway_authorization(
     boot_auth_outcome = _boot_auth_outcome or _terminal_boot_auth_outcome(
         _boot_auth, authorization, kind="settle" if success else "refund"
     )
-    if _shadow_request is not None and in_v2_cohort(settings.async_settle_shadow_policy,
+    if _shadow_request is not None and in_v2_cohort(settings.regional_async_settle_shadow_policy(),
             authorization.workspace_id, settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
         return _terminal_once(
             lambda once: _v2_refund_hook(settings, _shadow_request, body, authorization, once, success=success),
