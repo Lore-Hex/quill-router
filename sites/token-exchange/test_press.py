@@ -89,12 +89,33 @@ class PressTests(unittest.TestCase):
             self.assertEqual(svg.getroot().tag, "{http://www.w3.org/2000/svg}svg")
             self.assertFalse(svg.findall(".//{http://www.w3.org/2000/svg}script"))
             self.assertFalse(svg.findall(".//{http://www.w3.org/2000/svg}text"))
-        expected = {name + ".png": (2400, 480) if "wordmark" in name else (1024, 1024) for name, *_ in ASSETS}
+        expected = {name + ".png": (2400, 480) if "wordmark" in name else (2048, 1024) for name, *_ in ASSETS}
         expected.update({"nyte-social.png": (1200, 630), "nyte-homepage.png": (1920, 1080)})
         for filename, dimensions in expected.items():
             data = (assets / filename).read_bytes()
             self.assertEqual(data[:8], b"\x89PNG\r\n\x1a\n")
             self.assertEqual(struct.unpack(">II", data[16:24]), dimensions)
+
+    def test_kit_uses_the_nyte_globe_not_the_trustedrouter_mark(self):
+        assets = self.root / "assets/press"
+        self.assertIn('<h1 id="title">NY Token Exchange', self.page)
+        self.assertIn('src="/assets/press/nyte-mark-dark.svg"', self.page)
+        self.assertNotIn('href="/assets/mark.svg"', self.page)
+        self.assertNotIn('src="/assets/mark.svg"', self.page)
+        self.assertNotIn("Shared mark", self.page)
+        self.assertNotIn("NYTE uses the TrustedRouter routing mark", self.page)
+        self.assertEqual(json.loads((assets / "nyte-fact-sheet.json").read_text())["name"], "NY Token Exchange")
+        for variant in ("light", "dark", "mono"):
+            mark = ET.parse(assets / f"nyte-mark-{variant}.svg").getroot()  # noqa: S314
+            self.assertEqual(mark.attrib["viewBox"], "0 0 1000 500")
+            self.assertEqual(len(mark.findall(".//{http://www.w3.org/2000/svg}ellipse")), 1)
+            self.assertEqual(mark.attrib["aria-label"], "NY Token Exchange globe mark")
+            wordmark = ET.parse(assets / f"nyte-wordmark-{variant}.svg").getroot()  # noqa: S314
+            self.assertEqual(wordmark.attrib["aria-label"], "NY Token Exchange")
+            self.assertNotIn("TrustedRouter", ET.tostring(wordmark, encoding="unicode"))
+        for name in ("README.txt", "nyte-fact-sheet.txt"):
+            self.assertNotIn("mark is shared with TrustedRouter", (assets / name).read_text())
+        self.assertEqual((assets / "nyte-social.png").read_bytes(), (HERE / "press-assets/nyte-social.png").read_bytes())
 
     def test_copy_single_source_and_claim_boundaries(self):
         data = json.loads((HERE / "press.json").read_text())
