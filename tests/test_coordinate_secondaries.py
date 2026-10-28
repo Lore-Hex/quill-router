@@ -45,8 +45,11 @@ if os.environ.get('FAIL_LATE') and region == 'us-east4':
     sys.exit(0)
 event('canary')
 if not os.environ.get('NO_HANDOFF'):
-    ready.write_text(region + '\\n' + region + '-new\\n' +
-                     os.environ.get('HANDOFF_OPERATION', 'operation1') + '\\n')
+    # Match staged_traffic.sh: readers must never observe a partial handoff.
+    pending = pathlib.Path(str(ready) + '.tmp')
+    pending.write_text(region + '\\n' + region + '-new\\n' +
+                       os.environ.get('HANDOFF_OPERATION', 'operation1') + '\\n')
+    pending.replace(ready)
 event('drain')
 if region == os.environ.get('FAIL_LATE'):
     wait_for((ready.parent / 'us-east4.started').exists)
