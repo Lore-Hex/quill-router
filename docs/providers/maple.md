@@ -66,6 +66,14 @@ provenance. Reproduce the front enclave and review its enforced downstream i02
 policy before promotion. The SDK's default remote-history auto-approval must
 not be used in the production TR connector.
 
+Maple's [published measurement approval](https://github.com/MaplePrivacyLabs/Maple/commit/942efea0bfcbb7523d320186404dcb4cd8f27c0a)
+identifies backend source `7957ce78ad8eee7a173a9d877ff6e320876894c8` and
+[release run 40226283053](https://github.com/MaplePrivacyLabs/Maple/actions/runs/40226283053)
+for the candidate front measurement. This vendor record narrows the reproduction
+target; it does not replace independent build verification. The SDK qualification
+PR also has an unresolved dependency-scan range discrepancy documented in the
+gateway repository; its security gate remains intact.
+
 The proxy/SDK must run inside TR's measured environment. A host-side plaintext
 proxy, direct bearer request, disabled verification, shared unscoped cache root,
 or generic HTTP fallback is not an acceptable workaround. Namespace cached
