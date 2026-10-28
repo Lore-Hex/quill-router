@@ -448,12 +448,18 @@ fact sheets. `press.py` builds a deterministic ZIP from an explicit public-asset
 allowlist. It never includes the private commercial decks or the large demo MP4.
 The video remains available separately at its existing public URL.
 
-`press-assets/` holds the approved-mark derivatives (outlined SVGs and transparent
-PNGs) and an unmodified 1920 x 1080 homepage capture from October 15, 2026.
+`press-assets/` holds the NYTE globe and **NY Token Exchange** wordmark supplied
+by Joseph on October 28, 2026, as outlined SVGs and transparent PNGs. These are
+NYTE assets, not the TrustedRouter routing mark. The globe source is
+`nyte-globe-source.svg`; black and white exports preserve its 2:1 aspect ratio.
+The separate homepage capture remains an explicitly dated October 15 illustration.
 Regenerate the logos with `uv run --no-project --with fonttools --with brotli
 sites/token-exchange/export_press_logos.py` and `rsvg-convert` installed.
+The wordmark uses locally licensed Arial Bold; pass `--font /path/to/Arial-Bold.ttf`
+outside macOS. The font itself is not distributed. Exports have no external font dependency.
 The normal build uses the checked-in exports and has no new dependencies.
-The social card and video still reuse the existing public source assets.
+The media-kit social card uses the new globe and short wordmark; the video still
+retains its dated illustrative-demo source. Other sites' shared marks are untouched.
 
 Run `node sites/token-exchange/verify-press.cjs http://127.0.0.1:8089` after
 building and serving the site. It checks 320/390/768/1440px layouts, images,
