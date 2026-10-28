@@ -31,7 +31,10 @@ superseded = _module()
 
 
 def _workflow() -> dict:
-    return yaml.safe_load(WORKFLOW.read_text())
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+    production = yaml.safe_load((ROOT / ".github/workflows/deploy-production.yml").read_text())
+    workflow["jobs"].update(production["jobs"])
+    return workflow
 
 
 def test_the_script_and_the_trigger_list_the_same_deploy_paths() -> None:
@@ -162,6 +165,9 @@ READY = {
     "compare/aaa...bbb": (DESCENDS, 0),
     "compare/bbb...ccc": (ON_MAIN, 0),
     "--workflow ci.yml --commit bbb": ('[{"status": "completed", "conclusion": "success"}]', 0),
+    "run view 2": (json.dumps({"jobs": [
+        {"name": name, "conclusion": "success"} for name in ("gate-on-ci", "build-image")
+    ]}), 0),
 }
 ARGS = ["--repo", "o/r", "--base", "aaa", "--head", "ccc"]
 # A hanging fake sleeps 6 s; the timeout under test must be far below that and far above the fake's own
@@ -190,7 +196,8 @@ def test_main_skips_when_the_waiting_main_push_run_has_green_ci(tmp_path: Path, 
     assert calls[2] == "api repos/o/r/compare/aaa...bbb"
     assert calls[3] == "api repos/o/r/compare/bbb...ccc"
     assert "run list --repo o/r --workflow ci.yml --commit bbb" in calls[4]
-    assert len(calls) == 5
+    assert calls[5] == "run view 2 --repo o/r --json jobs"
+    assert len(calls) == 6
 
 
 def test_main_skips_when_the_waiting_commit_is_main_itself(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -483,7 +490,7 @@ def test_the_admit_wait_outlasts_a_gateway_rollout() -> None:
 @pytest.mark.parametrize(
     "workflow",
     [
-        ".github/workflows/deploy.yml",
+        ".github/workflows/deploy-production.yml",
         ".github/workflows/deploy-aws-control-plane.yml",
         ".github/workflows/deploy-azure-control-plane.yml",
     ],
@@ -513,7 +520,59 @@ def test_no_other_workflow_can_evict_a_pending_deploy() -> None:
         text = yaml.safe_load(path.read_text())
         groups = [text.get("concurrency")] + [job.get("concurrency") for job in text["jobs"].values()]
         names = [g["group"] if isinstance(g, dict) else g for g in groups if g]
-        if path.name == "deploy.yml":
+        if path.name == "deploy-production.yml":
             assert names == ["deploy-trusted-router"]
+            assert text["concurrency"]["queue"] == "max"
+            assert text["concurrency"]["cancel-in-progress"] is False
         else:
             assert "deploy-trusted-router" not in names, path.name
+
+
+@pytest.mark.parametrize("state", ["pending", "in_progress"])
+def test_preparation_must_finish_before_superseding(tmp_path, monkeypatch, state):
+    runs = json.dumps([{**json.loads(WAITING_RUN)[0], "status": state}, THIS_RUN])
+    _fake_gh(tmp_path, monkeypatch, responses={**READY, "--workflow deploy.yml": (runs, 0),
+        "run view 2": (json.dumps({"jobs": [{"name": "gate-on-ci", "conclusion": "success"},
+                                           {"name": "build-image", "conclusion": ""}]}), 0)})
+    assert superseded.main(ARGS) == 0
+
+
+def test_prepared_in_progress_run_can_take_over(tmp_path, monkeypatch):
+    runs = json.dumps([{**json.loads(WAITING_RUN)[0], "status": "in_progress"}, THIS_RUN])
+    _fake_gh(tmp_path, monkeypatch, responses={**READY, "--workflow deploy.yml": (runs, 0)})
+    assert superseded.main(ARGS) == 1
+
+
+@pytest.mark.parametrize("result", ["success", "skipped", "failure"])
+def test_late_preparation_never_downgrades_a_completed_newer_release(tmp_path, monkeypatch, result):
+    runs = json.dumps([{**json.loads(WAITING_RUN)[0], "status": "completed", "conclusion": "success"}, THIS_RUN])
+    jobs = [{"name": "rollout / " + name, "conclusion": result} for name in (
+        "deploy", "rollout-secondaries", "public-surface-companion", "verify-cloud-complete", "finalize-cloud")]
+    _fake_gh(tmp_path, monkeypatch, responses={**READY, "--workflow deploy.yml": (runs, 0),
+                                             "run view 2": (json.dumps({"jobs": jobs}), 0)})
+    assert superseded.main(ARGS) == (1 if result == "success" else 0)
+
+
+def test_build_and_ci_prepare_outside_the_serialized_rollout():
+    entry = yaml.safe_load(WORKFLOW.read_text())
+    production = yaml.safe_load((ROOT / ".github/workflows/deploy-production.yml").read_text())
+    assert "concurrency" not in entry
+    call = entry["jobs"]["rollout"]
+    assert set(call["needs"]) == {"gate-on-ci", "build-image"}
+    assert call["uses"] == "./.github/workflows/deploy-production.yml"
+    assert call["with"]["sha"] == "${{ needs.build-image.outputs.sha }}"
+    assert call["with"]["image"] == "${{ needs.build-image.outputs.image }}"
+    assert call["with"]["hotfix"] == "${{ inputs.hotfix == true }}"
+    assert production.get("on", production.get(True)).keys() == {"workflow_call"}
+    assert production["concurrency"] == {"group": "deploy-trusted-router", "queue": "max", "cancel-in-progress": False}
+    entry_build = entry["jobs"]["build-image"]
+    assert entry_build["outputs"]["image"] == "${{ steps.build.outputs.image }}"
+    build = next(step["run"] for step in entry_build["steps"] if step.get("id") == "build")
+    assert 'image_summary.digest' in build and '@${DIGEST}' in build
+    verify = production["jobs"]["build-image"]["steps"][-1]["run"]
+    assert '"$(git rev-parse HEAD)" == "$GITHUB_SHA"' in verify
+    assert '@sha256:[a-f0-9]{64}' in verify
+    # The exact-SHA gate is also rechecked when the serialized rollout starts.
+    before = entry["jobs"]["gate-on-ci"]["steps"][0]["run"]
+    admitted = production["jobs"]["gate-on-ci"]["steps"][0]["run"]
+    assert before == admitted

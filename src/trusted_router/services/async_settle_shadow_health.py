@@ -301,6 +301,22 @@ class Port:
         finally:
             svc.lock.release()
 
+    def record_startup_unprovisioned(self, observed_us: int) -> None:
+        """Retain unproven boot readiness without changing request eligibility."""
+        def action() -> None:
+            svc, day = self.service, day_at(observed_us)
+            require(day in svc.counters and not svc.journal.days[day].sealing, "closed_day")
+            target = svc.counters[day]["diagnostics"]
+            name = "startup_unprovisioned"
+            require(name in target or len(target) < 128, "evidence_size")
+            count = target.get(name, 0) + 1
+            require(count <= INT64, "counter_overflow")
+            growth = (len(str(count))-len(str(target[name])) if name in target else
+                      len(canonical(name))+1+bool(target)+len(str(count)))
+            require(svc.port.fold_cells[day][3]+growth <= 65536, "evidence_size")
+            svc._counter_cells(day, target, {name: count})
+        self.call(action)
+
     def reserve(self, observed_us: int, *, terminal: bool = False) -> Reservation | None:
         def action() -> Reservation | None:
             svc, day = self.service, day_at(observed_us)

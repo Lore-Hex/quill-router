@@ -16,9 +16,11 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -136,6 +138,21 @@ func run() error {
 	cfg.RecordTopic = "projects/" + *project + "/topics/" + topicNames[1]
 	cfg.SettleSubscription = "projects/" + *project + "/subscriptions/" + subNames[0]
 	cfg.RecordSubscription = "projects/" + *project + "/subscriptions/" + subNames[1]
+	// From here to service.Run the process reads its secrets and makes its
+	// clients, before the service's own watchdogs run: one of those stalled
+	// would leave the node down with no exit for systemd to restart. The
+	// watch stays armed through a start that fails here, so writing its
+	// error to a blocked stderr cannot hold the process either. A flag
+	// refused above is not watched: it fails the same way on every start,
+	// so a restart would not bring the node back, and a stderr that blocks
+	// holds the running service's every log line as much as the start's.
+	reads := 0
+	for _, name := range append(strings.Split(*acceptSecrets, ","), *keySecret, *edgeTokenSecret) {
+		if name != "" {
+			reads++
+		}
+	}
+	unwatch := startWatch(startBudget(reads), os.Exit)
 	var err error
 	if cfg.Key, cfg.AcceptKeys, err = keysOf(context.Background(), *keyPath, *keySecret, *acceptSecrets); err != nil {
 		return err
@@ -194,8 +211,53 @@ func run() error {
 		return err
 	}
 	defer ps.Close()
+	if !unwatch() {
+		return errors.New("the start stalled before its parts began")
+	}
 	began := time.Now()
 	err = service.Run(ctx, cfg, service.Clients{Spanner: sp, PubSub: ps})
 	fmt.Fprintf(os.Stderr, "fastpath: stopped after %v\n", time.Since(began).Round(time.Second))
 	return err
+}
+
+// startBudget is how long the start before service.Run may take: each of
+// its secret reads up to its deadline, one after another, and then
+// service.StartStall for the clients' construction, so a start whose every
+// read nearly runs out still reaches the service.
+func startBudget(reads int) time.Duration {
+	return time.Duration(reads)*secretDeadline + service.StartStall
+}
+
+// watchLog is where the watch says why it exits; a test's writer that
+// never returns stands in for a stderr that blocks.
+var watchLog io.Writer = os.Stderr
+
+// startWatch exits the process with code 1 unless the stop it returns is
+// called within d. Its line is written at most a second before the exit,
+// so a blocked stderr cannot hold the exit back. stop reports whether it
+// disarmed the watch in time; once the watch has fired, stop waits for the
+// exit, which in the process never returns, so nothing after a late stop
+// runs. Every call of stop after the first answers as the first.
+func startWatch(d time.Duration, exit func(int)) (stop func() bool) {
+	fired, w := make(chan struct{}), watchLog
+	t := time.AfterFunc(d, func() {
+		defer close(fired)
+		logged := make(chan struct{})
+		go func() {
+			fmt.Fprintf(w, "fastpath: the start stalled before its parts began, after %v; exiting\n", d)
+			close(logged)
+		}()
+		select {
+		case <-logged:
+		case <-time.After(time.Second):
+		}
+		exit(1)
+	})
+	return sync.OnceValue(func() bool {
+		if t.Stop() {
+			return true
+		}
+		<-fired
+		return false
+	})
 }
