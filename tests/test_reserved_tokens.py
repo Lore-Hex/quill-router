@@ -325,7 +325,7 @@ def test_approved_rollout_discount(settings: Settings, monkeypatch: pytest.Monke
     from pathlib import Path
 
     rollout = (Path(__file__).resolve().parents[1] / "scripts/deploy/rollout.sh").read_text()
-    assert '"TR_RESERVED_TOKENS_CHECKOUT_ENABLED=false"' in rollout
+    assert '"TR_RESERVED_TOKENS_CHECKOUT_ENABLED=true"' in rollout
     assert '"TR_RESERVED_TOKENS_DISCOUNT_BPS=1000"' in rollout
     settings.reserved_tokens_discount_bps = 1000
     monkeypatch.setitem(token_index.QUOTES, "B", {"value": 187})
