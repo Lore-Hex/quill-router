@@ -31,6 +31,11 @@ await page.clock.install();
 await page.goto(base+'/');
 for (const width of [1440,390]) {
  await page.setViewportSize({width,height:844});
+ const heroActions=page.locator('.hero .btns');
+ assert.deepEqual(await heroActions.locator('a,button').allTextContents(),['Reserved tokens','Get the buyer deck']);
+ assert.equal(await heroActions.getByRole('link',{name:'Reserved tokens',exact:true}).getAttribute('href'),'/buy');
+ assert.equal(await heroActions.getByRole('button',{name:'Get the buyer deck',exact:true}).getAttribute('data-open'),'deck');
+ assert(await page.locator('header').getByRole('link',{name:'Start building',exact:true}).isVisible());
  const rows=await page.locator('.r-row.skip').evaluateAll(elements=>elements.map(el=>({position:getComputedStyle(el).position,top:el.getBoundingClientRect().top})));
  assert.equal(rows.length,2);assert(rows.every(row=>row.position!=='absolute' && row.top>0));
 }
