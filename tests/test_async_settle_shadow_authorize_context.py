@@ -37,10 +37,10 @@ CASES = FIXTURE['shapes']
 
 @contextmanager
 def probe_context(monkeypatch, app_factory, name, *, echo=True, changes=None,
-                  ready=True, pin='shadow-v2', member=True, money=False, marker=True):
+                  ready=True, pin='shadow-v2', member=True, money=False, marker=True, workspace_id='ws-rpc'):
     pin_clocks(monkeypatch)
     monkeypatch.setattr('time.time_ns', lambda: NOW * 10**9)
-    store, money_db, key = _seed_typed_gateway_store()
+    store, money_db, key = _seed_typed_gateway_store(workspace_id=workspace_id)
     payload = copy.deepcopy(CASES[name])
     payload['api_key_lookup_hash'] = key.lookup_hash
     if echo:
@@ -61,7 +61,7 @@ def probe_context(monkeypatch, app_factory, name, *, echo=True, changes=None,
     shell, service, _ = installed()
     shell.startup_admission.ready = ready
     cfg = shell.settings
-    cfg._async_settle_shadow_workspace_ids = frozenset({'ws-rpc' if member else 'outside'})
+    cfg._async_settle_shadow_workspace_ids = frozenset({workspace_id if member else 'outside'})
     service.workspaces = cfg.async_settle_shadow_workspace_ids
     cfg.async_settle_enabled = money
     cfg.async_settle_shadow_policy = ''
@@ -88,7 +88,7 @@ def probe_context(monkeypatch, app_factory, name, *, echo=True, changes=None,
     def restore(saved):
         for k, v in saved.items():
             setattr(money_db, k, copy.deepcopy(v))
-        store._credit_shard_counts.invalidate('ws-rpc')
+        store._credit_shard_counts.invalidate(workspace_id)
     headers = {'X-TR-Settlement-Mode': 'async-v1'}
     if marker:
         headers['X-TR-Settlement-Shadow-Policy'] = 'shadow-v2'
