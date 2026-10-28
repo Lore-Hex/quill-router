@@ -528,7 +528,7 @@ def test_x402_concurrent_settle_credits_once(monkeypatch) -> None:
     assert _credit_summary(workspace_id)["total_credits"] == before_total + 10_000_000
 
 
-def test_x402_refund_webhook_is_operator_visible_not_silent(client: TestClient) -> None:
+def test_x402_refund_webhook_is_operator_visible_not_silent(client: TestClient, nonreservation_stripe_payment) -> None:
     response = client.post(
         "/v1/internal/stripe/webhook",
         json={

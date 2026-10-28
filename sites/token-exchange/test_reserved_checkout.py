@@ -18,13 +18,13 @@ class ReservedCheckoutTests(unittest.TestCase):
             for text in ['1 billion tokens', 'AAA, A, B or C', 'January 1, 2027 through December 31, 2027',
                          'Unused tokens expire December 31, 2027', 'full refund within 30 days of purchase',
                          'TrustedRouter account via the NYTE API', 'price is locked at purchase',
-                         'prepaid inference service, not a security or investment', '2026-10-27-v3', '10% early-reservation discount',
+                         'prepaid inference service, not a security or investment', '2026-10-27-v5', '10% early-reservation discount',
                          'transferable only through NYTE’s resale program', 'ahead of new inventory',
                          'resale price minus a 5% resale fee', 'refunded to the original card',
-                         'capped at what the holder paid for those lots', 'Until self-service resale launches',
+                         'capped at what the holder paid for those lots', 'Manage my reservation',
                          'Every completed purchase is a separate position with a stable ID']:
                 self.assertIn(text, terms)
-            self.assertEqual(terms.count('mailto:enterprise@trustedrouter.com'), 2)
+            self.assertIn('first-listed, first-sold', terms)
             self.assertIn('/assets/nyte-v2/styles.css', terms)
             self.assertIn('href="https://nytokenexchange.com/reserved-tokens-terms"', terms)
             for market in load_markets():
@@ -42,7 +42,7 @@ class ReservedCheckoutTests(unittest.TestCase):
                          'After 30 days, exit is only through NYTE’s resale program',
                          'transferable only through NYTE’s resale program', 'ahead of new inventory',
                          'resale price minus a 5% resale fee', 'to your original card',
-                         'capped at what you paid for those lots', 'Until self-service resale launches',
+                         'capped at what you paid for those lots', 'Manage my reservation',
                          'Every completed purchase is a position with a stable ID',
                          'Unused tokens expire December 31, 2027', 'href="/reserved-tokens-terms"',
                          'id="buy-reserve-terms" type="checkbox" required']:

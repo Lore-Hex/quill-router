@@ -22,7 +22,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import stripe
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 
 from trusted_router.acquisition import (
@@ -44,7 +44,7 @@ log = logging.getLogger(__name__)
 
 def register(router: APIRouter) -> None:
     @router.post("/internal/stripe/webhook")
-    async def stripe_webhook(request: Request, settings: SettingsDep) -> dict[str, Any]:
+    async def stripe_webhook(request: Request, settings: SettingsDep, background: BackgroundTasks) -> dict[str, Any]:
         raw = await request.body()
         sig = request.headers.get("stripe-signature")
         if settings.stripe_webhook_secret:
@@ -97,8 +97,20 @@ def register(router: APIRouter) -> None:
         event_type = event.get("type")
 
         obj = event.get("data", {}).get("object", {})
+        # Card reconciliation verifies NYTE payment ownership independently of
+        # the sales flag. Paid checkout retains its separate gate.
+        if (event_type in {"charge.refunded", "charge.refund.updated", "refund.created", "refund.updated", "refund.failed"}
+                or str(event_type).startswith("charge.dispute.")):
+            from trusted_router.services.resale import reconcile_payment_event
+
+            if await run_in_threadpool(reconcile_payment_event, event, settings):
+                return {"data": {"reserved_tokens": True, "credited": False, "ignored": True}}
+        if (obj.get("metadata") or {}).get("kind") in {"resale_fill", "full_refund"}:
+            # Typed NYTE refund metadata must never enter credit handlers,
+            # including while the resale feature is disabled.
+            return {"data": {"reserved_tokens": True, "credited": False, "ignored": True}}
         if (obj.get("metadata") or {}).get("kind") == KIND:
-            return {"data": await run_in_threadpool(handle_reservation_event, event, settings)}
+            return {"data": await run_in_threadpool(handle_reservation_event, event, settings, background)}
 
         adverse_events = _stripe_adverse_events(event, event_id=event_id)
         if adverse_events:

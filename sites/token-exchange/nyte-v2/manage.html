@@ -1,0 +1,23 @@
+<section class="wrap" style="padding:64px 24px;max-width:800px">
+  <p class="eyebrow">New York Token Exchange · Reservations</p>
+  <h1>Manage my reservation</h1>
+  <p>Use your purchase email to receive a private link. No account is needed. Links expire in 15 minutes and open once.</p>
+  <form id="holder-email-form">
+    <label for="holder-email">Purchase email</label>
+    <input id="holder-email" type="email" autocomplete="email" maxlength="254" required>
+    <button class="btn btn-primary" type="submit">Email me a link</button>
+  </form>
+  <button id="holder-redeem" class="btn btn-primary" type="button" hidden>Open my reservations</button>
+  <p id="holder-status" role="status" aria-live="polite"></p>
+  <div id="holder-positions"></div>
+  <button id="holder-more" class="btn btn-secondary" type="button" hidden>More reservations</button>
+  <form id="holder-backfill" hidden>
+    <p>Missing an older purchase? Enter the purchase email again to retrieve its Stripe receipt.</p>
+    <label for="holder-old-email">Purchase email</label>
+    <input id="holder-old-email" type="email" autocomplete="email" maxlength="254" required>
+    <button class="btn btn-secondary" type="submit">Find older reservations</button>
+  </form>
+  <p>Full refund requests received within 30 days of purchase are recorded immediately and sent to our team for a Stripe refund to the original card. After that window, you may list available lots when resale is enabled. You can withdraw unsold listed lots at any time.</p>
+  <p><a href="/reserved-tokens-terms">Read the resale rules</a> · <a href="/buy">Buy reserved tokens</a></p>
+  <noscript>Please enable JavaScript to use private reservation links, or email <a href="mailto:enterprise@trustedrouter.com">enterprise@trustedrouter.com</a> for assistance.</noscript>
+</section>

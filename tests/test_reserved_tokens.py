@@ -115,7 +115,7 @@ def test_stripe_parameters_and_quote(checkout: tuple[TestClient, Mock], settings
     }
     assert args["metadata"]["refund_window_days"] == "30"
     assert "refundable_until" not in args["metadata"]
-    assert args["metadata"]["terms_version"] == "2026-10-27-v3"
+    assert args["metadata"]["terms_version"] == "2026-10-27-v5"
     assert args["metadata"]["transfer_policy"] == "nyte_resale_only"
     assert args["metadata"]["resale_fee_bps"] == "500"
     assert args["metadata"]["resale_priority"] == "ahead_of_new_inventory"
@@ -300,6 +300,7 @@ def test_distinct_purchases_get_distinct_positions(client: TestClient, reservati
     for session_id in ("cs_reserved", "cs_another_purchase"):
         data = event()
         data["data"]["object"]["id"] = session_id
+        data["id"] = "evt_" + session_id
         assert client.post("/v1/internal/stripe/webhook", json=data).json()["data"]["recorded"]
     positions = [json.loads(call.args[0].text_body.split("\n", 1)[1])["position_id"]
                  for call in reservation_mail.call_args_list]
@@ -309,7 +310,7 @@ def test_distinct_purchases_get_distinct_positions(client: TestClient, reservati
 
 @pytest.mark.parametrize("patch", [
     {"refund_window_days": "31"}, {"terms_version": "2026-10-27"},
-    {"transfer_policy": "unrestricted"}, {"resale_fee_bps": "0"},
+    {"transfer_policy": "unrestricted"}, {"resale_fee_bps": "10000"},
     {"resale_priority": "after_new_inventory"}, {"resale_payout_method": "cash"},
     {"resale_payout_cap": "unlimited"},
 ])
@@ -375,3 +376,14 @@ def test_max_price_age_setting(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TR_RESERVED_TOKENS_MAX_PRICE_AGE_DAYS", invalid)
         with pytest.raises(ValidationError, match="reserved_tokens_max_price_age_days"):
             Settings(environment="test")
+
+
+@pytest.mark.usefixtures("reservation_mail")
+@pytest.mark.parametrize("terms_version", ["2026-10-27-v3", "2026-10-27-v4", "2026-10-27-v5"])
+def test_paid_checkout_keeps_accepted_terms_after_version_bump(client, terms_version):
+    data = event()
+    data["data"]["object"]["metadata"]["terms_version"] = terms_version
+    result = client.post("/v1/internal/stripe/webhook", json=data)
+    assert result.status_code == 200
+    assert result.json()["data"]["recorded"] is True
+    assert result.json()["data"]["credited"] is False

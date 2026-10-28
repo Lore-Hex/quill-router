@@ -10,6 +10,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Literal
 
 import stripe
+from fastapi import BackgroundTasks
 from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt
 
 from trusted_router.config import Settings
@@ -20,7 +21,7 @@ from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
 
 KIND = "reserved_tokens_2027"
-TERMS_VERSION = "2026-10-27-v3"
+TERMS_VERSION = "2026-10-27-v5"
 WINDOW = {
     "usable_from": "2027-01-01",
     "usable_until": "2027-12-31",
@@ -70,6 +71,7 @@ def reservation_quote(settings: Settings, grade: str, lots: int) -> dict[str, An
         "discount_bps": discount, "index_as_of": token_index.AS_OF_ISO,
         "total_cents": per_lot * lots,
         "max_lots": settings.reserved_tokens_max_lots_per_checkout, **WINDOW,
+        "resale_fee_bps": str(settings.resale_fee_bps),
     }
 
 
@@ -109,7 +111,7 @@ def reservation_position_id(session_id: str) -> str:
     return f"nyte_pos_{digest}"
 
 
-def handle_reservation_event(event: dict[str, Any], settings: Settings) -> dict[str, Any]:
+def handle_reservation_event(event: dict[str, Any], settings: Settings, background: BackgroundTasks | None = None) -> dict[str, Any]:
     """Called before ALL credit handlers, independent of the sales feature flag.
 
     A durable session lease deduplicates different event IDs and concurrent
@@ -131,7 +133,10 @@ def handle_reservation_event(event: dict[str, Any], settings: Settings) -> dict[
             lots > 0 and per_lot > 0 and obj.get("amount_total") == lots * per_lot
             and obj.get("currency") == "usd" and obj.get("mode") == "payment"
             and metadata["grade"] in {"AAA", "A", "B", "C"}
-            and all(metadata[key] == value for key, value in WINDOW.items())
+            and all(metadata[key] == value for key, value in WINDOW.items() if key not in {"terms_version", "resale_fee_bps"})
+            # Already-paid sessions retain the terms accepted at checkout.
+            and metadata["terms_version"] in {"2026-10-27-v3", "2026-10-27-v4", TERMS_VERSION}
+            and metadata["resale_fee_bps"] == "500"
             and int(metadata["list_price_cents"]) > 0
             and 0 <= int(metadata["discount_bps"]) < 10_000
             and isinstance(metadata["index_as_of"], str)
@@ -145,6 +150,16 @@ def handle_reservation_event(event: dict[str, Any], settings: Settings) -> dict[
     position_id = reservation_position_id(session_id)
     owner = uuid.uuid4().hex
     claim, purchase_timestamp = STORE.claim_reserved_notification(session_id, owner, now=int(_utc_now().timestamp()))
+    if settings.resale_enabled:
+        from trusted_router.services.resale import record_purchase, retry_buyer_refunds
+
+        position = record_purchase(obj, event["id"], None if claim == "sent" else purchase_timestamp, settings, backfill=claim == "sent")
+        # Allocation is already durable. Refund transport/alert failures cannot
+        # roll it back or send the purchase into a credit handler.
+        if background is not None:
+            background.add_task(retry_buyer_refunds, position, settings)
+        else:
+            retry_buyer_refunds(position, settings)
     if claim == "sent":
         return {**result, "duplicate": True}
     if claim == "busy":

@@ -737,6 +737,9 @@ def create_app(
     if surface in {"combined", "actions"}:
         register_public_action_routes(app, settings)
     if surface in {"combined", "control"}:
+        from trusted_router.routes.resale import register as register_resale
+
+        register_resale(app, settings)
         register_bedrock_group_buy_control_routes(app, settings)
     api = _make_api_router(settings, surface)
     if surface in {"combined", "control"}:

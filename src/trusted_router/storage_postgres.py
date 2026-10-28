@@ -3114,6 +3114,34 @@ class PostgresStore(OperationalAnalyticsReads):
 
         return self._run_transaction(txn)
 
+    def reserved_resale_position_page(self, *, cursor: str | None = None, limit: int = 100) -> dict[str, Any]:
+        if not 1 <= limit <= 100:
+            raise ValueError("Invalid reservation page size")
+
+        def txn(tx: Any) -> dict[str, Any]:
+            rows = tx.execute("SELECT id FROM tr_entities WHERE kind=%s AND id>%s ORDER BY id LIMIT %s",
+                              ("nyte_position", cursor or "", limit + 1)).fetchall()
+            ids = [row[0] for row in rows]
+            return {"ids": ids[:limit], "cursor": ids[limit - 1] if len(ids) > limit else None}
+
+        return self._run_transaction(txn)
+
+    def reserved_resale(self, command: dict[str, Any]) -> dict[str, Any]:
+        from trusted_router.storage_resale import execute
+
+        def txn(tx: Any) -> dict[str, Any]:
+            self._insert_entity_once_tx(tx, "nyte_mutex", "v1", {})
+            self._read_entity_tx(tx, "nyte_mutex", "v1", dict, for_update=True)
+            return execute(
+                # Serialize eligibility with notification completion as well
+                # as competing NYTE ledger commands (ordinary Postgres is RC).
+                lambda kind, key: self._read_entity_tx(tx, kind, key, dict, for_update=kind == "reserved_notification") or {},
+                lambda kind, key, row: self._write_entity_tx(tx, kind, key, row),
+                command,
+            )
+
+        return self._run_transaction(txn)
+
     def claim_reserved_notification(self, session_id: str, owner: str, *, now: int) -> tuple[str, int]:
         def txn(tx: Any) -> tuple[str, int]:
             self._insert_entity_once_tx(tx, "reserved_notification", session_id, {"sent": False})

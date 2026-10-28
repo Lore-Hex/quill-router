@@ -106,6 +106,14 @@ PAGES = {
         "group": "exchange",
         "menu_description": "",
     },
+    "manage": {
+        "route": "/manage-reservation",
+        "label": None,
+        "title": "Manage my reservation | New York Token Exchange",
+        "description": "Manage your NYTE reservations with a private email link.",
+        "group": "exchange",
+        "menu_description": "",
+    },
     "media-kit": {
         "route": "/media-kit",
         "label": None,
@@ -214,6 +222,9 @@ def render_nyte(
     if page == "accelerator":
         accelerator_version = hashlib.sha256((SOURCE / "accelerator.css").read_bytes()).hexdigest()[:12]
         extra_head += f'<link rel="stylesheet" href="/assets/nyte-v2/accelerator.css?v={accelerator_version}">'
+    if page == "manage":
+        manage_version = hashlib.sha256((SOURCE / "manage.js").read_bytes()).hexdigest()[:12]
+        extra_head += f'<meta name="referrer" content="no-referrer"><meta name="robots" content="noindex"><script src="/assets/nyte-v2/manage.js?v={manage_version}" defer></script>'
     if page == "buy":
         from buy_page import buy_content
 
@@ -258,7 +269,7 @@ def build_nyte(output: Path) -> None:
     shutil.copytree(SOURCE / "assets", assets, dirs_exist_ok=True)
     # NYTE can publish its approved evidence renderer without changing other markets.
     shutil.copyfile(HERE / "live-evidence.js", assets / "live-evidence.js")
-    for name in ("styles.css", "app.js", "fonts.css", "providers.css", "cowork.css", "buy.css", "buy.js", "accelerator.css"):
+    for name in ("styles.css", "app.js", "fonts.css", "providers.css", "cowork.css", "buy.css", "buy.js", "manage.js", "accelerator.css"):
         shutil.copyfile(SOURCE / name, assets / name)
     for page, entry in PAGES.items():
         if page == "home" or entry.get("builder"):

@@ -874,6 +874,8 @@ class Settings(BaseSettings):
     retirement_notices_mode: Literal["off", "preview", "send"] = "off"
     retirement_notices_preview_email: str | None = None
 
+    resale_enabled: bool = False
+    resale_fee_bps: int = 500
     reserved_tokens_checkout_enabled: bool = False
     reserved_tokens_discount_bps: int | None = Field(default=None, ge=0, lt=10_000)
     reserved_tokens_max_lots_per_checkout: int = Field(default=100, ge=1)
@@ -1427,6 +1429,13 @@ class Settings(BaseSettings):
             _LocalKeyFileSource(settings_cls),
             file_secret_settings,
         )
+
+    @field_validator("resale_fee_bps")
+    @classmethod
+    def resale_fee_matches_terms(cls, value: int) -> int:
+        if value != 500:
+            raise ValueError("TR_RESALE_FEE_BPS must equal 500; a fee change needs a new terms version")
+        return value
 
     @field_validator("remediator_mode")
     @classmethod

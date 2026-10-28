@@ -236,9 +236,9 @@ listed lots; holders do not sell to or contract with each other, and there is no
 peer-to-peer transfer. Reservations are transferable
 only through that program: holders list lots, NYTE resells them to new buyers ahead
 of new inventory, and each sale returns the resale price minus a 5% resale fee to
-the original card, capped at what the holder paid for those lots. Until self-service
-resale launches in a separate PR, refund and resale requests go to
-`enterprise@trustedrouter.com`. The terms version is `2026-10-27-v3`.
+the original card, capped at what the holder paid for those lots. The `/manage-reservation` page emails a signed, single-use, 15-minute link.
+Full refund requests are recorded durably for ops to refund in Stripe; resale
+listing and withdrawal use the same holder session. The terms version is `2026-10-27-v5`.
 Delivery is through a TrustedRouter account via the NYTE API. The terms live at
 `/reserved-tokens-terms` and its `.html` alias, in the shared NYTE shell and New
 York sitemap. These are prepaid inference services, not securities or investments.
@@ -270,8 +270,9 @@ Configuration, kept dark in `scripts/deploy/rollout.sh`:
 - `TR_RESERVED_TOKENS_MAX_PRICE_AGE_DAYS` defaults to 45 and must be at least 1.
   Invalid, future, or older snapshot dates (UTC) refuse quotes and checkout.
 - The existing `TR_STRIPE_SECRET_KEY`, signed webhook secret and SES configuration
-  are reused. The actions surface may now hold the Stripe key, but still no
-  webhook signing secret, credit store or other billing credentials.
+  are reused. Checkout/quote remain on the actions surface; holder management
+  uses the control surface, which has durable storage. The actions surface has
+  no webhook signing secret or durable credit store.
 
 Before enabling, confirm Stripe's account settings for this 2027 pre-sale, customer receipts, statement descriptor and tax
 handling, and confirm the existing webhook receives `checkout.session.completed`.
@@ -284,15 +285,18 @@ handling, even if a session contains workspace/refill metadata. It verifies the
 paid USD amount against locked metadata, logs `acquisition.reserved_tokens_recorded`
 and emails the existing enterprise inquiry recipient: `TR_PARTNER_INQUIRY_EMAIL`
 (`joseph@jperla.com` in rollout), falling back to `enterprise@trustedrouter.com`
-just like the enterprise brief. No buyer email/name is included. Stripe remains
-the order record; no token allowance, current balance credit or fulfillment is
-created. Full refunds requested within 30 days of purchase are handled manually
-in Stripe.
+just like the enterprise brief. No buyer email/name is included. Stripe remains the payment/contact record. When resale is enabled, every completed purchase also
+creates a durable NYTE position. With resale disabled, checkout retains the
+original notification-only path without accessing the resale ledger. No token
+allowance, current balance credit or fulfillment is created. Full refunds
+requested within 30 days of purchase are recorded for ops and handled in Stripe.
 Checkout Session and PaymentIntent metadata lock `refund_window_days=30`, the
 NYTE-only transfer policy, resale priority, 500-basis-point fee, original-card
 refund method and original-lot-price cap; there is no fixed `refundable_until`.
-The server computes `refund_deadline_at` from the signed Checkout Session’s
-`created` timestamp plus 30 days, never webhook arrival time.
+The server computes `refund_deadline_at` as `purchase_completed_at + 30 days`.
+`purchase_completed_at` is the persisted time of the first successful-payment
+webhook, first write wins; webhook retries preserve it. Checkout Session
+creation time is never the purchase time or the refund-window anchor.
 
 Every completed purchase is a separate position. Its stable ID is `nyte_pos_`
 followed by the full SHA-256 hex digest of `nyte:reserved-position:v1:` plus the
@@ -320,6 +324,84 @@ retries/manual replay recover temporary notification failures.
 details; it is not payment verification. Both honor GPC/DNT and flow through the
 collector, structured log fields and growth source filter. Only the signed
 webhook establishes the paid reservation.
+
+### Holder management and resale (local implementation; disabled by default)
+
+`/manage-reservation` and its `.html` alias use the shared NYTE shell. The API is
+`POST /token-exchange/reservations` on trustedrouter.com, explicitly routed to
+**control**, with canonical NYTE-origin CORS, bounded JSON requests and rate
+limits. No account or credit workspace is created. The HTTP email response is
+always “if we have reservations for that address, we sent a link”; valid addresses
+receive a link even if no position exists when resale is enabled. With resale
+disabled, all holder API actions return the inert generic response without
+sending email or touching the ledger. Email is used only for sending and
+Stripe lookup, never included in analytics or application logs. Stripe retains
+contact data; NYTE's holder index contains only a domain-separated email hash.
+
+Links use the shared OAuth HMAC-signature utility, domain-separated for NYTE,
+and the existing control Stripe secret. They expire after 15 minutes, have an
+atomic durable single-use marker, and exchange for a separate 15-minute bearer
+session. The browser keeps the session only in memory. The email-link fragment
+is removed immediately; it never enters server URLs or analytics. Redemption
+requires a button press to avoid email scanners consuming links. Refreshing or
+losing the session requires another link. Rotating the Stripe secret invalidates
+outstanding links. Repeated mutations use stable request IDs.
+
+`TR_RESALE_ENABLED=false` and `TR_RESALE_FEE_BPS=500` are the defaults and are
+pinned in `scripts/deploy/rollout.sh`. The flag gates every holder API action
+and new checkout position/allocation work. Existing refund obligations still
+reconcile lifecycle webhooks while the flag is off. Both modes retain unbound
+refund failure evidence for mapped NYTE payments and for unmapped payments whose
+own PaymentIntent metadata identifies a reservation; other payments create no
+NYTE state. Checkout/import first creates a non-sellable pending position and
+payment mapping, then reads Stripe, then atomically applies retained evidence and
+the snapshot before marking held or allocating. Allocation is allowed only for
+an unfinished purchase with the flag on and its notification not yet sent;
+imports, backfills, disabled finalization and already-notified replays finalize
+unfinished allocation as historical new inventory. Replay/import also repairs
+older pending allocation without changing purchase time or adverse evidence.
+The explicit ops refund CLI remains available for
+obligations already owed. Config loading rejects any fee other than 500 with an
+error explaining that a fee change requires a new terms version. v5 is the new checkout terms version;
+already-created v3/v4 sessions remain accepted by the webhook. The v5 terms keep
+email requests to enterprise@trustedrouter.com visible while self-service is
+unavailable; include the position ID or Stripe payment reference.
+
+Listed lots sell FIFO within each grade before new inventory at the buyer's
+locked checkout price. Allocation, seller lot counts, buyer position, event/session
+idempotency and refund records commit together. Stripe refunds run after the HTTP
+webhook response; failures stay in the durable queue and email ops. Run
+`uv run python -m scripts.retry_nyte_resale_refunds` with the control deployment's
+configuration periodically and after an alert. The CLI processes at most 100
+entries and prints a continuation cursor. Full refund requests are visible with
+`--full-refunds`; ops issues the full original-payment refund in Stripe, then
+reconciles it with `--ack-full-refund-session cs_... --refund-id re_...`. The CLI
+verifies payment, full amount and successful Stripe status before closing it.
+
+“Find older reservations” performs authenticated, bounded Stripe customer and
+session reads for that exact purchase email. It imports paid reserved-token
+sessions without allocating historical sales against today's listings. The
+existing `reserved_notification` row supplies `purchase_completed_at`. Missing
+completion timestamps remain unknown and cannot list or request a self-service
+refund; ops must reconcile them, never substitute `session.created`. Refunded or
+disputed payments are reconciled into existing positions as well as new imports;
+external changes block selling and atomically withdraw active listings. Refund
+evidence matching NYTE fills is exempt. Allocation status is independent of
+purchase time: an import racing the first webhook stays pending and that webhook
+allocates once; a completed legacy notification establishes historical status.
+
+Storage reuses #2125's `Store` protocol and entity transaction pattern across
+memory, native Spanner and Postgres. No new physical table or schema migration is
+needed. The existing migration-derived schema/SQL manifest and native emulator
+suite remain the schema gate; `tests/conformance/test_nyte_resale_ledger.py` exercises
+these entity transactions on all registered backends. See
+[`docs/nyte-resale.md`](../../docs/nyte-resale.md) for the entity schema, money
+examples, retry limits and operational setup. No Spanner body scans are used.
+
+`nyte.resale_listed` and `nyte.resale_withdrawn` carry only the grade and the
+existing bounded visitor/page context, honor GPC/DNT, and pass the browser,
+collector, structured-log and growth-source allowlists. No email, Stripe ID,
+position ID, capability, lot count or amount enters these analytics events.
 
 ### Neocloud accelerator (local implementation; publish separately)
 

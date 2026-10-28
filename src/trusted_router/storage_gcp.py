@@ -6700,6 +6700,34 @@ class SpannerStore(OperationalAnalyticsReads):
 
         return self._run_in_transaction(txn)
 
+    def reserved_resale_position_page(self, *, cursor: str | None = None, limit: int = 100) -> dict[str, Any]:
+        if not 1 <= limit <= 100:
+            raise ValueError("Invalid reservation page size")
+        # Bounded primary-key range, never a JSON/body predicate or table scan.
+        with self._database.snapshot() as snapshot:
+            rows = snapshot.execute_sql(
+                "SELECT id FROM tr_entities WHERE kind=@kind AND id>@cursor ORDER BY id LIMIT @limit",
+                params={"kind": "nyte_position", "cursor": cursor or "", "limit": limit + 1},
+                param_types={"kind": self._param_types.STRING, "cursor": self._param_types.STRING,
+                             "limit": self._param_types.INT64},
+            )
+            ids = [row[0] for row in rows]
+            return {"ids": ids[:limit], "cursor": ids[limit - 1] if len(ids) > limit else None}
+
+    def reserved_resale(self, command: dict[str, Any]) -> dict[str, Any]:
+        from trusted_router.storage_resale import execute
+
+        def txn(tx: Any) -> dict[str, Any]:
+            lock = self._read_entity_tx(tx, "nyte_mutex", "v1", dict) or {}
+            self._write_entity_tx(tx, "nyte_mutex", "v1", {"revision": lock.get("revision", 0) + 1})
+            return execute(
+                lambda kind, key: self._read_entity_tx(tx, kind, key, dict) or {},
+                lambda kind, key, row: self._write_entity_tx(tx, kind, key, row),
+                command,
+            )
+
+        return self._run_in_transaction(txn)
+
     def claim_reserved_notification(self, session_id: str, owner: str, *, now: int) -> tuple[str, int]:
         def txn(tx: Any) -> tuple[str, int]:
             row = self._read_entity_tx(tx, "reserved_notification", session_id, dict) or {}

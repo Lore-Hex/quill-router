@@ -658,7 +658,7 @@ def _webhook_client(store: Any) -> TestClient:
     return client
 
 
-def test_live_checkout_and_refund_facts_reconcile_with_zero_semantic_mismatches() -> None:
+def test_live_checkout_and_refund_facts_reconcile_with_zero_semantic_mismatches(nonreservation_stripe_payment) -> None:
     """Literal fixture through the real webhook handler vs a backfill-shaped scan.
 
     Session.created != PaymentIntent.created on purpose: before P1-C the
@@ -1596,7 +1596,7 @@ def test_converter_maps_every_event_type_the_live_handler_applies() -> None:
     assert picked is not None and picked.event_id == "evt_s2"
 
 
-def test_live_refund_with_four_same_status_events_reconciles_with_zero_semantic_mismatches() -> None:
+def test_live_refund_with_four_same_status_events_reconciles_with_zero_semantic_mismatches(nonreservation_stripe_payment) -> None:
     """Literal fixture through the real webhook: the normal Stripe card refund.
 
     Stripe emits charge.refunded and refund.created in the same second, then
@@ -1659,7 +1659,7 @@ def test_live_refund_with_four_same_status_events_reconciles_with_zero_semantic_
     assert _facts(database, workspace_id) == live_before
 
 
-def test_out_of_order_same_status_events_converge_on_the_same_stamps() -> None:
+def test_out_of_order_same_status_events_converge_on_the_same_stamps(nonreservation_stripe_payment) -> None:
     """Delivery order must not matter: later Event first, then the earlier one."""
 
     store, database, workspace_id = _spanner_workspace()
@@ -1747,7 +1747,7 @@ def test_postgres_and_memory_writers_restamp_a_later_same_status_event_without_m
 # -- finding 9: local adverse facts are compared by key, never by the Event clock
 
 
-def test_old_pending_refund_that_succeeds_inside_the_tail_keeps_the_tick_clean() -> None:
+def test_old_pending_refund_that_succeeds_inside_the_tail_keeps_the_tick_clean(nonreservation_stripe_payment) -> None:
     """occurred_at is Event.created and moves on every status change; the tail
     scan lists refunds by the OBJECT's created. An old pending refund that
     succeeds inside this tick's window was local-only by clock alone.

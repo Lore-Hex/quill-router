@@ -200,6 +200,7 @@ class InMemoryStore:
         self._reservation_pause_epochs: dict[str, int] = {}
         self._paused_authorizations: set[tuple[str, str, str]] = set()
         self.abuse_pause_clears: set[tuple[str, str]] = set()
+        self.resale_entities: dict[tuple[str, str], dict[str, Any]] = {}
         self.reserved_notifications: dict[str, dict[str, Any]] = {}
         self.webhook_events: set[tuple[str, str]] = set()
         self.retirement_notices: dict[str, dict[str, str]] = {}
@@ -287,6 +288,7 @@ class InMemoryStore:
             self._paused_authorizations.clear()
             self.abuse_pause_clears.clear()
             self.reserved_notifications.clear()
+            self.resale_entities.clear()
             self.webhook_events.clear()
             self.retirement_notices.clear()
             self.earnings_money.clear()
@@ -3875,6 +3877,24 @@ class InMemoryStore:
             claimed = sorted(set(retirement_ids) - notices.keys())
             notices.update(dict.fromkeys(claimed, occurred_at))
             return claimed
+
+    def reserved_resale_position_page(self, *, cursor: str | None = None, limit: int = 100) -> dict[str, Any]:
+        if not 1 <= limit <= 100:
+            raise ValueError("Invalid reservation page size")
+        with self._lock:
+            ids = sorted(key for kind, key in self.resale_entities if kind == "nyte_position" and key > (cursor or ""))[:limit + 1]
+            return {"ids": ids[:limit], "cursor": ids[limit - 1] if len(ids) > limit else None}
+
+    def reserved_resale(self, command: dict[str, Any]) -> dict[str, Any]:
+        from trusted_router.storage_resale import execute
+
+        with self._lock:
+            def read(kind: str, key: str) -> dict[str, Any]:
+                if kind == "reserved_notification":
+                    return self.reserved_notifications.get(key, {})
+                return self.resale_entities.get((kind, key), {})
+
+            return execute(read, lambda kind, key, row: self.resale_entities.__setitem__((kind, key), row), command)
 
     def claim_reserved_notification(self, session_id: str, owner: str, *, now: int) -> tuple[str, int]:
         """Atomically claim delivery and preserve the first paid-webhook timestamp."""

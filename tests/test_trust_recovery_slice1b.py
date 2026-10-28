@@ -386,7 +386,7 @@ def test_inbox_schema_and_every_conflict_clause_have_explicit_targets() -> None:
     assert "ON CONFLICT (provider, adverse_ref, kind) DO NOTHING" in source
 
 
-def test_stripe_refund_webhook_records_recovery_before_ack(client: Any) -> None:
+def test_stripe_refund_webhook_records_recovery_before_ack(client: Any, nonreservation_stripe_payment) -> None:
     workspace = STORE.create_workspace("owner", "stripe webhook", trial_credit_microdollars=0)
     assert STORE.credit_workspace_typed_direct(
         workspace.id,
@@ -430,7 +430,7 @@ def test_stripe_refund_webhook_records_recovery_before_ack(client: Any) -> None:
     assert STORE.credit_money_snapshot(workspace.id) == (500_000, 0, 0)
 
 
-def test_x402_refund_uses_same_webhook_handler_under_x402_provider(client: Any) -> None:
+def test_x402_refund_uses_same_webhook_handler_under_x402_provider(client: Any, nonreservation_stripe_payment) -> None:
     workspace = STORE.create_workspace("owner", "x402 webhook", trial_credit_microdollars=0)
     assert STORE.credit_workspace_typed_direct(
         workspace.id,
@@ -469,7 +469,7 @@ def test_x402_refund_uses_same_webhook_handler_under_x402_provider(client: Any) 
     assert STORE.credit_money_snapshot(workspace.id) == (750_000, 0, 0)
 
 
-def test_stripe_dispute_webhook_claims_all_then_won_restores(client: Any) -> None:
+def test_stripe_dispute_webhook_claims_all_then_won_restores(client: Any, nonreservation_stripe_payment) -> None:
     workspace = STORE.create_workspace("owner", "dispute webhook", trial_credit_microdollars=0)
     assert STORE.credit_workspace_typed_direct(
         workspace.id,

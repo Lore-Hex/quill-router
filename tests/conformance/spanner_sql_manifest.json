@@ -4657,6 +4657,19 @@
           }
         }
       ]
+    },
+    "storage_gcp:reserved_resale_position_page:1": {
+      "fingerprint": "c085bd2d7bd045dd724e37f03faba4443f382c7515b64b26d949bd333d9bdbfa",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "kind": "STRING",
+            "cursor": "STRING",
+            "limit": "INT64"
+          }
+        }
+      ]
     }
   },
   "sinks": {
@@ -4844,7 +4857,8 @@
     "trust_tier_bulk:iter_trust_tier_bulk": "846b000f05dbc96b50d63bfe4627e9f72b6a21d9103315b740330286a5f9cfe5",
     "trust_tier_bulk:select_trust_tier_candidates": "2047f3a799e1b13534cceb2c4e19dd904a12c244704184e7b9cc629fc5ff8bc2",
     "storage_account_closure:close_spanner.txn.rows": "d17299f98937c19aed4e65bd1f5ff91cfab3d1ee93c558fe9df621d3bf5ddde1",
-    "storage_gcp:SpannerStore._update_workspace_tx": "621d1f16006a6075cafc6dc8a6243ac906a43772044dec1223d34b33c01bb7fd"
+    "storage_gcp:SpannerStore._update_workspace_tx": "621d1f16006a6075cafc6dc8a6243ac906a43772044dec1223d34b33c01bb7fd",
+    "storage_gcp:SpannerStore.reserved_resale_position_page": "c085bd2d7bd045dd724e37f03faba4443f382c7515b64b26d949bd333d9bdbfa"
   },
   "non_google_sql": {
     "analytics_sink:_post_rows:1": {

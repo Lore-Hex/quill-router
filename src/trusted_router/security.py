@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import secrets
@@ -37,3 +38,11 @@ def key_label(key: str) -> str:
 
 def constant_time_equal(a: str, b: str) -> bool:
     return hmac.compare_digest(a.encode("utf-8"), b.encode("utf-8"))
+
+
+def signed_token_signature(secret: str, purpose: str, payload: str) -> str:
+    """Shared domain-separated HMAC used by OAuth state and holder links."""
+    if not secret:
+        raise ValueError("Signing key unavailable")
+    digest = hmac.new(secret.encode(), f"{purpose}:{payload}".encode(), hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")

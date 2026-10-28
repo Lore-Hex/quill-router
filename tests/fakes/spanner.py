@@ -4369,6 +4369,9 @@ def _execute_sql(
         if "LIMIT @limit" in sql:
             rows = rows[: int(params["limit"])]
         return [[body] for _, body in rows]
+    if "SELECT id FROM tr_entities WHERE kind=@kind AND id>@cursor" in sql:
+        ids = sorted(eid for k, eid in db.rows if k == kind and eid > params["cursor"])
+        return [[eid] for eid in ids[:int(params["limit"])]]
     if "SELECT id, body FROM tr_entities WHERE kind=@kind" in sql:
         rows = [(eid, r.body) for (k, eid), r in list(db.rows.items()) if k == kind]
         if "id IN UNNEST(@ids)" in sql:
