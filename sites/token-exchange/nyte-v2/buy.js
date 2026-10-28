@@ -88,7 +88,7 @@ document.addEventListener('DOMContentLoaded', () => {
           quote.exchange_fee_bps !== 10 || !Number.isSafeInteger(exchangeNumerator + 5000) ||
           !Number.isInteger(quote.processing_fee_bps) || quote.processing_fee_bps < 0 || quote.processing_fee_bps >= 10000 ||
           !Number.isSafeInteger(quote.processing_fee_fixed_cents) || quote.processing_fee_fixed_cents < 0 ||
-          !Number.isSafeInteger(processingNumerator) || !Number.isSafeInteger(total) ||
+          !Number.isSafeInteger(processingNumerator) || !Number.isSafeInteger(total) || total < 50 || total > 99999999 ||
           quote.subtotal_cents !== subtotal || quote.exchange_fee_cents !== exchangeFee ||
           quote.processing_fee_cents !== processingFee || quote.total_cents !== total) throw new Error('Quote unavailable. Please try again.');
       reserveQuote = quote;

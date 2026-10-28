@@ -74,6 +74,19 @@ const flush = async s => {
       assert(bad.get('reserve-price').textContent.includes('Quote unavailable'),field);
     }
   }
+  for (const [indexPrice, expectedTotal] of [['0.01',32], ['2000000',185561308]]) {
+    const outOfRange=setup('?step=2&unit=blocks&grade=C', {fetch:async url=>({ok:true,json:async()=>{
+      // All fields agree with the displayed index and published fee rates.
+      const quote=quoteFor(outOfRange,url);
+      assert.equal(quote.total_cents,expectedTotal);
+      return quote;
+    }})});
+    outOfRange.radio('grade','C').dataset.price=indexPrice;
+    outOfRange.get('reserve-terms').checked=true;
+    await flush(outOfRange);
+    assert.equal(outOfRange.get('reserve-button').disabled,true, `charge bound: ${expectedTotal}`);
+    assert(outOfRange.get('reserve-price').textContent.includes('Quote unavailable'));
+  }
   const multi=setup('?step=2&unit=blocks&grade=A', {fetch:async url=>({ok:true,json:async()=>quoteFor(multi,url)})});
   multi.radio('grade','A').dataset.price='863';
   multi.input('3');

@@ -131,7 +131,7 @@ def record_purchase(obj: dict[str, Any], event_id: str, purchased_at: int | None
 
     metadata = obj["metadata"]
     _, total = session_amounts(metadata)
-    if obj.get("amount_total") != total:
+    if type(obj.get("amount_total")) is not int or obj["amount_total"] != total:
         raise ValueError("Invalid reserved token payment amount")
     email = (obj.get("customer_details") or {}).get("email") or obj.get("customer_email") or ""
     # Missing contact/payment data still creates the paid position. It cannot
@@ -308,7 +308,7 @@ def backfill_email(email: str, holder: str, settings: Settings) -> None:
                 _, total = session_amounts(m)
             except ValueError:
                 continue
-            if obj.get("amount_total") != total:
+            if type(obj.get("amount_total")) is not int or obj["amount_total"] != total:
                 continue
             # The shared path creates the mapping before reading Stripe state.
             record_purchase(obj, "backfill:" + obj["id"], None, settings, backfill=True)

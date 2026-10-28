@@ -53,6 +53,18 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+def charge_breakdown(subtotal: int, exchange_fee_bps: int, processing_bps: int, processing_fixed: int) -> tuple[int, int, int]:
+    """Return exchange fee, at-cost card processing fee, and total in cents."""
+    exchange_fee = (subtotal * exchange_fee_bps + 5_000) // 10_000
+    card_fee = processing_fee(
+        credit_amount_cents=subtotal + exchange_fee,
+        variable_basis_points=processing_bps,
+        fixed_fee_cents=processing_fixed,
+        minimum_fee_cents=0, max_fee_cents=None, fee_multiplier_basis_points=10_000,
+    ).processing_fee_cents
+    return exchange_fee, card_fee, subtotal + exchange_fee + card_fee
+
+
 def reservation_quote(settings: Settings, grade: str, lots: int) -> dict[str, Any]:
     discount = settings.reserved_tokens_discount_bps
     if not settings.reserved_tokens_checkout_enabled or discount is None:
@@ -75,14 +87,9 @@ def reservation_quote(settings: Settings, grade: str, lots: int) -> dict[str, An
     if per_lot <= 0:
         raise api_error(503, "Reservation amount is outside card checkout limits; book a call", ErrorType.SERVICE_UNAVAILABLE)
     subtotal = per_lot * lots
-    exchange_fee = (subtotal * exchange_fee_bps + 5_000) // 10_000
-    card_fee = processing_fee(
-        credit_amount_cents=subtotal + exchange_fee,
-        variable_basis_points=settings.stripe_card_fee_basis_points,
-        fixed_fee_cents=settings.stripe_card_fee_fixed_cents,
-        minimum_fee_cents=0, max_fee_cents=None, fee_multiplier_basis_points=10_000,
-    ).processing_fee_cents
-    total = subtotal + exchange_fee + card_fee
+    exchange_fee, card_fee, total = charge_breakdown(
+        subtotal, exchange_fee_bps, settings.stripe_card_fee_basis_points, settings.stripe_card_fee_fixed_cents,
+    )
     if not 50 <= total <= 99_999_999:
         raise api_error(503, "Reservation amount is outside card checkout limits; book a call", ErrorType.SERVICE_UNAVAILABLE)
     return {
@@ -146,13 +153,18 @@ def session_amounts(metadata: dict[str, Any]) -> tuple[int, int]:
     try:
         if metadata["terms_version"] not in LEGACY_TERMS_VERSIONS | {TERMS_VERSION}:
             raise ValueError("Invalid reservation terms version")
+        if not all(isinstance(metadata[key], str) and metadata[key].isascii() and metadata[key].isdigit() for key in ("lots", "per_lot_cents")):
+            raise ValueError("Invalid reservation quantity or price")
         lots, per_lot = int(metadata["lots"]), int(metadata["per_lot_cents"])
+        if lots <= 0 or per_lot <= 0:
+            raise ValueError("Invalid reservation quantity or price")
+        subtotal = lots * per_lot
         legacy_no_fees = (
             metadata["terms_version"] in LEGACY_TERMS_VERSIONS
             and not any(key in metadata for key in FEE_FIELDS)
         )
         if legacy_no_fees:
-            fees = dict.fromkeys(FEE_FIELDS, 0)
+            return subtotal, subtotal
         else:
             # Stripe metadata is strings. Refuse partial, negative or fractional
             # fees; retain the checkout snapshot rather than today's price/rates.
@@ -161,12 +173,13 @@ def session_amounts(metadata: dict[str, Any]) -> tuple[int, int]:
             fees = {key: int(metadata[key]) for key in FEE_FIELDS}
             if metadata["exchange_fee_bps"] != "10" or fees["processing_fee_bps"] >= 10_000:
                 raise ValueError("Invalid fee rates")
-        subtotal = lots * per_lot
-        total = subtotal + fees["exchange_fee_cents"] + fees["processing_fee_cents"]
-        if not legacy_no_fees and (metadata["subtotal_cents"] != str(subtotal) or metadata["total_cents"] != str(total)):
+        exchange_fee, card_fee, total = charge_breakdown(
+            subtotal, fees["exchange_fee_bps"], fees["processing_fee_bps"], fees["processing_fee_fixed_cents"],
+        )
+        if fees["exchange_fee_cents"] != exchange_fee or fees["processing_fee_cents"] != card_fee:
+            raise ValueError("Invalid fee amounts")
+        if metadata["subtotal_cents"] != str(subtotal) or metadata["total_cents"] != str(total):
             raise ValueError("Invalid fee totals")
-        if lots <= 0 or per_lot <= 0:
-            raise ValueError("Invalid reservation quantity or price")
         return subtotal, total
     except (KeyError, TypeError, ValueError, OverflowError) as exc:
         raise ValueError("Invalid reserved token payment amounts") from exc
@@ -191,7 +204,7 @@ def handle_reservation_event(event: dict[str, Any], settings: Settings, backgrou
     try:
         subtotal, total = session_amounts(metadata)
         valid = (
-            obj.get("amount_total") == total
+            type(obj.get("amount_total")) is int and obj["amount_total"] == total
             and obj.get("currency") == "usd" and obj.get("mode") == "payment"
             and metadata["grade"] in {"AAA", "A", "B", "C"}
             and all(metadata[key] == value for key, value in WINDOW.items() if key not in {"terms_version", "resale_fee_bps"})

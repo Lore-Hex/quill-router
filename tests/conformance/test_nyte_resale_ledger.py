@@ -1305,7 +1305,7 @@ def test_nyte_fee_bearing_purchase_import(store: Store, unique: str, monkeypatch
         resale.record_purchase(obj, "evt_" + unique, 100, settings)
         resale.record_purchase(obj, "evt_" + unique, 200, settings)
     p = inspect_position(store, obj["id"])
-    assert p["total_cents"] == 1682  # 2 * 800 + 2 exchange + 80 processing.
+    assert p["total_cents"] == 1681  # 2 * 800 + 2 exchange + 79 processing.
     assert p["per_lot_cents"] == 800 and p["lots"] == 2
     assert p["terms_version"] == "2026-10-28-v6"
     assert p["purchase_completed_at"] == 100
@@ -1315,7 +1315,7 @@ def test_nyte_fee_bearing_purchase_import(store: Store, unique: str, monkeypatch
 @pytest.mark.parametrize("fee_bearing", [True, False])
 def test_nyte_full_refund_uses_payment_total(store: Store, unique: str, fee_bearing: bool) -> None:
     session = unique + "full"
-    total = 1682 if fee_bearing else 1600
+    total = 1681 if fee_bearing else 1600
     purchase(store, session, lots=2, price=800, total_cents=total if fee_bearing else None)
     if not fee_bearing:
         assert "total_cents" not in inspect_position(store, session)
@@ -1358,10 +1358,10 @@ def test_nyte_full_refund_uses_payment_total(store: Store, unique: str, fee_bear
 @pytest.mark.parametrize("buyer_price", [800, 1000])
 def test_nyte_v6_resale_fill_excludes_purchase_fees(store: Store, unique: str, buyer_price: int) -> None:
     seller, buyer = unique + "feeseller", unique + "feebuyer"
-    purchase(store, seller, lots=2, price=800, total_cents=1682)
+    purchase(store, seller, lots=2, price=800, total_cents=1681)
     listing(store, seller, lots=2)
     p = purchase(store, buyer, lots=2, price=buyer_price, allocate=True,
-                 total_cents=1682 if buyer_price == 800 else 2093)
+                 total_cents=1681 if buyer_price == 800 else 2093)
     fill = call(store, "refund_obligation", kind="resale_fill", id=p["fills"][0])
     assert fill["resale_price_cents"] == buyer_price
     assert fill["refund_amount_cents"] == (1520 if buyer_price == 800 else 1600)
@@ -1370,7 +1370,7 @@ def test_nyte_v6_resale_fill_excludes_purchase_fees(store: Store, unique: str, b
 
 def test_nyte_v6_subtotal_refund_keeps_obligation_open(store: Store, unique: str) -> None:
     session = unique + "partial"
-    purchase(store, session, lots=2, price=800, total_cents=1682)
+    purchase(store, session, lots=2, price=800, total_cents=1681)
     call(store, "request_refund", position=session, holder=session, now=101, request_id="full")
     refund = {"id": "re_" + unique, "payment_intent": "pi_" + session, "amount": 1600, "status": "succeeded"}
     with pytest.raises(ValueError, match="full original-payment"):

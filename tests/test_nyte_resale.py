@@ -979,25 +979,32 @@ def test_resale_fill_excludes_purchase_fees_from_proceeds_and_cap(settings, monk
     buyer = event()["data"]["object"]
     buyer.update(id="cs_buyer", payment_intent="pi_buyer", customer_details={"email": "buyer@example.com"})
     buyer["metadata"].update(per_lot_cents=str(buyer_price), subtotal_cents=str(buyer_price * 2))
-    # Complete fee-bearing snapshots: 1602 -> 1682, or 2002 -> 2093.
-    buyer_total = 1682 if buyer_price == 800 else 2093
+    # Complete fee-bearing snapshots: 1602 -> 1681, or 2002 -> 2093.
+    buyer_total = 1681 if buyer_price == 800 else 2093
     buyer["metadata"].update(processing_fee_cents=str(buyer_total - buyer_price * 2 - 2), total_cents=str(buyer_total))
     buyer["amount_total"] = buyer_total
     purchased = resale.record_purchase(buyer, "evt_buyer", 2_592_200, settings)
     fill = store.resale_entities["nyte_fill", purchased["fills"][0]]
     assert fill["resale_price_cents"] == buyer_price
     # Two lots at 800 yield 760 each after 5%; at 1000, 950 is capped
-    # at the seller's 800 per lot, never their 1682 / 2 fee-inclusive charge.
+    # at the seller's 800 per lot, never their 1681 / 2 fee-inclusive charge.
     assert fill["refund_amount_cents"] == expected_refund
 
 
 @pytest.mark.parametrize("patch,missing,amount_delta", [
     ({}, "exchange_fee_cents", 0), ({}, "processing_fee_bps", 0),
     ({"exchange_fee_bps": "20"}, None, 0), ({"processing_fee_bps": "10000"}, None, 0),
-    ({"processing_fee_cents": "８０"}, None, 0), ({"exchange_fee_cents": "-1"}, None, 0),
-    ({"subtotal_cents": "1601"}, None, 0), ({"total_cents": "1681"}, None, 0),
+    ({"processing_fee_cents": "７９"}, None, 0), ({"exchange_fee_cents": "-1"}, None, 0),
+    ({"subtotal_cents": "1601"}, None, 0), ({"total_cents": "1680"}, None, 0),
     ({"terms_version": "unknown"}, None, 0), ({"lots": "0"}, None, 0),
     ({}, None, -1), ({}, None, 1),
+    # Matching Stripe/metadata totals cannot make impossible fees valid.
+    ({"exchange_fee_cents": "0", "processing_fee_cents": "0", "total_cents": "1600"}, None, -81),
+    ({"processing_fee_cents": "80", "total_cents": "1682"}, None, 1),
+    ({"processing_fee_cents": "78", "total_cents": "1680"}, None, -1),
+    ({"lots": 2.9}, None, 0), ({"lots": "２"}, None, 0),
+    ({"per_lot_cents": 800}, None, 0), ({"per_lot_cents": "８００"}, None, 0),
+    pytest.param({}, None, 0.0, id="float-amount-total"),
 ])
 def test_invalid_fee_session_cannot_record_or_backfill(settings, monkeypatch, patch, missing, amount_delta):
     from tests.test_reserved_tokens import fee_event
@@ -1035,14 +1042,14 @@ def test_v6_full_payment_refund_service_acknowledgement(settings, monkeypatch):
     monkeypatch.setattr(resale.stripe.Refund, "list", lambda **kw: SimpleNamespace(auto_paging_iter=lambda: iter([refund])))
     with pytest.raises(ValueError, match="full original-payment"):
         resale.acknowledge_full_refund(obj["id"], refund["id"], settings)
-    refund["amount"] = 1682
+    refund["amount"] = 1681
     assert resale.reconcile_payment_event({"type": "refund.created", "data": {"object": refund}}, settings)
     assert not call(store, "position", position=obj["id"]).get("payment_review")
     assert resale.acknowledge_full_refund(obj["id"], refund["id"], settings)["status"] == "refunded"
     assert resale.reconcile_payment_event({"type": "charge.refunded", "data": {"object": {
-        "payment_intent": obj["payment_intent"], "paid": True, "amount_refunded": 1682,
+        "payment_intent": obj["payment_intent"], "paid": True, "amount_refunded": 1681,
     }}}, settings)
     saved = call(store, "position", position=obj["id"])
-    assert saved["status"] == "refunded" and saved["total_cents"] == 1682
+    assert saved["status"] == "refunded" and saved["total_cents"] == 1681
     assert not saved.get("payment_review")
     assert ("nyte_payment_review", obj["payment_intent"]) not in store.resale_entities

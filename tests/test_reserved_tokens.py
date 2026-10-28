@@ -155,15 +155,16 @@ def test_origin_preflight_rate_limit_and_body_bounds(checkout: tuple[TestClient,
 
 
 def fee_event() -> dict[str, Any]:
+    # 1600 * .001 -> 2; ceil((1602 + 30) * 10000 / 9710) = 1681.
     return {"id": "evt_reserved", "type": "checkout.session.completed", "data": {"object": {
         "id": "cs_reserved", "created": 1793102400, "customer": "cus_reserved", "mode": "payment", "currency": "usd",
-        "payment_status": "paid", "amount_total": 1682, "customer_details": {"email": "private@example.com"},
+        "payment_status": "paid", "amount_total": 1681, "customer_details": {"email": "private@example.com"},
         "metadata": {"kind": reserve.KIND, "grade": "A", "lots": "2", "per_lot_cents": "800",
                      "list_price_cents": "1000", "discount_bps": "2000", "index_as_of": "2026-10-26",
                      "workspace_id": "ws_exists", "auto_refill": "true", "amount_microdollars": "16000000",
                      **reserve.WINDOW, "subtotal_cents": "1600", "exchange_fee_bps": "10",
-                     "exchange_fee_cents": "2", "processing_fee_cents": "80",
-                     "processing_fee_bps": "290", "processing_fee_fixed_cents": "30", "total_cents": "1682"},
+                     "exchange_fee_cents": "2", "processing_fee_cents": "79",
+                     "processing_fee_bps": "290", "processing_fee_fixed_cents": "30", "total_cents": "1681"},
     }}}
 
 
@@ -223,12 +224,12 @@ def test_webhook_isolation_dedup_log_and_email(client: TestClient, reservation_m
     for key in (*reserve.FEE_FIELDS, "subtotal_cents", "total_cents"):
         assert details[key] == getattr(record, key)
     assert details["exchange_fee_cents"] == "2"
-    assert details["processing_fee_cents"] == "80"
-    assert details["total_cents"] == "1682"
+    assert details["processing_fee_cents"] == "79"
+    assert details["total_cents"] == "1681"
     assert "workspace_id" not in payload and "email" not in json.dumps(payload)
 
 
-@pytest.mark.parametrize("patch", [{"amount_total": 1681}, {"amount_total": 1683}, {"currency": "eur"}, {"mode": "setup"}, {"id": None}])
+@pytest.mark.parametrize("patch", [{"amount_total": 1680}, {"amount_total": 1682}, {"amount_total": 1681.0}, {"amount_total": 1682.0}, {"amount_total": True}, {"amount_total": "1682"}, {"currency": "eur"}, {"mode": "setup"}, {"id": None}])
 def test_invalid_payment_is_retryable_not_recorded(client: TestClient, reservation_mail: Mock, patch: dict[str, Any]) -> None:
     invalid = fee_event()
     invalid["data"]["object"].update(patch)
@@ -424,7 +425,7 @@ def test_paid_checkout_keeps_accepted_terms_after_version_bump(client, terms_ver
     # ceil((233243 + 30) * 10000 / 9710) = 240240; - 233243 = 6997.
     ("A", 863, 3, 77670, 233010, 233, 6997, 240240),
 ])
-def test_approved_fee_breakdown(settings, monkeypatch, grade, index, lots, per_lot, subtotal, exchange, processing, total):
+def test_approved_fee_breakdown(settings, monkeypatch, client, reservation_mail, grade, index, lots, per_lot, subtotal, exchange, processing, total):
     settings.reserved_tokens_discount_bps = 1000
     monkeypatch.setitem(token_index.QUOTES, grade, {"value": index})
     quote = reserve.reservation_quote(settings, grade, lots)
@@ -436,6 +437,14 @@ def test_approved_fee_breakdown(settings, monkeypatch, grade, index, lots, per_l
         "exchange_fee_cents": exchange, "processing_fee_bps": 290,
         "processing_fee_fixed_cents": 30, "processing_fee_cents": processing, "total_cents": total,
     }
+    data = fee_event()
+    obj = data["data"]["object"]
+    obj["metadata"] = {"kind": reserve.KIND, **{key: str(value) for key, value in quote.items() if key != "max_lots"}}
+    obj["amount_total"] = total
+    response = client.post("/v1/internal/stripe/webhook", json=data)
+    assert response.status_code == 200
+    assert response.json()["data"]["recorded"] is True
+    reservation_mail.assert_called_once()
 
 
 @pytest.mark.parametrize("index,rate,fixed,names", [
@@ -497,13 +506,42 @@ def test_v6_requires_complete_fees(client, reservation_mail, missing):
     {"exchange_fee_bps": "20"}, {"exchange_fee_bps": "010"},
     {"exchange_fee_cents": "-1"}, {"exchange_fee_cents": "2.5"},
     {"processing_fee_cents": "-1"}, {"processing_fee_cents": "80.5"},
-    {"processing_fee_cents": 80}, {"processing_fee_cents": True},
+    {"processing_fee_cents": 79}, {"processing_fee_cents": True},
     {"processing_fee_bps": "10000"}, {"processing_fee_fixed_cents": "-30"},
     {"subtotal_cents": "1601"}, {"total_cents": "1683"},
 ])
 def test_invalid_fee_metadata(client, reservation_mail, patch):
     data = fee_event()
     data["data"]["object"]["metadata"].update(patch)
+    assert client.post("/v1/internal/stripe/webhook", json=data).status_code == 400
+    reservation_mail.assert_not_called()
+
+
+@pytest.mark.parametrize("exchange,processing,total", [
+    # 1600 at 10/290/30 requires fees 2 + 79: ceil(16320000 / 9710) = 1681.
+    # An altered snapshot and matching Stripe amount cannot change that.
+    ("0", "0", 1600), ("2", "80", 1682), ("2", "78", 1680),
+])
+def test_coordinated_fee_tampering_rejected(client, reservation_mail, exchange, processing, total):
+    data = fee_event()
+    obj = data["data"]["object"]
+    obj["metadata"].update(exchange_fee_cents=exchange, processing_fee_cents=processing, total_cents=str(total))
+    obj["amount_total"] = total
+    assert client.post("/v1/internal/stripe/webhook", json=data).status_code == 400
+    reservation_mail.assert_not_called()
+    assert client.post("/v1/internal/stripe/webhook", json=fee_event()).json()["data"]["recorded"] is True
+
+
+@pytest.mark.parametrize("key,invalid", [
+    ("lots", 2.9), ("lots", 2), ("lots", True), ("lots", "２"),
+    ("lots", " 2"), ("lots", "+2"), ("lots", "2.0"),
+    ("per_lot_cents", 800.9), ("per_lot_cents", 800), ("per_lot_cents", True),
+    ("per_lot_cents", "８００"), ("per_lot_cents", " 800"), ("per_lot_cents", "+800"),
+])
+@pytest.mark.parametrize("legacy", [False, True])
+def test_session_quantity_and_price_require_ascii_digits(client, reservation_mail, key, invalid, legacy):
+    data = event() if legacy else fee_event()
+    data["data"]["object"]["metadata"][key] = invalid
     assert client.post("/v1/internal/stripe/webhook", json=data).status_code == 400
     reservation_mail.assert_not_called()
 
@@ -555,4 +593,4 @@ def test_paid_snapshot_survives_changed_configuration_and_index(client, settings
     monkeypatch.setitem(token_index.QUOTES, "A", {"value": 9999})
     monkeypatch.setattr(token_index, "AS_OF_ISO", "2026-01-01")
     assert reserve.handle_reservation_event(fee_event(), settings)["recorded"] is True
-    assert '"total_cents": "1682"' in reservation_mail.call_args.args[0].text_body
+    assert '"total_cents": "1681"' in reservation_mail.call_args.args[0].text_body
