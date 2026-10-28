@@ -728,17 +728,23 @@ ENV_VARS=(
   # after failed cycles and spread takeover (#2054), the fleet-wide runtime stop
   # marker, operator CLI and in-process API-failure breaker (#2053), and the
   # permit-row allocation backoff (#2058). Shadow v2 canary 4: the v2 policy,
-  # the one probe workspace and the primary health region, with the runtime
+  # the probe workspace and the primary health region, with the runtime
   # expiry below as the canary's stop. Gates for the canary hour, measured from
   # the moment the health region serves these pins: publications >= 80% after a
   # 5-minute warm-up, unknown <= 5%, readers installed >= 80% per region,
   # Spanner sessions bounded, no API-failure or session incident; otherwise opt
   # out by emptying the policy, workspaces, health-region and expiry lines
-  # together (keep the bucket). Money, protection and fast drain stay off.
+  # together (keep the bucket and regions; regions need not be emptied to
+  # disable shadow). Money, protection and fast drain stay off.
+  # October 28: scope shadow to us-central1, us-east4 and europe-west4 after
+  # client deadlines in southamerica-east1 falsely tripped the fleet stop
+  # while Spanner was healthy. Add the operator's pilot workspace to exercise
+  # real-traffic cached-input and reasoning-token billing shapes in shadow.
   "TR_ASYNC_SETTLE_SHADOW_ATTACHMENT_BUCKET=tr-async-settle-shadow-attachments-quill-cloud-proxy"
   "TR_ASYNC_SETTLE_SHADOW_POLICY=shadow-v2"
   "TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION=us-central1"
-  "TR_ASYNC_SETTLE_SHADOW_WORKSPACES=162e441a-5d13-414f-92bd-7c6cd805faa3"
+  "TR_ASYNC_SETTLE_SHADOW_REGIONS=us-central1,us-east4,europe-west4"
+  "TR_ASYNC_SETTLE_SHADOW_WORKSPACES=162e441a-5d13-414f-92bd-7c6cd805faa3,45819281-0ce9-4811-a0cd-c660ab3a116d"
   # Runtime stop for any shadow canary: an ISO-8601 UTC instant at most 14 days
   # ahead of start-up (e.g. 2026-10-24T15:00:00Z). Every request and owner tick
   # checks it, so the canary turns itself off without a deploy. Deployed
