@@ -1002,6 +1002,11 @@ class Settings(BaseSettings):
     async_settle_shadow_attachment_bucket: str = ""
     async_settle_shadow_policy: str = ""
     async_settle_shadow_health_region: str = ""
+    # Optional comma-separated serving-region allowlist for shadow v2 only.
+    # Empty preserves fleet-wide behavior; otherwise TR_SERVING_REGION must
+    # be explicit and listed. The health publisher region must also be listed.
+    async_settle_shadow_regions: str = ""
+    _async_settle_shadow_region_ids: frozenset[str] = PrivateAttr(default=frozenset())
     async_settle_shadow_workspaces: str = ""
     _async_settle_shadow_workspace_ids: frozenset[str] = PrivateAttr(default=frozenset())
     # Runtime stop for a shadow v2 canary: an ISO-8601 instant with an explicit
@@ -1471,6 +1476,32 @@ class Settings(BaseSettings):
         return self._async_settle_shadow_workspace_ids
 
     @model_validator(mode="after")
+    def parse_shadow_regions(self) -> Settings:
+        regions = frozenset(part.strip() for part in self.async_settle_shadow_regions.split(",") if part.strip())
+        if any(re.fullmatch(r"[a-z0-9\-]{1,32}", value) is None for value in regions):
+            raise ValueError("invalid async settle shadow region set")
+        if (regions and self.async_settle_shadow_health_region
+                and self.async_settle_shadow_health_region not in regions):
+            raise ValueError("TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION must be in TR_ASYNC_SETTLE_SHADOW_REGIONS "
+                             "so the shadow health publisher is not excluded")
+        self._async_settle_shadow_region_ids = regions
+        return self
+
+    @property
+    def async_settle_shadow_region_ids(self) -> frozenset[str]:
+        return self._async_settle_shadow_region_ids
+
+    def async_settle_shadow_region_allowed(self) -> bool:
+        # Fastpath uses this same process-region resolver. Require the explicit
+        # serving pin here: its primary_region fallback must not opt a boot in.
+        return not self._async_settle_shadow_region_ids or (
+            bool(self.serving_region) and self.effective_serving_region in self._async_settle_shadow_region_ids)
+
+    def regional_async_settle_shadow_policy(self) -> str:
+        """Region-filtered raw pin; preserve existing expiry checks at each layer."""
+        return self.async_settle_shadow_policy if self.async_settle_shadow_region_allowed() else ""
+
+    @model_validator(mode="after")
     def parse_shadow_expiry(self) -> Settings:
         raw = self.async_settle_shadow_expires_at.strip()
         if not raw:
@@ -1497,7 +1528,7 @@ class Settings(BaseSettings):
         Local and test environments without an expiry run unbounded; every
         deployed environment needs an unexpired ``async_settle_shadow_expires_at``.
         """
-        if self._async_settle_shadow_stopped:
+        if self._async_settle_shadow_stopped or not self.async_settle_shadow_region_allowed():
             return False
         expiry = self._async_settle_shadow_expiry
         if expiry is None:
@@ -1505,7 +1536,7 @@ class Settings(BaseSettings):
         return (time.time() if now is None else now) < expiry
 
     def effective_async_settle_shadow_policy(self, now: float | None = None) -> str:
-        """The shadow policy pin, or "" once the canary expiry has passed."""
+        """The shadow policy pin, or "" outside its region, expiry or stop gates."""
         return self.async_settle_shadow_policy if self.async_settle_shadow_live(now) else ""
 
     @model_validator(mode="after")

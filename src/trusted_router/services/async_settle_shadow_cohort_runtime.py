@@ -734,6 +734,8 @@ class Runtime:
 
 
 def install(app: Any, settings: Settings, backend: Any) -> None:
+    if not settings.async_settle_shadow_region_allowed():
+        return
     service = getattr(app.state, "async_settle_shadow_observation", None)
     if service is None:
         return
