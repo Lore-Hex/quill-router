@@ -72,7 +72,8 @@ def test_ci_shards_record_durations_using_existing_split_weights() -> None:
         steps = jobs[job_name]["steps"]
         test_index = next(i for i, step in enumerate(steps)
                           if "uv run pytest" in step.get("run", ""))
-        assert steps[test_index - 1]["run"] == f"cp .test_durations {path}"
+        profile = ".test_durations" if clock == "default" else ".test_durations-post-cutover"
+        assert steps[test_index - 1]["run"] == f"cp {profile} {path}"
         command = steps[test_index]["run"]
         assert f"--store-durations --durations-path={path} --clean-durations" in command
         assert "--splitting-algorithm least_duration" in command
@@ -192,7 +193,8 @@ def test_proof_oracle_ci_split(request, tmp_path):
                        '-m', 'proof_oracle', 'tests/test_async_settle_proof_oracle.py',
                        'tests/test_async_settle_shadow_v2_gate_window.py',
                        '--splits', '6', '--group', '${{', 'matrix.shard', '}}',
-                       '--splitting-algorithm', 'least_duration']
+                       '--splitting-algorithm', 'least_duration', '--store-durations',
+                       '--durations-path=durations-${{', 'matrix.shard', '}}.json', '--clean-durations']
     assert job['runs-on'] == 'ubuntu-24.04'
     assert job['timeout-minutes'] == 45
     assert job['strategy']['matrix'] == {'clock': ['default', 'post-cutover'], 'shard': [1, 2, 3, 4, 5, 6]}

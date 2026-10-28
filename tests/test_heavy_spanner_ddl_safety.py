@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 BASH = Path("/bin/bash")
 MIGRATION = ROOT / "scripts" / "deploy" / "migrate_entity_ttl.sh"
-DEPLOY_WORKFLOW = ROOT / ".github" / "workflows" / "deploy.yml"
+DEPLOY_WORKFLOW = ROOT / ".github" / "workflows" / "deploy-production.yml"
 
 
 def _fake_gcloud(tmp_path: Path) -> tuple[dict[str, str], Path]:

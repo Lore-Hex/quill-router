@@ -216,6 +216,10 @@ deploy_mutex_assert
 
 shift_traffic() {
   deploy_mutex_assert
+  if [ -n "${TR_SECONDARY_ABORT_FILE:-}" ] && [ -e "$TR_SECONDARY_ABORT_FILE" ]; then
+    rollback_to_old "another secondary failed; refusing further traffic shifts"
+    return 1
+  fi
   local new_pct="$1"
   local old_pct=$((100 - new_pct))
   log "shifting traffic: ${new_pct}% ${NEW_REV} / ${old_pct}% ${OLD_REV}"
@@ -242,6 +246,7 @@ shift_traffic() {
 
 rollback_to_old() {
   local reason="$1"
+  deploy_mutex_assert || return 1
   log "ROLLBACK — ${reason}; reverting to 100% ${OLD_REV}"
   gcloud run services update-traffic "$SERVICE" \
     --region="$REGION" --project="$PROJECT_ID" \
@@ -461,6 +466,32 @@ if ! shift_traffic 100; then
   exit 1
 fi
 probe_legacy_surface_or_rollback 100
+# The coordinator may start the next region only after a full healthy minute
+# at 100% and a billing gate. This is ADDITIONAL to the entire 15-minute drain;
+# this process retains ownership of its tag, watchdog and rollback throughout.
+if [ -n "${TR_SECONDARY_READY_FILE:-}" ]; then
+  if [ "$REGION" = "us-central1" ] || [ "${DEPLOY_MUTEX_SCOPE_OWNS_LOCK:-0}" -eq 1 ]; then
+    log "secondary overlap requires a workflow-owned reservation and secondary region"
+    exit 1
+  fi
+  python3 "${SCRIPT_DIR}/watchdog.py" --regions "$REGION" --duration-min 1 \
+    --rollback-after 1 --slo-class "$WATCHDOG_SLO_CLASS" \
+    --baseline-input "${TR_STAGED_WATCHDOG_BASELINE_FILE:?}" || {
+      rollback_to_old "secondary handoff canary failed"; exit 1;
+    }
+  bash "${SCRIPT_DIR}/assert_no_billing_5xx.sh" "$REGION" \
+    "${TR_SECONDARY_STARTED_AT:?}" "$NEW_REV" || {
+      rollback_to_old "secondary handoff billing gate failed"; exit 1;
+    }
+  deploy_mutex_assert
+  if [ -e "${TR_SECONDARY_ABORT_FILE:?}" ]; then
+    rollback_to_old "another secondary failed before handoff"
+    exit 1
+  fi
+  printf '%s\n' "$REGION" "$NEW_REV" "${TR_DEPLOY_MUTEX_OPERATION:?}" \
+    >"${TR_SECONDARY_READY_FILE}.tmp"
+  mv "${TR_SECONDARY_READY_FILE}.tmp" "$TR_SECONDARY_READY_FILE"
+fi
 finish_revision_drain
 if ! cleanup_probe_tag; then
   exit 1

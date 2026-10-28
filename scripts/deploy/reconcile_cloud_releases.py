@@ -31,7 +31,7 @@ def completed_release() -> str:
               "--status", "success", "--limit", "30", "--json", "databaseId,headSha")
     for run in runs:
         details = gh("run", "view", str(run["databaseId"]), "--repo", REPO, "--json", "jobs")
-        jobs = {job["name"]: job["conclusion"] for job in details["jobs"]}
+        jobs = {job["name"].removeprefix("rollout / "): job["conclusion"] for job in details["jobs"]}
         if all(jobs.get(name) == "success" for name in REQUIRED_JOBS):
             sha = run["headSha"]
             if not re.fullmatch(r"[a-f0-9]{40}", sha):

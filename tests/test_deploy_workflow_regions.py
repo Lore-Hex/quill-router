@@ -31,7 +31,7 @@ def _assert_rollout_secondaries_requires_successful_deploy(workflow: str) -> Non
 
 
 def test_every_load_balanced_control_plane_region_is_staged() -> None:
-    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/deploy-production.yml").read_text(encoding="utf-8")
     deploy = workflow.split("\n  deploy:\n", 1)[1].split("\n  rollout-secondaries:\n", 1)[0]
     ramp = (ROOT / "scripts/deploy/ramp_secondaries.sh").read_text(encoding="utf-8")
 
@@ -44,7 +44,7 @@ def test_every_load_balanced_control_plane_region_is_staged() -> None:
 
 
 def test_every_rollout_step_receives_the_repository_stripe_account_pin() -> None:
-    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/deploy-production.yml").read_text(encoding="utf-8")
     invocations = []
     for step in workflow.split("\n      - ")[1:]:
         metadata, separator, run = step.partition("\n        run:")
@@ -65,7 +65,7 @@ def test_every_rollout_step_receives_the_repository_stripe_account_pin() -> None
 
 
 def test_prod_smoke_checks_public_origins_and_converges_private_regions() -> None:
-    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/deploy-production.yml").read_text(encoding="utf-8")
 
     assert "for region in us-central1 us-east4 europe-west4 southamerica-east1; do" in workflow
     smoke = workflow.split("- name: Smoke test prod", 1)[1]
@@ -96,7 +96,7 @@ def test_prod_smoke_checks_public_origins_and_converges_private_regions() -> Non
 
 
 def test_deploy_syncs_the_shared_public_snapshot_worker() -> None:
-    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/deploy-production.yml").read_text(encoding="utf-8")
 
     assert "- name: Sync shared public analytics snapshots" in workflow
     assert "scripts/deploy/sync_public_analytics_snapshots.sh --apply" in workflow
@@ -104,7 +104,7 @@ def test_deploy_syncs_the_shared_public_snapshot_worker() -> None:
 
 def test_snapshot_upload_uses_isolated_iap_acceleration_without_runtime_bloat() -> None:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text())
-    workflow = yaml.safe_load((ROOT / ".github/workflows/deploy.yml").read_text())
+    workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-production.yml").read_text())
     steps = workflow["jobs"]["migrate-schema"]["steps"]
     install = next(step for step in steps if step.get("name") == "Install migration runtime")
     sync = next(step for step in steps if step.get("name") == "Sync shared public analytics snapshots")
@@ -121,7 +121,7 @@ def test_snapshot_upload_uses_isolated_iap_acceleration_without_runtime_bloat() 
 
 
 def test_snapshot_failure_is_reported_using_outcome_not_masked_conclusion() -> None:
-    workflow = yaml.safe_load((ROOT / ".github/workflows/deploy.yml").read_text())
+    workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-production.yml").read_text())
     steps = workflow["jobs"]["migrate-schema"]["steps"]
     sync = next(step for step in steps if step.get("name") == "Sync shared public analytics snapshots")
     report = next(step for step in steps if step.get("name") == "Report snapshot publication failure")
@@ -143,7 +143,7 @@ def test_snapshot_sync_cannot_gate_the_control_plane_deploy() -> None:
     ~61 minutes in -- with a Stripe-credit fix sitting in the image it was
     carrying. Bounded and non-fatal, so a snapshot problem degrades snapshots.
     """
-    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/deploy-production.yml").read_text(encoding="utf-8")
     step = workflow.split("- name: Sync shared public analytics snapshots", 1)[1].split(
         "- name:", 1
     )[0]
@@ -241,7 +241,7 @@ def test_public_snapshot_worker_swap_is_verified_and_rollbackable() -> None:
 
 
 def test_all_regions_launch_together_but_only_primary_warm_gates_traffic() -> None:
-    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/deploy-production.yml").read_text(encoding="utf-8")
     deploy = workflow.split("\n  deploy:\n", 1)[1].split("\n  rollout-secondaries:\n", 1)[0]
     start = deploy.index("- name: Warm all four regions in parallel (no traffic)")
     end = deploy.index("- name: Stage traffic 10/50/100 (us-central1)", start)
@@ -299,7 +299,7 @@ def test_all_regions_launch_together_but_only_primary_warm_gates_traffic() -> No
 
 
 def test_primary_job_budget_covers_gates_and_bounded_cleanup() -> None:
-    workflow = yaml.safe_load((ROOT / ".github/workflows/deploy.yml").read_text())
+    workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-production.yml").read_text())
     primary = workflow["jobs"]["deploy"]
     steps = primary["steps"]
     canary = next(step for step in steps if step.get("id") == "canary_us")
@@ -312,7 +312,7 @@ def test_primary_job_budget_covers_gates_and_bounded_cleanup() -> None:
 
 
 def test_secondaries_ramp_serially() -> None:
-    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/deploy-production.yml").read_text(encoding="utf-8")
     rollout = workflow.split("\n  rollout-secondaries:\n", 1)[1].split(
         "\n  public-surface-companion:\n", 1
     )[0]
@@ -330,9 +330,9 @@ def test_secondaries_ramp_serially() -> None:
     assert 'echo "TR_DEPLOY_MUTEX_OPERATION=${DEPLOY_MUTEX_OPERATION}"' in rollout
     assert 'echo "TR_DEPLOY_MUTEX_GENERATION=${DEPLOY_MUTEX_GENERATION}"' in rollout
 
-    ramp_step = rollout.index("- name: Ramp secondaries serially\n")
+    ramp_step = rollout.index("- name: Ramp secondaries serially with supervised overlapping drains\n")
     ramp = rollout[ramp_step : rollout.index("- name: Deploy synthetic monitor", ramp_step)]
-    assert "run: bash scripts/deploy/ramp_secondaries.sh" in ramp
+    assert "run: python3 scripts/deploy/coordinate_secondaries.py" in ramp
     assert "run: |" not in ramp
 
     script = (ROOT / "scripts/deploy/ramp_secondaries.sh").read_text(encoding="utf-8")
@@ -352,7 +352,7 @@ def test_secondaries_ramp_serially() -> None:
 
 
 def test_rollout_secondaries_deploy_result_gate_rejects_bare_success_mutation() -> None:
-    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/deploy-production.yml").read_text(encoding="utf-8")
     mutated = workflow.replace(
         ROLLOUT_SECONDARIES_DEPLOY_GATE,
         "if: ${{ github.repository == 'Lore-Hex/quill-router' && success() }}",
@@ -365,7 +365,7 @@ def test_rollout_secondaries_deploy_result_gate_rejects_bare_success_mutation() 
 
 
 def test_full_convergence_jobs_need_rollout_secondaries() -> None:
-    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/deploy-production.yml").read_text(encoding="utf-8")
     companion = workflow.split("\n  public-surface-companion:\n", 1)[1].split(
         "\n  verify-cloud-complete:\n", 1
     )[0]
@@ -377,7 +377,7 @@ def test_full_convergence_jobs_need_rollout_secondaries() -> None:
 
 
 def test_regional_hold_is_read_by_both_traffic_jobs() -> None:
-    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/deploy-production.yml").read_text(encoding="utf-8")
     deploy = workflow.split("\n  deploy:\n", 1)[1].split(
         "\n  rollout-secondaries:\n", 1
     )[0]
@@ -393,7 +393,7 @@ def test_regional_hold_is_read_by_both_traffic_jobs() -> None:
 
 
 def test_primary_rollout_gates_on_router_core_and_billing_path_errors() -> None:
-    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/deploy-production.yml").read_text(encoding="utf-8")
     primary = workflow.index("- name: Warm all four regions in parallel (no traffic)")
     secondary = workflow.index("\n  rollout-secondaries:", primary)
     rollout = workflow[primary:secondary]
@@ -408,7 +408,7 @@ def test_primary_rollout_gates_on_router_core_and_billing_path_errors() -> None:
 
 
 def test_primary_ramp_resolves_current_baseline_and_only_logs_snapshot() -> None:
-    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/deploy-production.yml").read_text(encoding="utf-8")
     start = workflow.index("- name: Resolve primary ramp baseline")
     end = workflow.index("- name: Canary gate — watch us-central1 only", start)
     primary = workflow[start:end]
@@ -430,7 +430,7 @@ def test_billing_path_gate_only_attributes_errors_to_candidate_revision() -> Non
 
 
 def test_superseded_push_stops_before_production_mutation() -> None:
-    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/deploy-production.yml").read_text(encoding="utf-8")
     confirm = workflow.index("confirm-current-main:")
     admit = workflow.index("\n  admit-cloud:", confirm)
     deploy = workflow.index("\n  deploy:", admit)
@@ -448,7 +448,7 @@ def test_superseded_push_stops_before_production_mutation() -> None:
 
 
 def test_rollback_capture_uses_the_sole_serving_revision() -> None:
-    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/deploy-production.yml").read_text(encoding="utf-8")
     start = workflow.index("- name: Capture pre-deploy revisions")
     end = workflow.index("- name: Warm all four regions in parallel", start)
     capture = workflow[start:end]
@@ -462,7 +462,7 @@ def test_rollback_capture_uses_the_sole_serving_revision() -> None:
 
 
 def test_runtime_secret_validation_is_parallel_and_does_not_restore_stale_ses_keys() -> None:
-    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/deploy-production.yml").read_text(encoding="utf-8")
     sync = workflow.index("sync-runtime-secrets:")
     end = workflow.index("\n  confirm-still-on-main:", sync)
     section = workflow[sync:end]
@@ -477,7 +477,7 @@ def test_runtime_secret_validation_is_parallel_and_does_not_restore_stale_ses_ke
 
 
 def test_shared_load_balancer_is_reconciled_once_per_workflow() -> None:
-    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/deploy-production.yml").read_text(encoding="utf-8")
 
     assert workflow.count('"us-central1" "1" "${revision_files[0]}"') == 1
     for region in ("europe-west4", "us-east4", "southamerica-east1"):
@@ -510,7 +510,7 @@ def test_probe_tag_is_hoisted_and_watchdog_baseline_overlaps_traffic_shift() -> 
     final_ready = staged.index("\nfinish_final_baseline\n", final_capture)
     assert final_capture < final_ready < final_shift
 
-    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/deploy-production.yml").read_text(encoding="utf-8")
     assert "final-watchdog-baseline-us-central1.json" in workflow
     assert '--baseline-input "${RUNNER_TEMP}/final-watchdog-baseline-us-central1.json"' in workflow
     ramp = (ROOT / "scripts/deploy/ramp_secondaries.sh").read_text(encoding="utf-8")
@@ -518,7 +518,7 @@ def test_probe_tag_is_hoisted_and_watchdog_baseline_overlaps_traffic_shift() -> 
 
 
 def test_full_convergence_metrics_are_reported_before_mutex_release() -> None:
-    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/deploy-production.yml").read_text(encoding="utf-8")
     rollout = workflow.split("\n  rollout-secondaries:\n", 1)[1].split(
         "\n  public-surface-companion:\n", 1
     )[0]
@@ -544,7 +544,7 @@ def test_mutex_acquire_step_cannot_swallow_a_blocked_exit() -> None:
     would deploy WITHOUT holding it. The acquire invocation must therefore
     never sit on the left of an unguarded pipe.
     """
-    workflow = (ROOT / ".github" / "workflows" / "deploy.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github" / "workflows" / "deploy-production.yml").read_text(encoding="utf-8")
     for line in workflow.splitlines():
         if "deploy_mutex.sh acquire" in line and "|" in line.split("acquire", 1)[1]:
             raise AssertionError(
