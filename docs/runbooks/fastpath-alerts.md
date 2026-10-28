@@ -168,7 +168,14 @@ lines, and take a dump before the next restart.
 
 ### A start that stalls
 
-A process's start has two budgets, one after the other. First it warms
+A process's start has three budgets, one after the other. First, before
+the service runs, it reads its secrets (the envelope keys and the edge's
+token), each read with a 15 s deadline, and makes its Spanner and Pub/Sub
+clients, all of it watched for 15 s per secret read plus a minute
+(`service.StartStall`), so reads that each nearly run out still fit: a read
+that runs out of time fails the start with its error, and one deaf to its
+deadline trips the watch, which logs `fastpath: the start stalled before
+its parts began` and exits with code 1. Then it warms
 the Spanner client's session: one read with a 2 min deadline
 (`store.WarmSessionWait`), since it waits behind the client's own session
 creations, watched for 2 min 15 s (`service.WarmStall`). Then its parts
@@ -176,8 +183,9 @@ start: the Spanner calls they make before they run (the ring row's join,
 the first read of the members, the first read of the switch) each have a
 15 s deadline (`service.StartDeadline`), and the parts' start as a whole
 has a minute (`service.StartStall`). A process whose start stalls
-anywhere exits within about four minutes (`WarmStall`, `StartStall` and
-`service.FailStop`). Without these bounds a stalled read held the start
+anywhere exits within the sum of the four (the first budget, `WarmStall`,
+`StartStall` and `service.FailStop`): under six minutes for a node's two or
+three secret reads. Without these bounds a stalled read held the start
 for good: the auditor never started, and the edge, which serves before
 the node's other parts, answered the balancer serving all the while. A
 join or a read of the members that runs out of time fails the process,
