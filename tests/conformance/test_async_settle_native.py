@@ -4,6 +4,8 @@ from uuid import uuid4
 
 import pytest
 
+from tests.conformance.spanner_sql_builders import NOW
+from tests.conformance.test_rpc_c1_native import c1_database  # noqa: F401 - isolated native database
 from trusted_router.services.async_settle import Admission
 from trusted_router.storage_gcp_async_admission import read_admission
 
@@ -264,3 +266,55 @@ def test_native_sibling_refund_first_claimant(native_emulator_resources, backend
         with database.batch() as batch:
             batch.delete('tr_reservation', KeySet(keys=[[rid]]))
             batch.delete('tr_settle_outbox', KeySet(keys=[[aid, 'settle'], [aid, 'refund']]))
+
+
+def test_native_drain_version_partition(c1_database, monkeypatch):  # noqa: F811 - shared fixture
+    """Execute the real bulk/shard queries and lease claims against two native rows."""
+    from google.cloud.spanner_v1 import param_types as pt
+
+    from trusted_router import storage_gcp_settle_outbox as outbox_module
+
+    database = c1_database
+    now = NOW.isoformat().replace('+00:00', 'Z')
+    monkeypatch.setattr(outbox_module, '_iso_now', lambda: now)
+    # Seventeen fixed keys guarantee a pair in one of the sixteen generated
+    # shards. Ask GoogleSQL for the hash; don't approximate FARM_FINGERPRINT.
+    with database.snapshot() as snapshot:
+        shards = list(snapshot.execute_sql(
+            "SELECT id, MOD(MOD(FARM_FINGERPRINT(CONCAT(id, '#settle')), 16) + 16, 16) "
+            "FROM UNNEST(@ids) AS id ORDER BY id",
+            params={'ids': [f'drain-partition-{i:02}' for i in range(17)]},
+            param_types={'ids': pt.Array(pt.STRING)},
+        ))
+    seen = {}
+    for aid, shard in shards:
+        if shard in seen:
+            legacy_id, async_id = seen[shard], aid
+            break
+        seen[shard] = aid
+    else:
+        pytest.fail('17 keys must collide across 16 shards')
+    with database.batch() as batch:
+        batch.insert('tr_settle_outbox',
+            columns=('authorization_id', 'intent_kind', 'settle_origin', 'actual_cost_micro',
+                     'async_version', 'created_at', 'next_attempt_at'),
+            values=[(legacy_id, 'settle', 'typed', 1, None, NOW - timedelta(seconds=3), NOW - timedelta(seconds=1)),
+                    (async_id, 'settle', 'typed', 1, 1, NOW - timedelta(seconds=3), NOW - timedelta(seconds=2))])
+    outbox = outbox_module.SpannerSettleOutbox(database, pt)
+    def ids(rows):
+        return [row.authorization_id for row in rows]
+
+    # Async is first in due order: a legacy LIMIT must apply after the SQL
+    # partition, not before a Python filter. Both default scans include both.
+    assert ids(outbox.due()) == [async_id, legacy_id]
+    assert ids(outbox.due(limit=1, legacy_only=True)) == [legacy_id]
+    assert ids(outbox.due_shard(shard=shard)) == [async_id, legacy_id]
+    assert ids(outbox.due_shard(shard=shard, async_only=True)) == [async_id]
+    assert ids(outbox.claim(limit=2, lease_seconds=300)) == [legacy_id]
+    legacy, accepted = outbox.get(legacy_id, 'settle'), outbox.get(async_id, 'settle')
+    assert legacy.lease_owner and legacy.leased_until == (NOW + timedelta(seconds=300)).isoformat().replace('+00:00', 'Z')
+    assert accepted.lease_owner is None and accepted.leased_until is None
+    # Recovery uses the same advisory candidates with the short lease.
+    candidates = outbox.due_shard(shard=shard, async_only=True)
+    assert ids(outbox.claim_candidates(candidates, lease_seconds=30)) == [async_id]
+    assert outbox.get(async_id, 'settle').leased_until == (NOW + timedelta(seconds=30)).isoformat().replace('+00:00', 'Z')
