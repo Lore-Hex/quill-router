@@ -523,7 +523,8 @@ protects, read from the serving process's catalog when signing);
 `async_settle`, four booleans read when signing
 (docs/design/fast-admission-e2-g15-async.md section 3.4):
 `admission_enabled` (`async_settle_admission_enabled`), `edge_decide`
-(`TR_FASTPATH_EDGE_DECIDE_ASYNC`, a literal `false` in `rollout.sh`),
+(`TR_FASTPATH_EDGE_DECIDE_ASYNC`, a literal in `rollout.sh`, `true` since
+I4),
 `ticket_authority` (this process's async-settle runtime has a signer, an
 epoch of at least 1 and a journal region) and `typed_records` (its store
 writes typed records). Sets are sorted and unique.
