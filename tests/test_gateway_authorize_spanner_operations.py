@@ -33,9 +33,9 @@ def _request() -> Request:
     return Request({"type": "http", "method": "POST", "path": "/", "headers": []})
 
 
-def _seed_typed_gateway_store(**options: Any) -> tuple[SpannerStore, object, object]:
+def _seed_typed_gateway_store(*, workspace_id: str = "ws-rpc", **options: Any) -> tuple[SpannerStore, object, object]:
     store, database = make_fake_store(request_record_write_mode="typed", **options)
-    workspace = Workspace(id="ws-rpc", name="RPC", owner_user_id="user-rpc")
+    workspace = Workspace(id=workspace_id, name="RPC", owner_user_id="user-rpc")
     store._write_entity("workspace", workspace.id, workspace)
     store._write_entity("credit", workspace.id, CreditAccount(workspace_id=workspace.id))
     database.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(workspace.id, 0)] = {
