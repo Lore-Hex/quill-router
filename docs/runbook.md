@@ -808,6 +808,94 @@ against a baseline of 6.
 
 ## <a id="settle-outbox"></a>Settle outbox: flip, verify, monitor, roll back
 
+### Dedicated warm worker (code available; deployment separate)
+
+Run the router image as `TR_SERVICE_SURFACE=settle-drain` on **one** warm,
+always-CPU Cloud Run instance in **us-central1**, alongside the existing
+five-minute scheduler. Do not start this loop on router instances. The only
+HTTP route is `GET /health`; ingress and invocation must be private.
+The separate worker deploy must go through the reviewed release gates.
+
+Worker-only pins (router pins remain unchanged):
+
+| Setting (prefix `TR_SETTLE_OUTBOX_`) | Value |
+| --- | ---: |
+| `FAST_DRAIN_ENABLED` | `true` |
+| `POLL_INTERVAL_SECONDS` | `1` |
+| `PASS_BUDGET_SECONDS` | `2` |
+| `LEASE_SECONDS` | `30` |
+| `WORKER_CONCURRENCY` | `4` |
+| `CLAIM_BATCH` | `4` |
+| `HEALTH_PUBLISH_INTERVAL_SECONDS` | `1` |
+
+Use the router's Spanner database and service-account identity, with
+`TR_ASYNC_SETTLE_PROTECTION=true`, `TR_SETTLE_OUTBOX_ENABLED=true`, typed
+request records, generation records, benchmark analytics outbox and operational
+analytics outbox enabled, and `TR_OPERATIONAL_ANALYTICS_SINK=outbox`.
+No application secrets, ClickHouse reader/writer credentials, gateway token,
+Stripe credentials or signing keys are needed. Application logs go to stdout/stderr.
+No analytics drain, auto-refill, shadow observer, startup harness, routing/edge
+publisher, synthetic monitor or other normal app starter is installed.
+
+The loop publishes the existing `settle_drain_control / fleet-v1` record from
+real unresolved-row snapshots. Completed shard scans/applies trigger due
+publication **inside** a pass, so a busy pass does not wait until its end.
+Leased and dead rows remain in the age distribution; bounded/truncated or
+unknown-age evidence remains unhealthy. There is no independent heartbeat
+publisher. A stuck/dead loop cannot refresh evidence, and router admission
+closes when the last observation reaches five seconds old. Publication is due
+at the configured interval, serviced by the next completed unit of work;
+if work or Spanner cannot progress promptly, freshness fails closed.
+
+Liveness is separate from admission: `/health` reports `idle` with fast mode
+off, `ok` while the thread responds, and HTTP 503 if it dies or has no progress
+for 60 seconds. Caught pass failures count as responsiveness but never publish
+health. This prevents ordinary database failures from causing restart storms;
+the longer threshold tolerates bounded housekeeping/apply delays. Configure an
+HTTP liveness probe, and alert on stale fleet health independently of restarts.
+A persistent blocking dependency can still cause repeated restarts: disable fast
+mode and investigate rather than loosening admission freshness.
+
+To stop, disable async admission on routers first, drain accepted work, then
+set **only this service's** `TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED=false` through
+its reviewed config. Off is healthy, logs once and does not initialize Spanner.
+SIGTERM skips the router listener delay, stops new claims, and joins the loop
+for at most eight seconds. A claim returned after stop is left leased; running
+applies retain existing fencing and RPC bounds. Cloud Run can kill a transaction
+at the grace deadline; do not clear its lease manually.
+
+Legacy bulk claims now skip non-NULL `async_version` rows, even if worker health
+is absent. Otherwise its 500-row, 300-second lease can strand an async batch
+tail past 60 seconds, including during worker recovery. The five-minute watchdog
+still claims sync-fallback rows exactly as before; it is **not** async failover.
+Keep the warm worker enabled until accepted async rows are resolved. Do not
+roll back this exclusion to recover async work; restore the warm worker.
+
+With four slots, a full empty sweep takes four waves of four shard queries.
+At the existing 200 ms query bound this is about 0.8 s, excluding overhead.
+Start-to-start polling is one second; 30 s lease + 1 s poll + 0.8 s sweep
+leaves about 28 s of the 60 s target for claim/apply and replacement startup
+beyond lease expiry. Normal acceptance-to-finalization within 5 s requires
+measured capacity and short applies, not just these pins. The 60 s objective
+cannot be guaranteed through an outage, backlog, slow recovery or retry/park.
+
+Idle steady-state upper rates (excluding SDK session setup/retries): 16
+read-only shard queries/s; one health cadence read-write transaction/s;
+one unresolved snapshot scan/s (at most 10,001 rows); one fleet publication
+read-write transaction/s. Housekeeping cadence is one read-write transaction
+per 300 s, plus the existing bounded purge/reap work once per 300 s. No
+cadence transaction runs on a warm pass where its local timer is not due.
+Slow work lowers these rates. Budget this new load alongside the unchanged
+scheduler; do not relax Spanner's 45% CPU alarm.
+
+Before enabling the pilot, verify one instance, no public invocation, fresh
+`observed_at` via complete-primary-key reads every few seconds, expected idle
+operation rates, Spanner alerts OK, and booking plus outbox-completion latency
+on any rows. Measure a crash/reclaim rehearsal and p95 <=5 s / all <=60 s in
+the operating envelope. INFO emits work/failure events and a minute summary;
+per-publication snapshots are DEBUG, avoiding idle per-second INFO logs.
+
+
 Durably recover completed charges whose settle intent was recorded but whose
 inline settle result was lost. See `docs/design/durable-settle-outbox.md`.
 The correctness spine is the reaper guard; drain cadence affects latency only.

@@ -249,6 +249,14 @@ def create_app(
             "temporary TR_ALLOW_DEPLOYED_COMBINED_SURFACE=true migration bridge is "
             "explicitly enabled"
         )
+    if surface == "settle-drain":
+        # Deliberately before ALL normal app initialization/installers. The
+        # worker needs the billing store, not analytics readers or publishers.
+        from trusted_router.services.settle_outbox_worker import create_worker_app
+        if configure_store_arg and settings.settle_outbox_fast_drain_enabled:
+            configure_store(create_store(settings))
+        _configure_application_logging()
+        return create_worker_app(settings)
     validate_auto_model_order(settings.auto_model_order)
     if configure_store_arg:
         configure_store(create_store(settings))

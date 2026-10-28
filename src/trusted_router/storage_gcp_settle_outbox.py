@@ -629,6 +629,11 @@ class SpannerSettleOutbox:
         lease_until = _iso_after_seconds(lease_seconds)
         claimed: list[SettleOutboxRow] = []
         for candidate in self.due(limit=limit * 2):
+            # Accepted async work belongs to the warm worker, even if its
+            # health expired. A legacy batch can otherwise strand its tail
+            # under a 300-second lease. Sync fallback has async_version=NULL.
+            if candidate.async_version is not None:
+                continue
             if len(claimed) >= limit:
                 break
             if self._claim_one(candidate, owner=owner, lease_until=lease_until):

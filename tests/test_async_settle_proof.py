@@ -17,6 +17,7 @@ from tests.test_async_settle_handler import (
     ROOT,
     SUPPORTED,
     WIRE,
+    _drain_async,
     call,
     env,
     prepare,
@@ -29,7 +30,6 @@ from trusted_router.catalog_data import Model
 from trusted_router.detached_jws import canonical
 from trusted_router.routes.internal import gateway
 from trusted_router.services import settle_outbox_apply
-from trusted_router.services.settle_outbox_drain import drain_settle_outbox
 from trusted_router.storage_models import SettleOutboxRow
 
 STATE = ('typed', 'rows', 'reservations', 'gateway_authorizations', 'settle_outbox',
@@ -267,7 +267,7 @@ def run_four_paths(env, monkeypatch, case, scenario='ordinary'):
             assert (durable['model_id'], durable['selected_endpoint_id']) == (
                 selected['model_id'], selected['endpoint_id']), path
             assert {field: persisted[field] for field in repair_usage} == repair_usage
-            assert drain_settle_outbox(10)['outcomes'] == {'settled_now': 1}
+            assert _drain_async()['outcomes'] == {'settled_now': 1}
         # Legacy's atomic done INSERT clears its body; fresh snapshot-sync
         # never INSERTs an intent. Observe their real constructed repair rows,
         # not a second call to the builder that could disagree with dispatch.

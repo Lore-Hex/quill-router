@@ -472,6 +472,7 @@ class Settings(BaseSettings):
         "control",
         "internal",
         "observer",
+        "settle-drain",
     ] = "combined"
     # Temporary compatibility bridge for the pre-split GCP service.  This is
     # deliberately separate from ``service_surface`` so a missing surface env
@@ -1469,6 +1470,13 @@ class Settings(BaseSettings):
         if (self.settle_outbox_fast_drain_enabled
                 and self.settle_outbox_pass_budget_seconds >= self.settle_outbox_lease_seconds):
             raise ValueError("fast drain pass budget must be below its lease")
+        if self.service_surface == "settle-drain" and self.settle_outbox_fast_drain_enabled:
+            if self.settle_outbox_poll_interval_seconds > 1:
+                raise ValueError("warm drain poll interval must be at most one second")
+            if self.settle_outbox_lease_seconds > 30:
+                raise ValueError("warm drain lease must be at most 30 seconds for crash reclaim")
+            if self.settle_outbox_health_publish_interval_seconds > 2:
+                raise ValueError("warm drain health interval must be at most two seconds")
         return self
 
     @model_validator(mode="after")
@@ -2164,6 +2172,20 @@ class Settings(BaseSettings):
                 missing.append(f"unset {environment_name} for TR_SERVICE_SURFACE={surface}")
         if self.bootstrap_management_key:
             missing.append("unset TR_BOOTSTRAP_MANAGEMENT_KEY")
+        if surface == "settle-drain":
+            for name, key_path in (
+                ("async_settle_ticket_private_key_file", self.async_settle_ticket_private_key_file),
+                ("routing_snapshot_private_key_file", self.routing_snapshot_private_key_file),
+                ("speculation_shadow_private_key_file", self.speculation_shadow_private_key_file),
+            ):
+                if key_path:
+                    missing.append(f"unset TR_{name.upper()} for TR_SERVICE_SURFACE=settle-drain")
+            if self.storage_backend != "spanner-clickhouse":
+                missing.append("TR_STORAGE_BACKEND=spanner-clickhouse for TR_SERVICE_SURFACE=settle-drain")
+            if not self.async_settle_protection:
+                missing.append("TR_ASYNC_SETTLE_PROTECTION=true for TR_SERVICE_SURFACE=settle-drain")
+            if self.operational_analytics_sink != "outbox":
+                missing.append("TR_OPERATIONAL_ANALYTICS_SINK=outbox for TR_SERVICE_SURFACE=settle-drain")
         storage_required = surface != "actions"
         if surface == "actions" and self.storage_backend != "memory":
             missing.append("TR_STORAGE_BACKEND=memory for TR_SERVICE_SURFACE=actions")
@@ -2188,9 +2210,10 @@ class Settings(BaseSettings):
                 missing.append("TR_REQUEST_RECORD_WRITE_MODE=typed")
             # Tenant activity, usage and provider analytics are read from
             # ClickHouse alone; without the reader the surface has no data.
-            if not self.operational_analytics_clickhouse_url:
+            # The drain only writes the durable outbox, never reads analytics.
+            if surface != "settle-drain" and not self.operational_analytics_clickhouse_url:
                 missing.append("TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL")
-            if not self.operational_analytics_clickhouse_password:
+            if surface != "settle-drain" and not self.operational_analytics_clickhouse_password:
                 missing.append("TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD")
         if (
             storage_required

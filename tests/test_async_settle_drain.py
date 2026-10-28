@@ -288,14 +288,13 @@ def test_settings_and_loop_stop(fake_store, monkeypatch):
                    dict(settle_outbox_lease_seconds=30, settle_outbox_pass_budget_seconds=30)]:
         with pytest.raises(ValueError):
             settings(**kwargs)
-    with pytest.raises(ValueError):
-        worker.run_worker(defaults, threading.Event())
+    worker.run_worker(defaults, threading.Event())
     calls = []
     class Stop:
         def is_set(self):
             return len(calls) == 3
         def wait(self, interval):
-            assert interval == .01
+            assert 0 <= interval <= .01
     monkeypatch.setattr(worker, 'drain_pass', lambda *a, **kw: calls.append(kw['start_shard']))
     worker.run_worker(settings(settle_outbox_poll_interval_seconds=.01), Stop())
     assert calls == [0, 1, 2]
@@ -451,7 +450,7 @@ def test_inserted_done_has_no_unresolved_index_entry(fake_store):
 
 
 @pytest.mark.parametrize('concurrency', [1, 4])
-def test_shutdown_stops_new_claims_and_finishes_inflight(fake_store, monkeypatch, concurrency):
+def test_shutdown_after_claim_leaves_row_leased(fake_store, monkeypatch, concurrency):
     store, db = fake_store
     seed(store, 16)
     # Ensure the first slot has work; the other 15 records must remain byte-identical.
@@ -481,8 +480,11 @@ def test_shutdown_stops_new_claims_and_finishes_inflight(fake_store, monkeypatch
     started = time.monotonic()
     worker.run_worker(settings(settle_outbox_worker_concurrency=concurrency), stop)
     assert time.monotonic() - started < 2
-    assert len(claims) == len(applies) == 1
-    assert db.settle_outbox[('fast-0', 'settle')]['status'] == 'done'
+    assert len(claims) == 1 and applies == []
+    record = db.settle_outbox[('fast-0', 'settle')]
+    assert record['status'] == 'pending'
+    assert record['leased_until'] == claims[0].leased_until
+    assert record['lease_owner'] == claims[0].lease_owner
     assert {key: row for key, row in db.settle_outbox.items() if key != ('fast-0', 'settle')} == {
         key: row for key, row in before.items() if key != ('fast-0', 'settle')}
 

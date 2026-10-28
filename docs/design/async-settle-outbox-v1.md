@@ -702,6 +702,21 @@ it alerts on mismatch, never reprices an accepted intent. The first-writer
 reservation gate, not the lease alone, prevents double booking. Competing
 settle/refund intents retain the existing winner semantics.
 
+**Dedicated worker decision (dormant code change, October 2026).** The warm
+loop runs only on the `settle-drain` service surface: one always-CPU Cloud Run
+instance in us-central1, using the router image. Only its environment enables
+fast drain; routers retain fast=false and their five-minute legacy watchdog,
+so the current shadow-v2 window is unchanged. Fleet health is published from
+completed drain progress inside busy passes, never by an independent heartbeat.
+Local due timers avoid read-write cadence transactions on every poll. The
+legacy bulk claim excludes accepted async-version rows unconditionally; its
+300-second batch leases cannot own async work, even during stale-health recovery.
+Sync-fallback rows retain the legacy path. Proposed worker pins are poll=1 s,
+pass=2 s, lease=30 s, concurrency=4, claim batch=4, health interval=1 s; the
+pass remains below the lease. See the [runbook](../runbook.md#settle-outbox) for
+cost/recovery arithmetic, shutdown, secret isolation, enable/disable order and
+measurement gates. No deploy wiring or router pin changes accompany this code.
+
 The current worker is a recovery mechanism: `docs/runbook.md#settle-outbox`
 describes a **five-minute** scheduler; `drain_settle_outbox` loops sequentially,
 clamps limit to 500, budgets 240 s and leases for 300 s. It does not batch

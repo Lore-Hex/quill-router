@@ -75,6 +75,8 @@ logger = logging.getLogger("trusted_router.serve")
 
 def drain_seconds_from_env(environ: dict[str, str] | None = None) -> float:
     env = os.environ if environ is None else environ
+    if env.get("TR_SERVICE_SURFACE") == "settle-drain":
+        return 0.0  # No router traffic to drain; stop new claims promptly.
     raw = env.get(DRAIN_SECONDS_ENV)
     if raw is None or raw.strip() == "":
         return DEFAULT_DRAIN_SECONDS
