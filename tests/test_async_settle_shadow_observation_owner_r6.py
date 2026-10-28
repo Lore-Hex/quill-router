@@ -149,19 +149,28 @@ async def test_start_dispatches_first_publisher_before_observer(monkeypatch):
     svc = service()
     svc.settings.async_settle_shadow_health_region = svc.settings.effective_serving_region
     svc.store.wall = lambda: NOW_US/1e6
-    # Keep the scheduling loops dormant; this check is the synchronous start
-    # boundary followed by one actual worker result, with no clock wait.
-    monkeypatch.setattr(svc.observer, "start", lambda: None)
-    async def run():
-        return
-    monkeypatch.setattr(svc, "run", run)
+    from trusted_router.services import async_settle_shadow_health as shell
+    # Preparation is asynchronous. Preserve the actual owner loop and prove it
+    # dispatches before starting the observer, without advancing the fake clock.
+    monkeypatch.setattr(shell, "asyncio", asyncio)
+    observed = []
+    def observer_start():
+        assert svc.publisher_job is not None
+        assert svc.runtime_stop.available
+        observed.append(True)
+    monkeypatch.setattr(svc.observer, "start", observer_start)
     svc.start()
-    assert svc.publisher_job is not None
-    await svc.publisher_job
-    await svc.task
-    assert not svc.state.days[0].publishers
-    assert svc.state.days[0].attempted == 1
-    await svc.close()
+    try:
+        async with asyncio.timeout(3.):
+            while svc.publisher_job is None:
+                await asyncio.sleep(.005)
+            await svc.publisher_job
+        assert observed
+        assert not svc.state.days[0].publishers
+        assert svc.state.days[0].attempted == 1
+    finally:
+        await svc.close()
+
 
 
 def test_final_flag_and_transition_share_one_port_try_lock(monkeypatch):

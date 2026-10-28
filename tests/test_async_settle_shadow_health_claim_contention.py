@@ -788,7 +788,12 @@ def test_job_creating_tick_samples_monotonic_before_wall(monkeypatch, site):
             if site == "run":
                 await svc.run()
             elif site == "start":
+                # start only installs the retry supervisor now. The first tick
+                # lives in run; inspect that same paired-clock boundary.
+                monkeypatch.setattr(svc, "supervise", svc.run)
                 svc.start()
+                svc.runtime_stop.available = True
+                await svc.task
             elif site == "_flush":
                 next(svc._flush(200.))
             elif site == "observer_bootstrap":
