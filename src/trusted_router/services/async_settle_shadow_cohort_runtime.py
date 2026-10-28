@@ -36,6 +36,7 @@ from trusted_router.billing_snapshot import Eligibility, exclusion
 from trusted_router.config import Settings
 from trusted_router.detached_jws import canonical
 from trusted_router.schemas import GatewaySettleRequest
+from trusted_router.services.async_settle import has_authorize_feature_extras
 from trusted_router.services.async_settle_shadow_admission import unknown
 from trusted_router.services.async_settle_shadow_cohort import (
     AuthorizeInput,
@@ -96,7 +97,8 @@ def map_requested_facts(*, body: Any, authorization: GatewayAuthorization, endpo
     try:
         require(body.route_type is not None and type(body.stream) is bool, "missing_context")
         require(body.requested_parameters is not None, "missing_context")
-        require(not body.model_extra and "input_modalities" not in body.model_fields_set, "missing_context")
+        require(not has_authorize_feature_extras(body, shadow_v2=True)
+                and "input_modalities" not in body.model_fields_set, "missing_context")
         require(not set(body.requested_parameters) - _ORDINARY_PARAMETERS, "unknown_parameters")
         # A compound/alias route has no complete program witness at this seam.
         require(body.model == auth.model_id and not body.models, "missing_context")
