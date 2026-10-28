@@ -194,7 +194,7 @@ func (s *Store) WaitLeasedInserts() { s.leased.running.Wait() }
 // then the take's), so the take is never served on an ended context. An
 // error is a client with no session: the process does not start.
 func (s *Store) WarmSession() error {
-	ctx, cancel := context.WithTimeout(context.Background(), warmSessionWait)
+	ctx, cancel := context.WithTimeout(context.Background(), WarmSessionWait)
 	defer cancel()
 	ro := s.client.Single()
 	defer ro.Close()
@@ -202,9 +202,9 @@ func (s *Store) WarmSession() error {
 		spanner.QueryOptions{RequestTag: tag("warm-session")}).Do(func(*spanner.Row) error { return nil })
 }
 
-// warmSessionWait bounds WarmSession past the two session creations its
+// WarmSessionWait bounds WarmSession past the two session creations its
 // take can wait behind.
-const warmSessionWait = 2 * time.Minute
+const WarmSessionWait = 2 * time.Minute
 
 // leasedBegun runs once a callback has marked its transaction begun; a
 // test stretches the moment to the deadline.

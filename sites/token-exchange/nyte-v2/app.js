@@ -1,12 +1,45 @@
 (() => {
 'use strict';
 const nav=document.getElementById('nav'), menu=document.getElementById('menuBtn');
-menu.addEventListener('click',()=>{const open=nav.classList.toggle('open');menu.setAttribute('aria-expanded',String(open));});
-document.addEventListener('keydown',e=>{if(e.key==='Escape' && nav.classList.contains('open')){nav.classList.remove('open');menu.setAttribute('aria-expanded','false');menu.focus();}});
-document.addEventListener('click',e=>{if(!e.target.closest('header')){nav.classList.remove('open');menu.setAttribute('aria-expanded','false');}});
-const active={home:'/',api:'/confidential',cowork:'/trusted-cowork',sup:'/suppliers',providers:'/providers',index:'/index',buy:'/buy',accelerator:'/neocloud-accelerator'}[document.body.dataset.nytePage];
-document.querySelectorAll('nav a').forEach(a=>{if(a.getAttribute('href')===active){a.setAttribute('aria-current','page');a.classList.add('on');}});
+const groups=[...nav.querySelectorAll('.nav-group')];
+const closeGroups=()=>groups.forEach(group=>{group.classList.remove('open','pinned');group.querySelector('button').setAttribute('aria-expanded','false');});
+const closeMenu=()=>{nav.classList.remove('open');menu.setAttribute('aria-expanded','false');closeGroups();};
+const openGroup=group=>{closeGroups();group.classList.add('open');group.querySelector('button').setAttribute('aria-expanded','true');};
+groups.forEach(group=>{
+ const button=group.querySelector('button');
+ button.addEventListener('click',()=>{if(group.classList.contains('pinned'))closeGroups();else{openGroup(group);group.classList.add('pinned');}});
+ group.addEventListener('pointerenter',e=>{if(e.pointerType==='mouse' && innerWidth>800)openGroup(group);});
+ group.addEventListener('pointerleave',()=>{if(!group.contains(document.activeElement))closeGroups();});
+ group.addEventListener('focusin',()=>{if(innerWidth>800 && !group.classList.contains('open'))openGroup(group);});
+ group.addEventListener('focusout',e=>{if(!group.contains(e.relatedTarget))closeGroups();});
+});
+menu.addEventListener('click',()=>{const open=!nav.classList.contains('open');closeMenu();nav.classList.toggle('open',open);menu.setAttribute('aria-expanded',String(open));});
+document.addEventListener('keydown',e=>{if(e.key==='Escape' && !e.target.closest('dialog')){
+ const expanded=nav.querySelector('.nav-group.open button');
+ const phone=nav.classList.contains('open');
+ if(phone)menu.focus();else expanded?.focus();closeMenu();
+}});
+document.addEventListener('click',e=>{if(!e.target.closest('header'))closeMenu();});
+const active=document.body.dataset.nytePage==='home' ? '/' : location.pathname.replace(/\.html$/, '').replace(/\/$/, '') || '/';
+nav.querySelectorAll('a').forEach(a=>{if(a.getAttribute('href')===active){a.setAttribute('aria-current','page');a.classList.add('on');a.closest('.nav-group').querySelector('button').classList.add('on');}});
+const updateNew=()=>{
+ const today=new Date();today.setHours(0,0,0,0);
+ const dated=[...nav.querySelectorAll('a[data-added]')];
+ dated.forEach(item=>{item.querySelector('.tag').hidden=true;});
+ dated.filter(item=>{
+  const added=new Date(item.dataset.added+'T00:00:00');
+  const expires=new Date(added);expires.setDate(expires.getDate()+14);
+  return today>=added && today<expires;
+ })
+ .sort((a,b)=>b.dataset.added.localeCompare(a.dataset.added))
+ .slice(0,3).forEach(item=>{item.querySelector('.tag').hidden=false;});
+};
+updateNew();setInterval(updateNew,60000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)updateNew();});
 const dialog=document.getElementById('m-deck');
+const openDeckHash=()=>{if(location.hash==='#deck' && document.body.dataset.nytePage==='home' && !dialog?.open)dialog?.showModal();};
+window.addEventListener('hashchange',openDeckHash);openDeckHash();
+nav.querySelector('a[href="/#deck"]')?.addEventListener('click',()=>{if(document.body.dataset.nytePage==='home' && location.hash==='#deck')dialog?.showModal();});
 document.querySelectorAll('[data-open="deck"]').forEach(b=>b.addEventListener('click',()=>dialog.showModal()));
 dialog?.querySelector('[data-close]')?.addEventListener('click',()=>dialog.close());
 dialog?.addEventListener('click',e=>{if(e.target===dialog)dialog.close();});

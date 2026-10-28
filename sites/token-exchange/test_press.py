@@ -1,13 +1,15 @@
 """Press downloads stay public, complete, reproducible and separate from decks."""
 
 import json
+import re
 import struct
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
+from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 from zipfile import ZipFile
 
 from build import build, load_markets
@@ -105,6 +107,23 @@ class PressTests(unittest.TestCase):
         for phrase in ("not a securities or cryptocurrency exchange", "not live products", "not an inference location", "Not every provider", "no guaranteed volume"):
             self.assertIn(phrase, self.page)
         self.assertIn("symbolic generated artwork", text)
+
+    def test_every_market_footer_links_to_its_media_kit(self):
+        markets = load_markets()
+        self.assertEqual(
+            {path.parent.name for path in self.root.glob("*/index.html")},
+            {market["slug"] for market in markets},
+        )
+        for market in markets:
+            with self.subTest(market=market["slug"]):
+                page = (self.root / market["slug"] / "index.html").read_text()
+                footer = re.search(r'<footer\b[^>]*>(.*?)</footer>', page, re.S).group(1)
+                legal = re.search(r'<div class="legal">(.*?)</div>', footer, re.S).group(1)
+                links = re.findall(r'<a\b[^>]*href="([^"]+)"[^>]*>Media kit</a>', legal)
+                self.assertEqual(len(links), 1)
+                expected = ("https://nytokenexchange.com/media-kit" if market["slug"] == "new-york"
+                            else "https://trustedrouter.com/media-kit")
+                self.assertEqual(urljoin(f'https://{market["domain"]}/', unescape(links[0])), expected)
 
     def test_new_york_discoverability_only(self):
         for market in load_markets():

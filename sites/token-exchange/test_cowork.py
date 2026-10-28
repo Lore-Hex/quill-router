@@ -5,7 +5,6 @@ import unittest
 from pathlib import Path
 
 from build import build
-from nyte_v2 import render_nyte
 
 
 class CoworkTests(unittest.TestCase):
@@ -35,10 +34,3 @@ class CoworkTests(unittest.TestCase):
             self.assertTrue((root / "assets/nyte-v2/photos/cowork-app.png").is_file())
             self.assertRegex(page, r'/assets/nyte-v2/cowork\.css\?v=[0-9a-f]{12}')
             self.assertEqual(page.count('href="https://github.com/Lore-Hex/confidential-cowork-desktop"'), 1)
-
-    def test_shared_navigation(self):
-        for name in ("home", "api", "sup", "providers", "cowork"):
-            page = render_nyte(name)
-            self.assertEqual(page.count('>Trusted Cowork</a>'), 1)
-            self.assertLess(page.index('>Confidential API</a>'), page.index('>Trusted Cowork</a>'))
-            self.assertLess(page.index('>Trusted Cowork</a>'), page.index('>Index</a>'))

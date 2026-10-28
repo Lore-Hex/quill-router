@@ -1,9 +1,5 @@
-import json
-import subprocess
-import sys
 from io import BytesIO
 from pathlib import Path
-from urllib.parse import urljoin
 from zipfile import ZipFile
 
 from bs4 import BeautifulSoup
@@ -67,25 +63,3 @@ def test_media_kit_uses_the_existing_approved_marks() -> None:
         assert (static / "media-kit" / f"trustedrouter-{name}.svg").read_bytes() == (
             static / source
         ).read_bytes()
-
-
-def test_token_exchange_footer_links_to_media_kit(tmp_path: Path) -> None:
-    root = Path(__file__).resolve().parents[1]
-    subprocess.run(  # noqa: S603 - fixed repository builder, isolated output directory
-        [sys.executable, str(root / "sites/token-exchange/build.py"), "--output", str(tmp_path)],
-        check=True, capture_output=True, timeout=60,
-    )
-    homepages = list(tmp_path.glob("*/index.html"))
-    markets = json.loads((root / "sites/token-exchange/markets.json").read_text())
-    assert {path.parent.name for path in homepages} == {market["slug"] for market in markets}
-    domains = {market["slug"]: market["domain"] for market in markets}
-    for path in homepages:
-        page = BeautifulSoup(path.read_text(), "html.parser")
-        links = [link for link in page.select("footer .legal a") if link.get_text() == "Media kit"]
-        # Each market is served at its own domain, so a relative footer link
-        # resolves there; compare where the link lands, not its spelling. Only
-        # New York has its own media kit; every other market links TrustedRouter's.
-        base = f"https://{domains[path.parent.name]}/"
-        expected = "https://nytokenexchange.com/media-kit" if path.parent.name == "new-york" else "https://trustedrouter.com/media-kit"
-        assert len(links) == 1
-        assert urljoin(base, links[0]["href"]) == expected
