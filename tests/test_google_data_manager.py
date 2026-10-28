@@ -587,7 +587,7 @@ def test_conversion_storage_is_versioned_away_from_retired_plaintext_rows() -> N
 def test_deploy_enforces_google_data_manager_is_disabled() -> None:
     root = Path(__file__).parents[1]
     deploy_script = (root / "scripts/deploy/google_data_manager.sh").read_text()
-    workflow = (root / ".github/workflows/deploy.yml").read_text()
+    workflow = (root / ".github/workflows/deploy-production.yml").read_text()
 
     assert "scheduler jobs pause" in deploy_script
     assert "TR_GOOGLE_DATA_MANAGER_ENABLED=false" in deploy_script

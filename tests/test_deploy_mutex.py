@@ -163,7 +163,7 @@ def test_journal_never_deleted_and_legacy_delete_generation_is_zero(mutex):
 
 
 def test_global_workflow_reservation_spans_all_mutating_jobs_and_completion():
-    workflow = yaml.safe_load((ROOT / ".github/workflows/deploy.yml").read_text())
+    workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-production.yml").read_text())
     jobs = workflow["jobs"]
     for name in ("migrate-schema", "sync-runtime-secrets", "deploy", "public-surface-companion"):
         assert "admit-cloud" in jobs[name]["needs"]

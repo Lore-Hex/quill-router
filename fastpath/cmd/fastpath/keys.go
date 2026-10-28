@@ -12,6 +12,8 @@ import (
 
 	"google.golang.org/api/option"
 	secretmanager "google.golang.org/api/secretmanager/v1"
+
+	"github.com/Lore-Hex/quill-router/fastpath/internal/service"
 )
 
 // pinnedVersion is a Secret Manager secret version named by its number,
@@ -53,11 +55,19 @@ func printsSecrets(getenv func(string) string) string {
 	return ""
 }
 
+// secretDeadline bounds each secret read, which the process makes as it
+// starts, before the service's own deadlines (service.StartDeadline) apply:
+// a read that stalled would hold the node down with nothing to restart it.
+// One that runs out fails the start, and systemd starts the process again.
+var secretDeadline = service.StartDeadline
+
 // readSecret reads a pinned secret version's payload: the key's own bytes.
 func readSecret(ctx context.Context, name string, opts ...option.ClientOption) ([]byte, error) {
 	if !pinnedVersion.MatchString(name) {
 		return nil, fmt.Errorf("%q is not a secret version pinned by its number", name)
 	}
+	ctx, cancel := context.WithTimeout(ctx, secretDeadline)
+	defer cancel()
 	// The quiet logger comes last, so no option given can replace it.
 	svc, err := secretmanager.NewService(ctx, append(opts[:len(opts):len(opts)], option.WithLogger(quiet))...)
 	if err != nil {

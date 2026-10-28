@@ -1291,7 +1291,7 @@ def test_trust_jobs_wiring_deploys_both_jobs_when_armed(
 
 
 def test_release_wiring_runs_trust_jobs_after_synthetic_refresh_and_rollout() -> None:
-    workflow = (ROOT / ".github/workflows/deploy.yml").read_text()
+    workflow = (ROOT / ".github/workflows/deploy-production.yml").read_text()
     orchestrator = (ROOT / "scripts/deploy-gcp.sh").read_text()
     assert "run: bash scripts/deploy/trust_jobs.sh" in workflow
     synthetic = workflow.index("bash scripts/deploy/synthetic_image_refresh.sh")

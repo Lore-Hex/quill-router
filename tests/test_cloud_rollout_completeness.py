@@ -700,7 +700,7 @@ def test_a_script_that_runs_the_verifier_unclaimed_fails_ci(tmp_path: Path) -> N
     for item in crc.ROLLOUT_REGISTRY["gcp"].exempt_deploy_scripts:
         (tmp_path / item.script).write_text("# exempt\n")
     (tmp_path / ".github" / "workflows").mkdir(parents=True, exist_ok=True)
-    (tmp_path / ".github" / "workflows" / "deploy.yml").write_text("jobs: {}\n")
+    (tmp_path / ".github" / "workflows" / "deploy-production.yml").write_text("jobs: {}\n")
     assert crc.script_binding_gaps(root=tmp_path) == []
 
     (tmp_path / "scripts" / "deploy" / "oracle_bring_up.sh").write_text(
@@ -725,7 +725,7 @@ def test_a_script_in_a_subdirectory_does_not_escape_the_scan(tmp_path: Path) -> 
     for item in crc.ROLLOUT_REGISTRY["gcp"].exempt_deploy_scripts:
         (tmp_path / item.script).write_text("# exempt\n")
     (tmp_path / ".github" / "workflows").mkdir(parents=True, exist_ok=True)
-    (tmp_path / ".github" / "workflows" / "deploy.yml").write_text("jobs: {}\n")
+    (tmp_path / ".github" / "workflows" / "deploy-production.yml").write_text("jobs: {}\n")
 
     nested = tmp_path / "scripts" / "deploy" / "oracle" / "bring_up.sh"
     nested.parent.mkdir(parents=True, exist_ok=True)
