@@ -136,6 +136,11 @@ func run() error {
 	cfg.RecordTopic = "projects/" + *project + "/topics/" + topicNames[1]
 	cfg.SettleSubscription = "projects/" + *project + "/subscriptions/" + subNames[0]
 	cfg.RecordSubscription = "projects/" + *project + "/subscriptions/" + subNames[1]
+	// From here to service.Run the process reads its secrets and makes its
+	// clients, before the service's own watchdogs run: one of those stalled
+	// would leave the node down with no exit for systemd to restart.
+	unwatch := startWatch(service.StartStall, os.Exit)
+	defer unwatch()
 	var err error
 	if cfg.Key, cfg.AcceptKeys, err = keysOf(context.Background(), *keyPath, *keySecret, *acceptSecrets); err != nil {
 		return err
@@ -194,8 +199,19 @@ func run() error {
 		return err
 	}
 	defer ps.Close()
+	unwatch()
 	began := time.Now()
 	err = service.Run(ctx, cfg, service.Clients{Spanner: sp, PubSub: ps})
 	fmt.Fprintf(os.Stderr, "fastpath: stopped after %v\n", time.Since(began).Round(time.Second))
 	return err
+}
+
+// startWatch exits the process with code 1 unless the stop it returns is
+// called within d. A stop called after it fired changes nothing.
+func startWatch(d time.Duration, exit func(int)) (stop func()) {
+	t := time.AfterFunc(d, func() {
+		fmt.Fprintf(os.Stderr, "fastpath: the start stalled before its parts began, after %v; exiting\n", d)
+		exit(1)
+	})
+	return func() { t.Stop() }
 }
