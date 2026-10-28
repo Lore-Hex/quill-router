@@ -1,4 +1,8 @@
-"""Lifespan-owned v2 observation. No request handler installs or starts this service."""
+"""Lifespan-owned v2 observation. No request handler installs or starts this service.
+
+A failed stop-marker read pauses new admission only. Already-admitted cohort and
+publisher work may finish while control reads retry.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -87,6 +91,10 @@ PUBLISHER_RELEASE_REASONS = frozenset({
 PUBLISHER_WATCHDOG_GRACE = SLOT_US / 1_000_000
 OWNER_PROGRESS_SECONDS = 15.
 START_RETRY_MAX_SECONDS = 60.
+START_ATTEMPT_SECONDS = 12.
+# Per boot, at most two abandoned publisher workers/cleanup owners may survive.
+# Exhaustion pauses contention until cleanup releases a slot; readers keep running.
+PUBLISHER_ABANDONED_BUDGET = 2
 
 
 class _ObserverQuiesced(Exception):
@@ -773,6 +781,10 @@ class Service:
         self.publisher_worker_active = threading.Event()
         self.publisher_store = store
         self.publisher_lane_generation = 0
+        self.publisher_lane_open = False
+        self.abandoned_publishers: list[Future[threading.Thread]] = []
+        self.startup_job: Future[bool] | None = None
+        self.startup_waiter: asyncio.Future[bool] | None = None
         self.publisher_session_job: Future[bool] | None = None
         self.owner_task: asyncio.Task[None] | None = None
         self.owner_progress = store.clock()
@@ -843,9 +855,13 @@ class Service:
                 and self.settings.async_settle_shadow_workspace_ids == self.workspaces
                 and bool(self.workspaces) and not self.settings.async_settle_enabled)
 
-    def contender(self) -> bool:
-        return (self.enabled() and self.runtime_stop.available and bool(self.settings.async_settle_shadow_health_region)
+    def publisher_eligible(self) -> bool:
+        return (self.enabled() and bool(self.settings.async_settle_shadow_health_region)
                 and self.settings.effective_serving_region == self.settings.async_settle_shadow_health_region)
+
+    def contender(self) -> bool:
+        return (self.publisher_eligible() and self.runtime_stop.available
+                and len(self.abandoned_publishers) < PUBLISHER_ABANDONED_BUDGET)
 
     def ensure_day(self, now_us: int) -> str:
         day = day_at(now_us)
@@ -895,7 +911,7 @@ class Service:
         if job is not None and self.store.clock() > job.latest_start_mono+CYCLE_SECONDS+PUBLISHER_WATCHDOG_GRACE:
             effects = self.accept(lifecycle.PublisherFailed(stamp, job.slot, job.generation, "publisher_watchdog"))
         if not self.state.days:
-            enabled = self.contender() if publisher is None else publisher
+            enabled = self.publisher_eligible() if publisher is None else publisher
             days = []
             for day in self.counters:
                 start = stamp if day == day_at(stamp) else self.counters[day]["started_at_us"]
@@ -1654,6 +1670,11 @@ class Service:
         job = self.state.job
         if job is None or job.slot != slot:
             return
+        if self.supervised and not self.publisher_lane_open:
+            self.replace_publisher()
+        if self.supervised and (not self.publisher_lane_open or not self.contender()):
+            self.accept(lifecycle.PublisherFailed(stamp, job.slot, job.generation, "publisher_worker_busy"))
+            return
         args = (self.publisher_store if self.supervised else self.store, self.journal.boot, self.settings.effective_serving_region,
                 self.settings.source_revision, job, stamp, self, self.is_incumbent(slot), self.has_incumbent(slot),
                 self.warm())
@@ -1702,38 +1723,90 @@ class Service:
             deliver(failed_publisher_reply(self.journal.boot, job, "publisher_submit_failed"))
             raise
 
-    def replace_publisher(self) -> None:
-        """Quarantine a hung worker, including its session lock and mutable hints."""
-        self.publisher_executor.shutdown(wait=False, cancel_futures=True)
-        self.publisher_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="shadow-v2-health")
+    def publisher_inventory(self) -> None:
+        """Owner-only accounting; cleanup completion releases an abandonment slot."""
+        # Future completion precedes executor thread exit. Keep its slot until
+        # the thread has exited as well, including across rapid replacements.
+        self.abandoned_publishers[:] = [job for job in self.abandoned_publishers
+            if not job.done() or job.cancelled() or job.exception() is not None or job.result().is_alive()]
+        day = self.ensure_day(int(self.store.wall()*1_000_000))
+        self._counter_cells(day, self.counters[day]["diagnostics"], {
+            "publisher_abandoned_outstanding": len(self.abandoned_publishers),
+            "publisher_budget_exhausted": int(len(self.abandoned_publishers) >= PUBLISHER_ABANDONED_BUDGET),
+        })
+
+    def retire_publisher(self) -> None:
+        """Queue cleanup behind this lane's worker, never join it on the owner.
+
+        The retired executor owns cleanup even after service shutdown. Failed or
+        stuck deletion retains its budget slot; no replacement can evade the cap.
+        """
+        if not self.publisher_lane_open:
+            return
+        lane = self.publisher_store
+        def cleanup() -> threading.Thread:
+            while not lane.close_publisher_lane():
+                sleep(60.)
+            return threading.current_thread()
+        self.abandoned_publishers.append(self.publisher_executor.submit(cleanup))
+        self.publisher_executor.shutdown(wait=False)
+        self.publisher_lane_open = False
         self.publisher_worker = None
+        self.publisher_session_job = None
         self.publisher_worker_active = threading.Event()
+
+    def replace_publisher(self) -> None:
+        """Quarantine a hung lane within the fixed boot-local resource budget."""
+        self.publisher_inventory()
+        if len(self.abandoned_publishers) >= PUBLISHER_ABANDONED_BUDGET:
+            return
+        self.retire_publisher()
+        self.publisher_inventory()
+        if not self.contender() or self.stopped.is_set():
+            return
+        self.publisher_executor.shutdown(wait=False)
+        self.publisher_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="shadow-v2-health")
         self.publisher_store = self.store.publisher_lane()
+        self.publisher_lane_open = True
         if self.publisher_store.transport is not None:
             self.publisher_store.transport.failure = self.runtime_stop.outcome
-        # Use this executor for preparation too: a stuck prepare costs only this
-        # lane, and is subject to the same slot watchdog/replacement mechanism.
         self.publisher_lane_generation += 1
         session_boot = f"{self.journal.boot}-publisher-{self.publisher_lane_generation}"
         self.publisher_session_job = self.publisher_executor.submit(self.publisher_store.prepare_session, session_boot)
+
+    async def retry_pause(self, delay: float) -> None:
+        try:
+            await asyncio.wait_for(self.stopped.wait(), timeout=delay)
+        except TimeoutError:
+            pass
+
+    def prepare_startup(self) -> bool:
+        return (self.store.prepare_session(self.journal.boot) and not self.stopped.is_set()
+                and self.runtime_stop.poll())
 
     async def supervise(self) -> None:
         """Retry startup and recover an exited/suspended owner without a process restart."""
         delay = 1.
         while not self.stopped.is_set() and self.policy_enabled():
             try:
-                async with asyncio.timeout(12.):
-                    prepared = await asyncio.to_thread(self.store.prepare_session, self.journal.boot)
-                    checked = prepared and await asyncio.to_thread(self.runtime_stop.poll)
-                if prepared and checked:
+                async with asyncio.timeout(START_ATTEMPT_SECONDS):
+                    # One owned worker, including across coroutine timeouts. A
+                    # hung native call cannot accumulate default-executor jobs.
+                    if self.startup_job is None or self.startup_job.done():
+                        self.startup_job = self.session_executor.submit(self.prepare_startup)
+                        self.startup_waiter = asyncio.wrap_future(self.startup_job)
+                    # Reuse the bridge too: repeated timeouts must not retain a
+                    # new asyncio Future/callback on the same hung native call.
+                    assert self.startup_waiter is not None
+                    checked = await asyncio.shield(self.startup_waiter)
+                if checked:
                     break
             except Exception:  # noqa: S110 - startup retries without retaining exception content
                 pass
-            await asyncio.sleep(delay)
+            await self.retry_pause(delay)
             delay = min(START_RETRY_MAX_SECONDS, delay*2)
         if self.stopped.is_set() or not self.policy_enabled():
             return
-        self.replace_publisher()
         self.runtime_stop.start(lambda: self.policy_enabled() and not self.stopped.is_set(),
                                 lambda: not self.close_finished)
         while not self.stopped.is_set() and self.policy_enabled():
@@ -1758,7 +1831,7 @@ class Service:
             if job is not None:
                 self.accept(lifecycle.PublisherFailed(int(self.store.wall()*1_000_000),
                     job.slot, job.generation, "publisher_watchdog"))
-            await asyncio.sleep(1.)
+            await self.retry_pause(1.)
 
     async def run(self) -> None:
         self.assert_owner()
@@ -1770,7 +1843,9 @@ class Service:
             self.owner_progress = self.store.clock()
             if self.store.session_recovery_due() and (self.session_job is None or self.session_job.done()):
                 self.session_job = self.session_executor.submit(self.store.prepare_session, self.journal.boot)
-            if (self.supervised and self.publisher_store.session_recovery_due()
+            if self.supervised:
+                self.publisher_inventory()
+            if (self.supervised and self.publisher_lane_open and self.publisher_store.session_recovery_due()
                     and (self.publisher_session_job is None or self.publisher_session_job.done())):
                 self.publisher_session_job = self.publisher_executor.submit(self.publisher_store.prepare_session)
             now = self.store.clock()
@@ -1855,7 +1930,25 @@ class Service:
             self.interval_end_us = stamp
         try:
             async with asyncio.timeout(max(0, deadline-self.store.clock())):
-                if self.task is not None and not from_loop:
+                if self.supervised:
+                    # Cancel the coroutine, not its native startup worker. Never
+                    # spend the nine-second evidence grace joining native I/O.
+                    tasks = [task for task in (self.task, self.owner_task)
+                             if task is not None and task is not asyncio.current_task()]
+                    for task in tasks:
+                        task.cancel()
+                    if self.startup_waiter is not None:
+                        self.startup_waiter.cancel()
+                    if tasks:
+                        done, _ = await asyncio.wait(tasks, timeout=.25)
+                        for task in done:
+                            if not task.cancelled():
+                                task.exception()
+                    day = self.ensure_day(stamp)
+                    self._counter_cells(day, self.counters[day]["diagnostics"], {
+                        "startup_worker_outstanding": int(self.startup_job is not None and not self.startup_job.done()),
+                    })
+                elif self.task is not None and not from_loop:
                     await asyncio.shield(self.task)
                 await self.observer.close()
                 for job in (self.publisher_job, self.flush_job):
@@ -1899,7 +1992,8 @@ class Service:
             if self.signal_handler is not None and signal.getsignal(signal.SIGTERM) is self.signal_handler:
                 signal.signal(signal.SIGTERM, self.previous_signal_handler)
             self.session_executor.shutdown(wait=False, cancel_futures=True)
-            self.publisher_executor.shutdown(wait=False, cancel_futures=True)
+            self.retire_publisher()
+            self.publisher_executor.shutdown(wait=False)
             self.evidence_executor.shutdown(wait=False, cancel_futures=True)
             if reason != "opt_out" or self.runtime_stop.tripped is None or self.runtime_stop.persisted:
                 await self.runtime_stop.close()

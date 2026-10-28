@@ -122,6 +122,25 @@ class Sessions:
             return False
         return True
 
+    def close(self, clock: Callable[[], float]) -> bool:
+        """Delete this retired lane only after all its worker calls have returned.
+
+        Unknown creation uses the same bounded inventory reconciliation as
+        recovery, but cleanup never allocates another session.
+        """
+        try:
+            with rpc_scope(clock()+5, 5, clock):
+                with self.lock:
+                    self.retire()
+                    if self.creation_unknown:
+                        self._reconcile()
+                    if self.retired is not None:
+                        self.retired.delete()
+                        self.retired = None
+            return True
+        except Exception:
+            return False
+
     def get_session(self, transaction_type: Any) -> Any:
         return self._checkout(create=not self.managed)
 
@@ -184,7 +203,11 @@ class Sessions:
             self.reconciliation_names = []
             self.reconciliation_token = ""
             raise
-        self.reconciliation_names.extend(session.name for session in page.sessions)
+        # Spanner label filters are substring matches: generation "1" also
+        # finds "10". Only this exact lane/boot may be deleted by its owner.
+        labels = {"tr_component": "shadow-v2", "tr_boot": self.boot, "tr_lane": self.lane}
+        self.reconciliation_names.extend(session.name for session in page.sessions
+                                         if all(session.labels.get(key) == value for key, value in labels.items()))
         self.reconciliation_token = page.next_page_token
         if self.reconciliation_token:
             raise SessionUnavailable("shadow_session_inventory_incomplete")

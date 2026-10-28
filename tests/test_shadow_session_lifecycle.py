@@ -1,4 +1,5 @@
 """Server-side session inventory must stay bounded across native SDK faults."""
+import asyncio
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
@@ -176,7 +177,27 @@ def test_iteration_failure_retains_session_until_cleanup(inventory):
     assert state.deletes == 2
 
 
-def test_install_prepares_session_under_own_five_second_budget(inventory, monkeypatch):
+async def startup_attempt(installed, monkeypatch):
+    """Run registered asynchronous startup through its first preparation attempt."""
+    from trusted_router.services import async_settle_shadow_health as shell
+    monkeypatch.setattr(shell, 'asyncio', asyncio)
+    monkeypatch.setattr(installed, 'trap_sigterm', lambda: None)
+    monkeypatch.setattr(installed.runtime_stop, 'poll', lambda: False)
+    attempted = asyncio.Event()
+    async def pause(delay):
+        attempted.set()
+        await asyncio.Event().wait()
+    monkeypatch.setattr(installed, 'retry_pause', pause)
+    installed.start()
+    try:
+        await asyncio.wait_for(attempted.wait(), 2)
+    finally:
+        installed.task.cancel()
+        await asyncio.gather(installed.task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_install_prepares_session_under_own_five_second_budget(inventory, monkeypatch):
     from tests.test_async_settle_shadow_health_watchdog import owner
     from trusted_router.services import async_settle_shadow_health as shell
     from trusted_router.storage_gcp_shadow_observation import ObservationStore
@@ -186,6 +207,8 @@ def test_install_prepares_session_under_own_five_second_budget(inventory, monkey
     monkeypatch.setattr(shell, 'ObservationStore', lambda database: store)
     app = SimpleNamespace(state=SimpleNamespace(), on_event=lambda name: lambda fn: fn)
     shell.install(app, svc.settings, SimpleNamespace(_database=db))
+    installed = app.state.async_settle_shadow_observation
+    await startup_attempt(installed, monkeypatch)
     assert state.creates == 1 and state.create_timeouts == [5.]
     assert db._sessions_manager.ready
     assert state.labels[next(iter(state.live))] == dict(
@@ -193,6 +216,7 @@ def test_install_prepares_session_under_own_five_second_budget(inventory, monkey
         tr_lane='observation')
     assert app.state.async_settle_shadow_observation.state.job is None
     assert not db.calls
+    installed.session_executor.shutdown(wait=True)
 
 
 def test_quarantined_cycle_never_calls_storage(inventory, monkeypatch):
@@ -471,10 +495,12 @@ async def test_recovery_worker_waits_for_first_window_after_unknown_startup(inve
     state.create_error = True
     shell.install(app, svc.settings, SimpleNamespace(_database=db))
     installed = app.state.async_settle_shadow_observation
+    await startup_attempt(installed, monkeypatch)
     manager = db._sessions_manager
     assert not manager.ready and manager.creation_unknown
     assert state.create_timeouts == [5.]
     installed.next_flush = float('inf')
+    monkeypatch.setattr(installed.observer, 'start', lambda: None)
     monkeypatch.setattr(installed, 'tick', lambda now, *, mono: ())
 
     async def one_turn(seconds):
@@ -825,3 +851,14 @@ def test_marker_retry_persists_while_workspace_is_unready(owned_inventory):
     assert workspace.lists == workspace.deletes == 1 and workspace.creates == 2
     svc.runtime_stop.retry()
     assert len(observation.commits) == 1
+
+
+def test_retired_unknown_creation_cleanup_does_not_allocate(inventory):
+    db, clock, state = inventory
+    manager = unknown_creation(inventory)
+    assert manager.creation_unknown and len(state.live) == 1
+    foreign = seed_session(db, state, 'other-generation', manager.boot+'0')
+    assert manager.close(clock.monotonic)
+    assert state.creates == 1 and state.deletes == 1
+    assert state.live == {foreign} and not manager.creation_unknown
+    assert manager.session is None and manager.retired is None
