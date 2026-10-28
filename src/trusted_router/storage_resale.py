@@ -36,6 +36,11 @@ def refund_cents(price: int, paid: int, fee_bps: int) -> tuple[int, int]:
     return price - net, min(net, paid)
 
 
+def position_total_cents(position: Row) -> int:
+    """Older positions predate purchase fees and store only the lot subtotal."""
+    return int(position.get("total_cents", position["lots"] * position["per_lot_cents"]))
+
+
 def execute(read: Callable[[str, str], Row], write: Callable[[str, str, Row], None], command: Row) -> Row:
     cache: dict[tuple[str, str], Row] = {}
     dirty: set[tuple[str, str]] = set()
@@ -111,24 +116,44 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
         withdraw_position_listings(p, "payment_review")
 
     def remember_payment_review(payment: str, state: Row) -> Row:
-        # Stripe may deliver charge.refunded before the refund worker's final
-        # commit. Match Stripe's refund to the durable fill, not its lease/status.
+        # Stripe can report the refund before ops/worker acknowledgement.
+        # Match the durable obligation, not its lease/status, and count it once.
         own_refunds = 0
-        seen: set[str] = set()
+        seen: set[tuple[str, str]] = set()
+        seen_refunds: set[str] = set()
         for refund in state.get("refunds", []):
+            rid = refund.get("id")
+            if (not rid or rid in seen_refunds or refund.get("payment_intent") != payment
+                    or refund.get("status") not in {"pending", "succeeded", "requires_action"}):
+                continue
             metadata = refund.get("metadata") or {}
             fid = metadata.get("fill_id") or metadata.get("nyte_fill_id")
-            if not fid or fid in seen:
-                continue
-            fill = get("nyte_fill", fid)
-            if (fill and fill["payment_intent"] == payment
-                    and refund.get("payment_intent") == payment
-                    and refund.get("amount") == fill["refund_amount_cents"]
-                    and refund.get("status") in {"pending", "succeeded", "requires_action"}
-                    and refund.get("id")
-                    and fill.get("stripe_refund_id") in {None, refund["id"]}):
+            if fid:
+                row = get("nyte_fill", fid)
+                identity = ("resale_fill", fid)
+                amount = row.get("refund_amount_cents")
+                bound = row.get("stripe_refund_id")
+                matches = row.get("payment_intent") == payment
+            else:
+                owner = get("nyte_payment", payment)
+                session = owner.get("session_id", "")
+                # Evidence reconciliation can itself be part of a position
+                # repair; use the immutable payment snapshot without recursion.
+                p = load_position(session, finalizing=True) if session else {}
+                row = get("nyte_refund_request", session) if p else {}
+                identity = ("full_refund", session)
+                amount = position_total_cents(p) if p else None
+                bound = row.get("stripe_refund_id") or p.get("stripe_refund_id")
+                matches = (p.get("payment_intent") == payment
+                           and metadata.get("position_id") in {None, p.get("id", session)})
+            index = get("nyte_refund", rid)
+            indexed = (("resale_fill", index["fill"]) if "fill" in index
+                       else (index.get("kind"), index.get("id")))
+            if (row and matches and identity not in seen and refund.get("amount") == amount
+                    and bound in {None, rid} and (not index or indexed == identity)):
                 own_refunds += refund["amount"]
-                seen.add(fid)
+                seen.add(identity)
+                seen_refunds.add(rid)
         evidence = get("nyte_payment_review", payment)
         external = max(0, state.get("amount_refunded", 0) - own_refunds)
         if state.get("disputed") or state.get("unpaid") or external:
@@ -405,7 +430,7 @@ def _execute(get: Callable[[str, str], Row], put: Callable[[str, str, Row], None
         if kind == "full_refund":
             p = load_position(key)
             row.setdefault("status", "refunded" if p["status"] == "refunded" else "pending")
-            row.update(payment_intent=p["payment_intent"], refund_amount_cents=p["lots"] * p["per_lot_cents"],
+            row.update(payment_intent=p["payment_intent"], refund_amount_cents=position_total_cents(p),
                        position_id=p.get("id", key))
             row.setdefault("stripe_refund_id", p.get("stripe_refund_id"))
         else:

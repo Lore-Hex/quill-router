@@ -23,7 +23,7 @@ class ResaleTests(unittest.TestCase):
             self.assertNotIn('localStorage', script)
             self.assertIn('Some lots may be resold reservations', (root / 'buy').read_text())
             terms = (root / 'reserved-tokens-terms').read_text()
-            for value in ('2026-10-27-v5', 'first successful-payment confirmation', 'first-listed, first-sold', 'Holders cannot set prices', '0.95', 'NYTE keeps', 'new position', 'Unsold listed lots can be withdrawn'):
+            for value in ('2026-10-28-v6', 'first successful-payment confirmation', 'first-listed, first-sold', 'Holders cannot set prices', '0.95', 'NYTE keeps', 'new position', 'Unsold listed lots can be withdrawn'):
                 self.assertIn(value, terms)
 
             plain_terms = re.sub(r"<[^>]+>", "", terms)
