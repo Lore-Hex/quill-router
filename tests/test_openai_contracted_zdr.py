@@ -25,15 +25,18 @@ from trusted_router.routing import chat_route_endpoint_candidates
 
 @pytest.fixture(autouse=True)
 def openai_routes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """OpenAI's GPT-5.5 routes, built from its pinned manifest row: the contract
-    covers OpenAI's prepaid routes whatever OpenAI lists today."""
-    serve_manifest_rows(monkeypatch, tmp_path, "openai", [OPENAI_GPT_5_5])
+    """A reviewed existing model; newly discovered models do not inherit approval."""
+    serve_manifest_rows(monkeypatch, tmp_path, "openai", [{
+        **OPENAI_GPT_5_5,
+        "id": "openai/gpt-4.1", "upstream_id": "gpt-4.1",
+        "display_name": "gpt-4.1", "title": "gpt-4.1",
+    }])
 
 
 def _first_party_openai_endpoints() -> tuple[ModelEndpoint, ModelEndpoint]:
     endpoints = [
         endpoint
-        for endpoint in endpoints_for_model("openai/gpt-5.5")
+        for endpoint in endpoints_for_model("openai/gpt-4.1")
         if endpoint.provider == "openai"
     ]
     credits = next(endpoint for endpoint in endpoints if endpoint.usage_type == "Credits")
@@ -69,7 +72,7 @@ def test_openai_catalog_metadata_does_not_extend_tr_contract_to_byok() -> None:
     assert provider_shape["prepaid_zero_data_retention"] is True
     assert provider_shape["zero_data_retention_scope"] == "trustedrouter_prepaid"
 
-    shape = model_to_openrouter_shape(MODELS["openai/gpt-5.5"])
+    shape = model_to_openrouter_shape(MODELS["openai/gpt-4.1"])
     endpoint_shapes = [
         endpoint
         for endpoint in shape["trustedrouter"]["endpoints"]
@@ -85,7 +88,7 @@ def test_openai_catalog_metadata_does_not_extend_tr_contract_to_byok() -> None:
 def test_openai_zdr_filter_selects_credits_and_never_inherits_byok() -> None:
     candidates = chat_route_endpoint_candidates(
         {
-            "model": "openai/gpt-5.5",
+            "model": "openai/gpt-4.1",
             "provider": {"only": ["openai"], "min_privacy": "zdr"},
         },
         Settings(environment="test"),
@@ -121,7 +124,7 @@ def test_public_pages_explain_active_openai_prepaid_scope(client: TestClient) ->
     assert "verified on July 29, 2026" in providers.text
     assert "customer BYOK credentials" in providers.text
 
-    model = client.get("/models/openai/gpt-5.5")
+    model = client.get("/models/openai/gpt-4.1")
     assert model.status_code == 200
     assert "Credits" in model.text
     assert "BYOK" not in model.text

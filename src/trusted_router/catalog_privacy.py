@@ -29,7 +29,20 @@ from trusted_router.catalog_data import (
     Provider,
     model_vendor_provider_slugs,
 )
+from trusted_router.managed_retention import managed_retention_policy
 from trusted_router.wafer_policy import wafer_zdr_support
+
+
+def endpoint_retention_metadata(endpoint: ModelEndpoint) -> dict[str, object] | None:
+    policy = managed_retention_policy(
+        endpoint.provider, endpoint.model_id, endpoint.upstream_id, endpoint.usage_type,
+    )
+    if policy is None:
+        return None
+    return {
+        **policy.metadata(),
+        "strict_zdr_eligible": endpoint_zero_data_retention(endpoint) is True,
+    }
 
 
 def provider_confidential_inference(provider: Provider, *, prepaid: bool = False) -> bool:
@@ -89,6 +102,17 @@ def _model_provider_privacy_override(
 def _endpoint_privacy_override(
     endpoint: ModelEndpoint,
 ) -> ModelProviderPrivacyOverride | None:
+    retention = managed_retention_policy(
+        endpoint.provider, endpoint.model_id, endpoint.upstream_id, endpoint.usage_type,
+    )
+    if retention is not None and not retention.permits_strict_zdr:
+        return ModelProviderPrivacyOverride(
+            privacy_tier=PRIVACY_TIER_STANDARD,
+            stores_content=True,
+            provider_zero_data_retention=False,
+            provider_policy=retention.detail,
+            provider_policy_url=retention.source_url,
+        )
     if endpoint.provider == "phala":
         # Only the exact phala/* upstream namespace selects Phala's
         # Confidential AI route. Fail closed for missing or upstream-author

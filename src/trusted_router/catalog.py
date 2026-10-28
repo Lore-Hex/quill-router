@@ -195,6 +195,7 @@ from trusted_router.catalog_privacy import (  # noqa: F401 - re-exported for bac
     endpoint_privacy_tier,
     endpoint_provider_policy,
     endpoint_provider_policy_url,
+    endpoint_retention_metadata,
     endpoint_stores_content,
     endpoint_zero_data_retention,
     endpoint_zero_data_retention_scope,
@@ -211,6 +212,7 @@ from trusted_router.catalog_registry import (  # noqa: F401 - built there, re-ex
 )
 from trusted_router.catalog_usage_policy import provider_usage_estimation_policy
 from trusted_router.image_generation import FIXED_IMAGE_PRICES_MICRODOLLARS
+from trusted_router.managed_retention import provider_retention_notice
 from trusted_router.model_aliases import router_model_aliases
 from trusted_router.money import (
     microdollars_per_million_tokens_to_token_decimal,
@@ -898,6 +900,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
                 "attested_gateway": PROVIDERS[endpoint.provider].attested_gateway,
                 "stores_content": endpoint_stores_content(endpoint),
                 "provider_zero_data_retention": endpoint_zero_data_retention(endpoint),
+                "retention": endpoint_retention_metadata(endpoint),
                 "zero_data_retention_scope": endpoint_zero_data_retention_scope(endpoint),
                 "privacy_tier": endpoint_privacy_tier(endpoint),
                 "privacy_tier_label": PRIVACY_TIER_LABELS[endpoint_privacy_tier(endpoint)],
@@ -1060,6 +1063,8 @@ def provider_to_openrouter_shape(provider: Provider) -> dict[str, object]:
         "provider_confidential_compute": provider.provider_confidential_compute,
         "provider_e2ee": provider.provider_e2ee,
         "provider_policy": provider.provider_policy,
+        "retention_notice": provider_retention_notice(provider.slug),
+        "retention_requires_model_review": provider.slug in {"openai", "google-vertex"},
         "trusted_provider": provider_privacy_tier(provider) == PRIVACY_TIER_TRUSTED,
         "provider_policy_url": provider.provider_policy_url,
         "provider_headquarters_country": provider.provider_headquarters_country,
