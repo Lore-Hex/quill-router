@@ -19,11 +19,16 @@ It also exits a process whose event loop has stopped. On 2026-10-28 two
 europe-west4 instances went silent for one and two minutes with CPU and memory
 flat; every request routed to them hung for up to two minutes and failed
 (two "billing path 5xx" alerts), and nothing said where the process was
-waiting. Once serving, each uvicorn tick re-arms ``faulthandler``'s watchdog,
-a C thread that needs neither the loop nor the GIL. If the loop goes
-``LOOP_STALL_EXIT_SECONDS`` without a tick, the watchdog writes every thread's
-stack to stderr and exits the process, so Cloud Run replaces it and the stacks
-name the call it was blocked in.
+waiting. With ``TR_LOOP_STALL_EXIT_SECONDS`` set, each second of uvicorn ticks
+re-arms ``faulthandler``'s watchdog, a C thread that needs neither the loop nor
+the GIL. If the loop goes that long without a tick, the watchdog writes every
+thread's stack to stderr and exits the process, so Cloud Run replaces it and
+the stacks name the call it was blocked in. Writing the stacks can itself block
+on a backed-up stderr, so a process timer re-armed with it ends the process
+``STALL_BACKSTOP_SECONDS`` later by SIGALRM's default action, which runs in the
+kernel. Only set it for a service whose CPU stays allocated between requests
+(``--no-cpu-throttling``): a throttled idle instance sees no ticks and would
+exit when CPU returns.
 
 Usage: ``python -m trusted_router.serve`` (host 0.0.0.0, port from ``PORT``).
 """
@@ -53,12 +58,13 @@ DEFAULT_DRAIN_SECONDS = 3.0
 # Cloud Run sends SIGKILL 10 s after SIGTERM; leave room for the graceful
 # shutdown that follows the drain.
 MAX_DRAIN_SECONDS = 3.0
-# Handlers run storage in worker threads under five-second budgets, so the loop
-# itself never legitimately waits this long; the front end cuts a request at 60 s.
-LOOP_STALL_EXIT_SECONDS = 30.0
+LOOP_STALL_ENV = "TR_LOOP_STALL_EXIT_SECONDS"
 # uvicorn ticks every 0.1 s; re-arming starts a new watchdog thread, so do it
-# once a second.
+# once a second. A stall budget must exceed that second.
 _TICKS_PER_REARM = 10
+MIN_LOOP_STALL_SECONDS = 2.0
+# After the stack dump's deadline, time for the dump to drain before SIGALRM.
+STALL_BACKSTOP_SECONDS = 10.0
 
 # Named explicitly: the container runs this module as `python -m`, where
 # `__name__` is "__main__" and a `__name__`-based logger would sit outside the
@@ -84,13 +90,32 @@ def drain_seconds_from_env(environ: dict[str, str] | None = None) -> float:
     return min(value, MAX_DRAIN_SECONDS)
 
 
+def loop_stall_seconds_from_env(environ: dict[str, str] | None = None) -> float | None:
+    """The stall budget, or None (no watchdog) when unset or invalid."""
+    env = os.environ if environ is None else environ
+    raw = env.get(LOOP_STALL_ENV, "").strip()
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        value = math.nan
+    if not (math.isfinite(value) and value >= MIN_LOOP_STALL_SECONDS):
+        logger.warning("serve.invalid_loop_stall_seconds value=%r watchdog off", raw)
+        return None
+    return value
+
+
 class DrainingServer(uvicorn.Server):
     """uvicorn.Server that keeps its listener open for a drain window after SIGTERM."""
 
-    def __init__(self, config: uvicorn.Config, *, drain_seconds: float) -> None:
+    def __init__(
+        self, config: uvicorn.Config, *, drain_seconds: float, stall_seconds: float | None = None,
+    ) -> None:
         super().__init__(config)
         self.drain_seconds = max(0.0, min(drain_seconds, MAX_DRAIN_SECONDS))
         self.drain_deadline: float | None = None
+        self.stall_seconds = stall_seconds
 
     async def startup(self, sockets: list | None = None) -> None:
         await super().startup(sockets=sockets)
@@ -118,8 +143,11 @@ class DrainingServer(uvicorn.Server):
         super().handle_exit(sig, frame)
 
     async def on_tick(self, counter: int) -> bool:
-        if counter % _TICKS_PER_REARM == 0:
-            faulthandler.dump_traceback_later(LOOP_STALL_EXIT_SECONDS, exit=True)
+        if self.stall_seconds is not None and counter % _TICKS_PER_REARM == 0:
+            if counter == 0:
+                signal.signal(signal.SIGALRM, signal.SIG_DFL)
+            faulthandler.dump_traceback_later(self.stall_seconds, exit=True)
+            signal.setitimer(signal.ITIMER_REAL, self.stall_seconds + STALL_BACKSTOP_SECONDS)
         if self.drain_deadline is not None and not self.should_exit:
             if monotonic() >= self.drain_deadline:
                 logger.info("serve.sigterm_drain_complete")
@@ -129,7 +157,9 @@ class DrainingServer(uvicorn.Server):
     async def shutdown(self, sockets: list | None = None) -> None:
         # Ticks stop here while shutdown waits on in-flight requests; Cloud
         # Run's SIGKILL bounds that wait instead.
-        faulthandler.cancel_dump_traceback_later()
+        if self.stall_seconds is not None:
+            faulthandler.cancel_dump_traceback_later()
+            signal.setitimer(signal.ITIMER_REAL, 0)
         await super().shutdown(sockets=sockets)
 
 
@@ -160,7 +190,9 @@ def build_config(environ: dict[str, str] | None = None) -> uvicorn.Config:
 def main() -> int:
     try:
         config = build_config()
-        server = DrainingServer(config, drain_seconds=drain_seconds_from_env())
+        server = DrainingServer(
+            config, drain_seconds=drain_seconds_from_env(), stall_seconds=loop_stall_seconds_from_env(),
+        )
         server.run()
         return 0
     finally:

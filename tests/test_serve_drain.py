@@ -401,37 +401,89 @@ def test_real_sigterm_serves_fresh_connection_during_drain(tmp_path: Path) -> No
                 process.wait(timeout=5)
 
 
-def test_each_second_of_ticks_rearms_the_stall_watchdog(monkeypatch: pytest.MonkeyPatch) -> None:
-    armed: list[tuple[float, bool]] = []
+
+def _stall_server(monkeypatch: pytest.MonkeyPatch, stall: float | None) -> serve.DrainingServer:
+    server = serve.DrainingServer(
+        serve.build_config({"PORT": "8080"}), drain_seconds=3.0, stall_seconds=stall,
+    )
+    monkeypatch.setattr(server.config, "callback_notify", None, raising=False)
+    return server
+
+
+def _record_arming(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, object]]:
+    calls: list[tuple[str, object]] = []
     monkeypatch.setattr(serve.faulthandler, "dump_traceback_later",
-                        lambda timeout, exit=False: armed.append((timeout, exit)))
-    server = _server(monkeypatch)
+                        lambda timeout, exit=False: calls.append(("dump", (timeout, exit))))
+    monkeypatch.setattr(serve.faulthandler, "cancel_dump_traceback_later",
+                        lambda: calls.append(("cancel", None)))
+    monkeypatch.setattr(serve.signal, "setitimer", lambda which, seconds: calls.append(("timer", (which, seconds))))
+    real_signal = serve.signal.signal
+
+    def record_alarm_disposition(number: int, handler: object) -> object:
+        # asyncio.run installs its own SIGINT handler; only SIGALRM is ours.
+        if number != serve.signal.SIGALRM:
+            return real_signal(number, handler)
+        calls.append(("signal", (number, handler)))
+        return None
+
+    monkeypatch.setattr(serve.signal, "signal", record_alarm_disposition)
+    return calls
+
+
+def test_each_second_of_ticks_rearms_the_stall_watchdog_and_its_backstop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _record_arming(monkeypatch)
+    server = _stall_server(monkeypatch, 30.0)
 
     for counter in range(21):
         asyncio.run(server.on_tick(counter))
 
-    assert armed == [(serve.LOOP_STALL_EXIT_SECONDS, True)] * 3
+    arm = [("dump", (30.0, True)), ("timer", (serve.signal.ITIMER_REAL, 30.0 + serve.STALL_BACKSTOP_SECONDS))]
+    assert calls == [("signal", (serve.signal.SIGALRM, serve.signal.SIG_DFL)), *arm, *arm, *arm]
 
 
-def test_shutdown_disarms_the_stall_watchdog(monkeypatch: pytest.MonkeyPatch) -> None:
-    cancelled: list[bool] = []
-    monkeypatch.setattr(serve.faulthandler, "cancel_dump_traceback_later", lambda: cancelled.append(True))
+def test_without_a_stall_budget_ticks_arm_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _record_arming(monkeypatch)
+    server = _stall_server(monkeypatch, None)
+
+    for counter in range(21):
+        asyncio.run(server.on_tick(counter))
+
+    assert calls == []
+
+
+def test_shutdown_disarms_the_stall_watchdog_and_its_backstop(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _record_arming(monkeypatch)
 
     async def stock_shutdown(self: object, sockets: object = None) -> None:
-        assert cancelled == [True]
+        calls.append(("stock_shutdown", None))
 
     monkeypatch.setattr(serve.uvicorn.Server, "shutdown", stock_shutdown)
-    server = _server(monkeypatch)
+    server = _stall_server(monkeypatch, 30.0)
 
     asyncio.run(server.shutdown())
 
-    assert cancelled == [True]
+    assert calls == [("cancel", None), ("timer", (serve.signal.ITIMER_REAL, 0)), ("stock_shutdown", None)]
 
 
-def test_real_stalled_loop_exits_with_every_stack(tmp_path: Path) -> None:
-    # A healthy loop outlives several stall budgets; a loop blocked in a call
-    # exits within one, and the dump names the call.
-    script = """
+@pytest.mark.parametrize(("raw", "expected"), [
+    (None, None), ("", None), (" ", None), ("30", 30.0), ("2", 2.0),
+    ("1.9", None), ("0", None), ("-5", None), ("nan", None), ("inf", None), ("thirty", None),
+])
+def test_stall_budget_comes_from_env(raw: str | None, expected: float | None) -> None:
+    env = {} if raw is None else {serve.LOOP_STALL_ENV: raw}
+    assert serve.loop_stall_seconds_from_env(env) == expected
+
+
+def test_trusted_router_rollout_sets_the_stall_budget_with_continuous_cpu() -> None:
+    rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
+    assert f'"{serve.LOOP_STALL_ENV}=30"' in rollout
+    assert "--no-cpu-throttling" in rollout
+
+
+_STALL_SCRIPT = """
+import os
 import socket
 import sys
 import time
@@ -441,14 +493,22 @@ from starlette.responses import PlainTextResponse
 from starlette.routing import Route
 from trusted_router import serve
 
-# Above the one-second re-arm, as the production budget is.
-serve.LOOP_STALL_EXIT_SECONDS = 2.5
+serve.STALL_BACKSTOP_SECONDS = 1.0
+FILL_STDERR = sys.argv[2] == "fill"
 
 def wedged_call():
     time.sleep(30)
 
 async def block(request):
     print("blocking", flush=True)
+    if FILL_STDERR:
+        os.set_blocking(2, False)
+        try:
+            while True:
+                os.write(2, b"x" * 4096)
+        except BlockingIOError:
+            pass
+        os.set_blocking(2, True)
     wedged_call()
     return PlainTextResponse("unreachable")
 
@@ -457,18 +517,31 @@ async def health(request):
 
 config = serve.build_config({})
 config.app = Starlette(routes=[Route("/block", block), Route("/health", health)])
-server = serve.DrainingServer(config, drain_seconds=0)
+server = serve.DrainingServer(config, drain_seconds=0, stall_seconds=2.5)
 server.run(sockets=[socket.socket(fileno=int(sys.argv[1]))])
 """
-    log_path = tmp_path / "stall.log"
+
+
+def _run_stalled_server(tmp_path: Path, *, fill_stderr: bool) -> tuple[int, str]:
+    # A healthy loop outlives several stall budgets; a loop blocked in a call
+    # then ends the process within one budget plus the backstop.
+    out_path = tmp_path / "stdout.log"
+    err_path = tmp_path / "stderr.log"
     env = dict(os.environ, PYTHONPATH=str(ROOT / "src"))
-    with socket.socket() as listener, log_path.open("w") as log:
+    read_end = write_end = None
+    if fill_stderr:
+        # A pipe nobody reads stands for a backed-up log collector.
+        read_end, write_end = os.pipe()
+    with socket.socket() as listener, out_path.open("w") as out, err_path.open("w") as err:
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
         process = subprocess.Popen(  # noqa: S603 - fixed local test program
-            [sys.executable, "-c", script, str(listener.fileno())],
-            cwd=tmp_path, env=env, pass_fds=(listener.fileno(),), stdout=log, stderr=log,
+            [sys.executable, "-c", _STALL_SCRIPT, str(listener.fileno()), "fill" if fill_stderr else "drain"],
+            cwd=tmp_path, env=env, pass_fds=(listener.fileno(),), stdout=out,
+            stderr=write_end if write_end is not None else err,
         )
+        if write_end is not None:
+            os.close(write_end)
 
         def get(path: str) -> int:
             connection = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
@@ -483,28 +556,40 @@ server.run(sockets=[socket.socket(fileno=int(sys.argv[1]))])
         try:
             deadline = time.monotonic() + 10
             while True:
-                assert process.poll() is None, log_path.read_text()
+                assert process.poll() is None, out_path.read_text()
                 try:
                     if get("/health") == 200:
                         break
                 except (OSError, http.client.HTTPException):
                     time.sleep(0.05)
-                assert time.monotonic() < deadline, log_path.read_text()
+                assert time.monotonic() < deadline, out_path.read_text()
 
             healthy_until = time.monotonic() + 6
             while time.monotonic() < healthy_until:
                 assert get("/health") == 200
                 time.sleep(0.2)
-            assert process.poll() is None, log_path.read_text()
+            assert process.poll() is None, out_path.read_text()
 
             with pytest.raises((OSError, http.client.HTTPException)):
                 get("/block")
-            assert process.wait(timeout=5) == 1
-            logs = log_path.read_text()
-            assert "blocking" in logs
-            assert "Timeout (0:00:02.500000)!" in logs
-            assert "in wedged_call" in logs
+            returncode = process.wait(timeout=8)
+            assert "blocking" in out_path.read_text()
+            return returncode, err_path.read_text()
         finally:
             if process.poll() is None:
                 process.kill()
                 process.wait(timeout=5)
+            if read_end is not None:
+                os.close(read_end)
+
+
+def test_real_stalled_loop_exits_with_every_stack(tmp_path: Path) -> None:
+    returncode, logs = _run_stalled_server(tmp_path, fill_stderr=False)
+    assert returncode == 1, logs
+    assert "Timeout (0:00:02.500000)!" in logs
+    assert "in wedged_call" in logs
+
+
+def test_real_stalled_loop_exits_when_stderr_is_backed_up(tmp_path: Path) -> None:
+    returncode, _ = _run_stalled_server(tmp_path, fill_stderr=True)
+    assert returncode == -signal.SIGALRM

@@ -61,12 +61,16 @@ policy:
 - A run of `503`s from one instance id, each with tens of seconds of latency
   and "connection to the instance had an error", while that instance's own
   output stops and its CPU stays flat, is a process whose event loop stopped
-  (two in europe-west4 on 2026-10-28, silent for one and two minutes). The
-  same runner exits such a process once its loop has gone 30 seconds without
-  a tick, after `faulthandler` writes every thread's stack to stderr under a
-  `Timeout (0:00:30)!` line. Read those stacks from the instance's stderr:
-  the frame each thread is waiting in is the cause, and it belongs in the
-  follow-up.
+  (two in europe-west4 on 2026-10-28, silent for one and two minutes). With
+  `TR_LOOP_STALL_EXIT_SECONDS=30`, which `scripts/deploy/rollout.sh` sets
+  for this service because it keeps CPU allocated between requests, the same
+  runner ends such a process once its loop has gone 30 seconds without a
+  tick. `faulthandler` first writes every thread's stack to stderr under a
+  `Timeout (0:00:30)!` line and exits with status 1. If stderr itself is
+  backed up that write can block, and SIGALRM ends the process 10 seconds
+  later with no stacks. Read the stacks from the instance's stderr: the frame
+  each thread is waiting in is the cause, and it belongs in the follow-up. A
+  SIGALRM exit with no stacks points at the log pipe.
 - Successful billing calls taking at least 10 seconds are counted. More than
   two per minute for three consecutive minutes opens one incident.
 - The general Spanner contention policy has three independent gates: more than
