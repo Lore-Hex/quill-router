@@ -127,9 +127,12 @@ def holder_key(email: str) -> str:
 
 
 def record_purchase(obj: dict[str, Any], event_id: str, purchased_at: int | None, settings: Settings, *, backfill: bool = False, needs_review: bool = False) -> dict[str, Any]:
-    from trusted_router.services.reserved_tokens import reservation_position_id
+    from trusted_router.services.reserved_tokens import reservation_position_id, session_amounts
 
     metadata = obj["metadata"]
+    _, total = session_amounts(metadata)
+    if type(obj.get("amount_total")) is not int or obj["amount_total"] != total:
+        raise ValueError("Invalid reserved token payment amount")
     email = (obj.get("customer_details") or {}).get("email") or obj.get("customer_email") or ""
     # Missing contact/payment data still creates the paid position. It cannot
     # be listed until reconciled; Stripe's normal completed event has both.
@@ -138,7 +141,8 @@ def record_purchase(obj: dict[str, Any], event_id: str, purchased_at: int | None
     position = {
         "id": reservation_position_id(obj["id"]), "session_id": obj["id"],
         "grade": metadata["grade"], "lots": int(metadata["lots"]),
-        "per_lot_cents": int(metadata["per_lot_cents"]), "purchase_completed_at": purchased_at,
+        "per_lot_cents": int(metadata["per_lot_cents"]), "total_cents": total,
+        "purchase_completed_at": purchased_at,
         "payment_intent": payment, "holder": holder_key(email),
         "terms_version": metadata["terms_version"], "status": "needs_review" if needs_review else "held",
         "stripe_session_complete": obj.get("payment_status") == "paid",
@@ -281,7 +285,7 @@ def backfill_email(email: str, holder: str, settings: Settings) -> None:
     reserved_notification row supplies first-paid-webhook time. If missing,
     preserve an unknown time and require ops; NEVER use session.created.
     """
-    from trusted_router.services.reserved_tokens import KIND
+    from trusted_router.services.reserved_tokens import KIND, session_amounts
 
     if holder_key(email) != holder:
         raise ValueError("Email does not match this link")
@@ -300,7 +304,11 @@ def backfill_email(email: str, holder: str, settings: Settings) -> None:
                 continue
             if obj.get("currency") != "usd" or obj.get("mode") != "payment" or m.get("grade") not in {"AAA", "A", "B", "C"}:
                 continue
-            if int(m["lots"]) <= 0 or int(m["per_lot_cents"]) <= 0 or obj.get("amount_total") != int(m["lots"]) * int(m["per_lot_cents"]):
+            try:
+                _, total = session_amounts(m)
+            except ValueError:
+                continue
+            if type(obj.get("amount_total")) is not int or obj["amount_total"] != total:
                 continue
             # The shared path creates the mapping before reading Stripe state.
             record_purchase(obj, "backfill:" + obj["id"], None, settings, backfill=True)
@@ -318,7 +326,7 @@ def current_payment_state(payment_intent: str | None, settings: Settings) -> dic
 
 
 def payment_state(payment_intent: str, charge: Any, settings: Settings) -> dict[str, Any]:
-    """Bounded Stripe refund evidence, verified against durable fills in the transaction."""
+    """Bounded Stripe refund evidence, verified against durable refund obligations in the transaction."""
     if not isinstance(charge, dict):
         return {"unpaid": True}
     state: dict[str, Any] = {"unpaid": not charge.get("paid"), "disputed": bool(charge.get("disputed")),

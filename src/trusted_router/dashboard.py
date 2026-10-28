@@ -53,6 +53,7 @@ from trusted_router.catalog import (
     endpoint_e2ee,
     endpoint_meets_privacy_requirement,
     endpoint_provider_policy,
+    endpoint_retention_metadata,
     endpoint_zero_data_retention,
     endpoints_for_model,
     meta_candidate_models,
@@ -5423,6 +5424,8 @@ def _endpoint_provider_views(
 
 
 def _provider_view(provider: Provider) -> dict[str, object]:
+    from trusted_router.managed_retention import provider_retention_notice
+
     routing_status = "active" if provider_is_routable(provider) else "blocked"
     confidential_verified = (
         provider.slug != "trustedrouter"
@@ -5441,6 +5444,7 @@ def _provider_view(provider: Provider) -> dict[str, object]:
         "gateway_stores_content": provider.stores_content,
         "zero_data_retention": provider.provider_zero_data_retention,
         "prepaid_zero_data_retention": provider.prepaid_zero_data_retention,
+        "retention_notice": provider_retention_notice(provider.slug),
         "prepaid_zero_data_retention_effective_on": (
             provider.prepaid_zero_data_retention_effective_on
         ),
@@ -5457,7 +5461,7 @@ def _provider_view(provider: Provider) -> dict[str, object]:
         "zero_data_retention_scope_label": (
             "All routes"
             if provider.provider_zero_data_retention is True
-            else "TR-funded routes"
+            else "Reviewed TR-funded routes only; check each model"
             if provider.prepaid_zero_data_retention
             else None
         ),
@@ -5514,9 +5518,10 @@ def _provider_faq_items(
         )
     elif provider.prepaid_zero_data_retention:
         zdr_answer = (
-            f"TrustedRouter records its managed {provider.name} routes as zero data "
-            "retention. That classification does not automatically cover every direct or "
-            "BYOK account. Use provider.min_privacy=zdr to require an eligible route."
+            f"Reviewed managed {provider.name} routes can qualify for zero data "
+            "retention. Check the exact model's endpoint policy: safety-retention, "
+            "durable-cache and unreviewed routes are excluded. BYOK does not inherit "
+            "this classification. Use provider.min_privacy=zdr to enforce eligibility."
         )
     elif provider.prepaid_zero_data_retention_effective_on:
         zdr_answer = (
@@ -5641,6 +5646,7 @@ def _model_detail_view(
                 ),
                 "provider_e2ee": endpoint_e2ee(endpoint) if ep_provider else None,
                 "provider_policy": endpoint_provider_policy(endpoint) if ep_provider else "",
+                "retention": endpoint_retention_metadata(endpoint) if ep_provider else None,
                 "endpoint_id": endpoint.id,
                 "precision": endpoint_precision_metadata(endpoint),
             }
@@ -6500,6 +6506,10 @@ def _provider_model_rows(provider_slug: str, *, test_mode: bool = False) -> list
                 "speech": speech_metadata(model.id) if speech else None,
                 "transcription": transcription_metadata(model.id) if transcription else None,
                 "endpoint_count": len(endpoints),
+                "retention_policies": [
+                    retention for endpoint in endpoints
+                    if (retention := endpoint_retention_metadata(endpoint)) is not None
+                ],
                 "fetch": fetch_metadata() if model.id == FETCH_MODEL_ID else None,
                 "prompt_price": fetch_price_label() if model.id == FETCH_MODEL_ID else transcription.price_label if transcription else speech.non_token_price_label if speech and not speech.token_billed else _endpoint_price_range(
                     endpoints,

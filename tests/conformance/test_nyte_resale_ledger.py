@@ -15,6 +15,18 @@ from trusted_router.store_protocol import Store
 # the reason beside each retained tuple names its storage proof obligation.
 # Collection deselects the others BEFORE store/emulator resource setup.
 EMULATOR_CASES = {
+    "fee_bearing_purchase_import": [
+        ({"path": "record"}, "V6 checkout persists the complete payment snapshot before verification"),
+        ({"path": "backfill"}, "V6 historical import preserves fee-inclusive total and first-paid timestamp"),
+    ],
+    "full_refund_uses_payment_total": [
+        ({"fee_bearing": True}, "V6 full amount binds/refunds; subtotal is insufficient; own evidence is deduplicated"),
+        ({"fee_bearing": False}, "Legacy positions without total retain subtotal full refunds"),
+    ],
+    "v6_resale_fill_excludes_purchase_fees": [
+        ({"buyer_price": 800}, "V6 resale proceeds exclude buyer processing and exchange fees"),
+        ({"buyer_price": 1000}, "V6 seller cap excludes seller processing and exchange fees"),
+    ],
     "external_payment_change_blocks_existing_position_and_listings": [
         ({"state": {"amount_refunded": 1}}, "External refund withdraws listings atomically; allocation skips them"),
     ],
@@ -1264,3 +1276,107 @@ def test_nyte_all_position_decisions_repair_legacy_rows(store: Store, unique: st
     assert p["allocation_status"] == "historical" and p["status"] == "held" and p["purchase_completed_at"] == 100
     assert p["sold_lots"] == (2 if decision == "allocation" else 1)
     call(store, "withdraw", position=seller, holder=seller, listing=lid, request_id="cleanup")
+
+
+@pytest.mark.parametrize("path", ["record", "backfill"])
+def test_nyte_fee_bearing_purchase_import(store: Store, unique: str, monkeypatch, path: str) -> None:
+    from types import SimpleNamespace
+
+    from tests.test_reserved_tokens import fee_event
+    from trusted_router.config import Settings
+    from trusted_router.services import resale
+
+    settings = Settings(environment="test", resale_enabled=True)
+    obj = fee_event()["data"]["object"]
+    obj.update(id="cs_" + unique, payment_intent="pi_" + unique)
+    holder = resale.holder_key(obj["customer_details"]["email"])
+    monkeypatch.setattr(resale, "STORE", store)
+    monkeypatch.setattr(resale.stripe.PaymentIntent, "retrieve", lambda *a, **kw: {
+        "status": "succeeded", "latest_charge": {"paid": True, "amount_refunded": 0},
+    })
+    store.claim_reserved_notification(obj["id"], "original", now=100)
+    store.finish_reserved_notification(obj["id"], "original", sent=True)
+    if path == "backfill":
+        monkeypatch.setattr(resale.stripe.Customer, "list", lambda **kw: SimpleNamespace(auto_paging_iter=lambda: iter([{"id": "cus_" + unique}])))
+        monkeypatch.setattr(resale.stripe.checkout.Session, "list", lambda **kw: SimpleNamespace(auto_paging_iter=lambda: iter([obj])))
+        resale.backfill_email(obj["customer_details"]["email"], holder, settings)
+        resale.backfill_email(obj["customer_details"]["email"], holder, settings)
+    else:
+        resale.record_purchase(obj, "evt_" + unique, 100, settings)
+        resale.record_purchase(obj, "evt_" + unique, 200, settings)
+    p = inspect_position(store, obj["id"])
+    assert p["total_cents"] == 1681  # 2 * 800 + 2 exchange + 79 processing.
+    assert p["per_lot_cents"] == 800 and p["lots"] == 2
+    assert p["terms_version"] == "2026-10-28-v6"
+    assert p["purchase_completed_at"] == 100
+    assert p["allocation_status"] == "historical" and not p["fills"]
+
+
+@pytest.mark.parametrize("fee_bearing", [True, False])
+def test_nyte_full_refund_uses_payment_total(store: Store, unique: str, fee_bearing: bool) -> None:
+    session = unique + "full"
+    total = 1681 if fee_bearing else 1600
+    purchase(store, session, lots=2, price=800, total_cents=total if fee_bearing else None)
+    if not fee_bearing:
+        assert "total_cents" not in inspect_position(store, session)
+        assert inspect_position(store, session)["terms_version"] == "2026-10-27-v5"
+    call(store, "request_refund", position=session, holder=session, now=101, request_id="full")
+    obligation = call(store, "refund_obligation", kind="full_refund", id=session)
+    assert obligation["refund_amount_cents"] == total
+    refund = {"id": "re_" + unique, "payment_intent": "pi_" + session, "amount": total, "status": "succeeded"}
+    if fee_bearing:
+        partial = {**refund, "id": "re_partial_" + unique, "amount": 1600}
+        with pytest.raises(ValueError, match="full original-payment"):
+            call(store, "refund_acknowledge", position=session, owner="ops", refund=partial)
+        assert call(store, "refund_obligation", kind="full_refund", id=session)["status"] == "pending"
+        assert call(store, "refund_lifecycle", refund={**partial, "status": "failed"}) == {}
+        # Subtotal failure evidence must not poison the full amount, even for
+        # the same refund ID; bind checks the obligation's complete amount.
+        call(store, "refund_lifecycle", refund={**refund, "amount": 1600, "status": "failed"})
+    # A Dashboard refund can reach charge.refunded before acknowledgement,
+    # with no metadata. The existing full-refund request establishes ownership.
+    for _ in range(2):
+        p = call(store, "reconcile_payment", payment_intent=refund["payment_intent"],
+                 payment_state={"amount_refunded": total, "refunds": [refund, refund]})
+        assert not p.get("payment_review")
+        assert p["status"] == "refund_requested"
+    assert call(store, "refund_acknowledge", position=session, owner="ops", refund=refund)["status"] == "refunded"
+    p = call(store, "reconcile_payment", payment_intent=refund["payment_intent"],
+             payment_state={"amount_refunded": total, "refunds": [refund]})
+    assert p["status"] == "refunded" and not p.get("payment_review")
+    assert session not in refund_queue_ids(store, "full_refunds")
+    # Failures use exactly the same full amount and cannot be undone by a
+    # late success. No new refund is issued to conceal an unsuccessful refund.
+    assert call(store, "refund_lifecycle", refund={**refund, "status": "failed"})["status"] == "needs_ops"
+    assert call(store, "refund_acknowledge", position=session, owner="ops", refund=refund)["status"] == "needs_ops"
+    # Repeated evidence cannot hide even one external cent.
+    p = call(store, "reconcile_payment", payment_intent=refund["payment_intent"],
+             payment_state={"amount_refunded": total + 1, "refunds": [refund, refund]})
+    assert p["payment_review"]
+
+
+@pytest.mark.parametrize("buyer_price", [800, 1000])
+def test_nyte_v6_resale_fill_excludes_purchase_fees(store: Store, unique: str, buyer_price: int) -> None:
+    seller, buyer = unique + "feeseller", unique + "feebuyer"
+    purchase(store, seller, lots=2, price=800, total_cents=1681)
+    listing(store, seller, lots=2)
+    p = purchase(store, buyer, lots=2, price=buyer_price, allocate=True,
+                 total_cents=1681 if buyer_price == 800 else 2093)
+    fill = call(store, "refund_obligation", kind="resale_fill", id=p["fills"][0])
+    assert fill["resale_price_cents"] == buyer_price
+    assert fill["refund_amount_cents"] == (1520 if buyer_price == 800 else 1600)
+    assert fill["fee_cents"] == (80 if buyer_price == 800 else 100)
+
+
+def test_nyte_v6_subtotal_refund_keeps_obligation_open(store: Store, unique: str) -> None:
+    session = unique + "partial"
+    purchase(store, session, lots=2, price=800, total_cents=1681)
+    call(store, "request_refund", position=session, holder=session, now=101, request_id="full")
+    refund = {"id": "re_" + unique, "payment_intent": "pi_" + session, "amount": 1600, "status": "succeeded"}
+    with pytest.raises(ValueError, match="full original-payment"):
+        call(store, "refund_acknowledge", position=session, owner="ops", refund=refund)
+    p = call(store, "reconcile_payment", payment_intent=refund["payment_intent"],
+             payment_state={"amount_refunded": 1600, "refunds": [refund]})
+    assert p["status"] == "refund_requested" and p["payment_review"]
+    assert call(store, "refund_obligation", kind="full_refund", id=session)["status"] == "pending"
+    assert session in refund_queue_ids(store, "full_refunds")

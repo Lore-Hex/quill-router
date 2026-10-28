@@ -89,7 +89,8 @@ class PressTests(unittest.TestCase):
             self.assertEqual(svg.getroot().tag, "{http://www.w3.org/2000/svg}svg")
             self.assertFalse(svg.findall(".//{http://www.w3.org/2000/svg}script"))
             self.assertFalse(svg.findall(".//{http://www.w3.org/2000/svg}text"))
-        expected = {name + ".png": (2400, 480) if "wordmark" in name else (2048, 1024) for name, *_ in ASSETS}
+        dimensions = {"lockup": (2400, 1080), "horizontal": (2400, 480), "wordmark": (2400, 480), "mark": (2048, 1024)}
+        expected = {name + ".png": dimensions[name.split("-")[1]] for name, *_ in ASSETS}
         expected.update({"nyte-social.png": (1200, 630), "nyte-homepage.png": (1920, 1080)})
         for filename, dimensions in expected.items():
             data = (assets / filename).read_bytes()
@@ -116,6 +117,22 @@ class PressTests(unittest.TestCase):
         for name in ("README.txt", "nyte-fact-sheet.txt"):
             self.assertNotIn("mark is shared with TrustedRouter", (assets / name).read_text())
         self.assertEqual((assets / "nyte-social.png").read_bytes(), (HERE / "press-assets/nyte-social.png").read_bytes())
+
+    def test_combined_logos_include_globe_and_outlined_name_and_appear_first(self):
+        assets = self.root / "assets/press"
+        self.assertEqual(ASSETS[0][0], "nyte-horizontal-light")
+        for kind, height in (("lockup", 450), ("horizontal", 200)):
+            for variant, color in (("light", "#000000"), ("dark", "#ffffff"), ("mono", "#000000")):
+                root = ET.parse(assets / f"nyte-{kind}-{variant}.svg").getroot()  # noqa: S314
+                self.assertEqual(root.attrib["aria-label"], "NY Token Exchange")
+                self.assertEqual(root.attrib["viewBox"], f"0 0 1000 {height}")
+                self.assertEqual(len(root.findall(".//{http://www.w3.org/2000/svg}ellipse")), 1)
+                groups = root.findall("{http://www.w3.org/2000/svg}g")
+                self.assertEqual(len(groups), 2)
+                name = groups[1].find("{http://www.w3.org/2000/svg}path")
+                self.assertEqual(name.attrib["fill"], color)
+                wordmark = ET.parse(assets / f"nyte-wordmark-{variant}.svg").getroot()  # noqa: S314
+                self.assertEqual(name.attrib["d"], wordmark.find("{http://www.w3.org/2000/svg}path").attrib["d"])
 
     def test_copy_single_source_and_claim_boundaries(self):
         data = json.loads((HERE / "press.json").read_text())

@@ -13,6 +13,12 @@ from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 HERE = Path(__file__).resolve().parent
 ASSET_URL = "/assets/press"
 ASSETS = (
+    ("nyte-horizontal-light", "Horizontal logo on light", "light", "svg", "png"),
+    ("nyte-horizontal-dark", "Horizontal logo on dark", "dark", "svg", "png"),
+    ("nyte-horizontal-mono", "Monochrome horizontal logo", "light", "svg", "png"),
+    ("nyte-lockup-light", "Stacked logo on light", "light", "svg", "png"),
+    ("nyte-lockup-dark", "Stacked logo on dark", "dark", "svg", "png"),
+    ("nyte-lockup-mono", "Monochrome stacked logo", "light", "svg", "png"),
     ("nyte-wordmark-light", "Wordmark on light", "light", "svg", "png"),
     ("nyte-wordmark-dark", "Wordmark on dark", "dark", "svg", "png"),
     ("nyte-wordmark-mono", "Monochrome wordmark", "light", "svg", "png"),
@@ -20,13 +26,16 @@ ASSETS = (
     ("nyte-mark-dark", "Globe mark on dark", "dark", "svg", "png"),
     ("nyte-mark-mono", "Monochrome mark", "light", "svg", "png"),
 )
+LOGO_DIMENSIONS = {"lockup": (1000, 450), "horizontal": (1000, 200), "wordmark": (600, 120), "mark": (1000, 500)}
 USAGE = (
     "Use these assets to identify NY Token Exchange in editorial coverage, "
     "integrations and partner materials. Keep proportions and colors intact; do not "
     "stretch, recolor, crop or add effects to the logos. Leave clear space at least "
     "half the mark's height around each lockup. Use a contrasting background. "
     "The globe mark and NY Token Exchange wordmark are NYTE's brand assets. "
-    "Use the wordmark on first reference. Write NY Token Exchange (NYTE), then NYTE. "
+    "Use the horizontal globe-and-name logo on first reference, with the globe "
+    "on the left and name on one line. A stacked version is available for taller "
+    "placements. Write NY Token Exchange (NYTE), then NYTE. "
     "Link to https://nytokenexchange.com. Logos are not certifications or endorsements. "
     "All trademark rights remain with Lore Hex Corp. Credit screenshots and social "
     "artwork to NY Token Exchange. The river image in historical screenshots is symbolic "
@@ -59,6 +68,8 @@ def build_press(output: Path) -> None:
     (assets / "README.txt").write_text(
         f"NY TOKEN EXCHANGE - PUBLIC PRESS KIT\nUpdated: {data['updated']}\n\n"
         "Source: https://nytokenexchange.com/media-kit\nContact: help@trustedrouter.com\n\n"
+        "Primary horizontal logos: outlined SVG and transparent 2400 x 480 PNG.\n"
+        "Alternate stacked logos: outlined SVG and transparent 2400 x 1080 PNG.\n"
         "Wordmarks: outlined SVG and transparent 2400 x 480 PNG.\n"
         "Globe marks: SVG and transparent 2048 x 1024 PNG.\n"
         "Social image: 1200 x 630 PNG. Homepage: 1920 x 1080 PNG, captured 2026-10-15.\n"
@@ -78,6 +89,7 @@ def build_press(output: Path) -> None:
     escape = html.escape
     cards = []
     for name, title, background, *formats in ASSETS:
+        width, height = LOGO_DIMENSIONS[name.split("-")[1]]
         links = "".join(
             f'<a class="download" href="{ASSET_URL}/{name}.{ext}" download '
             f'aria-label="Download {escape(title)} {ext.upper()}">{ext.upper()} <span aria-hidden="true">↓</span></a>'
@@ -86,7 +98,7 @@ def build_press(output: Path) -> None:
         cards.append(
             f'<article class="asset"><div class="asset-preview {background}">'
             f'<img src="{ASSET_URL}/{name}.svg" alt="NY Token Exchange: {escape(title)}" '
-            + ('width="1000" height="500"' if "-mark-" in name else 'width="600" height="120"')
+            + f'width="{width}" height="{height}"'
             + (' class="mark"' if "-mark-" in name else "")
             + f'></div><div class="asset-caption"><h3>{escape(title)}</h3><div>{links}</div></div></article>'
         )

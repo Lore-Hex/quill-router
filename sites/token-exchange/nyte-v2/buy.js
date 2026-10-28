@@ -75,11 +75,24 @@ document.addEventListener('DOMContentLoaded', () => {
       // half-up cent rounding; the returned authoritative quote must agree.
       const discounted = listCents * (10000 - quote.discount_bps);
       const perLot = Math.floor((discounted + 5000) / 10000);
+      const subtotal = perLot * lots;
+      const exchangeNumerator = subtotal * quote.exchange_fee_bps;
+      const exchangeFee = Math.floor((exchangeNumerator + 5000) / 10000);
+      const credit = subtotal + exchangeFee;
+      const processingNumerator = (credit + quote.processing_fee_fixed_cents) * 10000;
+      const processingFee = Math.ceil(processingNumerator / (10000 - quote.processing_fee_bps)) - credit;
+      const total = credit + processingFee;
       if (!Number.isInteger(quote.discount_bps) || quote.discount_bps < 0 || quote.discount_bps >= 10000 ||
           !Number.isSafeInteger(discounted) || perLot <= 0 || quote.per_lot_cents !== perLot ||
-          quote.total_cents !== perLot * lots) throw new Error('Quote unavailable. Please try again.');
+          quote.grade !== selected('grade').value || quote.lots !== lots ||
+          quote.exchange_fee_bps !== 10 || !Number.isSafeInteger(exchangeNumerator + 5000) ||
+          !Number.isInteger(quote.processing_fee_bps) || quote.processing_fee_bps < 0 || quote.processing_fee_bps >= 10000 ||
+          !Number.isSafeInteger(quote.processing_fee_fixed_cents) || quote.processing_fee_fixed_cents < 0 ||
+          !Number.isSafeInteger(processingNumerator) || !Number.isSafeInteger(total) || total < 50 || total > 99999999 ||
+          quote.subtotal_cents !== subtotal || quote.exchange_fee_cents !== exchangeFee ||
+          quote.processing_fee_cents !== processingFee || quote.total_cents !== total) throw new Error('Quote unavailable. Please try again.');
       reserveQuote = quote;
-      get('reserve-price').textContent = `${cents.format(perLot / 100)} per lot · ${quote.discount_bps / 100}% early-reservation discount · ${cents.format(perLot * lots / 100)} USD total for ${lots} lot${lots === 1 ? '' : 's'}. Index as of ${quote.index_as_of}. Up to ${quote.max_lots} lots by card; larger orders by call.`;
+      get('reserve-price').textContent = `${cents.format(perLot / 100)} per lot · ${quote.discount_bps / 100}% early-reservation discount · ${lots} lot${lots === 1 ? '' : 's'}: ${cents.format(subtotal / 100)} + ${cents.format(exchangeFee / 100)} NYTE exchange fee (${quote.exchange_fee_bps / 100}%) + ${cents.format(processingFee / 100)} card processing fee = ${cents.format(total / 100)} USD total. Index as of ${quote.index_as_of}. Up to ${quote.max_lots} lots by card; larger orders by call.`;
     } catch (error) {
       if (key !== reserveKey) return;
       reserveQuote = null;

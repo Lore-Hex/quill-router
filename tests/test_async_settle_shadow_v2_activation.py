@@ -603,6 +603,9 @@ def test_round2_ruled_rollout_patch(plan, tmp_path, phase):
     from trusted_router.async_settle_shadow_v2_activation_release import prepare
     original = (ROOT / 'scripts/deploy/rollout.sh').read_text()
     active = phase == 'shadow-opt-in'
+    # Production has two workspaces; an explicit release still uses only its
+    # approved plan workspace. Opt-out must remove both production workspaces.
+    assert '"TR_ASYNC_SETTLE_SHADOW_WORKSPACES=162e441a-5d13-414f-92bd-7c6cd805faa3,45819281-0ce9-4811-a0cd-c660ab3a116d"' in original
     # Independent ruled values: do not build this expectation from pins() or plan fields.
     expected = {
         'TR_ASYNC_SETTLE_SHADOW_POLICY': 'shadow-v2' if active else '',
@@ -623,6 +626,17 @@ def test_round2_ruled_rollout_patch(plan, tmp_path, phase):
         fromfile='a/scripts/deploy/rollout.sh', tofile='b/scripts/deploy/rollout.sh')).encode()
     prepare(plan, phase, ROOT, None, tmp_path, expires_at=EXPIRY)
     assert (tmp_path / 'router.patch').read_bytes() == wanted
+    region_pin = '  "TR_ASYNC_SETTLE_SHADOW_REGIONS=us-central1,us-east4,europe-west4"\n'
+    assert original.count(region_pin) == changed.count(region_pin) == 1
+    # Region scope survives both explicit release phases; clearing policy and
+    # workspaces is sufficient to disable both shadow versions on opt-out.
+    from trusted_router.config import Settings
+    config = Settings(environment='test', serving_region='us-central1',
+        async_settle_shadow_regions='us-central1,us-east4,europe-west4',
+        **{name.removeprefix('TR_').lower(): value for name, value in expected.items()})
+    assert config.effective_async_settle_shadow_policy() == ('shadow-v2' if active else '')
+    assert config.async_settle_shadow_workspace_ids == (
+        {'162e441a-5d13-414f-92bd-7c6cd805faa3'} if active else set())
     for name in ('TR_ASYNC_SETTLE_ENABLED', 'TR_ASYNC_SETTLE_PROTECTION', 'TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED'):
         line = f'  "{name}=false"\n'
         assert line in original and line in changed

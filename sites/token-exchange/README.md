@@ -222,7 +222,7 @@ retry. Preserve DNS, certificates, URL maps and other bucket objects. Verify the
 public routes, aliases, navigation, catalogue CORS, Calendly handoff, and privacy
 signals after the separately authorized publish.
 
-### 2027 card reservations (local implementation; publish separately)
+### 2027 card reservations
 
 Step 2 of `/buy` offers card checkout only for index-grade 1B-token lots, all
 four grades AAA/A/B/C. The existing call path remains available for every
@@ -238,7 +238,7 @@ only through that program: holders list lots, NYTE resells them to new buyers ah
 of new inventory, and each sale returns the resale price minus a 5% resale fee to
 the original card, capped at what the holder paid for those lots. The `/manage-reservation` page emails a signed, single-use, 15-minute link.
 Full refund requests are recorded durably for ops to refund in Stripe; resale
-listing and withdrawal use the same holder session. The terms version is `2026-10-27-v5`.
+listing and withdrawal use the same holder session. The terms version is `2026-10-28-v6`, replacing v5. Full refunds return the entire Stripe payment including both purchase fees; resale proceeds and caps use the per-lot price excluding purchase fees.
 Delivery is through a TrustedRouter account via the NYTE API. The terms live at
 `/reserved-tokens-terms` and its `.html` alias, in the shared NYTE shell and New
 York sitemap. These are prepaid inference services, not securities or investments.
@@ -250,21 +250,39 @@ quote reads use the bounded metadata collector limiter so editing the quantity
 does not consume the five-per-hour checkout limit. No customer email is posted
 by the page: Stripe-hosted Checkout collects it.
 
-The quote returns the current discount, snapshot date, per-lot cents and total.
-The page computes the discounted cents from its published index and the returned
-discount, checks agreement with the authoritative quote and refuses stale pages.
-This avoids embedding a potentially stale discount in a static build. The server
-recomputes the authoritative price at session creation from `content/token_index.py`:
-`ROUND_HALF_UP(index USD × 100 × (10000 − discount_bps) / 10000)`, then multiplies
-by lots. There are no credit top-up processing-fee line items, promotions or
-automatic tax additions; the exact displayed amount is charged. Stripe's final
-checkout price is the price locked at purchase.
+The quote publishes the index price/date, discount, per-lot cents, lot subtotal,
+exchange fee cents/rate, Stripe processing fee cents/rate/fixed cents, and total.
+The page independently recomputes the whole breakdown and refuses any mismatch
+or stale index. At session creation, the server uses `content/token_index.py`:
 
-Configuration, kept dark in `scripts/deploy/rollout.sh`:
+- Per-lot cents: `ROUND_HALF_UP(index USD × 100 × (10000 − discount_bps) / 10000)`.
+- Subtotal: per-lot cents × lots (the fee-exclusive refund/resale cap basis).
+- NYTE exchange fee: `ROUND_HALF_UP(subtotal × 10 / 10000)` (0.1%).
+- Card processing fee: Stripe at cost, using `credit = subtotal + exchange fee`
+  and `ceil((credit + 30) × 10000 / 9710) − credit` at 2.9% plus 30 cents.
+  This does not use the credit top-up surcharge multiplier or 80-cent floor.
+- Total charged: subtotal + exchange fee + card processing fee. Fee lines are
+  omitted only when zero; there are no promotions or automatic tax additions.
+
+Checkout Session and PaymentIntent metadata retain every quote field except
+`max_lots`, including the full charge and fee inputs. The webhook validates the
+paid amount against that snapshot, without consulting today's index or rates.
+New inventory and resale buyers use the same checkout breakdown.
+
+`TR_RESALE_ENABLED` remains false. Historical import and webhook recording share
+one validated payment snapshot. Positions store the full `total_cents`; older
+positions without it retain their lot-subtotal fallback. Full-refund obligations,
+acknowledgements and payment evidence use that full total, including both purchase
+fees. A subtotal-only refund cannot complete a v6 full-refund obligation. Seller
+resale proceeds and caps remain based on `per_lot_cents`, excluding purchase fees.
+
+Live sale configuration in `scripts/deploy/rollout.sh`:
 
 - `TR_RESERVED_TOKENS_CHECKOUT_ENABLED=true` enables sales.
-- `TR_RESERVED_TOKENS_DISCOUNT_BPS=1000` records Joseph’s approved 10% discount.
-  The checkout flag remains `false`; an absent discount still refuses sales.
+- `TR_RESERVED_TOKENS_DISCOUNT_BPS=1000` retains Joseph’s approved 10% discount.
+- `TR_RESERVED_TOKENS_EXCHANGE_FEE_BPS=10` sets the approved 0.1% exchange fee.
+  Missing discount or exchange fee refuses quotes/checkout with 503. Any other
+  exchange fee fails configuration validation and requires a new terms version.
 - `TR_RESERVED_TOKENS_MAX_LOTS_PER_CHECKOUT` defaults to 100. Larger orders go to
   the call. Stripe amount limits also fail closed.
 - `TR_RESERVED_TOKENS_MAX_PRICE_AGE_DAYS` defaults to 45 and must be at least 1.
@@ -361,9 +379,10 @@ imports, backfills, disabled finalization and already-notified replays finalize
 unfinished allocation as historical new inventory. Replay/import also repairs
 older pending allocation without changing purchase time or adverse evidence.
 The explicit ops refund CLI remains available for
-obligations already owed. Config loading rejects any fee other than 500 with an
-error explaining that a fee change requires a new terms version. v5 is the new checkout terms version;
-already-created v3/v4 sessions remain accepted by the webhook. The v5 terms keep
+obligations already owed. Config loading rejects any resale fee other than 500 with an
+error explaining that a fee change requires a new terms version. v6 replaces v5 for new checkouts;
+already-created v3/v4/v5 sessions without fee keys remain accepted with zero
+purchase fees. v6 requires complete fee metadata. The terms keep
 email requests to enterprise@trustedrouter.com visible while self-service is
 unavailable; include the position ID or Stripe payment reference.
 
@@ -452,6 +471,9 @@ The video remains available separately at its existing public URL.
 by Joseph on October 28, 2026, as outlined SVGs and transparent PNGs. These are
 NYTE assets, not the TrustedRouter routing mark. The globe source is
 `nyte-globe-source.svg`; black and white exports preserve its 2:1 aspect ratio.
+Combined globe-and-name exports come first in the kit: `nyte-horizontal-*` is the
+primary one-line 2400 x 480 logo; `nyte-lockup-*` is the alternate stacked 2400 x 1080 version.
+Both include outlined lettering and transparent backgrounds in each color variant.
 The separate homepage capture remains an explicitly dated October 15 illustration.
 Regenerate the logos with `uv run --no-project --with fonttools --with brotli
 sites/token-exchange/export_press_logos.py` and `rsvg-convert` installed.

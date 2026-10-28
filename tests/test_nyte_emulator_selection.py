@@ -27,10 +27,10 @@ def ledger_cases():
 
 def test_emulator_representatives_are_live_bounded_and_sales_on():
     cases = list(ledger_cases())
-    assert len(cases) == 164  # Full matrices remain present, not deleted.
+    assert len(cases) == 171  # Full matrices remain present, not deleted.
     kept = [(name, params) for name, params in cases
             if contract.emulator_case_reason(name, {**params, "store": "spanner-emulator"})]
-    assert len(kept) == 40
+    assert len(kept) == 47
     assert all(params.get("resale_enabled", True) for _, params in kept)
     for suffix, representatives in contract.EMULATOR_CASES.items():
         for expected, reason in representatives:
@@ -63,7 +63,7 @@ def test_collection_deselects_only_native_duplicates_before_fixtures():
     for backend in ("memory", "spanner-fake", "postgres", "spanner-pg"):
         before = [i for i in original if i is not unrelated and i.callspec.params["store"] == backend]
         after = [i for i in items if i is not unrelated and i.callspec.params["store"] == backend]
-        assert before == after and len(after) == 164
+        assert before == after and len(after) == 171
     assert all(i.user_properties for i in items if i is not unrelated and i.callspec.params["store"] == "spanner-emulator")
 
 

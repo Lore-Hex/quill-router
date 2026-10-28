@@ -13,7 +13,7 @@ OPTIONS = frozenset("""
 temperature top_p top_k top_a min_p max_tokens max_output_tokens
 max_completion_tokens max_tool_calls n seed depth frequency_penalty
 presence_penalty repetition_penalty logprobs top_logprobs stream store
-allow_fallbacks parallel_tool_calls background usage.include
+allow_fallbacks parallel_tool_calls background usage.include include_reasoning
 stream_options.include_usage reasoning.enabled reasoning.exclude reasoning.max_tokens
 provider.allow_fallbacks provider.require_parameters provider.zdr
 provider.max_price.prompt provider.max_price.completion provider.max_price.image

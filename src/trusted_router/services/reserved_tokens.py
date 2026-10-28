@@ -17,11 +17,17 @@ from trusted_router.config import Settings
 from trusted_router.content import token_index
 from trusted_router.errors import api_error
 from trusted_router.services.email import EmailMessage, get_email_service
+from trusted_router.services.stripe_fees import processing_fee
 from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
 
 KIND = "reserved_tokens_2027"
-TERMS_VERSION = "2026-10-27-v5"
+TERMS_VERSION = "2026-10-28-v6"
+LEGACY_TERMS_VERSIONS = {"2026-10-27-v3", "2026-10-27-v4", "2026-10-27-v5"}
+FEE_FIELDS = (
+    "exchange_fee_bps", "exchange_fee_cents", "processing_fee_cents",
+    "processing_fee_bps", "processing_fee_fixed_cents",
+)
 WINDOW = {
     "usable_from": "2027-01-01",
     "usable_until": "2027-12-31",
@@ -47,10 +53,25 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+def charge_breakdown(subtotal: int, exchange_fee_bps: int, processing_bps: int, processing_fixed: int) -> tuple[int, int, int]:
+    """Return exchange fee, at-cost card processing fee, and total in cents."""
+    exchange_fee = (subtotal * exchange_fee_bps + 5_000) // 10_000
+    card_fee = processing_fee(
+        credit_amount_cents=subtotal + exchange_fee,
+        variable_basis_points=processing_bps,
+        fixed_fee_cents=processing_fixed,
+        minimum_fee_cents=0, max_fee_cents=None, fee_multiplier_basis_points=10_000,
+    ).processing_fee_cents
+    return exchange_fee, card_fee, subtotal + exchange_fee + card_fee
+
+
 def reservation_quote(settings: Settings, grade: str, lots: int) -> dict[str, Any]:
     discount = settings.reserved_tokens_discount_bps
     if not settings.reserved_tokens_checkout_enabled or discount is None:
         raise api_error(503, "Reserved token checkout is not enabled or its discount is not configured", ErrorType.SERVICE_UNAVAILABLE)
+    exchange_fee_bps = settings.reserved_tokens_exchange_fee_bps
+    if exchange_fee_bps is None:
+        raise api_error(503, "Reserved token checkout is not enabled or its exchange fee is not configured", ErrorType.SERVICE_UNAVAILABLE)
     if grade not in {"AAA", "A", "B", "C"}:
         raise api_error(422, "Choose an NYTE Index grade: AAA, A, B or C", ErrorType.BAD_REQUEST)
     if type(lots) is not int or not 1 <= lots <= settings.reserved_tokens_max_lots_per_checkout:
@@ -63,13 +84,23 @@ def reservation_quote(settings: Settings, grade: str, lots: int) -> dict[str, An
         raise api_error(503, "Reserved token prices are being updated; book a call", ErrorType.SERVICE_UNAVAILABLE)
     list_cents = Decimal(str(token_index.QUOTES[grade]["value"])) * 100
     per_lot = int((list_cents * (10_000 - discount) / 10_000).quantize(Decimal(1), rounding=ROUND_HALF_UP))
-    if per_lot <= 0 or not 50 <= per_lot * lots <= 99_999_999:
+    if per_lot <= 0:
+        raise api_error(503, "Reservation amount is outside card checkout limits; book a call", ErrorType.SERVICE_UNAVAILABLE)
+    subtotal = per_lot * lots
+    exchange_fee, card_fee, total = charge_breakdown(
+        subtotal, exchange_fee_bps, settings.stripe_card_fee_basis_points, settings.stripe_card_fee_fixed_cents,
+    )
+    if not 50 <= total <= 99_999_999:
         raise api_error(503, "Reservation amount is outside card checkout limits; book a call", ErrorType.SERVICE_UNAVAILABLE)
     return {
         "grade": grade, "lots": lots, "per_lot_cents": per_lot,
         "list_price_cents": int(list_cents.quantize(Decimal(1), rounding=ROUND_HALF_UP)),
         "discount_bps": discount, "index_as_of": token_index.AS_OF_ISO,
-        "total_cents": per_lot * lots,
+        "subtotal_cents": subtotal, "exchange_fee_bps": exchange_fee_bps,
+        "exchange_fee_cents": exchange_fee, "processing_fee_cents": card_fee,
+        "processing_fee_bps": settings.stripe_card_fee_basis_points,
+        "processing_fee_fixed_cents": settings.stripe_card_fee_fixed_cents,
+        "total_cents": total,
         "max_lots": settings.reserved_tokens_max_lots_per_checkout, **WINDOW,
         "resale_fee_bps": str(settings.resale_fee_bps),
     }
@@ -81,19 +112,25 @@ def create_reservation_checkout(settings: Settings, body: ReservationRequest) ->
         raise api_error(422, "Accept the reserved tokens terms before checkout", ErrorType.BAD_REQUEST)
     if not settings.stripe_secret_key:
         raise api_error(503, "Card checkout is not configured", ErrorType.SERVICE_UNAVAILABLE)
-    metadata = {"kind": KIND, **{key: str(value) for key, value in quote.items() if key not in {"total_cents", "max_lots"}}}
+    metadata = {"kind": KIND, **{key: str(value) for key, value in quote.items() if key != "max_lots"}}
     # Use the same SDK/key as stripe_billing, but no workspace, saved payment
-    # method, fee pass-through, mock purchase or credit-acquisition callbacks.
-    session = stripe.checkout.Session.create(
-        api_key=settings.stripe_secret_key,
-        mode="payment", payment_method_types=["card"], customer_creation="always",
-        line_items=[{"price_data": {
+    # method, top-up surcharge, mock purchase or credit-acquisition callbacks.
+    line_items: list[Any] = [{"price_data": {
             "currency": "usd", "unit_amount": quote["per_lot_cents"],
             "product_data": {
                 "name": f"Reserved tokens · Grade {body.grade} · 1B tokens",
-                "description": "Usable January 1, 2027 through December 31, 2027. Unused tokens expire December 31, 2027. Full refund on request within 30 days of purchase. After 30 days, exit only through NYTE resale. Transfer only through NYTE resale: list lots; NYTE resells ahead of new inventory. Each sale refunds the resale price minus a 5% fee to the original card, capped at what you paid for those lots.",
+                "description": "Usable January 1, 2027 through December 31, 2027. Unused tokens expire December 31, 2027. Full refund including fees on request within 30 days of purchase. After 30 days, exit only through NYTE resale. Transfer only through NYTE resale: list lots; NYTE resells ahead of new inventory. Each sale refunds the resale price minus a 5% fee to the original card, capped at what you paid for those lots, excluding purchase fees.",
             },
-        }, "quantity": body.lots}],
+        }, "quantity": body.lots}]
+    for key, name in (("exchange_fee_cents", "NYTE exchange fee (0.1%)"), ("processing_fee_cents", "Card processing fee")):
+        if quote[key]:
+            line_items.append({"price_data": {
+                "currency": "usd", "unit_amount": quote[key], "product_data": {"name": name},
+            }, "quantity": 1})
+    session = stripe.checkout.Session.create(
+        api_key=settings.stripe_secret_key,
+        mode="payment", payment_method_types=["card"], customer_creation="always",
+        line_items=line_items,
         metadata=metadata, payment_intent_data={"metadata": metadata},
         success_url="https://nytokenexchange.com/buy?reserved=success",
         cancel_url=f"https://nytokenexchange.com/buy?step=2&grade={body.grade}&unit=blocks",
@@ -109,6 +146,43 @@ def reservation_position_id(session_id: str) -> str:
     """
     digest = hashlib.sha256(f"nyte:reserved-position:v1:{session_id}".encode()).hexdigest()
     return f"nyte_pos_{digest}"
+
+
+def session_amounts(metadata: dict[str, Any]) -> tuple[int, int]:
+    """Validate a paid checkout snapshot without consulting current prices/settings."""
+    try:
+        if metadata["terms_version"] not in LEGACY_TERMS_VERSIONS | {TERMS_VERSION}:
+            raise ValueError("Invalid reservation terms version")
+        if not all(isinstance(metadata[key], str) and metadata[key].isascii() and metadata[key].isdigit() for key in ("lots", "per_lot_cents")):
+            raise ValueError("Invalid reservation quantity or price")
+        lots, per_lot = int(metadata["lots"]), int(metadata["per_lot_cents"])
+        if lots <= 0 or per_lot <= 0:
+            raise ValueError("Invalid reservation quantity or price")
+        subtotal = lots * per_lot
+        legacy_no_fees = (
+            metadata["terms_version"] in LEGACY_TERMS_VERSIONS
+            and not any(key in metadata for key in FEE_FIELDS)
+        )
+        if legacy_no_fees:
+            return subtotal, subtotal
+        else:
+            # Stripe metadata is strings. Refuse partial, negative or fractional
+            # fees; retain the checkout snapshot rather than today's price/rates.
+            if not all(isinstance(metadata[key], str) and metadata[key].isascii() and metadata[key].isdigit() for key in FEE_FIELDS):
+                raise ValueError("Invalid fee metadata")
+            fees = {key: int(metadata[key]) for key in FEE_FIELDS}
+            if metadata["exchange_fee_bps"] != "10" or fees["processing_fee_bps"] >= 10_000:
+                raise ValueError("Invalid fee rates")
+        exchange_fee, card_fee, total = charge_breakdown(
+            subtotal, fees["exchange_fee_bps"], fees["processing_fee_bps"], fees["processing_fee_fixed_cents"],
+        )
+        if fees["exchange_fee_cents"] != exchange_fee or fees["processing_fee_cents"] != card_fee:
+            raise ValueError("Invalid fee amounts")
+        if metadata["subtotal_cents"] != str(subtotal) or metadata["total_cents"] != str(total):
+            raise ValueError("Invalid fee totals")
+        return subtotal, total
+    except (KeyError, TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("Invalid reserved token payment amounts") from exc
 
 
 def handle_reservation_event(event: dict[str, Any], settings: Settings, background: BackgroundTasks | None = None) -> dict[str, Any]:
@@ -128,14 +202,12 @@ def handle_reservation_event(event: dict[str, Any], settings: Settings, backgrou
         return {**result, "payment_pending": True}
     metadata = obj.get("metadata") or {}
     try:
-        lots, per_lot = int(metadata["lots"]), int(metadata["per_lot_cents"])
+        subtotal, total = session_amounts(metadata)
         valid = (
-            lots > 0 and per_lot > 0 and obj.get("amount_total") == lots * per_lot
+            type(obj.get("amount_total")) is int and obj["amount_total"] == total
             and obj.get("currency") == "usd" and obj.get("mode") == "payment"
             and metadata["grade"] in {"AAA", "A", "B", "C"}
             and all(metadata[key] == value for key, value in WINDOW.items() if key not in {"terms_version", "resale_fee_bps"})
-            # Already-paid sessions retain the terms accepted at checkout.
-            and metadata["terms_version"] in {"2026-10-27-v3", "2026-10-27-v4", TERMS_VERSION}
             and metadata["resale_fee_bps"] == "500"
             and int(metadata["list_price_cents"]) > 0
             and 0 <= int(metadata["discount_bps"]) < 10_000
@@ -167,6 +239,8 @@ def handle_reservation_event(event: dict[str, Any], settings: Settings, backgrou
     purchased_at = datetime.fromtimestamp(purchase_timestamp, UTC)
     refund_deadline = purchased_at + timedelta(days=int(WINDOW["refund_window_days"]))
     details = {key: metadata[key] for key in ("grade", "lots", "per_lot_cents", "list_price_cents", "discount_bps", "index_as_of", *WINDOW)}
+    details.update({key: str(int(metadata.get(key, "0"))) for key in FEE_FIELDS})
+    details.update(subtotal_cents=str(subtotal), total_cents=str(total))
     details.update(position_id=position_id, purchase_completed_at=purchased_at.isoformat(), refund_deadline_at=refund_deadline.isoformat(), stripe_session_id=session_id, stripe_customer_id=obj.get("customer") if isinstance(obj.get("customer"), str) else None)
     try:
         if STORE.record_webhook_event_once(KIND, session_id):
