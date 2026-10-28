@@ -354,6 +354,14 @@ def test_postgres_transaction_implementation_on_sql_fake(monkeypatch):
             with monkeypatch.context() as patch:
                 contract.test_nyte_all_position_decisions_repair_legacy_rows(
                     store, contract.reference(f"pg-repair-decision-{decision}")[:20], patch, decision)
+        for path in ("record", "backfill"):
+            with monkeypatch.context() as patch:
+                contract.test_nyte_fee_bearing_purchase_import(store, "pg-v6-" + path, patch, path)
+        for fee_bearing in (True, False):
+            contract.test_nyte_full_refund_uses_payment_total(store, "pg-full-" + str(fee_bearing), fee_bearing)
+        for buyer_price in (800, 1000):
+            contract.test_nyte_v6_resale_fill_excludes_purchase_fees(store, "pg-price-" + str(buyer_price), buyer_price)
+        contract.test_nyte_v6_subtotal_refund_keeps_obligation_open(store, "pg-partial-v6")
         # Read-committed Postgres must lock the completion fact until allocation
         # commits. SQLite cannot model the lock, but verifies the shipped SQL.
         completion_reads = [sql for sql, params in conn.statements
@@ -955,3 +963,86 @@ def test_refund_cli_always_sweeps_pending_positions(settings, monkeypatch, capsy
     script.main()
     sweep.assert_called_once_with(settings)
     assert "checked 3, repaired 1, pending 0" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("buyer_price,expected_refund", [(800, 1520), (1000, 1600)])
+def test_resale_fill_excludes_purchase_fees_from_proceeds_and_cap(settings, monkeypatch, buyer_price, expected_refund):
+    from tests.test_reserved_tokens import fee_event as event
+
+    store = InMemoryStore()
+    monkeypatch.setattr(resale, "STORE", store)
+    seller = event()["data"]["object"]
+    seller["payment_intent"] = "pi_seller"
+    position = resale.record_purchase(seller, "evt_seller", 100, settings)
+    seller_id = position["session_id"]
+    call(store, "list", position=seller_id, holder=resale.holder_key("private@example.com"), lots=2, request_id="list")
+    buyer = event()["data"]["object"]
+    buyer.update(id="cs_buyer", payment_intent="pi_buyer", customer_details={"email": "buyer@example.com"})
+    buyer["metadata"].update(per_lot_cents=str(buyer_price), subtotal_cents=str(buyer_price * 2))
+    # Complete fee-bearing snapshots: 1602 -> 1682, or 2002 -> 2093.
+    buyer_total = 1682 if buyer_price == 800 else 2093
+    buyer["metadata"].update(processing_fee_cents=str(buyer_total - buyer_price * 2 - 2), total_cents=str(buyer_total))
+    buyer["amount_total"] = buyer_total
+    purchased = resale.record_purchase(buyer, "evt_buyer", 2_592_200, settings)
+    fill = store.resale_entities["nyte_fill", purchased["fills"][0]]
+    assert fill["resale_price_cents"] == buyer_price
+    # Two lots at 800 yield 760 each after 5%; at 1000, 950 is capped
+    # at the seller's 800 per lot, never their 1682 / 2 fee-inclusive charge.
+    assert fill["refund_amount_cents"] == expected_refund
+
+
+@pytest.mark.parametrize("patch,missing,amount_delta", [
+    ({}, "exchange_fee_cents", 0), ({}, "processing_fee_bps", 0),
+    ({"exchange_fee_bps": "20"}, None, 0), ({"processing_fee_bps": "10000"}, None, 0),
+    ({"processing_fee_cents": "８０"}, None, 0), ({"exchange_fee_cents": "-1"}, None, 0),
+    ({"subtotal_cents": "1601"}, None, 0), ({"total_cents": "1681"}, None, 0),
+    ({"terms_version": "unknown"}, None, 0), ({"lots": "0"}, None, 0),
+    ({}, None, -1), ({}, None, 1),
+])
+def test_invalid_fee_session_cannot_record_or_backfill(settings, monkeypatch, patch, missing, amount_delta):
+    from tests.test_reserved_tokens import fee_event
+
+    store = InMemoryStore()
+    monkeypatch.setattr(resale, "STORE", store)
+    obj = fee_event()["data"]["object"]
+    obj["payment_intent"] = "pi_invalid"
+    obj["metadata"].update(patch)
+    if missing:
+        del obj["metadata"][missing]
+    obj["amount_total"] += amount_delta
+    provider = Mock(side_effect=AssertionError("Invalid snapshot reached Stripe"))
+    monkeypatch.setattr(resale.stripe.PaymentIntent, "retrieve", provider)
+    with pytest.raises(ValueError):
+        resale.record_purchase(obj, "evt_invalid", 100, settings)
+    monkeypatch.setattr(resale.stripe.Customer, "list", lambda **kw: SimpleNamespace(auto_paging_iter=lambda: iter([{"id": "cus_invalid"}])))
+    monkeypatch.setattr(resale.stripe.checkout.Session, "list", lambda **kw: SimpleNamespace(auto_paging_iter=lambda: iter([obj])))
+    resale.backfill_email("private@example.com", resale.holder_key("private@example.com"), settings)
+    provider.assert_not_called()
+    assert not store.resale_entities
+
+
+def test_v6_full_payment_refund_service_acknowledgement(settings, monkeypatch):
+    from tests.test_reserved_tokens import fee_event
+
+    store = InMemoryStore()
+    monkeypatch.setattr(resale, "STORE", store)
+    obj = fee_event()["data"]["object"]
+    obj["payment_intent"] = "pi_v6_full"
+    p = resale.record_purchase(obj, "evt_v6_full", 100, settings)
+    call(store, "request_refund", position=obj["id"], holder=p["holder"], now=101, request_id="full")
+    refund = {"id": "re_v6_full", "payment_intent": obj["payment_intent"], "amount": 1600, "status": "succeeded"}
+    monkeypatch.setattr(resale.stripe.Refund, "retrieve", lambda *a, **kw: refund)
+    monkeypatch.setattr(resale.stripe.Refund, "list", lambda **kw: SimpleNamespace(auto_paging_iter=lambda: iter([refund])))
+    with pytest.raises(ValueError, match="full original-payment"):
+        resale.acknowledge_full_refund(obj["id"], refund["id"], settings)
+    refund["amount"] = 1682
+    assert resale.reconcile_payment_event({"type": "refund.created", "data": {"object": refund}}, settings)
+    assert not call(store, "position", position=obj["id"]).get("payment_review")
+    assert resale.acknowledge_full_refund(obj["id"], refund["id"], settings)["status"] == "refunded"
+    assert resale.reconcile_payment_event({"type": "charge.refunded", "data": {"object": {
+        "payment_intent": obj["payment_intent"], "paid": True, "amount_refunded": 1682,
+    }}}, settings)
+    saved = call(store, "position", position=obj["id"])
+    assert saved["status"] == "refunded" and saved["total_cents"] == 1682
+    assert not saved.get("payment_review")
+    assert ("nyte_payment_review", obj["payment_intent"]) not in store.resale_entities

@@ -878,6 +878,7 @@ class Settings(BaseSettings):
     resale_fee_bps: int = 500
     reserved_tokens_checkout_enabled: bool = False
     reserved_tokens_discount_bps: int | None = Field(default=None, ge=0, lt=10_000)
+    reserved_tokens_exchange_fee_bps: int | None = None
     reserved_tokens_max_lots_per_checkout: int = Field(default=100, ge=1)
     reserved_tokens_max_price_age_days: int = Field(default=45, ge=1)
     stablecoin_checkout_enabled: bool = True
@@ -1434,6 +1435,13 @@ class Settings(BaseSettings):
             _LocalKeyFileSource(settings_cls),
             file_secret_settings,
         )
+
+    @field_validator("reserved_tokens_exchange_fee_bps")
+    @classmethod
+    def reserved_tokens_exchange_fee_matches_terms(cls, value: int | None) -> int | None:
+        if value is not None and value != 10:
+            raise ValueError("TR_RESERVED_TOKENS_EXCHANGE_FEE_BPS must equal 10; a fee change needs a new terms version")
+        return value
 
     @field_validator("resale_fee_bps")
     @classmethod

@@ -24,10 +24,11 @@ def inspect_position(store: Store, session: str) -> dict[str, Any]:
         return store.reserved_resale({"op": "test_observation", "now": 0})
 
 
-def purchase(store: Store, name: str, *, lots: int = 3, price: int = 100, allocate: bool = False, grade: str | None = None) -> dict[str, Any]:
+def purchase(store: Store, name: str, *, lots: int = 3, price: int = 100, allocate: bool = False, grade: str | None = None, total_cents: int | None = None) -> dict[str, Any]:
     return call(store, "purchase", position={"id": name, "session_id": name, "grade": grade or (name[:12] if len(name) >= 12 else "A"), "lots": lots,
                 "per_lot_cents": price, "payment_intent": "pi_" + name, "holder": name,
-                "purchase_completed_at": 100}, event_id="evt_" + name, allocate=allocate, fee_bps=500)
+                "purchase_completed_at": 100, "terms_version": "2026-10-27-v5" if total_cents is None else "2026-10-28-v6",
+                **({"total_cents": total_cents} if total_cents is not None else {})}, event_id="evt_" + name, allocate=allocate, fee_bps=500)
 
 
 def listing(store: Store, name: str, *, lots: int = 3, request: str = "list") -> str:
