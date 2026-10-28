@@ -142,7 +142,7 @@ jobs:
     needs: scope
     if: needs.scope.outputs.data_only != 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 40
     env:
       SPANNER_EMULATOR_HOST: 127.0.0.1:9010
       TR_CONFORMANCE_EMULATOR_SCHEMA: "1"
@@ -196,9 +196,13 @@ jobs:
       # SDK leftovers from other tests. Mixed-suite workers skip that count.
       - name: P5 package object budgets
         if: ${{ !cancelled() }}
-        # 861 covered tests on two workers: 3.5 minutes on one runner, over 5 on
-        # a slower one (run 38851426992 timed out at the old 5-minute limit).
-        timeout-minutes: 12
+        # Runner speed, not test growth: 57 green main runs (2026-10-24..28)
+        # took 635 s median / 669 s max; P5/conformance correlation was 0.73.
+        # Run 40736263651 hit 720 s at 88% (~876 s projected), then reran in
+        # 651 s. Oct 12 measurements found up to 1.9x runner-speed variation.
+        # 22 min gives 2.1x median / 1.5x projection; the 40-min job limit
+        # gives 2.2x its 1080 s median so a ~2x slower runner still fits.
+        timeout-minutes: 22
         run: >-
           uv run pytest -q tests/test_async_settle_shadow_v2_gate*.py
           -m "not proof_oracle" -n 2
