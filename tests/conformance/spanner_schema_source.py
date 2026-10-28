@@ -10,7 +10,7 @@ sources below are read whether tracked or not), except:
 (b) build/dependency directories .git, .venv, node_modules, dist, build,
 __pycache__, vendor, target, .next, .mypy_cache, .pytest_cache, .ruff_cache,
 and .hypothesis;
-(c) the existing exact data path .test_durations (generated pytest timing data);
+(c) the exact data paths in DATA_PATHS (generated pytest timing profiles);
 (d) binary files with no shebang, no CODE_EXTENSIONS suffix, and a NUL byte in
 the first 8 KiB. A shebang or code/script extension always defeats binary skipping.
 No extension or basename pattern excludes data. Every scanned Spanner DDL
@@ -27,7 +27,7 @@ cursor.execute supplied a connection externally), transport tokens or URLs
 assembled at runtime (e.g. getattr(db, "update_" + "d" + "dl")), statement text
 outside the fixed migration list (e.g. ALTER TABLE in clickhouse/build_public_snapshots.py;
 it cannot reach Spanner without a transport), root tests/ and docs/ (including
-deploy steps executing files there), the exact data path .test_durations, the
+deploy steps executing files there), the exact data paths in DATA_PATHS, the
 build/dependency directories and binary files defined above, and anything
 applied outside this repository (e.g. console SQL).
 Lore-Hex/quill-router#1372 tracks the scheduled production INFORMATION_SCHEMA
@@ -469,7 +469,10 @@ def migration_sources(root: Path) -> list[Path]:
 
 
 # Exact reviewed paths only; new files of any name/extension default to scanning.
-DATA_PATHS = {".test_durations": "generated pytest timing data at the repository root"}
+DATA_PATHS = {
+    ".test_durations": "generated pytest timing data at the repository root",
+    ".test_durations-post-cutover": "generated post-cutover pytest timing data at the repository root",
+}
 # Inclusion override for the binary heuristic, never an exclusion allowlist.
 CODE_EXTENSIONS = frozenset((
     ".py .pyi .sh .bash .zsh .fish .js .mjs .cjs .jsx .ts .tsx .go .java .kt .kts "

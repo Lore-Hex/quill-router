@@ -195,24 +195,41 @@ def test_capacity_metadata_rejects_private_or_inconsistent_fields(client: TestCl
     assert response.status_code == 422
 
 
-@pytest.mark.parametrize("pathname", [
+_BROWSER_PATHS = [
     route + suffix for route in ("/neocloud-accelerator", "/trusted-cowork", "/buy")
     for suffix in ("", ".html")
-])
+]
+
+
+@pytest.fixture(scope="module")
+def browser_payloads() -> dict[str, list[dict]]:
+    # One bounded Node startup per worker, fresh isolated VM for every page.
+    # Preserve stderr on timeout to distinguish runner/startup stalls from JS.
+    harness = Path(__file__).parent / "js" / "exchange_analytics_harness.cjs"
+    try:
+        result = subprocess.run(  # noqa: S603
+            ["node", str(harness), *_BROWSER_PATHS],  # noqa: S607
+            check=True, capture_output=True, text=True, timeout=10,
+        )
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(f"analytics harness exceeded 10s; progress: {exc.stderr!r}")
+    payloads = json.loads(result.stdout)
+    assert set(payloads) == set(_BROWSER_PATHS), result.stderr
+    return payloads
+
+
+@pytest.mark.xdist_group("exchange-browser-payloads")
+@pytest.mark.parametrize("pathname", _BROWSER_PATHS)
 def test_nyte_browser_payloads_survive_collector_logging_and_export(
     client: TestClient, caplog: pytest.LogCaptureFixture, pathname: str,
+    browser_payloads: dict[str, list[dict]],
 ) -> None:
     from scripts.axiom_growth.model import project_event
     from scripts.axiom_growth.provision import source_filter
     from trusted_router.main import _ApplicationConsoleFormatter
 
     canonical = pathname.removesuffix(".html")
-    harness = Path(__file__).parent / "js" / "exchange_analytics_harness.cjs"
-    result = subprocess.run(  # noqa: S603
-        ["node", str(harness), pathname],  # noqa: S607
-        check=True, capture_output=True, text=True, timeout=10,
-    )
-    payloads = json.loads(result.stdout)
+    payloads = browser_payloads[pathname]
     assert [payload["event"] for payload in payloads] == [
         "exchange.landing_viewed", "exchange.landing_engaged",
     ]

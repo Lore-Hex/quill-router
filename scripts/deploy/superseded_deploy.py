@@ -9,16 +9,16 @@ to the newer push's run, but only when that run is ready to take over:
   every input of the image and of the deploy itself (tests pin it to the
   Dockerfile and to the trigger), so deploying BASE ships exactly what main
   would.
-* The newer run queues behind this one (one pending run per concurrency
-  group), then waits for its own CI, which a saturated runner queue holds for
-  hours, then for the production lease, which an enclave rollout holds for
-  about three. Skipping before that run can deploy at once starves main: on
+* Preparation runs outside the production concurrency queue. A newer run
+  qualifies only after its exact-commit CI and image build succeed. A run
+  with green CI but an unfinished image must not displace this release.
+  Skipping before that run can deploy at once starves main: on
   2026-10-21 five control-plane pushes in a row waited for the lease, found
   themselves superseded, skipped, and main went 13 h undeployed. So BASE
-  ships now unless a deploy.yml run is waiting for a newer commit AND that
-  commit's CI run has already concluded success; then the waiting run deploys
-  within minutes of this one exiting, and the obsolete image need not roll
-  through production first.
+  ships now unless a newer push is prepared, green and still on main. The
+  production queue retains prepared releases instead of evicting a newer
+  release when an older build finishes late. Already delivered successors
+  also prevent an older preparation from downgrading production.
 
     superseded_deploy.py --repo OWNER/NAME --base DEPLOYED_SHA --head MAIN_SHA
 
@@ -62,6 +62,7 @@ DEPLOY_PATHS = (
     "pyproject.toml",
     "uv.lock",
     ".github/workflows/deploy.yml",
+    ".github/workflows/deploy-production.yml",
 )
 
 # GitHub's compare API returns at most 300 files.
@@ -170,30 +171,47 @@ def successor_ready(repo: str, base: str, head: str) -> tuple[bool, str]:
 
     Its commit must descend from BASE and still be on main (equal to or an
     ancestor of HEAD, main's head as observed by the caller), and its CI run
-    must have concluded success.
+    must have concluded success and its image must already be built.
     """
 
-    runs = _gh_json(["run", "list", "--repo", repo, "--workflow", DEPLOY_WORKFLOW, "--limit", "10",
-                     "--json", "databaseId,status,headSha,headBranch,event"])
-    successor = pending_successor(runs, base=base)
-    if successor is None:
-        return False, "no newer push run on main is waiting to take over"
-    lineage = _gh_json(["api", f"repos/{repo}/compare/{base}...{successor}"])
-    if not (isinstance(lineage, dict) and lineage.get("status") == "ahead"):
-        status = lineage.get("status") if isinstance(lineage, dict) else "unknown"
-        return False, f"the waiting run's commit {successor[:9]} is not known to descend from {base[:9]} ({status})"
-    on_main = _gh_json(["api", f"repos/{repo}/compare/{successor}...{head}"])
-    if not base_on_main(on_main):
-        status = on_main.get("status") if isinstance(on_main, dict) else "unknown"
-        return False, f"the waiting run's commit {successor[:9]} is not known to be on main {head[:9]} ({status})"
-    ci = _gh_json(["run", "list", "--repo", repo, "--workflow", CI_WORKFLOW, "--commit", successor,
-                   "--limit", "1", "--json", "status,conclusion"])
-    if ci_green(ci):
-        return True, f"the waiting run for {successor[:9]} has green CI and deploys after its own build and admission"
-    state = "unknown"
-    if isinstance(ci, list) and ci and isinstance(ci[0], dict):
-        state = f"{ci[0].get('status')}/{ci[0].get('conclusion') or '-'}"
-    return False, f"the waiting run for {successor[:9]} cannot deploy yet (CI {state})"
+    runs = _gh_json(["run", "list", "--repo", repo, "--workflow", DEPLOY_WORKFLOW, "--limit", "100",
+                     "--json", "databaseId,status,conclusion,headSha,headBranch,event"])
+    if not isinstance(runs, list):
+        return False, "deploy queue is unknown"
+    for run in runs:
+        if not isinstance(run, dict) or run.get("event") != "push" or run.get("headBranch") != MAIN_BRANCH:
+            continue
+        successor = run.get("headSha")
+        if not successor or successor == base or not run.get("databaseId"):
+            continue
+        if run.get("status") not in _WAITING_RUN_STATUSES | {"in_progress", "completed"}:
+            continue
+        if run.get("status") == "completed" and run.get("conclusion") != "success":
+            continue
+        lineage = _gh_json(["api", f"repos/{repo}/compare/{base}...{successor}"])
+        if not isinstance(lineage, dict) or lineage.get("status") != "ahead":
+            continue
+        if not base_on_main(_gh_json(["api", f"repos/{repo}/compare/{successor}...{head}"])):
+            continue
+        ci = _gh_json(["run", "list", "--repo", repo, "--workflow", CI_WORKFLOW, "--commit", successor,
+                       "--limit", "1", "--json", "status,conclusion"])
+        if not ci_green(ci):
+            continue
+        details = _gh_json(["run", "view", str(run["databaseId"]), "--repo", repo, "--json", "jobs"])
+        if not isinstance(details, dict) or not isinstance(details.get("jobs"), list):
+            continue
+        jobs = {job.get("name"): job.get("conclusion") for job in details["jobs"] if isinstance(job, dict)}
+        if run["status"] == "completed":
+            # An older preparation can finish AFTER a newer release ships.
+            # Never downgrade it; skipped/partial rollouts do not prove delivery.
+            required = {"deploy", "rollout-secondaries", "public-surface-companion",
+                        "verify-cloud-complete", "finalize-cloud"}
+            delivered = {str(name).removeprefix("rollout / "): result for name, result in jobs.items()}
+            if all(delivered.get(name) == "success" for name in required):
+                return True, f"newer release {successor[:9]} already completed all production gates"
+        elif all(jobs.get(name) == "success" for name in ("gate-on-ci", "build-image")):
+            return True, f"newer release {successor[:9]} has green CI and a prepared image queued for rollout"
+    return False, "no newer prepared green release can take over; shipping the current eligible release"
 
 
 def main(argv: list[str] | None = None) -> int:

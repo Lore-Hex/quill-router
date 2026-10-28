@@ -2911,7 +2911,7 @@ def test_combined_synthetic_refresh_preserves_security_boundaries(tmp_path: Path
 
 
 def test_combined_synthetic_refresh_is_a_visible_release_gate() -> None:
-    workflow = (ROOT / ".github/workflows/deploy.yml").read_text()
+    workflow = (ROOT / ".github/workflows/deploy-production.yml").read_text()
     rollout = workflow.split("\n  rollout-secondaries:\n", 1)[1].split(
         "\n  public-surface-companion:\n", 1
     )[0]
