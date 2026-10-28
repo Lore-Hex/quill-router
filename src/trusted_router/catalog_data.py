@@ -144,6 +144,11 @@ PROVIDER_JURISDICTION_SG = "SG"
 # starts where this one stopped instead of repeating it. Keys must be provider
 # slugs whose provider_headquarters_country is None.
 PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
+    "maple": (
+        "Checked maple.ai/privacy and maple.ai/terms on 2026-10-28. They name "
+        "Maple Privacy Labs Inc.; the pilot has not established the contracting "
+        "entity's headquarters or inference residency. No country-filter claim."
+    ),
     "hixtube": (
         "Checked the operator's Neocloud-in-a-Box repository and pilot runbook. "
         "The Hixtube brand and separate hosting project are defined, but the "
@@ -2443,6 +2448,24 @@ PROVIDERS: dict[str, Provider] = {
         provider_zero_data_retention=False,
         provider_confidential_compute=False,
         provider_e2ee=False,
+    ),
+    "maple": Provider(
+        slug="maple",
+        name="Maple",
+        internal_only=True,
+        supports_prepaid=False,
+        supports_byok=False,
+        attested_gateway=False,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "Internal encrypted-API pilot, not available for customer routing. "
+            "Pending account entitlement, measured Transport V2 integration, "
+            "live inference and billing qualification, and production resale terms. "
+            "Maple's encryption claims are not yet verified end to end by TrustedRouter."
+        ),
+        provider_policy_url="https://maple.ai/privacy",
     ),
 }
 
