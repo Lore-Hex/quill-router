@@ -85,6 +85,8 @@ PUBLISHER_RELEASE_REASONS = frozenset({
 })
 # One slot lets a delayed owner callback arrive without extending any RPC budget.
 PUBLISHER_WATCHDOG_GRACE = SLOT_US / 1_000_000
+OWNER_PROGRESS_SECONDS = 15.
+START_RETRY_MAX_SECONDS = 60.
 
 
 class _ObserverQuiesced(Exception):
@@ -294,7 +296,7 @@ class Port:
     def reserve(self, observed_us: int, *, terminal: bool = False) -> Reservation | None:
         def action() -> Reservation | None:
             svc, day = self.service, day_at(observed_us)
-            require(svc.policy_enabled() and not svc.journal.stopped, "quiesced")
+            require(svc.policy_enabled() and svc.runtime_stop.available and not svc.journal.stopped, "quiesced")
             require(day in svc.counters, "day_not_ready")
             require(not svc.journal.days[day].sealing, "closed_day")
             # Signal demand only; the evidence worker owns all cap I/O. Keep
@@ -582,7 +584,7 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
                 actual_us = int(store.wall()*1_000_000)
                 started = store.clock()
                 reason = ("revoked" if generation != job.generation or admission.revocation_epoch
-                    or admission.admission_job != job else
+                    or admission.admission_job != job or not getattr(getattr(admission, "runtime_stop", None), "available", True) else
                     "outside_window" if not (job.earliest_start_mono <= started <= job.latest_start_mono
                         and actual_us // SLOT_US == slot and actual_us % SLOT_US <= JITTER_US) else None)
                 if reason is not None:
@@ -610,7 +612,8 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
                     raise TimeoutError("publisher_admission")
                 try:
                     if (admission.generation != job.generation or admission.revocation_epoch
-                            or admission.admission_job != job):
+                            or admission.admission_job != job
+                            or not getattr(getattr(admission, "runtime_stop", None), "available", True)):
                         reason = "revoked"
                         return
                     if (int(store.wall()*1_000_000) // SLOT_US != slot
@@ -768,6 +771,12 @@ class Service:
         self.publisher_job: asyncio.Future[Any] | None = None
         self.publisher_worker: Future[None] | None = None
         self.publisher_worker_active = threading.Event()
+        self.publisher_store = store
+        self.publisher_lane_generation = 0
+        self.publisher_session_job: Future[bool] | None = None
+        self.owner_task: asyncio.Task[None] | None = None
+        self.owner_progress = store.clock()
+        self.supervised = False
         self.flush_job: asyncio.Future[Any] | None = None
         self.counters: dict[str, dict[str, Any]] = {}
         self.unknown_batches: set[Reservation] = set()
@@ -835,7 +844,7 @@ class Service:
                 and bool(self.workspaces) and not self.settings.async_settle_enabled)
 
     def contender(self) -> bool:
-        return (self.enabled() and bool(self.settings.async_settle_shadow_health_region)
+        return (self.enabled() and self.runtime_stop.available and bool(self.settings.async_settle_shadow_health_region)
                 and self.settings.effective_serving_region == self.settings.async_settle_shadow_health_region)
 
     def ensure_day(self, now_us: int) -> str:
@@ -1257,6 +1266,8 @@ class Service:
                     self.publisher_job.set_result(None)
                 if isinstance(event, lifecycle.PublisherFailed) and self.publisher_worker is not None:
                     self.publisher_worker.cancel()  # Only queued work can be cancelled.
+                    if self.supervised and self.publisher_worker_active.is_set():
+                        self.replace_publisher()
             with self.admission_lock:
                 self.generation = self.state.generation
                 self.admission_job = self.state.job
@@ -1643,7 +1654,7 @@ class Service:
         job = self.state.job
         if job is None or job.slot != slot:
             return
-        args = (self.store, self.journal.boot, self.settings.effective_serving_region,
+        args = (self.publisher_store if self.supervised else self.store, self.journal.boot, self.settings.effective_serving_region,
                 self.settings.source_revision, job, stamp, self, self.is_incumbent(slot), self.has_incumbent(slot),
                 self.warm())
         if (self.publisher_worker is not None and not self.publisher_worker.cancelled()
@@ -1691,21 +1702,84 @@ class Service:
             deliver(failed_publisher_reply(self.journal.boot, job, "publisher_submit_failed"))
             raise
 
+    def replace_publisher(self) -> None:
+        """Quarantine a hung worker, including its session lock and mutable hints."""
+        self.publisher_executor.shutdown(wait=False, cancel_futures=True)
+        self.publisher_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="shadow-v2-health")
+        self.publisher_worker = None
+        self.publisher_worker_active = threading.Event()
+        self.publisher_store = self.store.publisher_lane()
+        if self.publisher_store.transport is not None:
+            self.publisher_store.transport.failure = self.runtime_stop.outcome
+        # Use this executor for preparation too: a stuck prepare costs only this
+        # lane, and is subject to the same slot watchdog/replacement mechanism.
+        self.publisher_lane_generation += 1
+        session_boot = f"{self.journal.boot}-publisher-{self.publisher_lane_generation}"
+        self.publisher_session_job = self.publisher_executor.submit(self.publisher_store.prepare_session, session_boot)
+
+    async def supervise(self) -> None:
+        """Retry startup and recover an exited/suspended owner without a process restart."""
+        delay = 1.
+        while not self.stopped.is_set() and self.policy_enabled():
+            try:
+                async with asyncio.timeout(12.):
+                    prepared = await asyncio.to_thread(self.store.prepare_session, self.journal.boot)
+                    checked = prepared and await asyncio.to_thread(self.runtime_stop.poll)
+                if prepared and checked:
+                    break
+            except Exception:  # noqa: S110 - startup retries without retaining exception content
+                pass
+            await asyncio.sleep(delay)
+            delay = min(START_RETRY_MAX_SECONDS, delay*2)
+        if self.stopped.is_set() or not self.policy_enabled():
+            return
+        self.replace_publisher()
+        self.runtime_stop.start(lambda: self.policy_enabled() and not self.stopped.is_set(),
+                                lambda: not self.close_finished)
+        while not self.stopped.is_set() and self.policy_enabled():
+            self.owner_progress = self.store.clock()
+            self.owner_task = asyncio.create_task(self.run())
+            while not self.stopped.is_set():
+                done, _ = await asyncio.wait((self.owner_task,), timeout=1.)
+                if done or self.store.clock()-self.owner_progress > OWNER_PROGRESS_SECONDS:
+                    break
+            if self.stopped.is_set() or not self.policy_enabled():
+                return
+            # No exception text or request data: one diagnostic per recovery.
+            logger.warning("shadow_v2_owner_recovery")
+            day = self.ensure_day(int(self.store.wall()*1_000_000))
+            target = self.counters[day]["diagnostics"]
+            self._counter_cells(day, target, {"owner_recoveries": target.get("owner_recoveries", 0)+1})
+            self.owner_task.cancel()
+            # Cancellation is cooperative. Never await the failed owner here;
+            # all production owner waits are cancellation points, with no IO.
+            self.owner_task.add_done_callback(lambda task: None if task.cancelled() else task.exception())
+            job = self.state.job
+            if job is not None:
+                self.accept(lifecycle.PublisherFailed(int(self.store.wall()*1_000_000),
+                    job.slot, job.generation, "publisher_watchdog"))
+            await asyncio.sleep(1.)
+
     async def run(self) -> None:
         self.assert_owner()
         self.loop = asyncio.get_running_loop()
-        if self.policy_enabled():
-            await asyncio.to_thread(self.runtime_stop.poll)
-        self.runtime_stop.start(lambda: self.policy_enabled() and not self.stopped.is_set(),
-                                lambda: not self.close_finished)
+        if not self.supervised:
+            self.runtime_stop.start(lambda: self.policy_enabled() and not self.stopped.is_set(),
+                                    lambda: not self.close_finished)
         while not self.stopped.is_set() and self.enabled():
+            self.owner_progress = self.store.clock()
             if self.store.session_recovery_due() and (self.session_job is None or self.session_job.done()):
                 self.session_job = self.session_executor.submit(self.store.prepare_session, self.journal.boot)
+            if (self.supervised and self.publisher_store.session_recovery_due()
+                    and (self.publisher_session_job is None or self.publisher_session_job.done())):
+                self.publisher_session_job = self.publisher_executor.submit(self.publisher_store.prepare_session)
             now = self.store.clock()
             now_us = int(self.store.wall()*1_000_000)
             for effect in self.tick(now_us, mono=now):
                 if isinstance(effect, lifecycle.StartPublisherCycle):
                     self.submit_publisher(effect.slot, now_us)
+            if self.supervised and self.observer.task is None:
+                self.observer.start()
             if now >= self.next_flush and (self.flush_job is None or self.flush_job.done()):
                 self.next_flush = now+5
                 self.flush_job = self.loop.create_task(self.drive_async(self.maintenance()))
@@ -1746,18 +1820,12 @@ class Service:
         signal.signal(signal.SIGTERM, stop)
 
     def start(self) -> None:
-        if self.enabled() and not self.runtime_stop.poll():
-            return
         if self.enabled() and self.task is None:
             self.loop = asyncio.get_running_loop()
             self.trap_sigterm()
-            mono = self.store.clock()
-            stamp = int(self.store.wall()*1_000_000)
-            for effect in self.tick(stamp, mono=mono):
-                if isinstance(effect, lifecycle.StartPublisherCycle):
-                    self.submit_publisher(effect.slot, stamp)
-            self.observer.start()
-            self.task = asyncio.create_task(self.run())
+            self.runtime_stop.available = False
+            self.supervised = True
+            self.task = asyncio.create_task(self.supervise())
 
     async def close(self, reason: str = "shutdown", *, from_loop: bool = False,
                     deadline: float | None = None) -> None:
@@ -1843,12 +1911,7 @@ def install(app: Any, settings: Settings, backend: Any) -> None:
         return
     store = ObservationStore(backend._database)
     service = Service(settings, store)
-    store.prepare_session(service.journal.boot)
-    if not service.runtime_stop.poll():
-        service.session_executor.shutdown(wait=False, cancel_futures=True)
-        service.publisher_executor.shutdown(wait=False, cancel_futures=True)
-        service.evidence_executor.shutdown(wait=False, cancel_futures=True)
-        return
+    service.runtime_stop.available = False
     app.state.async_settle_shadow_observation = service
     @app.on_event("startup")
     async def start() -> None:

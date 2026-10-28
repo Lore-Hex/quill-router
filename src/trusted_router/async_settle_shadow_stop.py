@@ -36,6 +36,7 @@ class RuntimeStop:
         self.next_write = float('-inf')
         self.backoff = 1.
         self.next_read = float('-inf')
+        self.available = True
         self.task: asyncio.Task[None] | None = None
         for transport in (getattr(store, "transport", None),
                           getattr(store, "workspace_transport", None)):
@@ -75,16 +76,22 @@ class RuntimeStop:
         # database read errors still take the fail-closed path below.
         if not getattr(self.store, "supports_runtime_stop",
                        callable(getattr(self.store, "read_runtime_stop", None))):
+            self.available = True
             return True
         now = self.store.clock()
         if now < self.next_read:
-            return True
+            return self.available
         self.next_read = now+CADENCE
         try:
             if self.store.read_runtime_stop() is None:
+                self.available = True
                 return True
-        except Exception:  # noqa: S110 - unavailable control fails closed below
-            pass
+        except Exception:
+            # Unavailable is not an observed stop. Pause cohort admission, but
+            # keep the owner/recovery/observer alive to retry the exact key.
+            self.available = False
+            return False
+        self.available = False
         self.stop()
         return False
 
