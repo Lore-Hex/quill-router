@@ -412,25 +412,15 @@ def _stall_server(monkeypatch: pytest.MonkeyPatch, stall: float | None) -> serve
 
 def _record_arming(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, object]]:
     calls: list[tuple[str, object]] = []
+    monkeypatch.setattr(serve, "stall_dump_fd", lambda fd: calls.append(("dump_fd", fd)) or 99)
     monkeypatch.setattr(serve.faulthandler, "dump_traceback_later",
-                        lambda timeout, exit=False: calls.append(("dump", (timeout, exit))))
+                        lambda timeout, exit=False, file=None: calls.append(("dump", (timeout, exit, file))))
     monkeypatch.setattr(serve.faulthandler, "cancel_dump_traceback_later",
                         lambda: calls.append(("cancel", None)))
-    monkeypatch.setattr(serve.signal, "setitimer", lambda which, seconds: calls.append(("timer", (which, seconds))))
-    real_signal = serve.signal.signal
-
-    def record_alarm_disposition(number: int, handler: object) -> object:
-        # asyncio.run installs its own SIGINT handler; only SIGALRM is ours.
-        if number != serve.signal.SIGALRM:
-            return real_signal(number, handler)
-        calls.append(("signal", (number, handler)))
-        return None
-
-    monkeypatch.setattr(serve.signal, "signal", record_alarm_disposition)
     return calls
 
 
-def test_each_second_of_ticks_rearms_the_stall_watchdog_and_its_backstop(
+def test_each_second_of_ticks_rearms_the_stall_watchdog(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = _record_arming(monkeypatch)
@@ -439,8 +429,8 @@ def test_each_second_of_ticks_rearms_the_stall_watchdog_and_its_backstop(
     for counter in range(21):
         asyncio.run(server.on_tick(counter))
 
-    arm = [("dump", (30.0, True)), ("timer", (serve.signal.ITIMER_REAL, 30.0 + serve.STALL_BACKSTOP_SECONDS))]
-    assert calls == [("signal", (serve.signal.SIGALRM, serve.signal.SIG_DFL)), *arm, *arm, *arm]
+    arm = ("dump", (30.0, True, 99))
+    assert calls == [("dump_fd", sys.stderr.fileno()), arm, arm, arm]
 
 
 def test_without_a_stall_budget_ticks_arm_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -453,7 +443,7 @@ def test_without_a_stall_budget_ticks_arm_nothing(monkeypatch: pytest.MonkeyPatc
     assert calls == []
 
 
-def test_shutdown_disarms_the_stall_watchdog_and_its_backstop(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_shutdown_disarms_the_stall_watchdog(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = _record_arming(monkeypatch)
 
     async def stock_shutdown(self: object, sockets: object = None) -> None:
@@ -464,7 +454,7 @@ def test_shutdown_disarms_the_stall_watchdog_and_its_backstop(monkeypatch: pytes
 
     asyncio.run(server.shutdown())
 
-    assert calls == [("cancel", None), ("timer", (serve.signal.ITIMER_REAL, 0)), ("stock_shutdown", None)]
+    assert calls == [("cancel", None), ("stock_shutdown", None)]
 
 
 @pytest.mark.parametrize(("raw", "expected"), [
@@ -493,7 +483,6 @@ from starlette.responses import PlainTextResponse
 from starlette.routing import Route
 from trusted_router import serve
 
-serve.STALL_BACKSTOP_SECONDS = 1.0
 FILL_STDERR = sys.argv[2] == "fill"
 
 def wedged_call():
@@ -590,6 +579,42 @@ def test_real_stalled_loop_exits_with_every_stack(tmp_path: Path) -> None:
     assert "in wedged_call" in logs
 
 
+@pytest.mark.skipif(not Path("/proc/self/fd").is_dir(), reason="the dump descriptor reopens stderr through /proc")
 def test_real_stalled_loop_exits_when_stderr_is_backed_up(tmp_path: Path) -> None:
+    # The dump cannot be written, but the exit is not held behind it.
     returncode, _ = _run_stalled_server(tmp_path, fill_stderr=True)
-    assert returncode == -signal.SIGALRM
+    assert returncode == 1
+
+
+@pytest.mark.skipif(not Path("/proc/self/fd").is_dir(), reason="the dump descriptor reopens stderr through /proc")
+def test_dump_descriptor_is_nonblocking_without_changing_stderr() -> None:
+    read_end, write_end = os.pipe()
+    try:
+        fd = serve.stall_dump_fd(write_end)
+        assert fd != write_end
+        assert os.get_blocking(write_end) is True
+        assert os.get_blocking(fd) is False
+        os.write(fd, b"stack")
+        assert os.read(read_end, 16) == b"stack"
+        os.close(fd)
+    finally:
+        os.close(read_end)
+        os.close(write_end)
+
+
+def test_dump_descriptor_falls_back_to_stderr_when_it_cannot_reopen(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    def refuse(*args: object, **kwargs: object) -> int:
+        raise FileNotFoundError("no /proc")
+
+    monkeypatch.setattr(serve.os, "open", refuse)
+    read_end, write_end = os.pipe()
+    try:
+        with caplog.at_level(logging.WARNING, logger="trusted_router.serve"):
+            assert serve.stall_dump_fd(write_end) == write_end
+        assert os.get_blocking(write_end) is True
+        assert "serve.stall_dump_blocking reason=FileNotFoundError" in caplog.text
+    finally:
+        os.close(read_end)
+        os.close(write_end)

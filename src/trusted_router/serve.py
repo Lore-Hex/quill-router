@@ -23,10 +23,11 @@ waiting. With ``TR_LOOP_STALL_EXIT_SECONDS`` set, each second of uvicorn ticks
 re-arms ``faulthandler``'s watchdog, a C thread that needs neither the loop nor
 the GIL. If the loop goes that long without a tick, the watchdog writes every
 thread's stack to stderr and exits the process, so Cloud Run replaces it and
-the stacks name the call it was blocked in. Writing the stacks can itself block
-on a backed-up stderr, so a process timer re-armed with it ends the process
-``STALL_BACKSTOP_SECONDS`` later by SIGALRM's default action, which runs in the
-kernel. Only set it for a service whose CPU stays allocated between requests
+the stacks name the call it was blocked in. The watchdog writes the stacks
+before it exits, so it writes them through a non-blocking descriptor of its
+own (``stall_dump_fd``): a backed-up stderr then costs the stacks, never the
+exit. (No signal can be the backstop: the process is the container's PID 1,
+which a signal's default action does not end.) Only set it for a service whose CPU stays allocated between requests
 (``--no-cpu-throttling``): a throttled idle instance sees no ticks and would
 exit when CPU returns.
 
@@ -63,8 +64,6 @@ LOOP_STALL_ENV = "TR_LOOP_STALL_EXIT_SECONDS"
 # once a second. A stall budget must exceed that second.
 _TICKS_PER_REARM = 10
 MIN_LOOP_STALL_SECONDS = 2.0
-# After the stack dump's deadline, time for the dump to drain before SIGALRM.
-STALL_BACKSTOP_SECONDS = 10.0
 
 # Named explicitly: the container runs this module as `python -m`, where
 # `__name__` is "__main__" and a `__name__`-based logger would sit outside the
@@ -106,6 +105,32 @@ def loop_stall_seconds_from_env(environ: dict[str, str] | None = None) -> float 
     return value
 
 
+def stall_dump_fd(stderr_fd: int) -> int:
+    """A descriptor on stderr whose writes fail rather than wait when it is full.
+
+    Reopening the descriptor through /proc gives the same pipe or file a file
+    description of its own, so it can be non-blocking (and appending) without
+    changing how anything else writes to stderr. Where that is not possible,
+    stderr itself, logged.
+    """
+    was_blocking = os.get_blocking(stderr_fd)
+    try:
+        fd = os.open(
+            f"/proc/self/fd/{stderr_fd}",
+            os.O_WRONLY | os.O_APPEND | os.O_NONBLOCK | os.O_CLOEXEC,
+        )
+    except OSError as exc:
+        logger.warning("serve.stall_dump_blocking reason=%s", type(exc).__name__)
+        return stderr_fd
+    if os.get_blocking(stderr_fd) != was_blocking:
+        # One shared description after all: put stderr back as it was.
+        os.close(fd)
+        os.set_blocking(stderr_fd, was_blocking)
+        logger.warning("serve.stall_dump_blocking reason=shared_description")
+        return stderr_fd
+    return fd
+
+
 class DrainingServer(uvicorn.Server):
     """uvicorn.Server that keeps its listener open for a drain window after SIGTERM."""
 
@@ -116,6 +141,7 @@ class DrainingServer(uvicorn.Server):
         self.drain_seconds = max(0.0, min(drain_seconds, MAX_DRAIN_SECONDS))
         self.drain_deadline: float | None = None
         self.stall_seconds = stall_seconds
+        self._stall_dump_fd: int | None = None
 
     async def startup(self, sockets: list | None = None) -> None:
         await super().startup(sockets=sockets)
@@ -144,10 +170,9 @@ class DrainingServer(uvicorn.Server):
 
     async def on_tick(self, counter: int) -> bool:
         if self.stall_seconds is not None and counter % _TICKS_PER_REARM == 0:
-            if counter == 0:
-                signal.signal(signal.SIGALRM, signal.SIG_DFL)
-            faulthandler.dump_traceback_later(self.stall_seconds, exit=True)
-            signal.setitimer(signal.ITIMER_REAL, self.stall_seconds + STALL_BACKSTOP_SECONDS)
+            if self._stall_dump_fd is None:
+                self._stall_dump_fd = stall_dump_fd(sys.stderr.fileno())
+            faulthandler.dump_traceback_later(self.stall_seconds, exit=True, file=self._stall_dump_fd)
         if self.drain_deadline is not None and not self.should_exit:
             if monotonic() >= self.drain_deadline:
                 logger.info("serve.sigterm_drain_complete")
@@ -159,7 +184,6 @@ class DrainingServer(uvicorn.Server):
         # Run's SIGKILL bounds that wait instead.
         if self.stall_seconds is not None:
             faulthandler.cancel_dump_traceback_later()
-            signal.setitimer(signal.ITIMER_REAL, 0)
         await super().shutdown(sockets=sockets)
 
 
