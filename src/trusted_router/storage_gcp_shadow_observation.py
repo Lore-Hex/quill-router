@@ -40,6 +40,7 @@ from trusted_router.storage_gcp_shadow_io import (
     Sessions,
     configure,
     elapsed_clock,
+    finish_transaction_rpcs,
     owned_database,
     rpc_scope,
     timestamp_ns,
@@ -325,7 +326,8 @@ class ObservationStore:
                 original = row.body
             return True
         try:
-            landed = self.transaction(run, budget, CYCLE_SECONDS)
+            with finish_transaction_rpcs():
+                landed = self.transaction(run, budget, CYCLE_SECONDS)
         except UnknownCommit:
             self.claim_unknown = True
             raise
@@ -344,7 +346,8 @@ class ObservationStore:
                 return False
             self.write(tx, [row], budget)
             return True
-        landed = self.transaction(run, budget, CYCLE_SECONDS)
+        with finish_transaction_rpcs():
+            landed = self.transaction(run, budget, CYCLE_SECONDS)
         if landed:
             self.last_publication = (value["publisher_boot_id"], value["slot"])
             self.unpublished_since = value["slot"] + 1

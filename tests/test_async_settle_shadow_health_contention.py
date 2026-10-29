@@ -259,3 +259,97 @@ def test_claim_already_taken_uses_sdk_rollback_not_commit(sdk_database, monkeypa
     outcome(svc, job, "lost_claim")
     assert [name for name, _ in db.calls] == ["read", "rollback"]
     assert not sleeps
+
+
+@pytest.mark.parametrize("stage", ["read", "stream", "commit"])
+def test_late_claim_rpc_finishes_and_sdk_rolls_back_without_server_error(sdk_database, monkeypatch, stage):  # noqa: F811
+    from trusted_router import storage_gcp_shadow_io as io
+    from trusted_router.storage_gcp_shadow_observation import (
+        Budget,
+        ObservationStore,
+        UnknownCommit,
+    )
+
+    db, clock, sleeps = sdk_database
+    db.commit_duration = .02
+    if stage == "read":
+        db.read_duration = 10.
+    elif stage == "commit":
+        db.commit_duration = 10.
+    else:
+        original = db.spanner_api.execute_streaming_sql
+        def slow_stream(**kwargs):
+            yield from original(**kwargs)  # SDK has a transaction ID before the pause.
+            clock.now += 10.
+        monkeypatch.setattr(db.spanner_api, "execute_streaming_sql", slow_stream)
+    store = ObservationStore(db, clock=clock.monotonic, wall=lambda: NOW_US/1e6)
+    failures = []
+    store.transport.failure = lambda *args: failures.append(args)
+    with pytest.raises(UnknownCommit if stage == "commit" else TimeoutError):
+        store.claim("issuer", NOW_US//2_000_000, NOW_US, Budget(clock.now+.5, clock.monotonic))
+    assert not failures and not sleeps
+    assert [name for name, _ in db.calls] == ["read", "commit" if stage == "commit" else "rollback"]
+    assert all(timeout == (io.PUBLISHER_ROLLBACK_SECONDS if name == "rollback"
+                           else io.PUBLISHER_TRANSACTION_RPC_SECONDS) for name, timeout in db.calls)
+    assert store.claim_unknown == (stage == "commit")
+    assert io._SCOPE.get() is None and not io._FINISH_TRANSACTION.get()
+
+
+@pytest.mark.parametrize("operation", ["claim", "publish"])
+def test_expired_publisher_transaction_never_starts_rpc(sdk_database, operation):  # noqa: F811
+    from tests.test_async_settle_shadow_observation import health
+    from trusted_router import storage_gcp_shadow_io as io
+    from trusted_router.storage_gcp_shadow_observation import Budget, ObservationStore
+
+    db, clock, _ = sdk_database
+    store = ObservationStore(db, clock=clock.monotonic)
+    budget = Budget(clock.now, clock.monotonic)
+    with pytest.raises(TimeoutError):
+        if operation == "claim":
+            store.claim("issuer", NOW_US//2_000_000, NOW_US, budget)
+        else:
+            store.publish(health(), budget)
+    assert not db.calls
+    assert io._SCOPE.get() is None and not io._FINISH_TRANSACTION.get()
+
+
+@pytest.mark.parametrize("stage", ["fence", "commit"])
+def test_late_publication_rpc_drains_without_extending_acceptance(sdk_database, monkeypatch, stage):  # noqa: F811
+    from tests.test_async_settle_shadow_observation import health
+    from trusted_router.async_settle_shadow_journal import CLAIM_KIND, Row
+    from trusted_router.storage_gcp_shadow_observation import Budget, ObservationStore
+
+    db, clock, sleeps = sdk_database
+    value = health()
+    fence = dict(v=2, policy_version=value["policy_version"], contract_revision="a1",
+        authority="local", slot=value["slot"], claim_at_ns=value["observed_at_ns"],
+        owner_boot_id=value["publisher_boot_id"])
+    original = db.spanner_api.execute_streaming_sql
+    def read(**kwargs):
+        kind = kwargs["request"].params["kind"]
+        db.rows = [Row.build(CLAIM_KIND, "local/publish", fence).body.decode()] if kind == CLAIM_KIND else []
+        return original(**kwargs)
+    monkeypatch.setattr(db.spanner_api, "execute_streaming_sql", read)
+    db.read_duration = 10. if stage == "fence" else .01
+    db.commit_duration = 10.
+    store = ObservationStore(db, clock=clock.monotonic)
+    failures = []
+    store.transport.failure = lambda *args: failures.append(args)
+    with pytest.raises(TimeoutError if stage == "fence" else shell.UnknownCommit):
+        store.publish(value, Budget(clock.now+.5, clock.monotonic))
+    assert [name for name, _ in db.calls] == (["read", "rollback"] if stage == "fence" else ["read", "read", "commit"])
+    assert not failures and not sleeps
+
+
+def test_real_server_deadline_is_still_reported_to_breaker(sdk_database):  # noqa: F811
+    from trusted_router.storage_gcp_shadow_observation import Budget, ObservationStore
+
+    db, clock, sleeps = sdk_database
+    db.read_duration = 13.
+    store = ObservationStore(db, clock=clock.monotonic)
+    failures = []
+    store.transport.failure = lambda *args: failures.append(args)
+    with pytest.raises(RuntimeError):
+        store.claim("issuer", NOW_US//2_000_000, NOW_US, Budget(clock.now+.5, clock.monotonic))
+    assert failures == [("execute_streaming_sql", "DeadlineExceeded")]
+    assert not sleeps

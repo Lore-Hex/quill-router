@@ -35,6 +35,22 @@ class Scope:
 
 _SCOPE: contextvars.ContextVar[Scope | None] = contextvars.ContextVar("v2_rpc_scope", default=None)
 _RECORDER: contextvars.ContextVar[Callable[[int], None] | None] = contextvars.ContextVar("v2_rpc_recorder", default=None)
+# A client can disappear with a claim-row lock until Spanner's ~10 s idle
+# transaction expiry. Do not turn that wait into a fleet of 500 ms RPC errors.
+# This is a completion allowance, not a longer publisher acceptance budget.
+PUBLISHER_TRANSACTION_RPC_SECONDS = 12.
+PUBLISHER_ROLLBACK_SECONDS = 2.
+_FINISH_TRANSACTION: contextvars.ContextVar[bool] = contextvars.ContextVar("v2_finish_transaction", default=False)
+
+
+@contextmanager
+def finish_transaction_rpcs() -> Iterator[None]:
+    """Drain admitted claim/publication RPCs; permit cleanup after cycle expiry."""
+    token = _FINISH_TRANSACTION.set(True)
+    try:
+        yield
+    finally:
+        _FINISH_TRANSACTION.reset(token)
 
 
 @contextmanager
@@ -288,7 +304,13 @@ def configure(database: Any) -> Transport | None:
         original = getattr(original, "__wrapped__", original)
         def bounded(*args: Any, _call: Any = original, _name: str = name, **kwargs: Any) -> Any:
             scope = scope_now()
-            kwargs.update(timeout=scope.remaining(), retry=None)
+            finish = _FINISH_TRANSACTION.get() and _name in (
+                "begin_transaction", "execute_streaming_sql", "commit", "rollback")
+            # Rollback releases locks even when the application budget expired.
+            # Every other RPC must still be admitted within the original scope.
+            remaining = scope.remaining() if not (finish and _name == "rollback") else 0.
+            completion = PUBLISHER_ROLLBACK_SECONDS if _name == "rollback" else PUBLISHER_TRANSACTION_RPC_SECONDS
+            kwargs.update(timeout=completion if finish else remaining, retry=None)
             record = _RECORDER.get()
             started = scope.clock()
             streaming = False
@@ -309,7 +331,8 @@ def configure(database: Any) -> Transport | None:
                     def consume() -> Iterator[Any]:
                         try:
                             for response in result:
-                                scope.remaining()
+                                if not finish:
+                                    scope.remaining()
                                 yield response
                         except Exception as error:
                             failed(error)
@@ -323,7 +346,7 @@ def configure(database: Any) -> Transport | None:
                 # Let the SDK record a successful creation's server identity
                 # before checkout enforces the deadline. Otherwise a late
                 # reply becomes an orphan we can neither reuse nor delete.
-                if _name != "create_session":
+                if _name != "create_session" and not finish:
                     scope.remaining()
                 return result
             except Exception as error:

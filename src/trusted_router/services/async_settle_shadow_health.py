@@ -64,6 +64,7 @@ from trusted_router.services.async_settle_shadow_admission import Observer
 from trusted_router.storage_gcp_async_admission import read_admission
 from trusted_router.storage_gcp_shadow_attachments import GCSAttachments
 from trusted_router.storage_gcp_shadow_io import (
+    PUBLISHER_TRANSACTION_RPC_SECONDS,
     SessionCheckoutTimeout,
     SessionUnavailable,
     observe_spanner_rpcs,
@@ -549,9 +550,22 @@ def follower_stagger(boot: str, slot: int, incumbent_present: bool = True) -> fl
 # exhausting K attempts leaves its last claim at publication+K, so takeover
 # is eligible at publication+K+2. These are eligibility bounds, not promises
 # against arbitrarily many aborted/failed winners. S5 forbids in-slot retries.
+# Under churn, an already-started transaction RPC may drain for up to 12 s
+# across a ~10 s abandoned lock. Late reads roll back; late commits stay
+# unknown. Late cycles are never reported as successful. S4's timely-RPC eligibility
+# bounds above are unchanged; a busy lane can drain for 12 s plus at most 2 s
+# for rollback, then contend at the next eligible boundary (up to seven missed
+# slots, absent further stalls/errors; next opportunity within eight slots). The
+# watchdog's bounded replacement lanes remain fenced by S1/S2 and S5.
 HOLDER_FAILURE_SLOTS = 3
 TAKEOVER_SPREAD = 1
 TAKEOVER_MIN_AGE = 2
+# A late commit can leave this boot owning an old slot after its worker was
+# replaced (so no local unknown-commit hint survives). After a full completion
+# horizon without any renewal, let it enter the fenced election again. This
+# is not K-slot renewal: followers retain their age-two takeover opportunity.
+# Otherwise a lone survivor could permanently refuse its own stale claim.
+HOLDER_REENTRY_AGE = math.ceil(PUBLISHER_TRANSACTION_RPC_SECONDS / (SLOT_US / 1_000_000))
 
 
 def takeover_rank(boot: str, claim_slot: int) -> int:
@@ -600,6 +614,10 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
     store.last_claim = None
     def record(elapsed: int) -> None:
         rpc_durations.append(elapsed)
+    def revoked() -> bool:
+        return (admission.generation != job.generation or bool(admission.revocation_epoch)
+                or admission.admission_job != job
+                or not getattr(getattr(admission, "runtime_stop", None), "available", True))
     def attempt() -> None:
         nonlocal actual_us, attempted, outcome, claimed, value, ack_us, started, budget, reason, seen_claim_slot
         if not store.session_ready():
@@ -615,11 +633,9 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
             if not admission.admission_lock.acquire(timeout=budget.remaining(CYCLE_SECONDS)):
                 raise TimeoutError("publisher_admission")
             try:
-                generation = admission.generation
                 actual_us = int(store.wall()*1_000_000)
                 started = store.clock()
-                reason = ("revoked" if generation != job.generation or admission.revocation_epoch
-                    or admission.admission_job != job or not getattr(getattr(admission, "runtime_stop", None), "available", True) else
+                reason = ("revoked" if revoked() else
                     "outside_window" if not (job.earliest_start_mono <= started <= job.latest_start_mono
                         and actual_us // SLOT_US == slot and actual_us % SLOT_US <= JITTER_US) else None)
                 if reason is not None:
@@ -646,9 +662,7 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
                 if not admission.admission_lock.acquire(timeout=budget.remaining(CYCLE_SECONDS)):
                     raise TimeoutError("publisher_admission")
                 try:
-                    if (admission.generation != job.generation or admission.revocation_epoch
-                            or admission.admission_job != job
-                            or not getattr(getattr(admission, "runtime_stop", None), "available", True)):
+                    if revoked():
                         reason = "revoked"
                         return
                     if (int(store.wall()*1_000_000) // SLOT_US != slot
@@ -685,19 +699,32 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
                     renew = slot < since + HOLDER_FAILURE_SLOTS and store.clock() <= job.latest_start_mono
                 # Cached health selects timing, not ownership. In particular,
                 # slot-2 health must not veto takeover of an age-two claim.
-                if not renew and (owner
+                if not renew and (owner and current is not None and current["slot"] > slot-HOLDER_REENTRY_AGE
                         or current is not None and current["slot"] > slot-2
                         or (warm or current is not None) and not takeover_due(boot, slot, current)
                         or store.clock() > job.latest_start_mono):
                     outcome = "lost_claims"
                     return
+            # Preflight reads can overlap SIGTERM or a runtime stop. Do not
+            # start another transaction after revocation; admitted RPCs drain.
+            if revoked():
+                reason = "revoked"
+                return
             if not store.claim(boot, slot, actual_us, budget):
                 outcome = "lost_claims"
                 return
             claimed = True
             assert store.last_claim is not None
+            # A contended Commit can finish within the cycle but after the
+            # observation window. Do not spend its tiny remaining budget on
+            # a scan that cannot produce a valid publication anyway.
+            if store.clock() > job.latest_start_mono:
+                return
             value = store.observe(boot, region,
                 revision, slot, budget, claim_at_ns=store.last_claim["claim_at_ns"])
+            if revoked():
+                reason = "revoked"
+                return
             if not store.publish(value, budget):
                 return
             budget.remaining(CYCLE_SECONDS)
