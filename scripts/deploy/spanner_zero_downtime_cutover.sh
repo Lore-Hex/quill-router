@@ -160,16 +160,18 @@ phase_A() {
   local export_bucket="${TR_SPANNER_EXPORT_BUCKET:-gs://${PROJECT_ID}-spanner-export}"
   local export_path="${export_bucket}/${BACKUP_NAME}"
   if [ $DRY_RUN -eq 0 ]; then
-    if ! gsutil ls -b "$export_bucket" >/dev/null 2>&1; then
+    if ! gc storage buckets describe "$export_bucket" >/dev/null 2>&1; then
       log "  creating export bucket $export_bucket (regional in $DATAFLOW_REGION)"
-      gsutil mb -p "$PROJECT_ID" -l "$DATAFLOW_REGION" -b on "$export_bucket"
+      gc storage buckets create "$export_bucket" --location="$DATAFLOW_REGION" \
+        --uniform-bucket-level-access
     else
       log "  export bucket $export_bucket already exists"
     fi
     # Make sure Dataflow temp staging area exists too (Phase B uses it
     # but it doesn't hurt to provision it here).
-    if ! gsutil ls -b "$DATAFLOW_TEMP_BUCKET" >/dev/null 2>&1; then
-      gsutil mb -p "$PROJECT_ID" -l "$DATAFLOW_REGION" -b on "$DATAFLOW_TEMP_BUCKET"
+    if ! gc storage buckets describe "$DATAFLOW_TEMP_BUCKET" >/dev/null 2>&1; then
+      gc storage buckets create "$DATAFLOW_TEMP_BUCKET" --location="$DATAFLOW_REGION" \
+        --uniform-bucket-level-access
     fi
   fi
 
@@ -178,7 +180,7 @@ phase_A() {
   #    export and reuse it. The first export is the slow part (~minutes
   #    for a small database, hours for TB-scale).
   if [ $DRY_RUN -eq 0 ] && \
-     gsutil ls "${export_path}/tr_entities-manifest.json" >/dev/null 2>&1; then
+     gc storage objects describe "${export_path}/tr_entities-manifest.json" >/dev/null 2>&1; then
     log "  Avro export already present at $export_path (reusing)"
   else
     log "  launching Dataflow Avro-export job → $export_path"
@@ -225,12 +227,16 @@ EOF
   #    Cache the path in a variable shared with step 5.
   local import_input_dir=""
   if [ $DRY_RUN -eq 0 ]; then
-    import_input_dir=$(gsutil ls -d "${export_path}/${OLD_INSTANCE}-${DATABASE}-*" 2>/dev/null \
-      | tail -1 | sed 's:/$::')
+    # Match actual manifests, not directory-listing headers or incomplete exports.
+    local export_manifest
+    export_manifest=$(gc storage ls \
+      "${export_path}/${OLD_INSTANCE}-${DATABASE}-*/tr_entities-manifest.json" 2>/dev/null \
+      | LC_ALL=C sort | tail -1) || return 1
+    import_input_dir="${export_manifest%/tr_entities-manifest.json}"
     if [ -z "$import_input_dir" ]; then
       log "  ERROR: could not find export sub-prefix under $export_path"
       log "  bucket contents:"
-      gsutil ls -r "${export_path}/" >&2 || true
+      gc storage ls --recursive "${export_path}/" >&2 || true
       return 1
     fi
     log "  detected export sub-prefix: $import_input_dir"
@@ -239,7 +245,7 @@ EOF
     # Phase B's change stream needs --start-time=$T0 so writes that
     # landed during the export are replicated.
     local t0_avro
-    t0_avro=$(gsutil cat "${import_input_dir}/tr_entities-manifest.json" 2>/dev/null \
+    t0_avro=$(gc storage cat "${import_input_dir}/tr_entities-manifest.json" 2>/dev/null \
       | python3 -c "import json, sys; m=json.load(sys.stdin); print(m.get('snapshotTime') or m.get('snapshot_time') or '')" \
       2>/dev/null || echo "")
     if [ -n "$t0_avro" ]; then

@@ -43,6 +43,7 @@ from trusted_router.money import (
     MIN_PAYPAL_CHECKOUT_DOLLARS,
     MIN_PAYPAL_CHECKOUT_MICRODOLLARS,
     dollars_to_microdollars,
+    key_limit_dollars,
 )
 
 
@@ -151,13 +152,7 @@ class X402SettleRequest(_Strict):
 def _validate_dollars(value: Decimal | str | int | float | None) -> Decimal | None:
     if value is None:
         return None
-    try:
-        decimal = Decimal(str(value))
-    except Exception as exc:  # noqa: BLE001 - Decimal raises various errors.
-        raise ValueError("must be a dollar amount") from exc
-    if decimal < 0:
-        raise ValueError("must be non-negative")
-    return decimal
+    return key_limit_dollars(value)
 
 
 class CreateKeyRequest(_Lenient):
