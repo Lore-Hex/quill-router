@@ -70,6 +70,9 @@ DEEPINFRA_MYTHOMAX_RETIREMENT_AT = datetime(2026, 10, 29, 0, 0, tzinfo=UTC)
 TOGETHER_NOVEMBER_6_RETIREMENT_AT = datetime(2026, 11, 6, 0, 0, tzinfo=UTC)
 TOGETHER_QWEN38_24T_RETIREMENT_AT = datetime(2026, 11, 4, 0, 0, tzinfo=UTC)
 DIGITALOCEAN_NOVEMBER_9_RETIREMENT_AT = datetime(2026, 11, 9, 0, 0, tzinfo=UTC)
+# Decision Models (Passau, CET): pinned ids answer through 30 Nov 2026 and
+# return 410 from 1 Dec; retire at 1 Dec 00:00 CET.
+DECISIONMODELS_PINNED_S1_PRO_RETIREMENT_AT = datetime(2026, 11, 30, 23, 0, tzinfo=UTC)
 # 2026-10-30 10:00 PDT: Crusoe redirects four serverless models to replacements.
 CRUSOE_OCTOBER_30_RETIREMENT_AT = datetime(2026, 10, 30, 17, 0, tzinfo=UTC)
 TELNYX_NOVEMBER_2_RETIREMENT_AT = datetime(2026, 11, 2, 0, 0, tzinfo=UTC)
@@ -1010,6 +1013,39 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"openai/gpt-oss-120b-Turbo"}),
         effective_at=DEEPINFRA_GPT_OSS_120B_TURBO_RETIREMENT_AT,
         replacement_model_ids=("openai/gpt-oss-120b",),
+    ),
+    # Decision Models' October 29 notice (re-sent from info@decisionmodels.io)
+    # retires the pinned s1-pro-2 and s1-pro-3 ids: available through
+    # 30 November, HTTP 410 model_retired from 1 December. The unpinned
+    # s1-pro alias moves to mammoth-1 on 5 November and keeps routing, as
+    # Joseph decided for unversioned aliases (2026-10-29).
+    _Retirement(
+        provider="decisionmodelsio",
+        model_ids=frozenset({"decisionmodelsio/s1-pro-2"}),
+        upstream_ids=frozenset({"s1-pro-2"}),
+        effective_at=DECISIONMODELS_PINNED_S1_PRO_RETIREMENT_AT,
+        replacement_model_ids=("decisionmodelsio/s1-pro",),
+    ),
+    _Retirement(
+        provider="decisionmodelsio",
+        model_ids=frozenset({"decisionmodelsio/s1-pro-3"}),
+        upstream_ids=frozenset({"s1-pro-3"}),
+        effective_at=DECISIONMODELS_PINNED_S1_PRO_RETIREMENT_AT,
+        replacement_model_ids=("decisionmodelsio/s1-pro",),
+    ),
+    _Retirement(
+        provider="decisionmodelsio-eu",
+        model_ids=frozenset({"decisionmodelsio-eu/s1-pro-2"}),
+        upstream_ids=frozenset({"s1-pro-2"}),
+        effective_at=DECISIONMODELS_PINNED_S1_PRO_RETIREMENT_AT,
+        replacement_model_ids=("decisionmodelsio-eu/s1-pro",),
+    ),
+    _Retirement(
+        provider="decisionmodelsio-eu",
+        model_ids=frozenset({"decisionmodelsio-eu/s1-pro-3"}),
+        upstream_ids=frozenset({"s1-pro-3"}),
+        effective_at=DECISIONMODELS_PINNED_S1_PRO_RETIREMENT_AT,
+        replacement_model_ids=("decisionmodelsio-eu/s1-pro",),
     ),
     # DigitalOcean's October 29 notices deprecate these Inference models on
     # 2026-11-09 (date only; 00:00 UTC conservatively); requests then 404.
