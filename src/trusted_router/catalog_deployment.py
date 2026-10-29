@@ -6,6 +6,10 @@ import os
 from dataclasses import replace
 
 from trusted_router.catalog_data import Model, ModelEndpoint
+from trusted_router.provider_contracts import (
+    BEDROCK_RUNTIME_PROFILES,
+    provider_model_available_from_gateway_region,
+)
 from trusted_router.regions import cloud_for_region
 
 
@@ -50,8 +54,13 @@ def apply_gateway_admission_holds(
     # sealed-bundle entry). Automatic CP catch-up cannot upgrade those gateways.
     unavailable_providers = frozenset() if _gateway_cloud_upgraded() else frozenset({"amazon-bedrock"})
     affected_models = {model_id for model_id, _ in unavailable_routes}
+    region = os.environ.get("TR_SERVING_REGION") or os.environ.get("TR_PRIMARY_REGION") or ""
     for identity, endpoint in tuple(endpoints.items()):
-        if endpoint.provider in unavailable_providers or endpoint.model_id in unavailable_models or (
+        runtime_unavailable = (
+            endpoint.provider == "amazon-bedrock" and endpoint.model_id in BEDROCK_RUNTIME_PROFILES
+            and not provider_model_available_from_gateway_region(endpoint.provider, endpoint.model_id, region)
+        )
+        if runtime_unavailable or endpoint.provider in unavailable_providers or endpoint.model_id in unavailable_models or (
             endpoint.model_id, endpoint.provider
         ) in unavailable_routes:
             affected_models.add(endpoint.model_id)

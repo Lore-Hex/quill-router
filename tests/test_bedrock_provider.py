@@ -8,6 +8,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from scripts.pricing.base import ModelPrice
 from scripts.pricing.providers import amazon_bedrock as bedrock
 
 NOW = datetime(2026, 10, 18, tzinfo=UTC)
@@ -210,6 +211,20 @@ def test_canary_requires_usage_and_failed_route_stays_held(monkeypatch, tmp_path
     monkeypatch.setattr(bedrock, "MANIFEST_PATH", tmp_path / "bedrock.json")
     monkeypatch.setattr(bedrock, "fetch_json", lambda url, **kw: catalog("openai.gpt-oss-20b") if url == bedrock.URL else tariff())
     monkeypatch.setattr(bedrock, "fetch_model_limits", lambda _model: {})
+    monkeypatch.setattr(bedrock.runtime, "fetch_runtime_prices", lambda: {
+        model: ModelPrice(110_000, 550_000) for model in bedrock.runtime.PROFILES
+    })
+    monkeypatch.setattr(bedrock.runtime, "fetch_runtime_rows", lambda _key: {
+        model: {"id": model, "upstream_id": profile, "context_length": 1_000_000,
+                "endpoints": ["chat/completions"]}
+        for model, profile in bedrock.runtime.PROFILES.items()
+    })
+    runtime_probes = []
+    def runtime_probe(key, model):
+        assert key == "test-token"
+        runtime_probes.append(model)
+        return True
+    monkeypatch.setattr(bedrock.runtime, "probe_runtime", runtime_probe)
     def probe(**kwargs):
         assert kwargs["require_usage"] and kwargs["require_message"]
         assert kwargs["base_url"] == bedrock.BASE_URL
@@ -218,9 +233,15 @@ def test_canary_requires_usage_and_failed_route_stays_held(monkeypatch, tmp_path
     monkeypatch.setattr(bedrock, "probe_openai_chat", probe)
     result = bedrock.fetch()
     bedrock.write_provider_manifest(result)
-    row = json.loads(bedrock.MANIFEST_PATH.read_text())["models"][0]
+    rows = {row["id"]: row for row in json.loads(bedrock.MANIFEST_PATH.read_text())["models"]}
+    row = rows["openai/gpt-oss-20b"]
     assert row["routable"] is False
     assert row["routable_reason"] == "provider-canary-failed"
+    assert set(runtime_probes) == set(bedrock.runtime.PROFILES)
+    for model, profile in bedrock.runtime.PROFILES.items():
+        assert rows[model]["upstream_id"] == profile
+        assert rows[model]["routable"] is False
+        assert rows[model]["routable_reason"] == "runtime-enclave-rollout-pending"
 
 
 def test_registration_and_conservative_privacy():
