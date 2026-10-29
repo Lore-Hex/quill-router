@@ -19,13 +19,12 @@ Do not merge this checkpoint into a stock DeepSeek alias or automatically route
 it through a different model. At the source revision below it uses Maple i02;
 stock `deepseek-v4-1-flash` can use shared Tinfoil as well as Maple i01.
 
-The operator's offer specifies whole-credit rounding and a USD 0.001 minimum
-for nonzero usage. The public table does not specify the rounding algorithm.
-Confirm the credit quantum, rounding direction/ties, aggregation boundary,
-cache-count semantics, and debit behavior on failed/partial streams. Reconcile
-probes against actual Maple account debits. Per-token rates alone are NOT an
-adequate production billing adapter. Do not treat complimentary credits as a
-zero upstream cost or add this model to token-price-only customer settlement.
+The operator instructed shipping on October 28 without waiting for an account
+debit export. Charge actual reported tokens at the published rates above; do
+not invent a customer credit-rounding fee or USD 0.001 minimum. The pilot offer
+mentioned provider credit rounding, so actual provider-debit reconciliation
+remains unverified. Complimentary credits are not a zero upstream cost. Cached
+input receives the discounted rate only when reported as cached by the provider.
 
 ## Access and terms
 
@@ -36,12 +35,13 @@ email or ID with `support@maple.ai`, never the key. The operator supplied
 JSON/SSE PONG probes passed for the requested uncensored model, with integer
 usage. The key was used locally only; it is not provisioned to serving clouds.
 
-The proposed grant is one calendar month of Pro, 20,000 credits (about USD 20),
-with no automatic renewal or charge. It has not been confirmed or applied.
+The dedicated account dashboard confirms Pro through November 28, 2026, with
+no purchased extra credits. It does not show per-request debits or the remaining
+included allowance. The operator confirmed resale permission and zero API
+prompt/response retention on October 28, 2026.
 The [public terms](https://maple.ai/terms), sections 3.4-3.5, describe renewal
-and trial conversion; section 5.4 restricts competing services. Obtain explicit
-confirmation of the pilot exception and TrustedRouter resale permission before
-opening customer traffic. Do not start a paid subscription to simulate the grant.
+and trial conversion; section 5.4 restricts competing services. The operator's
+pilot confirmation is recorded above; do not start or renew a paid subscription.
 
 The [privacy policy](https://maple.ai/privacy) distinguishes encrypted saved
 conversations from API operational usage data. It is not, by itself, evidence
@@ -58,7 +58,7 @@ Keep all privacy badges off until the applicable policy and serving path pass re
 - [Transport V2 specification](https://github.com/MaplePrivacyLabs/Maple/blob/c668d817dceec5c2e7390de7c68a581c88ea2eea/services/opensecret/docs/transport-v2-protocol.md).
 - [Dedicated model routing and worker policy](https://github.com/MaplePrivacyLabs/Maple/blob/c668d817dceec5c2e7390de7c68a581c88ea2eea/services/opensecret/src/maple_inference.rs).
 
-The companion gateway repository's `tools/maple-pilot` uses the pinned SDK for
+The companion gateway repository's `enclave-go/maple-transport` uses the pinned SDK for
 qualification, not a new home-grown cryptographic implementation. Its fixed
 PCR0 is a *candidate* from the pinned source's production history, not proof
 that the live image reproduces that source. It does not fetch a mutable remote
@@ -73,8 +73,9 @@ identifies backend source `7957ce78ad8eee7a173a9d877ff6e320876894c8` and
 [release run 40226283053](https://github.com/MaplePrivacyLabs/Maple/actions/runs/40226283053)
 for the candidate front measurement. This vendor record narrows the reproduction
 target; it does not replace independent build verification. The SDK qualification
-PR also has an unresolved dependency-scan range discrepancy documented in the
-gateway repository; its security gate remains intact.
+PR removes the affected dependency version through a dependency-only patch;
+its required security scan passes without exclusions. Full cloud-image and
+independent-source checks still gate confidential activation.
 
 The proxy/SDK must run inside TR's measured environment. A host-side plaintext
 proxy, direct bearer request, disabled verification, shared unscoped cache root,
@@ -91,7 +92,8 @@ and therefore cannot simply be dropped into a multi-tenant gateway unchanged.
 3. Integrate the SDK within the measured image, with isolated cache roots,
    redacted errors, bounded streams, and no automatic inference replay.
 4. Pass discovery, JSON/SSE output, real integer/cache usage, missing/wrong-key,
-   model/plan errors, truncated/error streams and debit reconciliation tests.
+   model/plan errors, truncated/error streams and normal billing-oracle tests.
+   Track the unavailable provider debit export separately, as authorized above.
 5. Add cloud-local secrets and release through GCP/AWS/Azure CI, trust and
    coordinated rollout gates, preserving a healthy cloud. Test every serving region.
 6. Only then add the priced live manifest and gateway eligibility. Attach
