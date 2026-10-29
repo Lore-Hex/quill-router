@@ -204,6 +204,12 @@ class SpannerApiKeys:
         weakening the combined read just to make display counters stale would
         make the newly-created or deleted key itself stale too.
         """
+        max_int64 = 2**63 - 1
+        if offset >= max_int64:
+            return []
+        # Spanner evaluates LIMIT + OFFSET internally. An unbounded page must
+        # leave room for its offset rather than passing INT64_MAX as its limit.
+        page_limit = min(limit if limit is not None else max_int64, max_int64 - offset)
         pt = self._io.param_types
         with self._io.database.snapshot() as snapshot:
             rows = list(
@@ -213,8 +219,8 @@ class SpannerApiKeys:
                         "workspace_id": workspace_id,
                         "prefix": f"{workspace_id}#",
                         "include_disabled": include_disabled,
-                        "limit": limit if limit is not None else 2**63 - 1,
-                        "offset": min(offset, 2**63 - 1),
+                        "limit": page_limit,
+                        "offset": offset,
                     },
                     param_types={
                         "workspace_id": pt.STRING,
