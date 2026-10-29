@@ -67,6 +67,8 @@ from trusted_router.pricing import (
 from trusted_router.provider_compat import byok_storage_provider_candidates
 from trusted_router.provider_contracts import (
     BEDROCK_GATEWAY_REGIONS,
+    BEDROCK_RUNTIME_GATEWAY_REGIONS,
+    BEDROCK_RUNTIME_PROFILES,
     EXPLICIT_GATEWAY_REGIONS_BY_PROVIDER_MODEL,
     MAPLE_GATEWAY_REGIONS,
     MAPLE_MODEL_ID,
@@ -703,7 +705,10 @@ def _gateway_regions(endpoint: ModelEndpoint) -> GatewayRegions:
         )
     if endpoint.provider == BEDROCK_PROVIDER:
         return GatewayRegions(
-            only=tuple(sorted(BEDROCK_GATEWAY_REGIONS)), deny=(), requires_explicit_origin=True,
+            only=tuple(sorted(
+                BEDROCK_RUNTIME_GATEWAY_REGIONS if endpoint.model_id in BEDROCK_RUNTIME_PROFILES
+                else BEDROCK_GATEWAY_REGIONS
+            )), deny=(), requires_explicit_origin=True,
         )
     required_regions = EXPLICIT_GATEWAY_REGIONS_BY_PROVIDER_MODEL.get((endpoint.provider, endpoint.model_id))
     if required_regions is not None:

@@ -808,6 +808,137 @@ against a baseline of 6.
 
 ## <a id="settle-outbox"></a>Settle outbox: flip, verify, monitor, roll back
 
+### Dedicated warm worker (code available; deployment separate)
+
+Run the router image as `TR_SERVICE_SURFACE=settle-drain` on **one** always-CPU
+Cloud Run instance in **us-central1**. Keep the five-minute legacy scheduler.
+Only the worker enables fast drain; router pins and the shadow-v2 window stay
+unchanged. The only HTTP route is `GET /health`, with private ingress/invocation.
+The separate deployment must use the reviewed release gates.
+
+Worker-only pins (prefix `TR_SETTLE_OUTBOX_`):
+
+| Setting | Value |
+| --- | ---: |
+| `FAST_DRAIN_ENABLED` | `true` |
+| `POLL_INTERVAL_SECONDS` | `1` |
+| `PASS_BUDGET_SECONDS` | `2` |
+| `LEASE_SECONDS` | `30` |
+| `WORKER_CONCURRENCY` | `4` |
+| `CLAIM_BATCH` | `4` |
+| `HEALTH_PUBLISH_INTERVAL_SECONDS` | `1` |
+| `STALL_SECONDS` | `26` |
+
+Use the router's Spanner database/service account, protection=true, settle
+outbox enabled, typed/generation records and both durable analytics outboxes,
+with operational sink=outbox. The sole application secret is `TR_SENTRY_DSN`,
+using the router's Secret Manager binding. No gateway/provider/payment/signing
+or ClickHouse credentials are mounted. No analytics drains, auto-refill,
+shadows, startup harness, routing/edge publishers or synthetic starters run.
+**No purge or reaping runs on the worker.** The legacy scheduler retains its
+existing purge and limit-200 reaper, once per pass.
+
+Completed scan/apply units service due publication of
+`settle_drain_control / fleet-v1`. The existing bounded snapshot includes all
+unresolved versions, leased and dead rows; its ages/completeness remain honest.
+A busy pass can publish at completed slots. There is no timer heartbeat and no
+publication from failed claims. If useful drain progress stops, evidence ages
+out and new admission closes at five seconds. Local timers suppress not-due
+cadence transactions. The worker drains both NULL and async versions: an open
+reservation blocked by an accepted async sibling parks under protection; once
+terminal, the NULL row has the same outcome/alert/state as an ordinary loser.
+
+Liveness uses completed units and the existing **local** Spanner RPC counters.
+RPC starts only refresh process liveness; they never publish fleet health.
+An apply can span multiple transactions, so these counters distinguish useful
+I/O from a wedged unit. The existing per-RPC cap is 20 s; retry backoff is at
+most 4 s, cleanup at most 2 s, and a leased front-door call between Spanner RPCs
+is bounded to 5 s (normally 1.5 s). The 26 s minimum allows the longest 20+5 s
+gap plus one second scheduling margin. No money RPC bound or priority changes.
+A monitor checks every 0.1 s; at `STALL_SECONDS` without local progress it dumps
+all thread stacks (no locals) and calls `os._exit(70)`. `/health` uses the same
+threshold. Caught fast failures stay live, never refresh fleet evidence, and do
+not cause restart storms. Persistent blocking can still cause repeated exits.
+The dump uses the shared `stall_dump_fd` helper: on Cloud Run's Linux /proc,
+its separate nonblocking stderr descriptor cannot wait on a full logging pipe.
+It never cancels or re-arms the listener's faulthandler timer. The worker deploy
+draft also pins `TR_LOOP_STALL_EXIT_SECONDS=30` because CPU stays allocated:
+that C watchdog covers an event-loop/GIL wedge even when the drain's Python
+monitor cannot run. Only the listener owns the process-wide delayed timer.
+
+Crash/wedge arithmetic, measured from a claim immediately followed by failure:
+`max(30, 26.1 + E + R) + 1 + 0.8 + A` seconds, where E is stack-dump/exit
+time, R is measured replacement startup and A is claim/apply/resolve time.
+Lease expiry runs concurrently with detection/startup, not afterward. With
+illustrative E≤1, R=10 and A=5 this is **43.9 s**; these are acceptance-budget
+placeholders, not measurements. With those A/E values, startup must be under
+about 26 s to fit 60. Ordinary process death omits the 26.1 s detection term.
+If a GIL wedge prevents the Python monitor running, use the listener's 30 s
+threshold in place of 26.1 s: the same illustrative budgets total **47.8 s**.
+Late stalls add time already spent since acceptance. Outages, large backlogs,
+park retries and OS scheduling cannot prove a universal 60 s bound. E≤1 s is
+an operational budget to verify, not a hard real-time guarantee: nonblocking
+writes remove the unbounded stderr-backpressure wait, but do not bound CPU
+scheduling. On platforms without /proc the shared helper retains #2145's logged
+blocking fallback, so that budget does not apply. Measure exit and cold start
+and verify the nonblocking descriptor in the Linux image before rollout;
+if the measured sum fails, the smallest timing change is shortening replacement
+startup (or a separately reviewed tighter RPC budget to lower STALL), not
+lengthening leases or weakening fencing.
+
+Legacy bulk candidate SQL adds `AND async_version IS NULL` **before** its
+`LIMIT @limit` (`2 * caller_limit`, at most 1000), retaining
+`FORCE_INDEX=tr_settle_outbox_due_v2`, sparse predicates and ordering. An async
+prefix can no longer hide NULL-version candidates. Bulk leases remain 300 s.
+After the NULL-row loop, a bounded recovery phase uses the pass's remaining
+240 s budget. It scans the 16 shards with the same low-priority, no-retry,
+200 ms, limit-2 query mechanics, restricted to async versions. It reads
+`settle_drain_control / fleet-v1` by complete primary key only when needed.
+Ownership is fresh only if strict parsing succeeds and **both** observation
+and heartbeat ages satisfy `0 <= age < 5`; p95 and completeness are not part of
+ownership. Missing/invalid/unreadable/future/stale health permits recovery.
+Each recovery claim takes at most one row, with `min(configured lease, 30 s)`,
+and immediately applies it before another claim. It never publishes health.
+Protection off leaves async rows untouched and logs only a bounded due count.
+
+For a worker that stays absent, last-resort recovery is one watchdog interval
+(300 s) plus at most one short lease (30 s) plus apply time, provided the row
+fits the pass's remaining budget/capacity. The 60 s objective applies to the
+healthy worker and crash reclaim, not the five-minute backup. An arbitrarily
+large backlog or a pass whose NULL work consumes its budget can require more
+watchdog passes; alert on accepted-row age rather than claiming a hard bound.
+
+Idle worker upper rates, excluding session/retry overhead: **16 read-only
+shard queries/s + 1 unresolved snapshot scan/s + 1 health-cadence transaction/s
++ 1 fleet-publish transaction/s**. No housekeeping cadence transaction. The
+watchdog adds at most **16** bounded read-only recovery queries per idle pass
+(16/300 = **0.0533/s**), no health read or new writes when empty. Existing
+NULL candidate/reaper operations remain. SQL limits bound returned rows;
+version filtering on the existing due index does not promise a physical scan
+bound under an arbitrarily large version-skewed backlog. Keep the 45% CPU alarm.
+
+Worker handlers replace non-worker records with logger, severity and exception
+class only, removing message, args, exception/stack text and every extra field.
+Worker events contain fixed codes, aggregate counts and exception classes.
+Other surfaces retain their logging. Direct `ops_alert` pages reach the same
+Sentry destination with the existing allowlisted alarm fingerprints, but no raw
+message, customer tags, breadcrumbs or exception data. Idle logs are a minute
+summary; fleet snapshots are DEBUG. Confirm a test money alert reaches paging
+before enabling admission.
+
+Disable router async admission first, resolve accepted rows, then set worker
+fast=false through reviewed configuration. Off stays healthy, logs once and
+initializes no Spanner store. SIGTERM stops new claims and joins for at most
+eight seconds; running work retains its fences and claimed-but-not-started rows
+expire normally. Do not clear leases manually. Retain the watchdog on rollback.
+
+Before the pilot: verify one instance, private invocation, observed_at age every
+few seconds via complete-PK reads, expected idle operation rates, Spanner alarms
+OK, real money paging, and booking/outbox latency on any rows. Rehearse crash,
+wedge and worker-absent recovery. Require measured p95 <=5 s and <=60 s within
+the declared healthy-worker/restart envelope.
+
+
 Durably recover completed charges whose settle intent was recorded but whose
 inline settle result was lost. See `docs/design/durable-settle-outbox.md`.
 The correctness spine is the reaper guard; drain cadence affects latency only.

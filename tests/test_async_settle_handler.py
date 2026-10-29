@@ -27,13 +27,22 @@ from trusted_router.async_settle_ticket import verify_lookup_ticket, verify_tick
 from trusted_router.routes.settlements import status
 from trusted_router.services import async_settle_handler as handler
 from trusted_router.services.async_settle import snapshot_projection
-from trusted_router.services.settle_outbox_drain import drain_settle_outbox
+from trusted_router.services.settle_outbox_worker import drain_pass
 from trusted_router.storage import InMemoryStore, configure_store
 from trusted_router.storage_gcp_async_settle import ReservationNotOpen, enqueue
 
 ROOT = Path(__file__).parent / 'fixtures/async_settlement'
 WIRE = json.loads((ROOT / 'request_v1.json').read_text())
 NOW = 1791244801
+
+
+def _drain_async(*, limit=10, start_shard=0, concurrency=4):
+    # Accepted async rows now belong to the dedicated warm worker; the legacy
+    # watchdog deliberately cannot put them under its 300-second batch lease.
+    return drain_pass(limit, start_shard=start_shard, settings=settings(settle_outbox_fast_drain_enabled=True,
+        settle_outbox_poll_interval_seconds=1, settle_outbox_pass_budget_seconds=2,
+        settle_outbox_lease_seconds=30, settle_outbox_worker_concurrency=concurrency,
+        settle_outbox_claim_batch=4, settle_outbox_health_publish_interval_seconds=1))
 
 
 def _outbox(store):
@@ -256,7 +265,7 @@ def test_drain_and_status_ownership(env, kind):
         with pytest.raises(HTTPException) as exc:
             status(sid, SimpleNamespace(workspace=SimpleNamespace(id=ws), api_key=owner))
         assert exc.value.status_code == 404
-    result = drain_settle_outbox(10)
+    result = _drain_async()
     assert result['outcomes'] == {'settled_now': 1}
     view = status(sid, principal)['data']['trusted_router_settlement']
     assert view['settlement_status'] == ('settled' if kind == 'settle' else 'refunded')
@@ -349,9 +358,9 @@ def test_billing_matrix_enqueue_drain_and_sync_fallback(env, case, monkeypatch, 
     monkeypatch.setattr(settle_outbox_apply, 'endpoint_for_id', lambda _: None)
     assert call(env, body).status_code == 202
     if finalizer == 'drain':
-        assert drain_settle_outbox(10)['outcomes'] == {'settled_now': 1}
+        assert _drain_async()['outcomes'] == {'settled_now': 1}
     assert call(env, body, synchronous=True).status_code == 200
-    assert drain_settle_outbox(10)['outcomes'] == {}
+    assert _drain_async()['outcomes'] == {}
     expected = case['expected_charge_micro']
     assert _typed_credit(env[1], 'ws-v1')['total_usage'] == expected
     assert _typed_key(env[1], key.hash)['usage'] == expected
@@ -437,7 +446,7 @@ def test_enqueue_wins_reaper_and_legacy_fence(env):
                                guard_outbox=reaper, outbox_available=True, async_fence=True)
         assert result['outcome'] != 'settled'
     assert _typed_credit(env[1], 'ws-v1')['total_usage'] == 0
-    assert drain_settle_outbox(10)['outcomes'] == {'settled_now': 1}
+    assert _drain_async()['outcomes'] == {'settled_now': 1}
     assert _typed_credit(env[1], 'ws-v1')['total_usage'] == 2
 
 
@@ -551,7 +560,7 @@ def test_mark_park_never_rewrites_async_metadata(env):
     call(env, body)
     outbox = _outbox(env[0])
     frozen = outbox.get(auth.id, 'settle')
-    claimed = outbox.claim(limit=1)[0]
+    claimed = outbox.claim_shard(shard=env[1].settle_outbox[(auth.id, 'settle')]['queue_shard'], lease_seconds=30)[0]
     keys = ('actual_cost_micro', 'payload_hash', 'snapshot_hash', 'workspace_id', 'settle_body')
     assert not outbox.park(auth.id, 'settle', lease_owner='stale', retry_after_seconds=1, note='test')
     assert outbox.mark(auth.id, 'settle', done=True, lease_owner='stale') is None
@@ -646,12 +655,21 @@ def test_literal_status_and_timestamps(env, monkeypatch, kind):
     stamp = '2026-10-06T00:00:00Z'
     monkeypatch.setattr(storage_gcp_async_settle, '_iso_now', lambda: stamp)
     monkeypatch.setattr(storage_gcp_settle_outbox, '_iso_now', lambda: stamp)
+    import datetime as dt
+
+    from trusted_router.services import settle_outbox_worker
+    class Clock(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return dt.datetime.fromisoformat(stamp.replace('Z', '+00:00'))
+    # Warm apply checks lease expiry against UTC, so pin both clocks.
+    monkeypatch.setattr(settle_outbox_worker, 'dt', SimpleNamespace(datetime=Clock, UTC=dt.UTC))
     body, auth, key = prepare(env, kind=kind)
     call(env, body)
     principal = SimpleNamespace(workspace=SimpleNamespace(id='ws-v1'), api_key=key)
     for completed in (False, True):
         if completed:
-            drain_settle_outbox(10)
+            _drain_async()
         view = status(auth.id+'.'+kind, principal)
         literal = json.loads(json.dumps(view).replace(auth.id, 'auth-v1'))
         state = ('settled' if kind == 'settle' else 'refunded') if completed else 'pending'
@@ -686,7 +704,11 @@ def test_sibling_refund_reports_charge_winner(env):
     refund = copy.deepcopy(body)
     refund['terminal'].update(terminal_kind='refund', charge_micro=0)
     call(env, refund)
-    drain_settle_outbox(10)
+    # Establish the charge winner explicitly: warm slots do not impose the
+    # legacy batch's global insertion order across shards.
+    shard = env[1].settle_outbox[(auth.id, 'settle')]['queue_shard']
+    assert _drain_async(limit=1, start_shard=shard, concurrency=1)['outcomes'] == {'settled_now': 1}
+    _drain_async()
     view = status(auth.id+'.refund', SimpleNamespace(
         workspace=SimpleNamespace(id='ws-v1'), api_key=key))['data']['trusted_router_settlement']
     assert view['settlement_status'] == 'settled'
@@ -698,7 +720,7 @@ def test_sync_fallback_does_not_impersonate_worker_lease(env):
     body, auth, _ = prepare(env)
     call(env, body)
     outbox = _outbox(env[0])
-    claimed = outbox.claim(limit=1)[0]
+    claimed = outbox.claim_shard(shard=env[1].settle_outbox[(auth.id, 'settle')]['queue_shard'], lease_seconds=30)[0]
     assert call(env, body, synchronous=True).status_code == 200
     row = outbox.get(auth.id, 'settle')
     assert row.lease_owner == claimed.lease_owner and row.status == 'pending'
@@ -778,7 +800,7 @@ def test_accepted_amount_survives_evaluator_disagreement(env, monkeypatch):
     result = call(env, body)
     assert result.status_code == 202
     assert json.loads(result.body)['data']['trusted_router_settlement']['cost_microdollars'] == 2
-    assert drain_settle_outbox(10)['outcomes'] == {'settled_now': 1}
+    assert _drain_async()['outcomes'] == {'settled_now': 1}
     assert call(env, body).status_code == 200
 
 
@@ -1022,7 +1044,7 @@ def test_pilot_rollback_drains_truthfully(env, flip):
     assert call(env, body).status_code == 202
     assert status(sid, principal)['data']['trusted_router_settlement']['settlement_status'] == 'pending'
     assert env[3].async_settle_protection
-    assert drain_settle_outbox(10)['outcomes'] == {'settled_now': 1}
+    assert _drain_async()['outcomes'] == {'settled_now': 1}
     terminal = status(sid, principal)['data']['trusted_router_settlement']
     assert terminal['settlement_status'] == 'settled' and terminal['cost_microdollars'] == 2
     assert call(env, body).status_code == 200
@@ -1052,6 +1074,6 @@ def test_pilot_durable_fleet_health_flip(env):
     clock[0] += 1
     assert not cache.eligible('ws-v1', 5000000)
     assert call(env, body).status_code == 202
-    assert drain_settle_outbox(10)['outcomes'] == {'settled_now': 1}
+    assert _drain_async()['outcomes'] == {'settled_now': 1}
     principal = SimpleNamespace(workspace=SimpleNamespace(id='ws-v1'), api_key=key)
     assert status(auth.id + '.settle', principal)['data']['trusted_router_settlement']['settlement_status'] == 'settled'

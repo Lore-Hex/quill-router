@@ -175,7 +175,7 @@ def test_control_claim_transaction_deadline(fake_store, claim):
     assert db.last_timeout_secs == .5
 
 
-def test_housekeeping_cadence_over_fast_polls(fake_store, monkeypatch):
+def test_housekeeping_only_on_legacy_watchdog(fake_store, monkeypatch):
     counts = []
     clock = [1000.]
     monkeypatch.setattr(time, 'time', lambda: clock[0])
@@ -190,7 +190,12 @@ def test_housekeeping_cadence_over_fast_polls(fake_store, monkeypatch):
     for poll in range(31):
         clock[0] = 1000 + poll * 10
         worker.drain_pass(1, settings=settings())
-    assert counts == reaps == [1000, 1300]
+    assert counts == reaps == []
+    # The scheduler's unchanged legacy pass owns purge/reap, bounded to 200.
+    for now in (1300, 1600):
+        clock[0] = now
+        drain.drain_settle_outbox(1)
+    assert counts == reaps == [1300, 1600]
     # Independent replicas race on the same complete PK; only one wins.
     clock[0] = 1600
     with ThreadPoolExecutor(max_workers=6) as pool:
@@ -288,14 +293,13 @@ def test_settings_and_loop_stop(fake_store, monkeypatch):
                    dict(settle_outbox_lease_seconds=30, settle_outbox_pass_budget_seconds=30)]:
         with pytest.raises(ValueError):
             settings(**kwargs)
-    with pytest.raises(ValueError):
-        worker.run_worker(defaults, threading.Event())
+    worker.run_worker(defaults, threading.Event())
     calls = []
     class Stop:
         def is_set(self):
             return len(calls) == 3
         def wait(self, interval):
-            assert interval == .01
+            assert 0 <= interval <= .01
     monkeypatch.setattr(worker, 'drain_pass', lambda *a, **kw: calls.append(kw['start_shard']))
     worker.run_worker(settings(settle_outbox_poll_interval_seconds=.01), Stop())
     assert calls == [0, 1, 2]
@@ -325,7 +329,6 @@ def test_health_publish_cadence_across_workers(fake_store, monkeypatch, replicas
         return original(self, sql, **kwargs)
     monkeypatch.setattr(_FakeSnapshot, 'execute_sql', query)
     monkeypatch.setattr(time, 'time', lambda: clock[0])
-    monkeypatch.setattr(worker, 'claim_housekeeping', lambda db: False)
     cfg = settings(settle_outbox_health_publish_interval_seconds=interval)
     with ThreadPoolExecutor(max_workers=replicas) as pool:
         for tick in range(polls):
@@ -349,7 +352,6 @@ def test_health_claim_loss_or_failure_preserves_apply(fake_store, monkeypatch, f
     seed(store, 1)
     assert claim_health_publish(db, 2)
     assert not claim_health_publish(db, 2)
-    monkeypatch.setattr(worker, 'claim_housekeeping', lambda db: False)
     if failure:
         def fail(*args):
             raise TimeoutError
@@ -451,7 +453,7 @@ def test_inserted_done_has_no_unresolved_index_entry(fake_store):
 
 
 @pytest.mark.parametrize('concurrency', [1, 4])
-def test_shutdown_stops_new_claims_and_finishes_inflight(fake_store, monkeypatch, concurrency):
+def test_shutdown_after_claim_leaves_row_leased(fake_store, monkeypatch, concurrency):
     store, db = fake_store
     seed(store, 16)
     # Ensure the first slot has work; the other 15 records must remain byte-identical.
@@ -476,13 +478,15 @@ def test_shutdown_stops_new_claims_and_finishes_inflight(fake_store, monkeypatch
         return result
     monkeypatch.setattr(SpannerSettleOutbox, 'claim_shard', claim)
     monkeypatch.setattr(drain, 'apply_frozen_settle', lambda row: applies.append(row) or ApplyOutcome.SETTLED_NOW)
-    monkeypatch.setattr(worker, 'claim_housekeeping', lambda db: False)
     monkeypatch.setattr(worker, 'claim_health_publish', lambda *args: False)
     started = time.monotonic()
     worker.run_worker(settings(settle_outbox_worker_concurrency=concurrency), stop)
     assert time.monotonic() - started < 2
-    assert len(claims) == len(applies) == 1
-    assert db.settle_outbox[('fast-0', 'settle')]['status'] == 'done'
+    assert len(claims) == 1 and applies == []
+    record = db.settle_outbox[('fast-0', 'settle')]
+    assert record['status'] == 'pending'
+    assert record['leased_until'] == claims[0].leased_until
+    assert record['lease_owner'] == claims[0].lease_owner
     assert {key: row for key, row in db.settle_outbox.items() if key != ('fast-0', 'settle')} == {
         key: row for key, row in before.items() if key != ('fast-0', 'settle')}
 
@@ -601,7 +605,6 @@ def test_shutdown_finishes_all_four_inflight_applies(fake_store, monkeypatch):
         applied.append(row.authorization_id)
         return ApplyOutcome.SETTLED_NOW
     monkeypatch.setattr(drain, 'apply_frozen_settle', apply)
-    monkeypatch.setattr(worker, 'claim_housekeeping', lambda db: False)
     monkeypatch.setattr(worker, 'claim_health_publish', lambda *args: False)
     worker.run_worker(settings(settle_outbox_worker_concurrency=4), stop)
     assert set(applied) == {f'fast-{i}' for i in range(4)}

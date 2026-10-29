@@ -52,6 +52,8 @@ from types import FrameType
 
 import uvicorn
 
+from trusted_router.stall_dump import stall_dump_fd
+
 APP = "trusted_router.main:app"
 DEFAULT_PORT = 8080
 DRAIN_SECONDS_ENV = "TR_SHUTDOWN_DRAIN_SECONDS"
@@ -75,6 +77,8 @@ logger = logging.getLogger("trusted_router.serve")
 
 def drain_seconds_from_env(environ: dict[str, str] | None = None) -> float:
     env = os.environ if environ is None else environ
+    if env.get("TR_SERVICE_SURFACE") == "settle-drain":
+        return 0.0  # No router traffic to drain; stop new claims promptly.
     raw = env.get(DRAIN_SECONDS_ENV)
     if raw is None or raw.strip() == "":
         return DEFAULT_DRAIN_SECONDS
@@ -104,32 +108,6 @@ def loop_stall_seconds_from_env(environ: dict[str, str] | None = None) -> float 
         logger.warning("serve.invalid_loop_stall_seconds value=%r watchdog off", raw)
         return None
     return value
-
-
-def stall_dump_fd(stderr_fd: int) -> int:
-    """A descriptor on stderr whose writes fail rather than wait when it is full.
-
-    Reopening the descriptor through /proc gives the same pipe or file a file
-    description of its own, so it can be non-blocking (and appending) without
-    changing how anything else writes to stderr. Where that is not possible,
-    stderr itself, logged.
-    """
-    was_blocking = os.get_blocking(stderr_fd)
-    try:
-        fd = os.open(
-            f"/proc/self/fd/{stderr_fd}",
-            os.O_WRONLY | os.O_APPEND | os.O_NONBLOCK | os.O_CLOEXEC,
-        )
-    except OSError as exc:
-        logger.warning("serve.stall_dump_blocking reason=%s", type(exc).__name__)
-        return stderr_fd
-    if os.get_blocking(stderr_fd) != was_blocking:
-        # One shared description after all: put stderr back as it was.
-        os.close(fd)
-        os.set_blocking(stderr_fd, was_blocking)
-        logger.warning("serve.stall_dump_blocking reason=shared_description")
-        return stderr_fd
-    return fd
 
 
 class DrainingServer(uvicorn.Server):

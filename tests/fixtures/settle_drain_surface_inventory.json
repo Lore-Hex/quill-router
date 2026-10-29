@@ -1,0 +1,224 @@
+{
+  "revision": "ddfbd1e62",
+  "combined/False": {
+    "routes_sha256": "fd70db9d985eca8d1d0f9fde502f2d54762774435f4ff3e15df29c8b016ce294",
+    "route_count": 863,
+    "startup": [
+      "create_app.<locals>._warm_stage_d_policy"
+    ],
+    "shutdown": [
+      "create_app.<locals>._close_post_commit"
+    ],
+    "state": [
+      "async_settle",
+      "async_settle_shadow_startup",
+      "async_settle_shadow_startup_begin",
+      "authenticated_rate_limits",
+      "settings",
+      "stage_d_policy_resolver"
+    ]
+  },
+  "combined/True": {
+    "routes_sha256": "b5b5fcbbd4478da150e197d986c0f396ee709775d029e1caa4a2729a2f0554ff",
+    "route_count": 867,
+    "startup": [
+      "install.<locals>.start",
+      "create_app.<locals>._warm_stage_d_policy",
+      "create_app.<locals>._start_home_settlement_loop",
+      "create_app.<locals>._start_auto_refill_outbox_loop",
+      "create_app.<locals>._start_activation_reminder_loop",
+      "create_app.<locals>._start_retirement_notice_loop",
+      "create_app.<locals>._start_synthetic_loop",
+      "create_app.<locals>._start_remediator_loop"
+    ],
+    "shutdown": [
+      "create_app.<locals>._close_post_commit",
+      "install.<locals>.stop"
+    ],
+    "state": [
+      "async_settle",
+      "async_settle_shadow_startup",
+      "async_settle_shadow_startup_begin",
+      "authenticated_rate_limits",
+      "edge_policy_publisher",
+      "edge_policy_status",
+      "routing_snapshot_publisher",
+      "routing_snapshot_status",
+      "settings",
+      "stage_d_policy_resolver"
+    ]
+  },
+  "public/False": {
+    "routes_sha256": "f41a082d8fea6da64e71de8dc0b83c1e277036fd5069990514d3105180436a79",
+    "route_count": 368,
+    "startup": [],
+    "shutdown": [
+      "create_app.<locals>._close_post_commit"
+    ],
+    "state": [
+      "async_settle_shadow_startup",
+      "async_settle_shadow_startup_begin",
+      "authenticated_rate_limits",
+      "settings",
+      "stage_d_policy_resolver"
+    ]
+  },
+  "public/True": {
+    "routes_sha256": "f41a082d8fea6da64e71de8dc0b83c1e277036fd5069990514d3105180436a79",
+    "route_count": 368,
+    "startup": [],
+    "shutdown": [
+      "create_app.<locals>._close_post_commit"
+    ],
+    "state": [
+      "async_settle_shadow_startup",
+      "async_settle_shadow_startup_begin",
+      "authenticated_rate_limits",
+      "settings",
+      "stage_d_policy_resolver"
+    ]
+  },
+  "actions/False": {
+    "routes_sha256": "c1326cd358d9312ef1c0b94d09dde4849d67cf1f5d13d488a58a545fd24eab5c",
+    "route_count": 14,
+    "startup": [],
+    "shutdown": [
+      "create_app.<locals>._close_post_commit"
+    ],
+    "state": [
+      "async_settle_shadow_startup",
+      "async_settle_shadow_startup_begin",
+      "authenticated_rate_limits",
+      "settings",
+      "stage_d_policy_resolver"
+    ]
+  },
+  "actions/True": {
+    "routes_sha256": "c1326cd358d9312ef1c0b94d09dde4849d67cf1f5d13d488a58a545fd24eab5c",
+    "route_count": 14,
+    "startup": [],
+    "shutdown": [
+      "create_app.<locals>._close_post_commit"
+    ],
+    "state": [
+      "async_settle_shadow_startup",
+      "async_settle_shadow_startup_begin",
+      "authenticated_rate_limits",
+      "settings",
+      "stage_d_policy_resolver"
+    ]
+  },
+  "control/False": {
+    "routes_sha256": "5c688e989ef08823f40f75b02d379599b4d787977078812cfe81b022699f7c61",
+    "route_count": 413,
+    "startup": [],
+    "shutdown": [
+      "create_app.<locals>._close_post_commit"
+    ],
+    "state": [
+      "async_settle_shadow_startup",
+      "async_settle_shadow_startup_begin",
+      "authenticated_rate_limits",
+      "settings",
+      "stage_d_policy_resolver"
+    ]
+  },
+  "control/True": {
+    "routes_sha256": "5c688e989ef08823f40f75b02d379599b4d787977078812cfe81b022699f7c61",
+    "route_count": 413,
+    "startup": [
+      "create_app.<locals>._start_auto_refill_outbox_loop",
+      "create_app.<locals>._start_activation_reminder_loop",
+      "create_app.<locals>._start_retirement_notice_loop"
+    ],
+    "shutdown": [
+      "create_app.<locals>._close_post_commit"
+    ],
+    "state": [
+      "async_settle_shadow_startup",
+      "async_settle_shadow_startup_begin",
+      "authenticated_rate_limits",
+      "settings",
+      "stage_d_policy_resolver"
+    ]
+  },
+  "internal/False": {
+    "routes_sha256": "8ef873d1fda4802f25d69bca0881a4337d94788f392e25836d374f4127887946",
+    "route_count": 78,
+    "startup": [
+      "create_app.<locals>._warm_stage_d_policy"
+    ],
+    "shutdown": [
+      "create_app.<locals>._close_post_commit"
+    ],
+    "state": [
+      "async_settle",
+      "async_settle_shadow_startup",
+      "async_settle_shadow_startup_begin",
+      "authenticated_rate_limits",
+      "settings",
+      "stage_d_policy_resolver"
+    ]
+  },
+  "internal/True": {
+    "routes_sha256": "3c2216dad9afaefbfca591ff16e309c8a613a619532eea2d7ebb7527b9a4db95",
+    "route_count": 82,
+    "startup": [
+      "install.<locals>.start",
+      "create_app.<locals>._warm_stage_d_policy",
+      "create_app.<locals>._start_home_settlement_loop",
+      "create_app.<locals>._start_synthetic_loop",
+      "create_app.<locals>._start_remediator_loop"
+    ],
+    "shutdown": [
+      "create_app.<locals>._close_post_commit",
+      "install.<locals>.stop"
+    ],
+    "state": [
+      "async_settle",
+      "async_settle_shadow_startup",
+      "async_settle_shadow_startup_begin",
+      "authenticated_rate_limits",
+      "edge_policy_publisher",
+      "edge_policy_status",
+      "routing_snapshot_publisher",
+      "routing_snapshot_status",
+      "settings",
+      "stage_d_policy_resolver"
+    ]
+  },
+  "observer/False": {
+    "routes_sha256": "25cee28cb4052b7bb2903b195dac13092b0b7f29a2f0457c8fe89ff0fa066457",
+    "route_count": 370,
+    "startup": [],
+    "shutdown": [
+      "create_app.<locals>._close_post_commit"
+    ],
+    "state": [
+      "async_settle_shadow_startup",
+      "async_settle_shadow_startup_begin",
+      "authenticated_rate_limits",
+      "settings",
+      "stage_d_policy_resolver"
+    ]
+  },
+  "observer/True": {
+    "routes_sha256": "25cee28cb4052b7bb2903b195dac13092b0b7f29a2f0457c8fe89ff0fa066457",
+    "route_count": 370,
+    "startup": [
+      "create_app.<locals>._start_synthetic_loop",
+      "create_app.<locals>._start_remediator_loop"
+    ],
+    "shutdown": [
+      "create_app.<locals>._close_post_commit"
+    ],
+    "state": [
+      "async_settle_shadow_startup",
+      "async_settle_shadow_startup_begin",
+      "authenticated_rate_limits",
+      "settings",
+      "stage_d_policy_resolver"
+    ]
+  },
+  "factory_ast_sha256": "0d65050fedab6262e48be1d44631b540ee4896c6f7cfdc76cc06b5d89fb905b5"
+}

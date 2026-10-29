@@ -6,7 +6,11 @@ import os
 from dataclasses import replace
 
 from trusted_router.catalog_data import Model, ModelEndpoint
-from trusted_router.provider_contracts import MAPLE_GATEWAY_REGIONS
+from trusted_router.provider_contracts import (
+    BEDROCK_RUNTIME_PROFILES,
+    MAPLE_GATEWAY_REGIONS,
+    provider_model_available_from_gateway_region,
+)
 from trusted_router.regions import cloud_for_region
 
 
@@ -55,7 +59,11 @@ def apply_gateway_admission_holds(
         unavailable_providers |= {"maple"}
     affected_models = {model_id for model_id, _ in unavailable_routes}
     for identity, endpoint in tuple(endpoints.items()):
-        if endpoint.provider in unavailable_providers or endpoint.model_id in unavailable_models or (
+        runtime_unavailable = (
+            endpoint.provider == "amazon-bedrock" and endpoint.model_id in BEDROCK_RUNTIME_PROFILES
+            and not provider_model_available_from_gateway_region(endpoint.provider, endpoint.model_id, region)
+        )
+        if runtime_unavailable or endpoint.provider in unavailable_providers or endpoint.model_id in unavailable_models or (
             endpoint.model_id, endpoint.provider
         ) in unavailable_routes:
             affected_models.add(endpoint.model_id)

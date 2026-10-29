@@ -639,3 +639,71 @@ def test_dump_descriptor_falls_back_to_stderr_when_it_cannot_reopen(
     finally:
         os.close(read_end)
         os.close(write_end)
+
+
+def test_drain_immediate_dump_preserves_the_live_event_loop_watchdog() -> None:
+    # Run both real dump mechanisms in one process. Only the drain's immediate
+    # exit is intercepted so the existing C timer can prove it is still armed.
+    code = """
+import asyncio
+import faulthandler
+import time
+from trusted_router import serve
+from trusted_router.services import settle_outbox_worker as worker
+assert serve.stall_dump_fd is worker.stall_dump_fd
+original_arm = faulthandler.dump_traceback_later
+original_cancel = faulthandler.cancel_dump_traceback_later
+def arm(*args, **kwargs):
+    print('arm', flush=True)
+    return original_arm(*args, **kwargs)
+def cancel():
+    print('cancel', flush=True)
+    return original_cancel()
+faulthandler.dump_traceback_later = arm
+faulthandler.cancel_dump_traceback_later = cancel
+server = serve.DrainingServer(serve.build_config({}), drain_seconds=0, stall_seconds=2)
+asyncio.run(server.on_tick(0))
+worker.os._exit = lambda code: print(f'exit {code}', flush=True)
+worker._exit_stalled_worker()
+time.sleep(10)
+"""
+    process = subprocess.run(  # noqa: S603 - fixed test program, no external inputs
+        [sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True, timeout=30,
+    )
+    assert process.returncode == 1, process.stderr
+    assert process.stdout.splitlines() == ["arm", "exit 70"]
+    assert "in _exit_stalled_worker" in process.stderr  # immediate dump happened
+    assert "Timeout (0:00:02)!" in process.stderr  # original delayed timer fired
+
+
+@pytest.mark.skipif(not Path("/proc/self/fd").is_dir(), reason="the dump descriptor reopens stderr through /proc")
+def test_real_drain_stall_exits_when_stderr_is_backed_up() -> None:
+    # No socket required. Fill stderr after imports, then measure only dump+exit.
+    code = """
+import os
+import sys
+import time
+from trusted_router.services import settle_outbox_worker as worker
+fd = sys.stderr.fileno()
+os.set_blocking(fd, False)
+try:
+    while True:
+        os.write(fd, b'x' * 4096)
+except BlockingIOError:
+    pass
+os.set_blocking(fd, True)
+print(time.monotonic(), flush=True)
+worker._exit_stalled_worker()
+"""
+    read_end, write_end = os.pipe()
+    try:
+        process = subprocess.run(  # noqa: S603 - fixed test program, no external inputs
+            [sys.executable, "-c", code], cwd=ROOT, stdout=subprocess.PIPE,
+            stderr=write_end, text=True, timeout=30,
+        )
+        elapsed = time.monotonic() - float(process.stdout.strip())
+        assert process.returncode == 70
+        assert elapsed < 1, f"dump+exit exceeded the 1 s operational budget: {elapsed}"
+    finally:
+        os.close(read_end)
+        os.close(write_end)

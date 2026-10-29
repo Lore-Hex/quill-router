@@ -282,7 +282,7 @@ _EXPECTED_OWNER_GROUPS: tuple[tuple[frozenset[str], tuple[str, ...]], ...] = (
             "twilio_api_key_secret",
         ),
     ),
-    (frozenset({"public", "control", "internal", "observer"}), ("sentry_dsn",)),
+    (frozenset({"public", "control", "internal", "observer", "settle-drain"}), ("sentry_dsn",)),
     (
         frozenset({"public", "control"}),
         ("attribution_cookie_key", "attribution_cookie_secret"),

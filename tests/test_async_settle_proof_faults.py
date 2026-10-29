@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from tests.fakes.spanner import _FakeSnapshot, _FakeTransaction
-from tests.test_async_settle_handler import call, env, prepare, row_for
+from tests.test_async_settle_handler import _drain_async, call, env, prepare, row_for
 from tests.test_settle_outbox_drain import _typed_credit
 from trusted_router import async_settle_ticket
 from trusted_router import storage_gcp_async_admission as admission_sql
@@ -22,7 +22,6 @@ from trusted_router.services.async_settle import (
     DrainHealth,
 )
 from trusted_router.services.async_settle_handler import admission_reason
-from trusted_router.services.settle_outbox_drain import drain_settle_outbox
 from trusted_router.storage_gcp_async_settle import async_reservation_admission_statement
 
 
@@ -180,7 +179,7 @@ def test_transaction_fault_retry_identity(env, monkeypatch, boundary):
     assert ('read', auth.id, 'settle') in trace[last_insert+1:]
     assert list(saved) == [(auth.id, 'settle')]
     assert _typed_credit(env[1], 'ws-v1')['total_usage'] == 0
-    assert drain_settle_outbox(10)['outcomes'] == {'settled_now': 1}
+    assert _drain_async()['outcomes'] == {'settled_now': 1}
     assert call(env, body).status_code == 200
     assert _typed_credit(env[1], 'ws-v1')['total_usage'] == 2
 
@@ -194,13 +193,13 @@ def test_typed_unavailable_holds_and_recovers(env, monkeypatch):
         def unavailable(*a, **kw):
             raise StoreUnavailable('F1 injected typed outage')
         fault.setattr(type(env[0]), 'typed_finalize_gateway', unavailable)
-        result = drain_settle_outbox(10)
+        result = _drain_async()
     assert result['outcomes'] == {'park_typed_unavailable': 1}
     assert env[1].reservations[auth.credit_reservation_id] == before
     row = env[1].settle_outbox[(auth.id, 'settle')]
     assert row['status'] == 'pending' and row['attempts'] == 0 and row['settle_body'] is not None
     row['next_attempt_at'] = '2000-01-01T00:00:00Z'
-    assert drain_settle_outbox(10)['outcomes'] == {'settled_now': 1}
+    assert _drain_async()['outcomes'] == {'settled_now': 1}
     assert row is not env[1].settle_outbox[(auth.id, 'settle')]
     assert env[1].settle_outbox[(auth.id, 'settle')]['settle_body'] is None
 
@@ -305,7 +304,7 @@ def test_concurrent_sibling_refund_full_money(env, monkeypatch):
     assert reservation['settled'] and reservation['actual_micro'] in (0, 2)
     assert _typed_credit(env[1], 'ws-v1')['total_usage'] == reservation['actual_micro']
     assert _typed_credit(env[1], 'ws-v1')['reserved'] == 0
-    drain_settle_outbox(10)
+    _drain_async()
     assert _typed_credit(env[1], 'ws-v1')['total_usage'] == reservation['actual_micro']
     refund_row = env[1].settle_outbox[(auth.id, 'refund')]
     settle_row = env[1].settle_outbox[(auth.id, 'settle')]
@@ -344,7 +343,7 @@ def test_finalize_commit_crash_before_mark(env, monkeypatch):
             raise SystemExit('F1 crash after finalize commit before done mark')
         fault.setattr(SpannerSettleOutbox, 'mark', crash)
         with pytest.raises(SystemExit):
-            drain_settle_outbox(10)
+            _drain_async()
     row = env[1].settle_outbox[(auth.id, 'settle')]
     assert row['status'] == 'pending' and row['settle_body'] is not None
     before = copy.deepcopy(env[1].typed)
@@ -352,7 +351,7 @@ def test_finalize_commit_crash_before_mark(env, monkeypatch):
     assert env[1].reservations[auth.credit_reservation_id]['settled']
     # Move the old lease into the past; PR D separately pins TTL and equality.
     row['leased_until'] = '2000-01-01T00:00:00Z'
-    result = drain_settle_outbox(10)
+    result = _drain_async()
     assert result['outcomes'] == {'already_settled_with_charge': 1}
     assert env[1].typed == before
     row = env[1].settle_outbox[(auth.id, 'settle')]
