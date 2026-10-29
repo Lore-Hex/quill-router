@@ -73,6 +73,7 @@ from trusted_router.provider_contracts import (
     MAPLE_GATEWAY_REGIONS,
     MAPLE_MODEL_ID,
     UNSUPPORTED_GATEWAY_REGIONS_BY_PROVIDER_MODEL,
+    qualified_gateway_origin_names,
 )
 from trusted_router.provider_lifecycle import provider_retirements
 from trusted_router.provider_locations import inference_location_metadata
@@ -700,13 +701,13 @@ def _retired_at(endpoint: ModelEndpoint) -> int | None:
 def _gateway_regions(endpoint: ModelEndpoint) -> GatewayRegions:
     if endpoint.provider == "maple":
         return GatewayRegions(
-            only=tuple(sorted(MAPLE_GATEWAY_REGIONS)) if endpoint.model_id == MAPLE_MODEL_ID else (),
+            only=tuple(sorted(qualified_gateway_origin_names(MAPLE_GATEWAY_REGIONS))) if endpoint.model_id == MAPLE_MODEL_ID else (),
             deny=(), requires_explicit_origin=True,
         )
     if endpoint.provider == BEDROCK_PROVIDER:
         return GatewayRegions(
             only=tuple(sorted(
-                BEDROCK_RUNTIME_GATEWAY_REGIONS if endpoint.model_id in BEDROCK_RUNTIME_PROFILES
+                qualified_gateway_origin_names(BEDROCK_RUNTIME_GATEWAY_REGIONS) if endpoint.model_id in BEDROCK_RUNTIME_PROFILES
                 else BEDROCK_GATEWAY_REGIONS
             )), deny=(), requires_explicit_origin=True,
         )

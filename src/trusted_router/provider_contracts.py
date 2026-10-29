@@ -9,6 +9,22 @@ MAPLE_GATEWAY_REGIONS: frozenset[str] = frozenset({
     "aws-eu-west-1", "aws-eu-west-3", "azure-uaenorth", "azure-australiaeast",
 })
 
+# AWS BootstrapData.Region and Azure QUILL_AZURE_REGION carry native names.
+# These are alternate wire names for reviewed fleets, not additional locations.
+_NATIVE_GATEWAY_ORIGINS = {
+    "aws-eu-west-1": "eu-west-1",
+    "aws-eu-west-3": "eu-west-3",
+    "azure-uaenorth": "uaenorth",
+    "azure-australiaeast": "australiaeast",
+}
+
+
+def qualified_gateway_origin_names(regions: frozenset[str]) -> frozenset[str]:
+    """Admit a native wire name only while its exact fleet remains qualified."""
+    return regions | frozenset(
+        native for fleet, native in _NATIVE_GATEWAY_ORIGINS.items() if fleet in regions
+    )
+
 SAKANA_FUGU_MODEL_ID = "sakana-ai/fugu-ultra-v1.1"
 SAKANA_NAMAZU_MODEL_ID = "sakana-ai/sakana-namazu-v1.0"
 SAKANA_NAMAZU_ROUTE_HOLD_REASON = "provider-geographic-restriction"
@@ -183,10 +199,10 @@ def provider_model_available_from_gateway_region(
     gateway_region: str,
 ) -> bool:
     if provider_slug == "maple":
-        return model_id == MAPLE_MODEL_ID and gateway_region in MAPLE_GATEWAY_REGIONS
+        return model_id == MAPLE_MODEL_ID and gateway_region in qualified_gateway_origin_names(MAPLE_GATEWAY_REGIONS)
     if provider_slug == "amazon-bedrock":
         return gateway_region in (
-            BEDROCK_RUNTIME_GATEWAY_REGIONS if model_id in BEDROCK_RUNTIME_PROFILES
+            qualified_gateway_origin_names(BEDROCK_RUNTIME_GATEWAY_REGIONS) if model_id in BEDROCK_RUNTIME_PROFILES
             else BEDROCK_GATEWAY_REGIONS
         )
     required_regions = EXPLICIT_GATEWAY_REGIONS_BY_PROVIDER_MODEL.get((provider_slug, model_id))
