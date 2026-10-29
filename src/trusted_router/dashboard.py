@@ -53,6 +53,7 @@ from trusted_router.catalog import (
     endpoint_e2ee,
     endpoint_meets_privacy_requirement,
     endpoint_provider_policy,
+    endpoint_provider_policy_url,
     endpoint_retention_metadata,
     endpoint_zero_data_retention,
     endpoints_for_model,
@@ -5618,6 +5619,12 @@ def _model_detail_view(
             for candidate in meta_candidate_models(model.id)
         ]
     endpoint_views: list[dict[str, object]] = []
+    # Reuse the bounded, precomputed leaderboard snapshot; never probe a
+    # provider or scan request storage while rendering a model page.
+    measured_by_provider = {
+        str(row["provider"]): row
+        for row in measured_for_model(model.id, test_mode=test_mode)
+    }
     for endpoint in endpoints:
         ep_provider = PROVIDERS.get(endpoint.provider)
         endpoint_views.append(
@@ -5649,6 +5656,9 @@ def _model_detail_view(
                 "retention": endpoint_retention_metadata(endpoint) if ep_provider else None,
                 "endpoint_id": endpoint.id,
                 "precision": endpoint_precision_metadata(endpoint),
+                "geography": provider_geography(endpoint.provider),
+                "provider_policy_url": endpoint_provider_policy_url(endpoint),
+                "measured": measured_by_provider.get(endpoint.provider),
             }
         )
     # Sort cheapest-first by total prompt+completion price; ties broken by

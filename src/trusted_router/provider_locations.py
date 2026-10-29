@@ -113,11 +113,47 @@ PROVIDER_INFERENCE_LOCATIONS = {
         sources=(("Inference placement and key restrictions", "https://zro.moonmath.ai/docs/privacy"),),
     ),
     "boundless": InferenceLocations(
-        scope="US corporate registration does not establish GPU residency; exhaustive inference countries are not documented.",
+        locations=("United States", "United Kingdom", "European Union (countries unspecified)"),
+        scope="October 27 terms, section 3.3, describe provider-wide infrastructure in the US, UK and/or EU; not an exact-model placement receipt.",
+        routing="No fixed model location or exhaustive EU country list is published; placement can vary within the declared regions.",
         trustedrouter_pinning=_NO_TR_PIN,
-        evidence="Public provider terms disclose third-party infrastructure without country guarantees",
-        reviewed_on="2026-10-11",
+        declaration="US, UK and/or EU infrastructure, provider-declared; no per-request residency commitment.",
+        evidence="Published infrastructure terms, section 3.3",
+        reviewed_on="2026-10-28",
         sources=(("Infrastructure and data terms", "https://inference.boundless.network/terms"),),
+    ),
+    "sail-research": InferenceLocations(
+        locations=("Global (countries unspecified)",),
+        scope="Sail documents multi-region processing by default, including outside the United States.",
+        routing="Country is unrestricted unless a supported account sends the US-only routing option.",
+        provider_pinning="Pro and Enterprise accounts can request routing.allowed_countries=[US]; unavailable US capacity fails closed. Surcharges apply.",
+        trustedrouter_pinning=_NO_TR_PIN,
+        declaration="Global, dynamically placed; TrustedRouter does not enforce Sail's US-only option.",
+        evidence="Public security and US-only inference documentation",
+        reviewed_on="2026-10-28",
+        sources=(("Data processing and residency", "https://docs.sailresearch.com/security"),
+                 ("Provider US-only option", "https://docs.sailresearch.com/us-only-inference")),
+    ),
+    "makora": InferenceLocations(
+        locations=("United States (primary processing region)",),
+        scope="Privacy policy section 7 lists AWS and TensorWave inference compute in the US; section 10 also permits international processing.",
+        routing="The policy identifies a primary region, not an exhaustive country set or an exact-model guarantee.",
+        trustedrouter_pinning=_NO_TR_PIN,
+        declaration="United States primary processing, provider-declared; international processing is permitted and exact-model residency is unverified.",
+        evidence="Public privacy policy sections 7 and 10",
+        reviewed_on="2026-10-28",
+        sources=(("Inference subprocessors and processing region", "https://www.makora.com/privacy-policy"),),
+    ),
+    "nebius": InferenceLocations(
+        locations=("Global (dynamic public endpoints)",),
+        scope="Token Factory public endpoints are Global; Finland storage of retained content does not identify the inference location.",
+        routing="Public-endpoint processing location can change without notice.",
+        provider_pinning="Dedicated endpoints provide a selected-region commitment with no cross-region failover; public endpoints do not.",
+        trustedrouter_pinning=_NO_TR_PIN,
+        declaration="Global, dynamically placed public inference; no fixed-country commitment.",
+        evidence="Token Factory legal guide, section 5",
+        reviewed_on="2026-10-28",
+        sources=(("Processing and dedicated endpoint residency", "https://docs.tokenfactory.nebius.com/legal/legal-quick-guide"),),
     ),
     "greenference": InferenceLocations(
         locations=("European Union (countries unspecified)",),
@@ -252,16 +288,16 @@ PROVIDER_INFERENCE_LOCATIONS = {
                  ("Privacy and processing path", "https://engy.ai/privacy")),
     ),
     "novita": InferenceLocations(
-        scope=("No model-specific country list verified for the shared Qwen3.8-27B API route. "
-               "Novita publishes worldwide GPU rental regions, but that list does not prove "
-               "where this serverless model executes."),
+        scope=("No exhaustive inference-country list verified for the shared model API. "
+               "Novita publishes worldwide GPU rental regions, but that separate "
+               "product does not establish shared serverless model placement."),
         routing="Shared-route placement and failover geography require provider confirmation.",
         provider_pinning=("GPU-instance or dedicated-deployment region selection is not evidence "
                           "of a region pin for this shared model API."),
         trustedrouter_pinning=_NO_TR_PIN,
         declaration="Shared inference API; processing countries unconfirmed, no fixed-region commitment.",
         evidence="Public docs and native catalog reviewed; model-specific geography unconfirmed",
-        reviewed_on="2026-09-26",
+        reviewed_on="2026-10-28",
         sources=(
             ("GPU rental regions (different product)", "https://blogs.novita.ai/gpu-regions-zones/"),
             ("Native model catalog", "https://api.novita.ai/openai/v1/models"),
@@ -340,6 +376,8 @@ class Headquarters:
 # Keep physical HQ separate from catalog_data's legacy headquarters_country,
 # which is used for security filtering and actually identifies the API operator.
 PROVIDER_HEADQUARTERS = {
+    "lyceum": Headquarters("Berlin, Germany; Zurich, Switzerland (registered offices)", "Published legal imprint; registered offices, not GPU locations", "https://lyceum.technology/legal/imprint/", "2026-10-28"),
+    "nebius": Headquarters("Amsterdam, Netherlands", "Company newsroom identifies its headquarters", "https://nebius.com/newsroom/nebius-brings-compute-pricing-into-the-open-as-europe-s-ai-builders-scale-on-its-cloud", "2026-10-28"),
     "io-net": Headquarters("West Hollywood, California, United States (operating address)", "Provider-submitted operating address; not independently verified as headquarters", "https://io.net", "2026-09-28"),
     "telnyx": Headquarters("Austin, Texas, United States", "Provider-submitted headquarters; company profile", "https://www.linkedin.com/company/telnyx", "2026-09-27"),
     "deepinfra": Headquarters("Palo Alto, California, United States", "Company profile", "https://www.linkedin.com/company/deep-infra", "2026-09-27"),
