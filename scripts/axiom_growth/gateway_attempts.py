@@ -17,6 +17,14 @@ MAX_AUDITS = 20_000
 RETENTION_DAYS = 3
 OVERLAP = dt.timedelta(minutes=10)
 RECOVERY_STEP = dt.timedelta(minutes=5)
+# Late deliveries land within minutes. History read when it was this old is
+# final, and replay never reaches back into it (gateway_settled_through): at
+# 2026-09-28 density the overlap alone was ~14,500 audits, so no historical
+# window fit the source budget and the cursor never moved.
+SETTLED = dt.timedelta(hours=1)
+# The Confidential Space launcher wrote the line as MESSAGE until the image
+# that VMs picked up on 2026-10-06; it now writes message. History needs both.
+MESSAGE_FIELDS = ('message', 'MESSAGE')
 SOURCE_RETENTION_DAYS = 90
 
 
@@ -25,16 +33,23 @@ class AuditBudgetExceeded(ValueError):
 
 
 def source_filter():
-    names = ' OR '.join('jsonPayload.MESSAGE:' + json.dumps('enclave.request_' + s + ' ')
-                       for s in ('start', 'end'))
-    routes = ' OR '.join('jsonPayload.MESSAGE:' + json.dumps(r) for r in ROUTES)
-    return f'resource.type="gce_instance" ({names}) ({routes})'
+    def field(name):
+        names = ' OR '.join(f'jsonPayload.{name}:' + json.dumps('enclave.request_' + s + ' ')
+                           for s in ('start', 'end'))
+        routes = ' OR '.join(f'jsonPayload.{name}:' + json.dumps(r) for r in ROUTES)
+        return f'(({names}) ({routes}))'
+    return 'resource.type="gce_instance" (' + ' OR '.join(map(field, MESSAGE_FIELDS)) + ')'
 
 
 def project(entry):
     """Discard the entire operational payload after selecting fixed metadata."""
-    message = entry.get('jsonPayload', {}).get('MESSAGE', '')
-    match = re.search(r'\benclave\.request_(start|end) ', message) if isinstance(message, str) else None
+    payload = entry.get('jsonPayload', {})
+    message, match = '', None
+    for field in MESSAGE_FIELDS:
+        value = payload.get(field)
+        if isinstance(value, str) and (match := re.search(r'\benclave\.request_(start|end) ', value)):
+            message = value
+            break
     if not match or len(message) > 8192:
         return None
     try:
@@ -120,8 +135,23 @@ def collect(state, io, now, end):
     previous = m.date(state.get('gateway_watermark', end.isoformat()))
     if previous > end:
         raise ValueError('Gateway audit watermark is ahead of the export target')
-    end = min(end, previous + RECOVERY_STEP)
-    start = previous - OVERLAP
+    settled = now - SETTLED
+    floor = state.get('gateway_settled_through')
+    floor = m.date(floor) if floor else None
+    def reach(at):
+        """Re-read the overlap for late deliveries, never into final history."""
+        return at - OVERLAP if floor is None else max(at - OVERLAP, floor)
+    if (floor is None or floor < previous) and previous <= settled:
+        # The tail was read near the present and may have had late deliveries
+        # since. Re-read only that tail, once, before settled replay continues.
+        start, end = reach(previous), previous
+    else:
+        end = min(end, previous + RECOVERY_STEP)
+        start = reach(previous)
+    if end <= settled:
+        floor = end
+    # Keep exactly what the next window can re-read.
+    horizon = reach(end)
     if start < now - dt.timedelta(days=SOURCE_RETENTION_DAYS - 1):
         raise ValueError('Gateway audit backlog exceeds source retention; explicit recovery required')
     incoming = io.gateway_audits(start, end)
@@ -130,7 +160,7 @@ def collect(state, io, now, end):
     cutoff = end - dt.timedelta(days=RETENTION_DAYS)
     recent = state.get('gateway_audits', [])
     completed = {r['attempt_id'] for r in recent if r['stage'] == 'end'
-                 and m.date(r['_time']) < start}
+                 and m.date(r['_time']) < min(start, horizon)}
     rows = {r['event_id']: r for r in recent if m.date(r['_time']) >= cutoff
             and r['attempt_id'] not in completed}
     for row in incoming:
@@ -145,12 +175,13 @@ def collect(state, io, now, end):
         raise ValueError('Gateway audit state bound reached; partition before continuing')
     audits = list(rows.values())
     completed = {r['attempt_id'] for r in audits if r['stage'] == 'end'
-                 and m.date(r['_time']) < end - OVERLAP}
+                 and m.date(r['_time']) < horizon}
     # Return the entire window for projection before compacting its checkpoint.
     # Completed snapshots/milestones survive in Axiom; unmatched starts keep the
     # existing three-day pairing horizon, and late deliveries get the overlap.
     retained = [r for r in audits if r['attempt_id'] not in completed]
-    state.update(gateway_audits=retained, gateway_watermark=end.isoformat())
+    state.update(gateway_audits=retained, gateway_watermark=end.isoformat(),
+                 gateway_settled_through=floor.isoformat() if floor else None)
     return audits
 
 

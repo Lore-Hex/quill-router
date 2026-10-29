@@ -724,7 +724,7 @@ def test_rollout_opts_out_shadow_canary_4_without_enabling_money_paths(
     assert rendered["TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT"] == ""
     assert rendered["TR_ASYNC_SETTLE_SHADOW_ATTACHMENT_BUCKET"] == "tr-async-settle-shadow-attachments-quill-cloud-proxy"
     assert rendered["TR_ASYNC_SETTLE_ENABLED"] == "false"
-    assert rendered["TR_ASYNC_SETTLE_PROTECTION"] == "false"
+    assert rendered["TR_ASYNC_SETTLE_PROTECTION"] == "true"
     assert rendered["TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED"] == "false"
     config = Settings(
         environment="test",
@@ -761,8 +761,8 @@ def test_rollout_opts_out_shadow_canary_4_without_enabling_money_paths(
     health_install.assert_not_called()
     cohort_install.assert_not_called()
     assert not hasattr(app.state, "async_settle_shadow")
-    assert not config.async_settle_enabled
-    assert not config.async_settle_protection
+    assert config.async_settle_enabled is False
+    assert config.async_settle_protection is True
     assert not config.settle_outbox_fast_drain_enabled
     assert config.async_settle_shadow_workspace_ids == set()
     for workspace in ("162e441a-5d13-414f-92bd-7c6cd805faa3", "45819281-0ce9-4811-a0cd-c660ab3a116d",
@@ -807,7 +807,7 @@ def test_rendered_shadow_pins_install_only_in_serving_regions(
     assert config.effective_async_settle_shadow_policy() == ""
     assert config.async_settle_shadow_workspace_ids == set()
     assert not config.async_settle_admission_enabled
-    assert not config.async_settle_protection
+    assert config.async_settle_protection is True
     assert not config.settle_outbox_fast_drain_enabled
 
     store, database = fake_store()
@@ -3970,9 +3970,19 @@ def test_rollout_pins_serving_region_per_target_without_inheritance(
         assert deploy[deploy.index("--set-env-vars") + 1].count("TR_SERVING_REGION=") == 1
 
 
+@pytest.mark.parametrize("pin", ["TR_ASYNC_SETTLE_ENABLED", "TR_ASYNC_SETTLE_PROTECTION"])
 def test_rollout_pins_async_admission_and_protection_without_inheritance(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pin: str,
 ) -> None:
+    expected = {
+        "TR_ASYNC_SETTLE_ENABLED": "false",
+        "TR_ASYNC_SETTLE_PROTECTION": "true",
+        "TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE": "/secrets/async-settle/ticket.pem",
+        "TR_ASYNC_SETTLE_TICKET_KID": "tr-async-settle-2026-10a",
+        "TR_ASYNC_SETTLE_TICKET_ISSUER": "https://api.trustedrouter.com",
+        "TR_ASYNC_SETTLE_TICKET_AUDIENCE": "router-settlement",
+        "TR_ASYNC_SETTLE_AUTHORITY_EPOCH": "1",
+    }
     hostile = {
         "TR_ASYNC_SETTLE_ENABLED": "true",
         "TR_ASYNC_SETTLE_PROTECTION": "true",
@@ -3982,6 +3992,12 @@ def test_rollout_pins_async_admission_and_protection_without_inheritance(
         "TR_ASYNC_SETTLE_TICKET_AUDIENCE": "old-audience",
         "TR_ASYNC_SETTLE_AUTHORITY_EPOCH": "42",
     }
+    # Challenge each boolean independently in both caller and live-primary env.
+    hostile.update({name: expected[name] for name in (
+        "TR_ASYNC_SETTLE_ENABLED", "TR_ASYNC_SETTLE_PROTECTION",
+    )})
+    hostile[pin] = "false" if expected[pin] == "true" else "true"
+    assert hostile[pin] != expected[pin]
     isolated = _rollout_harness_with_live_primary(tmp_path, monkeypatch, {**_LIVE_PRIMARY_ENV, **hostile})
     run = isolated.run("scripts/deploy/rollout.sh", extra_env=hostile)
     assert run.returncode == 0, summarise(run)
@@ -3989,16 +4005,8 @@ def test_rollout_pins_async_admission_and_protection_without_inheritance(
     rendered = _cloud_run_job_env(deploy)
     # Runbook step 2: the purpose signer is provisioned as literals (Secret Manager
     # file mount plus public identity, positive epoch) while admission and
-    # protection stay off. None of it is inherited from the caller's environment.
-    assert {name: rendered[name] for name in hostile} == {
-        "TR_ASYNC_SETTLE_ENABLED": "false",
-        "TR_ASYNC_SETTLE_PROTECTION": "false",
-        "TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE": "/secrets/async-settle/ticket.pem",
-        "TR_ASYNC_SETTLE_TICKET_KID": "tr-async-settle-2026-10a",
-        "TR_ASYNC_SETTLE_TICKET_ISSUER": "https://api.trustedrouter.com",
-        "TR_ASYNC_SETTLE_TICKET_AUDIENCE": "router-settlement",
-        "TR_ASYNC_SETTLE_AUTHORITY_EPOCH": "1",
-    }
+    # protection follow the reviewed stage. No value is inherited from the caller.
+    assert {name: rendered[name] for name in hostile} == expected
     secret_flag = next(flag for flag in ("--update-secrets", "--set-secrets") if flag in deploy)
     bindings = deploy[deploy.index(secret_flag) + 1].split(",")
     assert "/secrets/async-settle/ticket.pem=trustedrouter-async-settle-ticket-key:latest" in bindings

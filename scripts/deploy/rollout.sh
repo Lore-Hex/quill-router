@@ -716,8 +716,8 @@ ENV_VARS=(
   "TR_TRUST_RECONCILE_MAX_AGE_SECONDS=3600"
   "TR_HEARTBEAT_GRACE_SECONDS=${TR_HEARTBEAT_GRACE_SECONDS:-300}"
   "TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS="
-  # Admission and protection stay off until the runbook's step 8; nothing in this
-  # block issues a ticket. Do not inherit any of these values from an old revision.
+  # Runbook step 8: the staged pins below govern admission and protection.
+  # Keep these literals authoritative; never inherit them from an old revision.
   # Shadow paused: v1 polls fleet-v1 while its publisher is disabled, so it
   # cannot qualify evidence and generates cross-region read-deadline alerts.
   # Re-enable only after independent shadow health and cohort prerequisites
@@ -736,7 +736,8 @@ ENV_VARS=(
   # Spanner sessions bounded, no API-failure or session incident; otherwise opt
   # out by emptying the policy, workspaces, health-region and expiry lines
   # together (keep the bucket and regions; regions need not be emptied to
-  # disable shadow). Money, protection and fast drain stay off.
+  # disable shadow). Historical canary gates kept money and fast drain off;
+  # the staged protection/admission pins below now govern pilot enablement.
   # October 28: scope shadow to us-central1, us-east4 and europe-west4 after
   # client deadlines in southamerica-east1 falsely tripped the fleet stop
   # while Spanner was healthy. Add the operator's pilot workspace to exercise
@@ -760,8 +761,11 @@ ENV_VARS=(
   # the workspaces are set and the policy is empty. The activation tool's
   # release shadow-opt-in requires --expires-at and opt-out clears it.
   "TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT="
+  # R1: accepted-work protection on before any async admission. Keep admission
+  # off until the separate dedicated worker release has fresh fleet health.
+  # Router fast drain remains off; measured fast drain belongs to the worker.
   "TR_ASYNC_SETTLE_ENABLED=false"
-  "TR_ASYNC_SETTLE_PROTECTION=false"
+  "TR_ASYNC_SETTLE_PROTECTION=true"
   # Purpose signer, design runbook step 2 and the 2026-10-09 decisions: the key
   # file is the Secret Manager mount declared in SECRET_ENVS, pinned as a literal
   # so no revision inherits a path. kid/issuer/audience are the public identity

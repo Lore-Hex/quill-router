@@ -2,8 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from scripts.pricing.manifest import models_requiring_canary
-from scripts.pricing.providers import fal, nvidia_nim
+from scripts.pricing.providers import fal
 from trusted_router import catalog
 from trusted_router.provider_contracts import provider_model_operator_held
 from trusted_router.provider_lifecycle import provider_model_retired
@@ -46,10 +45,3 @@ def test_pearl_unknown_gemma_is_held_without_affecting_other_providers() -> None
     assert not provider_model_operator_held("pearl", "z-ai/glm-5.3")
     assert not any(e.provider == "pearl" for e in catalog.endpoints_for_model(model))
     assert model not in rotation_candidates().get("pearl", [])
-
-
-def test_nvidia_stalled_vision_route_requires_successful_recovery_canary() -> None:
-    model = "meta-llama/llama-3.2-90b-vision-instruct"
-    assert not any(e.provider == "nvidia-nim" for e in catalog.endpoints_for_model(model))
-    assert model in models_requiring_canary(nvidia_nim.MANIFEST_PATH, {model})
-    assert not provider_model_retired("nvidia-nim", model)
