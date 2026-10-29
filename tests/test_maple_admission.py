@@ -18,6 +18,58 @@ from trusted_router.provider_contracts import (
 from trusted_router.routing_snapshot import _gateway_regions
 
 
+@pytest.mark.parametrize("provider,model", [
+    ("maple", MAPLE_MODEL_ID),
+    *(("amazon-bedrock", model) for model in BEDROCK_RUNTIME_PROFILES),
+])
+@pytest.mark.parametrize("setting,region", [
+    ("TR_PRIMARY_REGION", "eu-west-1"),
+    ("TR_PRIMARY_REGION", "eu-west-3"),
+    ("TR_PRIMARY_REGION", "uaenorth"),
+    ("TR_SERVING_REGION", "southamerica-east1"),
+])
+def test_runtime_catalog_uses_real_control_plane_region_settings(monkeypatch, provider, model, setting, region):
+    monkeypatch.delenv("TR_SERVING_REGION", raising=False)
+    monkeypatch.delenv("TR_PRIMARY_REGION", raising=False)
+    monkeypatch.setenv("TR_ENVIRONMENT", "production")
+    monkeypatch.setenv(setting, region)
+    endpoint = next(e for e in MODEL_ENDPOINTS.values() if e.provider == provider and e.model_id == model)
+    endpoints = {endpoint.id: endpoint}
+    apply_gateway_admission_holds({}, endpoints)
+    assert endpoints == {endpoint.id: endpoint}
+    # These are control-plane locations, not newly qualified gateway origins.
+    assert not provider_model_available_from_gateway_region(provider, model, region)
+
+
+@pytest.mark.parametrize("region", ["eu-west-2", "westus", "future-region", ""])
+def test_runtime_catalog_unknown_control_plane_still_fails_closed(monkeypatch, region):
+    monkeypatch.delenv("TR_SERVING_REGION", raising=False)
+    monkeypatch.setenv("TR_PRIMARY_REGION", region)
+    monkeypatch.setenv("TR_ENVIRONMENT", "production")
+    endpoints = {e.id: e for e in MODEL_ENDPOINTS.values()
+                 if e.provider == "maple" or (e.provider == "amazon-bedrock" and e.model_id in BEDROCK_RUNTIME_PROFILES)}
+    assert endpoints
+    apply_gateway_admission_holds({}, endpoints)
+    assert not endpoints
+
+
+@pytest.mark.parametrize("region", ["eu-west-1", "eu-west-3", "uaenorth", "southamerica-east1"])
+@pytest.mark.parametrize("qualified", [frozenset(), frozenset({"azure-australiaeast"})])
+def test_control_plane_alias_does_not_admit_unqualified_fleet(monkeypatch, region, qualified):
+    from trusted_router import provider_contracts
+
+    monkeypatch.setattr(provider_contracts, "MAPLE_GATEWAY_REGIONS", qualified)
+    monkeypatch.setattr(provider_contracts, "BEDROCK_RUNTIME_GATEWAY_REGIONS", qualified)
+    monkeypatch.delenv("TR_SERVING_REGION", raising=False)
+    monkeypatch.setenv("TR_PRIMARY_REGION", region)
+    monkeypatch.setenv("TR_ENVIRONMENT", "production")
+    endpoints = {e.id: e for e in MODEL_ENDPOINTS.values()
+                 if e.provider == "maple" or (e.provider == "amazon-bedrock" and e.model_id in BEDROCK_RUNTIME_PROFILES)}
+    assert endpoints
+    apply_gateway_admission_holds({}, endpoints)
+    assert not endpoints
+
+
 def test_release_admission_names_exact_gateway_fleets_without_expanding_mantle():
     expected = frozenset({
         "us-central1", "us-east4", "europe-west4", "us-west1",
