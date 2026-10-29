@@ -29,6 +29,7 @@ _LTX_EXPECTED_MICRODOLLARS_PER_SECOND = {
 }
 _RUNWAY_GEN45_CREDITS_PER_SECOND = 12
 _RUNWAY_MICRODOLLARS_PER_CREDIT = 10_000
+_RUNWAY_KLING4_RATES = {"720p": 157_000, "1080p": 235_000}
 _KLING_CREDITS_PER_USD = 66
 _KLING_VIDEO3_BASE_CREDITS_PER_SECOND = frozenset({6, 8, 9, 12})
 
@@ -116,6 +117,53 @@ def parse_kling_credit_policy(document: str) -> int:
     return matches.pop()
 
 
+def parse_runway_kling4_rates(document: str) -> dict[str, int]:
+    """Read the standard non-video-input rates, never temporary promotions."""
+    credit_prices = {
+        _microdollars(value)
+        for value in re.findall(
+            r"Credits can be purchased\s+for\s+\$([0-9]+(?:\.[0-9]+)?)\s+per credit",
+            document,
+            re.IGNORECASE,
+        )
+    }
+    if len(credit_prices) != 1:
+        raise ValueError("missing or conflicting Runway credit price")
+    credit_price = credit_prices.pop()
+    rates: dict[str, int] = {}
+    for resolution, row in re.findall(
+        r"^\|\s*`kling_4`\s*\((720p|1080p)\)\s*\|\s*([^|]+)\|",
+        document,
+        re.MULTILINE,
+    ):
+        # A promotional row explicitly separates list price from discounted
+        # and input-video rates. Unknown layouts are not guessed.
+        standard = re.search(
+            r"List price:\s*([0-9]+(?:\.[0-9]+)?)\s+and\s+[0-9.]+\s+credits per second",
+            row,
+            re.IGNORECASE,
+        ) or re.match(
+            r"([0-9]+(?:\.[0-9]+)?)\s+credits per second(?:\s+without an input video)?\s*$",
+            row.strip(),
+            re.IGNORECASE,
+        )
+        if standard is None:
+            raise ValueError(f"unrecognized Kling 4.0 {resolution} price")
+        exact_rate = Decimal(standard.group(1)) * credit_price
+        rate = int(exact_rate)
+        if exact_rate != rate or rate <= 0:
+            raise ValueError("invalid Kling 4.0 rate")
+        if resolution in rates and rates[resolution] != rate:
+            raise ValueError("conflicting Kling 4.0 rates")
+        rates[resolution] = rate
+    if set(rates) != {"720p", "1080p"}:
+        raise ValueError("missing Kling 4.0 resolution price")
+    normalized = re.sub(r"\s+", " ", document)
+    if "Charges are rounded up to the next credit." not in normalized:
+        raise ValueError("missing Kling 4.0 whole-credit rounding contract")
+    return rates
+
+
 def parse_kling_video3_rates(document: str) -> frozenset[int]:
     return frozenset(
         int(value) for value in re.findall(r"([0-9]+)\s*Credits/s", document, re.IGNORECASE)
@@ -150,15 +198,33 @@ def _audit_ltx(fetch_text: Callable[[str], str]) -> VideoPriceAudit:
 
 def _audit_runway(fetch_text: Callable[[str], str]) -> VideoPriceAudit:
     try:
-        actual = parse_runway_gen45_rate(fetch_text(RUNWAY_PRICING_URL))
+        document = fetch_text(RUNWAY_PRICING_URL)
     except Exception as exc:  # noqa: BLE001 - network/parser errors are audit results
         return _provider_failure("runway", f"unavailable ({type(exc).__name__}: {exc})", hard=False)
     expected = _RUNWAY_GEN45_CREDITS_PER_SECOND * _RUNWAY_MICRODOLLARS_PER_CREDIT
-    if actual != expected:
-        return _provider_failure(
-            "runway",
-            f"changed Gen-4.5 from the production rate of {expected} microdollars/second",
-            hard=True,
+    # A layout change for one model must not hide a known price change for
+    # the other model on the same page.
+    checks: tuple[tuple[str, Callable[[str], object], object], ...] = (
+        ("Gen-4.5", parse_runway_gen45_rate, expected),
+        ("Kling 4.0", parse_runway_kling4_rates, _RUNWAY_KLING4_RATES),
+    )
+    results: list[VideoPriceAudit] = []
+    for model, parser, expected_rate in checks:
+        try:
+            actual = parser(document)
+        except Exception as exc:  # noqa: BLE001 - parser errors are audit results
+            results.append(_provider_failure(
+                "runway", f"{model} unavailable ({type(exc).__name__}: {exc})", hard=False
+            ))
+            continue
+        if actual != expected_rate:
+            results.append(_provider_failure(
+                "runway", f"changed the production {model} price contract", hard=True
+            ))
+    if results:
+        return VideoPriceAudit(
+            warnings=tuple(message for result in results for message in result.warnings),
+            hard_failures=tuple(message for result in results for message in result.hard_failures),
         )
     return VideoPriceAudit(info=("runway: official fixed-cost video price matches production ✓",))
 
