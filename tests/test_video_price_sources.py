@@ -12,6 +12,7 @@ from scripts.pricing.video_sources import (
     parse_kling_video3_rates,
     parse_ltx_rates,
     parse_runway_gen45_rate,
+    parse_runway_kling4_rates,
 )
 
 LTX_DOCUMENT = r"""
@@ -48,6 +49,9 @@ RUNWAY_DOCUMENT = """
 Credits can be purchased
 for $0.01 per credit in the developer portal.
 | `gen4.5` | 12 credits per second |
+| `kling_4` (720p) | Promotion: 12.56 credits per second. List price: 15.7 and 9.4 credits per second |
+| `kling_4` (1080p) | Promotion: 18.8 credits per second. List price: 23.5 and 14.1 credits per second |
+Charges are rounded up to the next credit.
 """
 KLING_POLICY = "Standard Pricing: $1 USD = 66 Credits"
 KLING_GUIDE = "12 Credits/s 9 Credits/s 8 Credits/s 6 Credits/s 2 Credits/s"
@@ -131,3 +135,29 @@ def test_video_price_audit_retries_transient_kling_ssr_failure() -> None:
     assert attempts == 2
     assert result.warnings == ()
     assert result.hard_failures == ()
+
+
+def test_runway_kling4_uses_standard_rates_not_promotion_or_video_input() -> None:
+    assert parse_runway_kling4_rates(RUNWAY_DOCUMENT) == {"720p": 157_000, "1080p": 235_000}
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        RUNWAY_DOCUMENT.replace("15.7 and 9.4", "unknown"),
+        RUNWAY_DOCUMENT.replace("(1080p)", "(4K)"),
+        RUNWAY_DOCUMENT.replace("Charges are rounded up to the next credit.", ""),
+        RUNWAY_DOCUMENT + "\n| `kling_4` (720p) | 20 credits per second |",
+    ],
+)
+def test_runway_kling4_rejects_ambiguous_or_incomplete_contract(document: str) -> None:
+    with pytest.raises(ValueError):
+        parse_runway_kling4_rates(document)
+
+
+def test_runway_kling4_price_drift_blocks_publication() -> None:
+    result = audit_video_price_sources(
+        lambda url: _official_documents(url).replace("15.7 and 9.4", "16.7 and 9.4")
+    )
+    assert len(result.hard_failures) == 1
+    assert "Kling 4.0" in result.hard_failures[0]
