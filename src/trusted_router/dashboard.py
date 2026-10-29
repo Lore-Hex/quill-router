@@ -5656,6 +5656,7 @@ def _model_detail_view(
                 "retention": endpoint_retention_metadata(endpoint) if ep_provider else None,
                 "endpoint_id": endpoint.id,
                 "precision": endpoint_precision_metadata(endpoint),
+                "usage_type": endpoint.usage_type,
                 "geography": provider_geography(endpoint.provider),
                 "provider_policy_url": endpoint_provider_policy_url(endpoint),
                 "measured": measured_by_provider.get(endpoint.provider),

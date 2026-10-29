@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
 
 from tests.pinned_manifests import OPENAI_GPT_5_5, serve_manifest_rows
@@ -127,6 +128,14 @@ def test_public_pages_explain_active_openai_prepaid_scope(client: TestClient) ->
     model = client.get("/models/openai/gpt-4.1")
     assert model.status_code == 200
     assert "Credits" in model.text
-    assert "BYOK" not in model.text
+    # Policy disclosures mention BYOK to explain the exclusion, but the table
+    # must still publish only TR-funded Credits routes with the scoped badge.
+    soup = BeautifulSoup(model.text, "html.parser")
+    rows = soup.select(".model-route-table tbody tr")
+    assert rows and all(row["data-usage-type"] == "Credits" for row in rows)
+    openai = soup.select_one("#provider-openai")
+    assert openai.select_one('[data-privacy="zdr"]')
+    assert "customer BYOK credentials" in openai.get_text()
+    assert "customer's own OpenAI organization or project" in openai.get_text()
     assert ">ZDR<" in model.text
     assert "no verified privacy claim" not in model.text
