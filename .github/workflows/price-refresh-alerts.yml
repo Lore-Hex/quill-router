@@ -1,0 +1,39 @@
+name: Price refresh alerting
+
+on:
+  workflow_run:
+    workflows: ["Refresh upstream prices"]
+    branches: [main]
+    types: [completed]
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch: {}
+
+# Serialize the durable cooldown ledger, including manual/periodic checks.
+concurrency:
+  group: price-refresh-alerts
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+jobs:
+  report:
+    if: github.repository == 'Lore-Hex/quill-router'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Never run code or download artifacts from the triggering run. This
+      # observer is independent of refresh dependency installation and GCP auth.
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Report refresh failures and freshness to Sentry
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TR_SENTRY_DSN: ${{ secrets.PRICE_REFRESH_SENTRY_DSN }}
+          TR_REFRESH_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: python3 scripts/price_refresh_alerts.py
