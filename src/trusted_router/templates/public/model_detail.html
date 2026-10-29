@@ -218,10 +218,12 @@
       <strong>Trust boundary:</strong> TR router attestation verifies the
       TrustedRouter gateway only. Provider policy separately describes the
       upstream model host's retention, confidential compute, and E2EE posture.
+      Company country is separate from inference location. Weight formats are
+      source-backed declarations, not per-request proofs.
     </p>
     {% if model.endpoints %}
-    <div class="model-table-wrap">
-    <table data-sortable="true">
+    <div class="model-table-wrap" role="region" aria-label="Provider comparison" tabindex="0">
+    <table data-sortable="true" class="model-route-table">
       <thead>
         <tr>
           <th>Provider</th>
@@ -229,18 +231,19 @@
           <th>Cached input</th>
           <th>Output</th>
           <th>Weight format</th>
-          <th>TR router attested</th>
           <th>Provider policy</th>
+          <th>Company / inference location</th>
+          <th>Measured speed</th>
         </tr>
       </thead>
       <tbody>
         {% for endpoint in model.endpoints %}
         <tr id="provider-{{ endpoint.provider_slug }}">
           <td>{{ provider_identity(endpoint.provider_slug, endpoint.provider, endpoint.provider_href, subtitle=endpoint.provider_slug) }}</td>
-          <td>{{ endpoint.prompt_price }}</td>
-          <td>{{ endpoint.cached_prompt_price }}</td>
-          <td>{{ endpoint.completion_price }}</td>
-          <td class="model-precision">
+          <td data-label="Input">{{ endpoint.prompt_price }}</td>
+          <td data-label="Cached input">{{ endpoint.cached_prompt_price }}</td>
+          <td data-label="Output">{{ endpoint.completion_price }}</td>
+          <td class="model-precision" data-label="Weight format">
             {% if endpoint.precision %}
             <details>
               <summary>{{ endpoint.precision.label }}</summary>
@@ -253,15 +256,44 @@
             </details>
             {% else %}Unknown{% endif %}
           </td>
-          <td>{% if endpoint.attested_gateway %}<span class="pill good">yes</span>{% else %}no{% endif %}</td>
-          <td>
+          <td class="model-route-evidence" data-label="Provider policy">
             {{ provider_privacy_badges(endpoint) }}
+            <details>
+              <summary>Retention details</summary>
+              <p>{{ endpoint.provider_policy or 'No reviewed retention declaration.' }}</p>
+              {% if endpoint.provider_policy_url %}<p><a href="{{ endpoint.provider_policy_url }}" target="_blank" rel="noopener noreferrer">Provider policy source</a></p>{% endif %}
+            </details>
+          </td>
+          <td class="model-route-evidence" data-label="Company / inference location">
+            <span>Operator country: {{ endpoint.geography.operator_country or 'Not verified' }}</span>
+            <details>
+              <summary>Location details</summary>
+              <p><strong>Headquarters / registered office:</strong> {{ endpoint.geography.headquarters.location or 'Not verified' }}.</p>
+              {% if endpoint.geography.headquarters.source_url %}<p><a href="{{ endpoint.geography.headquarters.source_url }}" target="_blank" rel="noopener noreferrer">Company location source</a> (reviewed {{ endpoint.geography.headquarters.reviewed_on }}).</p>{% endif %}
+              <p><strong>Inference:</strong> {{ endpoint.geography.inference.declaration }}</p>
+              <p>{{ endpoint.geography.inference.scope }}</p>
+              <p><strong>Region pinning through TR:</strong> {{ endpoint.geography.inference.trustedrouter_pinning }}</p>
+              {% if endpoint.geography.inference.reviewed_on %}<p>Reviewed {{ endpoint.geography.inference.reviewed_on }}.</p>{% endif %}
+              {% for title, url in endpoint.geography.inference.sources %}<p><a href="{{ url }}" target="_blank" rel="noopener noreferrer">{{ title }}</a></p>{% endfor %}
+              <p><a href="{{ endpoint.provider_href }}#inference-locations">Full location evidence</a></p>
+            </details>
+          </td>
+          <td class="model-route-speed" data-label="Measured speed">
+            {% set measured = endpoint.measured %}
+            {% if measured and measured.p50_ttft_ms is not none and measured.ttft_sample_count|default(0) >= 2 %}
+            <div>TTFT: {{ '%.2f'|format(measured.p50_ttft_ms / 1000) }} s</div>
+            {% else %}<div>TTFT: insufficient data</div>{% endif %}
+            {% if measured and measured.p50_tokens_per_second is not none and measured.throughput_sample_count|default(0) >= 2 %}
+            <div>{{ '%.1f'|format(measured.p50_tokens_per_second) }} tokens/s</div>
+            {% else %}<div>Speed: insufficient data</div>{% endif %}
+            {% if measured and measured.last_seen %}<div class="muted-copy">Last sample: <time datetime="{{ measured.last_seen }}">{{ measured.last_seen }}</time></div>{% endif %}
           </td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
     </div>
+    <p class="muted-copy">Speed is the median (p50) from TR's recent measured requests for this exact model and provider, refreshed from the cached leaderboard. At least two timing samples are required; workload and network conditions affect results. <a href="{{ model.performance_href or '/leaderboard' }}">Performance details</a></p>
     {% else %}
     <p class="muted-copy">No Credits provider route is currently published for this model.</p>
     {% endif %}

@@ -244,10 +244,10 @@
   },
   "deepinfra": {
     "card_version": 2,
-    "model_count": 91,
+    "model_count": 90,
     "name": "DeepInfra",
     "privacy": "Policy documented",
-    "route_count": 174,
+    "route_count": 172,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepinfra"
   },
@@ -282,7 +282,7 @@
     "card_version": 2,
     "model_count": 9,
     "name": "Engy",
-    "privacy": "Zero retention",
+    "privacy": "Policy documented",
     "route_count": 9,
     "route_mode": "Prepaid",
     "slug": "engy"
@@ -300,7 +300,7 @@
     "card_version": 2,
     "model_count": 36,
     "name": "Featherless AI",
-    "privacy": "Policy documented",
+    "privacy": "Zero retention",
     "route_count": 36,
     "route_mode": "Prepaid",
     "slug": "featherless"
@@ -640,10 +640,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 11,
+    "model_count": 10,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 11,
+    "route_count": 10,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
@@ -685,10 +685,10 @@
   },
   "pearl": {
     "card_version": 2,
-    "model_count": 7,
+    "model_count": 6,
     "name": "Pearl Research Labs",
     "privacy": "Policy documented",
-    "route_count": 7,
+    "route_count": 6,
     "route_mode": "Prepaid",
     "slug": "pearl"
   },
@@ -795,7 +795,7 @@
     "card_version": 2,
     "model_count": 11,
     "name": "Sail Research",
-    "privacy": "Policy documented",
+    "privacy": "Zero retention",
     "route_count": 11,
     "route_mode": "Prepaid",
     "slug": "sail-research"
@@ -856,10 +856,10 @@
   },
   "streamlake": {
     "card_version": 2,
-    "model_count": 21,
+    "model_count": 20,
     "name": "StreamLake",
     "privacy": "Policy documented",
-    "route_count": 21,
+    "route_count": 20,
     "route_mode": "Prepaid",
     "slug": "streamlake"
   },

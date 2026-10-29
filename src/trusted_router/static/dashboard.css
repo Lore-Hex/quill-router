@@ -243,6 +243,21 @@ blockquote { margin:0 0 12px; padding-left:14px; border-left:3px solid var(--gre
 .model-precision { min-width:220px; width:260px; white-space:normal; }
 .model-precision summary { min-height:40px; padding:10px 0; cursor:pointer; }
 .model-precision p { margin:0 0 12px; overflow-wrap:anywhere; }
+.model-route-table td { vertical-align:top; }
+.model-route-evidence { min-width:220px; max-width:300px; white-space:normal; }
+.model-route-evidence summary { min-height:40px; padding:10px 0; cursor:pointer; }
+.model-route-evidence p { margin:0 0 12px; overflow-wrap:anywhere; }
+.model-route-speed { min-width:190px; max-width:240px; white-space:normal; font-variant-numeric:tabular-nums; }
+.model-route-speed time { overflow-wrap:anywhere; }
+
+@media (max-width:767px) {
+  .model-route-table, .model-route-table tbody { display:block; width:100%; }
+  .model-route-table thead { position:absolute; width:1px; height:1px; clip-path:inset(50%); overflow:hidden; }
+  .model-route-table tr { display:block; padding:16px 0; border-bottom:1px solid var(--line); }
+  .model-route-table td { display:block; width:auto; min-width:0; max-width:none; padding:6px 0; border:0; white-space:normal; overflow-wrap:anywhere; }
+  .model-route-table td[data-label]::before { content:attr(data-label); display:block; color:var(--muted); font-size:12px; font-weight:600; margin-bottom:3px; }
+  .model-route-table td:first-child { padding-bottom:12px; }
+}
 .openrouter-alternatives-table { min-width:820px; }
 .provider-chip-list { display:flex; flex-wrap:wrap; gap:5px; min-width:160px; max-width:320px; }
 .provider-chip-list .pill { max-width:160px; overflow:hidden; text-overflow:ellipsis; }

@@ -1123,9 +1123,11 @@ PROVIDERS: dict[str, Provider] = {
         name="Makora",
         supports_prepaid=True,
         provider_policy=(
-            "No provider-ZDR claim is tracked here. Makora's inference and "
-            "privacy documentation are linked for users who need to review API "
-            "data handling."
+            "Makora's Developer Pro and pay-as-you-go tiers advertise ZDR, but "
+            "permit encrypted on-host SSD caches with no fixed deletion deadline "
+            "and retention of flagged content for safety investigations. Starter "
+            "and Developer tiers retain content for 30 days. No training on any "
+            "tier. These routes remain excluded from strict ZDR."
         ),
         provider_policy_url="https://www.makora.com/privacy-policy",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
@@ -1164,10 +1166,13 @@ PROVIDERS: dict[str, Provider] = {
         supports_prepaid=True,
         supports_byok=False,
         provider_policy=(
-            "No provider-ZDR claim is tracked here. Cloudflare's Workers AI "
-            "documentation is linked for model and data-handling review."
+            "Workers AI documents no input/output retention after ordinary "
+            "stateless inference and no model training. Stateful features, "
+            "customer-enabled logging/caching, and safety, security or legal "
+            "exceptions may retain content. No exception-free commitment is "
+            "verified for this account; these routes remain outside strict ZDR."
         ),
-        provider_policy_url="https://developers.cloudflare.com/workers-ai/",
+        provider_policy_url="https://developers.cloudflare.com/workers-ai/platform/data-usage/",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     "inceptron": Provider(
@@ -1246,16 +1251,18 @@ PROVIDERS: dict[str, Provider] = {
         name="Engy",
         supports_prepaid=True,
         supports_byok=False,
-        stores_content=False,
-        provider_zero_data_retention=True,
+        stores_content=True,
+        provider_zero_data_retention=False,
         provider_confidential_compute=False,
         provider_e2ee=False,
         provider_policy=(
-            "Engy states that prompts, outputs, tool arguments, images, and "
-            "embeddings are not stored or used for training. It retains "
-            "request metadata such as model, token counts, cost, and latency. "
-            "Engy's verified-inference sampling is not a user-verifiable TEE "
-            "attestation, so this route is ZDR but not confidential or E2EE."
+            "Engy's October 21 policy distinguishes its no-content-logging "
+            "gateway from independent GPU workers. End-to-end ZDR requires "
+            "provider.zdr=true or a verified account/key setting; TrustedRouter "
+            "has not verified that setting for this route. Requests without it "
+            "may reach independently operated workers. Integrity audits may "
+            "retain output token IDs on qwen3.6-35b-a3b for 30 days. These routes "
+            "are not strict ZDR, confidential inference or verified E2EE."
         ),
         provider_policy_url="https://engy.ai/privacy",
         # No country recorded: see PROVIDER_JURISDICTION_UNVERIFIED["engy"].
@@ -1758,12 +1765,17 @@ PROVIDERS: dict[str, Provider] = {
         name="Sail Research",
         supports_prepaid=True,
         supports_byok=False,
+        stores_content=False,
+        provider_zero_data_retention=True,
         provider_policy=(
-            "No contractual zero-retention, confidential-compute, or E2EE claim "
-            "is tracked for TrustedRouter's Sail Research account. This route is "
-            "Standard."
+            "Sail's public DPA and security documentation provide default ZDR "
+            "for inference: Sail and its subprocessors process prompts and "
+            "outputs ephemerally in memory, without persistent storage or "
+            "training absent written consent. Files API uploads and stateful "
+            "Sailboxes are excluded. This is policy-backed ZDR, not verified "
+            "confidential compute or E2EE."
         ),
-        provider_policy_url="https://docs.sailresearch.com/",
+        provider_policy_url="https://docs.sailresearch.com/security",
     ),
     "perplexity": Provider(
         slug="perplexity",
@@ -1899,10 +1911,12 @@ PROVIDERS: dict[str, Provider] = {
         supports_prepaid=True,
         supports_byok=False,
         provider_policy=(
-            "No contractual zero-retention, confidential-compute, or E2EE claim "
-            "is tracked for TrustedRouter's Arcee account. This route is Standard."
+            "Arcee's July 24 privacy policy permits collection of inputs and "
+            "outputs to provide and improve its services. No route-specific "
+            "ZDR exception is verified for TrustedRouter's account. These "
+            "routes remain Standard, not confidential compute or E2EE."
         ),
-        provider_policy_url="https://docs.arcee.ai/",
+        provider_policy_url="https://www.arcee.ai/privacy-policy",
     ),
     "perceptron": Provider(
         slug="perceptron",
@@ -2036,10 +2050,12 @@ PROVIDERS: dict[str, Provider] = {
         slug="boundless", name="Boundless", supports_prepaid=True, supports_byok=False,
         provider_headquarters_country="US",
         provider_policy=(
-            "Boundless advertises no prompt/output retention or training. Its legal terms "
-            "permit retention needed to provide, secure, improve or maintain the service "
-            "and do not warrant third-party infrastructure retention practices. These "
-            "routes remain Standard, not ZDR, confidential compute or E2EE."
+            "Boundless's October 27 terms prohibit persistent input/output storage "
+            "after real-time processing, while retaining content-free request "
+            "records for up to 90 days. The terms still disclaim third-party "
+            "infrastructure practices; an equivalent downstream retention "
+            "commitment is not verified. Routes remain outside strict ZDR, "
+            "confidential compute and E2EE."
         ),
         provider_policy_url="https://inference.boundless.network/terms",
     ),
@@ -2213,13 +2229,16 @@ PROVIDERS: dict[str, Provider] = {
         name="Featherless AI",
         supports_prepaid=True,
         supports_byok=False,
+        stores_content=False,
+        provider_zero_data_retention=True,
         provider_policy=(
-            "Featherless routes are limited to chat models explicitly available "
-            "on TrustedRouter's current plan with exact prices in Featherless's "
-            "authenticated catalog. No contractual ZDR, confidential-compute, or "
-            "E2EE claim is tracked for this account, so these routes are Standard."
+            "Featherless's published privacy policy states that prompts and "
+            "completions are neither collected nor stored. Account, payment and "
+            "usage metadata, including token counts and sampler settings, may "
+            "be retained. This is policy-backed ZDR, not verified confidential "
+            "compute or E2EE."
         ),
-        provider_policy_url="https://docs.featherless.ai/",
+        provider_policy_url="https://featherless.ai/legal/privacy-policy",
         # Featherless's terms identify the API operator as a Delaware LLC.
         # https://featherless.ai/legal/terms-of-service
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
