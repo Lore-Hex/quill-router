@@ -585,6 +585,31 @@ func TestARefreshEndsWithItsContext(t *testing.T) {
 	}
 }
 
+// TestACancelledRefreshBeginsNoRead: with read slots free, a refresh whose
+// context has ended gives up every due read. (A select with both cases ready
+// picks at random, so each round would otherwise begin a read a quarter of
+// the time.)
+func TestACancelledRefreshBeginsNoRead(t *testing.T) {
+	r, c := newFakeReader(), start()
+	r.keys["a"], r.keys["b"] = keyContext("a", "ws", ""), keyContext("b", "ws", "")
+	r.credits["ws"] = funded
+	cache := newTestCache(t, r, c, func(cfg *CacheConfig) { cfg.Reads = 4 })
+	for _, hash := range []string{"a", "b"} {
+		cache.Lookup(hash, c.Now())
+		cache.settle()
+	}
+	c.advance(DefaultRefreshEvery)
+	reads := cache.Counters().Reads
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for range 64 {
+		cache.Refresh(ctx)
+	}
+	if got := cache.Counters(); got.Reads != reads || got.Unrefreshed != 64*3 {
+		t.Fatalf("the counters: %+v (reads before %d)", got, reads)
+	}
+}
+
 // TestARefreshLeavesTheMissesAQuarterOfTheReads: a refresh with more due
 // than it can read at once takes three quarters of the reads, and a miss
 // meanwhile still finds one.
