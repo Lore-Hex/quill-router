@@ -374,23 +374,34 @@ table.content-reference,
 
 @media (max-width: 900px) {
   .scroll-table {
+    --scroll-table-pin: 8rem;
+
+    container-type: inline-size;
     overflow-x: auto;
     overscroll-behavior-x: contain;
     scroll-snap-type: x proximity;
-    scroll-padding-inline-start: 9.5rem;
+    scroll-padding-inline-start: var(--scroll-table-pin);
   }
 
   .scroll-table.can-scroll-right {
-    mask-image: linear-gradient(to right, #000 calc(100% - 56px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
   }
 
   .scroll-table-controls {
     margin: 0 0 var(--tr-space-stack-xs);
   }
 
+  /* The second column fills exactly what the pinned column leaves, so it is
+     readable without swiping; the remaining columns follow off screen. */
   .scroll-table > table {
-    width: var(--scroll-table-width, 56rem);
+    width: calc(100cqw + var(--scroll-table-rest, 24rem));
     max-width: none;
+    table-layout: fixed;
+  }
+
+  .scroll-table :is(th, td):nth-child(2) {
+    width: calc(100cqw - var(--scroll-table-pin));
+    padding-right: var(--tr-space-stack-md);
   }
 
   .scroll-table :is(th, td) {
@@ -402,8 +413,8 @@ table.content-reference,
     position: sticky;
     left: 0;
     z-index: 1;
-    width: 9.5rem;
-    font-size: 14px;
+    width: var(--scroll-table-pin);
+    font-size: 12.5px;
     background: var(--panel);
     box-shadow: inset -1px 0 0 var(--tr-color-line-rule);
   }
@@ -989,17 +1000,32 @@ table.content-reference,
 }
 
 .docs-code-copy {
-  min-height: 32px;
-  padding: 0 12px;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
   border: 1px solid var(--tr-color-line-rule);
   border-radius: var(--tr-radius-panel);
   background: var(--tr-color-surface-panel-inset);
   color: var(--tr-color-text-primary);
-  font-family: var(--tr-font-family-sans);
-  font-size: 13px;
-  font-weight: var(--tr-font-weight-medium);
-  line-height: 1;
   cursor: pointer;
+}
+
+.docs-code-copy svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+[data-docs-code] pre,
+[data-docs-code] pre code {
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .docs-code-copy:focus-visible {
@@ -1026,8 +1052,13 @@ table.content-reference,
 
 @media (max-width: 700px) {
   .docs-code-copy {
-    min-height: 44px;
-    padding: 0 16px;
+    width: 44px;
+    height: 44px;
+  }
+
+  [data-docs-code] pre,
+  [data-docs-code] pre code {
+    font-size: 11.5px;
   }
 
   .copy-terminal .code-head:has(.docs-code-copy) {

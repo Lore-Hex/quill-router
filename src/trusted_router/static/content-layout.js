@@ -270,26 +270,48 @@
 (() => {
   "use strict";
   if (!document.body.hasAttribute("data-docs-code")) return;
+  // Lucide copy and check icons (ISC), the same copy shape as static/copy-icon.svg.
+  const icon = (shapes) => {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("focusable", "false");
+    shapes.forEach(([tag, attrs]) => {
+      const shape = document.createElementNS("http://www.w3.org/2000/svg", tag);
+      Object.entries(attrs).forEach(([name, value]) => shape.setAttribute(name, value));
+      svg.append(shape);
+    });
+    return svg;
+  };
+  const copyIcon = () => icon([
+    ["rect", { width: "14", height: "14", x: "8", y: "8", rx: "2", ry: "2" }],
+    ["path", { d: "M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" }],
+  ]);
+  const checkIcon = () => icon([["path", { d: "M20 6 9 17l-5-5" }]]);
   document.querySelectorAll("pre").forEach((pre) => {
     if (pre.closest(".content-code-frame")) return;
     const button = document.createElement("button");
     button.type = "button";
     button.className = "docs-code-copy";
-    button.textContent = "Copy";
-    button.setAttribute("aria-label", "Copy code");
+    const show = (icon, label) => {
+      button.replaceChildren(icon());
+      button.setAttribute("aria-label", label);
+      button.title = label;
+    };
+    show(copyIcon, "Copy code");
     button.addEventListener("click", async () => {
       try {
         await navigator.clipboard.writeText(pre.innerText.trim());
-        button.textContent = "Copied";
+        show(checkIcon, "Copied");
       } catch {
         const selection = window.getSelection();
         const range = document.createRange();
         range.selectNodeContents(pre);
         selection?.removeAllRanges();
         selection?.addRange(range);
-        button.textContent = "Selected";
+        show(checkIcon, "Code selected");
       }
-      setTimeout(() => { button.textContent = "Copy"; }, 2000);
+      setTimeout(() => show(copyIcon, "Copy code"), 2000);
     });
     const head = pre.closest(".copy-terminal")?.querySelector(":scope > .code-head");
     if (head) {
