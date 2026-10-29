@@ -17,10 +17,10 @@ MAX_AUDITS = 20_000
 RETENTION_DAYS = 3
 OVERLAP = dt.timedelta(minutes=10)
 RECOVERY_STEP = dt.timedelta(minutes=5)
-# Late deliveries land within minutes. A window read when its end was this old
-# leaves no late tail, so the next window reads no overlap: at 2026-09-28
-# density the overlap alone was ~14,500 audits, so no historical window fit the
-# source budget and the cursor never moved.
+# Late deliveries land within minutes. History read when it was this old is
+# final, and replay never reaches back into it (gateway_settled_through): at
+# 2026-09-28 density the overlap alone was ~14,500 audits, so no historical
+# window fit the source budget and the cursor never moved.
 SETTLED = dt.timedelta(hours=1)
 # The Confidential Space launcher wrote the line as MESSAGE until the image
 # that VMs picked up on 2026-10-06; it now writes message. History needs both.
@@ -136,18 +136,22 @@ def collect(state, io, now, end):
     if previous > end:
         raise ValueError('Gateway audit watermark is ahead of the export target')
     settled = now - SETTLED
-    if not state.get('gateway_tail_settled') and previous <= settled:
-        # The last window was read near the present and its tail may have had
-        # late deliveries since. Re-read only that tail, once, before settled
-        # replay continues without overlap.
-        start, end, tail_settled = previous - OVERLAP, previous, True
+    floor = state.get('gateway_settled_through')
+    floor = m.date(floor) if floor else None
+    def reach(at):
+        """Re-read the overlap for late deliveries, never into final history."""
+        return at - OVERLAP if floor is None else max(at - OVERLAP, floor)
+    if (floor is None or floor < previous) and previous <= settled:
+        # The tail was read near the present and may have had late deliveries
+        # since. Re-read only that tail, once, before settled replay continues.
+        start, end = reach(previous), previous
     else:
         end = min(end, previous + RECOVERY_STEP)
-        start = previous if state.get('gateway_tail_settled') else previous - OVERLAP
-        tail_settled = end <= settled
-    # Keep what the next window re-reads: nothing before end once this window
-    # leaves no late tail, otherwise the overlap.
-    horizon = end if tail_settled else end - OVERLAP
+        start = reach(previous)
+    if end <= settled:
+        floor = end
+    # Keep exactly what the next window can re-read.
+    horizon = reach(end)
     if start < now - dt.timedelta(days=SOURCE_RETENTION_DAYS - 1):
         raise ValueError('Gateway audit backlog exceeds source retention; explicit recovery required')
     incoming = io.gateway_audits(start, end)
@@ -177,7 +181,7 @@ def collect(state, io, now, end):
     # existing three-day pairing horizon, and late deliveries get the overlap.
     retained = [r for r in audits if r['attempt_id'] not in completed]
     state.update(gateway_audits=retained, gateway_watermark=end.isoformat(),
-                 gateway_tail_settled=tail_settled)
+                 gateway_settled_through=floor.isoformat() if floor else None)
     return audits
 
 

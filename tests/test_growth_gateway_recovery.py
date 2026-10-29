@@ -44,7 +44,8 @@ def journey(signup):
 def test_month_backlog_replays_one_hour_at_most_without_resetting_current_feed(monkeypatch):
     monkeypatch.setenv('GROWTH_GATEWAY_ATTEMPTS_ENABLED', 'true')
     previous = NOW-dt.timedelta(days=30)
-    original = {**state(), 'gateway_watermark': previous.isoformat(), 'gateway_tail_settled': True}
+    original = {**state(), 'gateway_watermark': previous.isoformat(),
+                'gateway_settled_through': previous.isoformat()}
     before = copy.deepcopy(original)
     io = GatewayIO()
     updated, _ = cycle(original, io, NOW)
@@ -89,7 +90,7 @@ def test_dense_settled_history_fits_the_audit_cap_and_advances():
     # present, so the tail is re-read once (it fits), then replay advances.
     checkpoint = {'gateway_watermark': previous.isoformat(), 'gateway_audits': buffered}
     assert len(ga.collect(checkpoint, io, NOW, NOW)) == len(buffered)
-    assert checkpoint['gateway_watermark'] == previous.isoformat() and checkpoint['gateway_tail_settled']
+    assert checkpoint['gateway_watermark'] == checkpoint['gateway_settled_through'] == previous.isoformat()
     audits = ga.collect(checkpoint, io, NOW, NOW)
     assert io.gateway_windows == [(previous-ga.OVERLAP, previous), (previous, previous+ga.RECOVERY_STEP)]
     assert len(audits) == len(window)
@@ -102,7 +103,8 @@ def test_late_start_in_a_near_present_tail_is_recovered_after_a_gap():
     previous = NOW-dt.timedelta(minutes=70)
     start = projected('start', previous-dt.timedelta(minutes=4))
     end = projected('end', previous-dt.timedelta(minutes=3))
-    checkpoint = {'gateway_watermark': previous.isoformat(), 'gateway_tail_settled': False,
+    checkpoint = {'gateway_watermark': previous.isoformat(),
+                  'gateway_settled_through': (previous-dt.timedelta(hours=1)).isoformat(),
                   'gateway_audits': [end]}
     io = GatewayIO([start, end])
     attempts, _ = collect_gateway(checkpoint, io, NOW, previous+ga.RECOVERY_STEP,
@@ -118,7 +120,8 @@ def test_pair_survives_the_switch_from_settled_to_near_present_windows():
     start = projected('start', NOW-dt.timedelta(minutes=71))
     end = projected('end', NOW-dt.timedelta(minutes=69))
     checkpoint = {'gateway_watermark': (NOW-dt.timedelta(minutes=65)).isoformat(),
-                  'gateway_tail_settled': True, 'gateway_audits': [start, end]}
+                  'gateway_settled_through': (NOW-dt.timedelta(minutes=65)).isoformat(),
+                  'gateway_audits': [start, end]}
     io = GatewayIO([start, end])
     attempts, status = collect_gateway(checkpoint, io, NOW, NOW-dt.timedelta(minutes=55),
                                       [journey(NOW-dt.timedelta(hours=2))], [], None)
@@ -126,7 +129,27 @@ def test_pair_survives_the_switch_from_settled_to_near_present_windows():
     assert io.gateway_windows == [
         (NOW-dt.timedelta(minutes=65), NOW-dt.timedelta(minutes=60)),
         (NOW-dt.timedelta(minutes=60), NOW-dt.timedelta(minutes=55))]
-    assert checkpoint['gateway_tail_settled'] is False
+    assert checkpoint['gateway_settled_through'] == (NOW-dt.timedelta(minutes=60)).isoformat()
+
+
+def test_resumed_overlap_never_reaches_into_compacted_settled_history():
+    # A settled window pairs and compacts an attempt; later near-present
+    # windows re-read their overlap only back to the settled boundary, so the
+    # end is never read again without its start.
+    previous = NOW-dt.timedelta(minutes=65)
+    start = projected('start', NOW-dt.timedelta(minutes=66))
+    end = projected('end', NOW-dt.timedelta(minutes=62))
+    checkpoint = {'gateway_watermark': previous.isoformat(),
+                  'gateway_settled_through': previous.isoformat(), 'gateway_audits': [start]}
+    io = GatewayIO([start, end])
+    attempts, status = collect_gateway(checkpoint, io, NOW, NOW-dt.timedelta(minutes=50),
+                                      [journey(NOW-dt.timedelta(hours=2))], [], None)
+    assert status == 'current'
+    assert io.gateway_windows == [
+        (NOW-dt.timedelta(minutes=65), NOW-dt.timedelta(minutes=60)),
+        (NOW-dt.timedelta(minutes=60), NOW-dt.timedelta(minutes=55)),
+        (NOW-dt.timedelta(minutes=60), NOW-dt.timedelta(minutes=50))]
+    assert attempts and all(a['paired'] for a in attempts)
     assert attempts and all(a['paired'] for a in attempts)
 
 
@@ -204,7 +227,7 @@ def test_incomplete_next_window_keeps_only_complete_cursor(failure, status, caps
             if self.gateway_windows:
                 raise failure
             return super().gateway_audits(start, end)
-    checkpoint = {'gateway_watermark': previous.isoformat(), 'gateway_tail_settled': True}
+    checkpoint = {'gateway_watermark': previous.isoformat(), 'gateway_settled_through': previous.isoformat()}
     _, actual = collect_gateway(checkpoint, Partial(), NOW, NOW, [], [], None)
     assert actual == status
     assert m.date(checkpoint['gateway_watermark']) == previous+ga.RECOVERY_STEP
