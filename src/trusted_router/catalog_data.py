@@ -643,8 +643,10 @@ PROVIDERS: dict[str, Provider] = {
         provider_policy=(
             "TrustedRouter's managed Vertex AI account is covered by contractual "
             "Zero Data Retention, but eligibility is reviewed per model and feature. "
-            "Durable caching was found enabled on October 28, 2026; affected Gemini "
-            "routes are excluded from strict ZDR. Safety-retention and unreviewed "
+            "Durable caching was disabled on October 29, 2026 and memory-only caching "
+            "verified in four regions. Affected Gemini routes remain excluded from "
+            "strict ZDR pending prior data expiration and model-specific review. "
+            "Safety-retention and unreviewed "
             "routes are also excluded, even when described upstream as ZDR-aligned. "
             "This guarantee applies only to reviewed TrustedRouter-funded routes. "
             "TrustedRouter does not invoke Google Search or Maps "

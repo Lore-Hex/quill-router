@@ -55,7 +55,8 @@ def test_retirement_boundary_and_provider_scope(retirement: RetirementCase) -> N
     assert not retired(case.provider, case.model, case.native, at=case.cutoff - timedelta(microseconds=1))
     assert retired(case.provider, case.model, at=case.cutoff)
     assert retired(case.provider, case.model, case.native, at=case.cutoff + timedelta(days=1))
-    for other in ("gmi", "google-ai-studio", "unaffected-provider"):
+    # AI Studio has its own, earlier 3.7 retirement and is not a negative control.
+    for other in ("gmi", "unaffected-provider"):
         assert not retired(other, case.model, case.native, at=case.cutoff)
 
 
