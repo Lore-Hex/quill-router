@@ -111,7 +111,7 @@ def test_settle_worker_release_job_inherits_parent_fence_and_prepared_checkout()
     assert worker["env"]["TR_DEPLOY_MUTEX_CLOUD"] == "gcp"
     assert worker["env"]["GH_TOKEN"] == "${{ github.token }}"  # noqa: S105 - workflow expression
     steps = worker["steps"]
-    assert steps[0] == {"uses": "actions/checkout@v7", "with": {"ref": "${{ inputs.sha }}"}}
+    assert steps[0] == {"uses": "actions/checkout@v7", "with": {"ref": "${{ github.sha }}"}}
     assert any(s.get("uses") == "google-github-actions/auth@v3" for s in steps)
     assert steps[-1]["run"] == "bash scripts/deploy/settle_drain_worker.sh"
     assert "if" not in steps[-1] and "continue-on-error" not in steps[-1]
@@ -120,6 +120,31 @@ def test_settle_worker_release_job_inherits_parent_fence_and_prepared_checkout()
     assert "deploy_mutex_acquire" not in script and "deploy_mutex_release" not in script
     assert script.index('cloud_bake_gate gcp') < script.index('gc run deploy')
     assert script.count("\ndeploy_mutex_assert\n") == 2
+
+
+def test_settle_worker_checkout_uses_full_verified_release_identity(tmp_path: Path) -> None:
+    jobs = yaml.safe_load((ROOT / ".github/workflows/deploy-production.yml").read_text())["jobs"]
+    # checkout treats abbreviated SHAs as branch/tag names. The prepared tag
+    # remains short, but every checkout must use the caller's full commit.
+    git = shutil.which("git")
+    bash = shutil.which("bash")
+    assert git and bash
+    subprocess.run([git, "init", str(tmp_path)], check=True, capture_output=True)  # noqa: S603
+    subprocess.run(  # noqa: S603
+        [git, "-C", str(tmp_path), "-c", "user.name=Test", "-c", "user.email=test@example.com",
+         "commit", "--allow-empty", "-m", "release"], check=True, capture_output=True,
+    )
+    full_sha = subprocess.check_output([git, "-C", str(tmp_path), "rev-parse", "HEAD"], text=True).strip()  # noqa: S603
+    short_sha = subprocess.check_output([git, "-C", str(tmp_path), "rev-parse", "--short", "HEAD"], text=True).strip()  # noqa: S603
+    assert len(full_sha) == 40 and len(short_sha) < 40
+    env = {**os.environ, "GITHUB_SHA": full_sha, "PREPARED_SHA": short_sha,
+           "PREPARED_IMAGE": "us-central1-docker.pkg.dev/quill-cloud-proxy/trusted-router/trusted-router@sha256:" + "a" * 64,
+           "GITHUB_OUTPUT": str(tmp_path / "outputs")}
+    verify = jobs["build-image"]["steps"][1]["run"]
+    subprocess.run([bash, "-c", verify], cwd=tmp_path, env=env, check=True, capture_output=True)  # noqa: S603
+    expression = jobs["settle-drain-worker"]["steps"][0]["with"]["ref"]
+    resolved_ref = expression.replace("${{ github.sha }}", full_sha).replace("${{ inputs.sha }}", short_sha)
+    assert resolved_ref == full_sha
 
 
 @pytest.mark.parametrize("hotfix", [False, True])

@@ -1316,7 +1316,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.sha }}
+          # inputs.sha is an image tag abbreviation, not a fetchable Git ref.
+          ref: ${{ github.sha }}
 
       - name: Authenticate to GCP via WIF
         uses: google-github-actions/auth@v3
