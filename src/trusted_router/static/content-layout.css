@@ -979,3 +979,58 @@ table.content-reference,
     display: none;
   }
 }
+
+/* Docs code blocks: Copy button in the header (or on its own line above the
+   code), and a fade on the right edge while code is hidden. */
+.docs-code-frame {
+  display: grid;
+  gap: var(--tr-space-stack-xs);
+  min-width: 0;
+}
+
+.docs-code-copy {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--tr-color-line-rule);
+  border-radius: var(--tr-radius-panel);
+  background: var(--tr-color-surface-panel-inset);
+  color: var(--tr-color-text-primary);
+  font-family: var(--tr-font-family-sans);
+  font-size: 13px;
+  font-weight: var(--tr-font-weight-medium);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.docs-code-copy:focus-visible {
+  outline: 2px solid var(--tr-color-focus);
+  outline-offset: 3px;
+}
+
+.docs-code-frame > .docs-code-copy {
+  justify-self: end;
+}
+
+/* Keep the button closer to its own code than to the block above. */
+.docs-code-frame {
+  margin-top: var(--tr-space-stack-xs);
+}
+
+.docs-code-frame > pre {
+  padding-top: var(--tr-space-stack-xs);
+}
+
+[data-docs-code] pre.can-scroll-right {
+  mask-image: linear-gradient(to right, #000 calc(100% - 56px), transparent);
+}
+
+@media (max-width: 700px) {
+  .docs-code-copy {
+    min-height: 44px;
+    padding: 0 16px;
+  }
+
+  .copy-terminal .code-head:has(.docs-code-copy) {
+    padding-block: 6px;
+  }
+}

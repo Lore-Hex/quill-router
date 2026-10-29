@@ -265,3 +265,49 @@
     followHash(false);
   });
 })();
+
+// Docs code blocks: a Copy button, and a fade while code is hidden to the right.
+(() => {
+  "use strict";
+  if (!document.body.hasAttribute("data-docs-code")) return;
+  document.querySelectorAll("pre").forEach((pre) => {
+    if (pre.closest(".content-code-frame")) return;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "docs-code-copy";
+    button.textContent = "Copy";
+    button.setAttribute("aria-label", "Copy code");
+    button.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(pre.innerText.trim());
+        button.textContent = "Copied";
+      } catch {
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(pre);
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        button.textContent = "Selected";
+      }
+      setTimeout(() => { button.textContent = "Copy"; }, 2000);
+    });
+    const head = pre.closest(".copy-terminal")?.querySelector(":scope > .code-head");
+    if (head) {
+      // The Copy button takes the place of the language label.
+      const label = head.children.length > 1 ? head.lastElementChild : null;
+      if (label) label.replaceWith(button); else head.append(button);
+    } else {
+      const frame = document.createElement("div");
+      frame.className = "docs-code-frame";
+      pre.before(frame);
+      frame.append(button, pre);
+    }
+    const update = () => {
+      pre.classList.toggle("can-scroll-right", pre.scrollWidth - pre.clientWidth - pre.scrollLeft > 1);
+    };
+    pre.addEventListener("scroll", update, { passive: true });
+    new ResizeObserver(update).observe(pre);
+    document.fonts.ready.then(update);
+    update();
+  });
+})();
