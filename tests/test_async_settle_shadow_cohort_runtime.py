@@ -642,11 +642,14 @@ def test_terminal_lock_handshake_returns_before_exact_lock_release(monkeypatch, 
             service.lock = real
         shell.join()
         shell.close()
-    assert returned_while_held, 'request must return while the exact lock is still held'
+    # Admission remains nonblocking; an already-owned charge must wait for its refund.
+    assert returned_while_held is (lock_name != 'cleanup')
+    assert shell.pending == 0 and shell.queued_bytes == 32*4096
     assert result == [b'committed money response'] and money == [1]
-    assert lock_name == 'liveness' or lost and incomplete
+    assert lock_name in {'liveness', 'cleanup'} or lost and incomplete
     assert attempts
-    assert all(kwargs == {'blocking': False} or args in ((False,), (False, -1)) for args, kwargs in attempts)
+    assert all(kwargs == {'blocking': False} or args in ((False,), (False, -1))
+               or lock_name == 'cleanup' and not args and not kwargs for args, kwargs in attempts)
 
 
 @pytest.mark.parametrize('failure', ['full', 'stopped'])

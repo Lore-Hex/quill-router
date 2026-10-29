@@ -286,6 +286,9 @@ class Port:
         self.lost = StickyLoss()
         self.fold_cells: dict[str, tuple[Any, ...]] = {}
         self.fold_obligations: dict[Reservation, str] = {}
+        # One preallocated latch per obligation: a failed nonblocking call must
+        # still hand its failure to the owner without retaining an unbounded queue.
+        self.fold_failures: dict[Reservation, StickyLoss] = {}
         self.fold_owners: set[Reservation] = set()
 
     def call(self, action: Callable[[], T]) -> T | None:
@@ -348,6 +351,7 @@ class Port:
             body = self.service.journal.finalize(reservation, event)
             if register:
                 self.fold_obligations[reservation] = "pending"
+                self.fold_failures[reservation] = StickyLoss()
                 slot.fold_registered = True
             return body
         return self.call(action)
@@ -451,6 +455,9 @@ class Port:
     def fail_fold(self, obligation: Reservation) -> bool:
         """Non-waiting sticky failure; the owner folds it into the model."""
         self.lost.set()
+        failure = self.fold_failures.get(obligation)
+        if failure is not None:
+            failure.set()
         def action() -> bool:
             require(self.fold_obligations.get(obligation) == "pending", "fold_obligation")
             self.fold_obligations[obligation] = "failed"
@@ -1418,6 +1425,8 @@ class Service:
             if not self.state.days:
                 self.tick(stamp, publisher=False)
             for reservation, status in list(self.port.fold_obligations.items()):
+                if status == "pending" and self.port.fold_failures[reservation].is_set():
+                    status = self.port.fold_obligations[reservation] = "failed"
                 key = f"fold:{reservation.boot}:{reservation.event_seq}"
                 if reservation not in self.port.fold_owners:
                     effects = self.accept(lifecycle.ObserverEnqueued(stamp, key, reservation.day))
@@ -1431,6 +1440,7 @@ class Service:
                         self.port.lost.set()
                         continue
                     del self.port.fold_obligations[reservation]
+                    del self.port.fold_failures[reservation]
                     self.port.fold_owners.remove(reservation)
 
     def _flush(self, deadline: float, *, finals_only: bool = False) -> Generator[Callable[[], Any], Any, None]:

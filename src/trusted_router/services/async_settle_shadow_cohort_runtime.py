@@ -275,17 +275,24 @@ def compared_handoff_fields(fields: dict[str, Any], authorization: GatewayAuthor
 class WorkerQueue(Queue[tuple[Callable[..., Any], tuple[Any, ...]]]):
     """Queue.put_nowait normally waits for its mutex; this port never does."""
 
+    closed = False
+
     def put_nowait(self, item: tuple[Callable[..., Any], tuple[Any, ...]]) -> None:
         if not self.mutex.acquire(blocking=False):
             raise Full
         try:
-            if self._qsize() >= self.maxsize:
+            if self.closed or self._qsize() >= self.maxsize:
                 raise Full
             self._put(item)
             self.unfinished_tasks += 1
             self.not_empty.notify()
         finally:
             self.mutex.release()
+
+    def close(self) -> None:
+        # Serialize termination with the last accepted dispatch.
+        with self.mutex:
+            self.closed = True
 
 
 class Runtime:
@@ -399,7 +406,7 @@ class Runtime:
                     pass
             if inputs.reservation is not None and inputs.event is not None:
                 self.fold_complete(inputs.reservation, inputs.event, (), None)
-        except Exception:
+        except BaseException:
             if inputs.reservation is not None and inputs.event is not None:
                 self.port.fail_fold(inputs.reservation)
             raise
@@ -492,19 +499,45 @@ class Runtime:
             return False
 
     def drain(self) -> None:
-        while True:
-            try:
-                action, args = self.queue.get(timeout=.05)
-            except Empty:
-                if self.stopped:
-                    return
-                continue
-            try:
-                action(*args)
-            except Exception:
-                self.port.lost.set()
-            finally:
-                self.queue.task_done()
+        try:
+            while True:
+                try:
+                    action, args = self.queue.get(timeout=.05)
+                except Empty:
+                    if self.stopped:
+                        return
+                    continue
+                try:
+                    action(*args)
+                except Exception:
+                    self.port.lost.set()
+                finally:
+                    self.queue.task_done()
+        except BaseException:
+            self.port.lost.set()
+            raise
+        finally:
+            self.stopped = True
+            self.queue.close()
+            # A fatal worker exit must return queued charges too. Evidence
+            # remains unresolved; cancellation cannot claim a completed receipt.
+            while True:
+                try:
+                    action, args = self.queue.get_nowait()
+                except Empty:
+                    break
+                try:
+                    self.port.lost.set()
+                    if action in (self.work, self.fold_work, self.input_work):
+                        try:
+                            if action == self.fold_work:
+                                self.port.fail_fold(args[0])
+                            elif action == self.input_work and args[0].event is not None:
+                                self.port.fail_fold(args[0].reservation)
+                        finally:
+                            self.release(args[-1])
+                finally:
+                    self.queue.task_done()
 
     def defer_authorize(self, reservation: Reservation, event: dict[str, Any]) -> None:
         self.defer_fold(reservation, event, (), None)
@@ -527,7 +560,7 @@ class Runtime:
                   rows: tuple[Row, ...], prediction: dict[str, Any] | None, size: int) -> None:
         try:
             self.fold_complete(reservation, event, rows, prediction)
-        except Exception:
+        except BaseException:
             self.port.fail_fold(reservation)
             raise
         finally:
@@ -542,10 +575,10 @@ class Runtime:
         require(self.port.complete(reservation, rows), "unfinished_slot")
 
     def release(self, size: int) -> None:
-        if not self.guard.acquire(blocking=False):
-            # Do not forget unresolved accounting or reclaim bytes without ownership.
-            self.port.lost.set()
-            return
+        # Refunds cannot be refused. The guard protects only bounded local
+        # accounting/cache mutations; no holder calls release, dispatch, a Port
+        # method, or waits for worker progress. There is no nested lock order.
+        self.guard.acquire()
         try:
             self.pending -= 1
             self.queued_bytes -= size
