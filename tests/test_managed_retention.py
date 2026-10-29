@@ -27,6 +27,7 @@ from trusted_router.managed_retention import (
     OPENAI_ZDR,
     REVIEWED_ROUTES,
     managed_retention_policy,
+    provider_retention_notice,
 )
 from trusted_router.routing import chat_route_endpoint_candidates
 
@@ -65,6 +66,26 @@ def test_byok_never_inherits_reviewed_managed_account() -> None:
     policy = managed_retention_policy("openai", "openai/gpt-5.5", "gpt-5.5", "BYOK")
     assert policy is not None and not policy.permits_strict_zdr
     assert managed_retention_policy("tinfoil", "model", "model", "Credits") is None
+
+
+def test_vertex_cache_remediation_does_not_automatically_approve_zdr() -> None:
+    policy = managed_retention_policy(
+        "google-vertex", "google/gemini-3.8-flash", "gemini-3.8-flash", "Credits",
+    )
+    assert policy is not None
+    assert not policy.permits_strict_zdr
+    assert policy.reviewed_on == "2026-10-29"
+    assert "EPHEMERAL" in policy.detail
+    assert "Previously cached inputs" in policy.detail
+    assert "review pending" in policy.label
+    notice = provider_retention_notice("google-vertex")
+    assert notice is not None
+    assert "Durable caching was disabled" in notice
+    assert "remain excluded" in notice
+    byok = managed_retention_policy(
+        "google-vertex", "google/gemini-3.8-flash", "gemini-3.8-flash", "BYOK",
+    )
+    assert byok is not None and byok.mode == "unverified"
 
 
 def test_review_does_not_upgrade_an_account_without_zdr(monkeypatch: pytest.MonkeyPatch) -> None:
