@@ -55,6 +55,7 @@ def test_collided_release_returns_exact_charge():
     try:
         assert shell.admit(41327) is None
         collide(shell, lambda: shell.release(41327))
+        shell.admit(256 * 1024 + 1)  # Reconcile published refunds without creating a charge.
         assert (shell.pending, shell.queued_bytes) == (0, BASE)
     finally:
         shell.close()
@@ -83,10 +84,12 @@ def test_random_interleavings_conserve_admitted_charges(seed):
                 if live:
                     size = live.pop(rng.randrange(len(live)))
                     collide(shell, lambda size=size: shell.release(size))
+                shell.admit(256 * 1024 + 1)
                 assert shell.pending == len(live)
                 assert shell.queued_bytes == BASE + sum(live)
             for size in live:
                 pool.submit(shell.release, size).result(timeout=5)
+        shell.admit(256 * 1024 + 1)  # Reconcile published refunds without creating a charge.
         assert (shell.pending, shell.queued_bytes) == (0, BASE)
     finally:
         shell.close()
@@ -136,6 +139,7 @@ def test_collisions_cannot_starve_later_terminal_or_authorize(monkeypatch, recor
         record_property('queue_full_receipts', refusals)
         record_property('later_bindings', sum(bindings))
         assert all(captures) and all(bindings), (leaked, captures, bindings, refusals)
+        shell.admit(256 * 1024 + 1)  # Reconcile published refunds without creating a charge.
         assert (shell.pending, shell.queued_bytes) == (0, BASE)
     finally:
         shell.close()
@@ -188,6 +192,7 @@ def test_dead_worker_returns_queued_charges_and_fails_fold(monkeypatch):
         die.set()
         shell.worker.join(5)
         assert not shell.worker.is_alive()
+        shell.admit(256 * 1024 + 1)  # Reconcile published refunds without creating a charge.
         assert (shell.pending, shell.queued_bytes) == (0, BASE)
         assert shell.queue.unfinished_tasks == 0
         assert list(service.port.fold_obligations.values()) == ['failed', 'failed']
@@ -223,7 +228,7 @@ def test_worker_finally_refunds_under_contention(monkeypatch, kind, failed):
                 def action():
                     return shell.fold_work(reservation, event, (), None, size)
             else:
-                inputs = SimpleNamespace(reservation=reservation, event=event)
+                inputs = SimpleNamespace(reservation=reservation, event=event, finalized=True)
                 def action():
                     return shell.input_work(inputs, False, size)
         def broken(*args):
@@ -235,6 +240,7 @@ def test_worker_finally_refunds_under_contention(monkeypatch, kind, failed):
                 collide(shell, action)
         else:
             collide(shell, action)
+        shell.admit(256 * 1024 + 1)  # Reconcile published refunds without creating a charge.
         assert (shell.pending, shell.queued_bytes) == (0, BASE)
     finally:
         shell.close()
