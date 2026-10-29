@@ -21,6 +21,20 @@ i02 deployment, not the inference host. It does not alias stock DeepSeek.
 Only this exact model/native-ID pair under the managed credential qualifies;
 unknown models, alternate native IDs and BYOK cannot inherit its privacy claims.
 
+The public [Maple provider page](https://trustedrouter.com/providers/maple#maple-api)
+and [model page](https://trustedrouter.com/models/dealignai/deepseek-v4.1-flash-1017-uncensored#maple-api)
+include the same copyable Chat Completions example whenever the qualified route
+is published. It requires `provider.only=["maple"]`, `allow_fallbacks=false` and
+`min_privacy="confidential"`, uses a TrustedRouter key rather than a Maple key,
+and requests streaming token/cost usage and route metadata. It does not imply
+that a regional gateway pins the downstream GPU's location.
+
+Precision metadata names the mixed **FP8 + FP4 experts** configuration, with
+`fp8_ds_mla` KV cache. The evidence is the dedicated worker at
+`76a8e5fdaa7dbade1640025829ba0bfeae7a3495` and the pinned Dealign weight config
+at `c19ca5ca4eaeb79d29fdf08aea8327da95b1116a`. This is source-backed precision
+metadata, not a new per-request precision receipt or a claim about stock DeepSeek.
+
 Prices were checked against <https://maple.ai/pricing> on 2026-10-28.
 The [model documentation](https://maple.ai/docs/proxy/models) advertises a
 1,048,576-token shared context and image/tool/reasoning support. The first pilot

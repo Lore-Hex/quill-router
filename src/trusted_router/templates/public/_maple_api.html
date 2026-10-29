@@ -1,0 +1,23 @@
+<section class="content-section" id="maple-api" aria-labelledby="maple-api-heading">
+  <h2 id="maple-api-heading">Maple Confidential API</h2>
+  <p>Use your TrustedRouter API key and Credits. This request selects only Maple's dedicated uncensored DeepSeek route, requires Confidential, and disables alternate-provider fallback. If the qualified route is unavailable or verification fails, the request fails closed.</p>
+  <pre class="maple-api-example"><code id="maple-api-request">curl --fail-with-body --no-buffer {{ api_base_url }}/chat/completions \
+  -H "Authorization: Bearer ${TRUSTEDROUTER_API_KEY:?Set your TrustedRouter API key}" \
+  -H 'Content-Type: application/json' \
+  -H 'X-OpenRouter-Metadata: enabled' \
+  -d '{
+    "model": "dealignai/deepseek-v4.1-flash-1017-uncensored",
+    "messages": [{"role": "user", "content": "Explain a binary search in three sentences."}],
+    "provider": {
+      "only": ["maple"],
+      "allow_fallbacks": false,
+      "min_privacy": "confidential"
+    },
+    "max_tokens": 512,
+    "stream": true,
+    "stream_options": {"include_usage": true}
+  }'</code></pre>
+  <p><strong>Supported on this route:</strong> text Chat Completions, streaming and non-streaming, and cached-input billing. Images, tools, structured-output schemas, and BYOK are not currently advertised as supported. For a JSON response, set <code>stream</code> to <code>false</code> and omit <code>stream_options</code>.</p>
+  <p>The streaming metadata event identifies the selected provider and gateway region; the usage events report token counts and cost. Non-streaming responses include <code>usage.provider_usage</code>. Gateway region is not the GPU location. <a href="/docs/tagging">Response metadata</a> &middot; <a href="/trust">Verify the TrustedRouter gateway</a></p>
+  <p>Confidential applies to this managed API route, not stock DeepSeek, Maple saved chats, or BYOK. Content zero retention does not remove account or billing records.</p>
+</section>

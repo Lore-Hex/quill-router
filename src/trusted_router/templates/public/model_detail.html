@@ -115,6 +115,10 @@
   </div>
 </section>
 
+{% if model.id == 'dealignai/deepseek-v4.1-flash-1017-uncensored' and model.providers|selectattr('slug', 'equalto', 'maple')|selectattr('confidential_available')|list %}
+{% include "public/_maple_api.html" %}
+{% endif %}
+
 {% if model.documentation %}
 <section class="panel" aria-labelledby="model-usage-heading">
   <div class="panel-head"><h2 id="model-usage-heading">How to use {{ model.name }}</h2></div>

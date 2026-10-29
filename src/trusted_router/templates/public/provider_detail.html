@@ -57,6 +57,10 @@
   </div>
 </section>
 
+{% if provider.id == 'maple' and provider.confidential_inference_verified and served_models|selectattr('id', 'equalto', 'dealignai/deepseek-v4.1-flash-1017-uncensored')|list %}
+{% include "public/_maple_api.html" %}
+{% endif %}
+
 {% if provider.id != 'trustedrouter' %}
 {% set locations = provider.inference_locations %}
 <section class="provider-locations" id="inference-locations" aria-labelledby="inference-locations-heading">
