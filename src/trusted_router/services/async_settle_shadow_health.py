@@ -276,7 +276,8 @@ class Port:
     complete queues verification, not a durable acknowledgement. Only maintenance
     grants permits, writes retained batches, reads references and advances HWM.
 
-    Lock inventory: every method tries service.lock; capture_prediction also
+    Explicit worker=True permits a service-lock wait of at most 250ms.
+    Lock inventory: by default every method tries service.lock; capture_prediction also
     tries observer.lock and bases.lock. Journal containers are plain bounded
     lists/dicts. No method touches the maintenance, trace-export, session or
     transport locks/queues. StickyLoss.set has no acquisition.
@@ -286,11 +287,17 @@ class Port:
         self.lost = StickyLoss()
         self.fold_cells: dict[str, tuple[Any, ...]] = {}
         self.fold_obligations: dict[Reservation, str] = {}
+        # One preallocated latch per obligation: a failed nonblocking call must
+        # still hand its failure to the owner without retaining an unbounded queue.
+        self.fold_failures: dict[Reservation, StickyLoss] = {}
         self.fold_owners: set[Reservation] = set()
 
-    def call(self, action: Callable[[], T]) -> T | None:
+    def call(self, action: Callable[[], T], *, worker: bool = False) -> T | None:
         svc = self.service
-        if not svc.lock.acquire(blocking=False):
+        # Only explicit off-request callers may wait. Keep the facade's
+        # default acquisition exactly nonblocking, including on an event loop.
+        acquired = svc.lock.acquire(timeout=.25) if worker else svc.lock.acquire(blocking=False)
+        if not acquired:
             self.lost.set()
             return None
         try:
@@ -317,7 +324,7 @@ class Port:
             svc._counter_cells(day, target, {name: count})
         self.call(action)
 
-    def reserve(self, observed_us: int, *, terminal: bool = False) -> Reservation | None:
+    def reserve(self, observed_us: int, *, terminal: bool = False, worker: bool = False) -> Reservation | None:
         def action() -> Reservation | None:
             svc, day = self.service, day_at(observed_us)
             require(svc.policy_enabled() and svc.runtime_stop.available and not svc.journal.stopped, "quiesced")
@@ -334,9 +341,9 @@ class Port:
                 require(svc.journal.terminal_permits.get(day, 0) > 0, "terminal_permits")
                 svc.journal.terminal_permits[day] -= 1
             return svc.journal.reserve(observed_us)
-        return self.call(action)
+        return self.call(action, worker=worker)
 
-    def finalize(self, reservation: Reservation, event: dict[str, Any], *, fold_owed: bool = False) -> bytes | None:
+    def finalize(self, reservation: Reservation, event: dict[str, Any], *, fold_owed: bool = False, worker: bool = False) -> bytes | None:
         def action() -> bytes:
             require(not self.service.journal.days[reservation.day].sealing, "closed_day")
             slot = self.service.journal.slot(reservation)
@@ -348,23 +355,24 @@ class Port:
             body = self.service.journal.finalize(reservation, event)
             if register:
                 self.fold_obligations[reservation] = "pending"
+                self.fold_failures[reservation] = StickyLoss()
                 slot.fold_registered = True
             return body
-        return self.call(action)
+        return self.call(action, worker=worker)
 
-    def complete(self, reservation: Reservation, rows: tuple[Row, ...] = ()) -> bool:
+    def complete(self, reservation: Reservation, rows: tuple[Row, ...] = (), *, worker: bool = False) -> bool:
         def action() -> bool:
             require(not self.service.journal.days[reservation.day].sealing, "closed_day")
             return self.service.journal.complete(reservation, rows)
-        return bool(self.call(action))
+        return bool(self.call(action, worker=worker))
 
-    def complete_event(self, reservation: Reservation, original_page: Row, event: dict[str, Any]) -> bytes | None:
+    def complete_event(self, reservation: Reservation, original_page: Row, event: dict[str, Any], *, worker: bool = False) -> bytes | None:
         def action() -> bytes:
             require(not self.service.journal.days[reservation.day].sealing, "closed_day")
             return self.service.journal.complete_event(reservation, original_page, event)
-        return self.call(action)
+        return self.call(action, worker=worker)
 
-    def capture_prediction(self, workspace: str, observed_us: int) -> dict[str, Any] | None:
+    def capture_prediction(self, workspace: str, observed_us: int, *, worker: bool = False) -> dict[str, Any] | None:
         """P4 captures the prediction and its immutable basis at one cache instant."""
         def action() -> dict[str, Any]:
             svc = self.service
@@ -384,9 +392,9 @@ class Port:
                 svc.observer.lock.release()
             result["basis_sha256"] = svc.bases.append(day, value, blocking=False)
             return result
-        return self.call(action)
+        return self.call(action, worker=worker)
 
-    def fold_counts(self, day: str, bucket: dict[str, Any], *, obligation: Reservation | None = None) -> bool:
+    def fold_counts(self, day: str, bucket: dict[str, Any], *, obligation: Reservation | None = None, worker: bool = False) -> bool:
         """Fold one P1 BUCKET delta atomically, including eligible demand.
 
         Unknown demand remains unknown; no cumulative field can be decremented.
@@ -443,7 +451,7 @@ class Port:
             if obligation is not None:
                 self.fold_obligations[obligation] = "folded"
             return True
-        result = bool(self.call(action))
+        result = bool(self.call(action, worker=worker))
         if not result and obligation is not None:
             self.fail_fold(obligation)
         return result
@@ -451,6 +459,9 @@ class Port:
     def fail_fold(self, obligation: Reservation) -> bool:
         """Non-waiting sticky failure; the owner folds it into the model."""
         self.lost.set()
+        failure = self.fold_failures.get(obligation)
+        if failure is not None:
+            failure.set()
         def action() -> bool:
             require(self.fold_obligations.get(obligation) == "pending", "fold_obligation")
             self.fold_obligations[obligation] = "failed"
@@ -1418,6 +1429,8 @@ class Service:
             if not self.state.days:
                 self.tick(stamp, publisher=False)
             for reservation, status in list(self.port.fold_obligations.items()):
+                if status == "pending" and self.port.fold_failures[reservation].is_set():
+                    status = self.port.fold_obligations[reservation] = "failed"
                 key = f"fold:{reservation.boot}:{reservation.event_seq}"
                 if reservation not in self.port.fold_owners:
                     effects = self.accept(lifecycle.ObserverEnqueued(stamp, key, reservation.day))
@@ -1431,6 +1444,7 @@ class Service:
                         self.port.lost.set()
                         continue
                     del self.port.fold_obligations[reservation]
+                    del self.port.fold_failures[reservation]
                     self.port.fold_owners.remove(reservation)
 
     def _flush(self, deadline: float, *, finals_only: bool = False) -> Generator[Callable[[], Any], Any, None]:

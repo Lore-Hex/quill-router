@@ -273,7 +273,7 @@ def test_missing_prediction_basis_retains_unfinished_eligible_slot(monkeypatch):
     from trusted_router.services.async_settle_shadow_cohort_runtime import receipt_prediction
     shell, service, _ = installed()
     monkeypatch.setattr('time.time_ns', lambda: NOW*10**9)
-    monkeypatch.setattr(service.port, 'capture_prediction', lambda *_: None)
+    monkeypatch.setattr(service.port, 'capture_prediction', lambda *_, **kwargs: None)
     try:
         ctx = context()
         cap, size = shell.capture_terminal(request([('X-TR-Settlement-Shadow', fixture('terminal_compared_full')[0]['header'])]),
@@ -643,6 +643,7 @@ def test_terminal_lock_handshake_returns_before_exact_lock_release(monkeypatch, 
         shell.join()
         shell.close()
     assert returned_while_held, 'request must return while the exact lock is still held'
+    assert shell.pending == 0 and shell.queued_bytes == 32*4096
     assert result == [b'committed money response'] and money == [1]
     assert lock_name == 'liveness' or lost and incomplete
     assert attempts
