@@ -742,11 +742,17 @@ ENV_VARS=(
   # client deadlines in southamerica-east1 falsely tripped the fleet stop
   # while Spanner was healthy. Add the operator's pilot workspace to exercise
   # real-traffic cached-input and reasoning-token billing shapes in shadow.
+  # October 29: canary 4 hit its API-failure stop gate twice (05:11Z, 06:28Z):
+  # every follower claims the one publish row at each takeover (spread 1,
+  # #2119), and lock waits past the 500 ms cycle became client cancellations.
+  # Opt out per the gate above; keep the bucket and regions. Re-enable only
+  # with a reviewed contention repair and another bounded canary. See
+  # docs/incidents/2026-10-29-shadow-canary-4-takeover-contention.md.
   "TR_ASYNC_SETTLE_SHADOW_ATTACHMENT_BUCKET=tr-async-settle-shadow-attachments-quill-cloud-proxy"
-  "TR_ASYNC_SETTLE_SHADOW_POLICY=shadow-v2"
-  "TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION=us-central1"
+  "TR_ASYNC_SETTLE_SHADOW_POLICY="
+  "TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION="
   "TR_ASYNC_SETTLE_SHADOW_REGIONS=us-central1,us-east4,europe-west4"
-  "TR_ASYNC_SETTLE_SHADOW_WORKSPACES=162e441a-5d13-414f-92bd-7c6cd805faa3,45819281-0ce9-4811-a0cd-c660ab3a116d"
+  "TR_ASYNC_SETTLE_SHADOW_WORKSPACES="
   # Runtime stop for any shadow canary: an ISO-8601 UTC instant at most 14 days
   # ahead of start-up (e.g. 2026-10-24T15:00:00Z). Every request and owner tick
   # checks it, so the canary turns itself off without a deploy. Deployed
@@ -754,7 +760,7 @@ ENV_VARS=(
   # valid one do nothing. It gates shadow v2 only; v1 still installs whenever
   # the workspaces are set and the policy is empty. The activation tool's
   # release shadow-opt-in requires --expires-at and opt-out clears it.
-  "TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT=2026-11-04T12:00:00Z"
+  "TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT="
   # R1: accepted-work protection on before any async admission. Keep admission
   # off until the separate dedicated worker release has fresh fleet health.
   # Router fast drain remains off; measured fast drain belongs to the worker.

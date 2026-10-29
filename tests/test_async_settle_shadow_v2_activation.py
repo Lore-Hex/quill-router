@@ -630,9 +630,9 @@ def test_round2_ruled_rollout_patch(plan, tmp_path, phase, dormant_router_root):
     from trusted_router.async_settle_shadow_v2_activation_release import prepare
     original = (dormant_router_root / 'scripts/deploy/rollout.sh').read_text()
     active = phase == 'shadow-opt-in'
-    # Production has two workspaces; an explicit release still uses only its
-    # approved plan workspace. Opt-out must remove both production workspaces.
-    assert '"TR_ASYNC_SETTLE_SHADOW_WORKSPACES=162e441a-5d13-414f-92bd-7c6cd805faa3,45819281-0ce9-4811-a0cd-c660ab3a116d"' in original
+    # Production is opted out (canary 4 stop gate, 2026-10-29); an explicit
+    # release still uses only its approved plan workspace.
+    assert '  "TR_ASYNC_SETTLE_SHADOW_WORKSPACES="\n' in original
     # Independent ruled values: do not build this expectation from pins() or plan fields.
     expected = {
         'TR_ASYNC_SETTLE_SHADOW_POLICY': 'shadow-v2' if active else '',
