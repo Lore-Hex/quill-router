@@ -249,6 +249,7 @@ blockquote { margin:0 0 12px; padding-left:14px; border-left:3px solid var(--gre
 .model-route-evidence p { margin:0 0 12px; overflow-wrap:anywhere; }
 .model-route-speed { min-width:190px; max-width:240px; white-space:normal; font-variant-numeric:tabular-nums; }
 .model-route-speed time { overflow-wrap:anywhere; }
+
 @media (max-width:767px) {
   .model-route-table, .model-route-table tbody { display:block; width:100%; }
   .model-route-table thead { position:absolute; width:1px; height:1px; clip-path:inset(50%); overflow:hidden; }
