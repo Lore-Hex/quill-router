@@ -33,7 +33,11 @@ inference key in the operator keyfile as `MAPLE_API_KEY`. Share only the account
 email or ID with `support@maple.ai`, never the key. The operator supplied
 `MAPLE_API_KEY` after the initial check. Authenticated encrypted discovery and
 JSON/SSE PONG probes passed for the requested uncensored model, with integer
-usage. The key was used locally only; it is not provisioned to serving clouds.
+usage. On October 29 separate key copies were provisioned to GCP Secret Manager
+and AWS Secrets Manager (Dublin primary, Paris replica InSync), with read-back
+verification. Azure bundle `8df3ba4381d74315b2d1c696e63e839d` was sealed/uploaded,
+preserving all 83 prior entries and adding Maple. No serving container has
+switched to this bundle; the gateway and catalog are not deployed yet.
 
 The dedicated account dashboard confirms Pro through November 28, 2026, with
 no purchased extra credits. It does not show per-request debits or the remaining
@@ -77,6 +81,16 @@ PR removes the affected dependency version through a dependency-only patch;
 its required security scan passes without exclusions. Full cloud-image and
 independent-source checks still gate confidential activation.
 
+Independent front-image reproduction completed on October 29 using the exact
+source and pinned Determinate Nix with sandbox fallback disabled. The entire
+233,941,161-byte EIF matches SHA-256
+`9702de6b825bb024d843fb840bf1c638ca7443bbd6ba49f93d14f6e6dfc60e23` and approved
+PCR0 `ada74c7aa10cbde75f83d7ec674cc4fc4a4cf9cc555e367189fbec332dffa985c6082ae4647fd50242a590bf9cd1d3f0`.
+All kernel/initramfs bytes and PCR1/PCR2 match too. The earlier discrepancy was
+Nix silently falling back outside its sandbox. Full evidence, downstream i02
+verification, and negative tests are recorded in gateway PR #624 and its
+`docs/providers/maple.md`. Reproduction is not production rollout evidence.
+
 The proxy/SDK must run inside TR's measured environment. A host-side plaintext
 proxy, direct bearer request, disabled verification, shared unscoped cache root,
 or generic HTTP fallback is not an acceptable workaround. Namespace cached
@@ -99,4 +113,6 @@ and therefore cannot simply be dropped into a multi-tenant gateway unchanged.
 6. Only then add the priced live manifest and gateway eligibility. Attach
    evidence before publishing privacy, residency, vision or tool-support claims.
 
-This onboarding change neither provisions secrets nor deploys a serving adapter.
+The price parser now participates in the shared 14-day stale-manifest expiry
+policy. Neither a successful price refresh nor a held manifest enables customer
+traffic; the attested gateway rollout must qualify first.

@@ -64,6 +64,7 @@ from scripts.pricing.providers import (
     krea,
     lyceum,
     mancer,
+    maple,
     meta,
     muna,
     near_ai,
@@ -556,6 +557,7 @@ _CI_DIRECT_OPENAI_DISCOVERY_MODULES = (
 
 _STALE_MANIFEST_PROVIDER_MODULES = (
     *_CI_DIRECT_OPENAI_DISCOVERY_MODULES,
+    maple,
     io_net,
     jina,
     krea,

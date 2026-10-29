@@ -22,6 +22,7 @@ EXPIRING_PROVIDER_MANIFEST_SLUGS = frozenset(
         "arcee",
         "inception",
         "mancer",
+        "maple",
         "nextbit",
         "nextbit-eu",
         "reka",

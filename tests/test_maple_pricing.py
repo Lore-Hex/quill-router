@@ -1,8 +1,13 @@
 import json
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from scripts.pricing.providers import maple
+from trusted_router.provider_manifest_policy import (
+    EXPIRED_PROVIDER_MANIFEST,
+    provider_manifest_valid_until,
+)
 
 PRICES = """<p>USD equivalent per 1 million tokens.</p><table>
 <thead><tr><th>Model</th><th>Input</th><th>Cached input</th><th>Output</th></tr></thead><tbody>
@@ -97,3 +102,20 @@ def test_price_refresh_does_not_clear_failed_encrypted_canary(monkeypatch, tmp_p
     row = json.loads(maple.MANIFEST_PATH.read_text())["models"][0]
     assert row["routable"] is False
     assert row["routable_reason"] == "provider-canary-failed"
+
+
+def test_maple_manifest_prices_expire_and_pending_routes_stay_closed(monkeypatch, tmp_path):
+    monkeypatch.setattr(maple, "MANIFEST_PATH", tmp_path / "maple.json")
+    monkeypatch.setattr(maple, "_DISCOVERED", {})
+    pages = {maple.PRICING_URL: PRICES, maple.MODEL_DOCS_URL: CAPABILITIES}
+    monkeypatch.setattr(maple, "fetch_html", pages.__getitem__)
+    maple.write_provider_manifest(maple.fetch())
+    manifest = json.loads(maple.MANIFEST_PATH.read_text())
+    assert provider_manifest_valid_until("maple", manifest) == EXPIRED_PROVIDER_MANIFEST
+    # Even after a future reviewed promotion, the last good prices have a deadline.
+    manifest["models"][0]["routable"] = True
+    generated = datetime(2026, 10, 28, tzinfo=UTC)
+    manifest["generated_at"] = generated.isoformat()
+    assert provider_manifest_valid_until("maple", manifest) == generated + timedelta(days=14)
+    manifest["generated_at"] = "invalid"
+    assert provider_manifest_valid_until("maple", manifest) == EXPIRED_PROVIDER_MANIFEST
