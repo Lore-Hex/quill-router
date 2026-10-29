@@ -52,8 +52,9 @@ def test_month_backlog_replays_one_hour_at_most_without_resetting_current_feed(m
     assert m.date(updated['watermark']) == NOW-dt.timedelta(minutes=1)
     assert m.date(updated['gateway_watermark']) == previous+dt.timedelta(hours=1)
     assert len(io.gateway_windows) == 12
-    assert io.gateway_windows[0][0] == previous-ga.OVERLAP
-    assert all(right-left == dt.timedelta(minutes=15) for left, right in io.gateway_windows)
+    # Settled history: every window is its own five minutes, no overlap.
+    assert io.gateway_windows[0][0] == previous
+    assert all(right-left == ga.RECOVERY_STEP for left, right in io.gateway_windows)
     assert io.sent[-1]['gateway_status'] == 'catching_up'
     assert io.sent[-1]['gateway_observed_through'] == updated['gateway_watermark']
 
@@ -66,7 +67,29 @@ def test_recovery_can_reach_present_and_status_is_then_current():
     assert status == 'current'
     assert checkpoint['gateway_watermark'] == NOW.isoformat()
     assert len(io.gateway_windows) == 3
+    # Near the present, late deliveries are still possible: keep the overlap.
+    assert io.gateway_windows[0][0] == previous-ga.OVERLAP
     assert io.gateway_windows[-1][1] == NOW
+
+
+def test_dense_settled_history_fits_the_audit_cap_and_advances():
+    # Production stall from 2026-09-28: the checkpoint held ~14,500 completed
+    # audits from the ten minutes before the cursor, and re-reading that overlap
+    # with the next window exceeded the 20,000-audit cap on every run.
+    previous = NOW-dt.timedelta(days=30)
+    def pair(i, at):
+        return [projected(stage, at+dt.timedelta(seconds=s), instance=f'vm-{i}')
+                for stage, s in (('start', 0), ('end', 1))]
+    buffered = [r for i in range(7_000)
+                for r in pair(i, previous-ga.OVERLAP+dt.timedelta(milliseconds=80*i))]
+    window = [r for i in range(7_000, 14_000)
+              for r in pair(i, previous+dt.timedelta(milliseconds=40*(i-7_000)))]
+    io = GatewayIO(buffered+window)
+    checkpoint = {'gateway_watermark': previous.isoformat(), 'gateway_audits': buffered}
+    audits = ga.collect(checkpoint, io, NOW, NOW)
+    assert io.gateway_windows == [(previous, previous+ga.RECOVERY_STEP)]
+    assert len(audits) == len(window)
+    assert checkpoint['gateway_watermark'] == (previous+ga.RECOVERY_STEP).isoformat()
 
 
 def test_retention_expired_history_is_not_silently_skipped():

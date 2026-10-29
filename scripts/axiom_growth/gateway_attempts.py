@@ -17,6 +17,13 @@ MAX_AUDITS = 20_000
 RETENTION_DAYS = 3
 OVERLAP = dt.timedelta(minutes=10)
 RECOVERY_STEP = dt.timedelta(minutes=5)
+# Late deliveries land within minutes. A window ending this long ago reads no
+# overlap: at 2026-09-28 density the overlap alone was ~14,500 audits, so no
+# historical window fit the source budget and the cursor never moved.
+SETTLED = dt.timedelta(hours=1)
+# The Confidential Space launcher wrote the line as MESSAGE until the image
+# that VMs picked up on 2026-10-06; it now writes message. History needs both.
+MESSAGE_FIELDS = ('message', 'MESSAGE')
 SOURCE_RETENTION_DAYS = 90
 
 
@@ -25,15 +32,18 @@ class AuditBudgetExceeded(ValueError):
 
 
 def source_filter():
-    names = ' OR '.join('jsonPayload.MESSAGE:' + json.dumps('enclave.request_' + s + ' ')
-                       for s in ('start', 'end'))
-    routes = ' OR '.join('jsonPayload.MESSAGE:' + json.dumps(r) for r in ROUTES)
-    return f'resource.type="gce_instance" ({names}) ({routes})'
+    def field(name):
+        names = ' OR '.join(f'jsonPayload.{name}:' + json.dumps('enclave.request_' + s + ' ')
+                           for s in ('start', 'end'))
+        routes = ' OR '.join(f'jsonPayload.{name}:' + json.dumps(r) for r in ROUTES)
+        return f'(({names}) ({routes}))'
+    return 'resource.type="gce_instance" (' + ' OR '.join(map(field, MESSAGE_FIELDS)) + ')'
 
 
 def project(entry):
     """Discard the entire operational payload after selecting fixed metadata."""
-    message = entry.get('jsonPayload', {}).get('MESSAGE', '')
+    payload = entry.get('jsonPayload', {})
+    message = next((payload[f] for f in MESSAGE_FIELDS if f in payload), '')
     match = re.search(r'\benclave\.request_(start|end) ', message) if isinstance(message, str) else None
     if not match or len(message) > 8192:
         return None
@@ -121,7 +131,7 @@ def collect(state, io, now, end):
     if previous > end:
         raise ValueError('Gateway audit watermark is ahead of the export target')
     end = min(end, previous + RECOVERY_STEP)
-    start = previous - OVERLAP
+    start = previous if end <= now - SETTLED else previous - OVERLAP
     if start < now - dt.timedelta(days=SOURCE_RETENTION_DAYS - 1):
         raise ValueError('Gateway audit backlog exceeds source retention; explicit recovery required')
     incoming = io.gateway_audits(start, end)

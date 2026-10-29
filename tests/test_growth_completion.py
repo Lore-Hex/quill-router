@@ -38,6 +38,15 @@ def test_gateway_pairs_are_actual_records_and_http_is_not_inference_success(stat
     assert 'finish_reason' not in result  # HTTP status cannot supply the provider's stop reason.
 
 
+@pytest.mark.parametrize('field', ['message', 'MESSAGE'])
+def test_gateway_projects_both_launcher_message_fields(field):
+    # Confidential Space launchers wrote MESSAGE until 2026-10-06, message since.
+    entry = audit('end')
+    entry['jsonPayload'] = {field: entry['jsonPayload']['MESSAGE']}
+    row = ga.project(entry)
+    assert row is not None and row['http_status'] == 200
+
+
 def test_missing_start_never_synthesized_from_elapsed_time():
     row = ga.snapshots([ga.project(audit('end', status=403))], [], NOW)[0]
     assert row['started_at'] is None and not row['paired']

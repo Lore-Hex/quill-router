@@ -87,12 +87,19 @@ acquisition and usage export. The `tr-growth-source` Cloud Logging bucket retain
 older than 89 days fails closed for explicit operator recovery, never jumps to
 the present, and never fabricates missing starts.
 
-Each scheduled run can replay up to twelve five-minute windows, with ten minutes
-of overlap. All windows share the existing twenty-page / 20,000-source-record
+Each scheduled run can replay up to twelve five-minute windows. A window that
+ends within an hour of now also re-reads the ten minutes before it for late
+deliveries; older history is settled and reads no overlap, because at peak
+density the overlap alone held about 14,500 audits and no window fit the budget
+(the cursor stalled at 2026-09-28 06:15Z for a month). All windows share the existing twenty-page / 20,000-source-record
 budget and a sixty-second source deadline. Page requests use at most ten seconds.
 This runs off the inference path, with no Spanner access or additional worker.
 Dense or slow windows retry next run; incomplete pages never advance the cursor.
 The 20,000-audit checkpoint cap still fails rather than truncating records.
+The source filter and projector read the audit line from `jsonPayload.message`
+or `jsonPayload.MESSAGE`: Confidential Space launcher images wrote `MESSAGE`
+until VMs picked up a newer image on 2026-10-06. A changed source filter needs
+the operator `source-filter` step before the deploy, as above.
 
 Buffered evidence is projected before compaction. Completed pairs are retained
 through the overlap, unmatched records keep the existing three-day horizon, and
