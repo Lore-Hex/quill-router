@@ -16,12 +16,15 @@ from bs4 import BeautifulSoup
 
 from scripts.pricing.base import ModelPrice, ProviderPricingResult, fetch_html
 from scripts.pricing.manifest import write_discovered_chat_manifest
+from trusted_router.provider_contracts import MAPLE_MODEL_ID, MAPLE_NATIVE_ID
 
 SLUG = "maple"
 PRICING_URL = "https://maple.ai/pricing"
 MODEL_DOCS_URL = "https://maple.ai/docs/proxy/models"
-MODEL_ID = "maple/deepseek-v4-1-flash-1017-uncensored"
-NATIVE_ID = "deepseek-v4-1-flash-1017-uncensored"
+# Name the reviewed weights' author, not the inference host. This checkpoint
+# must remain distinct from stock DeepSeek and from Maple's other workloads.
+MODEL_ID = MAPLE_MODEL_ID
+NATIVE_ID = MAPLE_NATIVE_ID
 DISPLAY_NAME = "DeepSeek V4.1 Flash Uncensored"
 MANIFEST_PATH = Path(__file__).resolve().parents[3] / "src/trusted_router/data/provider_models/maple.json"
 MANIFEST_STALE_FALLBACK = True

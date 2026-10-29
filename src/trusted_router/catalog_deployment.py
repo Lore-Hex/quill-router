@@ -6,6 +6,7 @@ import os
 from dataclasses import replace
 
 from trusted_router.catalog_data import Model, ModelEndpoint
+from trusted_router.provider_contracts import MAPLE_GATEWAY_REGIONS
 from trusted_router.regions import cloud_for_region
 
 
@@ -49,6 +50,9 @@ def apply_gateway_admission_holds(
     # Bedrock requires QCP #535 (including its AWS vsock tunnel and Azure
     # sealed-bundle entry). Automatic CP catch-up cannot upgrade those gateways.
     unavailable_providers = frozenset() if _gateway_cloud_upgraded() else frozenset({"amazon-bedrock"})
+    region = os.environ.get("TR_SERVING_REGION") or os.environ.get("TR_PRIMARY_REGION", "")
+    if region not in MAPLE_GATEWAY_REGIONS:
+        unavailable_providers |= {"maple"}
     affected_models = {model_id for model_id, _ in unavailable_routes}
     for identity, endpoint in tuple(endpoints.items()):
         if endpoint.provider in unavailable_providers or endpoint.model_id in unavailable_models or (

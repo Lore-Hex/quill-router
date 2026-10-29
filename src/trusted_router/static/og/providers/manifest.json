@@ -512,6 +512,15 @@
     "route_mode": "Prepaid",
     "slug": "mancer"
   },
+  "maple": {
+    "card_version": 2,
+    "model_count": 0,
+    "name": "Maple",
+    "privacy": "Confidential + ZDR",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
+    "slug": "maple"
+  },
   "meta": {
     "card_version": 2,
     "model_count": 3,

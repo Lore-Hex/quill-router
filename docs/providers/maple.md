@@ -1,15 +1,23 @@
 # Maple encrypted-inference pilot
 
-Status (2026-10-28): **internal onboarding only; no customer route is enabled**.
-Provider slug `maple`, legal name Maple Privacy Labs Inc. Do not add Maple to
-`OPENAI_COMPATIBLE_PROVIDERS` or the gateway Credits allowlist: the backend is
-not a bearer-only OpenAI HTTP endpoint.
+Status (2026-10-29): **activation candidate; not deployed**. The measured
+adapter is qualified locally, but `_PENDING_ENCLAVE_MODELS` and the empty
+`MAPLE_GATEWAY_REGIONS` still prevent customer traffic. Do not publish this
+candidate until the gateway rollout and production qualification are complete.
+Provider slug `maple`, legal name Maple Privacy Labs Inc. Maple must never be
+added to `OPENAI_COMPATIBLE_PROVIDERS`: its managed Credits adapter uses
+Transport V2, not bearer-only OpenAI HTTP.
 
 ## Initial model
 
 | Proposed TR ID | Native ID | Input USD/M | Cached input USD/M | Output USD/M |
 | --- | --- | ---: | ---: | ---: |
-| `maple/deepseek-v4-1-flash-1017-uncensored` | `deepseek-v4-1-flash-1017-uncensored` | 0.65 | 0.13 | 1.45 |
+| `dealignai/deepseek-v4.1-flash-1017-uncensored` | `deepseek-v4-1-flash-1017-uncensored` | 0.65 | 0.13 | 1.45 |
+
+The canonical ID names the author of the immutable weights in the reviewed
+i02 deployment, not the inference host. It does not alias stock DeepSeek.
+Only this exact model/native-ID pair under the managed credential qualifies;
+unknown models, alternate native IDs and BYOK cannot inherit its privacy claims.
 
 Prices were checked against <https://maple.ai/pricing> on 2026-10-28.
 The [model documentation](https://maple.ai/docs/proxy/models) advertises a
@@ -50,7 +58,8 @@ pilot confirmation is recorded above; do not start or renew a paid subscription.
 The [privacy policy](https://maple.ai/privacy) distinguishes encrypted saved
 conversations from API operational usage data. It is not, by itself, evidence
 that this specific API route meets TR's strict ZDR or confidential requirements.
-Keep all privacy badges off until the applicable policy and serving path pass review.
+The candidate's scoped privacy metadata must not be deployed before the
+reviewed serving path is qualified in every admitted gateway region.
 
 ## Encrypted path
 

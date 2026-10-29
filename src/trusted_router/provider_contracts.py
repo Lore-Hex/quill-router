@@ -1,5 +1,11 @@
 """Pinned provider contract identifiers shared by runtime and refresh code."""
 
+MAPLE_MODEL_ID = "dealignai/deepseek-v4.1-flash-1017-uncensored"
+MAPLE_NATIVE_ID = "deepseek-v4-1-flash-1017-uncensored"
+# The Transport V2 helper and cloud-local key must be verified in each fleet
+# before its region is admitted. Unknown regions remain unavailable.
+MAPLE_GATEWAY_REGIONS: frozenset[str] = frozenset()
+
 SAKANA_FUGU_MODEL_ID = "sakana-ai/fugu-ultra-v1.1"
 SAKANA_NAMAZU_MODEL_ID = "sakana-ai/sakana-namazu-v1.0"
 SAKANA_NAMAZU_ROUTE_HOLD_REASON = "provider-geographic-restriction"
@@ -160,6 +166,8 @@ def provider_model_available_from_gateway_region(
     model_id: str,
     gateway_region: str,
 ) -> bool:
+    if provider_slug == "maple":
+        return model_id == MAPLE_MODEL_ID and gateway_region in MAPLE_GATEWAY_REGIONS
     if provider_slug == "amazon-bedrock":
         return gateway_region in BEDROCK_GATEWAY_REGIONS
     required_regions = EXPLICIT_GATEWAY_REGIONS_BY_PROVIDER_MODEL.get((provider_slug, model_id))

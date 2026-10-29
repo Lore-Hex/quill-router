@@ -30,6 +30,7 @@ from trusted_router.catalog_data import (
     model_vendor_provider_slugs,
 )
 from trusted_router.managed_retention import managed_retention_policy
+from trusted_router.provider_contracts import MAPLE_MODEL_ID, MAPLE_NATIVE_ID
 from trusted_router.wafer_policy import wafer_zdr_support
 
 
@@ -77,6 +78,8 @@ def provider_privacy_tier(provider: Provider) -> int:
 def _model_provider_privacy_override(
     model_id: str, provider_slug: str
 ) -> ModelProviderPrivacyOverride | None:
+    if provider_slug == "maple" and model_id != MAPLE_MODEL_ID:
+        return _unqualified_maple_privacy()
     override = _MODEL_PROVIDER_PRIVACY_OVERRIDES.get(
         (model_id, provider_slug)
     ) or _MODEL_PROVIDER_PRIVACY_OVERRIDES.get((model_id, "*"))
@@ -99,9 +102,24 @@ def _model_provider_privacy_override(
     )
 
 
+def _unqualified_maple_privacy() -> ModelProviderPrivacyOverride:
+    return ModelProviderPrivacyOverride(
+        privacy_tier=PRIVACY_TIER_STANDARD, stores_content=True,
+        provider_zero_data_retention=False, provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy="Only the exact managed, release-pinned Maple workload is qualified.",
+        provider_policy_url="https://maple.ai/privacy",
+    )
+
+
 def _endpoint_privacy_override(
     endpoint: ModelEndpoint,
 ) -> ModelProviderPrivacyOverride | None:
+    if endpoint.provider == "maple" and (
+        endpoint.model_id != MAPLE_MODEL_ID or endpoint.upstream_id != MAPLE_NATIVE_ID
+        or endpoint.usage_type != "Credits"
+    ):
+        return _unqualified_maple_privacy()
     retention = managed_retention_policy(
         endpoint.provider, endpoint.model_id, endpoint.upstream_id, endpoint.usage_type,
     )

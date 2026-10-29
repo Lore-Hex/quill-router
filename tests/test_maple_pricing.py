@@ -1,5 +1,6 @@
 import json
 from datetime import UTC, datetime, timedelta
+from decimal import ROUND_HALF_UP, Decimal
 
 import pytest
 
@@ -119,3 +120,26 @@ def test_maple_manifest_prices_expire_and_pending_routes_stay_closed(monkeypatch
     assert provider_manifest_valid_until("maple", manifest) == generated + timedelta(days=14)
     manifest["generated_at"] = "invalid"
     assert provider_manifest_valid_until("maple", manifest) == EXPIRED_PROVIDER_MANIFEST
+
+
+@pytest.mark.parametrize("uncached,cached,output", [
+    (0, 0, 0), (1, 0, 1), (36, 0, 4), (81, 12_288, 19),
+    (1_000_000, 0, 100_000), (0, 1_000_000, 100_000),
+])
+def test_maple_bills_actual_cache_meters_without_provider_credit_rounding(uncached, cached, output):
+    from trusted_router.authorize_candidates import endpoint_cost_microdollars
+    from trusted_router.catalog_data import ModelEndpoint, PriceTier
+
+    price = maple.parse_prices(PRICES)
+    endpoint = ModelEndpoint(
+        id="maple-cache-oracle", model_id=maple.MODEL_ID,
+        upstream_id=maple.NATIVE_ID, provider="maple", usage_type="Credits",
+        price_tiers=tuple(PriceTier(t.max_prompt_tokens, t.prompt_micro_per_m,
+                                   t.completion_micro_per_m, t.prompt_cached_micro_per_m)
+                          for t in price.tiers),
+    )
+    # Independent public-tariff oracle; cache reads replace, never add to,
+    # uncached prompt tokens. Preserve the ledger's microdollar rounding.
+    expected = sum(int((Decimal(count) * Decimal(rate) / 1_000_000).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+                   for count, rate in zip((uncached, cached, output), (650_000, 130_000, 1_450_000), strict=True))
+    assert endpoint_cost_microdollars(endpoint, uncached, output, cache_read_tokens=cached) == expected
