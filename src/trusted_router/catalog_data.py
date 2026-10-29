@@ -4386,6 +4386,16 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
             "China (https://www.antgroup.com/en/about/our-offices)."
         ),
     ),
+    "kling": ModelOrigin(
+        country=PROVIDER_JURISDICTION_CN,
+        lab_name="Kuaishou (Kling AI)",
+        source_url="https://ir.kuaishou.com/investor-resources/investor-faqs",
+        note=(
+            "Kling AI is developed by Kuaishou, whose investor FAQ locates its "
+            "headquarters in Haidian District, Beijing, China. This describes "
+            "the model developer, not the serving provider or inference residency."
+        ),
+    ),
     "kwaipilot": ModelOrigin(
         country=PROVIDER_JURISDICTION_CN,
         lab_name="Kuaishou (Kwaipilot KAT)",

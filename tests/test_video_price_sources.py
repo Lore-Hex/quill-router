@@ -161,3 +161,21 @@ def test_runway_kling4_price_drift_blocks_publication() -> None:
     )
     assert len(result.hard_failures) == 1
     assert "Kling 4.0" in result.hard_failures[0]
+
+
+@pytest.mark.parametrize(
+    ("missing", "old", "new", "changed_model"),
+    [
+        ("`kling_4`", "12 credits per second", "14 credits per second", "Gen-4.5"),
+        ("`gen4.5`", "15.7 and 9.4", "16.7 and 9.4", "Kling 4.0"),
+    ],
+)
+def test_runway_one_missing_model_does_not_mask_other_price_drift(
+    missing: str, old: str, new: str, changed_model: str
+) -> None:
+    result = audit_video_price_sources(
+        lambda url: _official_documents(url).replace(missing, "unknown").replace(old, new)
+    )
+    assert len(result.hard_failures) == 1
+    assert changed_model in result.hard_failures[0]
+    assert len(result.warnings) == 2

@@ -199,20 +199,32 @@ def _audit_ltx(fetch_text: Callable[[str], str]) -> VideoPriceAudit:
 def _audit_runway(fetch_text: Callable[[str], str]) -> VideoPriceAudit:
     try:
         document = fetch_text(RUNWAY_PRICING_URL)
-        actual = parse_runway_gen45_rate(document)
-        kling4 = parse_runway_kling4_rates(document)
     except Exception as exc:  # noqa: BLE001 - network/parser errors are audit results
         return _provider_failure("runway", f"unavailable ({type(exc).__name__}: {exc})", hard=False)
     expected = _RUNWAY_GEN45_CREDITS_PER_SECOND * _RUNWAY_MICRODOLLARS_PER_CREDIT
-    if actual != expected:
-        return _provider_failure(
-            "runway",
-            f"changed Gen-4.5 from the production rate of {expected} microdollars/second",
-            hard=True,
-        )
-    if kling4 != _RUNWAY_KLING4_RATES:
-        return _provider_failure(
-            "runway", "changed the production Kling 4.0 per-resolution contract", hard=True
+    # A layout change for one model must not hide a known price change for
+    # the other model on the same page.
+    checks: tuple[tuple[str, Callable[[str], object], object], ...] = (
+        ("Gen-4.5", parse_runway_gen45_rate, expected),
+        ("Kling 4.0", parse_runway_kling4_rates, _RUNWAY_KLING4_RATES),
+    )
+    results: list[VideoPriceAudit] = []
+    for model, parser, expected_rate in checks:
+        try:
+            actual = parser(document)
+        except Exception as exc:  # noqa: BLE001 - parser errors are audit results
+            results.append(_provider_failure(
+                "runway", f"{model} unavailable ({type(exc).__name__}: {exc})", hard=False
+            ))
+            continue
+        if actual != expected_rate:
+            results.append(_provider_failure(
+                "runway", f"changed the production {model} price contract", hard=True
+            ))
+    if results:
+        return VideoPriceAudit(
+            warnings=tuple(message for result in results for message in result.warnings),
+            hard_failures=tuple(message for result in results for message in result.hard_failures),
         )
     return VideoPriceAudit(info=("runway: official fixed-cost video price matches production ✓",))
 

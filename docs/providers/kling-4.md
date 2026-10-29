@@ -41,7 +41,8 @@ through polling, settlement and replay. Do not apply chat token markup.
 
 Deploy the matching `quill-cloud-proxy` adapter to all relevant serving
 gateways before merging this control-plane catalog activation. Use the
-normal shared coordinator and keep a healthy cloud holdback. No secret
-rotation, trust-policy broadening, or bypass of release checks is needed.
+normal shared coordinator and keep a healthy cloud holdback. Preserve the
+documented staged trust publication for the new measured binaries. No secret
+rotation, permission expansion, or bypass of release checks is needed.
 After activation, verify authenticated TR create/poll/content/replay,
 provider-only routing, exact quoted charge, public model page and health.
