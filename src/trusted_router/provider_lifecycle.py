@@ -69,6 +69,7 @@ DEEPINFRA_HERMES_3_405B_RETIREMENT_AT = datetime(2026, 11, 2, 0, 0, tzinfo=UTC)
 DEEPINFRA_MYTHOMAX_RETIREMENT_AT = datetime(2026, 10, 29, 0, 0, tzinfo=UTC)
 TOGETHER_NOVEMBER_6_RETIREMENT_AT = datetime(2026, 11, 6, 0, 0, tzinfo=UTC)
 TOGETHER_QWEN38_24T_RETIREMENT_AT = datetime(2026, 11, 4, 0, 0, tzinfo=UTC)
+DIGITALOCEAN_NOVEMBER_9_RETIREMENT_AT = datetime(2026, 11, 9, 0, 0, tzinfo=UTC)
 # 2026-10-30 10:00 PDT: Crusoe redirects four serverless models to replacements.
 CRUSOE_OCTOBER_30_RETIREMENT_AT = datetime(2026, 10, 30, 17, 0, tzinfo=UTC)
 TELNYX_NOVEMBER_2_RETIREMENT_AT = datetime(2026, 11, 2, 0, 0, tzinfo=UTC)
@@ -1009,6 +1010,37 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"openai/gpt-oss-120b-Turbo"}),
         effective_at=DEEPINFRA_GPT_OSS_120B_TURBO_RETIREMENT_AT,
         replacement_model_ids=("openai/gpt-oss-120b",),
+    ),
+    # DigitalOcean's October 29 notices deprecate these Inference models on
+    # 2026-11-09 (date only; 00:00 UTC conservatively); requests then 404.
+    # Retire only DigitalOcean's routes; other providers' routes stay.
+    _Retirement(
+        provider="digitalocean",
+        model_ids=frozenset({"meta-llama/llama-4-maverick"}),
+        upstream_ids=frozenset({"llama-4-maverick"}),
+        effective_at=DIGITALOCEAN_NOVEMBER_9_RETIREMENT_AT,
+        replacement_model_ids=("deepseek/deepseek-v4.1-flash",),
+    ),
+    _Retirement(
+        provider="digitalocean",
+        model_ids=frozenset({"deepseek/deepseek-v4-flash"}),
+        upstream_ids=frozenset({"deepseek-4-flash"}),
+        effective_at=DIGITALOCEAN_NOVEMBER_9_RETIREMENT_AT,
+        replacement_model_ids=("deepseek/deepseek-v4.1-flash-1017",),
+    ),
+    _Retirement(
+        provider="digitalocean",
+        model_ids=frozenset({"qwen/qwen3.5-397b-a17b"}),
+        upstream_ids=frozenset({"qwen3.5-397b-a17b"}),
+        effective_at=DIGITALOCEAN_NOVEMBER_9_RETIREMENT_AT,
+        replacement_model_ids=("qwen/qwen3.8-max",),
+    ),
+    _Retirement(
+        provider="digitalocean",
+        model_ids=frozenset({"google/gemma-4-31b-it"}),
+        upstream_ids=frozenset({"gemma-4-31B-it"}),
+        effective_at=DIGITALOCEAN_NOVEMBER_9_RETIREMENT_AT,
+        replacement_model_ids=("z-ai/glm-5.3-flash",),
     ),
     # Together's notice (reminder received October 29) removes Qwen3.8
     # 2.4T-A95B from its serverless API on 2026-11-04 (date only; 00:00 UTC).
