@@ -2868,6 +2868,10 @@ def _execute_settle_outbox_sql(
             _require_pred(sql, "leased_until IS NULL OR leased_until < @now", "fast-due-lease")
             rows = [r for r in rows if r['queue_shard'] == p['shard']
                     and (r.get('leased_until') is None or r['leased_until'] < now)]
+        if "AND async_version IS NULL" in sql:
+            rows = [r for r in rows if r.get("async_version") is None]
+        if "AND async_version IS NOT NULL" in sql:
+            rows = [r for r in rows if r.get("async_version") is not None]
         rows.sort(key=lambda r: r.get("next_attempt_at") or "")
         return [[rec.get(c) for c in OUTBOX_COLUMNS] for rec in rows[:limit]]
     if "SELECT COUNT(*) FROM tr_settle_outbox" in sql and "intent_kind != @kind" in sql:

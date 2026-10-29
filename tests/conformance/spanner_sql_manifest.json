@@ -28,7 +28,7 @@
     "storage_gcp_settle_outbox:intent_insert_statements": "ac90a685c8db7258d2fd70897317680b0027a40bf59619426bea39001c0d9d9c",
     "storage_gcp_settle_outbox:resolved_intent_statements": "64f1ed43cb1ced684e9ce72e489c7152b538d1fe29863bf4165425884656c435",
     "storage_gcp_settle_outbox:speculative_done_statements": "e292de31c54e6ab2d1106ae773cd992b89f07f0e21a3e56b79316f55cd7aba26",
-    "storage_gcp_settle_outbox:shard_due_statement": "2e9432553701bdfff964d70013e1f680fecc7e4269ab01fcc301e86c5a8e07d0",
+    "storage_gcp_settle_outbox:shard_due_statement": "9f7f8898c774ed20030ce17b132181a045ac5732d840be4886d24d33f66a5bdb",
     "storage_gcp_shadow_observation:entity_point_statement": "55bfe94f7e7b088e014e23ecd096fdca691ac7a092a084ea1fadc43de8d22c8d",
     "storage_gcp_shadow_observation:read_shadow_health_statement": "128f680910723ba42df17187b92374b6bc5e76b43e719d962121553d25d80058"
   },
@@ -2592,10 +2592,21 @@
       ]
     },
     "storage_gcp_settle_outbox:due:1": {
-      "fingerprint": "2e92263eb28c5169bb261735117cf6b738b51be377b33a3c7375b28124a395aa",
+      "fingerprint": "0afc4b52c7449d3ab5a421ec8100ea217371f22a43bd9d2bebbcc7083b9ea53c",
       "scenarios": [
         {
-          "bindings": {},
+          "bindings": {
+            "legacy_only": false
+          },
+          "types": {
+            "limit": "INT64",
+            "now": "TIMESTAMP"
+          }
+        },
+        {
+          "bindings": {
+            "legacy_only": true
+          },
           "types": {
             "limit": "INT64",
             "now": "TIMESTAMP"
@@ -4258,10 +4269,22 @@
       ]
     },
     "storage_gcp_settle_outbox:shard_due_statement:1": {
-      "fingerprint": "2e9432553701bdfff964d70013e1f680fecc7e4269ab01fcc301e86c5a8e07d0",
+      "fingerprint": "9f7f8898c774ed20030ce17b132181a045ac5732d840be4886d24d33f66a5bdb",
       "scenarios": [
         {
-          "bindings": {},
+          "bindings": {
+            "async_only": false
+          },
+          "types": {
+            "shard": "INT64",
+            "now": "TIMESTAMP",
+            "limit": "INT64"
+          }
+        },
+        {
+          "bindings": {
+            "async_only": true
+          },
           "types": {
             "shard": "INT64",
             "now": "TIMESTAMP",
@@ -4812,8 +4835,8 @@
     "storage_gcp_settle_outbox:SpannerSettleOutbox.attach_auto_refill.txn": "2d57f7ddcaa46d8dc462a815ad5a3d13db3214a9f20bb466e8694da26410d67e",
     "storage_gcp_settle_outbox:SpannerSettleOutbox._claim_auto_refill_one.txn": "adf4f3f8adccb10352be73e9c02627d4e690ac44ee5d742e2aa0c0ab23c9dd4a",
     "storage_gcp_settle_outbox:SpannerSettleOutbox.resolve_auto_refill.txn": "6171c7a3fa9aa00810f6edccf2b0285ce9b0b38bf2b180a0ea0bccbad7358d48",
-    "storage_gcp_settle_outbox:SpannerSettleOutbox.due": "2e92263eb28c5169bb261735117cf6b738b51be377b33a3c7375b28124a395aa",
-    "storage_gcp_settle_outbox:SpannerSettleOutbox.claim_shard": "e2b991b30f4ba9f53d07c821c29642dc5b13688bca5b7a4455ef5a9ceaa35ff7",
+    "storage_gcp_settle_outbox:SpannerSettleOutbox.due": "0afc4b52c7449d3ab5a421ec8100ea217371f22a43bd9d2bebbcc7083b9ea53c",
+    "storage_gcp_settle_outbox:SpannerSettleOutbox.due_shard": "e0c19b4d39b0b5523488e345cdbb91fc00e30cd6c04f10b54f78f4fc54a5ff3d",
     "storage_gcp_settle_outbox:SpannerSettleOutbox.due_auto_refills": "4212fa7c7a13fb2b0fb5857fb78c18818d4e7503051eb1408e3a0b735c430f85",
     "storage_gcp_settle_outbox:SpannerSettleOutbox.get_auto_refill": "7031c426879971878bb247d141dfde3ab31c019225af2586f3baedf11a29649d",
     "storage_gcp_settle_outbox:SpannerSettleOutbox.auto_refill_pending_freshness": "042778fa0f70b513e671340a005e55a970a251cff104f834935066de93b88cf3",

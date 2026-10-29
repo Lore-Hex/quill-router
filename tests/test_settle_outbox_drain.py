@@ -2922,7 +2922,7 @@ def test_drain_clamps_limit_to_500(
 ) -> None:
     assert fake_store is not None
 
-    class SpyOutbox:
+    class SpyOutbox(SpannerSettleOutbox):
         seen_limit: int | None = None
 
         def claim(self, *, limit: int, lease_seconds: int = 60) -> list[SettleOutboxRow]:
@@ -2933,7 +2933,7 @@ def test_drain_clamps_limit_to_500(
         def purge_done(self) -> int:
             return 0
 
-    spy = SpyOutbox()
+    spy = SpyOutbox(fake_store[1], fake_store[0]._param_types)
     monkeypatch.setattr(drain_mod, "spanner_settle_outbox", lambda: spy)
 
     result = drain_mod.drain_settle_outbox(99_999)

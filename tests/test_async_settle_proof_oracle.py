@@ -31,6 +31,7 @@ from tests.fakes.frozen_package import (
 )
 from tests.fakes.requested_model_extension import compare_with_requested_model
 from tests.fakes.spanner import _FakeBatch, _FakeSnapshot, _FakeTransaction
+from tests.settle_drain_trace import normalize_legacy_drain_trace
 from tests.test_async_settle_handler import SUPPORTED, env, prepare
 from tests.test_async_settle_proof import catalog, legacy_body, restore, save
 from tests.test_settle_outbox_drain import _client
@@ -265,6 +266,11 @@ def test_frozen_main_complete_entry(env, monkeypatch, case, kind, mode, commit_p
                 value.get('data', {}).pop('timing', None)
                 stage = save(db)
                 clock += dt.timedelta(seconds=61)
+                if not frozen:
+                    assert not settings.settle_outbox_fast_drain_enabled
+                    assert store.trust_settings.async_settle_protection == (mode == 'no_header_protected')
+                    assert store.settle_outbox._async_fence == settings.async_settle_protection
+                    assert all(row.get('async_version') is None for row in db.settle_outbox.values())
                 drained = drain.drain_settle_outbox(10, settings=settings)
                 outputs.append((value, stage, drained, save(db), trace,
                                 [getattr(db, n)-v for n, v in zip(rpc, before, strict=True)]))
@@ -276,6 +282,13 @@ def test_frozen_main_complete_entry(env, monkeypatch, case, kind, mode, commit_p
                 if kind == 'settle':
                     assert ('trusted_router.storage_models', 'Generation.from_settle_body') in calls
                     assert ('trusted_router.storage_models', 'ProviderBenchmarkSample.from_generation') in calls
+    # One legacy drain, no async rows, and an unexpired 240s pass budget:
+    # recovery reads all 16 shards once, regardless of the async fence or
+    # lifecycle clock. Health is read only if a shard contains async work.
+    trace, counts = normalize_legacy_drain_trace(
+        outputs[1][4], outputs[1][5], expected_recovery_reads=16, parameter_types=store._param_types,
+    )
+    outputs[1] = (*outputs[1][:4], trace, counts)
     from trusted_router.storage_models import generation_id_for_authorization
     compare_with_requested_model(
         outputs[0], outputs[1], generation_id=generation_id_for_authorization(auth.id),

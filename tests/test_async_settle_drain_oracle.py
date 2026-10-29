@@ -11,12 +11,14 @@ import ast
 import copy
 import datetime as dt
 import json
+from itertools import chain, repeat
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from tests.fakes.spanner import _FakeSnapshot, _FakeTransaction
+from tests.settle_drain_trace import normalize_legacy_drain_trace
 from tests.test_async_settle_handler import env, prepare, row_for
 from tests.test_authorize_hold_time import _ast_sha256
 from trusted_router import storage_gcp_settle_outbox as storage
@@ -83,7 +85,7 @@ def test_flag_off_frozen_drain_sql_state_response(env, monkeypatch, scenario):
             for method in ('execute_sql', 'execute_update', 'batch_update', 'insert_or_update'):
                 record(_FakeTransaction, method)
             record(_FakeSnapshot, 'execute_sql')
-            ticks = iter([0., 241.] if scenario == 'budget' else [0.] * 1000)
+            ticks = chain([0.], repeat(241.)) if scenario == 'budget' else repeat(0.)
             monotonic = lambda ticks=ticks: next(ticks)  # noqa: E731
             patch.setattr(drain, '_monotonic', monotonic)
             old_drain['_monotonic'] = monotonic
@@ -99,9 +101,14 @@ def test_flag_off_frozen_drain_sql_state_response(env, monkeypatch, scenario):
             function = old_drain['drain_settle_outbox'] if frozen else drain.drain_settle_outbox
             result = function(999 if scenario == 'clamp' else 100,
                               **({} if frozen else {'settings': Settings(environment='test')}))
+            rpc_counts = [getattr(db, n)-v for n, v in zip(rpc, before, strict=True)]
+            if not frozen:
+                trace, rpc_counts = normalize_legacy_drain_trace(
+                    trace, rpc_counts, expected_recovery_reads=0 if scenario == 'budget' else 16,
+                    parameter_types=store._param_types,
+                )
             outputs.append((json.dumps(result, separators=(',', ':')),
-                {n: copy.deepcopy(getattr(db, n)) for n in names}, trace,
-                [getattr(db, n)-v for n, v in zip(rpc, before, strict=True)]))
+                {n: copy.deepcopy(getattr(db, n)) for n in names}, trace, rpc_counts))
     assert outputs[0] == outputs[1]
     assert not any('settle_drain_control' in str(call) for call in outputs[1][2])
     if scenario == 'apply':
