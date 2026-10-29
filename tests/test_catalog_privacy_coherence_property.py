@@ -152,14 +152,16 @@ def test_no_endpoint_clears_a_bar_without_an_explicit_flag() -> None:
     """A tier above STANDARD must be justified by something a human wrote —
     an override, a provider flag, or the prepaid-ZDR upgrade. Never by a
     default."""
-    from trusted_router.catalog_privacy import _model_provider_privacy_override
+    from trusted_router.catalog_privacy import _endpoint_privacy_override
 
     for endpoint in ALL_ENDPOINTS:
         tier = endpoint_privacy_tier(endpoint)
         if tier <= PRIVACY_TIER_STANDARD:
             continue
         provider = PROVIDERS[endpoint.provider]
-        override = _model_provider_privacy_override(endpoint.model_id, endpoint.provider)
+        # Managed retention is scoped to the exact upstream and billing path,
+        # so provider/model-only overrides cannot describe its evidence.
+        override = _endpoint_privacy_override(endpoint)
         justified = (
             override is not None
             or provider.stores_content is False

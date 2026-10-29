@@ -1,4 +1,5 @@
 from dataclasses import replace
+from datetime import UTC, datetime
 
 import pytest
 
@@ -55,6 +56,34 @@ def test_maple_checkpoint_names_its_weights_author_not_host():
     assert MAPLE_NATIVE_ID == "deepseek-v4-1-flash-1017-uncensored"
     assert "maple" not in model_vendor_provider_slugs(MAPLE_MODEL_ID)
     assert "deepseek" in model_vendor_provider_slugs("deepseek/deepseek-v4.1-flash")
+
+
+@pytest.mark.parametrize("origin,admitted", [
+    (None, False), ("", False), ("unknown-region", False), ("uaenorth", False),
+    ("us-central1", True), ("aws-eu-west-3", True), ("azure-uaenorth", True),
+])
+def test_maple_authorization_does_not_infer_the_gateways_origin(origin, admitted):
+    from trusted_router.authorize_candidates import CandidateRequest, plan_route, resolve_candidates
+    from trusted_router.config import Settings
+
+    request = CandidateRequest(
+        route_type="chat.completions", route_model_id=MAPLE_MODEL_ID,
+        routing_body={"model": MAPLE_MODEL_ID, "provider": {
+            "only": ["maple"], "allow_fallbacks": False, "min_privacy": "confidential",
+        }},
+        body_region=origin,
+    )
+    plan = plan_route(request, Settings(environment="test"), region="us-central1")
+    resolved = resolve_candidates(
+        plan, request, region="us-central1", at=datetime(2026, 10, 29, tzinfo=UTC),
+    )
+    assert bool(resolved.candidates) is admitted
+    if admitted:
+        assert len(resolved.candidates) == 1
+        endpoint = resolved.candidates[0][1]
+        assert (endpoint.provider, endpoint.upstream_id, endpoint.usage_type) == (
+            "maple", MAPLE_NATIVE_ID, "Credits",
+        )
 
 
 @pytest.mark.parametrize("region", [
