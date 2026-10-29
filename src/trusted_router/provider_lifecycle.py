@@ -31,6 +31,7 @@ OPENAI_SEPTEMBER_28_RETIREMENT_AT = datetime(2026, 9, 28, 0, 0, tzinfo=UTC)
 OPENAI_OCTOBER_23_RETIREMENT_AT = datetime(2026, 10, 23, 0, 0, tzinfo=UTC)
 GOOGLE_AI_STUDIO_VEO_PREVIEW_RETIREMENT_AT = datetime(2026, 10, 22, 0, 0, tzinfo=UTC)
 GOOGLE_AI_STUDIO_GEMINI_35_FLASH_RETIREMENT_AT = datetime(2026, 10, 10, 0, 0, tzinfo=UTC)
+GOOGLE_AI_STUDIO_GEMINI_37_FLASH_RETIREMENT_AT = datetime(2026, 10, 9, 0, 0, tzinfo=UTC)
 FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 25, 0, 0, tzinfo=UTC)
 BASETEN_JULY_2026_RETIREMENT_AT = datetime(2026, 7, 25, 0, 0, tzinfo=UTC)
 BASETEN_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 26, 0, 0, tzinfo=UTC)
@@ -525,6 +526,16 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"gemini-3.5-flash"}),
         effective_at=GOOGLE_AI_STUDIO_GEMINI_35_FLASH_RETIREMENT_AT,
         replacement_model_ids=("google/gemini-3.6-flash",),
+    ),
+    # AI Studio's October 9 notice redirects 3.7 to 3.8. Retire the old
+    # identity rather than silently substitute weights. Vertex's distinct
+    # retirement date remains January 28, 2027.
+    _Retirement(
+        provider="google-ai-studio",
+        model_ids=frozenset({"google/gemini-3.7-flash"}),
+        upstream_ids=frozenset({"gemini-3.7-flash"}),
+        effective_at=GOOGLE_AI_STUDIO_GEMINI_37_FLASH_RETIREMENT_AT,
+        replacement_model_ids=("google/gemini-3.8-flash",),
     ),
     # Baseten's September 13 notice: September 25 at 17:00 PDT is September
     # 26 at 00:00 UTC. These exact shared Model API ids retire; the distinct
