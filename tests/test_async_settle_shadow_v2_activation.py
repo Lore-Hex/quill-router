@@ -26,8 +26,29 @@ from trusted_router.async_settle_shadow_v2_native_reads import NativeClient, Rea
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / 'release/first-window-plan.json'
+# Independent test contract: a missing production guard must not alter the fixture.
+EXPECTED_MONEY_OFF = {
+    'TR_ASYNC_SETTLE_ENABLED': 'false',
+    'TR_ASYNC_SETTLE_PROTECTION': 'false',
+    'TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED': 'false',
+}
 # A ten-day canary covers a certified evidence window with one expiry.
 EXPIRY = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(time.time() + 10 * 86400))
+
+
+@pytest.fixture
+def dormant_router_root(tmp_path):
+    """Shadow activation is tested against dormant pins, never a live pilot."""
+    root = tmp_path / 'dormant-router'
+    target = root / 'scripts/deploy/rollout.sh'
+    target.parent.mkdir(parents=True)
+    source = (ROOT / 'scripts/deploy/rollout.sh').read_text()
+    for name, value in EXPECTED_MONEY_OFF.items():
+        source, count = re.subn(rf'(?m)^(  "{name}=)[^"\n]*"$',
+                                rf'\g<1>{value}"', source)
+        assert count == 1
+    target.write_text(source)
+    return root
 
 
 @pytest.fixture
@@ -163,7 +184,7 @@ def test_duplicate_keys_and_review(plan, tmp_path):
 
 
 @pytest.mark.parametrize('phase', ['shadow-opt-in', 'shadow-opt-out'])
-def test_exact_phase_pins(plan, phase):
+def test_exact_phase_pins(plan, phase, dormant_router_root):
     expected = pins(plan, phase, expires_at=EXPIRY)
     assert {k: expected['router'][k] for k in MONEY_OFF} == {
         'TR_ASYNC_SETTLE_ENABLED': 'false', 'TR_ASYNC_SETTLE_PROTECTION': 'false',
@@ -173,7 +194,7 @@ def test_exact_phase_pins(plan, phase):
     assert expected['enclave']['TR_ASYNC_SETTLE_SHADOW'] == ('on' if phase == 'shadow-opt-in' else 'off')
     assert expected['router']['TR_ASYNC_SETTLE_SHADOW_WORKSPACES'] == (plan.workspace if phase == 'shadow-opt-in' else '')
     assert expected['router']['TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT'] == (EXPIRY if phase == 'shadow-opt-in' else '')
-    original = (ROOT / 'scripts/deploy/rollout.sh').read_text()
+    original = (dormant_router_root / 'scripts/deploy/rollout.sh').read_text()
 
     def assert_phase_patch(source):
         current = {}
@@ -205,16 +226,22 @@ def test_exact_phase_pins(plan, phase):
             other, count = re.subn(rf'^  "{name}=[^"\n]*"$', f'  "{name}={value}"', other, flags=re.MULTILINE)
             assert count == 1
     assert_phase_patch(other)
-    assert (ROOT / 'scripts/deploy/rollout.sh').read_text() == original
+    assert (dormant_router_root / 'scripts/deploy/rollout.sh').read_text() == original
 
 
-def test_bad_source_money_pin(plan):
-    original = (ROOT / 'scripts/deploy/rollout.sh').read_text().replace('TR_ASYNC_SETTLE_ENABLED=false', 'TR_ASYNC_SETTLE_ENABLED=true')
+@pytest.mark.parametrize('money_pin', EXPECTED_MONEY_OFF)
+def test_bad_source_money_pin(plan, dormant_router_root, money_pin):
+    original = (dormant_router_root / 'scripts/deploy/rollout.sh').read_text()
+    for name, value in EXPECTED_MONEY_OFF.items():
+        assert original.count(f'  "{name}={value}"') == 1
+    bad_source = original.replace(f'  "{money_pin}=false"', f'  "{money_pin}=true"')
+    expected = {**pins(plan, 'shadow-opt-in', expires_at=EXPIRY)['router'], **EXPECTED_MONEY_OFF}
     with pytest.raises(ValueError, match='money-off'):
-        patch(original, 'rollout.sh', pins(plan, 'shadow-opt-in', expires_at=EXPIRY)['router'])
+        patch(bad_source, 'rollout.sh', expected)
 
 
-def test_release_cli_records_without_dispatch(tmp_path, monkeypatch):
+def test_release_cli_records_without_dispatch(tmp_path, monkeypatch, dormant_router_root):
+    monkeypatch.chdir(dormant_router_root)
     calls = []
     monkeypatch.setattr(cli, 'command', lambda args: calls.append(args))
     out = tmp_path / 'release'
@@ -467,7 +494,7 @@ def test_probe_wrong_job_stops_before_write(plan, change):
         cli.check_job(plan, value, 4)
 
 
-def test_enclave_patch_requires_exact_source(plan, tmp_path):
+def test_enclave_patch_requires_exact_source(plan, tmp_path, dormant_router_root):
     from trusted_router.async_settle_shadow_v2_activation_release import prepare
     enclave = tmp_path / 'enclave'
     target = enclave / plan.releases.enclave.pin_file
@@ -476,7 +503,7 @@ def test_enclave_patch_requires_exact_source(plan, tmp_path):
     original = target.read_bytes()
     out = tmp_path / 'out'
     out.mkdir()
-    result = prepare(plan, 'shadow-opt-in', ROOT, enclave, out, expires_at=EXPIRY)
+    result = prepare(plan, 'shadow-opt-in', dormant_router_root, enclave, out, expires_at=EXPIRY)
     assert not result['missing']
     assert '+ "TR_ASYNC_SETTLE_SHADOW=on"' in (out / 'enclave.patch').read_text()
     assert target.read_bytes() == original
@@ -596,12 +623,12 @@ def test_failed_attestation_workflow_cannot_be_omitted(plan, tmp_path):
 
 
 @pytest.mark.parametrize('phase', ['shadow-opt-in', 'shadow-opt-out'])
-def test_round2_ruled_rollout_patch(plan, tmp_path, phase):
+def test_round2_ruled_rollout_patch(plan, tmp_path, phase, dormant_router_root):
     import difflib
     import re
 
     from trusted_router.async_settle_shadow_v2_activation_release import prepare
-    original = (ROOT / 'scripts/deploy/rollout.sh').read_text()
+    original = (dormant_router_root / 'scripts/deploy/rollout.sh').read_text()
     active = phase == 'shadow-opt-in'
     # Production has two workspaces; an explicit release still uses only its
     # approved plan workspace. Opt-out must remove both production workspaces.
@@ -624,7 +651,7 @@ def test_round2_ruled_rollout_patch(plan, tmp_path, phase):
         assert count == 1
     wanted = ''.join(difflib.unified_diff(original.splitlines(keepends=True), changed.splitlines(keepends=True),
         fromfile='a/scripts/deploy/rollout.sh', tofile='b/scripts/deploy/rollout.sh')).encode()
-    prepare(plan, phase, ROOT, None, tmp_path, expires_at=EXPIRY)
+    prepare(plan, phase, dormant_router_root, None, tmp_path, expires_at=EXPIRY)
     assert (tmp_path / 'router.patch').read_bytes() == wanted
     region_pin = '  "TR_ASYNC_SETTLE_SHADOW_REGIONS=us-central1,us-east4,europe-west4"\n'
     assert original.count(region_pin) == changed.count(region_pin) == 1
@@ -769,7 +796,7 @@ def test_round2_understated_k_refused(plan):
 
 
 @pytest.mark.parametrize('role', ['router', 'enclave'])
-def test_round2_pin_source_containment(plan, tmp_path, role):
+def test_round2_pin_source_containment(plan, tmp_path, role, dormant_router_root):
     from trusted_router.async_settle_shadow_v2_activation_release import prepare
     inside, outside, out = (tmp_path / name for name in ('inside', 'outside', 'output'))
     for folder in (inside, outside, out):
@@ -782,7 +809,7 @@ def test_round2_pin_source_containment(plan, tmp_path, role):
     value['releases'][role]['pin_file'] = 'link/rollout.sh'
     selected = Plan.model_validate(value)
     with pytest.raises(ValueError, match='outside plan workspace'):
-        prepare(selected, 'shadow-opt-in', inside if role == 'router' else ROOT,
+        prepare(selected, 'shadow-opt-in', inside if role == 'router' else dormant_router_root,
             inside if role == 'enclave' else None, out, expires_at=EXPIRY)
     assert not (out / (role + '.patch')).exists()
     assert (outside / 'rollout.sh').read_text() == original
@@ -861,3 +888,12 @@ def test_opt_in_accepts_evidence_window_expiry(plan, monkeypatch, days):
     monkeypatch.setattr(time, "time", lambda: now)
     expiry = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(now + days * 86400))
     assert pins(plan, 'shadow-opt-in', expires_at=expiry)['router']['TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT'] == expiry
+
+
+def test_shadow_release_refuses_current_protected_router(plan):
+    source = (ROOT / 'scripts/deploy/rollout.sh').read_text()
+    if any(f'"{name}=true"' in source for name in MONEY_OFF):
+        with pytest.raises(ValueError, match='money-off'):
+            patch(source, 'rollout.sh', pins(plan, 'shadow-opt-out')['router'])
+    else:
+        patch(source, 'rollout.sh', pins(plan, 'shadow-opt-out')['router'])
