@@ -60,18 +60,17 @@ def gh(path: str, data: dict[str, Any] | None = None) -> Any:
 
 
 def read_state() -> tuple[int | None, dict[str, Any]]:
-    result = gh(f"search/issues?q=repo:{REPOSITORY}+is:issue+in:title+%22Price+refresh+monitoring%22&per_page=100")
+    result = gh(f"search/issues?q=repo:{REPOSITORY}+is:issue+author:github-actions%5Bbot%5D+in:title+%22Price+refresh+monitoring%22&per_page=100")
     if result["total_count"] > 100 or result.get("incomplete_results"):
         raise ValueError("Incomplete monitoring ledger lookup")
     issues = result["items"]
-    matches = [issue for issue in issues if issue.get("title") == ISSUE_TITLE]
+    matches = [issue for issue in issues if issue.get("title") == ISSUE_TITLE
+               and issue.get("user", {}).get("login") == "github-actions[bot]"]
     if len(matches) > 1:
         raise ValueError("Duplicate monitoring ledgers; reconcile before sending")
     if not matches:
         return None, {"last_validated_at": None, "sent": {}}
     issue = matches[0]
-    if issue.get("user", {}).get("login") != "github-actions[bot]":
-        raise ValueError("Monitoring ledger must be owned by GitHub Actions")
     body = issue.get("body") or ""
     if STATE_MARKER not in body:
         raise ValueError("Monitoring ledger state is missing")

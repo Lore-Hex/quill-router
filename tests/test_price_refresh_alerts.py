@@ -254,9 +254,11 @@ def test_ledger_search_includes_closed_issues_and_validates_owner(monkeypatch):
     monkeypatch.setattr(alerts, "gh", fake)
     assert alerts.read_state() == (12, state)
     assert "is:open" not in paths[0] and "search/issues" in paths[0]
+    assert "author:github-actions%5Bbot%5D" in paths[0]
+    # Anyone can open an issue in this public repo. A copied bot title must
+    # neither control the ledger nor disable notifications with a duplicate.
     record["user"]["login"] = "untrusted"
-    with pytest.raises(ValueError, match="owned"):
-        alerts.read_state()
+    assert alerts.read_state() == (None, state)
 
 
 def test_missing_or_incomplete_ledger_fails_closed(monkeypatch):
