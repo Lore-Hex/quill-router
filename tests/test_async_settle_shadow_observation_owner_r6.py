@@ -170,6 +170,11 @@ async def test_start_dispatches_first_publisher_before_observer(monkeypatch):
         assert svc.state.days[0].attempted == 1
     finally:
         await svc.close()
+        # close() never joins the owner's workers (native I/O must not spend
+        # the evidence grace); the test does, so an idle worker still exiting
+        # on a loaded runner is not counted as leaked.
+        for executor in (svc.publisher_executor, svc.evidence_executor, svc.session_executor):
+            executor.shutdown(wait=True)
 
 
 
