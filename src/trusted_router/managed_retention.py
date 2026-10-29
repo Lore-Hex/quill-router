@@ -1,13 +1,17 @@
 """Reviewed managed-account retention, independent of automatic model discovery.
 
 A provider's ZDR contract does not approve future models or safety-retention
-products. This registry may restrict an account claim, never upgrade one.
+products. OpenAI/Vertex reviews restrict existing account claims. Bedrock
+Runtime additionally enforces its reviewed regional policy before each call;
+its exact-profile approval never upgrades the provider-wide Mantle posture.
 """
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from typing import Literal
+
+from trusted_router.provider_contracts import BEDROCK_RUNTIME_PROFILES
 
 RetentionMode = Literal[
     "zero_retention", "private_safety_processing", "safety_retention",
@@ -22,6 +26,7 @@ VERTEX_DATA_URL = (
 VERTEX_SAFETY_URL = (
     "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/abuse-monitoring"
 )
+BEDROCK_RETENTION_URL = "https://docs.aws.amazon.com/bedrock/latest/userguide/data-retention.html"
 
 
 @dataclass(frozen=True)
@@ -101,6 +106,15 @@ VERTEX_FRONTIER_RETENTION = RetentionPolicy(
     "ZDR-aligned terminology. This is separate from OpenAI PSP.",
     VERTEX_SAFETY_URL, maximum_days=30, storage_control="customer_environment",
 )
+BEDROCK_RUNTIME_ZDR = RetentionPolicy(
+    "zero_retention", "ZDR - managed Bedrock Runtime",
+    "This exact US Claude inference profile uses the managed Bedrock Runtime "
+    "account with retention set to none in us-east-1, us-east-2 and us-west-2. "
+    "The gateway verifies all three policies before every inference and refuses "
+    "unverified policies. This does not cover Mantle, BYOK, global profiles or "
+    "other models. It is policy-backed ZDR, not confidential compute or E2EE.",
+    BEDROCK_RETENTION_URL, reviewed_on="2026-10-29",
+)
 
 # Frozen review, not generated from provider manifests. Discovery must never
 # append to this allowlist automatically. A mutable cross-model alias such as
@@ -119,6 +133,8 @@ _OPENAI_REVIEWED_IDS = frozenset({
 # Exact canonical/upstream pairs prevent a catalog alias from changing the
 # deployed model while retaining its predecessor's privacy approval.
 REVIEWED_ROUTES: dict[tuple[str, str, str], RetentionPolicy] = {
+    **{("amazon-bedrock", model, profile): BEDROCK_RUNTIME_ZDR
+       for model, profile in BEDROCK_RUNTIME_PROFILES.items()},
     **{("openai", f"openai/{name}", name): OPENAI_ZDR for name in _OPENAI_REVIEWED_IDS},
     **{
         ("openai", f"openai/{name}", name): OPENAI_DURABLE_CACHE
@@ -144,9 +160,10 @@ _VERTEX_DURABLE_MODELS = frozenset({
 def managed_retention_policy(
     provider: str, model_id: str, upstream_id: str | None, usage_type: str,
 ) -> RetentionPolicy | None:
-    if provider not in {"openai", "google-vertex"}:
+    if provider not in {"openai", "google-vertex", "amazon-bedrock"}:
         return None
-    source = OPENAI_DATA_URL if provider == "openai" else VERTEX_DATA_URL
+    source = {"openai": OPENAI_DATA_URL, "google-vertex": VERTEX_DATA_URL,
+              "amazon-bedrock": BEDROCK_RETENTION_URL}[provider]
     if usage_type != "Credits":
         return RetentionPolicy(
             "unverified", "Customer account retention - unverified",
@@ -174,6 +191,13 @@ def managed_retention_policy(
 
 
 def provider_retention_notice(provider: str) -> str | None:
+    if provider == "amazon-bedrock":
+        return (
+            "ZDR is scoped to the reviewed managed Claude US Runtime profiles, "
+            "with retention none verified in all three US destination regions "
+            "before every request. Mantle and unreviewed profiles are not covered. "
+            "Only routes whose gateway rollout has completed are available."
+        )
     if provider == "openai":
         return (
             "Ordinary ZDR is active on the reviewed managed project (checked October 28, "

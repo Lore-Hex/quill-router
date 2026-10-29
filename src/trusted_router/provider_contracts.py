@@ -105,6 +105,16 @@ UNSUPPORTED_GATEWAY_REGIONS_BY_PROVIDER_MODEL = {
 # QCP #535 must be verified on a gateway fleet before it can serve Bedrock.
 # An upgraded GCP control plane may also authorize older AWS/Azure gateways.
 BEDROCK_GATEWAY_REGIONS = frozenset({"us-central1", "us-east4", "europe-west4", "us-west1"})
+BEDROCK_RUNTIME_PROFILES = {
+    "anthropic/claude-haiku-5.5": "us.anthropic.claude-haiku-5-5",
+    "anthropic/claude-sonnet-5.5": "us.anthropic.claude-sonnet-5-5",
+    "anthropic/claude-opus-5.5": "us.anthropic.claude-opus-5-5",
+    "anthropic/claude-sonnet-5": "us.anthropic.claude-sonnet-5",
+    "anthropic/claude-opus-4.8": "us.anthropic.claude-opus-4-8",
+}
+# Runtime dispatch needs QCP #630. No fleet is qualified yet; control-plane
+# catch-up must never expose these profiles through an older Mantle adapter.
+BEDROCK_RUNTIME_GATEWAY_REGIONS: frozenset[str] = frozenset()
 # Clairic needs the native /ai/run adapter. Publish only after the GCP fleet
 # rolls; older AWS/Azure gateways must not send extraction tasks to chat.
 CLAIRIC_GATEWAY_REGIONS = frozenset({"us-central1", "us-east4", "europe-west4", "us-west1"})
@@ -161,7 +171,10 @@ def provider_model_available_from_gateway_region(
     gateway_region: str,
 ) -> bool:
     if provider_slug == "amazon-bedrock":
-        return gateway_region in BEDROCK_GATEWAY_REGIONS
+        return gateway_region in (
+            BEDROCK_RUNTIME_GATEWAY_REGIONS if model_id in BEDROCK_RUNTIME_PROFILES
+            else BEDROCK_GATEWAY_REGIONS
+        )
     required_regions = EXPLICIT_GATEWAY_REGIONS_BY_PROVIDER_MODEL.get((provider_slug, model_id))
     if required_regions is not None:
         return gateway_region in required_regions

@@ -113,6 +113,18 @@ def _endpoint_privacy_override(
             provider_policy=retention.detail,
             provider_policy_url=retention.source_url,
         )
+    if endpoint.provider == "amazon-bedrock" and retention is not None:
+        # Exact canonical/profile/managed-key pairs only. The provider-wide
+        # Mantle posture remains unchanged; no future Claude inherits this.
+        return ModelProviderPrivacyOverride(
+            privacy_tier=PRIVACY_TIER_ZERO_RETENTION,
+            stores_content=False,
+            provider_zero_data_retention=True,
+            provider_confidential_compute=False,
+            provider_e2ee=False,
+            provider_policy=retention.detail,
+            provider_policy_url=retention.source_url,
+        )
     if endpoint.provider == "phala":
         # Only the exact phala/* upstream namespace selects Phala's
         # Confidential AI route. Fail closed for missing or upstream-author
