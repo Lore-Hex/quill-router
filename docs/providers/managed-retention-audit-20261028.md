@@ -74,6 +74,25 @@ not a retention guarantee. The central endpoint policy also governs fallback,
 auto pools and the gateway authorization path. No gateway binary/pin changes
 are required for this control-plane classification change.
 
+## October 29 remediation
+
+The managed Vertex project's `cacheConfig` was changed from `DURABLE` to
+`EPHEMERAL`, with `disableCache=false` to preserve memory-only caching. The
+update operation completed successfully. Subsequent HTTP 200 reads from
+us-central1, us-east1, europe-west4 and southamerica-east1 all returned
+`retentionConfig.retentionType=EPHEMERAL`. Google's documented project-wide
+control applies across regions.
+
+This is configuration evidence, not evidence that previously cached content
+was immediately deleted. Allow for the documented 24-hour lifetime of prior
+durable cache entries and recheck controls before a fresh model-specific review.
+Existing strict-ZDR exclusions, exact route allowlists, BYOK restrictions and
+safety-retention classifications are unchanged. The historical `durable_cache`
+metadata mode remains a conservative exclusion while its label and detail now
+identify the remediation and pending review. No automatic date-based promotion
+to ZDR is introduced. Explicit caches and other feature-specific retention
+exceptions must be assessed separately.
+
 ## Sources
 
 - [OpenAI data controls](https://developers.openai.com/api/docs/guides/your-data)
