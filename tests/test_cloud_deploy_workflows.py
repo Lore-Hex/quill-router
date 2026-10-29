@@ -99,3 +99,47 @@ def test_pull_request_validation_cannot_cancel_a_pending_infra_apply() -> None:
         ),
         "cancel-in-progress": False,
     }
+
+
+def test_settle_worker_release_job_inherits_parent_fence_and_prepared_checkout() -> None:
+    jobs = yaml.safe_load((ROOT / ".github/workflows/deploy-production.yml").read_text())["jobs"]
+    worker = jobs["settle-drain-worker"]
+    assert worker["needs"] == ["rollout-secondaries", "admit-cloud"]
+    assert worker["if"] == "github.repository == 'Lore-Hex/quill-router'"
+    assert worker["continue-on-error"] is False
+    assert worker["env"]["TR_DEPLOY_MUTEX_OPERATION"] == "${{ needs.admit-cloud.outputs.TR_DEPLOY_MUTEX_OPERATION }}"
+    assert worker["env"]["TR_DEPLOY_MUTEX_CLOUD"] == "gcp"
+    assert worker["env"]["GH_TOKEN"] == "${{ github.token }}"  # noqa: S105 - workflow expression
+    steps = worker["steps"]
+    assert steps[0] == {"uses": "actions/checkout@v7", "with": {"ref": "${{ inputs.sha }}"}}
+    assert any(s.get("uses") == "google-github-actions/auth@v3" for s in steps)
+    assert steps[-1]["run"] == "bash scripts/deploy/settle_drain_worker.sh"
+    assert "if" not in steps[-1] and "continue-on-error" not in steps[-1]
+    assert "settle-drain-worker" in jobs["finalize-cloud"]["needs"]
+    script = (ROOT / "scripts/deploy/settle_drain_worker.sh").read_text()
+    assert "deploy_mutex_acquire" not in script and "deploy_mutex_release" not in script
+    assert script.index('cloud_bake_gate gcp') < script.index('gc run deploy')
+    assert script.count("\ndeploy_mutex_assert\n") == 2
+
+
+@pytest.mark.parametrize("hotfix", [False, True])
+def test_worker_uses_same_release_hotfix_decision_as_parent(hotfix: bool) -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-production.yml").read_text())
+    # PyYAML's YAML 1.1 parser reads the workflow's `on` key as True.
+    assert workflow[True]["workflow_call"]["inputs"]["hotfix"] == {
+        "type": "boolean", "default": False,
+    }
+    jobs = workflow["jobs"]
+    assert jobs["settle-drain-worker"]["env"]["TR_SETTLE_DRAIN_HOTFIX"] == "${{ inputs.hotfix == true }}"
+    parent = jobs["gate-on-ci"]["steps"][0]["run"]
+    # Execute the parent's decision prefix: hotfix exits before CI; normal
+    # releases fall through to CI. The script harness covers pending CI in both.
+    prefix = parent[:parent.index('echo "waiting for CI')]
+    script = prefix.replace("${{ inputs.hotfix }}", str(hotfix).lower()) + "echo CI_REQUIRED\n"
+    result = subprocess.run(  # noqa: S603 - local workflow decision, no cloud commands
+        [shutil.which("bash") or "/bin/bash", "-c", script], capture_output=True, text=True, check=True,
+    )
+    warning = "::warning::HOTFIX MODE — skipping the CI-green gate."
+    assert (warning in result.stdout) is hotfix
+    assert ("CI_REQUIRED" in result.stdout) is not hotfix
+    assert warning in (ROOT / "scripts/deploy/settle_drain_worker.sh").read_text()
