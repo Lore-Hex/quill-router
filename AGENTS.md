@@ -7,6 +7,9 @@ For Token Exchange city or region additions, read
 before editing. Preserve its approved shared design, regional-copy process,
 evidence scope and social-image workflow.
 
+For NY Token Exchange navigation additions, follow the page registry instructions
+in [`sites/token-exchange/README.md`](sites/token-exchange/README.md#build-and-test).
+
 ## Read first
 
 **[`docs/storage-portability/HANDOFF.md`](docs/storage-portability/HANDOFF.md)** — current

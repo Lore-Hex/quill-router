@@ -253,6 +253,33 @@ through a Python deploy (`scripts/deploy/rollout.sh`;
 no workspace's row is on, and without it a decided workspace's async-v1
 requests keep passing `async.off`. Then the rows, below.
 
+The policy is fetched with the internal token, and while no row is on
+the switch changes nothing the edge counts: `async.off` is the decision
+gate's reason only for a workspace whose row is on (`decide.go`, after
+`DecideView.gate`), so with the rows off an async-v1 request counts
+`decide.off` either way. Before the rows, read the setting from the
+revision serving each control-plane region (`TR_CONTROL_PLANE_REGIONS` in
+`scripts/deploy/_lib.sh`; a gateway-only region has no service), not
+from the service's template, which can name a revision that serves no
+traffic during a staged rollout or after a rollback:
+
+```bash
+for r in us-central1 us-east4 europe-west4 southamerica-east1; do
+  rev=$(gcloud run services describe trusted-router --region=$r --project=quill-cloud-proxy \
+    --format=json | python3 scripts/deploy/resolve_active_revision.py) || continue
+  echo "$r $rev $(gcloud run revisions describe "$rev" --region=$r --project=quill-cloud-proxy \
+    --format=json | python3 -c 'import json,sys; print([v.get("value") for v in json.load(sys.stdin)["spec"]["containers"][0]["env"] if v["name"]=="TR_FASTPATH_EDGE_DECIDE_ASYNC"])')"
+done
+```
+
+Each line ends `['true']`. `resolve_active_revision.py` refuses a
+service whose traffic is not on one revision; a region it refuses is read
+again once the rollout ends. After `decide on` (below), the decide path's
+`decide.by_name.passed` carries no `async.off`: that workspace's async-v1
+requests are answered beside its sync ones. `async.off` there is an
+instance still signing from the revision before, or a policy held from
+before it, gone within 60 s.
+
 An operator-owned workspace first, then the pilot workspace (§11). The
 decide path sees only what the balancer sends the edge: an enclave's
 `/internal/gateway/authorize` for a client's gateway request. The P1
@@ -490,6 +517,18 @@ untouched, and what the edge admitted settles through Python as before.
    ```bash
    fastpathctl -database $DB decide-off-all
    ```
+
+   **Async-v1 only**, every workspace: `TR_FASTPATH_EDGE_DECIDE_ASYNC=false`
+   in `scripts/deploy/rollout.sh`, a Python deploy. The edge stops deciding
+   async-v1 at its first verified policy from a new instance: those
+   requests then pass `async.off`, and a deciding workspace's sync
+   requests are still answered (`fast-admission-e2-g15-async.md` §6.2
+   step 5). Until a node fetches such a policy it keeps deciding async-v1
+   on the copy it holds; if every fetch fails, that copy expires at its
+   `not_after` (60 s) and the node passes every request, sync and async-v1,
+   `cache.policy`, which is not this switch but the broader fallback.
+   Slower than the rows, minutes, for a fault that is the async members'
+   alone.
 
 3. **The switch**, `fastpathctl -database $DB disable WORKSPACE`
    (`fastpath-turn-off.md`): each node's copy of the switch drops the

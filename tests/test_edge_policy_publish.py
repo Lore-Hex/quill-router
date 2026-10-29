@@ -488,10 +488,10 @@ def test_edge_decide_reads_its_environment_variable(monkeypatch: pytest.MonkeyPa
     assert Settings(environment="test", sentry_dsn=None).fastpath_edge_decide_async is False
 
 
-def test_rollout_renders_edge_decide_as_a_literal_false() -> None:
+def test_rollout_renders_edge_decide_as_a_literal_true() -> None:
     rollout = (ROOT / "scripts" / "deploy" / "rollout.sh").read_text()
     assert re.findall(r'"TR_FASTPATH_EDGE_DECIDE_ASYNC=[^"]*"', rollout) == [
-        '"TR_FASTPATH_EDGE_DECIDE_ASYNC=false"']
+        '"TR_FASTPATH_EDGE_DECIDE_ASYNC=true"']
 
 
 def test_ticket_authority_is_the_runtime_read_at_each_signing(key) -> None:

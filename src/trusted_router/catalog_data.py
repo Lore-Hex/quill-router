@@ -2635,7 +2635,6 @@ TIER_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
     ),
     ADVANCED_MODEL_ID: (
         "moonshotai/kimi-k3",
-        "z-ai/glm-5.3",
         "anthropic/claude-opus-5",
         "openai/gpt-6-sol",
         "anthropic/claude-fable-5",
