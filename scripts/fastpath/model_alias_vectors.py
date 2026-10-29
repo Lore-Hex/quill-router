@@ -35,6 +35,7 @@ from trusted_router.model_aliases import (  # noqa: E402
     canonical_router_model_id,
     router_model_aliases,
 )
+from trusted_router.provider_lifecycle import provider_retirements  # noqa: E402
 
 OUTPUT = ROOT / "fastpath" / "testdata" / "model_alias_vectors_v1.json"
 
@@ -55,7 +56,12 @@ EDGE_SPELLINGS = (
 
 def ids() -> list[str]:
     found: set[str] = set(EDGE_SPELLINGS)
-    for model_id in MODELS:
+    # Alias spelling stays testable after a scheduled retirement removes the
+    # model from the live catalog. The golden file must not depend on the clock.
+    model_ids = set(MODELS)
+    for retirement in provider_retirements():
+        model_ids.update(retirement.model_ids)
+    for model_id in model_ids:
         found.add(model_id)
         found.update(router_model_aliases(model_id))
         for variant in (":nitro", ":floor", ":free"):
