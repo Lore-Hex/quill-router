@@ -18,6 +18,7 @@ from types import SimpleNamespace
 import pytest
 
 from tests.fakes.spanner import _FakeSnapshot, _FakeTransaction
+from tests.settle_drain_trace import normalize_legacy_drain_trace
 from tests.test_async_settle_handler import env, prepare, row_for
 from tests.test_authorize_hold_time import _ast_sha256
 from trusted_router import storage_gcp_settle_outbox as storage
@@ -102,31 +103,10 @@ def test_flag_off_frozen_drain_sql_state_response(env, monkeypatch, scenario):
                               **({} if frozen else {'settings': Settings(environment='test')}))
             rpc_counts = [getattr(db, n)-v for n, v in zip(rpc, before, strict=True)]
             if not frozen:
-                # Round 2 explicitly permits the candidate exclusion and a
-                # bounded recovery read per shard. Compare every OTHER SQL byte,
-                # parameter, type, mutation, response and durable state unchanged.
-                recovery = [entry for entry in trace if 'AND async_version IS NOT NULL' in str(entry[2])]
-                assert len(recovery) == (0 if scenario == 'budget' else 16)
-                for cls, method, call_args, call_kwargs in recovery:
-                    assert cls == '_FakeSnapshot' and method == 'execute_sql'
-                    assert call_args[0] == storage.shard_due_statement(store._param_types,
-                        call_kwargs['params']['shard'], call_kwargs['params']['now'], async_only=True)[0]
-                    assert call_kwargs['params']['limit'] == 2
-                    assert call_kwargs['timeout'] == .2 and call_kwargs['retry'] is None
-                    assert call_kwargs['request_options'] == {'priority': 'PRIORITY_LOW'}
-                trace = [entry for entry in trace if entry not in recovery]
-                rpc_counts[0] -= len(recovery)
-                normalized = []
-                candidate_count = 0
-                for cls, method, call_args, call_kwargs in trace:
-                    if call_args and isinstance(call_args[0], str) and 'AND async_version IS NULL' in call_args[0]:
-                        assert cls == '_FakeSnapshot' and method == 'execute_sql'
-                        assert 'FORCE_INDEX=tr_settle_outbox_due_v2' in call_args[0]
-                        candidate_count += 1
-                        call_args = (call_args[0].replace('AND async_version IS NULL ', ''), *call_args[1:])
-                    normalized.append((cls, method, call_args, call_kwargs))
-                assert candidate_count == 1
-                trace = normalized
+                trace, rpc_counts = normalize_legacy_drain_trace(
+                    trace, rpc_counts, expected_recovery_reads=0 if scenario == 'budget' else 16,
+                    parameter_types=store._param_types,
+                )
             outputs.append((json.dumps(result, separators=(',', ':')),
                 {n: copy.deepcopy(getattr(db, n)) for n in names}, trace, rpc_counts))
     assert outputs[0] == outputs[1]
