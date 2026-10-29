@@ -16,13 +16,17 @@ switch, this process's ticket authority and typed records). The manifest
 snapshot's key under its own ``typ``.
 
 A body is issued at the publisher's clock and signed in the background, by
-one worker at a time, never on a poll: the first poll at or after the cached
-copy's ``refresh_at`` (+15 s), or the first poll with no copy, starts the
-worker, which refreshes the Stage D policy, reads the other facts and signs.
+one worker at a time, never on a poll. Startup warms the first copy before
+serving requests. A timer refreshes at ``refresh_at`` (+15 s) for 30 minutes
+after startup or the latest poll, keeping sparsely polled instances warm.
+The worker refreshes the Stage D policy, reads the other facts and signs.
 Meanwhile every poll is served the cached copy while it is within its
 ``not_after`` (+60 s), or answered 503 at once: ``compiling`` while the
 worker runs, ``digest-policy-unavailable`` or ``policy-error`` after it
-failed (no new worker for 5 s). So a signing happens at most once per
+failed (no new worker for 5 s). Once the idle window ends, timers stop; a
+later poll restarts them and may see ``compiling`` if its copy has expired.
+Bounded idle work and nonblocking polls cannot guarantee a warm copy after
+an arbitrarily long idle period. So a signing happens at most once per
 refresh interval and a poll never waits on a network round trip, holding no
 threadpool token that authorize shares. The edge polls at ``refresh_at``
 and trusts a body until its ``not_after``, then proxies everything to
@@ -39,7 +43,10 @@ calls ``StageDPolicyResolver.refresh_now()`` (two HTTPS fetches per release
 URL, each URL's within 5 s, and a Sigstore bundle check, together failed
 after 15 s, and three watermark reads or writes), so a body's set is the
 release's at ``issued_at`` (decide contract decision 17). That is at most
-four refreshes a minute, and only on an instance the edge polls. A refresh
+four refreshes a minute on a recently polled (or newly started) instance:
+at most 240 signatures and fact reads/hour, plus the startup publication.
+After the last poll, at most 120 refresh attempts on the successful path;
+failures retry at most every 5 s within the same idle window. A refresh
 takes at most ``REFRESH_BOUND_SECONDS`` (30 s, Spanner session creation
 aside) and may first wait out the resolver's own in-flight one, which is
 why it runs in the worker. If it fails nothing new is
@@ -99,6 +106,9 @@ ERROR_RETRY_SECONDS = 5
 # A poll that finds no valid copy while the background signing is in flight
 # comes back this soon.
 COMPILING_RETRY_SECONDS = 2
+# Ten instances polled every 15 s globally see 150 s between round-robin
+# polls. Thirty minutes also accommodates substantial load-balancer skew.
+IDLE_TIMEOUT_SECONDS = 30 * 60
 # A signing worker running longer than this is abandoned: polls stop
 # reporting it as in flight and the next one starts a fresh worker. Its late
 # outcome, if any, is discarded. Above its worst case: refresh_now() may wait
@@ -250,6 +260,14 @@ def _spawn_thread(run: Callable[[], None]) -> threading.Thread:
     return thread
 
 
+def _schedule_refresh(delay: float, run: Callable[[], None]) -> threading.Timer:
+    timer = threading.Timer(delay, run)
+    timer.daemon = True
+    timer.name = "edge-policy-refresh"
+    timer.start()
+    return timer
+
+
 class EdgePolicyPublisher:
     """Signs the edge policy in the background and serves the last signed copy.
 
@@ -280,12 +298,63 @@ class EdgePolicyPublisher:
         self._failed: tuple[str, int] = ("", 0)
         self.signatures = 0
         self.attempts = 0
+        self._maintaining = False
+        self._stopped = False
+        self._active_until = 0.0
+        self._timer: Any = None
+
+    def start(self) -> None:
+        """Warm at startup, then refresh for a bounded idle window.
+
+        The lifespan awaits this first worker outside the authorize pool.
+        Construction alone does no work (facts may not yet be installed).
+        """
+        with self._lock:
+            if self._maintaining or self._stopped:
+                return
+            self._maintaining = True
+            self._active_until = self._monotonic() + IDLE_TIMEOUT_SECONDS
+            self._maintain_locked()
+
+    def stop(self) -> None:
+        """Cancel scheduled refreshes and discard any in-flight outcome."""
+        with self._lock:
+            self._stopped = True
+            self._generation += 1
+            if self._timer is not None:
+                self._timer.cancel()
+                self._timer = None
+
+    def _maintain_locked(self) -> None:
+        if self._stopped or self._monotonic() >= self._active_until:
+            return
+        now = int(self._clock())
+        if self._cached is None or not self._cached.current(now):
+            self._start_locked(now)
+        # While a worker runs, check again after the failure backoff. The
+        # timer itself never reads facts or signs and shares no request pool.
+        due = now + ERROR_RETRY_SECONDS
+        if self._cached is not None and self._cached.current(now):
+            due = self._cached.refresh_at
+        elif self._failed[1] > now:
+            due = self._failed[1]
+        delay = min(max(1, due - self._clock()), self._active_until - self._monotonic())
+        self._timer = _schedule_refresh(max(0, delay), self._refresh_due)
+
+    def _refresh_due(self) -> None:
+        with self._lock:
+            self._timer = None
+            self._maintain_locked()
 
     def current(self) -> Publication:
         """The cached publication while it is within its not_after; raises
         PolicyUnavailable at once when there is none."""
         with self._lock:
             now = int(self._clock())
+            if self._maintaining and not self._stopped:
+                self._active_until = self._monotonic() + IDLE_TIMEOUT_SECONDS
+                if self._timer is None:
+                    self._maintain_locked()
             cached = self._cached
             if cached is not None and cached.current(now):
                 return cached
@@ -326,7 +395,7 @@ class EdgePolicyPublisher:
         return False
 
     def _start_locked(self, now: int) -> None:
-        if self._in_flight() or now < self._failed[1]:
+        if self._stopped or self._in_flight() or now < self._failed[1]:
             return
         self.attempts += 1
         self._generation += 1
@@ -428,3 +497,20 @@ def install(app: FastAPI, settings: Settings) -> None:
         state.edge_policy_status = "signer-unavailable"
         # load_signer's reasons name no key material.
         log.warning("edge policy publisher disabled: %s", exc)
+        return
+
+    @app.on_event("startup")
+    async def warm() -> None:
+        import asyncio
+
+        publisher = state.edge_policy_publisher
+        publisher.start()
+        # Startup can wait; polls cannot. No AnyIO/default executor token is
+        # held while the dedicated signing worker reads this process's facts.
+        deadline = time.monotonic() + WORKER_DEADLINE_SECONDS
+        while not publisher.idle(0) and time.monotonic() < deadline:
+            await asyncio.sleep(0.01)
+
+    @app.on_event("shutdown")
+    async def stop() -> None:
+        state.edge_policy_publisher.stop()

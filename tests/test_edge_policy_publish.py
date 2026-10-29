@@ -1356,3 +1356,208 @@ def test_a_null_monitor_hash_parses() -> None:
     decoded = {**json.loads(_golden_body()), "monitor_lookup_hash": None}
     assert parse_edge_policy(json.dumps(decoded, sort_keys=True, separators=(",", ":"))) \
         .monitor_lookup_hash is None
+
+
+class PolicyScheduler:
+    """Deterministic background threads/timers; work never runs inside a poll."""
+
+    def __init__(self) -> None:
+        self.now = float(T0)
+        self.jobs: list[Any] = []
+
+    def clock(self) -> float:
+        return self.now
+
+    def later(self, delay: float, run: Any) -> Any:
+        job = SimpleNamespace(at=self.now + delay, run=run, alive=True)
+        job.is_alive = lambda: job.alive
+        job.cancel = lambda: setattr(job, "alive", False)
+        self.jobs.append(job)
+        return job
+
+    def spawn(self, run: Any) -> Any:
+        return self.later(0.1, run)
+
+    def advance(self, instant: float) -> None:
+        while True:
+            pending = [job for job in self.jobs if job.alive and job.at <= instant]
+            if not pending:
+                break
+            job = min(pending, key=lambda job: job.at)
+            self.now = job.at
+            job.run()
+            job.alive = False
+        self.now = instant
+
+
+@pytest.mark.parametrize("distribution", ["round-robin", "random"])
+def test_ten_publishers_keep_policies_valid_between_load_balanced_polls(
+    key, monkeypatch, distribution,
+) -> None:
+    import random
+
+    scheduler = PolicyScheduler()
+    # raising=False lets this identical regression run on the old publisher.
+    monkeypatch.setattr(publisher_module, "_schedule_refresh", scheduler.later, raising=False)
+    settings = _settings(key)
+    publishers = [build_publisher(
+        settings, clock=scheduler.clock, monotonic=scheduler.clock, spawn=scheduler.spawn,
+        resolver=lambda: Resolver(frozenset({DIGEST_A})), typed_store=lambda: None,
+    ) for _ in range(10)]
+    for publisher in publishers:
+        if hasattr(publisher, "start"):
+            publisher.start()
+        else:
+            # Give main the same initial warm publication, excluding cold-start 503s.
+            with pytest.raises(PolicyUnavailable):
+                publisher.current()
+    scheduler.advance(T0 + 1)
+    rng = random.Random(43)  # noqa: S311 - reproducible load balancing, not cryptography
+    failures = []
+    for poll in range(240):
+        scheduler.advance(T0 + 1 + 15 * poll)
+        index = poll % 10 if distribution == "round-robin" else rng.randrange(10)
+        publisher = publishers[index]
+        try:
+            publication = publisher.current()
+        except PolicyUnavailable:
+            failures.append((poll, index))
+        else:
+            assert publication.issued_at <= int(scheduler.now) < publication.not_after
+            verify_edge_policy_manifest(
+                publication.manifest, [_trusted(key[1])], publication.body,
+                now=int(scheduler.now), expected_plane=plane_of(settings), expected_aud=AUDIENCE,
+            )
+    assert not failures, f"{len(failures)}/240 healthy fleet polls returned 503 ({distribution})"
+    assert all(publisher.signatures == publisher.attempts == 240 for publisher in publishers)
+    for publisher in publishers:
+        publisher.stop()
+
+
+def test_background_refresh_stops_at_idle_timeout_and_restarts_on_poll(key, monkeypatch) -> None:
+    scheduler = PolicyScheduler()
+    monkeypatch.setattr(publisher_module, "_schedule_refresh", scheduler.later)
+    resolver = Resolver(frozenset({DIGEST_A}))
+    publisher = build_publisher(
+        _settings(key), clock=scheduler.clock, monotonic=scheduler.clock,
+        spawn=scheduler.spawn, resolver=lambda: resolver, typed_store=lambda: None,
+    )
+    publisher.start()
+    publisher.start()  # Idempotent: no extra worker or timer.
+    assert publisher.attempts == 1
+    scheduler.advance(T0 + 1)
+    first = publisher.current()
+    scheduler.advance(T0 + publisher_module.IDLE_TIMEOUT_SECONDS + 1)
+    attempts = publisher.attempts
+    assert attempts <= 1 + publisher_module.IDLE_TIMEOUT_SECONDS // REFRESH_SECONDS
+    assert resolver.refreshes == publisher.signatures == attempts
+    assert not any(job.alive for job in scheduler.jobs)
+    scheduler.advance(T0 + 2 * publisher_module.IDLE_TIMEOUT_SECONDS)
+    assert publisher.attempts == attempts
+    # An arbitrarily late return cannot be both nonblocking and already warm.
+    with pytest.raises(PolicyUnavailable, match="compiling"):
+        publisher.current()
+    scheduler.advance(scheduler.now + 1)
+    assert publisher.current().issued_at > first.issued_at
+    assert publisher.attempts == attempts + 1
+    publisher.stop()
+    scheduler.advance(scheduler.now + publisher_module.IDLE_TIMEOUT_SECONDS)
+    assert publisher.attempts == attempts + 1
+    assert not any(job.alive for job in scheduler.jobs)
+
+
+@pytest.mark.parametrize("failure", ["facts", "signer"])
+def test_background_failures_back_off_expire_and_recover_without_polls(
+    key, monkeypatch, failure,
+) -> None:
+    scheduler = PolicyScheduler()
+    monkeypatch.setattr(publisher_module, "_schedule_refresh", scheduler.later)
+    resolver = Resolver(frozenset({DIGEST_A}))
+    publisher = build_publisher(
+        _settings(key), clock=scheduler.clock, monotonic=scheduler.clock,
+        spawn=scheduler.spawn, resolver=lambda: resolver, typed_store=lambda: None,
+    )
+    publisher.start()
+    scheduler.advance(T0 + 1)
+    first = publisher.current()
+    original_sign = EdgePolicySigner.sign
+
+    def broken_sign(*args: Any) -> str:
+        raise ValueError("unavailable")
+
+    if failure == "facts":
+        resolver.refresh_ok = False
+    else:
+        monkeypatch.setattr(EdgePolicySigner, "sign", broken_sign)
+    scheduler.advance(T0 + 16)
+    assert publisher.current() is first
+    assert publisher.signatures == 1
+    scheduler.advance(T0 + 61)
+    with pytest.raises(PolicyUnavailable) as refused:
+        publisher.current()
+    assert refused.value.status == ("digest-policy-unavailable" if failure == "facts" else "policy-error")
+    assert publisher.signatures == 1
+    assert publisher.attempts <= 1 + 60 // publisher_module.ERROR_RETRY_SECONDS
+    resolver.refresh_ok = True
+    monkeypatch.setattr(EdgePolicySigner, "sign", original_sign)
+    # Recovery runs on the timer even with no further poll to trigger it.
+    scheduler.advance(T0 + 76)
+    assert publisher.signatures > 1
+    assert publisher.current().not_after > scheduler.now
+    publisher.stop()
+
+
+def test_shutdown_discards_inflight_startup_publication(key, monkeypatch) -> None:
+    scheduler = PolicyScheduler()
+    monkeypatch.setattr(publisher_module, "_schedule_refresh", scheduler.later)
+    publisher = build_publisher(
+        _settings(key), clock=scheduler.clock, monotonic=scheduler.clock,
+        spawn=scheduler.spawn, typed_store=lambda: None,
+    )
+    publisher.start()
+    publisher.stop()
+    scheduler.advance(T0 + 100)
+    assert publisher.signatures == 1
+    assert publisher._cached is None
+    assert publisher.attempts == 1
+    assert not any(job.alive for job in scheduler.jobs)
+
+
+def test_maintenance_timer_and_polls_share_one_slow_worker(key, monkeypatch) -> None:
+    scheduler = PolicyScheduler()
+    monkeypatch.setattr(publisher_module, "_schedule_refresh", scheduler.later)
+    publisher = build_publisher(
+        _settings(key), clock=scheduler.clock, monotonic=scheduler.clock,
+        spawn=lambda run: scheduler.later(40, run), typed_store=lambda: None,
+    )
+    publisher.start()
+    for second in (1, 15, 30, 39):
+        scheduler.advance(T0 + second)
+        with pytest.raises(PolicyUnavailable, match="compiling"):
+            publisher.current()
+        assert publisher.attempts == 1
+    scheduler.advance(T0 + 41)
+    first = publisher.current()
+    assert publisher.signatures == 1
+    # A scheduled refresh is slow, but the previous copy remains valid.
+    scheduler.advance(T0 + 56)
+    assert publisher.current() is first
+    assert publisher.attempts == 2
+    scheduler.advance(T0 + 96)
+    assert publisher.current().issued_at > first.issued_at
+    assert publisher.signatures == publisher.attempts == 2
+    publisher.stop()
+
+
+def test_lifespan_warms_policy_before_the_first_poll_and_stops_timer(key) -> None:
+    settings = _settings(key)
+    app = _app(settings)
+    publisher = app.state.edge_policy_publisher
+    assert publisher.attempts == 0
+    with TestClient(app) as client:
+        assert publisher.signatures == 1  # Startup, before the first request.
+        response = _get(client)
+        assert response.status_code == 200
+        _verify(response, settings, key[1], int(time.time()))
+        assert _get(client, **{"If-None-Match": response.headers["etag"]}).status_code == 304
+    assert publisher._stopped and publisher._timer is None
