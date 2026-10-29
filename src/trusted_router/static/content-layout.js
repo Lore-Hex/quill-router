@@ -288,6 +288,7 @@
     ["path", { d: "M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" }],
   ]);
   const checkIcon = () => icon([["path", { d: "M20 6 9 17l-5-5" }]]);
+  const collapseAfter = 10;
   document.querySelectorAll("pre").forEach((pre) => {
     if (pre.closest(".content-code-frame")) return;
     const button = document.createElement("button");
@@ -331,5 +332,19 @@
     new ResizeObserver(update).observe(pre);
     document.fonts.ready.then(update);
     update();
+    // Long examples show their first lines on phones; copying still copies all of it.
+    const lines = pre.innerText.trim().split("\n").length;
+    if (lines <= collapseAfter + 2) return;
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "docs-code-more";
+    const setCollapsed = (collapsed) => {
+      pre.classList.toggle("is-collapsed", collapsed);
+      toggle.textContent = collapsed ? `Show all ${lines} lines` : "Show less";
+      toggle.setAttribute("aria-expanded", String(!collapsed));
+    };
+    toggle.addEventListener("click", () => setCollapsed(!pre.classList.contains("is-collapsed")));
+    pre.after(toggle);
+    setCollapsed(true);
   });
 })();

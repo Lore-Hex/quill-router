@@ -1028,6 +1028,19 @@ table.content-reference,
   line-height: 1.5;
 }
 
+/* iPhone Safari enlarges text in blocks that scroll sideways; keep code at
+   the size set here. */
+[data-docs-code] pre {
+  /* stylelint-disable-next-line property-no-vendor-prefix -- iOS Safari only reads the prefixed form. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* The collapse only applies on phones. */
+.docs-code-more {
+  display: none;
+}
+
 .docs-code-copy:focus-visible {
   outline: 2px solid var(--tr-color-focus);
   outline-offset: 3px;
@@ -1059,6 +1072,38 @@ table.content-reference,
   [data-docs-code] pre,
   [data-docs-code] pre code {
     font-size: 11.5px;
+  }
+
+  [data-docs-code] pre.is-collapsed {
+    max-height: calc(10 * 1.5 * 11.5px + var(--tr-space-stack-md));
+    overflow-y: hidden;
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 40px), transparent);
+  }
+
+  [data-docs-code] pre.is-collapsed.can-scroll-right {
+    mask-image:
+      linear-gradient(to bottom, #000 calc(100% - 40px), transparent),
+      linear-gradient(to right, #000 calc(100% - 56px), transparent);
+    mask-composite: intersect;
+  }
+
+  .docs-code-more {
+    display: block;
+    width: 100%;
+    min-height: 44px;
+    border: 0;
+    border-top: 1px solid var(--tr-color-line-rule);
+    background: transparent;
+    color: var(--tr-color-link-base);
+    font-family: var(--tr-font-family-sans);
+    font-size: 14px;
+    font-weight: var(--tr-font-weight-medium);
+    cursor: pointer;
+  }
+
+  .docs-code-more:focus-visible {
+    outline: 2px solid var(--tr-color-focus);
+    outline-offset: -2px;
   }
 
   .copy-terminal .code-head:has(.docs-code-copy) {
