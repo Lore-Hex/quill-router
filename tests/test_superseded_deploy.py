@@ -349,7 +349,7 @@ def _finalize_outcome(needs: dict) -> tuple[str, int]:
 def _needs(**overrides: dict) -> dict:
     names = ("admit-cloud", "migrate-schema", "sync-runtime-secrets", "confirm-current-main",
              "confirm-still-on-main", "deploy", "rollout-secondaries", "public-surface-companion",
-             "verify-cloud-complete")
+             "settle-drain-worker", "verify-cloud-complete")
     needs = {name: {"result": "success", "outputs": {}} for name in names}
     needs["confirm-current-main"]["outputs"] = {"proceed": "true"}
     needs["confirm-still-on-main"]["outputs"] = {"on_main": "true"}
@@ -364,7 +364,7 @@ def test_finalize_releases_cleanly_after_an_ancestry_refusal() -> None:
     needs = _needs(**{
         "confirm-still-on-main": {"result": "success", "outputs": {"on_main": "false"}},
         "deploy": skipped, "rollout-secondaries": skipped, "public-surface-companion": skipped,
-        "verify-cloud-complete": skipped,
+        "verify-cloud-complete": skipped, "settle-drain-worker": skipped,
     })
     assert _finalize_outcome(needs) == ("success", 0)
 
@@ -374,6 +374,8 @@ def test_finalize_blocks_the_lease_on_any_other_failure() -> None:
     assert _finalize_outcome(_needs()) == ("success", 0)
     skipped = {"result": "skipped", "outputs": {}}
     cases = {
+        "worker failed": _needs(**{"settle-drain-worker": {"result": "failure", "outputs": {}}}),
+        "worker skipped": _needs(**{"settle-drain-worker": skipped}),
         "deploy failed": _needs(**{"deploy": {"result": "failure", "outputs": {}}, "rollout-secondaries": skipped,
                                    "public-surface-companion": skipped, "verify-cloud-complete": skipped}),
         "ancestry job failed": _needs(**{"confirm-still-on-main": {"result": "failure", "outputs": {}},

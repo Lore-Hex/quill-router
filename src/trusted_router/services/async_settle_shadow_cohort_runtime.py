@@ -6,6 +6,7 @@ import datetime as dt
 import json
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, replace
 from queue import Empty, Full, Queue
@@ -275,17 +276,24 @@ def compared_handoff_fields(fields: dict[str, Any], authorization: GatewayAuthor
 class WorkerQueue(Queue[tuple[Callable[..., Any], tuple[Any, ...]]]):
     """Queue.put_nowait normally waits for its mutex; this port never does."""
 
+    closed = False
+
     def put_nowait(self, item: tuple[Callable[..., Any], tuple[Any, ...]]) -> None:
         if not self.mutex.acquire(blocking=False):
             raise Full
         try:
-            if self._qsize() >= self.maxsize:
+            if self.closed or self._qsize() >= self.maxsize:
                 raise Full
             self._put(item)
             self.unfinished_tasks += 1
             self.not_empty.notify()
         finally:
             self.mutex.release()
+
+    def close(self) -> None:
+        # Serialize termination with the last accepted dispatch.
+        with self.mutex:
+            self.closed = True
 
 
 class Runtime:
@@ -296,6 +304,7 @@ class Runtime:
         self.queue = WorkerQueue(32)
         self.worker = threading.Thread(target=self.drain, name="shadow-v2-compare", daemon=True)
         self.guard = self.lock = threading.RLock()
+        self.refunds: deque[int] = deque()
         # Reserve the bounded replay-decision cache inside the shared byte cap.
         self.tokens, self.refilled, self.pending, self.queued_bytes = 10., time.monotonic(), 0, 32*4096
         self.stopped = False
@@ -398,8 +407,11 @@ class Runtime:
                 except Exception:  # noqa: S110 - record availability does not change the native result
                     pass
             if inputs.reservation is not None and inputs.event is not None:
+                if not inputs.finalized:
+                    require(self.port.finalize(inputs.reservation, inputs.event,
+                        fold_owed=True, worker=True) is not None, "unfinished_slot")
                 self.fold_complete(inputs.reservation, inputs.event, (), None)
-        except Exception:
+        except BaseException:
             if inputs.reservation is not None and inputs.event is not None:
                 self.port.fail_fold(inputs.reservation)
             raise
@@ -410,6 +422,7 @@ class Runtime:
         if not self.guard.acquire(blocking=False):
             return "queue_full"
         try:
+            self._apply_refunds()
             if self.stopped:
                 return "queue_full"
             now = time.monotonic()
@@ -492,19 +505,46 @@ class Runtime:
             return False
 
     def drain(self) -> None:
-        while True:
-            try:
-                action, args = self.queue.get(timeout=.05)
-            except Empty:
-                if self.stopped:
-                    return
-                continue
-            try:
-                action(*args)
-            except Exception:
-                self.port.lost.set()
-            finally:
-                self.queue.task_done()
+        try:
+            while True:
+                try:
+                    action, args = self.queue.get(timeout=.05)
+                except Empty:
+                    self.reclaim()
+                    if self.stopped:
+                        return
+                    continue
+                try:
+                    action(*args)
+                except Exception:
+                    self.port.lost.set()
+                finally:
+                    self.queue.task_done()
+        except BaseException:
+            self.port.lost.set()
+            raise
+        finally:
+            self.stopped = True
+            self.queue.close()
+            # A fatal worker exit must return queued charges too. Evidence
+            # remains unresolved; cancellation cannot claim a completed receipt.
+            while True:
+                try:
+                    action, args = self.queue.get_nowait()
+                except Empty:
+                    break
+                try:
+                    self.port.lost.set()
+                    if action in (self.work, self.fold_work, self.input_work):
+                        try:
+                            if action == self.fold_work:
+                                self.port.fail_fold(args[0])
+                            elif action == self.input_work and args[0].event is not None:
+                                self.port.fail_fold(args[0].reservation)
+                        finally:
+                            self.release(args[-1])
+                finally:
+                    self.queue.task_done()
 
     def defer_authorize(self, reservation: Reservation, event: dict[str, Any]) -> None:
         self.defer_fold(reservation, event, (), None)
@@ -527,7 +567,7 @@ class Runtime:
                   rows: tuple[Row, ...], prediction: dict[str, Any] | None, size: int) -> None:
         try:
             self.fold_complete(reservation, event, rows, prediction)
-        except Exception:
+        except BaseException:
             self.port.fail_fold(reservation)
             raise
         finally:
@@ -535,22 +575,33 @@ class Runtime:
 
     def fold_complete(self, reservation: Reservation, event: dict[str, Any],
                       rows: tuple[Row, ...], prediction: dict[str, Any] | None) -> None:
-        require(self.port.fold_counts(reservation.day, receipt_bucket(event), obligation=reservation), "counter_overflow")
+        require(self.port.fold_counts(reservation.day, receipt_bucket(event), obligation=reservation, worker=True), "counter_overflow")
         if prediction is not None:
             with self.port.service.lock:
                 self.port.service.counters[reservation.day]["admission_observer"]["prediction_"+prediction["prediction"]] += 1
-        require(self.port.complete(reservation, rows), "unfinished_slot")
+        require(self.port.complete(reservation, rows, worker=True), "unfinished_slot")
+
+    def _apply_refunds(self) -> None:
+        """Guard-owned consumer; at most 32 outstanding charges can be refunded."""
+        while self.refunds:
+            self.pending -= 1
+            self.queued_bytes -= self.refunds.popleft()
+
+    def reclaim(self) -> None:
+        """Nonblocking accounting maintenance, including idle/shutdown drains."""
+        if self.guard.acquire(blocking=False):
+            try:
+                self._apply_refunds()
+            finally:
+                self.guard.release()
 
     def release(self, size: int) -> None:
-        if not self.guard.acquire(blocking=False):
-            # Do not forget unresolved accounting or reclaim bytes without ownership.
-            self.port.lost.set()
-            return
-        try:
-            self.pending -= 1
-            self.queued_bytes -= size
-        finally:
-            self.guard.release()
+        # CPython deque append/popleft are atomic. Publish ownership of the
+        # refund before trying the guard; a concurrent consumer may apply it.
+        # No maxlen: silently evicting a refund would recreate the leak. The
+        # unrefunded pending count bounds this mailbox to 32 entries instead.
+        self.refunds.append(size)
+        self.reclaim()
 
     def work(self, capture: Capture, size: int) -> None:
         try:
@@ -572,7 +623,7 @@ class Runtime:
         if isinstance(capture.body, TerminalFacts):
             capture.body = GatewaySettleRequest.model_validate(capture.body._asdict(), strict=True)
         if capture.prediction is None:
-            capture.prediction = self.port.capture_prediction(capture.authorization.workspace_id, capture.reservation.observed_us)
+            capture.prediction = self.port.capture_prediction(capture.authorization.workspace_id, capture.reservation.observed_us, worker=True)
         auth = capture.authorization
         try:
             booking = self.booking_store.booking(auth.id, time.monotonic()+1)
@@ -675,7 +726,7 @@ class Runtime:
                             self.port.service.journal.days[reservation.day].resets += 1
             else:
                 rows = (row,)
-        raw = self.port.finalize(reservation, event, fold_owed=True)
+        raw = self.port.finalize(reservation, event, fold_owed=True, worker=not defer)
         require(raw is not None, "unfinished_slot")
         capture.finalized = True
         if defer:
@@ -710,15 +761,15 @@ class Runtime:
         require(value["payload_hash"] == original["payload_sha256"]
                 and value["classification"] == original["comparison"]
                 and value["booking"]["outcome"] == original["booking"]["outcome"], "retry_backing")
-        later = self.port.reserve(attempt["event_at_us"])
+        later = self.port.reserve(attempt["event_at_us"], worker=True)
         require(later is not None, "unfinished_slot")
         assert later is not None
         completion = {**original, "phase": "completion", "seq": f"{later.event_seq:020}",
             "event_at_us": later.observed_us, "receipt_at_us": later.observed_us,
             "prediction": None, "completion_of": original["seq"],
             "retry_original": reference, "booking": attempt["booking"]}
-        require(self.port.complete_event(later, original_page, completion) is not None, "unfinished_slot")
-        require(self.port.complete(later), "unfinished_slot")
+        require(self.port.complete_event(later, original_page, completion, worker=True) is not None, "unfinished_slot")
+        require(self.port.complete(later, worker=True), "unfinished_slot")
 
     def start(self) -> None:
         # Already prestarted by install, including applications without lifespan.
@@ -730,6 +781,7 @@ class Runtime:
     def join(self) -> None:
         """Test/shutdown drain only; never called on the request path."""
         self.queue.join()
+        self.reclaim()
 
 
 

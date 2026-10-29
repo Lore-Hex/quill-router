@@ -165,11 +165,11 @@ def test_journal_never_deleted_and_legacy_delete_generation_is_zero(mutex):
 def test_global_workflow_reservation_spans_all_mutating_jobs_and_completion():
     workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-production.yml").read_text())
     jobs = workflow["jobs"]
-    for name in ("migrate-schema", "sync-runtime-secrets", "deploy", "public-surface-companion"):
+    for name in ("migrate-schema", "sync-runtime-secrets", "deploy", "public-surface-companion", "settle-drain-worker"):
         assert "admit-cloud" in jobs[name]["needs"]
     final = jobs["finalize-cloud"]
     assert "always()" in final["if"]
-    assert {"deploy", "rollout-secondaries", "verify-cloud-complete", "public-surface-companion"} <= set(final["needs"])
+    assert {"deploy", "rollout-secondaries", "verify-cloud-complete", "public-surface-companion", "settle-drain-worker"} <= set(final["needs"])
     releases = [(name, step) for name, job in jobs.items() for step in job["steps"]
                 if "deploy_mutex.sh release" in step.get("run", "")]
     assert [name for name, _ in releases] == ["finalize-cloud"]

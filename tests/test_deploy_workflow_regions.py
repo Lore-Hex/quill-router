@@ -577,3 +577,19 @@ def test_enclave_inventory_is_separate_from_live_control_plane_regions() -> None
     assert control_plane_regions == (
         set(ENCLAVE_REGIONS) - ENCLAVE_REGIONS_WITHOUT_LOCAL_CONTROL_PLANE
     ) | {"southamerica-east1"}
+
+
+def test_settle_worker_follows_router_rollout_and_uses_the_regional_hold() -> None:
+    jobs = yaml.safe_load((ROOT / ".github/workflows/deploy-production.yml").read_text())["jobs"]
+    worker = jobs["settle-drain-worker"]
+    assert worker["needs"] == ["rollout-secondaries", "admit-cloud"]
+    assert jobs["rollout-secondaries"]["needs"] == ["deploy"]
+    assert worker["env"]["TR_DEPLOY_HOLD_REGIONS"] == "${{ vars.TR_DEPLOY_HOLD_REGIONS }}"
+    assert worker["env"]["REGION"] == "us-central1"
+    script = (ROOT / "scripts/deploy/settle_drain_worker.sh").read_text()
+    assert 'REGION=us-central1' in script
+    assert script.index('deploy_region_is_held "$REGION"') < script.index('gc run deploy')
+    # This release creates healthy drain evidence, not async customer admission.
+    rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
+    for pin in ("TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED", "TR_ASYNC_SETTLE_ENABLED", "TR_ASYNC_SETTLE_PROTECTION"):
+        assert f'"{pin}=false"' in rollout
