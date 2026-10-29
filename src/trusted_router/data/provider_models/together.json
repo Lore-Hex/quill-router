@@ -595,6 +595,8 @@
       "status": 1,
       "id": "qwen/qwen3.8-2.4t-a95b",
       "upstream_id": "Qwen/Qwen3.8-2.4T-A95B",
+      "retirement_at": "2026-11-04T00:00:00Z",
+      "replacement_model_id": "qwen/qwen3.7-max",
       "features": [
         "serverless"
       ],

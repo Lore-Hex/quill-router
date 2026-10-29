@@ -67,6 +67,7 @@ SCALEWAY_GLM_52_RETIREMENT_AT = datetime(2026, 11, 16, 0, 0, tzinfo=UTC)
 DEEPINFRA_HERMES_3_405B_RETIREMENT_AT = datetime(2026, 11, 2, 0, 0, tzinfo=UTC)
 DEEPINFRA_MYTHOMAX_RETIREMENT_AT = datetime(2026, 10, 29, 0, 0, tzinfo=UTC)
 TOGETHER_NOVEMBER_6_RETIREMENT_AT = datetime(2026, 11, 6, 0, 0, tzinfo=UTC)
+TOGETHER_QWEN38_24T_RETIREMENT_AT = datetime(2026, 11, 4, 0, 0, tzinfo=UTC)
 # 2026-10-30 10:00 PDT: Crusoe redirects four serverless models to replacements.
 CRUSOE_OCTOBER_30_RETIREMENT_AT = datetime(2026, 10, 30, 17, 0, tzinfo=UTC)
 TELNYX_NOVEMBER_2_RETIREMENT_AT = datetime(2026, 11, 2, 0, 0, tzinfo=UTC)
@@ -997,6 +998,16 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"openai/gpt-oss-120b-Turbo"}),
         effective_at=DEEPINFRA_GPT_OSS_120B_TURBO_RETIREMENT_AT,
         replacement_model_ids=("openai/gpt-oss-120b",),
+    ),
+    # Together's notice (reminder received October 29) removes Qwen3.8
+    # 2.4T-A95B from its serverless API on 2026-11-04 (date only; 00:00 UTC).
+    # Retire only Together's route; other providers' routes stay.
+    _Retirement(
+        provider="together",
+        model_ids=frozenset({"qwen/qwen3.8-2.4t-a95b"}),
+        upstream_ids=frozenset({"Qwen/Qwen3.8-2.4T-A95B"}),
+        effective_at=TOGETHER_QWEN38_24T_RETIREMENT_AT,
+        replacement_model_ids=("qwen/qwen3.7-max",),
     ),
     # Together's October 23 notices remove MiniMax M3 and Inkling from its
     # serverless API on 2026-11-06 (date only; 00:00 UTC conservatively).
