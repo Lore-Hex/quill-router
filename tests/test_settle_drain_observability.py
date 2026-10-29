@@ -2,13 +2,111 @@
 from __future__ import annotations
 
 import logging
+import subprocess
+import sys
+import textwrap
 
+import pytest
 from fastapi.testclient import TestClient
 
 from tests.test_settle_drain_worker import config
 from trusted_router.main import create_app
 from trusted_router.services import settle_drain_observability as output
 from trusted_router.synthetic.alerts import ops_alert
+
+
+@pytest.mark.parametrize('use_colors', [False, True])
+def test_real_uvicorn_handlers_drop_worker_access_logs_and_restore_logging(use_colors):
+    # dictConfig closes existing handlers, including pytest's capture handlers.
+    # Exercise the real configuration in a child so it cannot poison later tests.
+    script = textwrap.dedent('''\
+        import copy
+        import io
+        import logging
+        import logging.config
+        import sys
+
+        from uvicorn.config import LOGGING_CONFIG
+        from uvicorn.logging import AccessFormatter, DefaultFormatter
+
+        from trusted_router.services import settle_drain_observability as output
+
+        config = copy.deepcopy(LOGGING_CONFIG)
+        for formatter in config['formatters'].values():
+            formatter['use_colors'] = sys.argv[1] == 'True'
+        logging.config.dictConfig(config)
+        root = logging.getLogger()
+        root.setLevel(logging.INFO)
+        root.addHandler(logging.StreamHandler())
+        named = logging.getLogger('library')
+        named.propagate = False
+        named.addHandler(logging.StreamHandler())
+        fallback = logging.getLogger('fallback')
+        fallback.propagate = False
+        logging.lastResort = logging.StreamHandler()
+        access = logging.getLogger('uvicorn.access')
+        handlers = {
+            'root': root.handlers[0],
+            'named': named.handlers[0],
+            'default': logging.getLogger('uvicorn').handlers[0],
+            'access': access.handlers[0],
+            'lastResort': logging.lastResort,
+        }
+        assert isinstance(handlers['default'].formatter, DefaultFormatter)
+        assert isinstance(handlers['access'].formatter, AccessFormatter)
+        streams = {name: io.StringIO() for name in handlers}
+        errors = []
+        def handle_error(record):
+            errors.append(str(sys.exc_info()[1]))
+        for name, handler in handlers.items():
+            handler.setStream(streams[name])
+            handler.handleError = handle_error
+        before = {name: (handler.formatter, list(handler.filters))
+                  for name, handler in handlers.items()}
+        cleanup = output.install_logging()
+        try:
+            for handler in handlers.values():
+                assert any(isinstance(f, output.WorkerLogFilter) for f in handler.filters)
+            # The exact message and five positional arguments used by Uvicorn's
+            # HTTP protocols, including deliberately sensitive request content.
+            access.info('%s - "%s %s HTTP/%s" %d',
+                        '192.0.2.123:45678', 'GET', '/health?private-query=secret', '1.1', 200)
+            for logger in (logging.getLogger('root.child'), named,
+                           logging.getLogger('uvicorn.error'), fallback):
+                try:
+                    raise ValueError('private-exception')
+                except ValueError:
+                    logger.exception('private-message %s', 'private-arg',
+                                     extra={'color_message': 'private-color', 'secret': 'private-extra'},
+                                     stack_info=True)
+            assert errors == [], errors
+            assert streams['access'].getvalue() == ''
+            for name, logger_name in (('root', 'root.child'), ('named', 'library'),
+                                      ('default', 'uvicorn.error'), ('lastResort', 'fallback')):
+                value = streams[name].getvalue()
+                assert f'logger={logger_name} level=ERROR exception_class=ValueError' in value
+                assert 'private-' not in value, value
+            logging.getLogger(output.WORKER_LOGGER).warning('async_drain.shutdown_inflight')
+            assert 'async_drain.shutdown_inflight' in streams['root'].getvalue()
+        finally:
+            cleanup()
+        for name, handler in handlers.items():
+            assert (handler.formatter, handler.filters) == before[name]
+        # The same handlers still work on ordinary surfaces after worker cleanup.
+        access.info('%s - "%s %s HTTP/%s" %d', '192.0.2.123:45678', 'GET', '/health', '1.1', 200)
+        assert errors == [], errors
+        assert '192.0.2.123:45678' in streams['access'].getvalue()
+        assert 'GET /health HTTP/1.1' in streams['access'].getvalue()
+        for logger in (logging.getLogger('root.child'), named,
+                       logging.getLogger('uvicorn.error'), fallback):
+            logger.warning('ordinary-service-diagnostic')
+        for name in ('root', 'named', 'default', 'lastResort'):
+            assert 'ordinary-service-diagnostic' in streams[name].getvalue()
+    ''')
+    result = subprocess.run(  # noqa: S603 - fixed local test program
+        [sys.executable, '-c', script, str(use_colors)], capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_handler_boundary_removes_extras_factory_fields_and_exception_text(caplog):
