@@ -87,11 +87,13 @@ acquisition and usage export. The `tr-growth-source` Cloud Logging bucket retain
 older than 89 days fails closed for explicit operator recovery, never jumps to
 the present, and never fabricates missing starts.
 
-Each scheduled run can replay up to twelve five-minute windows. A window that
-ends within an hour of now also re-reads the ten minutes before it for late
-deliveries; older history is settled and reads no overlap, because at peak
-density the overlap alone held about 14,500 audits and no window fit the budget
-(the cursor stalled at 2026-09-28 06:15Z for a month). All windows share the existing twenty-page / 20,000-source-record
+Each scheduled run can replay up to twelve five-minute windows. A window also
+re-reads the ten minutes before it for late deliveries, unless the window before
+it was read more than an hour after its end (`gateway_tail_settled`): that
+settled history has no late tail, and at peak density the overlap alone held
+about 14,500 audits, so no window fit the budget (the cursor stalled at
+2026-09-28 06:15Z for a month). When a tail read near the present has since
+settled, it is re-read once, alone, before settled replay continues. All windows share the existing twenty-page / 20,000-source-record
 budget and a sixty-second source deadline. Page requests use at most ten seconds.
 This runs off the inference path, with no Spanner access or additional worker.
 Dense or slow windows retry next run; incomplete pages never advance the cursor.

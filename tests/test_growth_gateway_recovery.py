@@ -44,7 +44,7 @@ def journey(signup):
 def test_month_backlog_replays_one_hour_at_most_without_resetting_current_feed(monkeypatch):
     monkeypatch.setenv('GROWTH_GATEWAY_ATTEMPTS_ENABLED', 'true')
     previous = NOW-dt.timedelta(days=30)
-    original = {**state(), 'gateway_watermark': previous.isoformat()}
+    original = {**state(), 'gateway_watermark': previous.isoformat(), 'gateway_tail_settled': True}
     before = copy.deepcopy(original)
     io = GatewayIO()
     updated, _ = cycle(original, io, NOW)
@@ -85,27 +85,48 @@ def test_dense_settled_history_fits_the_audit_cap_and_advances():
     window = [r for i in range(7_000, 14_000)
               for r in pair(i, previous+dt.timedelta(milliseconds=40*(i-7_000)))]
     io = GatewayIO(buffered+window)
+    # Production's checkpoint predates the flag: its tail was read near the
+    # present, so the tail is re-read once (it fits), then replay advances.
     checkpoint = {'gateway_watermark': previous.isoformat(), 'gateway_audits': buffered}
+    assert len(ga.collect(checkpoint, io, NOW, NOW)) == len(buffered)
+    assert checkpoint['gateway_watermark'] == previous.isoformat() and checkpoint['gateway_tail_settled']
     audits = ga.collect(checkpoint, io, NOW, NOW)
-    assert io.gateway_windows == [(previous, previous+ga.RECOVERY_STEP)]
+    assert io.gateway_windows == [(previous-ga.OVERLAP, previous), (previous, previous+ga.RECOVERY_STEP)]
     assert len(audits) == len(window)
     assert checkpoint['gateway_watermark'] == (previous+ga.RECOVERY_STEP).isoformat()
 
 
-def test_pair_survives_the_switch_from_settled_to_overlapping_windows():
-    # The first window is settled; the second re-reads ten minutes, including
-    # an end whose start lies before that read. Its pair must still be held.
+def test_late_start_in_a_near_present_tail_is_recovered_after_a_gap():
+    # A run checkpoints near the present; a start for its tail is delivered
+    # late; the next run comes more than an hour later. The tail is re-read.
+    previous = NOW-dt.timedelta(minutes=70)
+    start = projected('start', previous-dt.timedelta(minutes=4))
+    end = projected('end', previous-dt.timedelta(minutes=3))
+    checkpoint = {'gateway_watermark': previous.isoformat(), 'gateway_tail_settled': False,
+                  'gateway_audits': [end]}
+    io = GatewayIO([start, end])
+    attempts, _ = collect_gateway(checkpoint, io, NOW, previous+ga.RECOVERY_STEP,
+                                  [journey(previous-dt.timedelta(hours=1))], [], None)
+    assert io.gateway_windows[0] == (previous-ga.OVERLAP, previous)
+    assert attempts and all(a['paired'] for a in attempts)
+
+
+def test_pair_survives_the_switch_from_settled_to_near_present_windows():
+    # The first window is settled; the second ends near the present. Settled
+    # history left no late tail, so the second reads no overlap and cannot
+    # re-read an end whose start was compacted.
     start = projected('start', NOW-dt.timedelta(minutes=71))
     end = projected('end', NOW-dt.timedelta(minutes=69))
     checkpoint = {'gateway_watermark': (NOW-dt.timedelta(minutes=65)).isoformat(),
-                  'gateway_audits': [start, end]}
+                  'gateway_tail_settled': True, 'gateway_audits': [start, end]}
     io = GatewayIO([start, end])
     attempts, status = collect_gateway(checkpoint, io, NOW, NOW-dt.timedelta(minutes=55),
                                       [journey(NOW-dt.timedelta(hours=2))], [], None)
     assert status == 'current'
     assert io.gateway_windows == [
         (NOW-dt.timedelta(minutes=65), NOW-dt.timedelta(minutes=60)),
-        (NOW-dt.timedelta(minutes=70), NOW-dt.timedelta(minutes=55))]
+        (NOW-dt.timedelta(minutes=60), NOW-dt.timedelta(minutes=55))]
+    assert checkpoint['gateway_tail_settled'] is False
     assert attempts and all(a['paired'] for a in attempts)
 
 
@@ -183,7 +204,7 @@ def test_incomplete_next_window_keeps_only_complete_cursor(failure, status, caps
             if self.gateway_windows:
                 raise failure
             return super().gateway_audits(start, end)
-    checkpoint = {'gateway_watermark': previous.isoformat()}
+    checkpoint = {'gateway_watermark': previous.isoformat(), 'gateway_tail_settled': True}
     _, actual = collect_gateway(checkpoint, Partial(), NOW, NOW, [], [], None)
     assert actual == status
     assert m.date(checkpoint['gateway_watermark']) == previous+ga.RECOVERY_STEP
