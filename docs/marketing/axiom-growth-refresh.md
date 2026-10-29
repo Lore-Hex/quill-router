@@ -87,12 +87,30 @@ acquisition and usage export. The `tr-growth-source` Cloud Logging bucket retain
 older than 89 days fails closed for explicit operator recovery, never jumps to
 the present, and never fabricates missing starts.
 
-Each scheduled run can replay up to twelve five-minute windows, with ten minutes
-of overlap. All windows share the existing twenty-page / 20,000-source-record
+Each scheduled run can replay up to twelve five-minute windows. A window also
+re-reads the ten minutes before it for late deliveries, but never before
+`gateway_settled_through`, the end of the last window read more than an hour
+after its end. That history is final and already compacted, and at peak density
+the overlap alone held about 14,500 audits, so no window fit the budget (the
+cursor stalled at 2026-09-28 06:15Z for a month). When a tail read near the
+present has since settled, it is re-read once, alone, before settled replay
+continues; a run that completes only that re-read reports `catching_up` without
+moving the cursor. All windows share the existing twenty-page / 20,000-source-record
 budget and a sixty-second source deadline. Page requests use at most ten seconds.
 This runs off the inference path, with no Spanner access or additional worker.
 Dense or slow windows retry next run; incomplete pages never advance the cursor.
 The 20,000-audit checkpoint cap still fails rather than truncating records.
+The source filter and projector read the audit line from `jsonPayload.message`
+or `jsonPayload.MESSAGE`: Confidential Space launcher images wrote `MESSAGE`
+until VMs picked up a newer image on 2026-10-06. A changed source filter needs
+the operator `source-filter` step before the deploy, as above.
+
+Sinks do not route retroactively. Audits written as `message` from 2026-10-06
+(VM by VM, starting in us-central1-b) until the sink update on 2026-10-29 never
+reached `tr-growth-source`, so gateway attempts for that span are a recorded
+coverage gap: replay walks through it and finds nothing, and `current` after it
+does not mean those attempts were observed. Before calling any future recovery
+complete, confirm the bucket holds audits for the replayed span.
 
 Buffered evidence is projected before compaction. Completed pairs are retained
 through the overlap, unmatched records keep the existing three-day horizon, and

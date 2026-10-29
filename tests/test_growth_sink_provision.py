@@ -17,6 +17,9 @@ def test_sink_includes_control_plane_without_broadening_event_allowlist():
     )
     assert 'jsonPayload.event="acquisition.nyte.buy_completed"' in value
     assert '=~' not in value
+    for field in ("message", "MESSAGE"):
+        assert f'jsonPayload.{field}:"enclave.request_start "' in value
+        assert f'jsonPayload.{field}:"/v1/chat/completions"' in value
 
 
 def test_matching_sink_does_not_require_update_permission(monkeypatch, capsys):

@@ -70,6 +70,7 @@ def collect_gateway(state, io, now, end, journeys, daily, owners):
             updated, attempts = project_audits(checkpoint, audits, observed)
             state.update(gateway_audits=checkpoint['gateway_audits'],
                          gateway_watermark=checkpoint['gateway_watermark'],
+                         gateway_settled_through=checkpoint['gateway_settled_through'],
                          gateway_milestones=checkpoint['gateway_milestones'])
             journeys[:] = updated
             candidates.update({r['event_id']: r for r in attempts})
