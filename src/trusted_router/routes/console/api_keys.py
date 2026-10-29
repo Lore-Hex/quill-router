@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from trusted_router.acquisition import track_console
 from trusted_router.auth import SettingsDep
 from trusted_router.errors import assert_workspace_billing_active
-from trusted_router.money import dollars_to_microdollars, microdollars_to_decimal
+from trusted_router.money import dollars_to_microdollars, key_limit_dollars, microdollars_to_decimal
 from trusted_router.routes.console._shared import ConsoleDep, money, render
 from trusted_router.spend_windows import WINDOWS, suggested_window_limits
 from trusted_router.storage import STORE, ApiKey, ApiKeyUsageSnapshot
@@ -193,10 +193,7 @@ def _parse_limit(value: str) -> int | None:
     normalized = value.strip()
     if not normalized:
         return None
-    micro = dollars_to_microdollars(normalized)
-    if micro < 0:
-        raise ValueError("limit must be non-negative")
-    return micro
+    return dollars_to_microdollars(key_limit_dollars(normalized))
 
 
 def _checkbox(value: str) -> bool:

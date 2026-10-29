@@ -6,6 +6,9 @@ MICRODOLLARS_PER_DOLLAR = 1_000_000
 MICRODOLLARS_PER_CENT = 10_000
 TOKENS_PER_MILLION = 1_000_000
 
+# Key budgets are stored as signed INT64 microdollars in both production stores.
+MAX_KEY_LIMIT_DOLLARS = Decimal("9223372036854.775807")
+
 # Starter credit granted exactly once with a newly created email/social OAuth account.
 # Wallet-only accounts start at zero. Keep this integer-only so signup never
 # introduces float rounding into the credit ledger.
@@ -74,6 +77,21 @@ def dollars_to_microdollars(value: object) -> int:
     if not decimal.is_finite():
         raise ValueError("invalid dollar amount")
     return int((decimal * MICRODOLLARS_PER_DOLLAR).to_integral_value(rounding=ROUND_HALF_UP))
+
+
+def key_limit_dollars(value: object) -> Decimal:
+    """Validate before comparison, rounding, or conversion to a storage integer."""
+    try:
+        amount = Decimal(str(value))
+    except (InvalidOperation, ValueError) as exc:
+        raise ValueError("must be a dollar amount") from exc
+    if not amount.is_finite():
+        raise ValueError("must be a finite dollar amount")
+    if amount < 0:
+        raise ValueError("must be non-negative")
+    if amount > MAX_KEY_LIMIT_DOLLARS:
+        raise ValueError(f"must be at most {MAX_KEY_LIMIT_DOLLARS} dollars")
+    return amount
 
 
 def format_money_display(microdollars: int) -> str:
