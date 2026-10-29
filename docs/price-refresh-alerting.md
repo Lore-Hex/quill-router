@@ -17,8 +17,10 @@ unchanged.
   schedules recomputation because main moved does not count. A no-change run
   counts because it validated the current catalog. This measures publication,
   not deployment health, which remains covered by the release checks.
-* **Watchdog missing:** the observer sends Sentry Cron check-ins after completing
-  all reads, delivery and state writes. Sentry monitors this hourly heartbeat
+* **Watchdog missing:** the observer sends paired Sentry Cron check-ins on start
+  and completion, reporting OK only after all reads, delivery and state writes.
+  An observer error or ten-minute timeout also raises a Cron issue.
+  Sentry monitors this hourly heartbeat
   with a 60-minute grace period, so even a GitHub-wide scheduling outage or a
   broken observer can be detected outside GitHub. The first successful observer
   run provisions `price-refresh-watchdog`; verify it exists when installing.

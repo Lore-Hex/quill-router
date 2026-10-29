@@ -114,12 +114,17 @@ def test_stale_and_failure_have_independent_bounded_groups(emitted):
 
 
 def test_watchdog_heartbeat_is_external_and_does_not_spend_error_events(emitted):
-    alerts.heartbeat()
+    alerts.heartbeat("in_progress", "a" * 32)
+    alerts.heartbeat("ok", "a" * 32, 2.5)
     kind, payload = emitted[0]
     assert kind == "check_in"
     assert payload["monitor_slug"] == "price-refresh-watchdog"
     assert payload["monitor_config"]["checkin_margin"] == 60
     assert payload["monitor_config"]["schedule"] == {"type": "interval", "value": 1, "unit": "hour"}
+    assert emitted[1][1]["check_in_id"] == payload["check_in_id"]
+    assert emitted[1][1]["status"] == "ok"
+    assert emitted[1][1]["duration"] == 2.5
+    assert "monitor_config" not in emitted[1][1]
 
 
 @pytest.fixture
@@ -153,7 +158,7 @@ def observer(monkeypatch, emitted):
 def test_failed_refresh_and_absent_freshness_report_and_persist(observer, emitted):
     _, _, calls = observer
     alerts.main()
-    assert [item[0] for item in emitted] == ["event", "event", "check_in"]
+    assert [item[0] for item in emitted] == ["check_in", "event", "event", "check_in"]
     write = calls[-1][1]
     assert write["state"] == "open"
     assert '"refresh_failed":' in write["body"]
@@ -164,7 +169,7 @@ def test_no_runs_still_alerts_stale(observer, emitted):
     _, data, _ = observer
     data["runs"] = []
     alerts.main()
-    assert emitted[0][1]["fingerprint"] == ["price-refresh", "catalog_stale"]
+    assert emitted[1][1]["fingerprint"] == ["price-refresh", "catalog_stale"]
 
 
 def test_successful_recompute_without_publication_cannot_clear_staleness(observer, emitted):
@@ -172,7 +177,7 @@ def test_successful_recompute_without_publication_cannot_clear_staleness(observe
     data["runs"] = [run(conclusion="success")]
     data["jobs"] = []
     alerts.main()
-    assert emitted[0][1]["fingerprint"] == ["price-refresh", "catalog_stale"]
+    assert emitted[1][1]["fingerprint"] == ["price-refresh", "catalog_stale"]
     assert calls[-1][1]["state"] == "open"
 
 
@@ -184,7 +189,7 @@ def test_genuine_publication_closes_ledger_preserves_cooldown(observer, emitted)
     alerts.main()
     assert calls[-1][1]["state"] == "closed"
     assert state["sent"]["refresh_failed"] in calls[-1][1]["body"]
-    assert [kind for kind, _ in emitted] == ["check_in"]
+    assert [kind for kind, _ in emitted] == ["check_in", "check_in"]
 
 
 @pytest.mark.parametrize("age,stale", [(timedelta(hours=5, minutes=59), False), (timedelta(hours=6), True)])
@@ -209,7 +214,7 @@ def test_new_failure_is_reported_even_if_later_run_recovered(observer, emitted):
     state["last_validated_at"] = NOW.isoformat()
     data["runs"] = [run(101, "success"), run(100, when=NOW - timedelta(hours=1))]
     alerts.main()
-    assert emitted[0][1]["extra"]["run_id"] == 100
+    assert emitted[1][1]["extra"]["run_id"] == 100
 
 
 def test_recovered_old_failure_is_not_repeated_forever(observer, emitted):
@@ -218,7 +223,7 @@ def test_recovered_old_failure_is_not_repeated_forever(observer, emitted):
     state["last_failure"] = "100:1"
     data["runs"] = [run(101, "success"), run(100, when=NOW - timedelta(hours=1))]
     alerts.main()
-    assert [kind for kind, _ in emitted] == ["check_in"]
+    assert [kind for kind, _ in emitted] == ["check_in", "check_in"]
 
 
 def test_api_outage_does_not_emit_false_healthy_heartbeat(observer, emitted, monkeypatch):
@@ -227,7 +232,7 @@ def test_api_outage_does_not_emit_false_healthy_heartbeat(observer, emitted, mon
     monkeypatch.setattr(alerts, "gh", fail)
     with pytest.raises(RuntimeError):
         alerts.main()
-    assert not emitted
+    assert [payload["status"] for _, payload in emitted] == ["in_progress", "error"]
 
 
 def test_future_ledger_is_rejected(observer):

@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -164,17 +165,20 @@ def send_sentry(kind: str, payload: dict[str, Any]) -> None:
         raise RuntimeError("Sentry monitoring delivery failed; cooldown not advanced") from exc
 
 
-def heartbeat() -> None:
+def heartbeat(status: str, check_in_id: str, duration: float = 0) -> None:
     # This monitor checks the observer itself from outside GitHub. If Actions
     # stops scheduling both workflows, Sentry can still detect the silence.
-    send_sentry("check_in", {
-        "check_in_id": uuid4().hex, "monitor_slug": "price-refresh-watchdog",
-        "status": "ok", "environment": "production",
-        "monitor_config": {
+    payload: dict[str, Any] = {
+        "check_in_id": check_in_id, "monitor_slug": "price-refresh-watchdog",
+        "status": status, "environment": "production", "duration": duration,
+    }
+    if status == "in_progress":
+        payload["monitor_config"] = {
             "schedule": {"type": "interval", "value": 1, "unit": "hour"},
             "checkin_margin": 60, "failure_issue_threshold": 1, "recovery_threshold": 1,
-        },
-    })
+            "max_runtime": 10,
+        }
+    send_sentry("check_in", payload)
 
 
 def report(kind: str, details: dict[str, Any], state: dict[str, Any], now: datetime) -> bool:
@@ -197,9 +201,7 @@ def report(kind: str, details: dict[str, Any], state: dict[str, Any], now: datet
     return True
 
 
-def main(*, dry_run: bool = False) -> None:
-    if os.environ.get("GITHUB_REPOSITORY") != REPOSITORY:
-        raise ValueError("Monitoring is restricted to the production repository")
+def observe(*, dry_run: bool = False) -> None:
     now = datetime.now(UTC)
     number, state = read_state()
     if any(timestamp(value) > now for value in
@@ -261,9 +263,25 @@ def main(*, dry_run: bool = False) -> None:
         created = gh("issues", {"title": ISSUE_TITLE, "body": body})
         number = int(created["number"])
     gh(f"issues/{number}", data)
-    # Only a fully successful read, report and durable-state write earns a ping.
-    heartbeat()
     print(f"Price refresh monitoring: {status}; ledger #{number}")
+
+
+def main(*, dry_run: bool = False) -> None:
+    if os.environ.get("GITHUB_REPOSITORY") != REPOSITORY:
+        raise ValueError("Monitoring is restricted to the production repository")
+    if dry_run:
+        observe(dry_run=True)
+        return
+    check_in_id = uuid4().hex
+    started = time.monotonic()
+    heartbeat("in_progress", check_in_id)
+    try:
+        observe()
+    except Exception:
+        heartbeat("error", check_in_id, time.monotonic() - started)
+        raise
+    # Only a fully successful read, report and durable-state write earns OK.
+    heartbeat("ok", check_in_id, time.monotonic() - started)
 
 
 if __name__ == "__main__":
