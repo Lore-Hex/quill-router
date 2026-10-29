@@ -147,7 +147,10 @@ def send_sentry(kind: str, payload: dict[str, Any]) -> None:
             or not project.isdigit() or parsed.password or parsed.query or parsed.fragment
             or parsed.port not in {None, 443}):
         raise ValueError("Missing or invalid Sentry ingestion DSN")
-    envelope = (json.dumps({"dsn": dsn}) + "\n" + json.dumps({"type": kind})
+    headers = {"dsn": dsn}
+    if kind == "event":
+        headers["event_id"] = payload["event_id"]
+    envelope = (json.dumps(headers) + "\n" + json.dumps({"type": kind})
                 + "\n" + json.dumps(payload) + "\n").encode()
     request = Request(
         f"https://{host}/api/{project}/envelope/", data=envelope,

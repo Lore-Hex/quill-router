@@ -285,14 +285,15 @@ def test_envelope_is_synchronous_bounded_and_redirections_disabled(monkeypatch):
         assert handler.redirect_request() is None
         return Opener()
     monkeypatch.setattr(alerts, "build_opener", opener)
-    alerts.send_sentry("event", {"message": "safe"})
+    alerts.send_sentry("event", {"message": "safe", "event_id": "a" * 32})
     request, timeout = requests[0]
     assert timeout == 15
     assert request.full_url == "https://o1.ingest.us.sentry.io/api/2/envelope/"
     header, item, payload = map(json.loads, request.data.splitlines())
     assert header["dsn"] == "https://abc@o1.ingest.us.sentry.io/2"
+    assert header["event_id"] == "a" * 32
     assert item == {"type": "event"}
-    assert payload == {"message": "safe"}
+    assert payload == {"message": "safe", "event_id": "a" * 32}
 
 
 def test_sentry_429_is_not_success(monkeypatch):
@@ -302,7 +303,7 @@ def test_sentry_429_is_not_success(monkeypatch):
             raise HTTPError(request.full_url, 429, "quota", {}, None)
     monkeypatch.setattr(alerts, "build_opener", lambda _: Opener())
     with pytest.raises(RuntimeError, match="cooldown not advanced"):
-        alerts.send_sentry("event", {})
+        alerts.send_sentry("event", {"event_id": "a" * 32})
 
 
 def test_cli_failure_does_not_echo_output(monkeypatch):
