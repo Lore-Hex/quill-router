@@ -20,8 +20,7 @@
       "context_length": 1048576,
       "supports_tools": false,
       "supports_reasoning": false,
-      "routable": false,
-      "routable_reason": "attested-enclave-rollout-pending",
+      "routable": true,
       "input_token_price_per_m": 650000,
       "output_token_price_per_m": 1450000,
       "cached_input_token_price_per_m": 130000
@@ -29,7 +28,7 @@
   ],
   "source": "https://maple.ai/docs/proxy/models",
   "pricing_source": "https://maple.ai/pricing",
-  "generated_at": "2026-10-29T02:38:09Z",
+  "generated_at": "2026-10-29T05:58:23Z",
   "price_scale": "microdollars_per_million",
   "model_count": 1
 }

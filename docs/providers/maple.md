@@ -1,9 +1,10 @@
 # Maple encrypted-inference pilot
 
 Status (2026-10-29): **activation candidate; not deployed**. The measured
-adapter is qualified locally, but `_PENDING_ENCLAVE_MODELS` and the empty
-`MAPLE_GATEWAY_REGIONS` still prevent customer traffic. Do not publish this
-candidate until the gateway rollout and production qualification are complete.
+adapter is qualified locally and on the GCP and AWS fleets. This draft names
+the intended eight gateway regions, but Azure rollout and verification still
+gate merging and publishing the candidate. Preparing the catalog is not
+production activation. Record the Azure completion proof before merging.
 Provider slug `maple`, legal name Maple Privacy Labs Inc. Maple must never be
 added to `OPENAI_COMPATIBLE_PROVIDERS`: its managed Credits adapter uses
 Transport V2, not bearer-only OpenAI HTTP.
@@ -33,6 +34,9 @@ not invent a customer credit-rounding fee or USD 0.001 minimum. The pilot offer
 mentioned provider credit rounding, so actual provider-debit reconciliation
 remains unverified. Complimentary credits are not a zero upstream cost. Cached
 input receives the discounted rate only when reported as cached by the provider.
+The manifest stores upstream cost, not retail. TR's existing 5.5% markup yields
+retail USD/M rates of 0.68575 input, 0.13715 cached input and 1.52975 output.
+No additional Maple-specific fixed fee or request minimum is added.
 
 ## Access and terms
 

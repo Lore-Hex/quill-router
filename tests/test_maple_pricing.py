@@ -57,6 +57,7 @@ def test_exact_native_capability_and_context():
 
 
 def test_fetch_writes_held_text_only_route_without_inventing_fees(monkeypatch, tmp_path):
+    monkeypatch.setattr(maple, "_PENDING_ENCLAVE_MODELS", frozenset({maple.MODEL_ID}))
     monkeypatch.setattr(maple, "MANIFEST_PATH", tmp_path / "maple.json")
     monkeypatch.setattr(maple, "_DISCOVERED", {})
     pages = {maple.PRICING_URL: PRICES, maple.MODEL_DOCS_URL: CAPABILITIES}
@@ -106,6 +107,7 @@ def test_price_refresh_does_not_clear_failed_encrypted_canary(monkeypatch, tmp_p
 
 
 def test_maple_manifest_prices_expire_and_pending_routes_stay_closed(monkeypatch, tmp_path):
+    monkeypatch.setattr(maple, "_PENDING_ENCLAVE_MODELS", frozenset({maple.MODEL_ID}))
     monkeypatch.setattr(maple, "MANIFEST_PATH", tmp_path / "maple.json")
     monkeypatch.setattr(maple, "_DISCOVERED", {})
     pages = {maple.PRICING_URL: PRICES, maple.MODEL_DOCS_URL: CAPABILITIES}
@@ -120,6 +122,32 @@ def test_maple_manifest_prices_expire_and_pending_routes_stay_closed(monkeypatch
     assert provider_manifest_valid_until("maple", manifest) == generated + timedelta(days=14)
     manifest["generated_at"] = "invalid"
     assert provider_manifest_valid_until("maple", manifest) == EXPIRED_PROVIDER_MANIFEST
+
+
+def test_reviewed_maple_refresh_publishes_only_exact_text_workload(monkeypatch, tmp_path):
+    monkeypatch.setattr(maple, "MANIFEST_PATH", tmp_path / "maple.json")
+    monkeypatch.setattr(maple, "_DISCOVERED", {})
+    pages = {maple.PRICING_URL: PRICES, maple.MODEL_DOCS_URL: CAPABILITIES}
+    monkeypatch.setattr(maple, "fetch_html", pages.__getitem__)
+    maple.write_provider_manifest(maple.fetch())
+    row, = json.loads(maple.MANIFEST_PATH.read_text())["models"]
+    assert row["id"] == maple.MODEL_ID and row["upstream_id"] == maple.NATIVE_ID
+    assert row["routable"] is True and "routable_reason" not in row
+    assert row["input_modalities"] == ["text"] and row["endpoints"] == ["chat/completions"]
+    assert not row["supports_tools"] and not row["supports_reasoning"]
+    assert row["cached_input_token_price_per_m"] == 130_000
+
+
+@pytest.mark.parametrize("uncached,cached,output", [(36, 0, 4), (81, 12_288, 19), (0, 1_000_000, 100_000)])
+def test_published_maple_route_uses_standard_retail_markup_without_request_minimum(uncached, cached, output):
+    from trusted_router.authorize_candidates import endpoint_cost_microdollars
+    from trusted_router.catalog import MODEL_ENDPOINTS
+
+    endpoint, = [row for row in MODEL_ENDPOINTS.values() if row.provider == "maple"]
+    assert endpoint.model_id == maple.MODEL_ID and endpoint.upstream_id == maple.NATIVE_ID
+    expected = sum(int((Decimal(count) * Decimal(rate) / 1_000_000).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+                   for count, rate in zip((uncached, cached, output), (685_750, 137_150, 1_529_750), strict=True))
+    assert endpoint_cost_microdollars(endpoint, uncached, output, cache_read_tokens=cached) == expected
 
 
 @pytest.mark.parametrize("uncached,cached,output", [

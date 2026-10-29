@@ -54,6 +54,10 @@ def apply_gateway_admission_holds(
     # sealed-bundle entry). Automatic CP catch-up cannot upgrade those gateways.
     legacy_bedrock_unavailable = not _gateway_cloud_upgraded()
     region = os.environ.get("TR_SERVING_REGION") or os.environ.get("TR_PRIMARY_REGION", "")
+    if not region and os.environ.get("TR_ENVIRONMENT", "local").lower() in {"local", "test"}:
+        # Match the local Settings default for previews/social-card generation.
+        # Production with missing or unknown region evidence still fails closed.
+        region = "us-central1"
     affected_models = {model_id for model_id, _ in unavailable_routes}
     for identity, endpoint in tuple(endpoints.items()):
         bedrock_runtime = endpoint.provider == "amazon-bedrock" and endpoint.model_id in BEDROCK_RUNTIME_PROFILES

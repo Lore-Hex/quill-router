@@ -31,7 +31,7 @@ MANIFEST_STALE_FALLBACK = True
 INCLUDE_IN_PRICE_INDEX = True
 UPSTREAM_ID_MAP = {MODEL_ID: NATIVE_ID}
 # Release only after the matching measured gateway image passes every cloud.
-_PENDING_ENCLAVE_MODELS = frozenset({MODEL_ID})
+_PENDING_ENCLAVE_MODELS: frozenset[str] = frozenset()
 _DISCOVERED: dict[str, dict[str, Any]] = {}
 
 

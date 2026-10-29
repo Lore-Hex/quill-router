@@ -4,7 +4,10 @@ MAPLE_MODEL_ID = "dealignai/deepseek-v4.1-flash-1017-uncensored"
 MAPLE_NATIVE_ID = "deepseek-v4-1-flash-1017-uncensored"
 # The Transport V2 helper and cloud-local key must be verified in each fleet
 # before its region is admitted. Unknown regions remain unavailable.
-MAPLE_GATEWAY_REGIONS: frozenset[str] = frozenset()
+MAPLE_GATEWAY_REGIONS: frozenset[str] = frozenset({
+    "us-central1", "us-east4", "europe-west4", "us-west1",
+    "aws-eu-west-1", "aws-eu-west-3", "azure-uaenorth", "azure-australiaeast",
+})
 
 SAKANA_FUGU_MODEL_ID = "sakana-ai/fugu-ultra-v1.1"
 SAKANA_NAMAZU_MODEL_ID = "sakana-ai/sakana-namazu-v1.0"
@@ -118,9 +121,12 @@ BEDROCK_RUNTIME_PROFILES = {
     "anthropic/claude-sonnet-5": "us.anthropic.claude-sonnet-5",
     "anthropic/claude-opus-4.8": "us.anthropic.claude-opus-4-8",
 }
-# Runtime dispatch needs QCP #630. No fleet is qualified yet; control-plane
-# catch-up must never expose these profiles through an older Mantle adapter.
-BEDROCK_RUNTIME_GATEWAY_REGIONS: frozenset[str] = frozenset()
+# Runtime dispatch needs QCP #630, included in the measured QCP #624 release.
+# Keep this separate from the legacy Mantle adapter's GCP-only admission.
+BEDROCK_RUNTIME_GATEWAY_REGIONS: frozenset[str] = frozenset({
+    "us-central1", "us-east4", "europe-west4", "us-west1",
+    "aws-eu-west-1", "aws-eu-west-3", "azure-uaenorth", "azure-australiaeast",
+})
 # Clairic needs the native /ai/run adapter. Publish only after the GCP fleet
 # rolls; older AWS/Azure gateways must not send extraction tasks to chat.
 CLAIRIC_GATEWAY_REGIONS = frozenset({"us-central1", "us-east4", "europe-west4", "us-west1"})

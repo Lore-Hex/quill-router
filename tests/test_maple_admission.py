@@ -6,11 +6,46 @@ from trusted_router.catalog import MODEL_ENDPOINTS
 from trusted_router.catalog_data import model_vendor_provider_slugs
 from trusted_router.catalog_deployment import apply_gateway_admission_holds
 from trusted_router.provider_contracts import (
+    BEDROCK_GATEWAY_REGIONS,
+    BEDROCK_RUNTIME_GATEWAY_REGIONS,
+    BEDROCK_RUNTIME_PROFILES,
+    MAPLE_GATEWAY_REGIONS,
     MAPLE_MODEL_ID,
     MAPLE_NATIVE_ID,
     provider_model_available_from_gateway_region,
 )
 from trusted_router.routing_snapshot import _gateway_regions
+
+
+def test_release_admission_names_exact_gateway_fleets_without_expanding_mantle():
+    expected = frozenset({
+        "us-central1", "us-east4", "europe-west4", "us-west1",
+        "aws-eu-west-1", "aws-eu-west-3", "azure-uaenorth", "azure-australiaeast",
+    })
+    assert MAPLE_GATEWAY_REGIONS == BEDROCK_RUNTIME_GATEWAY_REGIONS == expected
+    assert BEDROCK_GATEWAY_REGIONS == expected - {
+        "aws-eu-west-1", "aws-eu-west-3", "azure-uaenorth", "azure-australiaeast",
+    }
+    for region in expected:
+        assert provider_model_available_from_gateway_region("maple", MAPLE_MODEL_ID, region)
+        for model in BEDROCK_RUNTIME_PROFILES:
+            assert provider_model_available_from_gateway_region("amazon-bedrock", model, region)
+    for unknown in ("", "aws-us-east-1", "azure-westus", "future-region"):
+        assert not provider_model_available_from_gateway_region("maple", MAPLE_MODEL_ID, unknown)
+        for model in BEDROCK_RUNTIME_PROFILES:
+            assert not provider_model_available_from_gateway_region("amazon-bedrock", model, unknown)
+
+
+@pytest.mark.parametrize("environment,admitted", [("local", True), ("test", True), ("production", False), ("prod", False)])
+def test_preview_default_never_substitutes_for_production_region_evidence(monkeypatch, environment, admitted):
+    monkeypatch.delenv("TR_SERVING_REGION", raising=False)
+    monkeypatch.delenv("TR_PRIMARY_REGION", raising=False)
+    monkeypatch.setenv("TR_ENVIRONMENT", environment)
+    endpoint = replace(next(iter(MODEL_ENDPOINTS.values())), provider="maple",
+                       model_id=MAPLE_MODEL_ID, upstream_id=MAPLE_NATIVE_ID, usage_type="Credits")
+    endpoints = {endpoint.id: endpoint}
+    apply_gateway_admission_holds({}, endpoints)
+    assert bool(endpoints) is admitted
 
 
 def test_maple_checkpoint_names_its_weights_author_not_host():
