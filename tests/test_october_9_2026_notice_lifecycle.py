@@ -11,6 +11,7 @@ from scripts.pricing.providers import (
     arcee,
     crusoe,
     deepinfra,
+    digitalocean,
     inception,
     novita,
     scaleway,
@@ -32,6 +33,14 @@ class Case:
 
 
 _CASES = [
+    Case("digitalocean", "meta-llama/llama-4-maverick", "llama-4-maverick",
+         datetime(2026, 11, 9, tzinfo=UTC), "deepseek/deepseek-v4.1-flash"),
+    Case("digitalocean", "deepseek/deepseek-v4-flash", "deepseek-4-flash",
+         datetime(2026, 11, 9, tzinfo=UTC), "deepseek/deepseek-v4.1-flash-1017"),
+    Case("digitalocean", "qwen/qwen3.5-397b-a17b", "qwen3.5-397b-a17b",
+         datetime(2026, 11, 9, tzinfo=UTC), "qwen/qwen3.8-max"),
+    Case("digitalocean", "google/gemma-4-31b-it", "gemma-4-31B-it",
+         datetime(2026, 11, 9, tzinfo=UTC), "z-ai/glm-5.3-flash"),
     Case("together", "qwen/qwen3.8-2.4t-a95b", "Qwen/Qwen3.8-2.4T-A95B",
          datetime(2026, 11, 4, tzinfo=UTC), "qwen/qwen3.7-max"),
     Case("deepinfra", "stepfun-ai/step-5-preview", "stepfun-ai/Step-5-Preview",
@@ -102,6 +111,7 @@ _CASES = [
          datetime(2026, 10, 14, 10, tzinfo=UTC), "xiaomi/mimo-v2.6-flash"),
 ]
 _MANIFESTS = {
+    "digitalocean": digitalocean.MANIFEST_PATH,
     "inception": inception.MANIFEST_PATH,
     "telnyx": telnyx.MANIFEST_PATH,
     "together": together.MANIFEST_PATH,
