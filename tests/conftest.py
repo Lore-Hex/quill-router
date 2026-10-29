@@ -283,7 +283,7 @@ def shadow_deadline_clock(monkeypatch):
         storage_gcp_async_settle_shadow,
         storage_gcp_io,
     )
-    from trusted_router.services import async_settle_shadow
+    from trusted_router.services import async_settle_shadow, async_settle_shadow_cohort_runtime
 
     class Clock:
         now = 16.0
@@ -295,7 +295,7 @@ def shadow_deadline_clock(monkeypatch):
             return getattr(time, name)
 
     clock = Clock()
-    for module in (async_settle_shadow, storage_gcp_async_settle_shadow,
+    for module in (async_settle_shadow, async_settle_shadow_cohort_runtime, storage_gcp_async_settle_shadow,
                    storage_gcp_async_admission, storage_gcp_io):
         monkeypatch.setattr(module, 'time', clock)
     return clock

@@ -35,6 +35,45 @@ def installed():
     return shell, service, db
 
 
+@pytest.mark.parametrize('elapsed', [0.99, 1.01])
+def test_original_sample_read_spends_only_injected_time(monkeypatch, shadow_deadline_clock, elapsed):
+    from contextlib import contextmanager
+
+    from trusted_router.async_settle_shadow_journal import Row
+    from trusted_router.services import async_settle_shadow_cohort_runtime as module
+
+    shell, service, db = installed()
+    value = fixture('sample')[0]['object']
+    row = Row.build(module.SAMPLE_KIND, value['authorization_day']+'/'+value['authorization_id'], value)
+    snapshot = db.snapshot
+    read = service.store.read
+    calls = []
+
+    def checked_read(kind, key, budget):
+        assert budget.clock == shadow_deadline_clock.monotonic
+        assert budget.deadline == shadow_deadline_clock.monotonic()+1
+        return read(kind, key, budget)
+
+    @contextmanager
+    def delayed_snapshot():
+        calls.append('snapshot')
+        shadow_deadline_clock.now += elapsed
+        with snapshot() as reader:
+            yield reader
+
+    monkeypatch.setattr(service.store, 'read', checked_read)
+    monkeypatch.setattr(db, 'snapshot', delayed_snapshot)
+    try:
+        if elapsed < 1:
+            assert shell.original_sample(row) is None
+        else:
+            with pytest.raises(TimeoutError, match='shadow_budget'):
+                shell.original_sample(row)
+        assert calls == ['snapshot']
+    finally:
+        shell.close()
+
+
 def request(headers=()):
     return SimpleNamespace(headers=Headers(raw=[(k.lower().encode(), v.encode()) for k, v in headers]))
 
