@@ -32,6 +32,8 @@ class Case:
 
 
 _CASES = [
+    Case("together", "qwen/qwen3.8-2.4t-a95b", "Qwen/Qwen3.8-2.4T-A95B",
+         datetime(2026, 11, 4, tzinfo=UTC), "qwen/qwen3.7-max"),
     Case("deepinfra", "stepfun-ai/step-5-preview", "stepfun-ai/Step-5-Preview",
          datetime(2026, 11, 4, tzinfo=UTC), "z-ai/glm-5.3-flash"),
     Case("deepinfra", "meta-llama/llama-3.1-70b-instruct", "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
