@@ -43,8 +43,12 @@ def source_filter():
 def project(entry):
     """Discard the entire operational payload after selecting fixed metadata."""
     payload = entry.get('jsonPayload', {})
-    message = next((payload[f] for f in MESSAGE_FIELDS if f in payload), '')
-    match = re.search(r'\benclave\.request_(start|end) ', message) if isinstance(message, str) else None
+    message, match = '', None
+    for field in MESSAGE_FIELDS:
+        value = payload.get(field)
+        if isinstance(value, str) and (match := re.search(r'\benclave\.request_(start|end) ', value)):
+            message = value
+            break
     if not match or len(message) > 8192:
         return None
     try:
@@ -131,7 +135,11 @@ def collect(state, io, now, end):
     if previous > end:
         raise ValueError('Gateway audit watermark is ahead of the export target')
     end = min(end, previous + RECOVERY_STEP)
-    start = previous if end <= now - SETTLED else previous - OVERLAP
+    settled = now - SETTLED
+    start = previous if end <= settled else previous - OVERLAP
+    # Keep what a later window re-reads. Only a window ending within OVERLAP of
+    # this one reaches back before it, and a later run's clock only settles more.
+    horizon = end if end + OVERLAP <= settled else end - OVERLAP
     if start < now - dt.timedelta(days=SOURCE_RETENTION_DAYS - 1):
         raise ValueError('Gateway audit backlog exceeds source retention; explicit recovery required')
     incoming = io.gateway_audits(start, end)
@@ -140,7 +148,7 @@ def collect(state, io, now, end):
     cutoff = end - dt.timedelta(days=RETENTION_DAYS)
     recent = state.get('gateway_audits', [])
     completed = {r['attempt_id'] for r in recent if r['stage'] == 'end'
-                 and m.date(r['_time']) < start}
+                 and m.date(r['_time']) < min(start, horizon)}
     rows = {r['event_id']: r for r in recent if m.date(r['_time']) >= cutoff
             and r['attempt_id'] not in completed}
     for row in incoming:
@@ -155,7 +163,7 @@ def collect(state, io, now, end):
         raise ValueError('Gateway audit state bound reached; partition before continuing')
     audits = list(rows.values())
     completed = {r['attempt_id'] for r in audits if r['stage'] == 'end'
-                 and m.date(r['_time']) < end - OVERLAP}
+                 and m.date(r['_time']) < horizon}
     # Return the entire window for projection before compacting its checkpoint.
     # Completed snapshots/milestones survive in Axiom; unmatched starts keep the
     # existing three-day pairing horizon, and late deliveries get the overlap.

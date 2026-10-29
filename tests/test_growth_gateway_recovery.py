@@ -92,6 +92,23 @@ def test_dense_settled_history_fits_the_audit_cap_and_advances():
     assert checkpoint['gateway_watermark'] == (previous+ga.RECOVERY_STEP).isoformat()
 
 
+def test_pair_survives_the_switch_from_settled_to_overlapping_windows():
+    # The first window is settled; the second re-reads ten minutes, including
+    # an end whose start lies before that read. Its pair must still be held.
+    start = projected('start', NOW-dt.timedelta(minutes=71))
+    end = projected('end', NOW-dt.timedelta(minutes=69))
+    checkpoint = {'gateway_watermark': (NOW-dt.timedelta(minutes=65)).isoformat(),
+                  'gateway_audits': [start, end]}
+    io = GatewayIO([start, end])
+    attempts, status = collect_gateway(checkpoint, io, NOW, NOW-dt.timedelta(minutes=55),
+                                      [journey(NOW-dt.timedelta(hours=2))], [], None)
+    assert status == 'current'
+    assert io.gateway_windows == [
+        (NOW-dt.timedelta(minutes=65), NOW-dt.timedelta(minutes=60)),
+        (NOW-dt.timedelta(minutes=70), NOW-dt.timedelta(minutes=55))]
+    assert attempts and all(a['paired'] for a in attempts)
+
+
 def test_retention_expired_history_is_not_silently_skipped():
     previous = NOW-dt.timedelta(days=90)
     checkpoint = {'gateway_watermark': previous.isoformat()}

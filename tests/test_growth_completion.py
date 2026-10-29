@@ -47,6 +47,14 @@ def test_gateway_projects_both_launcher_message_fields(field):
     assert row is not None and row['http_status'] == 200
 
 
+@pytest.mark.parametrize('other', ['', None, 'unrelated launcher line'])
+def test_gateway_projects_the_field_that_holds_the_audit(other):
+    entry = audit('end')
+    entry['jsonPayload']['message'] = other
+    row = ga.project(entry)
+    assert row is not None and row['http_status'] == 200
+
+
 def test_missing_start_never_synthesized_from_elapsed_time():
     row = ga.snapshots([ga.project(audit('end', status=403))], [], NOW)[0]
     assert row['started_at'] is None and not row['paired']

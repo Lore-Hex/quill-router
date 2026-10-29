@@ -101,6 +101,13 @@ or `jsonPayload.MESSAGE`: Confidential Space launcher images wrote `MESSAGE`
 until VMs picked up a newer image on 2026-10-06. A changed source filter needs
 the operator `source-filter` step before the deploy, as above.
 
+Sinks do not route retroactively. Audits written as `message` from 2026-10-06
+(VM by VM, starting in us-central1-b) until the sink update on 2026-10-29 never
+reached `tr-growth-source`, so gateway attempts for that span are a recorded
+coverage gap: replay walks through it and finds nothing, and `current` after it
+does not mean those attempts were observed. Before calling any future recovery
+complete, confirm the bucket holds audits for the replayed span.
+
 Buffered evidence is projected before compaction. Completed pairs are retained
 through the overlap, unmatched records keep the existing three-day horizon, and
 first-attempt milestones survive in the compact checkpoint. Expiry follows the
