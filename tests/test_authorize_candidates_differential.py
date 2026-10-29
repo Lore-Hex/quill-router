@@ -288,6 +288,11 @@ def _run(module: types.ModuleType, case: dict[str, Any], backend: str,
             old_available = module.provider_model_available_from_gateway_region
 
             def reference_available(provider: str, model: str, region: str) -> bool:
+                if provider == "maple":
+                    return model == "dealignai/deepseek-v4.1-flash-1017-uncensored" and body.region in {
+                        "us-central1", "us-east4", "us-west1", "europe-west4",
+                        "aws-eu-west-1", "aws-eu-west-3", "azure-uaenorth", "azure-australiaeast",
+                    }
                 # Independent release contract, not the production allowlist:
                 # these native adapters are deployed and credentialed on GCP only.
                 if (provider, model) in {

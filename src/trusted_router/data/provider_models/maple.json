@@ -1,0 +1,34 @@
+{
+  "provider": "maple",
+  "models": [
+    {
+      "display_name": "DeepSeek V4.1 Flash Uncensored",
+      "title": "deepseek-v4-1-flash-1017-uncensored",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "dealignai/deepseek-v4.1-flash-1017-uncensored",
+      "upstream_id": "deepseek-v4-1-flash-1017-uncensored",
+      "context_length": 1048576,
+      "supports_tools": false,
+      "supports_reasoning": false,
+      "routable": true,
+      "input_token_price_per_m": 650000,
+      "output_token_price_per_m": 1450000,
+      "cached_input_token_price_per_m": 130000
+    }
+  ],
+  "source": "https://maple.ai/docs/proxy/models",
+  "pricing_source": "https://maple.ai/pricing",
+  "generated_at": "2026-10-29T05:58:23Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 1
+}

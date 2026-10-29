@@ -343,7 +343,7 @@ def resolve_candidates(
             # missing metadata must not inherit the control plane's region.
             # Preserve legacy region fallback for already-deployed providers.
             request.body_region or (
-                "" if candidate_endpoint.provider == "amazon-bedrock"
+                "" if candidate_endpoint.provider in {"amazon-bedrock", "maple"}
                 or (candidate_endpoint.provider, candidate_endpoint.model_id)
                 in EXPLICIT_GATEWAY_REGIONS_BY_PROVIDER_MODEL else region
             ),

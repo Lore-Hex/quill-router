@@ -39,6 +39,10 @@ def test_only_exact_managed_runtime_profiles_can_be_zdr(model, profile, variant)
 
 @pytest.mark.parametrize("region", ["us-central1", "us-east4", "europe-west4", "us-west1", "aws-eu-west-1", "azure-uaenorth", ""])
 def test_unqualified_gateway_never_gets_runtime_route(monkeypatch, region):
+    from trusted_router import provider_contracts, routing_snapshot
+
+    monkeypatch.setattr(provider_contracts, "BEDROCK_RUNTIME_GATEWAY_REGIONS", frozenset())
+    monkeypatch.setattr(routing_snapshot, "BEDROCK_RUNTIME_GATEWAY_REGIONS", frozenset())
     model = "anthropic/claude-haiku-5.5"
     endpoint = replace(next(iter(MODEL_ENDPOINTS.values())), provider="amazon-bedrock",
                        model_id=model, upstream_id=BEDROCK_RUNTIME_PROFILES[model], usage_type="Credits")
@@ -49,3 +53,23 @@ def test_unqualified_gateway_never_gets_runtime_route(monkeypatch, region):
     endpoints = {endpoint.id: endpoint}
     apply_gateway_admission_holds({}, endpoints)
     assert not endpoints
+
+
+@pytest.mark.parametrize("region", ["aws-eu-west-1", "aws-eu-west-3", "azure-uaenorth", "azure-australiaeast"])
+def test_qualified_runtime_does_not_expand_legacy_mantle_regions(monkeypatch, region):
+    from trusted_router import provider_contracts, routing_snapshot
+
+    qualified = frozenset({region})
+    monkeypatch.setattr(provider_contracts, "BEDROCK_RUNTIME_GATEWAY_REGIONS", qualified)
+    monkeypatch.setattr(routing_snapshot, "BEDROCK_RUNTIME_GATEWAY_REGIONS", qualified)
+    model = "anthropic/claude-haiku-5.5"
+    endpoint = replace(next(iter(MODEL_ENDPOINTS.values())), provider="amazon-bedrock",
+                       model_id=model, upstream_id=BEDROCK_RUNTIME_PROFILES[model], usage_type="Credits")
+    assert provider_model_available_from_gateway_region("amazon-bedrock", model, region)
+    assert not provider_model_available_from_gateway_region("amazon-bedrock", "qwen/qwen3-32b", region)
+    snapshot = _gateway_regions(endpoint)
+    assert snapshot.only == (region,) and snapshot.requires_explicit_origin
+    monkeypatch.setenv("TR_SERVING_REGION", region)
+    endpoints = {endpoint.id: endpoint}
+    apply_gateway_admission_holds({}, endpoints)
+    assert endpoints == {endpoint.id: endpoint}

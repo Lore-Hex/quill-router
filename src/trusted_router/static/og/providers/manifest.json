@@ -46,10 +46,10 @@
   },
   "amazon-bedrock": {
     "card_version": 2,
-    "model_count": 34,
+    "model_count": 39,
     "name": "Amazon Bedrock",
     "privacy": "Policy documented",
-    "route_count": 34,
+    "route_count": 39,
     "route_mode": "Prepaid",
     "slug": "amazon-bedrock"
   },
@@ -511,6 +511,15 @@
     "route_count": 6,
     "route_mode": "Prepaid",
     "slug": "mancer"
+  },
+  "maple": {
+    "card_version": 2,
+    "model_count": 1,
+    "name": "Maple",
+    "privacy": "Confidential + ZDR",
+    "route_count": 1,
+    "route_mode": "Prepaid",
+    "slug": "maple"
   },
   "meta": {
     "card_version": 2,

@@ -1,15 +1,25 @@
-# Maple encrypted-inference pilot
+# Maple confidential inference
 
-Status (2026-10-28): **internal onboarding only; no customer route is enabled**.
-Provider slug `maple`, legal name Maple Privacy Labs Inc. Do not add Maple to
-`OPENAI_COMPATIBLE_PROVIDERS` or the gateway Credits allowlist: the backend is
-not a bearer-only OpenAI HTTP endpoint.
+The managed route uses the measured Transport V2 adapter with fixed front-enclave
+and dedicated-worker policy. Production activation requires qualification in
+every admitted GCP, AWS and Azure gateway region; preparing a catalog or secret
+does not satisfy that requirement. Release evidence and regional completion
+checks are tracked in [gateway PR #624](https://github.com/Lore-Hex/quill-cloud-proxy/pull/624)
+and [activation PR #2162](https://github.com/Lore-Hex/quill-router/pull/2162).
+Provider slug `maple`, legal name Maple Privacy Labs Inc. Maple must never be
+added to `OPENAI_COMPATIBLE_PROVIDERS`: its managed Credits adapter uses
+Transport V2, not bearer-only OpenAI HTTP.
 
 ## Initial model
 
-| Proposed TR ID | Native ID | Input USD/M | Cached input USD/M | Output USD/M |
+| TR ID | Native ID | Input USD/M | Cached input USD/M | Output USD/M |
 | --- | --- | ---: | ---: | ---: |
-| `maple/deepseek-v4-1-flash-1017-uncensored` | `deepseek-v4-1-flash-1017-uncensored` | 0.65 | 0.13 | 1.45 |
+| `dealignai/deepseek-v4.1-flash-1017-uncensored` | `deepseek-v4-1-flash-1017-uncensored` | 0.65 | 0.13 | 1.45 |
+
+The canonical ID names the author of the immutable weights in the reviewed
+i02 deployment, not the inference host. It does not alias stock DeepSeek.
+Only this exact model/native-ID pair under the managed credential qualifies;
+unknown models, alternate native IDs and BYOK cannot inherit its privacy claims.
 
 Prices were checked against <https://maple.ai/pricing> on 2026-10-28.
 The [model documentation](https://maple.ai/docs/proxy/models) advertises a
@@ -25,6 +35,9 @@ not invent a customer credit-rounding fee or USD 0.001 minimum. The pilot offer
 mentioned provider credit rounding, so actual provider-debit reconciliation
 remains unverified. Complimentary credits are not a zero upstream cost. Cached
 input receives the discounted rate only when reported as cached by the provider.
+The manifest stores upstream cost, not retail. TR's existing 5.5% markup yields
+retail USD/M rates of 0.68575 input, 0.13715 cached input and 1.52975 output.
+No additional Maple-specific fixed fee or request minimum is added.
 
 ## Access and terms
 
@@ -36,8 +49,9 @@ JSON/SSE PONG probes passed for the requested uncensored model, with integer
 usage. On October 29 separate key copies were provisioned to GCP Secret Manager
 and AWS Secrets Manager (Dublin primary, Paris replica InSync), with read-back
 verification. Azure bundle `8df3ba4381d74315b2d1c696e63e839d` was sealed/uploaded,
-preserving all 83 prior entries and adding Maple. No serving container has
-switched to this bundle; the gateway and catalog are not deployed yet.
+preserving all 83 prior entries and adding Maple. Azure releases must pin that
+reviewed bundle (or a separately reviewed superset), attest the generated policy,
+and publish the signed measurements before admitting traffic.
 
 The dedicated account dashboard confirms Pro through November 28, 2026, with
 no purchased extra credits. It does not show per-request debits or the remaining
@@ -50,7 +64,8 @@ pilot confirmation is recorded above; do not start or renew a paid subscription.
 The [privacy policy](https://maple.ai/privacy) distinguishes encrypted saved
 conversations from API operational usage data. It is not, by itself, evidence
 that this specific API route meets TR's strict ZDR or confidential requirements.
-Keep all privacy badges off until the applicable policy and serving path pass review.
+The candidate's scoped privacy metadata must not be deployed before the
+reviewed serving path is qualified in every admitted gateway region.
 
 ## Encrypted path
 
@@ -64,22 +79,20 @@ Keep all privacy badges off until the applicable policy and serving path pass re
 
 The companion gateway repository's `enclave-go/maple-transport` uses the pinned SDK for
 qualification, not a new home-grown cryptographic implementation. Its fixed
-PCR0 is a *candidate* from the pinned source's production history, not proof
-that the live image reproduces that source. It does not fetch a mutable remote
-allowlist. A successful handshake authenticates the front enclave and binds
-session keys; it does not independently prove GPU/model identity or source
-provenance. Reproduce the front enclave and review its enforced downstream i02
-policy before promotion. The SDK's default remote-history auto-approval must
-not be used in the production TR connector.
+PCR0 was independently reproduced as recorded below; it does not fetch a mutable
+remote allowlist. The handshake authenticates the front enclave and binds session
+keys. GPU/model identity additionally depends on the reviewed, enforced downstream
+i02 policy, not just a successful front-enclave handshake. The SDK's default
+remote-history auto-approval is not used in the production TR connector.
 
 Maple's [published measurement approval](https://github.com/MaplePrivacyLabs/Maple/commit/942efea0bfcbb7523d320186404dcb4cd8f27c0a)
 identifies backend source `7957ce78ad8eee7a173a9d877ff6e320876894c8` and
 [release run 40226283053](https://github.com/MaplePrivacyLabs/Maple/actions/runs/40226283053)
-for the candidate front measurement. This vendor record narrows the reproduction
-target; it does not replace independent build verification. The SDK qualification
-PR removes the affected dependency version through a dependency-only patch;
-its required security scan passes without exclusions. Full cloud-image and
-independent-source checks still gate confidential activation.
+for the pinned front measurement. This vendor record identified the reproduction
+target; it did not replace independent build verification. The SDK uses a
+dependency-only patch to remove an affected dependency version; its required
+security scan passes without exclusions. Cloud-image and independent-source
+checks remain mandatory for confidential activation and subsequent updates.
 
 Independent front-image reproduction completed on October 29 using the exact
 source and pinned Determinate Nix with sandbox fallback disabled. The entire

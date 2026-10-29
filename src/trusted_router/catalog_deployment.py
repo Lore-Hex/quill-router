@@ -52,15 +52,21 @@ def apply_gateway_admission_holds(
     unavailable_routes = unavailable_gateway_routes()
     # Bedrock requires QCP #535 (including its AWS vsock tunnel and Azure
     # sealed-bundle entry). Automatic CP catch-up cannot upgrade those gateways.
-    unavailable_providers = frozenset() if _gateway_cloud_upgraded() else frozenset({"amazon-bedrock"})
+    legacy_bedrock_unavailable = not _gateway_cloud_upgraded()
+    region = os.environ.get("TR_SERVING_REGION") or os.environ.get("TR_PRIMARY_REGION", "")
+    if not region and os.environ.get("TR_ENVIRONMENT", "local").lower() in {"local", "test"}:
+        # Match the local Settings default for previews/social-card generation.
+        # Production with missing or unknown region evidence still fails closed.
+        region = "us-central1"
     affected_models = {model_id for model_id, _ in unavailable_routes}
-    region = os.environ.get("TR_SERVING_REGION") or os.environ.get("TR_PRIMARY_REGION") or ""
     for identity, endpoint in tuple(endpoints.items()):
+        bedrock_runtime = endpoint.provider == "amazon-bedrock" and endpoint.model_id in BEDROCK_RUNTIME_PROFILES
         runtime_unavailable = (
-            endpoint.provider == "amazon-bedrock" and endpoint.model_id in BEDROCK_RUNTIME_PROFILES
+            (endpoint.provider == "maple" or bedrock_runtime)
             and not provider_model_available_from_gateway_region(endpoint.provider, endpoint.model_id, region)
         )
-        if runtime_unavailable or endpoint.provider in unavailable_providers or endpoint.model_id in unavailable_models or (
+        mantle_unavailable = endpoint.provider == "amazon-bedrock" and not bedrock_runtime and legacy_bedrock_unavailable
+        if runtime_unavailable or mantle_unavailable or endpoint.model_id in unavailable_models or (
             endpoint.model_id, endpoint.provider
         ) in unavailable_routes:
             affected_models.add(endpoint.model_id)

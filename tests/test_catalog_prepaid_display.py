@@ -27,6 +27,7 @@ from trusted_router.catalog_ingest import (
 )
 from trusted_router.dashboard import _model_detail_view
 from trusted_router.pricing import _customer_price
+from trusted_router.provider_contracts import BEDROCK_RUNTIME_PROFILES
 from trusted_router.provider_lifecycle import provider_model_retired
 
 
@@ -242,7 +243,8 @@ def test_gmi_only_credits_serves_allowlisted_models() -> None:
 
 @pytest.mark.parametrize("reseller", ["gmi", "lightning", "cloudflare-workers-ai"])
 def test_anthropic_models_credits_use_approved_hosts_only(reseller: str) -> None:
-    # Anthropic-direct and verified Vertex routes are approved for Credits;
+    # Anthropic-direct, verified Vertex and exact Bedrock Runtime profiles
+    # are approved for Credits;
     # unverified resellers remain blocked. BYOK survives unless the provider
     # has an all-usage hold, as Lightning and Cloudflare passthroughs do.
     built = catalog_vehicles.registry_endpoints()
@@ -251,7 +253,13 @@ def test_anthropic_models_credits_use_approved_hosts_only(reseller: str) -> None
         for e in built.values()
         if e.model_id.startswith("anthropic/") and e.usage_type == "Credits"
     }
-    assert credits_providers <= {"anthropic", "google-vertex"}
+    assert credits_providers <= {"anthropic", "google-vertex", "amazon-bedrock"}
+    bedrock = {
+        e.model_id: e.upstream_id for e in built.values()
+        if e.model_id.startswith("anthropic/")
+        and e.provider == "amazon-bedrock" and e.usage_type == "Credits"
+    }
+    assert bedrock == BEDROCK_RUNTIME_PROFILES
     assert {
         e.model_id for e in built.values()
         if e.model_id.startswith("anthropic/")

@@ -98,7 +98,8 @@
       ],
       "routable": false,
       "routable_reason": "price-unavailable",
-      "unresolved_since": "2026-10-19"
+      "unresolved_since": "2026-10-19",
+      "missing_since": "2026-10-29"
     },
     {
       "display_name": "claude-opus-5",
@@ -148,10 +149,11 @@
       ],
       "routable": false,
       "routable_reason": "price-unavailable",
-      "unresolved_since": "2026-10-19"
+      "unresolved_since": "2026-10-19",
+      "missing_since": "2026-10-29"
     },
     {
-      "display_name": "claude-sonnet-5",
+      "display_name": "Claude Sonnet 5",
       "title": "anthropic.claude-sonnet-5",
       "model_type": "chat",
       "input_modalities": [
@@ -165,15 +167,16 @@
       ],
       "status": 1,
       "id": "anthropic/claude-sonnet-5",
-      "upstream_id": "anthropic.claude-sonnet-5",
-      "context_length": 4096,
-      "max_output_tokens": 1024,
+      "upstream_id": "us.anthropic.claude-sonnet-5",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
       "supported_features": [
         "streaming"
       ],
-      "routable": false,
-      "routable_reason": "price-unavailable",
-      "unresolved_since": "2026-10-19"
+      "routable": true,
+      "input_token_price_per_m": 2200000,
+      "output_token_price_per_m": 11000000,
+      "cached_input_token_price_per_m": 220000
     },
     {
       "display_name": "v3.1",
@@ -1502,11 +1505,154 @@
       "routable": false,
       "routable_reason": "price-unavailable",
       "unresolved_since": "2026-10-19"
+    },
+    {
+      "display_name": "Claude Haiku 5.5",
+      "title": "us.anthropic.claude-haiku-5-5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-haiku-5.5",
+      "upstream_id": "us.anthropic.claude-haiku-5-5",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "supported_features": [
+        "streaming"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 110000,
+      "output_token_price_per_m": 550000,
+      "cached_input_token_price_per_m": 11000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 100000,
+          "input_token_price_per_m": 110000,
+          "output_token_price_per_m": 550000,
+          "cached_input_token_price_per_m": 11000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 550000,
+          "output_token_price_per_m": 2750000,
+          "cached_input_token_price_per_m": 55000
+        }
+      ]
+    },
+    {
+      "display_name": "Claude Opus 4.8",
+      "title": "us.anthropic.claude-opus-4-8",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-4.8",
+      "upstream_id": "us.anthropic.claude-opus-4-8",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "supported_features": [
+        "streaming"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 5500000,
+      "output_token_price_per_m": 27500000,
+      "cached_input_token_price_per_m": 550000
+    },
+    {
+      "display_name": "Claude Opus 5.5",
+      "title": "us.anthropic.claude-opus-5-5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-5.5",
+      "upstream_id": "us.anthropic.claude-opus-5-5",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "supported_features": [
+        "streaming"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 4400000,
+      "output_token_price_per_m": 22000000,
+      "cached_input_token_price_per_m": 220000
+    },
+    {
+      "display_name": "Claude Sonnet 5.5",
+      "title": "us.anthropic.claude-sonnet-5-5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-sonnet-5.5",
+      "upstream_id": "us.anthropic.claude-sonnet-5-5",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "supported_features": [
+        "streaming"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 2200000,
+      "output_token_price_per_m": 11000000,
+      "cached_input_token_price_per_m": 110000
+    },
+    {
+      "display_name": "gpt-6.1-terra",
+      "title": "openai.gpt-6.1-terra",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-6.1-terra",
+      "upstream_id": "openai.gpt-6.1-terra",
+      "context_length": 4096,
+      "max_output_tokens": 1024,
+      "supported_features": [
+        "streaming"
+      ],
+      "routable": false,
+      "routable_reason": "price-unavailable",
+      "unresolved_since": "2026-10-29"
     }
   ],
   "source": "https://bedrock-mantle.us-east-1.api.aws/v1/models",
   "pricing_source": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonBedrock/current/us-east-1/index.json",
-  "generated_at": "2026-10-26T06:59:20Z",
+  "generated_at": "2026-10-29T05:58:23Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 60
+  "model_count": 65
 }

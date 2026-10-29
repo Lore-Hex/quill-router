@@ -1,42 +1,45 @@
+from dataclasses import replace
+
 import pytest
 
-from trusted_router.catalog import (
-    GATEWAY_PREPAID_PROVIDER_SLUGS,
-    MODEL_ENDPOINTS,
-    MODELS,
-    PROVIDERS,
-    provider_is_routable,
-    provider_to_openrouter_shape,
-    providers_for_display,
-)
+from trusted_router.catalog import GATEWAY_PREPAID_PROVIDER_SLUGS, MODEL_ENDPOINTS, PROVIDERS
+from trusted_router.catalog_data import PRIVACY_TIER_CONFIDENTIAL, PRIVACY_TIER_ZERO_RETENTION
+from trusted_router.catalog_privacy import endpoint_meets_privacy_requirement
+from trusted_router.provider_contracts import MAPLE_MODEL_ID, MAPLE_NATIVE_ID
 from trusted_router.providers import OPENAI_COMPATIBLE_PROVIDERS
 
 
-def test_maple_pilot_cannot_receive_customer_traffic_or_claim_privacy() -> None:
+def test_maple_uses_only_the_measured_managed_adapter():
     provider = PROVIDERS["maple"]
-    assert provider.internal_only
-    assert not provider.supports_prepaid
-    assert not provider.supports_byok
-    assert not provider.attested_gateway
-    assert not provider.provider_zero_data_retention
-    assert not provider.provider_confidential_compute
-    assert not provider.provider_e2ee
-    assert not provider_is_routable(provider)
-    assert provider_to_openrouter_shape(provider)["routing_status"] == "blocked"
-    assert provider not in providers_for_display()
-    assert "maple" not in GATEWAY_PREPAID_PROVIDER_SLUGS
+    assert provider.supports_prepaid and not provider.supports_byok
+    assert provider.attested_gateway and provider.provider_confidential_compute and provider.provider_e2ee
+    assert provider.prepaid_zero_data_retention and not provider.provider_zero_data_retention
+    assert "maple" in GATEWAY_PREPAID_PROVIDER_SLUGS
     assert "maple" not in OPENAI_COMPATIBLE_PROVIDERS
-    assert not any(endpoint.provider == "maple" for endpoint in MODEL_ENDPOINTS.values())
-    assert not any(model.provider == "maple" for model in MODELS.values())
 
 
-@pytest.mark.parametrize("path", ["/v1/providers", "/providers", "/models", "/sitemap.xml"])
-def test_maple_pilot_is_not_a_public_listing(client, path: str) -> None:
-    response = client.get(path)
+@pytest.mark.parametrize("variant", ["approved", "stock", "other-model", "wrong-native", "missing-native", "byok"])
+def test_only_exact_managed_maple_route_qualifies_for_confidential(variant):
+    endpoint = replace(next(iter(MODEL_ENDPOINTS.values())), provider="maple",
+                       model_id=MAPLE_MODEL_ID, upstream_id=MAPLE_NATIVE_ID, usage_type="Credits")
+    if variant == "stock":
+        endpoint = replace(endpoint, model_id="deepseek/deepseek-v4.1-flash",
+                           upstream_id="deepseek-v4-1-flash")
+    elif variant == "other-model":
+        endpoint = replace(endpoint, model_id="maple/future-model")
+    elif variant == "wrong-native":
+        endpoint = replace(endpoint, upstream_id="deepseek-v4-1-flash")
+    elif variant == "missing-native":
+        endpoint = replace(endpoint, upstream_id=None)
+    elif variant == "byok":
+        endpoint = replace(endpoint, usage_type="BYOK")
+    for requirement in (PRIVACY_TIER_CONFIDENTIAL, PRIVACY_TIER_ZERO_RETENTION):
+        assert endpoint_meets_privacy_requirement(endpoint, requirement) is (variant == "approved")
+
+
+def test_maple_provider_page_explains_exact_scope(client):
+    response = client.get("/providers/maple")
     assert response.status_code == 200
-    assert "maple" not in response.text.lower()
-
-
-@pytest.mark.parametrize("path", ["/providers/maple", "/providers/maple/performance"])
-def test_maple_pilot_cannot_be_published_by_guessing_its_slug(client, path: str) -> None:
-    assert client.get(path).status_code == 404
+    for text in ("Maple", "Transport V2", "Unexpected measurements fail closed",
+                 "other models or BYOK", "https://maple.ai/pricing"):
+        assert text in response.text

@@ -128,14 +128,15 @@ def test_audio_models_cannot_change_existing_transcription_contract(native):
     ("us-central1", True), ("europe-west4", True),
     ("aws-eu-west-3", False), ("azure-australiaeast", False), ("unknown", False),
 ])
-def test_catalog_waits_for_each_cloud_gateway_upgrade(monkeypatch, region, allowed):
+def test_legacy_mantle_catalog_waits_for_each_cloud_gateway_upgrade(monkeypatch, region, allowed):
     from trusted_router.catalog import MODEL_ENDPOINTS, MODELS
     from trusted_router.catalog_deployment import apply_gateway_admission_holds
 
     monkeypatch.setenv("TR_ENVIRONMENT", "production")
     monkeypatch.setenv("TR_SERVING_REGION", region)
     models, endpoints = dict(MODELS), dict(MODEL_ENDPOINTS)
-    baseline = {key for key, ep in endpoints.items() if ep.provider == "amazon-bedrock"}
+    baseline = {key for key, ep in endpoints.items()
+                if ep.provider == "amazon-bedrock" and ep.model_id not in bedrock.runtime.PROFILES}
     assert baseline
     other_qwen = {key for key, ep in endpoints.items()
                   if ep.model_id == "qwen/qwen3-32b" and ep.provider != "amazon-bedrock"}
@@ -143,7 +144,11 @@ def test_catalog_waits_for_each_cloud_gateway_upgrade(monkeypatch, region, allow
     assert bool(baseline & endpoints.keys()) is allowed
     assert other_qwen <= endpoints.keys()
     if not allowed:
-        assert all(ep.provider != "amazon-bedrock" for ep in endpoints.values())
+        assert all(ep.provider != "amazon-bedrock" or ep.model_id in bedrock.runtime.PROFILES
+                   for ep in endpoints.values())
+    runtime = {ep.model_id for ep in endpoints.values()
+               if ep.provider == "amazon-bedrock" and ep.model_id in bedrock.runtime.PROFILES}
+    assert runtime == (set(bedrock.runtime.PROFILES) if region != "unknown" else set())
 
 
 @pytest.mark.parametrize("region,allowed", [
@@ -206,7 +211,10 @@ def test_failed_fetch_resets_discovery(monkeypatch):
         bedrock.write_provider_manifest(None)
 
 
-def test_canary_requires_usage_and_failed_route_stays_held(monkeypatch, tmp_path):
+@pytest.mark.parametrize("runtime_qualified", [False, True])
+def test_canary_requires_usage_and_failed_route_stays_held(monkeypatch, tmp_path, runtime_qualified):
+    monkeypatch.setattr(bedrock, "BEDROCK_RUNTIME_GATEWAY_REGIONS",
+                        frozenset({"us-central1"}) if runtime_qualified else frozenset())
     monkeypatch.setenv("BEDROCK_API_KEY", "test-token")
     monkeypatch.setattr(bedrock, "MANIFEST_PATH", tmp_path / "bedrock.json")
     monkeypatch.setattr(bedrock, "fetch_json", lambda url, **kw: catalog("openai.gpt-oss-20b") if url == bedrock.URL else tariff())
@@ -240,8 +248,11 @@ def test_canary_requires_usage_and_failed_route_stays_held(monkeypatch, tmp_path
     assert set(runtime_probes) == set(bedrock.runtime.PROFILES)
     for model, profile in bedrock.runtime.PROFILES.items():
         assert rows[model]["upstream_id"] == profile
-        assert rows[model]["routable"] is False
-        assert rows[model]["routable_reason"] == "runtime-enclave-rollout-pending"
+        assert rows[model]["routable"] is runtime_qualified
+        if runtime_qualified:
+            assert "routable_reason" not in rows[model]
+        else:
+            assert rows[model]["routable_reason"] == "runtime-enclave-rollout-pending"
 
 
 def test_registration_and_conservative_privacy():

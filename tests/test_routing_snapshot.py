@@ -341,7 +341,7 @@ def test_gateway_regions_agree_with_the_provider_contract(live, settings) -> Non
         endpoint = raw[entry.id]
         rule = entry.gateway_regions
         assert rule.requires_explicit_origin == (
-            endpoint.provider == "amazon-bedrock"
+            endpoint.provider in {"amazon-bedrock", "maple"}
             or (endpoint.provider, endpoint.model_id) in {
                 ("cloudflare-workers-ai", "cloudflare/clairic"),
                 ("regolo", "cloudflare/clef-flash"),
@@ -376,7 +376,7 @@ def test_the_request_region_is_checked_even_when_it_is_not_configured(live) -> N
     assert "body_region=body.region," in source
     pipeline = inspect.getsource(authorize_candidates.resolve_candidates)
     assert " ".join('''request.body_region or (
-        "" if candidate_endpoint.provider == "amazon-bedrock"
+        "" if candidate_endpoint.provider in {"amazon-bedrock", "maple"}
         or (candidate_endpoint.provider, candidate_endpoint.model_id)
         in EXPLICIT_GATEWAY_REGIONS_BY_PROVIDER_MODEL else region
     )'''.split()) in " ".join(pipeline.split())
@@ -401,7 +401,7 @@ def test_the_request_region_is_checked_even_when_it_is_not_configured(live) -> N
         rule = entry.gateway_regions
         for body_region in (None, "", "europe-west4", "us-east4", "unknown-region"):
             checked = _gateway_region(settings, rule, body_region)
-            explicit_origin = endpoint.provider == "amazon-bedrock" or (
+            explicit_origin = endpoint.provider in {"amazon-bedrock", "maple"} or (
                 endpoint.provider, endpoint.model_id
             ) in {
                 ("cloudflare-workers-ai", "cloudflare/clairic"),

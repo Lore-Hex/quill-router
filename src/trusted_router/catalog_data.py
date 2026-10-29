@@ -2471,18 +2471,21 @@ PROVIDERS: dict[str, Provider] = {
     "maple": Provider(
         slug="maple",
         name="Maple",
-        internal_only=True,
-        supports_prepaid=False,
+        supports_prepaid=True,
         supports_byok=False,
-        attested_gateway=False,
-        provider_zero_data_retention=False,
-        provider_confidential_compute=False,
-        provider_e2ee=False,
+        stores_content=False,
+        prepaid_zero_data_retention=True,
+        provider_confidential_compute=True,
+        provider_e2ee=True,
         provider_policy=(
-            "Internal encrypted-API pilot, not available for customer routing. "
-            "Pending account entitlement, measured Transport V2 integration, "
-            "live inference and billing qualification, and production resale terms. "
-            "Maple's encryption claims are not yet verified end to end by TrustedRouter."
+            "The managed uncensored DeepSeek route uses Maple Transport V2 from "
+            "inside TrustedRouter's measured enclave. Each request verifies a "
+            "pinned Nitro image, which enforces the reviewed dedicated GPU worker "
+            "and immutable model weights. Unexpected measurements fail closed; "
+            "there is no plaintext fallback. API prompt/response zero retention "
+            "was confirmed for TrustedRouter's account on October 28, 2026. "
+            "Account and billing metadata are separate from prompt/response content. "
+            "These guarantees do not cover Maple saved chats, other models or BYOK."
         ),
         provider_policy_url="https://maple.ai/privacy",
     ),
@@ -2490,6 +2493,7 @@ PROVIDERS: dict[str, Provider] = {
 
 GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
     {
+        "maple",
         "fortanix",
         "byteplus",
         "abliterate",
