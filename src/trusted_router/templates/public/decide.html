@@ -111,15 +111,15 @@
         <table>
           <thead><tr><th>Model</th><th>Pick it for</th><th>Median model latency</th><th>Eval accuracy</th><th>About one decision costs</th></tr></thead>
           <tbody>
-            <tr><td><span class="mono">typesafe-ai/<wbr>jev</span></td><td>A purpose-built decision model from TypeSafe AI, called at TypeSafe's own API.</td><td>about 250 ms</td><td>29 / 29</td><td>$0.00002</td></tr>
-            <tr><td><span class="mono">trustedrouter/<wbr>trev-1.0</span></td><td>The default. An open-weight 120B reasoning model on the fastest hardware we could measure, with automatic failover across four hosts.</td><td>about 300 ms</td><td>29 / 29</td><td>$0.00034</td></tr>
-            <tr><td><span class="mono">trustedrouter/<wbr>mev-1.0</span></td><td>Speed at a fifth of the price. Mercury 3, a diffusion model, answering without deliberating.</td><td>about 370 ms</td><td>29 / 29</td><td>$0.00007</td></tr>
-            <tr><td><span class="mono">trustedrouter/<wbr>lev-1.0</span></td><td>The steadiest tail. Llama 3.3 70B does not deliberate, so its slowest answer in the eval took 565 ms. Fails over across three hosts.</td><td>about 390 ms</td><td>29 / 29</td><td>$0.00036</td></tr>
-            <tr><td><span class="mono">trustedrouter/<wbr>zev-1.0</span></td><td>A larger fast model. GLM 5.2 Fast, with failover to a second host. About four times the price of the others here.</td><td>about 0.5 s (0.35 to 0.7 s)</td><td>29 / 29</td><td>$0.0014</td></tr>
-            <tr><td><span class="mono">trustedrouter/<wbr>gev-1.0</span></td><td>A Google model. Small, from the Gemini family, with the format enforced by the host.</td><td>about 0.8 s</td><td>29 / 29</td><td>$0.00023</td></tr>
-            <tr><td><span class="mono">trustedrouter/<wbr>dev-1.0</span></td><td>Harder judgments on a budget. A DeepSeek flash model: strong judgment, cheap input. Fails over from Wafer to DeepInfra to W&amp;B.</td><td>about 1 s (0.7 to 2.4 s)</td><td>29 / 29</td><td>$0.00013</td></tr>
-            <tr><td><span class="mono">trustedrouter/<wbr>oev-1.0</span></td><td>A cheap all-rounder. An open-weight 20B model that reasons briefly.</td><td>about 1.6 s</td><td>29 / 29</td><td>$0.00004</td></tr>
-            <tr><td><span class="mono">trustedrouter/<wbr>gemmev-1.0</span></td><td>An open Gemma model: Gemma 4 26B with 4B parameters active, answering without deliberating. Fails over across three hosts.</td><td>about 2 s</td><td>29 / 29</td><td>$0.00007</td></tr>
+            <tr><td><span class="mono">typesafe-ai/jev</span></td><td>A purpose-built decision model from TypeSafe AI, called at TypeSafe's own API.</td><td>about 250 ms</td><td>29 / 29</td><td>$0.00002</td></tr>
+            <tr><td><span class="mono">trustedrouter/trev-1.0</span></td><td>The default. An open-weight 120B reasoning model on the fastest hardware we could measure, with automatic failover across four hosts.</td><td>about 300 ms</td><td>29 / 29</td><td>$0.00034</td></tr>
+            <tr><td><span class="mono">trustedrouter/mev-1.0</span></td><td>Speed at a fifth of the price. Mercury 3, a diffusion model, answering without deliberating.</td><td>about 370 ms</td><td>29 / 29</td><td>$0.00007</td></tr>
+            <tr><td><span class="mono">trustedrouter/lev-1.0</span></td><td>The steadiest tail. Llama 3.3 70B does not deliberate, so its slowest answer in the eval took 565 ms. Fails over across three hosts.</td><td>about 390 ms</td><td>29 / 29</td><td>$0.00036</td></tr>
+            <tr><td><span class="mono">trustedrouter/zev-1.0</span></td><td>A larger fast model. GLM 5.2 Fast, with failover to a second host. About four times the price of the others here.</td><td>about 0.5 s (0.35 to 0.7 s)</td><td>29 / 29</td><td>$0.0014</td></tr>
+            <tr><td><span class="mono">trustedrouter/gev-1.0</span></td><td>A Google model. Small, from the Gemini family, with the format enforced by the host.</td><td>about 0.8 s</td><td>29 / 29</td><td>$0.00023</td></tr>
+            <tr><td><span class="mono">trustedrouter/dev-1.0</span></td><td>Harder judgments on a budget. A DeepSeek flash model: strong judgment, cheap input. Fails over from Wafer to DeepInfra to W&amp;B.</td><td>about 1 s (0.7 to 2.4 s)</td><td>29 / 29</td><td>$0.00013</td></tr>
+            <tr><td><span class="mono">trustedrouter/oev-1.0</span></td><td>A cheap all-rounder. An open-weight 20B model that reasons briefly.</td><td>about 1.6 s</td><td>29 / 29</td><td>$0.00004</td></tr>
+            <tr><td><span class="mono">trustedrouter/gemmev-1.0</span></td><td>An open Gemma model: Gemma 4 26B with 4B parameters active, answering without deliberating. Fails over across three hosts.</td><td>about 2 s</td><td>29 / 29</td><td>$0.00007</td></tr>
           </tbody>
         </table>
       </div>

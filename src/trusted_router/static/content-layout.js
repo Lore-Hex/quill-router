@@ -135,6 +135,17 @@
   });
   // Comparison tables: arrows sit above the table so the scroll is seen first.
   document.querySelectorAll(".scroll-table").forEach((wrap) => {
+    // Pinned names like "trustedrouter/trev-1.0" may wrap only after the slash.
+    wrap.querySelectorAll("tbody td:first-child").forEach((cell) => {
+      const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+      const nodes = [];
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) nodes.push(node);
+      nodes.forEach((node) => {
+        const parts = node.textContent.split(/(?<=\/)/);
+        if (parts.length < 2) return;
+        node.replaceWith(...parts.flatMap((part, index) => (index ? [document.createElement("wbr"), part] : [part])));
+      });
+    });
     addScrollControls(wrap, "table", (controls) => {
       controls.classList.add("scroll-table-controls");
       wrap.before(controls);
