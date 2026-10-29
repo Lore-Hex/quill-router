@@ -304,6 +304,142 @@ table.content-reference,
   }
 }
 
+/* Docs tables outside .content-reference keep their own desktop layout
+   and stack into labelled rows on phones. */
+@media (max-width: 900px) {
+  :not(.content-reference) > table.reference-mobile-table {
+    table-layout: auto;
+  }
+
+  :not(.content-reference) > .reference-mobile-table tr {
+    padding-block: var(--content-gap);
+    border-bottom: 1px solid var(--tr-color-line-rule);
+  }
+
+  :not(.content-reference) > .reference-mobile-table :is(th, td) {
+    padding: 0 0 var(--content-stack);
+    border: 0;
+    background: transparent;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    font-size: 16px;
+    line-height: 1.6;
+  }
+
+  :not(.content-reference) > .reference-mobile-table :is(th, td):last-child {
+    padding-bottom: 0;
+  }
+
+  /* The last card needs no rule; the gap separates it from what follows. */
+  :not(.content-reference) > .reference-mobile-table tbody tr:last-child {
+    padding-bottom: 0;
+    border-bottom: 0;
+  }
+
+  :not(.content-reference) > table.reference-mobile-table + *,
+  :is(.model-table-wrap, .leaderboard-table-wrap):has(> .reference-mobile-table) + * {
+    margin-top: var(--content-gap);
+  }
+
+  :not(.content-reference) > .reference-mobile-table .reference-key,
+  :not(.content-reference) > .reference-mobile-table .reference-key code {
+    font-size: 16px;
+    line-height: 1.5;
+    font-weight: var(--tr-font-weight-bold);
+    color: var(--tr-color-text-primary);
+  }
+}
+
+@media (min-width: 901px) {
+  /* Names in the first column never break mid-word; the column grows instead. */
+  :not(.content-reference) > .reference-mobile-table .reference-key,
+  :not(.content-reference) > .reference-mobile-table .reference-key code {
+    white-space: nowrap;
+    overflow-wrap: normal;
+    word-break: normal;
+  }
+}
+
+/* Comparison tables stay tables on phones: they scroll sideways with the
+   first column pinned, arrow buttons above, and a fade on the right edge
+   while more columns are hidden. */
+.scroll-table :is(th, td):first-child {
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.scroll-table + * {
+  margin-top: var(--content-gap);
+}
+
+@media (max-width: 900px) {
+  .scroll-table {
+    --scroll-table-pin: 8rem;
+
+    container-type: inline-size;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    scroll-padding-inline-start: var(--scroll-table-pin);
+  }
+
+  .scroll-table.can-scroll-right {
+    mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+  }
+
+  .scroll-table-controls {
+    margin: 0 0 var(--tr-space-stack-xs);
+  }
+
+  /* The second column fills exactly what the pinned column leaves, so it is
+     readable without swiping; the remaining columns follow off screen. */
+  .scroll-table > table {
+    width: calc(100cqw + var(--scroll-table-rest, 24rem));
+    max-width: none;
+    table-layout: fixed;
+  }
+
+  .scroll-table :is(th, td):nth-child(2) {
+    width: calc(100cqw - var(--scroll-table-pin));
+    padding-right: var(--tr-space-stack-md);
+  }
+
+  .scroll-table :is(th, td) {
+    font-size: 15px;
+    line-height: 1.5;
+  }
+
+  .scroll-table :is(th, td):first-child {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    width: var(--scroll-table-pin);
+    font-size: 12.5px;
+    background: var(--panel);
+    box-shadow: inset -1px 0 0 var(--tr-color-line-rule);
+  }
+
+  /* Swipes settle on a column edge beside the pinned column. */
+  .scroll-table :is(th, td):not(:first-child) {
+    scroll-snap-align: start;
+  }
+
+  .scroll-table th:first-child {
+    background: var(--panel2);
+  }
+}
+
+@media (min-width: 901px) {
+  .scroll-table :is(th, td):first-child,
+  .scroll-table :is(th, td):first-child * {
+    white-space: nowrap;
+  }
+
+  .scroll-table wbr {
+    display: none;
+  }
+}
+
 /* Technical text stays proportional to the surrounding reading size. */
 .content-section code {
   font-family: var(--tr-font-family-mono);
@@ -852,5 +988,125 @@ table.content-reference,
 
   .content-toc-short {
     display: none;
+  }
+}
+
+/* Docs code blocks: Copy button in the header (or on its own line above the
+   code), and a fade on the right edge while code is hidden. */
+.docs-code-frame {
+  display: grid;
+  gap: var(--tr-space-stack-xs);
+  min-width: 0;
+}
+
+.docs-code-copy {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--tr-color-line-rule);
+  border-radius: var(--tr-radius-panel);
+  background: var(--tr-color-surface-panel-inset);
+  color: var(--tr-color-text-primary);
+  cursor: pointer;
+}
+
+.docs-code-copy svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+[data-docs-code] pre,
+[data-docs-code] pre code {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* iPhone Safari enlarges text in blocks that scroll sideways; keep code at
+   the size set here. */
+[data-docs-code] pre {
+  /* stylelint-disable-next-line property-no-vendor-prefix -- iOS Safari only reads the prefixed form. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* The collapse only applies on phones. */
+.docs-code-more {
+  display: none;
+}
+
+.docs-code-copy:focus-visible {
+  outline: 2px solid var(--tr-color-focus);
+  outline-offset: 3px;
+}
+
+.docs-code-frame > .docs-code-copy {
+  justify-self: end;
+}
+
+/* Keep the button closer to its own code than to the block above. */
+.docs-code-frame {
+  margin-top: var(--tr-space-stack-xs);
+}
+
+.docs-code-frame > pre {
+  padding-top: var(--tr-space-stack-xs);
+}
+
+[data-docs-code] pre.can-scroll-right {
+  mask-image: linear-gradient(to right, #000 calc(100% - 56px), transparent);
+}
+
+@media (max-width: 700px) {
+  .docs-code-copy {
+    width: 44px;
+    height: 44px;
+  }
+
+  [data-docs-code] pre,
+  [data-docs-code] pre code {
+    font-size: 11.5px;
+  }
+
+  [data-docs-code] pre.is-collapsed {
+    max-height: calc(10 * 1.5 * 11.5px + var(--tr-space-stack-md));
+    overflow-y: hidden;
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 40px), transparent);
+  }
+
+  [data-docs-code] pre.is-collapsed.can-scroll-right {
+    mask-image:
+      linear-gradient(to bottom, #000 calc(100% - 40px), transparent),
+      linear-gradient(to right, #000 calc(100% - 56px), transparent);
+    mask-composite: intersect;
+  }
+
+  .docs-code-more {
+    display: block;
+    width: 100%;
+    min-height: 44px;
+    border: 0;
+    border-top: 1px solid var(--tr-color-line-rule);
+    background: transparent;
+    color: var(--tr-color-link-base);
+    font-family: var(--tr-font-family-sans);
+    font-size: 14px;
+    font-weight: var(--tr-font-weight-medium);
+    cursor: pointer;
+  }
+
+  .docs-code-more:focus-visible {
+    outline: 2px solid var(--tr-color-focus);
+    outline-offset: -2px;
+  }
+
+  .copy-terminal .code-head:has(.docs-code-copy) {
+    padding-block: 6px;
   }
 }

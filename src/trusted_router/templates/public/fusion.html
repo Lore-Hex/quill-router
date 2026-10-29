@@ -1,4 +1,5 @@
 {% extends "public/_base.html" %}
+{% block body_attributes %}data-docs-code{% endblock %}
 {% block body %}
 
 <section class="marketing-split" aria-label="Synth quickstart">
@@ -155,7 +156,7 @@
   <h2 class="section-center">Parameters</h2>
   <div class="panel">
     <div class="panel-body">
-      <table class="data-table">
+      <table data-reference-table class="data-table">
         <thead><tr><th>Name</th><th>Use</th></tr></thead>
         <tbody>
           <tr><td><code>preset</code></td><td><code>quality</code> or <code>budget</code>. Sets a built-in panel unless <code>analysis_models</code> is supplied. Quality defaults to an open-model panel: MiniMax M3, Kimi latest, GLM latest, Gemma 4 31B, and DeepSeek V4 Pro.</td></tr>

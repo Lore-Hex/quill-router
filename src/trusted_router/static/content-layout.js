@@ -76,20 +76,17 @@
     table.after(accordion);
     table.classList.add("has-reference-accordion");
   });
-  document.querySelectorAll(".content-section pre").forEach((pre) => {
-    const frame = document.createElement("div");
-    frame.className = "content-code-frame";
-    pre.before(frame);
-    frame.append(pre);
+  // Arrow buttons for anything that scrolls sideways; hidden when it fits.
+  const addScrollControls = (scroller, noun, placeControls) => {
     const controls = document.createElement("div");
     controls.className = "content-code-controls";
     controls.hidden = true;
-    frame.append(controls);
+    placeControls(controls);
     const buttons = [-1, 1].map((direction) => {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "content-code-scroll";
-      button.setAttribute("aria-label", `Scroll code ${direction < 0 ? "left" : "right"}`);
+      button.setAttribute("aria-label", `Scroll ${noun} ${direction < 0 ? "left" : "right"}`);
       const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
       svg.setAttribute("viewBox", "0 0 20 20");
       svg.setAttribute("width", "20");
@@ -106,26 +103,53 @@
       svg.append(path);
       button.append(svg);
       button.addEventListener("click", () => {
-        pre.scrollBy({ left: direction * pre.clientWidth * 0.75, behavior: "instant" });
+        scroller.scrollBy({ left: direction * scroller.clientWidth * 0.75, behavior: "instant" });
         update();
       });
       controls.append(button);
       return button;
     });
+    const label = noun.charAt(0).toUpperCase() + noun.slice(1);
     const update = () => {
-      const maxScroll = pre.scrollWidth - pre.clientWidth;
+      const maxScroll = scroller.scrollWidth - scroller.clientWidth;
       const overflow = maxScroll > 1;
       controls.hidden = !overflow;
-      buttons[0].disabled = pre.scrollLeft <= 1;
-      buttons[1].disabled = pre.scrollLeft >= maxScroll - 1;
-      pre.classList.toggle("has-overflow", overflow);
-      pre.tabIndex = overflow ? 0 : -1;
-      pre.setAttribute("aria-label", overflow ? "Code example, scroll horizontally for more" : "Code example");
+      buttons[0].disabled = scroller.scrollLeft <= 1;
+      buttons[1].disabled = scroller.scrollLeft >= maxScroll - 1;
+      scroller.classList.toggle("has-overflow", overflow);
+      scroller.classList.toggle("can-scroll-right", overflow && scroller.scrollLeft < maxScroll - 1);
+      scroller.tabIndex = overflow ? 0 : -1;
+      scroller.setAttribute("aria-label", overflow ? `${label}, scroll horizontally for more` : label);
     };
-    pre.addEventListener("scroll", update, { passive: true });
-    new ResizeObserver(update).observe(pre);
+    scroller.addEventListener("scroll", update, { passive: true });
+    new ResizeObserver(update).observe(scroller);
     document.fonts.ready.then(update);
     update();
+  };
+  document.querySelectorAll(".content-section pre").forEach((pre) => {
+    const frame = document.createElement("div");
+    frame.className = "content-code-frame";
+    pre.before(frame);
+    frame.append(pre);
+    addScrollControls(pre, "code example", (controls) => frame.append(controls));
+  });
+  // Comparison tables: arrows sit above the table so the scroll is seen first.
+  document.querySelectorAll(".scroll-table").forEach((wrap) => {
+    // Pinned names like "trustedrouter/trev-1.0" may wrap only after the slash.
+    wrap.querySelectorAll("tbody td:first-child").forEach((cell) => {
+      const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+      const nodes = [];
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) nodes.push(node);
+      nodes.forEach((node) => {
+        const parts = node.textContent.split(/(?<=\/)/);
+        if (parts.length < 2) return;
+        node.replaceWith(...parts.flatMap((part, index) => (index ? [document.createElement("wbr"), part] : [part])));
+      });
+    });
+    addScrollControls(wrap, "table", (controls) => {
+      controls.classList.add("scroll-table-controls");
+      wrap.before(controls);
+    });
   });
 })();
 
@@ -250,5 +274,88 @@
     document.fonts.ready.then(scheduleCurrent);
     updateCurrent();
     followHash(false);
+  });
+})();
+
+// Docs code blocks: a Copy button, and a fade while code is hidden to the right.
+(() => {
+  "use strict";
+  if (!document.body.hasAttribute("data-docs-code")) return;
+  // Lucide copy and check icons (ISC), the same copy shape as static/copy-icon.svg.
+  const icon = (shapes) => {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("focusable", "false");
+    shapes.forEach(([tag, attrs]) => {
+      const shape = document.createElementNS("http://www.w3.org/2000/svg", tag);
+      Object.entries(attrs).forEach(([name, value]) => shape.setAttribute(name, value));
+      svg.append(shape);
+    });
+    return svg;
+  };
+  const copyIcon = () => icon([
+    ["rect", { width: "14", height: "14", x: "8", y: "8", rx: "2", ry: "2" }],
+    ["path", { d: "M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" }],
+  ]);
+  const checkIcon = () => icon([["path", { d: "M20 6 9 17l-5-5" }]]);
+  const collapseAfter = 10;
+  document.querySelectorAll("pre").forEach((pre) => {
+    if (pre.closest(".content-code-frame")) return;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "docs-code-copy";
+    const show = (icon, label) => {
+      button.replaceChildren(icon());
+      button.setAttribute("aria-label", label);
+      button.title = label;
+    };
+    show(copyIcon, "Copy code");
+    button.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(pre.innerText.trim());
+        show(checkIcon, "Copied");
+      } catch {
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(pre);
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        show(checkIcon, "Code selected");
+      }
+      setTimeout(() => show(copyIcon, "Copy code"), 2000);
+    });
+    const head = pre.closest(".copy-terminal")?.querySelector(":scope > .code-head");
+    if (head) {
+      // The Copy button takes the place of the language label.
+      const label = head.children.length > 1 ? head.lastElementChild : null;
+      if (label) label.replaceWith(button); else head.append(button);
+    } else {
+      const frame = document.createElement("div");
+      frame.className = "docs-code-frame";
+      pre.before(frame);
+      frame.append(button, pre);
+    }
+    const update = () => {
+      pre.classList.toggle("can-scroll-right", pre.scrollWidth - pre.clientWidth - pre.scrollLeft > 1);
+    };
+    pre.addEventListener("scroll", update, { passive: true });
+    new ResizeObserver(update).observe(pre);
+    document.fonts.ready.then(update);
+    update();
+    // Long examples show their first lines on phones; copying still copies all of it.
+    const lines = pre.innerText.trim().split("\n").length;
+    if (lines <= collapseAfter + 2) return;
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "docs-code-more";
+    const setCollapsed = (collapsed) => {
+      pre.classList.toggle("is-collapsed", collapsed);
+      toggle.textContent = collapsed ? `Show all ${lines} lines` : "Show less";
+      toggle.setAttribute("aria-expanded", String(!collapsed));
+    };
+    toggle.addEventListener("click", () => setCollapsed(!pre.classList.contains("is-collapsed")));
+    pre.after(toggle);
+    setCollapsed(true);
   });
 })();
