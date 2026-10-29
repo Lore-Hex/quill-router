@@ -1,5 +1,128 @@
 [
   {
+    "provider": "tinfoil",
+    "model_id": "deepseek/deepseek-v4.1-flash-1017",
+    "upstream_id": "deepseek-v4-1-flash",
+    "quantization": "fp8",
+    "label": "FP8 + FP4 experts",
+    "weight_formats": [
+      "fp8",
+      "fp4"
+    ],
+    "kv_cache_dtype": "fp8_ds_mla",
+    "model_repository": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+    "model_revision": "1bae0e1088993b9b82de08f59de5be5a34e42170",
+    "reviewed_on": "2026-10-28",
+    "sources": [
+      {
+        "title": "Published serving configuration",
+        "url": "https://github.com/tinfoilsh/confidential-deepseek-v4-1-flash/blob/ae7a4b1f165502f65ea4b01437f118daa9be762d/tinfoil-config.yml"
+      },
+      {
+        "title": "Pinned weight configuration",
+        "url": "https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash-1017/resolve/1bae0e1088993b9b82de08f59de5be5a34e42170/config.json"
+      }
+    ],
+    "notes": "The published configuration pins the 1017 checkpoint and fp8_ds_mla KV cache. The checkpoint uses FP8 block weights with FP4 experts, not uniform FP8. Source review is not proof of a particular request's deployed image or weight revision."
+  },
+  {
+    "provider": "deepinfra",
+    "model_id": "deepseek/deepseek-v4.1-flash-1017",
+    "upstream_id": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+    "quantization": "fp8",
+    "label": "FP8 (provider-declared)",
+    "weight_formats": [
+      "fp8"
+    ],
+    "kv_cache_dtype": null,
+    "model_repository": null,
+    "model_revision": null,
+    "reviewed_on": "2026-10-28",
+    "evidence_type": "provider_declaration",
+    "runtime_verified": false,
+    "sources": [
+      {
+        "title": "Provider's exact-model precision declaration",
+        "url": "https://deepinfra.com/deepseek-ai/DeepSeek-V4.1-Flash-1017"
+      }
+    ],
+    "notes": "The provider's page labels this exact route FP8. It does not publish an immutable serving-weight revision or a complete mixed-precision breakdown; this is not a claim that every tensor is FP8."
+  },
+  {
+    "provider": "featherless",
+    "model_id": "deepseek/deepseek-v4.1-flash-1017",
+    "upstream_id": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+    "quantization": "fp8",
+    "label": "FP8 (provider-declared)",
+    "weight_formats": [
+      "fp8"
+    ],
+    "kv_cache_dtype": null,
+    "model_repository": null,
+    "model_revision": null,
+    "reviewed_on": "2026-10-28",
+    "evidence_type": "provider_declaration",
+    "runtime_verified": false,
+    "sources": [
+      {
+        "title": "Provider's exact-model precision declaration",
+        "url": "https://featherless.ai/models/deepseek-ai/DeepSeek-V4.1-Flash-1017"
+      }
+    ],
+    "notes": "The provider's page labels this exact route FP8. It does not publish an immutable serving-weight revision or a complete mixed-precision breakdown; this is not a claim that every tensor is FP8."
+  },
+  {
+    "provider": "novita",
+    "model_id": "deepseek/deepseek-v4.1-flash-1017",
+    "upstream_id": "deepseek/deepseek-v4.1-flash-1017",
+    "quantization": "fp8",
+    "label": "FP8 (provider-declared)",
+    "weight_formats": [
+      "fp8"
+    ],
+    "kv_cache_dtype": null,
+    "model_repository": null,
+    "model_revision": null,
+    "reviewed_on": "2026-10-28",
+    "evidence_type": "provider_declaration",
+    "runtime_verified": false,
+    "sources": [
+      {
+        "title": "Provider's exact-model precision declaration",
+        "url": "https://novita.ai/models/model-detail/deepseek-deepseek-v4.1-flash-1017"
+      }
+    ],
+    "notes": "The provider's page labels this exact route FP8. It does not publish an immutable serving-weight revision or a complete mixed-precision breakdown; this is not a claim that every tensor is FP8."
+  },
+  {
+    "provider": "sail-research",
+    "model_id": "deepseek/deepseek-v4.1-flash-1017",
+    "upstream_id": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+    "quantization": "fp8",
+    "label": "FP8 + FP4 experts (reference weights)",
+    "weight_formats": [
+      "fp8",
+      "fp4"
+    ],
+    "kv_cache_dtype": null,
+    "model_repository": null,
+    "model_revision": null,
+    "reviewed_on": "2026-10-28",
+    "evidence_type": "provider_declaration",
+    "runtime_verified": false,
+    "sources": [
+      {
+        "title": "Sail exact-model reference-checkpoint declaration",
+        "url": "https://docs.sailresearch.com/models"
+      },
+      {
+        "title": "Reviewed reference weight configuration",
+        "url": "https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash-1017/resolve/1bae0e1088993b9b82de08f59de5be5a34e42170/config.json"
+      }
+    ],
+    "notes": "Sail explicitly lists the reference 1017 checkpoint; its reviewed config combines FP8 weights and FP4 experts. Sail does not pin a serving revision in its public catalog. The checkpoint source is evidence of the declared reference format, not proof that a request ran those exact bytes."
+  },
+  {
     "provider": "featherless",
     "model_id": "minimax/minimax-m3.1-flash",
     "upstream_id": "MiniMaxAI/MiniMax-M3.1-Flash",

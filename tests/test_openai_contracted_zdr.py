@@ -3,10 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
 
 from tests.pinned_manifests import OPENAI_GPT_5_5, serve_manifest_rows
 from trusted_router.catalog import (
+    MODEL_ENDPOINTS,
     MODELS,
     PRIVACY_TIER_STANDARD,
     PRIVACY_TIER_ZERO_RETENTION,
@@ -20,6 +22,7 @@ from trusted_router.catalog import (
     provider_to_openrouter_shape,
 )
 from trusted_router.config import Settings
+from trusted_router.dashboard import _model_detail_view
 from trusted_router.routing import chat_route_endpoint_candidates
 
 
@@ -127,6 +130,16 @@ def test_public_pages_explain_active_openai_prepaid_scope(client: TestClient) ->
     model = client.get("/models/openai/gpt-4.1")
     assert model.status_code == 200
     assert "Credits" in model.text
-    assert "BYOK" not in model.text
+    # Policy disclosures mention BYOK to explain the exclusion, but the table
+    # must still publish only TR-funded Credits routes with the scoped badge.
+    soup = BeautifulSoup(model.text, "html.parser")
+    rows = soup.select(".model-route-table tbody tr")
+    view = _model_detail_view(MODELS["openai/gpt-4.1"], test_mode=True)
+    assert rows and len(rows) == len(view["endpoints"])
+    assert all(MODEL_ENDPOINTS[row["endpoint_id"]].usage_type == "Credits" for row in view["endpoints"])
+    openai = soup.select_one("#provider-openai")
+    assert openai.select_one('[data-privacy="zdr"]')
+    assert "customer BYOK credentials" in openai.get_text()
+    assert "customer's own OpenAI organization or project" in openai.get_text()
     assert ">ZDR<" in model.text
     assert "no verified privacy claim" not in model.text
