@@ -106,26 +106,26 @@
     <div class="panel-body">
       <p><strong>New: <a href="/models/microsoft/microsoft-decision-1">Microsoft Decision-1</a>.</strong> Use <code>microsoft/microsoft-decision-1</code> for yes/no probabilities, category selection and ordered scores. Served directly by Azure Foundry, with a 32,768-token text context and free output. This preview model accepts <code>state</code> and <code>questions</code> on <code>POST {{ decide_path }}</code>, rather than chat messages. It does not generate prose, accept images or expose reasoning. See <a href="https://ai.azure.com/catalog/models/Microsoft-Decision-1" target="_blank" rel="noopener noreferrer">Microsoft's model card</a> and <a href="https://learn.microsoft.com/en-us/azure/foundry/foundry-models/how-to/use-foundry-models-microsoft-decision" target="_blank" rel="noopener noreferrer">protocol documentation</a>. The measurements below predate its addition.</p>
       <p>Every model below takes the same request and returns the same response, so switching is changing one string. A decision usually sits in the middle of a request, so speed comes first: <strong>four of these answer in about a third of a second, and a fifth in about half.</strong> Start with <code>trustedrouter/trev-1.0</code>: it is among the fastest, it reasons briefly before it answers, and it fails over across four hosts.</p>
-      <div class="model-table-wrap">
+      <div class="model-table-wrap scroll-table">
         <table>
           <thead><tr><th>Model</th><th>Pick it for</th><th>Median model latency</th><th>Eval accuracy</th><th>About one decision costs</th></tr></thead>
           <tbody>
-            <tr><td><span class="mono">typesafe-ai/jev</span></td><td>A purpose-built decision model from TypeSafe AI, called at TypeSafe's own API.</td><td>about 250 ms</td><td>29 / 29</td><td>$0.00002</td></tr>
-            <tr><td><span class="mono">trustedrouter/trev-1.0</span></td><td>The default. An open-weight 120B reasoning model on the fastest hardware we could measure, with automatic failover across four hosts.</td><td>about 300 ms</td><td>29 / 29</td><td>$0.00034</td></tr>
-            <tr><td><span class="mono">trustedrouter/mev-1.0</span></td><td>Speed at a fifth of the price. Mercury 3, a diffusion model, answering without deliberating.</td><td>about 370 ms</td><td>29 / 29</td><td>$0.00007</td></tr>
-            <tr><td><span class="mono">trustedrouter/lev-1.0</span></td><td>The steadiest tail. Llama 3.3 70B does not deliberate, so its slowest answer in the eval took 565 ms. Fails over across three hosts.</td><td>about 390 ms</td><td>29 / 29</td><td>$0.00036</td></tr>
-            <tr><td><span class="mono">trustedrouter/zev-1.0</span></td><td>A larger fast model. GLM 5.2 Fast, with failover to a second host. About four times the price of the others here.</td><td>about 0.5 s (0.35 to 0.7 s)</td><td>29 / 29</td><td>$0.0014</td></tr>
-            <tr><td><span class="mono">trustedrouter/gev-1.0</span></td><td>A Google model. Small, from the Gemini family, with the format enforced by the host.</td><td>about 0.8 s</td><td>29 / 29</td><td>$0.00023</td></tr>
-            <tr><td><span class="mono">trustedrouter/dev-1.0</span></td><td>Harder judgments on a budget. A DeepSeek flash model: strong judgment, cheap input. Fails over from Wafer to DeepInfra to W&amp;B.</td><td>about 1 s (0.7 to 2.4 s)</td><td>29 / 29</td><td>$0.00013</td></tr>
-            <tr><td><span class="mono">trustedrouter/oev-1.0</span></td><td>A cheap all-rounder. An open-weight 20B model that reasons briefly.</td><td>about 1.6 s</td><td>29 / 29</td><td>$0.00004</td></tr>
-            <tr><td><span class="mono">trustedrouter/gemmev-1.0</span></td><td>An open Gemma model: Gemma 4 26B with 4B parameters active, answering without deliberating. Fails over across three hosts.</td><td>about 2 s</td><td>29 / 29</td><td>$0.00007</td></tr>
+            <tr><td><span class="mono">typesafe-ai/<wbr>jev</span></td><td>A purpose-built decision model from TypeSafe AI, called at TypeSafe's own API.</td><td>about 250 ms</td><td>29 / 29</td><td>$0.00002</td></tr>
+            <tr><td><span class="mono">trustedrouter/<wbr>trev-1.0</span></td><td>The default. An open-weight 120B reasoning model on the fastest hardware we could measure, with automatic failover across four hosts.</td><td>about 300 ms</td><td>29 / 29</td><td>$0.00034</td></tr>
+            <tr><td><span class="mono">trustedrouter/<wbr>mev-1.0</span></td><td>Speed at a fifth of the price. Mercury 3, a diffusion model, answering without deliberating.</td><td>about 370 ms</td><td>29 / 29</td><td>$0.00007</td></tr>
+            <tr><td><span class="mono">trustedrouter/<wbr>lev-1.0</span></td><td>The steadiest tail. Llama 3.3 70B does not deliberate, so its slowest answer in the eval took 565 ms. Fails over across three hosts.</td><td>about 390 ms</td><td>29 / 29</td><td>$0.00036</td></tr>
+            <tr><td><span class="mono">trustedrouter/<wbr>zev-1.0</span></td><td>A larger fast model. GLM 5.2 Fast, with failover to a second host. About four times the price of the others here.</td><td>about 0.5 s (0.35 to 0.7 s)</td><td>29 / 29</td><td>$0.0014</td></tr>
+            <tr><td><span class="mono">trustedrouter/<wbr>gev-1.0</span></td><td>A Google model. Small, from the Gemini family, with the format enforced by the host.</td><td>about 0.8 s</td><td>29 / 29</td><td>$0.00023</td></tr>
+            <tr><td><span class="mono">trustedrouter/<wbr>dev-1.0</span></td><td>Harder judgments on a budget. A DeepSeek flash model: strong judgment, cheap input. Fails over from Wafer to DeepInfra to W&amp;B.</td><td>about 1 s (0.7 to 2.4 s)</td><td>29 / 29</td><td>$0.00013</td></tr>
+            <tr><td><span class="mono">trustedrouter/<wbr>oev-1.0</span></td><td>A cheap all-rounder. An open-weight 20B model that reasons briefly.</td><td>about 1.6 s</td><td>29 / 29</td><td>$0.00004</td></tr>
+            <tr><td><span class="mono">trustedrouter/<wbr>gemmev-1.0</span></td><td>An open Gemma model: Gemma 4 26B with 4B parameters active, answering without deliberating. Fails over across three hosts.</td><td>about 2 s</td><td>29 / 29</td><td>$0.00007</td></tr>
           </tbody>
         </table>
       </div>
       <p><strong>What a name is.</strong> A <code>trustedrouter/</code> name is one tuned configuration: a model, the hosts it was measured on, its reasoning setting and its output format. It runs only on its own hosts, so the speed and price above are what you get, and it answers the decide route only. Improvements ship as a new version (<code>trev-1.1</code>) rather than by changing a name you have pinned. The exception is a model its hosts stop serving: <code>gemmev-1.0</code> moved from Gemma 4 E4B to Gemma 4 26B A4B on 28 September 2026, when DeepInfra, its only host, dropped the smaller model, and <code>mev-1.0</code> moved from Mercury 2 to Mercury 3 on 27 October 2026, ahead of Inception retiring Mercury 2 on 15 November.</p>
       <p><strong>Prefer a plain model id?</strong> The same tuning applies when you name one of these chat models directly, and any other chat model in the catalog, such as <code>anthropic/claude-opus-5</code>, works too, untuned. Larger models do better on harder judgments.</p>
       <div class="model-table-wrap">
-        <table>
+        <table data-reference-table>
           <thead><tr><th>Tuned chat model</th><th>Runs on</th></tr></thead>
           <tbody>
             <tr><td><span class="mono">inception/mercury-3</span></td><td>Inception</td></tr>
@@ -265,7 +265,7 @@ else:
     <div class="panel-head"><h2>Errors</h2></div>
     <div class="panel-body">
       <div class="model-table-wrap">
-        <table>
+        <table data-reference-table>
           <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
           <tbody>
             <tr><td><span class="mono">400</span></td><td>The request is malformed. <code>error.param</code> names the field, for example <code>questions.route.criteria</code>. Also returned when a decision model is named on a chat endpoint, or when the hosted model itself rejects the request, for example as too long.</td></tr>

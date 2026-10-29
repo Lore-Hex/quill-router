@@ -304,6 +304,107 @@ table.content-reference,
   }
 }
 
+/* Docs tables outside .content-reference keep their own desktop layout
+   and stack into labelled rows on phones. */
+@media (max-width: 900px) {
+  :not(.content-reference) > table.reference-mobile-table {
+    table-layout: auto;
+  }
+
+  :not(.content-reference) > .reference-mobile-table tr {
+    padding-block: var(--content-gap);
+    border-bottom: 1px solid var(--tr-color-line-rule);
+  }
+
+  :not(.content-reference) > .reference-mobile-table :is(th, td) {
+    padding: 0 0 var(--content-stack);
+    border: 0;
+    background: transparent;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    font-size: 16px;
+    line-height: 1.6;
+  }
+
+  :not(.content-reference) > .reference-mobile-table :is(th, td):last-child {
+    padding-bottom: 0;
+  }
+
+  :not(.content-reference) > .reference-mobile-table .reference-key,
+  :not(.content-reference) > .reference-mobile-table .reference-key code {
+    font-size: 16px;
+    line-height: 1.5;
+    font-weight: var(--tr-font-weight-bold);
+    color: var(--tr-color-text-primary);
+  }
+}
+
+@media (min-width: 901px) {
+  /* Names in the first column never break mid-word; the column grows instead. */
+  :not(.content-reference) > .reference-mobile-table .reference-key,
+  :not(.content-reference) > .reference-mobile-table .reference-key code {
+    white-space: nowrap;
+    overflow-wrap: normal;
+    word-break: normal;
+  }
+}
+
+/* Comparison tables stay tables on phones: they scroll sideways with the
+   first column pinned, and the table is wider than the screen so the next
+   column is visibly cut off at the edge. */
+.scroll-table :is(th, td):first-child {
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+@media (max-width: 900px) {
+  .scroll-table {
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    scroll-padding-inline-start: 9rem;
+  }
+
+  .scroll-table > table {
+    width: var(--scroll-table-width, 48rem);
+    max-width: none;
+  }
+
+  .scroll-table :is(th, td) {
+    font-size: 15px;
+    line-height: 1.5;
+  }
+
+  .scroll-table :is(th, td):first-child {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    width: 9rem;
+    background: var(--panel);
+    box-shadow: inset -1px 0 0 var(--tr-color-line-rule);
+  }
+
+  /* Swipes settle on a column edge beside the pinned column. */
+  .scroll-table :is(th, td):not(:first-child) {
+    scroll-snap-align: start;
+  }
+
+  .scroll-table th:first-child {
+    background: var(--panel2);
+  }
+}
+
+@media (min-width: 901px) {
+  .scroll-table :is(th, td):first-child,
+  .scroll-table :is(th, td):first-child * {
+    white-space: nowrap;
+  }
+
+  .scroll-table wbr {
+    display: none;
+  }
+}
+
 /* Technical text stays proportional to the surrounding reading size. */
 .content-section code {
   font-family: var(--tr-font-family-mono);
