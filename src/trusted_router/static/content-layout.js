@@ -76,20 +76,17 @@
     table.after(accordion);
     table.classList.add("has-reference-accordion");
   });
-  document.querySelectorAll(".content-section pre").forEach((pre) => {
-    const frame = document.createElement("div");
-    frame.className = "content-code-frame";
-    pre.before(frame);
-    frame.append(pre);
+  // Arrow buttons for anything that scrolls sideways; hidden when it fits.
+  const addScrollControls = (scroller, noun, placeControls) => {
     const controls = document.createElement("div");
     controls.className = "content-code-controls";
     controls.hidden = true;
-    frame.append(controls);
+    placeControls(controls);
     const buttons = [-1, 1].map((direction) => {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "content-code-scroll";
-      button.setAttribute("aria-label", `Scroll code ${direction < 0 ? "left" : "right"}`);
+      button.setAttribute("aria-label", `Scroll ${noun} ${direction < 0 ? "left" : "right"}`);
       const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
       svg.setAttribute("viewBox", "0 0 20 20");
       svg.setAttribute("width", "20");
@@ -106,26 +103,42 @@
       svg.append(path);
       button.append(svg);
       button.addEventListener("click", () => {
-        pre.scrollBy({ left: direction * pre.clientWidth * 0.75, behavior: "instant" });
+        scroller.scrollBy({ left: direction * scroller.clientWidth * 0.75, behavior: "instant" });
         update();
       });
       controls.append(button);
       return button;
     });
+    const label = noun.charAt(0).toUpperCase() + noun.slice(1);
     const update = () => {
-      const maxScroll = pre.scrollWidth - pre.clientWidth;
+      const maxScroll = scroller.scrollWidth - scroller.clientWidth;
       const overflow = maxScroll > 1;
       controls.hidden = !overflow;
-      buttons[0].disabled = pre.scrollLeft <= 1;
-      buttons[1].disabled = pre.scrollLeft >= maxScroll - 1;
-      pre.classList.toggle("has-overflow", overflow);
-      pre.tabIndex = overflow ? 0 : -1;
-      pre.setAttribute("aria-label", overflow ? "Code example, scroll horizontally for more" : "Code example");
+      buttons[0].disabled = scroller.scrollLeft <= 1;
+      buttons[1].disabled = scroller.scrollLeft >= maxScroll - 1;
+      scroller.classList.toggle("has-overflow", overflow);
+      scroller.classList.toggle("can-scroll-right", overflow && scroller.scrollLeft < maxScroll - 1);
+      scroller.tabIndex = overflow ? 0 : -1;
+      scroller.setAttribute("aria-label", overflow ? `${label}, scroll horizontally for more` : label);
     };
-    pre.addEventListener("scroll", update, { passive: true });
-    new ResizeObserver(update).observe(pre);
+    scroller.addEventListener("scroll", update, { passive: true });
+    new ResizeObserver(update).observe(scroller);
     document.fonts.ready.then(update);
     update();
+  };
+  document.querySelectorAll(".content-section pre").forEach((pre) => {
+    const frame = document.createElement("div");
+    frame.className = "content-code-frame";
+    pre.before(frame);
+    frame.append(pre);
+    addScrollControls(pre, "code example", (controls) => frame.append(controls));
+  });
+  // Comparison tables: arrows sit above the table so the scroll is seen first.
+  document.querySelectorAll(".scroll-table").forEach((wrap) => {
+    addScrollControls(wrap, "table", (controls) => {
+      controls.classList.add("scroll-table-controls");
+      wrap.before(controls);
+    });
   });
 })();
 

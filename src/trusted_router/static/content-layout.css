@@ -330,6 +330,17 @@ table.content-reference,
     padding-bottom: 0;
   }
 
+  /* The last card needs no rule; the gap separates it from what follows. */
+  :not(.content-reference) > .reference-mobile-table tbody tr:last-child {
+    padding-bottom: 0;
+    border-bottom: 0;
+  }
+
+  :not(.content-reference) > table.reference-mobile-table + *,
+  :is(.model-table-wrap, .leaderboard-table-wrap):has(> .reference-mobile-table) + * {
+    margin-top: var(--content-gap);
+  }
+
   :not(.content-reference) > .reference-mobile-table .reference-key,
   :not(.content-reference) > .reference-mobile-table .reference-key code {
     font-size: 16px;
@@ -350,11 +361,15 @@ table.content-reference,
 }
 
 /* Comparison tables stay tables on phones: they scroll sideways with the
-   first column pinned, and the table is wider than the screen so the next
-   column is visibly cut off at the edge. */
+   first column pinned, arrow buttons above, and a fade on the right edge
+   while more columns are hidden. */
 .scroll-table :is(th, td):first-child {
   overflow-wrap: normal;
   word-break: normal;
+}
+
+.scroll-table + * {
+  margin-top: var(--content-gap);
 }
 
 @media (max-width: 900px) {
@@ -362,11 +377,19 @@ table.content-reference,
     overflow-x: auto;
     overscroll-behavior-x: contain;
     scroll-snap-type: x proximity;
-    scroll-padding-inline-start: 9rem;
+    scroll-padding-inline-start: 9.5rem;
+  }
+
+  .scroll-table.can-scroll-right {
+    mask-image: linear-gradient(to right, #000 calc(100% - 56px), transparent);
+  }
+
+  .scroll-table-controls {
+    margin: 0 0 var(--tr-space-stack-xs);
   }
 
   .scroll-table > table {
-    width: var(--scroll-table-width, 48rem);
+    width: var(--scroll-table-width, 56rem);
     max-width: none;
   }
 
@@ -379,7 +402,8 @@ table.content-reference,
     position: sticky;
     left: 0;
     z-index: 1;
-    width: 9rem;
+    width: 9.5rem;
+    font-size: 14px;
     background: var(--panel);
     box-shadow: inset -1px 0 0 var(--tr-color-line-rule);
   }
