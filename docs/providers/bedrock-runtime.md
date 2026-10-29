@@ -1,7 +1,9 @@
 # Managed Claude on Bedrock Runtime
 
-Prepared, not deployed. Gateway PR [#630](https://github.com/Lore-Hex/quill-cloud-proxy/pull/630)
-adds the native Runtime adapter. The five exact US profiles in
+Gateway PR [#630](https://github.com/Lore-Hex/quill-cloud-proxy/pull/630)
+adds the native Runtime adapter. Activation is tracked in control-plane PR
+[#2162](https://github.com/Lore-Hex/quill-router/pull/2162) and requires the
+regional qualification below. The five exact US profiles in
 `BEDROCK_RUNTIME_PROFILES` are independent of the existing Mantle catalog.
 All five passed live streaming through the new adapter on October 29, 2026.
 
@@ -32,16 +34,16 @@ the shared ledger's existing half-up rounding.
 
 ## Release gate
 
-`BEDROCK_RUNTIME_GATEWAY_REGIONS` is empty until serving gateways are qualified.
-Manifest rows stay `runtime-enclave-rollout-pending`, catalog admission removes
-them, and authorization/snapshots require an explicitly qualified region.
+`BEDROCK_RUNTIME_GATEWAY_REGIONS` admits only qualified serving gateways.
+Before qualification, manifest rows stay `runtime-enclave-rollout-pending`
+and catalog admission removes them. Authorization and snapshots require an
+explicitly qualified gateway region; an unknown or missing origin fails closed.
 An ordinary control-plane catch-up must not make an older Mantle-only gateway
 receive Runtime traffic. Preserve the existing Mantle region restrictions.
 
 After the gateway release, add only verified serving regions, refresh the five
 rows, run strict-ZDR and non-streaming/streaming/cache billing probes, and deploy
 through the normal multi-cloud coordinator. Keep one healthy cloud unchanged.
-Local Claude CLI Opus is signed out; no private API key substitute was used.
 
 Sources: [AWS pricing](https://aws.amazon.com/bedrock/pricing/),
 [retention](https://docs.aws.amazon.com/bedrock/latest/userguide/data-retention.html),
