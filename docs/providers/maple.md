@@ -67,6 +67,15 @@ that this specific API route meets TR's strict ZDR or confidential requirements.
 The candidate's scoped privacy metadata must not be deployed before the
 reviewed serving path is qualified in every admitted gateway region.
 
+Catalog admission distinguishes control-plane locations from gateway origins.
+AWS deploys with native `TR_PRIMARY_REGION=eu-west-1` or `eu-west-3`, and Azure
+uses `uaenorth`; catalog publication maps these to their already-qualified
+namespaced gateway regions. The GCP control plane in `southamerica-east1`
+publishes the qualified GCP fleet's catalog even though no gateway runs there.
+These catalog-only mappings do not qualify new inference origins: authorization
+still requires an explicit origin from the exact reviewed gateway allowlist.
+Unknown regions, an empty qualified fleet, and stock/BYOK Maple remain excluded.
+
 ## Encrypted path
 
 - Backend: `https://enclave.trymaple.ai`.

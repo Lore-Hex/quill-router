@@ -45,6 +45,25 @@ def unavailable_gateway_routes() -> frozenset[tuple[str, str]]:
     })
 
 
+def _runtime_catalog_available(endpoint: ModelEndpoint, control_plane_region: str) -> bool:
+    # Deployment scripts use native cloud region IDs. Catalog publication is
+    # not authorization: request origins still require the exact gateway ID.
+    region = {
+        "eu-west-1": "aws-eu-west-1",
+        "eu-west-3": "aws-eu-west-3",
+        "uaenorth": "azure-uaenorth",
+    }.get(control_plane_region, control_plane_region)
+    # Sao Paulo runs a control plane, not a gateway. Its GCP catalog must stay
+    # consistent with the qualified GCP fleet without admitting a new origin.
+    gateway_regions = (
+        ("us-central1", "us-east4", "europe-west4", "us-west1")
+        if region == "southamerica-east1" else (region,)
+    )
+    return any(provider_model_available_from_gateway_region(
+        endpoint.provider, endpoint.model_id, gateway_region,
+    ) for gateway_region in gateway_regions)
+
+
 def apply_gateway_admission_holds(
     models: dict[str, Model], endpoints: dict[str, ModelEndpoint],
 ) -> None:
@@ -63,7 +82,7 @@ def apply_gateway_admission_holds(
         bedrock_runtime = endpoint.provider == "amazon-bedrock" and endpoint.model_id in BEDROCK_RUNTIME_PROFILES
         runtime_unavailable = (
             (endpoint.provider == "maple" or bedrock_runtime)
-            and not provider_model_available_from_gateway_region(endpoint.provider, endpoint.model_id, region)
+            and not _runtime_catalog_available(endpoint, region)
         )
         mantle_unavailable = endpoint.provider == "amazon-bedrock" and not bedrock_runtime and legacy_bedrock_unavailable
         if runtime_unavailable or mantle_unavailable or endpoint.model_id in unavailable_models or (
