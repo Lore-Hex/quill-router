@@ -133,6 +133,16 @@ def _live_catalog() -> tuple[dict[str, dict[str, Any]], dict[str, ModelPrice]]:
             "endpoints": ["chat/completions"],
             "status": 1,
         }
+        # Clef uses a decision protocol, not chat completions. Its generic
+        # /models entry does not prove Makora supports our decision adapter.
+        if model_id == "cloudflare/clef-flash":
+            row.update({
+                "model_type": "discovery",
+                "output_modalities": [],
+                "endpoints": [],
+                "routable": False,
+                "routable_reason": "unsupported-chat-endpoint",
+            })
         context_length = _positive_int(source.get("max_model_len") or source.get("context_length"))
         if context_length is not None:
             row["context_length"] = context_length

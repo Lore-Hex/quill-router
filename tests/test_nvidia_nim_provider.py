@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 
 import httpx
 import pytest
@@ -154,6 +155,47 @@ def test_nvidia_nim_recanaries_machine_held_chat_routes(
     migrated = next(row for row in payload["models"] if row["id"] == "vendor/model-0")
     assert migrated.get("routable", True) is True
     assert "routable_reason" not in migrated
+
+
+@pytest.mark.parametrize("healthy", [False, True])
+def test_nvidia_stalled_vision_route_requires_successful_recovery_canary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, healthy: bool,
+) -> None:
+    from scripts.pricing.manifest import models_requiring_canary
+    from trusted_router import catalog_ingest
+
+    model = "meta-llama/llama-3.2-90b-vision-instruct"
+    upstream = "meta/llama-3.2-90b-vision-instruct"
+    rows = [{"id": f"vendor/model-{index}"} for index in range(11)] + [{"id": upstream}]
+    _install_catalog(monkeypatch, rows)
+    manifest = tmp_path / "nvidia-nim.json"
+    manifest.write_text(json.dumps({"provider": "nvidia-nim", "models": [{
+        "id": model, "upstream_id": upstream, "model_type": "chat",
+        "endpoints": ["chat/completions"], "routable": False,
+        "routable_reason": "provider-canary-failed",
+    }]}))
+    monkeypatch.setattr(nvidia_nim, "MANIFEST_PATH", manifest)
+    monkeypatch.setattr(nvidia_nim, "_DISCOVERED_ROWS", {})
+    monkeypatch.setenv("NVIDIA_NIM_API_KEY", "test-key")
+    probed: list[str] = []
+
+    def probe(**kwargs) -> bool:
+        probed.append(kwargs["model"])
+        assert kwargs["require_message"] is True
+        return healthy if kwargs["model"] == upstream else True
+
+    monkeypatch.setattr(nvidia_nim, "probe_openai_chat", probe)
+    assert models_requiring_canary(manifest, {model}) == {model}
+    nvidia_nim.write_provider_manifest(nvidia_nim.fetch())
+    assert upstream in probed
+    row = next(row for row in json.loads(manifest.read_text())["models"] if row["id"] == model)
+    assert row["routable"] is healthy
+    assert row.get("routable_reason") == (None if healthy else "provider-canary-failed")
+    assert models_requiring_canary(manifest, {model}) == (set() if healthy else {model})
+
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
+    _, endpoints = catalog_ingest._supplemental_provider_models_and_endpoints()
+    assert (f"{model}@nvidia-nim/prepaid" in endpoints) is healthy
 
 
 def test_nvidia_nim_rechecks_each_routable_model_once_per_day(monkeypatch, tmp_path) -> None:
