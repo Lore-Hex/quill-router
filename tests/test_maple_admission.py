@@ -14,6 +14,7 @@ from trusted_router.provider_contracts import (
     MAPLE_MODEL_ID,
     MAPLE_NATIVE_ID,
     provider_model_available_from_gateway_region,
+    qualified_gateway_origin_names,
 )
 from trusted_router.routing_snapshot import _gateway_regions
 
@@ -37,8 +38,8 @@ def test_runtime_catalog_uses_real_control_plane_region_settings(monkeypatch, pr
     endpoints = {endpoint.id: endpoint}
     apply_gateway_admission_holds({}, endpoints)
     assert endpoints == {endpoint.id: endpoint}
-    # These are control-plane locations, not newly qualified gateway origins.
-    assert not provider_model_available_from_gateway_region(provider, model, region)
+    # South America is CP-only; AWS/Azure also use native names on the wire.
+    assert provider_model_available_from_gateway_region(provider, model, region) is (region != "southamerica-east1")
 
 
 @pytest.mark.parametrize("region", ["eu-west-2", "westus", "future-region", ""])
@@ -111,7 +112,8 @@ def test_maple_checkpoint_names_its_weights_author_not_host():
 
 
 @pytest.mark.parametrize("origin,admitted", [
-    (None, False), ("", False), ("unknown-region", False), ("uaenorth", False),
+    (None, False), ("", False), ("unknown-region", False), ("southamerica-east1", False),
+    ("eu-west-1", True), ("eu-west-3", True), ("uaenorth", True), ("australiaeast", True),
     ("us-central1", True), ("aws-eu-west-3", True), ("azure-uaenorth", True),
 ])
 def test_maple_authorization_does_not_infer_the_gateways_origin(origin, admitted):
@@ -141,6 +143,7 @@ def test_maple_authorization_does_not_infer_the_gateways_origin(origin, admitted
 @pytest.mark.parametrize("region", [
     "us-central1", "us-east4", "europe-west4", "us-west1",
     "aws-eu-west-1", "aws-eu-west-3", "azure-uaenorth", "azure-australiaeast", "",
+    "eu-west-1", "eu-west-3", "uaenorth", "australiaeast",
 ])
 def test_maple_requires_qualified_gateway_region(monkeypatch, region):
     from trusted_router import provider_contracts, routing_snapshot
@@ -187,8 +190,51 @@ def test_qualified_maple_region_admits_only_reviewed_workload(monkeypatch, regio
                        model_id=MAPLE_MODEL_ID, upstream_id=MAPLE_NATIVE_ID, usage_type="Credits")
     assert provider_model_available_from_gateway_region("maple", MAPLE_MODEL_ID, region)
     snapshot = _gateway_regions(endpoint)
-    assert snapshot.only == (region,) and snapshot.requires_explicit_origin
+    assert snapshot.only == tuple(sorted(qualified_gateway_origin_names(qualified)))
+    assert snapshot.requires_explicit_origin
     monkeypatch.setenv("TR_SERVING_REGION", region)
     endpoints = {endpoint.id: endpoint}
     apply_gateway_admission_holds({}, endpoints)
     assert endpoints == {endpoint.id: endpoint}
+
+
+@pytest.mark.parametrize("provider,model", [
+    ("maple", MAPLE_MODEL_ID),
+    *(("amazon-bedrock", model) for model in BEDROCK_RUNTIME_PROFILES),
+])
+@pytest.mark.parametrize("fleet,native", [
+    ("aws-eu-west-1", "eu-west-1"), ("aws-eu-west-3", "eu-west-3"),
+    ("azure-uaenorth", "uaenorth"), ("azure-australiaeast", "australiaeast"),
+])
+def test_native_gateway_origin_authorization_and_snapshot_follow_qualification(monkeypatch, provider, model, fleet, native):
+    from trusted_router import provider_contracts, routing_snapshot
+    from trusted_router.authorize_candidates import CandidateRequest, plan_route, resolve_candidates
+    from trusted_router.config import Settings
+
+    endpoint = next(e for e in MODEL_ENDPOINTS.values() if e.provider == provider and e.model_id == model)
+    contract = "MAPLE_GATEWAY_REGIONS" if provider == "maple" else "BEDROCK_RUNTIME_GATEWAY_REGIONS"
+    for qualified in (frozenset({fleet}), frozenset({"us-central1"}), frozenset()):
+        monkeypatch.setattr(provider_contracts, contract, qualified)
+        monkeypatch.setattr(routing_snapshot, contract, qualified)
+        snapshot = _gateway_regions(endpoint)
+        assert snapshot.requires_explicit_origin
+        for origin in (fleet, native, None, "", "southamerica-east1", "eu-west-2", "westus", "future-region"):
+            request = CandidateRequest(
+                route_type="chat.completions", route_model_id=model,
+                routing_body={"model": model, "provider": {
+                    "only": [provider], "allow_fallbacks": False,
+                    "min_privacy": "confidential" if provider == "maple" else "zdr",
+                }},
+                body_region=origin,
+            )
+            plan = plan_route(request, Settings(environment="test"), region="us-central1")
+            resolved = resolve_candidates(plan, request, region="us-central1", at=datetime(2026, 10, 29, tzinfo=UTC))
+            admitted = fleet in qualified and origin in (fleet, native)
+            assert bool(resolved.candidates) is admitted
+            assert (origin in snapshot.only) is admitted
+
+
+@pytest.mark.parametrize("origin", ["eu-west-1", "eu-west-3", "uaenorth", "australiaeast"])
+def test_native_origin_aliases_do_not_qualify_mantle_or_unreviewed_models(origin):
+    assert not provider_model_available_from_gateway_region("amazon-bedrock", "unknown/model", origin)
+    assert not provider_model_available_from_gateway_region("maple", "deepseek/deepseek-v4.1-flash", origin)

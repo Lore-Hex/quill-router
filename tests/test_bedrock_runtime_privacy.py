@@ -12,6 +12,7 @@ from trusted_router.catalog_privacy import (
 from trusted_router.provider_contracts import (
     BEDROCK_RUNTIME_PROFILES,
     provider_model_available_from_gateway_region,
+    qualified_gateway_origin_names,
 )
 from trusted_router.routing_snapshot import _gateway_regions
 
@@ -68,7 +69,11 @@ def test_qualified_runtime_does_not_expand_legacy_mantle_regions(monkeypatch, re
     assert provider_model_available_from_gateway_region("amazon-bedrock", model, region)
     assert not provider_model_available_from_gateway_region("amazon-bedrock", "qwen/qwen3-32b", region)
     snapshot = _gateway_regions(endpoint)
-    assert snapshot.only == (region,) and snapshot.requires_explicit_origin
+    assert snapshot.only == tuple(sorted(qualified_gateway_origin_names(qualified)))
+    assert snapshot.requires_explicit_origin
+    for origin in snapshot.only:
+        assert provider_model_available_from_gateway_region("amazon-bedrock", model, origin)
+        assert not provider_model_available_from_gateway_region("amazon-bedrock", "qwen/qwen3-32b", origin)
     monkeypatch.setenv("TR_SERVING_REGION", region)
     endpoints = {endpoint.id: endpoint}
     apply_gateway_admission_holds({}, endpoints)

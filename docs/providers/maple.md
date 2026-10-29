@@ -76,6 +76,15 @@ These catalog-only mappings do not qualify new inference origins: authorization
 still requires an explicit origin from the exact reviewed gateway allowlist.
 Unknown regions, an empty qualified fleet, and stock/BYOK Maple remain excluded.
 
+The authenticated gateway protocol also reports native region names: AWS's
+parent bootstrap sends `eu-west-1`/`eu-west-3`, and Azure's measured configuration
+sets `QUILL_AZURE_REGION` to `uaenorth`/`australiaeast`. Admission and routing
+snapshots accept each of these exact wire names only while its corresponding
+namespaced fleet is qualified. These aliases do not admit another location,
+infer a missing request origin, or expand the legacy Mantle adapter. Removing a
+fleet's qualification removes both names. A live AWS synthetic request exposed
+this separate authorization mismatch after catalog publication was repaired.
+
 ## Encrypted path
 
 - Backend: `https://enclave.trymaple.ai`.
