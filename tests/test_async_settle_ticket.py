@@ -179,18 +179,25 @@ def test_rollout_never_inherits_key_file():
     assert mounts == {pins['TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE']: 'trustedrouter-async-settle-ticket-key:latest'}
     assert 'add_secret_env_if_exists' not in source.split('trustedrouter-async-settle-ticket-key')[0].rsplit('\n', 2)[-2]
     # Public identity of the purpose key: distinct from the speculation shadow kid, enclave-checked audience,
-    # provisioned (positive) epoch, with admission and protection still off.
+    # provisioned (positive) epoch; rollout pins follow the reviewed pilot stage.
     assert pins['TR_ASYNC_SETTLE_TICKET_KID'] == 'tr-async-settle-2026-10a'
     assert pins['TR_ASYNC_SETTLE_TICKET_KID'] != Settings().speculation_shadow_kid
     assert pins['TR_ASYNC_SETTLE_TICKET_ISSUER'] == 'https://api.trustedrouter.com'
     assert pins['TR_ASYNC_SETTLE_TICKET_AUDIENCE'] == 'router-settlement'
     assert pins['TR_ASYNC_SETTLE_AUTHORITY_EPOCH'] == '1'
     assert pins['TR_ASYNC_SETTLE_ENABLED'] == 'false'
-    assert pins['TR_ASYNC_SETTLE_PROTECTION'] == 'false'
+    assert pins['TR_ASYNC_SETTLE_PROTECTION'] == 'true'
     assert Settings().async_settle_enabled is False
     assert Settings().async_settle_protection is False
     assert [line.strip() for line in source.splitlines() if 'TR_ASYNC_SETTLE_PROTECTION' in line] == [
-        '"TR_ASYNC_SETTLE_PROTECTION=false"']
+        '"TR_ASYNC_SETTLE_PROTECTION=true"']
+    config = Settings(environment='test', **{
+        key.removeprefix('TR_').lower(): value for key, value in pins.items()
+    })
+    assert config.async_settle_admission_enabled is False
+    assert config.async_settle_pilot_workspace_ids == frozenset()
+    assert config.async_settle_pilot_cap_micro == 0
+
 
 
 @pytest.mark.parametrize('field', ['authorization_id', 'workspace_id', 'key_id', 'reservation_id'])

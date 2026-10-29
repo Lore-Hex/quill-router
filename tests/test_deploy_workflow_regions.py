@@ -589,7 +589,15 @@ def test_settle_worker_follows_router_rollout_and_uses_the_regional_hold() -> No
     script = (ROOT / "scripts/deploy/settle_drain_worker.sh").read_text()
     assert 'REGION=us-central1' in script
     assert script.index('deploy_region_is_held "$REGION"') < script.index('gc run deploy')
-    # This release creates healthy drain evidence, not async customer admission.
+    # R1 protects accepted work while async customer admission and router fast drain stay off.
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
-    for pin in ("TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED", "TR_ASYNC_SETTLE_ENABLED", "TR_ASYNC_SETTLE_PROTECTION"):
-        assert f'"{pin}=false"' in rollout
+    expected = {
+        "TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED": "false",
+        "TR_ASYNC_SETTLE_ENABLED": "false",
+        "TR_ASYNC_SETTLE_PROTECTION": "true",
+    }
+    for pin, value in expected.items():
+        # Exactly one literal assignment per pin; no caller inheritance or later override.
+        assert [line.strip() for line in rollout.splitlines() if pin in line] == [
+            f'"{pin}={value}"'
+        ]
