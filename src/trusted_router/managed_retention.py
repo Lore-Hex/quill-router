@@ -84,12 +84,13 @@ VERTEX_ZDR = RetentionPolicy(
     VERTEX_DATA_URL,
 )
 VERTEX_DURABLE_CACHE = RetentionPolicy(
-    "durable_cache", "Durable cache - up to 24 hours",
-    "The managed Vertex project was verified with DURABLE implicit caching enabled "
-    "on October 28, 2026. Eligible Gemini inputs may persist in encrypted storage "
-    "for up to 24 hours. This route is excluded from strict ZDR pending remediation "
-    "and a fresh audit; no-training does not mean no retention.",
-    VERTEX_DATA_URL, maximum_days=1, storage_control="google",
+    "durable_cache", "Cache remediation - review pending",
+    "Durable implicit caching was disabled on the managed Vertex project on "
+    "October 29, 2026; four regional checks confirmed EPHEMERAL memory-only caching. "
+    "Previously cached inputs may persist for up to 24 hours. This route remains "
+    "excluded from strict ZDR until prior data expiration and model-specific terms "
+    "and feature exceptions are reviewed. BYOK is not covered.",
+    VERTEX_DATA_URL, maximum_days=1, storage_control="google", reviewed_on="2026-10-29",
 )
 VERTEX_SAFETY_RETENTION = RetentionPolicy(
     "safety_retention", "Safety retention - up to 30 days",
@@ -210,9 +211,11 @@ def provider_retention_notice(provider: str) -> str | None:
         )
     if provider == "google-vertex":
         return (
-            "Retention varies by model and feature. Durable caching is enabled on the "
-            "managed project (checked October 28, 2026); affected Gemini routes are not "
-            "strict ZDR. Advanced AI and Google Frontier safety-retention routes are "
+            "Retention varies by model and feature. Durable caching was disabled on the "
+            "managed project on October 29, 2026; four regional checks confirmed "
+            "memory-only caching. Affected Gemini routes remain excluded from strict "
+            "ZDR pending prior data expiration and model-specific review. "
+            "Advanced AI and Google Frontier safety-retention routes are "
             "also excluded. Google's ZDR-aligned wording is not a no-retention guarantee. "
             "Unreviewed models do not inherit the managed-account ZDR contract."
         )
