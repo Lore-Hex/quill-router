@@ -10,7 +10,7 @@ import json
 from typing import Any
 
 import pytest
-from fastapi import Request
+from fastapi import HTTPException, Request
 
 from tests.fakes.spanner import make_fake_store
 from tests.test_fastpath_frontdoor import _Door, _transport
@@ -717,6 +717,7 @@ def test_a_byok_terminal_charges_the_lease_nothing(door: _Door) -> None:
     gateway._settle_leased_authorization(
         authorization, settings=_pilot(), success=True, actual_cost=306, selected_usage_type="BYOK",
         generation=None, refund_benchmark=None, settle_intent=intent, typed_store=gateway.typed_billing_store(store),
+        background_tasks=None, customer_billing_event=True, generation_model_id=MODEL, generation_provider="anthropic",
     )
     path, sent = door.seen[1]
     assert path == "/v1/settle" and sent["Charge"] == 0
@@ -803,3 +804,97 @@ def test_a_store_without_the_activity_outbox_stays_on_todays_path(door: _Door) -
     authorization = store.get_gateway_authorization(data["authorization_id"])
     assert authorization is not None and authorization.fastpath_envelope is None
     assert door.seen == []
+
+
+def _lease_capped_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Admit keys with a cap or window, as e2-key-windows increment 1 will:
+    today's cohort keeps them out (`key_capped`), so these tests lift only
+    that one condition to reach the leased branches a capped key takes."""
+    real = fd.pilot_reason
+    monkeypatch.setattr(fd, "pilot_reason", lambda **kwargs: real(**{**kwargs, "key_capped": False}))
+
+
+def test_a_window_rejection_after_admission_gives_the_hold_back(door: _Door, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 429 for an enforcing window comes after the front door admitted the
+    request: no authorization row exists, so the hold goes back at once, not
+    at the lease's end of life."""
+    _lease_capped_keys(monkeypatch)
+    store, database, _key = _seed()
+    _raw, key = store.api_keys.create(
+        workspace_id=WORKSPACE, name="daily-window", creator_user_id="user-pilot", limit_daily_microdollars=1,
+    )
+    with pytest.raises(HTTPException) as caught:
+        gateway._authorize_gateway_sync(_request(), _body(key.hash), _pilot())
+    assert caught.value.status_code == 429
+    assert [path for path, _sent in door.seen] == ["/v1/authorize", "/v1/refund"]
+    assert door.seen[1][1]["Envelope"] == "sealed-pilot"
+    assert _credit(database)["reserved"] == 0
+
+
+def test_a_lifetime_cap_rejection_after_admission_gives_the_hold_back(door: _Door, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The lifetime-cap precheck's 402 also comes after the admission: the
+    hold goes back at once."""
+    _lease_capped_keys(monkeypatch)
+    store, database, _key = _seed()
+    _raw, key = store.api_keys.create(
+        workspace_id=WORKSPACE, name="capped", creator_user_id="user-pilot", limit_microdollars=1_000,
+    )
+    database.typed[KEY_LIMIT_TABLE][(key.hash, 0)]["usage"] = 1_000
+    store._lifetime_cap_exhausted_keys.add(key.hash)
+    with pytest.raises(HTTPException) as caught:
+        gateway._authorize_gateway_sync(_request(), _body(key.hash), _pilot())
+    assert caught.value.status_code == 402
+    assert [path for path, _sent in door.seen] == ["/v1/authorize", "/v1/refund"]
+    assert door.seen[1][1]["Envelope"] == "sealed-pilot"
+    assert _credit(database)["reserved"] == 0
+
+
+class _Outbox:
+    def __init__(self) -> None:
+        self.sent: list[Any] = []
+
+    def send(self, message: Any) -> None:
+        self.sent.append(message)
+
+
+def test_a_leased_settle_crossing_an_alert_only_window_emails_the_owner_once(
+    door: _Door, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The leased settle books the key's window usage, so an alert-only key's
+    crossing is emailed as today's settle emails it, and only once."""
+    _lease_capped_keys(monkeypatch)
+    outbox = _Outbox()
+    monkeypatch.setattr("trusted_router.services.budget_alerts.get_email_service", lambda _settings: outbox)
+    store, _database, _key = _seed()
+    owner = store.ensure_user("pilot-owner@example.com")
+    store._write_entity("workspace", WORKSPACE, Workspace(id=WORKSPACE, name="Pilot", owner_user_id=owner.id))
+    _raw, key = store.api_keys.create(
+        workspace_id=WORKSPACE, name="alert-window", creator_user_id=owner.id,
+        limit_daily_microdollars=1, budget_alert_only=True,
+    )
+    for _ in range(2):
+        authorized = gateway._authorize_gateway_sync(_request(), _body(key.hash), _pilot())["data"]
+        authorization = store.get_gateway_authorization(authorized["authorization_id"])
+        assert authorization is not None and authorization.fastpath_envelope == "sealed-pilot"
+        data = gateway._settle_gateway_authorization(_settle_body(authorized), success=True, settings=_pilot())["data"]
+        assert data["settled"] is True
+    assert len(outbox.sent) == 1
+    assert outbox.sent[0].to == "pilot-owner@example.com" and "daily" in outbox.sent[0].subject
+
+
+def test_a_leased_settle_claims_the_acquisition_milestones(door: _Door, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A successful leased settle records the successful API call, as
+    today's settle does; a refund does not."""
+    calls: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        gateway,
+        "record_successful_api_call_safely",
+        lambda workspace_id, *, model, provider: calls.append((workspace_id, model, provider)),
+    )
+    _store, _database, key = _seed()
+    refunded = gateway._authorize_gateway_sync(_request(), _body(key.hash), _pilot())["data"]
+    gateway._settle_gateway_authorization(_settle_body(refunded, success=False), success=False, settings=_pilot())
+    assert calls == []
+    settled = gateway._authorize_gateway_sync(_request(), _body(key.hash), _pilot())["data"]
+    gateway._settle_gateway_authorization(_settle_body(settled), success=True, settings=_pilot())
+    assert calls == [(WORKSPACE, MODEL, "anthropic")]
