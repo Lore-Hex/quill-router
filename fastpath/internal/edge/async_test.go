@@ -151,7 +151,7 @@ func TestEveryAsyncGoldenThroughThePipeline(t *testing.T) {
 		}
 	}
 	t.Logf("%d answered cases Python's bytes (by shape %v), %d pass cases with their reason", answered, shapes, passes)
-	if answered != 30 || shapes["A"] != 15 || shapes["B"] != 14 || shapes["none"] != 1 || passes != 18 {
+	if answered != 32 || shapes["A"] != 16 || shapes["B"] != 15 || shapes["none"] != 1 || passes != 19 {
 		t.Fatalf("answered %d (%v), passes %d: not the goldens' counts", answered, shapes, passes)
 	}
 }
@@ -226,7 +226,7 @@ func TestEdgeDecideFalseNeverAdmitsAnAsyncRequest(t *testing.T) {
 		}
 	}
 	t.Logf("%d async-v1 requests passed with edge_decide false, %d answered with it true", dark, answered)
-	if dark != 30 || answered != dark {
+	if dark != 32 || answered != dark {
 		t.Fatalf("dark %d, answered %d: not the goldens' counts", dark, answered)
 	}
 }
@@ -357,7 +357,7 @@ func TestTheAdmissionGateReadsTheKeysWorkspace(t *testing.T) {
 		}
 	}
 	t.Logf("%d requests covered by admission, %d composed as with admission off", covered, composed)
-	if covered != 3*27 || composed != 27+4 {
+	if covered != 3*29 || composed != 29+4 {
 		t.Fatalf("covered %d, composed %d: not the goldens' counts", covered, composed)
 	}
 }

@@ -50,7 +50,14 @@ Fields, all required:
   async-settle runtime can issue tickets (a signer, an authority epoch of at
   least 1 and a journal region), and whether its store writes typed records
   (the ``typed`` the async-v1 authorize branch passes). Go (G15a) reads it as
-  optional; Python always publishes it.
+  optional; Python always publishes it. Inside it one member is optional:
+  ``admission_workspaces``, the sorted async-settle pilot set
+  (``async_settle_pilot_workspace_ids``), present only while admission is on
+  and the set is non-empty (an empty set admits every workspace, which is the
+  member absent). Python answers a workspace the set leaves out as with
+  admission off, so the edge composes that answer and passes only the
+  workspaces it names (docs/design/fast-admission-e2-g15-async.md section
+  4.1). ``null`` and an empty array are refused.
 
 One field is optional:
 
@@ -74,6 +81,9 @@ KIND: Final = "tr-edge-policy"
 # Fixed by the contract: Go checks the same offsets.
 REFRESH_SECONDS: Final = 15
 LIFETIME_SECONDS: Final = 60
+# Settings.parse_pilot_workspaces bounds the async-settle pilot set; Go
+# (routingsnapshot.maxAdmissionWorkspaces) bounds admission_workspaces alike.
+MAX_ADMISSION_WORKSPACES: Final = 32
 
 Flag = Annotated[bool, Field(strict=True)]
 PositiveInt = Annotated[int, Field(strict=True, ge=1, le=(1 << 63) - 1)]
@@ -111,6 +121,26 @@ class EdgeAsyncSettle(Frozen):
     edge_decide: Flag
     ticket_authority: Flag
     typed_records: Flag
+    # Optional: the pilot set admission covers, present only with admission
+    # on and a non-empty set (an empty set admits every workspace, which is
+    # the member absent). The canonical bytes omit it when absent.
+    admission_workspaces: tuple[WorkspaceId, ...] | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
+
+    @model_validator(mode="after")
+    def admission_set(self) -> Self:
+        workspaces = self.admission_workspaces
+        if workspaces is None:
+            if "admission_workspaces" in self.model_fields_set:
+                raise ValueError("admission_workspaces is absent for every workspace, never null")
+            return self
+        if not self.admission_enabled:
+            raise ValueError("admission_workspaces requires admission_enabled")
+        if not 1 <= len(workspaces) <= MAX_ADMISSION_WORKSPACES:
+            raise ValueError("admission_workspaces must name 1 to 32 workspaces")
+        _sorted_unique(workspaces, "admission_workspaces")
+        return self
 
 
 class EdgePolicyV1(Frozen):
