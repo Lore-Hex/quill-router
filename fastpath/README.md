@@ -28,6 +28,14 @@ spike its rollout's step 5 describes (`docs/design/fast-admission-spike.md`).
   `testdata/gateway_key_vectors_v1.json`, which
   `scripts/fastpath/gateway_key_vectors.py` writes. The store reads them with
   `ReadKeyContext`, one strong query by complete primary keys.
+- `internal/keywindow`: the per-key daily, weekly and monthly spend-window
+  check (`docs/design/fast-admission-e2-key-windows.md` §4.4), ported from
+  `spend_windows.window_floors`, `window_resets_at` and
+  `storage_gcp_authorize.key_window_limit_decision`, with the edge's pass
+  reasons. Pure, and dark: nothing imports it yet. It is held to Python's
+  own functions by `testdata/key_window_vectors_v1.json`, which
+  `scripts/fastpath/key_window_vectors.py` writes; a Python test fails when
+  it is stale.
 - `internal/pyjson`: Python's JSON bytes (float repr, `json.dumps` escaping,
   `json_body`'s sorted form, `JSONResponse`'s insertion order for error
   bodies, and pydantic-core's `TypeAdapter.dump_json`, which FastAPI writes
