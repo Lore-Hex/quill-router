@@ -239,11 +239,11 @@ def test_claims_never_exceed_running_slots(fake_store, monkeypatch):
     lock = threading.Lock()
     active = set()
     seen = []
-    original = SpannerSettleOutbox.claim_shard
-    def claim(self, **kwargs):
+    original = SpannerSettleOutbox.claim_candidates
+    def claim(self, candidates, **kwargs):
         # Account claims, not only applies: executor-queued leases count too.
         with lock:
-            rows = original(self, **kwargs)
+            rows = original(self, candidates, **kwargs)
             for row in rows:
                 assert row.authorization_id not in seen
                 seen.append(row.authorization_id)
@@ -255,7 +255,7 @@ def test_claims_never_exceed_running_slots(fake_store, monkeypatch):
         with lock:
             active.remove(row.authorization_id)
         return ApplyOutcome.SETTLED_NOW
-    monkeypatch.setattr(SpannerSettleOutbox, 'claim_shard', claim)
+    monkeypatch.setattr(SpannerSettleOutbox, 'claim_candidates', claim)
     monkeypatch.setattr(drain, 'apply_frozen_settle', apply)
     result = worker.drain_pass(24, settings=settings(settle_outbox_worker_concurrency=3))
     assert result['claimed'] == len(seen) == 24
@@ -274,7 +274,7 @@ def test_batch_tail_expired_claim_never_applied(monkeypatch, expired):
     calls = []
     monkeypatch.setattr(drain, 'apply_frozen_settle', lambda row: calls.append(row) or ApplyOutcome.SETTLED_NOW)
     monkeypatch.setattr(drain, '_resolve_row', lambda *args, **kw: None)
-    box = SimpleNamespace(claim_shard=lambda **kw: [row], _database=None, _pt=None, _async_fence=False)
+    box = SimpleNamespace(due_shard=lambda **kw: [row], claim_candidates=lambda rows, **kw: rows, _database=None, _pt=None, _async_fence=False)
     assert worker._apply_slot(box, 0, 30, 1. if expired == 'budget' else 10.) == (1, 'deferred', 0)
     assert calls == []
 
@@ -461,7 +461,7 @@ def test_shutdown_after_claim_leaves_row_leased(fake_store, monkeypatch, concurr
         row['queue_shard'] = i
     before = {key: dict(row) for key, row in db.settle_outbox.items()}
     stop = threading.Event()
-    original = SpannerSettleOutbox.claim_shard
+    original = SpannerSettleOutbox.claim_candidates
     original_slot = worker._apply_slot
     def slot(outbox, shard, lease, deadline, event):
         # Hold other slots at their entry until the first claim sets stop.
@@ -470,13 +470,13 @@ def test_shutdown_after_claim_leaves_row_leased(fake_store, monkeypatch, concurr
         return original_slot(outbox, shard, lease, deadline, event)
     monkeypatch.setattr(worker, '_apply_slot', slot)
     claims, applies = [], []
-    def claim(self, **kw):
+    def claim(self, candidates, **kw):
         assert not stop.is_set()
-        result = original(self, **kw)
+        result = original(self, candidates, **kw)
         claims.extend(result)
         stop.set()
         return result
-    monkeypatch.setattr(SpannerSettleOutbox, 'claim_shard', claim)
+    monkeypatch.setattr(SpannerSettleOutbox, 'claim_candidates', claim)
     monkeypatch.setattr(drain, 'apply_frozen_settle', lambda row: applies.append(row) or ApplyOutcome.SETTLED_NOW)
     monkeypatch.setattr(worker, 'claim_health_publish', lambda *args: False)
     started = time.monotonic()
