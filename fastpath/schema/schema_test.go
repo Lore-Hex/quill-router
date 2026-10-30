@@ -58,7 +58,7 @@ func TestStatementsAreTheFastPathsTablesAndIndexes(t *testing.T) {
 		}
 		names = append(names, m[2])
 	}
-	want := "tr_credit_balance tr_reservation tr_reservation_by_expiry tr_reservation_by_idemp " +
+	want := "tr_credit_balance tr_key_limit tr_reservation tr_reservation_by_expiry tr_reservation_by_idemp " +
 		"tr_reservation_by_authorization tr_gateway_authorization " +
 		"tr_entities tr_lease tr_lease_by_state tr_lease_by_owner tr_lease_by_id tr_lease_donor tr_lease_hold tr_lease_handoff tr_lease_winners " +
 		"tr_lease_winners_by_work tr_lease_drain tr_lease_drain_by_commit tr_lease_record tr_lease_staged " +
@@ -150,6 +150,32 @@ func TestReservationIsProductions(t *testing.T) {
 	for _, m := range added {
 		if !regexp.MustCompile(`\b` + string(m[1]) + ` `).MatchString(ours[table]) {
 			t.Errorf("production adds %s to tr_reservation, and fastpath.sql lacks it", m[1])
+		}
+	}
+}
+
+// TestKeyLimitIsProductions holds fastpath.sql's tr_key_limit to the table
+// production creates (scripts/deploy/migrate_typed_counters.sh), up to
+// whitespace, and to every column the script adds to it since (docs/design/
+// fast-admission-e2-key-windows.md section 4.3).
+func TestKeyLimitIsProductions(t *testing.T) {
+	script := deployScript(t, "migrate_typed_counters.sh")
+	made := regexp.MustCompile(`(?s)"(CREATE TABLE tr_key_limit \(.*?\) PRIMARY KEY \(key_hash, shard\))"`).
+		FindAllSubmatch(script, -1)
+	if len(made) != 1 {
+		t.Fatalf("the script makes tr_key_limit %d times", len(made))
+	}
+	ours := ourStatement(t, "CREATE TABLE tr_key_limit ")
+	if want := words(string(made[0][1])); ours != want {
+		t.Fatalf("fastpath.sql's tr_key_limit:\n%s\nproduction's:\n%s", ours, want)
+	}
+	added := regexp.MustCompile(`(?m)^ensure_column tr_key_limit (\w+) `).FindAllSubmatch(script, -1)
+	if len(added) < 9 {
+		t.Fatalf("the script adds %d columns to tr_key_limit: the pattern no longer matches them", len(added))
+	}
+	for _, m := range added {
+		if !regexp.MustCompile(`\b` + string(m[1]) + ` `).MatchString(ours) {
+			t.Errorf("production adds %s to tr_key_limit, and fastpath.sql lacks it", m[1])
 		}
 	}
 }

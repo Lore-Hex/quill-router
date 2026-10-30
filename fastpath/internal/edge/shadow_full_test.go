@@ -26,6 +26,7 @@ import (
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/gwauth"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/gwstate"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/keywindow"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/pyjson"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/routingsnapshot"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store"
@@ -1745,5 +1746,150 @@ func TestAWindowRefusalOfAnUncheckedDecisionIsNotAWouldAdmit(t *testing.T) {
 	if r := compareFull(Decide(in), pyAnswer{status: 200, body: pythonsLegacyAnswer(t, f, cc, false)}); r.class !=
 		ClassAgreeFull || r.gate != PassKeyWindow {
 		t.Errorf("Python's 200: %+v", r)
+	}
+}
+
+// windowCase is an enforcing windowed key's decision (a daily limit of a
+// million microdollars, the policy's mode absent) and its window check over
+// rows holding used of the day.
+func windowCase(t *testing.T, used int64) (Decided, *windowRead, authorizeCase) {
+	t.Helper()
+	fields := map[string]any{"limit_daily_microdollars": 1_000_000}
+	d := Decide(windowedInputs(t, fields, ""))
+	dec := d.ForShadow()
+	if dec == nil || dec.Windows == nil {
+		t.Fatalf("no window check: %q", d.Pass)
+	}
+	at := d.ForShadow().Input.At
+	v := keywindow.Evaluate(dec.Windows.Limits, 1, dailyRows(at, 1_000_000, used, 1), dec.Estimate, at)
+	c := authorizeCaseNamed(t, "answer:app_categories_empty")
+	body := keyBodyWith(t, c, fields)
+	c.Key.KeyBody = &body
+	return d, &windowRead{verdict: v, made: true, took: 3 * time.Millisecond}, c
+}
+
+// rateLimited is Python's answer with its RateLimit-* headers.
+func rateLimited(a pyAnswer, limit, remaining, reset int64) pyAnswer {
+	a.rateLimit = [3]string{strconv.FormatInt(limit, 10), strconv.FormatInt(remaining, 10),
+		strconv.FormatInt(reset, 10)}
+	return a
+}
+
+// TestTheShadowComparesTheWindowCheck (docs/design/
+// fast-admission-e2-key-windows.md section 8.2): with the shadow's own
+// window check, Go's admit compares Python's 200 as the cohort's and makes
+// Python's window refusal the critical would-admit; Go's pass is benign
+// against Python's 200 (python_answered_go_passed by its reason) and agrees
+// with Python's refusal (passed); and Python's RateLimit-* headers are
+// compared with Go's limit, remaining and reset, the window of a 429 with
+// its message's. Without a check the comparison is read.none, as before.
+func TestTheShadowComparesTheWindowCheck(t *testing.T) {
+	f := authorizeGoldens(t)
+	allowed, admit, c := windowCase(t, 0)
+	_, spent, _ := windowCase(t, 1_000_000)
+	if !admit.verdict.Admit() || spent.verdict.Pass != keywindow.PassExceeded {
+		t.Fatalf("the verdicts: %+v %+v", admit.verdict, spent.verdict)
+	}
+	v := admit.verdict
+	py200 := pyAnswer{status: 200, body: pythonsLegacyAnswer(t, f, c, false)}
+	message := "API key daily spend limit exceeded; resets at 2026-10-20T00:00:00Z"
+	py429 := pyAnswer{status: 429, body: errorBody(429, windowRefusal, message)}
+	has := func(r fullResult, want ...string) bool {
+		for _, w := range want {
+			if !slices.Contains(r.windows, w) {
+				return false
+			}
+		}
+		return true
+	}
+	for _, x := range []struct {
+		name    string
+		w       *windowRead
+		a       pyAnswer
+		class   string
+		windows []string
+	}{
+		{"admit, Python's 200 agrees", admit, rateLimited(py200, v.Limit, v.Remaining, v.ResetSeconds), ClassAgreeFull,
+			[]string{"read.made", "latency.le_10ms", "verdict.admit", "window.agree", "window.same_inputs.agree"}},
+		{"admit, Python's 200 a second later", admit, rateLimited(py200, v.Limit, v.Remaining, v.ResetSeconds-1),
+			ClassAgreeFull, []string{"window.reset_1s", "window.same_inputs.agree"}},
+		{"admit, Python spent more", admit, rateLimited(py200, v.Limit, v.Remaining-5000, v.ResetSeconds),
+			ClassAgreeFull, []string{"window.differ.remaining.le_1000000"}},
+		{"admit, Python's other limit", admit, rateLimited(py200, v.Limit+1, v.Remaining, v.ResetSeconds),
+			ClassAgreeFull, []string{"window.differ.limit"}},
+		{"admit, Python's 200 without headers", admit, py200, ClassAgreeFull, []string{"window.python_none"}},
+		{"admit, Python refused the window", admit, rateLimited(py429, v.Limit, 0, v.ResetSeconds),
+			ClassWouldAdmit + ".429." + windowRefusal, []string{"verdict.admit", "window.differ.remaining.le_1000000"}},
+		{"admit, Python refused with the same inputs", admit, rateLimited(py429, v.Limit, v.Remaining, v.ResetSeconds),
+			ClassWouldAdmit + ".429." + windowRefusal, []string{"window.same_inputs.disagree"}},
+		{"spent, Python refused", spent, rateLimited(py429, 1_000_000, 0, v.ResetSeconds),
+			ClassGoPassed + "." + keywindow.PassExceeded,
+			[]string{"verdict." + keywindow.PassExceeded, "window.agree", "window.same_inputs.agree"}},
+		{"spent, Python refused another window", spent,
+			rateLimited(pyAnswer{status: 429, body: errorBody(429, windowRefusal,
+				"API key weekly spend limit exceeded; resets at 2026-10-26T00:00:00Z")}, 1_000_000, 0, v.ResetSeconds),
+			ClassGoPassed + "." + keywindow.PassExceeded, []string{"window.differ.window"}},
+		{"spent, Python admitted", spent, rateLimited(py200, 1_000_000, 0, v.ResetSeconds),
+			ClassPythonAnsweredGoPassed + "." + keywindow.PassExceeded, []string{"window.same_inputs.disagree"}},
+		{"unread, Python admitted", &windowRead{verdict: keywindow.Verdict{Pass: keywindow.PassUnread}, made: true,
+			took: time.Second}, py200, ClassPythonAnsweredGoPassed + "." + keywindow.PassUnread,
+			[]string{"latency.gt_300ms", "verdict." + keywindow.PassUnread}},
+		{"no check, Python refused", nil, py429, ClassWindowUnchecked + ".429." + windowRefusal, []string{"read.none"}},
+		{"no check, Python admitted", nil, py200, ClassAgreeFull, []string{"read.none"}},
+	} {
+		r := compareWindowed(allowed, x.a, x.w)
+		if r.class != x.class || !has(r, x.windows...) || !r.decided || r.gate != PassKeyWindow {
+			t.Errorf("%s: %s %v, want %s %v", x.name, r.class, r.windows, x.class, x.windows)
+		}
+		if strings.HasPrefix(r.class, ClassPythonAnsweredGoPassed) && (r.rows || len(r.fields) != 0) {
+			t.Errorf("%s: a pass compared as an answer: %+v", x.name, r)
+		}
+	}
+	// A key without a window check: no window counts.
+	in, _ := baseInputs(t)
+	if r := compareWindowed(Decide(in), py200, nil); len(r.windows) != 0 {
+		t.Errorf("an uncapped key's window counts: %v", r.windows)
+	}
+}
+
+// TestTheShadowReadsTheWindowsOffTheRequestPath: the shadow makes the
+// decide path's read for an enforcing key it follows, within its own
+// ReadsPerSecond, and counts it; Python's answer reaches the enclave
+// unchanged. With no reader it reads nothing (read.none).
+func TestTheShadowReadsTheWindowsOffTheRequestPath(t *testing.T) {
+	f := authorizeGoldens(t)
+	_, admit, c := windowCase(t, 0)
+	v := admit.verdict
+	windows := &fakeWindows{read: func(context.Context) ([]keywindow.Row, error) {
+		return dailyRows(c.at(), 1_000_000, 0, 1), nil
+	}}
+	py := pythonsLegacyAnswer(t, f, c, false)
+	headers := []string{"RateLimit-Limit", strconv.FormatInt(v.Limit, 10), "RateLimit-Remaining",
+		strconv.FormatInt(v.Remaining, 10), "RateLimit-Reset", strconv.FormatInt(v.ResetSeconds, 10)}
+	h := newFullEdge(t, f, c, nil, func(cfg *DecideShadowConfig) { cfg.Windows = windows })
+	h.answer(answerWith(200, py, headers...))
+	if rec := h.send(t, c); rec.Code != http.StatusOK || !bytes.Equal(rec.Body.Bytes(), py) {
+		t.Fatalf("the enclave got %d", rec.Code)
+	}
+	got := h.edge.DecideShadowCounts()
+	calls := windows.seen()
+	if len(calls) != 1 || calls[0].keyHash != c.Facts.Key.Hash || calls[0].shards != 1 ||
+		got.Classes[ClassAgreeFull] != 1 || got.Windows["read.made"] != 1 || got.Windows["verdict.admit"] != 1 ||
+		got.Windows["window.agree"] != 1 || got.Decide[PassKeyWindow] != 1 {
+		t.Fatalf("reads %+v, counts %+v", calls, got)
+	}
+	// The limiter: with no token left the shadow does not read.
+	h.edge.full.windowLimiter.Lock()
+	h.edge.full.cfg.ReadsPerSecond, h.edge.full.windowLimiter.tokens = 1e-9, 0
+	h.edge.full.windowLimiter.Unlock()
+	h.send(t, c)
+	if len(windows.seen()) != 1 || h.edge.DecideShadowCounts().Windows["read.none"] != 1 {
+		t.Fatalf("read past the limiter: %d reads, %v", len(windows.seen()), h.edge.DecideShadowCounts().Windows)
+	}
+	h = newFullEdge(t, f, c, nil, nil)
+	h.answer(answerWith(200, py, headers...))
+	h.send(t, c)
+	if got := h.edge.DecideShadowCounts(); got.Windows["read.none"] != 1 || got.Classes[ClassAgreeFull] != 1 {
+		t.Fatalf("no reader: %+v", got)
 	}
 }
