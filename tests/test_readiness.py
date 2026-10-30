@@ -39,11 +39,14 @@ async def test_liveness_is_independent_of_storage_and_saturated_threadpool(
     @app.get("/test-blocked-request")
     def blocked_request() -> dict[str, bool]:
         loop.call_soon_threadsafe(started.set)
-        assert release.wait(10), "test failed to release the long-running request"
+        # Only the test releases this worker, even if the runner deschedules
+        # the event loop. A wall-clock expiry would stop saturating the pool
+        # before the health assertion (or fail the fixture under CI load).
+        release.wait()
         return {"completed": True}
 
     def forbidden(*args: object, **kwargs: object) -> None:
-        pytest.fail("liveness touched storage, network, or a request-admission lock")
+        pytest.fail("liveness touched storage, network, threadpool, or a request-admission lock")
 
     # Patch the backend class, never the module-global forwarding STORE proxy.
     # Catch every backend attribute access, not just readiness_check().
@@ -60,7 +63,7 @@ async def test_liveness_is_independent_of_storage_and_saturated_threadpool(
             ) as client:
                 busy = asyncio.create_task(client.get("/test-blocked-request"))
                 try:
-                    await asyncio.wait_for(started.wait(), timeout=2)
+                    await started.wait()
                     assert limiter.borrowed_tokens == limiter.total_tokens == 1
                     # The busy request already passed admission. Probes must
                     # bypass both the rate limiter and body-budget locks.
@@ -71,15 +74,26 @@ async def test_liveness_is_independent_of_storage_and_saturated_threadpool(
                         clock[0] += 2.9  # Just before the listener drain ends.
                         assert server.drain_deadline == 103.0
                         assert await server.on_tick(1) is False
-                    for path in ("/health", "/v1/health"):
-                        response = await asyncio.wait_for(client.get(path), timeout=1)
-                        assert response.status_code == 200
-                        assert response.json() == {"status": "ok"}
+                    # Fail at dispatch/acquisition rather than timing out on
+                    # the occupied pool. Keep the real worker and its token
+                    # held throughout both responses. Remove these guards
+                    # before releasing it: its sync response validation may
+                    # legitimately use the pool during cleanup.
+                    with monkeypatch.context() as probe_guard:
+                        probe_guard.setattr(anyio.to_thread, "run_sync", forbidden)
+                        probe_guard.setattr(type(limiter), "acquire", forbidden)
+                        probe_guard.setattr(loop, "run_in_executor", forbidden)
+                        for path in ("/health", "/v1/health"):
+                            response = await client.get(path)
+                            assert response.status_code == 200
+                            assert response.json() == {"status": "ok"}
+                            assert limiter.borrowed_tokens == limiter.total_tokens == 1
+                            assert not release.is_set()
                     assert not busy.done()
                     assert not server.should_exit
                 finally:
                     release.set()
-                    response = await asyncio.wait_for(busy, timeout=2)
+                    response = await busy
                     assert response.status_code == 200
         finally:
             limiter.total_tokens = previous_tokens
