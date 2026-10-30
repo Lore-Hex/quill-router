@@ -74,6 +74,8 @@ NEBIUS_NOVEMBER_9_RETIREMENT_AT = datetime(2026, 11, 9, 0, 0, tzinfo=UTC)
 # Decision Models (Passau, CET): pinned ids answer through 30 Nov 2026 and
 # return 410 from 1 Dec; retire at 1 Dec 00:00 CET.
 DECISIONMODELS_PINNED_S1_PRO_RETIREMENT_AT = datetime(2026, 11, 30, 23, 0, tzinfo=UTC)
+# Anthropic retires claude-sonnet-4-5 on 30 Nov 2026 at 9AM PT (PST, UTC-8).
+ANTHROPIC_SONNET_45_RETIREMENT_AT = datetime(2026, 11, 30, 17, 0, tzinfo=UTC)
 # 2026-10-30 10:00 PDT: Crusoe redirects four serverless models to replacements.
 CRUSOE_OCTOBER_30_RETIREMENT_AT = datetime(2026, 10, 30, 17, 0, tzinfo=UTC)
 TELNYX_NOVEMBER_2_RETIREMENT_AT = datetime(2026, 11, 2, 0, 0, tzinfo=UTC)
@@ -1120,6 +1122,15 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"openbmb/MiniCPM-V-4_5"}),
         effective_at=NEBIUS_NOVEMBER_9_RETIREMENT_AT,
         replacement_model_ids=("nvidia/nemotron-3.5-super-vl",),
+    ),
+    # Anthropic's October 30 reminder: Claude Sonnet 4.5 retires on the native
+    # Claude API. Provider-scoped; Azure and other hosts keep serving it.
+    _Retirement(
+        provider="anthropic",
+        model_ids=frozenset({"anthropic/claude-sonnet-4.5"}),
+        upstream_ids=frozenset({"claude-sonnet-4-5-20250929", "claude-sonnet-4-5"}),
+        effective_at=ANTHROPIC_SONNET_45_RETIREMENT_AT,
+        replacement_model_ids=("anthropic/claude-sonnet-5.5",),
     ),
     # DigitalOcean's October 29 notices deprecate these Inference models on
     # 2026-11-09 (date only; 00:00 UTC conservatively); requests then 404.
