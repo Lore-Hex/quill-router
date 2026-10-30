@@ -1,5 +1,5 @@
 # Streams on the fast-path lease (docs/design/fast-admission-streams.md,
-# sections 4.4, 6.4 and 8.3): two lines the control plane writes, each
+# sections 4.4, 6.4 and 8.3): three lines the control plane writes, each
 # counted by a log-based metric and paged on by a policy, as
 # infra/fastpath_alerts.tf pages on the nodes' journal.
 #
@@ -15,6 +15,9 @@
 #   - settled_without_intent: the lease booked a settle for a leased stream
 #     whose row the reaper found with no settle intent to write its records
 #     (services/fastpath_settle.py, reconcile_reaped).
+#   - leased_reap_overdue: a leased stream's row whose lease still gives no
+#     disposition past the hold's end of life plus 15 minutes, repeated each
+#     reaper pass until it does (services/fastpath_settle.py).
 #
 # What each means and what to do: docs/runbooks/fastpath-alerts.md.
 
@@ -22,6 +25,7 @@ locals {
   fastpath_control_plane_lines = {
     heartbeat_divergence   = "fastpath.heartbeat_divergence"
     settled_without_intent = "fastpath.settled_without_intent"
+    leased_reap_overdue    = "fastpath.leased_reap_overdue"
   }
   fastpath_control_plane_filters = {
     for kind, event in local.fastpath_control_plane_lines : kind => join(" AND ", [

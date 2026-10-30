@@ -16,6 +16,7 @@ The repository has no harness that starts the Go service from Python.
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import json
 import logging
@@ -148,10 +149,43 @@ class _Terminal:
         return self._terminal()
 
 
-def _authorization() -> GatewayAuthorization:
+def _authorization(*, snapshot: bool = True) -> GatewayAuthorization:
+    """A leased authorization; with `snapshot`, one a stream's heartbeat
+    reached (the started marker and the delivered usage)."""
     return GatewayAuthorization(id="gwa-1", workspace_id=WORKSPACE, key_hash="k", model_id="m", provider="p",
                                 usage_type=UsageType.CREDITS, estimated_microdollars=500,
-                                fastpath_envelope="sealed", stage_d_boot_kid="boot")
+                                fastpath_envelope="sealed", stage_d_boot_kid="boot",
+                                started_at="2026-10-30T00:00:00Z" if snapshot else None,
+                                delivered_usage=json.dumps(USAGE) if snapshot else None)
+
+
+@pytest.mark.parametrize("answer", [REAP_WON, {"Status": "settled", "Outcome": "reaped_snapshot", "Cost": 0,
+                                               "CostKnown": True}], ids=["won_reap", "auditor_zero_reap"])
+def test_a_reap_of_a_hold_no_heartbeat_reached_keeps_todays_handling(answer: dict[str, Any]) -> None:
+    """The auditor reaps an open hold with no heartbeat at its end of life,
+    uncharged: no snapshot to record. A settle keeps its own generation at
+    the lease's cost, outcome settled, as before; a refund stays undecided,
+    as before; and a won reap, which no owner makes of such a hold, stays
+    undecided."""
+    plain = _authorization(snapshot=False)
+    generation = Generation(id="gen-1", request_id="r", workspace_id=WORKSPACE, key_hash="k", model="m",
+                            provider_name="p", app="a", tokens_prompt=1, tokens_completion=1,
+                            total_cost_microdollars=300, usage_type="Credits", speed_tokens_per_second=1.0,
+                            finish_reason="stop", status="success", streamed=False)
+    if answer["Status"] == "won":
+        for success in (True, False):
+            with pytest.raises(fastpath_settle.Undecided):
+                fastpath_settle.forward_terminal(_Terminal(answer), plain, success=success, charge=300,  # type: ignore[arg-type]
+                                                 generation=generation)
+        return
+    decision = fastpath_settle.forward_terminal(_Terminal(answer), plain, success=True, charge=300,  # type: ignore[arg-type]
+                                                generation=generation)
+    assert decision.outcome is None and decision.success and decision.charge == 0
+    assert decision.generation is not None and decision.generation.id == "gen-1"
+    assert decision.generation.total_cost_microdollars == 0
+    with pytest.raises(fastpath_settle.Undecided):
+        fastpath_settle.forward_terminal(_Terminal(answer), plain, success=False, charge=0,  # type: ignore[arg-type]
+                                         generation=None)
 
 
 @pytest.mark.parametrize("success", [True, False], ids=["settle", "refund"])
@@ -358,6 +392,99 @@ def test_no_front_door_is_pending(monkeypatch: pytest.MonkeyPatch, fleet: _Fleet
     assert outcome == fastpath_settle.RECONCILED_PENDING
     still = store.get_gateway_authorization(authorization.id)
     assert still is not None and not still.settled
+
+
+def test_a_settle_after_the_auditors_zero_reap_of_a_plain_hold_keeps_its_records(fleet: _Fleet) -> None:
+    """Through the route, a leased request no heartbeat reached: its settle
+    answered with the closed lease's uncharged reap records the settle's own
+    generation and activity row at the lease's cost, outcome settled, as
+    before; a refund answered so stays durable and pending, as before."""
+    store, database, key = _seed()
+    authorized = gateway._authorize_gateway_sync(_request(), _body(key.hash), _pilot())["data"]
+    fleet.answers["/v1/settle"] = (200, {"Status": "settled", "Outcome": "reaped_snapshot", "Cost": 0, "CostKnown": True})
+    gateway._settle_gateway_authorization(_settle_body(authorized), success=True, settings=_pilot())
+    finalized = store.get_gateway_authorization(authorized["authorization_id"])
+    assert finalized is not None and finalized.settled
+    assert finalized.finalization_outcome == "settled" and finalized.finalized_cost_microdollars == 0
+    (generation,) = _generations(database)
+    assert finalized.finalized_generation_id == generation["id"] and generation.get("settled_from") != "heartbeat"
+    assert len(database.operational_analytics_outbox) == 1
+
+    second = gateway._authorize_gateway_sync(_request(), _body(key.hash), _pilot())["data"]
+    fleet.answers["/v1/refund"] = (200, {"Status": "settled", "Outcome": "reaped_snapshot", "Cost": 0, "CostKnown": True})
+    data = gateway._settle_gateway_authorization(_settle_body(second, success=False), success=False,
+                                                 settings=_pilot())["data"]
+    assert data["disposition"] == "intent_durable"
+    still = store.get_gateway_authorization(second["authorization_id"])
+    assert still is not None and not still.settled
+
+
+class _ReconcileStore:
+    """A store the reconcile reads one row from, recording every write."""
+
+    def __init__(self, authorization: GatewayAuthorization | None) -> None:
+        self.authorization = authorization
+        self.writes: list[str] = []
+
+    def get_gateway_authorization(self, _authorization_id: str) -> GatewayAuthorization | None:
+        return self.authorization
+
+    def extend_reservation_expiry(self, *_args: Any) -> bool:
+        self.writes.append("extend")
+        return True
+
+    def typed_finalize_leased_result(self, *_args: Any, **_kwargs: Any) -> None:
+        self.writes.append("finalize")
+
+
+class _Disposing:
+    def __init__(self, answer: fd.Disposition) -> None:
+        self.answer, self.asked = answer, 0
+
+    def disposition(self, **_kwargs: Any) -> fd.Disposition:
+        self.asked += 1
+        return self.answer
+
+
+@pytest.mark.parametrize("row", ["absent", "not_leased", "settled"])
+def test_the_reconcile_leaves_a_row_that_is_not_an_open_leased_one_alone(row: str) -> None:
+    authorization: GatewayAuthorization | None = _authorization()
+    if row == "absent":
+        authorization = None
+    elif row == "not_leased":
+        authorization = dataclasses.replace(_authorization(), fastpath_envelope=None, credit_reservation_id="r")
+    else:
+        authorization = dataclasses.replace(_authorization(), settled=True, credit_reservation_id="r")
+    store = _ReconcileStore(authorization)
+    client = _Disposing(fd.Disposition(status="pending", outcome="", cost=0, cost_known=False))
+    outcome = fastpath_settle.reconcile_reaped(client, store, "gwa-1", now=dt.datetime.now(dt.UTC),  # type: ignore[arg-type]
+                                               grace_seconds=300)
+    assert outcome == fastpath_settle.RECONCILED_SKIPPED
+    assert store.writes == [] and client.asked == 0
+
+
+@pytest.mark.parametrize("intent", ["pending", "unreadable"])
+def test_a_settled_disposition_with_its_intent_pending_pages_no_one(
+    caplog: pytest.LogCaptureFixture, intent: str,
+) -> None:
+    """With the outbox guard off the reaper's scan passes over a row with a
+    pending settle intent; that settle's intent writes its records, so the
+    row is asked again later and nothing pages. A read of the intent that
+    fails counts as pending too."""
+    caplog.set_level(logging.INFO, logger="trusted_router.fastpath")
+    store = _ReconcileStore(dataclasses.replace(_authorization(), credit_reservation_id="r"))
+    client = _Disposing(fd.Disposition(status="settled", outcome="settled", cost=306, cost_known=True))
+
+    def has_intent(_authorization_id: str) -> bool:
+        if intent == "unreadable":
+            raise RuntimeError("store away")
+        return True
+
+    outcome = fastpath_settle.reconcile_reaped(client, store, "gwa-1", now=dt.datetime.now(dt.UTC),  # type: ignore[arg-type]
+                                               grace_seconds=300, has_intent=has_intent)
+    assert outcome == fastpath_settle.RECONCILED_PENDING
+    assert store.writes == ["extend"]
+    assert not [r for r in caplog.records if r.getMessage().startswith("fastpath.settled_without_intent ")]
 
 
 def test_a_settled_disposition_without_an_intent_is_told_and_left(fleet: _Fleet, caplog: pytest.LogCaptureFixture) -> None:

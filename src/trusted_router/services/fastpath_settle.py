@@ -14,6 +14,7 @@ import dataclasses
 import datetime as dt
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -51,6 +52,13 @@ class Undecided(Exception):
     a settle or a refund that won over the other kind, a closed lease's
     settle answered to a refund (which has no settle body to record), or no
     front door. The caller keeps the intent pending and asks again later."""
+
+
+def has_snapshot(authorization: GatewayAuthorization) -> bool:
+    """Whether a stream's heartbeat reached the row: the started marker or
+    the delivered usage it writes. Only such a row has a snapshot a reap
+    records (docs/design/fast-admission-streams.md section 6.3)."""
+    return authorization.started_at is not None or authorization.delivered_usage is not None
 
 
 def _reaped(authorization: GatewayAuthorization, *, kind: str, cost: int, charge: int) -> Decision:
@@ -130,8 +138,9 @@ def forward_terminal(
         terminal.charge,
         terminal.outcome,
     )
+    snapshot = has_snapshot(authorization)
     if terminal.status == frontdoor.WON:
-        if terminal.kind == "reap":
+        if terminal.kind == "reap" and snapshot:
             return _reaped(authorization, kind=kind, cost=int(terminal.charge), charge=charge)
         if terminal.kind != kind:
             # Another terminal of this authorization won at the owner; its
@@ -147,10 +156,14 @@ def forward_terminal(
             )
     elif terminal.status == frontdoor.SETTLED:
         # The lease closed before this terminal: the disposition is the
-        # outcome. A reap's records are the snapshot's, whichever terminal
-        # asks; a settle's booking needs the settle's body, so only a
-        # settle writes it.
-        if terminal.outcome == REAPED_SNAPSHOT and terminal.cost_known:
+        # outcome. A reap of a stream's snapshot has the snapshot's records,
+        # whichever terminal asks. A reap of a hold with no heartbeat, the
+        # auditor's uncharged reap at its end of life, has no snapshot to
+        # record: it keeps today's handling, a settle writing its own
+        # generation at the lease's cost and a refund left undecided. A
+        # settle's booking needs the settle's body, so only a settle writes
+        # it.
+        if terminal.outcome == REAPED_SNAPSHOT and terminal.cost_known and snapshot:
             return _reaped(authorization, kind=kind, cost=int(terminal.cost), charge=charge)
         if terminal.outcome in SETTLED_OUTCOMES and terminal.cost_known:
             if not success:
@@ -207,6 +220,7 @@ def reconcile_reaped(
     *,
     now: dt.datetime,
     grace_seconds: int,
+    has_intent: Callable[[str], bool] | None = None,
 ) -> str:
     """A leased stream's row the reaper found expired with a heartbeat on it
     (docs/design/fast-admission-streams.md section 6.4): its hold is the
@@ -262,6 +276,12 @@ def reconcile_reaped(
             )
             return RECONCILED_REFUND
         if answer.outcome == "settled":
+            if _intent_pending(has_intent, authorization.id):
+                # The settle's own intent writes its records: a reaper pass
+                # with the outbox guard off scans past it. Asked again later.
+                logger.info("fastpath leased reap settled, its intent pending authorization_id=%s", authorization.id)
+                _push_expiry(store, authorization, now=now, grace_seconds=grace_seconds)
+                return RECONCILED_PENDING
             logger.error(
                 "fastpath.settled_without_intent authorization_id=%s cost=%d cost_known=%s",
                 authorization.id,
@@ -284,6 +304,19 @@ def reconcile_reaped(
     return RECONCILED_PENDING
 
 
+def _intent_pending(has_intent: Callable[[str], bool] | None, authorization_id: str) -> bool:
+    """Whether the authorization has a settle-outbox intent that freezes its
+    hold. A read that fails counts as pending: the line pages a person, and
+    an intent that may be there is not a settle without one."""
+    if has_intent is None:
+        return False
+    try:
+        return bool(has_intent(authorization_id))
+    except Exception:  # noqa: BLE001 - a failed read must not page, nor end the pass
+        logger.warning("fastpath leased reap intent read failed authorization_id=%s", authorization_id)
+        return True
+
+
 def _push_expiry(store: Any, authorization: GatewayAuthorization, *, now: dt.datetime, grace_seconds: int) -> None:
     """The row's reservation expires again a grace from now, so the reaper's
     next pass asks the lease again and its scan is not filled by one row."""
@@ -299,13 +332,16 @@ def reconcile_reaped_leases(
     *,
     now: dt.datetime,
     grace_seconds: int,
+    has_intent: Callable[[str], bool] | None = None,
 ) -> dict[str, int]:
     """reconcile_reaped for each of a reaper pass's leased streams, one's
     failure that one's error alone, and the counts by outcome."""
     counts: dict[str, int] = {}
     for authorization_id in authorization_ids:
         try:
-            outcome = reconcile_reaped(client, store, authorization_id, now=now, grace_seconds=grace_seconds)
+            outcome = reconcile_reaped(
+                client, store, authorization_id, now=now, grace_seconds=grace_seconds, has_intent=has_intent,
+            )
         except Exception:  # noqa: BLE001 - one row's failure must not end the pass
             logger.exception("fastpath leased reap reconcile failed authorization_id=%s", authorization_id)
             outcome = "error"

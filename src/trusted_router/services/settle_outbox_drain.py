@@ -5,7 +5,7 @@ import json
 import logging
 import time
 from collections import Counter
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from itertools import chain
 from typing import Any, cast
 
@@ -144,12 +144,23 @@ def _reconcile_leased(reap_result: ReapPassResult) -> dict[str, int]:
     if store is None:
         logger.warning("fastpath leased reap reconcile without a typed store count=%s", len(leased))
         return {}
+    def every_intent_pending(_authorization_id: str) -> bool:
+        return True
+
+    has_intent: Callable[[str], bool]
+    try:
+        has_intent = spanner_settle_outbox().has_intent
+    except Exception:  # noqa: BLE001 - without the outbox no settled row pages: every one reads as pending
+        logger.warning("fastpath leased reap reconcile without the settle outbox count=%s", len(leased))
+        has_intent = every_intent_pending
+
     counts = fastpath_settle.reconcile_reaped_leases(
         _fastpath_front_door(settings),
         store,
         leased,
         now=dt.datetime.now(dt.UTC),
         grace_seconds=settings.heartbeat_grace_seconds,
+        has_intent=has_intent,
     )
     logger.info("fastpath leased reap reconciled %s", json.dumps(counts, sort_keys=True, separators=(",", ":")))
     return counts

@@ -86,7 +86,7 @@ page names does not change.
 
 ## The control plane's lines
 
-Two policies page on lines the control plane writes for streams on the lease
+Three policies page on lines the control plane writes for streams on the lease
 (`infra/fastpath_control_plane_alerts.tf`; `docs/design/fast-admission-streams.md`
 §4.4 and §6.4), each also counted by a log-based metric of the same name
 (`logging.googleapis.com/user/fastpath_control_plane_<kind>`). Find the
@@ -97,6 +97,7 @@ textPayload:"ERROR trusted_router.fastpath fastpath.<event> "'`.
 |---|---|---|
 | `heartbeat_divergence` | An owner refused a leased stream's heartbeat the control plane's transaction had accepted (`status=rejected`), or a front door could not open its envelope (`status=invalid`). The enclave was told `out_of_cohort` and stopped the stream, which settles what it delivered. | Gate P (§8.3) needs none. Read the authorization's heartbeat lines and the owner's records: a `rejected` means the two validations disagree, a defect to fix before streams move on; an `invalid` means the envelope's key is no longer accepted (`fastpath-key-rotation.md`: the old key must stay accepted for a hold's life). Set `fastpath_pilot_streams` off until it is explained. |
 | `settled_without_intent` | The reaper found a leased stream's row expired, and the lease answered that a settle won, but no settle intent remained for Python to write the settle's records: the charge is booked, its generation record is missing. The row is left, its expiry pushed out, so the line repeats each pass. | Find the settle in the lease's records (`tr_lease_record` for the authorization, or the record topic's export) and the settle route's lines for it. Write the records by hand only once the cause is known; money is not at risk, the record is. |
+| `leased_reap_overdue` | The reaper found a leased stream's row expired, and the lease still gave no disposition (pending, a failed or unserved read, no front door) though the hold's end of life plus 15 minutes has passed: the owner releases or reaps every hold by its end of life plus its grace, and the auditor drains a stopped owner's lease within its overdue allowance. The row is left, its expiry pushed out, so the line repeats each pass. | Read the lease's state and drain (`drain_overdue` and `pending_work_overdue` alerts on the same lease name the cause) and the `/v1/disposition` lines (`fastpath leased reap disposition unanswered`). Money is not at risk: Python books nothing for the row; its records wait for the lease's answer. |
 
 ## The edge's counts
 

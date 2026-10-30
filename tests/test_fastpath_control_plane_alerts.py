@@ -107,6 +107,13 @@ def _rendered(kind: str) -> list[str]:
                 _Client(disposition=fd.Disposition(status="settled", outcome="settled", cost=9, cost_known=True)),  # type: ignore[arg-type]
                 _Store(_authorization()), "gwa-alert", now=dt.datetime.now(dt.UTC), grace_seconds=300,
             )
+        elif kind == "leased_reap_overdue":
+            past = _authorization()
+            past.fastpath_end_of_life = "2020-01-01T00:00:00Z"
+            fastpath_settle.reconcile_reaped(
+                _Client(disposition=fd.Disposition(status="pending", outcome="", cost=0, cost_known=False)),  # type: ignore[arg-type]
+                _Store(past), "gwa-alert", now=dt.datetime.now(dt.UTC), grace_seconds=300,
+            )
         else:
             raise AssertionError(kind)
     finally:
@@ -119,6 +126,7 @@ def test_each_filter_matches_the_line_the_code_writes_and_no_other() -> None:
     assert events == {
         "heartbeat_divergence": "fastpath.heartbeat_divergence",
         "settled_without_intent": "fastpath.settled_without_intent",
+        "leased_reap_overdue": "fastpath.leased_reap_overdue",
     }
     for kind, event in events.items():
         match = _payload_match(event)
