@@ -191,8 +191,12 @@ lines, summed, are its counts. It prints JSON:
   compose with `async.off` (counted in `decide` beside the decide row's
   gates), so Python answers it and the shadow compares it; with no
   `async_settle` in the policy or no `billing_valid` in the snapshot it
-  passes `async.unpublished`, and with Python's admission on
-  `policy.async_admission`, both before the key is looked up. Its line
+  passes `async.unpublished` before the key is looked up; once the key's
+  workspace is known it passes `policy.async_admission` when Python's
+  admission covers that workspace (admission on, and
+  `async_settle.admission_workspaces` absent or naming it). A workspace
+  the member leaves out is composed and compared as with admission off,
+  since Python answers it without a ticket. Its line
   carries five maps, each keyed by population first (`plain`, `affinity`
   for a body naming a `cache_affinity_key`, and for `async_seen`
   `unparsed`, a body the edge did not parse): `async_seen` (every such

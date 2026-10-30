@@ -35,8 +35,9 @@ var (
 // EdgePolicy is a parsed v1 edge policy body: the live control-plane facts
 // the edge gates on before it would answer an authorize itself. Every
 // exported field is a wire field; ParseEdgePolicy refuses any other field, a
-// missing one (async_settle, fastpath_pilot_key_windows and
-// fastpath_edge_streams alone may be absent), a float, a duplicate key, null anywhere but monitor_lookup_hash,
+// missing one (async_settle, its admission_workspaces,
+// fastpath_pilot_key_windows and fastpath_edge_streams alone may be
+// absent), a float, a duplicate key, null anywhere but monitor_lookup_hash,
 // and a body that is not its own canonical encoding.
 type EdgePolicy struct {
 	V                                 int64         `json:"v"`
@@ -108,11 +109,20 @@ func (p *EdgePolicy) KeyWindowsMode() string {
 // AsyncSettle is the policy's async_settle object, four booleans the
 // publishing Python process reads from its settings and its async-settle
 // runtime when it signs (docs/design/fast-admission-e2-g15-async.md section
-// 3.4). Each is required inside the object; no other member is allowed.
-// The edge's decide pipeline reads them (edge/decide.go, G15c).
+// 3.4), and the optional admission_workspaces. Each boolean is required
+// inside the object; no other member is allowed. The edge's decide pipeline
+// reads them (edge/decide.go, G15c).
 type AsyncSettle struct {
 	// AdmissionEnabled is settings.async_settle_admission_enabled.
 	AdmissionEnabled bool `json:"admission_enabled"`
+	// AdmissionWorkspaces is optional: the workspaces Python's admission
+	// covers, settings.async_settle_pilot_workspace_ids, sorted and unique,
+	// 1 to maxAdmissionWorkspaces of them, present only with
+	// AdmissionEnabled. Absent with admission on is every workspace (an
+	// empty pilot set admits all, Settings.async_settle_pilot_allows); a
+	// workspace it leaves out Python answers as with admission off (G15
+	// section 4.1). Admits reads it.
+	AdmissionWorkspaces *[]string `json:"admission_workspaces,omitempty"`
 	// TicketAuthority is whether the publisher holds a ticket signer, an
 	// authority epoch of at least 1 and a non-empty journal region.
 	TicketAuthority bool `json:"ticket_authority"`
@@ -122,6 +132,42 @@ type AsyncSettle struct {
 	// EdgeDecide is fastpath_edge_decide_async: whether the edge may answer
 	// an async-v1 authorize itself.
 	EdgeDecide bool `json:"edge_decide"`
+}
+
+// maxAdmissionWorkspaces bounds admission_workspaces as
+// Settings.parse_pilot_workspaces bounds the pilot set it is.
+const maxAdmissionWorkspaces = 32
+
+// Admits is whether Python's async admission covers the workspace: admission
+// on, and admission_workspaces absent or naming it. Python answers a request
+// it does not cover exactly as with admission off (shape A or B, no ticket),
+// which the edge composes; one it covers is Python's to ticket.
+func (a *AsyncSettle) Admits(workspace string) bool {
+	if !a.AdmissionEnabled {
+		return false
+	}
+	return a.AdmissionWorkspaces == nil || slices.Contains(*a.AdmissionWorkspaces, workspace)
+}
+
+func (a *AsyncSettle) validate() error {
+	w := a.AdmissionWorkspaces
+	if w == nil {
+		return nil
+	}
+	switch {
+	case !a.AdmissionEnabled:
+		return errors.New("async_settle.admission_workspaces without admission_enabled")
+	case len(*w) == 0 || len(*w) > maxAdmissionWorkspaces:
+		return fmt.Errorf("async_settle.admission_workspaces must name 1 to %d workspaces", maxAdmissionWorkspaces)
+	case !sortedUnique(*w):
+		return errors.New("async_settle.admission_workspaces must be sorted and unique")
+	}
+	for _, value := range *w {
+		if !workspaceID.MatchString(value) {
+			return fmt.Errorf("async_settle.admission_workspaces: %q", value)
+		}
+	}
+	return nil
 }
 
 // PolicyClaims are an edge-policy manifest's claims; the canonical encoding
@@ -225,6 +271,11 @@ func (p *EdgePolicy) validate() error {
 	}
 	if s := p.FastpathEdgeStreams; s != nil && !*s {
 		return errors.New("fastpath_edge_streams is absent when off, never false")
+	}
+	if a := p.AsyncSettle; a != nil {
+		if err := a.validate(); err != nil {
+			return err
+		}
 	}
 	regions := p.ConfiguredRegions
 	if len(regions) == 0 || len(regions) != len(slices.Compact(slices.Sorted(slices.Values(regions)))) ||

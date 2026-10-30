@@ -60,12 +60,18 @@ func asyncCaseNamed(t *testing.T, name string) authorizeCase {
 // set to on.
 func withEdgeDecide(t *testing.T, f authorizeFile, c authorizeCase, on bool) authorizeCase {
 	t.Helper()
+	return withAsyncSettle(t, f, c, func(a *routingsnapshot.AsyncSettle) { a.EdgeDecide = on })
+}
+
+// withAsyncSettle is the case with its policy's async_settle changed.
+func withAsyncSettle(t *testing.T, f authorizeFile, c authorizeCase, change func(*routingsnapshot.AsyncSettle)) authorizeCase {
+	t.Helper()
 	a := policyOf(t, f, c).AsyncSettle
 	if a == nil {
 		t.Fatalf("%s: no async_settle", c.Name)
 	}
 	changed := *a
-	changed.EdgeDecide = on
+	change(&changed)
 	raw, err := json.Marshal(changed)
 	if err != nil {
 		t.Fatal(err)
@@ -225,11 +231,12 @@ func TestEdgeDecideFalseNeverAdmitsAnAsyncRequest(t *testing.T) {
 	}
 }
 
-// TestTheAsyncGatesAreKeyless: an async-v1 request passes before its key is
-// looked up when the policy carries no async_settle object or the snapshot
-// no billing_valid (async.unpublished), or Python's admission is on
-// (policy.async_admission); without the header, the same request decides.
-func TestTheAsyncGatesAreKeyless(t *testing.T) {
+// TestTheUnpublishedGateIsKeyless: an async-v1 request passes before its
+// key is looked up when the policy carries no async_settle object or the
+// snapshot no billing_valid (async.unpublished); without the header, the
+// same request decides. Python's admission (policy.async_admission) is
+// gated once the key's workspace is known (TestTheAdmissionGateReadsTheKeysWorkspace).
+func TestTheUnpublishedGateIsKeyless(t *testing.T) {
 	f := asyncAuthorizeGoldens(t)
 	c := asyncCaseNamed(t, "answer:async.B:single:openai/gpt-4.1")
 	for _, tc := range []struct {
@@ -250,13 +257,6 @@ func TestTheAsyncGatesAreKeyless(t *testing.T) {
 			}
 			in.Snapshot = regionsFor(s, in.Policy)
 		}, PassAsyncUnpublished},
-		{"admission on", func(in *DecideInputs) {
-			p := *in.Policy
-			a := *p.AsyncSettle
-			a.AdmissionEnabled = true
-			p.AsyncSettle = &a
-			in.Policy = &p
-		}, PassAsyncAdmission},
 	} {
 		in, _ := caseInputs(t, f, c)
 		tc.change(&in)
@@ -287,6 +287,124 @@ func TestTheAsyncGatesAreKeyless(t *testing.T) {
 	in.Request.Header.Set("X-TR-Settlement-Mode", "async-v1")
 	if d := Decide(in); d.Pass != PassAsyncUnpublished || d.AsyncPop != AsyncPlain {
 		t.Errorf("async-v1 under P1's policy: %q, population %q", d.Pass, d.AsyncPop)
+	}
+}
+
+// admissionOn is the async_settle change for Python's admission on, its
+// admission_workspaces the given set (nil: the member absent).
+func admissionOn(workspaces ...string) func(*routingsnapshot.AsyncSettle) {
+	return func(a *routingsnapshot.AsyncSettle) {
+		a.AdmissionEnabled, a.AdmissionWorkspaces = true, nil
+		if workspaces != nil {
+			w := slices.Clone(workspaces)
+			a.AdmissionWorkspaces = &w
+		}
+	}
+}
+
+// TestTheAdmissionGateReadsTheKeysWorkspace (G15 §4.1, per workspace): with
+// Python's admission on, every answered golden's async-v1 request passes
+// policy.async_admission, with no decision, when admission_workspaces is
+// absent (every workspace, as before the member) or names the key's
+// workspace; when the member leaves that workspace out, the request is
+// decided exactly as with admission off, Python's admission-off 200 byte
+// for byte (shape A or B: no ticket, no status URL). A request without the
+// header decides whatever the member says.
+func TestTheAdmissionGateReadsTheKeysWorkspace(t *testing.T) {
+	f := asyncAuthorizeGoldens(t)
+	covered, composed := 0, 0
+	for _, golden := range f.Cases {
+		if golden.Expect.Outcome != "answer" || golden.Expect.Affinity != nil {
+			continue
+		}
+		ws := golden.Facts.Key.WorkspaceID
+		if ws == "" {
+			t.Fatalf("%s: no workspace", golden.Name)
+		}
+		for _, v := range []struct {
+			name   string
+			change func(*routingsnapshot.AsyncSettle)
+			admits bool
+		}{
+			{"absent", admissionOn(), true},
+			{"naming the workspace", admissionOn("a_"+ws, ws, "z_"+ws), true},
+			{"naming it alone", admissionOn(ws), true},
+			{"leaving it out", admissionOn("a_"+ws, "z_"+ws), false},
+		} {
+			c := withAsyncSettle(t, f, golden, v.change)
+			in, _ := caseInputs(t, f, c)
+			d := Decide(in)
+			if v.admits && asyncPopOf(golden) != "" {
+				if d.Pass != PassAsyncAdmission || d.ForShadow() != nil || d.Workspace != ws {
+					t.Errorf("%s, admission_workspaces %s: passed %q (decision %v, workspace %q), want %q", golden.Name,
+						v.name, d.Pass, d.ForShadow() != nil, d.Workspace, PassAsyncAdmission)
+					continue
+				}
+				covered++
+				continue
+			}
+			if d.Pass != "" || d.ForShadow() == nil {
+				t.Errorf("%s, admission_workspaces %s: passed %q, want a decision", golden.Name, v.name, d.Pass)
+				continue
+			}
+			if !checkAnswered(t, c, d.ForShadow()) {
+				continue
+			}
+			if a := d.ForShadow().Staged.Async(); asyncPopOf(golden) != "" && a.Shape == gwauth.AsyncNone {
+				t.Errorf("%s, admission_workspaces %s: no async members", golden.Name, v.name)
+			}
+			composed++
+		}
+	}
+	t.Logf("%d requests covered by admission, %d composed as with admission off", covered, composed)
+	if covered != 3*27 || composed != 27+4 {
+		t.Fatalf("covered %d, composed %d: not the goldens' counts", covered, composed)
+	}
+}
+
+// TestTheAdmissionGateIsAfterTheLookup: Python's admission covering the
+// workspace, an async-v1 request whose key the cache cannot answer for
+// passes with the cache's reason (the workspace is not known), the key
+// looked up once; its key found, it passes policy.async_admission before
+// any of the key's own facts, as the gate stood before every key gate.
+func TestTheAdmissionGateIsAfterTheLookup(t *testing.T) {
+	f := asyncAuthorizeGoldens(t)
+	golden := asyncCaseNamed(t, "answer:async.B:single:openai/gpt-4.1")
+	federated := asyncCaseNamed(t, "pass:key.federated:async.A")
+	for _, v := range []struct {
+		name   string
+		c      authorizeCase
+		lookup func(gwstate.Read) gwstate.Read
+		want   string
+	}{
+		{"key missing", golden, func(r gwstate.Read) gwstate.Read { r.Found = false; return r }, PassKeyMissing},
+		{"key stale", golden, func(r gwstate.Read) gwstate.Read { r.Key = gwstate.Stale; return r }, PassCacheKey},
+		{"key found", golden, nil, PassAsyncAdmission},
+		{"federated key", federated, nil, PassAsyncAdmission},
+	} {
+		c := withAsyncSettle(t, f, v.c, admissionOn(v.c.Facts.Key.WorkspaceID))
+		in, _ := caseInputs(t, f, c)
+		looked := 0
+		lookup := in.Lookup
+		in.Lookup = func(h string, now time.Time) gwstate.Read {
+			looked++
+			r := lookup(h, now)
+			if v.lookup != nil {
+				r = v.lookup(r)
+			}
+			return r
+		}
+		if d := Decide(in); d.Pass != v.want || d.ForShadow() != nil || looked != 1 {
+			t.Errorf("%s: passed %q (decision %v), %d lookups; want %q after one", v.name, d.Pass,
+				d.ForShadow() != nil, looked, v.want)
+		}
+	}
+	// The control: the federated key outside the member passes with its
+	// own reason, as with admission off.
+	c := withAsyncSettle(t, f, federated, admissionOn("a_"+federated.Facts.Key.WorkspaceID))
+	in, _ := caseInputs(t, f, c)
+	if d := Decide(in); d.Pass != federated.Expect.Reason {
+		t.Errorf("federated key outside the member: %q, want %q", d.Pass, federated.Expect.Reason)
 	}
 }
 
@@ -406,6 +524,52 @@ func TestTheShadowComparesTheAsyncMembers(t *testing.T) {
 					t.Errorf("the line's %s: %v, want %v", name, line.ByName[name], m)
 				}
 			}
+		}
+	}
+}
+
+// TestTheShadowComparesAWorkspaceAdmissionLeavesOut (§4.4): with Python's
+// admission on and admission_workspaces leaving the workspace out, an
+// async-v1 request is composed, passed with async.off and compared as with
+// admission off: Python's admission-off 200 agrees in full; a Python that
+// still tickets it (one before the per-workspace answer) is
+// async_python_admitted, its members not compared. A workspace the member
+// names passes policy.async_admission and is not composed.
+func TestTheShadowComparesAWorkspaceAdmissionLeavesOut(t *testing.T) {
+	f := asyncAuthorizeGoldens(t)
+	off := asyncCaseNamed(t, "pass:async.off:async.B")
+	raw, ws := off.Expect.Python.Response, off.Facts.Key.WorkspaceID
+	if off.Expect.Python.AsyncShape != "B" || raw == "" || ws == "" {
+		t.Fatalf("the async.off case: shape %q", off.Expect.Python.AsyncShape)
+	}
+	left := withAsyncSettle(t, f, off, admissionOn("a_"+ws))
+	named := withAsyncSettle(t, f, off, admissionOn("a_"+ws, ws))
+	plain := map[string]int{AsyncPlain: 1}
+	shape := map[string]int{AsyncPlain + "." + gwauth.AsyncSnapshot: 1}
+	py := newFakePython(t)
+	for _, v := range []struct {
+		name   string
+		c      authorizeCase
+		body   []byte
+		class  string
+		decide map[string]int
+		want   map[string]map[string]int
+	}{
+		{"left out, Python's admission-off 200", left, []byte(raw), ClassAgreeFull, map[string]int{PassAsyncOff: 1},
+			asyncCountsOf(plain, map[string]int{AsyncPlain + ".agree": 1}, nil, shape, nil)},
+		{"left out, Python tickets it", left, ticketed(t, raw), ClassDifferAny, map[string]int{PassAsyncOff: 1},
+			asyncCountsOf(plain, nil, nil, shape, plain)},
+		{"named", named, ticketed(t, raw), ClassPythonAnsweredGoPassed + "." + PassAsyncAdmission, map[string]int{},
+			asyncCountsOf(plain, nil, nil, nil, plain)},
+	} {
+		h := newFullEdge(t, f, v.c, py, nil)
+		h.answer(answerWith(200, v.body))
+		h.send(t, v.c)
+		got := h.edge.DecideShadowCounts()
+		if !maps.Equal(got.Classes, map[string]int{v.class: 1}) || !asyncCountsEqual(got.Async, v.want) ||
+			!maps.Equal(got.Decide, v.decide) {
+			t.Errorf("%s: classes %v (fields %v), decide %v, async %v\nwant %v", v.name, got.Classes, got.Fields,
+				got.Decide, got.Async, v.want)
 		}
 	}
 }

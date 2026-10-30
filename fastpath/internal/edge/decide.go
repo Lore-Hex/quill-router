@@ -101,10 +101,13 @@ const (
 
 	// The async-v1 gates (docs/design/fast-admission-e2-g15-async.md §4.1,
 	// §6.1), for a request whose X-TR-Settlement-Mode is exactly
-	// ["async-v1"]. PassAsyncUnpublished and PassAsyncAdmission are keyless
-	// policy gates: the policy carries no async_settle object or the
-	// snapshot no billing_valid, so Go cannot build Python's answer; or
-	// Python's admission is on, so the ticket is Python's. PassAsyncOff is a
+	// ["async-v1"]. PassAsyncUnpublished is a keyless policy gate: the
+	// policy carries no async_settle object or the snapshot no
+	// billing_valid, so Go cannot build Python's answer. PassAsyncAdmission
+	// is the first gate once the key's workspace is known: Python's
+	// admission covers that workspace (async_settle.Admits), so the ticket is
+	// Python's; a workspace its admission_workspaces leaves out is composed
+	// as with admission off, Python's own answer to it. PassAsyncOff is a
 	// decision gate after the compose, beside the decide row's: the policy's
 	// edge_decide is false, so the request is composed (and compared by the
 	// shadow) but never answered.
@@ -419,6 +422,9 @@ func Decide(in DecideInputs) Decided {
 	}
 	key, ws := read.Facts.Key, read.Facts.Workspace
 	out.Workspace = key.WorkspaceID
+	if reason := asyncAdmissionPass(r, policy, key.WorkspaceID); reason != "" {
+		return pass(reason)
+	}
 	eligible, reason := key.At(at)
 	if w := key.Windows; w != nil && (eligible || reason == gwstate.ReasonKeyBudgetStrict) {
 		windowGate = keyWindowsGate(policy.KeyWindowsMode(), *w)
@@ -543,8 +549,13 @@ func Decide(in DecideInputs) Decided {
 	}
 	if r.Async.V1 {
 		// The additions Python splices in (shape A or B); the policy's
-		// object is present and admission off (asyncPolicyPass).
-		compose.Async = &gwauth.AsyncInput{Request: r.Async, Policy: *policy.AsyncSettle}
+		// object is present (asyncPolicyPass) and its admission does not
+		// cover the workspace (asyncAdmissionPass), so Python answers it as
+		// with admission off. Admits again here, not a literal false: were
+		// the gate above skipped, Stage refuses a covered workspace.
+		async := *policy.AsyncSettle
+		async.AdmissionEnabled = async.Admits(key.WorkspaceID)
+		compose.Async = &gwauth.AsyncInput{Request: r.Async, Policy: async}
 	}
 	staged, err := gwauth.Stage(compose)
 	if err != nil {
@@ -578,16 +589,23 @@ func Decide(in DecideInputs) Decided {
 }
 
 // asyncPolicyPass is an async-v1 request's keyless policy gate: "" when the
-// edge can compose Python's admission-off answer, PassAsyncUnpublished when
-// the policy or the snapshot does not carry what it reads, and
-// PassAsyncAdmission when Python's admission is on (a ticket is Python's).
+// policy and the snapshot carry what the edge reads to compose Python's
+// answer, else PassAsyncUnpublished.
 func asyncPolicyPass(r gwauth.Request, p *routingsnapshot.EdgePolicy, s *routingsnapshot.Snapshot) string {
-	switch {
-	case !r.Async.V1:
-		return ""
-	case p.AsyncSettle == nil || !s.BillingValidPublished():
+	if r.Async.V1 && (p.AsyncSettle == nil || !s.BillingValidPublished()) {
 		return PassAsyncUnpublished
-	case p.AsyncSettle.AdmissionEnabled:
+	}
+	return ""
+}
+
+// asyncAdmissionPass is an async-v1 request's admission gate, once the key's
+// workspace is known (asyncPolicyPass passed, so the policy's object is
+// present): PassAsyncAdmission when Python's admission covers the workspace
+// (a ticket is Python's), else "": admission off, or admission_workspaces
+// leaves the workspace out, and Python answers it as with admission off
+// (docs/design/fast-admission-e2-g15-async.md section 4.1).
+func asyncAdmissionPass(r gwauth.Request, p *routingsnapshot.EdgePolicy, workspace string) string {
+	if r.Async.V1 && p.AsyncSettle.Admits(workspace) {
 		return PassAsyncAdmission
 	}
 	return ""
