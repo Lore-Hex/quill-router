@@ -311,7 +311,7 @@ func (l *Lease) Heartbeat(ctx context.Context, auth string, hb HeartbeatOf) (tim
 		l.mu.Unlock()
 		return time.Time{}, err
 	}
-	reapDeadline := l.o.cfg.StreamReap.reapDeadline(h, now, deadline, l.o.cfg.Grace)
+	reapDeadline := l.o.cfg.StreamReap.reapDeadline(h, now, deadline, l.o.cfg.Grace, l.o.cfg.Skew)
 	r := record.Record{Kind: record.Heartbeat, Auth: auth, Estimate: h.estimate,
 		Snapshot: &record.Snapshot{GatewaySeq: hb.GatewaySeq, Hash: hb.Hash, Usage: usage, Running: hb.Running,
 			Deadline: deadline.UTC()}}
