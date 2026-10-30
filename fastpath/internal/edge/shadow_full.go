@@ -6,7 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"reflect"
 	"regexp"
@@ -75,13 +77,18 @@ const (
 	// (docs/design/fast-admission-e2-key-windows.md section 8.2).
 	ClassWindowUnchecked = "window_unchecked"
 	// ClassWindowRace: Go read the key's windows and would have admitted,
-	// and Python refused a window it read more spent: its 429 names a window
-	// whose limit Go holds too, and its RateLimit-Remaining is below what
-	// Go's rows leave in that window. A settle landed between the two reads,
-	// the race Python's own instances have with each other (section 8.3,
-	// at most 0.05% of compares). Counted, never paged; any other window
-	// refusal of a key Go would admit is ClassWouldAdmit.
+	// Python refused a window it read more spent (its 429 names a window
+	// whose limit Go holds, with RateLimit-Remaining below what Go's rows
+	// leave there), and Go's own re-read after Python's answer has caught up
+	// with Python's remaining (confirmRace): a settle landed between the two
+	// first reads, the race Python's own instances have with each other
+	// (section 8.3, at most 0.05% of compares). Counted, never paged one by
+	// one; AlertWindowRace watches its rate and its repeats per key.
 	ClassWindowRace = "window_race"
+	// ClassWindowRaceUnconfirmed: a race candidate no re-read settled (the
+	// limiter, a failed or late re-read, a window reset since). It pages as
+	// a would-admit does, since it cannot be told from a defect of Go's read.
+	ClassWindowRaceUnconfirmed = "window_race_unconfirmed"
 )
 
 // windowRefusal is the error type of Python's 429 for a spend window
@@ -203,6 +210,10 @@ type fullShadow struct {
 	totals   *fullTally
 	critical int
 	differs  int
+	// raceLogs bounds the race lines a period logs; races is the rolling
+	// hour AlertWindowRace reads.
+	raceLogs int
+	races    raceWatch
 	// cacheAt is the cache's counts at the last line, which logs the
 	// period's: the cache keeps running totals.
 	cacheAt gwstate.Counters
@@ -498,6 +509,9 @@ func (sh *fullShadow) follow(job *fullJob) {
 		}
 	}
 	r := sh.safeCompare(decided, a, windows)
+	if r.race != nil {
+		sh.confirmRace(decided.ForShadow(), windows, &r)
+	}
 	sh.evict(decided, a, job.in.Request.Body)
 	if r.rows && sh.sample() {
 		d := decided.ForShadow()
@@ -546,6 +560,7 @@ type fullResult struct {
 	warm     *Decision
 	async    asyncResult
 	windows  []string
+	race     *raceCandidate
 }
 
 // asyncResult is one followed request's async-v1 counts (asyncCounts): its
@@ -1389,7 +1404,14 @@ func (sh *fullShadow) record(digest string, r fullResult) {
 			}
 		}
 	}
-	if strings.HasPrefix(r.class, ClassWouldAdmit+".") && sh.critical < maxCriticalLogs {
+	if sh.races.count(r, time.Now()) && sh.raceLogs < maxDifferLogs {
+		sh.raceLogs++
+		c := r.race
+		sh.logf("fastpath edge decide shadow window race: class=%s key=%s window=%s go=%d reread=%d python=%d gap=%d %s",
+			r.class, c.keyHashPrefix, c.window, c.first, c.reread, c.python, c.first-c.python, digest)
+	}
+	pages := strings.HasPrefix(r.class, ClassWouldAdmit+".") || strings.HasPrefix(r.class, ClassWindowRaceUnconfirmed+".")
+	if pages && sh.critical < maxCriticalLogs {
 		sh.critical++
 		if sh.cfg.Alert != nil {
 			sh.cfg.Alert(AlertWouldAdmit, digest, "the edge would have answered an authorize Python refused: "+r.class+
@@ -1469,7 +1491,8 @@ func (sh *fullShadow) flush() {
 		args = append(args, n.Unrefreshed-was.Unrefreshed, n.Dropped-was.Dropped, n.ReadFailures-was.ReadFailures)
 	}
 	sh.logf(line, args...)
-	sh.tallies, sh.critical, sh.differs = map[string]*fullTally{}, 0, 0
+	sh.raceAlerts(time.Now())
+	sh.tallies, sh.critical, sh.differs, sh.raceLogs = map[string]*fullTally{}, 0, 0, 0
 }
 
 // DecideShadowCounts are the full-response shadow's counts since the edge
@@ -1573,8 +1596,9 @@ func compareWindowed(d Decided, a pyAnswer, w *windowRead) fullResult {
 	switch {
 	case v.Admit() && unchecked:
 		class := ClassWouldAdmit
-		if windowRace(d.ForShadow(), w, a) {
-			class = ClassWindowRace
+		if r.race = windowRace(d.ForShadow(), w, a); r.race != nil {
+			// Unconfirmed until the re-read settles it (confirmRace).
+			class, r.race.unconfirmed = ClassWindowRaceUnconfirmed, "unchecked"
 		}
 		r.class = class + strings.TrimPrefix(r.class, ClassWindowUnchecked)
 	case v.Admit():
@@ -1658,31 +1682,67 @@ func windowNote(windows []string) string {
 	return " windows=" + strings.Join(windows, ",")
 }
 
-// windowRace reports Python's window refusal of a request Go read and would
-// admit as the read race (ClassWindowRace): the 429's message names a
-// window Go holds a limit for, its RateLimit-Limit is that limit, and its
-// RateLimit-Remaining is below the remaining Go's rows leave in that window
-// at the request's instant, so Python's read saw more spent than Go's.
-// Anything else, a body or header not read, another limit, the same or
-// more remaining (the same inputs with another verdict), is not.
-func windowRace(dec *Decision, w *windowRead, a pyAnswer) bool {
+// raceCandidate is Python's window refusal of a request Go read and would
+// admit, whose own evidence says Python's read saw more spent than Go's
+// (windowRace): the window, Go's remaining there from its first read,
+// Python's (RateLimit-Remaining), Go's from the re-read that confirms or
+// refutes it (confirmRace; -1 before), why it stayed unconfirmed, and the
+// key hash's first characters, for the line that traces it.
+type raceCandidate struct {
+	window          keywindow.Window
+	first, python   int64
+	reread          int64
+	unconfirmed     string
+	keyHashPrefix   string
+	refuted, landed bool
+}
+
+// keyHashPrefixLen is how much of a key's hash a race's line carries: enough
+// to tell one key's repeats, not the hash.
+const keyHashPrefixLen = 8
+
+// windowRace is Python's window refusal of a request Go read and would admit
+// as a race candidate, or nil: the 429's message names a window Go holds a
+// limit for, its RateLimit-Limit is that limit, and its RateLimit-Remaining
+// is below the remaining Go's rows leave in that window at the request's
+// instant. That alone proves nothing (a refusal of what Go admits always has
+// Python's remaining below Go's, a Go defect too), so the candidate pages
+// until a re-read confirms it (confirmRace).
+func windowRace(dec *Decision, w *windowRead, a pyAnswer) *raceCandidate {
 	m := windowRefused.FindStringSubmatch(errorOf(a).message)
 	if m == nil || dec == nil || dec.Windows == nil {
-		return false
+		return nil
 	}
 	window := keywindow.Window(m[1])
 	limit := dec.Windows.Limits.Get(window)
 	if limit == nil {
-		return false
+		return nil
 	}
 	pyLimit, err1 := strconv.ParseInt(a.rateLimit[0], 10, 64)
 	pyRemaining, err2 := strconv.ParseInt(a.rateLimit[1], 10, 64)
 	if err1 != nil || err2 != nil || pyLimit != *limit {
-		return false
+		return nil
 	}
-	// Go's remaining in Python's window alone: Evaluate over that one limit
-	// (the other windows' mirrors make it a drift pass, which changes no
-	// figure).
+	ours, ok := windowRemaining(dec, window, w.rows, w.at)
+	if !ok || pyRemaining >= ours {
+		return nil
+	}
+	prefix := dec.KeyHash
+	if len(prefix) > keyHashPrefixLen {
+		prefix = prefix[:keyHashPrefixLen]
+	}
+	return &raceCandidate{window: window, first: ours, python: pyRemaining, reread: -1, keyHashPrefix: prefix}
+}
+
+// windowRemaining is what rows leave in one window of the decision's key at
+// at: Evaluate over that window's limit alone (the other windows' mirrors
+// make it a drift pass, which changes no figure). ok is false when the rows
+// do not give it (not exactly the key's shards, an overflow).
+func windowRemaining(dec *Decision, window keywindow.Window, rows []keywindow.Row, at time.Time) (int64, bool) {
+	limit := dec.Windows.Limits.Get(window)
+	if limit == nil {
+		return 0, false
+	}
 	var one keywindow.Limits
 	switch window {
 	case keywindow.Daily:
@@ -1692,6 +1752,154 @@ func windowRace(dec *Decision, w *windowRead, a pyAnswer) bool {
 	default:
 		one.Monthly = limit
 	}
-	ours := keywindow.Evaluate(one, dec.Windows.Shards, w.rows, dec.Estimate, w.at)
-	return ours.Decided && ours.Window == window && pyRemaining < ours.Remaining
+	v := keywindow.Evaluate(one, dec.Windows.Shards, rows, dec.Estimate, at)
+	return v.Remaining, v.Decided && v.Window == window
+}
+
+// confirmRace settles a race candidate, after Python's answer, with one more
+// strong read of the key's rows (within the window limiter, at most
+// WindowReadBudget), evaluated in the candidate's window at the request's
+// instant. Usage only grows inside a window, so a settle that landed
+// between the two first reads shows in the re-read: Go's fresh remaining at
+// or below Python's confirms the race (ClassWindowRace, counted, never
+// paged). Still above Python's, Go's read missed what Python saw: a defect,
+// the critical would-admit. No re-read (the limiter, a failed or late read,
+// rows that do not give the window) or a window that has reset since (its
+// usage is another window's now) leaves it unconfirmed
+// (ClassWindowRaceUnconfirmed), which pages as a would-admit does: it
+// cannot be told from a defect.
+func (sh *fullShadow) confirmRace(dec *Decision, w *windowRead, r *fullResult) {
+	c := r.race
+	if c == nil {
+		return
+	}
+	suffix := strings.TrimPrefix(r.class, ClassWindowRaceUnconfirmed)
+	switch {
+	case sh.cfg.Windows == nil || !sh.windowSample():
+		c.unconfirmed = "limiter"
+	default:
+		again := readWindows(context.Background(), sh.cfg.Windows, dec, w.at, time.Now().Add(WindowReadBudget))
+		rem, ok := windowRemaining(dec, c.window, again.rows, w.at)
+		switch {
+		case again.verdict.Pass == keywindow.PassUnread:
+			c.unconfirmed = "unread"
+		case !sh.clock().Before(keywindow.ResetsAt(c.window, w.at)):
+			c.unconfirmed = "reset"
+		case !ok:
+			c.unconfirmed = "rows"
+		default:
+			c.reread = rem
+			c.landed = rem <= c.python
+			c.refuted = !c.landed
+		}
+	}
+	switch {
+	case c.landed:
+		r.class = ClassWindowRace + suffix
+		r.windows = append(r.windows, "race.confirmed")
+	case c.refuted:
+		r.class = ClassWouldAdmit + suffix
+		r.windows = append(r.windows, "race.refuted")
+	default:
+		r.windows = append(r.windows, "race.unconfirmed."+c.unconfirmed)
+	}
+}
+
+// AlertWindowRace is the alert kind of window races past what a race
+// explains (section 8.3): over the last hour, confirmed races
+// (ClassWindowRace) above RaceRateShare of the window reads the shadow made
+// (at least RaceRateMin of them), or one key raced more than RaceKeyRepeats
+// times. Not the critical page each would-admit is: each race was confirmed
+// by a re-read, so this is a rate to explain (a hot key, a settle path
+// slower than usual), not a refusal Go would have missed.
+const AlertWindowRace = "edge_window_race"
+
+// The rolling hour of AlertWindowRace.
+const (
+	RaceRateShare  = 0.0005
+	RaceRateMin    = 3
+	RaceKeyRepeats = 3
+	raceWindow     = time.Hour
+	// maxRaceKeys bounds the races per key the hour remembers.
+	maxRaceKeys = 10_000
+)
+
+// raceWatch is the rolling hour AlertWindowRace reads: each past period's
+// window reads and confirmed races, this period's, and each confirmed race's
+// key-hash prefix and time. Held under the shadow's mu.
+type raceWatch struct {
+	periods      []racePeriod
+	reads, races int
+	keys         []raceKey
+}
+
+type racePeriod struct {
+	at           time.Time
+	reads, races int
+}
+
+type raceKey struct {
+	at  time.Time
+	key string
+}
+
+// count adds a comparison at at: a window read made, a confirmed race. It reports
+// whether the comparison was a race candidate at all (confirmed, refuted or
+// unconfirmed), which the race line traces.
+func (w *raceWatch) count(r fullResult, at time.Time) bool {
+	if slices.Contains(r.windows, "read.made") {
+		w.reads++
+	}
+	if r.race == nil {
+		return false
+	}
+	if strings.HasPrefix(r.class, ClassWindowRace+".") {
+		w.races++
+		if len(w.keys) < maxRaceKeys {
+			w.keys = append(w.keys, raceKey{at, r.race.keyHashPrefix})
+		}
+	}
+	return true
+}
+
+// raceAlerts closes the period at now and raises AlertWindowRace for the hour
+// to now: its race rate, and each key past its repeats.
+func (sh *fullShadow) raceAlerts(now time.Time) {
+	w := &sh.races
+	w.periods = append(w.periods, racePeriod{now, w.reads, w.races})
+	w.reads, w.races = 0, 0
+	since := now.Add(-raceWindow)
+	for len(w.periods) > 0 && !w.periods[0].at.After(since) {
+		w.periods = w.periods[1:]
+	}
+	for len(w.keys) > 0 && !w.keys[0].at.After(since) {
+		w.keys = w.keys[1:]
+	}
+	reads, races := 0, 0
+	for _, p := range w.periods {
+		reads, races = reads+p.reads, races+p.races
+	}
+	var what []string
+	if races >= RaceRateMin && float64(races) > RaceRateShare*float64(reads) {
+		what = append(what, fmt.Sprintf("%d window races of %d window reads in the last hour, above %.2f%%", races,
+			reads, RaceRateShare*100))
+	}
+	perKey := map[string]int{}
+	for _, k := range w.keys {
+		perKey[k.key]++
+	}
+	for _, key := range slices.Sorted(maps.Keys(perKey)) {
+		if perKey[key] > RaceKeyRepeats {
+			what = append(what, fmt.Sprintf("key %s raced %d times in the last hour", key, perKey[key]))
+		}
+	}
+	if len(what) == 0 {
+		return
+	}
+	message := "the edge's window checks raced Python's past what a race explains: " + strings.Join(what, "; ")
+	if sh.cfg.Alert != nil {
+		sh.cfg.Alert(AlertWindowRace, "edge decide shadow", message)
+		return
+	}
+	sh.logf("fastpath edge decide shadow ALERT %s: %s", AlertWindowRace, message)
 }

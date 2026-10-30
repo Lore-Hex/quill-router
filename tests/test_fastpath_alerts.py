@@ -83,6 +83,7 @@ def test_every_alert_kind_has_a_policy_and_a_runbook_entry() -> None:
         "edge_decide_unavailable",
         "edge_decide_unavailable_sustained",
         "edge_decide_window_unread",
+        "edge_window_race",
         "edge_would_admit_python_refused",
     ]
     kinds += edge_kinds

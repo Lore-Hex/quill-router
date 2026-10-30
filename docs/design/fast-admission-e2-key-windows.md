@@ -239,9 +239,13 @@ read-back); the comparator ignores timing values.
 
 ### 4.3 The read
 
-`store.ReadKeyWindows(ctx, keyHash string, shards int) (KeyWindowRows, error)`:
-one `client.Single().Read` (strong) of `tr_key_limit` over the key range
-`[(keyHash, 0), (keyHash, shards))`, columns `shard, day_usage, day_start,
+`store.ReadKeyWindows(ctx, keyHash string) ([]keywindow.Row, error)`:
+one `client.Single().Read` (strong) of `tr_key_limit` over the key's whole
+prefix, at most 65 rows (one past the 64 shards a key may have), not the
+range the cached `usage_shard_count` names: after a key's shards grow, an
+edge holding the old count reads rows it does not expect and passes
+(`key_window.rows`), rather than a complete-looking subset that
+undercounts. Columns `shard, day_usage, day_start,
 week_usage, week_start, month_usage, month_start, day_limit_micro,
 week_limit_micro, month_limit_micro`. Each `INT64` and `TIMESTAMP` column
 is read as nullable (`spanner.NullInt64`, `spanner.NullTime`).
@@ -514,10 +518,29 @@ Python's 200 byte for byte as it does now. Three additions:
    `remaining` bucketed by the size of the difference. `reset` differing by
    one second is the clock and counted apart.
 3. **The classes.** Python 200 and Go `allowed`: agree or differ as today,
-   plus item 2. Python 429 `key_window_limit_exceeded` and Go `allowed`:
-   `would_admit_python_refused` (the existing `AlertWouldAdmit`) with
-   `window.*` fields. Go `key_window.*` and Python 200: `would_pass`
-   (benign, counted by reason).
+   plus item 2. Go `key_window.*` and Python 200: `would_pass` (benign,
+   counted by reason). Python 429 `key_window_limit_exceeded` and Go
+   `allowed`: `would_admit_python_refused` (the existing `AlertWouldAdmit`,
+   with `window.*` fields), unless it is a **confirmed race**. A candidate
+   is a 429 that names a window whose limit Go holds, with that limit, and
+   a `RateLimit-Remaining` below what Go's rows leave in that window. That
+   shape alone proves nothing: Python's 429 means its remaining is below the
+   estimate, and Go's admit means the estimate fits Go's remaining, so
+   every such disagreement has it, a defect of Go's read included. So after
+   Python's answer the shadow re-reads the rows (one more strong read,
+   within its window limiter and `WindowReadBudget`) and evaluates that
+   window at the same instant. Usage only grows inside a window, so a
+   settle that landed between the first two reads shows: the re-read's
+   remaining at or below Python's is `window_race` (counted, traced on a
+   line with the key hash's first 8 characters, the window, Go's first and
+   re-read remaining, Python's and the gap; never paged one by one). Still
+   above Python's is the would-admit, paged. No re-read that settles it
+   (the limiter, a failed or late re-read, rows that are not the key's
+   shards, or the window reset since, its usage another window's) is
+   `window_race_unconfirmed`, which pages as the would-admit does, since
+   it cannot be told from a defect. `edge_window_race` alerts, apart from
+   the critical page, when the last hour's races pass 0.05% of the window
+   reads (at least 3), or one key races more than 3 times in an hour.
 
 The edge's own 200 carries no `RateLimit-*` headers (e2-decide decision 13:
 only `Content-Type` and `Content-Length`). The enclave reads `Retry-After`
@@ -538,10 +561,12 @@ Separately for each mode, before the setting moves:
   - **same inputs, same answer:** among comparisons where Python's
     `RateLimit-Limit` and `RateLimit-Remaining` equal Go's, every verdict
     agrees; one disagreement is a parity bug and blocks;
-  - `would_admit_python_refused` for windows at most 0.05% of compares,
-    each with Python's remaining below Go's (a settle landed between the
-    two reads), which is the race both of Python's own instances already
-    have with each other;
+  - confirmed `window_race` at most 0.05% of the window reads
+    (`fastpathwatch edge`'s `window_race_ratio`): a settle landed between
+    the two reads, the race both of Python's own instances already have
+    with each other, each confirmed by the re-read of §8.2 item 3; no
+    window `would_admit_python_refused`, and every `window_race_unconfirmed`
+    explained;
   - `key_window.boundary` and `key_window.config_drift` counted and
     explained; `key_window.unread` under 0.1%;
   - window read latency p99 under 50 ms.

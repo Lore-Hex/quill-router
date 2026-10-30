@@ -63,6 +63,7 @@ locals {
     "edge_decide_unavailable_sustained",
     "edge_decide_pass_slow",
     "edge_decide_window_unread",
+    "edge_window_race",
     "other",
   ])
 }

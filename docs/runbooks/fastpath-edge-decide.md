@@ -521,26 +521,32 @@ skipped one), their latency buckets, the verdicts, and how Python's
 `.window`; `window.reset_1s`, the two clocks; `window.same_inputs.agree` or
 `.disagree` where both read the same limit and remaining). The classes:
 Python's 429 `key_window_limit_exceeded` to a key the shadow did not read is
-`window_unchecked`; to one it read and would admit, `window_race` when
-Python's 429 shows its read saw more spent (it names a window whose limit
-Go holds, with that limit, and a `RateLimit-Remaining` below what Go's
-rows leave there: a settle landed between the two reads), counted and
-never paged, and otherwise the critical `would_admit_python_refused`;
-Go's `key_window.*` pass is
+`window_unchecked`; to one it read and would admit, a race candidate when
+the 429 names a window whose limit Go holds, with that limit, and a
+`RateLimit-Remaining` below what Go's rows leave there. Every refusal of
+what Go admits has that shape, a defect of Go's read included, so the
+shadow re-reads the rows after Python's answer, within the same limiter:
+Go's fresh remaining at or below Python's is `window_race` (the settle
+Python saw has landed; counted, traced on a `window race` line, never
+paged one by one); still above it, the critical
+`would_admit_python_refused`; no re-read that settles it (limiter, failed
+or late read, rows not the key's shards, the window reset since),
+`window_race_unconfirmed`, which pages too. Any other window refusal of
+what Go admits is the would-admit outright. Go's `key_window.*` pass is
 `python_answered_go_passed.key_window.*` against Python's 200 (benign) and
-`passed.key_window.*` against its 429.
+`passed.key_window.*` against its 429. `edge_window_race` alerts (not the
+critical page) when the last hour's races pass 0.05% of the window reads
+(at least 3), or one key races more than 3 times in an hour.
 
 Before the setting moves, per §8.3, from `fastpathwatch edge` over the
 span: for `alert`, the I2 agree bar over alert-only keys and no
 `would_admit_python_refused` among them; for `enforce`, at least 7 days and
 20,000 compared enforcing requests, no `window.same_inputs.disagree`,
-`window_race` at most 0.05% of compares and no window
-`would_admit_python_refused` at all, `key_window.unread` under 0.1%, and
-the window reads' latency buckets putting p99 under 50 ms (the design
-counts a would-admit whose Python remaining is below Go's as the race, and
-the shadow classes exactly those `window_race`). The setting moves in
-`rollout.sh`, a Python deploy, `off` then `alert` then `enforce`; the
-decide rows are
+`window_race_ratio` at most 0.05%, no window
+`would_admit_python_refused` and no `window_race_unconfirmed` left
+unexplained, `key_window.unread` under 0.1%, and the window reads' latency
+buckets putting p99 under 50 ms. The setting moves in `rollout.sh`, a
+Python deploy, `off` then `alert` then `enforce`; the decide rows are
 untouched. `edge_decide_window_unread` (`fastpath-alerts.md`) watches the
 reads once it is on.
 
