@@ -25,6 +25,11 @@ SETTLED = dt.timedelta(hours=1)
 # The Confidential Space launcher wrote the line as MESSAGE until the image
 # that VMs picked up on 2026-10-06; it now writes message. History needs both.
 MESSAGE_FIELDS = ('message', 'MESSAGE')
+# Replay never starts before the sink began routing message (2026-10-29
+# 20:43Z). Before it, 2026-10-06 onward was never routed, and walking the
+# 2026-09-28..10-06 remainder at the source budget would take days for
+# month-old analytics, so that span joins the recorded coverage gap.
+REPLAY_FLOOR = dt.datetime(2026, 10, 29, 20, 40, tzinfo=dt.UTC)
 SOURCE_RETENTION_DAYS = 90
 
 
@@ -138,6 +143,8 @@ def collect(state, io, now, end):
     settled = now - SETTLED
     floor = state.get('gateway_settled_through')
     floor = m.date(floor) if floor else None
+    if previous < REPLAY_FLOOR <= end:
+        previous = floor = REPLAY_FLOOR
     def reach(at):
         """Re-read the overlap for late deliveries, never into final history."""
         return at - OVERLAP if floor is None else max(at - OVERLAP, floor)
