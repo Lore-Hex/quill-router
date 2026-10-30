@@ -513,7 +513,9 @@ snapshot wins and a later terminal charges nothing more. `forward_terminal`
 with outcome `reaped_snapshot`, as a decision: `reaped_snapshot`, booked
 nothing in Python (the lease booked it), charge the lease's. The records
 are §6.4's, not the settle's, as today's reaper writes the snapshot's and a
-later settle answers `already_settled` with them. Shared by the route and
+later settle answers `already_settled` with them. Only a row a stream's heartbeat reached has a snapshot: a closed
+lease's uncharged reap of a hold with no heartbeat keeps today's handling
+(§11 item 7). Shared by the route and
 the drain. This changes existing behaviour (§2.3 item 4): today a settle
 answered `settled` with `reaped_snapshot` writes the settle's generation
 with outcome `settled`; after increment 3 it writes the snapshot's records
@@ -809,7 +811,12 @@ Decided by Joseph on 2026-10-30, on this design's first review:
    300 s), by the owner and the auditor alike (§4.6 item 4, increment 2).
    Non-stream holds are unchanged. Without it a late refund or settle
    inside the gap would be decided `reaped_snapshot` and §7's bound would
-   not hold.
+   not hold. A reap decides a terminal as `reaped_snapshot` (§6.3) only when
+   a stream's heartbeat reached the row: the auditor's uncharged reap of a
+   hold that never heartbeated (a non-stream hold, reaped at its end of life
+   plus the grace with no snapshot, cost 0) keeps today's handling, a settle
+   recording its own generation at the lease's cost, outcome `settled`, and
+   a refund left undecided (#2210).
 8. **The floor reaches the auditor in a second release, with the skew
    allowance** (§4.6 item 4, §10 increment 2b): #2207 reads the records'
    reap deadline and writes none; 2b writes it once every member reads it,
