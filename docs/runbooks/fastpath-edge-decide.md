@@ -538,16 +538,15 @@ what Go admits is the would-admit outright. Go's `key_window.*` pass is
 critical page) when the last hour's races pass 0.05% of the window reads
 (at least 3), or one key races more than 3 times in an hour.
 
-Before the setting moves, per §8.3, from `fastpathwatch edge` over the
-span: for `alert`, the I2 agree bar over alert-only keys and no
-`would_admit_python_refused` among them; for `enforce`, at least 7 days and
-20,000 compared enforcing requests, no `window.same_inputs.disagree`,
-`window_race_ratio` at most 0.05%, no window
-`would_admit_python_refused` and no `window_race_unconfirmed` left
-unexplained, `key_window.unread` under 0.1%, and the window reads' latency
-buckets putting p99 under 50 ms. The setting moves in `rollout.sh`, a
-Python deploy, `off` then `alert` then `enforce`; the decide rows are
-untouched. `edge_decide_window_unread` (`fastpath-alerts.md`) watches the
+Before the setting moves, per §8.3, from `fastpathwatch edge`: a count
+gate with no calendar minimum (Joseph's decision of 2026-10-30), 20,000
+compared enforcing requests with zero disagreements: no
+`window.same_inputs.disagree`, `window_race_ratio` at most 0.05%, no window
+`would_admit_python_refused` (alert-only keys included) and no
+`window_race_unconfirmed` left unexplained, `key_window.unread` under 0.1%,
+and the window reads' latency buckets putting p99 under 50 ms. The setting
+moves in `rollout.sh`, a Python deploy, `off` straight to `enforce`; the
+`alert` stage is skipped, and the decide rows are untouched. `edge_decide_window_unread` (`fastpath-alerts.md`) watches the
 reads once it is on.
 
 ## The way back, fastest first

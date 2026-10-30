@@ -551,13 +551,13 @@ middleware headers.
 
 ### 8.3 The gate
 
-Separately for each mode, before the setting moves:
+A count gate, not a calendar one: decided by Joseph on 2026-10-30, the
+`alert` stage is skipped and the setting goes from `off` straight to
+`enforce` once the shadow has compared 20,000 enforcing requests with zero
+disagreements, however long that takes. There is no 7-day minimum. Every
+condition below holds over those 20,000:
 
-- **Alert:** e2-decide's I2 agree bar over windowed alert-only keys, and no
-  `would_admit_python_refused` among them at all (Python never refuses
-  them for windows, so any is a bug elsewhere). Plus an integration test
-  that a leased settle crossing an alert-only window sends the email once.
-- **Enforce,** over at least 7 days and 20,000 compared enforcing requests:
+- **Enforce:**
   - **same inputs, same answer:** among comparisons where Python's
     `RateLimit-Limit` and `RateLimit-Remaining` equal Go's, every verdict
     agrees; one disagreement is a parity bug and blocks;
@@ -571,8 +571,14 @@ Separately for each mode, before the setting moves:
     explained; `key_window.unread` under 0.1%;
   - window read latency p99 under 50 ms.
 
-After the gate the setting moves (`off` to `alert` to `enforce`); the
-decide rows are untouched. The way back, fastest first: the setting to
+Alert-only keys need no stage of their own: `enforce` covers them too
+(§5), and Python never refuses one for its windows, so any
+`would_admit_python_refused` among them counts against the same zero. The
+integration test that a leased settle crossing an alert-only window sends
+the email once (increment 1) stays.
+
+After the gate the setting moves (`off` to `enforce`); the decide rows are
+untouched. The way back, fastest first: the setting to
 `off` (the edge sees it within the policy's 60 s maximum age), then
 e2-decide §9's levers.
 
@@ -602,13 +608,14 @@ increment is 0.
 | 3 | Go + Python | `keywindow` package; `key_window_vectors.py`, its staleness test and Go vector test | `fastpath/internal/keywindow/*`, `scripts/fastpath/key_window_vectors.py`, `tests/test_fastpath_key_window_vectors.py`, testdata | ~200 Go + ~350 Python + ~250 test |
 | 4 | Go | `store.ReadKeyWindows`; `tr_key_limit` schema copy; the decide-path read step (§4.2); shadow read and header comparison (§8.2); alert and runbook rows | `store/keywindows.go`, `schema/fastpath.sql`, `edge/decide_path.go`, `edge/shadow_full.go`, `docs/runbooks/*`, tests | ~300 LOC + ~500 test |
 
-Then the rollout of §8.3: `alert`, then `enforce`. In all, five code PRs
+Then the rollout of §8.3: `off` straight to `enforce` at the count gate
+(Joseph's decision of 2026-10-30; `alert` stays a valid setting, unused by
+the rollout). In all, five code PRs
 after this one, about 25 files, roughly 1,000 lines of production code and
 1,700 of tests and generators, the vector JSON aside.
 
-If increment 0 shows alert-only keys are a small share, increment 2 still
-ships (the gate and facts are needed by 4) but the `alert` stage of the
-rollout is skipped.
+Increment 2 still ships whole (the gate and facts are needed by 4); only
+the `alert` stage of the rollout is gone.
 
 ## 11. Spanner cost per decided request
 
