@@ -67,6 +67,14 @@ GIT = shutil.which("git") or "/usr/bin/git"
 
 PROVEN = crc.scripts_proven_by_execution()
 UNPROVEN = crc.scripts_not_proven()
+ROUTER_REGIONS = ("europe-west4", "us-central1", "us-east4", "southamerica-east1")
+
+
+def _without_router_execution_environment(call: list[str]) -> list[str]:
+    flags = [arg for arg in call if arg.startswith("--execution-environment")]
+    assert flags == ["--execution-environment"], call
+    assert call[-2:] == ["--execution-environment", "gen2"], call
+    return call[:-2]
 
 
 @pytest.fixture(scope="module")
@@ -86,20 +94,21 @@ def harness(tmp_path_factory: pytest.TempPathFactory) -> DeployScriptHarness:
         for stage in ("companion", "routed")
     ],
 )
-def test_every_router_deploy_sets_http_liveness(
+def test_every_router_deploy_sets_http_liveness_and_gen2(
     harness: DeployScriptHarness,
     script: str,
     args: tuple[str, ...],
     extra_env: dict[str, str],
     service: str,
 ) -> None:
-    regions = {"us-central1", "us-east4", "europe-west4", "southamerica-east1"}
-    run = harness.run(f"scripts/deploy/{script}", args=args, extra_env={
+    regions = set(ROUTER_REGIONS)
+    env = {
         **extra_env,
         "TR_DEPLOY_TARGET_REGIONS": ",".join(sorted(regions)),
         "TR_PUBLIC_REGIONS": ",".join(sorted(regions)),
         "TR_INTERNAL_REGIONS": ",".join(sorted(regions)),
-    })
+    }
+    run = harness.run(f"scripts/deploy/{script}", args=args, extra_env=env)
     assert run.returncode == 0, summarise(run)
     deploys = _gcloud_calls(run, "run", "deploy")
     assert len(deploys) == len(regions)
@@ -114,6 +123,21 @@ def test_every_router_deploy_sets_http_liveness(
         # Preserve Cloud Run's existing TCP startup probe and cold-start budget.
         assert not any(arg.startswith("--startup-probe") for arg in deploy)
 
+    # With the execution-environment policy disabled, every other argument must be
+    # identical, including CPU, memory, VPC, probes, env, secrets and traffic.
+    lib = harness.mirror / "scripts/deploy/_lib.sh"
+    original = lib.read_text()
+    try:
+        lib.write_text(original + '\ngc_router_revision() { gc "$@"; }\n')
+        baseline = harness.run(f"scripts/deploy/{script}", args=args, extra_env=env)
+    finally:
+        lib.write_text(original)
+    assert baseline.returncode == 0, summarise(baseline)
+    assert sorted(
+        _without_router_execution_environment(call)
+        for call in deploys
+    ) == sorted(_gcloud_calls(baseline, "run", "deploy"))
+
 
 @pytest.mark.parametrize("inherited_probe", [None, {
     "httpGet": {"path": "/ready", "port": 8080},
@@ -125,12 +149,17 @@ def test_signup_redeploy_replaces_absent_or_different_liveness(
 ) -> None:
     from .test_signup_operator_script import _run, _write_harness
 
-    script, env_file = _write_harness(tmp_path, inherited_probe=inherited_probe)
+    script, env_file = _write_harness(
+        tmp_path, inherited_probe=inherited_probe, regions=",".join(ROUTER_REGIONS),
+    )
     run = _run(script, env_file, action)
     assert run.returncode == 0, run.stderr
     calls = (tmp_path / "gcloud.log").read_text().splitlines()
     updates = [call for call in calls if call.startswith("run services update ")]
-    assert len(updates) == 2
+    assert len(updates) == len(ROUTER_REGIONS)
+    assert {arg for update in updates for arg in update.split() if arg.startswith("--region=")} == {
+        f"--region={region}" for region in ROUTER_REGIONS
+    }
     for update in updates:
         assert update.count("--liveness-probe ") == 1
         assert (
@@ -139,7 +168,18 @@ def test_signup_redeploy_replaces_absent_or_different_liveness(
         ) in update
         assert "--startup-probe" not in update
         assert "--no-traffic" in update
-    for region in ("region-a", "region-b"):
+        argv = update.split()
+        region = next(arg.removeprefix("--region=") for arg in argv if arg.startswith("--region="))
+        suffix = next(arg for arg in argv if arg.startswith("--revision-suffix="))
+        assert _without_router_execution_environment(argv) == [
+            "run", "services", "update", "trusted-router", f"--region={region}",
+            "--liveness-probe",
+            "httpGet.path=/health,httpGet.port=8080,initialDelaySeconds=0,"
+            "periodSeconds=10,timeoutSeconds=9,failureThreshold=6",
+            f"--update-env-vars=TR_NEW_SIGNUPS_ENABLED={'true' if action == 'enable' else 'false'}",
+            suffix, "--no-traffic", "--format=value(status.latestCreatedRevisionName)", "--quiet",
+        ]
+    for region in ROUTER_REGIONS:
         state = tmp_path / "state" / region
         assert json.loads((state / "probe").read_text()) == {
             "httpGet": {"path": "/health", "port": 8080}, "initialDelaySeconds": 0,

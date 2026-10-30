@@ -71,7 +71,7 @@ done
 candidate_revisions=()
 for target in "${clean_targets[@]}"; do
   log "setting new_signups=${desired} on ${control_service}/${target}"
-  revision="$(gc run services update "$control_service" \
+  revision="$(gc_router_revision run services update "$control_service" \
     --region="$target" \
     --liveness-probe 'httpGet.path=/health,httpGet.port=8080,initialDelaySeconds=0,periodSeconds=10,timeoutSeconds=9,failureThreshold=6' \
     --update-env-vars="TR_NEW_SIGNUPS_ENABLED=${desired}" \

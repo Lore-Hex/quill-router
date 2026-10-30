@@ -969,7 +969,7 @@ deploy_one_region() {
   # A silent freeze exhausts probes in ~59-69s (phase dependent); replacement
   # startup is additional. Keep TCP startup unchanged. public_surface.sh,
   # internal_surface.sh and set_new_signups.sh carry this same policy.
-  if gc run deploy "$SERVICE" \
+  if gc_router_revision run deploy "$SERVICE" \
       --region "$target" \
       --image "$IMAGE" \
       --allow-unauthenticated \
