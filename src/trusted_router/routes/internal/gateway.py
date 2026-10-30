@@ -3289,7 +3289,7 @@ def _gateway_authorize_response(
             "idempotent_replay": idempotent_replay,
             **(
                 {"invocation_nonce": authorization.invocation_nonce}
-                if idempotent_replay
+                if idempotent_replay or async_additions.get("async_eligible")
                 else {}
             ),
             "additional_cost_reservation_microdollars": (
