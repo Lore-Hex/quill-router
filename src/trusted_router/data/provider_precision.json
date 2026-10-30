@@ -1,5 +1,30 @@
 [
   {
+    "provider": "maple",
+    "model_id": "dealignai/deepseek-v4.1-flash-1017-uncensored",
+    "upstream_id": "deepseek-v4-1-flash-1017-uncensored",
+    "quantization": "fp8",
+    "label": "FP8 + FP4 experts",
+    "weight_formats": ["fp8", "fp4"],
+    "kv_cache_dtype": "fp8_ds_mla",
+    "model_repository": "dealignai/DeepSeek-V4.1-Flash-1017-UNCENSORED-FP8",
+    "model_revision": "c19ca5ca4eaeb79d29fdf08aea8327da95b1116a",
+    "reviewed_on": "2026-10-29",
+    "evidence_type": "published_serving_config",
+    "runtime_verified": false,
+    "sources": [
+      {
+        "title": "Reviewed dedicated worker configuration",
+        "url": "https://github.com/MaplePrivacyLabs/inference-deepseek-uncensored/blob/76a8e5fdaa7dbade1640025829ba0bfeae7a3495/tinfoil-config.yml"
+      },
+      {
+        "title": "Pinned uncensored weight configuration",
+        "url": "https://huggingface.co/dealignai/DeepSeek-V4.1-Flash-1017-UNCENSORED-FP8/resolve/c19ca5ca4eaeb79d29fdf08aea8327da95b1116a/config.json"
+      }
+    ],
+    "notes": "The reviewed dedicated worker pins the uncensored checkpoint and fp8_ds_mla KV cache. Its weight configuration declares FP8 block weights with FP4 experts, not uniform FP8. This source metadata is not a per-request precision receipt and does not apply to Maple's stock DeepSeek route."
+  },
+  {
     "provider": "tinfoil",
     "model_id": "deepseek/deepseek-v4.1-flash-1017",
     "upstream_id": "deepseek-v4-1-flash",
