@@ -108,8 +108,11 @@ the operator `source-filter` step before the deploy, as above.
 Sinks do not route retroactively. Audits written as `message` from 2026-10-06
 (VM by VM, starting in us-central1-b) until the sink update on 2026-10-29 never
 reached `tr-growth-source`, so gateway attempts for that span are a recorded
-coverage gap: replay walks through it and finds nothing, and `current` after it
-does not mean those attempts were observed. Before calling any future recovery
+coverage gap, and `current` does not mean those attempts were observed. Replay
+starts no earlier than `REPLAY_FLOOR` (2026-10-29 20:40Z, just before the first
+routed `message` audit): the 2026-09-28..10-06 remainder the stalled cursor still
+had to walk would have taken days at the source budget, so the recorded gap
+is 2026-09-28 06:30Z to 2026-10-29 20:40Z. Before calling any future recovery
 complete, confirm the bucket holds audits for the replayed span.
 
 Buffered evidence is projected before compaction. Completed pairs are retained

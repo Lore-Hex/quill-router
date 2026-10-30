@@ -97,6 +97,28 @@ def test_dense_settled_history_fits_the_audit_cap_and_advances():
     assert checkpoint['gateway_watermark'] == (previous+ga.RECOVERY_STEP).isoformat()
 
 
+def test_replay_skips_history_before_the_floor_and_drops_its_buffer():
+    # Production's cursor sat at 2026-09-28 with a buffer from that hour.
+    now = ga.REPLAY_FLOOR+dt.timedelta(hours=4)
+    previous = dt.datetime(2026, 9, 28, 6, 30, tzinfo=dt.UTC)
+    stale = projected('start', previous-dt.timedelta(minutes=1))
+    fresh = projected('end', ga.REPLAY_FLOOR+dt.timedelta(minutes=1))
+    io = GatewayIO([projected('start', ga.REPLAY_FLOOR-dt.timedelta(minutes=1)), fresh])
+    checkpoint = {'gateway_watermark': previous.isoformat(), 'gateway_settled_through': previous.isoformat(),
+                  'gateway_audits': [stale]}
+    assert ga.collect(checkpoint, io, now, now) == [fresh]
+    assert io.gateway_windows == [(ga.REPLAY_FLOOR, ga.REPLAY_FLOOR+ga.RECOVERY_STEP)]
+    # The 09-28 buffer expired; the window's settled end was projected, then compacted.
+    assert checkpoint['gateway_audits'] == []
+    assert checkpoint['gateway_watermark'] == (ga.REPLAY_FLOOR+ga.RECOVERY_STEP).isoformat()
+    assert checkpoint['gateway_settled_through'] == checkpoint['gateway_watermark']
+    # A legacy checkpoint without the flag jumps the same way.
+    io = GatewayIO()
+    checkpoint = {'gateway_watermark': previous.isoformat()}
+    ga.collect(checkpoint, io, now, now)
+    assert io.gateway_windows == [(ga.REPLAY_FLOOR, ga.REPLAY_FLOOR+ga.RECOVERY_STEP)]
+
+
 def test_late_start_in_a_near_present_tail_is_recovered_after_a_gap():
     # A run checkpoints near the present; a start for its tail is delivered
     # late; the next run comes more than an hour later. The tail is re-read.
