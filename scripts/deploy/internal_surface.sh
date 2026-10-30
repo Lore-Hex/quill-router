@@ -685,6 +685,8 @@ for index in "${!TARGET_REGIONS[@]}"; do
   target="${TARGET_REGIONS[$index]}"
   deploy_args=(
     --region "$target" --image "$LEGACY_IMAGE" --allow-unauthenticated --port 8080
+    # Same process-only liveness budget as rollout.sh; retain TCP startup.
+    --liveness-probe 'httpGet.path=/health,httpGet.port=8080,initialDelaySeconds=0,periodSeconds=10,timeoutSeconds=9,failureThreshold=6'
     --ingress all --service-account "$INTERNAL_RUNTIME_SA"
     --concurrency 8 --cpu 1 --memory 2Gi --timeout 60
     --max-instances 40 --min-instances 2
