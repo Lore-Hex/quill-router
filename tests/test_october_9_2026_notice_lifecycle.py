@@ -15,6 +15,8 @@ from scripts.pricing.providers import (
     inception,
     novita,
     scaleway,
+    system1models,
+    system1models_eu,
     telnyx,
     together,
     xiaomi,
@@ -33,6 +35,14 @@ class Case:
 
 
 _CASES = [
+    Case("decisionmodelsio", "decisionmodelsio/s1-pro-2", "s1-pro-2",
+         datetime(2026, 11, 30, 23, tzinfo=UTC), "decisionmodelsio/s1-pro"),
+    Case("decisionmodelsio", "decisionmodelsio/s1-pro-3", "s1-pro-3",
+         datetime(2026, 11, 30, 23, tzinfo=UTC), "decisionmodelsio/s1-pro"),
+    Case("decisionmodelsio-eu", "decisionmodelsio-eu/s1-pro-2", "s1-pro-2",
+         datetime(2026, 11, 30, 23, tzinfo=UTC), "decisionmodelsio-eu/s1-pro"),
+    Case("decisionmodelsio-eu", "decisionmodelsio-eu/s1-pro-3", "s1-pro-3",
+         datetime(2026, 11, 30, 23, tzinfo=UTC), "decisionmodelsio-eu/s1-pro"),
     Case("digitalocean", "meta-llama/llama-4-maverick", "llama-4-maverick",
          datetime(2026, 11, 9, tzinfo=UTC), "deepseek/deepseek-v4.1-flash"),
     Case("digitalocean", "deepseek/deepseek-v4-flash", "deepseek-4-flash",
@@ -111,6 +121,8 @@ _CASES = [
          datetime(2026, 10, 14, 10, tzinfo=UTC), "xiaomi/mimo-v2.6-flash"),
 ]
 _MANIFESTS = {
+    "decisionmodelsio": system1models.MANIFEST_PATH,
+    "decisionmodelsio-eu": system1models_eu.MANIFEST_PATH,
     "digitalocean": digitalocean.MANIFEST_PATH,
     "inception": inception.MANIFEST_PATH,
     "telnyx": telnyx.MANIFEST_PATH,
