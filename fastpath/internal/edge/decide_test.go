@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/gwauth"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/gwstate"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/keywindow"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/routingsnapshot"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store"
 )
@@ -485,6 +487,12 @@ func postAdmission(reason string) bool {
 		reason == "inflight.key" || reason == "budget.spent"
 }
 
+// windowReason are the edge policy's key-windows mode's reasons, a decision
+// gate: the pipeline reaches a Decision for them, and passes.
+func windowReason(reason string) bool {
+	return reason == PassKeyWindow || reason == PassKeyWindowAlert
+}
+
 func endOfLifeOf(t *testing.T, c authorizeCase) time.Time {
 	t.Helper()
 	eol, err := time.Parse(time.RFC3339Nano, c.Admitted.EndOfLife)
@@ -550,7 +558,16 @@ func TestEveryGoldenCaseThroughThePipeline(t *testing.T) {
 				t.Errorf("%s: passed %q, want %q", c.Name, d.Pass, c.Expect.Reason)
 				continue
 			}
-			if d.ForShadow() != nil {
+			if windowReason(c.Expect.Reason) {
+				// The policy's mode is a decision gate (key-windows section
+				// 4.7): the goldens' policy carries none (off), so the
+				// windowed key passes with its reason, composed for the
+				// shadow.
+				if d.ForShadow() == nil || d.DecideGate != c.Expect.Reason {
+					t.Errorf("%s: no decision behind the window gate (gate %q)", c.Name, d.DecideGate)
+					continue
+				}
+			} else if d.ForShadow() != nil {
 				t.Errorf("%s: a decision for a request passed before the decide row", c.Name)
 				continue
 			}
@@ -892,6 +909,142 @@ func TestTheRouteWalkerGapIsGated(t *testing.T) {
 		if got := Decide(in); got.Pass != v.want {
 			t.Errorf("%s: passed %q, want %q", v.name, got.Pass, v.want)
 		}
+	}
+}
+
+// windowedInputs are the base case's inputs with the key's stored body
+// changed by fields and the policy's fastpath_pilot_key_windows set to mode
+// ("" leaves it absent).
+func windowedInputs(t *testing.T, fields map[string]any, mode string) DecideInputs {
+	t.Helper()
+	f := authorizeGoldens(t)
+	c := authorizeCaseNamed(t, "answer:app_categories_empty")
+	body := keyBodyWith(t, c, fields)
+	c.Key.KeyBody = &body
+	in, _ := caseInputs(t, f, c)
+	p := *in.Policy
+	p.FastpathPilotKeyWindows = nil
+	if mode != "" {
+		p.FastpathPilotKeyWindows = &mode
+	}
+	in.Policy = &p
+	return in
+}
+
+// TestTheKeyWindowsModeIsADecisionGate (docs/design/
+// fast-admission-e2-key-windows.md sections 4.7 and 5): a windowed key is
+// composed whatever the policy's mode, so the shadow compares it; the mode
+// then gates it beside the decide row: absent or off passes every windowed
+// key with today's reason, alert covers the alert-only ones, enforce every
+// one. An enforcing key's decision carries its window check, an alert-only
+// key's none (it is decided as an uncapped one). A lifetime cap and a
+// strict key pass whatever the mode.
+func TestTheKeyWindowsModeIsADecisionGate(t *testing.T) {
+	enforcing := map[string]any{"limit_daily_microdollars": 5000, "limit_monthly_microdollars": 90000,
+		"usage_shard_count": 4}
+	alertOnly := map[string]any{"limit_weekly_microdollars": 7, "budget_alert_only": true}
+	daily, monthly := int64(5000), int64(90000)
+	check := &WindowCheck{Limits: keywindow.Limits{Daily: &daily, Monthly: &monthly}, Shards: 4}
+	for _, v := range []struct {
+		name    string
+		fields  map[string]any
+		mode    string
+		pass    string
+		windows *WindowCheck
+	}{
+		{"enforcing, mode absent", enforcing, "", PassKeyWindow, check},
+		{"enforcing, off", enforcing, routingsnapshot.KeyWindowsOff, PassKeyWindow, check},
+		{"enforcing, alert", enforcing, routingsnapshot.KeyWindowsAlert, PassKeyWindow, check},
+		{"enforcing, enforce", enforcing, routingsnapshot.KeyWindowsEnforce, "", check},
+		{"alert only, mode absent", alertOnly, "", PassKeyWindowAlert, nil},
+		{"alert only, off", alertOnly, routingsnapshot.KeyWindowsOff, PassKeyWindowAlert, nil},
+		{"alert only, alert", alertOnly, routingsnapshot.KeyWindowsAlert, "", nil},
+		{"alert only, enforce", alertOnly, routingsnapshot.KeyWindowsEnforce, "", nil},
+		// Positive control: a key without windows is not gated by any mode.
+		{"no windows, off", map[string]any{"budget_alert_only": true}, routingsnapshot.KeyWindowsOff, "", nil},
+	} {
+		d := Decide(windowedInputs(t, v.fields, v.mode))
+		dec := d.ForShadow()
+		if d.Pass != v.pass || d.DecideGate != v.pass || dec == nil {
+			t.Errorf("%s: passed %q at gate %q (decision %v), want %q", v.name, d.Pass, d.DecideGate, dec != nil, v.pass)
+			continue
+		}
+		if !reflect.DeepEqual(dec.Windows, v.windows) {
+			t.Errorf("%s: window check %+v, want %+v", v.name, dec.Windows, v.windows)
+		}
+		if _, ok := d.Admit(); ok != (v.pass == "") {
+			t.Errorf("%s: Admit %v with pass %q", v.name, ok, d.Pass)
+		}
+	}
+	for _, mode := range []string{"", routingsnapshot.KeyWindowsAlert, routingsnapshot.KeyWindowsEnforce} {
+		for _, v := range []struct {
+			name   string
+			fields map[string]any
+			want   string
+		}{
+			{"cap", map[string]any{"limit_microdollars": 5, "limit_daily_microdollars": 5}, PassKeyCap},
+			{"cap, alert only", map[string]any{"limit_microdollars": 5, "limit_daily_microdollars": 5,
+				"budget_alert_only": true}, PassKeyCap},
+			{"shape", map[string]any{"limit_daily_microdollars": 5.5}, PassKeyShape},
+		} {
+			if d := Decide(windowedInputs(t, v.fields, mode)); d.Pass != v.want || d.ForShadow() != nil {
+				t.Errorf("%s under %q: passed %q (decision %v), want %q", v.name, mode, d.Pass, d.ForShadow() != nil,
+					v.want)
+			}
+		}
+	}
+}
+
+// TestAnUncoveredWindowedKeyKeepsItsReason: while the mode does not cover a
+// windowed key, any gate after the key's facts passes it with its window
+// reason, as when its windows kept it out of the cohort (behaviour under
+// off is today's); once covered, the gate's own reason shows. A strict
+// windowed key is key.key_window under off, key.budget_strict once covered.
+func TestAnUncoveredWindowedKeyKeepsItsReason(t *testing.T) {
+	enforcing := map[string]any{"limit_daily_microdollars": 5000}
+	strict := map[string]any{"limit_daily_microdollars": 5000, "budget_strict": true}
+	strictAlert := map[string]any{"limit_daily_microdollars": 5000, "budget_strict": true, "budget_alert_only": true}
+	paused := func(r *gwstate.Read) { r.CreditState.Paused = true }
+	for _, v := range []struct {
+		name   string
+		fields map[string]any
+		mode   string
+		change func(*gwstate.Read)
+		want   string
+	}{
+		{"paused, off", enforcing, "", paused, PassKeyWindow},
+		{"paused, alert", enforcing, routingsnapshot.KeyWindowsAlert, paused, PassKeyWindow},
+		{"paused, enforce", enforcing, routingsnapshot.KeyWindowsEnforce, paused, PassWorkspacePaused},
+		{"stale credit, off", enforcing, "", func(r *gwstate.Read) { r.Credit = gwstate.Stale }, PassKeyWindow},
+		{"stale credit, enforce", enforcing, routingsnapshot.KeyWindowsEnforce,
+			func(r *gwstate.Read) { r.Credit = gwstate.Stale }, PassCacheWorkspace},
+		{"strict, off", strict, "", nil, PassKeyWindow},
+		{"strict, alert", strict, routingsnapshot.KeyWindowsAlert, nil, PassKeyWindow},
+		{"strict, enforce", strict, routingsnapshot.KeyWindowsEnforce, nil, PassKeyBudgetStrict},
+		{"strict alert only, off", strictAlert, "", nil, PassKeyWindowAlert},
+		{"strict alert only, alert", strictAlert, routingsnapshot.KeyWindowsAlert, nil, PassKeyBudgetStrict},
+		// Before the windows' place in the order, the earlier reason shows.
+		{"disabled, off", map[string]any{"limit_daily_microdollars": 5000, "disabled": true}, "", nil,
+			PassKeyDisabled},
+	} {
+		in := windowedInputs(t, v.fields, v.mode)
+		if v.change != nil {
+			in = withRead(t, in, v.change)
+		}
+		if d := Decide(in); d.Pass != v.want || d.ForShadow() != nil {
+			t.Errorf("%s: passed %q (decision %v), want %q", v.name, d.Pass, d.ForShadow() != nil, v.want)
+		}
+	}
+	// The decide row off: the window gate is first among the decision gates.
+	in := windowedInputs(t, enforcing, "")
+	in.Decide = DecideView{}
+	if d := Decide(in); d.Pass != PassKeyWindow || d.ForShadow() == nil {
+		t.Errorf("decide copy stale: passed %q", d.Pass)
+	}
+	in = windowedInputs(t, enforcing, routingsnapshot.KeyWindowsEnforce)
+	in.Decide = DecideView{}
+	if d := Decide(in); d.Pass != PassCacheDecide || d.ForShadow() == nil {
+		t.Errorf("decide copy stale, enforce: passed %q", d.Pass)
 	}
 }
 

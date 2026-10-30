@@ -10,6 +10,7 @@ import (
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/gwauth"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/gwstate"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/keywindow"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/routingsnapshot"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store"
 )
@@ -50,13 +51,18 @@ const (
 	PassCacheWorkspace = "cache.workspace"
 	PassCacheDecide    = "cache.decide"
 
-	PassKeyMissing      = "key.missing"
-	PassKeyDisabled     = "key.disabled"
-	PassKeyExpired      = "key.expired"
-	PassKeyScope        = "key.scope"
-	PassKeyFederated    = "key.federated"
-	PassKeyApp          = "key.app"
-	PassKeyCap          = "key.key_cap"
+	PassKeyMissing   = "key.missing"
+	PassKeyDisabled  = "key.disabled"
+	PassKeyExpired   = "key.expired"
+	PassKeyScope     = "key.scope"
+	PassKeyFederated = "key.federated"
+	PassKeyApp       = "key.app"
+	PassKeyCap       = "key.key_cap"
+	// PassKeyWindow and PassKeyWindowAlert are the edge policy's
+	// fastpath_pilot_key_windows as a decision gate
+	// (docs/design/fast-admission-e2-key-windows.md section 4.7): a key whose
+	// spend windows Python's authorize enforces, under mode off or alert; an
+	// alert-only one, under mode off.
 	PassKeyWindow       = "key.key_window"
 	PassKeyWindowAlert  = "key.key_window_alert"
 	PassKeyBudgetStrict = "key.budget_strict"
@@ -237,6 +243,19 @@ type Decision struct {
 	Affinity bool
 	Routing  routingsnapshot.Request
 	Snapshot *routingsnapshot.Snapshot
+	// Windows is the window check a key whose spend windows Python's
+	// authorize enforces needs before the edge may admit (key-windows
+	// section 4.2): nil for any other key, an alert-only one included.
+	Windows *WindowCheck
+}
+
+// WindowCheck is what the edge checks an enforcing windowed key against: the
+// cached limits and the key's tr_key_limit shard count. The estimate checked
+// is the Decision's (Python checks the model estimate, never the
+// reservation).
+type WindowCheck struct {
+	Limits keywindow.Limits
+	Shards int
 }
 
 // Finish is the decision admitted: the front door's envelope and end of
@@ -263,10 +282,14 @@ func (d *Decision) Restage(authorizationID, reservationID, idempotencyKey string
 // request itself, else the first §3 reason it goes to Python. ForShadow is
 // the decision when every gate but the decision gates passed, so the shadow
 // compares what the edge would answer for a workspace it does not yet
-// decide; DecideGate is then the decision gate's reason ("" for on; the
-// decide row's PassDecideOff or PassCacheDecide; else, for an async-v1
-// request while the policy's edge_decide is false, PassAsyncOff), and Pass
-// is it. Only Admit hands out a decision to admit, and only when Pass is
+// decide; DecideGate is then the decision gate's reason ("" for on; for a
+// windowed key the policy's mode does not cover, PassKeyWindow or
+// PassKeyWindowAlert; else the decide row's PassDecideOff or
+// PassCacheDecide; else, for an async-v1 request while the policy's
+// edge_decide is false, PassAsyncOff), and Pass is it. A windowed key the
+// mode does not cover passes with its window reason whatever gate after
+// the key's facts passes it, as it did when its windows kept it out of the
+// cohort. Only Admit hands out a decision to admit, and only when Pass is
 // "". LookupHash and Workspace are what the request named and what the
 // cache said of its key, "" when not known: the shadow and the decide path
 // evict them when Python refuses the key.
@@ -317,7 +340,15 @@ func (d Decided) ForShadow() *Decision { return d.shadowOnly }
 // request whose boot fails), and the decision gates last.
 func Decide(in DecideInputs) Decided {
 	var out Decided
+	// windowGate is the policy mode's reason for a windowed key it does not
+	// cover, once the key's facts are read: from there on it is the reason
+	// any gate passes with, as the windows' place in the key's fact order
+	// made it before they joined the cohort.
+	var windowGate string
 	pass := func(reason string) Decided {
+		if windowGate != "" {
+			reason = windowGate
+		}
 		out.Pass = reason
 		return out
 	}
@@ -379,7 +410,11 @@ func Decide(in DecideInputs) Decided {
 	}
 	key, ws := read.Facts.Key, read.Facts.Workspace
 	out.Workspace = key.WorkspaceID
-	if eligible, reason := key.At(at); !eligible {
+	eligible, reason := key.At(at)
+	if w := key.Windows; w != nil && (eligible || reason == gwstate.ReasonKeyBudgetStrict) {
+		windowGate = keyWindowsGate(policy.KeyWindowsMode(), *w)
+	}
+	if !eligible {
 		return pass(keyPass(reason))
 	}
 	if !ws.Eligible {
@@ -506,13 +541,24 @@ func Decide(in DecideInputs) Decided {
 	if err != nil {
 		return pass(PassCompose)
 	}
-	out.shadowOnly = &Decision{
+	decision := &Decision{
 		Staged: staged, Input: compose, Identity: identity, Estimate: res.ModelEstimate, Reservation: res.Reservation,
 		Workspace: key.WorkspaceID, KeyHash: key.Hash, LookupHash: r.APIKeyLookupHash, Kid: in.Request.Boot.Kid,
 		Region: region, Candidates: slices.Clone(res.Candidates),
 		Affinity: r.CacheAffinity, Routing: req, Snapshot: snap,
 	}
-	out.DecideGate = in.Decide.gate(key.WorkspaceID, policy.Plane.Cloud, region, at)
+	if w := key.Windows; w != nil && !w.AlertOnly {
+		// An alert-only key is decided as an uncapped one: Python's
+		// authorize never checks its windows.
+		decision.Windows = &WindowCheck{Limits: w.Limits, Shards: w.Shards}
+	}
+	out.shadowOnly = decision
+	// The decision gates, in order: the policy's mode for a windowed key,
+	// the decide row, and async-v1's edge_decide.
+	out.DecideGate = windowGate
+	if out.DecideGate == "" {
+		out.DecideGate = in.Decide.gate(key.WorkspaceID, policy.Plane.Cloud, region, at)
+	}
 	if out.DecideGate == "" && r.Async.V1 && !policy.AsyncSettle.EdgeDecide {
 		// Composed for the shadow, answered by Python, even for a workspace
 		// whose decide row is on (§6.2, the dark sequence).
@@ -613,16 +659,29 @@ func keyPass(reason string) string {
 	case gwstate.ReasonKeyLimit:
 		return PassKeyCap
 	case gwstate.ReasonKeyWindowLimit:
-		// Spend windows Python's authorize enforces.
+		// Spend windows Python's authorize enforces (keyWindowsGate).
 		return PassKeyWindow
 	case gwstate.ReasonKeyWindowAlert:
 		// Alert-only windows, which it never checks; counted apart
-		// (fast-admission-e2-key-windows.md §8.1), and passed all the same.
+		// (fast-admission-e2-key-windows.md §8.1).
 		return PassKeyWindowAlert
 	case gwstate.ReasonKeyBudgetStrict:
 		return PassKeyBudgetStrict
 	}
 	return PassKeyShape
+}
+
+// keyWindowsGate is the edge policy's fastpath_pilot_key_windows as a
+// decision gate for a key with spend windows (key-windows section 5): "" when
+// the mode covers the key (alert covers an alert-only key, enforce every
+// one), else its window reason.
+func keyWindowsGate(mode string, w gwstate.KeyWindows) string {
+	switch {
+	case mode == routingsnapshot.KeyWindowsEnforce,
+		mode == routingsnapshot.KeyWindowsAlert && w.AlertOnly:
+		return ""
+	}
+	return keyPass(w.Reason())
 }
 
 // workspacePass is an ineligible workspace's §3 reason.

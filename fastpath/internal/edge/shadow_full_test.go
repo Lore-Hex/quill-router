@@ -352,6 +352,11 @@ func pythonOfCase(t *testing.T, f authorizeFile, c authorizeCase) (func(http.Res
 		kind = *e.Python.Type
 	}
 	status, reason := e.Python.Status, e.Reason
+	if windowReason(reason) && status == 200 {
+		// The key's windows gate the decision, not the comparison: Python's
+		// 200 is compared as the cohort's (key-windows section 8.2).
+		return answerWith(200, pythonsLegacyAnswer(t, f, c, false)), ClassAgreeFull
+	}
 	if postAdmission(reason) {
 		switch {
 		case strings.HasPrefix(reason, "owner."):
@@ -391,10 +396,11 @@ func pythonOfCase(t *testing.T, f authorizeFile, c authorizeCase) (func(http.Res
 // decides is agree_full with no field differing and its rows agreeing (the
 // one whose tags a read-back sorts counted as Python's read-back), the two
 // whose provider preferences the evaluator passes are
-// python_answered_go_passed.evaluate.pass, every pass case is counted under its
-// §3 reason by what Python answered, the unavailable case is Python's
-// unavailable 503, and Python's 401, 402 and 403 evict the key and its
-// workspace.
+// python_answered_go_passed.evaluate.pass, the two windowed keys passed at
+// the key-windows gate compare Python's 200 as agree_full, every other pass
+// case is counted under its §3 reason by what Python answered, the
+// unavailable case is Python's unavailable 503, and Python's 401, 402 and
+// 403 evict the key and its workspace.
 func TestEveryGoldenCaseThroughTheDecideShadow(t *testing.T) {
 	f := authorizeGoldens(t)
 	py := newFakePython(t)
@@ -456,7 +462,7 @@ func TestEveryGoldenCaseThroughTheDecideShadow(t *testing.T) {
 		"read-back", classes, rowsAgree, affinityAgree, readBack)
 	// A request naming a cache_affinity_key is the cohort's (§1 item 5):
 	// its cold answer is agree_full with its rows read back, like any.
-	if classes[ClassAgreeFull] != 192+5 || rowsAgree != 192 || affinityAgree != 18 || readBack != 1 ||
+	if classes[ClassAgreeFull] != 192+5+2 || rowsAgree != 192 || affinityAgree != 18 || readBack != 1 ||
 		classes[ClassPythonUnavailable] != 2 || classes[ClassPythonAnsweredGoPassed+"."+PassEvaluate] != 1 {
 		t.Fatalf("agree_full %d, rows %d (%d with a cache affinity key), read back %d, unavailable %d: not the goldens' "+
 			"counts", classes[ClassAgreeFull], rowsAgree, affinityAgree, readBack, classes[ClassPythonUnavailable])
@@ -1690,5 +1696,54 @@ func TestTheCacheClosesAfterTheLastLookup(t *testing.T) {
 	}
 	if got := h.edge.DecideShadowCounts(); got.Classes[ClassStale+".key"] != 1 {
 		t.Fatalf("counts %+v", got)
+	}
+}
+
+// TestAWindowRefusalOfAnUncheckedDecisionIsNotAWouldAdmit (docs/design/
+// fast-admission-e2-key-windows.md section 8.2): Go's decision for a key
+// whose windows Python enforces carries no window verdict yet, so Python's
+// 429 key_window_limit_exceeded to it (or a 429 whose body was not read) is
+// window_unchecked, never the critical would-admit; any other refusal is a
+// would-admit as before, and so is a window refusal of an alert-only key,
+// whose windows Python never checks. Python's 200 compares as the cohort's.
+func TestAWindowRefusalOfAnUncheckedDecisionIsNotAWouldAdmit(t *testing.T) {
+	f := authorizeGoldens(t)
+	c := authorizeCaseNamed(t, "answer:app_categories_empty")
+	enforcing := Decide(windowedInputs(t, map[string]any{"limit_daily_microdollars": 5000}, ""))
+	alertOnly := Decide(windowedInputs(t, map[string]any{"limit_daily_microdollars": 5000, "budget_alert_only": true}, ""))
+	if enforcing.ForShadow() == nil || enforcing.ForShadow().Windows == nil || alertOnly.ForShadow() == nil ||
+		alertOnly.ForShadow().Windows != nil {
+		t.Fatalf("the decisions: %q %q", enforcing.Pass, alertOnly.Pass)
+	}
+	window := errorBody(429, windowRefusal, "API key daily spend limit exceeded")
+	for _, v := range []struct {
+		name string
+		d    Decided
+		a    pyAnswer
+		want string
+	}{
+		{"window refusal", enforcing, pyAnswer{status: 429, body: window},
+			ClassWindowUnchecked + ".429." + windowRefusal},
+		{"429 unread", enforcing, pyAnswer{status: 429, why: "bound"}, ClassWindowUnchecked + ".429.unread"},
+		{"another 429", enforcing, pyAnswer{status: 429, body: errorBody(429, "rate_limited", "slow down")},
+			ClassWouldAdmit + ".429.rate_limited"},
+		{"402", enforcing, pyAnswer{status: 402, body: errorBody(402, "insufficient_credits", "no")},
+			ClassWouldAdmit + ".402.insufficient_credits"},
+		{"alert only, window refusal", alertOnly, pyAnswer{status: 429, body: window},
+			ClassWouldAdmit + ".429." + windowRefusal},
+		{"alert only, 429 unread", alertOnly, pyAnswer{status: 429, why: "bound"}, ClassWouldAdmit + ".429.unread"},
+	} {
+		r := compareFull(v.d, v.a)
+		if r.class != v.want || !r.decided || r.gate != v.d.DecideGate {
+			t.Errorf("%s: %+v, want class %s", v.name, r, v.want)
+		}
+	}
+	in := windowedInputs(t, map[string]any{"limit_daily_microdollars": 5000}, "")
+	cc := c
+	body := keyBodyWith(t, cc, map[string]any{"limit_daily_microdollars": 5000})
+	cc.Key.KeyBody = &body
+	if r := compareFull(Decide(in), pyAnswer{status: 200, body: pythonsLegacyAnswer(t, f, cc, false)}); r.class !=
+		ClassAgreeFull || r.gate != PassKeyWindow {
+		t.Errorf("Python's 200: %+v", r)
 	}
 }

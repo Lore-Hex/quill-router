@@ -116,3 +116,46 @@ def test_python_cannot_reach_year_10000_and_the_edge_passes() -> None:
         assert cases[name]["edge"] == "pass:key_window.overflow", name
     for name in ("year_9998_december_monthly", "year_2_daily"):
         assert cases[name]["edge"] == "decide", name
+
+
+def test_the_facts_cases_cover_every_body_kind() -> None:
+    facts = _vectors()["facts"]
+    labels = Counter(label for case in facts for label in case["labels"])
+    for label in (
+        "integer", "zero", "negative", "int64_edge", "past_int64", "float", "string", "bool", "null", "none",
+        "multi_window", "alert_only", "alert_only_type", "shards", "shard_count_invalid",
+    ):
+        assert labels[label] >= 1, (label, labels)
+    outcomes = Counter("facts" if isinstance(case["go"], dict) else case["go"].split(":")[0] for case in facts)
+    assert outcomes["facts"] >= 10 and outcomes["none"] >= 3 and outcomes["key_shape"] >= 10, outcomes
+    assert len({case["name"] for case in facts}) == len(facts)
+
+
+def test_where_go_reads_a_key_body_it_reads_python_s_windows() -> None:
+    for case in _vectors()["facts"]:
+        python, go = case["python"], case["go"]
+        assert case["exact"] == (isinstance(go, dict) or go == "none"), case["name"]
+        if not case["exact"]:
+            assert go.startswith("key_shape:"), case["name"]
+            continue
+        assert python["error"] is None, case["name"]
+        if go == "none":
+            assert python["configured"] == {}, case["name"]
+            continue
+        configured = {w: v for w, v in go["limits"].items() if v is not None}
+        assert configured == python["configured"], case["name"]
+        assert python["enforced"] == ({} if go["alert_only"] else configured), case["name"]
+        assert go["shards"] == python["shards"], case["name"]
+
+
+def test_alert_only_keys_read_as_alert_only_and_others_pass() -> None:
+    cases = {case["name"]: case for case in _vectors()["facts"]}
+    assert cases["alert_only_true"]["go"]["alert_only"] is True
+    assert cases["alert_only_true"]["python"]["enforced"] == {}
+    # Python reads "false" as truthy and 0 as falsy; Go reads neither.
+    assert cases["alert_only_string_false"]["python"]["enforced"] == {}
+    assert cases["alert_only_number_zero"]["python"]["enforced"] == {"daily": 1000}
+    for name in ("alert_only_string_false", "alert_only_number_zero"):
+        assert cases[name]["go"] == "key_shape:budget_alert_only", name
+    # Without a window budget_alert_only decides nothing, and Go does not read it.
+    assert cases["no_window_alert_only_not_read"]["go"] == "none"

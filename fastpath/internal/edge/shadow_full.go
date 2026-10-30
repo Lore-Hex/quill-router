@@ -67,7 +67,17 @@ const (
 	// ClassUnread: Python's answer was not read through (not reached, past
 	// the bound or the budget, not answered within the wait).
 	ClassUnread = "unread"
+	// ClassWindowUnchecked: Python refused a window of a key whose windows
+	// it enforces (429 key_window_limit_exceeded, or a 429 whose body was
+	// not read), and Go's decision carries no window verdict to compare
+	// (Decision.Windows, not read): neither an agreement nor a would-admit
+	// (docs/design/fast-admission-e2-key-windows.md section 8.2).
+	ClassWindowUnchecked = "window_unchecked"
 )
+
+// windowRefusal is the error type of Python's 429 for a spend window
+// (gateway.py, ErrorType.KEY_WINDOW_LIMIT_EXCEEDED).
+const windowRefusal = "key_window_limit_exceeded"
 
 const (
 	// DefaultDecideShadowJobs bounds the requests the shadow follows at
@@ -571,6 +581,9 @@ func compareClass(d Decided, a pyAnswer, py asyncMembers) fullResult {
 		return fullResult{class: ClassGoPassed + "." + reason}
 	}
 	r := fullResult{decided: true, gate: d.DecideGate}
+	// Go's decision for an enforcing windowed key holds no verdict on its
+	// windows: Python's window refusal is not one Go would have made.
+	unchecked := d.ForShadow().Windows != nil && a.status == http.StatusTooManyRequests
 	if !read {
 		switch {
 		case a.status == 0 || a.status == http.StatusOK:
@@ -578,6 +591,8 @@ func compareClass(d Decided, a pyAnswer, py asyncMembers) fullResult {
 		case a.status >= 500:
 			// A pause 503 is told from Python's others by its body alone.
 			r.class = ClassPythonError + "." + strconv.Itoa(a.status) + ".unread"
+		case unchecked:
+			r.class = ClassWindowUnchecked + "." + strconv.Itoa(a.status) + ".unread"
 		default:
 			r.class = ClassWouldAdmit + "." + strconv.Itoa(a.status) + ".unread"
 		}
@@ -595,6 +610,8 @@ func compareClass(d Decided, a pyAnswer, py asyncMembers) fullResult {
 		r.class = ClassPythonUnavailable
 	case a.status >= 500 && !(a.status == http.StatusServiceUnavailable && refusal.message == pauseMessage):
 		r.class = ClassPythonError + "." + strconv.Itoa(a.status)
+	case unchecked && refusal.kind == windowRefusal:
+		r.class = ClassWindowUnchecked + "." + strconv.Itoa(a.status) + "." + refusal.kind
 	default:
 		r.class = ClassWouldAdmit + "." + strconv.Itoa(a.status) + "." + refusal.kind
 	}

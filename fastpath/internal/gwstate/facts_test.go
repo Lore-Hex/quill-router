@@ -7,12 +7,14 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Lore-Hex/quill-router/fastpath/internal/keywindow"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store"
 )
 
@@ -103,7 +105,8 @@ func TestTheKeyFactsAgreeWithPythonOnEveryVector(t *testing.T) {
 			t.Fatalf("%s: %v", c.Name, err)
 		}
 		facts := ParseKey(c.Body)
-		ok, reason := facts.At(at)
+		// The vectors hold the pilot's rule, windows an exclusion (PilotAt).
+		ok, reason := facts.PilotAt(at)
 		python := reasonOf(c.Python.Reason)
 		if ok {
 			if python != "" || !slices.Equal(facts.Tags, pairsOf(c.Python.Tags)) {
@@ -263,5 +266,153 @@ func TestOnlyTheEdgeAndTheServiceImportTheFacts(t *testing.T) {
 	}
 	if files < 50 || imports == 0 {
 		t.Fatalf("scanned %d files, %d allowed imports", files, imports)
+	}
+}
+
+// windowFactsCase is a facts case of key_window_vectors_v1.json
+// (docs/design/fast-admission-e2-key-windows.md section 7): an api_key body,
+// Python's reading of its windows, and what ParseKey must read (go): its
+// KeyWindows, "none", or key_shape:<field>.
+type windowFactsCase struct {
+	Name   string   `json:"name"`
+	Body   string   `json:"body"`
+	Labels []string `json:"labels"`
+	Exact  bool     `json:"exact"`
+	Python struct {
+		Error *string `json:"error"`
+		// Configured and Enforced may hold integers past int64.
+		Configured map[string]json.Number `json:"configured"`
+		Enforced   map[string]json.Number `json:"enforced"`
+		Shards     *int                   `json:"shards"`
+	} `json:"python"`
+	Go json.RawMessage `json:"go"`
+}
+
+type goWindowFacts struct {
+	Limits    map[string]*int64 `json:"limits"`
+	AlertOnly bool              `json:"alert_only"`
+	Shards    int               `json:"shards"`
+}
+
+// TestTheKeyWindowFactsAreTheVectors: on every facts case ParseKey reads
+// what the vectors say Go reads (the edge's rule), and on an exact case that
+// is Python's reading: the configured limits, the enforced ones (none for an
+// alert-only key) and the shard count. Go's windows never differ from
+// Python's where it reads them; elsewhere it passes (key_shape).
+func TestTheKeyWindowFactsAreTheVectors(t *testing.T) {
+	text, err := os.ReadFile(filepath.Join("..", "..", "testdata", "key_window_vectors_v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v struct {
+		Facts []windowFactsCase `json:"facts"`
+	}
+	if err := json.Unmarshal(text, &v); err != nil {
+		t.Fatal(err)
+	}
+	limitsOf := func(l keywindow.Limits) map[string]*int64 {
+		return map[string]*int64{"daily": l.Daily, "weekly": l.Weekly, "monthly": l.Monthly}
+	}
+	numbers := func(l keywindow.Limits) map[string]json.Number {
+		out := map[string]json.Number{}
+		for w, n := range limitsOf(l) {
+			if n != nil {
+				out[w] = json.Number(strconv.FormatInt(*n, 10))
+			}
+		}
+		return out
+	}
+	read, shapes, none := 0, 0, 0
+	for _, c := range v.Facts {
+		k := ParseKey(c.Body)
+		var want string
+		if json.Unmarshal(c.Go, &want) == nil {
+			switch {
+			case want == "none":
+				none++
+				if !k.Eligible || k.Windows != nil {
+					t.Errorf("%s: Go reads %+v (%q), want no windows", c.Name, k.Windows, k.Reason)
+				}
+			case k.Eligible || k.Reason != want:
+				t.Errorf("%s: Go %q (eligible %v), want %q", c.Name, k.Reason, k.Eligible, want)
+			default:
+				shapes++
+			}
+			continue
+		}
+		var w goWindowFacts
+		if err := json.Unmarshal(c.Go, &w); err != nil {
+			t.Fatalf("%s: %v", c.Name, err)
+		}
+		if !k.Eligible || k.Windows == nil {
+			t.Errorf("%s: Go %q (windows %v), want windows %+v", c.Name, k.Reason, k.Windows, w)
+			continue
+		}
+		got := k.Windows
+		if !reflect.DeepEqual(limitsOf(got.Limits), w.Limits) || got.AlertOnly != w.AlertOnly || got.Shards != w.Shards {
+			t.Errorf("%s: Go %+v, want %+v", c.Name, *got, w)
+			continue
+		}
+		if !c.Exact || c.Python.Error != nil || c.Python.Shards == nil {
+			t.Errorf("%s: Go reads windows the vectors do not hold exact", c.Name)
+			continue
+		}
+		if !reflect.DeepEqual(numbers(got.Limits), c.Python.Configured) ||
+			!reflect.DeepEqual(numbers(got.Enforced()), c.Python.Enforced) || got.Shards != *c.Python.Shards {
+			t.Errorf("%s: Go %+v; Python configured %v, enforced %v, shards %d", c.Name, *got, c.Python.Configured,
+				c.Python.Enforced, *c.Python.Shards)
+			continue
+		}
+		read++
+	}
+	// Positive control: the file holds each outcome.
+	if read < 10 || shapes < 10 || none < 3 {
+		t.Fatalf("%d facts cases read, %d passed, %d without windows", read, shapes, none)
+	}
+	t.Logf("%d facts cases: %d read as Python reads them, %d passed (key_shape), %d without windows", len(v.Facts),
+		read, shapes, none)
+}
+
+// TestAWindowedKeyIsInTheCohortWithItsWindows (section 4.7): a key whose one
+// exclusion was its windows is eligible with Windows; a lifetime cap and a
+// strict key still exclude it (key_limit first, the windows read before
+// key_budget_strict); PilotAt gives the pilot's reasons for each.
+func TestAWindowedKeyIsInTheCohortWithItsWindows(t *testing.T) {
+	now := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
+	body := func(extra string) string {
+		return `{"hash":"kh_synthetic","salt":"s","secret_hash":"x","lookup_hash":"lh_synthetic","name":"n",` +
+			`"label":"l","workspace_id":"ws_synthetic","creator_user_id":"u"` + extra + `}`
+	}
+	daily := int64(5)
+	for _, v := range []struct {
+		name, extra   string
+		eligible      bool
+		reason, pilot string
+		windows       *KeyWindows
+	}{
+		{"enforcing", `,"limit_daily_microdollars":5`, true, "", ReasonKeyWindowLimit,
+			&KeyWindows{Limits: keywindow.Limits{Daily: &daily}, Shards: 1}},
+		{"alert only, four shards", `,"limit_daily_microdollars":5,"budget_alert_only":true,"usage_shard_count":4`,
+			true, "", ReasonKeyWindowAlert,
+			&KeyWindows{Limits: keywindow.Limits{Daily: &daily}, AlertOnly: true, Shards: 4}},
+		{"strict", `,"limit_daily_microdollars":5,"budget_strict":true`, false, ReasonKeyBudgetStrict,
+			ReasonKeyWindowLimit, &KeyWindows{Limits: keywindow.Limits{Daily: &daily}, Shards: 1}},
+		{"lifetime cap", `,"limit_daily_microdollars":5.5,"limit_microdollars":9`, false, ReasonKeyLimit,
+			ReasonKeyLimit, nil},
+		{"disabled", `,"limit_daily_microdollars":5,"disabled":true`, false, ReasonKeyDisabled, ReasonKeyDisabled,
+			nil},
+		{"no window", `,"budget_alert_only":"yes"`, true, "", "", nil},
+		{"strict, no window", `,"budget_strict":true`, false, ReasonKeyBudgetStrict, ReasonKeyBudgetStrict, nil},
+		{"float window", `,"limit_weekly_microdollars":1.0`, false, ReasonKeyShape + ":limit_weekly_microdollars",
+			ReasonKeyShape + ":limit_weekly_microdollars", nil},
+	} {
+		k := ParseKey(body(v.extra))
+		if k.Eligible != v.eligible || k.Reason != v.reason || !reflect.DeepEqual(k.Windows, v.windows) {
+			t.Errorf("%s: eligible %v %q windows %+v, want %v %q %+v", v.name, k.Eligible, k.Reason, k.Windows,
+				v.eligible, v.reason, v.windows)
+		}
+		if ok, reason := k.PilotAt(now); ok != (v.pilot == "") || reason != v.pilot {
+			t.Errorf("%s: PilotAt %v %q, want %q", v.name, ok, reason, v.pilot)
+		}
 	}
 }

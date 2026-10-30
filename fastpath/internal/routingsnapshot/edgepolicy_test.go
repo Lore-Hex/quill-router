@@ -416,3 +416,83 @@ func TestTheAsyncSettleObjectIsOptional(t *testing.T) {
 		t.Fatalf("the refusals' control: %v", err)
 	}
 }
+
+// keyWindowsMember matches a fastpath_pilot_key_windows member, whatever its
+// value, so the tests run on a golden body with or without one.
+var keyWindowsMember = regexp.MustCompile(`"fastpath_pilot_key_windows":("[^"]*"|[^,]*),`)
+
+// withKeyWindows is the golden body with its fastpath_pilot_key_windows
+// member set to value (raw JSON) in its canonical place, just before
+// fastpath_pilot_regions; "" removes it.
+func withKeyWindows(t *testing.T, raw []byte, value string) []byte {
+	t.Helper()
+	out := keyWindowsMember.ReplaceAll(raw, nil)
+	if value == "" {
+		return out
+	}
+	at := []byte(`"fastpath_pilot_regions":`)
+	if bytes.Count(out, at) != 1 {
+		t.Fatal("the golden body has no single fastpath_pilot_regions")
+	}
+	return bytes.Replace(out, at, append([]byte(`"fastpath_pilot_key_windows":`+value+`,`), at...), 1)
+}
+
+// TestTheKeyWindowsModeIsOptional (docs/design/fast-admission-e2-key-windows.md
+// section 5): Go ships before Python publishes the member, so a body
+// without fastpath_pilot_key_windows parses and reads as off; a body with
+// it parses each of the three modes as published, and verifies under a
+// manifest signed for it; null, another string, another type and a member
+// out of canonical order are refused.
+func TestTheKeyWindowsModeIsOptional(t *testing.T) {
+	m, published := policyGolden(t)
+	raw := withKeyWindows(t, published, "")
+	p, err := ParseEdgePolicy(raw)
+	if err != nil || p.FastpathPilotKeyWindows != nil || p.KeyWindowsMode() != KeyWindowsOff {
+		t.Fatalf("absent fastpath_pilot_key_windows: %v, %+v", err, p)
+	}
+	for _, mode := range []string{KeyWindowsOff, KeyWindowsAlert, KeyWindowsEnforce} {
+		body := withKeyWindows(t, raw, `"`+mode+`"`)
+		got, err := ParseEdgePolicy(body)
+		if err != nil || got.FastpathPilotKeyWindows == nil || got.KeyWindowsMode() != mode {
+			t.Fatalf("%s: %v, %+v", mode, err, got)
+		}
+		// Every other field is what the golden body says.
+		got.FastpathPilotKeyWindows = nil
+		if a, b := canonical(got), canonical(p); !bytes.Equal(a, b) {
+			t.Fatalf("%s changed another field:\n%s\n%s", mode, a, b)
+		}
+	}
+	signed := withKeyWindows(t, raw, `"enforce"`)
+	s := testKeySigner(t, m)
+	verified, _, err := VerifyEdgePolicy(s.signPolicy(t, signed), []TrustedKey{goldenKey(t, m)}, signed,
+		policyOptions(m, policyIssuedAt))
+	if err != nil || verified.KeyWindowsMode() != KeyWindowsEnforce {
+		t.Fatalf("a signed body with fastpath_pilot_key_windows: %v, %+v", err, verified)
+	}
+	for name, value := range map[string]string{
+		"null":        `null`,
+		"empty":       `""`,
+		"upper case":  `"ENFORCE"`,
+		"other mode":  `"on"`,
+		"padded":      `" off"`,
+		"a bool":      `true`,
+		"an integer":  `1`,
+		"an object":   `{"mode":"off"}`,
+		"an array":    `["off"]`,
+		"unknown key": `"alert","fastpath_pilot_key_windows_x":"off"`,
+	} {
+		if got, err := ParseEdgePolicy(withKeyWindows(t, raw, value)); err == nil {
+			t.Errorf("%s: accepted as %v", name, got.KeyWindowsMode())
+		}
+	}
+	// Out of canonical order: the member after fastpath_pilot_regions.
+	at := []byte(`"fastpath_pilot_workspaces":`)
+	misplaced := bytes.Replace(raw, at, append([]byte(`"fastpath_pilot_key_windows":"off",`), at...), 1)
+	if _, err := ParseEdgePolicy(misplaced); err == nil || !strings.Contains(err.Error(), "canonical") {
+		t.Errorf("a misplaced member: %v", err)
+	}
+	// The positive control for the refusals: the same splice accepts a mode.
+	if _, err := ParseEdgePolicy(withKeyWindows(t, raw, `"alert"`)); err != nil {
+		t.Fatalf("the refusals' control: %v", err)
+	}
+}
