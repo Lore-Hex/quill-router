@@ -79,6 +79,11 @@ STALE = "stale"
 REJECTED = "rejected"
 DEADLINE_PASSED = "deadline_passed"
 DECIDED = "decided"
+# A disposition's answers besides settled (the stored outcome): pending, none
+# found yet; and unserved, the client's own for a front door from before the
+# path (a 404).
+PENDING = "pending"
+UNSERVED = "unserved"
 
 
 @dataclass(frozen=True)
@@ -111,6 +116,18 @@ class HeartbeatAnswer:
 
     status: str
     deadline: datetime | None
+
+
+@dataclass(frozen=True)
+class Disposition:
+    """A disposition read by envelope: `settled` with the stored outcome
+    (settled, refunded, reaped_snapshot or released) and its cost when
+    known, or pending, failed or invalid."""
+
+    status: str
+    outcome: str
+    cost: int
+    cost_known: bool
 
 
 class FrontDoorUnavailable(RuntimeError):
@@ -314,10 +331,40 @@ class FrontDoorClient:
             raise FrontDoorUnavailable("/v1/heartbeat: accepted without a deadline")
         return HeartbeatAnswer(status=status, deadline=deadline)
 
+    # -- disposition ------------------------------------------------------
+
+    def disposition(self, *, envelope: str) -> Disposition:
+        """An authorization's disposition by its envelope
+        (docs/design/fast-admission-streams.md section 6.4), the front
+        door's read-only POST /v1/disposition. Raises FrontDoorUnavailable
+        when no front door answered, the answer does not parse, or the front
+        doors do not serve the path (a release from before it): every one of
+        them is pending to the caller, never a refund."""
+        answer = self._call("/v1/disposition", {"Envelope": envelope}, unserved_ok=True)
+        if answer is None:
+            raise FrontDoorUnavailable("/v1/disposition")
+        status = answer.get("Status")
+        if status == UNSERVED:
+            raise FrontDoorUnavailable("/v1/disposition: not served")
+        try:
+            return Disposition(
+                status=str(status),
+                outcome=str(answer.get("Outcome") or ""),
+                cost=int(answer.get("Cost") or 0),
+                cost_known=bool(answer.get("CostKnown", False)),
+            )
+        except (TypeError, ValueError) as exc:
+            raise FrontDoorUnavailable("/v1/disposition: malformed answer") from exc
+
     # -- transport --------------------------------------------------------
 
     def _call(
-        self, path: str, body: dict[str, Any], *, permits: threading.BoundedSemaphore | None = None,
+        self,
+        path: str,
+        body: dict[str, Any],
+        *,
+        permits: threading.BoundedSemaphore | None = None,
+        unserved_ok: bool = False,
     ) -> dict[str, Any] | None:
         """One JSON call within one budget for the whole call, the membership
         read included: the caller waits at most the budget. None when no
@@ -334,7 +381,7 @@ class FrontDoorClient:
 
         def run() -> None:
             try:
-                answer[0] = self._call_within(path, body, deadline)
+                answer[0] = self._call_within(path, body, deadline, unserved_ok)
             except Exception:  # noqa: BLE001 - a front door call must not fail the request
                 logger.exception("fastpath %s failed", path)
             finally:
@@ -354,11 +401,15 @@ class FrontDoorClient:
             return None
         return answer[0]
 
-    def _call_within(self, path: str, body: dict[str, Any], deadline: float) -> dict[str, Any] | None:
+    def _call_within(
+        self, path: str, body: dict[str, Any], deadline: float, unserved_ok: bool = False,
+    ) -> dict[str, Any] | None:
         """The call itself, tried on at most DOORS_PER_CALL front doors the
         breakers allow, in turn from a rotating start, each request given what
         remains of the budget. Past the deadline nothing is sent, and an
-        answer that comes late changes no breaker: the caller has gone."""
+        answer that comes late changes no breaker: the caller has gone. With
+        `unserved_ok`, a 404 is answered {"Status": "unserved"} and moves no
+        breaker: a front door from before a read-only path."""
         if self._clock() >= deadline:
             return None
         addresses = tuple(self._front_doors(self._budget))
@@ -390,6 +441,12 @@ class FrontDoorClient:
                 self._failed(breaker, deadline)
                 logger.warning("fastpath %s via %s failed: %s", path, address, type(exc).__name__)
                 continue
+            if response.status_code == 404 and unserved_ok:
+                # A front door from before the path: it is up, and does not
+                # serve this. Neither its health nor a failure; the caller
+                # reads it as no answer of the path's own.
+                logger.warning("fastpath %s via %s: not served", path, address)
+                return {"Status": UNSERVED}
             if response.status_code != 200:
                 # 400 and 500 are the front door's own answers to a bad body or
                 # a bad encode, not its health; 502 is an owner it could not

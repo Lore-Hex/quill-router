@@ -5,7 +5,7 @@ import json
 import logging
 import time
 from collections import Counter
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from itertools import chain
 from typing import Any, cast
 
@@ -126,6 +126,46 @@ def _recover_async(outbox: SpannerSettleOutbox, *, limit: int, deadline: float,
             logger.warning("async_recovery.protection_disabled due_count_at_least=%s", blocked)
 
 
+def _reconcile_leased(reap_result: ReapPassResult) -> dict[str, int]:
+    """The reaper pass's heartbeated leased rows, each read from its lease
+    and recorded as the lease decided it, or left pending
+    (fastpath_settle.reconcile_reaped; docs/design/fast-admission-streams.md
+    section 6.4). Python never decides one, and never refunds one."""
+    leased = tuple(getattr(reap_result, "leased", ()) or ())
+    if not leased:
+        return {}
+    from trusted_router.config import get_settings
+    from trusted_router.routes.internal.gateway import _fastpath_front_door
+    from trusted_router.services import fastpath_settle
+    from trusted_router.storage import typed_billing_store
+
+    settings = get_settings()
+    store = typed_billing_store()
+    if store is None:
+        logger.warning("fastpath leased reap reconcile without a typed store count=%s", len(leased))
+        return {}
+    def every_intent_pending(_authorization_id: str) -> bool:
+        return True
+
+    has_intent: Callable[[str], bool]
+    try:
+        has_intent = spanner_settle_outbox().has_intent
+    except Exception:  # noqa: BLE001 - without the outbox no settled row pages: every one reads as pending
+        logger.warning("fastpath leased reap reconcile without the settle outbox count=%s", len(leased))
+        has_intent = every_intent_pending
+
+    counts = fastpath_settle.reconcile_reaped_leases(
+        _fastpath_front_door(settings),
+        store,
+        leased,
+        now=dt.datetime.now(dt.UTC),
+        grace_seconds=settings.heartbeat_grace_seconds,
+        has_intent=has_intent,
+    )
+    logger.info("fastpath leased reap reconciled %s", json.dumps(counts, sort_keys=True, separators=(",", ":")))
+    return counts
+
+
 def drain_settle_outbox(
     limit: int,
     *,
@@ -223,6 +263,7 @@ def drain_settle_outbox(
         reap_result.errors,
         reap_result.refunded,
     )
+    _reconcile_leased(reap_result)
     if reap_result.count >= _REAP_BURST_ALERT_THRESHOLD:
         ops_alert(
             "ALERT gateway reaper burst "
@@ -649,6 +690,7 @@ def housekeeping(outbox: SpannerSettleOutbox, *, reap_snapshot_booking_enabled: 
         reap_result.errors,
         reap_result.refunded,
     )
+    _reconcile_leased(reap_result)
     if reap_result.count >= _REAP_BURST_ALERT_THRESHOLD:
         ops_alert(
             "ALERT gateway reaper burst "

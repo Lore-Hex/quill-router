@@ -359,6 +359,9 @@ def test_a_lease_closed_before_the_terminal_records_the_disposition(door: _Door)
     gateway._settle_gateway_authorization(_settle_body(authorized), success=True, settings=_pilot())
     authorization = store.get_gateway_authorization(authorized["authorization_id"])
     assert authorization is not None and authorization.settled
+    # A row no heartbeat reached has no snapshot: a closed lease's reap of it
+    # keeps today's handling, the settle's own record at the lease's cost
+    # (docs/design/fast-admission-streams.md section 6.3).
     assert authorization.finalization_outcome == "settled" and authorization.finalized_cost_microdollars == 5
     # A settle answered with a refunded disposition records a refund, no generation.
     second = gateway._authorize_gateway_sync(_request(), _body(key.hash), _pilot())["data"]

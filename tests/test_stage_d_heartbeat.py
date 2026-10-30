@@ -813,6 +813,7 @@ def test_reaper_strong_reread_skips_a_heartbeat_renewed_after_scan(
         SettleOutcome.OUTBOX_GUARDED: 0,
         SettleOutcome.GUARD_LOST: 0,
         SettleOutcome.ERROR: 0,
+        SettleOutcome.LEASED_STREAM: 0,
         "refunded": 0,
         "snapshot_booked": 0,
     }

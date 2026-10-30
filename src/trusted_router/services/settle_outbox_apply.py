@@ -530,10 +530,13 @@ def _apply_leased(
             auth.id,
             success=decision.success,
             actual_microdollars=decision.charge,
-            selected_usage_type=usage_type,
+            # A reap the lease decided books credits, with the snapshot's
+            # records (docs/design/fast-admission-streams.md section 6.3).
+            selected_usage_type=UsageType.CREDITS if decision.outcome is not None else usage_type,
             generation=decision.generation,
             authorization_snapshot=auth,
             mark_intent=None,
+            outcome=decision.outcome,
         )
     except _TRANSIENT_STORE_EXCS:
         # The store, not the row: parked, as the typed path parks it, with

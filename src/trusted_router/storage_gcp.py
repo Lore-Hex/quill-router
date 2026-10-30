@@ -5160,6 +5160,25 @@ class SpannerStore(OperationalAnalyticsReads):
             return AuthorizeVerdict(AuthorizeOutcome.ACCEPTED, rate_limit=window_decision), landed
         return AuthorizeVerdict(AuthorizeOutcome.ACCEPTED, rate_limit=window_decision), authorization
 
+    def extend_reservation_expiry(self, reservation_id: str, until: dt.datetime) -> bool:
+        """A leased stream's row whose disposition the lease has not given
+        yet expires again at `until` (docs/design/fast-admission-streams.md
+        section 6.4), never sooner than it would: the reaper's next pass asks
+        again, and its scan is not filled by rows it can only leave. The
+        renewal is the heartbeat's own statement. True when the open row was
+        found."""
+        pt = self._param_types
+
+        def extend(transaction: Any) -> int:
+            return int(transaction.execute_update(
+                "UPDATE tr_reservation SET expires_at=GREATEST(expires_at,@renewed_expires_at) "
+                "WHERE reservation_id=@rid AND settled=false",
+                params={"rid": reservation_id, "renewed_expires_at": until},
+                param_types={"rid": pt.STRING, "renewed_expires_at": pt.TIMESTAMP},
+            ))
+
+        return run_in_transaction_with_retry(self._database, extend, transaction_tag="tr_leased_reap_extend") == 1
+
     def typed_finalize_leased_result(
         self,
         authorization_id: str,
@@ -5171,6 +5190,7 @@ class SpannerStore(OperationalAnalyticsReads):
         authorization_snapshot: GatewayAuthorization | None = None,
         refund_benchmark: ProviderBenchmarkSample | None = None,
         mark_intent: str | None = None,
+        outcome: str | None = None,
     ) -> tuple[TypedFinalizeResult, GatewayAuthorization] | None:
         """The pilot's finalize: the records of a terminal whose money the
         fast path booked (docs/design/fast-admission-pilot.md). ONE commit
@@ -5185,7 +5205,13 @@ class SpannerStore(OperationalAnalyticsReads):
         counters, as today's settle does for a key that held nothing (the
         design's §4.6 has the auditor do this once the control plane leaves
         the hot path). None when the authorization is not a leased one or is
-        settled already (the caller answers the stored disposition)."""
+        settled already (the caller answers the stored disposition).
+
+        `outcome` reaped_snapshot records a lease's reap of a stream's last
+        snapshot (docs/design/fast-admission-streams.md sections 6.3, 6.4):
+        with no generation given, the snapshot's own, built from the row at
+        the lease's charge, as the reaper builds it; the key books the
+        charge, as the reaper's booking does."""
         from trusted_router.storage_gcp_authorize import (
             _log_missing_key_releases,
             _release_key_or_skip_deleted,
@@ -5213,14 +5239,23 @@ class SpannerStore(OperationalAnalyticsReads):
         ):
             activity_outbox = None
         actual_usage_type = UsageType.coerce(selected_usage_type)
+        if outcome == "reaped_snapshot" and success and generation is None:
+            from trusted_router.storage_gcp_authorize import snapshot_generation
+
+            generation = snapshot_generation(authorization, actual_micro=int(actual_microdollars))
         authorization.record_finalization(
             success=success,
             actual_microdollars=actual_microdollars,
             selected_usage_type=actual_usage_type,
             generation=generation,
+            outcome=outcome,
         )
         benchmark = (
-            self.generation_store.benchmark_sample(generation)
+            # A reaped snapshot is no measured request: no benchmark, as the
+            # reaper writes none.
+            None
+            if outcome == "reaped_snapshot"
+            else self.generation_store.benchmark_sample(generation)
             if success and generation is not None
             else refund_benchmark if not success else None
         )
