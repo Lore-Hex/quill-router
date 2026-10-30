@@ -554,10 +554,10 @@ def test_the_golden_files_ignore_the_key_windows_environment(monkeypatch: pytest
     assert VECTORS.OUTPUT_MANIFEST.read_text() == VECTORS.render_manifest()
 
 
-def test_rollout_renders_key_windows_as_a_literal_off() -> None:
+def test_rollout_renders_key_windows_as_a_literal_alert() -> None:
     rollout = (ROOT / "scripts" / "deploy" / "rollout.sh").read_text()
     assert re.findall(r'"TR_FASTPATH_PILOT_KEY_WINDOWS=[^"]*"', rollout) == [
-        '"TR_FASTPATH_PILOT_KEY_WINDOWS=off"']
+        '"TR_FASTPATH_PILOT_KEY_WINDOWS=alert"']
 
 
 def test_ticket_authority_is_the_runtime_read_at_each_signing(key) -> None:
