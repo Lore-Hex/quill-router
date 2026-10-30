@@ -596,7 +596,7 @@ def test_every_async_case_has_the_shape_its_name_claims() -> None:
             assert "response" not in python and expect["reason"] == "policy.async_admission", name
         else:
             assert _shape(python["response"]) == claimed, name
-    assert seen["B"] >= 10 and seen["A"] >= 12 and seen["none"] >= 8 and seen["C"] == 1, seen
+    assert seen["B"] >= 10 and seen["A"] >= 12 and seen["none"] >= 8 and seen["C"] == 2, seen
     assert seen["affinity.warm_A.cold_B"] == 1, seen
 
 
@@ -632,10 +632,35 @@ def test_the_async_header_carries_pythons_sets_snapshot_and_policy() -> None:
         "admission_enabled": False, "edge_decide": True, "ticket_authority": True, "typed_records": True}
     names = [case["name"] for case in vectors["cases"]]
     assert names == sorted(names) and len(set(names)) == len(names)
+    named = other = 0
     for case in vectors["cases"]:
+        name = case["name"]
         effective = {**vectors["policy"], **case["policy_patch"]}["async_settle"]
-        assert effective["admission_enabled"] is (case["name"].startswith("pass:policy.async_admission:")), case["name"]
-        assert "settlement_ticket" not in json.dumps(case), case["name"]
+        assert effective["admission_enabled"] is (
+            name.startswith("pass:policy.async_admission:") or ":admission_workspaces_" in name), name
+        assert "settlement_ticket" not in json.dumps(case), name
+        assert "settlement_status_url" not in json.dumps(case), name
+        # Admission on for a pilot set (§4.1, per workspace): one naming the
+        # key's workspace passes (Python tickets it); one leaving it out is
+        # answered, Python's admission-off shape for that workspace.
+        workspaces = effective.get("admission_workspaces")
+        assert (workspaces is not None) is (":admission_workspaces_" in name), name
+        if workspaces is None:
+            continue
+        assert workspaces == sorted(set(workspaces)), name
+        if name.endswith(":admission_workspaces_named"):
+            named += 1
+            assert case["facts"]["key"]["workspace_id"] in workspaces, name
+            assert case["expect"]["reason"] == "policy.async_admission", name
+            assert case["expect"]["python"]["async_shape"] == "C", name
+        else:
+            assert name.endswith(":admission_workspaces_other"), name
+            other += 1
+            assert case["facts"]["key"]["workspace_id"] not in workspaces, name
+            assert case["expect"]["outcome"] == "answer" and case["expect"]["async_shape"] in ("A", "B"), name
+            data = json.loads(case["expect"]["response"])["data"]
+            assert data["async_eligible"] is False, name
+    assert named == 1 and other == 2
     # The edge's async switch off is a pass with Python's admission-off answer.
     (off,) = [case for case in vectors["cases"] if case["expect"].get("reason") == "async.off"]
     assert off["policy_patch"]["async_settle"]["edge_decide"] is False

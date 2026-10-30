@@ -253,11 +253,17 @@ def snapshot_projection(*, authorization: GatewayAuthorization, snapshot: Billin
                 or authorization.settlement != "local" or authorization.settled):
             return result
         digest = canonical_hash(snapshot)
-        if not settings.async_settle_admission_enabled:
+        # A workspace the pilot set leaves out gets the admission-off answer
+        # byte for byte (shape B): no ticket, no status URL. The enclave
+        # binds async settlement only from async_eligible true, so a ticket
+        # for it was never used; the edge composes this answer itself from
+        # the policy's async_settle.admission_workspaces
+        # (docs/design/fast-admission-e2-g15-async.md section 4.1).
+        if (not settings.async_settle_admission_enabled
+                or not settings.async_settle_pilot_allows(authorization.workspace_id)):
             result.update(billing_snapshot=snapshot.model_dump(mode="json"), billing_snapshot_hash=digest)
             return result
-        eligible = bool(settings.async_settle_pilot_allows(authorization.workspace_id)
-                        and runtime.admission is not None
+        eligible = bool(runtime.admission is not None
                         and runtime.admission.eligible(authorization.workspace_id,
                                                        settings.async_settle_pilot_cap_micro))
         issued = int(time.time()) if now is None else now

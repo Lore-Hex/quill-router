@@ -551,11 +551,8 @@ func Decide(in DecideInputs) Decided {
 		// The additions Python splices in (shape A or B); the policy's
 		// object is present (asyncPolicyPass) and its admission does not
 		// cover the workspace (asyncAdmissionPass), so Python answers it as
-		// with admission off. Admits again here, not a literal false: were
-		// the gate above skipped, Stage refuses a covered workspace.
-		async := *policy.AsyncSettle
-		async.AdmissionEnabled = async.Admits(key.WorkspaceID)
-		compose.Async = &gwauth.AsyncInput{Request: r.Async, Policy: async}
+		// with admission off (asyncComposeInput).
+		compose.Async = asyncComposeInput(r.Async, *policy.AsyncSettle, key.WorkspaceID)
 	}
 	staged, err := gwauth.Stage(compose)
 	if err != nil {
@@ -609,6 +606,15 @@ func asyncAdmissionPass(r gwauth.Request, p *routingsnapshot.EdgePolicy, workspa
 		return PassAsyncAdmission
 	}
 	return ""
+}
+
+// asyncComposeInput is the async input Stage composes for the workspace: the
+// policy's object as that workspace sees it, admission on only when it covers
+// the workspace (Admits), not a literal false, so that were the admission
+// gate skipped, Stage refuses a covered workspace (a ticket is Python's).
+func asyncComposeInput(r gwauth.AsyncRequest, p routingsnapshot.AsyncSettle, workspace string) *gwauth.AsyncInput {
+	p.AdmissionEnabled = p.Admits(workspace)
+	return &gwauth.AsyncInput{Request: r, Policy: p}
 }
 
 func composeTags(tags []gwauth.Tag) []gwauth.ComposeTag {

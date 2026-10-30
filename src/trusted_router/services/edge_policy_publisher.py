@@ -176,6 +176,20 @@ def typed_records(typed_store: Any) -> bool:
     return typed_store is not None and getattr(typed_store, "request_record_write_mode", "legacy") == "typed"
 
 
+def admission_workspaces(settings: Settings) -> dict[str, list[str]]:
+    """async_settle's optional ``admission_workspaces``: the sorted pilot set
+    while admission is on and the set is non-empty, else nothing (admission
+    off covers no workspace; an empty set covers every one,
+    ``Settings.async_settle_pilot_allows``). Python answers a workspace the
+    set leaves out as with admission off (``async_settle.snapshot_projection``),
+    which the edge composes itself (docs/design/fast-admission-e2-g15-async.md
+    section 4.1)."""
+    pilots = settings.async_settle_pilot_workspace_ids
+    if not settings.async_settle_admission_enabled or not pilots:
+        return {}
+    return {"admission_workspaces": sorted(pilots)}
+
+
 def settings_facts(
     settings: Settings, *, accepted: frozenset[str], durable: bool, internal: frozenset[str],
     ticket_authority: bool, typed_records: bool,
@@ -207,6 +221,7 @@ def settings_facts(
             "edge_decide": settings.fastpath_edge_decide_async,
             "ticket_authority": ticket_authority,
             "typed_records": typed_records,
+            **admission_workspaces(settings),
         },
         # Optional, published only when not off (docs/design/
         # fast-admission-e2-key-windows.md section 5): the default body stays

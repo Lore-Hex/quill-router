@@ -226,6 +226,32 @@ def test_pilot_workspace_authorize(allowlist, expected):
         assert not rt.admission.entries
 
 
+@pytest.mark.parametrize('allowlist', ['ws-v2', 'other,ws-v2'])
+def test_a_workspace_outside_the_pilot_set_gets_the_admission_off_answer(allowlist):
+    """Admission on and the workspace outside the pilot set: Python's answer
+    is its admission-off one byte for byte (shape B: no ticket, no status
+    URL), with no admission read, which the edge composes itself from the
+    policy's async_settle.admission_workspaces (G15 section 4.1). The
+    control: a pilot workspace is still ticketed (shape C)."""
+    import json
+
+    def answer(pilots: str, *, admission: bool, rt=None):
+        config = settings(async_settle_pilot_workspaces=pilots, async_settle_pilot_cap_micro=5000000)
+        config.async_settle_enabled = admission
+        return projection(authorization=authorization(), endpoints=[endpoint()], requested=Eligibility(),
+                          runtime=rt or runtime(), settings=config, now=1_800_000_000)
+
+    rt = runtime()
+    on, off = answer(allowlist, admission=True, rt=rt), answer(allowlist, admission=False)
+    assert json.dumps(on) == json.dumps(off)
+    assert list(on) == ['async_eligible', 'billing_snapshot', 'billing_snapshot_hash'] and on['async_eligible'] is False
+    assert not rt.admission.entries
+    pilot = answer(allowlist + ',ws-v1', admission=True)
+    assert list(pilot) == ['async_eligible', 'billing_snapshot', 'billing_snapshot_hash', 'settlement_ticket',
+                           'settlement_status_url']
+    assert {k: pilot[k] for k in list(off)[1:]} == {k: off[k] for k in list(off)[1:]}
+
+
 @pytest.mark.parametrize('tier', [1, 2, 3])
 @pytest.mark.parametrize('amount', [5000000, 5000001])
 def test_pilot_authorize_cap_override(tier, amount):

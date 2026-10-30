@@ -119,7 +119,11 @@ from trusted_router.scopes import SCOPE_INFERENCE  # noqa: E402
 from trusted_router.services import async_settle as async_settle_service  # noqa: E402
 from trusted_router.services import fastpath_frontdoor as fd  # noqa: E402
 from trusted_router.services.async_settle import ORDINARY_PARAMETERS  # noqa: E402
-from trusted_router.services.edge_policy_publisher import ticket_authority, typed_records  # noqa: E402
+from trusted_router.services.edge_policy_publisher import (  # noqa: E402
+    admission_workspaces,
+    ticket_authority,
+    typed_records,
+)
 from trusted_router.spend_windows import enforced_window_limits, key_window_limits  # noqa: E402
 from trusted_router.stage_d import ESTIMATED_USAGE_SNAPSHOT_MODELS  # noqa: E402
 from trusted_router.storage import configure_store, typed_billing_store  # noqa: E402
@@ -379,7 +383,9 @@ def ticket_key_file() -> str:
     return _TICKET_KEY_FILE[0]
 
 
-def async_settle_of(policy: dict[str, Any]) -> dict[str, bool]:
+def async_settle_of(policy: dict[str, Any]) -> dict[str, Any]:
+    """The case's async-settle facts: the four booleans, and optionally
+    admission_workspaces, the async-settle pilot set (absent: empty)."""
     return policy.get("async_settle", NO_ASYNC_AUTHORITY)
 
 
@@ -393,7 +399,7 @@ def settings_for(policy: dict[str, Any], key: dict[str, Any]) -> Settings:
         # neither; the journal region is primary_region; the edge's switch.
         async_settle_enabled=facts["admission_enabled"],
         async_settle_protection=facts["admission_enabled"],
-        async_settle_pilot_workspaces="",
+        async_settle_pilot_workspaces=",".join(facts.get("admission_workspaces", ())),
         async_settle_pilot_cap_micro=0,
         async_settle_ticket_ttl_seconds=300,
         async_settle_ticket_kid=TICKET_KID,
@@ -447,6 +453,8 @@ def edge_policy_body(policy: dict[str, Any], key: dict[str, Any], at: real_dt.da
         "edge_decide": settings.fastpath_edge_decide_async,
         "ticket_authority": policy["async_settle"]["ticket_authority"],
         "typed_records": policy["async_settle"]["typed_records"],
+        # The pilot set as the publisher writes it: only with admission on.
+        **admission_workspaces(settings),
     }} if "async_settle" in policy else {}
     return {
         **async_settle,
@@ -1626,6 +1634,19 @@ def async_cases() -> list[dict[str, Any]]:
         body={"invocation_nonce": "nonce-e2-async-admission"}, policy={"async_settle": {"admission_enabled": True}})
     add("pass:policy.async_admission:async.A:no_invocation_nonce", "policy.async_admission",
         policy={"async_settle": {"admission_enabled": True}})
+    # Admission on for a pilot set (§4.1, per workspace): the policy names it
+    # in async_settle.admission_workspaces. A set naming the key's workspace
+    # passes as above (Python tickets it); one leaving it out is answered as
+    # with admission off, Python's own shape B or A for that workspace (no
+    # ticket, no status URL, even with an invocation_nonce to sign with).
+    add("pass:policy.async_admission:async.C:admission_workspaces_named", "policy.async_admission",
+        body={"invocation_nonce": "nonce-e2-async-admission"},
+        policy={"async_settle": {"admission_enabled": True, "admission_workspaces": [COHORT_WS, OTHER_WS]}})
+    add("answer:async.B:admission_workspaces_other", body={"invocation_nonce": "nonce-e2-async-admission"},
+        policy={"async_settle": {"admission_enabled": True, "admission_workspaces": [OTHER_WS]}})
+    add("answer:async.A:route_type:embeddings:admission_workspaces_other",
+        body={"route_type": "embeddings", "invocation_nonce": "nonce-e2-async-admission"},
+        policy={"async_settle": {"admission_enabled": True, "admission_workspaces": [OTHER_WS]}})
     add("pass:async.off:async.B", "async.off", policy={"async_settle": {"edge_decide": False}})
     # Any header list but exactly ["async-v1"] adds nothing (§2.1). With no
     # header the edge answers; any present header but exactly async-v1 it

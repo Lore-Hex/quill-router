@@ -481,6 +481,78 @@ def test_async_settle_admission_and_edge_decide_are_the_settings(key) -> None:
     assert seen == {(False, False), (False, True), (True, False), (True, True)}
 
 
+def test_admission_workspaces_is_the_pilot_set_while_admission_is_on(key) -> None:
+    """async_settle.admission_workspaces (G15 section 4.1, per workspace):
+    the sorted pilot set whenever admission is on and the set is non-empty;
+    absent with admission off (it covers no workspace) and with an empty set
+    (it covers every one, async_settle_pilot_allows). The body stays
+    canonical and parses back."""
+    pilots = " ws-synthetic-z,ws-synthetic-a ,ws-synthetic-m,ws-synthetic-a"
+    for admission in (False, True):
+        for allowlist, expected in (("", None), ("ws-synthetic-p", ["ws-synthetic-p"]),
+                                    (pilots, ["ws-synthetic-a", "ws-synthetic-m", "ws-synthetic-z"])):
+            settings = _settings(key, async_settle_protection=True, async_settle_pilot_workspaces=allowlist)
+            settings.async_settle_enabled = admission
+            body = _publisher(settings, Clock(T0)).current().body
+            published = json.loads(body)["async_settle"]
+            want = expected if admission else None
+            if want is None:
+                assert "admission_workspaces" not in published, (admission, allowlist)
+            else:
+                assert published["admission_workspaces"] == want, (admission, allowlist)
+                assert want == sorted(settings.async_settle_pilot_workspace_ids)
+                assert all(settings.async_settle_pilot_allows(ws) for ws in want)
+            assert canonical_edge_policy_bytes(parse_edge_policy(body)) == body
+            # Without the member the async_settle object is the four booleans
+            # it was before the member existed.
+            assert set(published) - {"admission_workspaces"} == {
+                "admission_enabled", "edge_decide", "ticket_authority", "typed_records"}
+
+
+def test_parse_edge_policy_holds_admission_workspaces_strictly() -> None:
+    """The member Go reads (routingsnapshot.AsyncSettle): present only with
+    admission on, 1 to 32 workspace ids sorted and unique; null, empty, too
+    many, unsorted, duplicated, malformed or with admission off is refused.
+    A present member round-trips to its own canonical bytes."""
+    body = json.loads(_golden_body())
+
+    def with_member(admission: bool, value: Any = None, *, present: bool = True) -> bytes:
+        decoded = json.loads(json.dumps(body))
+        decoded["async_settle"]["admission_enabled"] = admission
+        decoded["async_settle"].pop("admission_workspaces", None)
+        if present:
+            decoded["async_settle"]["admission_workspaces"] = value
+        return json.dumps(decoded, sort_keys=True, separators=(",", ":")).encode()
+
+    thirty_two = [f"ws-synthetic-{i:02d}" for i in range(32)]
+    for value in (["ws-synthetic-a"], ["ws-synthetic-a", "ws-synthetic-b"], thirty_two):
+        raw = with_member(True, value)
+        policy = parse_edge_policy(raw)
+        assert policy.async_settle.admission_workspaces == tuple(value)
+        assert canonical_edge_policy_bytes(policy) == raw
+    for admission in (False, True):
+        raw = with_member(admission, present=False)
+        policy = parse_edge_policy(raw)
+        assert policy.async_settle.admission_workspaces is None
+        assert canonical_edge_policy_bytes(policy) == raw
+    for name, raw in {
+        "admission off": with_member(False, ["ws-synthetic-a"]),
+        "null": with_member(True, None),
+        "empty": with_member(True, []),
+        "thirty-three": with_member(True, [*thirty_two, "ws-synthetic-99"]),
+        "unsorted": with_member(True, ["ws-synthetic-b", "ws-synthetic-a"]),
+        "duplicate": with_member(True, ["ws-synthetic-a", "ws-synthetic-a"]),
+        "space": with_member(True, ["ws a"]),
+        "empty string": with_member(True, [""]),
+        "too long": with_member(True, ["w" * 65]),
+        "an integer": with_member(True, [1]),
+        "a string": with_member(True, "ws-synthetic-a"),
+    }.items():
+        with pytest.raises(ValidationError):
+            parse_edge_policy(raw)
+            pytest.fail(name)
+
+
 def test_edge_decide_reads_its_environment_variable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TR_FASTPATH_EDGE_DECIDE_ASYNC", "true")
     assert Settings(environment="test", sentry_dsn=None).fastpath_edge_decide_async is True
