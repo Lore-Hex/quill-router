@@ -1828,6 +1828,7 @@ def _authorize_gateway_sync_impl(
 
         from trusted_router.spend_windows import (
             enforced_window_limits,
+            key_window_read_timestamp_headers,
             remember_spend_window_decision,
             spend_window_headers,
             spend_window_limit_error_message,
@@ -2074,11 +2075,17 @@ def _authorize_gateway_sync_impl(
             release_after_error()
             if window_decision is None:
                 raise RuntimeError("typed window rejection omitted its rate-limit verdict")
+            # With the read timestamp of the snapshot the refusal evaluated,
+            # this internal route only: the edge's decide shadow re-reads the
+            # key's rows at that instant (key windows section 8.2 item 3).
             raise api_error(
                 429,
                 spend_window_limit_error_message(window_decision),
                 ErrorType.KEY_WINDOW_LIMIT_EXCEEDED,
-                headers=spend_window_headers(window_decision, retry_after=True),
+                headers={
+                    **spend_window_headers(window_decision, retry_after=True),
+                    **key_window_read_timestamp_headers(window_decision),
+                },
             )
         if outcome in (AuthorizeOutcome.KEY_LIMIT_EXCEEDED, AuthorizeOutcome.KEY_MISSING):
             # As the window rejection: the lifetime-cap precheck runs after

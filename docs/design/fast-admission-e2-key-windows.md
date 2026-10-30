@@ -249,6 +249,9 @@ undercounts. Columns `shard, day_usage, day_start,
 week_usage, week_start, month_usage, month_start, day_limit_micro,
 week_limit_micro, month_limit_micro`. Each `INT64` and `TIMESTAMP` column
 is read as nullable (`spanner.NullInt64`, `spanner.NullTime`).
+`store.ReadKeyWindowsAt(ctx, keyHash, at)` is the same read at exactly
+`at` (`spanner.ReadTimestamp`), for the shadow's race confirmation only
+(§8.2 item 3); the decide path never uses it.
 
 `fastpath/schema/fastpath.sql` gains a copy of `tr_key_limit`, held equal to
 production's `CREATE TABLE` by `schema_test.go` as the other copies are. The
@@ -526,21 +529,55 @@ Python's 200 byte for byte as it does now. Three additions:
    a `RateLimit-Remaining` below what Go's rows leave in that window. That
    shape alone proves nothing: Python's 429 means its remaining is below the
    estimate, and Go's admit means the estimate fits Go's remaining, so
-   every such disagreement has it, a defect of Go's read included. So after
-   Python's answer the shadow re-reads the rows (one more strong read,
-   within its window limiter and `WindowReadBudget`) and evaluates that
-   window at the same instant. Usage only grows inside a window, so a
-   settle that landed between the first two reads shows: the re-read's
-   remaining at or below Python's is `window_race` (counted, traced on a
-   line with the key hash's first 8 characters, the window, Go's first and
-   re-read remaining, Python's and the gap; never paged one by one). Still
-   above Python's is the would-admit, paged. No re-read that settles it
-   (the limiter, a failed or late re-read, rows that are not the key's
-   shards, or the window reset since, its usage another window's) is
-   `window_race_unconfirmed`, which pages as the would-admit does, since
-   it cannot be told from a defect. `edge_window_race` alerts, apart from
-   the critical page, when the last hour's races pass 0.05% of the window
-   reads (at least 3), or one key races more than 3 times in an hour.
+   every such disagreement has it, a defect of Go's read included. So
+   Python's 429 on the internal authorize route also carries
+   `X-TR-Key-Window-Read-Timestamp`: the read timestamp of the multi-use
+   snapshot its window check summed (`key_window_limit_decision`, RFC 3339
+   UTC with nine fractional digits), and after Python's answer the shadow
+   re-reads the rows at exactly that timestamp
+   (`store.ReadKeyWindowsAt`, a single-use read at that timestamp, within
+   its window limiter and `WindowReadBudget`) and evaluates that window at
+   the request's instant. Those are the rows Python summed, so a Go that
+   reads and sums them as Python does leaves exactly Python's remaining:
+   **equal** is `window_race` (Go's first read saw less spent only because
+   a settle landed between it and Python's read; counted, traced on a line
+   with the key hash's first 8 characters, the window, Go's first and
+   re-read remaining, Python's and the gap; never paged one by one). Any
+   other remaining, above or below, is Go's reading or arithmetic
+   differing from Python's on the same rows: the would-admit, paged. A
+   strong re-read could not tell these apart on a busy key: settles
+   landing between Python's read and Go's re-read can exceed a small,
+   persistent Go undercount and bring a strong re-read down to Python's
+   remaining, confirming a defect as a race. No timestamp (absent, or one
+   that does not parse: `race.unconfirmed.read_at_none`,
+   `.read_at_malformed`, and no re-read is made) or no re-read that
+   settles it (the limiter, a failed or late re-read, a timestamp past the
+   database's version retention, rows that are not the key's shards, or
+   the window reset since, at Python's read or now, its usage another
+   window's) is `window_race_unconfirmed`, which pages as the would-admit
+   does, since it cannot be told from a defect. One residue remains:
+   `RateLimit-Remaining` is clamped at 0, so where both read a window
+   already spent past its limit, equal remaining says only that both see
+   it spent, not that both sum it alike. `edge_window_race` alerts, apart
+   from the critical page, when the last hour's races pass 0.05% of the
+   window reads (at least 3), or one key races more than 3 times in an
+   hour; a persistent defect hidden at that clamp repeats on its key and
+   trips it.
+
+   Where the timestamp comes from: the window check reads on a strong
+   multi-use snapshot outside the authorize transaction (§2.3), so one
+   read timestamp covers every row it sums. google-cloud-spanner requests
+   it whenever a read-only transaction begins (inline on the snapshot's
+   first read) and keeps it as `Snapshot._transaction_read_timestamp`,
+   with no public accessor; `snapshot_read_timestamp_ns` reads it, keeping
+   the digits below a microsecond, and omits it when absent. The strict
+   path (§9) decides inside its read-write transaction, where no single
+   read timestamp exists before commit, and the in-memory store reads no
+   snapshot: neither sends the header, and Go does not decide strict keys.
+   Python's 200 does not carry it: the shadow confirms races only on a 429
+   (a Python 200 against Go's admit is compared byte for byte, against
+   Go's pass is benign), so it would be read by nothing. Customer-facing
+   routes and the response middleware never send it.
 
 The edge's own 200 carries no `RateLimit-*` headers (e2-decide decision 13:
 only `Content-Type` and `Content-Length`). The enclave reads `Retry-After`
@@ -564,9 +601,13 @@ condition below holds over those 20,000:
   - confirmed `window_race` at most 0.05% of the window reads
     (`fastpathwatch edge`'s `window_race_ratio`): a settle landed between
     the two reads, the race both of Python's own instances already have
-    with each other, each confirmed by the re-read of §8.2 item 3; no
-    window `would_admit_python_refused`, and every `window_race_unconfirmed`
-    explained;
+    with each other, each confirmed by the re-read of §8.2 item 3 at
+    Python's own read timestamp, whose remaining equals Python's exactly;
+    no window `would_admit_python_refused` (a refuted candidate is one: Go
+    read the rows Python read and left another remaining), and every
+    `window_race_unconfirmed` explained (`race.unconfirmed.read_at_*`
+    means Python's 429 carried no usable read timestamp, a deploy skew or
+    a Python defect, not a race);
   - `key_window.boundary` and `key_window.config_drift` counted and
     explained; `key_window.unread` under 0.1%;
   - window read latency p99 under 50 ms.

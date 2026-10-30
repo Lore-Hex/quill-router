@@ -1950,7 +1950,7 @@ func TestAWindowRaceCandidateIsUnconfirmedUntilReRead(t *testing.T) {
 
 // raceShadow is a bare shadow for confirmRace and raceAlerts: windows reads
 // its rows, its clock is clock, alerts are taken.
-func raceShadow(t *testing.T, windows KeyWindowReader, clock func() time.Time) (*fullShadow, *alerts, *logLines) {
+func raceShadow(t *testing.T, windows ShadowWindowReader, clock func() time.Time) (*fullShadow, *alerts, *logLines) {
 	t.Helper()
 	a, logs := &alerts{}, &logLines{}
 	sh, err := newFullShadow(DecideShadowConfig{Cache: &recordingCache{}, Decides: &fakeDecides{},
@@ -1962,68 +1962,117 @@ func raceShadow(t *testing.T, windows KeyWindowReader, clock func() time.Time) (
 	return sh, a, logs
 }
 
-// TestOnlyAReReadConfirmsAWindowRace (section 8.3): the candidate's re-read,
-// in its window at the request's instant, confirms the race when Go's fresh
-// remaining is at or below Python's (the settle Python saw has landed), and
-// refutes it when it is still above (Go's read misses what Python sees: the
-// would-admit, paged). No re-read (the limiter), a failed one, rows that do
-// not give the window, or a window reset since leave it unconfirmed.
-func TestOnlyAReReadConfirmsAWindowRace(t *testing.T) {
+// readAt is Python's answer with its WindowReadTimestampHeader as Python
+// writes it (nine fractional digits).
+func readAt(a pyAnswer, at time.Time) pyAnswer {
+	a.windowReadAt = at.UTC().Format("2006-01-02T15:04:05.000000000Z07:00")
+	return a
+}
+
+// TestOnlyAReReadAtPythonsTimestampConfirmsAWindowRace (section 8.2 item 3):
+// the candidate's re-read is of the rows at exactly Python's read timestamp,
+// evaluated in its window at the request's instant. It confirms the race
+// when Go's remaining there is exactly Python's (Go sums the rows Python
+// summed as Python does, so a settle landed between the first two reads),
+// and refutes it on any other remaining, above or below (Go's reading or
+// arithmetic differs from Python's on the same rows: the would-admit,
+// paged). What a strong read would see now plays no part. No timestamp from
+// Python, or one that does not parse, makes no re-read; no re-read (the
+// limiter), a failed one, rows that do not give the window, or a window
+// reset since (now, or at Python's read) leave it unconfirmed.
+func TestOnlyAReReadAtPythonsTimestampConfirmsAWindowRace(t *testing.T) {
 	allowed, admit, c := windowCase(t, 400_000)
 	v := admit.verdict
 	at := admit.at
-	py := windowRefusal429("daily", v.Limit, 100_000, v.ResetSeconds)
+	pyAt := at.Add(150*time.Millisecond + 7)
+	py := readAt(windowRefusal429("daily", v.Limit, 100_000, v.ResetSeconds), pyAt)
 	failed := errors.New("synthetic re-read failure")
 	day, _, _ := keywindow.Floors(at)
+	rowsAt := func(used int64, shards int) func(context.Context, time.Time) ([]keywindow.Row, error) {
+		return func(context.Context, time.Time) ([]keywindow.Row, error) {
+			return dailyRows(at, 1_000_000, used, shards), nil
+		}
+	}
 	for _, x := range []struct {
 		name    string
-		reread  func(context.Context) ([]keywindow.Row, error)
+		answer  pyAnswer
+		reread  func(context.Context, time.Time) ([]keywindow.Row, error)
 		clock   time.Time
 		noToken bool
 		class   string
 		count   string
+		reads   int
 	}{
-		{"the settle landed", func(context.Context) ([]keywindow.Row, error) {
-			return dailyRows(at, 1_000_000, 950_000, 1), nil
-		}, at, false, ClassWindowRace, "race.confirmed"},
-		{"Go's remaining at Python's", func(context.Context) ([]keywindow.Row, error) {
-			return dailyRows(at, 1_000_000, 900_000, 1), nil
-		}, at, false, ClassWindowRace, "race.confirmed"},
-		{"Go's remaining one above Python's", func(context.Context) ([]keywindow.Row, error) {
-			return dailyRows(at, 1_000_000, 899_999, 1), nil
-		}, at, false, ClassWouldAdmit, "race.refuted"},
-		{"the re-read sees the first read's rows", func(context.Context) ([]keywindow.Row, error) {
-			return dailyRows(at, 1_000_000, 400_000, 1), nil
-		}, at, false, ClassWouldAdmit, "race.refuted"},
-		{"the re-read failed", func(context.Context) ([]keywindow.Row, error) { return nil, failed }, at, false,
-			ClassWindowRaceUnconfirmed, "race.unconfirmed.unread"},
-		{"the re-read's rows are not the key's shards", func(context.Context) ([]keywindow.Row, error) {
-			return dailyRows(at, 1_000_000, 950_000, 2), nil
-		}, at, false, ClassWindowRaceUnconfirmed, "race.unconfirmed.rows"},
-		{"the window reset before the re-read", func(context.Context) ([]keywindow.Row, error) {
-			return dailyRows(at, 1_000_000, 950_000, 1), nil
-		}, day.Add(24 * time.Hour), false, ClassWindowRaceUnconfirmed, "race.unconfirmed.reset"},
-		{"the window resets a microsecond after the re-read", func(context.Context) ([]keywindow.Row, error) {
-			return dailyRows(at, 1_000_000, 950_000, 1), nil
-		}, day.Add(24*time.Hour - time.Microsecond), false, ClassWindowRace, "race.confirmed"},
-		{"the limiter refused the re-read", func(context.Context) ([]keywindow.Row, error) {
-			return dailyRows(at, 1_000_000, 950_000, 1), nil
-		}, at, true, ClassWindowRaceUnconfirmed, "race.unconfirmed.limiter"},
+		{"Go's remaining at Python's instant is Python's", py, rowsAt(900_000, 1), at, false, ClassWindowRace,
+			"race.confirmed", 1},
+		{"Go's remaining there one above Python's", py, rowsAt(899_999, 1), at, false, ClassWouldAdmit,
+			"race.refuted", 1},
+		{"Go's remaining there below Python's", py, rowsAt(950_000, 1), at, false, ClassWouldAdmit,
+			"race.refuted", 1},
+		{"Go's remaining there one below Python's", py, rowsAt(900_001, 1), at, false, ClassWouldAdmit,
+			"race.refuted", 1},
+		{"the re-read sees the first read's rows", py, rowsAt(400_000, 1), at, false, ClassWouldAdmit,
+			"race.refuted", 1},
+		{"the re-read failed", py, func(context.Context, time.Time) ([]keywindow.Row, error) { return nil, failed },
+			at, false, ClassWindowRaceUnconfirmed, "race.unconfirmed.unread", 1},
+		{"the re-read's rows are not the key's shards", py, rowsAt(900_000, 2), at, false,
+			ClassWindowRaceUnconfirmed, "race.unconfirmed.rows", 1},
+		{"the window reset before the re-read", py, rowsAt(900_000, 1), day.Add(24 * time.Hour), false,
+			ClassWindowRaceUnconfirmed, "race.unconfirmed.reset", 1},
+		{"the window resets a microsecond after the re-read", py, rowsAt(900_000, 1),
+			day.Add(24*time.Hour - time.Microsecond), false, ClassWindowRace, "race.confirmed", 1},
+		{"Python read in the next window", readAt(py, day.Add(24*time.Hour)), rowsAt(900_000, 1), at, false,
+			ClassWindowRaceUnconfirmed, "race.unconfirmed.reset", 1},
+		{"the limiter refused the re-read", py, rowsAt(900_000, 1), at, true, ClassWindowRaceUnconfirmed,
+			"race.unconfirmed.limiter", 0},
+		{"Python sent no read timestamp", windowRefusal429("daily", v.Limit, 100_000, v.ResetSeconds),
+			rowsAt(900_000, 1), at, false, ClassWindowRaceUnconfirmed, "race.unconfirmed.read_at_none", 0},
+		{"Python's read timestamp has no zone", readAt(py, pyAt), rowsAt(900_000, 1), at, false,
+			ClassWindowRaceUnconfirmed, "race.unconfirmed.read_at_malformed", 0},
+		{"Python's read timestamp is not one", py, rowsAt(900_000, 1), at, false, ClassWindowRaceUnconfirmed,
+			"race.unconfirmed.read_at_malformed", 0},
+		{"Python's read timestamp is too long", py, rowsAt(900_000, 1), at, false, ClassWindowRaceUnconfirmed,
+			"race.unconfirmed.read_at_malformed", 0},
 	} {
-		windows := &fakeWindows{read: x.reread}
+		a := x.answer
+		switch x.name {
+		case "Python's read timestamp has no zone":
+			a.windowReadAt = strings.TrimSuffix(a.windowReadAt, "Z")
+		case "Python's read timestamp is not one":
+			a.windowReadAt = "yesterday"
+		case "Python's read timestamp is too long":
+			a.windowReadAt = pyAt.Format(time.RFC3339Nano) + strings.Repeat(" ", 20)
+		}
+		// A strong read now would see a later settle (1,000,000 spent): it
+		// must not be what settles the race.
+		windows := &fakeWindows{read: func(context.Context) ([]keywindow.Row, error) {
+			return dailyRows(at, 1_000_000, 1_000_000, 1), nil
+		}, readAt: x.reread}
 		clock := x.clock
 		sh, _, _ := raceShadow(t, windows, func() time.Time { return clock })
 		if x.noToken {
 			sh.cfg.ReadsPerSecond, sh.windowLimiter.tokens = 1e-9, 0
 		}
-		r := compareWindowed(allowed, py, admit)
+		r := compareWindowed(allowed, a, admit)
+		if r.race == nil {
+			t.Fatalf("%s: no race candidate: %s", x.name, r.class)
+		}
 		sh.confirmRace(allowed.ForShadow(), admit, &r)
 		calls := windows.seen()
 		if r.class != x.class+".429."+windowRefusal || !slices.Contains(r.windows, x.count) {
 			t.Errorf("%s: %s %v, want %s and %s", x.name, r.class, r.windows, x.class, x.count)
 		}
-		if (len(calls) == 1) == x.noToken || (len(calls) == 1 && calls[0].keyHash != c.Facts.Key.Hash) {
-			t.Errorf("%s: re-reads %+v", x.name, calls)
+		if len(calls) != x.reads {
+			t.Errorf("%s: re-reads %+v, want %d", x.name, calls, x.reads)
+		}
+		want := pyAt
+		if x.name == "Python read in the next window" {
+			want = day.Add(24 * time.Hour)
+		}
+		for _, call := range calls {
+			if call.keyHash != c.Facts.Key.Hash || !call.at.Equal(want) {
+				t.Errorf("%s: a re-read of %s at %s, want at Python's %s", x.name, call.keyHash, call.at, want)
+			}
 		}
 		if r.race.first != 600_000 || r.race.python != 100_000 {
 			t.Errorf("%s: the race's figures %+v", x.name, *r.race)
@@ -2031,56 +2080,116 @@ func TestOnlyAReReadConfirmsAWindowRace(t *testing.T) {
 	}
 }
 
-// TestAPersistentUndercountPagesAndARealRaceDoesNot, over the edge: a Go
-// read that undercounts the same way on every request (here it never sees
-// 400,000 of the day Python sees) is refuted by its own re-read, 50 times
-// out of 50, and pages; a settle that lands between the reads, which the
-// re-read sees, is a confirmed race, counted and traced, never paged; a
-// re-read that fails pages as unconfirmed.
-func TestAPersistentUndercountPagesAndARealRaceDoesNot(t *testing.T) {
+// TestPythonReadAtParsesOnlyAnInstant: the header's instant to the
+// nanosecond, in UTC; nothing for an absent header, and a malformed one for
+// anything that is not an RFC 3339 instant.
+func TestPythonReadAtParsesOnlyAnInstant(t *testing.T) {
+	want := time.Date(2026, 10, 19, 12, 0, 0, 123_456_789, time.UTC)
+	for _, x := range []struct {
+		h   string
+		at  time.Time
+		why string
+	}{
+		{"2026-10-19T12:00:00.123456789Z", want, ""},
+		{"2026-10-19T14:00:00.123456789+02:00", want, ""},
+		{"2026-10-19T12:00:00Z", want.Truncate(time.Second), ""},
+		{"", time.Time{}, "read_at_none"},
+		{"2026-10-19T12:00:00.123456789", time.Time{}, "read_at_malformed"},
+		{"1792000000123456789", time.Time{}, "read_at_malformed"},
+		{"0001-01-01T00:00:00Z", time.Time{}, "read_at_malformed"},
+		{"2026-10-19T12:00:00.123456789Z" + strings.Repeat("0", 20), time.Time{}, "read_at_malformed"},
+	} {
+		at, why := pythonReadAt(x.h)
+		if !at.Equal(x.at) || why != x.why || (why == "" && at.Location() != time.UTC) {
+			t.Errorf("%q: %s %q, want %s %q", x.h, at, why, x.at, x.why)
+		}
+	}
+}
+
+// TestAPinnedReReadPagesAnUndercountAndNotARace, over the edge: Python's 429
+// carries the read timestamp of its window check's snapshot, and the re-read
+// is of the rows as they stood then. A Go read that undercounts the same way
+// on every request (here it never sees 50,000 of the day Python sees) pages,
+// even on a busy key whose settles after Python's read (100,000 of them)
+// bring a strong re-read down to Python's remaining, which would have hidden
+// it as a race; a settle that lands between Go's first read and Python's is
+// a confirmed race, counted and traced, never paged, however much lands
+// after; a re-read that fails, or a 429 with no timestamp or one that does
+// not parse, pages as unconfirmed.
+func TestAPinnedReReadPagesAnUndercountAndNotARace(t *testing.T) {
 	f := authorizeGoldens(t)
 	_, admit, c := windowCase(t, 400_000)
 	v := admit.verdict
 	at := c.at()
-	respond := answerWith(429, errorBody(429, windowRefusal,
-		"API key daily spend limit exceeded; resets at 2026-10-20T00:00:00Z"), "RateLimit-Limit", "1000000",
-		"RateLimit-Remaining", "100000", "RateLimit-Reset", strconv.FormatInt(v.ResetSeconds, 10))
+	pyAt := at.Add(200*time.Millisecond + 3)
+	header := pyAt.UTC().Format("2006-01-02T15:04:05.000000000Z07:00")
 	failed := errors.New("synthetic re-read failure")
+	// history is a key's day usage as the store versions it: what Go's first
+	// read sees, what the key had spent at Python's read, and what it has
+	// spent by the time of a strong re-read; Go's reads all miss undercount
+	// of it.
+	type history struct {
+		first, atPython, latest, undercount int64
+	}
 	for _, x := range []struct {
 		name     string
 		requests int
-		// first and then are the request's two reads.
-		first, then func() ([]keywindow.Row, error)
-		class       string
-		paged       bool
+		h        history
+		header   string
+		failAt   bool
+		class    string
+		count    string
+		paged    bool
 	}{
-		{"a persistent undercount", 50,
-			func() ([]keywindow.Row, error) { return dailyRows(at, 1_000_000, 500_000, 1), nil },
-			func() ([]keywindow.Row, error) { return dailyRows(at, 1_000_000, 500_000, 1), nil },
-			ClassWouldAdmit, true},
-		{"a real race", 5,
-			func() ([]keywindow.Row, error) { return dailyRows(at, 1_000_000, 400_000, 1), nil },
-			func() ([]keywindow.Row, error) { return dailyRows(at, 1_000_000, 900_000, 1), nil },
-			ClassWindowRace, false},
-		{"the re-read fails", 3,
-			func() ([]keywindow.Row, error) { return dailyRows(at, 1_000_000, 400_000, 1), nil },
-			func() ([]keywindow.Row, error) { return nil, failed },
-			ClassWindowRaceUnconfirmed, true},
+		{"a busy key's persistent undercount", 20, history{450_000, 900_000, 1_000_000, 50_000}, header, false,
+			ClassWouldAdmit, "race.refuted", true},
+		{"a quiet key's persistent undercount", 5, history{900_000, 900_000, 900_000, 500_000}, header, false,
+			ClassWouldAdmit, "race.refuted", true},
+		{"a real race with later settles", 5, history{400_000, 900_000, 1_000_000, 0}, header, false,
+			ClassWindowRace, "race.confirmed", false},
+		{"the re-read fails", 3, history{400_000, 900_000, 1_000_000, 0}, header, true,
+			ClassWindowRaceUnconfirmed, "race.unconfirmed.unread", true},
+		{"no read timestamp", 3, history{400_000, 900_000, 1_000_000, 0}, "", false,
+			ClassWindowRaceUnconfirmed, "race.unconfirmed.read_at_none", true},
+		{"a read timestamp that does not parse", 3, history{400_000, 900_000, 1_000_000, 0}, "not-a-time", false,
+			ClassWindowRaceUnconfirmed, "race.unconfirmed.read_at_malformed", true},
 	} {
-		var n atomic.Int64
+		headers := []string{"RateLimit-Limit", "1000000", "RateLimit-Remaining", "100000", "RateLimit-Reset",
+			strconv.FormatInt(v.ResetSeconds, 10)}
+		if x.header != "" {
+			headers = append(headers, WindowReadTimestampHeader, x.header)
+		}
+		respond := answerWith(429, errorBody(429, windowRefusal,
+			"API key daily spend limit exceeded; resets at 2026-10-20T00:00:00Z"), headers...)
+		h := x.h
+		// checked is whether this request's window check has read: its first
+		// strong read is that check, before Python's read; any later strong
+		// read sees every settle since.
+		var checked atomic.Bool
 		windows := &fakeWindows{read: func(context.Context) ([]keywindow.Row, error) {
-			if n.Add(1)%2 == 1 {
-				return x.first()
+			if checked.CompareAndSwap(false, true) {
+				return dailyRows(at, 1_000_000, h.first-h.undercount, 1), nil
 			}
-			return x.then()
+			return dailyRows(at, 1_000_000, h.latest-h.undercount, 1), nil
+		}, readAt: func(_ context.Context, asOf time.Time) ([]keywindow.Row, error) {
+			switch {
+			case x.failAt:
+				return nil, failed
+			case asOf.Before(pyAt):
+				return dailyRows(at, 1_000_000, h.first-h.undercount, 1), nil
+			case asOf.Equal(pyAt):
+				return dailyRows(at, 1_000_000, h.atPython-h.undercount, 1), nil
+			}
+			return dailyRows(at, 1_000_000, h.latest-h.undercount, 1), nil
 		}}
 		a := &alerts{}
-		h := newFullEdge(t, f, c, nil, func(cfg *DecideShadowConfig) { cfg.Windows, cfg.Alert = windows, a.raise })
-		h.answer(respond)
+		fe := newFullEdge(t, f, c, nil, func(cfg *DecideShadowConfig) { cfg.Windows, cfg.Alert = windows, a.raise })
+		fe.answer(respond)
 		for range x.requests {
-			h.send(t, c)
+			checked.Store(false)
+			fe.send(t, c)
 		}
-		got := h.edge.DecideShadowCounts()
+		got := fe.edge.DecideShadowCounts()
 		class := x.class + ".429." + windowRefusal
 		taken := a.taken()
 		paged := len(taken[AlertWouldAdmit])
@@ -2089,18 +2198,35 @@ func TestAPersistentUndercountPagesAndARealRaceDoesNot(t *testing.T) {
 			t.Errorf("%s: race alerts %q", x.name, taken[AlertWindowRace])
 		}
 		if got.Classes[class] != x.requests || len(got.Classes) != 1 || (paged > 0) != x.paged ||
-			n.Load() != int64(2*x.requests) {
-			t.Errorf("%s: classes %v, %d pages, %d reads", x.name, got.Classes, paged, n.Load())
+			got.Windows[x.count] != x.requests {
+			t.Errorf("%s: classes %v, windows %v, %d pages", x.name, got.Classes, got.Windows, paged)
+		}
+		calls := windows.seen()
+		pinned := 0
+		for _, call := range calls {
+			if !call.at.IsZero() {
+				pinned++
+				if !call.at.Equal(pyAt) {
+					t.Errorf("%s: a re-read at %s, not Python's %s", x.name, call.at, pyAt)
+				}
+			}
+		}
+		wantPinned := x.requests
+		if x.header != header {
+			wantPinned = 0
+		}
+		if len(calls) != x.requests+wantPinned || pinned != wantPinned {
+			t.Errorf("%s: %d reads, %d at a timestamp, for %d requests", x.name, len(calls), pinned, x.requests)
 		}
 		// Each send is its own period (WaitDecideShadow logs it), so no
 		// page is lost to the period's bound.
 		if x.paged && paged != x.requests {
 			t.Errorf("%s: %d pages for %d would-admits", x.name, paged, x.requests)
 		}
-		if x.class == ClassWindowRace && !h.logs.has("fastpath edge decide shadow window race: class="+class+
+		if x.class == ClassWindowRace && !fe.logs.has("fastpath edge decide shadow window race: class="+class+
 			" key="+c.Facts.Key.Hash[:min(len(c.Facts.Key.Hash), keyHashPrefixLen)]+
 			" window=daily go=600000 reread=100000 python=100000 gap=500000 ") {
-			t.Errorf("%s: no race line traces it: %q", x.name, h.logs.all())
+			t.Errorf("%s: no race line traces it: %q", x.name, fe.logs.all())
 		}
 	}
 }

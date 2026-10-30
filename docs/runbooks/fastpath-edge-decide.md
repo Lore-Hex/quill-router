@@ -525,13 +525,20 @@ Python's 429 `key_window_limit_exceeded` to a key the shadow did not read is
 the 429 names a window whose limit Go holds, with that limit, and a
 `RateLimit-Remaining` below what Go's rows leave there. Every refusal of
 what Go admits has that shape, a defect of Go's read included, so the
-shadow re-reads the rows after Python's answer, within the same limiter:
-Go's fresh remaining at or below Python's is `window_race` (the settle
-Python saw has landed; counted, traced on a `window race` line, never
-paged one by one); still above it, the critical
-`would_admit_python_refused`; no re-read that settles it (limiter, failed
-or late read, rows not the key's shards, the window reset since),
-`window_race_unconfirmed`, which pages too. Any other window refusal of
+shadow re-reads the rows after Python's answer, within the same limiter,
+at exactly the read timestamp Python's 429 names
+(`X-TR-Key-Window-Read-Timestamp`, the snapshot its window check summed):
+Go's remaining there equal to Python's is `window_race` (Go sums Python's
+rows as Python does, so a settle landed between the two first reads;
+counted, traced on a `window race` line, never paged one by one); any
+other remaining, the critical `would_admit_python_refused` (Go read the
+rows Python read and left another remaining, however busy the key); no
+timestamp on the 429 or one that does not parse
+(`race.unconfirmed.read_at_none`, `.read_at_malformed`: look for a Python
+deploy without the header) or no re-read that settles it (limiter, failed
+or late read, a timestamp past version retention, rows not the key's
+shards, the window reset since), `window_race_unconfirmed`, which pages
+too. Any other window refusal of
 what Go admits is the would-admit outright. Go's `key_window.*` pass is
 `python_answered_go_passed.key_window.*` against Python's 200 (benign) and
 `passed.key_window.*` against its 429. `edge_window_race` alerts (not the

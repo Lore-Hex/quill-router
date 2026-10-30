@@ -107,7 +107,8 @@ type i2 struct {
 	// (its windows map's read.made); WindowRace the confirmed read races
 	// among them (window_race.*, docs/design/fast-admission-e2-key-windows.md
 	// section 8.3) and WindowRaceRatio their share, the gate's 0.05%;
-	// WindowRaceUnconfirmed the candidates no re-read settled, which page.
+	// WindowRaceUnconfirmed the candidates no re-read at Python's read
+	// timestamp settled, which page.
 	WindowReads           int64    `json:"window_reads"`
 	WindowRace            int64    `json:"window_race"`
 	WindowRaceUnconfirmed int64    `json:"window_race_unconfirmed"`
