@@ -2021,7 +2021,9 @@ def _authorize_gateway_sync_impl(
                 key_id=api_key.hash, request_id=getattr(request.state, "request_id", None),
             )
         if outcome.startswith(AuthorizeOutcome.KEY_WINDOW_LIMIT_EXCEEDED):
-            release_user_model_slot_after_error()
+            # The window check runs after a lease admission and writes no
+            # row: the slot, and the hold a lease granted, are given back.
+            release_after_error()
             if window_decision is None:
                 raise RuntimeError("typed window rejection omitted its rate-limit verdict")
             raise api_error(
@@ -2031,7 +2033,9 @@ def _authorize_gateway_sync_impl(
                 headers=spend_window_headers(window_decision, retry_after=True),
             )
         if outcome in (AuthorizeOutcome.KEY_LIMIT_EXCEEDED, AuthorizeOutcome.KEY_MISSING):
-            release_user_model_slot_after_error()
+            # As the window rejection: the lifetime-cap precheck runs after
+            # a lease admission too.
+            release_after_error()
             raise api_error(402, "API key spend limit exceeded", ErrorType.KEY_LIMIT_EXCEEDED)
         if outcome == AuthorizeOutcome.IDEMPOTENCY_MISMATCH:
             # The slot, and the hold a lease granted this attempt: given back.
@@ -4611,6 +4615,10 @@ def _settle_gateway_authorization(
             refund_benchmark=refund_benchmark,
             settle_intent=settle_intent,
             typed_store=_typed_store,
+            background_tasks=background_tasks,
+            customer_billing_event=is_customer_billing_event,
+            generation_model_id=generation_model_id,
+            generation_provider=generation_provider,
         )
     one_commit_result: TypedFinalizeResult | None = None
     one_commit_ms = 0.0
@@ -4990,37 +4998,13 @@ def _settle_gateway_authorization(
             background_tasks,
         )
     if success and is_customer_billing_event:
-        if background_tasks is not None:
-            background_tasks.add_task(
-                record_successful_api_call_safely,
-                authorization.workspace_id,
-                model=generation_model_id,
-                provider=generation_provider,
-            )
-        else:
-            record_successful_api_call_safely(
-                authorization.workspace_id,
-                model=generation_model_id,
-                provider=generation_provider,
-            )
-        # Alert-mode budgets: email the owner when a window is crossed (never
-        # blocks — the block happens at authorize for limit-mode keys). Off the
-        # hot path; best-effort.
-        from trusted_router.services.budget_alerts import maybe_send_budget_alerts
-
-        if background_tasks is not None:
-            background_tasks.add_task(
-                maybe_send_budget_alerts,
-                api_key_hash=authorization.key_hash,
-                workspace_id=authorization.workspace_id,
-                settings=settings,
-            )
-        else:
-            maybe_send_budget_alerts(
-                api_key_hash=authorization.key_hash,
-                workspace_id=authorization.workspace_id,
-                settings=settings,
-            )
+        _schedule_successful_settle_followups(
+            authorization,
+            settings=settings,
+            background_tasks=background_tasks,
+            model=generation_model_id,
+            provider=generation_provider,
+        )
     if success and generation is not None:
         # Keep S27 before the reply: successful enqueue is durable today and
         # there is no durable replay intent for a skipped broadcast enqueue.
@@ -5370,6 +5354,10 @@ def _settle_leased_authorization(
     refund_benchmark: ProviderBenchmarkSample | None,
     settle_intent: SettleOutboxRow | None,
     typed_store: Any,
+    background_tasks: BackgroundTasks | None,
+    customer_billing_event: bool,
+    generation_model_id: str,
+    generation_provider: str,
 ) -> dict[str, Any]:
     """The pilot's terminal (docs/design/fast-admission-pilot.md), durable
     first as today's two-commit settle: the settle-outbox intent is pending
@@ -5378,7 +5366,10 @@ def _settle_leased_authorization(
     another kind) is answered as today's `intent_durable` and the drain asks
     again later, with the frozen charge. Decided, the records are written
     here in one commit with the intent resolved, and nothing booked: the
-    lease did the booking."""
+    lease did the booking. A decided success whose records this commit
+    wrote schedules today's follow-ups (the acquisition milestones and any
+    budget alert); the auto-refill rides the intent, as today's does on the
+    internal surface."""
     from trusted_router.services import fastpath_settle
 
     unavailable = api_error(
@@ -5446,7 +5437,60 @@ def _settle_leased_authorization(
         return {"data": _already_settled_gateway_data(refreshed)}
     _finalize, finalized = result
     _release_user_model_slot_safely(finalized)
+    if decision.success and customer_billing_event:
+        # The window usage is booked in the commit above, so an alert-only
+        # key's crossing is visible to the alert check, as after today's settle.
+        _schedule_successful_settle_followups(
+            finalized,
+            settings=settings,
+            background_tasks=background_tasks,
+            model=generation_model_id,
+            provider=generation_provider,
+        )
     return {"data": _already_settled_gateway_data(finalized)}
+
+
+def _schedule_successful_settle_followups(
+    authorization: GatewayAuthorization,
+    *,
+    settings: Settings,
+    background_tasks: BackgroundTasks | None,
+    model: str,
+    provider: str,
+) -> None:
+    """A customer's successful settle whose records this request committed:
+    claim the acquisition milestones and send any budget alert. Both are
+    best effort and run off the hot path when a background queue is given."""
+    if background_tasks is not None:
+        background_tasks.add_task(
+            record_successful_api_call_safely,
+            authorization.workspace_id,
+            model=model,
+            provider=provider,
+        )
+    else:
+        record_successful_api_call_safely(
+            authorization.workspace_id,
+            model=model,
+            provider=provider,
+        )
+    # Alert-mode budgets: email the owner when a window is crossed (never
+    # blocks: the block happens at authorize for limit-mode keys).
+    from trusted_router.services.budget_alerts import maybe_send_budget_alerts
+
+    if background_tasks is not None:
+        background_tasks.add_task(
+            maybe_send_budget_alerts,
+            api_key_hash=authorization.key_hash,
+            workspace_id=authorization.workspace_id,
+            settings=settings,
+        )
+    else:
+        maybe_send_budget_alerts(
+            api_key_hash=authorization.key_hash,
+            workspace_id=authorization.workspace_id,
+            settings=settings,
+        )
 
 
 def _already_settled_gateway_data(authorization: Any) -> dict[str, Any]:
