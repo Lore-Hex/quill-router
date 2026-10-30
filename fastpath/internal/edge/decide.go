@@ -58,6 +58,7 @@ const (
 	PassKeyApp          = "key.app"
 	PassKeyCap          = "key.key_cap"
 	PassKeyWindow       = "key.key_window"
+	PassKeyWindowAlert  = "key.key_window_alert"
 	PassKeyBudgetStrict = "key.budget_strict"
 	// PassKeyShape: the key's stored body is not one Go reads exactly
 	// (gwstate's key_shape:<field>), such as a usage_shard_count Python's
@@ -612,7 +613,12 @@ func keyPass(reason string) string {
 	case gwstate.ReasonKeyLimit:
 		return PassKeyCap
 	case gwstate.ReasonKeyWindowLimit:
+		// Spend windows Python's authorize enforces.
 		return PassKeyWindow
+	case gwstate.ReasonKeyWindowAlert:
+		// Alert-only windows, which it never checks; counted apart
+		// (fast-admission-e2-key-windows.md §8.1), and passed all the same.
+		return PassKeyWindowAlert
 	case gwstate.ReasonKeyBudgetStrict:
 		return PassKeyBudgetStrict
 	}

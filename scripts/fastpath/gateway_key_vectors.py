@@ -18,7 +18,10 @@ uses:
   ``enforced_window_limits`` and ``storage_gcp_counters.key_usage_shard_count``;
 * limit / window / strict: the pilot's ``key_capped`` and ``budget_strict``
   (``limit_microdollars is not None``, ``spend_windows.key_window_limits``,
-  ``budget_strict``);
+  ``budget_strict``), with configured windows told apart as the authorize
+  route tells them: enforcing when ``spend_windows.enforced_window_limits``
+  is non-empty (``key_window_limit``), alert-only when it is ``{}``
+  (``key_window_alert``: ``budget_alert_only`` read by truthiness);
 * workspace: absent or ``deleted`` (403), ``workspace_billing_paused`` and
   ``assert_workspace_billing_active`` (403/503), ``federated_home``, and the
   id Python bills (the body's), which must be the key's workspace_id.
@@ -84,7 +87,7 @@ OUTPUT = ROOT / "fastpath" / "testdata" / "gateway_key_vectors_v1.json"
 
 FACT_ORDER = (
     "key_disabled", "key_expired", "key_scope", "key_federated", "key_tags", "key_app",
-    "key_limit", "key_window_limit", "key_budget_strict",
+    "key_limit", "key_window_limit", "key_window_alert", "key_budget_strict",
 )
 WORKSPACE_ORDER = ("workspace_unavailable", "workspace_paused", "workspace_federated")
 
@@ -109,10 +112,10 @@ ROUTE_READS: dict[str, str] = {
     "_oauth_app_terms_for_key": "key_app (called; reaching the app's provenance is an app key)",
     "api_key.budget_strict": "key_budget_strict; also read by Stage D eligibility (called as truthiness)",
     "api_key.include_byok_in_limit": "read as the route reads it; it never raises, and only a BYOK request uses it",
-    "enforced_window_limits": "called; a raise is an error",
+    "enforced_window_limits": "called; a raise is an error; non-empty is key_window_limit",
     "key_usage_shard_count": "called; a raise is an error",
     "api_key.limit_microdollars": "key_limit",
-    "key_window_limits": "key_window_limit (called)",
+    "key_window_limits": "key_window_alert when enforced_window_limits is {} (called)",
     "api_key.hash": "returned (the authorization's key_hash)",
     "workspace.federated_home": "workspace_federated",
     "speculation_shadow.resolved": "not a check: an isolated shadow observation",
@@ -228,9 +231,12 @@ def key_facts(body: str, at: dt.datetime) -> dict[str, Any]:
         (None, lambda: _read(not key.include_byok_in_limit)),
         (None, lambda: _read(enforced_window_limits(key))),
         (None, lambda: _read(key_usage_shard_count(key))),
-        # The pilot's key_capped and budget_strict.
+        # The pilot's key_capped and budget_strict. key_capped's windows are
+        # key_window_limits; the ones the authorize enforces are
+        # enforced_window_limits, {} for an alert-only key.
         ("key_limit", lambda: key.limit_microdollars is not None),
-        ("key_window_limit", lambda: bool(key_window_limits(key))),
+        ("key_window_limit", lambda: bool(enforced_window_limits(key))),
+        ("key_window_alert", lambda: bool(key_window_limits(key))),
         ("key_budget_strict", lambda: bool(key.budget_strict)),
     ]
     assert tuple(name for name, _ in checks if name is not None) == FACT_ORDER
@@ -385,6 +391,28 @@ def key_cases() -> list[dict[str, Any]]:
         add(f"window_{window}_null", _raw(**{f"limit_{window}_microdollars": None}))
     add("window_alert_only", _stored(limit_daily_microdollars=10, budget_alert_only=True))
     add("alert_only_no_window", _stored(budget_alert_only=True))
+    # Alert-only windows: enforced_window_limits is {}, so the authorize never
+    # checks them (key_window_alert); budget_alert_only false or absent enforces.
+    for window in ("daily", "weekly", "monthly"):
+        for value in (0, 500):
+            add(f"window_{window}_{value}_alert_only",
+                _stored(**{f"limit_{window}_microdollars": value}, budget_alert_only=True))
+    add("window_all_alert_only", _stored(limit_daily_microdollars=1, limit_weekly_microdollars=2,
+                                         limit_monthly_microdollars=3, budget_alert_only=True))
+    add("window_alert_only_false", _stored(limit_daily_microdollars=10, budget_alert_only=False))
+    add("window_alert_only_absent", _raw(drop=("budget_alert_only",), limit_daily_microdollars=10))
+    add("window_null_alert_only", _raw(limit_daily_microdollars=None, budget_alert_only=True))
+    add("window_alert_only_strict", _stored(limit_weekly_microdollars=5, budget_alert_only=True, budget_strict=True))
+    add("window_alert_only_cap", _stored(limit_microdollars=5, limit_daily_microdollars=5, budget_alert_only=True))
+    add("window_alert_only_disabled", _stored(limit_daily_microdollars=5, budget_alert_only=True, disabled=True))
+    # budget_alert_only of another JSON type: Python reads it by truthiness;
+    # Go passes a windowed key carrying one (key_shape:budget_alert_only), and
+    # does not read it on a key without windows, whose authorize it decides
+    # nothing for.
+    for value in [1, 0, "true", "false", "", None, [], {}]:
+        add(f"window_alert_only_type_{json.dumps(value)}",
+            _raw(limit_daily_microdollars=10, budget_alert_only=value), exact=False)
+        add(f"alert_only_type_{json.dumps(value)}_no_window", _raw(budget_alert_only=value), exact=False)
     add("budget_strict", _stored(budget_strict=True))
     add("budget_strict_false", _raw(budget_strict=False))
     add("usage_counters_not_consulted", _stored(usage_microdollars=99, byok_usage_microdollars=4, reserved_microdollars=3))
@@ -447,6 +475,8 @@ def key_cases() -> list[dict[str, Any]]:
 
     # Several facts at once, seeded: the first in FACT_ORDER is the reason.
     rng = random.Random(3)  # noqa: S311 - reproducible test vectors, not secrets.
+    # Its own stream, so the cases from before it keep their draws.
+    alert_rng = random.Random(4)  # noqa: S311 - reproducible test vectors, not secrets.
     for i in range(300):
         changes: dict[str, Any] = {}
         if rng.random() < 0.2:
@@ -467,6 +497,8 @@ def key_cases() -> list[dict[str, Any]]:
             changes[f"limit_{rng.choice(['daily', 'weekly', 'monthly'])}_microdollars"] = rng.choice([0, 9])
         if rng.random() < 0.15:
             changes["budget_strict"] = True
+        if alert_rng.random() < 0.3:
+            changes["budget_alert_only"] = True
         add(f"seeded_{i:03d}", _stored(**changes))
 
     # Bodies Python decodes without checking types, or cannot decode: Go may pass.

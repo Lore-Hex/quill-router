@@ -56,7 +56,7 @@ SECTION_3 = {
     "body.custom_model", "body.internal_model", "body.tags", "body.referer", "body.evaluator_input",
     "header.idempotency_key", "header.settlement_async", "header.video_providers",
     "key.missing", "key.disabled", "key.expired", "key.scope", "key.federated", "key.app", "key.key_cap",
-    "key.key_window", "key.budget_strict",
+    "key.key_window", "key.key_window_alert", "key.budget_strict",
     "workspace.missing", "workspace.paused", "workspace.in_debt", "workspace.tier", "workspace.federated",
     "workspace.deleted", "workspace.broadcast", "tags.merged_invalid",
     "policy.pilot_off", "policy.not_pilot_workspace", "policy.pilot_region", "policy.records_not_durable",
@@ -73,7 +73,7 @@ SECTION_3 = {
 PYTHON_PASSES = {
     "policy.pilot_off", "policy.not_pilot_workspace", "policy.pilot_region", "policy.records_not_durable",
     "policy.digest_not_accepted", "body.stream", "candidates.byok", "key.key_cap", "key.key_window",
-    "key.budget_strict", "owner.busy", "owner.off", "owner.invalid", "owner.failed", "owner.unreachable",
+    "key.key_window_alert", "key.budget_strict", "owner.busy", "owner.off", "owner.invalid", "owner.failed", "owner.unreachable",
     "insert.failed", "boot.signature", "boot.unverified", "boot.missing",
 }
 # §10.2: Go passes a body carrying any of these.

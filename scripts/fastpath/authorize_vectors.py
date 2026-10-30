@@ -120,7 +120,7 @@ from trusted_router.services import async_settle as async_settle_service  # noqa
 from trusted_router.services import fastpath_frontdoor as fd  # noqa: E402
 from trusted_router.services.async_settle import ORDINARY_PARAMETERS  # noqa: E402
 from trusted_router.services.edge_policy_publisher import ticket_authority, typed_records  # noqa: E402
-from trusted_router.spend_windows import key_window_limits  # noqa: E402
+from trusted_router.spend_windows import enforced_window_limits, key_window_limits  # noqa: E402
 from trusted_router.stage_d import ESTIMATED_USAGE_SNAPSHOT_MODELS  # noqa: E402
 from trusted_router.storage import configure_store, typed_billing_store  # noqa: E402
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE  # noqa: E402
@@ -589,7 +589,9 @@ def key_facts(key: dict[str, Any], workspace_id: str, key_body: str | None) -> d
         ("federated", bool(key["federated_home"])),
         ("app", bool(key["app_id"])),
         ("key_cap", key["limit_microdollars"] is not None),
-        ("key_window", bool(key_window_limits(types.SimpleNamespace(**key)))),
+        # Enforcing windows, then alert-only ones (enforced_window_limits {}).
+        ("key_window", bool(enforced_window_limits(types.SimpleNamespace(**key)))),
+        ("key_window_alert", bool(key_window_limits(types.SimpleNamespace(**key)))),
         ("budget_strict", key["budget_strict"]),
     )
     reason = next((name for name, holds in reasons if holds), "")
@@ -1327,7 +1329,7 @@ def cases() -> list[dict[str, Any]]:
     add("pass:key.app", "key.app", world={"key": {"app_id": "app_e2_missing"}})
     add("pass:key.key_cap", "key.key_cap", world={"key": {"limit_microdollars": 10_000_000}})
     add("pass:key.key_window", "key.key_window", world={"key": {"limit_daily_microdollars": 10_000_000}})
-    add("pass:key.key_window:alert_only", "key.key_window",
+    add("pass:key.key_window_alert", "key.key_window_alert",
         world={"key": {"limit_daily_microdollars": 1_000, "budget_alert_only": True}})
     add("pass:key.budget_strict", "key.budget_strict", world={"key": {"budget_strict": True}})
     add("pass:workspace.paused", "workspace.paused", world={"workspace": {"billing_pause_causes": ["abuse"]}})

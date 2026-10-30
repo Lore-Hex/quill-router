@@ -720,8 +720,8 @@ func rowsAreGoldens(t *testing.T, c authorizeCase, composed gwauth.Composed) boo
 func TestEveryGoldenReasonIsNamed(t *testing.T) {
 	named := map[string]bool{}
 	for _, r := range []string{PassBootSignature, PassBootUnverified, PassBootMissing, PassKeyMissing, PassKeyDisabled,
-		PassKeyExpired, PassKeyScope, PassKeyFederated, PassKeyApp, PassKeyCap, PassKeyWindow, PassKeyBudgetStrict,
-		PassWorkspaceMissing, PassWorkspacePaused, PassWorkspaceInDebt, PassWorkspaceTier, PassWorkspaceFederated,
+		PassKeyExpired, PassKeyScope, PassKeyFederated, PassKeyApp, PassKeyCap, PassKeyWindow, PassKeyWindowAlert,
+		PassKeyBudgetStrict, PassWorkspaceMissing, PassWorkspacePaused, PassWorkspaceInDebt, PassWorkspaceTier, PassWorkspaceFederated,
 		PassWorkspaceDeleted, PassWorkspaceBroadcast, PassPilotOff, PassNotPilotWorkspace, PassPilotRegion,
 		PassRecordsNotDurable, PassAsyncSettleShadow, PassMonitorKey, PassDigestNotAccepted, PassEvaluateRefused,
 		PassEstimateOverflow, PassCandidatesBYOK, PassCandidatesEstimated, PassCandidatesPrivate,
@@ -865,7 +865,15 @@ func TestTheRouteWalkerGapIsGated(t *testing.T) {
 		{"daily window", map[string]any{"limit_daily_microdollars": 5}, PassKeyWindow},
 		{"weekly window", map[string]any{"limit_weekly_microdollars": 5}, PassKeyWindow},
 		{"monthly window alert only", map[string]any{"limit_monthly_microdollars": 5, "budget_alert_only": true},
+			PassKeyWindowAlert},
+		{"daily window alert only false", map[string]any{"limit_daily_microdollars": 5, "budget_alert_only": false},
 			PassKeyWindow},
+		{"alert only and a cap", map[string]any{"limit_microdollars": 5, "limit_daily_microdollars": 5,
+			"budget_alert_only": true}, PassKeyCap},
+		{"alert only and strict", map[string]any{"limit_weekly_microdollars": 5, "budget_alert_only": true,
+			"budget_strict": true}, PassKeyWindowAlert},
+		{"window with alert only not a bool", map[string]any{"limit_daily_microdollars": 5,
+			"budget_alert_only": "false"}, PassKeyShape},
 		{"lifetime cap", map[string]any{"limit_microdollars": 5}, PassKeyCap},
 		{"shard count zero", map[string]any{"usage_shard_count": 0}, PassKeyShape},
 		{"shard count past 64", map[string]any{"usage_shard_count": 65}, PassKeyShape},
@@ -874,6 +882,7 @@ func TestTheRouteWalkerGapIsGated(t *testing.T) {
 		{"budget strict", map[string]any{"budget_strict": true}, PassKeyBudgetStrict},
 		// Positive controls: what the cohort's keys carry decides.
 		{"alert only alone", map[string]any{"budget_alert_only": true}, ""},
+		{"alert only not a bool, no window", map[string]any{"budget_alert_only": "yes"}, ""},
 		{"two shards", map[string]any{"usage_shard_count": 2}, ""},
 	} {
 		c := base

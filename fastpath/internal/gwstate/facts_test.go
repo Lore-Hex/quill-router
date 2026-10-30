@@ -92,7 +92,7 @@ func pairsOf(tags [][2]string) []Pair {
 func TestTheKeyFactsAgreeWithPythonOnEveryVector(t *testing.T) {
 	v := readVectors(t)
 	want := []string{ReasonKeyDisabled, ReasonKeyExpired, ReasonKeyScope, ReasonKeyFederated, ReasonKeyTags,
-		ReasonKeyApp, ReasonKeyLimit, ReasonKeyWindowLimit, ReasonKeyBudgetStrict}
+		ReasonKeyApp, ReasonKeyLimit, ReasonKeyWindowLimit, ReasonKeyWindowAlert, ReasonKeyBudgetStrict}
 	if !slices.Equal(v.FactOrder, want) {
 		t.Fatalf("the vectors' fact order %q is not the facts' %q", v.FactOrder, want)
 	}

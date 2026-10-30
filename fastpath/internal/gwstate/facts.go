@@ -50,6 +50,7 @@ const (
 	ReasonKeyApp           = "key_app"
 	ReasonKeyLimit         = "key_limit"
 	ReasonKeyWindowLimit   = "key_window_limit"
+	ReasonKeyWindowAlert   = "key_window_alert"
 	ReasonKeyBudgetStrict  = "key_budget_strict"
 	ReasonWorkspaceShape   = "workspace_shape"
 	ReasonWorkspaceGone    = "workspace_unavailable"
@@ -182,8 +183,22 @@ func ParseKey(body string) KeyFacts {
 		k.Reason = ReasonKeyLimit
 	case f.set("limit_daily_microdollars") || f.set("limit_weekly_microdollars") || f.set("limit_monthly_microdollars"):
 		// spend_windows.key_window_limits: configured windows, alert-only
-		// or not, put a key outside the pilot.
-		k.Reason = ReasonKeyWindowLimit
+		// or not, put a key outside the pilot. enforced_window_limits tells
+		// them apart: windows Python's authorize enforces
+		// (key_window_limit), or {} when budget_alert_only is truthy, so it
+		// never checks them (key_window_alert). Go reads the flag as a JSON
+		// bool (absent is false, ApiKey's default) and passes any other
+		// type rather than reproduce Python's truthiness; on a key without
+		// windows it decides nothing, and is not read.
+		alertOnly, ok := f.boolean("budget_alert_only")
+		switch {
+		case !ok:
+			return keyShape("budget_alert_only")
+		case alertOnly:
+			k.Reason = ReasonKeyWindowAlert
+		default:
+			k.Reason = ReasonKeyWindowLimit
+		}
 	case strict:
 		k.Reason = ReasonKeyBudgetStrict
 	default:
@@ -206,17 +221,17 @@ const maxKeyUsageShards = 64
 // the route starts to consult fails the vector test until it is listed.
 var consultedKeyFields = map[string]string{
 	"app_id":                     "key_app",
-	"budget_alert_only":          "not read: any configured window is key_window_limit, alert-only or not",
+	"budget_alert_only":          "key_window_alert when a window is set (key_shape:budget_alert_only unless a JSON bool); not read otherwise",
 	"budget_strict":              "key_budget_strict",
 	"disabled":                   "key_disabled",
 	"expires_at":                 "ExpiresAt, key_expired",
 	"federated_home":             "key_federated",
 	"hash":                       "Hash",
 	"include_byok_in_limit":      "not read: truthiness never raises, and only a BYOK request, never Go's, uses it",
-	"limit_daily_microdollars":   "key_window_limit",
+	"limit_daily_microdollars":   "key_window_limit, key_window_alert",
 	"limit_microdollars":         "key_limit",
-	"limit_monthly_microdollars": "key_window_limit",
-	"limit_weekly_microdollars":  "key_window_limit",
+	"limit_monthly_microdollars": "key_window_limit, key_window_alert",
+	"limit_weekly_microdollars":  "key_window_limit, key_window_alert",
 	"lookup_hash":                "LookupHash",
 	"scopes":                     "key_scope",
 	"tags":                       "Tags, key_tags",
