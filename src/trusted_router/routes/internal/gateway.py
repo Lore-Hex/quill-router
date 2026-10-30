@@ -5465,11 +5465,14 @@ def _settle_leased_authorization(
             authorization.id,
             success=decision.success,
             actual_microdollars=decision.charge,
-            selected_usage_type=selected_usage_type,
+            # A reap the lease decided books credits, whatever this
+            # terminal asked (docs/design/fast-admission-streams.md 6.3).
+            selected_usage_type=UsageType.CREDITS if decision.outcome is not None else selected_usage_type,
             generation=decision.generation,
             authorization_snapshot=authorization,
             refund_benchmark=refund_benchmark if not decision.success else None,
             mark_intent=intent.intent_kind,
+            outcome=decision.outcome,
         )
     except Exception:
         # The lease took the charge and the intent is durable: the drain
@@ -5485,7 +5488,7 @@ def _settle_leased_authorization(
         return {"data": _already_settled_gateway_data(refreshed)}
     _finalize, finalized = result
     _release_user_model_slot_safely(finalized)
-    if decision.success and customer_billing_event:
+    if decision.success and decision.outcome is None and customer_billing_event:
         # The window usage is booked in the commit above, so an alert-only
         # key's crossing is visible to the alert check, as after today's settle.
         _schedule_successful_settle_followups(

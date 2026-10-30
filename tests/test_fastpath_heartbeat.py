@@ -298,6 +298,25 @@ def test_no_front_door_client_is_503(monkeypatch: pytest.MonkeyPatch) -> None:
     assert raised.value.status_code == 503
 
 
+def test_a_basis_that_cannot_be_built_after_the_row_committed_is_503(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The row's transaction has committed by the time the basis is built:
+    a failure there answers 503 with Retry-After, which the enclave retries
+    as a replay, never a 500, and sends nothing to the front door."""
+    db, private, boot = _store(leased=True)
+    door = _Door(ACCEPT)
+    _use(monkeypatch, _client(door))
+
+    def broken(*_args: Any, **_kwargs: Any) -> bytes:
+        raise ValueError("a price entry that does not encode")
+
+    monkeypatch.setattr(fh, "basis", broken)
+    with pytest.raises(HTTPException) as raised:
+        _beat(private, boot, _raw())
+    assert raised.value.status_code == 503 and raised.value.headers == {"Retry-After": "1"}
+    assert door.seen == []
+    assert db.gateway_authorizations[AUTH_ID]["heartbeat_seq"] == 1
+
+
 def test_a_front_door_slower_than_the_budget_is_503(monkeypatch: pytest.MonkeyPatch) -> None:
     _db, private, boot = _store(leased=True)
     door = _Door(ACCEPT, delay=0.5)
@@ -432,7 +451,8 @@ def test_a_held_heartbeat_permit_comes_back_when_its_call_ends() -> None:
 def test_the_reaper_never_books_a_leased_stream() -> None:
     """A leased stream whose row has heartbeated is the lease's to reap at
     its snapshot: the reaper books nothing for it, even with snapshot
-    booking on (design section 6.4)."""
+    booking on, and decides nothing, leaving it to the reconcile that reads
+    the lease's disposition (design section 6.4; increment 3)."""
     db, private, boot = _store(leased=True)
     client = _client(_Door(ACCEPT))
     original = gateway._fastpath_front_door
@@ -447,9 +467,10 @@ def test_the_reaper_never_books_a_leased_stream() -> None:
         db, _ParamTypes, now=datetime.now(UTC) + timedelta(seconds=301), snapshot_booking_enabled=True,
     )
 
-    assert result.count == 1
+    assert result.count == 0 and result.leased == (AUTH_ID,)
     assert result.snapshot_bookings == 0
-    assert db.reservations["reservation"]["actual_micro"] == 0
+    assert not db.reservations["reservation"]["settled"]
+    assert not db.reservations["reservation"].get("actual_micro")
     stored = db.gateway_authorizations[AUTH_ID]
-    assert stored["finalization_outcome"] == "refunded"
+    assert not stored["settled"] and stored.get("finalization_outcome") is None
     assert not db.generation_records

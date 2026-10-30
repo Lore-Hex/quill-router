@@ -133,13 +133,18 @@ def forward(
         logger.warning("fastpath heartbeat without a front door authorization_id=%s", authorization.id)
         return Forwarded()
     try:
+        first_basis = basis(authorization, selected_endpoint_id=selected_endpoint_id) if seq == 1 else None
+    except Exception:  # noqa: BLE001 - the row has committed; the enclave retries a 503, never a 500's guess
+        logger.exception("fastpath heartbeat basis failed authorization_id=%s seq=%d", authorization.id, seq)
+        return Forwarded()
+    try:
         answer = client.heartbeat(
             envelope=str(authorization.fastpath_envelope),
             seq=seq,
             digest=digest,
             usage=usage_total(counts),
             running=running,
-            basis=basis(authorization, selected_endpoint_id=selected_endpoint_id) if seq == 1 else None,
+            basis=first_basis,
         )
     except frontdoor.FrontDoorUnavailable as exc:
         logger.warning(

@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import base64
 import dataclasses
+import datetime as dt
 import json
 import logging
 from dataclasses import dataclass
+from typing import Any
 
 from trusted_router.services import fastpath_frontdoor as frontdoor
 from trusted_router.storage_models import GatewayAuthorization, Generation
@@ -33,14 +35,37 @@ class Decision:
     success: bool
     charge: int
     generation: Generation | None
+    # REAPED_SNAPSHOT when a reap of the stream's snapshot won: the records
+    # are the snapshot's, which the store builds from the row
+    # (docs/design/fast-admission-streams.md section 6.3); None for the
+    # terminal's own outcome.
+    outcome: str | None = None
+
+
+REAPED_SNAPSHOT = "reaped_snapshot"
 
 
 class Undecided(Exception):
     """The front door has not decided the terminal: `recorded` (durable in
     the drain log, the lease's order still to decide), `failed`, `invalid`,
-    a winner of another kind, a booking answered to a refund (which has no
-    settle body to record), or no front door. The caller keeps the intent
-    pending and asks again later."""
+    a settle or a refund that won over the other kind, a closed lease's
+    settle answered to a refund (which has no settle body to record), or no
+    front door. The caller keeps the intent pending and asks again later."""
+
+
+def _reaped(authorization: GatewayAuthorization, *, kind: str, cost: int, charge: int) -> Decision:
+    """Decision 70: the stream's snapshot won, so a later terminal charges
+    nothing more. The lease booked the reap; the records are the snapshot's,
+    at the lease's cost, outcome reaped_snapshot, as today's reaper writes
+    them and a later settle answers already_settled with them."""
+    logger.warning(
+        "fastpath pilot terminal after a reap authorization_id=%s kind=%s cost=%d priced=%d",
+        authorization.id,
+        kind,
+        cost,
+        charge,
+    )
+    return Decision(success=True, charge=int(cost), generation=None, outcome=REAPED_SNAPSHOT)
 
 
 def charge_for(*, success: bool, actual_cost: int, selected_usage_type: UsageType | str) -> int:
@@ -106,6 +131,8 @@ def forward_terminal(
         terminal.outcome,
     )
     if terminal.status == frontdoor.WON:
+        if terminal.kind == "reap":
+            return _reaped(authorization, kind=kind, cost=int(terminal.charge), charge=charge)
         if terminal.kind != kind:
             # Another terminal of this authorization won at the owner; its
             # own intent writes the records.
@@ -120,8 +147,11 @@ def forward_terminal(
             )
     elif terminal.status == frontdoor.SETTLED:
         # The lease closed before this terminal: the disposition is the
-        # outcome. A booking's records need the settle's body, so only a
-        # settle writes them.
+        # outcome. A reap's records are the snapshot's, whichever terminal
+        # asks; a settle's booking needs the settle's body, so only a
+        # settle writes it.
+        if terminal.outcome == REAPED_SNAPSHOT and terminal.cost_known:
+            return _reaped(authorization, kind=kind, cost=int(terminal.cost), charge=charge)
         if terminal.outcome in SETTLED_OUTCOMES and terminal.cost_known:
             if not success:
                 raise Undecided(f"{kind}: answered with a booking")
@@ -143,3 +173,141 @@ def forward_terminal(
     if recorded is not None and recorded.total_cost_microdollars != booked:
         recorded = dataclasses.replace(recorded, total_cost_microdollars=booked)
     return Decision(success=booked_success, charge=booked, generation=recorded)
+
+
+# What reconcile_reaped did with a leased stream's expired row.
+RECONCILED_REAP = "reaped_snapshot"
+RECONCILED_REFUND = "refunded"
+RECONCILED_SETTLED_WITHOUT_INTENT = "settled_without_intent"
+RECONCILED_PENDING = "pending"
+RECONCILED_SKIPPED = "skipped"
+
+# Past the hold's end of life by this much, a disposition still pending is
+# told: the owner releases or reaps every hold by its end of life plus its
+# grace (a minute), and the auditor drains a stopped owner's lease within
+# its overdue allowance (ten minutes).
+LEASED_REAP_OVERDUE = dt.timedelta(minutes=15)
+
+
+def _end_of_life(authorization: GatewayAuthorization) -> dt.datetime | None:
+    value = authorization.fastpath_end_of_life
+    if not value:
+        return None
+    try:
+        parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
+
+
+def reconcile_reaped(
+    client: frontdoor.FrontDoorClient | None,
+    store: Any,
+    authorization_id: str,
+    *,
+    now: dt.datetime,
+    grace_seconds: int,
+) -> str:
+    """A leased stream's row the reaper found expired with a heartbeat on it
+    (docs/design/fast-admission-streams.md section 6.4): its hold is the
+    lease's, which reaps it at the snapshot the owner holds, so Python never
+    decides it and never sends a refund for it (in a draining lease a refund
+    could come before the auditor's reap in the drain log and charge
+    nothing). It reads the lease's disposition by the envelope and writes
+    the records the lease decided, booking nothing:
+
+    - reaped_snapshot with its cost: the snapshot's records at that cost;
+    - refunded or released: refunded;
+    - settled: a settle the lease booked with no Python intent left to
+      write it (the reaper's scan passes over a row with a pending intent),
+      told as fastpath.settled_without_intent and left;
+    - anything else, a front door that does not answer, answers an error, or
+      does not serve the read: pending, never refunded. The row's expiry is
+      pushed out by the grace, so the next pass asks again, and a pending
+      disposition past the hold's end of life plus LEASED_REAP_OVERDUE is
+      told as fastpath.leased_reap_overdue.
+    """
+    authorization = store.get_gateway_authorization(authorization_id)
+    if authorization is None or authorization.settled or authorization.fastpath_envelope is None:
+        return RECONCILED_SKIPPED
+    answer: frontdoor.Disposition | None = None
+    if client is not None:
+        try:
+            answer = client.disposition(envelope=str(authorization.fastpath_envelope))
+        except frontdoor.FrontDoorUnavailable as exc:
+            logger.warning("fastpath leased reap disposition unanswered authorization_id=%s why=%s", authorization.id, exc)
+    if answer is not None and answer.status == frontdoor.SETTLED:
+        if answer.outcome == REAPED_SNAPSHOT and answer.cost_known:
+            store.typed_finalize_leased_result(
+                authorization.id,
+                success=True,
+                actual_microdollars=int(answer.cost),
+                selected_usage_type=UsageType.CREDITS,
+                generation=None,
+                authorization_snapshot=authorization,
+                outcome=REAPED_SNAPSHOT,
+            )
+            logger.info(
+                "fastpath leased reap recorded authorization_id=%s cost=%d", authorization.id, int(answer.cost),
+            )
+            return RECONCILED_REAP
+        if answer.outcome in REFUNDED_OUTCOMES:
+            store.typed_finalize_leased_result(
+                authorization.id,
+                success=False,
+                actual_microdollars=0,
+                selected_usage_type=UsageType.CREDITS,
+                generation=None,
+                authorization_snapshot=authorization,
+            )
+            return RECONCILED_REFUND
+        if answer.outcome == "settled":
+            logger.error(
+                "fastpath.settled_without_intent authorization_id=%s cost=%d cost_known=%s",
+                authorization.id,
+                int(answer.cost),
+                answer.cost_known,
+            )
+            _push_expiry(store, authorization, now=now, grace_seconds=grace_seconds)
+            return RECONCILED_SETTLED_WITHOUT_INTENT
+    if answer is not None and answer.status == frontdoor.INVALID:
+        logger.error("fastpath leased reap envelope refused authorization_id=%s", authorization.id)
+    _push_expiry(store, authorization, now=now, grace_seconds=grace_seconds)
+    end = _end_of_life(authorization)
+    if end is not None and now > end + LEASED_REAP_OVERDUE:
+        logger.error(
+            "fastpath.leased_reap_overdue authorization_id=%s end_of_life=%s status=%s",
+            authorization.id,
+            authorization.fastpath_end_of_life,
+            answer.status if answer is not None else "unanswered",
+        )
+    return RECONCILED_PENDING
+
+
+def _push_expiry(store: Any, authorization: GatewayAuthorization, *, now: dt.datetime, grace_seconds: int) -> None:
+    """The row's reservation expires again a grace from now, so the reaper's
+    next pass asks the lease again and its scan is not filled by one row."""
+    reservation_id = authorization.credit_reservation_id
+    if reservation_id:
+        store.extend_reservation_expiry(str(reservation_id), now + dt.timedelta(seconds=int(grace_seconds)))
+
+
+def reconcile_reaped_leases(
+    client: frontdoor.FrontDoorClient | None,
+    store: Any,
+    authorization_ids: tuple[str, ...] | list[str],
+    *,
+    now: dt.datetime,
+    grace_seconds: int,
+) -> dict[str, int]:
+    """reconcile_reaped for each of a reaper pass's leased streams, one's
+    failure that one's error alone, and the counts by outcome."""
+    counts: dict[str, int] = {}
+    for authorization_id in authorization_ids:
+        try:
+            outcome = reconcile_reaped(client, store, authorization_id, now=now, grace_seconds=grace_seconds)
+        except Exception:  # noqa: BLE001 - one row's failure must not end the pass
+            logger.exception("fastpath leased reap reconcile failed authorization_id=%s", authorization_id)
+            outcome = "error"
+        counts[outcome] = counts.get(outcome, 0) + 1
+    return counts

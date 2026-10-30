@@ -84,6 +84,20 @@ page names does not change.
 | `edge_window_race` | The decide shadow's confirmed window races (`window_race.*`, each confirmed by a re-read) ran past what a read race explains: over the last hour, more than 0.05% of its window reads (and at least 3 races), or one key more than 3 times (the message names the key by the first 8 characters of its hash). Not the critical page: each race was confirmed. | A hot key whose settles land between Python's read and the edge's, or settles slower than usual. Read the race lines (`fastpath edge decide shadow window race:`) for the keys and gaps, and `fastpathwatch edge`'s `window_race_ratio`. Above the gate's 0.05% over its span, `enforce` waits, or goes back to off, until it is explained (`fastpath-edge-decide.md` §6). |
 | `other` | An alert whose message is none of the auditor's or the edge's. | Read the entry's message. |
 
+## The control plane's lines
+
+Two policies page on lines the control plane writes for streams on the lease
+(`infra/fastpath_control_plane_alerts.tf`; `docs/design/fast-admission-streams.md`
+§4.4 and §6.4), each also counted by a log-based metric of the same name
+(`logging.googleapis.com/user/fastpath_control_plane_<kind>`). Find the
+lines with `gcloud logging read 'resource.type="cloud_run_revision" AND
+textPayload:"ERROR trusted_router.fastpath fastpath.<event> "'`.
+
+| Kind | What happened | What to do |
+|---|---|---|
+| `heartbeat_divergence` | An owner refused a leased stream's heartbeat the control plane's transaction had accepted (`status=rejected`), or a front door could not open its envelope (`status=invalid`). The enclave was told `out_of_cohort` and stopped the stream, which settles what it delivered. | Gate P (§8.3) needs none. Read the authorization's heartbeat lines and the owner's records: a `rejected` means the two validations disagree, a defect to fix before streams move on; an `invalid` means the envelope's key is no longer accepted (`fastpath-key-rotation.md`: the old key must stay accepted for a hold's life). Set `fastpath_pilot_streams` off until it is explained. |
+| `settled_without_intent` | The reaper found a leased stream's row expired, and the lease answered that a settle won, but no settle intent remained for Python to write the settle's records: the charge is booked, its generation record is missing. The row is left, its expiry pushed out, so the line repeats each pass. | Find the settle in the lease's records (`tr_lease_record` for the authorization, or the record topic's export) and the settle route's lines for it. Write the records by hand only once the cause is known; money is not at risk, the record is. |
+
 ## The edge's counts
 
 The edge logs its decide path's counts each minute, and its decide shadow's,

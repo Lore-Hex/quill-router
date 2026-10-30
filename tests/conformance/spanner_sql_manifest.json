@@ -4693,6 +4693,18 @@
           }
         }
       ]
+    },
+    "storage_gcp:extend:1": {
+      "fingerprint": "ba639fdfc735e9b5ed8c55dbbe6764a318b50518c7aa5ba3167d16e93de0f714",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "renewed_expires_at": "TIMESTAMP",
+            "rid": "STRING"
+          }
+        }
+      ]
     }
   },
   "sinks": {
@@ -4754,11 +4766,11 @@
     "storage_gcp_authorize:authorize_atomic.txn": "37002b308853018c3eb0d515605b8c3b4326b15251b5fe9ff6dfd3382f270fdf",
     "storage_gcp_authorize:typed_finalize_atomic.speculative_batch": "d5ec6f537d513b1b627c55e57e00db0a64e7d8c02d384b4705f56cd386b5ff39",
     "storage_gcp_authorize:key_window_limit_decision": "5a317b9f2927443ca6d6686b5cb1d1b6ff036c6d744d511a3b5f24c63e3b2ad7",
-    "storage_gcp_authorize:reap_expired_reservations_result": "792c0c08242dcd713034dd26eb9821673662536d20a3af9b1a2308dfe186a7d1",
+    "storage_gcp_authorize:reap_expired_reservations_result": "76f87cfbce638ce09d5a5b94b6857ce9eedb1744378bbd4ca44adba975cad470",
     "storage_gcp_authorize:typed_finalize_atomic.txn": "cf8aa92c4f2b5cfbdc8ffb0c0f72d83b57b90f9785e629ff8d5a26ee8e4d9f97",
     "storage_gcp_authorize:key_lifetime_cap_precheck": "4e9ee17c7e9363a1fc3a9d614f15148ad6fb20ff04d272785809beef92ab0b4c",
     "storage_gcp_authorize:credit_exhaustion_precheck": "bb08ce1cf8b8bf81a7db4487ec13fff5656d75ea7cb911c1325fc1770c5ef740",
-    "storage_gcp_authorize:_finalize_reaped_reservation_atomic.txn": "434f35b63e89d7b472ced3a6d9526f93de802d9924d5f8b4d57633894a1ece71",
+    "storage_gcp_authorize:_finalize_reaped_reservation_atomic.txn": "ec7b9d637ebd5967cb799505d4eddcd5a8f1aa37a95359db455fa25609359d15",
     "storage_gcp_authorize:settle_atomic.txn": "5415d0c16b4dd6fc436ca4e86128d9173d00879624bb16f236b578b00a7935d8",
     "storage_gcp_authorize:_outbox_table_available": "40f44f259524be5dc275f8a3400fc40fc5b8fe850c0482362de0382296e3f910",
     "storage_gcp_batch_dml:execute_batch_dml": "cf69cc8e1a62f4028bd2370e9d3d22e5f6f28856795ef05514f1f8dbc5130169",
@@ -4881,7 +4893,8 @@
     "trust_tier_bulk:select_trust_tier_candidates": "2047f3a799e1b13534cceb2c4e19dd904a12c244704184e7b9cc629fc5ff8bc2",
     "storage_account_closure:close_spanner.txn.rows": "d17299f98937c19aed4e65bd1f5ff91cfab3d1ee93c558fe9df621d3bf5ddde1",
     "storage_gcp:SpannerStore._update_workspace_tx": "621d1f16006a6075cafc6dc8a6243ac906a43772044dec1223d34b33c01bb7fd",
-    "storage_gcp:SpannerStore.reserved_resale_position_page": "c085bd2d7bd045dd724e37f03faba4443f382c7515b64b26d949bd333d9bdbfa"
+    "storage_gcp:SpannerStore.reserved_resale_position_page": "c085bd2d7bd045dd724e37f03faba4443f382c7515b64b26d949bd333d9bdbfa",
+    "storage_gcp:SpannerStore.extend_reservation_expiry.extend": "ba639fdfc735e9b5ed8c55dbbe6764a318b50518c7aa5ba3167d16e93de0f714"
   },
   "non_google_sql": {
     "analytics_sink:_post_rows:1": {

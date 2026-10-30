@@ -816,6 +816,7 @@ class SettleOutcome:
     NOT_ELIGIBLE = "not_eligible"  # reaper strong read found renewed/already-terminal state
     GUARD_LOST = "guard_lost"  # reaper candidate changed after its decisive read
     AUTHORIZATION_NOT_TYPED = "authorization_not_typed"
+    LEASED_STREAM = "leased_stream"  # reaper: a heartbeated leased row, the lease's to reap; nothing written
 
 
 class _SettleError(Exception):
@@ -854,6 +855,9 @@ class ReapPassResult:
     guard_lost: int = 0
     errors: int = 0
     refunded: int = 0
+    # The heartbeated leased rows the pass left to their leases: the
+    # reconcile reads each one's disposition.
+    leased: tuple[str, ...] = ()
 
     @property
     def outcome_counts(self) -> dict[str, int]:
@@ -862,6 +866,7 @@ class ReapPassResult:
             SettleOutcome.OUTBOX_GUARDED: self.guarded,
             SettleOutcome.GUARD_LOST: self.guard_lost,
             SettleOutcome.ERROR: self.errors,
+            SettleOutcome.LEASED_STREAM: len(self.leased),
             "refunded": self.refunded,
             "snapshot_booked": self.snapshot_bookings,
         }
@@ -883,6 +888,7 @@ class _ReapOneResult:
     snapshot_booked: bool = False
     out_of_cohort: bool = False
     missing_key_releases: tuple[dict[str, Any], ...] = ()
+    authorization_id: str = ""
 
 
 def _release_key_or_skip_deleted(
@@ -1298,6 +1304,7 @@ def reap_expired_reservations_result(
     guard_lost = 0
     errors = 0
     refunded = 0
+    leased: list[str] = []
     for (
         reservation_id,
         _authorization_id,
@@ -1357,6 +1364,9 @@ def reap_expired_reservations_result(
         if result.outcome == SettleOutcome.NOT_ELIGIBLE:
             not_eligible += 1
             continue
+        if result.outcome == SettleOutcome.LEASED_STREAM:
+            leased.append(result.authorization_id)
+            continue
         if result.outcome == SettleOutcome.OUTBOX_GUARDED:
             guarded += 1
             continue
@@ -1386,7 +1396,51 @@ def reap_expired_reservations_result(
         guard_lost=guard_lost,
         errors=errors,
         refunded=refunded,
+        leased=tuple(leased),
     )
+
+
+def snapshot_generation(authorization: Any, *, actual_micro: int) -> Generation | None:
+    """The generation a reap of a stream's last snapshot records, as the
+    reaper builds it below (streamed, usage estimated, finish reason
+    reaped_snapshot, settled from the heartbeat), at a charge given: a leased
+    stream's lease booked the reap, so its cost is the lease's
+    (docs/design/fast-admission-streams.md section 6.4). None when the row
+    has no snapshot to record."""
+    if authorization.selected_endpoint_id is None or authorization.delivered_usage is None:
+        return None
+    usage = delivered_usage_counts(authorization.delivered_usage)
+    selected_endpoint = endpoint_for_id(authorization.selected_endpoint_id)
+    selected_provider = selected_endpoint.provider if selected_endpoint is not None else authorization.provider
+    selected_model_id = selected_endpoint.model_id if selected_endpoint is not None else authorization.model_id
+    _uncached_input, total_input = normalized_delivered_prompt(selected_provider, usage)
+    provider = PROVIDERS.get(selected_provider)
+    app_markup_micro = (
+        app_markup_microdollars_from_charge(actual_micro, authorization.app_markup_basis_points)
+        if authorization.app_markup_basis_points > 0
+        else 0
+    )
+    generation = Generation.from_settle_body(
+        authorization=authorization,
+        provider_name=str(getattr(provider, "name", selected_provider)),
+        model_id=selected_model_id,
+        usage_type=UsageType.CREDITS,
+        provider=selected_provider,
+        body={
+            "streamed": True,
+            "usage_estimated": True,
+            "cache_read_input_tokens": usage["cache_read_input_tokens"],
+            "reasoning_tokens": usage["reasoning_tokens"],
+            "status": "success",
+            "finish_reason": "reaped_snapshot",
+        },
+        input_tokens=total_input,
+        output_tokens=usage["output_tokens"],
+        actual_cost_microdollars=int(actual_micro),
+        app_markup_microdollars=app_markup_micro,
+    )
+    generation.settled_from = "heartbeat"
+    return generation
 
 
 def reap_expired_reservations(
@@ -1465,6 +1519,13 @@ def _finalize_reaped_reservation_atomic(
         # or a leased stream would be charged twice
         # (docs/design/fast-admission-streams.md section 6.4).
         leased = authorization.fastpath_envelope is not None
+        if leased and started_marker:
+            # A leased stream with a heartbeat: the lease reaps it at the
+            # owner's snapshot, so nothing is decided or written here; the
+            # pass hands it to the reconcile, which reads the lease's
+            # disposition (docs/design/fast-admission-streams.md section
+            # 6.4). Never a refund.
+            return _ReapOneResult(SettleOutcome.LEASED_STREAM, authorization_id=authorization_id)
         snapshot_booked = bool(
             snapshot_booking_enabled and started_marker and not out_of_cohort and not leased
         )
