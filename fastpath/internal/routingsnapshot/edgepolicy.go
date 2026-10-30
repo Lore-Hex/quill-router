@@ -64,13 +64,17 @@ type EdgePolicy struct {
 	AsyncSettle *AsyncSettle `json:"async_settle,omitempty"`
 	// FastpathPilotKeyWindows is optional: settings.fastpath_pilot_key_windows,
 	// which keys with spend windows the cohort covers (KeyWindowsMode;
-	// docs/design/fast-admission-e2-key-windows.md section 5). Absent is off.
+	// docs/design/fast-admission-e2-key-windows.md section 5): "alert" or
+	// "enforce". Absent is off, the only form of it: the publisher leaves the
+	// member out rather than write "off", and parse_edge_policy refuses "off"
+	// as this does.
 	FastpathPilotKeyWindows *string `json:"fastpath_pilot_key_windows,omitempty"`
 }
 
-// The modes of fastpath_pilot_key_windows: off covers no windowed key, alert
-// the alert-only ones (whose windows Python's authorize never checks), and
-// enforce every one.
+// The modes of fastpath_pilot_key_windows (KeyWindowsMode): off, the member
+// absent, covers no windowed key; alert the alert-only ones (whose windows
+// Python's authorize never checks); enforce every one. Only alert and
+// enforce are written.
 const (
 	KeyWindowsOff     = "off"
 	KeyWindowsAlert   = "alert"
@@ -201,8 +205,7 @@ func (p *EdgePolicy) validate() error {
 	if !policyName.MatchString(p.AsyncSettleShadowPolicy) {
 		return errors.New("async_settle_shadow_policy")
 	}
-	if m := p.FastpathPilotKeyWindows; m != nil && *m != KeyWindowsOff && *m != KeyWindowsAlert &&
-		*m != KeyWindowsEnforce {
+	if m := p.FastpathPilotKeyWindows; m != nil && *m != KeyWindowsAlert && *m != KeyWindowsEnforce {
 		return errors.New("fastpath_pilot_key_windows")
 	}
 	regions := p.ConfiguredRegions

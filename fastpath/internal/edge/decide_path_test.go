@@ -918,7 +918,7 @@ func TestAnEnforcingWindowedKeyIsNeverAdmittedUnread(t *testing.T) {
 		{"enforcing, enforce", enforcing, routingsnapshot.KeyWindowsEnforce, keywindow.PassUnread},
 		{"enforcing, alert", enforcing, routingsnapshot.KeyWindowsAlert, PassKeyWindow},
 		{"enforcing, absent", enforcing, "", PassKeyWindow},
-		{"alert only, off", alertOnly, routingsnapshot.KeyWindowsOff, PassKeyWindowAlert},
+		{"alert only, absent", alertOnly, "", PassKeyWindowAlert},
 		{"alert only, alert", alertOnly, routingsnapshot.KeyWindowsAlert, ""},
 		{"alert only, enforce", alertOnly, routingsnapshot.KeyWindowsEnforce, ""},
 	} {

@@ -953,15 +953,13 @@ func TestTheKeyWindowsModeIsADecisionGate(t *testing.T) {
 		windows *WindowCheck
 	}{
 		{"enforcing, mode absent", enforcing, "", PassKeyWindow, check},
-		{"enforcing, off", enforcing, routingsnapshot.KeyWindowsOff, PassKeyWindow, check},
 		{"enforcing, alert", enforcing, routingsnapshot.KeyWindowsAlert, PassKeyWindow, check},
 		{"enforcing, enforce", enforcing, routingsnapshot.KeyWindowsEnforce, "", check},
 		{"alert only, mode absent", alertOnly, "", PassKeyWindowAlert, nil},
-		{"alert only, off", alertOnly, routingsnapshot.KeyWindowsOff, PassKeyWindowAlert, nil},
 		{"alert only, alert", alertOnly, routingsnapshot.KeyWindowsAlert, "", nil},
 		{"alert only, enforce", alertOnly, routingsnapshot.KeyWindowsEnforce, "", nil},
 		// Positive control: a key without windows is not gated by any mode.
-		{"no windows, off", map[string]any{"budget_alert_only": true}, routingsnapshot.KeyWindowsOff, "", nil},
+		{"no windows, mode absent", map[string]any{"budget_alert_only": true}, "", "", nil},
 	} {
 		d := Decide(windowedInputs(t, v.fields, v.mode))
 		dec := d.ForShadow()

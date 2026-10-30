@@ -439,10 +439,11 @@ func withKeyWindows(t *testing.T, raw []byte, value string) []byte {
 
 // TestTheKeyWindowsModeIsOptional (docs/design/fast-admission-e2-key-windows.md
 // section 5): Go ships before Python publishes the member, so a body
-// without fastpath_pilot_key_windows parses and reads as off; a body with
-// it parses each of the three modes as published, and verifies under a
-// manifest signed for it; null, another string, another type and a member
-// out of canonical order are refused.
+// without fastpath_pilot_key_windows parses and reads as off, the only form
+// of off; a body with it parses "alert" and "enforce" as published, and
+// verifies under a manifest signed for it; "off", null, another string,
+// another type and a member out of canonical order are refused, as
+// Python's parse_edge_policy refuses them.
 func TestTheKeyWindowsModeIsOptional(t *testing.T) {
 	m, published := policyGolden(t)
 	raw := withKeyWindows(t, published, "")
@@ -450,7 +451,7 @@ func TestTheKeyWindowsModeIsOptional(t *testing.T) {
 	if err != nil || p.FastpathPilotKeyWindows != nil || p.KeyWindowsMode() != KeyWindowsOff {
 		t.Fatalf("absent fastpath_pilot_key_windows: %v, %+v", err, p)
 	}
-	for _, mode := range []string{KeyWindowsOff, KeyWindowsAlert, KeyWindowsEnforce} {
+	for _, mode := range []string{KeyWindowsAlert, KeyWindowsEnforce} {
 		body := withKeyWindows(t, raw, `"`+mode+`"`)
 		got, err := ParseEdgePolicy(body)
 		if err != nil || got.FastpathPilotKeyWindows == nil || got.KeyWindowsMode() != mode {
@@ -470,6 +471,7 @@ func TestTheKeyWindowsModeIsOptional(t *testing.T) {
 		t.Fatalf("a signed body with fastpath_pilot_key_windows: %v, %+v", err, verified)
 	}
 	for name, value := range map[string]string{
+		"off":         `"off"`,
 		"null":        `null`,
 		"empty":       `""`,
 		"upper case":  `"ENFORCE"`,
@@ -479,7 +481,7 @@ func TestTheKeyWindowsModeIsOptional(t *testing.T) {
 		"an integer":  `1`,
 		"an object":   `{"mode":"off"}`,
 		"an array":    `["off"]`,
-		"unknown key": `"alert","fastpath_pilot_key_windows_x":"off"`,
+		"unknown key": `"alert","fastpath_pilot_key_windows_x":"alert"`,
 	} {
 		if got, err := ParseEdgePolicy(withKeyWindows(t, raw, value)); err == nil {
 			t.Errorf("%s: accepted as %v", name, got.KeyWindowsMode())
@@ -487,7 +489,7 @@ func TestTheKeyWindowsModeIsOptional(t *testing.T) {
 	}
 	// Out of canonical order: the member after fastpath_pilot_regions.
 	at := []byte(`"fastpath_pilot_workspaces":`)
-	misplaced := bytes.Replace(raw, at, append([]byte(`"fastpath_pilot_key_windows":"off",`), at...), 1)
+	misplaced := bytes.Replace(raw, at, append([]byte(`"fastpath_pilot_key_windows":"alert",`), at...), 1)
 	if _, err := ParseEdgePolicy(misplaced); err == nil || !strings.Contains(err.Error(), "canonical") {
 		t.Errorf("a misplaced member: %v", err)
 	}
