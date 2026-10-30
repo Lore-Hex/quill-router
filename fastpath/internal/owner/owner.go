@@ -127,7 +127,12 @@ type StreamReap struct {
 // reapDeadline is the deadline a stream hold's reap waits for, plus grace,
 // after a heartbeat accepted at beat with deadline: the floor less the
 // grace, when that is after the deadline; else zero, the deadline itself.
-func (s StreamReap) reapDeadline(h *hold, beat, deadline time.Time, grace time.Duration) time.Time {
+// The floor is read on the owner's clock and the control plane's expiry on
+// its own, so the floor carries the skew allowance too
+// (docs/design/fast-admission-streams.md section 4.6 item 4): an owner whose
+// clock runs that far ahead still reaps no sooner than the control plane's
+// row expires. The cap, the hold's end of life plus the grace, does not move.
+func (s StreamReap) reapDeadline(h *hold, beat, deadline time.Time, grace, skew time.Duration) time.Time {
 	if !h.stream || s == (StreamReap{}) {
 		return time.Time{}
 	}
@@ -135,6 +140,7 @@ func (s StreamReap) reapDeadline(h *hold, beat, deadline time.Time, grace time.D
 	if f := beat.Add(s.AfterHeartbeat); f.After(floor) {
 		floor = f
 	}
+	floor = floor.Add(skew)
 	if limit := h.endOfLife.Add(grace); floor.After(limit) {
 		floor = limit
 	}

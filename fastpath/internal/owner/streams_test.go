@@ -31,6 +31,9 @@ func streamFixture(t *testing.T, floor StreamReap, recordFloor bool) (*fixture, 
 	return f, l
 }
 
+// fixtureSkew is newFixture's skew allowance.
+const fixtureSkew = 2 * time.Second
+
 func admitOn(t *testing.T, l *Lease, e int64, stream bool) string {
 	t.Helper()
 	a, err := l.Admit(Admission{Estimate: e, Stream: stream, Boot: boot})
@@ -138,8 +141,9 @@ func TestAStreamHoldIsReapedNoSoonerThanItsFloor(t *testing.T) {
 		}
 	}
 
-	// Admitted at start, a heartbeat at start+1m: the admission's term,
-	// start+10m, is the later.
+	// The fixture's skew allowance, 2 s, joins each term; the cap does not
+	// move. Admitted at start, a heartbeat at start+1m: the admission's
+	// term, start+10m, is the later.
 	f, l := streamFixture(t, floor, false)
 	a := admitOn(t, l, 100, true)
 	f.clock.advance(time.Minute)
@@ -147,7 +151,7 @@ func TestAStreamHoldIsReapedNoSoonerThanItsFloor(t *testing.T) {
 		Basis: []byte("t")}); err != nil {
 		t.Fatal(err)
 	}
-	dueAt(t, l, a, start.Add(10*time.Minute))
+	dueAt(t, l, a, start.Add(10*time.Minute+fixtureSkew))
 
 	// Heartbeats every 30 s to start+8m: the last one's term, start+13m,
 	// is the later.
@@ -165,14 +169,14 @@ func TestAStreamHoldIsReapedNoSoonerThanItsFloor(t *testing.T) {
 			t.Fatalf("heartbeat %d: %v", i, err)
 		}
 	}
-	// The last at start+8m: start+13m, after start+10m.
+	// The last at start+8m: start+13m, after start+10m, each plus the skew.
 	if now := f2.clock.Now(); !now.Equal(start.Add(8 * time.Minute)) {
 		t.Fatalf("the last heartbeat at %v", now)
 	}
-	dueAt(t, l2, b, start.Add(13*time.Minute))
+	dueAt(t, l2, b, start.Add(13*time.Minute+fixtureSkew))
 
 	// A heartbeat near the end of life (an hour): the floor is capped at
-	// the end of life plus the grace, start+61m, before start+58m+5m.
+	// the end of life plus the grace, start+61m, before start+58m+5m+2s.
 	f3, l3 := streamFixture(t, floor, false)
 	c := admitOn(t, l3, 100, true)
 	f3.clock.advance(58 * time.Minute)
@@ -198,16 +202,26 @@ func TestOnlyAStreamsHoldHasAReapFloor(t *testing.T) {
 	beat := start.Add(time.Minute)
 	deadline := beat.Add(30 * time.Second)
 	plain := &hold{stream: false, admitted: start, endOfLife: start.Add(time.Hour)}
-	if got := floor.reapDeadline(plain, beat, deadline, time.Minute); !got.IsZero() {
+	if got := floor.reapDeadline(plain, beat, deadline, time.Minute, fixtureSkew); !got.IsZero() {
 		t.Fatalf("a hold that is not a stream has a reap deadline %v", got)
 	}
 	stream := &hold{stream: true, admitted: start, endOfLife: start.Add(time.Hour)}
-	if got := floor.reapDeadline(stream, beat, deadline, time.Minute); !got.Equal(start.Add(9 * time.Minute)) {
+	if got := floor.reapDeadline(stream, beat, deadline, time.Minute, 0); !got.Equal(start.Add(9 * time.Minute)) {
 		t.Fatalf("a stream's reap deadline %v, want the floor less the grace, %v", got, start.Add(9*time.Minute))
+	}
+	// The skew allowance joins the floor, so an owner whose clock runs that
+	// far ahead still reaps no sooner than the control plane's row expires.
+	if got := floor.reapDeadline(stream, beat, deadline, time.Minute, fixtureSkew); !got.Equal(start.Add(9*time.Minute + fixtureSkew)) {
+		t.Fatalf("a stream's reap deadline with the skew %v", got)
+	}
+	// It does not move the cap: a heartbeat near the end of life.
+	late := start.Add(58 * time.Minute)
+	if got := floor.reapDeadline(stream, late, late.Add(30*time.Second), time.Minute, fixtureSkew); !got.Equal(start.Add(time.Hour)) {
+		t.Fatalf("a capped reap deadline %v, want the end of life", got)
 	}
 	// A floor before the deadline plus the grace changes nothing.
 	short := StreamReap{AfterAdmission: time.Second, AfterHeartbeat: time.Second}
-	if got := short.reapDeadline(stream, beat, deadline, time.Minute); !got.IsZero() {
+	if got := short.reapDeadline(stream, beat, deadline, time.Minute, fixtureSkew); !got.IsZero() {
 		t.Fatalf("a floor before the deadline gave %v", got)
 	}
 }
@@ -239,13 +253,13 @@ func TestTheReapFloorIsRecordedOnlyWhenAsked(t *testing.T) {
 		}
 		want := time.Time{}
 		if recordFloor {
-			want = start.Add(9 * time.Minute)
+			want = start.Add(9*time.Minute + fixtureSkew)
 		}
 		if !r.Snapshot.ReapDeadline.Equal(want) {
 			t.Fatalf("RecordReapFloor %v: the reap deadline %v, want %v", recordFloor, r.Snapshot.ReapDeadline, want)
 		}
 		// The owner's own reap waits for the floor either way.
-		if d := l.due(start.Add(10*time.Minute-time.Nanosecond), time.Minute); len(d) != 0 {
+		if d := l.due(start.Add(10*time.Minute+fixtureSkew-time.Nanosecond), time.Minute); len(d) != 0 {
 			t.Fatalf("RecordReapFloor %v: due before the floor", recordFloor)
 		}
 		if _, err := l.handoff(ctx); err != nil {
@@ -259,6 +273,78 @@ func TestTheReapFloorIsRecordedOnlyWhenAsked(t *testing.T) {
 		}
 		if len(holds) != 1 || holds[0].Snapshot == nil || !holds[0].Snapshot.ReapDeadline.Equal(want) {
 			t.Fatalf("RecordReapFloor %v: the handed-off hold %+v", recordFloor, holds)
+		}
+	}
+}
+
+// TestOnlyAStreamsRecordsCarryTheFloor (increment 2b): with the floor
+// recorded, a stream heartbeat's record and its hold in a hand-off carry the
+// reap deadline, which an auditor reads as the deadline a reap waits for
+// (record.Snapshot.ReapAfter); a hold that is not a stream, and a stream
+// whose floor is not after its deadline plus the grace, carry none, so their
+// records are byte for byte what an owner without the floor writes.
+func TestOnlyAStreamsRecordsCarryTheFloor(t *testing.T) {
+	ctx := context.Background()
+	floor := StreamReap{AfterAdmission: 10 * time.Minute, AfterHeartbeat: 5 * time.Minute}
+	encodedHolds := func(t *testing.T, f *fixture) [][]byte {
+		t.Helper()
+		f.log.mu.Lock()
+		defer f.log.mu.Unlock()
+		return append([][]byte(nil), f.log.stored["lease-2"]...)
+	}
+	run := func(t *testing.T, floor StreamReap, record bool) [][]byte {
+		t.Helper()
+		f, l := streamFixture(t, floor, record)
+		s := admitOn(t, l, 100, true)
+		admitOn(t, l, 50, false)
+		if _, err := l.Heartbeat(ctx, s, HeartbeatOf{GatewaySeq: 1, Hash: sum("s1"), Usage: 1, Running: 1,
+			Basis: []byte("t")}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := l.handoff(ctx); err != nil {
+			t.Fatal(err)
+		}
+		return encodedHolds(t, f)
+	}
+	with := run(t, floor, true)
+	var stream, plain int
+	for _, raw := range with {
+		r, err := record.Decode(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch r.Kind {
+		case record.Heartbeat:
+			if got := r.Snapshot.ReapAfter(); !got.Equal(start.Add(9*time.Minute + fixtureSkew)) {
+				t.Fatalf("the heartbeat record's reap deadline %v", got)
+			}
+			stream++
+		case record.Handoff:
+			for _, h := range r.Holds {
+				switch {
+				case h.Estimate == 100 && h.Snapshot != nil && h.Snapshot.ReapAfter().Equal(start.Add(9*time.Minute+fixtureSkew)):
+					stream++
+				case h.Estimate == 50 && h.Snapshot == nil:
+					plain++
+				default:
+					t.Fatalf("a handed-off hold %+v (snapshot %+v)", h, h.Snapshot)
+				}
+			}
+		}
+	}
+	if stream != 2 || plain != 1 {
+		t.Fatalf("records with the floor: %d of the stream, %d of the plain hold", stream, plain)
+	}
+	// A floor that is never after the deadline plus the grace: the records
+	// are those of an owner that records no floor.
+	short := StreamReap{AfterAdmission: time.Second, AfterHeartbeat: time.Second}
+	recorded, unrecorded := run(t, short, true), run(t, short, false)
+	if len(recorded) != len(unrecorded) {
+		t.Fatalf("%d records, %d without the floor", len(recorded), len(unrecorded))
+	}
+	for i := range recorded {
+		if !bytes.Equal(recorded[i], unrecorded[i]) {
+			t.Fatalf("record %d differs:\n%s\n%s", i, recorded[i], unrecorded[i])
 		}
 	}
 }
