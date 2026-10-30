@@ -757,13 +757,60 @@ def _heartbeat_gateway_sync(
     )
     if not result.accepted:
         raise _heartbeat_rejection(str(result.reason))
+    expires_at_ms = int(result.expires_at_ms)
+    if authorization.fastpath_envelope is not None:
+        # A leased stream (docs/design/fast-admission-streams.md section
+        # 4.1): the row's transaction above ran unchanged; the heartbeat now
+        # goes to the lease's owner, whose deadline the answer carries.
+        expires_at_ms = _forward_leased_heartbeat(
+            authorization,
+            body,
+            settings,
+            canonical_body=canonical_body,
+            running=int(result.running_micro),
+        )
     return {
         "accepted": True,
         "seq": int(result.seq),
-        "expires_at_ms": int(result.expires_at_ms),
+        "expires_at_ms": expires_at_ms,
         "cap_micro": int(result.cap_micro),
         "running_micro": int(result.running_micro),
     }
+
+
+def _forward_leased_heartbeat(
+    authorization: GatewayAuthorization,
+    body: GatewayHeartbeatRequest,
+    settings: Settings,
+    *,
+    canonical_body: bytes,
+    running: int,
+) -> int:
+    """The owner's answer to a leased heartbeat today's transaction accepted:
+    its deadline in epoch milliseconds, else today's rejection, else 503 with
+    Retry-After as the heartbeat kill switch answers, which the enclave
+    retries within its budget and then stops the stream."""
+    from trusted_router.services import fastpath_heartbeat
+
+    forwarded = fastpath_heartbeat.forward(
+        _fastpath_front_door(settings),
+        authorization,
+        seq=int(body.seq),
+        digest=fastpath_heartbeat.heartbeat_digest(canonical_body),
+        counts=body.usage.canonical_counts(),
+        running=running,
+        selected_endpoint_id=body.selected_endpoint_id,
+    )
+    if forwarded.deadline is not None:
+        return fastpath_heartbeat.epoch_millis(forwarded.deadline)
+    if forwarded.reason is not None:
+        raise _heartbeat_rejection(forwarded.reason)
+    raise api_error(
+        503,
+        "Stage D heartbeat owner unavailable; retry",
+        ErrorType.SERVICE_UNAVAILABLE,
+        headers={"Retry-After": "1"},
+    )
 
 
 def _gateway_boot_auth_accepted(

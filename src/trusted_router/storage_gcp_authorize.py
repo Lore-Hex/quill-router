@@ -1460,8 +1460,13 @@ def _finalize_reaped_reservation_atomic(
 
         started_marker = authorization.started_at is not None
         out_of_cohort = authorization.pricing_snapshot is None
+        # A leased authorization's hold is a lease's, which books its own
+        # reap at the snapshot the owner holds: the reaper never books one,
+        # or a leased stream would be charged twice
+        # (docs/design/fast-admission-streams.md section 6.4).
+        leased = authorization.fastpath_envelope is not None
         snapshot_booked = bool(
-            snapshot_booking_enabled and started_marker and not out_of_cohort
+            snapshot_booking_enabled and started_marker and not out_of_cohort and not leased
         )
         generation: Generation | None = None
         app_markup_payout: AppMarkupPayout | None = None
