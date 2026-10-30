@@ -59,9 +59,43 @@ def test_frozen_authorize_response_matrix(monkeypatch, workspaces, headers, has_
     before = _state(db)
     frozen = namespace['_gateway_authorize_response'](**captured)
     current = original(**captured)
-    assert canonical(current) == canonical(frozen)
+    expected = {**frozen, 'data': dict(frozen['data'])}
+    # PR #2219: the enclave's terminal identity binding requires the stored
+    # nonce on fresh async-eligible responses. Every other byte stays frozen.
+    if current['data'].get('async_eligible') is True and not replay:
+        expected['data']['invocation_nonce'] = captured['authorization'].invocation_nonce
+    assert canonical(current) == canonical(expected), 'authorize response differs from frozen contract'
     assert _state(db) == before
     assert calls == []
+
+
+@pytest.mark.usefixtures('fixed_operation_catalog')
+@pytest.mark.parametrize('field,value,headers,enabled,replay', [
+    ('model', 'unexpected-model', [b'async-v1'], True, False),
+    ('invocation_nonce', 'wrong-nonce', [b'async-v1'], True, False),
+    ('invocation_nonce', None, [b'async-v1'], True, False),
+    ('invocation_nonce', 'nonce-frozen-shadow', [b'async-v1'], False, False),
+    ('invocation_nonce', 'nonce-frozen-shadow', [], True, False),
+    ('invocation_nonce', 'nonce-frozen-shadow', [b'wrong'], True, False),
+    ('invocation_nonce', 'wrong-replay-nonce', [b'async-v1'], True, True),
+])
+def test_frozen_authorize_response_rejects_other_changes(monkeypatch, field, value, headers, enabled, replay):
+    original = gateway._gateway_authorize_response
+
+    def mutate(**kwargs):
+        response = original(**kwargs)
+        if value is None:
+            response['data'].pop(field, None)
+        else:
+            response['data'][field] = value
+        return response
+
+    monkeypatch.setattr(gateway, '_gateway_authorize_response', mutate)
+    with pytest.raises(AssertionError, match='authorize response differs from frozen contract'):
+        test_frozen_authorize_response_matrix(
+            monkeypatch, workspaces='', headers=headers, has_signer=True,
+            enabled=enabled, replay=replay, eligible=True,
+        )
 
 
 @pytest.mark.usefixtures('fixed_operation_catalog')
