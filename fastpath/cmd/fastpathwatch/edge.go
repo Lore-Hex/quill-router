@@ -103,6 +103,15 @@ type i2 struct {
 	// share of traffic (docs/design/fast-admission-e2-g15-async.md §5).
 	SettlementHeaderPasses    int64    `json:"settlement_header_passes"`
 	SettlementHeaderPassShare *float64 `json:"settlement_header_pass_share"`
+	// WindowReads are the shadow's window reads of enforcing windowed keys
+	// (its windows map's read.made); WindowRace the confirmed read races
+	// among them (window_race.*, docs/design/fast-admission-e2-key-windows.md
+	// section 8.3) and WindowRaceRatio their share, the gate's 0.05%;
+	// WindowRaceUnconfirmed the candidates no re-read settled, which page.
+	WindowReads           int64    `json:"window_reads"`
+	WindowRace            int64    `json:"window_race"`
+	WindowRaceUnconfirmed int64    `json:"window_race_unconfirmed"`
+	WindowRaceRatio       *float64 `json:"window_race_ratio"`
 }
 
 // i3 are the I3 gate's figures (docs/design/fast-admission-e2-g15-async.md
@@ -212,6 +221,12 @@ func (r *edgeReport) gates() {
 		if strings.HasSuffix(class, "."+edge.PassSettlementHeader) {
 			g.SettlementHeaderPasses += n
 		}
+		switch {
+		case strings.HasPrefix(class, edge.ClassWindowRace+"."):
+			g.WindowRace += n
+		case strings.HasPrefix(class, edge.ClassWindowRaceUnconfirmed+"."):
+			g.WindowRaceUnconfirmed += n
+		}
 	}
 	for code, n := range r.Decide.ByName["unavailable_by_code"] {
 		g.UnavailableByCode[code] = n
@@ -219,6 +234,8 @@ func (r *edgeReport) gates() {
 	g.AgreeFullRatio = ratio(g.AgreeFull, g.Comparable)
 	g.StaleRate = ratio(g.Stale, g.Followed)
 	g.SettlementHeaderPassShare = ratio(g.SettlementHeaderPasses, g.Followed)
+	g.WindowReads = sh.ByName["windows"]["read.made"]
+	g.WindowRaceRatio = ratio(g.WindowRace, g.WindowReads)
 	r.I2 = g
 	r.I3 = r.asyncGates(g.Followed)
 }

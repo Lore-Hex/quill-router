@@ -7,6 +7,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -26,6 +27,7 @@ import (
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/gwauth"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/gwstate"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/keywindow"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/pyjson"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/routingsnapshot"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store"
@@ -222,6 +224,13 @@ func (l *logLines) all() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return strings.Join(l.lines, "\n")
+}
+
+// has reports a line that begins with prefix.
+func (l *logLines) has(prefix string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return slices.ContainsFunc(l.lines, func(s string) bool { return strings.HasPrefix(s, prefix) })
 }
 
 func newFullEdge(t *testing.T, f authorizeFile, c authorizeCase, py *fakePython,
@@ -1745,5 +1754,407 @@ func TestAWindowRefusalOfAnUncheckedDecisionIsNotAWouldAdmit(t *testing.T) {
 	if r := compareFull(Decide(in), pyAnswer{status: 200, body: pythonsLegacyAnswer(t, f, cc, false)}); r.class !=
 		ClassAgreeFull || r.gate != PassKeyWindow {
 		t.Errorf("Python's 200: %+v", r)
+	}
+}
+
+// windowCase is an enforcing windowed key's decision (a daily limit of a
+// million microdollars, the policy's mode absent) and its window check over
+// rows holding used of the day.
+func windowCase(t *testing.T, used int64) (Decided, *windowRead, authorizeCase) {
+	t.Helper()
+	fields := map[string]any{"limit_daily_microdollars": 1_000_000}
+	d := Decide(windowedInputs(t, fields, ""))
+	dec := d.ForShadow()
+	if dec == nil || dec.Windows == nil {
+		t.Fatalf("no window check: %q", d.Pass)
+	}
+	at := d.ForShadow().Input.At
+	rows := dailyRows(at, 1_000_000, used, 1)
+	v := keywindow.Evaluate(dec.Windows.Limits, 1, rows, dec.Estimate, at)
+	c := authorizeCaseNamed(t, "answer:app_categories_empty")
+	body := keyBodyWith(t, c, fields)
+	c.Key.KeyBody = &body
+	return d, &windowRead{verdict: v, made: true, took: 3 * time.Millisecond, rows: rows, at: at}, c
+}
+
+// rateLimited is Python's answer with its RateLimit-* headers.
+func rateLimited(a pyAnswer, limit, remaining, reset int64) pyAnswer {
+	a.rateLimit = [3]string{strconv.FormatInt(limit, 10), strconv.FormatInt(remaining, 10),
+		strconv.FormatInt(reset, 10)}
+	return a
+}
+
+// TestTheShadowComparesTheWindowCheck (docs/design/
+// fast-admission-e2-key-windows.md section 8.2): with the shadow's own
+// window check, Go's admit compares Python's 200 as the cohort's and makes
+// Python's window refusal the critical would-admit; Go's pass is benign
+// against Python's 200 (python_answered_go_passed by its reason) and agrees
+// with Python's refusal (passed); and Python's RateLimit-* headers are
+// compared with Go's limit, remaining and reset, the window of a 429 with
+// its message's. Without a check the comparison is read.none, as before.
+func TestTheShadowComparesTheWindowCheck(t *testing.T) {
+	f := authorizeGoldens(t)
+	allowed, admit, c := windowCase(t, 0)
+	_, spent, _ := windowCase(t, 1_000_000)
+	if !admit.verdict.Admit() || spent.verdict.Pass != keywindow.PassExceeded {
+		t.Fatalf("the verdicts: %+v %+v", admit.verdict, spent.verdict)
+	}
+	v := admit.verdict
+	py200 := pyAnswer{status: 200, body: pythonsLegacyAnswer(t, f, c, false)}
+	message := "API key daily spend limit exceeded; resets at 2026-10-20T00:00:00Z"
+	py429 := pyAnswer{status: 429, body: errorBody(429, windowRefusal, message)}
+	has := func(r fullResult, want ...string) bool {
+		for _, w := range want {
+			if !slices.Contains(r.windows, w) {
+				return false
+			}
+		}
+		return true
+	}
+	for _, x := range []struct {
+		name    string
+		w       *windowRead
+		a       pyAnswer
+		class   string
+		windows []string
+	}{
+		{"admit, Python's 200 agrees", admit, rateLimited(py200, v.Limit, v.Remaining, v.ResetSeconds), ClassAgreeFull,
+			[]string{"read.made", "latency.le_10ms", "verdict.admit", "window.agree", "window.same_inputs.agree"}},
+		{"admit, Python's 200 a second later", admit, rateLimited(py200, v.Limit, v.Remaining, v.ResetSeconds-1),
+			ClassAgreeFull, []string{"window.reset_1s", "window.same_inputs.agree"}},
+		{"admit, Python spent more", admit, rateLimited(py200, v.Limit, v.Remaining-5000, v.ResetSeconds),
+			ClassAgreeFull, []string{"window.differ.remaining.le_1000000"}},
+		{"admit, Python's other limit", admit, rateLimited(py200, v.Limit+1, v.Remaining, v.ResetSeconds),
+			ClassAgreeFull, []string{"window.differ.limit"}},
+		{"admit, Python's 200 without headers", admit, py200, ClassAgreeFull, []string{"window.python_none"}},
+		{"admit, Python refused the window it read more spent", admit, rateLimited(py429, v.Limit, 0, v.ResetSeconds),
+			ClassWindowRaceUnconfirmed + ".429." + windowRefusal, []string{"verdict.admit", "window.differ.remaining.le_1000000"}},
+		{"admit, Python refused with the same inputs", admit, rateLimited(py429, v.Limit, v.Remaining, v.ResetSeconds),
+			ClassWouldAdmit + ".429." + windowRefusal, []string{"window.same_inputs.disagree"}},
+		{"spent, Python refused", spent, rateLimited(py429, 1_000_000, 0, v.ResetSeconds),
+			ClassGoPassed + "." + keywindow.PassExceeded,
+			[]string{"verdict." + keywindow.PassExceeded, "window.agree", "window.same_inputs.agree"}},
+		{"spent, Python refused another window", spent,
+			rateLimited(pyAnswer{status: 429, body: errorBody(429, windowRefusal,
+				"API key weekly spend limit exceeded; resets at 2026-10-26T00:00:00Z")}, 1_000_000, 0, v.ResetSeconds),
+			ClassGoPassed + "." + keywindow.PassExceeded, []string{"window.differ.window"}},
+		{"spent, Python admitted", spent, rateLimited(py200, 1_000_000, 0, v.ResetSeconds),
+			ClassPythonAnsweredGoPassed + "." + keywindow.PassExceeded, []string{"window.same_inputs.disagree"}},
+		{"unread, Python admitted", &windowRead{verdict: keywindow.Verdict{Pass: keywindow.PassUnread}, made: true,
+			took: time.Second}, py200, ClassPythonAnsweredGoPassed + "." + keywindow.PassUnread,
+			[]string{"latency.gt_300ms", "verdict." + keywindow.PassUnread}},
+		{"no check, Python refused", nil, py429, ClassWindowUnchecked + ".429." + windowRefusal, []string{"read.none"}},
+		{"no check, Python admitted", nil, py200, ClassAgreeFull, []string{"read.none"}},
+	} {
+		r := compareWindowed(allowed, x.a, x.w)
+		if r.class != x.class || !has(r, x.windows...) || !r.decided || r.gate != PassKeyWindow {
+			t.Errorf("%s: %s %v, want %s %v", x.name, r.class, r.windows, x.class, x.windows)
+		}
+		if strings.HasPrefix(r.class, ClassPythonAnsweredGoPassed) && (r.rows || len(r.fields) != 0) {
+			t.Errorf("%s: a pass compared as an answer: %+v", x.name, r)
+		}
+	}
+	// A key without a window check: no window counts.
+	in, _ := baseInputs(t)
+	if r := compareWindowed(Decide(in), py200, nil); len(r.windows) != 0 {
+		t.Errorf("an uncapped key's window counts: %v", r.windows)
+	}
+}
+
+// TestTheShadowReadsTheWindowsOffTheRequestPath: the shadow makes the
+// decide path's read for an enforcing key it follows, within its own
+// ReadsPerSecond, and counts it; Python's answer reaches the enclave
+// unchanged. With no reader it reads nothing (read.none).
+func TestTheShadowReadsTheWindowsOffTheRequestPath(t *testing.T) {
+	f := authorizeGoldens(t)
+	_, admit, c := windowCase(t, 0)
+	v := admit.verdict
+	windows := &fakeWindows{read: func(context.Context) ([]keywindow.Row, error) {
+		return dailyRows(c.at(), 1_000_000, 0, 1), nil
+	}}
+	py := pythonsLegacyAnswer(t, f, c, false)
+	headers := []string{"RateLimit-Limit", strconv.FormatInt(v.Limit, 10), "RateLimit-Remaining",
+		strconv.FormatInt(v.Remaining, 10), "RateLimit-Reset", strconv.FormatInt(v.ResetSeconds, 10)}
+	h := newFullEdge(t, f, c, nil, func(cfg *DecideShadowConfig) { cfg.Windows = windows })
+	h.answer(answerWith(200, py, headers...))
+	if rec := h.send(t, c); rec.Code != http.StatusOK || !bytes.Equal(rec.Body.Bytes(), py) {
+		t.Fatalf("the enclave got %d", rec.Code)
+	}
+	got := h.edge.DecideShadowCounts()
+	calls := windows.seen()
+	if len(calls) != 1 || calls[0].keyHash != c.Facts.Key.Hash ||
+		got.Classes[ClassAgreeFull] != 1 || got.Windows["read.made"] != 1 || got.Windows["verdict.admit"] != 1 ||
+		got.Windows["window.agree"] != 1 || got.Decide[PassKeyWindow] != 1 {
+		t.Fatalf("reads %+v, counts %+v", calls, got)
+	}
+	// The limiter: with no token left the shadow does not read.
+	h.edge.full.windowLimiter.Lock()
+	h.edge.full.cfg.ReadsPerSecond, h.edge.full.windowLimiter.tokens = 1e-9, 0
+	h.edge.full.windowLimiter.Unlock()
+	h.send(t, c)
+	if len(windows.seen()) != 1 || h.edge.DecideShadowCounts().Windows["read.none"] != 1 {
+		t.Fatalf("read past the limiter: %d reads, %v", len(windows.seen()), h.edge.DecideShadowCounts().Windows)
+	}
+	h = newFullEdge(t, f, c, nil, nil)
+	h.answer(answerWith(200, py, headers...))
+	h.send(t, c)
+	if got := h.edge.DecideShadowCounts(); got.Windows["read.none"] != 1 || got.Classes[ClassAgreeFull] != 1 {
+		t.Fatalf("no reader: %+v", got)
+	}
+}
+
+// windowRefusal429 is Python's 429 for a window, with its RateLimit-* headers.
+func windowRefusal429(window string, limit, remaining, reset int64) pyAnswer {
+	return rateLimited(pyAnswer{status: 429, body: errorBody(429, windowRefusal,
+		"API key "+window+" spend limit exceeded; resets at 2026-10-20T00:00:00Z")}, limit, remaining, reset)
+}
+
+// TestAWindowRaceCandidateIsUnconfirmedUntilReRead (section 8.2 item 3): a
+// window refusal of a request Go read and would admit is a race candidate
+// only when the 429 names a window whose limit Go holds, with that limit,
+// and a RateLimit-Remaining below what Go's rows leave there; until a re-read
+// settles it, it is window_race_unconfirmed, which pages. Every other window
+// refusal is the would-admit outright.
+func TestAWindowRaceCandidateIsUnconfirmedUntilReRead(t *testing.T) {
+	allowed, admit, _ := windowCase(t, 400_000)
+	v := admit.verdict
+	if !v.Admit() || v.Remaining != 600_000 {
+		t.Fatalf("the verdict: %+v", v)
+	}
+	candidate := ClassWindowRaceUnconfirmed + ".429." + windowRefusal
+	would := ClassWouldAdmit + ".429." + windowRefusal
+	for _, x := range []struct {
+		name  string
+		a     pyAnswer
+		class string
+	}{
+		{"Python's remaining below Go's", windowRefusal429("daily", v.Limit, 0, v.ResetSeconds), candidate},
+		{"Python's remaining one below Go's", windowRefusal429("daily", v.Limit, v.Remaining-1, v.ResetSeconds),
+			candidate},
+		{"the same remaining", windowRefusal429("daily", v.Limit, v.Remaining, v.ResetSeconds), would},
+		{"more remaining than Go's", windowRefusal429("daily", v.Limit, v.Remaining+1, v.ResetSeconds), would},
+		{"another limit", windowRefusal429("daily", v.Limit+1, 0, v.ResetSeconds), would},
+		{"a window Go holds no limit for", windowRefusal429("weekly", v.Limit, 0, v.ResetSeconds), would},
+		{"no headers", pyAnswer{status: 429, body: windowRefusal429("daily", 0, 0, 0).body}, would},
+		{"another message", rateLimited(pyAnswer{status: 429, body: errorBody(429, windowRefusal, "slow down")},
+			v.Limit, 0, v.ResetSeconds), would},
+		{"a body not read", rateLimited(pyAnswer{status: 429, why: "bound"}, v.Limit, 0, v.ResetSeconds),
+			ClassWouldAdmit + ".429.unread"},
+	} {
+		r := compareWindowed(allowed, x.a, admit)
+		if r.class != x.class || (r.race != nil) != (x.class == candidate) {
+			t.Errorf("%s: %s (candidate %v), want %s", x.name, r.class, r.race != nil, x.class)
+		}
+	}
+}
+
+// raceShadow is a bare shadow for confirmRace and raceAlerts: windows reads
+// its rows, its clock is clock, alerts are taken.
+func raceShadow(t *testing.T, windows KeyWindowReader, clock func() time.Time) (*fullShadow, *alerts, *logLines) {
+	t.Helper()
+	a, logs := &alerts{}, &logLines{}
+	sh, err := newFullShadow(DecideShadowConfig{Cache: &recordingCache{}, Decides: &fakeDecides{},
+		Rows: &fakeRows{by: map[string]store.AuthorizationForCompare{}}, Windows: windows, ReadsPerSecond: 1e9,
+		Alert: a.raise}, logs.logf, clock, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sh, a, logs
+}
+
+// TestOnlyAReReadConfirmsAWindowRace (section 8.3): the candidate's re-read,
+// in its window at the request's instant, confirms the race when Go's fresh
+// remaining is at or below Python's (the settle Python saw has landed), and
+// refutes it when it is still above (Go's read misses what Python sees: the
+// would-admit, paged). No re-read (the limiter), a failed one, rows that do
+// not give the window, or a window reset since leave it unconfirmed.
+func TestOnlyAReReadConfirmsAWindowRace(t *testing.T) {
+	allowed, admit, c := windowCase(t, 400_000)
+	v := admit.verdict
+	at := admit.at
+	py := windowRefusal429("daily", v.Limit, 100_000, v.ResetSeconds)
+	failed := errors.New("synthetic re-read failure")
+	day, _, _ := keywindow.Floors(at)
+	for _, x := range []struct {
+		name    string
+		reread  func(context.Context) ([]keywindow.Row, error)
+		clock   time.Time
+		noToken bool
+		class   string
+		count   string
+	}{
+		{"the settle landed", func(context.Context) ([]keywindow.Row, error) {
+			return dailyRows(at, 1_000_000, 950_000, 1), nil
+		}, at, false, ClassWindowRace, "race.confirmed"},
+		{"Go's remaining at Python's", func(context.Context) ([]keywindow.Row, error) {
+			return dailyRows(at, 1_000_000, 900_000, 1), nil
+		}, at, false, ClassWindowRace, "race.confirmed"},
+		{"Go's remaining one above Python's", func(context.Context) ([]keywindow.Row, error) {
+			return dailyRows(at, 1_000_000, 899_999, 1), nil
+		}, at, false, ClassWouldAdmit, "race.refuted"},
+		{"the re-read sees the first read's rows", func(context.Context) ([]keywindow.Row, error) {
+			return dailyRows(at, 1_000_000, 400_000, 1), nil
+		}, at, false, ClassWouldAdmit, "race.refuted"},
+		{"the re-read failed", func(context.Context) ([]keywindow.Row, error) { return nil, failed }, at, false,
+			ClassWindowRaceUnconfirmed, "race.unconfirmed.unread"},
+		{"the re-read's rows are not the key's shards", func(context.Context) ([]keywindow.Row, error) {
+			return dailyRows(at, 1_000_000, 950_000, 2), nil
+		}, at, false, ClassWindowRaceUnconfirmed, "race.unconfirmed.rows"},
+		{"the window reset before the re-read", func(context.Context) ([]keywindow.Row, error) {
+			return dailyRows(at, 1_000_000, 950_000, 1), nil
+		}, day.Add(24 * time.Hour), false, ClassWindowRaceUnconfirmed, "race.unconfirmed.reset"},
+		{"the window resets a microsecond after the re-read", func(context.Context) ([]keywindow.Row, error) {
+			return dailyRows(at, 1_000_000, 950_000, 1), nil
+		}, day.Add(24*time.Hour - time.Microsecond), false, ClassWindowRace, "race.confirmed"},
+		{"the limiter refused the re-read", func(context.Context) ([]keywindow.Row, error) {
+			return dailyRows(at, 1_000_000, 950_000, 1), nil
+		}, at, true, ClassWindowRaceUnconfirmed, "race.unconfirmed.limiter"},
+	} {
+		windows := &fakeWindows{read: x.reread}
+		clock := x.clock
+		sh, _, _ := raceShadow(t, windows, func() time.Time { return clock })
+		if x.noToken {
+			sh.cfg.ReadsPerSecond, sh.windowLimiter.tokens = 1e-9, 0
+		}
+		r := compareWindowed(allowed, py, admit)
+		sh.confirmRace(allowed.ForShadow(), admit, &r)
+		calls := windows.seen()
+		if r.class != x.class+".429."+windowRefusal || !slices.Contains(r.windows, x.count) {
+			t.Errorf("%s: %s %v, want %s and %s", x.name, r.class, r.windows, x.class, x.count)
+		}
+		if (len(calls) == 1) == x.noToken || (len(calls) == 1 && calls[0].keyHash != c.Facts.Key.Hash) {
+			t.Errorf("%s: re-reads %+v", x.name, calls)
+		}
+		if r.race.first != 600_000 || r.race.python != 100_000 {
+			t.Errorf("%s: the race's figures %+v", x.name, *r.race)
+		}
+	}
+}
+
+// TestAPersistentUndercountPagesAndARealRaceDoesNot, over the edge: a Go
+// read that undercounts the same way on every request (here it never sees
+// 400,000 of the day Python sees) is refuted by its own re-read, 50 times
+// out of 50, and pages; a settle that lands between the reads, which the
+// re-read sees, is a confirmed race, counted and traced, never paged; a
+// re-read that fails pages as unconfirmed.
+func TestAPersistentUndercountPagesAndARealRaceDoesNot(t *testing.T) {
+	f := authorizeGoldens(t)
+	_, admit, c := windowCase(t, 400_000)
+	v := admit.verdict
+	at := c.at()
+	respond := answerWith(429, errorBody(429, windowRefusal,
+		"API key daily spend limit exceeded; resets at 2026-10-20T00:00:00Z"), "RateLimit-Limit", "1000000",
+		"RateLimit-Remaining", "100000", "RateLimit-Reset", strconv.FormatInt(v.ResetSeconds, 10))
+	failed := errors.New("synthetic re-read failure")
+	for _, x := range []struct {
+		name     string
+		requests int
+		// first and then are the request's two reads.
+		first, then func() ([]keywindow.Row, error)
+		class       string
+		paged       bool
+	}{
+		{"a persistent undercount", 50,
+			func() ([]keywindow.Row, error) { return dailyRows(at, 1_000_000, 500_000, 1), nil },
+			func() ([]keywindow.Row, error) { return dailyRows(at, 1_000_000, 500_000, 1), nil },
+			ClassWouldAdmit, true},
+		{"a real race", 5,
+			func() ([]keywindow.Row, error) { return dailyRows(at, 1_000_000, 400_000, 1), nil },
+			func() ([]keywindow.Row, error) { return dailyRows(at, 1_000_000, 900_000, 1), nil },
+			ClassWindowRace, false},
+		{"the re-read fails", 3,
+			func() ([]keywindow.Row, error) { return dailyRows(at, 1_000_000, 400_000, 1), nil },
+			func() ([]keywindow.Row, error) { return nil, failed },
+			ClassWindowRaceUnconfirmed, true},
+	} {
+		var n atomic.Int64
+		windows := &fakeWindows{read: func(context.Context) ([]keywindow.Row, error) {
+			if n.Add(1)%2 == 1 {
+				return x.first()
+			}
+			return x.then()
+		}}
+		a := &alerts{}
+		h := newFullEdge(t, f, c, nil, func(cfg *DecideShadowConfig) { cfg.Windows, cfg.Alert = windows, a.raise })
+		h.answer(respond)
+		for range x.requests {
+			h.send(t, c)
+		}
+		got := h.edge.DecideShadowCounts()
+		class := x.class + ".429." + windowRefusal
+		taken := a.taken()
+		paged := len(taken[AlertWouldAdmit])
+		// Five races of five reads in the hour: the backstop, not the page.
+		if backstop := len(taken[AlertWindowRace]) > 0; backstop != (x.class == ClassWindowRace) {
+			t.Errorf("%s: race alerts %q", x.name, taken[AlertWindowRace])
+		}
+		if got.Classes[class] != x.requests || len(got.Classes) != 1 || (paged > 0) != x.paged ||
+			n.Load() != int64(2*x.requests) {
+			t.Errorf("%s: classes %v, %d pages, %d reads", x.name, got.Classes, paged, n.Load())
+		}
+		// Each send is its own period (WaitDecideShadow logs it), so no
+		// page is lost to the period's bound.
+		if x.paged && paged != x.requests {
+			t.Errorf("%s: %d pages for %d would-admits", x.name, paged, x.requests)
+		}
+		if x.class == ClassWindowRace && !h.logs.has("fastpath edge decide shadow window race: class="+class+
+			" key="+c.Facts.Key.Hash[:min(len(c.Facts.Key.Hash), keyHashPrefixLen)]+
+			" window=daily go=600000 reread=100000 python=100000 gap=500000 ") {
+			t.Errorf("%s: no race line traces it: %q", x.name, h.logs.all())
+		}
+	}
+}
+
+// TestTheRaceRateAndAKeysRepeatsAlert (section 8.3): AlertWindowRace, once a
+// period, when the last hour's confirmed races pass RaceRateShare of its
+// window reads (at least RaceRateMin of them), or one key races more than
+// RaceKeyRepeats times; periods and races older than an hour no longer
+// count.
+func TestTheRaceRateAndAKeysRepeatsAlert(t *testing.T) {
+	race := func(key string) fullResult {
+		return fullResult{class: ClassWindowRace + ".429." + windowRefusal, windows: []string{"read.made"},
+			race: &raceCandidate{keyHashPrefix: key}}
+	}
+	read := fullResult{class: ClassAgreeFull, windows: []string{"read.made"}}
+	now := time.Now()
+	for _, x := range []struct {
+		name         string
+		reads, races int
+		keys         int
+		alert        string
+	}{
+		{"3 races in 5,000 reads", 5000, 3, 1, "3 window races of 5000 window reads"},
+		{"3 races in 7,000 reads", 7000, 3, 1, ""},
+		{"2 races in 100 reads", 100, 2, 1, ""},
+		{"one key 4 times", 1_000_000, 4, 4, "raced 4 times"},
+		{"one key 3 times", 1_000_000, 3, 3, ""},
+	} {
+		sh, a, _ := raceShadow(t, nil, time.Now)
+		for i := range x.races {
+			sh.races.count(race(fmt.Sprintf("kh%06d", i%max(1, x.races/x.keys))), now)
+		}
+		for range x.reads - x.races {
+			sh.races.count(read, now)
+		}
+		sh.raceAlerts(now)
+		got := a.taken()[AlertWindowRace]
+		if (x.alert == "") != (len(got) == 0) || (len(got) > 0 && !strings.Contains(got[0], x.alert)) {
+			t.Errorf("%s: alerts %q", x.name, got)
+		}
+	}
+	// The hour rolls: a period over an hour old no longer counts.
+	sh, a, _ := raceShadow(t, nil, time.Now)
+	hourAgo := now.Add(-61 * time.Minute)
+	for range 4 {
+		sh.races.count(race("kh000000"), hourAgo)
+	}
+	sh.raceAlerts(hourAgo)
+	if got := a.taken()[AlertWindowRace]; len(got) != 1 || !strings.Contains(got[0], "raced 4 times") {
+		t.Fatalf("4 races of one key in 4 reads: %q", got)
+	}
+	sh.races.count(read, now)
+	sh.raceAlerts(now)
+	if got := a.taken()[AlertWindowRace]; len(got) != 0 {
+		t.Fatalf("the hour-old races still count: %q", got)
 	}
 }

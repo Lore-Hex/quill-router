@@ -6,7 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"reflect"
 	"regexp"
@@ -20,6 +22,7 @@ import (
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/gwauth"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/gwstate"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/keywindow"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/pyjson"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store"
 )
@@ -73,6 +76,19 @@ const (
 	// (Decision.Windows, not read): neither an agreement nor a would-admit
 	// (docs/design/fast-admission-e2-key-windows.md section 8.2).
 	ClassWindowUnchecked = "window_unchecked"
+	// ClassWindowRace: Go read the key's windows and would have admitted,
+	// Python refused a window it read more spent (its 429 names a window
+	// whose limit Go holds, with RateLimit-Remaining below what Go's rows
+	// leave there), and Go's own re-read after Python's answer has caught up
+	// with Python's remaining (confirmRace): a settle landed between the two
+	// first reads, the race Python's own instances have with each other
+	// (section 8.3, at most 0.05% of compares). Counted, never paged one by
+	// one; AlertWindowRace watches its rate and its repeats per key.
+	ClassWindowRace = "window_race"
+	// ClassWindowRaceUnconfirmed: a race candidate no re-read settled (the
+	// limiter, a failed or late re-read, a window reset since). It pages as
+	// a would-admit does, since it cannot be told from a defect of Go's read.
+	ClassWindowRaceUnconfirmed = "window_race_unconfirmed"
 )
 
 // windowRefusal is the error type of Python's 429 for a spend window
@@ -135,6 +151,10 @@ type DecideShadowConfig struct {
 	Cache   KeyCache
 	Decides DecideReader
 	Rows    AuthorizationReader
+	// Windows reads an enforcing windowed key's tr_key_limit rows for the
+	// shadow's window check (key-windows section 8.2), within ReadsPerSecond
+	// of its own; nil checks none.
+	Windows KeyWindowReader
 	// Jobs bounds the requests followed at once; SampleEvery and
 	// ReadsPerSecond the row read-backs; DecideEvery the decide copy's
 	// refresh; Wait how long a request waits for Python's answer.
@@ -178,12 +198,22 @@ type fullShadow struct {
 		tokens float64
 		at     time.Time
 	}
+	// windowLimiter bounds the window reads as limiter the row read-backs.
+	windowLimiter struct {
+		sync.Mutex
+		tokens float64
+		at     time.Time
+	}
 
 	mu       sync.Mutex
 	tallies  map[string]*fullTally
 	totals   *fullTally
 	critical int
 	differs  int
+	// raceLogs bounds the race lines a period logs; races is the rolling
+	// hour AlertWindowRace reads.
+	raceLogs int
+	races    raceWatch
 	// cacheAt is the cache's counts at the last line, which logs the
 	// period's: the cache keeps running totals.
 	cacheAt gwstate.Counters
@@ -196,6 +226,8 @@ type fullShadow struct {
 type fullTally struct {
 	classes, fields, rows, decide, cohort map[string]int
 	readBack                              int
+	// windows are the window checks' counts (compareWindowed).
+	windows map[string]int
 	// async are the async-v1 counts (§4.4 of
 	// docs/design/fast-admission-e2-g15-async.md), by the line's map name
 	// (asyncCounts).
@@ -227,7 +259,7 @@ var asyncCounts = []string{asyncSeen, asyncCompared, asyncFields, asyncShape, as
 
 func newFullTally() *fullTally {
 	t := &fullTally{classes: map[string]int{}, fields: map[string]int{}, rows: map[string]int{}, decide: map[string]int{},
-		cohort: map[string]int{}, async: map[string]map[string]int{}}
+		cohort: map[string]int{}, windows: map[string]int{}, async: map[string]map[string]int{}}
 	for _, name := range asyncCounts {
 		t.async[name] = map[string]int{}
 	}
@@ -237,7 +269,7 @@ func newFullTally() *fullTally {
 func (t *fullTally) clone() *fullTally {
 	c := &fullTally{classes: clonedCounts(t.classes), fields: clonedCounts(t.fields), rows: clonedCounts(t.rows),
 		decide: clonedCounts(t.decide), cohort: clonedCounts(t.cohort), readBack: t.readBack,
-		async: map[string]map[string]int{}}
+		windows: clonedCounts(t.windows), async: map[string]map[string]int{}}
 	for name, m := range t.async {
 		c.async[name] = clonedCounts(m)
 	}
@@ -276,6 +308,7 @@ func newFullShadow(cfg DecideShadowConfig, logf func(string, ...any), clock func
 		decides: newDecideCopy(cfg.Decides, cfg.DecideEvery, clock, logf), jobs: make(chan struct{}, cfg.Jobs),
 		budget: maxShadowBytes, tallies: map[string]*fullTally{}, totals: newFullTally()}
 	sh.limiter.tokens = cfg.ReadsPerSecond
+	sh.windowLimiter.tokens = cfg.ReadsPerSecond
 	return sh, nil
 }
 
@@ -296,13 +329,16 @@ func (sh *fullShadow) release(n int64) {
 // pyAnswer is Python's answer as the shadow read it: its status (0 when
 // none came), its bytes as JSON (decoded from gzip by follow), and, when
 // they were not read through, why. latency is from the request's arrival
-// to the answer's end.
+// to the answer's end. rateLimit are its RateLimit-Limit, -Remaining and
+// -Reset headers, Python's window decision in its own words (key-windows
+// section 8.2), "" where absent.
 type pyAnswer struct {
-	status   int
-	encoding string
-	body     []byte
-	why      string
-	latency  time.Duration
+	status    int
+	encoding  string
+	body      []byte
+	why       string
+	latency   time.Duration
+	rateLimit [3]string
 }
 
 // fullJob is one followed request: what the pipeline reads, held at its
@@ -387,6 +423,8 @@ func (e *Edge) beginFull(r *http.Request, at time.Time, body []byte, boot BootSe
 // the proxy's goroutine. A job follow has already given up is not tapped.
 func (sh *fullShadow) tapFull(resp *http.Response, job *fullJob) {
 	status, encoding := resp.StatusCode, resp.Header.Get("Content-Encoding")
+	rateLimit := [3]string{resp.Header.Get("RateLimit-Limit"), resp.Header.Get("RateLimit-Remaining"),
+		resp.Header.Get("RateLimit-Reset")}
 	job.mu.Lock()
 	defer job.mu.Unlock()
 	if job.abandoned {
@@ -394,7 +432,8 @@ func (sh *fullShadow) tapFull(resp *http.Response, job *fullJob) {
 	}
 	job.tap = &tap{rc: resp.Body, sh: sh, limit: maxShadowResponse, length: resp.ContentLength, onClose: func(t *tap) {
 		raw, complete, spent := t.bytes()
-		a := pyAnswer{status: status, encoding: encoding, body: raw, latency: time.Since(job.arrived)}
+		a := pyAnswer{status: status, encoding: encoding, body: raw, latency: time.Since(job.arrived),
+			rateLimit: rateLimit}
 		switch {
 		case spent:
 			a.why, a.body = "budget", nil
@@ -449,6 +488,9 @@ func (sh *fullShadow) follow(job *fullJob) {
 	defer sh.wg.Done()
 	defer func() { <-sh.jobs }()
 	decided := sh.safeDecide(job.in)
+	// An enforcing windowed key's window check, at about the instant
+	// Python makes its own, before its answer is awaited.
+	windows := sh.checkWindows(decided, job.in.Request.At)
 	var a pyAnswer
 	wait := time.NewTimer(sh.cfg.Wait)
 	select {
@@ -466,7 +508,10 @@ func (sh *fullShadow) follow(job *fullJob) {
 			a.why = why
 		}
 	}
-	r := sh.safeCompare(decided, a)
+	r := sh.safeCompare(decided, a, windows)
+	if r.race != nil {
+		sh.confirmRace(decided.ForShadow(), windows, &r)
+	}
 	sh.evict(decided, a, job.in.Request.Body)
 	if r.rows && sh.sample() {
 		d := decided.ForShadow()
@@ -488,20 +533,21 @@ func (sh *fullShadow) safeDecide(in DecideInputs) (d Decided) {
 	return Decide(in)
 }
 
-func (sh *fullShadow) safeCompare(d Decided, a pyAnswer) (r fullResult) {
+func (sh *fullShadow) safeCompare(d Decided, a pyAnswer, w *windowRead) (r fullResult) {
 	defer func() {
 		if recover() != nil {
 			r = fullResult{class: ClassUnread + ".compare_failed"}
 		}
 	}()
-	return compareFull(d, a)
+	return compareWindowed(d, a, w)
 }
 
 // fullResult is one comparison: its class, the fields that differ, whether
 // Python answered from a read-back, the decide row's gate (when Go would
 // decide), whether the rows are worth reading back, Python's ids for that
 // read, and, for a differ.affinity_warm, Go's decision in Python's warm
-// order, whose rows that read compares.
+// order, whose rows that read compares; windows are the window check's
+// counts (compareWindowed).
 type fullResult struct {
 	class    string
 	fields   []string
@@ -513,6 +559,8 @@ type fullResult struct {
 	rowsOf   string
 	warm     *Decision
 	async    asyncResult
+	windows  []string
+	race     *raceCandidate
 }
 
 // asyncResult is one followed request's async-v1 counts (asyncCounts): its
@@ -1337,6 +1385,9 @@ func (sh *fullShadow) record(digest string, r fullResult) {
 		if r.readBack {
 			tally.readBack++
 		}
+		for _, w := range r.windows {
+			tally.windows[w]++
+		}
 		if a := r.async; a.pop != "" {
 			tally.async[asyncSeen][a.pop]++
 			if a.shape != "" {
@@ -1353,12 +1404,20 @@ func (sh *fullShadow) record(digest string, r fullResult) {
 			}
 		}
 	}
-	if strings.HasPrefix(r.class, ClassWouldAdmit+".") && sh.critical < maxCriticalLogs {
+	if sh.races.count(r, time.Now()) && sh.raceLogs < maxDifferLogs {
+		sh.raceLogs++
+		c := r.race
+		sh.logf("fastpath edge decide shadow window race: class=%s key=%s window=%s go=%d reread=%d python=%d gap=%d %s",
+			r.class, c.keyHashPrefix, c.window, c.first, c.reread, c.python, c.first-c.python, digest)
+	}
+	pages := strings.HasPrefix(r.class, ClassWouldAdmit+".") || strings.HasPrefix(r.class, ClassWindowRaceUnconfirmed+".")
+	if pages && sh.critical < maxCriticalLogs {
 		sh.critical++
 		if sh.cfg.Alert != nil {
-			sh.cfg.Alert(AlertWouldAdmit, digest, "the edge would have answered an authorize Python refused: "+r.class)
+			sh.cfg.Alert(AlertWouldAdmit, digest, "the edge would have answered an authorize Python refused: "+r.class+
+				windowNote(r.windows))
 		} else {
-			sh.logf("fastpath edge decide shadow CRITICAL: class=%s %s", r.class, digest)
+			sh.logf("fastpath edge decide shadow CRITICAL: class=%s%s %s", r.class, windowNote(r.windows), digest)
 		}
 	}
 	if len(r.fields) > 0 && sh.differs < maxDifferLogs {
@@ -1412,9 +1471,9 @@ func (sh *fullShadow) flush() {
 			}
 		}
 		line := "fastpath edge decide shadow: %s agree_full=%d differ=%d would_admit_python_refused=%d read_back=%d " +
-			"classes=%s fields=%s rows=%s decide=%s cohort=%s"
+			"classes=%s fields=%s rows=%s decide=%s cohort=%s windows=%s"
 		args := []any{d, t.classes[ClassAgreeFull], t.classes[ClassDifferAny], would, t.readBack, jsonOf(t.classes),
-			jsonOf(t.fields), jsonOf(t.rows), jsonOf(t.decide), jsonOf(t.cohort)}
+			jsonOf(t.fields), jsonOf(t.rows), jsonOf(t.decide), jsonOf(t.cohort), jsonOf(t.windows)}
 		for _, name := range asyncCounts {
 			line += " " + name + "=%s"
 			args = append(args, jsonOf(t.async[name]))
@@ -1432,7 +1491,8 @@ func (sh *fullShadow) flush() {
 		args = append(args, n.Unrefreshed-was.Unrefreshed, n.Dropped-was.Dropped, n.ReadFailures-was.ReadFailures)
 	}
 	sh.logf(line, args...)
-	sh.tallies, sh.critical, sh.differs = map[string]*fullTally{}, 0, 0
+	sh.raceAlerts(time.Now())
+	sh.tallies, sh.critical, sh.differs, sh.raceLogs = map[string]*fullTally{}, 0, 0, 0
 }
 
 // DecideShadowCounts are the full-response shadow's counts since the edge
@@ -1441,12 +1501,13 @@ func (sh *fullShadow) flush() {
 // the answers Python made from a read-back, the requests not followed
 // (dropped) and the cache evictions Python's refusals made. Async are the
 // async-v1 counts by the line's map name (async_seen, async_compared,
-// async_fields, async_shape, async_python_admitted).
+// async_fields, async_shape, async_python_admitted), Windows the window
+// checks' (compareWindowed).
 type DecideShadowCounts struct {
-	Classes, Fields, Rows, Decide, Cohort map[string]int
-	Async                                 map[string]map[string]int
-	ReadBack                              int
-	Dropped, Evictions                    int64
+	Classes, Fields, Rows, Decide, Cohort, Windows map[string]int
+	Async                                          map[string]map[string]int
+	ReadBack                                       int
+	Dropped, Evictions                             int64
 }
 
 // DecideShadowCounts are the counts now; zero with the shadow off.
@@ -1459,7 +1520,8 @@ func (e *Edge) DecideShadowCounts() DecideShadowCounts {
 	t := sh.totals.clone()
 	sh.mu.Unlock()
 	return DecideShadowCounts{Classes: t.classes, Fields: t.fields, Rows: t.rows, Decide: t.decide, Cohort: t.cohort,
-		Async: t.async, ReadBack: t.readBack, Dropped: sh.dropped.Load(), Evictions: sh.evictions.Load()}
+		Windows: t.windows,
+		Async:   t.async, ReadBack: t.readBack, Dropped: sh.dropped.Load(), Evictions: sh.evictions.Load()}
 }
 
 // DecideShadowOn reports the full-response shadow configured.
@@ -1477,4 +1539,367 @@ func (e *Edge) WaitDecideShadow() {
 		e.full.wg.Wait()
 		e.full.flush()
 	}
+}
+
+// checkWindows is the shadow's window check of a decision for an enforcing
+// windowed key (section 8.2 item 1): the decide path's read and evaluation,
+// off the request path, within ReadsPerSecond of its own. nil when the
+// decision needs none, no reader is configured, or the limiter refuses
+// (the comparison is then window_unchecked, as before the read).
+func (sh *fullShadow) checkWindows(d Decided, at time.Time) *windowRead {
+	dec := d.ForShadow()
+	if dec == nil || dec.Windows == nil || sh.cfg.Windows == nil || !sh.windowSample() {
+		return nil
+	}
+	w := readWindows(context.Background(), sh.cfg.Windows, dec, at, time.Now().Add(WindowReadBudget))
+	return &w
+}
+
+// windowSample is one window read within ReadsPerSecond (a bucket of that
+// many tokens refilled at that rate), apart from the row read-backs'.
+func (sh *fullShadow) windowSample() bool {
+	l := &sh.windowLimiter
+	l.Lock()
+	defer l.Unlock()
+	now := time.Now()
+	if !l.at.IsZero() {
+		l.tokens = min(sh.cfg.ReadsPerSecond, l.tokens+now.Sub(l.at).Seconds()*sh.cfg.ReadsPerSecond)
+	}
+	l.at = now
+	if l.tokens < 1 {
+		return false
+	}
+	l.tokens--
+	return true
+}
+
+// compareWindowed is compareFull with the window check's verdict, when the
+// shadow made one (section 8.2 item 3). Go would admit: Python's 200 is
+// compared as any, and its window refusal, no longer window_unchecked, is
+// window_race when Python's evidence shows a settle between the two reads
+// (windowRace), else the critical would-admit. Go would pass (any
+// key_window.* reason): Python's 200 is python_answered_go_passed by that
+// reason (benign), its refusal passed by it. Either way the counts add the
+// read, its latency, the verdict and how Python's RateLimit-* headers
+// compare with Go's limit, remaining and reset (windowFields).
+func compareWindowed(d Decided, a pyAnswer, w *windowRead) fullResult {
+	r := compareFull(d, a)
+	if w == nil {
+		if dec := d.ForShadow(); dec != nil && dec.Windows != nil {
+			r.windows = []string{"read.none"}
+		}
+		return r
+	}
+	v := w.verdict
+	r.windows = append([]string{"read.made", windowLatency(w.took), windowOutcome(v)}, windowFields(v, a)...)
+	unchecked := strings.HasPrefix(r.class, ClassWindowUnchecked+".")
+	switch {
+	case v.Admit() && unchecked:
+		class := ClassWouldAdmit
+		if r.race = windowRace(d.ForShadow(), w, a); r.race != nil {
+			// Unconfirmed until the re-read settles it (confirmRace).
+			class, r.race.unconfirmed = ClassWindowRaceUnconfirmed, "unchecked"
+		}
+		r.class = class + strings.TrimPrefix(r.class, ClassWindowUnchecked)
+	case v.Admit():
+	case unchecked || strings.HasPrefix(r.class, ClassWouldAdmit+"."):
+		r.class = ClassGoPassed + "." + v.Pass
+	case a.status == http.StatusOK:
+		r = fullResult{class: ClassPythonAnsweredGoPassed + "." + v.Pass, decided: true, gate: r.gate,
+			async: r.async, windows: r.windows}
+	}
+	return r
+}
+
+// windowRefused reads the window of Python's 429 from its message
+// (spend_windows.spend_window_limit_error_message), "" for another.
+var windowRefused = regexp.MustCompile(`^API key (daily|weekly|monthly) spend limit exceeded; `)
+
+// windowFields compares Go's window decision (when it computed Python's)
+// with Python's, read from its 200's or 429's RateLimit-* headers and, on a
+// 429, its message's window: window.agree, or window.differ.limit,
+// window.differ.remaining.<size of the difference>, window.differ.reset
+// (window.reset_1s for one second, the two clocks), window.differ.window;
+// window.python_none when Python's answer carries no decision. Where the
+// two read the same limit and remaining, window.same_inputs.agree or
+// .disagree says whether the verdicts agree (section 8.3: one disagreement
+// is a parity bug).
+func windowFields(v keywindow.Verdict, a pyAnswer) []string {
+	if !v.Decided || (a.status != http.StatusOK && a.status != http.StatusTooManyRequests) {
+		return nil
+	}
+	var py [3]int64
+	for i, h := range a.rateLimit {
+		n, err := strconv.ParseInt(h, 10, 64)
+		if err != nil || len(h) > 20 {
+			return []string{"window.python_none"}
+		}
+		py[i] = n
+	}
+	var out []string
+	if py[0] != v.Limit {
+		out = append(out, "window.differ.limit")
+	}
+	if d := py[1] - v.Remaining; d != 0 {
+		size := "gt_1000000"
+		switch {
+		case -1000 <= d && d <= 1000:
+			size = "le_1000"
+		case -1_000_000 <= d && d <= 1_000_000:
+			size = "le_1000000"
+		}
+		out = append(out, "window.differ.remaining."+size)
+	}
+	switch d := py[2] - v.ResetSeconds; {
+	case d == 1 || d == -1:
+		out = append(out, "window.reset_1s")
+	case d != 0:
+		out = append(out, "window.differ.reset")
+	}
+	if a.status == http.StatusTooManyRequests {
+		if m := windowRefused.FindStringSubmatch(errorOf(a).message); m == nil || m[1] != string(v.Window) {
+			out = append(out, "window.differ.window")
+		}
+	}
+	if py[0] == v.Limit && py[1] == v.Remaining {
+		if (a.status == http.StatusOK) == v.Allowed {
+			out = append(out, "window.same_inputs.agree")
+		} else {
+			out = append(out, "window.same_inputs.disagree")
+		}
+	}
+	if len(out) == 0 || (len(out) == 1 && out[0] == "window.same_inputs.agree") {
+		out = append(out, "window.agree")
+	}
+	return out
+}
+
+// windowNote is the window counts a critical line adds, "" for none.
+func windowNote(windows []string) string {
+	if len(windows) == 0 {
+		return ""
+	}
+	return " windows=" + strings.Join(windows, ",")
+}
+
+// raceCandidate is Python's window refusal of a request Go read and would
+// admit, whose own evidence says Python's read saw more spent than Go's
+// (windowRace): the window, Go's remaining there from its first read,
+// Python's (RateLimit-Remaining), Go's from the re-read that confirms or
+// refutes it (confirmRace; -1 before), why it stayed unconfirmed, and the
+// key hash's first characters, for the line that traces it.
+type raceCandidate struct {
+	window          keywindow.Window
+	first, python   int64
+	reread          int64
+	unconfirmed     string
+	keyHashPrefix   string
+	refuted, landed bool
+}
+
+// keyHashPrefixLen is how much of a key's hash a race's line carries: enough
+// to tell one key's repeats, not the hash.
+const keyHashPrefixLen = 8
+
+// windowRace is Python's window refusal of a request Go read and would admit
+// as a race candidate, or nil: the 429's message names a window Go holds a
+// limit for, its RateLimit-Limit is that limit, and its RateLimit-Remaining
+// is below the remaining Go's rows leave in that window at the request's
+// instant. That alone proves nothing (a refusal of what Go admits always has
+// Python's remaining below Go's, a Go defect too), so the candidate pages
+// until a re-read confirms it (confirmRace).
+func windowRace(dec *Decision, w *windowRead, a pyAnswer) *raceCandidate {
+	m := windowRefused.FindStringSubmatch(errorOf(a).message)
+	if m == nil || dec == nil || dec.Windows == nil {
+		return nil
+	}
+	window := keywindow.Window(m[1])
+	limit := dec.Windows.Limits.Get(window)
+	if limit == nil {
+		return nil
+	}
+	pyLimit, err1 := strconv.ParseInt(a.rateLimit[0], 10, 64)
+	pyRemaining, err2 := strconv.ParseInt(a.rateLimit[1], 10, 64)
+	if err1 != nil || err2 != nil || pyLimit != *limit {
+		return nil
+	}
+	ours, ok := windowRemaining(dec, window, w.rows, w.at)
+	if !ok || pyRemaining >= ours {
+		return nil
+	}
+	prefix := dec.KeyHash
+	if len(prefix) > keyHashPrefixLen {
+		prefix = prefix[:keyHashPrefixLen]
+	}
+	return &raceCandidate{window: window, first: ours, python: pyRemaining, reread: -1, keyHashPrefix: prefix}
+}
+
+// windowRemaining is what rows leave in one window of the decision's key at
+// at: Evaluate over that window's limit alone (the other windows' mirrors
+// make it a drift pass, which changes no figure). ok is false when the rows
+// do not give it (not exactly the key's shards, an overflow).
+func windowRemaining(dec *Decision, window keywindow.Window, rows []keywindow.Row, at time.Time) (int64, bool) {
+	limit := dec.Windows.Limits.Get(window)
+	if limit == nil {
+		return 0, false
+	}
+	var one keywindow.Limits
+	switch window {
+	case keywindow.Daily:
+		one.Daily = limit
+	case keywindow.Weekly:
+		one.Weekly = limit
+	default:
+		one.Monthly = limit
+	}
+	v := keywindow.Evaluate(one, dec.Windows.Shards, rows, dec.Estimate, at)
+	return v.Remaining, v.Decided && v.Window == window
+}
+
+// confirmRace settles a race candidate, after Python's answer, with one more
+// strong read of the key's rows (within the window limiter, at most
+// WindowReadBudget), evaluated in the candidate's window at the request's
+// instant. Usage only grows inside a window, so a settle that landed
+// between the two first reads shows in the re-read: Go's fresh remaining at
+// or below Python's confirms the race (ClassWindowRace, counted, never
+// paged). Still above Python's, Go's read missed what Python saw: a defect,
+// the critical would-admit. No re-read (the limiter, a failed or late read,
+// rows that do not give the window) or a window that has reset since (its
+// usage is another window's now) leaves it unconfirmed
+// (ClassWindowRaceUnconfirmed), which pages as a would-admit does: it
+// cannot be told from a defect.
+func (sh *fullShadow) confirmRace(dec *Decision, w *windowRead, r *fullResult) {
+	c := r.race
+	if c == nil {
+		return
+	}
+	suffix := strings.TrimPrefix(r.class, ClassWindowRaceUnconfirmed)
+	switch {
+	case sh.cfg.Windows == nil || !sh.windowSample():
+		c.unconfirmed = "limiter"
+	default:
+		again := readWindows(context.Background(), sh.cfg.Windows, dec, w.at, time.Now().Add(WindowReadBudget))
+		rem, ok := windowRemaining(dec, c.window, again.rows, w.at)
+		switch {
+		case again.verdict.Pass == keywindow.PassUnread:
+			c.unconfirmed = "unread"
+		case !sh.clock().Before(keywindow.ResetsAt(c.window, w.at)):
+			c.unconfirmed = "reset"
+		case !ok:
+			c.unconfirmed = "rows"
+		default:
+			c.reread = rem
+			c.landed = rem <= c.python
+			c.refuted = !c.landed
+		}
+	}
+	switch {
+	case c.landed:
+		r.class = ClassWindowRace + suffix
+		r.windows = append(r.windows, "race.confirmed")
+	case c.refuted:
+		r.class = ClassWouldAdmit + suffix
+		r.windows = append(r.windows, "race.refuted")
+	default:
+		r.windows = append(r.windows, "race.unconfirmed."+c.unconfirmed)
+	}
+}
+
+// AlertWindowRace is the alert kind of window races past what a race
+// explains (section 8.3): over the last hour, confirmed races
+// (ClassWindowRace) above RaceRateShare of the window reads the shadow made
+// (at least RaceRateMin of them), or one key raced more than RaceKeyRepeats
+// times. Not the critical page each would-admit is: each race was confirmed
+// by a re-read, so this is a rate to explain (a hot key, a settle path
+// slower than usual), not a refusal Go would have missed.
+const AlertWindowRace = "edge_window_race"
+
+// The rolling hour of AlertWindowRace.
+const (
+	RaceRateShare  = 0.0005
+	RaceRateMin    = 3
+	RaceKeyRepeats = 3
+	raceWindow     = time.Hour
+	// maxRaceKeys bounds the races per key the hour remembers.
+	maxRaceKeys = 10_000
+)
+
+// raceWatch is the rolling hour AlertWindowRace reads: each past period's
+// window reads and confirmed races, this period's, and each confirmed race's
+// key-hash prefix and time. Held under the shadow's mu.
+type raceWatch struct {
+	periods      []racePeriod
+	reads, races int
+	keys         []raceKey
+}
+
+type racePeriod struct {
+	at           time.Time
+	reads, races int
+}
+
+type raceKey struct {
+	at  time.Time
+	key string
+}
+
+// count adds a comparison at at: a window read made, a confirmed race. It reports
+// whether the comparison was a race candidate at all (confirmed, refuted or
+// unconfirmed), which the race line traces.
+func (w *raceWatch) count(r fullResult, at time.Time) bool {
+	if slices.Contains(r.windows, "read.made") {
+		w.reads++
+	}
+	if r.race == nil {
+		return false
+	}
+	if strings.HasPrefix(r.class, ClassWindowRace+".") {
+		w.races++
+		if len(w.keys) < maxRaceKeys {
+			w.keys = append(w.keys, raceKey{at, r.race.keyHashPrefix})
+		}
+	}
+	return true
+}
+
+// raceAlerts closes the period at now and raises AlertWindowRace for the hour
+// to now: its race rate, and each key past its repeats.
+func (sh *fullShadow) raceAlerts(now time.Time) {
+	w := &sh.races
+	w.periods = append(w.periods, racePeriod{now, w.reads, w.races})
+	w.reads, w.races = 0, 0
+	since := now.Add(-raceWindow)
+	for len(w.periods) > 0 && !w.periods[0].at.After(since) {
+		w.periods = w.periods[1:]
+	}
+	for len(w.keys) > 0 && !w.keys[0].at.After(since) {
+		w.keys = w.keys[1:]
+	}
+	reads, races := 0, 0
+	for _, p := range w.periods {
+		reads, races = reads+p.reads, races+p.races
+	}
+	var what []string
+	if races >= RaceRateMin && float64(races) > RaceRateShare*float64(reads) {
+		what = append(what, fmt.Sprintf("%d window races of %d window reads in the last hour, above %.2f%%", races,
+			reads, RaceRateShare*100))
+	}
+	perKey := map[string]int{}
+	for _, k := range w.keys {
+		perKey[k.key]++
+	}
+	for _, key := range slices.Sorted(maps.Keys(perKey)) {
+		if perKey[key] > RaceKeyRepeats {
+			what = append(what, fmt.Sprintf("key %s raced %d times in the last hour", key, perKey[key]))
+		}
+	}
+	if len(what) == 0 {
+		return
+	}
+	message := "the edge's window checks raced Python's past what a race explains: " + strings.Join(what, "; ")
+	if sh.cfg.Alert != nil {
+		sh.cfg.Alert(AlertWindowRace, "edge decide shadow", message)
+		return
+	}
+	sh.logf("fastpath edge decide shadow ALERT %s: %s", AlertWindowRace, message)
 }

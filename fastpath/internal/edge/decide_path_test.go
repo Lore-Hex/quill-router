@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"errors"
 	"go/ast"
 	"go/parser"
 	gotoken "go/token"
@@ -23,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"cloud.google.com/go/spanner"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -901,9 +903,9 @@ func TestSparseUnavailableAnswersAreSustained(t *testing.T) {
 // TestAnEnforcingWindowedKeyIsNeverAdmittedUnread (docs/design/
 // fast-admission-e2-key-windows.md section 4.2): under every mode, enforce
 // included, a key whose windows Python's authorize enforces passes
-// (key_window.unread) without asking the owner, while its windows are not
-// read; an alert-only key the mode covers is answered as an uncapped one,
-// and under off it passes with its reason.
+// (key_window.unread) without asking the owner when the decide path has no
+// window reader; an alert-only key the mode covers is answered as an
+// uncapped one, and under off it passes with its reason.
 func TestAnEnforcingWindowedKeyIsNeverAdmittedUnread(t *testing.T) {
 	f := authorizeGoldens(t)
 	base := authorizeCaseNamed(t, "answer:app_categories_empty")
@@ -942,6 +944,253 @@ func TestAnEnforcingWindowedKeyIsNeverAdmittedUnread(t *testing.T) {
 		}
 		if rec.Code != http.StatusOK || len(admits) != 1 || counts.Answered != 1 {
 			t.Errorf("%s: %d, %d admits, passed %v; want answered", v.name, rec.Code, len(admits), counts.Passed)
+		}
+	}
+}
+
+// fakeWindows is a KeyWindowReader: what it answers, and each read's key
+// and deadline.
+type fakeWindows struct {
+	mu    sync.Mutex
+	read  func(ctx context.Context) ([]keywindow.Row, error)
+	calls []windowCall
+}
+
+type windowCall struct {
+	keyHash  string
+	deadline time.Time
+}
+
+func (f *fakeWindows) ReadKeyWindows(ctx context.Context, keyHash string) ([]keywindow.Row, error) {
+	deadline, _ := ctx.Deadline()
+	f.mu.Lock()
+	f.calls = append(f.calls, windowCall{keyHash, deadline})
+	read := f.read
+	f.mu.Unlock()
+	return read(ctx)
+}
+
+func (f *fakeWindows) seen() []windowCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.calls)
+}
+
+// dailyRows are a key's tr_key_limit rows for a daily limit at at: shards
+// rows, the first holding used of the day and every one the limit mirrored.
+func dailyRows(at time.Time, limit, used int64, shards int) []keywindow.Row {
+	day, _, _ := keywindow.Floors(at)
+	rows := make([]keywindow.Row, shards)
+	for i := range rows {
+		rows[i] = keywindow.Row{Shard: int64(i), DayUsage: spanner.NullInt64{Valid: true},
+			DayStart: spanner.NullTime{Time: day, Valid: true}, DayLimit: spanner.NullInt64{Int64: limit, Valid: true}}
+	}
+	rows[0].DayUsage.Int64 = used
+	return rows
+}
+
+// windowedDecideEdge is a decide edge over the plain answered case with its
+// key's body changed by fields, the policy's mode set (absent for ""), and
+// reads answered by read.
+func windowedDecideEdge(t *testing.T, fields map[string]any, mode string,
+	read func(context.Context) ([]keywindow.Row, error)) (*decideEdge, authorizeCase, *fakeWindows) {
+	t.Helper()
+	return windowedDecideEdgeOf(t, "answer:app_categories_empty", fields, mode, read)
+}
+
+// windowedDecideEdgeOf is windowedDecideEdge over the golden case named.
+func windowedDecideEdgeOf(t *testing.T, name string, fields map[string]any, mode string,
+	read func(context.Context) ([]keywindow.Row, error)) (*decideEdge, authorizeCase, *fakeWindows) {
+	t.Helper()
+	f := authorizeGoldens(t)
+	c := authorizeCaseNamed(t, name)
+	body := keyBodyWith(t, c, fields)
+	c.Key.KeyBody = &body
+	h := newDecideEdge(t, f, c, nil)
+	if mode != "" {
+		h.policy.FastpathPilotKeyWindows = &mode
+	}
+	windows := &fakeWindows{read: read}
+	h.edge.decider.cfg.Windows = windows
+	return h, c, windows
+}
+
+// TestTheWindowCheckDecidesAnEnforcingKey (docs/design/
+// fast-admission-e2-key-windows.md sections 4.2 to 4.4): under enforce the
+// decide path reads the key's rows once, by its key hash, within
+// WindowReadBudget, and admits only on an allowed verdict, whose 200 counts
+// the read among its Spanner calls; every other verdict passes with its
+// key_window.* reason before the owner is asked. Rows the cached shard count
+// does not expect (the key's shards grew or shrank since) pass. An
+// alert-only key, and an enforcing key under alert, are never read.
+func TestTheWindowCheckDecidesAnEnforcingKey(t *testing.T) {
+	enforcing := map[string]any{"limit_daily_microdollars": 1_000_000, "usage_shard_count": 2}
+	failed := errors.New("synthetic read failure")
+	for _, v := range []struct {
+		name string
+		rows func(at time.Time) ([]keywindow.Row, error)
+		pass string
+	}{
+		{"headroom", func(at time.Time) ([]keywindow.Row, error) { return dailyRows(at, 1_000_000, 0, 2), nil }, ""},
+		{"spent", func(at time.Time) ([]keywindow.Row, error) {
+			return dailyRows(at, 1_000_000, 1_000_000, 2), nil
+		}, keywindow.PassExceeded},
+		{"mirror drifted", func(at time.Time) ([]keywindow.Row, error) { return dailyRows(at, 2_000_000, 0, 2), nil },
+			keywindow.PassConfigDrift},
+		{"no rows", func(time.Time) ([]keywindow.Row, error) { return nil, nil }, keywindow.PassRows},
+		{"a shard missing", func(at time.Time) ([]keywindow.Row, error) {
+			return dailyRows(at, 1_000_000, 0, 2)[:1], nil
+		}, keywindow.PassRows},
+		{"read failed", func(time.Time) ([]keywindow.Row, error) { return nil, failed }, keywindow.PassUnread},
+		{"the key's shards grew", func(at time.Time) ([]keywindow.Row, error) {
+			return dailyRows(at, 1_000_000, 0, 3), nil
+		}, keywindow.PassRows},
+	} {
+		var at time.Time
+		h, c, windows := windowedDecideEdge(t, enforcing, routingsnapshot.KeyWindowsEnforce,
+			func(context.Context) ([]keywindow.Row, error) { return v.rows(at) })
+		at = c.at()
+		before := time.Now()
+		rec := h.send(t, c)
+		admits, _, _ := h.admitter.seen()
+		calls := windows.seen()
+		if len(calls) != 1 || calls[0].keyHash != c.Facts.Key.Hash ||
+			calls[0].deadline.After(time.Now().Add(WindowReadBudget)) || calls[0].deadline.Before(before) {
+			t.Errorf("%s: reads %+v", v.name, calls)
+		}
+		counts := h.edge.DecideCounts()
+		if counts.Windows["reads"] != 1 || counts.Windows[windowOutcome(keywindow.Verdict{Pass: v.pass,
+			Decided: v.pass == "", Allowed: v.pass == ""})] != 1 {
+			t.Errorf("%s: window counts %v", v.name, counts.Windows)
+		}
+		if v.pass != "" {
+			if rec.Code != http.StatusTeapot || len(admits) != 0 || counts.Passed[v.pass] != 1 {
+				t.Errorf("%s: %d, %d admits, passed %v; want %q", v.name, rec.Code, len(admits), counts.Passed, v.pass)
+			}
+			continue
+		}
+		if rec.Code != http.StatusOK || len(admits) != 1 || counts.Answered != 1 ||
+			!bytes.Contains(rec.Body.Bytes(), []byte(`"spanner_rpcs":2,`)) {
+			t.Errorf("%s: %d, %d admits, passed %v: %s", v.name, rec.Code, len(admits), counts.Passed, rec.Body.Bytes())
+		}
+	}
+	for _, v := range []struct {
+		name   string
+		fields map[string]any
+		mode   string
+	}{
+		{"alert only, enforce", map[string]any{"limit_daily_microdollars": 5, "budget_alert_only": true},
+			routingsnapshot.KeyWindowsEnforce},
+		{"enforcing, alert", enforcing, routingsnapshot.KeyWindowsAlert},
+		{"enforcing, absent", enforcing, ""},
+	} {
+		h, c, windows := windowedDecideEdge(t, v.fields, v.mode, func(context.Context) ([]keywindow.Row, error) {
+			return nil, failed
+		})
+		h.send(t, c)
+		if calls := windows.seen(); len(calls) != 0 {
+			t.Errorf("%s: read %d times", v.name, len(calls))
+		}
+	}
+}
+
+// TestTheWindowCheckIsAgainstTheEstimate (section 4.2): Python checks the
+// model estimate, never the reservation the lease holds, which the output
+// hold cap makes smaller. With what the day has left between the two, the
+// key passes key_window.exceeded, though the reservation would fit; with the
+// estimate's room it is answered (the positive control).
+func TestTheWindowCheckIsAgainstTheEstimate(t *testing.T) {
+	const name = "answer:estimate:hold_cap:deepseek/deepseek-v4-flash:1000+131072"
+	const limit = int64(10_000_000)
+	fields := map[string]any{"limit_daily_microdollars": limit}
+	f := authorizeGoldens(t)
+	c := authorizeCaseNamed(t, name)
+	body := keyBodyWith(t, c, fields)
+	c.Key.KeyBody = &body
+	in, _ := caseInputs(t, f, c)
+	at := c.at()
+	mode := routingsnapshot.KeyWindowsEnforce
+	in.Policy.FastpathPilotKeyWindows = &mode
+	dec := Decide(in).ForShadow()
+	if dec == nil || dec.Windows == nil || dec.Reservation >= dec.Estimate {
+		t.Fatalf("the case must hold a reservation below its estimate: %+v", dec)
+	}
+	// What the day has left: the reservation and half the way to the
+	// estimate.
+	left := dec.Reservation + (dec.Estimate-dec.Reservation)/2
+	for _, v := range []struct {
+		left int64
+		pass string
+	}{
+		{left, keywindow.PassExceeded},
+		{dec.Estimate, ""},
+	} {
+		h, c, _ := windowedDecideEdgeOf(t, name, fields, routingsnapshot.KeyWindowsEnforce,
+			func(context.Context) ([]keywindow.Row, error) { return dailyRows(at, limit, limit-v.left, 1), nil })
+		rec := h.send(t, c)
+		admits, _, _ := h.admitter.seen()
+		counts := h.edge.DecideCounts()
+		if v.pass != "" {
+			if rec.Code != http.StatusTeapot || len(admits) != 0 || counts.Passed[v.pass] != 1 {
+				t.Errorf("%d left: %d, %d admits, passed %v; want %q", v.left, rec.Code, len(admits), counts.Passed,
+					v.pass)
+			}
+			continue
+		}
+		if rec.Code != http.StatusOK || len(admits) != 1 || admits[0].Estimate != dec.Reservation {
+			t.Errorf("%d left: %d, %d admits, passed %v", v.left, rec.Code, len(admits), counts.Passed)
+		}
+	}
+}
+
+// TestASlowWindowReadPassesWithinItsBudget: a read that does not answer ends
+// at WindowReadBudget and passes (key_window.unread), well inside the decide
+// budget, without asking the owner.
+func TestASlowWindowReadPassesWithinItsBudget(t *testing.T) {
+	h, c, windows := windowedDecideEdge(t, map[string]any{"limit_daily_microdollars": 5},
+		routingsnapshot.KeyWindowsEnforce, func(ctx context.Context) ([]keywindow.Row, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		})
+	start := time.Now()
+	rec := h.send(t, c)
+	took := time.Since(start)
+	admits, _, _ := h.admitter.seen()
+	if rec.Code != http.StatusTeapot || len(admits) != 0 || len(windows.seen()) != 1 ||
+		h.edge.DecideCounts().Passed[keywindow.PassUnread] != 1 {
+		t.Fatalf("%d, %d admits, passed %v", rec.Code, len(admits), h.edge.DecideCounts().Passed)
+	}
+	if took < WindowReadBudget || took > DecideBudget {
+		t.Fatalf("the pass came %v after the request", took)
+	}
+	if WindowReadBudget >= DecideBudget {
+		t.Fatal("the window read's budget must end inside the decide budget")
+	}
+}
+
+// TestUnreadWindowChecksAreAlerted: a period whose window reads failed past
+// WindowUnreadShare, at least WindowUnreadMin of them, raises
+// AlertWindowUnread once; fewer, or none, raise nothing.
+func TestUnreadWindowChecksAreAlerted(t *testing.T) {
+	for _, v := range []struct {
+		reads, unread int64
+		alert         bool
+	}{
+		{3, 3, true},
+		{200, 3, true},
+		{400, 3, false},
+		{2, 2, false},
+		{100, 0, false},
+	} {
+		h, _ := baseDecide(t)
+		a := &alerts{}
+		h.edge.decider.cfg.Alert = a.raise
+		h.edge.decider.count(func(t *decideTally) {
+			t.windows["reads"], t.windows["unread"] = v.reads, v.unread
+		})
+		h.edge.decider.flush()
+		if got := len(a.taken()[AlertWindowUnread]); (got == 1) != v.alert || got > 1 {
+			t.Errorf("%d unread of %d: %d alerts", v.unread, v.reads, got)
 		}
 	}
 }
