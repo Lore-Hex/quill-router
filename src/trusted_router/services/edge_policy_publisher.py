@@ -16,9 +16,12 @@ switch, this process's ticket authority and typed records). The manifest
 snapshot's key under its own ``typ``.
 
 A body is issued at the publisher's clock and signed in the background, by
-one worker at a time, never on a poll. Startup warms the first copy before
-serving requests. A timer refreshes at ``refresh_at`` (+15 s) for 30 minutes
-after startup or the latest poll, keeping sparsely polled instances warm.
+one worker at a time, never on a poll. Startup starts warming without waiting
+for the first copy; an early poll may get an immediate 503 ``compiling``.
+A timer renews at ``issued_at`` +30 s, halfway through the 60 s validity
+window, for 30 minutes after startup or the latest poll. Polls still start
+a refresh at ``refresh_at`` (+15 s) if no worker is running. This keeps
+sparsely polled instances warm without signing every 15 s in the background.
 The worker refreshes the Stage D policy, reads the other facts and signs.
 Meanwhile every poll is served the cached copy while it is within its
 ``not_after`` (+60 s), or answered 503 at once: ``compiling`` while the
@@ -30,8 +33,9 @@ an arbitrarily long idle period. So a signing happens at most once per
 refresh interval and a poll never waits on a network round trip, holding no
 threadpool token that authorize shares. The edge polls at ``refresh_at``
 and trusts a body until its ``not_after``, then proxies everything to
-Python. A changed setting therefore reaches a polling edge within about
-15 s.
+Python. Timer-only fact sampling is every 30 s plus build latency; polls
+can trigger sampling after 15 s. Delivery also depends on polling and load
+balancing, so neither interval guarantees end-to-end setting propagation.
 
 Unlike the routing snapshot there is no worker process: every fact is this
 process's own live state (its settings, its Stage D policy resolver, its
@@ -43,9 +47,11 @@ calls ``StageDPolicyResolver.refresh_now()`` (two HTTPS fetches per release
 URL, each URL's within 5 s, and a Sigstore bundle check, together failed
 after 15 s, and three watermark reads or writes), so a body's set is the
 release's at ``issued_at`` (decide contract decision 17). That is at most
-four refreshes a minute on a recently polled (or newly started) instance:
-at most 240 signatures and fact reads/hour, plus the startup publication.
-After the last poll, at most 120 refresh attempts on the successful path;
+120 signatures and complete facts reads/hour with timer-only renewal, up
+to 240/hour with frequent polls, plus the startup publication. A successful
+primary-source refresh fetches two policy artifacts and verifies one bundle;
+Sigstore's online TUF refresh normally adds two requests with a warm cache.
+After the last poll, at most 60 refresh attempts on the successful path;
 failures retry at most every 5 s within the same idle window. A refresh
 takes at most ``REFRESH_BOUND_SECONDS`` (30 s, Spanner session creation
 aside) and may first wait out the resolver's own in-flight one, which is
@@ -109,6 +115,10 @@ COMPILING_RETRY_SECONDS = 2
 # Ten instances polled every 15 s globally see 150 s between round-robin
 # polls. Thirty minutes also accommodates substantial load-balancer skew.
 IDLE_TIMEOUT_SECONDS = 30 * 60
+# Internal renewal deadline, independent of the signed +15 s poll hint.
+# Leaves 30 s for a refresh; this is not a guarantee against a worker that
+# takes the full 65 s deadline (nor was the previous 45 s margin).
+BACKGROUND_RENEW_SECONDS = LIFETIME_SECONDS // 2
 # A signing worker running longer than this is abandoned: polls stop
 # reporting it as in flight and the next one starts a fresh worker. Its late
 # outcome, if any, is discarded. Above its worst case: refresh_now() may wait
@@ -306,7 +316,7 @@ class EdgePolicyPublisher:
     def start(self) -> None:
         """Warm at startup, then refresh for a bounded idle window.
 
-        The lifespan awaits this first worker outside the authorize pool.
+        The lifespan returns without waiting for this worker.
         Construction alone does no work (facts may not yet be installed).
         """
         with self._lock:
@@ -329,13 +339,15 @@ class EdgePolicyPublisher:
         if self._stopped or self._monotonic() >= self._active_until:
             return
         now = int(self._clock())
-        if self._cached is None or not self._cached.current(now):
+        cached = self._cached
+        renew_at = cached.issued_at + BACKGROUND_RENEW_SECONDS if cached is not None else now
+        if cached is None or not cached.issued_at <= now < renew_at:
             self._start_locked(now)
         # While a worker runs, check again after the failure backoff. The
         # timer itself never reads facts or signs and shares no request pool.
         due = now + ERROR_RETRY_SECONDS
-        if self._cached is not None and self._cached.current(now):
-            due = self._cached.refresh_at
+        if cached is not None and cached.issued_at <= now < renew_at:
+            due = renew_at
         elif self._failed[1] > now:
             due = self._failed[1]
         delay = min(max(1, due - self._clock()), self._active_until - self._monotonic())
@@ -501,15 +513,9 @@ def install(app: FastAPI, settings: Settings) -> None:
 
     @app.on_event("startup")
     async def warm() -> None:
-        import asyncio
-
-        publisher = state.edge_policy_publisher
-        publisher.start()
-        # Startup can wait; polls cannot. No AnyIO/default executor token is
-        # held while the dedicated signing worker reads this process's facts.
-        deadline = time.monotonic() + WORKER_DEADLINE_SECONDS
-        while not publisher.idle(0) and time.monotonic() < deadline:
-            await asyncio.sleep(0.01)
+        # Uvicorn waits for lifespan before opening its listener: warming
+        # must not delay readiness or consume capacity needed by authorize.
+        state.edge_policy_publisher.start()
 
     @app.on_event("shutdown")
     async def stop() -> None:
