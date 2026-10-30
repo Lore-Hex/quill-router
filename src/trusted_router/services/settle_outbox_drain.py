@@ -15,6 +15,7 @@ from trusted_router.services.settle_outbox_apply import (
     ApplyOutcome,
     apply_frozen_settle,
 )
+from trusted_router.services.settle_outbox_audit import row_ref as _row_ref
 from trusted_router.storage import STORE
 from trusted_router.storage_errors import is_deterministic_store_error
 from trusted_router.storage_gcp_authorize import ReapPassResult
@@ -23,6 +24,15 @@ from trusted_router.storage_models import SettleOutboxRow, generation_id_for_aut
 from trusted_router.synthetic.alerts import ops_alert
 
 logger = logging.getLogger(__name__)
+
+
+def _audit_log(level: int, message: str, *args: Any) -> None:
+    # A successful claim must still be yielded if a handler/filter fails.
+    try:
+        logger.log(level, message, *args)
+    except Exception:
+        return  # Logging the logging failure would recurse.
+
 
 # Six hours is long enough to ride out a real analytics outage on 60-second
 # parks, but short enough that a permanently broken row cannot churn the drain
@@ -111,11 +121,20 @@ def _recover_async(outbox: SpannerSettleOutbox, *, limit: int, deadline: float,
                             return
                     if _monotonic() >= deadline:
                         return
+                    prior_leases = {id(candidate): (candidate.lease_owner, candidate.leased_until)
+                                    for candidate in candidates}
                     rows = outbox.claim_candidates(candidates, lease_seconds=lease)
                 except Exception as exc:
                     logger.warning("async_recovery.claim_failed error_class=%s", type(exc).__name__)
                     continue
                 for row in rows:
+                    prior_owner, prior_leased_until = prior_leases[id(row)]
+                    _audit_log(
+                        logging.INFO,
+                        "async_recovery.claim ref=%s prior_owner=%s prior_leased_until=%s owner=%s leased_until=%s",
+                        _row_ref(row.payload_hash), prior_owner or "none", prior_leased_until or "none",
+                        row.lease_owner or "none", row.leased_until or "none",
+                    )
                     claimed += 1
                     sweep_claimed += 1
                     yield row

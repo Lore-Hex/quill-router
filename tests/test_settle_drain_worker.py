@@ -282,13 +282,13 @@ def test_stopped_claim_is_reclaimable_at_worker_lease_expiry(fake_store, monkeyp
     stamp = [dt.datetime.now(dt.UTC)]
     monkeypatch.setattr(adapter, "_iso_now", lambda: stamp[0].replace(microsecond=0).isoformat().replace("+00:00", "Z"))
     stop = threading.Event()
-    original = SpannerSettleOutbox.claim_shard
-    def claim(self, **kwargs):
-        result = original(self, **kwargs)
+    original = SpannerSettleOutbox.claim_candidates
+    def claim(self, candidates, **kwargs):
+        result = original(self, candidates, **kwargs)
         stop.set()
         return result
     with monkeypatch.context() as patch:
-        patch.setattr(SpannerSettleOutbox, "claim_shard", claim)
+        patch.setattr(SpannerSettleOutbox, "claim_candidates", claim)
         assert worker._apply_slot(box, 0, 30, time.monotonic() + 2, stop) == (1, "deferred", 0)
     [pending] = list(fake_store[1].settle_outbox.values())
     assert pending["status"] == "pending"
@@ -371,16 +371,16 @@ def test_repeated_claim_failures_cannot_refresh_durable_health(fake_store, monke
     failed, recover, stop = threading.Event(), threading.Event(), threading.Event()
     worker.publish_health(fake_store[1])
     before = read_health(fake_store[1])
-    original = SpannerSettleOutbox.claim_shard
+    original = SpannerSettleOutbox.claim_candidates
     calls = []
-    def claim(self, **kw):
+    def claim(self, candidates, **kw):
         if not recover.is_set():
             calls.append(1)
             if len(calls) >= 3:
                 failed.set()
             raise TimeoutError('private-reservation')
-        return original(self, **kw)
-    monkeypatch.setattr(SpannerSettleOutbox, 'claim_shard', claim)
+        return original(self, candidates, **kw)
+    monkeypatch.setattr(SpannerSettleOutbox, 'claim_candidates', claim)
     cfg = config(settle_outbox_health_publish_interval_seconds=.03,
                  settle_outbox_poll_interval_seconds=.01, settle_outbox_worker_concurrency=1)
     thread = threading.Thread(target=worker.run_worker, args=(cfg, stop))
@@ -436,7 +436,7 @@ def test_fast_failures_keep_monitor_alive_without_publication(fake_store, monkey
     monkeypatch.setattr(worker, 'MONITOR_INTERVAL_SECONDS', .005)
     def fail(*a, **kw):
         raise TimeoutError('private-reservation')
-    monkeypatch.setattr(SpannerSettleOutbox, 'claim_shard', fail)
+    monkeypatch.setattr(SpannerSettleOutbox, 'claim_candidates', fail)
     cfg = config(settle_outbox_poll_interval_seconds=.005).model_copy(
         update={'settle_outbox_stall_seconds': .05})
     with TestClient(create_app(cfg, configure_store_arg=False, init_observability=False)) as client:

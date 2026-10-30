@@ -32,6 +32,7 @@ from fastapi.responses import JSONResponse
 from trusted_router.config import Settings
 from trusted_router.services import settle_outbox_drain as drain
 from trusted_router.services.settle_outbox_apply import ApplyOutcome
+from trusted_router.services.settle_outbox_audit import row_ref as _row_ref
 from trusted_router.stall_dump import stall_dump_fd
 from trusted_router.storage_gcp_async_admission import (
     claim_health_publish,
@@ -42,20 +43,31 @@ from trusted_router.storage_gcp_settle_outbox import SpannerSettleOutbox
 
 logger = logging.getLogger(__name__)
 
+def _audit_log(level: int, message: str, *args: Any) -> None:
+    # Observability must never turn a successful money/lease RPC into a failure.
+    try:
+        logger.log(level, message, *args)
+    except Exception:
+        return  # Logging the logging failure would recurse.
+
+
 class _ObservedOutbox(SpannerSettleOutbox):
     """Observe existing fenced return values without changing resolution SQL."""
     resolution: str | None = None
+    ref: str = "none"
 
     def mark(self, *args: Any, **kwargs: Any) -> str | None:
         result = super().mark(*args, **kwargs)
         self.resolution = result
-        logger.info("async_drain.resolution status=%s fence_miss=%s", result, int(result is None))
+        _audit_log(logging.INFO, "async_drain.resolution status=%s fence_miss=%s ref=%s",
+                   result, int(result is None), self.ref)
         return result
 
     def park(self, *args: Any, **kwargs: Any) -> bool:
         result = super().park(*args, **kwargs)
         self.resolution = "park" if result else None
-        logger.info("async_drain.resolution status=park parked=%s fence_miss=%s", int(result), int(not result))
+        _audit_log(logging.INFO, "async_drain.resolution status=park parked=%s fence_miss=%s ref=%s",
+                   int(result), int(not result), self.ref)
         return result
 
 
@@ -70,16 +82,38 @@ def _apply_slot_inner(outbox: SpannerSettleOutbox, shard: int, lease: int,
     # Stop prevents new claims and new applies; already running applies finish.
     if (stop is not None and stop.is_set()) or time.monotonic() >= deadline:
         return 0, "", 0
-    rows = outbox.claim_shard(shard=shard, lease_seconds=lease)
+    claim_started = time.monotonic()
+    # Exact expansion of storage_gcp_settle_outbox.SpannerSettleOutbox.claim_shard.
+    # claim_candidates mutates the winning candidate in place. This advisory
+    # preimage is NOT a transactionally witnessed previous owner (races remain).
+    candidates = outbox.due_shard(shard=shard)
+    prior_leases = {id(candidate): (candidate.lease_owner, candidate.leased_until)
+                    for candidate in candidates}
+    rows = outbox.claim_candidates(candidates, lease_seconds=lease)
+    claim_seconds = time.monotonic() - claim_started
     if not rows:
         return 0, "", 0
     row = rows[0]
+    ref = _row_ref(row.payload_hash)
+    prior_owner, prior_leased_until = prior_leases[id(row)]
+    _audit_log(logging.INFO,
+               "async_drain.claim ref=%s prior_owner=%s prior_leased_until=%s owner=%s leased_until=%s",
+               ref, prior_owner or "none", prior_leased_until or "none",
+               row.lease_owner or "none", row.leased_until or "none")
     # Claim RPCs can consume the lease/budget. Never start expired work, even
     # though the reservation fence would still prevent double billing.
     now = dt.datetime.now(dt.UTC)
-    if ((stop is not None and stop.is_set())
-            or time.monotonic() >= deadline or row.leased_until is None
-            or dt.datetime.fromisoformat(row.leased_until.replace('Z', '+00:00')) <= now):
+    reason = None
+    if stop is not None and stop.is_set():
+        reason = "stop"
+    elif time.monotonic() >= deadline:
+        reason = "deadline"
+    elif (row.leased_until is None
+          or dt.datetime.fromisoformat(row.leased_until.replace('Z', '+00:00')) <= now):
+        reason = "lease"
+    if reason is not None:
+        _audit_log(logging.INFO, "async_drain.deferred ref=%s owner=%s reason=%s",
+                   ref, row.lease_owner or "none", reason)
         return 1, "deferred", 0
     started = time.monotonic()
     error_note = None
@@ -87,26 +121,31 @@ def _apply_slot_inner(outbox: SpannerSettleOutbox, shard: int, lease: int,
     try:
         outcome = drain.apply_frozen_settle(row)
     except Exception as exc:
-        logger.warning("async_drain.apply_failed error_class=%s", type(exc).__name__)
+        _audit_log(logging.WARNING, "async_drain.apply_failed error_class=%s", type(exc).__name__)
         outcome, apply_error = ApplyOutcome.ERROR, exc
         error_note = f"{type(exc).__name__}: {exc}"
     observed = _ObservedOutbox(outbox._database, outbox._pt, async_fence=outbox._async_fence)
+    observed.ref = ref
+    resolve_started = time.monotonic()
     try:
         drain._resolve_row(observed, row, outcome, error_note=error_note, apply_error=apply_error)
     except Exception as exc:
-        logger.warning("async_drain.resolve_failed error_class=%s", type(exc).__name__)
+        _audit_log(logging.WARNING, "async_drain.resolve_failed error_class=%s", type(exc).__name__)
         outcome = "resolve_error"
-    # Aggregate only: never emit authorization/key/workspace IDs here.
+    resolve_seconds = time.monotonic() - resolve_started
+    # Pseudonymous reference only: never emit authorization/key/workspace IDs here.
     if observed.resolution == "done" and row.created_at is not None:
         try:
             created = dt.datetime.fromisoformat(row.created_at.replace('Z', '+00:00'))
             latency = (dt.datetime.now(dt.UTC) - created).total_seconds()
-            logger.info("async_drain.completed latency_seconds=%.6f", latency)
+            _audit_log(logging.INFO, "async_drain.completed latency_seconds=%.6f ref=%s", latency, ref)
         except (ValueError, TypeError):
-            logger.warning("async_drain.completion_timestamp_invalid")
+            _audit_log(logging.WARNING, "async_drain.completion_timestamp_invalid")
     elapsed = time.monotonic() - started
-    logger.info("async_drain.timing outcome=%s service_seconds=%.6f observed_at=%.6f",
-                outcome, elapsed, time.time())
+    _audit_log(logging.INFO,
+               "async_drain.timing outcome=%s service_seconds=%.6f observed_at=%.6f "
+               "ref=%s claim_seconds=%.6f resolve_seconds=%.6f",
+               outcome, elapsed, time.time(), ref, claim_seconds, resolve_seconds)
     return 1, outcome, int(row.actual_cost_micro) if outcome == ApplyOutcome.SETTLED_NOW else 0
 
 
