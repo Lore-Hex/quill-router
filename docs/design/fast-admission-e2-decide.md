@@ -379,6 +379,9 @@ path, or a path the client escaped.
 This is Python's `pilot_reason` (`fastpath_frontdoor.py:379-426`) plus the
 evaluator's exclusions, with every key cap, window, `budget_strict`,
 `app_id`, federated key or workspace and the monitor key out.
+[`fast-admission-e2-key-windows.md`](fast-admission-e2-key-windows.md)
+(design) proposes bringing windowed keys without a lifetime cap or
+`budget_strict` into the cohort.
 
 ## 4. Edge policy publication
 
