@@ -63,10 +63,12 @@ const (
 // HoldOutputTokens of the output budget, not the authorization row's spend
 // ceiling), whether it is a stream, which heartbeats, and the boot binding
 // of the enclave that asked. A heartbeat's running charge is bounded by e
-// (heartbeat below), so a stream admitted under a lease would be cut at the
-// reservation, not the ceiling: both front doors keep streams out of the
-// lease cohort (Python fastpath_frontdoor "stream", gwauth ReasonStream)
-// until an admission carries the ceiling beside the hold.
+// (heartbeat below). A stream's reservation is its whole budget's price,
+// its ceiling, so for a stream the bound is Stage D's cap; both front doors
+// keep streams out of the lease cohort (Python fastpath_frontdoor "stream",
+// gwauth ReasonStream) until the rest of
+// docs/design/fast-admission-streams.md ships, and admit one only while
+// its reservation equals its estimate.
 type Admission struct {
 	Estimate int64
 	Stream   bool
@@ -208,14 +210,20 @@ func (l *Lease) booksLocked() Books {
 // snapshot's SHA-256 hash, the tokens delivered so far, the running charge
 // priced from them, the deadline it echoes, which every heartbeat after the
 // hold's first must, and the basis a reap of the hold needs, which the
-// hold's first must bring.
+// hold's first must bring. EchoGranted, with Echoed zero, has the owner take
+// the deadline it last granted the hold as the echo
+// (docs/design/fast-admission-streams.md section 4.6 item 1): a gateway that
+// relays heartbeats and keeps no deadline of its own, the control plane,
+// asserts by it that its answer was the last one granted; one that lost an
+// answer sends the same sequence again, a replay.
 type HeartbeatOf struct {
-	GatewaySeq int64
-	Hash       []byte
-	Usage      int64
-	Running    int64
-	Echoed     time.Time
-	Basis      []byte
+	GatewaySeq  int64
+	Hash        []byte
+	Usage       int64
+	Running     int64
+	Echoed      time.Time
+	EchoGranted bool
+	Basis       []byte
 }
 
 // Heartbeat validates a stream's heartbeat as today (§4.5), publishes the
@@ -265,8 +273,18 @@ func (l *Lease) Heartbeat(ctx context.Context, auth string, hb HeartbeatOf) (tim
 			return l.heartbeatAnswer(ctx, s, granted, echoed)
 		}
 	}
+	echoed := hb.Echoed
+	if hb.EchoGranted && h.heartbeat {
+		echoed = h.deadline
+	}
+	// The running charge may fall while the usage does not: a cache-read
+	// count reported after the prompt moves those tokens to the cheaper
+	// rate, and the control plane's rule checks each count, not the charge
+	// (docs/design/fast-admission-streams.md section 4.6 item 2). It never
+	// passes the hold.
 	if hb.GatewaySeq < 1 || len(hb.Hash) != record.DigestSize || (!h.heartbeat && len(hb.Basis) == 0) ||
-		(h.heartbeat && hb.Echoed.IsZero()) || hb.Usage < h.usage || hb.Running < h.running || hb.Running > h.estimate {
+		(hb.EchoGranted && !hb.Echoed.IsZero()) || (h.heartbeat && echoed.IsZero()) || hb.Usage < h.usage ||
+		hb.Running < 0 || hb.Running > h.estimate {
 		l.mu.Unlock()
 		return time.Time{}, ErrRejected
 	}
@@ -293,9 +311,13 @@ func (l *Lease) Heartbeat(ctx context.Context, auth string, hb HeartbeatOf) (tim
 		l.mu.Unlock()
 		return time.Time{}, err
 	}
+	reapDeadline := l.o.cfg.StreamReap.reapDeadline(h, now, deadline, l.o.cfg.Grace)
 	r := record.Record{Kind: record.Heartbeat, Auth: auth, Estimate: h.estimate,
 		Snapshot: &record.Snapshot{GatewaySeq: hb.GatewaySeq, Hash: hb.Hash, Usage: usage, Running: hb.Running,
 			Deadline: deadline.UTC()}}
+	if l.o.cfg.RecordReapFloor {
+		r.Snapshot.ReapDeadline = reapDeadline
+	}
 	if !h.heartbeat {
 		// The hold's first heartbeat record carries the reap's basis and
 		// the authorization's boot binding, the owner's statement of it
@@ -320,10 +342,11 @@ func (l *Lease) Heartbeat(ctx context.Context, auth string, hb HeartbeatOf) (tim
 	if r.First {
 		h.basis = append([]byte(nil), hb.Basis...)
 	}
-	h.heartbeat, h.echoed, h.gatewaySeq, h.hash, h.usage, h.running, h.deadline, h.snapSeq, h.sent = true, hb.Echoed,
+	h.heartbeat, h.echoed, h.gatewaySeq, h.hash, h.usage, h.running, h.deadline, h.snapSeq, h.sent = true, echoed,
 		hb.GatewaySeq, append([]byte(nil), hb.Hash...), hb.Usage, hb.Running, deadline, s.seq, s
+	h.reapDeadline = reapDeadline
 	l.mu.Unlock()
-	return l.heartbeatAnswer(ctx, s, deadline, hb.Echoed)
+	return l.heartbeatAnswer(ctx, s, deadline, echoed)
 }
 
 // heartbeatAnswer answers a heartbeat whose record is s: the deadline it

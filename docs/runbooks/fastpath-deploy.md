@@ -166,7 +166,20 @@ it to the first before the second is pinned anywhere. Nodes replaced by one appl
 then never mix an owner that states the field with an auditor that does
 not read it. The first such field was the hold's boot binding on its
 first heartbeat record: one release read it and stated none, and the one
-after it states it.
+after it states it. The second is a stream's reap deadline
+(`record.Snapshot.ReapDeadline`, docs/design/fast-admission-streams.md
+section 4.6 item 4): the release that reads it leaves the owner's
+`RecordReapFloor` off, and the one after it, pinned as above, turns it on
+in the service's defaults. Until then each owner still waits for the floor
+before it reaps a stream's hold itself; only an auditor that drains a lease
+reaps at the heartbeat's deadline plus the grace.
+
+A field on a front door's or an owner's request (`EchoGranted` on a
+heartbeat) is refused by a node from before it, which decodes strictly. It
+is sent only when set, so nothing changes until a gateway sets it: owners
+take it before front doors, and the control plane sets it only once every
+owner and front door runs a release that takes it (check as "Taking a
+pinned release" below does).
 
 ## Turning the edge on
 

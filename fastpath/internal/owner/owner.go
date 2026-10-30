@@ -95,12 +95,59 @@ type Config struct {
 	// plus Grace, is released uncharged, before its end of life. Zero
 	// releases none before then.
 	FirstHeartbeat time.Duration
+	// StreamReap is a stream hold's reap floor (StreamReap). The zero
+	// floor reaps a stream's hold as any other, at its deadline plus Grace.
+	StreamReap StreamReap
+	// RecordReapFloor has each stream heartbeat's record carry the floor
+	// (record.Snapshot.ReapDeadline), as a hand-off's holds then do, so the
+	// auditor honors it after a hand-off or a drain. An auditor from before
+	// the field refuses such a record, so the field takes two releases
+	// (docs/runbooks/fastpath-deploy.md, "A record field the auditors must
+	// read first"): the release that reads it leaves this off, and the next,
+	// pinned once every member runs the first, sets it in the service's
+	// defaults. The owner applies the floor to its own reaps either way.
+	RecordReapFloor bool
+}
+
+// StreamReap is a stream hold's reap floor
+// (docs/design/fast-admission-streams.md section 4.6 item 4): the owner
+// reaps a hold admitted as a stream no sooner than the later of its
+// admission plus AfterAdmission and its last accepted heartbeat plus
+// AfterHeartbeat, capped at its end of life plus the grace, and never
+// before its deadline plus the grace. They are the control plane's figures
+// for the same stream, the reservation's life (2 h) and the heartbeat's
+// renewal (300 s), so a terminal the gateway sends meets an owner's reap
+// only once the control plane's own reaper could have reaped the stream. A
+// hold that is not a stream is reaped as before.
+type StreamReap struct {
+	AfterAdmission time.Duration
+	AfterHeartbeat time.Duration
+}
+
+// reapDeadline is the deadline a stream hold's reap waits for, plus grace,
+// after a heartbeat accepted at beat with deadline: the floor less the
+// grace, when that is after the deadline; else zero, the deadline itself.
+func (s StreamReap) reapDeadline(h *hold, beat, deadline time.Time, grace time.Duration) time.Time {
+	if !h.stream || s == (StreamReap{}) {
+		return time.Time{}
+	}
+	floor := h.admitted.Add(s.AfterAdmission)
+	if f := beat.Add(s.AfterHeartbeat); f.After(floor) {
+		floor = f
+	}
+	if limit := h.endOfLife.Add(grace); floor.After(limit) {
+		floor = limit
+	}
+	if d := floor.Add(-grace); d.After(deadline) {
+		return d.UTC()
+	}
+	return time.Time{}
 }
 
 func (c Config) validate() error {
 	if c.Epoch < 1 || c.Skew <= 0 || c.AnswerWait <= 0 || c.HoldLife <= 0 || c.HeartbeatEvery <= 0 ||
 		c.NewAuthorization == nil || c.Clock == nil || c.Enabled == nil || c.KeyStatus < 0 || c.Grace < 0 ||
-		c.FirstHeartbeat < 0 {
+		c.FirstHeartbeat < 0 || c.StreamReap.AfterAdmission < 0 || c.StreamReap.AfterHeartbeat < 0 {
 		return errors.New("owner: an epoch, positive durations, an authorization minter, a clock and the switch")
 	}
 	if c.Spanner != nil && (c.Node == "" || c.RenewEvery <= 0 || c.Window <= 0) {
@@ -333,8 +380,11 @@ type hold struct {
 	usage      int64
 	running    int64
 	deadline   time.Time
-	snapSeq    int64
-	sent       *sent
+	// reapDeadline is a stream's reap floor less the grace, when after
+	// deadline (StreamReap); zero otherwise.
+	reapDeadline time.Time
+	snapSeq      int64
+	sent         *sent
 	// basis is what the hold's first heartbeat brought for a reap of it.
 	basis []byte
 	// endIndex is the hold's place in its lease's ends.

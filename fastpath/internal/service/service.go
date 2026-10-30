@@ -156,7 +156,12 @@ func Defaults() Config {
 				Max: 10_000_000, IdleAfter: 10 * time.Minute, MaxLife: time.Hour},
 			// The authorize-to-heartbeat latency, the provider's out of it:
 			// a declared stream's first heartbeat is sent at its opening.
-			FirstHeartbeat: 10 * time.Second},
+			FirstHeartbeat: 10 * time.Second,
+			// The control plane's figures for the same stream: the
+			// reservation's life (GATEWAY_RESERVATION_TTL_SECONDS) and a
+			// heartbeat's renewal (heartbeat_grace_seconds)
+			// (docs/design/fast-admission-streams.md section 4.6 item 4).
+			StreamReap: owner.StreamReap{AfterAdmission: 2 * time.Hour, AfterHeartbeat: 300 * time.Second}},
 		FrontDoor: frontdoor.Config{OwnerWait: time.Second, PublishWait: 5 * time.Second, PeerWait: 800 * time.Millisecond,
 			WithdrawWithin: 5 * time.Second, ProbeEvery: 2 * time.Second, RevokeAfter: 15 * time.Second,
 			RevokeEvery: time.Second},

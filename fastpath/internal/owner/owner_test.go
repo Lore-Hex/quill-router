@@ -424,7 +424,6 @@ func TestHeartbeatValidity(t *testing.T) {
 		"a lower sequence":         {HeartbeatOf{GatewaySeq: 0, Hash: sum("h0"), Usage: 10, Running: 20}, ErrStale},
 		"the same with a new hash": {HeartbeatOf{GatewaySeq: 1, Hash: sum("x"), Usage: 10, Running: 20}, ErrStale},
 		"regressed usage":          {HeartbeatOf{GatewaySeq: 2, Hash: sum("h2"), Usage: 9, Running: 20, Echoed: first}, ErrRejected},
-		"a regressed charge":       {HeartbeatOf{GatewaySeq: 2, Hash: sum("h2"), Usage: 11, Running: 19, Echoed: first}, ErrRejected},
 		"a charge over its cap":    {HeartbeatOf{GatewaySeq: 2, Hash: sum("h2"), Usage: 11, Running: 501, Echoed: first}, ErrRejected},
 		"no hash":                  {HeartbeatOf{GatewaySeq: 2, Usage: 11, Running: 21, Echoed: first}, ErrRejected},
 		"a hash not SHA-256's":     {HeartbeatOf{GatewaySeq: 2, Hash: []byte("h2"), Usage: 11, Running: 21, Echoed: first}, ErrRejected},

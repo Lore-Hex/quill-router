@@ -35,8 +35,8 @@ var (
 // EdgePolicy is a parsed v1 edge policy body: the live control-plane facts
 // the edge gates on before it would answer an authorize itself. Every
 // exported field is a wire field; ParseEdgePolicy refuses any other field, a
-// missing one (async_settle and fastpath_pilot_key_windows alone may be
-// absent), a float, a duplicate key, null anywhere but monitor_lookup_hash,
+// missing one (async_settle, fastpath_pilot_key_windows and
+// fastpath_edge_streams alone may be absent), a float, a duplicate key, null anywhere but monitor_lookup_hash,
 // and a body that is not its own canonical encoding.
 type EdgePolicy struct {
 	V                                 int64         `json:"v"`
@@ -69,6 +69,21 @@ type EdgePolicy struct {
 	// member out rather than write "off", and parse_edge_policy refuses "off"
 	// as this does.
 	FastpathPilotKeyWindows *string `json:"fastpath_pilot_key_windows,omitempty"`
+	// FastpathEdgeStreams is optional: true when the control plane's
+	// fastpath_edge_streams, fastpath_pilot_streams and
+	// reap_snapshot_booking_enabled are all on, the edge's own switch for
+	// streams (docs/design/fast-admission-streams.md section 5.4). Absent is
+	// off, the only form of off: the publisher leaves the member out rather
+	// than write false, and false is refused. Go ships first; the edge reads
+	// it (EdgeStreams) and still passes every stream until the increment
+	// that decides them.
+	FastpathEdgeStreams *bool `json:"fastpath_edge_streams,omitempty"`
+}
+
+// EdgeStreams is the policy's fastpath_edge_streams, false when the
+// publisher does not carry it.
+func (p *EdgePolicy) EdgeStreams() bool {
+	return p.FastpathEdgeStreams != nil && *p.FastpathEdgeStreams
 }
 
 // The modes of fastpath_pilot_key_windows (KeyWindowsMode): off, the member
@@ -207,6 +222,9 @@ func (p *EdgePolicy) validate() error {
 	}
 	if m := p.FastpathPilotKeyWindows; m != nil && *m != KeyWindowsAlert && *m != KeyWindowsEnforce {
 		return errors.New("fastpath_pilot_key_windows")
+	}
+	if s := p.FastpathEdgeStreams; s != nil && !*s {
+		return errors.New("fastpath_edge_streams is absent when off, never false")
 	}
 	regions := p.ConfiguredRegions
 	if len(regions) == 0 || len(regions) != len(slices.Compact(slices.Sorted(slices.Values(regions)))) ||
