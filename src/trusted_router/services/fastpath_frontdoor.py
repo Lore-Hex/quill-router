@@ -57,6 +57,11 @@ CONNECT_TIMEOUT_SECONDS = 0.25
 DOORS_PER_CALL = 2
 # Calls in flight at once; past it a call is today's path at once.
 WORKERS = 64
+# Heartbeats in flight at once, a pool of their own: a heartbeat has no
+# other path to fall back to (one that is not answered stops its stream), so
+# a burst of authorizes must not take its permits
+# (docs/design/fast-admission-streams.md section 4.7).
+HEARTBEAT_WORKERS = 256
 
 ADMITTED = "admitted"
 BUSY = "busy"
@@ -66,6 +71,14 @@ WON = "won"
 RECORDED = "recorded"
 SETTLED = "settled"
 FAILED = "failed"
+# A heartbeat's answers (fastpath/internal/frontdoor/answers.go): accepted
+# with the deadline it grants, or why not. Retry stops the stream.
+ACCEPTED = "accepted"
+RETRY = "retry"
+STALE = "stale"
+REJECTED = "rejected"
+DEADLINE_PASSED = "deadline_passed"
+DECIDED = "decided"
 
 
 @dataclass(frozen=True)
@@ -89,6 +102,15 @@ class Terminal:
     outcome: str
     cost: int
     cost_known: bool
+
+
+@dataclass(frozen=True)
+class HeartbeatAnswer:
+    """A heartbeat's answer: its status, and for `accepted` the deadline the
+    owner granted (None for any other status)."""
+
+    status: str
+    deadline: datetime | None
 
 
 class FrontDoorUnavailable(RuntimeError):
@@ -184,6 +206,7 @@ class FrontDoorClient:
         # once, and nothing is ever queued to start later with a budget of
         # its own.
         self._permits = threading.BoundedSemaphore(WORKERS)
+        self._heartbeat_permits = threading.BoundedSemaphore(HEARTBEAT_WORKERS)
 
     def close(self) -> None:
         self._client.close()
@@ -247,13 +270,60 @@ class FrontDoorClient:
         except (KeyError, TypeError, ValueError) as exc:
             raise FrontDoorUnavailable(f"{path}: malformed answer") from exc
 
+    # -- heartbeats -------------------------------------------------------
+
+    def heartbeat(
+        self,
+        *,
+        envelope: str,
+        seq: int,
+        digest: bytes,
+        usage: int,
+        running: int,
+        basis: bytes | None,
+    ) -> HeartbeatAnswer:
+        """A leased stream's heartbeat (docs/design/fast-admission-streams.md
+        section 4.2), on the heartbeat permits. `digest` is the 32 bytes of
+        the heartbeat's hash; `basis` is sent only on a hold's first
+        heartbeat. No echoed deadline is sent: the field that has the owner
+        read its own (EchoGranted) comes with the Go change of section 4.6,
+        and a front door refuses a field it does not know. Raises
+        FrontDoorUnavailable when no front door answered, or the answer does
+        not parse."""
+        body: dict[str, Any] = {
+            "Envelope": envelope,
+            "GatewaySeq": int(seq),
+            "Hash": _bytes(digest),
+            "Usage": int(usage),
+            "Running": int(running),
+        }
+        if basis is not None:
+            body["Basis"] = _bytes(basis)
+        answer = self._call("/v1/heartbeat", body, permits=self._heartbeat_permits)
+        if answer is None:
+            raise FrontDoorUnavailable("/v1/heartbeat")
+        status = answer.get("Status")
+        if not isinstance(status, str) or not status:
+            raise FrontDoorUnavailable("/v1/heartbeat: malformed answer")
+        if status != ACCEPTED:
+            return HeartbeatAnswer(status=status, deadline=None)
+        deadline = _parse_time(answer.get("Deadline"))
+        if deadline is None:
+            raise FrontDoorUnavailable("/v1/heartbeat: accepted without a deadline")
+        return HeartbeatAnswer(status=status, deadline=deadline)
+
     # -- transport --------------------------------------------------------
 
-    def _call(self, path: str, body: dict[str, Any]) -> dict[str, Any] | None:
+    def _call(
+        self, path: str, body: dict[str, Any], *, permits: threading.BoundedSemaphore | None = None,
+    ) -> dict[str, Any] | None:
         """One JSON call within one budget for the whole call, the membership
         read included: the caller waits at most the budget. None when no
-        front door answered 200 with a JSON object in time."""
-        if not self._permits.acquire(blocking=False):
+        front door answered 200 with a JSON object in time. `permits` is the
+        pool the call's worker takes from: the authorize and terminal one
+        unless named."""
+        pool = permits if permits is not None else self._permits
+        if not pool.acquire(blocking=False):
             logger.warning("fastpath %s: every worker busy", path)
             return None
         deadline = self._clock() + self._budget
@@ -267,14 +337,14 @@ class FrontDoorClient:
                 logger.exception("fastpath %s failed", path)
             finally:
                 done.set()
-                self._permits.release()
+                pool.release()
 
         worker = threading.Thread(target=run, name="fastpath-front-door", daemon=True)
         try:
             worker.start()
         except RuntimeError:
             # Not started, so nothing runs later: the permit comes back now.
-            self._permits.release()
+            pool.release()
             logger.warning("fastpath %s: no thread", path)
             return None
         if not done.wait(self._budget):
