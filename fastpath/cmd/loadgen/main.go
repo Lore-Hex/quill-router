@@ -92,6 +92,9 @@ func run(args []string, out io.Writer, ready readiness) error {
 	heartbeat := fs.Duration("heartbeat", 20*time.Second, "how often a stream heartbeats")
 	openHeartbeat := fs.Bool("open-heartbeat", false,
 		"the boot declares the heartbeat at stream open: each stream's authorize says so, and its first heartbeat is sent as it opens")
+	echoGranted := fs.Bool("echo-granted", false,
+		"each heartbeat after a stream's first has the owner take the deadline it last granted as the echo, "+
+			"as the control plane relays them; needs owners and front doors that take the field")
 	heartbeatWait := fs.Duration("heartbeat-wait", 5*time.Second, "how long a heartbeat's attempts may take, together")
 	boot := fs.String("boot", "spike-boot", "the boot binding every request carries")
 	enclaves := fs.Int("enclaves", 8, "how many enclaves the load spreads over, each with its retry queue's one worker")
@@ -121,7 +124,7 @@ func run(args []string, out io.Writer, ready readiness) error {
 	}
 	client := &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: 1024}}
 	cfg := loadgen.Config{Rate: *rate, Duration: *duration, MaxInFlight: *inFlight, Mix: mix,
-		HeartbeatEvery: *heartbeat, OpenHeartbeat: *openHeartbeat, HeartbeatWait: *heartbeatWait,
+		HeartbeatEvery: *heartbeat, OpenHeartbeat: *openHeartbeat, EchoGranted: *echoGranted, HeartbeatWait: *heartbeatWait,
 		Boot: []byte(*boot), Enclaves: *enclaves, RetryQueue: *retryQueue, CallWait: *callWait, Seed: *seed}
 	for _, d := range strings.Split(*retryDelays, ",") {
 		if d = strings.TrimSpace(d); d == "" {

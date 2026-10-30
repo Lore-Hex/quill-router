@@ -311,6 +311,12 @@ type Decided struct {
 	// cache_affinity_key) once the strict parse has read the body whole,
 	// else AsyncUnparsed; "" for any other request.
 	AsyncPop string
+	// StreamStageD is the shadow's split of a request passed as body.stream
+	// (docs/design/fast-admission-streams.md section 8.1): the Stage D
+	// reason the stream would get, as far as the edge reads it before the
+	// key's facts (streamStageD); "" for any other request. It changes no
+	// decision: every stream still passes.
+	StreamStageD string
 }
 
 // The async-v1 populations (Decided.AsyncPop).
@@ -371,6 +377,9 @@ func Decide(in DecideInputs) Decided {
 		}
 	}
 	if p.Passed() {
+		if p.Reason == gwauth.ReasonStream {
+			out.StreamStageD = streamStageD(in.Policy, in.Request.Boot, r)
+		}
 		return pass(p.Reason)
 	}
 	at := in.Request.At
@@ -590,6 +599,53 @@ func composeTags(tags []gwauth.Tag) []gwauth.ComposeTag {
 		out[i] = gwauth.ComposeTag(t)
 	}
 	return out
+}
+
+// The shadow's Stage D reasons for a stream (Decided.StreamStageD), in
+// _stage_d_eligibility_reason's order (gateway.py), as far as the edge
+// reads them before the key's facts. A stream reaches them with a verified
+// boot (bootPass), so boot_not_accepted cannot occur. StreamPilotSet is a
+// stream whose policy names a Stage D pilot set, whose membership needs the
+// key's workspace; StreamUnread is one every reason read here lets
+// through, whose candidates' usage types and pricing the edge has not read.
+const (
+	StreamPolicyUnknown       = "policy_unknown"
+	StreamStageDDisabled      = "stage_d_disabled"
+	StreamPilotSet            = "pilot_set"
+	StreamHeartbeatsDisabled  = "heartbeats_disabled"
+	StreamHeartbeatUndeclared = "heartbeat_undeclared"
+	StreamRoute               = "route"
+	StreamServiceTier         = "service_tier"
+	StreamUnread              = "unread"
+)
+
+// streamStageD is a stream's Stage D reason for the shadow's split
+// (docs/design/fast-admission-streams.md section 8.1). A stream joins the
+// lease cohort only with a boot that declared heartbeats, whatever
+// require_heartbeat_declaration says (section 5.1), so an undeclared boot
+// is counted apart either way.
+func streamStageD(p *routingsnapshot.EdgePolicy, boot BootSeen, r gwauth.Request) string {
+	if p == nil {
+		return StreamPolicyUnknown
+	}
+	sd := p.StageD
+	switch {
+	case !sd.EligibilityEnabled:
+		return StreamStageDDisabled
+	case len(sd.PilotWorkspaces) > 0:
+		return StreamPilotSet
+	case !sd.HeartbeatEnabled:
+		return StreamHeartbeatsDisabled
+	case !boot.Boot.DeclaresUsageHeartbeat:
+		return StreamHeartbeatUndeclared
+	}
+	if rt := r.Routing.RouteType; rt == nil || (*rt != "chat.completions" && *rt != "responses") {
+		return StreamRoute
+	}
+	if t := r.Routing.ServiceTier; t != nil && (*t == "priority" || *t == "auto") {
+		return StreamServiceTier
+	}
+	return StreamUnread
 }
 
 // bootPass is the boot's reason (§3 "Boot"): E1's verdict, an Invalid one

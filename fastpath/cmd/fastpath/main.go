@@ -76,6 +76,12 @@ func run() error {
 	flag.DurationVar(&cfg.Owner.RenewEvery, "renew-every", cfg.Owner.RenewEvery, "how often an owner renews its leases")
 	flag.DurationVar(&cfg.Owner.FirstHeartbeat, "first-heartbeat", cfg.Owner.FirstHeartbeat,
 		"how long a declared stream's hold waits for its first heartbeat, before the grace; 0 releases none")
+	flag.DurationVar(&cfg.Owner.StreamReap.AfterAdmission, "stream-reap-after-admission",
+		cfg.Owner.StreamReap.AfterAdmission,
+		"a stream's hold is reaped no sooner than its admission plus this (the control plane's reservation life)")
+	flag.DurationVar(&cfg.Owner.StreamReap.AfterHeartbeat, "stream-reap-after-heartbeat",
+		cfg.Owner.StreamReap.AfterHeartbeat,
+		"a stream's hold is reaped no sooner than its last accepted heartbeat plus this (the control plane's renewal)")
 	flag.DurationVar(&cfg.HandOff, "hand-off", cfg.HandOff,
 		"how long a stopping node's owner has to hand its leases off; 0 hands none off")
 	flag.DurationVar(&cfg.ClockOffset, "clock-offset", cfg.ClockOffset,

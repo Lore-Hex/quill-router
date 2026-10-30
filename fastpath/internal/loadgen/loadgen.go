@@ -303,6 +303,12 @@ type Config struct {
 	// before; without it the first is sent HeartbeatEvery in, as at a first
 	// byte.
 	OpenHeartbeat bool
+	// EchoGranted: each heartbeat after a stream's first asks the owner to
+	// take the deadline it last granted as the echo, as the control plane
+	// relays them (docs/design/fast-admission-streams.md section 4.6),
+	// instead of echoing the deadline itself. It needs owners and front
+	// doors that take the field.
+	EchoGranted bool
 	// HeartbeatWait bounds a heartbeat's attempts together, as the enclave's
 	// 5 seconds do: three at most, the later two after a Retry or a call
 	// that failed (§4.5).
@@ -650,6 +656,10 @@ func (p *played) stream(ctx context.Context, g *Generation, envelope string, est
 		snapshot := sha256.Sum256([]byte(g.Request + "/" + strconv.FormatInt(seq, 10)))
 		hb := frontdoor.HeartbeatOf{Envelope: envelope, GatewaySeq: seq, Hash: snapshot[:], Usage: 10 * paid,
 			Running: min(delivered, estimate), Echoed: echoed}
+		if cfg.EchoGranted && seq > 1 {
+			// The owner takes the deadline it last granted as the echo.
+			hb.Echoed, hb.EchoGranted = time.Time{}, true
+		}
 		if seq == 1 {
 			// The reap's basis: what a reap of the hold needs to build its
 			// full record without the request's own, the request's terms

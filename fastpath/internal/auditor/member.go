@@ -243,7 +243,10 @@ func (l *Lease) heartbeat(r record.Record) {
 		l.holds[r.Auth] = h
 	}
 	s := r.Snapshot
-	h.row.Deadline = s.Deadline
+	// The row's deadline is the one a reap waits for, plus the grace: a
+	// stream's reap floor when its record carries one (record.Snapshot
+	// ReapDeadline), else the heartbeat's.
+	h.row.Deadline = s.ReapAfter()
 	h.row.SnapshotSeq = spanner.NullInt64{Int64: s.GatewaySeq, Valid: true}
 	h.row.SnapshotHash, h.row.SnapshotUsage = s.Hash, s.Usage
 	h.row.RunningCharge = spanner.NullInt64{Int64: s.Running, Valid: true}
@@ -358,6 +361,7 @@ func (l *Lease) manifest(r record.Record) {
 			row.RunningCharge = spanner.NullInt64{Int64: s.Running, Valid: true}
 			row.SnapshotOwnerSeq = spanner.NullInt64{Int64: held.SnapshotSeq, Valid: true}
 			row.ReapBasis = held.Basis
+			row.Deadline = s.ReapAfter()
 		}
 		if h := l.holds[held.Auth]; h != nil {
 			older := row

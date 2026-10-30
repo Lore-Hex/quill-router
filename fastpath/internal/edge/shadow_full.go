@@ -228,6 +228,9 @@ type fullTally struct {
 	readBack                              int
 	// windows are the window checks' counts (compareWindowed).
 	windows map[string]int
+	// streams are the requests passed as body.stream, by the Stage D
+	// reason the edge reads for them (Decided.StreamStageD).
+	streams map[string]int
 	// async are the async-v1 counts (§4.4 of
 	// docs/design/fast-admission-e2-g15-async.md), by the line's map name
 	// (asyncCounts).
@@ -259,7 +262,7 @@ var asyncCounts = []string{asyncSeen, asyncCompared, asyncFields, asyncShape, as
 
 func newFullTally() *fullTally {
 	t := &fullTally{classes: map[string]int{}, fields: map[string]int{}, rows: map[string]int{}, decide: map[string]int{},
-		cohort: map[string]int{}, windows: map[string]int{}, async: map[string]map[string]int{}}
+		cohort: map[string]int{}, windows: map[string]int{}, streams: map[string]int{}, async: map[string]map[string]int{}}
 	for _, name := range asyncCounts {
 		t.async[name] = map[string]int{}
 	}
@@ -269,7 +272,7 @@ func newFullTally() *fullTally {
 func (t *fullTally) clone() *fullTally {
 	c := &fullTally{classes: clonedCounts(t.classes), fields: clonedCounts(t.fields), rows: clonedCounts(t.rows),
 		decide: clonedCounts(t.decide), cohort: clonedCounts(t.cohort), readBack: t.readBack,
-		windows: clonedCounts(t.windows), async: map[string]map[string]int{}}
+		windows: clonedCounts(t.windows), streams: clonedCounts(t.streams), async: map[string]map[string]int{}}
 	for name, m := range t.async {
 		c.async[name] = clonedCounts(m)
 	}
@@ -560,6 +563,7 @@ type fullResult struct {
 	warm     *Decision
 	async    asyncResult
 	windows  []string
+	stream   string
 	race     *raceCandidate
 }
 
@@ -593,6 +597,7 @@ func compareFull(d Decided, a pyAnswer) fullResult {
 	}
 	r := compareClass(d, a, py)
 	r.async.pop = d.AsyncPop
+	r.stream = d.StreamStageD
 	if dec := d.ForShadow(); dec != nil && d.AsyncPop != "" {
 		r.async.shape = asyncShapeName(dec.Staged.Async())
 	}
@@ -1388,6 +1393,9 @@ func (sh *fullShadow) record(digest string, r fullResult) {
 		for _, w := range r.windows {
 			tally.windows[w]++
 		}
+		if r.stream != "" {
+			tally.streams[r.stream]++
+		}
 		if a := r.async; a.pop != "" {
 			tally.async[asyncSeen][a.pop]++
 			if a.shape != "" {
@@ -1478,6 +1486,8 @@ func (sh *fullShadow) flush() {
 			line += " " + name + "=%s"
 			args = append(args, jsonOf(t.async[name]))
 		}
+		line += " streams=%s"
+		args = append(args, jsonOf(t.streams))
 		sh.logf(line, args...)
 	}
 	// Every count of the line is the period's, the cache's too: its own
@@ -1505,9 +1515,12 @@ func (sh *fullShadow) flush() {
 // checks' (compareWindowed).
 type DecideShadowCounts struct {
 	Classes, Fields, Rows, Decide, Cohort, Windows map[string]int
-	Async                                          map[string]map[string]int
-	ReadBack                                       int
-	Dropped, Evictions                             int64
+	// Streams are the requests passed as body.stream by the Stage D reason
+	// the edge reads for them (Decided.StreamStageD).
+	Streams            map[string]int
+	Async              map[string]map[string]int
+	ReadBack           int
+	Dropped, Evictions int64
 }
 
 // DecideShadowCounts are the counts now; zero with the shadow off.
@@ -1520,8 +1533,8 @@ func (e *Edge) DecideShadowCounts() DecideShadowCounts {
 	t := sh.totals.clone()
 	sh.mu.Unlock()
 	return DecideShadowCounts{Classes: t.classes, Fields: t.fields, Rows: t.rows, Decide: t.decide, Cohort: t.cohort,
-		Windows: t.windows,
-		Async:   t.async, ReadBack: t.readBack, Dropped: sh.dropped.Load(), Evictions: sh.evictions.Load()}
+		Windows: t.windows, Streams: t.streams,
+		Async: t.async, ReadBack: t.readBack, Dropped: sh.dropped.Load(), Evictions: sh.evictions.Load()}
 }
 
 // DecideShadowOn reports the full-response shadow configured.
