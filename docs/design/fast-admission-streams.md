@@ -633,21 +633,25 @@ Then gate P (§8.3) after increment 4, gate E (§8.5) after 5, and the member
 after 6. In all, six code PRs after this one, about 1,300 lines of
 production code and 2,450 of tests and generators, the vector JSON aside.
 
-## 11. Open questions for Joseph
+## 11. Decisions
 
-1. **The tripwire or the ceiling.** This design keeps leased streams only
-   while `reservation == estimate`, which retires e2-decide's "Streams"
-   follow-up (lowering stream reservations) for leased traffic. The
-   alternative carries e beside r in the admission and the envelope, so the
-   owner bounds `Running` by e while holding r: an owner, front door and
-   record change. Recommended: the tripwire now.
-2. **The row transaction per heartbeat** (§4.1, §9): kept for exact parity
-   and the reap records. Dropping it is a second design.
-3. **Owner crash cuts streams** (§6.6). Accepted by batched settlement
-   §4.5; confirm it for the pilot workspaces.
-4. **`deadline_passed` as `already_terminal`.** The enclave has no reason
-   for it; `already_terminal` stops the stream at once, a 503 would retry
-   into the same answer. Recommended as written.
-5. **`stream_open_heartbeat`** in quill-cloud-proxy, to release a stream
-   that dies before its first byte after 10 s instead of 2 h 20 min (§6.5):
-   wanted now, or after gate P?
+Decided by Joseph on 2026-10-30, on this design's first review:
+
+1. **The tripwire now.** Leased streams require `reservation == estimate`
+   (§5.1 item 5). e2-decide's "Streams" follow-up, lowering stream
+   reservations, waits for a design that carries the ceiling beside the
+   hold (e beside r in the admission, the envelope and the record).
+2. **One row transaction per leased heartbeat** stays (§4.1): exact parity
+   with today's validity rules and the row's snapshot for reap records.
+   Dropping it is §9's, a design of its own.
+3. **An owner crash cutting pilot streams is accepted** (§6.6), as batched
+   settlement §4.5 accepts it.
+4. **`deadline_passed` answers 409 `already_terminal`** (§4.4): the
+   enclave has no reason for it, and a 503 would retry into the same
+   answer.
+5. **`stream_open_heartbeat` is requested from quill-cloud-proxy after
+   gate P** (§6.5, §8.3); until then no leased stream is admitted with
+   `OpenHeartbeat`.
+6. **Increment 1 is keyed on the row's envelope, with no switch** (§10):
+   the setting lands with the cohort in increment 4, after increment 3's
+   terminal handling.
