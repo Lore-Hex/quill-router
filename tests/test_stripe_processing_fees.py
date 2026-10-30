@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 import pytest
@@ -19,7 +20,7 @@ from trusted_router.typed_balance import live_credit_summary
 
 @pytest.mark.parametrize("amount", [
     "1e1000000", "-1e1000000", "NaN", "sNaN", "Infinity", "-Infinity",
-    "9223372036854.775808", "25.0000001", "0.9999999", "10000.0000001",
+    "9223372036854.775808", "10000.0000001",
 ])
 def test_checkout_bad_amount_is_a_validation_error(client, user_headers, amount):
     response = client.post(
@@ -32,7 +33,7 @@ def test_checkout_bad_amount_is_a_validation_error(client, user_headers, amount)
 
 @pytest.mark.parametrize("schema", [CheckoutRequest, X402FundingRequest])
 @pytest.mark.parametrize("amount", [
-    "1e1000000", "NaN", "Infinity", "-Infinity", "25.0000001", "10000.0000001",
+    "1e1000000", "NaN", "Infinity", "-Infinity",
 ])
 def test_funding_schema_rejects_unrepresentable_amounts(schema, amount):
     with pytest.raises(ValidationError):
@@ -822,3 +823,62 @@ def test_auto_refill_webhook_rejects_fee_metadata_mismatch(
     after = live_credit_summary(workspace_id)
     assert after is not None
     assert after["total_credits"] == before["total_credits"]
+
+
+@pytest.mark.parametrize("path", ["/v1/billing/checkout", "/billing/checkout"])
+@pytest.mark.parametrize("method,maximum,custom_maximum", [
+    ("card", "9,570.76", "9,176.83"),
+    ("ach", "9,992.50", "9,985.00"),
+    ("stablecoin", "9,776.66", "9,563.08"),
+])
+@pytest.mark.parametrize("multiplier", [15000, 30000])
+def test_checkout_above_principal_ceiling_reports_rail_maximum(
+    monkeypatch, user_headers, path, method, maximum, custom_maximum, multiplier,
+):
+    def unexpected_stripe_call(**kwargs):
+        pytest.fail("out-of-range checkout must not call Stripe")
+
+    monkeypatch.setattr(stripe.checkout.Session, "create", unexpected_stripe_call)
+    cfg = Settings(environment="test", stripe_secret_key="sk_test_bounds",  # noqa: S106
+                   stripe_paypal_fee_multiplier_basis_points=multiplier)
+    with TestClient(create_app(cfg, init_observability=False)) as local_client:
+        response = local_client.post(path, headers=user_headers,
+                                     json={"amount": "10000.01", "payment_method": method})
+    assert response.status_code == 400, response.text
+    maximum = maximum if multiplier == 15000 else custom_maximum
+    assert f"${maximum}" in response.json()["error"]["message"]
+
+
+@pytest.mark.parametrize("path", ["/v1/billing/checkout", "/billing/checkout"])
+@pytest.mark.parametrize("amount", ["25.0000001", "0.9999999", 3.3000000000000003])
+def test_checkout_submicro_precision_preserves_main_charge(monkeypatch, user_headers, path, amount):
+    captured = {}
+
+    def create_session(**kwargs):
+        captured.update(kwargs)
+        return {"id": "cs_precision", "url": "https://checkout.stripe.test/precision"}
+
+    monkeypatch.setattr(stripe.checkout.Session, "create", create_session)
+    cfg = Settings(environment="test", stripe_secret_key="sk_test_precision")  # noqa: S106
+    with TestClient(create_app(cfg, init_observability=False)) as local_client:
+        response = local_client.post(path, headers=user_headers,
+                                     json={"amount": amount, "payment_method": "card"})
+    assert response.status_code == 201, response.text
+    # Frozen main conversion and the unchanged fee schedule determine the charge.
+    cents = int((Decimal(str(amount)) * 100).to_integral_value(rounding=ROUND_HALF_UP))
+    micros = int((Decimal(str(amount)) * 1_000_000).to_integral_value(rounding=ROUND_HALF_UP))
+    expected_fee = rail_processing_fee(cfg, "card", cents)
+    assert captured["line_items"] == expected_fee.checkout_line_items()
+    assert response.json()["data"]["amount_microdollars"] == micros
+    assert response.json()["data"]["total_microdollars"] == expected_fee.charge_amount_cents * 10_000
+
+
+@pytest.mark.parametrize("method", ["paypal", "adyen"])
+def test_non_stripe_checkout_keeps_principal_ceiling(method):
+    assert CheckoutRequest(amount="10000.0000001", payment_method=method).amount == Decimal("10000.0000001")
+    with pytest.raises(ValidationError, match="amount must be at most 10000"):
+        CheckoutRequest(amount="10000.01", payment_method=method)
+    if method == "paypal":
+        with pytest.raises(ValidationError, match="PayPal checkout amount must be at least 20"):
+            CheckoutRequest(amount="19.99", payment_method=method)
+        assert CheckoutRequest(amount="20", payment_method=method).amount == 20

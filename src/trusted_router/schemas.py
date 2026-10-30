@@ -112,17 +112,19 @@ class CheckoutRequest(_Lenient):
         microdollars = dollars_to_microdollars(value)
         if microdollars < MICRODOLLARS_PER_DOLLAR:
             raise ValueError("amount must be at least 1")
-        if microdollars > MAX_CHECKOUT_DOLLARS * MICRODOLLARS_PER_DOLLAR:
-            raise ValueError(f"amount must be at most {MAX_CHECKOUT_DOLLARS}")
-        if (
-            microdollars % MICRODOLLARS_PER_CENT != 0
-            or Decimal(str(value)) != Decimal(microdollars) / MICRODOLLARS_PER_DOLLAR
-        ):
+        if microdollars % MICRODOLLARS_PER_CENT != 0:
             raise ValueError("amount must be exactly representable in cents")
         return Decimal(str(value))
 
     @model_validator(mode="after")
-    def paypal_amount_in_range(self) -> CheckoutRequest:
+    def payment_method_amount_in_range(self) -> CheckoutRequest:
+        # Stripe checks its fee-inclusive, configured rail maximum in the
+        # checkout service. Other processors retain the principal ceiling.
+        if (
+            self.payment_method in {"paypal", "adyen"}
+            and dollars_to_microdollars(self.amount) > MAX_CHECKOUT_DOLLARS * MICRODOLLARS_PER_DOLLAR
+        ):
+            raise ValueError(f"amount must be at most {MAX_CHECKOUT_DOLLARS}")
         if (
             self.payment_method == "paypal"
             and dollars_to_microdollars(self.amount) < MIN_PAYPAL_CHECKOUT_MICRODOLLARS
@@ -144,10 +146,7 @@ class X402FundingRequest(_Strict):
             raise ValueError("amount must be at least 1")
         if microdollars > MAX_CHECKOUT_DOLLARS * MICRODOLLARS_PER_DOLLAR:
             raise ValueError(f"amount must be at most {MAX_CHECKOUT_DOLLARS}")
-        if (
-            microdollars % MICRODOLLARS_PER_CENT != 0
-            or Decimal(str(value)) != Decimal(microdollars) / MICRODOLLARS_PER_DOLLAR
-        ):
+        if microdollars % MICRODOLLARS_PER_CENT != 0:
             raise ValueError("amount must be exactly representable in cents")
         return Decimal(str(value))
 

@@ -45,8 +45,8 @@ EXPECTED_FEE_CENTS: dict[FeeRail, dict[int, int]] = {
 }
 
 
-def _console_client() -> tuple[TestClient, Any, Any]:
-    app = create_app(Settings(environment="local"), init_observability=False)
+def _console_client(**settings: Any) -> tuple[TestClient, Any, Any]:
+    app = create_app(Settings(environment="local", **settings), init_observability=False)
     client = TestClient(app)
     user = STORE.ensure_user("credits-page@example.com")
     workspace = STORE.list_workspaces_for_user(user.id)[0]
@@ -145,7 +145,7 @@ def test_page_embeds_the_fee_schedule_and_the_default_summary() -> None:
     assert "Migration credits" not in page
 
 
-@pytest.mark.parametrize("amount", ["1e1000000", "NaN", "Infinity", "25.0000001", "10000"])
+@pytest.mark.parametrize("amount", ["1e1000000", "NaN", "Infinity", "10000"])
 def test_console_checkout_bad_amount_is_400(amount) -> None:
     client, _, _ = _console_client()
     response = client.post("/console/credits/checkout",
@@ -258,3 +258,31 @@ def test_saved_card_state_offers_change_manage_remove_and_the_switch() -> None:
     assert "pm_mock_f00d1234" not in page
     assert "Test ····1234" in details
     assert "pm_mock_f00d1234" not in details
+
+
+@pytest.mark.parametrize("method,maximum,custom_maximum", [
+    ("card", "9,570.76", "9,176.83"),
+    ("ach", "9,992.50", "9,985.00"),
+    ("stablecoin", "9,776.66", "9,563.08"),
+])
+@pytest.mark.parametrize("multiplier", [15000, 30000])
+def test_console_checkout_above_principal_ceiling_reports_rail_maximum(
+    method, maximum, custom_maximum, multiplier,
+):
+    client, _, _ = _console_client(stripe_paypal_fee_multiplier_basis_points=multiplier)
+    response = client.post("/console/credits/checkout",
+                           data={"amount": "10000.01", "payment_method": method},
+                           follow_redirects=False)
+    assert response.status_code == 400, response.text
+    maximum = maximum if multiplier == 15000 else custom_maximum
+    assert f"${maximum}" in response.json()["error"]["message"]
+
+
+@pytest.mark.parametrize("amount", ["25.0000001", "0.9999999", "3.3000000000000003"])
+def test_console_checkout_submicro_precision_stays_accepted(amount):
+    client, _, _ = _console_client()
+    response = client.post("/console/credits/checkout",
+                           data={"amount": amount, "payment_method": "card"},
+                           follow_redirects=False)
+    assert response.status_code == 303, response.text
+    assert response.headers["location"] == "/console/credits?checkout=mock"
