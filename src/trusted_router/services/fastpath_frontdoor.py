@@ -31,11 +31,13 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from trusted_router.spend_windows import LIMIT_FIELDS
+if TYPE_CHECKING:
+    from trusted_router.storage_models import ApiKey
+
 
 logger = logging.getLogger("trusted_router.fastpath")
 
@@ -391,7 +393,12 @@ def records_durable(settle_outbox_enabled: bool, typed_store: Any) -> bool:
 _INT64_MIN, _INT64_MAX = -(1 << 63), (1 << 63) - 1
 
 
-def key_windows_covered(mode: str, key: object) -> bool:
+def _window_limits(key: ApiKey) -> tuple[object, object, object]:
+    """The daily, weekly and monthly limits as stored, unconverted."""
+    return (key.limit_daily_microdollars, key.limit_weekly_microdollars, key.limit_monthly_microdollars)
+
+
+def key_windows_covered(mode: str, key: ApiKey) -> bool:
     """Whether ``fastpath_pilot_key_windows`` covers this key's configured
     spend windows (docs/design/fast-admission-e2-key-windows.md section 5):
     ``alert`` covers an alert-only key, ``enforce`` an alert-only or an
@@ -403,22 +410,21 @@ def key_windows_covered(mode: str, key: object) -> bool:
     ``key_shape`` on the edge, and is covered by no mode here either."""
     if mode not in {"alert", "enforce"}:
         return False
-    for field in LIMIT_FIELDS.values():
-        value = getattr(key, field, None)
+    for value in _window_limits(key):
         if value is not None and not (type(value) is int and _INT64_MIN <= value <= _INT64_MAX):
             return False
-    alert_only = getattr(key, "budget_alert_only", False)
+    alert_only = key.budget_alert_only
     if alert_only is True:
         return True
     return alert_only is False and mode == "enforce"
 
 
-def pilot_key_capped(mode: str, key: object) -> bool:
+def pilot_key_capped(mode: str, key: ApiKey) -> bool:
     """The cohort's ``key_capped``: a lifetime cap, or spend windows the
     mode does not cover. A key without either is not capped."""
-    if getattr(key, "limit_microdollars", None) is not None:
+    if key.limit_microdollars is not None:
         return True
-    if all(getattr(key, field, None) is None for field in LIMIT_FIELDS.values()):
+    if all(value is None for value in _window_limits(key)):
         return False
     return not key_windows_covered(mode, key)
 
