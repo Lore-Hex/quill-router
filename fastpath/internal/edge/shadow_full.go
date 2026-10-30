@@ -1725,19 +1725,24 @@ type raceCandidate struct {
 	refuted, landed bool
 }
 
-// maxReadAtLen bounds the read timestamp header the shadow parses: RFC 3339
-// with nine fractional digits is 30 bytes.
-const maxReadAtLen = 40
+// readAtForm is the one form Python writes its WindowReadTimestampHeader in
+// (spend_windows.key_window_read_timestamp_headers): UTC, exactly nine
+// fractional digits, a Z.
+var readAtForm = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{9}Z$`)
 
 // pythonReadAt parses Python's WindowReadTimestampHeader: the instant, or
-// why there is none (read_at_none when absent, read_at_malformed when it is
-// not an RFC 3339 instant).
+// why there is none (read_at_none when absent, read_at_malformed for
+// anything but exactly the form Python writes, or an instant that is not
+// one).
 func pythonReadAt(h string) (time.Time, string) {
 	if h == "" {
 		return time.Time{}, "read_at_none"
 	}
+	if !readAtForm.MatchString(h) {
+		return time.Time{}, "read_at_malformed"
+	}
 	at, err := time.Parse(time.RFC3339Nano, h)
-	if err != nil || len(h) > maxReadAtLen || at.IsZero() {
+	if err != nil || at.IsZero() {
 		return time.Time{}, "read_at_malformed"
 	}
 	return at.UTC(), ""

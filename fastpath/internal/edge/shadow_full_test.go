@@ -2080,10 +2080,12 @@ func TestOnlyAReReadAtPythonsTimestampConfirmsAWindowRace(t *testing.T) {
 	}
 }
 
-// TestPythonReadAtParsesOnlyAnInstant: the header's instant to the
-// nanosecond, in UTC; nothing for an absent header, and a malformed one for
-// anything that is not an RFC 3339 instant.
-func TestPythonReadAtParsesOnlyAnInstant(t *testing.T) {
+// TestPythonReadAtParsesOnlyPythonsForm: the header's instant to the
+// nanosecond, in UTC, only in exactly the form Python writes (UTC, Z,
+// exactly nine fractional digits); nothing for an absent header, and a
+// malformed one for any other form, even a valid RFC 3339 instant, and for
+// an instant that is not one.
+func TestPythonReadAtParsesOnlyPythonsForm(t *testing.T) {
 	want := time.Date(2026, 10, 19, 12, 0, 0, 123_456_789, time.UTC)
 	for _, x := range []struct {
 		h   string
@@ -2091,12 +2093,22 @@ func TestPythonReadAtParsesOnlyAnInstant(t *testing.T) {
 		why string
 	}{
 		{"2026-10-19T12:00:00.123456789Z", want, ""},
-		{"2026-10-19T14:00:00.123456789+02:00", want, ""},
-		{"2026-10-19T12:00:00Z", want.Truncate(time.Second), ""},
+		{"2026-10-19T12:00:00.000000000Z", want.Truncate(time.Second), ""},
 		{"", time.Time{}, "read_at_none"},
+		{"2026-10-19T14:00:00.123456789+02:00", time.Time{}, "read_at_malformed"},
+		{"2026-10-19T12:00:00.123456789+00:00", time.Time{}, "read_at_malformed"},
+		{"2026-10-19T12:00:00Z", time.Time{}, "read_at_malformed"},
+		{"2026-10-19T12:00:00.123456Z", time.Time{}, "read_at_malformed"},
+		{"2026-10-19T12:00:00.1234567890Z", time.Time{}, "read_at_malformed"},
+		{"2026-10-19T12:00:00.123456789z", time.Time{}, "read_at_malformed"},
+		{"2026-10-19 12:00:00.123456789Z", time.Time{}, "read_at_malformed"},
 		{"2026-10-19T12:00:00.123456789", time.Time{}, "read_at_malformed"},
+		{" 2026-10-19T12:00:00.123456789Z", time.Time{}, "read_at_malformed"},
+		{"2026-10-19T12:00:00.123456789Z\n", time.Time{}, "read_at_malformed"},
+		{"2026-13-19T12:00:00.123456789Z", time.Time{}, "read_at_malformed"},
+		{"2026-10-19T25:00:00.123456789Z", time.Time{}, "read_at_malformed"},
 		{"1792000000123456789", time.Time{}, "read_at_malformed"},
-		{"0001-01-01T00:00:00Z", time.Time{}, "read_at_malformed"},
+		{"0001-01-01T00:00:00.000000000Z", time.Time{}, "read_at_malformed"},
 		{"2026-10-19T12:00:00.123456789Z" + strings.Repeat("0", 20), time.Time{}, "read_at_malformed"},
 	} {
 		at, why := pythonReadAt(x.h)

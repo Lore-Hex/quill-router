@@ -533,7 +533,8 @@ Python's 200 byte for byte as it does now. Three additions:
    Python's 429 on the internal authorize route also carries
    `X-TR-Key-Window-Read-Timestamp`: the read timestamp of the multi-use
    snapshot its window check summed (`key_window_limit_decision`, RFC 3339
-   UTC with nine fractional digits), and after Python's answer the shadow
+   UTC with exactly nine fractional digits and a `Z`, the only form the
+   shadow accepts), and after Python's answer the shadow
    re-reads the rows at exactly that timestamp
    (`store.ReadKeyWindowsAt`, a single-use read at that timestamp, within
    its window limiter and `WindowReadBudget`) and evaluates that window at

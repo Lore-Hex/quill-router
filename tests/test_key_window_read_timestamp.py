@@ -187,6 +187,37 @@ def test_the_header_is_rfc3339_with_nanoseconds() -> None:
     }
 
 
+def test_the_real_client_snapshot_keeps_the_read_timestamp_where_we_read_it() -> None:
+    """Against google-cloud-spanner's own Snapshot, with no network: the read
+    timestamp the first result set's transaction carries is what
+    snapshot_read_timestamp_ns returns, to the nanosecond, and later result
+    sets (no metadata, or a transaction without one) leave it. A client
+    version that renames or stops keeping Snapshot._transaction_read_timestamp
+    fails here, not silently in production (every candidate would page as
+    read_at_none)."""
+    from google.cloud.spanner_v1 import PartialResultSet, ResultSetMetadata, Transaction
+    from google.cloud.spanner_v1.snapshot import Snapshot
+    from google.protobuf.timestamp_pb2 import Timestamp
+
+    snapshot = Snapshot(mock.MagicMock(), multi_use=True)
+    assert snapshot_read_timestamp_ns(snapshot) is None  # not begun yet
+    first = Transaction(id=b"txn", read_timestamp=Timestamp(seconds=1_792_000_000, nanos=123_456_789))
+    snapshot._update_for_result_set_pb(PartialResultSet(metadata=ResultSetMetadata(transaction=first)))
+    assert snapshot_read_timestamp_ns(snapshot) == 1_792_000_000_123_456_789
+    snapshot._update_for_result_set_pb(PartialResultSet())
+    snapshot._update_for_result_set_pb(PartialResultSet(metadata=ResultSetMetadata()))
+    snapshot._update_for_result_set_pb(
+        PartialResultSet(metadata=ResultSetMetadata(transaction=Transaction(id=b"txn")))
+    )
+    assert snapshot_read_timestamp_ns(snapshot) == 1_792_000_000_123_456_789
+    # An explicit begin records it the same way.
+    begun = Snapshot(mock.MagicMock(), multi_use=True)
+    begun._update_for_transaction_pb(
+        Transaction(id=b"begun", read_timestamp=Timestamp(seconds=1_792_000_001, nanos=7))
+    )
+    assert snapshot_read_timestamp_ns(begun) == 1_792_000_001_000_000_007
+
+
 def test_a_snapshot_without_a_read_timestamp_gives_none() -> None:
     assert snapshot_read_timestamp_ns(SimpleNamespace()) is None
     assert snapshot_read_timestamp_ns(mock.MagicMock()) is None
