@@ -1102,6 +1102,13 @@ class Settings(BaseSettings):
     fastpath_pilot_enabled: bool = False
     fastpath_pilot_workspaces: str = ""
     fastpath_pilot_regions: str = "us-central1"
+    # Which keys with day, week or month spend windows the pilot covers
+    # (docs/design/fast-admission-e2-key-windows.md section 5): `off` none,
+    # `alert` the alert-only keys, `enforce` the alert-only and the enforcing
+    # keys. One definition, read by this process's pilot cohort and published
+    # in the edge policy for the Go edge. A lifetime cap or a strict budget
+    # still keeps a key out. Any other spelling refuses to start.
+    fastpath_pilot_key_windows: Literal["off", "alert", "enforce"] = "off"
     # The front door answers an admitted authorize in a few milliseconds; the
     # owner behind it waits at most a second. A request past this budget
     # takes today's path, so the budget is spent inline on a customer request.

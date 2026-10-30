@@ -11,7 +11,8 @@ authorize checks a boot against), the Stage D settings, whether the settle
 records are durable, the pilot's gate, the per-key in-flight limit, the
 monitor key's lookup hash, the async-settle shadow cohort, the regions, the
 internal-only models and the async-settle facts (admission, the edge's async
-switch, this process's ticket authority and typed records). The manifest
+switch, this process's ticket authority and typed records), and, only when
+it is not off, the pilot's key-windows mode. The manifest
 (routing_snapshot_signing.py, ``EDGE_POLICY_TYP``) is signed with the routing
 snapshot's key under its own ``typ``.
 
@@ -207,6 +208,11 @@ def settings_facts(
             "ticket_authority": ticket_authority,
             "typed_records": typed_records,
         },
+        # Optional, published only when not off (docs/design/
+        # fast-admission-e2-key-windows.md section 5): the default body stays
+        # byte-identical, so a Go node that predates the member is unaffected.
+        **({} if settings.fastpath_pilot_key_windows == "off"
+           else {"fastpath_pilot_key_windows": settings.fastpath_pilot_key_windows}),
     }
 
 

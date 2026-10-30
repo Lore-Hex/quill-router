@@ -2,7 +2,7 @@
  "boundary_guard_us": 5000000,
  "max_shards": 64,
  "windows": ["daily", "weekly", "monthly"],
- "pinned_source": {"gateway._authorize_gateway_sync_impl: key_capped=": "api_key.limit_microdollars is not None or bool(key_window_limits(api_key))", "gateway._authorize_gateway_sync_impl: skip_key_limit=": "api_key.limit_microdollars is None and (not api_key.budget_strict)", "gateway._authorize_gateway_sync_impl: window_limits =": "{} if is_byok_request and (not api_key.include_byok_in_limit) else enforced_window_limits(api_key)", "storage_gcp.authorize_gateway_typed: if": "window_limits and (not strict_budget)"},
+ "pinned_source": {"gateway._authorize_gateway_sync_impl: key_capped=": "_fastpath.pilot_key_capped(settings.fastpath_pilot_key_windows, api_key)", "gateway._authorize_gateway_sync_impl: skip_key_limit=": "api_key.limit_microdollars is None and (not api_key.budget_strict)", "gateway._authorize_gateway_sync_impl: window_limits =": "{} if is_byok_request and (not api_key.include_byok_in_limit) else enforced_window_limits(api_key)", "storage_gcp.authorize_gateway_typed: if": "window_limits and (not strict_budget)"},
  "floors": [
   {"at_us":1792627199999999,"floors_us":{"daily":1792540800000000,"monthly":1790812800000000,"weekly":1792368000000000},"labels":["midnight"],"name":"midnight_before","offset_seconds":0,"resets_us":{"daily":1792627200000000,"monthly":1793491200000000,"weekly":1792972800000000}},
   {"at_us":1792627200000000,"floors_us":{"daily":1792627200000000,"monthly":1790812800000000,"weekly":1792368000000000},"labels":["midnight"],"name":"midnight_at","offset_seconds":0,"resets_us":{"daily":1792713600000000,"monthly":1793491200000000,"weekly":1792972800000000}},

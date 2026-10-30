@@ -31,9 +31,13 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
+
+if TYPE_CHECKING:
+    from trusted_router.storage_models import ApiKey
+
 
 logger = logging.getLogger("trusted_router.fastpath")
 
@@ -386,6 +390,45 @@ def records_durable(settle_outbox_enabled: bool, typed_store: Any) -> bool:
     )
 
 
+_INT64_MIN, _INT64_MAX = -(1 << 63), (1 << 63) - 1
+
+
+def _window_limits(key: ApiKey) -> tuple[object, object, object]:
+    """The daily, weekly and monthly limits as stored, unconverted."""
+    return (key.limit_daily_microdollars, key.limit_weekly_microdollars, key.limit_monthly_microdollars)
+
+
+def key_windows_covered(mode: str, key: ApiKey) -> bool:
+    """Whether ``fastpath_pilot_key_windows`` covers this key's configured
+    spend windows (docs/design/fast-admission-e2-key-windows.md section 5):
+    ``alert`` covers an alert-only key, ``enforce`` an alert-only or an
+    enforcing one, ``off`` none. The key's fields are read as the Go edge
+    reads them (gwstate/facts.go): ``budget_alert_only`` as a strict bool
+    (absent is the ApiKey default, false) and each configured window as an
+    integer in int64. Python's authorize reads the flag by truthiness and the
+    limits with ``int()``; a key whose fields only those readings accept is
+    ``key_shape`` on the edge, and is covered by no mode here either."""
+    if mode not in {"alert", "enforce"}:
+        return False
+    for value in _window_limits(key):
+        if value is not None and not (type(value) is int and _INT64_MIN <= value <= _INT64_MAX):
+            return False
+    alert_only = key.budget_alert_only
+    if alert_only is True:
+        return True
+    return alert_only is False and mode == "enforce"
+
+
+def pilot_key_capped(mode: str, key: ApiKey) -> bool:
+    """The cohort's ``key_capped``: a lifetime cap, or spend windows the
+    mode does not cover. A key without either is not capped."""
+    if key.limit_microdollars is not None:
+        return True
+    if all(value is None for value in _window_limits(key)):
+        return False
+    return not key_windows_covered(mode, key)
+
+
 def pilot_reason(
     *,
     enabled: bool,
@@ -406,8 +449,8 @@ def pilot_reason(
     """Why an authorize stays on today's path, or None when the pilot takes
     it. The cohort is the design's §4.11 at its narrowest: a credit-funded
     key on a standard route, not streaming, with a verified boot, no
-    service tier, no key cap, no markup, for a pilot workspace, from a pilot
-    region. An idempotency key does not exclude a request (the enclave sends
+    service tier, no key cap (``pilot_key_capped``), no markup, for a pilot
+    workspace, from a pilot region. An idempotency key does not exclude a request (the enclave sends
     one on every authorize; docs/design/fast-admission-pilot.md), and neither
     does its idempotency_key_source. A speculation descriptor never reaches
     an authorize body (it has a route of its own)."""

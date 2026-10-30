@@ -1781,7 +1781,6 @@ def _authorize_gateway_sync_impl(
 
         from trusted_router.spend_windows import (
             enforced_window_limits,
-            key_window_limits,
             remember_spend_window_decision,
             spend_window_headers,
             spend_window_limit_error_message,
@@ -1824,7 +1823,9 @@ def _authorize_gateway_sync_impl(
             boot_verified=bool(boot_context["boot_verified"]),
             boot_kid=boot_auth.kid if boot_auth is not None else None,
             service_tier=body.service_tier,
-            key_capped=api_key.limit_microdollars is not None or bool(key_window_limits(api_key)),
+            # A lifetime cap, or spend windows fastpath_pilot_key_windows does
+            # not cover (e2-key-windows section 5; the edge policy carries it).
+            key_capped=_fastpath.pilot_key_capped(settings.fastpath_pilot_key_windows, api_key),
             budget_strict=bool(api_key.budget_strict),
             app_markup=app_markup_basis_points > 0,
             # The leased settle writes its records, its resolved intent and
