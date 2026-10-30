@@ -31,6 +31,12 @@ which a signal's default action does not end.) Only set it for a service whose C
 (``--no-cpu-throttling``): a throttled idle instance sees no ticks and would
 exit when CPU returns.
 
+Early diagnostics reserve SIGUSR2: an isolated helper process requests stacks
+after 5 s and 15 s without a tick, even if the parent cannot acquire the GIL.
+Its headers distinguish a stopped loop from a stopped Python heartbeat and
+identify whether the last tick entered watchdog re-arming. These samples do
+not replace or reset the C exit timer. See ``stall_dump.LoopStallDiagnostics``.
+
 Usage: ``python -m trusted_router.serve`` (host 0.0.0.0, port from ``PORT``).
 """
 
@@ -52,7 +58,7 @@ from types import FrameType
 
 import uvicorn
 
-from trusted_router.stall_dump import stall_dump_fd
+from trusted_router.stall_dump import LoopStallDiagnostics, diagnostic_failure, stall_dump_fd
 
 APP = "trusted_router.main:app"
 DEFAULT_PORT = 8080
@@ -122,6 +128,8 @@ class DrainingServer(uvicorn.Server):
         self.stall_seconds = stall_seconds
         self._stall_dump_fd: int | None = None
         self._stall_armed_at: float | None = None
+        self._stall_diagnostics: LoopStallDiagnostics | None = None
+        self._stall_diagnostics_started = False
 
     async def startup(self, sockets: list | None = None) -> None:
         await super().startup(sockets=sockets)
@@ -155,19 +163,39 @@ class DrainingServer(uvicorn.Server):
         ):
             if self._stall_dump_fd is None:
                 self._stall_dump_fd = stall_dump_fd(sys.stderr.fileno())
-            faulthandler.dump_traceback_later(self.stall_seconds, exit=True, file=self._stall_dump_fd)
+            # The existing backstop must precede ALL optional diagnostic work.
+            self._arm_stall_watchdog()
             self._stall_armed_at = now
+            if not self._stall_diagnostics_started:
+                self._stall_diagnostics_started = True
+                try:
+                    self._stall_diagnostics = LoopStallDiagnostics(
+                        self._stall_dump_fd, self.stall_seconds,
+                        watchdog_code=DrainingServer._arm_stall_watchdog.__code__,
+                    )
+                except Exception:
+                    diagnostic_failure(self._stall_dump_fd)
+        if self._stall_diagnostics is not None:
+            self._stall_diagnostics.beat()
         if self.drain_deadline is not None and not self.should_exit:
             if monotonic() >= self.drain_deadline:
                 logger.info("serve.sigterm_drain_complete")
                 self.should_exit = True
         return await super().on_tick(counter)
 
+    def _arm_stall_watchdog(self) -> None:
+        # A fixed frame lets the background pulse classify a blocked re-arm
+        # without placing diagnostic IO or callbacks before the C timer.
+        assert self.stall_seconds is not None and self._stall_dump_fd is not None
+        faulthandler.dump_traceback_later(self.stall_seconds, exit=True, file=self._stall_dump_fd)
+
     async def shutdown(self, sockets: list | None = None) -> None:
         # Ticks stop here while shutdown waits on in-flight requests; Cloud
         # Run's SIGKILL bounds that wait instead.
         if self.stall_seconds is not None:
             faulthandler.cancel_dump_traceback_later()
+            if self._stall_diagnostics is not None:
+                self._stall_diagnostics.stop()
         await super().shutdown(sockets=sockets)
 
 
