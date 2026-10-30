@@ -336,7 +336,7 @@ jobs:
       - name: Sync
         run: uv sync --frozen
       - name: Check out enclave source for the mandatory Sentry guard
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: Lore-Hex/quill-cloud-proxy
           ref: main
@@ -514,7 +514,7 @@ jobs:
       - name: Sync
         run: uv sync --frozen
       - name: Check out enclave source for the mandatory Sentry guard
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: Lore-Hex/quill-cloud-proxy
           ref: main
