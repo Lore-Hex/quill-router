@@ -412,7 +412,7 @@ def _stall_server(monkeypatch: pytest.MonkeyPatch, stall: float | None) -> serve
 
 def _record_arming(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, object]]:
     calls: list[tuple[str, object]] = []
-    monkeypatch.setattr(serve, "LoopStallDiagnostics", lambda *args: None)
+    monkeypatch.setattr(serve, "LoopStallDiagnostics", lambda *args, **kwargs: None)
     monkeypatch.setattr(serve, "stall_dump_fd", lambda fd: calls.append(("dump_fd", fd)) or 99)
     monkeypatch.setattr(serve.faulthandler, "dump_traceback_later",
                         lambda timeout, exit=False, file=None: calls.append(("dump", (timeout, exit, file))))
@@ -627,6 +627,10 @@ def test_dump_descriptor_is_nonblocking_without_changing_stderr() -> None:
 def test_dump_descriptor_falls_back_to_stderr_when_it_cannot_reopen(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
 ) -> None:
+    from trusted_router import stall_dump
+
+    before = stall_dump.DROPPED_DIAGNOSTIC_FAILURES
+
     def refuse(*args: object, **kwargs: object) -> int:
         raise FileNotFoundError("no /proc")
 
@@ -636,7 +640,8 @@ def test_dump_descriptor_falls_back_to_stderr_when_it_cannot_reopen(
         with caplog.at_level(logging.WARNING, logger="trusted_router.serve"):
             assert serve.stall_dump_fd(write_end) == write_end
         assert os.get_blocking(write_end) is True
-        assert "serve.stall_dump_blocking reason=FileNotFoundError" in caplog.text
+        assert stall_dump.DROPPED_DIAGNOSTIC_FAILURES == before + 1
+        assert not caplog.text
     finally:
         os.close(read_end)
         os.close(write_end)
@@ -732,6 +737,7 @@ async def stock_shutdown(self, sockets=None):
 serve.uvicorn.Server.shutdown = stock_shutdown
 server = serve.DrainingServer(serve.build_config({}), drain_seconds=0, stall_seconds=5)
 asyncio.run(server.on_tick(0))
+assert server._stall_diagnostics._ready.wait(2)
 time.sleep(0.1)
 if sys.argv[2] == 'gil':
     def native_worker():
@@ -806,6 +812,7 @@ server = serve.DrainingServer(serve.build_config({}), drain_seconds=0, stall_sec
 asyncio.run(server.on_tick(0))
 diagnostics = server._stall_diagnostics
 assert diagnostics is not None
+assert diagnostics._ready.wait(2)
 mode = sys.argv[2]
 if mode in {'exit', 'backed_up'}:
     time.sleep(10)  # C exit timer must still kill this process after early dumps.
@@ -819,23 +826,25 @@ elif mode == 'helper_exit':
     assert not diagnostics._thread.is_alive()
     asyncio.run(server.on_tick(1))  # EPIPE cannot fail a serving tick.
 elif mode == 'full_pipe':
-    # Replace only the loop's writer with a pipe nobody consumes. Its writes
-    # must drop, not block. The original helper sees EOF after stop.
-    read_fd, write_fd = os.pipe()
-    os.set_blocking(write_fd, False)
+    # Pause the actual reader and fill its pipe with valid pulse records.
+    # Neither the serving tick nor the pulse writer may wait for it.
+    import signal
+    os.kill(diagnostics._process.pid, signal.SIGSTOP)
     try:
-        while True:
-            os.write(write_fd, b'x' * 4096)
-    except BlockingIOError:
-        pass
-    original_fd = diagnostics._fd
-    diagnostics._fd = write_fd
-    before = time.monotonic()
-    asyncio.run(server.on_tick(1))
-    assert time.monotonic() - before < 0.5
-    diagnostics._fd = original_fd
-    os.close(read_fd)
-    os.close(write_fd)
+        record = stall_dump._BEAT.pack(b'P', time.monotonic())
+        try:
+            while True:
+                os.write(diagnostics._fd, record)
+        except BlockingIOError:
+            pass
+        before = time.monotonic()
+        asyncio.run(server.on_tick(1))
+        assert time.monotonic() - before < 0.02
+        time.sleep(0.12)
+        assert diagnostics.dropped_records > 0
+    finally:
+        os.kill(diagnostics._process.pid, signal.SIGCONT)
+
 else:
     # A blocked worker alone must neither trigger samples nor stop serving
     # ticks; this control is green on main and does not prove an RPC bug.
@@ -876,7 +885,7 @@ def test_stall_diagnostic_setup_failure_keeps_exit_watchdog(
 ) -> None:
     calls = _record_arming(monkeypatch)
 
-    def fail(*args: object) -> None:
+    def fail(*args: object, **kwargs: object) -> None:
         raise OSError("helper unavailable")
 
     monkeypatch.setattr(serve, "LoopStallDiagnostics", fail)
@@ -888,8 +897,10 @@ def test_stall_diagnostic_setup_failure_keeps_exit_watchdog(
 def test_stall_diagnostic_fd_exhaustion_closes_partial_setup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from trusted_router import stall_dump
     from trusted_router.stall_dump import LoopStallDiagnostics
 
+    failures = stall_dump.DIAGNOSTIC_FAILURES
     fd = os.open(tmp_path / "dump", os.O_WRONLY | os.O_CREAT | os.O_NONBLOCK, 0o600)
     read_fd, write_fd = os.pipe()
     monkeypatch.setattr(os, "pipe", lambda: (read_fd, write_fd))
@@ -899,11 +910,277 @@ def test_stall_diagnostic_fd_exhaustion_closes_partial_setup(
 
     monkeypatch.setattr(os, "dup", exhausted)
     try:
-        with pytest.raises(OSError, match="no descriptors"):
-            LoopStallDiagnostics(fd, 30)
+        diagnostics = LoopStallDiagnostics(fd, 30)
+        assert diagnostics._finished.wait(2)
+        assert stall_dump.DIAGNOSTIC_FAILURES == failures + 1
         for closed in (read_fd, write_fd):
             with pytest.raises(OSError) as exc:
                 os.fstat(closed)
             assert exc.value.errno == errno.EBADF
     finally:
         os.close(fd)
+
+
+def test_failed_helper_with_blocking_stderr_preserves_progress_and_exit(tmp_path: Path) -> None:
+    # Review F1 probe: separate nonblocking dump FD, production-style synchronous
+    # stderr handler, a full blocking stderr pipe, then Popen(EAGAIN).
+    code = r'''
+import asyncio
+import errno
+import logging
+import os
+import sys
+import time
+from trusted_router import serve, stall_dump
+stall_dump.SAMPLE_SECONDS = (0.3, 0.8)
+fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_NONBLOCK, 0o600)
+serve.stall_dump_fd = lambda _: fd
+serve.logger.addHandler(logging.StreamHandler(sys.stderr))
+def fail(*args, **kwargs):
+    raise OSError(errno.EAGAIN, 'helper start failed')
+stall_dump.subprocess.Popen = fail
+os.set_blocking(2, False)
+try:
+    while True:
+        os.write(2, b'x' * 4096)
+except BlockingIOError:
+    pass
+os.set_blocking(2, True)
+server = serve.DrainingServer(serve.build_config({}), drain_seconds=0, stall_seconds=2)
+async def run():
+    start = time.monotonic()
+    await server.on_tick(0)
+    print('armed', flush=True)
+    # Outlive the original budget while continuing to tick, then really stall.
+    for i in range(24):
+        await asyncio.sleep(0.1)
+        await server.on_tick(i + 1)
+    print('progress', time.monotonic() - start, flush=True)
+    server._stall_armed_at = None
+    await server.on_tick(25)
+    print('stall', time.monotonic(), flush=True)
+    time.sleep(10)
+asyncio.run(run())
+'''
+    read_fd, write_fd = os.pipe()
+    dump = tmp_path / "failure-dump"
+    try:
+        result = subprocess.run(  # noqa: S603 - fixed isolated failure probe
+            [sys.executable, "-c", code, str(dump)], cwd=ROOT,
+            stdout=subprocess.PIPE, stderr=write_fd, text=True, timeout=8,
+        )
+    finally:
+        os.close(read_fd)
+        os.close(write_fd)
+    assert result.returncode == 1, result.stdout
+    assert "armed\nprogress " in result.stdout, result.stdout
+    elapsed = time.monotonic() - float(result.stdout.split("stall ")[1])
+    assert 1.8 <= elapsed < 2.5, elapsed
+    assert "Timeout (0:00:02)!" in dump.read_text()
+
+
+@pytest.mark.parametrize("mode", ["spawn", "cleanup"])
+def test_slow_helper_start_and_cleanup_never_delay_tick(tmp_path: Path, mode: str) -> None:
+    code = r'''
+import asyncio
+import json
+import os
+import sys
+import threading
+import time
+from trusted_router import serve, stall_dump
+fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_NONBLOCK, 0o600)
+serve.stall_dump_fd = lambda _: fd
+original_popen = stall_dump.subprocess.Popen
+original_wait = original_popen.wait
+original_start = threading.Thread.start
+entered = threading.Event()
+cleaned = threading.Event()
+workers = []
+def popen(*args, **kwargs):
+    workers.append(threading.get_ident())
+    if sys.argv[2] == 'spawn':
+        entered.set()
+        time.sleep(0.5)
+    return original_popen(*args, **kwargs)
+def start(self):
+    if self.name == 'loop-stall-pulse' and sys.argv[2] == 'cleanup':
+        raise RuntimeError('pulse startup failure')
+    return original_start(self)
+def wait(self, *args, **kwargs):
+    workers.append(threading.get_ident())
+    entered.set()
+    time.sleep(0.5)
+    result = original_wait(self, *args, **kwargs)
+    cleaned.set()
+    return result
+original_popen.wait = wait
+stall_dump.subprocess.Popen = popen
+threading.Thread.start = start
+arms = []
+serve.faulthandler.dump_traceback_later = lambda *a, **kw: arms.append(time.monotonic())
+async def stock_shutdown(self, sockets=None):
+    pass
+serve.uvicorn.Server.shutdown = stock_shutdown
+server = serve.DrainingServer(serve.build_config({}), drain_seconds=0, stall_seconds=30)
+async def run():
+    loop_tid = threading.get_ident()
+    ready = []
+    begin = time.monotonic()
+    asyncio.get_running_loop().call_soon(lambda: ready.append(time.monotonic()))
+    await server.on_tick(0)
+    await asyncio.sleep(0)
+    first_tick = time.monotonic() - begin
+    for _ in range(300):
+        if entered.is_set():
+            break
+        await asyncio.sleep(0.01)
+    assert entered.is_set()
+    before = time.monotonic()
+    await server.shutdown()  # Also stop during partial startup/cleanup.
+    shutdown = time.monotonic() - before
+    for _ in range(400):
+        if cleaned.is_set():
+            break
+        await asyncio.sleep(0.01)
+    assert cleaned.is_set(), 'real cleanup was not exercised'
+    print(json.dumps(dict(arm=arms[0]-begin, ready=ready[0]-begin, tick=first_tick,
+                          shutdown=shutdown, off_loop=all(t != loop_tid for t in workers))))
+asyncio.run(run())
+'''
+    import json
+
+    result = subprocess.run(  # noqa: S603 - fixed isolated lifecycle probe
+        [sys.executable, "-c", code, str(tmp_path / "dump"), mode], cwd=ROOT,
+        capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    (tmp_path / "measurements.json").write_text(result.stdout)
+    measured = json.loads(result.stdout)
+    assert measured["arm"] < 0.01, measured
+    assert measured["ready"] < 0.01, measured
+    assert measured["tick"] < 0.01, measured
+    assert measured["shutdown"] < 0.01, measured
+    assert measured["off_loop"], measured
+
+
+def test_production_stall_thresholds_and_exit_budget(tmp_path: Path) -> None:
+    # No scaled constants: derive the exit budget from the deployed config.
+    import re
+
+    from trusted_router.stall_dump import SAMPLE_SECONDS
+
+    rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
+    match = re.search(r'"TR_LOOP_STALL_EXIT_SECONDS=(\d+)"', rollout)
+    assert match is not None
+    budget = serve.loop_stall_seconds_from_env({serve.LOOP_STALL_ENV: match[1]})
+    assert budget == 30
+    assert SAMPLE_SECONDS == (5.0, 15.0)
+    code = r'''
+import asyncio
+import os
+import sys
+import time
+from trusted_router import serve
+fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_NONBLOCK, 0o600)
+serve.stall_dump_fd = lambda _: fd
+server = serve.DrainingServer(serve.build_config({}), drain_seconds=0, stall_seconds=float(sys.argv[2]))
+asyncio.run(server.on_tick(0))
+print(time.monotonic(), flush=True)
+time.sleep(40)
+'''
+    dump = tmp_path / "production-stacks"
+    result = subprocess.run(  # noqa: S603 - fixed actual-configuration stall probe
+        [sys.executable, "-c", code, str(dump), str(budget)], cwd=ROOT,
+        capture_output=True, text=True, timeout=36,
+    )
+    assert result.returncode == 1, result.stderr
+    elapsed = time.monotonic() - float(result.stdout.strip())
+    assert 29.5 <= elapsed < 32, elapsed
+    logs = dump.read_text()
+    samples = re.findall(r"threshold_seconds=(\d+) loop_age_seconds=([\d.]+)", logs)
+    assert [int(threshold) for threshold, _ in samples] == [5, 15], logs
+    for threshold, age in samples:
+        assert float(threshold) <= float(age) < float(threshold) + 1.5, samples
+    assert "Timeout (0:00:30)!" in logs
+
+
+@pytest.mark.parametrize("state", ["available", "failed", "stopped"])
+def test_exit_arm_precedes_every_diagnostic_callback(
+    monkeypatch: pytest.MonkeyPatch, state: str,
+) -> None:
+    calls = _record_arming(monkeypatch)
+    clock = [1000.0]
+    monkeypatch.setattr(serve, "monotonic", lambda: clock[0])
+
+    class Diagnostics:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            calls.append(("setup", None))
+            if state == "failed":
+                raise OSError("unavailable")
+
+        def beat(self) -> None:
+            calls.append(("beat", None))
+
+        def stop(self) -> None:
+            calls.append(("stop", None))
+
+    monkeypatch.setattr(serve, "LoopStallDiagnostics", Diagnostics)
+    monkeypatch.setattr(serve, "diagnostic_failure", lambda fd: calls.append(("failed", fd)))
+    server = _stall_server(monkeypatch, 30)
+    asyncio.run(server.on_tick(1))
+    arm = ("dump", (30, True, 99))
+    assert calls[:3] == [("dump_fd", sys.stderr.fileno()), arm, ("setup", None)]
+    if state == "stopped":
+        assert server._stall_diagnostics is not None
+        server._stall_diagnostics.stop()
+    calls.clear()
+    clock[0] += 1.1
+    asyncio.run(server.on_tick(2))
+    assert calls == ([arm] if state == "failed" else [arm, ("beat", None)])
+
+
+def test_stop_before_bootstrap_does_not_allocate_or_register(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router import stall_dump
+
+    pending = []
+    monkeypatch.setattr(stall_dump._thread, "start_new_thread",
+                        lambda fn, args: pending.append((fn, args)) or 1)
+    monkeypatch.setattr(stall_dump.os, "pipe", lambda: pytest.fail("allocated after stop"))
+    monkeypatch.setattr(stall_dump.faulthandler, "register",
+                        lambda *a, **kw: pytest.fail("registered after stop"))
+    diagnostics = stall_dump.LoopStallDiagnostics(99, 30)
+    diagnostics.stop()
+    fn, args = pending.pop()
+    fn(*args)
+    assert diagnostics._finished.is_set()
+    assert diagnostics._process is None
+
+
+def test_failed_second_sampler_cannot_unregister_live_owner(tmp_path: Path) -> None:
+    code = r'''
+import os
+import signal
+import sys
+from trusted_router.stall_dump import LoopStallDiagnostics
+fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_NONBLOCK, 0o600)
+owner = LoopStallDiagnostics(fd, 30)
+assert owner._ready.wait(2)
+other = LoopStallDiagnostics(fd, 30)
+assert other._finished.wait(2)
+assert other._process is None
+os.kill(os.getpid(), signal.SIGUSR2)  # Would terminate if failure removed owner's handler.
+owner.stop()
+assert owner._finished.wait(3)
+assert owner._process.poll() is not None
+os.close(fd)
+'''
+    dump = tmp_path / "owner-dump"
+    result = subprocess.run(  # noqa: S603 - fixed signal ownership probe
+        [sys.executable, "-c", code, str(dump)], cwd=ROOT,
+        capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Current thread" in dump.read_text()
