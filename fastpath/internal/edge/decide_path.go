@@ -17,6 +17,7 @@ import (
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/frontdoor"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/gwauth"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/keywindow"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store"
 )
 
@@ -217,6 +218,12 @@ func (e *Edge) decide(w http.ResponseWriter, r *http.Request, at, arrived time.T
 	d, ok := decided.Admit()
 	if !ok {
 		return pass(decided.Pass)
+	}
+	if d.Windows != nil {
+		// An enforcing windowed key is admitted only on a window check of
+		// its tr_key_limit rows (key-windows section 4.2), which this path
+		// does not read yet: it passes, whatever the policy's mode.
+		return pass(keywindow.PassUnread)
 	}
 	if !dp.inflight.enter(d.LookupHash, in.Policy.GatewayAuthorizeMaxInFlightPerKey) {
 		return pass(PassInFlightKey)

@@ -24,9 +24,14 @@ verdict is never computed here.
 
 Instants are integer Unix microseconds (``_us``). No key is real.
 
-The design's third case kind, ``facts`` (an ``api_key`` body read by
-``gwstate.ParseKey``), is not here yet: it needs ParseKey's ``KeyWindows``
-facts (the design's increment 2), and joins this file with them.
+The ``facts`` cases are ``api_key`` bodies (as production stores them,
+then with a window field changed): Python's reading of their windows through
+``decode_auth_record``, ``key_window_limits``, ``enforced_window_limits`` and
+``key_usage_shard_count`` (or the error it raises), and what
+``gwstate.ParseKey`` must read (``go``: its ``KeyWindows``, ``none`` for no
+window, or ``key_shape:<field>``), the edge's own rule written out here
+(``_go_facts``). Where Go reads a body (``exact``) the generator asserts
+that Go's reading is Python's.
 
     uv run python scripts/fastpath/key_window_vectors.py
 """
@@ -60,8 +65,9 @@ from trusted_router.spend_windows import (  # noqa: E402
     window_floors,
     window_resets_at,
 )
+from trusted_router.storage_codec import json_body  # noqa: E402
 from trusted_router.storage_gcp_counters import MAX_KEY_USAGE_SHARDS, key_usage_shard_count  # noqa: E402
-from trusted_router.storage_models import ApiKey  # noqa: E402
+from trusted_router.storage_models import ApiKey, decode_auth_record  # noqa: E402
 
 OUTPUT = ROOT / "fastpath" / "testdata" / "key_window_vectors_v1.json"
 GATEWAY = ROOT / "src" / "trusted_router" / "routes" / "internal" / "gateway.py"
@@ -700,6 +706,175 @@ def random_decide_cases() -> list[dict[str, Any]]:
     return cases
 
 
+# ---------------------------------------------------------------- facts
+
+LIMIT_FIELDS = {w: f"limit_{w}_microdollars" for w in WINDOWS}
+# A field the body leaves out (``_body``), unlike null.
+ABSENT = object()
+
+
+class Raw(str):
+    """A JSON value written into a body verbatim (``5.0``, ``1e3``, ``-0``)."""
+
+
+def _body(**fields: Any) -> str:
+    """A stored api_key body: the synthetic key as production stores it
+    (``storage_codec.json_body``), with ``fields`` replaced, added, or left
+    out (ABSENT); a Raw value is written verbatim."""
+    data = json.loads(json_body(_facts_key()))
+    raws: dict[str, str] = {}
+    for name, value in fields.items():
+        if value is ABSENT:
+            data.pop(name, None)
+        elif isinstance(value, Raw):
+            marker = f"raw-{len(raws)}"
+            raws[marker] = str(value)
+            data[name] = marker
+        else:
+            data[name] = value
+    text = json.dumps(data, sort_keys=True, separators=(",", ":"))
+    for marker, value in raws.items():
+        text = text.replace(json.dumps(marker), value)
+    return text
+
+
+def _facts_key() -> ApiKey:
+    return ApiKey(
+        hash="kh_synthetic_facts_0001", salt="salt-synthetic",
+        secret_hash="secret-hash-synthetic",  # noqa: S106 - synthetic test vector, no credential
+        lookup_hash="lh_synthetic_facts_0001", name="synthetic key", label="synthetic-facts-0001",
+        workspace_id="ws_synthetic_0001", creator_user_id="user_synthetic_0001",
+        created_at="2026-01-01T00:00:00Z",
+    )
+
+
+def _python_facts(body: str) -> dict[str, Any]:
+    """Python's reading of the body's windows: the configured limits, the
+    enforced ones and the shard count, or the error a read raises."""
+    try:
+        key = decode_auth_record(body, ApiKey)
+        configured = key_window_limits(key)
+        enforced = enforced_window_limits(key)
+        shards = key_usage_shard_count(key)
+    except (TypeError, ValueError, OverflowError) as exc:
+        return {"error": type(exc).__name__}
+    return {"error": None, "configured": configured, "enforced": enforced, "shards": shards}
+
+
+def _int64(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and INT64_MIN <= value <= INT64_MAX
+
+
+def _go_facts(body: str) -> str | dict[str, Any]:
+    """gwstate.ParseKey's expected reading (§4.7), the edge's own rule: the
+    shard count a JSON integer 1 to 64 (read before the windows), each set
+    limit a JSON integer in int64 in window order, and, on a key with a
+    window, budget_alert_only a JSON bool; anything else key_shape:<field>.
+    "none" is a key with no window (Windows nil)."""
+    data = json.loads(body)
+    if "usage_shard_count" in data:
+        shards = data["usage_shard_count"]
+        if not _int64(shards) or not 1 <= shards <= MAX_KEY_USAGE_SHARDS:
+            return "key_shape:usage_shard_count"
+    limits: dict[str, int | None] = {}
+    for w in WINDOWS:
+        value = data.get(LIMIT_FIELDS[w])
+        if value is not None and not _int64(value):
+            return f"key_shape:{LIMIT_FIELDS[w]}"
+        limits[w] = value
+    if all(v is None for v in limits.values()):
+        return "none"
+    alert_only = data.get("budget_alert_only", False)
+    if not isinstance(alert_only, bool):
+        return "key_shape:budget_alert_only"
+    return {"limits": limits, "alert_only": alert_only, "shards": data.get("usage_shard_count", 1)}
+
+
+def facts_case(name: str, labels: tuple[str, ...] = (), **fields: Any) -> dict[str, Any]:
+    body = _body(**fields)
+    python = _python_facts(body)
+    go = _go_facts(body)
+    exact = not isinstance(go, str) or go == "none"
+    if exact:
+        # Where Go reads the body, it reads what Python reads.
+        assert python["error"] is None, (name, python)
+        if go == "none":
+            assert python["configured"] == {}, (name, python)
+        else:
+            assert isinstance(go, dict)
+            set_limits = {w: v for w, v in go["limits"].items() if v is not None}
+            assert set_limits == python["configured"], (name, go, python)
+            assert python["enforced"] == ({} if go["alert_only"] else python["configured"]), (name, go, python)
+            assert go["shards"] == python["shards"], (name, go, python)
+    return {"name": name, "body": body, "labels": sorted(labels), "exact": exact, "python": python, "go": go}
+
+
+def facts_cases() -> list[dict[str, Any]]:
+    cases: list[dict[str, Any]] = []
+
+    def add(name: str, labels: tuple[str, ...] = (), **fields: Any) -> None:
+        cases.append(facts_case(name, labels, **fields))
+
+    add("no_window", ("none",))
+    add("no_window_nulls", ("none", "null"), limit_daily_microdollars=None, limit_weekly_microdollars=None,
+        limit_monthly_microdollars=None)
+    add("no_window_alert_only_not_read", ("none", "alert_only_type"), budget_alert_only="yes")
+    add("no_window_alert_only_null_not_read", ("none", "alert_only_type"), budget_alert_only=None)
+    for w in WINDOWS:
+        field = LIMIT_FIELDS[w]
+        add(f"{w}_integer", ("integer",), **{field: 5_000})
+        add(f"{w}_zero", ("integer", "zero"), **{field: 0})
+        add(f"{w}_negative", ("integer", "negative"), **{field: -1})
+        add(f"{w}_int64_max", ("integer", "int64_edge"), **{field: INT64_MAX})
+        add(f"{w}_int64_min", ("integer", "int64_edge"), **{field: INT64_MIN})
+        add(f"{w}_minus_zero", ("integer",), **{field: Raw("-0")})
+        add(f"{w}_past_int64", ("past_int64",), **{field: INT64_MAX + 1})
+        add(f"{w}_below_int64", ("past_int64",), **{field: INT64_MIN - 1})
+        add(f"{w}_float_whole", ("float",), **{field: Raw("5.0")})
+        add(f"{w}_float_fraction", ("float",), **{field: 5.5})
+        add(f"{w}_exponent", ("float",), **{field: Raw("1e3")})
+        add(f"{w}_string_digits", ("string",), **{field: "5"})
+        add(f"{w}_bool_true", ("bool",), **{field: True})
+        add(f"{w}_bool_false", ("bool",), **{field: False})
+        add(f"{w}_null", ("none", "null"), **{field: None})
+    add("all_windows", ("integer", "multi_window"), limit_daily_microdollars=1_000,
+        limit_weekly_microdollars=5_000, limit_monthly_microdollars=20_000)
+    add("daily_and_monthly", ("integer", "multi_window"), limit_daily_microdollars=1_000,
+        limit_monthly_microdollars=20_000)
+    add("weekly_set_daily_null", ("integer", "null"), limit_daily_microdollars=None, limit_weekly_microdollars=7)
+    add("daily_good_weekly_float", ("float", "multi_window"), limit_daily_microdollars=1,
+        limit_weekly_microdollars=2.5)
+    add("daily_string_weekly_float", ("float", "string", "multi_window"), limit_daily_microdollars="1",
+        limit_weekly_microdollars=2.5)
+
+    # budget_alert_only on a key with a window.
+    add("alert_only_true", ("alert_only",), limit_daily_microdollars=1_000, budget_alert_only=True)
+    add("alert_only_false", ("integer",), limit_daily_microdollars=1_000, budget_alert_only=False)
+    add("alert_only_absent", ("integer",), limit_daily_microdollars=1_000, budget_alert_only=ABSENT)
+    add("alert_only_all_windows", ("alert_only", "multi_window"), limit_daily_microdollars=1,
+        limit_weekly_microdollars=2, limit_monthly_microdollars=3, budget_alert_only=True)
+    for label, value in (("string_true", "true"), ("string_false", "false"), ("string_empty", ""),
+                         ("number_one", 1), ("number_zero", 0), ("null", None), ("list", []), ("object", {})):
+        add(f"alert_only_{label}", ("alert_only_type",), limit_daily_microdollars=1_000, budget_alert_only=value)
+    add("alert_only_string_and_float_limit", ("alert_only_type", "float"), limit_daily_microdollars=1.5,
+        budget_alert_only="yes")
+
+    # usage_shard_count: what the window check sums.
+    count: Any
+    for label, count in (("absent", ABSENT), ("one", 1), ("four", 4), ("max", MAX_KEY_USAGE_SHARDS)):
+        add(f"shards_{label}", ("integer", "shards"), limit_daily_microdollars=1_000, usage_shard_count=count)
+    for label, count in (("zero", 0), ("past_max", MAX_KEY_USAGE_SHARDS + 1), ("negative", -1),
+                         ("string", "2"), ("float", Raw("2.0")), ("bool", True), ("null", None)):
+        add(f"shards_{label}", ("shards", "shard_count_invalid"), limit_daily_microdollars=1_000,
+            usage_shard_count=count)
+    add("shards_four_no_window", ("none", "shards"), usage_shard_count=4)
+    add("shards_invalid_before_window_shape", ("shard_count_invalid", "float"), limit_daily_microdollars=1.5,
+        usage_shard_count=0)
+    add("shards_four_alert_only", ("alert_only", "shards"), limit_weekly_microdollars=9, budget_alert_only=True,
+        usage_shard_count=4)
+    return cases
+
+
 def vectors() -> dict[str, Any]:
     rule = source_rule()
     if rule != PINNED_SOURCE:
@@ -715,6 +890,7 @@ def vectors() -> dict[str, Any]:
         "pinned_source": PINNED_SOURCE,
         "floors": floors_cases(),
         "decide": edge_decide_cases() + random_decide_cases(),
+        "facts": facts_cases(),
     }
 
 
@@ -732,7 +908,8 @@ def render() -> str:
         + " \"windows\": " + json.dumps(v["windows"]) + ",\n"
         + " \"pinned_source\": " + json.dumps(v["pinned_source"], sort_keys=True) + ",\n"
         + " \"floors\": [\n  " + lines(v["floors"]) + "\n ],\n"
-        + " \"decide\": [\n  " + lines(v["decide"]) + "\n ]}\n"
+        + " \"decide\": [\n  " + lines(v["decide"]) + "\n ],\n"
+        + " \"facts\": [\n  " + lines(v["facts"]) + "\n ]}\n"
     )
 
 

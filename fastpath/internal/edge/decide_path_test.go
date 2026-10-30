@@ -28,6 +28,7 @@ import (
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/frontdoor"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/gwauth"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/keywindow"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/routingsnapshot"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store"
 )
@@ -894,5 +895,53 @@ func TestSparseUnavailableAnswersAreSustained(t *testing.T) {
 	}
 	if sustained != 1 {
 		t.Fatalf("%d sustained alerts over %d sparse unavailable periods, want 1", sustained, SustainedPeriods)
+	}
+}
+
+// TestAnEnforcingWindowedKeyIsNeverAdmittedUnread (docs/design/
+// fast-admission-e2-key-windows.md section 4.2): under every mode, enforce
+// included, a key whose windows Python's authorize enforces passes
+// (key_window.unread) without asking the owner, while its windows are not
+// read; an alert-only key the mode covers is answered as an uncapped one,
+// and under off it passes with its reason.
+func TestAnEnforcingWindowedKeyIsNeverAdmittedUnread(t *testing.T) {
+	f := authorizeGoldens(t)
+	base := authorizeCaseNamed(t, "answer:app_categories_empty")
+	enforcing := map[string]any{"limit_daily_microdollars": 5000}
+	alertOnly := map[string]any{"limit_daily_microdollars": 5000, "budget_alert_only": true}
+	for _, v := range []struct {
+		name   string
+		fields map[string]any
+		mode   string
+		pass   string
+	}{
+		{"enforcing, enforce", enforcing, routingsnapshot.KeyWindowsEnforce, keywindow.PassUnread},
+		{"enforcing, alert", enforcing, routingsnapshot.KeyWindowsAlert, PassKeyWindow},
+		{"enforcing, absent", enforcing, "", PassKeyWindow},
+		{"alert only, absent", alertOnly, "", PassKeyWindowAlert},
+		{"alert only, alert", alertOnly, routingsnapshot.KeyWindowsAlert, ""},
+		{"alert only, enforce", alertOnly, routingsnapshot.KeyWindowsEnforce, ""},
+	} {
+		c := base
+		body := keyBodyWith(t, c, v.fields)
+		c.Key.KeyBody = &body
+		h := newDecideEdge(t, f, c, nil)
+		if v.mode != "" {
+			mode := v.mode
+			h.policy.FastpathPilotKeyWindows = &mode
+		}
+		rec := h.send(t, c)
+		admits, _, _ := h.admitter.seen()
+		counts := h.edge.DecideCounts()
+		if v.pass != "" {
+			if rec.Code != http.StatusTeapot || len(admits) != 0 || counts.Passed[v.pass] != 1 {
+				t.Errorf("%s: %d, %d admits, passed %v; want a pass %q", v.name, rec.Code, len(admits), counts.Passed,
+					v.pass)
+			}
+			continue
+		}
+		if rec.Code != http.StatusOK || len(admits) != 1 || counts.Answered != 1 {
+			t.Errorf("%s: %d, %d admits, passed %v; want answered", v.name, rec.Code, len(admits), counts.Passed)
+		}
 	}
 }

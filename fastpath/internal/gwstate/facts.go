@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Lore-Hex/quill-router/fastpath/internal/keywindow"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store"
 )
 
@@ -46,9 +47,13 @@ const (
 	ReasonKeyTags      = "key_tags"
 	// ReasonKeyTagsNonASCII is a tag outside ASCII, whose validity turns
 	// on Unicode categories Go does not reproduce.
-	ReasonKeyTagsNonASCII  = "key_tags_non_ascii"
-	ReasonKeyApp           = "key_app"
-	ReasonKeyLimit         = "key_limit"
+	ReasonKeyTagsNonASCII = "key_tags_non_ascii"
+	ReasonKeyApp          = "key_app"
+	ReasonKeyLimit        = "key_limit"
+	// ReasonKeyWindowLimit and ReasonKeyWindowAlert are a windowed key's
+	// reasons under the pilot's rule (KeyWindows.Reason, PilotAt): windows
+	// Python's authorize enforces, or alert-only ones it never checks.
+	// ParseKey keeps such a key eligible, with Windows.
 	ReasonKeyWindowLimit   = "key_window_limit"
 	ReasonKeyWindowAlert   = "key_window_alert"
 	ReasonKeyBudgetStrict  = "key_budget_strict"
@@ -83,6 +88,36 @@ type KeyFacts struct {
 	// Python's merge keeps them (a repeated key keeps its first place and
 	// its last value).
 	Tags []Pair
+	// Windows are the key's spend windows, nil for a key with none
+	// configured (docs/design/fast-admission-e2-key-windows.md section
+	// 4.7). They do not keep a key out of the cohort: the edge policy's
+	// fastpath_pilot_key_windows does, as a decision gate (edge/decide.go).
+	Windows *KeyWindows
+}
+
+// KeyWindows are a key's configured spend windows as Python's authorize
+// reads them: spend_windows.key_window_limits (Limits), budget_alert_only
+// (AlertOnly: enforced_window_limits is {}, so the authorize never checks
+// them) and storage_gcp_counters.key_usage_shard_count (Shards, the
+// tr_key_limit rows the window check sums).
+type KeyWindows struct {
+	Limits    keywindow.Limits
+	AlertOnly bool
+	Shards    int
+}
+
+// Enforced are the limits Python's authorize checks: none for an
+// alert-only key.
+func (w KeyWindows) Enforced() keywindow.Limits { return keywindow.Enforced(w.Limits, w.AlertOnly) }
+
+// Reason is the windows' reason under the pilot's rule while no mode of
+// fastpath_pilot_key_windows covers them (the vectors' key_window_limit or
+// key_window_alert).
+func (w KeyWindows) Reason() string {
+	if w.AlertOnly {
+		return ReasonKeyWindowAlert
+	}
+	return ReasonKeyWindowLimit
 }
 
 // At is whether the key is in the cohort at now, and the first reason it is
@@ -98,6 +133,18 @@ func (k KeyFacts) At(now time.Time) (bool, string) {
 		return false, ReasonKeyExpired
 	}
 	return k.Eligible, k.Reason
+}
+
+// PilotAt is At with the key's windows an exclusion at their place in the
+// fact order (after key_limit, before key_budget_strict), as Python's pilot
+// reads them while no mode of fastpath_pilot_key_windows covers them: the
+// reason gateway_key_vectors_v1.json gives, and the edge's under mode off.
+func (k KeyFacts) PilotAt(now time.Time) (bool, string) {
+	ok, reason := k.At(now)
+	if k.Windows != nil && (ok || reason == ReasonKeyBudgetStrict) {
+		return false, k.Windows.Reason()
+	}
+	return ok, reason
 }
 
 // apiKeyRequired are the fields ApiKey has no default for: a body without
@@ -150,11 +197,13 @@ func ParseKey(body string) KeyFacts {
 	// storage_gcp_counters.key_usage_shard_count, which the route calls on
 	// every authorize: absent is 1, and what it cannot read as 1 to 64 is a
 	// raise (500). Go reads a JSON integer 1 to 64 and passes the rest.
-	if raw, present := f["usage_shard_count"]; present {
-		n, err := strconv.ParseInt(string(bytes.TrimSpace(raw)), 10, 64)
-		if err != nil || n < 1 || n > maxKeyUsageShards {
+	shards := int64(1)
+	if _, present := f["usage_shard_count"]; present {
+		n, ok := f.integer("usage_shard_count")
+		if !ok || n < 1 || n > maxKeyUsageShards {
 			return keyShape("usage_shard_count")
 		}
+		shards = n
 	}
 	expires, readable := "", true
 	if raw, present := f["expires_at"]; present && !isNull(raw) {
@@ -181,30 +230,70 @@ func ParseKey(body string) KeyFacts {
 		k.Reason = ReasonKeyApp
 	case f.set("limit_microdollars"):
 		k.Reason = ReasonKeyLimit
-	case f.set("limit_daily_microdollars") || f.set("limit_weekly_microdollars") || f.set("limit_monthly_microdollars"):
-		// spend_windows.key_window_limits: configured windows, alert-only
-		// or not, put a key outside the pilot. enforced_window_limits tells
-		// them apart: windows Python's authorize enforces
-		// (key_window_limit), or {} when budget_alert_only is truthy, so it
-		// never checks them (key_window_alert). Go reads the flag as a JSON
-		// bool (absent is false, ApiKey's default) and passes any other
-		// type rather than reproduce Python's truthiness; on a key without
-		// windows it decides nothing, and is not read.
-		alertOnly, ok := f.boolean("budget_alert_only")
-		switch {
-		case !ok:
-			return keyShape("budget_alert_only")
-		case alertOnly:
-			k.Reason = ReasonKeyWindowAlert
-		default:
-			k.Reason = ReasonKeyWindowLimit
-		}
-	case strict:
-		k.Reason = ReasonKeyBudgetStrict
 	default:
+		// spend_windows.key_window_limits: the configured windows, alert-only
+		// or not, read at their place in the fact order. They keep the key
+		// in the cohort (Windows): the edge policy's mode gates them at the
+		// end of Decide. A strict key stays out whatever its windows.
+		windows, field := keyWindows(f, int(shards))
+		if field != "" {
+			return keyShape(field)
+		}
+		k.Windows = windows
+		if strict {
+			k.Reason = ReasonKeyBudgetStrict
+			break
+		}
 		k.Eligible, k.Tags = true, tags
 	}
 	return k
+}
+
+// windowFields are spend_windows.LIMIT_FIELDS, in Python's window order.
+var windowFields = [3]struct {
+	window keywindow.Window
+	field  string
+}{
+	{keywindow.Daily, "limit_daily_microdollars"},
+	{keywindow.Weekly, "limit_weekly_microdollars"},
+	{keywindow.Monthly, "limit_monthly_microdollars"},
+}
+
+// keyWindows reads a key's windows: nil when none is set (absent or null),
+// else each set limit as a JSON integer in int64 and budget_alert_only as a
+// JSON bool (absent is false, ApiKey's default), with the key's shard count.
+// Anything else is the field's name (key_shape:<field>): Python's int() and
+// truthiness read a float, a string or a bool their own way, so Go passes
+// rather than guess. budget_alert_only decides nothing for a key without
+// windows, and is not read there.
+func keyWindows(f fields, shards int) (*KeyWindows, string) {
+	var w KeyWindows
+	for _, wf := range windowFields {
+		if !f.set(wf.field) {
+			continue
+		}
+		n, ok := f.integer(wf.field)
+		if !ok {
+			return nil, wf.field
+		}
+		switch wf.window {
+		case keywindow.Daily:
+			w.Limits.Daily = &n
+		case keywindow.Weekly:
+			w.Limits.Weekly = &n
+		default:
+			w.Limits.Monthly = &n
+		}
+	}
+	if w.Limits.Empty() {
+		return nil, ""
+	}
+	alertOnly, ok := f.boolean("budget_alert_only")
+	if !ok {
+		return nil, "budget_alert_only"
+	}
+	w.AlertOnly, w.Shards = alertOnly, shards
+	return &w, ""
 }
 
 func keyShape(field string) KeyFacts {
@@ -221,21 +310,21 @@ const maxKeyUsageShards = 64
 // the route starts to consult fails the vector test until it is listed.
 var consultedKeyFields = map[string]string{
 	"app_id":                     "key_app",
-	"budget_alert_only":          "key_window_alert when a window is set (key_shape:budget_alert_only unless a JSON bool); not read otherwise",
+	"budget_alert_only":          "Windows.AlertOnly when a window is set (key_shape:budget_alert_only unless a JSON bool); not read otherwise",
 	"budget_strict":              "key_budget_strict",
 	"disabled":                   "key_disabled",
 	"expires_at":                 "ExpiresAt, key_expired",
 	"federated_home":             "key_federated",
 	"hash":                       "Hash",
 	"include_byok_in_limit":      "not read: truthiness never raises, and only a BYOK request, never Go's, uses it",
-	"limit_daily_microdollars":   "key_window_limit, key_window_alert",
+	"limit_daily_microdollars":   "Windows.Limits (key_shape:<field> unless a JSON integer in int64)",
 	"limit_microdollars":         "key_limit",
-	"limit_monthly_microdollars": "key_window_limit, key_window_alert",
-	"limit_weekly_microdollars":  "key_window_limit, key_window_alert",
+	"limit_monthly_microdollars": "Windows.Limits (key_shape:<field> unless a JSON integer in int64)",
+	"limit_weekly_microdollars":  "Windows.Limits (key_shape:<field> unless a JSON integer in int64)",
 	"lookup_hash":                "LookupHash",
 	"scopes":                     "key_scope",
 	"tags":                       "Tags, key_tags",
-	"usage_shard_count":          "key_shape:usage_shard_count unless an integer 1 to 64",
+	"usage_shard_count":          "Windows.Shards (key_shape:usage_shard_count unless an integer 1 to 64)",
 	"workspace_id":               "WorkspaceID",
 }
 
@@ -481,6 +570,19 @@ func (f fields) str(name string) (string, bool) {
 		return "", false
 	}
 	return s, true
+}
+
+// integer is a JSON integer field in int64; ok is false when absent, for
+// another type (a float, an exponent, a string, a bool, null) or past int64.
+func (f fields) integer(name string) (int64, bool) {
+	raw, present := f[name]
+	if !present {
+		return 0, false
+	}
+	// The body decoded as JSON, so the text is a valid JSON value: ParseInt
+	// accepts exactly its integers (no "+", no leading zeros reach here).
+	n, err := strconv.ParseInt(string(bytes.TrimSpace(raw)), 10, 64)
+	return n, err == nil
 }
 
 // boolean is a bool field, false when absent; ok is false for another type.

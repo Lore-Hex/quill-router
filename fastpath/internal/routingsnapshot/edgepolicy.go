@@ -35,9 +35,9 @@ var (
 // EdgePolicy is a parsed v1 edge policy body: the live control-plane facts
 // the edge gates on before it would answer an authorize itself. Every
 // exported field is a wire field; ParseEdgePolicy refuses any other field, a
-// missing one (async_settle alone may be absent), a float, a duplicate key,
-// null anywhere but monitor_lookup_hash, and a body that is not its own
-// canonical encoding.
+// missing one (async_settle and fastpath_pilot_key_windows alone may be
+// absent), a float, a duplicate key, null anywhere but monitor_lookup_hash,
+// and a body that is not its own canonical encoding.
 type EdgePolicy struct {
 	V                                 int64         `json:"v"`
 	Kind                              string        `json:"kind"`
@@ -62,6 +62,32 @@ type EdgePolicy struct {
 	// AsyncSettle is optional: nil when the publisher does not carry it
 	// (unknown, docs/design/fast-admission-e2-g15-async.md section 6.1).
 	AsyncSettle *AsyncSettle `json:"async_settle,omitempty"`
+	// FastpathPilotKeyWindows is optional: settings.fastpath_pilot_key_windows,
+	// which keys with spend windows the cohort covers (KeyWindowsMode;
+	// docs/design/fast-admission-e2-key-windows.md section 5): "alert" or
+	// "enforce". Absent is off, the only form of it: the publisher leaves the
+	// member out rather than write "off", and parse_edge_policy refuses "off"
+	// as this does.
+	FastpathPilotKeyWindows *string `json:"fastpath_pilot_key_windows,omitempty"`
+}
+
+// The modes of fastpath_pilot_key_windows (KeyWindowsMode): off, the member
+// absent, covers no windowed key; alert the alert-only ones (whose windows
+// Python's authorize never checks); enforce every one. Only alert and
+// enforce are written.
+const (
+	KeyWindowsOff     = "off"
+	KeyWindowsAlert   = "alert"
+	KeyWindowsEnforce = "enforce"
+)
+
+// KeyWindowsMode is the policy's fastpath_pilot_key_windows, KeyWindowsOff
+// when the publisher does not carry it.
+func (p *EdgePolicy) KeyWindowsMode() string {
+	if p.FastpathPilotKeyWindows == nil {
+		return KeyWindowsOff
+	}
+	return *p.FastpathPilotKeyWindows
 }
 
 // AsyncSettle is the policy's async_settle object, four booleans the
@@ -178,6 +204,9 @@ func (p *EdgePolicy) validate() error {
 	}
 	if !policyName.MatchString(p.AsyncSettleShadowPolicy) {
 		return errors.New("async_settle_shadow_policy")
+	}
+	if m := p.FastpathPilotKeyWindows; m != nil && *m != KeyWindowsAlert && *m != KeyWindowsEnforce {
+		return errors.New("fastpath_pilot_key_windows")
 	}
 	regions := p.ConfiguredRegions
 	if len(regions) == 0 || len(regions) != len(slices.Compact(slices.Sorted(slices.Values(regions)))) ||
