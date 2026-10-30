@@ -62,7 +62,7 @@ func TestTheDecideLineReadsBackAsItsCounts(t *testing.T) {
 		"unavailable": want.Unavailable, "refunded": want.Refunded, "refund_failed": want.RefundFailed}) ||
 		!maps.Equal(got.ByName["unavailable_by_code"], want.UnavailableByCode) ||
 		!maps.Equal(got.ByName["passed"], want.Passed) || !maps.Equal(got.ByName["slow"], want.Slow) ||
-		len(got.ByName) != 3 {
+		!maps.Equal(got.ByName["windows"], want.Windows) || len(got.ByName) != 4 {
 		t.Fatalf("read back %+v, counted %+v", got, want)
 	}
 	if want.Answered != 1 || want.Unavailable != 1 || want.Refunded != 2 || want.Slow["at_edge"] != 1 {

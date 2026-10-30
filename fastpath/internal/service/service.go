@@ -421,10 +421,10 @@ func (p *parts) edge(cfg Config, s *store.Store) (err error) {
 	// (docs/runbooks/fastpath-alerts.md).
 	edgeAlert := func(kind, subject, what string) { writeAlertOf(alertOutput, subject, what, kind) }
 	if cfg.Edge.DecideShadow {
-		decideShadow = &edge.DecideShadowConfig{Cache: cache, Decides: s, Rows: s, Alert: edgeAlert}
+		decideShadow = &edge.DecideShadowConfig{Cache: cache, Decides: s, Rows: s, Windows: s, Alert: edgeAlert}
 	}
 	if cfg.Edge.Decide {
-		decide = &edge.DecideConfig{Cache: cache, Decides: s, Rows: s, Alert: edgeAlert}
+		decide = &edge.DecideConfig{Cache: cache, Decides: s, Rows: s, Windows: s, Alert: edgeAlert}
 	}
 	e, err := edge.New(edge.Config{Token: cfg.Edge.Token, Upstream: upstream, Boots: storeBoots{s}, BootWait: cfg.Edge.BootWait,
 		Clock: cfg.edgeClock, Transport: transport, Serving: p.serving, Snapshot: snapshot, Policy: policy,

@@ -63,6 +63,11 @@ const (
 	DecideBudget = 1500 * time.Millisecond
 	// RefundBudget bounds a refund, which runs beside the pass.
 	RefundBudget = time.Second
+	// WindowReadBudget bounds an enforcing windowed key's window read
+	// (docs/design/fast-admission-e2-key-windows.md section 4.2), which
+	// also ends with the decide budget: past either the request passes
+	// (key_window.unread), so the budgets above are unchanged.
+	WindowReadBudget = 300 * time.Millisecond
 )
 
 // The decide path's alert kinds (the fastpath_alert label of the service's
@@ -84,6 +89,10 @@ const (
 	// before it was forwarded, or Python's answer to it came more than
 	// SlowInAll after its arrival (decision 12).
 	AlertSlowPass = "edge_decide_pass_slow"
+	// AlertWindowUnread: more than WindowUnreadShare of the period's window
+	// reads (at least WindowUnreadMin of them) failed or ran past their
+	// deadline, so those windowed keys passed to Python (key_window.unread).
+	AlertWindowUnread = "edge_decide_window_unread"
 )
 
 const (
@@ -96,6 +105,11 @@ const (
 	// spend at the edge, and the enclave's 25 s an attempt.
 	SlowAtEdge = time.Second
 	SlowInAll  = 25 * time.Second
+	// WindowUnreadShare and WindowUnreadMin make AlertWindowUnread: ten
+	// times the rollout gate's 0.1% (key-windows section 8.3), and not for
+	// one or two slow reads in a quiet minute.
+	WindowUnreadShare = 0.01
+	WindowUnreadMin   = 3
 )
 
 // refundMoney is a refund's money fields, Python's
@@ -118,6 +132,9 @@ type DecideConfig struct {
 	Cache   KeyCache
 	Decides DecideReader
 	Rows    Inserter
+	// Windows reads an enforcing windowed key's tr_key_limit rows; nil
+	// passes every such key (key_window.unread).
+	Windows KeyWindowReader
 	// Mint makes the ids the edge mints; nil funcs are gwauth's random
 	// ones. A test pins them.
 	Mint Mint
@@ -150,15 +167,17 @@ type decider struct {
 // decideTally is the decide path's counts: the requests answered (of which
 // read back, the 200 after a read-back), the 503s of an outcome not known
 // by the insert's gRPC code, the refunds sent and failed, the requests
-// passed by §3 reason, and the forwarded passes slow at the edge (at_edge)
-// or in all (in_all).
+// passed by §3 reason, the forwarded passes slow at the edge (at_edge) or
+// in all (in_all), and the window checks (windows: reads made, unread,
+// latency.<bucket>, verdict.<outcome>).
 type decideTally struct {
 	answered, readBack, refunded, refundFailed int64
-	unavailable, passed, slow                  map[string]int64
+	unavailable, passed, slow, windows         map[string]int64
 }
 
 func newDecideTally() decideTally {
-	return decideTally{unavailable: map[string]int64{}, passed: map[string]int64{}, slow: map[string]int64{}}
+	return decideTally{unavailable: map[string]int64{}, passed: map[string]int64{}, slow: map[string]int64{},
+		windows: map[string]int64{}}
 }
 
 func newDecider(cfg DecideConfig, logf func(string, ...any), clock func() time.Time, every time.Duration) *decider {
@@ -219,12 +238,6 @@ func (e *Edge) decide(w http.ResponseWriter, r *http.Request, at, arrived time.T
 	if !ok {
 		return pass(decided.Pass)
 	}
-	if d.Windows != nil {
-		// An enforcing windowed key is admitted only on a window check of
-		// its tr_key_limit rows (key-windows section 4.2), which this path
-		// does not read yet: it passes, whatever the policy's mode.
-		return pass(keywindow.PassUnread)
-	}
 	if !dp.inflight.enter(d.LookupHash, in.Policy.GatewayAuthorizeMaxInFlightPerKey) {
 		return pass(PassInFlightKey)
 	}
@@ -239,6 +252,20 @@ func (e *Edge) decide(w http.ResponseWriter, r *http.Request, at, arrived time.T
 		return pass(PassBudgetSpent)
 	}
 	detached := context.WithoutCancel(r.Context())
+	// The Spanner calls the 200 counts: the insert, its read-back, and an
+	// enforcing windowed key's window read.
+	var rpcs int64
+	if d.Windows != nil {
+		// Admitted only on its window check (key-windows section 4.2): one
+		// read of its tr_key_limit rows within the decide budget, at most
+		// WindowReadBudget, evaluated at the request's instant. Anything but
+		// an admit passes; nothing has been admitted, so nothing is refunded.
+		v := dp.checkWindows(detached, d, at, budget)
+		rpcs++
+		if !v.Admit() {
+			return pass(v.Pass)
+		}
+	}
 	admitCtx, cancel := context.WithDeadline(detached, budget)
 	// The lease holds the reservation, as Python's _fastpath_admission asks
 	// for it; the rows and the 200 keep the estimate.
@@ -262,29 +289,29 @@ func (e *Edge) decide(w http.ResponseWriter, r *http.Request, at, arrived time.T
 	}
 	outcome, code := dp.cfg.Rows.InsertLeasedAuthorization(detached, composed.Authorization, composed.Reservation)
 	committed := time.Now()
-	timing := func(rpcs int64) gwauth.Timing {
+	timing := func(n int64) gwauth.Timing {
 		now := time.Now()
-		return gwauth.Timing{TotalMS: now.Sub(arrived).Milliseconds(), SpannerRPCs: rpcs,
+		return gwauth.Timing{TotalMS: now.Sub(arrived).Milliseconds(), SpannerRPCs: n,
 			RoutingMS: routed.Sub(arrived).Milliseconds(), StoreMS: committed.Sub(routed).Milliseconds(),
 			PostCommitMS: now.Sub(committed).Milliseconds()}
 	}
 	switch outcome {
 	case store.Inserted:
 		dp.count(func(t *decideTally) { t.answered++ })
-		writeAnswer(w, http.StatusOK, composed.Render(timing(1), false))
+		writeAnswer(w, http.StatusOK, composed.Render(timing(rpcs+1), false))
 		return true, passed
 	case store.Landed:
 		// The commit's answer was lost or AlreadyExists, and the row read
 		// back is ours: Python's bytes after a read-back (§6).
 		dp.count(func(t *decideTally) { t.answered++; t.readBack++ })
-		writeAnswer(w, http.StatusOK, composed.Render(timing(2), true))
+		writeAnswer(w, http.StatusOK, composed.Render(timing(rpcs+2), true))
 		return true, passed
 	case store.Unknown:
 		// The commit may have applied: never refunded. Python's 503, the
 		// hold kept; the enclave's retry finds the row through Python's
 		// replay, or inserts. Counted by the insert's code.
 		dp.count(func(t *decideTally) { t.unavailable[codeName(code)]++ })
-		writeAnswer(w, gwauth.UnavailableStatus, gwauth.Unavailable(timing(2)))
+		writeAnswer(w, gwauth.UnavailableStatus, gwauth.Unavailable(timing(rpcs+2)))
 		return true, passed
 	case store.ScopeTaken:
 		dp.refund(admitter, got.Envelope)
@@ -346,6 +373,23 @@ func (dp *decider) refund(a Admitter, envelope string) {
 			dp.count(func(t *decideTally) { t.refundFailed++ })
 		}
 	}()
+}
+
+// checkWindows is the decide path's window check of an enforcing windowed
+// key's decision (readWindows), within the decide budget, counted.
+func (dp *decider) checkWindows(ctx context.Context, d *Decision, at, budget time.Time) keywindow.Verdict {
+	w := readWindows(ctx, dp.cfg.Windows, d, at, budget)
+	dp.count(func(t *decideTally) {
+		if w.made {
+			t.windows["reads"]++
+			t.windows[windowLatency(w.took)]++
+		}
+		if w.verdict.Pass == keywindow.PassUnread {
+			t.windows["unread"]++
+		}
+		t.windows[windowOutcome(w.verdict)]++
+	})
+	return w.verdict
 }
 
 func (dp *decider) pass(reason string) {
@@ -418,11 +462,12 @@ func pauseAnswer(resp *http.Response) bool {
 // DecideCounts are the decide path's counts since the edge started: the
 // requests it answered (of which read back, the 200 after a read-back), the
 // 503s of an outcome not known (and by the insert's gRPC code), the refunds
-// sent and failed, the requests it passed by §3 reason, and the forwarded
-// passes slow at the edge (at_edge) or in all (in_all).
+// sent and failed, the requests it passed by §3 reason, the forwarded
+// passes slow at the edge (at_edge) or in all (in_all), and its window
+// checks (decideTally's windows).
 type DecideCounts struct {
 	Answered, ReadBack, Unavailable, Refunded, RefundFailed int64
-	UnavailableByCode, Passed, Slow                         map[string]int64
+	UnavailableByCode, Passed, Slow, Windows                map[string]int64
 }
 
 // DecideCounts are the counts now; zero with the decide path off.
@@ -436,7 +481,7 @@ func (e *Edge) DecideCounts() DecideCounts {
 	t := dp.total
 	return DecideCounts{Answered: t.answered, ReadBack: t.readBack, Unavailable: sum(t.unavailable),
 		Refunded: t.refunded, RefundFailed: t.refundFailed, UnavailableByCode: maps.Clone(t.unavailable),
-		Passed: maps.Clone(t.passed), Slow: maps.Clone(t.slow)}
+		Passed: maps.Clone(t.passed), Slow: maps.Clone(t.slow), Windows: maps.Clone(t.windows)}
 }
 
 func sum(m map[string]int64) int64 {
@@ -491,8 +536,8 @@ func (dp *decider) flush() {
 	run := dp.unavailableRun
 	dp.mu.Unlock()
 	dp.logf("fastpath edge decide: answered=%d read_back=%d unavailable=%d refunded=%d refund_failed=%d "+
-		"unavailable_by_code=%s passed=%s slow=%s", p.answered, p.readBack, unavailable, p.refunded, p.refundFailed,
-		jsonOf(p.unavailable), jsonOf(p.passed), jsonOf(p.slow))
+		"unavailable_by_code=%s passed=%s slow=%s windows=%s", p.answered, p.readBack, unavailable, p.refunded,
+		p.refundFailed, jsonOf(p.unavailable), jsonOf(p.passed), jsonOf(p.slow), jsonOf(p.windows))
 	if unavailable > 0 {
 		dp.alert(AlertUnavailable, fmt.Sprintf("the edge answered %d authorizes unavailable, their insert's "+
 			"outcome not known; by the insert's gRPC code: %s", unavailable, jsonOf(p.unavailable)))
@@ -504,6 +549,11 @@ func (dp *decider) flush() {
 	if len(p.slow) > 0 {
 		dp.alert(AlertSlowPass, fmt.Sprintf("forwarded passes over %v at the edge (at_edge) or over %v in all "+
 			"(in_all): %s", dp.slowAtEdge, dp.slowInAll, jsonOf(p.slow)))
+	}
+	if unread, reads := p.windows["unread"], p.windows["reads"]; unread >= WindowUnreadMin &&
+		float64(unread) > WindowUnreadShare*float64(max(reads, unread)) {
+		dp.alert(AlertWindowUnread, fmt.Sprintf("%d of %d window checks passed unread (key_window.unread): their "+
+			"read failed or ran past its deadline; the window counts: %s", unread, reads, jsonOf(p.windows)))
 	}
 }
 

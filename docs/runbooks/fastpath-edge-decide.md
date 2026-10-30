@@ -498,6 +498,45 @@ rendering `settle_outbox_enabled` the same in every region (decision 11)
 and on the policy's `fastpath_pilot_regions` naming it. A workspace leaves
 the cohort as it entered, `decide off`, and nothing else of it changes.
 
+## 6. Windowed keys
+
+Keys with a daily, weekly or monthly spend window (`tr_key_limit`) are
+gated apart from the decide rows, by the setting
+`fastpath_pilot_key_windows`, which the edge policy carries
+(`docs/design/fast-admission-e2-key-windows.md` §5). Absent, which is off,
+every windowed key passes `key.key_window` or `key.key_window_alert`, its
+reason before windows joined the cohort; `alert` covers alert-only keys,
+which Python never checks and the edge decides as uncapped ones; `enforce`
+covers every windowed key. An enforcing key is admitted only after one
+strong read of its `tr_key_limit` rows (at most 300 ms, inside the decide
+budget) finds Python's check allowing it; any other verdict passes with its
+`key_window.*` reason, and Python answers the 429 itself.
+
+The shadow composes windowed keys under every setting, and for an enforcing
+key reads its rows too, off the request path. Its line's `windows` map
+counts the reads (`read.made`, `read.none` when its limiter or no reader
+skipped one), their latency buckets, the verdicts, and how Python's
+`RateLimit-Limit`, `-Remaining` and `-Reset` compared with Go's
+(`window.agree`; `window.differ.limit`, `.remaining.<size>`, `.reset`,
+`.window`; `window.reset_1s`, the two clocks; `window.same_inputs.agree` or
+`.disagree` where both read the same limit and remaining). The classes:
+Python's 429 `key_window_limit_exceeded` to a key the shadow did not read is
+`window_unchecked`; to one it read and would admit, the critical
+`would_admit_python_refused`; Go's `key_window.*` pass is
+`python_answered_go_passed.key_window.*` against Python's 200 (benign) and
+`passed.key_window.*` against its 429.
+
+Before the setting moves, per §8.3, from `fastpathwatch edge` over the
+span: for `alert`, the I2 agree bar over alert-only keys and no
+`would_admit_python_refused` among them; for `enforce`, at least 7 days and
+20,000 compared enforcing requests, no `window.same_inputs.disagree`,
+window would-admits at most 0.05% of compares (each with Python's remaining
+below Go's), `key_window.unread` under 0.1%, and the window reads' latency
+buckets putting p99 under 50 ms. The setting moves in `rollout.sh`, a
+Python deploy, `off` then `alert` then `enforce`; the decide rows are
+untouched. `edge_decide_window_unread` (`fastpath-alerts.md`) watches the
+reads once it is on.
+
 ## The way back, fastest first
 
 As §9 and decision 17 give it. Each step leaves the ones after it
@@ -512,6 +551,11 @@ untouched, and what the edge admitted settles through Python as before.
 
    `decide status WORKSPACE` exits 0. This is the first step of any abuse
    pause or key revocation for a workspace that decides (decision 17).
+
+   **Windowed keys only**, every workspace: `fastpath_pilot_key_windows`
+   back to `off` in `scripts/deploy/rollout.sh`, a Python deploy; the edge
+   passes every windowed key `key.key_window` from its first policy without
+   the member, within the policy's 60 s life (§6).
 2. **Every workspace**, within the same bound:
 
    ```bash
