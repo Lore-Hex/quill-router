@@ -83,7 +83,7 @@ PINNED_SOURCE = {
         "api_key.limit_microdollars is None and (not api_key.budget_strict)"
     ),
     "gateway._authorize_gateway_sync_impl: key_capped=": (
-        "api_key.limit_microdollars is not None or bool(key_window_limits(api_key))"
+        "_fastpath.pilot_key_capped(settings.fastpath_pilot_key_windows, api_key)"
     ),
     "storage_gcp.authorize_gateway_typed: if": "window_limits and (not strict_budget)",
 }
