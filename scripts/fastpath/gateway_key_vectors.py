@@ -17,8 +17,10 @@ uses:
 * the reads that decide nothing but can raise (the route's 500):
   ``enforced_window_limits`` and ``storage_gcp_counters.key_usage_shard_count``;
 * limit / window / strict: the pilot's ``key_capped`` and ``budget_strict``
-  (``limit_microdollars is not None``, ``spend_windows.key_window_limits``,
-  ``budget_strict``), with configured windows told apart as the authorize
+  (``fastpath_frontdoor.pilot_key_capped`` at ``fastpath_pilot_key_windows``
+  ``off``, the facts' mode, since the mode is a decision gate after them: a
+  lifetime cap, then any configured window; and ``budget_strict``), with
+  configured windows told apart as the authorize
   route tells them: enforcing when ``spend_windows.enforced_window_limits``
   is non-empty (``key_window_limit``), alert-only when it is ``{}``
   (``key_window_alert``: ``budget_alert_only`` read by truthiness);
@@ -73,7 +75,8 @@ from trusted_router.routes.internal.gateway import (  # noqa: E402
     _assert_gateway_key_scope,
     _oauth_app_terms_for_key,
 )
-from trusted_router.spend_windows import enforced_window_limits, key_window_limits  # noqa: E402
+from trusted_router.services.fastpath_frontdoor import pilot_key_capped  # noqa: E402
+from trusted_router.spend_windows import enforced_window_limits  # noqa: E402
 from trusted_router.storage_codec import json_body  # noqa: E402
 from trusted_router.storage_gcp_counters import key_usage_shard_count  # noqa: E402
 from trusted_router.storage_models import (  # noqa: E402
@@ -114,8 +117,9 @@ ROUTE_READS: dict[str, str] = {
     "api_key.include_byok_in_limit": "read as the route reads it; it never raises, and only a BYOK request uses it",
     "enforced_window_limits": "called; a raise is an error; non-empty is key_window_limit",
     "key_usage_shard_count": "called; a raise is an error",
-    "api_key.limit_microdollars": "key_limit",
-    "key_window_limits": "key_window_alert when enforced_window_limits is {} (called)",
+    "_fastpath.pilot_key_capped": (
+        "key_limit, then key_window_alert when enforced_window_limits is {} (called at mode off)"
+    ),
     "api_key.hash": "returned (the authorization's key_hash)",
     "workspace.federated_home": "workspace_federated",
     "speculation_shadow.resolved": "not a check: an isolated shadow observation",
@@ -231,12 +235,13 @@ def key_facts(body: str, at: dt.datetime) -> dict[str, Any]:
         (None, lambda: _read(not key.include_byok_in_limit)),
         (None, lambda: _read(enforced_window_limits(key))),
         (None, lambda: _read(key_usage_shard_count(key))),
-        # The pilot's key_capped and budget_strict. key_capped's windows are
-        # key_window_limits; the ones the authorize enforces are
-        # enforced_window_limits, {} for an alert-only key.
+        # The pilot's key_capped (pilot_key_capped at mode off: a lifetime
+        # cap, then any configured window) and budget_strict. The windows the
+        # authorize enforces are enforced_window_limits, {} for an alert-only
+        # key.
         ("key_limit", lambda: key.limit_microdollars is not None),
         ("key_window_limit", lambda: bool(enforced_window_limits(key))),
-        ("key_window_alert", lambda: bool(key_window_limits(key))),
+        ("key_window_alert", lambda: pilot_key_capped("off", key)),
         ("key_budget_strict", lambda: bool(key.budget_strict)),
     ]
     assert tuple(name for name, _ in checks if name is not None) == FACT_ORDER

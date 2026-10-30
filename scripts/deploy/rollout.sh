@@ -705,6 +705,12 @@ ENV_VARS=(
   # alone, or TR_FASTPATH_PILOT_ENABLED=false.
   "TR_FASTPATH_PILOT_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d,84cbb802-e054-486a-9226-e3cda4a799fb"
   "TR_FASTPATH_PILOT_ENABLED=true"
+  # Which keys with spend windows the pilot covers, here and on the edge
+  # through the edge policy (docs/design/fast-admission-e2-key-windows.md
+  # section 5): off, alert, enforce. Off until Go reads the policy member and
+  # section 8.3's gate passes for the mode. A literal, so no revision
+  # inherits it; off is the way back.
+  "TR_FASTPATH_PILOT_KEY_WINDOWS=off"
   # Arms the authorize-time billing-pause gate (trust_eligibility
   # .billing_paused_tx) on both the typed and legacy paths. The name predates
   # the spend-lease pilot's removal (2026-09); Settings keeps it False so only

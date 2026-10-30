@@ -788,6 +788,53 @@ def test_a_key_with_an_alert_only_window_stays_on_todays_path(door: _Door) -> No
     assert door.seen == []
 
 
+@pytest.mark.parametrize(("mode", "alert_only", "leased"), [
+    ("off", True, False),
+    ("off", False, False),
+    ("alert", True, True),
+    ("alert", False, False),
+    ("enforce", True, True),
+    ("enforce", False, True),
+])
+def test_fastpath_pilot_key_windows_admits_the_windowed_keys_it_covers(
+    door: _Door, mode: str, alert_only: bool, leased: bool,
+) -> None:
+    """e2-key-windows section 5 at the route: the setting decides which
+    windowed keys the pilot leases. A window far above the estimate, so an
+    enforcing key's window check passes on the leased path too."""
+    store, database, _key = _seed()
+    _raw, key = store.api_keys.create(
+        workspace_id=WORKSPACE, name="windowed", creator_user_id="user-pilot",
+        limit_daily_microdollars=10_000_000, budget_alert_only=alert_only,
+    )
+    settings = _pilot(fastpath_pilot_key_windows=mode)
+    data = gateway._authorize_gateway_sync(_request(), _body(key.hash), settings)["data"]
+    authorization = store.get_gateway_authorization(data["authorization_id"])
+    assert authorization is not None
+    if leased:
+        assert authorization.fastpath_envelope == "sealed-pilot"
+        assert [path for path, _sent in door.seen] == ["/v1/authorize"]
+        assert _credit(database)["reserved"] == 0
+    else:
+        assert authorization.fastpath_envelope is None
+        assert door.seen == []
+        assert _credit(database)["reserved"] > 0
+
+
+@pytest.mark.parametrize("mode", ["off", "alert", "enforce"])
+def test_a_lifetime_cap_stays_on_todays_path_in_every_mode(door: _Door, mode: str) -> None:
+    store, database, _key = _seed()
+    _raw, key = store.api_keys.create(
+        workspace_id=WORKSPACE, name="capped-windowed", creator_user_id="user-pilot",
+        limit_microdollars=10_000_000, limit_daily_microdollars=10_000_000, budget_alert_only=True,
+    )
+    data = gateway._authorize_gateway_sync(_request(), _body(key.hash), _pilot(fastpath_pilot_key_windows=mode))["data"]
+    authorization = store.get_gateway_authorization(data["authorization_id"])
+    assert authorization is not None and authorization.fastpath_envelope is None
+    assert door.seen == []
+    assert _credit(database)["reserved"] > 0
+
+
 def test_a_store_without_the_activity_outbox_stays_on_todays_path(door: _Door) -> None:
     store, database = make_fake_store(request_record_write_mode="typed", operational_analytics_outbox_enabled=False)
     workspace = Workspace(id=WORKSPACE, name="Pilot", owner_user_id="user-pilot")

@@ -494,6 +494,72 @@ def test_rollout_renders_edge_decide_as_a_literal_true() -> None:
         '"TR_FASTPATH_EDGE_DECIDE_ASYNC=true"']
 
 
+# --- fastpath_pilot_key_windows (docs/design/fast-admission-e2-key-windows.md section 5) ---
+
+def test_key_windows_defaults_off_and_reads_its_environment_variable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("TR_FASTPATH_PILOT_KEY_WINDOWS", raising=False)
+    assert Settings(_env_file=None, environment="test", sentry_dsn=None).fastpath_pilot_key_windows == "off"  # type: ignore[call-arg]
+    for mode in ("off", "alert", "enforce"):
+        monkeypatch.setenv("TR_FASTPATH_PILOT_KEY_WINDOWS", mode)
+        assert Settings(_env_file=None, environment="test", sentry_dsn=None).fastpath_pilot_key_windows == mode  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize("value", ["", "OFF", "Alert", "enforcing", "on", "true", "false", "0", " off"])
+def test_key_windows_refuses_any_other_spelling(value: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A switch with a silent spelling is no switch: anything but the three
+    values refuses to start, so the previous revision keeps serving."""
+    with pytest.raises(ValidationError, match="fastpath_pilot_key_windows"):
+        Settings(environment="test", sentry_dsn=None, fastpath_pilot_key_windows=value)
+    monkeypatch.setenv("TR_FASTPATH_PILOT_KEY_WINDOWS", value)
+    with pytest.raises(ValidationError, match="fastpath_pilot_key_windows"):
+        Settings(_env_file=None, environment="test", sentry_dsn=None)  # type: ignore[call-arg]
+
+
+def test_off_publishes_no_key_windows_member_and_the_bytes_of_today(key) -> None:
+    """Off (the default) the body has no fastpath_pilot_key_windows, so a Go
+    node that does not know the member is unaffected: the off body is the
+    alert body without that one member, byte for byte, and the golden body
+    (written before the member existed, unchanged here) is still what the
+    publisher writes (test_the_golden_files_are_what_the_python_publisher_writes_now)."""
+    default = _publisher(_settings(key), Clock(T0)).current().body
+    assert _settings(key).fastpath_pilot_key_windows == "off"
+    assert b"fastpath_pilot_key_windows" not in default
+    off = _publisher(_settings(key, fastpath_pilot_key_windows="off"), Clock(T0)).current().body
+    assert off == default
+    alert = json.loads(_publisher(_settings(key, fastpath_pilot_key_windows="alert"), Clock(T0)).current().body)
+    assert alert.pop("fastpath_pilot_key_windows") == "alert"
+    assert json.dumps(alert, sort_keys=True, separators=(",", ":")).encode("ascii") == default
+    assert b"fastpath_pilot_key_windows" not in VECTORS.render_body()
+    assert VECTORS.fixture_settings().fastpath_pilot_key_windows == "off"
+
+
+@pytest.mark.parametrize("mode", ["alert", "enforce"])
+def test_alert_and_enforce_publish_the_member_signed(key, mode: str) -> None:
+    settings = _settings(key, fastpath_pilot_key_windows=mode)
+    client = TestClient(_app(settings, _publisher(settings, Clock(T0))))
+    response = _get(client)
+    assert response.status_code == 200
+    body, _claims = _verify(response, settings, key[1], T0)
+    assert json.loads(body)["fastpath_pilot_key_windows"] == mode
+    policy = parse_edge_policy(body)
+    assert policy.fastpath_pilot_key_windows == mode
+    assert canonical_edge_policy_bytes(policy) == body
+
+
+def test_the_golden_files_ignore_the_key_windows_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TR_FASTPATH_PILOT_KEY_WINDOWS", "enforce")
+    # Positive control: the environment does reach an unpinned Settings.
+    assert Settings(environment="test", sentry_dsn=None).fastpath_pilot_key_windows == "enforce"
+    assert VECTORS.render_body() == VECTORS.OUTPUT_BODY.read_bytes()
+    assert VECTORS.OUTPUT_MANIFEST.read_text() == VECTORS.render_manifest()
+
+
+def test_rollout_renders_key_windows_as_a_literal_off() -> None:
+    rollout = (ROOT / "scripts" / "deploy" / "rollout.sh").read_text()
+    assert re.findall(r'"TR_FASTPATH_PILOT_KEY_WINDOWS=[^"]*"', rollout) == [
+        '"TR_FASTPATH_PILOT_KEY_WINDOWS=off"']
+
+
 def test_ticket_authority_is_the_runtime_read_at_each_signing(key) -> None:
     """A signer, an epoch of at least 1 and a journal region, each required,
     read from the runtime when signing, not when the publisher was built."""
@@ -1331,6 +1397,11 @@ def test_verification_refuses_tampering_staleness_and_the_wrong_key() -> None:
     ("a missing async_settle member", lambda d: {**d, "async_settle": {
         k: v for k, v in d["async_settle"].items() if k != "typed_records"}}),
     ("an extra async_settle member", lambda d: {**d, "async_settle": {**d["async_settle"], "epoch": True}}),
+    # Optional, but absent is its only encoding of off.
+    ("an off key windows member", lambda d: {**d, "fastpath_pilot_key_windows": "off"}),
+    ("a null key windows member", lambda d: {**d, "fastpath_pilot_key_windows": None}),
+    ("an unknown key windows mode", lambda d: {**d, "fastpath_pilot_key_windows": "Enforce"}),
+    ("a boolean key windows member", lambda d: {**d, "fastpath_pilot_key_windows": True}),
 ])
 def test_the_body_parser_is_strict(name: str, edit: Any) -> None:
     decoded = json.loads(_golden_body())
@@ -1350,6 +1421,17 @@ def test_the_body_parser_refuses_duplicate_keys() -> None:
 def test_the_window_is_code_not_configuration() -> None:
     assert (REFRESH_SECONDS, LIFETIME_SECONDS) == (15, 60)
     assert publisher_module.RESPONSE_KIND == "tr-edge-policy-publication"
+
+
+@pytest.mark.parametrize("mode", ["alert", "enforce"])
+def test_a_key_windows_member_parses_and_stays_canonical(mode: str) -> None:
+    decoded = {**json.loads(_golden_body()), "fastpath_pilot_key_windows": mode}
+    raw = json.dumps(decoded, sort_keys=True, separators=(",", ":"))
+    policy = parse_edge_policy(raw)
+    assert policy.fastpath_pilot_key_windows == mode
+    assert canonical_edge_policy_bytes(policy) == raw.encode("ascii")
+    # Absent parses as off (None) and re-encodes without the member.
+    assert parse_edge_policy(_golden_body()).fastpath_pilot_key_windows is None
 
 
 def test_a_null_monitor_hash_parses() -> None:

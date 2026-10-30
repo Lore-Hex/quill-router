@@ -104,6 +104,9 @@ def fixture_settings() -> Settings:
         async_settle_enabled=False,
         async_settle_protection=False,
         fastpath_edge_decide_async=False,
+        # Off, as deployed: the body carries no fastpath_pilot_key_windows,
+        # the member Go nodes accept only from e2-key-windows increment 2.
+        fastpath_pilot_key_windows="off",
     )
 
 

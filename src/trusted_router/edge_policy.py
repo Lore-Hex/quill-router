@@ -51,6 +51,15 @@ Fields, all required:
   least 1 and a journal region), and whether its store writes typed records
   (the ``typed`` the async-v1 authorize branch passes). Go (G15a) reads it as
   optional; Python always publishes it.
+
+One field is optional:
+
+- ``fastpath_pilot_key_windows``: ``"alert"`` or ``"enforce"``, the setting of
+  that name (docs/design/fast-admission-e2-key-windows.md section 5): which
+  keys with spend windows the pilot covers. Absent when the setting is
+  ``off``, so the default body is byte-identical to one from before the field
+  existed, and Go reads absent as ``off``. ``null`` and ``"off"`` are refused,
+  so each mode has exactly one encoding.
 """
 
 from __future__ import annotations
@@ -126,9 +135,15 @@ class EdgePolicyV1(Frozen):
     multi_region_enabled: Flag
     internal_models: tuple[Identity, ...]
     async_settle: EdgeAsyncSettle
+    # Optional: absent is "off", and the canonical bytes omit it then.
+    fastpath_pilot_key_windows: Literal["alert", "enforce"] | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
 
     @model_validator(mode="after")
     def consistent(self) -> Self:
+        if self.fastpath_pilot_key_windows is None and "fastpath_pilot_key_windows" in self.model_fields_set:
+            raise ValueError("fastpath_pilot_key_windows is absent when off, never null")
         if (self.refresh_at != self.issued_at + REFRESH_SECONDS
                 or self.not_after != self.issued_at + LIFETIME_SECONDS):
             raise ValueError("edge policy window")
