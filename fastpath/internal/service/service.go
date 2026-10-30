@@ -161,7 +161,14 @@ func Defaults() Config {
 			// reservation's life (GATEWAY_RESERVATION_TTL_SECONDS) and a
 			// heartbeat's renewal (heartbeat_grace_seconds)
 			// (docs/design/fast-admission-streams.md section 4.6 item 4).
-			StreamReap: owner.StreamReap{AfterAdmission: 2 * time.Hour, AfterHeartbeat: 300 * time.Second}},
+			StreamReap: owner.StreamReap{AfterAdmission: 2 * time.Hour, AfterHeartbeat: 300 * time.Second},
+			// Increment 2b: every member reads a record's reap deadline
+			// since increment 2, so the owner states it, and the auditor
+			// that drains a lease honors the floor too
+			// (docs/runbooks/fastpath-deploy.md, "A record field the
+			// auditors must read first"; this release is pinned only once
+			// every member runs increment 2's).
+			RecordReapFloor: true},
 		FrontDoor: frontdoor.Config{OwnerWait: time.Second, PublishWait: 5 * time.Second, PeerWait: 800 * time.Millisecond,
 			WithdrawWithin: 5 * time.Second, ProbeEvery: 2 * time.Second, RevokeAfter: 15 * time.Second,
 			RevokeEvery: time.Second},
