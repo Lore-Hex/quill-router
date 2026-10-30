@@ -287,7 +287,9 @@ class FrontDoorClient:
         the heartbeat's hash; `basis` is sent only on a hold's first
         heartbeat. No echoed deadline is sent: the field that has the owner
         read its own (EchoGranted) comes with the Go change of section 4.6,
-        and a front door refuses a field it does not know. Raises
+        and a front door refuses a field it does not know, so Python sends it
+        only from increment 4, once that change is on every owner and front
+        door. Raises
         FrontDoorUnavailable when no front door answered, or the answer does
         not parse."""
         body: dict[str, Any] = {
