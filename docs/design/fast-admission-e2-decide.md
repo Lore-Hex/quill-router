@@ -582,7 +582,7 @@ reader of either, and which it reads:
 | Reader | Figure |
 |---|---|
 | Workspace credit admission against the available balance (`reserve_credit`, `reserve_credit_with_pause`, `credit_exhaustion_precheck`, the memory and Postgres `reserve`), the typed credit counters' `reserved`, the reservation row's `credit_reserved_micro`, and its release at settle, refund and reap (`storage_gcp_counter_dml`, `storage_gcp_authorize` settle; the outbox resolves the reservation by id and releases the recorded hold) | reservation |
-| Key admission: the lifetime cap, the spend windows and the strict windows (`reserve_key`, `reserve_strict_key`, `key_window_limit_decision`, `key_lifetime_cap_precheck`, the memory and Postgres `reserve_key_limit`), the key counters' reserved and the reservation row's `key_reserved_micro`, released at settle, refund and reap as recorded | estimate: a key cap is a promise to the key's owner that outstanding spend ceilings count against it (docs/routing-controls-20260927.md, "Strict spending"); the key counter carries what it admitted, so its release is the recorded hold, symmetric as before. The edge has no key gate: a capped, windowed or strict key passes to Python (`key.key_cap`, `key.key_window`, `key.budget_strict`) |
+| Key admission: the lifetime cap, the spend windows and the strict windows (`reserve_key`, `reserve_strict_key`, `key_window_limit_decision`, `key_lifetime_cap_precheck`, the memory and Postgres `reserve_key_limit`), the key counters' reserved and the reservation row's `key_reserved_micro`, released at settle, refund and reap as recorded | estimate: a key cap is a promise to the key's owner that outstanding spend ceilings count against it (docs/routing-controls-20260927.md, "Strict spending"); the key counter carries what it admitted, so its release is the recorded hold, symmetric as before. The edge has no key gate: a capped, windowed or strict key passes to Python (`key.key_cap`, `key.key_window`, `key.key_window_alert`, `key.budget_strict`) |
 | The fast path's lease: `_fastpath_admission` and the edge's admit (`frontdoor.AuthorizeOf.Estimate`, the owner's `Admission.Estimate`, the hold row's `Estimate`, the signed envelope), the drain's raise (`max(charge - hold, 0)`), the owner's and the record's bound on a heartbeat's running charge, and the Go reaper's cap on an abandoned hold's charge | reservation. The owner accepts no heartbeat whose running charge passes the hold, so a stream admitted under a lease would be cut at the reservation: both front doors keep streams out of the lease cohort (Python `fastpath_frontdoor` reason `stream`, Go `gwauth.ReasonStream`) until an admission carries the ceiling beside the hold; an abandoned hold is charged its last accepted snapshot, at most the reservation (Python's snapshot reaper charges the recorded running charge and releases the recorded hold) |
 | The insufficient-credits 402 and its `billing.insufficient_credits` line (`reserved_microdollars`, beside the estimate) | reservation |
 | The authorization row's `estimated_microdollars` (Python and `gwauth.AuthorizationRow`; `storage_gcp_request_records` readback), the payload's `estimated_microdollars`, the 200's `estimated_cost` and `estimated_cost_microdollars` (Python and `gwauth/response.go`, so the shadow's byte comparison of the 200 and of the rows is unchanged; the shadow compares no reservation, the goldens' `reservation_microdollars` does), the replay of a stored authorization, the fast path settle's full-record money metadata (`fastpath_settle`), and the `billing.authorize_contention` and `authorize_conflict_after_escrow` diagnostics | estimate |
@@ -859,11 +859,18 @@ set; `key.federated`), `key_tags` and `key_tags_non_ascii` (stored tags Go
 cannot read or that `validate_tags` refuses; `tags.merged_invalid`),
 `key_app` (`app_id` set; `key.app`), `key_limit` (`limit_microdollars`
 set; `key.key_cap`), `key_window_limit` (any of `limit_daily_microdollars`,
-`limit_weekly_microdollars`, `limit_monthly_microdollars` set, alert-only
-or not; `key.key_window`), `key_budget_strict` (`key.budget_strict`).
+`limit_weekly_microdollars`, `limit_monthly_microdollars` set on a key
+whose windows Python's authorize enforces, `enforced_window_limits`
+non-empty; `key.key_window`), `key_window_alert` (windows set on an
+alert-only key, `budget_alert_only` true, for which `enforced_window_limits`
+is `{}` and the authorize never checks them; `key.key_window_alert`; Go
+reads `budget_alert_only` only on a windowed key, as a JSON bool, and any
+other type is `key_shape:budget_alert_only`), `key_budget_strict`
+(`key.budget_strict`). The two window reasons are counted apart
+(`fast-admission-e2-key-windows.md` §8.1); both pass to Python.
 So the §3 key reasons are `key.<reason>` for `missing`, `disabled`,
 `expired`, `scope`, `federated`, `app`, `key_cap`, `key_window`,
-`budget_strict` and `shape`. They cover `authorize_gateway_typed`'s checks
+`key_window_alert`, `budget_strict` and `shape`. They cover `authorize_gateway_typed`'s checks
 before its leased branch (the window check, the shard count's
 re-validation, the lifetime cap's precheck) and its later arguments
 (`app_id`, `budget_alert_only`): each is a key the cohort excludes, so each
@@ -1484,7 +1491,7 @@ one Python refuses.
 `scripts/fastpath/gateway_key_vectors.py` builds real `ApiKey` and
 `Workspace` dataclasses, stores them as Python stores them, and applies
 Python's own predicates (`is_api_key_expired`, `_assert_gateway_key_scope`,
-`key_window_limits`, `workspace_billing_paused`);
+`key_window_limits`, `enforced_window_limits`, `workspace_billing_paused`);
 `tests/test_fastpath_gateway_key_vectors.py` checks staleness.
 
 ```
@@ -1511,7 +1518,7 @@ WORKSPACE_FACTS = {"workspace_id": STR, "missing": BOOL,
 
 `ReadAt` is not in the vectors. Labels name the predicate a case exercises
 (`disabled`, `expired.past`, `expired.unparseable`, `scope.inference`,
-`scope.other`, `federated`, `app`, `key_cap`, `key_window.alert_only`,
+`scope.other`, `federated`, `app`, `key_cap`, `key_window`, `key_window_alert`,
 `budget_strict`, `tags.order`, `tags.not_object`, `tags.non_string`,
 `tags.non_ascii`, `workspace.missing`, `pause.entity`, `pause.credit_row`,
 `debt`, `tier.latched`, ...).

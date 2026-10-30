@@ -116,6 +116,28 @@ def test_the_oracle_covers_every_key_and_workspace_read_on_the_authorize_path() 
     assert covered - reads == set(), "ROUTE_READS names reads the route no longer makes"
 
 
+def test_alert_only_windows_are_their_own_reason() -> None:
+    # enforced_window_limits is {} for an alert-only key, so its windows are
+    # key_window_alert; false or absent enforces them (key_window_limit), and
+    # without a window the flag decides nothing.
+    cases = {case["name"]: case for case in _vectors()["key_cases"]}
+    reason = {name: case["python"]["reason"] for name, case in cases.items()}
+    for window in ("daily", "weekly", "monthly"):
+        for value in (0, 500):
+            assert reason[f"window_{window}_{value}_alert_only"] == "key_window_alert"
+            assert reason[f"window_{window}_{value}"] == "key_window_limit"
+    assert reason["window_alert_only_false"] == reason["window_alert_only_absent"] == "key_window_limit"
+    assert reason["alert_only_no_window"] is None and reason["window_null_alert_only"] is None
+    # A lifetime cap still comes first, and strict after.
+    assert reason["window_alert_only_cap"] == "key_limit"
+    assert reason["window_alert_only_strict"] == "key_window_alert"
+    # Python reads the flag by truthiness; these bodies are not exact, Go
+    # passes them.
+    assert reason['window_alert_only_type_"false"'] == "key_window_alert"
+    assert reason["window_alert_only_type_0"] == "key_window_limit"
+    assert not any(cases[f"window_alert_only_type_{v}"]["exact"] for v in ("1", "0", '"false"', "null"))
+
+
 def test_the_shard_count_vectors_hold_python_to_its_raise() -> None:
     cases = {case["name"]: case for case in _vectors()["key_cases"]}
     for value in ("0", "-1", "65", "true", "false", "null", "[]", "{}", '"abc"'):
