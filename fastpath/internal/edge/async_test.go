@@ -1,6 +1,7 @@
 package edge
 
 import (
+	"bytes"
 	"encoding/json"
 	"maps"
 	"net/http"
@@ -359,6 +360,58 @@ func TestTheAdmissionGateReadsTheKeysWorkspace(t *testing.T) {
 	t.Logf("%d requests covered by admission, %d composed as with admission off", covered, composed)
 	if covered != 3*29 || composed != 29+4 {
 		t.Fatalf("covered %d, composed %d: not the goldens' counts", covered, composed)
+	}
+}
+
+// TestTheComposeRefusesACoveredWorkspace: the compose's own backstop, as if
+// the admission gate were skipped. The async input Decide hands Stage for a
+// workspace Python's admission covers (the member absent, or naming it)
+// keeps admission on, so Stage refuses it (a ticket is Python's); for one
+// the member leaves out, or admission off, it composes Python's
+// admission-off members byte for byte.
+func TestTheComposeRefusesACoveredWorkspace(t *testing.T) {
+	f := asyncAuthorizeGoldens(t)
+	c := asyncCaseNamed(t, "answer:async.B:single:openai/gpt-4.1")
+	ws := c.Facts.Key.WorkspaceID
+	in, _ := caseInputs(t, f, c)
+	d := Decide(in)
+	dec, ok := d.Admit()
+	if !ok {
+		t.Fatalf("the shape B case: passed %q", d.Pass)
+	}
+	want := dec.Staged.Async()
+	for _, v := range []struct {
+		name   string
+		change func(*routingsnapshot.AsyncSettle)
+		covers bool
+	}{
+		{"admission off", func(*routingsnapshot.AsyncSettle) {}, false},
+		{"member absent", admissionOn(), true},
+		{"member naming it", admissionOn(ws), true},
+		{"member leaving it out", admissionOn("a_" + ws), false},
+	} {
+		policy := *in.Policy.AsyncSettle
+		v.change(&policy)
+		compose := dec.Input
+		compose.Async = asyncComposeInput(compose.Async.Request, policy, ws)
+		staged, err := gwauth.Stage(compose)
+		if v.covers {
+			if err == nil || !compose.Async.Policy.AdmissionEnabled {
+				t.Errorf("%s: Stage composed a covered workspace (admission %v)", v.name,
+					compose.Async.Policy.AdmissionEnabled)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%s: Stage: %v", v.name, err)
+			continue
+		}
+		got := staged.Async()
+		a, errA := pyjson.DumpsPydantic(got.Members)
+		b, errB := pyjson.DumpsPydantic(want.Members)
+		if errA != nil || errB != nil || !bytes.Equal(a, b) || got.Shape != gwauth.AsyncSnapshot {
+			t.Errorf("%s: members %s, want %s", v.name, a, b)
+		}
 	}
 }
 

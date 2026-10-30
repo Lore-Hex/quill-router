@@ -196,7 +196,12 @@ lines, summed, are its counts. It prints JSON:
   admission covers that workspace (admission on, and
   `async_settle.admission_workspaces` absent or naming it). A workspace
   the member leaves out is composed and compared as with admission off,
-  since Python answers it without a ticket. Its line
+  since Python answers it without a ticket. Because the admission gate
+  needs the key, an async-v1 request whose key the cache cannot answer
+  for (cold, stale or missing) now passes `cache.key` or `key.missing`
+  rather than `policy.async_admission`, even with the member absent, so
+  after this release those reasons grow and `policy.async_admission`
+  shrinks by the same requests; neither is answered by the edge. Its line
   carries five maps, each keyed by population first (`plain`, `affinity`
   for a body naming a `cache_affinity_key`, and for `async_seen`
   `unparsed`, a body the edge did not parse): `async_seen` (every such

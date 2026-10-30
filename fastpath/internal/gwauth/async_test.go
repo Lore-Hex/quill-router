@@ -203,7 +203,10 @@ func pairsOf(h [][2]string) [][]string {
 // asyncInputOf is the case as the decide pipeline would hand it to Stage:
 // the request parsed strictly (the request half of the cohort is not this
 // test's: P6's header cases pass it), its async facts recorded, the
-// policy's async_settle object, and the target's candidates.
+// policy's async_settle object as the workspace sees it (admission on only
+// when it covers the workspace, as edge.Decide hands it over: a workspace
+// admission_workspaces leaves out is composed as with admission off), and
+// the target's candidates.
 func asyncInputOf(t *testing.T, g asyncGoldens, c asyncCase) (ComposeInput, Request) {
 	t.Helper()
 	r, _, p := parseBody([]byte(c.Request.Body), headersOf(pairsOf(c.Request.Headers)))
@@ -218,7 +221,9 @@ func asyncInputOf(t *testing.T, g asyncGoldens, c asyncCase) (ComposeInput, Requ
 			in.ReservationID = c.target.reservation
 		}
 	}
-	in.Async = &AsyncInput{Request: r.Async, Policy: c.asyncSettle}
+	policy := c.asyncSettle
+	policy.AdmissionEnabled = policy.Admits(in.WorkspaceID)
+	in.Async = &AsyncInput{Request: r.Async, Policy: policy}
 	return in, r
 }
 
@@ -299,14 +304,19 @@ func membersBytes(t *testing.T, members pyjson.Object) string {
 // accounted for.
 func TestEveryAsyncCaseIsPythonsBytes(t *testing.T) {
 	g := loadAsyncGoldens(t)
-	equal, membersOnly, admission := 0, 0, 0
+	equal, membersOnly, admission, leftOut := 0, 0, 0, 0
 	shapes, reasons := map[string]int{}, map[string]int{}
 	for _, c := range g.cases {
 		if c.target == nil {
 			t.Fatalf("%s: no Python answer to hold the compose to", c.Name)
 		}
 		in, _ := asyncInputOf(t, g, c)
-		if c.asyncSettle.AdmissionEnabled {
+		if c.asyncSettle.AdmissionEnabled && !in.Async.Policy.AdmissionEnabled {
+			// Admission on for a pilot set leaving the workspace out:
+			// composed and byte-compared below as with admission off.
+			leftOut++
+		}
+		if in.Async.Policy.AdmissionEnabled {
 			// policy.async_admission: Python's ticket (or its shape A for a
 			// missing nonce). Stage refuses, and the caller passes.
 			if _, err := Stage(in); err == nil {
@@ -380,6 +390,11 @@ func TestEveryAsyncCaseIsPythonsBytes(t *testing.T) {
 	// every shape and every reason P6 can show reached.
 	if equal < 40 || shapes[AsyncNone] < 10 || shapes[AsyncSnapshot] < 13 || shapes[AsyncFalseOnly] < 15 {
 		t.Fatalf("%d byte-equal, shapes %v", equal, shapes)
+	}
+	// The admission cases: the three covered (the member absent, or naming
+	// the workspace) refused, the two the member leaves out byte-equal.
+	if admission != 3 || leftOut != 2 {
+		t.Fatalf("%d admission on, %d left out by admission_workspaces", admission, leftOut)
 	}
 	for _, r := range p6Reasons {
 		if reasons[r] == 0 {
