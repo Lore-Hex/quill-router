@@ -814,7 +814,7 @@ for index in "${!TARGET_REGIONS[@]}"; do
     --set-secrets "$SET_SECRETS"
   )
   if [ "$STAGE" = "companion" ]; then
-    gc run deploy "$PUBLIC_SERVICE" "${deploy_args[@]}" --quiet
+    gc_router_revision run deploy "$PUBLIC_SERVICE" "${deploy_args[@]}" --quiet
     continue
   fi
 
@@ -824,7 +824,7 @@ for index in "${!TARGET_REGIONS[@]}"; do
     echo "ERROR: refusing to widen ingress without durable recovery state for ${PUBLIC_SERVICE}/${target}" >&2
     exit 1
   fi
-  if ! new_revision="$(gc run deploy "$PUBLIC_SERVICE" \
+  if ! new_revision="$(gc_router_revision run deploy "$PUBLIC_SERVICE" \
       "${deploy_args[@]}" \
       --no-traffic \
       --format 'value(status.latestCreatedRevisionName)' \

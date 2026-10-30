@@ -129,6 +129,13 @@ TRUST_FILE_URL="${TRUST_FILE_URL:-https://trust.trustedrouter.com/trust/gcp-rele
 log() { echo "[$(date +%H:%M:%S)] $*" >&2; }
 gc() { gcloud --project "$PROJECT_ID" "$@"; }
 
+# Google case 77055262: first-generation sandboxes pause under host contention;
+# gen2 runs a microVM. Pin every router revision to gen2 as recommended by Support.
+# Gen2 requires >=512 MiB; router revisions use 2 GiB.
+gc_router_revision() {
+  gc "$@" --execution-environment gen2
+}
+
 PROJECT_NUMBER="$(gc projects describe "$PROJECT_ID" --format='value(projectNumber)')"
 RUN_SERVICE_ACCOUNT="${RUN_SERVICE_ACCOUNT:-${PROJECT_NUMBER}-compute@developer.gserviceaccount.com}"
 # The regional control-plane services run under a dedicated identity. Keep it
