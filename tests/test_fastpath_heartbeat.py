@@ -228,7 +228,11 @@ def test_a_later_heartbeat_carries_no_basis_and_its_own_hash(monkeypatch: pytest
 
     assert answer["seq"] == 2 and answer["running_micro"] == 140
     body = door.bodies()[1]
-    assert set(body) == {"Envelope", "GatewaySeq", "Hash", "Usage", "Running"}
+    # No echoed deadline: EchoGranted has the owner take the one it last
+    # granted (docs/design/fast-admission-streams.md section 4.6, increment 4).
+    assert set(body) == {"Envelope", "GatewaySeq", "Hash", "Usage", "Running", "EchoGranted"}
+    assert body["EchoGranted"] is True
+    assert "EchoGranted" not in door.bodies()[0]
     assert body["GatewaySeq"] == 2 and body["Usage"] == 120 and body["Running"] == 140
     assert base64.b64decode(body["Hash"]) == hashlib.sha256(_canonical(second)).digest()
 

@@ -228,7 +228,22 @@ def settings_facts(
         # byte-identical, so a Go node that predates the member is unaffected.
         **({} if settings.fastpath_pilot_key_windows == "off"
            else {"fastpath_pilot_key_windows": settings.fastpath_pilot_key_windows}),
+        # Optional, published only when the edge may decide streams
+        # (docs/design/fast-admission-streams.md section 5.4): its own switch,
+        # the pilot's, and snapshot booking, which the lease always does, all
+        # on. Absent otherwise, so the default body stays byte-identical.
+        **({"fastpath_edge_streams": True} if edge_streams_on(settings) else {}),
     }
+
+
+def edge_streams_on(settings: Settings) -> bool:
+    """Whether the edge policy carries fastpath_edge_streams: the edge's
+    switch, the pilot's streams switch and reap snapshot booking, all on."""
+    return bool(
+        settings.fastpath_edge_streams
+        and settings.fastpath_pilot_streams
+        and settings.reap_snapshot_booking_enabled
+    )
 
 
 def build_policy(plane: BaseModel, issued_at: int, facts: dict[str, Any]) -> EdgePolicyV1:

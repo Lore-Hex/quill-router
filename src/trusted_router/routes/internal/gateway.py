@@ -1879,6 +1879,13 @@ def _authorize_gateway_sync_impl(
             # The leased settle writes its records, its resolved intent and
             # its activity row in one commit: it needs the durable outboxes.
             records_durable=_fastpath.records_durable(settings.settle_outbox_enabled, _typed_store),
+            # A stream joins only as docs/design/fast-admission-streams.md
+            # section 5.1 says: the enclave heartbeats it (Stage D ok, the
+            # boot declared it), the lease's snapshot reap matches Python's,
+            # and its hold is its ceiling.
+            stage_d_reason=stage_d_reason,
+            heartbeat_declared=bool(boot_context.get("heartbeat_declared", False)),
+            hold_is_ceiling=reservation == estimate,
         )
 
         def release_after_error() -> None:
@@ -5320,10 +5327,24 @@ def _fastpath_admission(
     budget_strict: bool,
     app_markup: bool,
     records_durable: bool,
+    stage_d_reason: str | None = None,
+    heartbeat_declared: bool = False,
+    hold_is_ceiling: bool = False,
 ) -> _fastpath.Admitted | None:
     """The pilot's admission, or None for today's path. The region is this
     control plane's own: the front doors are reachable from the region the
-    fast path's nodes are in, whatever region the request routes to."""
+    fast path's nodes are in, whatever region the request routes to. A
+    stream passed over logs the condition of section 5.1 it failed
+    (docs/design/fast-admission-streams.md)."""
+    def stream_reason() -> str | None:
+        return _fastpath.pilot_stream_reason(
+            streams_enabled=settings.fastpath_pilot_streams,
+            stage_d_reason=stage_d_reason,
+            heartbeat_declared=heartbeat_declared,
+            snapshot_booking=settings.reap_snapshot_booking_enabled,
+            hold_is_ceiling=hold_is_ceiling,
+        )
+
     reason = _fastpath.pilot_reason(
         enabled=settings.fastpath_pilot_enabled,
         workspace_id=workspace_id,
@@ -5339,9 +5360,16 @@ def _fastpath_admission(
         budget_strict=budget_strict,
         app_markup=app_markup,
         records_durable=records_durable,
+        streams_enabled=settings.fastpath_pilot_streams,
+        stage_d_reason=stage_d_reason,
+        heartbeat_declared=heartbeat_declared,
+        snapshot_booking=settings.reap_snapshot_booking_enabled,
+        hold_is_ceiling=hold_is_ceiling,
     )
     if reason is not None:
         if settings.fastpath_pilot_enabled and workspace_id in settings.fastpath_pilot_workspace_ids:
+            if reason == "stream":
+                reason = stream_reason() or reason
             logger.info("fastpath pilot passed over reason=%s workspace_id=%s", reason, workspace_id)
         return None
     client = _fastpath_front_door(settings)
