@@ -686,7 +686,7 @@ def test_rollout_supplies_full_source_revision_for_shadow_evidence(
 
 @pytest.mark.parametrize("region", ["us-central1", "us-east4", "europe-west4", "southamerica-east1"])
 @pytest.mark.parametrize("no_traffic", ["0", "1"])
-def test_rollout_opts_out_shadow_canary_4_without_enabling_money_paths(
+def test_rollout_keeps_shadow_canary_4_opted_out_with_pilot_pins(
     harness: DeployScriptHarness, region: str, monkeypatch: pytest.MonkeyPatch,
     no_traffic: str,
 ) -> None:
@@ -723,7 +723,7 @@ def test_rollout_opts_out_shadow_canary_4_without_enabling_money_paths(
     assert rendered["TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION"] == ""
     assert rendered["TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT"] == ""
     assert rendered["TR_ASYNC_SETTLE_SHADOW_ATTACHMENT_BUCKET"] == "tr-async-settle-shadow-attachments-quill-cloud-proxy"
-    assert rendered["TR_ASYNC_SETTLE_ENABLED"] == "false"
+    assert rendered["TR_ASYNC_SETTLE_ENABLED"] == "true"
     assert rendered["TR_ASYNC_SETTLE_PROTECTION"] == "true"
     assert rendered["TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED"] == "false"
     config = Settings(
@@ -734,6 +734,8 @@ def test_rollout_opts_out_shadow_canary_4_without_enabling_money_paths(
         async_settle_shadow_workspaces=rendered["TR_ASYNC_SETTLE_SHADOW_WORKSPACES"],
         async_settle_shadow_health_region=rendered["TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION"],
         async_settle_shadow_attachment_bucket=rendered["TR_ASYNC_SETTLE_SHADOW_ATTACHMENT_BUCKET"],
+        async_settle_pilot_workspaces=rendered["TR_ASYNC_SETTLE_PILOT_WORKSPACES"],
+        async_settle_pilot_cap_micro=rendered["TR_ASYNC_SETTLE_PILOT_CAP_MICRO"],
         async_settle_enabled=rendered["TR_ASYNC_SETTLE_ENABLED"],
         async_settle_protection=rendered["TR_ASYNC_SETTLE_PROTECTION"],
         settle_outbox_fast_drain_enabled=rendered["TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED"],
@@ -761,7 +763,10 @@ def test_rollout_opts_out_shadow_canary_4_without_enabling_money_paths(
     health_install.assert_not_called()
     cohort_install.assert_not_called()
     assert not hasattr(app.state, "async_settle_shadow")
-    assert config.async_settle_enabled is False
+    assert config.async_settle_enabled is True
+    assert config.async_settle_admission_enabled is True
+    assert config.async_settle_pilot_workspace_ids == {"162e441a-5d13-414f-92bd-7c6cd805faa3"}
+    assert config.async_settle_pilot_cap_micro == 5000000
     assert config.async_settle_protection is True
     assert not config.settle_outbox_fast_drain_enabled
     assert config.async_settle_shadow_workspace_ids == set()
@@ -797,6 +802,7 @@ def test_rendered_shadow_pins_install_only_in_serving_regions(
         if name.startswith("TR_ASYNC_SETTLE_SHADOW_") or name in {
             "TR_SERVING_REGION", "TR_SOURCE_REVISION", "TR_ASYNC_SETTLE_ENABLED",
             "TR_ASYNC_SETTLE_PROTECTION", "TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED",
+            "TR_ASYNC_SETTLE_PILOT_WORKSPACES", "TR_ASYNC_SETTLE_PILOT_CAP_MICRO",
         }:
             monkeypatch.setenv(name, value)
     config = Settings(environment="test", service_surface="internal")
@@ -806,7 +812,9 @@ def test_rendered_shadow_pins_install_only_in_serving_regions(
     active = False
     assert config.effective_async_settle_shadow_policy() == ""
     assert config.async_settle_shadow_workspace_ids == set()
-    assert not config.async_settle_admission_enabled
+    assert config.async_settle_admission_enabled is True
+    assert config.async_settle_pilot_workspace_ids == {"162e441a-5d13-414f-92bd-7c6cd805faa3"}
+    assert config.async_settle_pilot_cap_micro == 5000000
     assert config.async_settle_protection is True
     assert not config.settle_outbox_fast_drain_enabled
 
@@ -3975,13 +3983,15 @@ def test_rollout_pins_async_admission_and_protection_without_inheritance(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pin: str,
 ) -> None:
     expected = {
-        "TR_ASYNC_SETTLE_ENABLED": "false",
+        "TR_ASYNC_SETTLE_ENABLED": "true",
         "TR_ASYNC_SETTLE_PROTECTION": "true",
         "TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE": "/secrets/async-settle/ticket.pem",
         "TR_ASYNC_SETTLE_TICKET_KID": "tr-async-settle-2026-10a",
         "TR_ASYNC_SETTLE_TICKET_ISSUER": "https://api.trustedrouter.com",
         "TR_ASYNC_SETTLE_TICKET_AUDIENCE": "router-settlement",
         "TR_ASYNC_SETTLE_AUTHORITY_EPOCH": "1",
+        "TR_ASYNC_SETTLE_PILOT_WORKSPACES": "162e441a-5d13-414f-92bd-7c6cd805faa3",
+        "TR_ASYNC_SETTLE_PILOT_CAP_MICRO": "5000000",
     }
     hostile = {
         "TR_ASYNC_SETTLE_ENABLED": "true",
@@ -3991,6 +4001,8 @@ def test_rollout_pins_async_admission_and_protection_without_inheritance(
         "TR_ASYNC_SETTLE_TICKET_ISSUER": "https://old.example",
         "TR_ASYNC_SETTLE_TICKET_AUDIENCE": "old-audience",
         "TR_ASYNC_SETTLE_AUTHORITY_EPOCH": "42",
+        "TR_ASYNC_SETTLE_PILOT_WORKSPACES": "unapproved",
+        "TR_ASYNC_SETTLE_PILOT_CAP_MICRO": "1",
     }
     # Challenge each boolean independently in both caller and live-primary env.
     hostile.update({name: expected[name] for name in (

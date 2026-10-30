@@ -761,11 +761,13 @@ ENV_VARS=(
   # the workspaces are set and the policy is empty. The activation tool's
   # release shadow-opt-in requires --expires-at and opt-out clears it.
   "TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT="
-  # R1: accepted-work protection on before any async admission. Keep admission
-  # off until the separate dedicated worker release has fresh fleet health.
-  # Router fast drain remains off; measured fast drain belongs to the worker.
-  "TR_ASYNC_SETTLE_ENABLED=false"
+  # R2: probe-only async admission after the reviewed operator and worker
+  # health gates. Measure drain, run one crash trial and rehearse RB1 then RB2
+  # before the customer pilot. Shadow remains opted out after its stop gate.
+  "TR_ASYNC_SETTLE_ENABLED=true"
   "TR_ASYNC_SETTLE_PROTECTION=true"
+  "TR_ASYNC_SETTLE_PILOT_WORKSPACES=162e441a-5d13-414f-92bd-7c6cd805faa3"
+  "TR_ASYNC_SETTLE_PILOT_CAP_MICRO=5000000"
   # Purpose signer, design runbook step 2 and the 2026-10-09 decisions: the key
   # file is the Secret Manager mount declared in SECRET_ENVS, pinned as a literal
   # so no revision inherits a path. kid/issuer/audience are the public identity
