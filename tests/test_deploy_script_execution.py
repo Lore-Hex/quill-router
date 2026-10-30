@@ -75,6 +75,46 @@ def harness(tmp_path_factory: pytest.TempPathFactory) -> DeployScriptHarness:
     return DeployScriptHarness(tmp_path_factory.mktemp("deploy-harness"))
 
 
+@pytest.mark.parametrize(
+    ("script", "args", "extra_env", "service"),
+    [
+        ("rollout.sh", (), {"TR_DEPLOY_NO_TRAFFIC": staged}, "trusted-router")
+        for staged in ("0", "1")
+    ] + [
+        (f"{surface}_surface.sh", (stage,), {}, f"trusted-router-{surface}")
+        for surface in ("public", "internal")
+        for stage in ("companion", "routed")
+    ],
+)
+def test_every_router_deploy_sets_http_liveness(
+    harness: DeployScriptHarness,
+    script: str,
+    args: tuple[str, ...],
+    extra_env: dict[str, str],
+    service: str,
+) -> None:
+    regions = {"us-central1", "us-east4", "europe-west4", "southamerica-east1"}
+    run = harness.run(f"scripts/deploy/{script}", args=args, extra_env={
+        **extra_env,
+        "TR_DEPLOY_TARGET_REGIONS": ",".join(sorted(regions)),
+        "TR_PUBLIC_REGIONS": ",".join(sorted(regions)),
+        "TR_INTERNAL_REGIONS": ",".join(sorted(regions)),
+    })
+    assert run.returncode == 0, summarise(run)
+    deploys = _gcloud_calls(run, "run", "deploy")
+    assert len(deploys) == len(regions)
+    assert {call[call.index("--region") + 1] for call in deploys} == regions
+    for deploy in deploys:
+        assert deploy[deploy.index("deploy") + 1] == service
+        assert deploy.count("--liveness-probe") == 1
+        assert deploy[deploy.index("--liveness-probe") + 1] == (
+            "httpGet.path=/health,httpGet.port=8080,initialDelaySeconds=0,"
+            "periodSeconds=10,timeoutSeconds=2,failureThreshold=4"
+        )
+        # Preserve Cloud Run's existing TCP startup probe and cold-start budget.
+        assert not any(arg.startswith("--startup-probe") for arg in deploy)
+
+
 @pytest.mark.parametrize("backend", ["clickhouse", "postgres"])
 def test_ecs_record_reads_resolve_only_paris_reader_metadata(
     harness: DeployScriptHarness, backend: str,

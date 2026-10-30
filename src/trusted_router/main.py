@@ -829,6 +829,9 @@ def _make_api_router(settings: Settings, surface: str) -> APIRouter:
 
     @router.get("/health")
     async def health() -> dict[str, str]:
+        # Cloud Run liveness: stay on the event loop with no dependencies.
+        # Storage checks belong in /ready; a busy sync threadpool, slow store,
+        # long request, or SIGTERM listener drain must not trigger replacement.
         return {"status": "ok"}
 
     @router.get("/ready")
