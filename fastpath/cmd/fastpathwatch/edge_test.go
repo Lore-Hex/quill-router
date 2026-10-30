@@ -327,3 +327,38 @@ func TestTheLogReaderPagesPacesAndBacksOff(t *testing.T) {
 		}
 	}
 }
+
+// TestTheEdgeReportPrintsTheWindowRaceFigures (docs/design/
+// fast-admission-e2-key-windows.md section 8.3): the shadow's window reads,
+// its confirmed read races and their share of the reads (the gate's 0.05%),
+// and the unconfirmed candidates, summed over the span's lines; the races
+// are not would-admits, the unconfirmed not races.
+func TestTheEdgeReportPrintsTheWindowRaceFigures(t *testing.T) {
+	entries := []logEntry{
+		{"1", "tr-fastpath-5", `2026/10/24 12:00:00 fastpath edge decide shadow: snapshot=s1 policy=p1 agree_full=1990 ` +
+			`differ=0 would_admit_python_refused=1 read_back=0 classes={"agree_full":1990,` +
+			`"window_race.429.key_window_limit_exceeded":2,"window_race_unconfirmed.429.key_window_limit_exceeded":1,` +
+			`"would_admit_python_refused.429.key_window_limit_exceeded":1} fields={} rows={} decide={"on":1994} ` +
+			`cohort={} windows={"read.made":1500,"verdict.admit":1500,"race.confirmed":2}`},
+		{"2", "tr-fastpath-6", `2026/10/24 12:01:00 fastpath edge decide shadow: snapshot=s1 policy=p1 agree_full=500 ` +
+			`differ=0 would_admit_python_refused=0 read_back=0 classes={"agree_full":500,` +
+			`"window_race.429.key_window_limit_exceeded":1} fields={} rows={} decide={"on":501} cohort={} ` +
+			`windows={"read.made":500,"race.confirmed":1}`},
+	}
+	d, _ := edgeDeps(entries, nil)
+	var out bytes.Buffer
+	if code, err := run(context.Background(), []string{"edge", "-project", "p", "-since", "2026-10-22T13:00:00Z"},
+		&out, d); code != 0 || err != nil {
+		t.Fatalf("%d %v", code, err)
+	}
+	var r edgeReport
+	if err := json.Unmarshal(out.Bytes(), &r); err != nil {
+		t.Fatalf("%v: %s", err, out.Bytes())
+	}
+	g := r.I2
+	if g.WindowReads != 2000 || g.WindowRace != 3 || g.WindowRaceUnconfirmed != 1 || g.WindowRaceRatio == nil ||
+		*g.WindowRaceRatio != 3.0/2000 || g.WouldAdmitPythonRefused != 1 ||
+		len(g.WouldAdmitByClass) != 1 || g.WouldAdmitByClass["429.key_window_limit_exceeded"] != 1 {
+		t.Errorf("the window race figures: %s", out.Bytes())
+	}
+}

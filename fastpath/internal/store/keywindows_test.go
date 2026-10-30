@@ -229,3 +229,36 @@ func TestReadKeyWindowsReadsAnOlderDatabasesNulls(t *testing.T) {
 		t.Fatal("the fresh tr_key_limit took a NULL day_usage")
 	}
 }
+
+// TestReadKeyWindowsReadsOneRowPastAKeysShards: the read stops one row past
+// the most shards a key may have, so a key holding more rows than that is
+// read as more (65), which the window check refuses (key_window.rows) even
+// under the largest count, 64; a read that stopped at 64 would look like a
+// complete key of 64 shards and decide.
+func TestReadKeyWindowsReadsOneRowPastAKeysShards(t *testing.T) {
+	s := spikeStore(t)
+	ctx := context.Background()
+	key := storetest.UniqueID("kh")
+	day := time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC)
+	var rows []*spanner.Mutation
+	for shard := range int64(keywindow.MaxShards + 2) {
+		rows = append(rows, keyLimitRow(key, shard, map[string]any{"day_start": day, "day_limit_micro": int64(1000)}))
+	}
+	if _, err := shared.Apply(ctx, rows); err != nil {
+		t.Fatal(err)
+	}
+	read, err := s.ReadKeyWindows(ctx, key)
+	if err != nil || len(read) != keywindow.MaxShards+1 || read[keywindow.MaxShards].Shard != keywindow.MaxShards {
+		t.Fatalf("read %d rows, %v", len(read), err)
+	}
+	limit := int64(1000)
+	at := day.Add(12 * time.Hour)
+	if v := keywindow.Evaluate(keywindow.Limits{Daily: &limit}, keywindow.MaxShards, read, 1, at); v.Pass != keywindow.PassRows {
+		t.Fatalf("64 shards over %d rows: %+v", len(read), v)
+	}
+	// The positive control: the first 64 rows alone are a complete key.
+	if v := keywindow.Evaluate(keywindow.Limits{Daily: &limit}, keywindow.MaxShards, read[:keywindow.MaxShards], 1,
+		at); !v.Admit() {
+		t.Fatalf("64 shards over 64 rows: %+v", v)
+	}
+}

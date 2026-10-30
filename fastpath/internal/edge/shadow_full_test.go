@@ -7,6 +7,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -223,6 +224,13 @@ func (l *logLines) all() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return strings.Join(l.lines, "\n")
+}
+
+// has reports a line that begins with prefix.
+func (l *logLines) has(prefix string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return slices.ContainsFunc(l.lines, func(s string) bool { return strings.HasPrefix(s, prefix) })
 }
 
 func newFullEdge(t *testing.T, f authorizeFile, c authorizeCase, py *fakePython,
@@ -1820,7 +1828,7 @@ func TestTheShadowComparesTheWindowCheck(t *testing.T) {
 			ClassAgreeFull, []string{"window.differ.limit"}},
 		{"admit, Python's 200 without headers", admit, py200, ClassAgreeFull, []string{"window.python_none"}},
 		{"admit, Python refused the window it read more spent", admit, rateLimited(py429, v.Limit, 0, v.ResetSeconds),
-			ClassWindowRace + ".429." + windowRefusal, []string{"verdict.admit", "window.differ.remaining.le_1000000"}},
+			ClassWindowRaceUnconfirmed + ".429." + windowRefusal, []string{"verdict.admit", "window.differ.remaining.le_1000000"}},
 		{"admit, Python refused with the same inputs", admit, rateLimited(py429, v.Limit, v.Remaining, v.ResetSeconds),
 			ClassWouldAdmit + ".429." + windowRefusal, []string{"window.same_inputs.disagree"}},
 		{"spent, Python refused", spent, rateLimited(py429, 1_000_000, 0, v.ResetSeconds),
@@ -1895,72 +1903,258 @@ func TestTheShadowReadsTheWindowsOffTheRequestPath(t *testing.T) {
 	}
 }
 
-// TestAWindowRaceIsCountedNotPaged (section 8.3): Python's window refusal
-// of a request Go read and would admit is window_race, counted and never
-// alerted, when its evidence shows Python's read saw more spent than Go's:
-// the 429 names a window whose limit Go holds, its RateLimit-Limit is that
-// limit, and its RateLimit-Remaining is below what Go's rows leave there.
-// Every other window refusal stays the paging would_admit: the same
-// remaining (the same inputs, another verdict), more remaining than Go's,
-// another limit, a window Go holds no limit for, no headers, a body not
-// read. Over the edge, the race raises no alert where the would-admit does.
-func TestAWindowRaceIsCountedNotPaged(t *testing.T) {
+// windowRefusal429 is Python's 429 for a window, with its RateLimit-* headers.
+func windowRefusal429(window string, limit, remaining, reset int64) pyAnswer {
+	return rateLimited(pyAnswer{status: 429, body: errorBody(429, windowRefusal,
+		"API key "+window+" spend limit exceeded; resets at 2026-10-20T00:00:00Z")}, limit, remaining, reset)
+}
+
+// TestAWindowRaceCandidateIsUnconfirmedUntilReRead (section 8.2 item 3): a
+// window refusal of a request Go read and would admit is a race candidate
+// only when the 429 names a window whose limit Go holds, with that limit,
+// and a RateLimit-Remaining below what Go's rows leave there; until a re-read
+// settles it, it is window_race_unconfirmed, which pages. Every other window
+// refusal is the would-admit outright.
+func TestAWindowRaceCandidateIsUnconfirmedUntilReRead(t *testing.T) {
 	allowed, admit, _ := windowCase(t, 400_000)
 	v := admit.verdict
-	if !admit.verdict.Admit() || v.Remaining != 600_000 {
+	if !v.Admit() || v.Remaining != 600_000 {
 		t.Fatalf("the verdict: %+v", v)
 	}
-	refused := func(window string) pyAnswer {
-		return pyAnswer{status: 429, body: errorBody(429, windowRefusal,
-			"API key "+window+" spend limit exceeded; resets at 2026-10-20T00:00:00Z")}
-	}
-	race, would := ClassWindowRace+".429."+windowRefusal, ClassWouldAdmit+".429."+windowRefusal
+	candidate := ClassWindowRaceUnconfirmed + ".429." + windowRefusal
+	would := ClassWouldAdmit + ".429." + windowRefusal
 	for _, x := range []struct {
 		name  string
 		a     pyAnswer
 		class string
 	}{
-		{"Python's remaining below Go's", rateLimited(refused("daily"), v.Limit, 0, v.ResetSeconds), race},
-		{"Python's remaining one below Go's", rateLimited(refused("daily"), v.Limit, v.Remaining-1, v.ResetSeconds),
-			race},
-		{"the same remaining", rateLimited(refused("daily"), v.Limit, v.Remaining, v.ResetSeconds), would},
-		{"more remaining than Go's", rateLimited(refused("daily"), v.Limit, v.Remaining+1, v.ResetSeconds), would},
-		{"another limit", rateLimited(refused("daily"), v.Limit+1, 0, v.ResetSeconds), would},
-		{"a window Go holds no limit for", rateLimited(refused("weekly"), v.Limit, 0, v.ResetSeconds), would},
-		{"no headers", refused("daily"), would},
+		{"Python's remaining below Go's", windowRefusal429("daily", v.Limit, 0, v.ResetSeconds), candidate},
+		{"Python's remaining one below Go's", windowRefusal429("daily", v.Limit, v.Remaining-1, v.ResetSeconds),
+			candidate},
+		{"the same remaining", windowRefusal429("daily", v.Limit, v.Remaining, v.ResetSeconds), would},
+		{"more remaining than Go's", windowRefusal429("daily", v.Limit, v.Remaining+1, v.ResetSeconds), would},
+		{"another limit", windowRefusal429("daily", v.Limit+1, 0, v.ResetSeconds), would},
+		{"a window Go holds no limit for", windowRefusal429("weekly", v.Limit, 0, v.ResetSeconds), would},
+		{"no headers", pyAnswer{status: 429, body: windowRefusal429("daily", 0, 0, 0).body}, would},
 		{"another message", rateLimited(pyAnswer{status: 429, body: errorBody(429, windowRefusal, "slow down")},
 			v.Limit, 0, v.ResetSeconds), would},
 		{"a body not read", rateLimited(pyAnswer{status: 429, why: "bound"}, v.Limit, 0, v.ResetSeconds),
 			ClassWouldAdmit + ".429.unread"},
 	} {
-		if r := compareWindowed(allowed, x.a, admit); r.class != x.class {
-			t.Errorf("%s: %s, want %s (%v)", x.name, r.class, x.class, r.windows)
+		r := compareWindowed(allowed, x.a, admit)
+		if r.class != x.class || (r.race != nil) != (x.class == candidate) {
+			t.Errorf("%s: %s (candidate %v), want %s", x.name, r.class, r.race != nil, x.class)
 		}
 	}
+}
 
-	f := authorizeGoldens(t)
-	_, _, c := windowCase(t, 400_000)
-	windows := &fakeWindows{read: func(context.Context) ([]keywindow.Row, error) {
-		return dailyRows(c.at(), 1_000_000, 400_000, 1), nil
-	}}
-	message := "API key daily spend limit exceeded; resets at 2026-10-20T00:00:00Z"
+// raceShadow is a bare shadow for confirmRace and raceAlerts: windows reads
+// its rows, its clock is clock, alerts are taken.
+func raceShadow(t *testing.T, windows KeyWindowReader, clock func() time.Time) (*fullShadow, *alerts, *logLines) {
+	t.Helper()
+	a, logs := &alerts{}, &logLines{}
+	sh, err := newFullShadow(DecideShadowConfig{Cache: &recordingCache{}, Decides: &fakeDecides{},
+		Rows: &fakeRows{by: map[string]store.AuthorizationForCompare{}}, Windows: windows, ReadsPerSecond: 1e9,
+		Alert: a.raise}, logs.logf, clock, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sh, a, logs
+}
+
+// TestOnlyAReReadConfirmsAWindowRace (section 8.3): the candidate's re-read,
+// in its window at the request's instant, confirms the race when Go's fresh
+// remaining is at or below Python's (the settle Python saw has landed), and
+// refutes it when it is still above (Go's read misses what Python sees: the
+// would-admit, paged). No re-read (the limiter), a failed one, rows that do
+// not give the window, or a window reset since leave it unconfirmed.
+func TestOnlyAReReadConfirmsAWindowRace(t *testing.T) {
+	allowed, admit, c := windowCase(t, 400_000)
+	v := admit.verdict
+	at := admit.at
+	py := windowRefusal429("daily", v.Limit, 100_000, v.ResetSeconds)
+	failed := errors.New("synthetic re-read failure")
+	day, _, _ := keywindow.Floors(at)
 	for _, x := range []struct {
-		remaining int64
-		class     string
-		alerts    int
+		name    string
+		reread  func(context.Context) ([]keywindow.Row, error)
+		clock   time.Time
+		noToken bool
+		class   string
+		count   string
 	}{
-		{0, race, 0},
-		{v.Remaining, would, 1},
+		{"the settle landed", func(context.Context) ([]keywindow.Row, error) {
+			return dailyRows(at, 1_000_000, 950_000, 1), nil
+		}, at, false, ClassWindowRace, "race.confirmed"},
+		{"Go's remaining at Python's", func(context.Context) ([]keywindow.Row, error) {
+			return dailyRows(at, 1_000_000, 900_000, 1), nil
+		}, at, false, ClassWindowRace, "race.confirmed"},
+		{"Go's remaining one above Python's", func(context.Context) ([]keywindow.Row, error) {
+			return dailyRows(at, 1_000_000, 899_999, 1), nil
+		}, at, false, ClassWouldAdmit, "race.refuted"},
+		{"the re-read sees the first read's rows", func(context.Context) ([]keywindow.Row, error) {
+			return dailyRows(at, 1_000_000, 400_000, 1), nil
+		}, at, false, ClassWouldAdmit, "race.refuted"},
+		{"the re-read failed", func(context.Context) ([]keywindow.Row, error) { return nil, failed }, at, false,
+			ClassWindowRaceUnconfirmed, "race.unconfirmed.unread"},
+		{"the re-read's rows are not the key's shards", func(context.Context) ([]keywindow.Row, error) {
+			return dailyRows(at, 1_000_000, 950_000, 2), nil
+		}, at, false, ClassWindowRaceUnconfirmed, "race.unconfirmed.rows"},
+		{"the window reset before the re-read", func(context.Context) ([]keywindow.Row, error) {
+			return dailyRows(at, 1_000_000, 950_000, 1), nil
+		}, day.Add(24 * time.Hour), false, ClassWindowRaceUnconfirmed, "race.unconfirmed.reset"},
+		{"the window resets a microsecond after the re-read", func(context.Context) ([]keywindow.Row, error) {
+			return dailyRows(at, 1_000_000, 950_000, 1), nil
+		}, day.Add(24*time.Hour - time.Microsecond), false, ClassWindowRace, "race.confirmed"},
+		{"the limiter refused the re-read", func(context.Context) ([]keywindow.Row, error) {
+			return dailyRows(at, 1_000_000, 950_000, 1), nil
+		}, at, true, ClassWindowRaceUnconfirmed, "race.unconfirmed.limiter"},
 	} {
+		windows := &fakeWindows{read: x.reread}
+		clock := x.clock
+		sh, _, _ := raceShadow(t, windows, func() time.Time { return clock })
+		if x.noToken {
+			sh.cfg.ReadsPerSecond, sh.windowLimiter.tokens = 1e-9, 0
+		}
+		r := compareWindowed(allowed, py, admit)
+		sh.confirmRace(allowed.ForShadow(), admit, &r)
+		calls := windows.seen()
+		if r.class != x.class+".429."+windowRefusal || !slices.Contains(r.windows, x.count) {
+			t.Errorf("%s: %s %v, want %s and %s", x.name, r.class, r.windows, x.class, x.count)
+		}
+		if (len(calls) == 1) == x.noToken || (len(calls) == 1 && calls[0].keyHash != c.Facts.Key.Hash) {
+			t.Errorf("%s: re-reads %+v", x.name, calls)
+		}
+		if r.race.first != 600_000 || r.race.python != 100_000 {
+			t.Errorf("%s: the race's figures %+v", x.name, *r.race)
+		}
+	}
+}
+
+// TestAPersistentUndercountPagesAndARealRaceDoesNot, over the edge: a Go
+// read that undercounts the same way on every request (here it never sees
+// 400,000 of the day Python sees) is refuted by its own re-read, 50 times
+// out of 50, and pages; a settle that lands between the reads, which the
+// re-read sees, is a confirmed race, counted and traced, never paged; a
+// re-read that fails pages as unconfirmed.
+func TestAPersistentUndercountPagesAndARealRaceDoesNot(t *testing.T) {
+	f := authorizeGoldens(t)
+	_, admit, c := windowCase(t, 400_000)
+	v := admit.verdict
+	at := c.at()
+	respond := answerWith(429, errorBody(429, windowRefusal,
+		"API key daily spend limit exceeded; resets at 2026-10-20T00:00:00Z"), "RateLimit-Limit", "1000000",
+		"RateLimit-Remaining", "100000", "RateLimit-Reset", strconv.FormatInt(v.ResetSeconds, 10))
+	failed := errors.New("synthetic re-read failure")
+	for _, x := range []struct {
+		name     string
+		requests int
+		// first and then are the request's two reads.
+		first, then func() ([]keywindow.Row, error)
+		class       string
+		paged       bool
+	}{
+		{"a persistent undercount", 50,
+			func() ([]keywindow.Row, error) { return dailyRows(at, 1_000_000, 500_000, 1), nil },
+			func() ([]keywindow.Row, error) { return dailyRows(at, 1_000_000, 500_000, 1), nil },
+			ClassWouldAdmit, true},
+		{"a real race", 5,
+			func() ([]keywindow.Row, error) { return dailyRows(at, 1_000_000, 400_000, 1), nil },
+			func() ([]keywindow.Row, error) { return dailyRows(at, 1_000_000, 900_000, 1), nil },
+			ClassWindowRace, false},
+		{"the re-read fails", 3,
+			func() ([]keywindow.Row, error) { return dailyRows(at, 1_000_000, 400_000, 1), nil },
+			func() ([]keywindow.Row, error) { return nil, failed },
+			ClassWindowRaceUnconfirmed, true},
+	} {
+		var n atomic.Int64
+		windows := &fakeWindows{read: func(context.Context) ([]keywindow.Row, error) {
+			if n.Add(1)%2 == 1 {
+				return x.first()
+			}
+			return x.then()
+		}}
 		a := &alerts{}
 		h := newFullEdge(t, f, c, nil, func(cfg *DecideShadowConfig) { cfg.Windows, cfg.Alert = windows, a.raise })
-		h.answer(answerWith(429, errorBody(429, windowRefusal, message), "RateLimit-Limit", "1000000",
-			"RateLimit-Remaining", strconv.FormatInt(x.remaining, 10), "RateLimit-Reset",
-			strconv.FormatInt(v.ResetSeconds, 10)))
-		h.send(t, c)
-		got := h.edge.DecideShadowCounts()
-		if got.Classes[x.class] != 1 || len(a.taken()[AlertWouldAdmit]) != x.alerts {
-			t.Errorf("Python's remaining %d: classes %v, alerts %v", x.remaining, got.Classes, a.taken())
+		h.answer(respond)
+		for range x.requests {
+			h.send(t, c)
 		}
+		got := h.edge.DecideShadowCounts()
+		class := x.class + ".429." + windowRefusal
+		taken := a.taken()
+		paged := len(taken[AlertWouldAdmit])
+		// Five races of five reads in the hour: the backstop, not the page.
+		if backstop := len(taken[AlertWindowRace]) > 0; backstop != (x.class == ClassWindowRace) {
+			t.Errorf("%s: race alerts %q", x.name, taken[AlertWindowRace])
+		}
+		if got.Classes[class] != x.requests || len(got.Classes) != 1 || (paged > 0) != x.paged ||
+			n.Load() != int64(2*x.requests) {
+			t.Errorf("%s: classes %v, %d pages, %d reads", x.name, got.Classes, paged, n.Load())
+		}
+		// Each send is its own period (WaitDecideShadow logs it), so no
+		// page is lost to the period's bound.
+		if x.paged && paged != x.requests {
+			t.Errorf("%s: %d pages for %d would-admits", x.name, paged, x.requests)
+		}
+		if x.class == ClassWindowRace && !h.logs.has("fastpath edge decide shadow window race: class="+class+
+			" key="+c.Facts.Key.Hash[:min(len(c.Facts.Key.Hash), keyHashPrefixLen)]+
+			" window=daily go=600000 reread=100000 python=100000 gap=500000 ") {
+			t.Errorf("%s: no race line traces it: %q", x.name, h.logs.all())
+		}
+	}
+}
+
+// TestTheRaceRateAndAKeysRepeatsAlert (section 8.3): AlertWindowRace, once a
+// period, when the last hour's confirmed races pass RaceRateShare of its
+// window reads (at least RaceRateMin of them), or one key races more than
+// RaceKeyRepeats times; periods and races older than an hour no longer
+// count.
+func TestTheRaceRateAndAKeysRepeatsAlert(t *testing.T) {
+	race := func(key string) fullResult {
+		return fullResult{class: ClassWindowRace + ".429." + windowRefusal, windows: []string{"read.made"},
+			race: &raceCandidate{keyHashPrefix: key}}
+	}
+	read := fullResult{class: ClassAgreeFull, windows: []string{"read.made"}}
+	now := time.Now()
+	for _, x := range []struct {
+		name         string
+		reads, races int
+		keys         int
+		alert        string
+	}{
+		{"3 races in 5,000 reads", 5000, 3, 1, "3 window races of 5000 window reads"},
+		{"3 races in 7,000 reads", 7000, 3, 1, ""},
+		{"2 races in 100 reads", 100, 2, 1, ""},
+		{"one key 4 times", 1_000_000, 4, 4, "raced 4 times"},
+		{"one key 3 times", 1_000_000, 3, 3, ""},
+	} {
+		sh, a, _ := raceShadow(t, nil, time.Now)
+		for i := range x.races {
+			sh.races.count(race(fmt.Sprintf("kh%06d", i%max(1, x.races/x.keys))), now)
+		}
+		for range x.reads - x.races {
+			sh.races.count(read, now)
+		}
+		sh.raceAlerts(now)
+		got := a.taken()[AlertWindowRace]
+		if (x.alert == "") != (len(got) == 0) || (len(got) > 0 && !strings.Contains(got[0], x.alert)) {
+			t.Errorf("%s: alerts %q", x.name, got)
+		}
+	}
+	// The hour rolls: a period over an hour old no longer counts.
+	sh, a, _ := raceShadow(t, nil, time.Now)
+	hourAgo := now.Add(-61 * time.Minute)
+	for range 4 {
+		sh.races.count(race("kh000000"), hourAgo)
+	}
+	sh.raceAlerts(hourAgo)
+	if got := a.taken()[AlertWindowRace]; len(got) != 1 || !strings.Contains(got[0], "raced 4 times") {
+		t.Fatalf("4 races of one key in 4 reads: %q", got)
+	}
+	sh.races.count(read, now)
+	sh.raceAlerts(now)
+	if got := a.taken()[AlertWindowRace]; len(got) != 0 {
+		t.Fatalf("the hour-old races still count: %q", got)
 	}
 }
