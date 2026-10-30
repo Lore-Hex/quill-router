@@ -31,6 +31,12 @@ which a signal's default action does not end.) Only set it for a service whose C
 (``--no-cpu-throttling``): a throttled idle instance sees no ticks and would
 exit when CPU returns.
 
+Early diagnostics reserve SIGUSR2: an isolated helper process requests stacks
+after 5 s and 15 s without a tick, even if the parent cannot acquire the GIL.
+Its headers distinguish a stopped loop from a stopped Python heartbeat and
+identify whether the last tick entered watchdog re-arming. These samples do
+not replace or reset the C exit timer. See ``stall_dump.LoopStallDiagnostics``.
+
 Usage: ``python -m trusted_router.serve`` (host 0.0.0.0, port from ``PORT``).
 """
 
@@ -52,7 +58,7 @@ from types import FrameType
 
 import uvicorn
 
-from trusted_router.stall_dump import stall_dump_fd
+from trusted_router.stall_dump import LoopStallDiagnostics, stall_dump_fd
 
 APP = "trusted_router.main:app"
 DEFAULT_PORT = 8080
@@ -122,6 +128,7 @@ class DrainingServer(uvicorn.Server):
         self.stall_seconds = stall_seconds
         self._stall_dump_fd: int | None = None
         self._stall_armed_at: float | None = None
+        self._stall_diagnostics: LoopStallDiagnostics | None = None
 
     async def startup(self, sockets: list | None = None) -> None:
         await super().startup(sockets=sockets)
@@ -155,8 +162,19 @@ class DrainingServer(uvicorn.Server):
         ):
             if self._stall_dump_fd is None:
                 self._stall_dump_fd = stall_dump_fd(sys.stderr.fileno())
+                try:
+                    self._stall_diagnostics = LoopStallDiagnostics(
+                        self._stall_dump_fd, self.stall_seconds,
+                    )
+                except Exception as exc:
+                    logger.warning("serve.stall_diagnostics_unavailable reason=%s",
+                                   type(exc).__name__)
+            if self._stall_diagnostics is not None:
+                self._stall_diagnostics.beat(b"A")
             faulthandler.dump_traceback_later(self.stall_seconds, exit=True, file=self._stall_dump_fd)
             self._stall_armed_at = now
+        if self._stall_diagnostics is not None:
+            self._stall_diagnostics.beat()
         if self.drain_deadline is not None and not self.should_exit:
             if monotonic() >= self.drain_deadline:
                 logger.info("serve.sigterm_drain_complete")
@@ -167,6 +185,8 @@ class DrainingServer(uvicorn.Server):
         # Ticks stop here while shutdown waits on in-flight requests; Cloud
         # Run's SIGKILL bounds that wait instead.
         if self.stall_seconds is not None:
+            if self._stall_diagnostics is not None:
+                self._stall_diagnostics.stop()
             faulthandler.cancel_dump_traceback_later()
         await super().shutdown(sockets=sockets)
 

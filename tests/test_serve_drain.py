@@ -412,6 +412,7 @@ def _stall_server(monkeypatch: pytest.MonkeyPatch, stall: float | None) -> serve
 
 def _record_arming(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, object]]:
     calls: list[tuple[str, object]] = []
+    monkeypatch.setattr(serve, "LoopStallDiagnostics", lambda *args: None)
     monkeypatch.setattr(serve, "stall_dump_fd", lambda fd: calls.append(("dump_fd", fd)) or 99)
     monkeypatch.setattr(serve.faulthandler, "dump_traceback_later",
                         lambda timeout, exit=False, file=None: calls.append(("dump", (timeout, exit, file))))
@@ -707,3 +708,202 @@ worker._exit_stalled_worker()
     finally:
         os.close(read_end)
         os.close(write_end)
+
+
+@pytest.mark.parametrize("block", ["loop", "gil", "rearm"])
+def test_early_stall_samples_survive_loop_and_gil_blocks(tmp_path: Path, block: str) -> None:
+    # This reproduces diagnostic blind spots, NOT the unproven Spanner incident.
+    # PyDLL deliberately retains the GIL in a sleeping native worker; a Python
+    # sampler thread cannot take a stack sample in that case. No sockets needed.
+    code = r'''
+import asyncio
+import ctypes
+import os
+import sys
+import threading
+import time
+from trusted_router import serve, stall_dump
+stall_dump.SAMPLE_SECONDS = (0.3, 0.8)
+stall_dump.PULSE_SECONDS = 0.05
+fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NONBLOCK, 0o600)
+serve.stall_dump_fd = lambda _: fd
+async def stock_shutdown(self, sockets=None):
+    pass
+serve.uvicorn.Server.shutdown = stock_shutdown
+server = serve.DrainingServer(serve.build_config({}), drain_seconds=0, stall_seconds=5)
+asyncio.run(server.on_tick(0))
+time.sleep(0.1)
+if sys.argv[2] == 'gil':
+    def native_worker():
+        ctypes.PyDLL(None).sleep(2)
+    worker = threading.Thread(target=native_worker)
+    worker.start()
+    worker.join()
+elif sys.argv[2] == 'rearm':
+    original = serve.faulthandler.dump_traceback_later
+    def blocked_rearm(*args, **kwargs):
+        time.sleep(1.4)
+        original(*args, **kwargs)
+    serve.faulthandler.dump_traceback_later = blocked_rearm
+    server._stall_armed_at = None
+    asyncio.run(server.on_tick(1))
+else:
+    def blocked_loop():
+        time.sleep(1.4)
+    blocked_loop()
+asyncio.run(server.shutdown())
+time.sleep(0.2)
+os.close(fd)
+'''
+    dump = tmp_path / "early-stacks.log"
+    process = subprocess.run(  # noqa: S603 - fixed isolated diagnostic scenario
+        [sys.executable, "-c", code, str(dump), block], cwd=ROOT,
+        capture_output=True, text=True, timeout=15,
+    )
+    assert process.returncode == 0, process.stderr
+    logs = dump.read_text()
+    samples = [line for line in logs.splitlines() if "serve.loop_stall_sample " in line]
+    assert len(samples) == 2, logs
+    assert "threshold_seconds=0.3" in samples[0]
+    assert "threshold_seconds=0.8" in samples[1]
+    progress = "stalled" if block == "gil" else "running"
+    assert all(f"python_progress={progress}" in line for line in samples), logs
+    frame = {"loop": "blocked_loop", "gil": "native_worker", "rearm": "blocked_rearm"}[block]
+    assert f"in {frame}" in logs, logs
+    if block == "rearm":
+        assert all("loop_phase=rearm" in line for line in samples), logs
+    assert "Timeout (" not in logs  # Early samples did not replace/fire the exit timer.
+
+
+@pytest.mark.parametrize("mode", [
+    "healthy", "recover", "exit", "helper_exit", "full_pipe", "backed_up",
+])
+def test_stall_diagnostic_lifecycle(tmp_path: Path, mode: str) -> None:
+    code = r'''
+import asyncio
+import os
+import sys
+import threading
+import time
+from trusted_router import serve, stall_dump
+stall_dump.SAMPLE_SECONDS = (0.3, 0.8)
+stall_dump.PULSE_SECONDS = 0.05
+fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NONBLOCK, 0o600)
+if sys.argv[2] == 'backed_up':
+    os.close(fd)
+    read_end, fd = os.pipe()
+    os.set_blocking(fd, False)
+    try:
+        while True:
+            os.write(fd, b'x' * 4096)
+    except BlockingIOError:
+        pass
+serve.stall_dump_fd = lambda _: fd
+async def stock_shutdown(self, sockets=None):
+    pass
+serve.uvicorn.Server.shutdown = stock_shutdown
+server = serve.DrainingServer(serve.build_config({}), drain_seconds=0, stall_seconds=2)
+asyncio.run(server.on_tick(0))
+diagnostics = server._stall_diagnostics
+assert diagnostics is not None
+mode = sys.argv[2]
+if mode in {'exit', 'backed_up'}:
+    time.sleep(10)  # C exit timer must still kill this process after early dumps.
+elif mode == 'recover':
+    time.sleep(1.1)
+    asyncio.run(server.on_tick(1))
+    time.sleep(1.1)
+elif mode == 'helper_exit':
+    diagnostics._process.kill()
+    diagnostics._thread.join(timeout=3)
+    assert not diagnostics._thread.is_alive()
+    asyncio.run(server.on_tick(1))  # EPIPE cannot fail a serving tick.
+elif mode == 'full_pipe':
+    # Replace only the loop's writer with a pipe nobody consumes. Its writes
+    # must drop, not block. The original helper sees EOF after stop.
+    read_fd, write_fd = os.pipe()
+    os.set_blocking(write_fd, False)
+    try:
+        while True:
+            os.write(write_fd, b'x' * 4096)
+    except BlockingIOError:
+        pass
+    original_fd = diagnostics._fd
+    diagnostics._fd = write_fd
+    before = time.monotonic()
+    asyncio.run(server.on_tick(1))
+    assert time.monotonic() - before < 0.5
+    diagnostics._fd = original_fd
+    os.close(read_fd)
+    os.close(write_fd)
+else:
+    # A blocked worker alone must neither trigger samples nor stop serving
+    # ticks; this control is green on main and does not prove an RPC bug.
+    release = threading.Event()
+    worker = threading.Thread(target=release.wait)
+    worker.start()
+    async def healthy():
+        for i in range(15):
+            await asyncio.sleep(0.1)
+            await server.on_tick(i + 1)
+    asyncio.run(healthy())
+    assert worker.is_alive()
+    release.set()
+    worker.join()
+before = time.monotonic()
+asyncio.run(server.shutdown())
+assert time.monotonic() - before < 0.5
+diagnostics._thread.join(timeout=3)
+assert not diagnostics._thread.is_alive()
+assert diagnostics._process.poll() is not None
+time.sleep(0.9)  # No late samples after shutdown, even though ticks have stopped.
+os.close(fd)
+'''
+    dump = tmp_path / "lifecycle-stacks.log"
+    process = subprocess.run(  # noqa: S603 - fixed isolated diagnostic scenario
+        [sys.executable, "-c", code, str(dump), mode], cwd=ROOT,
+        capture_output=True, text=True, timeout=15,
+    )
+    logs = dump.read_text()
+    assert process.returncode == (1 if mode in {"exit", "backed_up"} else 0), process.stderr + logs
+    count = logs.count("serve.loop_stall_sample ")
+    assert count == {"recover": 4, "exit": 2}.get(mode, 0), logs
+    assert ("Timeout (0:00:02)!" in logs) == (mode == "exit"), logs
+
+
+def test_stall_diagnostic_setup_failure_keeps_exit_watchdog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _record_arming(monkeypatch)
+
+    def fail(*args: object) -> None:
+        raise OSError("helper unavailable")
+
+    monkeypatch.setattr(serve, "LoopStallDiagnostics", fail)
+    server = _stall_server(monkeypatch, 30)
+    asyncio.run(server.on_tick(0))
+    assert calls[-1] == ("dump", (30, True, 99))
+
+
+def test_stall_diagnostic_fd_exhaustion_closes_partial_setup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router.stall_dump import LoopStallDiagnostics
+
+    fd = os.open(tmp_path / "dump", os.O_WRONLY | os.O_CREAT | os.O_NONBLOCK, 0o600)
+    read_fd, write_fd = os.pipe()
+    monkeypatch.setattr(os, "pipe", lambda: (read_fd, write_fd))
+
+    def exhausted(*args: object) -> int:
+        raise OSError(errno.EMFILE, "no descriptors")
+
+    monkeypatch.setattr(os, "dup", exhausted)
+    try:
+        with pytest.raises(OSError, match="no descriptors"):
+            LoopStallDiagnostics(fd, 30)
+        for closed in (read_fd, write_fd):
+            with pytest.raises(OSError) as exc:
+                os.fstat(closed)
+            assert exc.value.errno == errno.EBADF
+    finally:
+        os.close(fd)
