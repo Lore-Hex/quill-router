@@ -510,7 +510,7 @@ def edge_decide_cases() -> list[dict[str, Any]]:
     add("start_at_floor_counts", d, rows=one(d, day_usage=1_000, day_start_us=day_floor), estimate=1)
     add("start_after_floor_counts", d, rows=one(d, day_usage=1_000, day_start_us=day_floor + 1), estimate=1)
     add("start_in_future_counts", d, rows=one(d, day_usage=1_000, day_start_us=AT + HOUR), estimate=1)
-    add("pre_ddl_row_all_null", {"daily": 1_000, "weekly": 5_000, "monthly": 20_000},
+    add("legacy_row_all_null", {"daily": 1_000, "weekly": 5_000, "monthly": 20_000},
         rows=[_row(0, {"daily": 1_000, "weekly": 5_000, "monthly": 20_000}, AT,
                    day_usage=None, day_start_us=None, week_usage=None, week_start_us=None,
                    month_usage=None, month_start_us=None)], estimate=1_000)

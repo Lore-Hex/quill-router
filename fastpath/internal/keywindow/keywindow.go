@@ -105,7 +105,7 @@ func Enforced(configured Limits, alertOnly bool) Limits {
 }
 
 // Row is one tr_key_limit shard as the edge reads it. Every column is
-// nullable: databases older than the window DDL added them nullable.
+// nullable: the window columns were added later, as nullable columns.
 type Row struct {
 	Shard                           int64
 	DayUsage, WeekUsage, MonthUsage spanner.NullInt64
