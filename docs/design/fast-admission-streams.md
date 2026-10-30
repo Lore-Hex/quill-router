@@ -10,7 +10,8 @@ how parity is measured, and in what order it ships. Nothing here changes a
 decision until §10's increment 4, behind a setting that is off.
 
 Line citations are against quill-router `origin/main` at `c06417b7f` and
-quill-cloud-proxy `origin/main` at `bb69aa0c` (prefixed `qcp:`).
+quill-cloud-proxy `origin/main` at `bb69aa0c` (prefixed `qcp:`, paths from
+that repository's root).
 
 ## 1. Why
 
@@ -57,7 +58,9 @@ estimate on both sides:
   reservation on the `pass:body.stream:hold_cap:*` cases;
   `test_fastpath_authorize_vectors.py:503-514` holds it equal to the
   matching answer's estimate and above that answer's reservation;
-  `decide_test.go:1459` and `:1506` hold the evaluator's figures to it.
+  `fastpath/internal/edge/decide_test.go:1506` holds Python's recorded
+  stream reservation to the evaluator's (`:1459` pins the non-stream hold
+  cap).
 
 Precisely: for a stream, the front door's `AuthorizeOf.Estimate`, the
 owner's `Admission.Estimate` and so the hold `h.estimate`, the row's
@@ -82,7 +85,7 @@ e2-decide "Streams" follow-up that would lower it gets a tripwire (§5.1).
    while it runs.
 2. **Python cannot echo a deadline.** Every heartbeat after a hold's first
    must echo the deadline the last granted (`requests.go:268-269`). The
-   enclave sends none (`qcp: internal/trustedrouter/stage_d.go:89-97`) and
+   enclave sends none (`qcp: enclave-go/internal/trustedrouter/stage_d.go:89-97`) and
    Python keeps no per-stream state outside the row.
 3. **The owner refuses a running charge below the last**
    (`requests.go:269`, `hb.Running < h.running`). Today's rule checks each
@@ -91,10 +94,14 @@ e2-decide "Streams" follow-up that would lower it gets a tripwire (§5.1).
    was reported: `normalized_delivered_prompt` moves those tokens from the
    input rate to the cheaper cached rate (`storage_gcp_stage_d.py:222-232`).
    Today that stream runs on; under the lease it would be cut.
-4. **A late terminal after an owner reap never resolves.** A settle or
-   refund answered `won` with kind `reap` is `Undecided`
-   (`fastpath_settle.py:109-113`), so its intent stays pending forever.
-   Non-streams never meet this: only a stream has a snapshot to reap.
+4. **A late terminal after an owner reap never resolves, or resolves as a
+   settle.** A settle or refund answered `won` with kind `reap`, and a
+   refund answered `settled` with a booking, are `Undecided`
+   (`fastpath_settle.py:109-113`, `:125-127`), so the intent stays pending
+   forever. A settle answered `settled` with `reaped_snapshot` is decided
+   today, as a booking at the disposition's cost written with the settle's
+   generation and outcome `settled` (`:121-128`). Non-streams never meet
+   either: only a stream has a snapshot to reap.
 5. **Python's reaper would book a leased stream.** It books a row's
    snapshot when `started_at` is set and the row has a pricing snapshot
    (`storage_gcp_authorize.py:1461-1465`). A leased non-stream never has
@@ -126,8 +133,9 @@ transaction:
   charge above `_cap_micro` `usage_exceeds_cap` (`:122-143`);
 - writes `heartbeat_seq`, `heartbeat_at`, `heartbeat_hash`,
   `delivered_usage`, and at seq 1 `started_at` and `selected_endpoint_id`
-  (`:144-173`), and renews the reservation's `expires_at` to now plus
-  `heartbeat_grace_seconds`, 300 (`:174-187`).
+  (`:144-173`), and renews the reservation's expiry to
+  `GREATEST(expires_at, now + heartbeat_grace_seconds)`, 300 s
+  (`:174-187`): it never shortens one.
 
 It answers `{"accepted", "seq", "expires_at_ms", "cap_micro",
 "running_micro"}` (`gateway.py:760-766`); a rejection is
@@ -138,23 +146,27 @@ for `boot_not_accepted`, 409 otherwise (`:958-966`).
 
 - It heartbeats a stream only when its boot runs `QUILL_USAGE_HEARTBEAT`
   and the authorization says `stage_d.eligible`, on `chat.completions` and
-  `responses` (`qcp: cmd/enclave/stage_d.go:64-69`).
+  `responses` (`qcp: enclave-go/cmd/enclave/stage_d.go:64-69`).
 - The first heartbeat is sent in `preHeader`, after the provider's first
-  byte and before the response head (`qcp: cmd/enclave/main.go:2019`); a
-  failure there answers 503 and sends no settle. Then one every 10 s or 256
-  output tokens, each within a 5 s budget (`stage_d.go:18-23`), retried with
-  the same signed bytes (`internal/trustedrouter/stage_d.go:152-195`).
+  byte and before the response head (`qcp: enclave-go/cmd/enclave/main.go:2019`);
+  a failure there answers 503 and sends no settle. Then one every 10 s or
+  256 output tokens, each within a 5 s budget
+  (`qcp: enclave-go/cmd/enclave/stage_d.go:18-23`), retried with the same
+  signed bytes (`qcp: enclave-go/internal/trustedrouter/stage_d.go:152-195`).
 - From an answer it reads `accepted` and `seq` (must equal the one sent),
   takes `cap_micro` only when it had none and logs a mismatch otherwise,
-  and logs `running_micro` (`stage_d.go:325-337`). `expires_at_ms` is
-  decoded and never read (`internal/trustedrouter/stage_d.go:102` is its
-  only mention).
+  and logs `running_micro` (`qcp: enclave-go/cmd/enclave/stage_d.go:325-337`).
+  `expires_at_ms` is decoded and never read
+  (`qcp: enclave-go/internal/trustedrouter/stage_d.go:102` is its only
+  mention).
 - A rejection with a reason from its closed set
-  (`internal/trustedrouter/stage_d.go:109-126`) or any other failure stops
+  (`qcp: enclave-go/internal/trustedrouter/stage_d.go:109-126`) or any other
+  failure stops
   the stream, which then settles what it delivered.
 - Its boot declares `usage_heartbeat` exactly when it heartbeats, and never
-  `stream_open_heartbeat` (`internal/trustedrouter/spend_lease.go:40-56`;
-  `stage_d.go:49-53`).
+  `stream_open_heartbeat`
+  (`qcp: enclave-go/internal/trustedrouter/spend_lease.go:40-56`;
+  `qcp: enclave-go/cmd/enclave/stage_d.go:49-53`).
 
 ### 3.3 Go's heartbeat path
 
@@ -164,7 +176,7 @@ for `boot_not_accepted`, 409 otherwise (`:958-966`).
   (`invalid` if it does not), and sends `OwnerHeartbeat` to the owner it
   names or through a peer (`peers.go:16-42`, `/peer/heartbeat`), else
   `retry`.
-- `Local.Heartbeat` (`local.go:65-81`) maps the owner's errors: `accepted`
+- `Local.Heartbeat` (`local.go:65-85`) maps the owner's errors: `accepted`
   with the deadline, `stale`, `rejected` (also an unknown hold),
   `deadline_passed`, `decided`, and `retry` for everything else, a lease it
   does not hold included.
@@ -181,8 +193,9 @@ for `boot_not_accepted`, 409 otherwise (`:958-966`).
   allowance (`releaseDue`, `:119`, `released` at `:246-249`), only for
   holds admitted with `OpenHeartbeat`.
 - Defaults (`service/service.go:144-159`): `HeartbeatEvery` 30 s, the grace
-  1 min, `FirstHeartbeat` 10 s, the hold's life `MaxLife + Window`, 2 h 20
-  min 30 s. The load generator plays streams end to end
+  1 min, `FirstHeartbeat` 10 s, the owner's hold life `MaxLife`, 2 h 20 min
+  (`:261`); `MaxLife + Window`, 2 h 20 min 30 s, is the front door's
+  (`:264`). The load generator plays streams end to end
   (`loadgen/loadgen.go:621-665`).
 
 ### 3.4 Python's leased authorization
@@ -191,7 +204,9 @@ for `boot_not_accepted`, 409 otherwise (`:958-966`).
 commit, the full typed authorization row (pricing snapshot, `stage_d_*`
 columns, candidates, model, fees, `fastpath_envelope`,
 `fastpath_end_of_life` in the payload) and a reservation row that holds
-nothing (credit 0, key 0) with today's 2 h expiry. A leased terminal is
+nothing (credit 0, key 0) with today's 2 h expiry
+(`GATEWAY_RESERVATION_TTL_SECONDS`, `user_model_rules.py:17`;
+`storage_gcp.py:5128`). A leased terminal is
 made durable as an outbox intent, forwarded, and on `won` written with the
 records in one commit (`gateway.py:5347-5452`). Python's reaper finalizes
 an expired leased row `refunded` with nothing booked, which matches the
@@ -233,7 +248,7 @@ it is §9's.
 | `Hash` | the 32 bytes of SHA-256 over today's canonical body, `json.dumps(body.model_dump(exclude_none=True), sort_keys=True, separators=(",", ":"))` (`gateway.py:743-747`); the row stores the same digest as hex | the request |
 | `Usage` | `input_tokens + output_tokens` of `body.usage.canonical_counts()`; the transaction has already refused any count below the stored one, so the sum never falls | the request |
 | `Running` | `HeartbeatResult.running_micro` (§4.3) | the transaction |
-| `Echoed` | zero; `EchoGranted` true on every seq above 1 (§4.6) | |
+| `Echoed` | zero; from increment 4, `EchoGranted` true on every seq above 1 (§4.6) | |
 | `Basis` | seq 1 only: §4.5's document | the row and the request |
 
 `started_at_ms`, `elapsed_ms`, `selected_endpoint_id` and `stream` reach
@@ -243,7 +258,7 @@ field Python has not validated first.
 A replay (`HeartbeatResult.replay`) is forwarded too, with the same seq,
 hash and running charge: the owner may not have the first attempt. The
 owner answers a replay it has as the heartbeat it repeats, with no second
-publish (`requests.go:253-261`).
+publish (`requests.go:255-266`).
 
 ### 4.3 The running charge
 
@@ -318,9 +333,15 @@ publish its full authorization record and carry what a reap needs. Here:
 
 ### 4.6 The Go changes this needs
 
-Three, all optional on the wire and taken by owners before front doors and
-by front doors before Python sends them (the order `OpenHeartbeat` used,
-`frontdoor.go:194-200`):
+Four, all in increment 2. The new wire fields are optional and taken by
+owners before front doors, the order `OpenHeartbeat` used
+(`frontdoor.go:194-200`). A front door decodes strictly
+(`DisallowUnknownFields`, `frontdoor/http.go:122`): a field it does not
+know is a 400, which Python reads as no answer, a 503. So Python sends
+`EchoGranted` only once increment 2 is live on every owner and every front
+door: from increment 4, whose runbook checks it first (§10). Until then
+Python sends no echo, and the owner refuses every heartbeat after a hold's
+first; no leased stream exists before increment 4.
 
 1. **`EchoGranted bool`** (omitempty) on `HeartbeatOf`, `OwnerHeartbeat` and
    `owner.HeartbeatOf`. With it set and `Echoed` zero, the owner reads the
@@ -341,8 +362,25 @@ by front doors before Python sends them (the order `OpenHeartbeat` used,
    `{Outcome, Cost, CostKnown}`, the read `appendTerminal` already does
    (`frontdoor.go:412`). Python's reaper uses it (§6.4) instead of reading
    the lease's tables itself.
+4. **A stream hold's reap floor.** The owner reaps a heartbeated hold at
+   its last deadline plus the grace (`adopt.go:113`, `due` at `:370`),
+   about 90 s after its last heartbeat, while Python's reaper cannot act
+   on the same stream before its row expires, at
+   max(authorize + 2 h, last heartbeat + 300 s) (§6.4). A late refund or
+   settle inside that gap would meet the owner's reap and be decided
+   `reaped_snapshot`: the customer pays the snapshot where today a refund
+   books nothing and a settle books the provider's exact figure. So a
+   stream hold (`Admission.Stream`) is reaped, by the owner and by the
+   auditor's ticks alike, no sooner than
+   max(admitted + 2 h, last accepted heartbeat + 300 s), capped at the
+   hold's end of life plus the grace. The floor's two durations are owner
+   configuration equal to `GATEWAY_RESERVATION_TTL_SECONDS` and
+   `heartbeat_grace_seconds`; the hold's admission time travels in its
+   first heartbeat record and its hand-off record, and each accepted
+   heartbeat's time in its own record, so the auditor applies the same
+   floor after a hand-off or a drain. Non-stream holds are unchanged (§11 item 7).
 
-### 4.7 Budget and capacity
+### 4.7 Budget, capacity and keys
 
 A heartbeat cannot fall back to another path, as an authorize can, so it
 gets its own permits in `FrontDoorClient` rather than sharing the 64
@@ -352,6 +390,13 @@ not starve heartbeats into 503s that stop streams. Its budget is
 fits one enclave retry inside the enclave's 5 s. A heartbeat may go to any
 serving front door; it relays to the owner (§3.3).
 
+A front door opens an envelope with the fleet's key or any key it accepts
+(`frontdoor.go:70-75`, `keys` at `:213`). A stream heartbeats its envelope
+for the hold's whole life, so a key rotation keeps the old key in the
+accepted list for at least the hold's life plus the grace, 2 h 21 min;
+dropped sooner, a running stream's next heartbeat answers `invalid` and the
+stream stops.
+
 ## 5. The cohort and the switch
 
 ### 5.1 The rule
@@ -359,7 +404,8 @@ serving front door; it relays to the owner (§3.3).
 A stream joins the lease cohort only when all of these hold, on both front
 doors, in addition to today's cohort:
 
-1. `fastpath_pilot_streams` is on (§5.4);
+1. on Python's pilot, `fastpath_pilot_streams` is on; on the edge, the
+   policy carries `fastpath_edge_streams` (§5.4);
 2. Stage D's reason is `ok` (`_stage_d_eligibility_reason`,
    `gateway.py:3285-3331`): eligibility on, the Stage D pilot set, heartbeats
    on, an accepted boot, `chat.completions` or `responses`, every candidate
@@ -392,7 +438,7 @@ are computed before it (`gateway.py:1688-1705`, `:1049`).
 ### 5.3 The edge
 
 `gwauth`'s request cohort keeps `body.stream` (`cohort_request.go:75-76`)
-unless the policy carries the member. With it, a stream goes on to the
+unless the policy carries `fastpath_edge_streams`. With it, a stream goes on to the
 facts, and `StageDReasonOf` grows Python's whole rule for streams (route,
 candidate usage types, pricing kind, service tier, backend), counted under
 `stream.stage_d:<reason>` when it is not `ok`. An `ok` stream composes:
@@ -405,23 +451,29 @@ candidate usage types, pricing kind, service tier, backend), counted under
   `rounding`) the async billing snapshot already writes
   (`gwauth/async.go:321-325`);
 - the row's `pricing_snapshot`, `canonical_pricing_snapshot` of the
-  candidates' pricing document (`gateway.py:1746-1753`, `stage_d.py:164-173`), byte for byte;
+  candidates' pricing document (`gateway.py:1746-1753`; `endpoint_pricing_document`, `stage_d.py:164`;
+  `canonical_pricing_snapshot`, `:172`), byte for byte;
 - the admit with `Estimate = Reservation`, refused (pass `stream.hold`)
   unless it equals `ModelEstimate`.
 
-### 5.4 The switch
+### 5.4 The switches
 
-A Python setting `fastpath_pilot_streams: bool = False`, read in two
-places so the cohort stays one definition (e2-decide decision 11):
+Two Python settings, so gate P can run with the edge dark:
 
-1. Python's pilot: §5.2.
-2. The edge policy: an optional member `fastpath_pilot_streams: true`,
-   published only when the setting and `reap_snapshot_booking_enabled` are
-   both on, absent otherwise, `false` and `null` refused, as
-   `fastpath_pilot_key_windows` is (`edge_policy.py:56-62`, `:139-146`;
-   `edge_policy_publisher.py:214-215`; `routingsnapshot/edgepolicy.go:38`,
-   `:65-91`). Go ships first, accepting it absent or present; Python
-   publishes after. A stale policy already passes everything.
+1. `fastpath_pilot_streams: bool = False`: Python's pilot admits streams
+   (§5.2).
+2. `fastpath_edge_streams: bool = False`: the edge may decide streams. The
+   edge policy carries an optional member `fastpath_edge_streams: true`,
+   published only when this setting, `fastpath_pilot_streams` and
+   `reap_snapshot_booking_enabled` are all on, absent otherwise, `false`
+   and `null` refused, as `fastpath_pilot_key_windows` is
+   (`edge_policy.py:56-62`, `:139-146`; `edge_policy_publisher.py:214-215`;
+   `routingsnapshot/edgepolicy.go:38`, `:65-73`). Go ships first,
+   accepting it absent or present; Python publishes it only after gate E.
+   A stale policy already passes everything.
+
+The cohort rule itself is one definition (e2-decide decision 11): both
+front doors apply §5.1's items 2 to 5 the same way.
 
 ## 6. Terminals, reaps and switches
 
@@ -446,14 +498,24 @@ with outcome `reaped_snapshot`, as a decision: `reaped_snapshot`, booked
 nothing in Python (the lease booked it), charge the lease's. The records
 are §6.4's, not the settle's, as today's reaper writes the snapshot's and a
 later settle answers `already_settled` with them. Shared by the route and
-the drain.
+the drain. This changes existing behaviour (§2.3 item 4): today a settle
+answered `settled` with `reaped_snapshot` writes the settle's generation
+with outcome `settled`; after increment 3 it writes the snapshot's records
+with outcome `reaped_snapshot`. A refund answered `settled` with a booking
+is decided the same way instead of staying `Undecided`. With §4.6 item 4's
+floor, a terminal meets an owner reap only after Python's own reaper could
+have reaped the same stream.
 
 ### 6.4 A stream abandoned after heartbeats
 
-The owner reaps the hold at its last deadline plus the grace (about 90 s
-after the last heartbeat) at its last running charge; once the lease
-drains, the auditor does it at a tick (`auditor/runtime.go:631-656`).
-Python's row expires 300 s after the last heartbeat. Python's reaper:
+Python's row expires at max(authorize + 2 h, last heartbeat + 300 s): a
+leased row starts with today's 2 h (§3.4), and each heartbeat renews it to
+`GREATEST(expires_at, now + 300 s)` (`storage_gcp_stage_d.py:175`). The
+owner reaps the hold at its last running charge no sooner than the same
+instant, from its admission and its last accepted heartbeat (§4.6 item 4;
+today's code would reap about 90 s after the last heartbeat); once the
+lease drains, the auditor does it at a tick under the same floor
+(`auditor/runtime.go:631-656`). Python's reaper:
 
 - never books a row with `fastpath_envelope` (the guard on
   `snapshot_booked`, `storage_gcp_authorize.py:1463`);
@@ -465,9 +527,12 @@ Python's row expires 300 s after the last heartbeat. Python's reaper:
   `storage_gcp_authorize.py:1466-1531`) with the lease's cost, through
   `typed_finalize_leased_result` with nothing booked; `refunded` or
   `released` finalizes `refunded`; `settled` leaves it to the settle's
-  intent; `pending` pushes the expiry out by the grace and alerts once the
-  hold's end of life plus the grace and the drain's overdue allowance have
-  passed.
+  intent, and alerts when the row has no settle intent (a settle the lease
+  booked that Python never recorded); `pending` pushes the expiry out by
+  the grace and alerts once the hold's end of life plus the grace and the
+  drain's overdue allowance have passed. A front door that does not
+  answer, answers an error, or does not serve `/v1/disposition` reads as
+  `pending`, never as `refunded`.
 
 It never sends a refund for a heartbeated stream: in a draining lease that
 refund could precede the auditor's reap in the drain log and charge
@@ -500,13 +565,15 @@ crash cuts no stream today. A revoked or draining lease answers the same.
 |---|---|---|
 | `stage_d_heartbeat_enabled` | Stage D reason `heartbeats_disabled`: Python's path | every heartbeat 503 before the row or the front door (`gateway.py:701-706`): stopped at the next heartbeat, as today |
 | `stage_d_eligibility_enabled` | `stage_d_disabled`: Python's path | keep heartbeating; the heartbeat route does not read it, as today |
-| `fastpath_pilot_streams`, `fastpath_pilot_enabled` | Python's path (the edge within the policy's 60 s) | keep heartbeating: forwarding follows the row (§4.1) |
+| `fastpath_pilot_streams`, `fastpath_pilot_enabled` | Python's path on Python's pilot; the edge member is withdrawn too (§5.4) | keep heartbeating: forwarding follows the row (§4.1) |
+| `fastpath_edge_streams` | the edge passes streams within the policy's 60 s | keep heartbeating |
 | the front door's workspace switch | `off`: Python's path | keep heartbeating: the owner asks the switch only at admission (`requests.go:143`) |
 | `reap_snapshot_booking_enabled` | Python's path (§5.1 item 4) | the lease still reaps at the snapshot: turn the switch off and let leased streams end first |
 
 ## 7. Money safety
 
-For the same stream, no path admits or charges more than Python's:
+For the same stream, no path admits or charges more than Python's, given
+§4.6 item 4's reap floor (increment 2, before any leased stream exists):
 
 | Step | Python's path | Leased |
 |---|---|---|
@@ -515,6 +582,7 @@ For the same stream, no path admits or charges more than Python's:
 | settle | books the priced charge | the owner books the same priced charge; Python books nothing |
 | reap with heartbeats | books the last snapshot's running charge, at most e, with `reap_snapshot_booking_enabled` | books `min(running, e)`, the same figure (§4.3), only with that switch on (§5.1) |
 | reap without heartbeats | refunded | released uncharged |
+| reap timing | not before the row's expiry, max(authorize + 2 h, last heartbeat + 300 s) | not before max(admission + 2 h, last accepted heartbeat + 300 s) (§4.6 item 4); a refund or settle before then wins as it would on Python's path |
 | terminal after a reap | charges nothing more (Decision 70) | charges nothing more (§6.3) |
 | double booking | one booking per reservation | Python's reaper never books a leased row (§6.4); Python's settle never books a leased one |
 
@@ -538,6 +606,19 @@ Residual risks:
 6. **The edge's composition.** A stream's 200 and row carry the full price
    document; a byte off in `candidate_prices` changes what the enclave
    cuts at. §8.4's shadow compares both before the edge decides.
+7. **A heartbeat gap past the owner's deadline cuts a stream.** With
+   `EchoGranted`, a heartbeat acknowledged after the deadline the owner
+   last granted (30 s) is `deadline_passed`, `already_terminal` to the
+   enclave. Today Python accepts a heartbeat at any gap before the row
+   expires. The enclave sends one every 10 s, but a slow consumer can hold
+   it off: the cadence skips while a slice is being written
+   (`qcp: enclave-go/cmd/enclave/stage_d.go:196`), so a client that reads
+   slowly for 30 s loses its stream where today it would not. Measured in
+   §8.3.
+8. **Streams past the hold's life are cut.** The owner's hold ends at 2 h
+   20 min (§3.3); today's row is renewed for as long as heartbeats come.
+   The enclave ends a stream at 2 h 15 min, so only a stream that outlives
+   its gateway's own bound meets this.
 
 ## 8. Shadow comparison and rollout gate
 
@@ -553,17 +634,18 @@ any leased stream exists.
 Nothing for streams: the edge passes them at the request cohort, before
 any decision, so the E2 full shadow (`edge/shadow_full.go`), which compares
 Python's 200 byte for byte and the rows column by column, never sees one.
-Heartbeats are never shadowed. A row Python's heartbeat reached first is
-compared only on the columns heartbeats leave alone (`moved`,
-`shadow_full.go:1148`; `settleStable`, `:1304`), which is most stream rows
-by the time they are read.
+Heartbeats are never shadowed. `moved` (`shadow_full.go:1148`) tests
+`HeartbeatSeq.Valid`, and authorize writes `heartbeat_seq = 0` on every
+row with a pricing snapshot (`storage_gcp.py:5606`), so every Stage D
+eligible stream's row is `moved` from authorize on: it is compared only on
+`settleStable` (`:1304`), never on its payload.
 
 ### 8.3 Gate P: the Python pilot
 
-The setting on for the pilot workspaces in one region; the edge's member
-absent (Python publishes it only after gate P, or the edge's decide rows
-stay off). Before the edge moves, over at least 7 days and 1,000 leased
-streams settled or reaped:
+`fastpath_pilot_streams` on for the pilot workspaces in one region;
+`fastpath_edge_streams` off, so the edge's member is absent. Before the
+edge moves, over at least 7 days and 1,000 leased streams settled or
+reaped:
 
 - `fastpath.heartbeat_divergence` zero, and no `invalid`;
 - every leased settle's winner charge equal to Python's priced charge (the
@@ -577,7 +659,13 @@ streams settled or reaped:
   the same span, and no stream stopped by a front door `retry` outside a
   deploy or a stop;
 - the reaper's leased outcomes counted: `refunded`, `reaped_snapshot`,
-  `pending`.
+  `pending`;
+- every leased terminal answered with a reap (`won` with kind `reap`, or
+  `settled` with `reaped_snapshot`) logged with the charge the settle or
+  refund asked for beside the reap's, each one explained; with §4.6 item
+  4's floor, none should arrive before the row's expiry;
+- streams cut by `deadline_passed` (risk 7) counted against Python's
+  `heartbeat_lost` rate for the same span.
 
 ### 8.4 The edge shadow for streams
 
@@ -585,7 +673,9 @@ Increment 5 composes eligible streams in the shadow only, still passing
 them, and the full shadow compares Python's 200, `stage_d`,
 `candidate_prices` and `cap_micro` included, and the rows,
 `pricing_snapshot` and the `stage_d_*` columns added to `settleStable` so a
-heartbeated row still compares them. The authorize vectors gain stream
+stream's row, always `moved` (§8.2), still compares them. Comparing a
+stream row's payload needs `moved` to stop counting a `heartbeat_seq` of 0
+written by authorize; that is increment 5's too. The authorize vectors gain stream
 answer cases (eligible, each Stage D reason, the boot undeclared), with
 Python's 200 and rows recorded, in `authorize_vectors.py`.
 
@@ -593,10 +683,12 @@ Python's 200 and rows recorded, in `authorize_vectors.py`.
 
 e2-decide's I2 bar (`fast-admission-e2-decide.md:1714-1777`) over streams
 alone, with zero differs in `candidate_prices`, `cap_micro`,
-`pricing_snapshot` or `estimated_microdollars`; then Python publishes the
-member and the decide rows choose where it applies. The way back, fastest
-first: the member off (the policy's 60 s), the setting off, then e2-decide
-§9's levers. Running leased streams finish on the lease either way.
+`pricing_snapshot` or `estimated_microdollars`; then, with increment 6
+deployed, `fastpath_edge_streams` goes on, Python publishes the member,
+and the decide rows choose where it applies. The way back, fastest first:
+`fastpath_edge_streams` off (the policy's 60 s), `fastpath_pilot_streams`
+off, then e2-decide §9's levers. Running leased streams finish on the
+lease either way (§10's rollback floors).
 
 ## 9. Out of scope
 
@@ -618,20 +710,33 @@ Each merges dark and deploys before the next. No leased stream exists
 until increment 4's setting moves, so increments 1 to 3 run only on rows a
 test seeds. Increment 1 is the forwarding; the setting itself lands with
 the cohort in increment 4, so it can never admit a stream before the
-terminal handling of increment 3 is deployed.
+terminal handling of increment 3 is deployed. Increment 4 also needs
+increment 2 live on every owner and every front door (the strict decoder
+and the reap floor, §4.6); its runbook checks the fleet's release before
+the setting moves. Increment 6 is dark until `fastpath_edge_streams` goes
+on after gate E (§5.4).
 
 | # | Where | What | Files | Size |
 |---|---|---|---|---|
 | 1 | Python, dark | `FrontDoorClient.heartbeat` with its own permits (§4.7); `_heartbeat_gateway_sync`'s leased branch: transaction, forward, answer map (§4.2 to §4.5); the basis builder; the reaper never books a leased row (§6.4 first bullet); tests with a fake front door: each answer row of §4.4, replay forwarding, a row without an envelope untouched, the kill switch before the forward | `routes/internal/gateway.py`, `services/fastpath_frontdoor.py`, `services/fastpath_heartbeat.py` (new), `storage_gcp_authorize.py`, `tests/test_stage_d_heartbeat.py`, `tests/test_fastpath_frontdoor.py`, `tests/test_fastpath_pilot_route.py` | ~250 LOC + ~450 test |
-| 2 | Go | `EchoGranted` and the falling running charge (§4.6 items 1, 2), owners before front doors; `POST /v1/disposition` (item 3); the edge policy's optional `fastpath_pilot_streams`; the shadow's stream split (§8.1); loadgen plays `EchoGranted` | `owner/requests.go`, `frontdoor/{frontdoor,answers,local,http}.go`, `routingsnapshot/edgepolicy.go`, `gwauth/staged.go`, `edge/shadow.go`, `loadgen/loadgen.go`, tests | ~200 LOC + ~400 test |
-| 3 | Python, dark | `forward_terminal`'s reap and `reaped_snapshot` answers (§6.3); the reaper's leased-stream reconcile through `/v1/disposition` (§6.4); the drain the same; integration test against the Go service: lease a seeded stream, heartbeat, stop, reap, late settle | `services/fastpath_settle.py`, `services/fastpath_frontdoor.py`, `storage_gcp_authorize.py`, `storage_gcp.py`, `services/settle_outbox_apply.py`, tests | ~250 LOC + ~500 test |
-| 4 | Python | the setting `fastpath_pilot_streams`; `pilot_reason`'s stream rule and sub-reasons (§5.1, §5.2); the edge policy publishes the member; runbook rows for gate P | `config.py`, `services/fastpath_frontdoor.py`, `routes/internal/gateway.py`, `edge_policy.py`, `services/edge_policy_publisher.py`, `docs/runbooks/*`, tests | ~120 LOC + ~300 test |
+| 2 | Go | `EchoGranted` and the falling running charge (§4.6 items 1, 2), owners before front doors; `POST /v1/disposition` (item 3); the stream hold's reap floor for the owner and the auditor (item 4); the edge policy's optional `fastpath_edge_streams`; the shadow's stream split (§8.1); loadgen plays `EchoGranted` and the floor | `owner/{requests,adopt,handoff}.go`, `record/record.go`, `auditor/{member,runtime}.go`, `frontdoor/{frontdoor,answers,local,http}.go`, `routingsnapshot/edgepolicy.go`, `gwauth/staged.go`, `edge/shadow.go`, `loadgen/loadgen.go`, tests | ~300 LOC + ~550 test |
+| 3 | Python, dark | `forward_terminal`'s reap and `reaped_snapshot` answers, a change to today's `settled` handling (§6.3); the reaper's leased-stream reconcile through `/v1/disposition`, an unanswered or failing read as `pending`, the alert for a `settled` disposition without an intent (§6.4); the drain the same; integration test against the Go service: lease a seeded stream, heartbeat, stop, reap after the floor, late settle | `services/fastpath_settle.py`, `services/fastpath_frontdoor.py`, `storage_gcp_authorize.py`, `storage_gcp.py`, `services/settle_outbox_apply.py`, tests | ~250 LOC + ~500 test |
+| 4 | Python | the settings `fastpath_pilot_streams` and `fastpath_edge_streams`; `pilot_reason`'s stream rule and sub-reasons (§5.1, §5.2); `EchoGranted` sent on every seq above 1 (§4.6); the edge policy publishes `fastpath_edge_streams` only when on (§5.4); runbook rows: increment 2 on every owner and front door, then gate P | `config.py`, `services/fastpath_frontdoor.py`, `routes/internal/gateway.py`, `edge_policy.py`, `services/edge_policy_publisher.py`, `docs/runbooks/*`, tests | ~120 LOC + ~300 test |
 | 5 | Go + Python vectors | the edge's stream composition in the shadow only (§5.3, §8.4); `StageDReasonOf` for streams; `pricing_snapshot`; stream answer vectors | `gwauth/{staged,response,rows,payload}.go`, `edge/{decide,shadow_full}.go`, `scripts/fastpath/authorize_vectors.py`, testdata, tests | ~400 LOC + ~600 test |
-| 6 | Go | the edge decides eligible streams when the member is present (the tripwire of §5.1 item 5) | `gwauth/cohort_request.go`, `edge/decide.go`, `edge/decide_path.go`, tests | ~80 LOC + ~200 test |
+| 6 | Go | the edge decides eligible streams when the policy carries `fastpath_edge_streams` (the tripwire of §5.1 item 5); dark until that setting goes on | `gwauth/cohort_request.go`, `edge/decide.go`, `edge/decide_path.go`, tests | ~80 LOC + ~200 test |
 
-Then gate P (§8.3) after increment 4, gate E (§8.5) after 5, and the member
-after 6. In all, six code PRs after this one, about 1,300 lines of
-production code and 2,450 of tests and generators, the vector JSON aside.
+Then gate P (§8.3) after increment 4, gate E (§8.5) after 5, and
+`fastpath_edge_streams` after 6. In all, six code PRs after this one, about
+1,400 lines of production code and 2,600 of tests and generators, the
+vector JSON aside.
+
+**Rollback floors.** While any leased stream is open, Python does not roll
+back below increment 3 (it must forward heartbeats and decide reap
+answers) and Go does not roll back below increment 2 (the strict decoder
+would refuse `EchoGranted`, and the reap floor would go). The way back is
+the settings off (§6.7), then waiting out the hold's life plus the grace
+plus the drain's overdue allowance, after which no leased stream is open
+and any release may be rolled back.
 
 ## 11. Decisions
 
@@ -655,3 +760,9 @@ Decided by Joseph on 2026-10-30, on this design's first review:
 6. **Increment 1 is keyed on the row's envelope, with no switch** (§10):
    the setting lands with the cohort in increment 4, after increment 3's
    terminal handling.
+7. **The owner reaps a leased stream hold no sooner than Python's row
+   expiry would allow**, max(admission + 2 h, last accepted heartbeat +
+   300 s), by the owner and the auditor alike (§4.6 item 4, increment 2).
+   Non-stream holds are unchanged. Without it a late refund or settle
+   inside the gap would be decided `reaped_snapshot` and §7's bound would
+   not hold.
