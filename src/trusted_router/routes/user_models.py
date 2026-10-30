@@ -61,6 +61,16 @@ def register_user_model_routes(router: APIRouter) -> None:
         principal: ManagementPrincipal,
         before: str | None = None,
     ) -> dict[str, Any]:
+        if before is not None:
+            try:
+                cutoff = datetime.fromisoformat(before.replace("Z", "+00:00"))
+                if cutoff.tzinfo is None:
+                    cutoff = cutoff.replace(tzinfo=UTC)
+                before = cutoff.astimezone(UTC).isoformat().replace("+00:00", "Z")
+            except (ValueError, OverflowError) as exc:
+                raise api_error(
+                    400, "before must be an ISO 8601 timestamp", ErrorType.BAD_REQUEST
+                ) from exc
         return {"data": _earnings_data(_owner_user_id(principal), before=before)}
 
     @router.post("/user-models/earnings/transfer")
