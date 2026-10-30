@@ -354,6 +354,29 @@ function initCreditsCheckout() {
   let bumpedTo = null;
 
   const selectedMethod = () => (method ? method.value : fixedMethod ? fixedMethod.value : "auto");
+  const maximumCreditCents = () => {
+    const selected = selectedMethod();
+    const maximum = schedule.maximum_cents?.[selected];
+    if (Number.isSafeInteger(maximum) && maximum >= 0)
+      return maximum;
+    // Older rendered pages provide the fee rates without maximum_cents.
+    // Derive the same fee-inclusive ceiling instead of treating absence as zero.
+    if (selected === "paypal" || selected === "adyen")
+      return 1000000;
+    const rates = schedule.rates[schedule.rails[selected] || "card"];
+    if (!rates)
+      return 0;
+    let low = 0;
+    let high = 1000000;
+    while (low < high) {
+      const candidate = Math.floor((low + high + 1) / 2);
+      if (candidate + checkoutFeeCents(candidate, rates) <= 1000000)
+        low = candidate;
+      else
+        high = candidate - 1;
+    }
+    return low;
+  };
   const checkedPreset = () => presets.find((preset) => preset.checked) || null;
   const amountCents = () => {
     const checked = checkedPreset();
@@ -374,7 +397,7 @@ function initCreditsCheckout() {
 
   function sync(trigger) {
     const paypal = selectedMethod() === "paypal";
-    const maximumCents = schedule.maximum_cents?.[selectedMethod()] || 0;
+    const maximumCents = maximumCreditCents();
     const minimumCents = paypalMinimum * 100;
     presets.forEach((preset) => {
       if (preset.value !== "other")
