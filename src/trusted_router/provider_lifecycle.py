@@ -70,6 +70,7 @@ DEEPINFRA_MYTHOMAX_RETIREMENT_AT = datetime(2026, 10, 29, 0, 0, tzinfo=UTC)
 TOGETHER_NOVEMBER_6_RETIREMENT_AT = datetime(2026, 11, 6, 0, 0, tzinfo=UTC)
 TOGETHER_QWEN38_24T_RETIREMENT_AT = datetime(2026, 11, 4, 0, 0, tzinfo=UTC)
 DIGITALOCEAN_NOVEMBER_9_RETIREMENT_AT = datetime(2026, 11, 9, 0, 0, tzinfo=UTC)
+NEBIUS_NOVEMBER_9_RETIREMENT_AT = datetime(2026, 11, 9, 0, 0, tzinfo=UTC)
 # Decision Models (Passau, CET): pinned ids answer through 30 Nov 2026 and
 # return 410 from 1 Dec; retire at 1 Dec 00:00 CET.
 DECISIONMODELS_PINNED_S1_PRO_RETIREMENT_AT = datetime(2026, 11, 30, 23, 0, tzinfo=UTC)
@@ -1046,6 +1047,79 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"s1-pro-3"}),
         effective_at=DECISIONMODELS_PINNED_S1_PRO_RETIREMENT_AT,
         replacement_model_ids=("decisionmodelsio-eu/s1-pro",),
+    ),
+    # Nebius's October 30 notice retires these Token Factory Serverless models
+    # on 9 November 2026 (date-only, so 00:00 UTC). Dedicated endpoints are
+    # unaffected; the same weights stay routable through other providers.
+    _Retirement(
+        provider="nebius",
+        model_ids=frozenset({"zai-org/GLM-5.1"}),
+        upstream_ids=frozenset({"zai-org/GLM-5.1"}),
+        effective_at=NEBIUS_NOVEMBER_9_RETIREMENT_AT,
+        replacement_model_ids=("z-ai/glm-5.3",),
+    ),
+    _Retirement(
+        provider="nebius",
+        model_ids=frozenset({"nvidia/nemotron-3-super-120b-a12b"}),
+        upstream_ids=frozenset({"nvidia/nemotron-3-super-120b-a12b"}),
+        effective_at=NEBIUS_NOVEMBER_9_RETIREMENT_AT,
+        replacement_model_ids=("nvidia/nemotron-3.5-super-vl",),
+    ),
+    _Retirement(
+        provider="nebius",
+        model_ids=frozenset({"deepseek-ai/DeepSeek-V4-Pro"}),
+        upstream_ids=frozenset({"deepseek-ai/DeepSeek-V4-Pro"}),
+        effective_at=NEBIUS_NOVEMBER_9_RETIREMENT_AT,
+        replacement_model_ids=("deepseek/deepseek-v4-pro-0813",),
+    ),
+    _Retirement(
+        provider="nebius",
+        model_ids=frozenset({"deepseek/deepseek-v4-flash-0731"}),
+        upstream_ids=frozenset({"deepseek-ai/DeepSeek-V4-Flash-0731"}),
+        effective_at=NEBIUS_NOVEMBER_9_RETIREMENT_AT,
+        replacement_model_ids=("deepseek/deepseek-v4.1-flash-1017",),
+    ),
+    _Retirement(
+        provider="nebius",
+        model_ids=frozenset({"deepseek/deepseek-v4.1-flash"}),
+        upstream_ids=frozenset({"deepseek-ai/DeepSeek-V4.1-Flash"}),
+        effective_at=NEBIUS_NOVEMBER_9_RETIREMENT_AT,
+        replacement_model_ids=("deepseek/deepseek-v4.1-flash-1017",),
+    ),
+    _Retirement(
+        provider="nebius",
+        model_ids=frozenset({"Qwen/Qwen3.5-397B-A17B"}),
+        upstream_ids=frozenset({"Qwen/Qwen3.5-397B-A17B"}),
+        effective_at=NEBIUS_NOVEMBER_9_RETIREMENT_AT,
+        replacement_model_ids=("qwen/qwen3.8-27b",),
+    ),
+    _Retirement(
+        provider="nebius",
+        model_ids=frozenset({"Qwen/Qwen3-235B-A22B-Instruct-2507"}),
+        upstream_ids=frozenset({"Qwen/Qwen3-235B-A22B-Instruct-2507"}),
+        effective_at=NEBIUS_NOVEMBER_9_RETIREMENT_AT,
+        replacement_model_ids=("qwen/qwen3.8-27b",),
+    ),
+    _Retirement(
+        provider="nebius",
+        model_ids=frozenset({"moonshotai/Kimi-K2.6"}),
+        upstream_ids=frozenset({"moonshotai/Kimi-K2.6"}),
+        effective_at=NEBIUS_NOVEMBER_9_RETIREMENT_AT,
+        replacement_model_ids=("moonshotai/kimi-k3",),
+    ),
+    _Retirement(
+        provider="nebius",
+        model_ids=frozenset({"moonshotai/Kimi-K2.7-Code"}),
+        upstream_ids=frozenset({"moonshotai/Kimi-K2.7-Code"}),
+        effective_at=NEBIUS_NOVEMBER_9_RETIREMENT_AT,
+        replacement_model_ids=("moonshotai/kimi-k3",),
+    ),
+    _Retirement(
+        provider="nebius",
+        model_ids=frozenset({"openbmb/MiniCPM-V-4_5"}),
+        upstream_ids=frozenset({"openbmb/MiniCPM-V-4_5"}),
+        effective_at=NEBIUS_NOVEMBER_9_RETIREMENT_AT,
+        replacement_model_ids=("nvidia/nemotron-3.5-super-vl",),
     ),
     # DigitalOcean's October 29 notices deprecate these Inference models on
     # 2026-11-09 (date only; 00:00 UTC conservatively); requests then 404.
