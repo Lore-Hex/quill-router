@@ -48,12 +48,14 @@ locals {
   # bounded too: a deadline on each secret read, and a watch that exits the
   # process if it has not reached the service within 15 s per secret read
   # plus a minute.
-  # e29917396: main after the key window increments (#2192, #2196,
-  # #2199): alert-only windowed keys counted apart, the window mode as a
-  # decision gate and the window read, all dark while the edge policy
-  # carries no fastpath_pilot_key_windows member; the shadow compares
-  # windowed keys and counts a re-read confirmed window race apart.
-  fastpath_release        = "e29917396d07881b776581ab6a5c0d5d03e49342"
+  # 307b2865c: main after the async admission gate per workspace (#2214)
+  # and streams increments 2 and 3 (#2207, #2210): the edge passes
+  # async-v1 requests to Python only for the workspaces the policy says
+  # Python admits (all of them while the policy carries no
+  # admission_workspaces member); the owner takes EchoGranted, a falling
+  # running charge and the stream reap floor, and answers a disposition
+  # read; no stream is leased while the stream switches are off.
+  fastpath_release        = "307b2865c151605b10660b9c1b317fff28c68887"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
