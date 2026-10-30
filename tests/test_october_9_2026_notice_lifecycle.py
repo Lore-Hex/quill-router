@@ -8,6 +8,7 @@ import pytest
 
 from scripts.pricing.providers import (
     alibaba,
+    anthropic,
     arcee,
     crusoe,
     deepinfra,
@@ -36,6 +37,8 @@ class Case:
 
 
 _CASES = [
+    Case("anthropic", "anthropic/claude-sonnet-4.5", "claude-sonnet-4-5-20250929",
+         datetime(2026, 11, 30, 17, tzinfo=UTC), "anthropic/claude-sonnet-5.5"),
     Case("nebius", "zai-org/GLM-5.1", "zai-org/GLM-5.1",
          datetime(2026, 11, 9, tzinfo=UTC), "z-ai/glm-5.3"),
     Case("nebius", "nvidia/nemotron-3-super-120b-a12b", "nvidia/nemotron-3-super-120b-a12b",
@@ -153,6 +156,7 @@ _MANIFESTS = {
     "arcee": arcee.MANIFEST_PATH,
     "novita": novita.MANIFEST_PATH,
     "alibaba": alibaba.MANIFEST_PATH,
+    "anthropic": anthropic.MANIFEST_PATH,
     "deepinfra": deepinfra.MANIFEST_PATH,
     "scaleway": scaleway.MANIFEST_PATH,
     "xiaomi": xiaomi.MANIFEST_PATH,
