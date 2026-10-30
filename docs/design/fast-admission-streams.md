@@ -685,8 +685,9 @@ eligible stream's row is `moved` from authorize on: it is compared only on
 
 `fastpath_pilot_streams` on for the pilot workspaces in one region;
 `fastpath_edge_streams` off, so the edge's member is absent. Before the
-edge moves, over at least 7 days and 1,000 leased streams settled or
-reaped:
+edge moves, a count gate with no calendar minimum (Joseph, 2026-10-30;
+§11 item 9): 1,000 leased streams settled or reaped, with zero divergence,
+and over those:
 
 - `fastpath.heartbeat_divergence` zero, and no `invalid`;
 - every leased settle's winner charge equal to Python's priced charge (the
@@ -710,8 +711,8 @@ reaped:
 
 ### 8.4 The edge shadow for streams
 
-Increment 5 composes eligible streams in the shadow only, still passing
-them, and the full shadow compares Python's 200, `stage_d`,
+Increment 5 composes eligible streams and, until the edge's member is
+present, still passes them, and the full shadow compares Python's 200, `stage_d`,
 `candidate_prices` and `cap_micro` included, and the rows,
 `pricing_snapshot` and the `stage_d_*` columns added to `settleStable` so a
 stream's row, always `moved` (§8.2), still compares them. Comparing a
@@ -722,9 +723,9 @@ Python's 200 and rows recorded, in `authorize_vectors.py`.
 
 ### 8.5 Gate E: the edge
 
-e2-decide's I2 bar (`fast-admission-e2-decide.md:1714-1777`) over streams
-alone, with zero differs in `candidate_prices`, `cap_micro`,
-`pricing_snapshot` or `estimated_microdollars`; then, with increment 6
+e2-decide's I2 bar (`fast-admission-e2-decide.md:1714-1777`) over the
+compared streams alone, a count with no calendar minimum (§11 item 9), with zero differs in `candidate_prices`, `cap_micro`,
+`pricing_snapshot` or `estimated_microdollars`; then, with increment 5
 deployed, `fastpath_edge_streams` goes on, Python publishes the member,
 and the decide rows choose where it applies. The way back, fastest first:
 `fastpath_edge_streams` off (the policy's 60 s), `fastpath_pilot_streams`
@@ -755,8 +756,8 @@ terminal handling of increment 3 is deployed. Increment 4 also needs
 increment 2b pinned on every owner and every front door (the strict
 decoder, the reap floor written into the records the auditor reads, and
 its skew allowance, §4.6); its runbook checks the fleet's release before
-the setting moves. Increment 6 is dark until `fastpath_edge_streams` goes
-on after gate E (§5.4).
+the setting moves. Increment 5's deciding half is dark until
+`fastpath_edge_streams` goes on after gate E (§5.4).
 
 | # | Where | What | Files | Size |
 |---|---|---|---|---|
@@ -765,11 +766,10 @@ on after gate E (§5.4).
 | 2b | Go | once every member runs increment 2 (#2207), pinned as `fastpath-deploy.md` says: the service's defaults turn `RecordReapFloor` on, so heartbeat and hand-off records carry the reap deadline the auditor honours (§4.6 item 4); the floor gains the store's skew allowance | `service/service.go`, `owner/owner.go`, tests | ~10 LOC + ~60 test |
 | 3 | Python, dark | `forward_terminal`'s reap and `reaped_snapshot` answers, a change to today's `settled` handling (§6.3); the reaper's leased-stream reconcile through `/v1/disposition`, an unanswered or failing read as `pending`, the alert for a `settled` disposition without an intent (§6.4); the drain the same; the alerts for `fastpath.heartbeat_divergence` and `fastpath.settled_without_intent` (log-based metrics and policies); tests against a fake front door answering in the Go front door's own JSON, since no Python harness starts the Go service (#2210) | `services/fastpath_settle.py`, `services/fastpath_frontdoor.py`, `storage_gcp_authorize.py`, `storage_gcp.py`, `services/settle_outbox_apply.py`, tests | ~250 LOC + ~500 test |
 | 4 | Python | the settings `fastpath_pilot_streams` and `fastpath_edge_streams`; `pilot_reason`'s stream rule and sub-reasons (§5.1, §5.2); `EchoGranted` sent on every seq above 1 (§4.6); the edge policy publishes `fastpath_edge_streams` only when on (§5.4); runbook rows: increment 2b pinned on every owner and front door, then gate P | `config.py`, `services/fastpath_frontdoor.py`, `routes/internal/gateway.py`, `edge_policy.py`, `services/edge_policy_publisher.py`, `docs/runbooks/*`, tests | ~120 LOC + ~300 test |
-| 5 | Go + Python vectors | the edge's stream composition in the shadow only (§5.3, §8.4); `StageDReasonOf` for streams; `pricing_snapshot`; stream answer vectors | `gwauth/{staged,response,rows,payload}.go`, `edge/{decide,shadow_full}.go`, `scripts/fastpath/authorize_vectors.py`, testdata, tests | ~400 LOC + ~600 test |
-| 6 | Go | the edge decides eligible streams when the policy carries `fastpath_edge_streams` (the tripwire of §5.1 item 5); dark until that setting goes on | `gwauth/cohort_request.go`, `edge/decide.go`, `edge/decide_path.go`, tests | ~80 LOC + ~200 test |
+| 5 | Go + Python vectors | one PR (Joseph, 2026-10-30): the edge composes eligible streams (§5.3) and the shadow compares them (§8.4), `StageDReasonOf` for streams, `pricing_snapshot`, stream answer vectors; and the edge decides them only when the policy carries `fastpath_edge_streams` (the tripwire of §5.1 item 5), so the deciding half is dark until gate E | `gwauth/{staged,response,rows,payload,cohort_request}.go`, `edge/{decide,decide_path,shadow_full}.go`, `scripts/fastpath/authorize_vectors.py`, testdata, tests | ~480 LOC + ~800 test |
 
-Then gate P (§8.3) after increment 4, gate E (§8.5) after 5, and
-`fastpath_edge_streams` after 6. In all, seven code PRs after this one,
+Then gate P (§8.3) after increment 4, gate E (§8.5) after 5, then
+`fastpath_edge_streams`. In all, six code PRs after this one,
 about 1,400 lines of production code and 2,650 of tests and generators, the
 vector JSON aside.
 
@@ -816,3 +816,11 @@ Decided by Joseph on 2026-10-30, on this design's first review:
    and adds the store's skew allowance to the floor. Python's increment 4
    waits for 2b pinned on every owner and front door, and 2b is Go's
    rollback floor while leased streams are open.
+9. **Count gates, not calendar soaks** (decided by Joseph on 2026-10-30):
+   gate P (§8.3) is 1,000 leased streams with zero divergence and every
+   other gate P check, with no 7-day minimum; gate E (§8.5) is the edge's
+   I2 agree bar over the compared streams, with no calendar minimum.
+   Increments 5 and 6 are one PR: the edge composes eligible streams in the
+   shadow and decides them only when the edge's member is present. The same
+   choice drops the `alert` stage and the 7-day minimum from the E2 key
+   windows' gate (`fast-admission-e2-key-windows.md` §8.3).
