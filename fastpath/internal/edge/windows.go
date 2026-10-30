@@ -15,18 +15,23 @@ import (
 // them at the request's instant. Only an allowed verdict admits; every other
 // one passes to Python, which answers the 429, replays, or admits.
 
-// KeyWindowReader reads a key's tr_key_limit rows of shards 0 to shards-1
-// (store.Store.ReadKeyWindows).
+// KeyWindowReader reads every tr_key_limit row of a key, in shard order
+// (store.Store.ReadKeyWindows): not the shards the cached count names, so a
+// key whose shards changed since is refused (key_window.rows).
 type KeyWindowReader interface {
-	ReadKeyWindows(ctx context.Context, keyHash string, shards int) ([]keywindow.Row, error)
+	ReadKeyWindows(ctx context.Context, keyHash string) ([]keywindow.Row, error)
 }
 
 // windowRead is one window check: its verdict, whether the read was made
-// (no reader makes none), and how long it took.
+// (no reader makes none), how long it took, and the rows it read and the
+// instant it evaluated them at (for the shadow's reading of Python's
+// refusal, compareWindowed).
 type windowRead struct {
 	verdict keywindow.Verdict
 	made    bool
 	took    time.Duration
+	rows    []keywindow.Row
+	at      time.Time
 }
 
 // readWindows checks an enforcing windowed key's decision: one read of its
@@ -43,8 +48,8 @@ func readWindows(ctx context.Context, reader KeyWindowReader, d *Decision, at, d
 	readCtx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 	start := time.Now()
-	rows, err := reader.ReadKeyWindows(readCtx, d.KeyHash, d.Windows.Shards)
-	w := windowRead{made: true, took: time.Since(start)}
+	rows, err := reader.ReadKeyWindows(readCtx, d.KeyHash)
+	w := windowRead{made: true, took: time.Since(start), rows: rows, at: at}
 	if err != nil {
 		w.verdict = keywindow.Verdict{Pass: keywindow.PassUnread}
 		return w

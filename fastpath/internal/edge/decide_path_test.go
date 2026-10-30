@@ -948,8 +948,8 @@ func TestAnEnforcingWindowedKeyIsNeverAdmittedUnread(t *testing.T) {
 	}
 }
 
-// fakeWindows is a KeyWindowReader: what it answers, and each read's key,
-// shard count and deadline.
+// fakeWindows is a KeyWindowReader: what it answers, and each read's key
+// and deadline.
 type fakeWindows struct {
 	mu    sync.Mutex
 	read  func(ctx context.Context) ([]keywindow.Row, error)
@@ -958,14 +958,13 @@ type fakeWindows struct {
 
 type windowCall struct {
 	keyHash  string
-	shards   int
 	deadline time.Time
 }
 
-func (f *fakeWindows) ReadKeyWindows(ctx context.Context, keyHash string, shards int) ([]keywindow.Row, error) {
+func (f *fakeWindows) ReadKeyWindows(ctx context.Context, keyHash string) ([]keywindow.Row, error) {
 	deadline, _ := ctx.Deadline()
 	f.mu.Lock()
-	f.calls = append(f.calls, windowCall{keyHash, shards, deadline})
+	f.calls = append(f.calls, windowCall{keyHash, deadline})
 	read := f.read
 	f.mu.Unlock()
 	return read(ctx)
@@ -996,8 +995,15 @@ func dailyRows(at time.Time, limit, used int64, shards int) []keywindow.Row {
 func windowedDecideEdge(t *testing.T, fields map[string]any, mode string,
 	read func(context.Context) ([]keywindow.Row, error)) (*decideEdge, authorizeCase, *fakeWindows) {
 	t.Helper()
+	return windowedDecideEdgeOf(t, "answer:app_categories_empty", fields, mode, read)
+}
+
+// windowedDecideEdgeOf is windowedDecideEdge over the golden case named.
+func windowedDecideEdgeOf(t *testing.T, name string, fields map[string]any, mode string,
+	read func(context.Context) ([]keywindow.Row, error)) (*decideEdge, authorizeCase, *fakeWindows) {
+	t.Helper()
 	f := authorizeGoldens(t)
-	c := authorizeCaseNamed(t, "answer:app_categories_empty")
+	c := authorizeCaseNamed(t, name)
 	body := keyBodyWith(t, c, fields)
 	c.Key.KeyBody = &body
 	h := newDecideEdge(t, f, c, nil)
@@ -1011,11 +1017,12 @@ func windowedDecideEdge(t *testing.T, fields map[string]any, mode string,
 
 // TestTheWindowCheckDecidesAnEnforcingKey (docs/design/
 // fast-admission-e2-key-windows.md sections 4.2 to 4.4): under enforce the
-// decide path reads the key's rows once, with its key hash and shard count,
-// within WindowReadBudget, and admits only on an allowed verdict, whose 200
-// counts the read among its Spanner calls; every other verdict passes with
-// its key_window.* reason before the owner is asked. An alert-only key, and
-// an enforcing key under alert, are never read.
+// decide path reads the key's rows once, by its key hash, within
+// WindowReadBudget, and admits only on an allowed verdict, whose 200 counts
+// the read among its Spanner calls; every other verdict passes with its
+// key_window.* reason before the owner is asked. Rows the cached shard count
+// does not expect (the key's shards grew or shrank since) pass. An
+// alert-only key, and an enforcing key under alert, are never read.
 func TestTheWindowCheckDecidesAnEnforcingKey(t *testing.T) {
 	enforcing := map[string]any{"limit_daily_microdollars": 1_000_000, "usage_shard_count": 2}
 	failed := errors.New("synthetic read failure")
@@ -1035,6 +1042,9 @@ func TestTheWindowCheckDecidesAnEnforcingKey(t *testing.T) {
 			return dailyRows(at, 1_000_000, 0, 2)[:1], nil
 		}, keywindow.PassRows},
 		{"read failed", func(time.Time) ([]keywindow.Row, error) { return nil, failed }, keywindow.PassUnread},
+		{"the key's shards grew", func(at time.Time) ([]keywindow.Row, error) {
+			return dailyRows(at, 1_000_000, 0, 3), nil
+		}, keywindow.PassRows},
 	} {
 		var at time.Time
 		h, c, windows := windowedDecideEdge(t, enforcing, routingsnapshot.KeyWindowsEnforce,
@@ -1044,7 +1054,7 @@ func TestTheWindowCheckDecidesAnEnforcingKey(t *testing.T) {
 		rec := h.send(t, c)
 		admits, _, _ := h.admitter.seen()
 		calls := windows.seen()
-		if len(calls) != 1 || calls[0].keyHash != c.Facts.Key.Hash || calls[0].shards != 2 ||
+		if len(calls) != 1 || calls[0].keyHash != c.Facts.Key.Hash ||
 			calls[0].deadline.After(time.Now().Add(WindowReadBudget)) || calls[0].deadline.Before(before) {
 			t.Errorf("%s: reads %+v", v.name, calls)
 		}
@@ -1080,6 +1090,55 @@ func TestTheWindowCheckDecidesAnEnforcingKey(t *testing.T) {
 		h.send(t, c)
 		if calls := windows.seen(); len(calls) != 0 {
 			t.Errorf("%s: read %d times", v.name, len(calls))
+		}
+	}
+}
+
+// TestTheWindowCheckIsAgainstTheEstimate (section 4.2): Python checks the
+// model estimate, never the reservation the lease holds, which the output
+// hold cap makes smaller. With what the day has left between the two, the
+// key passes key_window.exceeded, though the reservation would fit; with the
+// estimate's room it is answered (the positive control).
+func TestTheWindowCheckIsAgainstTheEstimate(t *testing.T) {
+	const name = "answer:estimate:hold_cap:deepseek/deepseek-v4-flash:1000+131072"
+	const limit = int64(10_000_000)
+	fields := map[string]any{"limit_daily_microdollars": limit}
+	f := authorizeGoldens(t)
+	c := authorizeCaseNamed(t, name)
+	body := keyBodyWith(t, c, fields)
+	c.Key.KeyBody = &body
+	in, _ := caseInputs(t, f, c)
+	at := c.at()
+	mode := routingsnapshot.KeyWindowsEnforce
+	in.Policy.FastpathPilotKeyWindows = &mode
+	dec := Decide(in).ForShadow()
+	if dec == nil || dec.Windows == nil || dec.Reservation >= dec.Estimate {
+		t.Fatalf("the case must hold a reservation below its estimate: %+v", dec)
+	}
+	// What the day has left: the reservation and half the way to the
+	// estimate.
+	left := dec.Reservation + (dec.Estimate-dec.Reservation)/2
+	for _, v := range []struct {
+		left int64
+		pass string
+	}{
+		{left, keywindow.PassExceeded},
+		{dec.Estimate, ""},
+	} {
+		h, c, _ := windowedDecideEdgeOf(t, name, fields, routingsnapshot.KeyWindowsEnforce,
+			func(context.Context) ([]keywindow.Row, error) { return dailyRows(at, limit, limit-v.left, 1), nil })
+		rec := h.send(t, c)
+		admits, _, _ := h.admitter.seen()
+		counts := h.edge.DecideCounts()
+		if v.pass != "" {
+			if rec.Code != http.StatusTeapot || len(admits) != 0 || counts.Passed[v.pass] != 1 {
+				t.Errorf("%d left: %d, %d admits, passed %v; want %q", v.left, rec.Code, len(admits), counts.Passed,
+					v.pass)
+			}
+			continue
+		}
+		if rec.Code != http.StatusOK || len(admits) != 1 || admits[0].Estimate != dec.Reservation {
+			t.Errorf("%d left: %d, %d admits, passed %v", v.left, rec.Code, len(admits), counts.Passed)
 		}
 	}
 }
