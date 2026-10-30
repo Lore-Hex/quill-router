@@ -589,11 +589,11 @@ def test_settle_worker_follows_router_rollout_and_uses_the_regional_hold() -> No
     script = (ROOT / "scripts/deploy/settle_drain_worker.sh").read_text()
     assert 'REGION=us-central1' in script
     assert script.index('deploy_region_is_held "$REGION"') < script.index('gc run deploy')
-    # R2 admits only the probe; accepted-work protection stays on and router fast drain stays off.
+    # RB1 stops fresh admission; accepted-work protection stays on and router fast drain stays off.
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
     expected = {
         "TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED": "false",
-        "TR_ASYNC_SETTLE_ENABLED": "true",
+        "TR_ASYNC_SETTLE_ENABLED": "false",
         "TR_ASYNC_SETTLE_PROTECTION": "true",
     }
     for pin, value in expected.items():

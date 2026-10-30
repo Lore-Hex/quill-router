@@ -185,7 +185,7 @@ def test_rollout_never_inherits_key_file():
     assert pins['TR_ASYNC_SETTLE_TICKET_ISSUER'] == 'https://api.trustedrouter.com'
     assert pins['TR_ASYNC_SETTLE_TICKET_AUDIENCE'] == 'router-settlement'
     assert pins['TR_ASYNC_SETTLE_AUTHORITY_EPOCH'] == '1'
-    assert pins['TR_ASYNC_SETTLE_ENABLED'] == 'true'
+    assert pins['TR_ASYNC_SETTLE_ENABLED'] == 'false'
     assert pins['TR_ASYNC_SETTLE_PROTECTION'] == 'true'
     assert Settings().async_settle_enabled is False
     assert Settings().async_settle_protection is False
@@ -194,7 +194,7 @@ def test_rollout_never_inherits_key_file():
     config = Settings(environment='test', **{
         key.removeprefix('TR_').lower(): value for key, value in pins.items()
     })
-    assert config.async_settle_admission_enabled is True
+    assert config.async_settle_admission_enabled is False
     assert config.async_settle_pilot_workspace_ids == {'162e441a-5d13-414f-92bd-7c6cd805faa3'}
     assert config.async_settle_pilot_cap_micro == 5000000
 
