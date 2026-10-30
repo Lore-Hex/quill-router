@@ -4,6 +4,7 @@ import base64
 import datetime as dt
 import json
 from concurrent.futures import ThreadPoolExecutor
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 import pytest
@@ -567,3 +568,26 @@ def test_x402_webhook_orphan_payment_intent_stops_retrying() -> None:
     assert response.status_code == 200
     assert response.json()["data"]["orphan"] is True
     assert response.json()["data"]["credited"] is False
+
+
+@pytest.mark.parametrize("path", ["/v1/billing/x402/fund", "/billing/x402/fund"])
+@pytest.mark.parametrize("amount", ["25.0000001", "0.9999999", 3.3000000000000003])
+def test_x402_submicro_precision_preserves_main_charge(monkeypatch, path, amount):
+    captured = {}
+
+    def create_payment_intent(**kwargs):
+        captured.update(kwargs)
+        return _payment_intent(workspace_id=kwargs["metadata"]["workspace_id"],
+                               status="requires_action", received_cents=None)
+
+    monkeypatch.setattr("trusted_router.services.x402_billing.stripe.PaymentIntent.create",
+                        create_payment_intent)
+    with _x402_client() as client:
+        headers, _ = _api_headers(client)
+        response = client.post(path, headers=headers, json={"amount": amount})
+    assert response.status_code == 402, response.text
+    cents = int((Decimal(str(amount)) * 100).to_integral_value(rounding=ROUND_HALF_UP))
+    micros = int((Decimal(str(amount)) * 1_000_000).to_integral_value(rounding=ROUND_HALF_UP))
+    assert captured["amount"] == cents
+    assert captured["metadata"]["amount_microdollars"] == str(micros)
+    assert response.json()["data"]["amount_microdollars"] == micros

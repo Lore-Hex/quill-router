@@ -1567,8 +1567,8 @@ def test_console_checkout_exposes_and_enforces_paypal_minimum(
         data={"amount": "19.99", "payment_method": "paypal"},
         follow_redirects=False,
     )
-    assert too_small.status_code == 303
-    assert too_small.headers["location"] == "/console/credits?error=invalid_checkout"
+    assert too_small.status_code == 400
+    assert "at least 20" in too_small.json()["error"]["message"]
 
     minimum = client.post(
         "/console/credits/checkout",

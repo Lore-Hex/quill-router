@@ -237,3 +237,85 @@ test('keyboard order reaches every control and the fee note opens', async ({ pag
   const box = await note.boundingBox();
   expect(box.x + box.width).toBeLessThanOrEqual(card.x + card.width + 1);
 });
+
+// Keep the original fixture without maximum_cents: older rendered pages must
+// still initialize correctly. Exercise the current route's explicit map too.
+for (const suppliedMaxima of [false, true]) test(`cent amounts and rail ceilings with server maxima ${suppliedMaxima}`, async ({ page }) => {
+  const rails = { auto: 'card', card: 'card', paypal: 'card', ach: 'ach', stablecoin: 'stablecoin', adyen: 'adyen' };
+  const maxima = { auto: 957076, card: 957076, paypal: 1000000, ach: 999250, stablecoin: 977666, adyen: 1000000 };
+  await load(page, suppliedMaxima ? {
+    checkout_fee_schedule_json: JSON.stringify({ rails, rates: schedule, maximum_cents: maxima }),
+    checkout_max_credit_dollars: '9570.76',
+    adyen_enabled: true,
+  } : { adyen_enabled: true });
+  expect(await summary(page)).toEqual(['$25.00', '$1.59', '$26.59']);
+  await preset(page, 'Other').check();
+  const amount = page.getByLabel('Amount in US dollars');
+  const method = page.getByLabel('Payment method');
+  const submit = page.locator('[data-checkout-submit]');
+  await amount.fill('25.50');
+  expect(await summary(page)).toEqual(['$25.50', '$1.62', '$27.12']);
+  await expect(submit).toBeEnabled();
+  for (const [rail, maximum] of [['auto', '9570.76'], ['ach', '9992.50'], ['stablecoin', '9776.66'], ['paypal', '10000.00'], ['adyen', '10000.00']]) {
+    await method.selectOption(rail);
+    await expect(amount).toHaveAttribute('max', maximum);
+    await amount.fill(maximum);
+    await expect(submit).toBeEnabled();
+    await expect(page.locator('[data-checkout-maximum-message]')).toContainText(`$${maximum}`);
+    if (!['paypal', 'adyen'].includes(rail)) expect((await summary(page))[2]).toBe('$10000.00');
+    await amount.fill((Number(maximum) + 0.01).toFixed(2));
+    await expect(submit).toBeDisabled();
+    expect(await summary(page)).toEqual(['—', '—', '—']);
+  }
+  await method.selectOption('paypal');
+  await expect(amount).toHaveAttribute('min', '20');
+  await amount.fill('19.99');
+  await expect(submit).toBeDisabled();
+  await amount.fill('20');
+  await expect(submit).toBeEnabled();
+  await amount.fill('9999');
+  await expect(submit).toBeEnabled();
+  await method.selectOption('auto');
+  await expect(submit).toBeDisabled();
+  await expect(amount).toHaveAttribute('min', '1');
+});
+
+test('missing maxima use the configured fee rates', async ({ page }) => {
+  const rates = Object.fromEntries(Object.entries(schedule).map(([rail, values]) => [rail, { ...values, multiplier_basis_points: 30000 }]));
+  await load(page, { checkout_fee_schedule_json: JSON.stringify({ rails: { auto: 'card', ach: 'ach', stablecoin: 'stablecoin' }, rates }) });
+  await preset(page, 'Other').check();
+  const amount = page.getByLabel('Amount in US dollars');
+  for (const [rail, maximum] of [['auto', '9176.83'], ['ach', '9985.00'], ['stablecoin', '9563.08']]) {
+    await page.getByLabel('Payment method').selectOption(rail);
+    await expect(amount).toHaveAttribute('max', maximum);
+    await amount.fill(maximum);
+    await expect(page.locator('[data-checkout-submit]')).toBeEnabled();
+    expect(Number((await summary(page))[2].slice(1))).toBeLessThanOrEqual(10000);
+    await amount.fill((Number(maximum) + 0.01).toFixed(2));
+    await expect(page.locator('[data-checkout-submit]')).toBeDisabled();
+  }
+});
+
+test('explicit server maxima including zero remain authoritative', async ({ page }) => {
+  await load(page, { checkout_fee_schedule_json: JSON.stringify({ rails: { auto: 'card', ach: 'ach' }, rates: schedule, maximum_cents: { auto: 2000, ach: 0 } }) });
+  await expect(preset(page, '$25')).toBeDisabled();
+  await expect(page.locator('[data-checkout-submit]')).toBeDisabled();
+  await preset(page, '$5').check();
+  await expect(page.locator('[data-checkout-submit]')).toBeEnabled();
+  await page.getByLabel('Payment method').selectOption('ach');
+  await expect(preset(page, '$5')).toBeDisabled();
+  await expect(page.locator('[data-checkout-submit]')).toBeDisabled();
+  await expect(page.getByLabel('Amount in US dollars')).toHaveAttribute('max', '0.00');
+});
+
+test('wallet-only checkout derives the stablecoin ceiling', async ({ page }) => {
+  await load(page, { wallet_only_billing: true });
+  expect(await summary(page)).toEqual(['$25.00', '$0.59', '$25.59']);
+  await expect(page.getByLabel('Payment method')).toHaveCount(0);
+  await preset(page, 'Other').check();
+  const amount = page.getByLabel('Amount in US dollars');
+  await expect(amount).toHaveAttribute('max', '9776.66');
+  await amount.fill('9776.66');
+  await expect(page.locator('[data-checkout-submit]')).toBeEnabled();
+  expect((await summary(page))[2]).toBe('$10000.00');
+});

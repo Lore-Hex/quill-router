@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, DecimalException, InvalidOperation
 
 MICRODOLLARS_PER_DOLLAR = 1_000_000
 MICRODOLLARS_PER_CENT = 10_000
 TOKENS_PER_MILLION = 1_000_000
+MIN_MICRODOLLARS = -(2**63)
+MAX_MICRODOLLARS = 2**63 - 1
 
 # Key budgets are stored as signed INT64 microdollars in both production stores.
 MAX_KEY_LIMIT_DOLLARS = Decimal("9223372036854.775807")
@@ -14,7 +16,7 @@ MAX_KEY_LIMIT_DOLLARS = Decimal("9223372036854.775807")
 # introduces float rounding into the credit ledger.
 DEFAULT_SIGNUP_CREDIT_MICRODOLLARS = 30 * MICRODOLLARS_PER_CENT
 
-# Stripe checkout cap ($10,000).
+# Checkout credit ceiling; Stripe also caps the total INCLUDING processing fees.
 MAX_CHECKOUT_DOLLARS = 10_000
 MAX_CHECKOUT_MICRODOLLARS = MAX_CHECKOUT_DOLLARS * MICRODOLLARS_PER_DOLLAR
 
@@ -72,11 +74,19 @@ def microdollars_to_float(microdollars: int) -> float:
 def dollars_to_microdollars(value: object) -> int:
     try:
         decimal = Decimal(str(value))
-    except (InvalidOperation, ValueError) as exc:
+        if not decimal.is_finite():
+            raise ValueError("dollar amount must be finite")
+        # Reject huge exponents before multiplication or conversion to a Python
+        # int. This coarse guard leaves all values that can round into int64
+        # untouched, including the half-microdollar boundary on either side.
+        if decimal.copy_abs() >= Decimal("1e13"):
+            raise ValueError("dollar amount must fit in signed int64 microdollars")
+        rounded = (decimal * MICRODOLLARS_PER_DOLLAR).to_integral_value(rounding=ROUND_HALF_UP)
+        if not MIN_MICRODOLLARS <= rounded <= MAX_MICRODOLLARS:
+            raise ValueError("dollar amount must fit in signed int64 microdollars")
+        return int(rounded)
+    except (DecimalException, OverflowError) as exc:
         raise ValueError("invalid dollar amount") from exc
-    if not decimal.is_finite():
-        raise ValueError("invalid dollar amount")
-    return int((decimal * MICRODOLLARS_PER_DOLLAR).to_integral_value(rounding=ROUND_HALF_UP))
 
 
 def key_limit_dollars(value: object) -> Decimal:

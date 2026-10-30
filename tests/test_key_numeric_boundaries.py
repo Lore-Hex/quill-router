@@ -6,7 +6,13 @@ from pydantic import ValidationError
 from tests.fakes.spanner import make_fake_store
 from trusted_router.money import dollars_to_microdollars
 from trusted_router.routes.console.api_keys import _parse_limit
-from trusted_router.schemas import CreateKeyRequest, PatchKeyRequest
+from trusted_router.schemas import (
+    CreateKeyRequest,
+    EarningsTransferRequest,
+    PatchKeyRequest,
+    UserModelCreateRequest,
+    UserModelPatchRequest,
+)
 from trusted_router.storage import STORE
 
 MAX_INT64 = 2**63 - 1
@@ -45,7 +51,7 @@ def test_console_budget_uses_the_same_storage_boundary(value):
 
 @pytest.mark.parametrize("method", ["post", "patch"])
 @pytest.mark.parametrize("field", FIELDS)
-@pytest.mark.parametrize("value", ["NaN", "9223372036854.775808"])
+@pytest.mark.parametrize("value", BAD_BUDGETS)
 def test_invalid_key_budget_returns_400_without_mutation(client, user_headers, method, field, value):
     created = client.post("/v1/keys", headers=user_headers, json={"limit": "1"})
     assert created.status_code == 201
@@ -77,3 +83,17 @@ def test_key_page_large_offsets_are_empty_not_errors(client, user_headers, query
     response = client.get(f"/v1/keys?{query}", headers=user_headers)
     assert response.status_code == 200
     assert response.json() == {"data": []}
+
+
+@pytest.mark.parametrize("value", [2**63, "1e1000000", "NaN", "Infinity", "-Infinity"])
+def test_integer_money_schemas_reject_unstorable_values(value):
+    with pytest.raises(ValidationError):
+        EarningsTransferRequest(workspace_id="ws-test", amount_microdollars=value)
+    for schema in (UserModelCreateRequest, UserModelPatchRequest):
+        data = ({"name": "test", "slug": "test", "kind": "machine", "display_name": "test",
+                 "endpoint_url": "https://example.com", "upstream_model_id": "test"}
+                if schema is UserModelCreateRequest else {})
+        for field in ("prompt_price_microdollars_per_million_tokens",
+                      "completion_price_microdollars_per_million_tokens"):
+            with pytest.raises(ValidationError):
+                schema.model_validate({**data, field: value})

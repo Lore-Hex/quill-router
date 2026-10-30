@@ -38,6 +38,7 @@ from trusted_router.client_context import (
 from trusted_router.model_aliases import canonical_router_model_id
 from trusted_router.money import (
     MAX_CHECKOUT_DOLLARS,
+    MAX_MICRODOLLARS,
     MICRODOLLARS_PER_CENT,
     MICRODOLLARS_PER_DOLLAR,
     MIN_PAYPAL_CHECKOUT_DOLLARS,
@@ -111,14 +112,19 @@ class CheckoutRequest(_Lenient):
         microdollars = dollars_to_microdollars(value)
         if microdollars < MICRODOLLARS_PER_DOLLAR:
             raise ValueError("amount must be at least 1")
-        if microdollars > MAX_CHECKOUT_DOLLARS * MICRODOLLARS_PER_DOLLAR:
-            raise ValueError(f"amount must be at most {MAX_CHECKOUT_DOLLARS}")
         if microdollars % MICRODOLLARS_PER_CENT != 0:
             raise ValueError("amount must be exactly representable in cents")
         return Decimal(str(value))
 
     @model_validator(mode="after")
-    def paypal_amount_in_range(self) -> CheckoutRequest:
+    def payment_method_amount_in_range(self) -> CheckoutRequest:
+        # Stripe checks its fee-inclusive, configured rail maximum in the
+        # checkout service. Other processors retain the principal ceiling.
+        if (
+            self.payment_method in {"paypal", "adyen"}
+            and dollars_to_microdollars(self.amount) > MAX_CHECKOUT_DOLLARS * MICRODOLLARS_PER_DOLLAR
+        ):
+            raise ValueError(f"amount must be at most {MAX_CHECKOUT_DOLLARS}")
         if (
             self.payment_method == "paypal"
             and dollars_to_microdollars(self.amount) < MIN_PAYPAL_CHECKOUT_MICRODOLLARS
@@ -266,8 +272,8 @@ class UserModelCreateRequest(_Strict):
     supports_streaming: bool = True
     heartbeat_interval_seconds: int | None = Field(default=None, ge=5, le=3600)
     max_concurrency: int = Field(default=4, ge=1, le=100)
-    prompt_price_microdollars_per_million_tokens: int = Field(default=0, ge=0)
-    completion_price_microdollars_per_million_tokens: int = Field(default=0, ge=0)
+    prompt_price_microdollars_per_million_tokens: int = Field(default=0, ge=0, le=MAX_MICRODOLLARS)
+    completion_price_microdollars_per_million_tokens: int = Field(default=0, ge=0, le=MAX_MICRODOLLARS)
 
 
 class UserModelPatchRequest(_Strict):
@@ -283,13 +289,13 @@ class UserModelPatchRequest(_Strict):
     supports_streaming: bool | None = None
     heartbeat_interval_seconds: int | None = Field(default=None, ge=5, le=3600)
     max_concurrency: int | None = Field(default=None, ge=1, le=100)
-    prompt_price_microdollars_per_million_tokens: int | None = Field(default=None, ge=0)
-    completion_price_microdollars_per_million_tokens: int | None = Field(default=None, ge=0)
+    prompt_price_microdollars_per_million_tokens: int | None = Field(default=None, ge=0, le=MAX_MICRODOLLARS)
+    completion_price_microdollars_per_million_tokens: int | None = Field(default=None, ge=0, le=MAX_MICRODOLLARS)
 
 
 class EarningsTransferRequest(_Strict):
     workspace_id: str = Field(min_length=1, max_length=80)
-    amount_microdollars: int
+    amount_microdollars: int = Field(gt=0, le=MAX_MICRODOLLARS)
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=64)
 
 

@@ -7,6 +7,7 @@ import json
 import re
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 from trusted_router.config import Settings
@@ -44,8 +45,8 @@ EXPECTED_FEE_CENTS: dict[FeeRail, dict[int, int]] = {
 }
 
 
-def _console_client() -> tuple[TestClient, Any, Any]:
-    app = create_app(Settings(environment="local"), init_observability=False)
+def _console_client(**settings: Any) -> tuple[TestClient, Any, Any]:
+    app = create_app(Settings(environment="local", **settings), init_observability=False)
     client = TestClient(app)
     user = STORE.ensure_user("credits-page@example.com")
     workspace = STORE.list_workspaces_for_user(user.id)[0]
@@ -128,6 +129,11 @@ def test_page_embeds_the_fee_schedule_and_the_default_summary() -> None:
     assert f'value="{CHECKOUT_DEFAULT_PRESET_DOLLARS}" checked' in page
     assert 'name="amount" value="other"' in page
     assert 'name="other_amount"' in page
+    assert 'max="9570.76" step="0.01"' in page
+    assert schedule["maximum_cents"] == {
+        "auto": 957076, "card": 957076, "ach": 999250,
+        "stablecoin": 977666, "paypal": 1000000, "adyen": 1000000,
+    }
     assert '<option value="ach">Bank account (ACH)</option>' in page
     assert 'data-method-icon="bank" data-methods="ach"' in page
     # $25 on a card: $1.59 fee, $26.59 at checkout.
@@ -137,6 +143,26 @@ def test_page_embeds_the_fee_schedule_and_the_default_summary() -> None:
     assert "Top up to keep prepaid routes flowing" not in page
     assert "Lifetime usage" not in page
     assert "Migration credits" not in page
+
+
+@pytest.mark.parametrize("amount", ["1e1000000", "NaN", "Infinity", "10000"])
+def test_console_checkout_bad_amount_is_400(amount) -> None:
+    client, _, _ = _console_client()
+    response = client.post("/console/credits/checkout",
+                           data={"amount": amount, "payment_method": "card"},
+                           follow_redirects=False)
+    assert response.status_code == 400, response.text
+    if amount == "10000":
+        assert "$9,570.76" in response.json()["error"]["message"]
+
+
+def test_console_checkout_exact_maximum_succeeds() -> None:
+    client, _, _ = _console_client()
+    response = client.post("/console/credits/checkout",
+                           data={"amount": "other", "other_amount": "9570.76",
+                                 "payment_method": "card"}, follow_redirects=False)
+    assert response.status_code == 303, response.text
+    assert response.headers["location"] == "/console/credits?checkout=mock"
 
 
 def test_checkout_presets_follow_the_verification_remainder() -> None:
@@ -186,15 +212,15 @@ def test_other_amount_posts_through_the_existing_checkout() -> None:
             data={"amount": "other", "other_amount": bad, "payment_method": "auto"},
             follow_redirects=False,
         )
-        assert response.status_code == 303, bad
-        assert response.headers["location"] == "/console/credits?error=invalid_checkout", bad
+        assert response.status_code == 400, bad
+        assert response.json()["error"]["message"], bad
 
 
 def test_status_lines_render_for_redirect_codes_only() -> None:
     client, _, _ = _console_client()
 
     expected = {
-        "invalid_checkout": "Enter a whole-dollar amount from $1 to $10,000; PayPal starts at $20.",
+        "invalid_checkout": "Enter a dollar amount with at most two decimals, within the maximum shown for your payment method.",
         "stablecoin_only": "This account adds credits with USDC only.",
         "checkout_unavailable": "Checkout is temporarily unavailable.",
         "paypal_capture_failed": "The PayPal payment failed to complete.",
@@ -232,3 +258,31 @@ def test_saved_card_state_offers_change_manage_remove_and_the_switch() -> None:
     assert "pm_mock_f00d1234" not in page
     assert "Test ····1234" in details
     assert "pm_mock_f00d1234" not in details
+
+
+@pytest.mark.parametrize("method,maximum,custom_maximum", [
+    ("card", "9,570.76", "9,176.83"),
+    ("ach", "9,992.50", "9,985.00"),
+    ("stablecoin", "9,776.66", "9,563.08"),
+])
+@pytest.mark.parametrize("multiplier", [15000, 30000])
+def test_console_checkout_above_principal_ceiling_reports_rail_maximum(
+    method, maximum, custom_maximum, multiplier,
+):
+    client, _, _ = _console_client(stripe_paypal_fee_multiplier_basis_points=multiplier)
+    response = client.post("/console/credits/checkout",
+                           data={"amount": "10000.01", "payment_method": method},
+                           follow_redirects=False)
+    assert response.status_code == 400, response.text
+    maximum = maximum if multiplier == 15000 else custom_maximum
+    assert f"${maximum}" in response.json()["error"]["message"]
+
+
+@pytest.mark.parametrize("amount", ["25.0000001", "0.9999999", "3.3000000000000003"])
+def test_console_checkout_submicro_precision_stays_accepted(amount):
+    client, _, _ = _console_client()
+    response = client.post("/console/credits/checkout",
+                           data={"amount": amount, "payment_method": "card"},
+                           follow_redirects=False)
+    assert response.status_code == 303, response.text
+    assert response.headers["location"] == "/console/credits?checkout=mock"

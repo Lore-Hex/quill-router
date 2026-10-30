@@ -334,6 +334,7 @@ function initCreditsCheckout() {
   const paypalMinimum = Number(form.dataset.paypalMinimum) || 0;
   const presets = Array.from(form.querySelectorAll("[data-checkout-preset]"));
   const otherInput = form.querySelector("[data-checkout-amount]");
+  const maximumMessage = form.querySelector("[data-checkout-maximum-message]");
   const method = form.querySelector("[data-checkout-payment-method]");
   const fixedMethod = form.querySelector('input[type="hidden"][name="payment_method"]');
   const methodWrap = form.querySelector("[data-checkout-method-wrap]");
@@ -353,6 +354,29 @@ function initCreditsCheckout() {
   let bumpedTo = null;
 
   const selectedMethod = () => (method ? method.value : fixedMethod ? fixedMethod.value : "auto");
+  const maximumCreditCents = () => {
+    const selected = selectedMethod();
+    const maximum = schedule.maximum_cents?.[selected];
+    if (Number.isSafeInteger(maximum) && maximum >= 0)
+      return maximum;
+    // Older rendered pages provide the fee rates without maximum_cents.
+    // Derive the same fee-inclusive ceiling instead of treating absence as zero.
+    if (selected === "paypal" || selected === "adyen")
+      return 1000000;
+    const rates = schedule.rates[schedule.rails[selected] || "card"];
+    if (!rates)
+      return 0;
+    let low = 0;
+    let high = 1000000;
+    while (low < high) {
+      const candidate = Math.floor((low + high + 1) / 2);
+      if (candidate + checkoutFeeCents(candidate, rates) <= 1000000)
+        low = candidate;
+      else
+        high = candidate - 1;
+    }
+    return low;
+  };
   const checkedPreset = () => presets.find((preset) => preset.checked) || null;
   const amountCents = () => {
     const checked = checkedPreset();
@@ -361,8 +385,8 @@ function initCreditsCheckout() {
     if (checked.value === "other") {
       if (!otherInput || otherInput.value.trim() === "")
         return NaN;
-      const dollars = Number(otherInput.value);
-      return Number.isInteger(dollars) ? dollars * 100 : NaN;
+      const dollars = otherInput.value.trim();
+      return /^\d+(?:\.\d{1,2})?$/.test(dollars) ? Math.round(Number(dollars) * 100) : NaN;
     }
     return Number(checked.value) * 100;
   };
@@ -373,10 +397,12 @@ function initCreditsCheckout() {
 
   function sync(trigger) {
     const paypal = selectedMethod() === "paypal";
+    const maximumCents = maximumCreditCents();
     const minimumCents = paypalMinimum * 100;
     presets.forEach((preset) => {
       if (preset.value !== "other")
-        preset.disabled = paypal && Number(preset.value) * 100 < minimumCents;
+        preset.disabled = Number(preset.value) * 100 > maximumCents
+          || (paypal && Number(preset.value) * 100 < minimumCents);
     });
     bumpedTo = null;
     if (trigger !== "amount") {
@@ -393,7 +419,11 @@ function initCreditsCheckout() {
     if (otherInput) {
       otherInput.disabled = !other;
       otherInput.required = other;
+      otherInput.max = (maximumCents / 100).toFixed(2);
+      otherInput.min = paypal ? String(paypalMinimum) : "1";
     }
+    setText(maximumMessage, `Maximum credit: ${formatCents(maximumCents)}.`
+      + (paypal || selectedMethod() === "adyen" ? "" : " Stripe's $10,000 total includes processing fees."));
     if (methodWrap) {
       const icon = methodIcons.find(
         (span) => (span.dataset.methods || "").split(" ").includes(selectedMethod()),
@@ -402,7 +432,7 @@ function initCreditsCheckout() {
     }
     const cents = amountCents();
     const tooLow = paypal && Number.isFinite(cents) && cents < minimumCents;
-    const valid = Number.isFinite(cents) && cents >= 100 && cents <= 1000000 && !tooLow;
+    const valid = Number.isFinite(cents) && cents >= 100 && cents <= maximumCents && !tooLow;
     if (message && messageText) {
       message.hidden = !(paypal && (bumpedTo !== null || tooLow));
       messageText.textContent = tooLow
