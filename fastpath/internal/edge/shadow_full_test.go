@@ -1761,11 +1761,12 @@ func windowCase(t *testing.T, used int64) (Decided, *windowRead, authorizeCase) 
 		t.Fatalf("no window check: %q", d.Pass)
 	}
 	at := d.ForShadow().Input.At
-	v := keywindow.Evaluate(dec.Windows.Limits, 1, dailyRows(at, 1_000_000, used, 1), dec.Estimate, at)
+	rows := dailyRows(at, 1_000_000, used, 1)
+	v := keywindow.Evaluate(dec.Windows.Limits, 1, rows, dec.Estimate, at)
 	c := authorizeCaseNamed(t, "answer:app_categories_empty")
 	body := keyBodyWith(t, c, fields)
 	c.Key.KeyBody = &body
-	return d, &windowRead{verdict: v, made: true, took: 3 * time.Millisecond}, c
+	return d, &windowRead{verdict: v, made: true, took: 3 * time.Millisecond, rows: rows, at: at}, c
 }
 
 // rateLimited is Python's answer with its RateLimit-* headers.
@@ -1818,8 +1819,8 @@ func TestTheShadowComparesTheWindowCheck(t *testing.T) {
 		{"admit, Python's other limit", admit, rateLimited(py200, v.Limit+1, v.Remaining, v.ResetSeconds),
 			ClassAgreeFull, []string{"window.differ.limit"}},
 		{"admit, Python's 200 without headers", admit, py200, ClassAgreeFull, []string{"window.python_none"}},
-		{"admit, Python refused the window", admit, rateLimited(py429, v.Limit, 0, v.ResetSeconds),
-			ClassWouldAdmit + ".429." + windowRefusal, []string{"verdict.admit", "window.differ.remaining.le_1000000"}},
+		{"admit, Python refused the window it read more spent", admit, rateLimited(py429, v.Limit, 0, v.ResetSeconds),
+			ClassWindowRace + ".429." + windowRefusal, []string{"verdict.admit", "window.differ.remaining.le_1000000"}},
 		{"admit, Python refused with the same inputs", admit, rateLimited(py429, v.Limit, v.Remaining, v.ResetSeconds),
 			ClassWouldAdmit + ".429." + windowRefusal, []string{"window.same_inputs.disagree"}},
 		{"spent, Python refused", spent, rateLimited(py429, 1_000_000, 0, v.ResetSeconds),
@@ -1873,7 +1874,7 @@ func TestTheShadowReadsTheWindowsOffTheRequestPath(t *testing.T) {
 	}
 	got := h.edge.DecideShadowCounts()
 	calls := windows.seen()
-	if len(calls) != 1 || calls[0].keyHash != c.Facts.Key.Hash || calls[0].shards != 1 ||
+	if len(calls) != 1 || calls[0].keyHash != c.Facts.Key.Hash ||
 		got.Classes[ClassAgreeFull] != 1 || got.Windows["read.made"] != 1 || got.Windows["verdict.admit"] != 1 ||
 		got.Windows["window.agree"] != 1 || got.Decide[PassKeyWindow] != 1 {
 		t.Fatalf("reads %+v, counts %+v", calls, got)
@@ -1891,5 +1892,75 @@ func TestTheShadowReadsTheWindowsOffTheRequestPath(t *testing.T) {
 	h.send(t, c)
 	if got := h.edge.DecideShadowCounts(); got.Windows["read.none"] != 1 || got.Classes[ClassAgreeFull] != 1 {
 		t.Fatalf("no reader: %+v", got)
+	}
+}
+
+// TestAWindowRaceIsCountedNotPaged (section 8.3): Python's window refusal
+// of a request Go read and would admit is window_race, counted and never
+// alerted, when its evidence shows Python's read saw more spent than Go's:
+// the 429 names a window whose limit Go holds, its RateLimit-Limit is that
+// limit, and its RateLimit-Remaining is below what Go's rows leave there.
+// Every other window refusal stays the paging would_admit: the same
+// remaining (the same inputs, another verdict), more remaining than Go's,
+// another limit, a window Go holds no limit for, no headers, a body not
+// read. Over the edge, the race raises no alert where the would-admit does.
+func TestAWindowRaceIsCountedNotPaged(t *testing.T) {
+	allowed, admit, _ := windowCase(t, 400_000)
+	v := admit.verdict
+	if !admit.verdict.Admit() || v.Remaining != 600_000 {
+		t.Fatalf("the verdict: %+v", v)
+	}
+	refused := func(window string) pyAnswer {
+		return pyAnswer{status: 429, body: errorBody(429, windowRefusal,
+			"API key "+window+" spend limit exceeded; resets at 2026-10-20T00:00:00Z")}
+	}
+	race, would := ClassWindowRace+".429."+windowRefusal, ClassWouldAdmit+".429."+windowRefusal
+	for _, x := range []struct {
+		name  string
+		a     pyAnswer
+		class string
+	}{
+		{"Python's remaining below Go's", rateLimited(refused("daily"), v.Limit, 0, v.ResetSeconds), race},
+		{"Python's remaining one below Go's", rateLimited(refused("daily"), v.Limit, v.Remaining-1, v.ResetSeconds),
+			race},
+		{"the same remaining", rateLimited(refused("daily"), v.Limit, v.Remaining, v.ResetSeconds), would},
+		{"more remaining than Go's", rateLimited(refused("daily"), v.Limit, v.Remaining+1, v.ResetSeconds), would},
+		{"another limit", rateLimited(refused("daily"), v.Limit+1, 0, v.ResetSeconds), would},
+		{"a window Go holds no limit for", rateLimited(refused("weekly"), v.Limit, 0, v.ResetSeconds), would},
+		{"no headers", refused("daily"), would},
+		{"another message", rateLimited(pyAnswer{status: 429, body: errorBody(429, windowRefusal, "slow down")},
+			v.Limit, 0, v.ResetSeconds), would},
+		{"a body not read", rateLimited(pyAnswer{status: 429, why: "bound"}, v.Limit, 0, v.ResetSeconds),
+			ClassWouldAdmit + ".429.unread"},
+	} {
+		if r := compareWindowed(allowed, x.a, admit); r.class != x.class {
+			t.Errorf("%s: %s, want %s (%v)", x.name, r.class, x.class, r.windows)
+		}
+	}
+
+	f := authorizeGoldens(t)
+	_, _, c := windowCase(t, 400_000)
+	windows := &fakeWindows{read: func(context.Context) ([]keywindow.Row, error) {
+		return dailyRows(c.at(), 1_000_000, 400_000, 1), nil
+	}}
+	message := "API key daily spend limit exceeded; resets at 2026-10-20T00:00:00Z"
+	for _, x := range []struct {
+		remaining int64
+		class     string
+		alerts    int
+	}{
+		{0, race, 0},
+		{v.Remaining, would, 1},
+	} {
+		a := &alerts{}
+		h := newFullEdge(t, f, c, nil, func(cfg *DecideShadowConfig) { cfg.Windows, cfg.Alert = windows, a.raise })
+		h.answer(answerWith(429, errorBody(429, windowRefusal, message), "RateLimit-Limit", "1000000",
+			"RateLimit-Remaining", strconv.FormatInt(x.remaining, 10), "RateLimit-Reset",
+			strconv.FormatInt(v.ResetSeconds, 10)))
+		h.send(t, c)
+		got := h.edge.DecideShadowCounts()
+		if got.Classes[x.class] != 1 || len(a.taken()[AlertWouldAdmit]) != x.alerts {
+			t.Errorf("Python's remaining %d: classes %v, alerts %v", x.remaining, got.Classes, a.taken())
+		}
 	}
 }

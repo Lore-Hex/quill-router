@@ -27,15 +27,19 @@ func keyLimitRow(keyHash string, shard int64, columns map[string]any) *spanner.M
 }
 
 // TestReadKeyWindowsReadsTheKeysShards (docs/design/
-// fast-admission-e2-key-windows.md section 4.3): one strong read returns the
-// key's rows of shards 0 to n-1 in shard order, each window's usage, start
-// and mirrored limit as stored, NULL as not valid; not a shard past n-1, not
-// another key's; a key with no rows reads none; and a key hash or shard
-// count no key has is refused before any read.
+// fast-admission-e2-key-windows.md section 4.3): one read returns every row
+// of the key, in shard order, each window's usage, start and mirrored limit
+// as stored, NULL as not valid; not another key's (one whose hash the key's
+// begins with included); a key with no rows reads none; and an empty key
+// hash is refused before any read. It reads every shard the key has, not the
+// ones a cached shard count names: after the key's shards grew from 3 to 4,
+// an edge holding 3 reads 4 rows, which the window check refuses
+// (key_window.rows), rather than three that undercount.
 func TestReadKeyWindowsReadsTheKeysShards(t *testing.T) {
 	s := spikeStore(t)
 	ctx := context.Background()
 	key, other := storetest.UniqueID("kh"), storetest.UniqueID("kh")
+	longer := key + "0"
 	day := time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC)
 	week := time.Date(2026, 10, 19, 0, 0, 0, 0, time.UTC)
 	if _, err := shared.Apply(ctx, []*spanner.Mutation{
@@ -43,12 +47,13 @@ func TestReadKeyWindowsReadsTheKeysShards(t *testing.T) {
 			"week_start": week, "day_limit_micro": int64(1000), "week_limit_micro": int64(5000)}),
 		keyLimitRow(key, 1, map[string]any{"day_usage": int64(5), "day_start": day, "day_limit_micro": int64(1000)}),
 		keyLimitRow(key, 2, map[string]any{}),
-		keyLimitRow(key, 3, map[string]any{"day_usage": int64(99), "day_start": day}),
+		keyLimitRow(key, 3, map[string]any{"day_usage": int64(99), "day_start": day, "day_limit_micro": int64(1000)}),
 		keyLimitRow(other, 0, map[string]any{"day_usage": int64(1), "day_start": day}),
+		keyLimitRow(longer, 0, map[string]any{"day_usage": int64(2), "day_start": day}),
 	}); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := s.ReadKeyWindows(ctx, key, 3)
+	rows, err := s.ReadKeyWindows(ctx, key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,6 +68,9 @@ func TestReadKeyWindowsReadsTheKeysShards(t *testing.T) {
 			DayLimit: spanner.NullInt64{Int64: 1000, Valid: true}},
 		{Shard: 2, DayUsage: spanner.NullInt64{Valid: true}, WeekUsage: spanner.NullInt64{Valid: true},
 			MonthUsage: spanner.NullInt64{Valid: true}},
+		{Shard: 3, DayUsage: spanner.NullInt64{Int64: 99, Valid: true}, DayStart: spanner.NullTime{Time: day, Valid: true},
+			WeekUsage: spanner.NullInt64{Valid: true}, MonthUsage: spanner.NullInt64{Valid: true},
+			DayLimit: spanner.NullInt64{Int64: 1000, Valid: true}},
 	}
 	if len(rows) != len(want) {
 		t.Fatalf("read %d rows: %+v", len(rows), rows)
@@ -72,23 +80,55 @@ func TestReadKeyWindowsReadsTheKeysShards(t *testing.T) {
 			t.Errorf("row %d: %+v, want %+v", i, rows[i], want[i])
 		}
 	}
-	// A shard count of one reads shard 0 alone; one past the rows reads
-	// what there is (Evaluate refuses the set).
-	if rows, err := s.ReadKeyWindows(ctx, key, 1); err != nil || len(rows) != 1 || rows[0].Shard != 0 {
-		t.Errorf("one shard: %+v, %v", rows, err)
+	// The key's shards grew to 4 while an edge holds 3: the check refuses
+	// the set; with the count it should hold, it decides.
+	limit := int64(1000)
+	at := day.Add(12 * time.Hour)
+	if v := keywindow.Evaluate(keywindow.Limits{Daily: &limit}, 3, rows, 1, at); v.Pass != keywindow.PassRows {
+		t.Errorf("a stale shard count of 3 over 4 rows: %+v", v)
 	}
-	if rows, err := s.ReadKeyWindows(ctx, key, 64); err != nil || len(rows) != 4 {
-		t.Errorf("64 shards: %d rows, %v", len(rows), err)
+	if v := keywindow.Evaluate(keywindow.Limits{Daily: &limit}, 4, rows, 1, at); v.Pass != keywindow.PassConfigDrift {
+		// Shard 2 mirrors no daily limit: drift, which the check passes
+		// too, but only once it has read the rows as a whole.
+		t.Errorf("the key's own count over its rows: %+v", v)
 	}
-	if rows, err := s.ReadKeyWindows(ctx, storetest.UniqueID("kh"), 4); err != nil || len(rows) != 0 {
+	if rows, err := s.ReadKeyWindows(ctx, storetest.UniqueID("kh")); err != nil || len(rows) != 0 {
 		t.Errorf("a key with no rows: %+v, %v", rows, err)
 	}
-	for _, bad := range []struct {
-		key    string
-		shards int
-	}{{"", 1}, {key, 0}, {key, 65}, {key, -1}} {
-		if _, err := s.ReadKeyWindows(ctx, bad.key, bad.shards); err == nil {
-			t.Errorf("key %q with %d shards read", bad.key, bad.shards)
+	if _, err := s.ReadKeyWindows(ctx, ""); err == nil {
+		t.Error("an empty key hash read")
+	}
+}
+
+// TestReadKeyWindowsIsAStrongRead: the read sees a write committed just
+// before it, and then the write after that, as Python's own read of the rows
+// would; a read at a staleness bound would miss a settle that Python sees. It
+// is held so twice: by what the emulator answers, and in keywindows.go's
+// source, which must take Single() with no timestamp bound.
+func TestReadKeyWindowsIsAStrongRead(t *testing.T) {
+	src, err := os.ReadFile("keywindows.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(src), "ro := s.client.Single()\n") || strings.Contains(string(src), "TimestampBound") ||
+		strings.Contains(string(src), "Staleness") {
+		t.Fatal("ReadKeyWindows must read with a plain s.client.Single(): a strong read")
+	}
+	s := spikeStore(t)
+	ctx := context.Background()
+	key := storetest.UniqueID("kh")
+	day := time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC)
+	for i, usage := range []int64{100, 250, 900} {
+		m := keyLimitRow(key, 0, map[string]any{"day_usage": usage, "day_start": day})
+		if i > 0 {
+			m = spanner.UpdateMap("tr_key_limit", map[string]any{"key_hash": key, "shard": int64(0), "day_usage": usage})
+		}
+		if _, err := shared.Apply(ctx, []*spanner.Mutation{m}); err != nil {
+			t.Fatal(err)
+		}
+		rows, err := s.ReadKeyWindows(ctx, key)
+		if err != nil || len(rows) != 1 || rows[0].DayUsage.Int64 != usage {
+			t.Fatalf("after writing %d: %+v, %v", usage, rows, err)
 		}
 	}
 }
@@ -170,7 +210,7 @@ func TestReadKeyWindowsReadsAnOlderDatabasesNulls(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := s.ReadKeyWindows(ctx, key, 2)
+	rows, err := s.ReadKeyWindows(ctx, key)
 	if err != nil {
 		t.Fatal(err)
 	}

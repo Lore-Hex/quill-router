@@ -74,6 +74,14 @@ const (
 	// (Decision.Windows, not read): neither an agreement nor a would-admit
 	// (docs/design/fast-admission-e2-key-windows.md section 8.2).
 	ClassWindowUnchecked = "window_unchecked"
+	// ClassWindowRace: Go read the key's windows and would have admitted,
+	// and Python refused a window it read more spent: its 429 names a window
+	// whose limit Go holds too, and its RateLimit-Remaining is below what
+	// Go's rows leave in that window. A settle landed between the two reads,
+	// the race Python's own instances have with each other (section 8.3,
+	// at most 0.05% of compares). Counted, never paged; any other window
+	// refusal of a key Go would admit is ClassWouldAdmit.
+	ClassWindowRace = "window_race"
 )
 
 // windowRefusal is the error type of Python's 429 for a spend window
@@ -1544,12 +1552,13 @@ func (sh *fullShadow) windowSample() bool {
 
 // compareWindowed is compareFull with the window check's verdict, when the
 // shadow made one (section 8.2 item 3). Go would admit: Python's 200 is
-// compared as any, and its window refusal is the critical would-admit, no
-// longer window_unchecked. Go would pass (any key_window.* reason): Python's
-// 200 is python_answered_go_passed by that reason (benign), its refusal
-// passed by it. Either way the counts add the read, its latency, the
-// verdict and how Python's RateLimit-* headers compare with Go's limit,
-// remaining and reset (windowFields).
+// compared as any, and its window refusal, no longer window_unchecked, is
+// window_race when Python's evidence shows a settle between the two reads
+// (windowRace), else the critical would-admit. Go would pass (any
+// key_window.* reason): Python's 200 is python_answered_go_passed by that
+// reason (benign), its refusal passed by it. Either way the counts add the
+// read, its latency, the verdict and how Python's RateLimit-* headers
+// compare with Go's limit, remaining and reset (windowFields).
 func compareWindowed(d Decided, a pyAnswer, w *windowRead) fullResult {
 	r := compareFull(d, a)
 	if w == nil {
@@ -1563,7 +1572,11 @@ func compareWindowed(d Decided, a pyAnswer, w *windowRead) fullResult {
 	unchecked := strings.HasPrefix(r.class, ClassWindowUnchecked+".")
 	switch {
 	case v.Admit() && unchecked:
-		r.class = ClassWouldAdmit + strings.TrimPrefix(r.class, ClassWindowUnchecked)
+		class := ClassWouldAdmit
+		if windowRace(d.ForShadow(), w, a) {
+			class = ClassWindowRace
+		}
+		r.class = class + strings.TrimPrefix(r.class, ClassWindowUnchecked)
 	case v.Admit():
 	case unchecked || strings.HasPrefix(r.class, ClassWouldAdmit+"."):
 		r.class = ClassGoPassed + "." + v.Pass
@@ -1643,4 +1656,42 @@ func windowNote(windows []string) string {
 		return ""
 	}
 	return " windows=" + strings.Join(windows, ",")
+}
+
+// windowRace reports Python's window refusal of a request Go read and would
+// admit as the read race (ClassWindowRace): the 429's message names a
+// window Go holds a limit for, its RateLimit-Limit is that limit, and its
+// RateLimit-Remaining is below the remaining Go's rows leave in that window
+// at the request's instant, so Python's read saw more spent than Go's.
+// Anything else, a body or header not read, another limit, the same or
+// more remaining (the same inputs with another verdict), is not.
+func windowRace(dec *Decision, w *windowRead, a pyAnswer) bool {
+	m := windowRefused.FindStringSubmatch(errorOf(a).message)
+	if m == nil || dec == nil || dec.Windows == nil {
+		return false
+	}
+	window := keywindow.Window(m[1])
+	limit := dec.Windows.Limits.Get(window)
+	if limit == nil {
+		return false
+	}
+	pyLimit, err1 := strconv.ParseInt(a.rateLimit[0], 10, 64)
+	pyRemaining, err2 := strconv.ParseInt(a.rateLimit[1], 10, 64)
+	if err1 != nil || err2 != nil || pyLimit != *limit {
+		return false
+	}
+	// Go's remaining in Python's window alone: Evaluate over that one limit
+	// (the other windows' mirrors make it a drift pass, which changes no
+	// figure).
+	var one keywindow.Limits
+	switch window {
+	case keywindow.Daily:
+		one.Daily = limit
+	case keywindow.Weekly:
+		one.Weekly = limit
+	default:
+		one.Monthly = limit
+	}
+	ours := keywindow.Evaluate(one, dec.Windows.Shards, w.rows, dec.Estimate, w.at)
+	return ours.Decided && ours.Window == window && pyRemaining < ours.Remaining
 }
