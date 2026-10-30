@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"time"
 
 	"cloud.google.com/go/spanner"
 
@@ -37,9 +38,36 @@ func (s *Store) ReadKeyWindows(ctx context.Context, keyHash string) ([]keywindow
 	// Strong: a stale read would miss a settle Python's own read sees.
 	ro := s.client.Single()
 	defer ro.Close()
+	return readKeyWindows(ctx, ro, keyHash, "read-key-windows")
+}
+
+// ReadKeyWindowsAt reads the same rows as ReadKeyWindows, as they stood at
+// exactly at: the read timestamp of the snapshot Python's own window check
+// read (its authorize's X-TR-Key-Window-Read-Timestamp), for the decide
+// shadow's confirmation of a window race (docs/design/
+// fast-admission-e2-key-windows.md section 8.2 item 3). Rows as of Python's
+// instant leave Go's evaluation nothing to differ by but its own reading and
+// arithmetic. A timestamp older than the database's version retention fails
+// (FailedPrecondition), as does any read error; the caller then leaves the
+// race unconfirmed.
+func (s *Store) ReadKeyWindowsAt(ctx context.Context, keyHash string, at time.Time) ([]keywindow.Row, error) {
+	if keyHash == "" {
+		return nil, errors.New("store: no key hash")
+	}
+	if at.IsZero() {
+		return nil, errors.New("store: no read timestamp")
+	}
+	ro := s.client.Single().WithTimestampBound(spanner.ReadTimestamp(at))
+	defer ro.Close()
+	return readKeyWindows(ctx, ro, keyHash, "read-key-windows-at")
+}
+
+// readKeyWindows is the one read both make, through ro, tagged operation.
+func readKeyWindows(ctx context.Context, ro *spanner.ReadOnlyTransaction, keyHash, operation string) (
+	[]keywindow.Row, error) {
 	var rows []keywindow.Row
 	err := ro.ReadWithOptions(ctx, "tr_key_limit", spanner.Key{keyHash}.AsPrefix(), keyWindowColumns,
-		&spanner.ReadOptions{RequestTag: tag("read-key-windows"), Limit: keywindow.MaxShards + 1}).Do(
+		&spanner.ReadOptions{RequestTag: tag(operation), Limit: keywindow.MaxShards + 1}).Do(
 		func(r *spanner.Row) error {
 			var row keywindow.Row
 			if err := r.Columns(&row.Shard, &row.DayUsage, &row.DayStart, &row.WeekUsage, &row.WeekStart,

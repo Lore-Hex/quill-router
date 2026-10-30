@@ -79,17 +79,24 @@ const (
 	// ClassWindowRace: Go read the key's windows and would have admitted,
 	// Python refused a window it read more spent (its 429 names a window
 	// whose limit Go holds, with RateLimit-Remaining below what Go's rows
-	// leave there), and Go's own re-read after Python's answer has caught up
-	// with Python's remaining (confirmRace): a settle landed between the two
-	// first reads, the race Python's own instances have with each other
-	// (section 8.3, at most 0.05% of compares). Counted, never paged one by
-	// one; AlertWindowRace watches its rate and its repeats per key.
+	// leave there), and Go's re-read of the rows at Python's own read
+	// timestamp leaves exactly Python's remaining (confirmRace): Go reads and
+	// sums the rows as Python does, so a settle landed between the two first
+	// reads, the race Python's own instances have with each other (section
+	// 8.3, at most 0.05% of compares). Counted, never paged one by one;
+	// AlertWindowRace watches its rate and its repeats per key.
 	ClassWindowRace = "window_race"
-	// ClassWindowRaceUnconfirmed: a race candidate no re-read settled (the
-	// limiter, a failed or late re-read, a window reset since). It pages as
-	// a would-admit does, since it cannot be told from a defect of Go's read.
+	// ClassWindowRaceUnconfirmed: a race candidate no re-read settled (no
+	// read timestamp from Python or one that does not parse, the limiter, a
+	// failed or late re-read, a window reset since). It pages as a
+	// would-admit does, since it cannot be told from a defect of Go's read.
 	ClassWindowRaceUnconfirmed = "window_race_unconfirmed"
 )
+
+// WindowReadTimestampHeader is the header of Python's internal authorize
+// that names the read timestamp of the snapshot its window refusal summed
+// (spend_windows.key_window_read_timestamp_headers), RFC 3339 in UTC.
+const WindowReadTimestampHeader = "X-TR-Key-Window-Read-Timestamp"
 
 // windowRefusal is the error type of Python's 429 for a spend window
 // (gateway.py, ErrorType.KEY_WINDOW_LIMIT_EXCEEDED).
@@ -152,9 +159,10 @@ type DecideShadowConfig struct {
 	Decides DecideReader
 	Rows    AuthorizationReader
 	// Windows reads an enforcing windowed key's tr_key_limit rows for the
-	// shadow's window check (key-windows section 8.2), within ReadsPerSecond
-	// of its own; nil checks none.
-	Windows KeyWindowReader
+	// shadow's window check (key-windows section 8.2), and again at Python's
+	// read timestamp to settle a race, within ReadsPerSecond of its own; nil
+	// checks none.
+	Windows ShadowWindowReader
 	// Jobs bounds the requests followed at once; SampleEvery and
 	// ReadsPerSecond the row read-backs; DecideEvery the decide copy's
 	// refresh; Wait how long a request waits for Python's answer.
@@ -334,14 +342,16 @@ func (sh *fullShadow) release(n int64) {
 // they were not read through, why. latency is from the request's arrival
 // to the answer's end. rateLimit are its RateLimit-Limit, -Remaining and
 // -Reset headers, Python's window decision in its own words (key-windows
-// section 8.2), "" where absent.
+// section 8.2), "" where absent; windowReadAt its WindowReadTimestampHeader,
+// the instant the rows behind that decision are as of.
 type pyAnswer struct {
-	status    int
-	encoding  string
-	body      []byte
-	why       string
-	latency   time.Duration
-	rateLimit [3]string
+	status       int
+	encoding     string
+	body         []byte
+	why          string
+	latency      time.Duration
+	rateLimit    [3]string
+	windowReadAt string
 }
 
 // fullJob is one followed request: what the pipeline reads, held at its
@@ -428,6 +438,7 @@ func (sh *fullShadow) tapFull(resp *http.Response, job *fullJob) {
 	status, encoding := resp.StatusCode, resp.Header.Get("Content-Encoding")
 	rateLimit := [3]string{resp.Header.Get("RateLimit-Limit"), resp.Header.Get("RateLimit-Remaining"),
 		resp.Header.Get("RateLimit-Reset")}
+	windowReadAt := resp.Header.Get(WindowReadTimestampHeader)
 	job.mu.Lock()
 	defer job.mu.Unlock()
 	if job.abandoned {
@@ -436,7 +447,7 @@ func (sh *fullShadow) tapFull(resp *http.Response, job *fullJob) {
 	job.tap = &tap{rc: resp.Body, sh: sh, limit: maxShadowResponse, length: resp.ContentLength, onClose: func(t *tap) {
 		raw, complete, spent := t.bytes()
 		a := pyAnswer{status: status, encoding: encoding, body: raw, latency: time.Since(job.arrived),
-			rateLimit: rateLimit}
+			rateLimit: rateLimit, windowReadAt: windowReadAt}
 		switch {
 		case spent:
 			a.why, a.body = "budget", nil
@@ -1698,16 +1709,43 @@ func windowNote(windows []string) string {
 // raceCandidate is Python's window refusal of a request Go read and would
 // admit, whose own evidence says Python's read saw more spent than Go's
 // (windowRace): the window, Go's remaining there from its first read,
-// Python's (RateLimit-Remaining), Go's from the re-read that confirms or
-// refutes it (confirmRace; -1 before), why it stayed unconfirmed, and the
-// key hash's first characters, for the line that traces it.
+// Python's (RateLimit-Remaining), Go's from the re-read at Python's read
+// timestamp that confirms or refutes it (confirmRace; -1 before), that
+// timestamp (pythonReadAt, from WindowReadTimestampHeader) or why there is
+// none (readAtWhy), why it stayed unconfirmed, and the key hash's first
+// characters, for the line that traces it.
 type raceCandidate struct {
 	window          keywindow.Window
 	first, python   int64
 	reread          int64
+	pythonReadAt    time.Time
+	readAtWhy       string
 	unconfirmed     string
 	keyHashPrefix   string
 	refuted, landed bool
+}
+
+// readAtForm is the one form Python writes its WindowReadTimestampHeader in
+// (spend_windows.key_window_read_timestamp_headers): UTC, exactly nine
+// fractional digits, a Z.
+var readAtForm = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{9}Z$`)
+
+// pythonReadAt parses Python's WindowReadTimestampHeader: the instant, or
+// why there is none (read_at_none when absent, read_at_malformed for
+// anything but exactly the form Python writes, or an instant that is not
+// one).
+func pythonReadAt(h string) (time.Time, string) {
+	if h == "" {
+		return time.Time{}, "read_at_none"
+	}
+	if !readAtForm.MatchString(h) {
+		return time.Time{}, "read_at_malformed"
+	}
+	at, err := time.Parse(time.RFC3339Nano, h)
+	if err != nil || at.IsZero() {
+		return time.Time{}, "read_at_malformed"
+	}
+	return at.UTC(), ""
 }
 
 // keyHashPrefixLen is how much of a key's hash a race's line carries: enough
@@ -1744,7 +1782,9 @@ func windowRace(dec *Decision, w *windowRead, a pyAnswer) *raceCandidate {
 	if len(prefix) > keyHashPrefixLen {
 		prefix = prefix[:keyHashPrefixLen]
 	}
-	return &raceCandidate{window: window, first: ours, python: pyRemaining, reread: -1, keyHashPrefix: prefix}
+	readAt, why := pythonReadAt(a.windowReadAt)
+	return &raceCandidate{window: window, first: ours, python: pyRemaining, reread: -1, pythonReadAt: readAt,
+		readAtWhy: why, keyHashPrefix: prefix}
 }
 
 // windowRemaining is what rows leave in one window of the decision's key at
@@ -1770,15 +1810,21 @@ func windowRemaining(dec *Decision, window keywindow.Window, rows []keywindow.Ro
 }
 
 // confirmRace settles a race candidate, after Python's answer, with one more
-// strong read of the key's rows (within the window limiter, at most
+// read of the key's rows at exactly Python's read timestamp (its
+// WindowReadTimestampHeader; within the window limiter, at most
 // WindowReadBudget), evaluated in the candidate's window at the request's
-// instant. Usage only grows inside a window, so a settle that landed
-// between the two first reads shows in the re-read: Go's fresh remaining at
-// or below Python's confirms the race (ClassWindowRace, counted, never
-// paged). Still above Python's, Go's read missed what Python saw: a defect,
-// the critical would-admit. No re-read (the limiter, a failed or late read,
-// rows that do not give the window) or a window that has reset since (its
-// usage is another window's now) leaves it unconfirmed
+// instant. Those are the rows Python summed, so a Go that reads and sums
+// them as Python does leaves exactly Python's remaining there: equal
+// confirms the race (ClassWindowRace, counted, never paged), since Go's
+// first read then saw less spent only because a settle landed between it and
+// Python's. Any other remaining is Go's own reading or arithmetic differing
+// from Python's on the same rows: a defect, the critical would-admit. A
+// strong re-read could not tell the two apart on a busy key, where settles
+// landing after Python's read can hide a small, persistent undercount. No
+// timestamp from Python (absent, or not one), no re-read (the limiter, a
+// failed or late read, a timestamp past the version retention, rows that do
+// not give the window) or a window that has reset since (Python's read or
+// now past the window's end) leaves it unconfirmed
 // (ClassWindowRaceUnconfirmed), which pages as a would-admit does: it
 // cannot be told from a defect.
 func (sh *fullShadow) confirmRace(dec *Decision, w *windowRead, r *fullResult) {
@@ -1788,21 +1834,25 @@ func (sh *fullShadow) confirmRace(dec *Decision, w *windowRead, r *fullResult) {
 	}
 	suffix := strings.TrimPrefix(r.class, ClassWindowRaceUnconfirmed)
 	switch {
+	case c.readAtWhy != "":
+		c.unconfirmed = c.readAtWhy
 	case sh.cfg.Windows == nil || !sh.windowSample():
 		c.unconfirmed = "limiter"
 	default:
-		again := readWindows(context.Background(), sh.cfg.Windows, dec, w.at, time.Now().Add(WindowReadBudget))
+		again := readWindowsAt(context.Background(), sh.cfg.Windows, dec, w.at, c.pythonReadAt,
+			time.Now().Add(WindowReadBudget))
 		rem, ok := windowRemaining(dec, c.window, again.rows, w.at)
+		resets := keywindow.ResetsAt(c.window, w.at)
 		switch {
 		case again.verdict.Pass == keywindow.PassUnread:
 			c.unconfirmed = "unread"
-		case !sh.clock().Before(keywindow.ResetsAt(c.window, w.at)):
+		case !sh.clock().Before(resets) || !c.pythonReadAt.Before(resets):
 			c.unconfirmed = "reset"
 		case !ok:
 			c.unconfirmed = "rows"
 		default:
 			c.reread = rem
-			c.landed = rem <= c.python
+			c.landed = rem == c.python
 			c.refuted = !c.landed
 		}
 	}

@@ -22,6 +22,20 @@ type KeyWindowReader interface {
 	ReadKeyWindows(ctx context.Context, keyHash string) ([]keywindow.Row, error)
 }
 
+// KeyWindowReaderAt reads the same rows as they stood at exactly at
+// (store.Store.ReadKeyWindowsAt): Python's window check's read timestamp,
+// for the shadow's confirmation of a window race (confirmRace).
+type KeyWindowReaderAt interface {
+	ReadKeyWindowsAt(ctx context.Context, keyHash string, at time.Time) ([]keywindow.Row, error)
+}
+
+// ShadowWindowReader is the decide shadow's reader: its window check's
+// strong read, and the read at Python's timestamp that settles a race.
+type ShadowWindowReader interface {
+	KeyWindowReader
+	KeyWindowReaderAt
+}
+
 // windowRead is one window check: its verdict, whether the read was made
 // (no reader makes none), how long it took, and the rows it read and the
 // instant it evaluated them at (for the shadow's reading of Python's
@@ -42,13 +56,31 @@ func readWindows(ctx context.Context, reader KeyWindowReader, d *Decision, at, d
 	if reader == nil {
 		return windowRead{verdict: keywindow.Verdict{Pass: keywindow.PassUnread}}
 	}
+	return readWindowsBy(ctx, reader.ReadKeyWindows, d, at, deadline)
+}
+
+// readWindowsAt is readWindows over the rows as they stood at asOf
+// (KeyWindowReaderAt), still evaluated at at.
+func readWindowsAt(ctx context.Context, reader KeyWindowReaderAt, d *Decision, at, asOf,
+	deadline time.Time) windowRead {
+	if reader == nil {
+		return windowRead{verdict: keywindow.Verdict{Pass: keywindow.PassUnread}}
+	}
+	return readWindowsBy(ctx, func(ctx context.Context, keyHash string) ([]keywindow.Row, error) {
+		return reader.ReadKeyWindowsAt(ctx, keyHash, asOf)
+	}, d, at, deadline)
+}
+
+// readWindowsBy is one window check whose rows read reads.
+func readWindowsBy(ctx context.Context, read func(context.Context, string) ([]keywindow.Row, error), d *Decision,
+	at, deadline time.Time) windowRead {
 	if late := time.Now().Add(WindowReadBudget); late.Before(deadline) {
 		deadline = late
 	}
 	readCtx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 	start := time.Now()
-	rows, err := reader.ReadKeyWindows(readCtx, d.KeyHash)
+	rows, err := read(readCtx, d.KeyHash)
 	w := windowRead{made: true, took: time.Since(start), rows: rows, at: at}
 	if err != nil {
 		w.verdict = keywindow.Verdict{Pass: keywindow.PassUnread}

@@ -104,15 +104,17 @@ func TestReadKeyWindowsReadsTheKeysShards(t *testing.T) {
 // before it, and then the write after that, as Python's own read of the rows
 // would; a read at a staleness bound would miss a settle that Python sees. It
 // is held so twice: by what the emulator answers, and in keywindows.go's
-// source, which must take Single() with no timestamp bound.
+// source, where ReadKeyWindows must take Single() with no timestamp bound
+// (ReadKeyWindowsAt, beside it, is the one that pins a timestamp).
 func TestReadKeyWindowsIsAStrongRead(t *testing.T) {
-	src, err := os.ReadFile("keywindows.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(src), "ro := s.client.Single()\n") || strings.Contains(string(src), "TimestampBound") ||
-		strings.Contains(string(src), "Staleness") {
+	strong := funcSource(t, "keywindows.go", "func (s *Store) ReadKeyWindows(")
+	if !strings.Contains(strong, "ro := s.client.Single()\n") || strings.Contains(strong, "TimestampBound") ||
+		strings.Contains(strong, "Staleness") {
 		t.Fatal("ReadKeyWindows must read with a plain s.client.Single(): a strong read")
+	}
+	if !strings.Contains(funcSource(t, "keywindows.go", "func (s *Store) ReadKeyWindowsAt("),
+		".WithTimestampBound(spanner.ReadTimestamp(at))") {
+		t.Fatal("ReadKeyWindowsAt must read at exactly its timestamp")
 	}
 	s := spikeStore(t)
 	ctx := context.Background()
@@ -130,6 +132,74 @@ func TestReadKeyWindowsIsAStrongRead(t *testing.T) {
 		if err != nil || len(rows) != 1 || rows[0].DayUsage.Int64 != usage {
 			t.Fatalf("after writing %d: %+v, %v", usage, rows, err)
 		}
+	}
+}
+
+// funcSource is one function's text in file: from its signature to the
+// first closing brace at the start of a line.
+func funcSource(t *testing.T, file, signature string) string {
+	t.Helper()
+	src, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, body, ok := strings.Cut(string(src), signature)
+	if !ok {
+		t.Fatalf("%s has no %q", file, signature)
+	}
+	body, _, ok = strings.Cut(body, "\n}\n")
+	if !ok {
+		t.Fatalf("%s: %q does not end", file, signature)
+	}
+	return body
+}
+
+// TestReadKeyWindowsAtReadsTheRowsAsOfItsTimestamp (key windows section 8.2
+// item 3): pinned to a write's commit timestamp, the read sees that write
+// and not the settle committed after it, which a strong read sees; at the
+// later commit it sees the later one. No key or no timestamp reads nothing.
+func TestReadKeyWindowsAtReadsTheRowsAsOfItsTimestamp(t *testing.T) {
+	s := spikeStore(t)
+	ctx := context.Background()
+	key := storetest.UniqueID("kh")
+	day := time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC)
+	var commits []time.Time
+	for i, usage := range []int64{100, 250} {
+		m := keyLimitRow(key, 0, map[string]any{"day_usage": usage, "day_start": day})
+		if i > 0 {
+			m = spanner.UpdateMap("tr_key_limit", map[string]any{"key_hash": key, "shard": int64(0), "day_usage": usage})
+		}
+		at, err := shared.Apply(ctx, []*spanner.Mutation{m})
+		if err != nil {
+			t.Fatal(err)
+		}
+		commits = append(commits, at)
+	}
+	for _, x := range []struct {
+		name  string
+		at    time.Time
+		usage int64
+	}{
+		{"at the first commit", commits[0], 100},
+		{"between the commits", commits[1].Add(-time.Microsecond), 100},
+		{"at the second commit", commits[1], 250},
+	} {
+		rows, err := s.ReadKeyWindowsAt(ctx, key, x.at)
+		if err != nil || len(rows) != 1 || rows[0].DayUsage.Int64 != x.usage || rows[0].Shard != 0 {
+			t.Errorf("%s: %+v, %v; want usage %d", x.name, rows, err, x.usage)
+		}
+	}
+	if rows, err := s.ReadKeyWindowsAt(ctx, key, commits[0].Add(-time.Microsecond)); err != nil || len(rows) != 0 {
+		t.Errorf("before the row was written: %+v, %v", rows, err)
+	}
+	if rows, err := s.ReadKeyWindows(ctx, key); err != nil || len(rows) != 1 || rows[0].DayUsage.Int64 != 250 {
+		t.Errorf("the strong read: %+v, %v", rows, err)
+	}
+	if _, err := s.ReadKeyWindowsAt(ctx, key, time.Time{}); err == nil {
+		t.Error("a read with no timestamp")
+	}
+	if _, err := s.ReadKeyWindowsAt(ctx, "", commits[1]); err == nil {
+		t.Error("a read of no key")
 	}
 }
 

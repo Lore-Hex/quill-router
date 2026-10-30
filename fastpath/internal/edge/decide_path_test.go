@@ -948,25 +948,40 @@ func TestAnEnforcingWindowedKeyIsNeverAdmittedUnread(t *testing.T) {
 	}
 }
 
-// fakeWindows is a KeyWindowReader: what it answers, and each read's key
-// and deadline.
+// fakeWindows is a ShadowWindowReader: what it answers, and each read's key,
+// deadline and, for a read at a timestamp, that timestamp. readAt answers a
+// read at a timestamp; nil answers it as read does.
 type fakeWindows struct {
-	mu    sync.Mutex
-	read  func(ctx context.Context) ([]keywindow.Row, error)
-	calls []windowCall
+	mu     sync.Mutex
+	read   func(ctx context.Context) ([]keywindow.Row, error)
+	readAt func(ctx context.Context, at time.Time) ([]keywindow.Row, error)
+	calls  []windowCall
 }
 
 type windowCall struct {
 	keyHash  string
 	deadline time.Time
+	at       time.Time // zero for a strong read
 }
 
 func (f *fakeWindows) ReadKeyWindows(ctx context.Context, keyHash string) ([]keywindow.Row, error) {
 	deadline, _ := ctx.Deadline()
 	f.mu.Lock()
-	f.calls = append(f.calls, windowCall{keyHash, deadline})
+	f.calls = append(f.calls, windowCall{keyHash: keyHash, deadline: deadline})
 	read := f.read
 	f.mu.Unlock()
+	return read(ctx)
+}
+
+func (f *fakeWindows) ReadKeyWindowsAt(ctx context.Context, keyHash string, at time.Time) ([]keywindow.Row, error) {
+	deadline, _ := ctx.Deadline()
+	f.mu.Lock()
+	f.calls = append(f.calls, windowCall{keyHash: keyHash, deadline: deadline, at: at})
+	read, readAt := f.read, f.readAt
+	f.mu.Unlock()
+	if readAt != nil {
+		return readAt(ctx, at)
+	}
 	return read(ctx)
 }
 

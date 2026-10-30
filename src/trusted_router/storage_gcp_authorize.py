@@ -26,7 +26,7 @@ import time
 import uuid
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -388,6 +388,11 @@ def key_window_limit_decision(
 
     The CALLER must omit windows that don't apply (e.g. a BYOK request on a key
     that excludes BYOK from its caps).
+
+    The decision carries the snapshot's read timestamp (``read_timestamp_ns``),
+    the instant its rows are as of, which the internal authorize route sends
+    with a window refusal so the fast-path edge's shadow can re-read the same
+    rows at the same instant.
     """
     if shard_count < 1:
         raise ValueError("shard_count must be positive")
@@ -410,6 +415,7 @@ def key_window_limit_decision(
                 param_types={"kh": pt.STRING, "shard_count": pt.INT64},
             )
         )
+        read_timestamp_ns = snapshot_read_timestamp_ns(snapshot)
     if not rows:
         return None  # no typed row -> reserve_key fail-closes as KEY_MISSING
     if [int(row[0]) for row in rows] != list(range(shard_count)):
@@ -429,12 +435,37 @@ def key_window_limit_decision(
             int(row[5] or 0) for row in rows if row[6] is not None and row[6] >= floors["monthly"]
         ),
     }
-    return decide_key_window_limits(
+    decision = decide_key_window_limits(
         window_limits,
         current,
         estimate,
         now=decision_now,
     )
+    if decision is None or read_timestamp_ns is None:
+        return decision
+    return replace(decision, read_timestamp_ns=read_timestamp_ns)
+
+
+def snapshot_read_timestamp_ns(snapshot: Any) -> int | None:
+    """The read timestamp of a read-only snapshot that has made its first read,
+    Unix nanoseconds: the one instant every read in it saw.
+
+    google-cloud-spanner asks for it (return_read_timestamp) whenever a
+    read-only transaction begins, inline on a multi-use snapshot's first read
+    included, and keeps it as ``Snapshot._transaction_read_timestamp``; the
+    client has no public accessor. None when it is absent or not a timestamp
+    (a snapshot that has not read, a test double), so the caller omits it
+    rather than guessing an instant.
+    """
+    value = getattr(snapshot, "_transaction_read_timestamp", None)
+    if not isinstance(value, datetime) or value.tzinfo is None:
+        return None
+    to_pb = getattr(value, "timestamp_pb", None)
+    if callable(to_pb):  # DatetimeWithNanoseconds: keeps the digits below a microsecond
+        stamp = to_pb()
+        return int(stamp.seconds) * 1_000_000_000 + int(stamp.nanos)
+    delta = value - datetime(1970, 1, 1, tzinfo=UTC)
+    return (delta.days * 86_400 + delta.seconds) * 1_000_000_000 + delta.microseconds * 1_000
 
 
 def check_key_window_limits(

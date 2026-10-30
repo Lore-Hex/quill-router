@@ -316,6 +316,11 @@ class FakeSpannerDatabase:
         self.snapshot_execute_sql_calls = 0
         self.snapshot_sql: list[str] = []
         self.snapshot_sql_params: list[dict[str, Any]] = []
+        # Each snapshot's read timestamp, as the real client records it when
+        # the snapshot's first read begins its read-only transaction
+        # (Snapshot._transaction_read_timestamp): a distinct nanosecond
+        # instant per snapshot, in the order they began.
+        self.snapshot_read_timestamps: list[Any] = []
         self.transaction_execute_sql_calls = 0
         self.transaction_execute_update_calls = 0
         self.transaction_batch_update_calls = 0
@@ -2344,6 +2349,21 @@ class _FakeTransaction:
                 self.pending_writes.append(("delete_typed", table, tuple(entry)))
 
 
+def _next_read_timestamp(db: FakeSpannerDatabase) -> Any:
+    """A snapshot's read timestamp as the client keeps it (proto-plus's
+    DatetimeWithNanoseconds), with digits below the microsecond so a caller
+    that rounds through a plain datetime is caught."""
+    from google.protobuf.timestamp_pb2 import Timestamp
+    from proto.datetime_helpers import DatetimeWithNanoseconds
+
+    n = len(db.snapshot_read_timestamps)
+    stamp = DatetimeWithNanoseconds.from_timestamp_pb(
+        Timestamp(seconds=1_792_000_000 + n, nanos=123_456_789 + n)
+    )
+    db.snapshot_read_timestamps.append(stamp)
+    return stamp
+
+
 class _FakeSnapshot:
     def __init__(self, db: FakeSpannerDatabase, *, multi_use: bool = False) -> None:
         self.db = db
@@ -2391,6 +2411,8 @@ class _FakeSnapshot:
                 "database.snapshot(multi_use=True) for multiple reads "
                 "(models real Spanner — see prod fix fa9f5d4)"
             )
+        if self._reads == 1:
+            self._transaction_read_timestamp = _next_read_timestamp(self.db)
         self.db.snapshot_execute_sql_calls += 1
         self.db.snapshot_sql.append(sql)
         self.db.snapshot_sql_params.append(dict(params or {}))
