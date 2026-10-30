@@ -711,6 +711,13 @@ ENV_VARS=(
   # section 8.3's gate passes for the mode. A literal, so no revision
   # inherits it; off is the way back.
   "TR_FASTPATH_PILOT_KEY_WINDOWS=off"
+  # Streams on the lease (docs/design/fast-admission-streams.md section
+  # 5.4): the pilot's switch, which moves only once increment 2b is pinned on
+  # every owner and front door (docs/runbooks/fastpath-streams.md), and the
+  # edge's own, which moves only after gate E. Literals, so no revision
+  # inherits either; false is the way back.
+  "TR_FASTPATH_PILOT_STREAMS=false"
+  "TR_FASTPATH_EDGE_STREAMS=false"
   # Arms the authorize-time billing-pause gate (trust_eligibility
   # .billing_paused_tx) on both the typed and legacy paths. The name predates
   # the spend-lease pilot's removal (2026-09); Settings keeps it False so only

@@ -302,11 +302,12 @@ class FrontDoorClient:
         """A leased stream's heartbeat (docs/design/fast-admission-streams.md
         section 4.2), on the heartbeat permits. `digest` is the 32 bytes of
         the heartbeat's hash; `basis` is sent only on a hold's first
-        heartbeat. No echoed deadline is sent: the field that has the owner
-        read its own (EchoGranted) comes with the Go change of section 4.6,
-        and a front door refuses a field it does not know, so Python sends it
-        only from increment 4, once that change is on every owner and front
-        door. Raises
+        heartbeat. No echoed deadline is sent: Python keeps none, so every
+        heartbeat after a hold's first carries EchoGranted, which has the owner
+        take the deadline it last granted as the echo (section 4.6 item 1). A
+        front door or owner from before increment 2 refuses the field, so the
+        setting that admits streams moves only once increment 2b is pinned on
+        every owner and front door (docs/runbooks/fastpath-streams.md). Raises
         FrontDoorUnavailable when no front door answered, or the answer does
         not parse."""
         body: dict[str, Any] = {
@@ -318,6 +319,8 @@ class FrontDoorClient:
         }
         if basis is not None:
             body["Basis"] = _bytes(basis)
+        if seq > 1:
+            body["EchoGranted"] = True
         answer = self._call("/v1/heartbeat", body, permits=self._heartbeat_permits)
         if answer is None:
             raise FrontDoorUnavailable("/v1/heartbeat")
@@ -558,6 +561,41 @@ def pilot_key_capped(mode: str, key: ApiKey) -> bool:
     return not key_windows_covered(mode, key)
 
 
+def pilot_stream_reason(
+    *,
+    streams_enabled: bool,
+    stage_d_reason: str | None,
+    heartbeat_declared: bool,
+    snapshot_booking: bool,
+    hold_is_ceiling: bool,
+) -> str | None:
+    """Why a stream stays out of the lease cohort, or None when section 5.1
+    of docs/design/fast-admission-streams.md lets it in, the first failing
+    condition named:
+
+    - ``stream.switch``: ``fastpath_pilot_streams`` is off;
+    - ``stream.stage_d:<reason>``: Stage D's reason is not ``ok``, so the
+      enclave will not heartbeat it;
+    - ``stream.undeclared``: its boot did not declare usage heartbeats,
+      whatever ``stage_d_require_heartbeat_declaration`` says;
+    - ``stream.snapshot_booking``: ``reap_snapshot_booking_enabled`` is off,
+      and the lease always charges an abandoned stream its snapshot;
+    - ``stream.hold``: the reservation is not the estimate, the tripwire for
+      a lowered stream reservation, which the lease would cut the stream at.
+    """
+    if not streams_enabled:
+        return "stream.switch"
+    if stage_d_reason != "ok":
+        return f"stream.stage_d:{stage_d_reason}"
+    if not heartbeat_declared:
+        return "stream.undeclared"
+    if not snapshot_booking:
+        return "stream.snapshot_booking"
+    if not hold_is_ceiling:
+        return "stream.hold"
+    return None
+
+
 def pilot_reason(
     *,
     enabled: bool,
@@ -574,12 +612,19 @@ def pilot_reason(
     budget_strict: bool,
     app_markup: bool,
     records_durable: bool,
+    streams_enabled: bool = False,
+    stage_d_reason: str | None = None,
+    heartbeat_declared: bool = False,
+    snapshot_booking: bool = False,
+    hold_is_ceiling: bool = False,
 ) -> str | None:
     """Why an authorize stays on today's path, or None when the pilot takes
     it. The cohort is the design's §4.11 at its narrowest: a credit-funded
-    key on a standard route, not streaming, with a verified boot, no
-    service tier, no key cap (``pilot_key_capped``), no markup, for a pilot
-    workspace, from a pilot region. An idempotency key does not exclude a request (the enclave sends
+    key on a standard route, with a verified boot, no service tier, no key
+    cap (``pilot_key_capped``), no markup, for a pilot workspace, from a
+    pilot region; and a stream only as ``pilot_stream_reason`` lets it
+    through (docs/design/fast-admission-streams.md section 5.1), else its
+    reason is ``stream``. An idempotency key does not exclude a request (the enclave sends
     one on every authorize; docs/design/fast-admission-pilot.md), and neither
     does its idempotency_key_source. A speculation descriptor never reaches
     an authorize body (it has a route of its own)."""
@@ -589,7 +634,13 @@ def pilot_reason(
         return "workspace"
     if region not in pilot_region_ids:
         return "region"
-    if stream:
+    if stream and pilot_stream_reason(
+        streams_enabled=streams_enabled,
+        stage_d_reason=stage_d_reason,
+        heartbeat_declared=heartbeat_declared,
+        snapshot_booking=snapshot_booking,
+        hold_is_ceiling=hold_is_ceiling,
+    ) is not None:
         return "stream"
     if not standard_endpoint_pricing:
         return "pricing"

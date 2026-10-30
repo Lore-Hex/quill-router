@@ -52,7 +52,7 @@ Fields, all required:
   (the ``typed`` the async-v1 authorize branch passes). Go (G15a) reads it as
   optional; Python always publishes it.
 
-One field is optional:
+Two fields are optional:
 
 - ``fastpath_pilot_key_windows``: ``"alert"`` or ``"enforce"``, the setting of
   that name (docs/design/fast-admission-e2-key-windows.md section 5): which
@@ -60,6 +60,13 @@ One field is optional:
   ``off``, so the default body is byte-identical to one from before the field
   existed, and Go reads absent as ``off``. ``null`` and ``"off"`` are refused,
   so each mode has exactly one encoding.
+- ``fastpath_edge_streams``: ``true`` when the settings
+  ``fastpath_edge_streams``, ``fastpath_pilot_streams`` and
+  ``reap_snapshot_booking_enabled`` are all on
+  (docs/design/fast-admission-streams.md section 5.4): the edge may decide
+  streams. Absent otherwise, so the default body is byte-identical to one
+  from before the field existed, and Go reads absent as off; ``null`` and
+  ``false`` are refused.
 """
 
 from __future__ import annotations
@@ -139,11 +146,17 @@ class EdgePolicyV1(Frozen):
     fastpath_pilot_key_windows: Literal["alert", "enforce"] | None = Field(
         default=None, exclude_if=lambda value: value is None,
     )
+    # Optional: absent is off, and the canonical bytes omit it then.
+    fastpath_edge_streams: Flag | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
 
     @model_validator(mode="after")
     def consistent(self) -> Self:
         if self.fastpath_pilot_key_windows is None and "fastpath_pilot_key_windows" in self.model_fields_set:
             raise ValueError("fastpath_pilot_key_windows is absent when off, never null")
+        if self.fastpath_edge_streams is not True and "fastpath_edge_streams" in self.model_fields_set:
+            raise ValueError("fastpath_edge_streams is absent when off, never null or false")
         if (self.refresh_at != self.issued_at + REFRESH_SECONDS
                 or self.not_after != self.issued_at + LIFETIME_SECONDS):
             raise ValueError("edge policy window")

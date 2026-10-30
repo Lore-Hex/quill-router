@@ -1109,6 +1109,16 @@ class Settings(BaseSettings):
     # in the edge policy for the Go edge. A lifetime cap or a strict budget
     # still keeps a key out. Any other spelling refuses to start.
     fastpath_pilot_key_windows: Literal["off", "alert", "enforce"] = "off"
+    # Streams on the lease (docs/design/fast-admission-streams.md section
+    # 5.4). `fastpath_pilot_streams`: this process's pilot admits a stream the
+    # enclave heartbeats under a lease (section 5.1's rule). It moves only
+    # once increment 2b's release is pinned on every owner and front door
+    # (docs/runbooks/fastpath-streams.md). `fastpath_edge_streams`: the Go
+    # edge may decide streams too; published in the edge policy only when it,
+    # `fastpath_pilot_streams` and `reap_snapshot_booking_enabled` are all
+    # on, and turned on only after gate E. Both off by default.
+    fastpath_pilot_streams: bool = False
+    fastpath_edge_streams: bool = False
     # The front door answers an admitted authorize in a few milliseconds; the
     # owner behind it waits at most a second. A request past this budget
     # takes today's path, so the budget is spent inline on a customer request.
