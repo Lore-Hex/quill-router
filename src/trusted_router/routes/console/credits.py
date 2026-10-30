@@ -23,7 +23,9 @@ from trusted_router.billing_policy import (
 )
 from trusted_router.config import Settings
 from trusted_router.domains import request_control_origin
+from trusted_router.errors import api_error
 from trusted_router.money import (
+    MAX_CHECKOUT_DOLLARS,
     MICRODOLLARS_PER_CENT,
     MICRODOLLARS_PER_DOLLAR,
     MIN_PAYPAL_CHECKOUT_DOLLARS,
@@ -43,6 +45,7 @@ from trusted_router.services.checkout_fees import (
     FeeRail,
     rail_fee_rates,
     rail_processing_fee,
+    stripe_max_credit_cents,
 )
 from trusted_router.services.paypal_billing import (
     capture_paypal_order_for_workspace,
@@ -59,6 +62,7 @@ from trusted_router.services.stripe_billing import (
 from trusted_router.services.stripe_fees import scale_processing_fee_cents
 from trusted_router.storage import STORE
 from trusted_router.typed_balance import live_credit_summary
+from trusted_router.types import ErrorType
 from trusted_router.views import render_template
 
 _PRIVATE_CREDITS_HEADERS = {
@@ -92,7 +96,7 @@ CHECKOUT_METHOD_RAILS: dict[str, FeeRail] = {
 
 # One amber line per redirect code the checkout handlers send back to the page.
 _CHECKOUT_ERROR_COPY: dict[str, str] = {
-    "invalid_checkout": "Enter a whole-dollar amount from $1 to $10,000; PayPal starts at $20.",
+    "invalid_checkout": "Enter a dollar amount with at most two decimals, within the maximum shown for your payment method. Stripe's $10,000 total includes processing fees; PayPal starts at $20.",
     "stablecoin_only": "This account adds credits with USDC only.",
     "paypal_missing_order": "PayPal sent you back without an order to confirm.",
     "paypal_capture_failed": "The PayPal payment failed to complete.",
@@ -106,6 +110,11 @@ def checkout_fee_schedule(settings: Settings) -> dict[str, Any]:
     return {
         "rails": CHECKOUT_METHOD_RAILS,
         "rates": {rail: rail_fee_rates(settings, rail).as_dict() for rail in FEE_RAILS},
+        "maximum_cents": {
+            method: MAX_CHECKOUT_DOLLARS * 100 if method in {"paypal", "adyen"}
+            else stripe_max_credit_cents(settings, rail)
+            for method, rail in CHECKOUT_METHOD_RAILS.items()
+        },
     }
 
 
@@ -181,6 +190,9 @@ def register(app: FastAPI) -> None:
                 page_title="Credits",
                 checkout_presets=presets,
                 checkout_selected_preset=selected_preset,
+                checkout_max_credit_dollars=(
+                    f"{stripe_max_credit_cents(settings, 'stablecoin' if wallet_only_billing else 'card') / 100:.2f}"
+                ),
                 checkout_fee_schedule_json=json.dumps(
                     checkout_fee_schedule(settings), separators=(",", ":")
                 ),
@@ -338,8 +350,8 @@ def register(app: FastAPI) -> None:
                 success_url=success_url,
                 cancel_url=f"{origin}/console/credits?checkout=cancel",
             )
-        except ValidationError:
-            return RedirectResponse(url="/console/credits?error=invalid_checkout", status_code=303)
+        except ValidationError as exc:
+            raise api_error(400, exc.errors()[0]["msg"], ErrorType.BAD_REQUEST) from exc
         credit = STORE.get_credit_account(ctx.workspace.id)
         try:
             data = (
@@ -369,7 +381,9 @@ def register(app: FastAPI) -> None:
                     settings=settings,
                 )
             )
-        except HTTPException:
+        except HTTPException as exc:
+            if exc.status_code == 400:
+                raise
             return RedirectResponse(url="/console/credits?error=checkout_unavailable", status_code=303)
         if body.purpose == "identity_verification":
             data.update(

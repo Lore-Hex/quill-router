@@ -11,6 +11,7 @@ from dataclasses import asdict, dataclass
 from typing import Literal
 
 from trusted_router.config import Settings
+from trusted_router.money import MAX_CHECKOUT_DOLLARS
 from trusted_router.services.stripe_fees import ProcessingFee, processing_fee
 
 FeeRail = Literal["card", "ach", "stablecoin", "adyen"]
@@ -83,3 +84,21 @@ def rail_processing_fee(
     settings: Settings, rail: FeeRail, credit_amount_cents: int
 ) -> ProcessingFee:
     return rail_fee_rates(settings, rail).processing_fee(credit_amount_cents)
+
+
+def stripe_max_credit_cents(settings: Settings, rail: FeeRail) -> int:
+    """Largest cent principal whose actual line-item total fits Stripe's cap.
+
+    The fee is monotone, including its floor, cap and surcharge rounding.
+    Search the same integer calculation that produces the charge rather than
+    inverting an approximate percentage formula.
+    """
+    rates = rail_fee_rates(settings, rail)
+    low, high = 0, MAX_CHECKOUT_DOLLARS * 100
+    while low < high:
+        middle = (low + high + 1) // 2
+        if rates.processing_fee(middle).charge_amount_cents <= MAX_CHECKOUT_DOLLARS * 100:
+            low = middle
+        else:
+            high = middle - 1
+    return low

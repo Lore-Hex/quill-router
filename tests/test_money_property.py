@@ -7,7 +7,7 @@ formatting invariants hold across the whole int range we care about.
 
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 import pytest
 from hypothesis import assume, example, given, settings
@@ -160,3 +160,32 @@ def test_dollars_to_microdollars_rejects_invalid() -> None:
         dollars_to_microdollars(float("nan"))
     with pytest.raises(ValueError):
         dollars_to_microdollars(float("inf"))
+
+
+@pytest.mark.parametrize("value", [
+    "1e1000000", "-1e1000000", "1e100", "-1e100", "NaN", "sNaN",
+    "Infinity", "-Infinity", "9223372036854.7758075", "-9223372036854.7758085",
+])
+def test_microdollar_conversion_rejects_overflow_as_value_error(value: str) -> None:
+    with pytest.raises(ValueError, match="dollar amount"):
+        dollars_to_microdollars(value)
+
+
+@settings(max_examples=1000, database=None)
+@given(value=st.one_of(
+    st.decimals(min_value="-9223372036854.775808", max_value="9223372036854.775807",
+                places=12, allow_nan=False, allow_infinity=False),
+    st.floats(min_value=-9e12, max_value=9e12, allow_nan=False, allow_infinity=False),
+    st.integers(min_value=-9_223_372_036_854, max_value=9_223_372_036_854),
+))
+@example(value=Decimal("9223372036854.775807499999999"))
+@example(value=Decimal("-9223372036854.775808499999999"))
+@example(value=Decimal("0.0000005"))
+@example(value=Decimal("-0.0000005"))
+@example(value=Decimal("1e-1000000"))
+def test_microdollar_conversion_matches_main_for_in_range_values(value: object) -> None:
+    # Frozen f8c287aa5 arithmetic: do not replace with a round-trip assertion.
+    expected = int((Decimal(str(value)) * 1_000_000).to_integral_value(rounding=ROUND_HALF_UP))
+    assert -(2**63) <= expected < 2**63
+    assert dollars_to_microdollars(value) == expected
+    assert dollars_to_microdollars(str(value)) == expected

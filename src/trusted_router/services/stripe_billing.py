@@ -11,9 +11,13 @@ from trusted_router.acquisition import (
 )
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
-from trusted_router.money import dollars_to_cents, money_pair
+from trusted_router.money import MAX_CHECKOUT_DOLLARS, dollars_to_cents, money_pair
 from trusted_router.schemas import CheckoutRequest
-from trusted_router.services.checkout_fees import FeeRail, rail_processing_fee
+from trusted_router.services.checkout_fees import (
+    FeeRail,
+    rail_processing_fee,
+    stripe_max_credit_cents,
+)
 from trusted_router.services.stripe_radar import payment_account_signals
 from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
@@ -44,6 +48,14 @@ def create_checkout_session(
         "ach" if ach_requested else "stablecoin" if stablecoin_requested else "card"
     )
     fee = rail_processing_fee(settings, payment_method, amount_cents)
+    maximum_cents = stripe_max_credit_cents(settings, payment_method)
+    amount_message = (
+        f"Checkout amount must be at most ${maximum_cents // 100:,}.{maximum_cents % 100:02d} "
+        f"in credits for {payment_method}; the total including processing fees "
+        f"must not exceed ${MAX_CHECKOUT_DOLLARS:,}.00."
+    )
+    if fee.charge_amount_cents > MAX_CHECKOUT_DOLLARS * 100:
+        raise api_error(400, amount_message, ErrorType.BAD_REQUEST)
     payment_metadata = fee.metadata(
         workspace_id=workspace_id,
         payment_method=payment_method,
@@ -86,7 +98,21 @@ def create_checkout_session(
                     "setup_future_usage": "off_session",
                     "metadata": payment_metadata,
                 }
-        session = stripe.checkout.Session.create(**session_args)
+        try:
+            session = stripe.checkout.Session.create(**session_args)
+        except stripe.InvalidRequestError as exc:
+            # Do not mislabel customer, currency, URL or configuration errors
+            # as user input. Stripe sometimes omits param/code for its session
+            # total cap, so recognize that specific message as well.
+            message = (exc.user_message or "").lower()
+            if exc.code in {"amount_too_large", "amount_too_small"} or (
+                "checkout session's total amount due must be" in message
+                and ("no more than" in message or "at least" in message)
+            ):
+                raise api_error(
+                    400, f"Stripe could not accept this amount. {amount_message}", ErrorType.BAD_REQUEST
+                ) from exc
+            raise
         mode = (
             "stripe_stablecoin"
             if stablecoin_requested

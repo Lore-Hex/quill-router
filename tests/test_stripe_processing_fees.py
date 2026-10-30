@@ -3,16 +3,118 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+import stripe
 from fastapi.testclient import TestClient
-from hypothesis import given
+from hypothesis import given, settings
 from hypothesis import strategies as st
 from pydantic import ValidationError
 
 from trusted_router.config import Settings
 from trusted_router.main import create_app
-from trusted_router.schemas import CheckoutRequest
+from trusted_router.schemas import CheckoutRequest, X402FundingRequest
+from trusted_router.services.checkout_fees import rail_processing_fee, stripe_max_credit_cents
 from trusted_router.services.stripe_fees import stripe_processing_fee
 from trusted_router.typed_balance import live_credit_summary
+
+
+@pytest.mark.parametrize("amount", [
+    "1e1000000", "-1e1000000", "NaN", "sNaN", "Infinity", "-Infinity",
+    "9223372036854.775808", "25.0000001", "0.9999999", "10000.0000001",
+])
+def test_checkout_bad_amount_is_a_validation_error(client, user_headers, amount):
+    response = client.post(
+        "/v1/billing/checkout", headers=user_headers,
+        json={"amount": amount, "payment_method": "card"},
+    )
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["message"]
+
+
+@pytest.mark.parametrize("schema", [CheckoutRequest, X402FundingRequest])
+@pytest.mark.parametrize("amount", [
+    "1e1000000", "NaN", "Infinity", "-Infinity", "25.0000001", "10000.0000001",
+])
+def test_funding_schema_rejects_unrepresentable_amounts(schema, amount):
+    with pytest.raises(ValidationError):
+        schema(amount=amount)
+
+
+@settings(max_examples=100, database=None)
+@given(rate=st.integers(0, 9999), fixed=st.integers(0, 1000),
+       floor=st.integers(0, 1000), cap=st.integers(0, 2000),
+       multiplier=st.integers(10000, 30000))
+def test_checkout_maximum_matches_configured_line_item_total(rate, fixed, floor, cap, multiplier):
+    cfg = Settings(environment="test", stripe_card_fee_basis_points=rate,
+                   stripe_card_fee_fixed_cents=fixed, checkout_card_fee_minimum_cents=floor,
+                   stripe_ach_fee_basis_points=rate, stripe_ach_fee_max_cents=cap,
+                   stripe_stablecoin_fee_basis_points=rate,
+                   stripe_paypal_fee_multiplier_basis_points=multiplier)
+    for rail in ("card", "ach", "stablecoin"):
+        maximum = stripe_max_credit_cents(cfg, rail)
+        if maximum:
+            fee = rail_processing_fee(cfg, rail, maximum)
+            assert sum(item["price_data"]["unit_amount"] * item["quantity"]
+                       for item in fee.checkout_line_items()) <= 1_000_000
+        assert rail_processing_fee(cfg, rail, maximum + 1).charge_amount_cents > 1_000_000
+
+
+@pytest.mark.parametrize("method,maximum", [
+    ("auto", "9570.76"), ("card", "9570.76"),
+    ("ach", "9992.50"), ("bank", "9992.50"), ("us_bank_account", "9992.50"),
+    ("stablecoin", "9776.66"), ("crypto", "9776.66"), ("usdc", "9776.66"),
+])
+def test_checkout_total_cap_and_exact_maximum(monkeypatch, user_headers, method, maximum):
+    app = create_app(Settings(environment="test", stripe_secret_key="sk_test_bounds"),  # noqa: S106
+                     init_observability=False)
+    calls = []
+
+    def create_session(**kwargs):
+        calls.append(kwargs)
+        return {"id": "cs_bounds", "url": "https://checkout.stripe.test/bounds"}
+
+    monkeypatch.setattr(stripe.checkout.Session, "create", create_session)
+    with TestClient(app) as local_client:
+        for amount in ("10000", f"{(int(maximum.replace('.', '')) + 1) / 100:.2f}"):
+            response = local_client.post("/v1/billing/checkout", headers=user_headers,
+                                         json={"amount": amount, "payment_method": method})
+            assert response.status_code == 400, response.text
+            assert maximum in response.json()["error"]["message"].replace(",", "")
+            assert not calls
+        response = local_client.post("/v1/billing/checkout", headers=user_headers,
+                                     json={"amount": maximum, "payment_method": method})
+    assert response.status_code == 201, response.text
+    assert len(calls) == 1
+    total = sum(item["price_data"]["unit_amount"] * item["quantity"]
+                for item in calls[0]["line_items"])
+    assert total <= 1_000_000
+    assert response.json()["data"]["total_microdollars"] == total * 10_000
+
+
+@pytest.mark.parametrize("message,param,code,is_amount", [
+    ("The Checkout Session's total amount due must be no more than $10,000.00 usd",
+     None, None, True),
+    ("Amount too large", "line_items[0][price_data][unit_amount]", "amount_too_large", True),
+    ("Amount too small", "amount", "amount_too_small", True),
+    ("No such customer", "customer", "resource_missing", False),
+    ("Invalid currency", "line_items[0][price_data][currency]", None, False),
+    ("Invalid API key", None, None, False),
+])
+def test_stripe_only_amount_errors_become_400(
+    monkeypatch, user_headers, message, param, code, is_amount,
+):
+    app = create_app(Settings(environment="test", stripe_secret_key="sk_test_bounds"),  # noqa: S106
+                     init_observability=False)
+
+    def create_session(**kwargs):
+        raise stripe.InvalidRequestError(message, param, code=code)
+
+    monkeypatch.setattr(stripe.checkout.Session, "create", create_session)
+    with TestClient(app, raise_server_exceptions=False) as local_client:
+        response = local_client.post("/v1/billing/checkout", headers=user_headers,
+                                     json={"amount": 25, "payment_method": "card"})
+    assert response.status_code == (400 if is_amount else 500), response.text
+    if is_amount:
+        assert "amount" in response.json()["error"]["message"].lower()
 
 
 def test_card_fee_grosses_up_principal_without_float_math() -> None:
