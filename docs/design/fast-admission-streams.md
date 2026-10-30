@@ -375,10 +375,26 @@ first; no leased stream exists before increment 4.
    max(admitted + 2 h, last accepted heartbeat + 300 s), capped at the
    hold's end of life plus the grace. The floor's two durations are owner
    configuration equal to `GATEWAY_RESERVATION_TTL_SECONDS` and
-   `heartbeat_grace_seconds`; the hold's admission time travels in its
-   first heartbeat record and its hand-off record, and each accepted
-   heartbeat's time in its own record, so the auditor applies the same
-   floor after a hand-off or a drain. Non-stream holds are unchanged (§11 item 7).
+   `heartbeat_grace_seconds`. Non-stream holds are unchanged (§11 item 7).
+
+   What the records carry, as built (#2207): not the admission time, but
+   each stream heartbeat's precomputed reap deadline
+   (`record.Snapshot.ReapDeadline`, the floor less the grace, set only when
+   it is after the heartbeat's deadline), on the heartbeat record and on
+   the hold in a hand-off. The auditor stores it as the hold row's deadline,
+   which its drain reap and `store.Reap` already wait on, so it needs
+   neither the heartbeat's time nor the hold's end of life, and no schema
+   change. An auditor from before the field refuses a record carrying it,
+   so the field takes two releases (`docs/runbooks/fastpath-deploy.md`, "A
+   record field the auditors must read first"): #2207 reads it and writes
+   nothing new (`RecordReapFloor` off), and increment 2b turns it on. Until
+   2b the owner applies the floor to its own reaps, but an auditor that
+   drains a lease reaps a stream at the heartbeat's deadline plus the grace.
+
+   The owner computes the floor on its own clock, Python on its own. 2b
+   adds the fleet's skew allowance (the store's `Skew`, 2 s) to the floor,
+   so an owner whose clock runs ahead of Python's, within that allowance,
+   cannot reap before Python's row expires.
 
 ### 4.7 Budget, capacity and keys
 
@@ -515,7 +531,18 @@ owner reaps the hold at its last running charge no sooner than the same
 instant, from its admission and its last accepted heartbeat (§4.6 item 4;
 today's code would reap about 90 s after the last heartbeat); once the
 lease drains, the auditor does it at a tick under the same floor
-(`auditor/runtime.go:631-656`). Python's reaper:
+(`auditor/runtime.go:631-656`), from increment 2b on (§4.6 item 4; before
+2b the auditor reaps at the heartbeat's deadline plus the grace).
+
+One edge remains: a heartbeat Python's transaction accepted (renewing its
+row to now plus 300 s) whose forward the owner answered `retry` (past its
+cutoff, say) and that the enclave never sent again leaves the owner's floor
+on the heartbeat before it, about one heartbeat interval (10 s) earlier
+than Python's expiry. A terminal arriving in that window meets a reap Python
+would not yet have made. It is a residual risk (§7 risk 9); the enclave's
+retry of the same sequence, its usual answer to a 503, closes it.
+
+Python's reaper:
 
 - never books a row with `fastpath_envelope` (the guard on
   `snapshot_booked`, `storage_gcp_authorize.py:1463`);
@@ -573,7 +600,9 @@ crash cuts no stream today. A revoked or draining lease answers the same.
 ## 7. Money safety
 
 For the same stream, no path admits or charges more than Python's, given
-§4.6 item 4's reap floor (increment 2, before any leased stream exists):
+§4.6 item 4's reap floor, applied by the owner from increment 2 and by the
+auditor and with the skew allowance from increment 2b, both before any
+leased stream exists:
 
 | Step | Python's path | Leased |
 |---|---|---|
@@ -619,6 +648,18 @@ Residual risks:
    20 min (§3.3); today's row is renewed for as long as heartbeats come.
    The enclave ends a stream at 2 h 15 min, so only a stream that outlives
    its gateway's own bound meets this.
+9. **A heartbeat the owner answered `retry` and never got again** leaves
+   the owner's floor about one heartbeat interval behind Python's expiry
+   (§6.4): a terminal in that window meets a reap Python would not yet have
+   made.
+10. **The owner no longer lower-bounds the running charge** (§4.6 item 2).
+    It still refuses usage that falls and a charge past the hold, but a
+    charge below the last is taken, so a pricing defect in Python's
+    `delivered_usage_charge_microdollars` that priced a later snapshot too
+    low would under-charge a reap of it. The reap then charges less than
+    Python's own reaper of the same row would only if Python's reaper used
+    a different price, and it uses the same function, so the risk is a
+    defect shared by both paths, not one the lease adds.
 
 ## 8. Shadow comparison and rollout gate
 
@@ -711,8 +752,9 @@ until increment 4's setting moves, so increments 1 to 3 run only on rows a
 test seeds. Increment 1 is the forwarding; the setting itself lands with
 the cohort in increment 4, so it can never admit a stream before the
 terminal handling of increment 3 is deployed. Increment 4 also needs
-increment 2 live on every owner and every front door (the strict decoder
-and the reap floor, §4.6); its runbook checks the fleet's release before
+increment 2b pinned on every owner and every front door (the strict
+decoder, the reap floor written into the records the auditor reads, and
+its skew allowance, §4.6); its runbook checks the fleet's release before
 the setting moves. Increment 6 is dark until `fastpath_edge_streams` goes
 on after gate E (§5.4).
 
@@ -720,20 +762,22 @@ on after gate E (§5.4).
 |---|---|---|---|---|
 | 1 | Python, dark | `FrontDoorClient.heartbeat` with its own permits (§4.7); `_heartbeat_gateway_sync`'s leased branch: transaction, forward, answer map (§4.2 to §4.5); the basis builder; the reaper never books a leased row (§6.4 first bullet); tests with a fake front door: each answer row of §4.4, replay forwarding, a row without an envelope untouched, the kill switch before the forward | `routes/internal/gateway.py`, `services/fastpath_frontdoor.py`, `services/fastpath_heartbeat.py` (new), `storage_gcp_authorize.py`, `tests/test_stage_d_heartbeat.py`, `tests/test_fastpath_frontdoor.py`, `tests/test_fastpath_pilot_route.py` | ~250 LOC + ~450 test |
 | 2 | Go | `EchoGranted` and the falling running charge (§4.6 items 1, 2), owners before front doors; `POST /v1/disposition` (item 3); the stream hold's reap floor for the owner and the auditor (item 4); the edge policy's optional `fastpath_edge_streams`; the shadow's stream split (§8.1); loadgen plays `EchoGranted` and the floor | `owner/{requests,adopt,handoff}.go`, `record/record.go`, `auditor/{member,runtime}.go`, `frontdoor/{frontdoor,answers,local,http}.go`, `routingsnapshot/edgepolicy.go`, `gwauth/staged.go`, `edge/shadow.go`, `loadgen/loadgen.go`, tests | ~300 LOC + ~550 test |
-| 3 | Python, dark | `forward_terminal`'s reap and `reaped_snapshot` answers, a change to today's `settled` handling (§6.3); the reaper's leased-stream reconcile through `/v1/disposition`, an unanswered or failing read as `pending`, the alert for a `settled` disposition without an intent (§6.4); the drain the same; integration test against the Go service: lease a seeded stream, heartbeat, stop, reap after the floor, late settle | `services/fastpath_settle.py`, `services/fastpath_frontdoor.py`, `storage_gcp_authorize.py`, `storage_gcp.py`, `services/settle_outbox_apply.py`, tests | ~250 LOC + ~500 test |
-| 4 | Python | the settings `fastpath_pilot_streams` and `fastpath_edge_streams`; `pilot_reason`'s stream rule and sub-reasons (§5.1, §5.2); `EchoGranted` sent on every seq above 1 (§4.6); the edge policy publishes `fastpath_edge_streams` only when on (§5.4); runbook rows: increment 2 on every owner and front door, then gate P | `config.py`, `services/fastpath_frontdoor.py`, `routes/internal/gateway.py`, `edge_policy.py`, `services/edge_policy_publisher.py`, `docs/runbooks/*`, tests | ~120 LOC + ~300 test |
+| 2b | Go | once every member runs increment 2 (#2207), pinned as `fastpath-deploy.md` says: the service's defaults turn `RecordReapFloor` on, so heartbeat and hand-off records carry the reap deadline the auditor honours (§4.6 item 4); the floor gains the store's skew allowance | `service/service.go`, `owner/owner.go`, tests | ~10 LOC + ~60 test |
+| 3 | Python, dark | `forward_terminal`'s reap and `reaped_snapshot` answers, a change to today's `settled` handling (§6.3); the reaper's leased-stream reconcile through `/v1/disposition`, an unanswered or failing read as `pending`, the alert for a `settled` disposition without an intent (§6.4); the drain the same; the alerts for `fastpath.heartbeat_divergence` and `fastpath.settled_without_intent` (log-based metrics and policies); tests against a fake front door answering in the Go front door's own JSON, since no Python harness starts the Go service (#2210) | `services/fastpath_settle.py`, `services/fastpath_frontdoor.py`, `storage_gcp_authorize.py`, `storage_gcp.py`, `services/settle_outbox_apply.py`, tests | ~250 LOC + ~500 test |
+| 4 | Python | the settings `fastpath_pilot_streams` and `fastpath_edge_streams`; `pilot_reason`'s stream rule and sub-reasons (§5.1, §5.2); `EchoGranted` sent on every seq above 1 (§4.6); the edge policy publishes `fastpath_edge_streams` only when on (§5.4); runbook rows: increment 2b pinned on every owner and front door, then gate P | `config.py`, `services/fastpath_frontdoor.py`, `routes/internal/gateway.py`, `edge_policy.py`, `services/edge_policy_publisher.py`, `docs/runbooks/*`, tests | ~120 LOC + ~300 test |
 | 5 | Go + Python vectors | the edge's stream composition in the shadow only (§5.3, §8.4); `StageDReasonOf` for streams; `pricing_snapshot`; stream answer vectors | `gwauth/{staged,response,rows,payload}.go`, `edge/{decide,shadow_full}.go`, `scripts/fastpath/authorize_vectors.py`, testdata, tests | ~400 LOC + ~600 test |
 | 6 | Go | the edge decides eligible streams when the policy carries `fastpath_edge_streams` (the tripwire of §5.1 item 5); dark until that setting goes on | `gwauth/cohort_request.go`, `edge/decide.go`, `edge/decide_path.go`, tests | ~80 LOC + ~200 test |
 
 Then gate P (§8.3) after increment 4, gate E (§8.5) after 5, and
-`fastpath_edge_streams` after 6. In all, six code PRs after this one, about
-1,400 lines of production code and 2,600 of tests and generators, the
+`fastpath_edge_streams` after 6. In all, seven code PRs after this one,
+about 1,400 lines of production code and 2,650 of tests and generators, the
 vector JSON aside.
 
 **Rollback floors.** While any leased stream is open, Python does not roll
 back below increment 3 (it must forward heartbeats and decide reap
-answers) and Go does not roll back below increment 2 (the strict decoder
-would refuse `EchoGranted`, and the reap floor would go). The way back is
+answers) and Go does not roll back below increment 2b (before 2 the strict
+decoder would refuse `EchoGranted` and the reap floor would go; before 2b
+the auditor would reap a drained lease's streams without the floor). The way back is
 the settings off (§6.7), then waiting out the hold's life plus the grace
 plus the drain's overdue allowance, after which no leased stream is open
 and any release may be rolled back.
@@ -766,3 +810,9 @@ Decided by Joseph on 2026-10-30, on this design's first review:
    Non-stream holds are unchanged. Without it a late refund or settle
    inside the gap would be decided `reaped_snapshot` and §7's bound would
    not hold.
+8. **The floor reaches the auditor in a second release, with the skew
+   allowance** (§4.6 item 4, §10 increment 2b): #2207 reads the records'
+   reap deadline and writes none; 2b writes it once every member reads it,
+   and adds the store's skew allowance to the floor. Python's increment 4
+   waits for 2b pinned on every owner and front door, and 2b is Go's
+   rollback floor while leased streams are open.
