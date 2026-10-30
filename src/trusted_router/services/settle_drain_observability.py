@@ -13,7 +13,12 @@ _ALERT_CLASSES = frozenset({"activity-repair-expired", "lost-charge", "reservati
 
 
 class WorkerLogFilter(logging.Filter):
-    def filter(self, record: logging.LogRecord) -> logging.LogRecord:
+    def filter(self, record: logging.LogRecord) -> logging.LogRecord | bool:
+        # The worker only serves /health. Drop access records before scrubbing:
+        # Uvicorn's AccessFormatter requires its original five request fields,
+        # which must never reach the worker's output boundary.
+        if record.name == "uvicorn.access":
+            return False
         if record.name == WORKER_LOGGER:
             return record
         error_class = record.exc_info[0].__name__ if record.exc_info and record.exc_info[0] else "none"
