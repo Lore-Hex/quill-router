@@ -66,11 +66,14 @@ done
 # Stage every candidate at zero traffic, capture the revision returned by the
 # update command itself, and validate all candidates before moving one byte of
 # traffic. A separate latestCreated lookup is racy with concurrent rollouts.
+# Establish the router liveness policy even if the inherited template predates
+# it or has drifted. Keep the existing startup probe unchanged.
 candidate_revisions=()
 for target in "${clean_targets[@]}"; do
   log "setting new_signups=${desired} on ${control_service}/${target}"
   revision="$(gc run services update "$control_service" \
     --region="$target" \
+    --liveness-probe 'httpGet.path=/health,httpGet.port=8080,initialDelaySeconds=0,periodSeconds=10,timeoutSeconds=9,failureThreshold=6' \
     --update-env-vars="TR_NEW_SIGNUPS_ENABLED=${desired}" \
     --revision-suffix="$revision_suffix" \
     --no-traffic \

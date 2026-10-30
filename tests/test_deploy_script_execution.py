@@ -109,10 +109,43 @@ def test_every_router_deploy_sets_http_liveness(
         assert deploy.count("--liveness-probe") == 1
         assert deploy[deploy.index("--liveness-probe") + 1] == (
             "httpGet.path=/health,httpGet.port=8080,initialDelaySeconds=0,"
-            "periodSeconds=10,timeoutSeconds=2,failureThreshold=4"
+            "periodSeconds=10,timeoutSeconds=9,failureThreshold=6"
         )
         # Preserve Cloud Run's existing TCP startup probe and cold-start budget.
         assert not any(arg.startswith("--startup-probe") for arg in deploy)
+
+
+@pytest.mark.parametrize("inherited_probe", [None, {
+    "httpGet": {"path": "/ready", "port": 8080},
+    "periodSeconds": 10, "timeoutSeconds": 2, "failureThreshold": 4,
+}], ids=["absent", "different"])
+@pytest.mark.parametrize("action", ["enable", "disable"])
+def test_signup_redeploy_replaces_absent_or_different_liveness(
+    tmp_path: Path, inherited_probe: dict[str, object] | None, action: str,
+) -> None:
+    from .test_signup_operator_script import _run, _write_harness
+
+    script, env_file = _write_harness(tmp_path, inherited_probe=inherited_probe)
+    run = _run(script, env_file, action)
+    assert run.returncode == 0, run.stderr
+    calls = (tmp_path / "gcloud.log").read_text().splitlines()
+    updates = [call for call in calls if call.startswith("run services update ")]
+    assert len(updates) == 2
+    for update in updates:
+        assert update.count("--liveness-probe ") == 1
+        assert (
+            "--liveness-probe httpGet.path=/health,httpGet.port=8080,initialDelaySeconds=0,"
+            "periodSeconds=10,timeoutSeconds=9,failureThreshold=6"
+        ) in update
+        assert "--startup-probe" not in update
+        assert "--no-traffic" in update
+    for region in ("region-a", "region-b"):
+        state = tmp_path / "state" / region
+        assert json.loads((state / "probe").read_text()) == {
+            "httpGet": {"path": "/health", "port": 8080}, "initialDelaySeconds": 0,
+            "periodSeconds": 10, "timeoutSeconds": 9, "failureThreshold": 6,
+        }
+        assert (state / "serving").read_text().strip().startswith("trusted-router-signup-")
 
 
 @pytest.mark.parametrize("backend", ["clickhouse", "postgres"])

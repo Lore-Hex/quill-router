@@ -956,16 +956,19 @@ deploy_one_region() {
   # for the instance lifetime; minimum instances alone do not provide idle CPU.
   # Append serving identity per target; never inherit it from the caller or
   # primary revision. TR_PRIMARY_REGION still names the shared journal region.
-  # /health is async and process-only, including during SIGTERM drain. Four
-  # failures at 10s (2s timeout) give a nominal 40s external kill budget,
-  # after the 30s loop-stall stack-dump watchdog. Keep TCP startup unchanged.
-  # public_surface.sh and internal_surface.sh carry the same liveness policy.
+  # /health has no storage/threadpool dependency, including in SIGTERM drain.
+  # Its HTTP deadline still includes CPU scheduling and instrumentation: 9s
+  # tolerates the tested 8s recoverable loop delays. Six failures at 10s give
+  # a nominal 60s external backstop, beyond the 30s in-process watchdog.
+  # A silent freeze exhausts probes in ~59-69s (phase dependent); replacement
+  # startup is additional. Keep TCP startup unchanged. public_surface.sh,
+  # internal_surface.sh and set_new_signups.sh carry this same policy.
   if gc run deploy "$SERVICE" \
       --region "$target" \
       --image "$IMAGE" \
       --allow-unauthenticated \
       --port 8080 \
-      --liveness-probe 'httpGet.path=/health,httpGet.port=8080,initialDelaySeconds=0,periodSeconds=10,timeoutSeconds=2,failureThreshold=4' \
+      --liveness-probe 'httpGet.path=/health,httpGet.port=8080,initialDelaySeconds=0,periodSeconds=10,timeoutSeconds=9,failureThreshold=6' \
       --memory "${TR_CLOUD_RUN_MEMORY:-1Gi}" \
       --no-cpu-throttling \
       --concurrency "$TR_CLOUD_RUN_CONCURRENCY" \

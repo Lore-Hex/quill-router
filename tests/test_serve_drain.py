@@ -1184,3 +1184,249 @@ os.close(fd)
     )
     assert result.returncode == 0, result.stderr
     assert "Current thread" in dump.read_text()
+
+
+# Run the application and the probe clock in DIFFERENT OS processes. An
+# asyncio.wait_for on the serving loop cannot time a CPU-starved HTTP request.
+_LIVENESS_SERVER = r'''
+import asyncio
+import json
+import socket
+import sys
+import time
+
+import sentry_sdk
+from sentry_sdk.transport import HttpTransport
+from trusted_router import sentry_config, serve
+from trusted_router.config import Settings
+from trusted_router.main import create_app
+
+# Retain the real integrations, sampling, transport queue and worker. Replace
+# only final envelope delivery so this regression cannot contact Sentry.
+def delivered(self, envelope):
+    print("LIVENESS_ENVELOPE", flush=True)
+HttpTransport._send_envelope = delivered
+# Test environment disables unrelated background IO. Bypass ONLY Sentry's
+# test suppression, exercising the production init_sentry configuration.
+sentry_config._running_under_pytest = lambda settings: False
+app = create_app(Settings(
+    environment="test", service_surface="internal", storage_backend="memory",
+    sentry_dsn="https://public@example.invalid/1", sentry_traces_sample_rate=1.0,
+), init_observability=True)
+client = sentry_sdk.get_client()
+assert client.is_active()
+assert {"fastapi", "starlette", "logging"} <= client.integrations.keys()
+print("LIVENESS_SENTRY_ACTIVE", flush=True)
+state = {"count": 0, "start": None}
+ready = asyncio.Event()
+block_seconds = float(sys.argv[2])
+cycles = int(sys.argv[3])
+
+@app.get("/liveness-test-work")
+async def work():
+    state["count"] += 1
+    if state["count"] == 8:
+        state["start"] = time.monotonic() + 2
+        ready.set()
+    await ready.wait()
+    for cycle in range(cycles):
+        await asyncio.sleep(max(0, state["start"] + cycle * 10 - time.monotonic()))
+        end = time.monotonic() + block_seconds
+        while time.monotonic() < end:
+            pass
+    return {"completed": True}
+
+@app.get("/liveness-test-status")
+async def status():
+    return state
+
+class Server(serve.DrainingServer):
+    async def on_tick(self, counter):
+        now = time.monotonic()
+        if self._stall_armed_at is None or now - self._stall_armed_at >= 1:
+            print("LIVENESS_TICK", now, flush=True)
+        return await super().on_tick(counter)
+
+config = serve.build_config({})
+config.app = app
+assert config.access_log  # Include synchronous Uvicorn access logging.
+server = Server(config, drain_seconds=3, stall_seconds=30)
+server.run(sockets=[socket.socket(fileno=int(sys.argv[1]))])
+'''
+
+_LIVENESS_PROBER = r'''
+import concurrent.futures
+import json
+import os
+import signal
+import socket
+import sys
+import time
+
+port, pid = int(sys.argv[1]), int(sys.argv[2])
+policy = json.loads(sys.argv[3])
+period = int(policy["periodSeconds"])
+timeout = int(policy["timeoutSeconds"])
+threshold = int(policy["failureThreshold"])
+mode = sys.argv[4]
+cycles = threshold + 1
+
+def get(path, budget):
+    started = time.monotonic()
+    deadline = started + budget
+    def remaining():
+        value = deadline - time.monotonic()
+        if value <= 0:
+            raise TimeoutError("external total HTTP deadline")
+        return value
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=remaining()) as conn:
+            conn.settimeout(remaining())
+            conn.sendall((f"GET {path} HTTP/1.1\r\nHost: instance\r\nConnection: close\r\n\r\n").encode())
+            data = b""
+            while True:
+                conn.settimeout(remaining())
+                chunk = conn.recv(65536)
+                if not chunk:
+                    break
+                data += chunk
+            head, body = data.split(b"\r\n\r\n", 1)
+            status = int(head.split(b" ", 2)[1])
+            result = {"status": status, "body": json.loads(body)}
+    except (OSError, ValueError) as exc:
+        result = {"error": type(exc).__name__}
+    return {**result, "started": started, "elapsed": time.monotonic() - started}
+
+def probe(origin, budget, count):
+    failures = maximum = 0
+    results = []
+    for index in range(count):
+        time.sleep(max(0, origin + index * period - time.monotonic()))
+        result = get("/health", budget)
+        failures = 0 if result.get("status") == 200 else failures + 1
+        maximum = max(maximum, failures)
+        results.append(result)
+    return {"results": results, "max_failures": maximum}
+
+assert get("/health", timeout)["status"] == 200
+if mode == "stopped":
+    stopped = time.monotonic()
+    os.kill(pid, signal.SIGSTOP)
+    # Worst phase: stop just after the previous successful probe, then wait
+    # almost a full period before the first failure attempt starts.
+    result = probe(stopped + period - 0.05, timeout, threshold)
+    result["stopped_elapsed"] = time.monotonic() - stopped
+    print(json.dumps(result), flush=True)
+else:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=9) as pool:
+        work = [pool.submit(get, "/liveness-test-work", cycles * period + 30) for _ in range(8)]
+        deadline = time.monotonic() + 10
+        while True:
+            status = get("/liveness-test-status", timeout)["body"]
+            if status["start"] is not None:
+                break
+            assert time.monotonic() < deadline
+            time.sleep(0.02)
+        assert status["count"] == 8
+        origin = status["start"] + 0.2
+        # Negative control: the old 2s deadline must reproduce the false kill,
+        # proving probes overlap the CPU bursts rather than idle intervals.
+        old = pool.submit(probe, origin, 2, cycles)
+        result = probe(origin, timeout, cycles)
+        result["old_policy"] = old.result()
+        result["work"] = [future.result() for future in work]
+        result["recovered"] = get("/health", timeout)
+        print(json.dumps(result), flush=True)
+'''
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="requires POSIX signals and inherited listener")
+@pytest.mark.parametrize("mode,block_seconds", [
+    ("reviewer-cpu", 0.4), ("eight-second-cpu", 1.0), ("stopped", 0.0),
+])
+def test_real_external_liveness_distinguishes_cpu_progress_from_sigstop(
+    tmp_path: Path, mode: str, block_seconds: float,
+) -> None:
+    import json
+    import re
+
+    # Read what will actually be deployed: shortening the timeout must make
+    # this real-server regression red, not leave a hardcoded probe green.
+    rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
+    match = re.search(r"--liveness-probe '([^']+)'", rollout)
+    assert match is not None
+    policy = dict(field.split("=", 1) for field in match[1].split(","))
+    threshold = int(policy["failureThreshold"])
+    period = int(policy["periodSeconds"])
+    timeout = int(policy["timeoutSeconds"])
+    env = {
+        key: value for key, value in os.environ.items()
+        if not key.startswith(("TR_", "UVICORN_", "AXIOM_", "SENTRY_"))
+        and key not in {"PYTEST_CURRENT_TEST", "WEB_CONCURRENCY", "FORWARDED_ALLOW_IPS"}
+    }
+    env.update(PYTHONPATH=str(ROOT / "src"), TR_STORAGE_BACKEND="memory", TR_ENVIRONMENT="test")
+    log_path = tmp_path / "server.log"
+    with socket.socket() as listener, log_path.open("w") as log:
+        try:
+            listener.bind(("127.0.0.1", 0))
+        except OSError as exc:
+            if exc.errno in {errno.EACCES, errno.EPERM}:
+                pytest.skip(f"operator must run real external liveness ({mode}): socket bind denied")
+            raise
+        port = listener.getsockname()[1]
+        process = subprocess.Popen(  # noqa: S603 - fixed local regression program
+            [sys.executable, "-c", _LIVENESS_SERVER, str(listener.fileno()),
+             str(block_seconds), str(threshold + 1)],
+            cwd=tmp_path, env=env, pass_fds=(listener.fileno(),),
+            stdout=log, stderr=subprocess.STDOUT,
+        )
+        try:
+            deadline = time.monotonic() + 30
+            while True:
+                assert process.poll() is None, log_path.read_text()
+                connection = http.client.HTTPConnection("127.0.0.1", port, timeout=0.2)
+                try:
+                    connection.request("GET", "/health")
+                    if connection.getresponse().status == 200:
+                        break
+                except (OSError, http.client.HTTPException):
+                    pass
+                finally:
+                    connection.close()
+                assert time.monotonic() < deadline, log_path.read_text()
+                time.sleep(0.05)
+            probe = subprocess.run(  # noqa: S603 - separate process owns all probe deadlines
+                [sys.executable, "-c", _LIVENESS_PROBER, str(port), str(process.pid),
+                 json.dumps(policy), mode],
+                cwd=tmp_path, env=env, capture_output=True, text=True,
+                timeout=(threshold + 1) * period + 40,
+            )
+            assert probe.returncode == 0, probe.stderr + log_path.read_text()
+            result = json.loads(probe.stdout)
+            (tmp_path / "probes.json").write_text(json.dumps(result, indent=2))
+            assert process.poll() is None, log_path.read_text()
+            if mode == "stopped":
+                assert result["max_failures"] == threshold, result
+                # Six 9s deadlines, starting at +10,+20,...,+60: ~69s.
+                # Allow 2s host scheduler tolerance, not server-loop time.
+                assert threshold * period + timeout - 1 <= result["stopped_elapsed"] <= threshold * period + timeout + 2, result
+                assert all(item.get("error") == "TimeoutError" for item in result["results"])
+            else:
+                assert result["max_failures"] == 0, result
+                assert result["old_policy"]["max_failures"] >= 4, result
+                assert all(item.get("status") == 200 for item in result["work"]), result
+                assert result["recovered"]["status"] == 200, result
+                ticks = [float(line.split()[1]) for line in log_path.read_text().splitlines()
+                         if line.startswith("LIVENESS_TICK ")]
+                assert len(ticks) > threshold
+                assert max(b - a for a, b in zip(ticks, ticks[1:], strict=False)) < 30
+            logs = log_path.read_text()
+            assert "LIVENESS_SENTRY_ACTIVE" in logs
+            assert "LIVENESS_ENVELOPE" in logs
+            assert '"GET /health HTTP/1.1" 200' in logs
+        finally:
+            # SIGKILL also cleans up a SIGSTOP'd process (SIGTERM would remain
+            # pending). Never leave a frozen child after assertion failure.
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=5)

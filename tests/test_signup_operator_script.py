@@ -15,6 +15,7 @@ def _write_harness(
     bad_region: str = "",
     bad_candidate_region: str = "",
     traffic_failure_region: str = "",
+    inherited_probe: dict[str, object] | None = None,
 ) -> tuple[Path, Path]:
     deploy = tmp_path / "deploy"
     deploy.mkdir()
@@ -59,14 +60,31 @@ elif [ "$1 $2 $3" = "run revisions describe" ]; then
   printf '{"spec":{"containers":[{"env":[{"name":"TR_SERVICE_SURFACE","value":"%s"},{"name":"TR_NEW_SIGNUPS_ENABLED","value":"%s"}]}]}}\n' "$surface" "$gate"
 elif [ "$1 $2 $3" = "run services update" ]; then
   suffix="" desired=""
+  probe="${FAKE_INHERITED_PROBE}"
+  previous=""
   for arg in "$@"; do
+    if [ "$previous" = --liveness-probe ]; then
+      probe="$(/usr/bin/python3 -c '
+import json,sys
+probe={"httpGet": {}}
+for field in sys.argv[1].split(","):
+    key,value=field.split("=",1)
+    if key.startswith("httpGet."):
+        probe["httpGet"][key.split(".")[1]]=int(value) if key.endswith("port") else value
+    else:
+        probe[key]=int(value)
+print(json.dumps(probe))
+' "$arg")"
+    fi
     case "$arg" in
       --revision-suffix=*) suffix="${arg#--revision-suffix=}" ;;
       --update-env-vars=TR_NEW_SIGNUPS_ENABLED=*) desired="${arg##*=}" ;;
     esac
+    previous="$arg"
   done
   revision="trusted-router-${suffix}"
   printf '%s\n' "$desired" >"$state/gate"
+  printf '%s\n' "$probe" >"$state/probe"
   printf '%s\n' "$revision"
 elif [ "$1 $2 $3" = "run services update-traffic" ]; then
   for arg in "$@"; do
@@ -124,6 +142,7 @@ else:
                 "FAKE_BAD_REGION": bad_region,
                 "FAKE_BAD_CANDIDATE_REGION": bad_candidate_region,
                 "FAKE_TRAFFIC_FAILURE_REGION": traffic_failure_region,
+                "FAKE_INHERITED_PROBE": json.dumps(inherited_probe),
             }
         ),
         encoding="utf-8",

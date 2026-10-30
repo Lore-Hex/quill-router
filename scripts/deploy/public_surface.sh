@@ -800,7 +800,7 @@ for index in "${!TARGET_REGIONS[@]}"; do
     --allow-unauthenticated
     --port 8080
     # Same process-only liveness budget as rollout.sh; retain TCP startup.
-    --liveness-probe 'httpGet.path=/health,httpGet.port=8080,initialDelaySeconds=0,periodSeconds=10,timeoutSeconds=2,failureThreshold=4'
+    --liveness-probe 'httpGet.path=/health,httpGet.port=8080,initialDelaySeconds=0,periodSeconds=10,timeoutSeconds=9,failureThreshold=6'
     --ingress "$INGRESS"
     --service-account "$PUBLIC_RUNTIME_SA"
     --concurrency "$PUBLIC_CONCURRENCY"
