@@ -194,11 +194,11 @@ def test_rollout_never_inherits_key_file():
     assert pins['TR_ASYNC_SETTLE_TICKET_AUDIENCE'] == 'router-settlement'
     assert pins['TR_ASYNC_SETTLE_AUTHORITY_EPOCH'] == '1'
     assert pins['TR_ASYNC_SETTLE_ENABLED'] == 'false'
-    assert pins['TR_ASYNC_SETTLE_PROTECTION'] == 'true'
+    assert pins['TR_ASYNC_SETTLE_PROTECTION'] == 'false'
     assert Settings().async_settle_enabled is False
     assert Settings().async_settle_protection is False
     assert [line.strip() for line in source.splitlines() if 'TR_ASYNC_SETTLE_PROTECTION' in line] == [
-        '"TR_ASYNC_SETTLE_PROTECTION=true"']
+        '"TR_ASYNC_SETTLE_PROTECTION=false"']
     config = Settings(environment='test', **{
         key.removeprefix('TR_').lower(): value for key, value in pins.items()
     })

@@ -774,11 +774,11 @@ ENV_VARS=(
   # the workspaces are set and the policy is empty. The activation tool's
   # release shadow-opt-in requires --expires-at and opt-out clears it.
   "TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT="
-  # RB1: fresh admission off; retain protection, signer, epoch, pilot cap and
-  # dedicated worker drain until all accepted work is terminal. Shadow stays
-  # opted out after its stop gate; pending stays truthful.
+  # RB2: protection off only after accepted work is proved drained, including
+  # leased and dead unresolved rows. Preserve signer/epoch and the worker;
+  # reinstall R1 protection and reverify fleet health before re-enabling.
   "TR_ASYNC_SETTLE_ENABLED=false"
-  "TR_ASYNC_SETTLE_PROTECTION=true"
+  "TR_ASYNC_SETTLE_PROTECTION=false"
   "TR_ASYNC_SETTLE_PILOT_WORKSPACES=162e441a-5d13-414f-92bd-7c6cd805faa3"
   "TR_ASYNC_SETTLE_PILOT_CAP_MICRO=5000000"
   # October 31: new async-v1 acceptance only where the 500 ms durable handoff
