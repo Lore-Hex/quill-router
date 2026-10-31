@@ -260,6 +260,12 @@ type Decision struct {
 	Affinity bool
 	Routing  routingsnapshot.Request
 	Snapshot *routingsnapshot.Snapshot
+	// Stream is body.stream: the lease takes a stream's hold as a stream
+	// (Admission.Stream), as Python's pilot asks for it
+	// (fastpath_frontdoor.authorize), so the owner accepts its heartbeats
+	// and keeps the stream reap floor (docs/design/fast-admission-streams.md
+	// section 2.3 item 4).
+	Stream bool
 	// Windows is the window check a key whose spend windows Python's
 	// authorize enforces needs before the edge may admit (key-windows
 	// section 4.2): nil for any other key, an alert-only one included.
@@ -607,7 +613,7 @@ func Decide(in DecideInputs) Decided {
 		Staged: staged, Input: compose, Identity: identity, Estimate: res.ModelEstimate, Reservation: res.Reservation,
 		Workspace: key.WorkspaceID, KeyHash: key.Hash, LookupHash: r.APIKeyLookupHash, Kid: in.Request.Boot.Kid,
 		Region: region, Candidates: slices.Clone(res.Candidates),
-		Affinity: r.CacheAffinity, Routing: req, Snapshot: snap,
+		Affinity: r.CacheAffinity, Routing: req, Snapshot: snap, Stream: r.Streamed(),
 	}
 	if w := key.Windows; w != nil && !w.AlertOnly {
 		// An alert-only key is decided as an uncapped one: Python's
