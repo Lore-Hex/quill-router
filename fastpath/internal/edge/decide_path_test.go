@@ -31,6 +31,7 @@ import (
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/frontdoor"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/gwauth"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/gwstate"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/keywindow"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/routingsnapshot"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store"
@@ -511,18 +512,29 @@ func TestTheInFlightLimitIsPerLookupHash(t *testing.T) {
 	}
 }
 
+// orderedShadowCache orders only the asynchronous shadow lookup, not the
+// enforcing path's lookup or eviction. Neither path waits on the other in
+// production, so a refusal can invalidate the cache before the shadow runs.
+type orderedShadowCache struct {
+	KeyCache
+	allow <-chan struct{}
+	read  chan struct{}
+}
+
+func (c *orderedShadowCache) Lookup(hash string, at time.Time) gwstate.Read {
+	<-c.allow
+	r := c.KeyCache.Lookup(hash, at)
+	close(c.read)
+	return r
+}
+
 // TestPythonsInFlightRefusalOfAnInFlightPassIsAPass: with the decide path
-// and the full shadow both on, a request the decide path passed at its own
-// in-flight limit (inflight.key) that Python refuses at its per-key
-// in-flight gate (429 rate_limited, "Too many concurrent requests for this
-// API key") is passed.inflight.key: Go answered nothing, and its gate made
-// Python's call. Not a would-admit, and nothing pages. Every other refusal
-// of such a pass (a 402, the ingress limiter's 429, a window's 429) stays a
-// would-admit and pages, and so does Python's in-flight refusal of a
-// request the decide path passed for another reason after its gate let the
-// request in (owner.busy); TestOnlyAnInFlightPassAgreesWithAnInFlightRefusal
-// holds the unread 429 and the shadow alone. The 2026-10-31 ramp's 83 pages
-// were the first case.
+// and the full shadow both on, an inflight.key pass refused by Python's
+// matching in-flight gate is passed.inflight.key, not a would-admit page.
+// Other refusals still page when the shadow holds a warm key. If Python's
+// enforcing eviction wins the race with the shadow lookup, the shadow must
+// instead report stale.key: it cannot decide from an invalidated cache.
+// Both orderings are intentional; neither may depend on goroutine scheduling.
 func TestPythonsInFlightRefusalOfAnInFlightPassIsAPass(t *testing.T) {
 	f := authorizeGoldens(t)
 	c := authorizeCaseNamed(t, "answer:app_categories_empty")
@@ -535,15 +547,18 @@ func TestPythonsInFlightRefusalOfAnInFlightPassIsAPass(t *testing.T) {
 		pass    string
 		want    string
 		pages   bool
+		late    bool // Python's cache eviction happens before the shadow lookup
 	}{
-		{"in_flight_refusal", true, 429, inFlight, PassInFlightKey, ClassGoPassed + "." + PassInFlightKey, false},
+		{"in_flight_refusal", true, 429, inFlight, PassInFlightKey, ClassGoPassed + "." + PassInFlightKey, false, false},
 		{"payment_required", true, 402, errorBody(402, "payment_required", "Insufficient credits"), PassInFlightKey,
-			ClassWouldAdmit + ".402.payment_required", true},
+			ClassWouldAdmit + ".402.payment_required", true, false},
+		{"payment_required_after_eviction", true, 402, errorBody(402, "payment_required", "Insufficient credits"), PassInFlightKey,
+			"stale.key", false, true},
 		{"ingress_limiter", true, 429, errorBody(429, "rate_limited", "Rate limit exceeded"), PassInFlightKey,
-			ClassWouldAdmit + ".429.rate_limited", true},
+			ClassWouldAdmit + ".429.rate_limited", true, false},
 		{"window", true, 429, errorBody(429, "key_window_limit_exceeded", "API key daily spend limit exceeded; x"),
-			PassInFlightKey, ClassWouldAdmit + ".429.key_window_limit_exceeded", true},
-		{"owner_busy", false, 429, inFlight, PassOwnerBusy, ClassWouldAdmit + ".429.rate_limited", true},
+			PassInFlightKey, ClassWouldAdmit + ".429.key_window_limit_exceeded", true, false},
+		{"owner_busy", false, 429, inFlight, PassOwnerBusy, ClassWouldAdmit + ".429.rate_limited", true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var mu sync.Mutex
@@ -555,6 +570,11 @@ func TestPythonsInFlightRefusalOfAnInFlightPassIsAPass(t *testing.T) {
 					alerts = append(alerts, kind+"|"+what)
 				}}
 			h := newDecideEdgeWith(t, f, c, nil, shadow)
+			allow, read := make(chan struct{}), make(chan struct{})
+			h.edge.full.cfg.Cache = &orderedShadowCache{KeyCache: h.cache, allow: allow, read: read}
+			if !tc.late {
+				close(allow)
+			}
 			h.policy.GatewayAuthorizeMaxInFlightPerKey = 1
 			release := make(chan struct{})
 			var wg sync.WaitGroup
@@ -577,9 +597,18 @@ func TestPythonsInFlightRefusalOfAnInFlightPassIsAPass(t *testing.T) {
 					return frontdoor.Authorized{Status: frontdoor.Busy}
 				}
 			}
-			respond := answerWith(tc.status, tc.body, "Retry-After", "1")
+			answer := answerWith(tc.status, tc.body, "Retry-After", "1")
+			respond := func(w http.ResponseWriter) {
+				if !tc.late {
+					<-read
+				}
+				answer(w)
+			}
 			h.python.respond.Store(&respond)
 			rec := h.send(t, c)
+			if tc.late {
+				close(allow)
+			}
 			h.edge.WaitDecideShadow()
 			close(release)
 			wg.Wait()
