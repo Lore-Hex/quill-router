@@ -24,7 +24,6 @@ import logging
 import sys
 import threading
 from typing import Any
-from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, Request
@@ -40,6 +39,7 @@ from trusted_router.services.ses_suppression import (
 from trusted_router.sns_verify import SnsVerificationError, verify_sns_message
 from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
+from trusted_router.url_validation import parse_url
 
 log = logging.getLogger(__name__)
 _SNS_CONFIRM_MAX_CONCURRENT = 2
@@ -69,12 +69,14 @@ def register_ses_notification_routes(router: APIRouter, settings: Settings) -> N
             # has been rejecting every SNS delivery for days. Metadata only
             # (field names, type, cert host); never the Message content.
             cert_url = str(envelope.get("SigningCertURL") or envelope.get("SigningCertUrl") or "")
+            parsed_cert_url = parse_url(cert_url)
+            cert_host = parsed_cert_url.hostname if parsed_cert_url is not None else "<unparseable>"
             print(
                 "ses_notification.signature_invalid "
                 f"reason={str(exc)!r} keys={sorted(envelope.keys())} "
                 f"type={envelope.get('Type')!r} "
                 f"sig_version={envelope.get('SignatureVersion')!r} "
-                f"cert_host={urlparse(cert_url).hostname!r}",
+                f"cert_host={cert_host!r}",
                 file=sys.stderr,
                 flush=True,
             )
