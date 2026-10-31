@@ -489,13 +489,13 @@ def register_catalog_routes(router: APIRouter) -> None:
     _current_catalog_payload()
 
     @router.get("/embeddings/models")
-    async def embeddings_models() -> dict[str, list[dict[str, Any]]]:
+    def embeddings_models() -> dict[str, list[dict[str, Any]]]:
         return {
             "data": [model_to_openrouter_shape(m) for m in MODELS.values() if m.supports_embeddings]
         }
 
     @router.get("/images/models")
-    async def image_models() -> dict[str, list[dict[str, Any]]]:
+    def image_models() -> dict[str, list[dict[str, Any]]]:
         return {
             "data": [
                 _image_model_shape(model)
@@ -505,7 +505,7 @@ def register_catalog_routes(router: APIRouter) -> None:
         }
 
     @router.get("/images/models/{author}/{slug}/endpoints")
-    async def image_model_endpoints(
+    def image_model_endpoints(
         author: str,
         slug: str,
         request: Request,
@@ -590,7 +590,7 @@ def register_catalog_routes(router: APIRouter) -> None:
             ],
         },
     )
-    async def models(request: Request) -> Response:
+    def models(request: Request) -> Response:
         catalog_payload = _current_catalog_payload()
         include_endpoints = _includes_endpoints(request)
         if not _has_public_model_filters(request):
@@ -623,13 +623,13 @@ def register_catalog_routes(router: APIRouter) -> None:
         )
 
     @router.get("/models/count")
-    async def models_count(request: Request, response: Response) -> dict[str, dict[str, int]]:
+    def models_count(request: Request, response: Response) -> dict[str, dict[str, int]]:
         # Anonymous public catalogue data, readable by static exchange sites.
         response.headers["Access-Control-Allow-Origin"] = "*"
         return {"data": {"count": len(_public_model_shapes(request))}}
 
     @router.get("/models/picker")
-    async def models_picker(request: Request) -> Response:
+    def models_picker(request: Request) -> Response:
         catalog_payload = _current_catalog_payload()
         return _cached_json_response(
             request,
@@ -640,7 +640,7 @@ def register_catalog_routes(router: APIRouter) -> None:
         )
 
     @router.get("/models/{author}/{slug}/endpoints")
-    async def model_endpoints(
+    def model_endpoints(
         author: str,
         slug: str,
         request: Request,
@@ -723,7 +723,7 @@ def register_catalog_routes(router: APIRouter) -> None:
         }
 
     @router.get("/endpoints/zdr")
-    async def endpoints_zdr() -> dict[str, list[dict[str, Any]]]:
+    def endpoints_zdr() -> dict[str, list[dict[str, Any]]]:
         return {
             "data": [
                 {
@@ -756,7 +756,7 @@ def register_catalog_routes(router: APIRouter) -> None:
         }
 
     @router.get("/regions")
-    async def regions(settings: SettingsDep) -> dict[str, Any]:
+    def regions(settings: SettingsDep) -> dict[str, Any]:
         return {
             "data": region_payload(settings),
             "trustedrouter": {
@@ -766,7 +766,7 @@ def register_catalog_routes(router: APIRouter) -> None:
         }
 
     @router.get("/providers")
-    async def providers(response: Response) -> dict[str, list[dict[str, Any]]]:
+    def providers(response: Response) -> dict[str, list[dict[str, Any]]]:
         # No credentials are needed or allowed for cross-origin catalogue reads.
         response.headers["Access-Control-Allow-Origin"] = "*"
         return {
@@ -783,7 +783,7 @@ def register_authenticated_catalog_routes(router: APIRouter) -> None:
     """
 
     @router.get("/models/user")
-    async def models_user(
+    def models_user(
         _principal: ManagementPrincipal,
     ) -> dict[str, list[dict[str, Any]]]:
         return {"data": list(_current_catalog_payload().shapes)}

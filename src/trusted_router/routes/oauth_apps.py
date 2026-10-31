@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from trusted_router.auth import SettingsDep
 from trusted_router.config import Settings
@@ -82,26 +83,32 @@ def register_oauth_app_routes(router: APIRouter) -> None:
         request: Request,
         settings: SettingsDep,
     ) -> JSONResponse:
-        owner = _resolved_user(request, settings)
+        # Session lookup and the Store write are synchronous IO: run them on
+        # worker threads, awaiting only the request body on the event loop.
+        owner = await run_in_threadpool(_resolved_user, request, settings)
         body = await json_body(request)
-        values = _validated_create(body)
-        if values["markup_basis_points"] > 0 and not values["suspended"]:
-            _require_identity_verification(owner)
-        app = OAuthApp(owner_user_id=owner.id, **values)
-        try:
-            STORE.create_oauth_app(app)
-        except ValueError as exc:
-            if str(exc) == "oauth_app_id_taken":
-                raise api_error(
-                    409,
-                    "OAuth app id is already in use",
-                    ErrorType.CONFLICT,
-                ) from exc
-            raise
-        return JSONResponse({"data": _oauth_app_shape(app)}, status_code=201)
+
+        def create() -> JSONResponse:
+            values = _validated_create(body)
+            if values["markup_basis_points"] > 0 and not values["suspended"]:
+                _require_identity_verification(owner)
+            app = OAuthApp(owner_user_id=owner.id, **values)
+            try:
+                STORE.create_oauth_app(app)
+            except ValueError as exc:
+                if str(exc) == "oauth_app_id_taken":
+                    raise api_error(
+                        409,
+                        "OAuth app id is already in use",
+                        ErrorType.CONFLICT,
+                    ) from exc
+                raise
+            return JSONResponse({"data": _oauth_app_shape(app)}, status_code=201)
+
+        return await run_in_threadpool(create)
 
     @router.get("/oauth/apps")
-    async def list_oauth_apps(
+    def list_oauth_apps(
         request: Request,
         settings: SettingsDep,
     ) -> dict[str, Any]:
@@ -114,7 +121,7 @@ def register_oauth_app_routes(router: APIRouter) -> None:
         }
 
     @router.get("/oauth/apps/{app_id}")
-    async def get_oauth_app(
+    def get_oauth_app(
         app_id: str,
         request: Request,
         settings: SettingsDep,
@@ -128,17 +135,24 @@ def register_oauth_app_routes(router: APIRouter) -> None:
         request: Request,
         settings: SettingsDep,
     ) -> dict[str, Any]:
-        owner = _resolved_user(request, settings)
-        app = _owned_app(app_id, owner)
+        def owned() -> tuple[User, OAuthApp]:
+            owner = _resolved_user(request, settings)
+            return owner, _owned_app(app_id, owner)
+
+        owner, app = await run_in_threadpool(owned)
         patch = _validated_patch(await json_body(request))
-        resulting_markup = int(patch.get("markup_basis_points", app.markup_basis_points))
-        resulting_suspended = bool(patch.get("suspended", app.suspended))
-        if resulting_markup > 0 and not resulting_suspended:
-            _require_identity_verification(owner)
-        updated = STORE.update_oauth_app(app.id, patch=patch)
-        if updated is None:
-            raise api_error(404, "Resource not found", ErrorType.NOT_FOUND)
-        return {"data": _oauth_app_shape(updated)}
+
+        def update() -> dict[str, Any]:
+            resulting_markup = int(patch.get("markup_basis_points", app.markup_basis_points))
+            resulting_suspended = bool(patch.get("suspended", app.suspended))
+            if resulting_markup > 0 and not resulting_suspended:
+                _require_identity_verification(owner)
+            updated = STORE.update_oauth_app(app.id, patch=patch)
+            if updated is None:
+                raise api_error(404, "Resource not found", ErrorType.NOT_FOUND)
+            return {"data": _oauth_app_shape(updated)}
+
+        return await run_in_threadpool(update)
 
 
 def _resolved_user(request: Request, settings: Settings) -> User:

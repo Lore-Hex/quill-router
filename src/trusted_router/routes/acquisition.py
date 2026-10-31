@@ -72,7 +72,7 @@ class MarketingEventRequest(BaseModel):
 
 def register_acquisition_routes(router: APIRouter) -> None:
     @router.post("/analytics/events", status_code=204)
-    async def marketing_event(body: MarketingEventRequest, request: Request) -> Response:
+    def marketing_event(body: MarketingEventRequest, request: Request) -> Response:
         log_browser_funnel_event(
             request, body.event,
             attempt_id=str(body.attempt_id) if body.attempt_id else None,

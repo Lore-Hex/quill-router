@@ -5,6 +5,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, Request
+from starlette.concurrency import run_in_threadpool
 
 from trusted_router.auth import SettingsDep
 from trusted_router.errors import api_error
@@ -73,7 +74,8 @@ def register(router: APIRouter) -> None:
         event_id = f"{session_id}#{provider_status}#{code}"
         approved_name = verified_name(verification) if decision_status == "approved" else None
         reason, reason_code = decision_reason(verification)
-        outcome = STORE.apply_veriff_identity_decision(
+        outcome = await run_in_threadpool(
+            STORE.apply_veriff_identity_decision,
             vendor_data,
             event_id=event_id,
             session_id=session_id,

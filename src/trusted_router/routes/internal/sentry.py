@@ -14,7 +14,7 @@ from trusted_router.types import ErrorType
 
 def register(router: APIRouter) -> None:
     @router.get("/internal/sentry-test")
-    async def sentry_test(request: Request, settings: SettingsDep) -> None:
+    def sentry_test(request: Request, settings: SettingsDep) -> None:
         if (
             settings.environment.lower() not in {"local", "test"}
             and not settings.enable_sentry_test_route

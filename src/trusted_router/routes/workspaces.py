@@ -4,6 +4,7 @@ from typing import Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from trusted_router.auth import ManagementPrincipal, Principal, SettingsDep
 from trusted_router.errors import api_error
@@ -19,7 +20,7 @@ MAX_WORKSPACE_MEMBER_IDENTIFIER_LENGTH = 320
 
 def register_workspace_routes(router: APIRouter) -> None:
     @router.get("/workspaces")
-    async def workspaces(principal: ManagementPrincipal) -> dict[str, list[dict[str, Any]]]:
+    def workspaces(principal: ManagementPrincipal) -> dict[str, list[dict[str, Any]]]:
         if principal.user:
             items = STORE.list_workspaces_for_user(principal.user.id)
         else:
@@ -31,7 +32,8 @@ def register_workspace_routes(router: APIRouter) -> None:
         if principal.user is None:
             raise api_error(403, "User auth is required to create workspaces", ErrorType.FORBIDDEN)
         body = await json_body(request)
-        workspace = STORE.create_workspace(
+        workspace = await run_in_threadpool(
+            STORE.create_workspace,
             principal.user.id,
             str(body.get("name") or "Workspace"),
             # Starter credit belongs to the account's first workspace only.
@@ -40,7 +42,7 @@ def register_workspace_routes(router: APIRouter) -> None:
         return JSONResponse({"data": workspace_shape(workspace)}, status_code=201)
 
     @router.get("/workspaces/{id}")
-    async def get_workspace(id: str, principal: ManagementPrincipal) -> dict[str, Any]:  # noqa: A002
+    def get_workspace(id: str, principal: ManagementPrincipal) -> dict[str, Any]:  # noqa: A002
         workspace = _require_managed_workspace(id, principal)
         return {"data": workspace_shape(workspace)}
 
@@ -50,7 +52,7 @@ def register_workspace_routes(router: APIRouter) -> None:
         request: Request,
         principal: ManagementPrincipal,
     ) -> dict[str, Any]:
-        workspace = _require_managed_workspace(id, principal)
+        workspace = await run_in_threadpool(_require_managed_workspace, id, principal)
         body = await json_body(request)
         if body.get("content_storage_enabled"):
             raise api_error(
@@ -59,14 +61,16 @@ def register_workspace_routes(router: APIRouter) -> None:
                 ErrorType.CONTENT_STORAGE_DISABLED,
             )
         if "name" in body:
-            updated = STORE.update_workspace(workspace.id, name=str(body["name"]))
+            updated = await run_in_threadpool(
+                STORE.update_workspace, workspace.id, name=str(body["name"])
+            )
             if updated is None:
                 raise api_error(404, "Resource not found", ErrorType.NOT_FOUND)
             workspace = updated
         return {"data": workspace_shape(workspace)}
 
     @router.delete("/workspaces/{id}")
-    async def delete_workspace(id: str, principal: ManagementPrincipal) -> dict[str, Any]:  # noqa: A002
+    def delete_workspace(id: str, principal: ManagementPrincipal) -> dict[str, Any]:  # noqa: A002
         workspace = _require_managed_workspace(id, principal)
         STORE.update_workspace(workspace.id, deleted=True)
         return {"data": {"deleted": True, "id": id}}
@@ -94,20 +98,25 @@ def register_workspace_routes(router: APIRouter) -> None:
                 "role must be member or admin",
                 ErrorType.BAD_REQUEST,
             )
-        _require_managed_workspace(id, principal)
-        # add_members intentionally creates a user record for an unknown email.
-        # Preflight the whole batch so a closed gate cannot partially add the
-        # existing members before discovering a new-account invite later.
-        if not settings.new_signups_enabled and any(
-            STORE.find_user_by_email(email) is None for email in normalized_emails
-        ):
-            require_new_account_creation(settings)
-        members = STORE.add_members(
-            id,
-            normalized_emails,
-            role=raw_role,
-        )
-        return {"data": [member_shape(m) for m in members]}
+
+        def add_members() -> dict[str, Any]:
+            # Store reads and writes: worker thread, not the event loop.
+            _require_managed_workspace(id, principal)
+            # add_members intentionally creates a user record for an unknown email.
+            # Preflight the whole batch so a closed gate cannot partially add the
+            # existing members before discovering a new-account invite later.
+            if not settings.new_signups_enabled and any(
+                STORE.find_user_by_email(email) is None for email in normalized_emails
+            ):
+                require_new_account_creation(settings)
+            members = STORE.add_members(
+                id,
+                normalized_emails,
+                role=raw_role,
+            )
+            return {"data": [member_shape(m) for m in members]}
+
+        return await run_in_threadpool(add_members)
 
     @router.post("/workspaces/{id}/members/remove")
     async def remove_workspace_members(
@@ -124,12 +133,16 @@ def register_workspace_routes(router: APIRouter) -> None:
             field_name="user_ids",
             normalize_case=False,
         )
-        _require_managed_workspace(id, principal)
-        STORE.remove_members(id, normalized_user_ids)
+
+        def remove_members() -> None:
+            _require_managed_workspace(id, principal)
+            STORE.remove_members(id, normalized_user_ids)
+
+        await run_in_threadpool(remove_members)
         return {"data": {"removed": len(normalized_user_ids)}}
 
     @router.get("/organization/members")
-    async def organization_members(principal: ManagementPrincipal) -> dict[str, list[dict[str, Any]]]:
+    def organization_members(principal: ManagementPrincipal) -> dict[str, list[dict[str, Any]]]:
         return {"data": [member_shape(m) for m in STORE.list_members(principal.workspace.id)]}
 
 

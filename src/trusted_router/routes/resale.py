@@ -58,7 +58,7 @@ def handle(body: HolderRequest, settings: Settings) -> dict:
 
 def register(app: FastAPI, settings: Settings) -> None:
     @app.options(PATH, include_in_schema=False)
-    async def preflight(request: Request) -> JSONResponse:
+    def preflight(request: Request) -> JSONResponse:
         if not settings.resale_enabled:
             return JSONResponse({"message": resale.GENERIC_RESPONSE}, headers={
                 **(_headers(request) or HEADERS), "Access-Control-Allow-Methods": "POST, OPTIONS",

@@ -63,7 +63,8 @@ def register(router: APIRouter) -> None:
         if isinstance(tier, bool) or not isinstance(tier, int) or not 0 <= tier <= 3:
             raise api_error(400, "tier must be an integer from 0 through 3", ErrorType.BAD_REQUEST)
         try:
-            record = STORE.set_workspace_trust_override(
+            record = await run_in_threadpool(
+                STORE.set_workspace_trust_override,
                 workspace_id,
                 tier=tier,
                 identity_bypass=bool(body.get("identity_bypass", False)),
@@ -108,7 +109,8 @@ def register(router: APIRouter) -> None:
             )
         try:
             if clearing:
-                applied = STORE.clear_workspace_abuse_pause(
+                applied = await run_in_threadpool(
+                    STORE.clear_workspace_abuse_pause,
                     workspace_id,
                     abuse_ref=abuse_ref,
                     operator_identity=identity,
@@ -116,7 +118,8 @@ def register(router: APIRouter) -> None:
                 )
                 action = "clear"
             else:
-                applied = STORE.record_workspace_abuse_and_demote(
+                applied = await run_in_threadpool(
+                    STORE.record_workspace_abuse_and_demote,
                     workspace_id,
                     abuse_ref=abuse_ref,
                     operator_identity=identity,
