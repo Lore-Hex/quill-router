@@ -300,7 +300,7 @@ apt-get update -qq
 
 # Non-interactive install; the default user password is set below.
 echo "clickhouse-server clickhouse-server/default-password password" | debconf-set-selections
-apt-get install -y clickhouse-server clickhouse-client
+apt-get install -y clickhouse-common-static=26.8.36.3 clickhouse-server=26.8.36.3 clickhouse-client=26.8.36.3
 
 # IMDSv2: the token PUT is required, so a stolen SSRF primitive cannot read
 # instance metadata with a bare GET.

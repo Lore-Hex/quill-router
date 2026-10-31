@@ -415,7 +415,8 @@ export DEBIAN_FRONTEND=noninteractive
 curl -fsSL https://packages.clickhouse.com/rpm/lts/repodata/repomd.xml.key | gpg --dearmor -o /usr/share/keyrings/clickhouse-keyring.gpg
 echo "deb [signed-by=/usr/share/keyrings/clickhouse-keyring.gpg] https://packages.clickhouse.com/deb stable main" > /etc/apt/sources.list.d/clickhouse.list
 apt-get update
-apt-get install -y --no-install-recommends clickhouse-server clickhouse-client jq
+# CVE-2026-116366 patched LTS; match the GCP and AWS provisioners.
+apt-get install -y --no-install-recommends clickhouse-common-static=26.8.36.3 clickhouse-server=26.8.36.3 clickhouse-client=26.8.36.3 jq
 # Bind to the private IP only. 0.0.0.0 plus one permissive rule is how an
 # analytics store reaches the public internet.
 PRIVATE_IP=\$(curl -fsS -H Metadata:true "http://169.254.169.254/metadata/instance/network/interface/0/ipv4/ipAddress/0/privateIpAddress?api-version=2021-02-01&format=text")
