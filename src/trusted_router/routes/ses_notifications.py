@@ -54,7 +54,7 @@ def register_ses_notification_routes(router: APIRouter, settings: Settings) -> N
         raw = await request.body()
         try:
             envelope: dict[str, Any] = json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        except ValueError as exc:
             raise api_error(400, "invalid JSON", ErrorType.BAD_REQUEST) from exc
 
         try:

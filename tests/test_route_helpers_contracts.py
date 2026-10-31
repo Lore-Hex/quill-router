@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 
 from trusted_router.routes.helpers import (
     float_body_field,
@@ -23,6 +24,36 @@ class _FakeRequest:
         if self.error is not None:
             raise self.error
         return self.value
+
+
+@pytest.mark.parametrize(("path", "message"), [
+    ("/v1/workspaces", "Malformed JSON"),
+    ("/v1/internal/adyen/webhook", "Invalid Adyen webhook JSON"),
+    ("/v1/internal/paypal/webhook", "Invalid PayPal webhook JSON"),
+    ("/v1/internal/ses/notifications", "invalid JSON"),
+])
+@pytest.mark.parametrize("raw", [
+    pytest.param(b'"\xff"', id="invalid-utf8"),
+    pytest.param(b'{"n":' + b"9" * 5000 + b"}", id="oversized-integer"),
+])
+def test_request_json_decoder_errors_are_bad_requests(
+    client: TestClient, path: str, message: str, raw: bytes,
+) -> None:
+    response = client.post(
+        path,
+        headers={
+            "x-trustedrouter-user": "parse-errors@example.com",
+            "content-type": "application/json",
+        },
+        content=raw,
+    )
+    assert response.status_code == 400, response.text
+    assert response.json() == {"error": {
+        "code": 400,
+        "message": message,
+        "type": "bad_request",
+        "source": "router",
+    }}
 
 
 @pytest.mark.asyncio

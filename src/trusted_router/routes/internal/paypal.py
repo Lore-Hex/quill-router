@@ -25,7 +25,7 @@ def register(router: APIRouter) -> None:
         raw = await request.body()
         try:
             event = json.loads(raw)
-        except json.JSONDecodeError as exc:
+        except ValueError as exc:
             raise api_error(400, "Invalid PayPal webhook JSON", ErrorType.BAD_REQUEST) from exc
         if not isinstance(event, dict):
             raise api_error(400, "Invalid PayPal webhook payload", ErrorType.BAD_REQUEST)
