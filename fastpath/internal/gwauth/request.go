@@ -104,15 +104,27 @@ var jsonContentType = regexp.MustCompile(`(?i)^application/json(;[ \t]*charset=u
 // shadow can count its CacheAffinity and Async.V1; it is never decided on.
 // Any earlier reason's Request is the zero one.
 func ParseRequest(body []byte, h Headers) (Request, Pass) {
+	return ParseRequestStreams(body, h, false)
+}
+
+// ParseRequestStreams is ParseRequest with streams the edge may decide
+// (the edge policy's fastpath_edge_streams, docs/design/fast-admission-streams.md
+// section 5.4): a stream then goes on past body.stream to the request's
+// other reasons, and the decide pipeline gates it on Stage D. Without
+// streams it is ParseRequest, and every stream passes as body.stream.
+func ParseRequestStreams(body []byte, h Headers, streams bool) (Request, Pass) {
 	r, object, p := parseBody(body, h)
 	if p.Passed() {
 		return Request{}, p
 	}
-	if p := r.cohort(object, h); p.Passed() {
+	if p := r.cohort(object, h, streams); p.Passed() {
 		return r, p
 	}
 	return r, Pass{}
 }
+
+// Streamed reports a body whose stream is true.
+func (r Request) Streamed() bool { return r.Routing.Stream != nil && *r.Routing.Stream }
 
 // parseBody is ParseRequest up to body.refused: the content type, the
 // decode and the schema.

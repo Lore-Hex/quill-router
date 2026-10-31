@@ -265,6 +265,11 @@ type casesFileT struct {
 		IDs struct {
 			Minted string `json:"minted_idempotency_key"`
 		} `json:"ids"`
+		// PolicyPatch's fastpath_edge_streams lets a stream past body.stream
+		// (ParseRequestStreams).
+		PolicyPatch struct {
+			EdgeStreams bool `json:"fastpath_edge_streams"`
+		} `json:"policy_patch"`
 		Key struct {
 			KeyBody *string `json:"key_body"`
 		} `json:"key"`
@@ -343,7 +348,7 @@ func TestEveryAuthorizeCase(t *testing.T) {
 		}
 		h := headersOf(c.Request.Headers)
 		keyTags, usable := storedTags(t, c.Key.KeyBody)
-		r, p := ParseRequest([]byte(body), h)
+		r, p := ParseRequestStreams([]byte(body), h, c.PolicyPatch.EdgeStreams)
 		if !p.Passed() {
 			_, p = MergeTags(keyTags, usable, r)
 		}

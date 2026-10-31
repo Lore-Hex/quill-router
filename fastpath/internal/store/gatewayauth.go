@@ -102,7 +102,8 @@ var reservationColumns = []string{
 // (storage_gcp_request_records.py, _INSERT_GATEWAY_AUTHORIZATION_SQL), in
 // its order: settled false and terminal_at NULL as constants, then the
 // payload and the 13 typed columns (AUTHORIZATION_TYPED_COLUMNS), of which
-// the edge's rows set three. The retired spend-lease columns are not named,
+// the edge's rows set three, and a stream's five (pricing_snapshot and
+// heartbeat_seq too). The retired spend-lease columns are not named,
 // so they are NULL, as Python leaves them.
 var authorizationColumns = []string{
 	"authorization_id", "workspace_id", "key_hash", "reservation_id", "model_id",
@@ -117,10 +118,7 @@ var authorizationColumns = []string{
 // batch orders them. The shards and the reserved amounts are §5's
 // constants.
 func leasedMutations(a gwauth.AuthorizationRow, r gwauth.ReservationRow) []*spanner.Mutation {
-	nonce := spanner.NullString{}
-	if a.InvocationNonce != nil {
-		nonce = spanner.NullString{StringVal: *a.InvocationNonce, Valid: true}
-	}
+	nonce, pricing, seq := leasedNullables(a)
 	return []*spanner.Mutation{
 		spanner.Insert("tr_reservation", reservationColumns, []any{
 			r.ReservationID, r.WorkspaceID, r.KeyHash, int64(0), int64(0), int64(0),
@@ -132,11 +130,27 @@ func leasedMutations(a gwauth.AuthorizationRow, r gwauth.ReservationRow) []*span
 			a.AuthorizationID, a.WorkspaceID, a.KeyHash, a.ReservationID, a.ModelID,
 			a.Provider, a.UsageType, a.EstimatedMicrodollars, false, a.CreatedAt,
 			spanner.NullTime{}, a.Payload, a.IdempotencyFingerprint, spanner.NullString{},
-			spanner.NullInt64{}, spanner.NullTime{}, spanner.NullInt64{}, spanner.NullTime{},
-			spanner.NullString{}, spanner.NullString{}, spanner.NullString{}, spanner.NullString{},
+			spanner.NullInt64{}, spanner.NullTime{}, seq, spanner.NullTime{},
+			spanner.NullString{}, spanner.NullString{}, spanner.NullString{}, pricing,
 			a.StageDBootKid, nonce, spanner.NullString{},
 		}),
 	}
+}
+
+// leasedNullables are the row's nullable columns as the insert writes
+// them: invocation_nonce, pricing_snapshot and heartbeat_seq, NULL when
+// the row has none.
+func leasedNullables(a gwauth.AuthorizationRow) (nonce, pricing spanner.NullString, seq spanner.NullInt64) {
+	if a.InvocationNonce != nil {
+		nonce = spanner.NullString{StringVal: *a.InvocationNonce, Valid: true}
+	}
+	if a.PricingSnapshot != nil {
+		pricing = spanner.NullString{StringVal: *a.PricingSnapshot, Valid: true}
+	}
+	if a.HeartbeatSeq != nil {
+		seq = spanner.NullInt64{Int64: *a.HeartbeatSeq, Valid: true}
+	}
+	return nonce, pricing, seq
 }
 
 // checkLeasedRows refuses rows that are not one authorization's two rows,
@@ -446,20 +460,19 @@ func (s *Store) readOurRow(a gwauth.AuthorizationRow) (rowUnderOurID, error) {
 // isOurs: the stored row is a's as leasedMutations writes it.
 func isOurs(a gwauth.AuthorizationRow, got StoredAuthorization) bool {
 	some := func(v string) spanner.NullString { return spanner.NullString{StringVal: v, Valid: true} }
-	nonce := spanner.NullString{}
-	if a.InvocationNonce != nil {
-		nonce = some(*a.InvocationNonce)
-	}
+	// A read-back follows a commit whose answer the enclave has not had,
+	// so a stream's row has had no heartbeat: heartbeat_seq is still 0.
+	nonce, pricing, seq := leasedNullables(a)
 	return got.AuthorizationID == a.AuthorizationID && got.WorkspaceID == a.WorkspaceID && got.KeyHash == a.KeyHash &&
 		got.ModelID == a.ModelID && got.Provider == a.Provider && got.UsageType == a.UsageType &&
 		got.EstimatedMicrodollars == a.EstimatedMicrodollars && !got.Settled && got.CreatedAt.Equal(a.CreatedAt) &&
 		!got.TerminalAt.Valid && got.Payload == some(a.Payload) &&
 		got.IdempotencyFingerprint == some(a.IdempotencyFingerprint) && got.StageDBootKid == some(a.StageDBootKid) &&
-		got.InvocationNonce == nonce &&
+		got.InvocationNonce == nonce && got.PricingSnapshot == pricing && got.HeartbeatSeq == seq &&
 		// The typed columns the edge's insert leaves NULL.
 		!got.FinalizationOutcome.Valid && !got.FinalizedCostMicrodollars.Valid && !got.StartedAt.Valid &&
-		!got.HeartbeatSeq.Valid && !got.HeartbeatAt.Valid && !got.HeartbeatHash.Valid &&
-		!got.SelectedEndpointID.Valid && !got.DeliveredUsage.Valid && !got.PricingSnapshot.Valid &&
+		!got.HeartbeatAt.Valid && !got.HeartbeatHash.Valid &&
+		!got.SelectedEndpointID.Valid && !got.DeliveredUsage.Valid &&
 		!got.GatewayRequestID.Valid
 }
 

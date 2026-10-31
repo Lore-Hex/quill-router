@@ -122,14 +122,28 @@ const (
 	// PassEvaluate is any evaluator pass not named below (the request's
 	// shape or a snapshot input Go does not reproduce); PassEvaluateRefused
 	// any refusal, which Python makes itself.
-	PassEvaluate              = "evaluate.pass"
-	PassEvaluateRefused       = "evaluate.refused"
-	PassEstimateOverflow      = "evaluate.estimate_overflow"
-	PassCandidatesBYOK        = "candidates.byok"
-	PassCandidatesEstimated   = "candidates.estimated_usage"
-	PassCandidatesPrivate     = "candidates.private_proxy"
-	PassClockWindow           = "clock.window"
-	PassCompose               = "compose.refused"
+	PassEvaluate            = "evaluate.pass"
+	PassEvaluateRefused     = "evaluate.refused"
+	PassEstimateOverflow    = "evaluate.estimate_overflow"
+	PassCandidatesBYOK      = "candidates.byok"
+	PassCandidatesEstimated = "candidates.estimated_usage"
+	PassCandidatesPrivate   = "candidates.private_proxy"
+	PassClockWindow         = "clock.window"
+	PassCompose             = "compose.refused"
+	// The stream gates (docs/design/fast-admission-streams.md section 5.1),
+	// named only when the edge policy carries fastpath_edge_streams (else a
+	// stream passes as body.stream whatever gate it reaches): Python's
+	// pilot reasons for a stream it does not lease
+	// (fastpath_frontdoor.pilot_stream_reason). A stream
+	// Stage D does not let in passes as PassStreamStageD and its reason; one
+	// whose boot did not declare heartbeats, whatever
+	// require_heartbeat_declaration says, as PassStreamUndeclared; and one
+	// whose reservation is not its estimate, the tripwire for a lowered
+	// stream reservation the lease would cut the stream at, as
+	// PassStreamHold.
+	PassStreamStageD          = "stream.stage_d:"
+	PassStreamUndeclared      = "stream.undeclared"
+	PassStreamHold            = "stream.hold"
 	evaluatorWindowReason     = "the instant is outside the snapshot's window"
 	evaluatorEstimateOverflow = "the estimate exceeds int64"
 )
@@ -318,7 +332,8 @@ type Decided struct {
 	// (docs/design/fast-admission-streams.md section 8.1): the Stage D
 	// reason the stream would get, as far as the edge reads it before the
 	// key's facts (streamStageD); "" for any other request. It changes no
-	// decision: every stream still passes.
+	// decision: without the policy's fastpath_edge_streams every stream
+	// still passes.
 	StreamStageD string
 }
 
@@ -354,9 +369,18 @@ func Decide(in DecideInputs) Decided {
 	// any gate passes with, as the windows' place in the key's fact order
 	// made it before they joined the cohort.
 	var windowGate string
+	// darkStream is a stream the policy does not let the edge decide (no
+	// fastpath_edge_streams, docs/design/fast-admission-streams.md section
+	// 8.4): it passes as body.stream, as it did at the request cohort before
+	// the member, whatever gate it reaches, and when it reaches none it is
+	// composed for the shadow alone (body.stream its decision gate).
+	var darkStream bool
 	pass := func(reason string) Decided {
 		if windowGate != "" {
 			reason = windowGate
+		}
+		if darkStream {
+			reason = gwauth.ReasonStream
 		}
 		out.Pass = reason
 		return out
@@ -371,7 +395,15 @@ func Decide(in DecideInputs) Decided {
 	if reason := bootPass(in.Request.Boot); reason != "" {
 		return pass(reason)
 	}
-	r, p := gwauth.ParseRequest(in.Request.Body, h)
+	// A stream goes on past the request's cohort, for the shadow; without
+	// the policy's fastpath_edge_streams it passes as body.stream all the
+	// same (darkStream), but for body.api_key_hash, the one cohort reason
+	// before it.
+	r, p := gwauth.ParseRequestStreams(in.Request.Body, h, true)
+	if r.Streamed() && p.Reason != gwauth.ReasonAPIKeyHash && (in.Policy == nil || !in.Policy.EdgeStreams()) {
+		darkStream = true
+		out.StreamStageD = streamStageD(in.Policy, in.Request.Boot, r)
+	}
 	if r.Async.V1 {
 		// The body parsed whole (a cohort reason may still pass it).
 		out.AsyncPop = AsyncPlain
@@ -380,9 +412,6 @@ func Decide(in DecideInputs) Decided {
 		}
 	}
 	if p.Passed() {
-		if p.Reason == gwauth.ReasonStream {
-			out.StreamStageD = streamStageD(in.Policy, in.Request.Boot, r)
-		}
 		return pass(p.Reason)
 	}
 	at := in.Request.At
@@ -517,6 +546,30 @@ func Decide(in DecideInputs) Decided {
 		return pass(p.Reason)
 	}
 	sd := policy.StageD
+	stageD := gwauth.StageDReasonOf(gwauth.StageDSettings{
+		// Python ANDs the switch with not budget_strict (gateway.py,
+		// _stage_d_eligibility_reason's caller); a budget-strict key
+		// passed above (key.budget_strict), so the switch is the whole
+		// of it.
+		EligibilityEnabled:          sd.EligibilityEnabled,
+		HeartbeatEnabled:            sd.HeartbeatEnabled,
+		RequireHeartbeatDeclaration: sd.RequireHeartbeatDeclaration, PilotWorkspaces: sd.PilotWorkspaces,
+	}, gwauth.StageDRequest{
+		// Every fact the gates above already hold: a verified boot
+		// (bootPass), credits-only candidates (CreditsOnly), standard
+		// pricing (no custom, user or partner model, no priced extra, not
+		// native batch: the request cohort) and no service tier.
+		WorkspaceID: key.WorkspaceID, BootAccepted: true,
+		BootDeclaresHeartbeat: in.Request.Boot.Boot.DeclaresUsageHeartbeat,
+		Stream:                r.Streamed(), RouteType: r.Routing.RouteType,
+		CreditsOnly: true, StandardPricing: true, ServiceTier: res.ServiceTier,
+		TypedSettlement: policy.AsyncSettle != nil && policy.AsyncSettle.TypedRecords,
+	})
+	if r.Streamed() {
+		if reason := streamGate(r, stageD, in.Request.Boot.Boot.DeclaresUsageHeartbeat, res); reason != "" {
+			return pass(reason)
+		}
+	}
 	compose := gwauth.ComposeInput{
 		At:                     at,
 		AuthorizationID:        in.Mint.authorization(),
@@ -536,16 +589,8 @@ func Decide(in DecideInputs) Decided {
 		Regions:                gwauth.RegionsOf(snap.Settings.RegionPayload),
 		Candidates:             candidates,
 		Estimate:               res.ModelEstimate,
-		StageDReason: gwauth.StageDReasonOf(gwauth.StageDSettings{
-			// Python ANDs the switch with not budget_strict (gateway.py,
-			// _stage_d_eligibility_reason's caller); a budget-strict key
-			// passed above (key.budget_strict), so the switch is the whole
-			// of it.
-			EligibilityEnabled:          sd.EligibilityEnabled,
-			HeartbeatEnabled:            sd.HeartbeatEnabled,
-			RequireHeartbeatDeclaration: sd.RequireHeartbeatDeclaration, PilotWorkspaces: sd.PilotWorkspaces,
-		}, key.WorkspaceID, in.Request.Boot.Boot.DeclaresUsageHeartbeat),
-		BootKid: in.Request.Boot.Kid,
+		StageDReason:           stageD,
+		BootKid:                in.Request.Boot.Kid,
 	}
 	if r.Async.V1 {
 		// The additions Python splices in (shape A or B); the policy's
@@ -570,10 +615,18 @@ func Decide(in DecideInputs) Decided {
 		decision.Windows = &WindowCheck{Limits: w.Limits, Shards: w.Shards}
 	}
 	out.shadowOnly = decision
-	// The decision gates, in order: the policy's mode for a windowed key,
-	// the decide row, and async-v1's edge_decide.
-	out.DecideGate = windowGate
-	if out.DecideGate == "" {
+	// The decision gates, in order: a stream without the policy's
+	// fastpath_edge_streams, the policy's mode for a windowed key, the
+	// decide row, and async-v1's edge_decide.
+	switch {
+	case darkStream:
+		// Composed for the shadow, answered by Python, even for a workspace
+		// whose decide row is on (docs/design/fast-admission-streams.md
+		// section 8.4).
+		out.DecideGate = gwauth.ReasonStream
+	case windowGate != "":
+		out.DecideGate = windowGate
+	default:
 		out.DecideGate = in.Decide.gate(key.WorkspaceID, policy.Plane.Cloud, region, at)
 	}
 	if out.DecideGate == "" && r.Async.V1 && !policy.AsyncSettle.EdgeDecide {
@@ -583,6 +636,27 @@ func Decide(in DecideInputs) Decided {
 	}
 	out.Pass = out.DecideGate
 	return out
+}
+
+// streamGate is a stream's gate past the request cohort, "" when the edge
+// may compose it as
+// Python's pilot leases it (fastpath_frontdoor.pilot_stream_reason, whose
+// switch and snapshot booking the member implies): Stage D lets it in, its
+// boot declared heartbeats, and its hold is its ceiling (the evaluator's
+// reservation is its estimate, as Python's hold_is_ceiling). An async-v1
+// stream passes as body.stream: its additions are not composed here.
+func streamGate(r gwauth.Request, stageD string, declared bool, res routingsnapshot.Result) string {
+	switch {
+	case r.Async.V1:
+		return gwauth.ReasonStream
+	case stageD != gwauth.StageDOK:
+		return PassStreamStageD + stageD
+	case !declared:
+		return PassStreamUndeclared
+	case res.Reservation != res.ModelEstimate:
+		return PassStreamHold
+	}
+	return ""
 }
 
 // asyncPolicyPass is an async-v1 request's keyless policy gate: "" when the

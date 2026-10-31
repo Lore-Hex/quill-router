@@ -121,6 +121,7 @@ from trusted_router.services import fastpath_frontdoor as fd  # noqa: E402
 from trusted_router.services.async_settle import ORDINARY_PARAMETERS  # noqa: E402
 from trusted_router.services.edge_policy_publisher import (  # noqa: E402
     admission_workspaces,
+    edge_streams_on,
     ticket_authority,
     typed_records,
 )
@@ -339,6 +340,14 @@ ASYNC_POLICY: dict[str, Any] = {
     "async_settle": {"admission_enabled": False, "edge_decide": True, "ticket_authority": True,
                      "typed_records": True},
 }
+# The edge's streams (docs/design/fast-admission-streams.md section 5.4):
+# the three switches fastpath_edge_streams needs, and the async-settle object
+# the publisher always carries, whose typed_records is Stage D's
+# settlement_backend (the cases' world is a typed store).
+STREAMS_POLICY: dict[str, Any] = {
+    "fastpath_pilot_streams": True, "fastpath_edge_streams": True, "reap_snapshot_booking_enabled": True,
+    "async_settle": NO_ASYNC_AUTHORITY,
+}
 DEFAULT_KEY: dict[str, Any] = {
     "hash": "key_e2_cohort", "name": "cohort", "disabled": False, "expires_at": None,
     "scopes": [], "app_id": "", "federated_home": "", "limit_microdollars": None,
@@ -437,6 +446,12 @@ def settings_for(policy: dict[str, Any], key: dict[str, Any]) -> Settings:
         synthetic_monitor_api_key=_raw_key(key["hash"]) if policy["monitor_key"] else None,
         async_settle_shadow_policy=policy["async_settle_shadow_policy"],
         async_settle_shadow_workspaces=",".join(policy["async_settle_shadow_workspaces"]),
+        # The three switches the edge policy's fastpath_edge_streams needs
+        # (docs/design/fast-admission-streams.md section 5.4), off unless the
+        # case's policy names them.
+        fastpath_pilot_streams=policy.get("fastpath_pilot_streams", False),
+        fastpath_edge_streams=policy.get("fastpath_edge_streams", False),
+        reap_snapshot_booking_enabled=policy.get("reap_snapshot_booking_enabled", False),
     )
 
 
@@ -479,6 +494,8 @@ def edge_policy_body(policy: dict[str, Any], key: dict[str, Any], at: real_dt.da
         "primary_region": settings.primary_region,
         "multi_region_enabled": settings.multi_region_enabled,
         "internal_models": internal_models(),
+        # Optional: only when the publisher would carry it.
+        **({"fastpath_edge_streams": True} if edge_streams_on(settings) else {}),
     }
 
 
@@ -896,6 +913,39 @@ def _run_case(case: dict[str, Any], sessions: tuple[tuple[str, float], ...], *,
     body = response.content.decode()
     leased = bool(authorizations and json.loads(authorizations[0]["payload"]).get("fastpath_envelope"))
     reason = case["_reason"]
+
+    def answered() -> dict[str, Any]:
+        """Python's leased answer: its 200, its rows and what Go decides
+        them from."""
+        (authorization,), (reservation,) = authorizations, reservations
+        # Today's path mints its reservation id in the store; the shadow
+        # reads Python's ids from its 200 (Restage).
+        if leased and (authorization["authorization_id"], reservation["reservation_id"]) != (
+                case["ids"]["authorization_id"], case["ids"]["reservation_id"]):
+            raise AssertionError(f"{case['name']}: the route minted other ids")
+        data = json.loads(body)["data"]
+        fingerprint, material = recorder.seen[-1]
+        return {
+            "status": 200, "response": body,
+            "generation_id": data["generation_id"],
+            "estimate_microdollars": data["estimated_cost_microdollars"],
+            # The credit reservation the lease held (the front door's
+            # Estimate): at most HOLD_OUTPUT_TOKENS of the output budget,
+            # where the estimate above prices the whole budget
+            # (authorize_candidates.hold_output_tokens), or all of it for a
+            # stream; without a lease, the hold Python's typed store wrote.
+            "reservation_microdollars": door.seen[0][1]["Estimate"] if leased
+            else reservation["credit_reserved_micro"],
+            "decide_region": data["region"],
+            "fingerprint": fingerprint,
+            "fingerprint_material": material,
+            "idempotency_scope": reservation["idempotency_scope"],
+            "timing": data["timing"],
+            "authorization_row": _row_timestamps(authorization, ("created_at", "terminal_at", "started_at",
+                                                                 "heartbeat_at")),
+            "reservation_row": _reservation_row(reservation),
+        }
+
     if reason is not None:
         error = _error(body) if response.status_code != 200 else {}
         # The credit reservation Python's typed store wrote for a request it
@@ -906,8 +956,16 @@ def _run_case(case: dict[str, Any], sessions: tuple[tuple[str, float], ...], *,
             {"reservation_microdollars": reservations[0]["credit_reserved_micro"]}
             if len(reservations) == 1 and not leased else {}
         )
-        return {**world_rows, "_models": models, "_response": body, "expect": {"outcome": "pass", "reason": reason,
-                "python": {"status": response.status_code, "type": error.get("type"), "leased": leased, **reserved}}}
+        expect: dict[str, Any] = {"outcome": "pass", "reason": reason, "python": {
+            "status": response.status_code, "type": error.get("type"), "leased": leased, **reserved}}
+        if reason == "body.stream" and response.status_code == 200 and json.loads(body)["data"]["stage_d"]["eligible"]:
+            # A stream Stage D lets in, which Go composes for the shadow
+            # alone when the edge policy carries no fastpath_edge_streams
+            # (docs/design/fast-admission-streams.md section 8.4): the
+            # answer and rows the shadow compares Go's with, leased (the
+            # pilot's) or not (python.leased says).
+            expect["shadow"] = answered()
+        return {**world_rows, "_models": models, "_response": body, "expect": expect}
     if case["insert"] == "failed_precondition" and response.status_code != 503:
         # Python counts this code permanent and fails the request; Go cannot
         # tell it from the refusal of a re-sent commit whose first applied
@@ -926,28 +984,7 @@ def _run_case(case: dict[str, Any], sessions: tuple[tuple[str, float], ...], *,
                                          "response": body, "timing": json.loads(body)["data"]["timing"]}}
     if not (response.status_code == 200 and leased):
         raise AssertionError(f"{case['name']}: an answer case Python did not lease: {response.status_code} {body}")
-    (authorization,), (reservation,) = authorizations, reservations
-    if (authorization["authorization_id"], reservation["reservation_id"]) != (
-            case["ids"]["authorization_id"], case["ids"]["reservation_id"]):
-        raise AssertionError(f"{case['name']}: the route minted other ids")
-    data = json.loads(body)["data"]
-    fingerprint, material = recorder.seen[-1]
-    return {**world_rows, "_models": models, "_async": expected_async, "expect": {
-        "outcome": "answer", "status": 200, "response": body,
-        "generation_id": data["generation_id"],
-        "estimate_microdollars": data["estimated_cost_microdollars"],
-        # The credit reservation the lease held (the front door's Estimate):
-        # at most HOLD_OUTPUT_TOKENS of the output budget, where the estimate
-        # above prices the whole budget (authorize_candidates.hold_output_tokens).
-        "reservation_microdollars": door.seen[0][1]["Estimate"],
-        "decide_region": data["region"],
-        "fingerprint": fingerprint,
-        "fingerprint_material": material,
-        "idempotency_scope": reservation["idempotency_scope"],
-        "timing": data["timing"],
-        "authorization_row": _row_timestamps(authorization, ("created_at", "terminal_at", "started_at", "heartbeat_at")),
-        "reservation_row": _reservation_row(reservation),
-    }}
+    return {**world_rows, "_models": models, "_async": expected_async, "expect": {"outcome": "answer", **answered()}}
 
 
 def _catalog_addition(model_id: str) -> tuple[Model, ModelEndpoint]:
@@ -1087,6 +1124,69 @@ def make_case(name: str, reason: str | None = None, body: dict[str, Any] | str |
         "_prior": [(_request(case_world, {**base_body, **p}), answer) for p, answer in prior],
         "_affinity": affinity,
     }
+
+
+def streams_cases(add: Any) -> None:
+    """The edge's streams (docs/design/fast-admission-streams.md sections 5
+    and 8): Python leases a stream its pilot admits, and Go composes and
+    decides one only when the edge policy carries fastpath_edge_streams."""
+    streams = STREAMS_POLICY
+    # Dark without the member: Python's pilot leases the stream, Go passes it
+    # as body.stream whatever else is on.
+    add("pass:body.stream:member_absent", "body.stream", body={"stream": True, "model": GEMINI},
+        policy={**streams, "fastpath_edge_streams": False})
+    add("pass:body.stream:member_absent:no_booking", "body.stream", body={"stream": True, "model": GEMINI},
+        policy={**streams, "reap_snapshot_booking_enabled": False})
+    # Every fixture model at every instant, streamed as Python leases it.
+    for model, region in ((FLASH, None), (TENCENT_FLASH, None), (GLM, None), (GEMINI, None),
+                          (FUGU, None), (BEDROCK, "us-east4"), (INKLING, None)):
+        for at in INSTANTS:
+            add(f"answer:stream:model:{model}@{at}", body={"model": model, "region": region, "stream": True},
+                at=at, policy=streams)
+    # A stream's reservation is its estimate: past HOLD_OUTPUT_TOKENS too.
+    for tokens_out in (HOLD_OUTPUT_TOKENS, HOLD_OUTPUT_TOKENS + 1, 131_072):
+        add(f"answer:stream:hold_cap:{FLASH}:1000+{tokens_out}", policy=streams,
+            body={"model": FLASH, "stream": True, "estimated_input_tokens": 1_000, "max_output_tokens": tokens_out})
+    add("answer:stream:fallback_models", body={"model": FLASH, "models": [GLM, GEMINI], "stream": True},
+        policy=streams)
+    add("answer:stream:route_responses", body={"model": GEMINI, "stream": True, "route_type": "responses"},
+        policy=streams)
+    add("answer:stream:tags", body={"model": GEMINI, "stream": True, "tags": {"team": "e2"}}, policy=streams,
+        world={"key": {"tags": {"team": "key", "env": "test"}}})
+    add("answer:stream:every_workspace_pilot", body={"model": GEMINI, "stream": True},
+        policy={**streams, "stage_d": {"pilot_workspaces": []}})
+    add("answer:stream:declared_and_required", body={"model": GEMINI, "stream": True},
+        policy={**streams, "stage_d": {"require_heartbeat_declaration": True}})
+    # The leased insert's outcomes: read back (a stream's row carries its
+    # pricing snapshot and heartbeat_seq 0), not landed, refused.
+    add("answer:stream:insert:unknown_landed", body={"model": GEMINI, "stream": True}, policy=streams,
+        insert="unknown_landed")
+    add("unavailable:stream:insert:unknown_not_landed", body={"model": GEMINI, "stream": True}, policy=streams,
+        insert="unknown_not_landed")
+    add("pass:insert.failed:invalid_argument:stream", "insert.failed", body={"model": GEMINI, "stream": True},
+        policy=streams, insert="invalid_argument")
+    # A stream Stage D does not let in passes with Python's pilot reason
+    # (fastpath_frontdoor.pilot_stream_reason): stream.stage_d:<reason>, or
+    # stream.undeclared for a boot that did not declare heartbeats whatever
+    # require_heartbeat_declaration says.
+    for reason, policy, world, body in (
+        ("stage_d_disabled", {"stage_d": {"eligibility_enabled": False}}, None, {}),
+        ("workspace_not_pilot", {"stage_d": {"pilot_workspaces": [OTHER_WS]}}, None, {}),
+        ("heartbeats_disabled", {"stage_d": {"heartbeat_enabled": False}}, None, {}),
+        ("heartbeat_undeclared", {"stage_d": {"require_heartbeat_declaration": True}},
+         {"boot": {"declares_usage_heartbeat": False}}, {}),
+        ("route", None, None, {"route_type": "messages"}),
+        ("settlement_backend", {"async_settle": {**NO_ASYNC_AUTHORITY, "typed_records": False}}, None, {}),
+    ):
+        add(f"pass:stream.stage_d:{reason}", f"stream.stage_d:{reason}",
+            body={"model": GEMINI, "stream": True, **body}, policy=_merge(streams, policy), world=world)
+    add("pass:stream.undeclared", "stream.undeclared", body={"model": GEMINI, "stream": True}, policy=streams,
+        world={"boot": {"declares_usage_heartbeat": False}})
+    # A stream the request's other reasons pass, past body.stream.
+    add("pass:body.service_tier:stream", "body.service_tier",
+        body={"model": GEMINI, "stream": True, "service_tier": "priority"}, policy=streams)
+    add("pass:body.api_key_hash:stream", "body.api_key_hash",
+        body={"api_key_hash": DEFAULT_KEY["hash"], "api_key_lookup_hash": None, "stream": True}, policy=streams)
 
 
 def cases() -> list[dict[str, Any]]:
@@ -1249,6 +1349,7 @@ def cases() -> list[dict[str, Any]]:
     add("pass:body.api_key_hash:both", "body.api_key_hash", body={"api_key_hash": DEFAULT_KEY["hash"]})
     add("pass:body.stream", "body.stream", body={"stream": True})
     add("pass:body.stream:stage_d_ok", "body.stream", body={"stream": True, "model": GEMINI})
+    streams_cases(add)
     for tier in ("auto", "priority", "flex", "default"):
         add(f"pass:body.service_tier:{tier}", "body.service_tier", body={"model": GEMINI, "service_tier": tier})
     # A cache affinity key (G13, §1 item 5): Python's order comes from a
@@ -1703,7 +1804,7 @@ def render_async() -> str:
         row = {k: v for k, v in case.items() if not k.startswith("_")}
         row.update({k: v for k, v in result.items() if not k.startswith("_")})
         row["at_us"] = _us(at)
-        row["policy_patch"] = {k: v for k, v in policy.items() if v != header_policy[k]}
+        row["policy_patch"] = {k: v for k, v in policy.items() if k not in header_policy or v != header_policy[k]}
         row["labels"] = case_labels(case, result["expect"])
         rows.append(row)
     names = [row["name"] for row in rows]
@@ -2222,7 +2323,7 @@ def render_cases() -> str:
         row = {k: v for k, v in case.items() if not k.startswith("_")}
         row.update({k: v for k, v in result.items() if not k.startswith("_")})
         row["at_us"] = _us(at)
-        row["policy_patch"] = {k: v for k, v in policy.items() if v != header_policy[k]}
+        row["policy_patch"] = {k: v for k, v in policy.items() if k not in header_policy or v != header_policy[k]}
         row["labels"] = case_labels(case, result["expect"])
         rows.append(row)
     names = [row["name"] for row in rows]

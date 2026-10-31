@@ -1161,7 +1161,7 @@ var mintedKeyForm = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[8
 func compareRows(d *Decision, stored store.AuthorizationForCompare, fields []string,
 	latency time.Duration) (string, []string) {
 	a := stored.Authorization
-	moved := a.Settled || a.TerminalAt.Valid || a.StartedAt.Valid || a.HeartbeatSeq.Valid || a.FinalizationOutcome.Valid
+	moved := rowMoved(a)
 	payloadTree, err := pyjson.Decode([]byte(a.Payload.StringVal))
 	payload, ok := payloadTree.(pyjson.Object)
 	if !a.Payload.Valid || err != nil || !ok {
@@ -1228,11 +1228,28 @@ func compareRows(d *Decision, stored store.AuthorizationForCompare, fields []str
 	return "agree", fields
 }
 
+// rowMoved: Python's settle, refund or heartbeat reached the row before the
+// shadow read it. A heartbeat_seq of 0 is authorize's own, written on every
+// row with a pricing snapshot (a stream Stage D lets in, storage_gcp.py),
+// so it is not one (docs/design/fast-admission-streams.md section 8.4): only
+// a heartbeat's seq, from 1, or its instant is.
+func rowMoved(a store.StoredAuthorization) bool {
+	return a.Settled || a.TerminalAt.Valid || a.StartedAt.Valid || (a.HeartbeatSeq.Valid && a.HeartbeatSeq.Int64 != 0) ||
+		a.HeartbeatAt.Valid || a.FinalizationOutcome.Valid
+}
+
 func nullString(s *string) any {
 	if s == nil {
 		return nil
 	}
 	return *s
+}
+
+func nullInt64(n *int64) any {
+	if n == nil {
+		return nil
+	}
+	return *n
 }
 
 func ns(v interface{ IsNull() bool }, value any) any {
@@ -1270,12 +1287,12 @@ func authorizationDifferences(g gwauth.AuthorizationRow, p store.StoredAuthoriza
 		{"finalization_outcome", nil, ns(p.FinalizationOutcome, p.FinalizationOutcome.StringVal)},
 		{"finalized_cost_microdollars", nil, ns(p.FinalizedCostMicrodollars, p.FinalizedCostMicrodollars.Int64)},
 		{"started_at", nil, ns(p.StartedAt, p.StartedAt.Time)},
-		{"heartbeat_seq", nil, ns(p.HeartbeatSeq, p.HeartbeatSeq.Int64)},
+		{"heartbeat_seq", nullInt64(g.HeartbeatSeq), ns(p.HeartbeatSeq, p.HeartbeatSeq.Int64)},
 		{"heartbeat_at", nil, ns(p.HeartbeatAt, p.HeartbeatAt.Time)},
 		{"heartbeat_hash", nil, ns(p.HeartbeatHash, p.HeartbeatHash.StringVal)},
 		{"selected_endpoint_id", nil, ns(p.SelectedEndpointID, p.SelectedEndpointID.StringVal)},
 		{"delivered_usage", nil, ns(p.DeliveredUsage, p.DeliveredUsage.StringVal)},
-		{"pricing_snapshot", nil, ns(p.PricingSnapshot, p.PricingSnapshot.StringVal)},
+		{"pricing_snapshot", nullString(g.PricingSnapshot), ns(p.PricingSnapshot, p.PricingSnapshot.StringVal)},
 		{"stage_d_boot_kid", g.StageDBootKid, ns(p.StageDBootKid, p.StageDBootKid.StringVal)},
 		{"invocation_nonce", nullString(g.InvocationNonce), ns(p.InvocationNonce, p.InvocationNonce.StringVal)},
 		{"gateway_request_id", nil, ns(p.GatewayRequestID, p.GatewayRequestID.StringVal)},
@@ -1316,11 +1333,13 @@ func authorizationDifferences(g gwauth.AuthorizationRow, p store.StoredAuthoriza
 }
 
 // settleStable are the columns of either row that settle, refund and
-// heartbeat leave as the authorize wrote them.
+// heartbeat leave as the authorize wrote them: a stream's frozen
+// pricing_snapshot among them (docs/design/fast-admission-streams.md
+// section 8.4), so a stream's row a heartbeat moved still compares it.
 var settleStable = map[string]bool{
 	"authorization_id": true, "workspace_id": true, "key_hash": true, "reservation_id": true, "model_id": true,
 	"provider": true, "usage_type": true, "estimated_microdollars": true, "created_at": true,
-	"idempotency_fingerprint": true, "stage_d_boot_kid": true, "invocation_nonce": true,
+	"idempotency_fingerprint": true, "stage_d_boot_kid": true, "invocation_nonce": true, "pricing_snapshot": true,
 	"ws_shard": true, "credit_shard": true, "key_shard": true, "hold_usage_type": true, "idempotency_scope": true,
 }
 

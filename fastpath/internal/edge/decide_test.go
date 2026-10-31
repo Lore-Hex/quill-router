@@ -142,6 +142,13 @@ type authorizeExpect struct {
 	// AsyncShape is P6's shape of an answered case's async members (none,
 	// A or B).
 	AsyncShape string `json:"async_shape"`
+	// Shadow is a body.stream case's record of Python's 200 to a stream
+	// Stage D lets in, which Go composes for the shadow alone when the edge
+	// policy carries no fastpath_edge_streams
+	// (docs/design/fast-admission-streams.md section 8.4): an answer's
+	// fields, its rows the pilot's lease's when Python.Leased, else today's
+	// path's, ids and all.
+	Shadow *authorizeExpect `json:"shadow"`
 	// Affinity is a cache affinity case's record (§1 item 5, §10.1): the
 	// case's answer is Python's with no session (the cold order, which Go
 	// decides), and this is Python's answer with its sessions remembered,
@@ -509,7 +516,7 @@ func endOfLifeOf(t *testing.T, c authorizeCase) time.Time {
 // reason, or, for a reason after the admit, reaches a Decision.
 func TestEveryGoldenCaseThroughThePipeline(t *testing.T) {
 	f := authorizeGoldens(t)
-	answered, passes, admitted, evaluatorPassed := 0, 0, 0, 0
+	answered, passes, admitted, evaluatorPassed, shadowStreams := 0, 0, 0, 0, 0
 	affinity := map[string]int{}
 	seen := map[string]bool{}
 	for _, c := range f.Cases {
@@ -567,8 +574,27 @@ func TestEveryGoldenCaseThroughThePipeline(t *testing.T) {
 					t.Errorf("%s: no decision behind the window gate (gate %q)", c.Name, d.DecideGate)
 					continue
 				}
+			} else if c.Expect.Reason == gwauth.ReasonStream && d.ForShadow() != nil {
+				// A stream composed for the shadow alone (streams section
+				// 8.4): body.stream its decision gate, and Python's leased
+				// answer, where Python leased it, is Go's bytes and rows.
+				if d.DecideGate != gwauth.ReasonStream {
+					t.Errorf("%s: a stream's decision behind gate %q", c.Name, d.DecideGate)
+					continue
+				}
+				if s := c.Expect.Shadow; s != nil && c.Expect.Python.Leased {
+					shadowCase := c
+					shadowCase.Expect = *s
+					if !checkAnswered(t, shadowCase, d.ForShadow()) {
+						continue
+					}
+					shadowStreams++
+				}
 			} else if d.ForShadow() != nil {
 				t.Errorf("%s: a decision for a request passed before the decide row", c.Name)
+				continue
+			} else if c.Expect.Shadow != nil && c.Expect.Python.Leased {
+				t.Errorf("%s: Python's leased stream, and no decision for the shadow", c.Name)
 				continue
 			}
 			passes++
@@ -580,6 +606,9 @@ func TestEveryGoldenCaseThroughThePipeline(t *testing.T) {
 		"Python that the evaluator passes", answered, passes, admitted, evaluatorPassed)
 	if evaluatorPassed != len(evaluatorPasses) {
 		t.Errorf("%d of the %d evaluator passes seen", evaluatorPassed, len(evaluatorPasses))
+	}
+	if shadowStreams != 1 {
+		t.Errorf("%d streams composed for the shadow as Python leased them, want the goldens' 1", shadowStreams)
 	}
 	if answered < 160 || passes < 90 || admitted < 10 {
 		t.Fatalf("answered %d, passes %d, admitted %d: fewer than the goldens hold", answered, passes, admitted)
@@ -690,6 +719,15 @@ func rowsAreGoldens(t *testing.T, c authorizeCase, composed gwauth.Composed) boo
 		"idempotency_fingerprint": a.IdempotencyFingerprint, "stage_d_boot_kid": a.StageDBootKid,
 		"invocation_nonce": nonce,
 	}
+	// A stream's two columns, NULL for any other request.
+	var pricing, seq any
+	if a.PricingSnapshot != nil {
+		pricing = *a.PricingSnapshot
+	}
+	if a.HeartbeatSeq != nil {
+		seq = num(*a.HeartbeatSeq)
+	}
+	gotA["pricing_snapshot"], gotA["heartbeat_seq"] = pricing, seq
 	gotR := map[string]any{
 		"reservation_id": r.ReservationID, "workspace_id": r.WorkspaceID, "key_hash": r.KeyHash,
 		"ws_shard": num(0), "credit_shard": num(0), "key_shard": num(0), "credit_reserved_micro": num(0),
@@ -742,13 +780,13 @@ func TestEveryGoldenReasonIsNamed(t *testing.T) {
 		PassWorkspaceDeleted, PassWorkspaceBroadcast, PassPilotOff, PassNotPilotWorkspace, PassPilotRegion,
 		PassRecordsNotDurable, PassAsyncSettleShadow, PassMonitorKey, PassDigestNotAccepted, PassEvaluateRefused,
 		PassEstimateOverflow, PassCandidatesBYOK, PassCandidatesEstimated, PassCandidatesPrivate,
-		gwauth.ReasonTagsMergedInvalid} {
+		PassStreamUndeclared, PassStreamHold, gwauth.ReasonTagsMergedInvalid} {
 		named[r] = true
 	}
 	for _, c := range authorizeGoldens(t).Cases {
 		r := c.Expect.Reason
 		if c.Expect.Outcome == "pass" && !named[r] && !postAdmission(r) && !strings.HasPrefix(r, "body.") &&
-			!strings.HasPrefix(r, "header.") {
+			!strings.HasPrefix(r, "header.") && !strings.HasPrefix(r, PassStreamStageD) {
 			t.Errorf("%s: reason %q is not one the pipeline names", c.Name, r)
 		}
 	}

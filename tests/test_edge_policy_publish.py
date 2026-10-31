@@ -1878,3 +1878,38 @@ def test_fleet_with_edge_two_second_minimum_poll_interval(key, monkeypatch, dist
     assert all(publisher.signatures == publisher.attempts <= 240 for publisher in publishers)
     for publisher in publishers:
         publisher.stop()
+
+
+# ------------------------------------------- the fastpath_edge_streams member --
+
+
+def test_the_streams_member_vectors_are_what_the_python_publisher_writes_now() -> None:
+    # fastpath/testdata/edge_policy_streams_v1.json is the member's shared
+    # vector (docs/design/fast-admission-streams.md section 5.4); the Go
+    # reader holds every case too (routingsnapshot's
+    # TestTheStreamsMemberVectors).
+    assert VECTORS.OUTPUT_STREAMS.read_text() == VECTORS.render_streams(), (
+        "fastpath/testdata/edge_policy_streams_v1.json is stale: run "
+        "`uv run python scripts/fastpath/edge_policy_vectors.py` and check the Go reader"
+    )
+
+
+def test_every_streams_member_vector_is_what_python_reads() -> None:
+    cases = json.loads(VECTORS.OUTPUT_STREAMS.read_text())["cases"]
+    published = [c for c in cases if c["switches"] is not None]
+    # Every combination of the three switches, the member only with all on.
+    assert len(published) == 1 << len(VECTORS.STREAMS_SWITCHES)
+    assert [c["edge_streams"] for c in published].count(True) == 1
+    assert len(cases) - len(published) == len(VECTORS.STREAMS_REFUSED)
+    for case in cases:
+        if not case["accept"]:
+            with pytest.raises(ValidationError):
+                parse_edge_policy(case["body"])
+            continue
+        parsed = parse_edge_policy(case["body"])
+        assert (parsed.fastpath_edge_streams is True) is case["edge_streams"], case["name"]
+        assert ("fastpath_edge_streams" in case["body"]) is case["edge_streams"], case["name"]
+        assert canonical_edge_policy_bytes(parsed).decode("ascii") == case["body"], case["name"]
+        if case["switches"] is not None:
+            settings = VECTORS.fixture_settings().model_copy(update=case["switches"])
+            assert publisher_module.edge_streams_on(settings) is case["edge_streams"], case["name"]

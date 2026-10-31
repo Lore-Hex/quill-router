@@ -62,8 +62,9 @@ var chatArmRouteTypes = map[string]bool{"chat.completions": true, "responses": t
 	"embeddings": true, "decide": true}
 
 // cohort applies §3's request reasons after body.refused, in order. object
-// is the decoded body; r is its parse.
-func (r *Request) cohort(object pyjson.Object, h Headers) Pass {
+// is the decoded body; r is its parse. With streams a stream does not pass
+// as body.stream (ParseRequestStreams).
+func (r *Request) cohort(object pyjson.Object, h Headers, streams bool) Pass {
 	values := make(map[string]any, len(object))
 	for _, m := range object {
 		values[m.Key] = m.Value
@@ -72,7 +73,7 @@ func (r *Request) cohort(object pyjson.Object, h Headers) Pass {
 	switch {
 	case present("api_key_hash"):
 		return passFor(ReasonAPIKeyHash)
-	case values["stream"] == true:
+	case values["stream"] == true && !streams:
 		return passFor(ReasonStream)
 	case present("service_tier"):
 		return passFor(ReasonServiceTier)

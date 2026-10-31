@@ -70,6 +70,23 @@ leased streams settled or reaped with zero divergence, and over those:
 Find the lines with `gcloud logging read 'resource.type="cloud_run_revision"
 AND textPayload:"trusted_router.fastpath"'`.
 
+## Gate E (§8.5)
+
+With increment 5 deployed on the edge and `TR_FASTPATH_EDGE_STREAMS` still
+`false`, the edge composes every stream Stage D lets in for its decide
+shadow alone (`body.stream` is its decision gate, so the shadow line's
+`decide` map counts it under `body.stream`) and compares Python's 200 and
+rows with it. A count gate, no calendar minimum: e2-decide's I2 bar over
+those compared streams, and over them zero `differ.candidate_prices`,
+`differ.cap_micro`, `differ.candidate_cost_reporting`,
+`row.pricing_snapshot`, `row.heartbeat_seq` or `row.estimated_microdollars`
+in the shadow line's fields. A stream Python's pilot did not lease is
+compared on its 200 alone (rows `python_not_leased`). Then set
+`TR_FASTPATH_EDGE_STREAMS=true`: the decide rows choose where the edge
+answers streams, each one still gated on Stage D, the boot's declaration
+and the hold (`stream.stage_d:<reason>`, `stream.undeclared`,
+`stream.hold`).
+
 ## The way back, fastest first
 
 1. `TR_FASTPATH_EDGE_STREAMS=false`, if it is on: the edge stops deciding
