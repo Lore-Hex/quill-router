@@ -836,7 +836,7 @@ def test_rollout_keeps_shadow_canary_4_opted_out_with_pilot_pins(
     assert rendered["TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION"] == ""
     assert rendered["TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT"] == ""
     assert rendered["TR_ASYNC_SETTLE_SHADOW_ATTACHMENT_BUCKET"] == "tr-async-settle-shadow-attachments-quill-cloud-proxy"
-    assert rendered["TR_ASYNC_SETTLE_ENABLED"] == "false"
+    assert rendered["TR_ASYNC_SETTLE_ENABLED"] == "true"
     assert rendered["TR_ASYNC_SETTLE_PROTECTION"] == "true"
     assert rendered["TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED"] == "false"
     config = Settings(
@@ -876,9 +876,9 @@ def test_rollout_keeps_shadow_canary_4_opted_out_with_pilot_pins(
     health_install.assert_not_called()
     cohort_install.assert_not_called()
     assert not hasattr(app.state, "async_settle_shadow")
-    assert config.async_settle_enabled is False
-    assert config.async_settle_admission_enabled is False
-    assert config.async_settle_pilot_workspace_ids == {"162e441a-5d13-414f-92bd-7c6cd805faa3"}
+    assert config.async_settle_enabled is True
+    assert config.async_settle_admission_enabled is True
+    assert config.async_settle_pilot_workspace_ids == {"45819281-0ce9-4811-a0cd-c660ab3a116d"}
     assert config.async_settle_pilot_cap_micro == 5000000
     assert config.async_settle_protection is True
     assert not config.settle_outbox_fast_drain_enabled
@@ -925,8 +925,8 @@ def test_rendered_shadow_pins_install_only_in_serving_regions(
     active = False
     assert config.effective_async_settle_shadow_policy() == ""
     assert config.async_settle_shadow_workspace_ids == set()
-    assert config.async_settle_admission_enabled is False
-    assert config.async_settle_pilot_workspace_ids == {"162e441a-5d13-414f-92bd-7c6cd805faa3"}
+    assert config.async_settle_admission_enabled is True
+    assert config.async_settle_pilot_workspace_ids == {"45819281-0ce9-4811-a0cd-c660ab3a116d"}
     assert config.async_settle_pilot_cap_micro == 5000000
     assert config.async_settle_protection is True
     assert not config.settle_outbox_fast_drain_enabled
@@ -4096,14 +4096,14 @@ def test_rollout_pins_async_admission_and_protection_without_inheritance(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pin: str,
 ) -> None:
     expected = {
-        "TR_ASYNC_SETTLE_ENABLED": "false",
+        "TR_ASYNC_SETTLE_ENABLED": "true",
         "TR_ASYNC_SETTLE_PROTECTION": "true",
         "TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE": "/secrets/async-settle/ticket.pem",
         "TR_ASYNC_SETTLE_TICKET_KID": "tr-async-settle-2026-10a",
         "TR_ASYNC_SETTLE_TICKET_ISSUER": "https://api.trustedrouter.com",
         "TR_ASYNC_SETTLE_TICKET_AUDIENCE": "router-settlement",
         "TR_ASYNC_SETTLE_AUTHORITY_EPOCH": "1",
-        "TR_ASYNC_SETTLE_PILOT_WORKSPACES": "162e441a-5d13-414f-92bd-7c6cd805faa3",
+        "TR_ASYNC_SETTLE_PILOT_WORKSPACES": "45819281-0ce9-4811-a0cd-c660ab3a116d",
         "TR_ASYNC_SETTLE_PILOT_CAP_MICRO": "5000000",
     }
     hostile = {
