@@ -1464,6 +1464,48 @@ func TestAnUnreadRefusalIsStillARefusal(t *testing.T) {
 	}
 }
 
+// TestOnlyAnInFlightPassAgreesWithAnInFlightRefusal: inFlightAgreed makes
+// passed.inflight.key of Python's per-key in-flight 429, read through, to a
+// request the decide path passed at inflight.key, and of nothing else: not
+// that 429 unread (its type and message unknown), not with no decide path
+// (the shadow alone: Go's gate was never asked), not after another pass,
+// not another message or type, not a 200.
+func TestOnlyAnInFlightPassAgreesWithAnInFlightRefusal(t *testing.T) {
+	f := authorizeGoldens(t)
+	c := authorizeCaseNamed(t, "answer:app_categories_empty")
+	in, _ := caseInputs(t, f, c)
+	d := Decide(in)
+	inFlight := errorBody(429, inFlightRefusal, inFlightMessage)
+	agreed := ClassGoPassed + "." + PassInFlightKey
+	for _, v := range []struct {
+		a          pyAnswer
+		decidePass string
+		want       string
+	}{
+		{pyAnswer{status: 429, body: inFlight}, PassInFlightKey, agreed},
+		{pyAnswer{status: 429, why: "budget"}, PassInFlightKey, ClassWouldAdmit + ".429.unread"},
+		{pyAnswer{status: 429, body: inFlight}, "", ClassWouldAdmit + ".429.rate_limited"},
+		{pyAnswer{status: 429, body: inFlight}, PassOwnerBusy, ClassWouldAdmit + ".429.rate_limited"},
+		{pyAnswer{status: 429, body: inFlight}, PassBudgetSpent, ClassWouldAdmit + ".429.rate_limited"},
+		{pyAnswer{status: 429, body: errorBody(429, inFlightRefusal, "Rate limit exceeded")}, PassInFlightKey,
+			ClassWouldAdmit + ".429.rate_limited"},
+		{pyAnswer{status: 429, body: errorBody(429, "other_limit", inFlightMessage)}, PassInFlightKey,
+			ClassWouldAdmit + ".429.other_limit"},
+		{pyAnswer{status: 503, body: errorBody(503, inFlightRefusal, inFlightMessage)}, PassInFlightKey,
+			ClassPythonError + ".503"},
+	} {
+		got := inFlightAgreed(compareWindowed(d, v.a, nil), v.a, v.decidePass)
+		if got.class != v.want || !got.decided {
+			t.Errorf("%d %q after %q: %+v, want %s", v.a.status, v.a.body, v.decidePass, got, v.want)
+		}
+	}
+	// A 200 is compared as any (the pipeline's decision against Python's).
+	ok := pyAnswer{status: 200, body: []byte(c.Expect.Response)}
+	if want, got := compareWindowed(d, ok, nil), inFlightAgreed(compareWindowed(d, ok, nil), ok, PassInFlightKey); got.class != want.class {
+		t.Errorf("a 200 after an in-flight pass: %s, want %s", got.class, want.class)
+	}
+}
+
 // TestARefusalEvictsTheKeyOfABodyThatDidNotParse: Decide named no key (the
 // body changed past its boot signature, which passes first, and holds a
 // float the strict parse would pass too); Python's 401 evicts the lookup

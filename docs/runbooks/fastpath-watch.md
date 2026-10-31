@@ -162,7 +162,9 @@ lines, summed, are its counts. It prints JSON:
   answered (each counts its decide row's gate) and `cohort_by_class` the
   same requests by class, the comparable ones and the rest the gate
   accounts for (`would_admit_python_refused.*`, `python_error.*`,
-  `python_unavailable`, `unread.*`, the scope taken, replays). Then
+  `python_unavailable`, `unread.*`, the scope taken, replays, and
+  `passed.inflight.key`, Python's per-key in-flight 429 to a request the
+  decide path passed at its own in-flight limit). Then
   `differ` and `differ_by_field` (every `differ.*` and `row.*` field),
   `differ_affinity_warm` (the differs whose Python 200 is Go's decision
   re-ranked for an endpoint a Python process remembered for the request's
