@@ -197,11 +197,14 @@ func (dp *decider) count(add func(*decideTally)) {
 }
 
 // decidePassed is what the proxy carries of a request the decide path
-// passed: what it named, for the eviction Python's refusal makes, and its
-// arrival, for the time Python's answer took in all.
+// passed: what it named, for the eviction Python's refusal makes, its
+// arrival, for the time Python's answer took in all, and the §3 reason it
+// passed with, for the full shadow (which compares Python's per-key
+// in-flight refusal with the decide path's own inflight.key).
 type decidePassed struct {
 	lookupHash, workspace string
 	arrived               time.Time
+	reason                string
 }
 
 type decidePassedKey struct{}
@@ -229,6 +232,7 @@ func (e *Edge) decide(w http.ResponseWriter, r *http.Request, at, arrived time.T
 	passed = decidePassed{lookupHash: decided.LookupHash, workspace: decided.Workspace, arrived: arrived}
 	pass := func(reason string) (bool, decidePassed) {
 		dp.pass(reason)
+		passed.reason = reason
 		if time.Since(arrived) > dp.slowAtEdge {
 			dp.count(func(t *decideTally) { t.slow["at_edge"]++ })
 		}

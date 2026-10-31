@@ -113,6 +113,15 @@ type decideEdge struct {
 
 func newDecideEdge(t *testing.T, f authorizeFile, c authorizeCase, py *fakePython) *decideEdge {
 	t.Helper()
+	return newDecideEdgeWith(t, f, c, py, nil)
+}
+
+// newDecideEdgeWith is newDecideEdge with the full shadow on too when
+// shadow is not nil, as production runs both (-edge-decide and
+// -edge-decide-shadow): the shadow follows what the decide path passes.
+func newDecideEdgeWith(t *testing.T, f authorizeFile, c authorizeCase, py *fakePython,
+	shadow *DecideShadowConfig) *decideEdge {
+	t.Helper()
 	if py == nil {
 		py = newFakePython(t)
 	}
@@ -141,7 +150,13 @@ func newDecideEdge(t *testing.T, f authorizeFile, c authorizeCase, py *fakePytho
 		Snapshot: SnapshotConfig{URL: snapshotURL, Keys: keys, Plane: "gcp/us-central1"},
 		Policy:   PolicyConfig{URL: policyURL, Keys: keys, Plane: "gcp/us-central1"},
 		Admitter: h.holder,
-		Decide:   &DecideConfig{Cache: h.cache, Decides: &fakeDecides{}, Rows: h.rows, Mint: pinnedMint(c)}})
+		Decide:   &DecideConfig{Cache: h.cache, Decides: &fakeDecides{}, Rows: h.rows, Mint: pinnedMint(c)},
+		DecideShadow: func() *DecideShadowConfig {
+			if shadow != nil && shadow.Cache == nil {
+				shadow.Cache = h.cache
+			}
+			return shadow
+		}()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,6 +167,10 @@ func newDecideEdge(t *testing.T, f authorizeFile, c authorizeCase, py *fakePytho
 		NotAfter: h.policy.NotAfter, SHA256: "golden-policy"}})
 	view := decideAll(h.policy, c.Facts.Key.WorkspaceID, c.at())
 	e.decider.decides.current.Store(&view)
+	if e.full != nil {
+		e.full.decides.current.Store(&view)
+		t.Cleanup(e.WaitDecideShadow)
+	}
 	h.holder.Bind(h.admitter)
 	h.edge = e
 	t.Cleanup(e.WaitDecide)
@@ -469,6 +488,94 @@ func TestTheInFlightLimitIsPerLookupHash(t *testing.T) {
 	k.leave("other")
 	if len(k.n) != 0 {
 		t.Errorf("entries left: %v", k.n)
+	}
+}
+
+// TestPythonsInFlightRefusalOfAnInFlightPassIsAPass: with the decide path
+// and the full shadow both on, a request the decide path passed at its own
+// in-flight limit (inflight.key) that Python refuses at its per-key
+// in-flight gate (429 rate_limited, "Too many concurrent requests for this
+// API key") is passed.inflight.key: Go answered nothing, and its gate made
+// Python's call. Not a would-admit, and nothing pages. Every other refusal
+// of such a pass (a 402, the ingress limiter's 429, a window's 429) stays a
+// would-admit and pages, and so does Python's in-flight refusal of a
+// request the decide path passed for another reason after its gate let the
+// request in (owner.busy); TestOnlyAnInFlightPassAgreesWithAnInFlightRefusal
+// holds the unread 429 and the shadow alone. The 2026-10-31 ramp's 83 pages
+// were the first case.
+func TestPythonsInFlightRefusalOfAnInFlightPassIsAPass(t *testing.T) {
+	f := authorizeGoldens(t)
+	c := authorizeCaseNamed(t, "answer:app_categories_empty")
+	inFlight := errorBody(429, "rate_limited", "Too many concurrent requests for this API key")
+	for _, tc := range []struct {
+		name    string
+		atLimit bool // a request of the key holds the one slot
+		status  int
+		body    []byte
+		pass    string
+		want    string
+		pages   bool
+	}{
+		{"in_flight_refusal", true, 429, inFlight, PassInFlightKey, ClassGoPassed + "." + PassInFlightKey, false},
+		{"payment_required", true, 402, errorBody(402, "payment_required", "Insufficient credits"), PassInFlightKey,
+			ClassWouldAdmit + ".402.payment_required", true},
+		{"ingress_limiter", true, 429, errorBody(429, "rate_limited", "Rate limit exceeded"), PassInFlightKey,
+			ClassWouldAdmit + ".429.rate_limited", true},
+		{"window", true, 429, errorBody(429, "key_window_limit_exceeded", "API key daily spend limit exceeded; x"),
+			PassInFlightKey, ClassWouldAdmit + ".429.key_window_limit_exceeded", true},
+		{"owner_busy", false, 429, inFlight, PassOwnerBusy, ClassWouldAdmit + ".429.rate_limited", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var alerts []string
+			shadow := &DecideShadowConfig{Decides: &fakeDecides{}, Rows: &fakeRows{by: map[string]store.AuthorizationForCompare{}},
+				SampleEvery: 1, ReadsPerSecond: 1e9, Alert: func(kind, _, what string) {
+					mu.Lock()
+					defer mu.Unlock()
+					alerts = append(alerts, kind+"|"+what)
+				}}
+			h := newDecideEdgeWith(t, f, c, nil, shadow)
+			h.policy.GatewayAuthorizeMaxInFlightPerKey = 1
+			release := make(chan struct{})
+			var wg sync.WaitGroup
+			if tc.atLimit {
+				var held atomic.Int32
+				h.rows.insert = func(context.Context) store.InsertOutcome {
+					if held.Add(1) == 1 {
+						<-release
+					}
+					return store.Inserted
+				}
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					h.edge.ServeHTTP(httptest.NewRecorder(), request(c, context.Background()))
+				}()
+				waitFor(t, func() bool { return held.Load() == 1 })
+			} else {
+				h.admitter.authorize = func(context.Context, frontdoor.AuthorizeOf) frontdoor.Authorized {
+					return frontdoor.Authorized{Status: frontdoor.Busy}
+				}
+			}
+			respond := answerWith(tc.status, tc.body, "Retry-After", "1")
+			h.python.respond.Store(&respond)
+			rec := h.send(t, c)
+			h.edge.WaitDecideShadow()
+			close(release)
+			wg.Wait()
+			got := h.edge.DecideShadowCounts().Classes
+			if rec.Code != tc.status || h.edge.DecideCounts().Passed[tc.pass] != 1 || got[tc.want] != 1 {
+				t.Fatalf("Python's %d to a pass: edge %d, passes %v, classes %v, want %s", tc.status, rec.Code,
+					h.edge.DecideCounts().Passed, got, tc.want)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if paged := len(alerts) == 1 && alerts[0] == AlertWouldAdmit+
+				"|the edge would have answered an authorize Python refused: "+tc.want; paged != tc.pages ||
+				(!tc.pages && len(alerts) != 0) {
+				t.Errorf("alerts %q, want a page %v", alerts, tc.pages)
+			}
+		})
 	}
 }
 

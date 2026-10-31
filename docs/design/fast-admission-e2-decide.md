@@ -189,7 +189,29 @@ The flow, per request, in this order:
     its authorization id (in the body and both rows) is the handle instead.
 14. **Per-key in-flight limit** at the edge, from the policy's
     `gateway_authorize_max_in_flight_per_key`; over the limit passes. Go
-    never learns "exhausted" from `Busy`.
+    never learns "exhausted" from `Busy`. Python's gate is the same count
+    with the same limit (`gateway.py` `authorize_gateway`,
+    `_AUTHORIZE_ADMISSION`, `services/keyed_admission.py`
+    `KeyedConcurrencyAdmission`; `TR_GATEWAY_AUTHORIZE_MAX_IN_FLIGHT_PER_KEY`,
+    4 by default, published in the edge policy): a dict in one Python
+    process's memory, keyed by the request's `api_key_lookup_hash` (or
+    `api_key_hash`), taken before the body is read and given back when the
+    authorize returns, so it counts authorizes being decided, never
+    generations until settle (settle has its own gate of 16). Past it Python
+    answers 429 `rate_limited`, "Too many concurrent requests for this API
+    key", `Retry-After: 1`. Nothing is shared between processes: the
+    `trusted-router` service runs 8 warm instances in each primary region
+    (up to 20), each with its own count, so Python alone already serves up
+    to 4 x its instances of one key at once, and which request it refuses
+    depends on the instance the load balancer picks. The edge's count is
+    the same per edge process (`inflight.go`, held from the pipeline's admit
+    to the answer or the pass), so a deciding edge adds at most 4 per edge
+    node to that bound and never answers more than 4 of a key at once on a
+    node. The gate is a worker bulkhead, not a spend or abuse control: what
+    Go answers is held by the front door's reservation of the estimate
+    (`Busy` passes, and Python answers 402), and key caps and windows are
+    the pipeline's gates (§3) or pass. The full shadow compares Python's
+    429 of this gate with Go's own gate, not with the pipeline (§11).
 15. **One clock.** One edge clock reading per request is the price instant,
     the authorization's `created_at` and the base of `expires_at`. An
     instant outside the snapshot's window passes. The reservation's
@@ -1068,7 +1090,9 @@ a decision `Decided.Admit` hands out: `Decided`'s decision is unexported,
 read through `ForShadow` by the shadow alone, and a parser test holds both
 rules. Before the admit, the request takes a slot of its lookup hash's
 in-flight count (`fastpath/internal/edge/inflight.go`, decision 14), held
-to its answer; past the policy's limit it passes (`inflight.key`).
+to its answer; past the policy's limit it passes (`inflight.key`). The
+reason it passes with travels with the request to the full shadow
+(`decidePassed.reason`), which follows every pass (§11).
 
 ```go
 package store
@@ -1649,6 +1673,32 @@ counts, per snapshot and policy digest:
 - `passed.<reason>`: Go would pass and Python refused or failed too
   (Python's 409 `conflict` to a request Go would answer is
   `passed.insert.scope_taken`).
+- `passed.inflight.key`: with the decide path on, the shadow follows what
+  it passes, and compares the pipeline's decision, which holds no in-flight
+  count. A request the decide path passed at its own in-flight limit
+  (decision 14) that Python refused at its own (429 `rate_limited`, "Too
+  many concurrent requests for this API key", read through) is this class
+  (`inFlightAgreed`): both gates declined the key's request at that
+  instant and Go answered nothing. Before this class, the 2026-10-31 ramp
+  of one key to 20 requests a second paged 83 times: every request the
+  shadow decided in that span was an `inflight.key` pass (its `decide`
+  count of `on` equal, per node and minute, to the decide path's
+  `inflight.key` count), and
+  each of the 83 was a Python instance's own gate (8 instances in
+  `us-central1` logged `billing.authorize_admission_limited`). Only that
+  refusal: any other refusal of an `inflight.key` pass (401, 402, 403, a
+  window, the ingress limiter's 429 "Rate limit exceeded", a 429 not read
+  through) stays `would_admit_python_refused` and pages, since the pipeline
+  decides the key's next request the same with a slot free. Python's
+  in-flight 429 to a request whose in-flight gate Go never asked (the
+  shadow alone, a workspace not deciding) or asked and passed (a later
+  `owner.*`, `budget.spent` or `insert.*` pass) pages too: it is the
+  per-process count of decision 14 disagreeing across processes, not
+  known to happen, and a page that keeps firing for it is the cue to read
+  the reason before adding a class. The pipeline's comparison of an
+  `inflight.key` pass that Python answered 200 is unchanged (`agree_full`
+  or `differ`): it compares the pipeline's decision, which Go would have
+  answered with a slot free.
 - `stale.<cache>`: Go would pass for `cache.<cache>`.
 - `python_unavailable` (decision 1's 503: Python's own insert outcome) and
   `python_error.<status>` (any other 5xx): not refusals on the facts.

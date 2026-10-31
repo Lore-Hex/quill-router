@@ -102,6 +102,17 @@ const WindowReadTimestampHeader = "X-TR-Key-Window-Read-Timestamp"
 // (gateway.py, ErrorType.KEY_WINDOW_LIMIT_EXCEEDED).
 const windowRefusal = "key_window_limit_exceeded"
 
+// Python's 429 from its per-key in-flight gate (gateway.py authorize_gateway,
+// _AUTHORIZE_ADMISSION, KeyedConcurrencyAdmission): a count of one key's
+// authorizes inside one Python process, at most the edge policy's
+// gateway_authorize_max_in_flight_per_key, released when the authorize
+// returns. Its type and its exact message; the ingress limiter's 429 is
+// rate_limited too, with another message, and is not this gate.
+const (
+	inFlightRefusal = "rate_limited"
+	inFlightMessage = "Too many concurrent requests for this API key"
+)
+
 const (
 	// DefaultDecideShadowJobs bounds the requests the shadow follows at
 	// once, each from its arrival to Python's answer; past it a request is
@@ -364,6 +375,11 @@ type fullJob struct {
 	held    int64
 	answer  chan pyAnswer
 	arrived time.Time // the real clock's, for the latency
+	// decidePass is the §3 reason the decide path passed the request with,
+	// when it ran ("" when it did not): the pipeline's decision is
+	// compared, but Python's in-flight refusal of a request the decide path
+	// passed at its own in-flight limit is the same call (inFlightAgreed).
+	decidePass string
 
 	mu        sync.Mutex
 	tap       *tap
@@ -414,6 +430,9 @@ func (e *Edge) beginFull(r *http.Request, at time.Time, body []byte, boot BootSe
 		Request: RequestOf(r, at, body, boot),
 		Lookup:  sh.cfg.Cache.Lookup, Decide: sh.decides.view(), Mint: sh.cfg.Mint,
 	}}
+	if p, ok := r.Context().Value(decidePassedKey{}).(decidePassed); ok {
+		job.decidePass = p.reason
+	}
 	snapshotDigest, policyDigest := "none", "none"
 	if e.poller != nil {
 		if h := e.poller.snapshot(); h != nil {
@@ -522,7 +541,7 @@ func (sh *fullShadow) follow(job *fullJob) {
 			a.why = why
 		}
 	}
-	r := sh.safeCompare(decided, a, windows)
+	r := sh.safeCompare(decided, a, windows, job.decidePass)
 	if r.race != nil {
 		sh.confirmRace(decided.ForShadow(), windows, &r)
 	}
@@ -547,13 +566,33 @@ func (sh *fullShadow) safeDecide(in DecideInputs) (d Decided) {
 	return Decide(in)
 }
 
-func (sh *fullShadow) safeCompare(d Decided, a pyAnswer, w *windowRead) (r fullResult) {
+func (sh *fullShadow) safeCompare(d Decided, a pyAnswer, w *windowRead, decidePass string) (r fullResult) {
 	defer func() {
 		if recover() != nil {
 			r = fullResult{class: ClassUnread + ".compare_failed"}
 		}
 	}()
-	return compareWindowed(d, a, w)
+	return inFlightAgreed(compareWindowed(d, a, w), a, decidePass)
+}
+
+// inFlightAgreed is r, unless the decide path passed the request at its
+// per-key in-flight limit (inflight.key, decision 14) and Python refused it
+// at its own (inFlightRefusal with inFlightMessage, read through): both
+// gates are the same count with the same limit, each in its own process,
+// and both declined to serve the key's request at that instant, so it is
+// passed.inflight.key and never a would-admit. Go answered nothing. Only
+// that refusal: any other refusal of a request passed at inflight.key (a
+// 401, a 402, a window, the ingress limiter's 429, a 429 not read through)
+// is a gate the pipeline holds or no gate at all, and stays what the
+// pipeline's comparison makes it, since the pipeline would decide the
+// key's next request the same way with a slot free.
+func inFlightAgreed(r fullResult, a pyAnswer, decidePass string) fullResult {
+	if decidePass != PassInFlightKey || r.class != ClassWouldAdmit+".429."+inFlightRefusal ||
+		errorOf(a).message != inFlightMessage {
+		return r
+	}
+	r.class, r.fields, r.race = ClassGoPassed+"."+PassInFlightKey, nil, nil
+	return r
 }
 
 // fullResult is one comparison: its class, the fields that differ, whether
