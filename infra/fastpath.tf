@@ -48,13 +48,12 @@ locals {
   # bounded too: a deadline on each secret read, and a watch that exits the
   # process if it has not reached the service within 15 s per secret read
   # plus a minute.
-  # ff2bf1614: main after streams increment 2b (#2220) and the key window
-  # race read timestamp (#2206): the owner records a stream hold's reap
-  # floor, with the skew allowance, for the auditors to honour; the edge's
-  # shadow confirms a window race only by a re-read at Python's own read
-  # timestamp with an equal remaining; no stream is leased while the
-  # stream switches are off.
-  fastpath_release        = "ff2bf1614a56491c64f2f21738d64c16dd64d987"
+  # cae6c5479: main after streams increments 5+6 (#2226) and the in-flight
+  # 429 shadow fix (#2229): the edge tells the owner whether a decided
+  # request streams, composes eligible streams, and decides them only with
+  # fastpath_edge_streams on; the shadow counts Python's in-flight 429 to
+  # an inflight.key pass as passed. Stream switches stay off.
+  fastpath_release        = "cae6c547941460f4f97e6eeaad3dd6b541114728"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
