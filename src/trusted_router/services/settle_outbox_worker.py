@@ -40,6 +40,7 @@ from trusted_router.storage_gcp_async_admission import (
 )
 from trusted_router.storage_gcp_io import SpannerRpcCounter, count_spanner_rpcs
 from trusted_router.storage_gcp_settle_outbox import SpannerSettleOutbox
+from trusted_router.storage_models import SettleOutboxRow
 
 logger = logging.getLogger(__name__)
 
@@ -71,9 +72,62 @@ class _ObservedOutbox(SpannerSettleOutbox):
         return result
 
 
+class _WorkspaceGate:
+    """At most one in-flight apply per workspace in this process.
+
+    Every apply writes its workspace's credit row and key-limit row. Parallel
+    slots on one hot workspace (a backlog catch-up) queue on those same rows,
+    and the live authorizes for that workspace wait behind them. Slots skip a
+    busy workspace's rows instead; they stay due for the next pass. The worker
+    runs as one instance, so a process-local gate covers the whole drain.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._busy: set[str] = set()
+
+    def enter(self, workspace_id: str | None) -> bool:
+        if workspace_id is None:
+            return True
+        with self._lock:
+            if workspace_id in self._busy:
+                return False
+            self._busy.add(workspace_id)
+            return True
+
+    def leave(self, workspace_id: str | None) -> None:
+        if workspace_id is None:
+            return
+        with self._lock:
+            self._busy.discard(workspace_id)
+
+
+_WORKSPACES = _WorkspaceGate()
+
+
 def _apply_slot(outbox: SpannerSettleOutbox, shard: int, lease: int,
                 deadline: float, stop: threading.Event | None = None) -> tuple[int, str, int]:
     return _apply_slot_inner(outbox, shard, lease, deadline, stop)
+
+
+def _claim_ungated(outbox: SpannerSettleOutbox, candidates: list[SettleOutboxRow],
+                   lease: int) -> SettleOutboxRow | None:
+    """Claim the first candidate whose workspace this process can enter.
+
+    The returned row's workspace stays entered; the caller leaves it.
+    """
+    for candidate in candidates:
+        if not _WORKSPACES.enter(candidate.workspace_id):
+            continue
+        claimed = False
+        try:
+            claimed = bool(outbox.claim_candidates([candidate], lease_seconds=lease))
+        finally:
+            if not claimed:
+                _WORKSPACES.leave(candidate.workspace_id)
+        if claimed:
+            return candidate
+    return None
 
 
 def _apply_slot_inner(outbox: SpannerSettleOutbox, shard: int, lease: int,
@@ -83,19 +137,28 @@ def _apply_slot_inner(outbox: SpannerSettleOutbox, shard: int, lease: int,
     if (stop is not None and stop.is_set()) or time.monotonic() >= deadline:
         return 0, "", 0
     claim_started = time.monotonic()
-    # Exact expansion of storage_gcp_settle_outbox.SpannerSettleOutbox.claim_shard.
-    # claim_candidates mutates the winning candidate in place. This advisory
-    # preimage is NOT a transactionally witnessed previous owner (races remain).
+    # Expansion of storage_gcp_settle_outbox.SpannerSettleOutbox.claim_shard
+    # behind the workspace gate. claim_candidates mutates the winning candidate
+    # in place. This advisory preimage is NOT a transactionally witnessed
+    # previous owner (races remain).
     candidates = outbox.due_shard(shard=shard)
     prior_leases = {id(candidate): (candidate.lease_owner, candidate.leased_until)
                     for candidate in candidates}
-    rows = outbox.claim_candidates(candidates, lease_seconds=lease)
+    row = _claim_ungated(outbox, candidates, lease)
     claim_seconds = time.monotonic() - claim_started
-    if not rows:
+    if row is None:
         return 0, "", 0
-    row = rows[0]
+    try:
+        return _apply_claimed(outbox, row, prior_leases[id(row)], deadline, stop, claim_seconds)
+    finally:
+        _WORKSPACES.leave(row.workspace_id)
+
+
+def _apply_claimed(outbox: SpannerSettleOutbox, row: SettleOutboxRow,
+                   prior_lease: tuple[str | None, str | None], deadline: float,
+                   stop: threading.Event | None, claim_seconds: float) -> tuple[int, str, int]:
     ref = _row_ref(row.payload_hash)
-    prior_owner, prior_leased_until = prior_leases[id(row)]
+    prior_owner, prior_leased_until = prior_lease
     _audit_log(logging.INFO,
                "async_drain.claim ref=%s prior_owner=%s prior_leased_until=%s owner=%s leased_until=%s",
                ref, prior_owner or "none", prior_leased_until or "none",
