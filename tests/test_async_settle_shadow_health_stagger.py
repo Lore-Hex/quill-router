@@ -209,3 +209,49 @@ def test_stagger_uses_original_cycle_budget(monkeypatch):
     assert len(waits) == 1
     assert remaining == pytest.approx([.5-waits[0]])
     assert trace["cycle_us"] == round(waits[0]*1e6)
+
+
+@pytest.mark.parametrize("stage", ["preflight", "observation"])
+@pytest.mark.parametrize("stop", ["signal", "runtime", "generation"])
+def test_stop_during_read_starts_no_new_transaction(monkeypatch, stage, stop):
+    from types import SimpleNamespace
+
+    svc, wall, _, job, _ = timed_owner(monkeypatch)
+    svc.runtime_stop = SimpleNamespace(available=True)
+    name = "read_shadow_claim" if stage == "preflight" else "observe"
+    original = getattr(svc.store, name)
+    def read(*args, **kwargs):
+        result = original(*args, **kwargs)
+        if stop == "signal":
+            svc.revocation_epoch = 1
+        elif stop == "runtime":
+            svc.runtime_stop.available = False
+        else:
+            svc.generation += 1
+        return result
+    monkeypatch.setattr(svc.store, name, read)
+    reply = shell.publish_cycle(svc.store, svc.journal.boot, svc.settings.effective_serving_region,
+                                svc.settings.source_revision, job, wall[0], svc)
+    assert reply.reason == "revoked" and reply.trace["outcome"] == "failed"
+    assert svc.store.database.commits == (0 if stage == "preflight" else 1)
+
+
+def test_slow_claim_commit_does_not_cancel_an_unusable_observation(monkeypatch):
+    svc, wall, mono, job, _ = timed_owner(monkeypatch)
+    claim = svc.store.claim
+    scans = []
+    def slow_claim(*args, **kwargs):
+        landed = claim(*args, **kwargs)
+        mono[0] += .45
+        wall[0] += 450_000
+        return landed
+    observe = svc.store.observe
+    def scan(*args, **kwargs):
+        scans.append(1)
+        return observe(*args, **kwargs)
+    monkeypatch.setattr(svc.store, "claim", slow_claim)
+    monkeypatch.setattr(svc.store, "observe", scan)
+    reply = shell.publish_cycle(svc.store, svc.journal.boot, svc.settings.effective_serving_region,
+                                svc.settings.source_revision, job, wall[0], svc, True, True)
+    assert reply.claimed and reply.trace["outcome"] == "failed"
+    assert not scans and svc.store.database.commits == 1

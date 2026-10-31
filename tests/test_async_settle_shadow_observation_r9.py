@@ -67,8 +67,9 @@ async def test_admission_after_scope_sample(monkeypatch, revoke):
         assert svc.state.last_start_boundary == 102., status(svc)
 
 
+@pytest.mark.parametrize("revoke_before_claim", [True, False])
 @pytest.mark.asyncio
-async def test_revocation_after_admission_and_during_io(monkeypatch):
+async def test_revocation_after_admission_and_during_io(monkeypatch, revoke_before_claim):
     svc = service()
     svc.loop = asyncio.get_running_loop()
     svc.store.wall, svc.store.clock = lambda: NOW_US/1e6, lambda: 100.
@@ -97,19 +98,29 @@ async def test_revocation_after_admission_and_during_io(monkeypatch):
         return claim(*args)
     monkeypatch.setattr(svc.store, "claim", held)
     svc.submit_publisher(NOW_US//m.SLOT_US, NOW_US)
+    task = svc.publisher_job
+    assert task is not None
     try:
-        await released.wait()
+        await asyncio.wait_for(released.wait(), 5)
+        if not revoke_before_claim:
+            continue_claim.set()
+            await asyncio.wait_for(inside.wait(), 5)
         svc.settings.async_settle_shadow_policy = ""
-        assert not svc.enabled()  # Linearized after admission: this claim is allowed.
+        assert not svc.enabled()
         continue_claim.set()
-        await inside.wait()
+        if revoke_before_claim:
+            # Admission precedes preflight: revocation still prevents entry
+            # into a new claim transaction after that read finishes.
+            await asyncio.wait_for(asyncio.shield(task), 5)
+            assert not inside.is_set()
         svc.settings.async_settle_shadow_policy = "shadow-v2"
-        assert svc.enabled()  # Returns while I/O is still held, without a timing threshold.
+        # Already-entered claim I/O drains without blocking the owner loop.
+        assert svc.enabled()
         assert not finish.is_set()
     finally:
         continue_claim.set()
         finish.set()
-    await svc.publisher_job
+    await asyncio.wait_for(asyncio.shield(task), 5)
     assert svc.state.days[0].attempted == 1, status(svc)
 
 
