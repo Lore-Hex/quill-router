@@ -1022,6 +1022,15 @@ class Settings(BaseSettings):
     _async_settle_shadow_stopped: bool = PrivateAttr(default=False)
     async_settle_pilot_workspaces: str = ""
     _async_settle_pilot_workspace_ids: frozenset[str] = PrivateAttr(default=frozenset())
+    # Optional comma-separated serving-region allowlist for NEW async-v1
+    # acceptance (the 500 ms durable handoff, D2). Empty keeps every region;
+    # otherwise TR_SERVING_REGION must be explicit and listed. A region outside
+    # it answers sync_required before opening the enqueue transaction, so a
+    # region whose round trips to the Spanner leader cannot fit the handoff
+    # never strands a timed-out transaction's locks on the authorization.
+    # Snapshot-sync recovery and duplicates of accepted intents are unaffected.
+    async_settle_accept_regions: str = ""
+    _async_settle_accept_region_ids: frozenset[str] = PrivateAttr(default=frozenset())
     async_settle_enabled: bool = False
     async_settle_protection: bool = False
     async_settle_ticket_kid: str = ""
@@ -1611,6 +1620,24 @@ class Settings(BaseSettings):
 
     def async_settle_pilot_allows(self, workspace_id: str) -> bool:
         return not self._async_settle_pilot_workspace_ids or workspace_id in self._async_settle_pilot_workspace_ids
+
+    @model_validator(mode="after")
+    def parse_accept_regions(self) -> Settings:
+        regions = frozenset(part.strip() for part in self.async_settle_accept_regions.split(",") if part.strip())
+        if any(re.fullmatch(r"[a-z0-9\-]{1,32}", value) is None for value in regions):
+            raise ValueError("invalid async settle accept region set")
+        self._async_settle_accept_region_ids = regions
+        return self
+
+    @property
+    def async_settle_accept_region_ids(self) -> frozenset[str]:
+        return self._async_settle_accept_region_ids
+
+    def async_settle_accept_region_allowed(self) -> bool:
+        # Like the shadow region gate: require the explicit serving pin, so the
+        # primary_region fallback cannot opt an unpinned boot in.
+        return not self._async_settle_accept_region_ids or (
+            bool(self.serving_region) and self.effective_serving_region in self._async_settle_accept_region_ids)
 
     @property
     def async_settle_admission_enabled(self) -> bool:

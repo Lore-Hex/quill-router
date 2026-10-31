@@ -781,6 +781,17 @@ ENV_VARS=(
   "TR_ASYNC_SETTLE_PROTECTION=true"
   "TR_ASYNC_SETTLE_PILOT_WORKSPACES=162e441a-5d13-414f-92bd-7c6cd805faa3"
   "TR_ASYNC_SETTLE_PILOT_CAP_MICRO=5000000"
+  # October 31: new async-v1 acceptance only where the 500 ms durable handoff
+  # was measured to fit (accepted handoffs: us-central1 at most 92 ms, us-east4
+  # at most 292 ms). From europe-west4 the enqueue's batch DML and commit are
+  # about five serial round trips to the US leader, so every attempt timed out
+  # (05:29Z-05:41Z, 0 of 19 accepted). The 50 ms rollback floor is shorter
+  # than one round trip, and the stranded row locks (7-10 s of lock wait on
+  # those authorizations' rows) turned the retries and the legacy fallback
+  # into 2 s 503s and 8 s settles. Other regions answer
+  # sync_required("unsupported_cohort") before opening a transaction. Add a
+  # region only with measured handoff percentiles.
+  "TR_ASYNC_SETTLE_ACCEPT_REGIONS=us-central1,us-east4"
   # Purpose signer, design runbook step 2 and the 2026-10-09 decisions: the key
   # file is the Secret Manager mount declared in SECRET_ENVS, pinned as a literal
   # so no revision inherits a path. kid/issuer/audience are the public identity

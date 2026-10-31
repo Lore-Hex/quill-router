@@ -1077,3 +1077,172 @@ def test_pilot_durable_fleet_health_flip(env):
     assert _drain_async()['outcomes'] == {'settled_now': 1}
     principal = SimpleNamespace(workspace=SimpleNamespace(id='ws-v1'), api_key=key)
     assert status(auth.id + '.settle', principal)['data']['trusted_router_settlement']['settlement_status'] == 'settled'
+
+
+# 2026-10-31: every async-v1 handoff from europe-west4 timed out. Its batch DML
+# and commit are serial round trips to the US leader, longer than the 500 ms
+# handoff, and each timed-out attempt left row locks for the retries of the
+# same identity. Fresh acceptance is scoped to measured serving regions.
+ACCEPT = 'us-central1,us-east4'
+
+
+def _regional(env, serving, accept=ACCEPT):
+    cfg = settings(settle_outbox_enabled=True, serving_region=serving, async_settle_accept_regions=accept)
+    env[0].trust_settings = cfg
+    return (*env[:3], cfg)
+
+
+def _count_transactions(env, monkeypatch):
+    run = env[1].run_in_transaction
+    calls = []
+
+    def counted(fn, **kwargs):
+        calls.append(kwargs.get('transaction_tag'))
+        return run(fn, **kwargs)
+
+    monkeypatch.setattr(env[1], 'run_in_transaction', counted)
+    return calls
+
+
+@pytest.mark.parametrize('raw,expected', [('', frozenset()), (' , ', frozenset()),
+                                          (' us-central1,us-east4,us-central1 ', frozenset({'us-central1', 'us-east4'}))])
+def test_accept_regions_parse(raw, expected):
+    assert settings(async_settle_accept_regions=raw).async_settle_accept_region_ids == expected
+
+
+@pytest.mark.parametrize('raw', ['US-central1', 'us_central1', 'us central1', 'a' * 33])
+def test_accept_regions_reject_invalid(raw):
+    with pytest.raises(ValueError, match='invalid async settle accept region set'):
+        settings(async_settle_accept_regions=raw)
+
+
+@pytest.mark.parametrize('accept,serving,allowed', [
+    ('', '', True), ('', 'europe-west4', True), (ACCEPT, 'us-central1', True), (ACCEPT, 'us-east4', True),
+    (ACCEPT, 'europe-west4', False), (ACCEPT, 'southamerica-east1', False),
+    # The primary_region fallback must not opt an unpinned boot in.
+    (ACCEPT, '', False),
+])
+def test_accept_region_needs_explicit_listed_serving_pin(accept, serving, allowed):
+    cfg = settings(async_settle_accept_regions=accept, serving_region=serving, primary_region='us-central1')
+    assert cfg.async_settle_accept_region_allowed() is allowed
+
+
+@pytest.mark.parametrize('serving', ['europe-west4', ''])
+def test_region_outside_accept_set_opens_no_transaction(env, monkeypatch, caplog, serving):
+    import logging
+    body, auth, key = prepare(env)
+    env = _regional(env, serving)
+    before = copy.deepcopy((env[1].typed, env[1].gateway_authorizations, env[1].reservations))
+    calls = _count_transactions(env, monkeypatch)
+    with caplog.at_level(logging.INFO, logger=handler.logger.name):
+        result = call(env, body)
+    assert result.status_code == 200
+    assert json.loads(result.body) == json.loads((ROOT/'sync_required_v1.json').read_text())['unsupported_cohort']
+    assert calls == []
+    assert not env[1].settle_outbox
+    assert (env[1].typed, env[1].gateway_authorizations, env[1].reservations) == before
+    assert 'metric=async_settle_region_not_accepting' in caplog.text
+    # The synchronous snapshot recovery the enclave falls back to still books once.
+    assert call(env, body, synchronous=True).status_code == 200
+    assert _typed_credit(env[1], 'ws-v1')['total_usage'] == 2
+    assert _typed_key(env[1], key.hash)['usage'] == 2
+    assert not env[1].settle_outbox
+
+
+def test_region_outside_accept_set_still_resolves_accepted_intent(env):
+    body, auth, _ = prepare(env)
+    assert call(env, body).status_code == 202  # accepted in a listed region
+    europe = _regional(env, 'europe-west4')
+    retry = call(europe, body)
+    assert retry.status_code == 202
+    assert json.loads(retry.body)['data']['acceptance']['status'] == 'duplicate'
+    assert _typed_credit(env[1], 'ws-v1')['total_usage'] == 0
+    assert call(europe, body, synchronous=True).status_code == 200
+    assert env[1].settle_outbox[(auth.id, 'settle')]['status'] == 'done'
+    assert _typed_credit(env[1], 'ws-v1')['total_usage'] == 2
+
+
+def test_region_gate_runs_after_ticket_authority(env):
+    rt = env[2]
+    body, _, _ = prepare(env)
+    claims = verify_lookup_ticket(body['settlement_ticket'], [rt.signer.trusted], NOW).model_dump()
+    claims['journal_region'] = 'europe-west4'
+    body['settlement_ticket'] = rt.signer.sign(claims, NOW)
+    body['terminal']['journal_region'] = 'europe-west4'
+    with pytest.raises(HTTPException) as exc:
+        call(_regional(env, 'europe-west4'), body)
+    assert exc.value.status_code == 401
+
+
+def test_listed_region_still_accepts(env, monkeypatch):
+    body, auth, _ = prepare(env)
+    env = _regional(env, 'us-east4')
+    calls = _count_transactions(env, monkeypatch)
+    assert call(env, body).status_code == 202
+    assert calls == ['tr_async_settle_enqueue']
+    assert env[1].settle_outbox[(auth.id, 'settle')]['async_version'] == 1
+
+
+@pytest.mark.parametrize('serving,code', [('', 503), ('europe-west4', 200)], ids=['ungated', 'europe-gated'])
+def test_cross_region_handoff_model(env, monkeypatch, caplog, serving, code):
+    """The incident's shape: the batch returns after the 500 ms handoff."""
+    import logging
+    body, _, _ = prepare(env)
+    if serving:
+        env = _regional(env, serving)
+    clock = [100.0]
+    monkeypatch.setattr(time, 'monotonic', lambda: clock[0])
+    original = _FakeTransaction.batch_update
+    batches = []
+
+    def leader_round_trips(self, statements, *args, **kwargs):
+        batches.append(len(statements))
+        clock[0] += .55  # begin + DML from europe-west4 to the US leader
+        return original(self, statements, *args, **kwargs)
+
+    monkeypatch.setattr(_FakeTransaction, 'batch_update', leader_round_trips)
+    with caplog.at_level(logging.INFO, logger=handler.logger.name):
+        if code == 503:
+            with pytest.raises(HTTPException) as exc:
+                handler.handle(json.dumps(body).encode(), kind='settle', runtime=env[2],
+                               settings=env[3], started=100.0)
+            assert exc.value.status_code == 503
+            assert batches == [4]
+            assert 'metric=async_settle_unknown_outcome reason=DeadlineExceeded ' in caplog.text
+            assert 'metric=async_settle_rejected' in caplog.text
+        else:
+            result = handler.handle(json.dumps(body).encode(), kind='settle', runtime=env[2],
+                                    settings=env[3], started=100.0)
+            assert result.status_code == code
+            assert json.loads(result.body)['data']['reason'] == 'unsupported_cohort'
+            assert batches == []
+            assert 'unknown_outcome' not in caplog.text
+    assert not env[1].settle_outbox
+
+
+def test_unknown_outcome_names_only_the_exception_class(env, monkeypatch, caplog):
+    import logging
+
+    from google.api_core.exceptions import DeadlineExceeded
+    body, auth, _ = prepare(env)
+
+    def lost(fn, **kwargs):
+        raise DeadlineExceeded('lost reply for ' + auth.id)
+
+    monkeypatch.setattr(env[1], 'run_in_transaction', lost)
+    with caplog.at_level(logging.INFO, logger=handler.logger.name):
+        with pytest.raises(HTTPException) as exc:
+            call(env, body)
+    assert exc.value.status_code == 503
+    lines = [r.getMessage() for r in caplog.records if 'unknown_outcome' in r.getMessage()]
+    assert lines == ['metric=async_settle_unknown_outcome reason=DeadlineExceeded value=1'] * 2
+    assert auth.id not in caplog.text
+
+
+def test_rollout_pins_accept_regions_to_measured_regions():
+    rollout = (Path(__file__).parents[1] / 'scripts/deploy/rollout.sh').read_text()
+    pins = [line.strip().strip('"') for line in rollout.splitlines()
+            if line.strip().startswith('"TR_ASYNC_SETTLE_ACCEPT_REGIONS=')]
+    assert pins == ['TR_ASYNC_SETTLE_ACCEPT_REGIONS=' + ACCEPT]
+    cfg = settings(async_settle_accept_regions=pins[0].split('=', 1)[1], serving_region='europe-west4')
+    assert not cfg.async_settle_accept_region_allowed()
