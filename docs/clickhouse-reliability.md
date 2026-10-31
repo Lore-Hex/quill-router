@@ -253,6 +253,33 @@ endpoint answers 502, 503 or 504. A failed or empty lookup fails the rollout.
 Never restart or deploy all three ClickHouse nodes together. Change one zone,
 wait for replica queue and load-balancer health to recover, then continue.
 
+### October 2026 security update
+
+All provisioners pin ClickHouse `26.8.36.3`, the LTS fix for
+[CVE-2026-116366](https://clickhouse.com/docs/resources/changelogs/security-changelog).
+Updating a provisioner does not upgrade an existing server. Use a separate
+rolling maintenance operation, never rerun a provisioning script to patch a node.
+
+1. Verify recovery snapshots and archive evidence before changing a server.
+2. Check all three GCP Keeper voters, one leader with two synced followers,
+   every replicated table writable, and zero replication delay and queue.
+3. Upgrade one non-publisher node's `clickhouse-common-static`,
+   `clickhouse-server`, and `clickhouse-client` to the exact pinned version.
+   Preserve configuration files. Do not change schema or retention during this work.
+4. Reboot that node to activate its already-installed security kernel, then
+   require the full quorum, replica catch-up, SQL reads, and healthy load-balancer
+   membership before touching the next node. Process the publisher last.
+5. AWS and Azure standalone nodes require their own snapshots and separate
+   maintenance windows. Their durable outboxes retain analytics during a restart;
+   confirm drain recovery and the public status/leaderboard after each cloud.
+
+Stop on any failed gate. A completed package installation is not proof that the
+running service or kernel has changed. Confirm `SELECT version()`, `uname -r`,
+worker/timer recovery and analytics freshness after reboot. Keep recovery
+snapshots until the upgraded fleet is verified. Do not attempt an in-place
+database downgrade if startup fails; preserve the disk and use the documented
+snapshot/replica recovery procedure.
+
 ### Node configuration: `/tr_health` and system-log retention
 
 `scripts/deploy/clickhouse_node_config.sh` installs the files in

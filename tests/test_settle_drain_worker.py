@@ -369,7 +369,7 @@ def test_stall_across_multiple_intervals_never_publishes(fake_store, monkeypatch
 
 
 def test_repeated_claim_failures_cannot_refresh_durable_health(fake_store, monkeypatch):
-    failed, recover, stop = threading.Event(), threading.Event(), threading.Event()
+    recover, stop = threading.Event(), threading.Event()
     # A claim RPC runs only for a due candidate: every shard has one, so every
     # slot fails its claim instead of completing an empty scan.
     _workspace_rows(fake_store, [f"ws-{i}" for i in range(16)])
@@ -380,29 +380,44 @@ def test_repeated_claim_failures_cannot_refresh_durable_health(fake_store, monke
     def claim(self, candidates, **kw):
         if not recover.is_set():
             calls.append(1)
-            if len(calls) >= 3:
-                failed.set()
             raise TimeoutError('private-reservation')
         return original(self, candidates, **kw)
     monkeypatch.setattr(SpannerSettleOutbox, 'claim_candidates', claim)
     cfg = config(settle_outbox_health_publish_interval_seconds=.03,
                  settle_outbox_poll_interval_seconds=.01, settle_outbox_worker_concurrency=1)
-    thread = threading.Thread(target=worker.run_worker, args=(cfg, stop))
-    thread.start()
-    try:
-        assert failed.wait(2)
-        time.sleep(.18)
-        assert len(calls) >= 3
-        assert read_health(fake_store[1]) == before
-        recover.set()
-        deadline = time.monotonic() + 2
-        while read_health(fake_store[1]) == before and time.monotonic() < deadline:
-            time.sleep(.01)
-        assert read_health(fake_store[1]) != before
-    finally:
+    cadence = worker.WorkerCadence()
+    original_pass = worker.drain_pass
+    failed_health, pass_errors = [], []
+    recovered = []
+
+    def observe_pass(*args, **kwargs):
+        # Make publication due on every real pass, independent of CI scheduling.
+        # A failed claim must not refresh it even when the interval has elapsed.
+        cadence.next_health = 0
+        try:
+            result = original_pass(*args, **kwargs)
+        except TimeoutError:
+            failed_health.append(read_health(fake_store[1]))
+            if len(failed_health) == 3:
+                recover.set()
+            elif len(failed_health) > 3:
+                stop.set()
+            raise
+        except Exception as exc:
+            pass_errors.append(exc)
+            stop.set()
+            raise
+        recovered.append(recover.is_set())
         stop.set()
-        thread.join(3)
-    assert not thread.is_alive()
+        return result
+
+    monkeypatch.setattr(worker, 'drain_pass', observe_pass)
+    worker.run_worker(cfg, stop, cadence=cadence)
+    assert pass_errors == []
+    assert len(calls) == 3
+    assert failed_health == [before, before, before]
+    assert recovered == [True]
+    assert read_health(fake_store[1]) != before
 
 
 def test_monitor_dumps_all_stacks_then_exits_without_shutdown_delay(monkeypatch):

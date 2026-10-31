@@ -28,6 +28,7 @@
 set -euo pipefail
 
 REGION="${REGION:-eu-west-3}"                  # Paris: same region as tr-eu.
+CLICKHOUSE_VERSION="26.8.36.3"                # CVE-2026-116366 patched LTS.
 ACCOUNT="${ACCOUNT:-330422590279}"
 VPC_ID="${VPC_ID:-vpc-05b829b9cae6a9cd8}"
 SUBNET_ID="${SUBNET_ID:-subnet-06e58bd9bca166a94}"
@@ -280,7 +281,7 @@ apt-get update -qq
 
 # Non-interactive install; the default user password is set below.
 echo "clickhouse-server clickhouse-server/default-password password" | debconf-set-selections
-apt-get install -y clickhouse-server clickhouse-client
+apt-get install -y "clickhouse-common-static=${CLICKHOUSE_VERSION}" "clickhouse-server=${CLICKHOUSE_VERSION}" "clickhouse-client=${CLICKHOUSE_VERSION}"
 
 PRIVATE_IP=\$(curl -s -H "X-aws-ec2-metadata-token: \$(curl -s -X PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 60')" http://169.254.169.254/latest/meta-data/local-ipv4)
 
