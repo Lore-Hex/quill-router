@@ -10,6 +10,7 @@ import json
 import logging
 import threading
 import time
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -369,6 +370,9 @@ def test_stall_across_multiple_intervals_never_publishes(fake_store, monkeypatch
 
 def test_repeated_claim_failures_cannot_refresh_durable_health(fake_store, monkeypatch):
     failed, recover, stop = threading.Event(), threading.Event(), threading.Event()
+    # A claim RPC runs only for a due candidate: every shard has one, so every
+    # slot fails its claim instead of completing an empty scan.
+    _workspace_rows(fake_store, [f"ws-{i}" for i in range(16)])
     worker.publish_health(fake_store[1])
     before = read_health(fake_store[1])
     original = SpannerSettleOutbox.claim_candidates
@@ -437,6 +441,8 @@ def test_fast_failures_keep_monitor_alive_without_publication(fake_store, monkey
     def fail(*a, **kw):
         raise TimeoutError('private-reservation')
     monkeypatch.setattr(SpannerSettleOutbox, 'claim_candidates', fail)
+    # Every shard has a due row, so every slot reaches the failing claim.
+    _workspace_rows(fake_store, [f"ws-{i}" for i in range(16)])
     cfg = config(settle_outbox_poll_interval_seconds=.005).model_copy(
         update={'settle_outbox_stall_seconds': .05})
     with TestClient(create_app(cfg, configure_store_arg=False, init_observability=False)) as client:
@@ -444,3 +450,85 @@ def test_fast_failures_keep_monitor_alive_without_publication(fake_store, monkey
         assert client.get('/health').status_code == 200
         assert exits == []
         assert read_health(fake_store[1]) is None
+
+
+def _workspace_rows(store, workspaces):
+    box = seed(store[0], len(workspaces))
+    for i, workspace in enumerate(workspaces):
+        row = store[1].settle_outbox[(f"fast-{i}", "settle")]
+        row["queue_shard"], row["workspace_id"] = i % 16, workspace
+    return box
+
+
+def test_parallel_slots_apply_one_row_per_workspace_at_a_time(fake_store, monkeypatch):
+    # A backlog on one workspace must not run several finalizes against its
+    # single credit row at once; other workspaces keep their parallel slots.
+    box = _workspace_rows(fake_store, ["hot"] * 8 + ["cold-a", "cold-b"])
+    lock, inflight, peak, applied = threading.Lock(), Counter(), Counter(), []
+    def apply(row):
+        with lock:
+            inflight[row.workspace_id] += 1
+            peak[row.workspace_id] = max(peak[row.workspace_id], inflight[row.workspace_id])
+        time.sleep(.02)
+        with lock:
+            inflight[row.workspace_id] -= 1
+            applied.append(row.workspace_id)
+        return ApplyOutcome.SETTLED_NOW
+    monkeypatch.setattr(drain, "apply_frozen_settle", apply)
+    for _ in range(20):
+        if len(applied) == 10:
+            break
+        worker.drain_pass(10, settings=config())
+    assert sorted(applied) == sorted(["hot"] * 8 + ["cold-a", "cold-b"])
+    assert peak["hot"] == 1
+    assert worker._WORKSPACES._busy == set()
+    assert {row["status"] for row in fake_store[1].settle_outbox.values()} == {"done"}
+    assert box.claim_shard(shard=0, lease_seconds=30) == []
+
+
+def test_busy_workspace_rows_stay_unleased_for_the_next_pass(fake_store, monkeypatch):
+    # One shard, both rows inside its two-candidate scan.
+    box = _workspace_rows(fake_store, ["hot", "cold"])
+    for row in fake_store[1].settle_outbox.values():
+        row["queue_shard"] = 0
+    monkeypatch.setattr(drain, "apply_frozen_settle", lambda row: ApplyOutcome.SETTLED_NOW)
+    assert worker._WORKSPACES.enter("hot")
+    try:
+        assert worker._apply_slot(box, 0, 30, time.monotonic() + 2)[:2] == (1, ApplyOutcome.SETTLED_NOW)
+        assert worker._apply_slot(box, 0, 30, time.monotonic() + 2) == (0, "", 0)
+    finally:
+        worker._WORKSPACES.leave("hot")
+    statuses = {aid: row["status"] for (aid, _), row in fake_store[1].settle_outbox.items()}
+    assert statuses == {"fast-0": "pending", "fast-1": "done"}
+    # The skipped row was never leased, so the next pass claims it at once.
+    assert fake_store[1].settle_outbox[("fast-0", "settle")]["lease_owner"] is None
+    assert worker._apply_slot(box, 0, 30, time.monotonic() + 2)[0] == 1
+    assert worker._WORKSPACES._busy == set()
+
+
+def test_failed_claim_releases_the_workspace(fake_store, monkeypatch):
+    box = _workspace_rows(fake_store, ["hot"])
+    def fail(self, candidates, **kwargs):
+        raise TimeoutError
+    with monkeypatch.context() as patch:
+        patch.setattr(SpannerSettleOutbox, "claim_candidates", fail)
+        with pytest.raises(TimeoutError):
+            worker._apply_slot(box, 0, 30, time.monotonic() + 2)
+    assert worker._WORKSPACES._busy == set()
+    def lost(self, candidates, **kwargs):
+        return []
+    with monkeypatch.context() as patch:
+        patch.setattr(SpannerSettleOutbox, "claim_candidates", lost)
+        assert worker._apply_slot(box, 0, 30, time.monotonic() + 2) == (0, "", 0)
+    assert worker._WORKSPACES._busy == set()
+
+
+def test_apply_failure_releases_the_workspace(fake_store, monkeypatch):
+    box = _workspace_rows(fake_store, ["hot"])
+    def resolve(*args, **kwargs):
+        raise KeyboardInterrupt
+    monkeypatch.setattr(drain, "apply_frozen_settle", lambda row: ApplyOutcome.SETTLED_NOW)
+    monkeypatch.setattr(drain, "_resolve_row", resolve)
+    with pytest.raises(KeyboardInterrupt):
+        worker._apply_slot(box, 0, 30, time.monotonic() + 2)
+    assert worker._WORKSPACES._busy == set()
