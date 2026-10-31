@@ -215,12 +215,12 @@ func pythonInsert(ctx context.Context, c *spanner.Client, a gwauth.Authorization
 				"finalization_outcome":        spanner.NullString{},
 				"finalized_cost_microdollars": spanner.NullInt64{},
 				"started_at":                  spanner.NullTime{},
-				"heartbeat_seq":               spanner.NullInt64{},
+				"heartbeat_seq":               nullInt(a.HeartbeatSeq),
 				"heartbeat_at":                spanner.NullTime{},
 				"heartbeat_hash":              spanner.NullString{},
 				"selected_endpoint_id":        spanner.NullString{},
 				"delivered_usage":             spanner.NullString{},
-				"pricing_snapshot":            spanner.NullString{},
+				"pricing_snapshot":            nullString(a.PricingSnapshot),
 				"stage_d_boot_kid":            spanner.NullString{StringVal: a.StageDBootKid, Valid: true},
 				"invocation_nonce":            nonce,
 				"gateway_request_id":          spanner.NullString{},
@@ -330,7 +330,7 @@ func (g goldenCase) rows() (gwauth.AuthorizationRow, gwauth.ReservationRow) {
 			ReservationID: a.ReservationID, ModelID: a.ModelID, Provider: a.Provider, UsageType: a.UsageType,
 			EstimatedMicrodollars: a.EstimatedMicrodollars, CreatedAt: fromUS(a.CreatedAtUS), Payload: a.Payload,
 			IdempotencyFingerprint: a.IdempotencyFingerprint, StageDBootKid: a.StageDBootKid,
-			InvocationNonce: a.InvocationNonce},
+			InvocationNonce: a.InvocationNonce, PricingSnapshot: a.PricingSnapshot, HeartbeatSeq: a.HeartbeatSeq},
 		gwauth.ReservationRow{ReservationID: r.ReservationID, WorkspaceID: r.WorkspaceID, KeyHash: r.KeyHash,
 			HoldUsageType: r.HoldUsageType, AuthorizationID: r.AuthorizationID, IdempotencyScope: r.IdempotencyScope,
 			IdempotencyFingerprint: r.IdempotencyFingerprint, ExpiresAt: fromUS(r.ExpiresAtUS)}
@@ -454,6 +454,9 @@ func typedColumnsWritten(t *testing.T, name string, got StoredAuthorization, a g
 	if got.InvocationNonce != nullString(a.InvocationNonce) {
 		t.Errorf("%s: invocation_nonce %+v, want %+v", name, got.InvocationNonce, nullString(a.InvocationNonce))
 	}
+	if got.PricingSnapshot != nullString(a.PricingSnapshot) || got.HeartbeatSeq != nullInt(a.HeartbeatSeq) {
+		t.Errorf("%s: pricing_snapshot %+v, heartbeat_seq %+v", name, got.PricingSnapshot, got.HeartbeatSeq)
+	}
 }
 
 // TestLeasedInsertWritesP1sRowsByteForByte: each row Python wrote for an
@@ -484,7 +487,7 @@ func TestLeasedInsertWritesP1sRowsByteForByte(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	nonces := 0
+	nonces, streams := 0, 0
 	for _, g := range goldenAnswered(t) {
 		if g.Expect.ReservationRow.CreatedAt != "commit_timestamp" {
 			t.Fatalf("%s: the golden reservation's created_at is %q, not the commit's timestamp", g.Name, g.Expect.ReservationRow.CreatedAt)
@@ -492,6 +495,9 @@ func TestLeasedInsertWritesP1sRowsByteForByte(t *testing.T) {
 		a, r := g.rows()
 		if a.InvocationNonce != nil {
 			nonces++
+		}
+		if a.PricingSnapshot != nil && a.HeartbeatSeq != nil && *a.HeartbeatSeq == 0 {
+			streams++
 		}
 		before := time.Now()
 		if out, _ := goStore.InsertLeasedAuthorization(ctx, a, r); out != Inserted {
@@ -517,6 +523,9 @@ func TestLeasedInsertWritesP1sRowsByteForByte(t *testing.T) {
 	}
 	if nonces == 0 {
 		t.Error("no golden case sends an invocation nonce: the typed column's non-NULL value went untested")
+	}
+	if streams == 0 {
+		t.Error("no golden case is a stream's: pricing_snapshot and heartbeat_seq went untested")
 	}
 	if _, found, err := goStore.ReadAuthorizationForCompare(ctx, "gwa-none"); found || err != nil {
 		t.Errorf("an id with no row: %v %v", found, err)
@@ -1261,14 +1270,61 @@ func TestARowNotOursColumnForColumnIsNeverAnswered(t *testing.T) {
 			t.Errorf("%s set: %v, want unknown", column, out)
 		}
 	}
-	// The positive control: our own rows are Landed.
+	// A stream's row (docs/design/fast-admission-streams.md section 8.4):
+	// its pricing snapshot and heartbeat_seq 0 are ours only as we wrote
+	// them; a heartbeat's seq, another snapshot or none is not ours.
+	other, one := `{"v":2}`, int64(1)
+	for name, change := range map[string]func(*gwauth.AuthorizationRow){
+		"another snapshot": func(a *gwauth.AuthorizationRow) { a.PricingSnapshot = &other },
+		"no snapshot":      func(a *gwauth.AuthorizationRow) { a.PricingSnapshot = nil },
+		"a heartbeat":      func(a *gwauth.AuthorizationRow) { a.HeartbeatSeq = &one },
+		"no heartbeat_seq": func(a *gwauth.AuthorizationRow) { a.HeartbeatSeq = nil },
+	} {
+		a, r := streamRows()
+		theirs := a
+		change(&theirs)
+		if err := pythonInsert(ctx, shared, theirs, r); err != nil {
+			t.Fatal(err)
+		}
+		if out, _ := s.InsertLeasedAuthorization(ctx, a, r); out != Unknown {
+			t.Errorf("stream, %s: %v, want unknown", name, out)
+		}
+	}
+	// And a row without either is not a stream's of ours.
 	a, r := leasedRows("")
+	stream := a
+	snapshot, zero := `{"v":1}`, int64(0)
+	stream.PricingSnapshot, stream.HeartbeatSeq = &snapshot, &zero
+	if err := pythonInsert(ctx, shared, stream, r); err != nil {
+		t.Fatal(err)
+	}
+	if out, _ := s.InsertLeasedAuthorization(ctx, a, r); out != Unknown {
+		t.Errorf("a stream's row for ours: %v, want unknown", out)
+	}
+	// The positive controls: our own rows are Landed, a stream's too.
+	a, r = leasedRows("")
 	if err := pythonInsert(ctx, shared, a, r); err != nil {
 		t.Fatal(err)
 	}
 	if out, _ := s.InsertLeasedAuthorization(ctx, a, r); out != Landed {
 		t.Errorf("our own rows: %v, want landed", out)
 	}
+	a, r = streamRows()
+	if err := pythonInsert(ctx, shared, a, r); err != nil {
+		t.Fatal(err)
+	}
+	if out, _ := s.InsertLeasedAuthorization(ctx, a, r); out != Landed {
+		t.Errorf("our own stream rows: %v, want landed", out)
+	}
+}
+
+// streamRows are leasedRows for a stream Stage D lets in: its pricing
+// snapshot and heartbeat_seq 0.
+func streamRows() (gwauth.AuthorizationRow, gwauth.ReservationRow) {
+	a, r := leasedRows("")
+	snapshot, zero := `{"candidates":[],"kind":"endpoint","v":1}`, int64(0)
+	a.PricingSnapshot, a.HeartbeatSeq = &snapshot, &zero
+	return a, r
 }
 
 // TestASessionAfterTheDeadlineSendsNothing: the client cannot make a

@@ -6,8 +6,14 @@ environment cannot change the files) through the publisher's own
 ``settings_facts`` and ``build_policy``, and signs it with the routing
 snapshot's TEST key (scripts/fastpath/routing_snapshot_vectors.py, derived from
 a public seed) under the edge-policy ``typ``. It writes the exact canonical
-body (no trailing newline) and the signed manifest to fastpath/testdata/.
-Workspace ids, digests and the monitor key are synthetic.
+body (no trailing newline) and the signed manifest to fastpath/testdata/,
+and the optional fastpath_edge_streams member's vectors
+(docs/design/fast-admission-streams.md section 5.4) to
+fastpath/testdata/edge_policy_streams_v1.json: bodies the publisher writes
+from each combination of its three switches, and the member's other
+spellings, each with whether Python's EdgePolicyV1 and Go's ParseEdgePolicy
+accept it and what the member says. Workspace ids, digests and the monitor
+key are synthetic.
 tests/test_edge_policy_publish.py fails when the files are not what this
 script writes now.
 
@@ -39,12 +45,14 @@ from trusted_router.routing_snapshot_signing import (  # noqa: E402
 )
 from trusted_router.services.edge_policy_publisher import (  # noqa: E402
     build_policy,
+    edge_streams_on,
     settings_facts,
 )
 from trusted_router.services.routing_snapshot_publisher import plane_of  # noqa: E402
 
 OUTPUT_BODY = ROOT / "fastpath" / "testdata" / "edge_policy_v1.body.json"
 OUTPUT_MANIFEST = ROOT / "fastpath" / "testdata" / "edge_policy_v1.manifest.json"
+OUTPUT_STREAMS = ROOT / "fastpath" / "testdata" / "edge_policy_streams_v1.json"
 GENERATOR = "scripts/fastpath/edge_policy_vectors.py"
 
 ISSUED_AT = calendar.timegm((2026, 10, 19, 0, 0, 0))  # 2026-10-19T00:00Z
@@ -110,8 +118,8 @@ def fixture_settings() -> Settings:
     )
 
 
-def policy() -> EdgePolicyV1:
-    settings = fixture_settings()
+def policy(settings: Settings | None = None) -> EdgePolicyV1:
+    settings = settings or fixture_settings()
     # async_settle: admission and the edge's async switch off (pinned in
     # fixture_settings, as rollout.sh deploys them), a ticket authority and
     # typed records, so the body carries both values.
@@ -132,6 +140,43 @@ def render_body() -> bytes:
     return canonical_edge_policy_bytes(policy())
 
 
+# The three switches fastpath_edge_streams needs, by name.
+STREAMS_SWITCHES = ("fastpath_edge_streams", "fastpath_pilot_streams", "reap_snapshot_booking_enabled")
+# The member's spellings the publisher never writes, each refused by both
+# readers: present only as true.
+STREAMS_REFUSED = (("false", "false"), ("null", "null"), ("one", "1"), ("string", '"true"'))
+
+
+def streams_cases() -> list[dict[str, object]]:
+    """The member's vectors: the publisher's body for every combination of
+    the three switches (the member present only with all three on), then
+    the all-on body with the member spelled every other way."""
+    cases: list[dict[str, object]] = []
+    on_body = ""
+    for mask in range(1 << len(STREAMS_SWITCHES)):
+        switches = {name: bool(mask >> i & 1) for i, name in enumerate(STREAMS_SWITCHES)}
+        settings = fixture_settings().model_copy(update=switches)
+        body = canonical_edge_policy_bytes(policy(settings)).decode("ascii")
+        member = edge_streams_on(settings)
+        if member:
+            on_body = body
+        name = "+".join(n for n, v in switches.items() if v) or "all_off"
+        cases.append({"name": f"publisher:{name}", "switches": switches, "body": body, "accept": True,
+                      "edge_streams": member})
+    member_text = '"fastpath_edge_streams":true'
+    if on_body.count(member_text) != 1:
+        raise AssertionError("the all-on body does not carry the member once")
+    for name, spelling in STREAMS_REFUSED:
+        cases.append({"name": f"refused:{name}", "switches": None,
+                      "body": on_body.replace(member_text, f'"fastpath_edge_streams":{spelling}'),
+                      "accept": False, "edge_streams": False})
+    return cases
+
+
+def render_streams() -> str:
+    return json.dumps({"generator": GENERATOR, "cases": streams_cases()}, indent=1, sort_keys=True) + "\n"
+
+
 def render_manifest() -> str:
     manifest = {
         "generator": GENERATOR,
@@ -149,4 +194,6 @@ def render_manifest() -> str:
 if __name__ == "__main__":
     OUTPUT_BODY.write_bytes(render_body())
     OUTPUT_MANIFEST.write_text(render_manifest())
-    print(f"wrote {OUTPUT_BODY.relative_to(ROOT)} and {OUTPUT_MANIFEST.relative_to(ROOT)}")
+    OUTPUT_STREAMS.write_text(render_streams())
+    print(f"wrote {OUTPUT_BODY.relative_to(ROOT)}, {OUTPUT_MANIFEST.relative_to(ROOT)} and "
+          f"{OUTPUT_STREAMS.relative_to(ROOT)}")

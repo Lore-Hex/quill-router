@@ -1,9 +1,12 @@
 package edge
 
-// Streams on the fast-path lease, the edge's part in this increment
-// (docs/design/fast-admission-streams.md sections 5.4 and 8.1): every
-// stream still passes as body.stream, whatever the policy says, and the
-// shadow splits them by the Stage D reason the edge reads for them.
+// Streams on the fast-path lease, the edge's part
+// (docs/design/fast-admission-streams.md sections 5.4, 8.1 and 8.4):
+// without the edge policy's fastpath_edge_streams every stream passes as
+// body.stream, composed for the shadow when nothing else passes it, and
+// the shadow splits them by the Stage D reason the edge reads for them;
+// with it the edge decides a stream Stage D lets in, as Python's pilot
+// leases it.
 
 import (
 	"bytes"
@@ -77,10 +80,9 @@ func TestAStreamPassesWithTheStageDReasonTheEdgeReads(t *testing.T) {
 		{"the priority tier", open, map[string]any{"service_tier": "priority"}, true, StreamServiceTier},
 		{"the auto tier", open, map[string]any{"service_tier": "auto"}, true, StreamServiceTier},
 		{"the default tier", open, map[string]any{"service_tier": "default"}, true, StreamUnread},
-		{"the edge's own switch on", func(p *routingsnapshot.EdgePolicy) {
+		{"a typed store", func(p *routingsnapshot.EdgePolicy) {
 			open(p)
-			on := true
-			p.FastpathEdgeStreams = &on
+			p.AsyncSettle = &routingsnapshot.AsyncSettle{TypedRecords: true}
 		}, nil, true, StreamUnread},
 	} {
 		in := stream
@@ -92,8 +94,9 @@ func TestAStreamPassesWithTheStageDReasonTheEdgeReads(t *testing.T) {
 		in.Policy = &policy
 		in.Request.Boot.Boot.DeclaresUsageHeartbeat = c.boot
 		d := Decide(in)
-		if d.Pass != gwauth.ReasonStream || d.ForShadow() != nil {
-			t.Errorf("%s: passed %q, decided %v: every stream still passes", c.name, d.Pass, d.ForShadow() != nil)
+		if _, admit := d.Admit(); d.Pass != gwauth.ReasonStream || admit ||
+			(d.ForShadow() != nil && d.DecideGate != gwauth.ReasonStream) {
+			t.Errorf("%s: passed %q, admitted %v, gate %q: every stream still passes", c.name, d.Pass, admit, d.DecideGate)
 		}
 		if d.StreamStageD != c.want {
 			t.Errorf("%s: %q, want %q", c.name, d.StreamStageD, c.want)
@@ -130,5 +133,155 @@ func TestTheShadowCountsStreamsByTheirStageDReason(t *testing.T) {
 	sh.flush()
 	if len(lines) != 1 || !strings.HasSuffix(lines[0], " streams=%s") {
 		t.Fatalf("the period's line: %q", lines)
+	}
+}
+
+// streamsOn is in streaming, its policy letting the edge decide streams:
+// Stage D open to every workspace, a typed store, fastpath_edge_streams
+// true and a boot that declared heartbeats.
+func streamsOn(t *testing.T, in DecideInputs, member bool) DecideInputs {
+	t.Helper()
+	in = withBody(t, in, map[string]any{"stream": true, "route_type": "chat.completions"})
+	policy := *in.Policy
+	policy.StageD = routingsnapshot.StageDSetting{EligibilityEnabled: true, HeartbeatEnabled: true}
+	policy.AsyncSettle = &routingsnapshot.AsyncSettle{TypedRecords: true}
+	policy.FastpathEdgeStreams = nil
+	if member {
+		on := true
+		policy.FastpathEdgeStreams = &on
+	}
+	in.Policy = &policy
+	in.Request.Boot.Boot.DeclaresUsageHeartbeat = true
+	return in
+}
+
+// TestTheEdgeDecidesAStreamOnlyWithTheMember: a stream Stage D lets in is
+// decided (its 200 eligible, its row carrying its pricing snapshot and
+// heartbeat_seq 0) only when the policy carries fastpath_edge_streams;
+// without it the same stream passes as body.stream, composed for the
+// shadow alone.
+func TestTheEdgeDecidesAStreamOnlyWithTheMember(t *testing.T) {
+	base, c := baseInputs(t)
+	on := Decide(streamsOn(t, base, true))
+	dec, admit := on.Admit()
+	if on.Pass != "" || !admit || on.StreamStageD != "" {
+		t.Fatalf("with the member: passed %q, admitted %v, split %q", on.Pass, admit, on.StreamStageD)
+	}
+	if dec.Reservation != dec.Estimate || dec.Input.StageDReason != gwauth.StageDOK {
+		t.Fatalf("reservation %d, estimate %d, Stage D %q", dec.Reservation, dec.Estimate, dec.Input.StageDReason)
+	}
+	composed, err := dec.Finish(c.Admitted.Envelope, endOfLifeOf(t, c))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := composed.Authorization
+	if a.PricingSnapshot == nil || a.HeartbeatSeq == nil || *a.HeartbeatSeq != 0 ||
+		!strings.Contains(a.Payload, `"heartbeat_seq":0`) {
+		t.Fatalf("the row: pricing %v, heartbeat_seq %v", a.PricingSnapshot, a.HeartbeatSeq)
+	}
+	body := composed.Render(gwauth.Timing{}, false)
+	for _, want := range []string{`"candidate_cost_reporting":true`, `"stage_d":{"eligible":true,"reason":"ok"}`,
+		`"candidate_prices":[`, `,"cap_micro":`} {
+		if !bytes.Contains(body, []byte(want)) {
+			t.Errorf("the 200 lacks %s", want)
+		}
+	}
+
+	off := Decide(streamsOn(t, base, false))
+	if _, admit := off.Admit(); off.Pass != gwauth.ReasonStream || admit || off.ForShadow() == nil ||
+		off.DecideGate != gwauth.ReasonStream || off.StreamStageD != StreamUnread {
+		t.Fatalf("without the member: passed %q, admitted %v, gate %q, split %q", off.Pass, admit, off.DecideGate,
+			off.StreamStageD)
+	}
+	// The shadow's decision is the decided one, the gate aside.
+	shadow, err := off.ForShadow().Finish(c.Admitted.Envelope, endOfLifeOf(t, c))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sa := shadow.Authorization
+	if !bytes.Equal(shadow.Render(gwauth.Timing{}, false), body) || sa.Payload != a.Payload ||
+		sa.PricingSnapshot == nil || *sa.PricingSnapshot != *a.PricingSnapshot {
+		t.Fatal("the shadow's stream is not the one the member decides")
+	}
+}
+
+// TestAStreamThePilotWouldNotLeasePasses: with the member, each condition
+// of section 5.1 the edge reads passes the stream with Python's pilot
+// reason; without it every one is body.stream, and a stream whose body
+// names api_key_hash passes as that, the one reason before body.stream.
+func TestAStreamThePilotWouldNotLeasePasses(t *testing.T) {
+	base, _ := baseInputs(t)
+	for _, c := range []struct {
+		name   string
+		change func(*DecideInputs)
+		want   string
+	}{
+		{"eligibility off", func(in *DecideInputs) { in.Policy.StageD.EligibilityEnabled = false },
+			PassStreamStageD + "stage_d_disabled"},
+		{"not a Stage D pilot", func(in *DecideInputs) { in.Policy.StageD.PilotWorkspaces = []string{"ws-other"} },
+			PassStreamStageD + "workspace_not_pilot"},
+		{"heartbeats off", func(in *DecideInputs) { in.Policy.StageD.HeartbeatEnabled = false },
+			PassStreamStageD + "heartbeats_disabled"},
+		{"a declaration required", func(in *DecideInputs) {
+			in.Policy.StageD.RequireHeartbeatDeclaration = true
+			in.Request.Boot.Boot.DeclaresUsageHeartbeat = false
+		}, PassStreamStageD + "heartbeat_undeclared"},
+		{"a boot that declared none", func(in *DecideInputs) { in.Request.Boot.Boot.DeclaresUsageHeartbeat = false },
+			PassStreamUndeclared},
+		{"messages", func(in *DecideInputs) {
+			*in = withBody(t, *in, map[string]any{"route_type": "messages"})
+		}, PassStreamStageD + "route"},
+		{"no async_settle object", func(in *DecideInputs) { in.Policy.AsyncSettle = nil },
+			PassStreamStageD + "settlement_backend"},
+		{"legacy records", func(in *DecideInputs) { in.Policy.AsyncSettle = &routingsnapshot.AsyncSettle{} },
+			PassStreamStageD + "settlement_backend"},
+		{"async-v1", func(in *DecideInputs) {
+			in.Request.Header = in.Request.Header.Clone()
+			in.Request.Header.Set("X-TR-Settlement-Mode", gwauth.SettlementModeAsyncV1)
+		}, gwauth.ReasonStream},
+	} {
+		for _, member := range []bool{true, false} {
+			in := streamsOn(t, base, member)
+			c.change(&in)
+			d := Decide(in)
+			want := c.want
+			if !member {
+				want = gwauth.ReasonStream
+			}
+			if d.Pass != want || d.ForShadow() != nil {
+				t.Errorf("%s (member %v): passed %q, decided %v; want %q", c.name, member, d.Pass,
+					d.ForShadow() != nil, want)
+			}
+		}
+	}
+	for _, member := range []bool{true, false} {
+		in := streamsOn(t, base, member)
+		in = withBody(t, in, map[string]any{"api_key_hash": "key_e2_cohort", "api_key_lookup_hash": nil})
+		if d := Decide(in); d.Pass != gwauth.ReasonAPIKeyHash || d.StreamStageD != "" {
+			t.Errorf("api_key_hash (member %v): passed %q, split %q", member, d.Pass, d.StreamStageD)
+		}
+	}
+}
+
+// TestTheHoldTripwire: a stream whose reservation is not its estimate (a
+// lowered stream reservation, which the lease would cut the stream at)
+// passes as stream.hold; one whose hold is its ceiling goes on.
+func TestTheHoldTripwire(t *testing.T) {
+	var r gwauth.Request
+	equal := routingsnapshot.Result{ModelEstimate: 10, Reservation: 10}
+	if got := streamGate(r, gwauth.StageDOK, true, equal); got != "" {
+		t.Fatalf("a hold at its ceiling: %q", got)
+	}
+	for _, res := range []routingsnapshot.Result{{ModelEstimate: 10, Reservation: 9}, {ModelEstimate: 10, Reservation: 11}} {
+		if got := streamGate(r, gwauth.StageDOK, true, res); got != PassStreamHold {
+			t.Errorf("reservation %d, estimate %d: %q", res.Reservation, res.ModelEstimate, got)
+		}
+	}
+	// The gates before it name their own reason first.
+	if got := streamGate(r, "route", false, routingsnapshot.Result{ModelEstimate: 10, Reservation: 9}); got != PassStreamStageD+"route" {
+		t.Errorf("Stage D first: %q", got)
+	}
+	if got := streamGate(r, gwauth.StageDOK, false, routingsnapshot.Result{ModelEstimate: 10, Reservation: 9}); got != PassStreamUndeclared {
+		t.Errorf("the declaration before the hold: %q", got)
 	}
 }

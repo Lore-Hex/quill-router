@@ -354,13 +354,15 @@ func TestEveryGoldenCaseThroughTheDecidePath(t *testing.T) {
 	}
 	t.Logf("%d answered (%d naming a cache_affinity_key), %d unavailable, %d passed (%d refunded)", answered, affinity,
 		unavailable, passed, refunded)
-	if answered != 192 || affinity != 18 || unavailable != 3 || refunded != 7 {
+	// The streams' (the edge policy carrying fastpath_edge_streams): 30
+	// answered, one unavailable, one refunded.
+	if answered != 192+30 || affinity != 18 || unavailable != 3+1 || refunded != 7+1 {
 		t.Fatalf("answered %d (%d with a cache affinity key), unavailable %d, refunded %d: not the goldens' counts",
 			answered, affinity, unavailable, refunded)
 	}
 	// The goldens' three unavailable answers, a code each: the clock ahead
 	// of Spanner's among them (§8.4).
-	if !maps.Equal(unavailableCodes, map[string]int{"deadline_exceeded": 1, "failed_precondition": 1, "aborted": 1}) {
+	if !maps.Equal(unavailableCodes, map[string]int{"deadline_exceeded": 1 + 1, "failed_precondition": 1, "aborted": 1}) {
 		t.Fatalf("the unavailable answers' codes: %v", unavailableCodes)
 	}
 }
