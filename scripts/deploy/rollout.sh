@@ -803,6 +803,10 @@ ENV_VARS=(
   "TR_ASYNC_SETTLE_TICKET_ISSUER=https://api.trustedrouter.com"
   "TR_ASYNC_SETTLE_TICKET_AUDIENCE=router-settlement"
   "TR_ASYNC_SETTLE_AUTHORITY_EPOCH=1"
+  "TR_ASYNC_SETTLE_NEGOTIATION_REGIONS=us-central1,us-west1"
+  # Gate at authorize: 500 ms handoff budget; central p50/p99 64/103 ms,
+  # east p50/p90/p99 257/308/487 ms. Europe: 139 unknown, 93 rejected,
+  # 126 settle 503s tripping the deploy billing gate. West settles via central.
   # E2 routing snapshot publication: the literals of the key block above.
   "TR_ROUTING_SNAPSHOT_PUBLISH_ENABLED=${ROUTING_SNAPSHOT_PUBLISH_ENABLED}"
   "TR_ROUTING_SNAPSHOT_PRIVATE_KEY_FILE=${ROUTING_SNAPSHOT_KEY_FILE}"

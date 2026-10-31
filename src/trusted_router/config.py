@@ -1009,6 +1009,10 @@ class Settings(BaseSettings):
     # be explicit and listed. The health publisher region must also be listed.
     async_settle_shadow_regions: str = ""
     _async_settle_shadow_region_ids: frozenset[str] = PrivateAttr(default=frozenset())
+    # Enclave regions whose settlement router meets the async handoff budget.
+    # Empty preserves fleet-wide negotiation; this is not the serving region.
+    async_settle_negotiation_regions: str = ""
+    _async_settle_negotiation_region_ids: frozenset[str] = PrivateAttr(default=frozenset())
     async_settle_shadow_workspaces: str = ""
     _async_settle_shadow_workspace_ids: frozenset[str] = PrivateAttr(default=frozenset())
     # Runtime stop for a shadow v2 canary: an ISO-8601 instant with an explicit
@@ -1531,6 +1535,18 @@ class Settings(BaseSettings):
                              "so the shadow health publisher is not excluded")
         self._async_settle_shadow_region_ids = regions
         return self
+
+    @model_validator(mode="after")
+    def parse_negotiation_regions(self) -> Settings:
+        regions = frozenset(part.strip() for part in self.async_settle_negotiation_regions.split(",") if part.strip())
+        if any(re.fullmatch(r"[a-z0-9\-]{1,32}", value) is None for value in regions):
+            raise ValueError("invalid async settle negotiation region set")
+        self._async_settle_negotiation_region_ids = regions
+        return self
+
+    def async_settle_negotiation_region_allowed(self, region: str | None) -> bool:
+        return not self._async_settle_negotiation_region_ids or (
+            bool(region) and region in self._async_settle_negotiation_region_ids)
 
     @property
     def async_settle_shadow_region_ids(self) -> frozenset[str]:
