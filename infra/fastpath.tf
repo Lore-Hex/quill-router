@@ -53,7 +53,9 @@ locals {
   # request streams, composes eligible streams, and decides them only with
   # fastpath_edge_streams on; the shadow counts Python's in-flight 429 to
   # an inflight.key pass as passed. Stream switches stay off.
-  fastpath_release        = "cae6c547941460f4f97e6eeaad3dd6b541114728"
+  # 2b3f846f3: security release (#2236), with x/net 0.62.0 and
+  # OpenTelemetry 1.45.0. Admission switches and record formats are unchanged.
+  fastpath_release        = "2b3f846f3c6bd30206db08e673db1235f4877051"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
