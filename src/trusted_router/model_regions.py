@@ -42,6 +42,7 @@ from trusted_router.catalog import (
     model_open_weights,
     model_us_provider_available,
 )
+from trusted_router.catalog_aliases import is_listing_alias
 from trusted_router.catalog_data import (
     LIBERTY_1_0_1M_MODEL_ID,
     LIBERTY_1_0_MODEL_ID,
@@ -236,6 +237,7 @@ def _directory_models() -> list[Model]:
         for model in MODELS.values()
         if model.id not in META_MODEL_IDS
         and not model.hidden_public_metadata
+        and not is_listing_alias(model.id, MODELS)
         and endpoints_for_model(model.id)
     ]
 
