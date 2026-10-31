@@ -258,14 +258,15 @@ def snapshot_projection(*, authorization: GatewayAuthorization, snapshot: Billin
                 or authorization.settlement != "local" or authorization.settled):
             return result
         digest = canonical_hash(snapshot)
-        # A workspace the pilot set leaves out gets the admission-off answer
+        # A workspace or enclave region outside negotiation gets the admission-off answer
         # byte for byte (shape B): no ticket, no status URL. The enclave
-        # binds async settlement only from async_eligible true, so a ticket
-        # for it was never used; the edge composes this answer itself from
-        # the policy's async_settle.admission_workspaces
+        # binds async settlement only from async_eligible true. The edge
+        # composes this answer for non-pilots from admission_workspaces;
+        # pilots pass to Python, which checks their stored enclave region here
         # (docs/design/fast-admission-e2-g15-async.md section 4.1).
         if (not settings.async_settle_admission_enabled
-                or not settings.async_settle_pilot_allows(authorization.workspace_id)):
+                or not settings.async_settle_pilot_allows(authorization.workspace_id)
+                or not settings.async_settle_negotiation_region_allowed(authorization.region)):
             result.update(billing_snapshot=snapshot.model_dump(mode="json"), billing_snapshot_hash=digest)
             return result
         eligible = bool(runtime.admission is not None

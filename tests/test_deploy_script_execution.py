@@ -4357,3 +4357,14 @@ def test_rollout_pins_dormant_drain_knobs_without_inheritance(
     deploy = next(call for call in run.calls if call[3:5] == ['run', 'deploy'])
     rendered = _cloud_run_job_env(deploy)
     assert {name: rendered[name] for name in expected} == expected
+
+
+def test_rollout_negotiation_regions_are_literal_and_configured(tmp_path, monkeypatch):
+    hostile = {'TR_ASYNC_SETTLE_NEGOTIATION_REGIONS': 'europe-west4'}
+    isolated = _rollout_harness_with_live_primary(tmp_path, monkeypatch, {**_LIVE_PRIMARY_ENV, **hostile})
+    run = isolated.run('scripts/deploy/rollout.sh', extra_env=hostile)
+    assert run.returncode == 0, summarise(run)
+    deploy = next(call for call in run.calls if call[3:5] == ['run', 'deploy'])
+    rendered = _cloud_run_job_env(deploy)
+    assert rendered['TR_ASYNC_SETTLE_NEGOTIATION_REGIONS'] == 'us-central1,us-west1'
+    assert set(rendered['TR_ASYNC_SETTLE_NEGOTIATION_REGIONS'].split(',')) <= set(rendered['TR_REGIONS'].split(','))
