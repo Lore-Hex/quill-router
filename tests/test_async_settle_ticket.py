@@ -11,7 +11,14 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from trusted_router.async_settle_ticket import PURPOSE, TYP, TicketSigner, verify_ticket
+from trusted_router.async_settle_ticket import (
+    PURPOSE,
+    TYP,
+    TicketSigner,
+    validate_claims,
+    verify_lookup_ticket,
+    verify_ticket,
+)
 from trusted_router.billing_snapshot import BillingSnapshot, Eligibility, canonical_hash
 from trusted_router.catalog_data import ModelEndpoint
 from trusted_router.config import Settings
@@ -64,11 +71,12 @@ def settings(**kwargs):
 
 def test_literal_wire_and_fixture_signature():
     assert hashlib.sha256((Path(__file__).parent / 'fixtures/async_settlement/authorize_v1.json').read_bytes()).hexdigest() == '3f8f7b08aeb89e35bdcecd85848fc5bb95b181e103f8473459af7065a79458e0'
+    # Keep the frozen wire fixture byte-identical; issue 60s into its window.
     rt = runtime()
     snapshot = BillingSnapshot.model_validate(FIXTURE['response']['data']['billing_snapshot'])
     additions = snapshot_projection(authorization=authorization(), snapshot=snapshot,
                                    requested=Eligibility(), runtime=rt, settings=settings(),
-                                   now=CLAIMS['iat'])
+                                   now=CLAIMS['iat'] + 60)
     response = {'data': {'authorization_id': 'auth-v1', 'generation_id': CLAIMS['generation_id'], **additions}}
     assert canonical(response) == canonical(FIXTURE['response'])  # signature also deterministic
     ticket = additions['settlement_ticket']
@@ -79,7 +87,7 @@ def test_literal_wire_and_fixture_signature():
 def test_literal_is_not_the_catalog_builder_cache_policy():
     # Explicit design discrepancy, never patch the builder to manufacture parity.
     output = projection(authorization=authorization(), endpoints=[endpoint()], requested=Eligibility(),
-                        runtime=runtime(), settings=settings(), now=CLAIMS['iat'])
+                        runtime=runtime(), settings=settings(), now=CLAIMS['iat'] + 60)
     rates = output['billing_snapshot']['candidates'][0]['rates']
     assert rates['cached_input_micro_per_million'] == 250000
     assert rates['cache_creation_micro_per_million'] == 625000
@@ -406,3 +414,81 @@ def test_runtime_admission_issues_no_ticket_or_admission_read(monkeypatch, admis
     assert not result['async_eligible']
     assert 'settlement_ticket' not in result
     assert not calls
+
+
+@pytest.mark.parametrize(('ttl', 'expires'), [(61, 2001), (120, 2060), (300, 2240)])
+@pytest.mark.parametrize('use_wall_clock', [False, True])
+def test_backdated_ticket_literal_window(monkeypatch, ttl, expires, use_wall_clock):
+    from trusted_router.services import async_settle
+
+    monkeypatch.setattr(async_settle.time, 'time', lambda: 2000)
+    rt = runtime()
+    snapshot = BillingSnapshot.model_validate(FIXTURE['response']['data']['billing_snapshot'])
+    output = snapshot_projection(
+        authorization=authorization(), snapshot=snapshot, requested=Eligibility(),
+        runtime=rt, settings=settings(async_settle_ticket_ttl_seconds=ttl),
+        now=None if use_wall_clock else 2000,
+    )
+    expected = {**CLAIMS, 'iat': 1940, 'exp': expires}
+    token = output['settlement_ticket']
+    parsed = verify_ticket(token, [rt.signer.trusted], expected, 2000)
+    assert parsed.model_dump() == expected  # Every other claim stays identical.
+    assert parsed.exp - parsed.iat == ttl <= 300
+    assert parsed.exp - 2000 == ttl - 60 > 0
+    # Entire signed window, including issue time and the final forward second.
+    for now in range(1940, expires):
+        assert validate_claims(expected, now) == parsed
+        assert verify_lookup_ticket(token, [rt.signer.trusted], now) == parsed
+    for now in (1939, expires):
+        with pytest.raises(ValueError, match='ticket validity'):
+            validate_claims(expected, now)
+        with pytest.raises(ValueError, match='ticket validity'):
+            verify_ticket(token, [rt.signer.trusted], expected, now)
+    with pytest.raises(ValueError, match='ticket lookup validity'):
+        verify_lookup_ticket(token, [rt.signer.trusted], 1939)
+    # Lookup may identify previously accepted work even after expiration.
+    assert verify_lookup_ticket(token, [rt.signer.trusted], expires) == parsed
+
+
+@pytest.mark.parametrize(('offset', 'accepted'), [
+    (0, True), (-10, True), (-59, True), (-60, True), (-61, False), (10, True),
+])
+def test_backdated_ticket_enclave_clock_contract(offset, accepted):
+    snapshot = BillingSnapshot.model_validate(FIXTURE['response']['data']['billing_snapshot'])
+    output = snapshot_projection(
+        authorization=authorization(), snapshot=snapshot, requested=Eligibility(),
+        runtime=runtime(), settings=settings(), now=2000,
+    )
+    # Decode the actual signed router claims, not a synthetic ticket.
+    claims = verify_lookup_ticket(output['settlement_ticket'], [signer().trusted], 2000)
+    now = 2000 + offset
+    # enclave-go/internal/trustedrouter/async_ticket_claims.go, parseAsyncTicketClaims:
+    # if c.Iat > now || now >= c.Exp || c.Exp <= c.Iat || c.Exp-c.Iat > 300 { return c, false }
+    rejected = (claims.iat > now or now >= claims.exp
+                or claims.exp <= claims.iat or claims.exp - claims.iat > 300)
+    assert (not rejected) is accepted
+
+
+@pytest.mark.parametrize('ttl', [1, 59, 60, 61, 120, 300])
+def test_ticket_clock_skew_configuration_fails_closed(tmp_path, ttl):
+    path = tmp_path / 'ticket.pem'
+    path.write_bytes(signer().private.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ))
+    config = settings(
+        async_settle_ticket_private_key_file=str(path),
+        async_settle_ticket_kid='async-v1-fixture',
+        async_settle_ticket_issuer='router-fixture',
+        async_settle_ticket_audience='router-settlement',
+        async_settle_ticket_ttl_seconds=ttl,
+        async_settle_authority_epoch=1,
+    )
+    rt = load_runtime(config, None)
+    assert (rt.signer is not None) is (ttl > 60)
+    rt.admission = runtime().admission
+    output = projection(authorization=authorization(), endpoints=[endpoint()],
+                        requested=Eligibility(), runtime=rt, settings=config, now=2000)
+    assert ('settlement_ticket' in output) is (ttl > 60)
+    if ttl <= 60:
+        assert output == {'async_eligible': False}

@@ -34,6 +34,9 @@ from trusted_router.storage_models import GatewayAuthorization, generation_id_fo
 
 CACHE_SECONDS = 5.0
 TIER_CAPS = {2: 25_000_000, 3: 100_000_000}
+# Enclaves reject future-issued tickets without clock tolerance. Backdate the
+# whole window, preserving the 300s contract bound (240s remain at default TTL).
+TICKET_CLOCK_SKEW_ALLOWANCE_SECONDS = 60
 
 
 @dataclass(frozen=True)
@@ -191,9 +194,11 @@ class Runtime:
 
 
 def load_runtime(settings: Settings, backend: Any) -> Runtime:
-    """Application construction only. Invalid/missing mounted key disables tickets."""
+    """Application construction only. Invalid key or lifetime disables tickets."""
     signer = None
     try:
+        if settings.async_settle_ticket_ttl_seconds <= TICKET_CLOCK_SKEW_ALLOWANCE_SECONDS:
+            raise ValueError("ticket lifetime must exceed clock skew allowance")
         path = settings.async_settle_ticket_private_key_file
         if not path or path == settings.speculation_shadow_private_key_file:
             raise ValueError("separate key required")
@@ -267,6 +272,7 @@ def snapshot_projection(*, authorization: GatewayAuthorization, snapshot: Billin
                         and runtime.admission.eligible(authorization.workspace_id,
                                                        settings.async_settle_pilot_cap_micro))
         issued = int(time.time()) if now is None else now
+        valid_from = issued - TICKET_CLOCK_SKEW_ALLOWANCE_SECONDS
         signer = runtime.signer
         claims = dict(
             authorization_id=authorization.id,
@@ -277,7 +283,7 @@ def snapshot_projection(*, authorization: GatewayAuthorization, snapshot: Billin
             snapshot_hash=digest, route_type=requested.route_type, streamed=requested.streamed,
             reservation_id=authorization.credit_reservation_id, settle_origin="typed",
             async_eligible=eligible, iss=signer.trusted.iss, aud=signer.trusted.aud,
-            iat=issued, exp=issued + settings.async_settle_ticket_ttl_seconds,
+            iat=valid_from, exp=valid_from + settings.async_settle_ticket_ttl_seconds,
         )
         ticket = signer.sign(claims, issued)
         result.update(billing_snapshot=snapshot.model_dump(mode="json"),
