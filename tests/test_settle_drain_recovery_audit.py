@@ -154,10 +154,12 @@ def test_exact_watchdog_claim_reaches_router_outputs(monkeypatch, caplog, capsys
 @pytest.mark.parametrize('winner', [0, 1, None, 'exception'])
 @pytest.mark.parametrize('gate', ['missing', 'fresh', 'stale', 'error', 'protection_off'])
 def test_watchdog_claiming_matches_frozen_main(monkeypatch, caplog, winner, gate):
+    # Both implementations must receive identical inputs even across a second boundary.
+    original = [candidate(prior=False), candidate()]
+    original[0].payload_hash = 'f' * 64
     outputs = []
     for baseline in (True, False):
-        rows = [candidate(prior=False), candidate()]
-        rows[0].payload_hash = 'f' * 64
+        rows = copy.deepcopy(original)
         box = box_for(monkeypatch, rows, winner=winner, protection=gate != 'protection_off')
         health_reads = []
         def read(database, health_reads=health_reads):

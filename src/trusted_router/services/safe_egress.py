@@ -4,10 +4,10 @@ import asyncio
 import ipaddress
 import socket
 from typing import Any
-from urllib.parse import urlparse
 
 from trusted_router.errors import api_error
 from trusted_router.types import ErrorType
+from trusted_router.url_validation import parse_url
 
 _ALLOWED_SCHEMES = ("http", "https")
 # A lookup that has not answered in this long is treated as a bad host. This
@@ -80,13 +80,10 @@ async def aresolve_public_or_reject(host: str) -> None:
 
 def validate_url_scheme(url: str) -> tuple[str, str]:
     """Return the normalized scheme and hostname for an HTTP(S) URL."""
-    try:
-        parsed = urlparse(url)
-        host = parsed.hostname
-    except ValueError as exc:
-        # urlparse raises on malformed IPv6 brackets ("host]:1@127.0.0.1");
-        # that is a bad URL, not a server error.
-        raise api_error(400, "invalid URL", ErrorType.BAD_REQUEST) from exc
+    parsed = parse_url(url)
+    if parsed is None:
+        raise api_error(400, "invalid URL", ErrorType.BAD_REQUEST)
+    host = parsed.hostname
     scheme = (parsed.scheme or "").lower()
     if scheme not in _ALLOWED_SCHEMES:
         raise api_error(400, "unsupported URL scheme", ErrorType.BAD_REQUEST)

@@ -5,7 +5,6 @@ import logging
 import threading
 import time
 from collections.abc import Mapping
-from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -29,6 +28,7 @@ from trusted_router.storage_models import (
     BedrockGroupBuyPledge,
     BedrockGroupBuyPublicMessage,
 )
+from trusted_router.url_validation import parse_url
 
 log = logging.getLogger(__name__)
 
@@ -388,7 +388,9 @@ def _assert_same_origin(request: Request, settings: Settings) -> None:
         if settings.environment.lower() not in {"local", "test"}:
             raise api_error(403, "Same-origin request required", "forbidden")
         return
-    parsed = urlparse(source)
+    parsed = parse_url(source)
+    if parsed is None:
+        raise api_error(403, "Same-origin request required", "forbidden")
     source_host = (parsed.hostname or "").lower()
     request_host = (request.url.hostname or "").lower()
     if parsed.scheme not in {"http", "https"} or source_host != request_host:

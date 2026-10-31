@@ -44,6 +44,7 @@ from trusted_router.storage import (
 )
 from trusted_router.typed_balance import live_credit_summary
 from trusted_router.types import ErrorType
+from trusted_router.url_validation import parse_url
 from trusted_router.verification import enriched_identity_payload, identity_payload
 from trusted_router.views import render_template
 
@@ -507,8 +508,8 @@ def _require_programmatic_app_ownership(
 def _validate_callback_url(callback_url: str) -> str:
     if not callback_url:
         raise api_error(400, "callback_url is required", ErrorType.BAD_REQUEST)
-    parsed = urlsplit(callback_url)
-    if not parsed.hostname:
+    parsed = parse_url(callback_url, check_port=False)
+    if parsed is None or not parsed.hostname:
         raise api_error(400, "callback_url must be an https URL", ErrorType.BAD_REQUEST)
     localhost_callback = parsed.scheme == "http" and parsed.hostname in {
         "localhost",

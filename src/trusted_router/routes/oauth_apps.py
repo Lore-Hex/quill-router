@@ -4,7 +4,6 @@ import dataclasses
 import re
 import unicodedata
 from typing import Any
-from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -19,6 +18,7 @@ from trusted_router.routes.helpers import json_body
 from trusted_router.routes.oauth_keys import _validate_callback_url
 from trusted_router.storage import STORE, OAuthApp, User
 from trusted_router.types import ErrorType
+from trusted_router.url_validation import parse_url
 
 OAUTH_APP_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{2,63}$")
 OAUTH_APP_RESERVED_IDS = frozenset(
@@ -323,9 +323,10 @@ def _validated_logo_url(raw: Any) -> str | None:
         return None
     if not isinstance(raw, str) or len(raw) > 2048:
         raise api_error(400, "logo_url must be an https URL", ErrorType.BAD_REQUEST)
-    parsed = urlsplit(raw)
+    parsed = parse_url(raw)
     if (
-        parsed.scheme != "https"
+        parsed is None
+        or parsed.scheme != "https"
         or not parsed.hostname
         or parsed.username is not None
         or parsed.password is not None
