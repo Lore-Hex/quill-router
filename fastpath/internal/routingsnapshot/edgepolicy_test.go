@@ -594,3 +594,49 @@ func TestTheKeyWindowsModeIsOptional(t *testing.T) {
 		t.Fatalf("the refusals' control: %v", err)
 	}
 }
+
+// TestTheStreamsMemberVectors: fastpath_edge_streams as Python publishes and
+// reads it (scripts/fastpath/edge_policy_vectors.py writes
+// edge_policy_streams_v1.json; tests/test_edge_policy_publish.py holds
+// Python to the same cases): the publisher's body for every combination of
+// its three switches, the member present only with all three on, and the
+// member's other spellings, refused by both readers.
+func TestTheStreamsMemberVectors(t *testing.T) {
+	var file struct {
+		Generator string `json:"generator"`
+		Cases     []struct {
+			Name        string          `json:"name"`
+			Switches    map[string]bool `json:"switches"`
+			Body        string          `json:"body"`
+			Accept      bool            `json:"accept"`
+			EdgeStreams bool            `json:"edge_streams"`
+		} `json:"cases"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(testdata(t, "edge_policy_streams_v1.json")))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&file); err != nil {
+		t.Fatal(err)
+	}
+	accepted, refused, on := 0, 0, 0
+	for _, c := range file.Cases {
+		p, err := ParseEdgePolicy([]byte(c.Body))
+		if (err == nil) != c.Accept {
+			t.Errorf("%s: accepted %v, Python's %v (%v)", c.Name, err == nil, c.Accept, err)
+			continue
+		}
+		if err != nil {
+			refused++
+			continue
+		}
+		accepted++
+		if p.EdgeStreams() != c.EdgeStreams {
+			t.Errorf("%s: EdgeStreams %v, Python's %v", c.Name, p.EdgeStreams(), c.EdgeStreams)
+		}
+		if p.EdgeStreams() {
+			on++
+		}
+	}
+	if accepted != 8 || refused != 4 || on != 1 {
+		t.Fatalf("%d accepted (%d with the member), %d refused: not the vectors' 8 (1) and 4", accepted, on, refused)
+	}
+}

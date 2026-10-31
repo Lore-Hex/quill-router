@@ -49,6 +49,11 @@ CONTRACT = ROOT / "docs" / "design" / "fast-admission-e2-decide.md"
 # recording what Python answers. The rest of §3 is the edge's own state
 # (cache.*, decide.off, inflight.key, budget.spent, clock.window,
 # policy.lookup_hash_mismatch, policy.regions_mismatch).
+STREAM_PASSES = {
+    "stream.stage_d:stage_d_disabled", "stream.stage_d:workspace_not_pilot", "stream.stage_d:heartbeats_disabled",
+    "stream.stage_d:heartbeat_undeclared", "stream.stage_d:route", "stream.stage_d:settlement_backend",
+    "stream.undeclared",
+}
 SECTION_3 = {
     "body.content_type", "body.unparseable", "body.duplicate_key", "body.float", "body.lax_type",
     "body.strip_ambiguous", "body.dict_key_strip", "body.refused", "body.api_key_hash", "body.stream",
@@ -67,14 +72,20 @@ SECTION_3 = {
     # An estimate past int64 (the fake store keeps it, where a real Spanner
     # INT64 column refuses the commit), and the boot E1 or decision 8 refuses.
     "evaluate.estimate_overflow", "boot.signature", "boot.unverified", "boot.missing",
+    # The stream gates, named only when the edge policy carries
+    # fastpath_edge_streams (docs/design/fast-admission-streams.md section
+    # 5.1): Python's own pilot reasons for a stream it does not lease.
+    *STREAM_PASSES,
 }
 # The reasons Python's own pilot shares (pilot_reason, the boot, the owner's
-# non-admit answers): Python never leases a request tripping one.
+# non-admit answers): Python never leases a request tripping one. A stream
+# the edge passes as body.stream (the policy carrying no
+# fastpath_edge_streams) Python's pilot may lease, its streams switch on.
 PYTHON_PASSES = {
     "policy.pilot_off", "policy.not_pilot_workspace", "policy.pilot_region", "policy.records_not_durable",
-    "policy.digest_not_accepted", "body.stream", "candidates.byok", "key.key_cap", "key.key_window",
+    "policy.digest_not_accepted", "candidates.byok", "key.key_cap", "key.key_window",
     "key.key_window_alert", "key.budget_strict", "owner.busy", "owner.off", "owner.invalid", "owner.failed", "owner.unreachable",
-    "insert.failed", "boot.signature", "boot.unverified", "boot.missing",
+    "insert.failed", "boot.signature", "boot.unverified", "boot.missing", *STREAM_PASSES,
 }
 # §10.2: Go passes a body carrying any of these.
 PASS_REQUIRED = {
@@ -139,8 +150,14 @@ def test_the_cases_name_their_snapshot_and_policy() -> None:
     assert policy["internal_models"] == vectors["internal_models"]
     names = [case["name"] for case in vectors["cases"]]
     assert names == sorted(names) and len(set(names)) == len(names)
+    # The optional members the header's body predates, which a case's
+    # policy adds as the publisher would: the edge's streams
+    # (docs/design/fast-admission-streams.md section 5.4) with the
+    # async-settle object whose typed_records is Stage D's settlement backend.
+    optional = {"fastpath_edge_streams", "async_settle"}
     for case in vectors["cases"]:
-        assert set(case["policy_patch"]) <= set(policy), case["name"]
+        assert set(case["policy_patch"]) <= set(policy) | optional, case["name"]
+        assert case["policy_patch"].get("fastpath_edge_streams", True) is True, case["name"]
         effective = {**policy, **case["policy_patch"]}
         assert effective["issued_at"] * 1_000_000 < case["at_us"] < effective["not_after"] * 1_000_000, case["name"]
         assert case["labels"] == sorted(case["labels"]), case["name"]
@@ -211,13 +228,14 @@ def test_every_answer_agrees_with_its_rows_and_inputs() -> None:
         assert payload["candidate_endpoint_ids"] == [c["endpoint_id"] for c in data["route_candidates"]], name
         assert payload["endpoint_id"] == data["endpoint_id"] == data["route_candidates"][0]["endpoint_id"], name
         assert expect["decide_region"] == data["region"] == payload["region"], name
-        assert payload["stage_d_reason"] == data["stage_d"]["reason"] and not data["stage_d"]["eligible"], name
+        assert payload["stage_d_reason"] == data["stage_d"]["reason"], name
+        _stage_d_members(name, json.loads(case["request"]["body"]), data, authorization, payload)
         assert f"stage_d.{data['stage_d']['reason']}" in case["labels"], name
         assert data["tags"] == payload.get("tags", {}), name
         if case["insert"] == "unknown_landed":
             # Answered from the authorization read back: tags in sorted order.
             assert list(data["tags"]) == sorted(data["tags"]), name
-        assert data["broadcast_destinations"] == [] and data["candidate_cost_reporting"] is False, name
+        assert data["broadcast_destinations"] == [], name
         assert data["response_model"] is None and data["idempotent_replay"] is False, name
         assert case["facts"]["key"]["eligible"] and not case["facts"]["workspace"]["pause_causes"], name
         # data.timing is the last key, its keys in a fixed order; EXPECT
@@ -225,6 +243,34 @@ def test_every_answer_agrees_with_its_rows_and_inputs() -> None:
         assert list(data)[-1] == "timing" and list(data["timing"]) == TIMING, name
         assert data["timing"] == expect["timing"], name
         assert token in case["request"]["headers"], name
+
+
+def _stage_d_members(name: str, body: dict[str, Any], data: dict[str, Any], authorization: dict[str, Any],
+                     payload: dict[str, Any]) -> None:
+    """An answer's Stage D members: a stream Stage D lets in (ok) carries its
+    frozen pricing (the row's pricing_snapshot, the 200's candidate_prices
+    read from it and the estimate as cap_micro, candidate_cost_reporting
+    true) and heartbeat_seq 0 in the row and the payload; any other answer
+    none of them (docs/design/fast-admission-streams.md section 8.4)."""
+    eligible = data["stage_d"]["reason"] == "ok"
+    assert data["stage_d"]["eligible"] is eligible and data["candidate_cost_reporting"] is eligible, name
+    assert eligible is (body.get("stream") is True), name
+    if not eligible:
+        assert "candidate_prices" not in data and "cap_micro" not in data, name
+        assert authorization["pricing_snapshot"] is None and authorization["heartbeat_seq"] is None, name
+        assert "pricing_snapshot" not in payload and "heartbeat_seq" not in payload, name
+        return
+    snapshot = authorization["pricing_snapshot"]
+    assert snapshot == payload["pricing_snapshot"], name
+    document = json.loads(snapshot)
+    assert snapshot == json.dumps(document, sort_keys=True, separators=(",", ":")), name
+    assert (document["v"], document["kind"]) == (1, "endpoint"), name
+    assert data["candidate_prices"] == document["candidates"], name
+    assert [c["endpoint_id"] for c in document["candidates"]] == payload["candidate_endpoint_ids"], name
+    assert data["cap_micro"] == data["estimated_cost_microdollars"] == authorization["estimated_microdollars"], name
+    assert authorization["heartbeat_seq"] == payload["heartbeat_seq"] == 0, name
+    keys = list(data)
+    assert keys[keys.index("stage_d"):keys.index("stage_d") + 3] == ["stage_d", "candidate_prices", "cap_micro"], name
 
 
 def test_the_answered_float_is_pydantics_spelling_not_python_repr() -> None:
@@ -269,6 +315,11 @@ def test_every_section_3_reason_records_pythons_answer() -> None:
         if expect["reason"] == "insert.scope_taken":
             # A replay writes nothing: the stored authorization, or 409.
             assert python["status"] in {200, 409} and not python["leased"], case["name"]
+        if python["leased"] and expect["reason"] == "body.stream":
+            # Composed by the edge for the shadow alone: Python's leased
+            # answer recorded beside it (streams section 8.4).
+            assert expect["shadow"]["status"] == 200, case["name"]
+        assert ("shadow" in expect) <= (expect["reason"] == "body.stream"), case["name"]
     # Each cause of body.unparseable and each tags.merged_invalid has a case.
     names = {case["name"] for case in passes}
     for name in ("body.unparseable:bom", "body.unparseable:depth_129", "body.unparseable:int_4001_digits",
@@ -441,6 +492,8 @@ def test_the_contract_names_every_reason_and_label_the_vectors_use() -> None:
             assert {"key.<reason>", name} <= named, reason
         elif reason == "evaluate.refused":  # `evaluate.<outcome>`
             assert "evaluate.<outcome>" in named, reason
+        elif reason.startswith("stream.stage_d:"):  # `stream.stage_d:<reason>`
+            assert "stream.stage_d" in named and "stream.stage_d:<reason>" in contract, reason
         else:
             assert reason in named, reason
     assert PASS_REQUIRED | DESCRIPTIVE <= named, sorted((PASS_REQUIRED | DESCRIPTIVE) - named)

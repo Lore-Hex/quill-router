@@ -190,6 +190,36 @@ func stageDSettings(t *testing.T, f goldenFile, c goldenCase) StageDSettings {
 	return StageDSettings{sd.EligibilityEnabled, sd.HeartbeatEnabled, sd.RequireHeartbeatDeclaration, sd.PilotWorkspaces}
 }
 
+// stageDReason is the case's Stage D reason as the decide pipeline gives it:
+// the policy's settings and the boot, the body's stream and route_type, and
+// the patched policy's async_settle.typed_records (absent: not typed). An
+// answered case's candidates are credits-only, standard and untiered.
+func stageDReason(t *testing.T, f goldenFile, c goldenCase) string {
+	t.Helper()
+	tree, err := pyjson.Decode([]byte(c.Request.Body))
+	if err != nil {
+		t.Fatalf("%s: %v", c.Name, err)
+	}
+	body := tree.(pyjson.Object)
+	q := StageDRequest{
+		WorkspaceID: c.Facts.Key.WorkspaceID, BootAccepted: true, BootDeclaresHeartbeat: c.Boot.DeclaresUsageHeartbeat,
+		Stream: member(body, "stream") == true, CreditsOnly: true, StandardPricing: true,
+	}
+	if rt, ok := member(body, "route_type").(string); ok {
+		q.RouteType = &rt
+	}
+	if raw, ok := c.PolicyPatch["async_settle"]; ok {
+		var a struct {
+			TypedRecords bool `json:"typed_records"`
+		}
+		if err := json.Unmarshal(raw, &a); err != nil {
+			t.Fatal(err)
+		}
+		q.TypedSettlement = a.TypedRecords
+	}
+	return StageDReasonOf(stageDSettings(t, f, c), q)
+}
+
 // inputOf is the case as the decide pipeline would hand it to Stage. The
 // request side is read from the body here as G5's Request and Identity
 // will carry it (the fingerprint and scope are G5's, so they come from the
@@ -240,7 +270,7 @@ func inputOf(t *testing.T, f goldenFile, snap snapshotFacts, c goldenCase) Compo
 		Region:                 c.Expect.DecideRegion,
 		Regions:                regionsOf(t, snap, c),
 		Estimate:               c.Expect.Estimate,
-		StageDReason:           StageDReasonOf(stageDSettings(t, f, c), c.Facts.Key.WorkspaceID, c.Boot.DeclaresUsageHeartbeat),
+		StageDReason:           stageDReason(t, f, c),
 		BootKid:                c.Boot.Kid,
 	}
 	for _, h := range c.Request.Headers {
@@ -417,6 +447,13 @@ func TestEveryPayloadAndRowIsPythons(t *testing.T) {
 			"payload": a.Payload, "idempotency_fingerprint": a.IdempotencyFingerprint,
 			"stage_d_boot_kid": a.StageDBootKid, "invocation_nonce": nonce,
 		}
+		// A stream's two columns, written only for one (NULL otherwise).
+		if a.PricingSnapshot != nil {
+			gotA["pricing_snapshot"] = *a.PricingSnapshot
+		}
+		if a.HeartbeatSeq != nil {
+			gotA["heartbeat_seq"] = json.Number(strconv.FormatInt(*a.HeartbeatSeq, 10))
+		}
 		gotR := map[string]any{
 			"reservation_id": r.ReservationID, "workspace_id": r.WorkspaceID, "key_hash": r.KeyHash,
 			"ws_shard": json.Number("0"), "credit_shard": json.Number("0"), "key_shard": json.Number("0"),
@@ -505,13 +542,13 @@ func TestTheReadBackSortsTags(t *testing.T) {
 // nothing: §8.4).
 func TestTheUnavailableBodyIsPythons(t *testing.T) {
 	f := loadGoldens(t)
-	found := 0
+	found := map[string]bool{}
 	unknown := map[string]bool{"unknown_not_landed": true, "failed_precondition": true, "aborted": true}
 	for _, c := range f.Cases {
 		if c.Expect.Outcome != "unavailable" {
 			continue
 		}
-		found++
+		found[c.Insert] = true
 		if !unknown[c.Insert] || c.Expect.Status != UnavailableStatus {
 			t.Errorf("%s: insert %q, status %d", c.Name, c.Insert, c.Expect.Status)
 		}
@@ -522,8 +559,8 @@ func TestTheUnavailableBodyIsPythons(t *testing.T) {
 			t.Errorf("%s: headers %q", c.Name, c.Expect.Headers)
 		}
 	}
-	if found != len(unknown) {
-		t.Fatalf("%d unavailable cases, want %d", found, len(unknown))
+	if len(found) != len(unknown) {
+		t.Fatalf("unavailable cases of %d inserts, want %d", len(found), len(unknown))
 	}
 }
 
@@ -588,13 +625,14 @@ func TestStageDReasonIsTheLabel(t *testing.T) {
 	f := loadGoldens(t)
 	seen := map[string]bool{}
 	for _, c := range answered(f) {
-		got := StageDReasonOf(stageDSettings(t, f, c), c.Facts.Key.WorkspaceID, c.Boot.DeclaresUsageHeartbeat)
+		got := stageDReason(t, f, c)
 		if !hasLabel(c, "stage_d."+got) {
 			t.Errorf("%s: reason %s, labels %q", c.Name, got, c.Labels)
 		}
 		seen[got] = true
 	}
-	for _, r := range []string{"stage_d_disabled", "workspace_not_pilot", "heartbeats_disabled", "heartbeat_undeclared", "not_streaming"} {
+	for _, r := range []string{"stage_d_disabled", "workspace_not_pilot", "heartbeats_disabled", "heartbeat_undeclared",
+		"not_streaming", StageDOK} {
 		if !seen[r] {
 			t.Errorf("no answered case has stage_d reason %s", r)
 		}

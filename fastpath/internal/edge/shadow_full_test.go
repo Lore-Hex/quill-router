@@ -361,6 +361,16 @@ func pythonOfCase(t *testing.T, f authorizeFile, c authorizeCase) (func(http.Res
 		kind = *e.Python.Type
 	}
 	status, reason := e.Python.Status, e.Reason
+	if e.Shadow != nil {
+		// A stream Stage D lets in (streams section 8.4): Python's 200,
+		// compared as the cohort's when Go composed it for the shadow, else
+		// one Go passed.
+		in, _ := caseInputs(t, f, c)
+		if Decide(in).ForShadow() != nil {
+			return answerWith(200, []byte(e.Shadow.Response)), ClassAgreeFull
+		}
+		return answerWith(200, []byte(e.Shadow.Response)), ClassPythonAnsweredGoPassed + "." + reason
+	}
 	if windowReason(reason) && status == 200 {
 		// The key's windows gate the decision, not the comparison: Python's
 		// 200 is compared as the cohort's (key-windows section 8.2).
@@ -414,13 +424,21 @@ func TestEveryGoldenCaseThroughTheDecideShadow(t *testing.T) {
 	f := authorizeGoldens(t)
 	py := newFakePython(t)
 	classes := map[string]int{}
-	rowsAgree, readBack, affinityAgree := 0, 0, 0
+	rowsAgree, readBack, affinityAgree, notLeasedRows := 0, 0, 0, 0
 	for _, c := range f.Cases {
 		respond, want := pythonOfCase(t, f, c)
 		h := newFullEdge(t, f, c, py, nil)
 		h.answer(respond)
-		if c.Expect.Outcome == "answer" {
-			h.rows.by[c.IDs.AuthorizationID] = storedRows(t, c)
+		answeredCase, answered := c, c.Expect.Outcome == "answer"
+		// A stream Stage D lets in: its rows Python's, the lease's or
+		// today's path's (python_not_leased), by Python's own ids.
+		notLeased := false
+		if s := c.Expect.Shadow; s != nil {
+			answeredCase.Expect, answered, notLeased = *s, true, !c.Expect.Python.Leased
+		}
+		if answered {
+			id, _ := answeredCase.Expect.AuthorizationRow["authorization_id"].(string)
+			h.rows.by[id] = storedRows(t, answeredCase)
 		}
 		rec := h.send(t, c)
 		probe := httptest.NewRecorder()
@@ -437,7 +455,13 @@ func TestEveryGoldenCaseThroughTheDecideShadow(t *testing.T) {
 		if want == ClassAgreeFull && len(got.Fields) != 0 {
 			t.Errorf("%s: agree_full with fields %v", c.Name, got.Fields)
 		}
-		if c.Expect.Outcome == "answer" && want == ClassAgreeFull {
+		if notLeased && want == ClassAgreeFull {
+			if got.Rows["python_not_leased"] != 1 {
+				t.Errorf("%s: rows %v, fields %v", c.Name, got.Rows, got.Fields)
+			} else {
+				notLeasedRows++
+			}
+		} else if answered && want == ClassAgreeFull {
 			if got.Rows["agree"] != 1 || got.Cohort[ClassAgreeFull] != 1 {
 				t.Errorf("%s: rows %v, fields %v, cohort %v", c.Name, got.Rows, got.Fields, got.Cohort)
 			} else {
@@ -471,8 +495,12 @@ func TestEveryGoldenCaseThroughTheDecideShadow(t *testing.T) {
 		"read-back", classes, rowsAgree, affinityAgree, readBack)
 	// A request naming a cache_affinity_key is the cohort's (§1 item 5):
 	// its cold answer is agree_full with its rows read back, like any.
-	if classes[ClassAgreeFull] != 192+5+2 || rowsAgree != 192 || affinityAgree != 18 || readBack != 1 ||
-		classes[ClassPythonUnavailable] != 2 || classes[ClassPythonAnsweredGoPassed+"."+PassEvaluate] != 1 {
+	// The streams (streams section 8.4): 30 answered with the policy's
+	// fastpath_edge_streams, one composed for the shadow alone, and one
+	// unavailable.
+	if classes[ClassAgreeFull] != 192+30+1+5+2+notLeasedRows || rowsAgree != 192+30+1 || notLeasedRows != 1 ||
+		affinityAgree != 18 || readBack != 1 ||
+		classes[ClassPythonUnavailable] != 2+1 || classes[ClassPythonAnsweredGoPassed+"."+PassEvaluate] != 1 {
 		t.Fatalf("agree_full %d, rows %d (%d with a cache affinity key), read back %d, unavailable %d: not the goldens' "+
 			"counts", classes[ClassAgreeFull], rowsAgree, affinityAgree, readBack, classes[ClassPythonUnavailable])
 	}
@@ -1203,6 +1231,68 @@ func TestEveryRowColumnIsCompared(t *testing.T) {
 	if outcome, fields := compareRows(pd.ForShadow(), rows, nil, time.Second); outcome != "differ" ||
 		strings.Join(fields, ",") != "row.payload.idempotency_key" {
 		t.Fatalf("another presented key: %s %v", outcome, fields)
+	}
+}
+
+// TestAStreamRowIsComparedInFull (streams section 8.4): a stream's row,
+// whose heartbeat_seq authorize writes as 0, is compared column for column
+// and its payload member by member, not counted moved; a heartbeat's seq
+// or instant moves it, and a moved stream row still compares its frozen
+// pricing_snapshot.
+func TestAStreamRowIsComparedInFull(t *testing.T) {
+	f := authorizeGoldens(t)
+	c := authorizeCaseNamed(t, "answer:stream:model:google/gemini-3.1-pro-preview@peak")
+	in, _ := caseInputs(t, f, c)
+	in.Mint = Mint{}
+	d := Decide(in)
+	if d.Pass != "" || d.ForShadow() == nil {
+		t.Fatalf("the stream passed: %q", d.Pass)
+	}
+	golden := storedRows(t, c)
+	if seq := golden.Authorization.HeartbeatSeq; !seq.Valid || seq.Int64 != 0 || !golden.Authorization.PricingSnapshot.Valid {
+		t.Fatalf("not a stream's row: heartbeat_seq %+v", seq)
+	}
+	if outcome, fields := compareRows(d.ForShadow(), golden, nil, time.Second); outcome != "agree" || len(fields) != 0 {
+		t.Fatalf("the golden stream rows: %s %v", outcome, fields)
+	}
+	set := func(s string) spanner.NullString { return spanner.NullString{StringVal: s, Valid: true} }
+	for _, v := range []struct {
+		name    string
+		change  func(*store.AuthorizationForCompare)
+		outcome string
+		want    []string
+	}{
+		{"another snapshot", func(r *store.AuthorizationForCompare) {
+			r.Authorization.PricingSnapshot = set("{}")
+		}, "differ", []string{"row.pricing_snapshot"}},
+		{"no heartbeat_seq", func(r *store.AuthorizationForCompare) {
+			r.Authorization.HeartbeatSeq = spanner.NullInt64{}
+		}, "differ", []string{"row.heartbeat_seq"}},
+		{"the payload's heartbeat_seq", func(r *store.AuthorizationForCompare) {
+			r.Authorization.Payload = set(strings.Replace(r.Authorization.Payload.StringVal, `"heartbeat_seq":0`,
+				`"heartbeat_seq":3`, 1))
+		}, "differ", []string{"row.payload.heartbeat_seq"}},
+		{"a heartbeat", func(r *store.AuthorizationForCompare) {
+			r.Authorization.HeartbeatSeq = spanner.NullInt64{Int64: 1, Valid: true}
+		}, "moved_on", nil},
+		{"a heartbeat's instant", func(r *store.AuthorizationForCompare) {
+			r.Authorization.HeartbeatAt = spanner.NullTime{Time: r.Authorization.CreatedAt, Valid: true}
+		}, "moved_on", nil},
+		{"a heartbeat, another snapshot", func(r *store.AuthorizationForCompare) {
+			r.Authorization.HeartbeatSeq = spanner.NullInt64{Int64: 2, Valid: true}
+			r.Authorization.PricingSnapshot = set("{}")
+		}, "moved_on_differ", []string{"row.pricing_snapshot"}},
+	} {
+		rows := storedRows(t, c)
+		if rows.Reservation != nil {
+			copied := *rows.Reservation
+			rows.Reservation = &copied
+		}
+		v.change(&rows)
+		outcome, fields := compareRows(d.ForShadow(), rows, nil, time.Second)
+		if outcome != v.outcome || strings.Join(fields, ",") != strings.Join(v.want, ",") {
+			t.Errorf("%s: %s %v, want %s %v", v.name, outcome, fields, v.outcome, v.want)
+		}
 	}
 }
 

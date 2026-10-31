@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"go/ast"
 	"go/parser"
@@ -259,6 +260,18 @@ func insertOf(t *testing.T, c authorizeCase) (store.InsertOutcome, codes.Code) {
 	return store.Unknown, fault.code
 }
 
+// bodyStreams is whether a case's body asks for a stream (body.stream true).
+func bodyStreams(t *testing.T, body []byte) bool {
+	t.Helper()
+	var b struct {
+		Stream *bool `json:"stream"`
+	}
+	if err := json.Unmarshal(body, &b); err != nil {
+		t.Fatalf("case body: %v", err)
+	}
+	return b.Stream != nil && *b.Stream
+}
+
 // TestEveryGoldenCaseThroughTheDecidePath: with the decide path on, every
 // answered case is answered by the edge with Python's 200 byte for byte
 // (timing values aside), Python never reached, its rows inserted as Python
@@ -272,7 +285,7 @@ func insertOf(t *testing.T, c authorizeCase) (store.InsertOutcome, codes.Code) {
 func TestEveryGoldenCaseThroughTheDecidePath(t *testing.T) {
 	f := authorizeGoldens(t)
 	py := newFakePython(t)
-	answered, unavailable, passed, refunded, affinity := 0, 0, 0, 0, 0
+	answered, unavailable, passed, refunded, affinity, streams := 0, 0, 0, 0, 0, 0
 	unavailableCodes := map[string]int{}
 	for _, c := range f.Cases {
 		h := newDecideEdge(t, f, c, py)
@@ -309,13 +322,18 @@ func TestEveryGoldenCaseThroughTheDecidePath(t *testing.T) {
 			if len(rows) != 1 || !rowsAreGoldens(t, c, rows[0]) {
 				t.Errorf("%s: %d inserts", c.Name, len(rows))
 			}
-			// The lease is asked for the reservation, not the rows' estimate.
+			// The lease is asked for the reservation, not the rows' estimate,
+			// and for a stream's hold as a stream.
 			want := frontdoor.AuthorizeOf{Workspace: c.Facts.Key.WorkspaceID, Request: c.IDs.AuthorizationID,
-				Estimate: c.Expect.Reservation, Boot: []byte(c.Boot.Kid)}
+				Estimate: c.Expect.Reservation, Stream: bodyStreams(t, c.body()), Boot: []byte(c.Boot.Kid)}
 			if len(asked) != 1 || asked[0].Workspace != want.Workspace || asked[0].Request != want.Request ||
-				asked[0].Estimate != want.Estimate || string(asked[0].Boot) != string(want.Boot) || asked[0].Stream ||
+				asked[0].Estimate != want.Estimate || string(asked[0].Boot) != string(want.Boot) ||
+				asked[0].Stream != want.Stream ||
 				asked[0].OpenHeartbeat {
 				t.Errorf("%s: the admit %+v, want %+v", c.Name, asked, want)
+			}
+			if want.Stream {
+				streams++
 			}
 			if len(refunds) != 0 || counts.Answered != 1 || (counts.ReadBack == 1) != (outcome == store.Landed) {
 				t.Errorf("%s: refunds %d, counts %+v", c.Name, len(refunds), counts)
@@ -373,13 +391,15 @@ func TestEveryGoldenCaseThroughTheDecidePath(t *testing.T) {
 	}
 	t.Logf("%d answered (%d naming a cache_affinity_key), %d unavailable, %d passed (%d refunded)", answered, affinity,
 		unavailable, passed, refunded)
-	if answered != 192 || affinity != 18 || unavailable != 3 || refunded != 7 {
-		t.Fatalf("answered %d (%d with a cache affinity key), unavailable %d, refunded %d: not the goldens' counts",
-			answered, affinity, unavailable, refunded)
+	// The streams' (the edge policy carrying fastpath_edge_streams): 30
+	// answered, one unavailable, one refunded.
+	if answered != 192+30 || streams != 30 || affinity != 18 || unavailable != 3+1 || refunded != 7+1 {
+		t.Fatalf("answered %d (%d streams, %d with a cache affinity key), unavailable %d, refunded %d: not the goldens' counts",
+			answered, streams, affinity, unavailable, refunded)
 	}
 	// The goldens' three unavailable answers, a code each: the clock ahead
 	// of Spanner's among them (§8.4).
-	if !maps.Equal(unavailableCodes, map[string]int{"deadline_exceeded": 1, "failed_precondition": 1, "aborted": 1}) {
+	if !maps.Equal(unavailableCodes, map[string]int{"deadline_exceeded": 1 + 1, "failed_precondition": 1, "aborted": 1}) {
 		t.Fatalf("the unavailable answers' codes: %v", unavailableCodes)
 	}
 }
