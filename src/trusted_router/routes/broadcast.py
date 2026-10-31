@@ -5,6 +5,7 @@ from typing import Any
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from trusted_router.auth import ManagementPrincipal, SettingsDep
 from trusted_router.byok_crypto import encrypt_control_secret
@@ -29,7 +30,7 @@ from trusted_router.types import ErrorType
 
 def register_broadcast_routes(router: APIRouter) -> None:
     @router.get("/broadcast/destinations")
-    async def list_destinations(principal: ManagementPrincipal) -> dict[str, Any]:
+    def list_destinations(principal: ManagementPrincipal) -> dict[str, Any]:
         return {
             "data": [
                 public_destination_shape(destination)
@@ -38,7 +39,7 @@ def register_broadcast_routes(router: APIRouter) -> None:
         }
 
     @router.post("/broadcast/destinations")
-    async def create_destination(
+    def create_destination(
         body: BroadcastDestinationCreateRequest,
         principal: ManagementPrincipal,
         settings: SettingsDep,
@@ -65,14 +66,14 @@ def register_broadcast_routes(router: APIRouter) -> None:
         return JSONResponse({"data": public_destination_shape(destination)}, status_code=201)
 
     @router.get("/broadcast/destinations/{destination_id}")
-    async def get_destination(
+    def get_destination(
         destination_id: str,
         principal: ManagementPrincipal,
     ) -> dict[str, Any]:
         return {"data": public_destination_shape(_require_destination(principal.workspace.id, destination_id))}
 
     @router.patch("/broadcast/destinations/{destination_id}")
-    async def patch_destination(
+    def patch_destination(
         destination_id: str,
         body: BroadcastDestinationPatchRequest,
         principal: ManagementPrincipal,
@@ -102,7 +103,7 @@ def register_broadcast_routes(router: APIRouter) -> None:
         return {"data": public_destination_shape(destination)}
 
     @router.delete("/broadcast/destinations/{destination_id}")
-    async def delete_destination(
+    def delete_destination(
         destination_id: str,
         principal: ManagementPrincipal,
     ) -> dict[str, Any]:
@@ -116,7 +117,7 @@ def register_broadcast_routes(router: APIRouter) -> None:
         principal: ManagementPrincipal,
         settings: SettingsDep,
     ) -> JSONResponse:
-        destination = _require_destination(principal.workspace.id, destination_id)
+        destination = await run_in_threadpool(_require_destination, principal.workspace.id, destination_id)
         ok, message = await test_destination(destination, settings)
         return JSONResponse(
             {"data": {"ok": ok, "message": message}},
