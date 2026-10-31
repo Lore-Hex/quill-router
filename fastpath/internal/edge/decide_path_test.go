@@ -241,16 +241,6 @@ func insertOf(t *testing.T, c authorizeCase) (store.InsertOutcome, codes.Code) {
 	return store.Unknown, fault.code
 }
 
-// TestEveryGoldenCaseThroughTheDecidePath: with the decide path on, every
-// answered case is answered by the edge with Python's 200 byte for byte
-// (timing values aside), Python never reached, its rows inserted as Python
-// wrote them, and nothing refunded (a request naming a cache_affinity_key
-// among them, in Python's cold order, §1 item 5); the unavailable case is Python's 503
-// exactly, Retry-After 1, the hold kept, counted by its insert's code; every
-// pass case reaches Python
-// with its §3 reason counted, the owner asked only for a reason after the
-// admit, and a refund sent for exactly the insert's passes (its own
-// envelope, Python's refund money, on a live context of its own).
 // bodyStreams is whether a case's body asks for a stream (body.stream true).
 func bodyStreams(t *testing.T, body []byte) bool {
 	t.Helper()
@@ -263,6 +253,16 @@ func bodyStreams(t *testing.T, body []byte) bool {
 	return b.Stream != nil && *b.Stream
 }
 
+// TestEveryGoldenCaseThroughTheDecidePath: with the decide path on, every
+// answered case is answered by the edge with Python's 200 byte for byte
+// (timing values aside), Python never reached, its rows inserted as Python
+// wrote them, and nothing refunded (a request naming a cache_affinity_key
+// among them, in Python's cold order, §1 item 5); the unavailable case is Python's 503
+// exactly, Retry-After 1, the hold kept, counted by its insert's code; every
+// pass case reaches Python
+// with its §3 reason counted, the owner asked only for a reason after the
+// admit, and a refund sent for exactly the insert's passes (its own
+// envelope, Python's refund money, on a live context of its own).
 func TestEveryGoldenCaseThroughTheDecidePath(t *testing.T) {
 	f := authorizeGoldens(t)
 	py := newFakePython(t)
