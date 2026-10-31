@@ -867,7 +867,7 @@ def _make_api_router(settings: Settings, surface: str) -> APIRouter:
     if surface in {"combined", "public", "observer"}:
 
         @router.get("/coverage/openrouter")
-        async def coverage() -> dict[str, Any]:
+        def coverage() -> dict[str, Any]:
             from trusted_router.openrouter_coverage import ROUTE_COVERAGE
 
             return {

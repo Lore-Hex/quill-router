@@ -5,6 +5,7 @@ from collections.abc import Iterable
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request
+from starlette.concurrency import run_in_threadpool
 
 from trusted_router.auth import Principal, SettingsDep, principal_from_request
 from trusted_router.errors import api_error
@@ -44,7 +45,7 @@ AuthorizedAppsPrincipal = Annotated[
 
 def register_oauth_authorized_app_routes(router: APIRouter) -> None:
     @router.get("/oauth/authorized-apps")
-    async def list_authorized_apps(
+    def list_authorized_apps(
         principal: AuthorizedAppsPrincipal,
     ) -> dict[str, list[dict[str, Any]]]:
         snapshots = _live_delegated_snapshots(principal.workspace.id)
@@ -65,7 +66,9 @@ def register_oauth_authorized_app_routes(router: APIRouter) -> None:
         request: Request,
         principal: AuthorizedAppsPrincipal,
     ) -> dict[str, Any]:
-        snapshots = _owned_app_snapshots(principal.workspace.id, app_id)
+        snapshots = await run_in_threadpool(
+            _owned_app_snapshots, principal.workspace.id, app_id
+        )
         body = await json_body(request)
         if set(body) != {"monthly_budget"}:
             raise api_error(
@@ -75,18 +78,22 @@ def register_oauth_authorized_app_routes(router: APIRouter) -> None:
             )
         monthly_budget = _monthly_budget(body["monthly_budget"])
         keys = [snapshot.api_key for snapshot in snapshots]
-        _update_all_or_rollback(
-            keys,
-            field="limit_monthly_microdollars",
-            value=monthly_budget,
-        )
-        refreshed = _owned_app_snapshots(principal.workspace.id, app_id)
-        app = STORE.get_oauth_app(app_id)
-        assert app is not None
-        return {"data": _authorized_app_shape(app, refreshed)}
+
+        def apply_budget() -> dict[str, Any]:
+            _update_all_or_rollback(
+                keys,
+                field="limit_monthly_microdollars",
+                value=monthly_budget,
+            )
+            refreshed = _owned_app_snapshots(principal.workspace.id, app_id)
+            app = STORE.get_oauth_app(app_id)
+            assert app is not None
+            return {"data": _authorized_app_shape(app, refreshed)}
+
+        return await run_in_threadpool(apply_budget)
 
     @router.delete("/oauth/authorized-apps/{app_id}")
-    async def revoke_authorized_app(
+    def revoke_authorized_app(
         app_id: str,
         principal: AuthorizedAppsPrincipal,
     ) -> dict[str, Any]:

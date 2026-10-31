@@ -12,6 +12,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import ValidationError
+from starlette.concurrency import run_in_threadpool
 
 from trusted_router.auth import (
     ManagementPrincipal,
@@ -33,7 +34,14 @@ from trusted_router.schemas import CheckoutRequest
 from trusted_router.scopes import DEFAULT_DELEGATED_SCOPES, KNOWN_SCOPES, SCOPE_PROFILE
 from trusted_router.serialization import key_shape
 from trusted_router.services.stripe_billing import create_checkout_session
-from trusted_router.storage import STORE, ConsentRequest, OAuthApp, OAuthAuthorizationCode
+from trusted_router.storage import (
+    STORE,
+    ApiKey,
+    ConsentRequest,
+    OAuthApp,
+    OAuthAuthorizationCode,
+    User,
+)
 from trusted_router.typed_balance import live_credit_summary
 from trusted_router.types import ErrorType
 from trusted_router.verification import enriched_identity_payload, identity_payload
@@ -68,7 +76,7 @@ OAUTH_AUTHORIZATION_FIELDS = (
 def register_oauth_key_routes(router: APIRouter) -> None:
 
     @router.get(OAUTH_AUTHORIZATION_ENDPOINT_PATH)
-    async def oauth_authorize_page(request: Request, settings: SettingsDep) -> Response:
+    def oauth_authorize_page(request: Request, settings: SettingsDep) -> Response:
         if request.query_params.get("consent"):
             return _resume_consent(request, settings)
         params = _oauth_params_from_query(request)
@@ -89,7 +97,7 @@ def register_oauth_key_routes(router: APIRouter) -> None:
         return HTMLResponse(_consent_html_for_record(consent, principal.workspace.name, oauth_app))
 
     @router.get("/oauth/authorize")
-    async def oauth_authorize(request: Request, settings: SettingsDep) -> Response:
+    def oauth_authorize(request: Request, settings: SettingsDep) -> Response:
         params, app, error = _conformant_authorize_params(request)
         if error is not None:
             return error
@@ -108,112 +116,123 @@ def register_oauth_key_routes(router: APIRouter) -> None:
     @router.post("/auth/fund")
     async def oauth_authorize_fund(request: Request, settings: SettingsDep) -> Response:
         form = dict(await request.form())
-        try:
-            principal = principal_from_request(request, settings)
-        except HTTPException as exc:
-            if exc.status_code != 401:
-                raise
-            raise api_error(401, "Sign in is required", ErrorType.UNAUTHORIZED) from exc
-        if not principal.is_management:
-            raise api_error(403, "Only management users can fund credits", ErrorType.FORBIDDEN)
-        _deny_scoped_delegator(principal)
-        consent = _owned_consent(str(form.get("consent") or ""), principal)
 
-        amount = str(form.get("fund_amount") or "")
-        if amount not in OAUTH_FUNDING_AMOUNTS:
-            raise api_error(400, "fund_amount must be 5, 20, or 100", ErrorType.BAD_REQUEST)
-        origin = request_control_origin(request, settings)
-        try:
-            body = CheckoutRequest(
-                amount=amount,
+        # Session lookup, consent read, and Stripe checkout are synchronous IO:
+        # run them on a worker thread, not the shared event loop.
+        def fund() -> Response:
+            try:
+                principal = principal_from_request(request, settings)
+            except HTTPException as exc:
+                if exc.status_code != 401:
+                    raise
+                raise api_error(401, "Sign in is required", ErrorType.UNAUTHORIZED) from exc
+            if not principal.is_management:
+                raise api_error(403, "Only management users can fund credits", ErrorType.FORBIDDEN)
+            _deny_scoped_delegator(principal)
+            consent = _owned_consent(str(form.get("consent") or ""), principal)
+
+            amount = str(form.get("fund_amount") or "")
+            if amount not in OAUTH_FUNDING_AMOUNTS:
+                raise api_error(400, "fund_amount must be 5, 20, or 100", ErrorType.BAD_REQUEST)
+            origin = request_control_origin(request, settings)
+            try:
+                body = CheckoutRequest(
+                    amount=amount,
+                    workspace_id=principal.workspace.id,
+                    payment_method="card",
+                    success_url=_consent_return_url(origin, consent.id, checkout="success"),
+                    cancel_url=_consent_return_url(origin, consent.id, checkout="cancel"),
+                )
+            except ValidationError as exc:
+                raise api_error(400, "Invalid checkout request", ErrorType.BAD_REQUEST) from exc
+            credit = STORE.get_credit_account(principal.workspace.id)
+            data = create_checkout_session(
+                body=body,
                 workspace_id=principal.workspace.id,
-                payment_method="card",
-                success_url=_consent_return_url(origin, consent.id, checkout="success"),
-                cancel_url=_consent_return_url(origin, consent.id, checkout="cancel"),
+                initiating_user_id=_principal_user_id(principal),
+                customer_email=(
+                    principal.user.email
+                    if principal.user and principal.user.email and "@" in principal.user.email
+                    else None
+                ),
+                customer_id=credit.stripe_customer_id if credit else None,
+                settings=settings,
             )
-        except ValidationError as exc:
-            raise api_error(400, "Invalid checkout request", ErrorType.BAD_REQUEST) from exc
-        credit = STORE.get_credit_account(principal.workspace.id)
-        data = create_checkout_session(
-            body=body,
-            workspace_id=principal.workspace.id,
-            initiating_user_id=_principal_user_id(principal),
-            customer_email=(
-                principal.user.email
-                if principal.user and principal.user.email and "@" in principal.user.email
-                else None
-            ),
-            customer_id=credit.stripe_customer_id if credit else None,
-            settings=settings,
-        )
-        if str(data.get("mode") or "").startswith("mock"):
-            return RedirectResponse(
-                url=_consent_return_url(origin, consent.id, checkout="mock"),
-                status_code=303,
-            )
-        return RedirectResponse(url=str(data["url"]), status_code=303)
+            if str(data.get("mode") or "").startswith("mock"):
+                return RedirectResponse(
+                    url=_consent_return_url(origin, consent.id, checkout="mock"),
+                    status_code=303,
+                )
+            return RedirectResponse(url=str(data["url"]), status_code=303)
+
+        return await run_in_threadpool(fund)
 
     @router.post("/auth/approve")
     async def oauth_authorize_approve(request: Request, settings: SettingsDep) -> Response:
         form = dict(await request.form())
-        try:
-            principal = principal_from_request(request, settings)
-        except HTTPException as exc:
-            if exc.status_code != 401:
-                raise
-            raise api_error(401, "Sign in is required", ErrorType.UNAUTHORIZED) from exc
-        if not principal.is_management:
-            raise api_error(403, "Only management users can delegate credits", ErrorType.FORBIDDEN)
-        _deny_scoped_delegator(principal)
-        consent = _owned_consent(str(form.get("consent") or ""), principal)
-        if not hmac.compare_digest(str(form.get("csrf_token") or ""), consent.csrf_token):
-            raise api_error(403, "Invalid consent CSRF token", ErrorType.FORBIDDEN)
-        chosen = str(form.get("monthly_budget") or "20")
-        if consent.client_app_id and chosen not in {"5", "20", "100", "none"}:
-            raise api_error(400, "Invalid monthly budget", ErrorType.BAD_REQUEST)
-        posted_limit_present = "limit" in form
-        posted_limit = (
-            _limit_microdollars(
-                form.get("limit"),
-                maximum_microdollars=CONSENT_FORM_LIMIT_MAX_DOLLARS * 1_000_000,
+
+        # Session lookup and the consent/code writes are synchronous Store IO.
+        def approve() -> Response:
+            try:
+                principal = principal_from_request(request, settings)
+            except HTTPException as exc:
+                if exc.status_code != 401:
+                    raise
+                raise api_error(401, "Sign in is required", ErrorType.UNAUTHORIZED) from exc
+            if not principal.is_management:
+                raise api_error(403, "Only management users can delegate credits", ErrorType.FORBIDDEN)
+            _deny_scoped_delegator(principal)
+            consent = _owned_consent(str(form.get("consent") or ""), principal)
+            if not hmac.compare_digest(str(form.get("csrf_token") or ""), consent.csrf_token):
+                raise api_error(403, "Invalid consent CSRF token", ErrorType.FORBIDDEN)
+            chosen = str(form.get("monthly_budget") or "20")
+            if consent.client_app_id and chosen not in {"5", "20", "100", "none"}:
+                raise api_error(400, "Invalid monthly budget", ErrorType.BAD_REQUEST)
+            posted_limit_present = "limit" in form
+            posted_limit = (
+                _limit_microdollars(
+                    form.get("limit"),
+                    maximum_microdollars=CONSENT_FORM_LIMIT_MAX_DOLLARS * 1_000_000,
+                )
+                if posted_limit_present
+                else None
             )
-            if posted_limit_present
-            else None
-        )
-        posted_reset_present = "usage_limit_type" in form
-        posted_reset = _limit_reset(form.get("usage_limit_type")) if posted_reset_present else None
-        consumed = STORE.consume_consent_request(
-            consent.id,
-            user_id=str(_principal_user_id(principal) or ""),
-            workspace_id=principal.workspace.id,
-            csrf_token=str(form.get("csrf_token") or ""),
-        )
-        if consumed is None:
-            raise api_error(400, "Consent request is expired or already used", ErrorType.BAD_REQUEST)
-        if consumed.client_app_id:
-            consumed.limit_microdollars = None if chosen == "none" else dollars_to_microdollars(chosen)
-            consumed.limit_reset = None if chosen == "none" else "monthly"
-        else:
-            # The legacy consent page renders "Maximum spend (USD)" and "Limit
-            # resets" as editable fields, but only the app's query-suggested
-            # limit ever reached the key: the posted values were discarded, so
-            # an app that suggested nothing (the Cowork desktop flow) minted an
-            # UNCAPPED key while the page showed a $20 maximum, and a user who
-            # edited a suggested limit was silently overridden. Honor what the
-            # form actually posted (validated above, before the consent was
-            # consumed); absent fields keep the consent's stored values so
-            # programmatic approvals are unchanged.
-            if posted_limit_present:
-                consumed.limit_microdollars = posted_limit
-            if posted_reset_present:
-                consumed.limit_reset = posted_reset
-        raw_code, code = _create_code_from_consent(consumed, settings)
-        callback_url = (
-            _conformant_callback_with_code(code.callback_url, raw_code, state=consumed.state)
-            if consumed.rfc_conformant
-            else _callback_with_code(code.callback_url, raw_code, code.user_id, state=consumed.state)
-        )
-        return RedirectResponse(url=callback_url, status_code=302)
+            posted_reset_present = "usage_limit_type" in form
+            posted_reset = _limit_reset(form.get("usage_limit_type")) if posted_reset_present else None
+            consumed = STORE.consume_consent_request(
+                consent.id,
+                user_id=str(_principal_user_id(principal) or ""),
+                workspace_id=principal.workspace.id,
+                csrf_token=str(form.get("csrf_token") or ""),
+            )
+            if consumed is None:
+                raise api_error(400, "Consent request is expired or already used", ErrorType.BAD_REQUEST)
+            if consumed.client_app_id:
+                consumed.limit_microdollars = None if chosen == "none" else dollars_to_microdollars(chosen)
+                consumed.limit_reset = None if chosen == "none" else "monthly"
+            else:
+                # The legacy consent page renders "Maximum spend (USD)" and "Limit
+                # resets" as editable fields, but only the app's query-suggested
+                # limit ever reached the key: the posted values were discarded, so
+                # an app that suggested nothing (the Cowork desktop flow) minted an
+                # UNCAPPED key while the page showed a $20 maximum, and a user who
+                # edited a suggested limit was silently overridden. Honor what the
+                # form actually posted (validated above, before the consent was
+                # consumed); absent fields keep the consent's stored values so
+                # programmatic approvals are unchanged.
+                if posted_limit_present:
+                    consumed.limit_microdollars = posted_limit
+                if posted_reset_present:
+                    consumed.limit_reset = posted_reset
+            raw_code, code = _create_code_from_consent(consumed, settings)
+            callback_url = (
+                _conformant_callback_with_code(code.callback_url, raw_code, state=consumed.state)
+                if consumed.rfc_conformant
+                else _callback_with_code(code.callback_url, raw_code, code.user_id, state=consumed.state)
+            )
+            return RedirectResponse(url=callback_url, status_code=302)
+
+        return await run_in_threadpool(approve)
 
     @router.post("/auth/keys/code")
     async def auth_keys_code(
@@ -222,17 +241,21 @@ def register_oauth_key_routes(router: APIRouter) -> None:
         settings: SettingsDep,
     ) -> JSONResponse:
         params = await _oauth_params_from_json(request)
-        _require_programmatic_app_ownership(params, principal)
-        raw_code, code = _create_code(params, principal, settings)
-        return JSONResponse(
-            {
-                "data": {
-                    "id": raw_code,
-                    "app_id": code.app_id,
-                    "created_at": code.created_at,
+
+        def issue() -> JSONResponse:
+            _require_programmatic_app_ownership(params, principal)
+            raw_code, code = _create_code(params, principal, settings)
+            return JSONResponse(
+                {
+                    "data": {
+                        "id": raw_code,
+                        "app_id": code.app_id,
+                        "created_at": code.created_at,
+                    }
                 }
-            }
-        )
+            )
+
+        return await run_in_threadpool(issue)
 
     @router.post(OAUTH_KEY_EXCHANGE_ENDPOINT_PATH)
     async def auth_keys(request: Request) -> JSONResponse:
@@ -243,31 +266,38 @@ def register_oauth_key_routes(router: APIRouter) -> None:
         raw_code = str(body.get("code") or "")
         if not raw_code:
             raise api_error(400, "code is required", ErrorType.BAD_REQUEST)
-        code = STORE.consume_oauth_authorization_code(raw_code)
-        if code is None:
-            raise api_error(403, "Invalid or expired authorization code", ErrorType.FORBIDDEN)
-        _verify_pkce(code, body)
-        if code.client_app_id:
-            app = STORE.get_oauth_app(code.client_app_id)
-            if not _oauth_app_is_available(app):
-                raise api_error(403, "OAuth app is unavailable", ErrorType.FORBIDDEN)
-        # Quiesce: a pre-pause OAuth code must not mint a key during pause.
-        assert_workspace_billing_active(STORE.get_workspace(code.workspace_id))
-        raw_key, key = STORE.create_api_key(
-            workspace_id=code.workspace_id,
-            name=code.key_label,
-            creator_user_id=code.user_id,
-            management=False,
-            limit_microdollars=code.limit_microdollars,
-            limit_reset=code.limit_reset,
-            expires_at=code.expires_at,
-            scopes=DEFAULT_DELEGATED_SCOPES,
-            app_id=code.client_app_id,
-        )
-        # Return the signed-in user's identity alongside the key so the app
-        # knows WHO signed in without a second /auth/userinfo round-trip
-        # ("Sign in with TrustedRouter" = key + identity).
-        user = STORE.get_user(code.user_id) if code.user_id else None
+
+        def mint() -> tuple[OAuthAuthorizationCode, str, ApiKey, User | None]:
+            # Code consumption, app/workspace reads, and key creation are
+            # synchronous Store IO: worker thread, not the event loop.
+            code = STORE.consume_oauth_authorization_code(raw_code)
+            if code is None:
+                raise api_error(403, "Invalid or expired authorization code", ErrorType.FORBIDDEN)
+            _verify_pkce(code, body)
+            if code.client_app_id:
+                app = STORE.get_oauth_app(code.client_app_id)
+                if not _oauth_app_is_available(app):
+                    raise api_error(403, "OAuth app is unavailable", ErrorType.FORBIDDEN)
+            # Quiesce: a pre-pause OAuth code must not mint a key during pause.
+            assert_workspace_billing_active(STORE.get_workspace(code.workspace_id))
+            raw_key, key = STORE.create_api_key(
+                workspace_id=code.workspace_id,
+                name=code.key_label,
+                creator_user_id=code.user_id,
+                management=False,
+                limit_microdollars=code.limit_microdollars,
+                limit_reset=code.limit_reset,
+                expires_at=code.expires_at,
+                scopes=DEFAULT_DELEGATED_SCOPES,
+                app_id=code.client_app_id,
+            )
+            # Return the signed-in user's identity alongside the key so the app
+            # knows WHO signed in without a second /auth/userinfo round-trip
+            # ("Sign in with TrustedRouter" = key + identity).
+            user = STORE.get_user(code.user_id) if code.user_id else None
+            return code, raw_key, key, user
+
+        code, raw_key, key, user = await run_in_threadpool(mint)
         return JSONResponse(
             {
                 "key": raw_key,
@@ -294,24 +324,33 @@ def register_oauth_key_routes(router: APIRouter) -> None:
         verifier = str(form["code_verifier"])
         if not CODE_VERIFIER_RE.fullmatch(verifier):
             return _oauth_error("invalid_request", "code_verifier is not valid RFC 7636 syntax")
-        code = STORE.consume_oauth_authorization_code(str(form["code"]))
-        if code is None:
-            return _oauth_error("invalid_grant", "Authorization code is invalid, expired, or already used")
-        if code.client_app_id != str(form["client_id"]) or code.callback_url != str(form["redirect_uri"]):
-            return _oauth_error("invalid_grant", "Authorization code binding does not match")
-        if code.code_challenge_method != "S256" or not _pkce_matches(code, verifier):
-            return _oauth_error("invalid_grant", "code_verifier does not match")
-        app = STORE.get_oauth_app(code.client_app_id)
-        if not _oauth_app_is_available(app):
-            return _oauth_error("invalid_grant", "OAuth app is unavailable")
-        assert_workspace_billing_active(STORE.get_workspace(code.workspace_id))
-        raw_key, _key = STORE.create_api_key(
-            workspace_id=code.workspace_id, name=code.key_label,
-            creator_user_id=code.user_id, management=False,
-            limit_microdollars=code.limit_microdollars, limit_reset=code.limit_reset,
-            expires_at=code.expires_at, scopes=code.scopes, app_id=code.client_app_id,
-        )
-        user = STORE.get_user(code.user_id) if code.user_id else None
+
+        def mint() -> JSONResponse | tuple[OAuthAuthorizationCode, str, User | None]:
+            # Synchronous Store IO: worker thread, not the event loop.
+            code = STORE.consume_oauth_authorization_code(str(form["code"]))
+            if code is None:
+                return _oauth_error("invalid_grant", "Authorization code is invalid, expired, or already used")
+            if code.client_app_id != str(form["client_id"]) or code.callback_url != str(form["redirect_uri"]):
+                return _oauth_error("invalid_grant", "Authorization code binding does not match")
+            if code.code_challenge_method != "S256" or not _pkce_matches(code, verifier):
+                return _oauth_error("invalid_grant", "code_verifier does not match")
+            app = STORE.get_oauth_app(code.client_app_id)
+            if not _oauth_app_is_available(app):
+                return _oauth_error("invalid_grant", "OAuth app is unavailable")
+            assert_workspace_billing_active(STORE.get_workspace(code.workspace_id))
+            raw_key, _key = STORE.create_api_key(
+                workspace_id=code.workspace_id, name=code.key_label,
+                creator_user_id=code.user_id, management=False,
+                limit_microdollars=code.limit_microdollars, limit_reset=code.limit_reset,
+                expires_at=code.expires_at, scopes=code.scopes, app_id=code.client_app_id,
+            )
+            user = STORE.get_user(code.user_id) if code.user_id else None
+            return code, raw_key, user
+
+        minted = await run_in_threadpool(mint)
+        if isinstance(minted, JSONResponse):
+            return minted
+        code, raw_key, user = minted
         identity = identity_payload(user, code.workspace_id) or {"verification_level": "none"}
         metadata = {"verification_level": identity["verification_level"], "app_id": code.client_app_id, "workspace_id": code.workspace_id}
         if SCOPE_PROFILE in code.scopes:

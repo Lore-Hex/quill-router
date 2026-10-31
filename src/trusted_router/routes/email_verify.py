@@ -23,7 +23,7 @@ from trusted_router.views import render_template
 
 def register_email_verify_routes(router: APIRouter) -> None:
     @router.get("/auth/verify-email")
-    async def verify_email(request: Request, token: str, settings: SettingsDep) -> Response:
+    def verify_email(request: Request, token: str, settings: SettingsDep) -> Response:
         consumed = STORE.consume_verification_token(token, purpose="signup")
         if consumed is None:
             return HTMLResponse(_invalid_page(), status_code=400)

@@ -7,6 +7,7 @@ from typing import Any, Protocol
 from urllib.parse import urlparse
 
 import httpx
+from starlette.concurrency import run_in_threadpool
 
 from trusted_router.byok_crypto import decrypt_control_secret
 from trusted_router.config import Settings
@@ -53,7 +54,8 @@ class PostHogBroadcastAdapter:
         return None
 
     async def test(self, destination: BroadcastDestination, settings: Settings) -> tuple[bool, str]:
-        api_key = _decrypt_api_key(destination, settings)
+        # KMS decrypt is a synchronous network call; keep it off the event loop.
+        api_key = await run_in_threadpool(_decrypt_api_key, destination, settings)
         payload = {
             "api_key": api_key,
             "event": "$ai_generation",
@@ -111,7 +113,7 @@ class WebhookOTLPBroadcastAdapter:
         return _validate_http_endpoint(endpoint)
 
     async def test(self, destination: BroadcastDestination, settings: Settings) -> tuple[bool, str]:
-        headers = _decrypt_headers(destination, settings)
+        headers = await run_in_threadpool(_decrypt_headers, destination, settings)
         headers["X-Test-Connection"] = "true"
         headers.setdefault("content-type", "application/json")
         async with httpx.AsyncClient(timeout=5) as client:

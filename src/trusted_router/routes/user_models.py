@@ -7,6 +7,7 @@ from typing import Any, NoReturn
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from trusted_router.auth import (
     ManagementPrincipal,
@@ -52,19 +53,19 @@ from trusted_router.user_model_rules import (
 
 def register_user_model_routes(router: APIRouter) -> None:
     @router.get("/user-models")
-    async def list_user_models(principal: ManagementPrincipal) -> dict[str, Any]:
+    def list_user_models(principal: ManagementPrincipal) -> dict[str, Any]:
         models = STORE.list_user_models_for_user(_owner_user_id(principal))
         return {"data": [user_model_owner_shape(model) for model in models]}
 
     @router.get("/user-models/earnings")
-    async def get_user_model_earnings(
+    def get_user_model_earnings(
         principal: ManagementPrincipal,
         before: str | None = None,
     ) -> dict[str, Any]:
         return {"data": _earnings_data(_owner_user_id(principal), before=before)}
 
     @router.post("/user-models/earnings/transfer")
-    async def transfer_user_model_earnings(
+    def transfer_user_model_earnings(
         body: EarningsTransferRequest,
         principal: ManagementPrincipal,
     ) -> dict[str, Any]:
@@ -122,21 +123,26 @@ def register_user_model_routes(router: APIRouter) -> None:
         settings: SettingsDep,
     ) -> JSONResponse:
         owner_user_id = _owner_user_id(principal)
-        owner = STORE.get_user(owner_user_id)
-        assert_user_can_create_custom_models(owner, settings)
-        assert owner is not None
-        try:
-            owner_username = creator_username_for_models(
-                owner,
-                enforce_verification=settings.custom_models_verification_enforced,
-            )
-        except ValueError as exc:
-            raise api_error(
-                403,
-                "Choose a creator username before publishing a user-provided model",
-                ErrorType.VERIFICATION_REQUIRED,
-                extra={"verification_url": "/console/account/verification"},
-            ) from exc
+
+        def owner_username_for_create() -> str:
+            # Store read: worker thread, not the event loop.
+            owner = STORE.get_user(owner_user_id)
+            assert_user_can_create_custom_models(owner, settings)
+            assert owner is not None
+            try:
+                return creator_username_for_models(
+                    owner,
+                    enforce_verification=settings.custom_models_verification_enforced,
+                )
+            except ValueError as exc:
+                raise api_error(
+                    403,
+                    "Choose a creator username before publishing a user-provided model",
+                    ErrorType.VERIFICATION_REQUIRED,
+                    extra={"verification_url": "/console/account/verification"},
+                ) from exc
+
+        owner_username = await run_in_threadpool(owner_username_for_create)
         slug = validate_user_model_slug(body.slug) if body.slug is not None else None
         display_name = validate_user_model_display_name(body.display_name)
         endpoint_url = await validate_endpoint_url(body.endpoint_url, settings)
@@ -146,55 +152,60 @@ def register_user_model_routes(router: APIRouter) -> None:
             kind=body.kind,
         )
         signing_secret = secrets.token_urlsafe(32)
-        encrypted_signing_secret = encrypt_user_model_signing_secret(
-            signing_secret,
-            settings,
-            workspace_id=principal.workspace.id,
-        )
-        encrypted_endpoint_api_key = (
-            encrypt_user_model_endpoint_key(
-                body.endpoint_api_key,
+
+        def encrypt_and_create() -> JSONResponse:
+            # KMS encryption and the Store write are synchronous network IO.
+            encrypted_signing_secret = encrypt_user_model_signing_secret(
+                signing_secret,
                 settings,
                 workspace_id=principal.workspace.id,
             )
-            if body.endpoint_api_key is not None
-            else None
-        )
-        try:
-            model = STORE.create_user_model(
-                owner_user_id=owner_user_id,
-                owner_workspace_id=principal.workspace.id,
-                owner_username=owner_username,
-                name=body.name,
-                kind=body.kind,
-                description=body.description,
-                display_identity=body.display_identity,
-                display_name=display_name,
-                endpoint_url=endpoint_url,
-                upstream_model_id=body.upstream_model_id,
-                encrypted_endpoint_api_key=encrypted_endpoint_api_key,
-                endpoint_key_hint=_secret_hint(body.endpoint_api_key),
-                encrypted_signing_secret=encrypted_signing_secret,
-                supports_streaming=body.supports_streaming,
-                heartbeat_interval_seconds=body.heartbeat_interval_seconds,
-                max_concurrency=body.max_concurrency,
-                prompt_price_microdollars_per_million_tokens=(
-                    body.prompt_price_microdollars_per_million_tokens
-                ),
-                completion_price_microdollars_per_million_tokens=(
-                    body.completion_price_microdollars_per_million_tokens
-                ),
-                human_verified=body.kind == "human",
-                slug=slug,
+            encrypted_endpoint_api_key = (
+                encrypt_user_model_endpoint_key(
+                    body.endpoint_api_key,
+                    settings,
+                    workspace_id=principal.workspace.id,
+                )
+                if body.endpoint_api_key is not None
+                else None
             )
-        except ValueError as exc:
-            _raise_store_error(exc)
-        data = user_model_owner_shape(model)
-        data["signing_secret"] = signing_secret
-        return JSONResponse({"data": data}, status_code=201)
+            try:
+                model = STORE.create_user_model(
+                    owner_user_id=owner_user_id,
+                    owner_workspace_id=principal.workspace.id,
+                    owner_username=owner_username,
+                    name=body.name,
+                    kind=body.kind,
+                    description=body.description,
+                    display_identity=body.display_identity,
+                    display_name=display_name,
+                    endpoint_url=endpoint_url,
+                    upstream_model_id=body.upstream_model_id,
+                    encrypted_endpoint_api_key=encrypted_endpoint_api_key,
+                    endpoint_key_hint=_secret_hint(body.endpoint_api_key),
+                    encrypted_signing_secret=encrypted_signing_secret,
+                    supports_streaming=body.supports_streaming,
+                    heartbeat_interval_seconds=body.heartbeat_interval_seconds,
+                    max_concurrency=body.max_concurrency,
+                    prompt_price_microdollars_per_million_tokens=(
+                        body.prompt_price_microdollars_per_million_tokens
+                    ),
+                    completion_price_microdollars_per_million_tokens=(
+                        body.completion_price_microdollars_per_million_tokens
+                    ),
+                    human_verified=body.kind == "human",
+                    slug=slug,
+                )
+            except ValueError as exc:
+                _raise_store_error(exc)
+            data = user_model_owner_shape(model)
+            data["signing_secret"] = signing_secret
+            return JSONResponse({"data": data}, status_code=201)
+
+        return await run_in_threadpool(encrypt_and_create)
 
     @router.get("/user-models/{model_id:path}")
-    async def get_user_model(
+    def get_user_model(
         model_id: str,
         principal: ManagementPrincipal,
     ) -> dict[str, Any]:
@@ -212,8 +223,13 @@ def register_user_model_routes(router: APIRouter) -> None:
         settings: SettingsDep,
     ) -> dict[str, Any]:
         owner_user_id = _owner_user_id(principal)
-        assert_user_can_create_custom_models(STORE.get_user(owner_user_id), settings)
-        existing = _require_owner_user_model(model_id, principal)
+
+        def require_existing() -> UserProvidedModel:
+            # Store reads: worker thread, not the event loop.
+            assert_user_can_create_custom_models(STORE.get_user(owner_user_id), settings)
+            return _require_owner_user_model(model_id, principal)
+
+        existing = await run_in_threadpool(require_existing)
         patch = body.model_dump(exclude_unset=True)
         if "slug" in patch:
             patch["slug"] = validate_user_model_slug(str(patch["slug"]))
@@ -241,32 +257,37 @@ def register_user_model_routes(router: APIRouter) -> None:
         _validate_price(prompt_price, completion_price, kind=kind)
         if "kind" in patch:
             patch["human_verified"] = kind == "human"
-        if "endpoint_api_key" in body.model_fields_set:
-            endpoint_api_key = patch.pop("endpoint_api_key", None)
-            patch["encrypted_endpoint_api_key"] = (
-                encrypt_user_model_endpoint_key(
-                    str(endpoint_api_key),
-                    settings,
-                    workspace_id=existing.owner_workspace_id,
+
+        def encrypt_and_update() -> dict[str, Any]:
+            # KMS encryption and the Store write are synchronous network IO.
+            if "endpoint_api_key" in body.model_fields_set:
+                endpoint_api_key = patch.pop("endpoint_api_key", None)
+                patch["encrypted_endpoint_api_key"] = (
+                    encrypt_user_model_endpoint_key(
+                        str(endpoint_api_key),
+                        settings,
+                        workspace_id=existing.owner_workspace_id,
+                    )
+                    if endpoint_api_key is not None
+                    else None
                 )
-                if endpoint_api_key is not None
-                else None
-            )
-            patch["endpoint_key_hint"] = _secret_hint(
-                None if endpoint_api_key is None else str(endpoint_api_key)
-            )
-        try:
-            updated = STORE.update_user_model(
-                existing.id,
-                owner_user_id=existing.owner_user_id,
-                patch=patch,
-            )
-        except ValueError as exc:
-            _raise_store_error(exc)
-        return {"data": user_model_owner_shape(updated)}
+                patch["endpoint_key_hint"] = _secret_hint(
+                    None if endpoint_api_key is None else str(endpoint_api_key)
+                )
+            try:
+                updated = STORE.update_user_model(
+                    existing.id,
+                    owner_user_id=existing.owner_user_id,
+                    patch=patch,
+                )
+            except ValueError as exc:
+                _raise_store_error(exc)
+            return {"data": user_model_owner_shape(updated)}
+
+        return await run_in_threadpool(encrypt_and_update)
 
     @router.delete("/user-models/{model_id:path}")
-    async def delete_user_model(
+    def delete_user_model(
         model_id: str,
         principal: ManagementPrincipal,
     ) -> dict[str, Any]:
@@ -284,13 +305,15 @@ def register_user_model_routes(router: APIRouter) -> None:
         existing = await _clock_target(model_id, request, settings)
         result = await probe_user_model(existing, settings)
         if not result.ok:
-            STORE.set_user_model_online(
+            await run_in_threadpool(
+                STORE.set_user_model_online,
                 existing.id,
                 owner_user_id=existing.owner_user_id,
                 online=False,
             )
             raise api_error(409, result.detail, ErrorType.CONFLICT)
-        updated = STORE.set_user_model_online(
+        updated = await run_in_threadpool(
+            STORE.set_user_model_online,
             existing.id,
             owner_user_id=existing.owner_user_id,
             online=True,
@@ -304,7 +327,8 @@ def register_user_model_routes(router: APIRouter) -> None:
         settings: SettingsDep,
     ) -> dict[str, Any]:
         existing = await _clock_target(model_id, request, settings)
-        updated = STORE.set_user_model_online(
+        updated = await run_in_threadpool(
+            STORE.set_user_model_online,
             existing.id,
             owner_user_id=existing.owner_user_id,
             online=False,
@@ -326,7 +350,8 @@ def register_user_model_routes(router: APIRouter) -> None:
                 ErrorType.BAD_REQUEST,
             )
         expires_at = datetime.now(UTC) + timedelta(seconds=2 * interval)
-        updated = STORE.record_user_model_heartbeat(
+        updated = await run_in_threadpool(
+            STORE.record_user_model_heartbeat,
             existing.id,
             expires_at=expires_at.isoformat().replace("+00:00", "Z"),
         )
@@ -338,9 +363,9 @@ def register_user_model_routes(router: APIRouter) -> None:
         principal: ManagementPrincipal,
         settings: SettingsDep,
     ) -> dict[str, Any]:
-        existing = _require_owner_user_model(model_id, principal)
+        existing = await run_in_threadpool(_require_owner_user_model, model_id, principal)
         result = await probe_user_model(existing, settings)
-        updated = _require_owner_user_model(model_id, principal)
+        updated = await run_in_threadpool(_require_owner_user_model, model_id, principal)
         return {
             "data": {
                 **user_model_owner_shape(updated),
@@ -349,7 +374,7 @@ def register_user_model_routes(router: APIRouter) -> None:
         }
 
     @router.post("/user-models/{model_id:path}/rotate-secrets")
-    async def rotate_user_model_secrets(
+    def rotate_user_model_secrets(
         model_id: str,
         principal: ManagementPrincipal,
         settings: SettingsDep,
@@ -452,8 +477,23 @@ async def _clock_target(
     key can do. It deliberately does NOT extend to editing the model: changing
     endpoint_url decides where prompts go, so it stays with the owner's account.
     """
-    model = STORE.get_user_model(normalize_user_provided_model_id(model_id))
     signature = request.headers.get("tr-signature")
+    # Only the body read needs the event loop. The model read, KMS decrypt,
+    # and management-principal lookup are synchronous IO for a worker thread.
+    raw_body = await request.body() if signature else b""
+    return await run_in_threadpool(
+        _clock_target_sync, model_id, request, settings, signature, raw_body
+    )
+
+
+def _clock_target_sync(
+    model_id: str,
+    request: Request,
+    settings: Settings,
+    signature: str | None,
+    raw_body: bytes,
+) -> UserProvidedModel:
+    model = STORE.get_user_model(normalize_user_provided_model_id(model_id))
     if signature and model is not None and model.encrypted_signing_secret is not None:
         try:
             secret = decrypt_user_model_secret(
@@ -465,7 +505,7 @@ async def _clock_target(
             verify_clock_signature(
                 secret,
                 signature,
-                await request.body(),
+                raw_body,
                 now=datetime.now(UTC),
             )
         except ValueError as exc:

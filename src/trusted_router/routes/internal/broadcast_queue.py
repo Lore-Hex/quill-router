@@ -12,7 +12,7 @@ from trusted_router.storage import STORE
 
 def register(router: APIRouter) -> None:
     @router.post("/internal/broadcast/drain")
-    async def drain_broadcast(request: Request, settings: SettingsDep, limit: int = 100) -> dict[str, Any]:
+    def drain_broadcast(request: Request, settings: SettingsDep, limit: int = 100) -> dict[str, Any]:
         require_internal_gateway(request, settings)
         before = len(STORE.due_broadcast_deliveries(limit=limit))
         attempted = drain_broadcast_queue(settings=settings, limit=limit)

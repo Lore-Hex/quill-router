@@ -88,7 +88,7 @@ def register_model_change_routes(router: APIRouter) -> None:
             "Subscribe at /v1/models/changes.atom. See /docs#model-changes."
         ),
     )
-    async def model_changes(rows: list[dict[str, Any]] = Depends(selected_changes)) -> dict[str, Any]:
+    def model_changes(rows: list[dict[str, Any]] = Depends(selected_changes)) -> dict[str, Any]:
         return {"data": rows}
 
     @router.get(
@@ -96,7 +96,7 @@ def register_model_change_routes(router: APIRouter) -> None:
         summary="Subscribe to public model route changes",
         description="Atom feed with the same filters, ordering and entries as /v1/models/changes.",
     )
-    async def model_changes_atom(
+    def model_changes_atom(
         request: Request, rows: list[dict[str, Any]] = Depends(selected_changes),
     ) -> Response:
         feed = ET.Element("feed", xmlns="http://www.w3.org/2005/Atom")

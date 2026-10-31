@@ -54,7 +54,7 @@ def register_bedrock_group_buy_public_routes(app: FastAPI, settings: Settings) -
     )
     async def group_buy_page(request: Request) -> HTMLResponse:
         if _legacy_combined_bridge(settings):
-            principal = _optional_user_principal(request, settings)
+            principal = await run_in_threadpool(_optional_user_principal, request, settings)
             pledge = await _own_pledge(principal)
             notice = ""
             if request.query_params.get("saved") == "1":
@@ -95,7 +95,7 @@ def register_bedrock_group_buy_control_routes(app: FastAPI, settings: Settings) 
         response_class=HTMLResponse,
     )
     async def manage_group_buy_page(request: Request) -> Response:
-        principal = _optional_user_principal(request, settings)
+        principal = await run_in_threadpool(_optional_user_principal, request, settings)
         if principal is None:
             next_path = (
                 "%2Fbedrock-group-buy"
@@ -123,7 +123,7 @@ def register_bedrock_group_buy_control_routes(app: FastAPI, settings: Settings) 
     @app.post("/bedrock-group-buy/pledge", response_class=HTMLResponse)
     async def save_group_buy_pledge(request: Request) -> Response:
         _assert_same_origin(request, settings)
-        principal = _optional_user_principal(request, settings)
+        principal = await run_in_threadpool(_optional_user_principal, request, settings)
         if principal is None:
             next_path = (
                 "%2Fbedrock-group-buy"
@@ -173,7 +173,7 @@ def register_bedrock_group_buy_control_routes(app: FastAPI, settings: Settings) 
     @app.post("/bedrock-group-buy/withdraw")
     async def withdraw_group_buy_pledge(request: Request) -> RedirectResponse:
         _assert_same_origin(request, settings)
-        principal = _optional_user_principal(request, settings)
+        principal = await run_in_threadpool(_optional_user_principal, request, settings)
         if principal is None:
             next_path = (
                 "%2Fbedrock-group-buy"
@@ -194,14 +194,14 @@ def register_bedrock_group_buy_control_routes(app: FastAPI, settings: Settings) 
 
     @app.get("/v1/bedrock-group-buy/me")
     async def own_group_buy_pledge(request: Request) -> JSONResponse:
-        principal = _required_user_principal(request, settings)
+        principal = await run_in_threadpool(_required_user_principal, request, settings)
         pledge = await _own_pledge(principal)
         return JSONResponse({"pledge": _private_pledge_dict(pledge) if pledge else None})
 
     @app.api_route("/v1/bedrock-group-buy/pledge", methods=["PUT", "POST"])
     async def upsert_group_buy_pledge(request: Request) -> JSONResponse:
         _assert_same_origin(request, settings)
-        principal = _required_user_principal(request, settings)
+        principal = await run_in_threadpool(_required_user_principal, request, settings)
         try:
             payload = await _request_values(request)
             saved = await _save_or_withdraw(principal, payload)
@@ -222,7 +222,7 @@ def register_bedrock_group_buy_control_routes(app: FastAPI, settings: Settings) 
     @app.delete("/v1/bedrock-group-buy/pledge")
     async def delete_group_buy_pledge(request: Request) -> JSONResponse:
         _assert_same_origin(request, settings)
-        principal = _required_user_principal(request, settings)
+        principal = await run_in_threadpool(_required_user_principal, request, settings)
         assert principal.user is not None
         removed = await run_in_threadpool(
             STORE.withdraw_bedrock_group_buy_pledge,

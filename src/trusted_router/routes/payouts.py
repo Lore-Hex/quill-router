@@ -58,7 +58,7 @@ def register_payout_routes(router: APIRouter) -> None:
         request: Request,
         settings: SettingsDep,
     ) -> dict[str, Any]:
-        user = _resolved_user(request, settings)
+        user = await run_in_threadpool(_resolved_user, request, settings)
         return await run_in_threadpool(payout_status, user, settings)
 
     @router.get("/payouts/{payout_id}")
@@ -67,7 +67,7 @@ def register_payout_routes(router: APIRouter) -> None:
         request: Request,
         settings: SettingsDep,
     ) -> dict[str, Any]:
-        user = _resolved_user(request, settings)
+        user = await run_in_threadpool(_resolved_user, request, settings)
         cashout = await run_in_threadpool(
             STORE.get_earnings_cashout,
             user.id,
@@ -83,7 +83,7 @@ def register_payout_routes(router: APIRouter) -> None:
         request: Request,
         settings: SettingsDep,
     ) -> JSONResponse:
-        user = _resolved_user(request, settings)
+        user = await run_in_threadpool(_resolved_user, request, settings)
         _require_payout_identity(user)
         _require_routable(settings)
         cashout = await run_in_threadpool(
@@ -104,7 +104,7 @@ def register_payout_routes(router: APIRouter) -> None:
         request: Request,
         settings: SettingsDep,
     ) -> dict[str, Any]:
-        user = _resolved_user(request, settings)
+        user = await run_in_threadpool(_resolved_user, request, settings)
         _require_payout_identity(user)
         _require_routable(settings)
         values = _onboarding_values(await json_body(request), user)
@@ -166,7 +166,7 @@ def register_payout_routes(router: APIRouter) -> None:
         request: Request,
         settings: SettingsDep,
     ) -> JSONResponse:
-        user = _resolved_user(request, settings)
+        user = await run_in_threadpool(_resolved_user, request, settings)
         _require_payout_identity(user)
         _require_routable(settings)
         idempotency_key = request.headers.get("Idempotency-Key", "").strip()

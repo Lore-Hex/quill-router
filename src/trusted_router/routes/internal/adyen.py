@@ -7,6 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import PlainTextResponse
+from starlette.concurrency import run_in_threadpool
 
 from trusted_router.auth import SettingsDep
 from trusted_router.errors import api_error
@@ -43,10 +44,16 @@ def register(router: APIRouter) -> None:
             live = live_value.lower() == "true"
         else:
             raise api_error(400, "Invalid Adyen webhook environment", ErrorType.BAD_REQUEST)
-        prepared = [
-            prepare_adyen_notification(item, live=live, settings=settings)
-            for item in items
-        ]
-        for notification in prepared:
-            apply_adyen_notification(notification)
+        # Preparing and applying notifications are synchronous Store
+        # transactions; keep them off the shared event loop.
+        await run_in_threadpool(_prepare_and_apply, items, live=live, settings=settings)
         return PlainTextResponse("[accepted]")
+
+
+def _prepare_and_apply(items: list[Any], *, live: bool, settings: Any) -> None:
+    prepared = [
+        prepare_adyen_notification(item, live=live, settings=settings)
+        for item in items
+    ]
+    for notification in prepared:
+        apply_adyen_notification(notification)

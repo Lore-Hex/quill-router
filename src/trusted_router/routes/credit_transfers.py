@@ -6,7 +6,6 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
-from starlette.concurrency import run_in_threadpool
 
 from trusted_router.auth import Principal, SettingsDep, principal_from_request
 from trusted_router.config import Settings
@@ -49,24 +48,21 @@ CreditTransferPrincipal = Annotated[
 
 def register_credit_transfer_routes(router: APIRouter) -> None:
     @router.post("/credits/transfers")
-    async def create_credit_transfer(
+    def create_credit_transfer(
         body: CreditTransferRequest,
         principal: CreditTransferPrincipal,
         settings: SettingsDep,
     ) -> JSONResponse:
-        movement, duplicate = await run_in_threadpool(
-            execute_credit_transfer,
-            principal,
-            body,
-            settings,
-        )
+        # Plain def: FastAPI runs the transfer and the username lookup in
+        # transfer_shape on a worker thread, never on the event loop.
+        movement, duplicate = execute_credit_transfer(principal, body, settings)
         return JSONResponse(
             {"data": transfer_shape(movement)},
             status_code=200 if duplicate else 201,
         )
 
     @router.get("/credits/transfers")
-    async def list_credit_transfers(
+    def list_credit_transfers(
         principal: CreditTransferPrincipal,
     ) -> dict[str, list[dict[str, Any]]]:
         if not STORE.supports_user_credit_transfers():
@@ -75,8 +71,7 @@ def register_credit_transfer_routes(router: APIRouter) -> None:
                 "This deployment cannot transfer credits",
                 ErrorType.ENDPOINT_NOT_SUPPORTED,
             )
-        movements = await run_in_threadpool(
-            STORE.list_credit_movements,
+        movements = STORE.list_credit_movements(
             principal.workspace.id,
             kinds=["user_transfer_out", "user_transfer_in"],
             limit=100,

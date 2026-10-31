@@ -87,7 +87,7 @@ def self_key_shape(key: ApiKey) -> dict[str, Any]:
 
 def register_key_routes(router: APIRouter) -> None:
     @router.get("/key")
-    async def key(principal: InferencePrincipal) -> dict[str, Any]:
+    def key(principal: InferencePrincipal) -> dict[str, Any]:
         assert principal.api_key is not None
         return {"data": self_key_shape(principal.api_key)}
 
@@ -154,7 +154,7 @@ def register_key_routes(router: APIRouter) -> None:
         }
 
     @router.post("/keys")
-    async def create_key(body: CreateKeyRequest, principal: ManagementPrincipal) -> JSONResponse:
+    def create_key(body: CreateKeyRequest, principal: ManagementPrincipal) -> JSONResponse:
         limit_microdollars: int | None = None
         if body.limit is not None:
             limit_microdollars = dollars_to_microdollars(body.limit)
@@ -199,11 +199,11 @@ def register_key_routes(router: APIRouter) -> None:
         return JSONResponse({"data": key_shape(k), "key": raw}, status_code=201)
 
     @router.get("/keys/{hash}")
-    async def get_key(hash: str, principal: ManagementPrincipal) -> dict[str, Any]:  # noqa: A002
+    def get_key(hash: str, principal: ManagementPrincipal) -> dict[str, Any]:  # noqa: A002
         return {"data": _enriched_key_shape(_require_key_in_workspace(hash, principal))}
 
     @router.patch("/keys/{hash}")
-    async def patch_key(
+    def patch_key(
         hash: str,  # noqa: A002
         body: PatchKeyRequest,
         principal: ManagementPrincipal,

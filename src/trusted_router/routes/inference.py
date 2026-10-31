@@ -26,6 +26,7 @@ from typing import Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.concurrency import run_in_threadpool
 
 from trusted_router.adapter import (
     messages_to_chat_body,
@@ -164,7 +165,7 @@ def register_inference_routes(router: APIRouter) -> None:
         _validate_output_token_limit(body)
         _validate_chat_messages(body)
         _require_monitor_model_key(body, principal, settings)
-        user_model = _local_user_model_or_none(body)
+        user_model = await run_in_threadpool(_local_user_model_or_none, body)
         if user_model is not None:
             _refuse_user_model_privacy_floor(body)
             if body.get("stream") is True:
