@@ -12,6 +12,7 @@ import logging
 import math
 import signal
 import threading
+import time
 from collections.abc import Callable, Generator
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
@@ -64,6 +65,9 @@ from trusted_router.services.async_settle_shadow_admission import Observer
 from trusted_router.storage_gcp_async_admission import read_admission
 from trusted_router.storage_gcp_shadow_attachments import GCSAttachments
 from trusted_router.storage_gcp_shadow_io import (
+    PUBLISHER_STOP_DRAIN_SECONDS,
+    PUBLISHER_TRANSACTION_RPC_SECONDS,
+    PublisherTransactions,
     SessionCheckoutTimeout,
     SessionUnavailable,
     observe_spanner_rpcs,
@@ -549,9 +553,23 @@ def follower_stagger(boot: str, slot: int, incumbent_present: bool = True) -> fl
 # exhausting K attempts leaves its last claim at publication+K, so takeover
 # is eligible at publication+K+2. These are eligibility bounds, not promises
 # against arbitrarily many aborted/failed winners. S5 forbids in-slot retries.
+# Under churn, an already-started transaction RPC may drain for up to 12 s
+# across a ~10 s abandoned lock. Late reads roll back; late commits stay
+# unknown. Late cycles are never reported as successful. S4's timely-RPC eligibility
+# bounds above are unchanged. Supervised recovery includes 12 s drainage, 2 s
+# rollback, 5 s retired-session deletion and 2 s replacement preparation, plus
+# the next boundary: within 12 slots (24 s), absent further failures/stalls. A
+# boot admits only one native transaction across all replacement lanes. The
+# watchdog's bounded replacement lanes remain fenced by S1/S2 and S5.
 HOLDER_FAILURE_SLOTS = 3
 TAKEOVER_SPREAD = 1
 TAKEOVER_MIN_AGE = 2
+# A late commit can leave this boot owning an old slot after its worker was
+# replaced (so no local unknown-commit hint survives). After a full completion
+# horizon without any renewal, let it enter the fenced election again. This
+# is not K-slot renewal: followers retain their age-two takeover opportunity.
+# Otherwise a lone survivor could permanently refuse its own stale claim.
+HOLDER_REENTRY_AGE = math.ceil(PUBLISHER_TRANSACTION_RPC_SECONDS / (SLOT_US / 1_000_000))
 
 
 def takeover_rank(boot: str, claim_slot: int) -> int:
@@ -600,6 +618,10 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
     store.last_claim = None
     def record(elapsed: int) -> None:
         rpc_durations.append(elapsed)
+    def revoked() -> bool:
+        return (admission.generation != job.generation or bool(admission.revocation_epoch)
+                or admission.admission_job != job
+                or not getattr(getattr(admission, "runtime_stop", None), "available", True))
     def attempt() -> None:
         nonlocal actual_us, attempted, outcome, claimed, value, ack_us, started, budget, reason, seen_claim_slot
         if not store.session_ready():
@@ -615,11 +637,9 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
             if not admission.admission_lock.acquire(timeout=budget.remaining(CYCLE_SECONDS)):
                 raise TimeoutError("publisher_admission")
             try:
-                generation = admission.generation
                 actual_us = int(store.wall()*1_000_000)
                 started = store.clock()
-                reason = ("revoked" if generation != job.generation or admission.revocation_epoch
-                    or admission.admission_job != job or not getattr(getattr(admission, "runtime_stop", None), "available", True) else
+                reason = ("revoked" if revoked() else
                     "outside_window" if not (job.earliest_start_mono <= started <= job.latest_start_mono
                         and actual_us // SLOT_US == slot and actual_us % SLOT_US <= JITTER_US) else None)
                 if reason is not None:
@@ -646,9 +666,7 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
                 if not admission.admission_lock.acquire(timeout=budget.remaining(CYCLE_SECONDS)):
                     raise TimeoutError("publisher_admission")
                 try:
-                    if (admission.generation != job.generation or admission.revocation_epoch
-                            or admission.admission_job != job
-                            or not getattr(getattr(admission, "runtime_stop", None), "available", True)):
+                    if revoked():
                         reason = "revoked"
                         return
                     if (int(store.wall()*1_000_000) // SLOT_US != slot
@@ -685,19 +703,32 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
                     renew = slot < since + HOLDER_FAILURE_SLOTS and store.clock() <= job.latest_start_mono
                 # Cached health selects timing, not ownership. In particular,
                 # slot-2 health must not veto takeover of an age-two claim.
-                if not renew and (owner
+                if not renew and (owner and current is not None and current["slot"] > slot-HOLDER_REENTRY_AGE
                         or current is not None and current["slot"] > slot-2
                         or (warm or current is not None) and not takeover_due(boot, slot, current)
                         or store.clock() > job.latest_start_mono):
                     outcome = "lost_claims"
                     return
+            # Preflight reads can overlap SIGTERM or a runtime stop. Do not
+            # start another transaction after revocation; admitted RPCs drain.
+            if revoked():
+                reason = "revoked"
+                return
             if not store.claim(boot, slot, actual_us, budget):
                 outcome = "lost_claims"
                 return
             claimed = True
             assert store.last_claim is not None
+            # A contended Commit can finish within the cycle but after the
+            # observation window. Do not spend its tiny remaining budget on
+            # a scan that cannot produce a valid publication anyway.
+            if store.clock() > job.latest_start_mono:
+                return
             value = store.observe(boot, region,
                 revision, slot, budget, claim_at_ns=store.last_claim["claim_at_ns"])
+            if revoked():
+                reason = "revoked"
+                return
             if not store.publish(value, budget):
                 return
             budget.remaining(CYCLE_SECONDS)
@@ -807,6 +838,10 @@ class Service:
         self.publisher_worker: Future[None] | None = None
         self.publisher_worker_active = threading.Event()
         self.publisher_store = store
+        self.publisher_transactions = PublisherTransactions()
+        self.publisher_drain_task: asyncio.Task[None] | None = None
+        self.publisher_stop_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="shadow-v2-stop")
+        self.publisher_stop_job: Future[None] | None = None
         self.publisher_lane_generation = 0
         self.publisher_lane_open = False
         self.abandoned_publishers: list[Future[threading.Thread]] = []
@@ -888,6 +923,7 @@ class Service:
 
     def contender(self) -> bool:
         return (self.publisher_eligible() and self.runtime_stop.available
+                and self.publisher_transactions.stopped_at is None
                 and len(self.abandoned_publishers) < PUBLISHER_ABANDONED_BUDGET)
 
     def ensure_day(self, now_us: int) -> str:
@@ -1705,7 +1741,9 @@ class Service:
         if self.supervised and (not self.publisher_lane_open or not self.contender()):
             self.accept(lifecycle.PublisherFailed(stamp, job.slot, job.generation, "publisher_worker_busy"))
             return
-        args = (self.publisher_store if self.supervised else self.store, self.journal.boot, self.settings.effective_serving_region,
+        publisher_store = self.publisher_store if self.supervised else self.store
+        publisher_store.publisher_transactions = self.publisher_transactions
+        args = (publisher_store, self.journal.boot, self.settings.effective_serving_region,
                 self.settings.source_revision, job, stamp, self, self.is_incumbent(slot), self.has_incumbent(slot),
                 self.warm())
         if (self.publisher_worker is not None and not self.publisher_worker.cancelled()
@@ -1797,6 +1835,7 @@ class Service:
         self.publisher_executor.shutdown(wait=False)
         self.publisher_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="shadow-v2-health")
         self.publisher_store = self.store.publisher_lane()
+        self.publisher_store.publisher_transactions = self.publisher_transactions
         self.publisher_lane_open = True
         if self.publisher_store.transport is not None:
             self.publisher_store.transport.failure = self.runtime_stop.outcome
@@ -1875,6 +1914,10 @@ class Service:
                 self.session_job = self.session_executor.submit(self.store.prepare_session, self.journal.boot)
             if self.supervised:
                 self.publisher_inventory()
+                # Prepare as soon as retired cleanup releases capacity, rather
+                # than spending the next eligible slot merely creating a lane.
+                if not self.publisher_lane_open and self.contender():
+                    self.replace_publisher()
             if (self.supervised and self.publisher_lane_open and self.publisher_store.session_recovery_due()
                     and (self.publisher_session_job is None or self.publisher_session_job.done())):
                 self.publisher_session_job = self.publisher_executor.submit(self.publisher_store.prepare_session)
@@ -1905,6 +1948,10 @@ class Service:
         if not callable(previous):
             return
         loop = asyncio.get_running_loop()
+        # Arm the independent shutdown worker before installing the handler.
+        # A stalled owner loop must not move the native cancellation cutoff.
+        if self.publisher_stop_job is None:
+            self.publisher_stop_job = self.publisher_stop_executor.submit(self.stop_publisher_io)
         def shutdown_on_owner() -> None:
             self.assert_owner()
             if self.close_task is None:
@@ -1917,6 +1964,7 @@ class Service:
             self.revocation_epoch = 1
             stamp = self.store.clock()
             self.signal_stamp = min(self.signal_stamp if self.signal_stamp is not None else stamp, stamp)
+            self.publisher_transactions.stopped_at = self.signal_stamp
             deadline = self.signal_stamp+9
             self.termination_deadline = min(self.termination_deadline or deadline, deadline)
             loop.call_soon_threadsafe(shutdown_on_owner)
@@ -1932,6 +1980,47 @@ class Service:
             self.supervised = True
             self.task = asyncio.create_task(self.supervise())
 
+    def stop_publisher_io(self) -> None:
+        """Dedicated shutdown worker; never needs the owner loop or its locks."""
+        while self.publisher_transactions.stopped_at is None:
+            time.sleep(.01)
+        stop = self.publisher_transactions.stopped_at
+        lane = self.publisher_transactions.lane or self.publisher_store
+        while (self.publisher_transactions.gate.locked()
+               and self.store.clock() < stop+PUBLISHER_STOP_DRAIN_SECONDS):
+            time.sleep(.01)
+        if self.publisher_transactions.gate.locked():
+            self.publisher_transactions.cancel()
+            # Give native cancellation one second to return to the SDK. A
+            # Python-stalled worker still owns a known transaction identity;
+            # the fallback reserves 2 s rollback + 2 s deletion before +9 s.
+            while self.publisher_transactions.gate.locked() and self.store.clock() < stop+5:
+                time.sleep(.01)
+            transaction = self.publisher_transactions.transaction
+            if lane is not None and transaction is not None:
+                lane.stop_publisher_transaction(transaction)
+        # This also closes the active lane when the owner loop cannot yet queue
+        # retirement. The cleanup lock coalesces a concurrently queued deletion.
+        if not lane.close_publisher_lane():
+            raise TimeoutError("publisher_shutdown_cleanup")
+
+    async def drain_publishers(self) -> None:
+        """Join shutdown-only work concurrently with the independent final flush."""
+        stop = self.publisher_transactions.stopped_at
+        assert stop is not None
+        if self.publisher_stop_job is None:
+            self.publisher_stop_job = self.publisher_stop_executor.submit(self.stop_publisher_io)
+        try:
+            async with asyncio.timeout(max(0., stop+9-self.store.clock())):
+                await asyncio.shield(asyncio.wrap_future(self.publisher_stop_job))
+        except Exception:
+            self.unclosed = True
+            logger.warning("shadow_v2_publisher_cleanup_incomplete")
+        # Cleanup is already queued on each lane, behind SDK rollback.
+        while self.abandoned_publishers and self.store.clock() < stop+9:
+            self.publisher_inventory()
+            await asyncio.sleep(.01)
+
     async def close(self, reason: str = "shutdown", *, from_loop: bool = False,
                     deadline: float | None = None) -> None:
         if self.close_finished:
@@ -1940,6 +2029,11 @@ class Service:
             await self.close_done.wait()
             return
         self.close_task = asyncio.current_task()
+        if self.publisher_transactions.stopped_at is None:
+            self.publisher_transactions.stopped_at = self.store.clock()
+        self.retire_publisher()
+        if self.publisher_drain_task is None:
+            self.publisher_drain_task = asyncio.create_task(self.drain_publishers())
         self.startup_preparation_started = round(self.store.clock()*1_000_000) if self.startup_close is not None else 0
         deadline = min(deadline or self.store.clock()+9, self.termination_deadline or self.store.clock()+9)
         if reason == "shutdown":
@@ -1981,7 +2075,7 @@ class Service:
                 elif self.task is not None and not from_loop:
                     await asyncio.shield(self.task)
                 await self.observer.close()
-                for job in (self.publisher_job, self.flush_job):
+                for job in (self.flush_job,):
                     if job is not None:
                         await asyncio.shield(job)
                 # Joining the reader executor is evidence-only; no money task is cancelled.
@@ -2016,6 +2110,10 @@ class Service:
         except (TimeoutError, ValueError):
             self.unclosed = True
         finally:
+            # Evidence got its entire independent budget while the native
+            # publisher drained. Only service shutdown joins the cleanup task.
+            if self.publisher_drain_task is not None:
+                await asyncio.shield(self.publisher_drain_task)
             self.close_finished = True
             self.close_done.set()
             self.unclosed |= bool(self.journal.days)
@@ -2024,6 +2122,7 @@ class Service:
             self.session_executor.shutdown(wait=False, cancel_futures=True)
             self.retire_publisher()
             self.publisher_executor.shutdown(wait=False)
+            self.publisher_stop_executor.shutdown(wait=False)
             self.evidence_executor.shutdown(wait=False, cancel_futures=True)
             if reason != "opt_out" or self.runtime_stop.tripped is None or self.runtime_stop.persisted:
                 await self.runtime_stop.close()

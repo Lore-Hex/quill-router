@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import datetime as dt
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -37,9 +38,12 @@ from trusted_router.async_settle_shadow_v2_schema import POLICY, require
 from trusted_router.detached_jws import canonical
 from trusted_router.storage_gcp_async_admission import HEALTH_ROW_LIMIT, unresolved_statement
 from trusted_router.storage_gcp_shadow_io import (
+    PUBLISHER_STOP_CLEANUP_SECONDS,
+    PublisherTransactions,
     Sessions,
     configure,
     elapsed_clock,
+    finish_transaction_rpcs,
     owned_database,
     rpc_scope,
     timestamp_ns,
@@ -129,6 +133,9 @@ class ObservationStore:
         self.last_publication: tuple[str, int] | None = None
         self.unpublished_since: int | None = None
         self.owns_publisher_database = False
+        self.publisher_transactions: PublisherTransactions | None = None
+        self.publisher_lane_closed = False
+        self.publisher_cleanup_lock = threading.Lock()
         self.startup_retention = False
         self.startup_claim_raw: bytes | None = None
         self.startup_publication_raw: bytes | None = None
@@ -154,20 +161,55 @@ class ObservationStore:
         lane.last_claim = lane.won = lane.claim_attempt = lane.last_publication = None
         lane.claim_unknown = False
         lane.unpublished_since = None
+        lane.publisher_lane_closed = False
+        lane.publisher_cleanup_lock = threading.Lock()
         return lane
 
     def close_publisher_lane(self) -> bool:
         """The retired worker owns deletion and client closure, including retries."""
+        with self.publisher_cleanup_lock:
+            return self._close_publisher_lane()
+
+    def _close_publisher_lane(self) -> bool:
+        if self.publisher_lane_closed:
+            return True
         if not self.owns_publisher_database:
             return True  # Explicit offline transports may share their database.
         manager = self.database._sessions_manager
-        if not manager.close(self.clock):
+        stopping = self.publisher_transactions is not None and self.publisher_transactions.stopped_at is not None
+        if not manager.close(self.clock, PUBLISHER_STOP_CLEANUP_SECONDS if stopping else 5.):
             return False
         try:
             self.database.spanner_api.transport.close()
         except Exception:
             return False
+        self.publisher_lane_closed = True
         return True
+
+    def stop_publisher_transaction(self, transaction: Any) -> None:
+        """Shutdown-only fallback when a worker cannot resume after RPC cancel.
+
+        Admission is already terminal. Rollback and session deletion operate on
+        known identities, without waiting for the worker's checkout lock. The
+        worker may later return, but cannot dispatch another transaction RPC.
+        """
+        with finish_transaction_rpcs(), rpc_scope(self.clock()+2, 2, self.clock):
+            if not transaction.rolled_back and transaction.committed is None:
+                transaction.rollback()
+        if not self.owns_publisher_database:
+            self.close_publisher_lane()
+            return
+        with self.publisher_cleanup_lock:
+            if self.publisher_lane_closed:
+                return
+            manager = self.database._sessions_manager
+            with rpc_scope(self.clock()+PUBLISHER_STOP_CLEANUP_SECONDS, PUBLISHER_STOP_CLEANUP_SECONDS, self.clock):
+                session = manager.session or manager.retired
+                if session is not None:
+                    session.delete()
+                    manager.session = manager.retired = None
+            self.database.spanner_api.transport.close()
+            self.publisher_lane_closed = True
 
     def session_ready(self, *, workspace: bool = False) -> bool:
         database = self.workspace_database if workspace else self.database
@@ -220,13 +262,14 @@ class ObservationStore:
             with self.database.snapshot() as snapshot:
                 return self.point(snapshot, entity_point_statement(kind, key), budget, READ_SECONDS)
 
-    def transaction(self, callback: Callable[[Any], T], budget: Budget, cap: float) -> T:
+    def transaction(self, callback: Callable[[Any], T], budget: Budget, cap: float, *, publisher: bool = False) -> T:
         from google.api_core.exceptions import Aborted
 
         attempted = False
         committing = False
         aborted = False
         loss: ContentionLoss | None = None
+        native_tx: Any = None
         def record_abort(error: BaseException) -> None:
             nonlocal aborted
             seen: set[int] = set()
@@ -238,14 +281,24 @@ class ObservationStore:
                     break
                 cause = cause.__cause__
         def once(tx: Any) -> T:
-            nonlocal attempted, committing, aborted, loss
+            nonlocal attempted, committing, aborted, loss, native_tx
             if attempted:
                 # Session re-enters only after ABORTED. Do not run a second attempt.
                 aborted = True
                 raise ContentionLoss("transaction_aborted")
             attempted = True
+            native_tx = tx
+            if publisher and self.publisher_transactions is not None:
+                self.publisher_transactions.transaction = tx
+                self.publisher_transactions.lane = self
             try:
                 budget.remaining(cap)
+                if (publisher and self.publisher_transactions is not None
+                        and getattr(getattr(self.database, "spanner_api", None), "transport", None) is not None):
+                    # Know the transaction identity even if its first claim or
+                    # fence read blocks before yielding metadata. Shutdown can
+                    # then roll it back instead of abandoning an implicit begin.
+                    tx.begin()
                 result = callback(tx)
                 budget.remaining(cap)
             except Exception as error:
@@ -258,8 +311,17 @@ class ObservationStore:
             return result
         try:
             with rpc_scope(budget.deadline, cap, budget.clock):
-                result = self.database.run_in_transaction(once, timeout_secs=budget.remaining(cap),
-                    commit_request_options={"priority": "PRIORITY_LOW"}, transaction_tag="tr_shadow_v2")
+                try:
+                    result = self.database.run_in_transaction(once, timeout_secs=budget.remaining(cap),
+                        commit_request_options={"priority": "PRIORITY_LOW"}, transaction_tag="tr_shadow_v2")
+                except Exception:
+                    # The SDK rolls back callback errors, but not Commit errors.
+                    # A shutdown cancellation needs cleanup in either phase.
+                    if (publisher and committing and self.publisher_transactions is not None
+                            and self.publisher_transactions.stopped_at is not None
+                            and native_tx is not None and not getattr(native_tx, "rolled_back", False)):
+                        native_tx.rollback()
+                    raise
             budget.remaining(cap)
             return result
         except ContentionLoss:
@@ -325,7 +387,8 @@ class ObservationStore:
                 original = row.body
             return True
         try:
-            landed = self.transaction(run, budget, CYCLE_SECONDS)
+            with finish_transaction_rpcs(self.publisher_transactions):
+                landed = self.transaction(run, budget, CYCLE_SECONDS, publisher=True)
         except UnknownCommit:
             self.claim_unknown = True
             raise
@@ -344,7 +407,8 @@ class ObservationStore:
                 return False
             self.write(tx, [row], budget)
             return True
-        landed = self.transaction(run, budget, CYCLE_SECONDS)
+        with finish_transaction_rpcs(self.publisher_transactions):
+            landed = self.transaction(run, budget, CYCLE_SECONDS, publisher=True)
         if landed:
             self.last_publication = (value["publisher_boot_id"], value["slot"])
             self.unpublished_since = value["slot"] + 1

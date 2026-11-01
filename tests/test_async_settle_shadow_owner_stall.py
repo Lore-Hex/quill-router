@@ -215,10 +215,23 @@ async def test_owner_progress_after_commit_deadline(monkeypatch, mode, unfixed, 
             # A completed unknown cycle recovers its lane; an unreturned worker
             # is quarantined by the watchdog. Neither can obstruct other lanes.
             advance(6.)
-            await until(lambda: svc.incumbent_slot == (NOW_US+6_000_000)//2_000_000)
             await until(lambda: checkpoint(db) > before)
             assert ticks.call_count > 10 and svc.observer.counts['health_reads'] >= 2
             assert any(key.startswith('health-basis-batches/') for key in svc.bases.transport.objects)
+            recovered_at = 6
+            if mode == 'never':
+                # A native worker ignoring its deadline retains the boot-wide
+                # transaction lease. New lanes must not multiply transactions
+                # needing cancellation on SIGTERM. Other lanes still progress.
+                assert svc.publisher_transactions.gate.locked()
+                assert svc.incumbent_slot != (NOW_US+6_000_000)//2_000_000
+                advance(12.)  # Ten seconds after the original dispatch.
+                fault.release.set()
+                await until(lambda: not svc.publisher_transactions.gate.locked())
+                recovered_at = 14
+                advance(recovered_at)
+            await until(lambda: svc.incumbent_slot == (NOW_US+recovered_at*1_000_000)//2_000_000)
+            assert recovered_at-2 <= 24
             assert svc.counters[next(iter(svc.counters))]['publisher']['publications'] >= 1
             accounting(svc)
     finally:
