@@ -94,7 +94,7 @@ jobs:
           [ "$ci" = success ] || { echo "::error::CI must pass for this exact release ($release): ${ci:-no run}"; exit 1; }
 
       - name: Log in to Azure via OIDC
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           client-id: ${{ vars.AZURE_DEPLOY_CLIENT_ID }}
           tenant-id: 2abe2fae-5c28-491d-af5a-6255b33e534e
