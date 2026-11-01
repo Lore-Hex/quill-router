@@ -1,7 +1,7 @@
 {
   "provider": "cloudflare-workers-ai",
   "source": "https://api.cloudflare.com/client/v4/accounts/2698c706fd4793c818af14adad4e1a39/ai/models/search?per_page=100",
-  "generated_at": "2026-10-26T06:59:20Z",
+  "generated_at": "2026-11-01T19:12:14Z",
   "price_scale": "microdollars_per_million",
   "model_count": 40,
   "models": [
@@ -125,10 +125,9 @@
       "status": 1,
       "id": "ibm-granite/granite-4.0-h-micro",
       "upstream_id": "@cf/ibm-granite/granite-4.0-h-micro",
-      "routable": true,
+      "routable": false,
       "context_length": 131000,
-      "input_token_price_per_m": 17000,
-      "output_token_price_per_m": 112000
+      "routable_reason": "awaiting-price"
     },
     {
       "display_name": "@cf/meta-llama/llama-2-7b-chat-hf-lora",

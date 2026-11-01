@@ -50,7 +50,7 @@
     }
   ],
   "source": "https://api.hixtube.com/v1/models",
-  "generated_at": "2026-10-27T03:23:39Z",
+  "generated_at": "2026-11-01T19:12:14Z",
   "price_scale": "microdollars_per_million",
   "model_count": 1,
   "pricing_valid_until": "2026-11-02T23:56:20Z"

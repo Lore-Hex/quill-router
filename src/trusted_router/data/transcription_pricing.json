@@ -2,9 +2,9 @@
   "checked_on": "2026-10-26",
   "minute_prices": {
     "mistralai/voxtral-mini-2602": 3000,
-    "mistralai/voxtral-mini-3b-2507": 4702,
+    "mistralai/voxtral-mini-3b-2507": 4693,
     "openai/whisper-1": 6000,
-    "openai/whisper-large-v3": 16454
+    "openai/whisper-large-v3": 16423
   },
   "request_prices": {
     "openai/whisper-large-v3-turbo": 10000

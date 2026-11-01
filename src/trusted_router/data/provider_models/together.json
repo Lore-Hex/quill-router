@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Together AI routes that are live ahead of the shared OpenRouter snapshot. Verified against https://api.together.xyz/v1/models on 2026-06-22.",
   "provider": "together",
   "source": "https://api.together.xyz/v1/endpoints?type=serverless",
-  "generated_at": "2026-10-26T06:59:20Z",
+  "generated_at": "2026-11-01T19:12:14Z",
   "model_count": 25,
   "models": [
     {
@@ -445,7 +445,8 @@
       ],
       "context_length": 262144,
       "input_token_price_per_m": 170000,
-      "output_token_price_per_m": 250000
+      "output_token_price_per_m": 250000,
+      "missing_since": "2026-11-01"
     },
     {
       "display_name": "Inkling FP4",
@@ -577,7 +578,8 @@
       "context_length": 131072,
       "input_token_price_per_m": 350000,
       "output_token_price_per_m": 1500000,
-      "cached_input_token_price_per_m": 40000
+      "cached_input_token_price_per_m": 40000,
+      "missing_since": "2026-11-01"
     },
     {
       "display_name": "Qwen3.8-2.4T-A95B",

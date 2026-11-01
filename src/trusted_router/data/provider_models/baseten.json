@@ -2,9 +2,9 @@
   "_about": "Provider-native Baseten Model API routes, capabilities, context windows, and account-billable prices refreshed hourly from Baseten's authenticated /v1/models feed.",
   "provider": "baseten",
   "source": "https://inference.baseten.co/v1/models",
-  "generated_at": "2026-10-26T06:59:20Z",
+  "generated_at": "2026-11-01T19:12:14Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 31,
+  "model_count": 32,
   "models": [
     {
       "id": "reflection/beam-1.0",
@@ -983,9 +983,10 @@
       "context_length": 16384,
       "supported_features": [],
       "supported_sampling_parameters": [],
-      "routable": false,
-      "routable_reason": "awaiting-price",
-      "unresolved_since": "2026-10-25"
+      "routable": true,
+      "input_token_price_per_m": 35000,
+      "output_token_price_per_m": 0,
+      "cached_input_token_price_per_m": 0
     },
     {
       "display_name": "mammoth-1",
@@ -1007,9 +1008,34 @@
       "context_length": 16384,
       "supported_features": [],
       "supported_sampling_parameters": [],
-      "routable": false,
-      "routable_reason": "awaiting-price",
-      "unresolved_since": "2026-10-25"
+      "routable": true,
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 0,
+      "cached_input_token_price_per_m": 0
+    },
+    {
+      "display_name": "joey-1",
+      "title": "decision-models/baseten-joey-2b-latest",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "decision-models/baseten-joey-2b-latest",
+      "upstream_id": "decision-models/baseten-joey-2b-latest",
+      "context_length": 16384,
+      "supported_features": [],
+      "supported_sampling_parameters": [],
+      "input_token_price_per_m": 10000,
+      "output_token_price_per_m": 0,
+      "cached_input_token_price_per_m": 0
     }
   ]
 }

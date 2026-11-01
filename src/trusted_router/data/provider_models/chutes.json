@@ -2,7 +2,7 @@
   "_about": "Provider-native Chutes TEE model catalog. Refreshed hourly from the authenticated Chutes OpenAI-compatible models API.",
   "provider": "chutes",
   "source": "https://llm.chutes.ai/v1/models",
-  "generated_at": "2026-10-26T06:59:20Z",
+  "generated_at": "2026-11-01T19:12:14Z",
   "price_scale": "microdollars_per_million",
   "model_count": 17,
   "models": [
@@ -117,7 +117,8 @@
       "context_length": 131072,
       "input_token_price_per_m": 24500,
       "output_token_price_per_m": 97800,
-      "cached_input_token_price_per_m": 2450
+      "cached_input_token_price_per_m": 2450,
+      "missing_since": "2026-11-01"
     },
     {
       "display_name": "moonshotai/Kimi-K2.5",
@@ -180,9 +181,9 @@
         "tools",
         "reasoning"
       ],
-      "input_token_price_per_m": 450000,
-      "output_token_price_per_m": 1950000,
-      "cached_input_token_price_per_m": 45000
+      "input_token_price_per_m": 390000,
+      "output_token_price_per_m": 1800000,
+      "cached_input_token_price_per_m": 39000
     },
     {
       "display_name": "Qwen/Qwen3-235B-A22B-Thinking-2507",
@@ -213,7 +214,8 @@
       "output_token_price_per_m": 1195700,
       "cached_input_token_price_per_m": 29890,
       "routable": false,
-      "routable_reason": "attestation-evidence-unavailable"
+      "routable_reason": "attestation-evidence-unavailable",
+      "missing_since": "2026-11-01"
     },
     {
       "display_name": "Qwen/Qwen3-32B",
@@ -242,7 +244,8 @@
       ],
       "input_token_price_per_m": 104000,
       "output_token_price_per_m": 416000,
-      "cached_input_token_price_per_m": 10400
+      "cached_input_token_price_per_m": 10400,
+      "missing_since": "2026-11-01"
     },
     {
       "display_name": "Qwen/Qwen3.5-397B-A17B",
@@ -361,9 +364,9 @@
         "tools",
         "reasoning"
       ],
-      "input_token_price_per_m": 980000,
-      "output_token_price_per_m": 3080000,
-      "cached_input_token_price_per_m": 98000
+      "input_token_price_per_m": 900000,
+      "output_token_price_per_m": 2900000,
+      "cached_input_token_price_per_m": 90000
     },
     {
       "display_name": "zai-org/GLM-5.2",
@@ -474,7 +477,8 @@
       "context_length": 131072,
       "input_token_price_per_m": 24500,
       "output_token_price_per_m": 97800,
-      "cached_input_token_price_per_m": 2450
+      "cached_input_token_price_per_m": 2450,
+      "missing_since": "2026-11-01"
     },
     {
       "display_name": "Qwen/Qwen3.8-27B",

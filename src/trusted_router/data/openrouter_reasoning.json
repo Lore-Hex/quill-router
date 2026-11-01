@@ -1154,15 +1154,6 @@
       ],
       "default_effort": "high"
     },
-    "mistralai/mistral-small-2603:batch": {
-      "mandatory": false,
-      "default_enabled": false,
-      "supported_efforts": [
-        "high",
-        "none"
-      ],
-      "default_effort": "high"
-    },
     "moondream/moondream3-preview": {
       "mandatory": false,
       "default_enabled": false,
@@ -1271,16 +1262,6 @@
       "default_effort": null
     },
     "nvidia/nemotron-3-super-120b-a12b": {
-      "mandatory": false,
-      "default_enabled": true,
-      "supported_efforts": [
-        "medium",
-        "low",
-        "none"
-      ],
-      "default_effort": "medium"
-    },
-    "nvidia/nemotron-3-super-120b-a12b:free": {
       "mandatory": false,
       "default_enabled": true,
       "supported_efforts": [
@@ -2077,6 +2058,30 @@
       ],
       "default_effort": "medium"
     },
+    "openai/gpt-6.1-terra-pro": {
+      "mandatory": true,
+      "default_enabled": true,
+      "supported_efforts": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "default_effort": "medium"
+    },
+    "openai/gpt-6.1-terra-pro:batch": {
+      "mandatory": true,
+      "default_enabled": true,
+      "supported_efforts": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "default_effort": "medium"
+    },
     "openai/gpt-6.1-terra:batch": {
       "mandatory": false,
       "default_enabled": true,
@@ -2136,37 +2141,11 @@
       "supported_efforts": [],
       "default_effort": null
     },
-    "openai/o1": {
-      "mandatory": true,
-      "default_enabled": false,
-      "supported_efforts": [],
-      "default_effort": null
-    },
-    "openai/o1-pro": {
-      "mandatory": true,
-      "default_enabled": false,
-      "supported_efforts": [],
-      "default_effort": null
-    },
     "openai/o3": {
       "mandatory": true,
       "default_enabled": false,
       "supported_efforts": [],
       "default_effort": null
-    },
-    "openai/o3-mini": {
-      "mandatory": true,
-      "default_enabled": false,
-      "supported_efforts": [],
-      "default_effort": null
-    },
-    "openai/o3-mini-high": {
-      "mandatory": true,
-      "default_enabled": false,
-      "supported_efforts": [
-        "high"
-      ],
-      "default_effort": "high"
     },
     "openai/o3-mini:batch": {
       "mandatory": true,
@@ -2186,25 +2165,25 @@
       "supported_efforts": [],
       "default_effort": null
     },
-    "openai/o4-mini": {
-      "mandatory": true,
-      "default_enabled": false,
-      "supported_efforts": [],
-      "default_effort": null
-    },
-    "openai/o4-mini-high": {
-      "mandatory": true,
-      "default_enabled": false,
-      "supported_efforts": [
-        "high"
-      ],
-      "default_effort": "high"
-    },
     "openai/o4-mini:batch": {
       "mandatory": true,
       "default_enabled": false,
       "supported_efforts": [],
       "default_effort": null
+    },
+    "particle-ai/particle-1": {
+      "mandatory": false,
+      "default_enabled": true,
+      "supported_efforts": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "minimal",
+        "none"
+      ],
+      "default_effort": "high"
     },
     "perceptron/perceptron-mk1": {
       "mandatory": false,
@@ -2242,30 +2221,6 @@
       "supported_efforts": [],
       "default_effort": null
     },
-    "poolside/laguna-s-2.1": {
-      "mandatory": false,
-      "default_enabled": true,
-      "supported_efforts": [],
-      "default_effort": null
-    },
-    "poolside/laguna-s-2.1:free": {
-      "mandatory": false,
-      "default_enabled": true,
-      "supported_efforts": [],
-      "default_effort": null
-    },
-    "poolside/laguna-xs-2.1": {
-      "mandatory": false,
-      "default_enabled": true,
-      "supported_efforts": [],
-      "default_effort": null
-    },
-    "poolside/laguna-xs-2.1:free": {
-      "mandatory": false,
-      "default_enabled": true,
-      "supported_efforts": [],
-      "default_effort": null
-    },
     "prism-ml/ternary-bonsai-2-27b": {
       "mandatory": false,
       "default_enabled": true,
@@ -2275,6 +2230,12 @@
         "none"
       ],
       "default_effort": "xhigh"
+    },
+    "prism-ml/ternary-bonsai-2-9b": {
+      "mandatory": false,
+      "default_enabled": true,
+      "supported_efforts": [],
+      "default_effort": null
     },
     "qwen/qwen3-14b": {
       "mandatory": false,
@@ -2296,12 +2257,6 @@
     },
     "qwen/qwen3-32b": {
       "mandatory": false,
-      "default_enabled": false,
-      "supported_efforts": [],
-      "default_effort": null
-    },
-    "qwen/qwen3-next-80b-a3b-thinking": {
-      "mandatory": true,
       "default_enabled": false,
       "supported_efforts": [],
       "default_effort": null
@@ -2654,18 +2609,6 @@
       "supported_efforts": [
         "max",
         "xhigh",
-        "high",
-        "medium",
-        "low",
-        "minimal",
-        "none"
-      ],
-      "default_effort": "medium"
-    },
-    "upstage/solar-pro-3": {
-      "mandatory": false,
-      "default_enabled": false,
-      "supported_efforts": [
         "high",
         "medium",
         "low",

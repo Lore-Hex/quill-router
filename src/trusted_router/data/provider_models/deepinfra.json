@@ -2,8 +2,8 @@
   "_about": "Provider-native supplement for DeepInfra models whose live /v1/openai/models feed is ahead of the shared snapshot. Verified against https://api.deepinfra.com/v1/openai/models on 2026-06-20. DeepInfra uses mixed-case upstream author/model IDs, so the enclave preserves upstream_id verbatim for this provider.",
   "provider": "deepinfra",
   "source": "https://api.deepinfra.com/v1/openai/models",
-  "generated_at": "2026-10-15T12:03:30Z",
-  "model_count": 123,
+  "generated_at": "2026-11-01T19:12:14Z",
+  "model_count": 124,
   "models": [
     {
       "id": "z-ai/glm-5.2",
@@ -42,7 +42,8 @@
       "title": "anthropic/claude-fable-5",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -70,7 +71,8 @@
       "title": "anthropic/claude-haiku-4-5",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -97,7 +99,8 @@
       "title": "anthropic/claude-opus-4-7",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -125,7 +128,8 @@
       "title": "anthropic/claude-opus-4-8",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -153,7 +157,8 @@
       "title": "anthropic/claude-opus-5",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -181,7 +186,8 @@
       "title": "anthropic/claude-sonnet-4-6",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -209,7 +215,8 @@
       "title": "anthropic/claude-sonnet-5",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -237,7 +244,8 @@
       "title": "ByteDance/Seed-1.8",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -265,7 +273,8 @@
       "title": "ByteDance/Seed-2.0-code",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -291,7 +300,8 @@
       "title": "ByteDance/Seed-2.0-mini",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -319,7 +329,8 @@
       "title": "ByteDance/Seed-2.0-pro",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -588,7 +599,8 @@
       "title": "google/gemini-2.5-flash",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -615,7 +627,8 @@
       "title": "google/gemini-2.5-pro",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -642,7 +655,8 @@
       "title": "google/gemini-3.1-flash-lite",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -669,7 +683,8 @@
       "title": "google/gemini-3.1-pro",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -696,7 +711,8 @@
       "title": "google/gemini-3.5-flash",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -723,7 +739,8 @@
       "title": "google/gemma-3-12b-it",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -749,7 +766,8 @@
       "title": "google/gemma-3-27b-it",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -775,7 +793,8 @@
       "title": "google/gemma-3-4b-it",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -801,7 +820,8 @@
       "title": "google/gemma-4-26B-A4B-it",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -828,7 +848,8 @@
       "title": "google/gemma-4-31B-it",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -855,7 +876,8 @@
       "title": "google/gemma-4-31B-it-turbo",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -883,7 +905,8 @@
       "title": "google/gemma-4-31B-it-Ultra",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -953,7 +976,8 @@
       "supported_features": [
         "structured-outputs",
         "json-mode"
-      ]
+      ],
+      "missing_since": "2026-11-01"
     },
     {
       "display_name": "inclusionAI/Ling-3.0-flash",
@@ -1009,7 +1033,8 @@
         "tools",
         "structured-outputs",
         "json-mode"
-      ]
+      ],
+      "missing_since": "2026-11-01"
     },
     {
       "display_name": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
@@ -1066,7 +1091,8 @@
       "title": "meta-llama/Llama-4-Scout-17B-16E-Instruct",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -1092,7 +1118,8 @@
       "title": "meta-llama/Llama-Guard-4-12B",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -1139,7 +1166,8 @@
       "title": "meta-models/Muse-Glimmer-30B",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -1244,7 +1272,8 @@
       "title": "MiniMaxAI/MiniMax-M3",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -1323,7 +1352,8 @@
       "title": "mistralai/Mistral-Small-3.2-24B-Instruct-2506",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -1376,7 +1406,8 @@
       "title": "moonshotai/Kimi-K2.6",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -1429,7 +1460,8 @@
       "title": "moonshotai/Kimi-K3",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -1477,7 +1509,8 @@
       "supported_features": [
         "structured-outputs",
         "json-mode"
-      ]
+      ],
+      "missing_since": "2026-11-01"
     },
     {
       "display_name": "NousResearch/Hermes-3-Llama-3.1-70B",
@@ -1502,7 +1535,8 @@
       "supported_features": [
         "structured-outputs",
         "json-mode"
-      ]
+      ],
+      "missing_since": "2026-11-01"
     },
     {
       "display_name": "nvidia/Nemotron-3-Nano-30B-A3B",
@@ -1617,7 +1651,8 @@
       "title": "nvidia/Nemotron-Content-Safety-3.5",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -1688,7 +1723,8 @@
         "structured-outputs",
         "json-mode",
         "reasoning"
-      ]
+      ],
+      "missing_since": "2026-11-01"
     },
     {
       "display_name": "openai/gpt-oss-120b-Ultra",
@@ -2014,7 +2050,8 @@
       "title": "Qwen/Qwen3-VL-235B-A22B-Instruct",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -2041,7 +2078,8 @@
       "title": "Qwen/Qwen3-VL-30B-A3B-Instruct",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -2091,7 +2129,8 @@
       "title": "Qwen/Qwen3.5-27B",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -2118,7 +2157,8 @@
       "title": "Qwen/Qwen3.5-35B-A3B",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -2146,7 +2186,8 @@
       "title": "Qwen/Qwen3.5-397B-A17B",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -2174,7 +2215,8 @@
       "title": "Qwen/Qwen3.5-9B",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -2201,7 +2243,8 @@
       "title": "Qwen/Qwen3.6-27B",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -2228,7 +2271,8 @@
       "title": "Qwen/Qwen3.6-35B-A3B",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -2459,14 +2503,17 @@
         "json-mode",
         "reasoning"
       ],
-      "missing_since": "2026-10-15"
+      "missing_since": "2026-10-15",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "thinkingmachines/Inkling-Small",
       "title": "thinkingmachines/Inkling-Small",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -2706,7 +2753,8 @@
       "title": "google/gemini-3.7-flash",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -2733,7 +2781,8 @@
       "title": "Qwen/Qwen3.8-27B",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -2904,7 +2953,8 @@
       "title": "zai-org/GLM-5.3-Flash",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -2960,7 +3010,8 @@
       "title": "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -3015,7 +3066,8 @@
       "title": "inclusionAI/Ling-3.0-flash-VL",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -3043,7 +3095,8 @@
       "title": "deepseek-ai/DeepSeek-V4.1-Flash",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -3098,7 +3151,8 @@
       "title": "XiaomiMiMo/MiMo-V2.6-Flash",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -3126,7 +3180,8 @@
       "title": "XiaomiMiMo/MiMo-V2.6-Pro",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -3154,7 +3209,8 @@
       "title": "anthropic/claude-opus-5-5",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -3210,7 +3266,8 @@
       "title": "anthropic/claude-sonnet-5-5",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -3288,7 +3345,8 @@
       "max_output_tokens": 1048576,
       "input_token_price_per_m": 1000000,
       "output_token_price_per_m": 2700000,
-      "cached_input_token_price_per_m": 50000
+      "cached_input_token_price_per_m": 50000,
+      "missing_since": "2026-11-01"
     },
     {
       "display_name": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
@@ -3317,6 +3375,34 @@
       "input_token_price_per_m": 200000,
       "output_token_price_per_m": 600000,
       "cached_input_token_price_per_m": 6000
+    },
+    {
+      "display_name": "nvidia/NVIDIA-Nemotron-3.5-Super-VL",
+      "title": "nvidia/NVIDIA-Nemotron-3.5-Super-VL",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "nvidia/nemotron-3.5-super-vl",
+      "upstream_id": "nvidia/NVIDIA-Nemotron-3.5-Super-VL",
+      "supported_features": [
+        "tools",
+        "structured-outputs",
+        "json-mode",
+        "reasoning"
+      ],
+      "context_length": 262144,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 500000,
+      "cached_input_token_price_per_m": 20000
     }
   ],
   "price_scale": "microdollars_per_million"
