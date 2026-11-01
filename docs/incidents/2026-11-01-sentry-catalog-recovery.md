@@ -139,6 +139,24 @@ and tests throughput ordering against two explicit, opposite rank maps. The
 three-model metadata threshold, real ranking evidence, routing implementation,
 and publication gate remain unchanged. The failed snapshot is not published.
 
+The next guarded refresh, 41329832709, generated snapshot
+`b3a0f042739f66b87b0dbecdd3baa146b49f71db` after #2241. BytePlus, IO-net,
+and Inception all refreshed at November 1 17:10:26 UTC, including the exact
+reviewed IO-net and Mercury 2.5 tariffs. Publication CI 41330231436 then found
+another incomplete origin-metadata prefix: `reflection`, now represented by
+`reflection/beam`, `reflection/beam-1.0`, and
+`reflection/beam-1.0-501b-a23b` across provider manifests and the snapshot.
+The existing three-model completeness check correctly withheld publication.
+The follow-up adds a sourced Reflection AI model-developer entry and regressions
+for those three aliases, without changing the threshold, canonicalization,
+provider jurisdictions, inference-location policy, or prices. Reflection's
+[first-party Beam announcement](https://reflection.ai/blog/introducing-beam)
+identifies the developer; its [August 2026 privacy policy](https://reflection.ai/legal/privacy-policy)
+provides a New York company address. This is model-developer metadata, not a
+claim about where an inference request is executed. The failed snapshot is not
+made publishable by a focused local pass; normal full CI and a fresh guarded
+publication remain required.
+
 The missing-tariff regression reproduced the original exception before the fix.
 Both Databricks retirement regressions failed before the retirement rule.
 Focused pricing, discovery, route, and recovery tests: 120 passed, one live-provider

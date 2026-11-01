@@ -4117,6 +4117,17 @@ _MODEL_ORIGIN_INDEPENDENT_SAO10K = ModelOrigin(
 MODEL_ORIGINS: dict[str, ModelOrigin] = {
     # --- United States ---
     "trustedrouter": _MODEL_ORIGIN_US_TRUSTEDROUTER,
+    "reflection": ModelOrigin(
+        country=PROVIDER_JURISDICTION_US,
+        lab_name="Reflection AI",
+        source_url="https://reflection.ai/legal/privacy-policy",
+        note=(
+            "Reflection AI, Inc.'s August 28, 2026 privacy policy lists its "
+            "contact address in New York. Its first-party Beam announcement "
+            "(https://reflection.ai/blog/introducing-beam) identifies the lab "
+            "as the model's developer. This describes the developer, not inference residency."
+        ),
+    ),
     "inception": ModelOrigin(
         country=PROVIDER_JURISDICTION_US,
         lab_name="Inception Labs",
