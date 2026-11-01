@@ -182,3 +182,79 @@ Diagnostics used selected Sentry metadata and bounded synthetic-only ClickHouse
 queries with a 200-result limit, one-million-row read ceiling, 15-second execution
 limit, and 256 MiB memory cap. No billing-store body scan, customer prompt/output,
 credential publication, or production data mutation was performed.
+
+## Post-publication follow-up
+
+The normal refresh published `971d99c6cf7bf56342e8f482532e011b98c830b3`
+after all 46 exact-source CI jobs passed. GCP rollout 41343091759 completed all
+15 jobs at 21:33:52 UTC; normal reconciliation then completed Azure 41353092916
+at 21:47:05 and AWS 41353083988 at 21:55:22. Independent serving-source,
+image, readiness, traffic, and public catalog checks passed on all three clouds.
+Public Mercury 2.5 and IO-net MiMo V2.5 tariffs match the reviewed upstream
+rates with the existing markup. BytePlus, IO-net, and Inception catalog-expiry
+issues last occurred at 20:01:46 in the bounded 22:02:48 Sentry read. This is
+not a claim that every Sentry issue is resolved or that future recurrence is
+impossible. No issue was muted or manually resolved.
+
+### Streamlake MiMo V2.5 Pro
+
+Sentry issue 157874336 reports the exact `MiMo-V2.5-Pro` route returning HTTP
+400 with an upstream deprecation rejection. Bounded stored synthetic metadata
+independently confirms this classification at 14:51, 15:25, 17:36, and 21:21 UTC,
+including before the latest deployment. Streamlake's public model and pricing
+pages still list this native ID:
+
+- https://www.streamlake.ai/document/DOC/mh1gbfvrdn6hpbzxixv
+- https://www.streamlake.ai/document/DOC/mgrnm4xm362hvp5wyce
+
+The discrepancy does not establish a global permanent retirement. The committed
+route was still routable, so ordinary catalog rediscovery did not require a new
+canary. Put only this route into the existing `provider-canary-failed` state.
+Its existing usage-bearing, message-bearing canary must succeed before recovery;
+tests exercise both rejection and successful recovery. Prices, native IDs,
+timestamps, alternative providers, and other Streamlake models are unchanged.
+MiMo V2.6 is not silently substituted for the failed native ID.
+
+### Chutes Mistral Nemo
+
+The earlier isolated 502 now has corroboration: the authenticated TEE catalog
+at 16:14 and 16:19 UTC contains 17 models and no Nemo native ID; bounded stored
+synthetic metadata records further 502s at 19:24 and 21:09 UTC. The first fresh
+catalog miss recorded `missing_since` but kept the route under the existing
+two-miss delisting guard. That guard alone does not address confirmed runtime
+unavailability while the grace period is open.
+
+Add an exact `provider-route-unavailable` operator hold for
+`unsloth/Mistral-Nemo-Instruct-2407-TEE`. This reuses Chutes' existing hold mechanism
+and rejects stale snapshot reintroduction for both Credits and BYOK. Catalog
+reappearance alone must not clear it; verified operator recovery is required.
+The existing Qwen attestation hold, two-miss guard, tariffs, and trust policy
+remain unchanged. The provider-side initiating cause of the 502s is not proven,
+and this is neither permanent retirement nor evidence of a measurement mismatch.
+
+### Price-refresh watchdog
+
+The 21:43 UTC event for existing Cron issue 157278794 is distinct from catalog
+publication failure. The hourly observer's most recent scheduled run was
+41339697665 (19:02 UTC), followed by refresh-triggered 41343108333 (success
+19:43:09). No 20:23 or 21:23 scheduled observer run appeared in the bounded
+workflow listing. The normal observer was dispatched once as 41355399811 and
+completed successfully at 22:06:46. This repairs the immediate observer execution
+gap, not the unestablished cause of missed GitHub scheduling or proof of durable
+Cron recovery. The monitor schedule, grace, alert logic, and durable ledger were
+not weakened or edited. A subsequent read-only Sentry Cron check at 22:15:50
+independently confirmed production status `ok` and the accepted 22:06 check-in,
+while retaining the prior missed check-ins. This confirms immediate recovery,
+not prevention of another scheduling gap.
+
+All seven new route-hold regression cases failed before the follow-up changes;
+the three retained Qwen hold cases passed. Full local gates, exact-head and
+merged-source CI, normal deployment, and fresh production checks remain required
+for these two additional route corrections.
+
+The first follow-up PR CI post-cutover shard found a stale generated fastpath
+alias corpus after Nemo lost its final routes. The unchanged generator removes
+exactly seven Nemo spellings; canonicalization and the Go port are unchanged.
+Its parity test remains mandatory. The first local full-suite run was stopped
+to update that artifact and is not a full-suite pass; a fresh complete run and
+exact-head CI are required on the corrected tree.

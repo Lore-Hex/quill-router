@@ -739,7 +739,8 @@
       "id": "xiaomi/mimo-v2.5-pro",
       "upstream_id": "MiMo-V2.5-Pro",
       "context_length": 1024000,
-      "routable": true,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
       "input_token_price_per_m": 435000,
       "output_token_price_per_m": 870000,
       "cached_input_token_price_per_m": 3600
