@@ -107,7 +107,7 @@ func asyncPopOf(c authorizeCase) string {
 // the shadow; and each request names its async population.
 func TestEveryAsyncGoldenThroughThePipeline(t *testing.T) {
 	f := asyncAuthorizeGoldens(t)
-	answered, passes, shapes := 0, 0, map[string]int{}
+	answered, passes, shadowStreams, shapes := 0, 0, 0, map[string]int{}
 	for _, c := range f.Cases {
 		in, _ := caseInputs(t, f, c)
 		d := Decide(in)
@@ -142,6 +142,29 @@ func TestEveryAsyncGoldenThroughThePipeline(t *testing.T) {
 						d.ForShadow() != nil, reason)
 					continue
 				}
+			} else if reason == gwauth.ReasonStream {
+				// An async-v1 stream for a workspace admission leaves out,
+				// without fastpath_edge_streams: composed for the shadow alone
+				// (streams section 8.5), body.stream its decision gate, and
+				// Python's leased answer Go's bytes and rows, its async
+				// members among them.
+				s := c.Expect.Shadow
+				if d.Pass != reason || d.ForShadow() == nil || d.DecideGate != reason || s == nil ||
+					!c.Expect.Python.Leased {
+					t.Errorf("%s: passed %q (decision %v, gate %q), want a stream composed for the shadow", c.Name,
+						d.Pass, d.ForShadow() != nil, d.DecideGate)
+					continue
+				}
+				shadowCase := c
+				shadowCase.Expect = *s
+				if !checkAnswered(t, shadowCase, d.ForShadow()) {
+					continue
+				}
+				if a := d.ForShadow().Staged.Async(); a.Shape != gwauth.AsyncSnapshot {
+					t.Errorf("%s: the shadow's stream composed shape %q", c.Name, a.Shape)
+					continue
+				}
+				shadowStreams++
 			} else if d.Pass != reason || d.ForShadow() != nil {
 				t.Errorf("%s: passed %q (decision %v), want %q", c.Name, d.Pass, d.ForShadow() != nil, reason)
 				continue
@@ -151,9 +174,12 @@ func TestEveryAsyncGoldenThroughThePipeline(t *testing.T) {
 			t.Fatalf("%s: outcome %q", c.Name, c.Expect.Outcome)
 		}
 	}
-	t.Logf("%d answered cases Python's bytes (by shape %v), %d pass cases with their reason", answered, shapes, passes)
-	if answered != 32 || shapes["A"] != 16 || shapes["B"] != 15 || shapes["none"] != 1 || passes != 19 {
-		t.Fatalf("answered %d (%v), passes %d: not the goldens' counts", answered, shapes, passes)
+	t.Logf("%d answered cases Python's bytes (by shape %v), %d pass cases with their reason (%d streams composed "+
+		"for the shadow)", answered, shapes, passes, shadowStreams)
+	if answered != 38 || shapes["A"] != 18 || shapes["B"] != 19 || shapes["none"] != 1 || passes != 22 ||
+		shadowStreams != 1 {
+		t.Fatalf("answered %d (%v), passes %d, shadow streams %d: not the goldens' counts", answered, shapes, passes,
+			shadowStreams)
 	}
 }
 
@@ -227,7 +253,7 @@ func TestEdgeDecideFalseNeverAdmitsAnAsyncRequest(t *testing.T) {
 		}
 	}
 	t.Logf("%d async-v1 requests passed with edge_decide false, %d answered with it true", dark, answered)
-	if dark != 32 || answered != dark {
+	if dark != 38 || answered != dark {
 		t.Fatalf("dark %d, answered %d: not the goldens' counts", dark, answered)
 	}
 }
@@ -358,7 +384,7 @@ func TestTheAdmissionGateReadsTheKeysWorkspace(t *testing.T) {
 		}
 	}
 	t.Logf("%d requests covered by admission, %d composed as with admission off", covered, composed)
-	if covered != 3*29 || composed != 29+4 {
+	if covered != 3*35 || composed != 35+4 {
 		t.Fatalf("covered %d, composed %d: not the goldens' counts", covered, composed)
 	}
 }
@@ -730,6 +756,141 @@ func TestATicketIsCountedWhateverGoDid(t *testing.T) {
 				!asyncCountsEqual(got.Async, want) {
 				t.Errorf("%s, ticket %v: classes %v, async %v\nwant %v", v.name, ticket, got.Classes, got.Async, want)
 			}
+		}
+	}
+}
+
+// withEdgeStreams is the case with its policy's fastpath_edge_streams
+// member present (on) or absent.
+func withEdgeStreams(c authorizeCase, on bool) authorizeCase {
+	c.PolicyPatch = maps.Clone(c.PolicyPatch)
+	if c.PolicyPatch == nil {
+		c.PolicyPatch = map[string]json.RawMessage{}
+	}
+	delete(c.PolicyPatch, "fastpath_edge_streams")
+	if on {
+		c.PolicyPatch["fastpath_edge_streams"] = json.RawMessage("true")
+	}
+	return c
+}
+
+// TestAnAsyncStreamOutsideAdmissionIsComposed (streams section 8.5): an
+// async-v1 stream for a workspace Python's admission leaves out is composed
+// as the same request without stream is, its async members spliced in after
+// the stream's frozen pricing. With fastpath_edge_streams the decision gates
+// are a non-stream's (admitted, or async.off with edge_decide false); without
+// it the stream passes as body.stream with its decision for the shadow. A
+// workspace admission covers passes policy.async_admission with no decision
+// (body.stream without the member, as every stream then passes), and a
+// stream Stage D does not let in passes with the pilot's reason.
+func TestAnAsyncStreamOutsideAdmissionIsComposed(t *testing.T) {
+	f := asyncAuthorizeGoldens(t)
+	golden := asyncCaseNamed(t, "answer:async.B:stream")
+	ws := golden.Facts.Key.WorkspaceID
+	off := withAsyncSettle(t, f, golden, func(a *routingsnapshot.AsyncSettle) { a.EdgeDecide = false })
+	covered := withAsyncSettle(t, f, golden, admissionOn(ws))
+	leftOut := withAsyncSettle(t, f, golden, admissionOn("a_"+ws))
+	for _, v := range []struct {
+		name     string
+		c        authorizeCase
+		pass     string
+		decision bool
+	}{
+		{"member on", withEdgeStreams(golden, true), "", true},
+		{"member absent", withEdgeStreams(golden, false), gwauth.ReasonStream, true},
+		{"member on, edge_decide false", withEdgeStreams(off, true), PassAsyncOff, true},
+		{"member absent, edge_decide false", withEdgeStreams(off, false), gwauth.ReasonStream, true},
+		{"member on, admission leaving the workspace out", withEdgeStreams(leftOut, true), "", true},
+		{"member absent, admission leaving the workspace out", withEdgeStreams(leftOut, false), gwauth.ReasonStream,
+			true},
+		{"member on, admission covering the workspace", withEdgeStreams(covered, true), PassAsyncAdmission, false},
+		{"member absent, admission covering the workspace", withEdgeStreams(covered, false), gwauth.ReasonStream,
+			false},
+	} {
+		in, _ := caseInputs(t, f, v.c)
+		d := Decide(in)
+		if d.Pass != v.pass || (d.ForShadow() != nil) != v.decision || d.AsyncPop != AsyncPlain {
+			t.Errorf("%s: passed %q (decision %v, population %q), want %q (decision %v)", v.name, d.Pass,
+				d.ForShadow() != nil, d.AsyncPop, v.pass, v.decision)
+			continue
+		}
+		if !v.decision {
+			continue
+		}
+		dec := d.ForShadow()
+		if !dec.Stream || dec.Input.StageDReason != gwauth.StageDOK || dec.Staged.Async().Shape != gwauth.AsyncSnapshot {
+			t.Errorf("%s: stream %v, Stage D %q, shape %q", v.name, dec.Stream, dec.Input.StageDReason,
+				dec.Staged.Async().Shape)
+			continue
+		}
+		// Every decision is Python's leased 200 to the stream, byte for byte.
+		if !checkAnswered(t, golden, dec) {
+			t.Errorf("%s: not Python's bytes", v.name)
+		}
+	}
+	// The pilot's reason for a stream it does not lease, as without the
+	// header; without the member, body.stream.
+	stageD := asyncCaseNamed(t, "pass:stream.stage_d:stage_d_disabled:async.B")
+	for _, on := range []bool{true, false} {
+		in, _ := caseInputs(t, f, withEdgeStreams(stageD, on))
+		want := stageD.Expect.Reason
+		if !on {
+			want = gwauth.ReasonStream
+		}
+		if d := Decide(in); d.Pass != want || d.ForShadow() != nil {
+			t.Errorf("Stage D off (member %v): passed %q (decision %v), want %q", on, d.Pass, d.ForShadow() != nil, want)
+		}
+	}
+}
+
+// TestTheShadowComparesAnAsyncStream (gate E, streams section 8.5): with
+// fastpath_edge_streams absent, an async-v1 stream for a workspace admission
+// leaves out is composed for the shadow and compared: Python's leased 200
+// agrees in full, its rows too, decided under body.stream, its async members
+// compared and agreeing. A stream whose snapshot Python froze otherwise is a
+// differ in billing_snapshot.
+func TestTheShadowComparesAnAsyncStream(t *testing.T) {
+	f := asyncAuthorizeGoldens(t)
+	c := asyncCaseNamed(t, "pass:body.stream:async.B:member_absent")
+	s := c.Expect.Shadow
+	if s == nil || !c.Expect.Python.Leased {
+		t.Fatal("the member-absent stream: no leased answer recorded for the shadow")
+	}
+	shadowCase := c
+	shadowCase.Expect = *s
+	id, _ := s.AuthorizationRow["authorization_id"].(string)
+	plain := map[string]int{AsyncPlain: 1}
+	shape := map[string]int{AsyncPlain + "." + gwauth.AsyncSnapshot: 1}
+	py := newFakePython(t)
+	for _, v := range []struct {
+		name   string
+		body   []byte
+		class  string
+		fields map[string]int
+		async  map[string]map[string]int
+	}{
+		{"Python's", []byte(s.Response), ClassAgreeFull, map[string]int{},
+			asyncCountsOf(plain, map[string]int{AsyncPlain + ".agree": 1}, nil, shape, nil)},
+		{"another snapshot", mutated(t, s.Response, func(d pyjson.Object) pyjson.Object {
+			return setMember(d, "billing_snapshot",
+				setMember(memberOf(d, "billing_snapshot").(pyjson.Object), "minimum_charge", "none"))
+		}), ClassDifferAny, map[string]int{FieldBillingSnapshot: 1},
+			asyncCountsOf(plain, map[string]int{AsyncPlain + ".differ": 1},
+				map[string]int{AsyncPlain + "." + FieldBillingSnapshot: 1}, shape, nil)},
+	} {
+		h := newFullEdge(t, f, c, py, nil)
+		h.rows.by[id] = storedRows(t, shadowCase)
+		h.answer(answerWith(200, v.body))
+		h.send(t, c)
+		got := h.edge.DecideShadowCounts()
+		if !maps.Equal(got.Classes, map[string]int{v.class: 1}) || !maps.Equal(got.Fields, v.fields) ||
+			!maps.Equal(got.Decide, map[string]int{gwauth.ReasonStream: 1}) || !asyncCountsEqual(got.Async, v.async) {
+			t.Errorf("%s: classes %v, fields %v, decide %v, async %v\nwant async %v", v.name, got.Classes, got.Fields,
+				got.Decide, got.Async, v.async)
+			continue
+		}
+		if v.class == ClassAgreeFull && got.Rows["agree"] != 1 {
+			t.Errorf("%s: rows %v", v.name, got.Rows)
 		}
 	}
 }

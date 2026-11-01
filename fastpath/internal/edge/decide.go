@@ -572,7 +572,7 @@ func Decide(in DecideInputs) Decided {
 		TypedSettlement: policy.AsyncSettle != nil && policy.AsyncSettle.TypedRecords,
 	})
 	if r.Streamed() {
-		if reason := streamGate(r, stageD, in.Request.Boot.Boot.DeclaresUsageHeartbeat, res); reason != "" {
+		if reason := streamGate(stageD, in.Request.Boot.Boot.DeclaresUsageHeartbeat, res); reason != "" {
 			return pass(reason)
 		}
 	}
@@ -650,11 +650,13 @@ func Decide(in DecideInputs) Decided {
 // switch and snapshot booking the member implies): Stage D lets it in, its
 // boot declared heartbeats, and its hold is its ceiling (the evaluator's
 // reservation is its estimate, as Python's hold_is_ceiling). An async-v1
-// stream passes as body.stream: its additions are not composed here.
-func streamGate(r gwauth.Request, stageD string, declared bool, res routingsnapshot.Result) string {
+// stream reaches it only for a workspace Python's admission leaves out
+// (asyncAdmissionPass), and goes on as any other: Python's pilot reads no
+// settlement mode, and its additions are the non-stream request's
+// (authorize_additions reads body.stream only into a ticket's claims), so
+// the compose below splices them in after the stream's frozen pricing.
+func streamGate(stageD string, declared bool, res routingsnapshot.Result) string {
 	switch {
-	case r.Async.V1:
-		return gwauth.ReasonStream
 	case stageD != gwauth.StageDOK:
 		return PassStreamStageD + stageD
 	case !declared:

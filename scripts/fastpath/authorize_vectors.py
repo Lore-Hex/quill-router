@@ -1615,6 +1615,8 @@ ASYNC_MEMBERS = ("async_eligible", "billing_snapshot", "billing_snapshot_hash", 
 ASYNC_SHAPES = {
     (): "none", ASYNC_MEMBERS[:1]: "A", ASYNC_MEMBERS[:3]: "B", ASYNC_MEMBERS: "C",
 }
+# The members a stream Stage D lets in carries right after stage_d.
+STREAM_PRICING = ["candidate_prices", "cap_micro"]
 
 
 def async_snapshot_inputs() -> Any:
@@ -1639,7 +1641,9 @@ def async_snapshot_body() -> bytes:
 
 def async_shape(response: str) -> str:
     """§2.2's shape of a 200's async members; they sit, in order, between
-    stage_d and tags (§2.1)."""
+    stage_d and tags (§2.1), after the frozen pricing a stream Stage D lets
+    in carries beside stage_d (candidate_prices and cap_micro,
+    docs/design/fast-admission-streams.md section 8.4)."""
     data = json.loads(response)["data"]
     keys = list(data)
     present = tuple(key for key in keys if key in ASYNC_MEMBERS)
@@ -1647,6 +1651,8 @@ def async_shape(response: str) -> str:
         raise AssertionError(f"async members {present} are none of §2.2's shapes")
     if present:
         start = keys.index("stage_d") + 1
+        if keys[start:start + 2] == STREAM_PRICING:
+            start += 2
         if tuple(keys[start:start + len(present)]) != present or keys[start + len(present)] != "tags":
             raise AssertionError("the async members are not between stage_d and tags")
     return ASYNC_SHAPES[present]
@@ -1749,6 +1755,7 @@ def async_cases() -> list[dict[str, Any]]:
         body={"route_type": "embeddings", "invocation_nonce": "nonce-e2-async-admission"},
         policy={"async_settle": {"admission_enabled": True, "admission_workspaces": [OTHER_WS]}})
     add("pass:async.off:async.B", "async.off", policy={"async_settle": {"edge_decide": False}})
+    async_streams_cases(add)
     # Any header list but exactly ["async-v1"] adds nothing (§2.1). With no
     # header the edge answers; any present header but exactly async-v1 it
     # passes (header.settlement_async, which G15c keeps for these), and the
@@ -1770,6 +1777,42 @@ def async_cases() -> list[dict[str, Any]]:
     # The header's name is case-insensitive; only its value is exact.
     add("answer:async.B:header_name_case", headers=(("X-TR-Settlement-Mode", "async-v1"),))
     return out
+
+
+def async_streams_cases(add: Any) -> None:
+    """Async-v1 streams (docs/design/fast-admission-streams.md section 8.5.1).
+    Python answers an async-v1 stream for a workspace its admission leaves
+    out as it answers the same request without stream: authorize_additions
+    reads body.stream only into Eligibility.streamed, which no exclusion and
+    no snapshot member reads (only a ticket's claims carry it, and a ticket
+    is admission's), so the stream's leased 200 carries the same shape A or
+    B members. Go composes it as it composes the non-stream one; a workspace
+    admission covers passes policy.async_admission, and a stream the pilot
+    would not lease passes with the pilot's reason, as without the header."""
+    streams = {"fastpath_pilot_streams": True, "fastpath_edge_streams": True, "reap_snapshot_booking_enabled": True}
+    add("answer:async.B:stream", body={"stream": True}, policy=streams)
+    add("answer:async.B:stream:route_type:responses", body={"stream": True, "route_type": "responses"},
+        policy=streams)
+    add(f"answer:async.B:stream:mixed_provider:{GPT41}+{SONNET}", body={"stream": True, "models": [SONNET]},
+        policy=streams)
+    add(f"answer:async.A:partner:{GLM}:stream", body={"stream": True, "model": GLM}, policy=streams)
+    add("answer:async.A:requested_parameter:tools:stream", body={"stream": True, "requested_parameters": ["tools"]},
+        policy=streams)
+    add("answer:async.B:stream:admission_workspaces_other",
+        body={"stream": True, "invocation_nonce": "nonce-e2-async-admission"},
+        policy={**streams, "async_settle": {"admission_enabled": True, "admission_workspaces": [OTHER_WS]}})
+    # Without fastpath_edge_streams the stream passes as body.stream,
+    # composed for the shadow alone: Python's leased answer recorded beside it.
+    add("pass:body.stream:async.B:member_absent", "body.stream", body={"stream": True},
+        policy={**streams, "fastpath_edge_streams": False})
+    # Python's admission covers the workspace: a ticket is Python's.
+    add("pass:policy.async_admission:async.C:stream", "policy.async_admission",
+        body={"stream": True, "invocation_nonce": "nonce-e2-async-admission"},
+        policy={**streams, "async_settle": {"admission_enabled": True}})
+    # A stream Stage D does not let in: Python answers it unleased, its
+    # async members as ever.
+    add("pass:stream.stage_d:stage_d_disabled:async.B", "stream.stage_d:stage_d_disabled", body={"stream": True},
+        policy={**streams, "stage_d": {"eligibility_enabled": False}})
 
 
 def run_async_case(case: dict[str, Any]) -> dict[str, Any]:

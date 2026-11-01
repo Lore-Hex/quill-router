@@ -734,6 +734,37 @@ and the decide rows choose where it applies. The way back, fastest first:
 off, then e2-decide §9's levers. Running leased streams finish on the
 lease either way (§10's rollback floors).
 
+#### 8.5.1 Async-v1 streams
+
+Every authorize the enclaves send carries `X-TR-Settlement-Mode:
+async-v1`, so gate E's compared streams are async-v1 streams. Python
+answers one for a workspace its admission leaves out exactly as it answers
+the same stream without the header, plus the async members
+(G15 §2.2's shape A or B) it splices in after `**stage_d`
+(`gateway.py:3320-3321`): after `candidate_prices` and `cap_micro` for a
+stream Stage D lets in. `authorize_additions` reads `body.stream` only into
+`Eligibility.streamed` (`async_settle.py:350`), which no exclusion reads
+(`billing_snapshot.py:182`) and no snapshot member carries
+(`build_snapshot`, `:508`); only a ticket's claims carry it
+(`async_settle.py:284`), and a ticket is admission's. The pilot's lease
+decision (`fastpath_frontdoor.pilot_stream_reason`, `gateway.py:1859-1889`)
+reads no settlement mode, and the rows are a stream's as without the
+header (G15 §2.5: the async members are in the 200 alone).
+
+So the edge composes an async-v1 stream for a workspace outside admission
+as it composes the non-stream one (`asyncComposeInput`), past the same
+stream gates (`stream.stage_d:<reason>`, `stream.undeclared`,
+`stream.hold`). Without `fastpath_edge_streams` it passes as `body.stream`
+with its decision for the shadow, which compares its 200, async members
+included (`async_compared`), and its rows. A workspace inside admission
+passes `policy.async_admission` with no decision (as `body.stream` without
+the member, as every stream then does): its ticket is Python's. With the
+member, an async-v1 stream is answered only where `edge_decide` is on, as
+any async-v1 request (`async.off` otherwise). The async goldens
+(`authorize_async_cases_v1.json`) carry Python's answers to async-v1
+streams: answered, passed as `body.stream` with Python's leased answer for
+the shadow, admission on, and Stage D off.
+
 ## 9. Out of scope
 
 - **Heartbeats without the row transaction.** Python would validate from
