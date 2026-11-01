@@ -444,7 +444,10 @@ and `audit`, below). Read, each against the line of §11 it answers to:
   was proven not applied. Each of the last group past the share the
   owner's load explains is a thing to explain.
 - `decide.by_name.slow`: `at_edge` and `in_all` 0 (decision 12;
-  `edge_decide_pass_slow`).
+  `edge_decide_pass_slow`). Each `at_edge` pass is also counted under the
+  phase it spent the most time in (`at_edge.body`, `at_edge.boot`,
+  `at_edge.decide`, `at_edge.admit`), which sum to `at_edge`; the alert's
+  runbook row says what each means.
 - The shadow's figures are now of the passes alone: a request Go answers
   never reaches it. With one pilot workspace deciding, `i2.comparable` can
   be 0 and `i2.agree_full_ratio` null, and that is the expected shape, not

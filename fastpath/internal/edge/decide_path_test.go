@@ -10,6 +10,7 @@ import (
 	"go/ast"
 	"go/parser"
 	gotoken "go/token"
+	"io"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -957,10 +958,11 @@ func TestUnavailableAnswersAreCountedByCodeAndAlerted(t *testing.T) {
 
 // TestSlowPassesAreCountedAndAlerted (decision 12, G12): a pass that spent
 // more than SlowAtEdge at the edge before it was forwarded is counted
-// at_edge, and one whose answer from Python, or the proxy's failure to
-// reach it, came more than SlowInAll after its arrival is counted in_all;
-// a period with either raises AlertSlowPass. At the contract's thresholds
-// the same passes count neither.
+// at_edge, and under its phase (here a slow insert's, at_edge.admit), and
+// one whose answer from Python, or the proxy's failure to reach it, came
+// more than SlowInAll after its arrival is counted in_all; a period with
+// either raises AlertSlowPass. At the contract's thresholds the same passes
+// count neither.
 func TestSlowPassesAreCountedAndAlerted(t *testing.T) {
 	h, c := baseDecide(t)
 	var raised alerts
@@ -973,11 +975,18 @@ func TestSlowPassesAreCountedAndAlerted(t *testing.T) {
 	if c := h.edge.DecideCounts(); len(c.Slow) != 0 || len(raised.taken()) != 0 {
 		t.Fatalf("a fast pass is slow: %+v", c)
 	}
-	h.edge.decider.slowAtEdge = 0
+	// The insert takes twice the threshold, and nothing else a tenth of
+	// it: the pass is slow in its admission.
+	h.edge.decider.slowAtEdge = 100 * time.Millisecond
+	h.rows.insert = func(context.Context) store.InsertOutcome {
+		time.Sleep(2 * h.edge.decider.slowAtEdge)
+		return store.Failed
+	}
 	h.send(t, c)
-	if got := h.edge.DecideCounts().Slow; !maps.Equal(got, map[string]int64{"at_edge": 1}) {
+	if got := h.edge.DecideCounts().Slow; !maps.Equal(got, map[string]int64{"at_edge": 1, "at_edge.admit": 1}) {
 		t.Fatalf("slow at the edge: %v", got)
 	}
+	h.rows.insert = func(context.Context) store.InsertOutcome { return store.Failed }
 	h.edge.decider.slowAtEdge, h.edge.decider.slowInAll = SlowAtEdge, 0
 	h.send(t, c)
 	// Python not reached: the proxy's failure is the pass's end.
@@ -988,17 +997,138 @@ func TestSlowPassesAreCountedAndAlerted(t *testing.T) {
 	if rec := h.send(t, c); rec.Code != http.StatusBadGateway {
 		t.Fatalf("Python not reached: %d", rec.Code)
 	}
-	if got := h.edge.DecideCounts().Slow; !maps.Equal(got, map[string]int64{"at_edge": 1, "in_all": 2}) {
+	if got := h.edge.DecideCounts().Slow; !maps.Equal(got, map[string]int64{"at_edge": 1, "at_edge.admit": 1,
+		"in_all": 2}) {
 		t.Fatalf("slow in all: %v", got)
 	}
 	h.edge.decider.flush()
-	if !strings.Contains(h.logs.all(), `passed={"insert.failed":3} slow={"at_edge":1,"in_all":2}`) {
+	if !strings.Contains(h.logs.all(),
+		`passed={"insert.failed":3} slow={"at_edge":1,"at_edge.admit":1,"in_all":2}`) {
 		t.Fatalf("the period's line: %s", h.logs.all())
 	}
 	got := raised.taken()
-	if len(got) != 1 || len(got[AlertSlowPass]) != 1 ||
-		!strings.Contains(got[AlertSlowPass][0], `{"at_edge":1,"in_all":2}`) {
+	if len(got) != 1 || len(got[AlertSlowPass]) != 1 || !strings.Contains(got[AlertSlowPass][0],
+		`forwarded passes over 1s at the edge (at_edge) or over 0s in all (in_all): `+
+			`{"at_edge":1,"at_edge.admit":1,"in_all":2}; each at_edge pass is counted again under the phase`) {
 		t.Fatalf("the alerts: %v", got)
+	}
+}
+
+// slowBody is a request body whose first read waits: a caller that sends
+// its body slowly.
+type slowBody struct {
+	r     io.Reader
+	delay time.Duration
+	once  sync.Once
+}
+
+func (b *slowBody) Read(p []byte) (int, error) {
+	b.once.Do(func() { time.Sleep(b.delay) })
+	return b.r.Read(p)
+}
+
+// TestASlowPassIsCountedUnderItsPhase: a pass slow at the edge is counted
+// at_edge and under the phase it spent the most time in. A cold boot read
+// (the boot's first, from the store) twice the threshold is the boot's,
+// even when the pass is the pipeline's own (boot.signature, a body that is
+// not the one signed), with no owner, insert or budget reason beside it;
+// the next request reads the boot from the cache and counts nothing. A
+// body read slowly is the body's. A fast pass counts nothing.
+func TestASlowPassIsCountedUnderItsPhase(t *testing.T) {
+	f := authorizeGoldens(t)
+	c := authorizeCaseNamed(t, "answer:app_categories_empty")
+	const threshold = 100 * time.Millisecond
+	unsigned := func(body io.Reader) *http.Request {
+		req := request(c, context.Background())
+		req.Body, req.ContentLength = io.NopCloser(body), -1
+		return req
+	}
+	send := func(h *decideEdge, req *http.Request) int {
+		rec := httptest.NewRecorder()
+		h.edge.ServeHTTP(rec, req)
+		h.edge.decider.refunds.Wait()
+		return rec.Code
+	}
+
+	// A fast pass: the insert fails, the boot read and the body take no
+	// time, and the contract's threshold holds.
+	h := newDecideEdge(t, f, c, nil)
+	h.rows.insert = func(context.Context) store.InsertOutcome { return store.Failed }
+	if code := h.send(t, c).Code; code != http.StatusTeapot || h.edge.DecideCounts().Passed[PassInsertFailed] != 1 {
+		t.Fatalf("a failed insert: %d, counts %+v", code, h.edge.DecideCounts())
+	}
+	if got := h.edge.DecideCounts().Slow; len(got) != 0 {
+		t.Fatalf("a fast pass is slow: %v", got)
+	}
+
+	// A cold boot read twice the threshold, the pipeline passing on the
+	// signature: the boot's.
+	h = newDecideEdge(t, f, c, nil)
+	b := bootsOf(t, f, c)
+	b.slow = 2 * threshold
+	h.edge.cfg.Boots, h.edge.decider.slowAtEdge = b, threshold
+	body := append(c.body(), ' ')
+	if code := send(h, unsigned(bytes.NewReader(body))); code != http.StatusTeapot {
+		t.Fatalf("a cold boot read: %d", code)
+	}
+	counts := h.edge.DecideCounts()
+	if !maps.Equal(counts.Passed, map[string]int64{PassBootSignature: 1}) || b.reads.Load() != 1 ||
+		!maps.Equal(counts.Slow, map[string]int64{"at_edge": 1, "at_edge.boot": 1}) {
+		t.Fatalf("a cold boot read: %d reads, counts %+v", b.reads.Load(), counts)
+	}
+	// The boot is cached now (BootTTL): the same request is fast.
+	send(h, unsigned(bytes.NewReader(body)))
+	counts = h.edge.DecideCounts()
+	if counts.Passed[PassBootSignature] != 2 || b.reads.Load() != 1 ||
+		!maps.Equal(counts.Slow, map[string]int64{"at_edge": 1, "at_edge.boot": 1}) {
+		t.Fatalf("a cached boot: %d reads, counts %+v", b.reads.Load(), counts)
+	}
+	h.edge.decider.flush()
+	if !strings.Contains(h.logs.all(), `passed={"boot.signature":2} slow={"at_edge":1,"at_edge.boot":1}`) {
+		t.Fatalf("the period's line: %s", h.logs.all())
+	}
+
+	// A body whose read takes twice the threshold, the insert failing: the
+	// body's.
+	h = newDecideEdge(t, f, c, nil)
+	h.rows.insert = func(context.Context) store.InsertOutcome { return store.Failed }
+	h.edge.decider.slowAtEdge = threshold
+	req := request(c, context.Background())
+	req.Body = io.NopCloser(&slowBody{r: bytes.NewReader(c.body()), delay: 2 * threshold})
+	if code := send(h, req); code != http.StatusTeapot {
+		t.Fatalf("a slow body: %d", code)
+	}
+	counts = h.edge.DecideCounts()
+	if !maps.Equal(counts.Passed, map[string]int64{PassInsertFailed: 1}) ||
+		!maps.Equal(counts.Slow, map[string]int64{"at_edge": 1, "at_edge.body": 1}) {
+		t.Fatalf("a slow body: counts %+v", counts)
+	}
+}
+
+// TestTheSlowPhaseIsTheLongest: slowPhase names the phase between two
+// marks that took the most time, the earlier of two that took the same,
+// whichever phase the pass crossed the threshold in.
+func TestTheSlowPhaseIsTheLongest(t *testing.T) {
+	t0 := time.Unix(1_800_000_000, 0)
+	at := func(ms int) time.Time { return t0.Add(time.Duration(ms) * time.Millisecond) }
+	for _, tc := range []struct {
+		name                             string
+		read, checked, routed, forwarded int
+		phase                            string
+	}{
+		{"body", 900, 950, 951, 1100, SlowPhaseBody},
+		{"boot", 1, 1300, 1301, 1302, SlowPhaseBoot},
+		{"decide", 1, 2, 1200, 1201, SlowPhaseDecide},
+		{"admit", 1, 2, 3, 1600, SlowPhaseAdmit},
+		// Crossed 1 s in the boot read, but the body took longer.
+		{"longest, not crossing", 600, 1100, 1101, 1102, SlowPhaseBody},
+		{"a tie is the earlier", 1, 601, 602, 1202, SlowPhaseBoot},
+		{"all instant", 0, 0, 0, 0, SlowPhaseBody},
+	} {
+		m := edgeMarks{arrived: t0, read: at(tc.read), checked: at(tc.checked)}
+		if got := slowPhase(m, at(tc.routed), at(tc.forwarded)); got != tc.phase {
+			t.Errorf("%s: %s, want %s", tc.name, got, tc.phase)
+		}
 	}
 }
 
