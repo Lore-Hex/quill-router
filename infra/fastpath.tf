@@ -52,7 +52,8 @@ locals {
   # 429 shadow fix (#2229): the edge tells the owner whether a decided
   # request streams, composes eligible streams, and decides them only with
   # fastpath_edge_streams on; the shadow counts Python's in-flight 429 to
-  # an inflight.key pass as passed. Stream switches stay off.
+  # an inflight.key pass as passed. The pilot leases streams; the edge
+  # switch stays off.
   # b2d12a046: the edge composes async-v1 streams outside async admission
   # for its decide shadow (#2242), so gate E can count them. Carries
   # everything since 2b3f846f3.
