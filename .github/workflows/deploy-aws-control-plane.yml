@@ -103,7 +103,7 @@ jobs:
       # failure while importing the verifier.
       - uses: astral-sh/setup-uv@v7
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Roll the two existing ECS regions from this commit
         if: ${{ inputs.mode == 'deploy' }}
