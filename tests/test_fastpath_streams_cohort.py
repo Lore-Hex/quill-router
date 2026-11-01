@@ -243,9 +243,9 @@ def test_the_member_has_one_encoding(key: Any) -> None:  # noqa: F811
             parse_edge_policy(on.replace(b'"fastpath_edge_streams":true', b'"fastpath_edge_streams":' + value))
 
 
-def test_rollout_renders_both_switches_as_literal_false() -> None:
+def test_rollout_renders_both_switches_as_literals() -> None:
     rollout = (ROOT / "scripts" / "deploy" / "rollout.sh").read_text()
-    assert re.findall(r'"TR_FASTPATH_PILOT_STREAMS=[^"]*"', rollout) == ['"TR_FASTPATH_PILOT_STREAMS=false"']
+    assert re.findall(r'"TR_FASTPATH_PILOT_STREAMS=[^"]*"', rollout) == ['"TR_FASTPATH_PILOT_STREAMS=true"']
     assert re.findall(r'"TR_FASTPATH_EDGE_STREAMS=[^"]*"', rollout) == ['"TR_FASTPATH_EDGE_STREAMS=false"']
 
 
