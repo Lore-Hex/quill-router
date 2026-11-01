@@ -82,7 +82,13 @@ those compared streams, and over them zero `differ.candidate_prices`,
 `differ.cap_micro`, `differ.candidate_cost_reporting`,
 `row.pricing_snapshot`, `row.heartbeat_seq` or `row.estimated_microdollars`
 in the shadow line's fields. A stream Python's pilot did not lease is
-compared on its 200 alone (rows `python_not_leased`). Then set
+compared on its 200 alone (rows `python_not_leased`). Every enclave
+authorize is async-v1 (the line's `async_seen`): an async-v1 stream for a
+workspace outside async admission is composed and compared the same way,
+its async members too (`async_compared` and `async_shape` count it), while
+one for a workspace inside admission passes (`policy.async_admission`, or
+`body.stream` while the member is off) and is never compared (design
+§8.5.1). Then set
 `TR_FASTPATH_EDGE_STREAMS=true`: the decide rows choose where the edge
 answers streams, each one still gated on Stage D, the boot's declaration
 and the hold (`stream.stage_d:<reason>`, `stream.undeclared`,

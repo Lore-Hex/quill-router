@@ -581,13 +581,17 @@ PRICE_FIELDS = ("endpoint_id", "price_history_version", "rates", "tiers", "reque
 
 def _shape(response: str) -> str:
     """The shape of a 200's async members, which sit, in order, between
-    stage_d and tags (§2.1); async_eligible is false in shapes A and B."""
+    stage_d and tags (§2.1), after a Stage D stream's candidate_prices and
+    cap_micro (streams section 8.4); async_eligible is false in shapes A
+    and B."""
     data = json.loads(response)["data"]
     keys = list(data)
     present = tuple(k for k in keys if k in ASYNC_MEMBERS)
     assert present in ASYNC_SHAPES, present
     if present:
         start = keys.index("stage_d") + 1
+        if keys[start:start + 2] == ["candidate_prices", "cap_micro"]:
+            start += 2
         assert tuple(keys[start:start + len(present)]) == present and keys[start + len(present)] == "tags"
     shape = ASYNC_SHAPES[present]
     if shape in ("A", "B"):
@@ -649,7 +653,7 @@ def test_every_async_case_has_the_shape_its_name_claims() -> None:
             assert "response" not in python and expect["reason"] == "policy.async_admission", name
         else:
             assert _shape(python["response"]) == claimed, name
-    assert seen["B"] >= 10 and seen["A"] >= 12 and seen["none"] >= 8 and seen["C"] == 2, seen
+    assert seen["B"] >= 10 and seen["A"] >= 12 and seen["none"] >= 8 and seen["C"] == 3, seen
     assert seen["affinity.warm_A.cold_B"] == 1, seen
 
 
@@ -713,7 +717,7 @@ def test_the_async_header_carries_pythons_sets_snapshot_and_policy() -> None:
             assert case["expect"]["outcome"] == "answer" and case["expect"]["async_shape"] in ("A", "B"), name
             data = json.loads(case["expect"]["response"])["data"]
             assert data["async_eligible"] is False, name
-    assert named == 1 and other == 2
+    assert named == 1 and other == 3
     # The edge's async switch off is a pass with Python's admission-off answer.
     (off,) = [case for case in vectors["cases"] if case["expect"].get("reason") == "async.off"]
     assert off["policy_patch"]["async_settle"]["edge_decide"] is False
@@ -759,3 +763,29 @@ def test_a_billing_valid_false_case_names_a_candidate_the_snapshot_refuses() -> 
     for case in cases:
         ids = [c["endpoint_id"] for c in json.loads(case["expect"]["response"])["data"]["route_candidates"]]
         assert [_epoch(endpoints[i], case["at_us"])["billing_valid"] for i in ids].count(False) == 1, case["name"]
+
+
+def test_an_async_stream_carries_the_same_members_as_without_stream() -> None:
+    """Streams section 8.5.1: outside admission, Python's async members to an
+    async-v1 stream are the same request's without stream (body.stream is
+    read only into a ticket's claims); the stream's 200 differs from it only
+    in its Stage D members, and its rows are a stream's."""
+    by_name = {case["name"]: case for case in _load(ASYNC_CASES)["cases"]}
+    plain = json.loads(by_name["answer:async.B:single:openai/gpt-4.1"]["expect"]["response"])["data"]
+    streamed_bodies = [case for case in by_name.values() if json.loads(case["request"]["body"]).get("stream") is True]
+    assert len(streamed_bodies) == 9
+    for name in ("answer:async.B:stream", "pass:body.stream:async.B:member_absent"):
+        expect = by_name[name]["expect"]
+        streamed = json.loads((expect.get("shadow") or expect)["response"])["data"]
+        assert streamed["stage_d"] == {"eligible": True, "reason": "ok"}, name
+        for member in ("async_eligible", "billing_snapshot", "billing_snapshot_hash"):
+            assert streamed[member] == plain[member], (name, member)
+        ignored = {"authorization_id", "generation_id", "credit_reservation_id", "stage_d", "candidate_cost_reporting",
+                   "candidate_prices", "cap_micro", "timing"}
+        assert {k: v for k, v in streamed.items() if k not in ignored} == {
+            k: v for k, v in plain.items() if k not in ignored}, name
+        assert list(streamed).index("cap_micro") + 1 == list(streamed).index("async_eligible"), name
+    member_absent = by_name["pass:body.stream:async.B:member_absent"]["expect"]
+    assert member_absent["python"]["leased"] and member_absent["shadow"]["status"] == 200
+    shadow_row = json.loads(member_absent["shadow"]["authorization_row"]["payload"])
+    assert shadow_row["heartbeat_seq"] == 0 and "billing_snapshot" not in shadow_row

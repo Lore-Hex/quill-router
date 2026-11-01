@@ -30,6 +30,11 @@ type goldenFile struct {
 			RequireHeartbeatDeclaration bool     `json:"require_heartbeat_declaration"`
 			PilotWorkspaces             []string `json:"pilot_workspaces"`
 		} `json:"stage_d"`
+		// AsyncSettle is the header policy's object, present in the async
+		// file's (authorize_async_cases_v1.json) alone.
+		AsyncSettle *struct {
+			TypedRecords bool `json:"typed_records"`
+		} `json:"async_settle"`
 	} `json:"policy"`
 	Volatile []string     `json:"volatile"`
 	Cases    []goldenCase `json:"cases"`
@@ -192,7 +197,8 @@ func stageDSettings(t *testing.T, f goldenFile, c goldenCase) StageDSettings {
 
 // stageDReason is the case's Stage D reason as the decide pipeline gives it:
 // the policy's settings and the boot, the body's stream and route_type, and
-// the patched policy's async_settle.typed_records (absent: not typed). An
+// the patched policy's async_settle.typed_records (absent from the patch:
+// the header policy's; absent there too: not typed). An
 // answered case's candidates are credits-only, standard and untiered.
 func stageDReason(t *testing.T, f goldenFile, c goldenCase) string {
 	t.Helper()
@@ -204,6 +210,9 @@ func stageDReason(t *testing.T, f goldenFile, c goldenCase) string {
 	q := StageDRequest{
 		WorkspaceID: c.Facts.Key.WorkspaceID, BootAccepted: true, BootDeclaresHeartbeat: c.Boot.DeclaresUsageHeartbeat,
 		Stream: member(body, "stream") == true, CreditsOnly: true, StandardPricing: true,
+	}
+	if a := f.Policy.AsyncSettle; a != nil {
+		q.TypedSettlement = a.TypedRecords
 	}
 	if rt, ok := member(body, "route_type").(string); ok {
 		q.RouteType = &rt

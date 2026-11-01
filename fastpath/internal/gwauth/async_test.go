@@ -391,9 +391,10 @@ func TestEveryAsyncCaseIsPythonsBytes(t *testing.T) {
 	if equal < 40 || shapes[AsyncNone] < 10 || shapes[AsyncSnapshot] < 13 || shapes[AsyncFalseOnly] < 15 {
 		t.Fatalf("%d byte-equal, shapes %v", equal, shapes)
 	}
-	// The admission cases: the three covered (the member absent, or naming
-	// the workspace) refused, the two the member leaves out byte-equal.
-	if admission != 3 || leftOut != 2 {
+	// The admission cases: the four covered (the member absent, or naming
+	// the workspace; one a stream) refused, the three the member leaves out
+	// (one a stream) byte-equal.
+	if admission != 4 || leftOut != 3 {
 		t.Fatalf("%d admission on, %d left out by admission_workspaces", admission, leftOut)
 	}
 	for _, r := range p6Reasons {

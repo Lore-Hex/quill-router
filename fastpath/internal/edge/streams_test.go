@@ -235,10 +235,6 @@ func TestAStreamThePilotWouldNotLeasePasses(t *testing.T) {
 			PassStreamStageD + "settlement_backend"},
 		{"legacy records", func(in *DecideInputs) { in.Policy.AsyncSettle = &routingsnapshot.AsyncSettle{} },
 			PassStreamStageD + "settlement_backend"},
-		{"async-v1", func(in *DecideInputs) {
-			in.Request.Header = in.Request.Header.Clone()
-			in.Request.Header.Set("X-TR-Settlement-Mode", gwauth.SettlementModeAsyncV1)
-		}, gwauth.ReasonStream},
 	} {
 		for _, member := range []bool{true, false} {
 			in := streamsOn(t, base, member)
@@ -267,21 +263,20 @@ func TestAStreamThePilotWouldNotLeasePasses(t *testing.T) {
 // lowered stream reservation, which the lease would cut the stream at)
 // passes as stream.hold; one whose hold is its ceiling goes on.
 func TestTheHoldTripwire(t *testing.T) {
-	var r gwauth.Request
 	equal := routingsnapshot.Result{ModelEstimate: 10, Reservation: 10}
-	if got := streamGate(r, gwauth.StageDOK, true, equal); got != "" {
+	if got := streamGate(gwauth.StageDOK, true, equal); got != "" {
 		t.Fatalf("a hold at its ceiling: %q", got)
 	}
 	for _, res := range []routingsnapshot.Result{{ModelEstimate: 10, Reservation: 9}, {ModelEstimate: 10, Reservation: 11}} {
-		if got := streamGate(r, gwauth.StageDOK, true, res); got != PassStreamHold {
+		if got := streamGate(gwauth.StageDOK, true, res); got != PassStreamHold {
 			t.Errorf("reservation %d, estimate %d: %q", res.Reservation, res.ModelEstimate, got)
 		}
 	}
 	// The gates before it name their own reason first.
-	if got := streamGate(r, "route", false, routingsnapshot.Result{ModelEstimate: 10, Reservation: 9}); got != PassStreamStageD+"route" {
+	if got := streamGate("route", false, routingsnapshot.Result{ModelEstimate: 10, Reservation: 9}); got != PassStreamStageD+"route" {
 		t.Errorf("Stage D first: %q", got)
 	}
-	if got := streamGate(r, gwauth.StageDOK, false, routingsnapshot.Result{ModelEstimate: 10, Reservation: 9}); got != PassStreamUndeclared {
+	if got := streamGate(gwauth.StageDOK, false, routingsnapshot.Result{ModelEstimate: 10, Reservation: 9}); got != PassStreamUndeclared {
 		t.Errorf("the declaration before the hold: %q", got)
 	}
 }
