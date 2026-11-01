@@ -1,3 +1,4 @@
+import json
 from dataclasses import replace
 from pathlib import Path
 
@@ -101,3 +102,37 @@ def test_each_streamlake_route_has_its_own_usage_canary(monkeypatch: pytest.Monk
     assert set(checked) == {'GLM-5.3-Flash', 'DeepSeek-V4.1-Flash'}
     assert adapter.discovered_rows['z-ai/glm-5.3-flash']['routable'] is True
     assert adapter.discovered_rows['deepseek/deepseek-v4.1-flash']['routable'] is False
+
+
+@pytest.mark.parametrize('healthy', [False, True])
+def test_deprecated_mimo_route_requires_fresh_success_to_recover(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, healthy: bool,
+) -> None:
+    model = 'xiaomi/mimo-v2.5-pro'
+    native = 'MiMo-V2.5-Pro'
+    committed = json.loads(streamlake.MANIFEST_PATH.read_text())
+    row, = [row for row in committed['models'] if row['id'] == model]
+    assert row['upstream_id'] == native
+    manifest = tmp_path / 'models.json'
+    manifest.write_text(json.dumps({'provider': 'streamlake', 'models': [row]}))
+    checked = []
+
+    def probe(**kwargs):
+        assert kwargs['require_usage'] and kwargs['require_message']
+        checked.append(kwargs['model'])
+        return healthy
+
+    monkeypatch.setenv('STREAMLAKE_API_KEY', 'test-key')
+    monkeypatch.setattr('scripts.pricing.providers._direct_openai.probe_openai_chat', probe)
+    spec = replace(
+        streamlake.CATALOG.spec,
+        catalog_loader=lambda key: [{'id': native}],
+        price_loader=lambda: {model: ModelPrice(435_000, 870_000, prompt_cached_micro_per_m=3_600)},
+        expected_models=(model,),
+    )
+    adapter = DirectOpenAIProvider(spec, manifest_path=manifest)
+    adapter.write_provider_manifest(adapter.fetch())
+    refreshed, = json.loads(manifest.read_text())['models']
+    assert checked == [native]
+    assert refreshed['routable'] is healthy
+    assert refreshed.get('routable_reason') == (None if healthy else 'provider-canary-failed')

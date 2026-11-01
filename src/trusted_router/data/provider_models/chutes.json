@@ -113,6 +113,8 @@
       "status": 1,
       "id": "mistralai/mistral-nemo",
       "upstream_id": "unsloth/Mistral-Nemo-Instruct-2407-TEE",
+      "routable": false,
+      "routable_reason": "provider-route-unavailable",
       "confidential_compute": true,
       "context_length": 131072,
       "input_token_price_per_m": 24500,
