@@ -158,14 +158,15 @@ def test_nvidia_nim_recanaries_machine_held_chat_routes(
 
 
 @pytest.mark.parametrize("healthy", [False, True])
+@pytest.mark.parametrize("size", ["11b", "90b"])
 def test_nvidia_stalled_vision_route_requires_successful_recovery_canary(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, healthy: bool,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, healthy: bool, size: str,
 ) -> None:
     from scripts.pricing.manifest import models_requiring_canary
     from trusted_router import catalog_ingest
 
-    model = "meta-llama/llama-3.2-90b-vision-instruct"
-    upstream = "meta/llama-3.2-90b-vision-instruct"
+    model = f"meta-llama/llama-3.2-{size}-vision-instruct"
+    upstream = f"meta/llama-3.2-{size}-vision-instruct"
     rows = [{"id": f"vendor/model-{index}"} for index in range(11)] + [{"id": upstream}]
     _install_catalog(monkeypatch, rows)
     manifest = tmp_path / "nvidia-nim.json"

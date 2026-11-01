@@ -121,6 +121,31 @@ def test_dynamic_discovery_and_canary_fail_closed(module, catalog, html, expecte
         module.write_provider_manifest(result)
 
 
+@pytest.mark.parametrize("healthy", [False, True])
+def test_zro_rejected_minimax_requires_fresh_success_to_recover(monkeypatch, tmp_path, healthy):
+    model = "minimax/minimax-m3.1-flash"
+    native = "minimax-m3.1-flash"
+    manifest = tmp_path / "zro.json"
+    manifest.write_text(json.dumps({"provider": "zro", "models": [{
+        "id": model, "upstream_id": native, "model_type": "chat",
+        "routable": False, "routable_reason": "provider-canary-failed",
+    }]}))
+    monkeypatch.setattr(zro, "MANIFEST_PATH", manifest)
+    monkeypatch.setattr(zro, "_DISCOVERED_ROWS", {})
+    monkeypatch.setattr(zro, "UPSTREAM_ID_MAP", {})
+    monkeypatch.setenv("ZRO_API_KEY", "test-key")
+    monkeypatch.setattr(zro, "fetch_json", lambda *_a, **_kw: zro_catalog(native))
+    monkeypatch.setattr(zro, "fetch_html", lambda *_a, **_kw: zro_html(native))
+    calls = []
+    monkeypatch.setattr(zro, "probe_openai_chat", lambda **kw: calls.append(kw) or healthy)
+    zro.write_provider_manifest(zro.fetch())
+    row = json.loads(manifest.read_text())["models"][0]
+    assert calls[0]["model"] == native
+    assert calls[0]["require_usage"] is True
+    assert row["routable"] is healthy
+    assert row.get("routable_reason") == (None if healthy else "provider-canary-failed")
+
+
 @pytest.mark.parametrize("module,catalog,html", [(boundless, boundless_catalog, boundless_html), (zro, zro_catalog, zro_html)])
 def test_empty_duplicate_catalog_and_new_versions(module, catalog, html):
     with pytest.raises(RuntimeError):
