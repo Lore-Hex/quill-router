@@ -24,6 +24,82 @@ AZURE_OPENROUTER_ABSENT_IDS = frozenset(
 AZURE_SPIKE_TARGET = "x-ai/grok-4.20-reasoning"
 
 
+@pytest.mark.parametrize(("suffix", "dimension", "old", "new"), [
+    ("", "prompt", "0.00000004", "0.0000002"),
+    ("", "completion", "0.00000015", "0.00000075"),
+    (" cached-input", "prompt", "0.000000004", "0.00000002"),
+])
+def test_november_1_inception_tariff_approval_is_exact(suffix, dimension, old, new):
+    route = "inception/mercury-2.5 [inception:inception:mercury-2.5]" + suffix
+    before = {route: {"prompt": "1", "completion": "1", dimension: old}}
+    after = {route: {**before[route], dimension: new}}
+    assert check(before, after)[0] == []
+
+    assert check(before, {route: {
+        **after[route], dimension: str(Decimal(new) + Decimal("0.000000000001")),
+    }})[0]
+    assert check({route: {
+        **before[route], dimension: str(Decimal(old) / 2),
+    }}, after)[0]
+    assert check(after, {route: {
+        **after[route], dimension: str(Decimal(new) * 2),
+    }})[0]
+    other_dimension = "prompt" if dimension == "completion" else "completion"
+    assert check(
+        {route: {"prompt": "1", "completion": "1", other_dimension: old}},
+        {route: {"prompt": "1", "completion": "1", other_dimension: new}},
+    )[0]
+    for other_route in (
+        route.replace("inception:inception:", "other:other:"),
+        route.replace("inception:inception:", "inception:inception/fp8:"),
+        route.replace(":mercury-2.5]", ":mercury-3]"),
+        route.replace("inception/mercury-2.5 ", "inception/mercury-3 "),
+        route.removesuffix(" cached-input") if suffix else route + " cached-input",
+        "inception/mercury-2.5",
+    ):
+        assert check({other_route: before[route]}, {other_route: after[route]})[0]
+
+
+def test_november_1_inception_snapshot_and_manifest_spikes_pass(tmp_path, monkeypatch):
+    model_id, native = "inception/mercury-2.5", "mercury-2.5"
+    paths = []
+    for side, prompt, completion, cached in (
+        ("before", 40_000, 150_000, 4_000),
+        ("after", 200_000, 750_000, 20_000),
+    ):
+        snapshot = _write(tmp_path, side + ".json", _make_endpoint_snapshot(
+            ("1", "1"),
+            [("inception", native, str(Decimal(prompt) / 10**12),
+              str(Decimal(completion) / 10**12))],
+            model_id=model_id,
+        ))
+        directory = tmp_path / side
+        directory.mkdir()
+        (directory / "inception.json").write_text(json.dumps({
+            "provider": "inception", "models": [{
+                "id": model_id, "upstream_id": native,
+                "input_token_price_per_m": prompt,
+                "output_token_price_per_m": completion,
+                "cached_input_token_price_per_m": cached,
+            }],
+        }))
+        paths.append((snapshot, directory))
+    args = (paths[0][0], paths[1][0], paths[0][1], paths[1][1])
+    assert check_price_spike.spiking_providers(*args) == {}
+    for pair in check_price_spike.route_pairs(*args):
+        assert pair is not None
+        assert check(*pair)[0] == []
+
+    monkeypatch.setattr(check_price_spike, "APPROVED_ENDPOINT_PRICE_TRANSITIONS", frozenset())
+    assert check_price_spike.spiking_providers(*args) == {
+        "inception": [
+            f"{model_id} [inception:inception:{native}]",
+            f"{model_id} [inception:inception:{native}]",
+            f"{model_id} [inception:inception:{native}] cached-input",
+        ],
+    }
+
+
 def test_akashml_kimi_cache_price_review_is_exact():
     route = "moonshotai/kimi-k3 [akashml:akashml:moonshotai/Kimi-K3] cached-input"
     before = {route: {"prompt": "0.0000003", "completion": "0"}}
