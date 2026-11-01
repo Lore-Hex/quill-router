@@ -98,8 +98,101 @@ def _table(section: str, columns: int) -> list[list[str]]:
     return rows
 
 
+def _section(md: str, start: str, end: str) -> str:
+    lines = md.replace("\\-", "-").splitlines()
+    if lines.count(start) != 1 or lines.count(end) != 1:
+        raise RuntimeError("byteplus: missing or ambiguous pricing section")
+    first, last = lines.index(start), lines.index(end)
+    if first >= last:
+        raise RuntimeError("byteplus: pricing sections reordered")
+    return "\n".join(lines[first + 1:last])
+
+
+def _dollar_price(cell: str) -> str:
+    if not re.fullmatch(r"\$[0-9]+(?:\.[0-9]+)?", cell):
+        raise RuntimeError("byteplus: ambiguous USD token price")
+    return cell[1:]
+
+
+def _modern_standard_rows(md: str) -> list[list[str]]:
+    llm = _section(md, "## Large language models", "## Video generation models")
+    non_audio = _section(llm, "#### Non-audio input", "#### Audio input")
+    rows = _table(_section(non_audio, "**Standard**", "**Flex**"), 7)
+    header = ["Provider", "Model ID", "Prompt length (K tokens)", "Input", "Cached input", "Cache storage", "Output"]
+    if not rows or rows[0] != header:
+        raise RuntimeError("byteplus: standard pricing columns changed")
+    result = []
+    seen: set[str] = set()
+    upper: int | None = None
+    mode = ""
+    for provider, identity, tier, prompt, cached, _storage, output in rows[1:]:
+        native = ""
+        next_mode = "time" if tier in {"Off-peak hours", "Peak hours"} else "context"
+        if identity:
+            match = re.fullmatch(r"`([a-z0-9][a-z0-9.-]*)`", identity)
+            if match is None or match[1] in seen:
+                raise RuntimeError("byteplus: invalid or duplicate pricing identity")
+            native = match[1]
+            seen.add(native)
+            upper = None
+            mode = next_mode
+        elif not seen or provider or mode != next_mode:
+            raise RuntimeError("byteplus: orphan or mixed pricing tier")
+        if tier in {"Off-peak hours", "Peak hours"}:
+            # Time-dependent tariffs remain unsupported for managed routes.
+            normalized_tier = tier
+        elif tier == "Not applicable" and native:
+            normalized_tier = "-"
+        else:
+            interval = re.fullmatch(r"([\[(])([0-9]+), ([0-9]+)\]", tier)
+            lower = 0 if native else upper
+            if (interval is None or lower is None or int(interval[2]) != lower
+                    or int(interval[3]) <= lower or interval[1] != ("[" if native else "(")):
+                raise RuntimeError("byteplus: unknown or noncontiguous pricing tier")
+            upper = int(interval[3])
+            normalized_tier = f"Prompt length {tier}"
+        result.append([native, normalized_tier, _dollar_price(prompt), "-", "-",
+                       _dollar_price(cached), "-", _dollar_price(output)])
+    return result
+
+
+def _modern_video_prices(md: str) -> dict[str, dict[str, int]]:
+    video = _section(md, "## Video generation models", "## Image generation models")
+    pricing = _section(video, "### Pricing", "### Billing rules")
+    rows = _table(_section(pricing, "**Input without video**", "**Input with video**"), 5)
+    if rows[:2] != [["Model", "Online inference", "", "", "Offline inference"],
+                    ["", "480p and 720p", "1080p", "4K", ""]]:
+        raise RuntimeError("byteplus: video pricing columns changed")
+    prices = {}
+    for native, base, high, _four_k, _offline in rows[2:]:
+        if native not in VIDEO_MODELS:
+            continue
+        if native in prices:
+            raise RuntimeError("byteplus: conflicting video tariff")
+        rates = dict.fromkeys(("480p", "720p"), _usd(_dollar_price(base)))
+        if high != "Not supported":
+            rates["1080p"] = _usd(_dollar_price(high))
+        if any(rate <= 0 for rate in rates.values()):
+            raise RuntimeError("byteplus: invalid video tariff")
+        prices[native] = rates
+    if not VIDEO_MODELS.keys() <= prices.keys():
+        raise RuntimeError("byteplus: required video prices missing")
+    return prices
+
+
+def _modern_layout(md: str) -> bool:
+    if "## Large language models" not in md.splitlines():
+        return False
+    preamble = md.split("## Large language models", 1)[0]
+    if "Token prices are **USD per million tokens**." not in preamble:
+        raise RuntimeError("byteplus: token pricing units changed")
+    return True
+
+
 def video_resolution_prices(md: str) -> dict[str, dict[str, int]]:
     """Parse no-video-input list tariffs, never promotional or video-input rates."""
+    if _modern_layout(md):
+        return _modern_video_prices(md)
     try:
         video = md.split("# Video generation models", 1)[1].split("## Pricing", 1)[1].split("## Price examples", 1)[0]
     except IndexError as exc:
@@ -134,13 +227,17 @@ def video_resolution_prices(md: str) -> dict[str, dict[str, int]]:
 
 
 def parse_prices(md: str) -> dict[str, ModelPrice]:
-    try:
-        standard = md.split("## Online inference (standard)", 1)[1].split("## Online inference (Flex)", 1)[0]
-    except IndexError as exc:
-        raise RuntimeError("byteplus: pricing sections changed") from exc
+    if _modern_layout(md):
+        rows = _modern_standard_rows(md)
+    else:
+        try:
+            standard = md.split("## Online inference (standard)", 1)[1].split("## Online inference (Flex)", 1)[0]
+        except IndexError as exc:
+            raise RuntimeError("byteplus: pricing sections changed") from exc
+        rows = _table(standard, 8)
     tiers: dict[str, list[PriceTier]] = {}
     native = ""
-    for cells in _table(standard, 8):
+    for cells in rows:
         native = cells[0] or native
         if not native:
             raise RuntimeError("byteplus: orphan pricing tier")

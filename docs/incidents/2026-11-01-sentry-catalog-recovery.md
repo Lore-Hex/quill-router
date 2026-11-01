@@ -73,6 +73,29 @@ success before restoring it. Regressions exercise both failure and recovery.
 
 ## Still actionable, not cleared
 
+- BytePlus and IO-net both reported catalog expiry on November 3 at
+  12:05:14 UTC in the 14:01 UTC synthetic cycle. The failed guarded refresh
+  preserved their October 20 manifests, correctly retaining the old deadlines.
+  BytePlus's public pricing document now uses separate Standard, Flex, audio,
+  video-input, and video-resolution tables. At 14:17:59 UTC, its unchanged parser
+  failed because the old `Online inference (standard)` heading no longer exists.
+  The parser repair accepts the observed new headers and USD-per-million units,
+  still supports the legacy layout, and rejects ambiguous identities, prices,
+  columns, units, and tiers. Only Standard non-audio and online no-video-input
+  tariffs are selected; time-dependent rates remain excluded. Paid canary,
+  discovery, and gateway-support gates are unchanged. Source:
+  https://docs.byteplus.com/en/docs/modelark/model-pricing
+- IO-net's authenticated `GET /api/v1/models` at 14:18:42 UTC reported
+  `XiaomiMiMo/MiMo-V2.5` input `4e-7`, output `2e-6`, and cache read `2e-7`
+  USD per token. Its first-party payment documentation identifies the models API
+  as the current per-token tariff source:
+  https://io.net/docs/guides/payment/io-intelligence-payments
+  These are $0.40/$2.00/$0.20 per million, versus the stored
+  $0.199/$0.638/$0.0995. Exact reviewed transitions cover the existing snapshot
+  and native-manifest identities. Other prices and future changes remain subject
+  to the unchanged twofold guard. Neither this approval nor the BytePlus parser
+  repair manually changes committed prices or advances freshness timestamps.
+  A successful normal refresh, publication CI, and deployment are still required.
 - Inception (distinct from Inceptron) retained its October 19 catalog because
   Mercury 2.5's three prices increased fivefold and the refresh correctly held
   them for review. At November 1 13:31:02 UTC the authenticated
