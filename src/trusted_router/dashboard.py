@@ -129,7 +129,6 @@ from trusted_router.seo_meta import (
     SEO_TITLE_MAX_LENGTH,
     seo_meta_description,
     seo_title,
-    truncate_seo_text,
 )
 from trusted_router.speech import SPEECH_MODELS, speech_metadata
 from trusted_router.storage_models import BedrockGroupBuyPledge
@@ -2394,8 +2393,8 @@ def _provider_hero(provider: Provider, credits_model_count: int) -> tuple[str, s
 
 
 def _seo_comparison_title(left: Model, right: Model) -> str:
-    left_name = _seo_model_name(left)
-    right_name = _seo_model_name(right)
+    left_name = " ".join(_hero_model_name(left).split())
+    right_name = " ".join(_hero_model_name(right).split())
     base = f"{left_name} vs {right_name}"
     detailed_suffix = ": Price, Speed & Context"
     compact_suffix = ": Price & Speed"
@@ -2403,11 +2402,9 @@ def _seo_comparison_title(left: Model, right: Model) -> str:
         return f"{base}{detailed_suffix}"
     if len(f"{base}{compact_suffix}") <= SEO_TITLE_MAX_LENGTH:
         return f"{base}{compact_suffix}"
-    name_budget = (SEO_TITLE_MAX_LENGTH - len(" vs ") - len(compact_suffix)) // 2
-    return (
-        f"{truncate_seo_text(left_name, name_budget)} vs "
-        f"{truncate_seo_text(right_name, name_budget)}{compact_suffix}"
-    )
+    # Model versions and sizes distinguish the query intent. Drop boilerplate
+    # before names; the search engine can choose its own display truncation.
+    return base
 
 
 @lru_cache(maxsize=1)
@@ -4368,6 +4365,7 @@ def public_model_compare_html(settings: Settings, left_id: str, right_id: str) -
             api_base_url=settings.api_base_url,
             site_url=f"https://{settings.trusted_domain}{site_path}",
             title=_seo_comparison_title(left, right),
+            preserve_title=True,
             heading=f"{left.name} vs {right.name}",
             hero_label=hero_label,
             hero_pitch=hero_pitch,
