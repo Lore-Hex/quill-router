@@ -34,6 +34,12 @@ This repairs refresh isolation; it does not manufacture a fresh price for the
 deprecated Mistral model or approve its replacement. Missing tariffs remain held
 for review. No committed prices change in this patch.
 
+A live public-source dry run against a temporary snapshot refreshed three of four
+providers and held Mistral for its missing tariff. It exited successfully, kept the
+October 26 `checked_on` date, and left the committed snapshot byte-for-byte
+unchanged. The temporary Privatemode prices reflected the current ECB feed; they
+were not published.
+
 ### Databricks Inkling
 
 Production synthetic metadata recorded HTTP 404, endpoint `databricks-inkling`
@@ -89,6 +95,11 @@ health test excluded by the normal release marker. Full local gates, exact-head
 CI, guarded deployment, and production verification must complete before this
 incident can be described as repaired in production. No Sentry issue has been
 muted or resolved to substitute for those checks.
+
+The first PR CI run passed Ruff and mypy but rejected stale catalog change
+history. The existing generator recorded exactly the three intended endpoint
+removals; no gate was relaxed. Local suite runs interrupted before this complete
+artifact update are not full-suite passes.
 
 Diagnostics used selected Sentry metadata and bounded synthetic-only ClickHouse
 queries with a 200-result limit, one-million-row read ceiling, 15-second execution
