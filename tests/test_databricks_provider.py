@@ -12,6 +12,7 @@ from scripts.pricing.providers import databricks
 from scripts.pricing.refresh import PROVIDER_SLUGS
 from tests import catalog_vehicles
 from trusted_router.catalog import PROVIDERS
+from trusted_router.provider_lifecycle import provider_model_retired
 from trusted_router.providers import OPENAI_COMPATIBLE_PROVIDERS, ProviderClient
 from trusted_router.services.inference_errors import default_provider_secret_ref
 
@@ -334,6 +335,9 @@ def test_databricks_canaried_manifest_routes_are_in_catalog() -> None:
 
     built = catalog_vehicles.registry_endpoints()
     for model_id, row in active.items():
+        if provider_model_retired("databricks", model_id, row["upstream_id"]):
+            assert f"{model_id}@databricks/prepaid" not in built
+            continue
         endpoint = built[f"{model_id}@databricks/prepaid"]
         assert endpoint.upstream_id == row["upstream_id"]
         assert endpoint.usage_type == "Credits"

@@ -1,8 +1,9 @@
-"""Guarded transcription tariffs; never reinterpret audio prices as token rates."""
+"""Guarded, source-isolated transcription tariffs with explicit review holds."""
 from __future__ import annotations
 
 import json
 import re
+from copy import deepcopy
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -11,6 +12,7 @@ from typing import Any
 import requests
 from bs4 import BeautifulSoup
 
+from scripts.pricing.base import safe_exception_summary
 from scripts.pricing.currency import ECB_FX_URL, eur_microdollars_per_million, usd_per_eur
 from trusted_router.transcription import TRANSCRIPTION_MODELS
 
@@ -93,34 +95,76 @@ def parse_price(model: str, raw: str, *, usd_eur_rate: Decimal | None = None) ->
     return int(micro)
 
 
-def refresh() -> None:
-    before = json.loads(SNAPSHOT.read_text())
-    if before.get("unit") != "microdollars":
-        raise ValueError("Invalid transcription price unit")
-    after: dict[str, Any] = {"unit": "microdollars", "minute_prices": {}, "request_prices": {}, "token_prices": {}}
-    fx_response = requests.get(ECB_FX_URL, timeout=30)
-    fx_response.raise_for_status()
-    rate = usd_per_eur(fx_response.text)
+def _fetch_text(url: str) -> str:
+    response = requests.get(url, timeout=30)
+    response.raise_for_status()
+    return response.text
+
+
+def _source_prices(provider: str, before: dict[str, Any]) -> dict[str, Any]:
+    updates: dict[str, Any] = {"minute_prices": {}, "request_prices": {}, "token_prices": {}}
+    rate = usd_per_eur(_fetch_text(ECB_FX_URL)) if provider == "privatemode" else None
+    pages: dict[str, str] = {}
     for model, spec in TRANSCRIPTION_MODELS.items():
-        response = requests.get(spec.pricing_source, timeout=30)
-        response.raise_for_status()
+        if spec.provider != provider:
+            continue
+        if spec.pricing_source not in pages:
+            pages[spec.pricing_source] = _fetch_text(spec.pricing_source)
+        raw = pages[spec.pricing_source]
         if spec.token_billed:
-            token_prices = parse_token_prices(response.text)
+            token_prices = parse_token_prices(raw)
             for kind, price in token_prices.items():
                 previous = before["token_prices"][model][kind]
                 if price >= previous * 2 or price * 2 <= previous:
                     raise ValueError(f"Transcription token price change requires review: {model} {kind}")
-            after["token_prices"][model] = token_prices
+            updates["token_prices"][model] = token_prices
             continue
-        price = parse_price(model, response.text, usd_eur_rate=rate)
+        price = parse_price(model, raw, usd_eur_rate=rate)
         kind = "request_prices" if spec.request_cost_microdollars else "minute_prices"
         previous = before[kind][model]
         if price >= previous * 2 or price * 2 <= previous:
             raise ValueError(f"Transcription price change requires review: {model}")
-        after[kind][model] = price
-    after["checked_on"] = datetime.now(UTC).date().isoformat()
+        updates[kind][model] = price
+    return updates
+
+
+def refresh() -> int:
+    before = json.loads(SNAPSHOT.read_text())
+    if before.get("unit") != "microdollars":
+        raise ValueError("Invalid transcription price unit")
+    providers = sorted({spec.provider for spec in TRANSCRIPTION_MODELS.values()})
+    after = deepcopy(before)
+    held: dict[str, str] = {}
+    for provider in providers:
+        try:
+            updates = _source_prices(provider, before)
+        except Exception as exc:  # noqa: BLE001 - hold the entire source, never partially publish it
+            reason = f"ValueError: {exc}" if isinstance(exc, ValueError) else safe_exception_summary(exc)
+            held[provider] = f"refresh failed: {reason}"
+            continue
+        for section, rows in updates.items():
+            after[section].update(rows)
+
+    systemic = len(held) * 2 > len(providers)
+    if systemic:
+        print(f"Systemic transcription refresh failure: {len(held)}/{len(providers)} sources failed; nothing published.")
+    else:
+        print(f"Transcription price refresh: {len(providers)} sources, {len(held)} held")
+    if held:
+        print("Held for price review (last published prices kept):")
+        for provider, reason in held.items():
+            print(f"  {provider}: {reason}")
+        print()
+        print("::warning title=Transcription prices held for review::"
+              f"{', '.join(held)} kept their committed prices. Repair the source or review the price change.")
+    if systemic:
+        return 1
+    # A successful partial run must not re-date the held tariffs as fresh.
+    if not held:
+        after["checked_on"] = datetime.now(UTC).date().isoformat()
     SNAPSHOT.write_text(json.dumps(after, indent=2, sort_keys=True) + "\n")
+    return 0
 
 
 if __name__ == "__main__":
-    refresh()
+    raise SystemExit(refresh())

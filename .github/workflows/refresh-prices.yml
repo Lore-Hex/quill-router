@@ -263,7 +263,7 @@ jobs:
         run: |
           set -o pipefail
           uv run python -m scripts.pricing.speech | tee /tmp/speech-summary.txt
-          uv run python -m scripts.pricing.transcription
+          uv run python -m scripts.pricing.transcription | tee /tmp/transcription-summary.txt
           uv run python -m scripts.pricing.refresh | tee /tmp/refresh-summary.txt
           uv run python -m scripts.pricing.openrouter_reasoning
 
@@ -650,10 +650,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          # Language-model providers (refresh.py) and speech price sources
-          # (speech.py) hold independently and report under the same heading.
+          # Language-model, speech, and transcription sources hold independently
+          # and report under the same heading.
           summaries=""
-          for summary in /tmp/refresh-summary.txt /tmp/speech-summary.txt; do
+          for summary in /tmp/refresh-summary.txt /tmp/speech-summary.txt /tmp/transcription-summary.txt; do
             if [ -s "${summary}" ] && grep -q '^Held for price review' "${summary}"; then
               summaries="${summaries} ${summary}"
             fi

@@ -24,6 +24,7 @@ from datetime import UTC, datetime, timedelta, timezone
 LIFECYCLE_CLOCK_OVERRIDE_ENV = "TR_LIFECYCLE_CLOCK_OVERRIDE"
 
 PHALA_JULY_2026_EFFECTIVE_AT = datetime(2026, 7, 29, 18, 0, tzinfo=UTC)
+DATABRICKS_INKLING_RETIREMENT_AT = datetime(2026, 10, 30, 0, 0, tzinfo=UTC)
 TOGETHER_MINIMAX_M27_RETIREMENT_AT = datetime(2026, 7, 27, 0, 0, tzinfo=UTC)
 TOGETHER_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 14, 0, 0, tzinfo=UTC)
 TOGETHER_OCTOBER_22_RETIREMENT_AT = datetime(2026, 10, 22, 0, 0, tzinfo=UTC)
@@ -224,6 +225,16 @@ def provider_retirements() -> tuple[_Retirement, ...]:
 
 
 _RETIREMENTS = (
+    # Databricks' date-only PAYGO retirement notice; do not silently substitute
+    # its suggested GLM/Kimi replacements or retire other providers' Inkling.
+    # https://docs.databricks.com/aws/en/machine-learning/retired-models-policy
+    _Retirement(
+        provider="databricks",
+        model_ids=frozenset({"thinkingmachines/inkling"}),
+        upstream_ids=frozenset({"databricks-inkling"}),
+        effective_at=DATABRICKS_INKLING_RETIREMENT_AT,
+        replacement_model_ids=("z-ai/glm-5.3", "moonshotai/kimi-k3"),
+    ),
     # Official FAQ observed 2026-10-19 marks these retired even though the
     # list API still advertises them. Other providers are unaffected.
     # https://platform.minimax.io/docs/faq/models

@@ -1875,7 +1875,8 @@
       "status": 1,
       "id": "meta-llama/llama-3.2-11b-vision-instruct",
       "upstream_id": "meta/llama-3.2-11b-vision-instruct",
-      "routable": true,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000
     },
