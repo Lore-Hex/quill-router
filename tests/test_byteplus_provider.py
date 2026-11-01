@@ -33,6 +33,105 @@ The Seedance 2.5 promotion ended 2026-09-17.
 """
 
 
+# Public table layout and tariff cells checked on 2026-11-01.
+MODERN_MD = r"""
+Token prices are **USD per million tokens**.
+## Large language models
+### Pricing
+#### Non\-audio input
+**Standard**
+|Provider |Model ID |Prompt length (K tokens) |Input |Cached input |Cache storage |Output |
+|---|---|---|---|---|---|---|
+|ByteDance |`dola-seed-2-1-turbo` |[0, 256] |$0.5 |$0.1 |$0.0083 |$2.5 |
+||`seed-2-0-pro-260328` |[0, 128] |$0.50 |$0.10 |$0.0083 |$3.00 |
+|||(128, 256] |$1.00 |$0.20 |$0.0083 |$6.00 |
+|DeepSeek |`deepseek-v4-1-flash-260910` |Off\-peak hours |$0.15 |$0.003 |$0.0083 |$0.60 |
+|||Peak hours |$0.30 |$0.006 |$0.0083 |$1.20 |
+||`deepseek-v4-flash-ga-260731` |Not applicable |$0.44 |$0.014 |$0.0083 |$1.32 |
+**Flex**
+|Provider |Model ID |Prompt length (K tokens) |Input |Cached input |Output |
+|---|---|---|---|---|---|
+|ByteDance |`dola-seed-2-1-turbo` |[0, 256] |$0.25 |$0.10 |$1.25 |
+#### Audio input
+**Standard**
+|Provider |Model ID |Input |
+|---|---|---|
+|ByteDance |`dola-seed-2-1-turbo` |$9.00 |
+## Video generation models
+### Pricing
+**Input without video**
+|Model |Online inference |||Offline inference |
+|---|---|---|---|---|
+| |480p and 720p |1080p |4K | |
+|dreamina\-seedance\-2\-5\-260628 |$10.70 |$11.7 |Not supported |Not supported |
+|dreamina\-seedance\-2\-0\-260128 |$7.0 |$7.7 |$4.0 |Not supported |
+|dreamina\-seedance\-2\-0\-fast\-260128 |$5.6 |Not supported |Not supported |Not supported |
+**Input with video**
+|Model |Online inference |||Offline inference |
+|---|---|---|---|---|
+| |480p and 720p |1080p |4K | |
+|dreamina\-seedance\-2\-5\-260628 |$6.40 |$7.0 |Not supported |Not supported |
+### Billing rules
+### Billing examples
+**Input without video**
+|Resolution |Price (per video) |
+|---|---|
+|720p |$0.514 |
+## Image generation models
+### Pricing
+"""
+
+
+def test_modern_layout_matches_standard_and_resolution_tariffs():
+    prices = byteplus.parse_prices(MODERN_MD)
+    legacy = byteplus.parse_prices(MD)
+    assert all(prices[native] == price for native, price in legacy.items())
+    assert prices["deepseek-v4-flash-ga-260731"].prompt_micro_per_m == 440_000
+    assert prices["deepseek-v4-flash-ga-260731"].completion_micro_per_m == 1_320_000
+    assert "deepseek-v4-1-flash-260910" not in prices
+    assert byteplus.video_resolution_prices(MODERN_MD) == byteplus.video_resolution_prices(MD)
+
+
+@pytest.mark.parametrize("old,new", [
+    ("USD per million tokens", "USD per thousand tokens"),
+    ("**Standard**\n|Provider", "**Other**\n|Provider"),
+    ("|Input |Cached input |Cache storage |Output |", "|Input |Output |Cache storage |Cached input |"),
+    ("|$0.50 |$0.10", "|$0.50 or $0.25 |$0.10"),
+    ("|$0.50 |$0.10", "|EUR0.50 |$0.10"),
+    ("|(128, 256]", "|Unknown tier"),
+    ("**Input without video**\n|Model", "**Other input**\n|Model"),
+    ("|480p and 720p |1080p |4K |", "|480p and 720p |4K |1080p |"),
+    ("|$10.70 |$11.7", "|$10.70 |$0"),
+    ("|$10.70 |$11.7", "|$10.70 |$11.7 or $8.4"),
+    ("dreamina\\-seedance\\-2\\-5\\-260628", "unknown-video-model"),
+])
+def test_modern_layout_rejects_ambiguous_units_sections_and_columns(old, new):
+    with pytest.raises((RuntimeError, ValueError)):
+        byteplus.parse_prices(MODERN_MD.replace(old, new))
+
+
+def test_modern_layout_duplicate_video_tariff_fails_closed():
+    row = "|dreamina\\-seedance\\-2\\-5\\-260628 |$10.70 |$11.7 |Not supported |Not supported |"
+    with pytest.raises(RuntimeError):
+        byteplus.parse_prices(MODERN_MD.replace(row, row + "\n" + row))
+
+
+@pytest.mark.parametrize("old,new", [
+    ("**Standard**\n|Provider", "**Standard**\n**Standard**\n|Provider"),
+    ("`seed-2-0-pro-260328`", "`dola-seed-2-1-turbo`"),
+    ("`dola-seed-2-1-turbo`", "unknown identity"),
+    ("|ByteDance |`dola-seed-2-1-turbo`", "|ByteDance |"),
+    ("|(128, 256]", "|(129, 256]"),
+    ("|(128, 256]", "|[128, 256]"),
+    ("|(128, 256]", "|(128, 128]"),
+    ("|(128, 256]", "|Peak hours"),
+    ("|||Peak hours", "|||(0, 128]"),
+])
+def test_modern_layout_rejects_duplicate_or_misaligned_tiers(old, new):
+    with pytest.raises(RuntimeError):
+        byteplus.parse_prices(MODERN_MD.replace(old, new))
+
+
 def catalog():
     return {"data": [
         {"id": "dola-seed-2-1-turbo-260628", "domain": "VLM", "token_limits": {"context_window": 262144, "max_output_token_length": 262144}},
@@ -95,11 +194,12 @@ def test_price_shape_change_is_not_silently_accepted(bad):
         byteplus.parse_prices(bad)
 
 
-def test_discovery_live_statuses_unknown_prices_and_rollout_gate(monkeypatch):
+@pytest.mark.parametrize("md", [MD, MODERN_MD], ids=["legacy", "modern"])
+def test_discovery_live_statuses_unknown_prices_and_rollout_gate(monkeypatch, md):
     monkeypatch.setattr(byteplus, "NATIVE_ROUTES_DEPLOYED", False)
     payload = catalog()
     payload["data"][1]["status"] = "Shutdown"
-    prices, rows = byteplus.discover(payload, MD)
+    prices, rows = byteplus.discover(payload, md)
     assert "bytedance/seed-2-0-pro-260328" not in prices
     assert rows["bytedance/seed-2-0-pro-260328"]["routable_reason"] == "provider-retired"
     assert rows["bytedance/unpriced-new-model"]["routable_reason"] == "awaiting-price"
@@ -110,13 +210,14 @@ def test_discovery_live_statuses_unknown_prices_and_rollout_gate(monkeypatch):
         assert rows[model]["routable"] is False
 
 
-def test_refresh_canaries_manifest_and_safety_holds(monkeypatch, tmp_path):
+@pytest.mark.parametrize("md", [MD, MODERN_MD], ids=["legacy", "modern"])
+def test_refresh_canaries_manifest_and_safety_holds(monkeypatch, tmp_path, md):
     monkeypatch.setattr(byteplus, "NATIVE_ROUTES_DEPLOYED", False)
     path = tmp_path / "byteplus.json"
     monkeypatch.setattr(byteplus, "MANIFEST_PATH", path)
     monkeypatch.setenv("BYTEPLUS_API_KEY", "test-key")
     monkeypatch.setattr(byteplus, "fetch_json", lambda *_a, **_kw: catalog())
-    monkeypatch.setattr(byteplus, "fetch_html", lambda *_a, **_kw: html())
+    monkeypatch.setattr(byteplus, "fetch_html", lambda *_a, **_kw: html(md))
     probed = []
     def probe(**kw):
         probed.append(kw["model"])
