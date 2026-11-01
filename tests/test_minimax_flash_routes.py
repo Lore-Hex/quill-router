@@ -10,7 +10,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from scripts.pricing.providers import gmi, novita, together, venice
+from scripts.pricing.providers import gmi, novita, together, venice, zro
 from trusted_router import provider_lifecycle
 from trusted_router.catalog import MODELS, endpoints_for_model
 from trusted_router.catalog_data import _PROVIDER_UNSERVED_CREDITS_MODELS
@@ -57,8 +57,14 @@ def test_flash_has_verified_prepaid_routes_and_preserves_native_ids() -> None:
         "together": NATIVE,
         "venice": "minimax-m3-1-flash",
         "wafer": "MiniMax-M3.1-Flash",  # Wafer serves MiniMax's own id
-        "zro": "minimax-m3.1-flash",  # ZRO serves the bare model name
     }
+    # ZRO rejected this exact route and removed it from discovery on Nov 1.
+    # Preserve its native ID for a future successful recovery canary.
+    zro_row = next(row for row in json.loads(zro.MANIFEST_PATH.read_text())["models"] if row["id"] == MODEL)
+    assert zro_row["upstream_id"] == "minimax-m3.1-flash"
+    assert zro_row["routable"] is False
+    assert zro_row["routable_reason"] == "provider-canary-failed"
+    assert "zro" not in routes
     # NIM declares no tool support and carries NVIDIA's conservative hosted
     # rate, so it never wins cheapest-route selection for this model.
     assert {p: endpoint_capabilities(MODELS[MODEL], e)["tools"] for p, e in routes.items()} == {
