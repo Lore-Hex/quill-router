@@ -87,7 +87,8 @@ const (
 	AlertUnavailableSustained = "edge_decide_unavailable_sustained"
 	// AlertSlowPass: a forwarded pass spent more than SlowAtEdge at the edge
 	// before it was forwarded, or Python's answer to it came more than
-	// SlowInAll after its arrival (decision 12).
+	// SlowInAll after its arrival (decision 12). The message's counts name
+	// each pass slow at the edge's phase too (at_edge.<phase>, slowPhase).
 	AlertSlowPass = "edge_decide_pass_slow"
 	// AlertWindowUnread: more than WindowUnreadShare of the period's window
 	// reads (at least WindowUnreadMin of them) failed or ran past their
@@ -110,6 +111,23 @@ const (
 	// one or two slow reads in a quiet minute.
 	WindowUnreadShare = 0.01
 	WindowUnreadMin   = 3
+)
+
+// The phases of a request's time at the edge, from one of its marks to the
+// next (edgeMarks), that a pass slow at the edge is counted under besides
+// at_edge, as at_edge.<phase>: the body's read; the boot check, whose boot
+// is read from the store on a cache miss (a cold boot, or one past BootTTL)
+// for up to BootWait; the decide pipeline, which reads only what the edge
+// holds; and the admission after the decision (the in-flight count, an
+// enforcing windowed key's window read, the owner's admit and the insert,
+// whose passed counts of the same period, key_window.unread, budget.spent,
+// owner.* and insert.*, say which). A request the edge passes before reading its body
+// whole is never counted slow, so it has no phase.
+const (
+	SlowPhaseBody   = "body"
+	SlowPhaseBoot   = "boot"
+	SlowPhaseDecide = "decide"
+	SlowPhaseAdmit  = "admit"
 )
 
 // refundMoney is a refund's money fields, Python's
@@ -167,8 +185,9 @@ type decider struct {
 // decideTally is the decide path's counts: the requests answered (of which
 // read back, the 200 after a read-back), the 503s of an outcome not known
 // by the insert's gRPC code, the refunds sent and failed, the requests
-// passed by §3 reason, the forwarded passes slow at the edge (at_edge) or
-// in all (in_all), and the window checks (windows: reads made, unread,
+// passed by §3 reason, the forwarded passes slow at the edge (at_edge, and
+// at_edge.<phase> by the phase each spent the most time in) or in all
+// (in_all), and the window checks (windows: reads made, unread,
 // latency.<bucket>, verdict.<outcome>).
 type decideTally struct {
 	answered, readBack, refunded, refundFailed int64
@@ -196,6 +215,31 @@ func (dp *decider) count(add func(*decideTally)) {
 	add(&dp.period)
 }
 
+// edgeMarks are the instants a request's time at the edge is told apart by:
+// its arrival, the end of its body's read and the end of its boot check
+// (verdictOf). With the end of the decide pipeline and the pass itself they
+// bound the four phases slowPhase chooses among.
+type edgeMarks struct{ arrived, read, checked time.Time }
+
+// slowPhase is the phase a pass slow at the edge is counted under: the one
+// it spent the most time in, from its marks, routed (the decide pipeline's
+// end) and forwarded (the pass); of phases that took the same time, the
+// earlier. The longest, not the one during which the pass crossed
+// SlowAtEdge: a 0.6 s body read and a 0.5 s boot read are the body's, since
+// the boot read alone would not have made the pass slow.
+func slowPhase(m edgeMarks, routed, forwarded time.Time) string {
+	phase, longest := SlowPhaseBody, m.read.Sub(m.arrived)
+	for _, p := range []struct {
+		name     string
+		from, to time.Time
+	}{{SlowPhaseBoot, m.read, m.checked}, {SlowPhaseDecide, m.checked, routed}, {SlowPhaseAdmit, routed, forwarded}} {
+		if took := p.to.Sub(p.from); took > longest {
+			phase, longest = p.name, took
+		}
+	}
+	return phase
+}
+
 // decidePassed is what the proxy carries of a request the decide path
 // passed: what it named, for the eviction Python's refusal makes, its
 // arrival, for the time Python's answer took in all, and the §3 reason it
@@ -209,12 +253,14 @@ type decidePassed struct {
 
 type decidePassedKey struct{}
 
-// decide runs the decide path over a request the edge read. It reports
+// decide runs the decide path over a request the edge read, its marks the
+// instants of its arrival, its body's read and its boot check. It reports
 // whether it answered; when it did not, the request passes to Python and
 // passed is what the proxy carries of it.
-func (e *Edge) decide(w http.ResponseWriter, r *http.Request, at, arrived time.Time, body []byte,
+func (e *Edge) decide(w http.ResponseWriter, r *http.Request, at time.Time, marks edgeMarks, body []byte,
 	seen BootSeen) (answered bool, passed decidePassed) {
 	dp := e.decider
+	arrived := marks.arrived
 	in := DecideInputs{Request: RequestOf(r, at, body, seen), Lookup: dp.cfg.Cache.Lookup, Decide: dp.decides.view(),
 		Mint: dp.cfg.Mint}
 	if e.poller != nil {
@@ -233,8 +279,13 @@ func (e *Edge) decide(w http.ResponseWriter, r *http.Request, at, arrived time.T
 	pass := func(reason string) (bool, decidePassed) {
 		dp.pass(reason)
 		passed.reason = reason
-		if time.Since(arrived) > dp.slowAtEdge {
-			dp.count(func(t *decideTally) { t.slow["at_edge"]++ })
+		// Counted at_edge, the total the alert and the rollout gate read,
+		// and under the phase it spent the most time in (slowPhase), so
+		// that a minute's slow pass with no owner, insert or budget reason
+		// beside it still says where its time went.
+		if forwarded := time.Now(); forwarded.Sub(arrived) > dp.slowAtEdge {
+			phase := "at_edge." + slowPhase(marks, routed, forwarded)
+			dp.count(func(t *decideTally) { t.slow["at_edge"]++; t.slow[phase]++ })
 		}
 		return false, passed
 	}
@@ -468,8 +519,8 @@ func pauseAnswer(resp *http.Response) bool {
 // requests it answered (of which read back, the 200 after a read-back), the
 // 503s of an outcome not known (and by the insert's gRPC code), the refunds
 // sent and failed, the requests it passed by §3 reason, the forwarded
-// passes slow at the edge (at_edge) or in all (in_all), and its window
-// checks (decideTally's windows).
+// passes slow at the edge (at_edge, and at_edge.<phase> by slowPhase) or in
+// all (in_all), and its window checks (decideTally's windows).
 type DecideCounts struct {
 	Answered, ReadBack, Unavailable, Refunded, RefundFailed int64
 	UnavailableByCode, Passed, Slow, Windows                map[string]int64
@@ -553,7 +604,9 @@ func (dp *decider) flush() {
 	}
 	if len(p.slow) > 0 {
 		dp.alert(AlertSlowPass, fmt.Sprintf("forwarded passes over %v at the edge (at_edge) or over %v in all "+
-			"(in_all): %s", dp.slowAtEdge, dp.slowInAll, jsonOf(p.slow)))
+			"(in_all): %s; each at_edge pass is counted again under the phase it spent the most time in "+
+			"(at_edge.body, at_edge.boot, at_edge.decide or at_edge.admit)", dp.slowAtEdge, dp.slowInAll,
+			jsonOf(p.slow)))
 	}
 	if unread, reads := p.windows["unread"], p.windows["reads"]; unread >= WindowUnreadMin &&
 		float64(unread) > WindowUnreadShare*float64(max(reads, unread)) {

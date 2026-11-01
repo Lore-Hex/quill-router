@@ -421,6 +421,9 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxBody+1))
+	// The end of the body's read, and below of the boot check: the marks
+	// that tell a slow pass's time at the edge apart (edgeMarks).
+	read := time.Now()
 	if err != nil {
 		answer(w, http.StatusBadRequest, "The request body could not be read", "bad_request")
 		return
@@ -448,10 +451,11 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if printableASCII(path) {
 		seen = e.verdictOf(r.Context(), headers, r.Method, path, body)
 	}
+	checked := time.Now()
 	verdict := seen.Verdict
 	ctx := context.WithValue(r.Context(), verdictKey{}, verdict)
 	if e.decider != nil && r.Method == http.MethodPost && authorizeRoutes[r.URL.Path] {
-		answered, passed := e.decide(w, r, at, arrived, body, seen)
+		answered, passed := e.decide(w, r, at, edgeMarks{arrived: arrived, read: read, checked: checked}, body, seen)
 		if answered {
 			return
 		}

@@ -173,7 +173,12 @@ The flow, per request, in this order:
     forwarded pass can still exceed 25 s. That is the tightest Go may go:
     G11 fails a test if any budget here grows, and G12 alerts on forwarded
     passes that spent more than 1 s at the edge and on any forwarded pass
-    past 25 s in all.
+    past 25 s in all. The 1 s at the edge runs from the request's arrival,
+    so it includes the body's read and the boot check's read of a boot not
+    cached (up to `BootWait`, 2 s) as well as the decision and the
+    admission; each pass past it is counted `at_edge` and again under the
+    longest of those four phases (`at_edge.body`, `at_edge.boot`,
+    `at_edge.decide`, `at_edge.admit`).
 13. **Response encoding.** Identity-encoded JSON, `Content-Type:
     application/json`, `Content-Length`, and the bytes FastAPI's pydantic-core
     fast path writes for the 200 (§6): insertion order, raw UTF-8,
