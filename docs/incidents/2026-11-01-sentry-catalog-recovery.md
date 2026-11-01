@@ -242,9 +242,19 @@ workflow listing. The normal observer was dispatched once as 41355399811 and
 completed successfully at 22:06:46. This repairs the immediate observer execution
 gap, not the unestablished cause of missed GitHub scheduling or proof of durable
 Cron recovery. The monitor schedule, grace, alert logic, and durable ledger were
-not weakened or edited.
+not weakened or edited. A subsequent read-only Sentry Cron check at 22:15:50
+independently confirmed production status `ok` and the accepted 22:06 check-in,
+while retaining the prior missed check-ins. This confirms immediate recovery,
+not prevention of another scheduling gap.
 
 All seven new route-hold regression cases failed before the follow-up changes;
 the three retained Qwen hold cases passed. Full local gates, exact-head and
 merged-source CI, normal deployment, and fresh production checks remain required
 for these two additional route corrections.
+
+The first follow-up PR CI post-cutover shard found a stale generated fastpath
+alias corpus after Nemo lost its final routes. The unchanged generator removes
+exactly seven Nemo spellings; canonicalization and the Go port are unchanged.
+Its parity test remains mandatory. The first local full-suite run was stopped
+to update that artifact and is not a full-suite pass; a fresh complete run and
+exact-head CI are required on the corrected tree.
