@@ -106,6 +106,8 @@ required the rejected ZRO route. It now explicitly checks the exact native ID,
 recoverable hold reason, and exclusion while preserving every other host's
 native-ID and capability assertions. Neighboring route and recovery tests pass
 under both the normal clock and CI's May 1, 2027 post-cutover clock.
+The existing held-price workflow test also now requires all three summary files,
+including transcription, while retaining its publication and alert-gate checks.
 
 Diagnostics used selected Sentry metadata and bounded synthetic-only ClickHouse
 queries with a 200-result limit, one-million-row read ceiling, 15-second execution
