@@ -105,6 +105,17 @@ success before restoring it. Regressions exercise both failure and recovery.
 
 ## Verification scope
 
+The first guarded refresh after #2239 passed the formerly crashing transcription
+step but its generated commit `1de4926d38a784559b356a1258d08b0f899b7012`
+failed CI: a third `decision-models` catalog entry required an origin-metadata
+row, and a routing unit test assumed DeepSeek always outranked Anthropic despite
+fresh measured evidence. Both failures reproduced unchanged under the CI
+post-cutover clock. The follow-up documents Baseten/Base Labs' Qwen3.5-derived
+namespace without inferring a country or confusing it with Decision Models IO,
+and tests throughput ordering against two explicit, opposite rank maps. The
+three-model metadata threshold, real ranking evidence, routing implementation,
+and publication gate remain unchanged. The failed snapshot is not published.
+
 The missing-tariff regression reproduced the original exception before the fix.
 Both Databricks retirement regressions failed before the retirement rule.
 Focused pricing, discovery, route, and recovery tests: 120 passed, one live-provider

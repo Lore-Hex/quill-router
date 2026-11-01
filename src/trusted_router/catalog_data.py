@@ -4398,6 +4398,19 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
         ),
     ),
     # --- No single creator country ---
+    "decision-models": ModelOrigin(
+        country=None,
+        lab_name="Baseten / Base Labs decision-model namespace",
+        source_url="https://www.baseten.co/blog/decisions-for-a-penny-introducing-joey-1/",
+        note=(
+            "Baseten's October 29 announcement identifies Base Labs as the "
+            "post-training team for joey-1, elephant-1, and mammoth-1, built "
+            "from Qwen3.5 weights. This API namespace does not establish a "
+            "single origin country for the underlying weights and post-training. "
+            "It is distinct from the decisionmodelsio serving namespace; "
+            "neither provider jurisdiction is inferred as model origin."
+        ),
+    ),
     "sao10k": _MODEL_ORIGIN_INDEPENDENT_SAO10K,
     "Sao10K": _MODEL_ORIGIN_INDEPENDENT_SAO10K,
     "abliteration": ModelOrigin(

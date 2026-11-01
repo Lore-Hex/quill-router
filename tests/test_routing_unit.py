@@ -459,8 +459,22 @@ def test_allow_fallbacks_false_uses_first_models_entry_when_model_is_absent() ->
     assert [candidate.id for candidate in candidates] == ["openai/gpt-5.4-nano"]
 
 
-def test_chat_route_candidates_sort_by_throughput_uses_rank_table() -> None:
+@pytest.mark.parametrize("rank_order", [
+    ("cerebras", "deepseek", "openai", "anthropic"),
+    ("anthropic", "openai", "deepseek", "cerebras"),
+])
+def test_chat_route_candidates_sort_by_throughput_uses_rank_table(
+    monkeypatch: pytest.MonkeyPatch, rank_order: tuple[str, ...],
+) -> None:
     """sort=throughput orders by the configured throughput-rank map."""
+    ranks = {provider: index for index, provider in enumerate(rank_order)}
+
+    def rank(provider, sort):
+        assert sort == "throughput"
+        return ranks[provider]
+
+    # Hourly production measurements can legitimately reverse the old order.
+    monkeypatch.setattr("trusted_router.routing.measured_provider_rank", rank)
     candidates = chat_route_candidates(
         {
             "models": [
@@ -473,10 +487,7 @@ def test_chat_route_candidates_sort_by_throughput_uses_rank_table() -> None:
         },
         _settings(),
     )
-    providers_in_order = [c.provider for c in candidates]
-    # cerebras + deepseek should land before openai + anthropic.
-    assert providers_in_order.index("cerebras") < providers_in_order.index("openai")
-    assert providers_in_order.index("deepseek") < providers_in_order.index("anthropic")
+    assert [c.provider for c in candidates] == list(rank_order)
 
 
 def test_chat_route_candidates_sort_by_price_orders_cheapest_first() -> None:
