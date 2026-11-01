@@ -1,7 +1,8 @@
 # Streams on the fast-path lease: turning them on, gate P, the way back
 
 What `docs/design/fast-admission-streams.md` §5, §8.3 and §10 ask of an
-operator. Two settings, both literal `false` in `scripts/deploy/rollout.sh`:
+operator. Two settings, both literals in `scripts/deploy/rollout.sh`
+(the pilot's on since 2026-11-01 for gate P, the edge's `false`):
 
 - `TR_FASTPATH_PILOT_STREAMS`: Python's pilot admits a stream the enclave
   heartbeats under a lease (§5.1's rule, below);
@@ -14,7 +15,7 @@ operator. Two settings, both literal `false` in `scripts/deploy/rollout.sh`:
 
 1. **Increment 2b on every owner and front door.** Check each node's
    running release as `fastpath-deploy.md` does under "Taking a pinned
-   release": every member reports increment 2b's release (#2212) or later.
+   release": every member reports increment 2b's release (#2220) or later.
    Python sends `EchoGranted` on every heartbeat after a stream's first, and
    a node from before increment 2 refuses it; before 2b an auditor that
    drains a lease reaps a stream without the reap floor
