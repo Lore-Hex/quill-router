@@ -42,6 +42,28 @@ DEFAULT_SPIKE_RATIO = 2.0  # 100% increase = ≥2× the previous value
 # route, dimension, old value, or new value still fails closed.
 APPROVED_ENDPOINT_PRICE_TRANSITIONS = frozenset(
     {
+        # Authenticated https://api.inceptionlabs.ai/v1/models and
+        # https://docs.inceptionlabs.ai/get-started/models, verified 2026-11-01:
+        # Mercury 2.5 is $0.20 input / $0.75 output / $0.02 cached per M.
+        # Mercury 3's separate launch promotion is unchanged.
+        (
+            "inception/mercury-2.5 [inception:inception:mercury-2.5]",
+            "prompt",
+            Decimal("0.00000004"),
+            Decimal("0.0000002"),
+        ),
+        (
+            "inception/mercury-2.5 [inception:inception:mercury-2.5]",
+            "completion",
+            Decimal("0.00000015"),
+            Decimal("0.00000075"),
+        ),
+        (
+            "inception/mercury-2.5 [inception:inception:mercury-2.5] cached-input",
+            "prompt",
+            Decimal("0.000000004"),
+            Decimal("0.00000002"),
+        ),
         # Authenticated https://api.akashml.com/v1/models, verified 2026-10-20:
         # Kimi K3 cache-read now equals its $1.20/M input price (was $0.30/M).
         # Other axes fell, and the native route identity is unchanged.

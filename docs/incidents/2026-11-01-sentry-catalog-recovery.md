@@ -73,6 +73,23 @@ success before restoring it. Regressions exercise both failure and recovery.
 
 ## Still actionable, not cleared
 
+- Inception (distinct from Inceptron) retained its October 19 catalog because
+  Mercury 2.5's three prices increased fivefold and the refresh correctly held
+  them for review. At November 1 13:31:02 UTC the authenticated
+  `https://api.inceptionlabs.ai/v1/models` and the first-party
+  `https://docs.inceptionlabs.ai/get-started/models` agreed on $0.20 input,
+  $0.02 cached input, and $0.75 output per million tokens. The committed rates
+  were $0.04, $0.004, and $0.15, respectively. A follow-up adds only those three
+  exact provider/native-route/dimension/old/new transitions to the existing
+  reviewed-tariff mechanism. Different values, identities, dimensions, or future
+  increases still fail the unchanged twofold guard. Mercury 3's current launch
+  promotion is not changed. This does not manually rewrite prices or refresh
+  freshness timestamps: a subsequent normal refresh must still pass live
+  discovery, canaries, publication CI, and deployment before the alert clears.
+- Hixtube's fresh provider declaration still ends its pilot at November 2
+  23:56:20 UTC. The refresh deliberately uses that real cutoff rather than a
+  rolling freshness window. Do not extend it to silence an expiry alert;
+  renewal requires a fresh provider declaration and successful canaries.
 - Inceptron synthetic probes return HTTP 402 `prepaid_credit_exhausted` across
   multiple models, including at 11:23 UTC. Provider funding is required. No
   payment, credit top-up, quota bypass, or alert suppression was performed.
@@ -87,6 +104,17 @@ success before restoring it. Regressions exercise both failure and recovery.
   evidence. No completed Maple release is repeated by this investigation.
 
 ## Verification scope
+
+The first guarded refresh after #2239 passed the formerly crashing transcription
+step but its generated commit `1de4926d38a784559b356a1258d08b0f899b7012`
+failed CI: a third `decision-models` catalog entry required an origin-metadata
+row, and a routing unit test assumed DeepSeek always outranked Anthropic despite
+fresh measured evidence. Both failures reproduced unchanged under the CI
+post-cutover clock. The follow-up documents Baseten/Base Labs' Qwen3.5-derived
+namespace without inferring a country or confusing it with Decision Models IO,
+and tests throughput ordering against two explicit, opposite rank maps. The
+three-model metadata threshold, real ranking evidence, routing implementation,
+and publication gate remain unchanged. The failed snapshot is not published.
 
 The missing-tariff regression reproduced the original exception before the fix.
 Both Databricks retirement regressions failed before the retirement rule.

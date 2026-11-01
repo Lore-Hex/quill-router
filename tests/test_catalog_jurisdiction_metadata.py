@@ -196,6 +196,21 @@ def test_model_origin_lookup_reads_the_vendor_prefix() -> None:
     assert model_origin_for_model_id("no-such-vendor/some-model") is None
 
 
+@pytest.mark.parametrize("native", [
+    "baseten-elephant-9b-latest", "baseten-mammoth-27b-latest", "baseten-joey-2b-latest",
+])
+def test_baseten_decision_namespace_does_not_infer_weights_origin(native) -> None:
+    origin = model_origin_for_model_id(f"decision-models/{native}")
+    assert origin is not None
+    assert origin.country is None
+    assert origin.lab_name == "Baseten / Base Labs decision-model namespace"
+    assert origin.source_url == (
+        "https://www.baseten.co/blog/decisions-for-a-penny-introducing-joey-1/"
+    )
+    assert "Qwen3.5" in origin.note
+    assert origin is not MODEL_ORIGINS["decisionmodelsio"]
+
+
 def test_meta_models_publisher_has_the_same_origin_as_meta() -> None:
     origin = model_origin_for_model_id("meta-models/muse-spark-open")
     assert origin is not None
