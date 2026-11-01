@@ -52,10 +52,12 @@ locals {
   # 429 shadow fix (#2229): the edge tells the owner whether a decided
   # request streams, composes eligible streams, and decides them only with
   # fastpath_edge_streams on; the shadow counts Python's in-flight 429 to
-  # an inflight.key pass as passed. Stream switches stay off.
-  # 2b3f846f3: security release (#2236), with x/net 0.62.0 and
-  # OpenTelemetry 1.45.0. Admission switches and record formats are unchanged.
-  fastpath_release        = "2b3f846f3c6bd30206db08e673db1235f4877051"
+  # an inflight.key pass as passed. The pilot leases streams; the edge
+  # switch stays off.
+  # b2d12a046: the edge composes async-v1 streams outside async admission
+  # for its decide shadow (#2242), so gate E can count them. Carries
+  # everything since 2b3f846f3.
+  fastpath_release        = "b2d12a046d97a4b638dc31845b97367f2ed6d513"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
