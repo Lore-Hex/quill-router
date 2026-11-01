@@ -196,6 +196,18 @@ def test_model_origin_lookup_reads_the_vendor_prefix() -> None:
     assert model_origin_for_model_id("no-such-vendor/some-model") is None
 
 
+@pytest.mark.parametrize("native", ["beam", "beam-1.0", "beam-1.0-501b-a23b"])
+def test_reflection_beam_aliases_record_the_developer_not_the_host(native) -> None:
+    origin = model_origin_for_model_id(f"reflection/{native}")
+    assert origin is not None
+    assert origin.country == PROVIDER_JURISDICTION_US
+    assert origin.lab_name == "Reflection AI"
+    assert origin.source_url == "https://reflection.ai/legal/privacy-policy"
+    assert "https://reflection.ai/blog/introducing-beam" in origin.note
+    assert "not inference residency" in origin.note
+    assert model_origin_for_model_id(f"reflection-unknown/{native}") is None
+
+
 @pytest.mark.parametrize("native", [
     "baseten-elephant-9b-latest", "baseten-mammoth-27b-latest", "baseten-joey-2b-latest",
 ])
