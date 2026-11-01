@@ -972,17 +972,14 @@ def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
             if endpoint.provider == provider and endpoint.model_id == model_id
         ], f"{provider}/{model_id} should be quarantined"
 
-    # atlas-cloud's healthy openai routes must stay live while it lists them —
-    # only the router-not-found phantoms are quarantined, not the whole openai
-    # namespace.
-    for kept_model in ("openai/gpt-5.5", "openai/gpt-5.6-sol"):
-        assert [
+    # Availability is not permission to add an OpenAI API intermediary.
+    # Working reseller routes are held too, independently of feed changes.
+    for held_model in ("openai/gpt-5.5", "openai/gpt-5.6-sol"):
+        assert not [
             endpoint
             for endpoint in built.values()
-            if endpoint.provider == "atlas-cloud" and endpoint.model_id == kept_model
-        ] or _listed_row("atlas-cloud", kept_model) is None, (
-            f"atlas-cloud/{kept_model} should remain routable"
-        )
+            if endpoint.provider == "atlas-cloud" and endpoint.model_id == held_model
+        ]
 
     # Policy (2026-07-18): Anthropic-authored models route via Anthropic only
     # for Credits. Lightning's later passthrough hold also removes BYOK.
@@ -2163,8 +2160,6 @@ def test_venice_privacy_is_model_specific_and_never_claims_tee(
         "google/veo-3.1",
         "google/veo-3.1-fast",
         "google/gemini-omni-flash",
-        "openai/sora-2",
-        "openai/sora-2-pro",
         "runway/gen-4.5",
         "kling/v3-pro",
         "kling/o3-pro",

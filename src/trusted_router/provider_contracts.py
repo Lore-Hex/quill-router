@@ -43,6 +43,11 @@ STREAMLAKE_KIMI_K2_0905_HOLD_REASON = "provider-model-not-found"
 PEARL_GEMMA_4_31B_MODEL_ID = "google/gemma-4-31b-it"
 PEARL_GEMMA_4_31B_HOLD_REASON = "provider-model-not-found"
 THIRD_PARTY_PASSTHROUGH_HOLD_REASON = "third-party-passthrough-disabled"
+# OpenAI API models must use our direct OpenAI or Azure deployments, never
+# another router's wrapper. Independent GPT-OSS and Whisper weight hosting is
+# not an API passthrough. Unknown OpenAI families fail closed on other hosts.
+_OPENAI_DIRECT_PROVIDERS = frozenset({"openai", "azure"})
+_OPENAI_HOSTED_WEIGHT_PREFIXES = ("openai/gpt-oss-", "openai/whisper-large-")
 # These providers also advertise third-party API wrappers. Only their native
 # hosted namespaces may route here; the original providers serve passthroughs.
 _NATIVE_HOSTED_MODEL_PREFIXES = {
@@ -164,6 +169,14 @@ EXPLICIT_GATEWAY_REGIONS_BY_PROVIDER_MODEL = {
 # make ordinary Namazu calls fail nondeterministically. Keep the discovered
 # model visible but globally unroutable until canonical steering can guarantee
 # a supported egress region without bypassing Sakana's geographic policy.
+
+
+def provider_model_is_openai_reseller(provider_slug: str, model_id: str) -> bool:
+    return (
+        model_id.startswith("openai/")
+        and provider_slug not in _OPENAI_DIRECT_PROVIDERS
+        and not model_id.startswith(_OPENAI_HOSTED_WEIGHT_PREFIXES)
+    )
 
 
 def provider_model_operator_held(
