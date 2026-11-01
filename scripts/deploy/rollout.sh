@@ -715,8 +715,10 @@ ENV_VARS=(
   # 5.4): the pilot's switch, which moves only once increment 2b is pinned on
   # every owner and front door (docs/runbooks/fastpath-streams.md), and the
   # edge's own, which moves only after gate E. Literals, so no revision
-  # inherits either; false is the way back.
-  "TR_FASTPATH_PILOT_STREAMS=false"
+  # inherits either; false is the way back. The pilot's switch is on for
+  # gate P (2026-11-01): both nodes on 2b3f846f3, increment 3 in every
+  # control plane region, snapshot booking on, the stream alerts enabled.
+  "TR_FASTPATH_PILOT_STREAMS=true"
   "TR_FASTPATH_EDGE_STREAMS=false"
   # Arms the authorize-time billing-pause gate (trust_eligibility
   # .billing_paused_tx) on both the typed and legacy paths. The name predates
