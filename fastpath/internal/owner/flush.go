@@ -72,7 +72,13 @@ func (l *Lease) flush() {
 			backoff = firstBackoff
 			continue
 		}
-		l.o.tally.publishFailed()
+		// A failure is counted once per publish: past the cutoff the flusher
+		// waits on the same failed publish again at each kick, and a record
+		// not sent yet was never published.
+		if !s.failCounted && !errors.Is(err, errNotSent) {
+			s.failCounted = true
+			l.o.tally.publishFailed()
+		}
 		// Every record not acknowledged awaits its republish now.
 		now := l.o.cfg.Clock()
 		if !l.failed {
@@ -133,7 +139,7 @@ func (l *Lease) republishSome() bool {
 			return false
 		}
 		x := l.inflight[l.live]
-		x.waiter = l.o.pub.Publish(l.id, x.data)
+		x.waiter, x.failCounted = l.o.pub.Publish(l.id, x.data), false
 		l.live++
 	}
 	return l.live < len(l.inflight)

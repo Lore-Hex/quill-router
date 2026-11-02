@@ -897,6 +897,9 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 		for {
 			select {
 			case <-ctx.Done():
+				// The period's last part: a stopping node's answers are
+				// what a hand-off's slow ones would be.
+				log.Print(ownerTallyLine(o.TakeTally()))
 				return nil
 			case <-t.C:
 				log.Print(ownerTallyLine(o.TakeTally()))

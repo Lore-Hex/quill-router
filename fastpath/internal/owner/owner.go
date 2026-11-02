@@ -412,12 +412,14 @@ type decision struct {
 // publish, and done, closed once it is acknowledged (at ackedAt, before the
 // cutoff or not).
 type sent struct {
-	seq          int64
-	data         []byte
-	freed        int64
-	waiter       Waiter
-	done         chan struct{}
-	handedAt     time.Time
+	seq      int64
+	data     []byte
+	freed    int64
+	waiter   Waiter
+	done     chan struct{}
+	handedAt time.Time
+	// failCounted is whether this publish's failure is in the tally.
+	failCounted  bool
 	acked        bool
 	ackedAt      time.Time
 	beforeCutoff bool
