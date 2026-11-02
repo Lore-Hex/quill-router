@@ -7,6 +7,7 @@ import hashlib
 import threading
 import time
 from collections import Counter
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -275,6 +276,73 @@ def test_stalled_lookup_late_result_fills_cache(
     assert reads == [key.hash]
     assert caplog.text.count('metric=leased_key_usage_shard_lookup_fallback_total') == 1
     assert store._leased_key_usage_counts._entries[key.hash].next_attempt == 7.0 + CACHE_TTL_SECONDS
+
+
+def test_worker_scheduled_after_600_ms_still_fills_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    from trusted_router import storage_gcp_leased_key_usage as cache_module
+    store, db, workspace, key = _setup()
+    ticks = [0.0]
+    # Same cache-only clock model as the reviewer's scheduler probe. The
+    # production point read keeps its own real RPC clock and original options.
+    monkeypatch.setattr(cache_module, 'time', SimpleNamespace(monotonic=lambda: ticks[0]))
+    cache = LeasedKeyUsageShardCache(clock=lambda: ticks[0])
+    store._leased_key_usage_counts = cache
+    started, release = threading.Event(), threading.Event()
+    calls = []
+    real_load = LeasedKeyUsageShardCache._load
+    def delayed_load(self: Any, *args: Any) -> None:
+        calls.append(1)
+        ticks[0] = 0.6
+        started.set()
+        assert release.wait(2)
+        real_load(self, *args)
+    class ExpiredWait(threading.Event):
+        def wait(self, timeout: float | None = None) -> bool:
+            assert started.wait(1)
+            return False
+    real_start = LeasedKeyUsageShardCache._start
+    def start(self: Any, kh: str, entry: Any, loader: Any) -> None:
+        real_start(self, kh, entry, loader)
+        entry.done = ExpiredWait()
+    monkeypatch.setattr(LeasedKeyUsageShardCache, '_load', delayed_load)
+    monkeypatch.setattr(LeasedKeyUsageShardCache, '_start', start)
+    try:
+        _settle(store, workspace, key, 'scheduler-first')
+        assert db.typed[KEY_LIMIT_TABLE][(key.hash, 0)]['usage'] == 700
+    finally:
+        release.set()
+        assert cache_module._wait_for_idle_reads(2)
+    _settle(store, workspace, key, 'auth-leased-1')
+    assert db.typed[KEY_LIMIT_TABLE][(key.hash, 12)]['usage'] == 700
+    assert db.typed[KEY_LIMIT_TABLE][(key.hash, 0)]['usage'] == 700
+    assert cache._entries[key.hash].next_attempt == 0.6 + CACHE_TTL_SECONDS
+    assert calls == [1]
+
+
+def test_base_exception_retires_attempt_and_propagates() -> None:
+    from trusted_router.storage_gcp_leased_key_usage import _Entry
+    class CancelRead(BaseException):
+        pass
+    failure = CancelRead()
+    now = [0.0]
+    cache = LeasedKeyUsageShardCache(clock=lambda: now[0])
+    entry = _Entry()
+    with cache._lock:
+        cache._entries['key'] = entry
+        cache._inflight['key'] = entry
+    def cancelled() -> int:
+        raise failure
+    # Invoke the worker body directly to assert propagation without turning
+    # an intentional BaseException into an unhandled-thread pytest warning.
+    with pytest.raises(CancelRead) as caught:
+        cache._load('key', entry, cancelled)
+    assert caught.value is failure
+    assert entry.done.is_set()
+    assert not cache._inflight
+    assert entry.count is None
+    assert entry.next_attempt == RETRY_SECONDS
+    now[0] = RETRY_SECONDS
+    assert cache.get('key', lambda: 16) == 16
 
 
 @pytest.mark.parametrize('wrapped_load', [False, True])
@@ -548,14 +616,18 @@ def test_no_read_slot_preserves_good_count_and_retries_cold(caplog: pytest.LogCa
 
 def test_stale_point_read_has_short_deadline_and_no_retries(monkeypatch: pytest.MonkeyPatch) -> None:
     store, db, workspace, key = _setup()
-    snapshots, options, budgets, contexts = [], [], [], []
-    from trusted_router.storage_gcp_io import remaining_rpc_budget, spanner_rpc_deadline
+    snapshots, options, deadlines, contexts = [], [], [], []
+    from trusted_router import storage_gcp_io
+    real_deadline = storage_gcp_io.spanner_rpc_deadline
+    def record_deadline(deadline: float, **kwargs: Any) -> Any:
+        deadlines.append((deadline, storage_gcp_io._SPANNER_RPC_DEADLINE.get()))
+        return real_deadline(deadline, **kwargs)
+    monkeypatch.setattr(storage_gcp_io, 'spanner_rpc_deadline', record_deadline)
     marker = contextvars.ContextVar("leased_test_caller", default=False)
     real_snapshot = db.snapshot
     def snapshot(**kwargs: Any) -> Any:
         snapshots.append(kwargs)
         contexts.append(marker.get())
-        budgets.append(remaining_rpc_budget(READ_DEADLINE_SECONDS))
         snap = real_snapshot(**kwargs)
         execute = snap.execute_sql
         def sql(query: str, **kwargs: Any) -> Any:
@@ -565,13 +637,18 @@ def test_stale_point_read_has_short_deadline_and_no_retries(monkeypatch: pytest.
         return snap
     monkeypatch.setattr(db, 'snapshot', snapshot)
     token = marker.set(True)
+    caller_deadline = time.monotonic() + 0.05
+    deadline_token = storage_gcp_io._SPANNER_RPC_DEADLINE.set(caller_deadline)
     try:
-        with spanner_rpc_deadline(time.monotonic() + 0.05):
-            assert store._leased_key_usage_shard_count(key.hash) == 16
+        assert store._leased_key_usage_shard_count(key.hash) == 16
     finally:
+        storage_gcp_io._SPANNER_RPC_DEADLINE.reset(deadline_token)
         marker.reset(token)
     assert contexts == [False]
-    assert 0.05 < budgets[0] <= READ_DEADLINE_SECONDS == 0.5
+    assert len(deadlines) == 1
+    assert deadlines[0][1] is None
+    assert deadlines[0][0] > caller_deadline
+    assert READ_DEADLINE_SECONDS == 0.5
     assert len(snapshots) == len(options) == 1
     assert snapshots[0]['exact_staleness'].total_seconds() == 5
     assert options[0]['params'] == {'kind': 'api_key', 'id': key.hash}

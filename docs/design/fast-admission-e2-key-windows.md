@@ -140,10 +140,10 @@ lands on (derived from the authorization ID on the leased path, the
 reservation's random shard on the other), which the window check sums away.
 The count is cached locally for two minutes in a 10,000-entry LRU and loaded
 outside the settle transaction with a five-second-stale point read. Only
-a cold miss waits, at most 100 ms; the independent read has a 500 ms deadline
-and no RPC retries. A late result fills the cache. Expired counts are served
-without waiting; refresh failures keep the last good count and retry after
-10 s. Lookup fallback uses shard 0 only when no count is known, also retrying
+a cold miss waits at most 100 ms for the read; the independent read has a
+500 ms RPC deadline and no RPC retries. A late successful read fills the cache
+whenever it completes. Expired counts are served without waiting; refresh
+failures keep the last good count and retry after 10 s. Lookup fallback uses shard 0 only when no count is known, also retrying
 after 10 s. A stale larger count after shrink reaches a missing row and the
 existing release helper re-books on shard 0; a stale smaller count selects
 an existing row. Single-shard and strict keys continue to use shard 0.

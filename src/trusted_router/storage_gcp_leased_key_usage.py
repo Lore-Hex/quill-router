@@ -57,7 +57,6 @@ class _Entry:
     count: int | None = None
     next_attempt: float = 0.0
     wait_deadline: float = 0.0
-    read_deadline: float = 0.0
     done: threading.Event = field(default_factory=threading.Event)
     logged: bool = False
 
@@ -133,7 +132,6 @@ class LeasedKeyUsageShardCache:
         entry.done = threading.Event()
         now = time.monotonic()
         entry.wait_deadline = now + WAIT_SECONDS
-        entry.read_deadline = now + READ_DEADLINE_SECONDS
         self._inflight[key_hash] = entry
         try:
             load = self._load
@@ -149,16 +147,20 @@ class LeasedKeyUsageShardCache:
             entry.done.set()
 
     def _load(self, key_hash: str, entry: _Entry, loader: Callable[[], int]) -> None:
+        count: int | None = None
         try:
             count = key_usage_shard_count({"usage_shard_count": loader()})
-            failed = time.monotonic() >= entry.read_deadline
         except Exception:
-            count, failed = 1, True
-        with self._lock:
-            if failed:
-                self._failure(entry)
-            else:
-                entry.count = count
-                entry.next_attempt = self._clock() + self._ttl
-            del self._inflight[key_hash]
-            entry.done.set()
+            count = None
+        finally:
+            # Retire the attempt even on BaseException, which still propagates.
+            # The loader owns its RPC deadline; every validated result is safe
+            # to cache regardless of scheduling or session-checkout delay.
+            with self._lock:
+                if count is None:
+                    self._failure(entry)
+                else:
+                    entry.count = count
+                    entry.next_attempt = self._clock() + self._ttl
+                del self._inflight[key_hash]
+                entry.done.set()
