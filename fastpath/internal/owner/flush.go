@@ -62,6 +62,7 @@ func (l *Lease) flush() {
 		if err == nil {
 			now := l.o.cfg.Clock()
 			s.acked, s.ackedAt, s.beforeCutoff = true, now, l.withinCutoff(now)
+			l.o.tally.ack(l.o.tally.clock().Sub(s.handedAt))
 			l.pending -= s.freed
 			l.inflight = l.inflight[1:]
 			l.live--
@@ -71,6 +72,7 @@ func (l *Lease) flush() {
 			backoff = firstBackoff
 			continue
 		}
+		l.o.tally.publishFailed()
 		// Every record not acknowledged awaits its republish now.
 		now := l.o.cfg.Clock()
 		if !l.failed {

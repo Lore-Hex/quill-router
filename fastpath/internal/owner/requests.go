@@ -232,6 +232,8 @@ type HeartbeatOf struct {
 // and hash, is answered as the heartbeat it repeats, without a second
 // publish. Until the lease's drain log is adopted, each is answered retry.
 func (l *Lease) Heartbeat(ctx context.Context, auth string, hb HeartbeatOf) (time.Time, error) {
+	began := l.o.tally.clock()
+	defer func() { l.o.tally.heartbeat(l.o.tally.clock().Sub(began)) }()
 	// A basis whose encoding alone passes a heartbeat record's size is
 	// refused before the lease's lock, at a cost that does not grow with
 	// it: encoding it under the lock would keep a hand-off waiting. The
@@ -384,11 +386,15 @@ type Outcome struct {
 // digest. One the record format cannot carry, a negative charge or a digest
 // not SHA-256's, decides nothing.
 func (l *Lease) Settle(ctx context.Context, auth string, charge int64, digest []byte) (Outcome, error) {
+	began := l.o.tally.clock()
+	defer func() { l.o.tally.terminal(l.o.tally.clock().Sub(began)) }()
 	return l.terminal(ctx, auth, record.Settle, charge, digest)
 }
 
 // Refund decides a refund for auth.
 func (l *Lease) Refund(ctx context.Context, auth string) (Outcome, error) {
+	began := l.o.tally.clock()
+	defer func() { l.o.tally.terminal(l.o.tally.clock().Sub(began)) }()
 	return l.terminal(ctx, auth, record.Refund, 0, nil)
 }
 
@@ -531,12 +537,14 @@ func (l *Lease) handOver(r record.Record, freed int64) (*sent, error) {
 		return nil, ErrPastCutoff
 	}
 	l.nextSeq++
-	s := &sent{seq: r.Seq, data: data, freed: freed, waiter: notSent{}, done: make(chan struct{})}
+	s := &sent{seq: r.Seq, data: data, freed: freed, waiter: notSent{}, done: make(chan struct{}),
+		handedAt: l.o.tally.clock()}
 	if l.live == len(l.inflight) {
 		s.waiter = l.o.pub.Publish(l.id, data)
 		l.live++
 	}
 	l.inflight = append(l.inflight, s)
+	l.o.tally.depth(len(l.inflight))
 	select {
 	case l.kick <- struct{}{}:
 	default:
