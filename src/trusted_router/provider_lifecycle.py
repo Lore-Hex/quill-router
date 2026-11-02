@@ -78,6 +78,8 @@ DECISIONMODELS_PINNED_S1_PRO_RETIREMENT_AT = datetime(2026, 11, 30, 23, 0, tzinf
 # Anthropic retires claude-sonnet-4-5 on 30 Nov 2026 at 9AM PT (PST, UTC-8).
 ANTHROPIC_SONNET_45_RETIREMENT_AT = datetime(2026, 11, 30, 17, 0, tzinfo=UTC)
 MISTRAL_MEDIUM_35_RETIREMENT_AT = datetime(2027, 4, 30, 0, 0, tzinfo=UTC)
+# AI Studio redirects gemini-2.5-flash to 3.5 Flash-Lite on 1 Dec 2026 (date only).
+GOOGLE_AI_STUDIO_GEMINI_25_FLASH_RETIREMENT_AT = datetime(2026, 12, 1, 0, 0, tzinfo=UTC)
 # 2026-10-30 10:00 PDT: Crusoe redirects four serverless models to replacements.
 CRUSOE_OCTOBER_30_RETIREMENT_AT = datetime(2026, 10, 30, 17, 0, tzinfo=UTC)
 TELNYX_NOVEMBER_2_RETIREMENT_AT = datetime(2026, 11, 2, 0, 0, tzinfo=UTC)
@@ -1153,6 +1155,16 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"mistral-medium-3.5", "mistral-medium-3-5"}),
         effective_at=MISTRAL_MEDIUM_35_RETIREMENT_AT,
         replacement_model_ids=("mistralai/mistral-large-4",),
+    ),
+    # AI Studio's November 2 notice redirects gemini-2.5-flash to
+    # gemini-3.5-flash-lite on 1 December 2026. Retire the old identity rather
+    # than silently substitute weights; Vertex is a separate notice.
+    _Retirement(
+        provider="google-ai-studio",
+        model_ids=frozenset({"google/gemini-2.5-flash"}),
+        upstream_ids=frozenset({"gemini-2.5-flash"}),
+        effective_at=GOOGLE_AI_STUDIO_GEMINI_25_FLASH_RETIREMENT_AT,
+        replacement_model_ids=("google/gemini-3.5-flash-lite",),
     ),
     # DigitalOcean's October 29 notices deprecate these Inference models on
     # 2026-11-09 (date only; 00:00 UTC conservatively); requests then 404.
