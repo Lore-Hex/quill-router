@@ -5393,8 +5393,10 @@ class SpannerStore(OperationalAnalyticsReads):
         recorded, release row-count failure). Raises on any other failure,
         including an abort that outlived its retries, a deadline, or a commit
         whose outcome is unknown. For both None and an exception the caller runs
-        the durable two-commit settle; its durability is never weaker than
-        before this path existed:
+        the durable two-commit settle, except that a transient store error
+        followed by an enqueue that inserts the intent leaves the charge to the
+        drain (``settle_contention_defers_to_drain``); its durability is never
+        weaker than before this path existed:
 
         * Declined or definitely not committed: the fallback is exactly today's
           flow (durable pending enqueue, then finalize, drain on failure).

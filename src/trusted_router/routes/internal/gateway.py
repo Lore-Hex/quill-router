@@ -242,6 +242,7 @@ from trusted_router.storage_errors import (
     LeasedOutcomeUnknown,
     StoreConflict,
     conflict_store_error_types,
+    is_transient_store_error,
     transient_store_error_types,
 )
 from trusted_router.storage_gcp_io import spanner_rpc_budget
@@ -4660,8 +4661,9 @@ def _settle_gateway_authorization(
 
     # Happy path: the intent, the charge, the done-mark and the benchmark in
     # ONE commit. Any failure (declined, aborted, deadline, unknown outcome)
-    # falls through to the durable two-commit settle below, unchanged; the
-    # store method documents why an unknown outcome is safe to follow with it.
+    # falls through to the durable two-commit settle below; the store method
+    # documents why an unknown outcome is safe to follow with it. A transient
+    # failure whose fallback enqueue inserts the intent goes to the drain.
     if authorization.fastpath_envelope is not None and _typed_store is not None:
         # The fast path's pilot (docs/design/fast-admission-pilot.md): the
         # hold is a lease's, so the terminal goes to the front door and then
@@ -4684,6 +4686,10 @@ def _settle_gateway_authorization(
         )
     one_commit_result: TypedFinalizeResult | None = None
     one_commit_ms = 0.0
+    # The one-commit attempt lost to the store (contention, deadline,
+    # overload) rather than declining: its counter rows are hot.
+    one_commit_transient = False
+    enqueue_outcome: str | None = None
     settle_one_commit = (
         getattr(_typed_store, "typed_settle_one_commit_result", None) if is_typed else None
     )
@@ -4710,10 +4716,15 @@ def _settle_gateway_authorization(
                         intent_initial_delay_seconds=60,
                     ),
                 )
-        except Exception:
+        except Exception as exc:
+            one_commit_transient = (
+                settings.settle_contention_defers_to_drain and is_transient_store_error(exc)
+            )
             logger.warning(
-                "one-commit settle failed; using the durable two-commit settle "
-                "authorization_id=%s",
+                "one-commit settle failed; %s authorization_id=%s",
+                "recording the intent for the drain"
+                if one_commit_transient
+                else "using the durable two-commit settle",
                 authorization.id,
                 exc_info=True,
             )
@@ -4735,7 +4746,11 @@ def _settle_gateway_authorization(
                 settle_intent,
                 # Grace so inline finalize wins the benign race; the drain only
                 # sees rows whose inline attempt is dead >=60s, avoiding replays.
-                initial_delay_seconds=60,
+                # A contended one commit leaves an inserted intent to the drain
+                # with no inline finalize to race, so it is due at once; its
+                # refill keeps the grace, so it follows the charge.
+                initial_delay_seconds=0 if one_commit_transient else 60,
+                refill_delay_seconds=60,
             )
             # The intent is durable at this exact point. Any later attachment,
             # inline-finalize, or response-side failure must report
@@ -4818,6 +4833,44 @@ def _settle_gateway_authorization(
             "Settlement durability is temporarily unavailable",
             ErrorType.SERVICE_UNAVAILABLE,
         )
+
+    if (
+        one_commit_transient
+        and outbox_enqueued
+        and enqueue_outcome == ENQ_INSERTED
+        and durable_intent is not None
+    ):
+        # The one-commit settle lost to the store on the workspace's and key's
+        # counter rows, and the intent this delivery inserted is durable (an
+        # insert proves the one-commit did not land). An inline finalize would
+        # spend the rest of the route's budget on the same hot rows, doubling
+        # the contention that failed it (2026-11-02: every settle in an
+        # 8-minute burst on one workspace did both, ~18 s each). Leave it to
+        # the drain, as an inline finalize failure does; the drain's accepted
+        # losses (settle_outbox_drain.py, SF7) apply to these settles too.
+        logger.warning(
+            "settlement deferred to the drain after a contended one-commit "
+            "settle authorization_id=%s",
+            authorization.id,
+        )
+        _release_user_model_slot_safely(authorization)
+        logger.info(
+            "settle timing authorization_id=%s success=%s origin=%s total_ms=%.1f "
+            "auth_ms=%.1f enqueue_ms=%.1f finalize_ms=%.1f mark_ms=%.1f "
+            "commit_path=%s one_commit_ms=%.1f boot_auth=%s",
+            authorization.id,
+            success,
+            "typed",
+            (perf_counter() - timing_start) * 1000,
+            auth_ms,
+            enqueue_ms,
+            0.0,
+            0.0,
+            "deferred",
+            one_commit_ms,
+            boot_auth_outcome,
+        )
+        return {"data": _intent_durable_gateway_data(authorization, durable_intent)}
 
     finalize_start = perf_counter()
     finalize_result = TypedFinalizeResult(
@@ -5138,6 +5191,8 @@ def _settle_gateway_authorization(
         # one_commit: enqueue+finalize+mark in one commit. fallback: that
         # attempt was declined or failed (its time is one_commit_ms) and the
         # durable two-commit settle ran. two_commit: never attempted.
+        # deferred (logged where it returns): the attempt lost to the store
+        # and the drain charges the intent.
         (
             "one_commit"
             if one_commit_result is not None

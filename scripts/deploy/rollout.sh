@@ -623,6 +623,10 @@ ENV_VARS=(
   # Flipped 2026-07-04 with Joseph's authorization. Remove to revert — the
   # flag-off settle path is byte-identical.
   "TR_SETTLE_OUTBOX_ENABLED=true"
+  # A contended one-commit settle defers to the drain instead of finalizing
+  # inline on the same hot rows (docs/design/durable-settle-outbox.md §7).
+  # A literal, so no revision inherits it; false is the way back.
+  "TR_SETTLE_CONTENTION_DEFERS_TO_DRAIN=true"
   "TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED=false"
   "TR_SETTLE_OUTBOX_POLL_INTERVAL_SECONDS=300"
   "TR_SETTLE_OUTBOX_HEALTH_PUBLISH_INTERVAL_SECONDS=2"

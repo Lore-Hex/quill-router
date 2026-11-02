@@ -267,6 +267,29 @@ lease-claims due `pending` rows and for each:
   Before the one commit lands nothing is durable and the enclave's redelivery
   covers it, exactly as before the enqueue committed; the reaper still
   serializes against it on the `settled=false` claim.
+- **A contended one commit defers to the drain (2026-11):** when the attempt
+  fails with a transient store error (`is_transient_store_error`: aborted,
+  deadline, unavailable, overload) and the fallback enqueue then inserts the
+  intent, the settle answers `intent_durable` without the inline finalize and
+  the drain charges it. The insert proves the one commit did not land; the
+  inline finalize would have spent the rest of the route's budget on the same
+  hot counter rows. On 2026-11-02 one workspace's 8-minute burst ran every
+  settle through both (p50 ~18 s), and that second pass was most of the
+  contention on its credit and key rows. A decline, or an enqueue that finds
+  an existing row (the unknown-outcome case above), keeps the two-commit flow.
+  Behind `TR_SETTLE_CONTENTION_DEFERS_TO_DRAIN` (`false` is the way back). The
+  intent is due at once (no inline finalize to race); a refill attached to it
+  gets its own due time, keeping the 60 s grace so it follows the charge. These settles take the drain's accepted losses (§6 addendum: no
+  metadata broadcast, budget-alert email or provider-error benchmark), and for
+  a contended burst that is every generation in it, not a rare crash. The
+  inline route's other post-settle work is skipped too: routing-state and
+  cache-affinity observation, and the user-provided model's dispatch outcome.
+  Each logs `settle timing ... commit_path=deferred`. Until the drain charges
+  it the hold stays booked. The dedicated drain worker
+  (`trusted-router-settle-drain`, 1 s poll, concurrency 4, claim batch 4)
+  applies one intent per workspace at a time in each process, so a bursting
+  workspace's deferred charges queue there rather than contend; its holds stay
+  booked for the queue's length.
 
 ## 8. Rollout (default-off, Joseph-gated)
 
