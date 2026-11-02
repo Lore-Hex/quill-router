@@ -16,6 +16,7 @@ import sys
 import time
 import typing
 from collections.abc import Iterator
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -271,14 +272,53 @@ def _snapshot_no_route(snapshot: RoutingSnapshotV3, entries: list[Any], preferen
     return f"No route for the requested model supports these parameters together: {', '.join(capability)}", capability[0]
 
 
-def test_privacy_and_parameter_filters_are_what_routing_filters(live) -> None:
+@pytest.fixture
+def privacy_parameter_catalog(live, settings, monkeypatch):
+    """Keep named refusals exercised even when discovery removes their last live route."""
+    _snapshot, inputs = live
+    model = catalog_data.Model(
+        id="fixture/privacy-parameters", name="Privacy parameter fixture",
+        provider="fixture-standard", context_length=4096,
+        supported_parameters=("tools",),
+    )
+    providers = {
+        "fixture-standard": catalog_data.Provider(slug="fixture-standard", name="Standard fixture"),
+        "fixture-zdr": catalog_data.Provider(
+            slug="fixture-zdr", name="ZDR fixture", stores_content=False,
+            provider_zero_data_retention=True,
+        ),
+    }
+    endpoints = tuple(
+        catalog_data.ModelEndpoint(
+            id=f"{model.id}@{provider}/byok", model_id=model.id, provider=provider,
+            usage_type="BYOK", upstream_id="privacy-parameters",
+            supported_parameters=("tools",) if provider == "fixture-standard" else (),
+            input_modalities=("text",),
+        )
+        for provider in providers
+    )
+    for provider, declaration in providers.items():
+        monkeypatch.setitem(catalog_data.PROVIDERS, provider, declaration)
+    original_lookup = routing.endpoints_for_model
+    monkeypatch.setattr(
+        routing, "endpoints_for_model",
+        lambda model_id: endpoints if model_id == model.id else original_lookup(model_id),
+    )
+    inputs = replace(
+        inputs, providers={**inputs.providers, **providers},
+        models=(*inputs.models, model), endpoints=(*inputs.endpoints, *endpoints),
+    )
+    return _compile(settings, inputs), model, endpoints
+
+
+def test_privacy_and_parameter_filters_are_what_routing_filters(privacy_parameter_catalog) -> None:
     """Every live chat model's routes, under every min_privacy tier and the
     parameter lists, kept or refused by the snapshot's tables exactly as
     routing keeps or refuses them (provider_route_preferences,
     _apply_endpoint_provider_filters, _no_route_error)."""
-    snapshot, _inputs = live
+    snapshot, fixture_model, _endpoints = privacy_parameter_catalog
     entries = {e.id: e for e in snapshot.endpoints}
-    models = [m for m in routing.MODELS.values() if m.supports_chat]
+    models = [m for m in (*routing.MODELS.values(), fixture_model) if m.supports_chat]
     compared = dropped = refusals = 0
     for spelling in MIN_PRIVACY_SPELLINGS:
         for require in (False, True):
@@ -307,6 +347,37 @@ def test_privacy_and_parameter_filters_are_what_routing_filters(live) -> None:
                             refusals += error.get("param") is not None
     # Not vacuous: routes were dropped, and parameters were named.
     assert compared > 1_000 and dropped > 100 and refusals > 0, (compared, dropped, refusals)
+
+
+@pytest.mark.parametrize("privacy", ["no_store", "zdr"])
+@pytest.mark.parametrize("parameter", ["tools", "tool_choice"])
+def test_snapshot_names_capability_refusal_after_privacy_filter(
+    privacy_parameter_catalog, privacy, parameter,
+) -> None:
+    snapshot, model, endpoints = privacy_parameter_catalog
+    candidates = [(model, endpoint) for endpoint in endpoints]
+    entries = [entry for entry in snapshot.endpoints if entry.model_id == model.id]
+    body = {"provider": {"min_privacy": privacy}, "requested_parameters": [parameter]}
+    prefs = routing.provider_route_preferences(body)
+    preferences = _snapshot_preferences(snapshot, body)
+    assert [e.id for _, e in routing._apply_endpoint_provider_filters(
+        candidates, replace(prefs, capability_parameters=frozenset()),
+    )] == [endpoints[1].id]
+    assert routing._apply_endpoint_provider_filters(candidates, prefs) == []
+    assert _snapshot_keep(snapshot, entries, preferences, preferences[3]) == []
+    error = routing._no_route_error(candidates, prefs)
+    assert error.status_code == 400
+    detail = error.detail["error"]
+    expected = f"No route for the requested model supports the parameter: {parameter}"
+    assert (detail["message"], detail["param"]) == (expected, parameter)
+    assert detail["unsupported_parameters"] == [parameter]
+    assert _snapshot_no_route(snapshot, entries, preferences) == (expected, parameter)
+
+    body["provider"]["min_privacy"] = "any"
+    prefs = routing.provider_route_preferences(body)
+    preferences = _snapshot_preferences(snapshot, body)
+    assert [e.id for _, e in routing._apply_endpoint_provider_filters(candidates, prefs)] == [endpoints[0].id]
+    assert _snapshot_keep(snapshot, entries, preferences, preferences[3]) == [endpoints[0].id]
 
 
 def test_min_privacy_and_require_parameters_spellings_are_what_routing_parses(live) -> None:

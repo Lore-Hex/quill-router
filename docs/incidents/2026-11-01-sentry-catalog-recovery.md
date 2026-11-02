@@ -312,3 +312,29 @@ whole-suite pass. Final focused, full local, exact-head/main CI, normal deployme
 and a fresh guarded price publication remain required for this follow-up.
 The separate owner-stall CI timeout is not established as a flake or repaired by
 these catalog changes; its assertion and two-second deadline are unchanged.
+
+## November 2 post-cutover refusal coverage
+
+PR 2249 merged as `277b8882e8849743d25f3a5c2b338d08f29d8141` after
+42,821 local tests passed with 87.35% coverage. Its independent merged-source
+CI 41378709070 passed all 46 jobs at 03:06:58 UTC. Scheduled refresh 41379164189
+then generated `8f8c7beeeef3fc163bc7013caffcac1faccae604`; this is a fresh
+candidate, not a retry or publication of the failed `2e658` snapshot.
+
+Candidate CI 41379527628 found a distinct failure in post-cutover shard 4.
+At the job's lifecycle clock of May 1, 2027, all 108,864 privacy/parameter
+comparisons agreed and 80,544 dropped routes, but none of the remaining live
+routes produced a named capability refusal. The differential test's required
+non-vacuity assertion correctly failed. An isolated exact-source run reproduced
+the same failure unchanged; this was not an observed routing mismatch.
+
+The follow-up supplies a test-only model with a standard-privacy tool route and
+a ZDR route without tools. Both the real compiler and real routing filters
+consume those explicit declarations alongside every live model. Preserve the
+existing comparison loop and its required nonzero refusal assertion. Four
+additional cases require exact HTTP 400 parameter attribution under no-store
+and ZDR, and positively check the tool route when the privacy floor permits it.
+No production routing, privacy declarations, catalog data, lifecycle clock,
+provider hold, deadline, watchdog or release gate is changed. The five focused
+cases pass on both merged main and the exact rejected catalog at the CI clock;
+full local and exact-head qualification remain required before merge.
