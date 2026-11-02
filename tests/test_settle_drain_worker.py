@@ -89,13 +89,15 @@ def test_worker_surface_excludes_every_other_starter(monkeypatch):
     def forbidden(*args, **kwargs):
         raise AssertionError("unrelated worker initialization")
     for module in ["speculation_shadow", "routing_snapshot_publisher", "edge_policy_publisher",
+                   "async_settle_admission_refresh",
                    "async_settle_shadow", "async_settle_shadow_cohort_runtime",
                    "async_settle_shadow_health", "async_settle_shadow_startup_harness"]:
         monkeypatch.setattr(f"trusted_router.services.{module}.install", forbidden)
     for name in ["init_sentry", "init_axiom", "create_analytics_sink", "report_refused_manifest_rows",
                  "validate_auto_model_order", "register_http_middleware", "StageDPolicyResolver"]:
         monkeypatch.setattr(f"trusted_router.main.{name}", forbidden)
-    app = create_app(inventory_settings("settle-drain", True), configure_store_arg=False)
+    app = create_app(inventory_settings("settle-drain", True).model_copy(
+        update={"async_settle_admission_refresh_enabled": True}), configure_store_arg=False)
     assert [r.path for r in app.routes] == ["/health"]
     assert [f.__name__ for f in app.router.on_startup] == ["_start_settle_drain"]
     assert [f.__name__ for f in app.router.on_shutdown] == ["_stop_settle_drain"]
