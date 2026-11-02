@@ -589,12 +589,13 @@ def test_settle_worker_follows_router_rollout_and_uses_the_regional_hold() -> No
     script = (ROOT / "scripts/deploy/settle_drain_worker.sh").read_text()
     assert 'REGION=us-central1' in script
     assert script.index('deploy_region_is_held "$REGION"') < script.index('gc run deploy')
-    # R3 admits only the customer pilot; protection stays on and router fast drain stays off.
+    # R3 admits the customer and probe pilots; protection stays on and router fast drain stays off.
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
     expected = {
         "TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED": "false",
         "TR_ASYNC_SETTLE_ENABLED": "true",
         "TR_ASYNC_SETTLE_PROTECTION": "true",
+        "TR_ASYNC_SETTLE_PILOT_WORKSPACES": "45819281-0ce9-4811-a0cd-c660ab3a116d,162e441a-5d13-414f-92bd-7c6cd805faa3",
     }
     for pin, value in expected.items():
         # Exactly one literal assignment per pin; no caller inheritance or later override.

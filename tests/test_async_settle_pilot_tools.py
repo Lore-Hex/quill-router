@@ -245,10 +245,25 @@ def test_pre_flip_seven_days_artifacts_and_chosen_settings(tmp_path):
     assert pilot.pre_flip(data)['status'] == 'BLOCKED'
 
 
+@pytest.mark.parametrize('workspaces,expected', [
+    ('45819281-0ce9-4811-a0cd-c660ab3a116d,162e441a-5d13-414f-92bd-7c6cd805faa3', True),
+    (pilot.PILOT, False),
+    ('162e441a-5d13-414f-92bd-7c6cd805faa3', False),
+    (pilot.PILOT_WORKSPACES + ',unapproved', False),
+    (','.join(reversed(pilot.PILOT_WORKSPACES.split(','))), False),
+])
+def test_serving_requires_exact_rendered_pilot_list(tmp_path, workspaces, expected):
+    data = bundle(tmp_path)
+    data['serving'][0]['pins'].update(TR_ASYNC_SETTLE_ENABLED='true', TR_ASYNC_SETTLE_PROTECTION='true',
+        TR_ASYNC_SETTLE_PILOT_WORKSPACES=workspaces, TR_ASYNC_SETTLE_PILOT_CAP_MICRO='5000000')
+    data['serving'][1]['pins'].update(TR_ASYNC_SETTLE_NEGOTIATE='on', TR_ASYNC_SETTLE_SHADOW='off')
+    assert pilot.serving(data, admitted=True) is expected
+
+
 def test_post_flip_real_timings_rollback_and_missing_data(tmp_path):
     data = bundle(tmp_path)
     data['serving'][0]['pins'].update(TR_ASYNC_SETTLE_ENABLED='true', TR_ASYNC_SETTLE_PROTECTION='true',
-        TR_ASYNC_SETTLE_PILOT_WORKSPACES=pilot.PILOT, TR_ASYNC_SETTLE_PILOT_CAP_MICRO='5000000')
+        TR_ASYNC_SETTLE_PILOT_WORKSPACES=pilot.PILOT_WORKSPACES, TR_ASYNC_SETTLE_PILOT_CAP_MICRO='5000000')
     data['serving'][1]['pins'].update(TR_ASYNC_SETTLE_NEGOTIATE='on', TR_ASYNC_SETTLE_SHADOW='off')
     data.update(rollback=artifact(tmp_path, 'rollback.json', dict(status='PASS', states=[
         'admission_on', 'pending', 'admission_off', 'drained', 'protection_off'])),

@@ -129,7 +129,7 @@ def test_all_eight_entry_points_match_real_retained_functions(tmp_path: Path, mo
             TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE='/mounted/key.pem')
     elif entry.endswith('.post_flip'):
         data['serving'][0]['pins'].update(TR_ASYNC_SETTLE_ENABLED='true', TR_ASYNC_SETTLE_PROTECTION='true',
-            TR_ASYNC_SETTLE_PILOT_WORKSPACES=pilot.PILOT, TR_ASYNC_SETTLE_PILOT_CAP_MICRO='5000000')
+            TR_ASYNC_SETTLE_PILOT_WORKSPACES=pilot.PILOT_WORKSPACES, TR_ASYNC_SETTLE_PILOT_CAP_MICRO='5000000')
         data['serving'][1]['pins'].update(TR_ASYNC_SETTLE_NEGOTIATE='on', TR_ASYNC_SETTLE_SHADOW='off')
         data.update(rollback=fixtures.artifact(tmp_path, 'rollback.json', dict(status='PASS', states=[
             'admission_on', 'pending', 'admission_off', 'drained', 'protection_off'])),

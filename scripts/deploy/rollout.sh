@@ -789,7 +789,10 @@ ENV_VARS=(
   # Admission-on edge policy passes async-v1 authorizes to Python.
   "TR_ASYNC_SETTLE_ENABLED=true"
   "TR_ASYNC_SETTLE_PROTECTION=true"
-  "TR_ASYNC_SETTLE_PILOT_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d"
+  # 2026-11-02: the probe workspace (R2 cohort, #2187) rejoins the R3 pilot
+  # so its provider-pinned first-party requests produce handoff timing samples.
+  # The pilot cap is per workspace; the probe does not draw on the customer cap.
+  "TR_ASYNC_SETTLE_PILOT_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d,162e441a-5d13-414f-92bd-7c6cd805faa3"
   "TR_ASYNC_SETTLE_PILOT_CAP_MICRO=5000000"
   # October 31: new async-v1 acceptance only where the 500 ms durable handoff
   # was measured to fit (accepted handoffs: us-central1 at most 92 ms, us-east4

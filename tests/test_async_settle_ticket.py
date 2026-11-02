@@ -203,7 +203,9 @@ def test_rollout_never_inherits_key_file():
         key.removeprefix('TR_').lower(): value for key, value in pins.items()
     })
     assert config.async_settle_admission_enabled is True
-    assert config.async_settle_pilot_workspace_ids == {'45819281-0ce9-4811-a0cd-c660ab3a116d'}
+    assert config.async_settle_pilot_workspace_ids == {
+        '45819281-0ce9-4811-a0cd-c660ab3a116d', '162e441a-5d13-414f-92bd-7c6cd805faa3',
+    }
     assert config.async_settle_pilot_cap_micro == 5000000
 
 
