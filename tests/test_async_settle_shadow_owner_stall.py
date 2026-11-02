@@ -5,6 +5,7 @@ import asyncio
 import copy
 import inspect
 import json
+import sys
 import textwrap
 import threading
 from contextlib import contextmanager
@@ -212,6 +213,12 @@ async def test_owner_progress_after_commit_deadline(monkeypatch, mode, unfixed, 
             assert not svc.bases.transport.objects.keys() & {item.key for item in svc.bases.queue}
         else:
             assert not reasons and svc.runtime_stop.available and svc.policy_enabled()
+            if mode != 'never':
+                # Tick counts do not prove the intermediate worker finished.
+                # Expiring it with a second clock jump can consume slot six
+                # while it is pending; there is deliberately no in-slot retry.
+                await until(lambda: svc.state.days[0].cursor == (NOW_US+4_000_000)//2_000_000
+                            and svc.state.job is None)
             # A completed unknown cycle recovers its lane; an unreturned worker
             # is quarantined by the watchdog. Neither can obstruct other lanes.
             advance(6.)
@@ -223,6 +230,43 @@ async def test_owner_progress_after_commit_deadline(monkeypatch, mode, unfixed, 
             accounting(svc)
     finally:
         await cleanup(svc, fault)
+
+
+@pytest.mark.parametrize('mode', ['lands', 'absent'])
+async def test_recovery_clock_does_not_expire_the_intermediate_cycle(monkeypatch, mode):
+    module = sys.modules[__name__]
+    setup = harness(monkeypatch, mode, kind=CLAIM_KIND)
+    svc = setup[0]
+    entered, release = threading.Event(), threading.Event()
+    publish, wait = shell.publish_cycle, until
+    timer = None
+
+    def pending_cycle(*args, **kwargs):
+        if args[4].slot == (NOW_US+4_000_000)//2_000_000:
+            entered.set()
+            assert release.wait(2.)
+        return publish(*args, **kwargs)
+
+    async def wait_with_pending_cycle(*args, **kwargs):
+        nonlocal timer
+        if svc.store.clock() == 104. and timer is None:
+            await wait(entered.is_set)
+            await wait(*args, **kwargs)
+            # Keep the intermediate worker pending when the tick-count wait
+            # returns. Its completion does not require advancing logical time.
+            timer = asyncio.get_running_loop().call_later(.05, release.set)
+        else:
+            await wait(*args, **kwargs)
+
+    monkeypatch.setattr(module, 'harness', lambda *args, **kwargs: setup)
+    monkeypatch.setattr(module, 'until', wait_with_pending_cycle)
+    monkeypatch.setattr(shell, 'publish_cycle', pending_cycle)
+    try:
+        await test_owner_progress_after_commit_deadline(monkeypatch, mode, False, 'claim')
+    finally:
+        release.set()
+        if timer is not None:
+            timer.cancel()
 
 
 @pytest.mark.parametrize('failure', ['poll', 'prepare', 'unready'])

@@ -338,3 +338,33 @@ No production routing, privacy declarations, catalog data, lifecycle clock,
 provider hold, deadline, watchdog or release gate is changed. The five focused
 cases pass on both merged main and the exact rejected catalog at the CI clock;
 full local and exact-head qualification remain required before merge.
+
+### Owner-stall test clock synchronization
+
+The initial refusal-fixture head `8dbd34b` passed the full local suite
+(42,825 passed, 87.36% coverage), but did not qualify in CI. Attempt 1 of
+41381543184 failed the unchanged startup-listener 250 ms assertion. One complete
+recheck passed that shard but failed the unchanged owner-stall case
+`lands-fixed-claim` at its two-second wait for publication at simulated time six.
+All 46 jobs stopped: 43 succeeded, the test shard, coverage and final gate failed.
+Neither attempt is a passing release qualification.
+
+An isolated controlled schedule reproduced a race in the owner-stall test:
+its total tick count can exceed ten while the intermediate time-four publisher
+is still pending. Advancing the fake clock immediately to six expires that
+worker and lets the real lifecycle correctly account slot six as missed while
+the old job remains outstanding. Holding the clock at six then cannot produce
+the expected publication because in-slot retries are forbidden. Twenty ordinary
+isolated runs passed; the original CI log lacks the state observations needed
+to prove that the runner followed this exact sequence.
+
+For completed unknown commits only, wait for the time-four lifecycle cursor and
+job completion before advancing the clock again. Keep the never-returning worker
+case unchanged so the real watchdog still has to quarantine it. Both controlled
+landed/absent-commit regressions failed at the original publication assertion
+before this synchronization and pass afterward; all 19 owner-stall tests pass.
+The original two-second waits, all publication/accounting assertions, production
+code, watchdog, admission bounds and no-retry rule remain unchanged. This repairs
+a reproduced test scheduling defect, not evidence of a production stall repair
+or retrospective clearance of either failed CI attempt. Fresh full local gates
+and exact-head/main CI remain required for the amended tree.
