@@ -5,6 +5,8 @@ import json
 import logging
 import time
 from collections import Counter
+from collections.abc import Callable, Iterator
+from itertools import chain
 from typing import Any, cast
 
 from trusted_router.config import Settings
@@ -13,6 +15,7 @@ from trusted_router.services.settle_outbox_apply import (
     ApplyOutcome,
     apply_frozen_settle,
 )
+from trusted_router.services.settle_outbox_audit import row_ref as _row_ref
 from trusted_router.storage import STORE
 from trusted_router.storage_errors import is_deterministic_store_error
 from trusted_router.storage_gcp_authorize import ReapPassResult
@@ -21,6 +24,15 @@ from trusted_router.storage_models import SettleOutboxRow, generation_id_for_aut
 from trusted_router.synthetic.alerts import ops_alert
 
 logger = logging.getLogger(__name__)
+
+
+def _audit_log(level: int, message: str, *args: Any) -> None:
+    # A successful claim must still be yielded if a handler/filter fails.
+    try:
+        logger.log(level, message, *args)
+    except Exception:
+        return  # Logging the logging failure would recurse.
+
 
 # Six hours is long enough to ride out a real analytics outage on 60-second
 # parks, but short enough that a permanently broken row cannot churn the drain
@@ -69,6 +81,110 @@ def spanner_settle_outbox() -> SpannerSettleOutbox:
     )
 
 
+def _recover_async(outbox: SpannerSettleOutbox, *, limit: int, deadline: float,
+                   settings: Settings | None) -> Iterator[SettleOutboxRow]:
+    """Last-resort watchdog: short leases, immediately consumed, never health writes."""
+    from trusted_router.services.async_settle import CACHE_SECONDS
+    from trusted_router.storage_gcp_async_admission import read_health
+
+    protection = outbox._async_fence
+    lease = min(30, settings.settle_outbox_lease_seconds if settings is not None else 30)
+    health_checked = False
+    claimed = blocked = 0
+    # One sweep when empty. Under backlog repeat bounded sweeps within this
+    # pass's remaining budget; a yielded row is applied before the next claim.
+    try:
+        while claimed < limit:
+            sweep_claimed = 0
+            for shard in range(16):
+                if _monotonic() >= deadline or claimed >= limit:
+                    return
+                try:
+                    candidates = outbox.due_shard(shard=shard, async_only=True)
+                    if not candidates:
+                        continue
+                    if not protection:
+                        blocked += len(candidates)
+                        continue
+                    if not health_checked:
+                        health_checked = True
+                        try:
+                            health = read_health(outbox._database)
+                        except Exception as exc:
+                            logger.warning("async_recovery.health_read_failed error_class=%s", type(exc).__name__)
+                            health = None
+                        now = time.time()
+                        if health is not None and all(
+                            0 <= now - health[field] < CACHE_SECONDS
+                            for field in ("observed_at", "worker_heartbeat")
+                        ):
+                            return
+                    if _monotonic() >= deadline:
+                        return
+                    prior_leases = {id(candidate): (candidate.lease_owner, candidate.leased_until)
+                                    for candidate in candidates}
+                    rows = outbox.claim_candidates(candidates, lease_seconds=lease)
+                except Exception as exc:
+                    logger.warning("async_recovery.claim_failed error_class=%s", type(exc).__name__)
+                    continue
+                for row in rows:
+                    prior_owner, prior_leased_until = prior_leases[id(row)]
+                    _audit_log(
+                        logging.INFO,
+                        "async_recovery.claim ref=%s prior_owner=%s prior_leased_until=%s owner=%s leased_until=%s",
+                        _row_ref(row.payload_hash), prior_owner or "none", prior_leased_until or "none",
+                        row.lease_owner or "none", row.leased_until or "none",
+                    )
+                    claimed += 1
+                    sweep_claimed += 1
+                    yield row
+            if not sweep_claimed:
+                return
+    finally:
+        if blocked:
+            logger.warning("async_recovery.protection_disabled due_count_at_least=%s", blocked)
+
+
+def _reconcile_leased(reap_result: ReapPassResult) -> dict[str, int]:
+    """The reaper pass's heartbeated leased rows, each read from its lease
+    and recorded as the lease decided it, or left pending
+    (fastpath_settle.reconcile_reaped; docs/design/fast-admission-streams.md
+    section 6.4). Python never decides one, and never refunds one."""
+    leased = tuple(getattr(reap_result, "leased", ()) or ())
+    if not leased:
+        return {}
+    from trusted_router.config import get_settings
+    from trusted_router.routes.internal.gateway import _fastpath_front_door
+    from trusted_router.services import fastpath_settle
+    from trusted_router.storage import typed_billing_store
+
+    settings = get_settings()
+    store = typed_billing_store()
+    if store is None:
+        logger.warning("fastpath leased reap reconcile without a typed store count=%s", len(leased))
+        return {}
+    def every_intent_pending(_authorization_id: str) -> bool:
+        return True
+
+    has_intent: Callable[[str], bool]
+    try:
+        has_intent = spanner_settle_outbox().has_intent
+    except Exception:  # noqa: BLE001 - without the outbox no settled row pages: every one reads as pending
+        logger.warning("fastpath leased reap reconcile without the settle outbox count=%s", len(leased))
+        has_intent = every_intent_pending
+
+    counts = fastpath_settle.reconcile_reaped_leases(
+        _fastpath_front_door(settings),
+        store,
+        leased,
+        now=dt.datetime.now(dt.UTC),
+        grace_seconds=settings.heartbeat_grace_seconds,
+        has_intent=has_intent,
+    )
+    logger.info("fastpath leased reap reconciled %s", json.dumps(counts, sort_keys=True, separators=(",", ":")))
+    return counts
+
+
 def drain_settle_outbox(
     limit: int,
     *,
@@ -86,7 +202,9 @@ def drain_settle_outbox(
     recovered_micro = 0
     deferred = 0
 
-    for row in rows:
+    async_claimed = 0
+    for row in chain(rows, _recover_async(outbox, limit=limit, deadline=deadline, settings=settings)):
+        async_claimed += int(row.async_version is not None)
         if _monotonic() >= deadline:
             # Out of budget: leave the row leased and untouched. Its lease
             # outlives this request, so the next tick reclaims it cleanly.
@@ -164,6 +282,7 @@ def drain_settle_outbox(
         reap_result.errors,
         reap_result.refunded,
     )
+    _reconcile_leased(reap_result)
     if reap_result.count >= _REAP_BURST_ALERT_THRESHOLD:
         ops_alert(
             "ALERT gateway reaper burst "
@@ -183,7 +302,7 @@ def drain_settle_outbox(
         )
 
     return {
-        "claimed": len(rows),
+        "claimed": len(rows) + async_claimed,
         "outcomes": dict(outcomes),
         "recovered_micro": recovered_micro,
         "purged": purged,
@@ -590,6 +709,7 @@ def housekeeping(outbox: SpannerSettleOutbox, *, reap_snapshot_booking_enabled: 
         reap_result.errors,
         reap_result.refunded,
     )
+    _reconcile_leased(reap_result)
     if reap_result.count >= _REAP_BURST_ALERT_THRESHOLD:
         ops_alert(
             "ALERT gateway reaper burst "

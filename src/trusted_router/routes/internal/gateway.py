@@ -757,13 +757,60 @@ def _heartbeat_gateway_sync(
     )
     if not result.accepted:
         raise _heartbeat_rejection(str(result.reason))
+    expires_at_ms = int(result.expires_at_ms)
+    if authorization.fastpath_envelope is not None:
+        # A leased stream (docs/design/fast-admission-streams.md section
+        # 4.1): the row's transaction above ran unchanged; the heartbeat now
+        # goes to the lease's owner, whose deadline the answer carries.
+        expires_at_ms = _forward_leased_heartbeat(
+            authorization,
+            body,
+            settings,
+            canonical_body=canonical_body,
+            running=int(result.running_micro),
+        )
     return {
         "accepted": True,
         "seq": int(result.seq),
-        "expires_at_ms": int(result.expires_at_ms),
+        "expires_at_ms": expires_at_ms,
         "cap_micro": int(result.cap_micro),
         "running_micro": int(result.running_micro),
     }
+
+
+def _forward_leased_heartbeat(
+    authorization: GatewayAuthorization,
+    body: GatewayHeartbeatRequest,
+    settings: Settings,
+    *,
+    canonical_body: bytes,
+    running: int,
+) -> int:
+    """The owner's answer to a leased heartbeat today's transaction accepted:
+    its deadline in epoch milliseconds, else today's rejection, else 503 with
+    Retry-After as the heartbeat kill switch answers, which the enclave
+    retries within its budget and then stops the stream."""
+    from trusted_router.services import fastpath_heartbeat
+
+    forwarded = fastpath_heartbeat.forward(
+        _fastpath_front_door(settings),
+        authorization,
+        seq=int(body.seq),
+        digest=fastpath_heartbeat.heartbeat_digest(canonical_body),
+        counts=body.usage.canonical_counts(),
+        running=running,
+        selected_endpoint_id=body.selected_endpoint_id,
+    )
+    if forwarded.deadline is not None:
+        return fastpath_heartbeat.epoch_millis(forwarded.deadline)
+    if forwarded.reason is not None:
+        raise _heartbeat_rejection(forwarded.reason)
+    raise api_error(
+        503,
+        "Stage D heartbeat owner unavailable; retry",
+        ErrorType.SERVICE_UNAVAILABLE,
+        headers={"Retry-After": "1"},
+    )
 
 
 def _gateway_boot_auth_accepted(
@@ -1781,7 +1828,7 @@ def _authorize_gateway_sync_impl(
 
         from trusted_router.spend_windows import (
             enforced_window_limits,
-            key_window_limits,
+            key_window_read_timestamp_headers,
             remember_spend_window_decision,
             spend_window_headers,
             spend_window_limit_error_message,
@@ -1824,12 +1871,21 @@ def _authorize_gateway_sync_impl(
             boot_verified=bool(boot_context["boot_verified"]),
             boot_kid=boot_auth.kid if boot_auth is not None else None,
             service_tier=body.service_tier,
-            key_capped=api_key.limit_microdollars is not None or bool(key_window_limits(api_key)),
+            # A lifetime cap, or spend windows fastpath_pilot_key_windows does
+            # not cover (e2-key-windows section 5; the edge policy carries it).
+            key_capped=_fastpath.pilot_key_capped(settings.fastpath_pilot_key_windows, api_key),
             budget_strict=bool(api_key.budget_strict),
             app_markup=app_markup_basis_points > 0,
             # The leased settle writes its records, its resolved intent and
             # its activity row in one commit: it needs the durable outboxes.
             records_durable=_fastpath.records_durable(settings.settle_outbox_enabled, _typed_store),
+            # A stream joins only as docs/design/fast-admission-streams.md
+            # section 5.1 says: the enclave heartbeats it (Stage D ok, the
+            # boot declared it), the lease's snapshot reap matches Python's,
+            # and its hold is its ceiling.
+            stage_d_reason=stage_d_reason,
+            heartbeat_declared=bool(boot_context.get("heartbeat_declared", False)),
+            hold_is_ceiling=reservation == estimate,
         )
 
         def release_after_error() -> None:
@@ -2021,17 +2077,27 @@ def _authorize_gateway_sync_impl(
                 key_id=api_key.hash, request_id=getattr(request.state, "request_id", None),
             )
         if outcome.startswith(AuthorizeOutcome.KEY_WINDOW_LIMIT_EXCEEDED):
-            release_user_model_slot_after_error()
+            # The window check runs after a lease admission and writes no
+            # row: the slot, and the hold a lease granted, are given back.
+            release_after_error()
             if window_decision is None:
                 raise RuntimeError("typed window rejection omitted its rate-limit verdict")
+            # With the read timestamp of the snapshot the refusal evaluated,
+            # this internal route only: the edge's decide shadow re-reads the
+            # key's rows at that instant (key windows section 8.2 item 3).
             raise api_error(
                 429,
                 spend_window_limit_error_message(window_decision),
                 ErrorType.KEY_WINDOW_LIMIT_EXCEEDED,
-                headers=spend_window_headers(window_decision, retry_after=True),
+                headers={
+                    **spend_window_headers(window_decision, retry_after=True),
+                    **key_window_read_timestamp_headers(window_decision),
+                },
             )
         if outcome in (AuthorizeOutcome.KEY_LIMIT_EXCEEDED, AuthorizeOutcome.KEY_MISSING):
-            release_user_model_slot_after_error()
+            # As the window rejection: the lifetime-cap precheck runs after
+            # a lease admission too.
+            release_after_error()
             raise api_error(402, "API key spend limit exceeded", ErrorType.KEY_LIMIT_EXCEEDED)
         if outcome == AuthorizeOutcome.IDEMPOTENCY_MISMATCH:
             # The slot, and the hold a lease granted this attempt: given back.
@@ -3237,7 +3303,7 @@ def _gateway_authorize_response(
             "idempotent_replay": idempotent_replay,
             **(
                 {"invocation_nonce": authorization.invocation_nonce}
-                if idempotent_replay
+                if idempotent_replay or async_additions.get("async_eligible")
                 else {}
             ),
             "additional_cost_reservation_microdollars": (
@@ -3808,7 +3874,7 @@ def _record_refund_benchmark_safely(
 
 def _v2_authorize_hook(settings: Settings, request: Any, body: Any, authorization: GatewayAuthorization,
                        additions: dict, candidates: Any, federated: bool, replay: bool) -> None:
-    if not in_v2_cohort(settings.async_settle_shadow_policy, authorization.workspace_id,
+    if not in_v2_cohort(settings.regional_async_settle_shadow_policy(), authorization.workspace_id,
                         settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
         return None
     try:
@@ -3847,7 +3913,7 @@ def _terminal_once(hook: Any, callback: Any) -> Any:
 
 def _v2_settle_hook(settings: Settings, request: Any, body: Any, authorization: GatewayAuthorization,
                     callback: Any) -> Any:
-    if not in_v2_cohort(settings.async_settle_shadow_policy, authorization.workspace_id,
+    if not in_v2_cohort(settings.regional_async_settle_shadow_policy(), authorization.workspace_id,
                         settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
         return callback()
     def invoke(once: Any) -> Any:
@@ -3858,7 +3924,7 @@ def _v2_settle_hook(settings: Settings, request: Any, body: Any, authorization: 
 
 def _v2_refund_hook(settings: Settings, request: Any, body: Any, authorization: GatewayAuthorization,
                     callback: Any, *, success: bool) -> Any:
-    if not in_v2_cohort(settings.async_settle_shadow_policy, authorization.workspace_id,
+    if not in_v2_cohort(settings.regional_async_settle_shadow_policy(), authorization.workspace_id,
                         settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
         return callback()
     def invoke(once: Any) -> Any:
@@ -3869,7 +3935,7 @@ def _v2_refund_hook(settings: Settings, request: Any, body: Any, authorization: 
 
 def _v2_capture_hook(settings: Settings, authorization: GatewayAuthorization, body: Any,
                     endpoint: Any, document: Any, *, replay: bool) -> None:
-    if not in_v2_cohort(settings.async_settle_shadow_policy, authorization.workspace_id,
+    if not in_v2_cohort(settings.regional_async_settle_shadow_policy(), authorization.workspace_id,
                         settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
         return None
     try:
@@ -3902,7 +3968,7 @@ def _settle_gateway_with_admission_sync(
     boot_auth_outcome = _boot_auth_outcome or _terminal_boot_auth_outcome(
         _boot_auth, authorization, kind="settle"
     )
-    if _shadow_request is not None and in_v2_cohort(settings.async_settle_shadow_policy,
+    if _shadow_request is not None and in_v2_cohort(settings.regional_async_settle_shadow_policy(),
             authorization.workspace_id, settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
         return _terminal_once(
             lambda once: _v2_settle_hook(settings, _shadow_request, body, authorization, once),
@@ -3970,7 +4036,7 @@ def _settle_gateway_authorization(
     boot_auth_outcome = _boot_auth_outcome or _terminal_boot_auth_outcome(
         _boot_auth, authorization, kind="settle" if success else "refund"
     )
-    if _shadow_request is not None and in_v2_cohort(settings.async_settle_shadow_policy,
+    if _shadow_request is not None and in_v2_cohort(settings.regional_async_settle_shadow_policy(),
             authorization.workspace_id, settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
         return _terminal_once(
             lambda once: _v2_refund_hook(settings, _shadow_request, body, authorization, once, success=success),
@@ -4611,6 +4677,10 @@ def _settle_gateway_authorization(
             refund_benchmark=refund_benchmark,
             settle_intent=settle_intent,
             typed_store=_typed_store,
+            background_tasks=background_tasks,
+            customer_billing_event=is_customer_billing_event,
+            generation_model_id=generation_model_id,
+            generation_provider=generation_provider,
         )
     one_commit_result: TypedFinalizeResult | None = None
     one_commit_ms = 0.0
@@ -4990,37 +5060,13 @@ def _settle_gateway_authorization(
             background_tasks,
         )
     if success and is_customer_billing_event:
-        if background_tasks is not None:
-            background_tasks.add_task(
-                record_successful_api_call_safely,
-                authorization.workspace_id,
-                model=generation_model_id,
-                provider=generation_provider,
-            )
-        else:
-            record_successful_api_call_safely(
-                authorization.workspace_id,
-                model=generation_model_id,
-                provider=generation_provider,
-            )
-        # Alert-mode budgets: email the owner when a window is crossed (never
-        # blocks — the block happens at authorize for limit-mode keys). Off the
-        # hot path; best-effort.
-        from trusted_router.services.budget_alerts import maybe_send_budget_alerts
-
-        if background_tasks is not None:
-            background_tasks.add_task(
-                maybe_send_budget_alerts,
-                api_key_hash=authorization.key_hash,
-                workspace_id=authorization.workspace_id,
-                settings=settings,
-            )
-        else:
-            maybe_send_budget_alerts(
-                api_key_hash=authorization.key_hash,
-                workspace_id=authorization.workspace_id,
-                settings=settings,
-            )
+        _schedule_successful_settle_followups(
+            authorization,
+            settings=settings,
+            background_tasks=background_tasks,
+            model=generation_model_id,
+            provider=generation_provider,
+        )
     if success and generation is not None:
         # Keep S27 before the reply: successful enqueue is durable today and
         # there is no durable replay intent for a skipped broadcast enqueue.
@@ -5281,10 +5327,24 @@ def _fastpath_admission(
     budget_strict: bool,
     app_markup: bool,
     records_durable: bool,
+    stage_d_reason: str | None = None,
+    heartbeat_declared: bool = False,
+    hold_is_ceiling: bool = False,
 ) -> _fastpath.Admitted | None:
     """The pilot's admission, or None for today's path. The region is this
     control plane's own: the front doors are reachable from the region the
-    fast path's nodes are in, whatever region the request routes to."""
+    fast path's nodes are in, whatever region the request routes to. A
+    stream passed over logs the condition of section 5.1 it failed
+    (docs/design/fast-admission-streams.md)."""
+    def stream_reason() -> str | None:
+        return _fastpath.pilot_stream_reason(
+            streams_enabled=settings.fastpath_pilot_streams,
+            stage_d_reason=stage_d_reason,
+            heartbeat_declared=heartbeat_declared,
+            snapshot_booking=settings.reap_snapshot_booking_enabled,
+            hold_is_ceiling=hold_is_ceiling,
+        )
+
     reason = _fastpath.pilot_reason(
         enabled=settings.fastpath_pilot_enabled,
         workspace_id=workspace_id,
@@ -5300,9 +5360,16 @@ def _fastpath_admission(
         budget_strict=budget_strict,
         app_markup=app_markup,
         records_durable=records_durable,
+        streams_enabled=settings.fastpath_pilot_streams,
+        stage_d_reason=stage_d_reason,
+        heartbeat_declared=heartbeat_declared,
+        snapshot_booking=settings.reap_snapshot_booking_enabled,
+        hold_is_ceiling=hold_is_ceiling,
     )
     if reason is not None:
         if settings.fastpath_pilot_enabled and workspace_id in settings.fastpath_pilot_workspace_ids:
+            if reason == "stream":
+                reason = stream_reason() or reason
             logger.info("fastpath pilot passed over reason=%s workspace_id=%s", reason, workspace_id)
         return None
     client = _fastpath_front_door(settings)
@@ -5370,6 +5437,10 @@ def _settle_leased_authorization(
     refund_benchmark: ProviderBenchmarkSample | None,
     settle_intent: SettleOutboxRow | None,
     typed_store: Any,
+    background_tasks: BackgroundTasks | None,
+    customer_billing_event: bool,
+    generation_model_id: str,
+    generation_provider: str,
 ) -> dict[str, Any]:
     """The pilot's terminal (docs/design/fast-admission-pilot.md), durable
     first as today's two-commit settle: the settle-outbox intent is pending
@@ -5378,7 +5449,10 @@ def _settle_leased_authorization(
     another kind) is answered as today's `intent_durable` and the drain asks
     again later, with the frozen charge. Decided, the records are written
     here in one commit with the intent resolved, and nothing booked: the
-    lease did the booking."""
+    lease did the booking. A decided success whose records this commit
+    wrote schedules today's follow-ups (the acquisition milestones and any
+    budget alert); the auto-refill rides the intent, as today's does on the
+    internal surface."""
     from trusted_router.services import fastpath_settle
 
     unavailable = api_error(
@@ -5426,11 +5500,14 @@ def _settle_leased_authorization(
             authorization.id,
             success=decision.success,
             actual_microdollars=decision.charge,
-            selected_usage_type=selected_usage_type,
+            # A reap the lease decided books credits, whatever this
+            # terminal asked (docs/design/fast-admission-streams.md 6.3).
+            selected_usage_type=UsageType.CREDITS if decision.outcome is not None else selected_usage_type,
             generation=decision.generation,
             authorization_snapshot=authorization,
             refund_benchmark=refund_benchmark if not decision.success else None,
             mark_intent=intent.intent_kind,
+            outcome=decision.outcome,
         )
     except Exception:
         # The lease took the charge and the intent is durable: the drain
@@ -5446,7 +5523,60 @@ def _settle_leased_authorization(
         return {"data": _already_settled_gateway_data(refreshed)}
     _finalize, finalized = result
     _release_user_model_slot_safely(finalized)
+    if decision.success and decision.outcome is None and customer_billing_event:
+        # The window usage is booked in the commit above, so an alert-only
+        # key's crossing is visible to the alert check, as after today's settle.
+        _schedule_successful_settle_followups(
+            finalized,
+            settings=settings,
+            background_tasks=background_tasks,
+            model=generation_model_id,
+            provider=generation_provider,
+        )
     return {"data": _already_settled_gateway_data(finalized)}
+
+
+def _schedule_successful_settle_followups(
+    authorization: GatewayAuthorization,
+    *,
+    settings: Settings,
+    background_tasks: BackgroundTasks | None,
+    model: str,
+    provider: str,
+) -> None:
+    """A customer's successful settle whose records this request committed:
+    claim the acquisition milestones and send any budget alert. Both are
+    best effort and run off the hot path when a background queue is given."""
+    if background_tasks is not None:
+        background_tasks.add_task(
+            record_successful_api_call_safely,
+            authorization.workspace_id,
+            model=model,
+            provider=provider,
+        )
+    else:
+        record_successful_api_call_safely(
+            authorization.workspace_id,
+            model=model,
+            provider=provider,
+        )
+    # Alert-mode budgets: email the owner when a window is crossed (never
+    # blocks: the block happens at authorize for limit-mode keys).
+    from trusted_router.services.budget_alerts import maybe_send_budget_alerts
+
+    if background_tasks is not None:
+        background_tasks.add_task(
+            maybe_send_budget_alerts,
+            api_key_hash=authorization.key_hash,
+            workspace_id=authorization.workspace_id,
+            settings=settings,
+        )
+    else:
+        maybe_send_budget_alerts(
+            api_key_hash=authorization.key_hash,
+            workspace_id=authorization.workspace_id,
+            settings=settings,
+        )
 
 
 def _already_settled_gateway_data(authorization: Any) -> dict[str, Any]:

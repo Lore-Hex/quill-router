@@ -27,6 +27,108 @@ document.addEventListener('DOMContentLoaded', () => {
   const track = event => window.TokenExchangeAnalytics?.track(event, metadata());
   const money = new Intl.NumberFormat('en-US', {style:'currency', currency:'USD', maximumFractionDigits:0});
 
+  const reserveEndpoint = 'https://trustedrouter.com/token-exchange/reserve';
+  const cents = new Intl.NumberFormat('en-US', {style:'currency', currency:'USD'});
+  let reserveQuote = null;
+  let reserveKey = '';
+  let reserveTimer;
+  let checkingOut = false;
+  const reserveEligible = () => selected('unit').value === 'blocks' && selected('underlying').value === 'index';
+  const currentReserveKey = () => `${selected('grade').value}:${get('blocks').value}`;
+
+  function updateReservation() {
+    const eligible = reserveEligible();
+    get('reserve').hidden = !eligible;
+    get('reserve-terms').disabled = !eligible;
+    const key = eligible ? currentReserveKey() : '';
+    if (key !== reserveKey) {
+      reserveKey = key;
+      reserveQuote = null;
+      get('reserve-terms').checked = false;
+      get('reserve-error').textContent = '';
+      clearTimeout(reserveTimer);
+      if (eligible) {
+        get('reserve-price').textContent = 'Loading the current reservation quote…';
+        reserveTimer = setTimeout(() => void loadReservationQuote(key), 250);
+      }
+    }
+    get('reserve-button').disabled = !eligible || !reserveQuote || !get('reserve-terms').checked || checkingOut;
+  }
+
+  async function loadReservationQuote(key) {
+    const lots = get('blocks').valueAsNumber;
+    if (!Number.isInteger(lots) || lots < 1) {
+      get('reserve-price').textContent = 'Choose a positive whole number of lots.';
+      return;
+    }
+    try {
+      const response = await fetch(`${reserveEndpoint}/quote?${new URLSearchParams({grade:selected('grade').value,lots:String(lots)})}`,
+        {mode:'cors', credentials:'omit'});
+      if (!response.ok) throw new Error('Card reservations are unavailable for this quantity. Book a call or try again later.');
+      const quote = await response.json();
+      if (key !== reserveKey) return;
+      if (quote.index_as_of !== get('as-of').dateTime || quote.list_price_cents !== Math.round(Number(selected('grade').dataset.price) * 100)) {
+        throw new Error('The index snapshot has changed. Reload this page before reserving, or book a call.');
+      }
+      const listCents = Math.round(Number(selected('grade').dataset.price) * 100);
+      // Published prices are whole cents. Integer arithmetic mirrors the server's
+      // half-up cent rounding; the returned authoritative quote must agree.
+      const discounted = listCents * (10000 - quote.discount_bps);
+      const perLot = Math.floor((discounted + 5000) / 10000);
+      const subtotal = perLot * lots;
+      const exchangeNumerator = subtotal * quote.exchange_fee_bps;
+      const exchangeFee = Math.floor((exchangeNumerator + 5000) / 10000);
+      const credit = subtotal + exchangeFee;
+      const processingNumerator = (credit + quote.processing_fee_fixed_cents) * 10000;
+      const processingFee = Math.ceil(processingNumerator / (10000 - quote.processing_fee_bps)) - credit;
+      const total = credit + processingFee;
+      if (!Number.isInteger(quote.discount_bps) || quote.discount_bps < 0 || quote.discount_bps >= 10000 ||
+          !Number.isSafeInteger(discounted) || perLot <= 0 || quote.per_lot_cents !== perLot ||
+          quote.grade !== selected('grade').value || quote.lots !== lots ||
+          quote.exchange_fee_bps !== 10 || !Number.isSafeInteger(exchangeNumerator + 5000) ||
+          !Number.isInteger(quote.processing_fee_bps) || quote.processing_fee_bps < 0 || quote.processing_fee_bps >= 10000 ||
+          !Number.isSafeInteger(quote.processing_fee_fixed_cents) || quote.processing_fee_fixed_cents < 0 ||
+          !Number.isSafeInteger(processingNumerator) || !Number.isSafeInteger(total) || total < 50 || total > 99999999 ||
+          quote.subtotal_cents !== subtotal || quote.exchange_fee_cents !== exchangeFee ||
+          quote.processing_fee_cents !== processingFee || quote.total_cents !== total) throw new Error('Quote unavailable. Please try again.');
+      reserveQuote = quote;
+      get('reserve-price').textContent = `${cents.format(perLot / 100)} per lot · ${quote.discount_bps / 100}% early-reservation discount · ${lots} lot${lots === 1 ? '' : 's'}: ${cents.format(subtotal / 100)} + ${cents.format(exchangeFee / 100)} NYTE exchange fee (${quote.exchange_fee_bps / 100}%) + ${cents.format(processingFee / 100)} card processing fee = ${cents.format(total / 100)} USD total. Index as of ${quote.index_as_of}. Up to ${quote.max_lots} lots by card; larger orders by call.`;
+    } catch (error) {
+      if (key !== reserveKey) return;
+      reserveQuote = null;
+      get('reserve-price').textContent = error.message;
+    }
+    updateReservation();
+  }
+
+  get('reserve-button').addEventListener('click', async () => {
+    if (!reserveEligible() || !reserveQuote || checkingOut || currentReserveKey() !== reserveKey) return;
+    if (!get('reserve-terms').reportValidity()) return;
+    checkingOut = true;
+    updateReservation();
+    get('reserve-error').textContent = '';
+    track('nyte.reserve_checkout_started');
+    try {
+      const response = await fetch(`${reserveEndpoint}/checkout`, {method:'POST', mode:'cors', credentials:'omit',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({grade:selected('grade').value, lots:get('blocks').valueAsNumber, terms_accepted:true})});
+      if (!response.ok) throw new Error('Checkout could not start. Please try again or book a call.');
+      const payload = await response.json();
+      const url = new URL(payload.url);
+      if (url.protocol !== 'https:' || url.hostname !== 'checkout.stripe.com') throw new Error('Checkout is unavailable. Please book a call.');
+      location.assign(url.href);
+    } catch (error) {
+      get('reserve-error').textContent = error.message;
+      checkingOut = false;
+      updateReservation();
+    }
+  });
+  if (query.get('reserved') === 'success') {
+    get('reserved-success').hidden = false;
+    // A browser return is a funnel signal, not authoritative payment proof.
+    window.TokenExchangeAnalytics?.track('nyte.reserve_checkout_succeeded');
+  }
+
   async function catalogue() {
     if (catalogueLoaded) return;
     catalogueLoaded = true;
@@ -105,6 +207,7 @@ document.addEventListener('DOMContentLoaded', () => {
       get('total').textContent = 'Pricing is discussed on the call. No indicative total is shown for throughput, a specific model, or an undecided request.';
     }
     if (model) void catalogue();
+    updateReservation();
   }
 
   function fieldsValid(number, report = false) {

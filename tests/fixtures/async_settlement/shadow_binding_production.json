@@ -1,0 +1,797 @@
+{
+  "cases": [
+    {
+      "authorization": {
+        "api_key_hash": "key_AAECAwQFBgcICQoLDA0ODxAR",
+        "authorization_id": "gwa-101112131415461798191a1b1c1d1e1f",
+        "billing_shadow_binding": "eyJhbGciOiJFZERTQSIsImtpZCI6InRyLWFzeW5jLXNldHRsZS0yMDI2LTEwYSIsInR5cCI6InRyLWFzeW5jLXNldHRsZS1zaGFkb3ctdjEifQ.eyJhc3luY19lbGlnaWJsZSI6ZmFsc2UsImF1ZCI6InJvdXRlci1zaGFkb3ciLCJhdXRob3JpemF0aW9uX2lkIjoiZ3dhLTEwMTExMjEzMTQxNTQ2MTc5ODE5MWExYjFjMWQxZTFmIiwiYmlsbGluZ19hdXRob3JpdHkiOiJsb2NhbCIsImVwb2NoIjoxLCJleHAiOjE3OTE0MTc2MDEsImdlbmVyYXRpb25faWQiOiJnZW4tNmY5ZTczOWU4MzVmNTZmYTlkMGZmNzJiNDBiMmFjM2YiLCJpYXQiOjE3OTEyNDQ4MDEsImludm9jYXRpb25fbm9uY2UiOiIwMDExMjIzMzQ0NTU2Njc3ODg5OWFhYmJjY2RkZWVmZiIsImlzcyI6Imh0dHBzOi8vYXBpLnRydXN0ZWRyb3V0ZXIuY29tIiwiam91cm5hbF9yZWdpb24iOiJ1cy1jZW50cmFsMSIsImtleV9pZCI6ImtleV9BQUVDQXdRRkJnY0lDUW9MREEwT0R4QVIiLCJyZXNlcnZhdGlvbl9pZCI6IjEwMTExMjEzLTE0MTUtNDYxNy05ODE5LTFhMWIxYzFkMWUxZiIsInJvdXRlX3R5cGUiOiJjaGF0LmNvbXBsZXRpb25zIiwic2V0dGxlX29yaWdpbiI6InR5cGVkIiwic25hcHNob3RfaGFzaCI6ImZhOTUwM2I1OTc3NjhlOTVmNDdhMGI3NWJjNzFkNWNhOTEwMTU0YTIyZjM1OWNjYWI4YzE3YWFiNjQ2MzY1ZDIiLCJzbmFwc2hvdF92ZXJzaW9uIjoxLCJzdHJlYW1lZCI6ZmFsc2UsIndvcmtzcGFjZV9pZCI6IjAwMDEwMjAzLTA0MDUtNDYwNy04ODA5LTBhMGIwYzBkMGUwZiJ9.cQ-v46UNVAMnvir211ZZLfIXkI9YTPJ1k-oxgu2X6FNvdafXOakxl8H5DiwluxlLok7xFrivDf6LPOBCIc4xBg",
+        "billing_shadow_policy": "shadow-v2",
+        "billing_snapshot": {
+          "candidates": [
+            {
+              "endpoint_id": "openai/gpt-4.1-mini@openai/prepaid",
+              "model_id": "openai/gpt-4.1-mini",
+              "output_convention": "includes_reasoning",
+              "price_history_version": 1,
+              "prompt_convention": "includes_cache",
+              "provider": "openai",
+              "rates": {
+                "cache_creation_micro_per_million": 625000,
+                "cached_input_micro_per_million": 250000,
+                "input_micro_per_million": 500000,
+                "output_micro_per_million": 500000
+              },
+              "request_fee_micro": 0,
+              "rounding": "half_up_per_million",
+              "tiers": [],
+              "usage_type": "Credits"
+            }
+          ],
+          "charge_cap": null,
+          "kind": "credits_endpoint",
+          "minimum_charge": "one_micro_if_positive",
+          "tier_basis": "total_prompt",
+          "tier_boundary": "inclusive",
+          "tier_fallback": "last_tier",
+          "v": 1
+        },
+        "billing_snapshot_hash": "fa9503b597768e95f47a0b75bc71d5ca910154a22f359ccab8c17aab646365d2",
+        "credit_reservation_id": "10111213-1415-4617-9819-1a1b1c1d1e1f",
+        "endpoint_id": "openai/gpt-4.1-mini@openai/prepaid",
+        "generation_id": "gen-6f9e739e835f56fa9d0ff72b40b2ac3f",
+        "invocation_nonce": "00112233445566778899aabbccddeeff",
+        "model": "openai/gpt-4.1-mini",
+        "provider": "openai",
+        "workspace_id": "00010203-0405-4607-8809-0a0b0c0d0e0f"
+      },
+      "binding": "eyJhbGciOiJFZERTQSIsImtpZCI6InRyLWFzeW5jLXNldHRsZS0yMDI2LTEwYSIsInR5cCI6InRyLWFzeW5jLXNldHRsZS1zaGFkb3ctdjEifQ.eyJhc3luY19lbGlnaWJsZSI6ZmFsc2UsImF1ZCI6InJvdXRlci1zaGFkb3ciLCJhdXRob3JpemF0aW9uX2lkIjoiZ3dhLTEwMTExMjEzMTQxNTQ2MTc5ODE5MWExYjFjMWQxZTFmIiwiYmlsbGluZ19hdXRob3JpdHkiOiJsb2NhbCIsImVwb2NoIjoxLCJleHAiOjE3OTE0MTc2MDEsImdlbmVyYXRpb25faWQiOiJnZW4tNmY5ZTczOWU4MzVmNTZmYTlkMGZmNzJiNDBiMmFjM2YiLCJpYXQiOjE3OTEyNDQ4MDEsImludm9jYXRpb25fbm9uY2UiOiIwMDExMjIzMzQ0NTU2Njc3ODg5OWFhYmJjY2RkZWVmZiIsImlzcyI6Imh0dHBzOi8vYXBpLnRydXN0ZWRyb3V0ZXIuY29tIiwiam91cm5hbF9yZWdpb24iOiJ1cy1jZW50cmFsMSIsImtleV9pZCI6ImtleV9BQUVDQXdRRkJnY0lDUW9MREEwT0R4QVIiLCJyZXNlcnZhdGlvbl9pZCI6IjEwMTExMjEzLTE0MTUtNDYxNy05ODE5LTFhMWIxYzFkMWUxZiIsInJvdXRlX3R5cGUiOiJjaGF0LmNvbXBsZXRpb25zIiwic2V0dGxlX29yaWdpbiI6InR5cGVkIiwic25hcHNob3RfaGFzaCI6ImZhOTUwM2I1OTc3NjhlOTVmNDdhMGI3NWJjNzFkNWNhOTEwMTU0YTIyZjM1OWNjYWI4YzE3YWFiNjQ2MzY1ZDIiLCJzbmFwc2hvdF92ZXJzaW9uIjoxLCJzdHJlYW1lZCI6ZmFsc2UsIndvcmtzcGFjZV9pZCI6IjAwMDEwMjAzLTA0MDUtNDYwNy04ODA5LTBhMGIwYzBkMGUwZiJ9.cQ-v46UNVAMnvir211ZZLfIXkI9YTPJ1k-oxgu2X6FNvdafXOakxl8H5DiwluxlLok7xFrivDf6LPOBCIc4xBg",
+      "claims": {
+        "async_eligible": false,
+        "aud": "router-shadow",
+        "authorization_id": "gwa-101112131415461798191a1b1c1d1e1f",
+        "billing_authority": "local",
+        "epoch": 1,
+        "exp": 1791417601,
+        "generation_id": "gen-6f9e739e835f56fa9d0ff72b40b2ac3f",
+        "iat": 1791244801,
+        "invocation_nonce": "00112233445566778899aabbccddeeff",
+        "iss": "https://api.trustedrouter.com",
+        "journal_region": "us-central1",
+        "key_id": "key_AAECAwQFBgcICQoLDA0ODxAR",
+        "reservation_id": "10111213-1415-4617-9819-1a1b1c1d1e1f",
+        "route_type": "chat.completions",
+        "settle_origin": "typed",
+        "snapshot_hash": "fa9503b597768e95f47a0b75bc71d5ca910154a22f359ccab8c17aab646365d2",
+        "snapshot_version": 1,
+        "streamed": false,
+        "workspace_id": "00010203-0405-4607-8809-0a0b0c0d0e0f"
+      },
+      "name": "openai_chat_buffered",
+      "request": {
+        "api_key_lookup_hash": "5bad7d21204dddea423b39acd25fb9be0d174323d156dd2c9c2b7d6c3386a575",
+        "cache_affinity_explicit": false,
+        "cache_affinity_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "estimated_input_tokens": 6,
+        "idempotency_key": "async-settle-probe-00000000-0000-4000-8000-000000000001",
+        "invocation_nonce": "00112233445566778899aabbccddeeff",
+        "max_output_tokens": 8,
+        "max_tokens": 8,
+        "model": "openai/gpt-4.1-mini",
+        "provider": {
+          "allow_fallbacks": false,
+          "only": [
+            "openai"
+          ]
+        },
+        "region": "us",
+        "requested_parameters": [
+          "max_tokens"
+        ],
+        "route_type": "chat.completions",
+        "spend_lease_echo": {
+          "catalog_version": null,
+          "enclave_estimate_micro": null,
+          "lease_id": null,
+          "remaining_micro": null,
+          "state": "dormant",
+          "would_admit": null
+        },
+        "stream": false
+      }
+    },
+    {
+      "authorization": {
+        "api_key_hash": "key_AAECAwQFBgcICQoLDA0ODxAR",
+        "authorization_id": "gwa-101112131415461798191a1b1c1d1e1f",
+        "billing_shadow_binding": "eyJhbGciOiJFZERTQSIsImtpZCI6InRyLWFzeW5jLXNldHRsZS0yMDI2LTEwYSIsInR5cCI6InRyLWFzeW5jLXNldHRsZS1zaGFkb3ctdjEifQ.eyJhc3luY19lbGlnaWJsZSI6ZmFsc2UsImF1ZCI6InJvdXRlci1zaGFkb3ciLCJhdXRob3JpemF0aW9uX2lkIjoiZ3dhLTEwMTExMjEzMTQxNTQ2MTc5ODE5MWExYjFjMWQxZTFmIiwiYmlsbGluZ19hdXRob3JpdHkiOiJsb2NhbCIsImVwb2NoIjoxLCJleHAiOjE3OTE0MTc2MDEsImdlbmVyYXRpb25faWQiOiJnZW4tNmY5ZTczOWU4MzVmNTZmYTlkMGZmNzJiNDBiMmFjM2YiLCJpYXQiOjE3OTEyNDQ4MDEsImludm9jYXRpb25fbm9uY2UiOiIwMDExMjIzMzQ0NTU2Njc3ODg5OWFhYmJjY2RkZWVmZiIsImlzcyI6Imh0dHBzOi8vYXBpLnRydXN0ZWRyb3V0ZXIuY29tIiwiam91cm5hbF9yZWdpb24iOiJ1cy1jZW50cmFsMSIsImtleV9pZCI6ImtleV9BQUVDQXdRRkJnY0lDUW9MREEwT0R4QVIiLCJyZXNlcnZhdGlvbl9pZCI6IjEwMTExMjEzLTE0MTUtNDYxNy05ODE5LTFhMWIxYzFkMWUxZiIsInJvdXRlX3R5cGUiOiJjaGF0LmNvbXBsZXRpb25zIiwic2V0dGxlX29yaWdpbiI6InR5cGVkIiwic25hcHNob3RfaGFzaCI6ImZhOTUwM2I1OTc3NjhlOTVmNDdhMGI3NWJjNzFkNWNhOTEwMTU0YTIyZjM1OWNjYWI4YzE3YWFiNjQ2MzY1ZDIiLCJzbmFwc2hvdF92ZXJzaW9uIjoxLCJzdHJlYW1lZCI6dHJ1ZSwid29ya3NwYWNlX2lkIjoiMDAwMTAyMDMtMDQwNS00NjA3LTg4MDktMGEwYjBjMGQwZTBmIn0.EC6wtD3lAPyxjYq5DgZKpAnKxWhnAIP_tqmgA50_r2km9sR8NkefR0nSAPbythvHMbRA3tuQDorDsX7eA3rdCg",
+        "billing_shadow_policy": "shadow-v2",
+        "billing_snapshot": {
+          "candidates": [
+            {
+              "endpoint_id": "openai/gpt-4.1-mini@openai/prepaid",
+              "model_id": "openai/gpt-4.1-mini",
+              "output_convention": "includes_reasoning",
+              "price_history_version": 1,
+              "prompt_convention": "includes_cache",
+              "provider": "openai",
+              "rates": {
+                "cache_creation_micro_per_million": 625000,
+                "cached_input_micro_per_million": 250000,
+                "input_micro_per_million": 500000,
+                "output_micro_per_million": 500000
+              },
+              "request_fee_micro": 0,
+              "rounding": "half_up_per_million",
+              "tiers": [],
+              "usage_type": "Credits"
+            }
+          ],
+          "charge_cap": null,
+          "kind": "credits_endpoint",
+          "minimum_charge": "one_micro_if_positive",
+          "tier_basis": "total_prompt",
+          "tier_boundary": "inclusive",
+          "tier_fallback": "last_tier",
+          "v": 1
+        },
+        "billing_snapshot_hash": "fa9503b597768e95f47a0b75bc71d5ca910154a22f359ccab8c17aab646365d2",
+        "credit_reservation_id": "10111213-1415-4617-9819-1a1b1c1d1e1f",
+        "endpoint_id": "openai/gpt-4.1-mini@openai/prepaid",
+        "generation_id": "gen-6f9e739e835f56fa9d0ff72b40b2ac3f",
+        "invocation_nonce": "00112233445566778899aabbccddeeff",
+        "model": "openai/gpt-4.1-mini",
+        "provider": "openai",
+        "workspace_id": "00010203-0405-4607-8809-0a0b0c0d0e0f"
+      },
+      "binding": "eyJhbGciOiJFZERTQSIsImtpZCI6InRyLWFzeW5jLXNldHRsZS0yMDI2LTEwYSIsInR5cCI6InRyLWFzeW5jLXNldHRsZS1zaGFkb3ctdjEifQ.eyJhc3luY19lbGlnaWJsZSI6ZmFsc2UsImF1ZCI6InJvdXRlci1zaGFkb3ciLCJhdXRob3JpemF0aW9uX2lkIjoiZ3dhLTEwMTExMjEzMTQxNTQ2MTc5ODE5MWExYjFjMWQxZTFmIiwiYmlsbGluZ19hdXRob3JpdHkiOiJsb2NhbCIsImVwb2NoIjoxLCJleHAiOjE3OTE0MTc2MDEsImdlbmVyYXRpb25faWQiOiJnZW4tNmY5ZTczOWU4MzVmNTZmYTlkMGZmNzJiNDBiMmFjM2YiLCJpYXQiOjE3OTEyNDQ4MDEsImludm9jYXRpb25fbm9uY2UiOiIwMDExMjIzMzQ0NTU2Njc3ODg5OWFhYmJjY2RkZWVmZiIsImlzcyI6Imh0dHBzOi8vYXBpLnRydXN0ZWRyb3V0ZXIuY29tIiwiam91cm5hbF9yZWdpb24iOiJ1cy1jZW50cmFsMSIsImtleV9pZCI6ImtleV9BQUVDQXdRRkJnY0lDUW9MREEwT0R4QVIiLCJyZXNlcnZhdGlvbl9pZCI6IjEwMTExMjEzLTE0MTUtNDYxNy05ODE5LTFhMWIxYzFkMWUxZiIsInJvdXRlX3R5cGUiOiJjaGF0LmNvbXBsZXRpb25zIiwic2V0dGxlX29yaWdpbiI6InR5cGVkIiwic25hcHNob3RfaGFzaCI6ImZhOTUwM2I1OTc3NjhlOTVmNDdhMGI3NWJjNzFkNWNhOTEwMTU0YTIyZjM1OWNjYWI4YzE3YWFiNjQ2MzY1ZDIiLCJzbmFwc2hvdF92ZXJzaW9uIjoxLCJzdHJlYW1lZCI6dHJ1ZSwid29ya3NwYWNlX2lkIjoiMDAwMTAyMDMtMDQwNS00NjA3LTg4MDktMGEwYjBjMGQwZTBmIn0.EC6wtD3lAPyxjYq5DgZKpAnKxWhnAIP_tqmgA50_r2km9sR8NkefR0nSAPbythvHMbRA3tuQDorDsX7eA3rdCg",
+      "claims": {
+        "async_eligible": false,
+        "aud": "router-shadow",
+        "authorization_id": "gwa-101112131415461798191a1b1c1d1e1f",
+        "billing_authority": "local",
+        "epoch": 1,
+        "exp": 1791417601,
+        "generation_id": "gen-6f9e739e835f56fa9d0ff72b40b2ac3f",
+        "iat": 1791244801,
+        "invocation_nonce": "00112233445566778899aabbccddeeff",
+        "iss": "https://api.trustedrouter.com",
+        "journal_region": "us-central1",
+        "key_id": "key_AAECAwQFBgcICQoLDA0ODxAR",
+        "reservation_id": "10111213-1415-4617-9819-1a1b1c1d1e1f",
+        "route_type": "chat.completions",
+        "settle_origin": "typed",
+        "snapshot_hash": "fa9503b597768e95f47a0b75bc71d5ca910154a22f359ccab8c17aab646365d2",
+        "snapshot_version": 1,
+        "streamed": true,
+        "workspace_id": "00010203-0405-4607-8809-0a0b0c0d0e0f"
+      },
+      "name": "openai_chat_stream",
+      "request": {
+        "api_key_lookup_hash": "5bad7d21204dddea423b39acd25fb9be0d174323d156dd2c9c2b7d6c3386a575",
+        "cache_affinity_explicit": false,
+        "cache_affinity_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "estimated_input_tokens": 6,
+        "idempotency_key": "async-settle-probe-00000000-0000-4000-8000-000000000001",
+        "invocation_nonce": "00112233445566778899aabbccddeeff",
+        "max_output_tokens": 8,
+        "max_tokens": 8,
+        "model": "openai/gpt-4.1-mini",
+        "provider": {
+          "allow_fallbacks": false,
+          "only": [
+            "openai"
+          ]
+        },
+        "region": "us",
+        "requested_parameters": [
+          "max_tokens"
+        ],
+        "route_type": "chat.completions",
+        "spend_lease_echo": {
+          "catalog_version": null,
+          "enclave_estimate_micro": null,
+          "lease_id": null,
+          "remaining_micro": null,
+          "state": "dormant",
+          "would_admit": null
+        },
+        "stream": true
+      }
+    },
+    {
+      "authorization": {
+        "api_key_hash": "key_AAECAwQFBgcICQoLDA0ODxAR",
+        "authorization_id": "gwa-101112131415461798191a1b1c1d1e1f",
+        "billing_shadow_binding": "eyJhbGciOiJFZERTQSIsImtpZCI6InRyLWFzeW5jLXNldHRsZS0yMDI2LTEwYSIsInR5cCI6InRyLWFzeW5jLXNldHRsZS1zaGFkb3ctdjEifQ.eyJhc3luY19lbGlnaWJsZSI6ZmFsc2UsImF1ZCI6InJvdXRlci1zaGFkb3ciLCJhdXRob3JpemF0aW9uX2lkIjoiZ3dhLTEwMTExMjEzMTQxNTQ2MTc5ODE5MWExYjFjMWQxZTFmIiwiYmlsbGluZ19hdXRob3JpdHkiOiJsb2NhbCIsImVwb2NoIjoxLCJleHAiOjE3OTE0MTc2MDEsImdlbmVyYXRpb25faWQiOiJnZW4tNmY5ZTczOWU4MzVmNTZmYTlkMGZmNzJiNDBiMmFjM2YiLCJpYXQiOjE3OTEyNDQ4MDEsImludm9jYXRpb25fbm9uY2UiOiIwMDExMjIzMzQ0NTU2Njc3ODg5OWFhYmJjY2RkZWVmZiIsImlzcyI6Imh0dHBzOi8vYXBpLnRydXN0ZWRyb3V0ZXIuY29tIiwiam91cm5hbF9yZWdpb24iOiJ1cy1jZW50cmFsMSIsImtleV9pZCI6ImtleV9BQUVDQXdRRkJnY0lDUW9MREEwT0R4QVIiLCJyZXNlcnZhdGlvbl9pZCI6IjEwMTExMjEzLTE0MTUtNDYxNy05ODE5LTFhMWIxYzFkMWUxZiIsInJvdXRlX3R5cGUiOiJyZXNwb25zZXMiLCJzZXR0bGVfb3JpZ2luIjoidHlwZWQiLCJzbmFwc2hvdF9oYXNoIjoiZmE5NTAzYjU5Nzc2OGU5NWY0N2EwYjc1YmM3MWQ1Y2E5MTAxNTRhMjJmMzU5Y2NhYjhjMTdhYWI2NDYzNjVkMiIsInNuYXBzaG90X3ZlcnNpb24iOjEsInN0cmVhbWVkIjpmYWxzZSwid29ya3NwYWNlX2lkIjoiMDAwMTAyMDMtMDQwNS00NjA3LTg4MDktMGEwYjBjMGQwZTBmIn0.WZj4NNFE--8Upn0VzKQNXzW4--ZlZvVDO9lkhqSUNpzhhwaTEYk-MSw6DU7WMpx7BZo2CuKpn_5RCK7GE8VQAg",
+        "billing_shadow_policy": "shadow-v2",
+        "billing_snapshot": {
+          "candidates": [
+            {
+              "endpoint_id": "openai/gpt-4.1-mini@openai/prepaid",
+              "model_id": "openai/gpt-4.1-mini",
+              "output_convention": "includes_reasoning",
+              "price_history_version": 1,
+              "prompt_convention": "includes_cache",
+              "provider": "openai",
+              "rates": {
+                "cache_creation_micro_per_million": 625000,
+                "cached_input_micro_per_million": 250000,
+                "input_micro_per_million": 500000,
+                "output_micro_per_million": 500000
+              },
+              "request_fee_micro": 0,
+              "rounding": "half_up_per_million",
+              "tiers": [],
+              "usage_type": "Credits"
+            }
+          ],
+          "charge_cap": null,
+          "kind": "credits_endpoint",
+          "minimum_charge": "one_micro_if_positive",
+          "tier_basis": "total_prompt",
+          "tier_boundary": "inclusive",
+          "tier_fallback": "last_tier",
+          "v": 1
+        },
+        "billing_snapshot_hash": "fa9503b597768e95f47a0b75bc71d5ca910154a22f359ccab8c17aab646365d2",
+        "credit_reservation_id": "10111213-1415-4617-9819-1a1b1c1d1e1f",
+        "endpoint_id": "openai/gpt-4.1-mini@openai/prepaid",
+        "generation_id": "gen-6f9e739e835f56fa9d0ff72b40b2ac3f",
+        "invocation_nonce": "00112233445566778899aabbccddeeff",
+        "model": "openai/gpt-4.1-mini",
+        "provider": "openai",
+        "workspace_id": "00010203-0405-4607-8809-0a0b0c0d0e0f"
+      },
+      "binding": "eyJhbGciOiJFZERTQSIsImtpZCI6InRyLWFzeW5jLXNldHRsZS0yMDI2LTEwYSIsInR5cCI6InRyLWFzeW5jLXNldHRsZS1zaGFkb3ctdjEifQ.eyJhc3luY19lbGlnaWJsZSI6ZmFsc2UsImF1ZCI6InJvdXRlci1zaGFkb3ciLCJhdXRob3JpemF0aW9uX2lkIjoiZ3dhLTEwMTExMjEzMTQxNTQ2MTc5ODE5MWExYjFjMWQxZTFmIiwiYmlsbGluZ19hdXRob3JpdHkiOiJsb2NhbCIsImVwb2NoIjoxLCJleHAiOjE3OTE0MTc2MDEsImdlbmVyYXRpb25faWQiOiJnZW4tNmY5ZTczOWU4MzVmNTZmYTlkMGZmNzJiNDBiMmFjM2YiLCJpYXQiOjE3OTEyNDQ4MDEsImludm9jYXRpb25fbm9uY2UiOiIwMDExMjIzMzQ0NTU2Njc3ODg5OWFhYmJjY2RkZWVmZiIsImlzcyI6Imh0dHBzOi8vYXBpLnRydXN0ZWRyb3V0ZXIuY29tIiwiam91cm5hbF9yZWdpb24iOiJ1cy1jZW50cmFsMSIsImtleV9pZCI6ImtleV9BQUVDQXdRRkJnY0lDUW9MREEwT0R4QVIiLCJyZXNlcnZhdGlvbl9pZCI6IjEwMTExMjEzLTE0MTUtNDYxNy05ODE5LTFhMWIxYzFkMWUxZiIsInJvdXRlX3R5cGUiOiJyZXNwb25zZXMiLCJzZXR0bGVfb3JpZ2luIjoidHlwZWQiLCJzbmFwc2hvdF9oYXNoIjoiZmE5NTAzYjU5Nzc2OGU5NWY0N2EwYjc1YmM3MWQ1Y2E5MTAxNTRhMjJmMzU5Y2NhYjhjMTdhYWI2NDYzNjVkMiIsInNuYXBzaG90X3ZlcnNpb24iOjEsInN0cmVhbWVkIjpmYWxzZSwid29ya3NwYWNlX2lkIjoiMDAwMTAyMDMtMDQwNS00NjA3LTg4MDktMGEwYjBjMGQwZTBmIn0.WZj4NNFE--8Upn0VzKQNXzW4--ZlZvVDO9lkhqSUNpzhhwaTEYk-MSw6DU7WMpx7BZo2CuKpn_5RCK7GE8VQAg",
+      "claims": {
+        "async_eligible": false,
+        "aud": "router-shadow",
+        "authorization_id": "gwa-101112131415461798191a1b1c1d1e1f",
+        "billing_authority": "local",
+        "epoch": 1,
+        "exp": 1791417601,
+        "generation_id": "gen-6f9e739e835f56fa9d0ff72b40b2ac3f",
+        "iat": 1791244801,
+        "invocation_nonce": "00112233445566778899aabbccddeeff",
+        "iss": "https://api.trustedrouter.com",
+        "journal_region": "us-central1",
+        "key_id": "key_AAECAwQFBgcICQoLDA0ODxAR",
+        "reservation_id": "10111213-1415-4617-9819-1a1b1c1d1e1f",
+        "route_type": "responses",
+        "settle_origin": "typed",
+        "snapshot_hash": "fa9503b597768e95f47a0b75bc71d5ca910154a22f359ccab8c17aab646365d2",
+        "snapshot_version": 1,
+        "streamed": false,
+        "workspace_id": "00010203-0405-4607-8809-0a0b0c0d0e0f"
+      },
+      "name": "openai_responses_buffered",
+      "request": {
+        "api_key_lookup_hash": "5bad7d21204dddea423b39acd25fb9be0d174323d156dd2c9c2b7d6c3386a575",
+        "cache_affinity_explicit": false,
+        "cache_affinity_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "estimated_input_tokens": 6,
+        "idempotency_key": "async-settle-probe-00000000-0000-4000-8000-000000000001",
+        "invocation_nonce": "00112233445566778899aabbccddeeff",
+        "max_output_tokens": 8,
+        "max_tokens": 8,
+        "model": "openai/gpt-4.1-mini",
+        "provider": {
+          "allow_fallbacks": false,
+          "only": [
+            "openai"
+          ]
+        },
+        "region": "us",
+        "requested_parameters": [
+          "max_tokens"
+        ],
+        "route_type": "responses",
+        "spend_lease_echo": {
+          "catalog_version": null,
+          "enclave_estimate_micro": null,
+          "lease_id": null,
+          "remaining_micro": null,
+          "state": "dormant",
+          "would_admit": null
+        },
+        "stream": false
+      }
+    },
+    {
+      "authorization": {
+        "api_key_hash": "key_AAECAwQFBgcICQoLDA0ODxAR",
+        "authorization_id": "gwa-101112131415461798191a1b1c1d1e1f",
+        "billing_shadow_binding": "eyJhbGciOiJFZERTQSIsImtpZCI6InRyLWFzeW5jLXNldHRsZS0yMDI2LTEwYSIsInR5cCI6InRyLWFzeW5jLXNldHRsZS1zaGFkb3ctdjEifQ.eyJhc3luY19lbGlnaWJsZSI6ZmFsc2UsImF1ZCI6InJvdXRlci1zaGFkb3ciLCJhdXRob3JpemF0aW9uX2lkIjoiZ3dhLTEwMTExMjEzMTQxNTQ2MTc5ODE5MWExYjFjMWQxZTFmIiwiYmlsbGluZ19hdXRob3JpdHkiOiJsb2NhbCIsImVwb2NoIjoxLCJleHAiOjE3OTE0MTc2MDEsImdlbmVyYXRpb25faWQiOiJnZW4tNmY5ZTczOWU4MzVmNTZmYTlkMGZmNzJiNDBiMmFjM2YiLCJpYXQiOjE3OTEyNDQ4MDEsImludm9jYXRpb25fbm9uY2UiOiIwMDExMjIzMzQ0NTU2Njc3ODg5OWFhYmJjY2RkZWVmZiIsImlzcyI6Imh0dHBzOi8vYXBpLnRydXN0ZWRyb3V0ZXIuY29tIiwiam91cm5hbF9yZWdpb24iOiJ1cy1jZW50cmFsMSIsImtleV9pZCI6ImtleV9BQUVDQXdRRkJnY0lDUW9MREEwT0R4QVIiLCJyZXNlcnZhdGlvbl9pZCI6IjEwMTExMjEzLTE0MTUtNDYxNy05ODE5LTFhMWIxYzFkMWUxZiIsInJvdXRlX3R5cGUiOiJyZXNwb25zZXMiLCJzZXR0bGVfb3JpZ2luIjoidHlwZWQiLCJzbmFwc2hvdF9oYXNoIjoiZmE5NTAzYjU5Nzc2OGU5NWY0N2EwYjc1YmM3MWQ1Y2E5MTAxNTRhMjJmMzU5Y2NhYjhjMTdhYWI2NDYzNjVkMiIsInNuYXBzaG90X3ZlcnNpb24iOjEsInN0cmVhbWVkIjp0cnVlLCJ3b3Jrc3BhY2VfaWQiOiIwMDAxMDIwMy0wNDA1LTQ2MDctODgwOS0wYTBiMGMwZDBlMGYifQ.it0WtTN8SJAZjIKVvAZhF0gBnC1W-MhfoofzzeTc1WUUflxZq8oPZEZMozgNA2veKFV_XvoJwLlg2PjaJSUlDw",
+        "billing_shadow_policy": "shadow-v2",
+        "billing_snapshot": {
+          "candidates": [
+            {
+              "endpoint_id": "openai/gpt-4.1-mini@openai/prepaid",
+              "model_id": "openai/gpt-4.1-mini",
+              "output_convention": "includes_reasoning",
+              "price_history_version": 1,
+              "prompt_convention": "includes_cache",
+              "provider": "openai",
+              "rates": {
+                "cache_creation_micro_per_million": 625000,
+                "cached_input_micro_per_million": 250000,
+                "input_micro_per_million": 500000,
+                "output_micro_per_million": 500000
+              },
+              "request_fee_micro": 0,
+              "rounding": "half_up_per_million",
+              "tiers": [],
+              "usage_type": "Credits"
+            }
+          ],
+          "charge_cap": null,
+          "kind": "credits_endpoint",
+          "minimum_charge": "one_micro_if_positive",
+          "tier_basis": "total_prompt",
+          "tier_boundary": "inclusive",
+          "tier_fallback": "last_tier",
+          "v": 1
+        },
+        "billing_snapshot_hash": "fa9503b597768e95f47a0b75bc71d5ca910154a22f359ccab8c17aab646365d2",
+        "credit_reservation_id": "10111213-1415-4617-9819-1a1b1c1d1e1f",
+        "endpoint_id": "openai/gpt-4.1-mini@openai/prepaid",
+        "generation_id": "gen-6f9e739e835f56fa9d0ff72b40b2ac3f",
+        "invocation_nonce": "00112233445566778899aabbccddeeff",
+        "model": "openai/gpt-4.1-mini",
+        "provider": "openai",
+        "workspace_id": "00010203-0405-4607-8809-0a0b0c0d0e0f"
+      },
+      "binding": "eyJhbGciOiJFZERTQSIsImtpZCI6InRyLWFzeW5jLXNldHRsZS0yMDI2LTEwYSIsInR5cCI6InRyLWFzeW5jLXNldHRsZS1zaGFkb3ctdjEifQ.eyJhc3luY19lbGlnaWJsZSI6ZmFsc2UsImF1ZCI6InJvdXRlci1zaGFkb3ciLCJhdXRob3JpemF0aW9uX2lkIjoiZ3dhLTEwMTExMjEzMTQxNTQ2MTc5ODE5MWExYjFjMWQxZTFmIiwiYmlsbGluZ19hdXRob3JpdHkiOiJsb2NhbCIsImVwb2NoIjoxLCJleHAiOjE3OTE0MTc2MDEsImdlbmVyYXRpb25faWQiOiJnZW4tNmY5ZTczOWU4MzVmNTZmYTlkMGZmNzJiNDBiMmFjM2YiLCJpYXQiOjE3OTEyNDQ4MDEsImludm9jYXRpb25fbm9uY2UiOiIwMDExMjIzMzQ0NTU2Njc3ODg5OWFhYmJjY2RkZWVmZiIsImlzcyI6Imh0dHBzOi8vYXBpLnRydXN0ZWRyb3V0ZXIuY29tIiwiam91cm5hbF9yZWdpb24iOiJ1cy1jZW50cmFsMSIsImtleV9pZCI6ImtleV9BQUVDQXdRRkJnY0lDUW9MREEwT0R4QVIiLCJyZXNlcnZhdGlvbl9pZCI6IjEwMTExMjEzLTE0MTUtNDYxNy05ODE5LTFhMWIxYzFkMWUxZiIsInJvdXRlX3R5cGUiOiJyZXNwb25zZXMiLCJzZXR0bGVfb3JpZ2luIjoidHlwZWQiLCJzbmFwc2hvdF9oYXNoIjoiZmE5NTAzYjU5Nzc2OGU5NWY0N2EwYjc1YmM3MWQ1Y2E5MTAxNTRhMjJmMzU5Y2NhYjhjMTdhYWI2NDYzNjVkMiIsInNuYXBzaG90X3ZlcnNpb24iOjEsInN0cmVhbWVkIjp0cnVlLCJ3b3Jrc3BhY2VfaWQiOiIwMDAxMDIwMy0wNDA1LTQ2MDctODgwOS0wYTBiMGMwZDBlMGYifQ.it0WtTN8SJAZjIKVvAZhF0gBnC1W-MhfoofzzeTc1WUUflxZq8oPZEZMozgNA2veKFV_XvoJwLlg2PjaJSUlDw",
+      "claims": {
+        "async_eligible": false,
+        "aud": "router-shadow",
+        "authorization_id": "gwa-101112131415461798191a1b1c1d1e1f",
+        "billing_authority": "local",
+        "epoch": 1,
+        "exp": 1791417601,
+        "generation_id": "gen-6f9e739e835f56fa9d0ff72b40b2ac3f",
+        "iat": 1791244801,
+        "invocation_nonce": "00112233445566778899aabbccddeeff",
+        "iss": "https://api.trustedrouter.com",
+        "journal_region": "us-central1",
+        "key_id": "key_AAECAwQFBgcICQoLDA0ODxAR",
+        "reservation_id": "10111213-1415-4617-9819-1a1b1c1d1e1f",
+        "route_type": "responses",
+        "settle_origin": "typed",
+        "snapshot_hash": "fa9503b597768e95f47a0b75bc71d5ca910154a22f359ccab8c17aab646365d2",
+        "snapshot_version": 1,
+        "streamed": true,
+        "workspace_id": "00010203-0405-4607-8809-0a0b0c0d0e0f"
+      },
+      "name": "openai_responses_stream",
+      "request": {
+        "api_key_lookup_hash": "5bad7d21204dddea423b39acd25fb9be0d174323d156dd2c9c2b7d6c3386a575",
+        "cache_affinity_explicit": false,
+        "cache_affinity_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "estimated_input_tokens": 6,
+        "idempotency_key": "async-settle-probe-00000000-0000-4000-8000-000000000001",
+        "invocation_nonce": "00112233445566778899aabbccddeeff",
+        "max_output_tokens": 8,
+        "max_tokens": 8,
+        "model": "openai/gpt-4.1-mini",
+        "provider": {
+          "allow_fallbacks": false,
+          "only": [
+            "openai"
+          ]
+        },
+        "region": "us",
+        "requested_parameters": [
+          "max_tokens"
+        ],
+        "route_type": "responses",
+        "spend_lease_echo": {
+          "catalog_version": null,
+          "enclave_estimate_micro": null,
+          "lease_id": null,
+          "remaining_micro": null,
+          "state": "dormant",
+          "would_admit": null
+        },
+        "stream": true
+      }
+    },
+    {
+      "authorization": {
+        "api_key_hash": "key_AAECAwQFBgcICQoLDA0ODxAR",
+        "authorization_id": "gwa-101112131415461798191a1b1c1d1e1f",
+        "billing_shadow_binding": "eyJhbGciOiJFZERTQSIsImtpZCI6InRyLWFzeW5jLXNldHRsZS0yMDI2LTEwYSIsInR5cCI6InRyLWFzeW5jLXNldHRsZS1zaGFkb3ctdjEifQ.eyJhc3luY19lbGlnaWJsZSI6ZmFsc2UsImF1ZCI6InJvdXRlci1zaGFkb3ciLCJhdXRob3JpemF0aW9uX2lkIjoiZ3dhLTEwMTExMjEzMTQxNTQ2MTc5ODE5MWExYjFjMWQxZTFmIiwiYmlsbGluZ19hdXRob3JpdHkiOiJsb2NhbCIsImVwb2NoIjoxLCJleHAiOjE3OTE0MTc2MDEsImdlbmVyYXRpb25faWQiOiJnZW4tNmY5ZTczOWU4MzVmNTZmYTlkMGZmNzJiNDBiMmFjM2YiLCJpYXQiOjE3OTEyNDQ4MDEsImludm9jYXRpb25fbm9uY2UiOiIwMDExMjIzMzQ0NTU2Njc3ODg5OWFhYmJjY2RkZWVmZiIsImlzcyI6Imh0dHBzOi8vYXBpLnRydXN0ZWRyb3V0ZXIuY29tIiwiam91cm5hbF9yZWdpb24iOiJ1cy1jZW50cmFsMSIsImtleV9pZCI6ImtleV9BQUVDQXdRRkJnY0lDUW9MREEwT0R4QVIiLCJyZXNlcnZhdGlvbl9pZCI6IjEwMTExMjEzLTE0MTUtNDYxNy05ODE5LTFhMWIxYzFkMWUxZiIsInJvdXRlX3R5cGUiOiJjaGF0LmNvbXBsZXRpb25zIiwic2V0dGxlX29yaWdpbiI6InR5cGVkIiwic25hcHNob3RfaGFzaCI6IjQ4OGE5NjFhOTZlOTI1MjUyYTYzNWZjZGZhZjY2ZDgyMGU2YmFkYTljNjQwN2FkMzY3NDM3ZWZjYTY3ZDZkZmYiLCJzbmFwc2hvdF92ZXJzaW9uIjoxLCJzdHJlYW1lZCI6ZmFsc2UsIndvcmtzcGFjZV9pZCI6IjAwMDEwMjAzLTA0MDUtNDYwNy04ODA5LTBhMGIwYzBkMGUwZiJ9.qW9D7ElplN_IkLbweCzxnITLhg15RS8QVRg-gVXzaW8WTPVZtckhqf_HLOrOjX-HaUwq6YLKxjED6GVPElt_Bg",
+        "billing_shadow_policy": "shadow-v2",
+        "billing_snapshot": {
+          "candidates": [
+            {
+              "endpoint_id": "anthropic/claude-haiku-4.5@anthropic/prepaid",
+              "model_id": "anthropic/claude-haiku-4.5",
+              "output_convention": "includes_reasoning",
+              "price_history_version": 1,
+              "prompt_convention": "excludes_cache",
+              "provider": "anthropic",
+              "rates": {
+                "cache_creation_micro_per_million": 625000,
+                "cached_input_micro_per_million": 50000,
+                "input_micro_per_million": 500000,
+                "output_micro_per_million": 500000
+              },
+              "request_fee_micro": 0,
+              "rounding": "half_up_per_million",
+              "tiers": [],
+              "usage_type": "Credits"
+            }
+          ],
+          "charge_cap": null,
+          "kind": "credits_endpoint",
+          "minimum_charge": "one_micro_if_positive",
+          "tier_basis": "total_prompt",
+          "tier_boundary": "inclusive",
+          "tier_fallback": "last_tier",
+          "v": 1
+        },
+        "billing_snapshot_hash": "488a961a96e925252a635fcdfaf66d820e6bada9c6407ad367437efca67d6dff",
+        "credit_reservation_id": "10111213-1415-4617-9819-1a1b1c1d1e1f",
+        "endpoint_id": "anthropic/claude-haiku-4.5@anthropic/prepaid",
+        "generation_id": "gen-6f9e739e835f56fa9d0ff72b40b2ac3f",
+        "invocation_nonce": "00112233445566778899aabbccddeeff",
+        "model": "anthropic/claude-haiku-4.5",
+        "provider": "anthropic",
+        "workspace_id": "00010203-0405-4607-8809-0a0b0c0d0e0f"
+      },
+      "binding": "eyJhbGciOiJFZERTQSIsImtpZCI6InRyLWFzeW5jLXNldHRsZS0yMDI2LTEwYSIsInR5cCI6InRyLWFzeW5jLXNldHRsZS1zaGFkb3ctdjEifQ.eyJhc3luY19lbGlnaWJsZSI6ZmFsc2UsImF1ZCI6InJvdXRlci1zaGFkb3ciLCJhdXRob3JpemF0aW9uX2lkIjoiZ3dhLTEwMTExMjEzMTQxNTQ2MTc5ODE5MWExYjFjMWQxZTFmIiwiYmlsbGluZ19hdXRob3JpdHkiOiJsb2NhbCIsImVwb2NoIjoxLCJleHAiOjE3OTE0MTc2MDEsImdlbmVyYXRpb25faWQiOiJnZW4tNmY5ZTczOWU4MzVmNTZmYTlkMGZmNzJiNDBiMmFjM2YiLCJpYXQiOjE3OTEyNDQ4MDEsImludm9jYXRpb25fbm9uY2UiOiIwMDExMjIzMzQ0NTU2Njc3ODg5OWFhYmJjY2RkZWVmZiIsImlzcyI6Imh0dHBzOi8vYXBpLnRydXN0ZWRyb3V0ZXIuY29tIiwiam91cm5hbF9yZWdpb24iOiJ1cy1jZW50cmFsMSIsImtleV9pZCI6ImtleV9BQUVDQXdRRkJnY0lDUW9MREEwT0R4QVIiLCJyZXNlcnZhdGlvbl9pZCI6IjEwMTExMjEzLTE0MTUtNDYxNy05ODE5LTFhMWIxYzFkMWUxZiIsInJvdXRlX3R5cGUiOiJjaGF0LmNvbXBsZXRpb25zIiwic2V0dGxlX29yaWdpbiI6InR5cGVkIiwic25hcHNob3RfaGFzaCI6IjQ4OGE5NjFhOTZlOTI1MjUyYTYzNWZjZGZhZjY2ZDgyMGU2YmFkYTljNjQwN2FkMzY3NDM3ZWZjYTY3ZDZkZmYiLCJzbmFwc2hvdF92ZXJzaW9uIjoxLCJzdHJlYW1lZCI6ZmFsc2UsIndvcmtzcGFjZV9pZCI6IjAwMDEwMjAzLTA0MDUtNDYwNy04ODA5LTBhMGIwYzBkMGUwZiJ9.qW9D7ElplN_IkLbweCzxnITLhg15RS8QVRg-gVXzaW8WTPVZtckhqf_HLOrOjX-HaUwq6YLKxjED6GVPElt_Bg",
+      "claims": {
+        "async_eligible": false,
+        "aud": "router-shadow",
+        "authorization_id": "gwa-101112131415461798191a1b1c1d1e1f",
+        "billing_authority": "local",
+        "epoch": 1,
+        "exp": 1791417601,
+        "generation_id": "gen-6f9e739e835f56fa9d0ff72b40b2ac3f",
+        "iat": 1791244801,
+        "invocation_nonce": "00112233445566778899aabbccddeeff",
+        "iss": "https://api.trustedrouter.com",
+        "journal_region": "us-central1",
+        "key_id": "key_AAECAwQFBgcICQoLDA0ODxAR",
+        "reservation_id": "10111213-1415-4617-9819-1a1b1c1d1e1f",
+        "route_type": "chat.completions",
+        "settle_origin": "typed",
+        "snapshot_hash": "488a961a96e925252a635fcdfaf66d820e6bada9c6407ad367437efca67d6dff",
+        "snapshot_version": 1,
+        "streamed": false,
+        "workspace_id": "00010203-0405-4607-8809-0a0b0c0d0e0f"
+      },
+      "name": "anthropic_chat_buffered",
+      "request": {
+        "api_key_lookup_hash": "5bad7d21204dddea423b39acd25fb9be0d174323d156dd2c9c2b7d6c3386a575",
+        "cache_affinity_explicit": false,
+        "cache_affinity_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "estimated_input_tokens": 6,
+        "idempotency_key": "async-settle-probe-00000000-0000-4000-8000-000000000001",
+        "invocation_nonce": "00112233445566778899aabbccddeeff",
+        "max_output_tokens": 8,
+        "max_tokens": 8,
+        "model": "anthropic/claude-haiku-4.5",
+        "provider": {
+          "allow_fallbacks": false,
+          "only": [
+            "anthropic"
+          ]
+        },
+        "region": "us",
+        "requested_parameters": [
+          "max_tokens"
+        ],
+        "route_type": "chat.completions",
+        "spend_lease_echo": {
+          "catalog_version": null,
+          "enclave_estimate_micro": null,
+          "lease_id": null,
+          "remaining_micro": null,
+          "state": "dormant",
+          "would_admit": null
+        },
+        "stream": false
+      }
+    },
+    {
+      "authorization": {
+        "api_key_hash": "key_AAECAwQFBgcICQoLDA0ODxAR",
+        "authorization_id": "gwa-101112131415461798191a1b1c1d1e1f",
+        "billing_shadow_binding": "eyJhbGciOiJFZERTQSIsImtpZCI6InRyLWFzeW5jLXNldHRsZS0yMDI2LTEwYSIsInR5cCI6InRyLWFzeW5jLXNldHRsZS1zaGFkb3ctdjEifQ.eyJhc3luY19lbGlnaWJsZSI6ZmFsc2UsImF1ZCI6InJvdXRlci1zaGFkb3ciLCJhdXRob3JpemF0aW9uX2lkIjoiZ3dhLTEwMTExMjEzMTQxNTQ2MTc5ODE5MWExYjFjMWQxZTFmIiwiYmlsbGluZ19hdXRob3JpdHkiOiJsb2NhbCIsImVwb2NoIjoxLCJleHAiOjE3OTE0MTc2MDEsImdlbmVyYXRpb25faWQiOiJnZW4tNmY5ZTczOWU4MzVmNTZmYTlkMGZmNzJiNDBiMmFjM2YiLCJpYXQiOjE3OTEyNDQ4MDEsImludm9jYXRpb25fbm9uY2UiOiIwMDExMjIzMzQ0NTU2Njc3ODg5OWFhYmJjY2RkZWVmZiIsImlzcyI6Imh0dHBzOi8vYXBpLnRydXN0ZWRyb3V0ZXIuY29tIiwiam91cm5hbF9yZWdpb24iOiJ1cy1jZW50cmFsMSIsImtleV9pZCI6ImtleV9BQUVDQXdRRkJnY0lDUW9MREEwT0R4QVIiLCJyZXNlcnZhdGlvbl9pZCI6IjEwMTExMjEzLTE0MTUtNDYxNy05ODE5LTFhMWIxYzFkMWUxZiIsInJvdXRlX3R5cGUiOiJjaGF0LmNvbXBsZXRpb25zIiwic2V0dGxlX29yaWdpbiI6InR5cGVkIiwic25hcHNob3RfaGFzaCI6IjQ4OGE5NjFhOTZlOTI1MjUyYTYzNWZjZGZhZjY2ZDgyMGU2YmFkYTljNjQwN2FkMzY3NDM3ZWZjYTY3ZDZkZmYiLCJzbmFwc2hvdF92ZXJzaW9uIjoxLCJzdHJlYW1lZCI6dHJ1ZSwid29ya3NwYWNlX2lkIjoiMDAwMTAyMDMtMDQwNS00NjA3LTg4MDktMGEwYjBjMGQwZTBmIn0.lkhpxjRuECJuS6zB8_SHx4s1bi1A8NLgOp_tp4YXK8QN8VIjThHp56JtBjBacOprpNLYLkZJWHXbuGAcR5CdCg",
+        "billing_shadow_policy": "shadow-v2",
+        "billing_snapshot": {
+          "candidates": [
+            {
+              "endpoint_id": "anthropic/claude-haiku-4.5@anthropic/prepaid",
+              "model_id": "anthropic/claude-haiku-4.5",
+              "output_convention": "includes_reasoning",
+              "price_history_version": 1,
+              "prompt_convention": "excludes_cache",
+              "provider": "anthropic",
+              "rates": {
+                "cache_creation_micro_per_million": 625000,
+                "cached_input_micro_per_million": 50000,
+                "input_micro_per_million": 500000,
+                "output_micro_per_million": 500000
+              },
+              "request_fee_micro": 0,
+              "rounding": "half_up_per_million",
+              "tiers": [],
+              "usage_type": "Credits"
+            }
+          ],
+          "charge_cap": null,
+          "kind": "credits_endpoint",
+          "minimum_charge": "one_micro_if_positive",
+          "tier_basis": "total_prompt",
+          "tier_boundary": "inclusive",
+          "tier_fallback": "last_tier",
+          "v": 1
+        },
+        "billing_snapshot_hash": "488a961a96e925252a635fcdfaf66d820e6bada9c6407ad367437efca67d6dff",
+        "credit_reservation_id": "10111213-1415-4617-9819-1a1b1c1d1e1f",
+        "endpoint_id": "anthropic/claude-haiku-4.5@anthropic/prepaid",
+        "generation_id": "gen-6f9e739e835f56fa9d0ff72b40b2ac3f",
+        "invocation_nonce": "00112233445566778899aabbccddeeff",
+        "model": "anthropic/claude-haiku-4.5",
+        "provider": "anthropic",
+        "workspace_id": "00010203-0405-4607-8809-0a0b0c0d0e0f"
+      },
+      "binding": "eyJhbGciOiJFZERTQSIsImtpZCI6InRyLWFzeW5jLXNldHRsZS0yMDI2LTEwYSIsInR5cCI6InRyLWFzeW5jLXNldHRsZS1zaGFkb3ctdjEifQ.eyJhc3luY19lbGlnaWJsZSI6ZmFsc2UsImF1ZCI6InJvdXRlci1zaGFkb3ciLCJhdXRob3JpemF0aW9uX2lkIjoiZ3dhLTEwMTExMjEzMTQxNTQ2MTc5ODE5MWExYjFjMWQxZTFmIiwiYmlsbGluZ19hdXRob3JpdHkiOiJsb2NhbCIsImVwb2NoIjoxLCJleHAiOjE3OTE0MTc2MDEsImdlbmVyYXRpb25faWQiOiJnZW4tNmY5ZTczOWU4MzVmNTZmYTlkMGZmNzJiNDBiMmFjM2YiLCJpYXQiOjE3OTEyNDQ4MDEsImludm9jYXRpb25fbm9uY2UiOiIwMDExMjIzMzQ0NTU2Njc3ODg5OWFhYmJjY2RkZWVmZiIsImlzcyI6Imh0dHBzOi8vYXBpLnRydXN0ZWRyb3V0ZXIuY29tIiwiam91cm5hbF9yZWdpb24iOiJ1cy1jZW50cmFsMSIsImtleV9pZCI6ImtleV9BQUVDQXdRRkJnY0lDUW9MREEwT0R4QVIiLCJyZXNlcnZhdGlvbl9pZCI6IjEwMTExMjEzLTE0MTUtNDYxNy05ODE5LTFhMWIxYzFkMWUxZiIsInJvdXRlX3R5cGUiOiJjaGF0LmNvbXBsZXRpb25zIiwic2V0dGxlX29yaWdpbiI6InR5cGVkIiwic25hcHNob3RfaGFzaCI6IjQ4OGE5NjFhOTZlOTI1MjUyYTYzNWZjZGZhZjY2ZDgyMGU2YmFkYTljNjQwN2FkMzY3NDM3ZWZjYTY3ZDZkZmYiLCJzbmFwc2hvdF92ZXJzaW9uIjoxLCJzdHJlYW1lZCI6dHJ1ZSwid29ya3NwYWNlX2lkIjoiMDAwMTAyMDMtMDQwNS00NjA3LTg4MDktMGEwYjBjMGQwZTBmIn0.lkhpxjRuECJuS6zB8_SHx4s1bi1A8NLgOp_tp4YXK8QN8VIjThHp56JtBjBacOprpNLYLkZJWHXbuGAcR5CdCg",
+      "claims": {
+        "async_eligible": false,
+        "aud": "router-shadow",
+        "authorization_id": "gwa-101112131415461798191a1b1c1d1e1f",
+        "billing_authority": "local",
+        "epoch": 1,
+        "exp": 1791417601,
+        "generation_id": "gen-6f9e739e835f56fa9d0ff72b40b2ac3f",
+        "iat": 1791244801,
+        "invocation_nonce": "00112233445566778899aabbccddeeff",
+        "iss": "https://api.trustedrouter.com",
+        "journal_region": "us-central1",
+        "key_id": "key_AAECAwQFBgcICQoLDA0ODxAR",
+        "reservation_id": "10111213-1415-4617-9819-1a1b1c1d1e1f",
+        "route_type": "chat.completions",
+        "settle_origin": "typed",
+        "snapshot_hash": "488a961a96e925252a635fcdfaf66d820e6bada9c6407ad367437efca67d6dff",
+        "snapshot_version": 1,
+        "streamed": true,
+        "workspace_id": "00010203-0405-4607-8809-0a0b0c0d0e0f"
+      },
+      "name": "anthropic_chat_stream",
+      "request": {
+        "api_key_lookup_hash": "5bad7d21204dddea423b39acd25fb9be0d174323d156dd2c9c2b7d6c3386a575",
+        "cache_affinity_explicit": false,
+        "cache_affinity_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "estimated_input_tokens": 6,
+        "idempotency_key": "async-settle-probe-00000000-0000-4000-8000-000000000001",
+        "invocation_nonce": "00112233445566778899aabbccddeeff",
+        "max_output_tokens": 8,
+        "max_tokens": 8,
+        "model": "anthropic/claude-haiku-4.5",
+        "provider": {
+          "allow_fallbacks": false,
+          "only": [
+            "anthropic"
+          ]
+        },
+        "region": "us",
+        "requested_parameters": [
+          "max_tokens"
+        ],
+        "route_type": "chat.completions",
+        "spend_lease_echo": {
+          "catalog_version": null,
+          "enclave_estimate_micro": null,
+          "lease_id": null,
+          "remaining_micro": null,
+          "state": "dormant",
+          "would_admit": null
+        },
+        "stream": true
+      }
+    },
+    {
+      "authorization": {
+        "api_key_hash": "key_AAECAwQFBgcICQoLDA0ODxAR",
+        "authorization_id": "gwa-101112131415461798191a1b1c1d1e1f",
+        "billing_shadow_binding": "eyJhbGciOiJFZERTQSIsImtpZCI6InRyLWFzeW5jLXNldHRsZS0yMDI2LTEwYSIsInR5cCI6InRyLWFzeW5jLXNldHRsZS1zaGFkb3ctdjEifQ.eyJhc3luY19lbGlnaWJsZSI6ZmFsc2UsImF1ZCI6InJvdXRlci1zaGFkb3ciLCJhdXRob3JpemF0aW9uX2lkIjoiZ3dhLTEwMTExMjEzMTQxNTQ2MTc5ODE5MWExYjFjMWQxZTFmIiwiYmlsbGluZ19hdXRob3JpdHkiOiJsb2NhbCIsImVwb2NoIjoxLCJleHAiOjE3OTE0MTc2MDEsImdlbmVyYXRpb25faWQiOiJnZW4tNmY5ZTczOWU4MzVmNTZmYTlkMGZmNzJiNDBiMmFjM2YiLCJpYXQiOjE3OTEyNDQ4MDEsImludm9jYXRpb25fbm9uY2UiOiIwMDExMjIzMzQ0NTU2Njc3ODg5OWFhYmJjY2RkZWVmZiIsImlzcyI6Imh0dHBzOi8vYXBpLnRydXN0ZWRyb3V0ZXIuY29tIiwiam91cm5hbF9yZWdpb24iOiJ1cy1jZW50cmFsMSIsImtleV9pZCI6ImtleV9BQUVDQXdRRkJnY0lDUW9MREEwT0R4QVIiLCJyZXNlcnZhdGlvbl9pZCI6IjEwMTExMjEzLTE0MTUtNDYxNy05ODE5LTFhMWIxYzFkMWUxZiIsInJvdXRlX3R5cGUiOiJyZXNwb25zZXMiLCJzZXR0bGVfb3JpZ2luIjoidHlwZWQiLCJzbmFwc2hvdF9oYXNoIjoiNDg4YTk2MWE5NmU5MjUyNTJhNjM1ZmNkZmFmNjZkODIwZTZiYWRhOWM2NDA3YWQzNjc0MzdlZmNhNjdkNmRmZiIsInNuYXBzaG90X3ZlcnNpb24iOjEsInN0cmVhbWVkIjpmYWxzZSwid29ya3NwYWNlX2lkIjoiMDAwMTAyMDMtMDQwNS00NjA3LTg4MDktMGEwYjBjMGQwZTBmIn0.cK8yCwyi0pvUpQ8k-klKt6MkJX1Fp004C2WsQezqEmf_v6Fg94AlxxxCDxbKh5UOQwdBFEaqhJgsPu1arkQiAg",
+        "billing_shadow_policy": "shadow-v2",
+        "billing_snapshot": {
+          "candidates": [
+            {
+              "endpoint_id": "anthropic/claude-haiku-4.5@anthropic/prepaid",
+              "model_id": "anthropic/claude-haiku-4.5",
+              "output_convention": "includes_reasoning",
+              "price_history_version": 1,
+              "prompt_convention": "excludes_cache",
+              "provider": "anthropic",
+              "rates": {
+                "cache_creation_micro_per_million": 625000,
+                "cached_input_micro_per_million": 50000,
+                "input_micro_per_million": 500000,
+                "output_micro_per_million": 500000
+              },
+              "request_fee_micro": 0,
+              "rounding": "half_up_per_million",
+              "tiers": [],
+              "usage_type": "Credits"
+            }
+          ],
+          "charge_cap": null,
+          "kind": "credits_endpoint",
+          "minimum_charge": "one_micro_if_positive",
+          "tier_basis": "total_prompt",
+          "tier_boundary": "inclusive",
+          "tier_fallback": "last_tier",
+          "v": 1
+        },
+        "billing_snapshot_hash": "488a961a96e925252a635fcdfaf66d820e6bada9c6407ad367437efca67d6dff",
+        "credit_reservation_id": "10111213-1415-4617-9819-1a1b1c1d1e1f",
+        "endpoint_id": "anthropic/claude-haiku-4.5@anthropic/prepaid",
+        "generation_id": "gen-6f9e739e835f56fa9d0ff72b40b2ac3f",
+        "invocation_nonce": "00112233445566778899aabbccddeeff",
+        "model": "anthropic/claude-haiku-4.5",
+        "provider": "anthropic",
+        "workspace_id": "00010203-0405-4607-8809-0a0b0c0d0e0f"
+      },
+      "binding": "eyJhbGciOiJFZERTQSIsImtpZCI6InRyLWFzeW5jLXNldHRsZS0yMDI2LTEwYSIsInR5cCI6InRyLWFzeW5jLXNldHRsZS1zaGFkb3ctdjEifQ.eyJhc3luY19lbGlnaWJsZSI6ZmFsc2UsImF1ZCI6InJvdXRlci1zaGFkb3ciLCJhdXRob3JpemF0aW9uX2lkIjoiZ3dhLTEwMTExMjEzMTQxNTQ2MTc5ODE5MWExYjFjMWQxZTFmIiwiYmlsbGluZ19hdXRob3JpdHkiOiJsb2NhbCIsImVwb2NoIjoxLCJleHAiOjE3OTE0MTc2MDEsImdlbmVyYXRpb25faWQiOiJnZW4tNmY5ZTczOWU4MzVmNTZmYTlkMGZmNzJiNDBiMmFjM2YiLCJpYXQiOjE3OTEyNDQ4MDEsImludm9jYXRpb25fbm9uY2UiOiIwMDExMjIzMzQ0NTU2Njc3ODg5OWFhYmJjY2RkZWVmZiIsImlzcyI6Imh0dHBzOi8vYXBpLnRydXN0ZWRyb3V0ZXIuY29tIiwiam91cm5hbF9yZWdpb24iOiJ1cy1jZW50cmFsMSIsImtleV9pZCI6ImtleV9BQUVDQXdRRkJnY0lDUW9MREEwT0R4QVIiLCJyZXNlcnZhdGlvbl9pZCI6IjEwMTExMjEzLTE0MTUtNDYxNy05ODE5LTFhMWIxYzFkMWUxZiIsInJvdXRlX3R5cGUiOiJyZXNwb25zZXMiLCJzZXR0bGVfb3JpZ2luIjoidHlwZWQiLCJzbmFwc2hvdF9oYXNoIjoiNDg4YTk2MWE5NmU5MjUyNTJhNjM1ZmNkZmFmNjZkODIwZTZiYWRhOWM2NDA3YWQzNjc0MzdlZmNhNjdkNmRmZiIsInNuYXBzaG90X3ZlcnNpb24iOjEsInN0cmVhbWVkIjpmYWxzZSwid29ya3NwYWNlX2lkIjoiMDAwMTAyMDMtMDQwNS00NjA3LTg4MDktMGEwYjBjMGQwZTBmIn0.cK8yCwyi0pvUpQ8k-klKt6MkJX1Fp004C2WsQezqEmf_v6Fg94AlxxxCDxbKh5UOQwdBFEaqhJgsPu1arkQiAg",
+      "claims": {
+        "async_eligible": false,
+        "aud": "router-shadow",
+        "authorization_id": "gwa-101112131415461798191a1b1c1d1e1f",
+        "billing_authority": "local",
+        "epoch": 1,
+        "exp": 1791417601,
+        "generation_id": "gen-6f9e739e835f56fa9d0ff72b40b2ac3f",
+        "iat": 1791244801,
+        "invocation_nonce": "00112233445566778899aabbccddeeff",
+        "iss": "https://api.trustedrouter.com",
+        "journal_region": "us-central1",
+        "key_id": "key_AAECAwQFBgcICQoLDA0ODxAR",
+        "reservation_id": "10111213-1415-4617-9819-1a1b1c1d1e1f",
+        "route_type": "responses",
+        "settle_origin": "typed",
+        "snapshot_hash": "488a961a96e925252a635fcdfaf66d820e6bada9c6407ad367437efca67d6dff",
+        "snapshot_version": 1,
+        "streamed": false,
+        "workspace_id": "00010203-0405-4607-8809-0a0b0c0d0e0f"
+      },
+      "name": "anthropic_responses_buffered",
+      "request": {
+        "api_key_lookup_hash": "5bad7d21204dddea423b39acd25fb9be0d174323d156dd2c9c2b7d6c3386a575",
+        "cache_affinity_explicit": false,
+        "cache_affinity_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "estimated_input_tokens": 6,
+        "idempotency_key": "async-settle-probe-00000000-0000-4000-8000-000000000001",
+        "invocation_nonce": "00112233445566778899aabbccddeeff",
+        "max_output_tokens": 8,
+        "max_tokens": 8,
+        "model": "anthropic/claude-haiku-4.5",
+        "provider": {
+          "allow_fallbacks": false,
+          "only": [
+            "anthropic"
+          ]
+        },
+        "region": "us",
+        "requested_parameters": [
+          "max_tokens"
+        ],
+        "route_type": "responses",
+        "spend_lease_echo": {
+          "catalog_version": null,
+          "enclave_estimate_micro": null,
+          "lease_id": null,
+          "remaining_micro": null,
+          "state": "dormant",
+          "would_admit": null
+        },
+        "stream": false
+      }
+    },
+    {
+      "authorization": {
+        "api_key_hash": "key_AAECAwQFBgcICQoLDA0ODxAR",
+        "authorization_id": "gwa-101112131415461798191a1b1c1d1e1f",
+        "billing_shadow_binding": "eyJhbGciOiJFZERTQSIsImtpZCI6InRyLWFzeW5jLXNldHRsZS0yMDI2LTEwYSIsInR5cCI6InRyLWFzeW5jLXNldHRsZS1zaGFkb3ctdjEifQ.eyJhc3luY19lbGlnaWJsZSI6ZmFsc2UsImF1ZCI6InJvdXRlci1zaGFkb3ciLCJhdXRob3JpemF0aW9uX2lkIjoiZ3dhLTEwMTExMjEzMTQxNTQ2MTc5ODE5MWExYjFjMWQxZTFmIiwiYmlsbGluZ19hdXRob3JpdHkiOiJsb2NhbCIsImVwb2NoIjoxLCJleHAiOjE3OTE0MTc2MDEsImdlbmVyYXRpb25faWQiOiJnZW4tNmY5ZTczOWU4MzVmNTZmYTlkMGZmNzJiNDBiMmFjM2YiLCJpYXQiOjE3OTEyNDQ4MDEsImludm9jYXRpb25fbm9uY2UiOiIwMDExMjIzMzQ0NTU2Njc3ODg5OWFhYmJjY2RkZWVmZiIsImlzcyI6Imh0dHBzOi8vYXBpLnRydXN0ZWRyb3V0ZXIuY29tIiwiam91cm5hbF9yZWdpb24iOiJ1cy1jZW50cmFsMSIsImtleV9pZCI6ImtleV9BQUVDQXdRRkJnY0lDUW9MREEwT0R4QVIiLCJyZXNlcnZhdGlvbl9pZCI6IjEwMTExMjEzLTE0MTUtNDYxNy05ODE5LTFhMWIxYzFkMWUxZiIsInJvdXRlX3R5cGUiOiJyZXNwb25zZXMiLCJzZXR0bGVfb3JpZ2luIjoidHlwZWQiLCJzbmFwc2hvdF9oYXNoIjoiNDg4YTk2MWE5NmU5MjUyNTJhNjM1ZmNkZmFmNjZkODIwZTZiYWRhOWM2NDA3YWQzNjc0MzdlZmNhNjdkNmRmZiIsInNuYXBzaG90X3ZlcnNpb24iOjEsInN0cmVhbWVkIjp0cnVlLCJ3b3Jrc3BhY2VfaWQiOiIwMDAxMDIwMy0wNDA1LTQ2MDctODgwOS0wYTBiMGMwZDBlMGYifQ.smSJejzeO-p5SUMQ5g877JxDtliZ0vFfV1PQGh-2SxzuLVed82SihlJ5XrsGGLNv83WyU_TpcjEdf2E1THZCCw",
+        "billing_shadow_policy": "shadow-v2",
+        "billing_snapshot": {
+          "candidates": [
+            {
+              "endpoint_id": "anthropic/claude-haiku-4.5@anthropic/prepaid",
+              "model_id": "anthropic/claude-haiku-4.5",
+              "output_convention": "includes_reasoning",
+              "price_history_version": 1,
+              "prompt_convention": "excludes_cache",
+              "provider": "anthropic",
+              "rates": {
+                "cache_creation_micro_per_million": 625000,
+                "cached_input_micro_per_million": 50000,
+                "input_micro_per_million": 500000,
+                "output_micro_per_million": 500000
+              },
+              "request_fee_micro": 0,
+              "rounding": "half_up_per_million",
+              "tiers": [],
+              "usage_type": "Credits"
+            }
+          ],
+          "charge_cap": null,
+          "kind": "credits_endpoint",
+          "minimum_charge": "one_micro_if_positive",
+          "tier_basis": "total_prompt",
+          "tier_boundary": "inclusive",
+          "tier_fallback": "last_tier",
+          "v": 1
+        },
+        "billing_snapshot_hash": "488a961a96e925252a635fcdfaf66d820e6bada9c6407ad367437efca67d6dff",
+        "credit_reservation_id": "10111213-1415-4617-9819-1a1b1c1d1e1f",
+        "endpoint_id": "anthropic/claude-haiku-4.5@anthropic/prepaid",
+        "generation_id": "gen-6f9e739e835f56fa9d0ff72b40b2ac3f",
+        "invocation_nonce": "00112233445566778899aabbccddeeff",
+        "model": "anthropic/claude-haiku-4.5",
+        "provider": "anthropic",
+        "workspace_id": "00010203-0405-4607-8809-0a0b0c0d0e0f"
+      },
+      "binding": "eyJhbGciOiJFZERTQSIsImtpZCI6InRyLWFzeW5jLXNldHRsZS0yMDI2LTEwYSIsInR5cCI6InRyLWFzeW5jLXNldHRsZS1zaGFkb3ctdjEifQ.eyJhc3luY19lbGlnaWJsZSI6ZmFsc2UsImF1ZCI6InJvdXRlci1zaGFkb3ciLCJhdXRob3JpemF0aW9uX2lkIjoiZ3dhLTEwMTExMjEzMTQxNTQ2MTc5ODE5MWExYjFjMWQxZTFmIiwiYmlsbGluZ19hdXRob3JpdHkiOiJsb2NhbCIsImVwb2NoIjoxLCJleHAiOjE3OTE0MTc2MDEsImdlbmVyYXRpb25faWQiOiJnZW4tNmY5ZTczOWU4MzVmNTZmYTlkMGZmNzJiNDBiMmFjM2YiLCJpYXQiOjE3OTEyNDQ4MDEsImludm9jYXRpb25fbm9uY2UiOiIwMDExMjIzMzQ0NTU2Njc3ODg5OWFhYmJjY2RkZWVmZiIsImlzcyI6Imh0dHBzOi8vYXBpLnRydXN0ZWRyb3V0ZXIuY29tIiwiam91cm5hbF9yZWdpb24iOiJ1cy1jZW50cmFsMSIsImtleV9pZCI6ImtleV9BQUVDQXdRRkJnY0lDUW9MREEwT0R4QVIiLCJyZXNlcnZhdGlvbl9pZCI6IjEwMTExMjEzLTE0MTUtNDYxNy05ODE5LTFhMWIxYzFkMWUxZiIsInJvdXRlX3R5cGUiOiJyZXNwb25zZXMiLCJzZXR0bGVfb3JpZ2luIjoidHlwZWQiLCJzbmFwc2hvdF9oYXNoIjoiNDg4YTk2MWE5NmU5MjUyNTJhNjM1ZmNkZmFmNjZkODIwZTZiYWRhOWM2NDA3YWQzNjc0MzdlZmNhNjdkNmRmZiIsInNuYXBzaG90X3ZlcnNpb24iOjEsInN0cmVhbWVkIjp0cnVlLCJ3b3Jrc3BhY2VfaWQiOiIwMDAxMDIwMy0wNDA1LTQ2MDctODgwOS0wYTBiMGMwZDBlMGYifQ.smSJejzeO-p5SUMQ5g877JxDtliZ0vFfV1PQGh-2SxzuLVed82SihlJ5XrsGGLNv83WyU_TpcjEdf2E1THZCCw",
+      "claims": {
+        "async_eligible": false,
+        "aud": "router-shadow",
+        "authorization_id": "gwa-101112131415461798191a1b1c1d1e1f",
+        "billing_authority": "local",
+        "epoch": 1,
+        "exp": 1791417601,
+        "generation_id": "gen-6f9e739e835f56fa9d0ff72b40b2ac3f",
+        "iat": 1791244801,
+        "invocation_nonce": "00112233445566778899aabbccddeeff",
+        "iss": "https://api.trustedrouter.com",
+        "journal_region": "us-central1",
+        "key_id": "key_AAECAwQFBgcICQoLDA0ODxAR",
+        "reservation_id": "10111213-1415-4617-9819-1a1b1c1d1e1f",
+        "route_type": "responses",
+        "settle_origin": "typed",
+        "snapshot_hash": "488a961a96e925252a635fcdfaf66d820e6bada9c6407ad367437efca67d6dff",
+        "snapshot_version": 1,
+        "streamed": true,
+        "workspace_id": "00010203-0405-4607-8809-0a0b0c0d0e0f"
+      },
+      "name": "anthropic_responses_stream",
+      "request": {
+        "api_key_lookup_hash": "5bad7d21204dddea423b39acd25fb9be0d174323d156dd2c9c2b7d6c3386a575",
+        "cache_affinity_explicit": false,
+        "cache_affinity_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "estimated_input_tokens": 6,
+        "idempotency_key": "async-settle-probe-00000000-0000-4000-8000-000000000001",
+        "invocation_nonce": "00112233445566778899aabbccddeeff",
+        "max_output_tokens": 8,
+        "max_tokens": 8,
+        "model": "anthropic/claude-haiku-4.5",
+        "provider": {
+          "allow_fallbacks": false,
+          "only": [
+            "anthropic"
+          ]
+        },
+        "region": "us",
+        "requested_parameters": [
+          "max_tokens"
+        ],
+        "route_type": "responses",
+        "spend_lease_echo": {
+          "catalog_version": null,
+          "enclave_estimate_micro": null,
+          "lease_id": null,
+          "remaining_micro": null,
+          "state": "dormant",
+          "would_admit": null
+        },
+        "stream": true
+      }
+    }
+  ],
+  "test_seed_hex": "0101010101010101010101010101010101010101010101010101010101010101"
+}

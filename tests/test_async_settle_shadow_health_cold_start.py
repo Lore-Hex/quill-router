@@ -8,7 +8,11 @@ from tests.shadow_observation_hygiene import package_hygiene  # noqa: F401
 from tests.test_async_settle_shadow_health_contention import outcome
 from tests.test_async_settle_shadow_health_stagger import advance, timed_owner
 from tests.test_async_settle_shadow_health_watchdog import accounting
-from tests.test_async_settle_shadow_observation import deterministic_scheduler  # noqa: F401
+from tests.test_async_settle_shadow_observation import (
+    NOW_US,
+    deterministic_scheduler,  # noqa: F401
+    service,
+)
 from tests.test_async_settle_shadow_observation_r7 import entries
 from trusted_router import async_settle_shadow_lifecycle as lifecycle
 from trusted_router.async_settle_shadow_v2_a1_health import PUBLISHER_SLOT_TRACE
@@ -25,7 +29,8 @@ def test_release_leaves_immediately_next_slot_publishable(monkeypatch, reason):
     accounting(svc)
 
 
-def test_early_next_wake_waits_for_actual_start_cadence(monkeypatch):
+@pytest.mark.parametrize("early", [0., .1, .3])
+def test_early_next_wake_waits_for_actual_start_cadence(monkeypatch, early):
     svc, wall, mono, job, waits = timed_owner(monkeypatch)
     # Receipt 896295396: published start 8,633 us into the slot, cycle 97,787 us.
     mono[0] += .008633
@@ -34,14 +39,23 @@ def test_early_next_wake_waits_for_actual_start_cadence(monkeypatch):
     svc.submit_publisher(job.slot, wall[0])
     outcome(svc, job, 'published')
     first_start = svc.state.last_actual_start
-    next_job = advance(svc, wall, mono, job.slot+1)
-    assert next_job.earliest_start_mono > mono[0]
+    wall[0], mono[0] = (job.slot+1)*lifecycle.SLOT_US, 102.-early
+    svc.store.database.server_ns = wall[0]*1000
+    svc.tick(wall[0])
+    next_job = svc.state.job
+    # Forward wall steps/early monotonic wakes wait for the reserved boundary;
+    # the previous worker's 8.633ms jitter is not carried forward.
+    assert next_job.earliest_start_mono == pytest.approx(102.)
     svc.submit_publisher(next_job.slot, wall[0])
-    trace = outcome(svc, next_job, 'published')
-    assert waits == pytest.approx([.008633])
-    assert svc.state.last_actual_start-first_start >= 2
-    assert trace['claim_start_us'] % lifecycle.SLOT_US == 8633
-    assert trace['cycle_us'] == 0  # Cadence wait precedes the actual admitted start.
+    trace = outcome(svc, next_job, 'missed' if early > .25 else 'published')
+    assert waits == pytest.approx([early] if 0 < early <= .25 else [])
+    if early > .25:
+        assert trace['rpc_count'] == 0
+        assert svc.state.last_actual_start == first_start
+    else:
+        assert svc.state.last_actual_start-first_start >= 1.75
+        assert trace['claim_start_us'] % lifecycle.SLOT_US == round(early*1e6)
+    assert trace['cycle_us'] == (None if early > .25 else 0)  # Wait precedes actual admission.
 
 
 @pytest.mark.parametrize('change', ['revoke', 'late'])
@@ -78,10 +92,11 @@ def test_installed_fleet_publication_selects_follower_stagger(monkeypatch, gap):
     svc, wall, _, job, waits = timed_owner(monkeypatch)
     svc.observer.health = {'body': {'slot': job.slot-gap}}
     svc.submit_publisher(job.slot, wall[0])
-    outcome(svc, job, 'lost_claim' if gap <= 2 else 'published')
-    assert svc.store.database.commits == (0 if gap <= 2 else 2)
-    # Once health was installed, takeover has an inter-slot rank and retains
-    # the warm follower band even after that publication becomes stale.
+    # A cached health body selects timing, but cannot veto an election when
+    # the authoritative claim row is absent.
+    outcome(svc, job, 'published')
+    assert svc.store.database.commits == 2
+    # Once health was installed, keep the warm follower band.
     assert waits == [shell.follower_stagger(svc.journal.boot, job.slot, True)]
 
 
@@ -168,3 +183,124 @@ def test_scope_setup_does_not_accumulate_after_cadence_wait(monkeypatch):
         starts.append(trace["claim_start_us"]-current.slot*lifecycle.SLOT_US)
     # Previously 5, 10, 15, 20, 25ms: each setup followed the cadence wait.
     assert starts == [5000]*5
+
+
+@pytest.mark.parametrize("forward", [True, False])
+def test_wall_steps_cannot_compress_cadence_or_replay_slots(forward):
+    state = lifecycle.State()
+    stamp = 1_792_590_792_000_000
+    starts = []
+    for index in range(20):
+        # Wall advances two seconds while monotonic advances only 100ms.
+        wall = stamp+index*lifecycle.SLOT_US if forward else stamp-index*lifecycle.SLOT_US
+        state, effects = lifecycle.step(state, lifecycle.Tick(wall, 100.+index*.1))
+        jobs = [e.job for e in effects if isinstance(e, lifecycle.StartPublisherCycle)]
+        if not jobs:
+            continue
+        job = jobs[0]
+        if job.earliest_start_mono <= job.latest_start_mono:
+            starts.append(job.earliest_start_mono)
+            state, _ = lifecycle.step(state, lifecycle.SlotOutcome(wall, job.slot, "failed",
+                generation=job.generation, actual_start_mono=job.earliest_start_mono))
+        else:
+            state, _ = lifecycle.step(state, lifecycle.SlotOutcome(wall, job.slot, "missed",
+                generation=job.generation))
+    assert starts == ([100., 102.] if forward else [100.])
+    assert state.last_start_boundary == starts[-1]
+    # After impossible early windows, the next feasible window can run.
+    # Reserving those impossible jobs would incorrectly push Q to 140s.
+    state, effects = lifecycle.step(state, lifecycle.Tick(stamp+20*lifecycle.SLOT_US, 104.))
+    job = next(e.job for e in effects if isinstance(e, lifecycle.StartPublisherCycle))
+    assert job.earliest_start_mono == 104. <= job.latest_start_mono
+    assert lifecycle.accounted_once(state)
+    assert lifecycle.conservation(state)
+
+
+@pytest.fixture
+def offline_driver(monkeypatch):
+    svc = service()
+    wall, mono, claims = [NOW_US+lifecycle.SLOT_US], [102.], []
+    svc.store.wall = lambda: wall[0]/1e6
+    svc.store.clock = lambda: mono[0]
+    svc.store.database.server_ns = wall[0]*1000
+    original = svc.store.claim
+
+    def claim(boot, slot, *args, **kwargs):
+        claims.append(slot)
+        return original(boot, slot, *args, **kwargs)
+
+    def sleep(seconds):
+        mono[0] += seconds
+        wall[0] += round(seconds*1e6)
+        svc.store.database.server_ns = wall[0]*1000
+
+    monkeypatch.setattr(svc.store, "claim", claim)
+    monkeypatch.setattr(shell, "sleep", sleep)
+    return svc, wall, mono, claims
+
+
+def test_offline_stale_publish_does_not_block_next_slot(offline_driver):
+    svc, wall, mono, claims = offline_driver
+    slot = NOW_US//lifecycle.SLOT_US
+    # Fresh service, caller still names s while the paired sample is in s+1.
+    svc.publish_cycle(slot, NOW_US)
+    pending = svc.state.job
+    assert not claims and not svc.store.database.snapshot_calls
+    assert svc.store.database.commits == 0
+    wall[0], mono[0] = NOW_US+2*lifecycle.SLOT_US, 104.
+    svc.store.database.server_ns = wall[0]*1000
+    svc.publish_cycle(slot+2, wall[0])
+    print("OFFLINE_STALE", "pending_after_stale", pending.slot-slot if pending else None,
+          "claim_offsets", [s-slot for s in claims],
+          "outcomes", [(t["slot"]-slot, t["outcome"]) for t in entries(svc)])
+    assert claims == [slot+2]
+    assert pending is None and svc.state.job is None and svc.admission_job is None
+    assert not svc.publishing and svc.publisher_faults == 0
+    traces = entries(svc)
+    assert [(t["slot"], t["outcome"]) for t in traces] == [(slot+1, "missed"), (slot+2, "published")]
+    assert traces[0]["rpc_count"] == 0 and not traces[0]["unknown_outcome"]
+    day, = svc.state.days
+    assert (day.scheduled, day.missed, day.attempted, day.published, day.failed) == (2, 1, 1, 1, 0)
+    accounting(svc)
+
+
+@pytest.mark.parametrize("slot_offset,stamp_offset", [
+    (-1, -lifecycle.SLOT_US), (1, lifecycle.SLOT_US), (-1, 0),
+    (0, -lifecycle.DAY_US), (0, lifecycle.DAY_US),
+], ids=["stale-slot", "future-slot", "inconsistent-slot", "old-stamp-day", "future-stamp-day"])
+def test_offline_schedule_resolves_slot_and_stamp_mismatch(offline_driver, slot_offset, stamp_offset):
+    svc, wall, mono, claims = offline_driver
+    stamp = wall[0]
+    slot = stamp//lifecycle.SLOT_US
+    svc.schedule_cycle(slot+slot_offset, stamp+stamp_offset)
+    assert not claims and not svc.store.database.snapshot_calls
+    assert svc.store.database.commits == 0
+    if slot_offset:
+        assert svc.state.job is None and svc.admission_job is None
+        assert not svc.publishing
+        trace, = entries(svc)
+        assert (trace["slot"], trace["outcome"], trace["rpc_count"]) == (slot, "missed", 0)
+        assert not trace["unknown_outcome"]
+    else:
+        assert svc.state.job.slot == slot
+        # Pending ownership is the actual slot's day, never the caller's stamp.
+        assert svc.publishing == {lifecycle.day_name(stamp)}
+    svc.publish_cycle(slot, stamp)
+    assert claims == ([] if slot_offset else [slot])  # No retry of a missed slot.
+    assert svc.state.job is None and not svc.publishing
+    accounting(svc)
+    wall[0], mono[0] = stamp+lifecycle.SLOT_US, 104.
+    svc.store.database.server_ns = wall[0]*1000
+    svc.publish_cycle(slot+1, wall[0])
+    assert claims == ([slot+1] if slot_offset else [slot, slot+1])
+    # Replaying either call cannot create another attempt or another trace.
+    svc.publish_cycle(slot+slot_offset, stamp+stamp_offset)
+    svc.publish_cycle(slot+1, wall[0])
+    assert claims == ([slot+1] if slot_offset else [slot, slot+1])
+    day, = svc.state.days
+    assert (day.scheduled, day.missed, day.attempted, day.published) == (
+        (2, 1, 1, 1) if slot_offset else (2, 0, 2, 2))
+    assert len(entries(svc)) == 2 and not day.publishers
+    assert svc.state.job is None and svc.admission_job is None and not svc.publishing
+    assert svc.publisher_faults == 0
+    accounting(svc)

@@ -11,6 +11,8 @@ RUNNER_TEMP="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/deploy/_deploy_hold.sh
 source "${SCRIPT_DIR}/_deploy_hold.sh"
+# shellcheck source=scripts/deploy/deploy_mutex.sh
+source "${SCRIPT_DIR}/deploy_mutex.sh"
 
 watchdog_extra=()
 if [ -n "${WD_EXTRA:-}" ]; then
@@ -127,6 +129,7 @@ rollback_region() {
   fi
 
   echo "${region} canary failed; rolling traffic back to ${target}"
+  deploy_mutex_assert || return 1
   gcloud run services update-traffic "${SERVICE}" \
     --region="${region}" --project="${PROJECT_ID}" \
     --to-revisions="${target}=100" --quiet
@@ -182,6 +185,7 @@ ramp_secondary() {
   if [ "$RAMP_BASELINE" = "$revision" ]; then
     echo "${region} already serves ${revision} at 100%; skipping traffic stages"
   elif ! TR_STAGED_WATCHDOG_BASELINE_FILE="${watchdog_baseline}" \
+      TR_SECONDARY_STARTED_AT="${rollout_started_at}" \
       bash "${SCRIPT_DIR}/staged_traffic.sh" \
         "${region}" "${revision}" "${RAMP_BASELINE}"; then
     rollback_region "${region}" || true
@@ -234,9 +238,21 @@ held=""
 ramped=""
 refused=""
 ramp_status=0
-for region in europe-west4 us-east4 southamerica-east1; do
+regions=(europe-west4 us-east4 southamerica-east1)
+if [ "$#" -ne 0 ]; then
+  if [ "$#" -ne 2 ] || [ "$1" != "--region" ]; then
+    echo "usage: $0 [--region SECONDARY]" >&2; exit 2
+  fi
+  case "$2" in
+    europe-west4|us-east4|southamerica-east1) regions=("$2") ;;
+    *) echo "not a secondary region: $2" >&2; exit 2 ;;
+  esac
+fi
+for region in "${regions[@]}"; do
   if ! ramp_secondary "$region"; then
-    if [ "$region" = "southamerica-east1" ]; then
+    if [ -n "${TR_SECONDARY_READY_FILE:-}" ]; then
+      echo "::error::${region} failed; the coordinator stops admissions and joins every in-flight retention monitor."
+    elif [ "$region" = "southamerica-east1" ]; then
       echo "::error::${region} ramp failed and was rolled back."
     else
       echo "::error::${region} ramp failed and was rolled back. Later regions remain warm at zero traffic and never received traffic."

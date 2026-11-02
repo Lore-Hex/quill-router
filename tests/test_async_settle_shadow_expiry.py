@@ -185,8 +185,14 @@ async def test_run_closes_as_opt_out_once_expired():
     svc = shell.Service(pins(async_settle_shadow_expires_at=iso(NOW_US/1e6 + 50)), store)
     live = shell.Service(pins(async_settle_shadow_expires_at=iso(NOW_US/1e6 + 150)), fake_store()[0])
     assert live.policy_enabled() and not svc.policy_enabled()
-    await svc.run()
-    assert not svc.journal.days and not svc.unclosed
+    try:
+        await svc.run()
+        assert not svc.journal.days and not svc.unclosed
+    finally:
+        # run() closes as opt-out, and close() never joins the owner's workers;
+        # join them so one still exiting on a loaded runner is not a leak.
+        for executor in (svc.publisher_executor, svc.evidence_executor, svc.session_executor):
+            executor.shutdown(wait=True)
 
 
 def test_install_skips_an_expired_canary():

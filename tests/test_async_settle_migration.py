@@ -70,7 +70,7 @@ def test_migration_stops_on_every_gcloud_failure(tmp_path, fail_at):
 
 
 def test_migration_inherits_sibling_workflow_execution():
-    workflow = yaml.safe_load((ROOT / '.github/workflows/deploy.yml').read_text())
+    workflow = yaml.safe_load((ROOT / '.github/workflows/deploy-production.yml').read_text())
     steps = workflow['jobs']['migrate-schema']['steps']
     sibling = next(i for i, step in enumerate(steps)
                    if step.get('run') == 'scripts/deploy/migrate_operational_analytics_outbox.sh')

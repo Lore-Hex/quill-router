@@ -92,7 +92,11 @@ def test_startup_marker_installs_nothing(monkeypatch):
         monkeypatch.setattr(shell, 'ObservationStore', lambda _: svc.store)
         app = Mock()
         shell.install(app, pins(), SimpleNamespace(_database=object()))
-        assert not app.mock_calls
+        installed = app.state.async_settle_shadow_observation
+        assert not installed.runtime_stop.available
+        assert installed.port.reserve(int(installed.store.wall()*1e6)) is None
+        assert not installed.runtime_stop.poll() and not installed.policy_enabled()
+        cleanup(installed)
     finally:
         cleanup(svc)
 
@@ -230,15 +234,22 @@ def test_create_app_and_cohort_gate_are_dormant_with_marker(monkeypatch):
         stop(svc.store)
         cfg = pins()
         monkeypatch.setattr(storage, 'typed_billing_store', lambda _: SimpleNamespace(_database=object()))
-        monkeypatch.setattr(async_settle, 'load_runtime', lambda *args: None)
+        monkeypatch.setattr(async_settle, 'load_runtime', lambda *args: SimpleNamespace(signer=signer()))
         monkeypatch.setattr(async_settle_shadow_health, 'ObservationStore', lambda _: svc.store)
         app = main.create_app(cfg, configure_store_arg=False, init_observability=False)
-        assert not hasattr(app.state, 'async_settle_shadow_observation')
-        assert not hasattr(app.state, 'async_settle_shadow_cohort')
+        installed = app.state.async_settle_shadow_observation
+        assert not installed.runtime_stop.available
+        assert installed.port.reserve(int(installed.store.wall()*1e6)) is None
+        assert not installed.runtime_stop.poll() and not installed.policy_enabled()
+        cleanup(installed)
         port = Port()
         assert not authorize(cfg, ('shadow-v2',), port, inputs(), additions(), signer())
         assert port.calls == []
     finally:
+        if "app" in locals():
+            app.state.async_settle_shadow_cohort.close()
+            app.state.async_settle_shadow_cohort.worker.join(timeout=1)
+            assert not app.state.async_settle_shadow_cohort.worker.is_alive()
         cleanup(svc)
 
 
@@ -247,13 +258,16 @@ def test_failed_control_read_fails_closed_and_has_no_catchup_reads(monkeypatch):
     try:
         read = Mock(side_effect=RuntimeError('unavailable'))
         monkeypatch.setattr(svc.store, 'read_runtime_stop', read)
-        assert not svc.runtime_stop.poll() and not svc.policy_enabled()
+        assert not svc.runtime_stop.poll() and not svc.runtime_stop.available
+        assert svc.policy_enabled()
         for _ in range(100):
             svc.runtime_stop.poll()
         assert read.call_count == 1
         wall[0] += 4_000_000
         svc.runtime_stop.poll()
-        assert read.call_count == 2 and not svc.policy_enabled()
+        assert read.call_count == 2 and not svc.runtime_stop.available
+        assert svc.policy_enabled()
+        assert svc.port.reserve(wall[0]) is None
     finally:
         cleanup(svc)
 
@@ -425,7 +439,13 @@ def test_sdk_clients_and_transport_registration_are_owned_and_idempotent():
         disable_builtin_metrics=True).instance('i').database('d')
     store = ObservationStore(backend)
     breaker = RuntimeStop(store, 'boot', Mock())
+    publisher = store.publisher_lane()
+    replacement = store.publisher_lane()
     try:
+        assert len({id(s.database._sessions_manager) for s in (store, publisher, replacement)}) == 3
+        assert publisher.database.spanner_api is not store.database.spanner_api
+        assert replacement.database.spanner_api is not publisher.database.spanner_api
+        assert publisher.workspace_database is publisher.database
         assert len({id(backend), id(store.database), id(store.workspace_database)}) == 3
         assert store.database.spanner_api is not backend.spanner_api
         assert store.workspace_database.spanner_api is not backend.spanner_api
@@ -437,7 +457,7 @@ def test_sdk_clients_and_transport_registration_are_owned_and_idempotent():
             assert not hasattr(database, '_shadow_v2_failure')
         assert not hasattr(backend, '_shadow_v2_failure')
     finally:
-        for database in (backend, store.database, store.workspace_database):
+        for database in (backend, store.database, store.workspace_database, publisher.database, replacement.database):
             database.spanner_api.transport.close()
 
 

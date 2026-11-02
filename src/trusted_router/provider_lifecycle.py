@@ -24,6 +24,7 @@ from datetime import UTC, datetime, timedelta, timezone
 LIFECYCLE_CLOCK_OVERRIDE_ENV = "TR_LIFECYCLE_CLOCK_OVERRIDE"
 
 PHALA_JULY_2026_EFFECTIVE_AT = datetime(2026, 7, 29, 18, 0, tzinfo=UTC)
+DATABRICKS_INKLING_RETIREMENT_AT = datetime(2026, 10, 30, 0, 0, tzinfo=UTC)
 TOGETHER_MINIMAX_M27_RETIREMENT_AT = datetime(2026, 7, 27, 0, 0, tzinfo=UTC)
 TOGETHER_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 14, 0, 0, tzinfo=UTC)
 TOGETHER_OCTOBER_22_RETIREMENT_AT = datetime(2026, 10, 22, 0, 0, tzinfo=UTC)
@@ -31,6 +32,7 @@ OPENAI_SEPTEMBER_28_RETIREMENT_AT = datetime(2026, 9, 28, 0, 0, tzinfo=UTC)
 OPENAI_OCTOBER_23_RETIREMENT_AT = datetime(2026, 10, 23, 0, 0, tzinfo=UTC)
 GOOGLE_AI_STUDIO_VEO_PREVIEW_RETIREMENT_AT = datetime(2026, 10, 22, 0, 0, tzinfo=UTC)
 GOOGLE_AI_STUDIO_GEMINI_35_FLASH_RETIREMENT_AT = datetime(2026, 10, 10, 0, 0, tzinfo=UTC)
+GOOGLE_AI_STUDIO_GEMINI_37_FLASH_RETIREMENT_AT = datetime(2026, 10, 9, 0, 0, tzinfo=UTC)
 FIREWORKS_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 25, 0, 0, tzinfo=UTC)
 BASETEN_JULY_2026_RETIREMENT_AT = datetime(2026, 7, 25, 0, 0, tzinfo=UTC)
 BASETEN_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 26, 0, 0, tzinfo=UTC)
@@ -67,10 +69,21 @@ SCALEWAY_GLM_52_RETIREMENT_AT = datetime(2026, 11, 16, 0, 0, tzinfo=UTC)
 DEEPINFRA_HERMES_3_405B_RETIREMENT_AT = datetime(2026, 11, 2, 0, 0, tzinfo=UTC)
 DEEPINFRA_MYTHOMAX_RETIREMENT_AT = datetime(2026, 10, 29, 0, 0, tzinfo=UTC)
 TOGETHER_NOVEMBER_6_RETIREMENT_AT = datetime(2026, 11, 6, 0, 0, tzinfo=UTC)
+TOGETHER_QWEN38_24T_RETIREMENT_AT = datetime(2026, 11, 4, 0, 0, tzinfo=UTC)
+DIGITALOCEAN_NOVEMBER_9_RETIREMENT_AT = datetime(2026, 11, 9, 0, 0, tzinfo=UTC)
+NEBIUS_NOVEMBER_9_RETIREMENT_AT = datetime(2026, 11, 9, 0, 0, tzinfo=UTC)
+# Decision Models (Passau, CET): pinned ids answer through 30 Nov 2026 and
+# return 410 from 1 Dec; retire at 1 Dec 00:00 CET.
+DECISIONMODELS_PINNED_S1_PRO_RETIREMENT_AT = datetime(2026, 11, 30, 23, 0, tzinfo=UTC)
+# Anthropic retires claude-sonnet-4-5 on 30 Nov 2026 at 9AM PT (PST, UTC-8).
+ANTHROPIC_SONNET_45_RETIREMENT_AT = datetime(2026, 11, 30, 17, 0, tzinfo=UTC)
+MISTRAL_MEDIUM_35_RETIREMENT_AT = datetime(2027, 4, 30, 0, 0, tzinfo=UTC)
 # 2026-10-30 10:00 PDT: Crusoe redirects four serverless models to replacements.
 CRUSOE_OCTOBER_30_RETIREMENT_AT = datetime(2026, 10, 30, 17, 0, tzinfo=UTC)
 TELNYX_NOVEMBER_2_RETIREMENT_AT = datetime(2026, 11, 2, 0, 0, tzinfo=UTC)
 INCEPTION_MERCURY_2_RETIREMENT_AT = datetime(2026, 11, 15, 0, 0, tzinfo=UTC)
+DEEPINFRA_LLAMA_31_70B_TURBO_RETIREMENT_AT = datetime(2026, 11, 3, 0, 0, tzinfo=UTC)
+DEEPINFRA_STEP_5_PREVIEW_RETIREMENT_AT = datetime(2026, 11, 4, 0, 0, tzinfo=UTC)
 # 2027-01-19 10:00 UTC+8: Model Studio stops serving legacy Qwen3.5 models.
 ALIBABA_QWEN35_RETIREMENT_AT = datetime(2027, 1, 19, 2, 0, tzinfo=UTC)
 # 2026-10-14 18:00 UTC+8: Xiaomi starts serving V2.6 weights at V2.6 prices.
@@ -108,6 +121,8 @@ STREAMLAKE_QWEN3_VL_235B_RETIREMENT_AT = datetime(2026, 10, 16, 22, 1, tzinfo=UT
 # Direct authenticated inference confirmed UnavailableModel at this time.
 # This is our enforcement observation, not an announced upstream cutover.
 STREAMLAKE_QWEN3_30B_THINKING_RETIREMENT_AT = datetime(2026, 10, 25, 17, 17, tzinfo=UTC)
+# Direct authenticated inference returned UnavailableModel at this observation.
+STREAMLAKE_QWEN3_VL_THINKING_RETIREMENT_AT = datetime(2026, 10, 28, 13, 3, tzinfo=UTC)
 DEEPSEEK_V4_PRICING_EFFECTIVE_AT = datetime(2026, 8, 16, 16, 0, tzinfo=UTC)
 DEEPSEEK_V41_FLASH_EFFECTIVE_AT = datetime(2026, 9, 10, 4, 0, tzinfo=UTC)
 # The launch-day pricing page supersedes the earlier email: Pro remains
@@ -210,6 +225,16 @@ def provider_retirements() -> tuple[_Retirement, ...]:
 
 
 _RETIREMENTS = (
+    # Databricks' date-only PAYGO retirement notice; do not silently substitute
+    # its suggested GLM/Kimi replacements or retire other providers' Inkling.
+    # https://docs.databricks.com/aws/en/machine-learning/retired-models-policy
+    _Retirement(
+        provider="databricks",
+        model_ids=frozenset({"thinkingmachines/inkling"}),
+        upstream_ids=frozenset({"databricks-inkling"}),
+        effective_at=DATABRICKS_INKLING_RETIREMENT_AT,
+        replacement_model_ids=("z-ai/glm-5.3", "moonshotai/kimi-k3"),
+    ),
     # Official FAQ observed 2026-10-19 marks these retired even though the
     # list API still advertises them. Other providers are unaffected.
     # https://platform.minimax.io/docs/faq/models
@@ -394,6 +419,12 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"moonshotai/kimi-k3"}),
         effective_at=NVIDIA_NIM_KIMI_K3_RETIREMENT_AT,
     ),
+    _Retirement(
+        provider="streamlake",
+        model_ids=frozenset({"qwen/qwen3-vl-235b-a22b-thinking"}),
+        upstream_ids=frozenset({"Qwen3-VL-235B-A22B-Thinking"}),
+        effective_at=STREAMLAKE_QWEN3_VL_THINKING_RETIREMENT_AT,
+    ),
     # W&B's September notice gives October 5 without a time zone. Stop at
     # 00:00 UTC conservatively, only for these exact Serverless Inference ids.
     # Dated DeepSeek releases and other providers are unaffected; never
@@ -514,6 +545,16 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"gemini-3.5-flash"}),
         effective_at=GOOGLE_AI_STUDIO_GEMINI_35_FLASH_RETIREMENT_AT,
         replacement_model_ids=("google/gemini-3.6-flash",),
+    ),
+    # AI Studio's October 9 notice redirects 3.7 to 3.8. Retire the old
+    # identity rather than silently substitute weights. Vertex's distinct
+    # retirement date remains January 28, 2027.
+    _Retirement(
+        provider="google-ai-studio",
+        model_ids=frozenset({"google/gemini-3.7-flash"}),
+        upstream_ids=frozenset({"gemini-3.7-flash"}),
+        effective_at=GOOGLE_AI_STUDIO_GEMINI_37_FLASH_RETIREMENT_AT,
+        replacement_model_ids=("google/gemini-3.8-flash",),
     ),
     # Baseten's September 13 notice: September 25 at 17:00 PDT is September
     # 26 at 00:00 UTC. These exact shared Model API ids retire; the distinct
@@ -988,6 +1029,172 @@ _RETIREMENTS = (
         effective_at=DEEPINFRA_GPT_OSS_120B_TURBO_RETIREMENT_AT,
         replacement_model_ids=("openai/gpt-oss-120b",),
     ),
+    # Decision Models' October 29 notice (re-sent from info@decisionmodels.io)
+    # retires the pinned s1-pro-2 and s1-pro-3 ids: available through
+    # 30 November, HTTP 410 model_retired from 1 December. The unpinned
+    # s1-pro alias moves to mammoth-1 on 5 November and keeps routing, as
+    # Joseph decided for unversioned aliases (2026-10-29).
+    _Retirement(
+        provider="decisionmodelsio",
+        model_ids=frozenset({"decisionmodelsio/s1-pro-2"}),
+        upstream_ids=frozenset({"s1-pro-2"}),
+        effective_at=DECISIONMODELS_PINNED_S1_PRO_RETIREMENT_AT,
+        replacement_model_ids=("decisionmodelsio/s1-pro",),
+    ),
+    _Retirement(
+        provider="decisionmodelsio",
+        model_ids=frozenset({"decisionmodelsio/s1-pro-3"}),
+        upstream_ids=frozenset({"s1-pro-3"}),
+        effective_at=DECISIONMODELS_PINNED_S1_PRO_RETIREMENT_AT,
+        replacement_model_ids=("decisionmodelsio/s1-pro",),
+    ),
+    _Retirement(
+        provider="decisionmodelsio-eu",
+        model_ids=frozenset({"decisionmodelsio-eu/s1-pro-2"}),
+        upstream_ids=frozenset({"s1-pro-2"}),
+        effective_at=DECISIONMODELS_PINNED_S1_PRO_RETIREMENT_AT,
+        replacement_model_ids=("decisionmodelsio-eu/s1-pro",),
+    ),
+    _Retirement(
+        provider="decisionmodelsio-eu",
+        model_ids=frozenset({"decisionmodelsio-eu/s1-pro-3"}),
+        upstream_ids=frozenset({"s1-pro-3"}),
+        effective_at=DECISIONMODELS_PINNED_S1_PRO_RETIREMENT_AT,
+        replacement_model_ids=("decisionmodelsio-eu/s1-pro",),
+    ),
+    # Nebius's October 30 notice retires these Token Factory Serverless models
+    # on 9 November 2026 (date-only, so 00:00 UTC). Dedicated endpoints are
+    # unaffected; the same weights stay routable through other providers.
+    _Retirement(
+        provider="nebius",
+        model_ids=frozenset({"zai-org/GLM-5.1"}),
+        upstream_ids=frozenset({"zai-org/GLM-5.1"}),
+        effective_at=NEBIUS_NOVEMBER_9_RETIREMENT_AT,
+        replacement_model_ids=("z-ai/glm-5.3",),
+    ),
+    _Retirement(
+        provider="nebius",
+        model_ids=frozenset({"nvidia/nemotron-3-super-120b-a12b"}),
+        upstream_ids=frozenset({"nvidia/nemotron-3-super-120b-a12b"}),
+        effective_at=NEBIUS_NOVEMBER_9_RETIREMENT_AT,
+        replacement_model_ids=("nvidia/nemotron-3.5-super-vl",),
+    ),
+    _Retirement(
+        provider="nebius",
+        model_ids=frozenset({"deepseek-ai/DeepSeek-V4-Pro"}),
+        upstream_ids=frozenset({"deepseek-ai/DeepSeek-V4-Pro"}),
+        effective_at=NEBIUS_NOVEMBER_9_RETIREMENT_AT,
+        replacement_model_ids=("deepseek/deepseek-v4-pro-0813",),
+    ),
+    _Retirement(
+        provider="nebius",
+        model_ids=frozenset({"deepseek/deepseek-v4-flash-0731"}),
+        upstream_ids=frozenset({"deepseek-ai/DeepSeek-V4-Flash-0731"}),
+        effective_at=NEBIUS_NOVEMBER_9_RETIREMENT_AT,
+        replacement_model_ids=("deepseek/deepseek-v4.1-flash-1017",),
+    ),
+    _Retirement(
+        provider="nebius",
+        model_ids=frozenset({"deepseek/deepseek-v4.1-flash"}),
+        upstream_ids=frozenset({"deepseek-ai/DeepSeek-V4.1-Flash"}),
+        effective_at=NEBIUS_NOVEMBER_9_RETIREMENT_AT,
+        replacement_model_ids=("deepseek/deepseek-v4.1-flash-1017",),
+    ),
+    _Retirement(
+        provider="nebius",
+        model_ids=frozenset({"Qwen/Qwen3.5-397B-A17B"}),
+        upstream_ids=frozenset({"Qwen/Qwen3.5-397B-A17B"}),
+        effective_at=NEBIUS_NOVEMBER_9_RETIREMENT_AT,
+        replacement_model_ids=("qwen/qwen3.8-27b",),
+    ),
+    _Retirement(
+        provider="nebius",
+        model_ids=frozenset({"Qwen/Qwen3-235B-A22B-Instruct-2507"}),
+        upstream_ids=frozenset({"Qwen/Qwen3-235B-A22B-Instruct-2507"}),
+        effective_at=NEBIUS_NOVEMBER_9_RETIREMENT_AT,
+        replacement_model_ids=("qwen/qwen3.8-27b",),
+    ),
+    _Retirement(
+        provider="nebius",
+        model_ids=frozenset({"moonshotai/Kimi-K2.6"}),
+        upstream_ids=frozenset({"moonshotai/Kimi-K2.6"}),
+        effective_at=NEBIUS_NOVEMBER_9_RETIREMENT_AT,
+        replacement_model_ids=("moonshotai/kimi-k3",),
+    ),
+    _Retirement(
+        provider="nebius",
+        model_ids=frozenset({"moonshotai/Kimi-K2.7-Code"}),
+        upstream_ids=frozenset({"moonshotai/Kimi-K2.7-Code"}),
+        effective_at=NEBIUS_NOVEMBER_9_RETIREMENT_AT,
+        replacement_model_ids=("moonshotai/kimi-k3",),
+    ),
+    _Retirement(
+        provider="nebius",
+        model_ids=frozenset({"openbmb/MiniCPM-V-4_5"}),
+        upstream_ids=frozenset({"openbmb/MiniCPM-V-4_5"}),
+        effective_at=NEBIUS_NOVEMBER_9_RETIREMENT_AT,
+        replacement_model_ids=("nvidia/nemotron-3.5-super-vl",),
+    ),
+    # Anthropic's October 30 reminder: Claude Sonnet 4.5 retires on the native
+    # Claude API. Provider-scoped; Azure and other hosts keep serving it.
+    _Retirement(
+        provider="anthropic",
+        model_ids=frozenset({"anthropic/claude-sonnet-4.5"}),
+        upstream_ids=frozenset({"claude-sonnet-4-5-20250929", "claude-sonnet-4-5"}),
+        effective_at=ANTHROPIC_SONNET_45_RETIREMENT_AT,
+        replacement_model_ids=("anthropic/claude-sonnet-5.5",),
+    ),
+    # Mistral's October 30 notice retires Mistral Medium 3.5 from the
+    # serverless API on 30 April 2027 (date-only, so 00:00 UTC); recommended
+    # replacement Mistral Large 4.
+    _Retirement(
+        provider="mistral",
+        model_ids=frozenset({"mistralai/mistral-medium-3-5"}),
+        upstream_ids=frozenset({"mistral-medium-3.5", "mistral-medium-3-5"}),
+        effective_at=MISTRAL_MEDIUM_35_RETIREMENT_AT,
+        replacement_model_ids=("mistralai/mistral-large-4",),
+    ),
+    # DigitalOcean's October 29 notices deprecate these Inference models on
+    # 2026-11-09 (date only; 00:00 UTC conservatively); requests then 404.
+    # Retire only DigitalOcean's routes; other providers' routes stay.
+    _Retirement(
+        provider="digitalocean",
+        model_ids=frozenset({"meta-llama/llama-4-maverick"}),
+        upstream_ids=frozenset({"llama-4-maverick"}),
+        effective_at=DIGITALOCEAN_NOVEMBER_9_RETIREMENT_AT,
+        replacement_model_ids=("deepseek/deepseek-v4.1-flash",),
+    ),
+    _Retirement(
+        provider="digitalocean",
+        model_ids=frozenset({"deepseek/deepseek-v4-flash"}),
+        upstream_ids=frozenset({"deepseek-4-flash"}),
+        effective_at=DIGITALOCEAN_NOVEMBER_9_RETIREMENT_AT,
+        replacement_model_ids=("deepseek/deepseek-v4.1-flash-1017",),
+    ),
+    _Retirement(
+        provider="digitalocean",
+        model_ids=frozenset({"qwen/qwen3.5-397b-a17b"}),
+        upstream_ids=frozenset({"qwen3.5-397b-a17b"}),
+        effective_at=DIGITALOCEAN_NOVEMBER_9_RETIREMENT_AT,
+        replacement_model_ids=("qwen/qwen3.8-max",),
+    ),
+    _Retirement(
+        provider="digitalocean",
+        model_ids=frozenset({"google/gemma-4-31b-it"}),
+        upstream_ids=frozenset({"gemma-4-31B-it"}),
+        effective_at=DIGITALOCEAN_NOVEMBER_9_RETIREMENT_AT,
+        replacement_model_ids=("z-ai/glm-5.3-flash",),
+    ),
+    # Together's notice (reminder received October 29) removes Qwen3.8
+    # 2.4T-A95B from its serverless API on 2026-11-04 (date only; 00:00 UTC).
+    # Retire only Together's route; other providers' routes stay.
+    _Retirement(
+        provider="together",
+        model_ids=frozenset({"qwen/qwen3.8-2.4t-a95b"}),
+        upstream_ids=frozenset({"Qwen/Qwen3.8-2.4T-A95B"}),
+        effective_at=TOGETHER_QWEN38_24T_RETIREMENT_AT,
+        replacement_model_ids=("qwen/qwen3.7-max",),
+    ),
     # Together's October 23 notices remove MiniMax M3 and Inkling from its
     # serverless API on 2026-11-06 (date only; 00:00 UTC conservatively).
     # Retire only Together's routes; other providers' routes stay.
@@ -1004,6 +1211,26 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"thinkingmachines/Inkling"}),
         effective_at=TOGETHER_NOVEMBER_6_RETIREMENT_AT,
         replacement_model_ids=("meta-models/muse-spark-open",),
+    ),
+    # DeepInfra's October 28 notice deprecates Step 5 Preview on 2026-11-04
+    # and redirects later requests to the different GLM 5.3 Flash model.
+    # Retire DeepInfra's route at 00:00 UTC (date only).
+    _Retirement(
+        provider="deepinfra",
+        model_ids=frozenset({"stepfun-ai/step-5-preview"}),
+        upstream_ids=frozenset({"stepfun-ai/Step-5-Preview"}),
+        effective_at=DEEPINFRA_STEP_5_PREVIEW_RETIREMENT_AT,
+        replacement_model_ids=("z-ai/glm-5.3-flash",),
+    ),
+    # DeepInfra's October 27 notice deprecates Llama 3.1 70B Instruct Turbo
+    # on 2026-11-03 and redirects later requests to the different Llama 3.3
+    # 70B weights. Retire DeepInfra's route at 00:00 UTC (date only).
+    _Retirement(
+        provider="deepinfra",
+        model_ids=frozenset({"meta-llama/llama-3.1-70b-instruct"}),
+        upstream_ids=frozenset({"meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"}),
+        effective_at=DEEPINFRA_LLAMA_31_70B_TURBO_RETIREMENT_AT,
+        replacement_model_ids=("meta-llama/llama-3.3-70b-instruct",),
     ),
     # Inception's October 26 notice: Mercury 2 and 2.5 stay available until
     # 2026-11-15 (date only; 00:00 UTC conservatively), after which callers

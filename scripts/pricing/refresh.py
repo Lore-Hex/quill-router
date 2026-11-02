@@ -178,6 +178,7 @@ PROVIDER_SLUGS = [
     "zro",
     "byteplus",
     "privatemode",
+    "maple",
     "featherless",
     "sakana",
     "jina",

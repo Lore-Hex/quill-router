@@ -142,7 +142,7 @@ jobs:
     needs: scope
     if: needs.scope.outputs.data_only != 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 40
     env:
       SPANNER_EMULATOR_HOST: 127.0.0.1:9010
       TR_CONFORMANCE_EMULATOR_SCHEMA: "1"
@@ -196,9 +196,13 @@ jobs:
       # SDK leftovers from other tests. Mixed-suite workers skip that count.
       - name: P5 package object budgets
         if: ${{ !cancelled() }}
-        # 861 covered tests on two workers: 3.5 minutes on one runner, over 5 on
-        # a slower one (run 38851426992 timed out at the old 5-minute limit).
-        timeout-minutes: 12
+        # Runner speed, not test growth: 57 green main runs (2026-10-24..28)
+        # took 635 s median / 669 s max; P5/conformance correlation was 0.73.
+        # Run 40736263651 hit 720 s at 88% (~876 s projected), then reran in
+        # 651 s. Oct 12 measurements found up to 1.9x runner-speed variation.
+        # 22 min gives 2.1x median / 1.5x projection; the 40-min job limit
+        # gives 2.2x its 1080 s median so a ~2x slower runner still fits.
+        timeout-minutes: 22
         run: >-
           uv run pytest -q tests/test_async_settle_shadow_v2_gate*.py
           -m "not proof_oracle" -n 2
@@ -284,10 +288,11 @@ jobs:
         # The committed weights understate real work; observed wall times
         # are four to five times the estimates. These are estimates, not
         # timeout bounds, and exclude queue delay.
-        # Refresh durations from CI artifacts (including service-backed tests):
-        #   gh run download <run> -p 'durations-*' -D /tmp/ci-durations
-        #   uv run python scripts/ci/merge_shard_durations.py /tmp/ci-durations .test_durations /tmp/merged-durations.json
-        # Review the output, copy it to .test_durations, and commit.
+        # Oct 27: 6,271 IDs were missing weights. Profile at least three green
+        # runs, keeping coverage and post-cutover timings separate:
+        #   gh run download <run> -p 'durations-*' -D /tmp/ci-durations/<run>
+        #   uv run python scripts/ci/merge_shard_durations.py /tmp/ci-durations .test_durations /tmp/default.json --profile default
+        # Repeat with --profile post-cutover; review both profiles before commit.
         shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
     runs-on: ubuntu-24.04
     env:
@@ -537,9 +542,9 @@ jobs:
               env.write(f"TR_LIFECYCLE_CLOCK_OVERRIDE={stamp}\n")
           print(f"lifecycle clock pinned to {stamp}")
           '
-      - name: Copy split weights for this shard
+      - name: Use the independent post-cutover profile
         # --durations-path is both the split input and the recording output.
-        run: cp .test_durations durations-${{ matrix.shard }}.json
+        run: cp .test_durations-post-cutover durations-${{ matrix.shard }}.json
       - name: Tests with every scheduled cutover already past
         run: >-
           uv run pytest -q -n 4 --dist loadgroup
@@ -595,12 +600,22 @@ jobs:
               env.write(f"TR_LIFECYCLE_CLOCK_OVERRIDE={stamp}\n")
           print(f"lifecycle clock pinned to {stamp}")
           '
+      - name: Copy oracle split weights for recording
+        run: cp .test_durations durations-${{ matrix.shard }}.json
       - name: Frozen-main proof matrix without coverage
         run: >-
           uv run pytest -q -n 4 --dist loadgroup
           -m proof_oracle tests/test_async_settle_proof_oracle.py tests/test_async_settle_shadow_v2_gate_window.py
           --splits 6 --group ${{ matrix.shard }}
           --splitting-algorithm least_duration
+          --store-durations --durations-path=durations-${{ matrix.shard }}.json --clean-durations
+      - name: Upload oracle durations separately from the full suites
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: durations-oracle-${{ matrix.clock }}-${{ matrix.shard }}
+          path: durations-${{ matrix.shard }}.json
+          retention-days: 7
 
   browser:
     runs-on: ubuntu-24.04

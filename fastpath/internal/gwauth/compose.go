@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/pyjson"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/routingsnapshot"
 )
 
 // Compose (G6 of docs/design/fast-admission-e2-decide.md, §5, §6 and §8.3)
@@ -56,6 +57,10 @@ type ComposeInput struct {
 	Estimate     int64       // Result.ModelEstimate, microdollars: the spend ceiling, not the lease's hold
 	StageDReason string      // StageDReasonOf
 	BootKid      string
+
+	// Async is the async-v1 additions' input (async.go), nil for a request
+	// whose 200 adds nothing: Stage then writes the 200 it wrote before G15.
+	Async *AsyncInput
 }
 
 // ComposeTag is one tag, key and value. It is not G5's Tag (built in
@@ -77,6 +82,11 @@ type Candidate struct {
 	EndpointID, Model, UpstreamModel, Provider, ProviderName string
 	InferenceLocation                                        pyjson.Object // the snapshot's (sorted); Stage re-orders it
 	WaferZDRRequired                                         bool
+	// UsageType and Epochs are what the async-v1 billing snapshot reads
+	// (async.go): the endpoint's usage type and its price epochs, the
+	// snapshot's own slice, never written.
+	UsageType string
+	Epochs    []routingsnapshot.Epoch
 }
 
 // Composed is an admitted authorization's rows and its 200 body but the

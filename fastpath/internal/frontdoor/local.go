@@ -68,7 +68,7 @@ func (l *Local) Heartbeat(ctx context.Context, req OwnerHeartbeat) HeartbeatAnsw
 		return HeartbeatAnswer{Status: Retry}
 	}
 	deadline, err := lease.Heartbeat(ctx, req.Auth, owner.HeartbeatOf{GatewaySeq: req.GatewaySeq, Hash: req.Hash,
-		Usage: req.Usage, Running: req.Running, Echoed: req.Echoed, Basis: req.Basis})
+		Usage: req.Usage, Running: req.Running, Echoed: req.Echoed, EchoGranted: req.EchoGranted, Basis: req.Basis})
 	switch {
 	case err == nil:
 		return HeartbeatAnswer{Status: Accepted, Deadline: deadline}

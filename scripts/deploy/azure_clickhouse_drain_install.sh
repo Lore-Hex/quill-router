@@ -122,7 +122,9 @@ say "building the payload"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 archive="$WORK/drain.tgz"
-build_clickhouse_bundle "$ROOT" "$archive"
+# This scope keeps all Python, catalog, template and content dependencies,
+# excluding only website static assets that the drain never imports.
+build_clickhouse_bundle "$ROOT" "$archive" public-snapshots
 SHA="$(python3 - "$archive" <<'PY'
 import hashlib
 from pathlib import Path

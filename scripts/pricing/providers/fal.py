@@ -90,8 +90,8 @@ def _h3_max_standard_rates(page: str) -> dict[str, int]:
     normalized = re.sub(r"<[^>]+>", " ", html_lib.unescape(page))
     normalized = re.sub(r"\s+", " ", normalized)
     post_promotion_matches = re.findall(
-        r"after which\s+480p\s+is\s+\$(\d+(?:\.\d+)?)/second\s+and\s+"
-        r"768p\s+is\s+\$(\d+(?:\.\d+)?)/second",
+        r"after which\s+480p\s+is\s+\$(\d+(?:\.\d+)?)\s*/second\s*(?:,\s*(?:and\s+)?|and\s+)"
+        r"768p\s+is\s+\$(\d+(?:\.\d+)?)\s*/second",
         normalized,
         flags=re.IGNORECASE,
     )
@@ -112,8 +112,8 @@ def _h3_max_standard_rates(page: str) -> dict[str, int]:
         )
         matches.extend(
             re.findall(
-                r"480p\s+is\s+\$(\d+(?:\.\d+)?)/second\s+and\s+"
-                r"768p\s+is\s+\$(\d+(?:\.\d+)?)/second",
+                r"480p\s+is\s+\$(\d+(?:\.\d+)?)\s*/second\s*(?:,\s*(?:and\s+)?|and\s+)"
+                r"768p\s+is\s+\$(\d+(?:\.\d+)?)\s*/second",
                 normalized,
                 flags=re.IGNORECASE,
             )

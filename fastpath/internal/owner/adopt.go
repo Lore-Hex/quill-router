@@ -365,11 +365,12 @@ type dueReap struct {
 
 // due are the lease's open holds whose last heartbeat's deadline plus the
 // grace has passed, in order of their authorizations, found by a scan and
-// sorted once its lock is let go. A hold that never heartbeated has no
-// snapshot to reap at.
+// sorted once its lock is let go: for a stream's hold with a reap floor,
+// its reap deadline plus the grace (StreamReap). A hold that never
+// heartbeated has no snapshot to reap at.
 func (l *Lease) due(now time.Time, grace time.Duration) []dueReap {
 	out := gather(l, func(h *hold) (dueReap, bool) {
-		if !h.heartbeat || now.Before(h.deadline.Add(grace)) {
+		if !h.heartbeat || now.Before(reapAfter(h).Add(grace)) {
 			return dueReap{}, false
 		}
 		return dueReap{Lease: l.id, Auth: h.auth, Estimate: h.estimate, Charge: h.running,
@@ -378,6 +379,15 @@ func (l *Lease) due(now time.Time, grace time.Duration) []dueReap {
 	})
 	slices.SortFunc(out, func(a, b dueReap) int { return strings.Compare(a.Auth, b.Auth) })
 	return out
+}
+
+// reapAfter is the deadline a heartbeated hold's reap waits for, plus the
+// grace: its reap floor's when later than its deadline, else its deadline.
+func reapAfter(h *hold) time.Time {
+	if h.reapDeadline.After(h.deadline) {
+		return h.reapDeadline
+	}
+	return h.deadline
 }
 
 // reap decides a reap of a due hold at the snapshot its full record states:

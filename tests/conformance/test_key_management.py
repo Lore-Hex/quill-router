@@ -42,6 +42,9 @@ def test_key_pages_and_bulk_delete(store, unique, user_id, workspace_id):
     ]
     assert [len(page) for page in pages] == [2, 2, 1]
     assert [row.api_key.hash for page in pages for row in page] == [key.hash for key in expected]
+    assert store.list_api_keys_with_usage(workspace_id, offset=1) == rows[1:]
+    assert store.list_api_keys_with_usage(workspace_id, offset=999999999999999999) == []
+    assert store.list_api_keys_with_usage(workspace_id, offset=2**63 - 2, limit=1001) == []
     filtered = store.list_api_keys_with_usage(workspace_id, include_disabled=False)
     assert [row.api_key.hash for row in filtered] == [
         key.hash for key in expected if key.hash != disabled

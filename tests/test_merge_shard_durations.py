@@ -46,3 +46,35 @@ def test_invalid_durations_leave_output_untouched(tmp_path: Path, value: object)
     with pytest.raises(ValueError, match="finite, nonnegative"):
         main([str(tmp_path), str(current), str(current)])
     assert current.read_text() == '{"test": 1}'
+
+
+def test_profile_uses_independent_runs_and_does_not_mix_clocks(tmp_path: Path) -> None:
+    current = tmp_path / "current.json"
+    current.write_text('{"unobserved": 7}')
+    for run, value in enumerate((10, 12, 1000)):
+        for clock, duration in (("default", value), ("post-cutover", 1)):
+            directory = tmp_path / str(run) / f"durations-{clock}-1"
+            directory.mkdir(parents=True)
+            (directory / "durations-1.json").write_text(json.dumps({
+                "test@conformance-postgres": duration,
+            }))
+    output = tmp_path / "profile.json"
+    main([str(tmp_path), str(current), str(output), "--profile", "default"])
+    assert json.loads(output.read_text()) == {"unobserved": 7, "test@conformance-postgres": 12}
+    main([str(tmp_path), str(current), str(output), "--profile", "post-cutover"])
+    assert json.loads(output.read_text())["test@conformance-postgres"] == 1
+
+
+def test_profile_refuses_single_run_and_duplicate_shards(tmp_path: Path) -> None:
+    current = tmp_path / "current.json"
+    current.write_text('{}')
+    directory = tmp_path / "run1" / "durations-default-1"
+    directory.mkdir(parents=True)
+    (directory / "durations-1.json").write_text('{"test": 1}')
+    args = [str(tmp_path), str(current), str(current), "--profile", "default"]
+    with pytest.raises(ValueError, match="at least three"):
+        main(args)
+    (directory / "durations-2.json").write_text('{"test": 1}')
+    with pytest.raises(ValueError, match="duplicate"):
+        main(args)
+    assert current.read_text() == '{}'

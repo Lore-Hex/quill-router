@@ -23,7 +23,10 @@ const (
 )
 
 // HoldRow is a stored open hold (§4.8): its estimate and deadline, its
-// latest valid snapshot, and what a reap of it needs.
+// latest valid snapshot, and what a reap of it needs. Deadline is the one a
+// reap waits for, plus the grace: a stream's reap floor when its snapshot
+// carries one (record.Snapshot.ReapAfter), else the heartbeat's, or a hold
+// with no heartbeat's end of life.
 type HoldRow struct {
 	AuthorizationID  string
 	Estimate         int64

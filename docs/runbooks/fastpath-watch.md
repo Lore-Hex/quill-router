@@ -143,6 +143,9 @@ restarted, so the last node's restart is the change. The report's
 `-since` on. The gates are a sample, not a calendar: at least 3,000
 comparable requests over at least 24 hours and at least three policy and
 two snapshot digests among them, and the ratios and zero counts below.
+On a release with G15c the `i3` figures' minimums take the place of the
+3,000 (`fast-admission-e2-decide.md`, "With G15c pinned, I3's gate is
+I2's"); the span, digest, ratio and zero-count rules stay.
 
 Each minute every node logs one line of its decide path's counts
 (`fastpath edge decide: ...`, with `-edge-decide`) and, with
@@ -153,31 +156,83 @@ lines, summed, are its counts. It prints JSON:
 
 - `i2`: the gates' figures. `comparable` is `agree_full` plus `differ`, the
   requests whose answers were compared (Go would answer, Python answered a
-  200 that is not a replay), and `agree_full_ratio` is `agree_full` over
-  it: the 99.5% gate. `cohort_eligible` is every request Go would have
+  200 that is not a replay; a request naming a `cache_affinity_key` is
+  compared like any other, since Go decides it in the cold order), and
+  `agree_full_ratio` is `agree_full` over it: the 99.5% gate. `cohort_eligible` is every request Go would have
   answered (each counts its decide row's gate) and `cohort_by_class` the
   same requests by class, the comparable ones and the rest the gate
   accounts for (`would_admit_python_refused.*`, `python_error.*`,
-  `python_unavailable`, `unread.*`, the scope taken, replays). Then
+  `python_unavailable`, `unread.*`, the scope taken, replays, and
+  `passed.inflight.key`, Python's per-key in-flight 429 to a request the
+  decide path passed at its own in-flight limit). Then
   `differ` and `differ_by_field` (every `differ.*` and `row.*` field),
+  `differ_affinity_warm` (the differs whose Python 200 is Go's decision
+  re-ranked for an endpoint a Python process remembered for the request's
+  `cache_affinity_key`, `differ.affinity_warm`: a warm session Go does not
+  reproduce, counted in `differ` and against the 99.5% like any differ),
   `differ_estimate` (the `differ.estimate*` fields),
   `row_idempotency_fingerprint` and `fields_other`: a period's fields past
   the line's bound are counted `other`, so a non-zero `fields_other` means
   the two zero gates cannot be read as zero. Then
   `would_admit_python_refused` and its classes; `stale` by cache,
-  `followed` (every request the shadow compared whose body did not name a
-  `cache_affinity_key`; those are counted under `affinity` alone, wherever
-  they passed, so neither `stale` nor `followed` moves for them) and
-  `stale_rate`; the
+  `followed` (every request the shadow compared) and `stale_rate`; the
   decide path's `unavailable` answers by the insert's gRPC code; and
-  `affinity_by_class` with `affinity_warm_share`: the requests naming a
-  `cache_affinity_key`, which Go composes in the cold order to measure and
-  never admits, by class (`affinity_cold`: Python's bytes are Go's;
-  `affinity_warm`: Go's with a remembered endpoint promoted; `differ`,
-  `would_admit_python_refused.*` and the rest as for the cohort), and
-  `affinity_warm` over cold plus warm, the figure the design's §1 item 5
-  revisit reads. They are not cohort-eligible, and no row is read back for
-  them.
+  `settlement_header_passes` and `settlement_header_pass_share`, the
+  results passed `header.settlement_async` (any `X-TR-Settlement-Mode` but
+  exactly `async-v1`, `sync` and repeated values included) over `followed`:
+  a pass share under one reason, not the async-v1 share of traffic
+  (`docs/design/fast-admission-e2-g15-async.md` §5). Lines of a
+  release before this one also carried `affinity=` (the requests naming a
+  `cache_affinity_key`, then measured apart); the report sums it under
+  `decide_shadow.by_name.affinity` and no figure reads it, so read a span
+  from the first line of a node on this release.
+- `i3`: the I3 gate's figures (`docs/design/fast-admission-e2-g15-async.md`
+  §4.4, §6.2), each one number. From G15c the shadow composes every
+  request whose `X-TR-Settlement-Mode` is exactly `async-v1` and, while
+  the policy's `async_settle.edge_decide` is false, passes it after the
+  compose with `async.off` (counted in `decide` beside the decide row's
+  gates), so Python answers it and the shadow compares it; with no
+  `async_settle` in the policy or no `billing_valid` in the snapshot it
+  passes `async.unpublished` before the key is looked up; once the key's
+  workspace is known it passes `policy.async_admission` when Python's
+  admission covers that workspace (admission on, and
+  `async_settle.admission_workspaces` absent or naming it). A workspace
+  the member leaves out is composed and compared as with admission off,
+  since Python answers it without a ticket. Because the admission gate
+  needs the key, an async-v1 request whose key the cache cannot answer
+  for (cold, stale or missing) now passes `cache.key` or `key.missing`
+  rather than `policy.async_admission`, even with the member absent, so
+  after this release those reasons grow and `policy.async_admission`
+  shrinks by the same requests; neither is answered by the edge. Its line
+  carries five maps, each keyed by population first (`plain`, `affinity`
+  for a body naming a `cache_affinity_key`, and for `async_seen`
+  `unparsed`, a body the edge did not parse): `async_seen` (every such
+  request followed, whatever it passed with), `async_compared`
+  (`<pop>.agree` or `<pop>.differ`: Go composed it and Python's 200 was
+  read, by whether the async members alone matched byte for byte, an
+  affinity request's against the candidates its comparison used), `async_fields`
+  (`<pop>.differ.async_eligible`, `.differ.billing_snapshot`,
+  `.differ.billing_snapshot_hash`, `.differ.async_shape`), `async_shape`
+  (Go's composed shape, `snapshot` or `false_only.<reason>`) and
+  `async_python_admitted` (Python answered with a ticket, whatever the
+  edge did with the request, passed before the compose or composed: its
+  admission was on, so the members are not compared and the sample
+  restarts). The
+  report prints `async_seen` and `async_seen_share` (over `followed`),
+  `async_compared` with `async_compared_per_day`, `async_compared_plain`
+  with `async_compared_plain_per_day` (the two daily rates, over the span
+  from `-since` to `-until`, that project the soak's end),
+  `async_compared_plain_agree_ratio`, `async_compared_affinity` and
+  `async_compared_affinity_agree_ratio` (each at least 99.5%),
+  `async_fields_billing_snapshot_hash` (zero),
+  `async_fields_billing_snapshot`, `async_fields_async_eligible` and
+  `async_fields_async_shape` (zero beyond the explained price-epoch
+  boundary cases), each over both populations, and
+  `async_python_admitted` (zero). The I3 bars: `async_compared` at least
+  2,000 and `async_compared_plain` at least 250, read with `-since` the
+  last node's restart onto G15c as for I2. A line of a release before G15c
+  has none of these maps: its figures are zero, and a ratio of nothing is
+  `null`.
 - `decide_shadow` and `decide`: every count of the lines, summed.
 - `periods`: each node's lines that come once a minute, the decide line and
   the shadow's line of the requests it did not follow. A node that ran the
@@ -199,8 +254,7 @@ them. The distinct digests of the span, which the gate counts, are read
 from the lines themselves, each line's `snapshot=` and `policy=` (one line
 a minute a node for each pair the minute compared under), counted only
 among the lines with comparable requests (`agree_full` plus `differ`
-above 0): a pair whose lines carried affinity results alone, or none, is
-no evidence, and a line of a minute with no snapshot or policy held says
+above 0): a pair whose lines carried none is no evidence, and a line of a minute with no snapshot or policy held says
 `snapshot=none` or `policy=none` and compares nothing. Each dimension is
 counted apart, over the report's exact window:
 

@@ -420,6 +420,12 @@ func TestBillingValidIsOptionalPerEpoch(t *testing.T) {
 	if published != 2 {
 		t.Fatalf("%d epochs carry billing_valid, want 2", published)
 	}
+	// BillingValidPublished (G15c's async.unpublished): every epoch, false
+	// or true, or not published.
+	if !all.BillingValidPublished() || plain.BillingValidPublished() || s.BillingValidPublished() {
+		t.Errorf("published: every epoch %v, none %v, two %v", all.BillingValidPublished(),
+			plain.BillingValidPublished(), s.BillingValidPublished())
+	}
 	for _, value := range []string{"null", `"true"`, "1", "{}"} {
 		if _, err := Parse(splice(value)); err == nil {
 			t.Errorf("billing_valid %s: parsed", value)
@@ -440,6 +446,9 @@ func TestBillingValidIsOptionalPerEpoch(t *testing.T) {
 			}
 			epochs++
 		}
+	}
+	if !flagged.BillingValidPublished() {
+		t.Error("every epoch false: not published")
 	}
 	base := goldenSnapshot(t)
 	cases := loadCases(t).Cases

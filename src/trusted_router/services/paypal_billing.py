@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
-from urllib.parse import urlparse
 
 import httpx
 
@@ -34,6 +33,7 @@ from trusted_router.storage import STORE
 from trusted_router.storage_models import CreditProvenance
 from trusted_router.storage_rate_limits import InMemoryRateLimits
 from trusted_router.types import ErrorType
+from trusted_router.url_validation import parse_url
 
 _TOKEN_CACHE_SECONDS_SKEW = 60
 _TOKEN_CACHE_LOCK = threading.Lock()
@@ -346,11 +346,10 @@ def _validated_paypal_webhook_headers(headers: Mapping[str, str]) -> dict[str, s
     if _PAYPAL_AUTH_ALGO_RE.fullmatch(auth_algo) is None:
         raise api_error(400, "Invalid PayPal webhook headers", ErrorType.BAD_REQUEST)
 
-    parsed = urlparse(cert_url)
-    try:
-        port = parsed.port
-    except ValueError as exc:
-        raise api_error(400, "Invalid PayPal webhook headers", ErrorType.BAD_REQUEST) from exc
+    parsed = parse_url(cert_url)
+    if parsed is None:
+        raise api_error(400, "Invalid PayPal webhook headers", ErrorType.BAD_REQUEST)
+    port = parsed.port
     hostname = (parsed.hostname or "").lower().rstrip(".")
     if (
         parsed.scheme != "https"

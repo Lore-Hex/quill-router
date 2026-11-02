@@ -16,6 +16,7 @@ import sys
 import time
 import typing
 from collections.abc import Iterator
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -271,14 +272,53 @@ def _snapshot_no_route(snapshot: RoutingSnapshotV3, entries: list[Any], preferen
     return f"No route for the requested model supports these parameters together: {', '.join(capability)}", capability[0]
 
 
-def test_privacy_and_parameter_filters_are_what_routing_filters(live) -> None:
+@pytest.fixture
+def privacy_parameter_catalog(live, settings, monkeypatch):
+    """Keep named refusals exercised even when discovery removes their last live route."""
+    _snapshot, inputs = live
+    model = catalog_data.Model(
+        id="fixture/privacy-parameters", name="Privacy parameter fixture",
+        provider="fixture-standard", context_length=4096,
+        supported_parameters=("tools",),
+    )
+    providers = {
+        "fixture-standard": catalog_data.Provider(slug="fixture-standard", name="Standard fixture"),
+        "fixture-zdr": catalog_data.Provider(
+            slug="fixture-zdr", name="ZDR fixture", stores_content=False,
+            provider_zero_data_retention=True,
+        ),
+    }
+    endpoints = tuple(
+        catalog_data.ModelEndpoint(
+            id=f"{model.id}@{provider}/byok", model_id=model.id, provider=provider,
+            usage_type="BYOK", upstream_id="privacy-parameters",
+            supported_parameters=("tools",) if provider == "fixture-standard" else (),
+            input_modalities=("text",),
+        )
+        for provider in providers
+    )
+    for provider, declaration in providers.items():
+        monkeypatch.setitem(catalog_data.PROVIDERS, provider, declaration)
+    original_lookup = routing.endpoints_for_model
+    monkeypatch.setattr(
+        routing, "endpoints_for_model",
+        lambda model_id: endpoints if model_id == model.id else original_lookup(model_id),
+    )
+    inputs = replace(
+        inputs, providers={**inputs.providers, **providers},
+        models=(*inputs.models, model), endpoints=(*inputs.endpoints, *endpoints),
+    )
+    return _compile(settings, inputs), model, endpoints
+
+
+def test_privacy_and_parameter_filters_are_what_routing_filters(privacy_parameter_catalog) -> None:
     """Every live chat model's routes, under every min_privacy tier and the
     parameter lists, kept or refused by the snapshot's tables exactly as
     routing keeps or refuses them (provider_route_preferences,
     _apply_endpoint_provider_filters, _no_route_error)."""
-    snapshot, _inputs = live
+    snapshot, fixture_model, _endpoints = privacy_parameter_catalog
     entries = {e.id: e for e in snapshot.endpoints}
-    models = [m for m in routing.MODELS.values() if m.supports_chat]
+    models = [m for m in (*routing.MODELS.values(), fixture_model) if m.supports_chat]
     compared = dropped = refusals = 0
     for spelling in MIN_PRIVACY_SPELLINGS:
         for require in (False, True):
@@ -307,6 +347,37 @@ def test_privacy_and_parameter_filters_are_what_routing_filters(live) -> None:
                             refusals += error.get("param") is not None
     # Not vacuous: routes were dropped, and parameters were named.
     assert compared > 1_000 and dropped > 100 and refusals > 0, (compared, dropped, refusals)
+
+
+@pytest.mark.parametrize("privacy", ["no_store", "zdr"])
+@pytest.mark.parametrize("parameter", ["tools", "tool_choice"])
+def test_snapshot_names_capability_refusal_after_privacy_filter(
+    privacy_parameter_catalog, privacy, parameter,
+) -> None:
+    snapshot, model, endpoints = privacy_parameter_catalog
+    candidates = [(model, endpoint) for endpoint in endpoints]
+    entries = [entry for entry in snapshot.endpoints if entry.model_id == model.id]
+    body = {"provider": {"min_privacy": privacy}, "requested_parameters": [parameter]}
+    prefs = routing.provider_route_preferences(body)
+    preferences = _snapshot_preferences(snapshot, body)
+    assert [e.id for _, e in routing._apply_endpoint_provider_filters(
+        candidates, replace(prefs, capability_parameters=frozenset()),
+    )] == [endpoints[1].id]
+    assert routing._apply_endpoint_provider_filters(candidates, prefs) == []
+    assert _snapshot_keep(snapshot, entries, preferences, preferences[3]) == []
+    error = routing._no_route_error(candidates, prefs)
+    assert error.status_code == 400
+    detail = error.detail["error"]
+    expected = f"No route for the requested model supports the parameter: {parameter}"
+    assert (detail["message"], detail["param"]) == (expected, parameter)
+    assert detail["unsupported_parameters"] == [parameter]
+    assert _snapshot_no_route(snapshot, entries, preferences) == (expected, parameter)
+
+    body["provider"]["min_privacy"] = "any"
+    prefs = routing.provider_route_preferences(body)
+    preferences = _snapshot_preferences(snapshot, body)
+    assert [e.id for _, e in routing._apply_endpoint_provider_filters(candidates, prefs)] == [endpoints[0].id]
+    assert _snapshot_keep(snapshot, entries, preferences, preferences[3]) == [endpoints[0].id]
 
 
 def test_min_privacy_and_require_parameters_spellings_are_what_routing_parses(live) -> None:
@@ -341,7 +412,7 @@ def test_gateway_regions_agree_with_the_provider_contract(live, settings) -> Non
         endpoint = raw[entry.id]
         rule = entry.gateway_regions
         assert rule.requires_explicit_origin == (
-            endpoint.provider == "amazon-bedrock"
+            endpoint.provider in {"amazon-bedrock", "maple"}
             or (endpoint.provider, endpoint.model_id) in {
                 ("cloudflare-workers-ai", "cloudflare/clairic"),
                 ("regolo", "cloudflare/clef-flash"),
@@ -376,7 +447,7 @@ def test_the_request_region_is_checked_even_when_it_is_not_configured(live) -> N
     assert "body_region=body.region," in source
     pipeline = inspect.getsource(authorize_candidates.resolve_candidates)
     assert " ".join('''request.body_region or (
-        "" if candidate_endpoint.provider == "amazon-bedrock"
+        "" if candidate_endpoint.provider in {"amazon-bedrock", "maple"}
         or (candidate_endpoint.provider, candidate_endpoint.model_id)
         in EXPLICIT_GATEWAY_REGIONS_BY_PROVIDER_MODEL else region
     )'''.split()) in " ".join(pipeline.split())
@@ -401,7 +472,7 @@ def test_the_request_region_is_checked_even_when_it_is_not_configured(live) -> N
         rule = entry.gateway_regions
         for body_region in (None, "", "europe-west4", "us-east4", "unknown-region"):
             checked = _gateway_region(settings, rule, body_region)
-            explicit_origin = endpoint.provider == "amazon-bedrock" or (
+            explicit_origin = endpoint.provider in {"amazon-bedrock", "maple"} or (
                 endpoint.provider, endpoint.model_id
             ) in {
                 ("cloudflare-workers-ai", "cloudflare/clairic"),
@@ -630,6 +701,45 @@ def test_each_requested_model_means_what_routing_says(live, settings) -> None:
     assert "trustedrouter/synth" in refused and "trustedrouter/auto" not in refused
 
 
+@pytest.mark.parametrize("alias", [
+    catalog_data.ARCHIMEDES_1_0_MODEL_ID,
+    catalog_data.NAMED_DECISION_MODELS[0].id,
+])
+def test_missing_private_proxy_target_is_a_refusal_not_a_dangling_expansion(
+    monkeypatch, settings, catalog_clock, alias,
+) -> None:
+    from tests.fixture_routes import drop_routes
+
+    target = catalog_data.PRIVATE_PROXY_MODEL_TARGETS[alias]
+    for model_id in (alias, target):
+        drop_routes(monkeypatch, model_id)
+        monkeypatch.delitem(catalog_registry.MODELS, model_id, raising=False)
+    inputs = CatalogInputs.live(settings)
+    snapshot = _compile(settings, inputs)
+    entry = next(row for row in snapshot.requested_models if row.id == alias)
+    assert entry.private_proxy is True
+    assert entry.refused_status == 400
+    assert entry.expands_to == ()
+    companion = next(model.id for model in inputs.models if model.id not in {
+        row.id for row in inputs.requested_models
+    })
+    for models in ([alias], [alias, companion], [companion, alias]):
+        assert _requested(snapshot, models) == _python_requested({"models": models}, settings) == 400
+        with pytest.raises(HTTPException) as unsupported:
+            routing._requested_model_ids({"models": models}, settings)
+        assert unsupported.value.detail["error"] == {
+            "code": 400, "type": "model_not_supported", "source": "router",
+            "message": f"Model does not support chat completions: {alias}",
+        }
+    # The compiler must represent the refusal, not relax referential integrity.
+    raw = snapshot.model_dump(mode="json")
+    refused = next(row for row in raw["requested_models"] if row["id"] == alias)
+    refused["refused_status"] = None
+    refused["expands_to"] = [target]
+    with pytest.raises(ValueError, match="requested model expands to an unknown model"):
+        RoutingSnapshotV3.model_validate(raw)
+
+
 def test_every_other_spelling_means_itself_with_no_overrides(live, settings) -> None:
     snapshot, _inputs = live
     for spelling in _spellings(snapshot):
@@ -711,6 +821,8 @@ def test_compiling_twice_gives_identical_bytes(live, settings) -> None:
 _SUBPROCESS = """
 import hashlib, json, sys
 from datetime import UTC, datetime
+from tests.snapshot_retirement_fixture import install
+install()
 resolved = datetime.fromtimestamp(int(sys.argv[3]), UTC)
 from trusted_router import catalog_data
 catalog_data._utc_now = lambda: resolved
@@ -737,7 +849,7 @@ def _compile_in_subprocess(at: int, horizon: int, resolved: int, seed: str = "0"
     env = {
         **os.environ, "PYTHONHASHSEED": seed, "TR_ENVIRONMENT": "test",
         "TR_LIFECYCLE_CLOCK_OVERRIDE": _instant(resolved).isoformat().replace("+00:00", "Z"),
-        "PYTHONPATH": str(ROOT / "src"),
+        "PYTHONPATH": os.pathsep.join((str(ROOT), str(ROOT / "src"))),
     }
     result = subprocess.run(  # noqa: S603 - fixed Python script, no shell or caller input
         [sys.executable, "-c", _SUBPROCESS, str(at), str(horizon), str(resolved)], env=env,

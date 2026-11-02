@@ -136,7 +136,7 @@ def register_provider_portal_routes(app: FastAPI) -> None:
         )
 
     @app.get("/provider", response_class=RedirectResponse, include_in_schema=False)
-    async def provider_portal_redirect(
+    def provider_portal_redirect(
         context: ProviderPortalDep,
         provider: str | None = Query(default=None),
         days: int = Query(default=7, ge=1, le=MAX_PROVIDER_EXPORT_DAYS),

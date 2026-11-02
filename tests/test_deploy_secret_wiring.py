@@ -81,7 +81,7 @@ def test_top_level_deploy_passes_spanner_config_to_unshared_migration() -> None:
 
 
 def test_guarded_deploy_applies_clickhouse_delivery_schemas_before_rollout() -> None:
-    workflow = (ROOT / ".github/workflows/deploy.yml").read_text()
+    workflow = (ROOT / ".github/workflows/deploy-production.yml").read_text()
 
     generation = "scripts/deploy/migrate_generation_records.sh --apply"
     provider_outbox = "scripts/deploy/migrate_analytics_outbox.sh"
@@ -100,7 +100,7 @@ def test_guarded_deploy_applies_clickhouse_delivery_schemas_before_rollout() -> 
 def test_legacy_combined_rollout_requires_and_emits_the_workflow_opt_in() -> None:
     rollout_path = ROOT / "scripts/deploy/rollout.sh"
     rollout = rollout_path.read_text(encoding="utf-8")
-    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/deploy-production.yml").read_text(encoding="utf-8")
 
     env = os.environ.copy()
     env.pop("TR_ALLOW_DEPLOYED_COMBINED_SURFACE", None)
@@ -477,7 +477,7 @@ def test_every_authenticated_discovery_feed_is_wired_to_narrow_secret_access() -
 def test_provider_portal_uses_private_vpc_and_dedicated_clickhouse_reader() -> None:
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text(encoding="utf-8")
     secrets = (ROOT / "scripts/deploy/secrets.sh").read_text(encoding="utf-8")
-    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/deploy-production.yml").read_text(encoding="utf-8")
     reader = (
         ROOT / "scripts/deploy/clickhouse_provider_reader.sh"
     ).read_text(encoding="utf-8")

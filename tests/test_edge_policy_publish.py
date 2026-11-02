@@ -481,6 +481,78 @@ def test_async_settle_admission_and_edge_decide_are_the_settings(key) -> None:
     assert seen == {(False, False), (False, True), (True, False), (True, True)}
 
 
+def test_admission_workspaces_is_the_pilot_set_while_admission_is_on(key) -> None:
+    """async_settle.admission_workspaces (G15 section 4.1, per workspace):
+    the sorted pilot set whenever admission is on and the set is non-empty;
+    absent with admission off (it covers no workspace) and with an empty set
+    (it covers every one, async_settle_pilot_allows). The body stays
+    canonical and parses back."""
+    pilots = " ws-synthetic-z,ws-synthetic-a ,ws-synthetic-m,ws-synthetic-a"
+    for admission in (False, True):
+        for allowlist, expected in (("", None), ("ws-synthetic-p", ["ws-synthetic-p"]),
+                                    (pilots, ["ws-synthetic-a", "ws-synthetic-m", "ws-synthetic-z"])):
+            settings = _settings(key, async_settle_protection=True, async_settle_pilot_workspaces=allowlist)
+            settings.async_settle_enabled = admission
+            body = _publisher(settings, Clock(T0)).current().body
+            published = json.loads(body)["async_settle"]
+            want = expected if admission else None
+            if want is None:
+                assert "admission_workspaces" not in published, (admission, allowlist)
+            else:
+                assert published["admission_workspaces"] == want, (admission, allowlist)
+                assert want == sorted(settings.async_settle_pilot_workspace_ids)
+                assert all(settings.async_settle_pilot_allows(ws) for ws in want)
+            assert canonical_edge_policy_bytes(parse_edge_policy(body)) == body
+            # Without the member the async_settle object is the four booleans
+            # it was before the member existed.
+            assert set(published) - {"admission_workspaces"} == {
+                "admission_enabled", "edge_decide", "ticket_authority", "typed_records"}
+
+
+def test_parse_edge_policy_holds_admission_workspaces_strictly() -> None:
+    """The member Go reads (routingsnapshot.AsyncSettle): present only with
+    admission on, 1 to 32 workspace ids sorted and unique; null, empty, too
+    many, unsorted, duplicated, malformed or with admission off is refused.
+    A present member round-trips to its own canonical bytes."""
+    body = json.loads(_golden_body())
+
+    def with_member(admission: bool, value: Any = None, *, present: bool = True) -> bytes:
+        decoded = json.loads(json.dumps(body))
+        decoded["async_settle"]["admission_enabled"] = admission
+        decoded["async_settle"].pop("admission_workspaces", None)
+        if present:
+            decoded["async_settle"]["admission_workspaces"] = value
+        return json.dumps(decoded, sort_keys=True, separators=(",", ":")).encode()
+
+    thirty_two = [f"ws-synthetic-{i:02d}" for i in range(32)]
+    for value in (["ws-synthetic-a"], ["ws-synthetic-a", "ws-synthetic-b"], thirty_two):
+        raw = with_member(True, value)
+        policy = parse_edge_policy(raw)
+        assert policy.async_settle.admission_workspaces == tuple(value)
+        assert canonical_edge_policy_bytes(policy) == raw
+    for admission in (False, True):
+        raw = with_member(admission, present=False)
+        policy = parse_edge_policy(raw)
+        assert policy.async_settle.admission_workspaces is None
+        assert canonical_edge_policy_bytes(policy) == raw
+    for name, raw in {
+        "admission off": with_member(False, ["ws-synthetic-a"]),
+        "null": with_member(True, None),
+        "empty": with_member(True, []),
+        "thirty-three": with_member(True, [*thirty_two, "ws-synthetic-99"]),
+        "unsorted": with_member(True, ["ws-synthetic-b", "ws-synthetic-a"]),
+        "duplicate": with_member(True, ["ws-synthetic-a", "ws-synthetic-a"]),
+        "space": with_member(True, ["ws a"]),
+        "empty string": with_member(True, [""]),
+        "too long": with_member(True, ["w" * 65]),
+        "an integer": with_member(True, [1]),
+        "a string": with_member(True, "ws-synthetic-a"),
+    }.items():
+        with pytest.raises(ValidationError):
+            parse_edge_policy(raw)
+            pytest.fail(name)
+
+
 def test_edge_decide_reads_its_environment_variable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TR_FASTPATH_EDGE_DECIDE_ASYNC", "true")
     assert Settings(environment="test", sentry_dsn=None).fastpath_edge_decide_async is True
@@ -488,10 +560,76 @@ def test_edge_decide_reads_its_environment_variable(monkeypatch: pytest.MonkeyPa
     assert Settings(environment="test", sentry_dsn=None).fastpath_edge_decide_async is False
 
 
-def test_rollout_renders_edge_decide_as_a_literal_false() -> None:
+def test_rollout_renders_edge_decide_as_a_literal_true() -> None:
     rollout = (ROOT / "scripts" / "deploy" / "rollout.sh").read_text()
     assert re.findall(r'"TR_FASTPATH_EDGE_DECIDE_ASYNC=[^"]*"', rollout) == [
-        '"TR_FASTPATH_EDGE_DECIDE_ASYNC=false"']
+        '"TR_FASTPATH_EDGE_DECIDE_ASYNC=true"']
+
+
+# --- fastpath_pilot_key_windows (docs/design/fast-admission-e2-key-windows.md section 5) ---
+
+def test_key_windows_defaults_off_and_reads_its_environment_variable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("TR_FASTPATH_PILOT_KEY_WINDOWS", raising=False)
+    assert Settings(_env_file=None, environment="test", sentry_dsn=None).fastpath_pilot_key_windows == "off"  # type: ignore[call-arg]
+    for mode in ("off", "alert", "enforce"):
+        monkeypatch.setenv("TR_FASTPATH_PILOT_KEY_WINDOWS", mode)
+        assert Settings(_env_file=None, environment="test", sentry_dsn=None).fastpath_pilot_key_windows == mode  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize("value", ["", "OFF", "Alert", "enforcing", "on", "true", "false", "0", " off"])
+def test_key_windows_refuses_any_other_spelling(value: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A switch with a silent spelling is no switch: anything but the three
+    values refuses to start, so the previous revision keeps serving."""
+    with pytest.raises(ValidationError, match="fastpath_pilot_key_windows"):
+        Settings(environment="test", sentry_dsn=None, fastpath_pilot_key_windows=value)
+    monkeypatch.setenv("TR_FASTPATH_PILOT_KEY_WINDOWS", value)
+    with pytest.raises(ValidationError, match="fastpath_pilot_key_windows"):
+        Settings(_env_file=None, environment="test", sentry_dsn=None)  # type: ignore[call-arg]
+
+
+def test_off_publishes_no_key_windows_member_and_the_bytes_of_today(key) -> None:
+    """Off (the default) the body has no fastpath_pilot_key_windows, so a Go
+    node that does not know the member is unaffected: the off body is the
+    alert body without that one member, byte for byte, and the golden body
+    (written before the member existed, unchanged here) is still what the
+    publisher writes (test_the_golden_files_are_what_the_python_publisher_writes_now)."""
+    default = _publisher(_settings(key), Clock(T0)).current().body
+    assert _settings(key).fastpath_pilot_key_windows == "off"
+    assert b"fastpath_pilot_key_windows" not in default
+    off = _publisher(_settings(key, fastpath_pilot_key_windows="off"), Clock(T0)).current().body
+    assert off == default
+    alert = json.loads(_publisher(_settings(key, fastpath_pilot_key_windows="alert"), Clock(T0)).current().body)
+    assert alert.pop("fastpath_pilot_key_windows") == "alert"
+    assert json.dumps(alert, sort_keys=True, separators=(",", ":")).encode("ascii") == default
+    assert b"fastpath_pilot_key_windows" not in VECTORS.render_body()
+    assert VECTORS.fixture_settings().fastpath_pilot_key_windows == "off"
+
+
+@pytest.mark.parametrize("mode", ["alert", "enforce"])
+def test_alert_and_enforce_publish_the_member_signed(key, mode: str) -> None:
+    settings = _settings(key, fastpath_pilot_key_windows=mode)
+    client = TestClient(_app(settings, _publisher(settings, Clock(T0))))
+    response = _get(client)
+    assert response.status_code == 200
+    body, _claims = _verify(response, settings, key[1], T0)
+    assert json.loads(body)["fastpath_pilot_key_windows"] == mode
+    policy = parse_edge_policy(body)
+    assert policy.fastpath_pilot_key_windows == mode
+    assert canonical_edge_policy_bytes(policy) == body
+
+
+def test_the_golden_files_ignore_the_key_windows_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TR_FASTPATH_PILOT_KEY_WINDOWS", "enforce")
+    # Positive control: the environment does reach an unpinned Settings.
+    assert Settings(environment="test", sentry_dsn=None).fastpath_pilot_key_windows == "enforce"
+    assert VECTORS.render_body() == VECTORS.OUTPUT_BODY.read_bytes()
+    assert VECTORS.OUTPUT_MANIFEST.read_text() == VECTORS.render_manifest()
+
+
+def test_rollout_renders_key_windows_as_a_literal_off() -> None:
+    rollout = (ROOT / "scripts" / "deploy" / "rollout.sh").read_text()
+    assert re.findall(r'"TR_FASTPATH_PILOT_KEY_WINDOWS=[^"]*"', rollout) == [
+        '"TR_FASTPATH_PILOT_KEY_WINDOWS=off"']
 
 
 def test_ticket_authority_is_the_runtime_read_at_each_signing(key) -> None:
@@ -1331,6 +1469,11 @@ def test_verification_refuses_tampering_staleness_and_the_wrong_key() -> None:
     ("a missing async_settle member", lambda d: {**d, "async_settle": {
         k: v for k, v in d["async_settle"].items() if k != "typed_records"}}),
     ("an extra async_settle member", lambda d: {**d, "async_settle": {**d["async_settle"], "epoch": True}}),
+    # Optional, but absent is its only encoding of off.
+    ("an off key windows member", lambda d: {**d, "fastpath_pilot_key_windows": "off"}),
+    ("a null key windows member", lambda d: {**d, "fastpath_pilot_key_windows": None}),
+    ("an unknown key windows mode", lambda d: {**d, "fastpath_pilot_key_windows": "Enforce"}),
+    ("a boolean key windows member", lambda d: {**d, "fastpath_pilot_key_windows": True}),
 ])
 def test_the_body_parser_is_strict(name: str, edit: Any) -> None:
     decoded = json.loads(_golden_body())
@@ -1352,7 +1495,421 @@ def test_the_window_is_code_not_configuration() -> None:
     assert publisher_module.RESPONSE_KIND == "tr-edge-policy-publication"
 
 
+@pytest.mark.parametrize("mode", ["alert", "enforce"])
+def test_a_key_windows_member_parses_and_stays_canonical(mode: str) -> None:
+    decoded = {**json.loads(_golden_body()), "fastpath_pilot_key_windows": mode}
+    raw = json.dumps(decoded, sort_keys=True, separators=(",", ":"))
+    policy = parse_edge_policy(raw)
+    assert policy.fastpath_pilot_key_windows == mode
+    assert canonical_edge_policy_bytes(policy) == raw.encode("ascii")
+    # Absent parses as off (None) and re-encodes without the member.
+    assert parse_edge_policy(_golden_body()).fastpath_pilot_key_windows is None
+
+
 def test_a_null_monitor_hash_parses() -> None:
     decoded = {**json.loads(_golden_body()), "monitor_lookup_hash": None}
     assert parse_edge_policy(json.dumps(decoded, sort_keys=True, separators=(",", ":"))) \
         .monitor_lookup_hash is None
+
+
+class PolicyScheduler:
+    """Deterministic background threads/timers; work never runs inside a poll."""
+
+    def __init__(self) -> None:
+        self.now = float(T0)
+        self.jobs: list[Any] = []
+
+    def clock(self) -> float:
+        return self.now
+
+    def later(self, delay: float, run: Any) -> Any:
+        job = SimpleNamespace(at=self.now + delay, run=run, alive=True)
+        job.is_alive = lambda: job.alive
+        job.cancel = lambda: setattr(job, "alive", False)
+        self.jobs.append(job)
+        return job
+
+    def spawn(self, run: Any) -> Any:
+        return self.later(0.1, run)
+
+    def advance(self, instant: float) -> None:
+        while True:
+            pending = [job for job in self.jobs if job.alive and job.at <= instant]
+            if not pending:
+                break
+            job = min(pending, key=lambda job: job.at)
+            self.now = job.at
+            job.run()
+            job.alive = False
+        self.now = instant
+
+
+@pytest.mark.parametrize("distribution", ["round-robin", "random"])
+def test_ten_publishers_keep_policies_valid_between_load_balanced_polls(
+    key, monkeypatch, distribution,
+) -> None:
+    import random
+
+    scheduler = PolicyScheduler()
+    # raising=False lets this identical regression run on the old publisher.
+    monkeypatch.setattr(publisher_module, "_schedule_refresh", scheduler.later, raising=False)
+    settings = _settings(key)
+    publishers = [build_publisher(
+        settings, clock=scheduler.clock, monotonic=scheduler.clock, spawn=scheduler.spawn,
+        resolver=lambda: Resolver(frozenset({DIGEST_A})), typed_store=lambda: None,
+    ) for _ in range(10)]
+    for publisher in publishers:
+        if hasattr(publisher, "start"):
+            publisher.start()
+        else:
+            # Give main the same initial warm publication, excluding cold-start 503s.
+            with pytest.raises(PolicyUnavailable):
+                publisher.current()
+    scheduler.advance(T0 + 1)
+    rng = random.Random(43)  # noqa: S311 - reproducible load balancing, not cryptography
+    failures = []
+    for poll in range(240):
+        scheduler.advance(T0 + 1 + 15 * poll)
+        index = poll % 10 if distribution == "round-robin" else rng.randrange(10)
+        publisher = publishers[index]
+        try:
+            publication = publisher.current()
+        except PolicyUnavailable:
+            failures.append((poll, index))
+        else:
+            assert publication.issued_at <= int(scheduler.now) < publication.not_after
+            verify_edge_policy_manifest(
+                publication.manifest, [_trusted(key[1])], publication.body,
+                now=int(scheduler.now), expected_plane=plane_of(settings), expected_aud=AUDIENCE,
+            )
+    assert not failures, f"{len(failures)}/240 healthy fleet polls returned 503 ({distribution})"
+    scheduler.advance(scheduler.now + 0.1)  # Complete the final poll's queued signing, if any.
+    # Timer-only renewal costs 120/hour; polls can renew after the signed
+    # +15 s hint. Even if every poll adds a signing, stay within that budget.
+    signatures = [publisher.signatures for publisher in publishers]
+    assert all(publisher.signatures == publisher.attempts for publisher in publishers)
+    assert all(120 <= count <= 240 for count in signatures)
+    assert sum(signatures) <= 120 * len(publishers) + 240
+    for publisher in publishers:
+        publisher.stop()
+
+
+def test_background_refresh_stops_at_idle_timeout_and_restarts_on_poll(key, monkeypatch) -> None:
+    scheduler = PolicyScheduler()
+    monkeypatch.setattr(publisher_module, "_schedule_refresh", scheduler.later)
+    resolver = Resolver(frozenset({DIGEST_A}))
+    publisher = build_publisher(
+        _settings(key), clock=scheduler.clock, monotonic=scheduler.clock,
+        spawn=scheduler.spawn, resolver=lambda: resolver, typed_store=lambda: None,
+    )
+    publisher.start()
+    publisher.start()  # Idempotent: no extra worker or timer.
+    assert publisher.attempts == 1
+    scheduler.advance(T0 + 1)
+    first = publisher.current()
+    scheduler.advance(T0 + publisher_module.IDLE_TIMEOUT_SECONDS + 1)
+    attempts = publisher.attempts
+    assert attempts <= 1 + publisher_module.IDLE_TIMEOUT_SECONDS // publisher_module.BACKGROUND_RENEW_SECONDS
+    assert resolver.refreshes == publisher.signatures == attempts
+    assert not any(job.alive for job in scheduler.jobs)
+    scheduler.advance(T0 + 2 * publisher_module.IDLE_TIMEOUT_SECONDS)
+    assert publisher.attempts == attempts
+    # An arbitrarily late return cannot be both nonblocking and already warm.
+    with pytest.raises(PolicyUnavailable, match="compiling"):
+        publisher.current()
+    scheduler.advance(scheduler.now + 1)
+    assert publisher.current().issued_at > first.issued_at
+    assert publisher.attempts == attempts + 1
+    publisher.stop()
+    scheduler.advance(scheduler.now + publisher_module.IDLE_TIMEOUT_SECONDS)
+    assert publisher.attempts == attempts + 1
+    assert not any(job.alive for job in scheduler.jobs)
+
+
+@pytest.mark.parametrize("failure", ["facts", "signer"])
+def test_background_failures_back_off_expire_and_recover_without_polls(
+    key, monkeypatch, failure,
+) -> None:
+    scheduler = PolicyScheduler()
+    monkeypatch.setattr(publisher_module, "_schedule_refresh", scheduler.later)
+    resolver = Resolver(frozenset({DIGEST_A}))
+    publisher = build_publisher(
+        _settings(key), clock=scheduler.clock, monotonic=scheduler.clock,
+        spawn=scheduler.spawn, resolver=lambda: resolver, typed_store=lambda: None,
+    )
+    publisher.start()
+    scheduler.advance(T0 + 1)
+    first = publisher.current()
+    original_sign = EdgePolicySigner.sign
+
+    def broken_sign(*args: Any) -> str:
+        raise ValueError("unavailable")
+
+    if failure == "facts":
+        resolver.refresh_ok = False
+    else:
+        monkeypatch.setattr(EdgePolicySigner, "sign", broken_sign)
+    scheduler.advance(T0 + 16)
+    assert publisher.current() is first
+    assert publisher.signatures == 1
+    scheduler.advance(T0 + 61)
+    with pytest.raises(PolicyUnavailable) as refused:
+        publisher.current()
+    assert refused.value.status == ("digest-policy-unavailable" if failure == "facts" else "policy-error")
+    assert publisher.signatures == 1
+    assert publisher.attempts <= 1 + 60 // publisher_module.ERROR_RETRY_SECONDS
+    resolver.refresh_ok = True
+    monkeypatch.setattr(EdgePolicySigner, "sign", original_sign)
+    # Recovery runs on the timer even with no further poll to trigger it.
+    scheduler.advance(T0 + 76)
+    assert publisher.signatures > 1
+    assert publisher.current().not_after > scheduler.now
+    publisher.stop()
+
+
+def test_shutdown_discards_inflight_startup_publication(key, monkeypatch) -> None:
+    scheduler = PolicyScheduler()
+    monkeypatch.setattr(publisher_module, "_schedule_refresh", scheduler.later)
+    publisher = build_publisher(
+        _settings(key), clock=scheduler.clock, monotonic=scheduler.clock,
+        spawn=scheduler.spawn, typed_store=lambda: None,
+    )
+    publisher.start()
+    publisher.stop()
+    scheduler.advance(T0 + 100)
+    assert publisher.signatures == 1
+    assert publisher._cached is None
+    assert publisher.attempts == 1
+    assert not any(job.alive for job in scheduler.jobs)
+
+
+def test_maintenance_timer_and_polls_share_one_slow_worker(key, monkeypatch) -> None:
+    scheduler = PolicyScheduler()
+    monkeypatch.setattr(publisher_module, "_schedule_refresh", scheduler.later)
+    publisher = build_publisher(
+        _settings(key), clock=scheduler.clock, monotonic=scheduler.clock,
+        spawn=lambda run: scheduler.later(40, run), typed_store=lambda: None,
+    )
+    publisher.start()
+    for second in (1, 15, 30, 39):
+        scheduler.advance(T0 + second)
+        with pytest.raises(PolicyUnavailable, match="compiling"):
+            publisher.current()
+        assert publisher.attempts == 1
+    scheduler.advance(T0 + 41)
+    first = publisher.current()
+    assert publisher.signatures == 1
+    # A scheduled refresh is slow, but the previous copy remains valid.
+    scheduler.advance(T0 + 56)
+    assert publisher.current() is first
+    assert publisher.attempts == 2
+    scheduler.advance(T0 + 96)
+    assert publisher.current().issued_at > first.issued_at
+    assert publisher.signatures == publisher.attempts == 2
+    publisher.stop()
+
+
+def test_lifespan_starts_warming_and_stops_timer(key) -> None:
+    settings = _settings(key)
+    app = _app(settings)
+    publisher = app.state.edge_policy_publisher
+    assert publisher.attempts == 0
+    with TestClient(app) as client:
+        assert publisher.attempts == 1  # Startup started the worker without a poll.
+        assert publisher.idle(2)
+        assert publisher.signatures == 1
+        response = _get(client)
+        assert response.status_code == 200
+        _verify(response, settings, key[1], int(time.time()))
+        assert _get(client, **{"If-None-Match": response.headers["etag"]}).status_code == 304
+    assert publisher._stopped and publisher._timer is None
+
+
+async def test_real_lifespan_completes_while_startup_facts_are_blocked(key, monkeypatch) -> None:
+    import asyncio
+    import threading
+
+    from fastapi import FastAPI
+
+    entered, release = threading.Event(), threading.Event()
+    settings = _settings(key)
+    publisher = build_publisher(settings, typed_store=lambda: None)
+    live_facts = publisher._facts
+
+    def blocked_facts() -> dict[str, Any]:
+        entered.set()
+        assert release.wait(10)
+        return live_facts()
+
+    publisher._facts = blocked_facts
+    monkeypatch.setattr(publisher_module, "build_publisher", lambda *args, **kwargs: publisher)
+    app = FastAPI()
+    publisher_module.install(app, settings)
+    ready, shutdown = asyncio.Event(), asyncio.Event()
+    messages: list[str] = []
+
+    async def receive() -> dict[str, str]:
+        if not messages:
+            return {"type": "lifespan.startup"}
+        await shutdown.wait()
+        return {"type": "lifespan.shutdown"}
+
+    async def send(message: dict[str, Any]) -> None:
+        messages.append(message["type"])
+        if message["type"] == "lifespan.startup.complete":
+            ready.set()
+
+    task = asyncio.create_task(app(
+        {"type": "lifespan", "asgi": {"version": "3.0"}, "state": {}}, receive, send,
+    ))
+
+    async def startup_and_worker_started() -> None:
+        await ready.wait()
+        while not entered.is_set():
+            await asyncio.sleep(0.001)
+
+    try:
+        # Facts cannot finish until finally releases them. Readiness must not
+        # depend on that release or the publisher's 65-second worker deadline.
+        await asyncio.wait_for(startup_and_worker_started(), timeout=0.5)
+        assert messages == ["lifespan.startup.complete"]
+        assert not release.is_set() and publisher.signatures == 0
+        assert publisher.attempts == 1
+        with pytest.raises(PolicyUnavailable, match="compiling"):
+            publisher.current()
+        assert publisher.attempts == 1
+    finally:
+        release.set()
+        shutdown.set()
+        await asyncio.wait_for(task, timeout=2)
+        publisher.stop()
+        assert publisher.idle(2)
+    assert entered.is_set()
+    assert messages[-1] == "lifespan.shutdown.complete"
+
+
+def test_background_renewal_is_at_thirty_seconds_but_polls_refresh_at_fifteen(key, monkeypatch) -> None:
+    scheduler = PolicyScheduler()
+    monkeypatch.setattr(publisher_module, "_schedule_refresh", scheduler.later)
+    publisher = build_publisher(
+        _settings(key), clock=scheduler.clock, monotonic=scheduler.clock,
+        spawn=scheduler.spawn, typed_store=lambda: None,
+    )
+    publisher.start()
+    scheduler.advance(T0 + 29)
+    assert publisher.attempts == publisher.signatures == 1
+    scheduler.advance(T0 + 30)
+    assert publisher.attempts == 2 and publisher.signatures == 1
+    scheduler.advance(T0 + 31)
+    second = publisher.current()
+    assert (second.issued_at, second.refresh_at, second.not_after) == (T0 + 30, T0 + 45, T0 + 90)
+    scheduler.advance(T0 + 45)
+    assert publisher.attempts == 2  # Timer does not use the poll hint.
+    assert publisher.current() is second  # Poll still starts a nonblocking refresh.
+    assert publisher.attempts == 3
+    scheduler.advance(T0 + 46)
+    third = publisher.current()
+    assert third.issued_at == T0 + 45
+    scheduler.advance(T0 + 74)
+    assert publisher.attempts == 3  # Old timer's deadline cannot refresh too early.
+    scheduler.advance(T0 + 75)
+    assert publisher.attempts == 4
+    publisher.stop()
+
+
+@pytest.mark.parametrize("refresh_latency", [29, 31])
+def test_background_renewal_margin_does_not_extend_policy_validity(key, monkeypatch, refresh_latency) -> None:
+    scheduler = PolicyScheduler()
+    monkeypatch.setattr(publisher_module, "_schedule_refresh", scheduler.later)
+    delays = iter((0.1, refresh_latency))
+    publisher = build_publisher(
+        _settings(key), clock=scheduler.clock, monotonic=scheduler.clock,
+        spawn=lambda run: scheduler.later(next(delays), run), typed_store=lambda: None,
+    )
+    publisher.start()
+    scheduler.advance(T0 + 60)
+    assert publisher.attempts == 2
+    if refresh_latency == 29:
+        assert publisher.current().issued_at == T0 + 59
+    else:
+        # The 30 s margin is finite. A slower successful build cannot make
+        # an expired publication serveable while its replacement is pending.
+        with pytest.raises(PolicyUnavailable, match="compiling"):
+            publisher.current()
+        scheduler.advance(T0 + 61)
+        assert publisher.current().issued_at == T0 + 61
+    publisher.stop()
+
+
+@pytest.mark.parametrize("distribution", ["round-robin", "random"])
+def test_fleet_with_edge_two_second_minimum_poll_interval(key, monkeypatch, distribution) -> None:
+    import random
+
+    scheduler = PolicyScheduler()
+    monkeypatch.setattr(publisher_module, "_schedule_refresh", scheduler.later)
+    settings = _settings(key)
+    publishers = [build_publisher(
+        settings, clock=scheduler.clock, monotonic=scheduler.clock,
+        spawn=scheduler.spawn, typed_store=lambda: None,
+    ) for _ in range(10)]
+    for publisher in publishers:
+        publisher.start()
+    rng = random.Random(43)  # noqa: S311 - deterministic load balancing
+    held = None
+    next_poll, polls = float(T0 + 1), 0
+    while next_poll < T0 + 3600:
+        scheduler.advance(next_poll)
+        index = polls % 10 if distribution == "round-robin" else rng.randrange(10)
+        publication = publishers[index].current()  # Any unavailable poll fails the test.
+        assert publication.issued_at <= int(scheduler.now) < publication.not_after
+        if held is None or publication.issued_at > held.issued_at:
+            held = publication
+        assert held.issued_at <= int(scheduler.now) < held.not_after
+        verify_edge_policy_manifest(
+            held.manifest, [_trusted(key[1])], held.body,
+            now=int(scheduler.now), expected_plane=plane_of(settings), expected_aud=AUDIENCE,
+        )
+        # Go retains an unchanged/older valid copy, then retries after its
+        # two-second MinInterval if that copy's refresh_at is already past.
+        next_poll = max(scheduler.now + 2, held.refresh_at)
+        polls += 1
+    assert polls > 240  # Exercise those extra cheap polls, not just +15 s.
+    scheduler.advance(scheduler.now + 0.1)
+    assert all(publisher.signatures == publisher.attempts <= 240 for publisher in publishers)
+    for publisher in publishers:
+        publisher.stop()
+
+
+# ------------------------------------------- the fastpath_edge_streams member --
+
+
+def test_the_streams_member_vectors_are_what_the_python_publisher_writes_now() -> None:
+    # fastpath/testdata/edge_policy_streams_v1.json is the member's shared
+    # vector (docs/design/fast-admission-streams.md section 5.4); the Go
+    # reader holds every case too (routingsnapshot's
+    # TestTheStreamsMemberVectors).
+    assert VECTORS.OUTPUT_STREAMS.read_text() == VECTORS.render_streams(), (
+        "fastpath/testdata/edge_policy_streams_v1.json is stale: run "
+        "`uv run python scripts/fastpath/edge_policy_vectors.py` and check the Go reader"
+    )
+
+
+def test_every_streams_member_vector_is_what_python_reads() -> None:
+    cases = json.loads(VECTORS.OUTPUT_STREAMS.read_text())["cases"]
+    published = [c for c in cases if c["switches"] is not None]
+    # Every combination of the three switches, the member only with all on.
+    assert len(published) == 1 << len(VECTORS.STREAMS_SWITCHES)
+    assert [c["edge_streams"] for c in published].count(True) == 1
+    assert len(cases) - len(published) == len(VECTORS.STREAMS_REFUSED)
+    for case in cases:
+        if not case["accept"]:
+            with pytest.raises(ValidationError):
+                parse_edge_policy(case["body"])
+            continue
+        parsed = parse_edge_policy(case["body"])
+        assert (parsed.fastpath_edge_streams is True) is case["edge_streams"], case["name"]
+        assert ("fastpath_edge_streams" in case["body"]) is case["edge_streams"], case["name"]
+        assert canonical_edge_policy_bytes(parsed).decode("ascii") == case["body"], case["name"]
+        if case["switches"] is not None:
+            settings = VECTORS.fixture_settings().model_copy(update=case["switches"])
+            assert publisher_module.edge_streams_on(settings) is case["edge_streams"], case["name"]

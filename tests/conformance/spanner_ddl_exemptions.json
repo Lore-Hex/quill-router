@@ -482,7 +482,9 @@
       "# project Viewer/Owner perms that we don't want to grant the": {
         "count": 1,
         "reason": "Comment describing restricted project permissions."
-      },
+      }
+    },
+    ".github/workflows/deploy-production.yml": {
       "# tr_user_lifetime_topup is written INSIDE the credit-grant transaction": {
         "count": 1,
         "reason": "Comment describing the existing credit transaction, not schema execution."

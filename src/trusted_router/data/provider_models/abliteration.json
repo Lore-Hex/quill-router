@@ -32,14 +32,12 @@
         "temperature",
         "top_p",
         "top_k",
-        "min_p",
         "frequency_penalty",
         "presence_penalty",
         "repetition_penalty",
         "stop",
         "seed",
-        "max_tokens",
-        "logit_bias"
+        "max_tokens"
       ],
       "routable": true,
       "input_token_price_per_m": 1000000,
@@ -76,14 +74,12 @@
         "temperature",
         "top_p",
         "top_k",
-        "min_p",
         "frequency_penalty",
         "presence_penalty",
         "repetition_penalty",
         "stop",
         "seed",
-        "max_tokens",
-        "logit_bias"
+        "max_tokens"
       ],
       "routable": true,
       "input_token_price_per_m": 3000000,
@@ -121,14 +117,12 @@
         "temperature",
         "top_p",
         "top_k",
-        "min_p",
         "frequency_penalty",
         "presence_penalty",
         "repetition_penalty",
         "stop",
         "seed",
-        "max_tokens",
-        "logit_bias"
+        "max_tokens"
       ],
       "routable": true,
       "input_token_price_per_m": 1000000,
@@ -165,14 +159,12 @@
         "temperature",
         "top_p",
         "top_k",
-        "min_p",
         "frequency_penalty",
         "presence_penalty",
         "repetition_penalty",
         "stop",
         "seed",
-        "max_tokens",
-        "logit_bias"
+        "max_tokens"
       ],
       "routable": true,
       "input_token_price_per_m": 3000000,
@@ -181,7 +173,7 @@
     }
   ],
   "source": "https://api.abliteration.ai/v1/models",
-  "generated_at": "2026-10-26T06:59:20Z",
+  "generated_at": "2026-11-01T19:12:14Z",
   "price_scale": "microdollars_per_million",
   "model_count": 4
 }

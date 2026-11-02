@@ -14,9 +14,13 @@ edge policy Python publishes, whose pilot set must name the workspace
 `scripts/deploy/rollout.sh`'s `TR_FASTPATH_PILOT_*`), and a row of
 `tr_fastpath_edge_decide` for the workspace, cloud and region that says
 `decide` (§9, decision 10), checked last of the gates so that the shadow
-compares a complete decision for a workspace not yet deciding (after it
-only `body.cache_affinity`, below). Everything else passes with a §3
-reason, counted. The edge sees only the share of the enclaves' authorizes
+compares a complete decision for a workspace not yet deciding. A request
+naming a `cache_affinity_key` is decided like any other, in the cold
+order (the design's §1 item 5: Python's affinity sessions live in each
+Cloud Run instance's memory and almost never warm across instances, so
+the cold order is what another instance answers; only a rare warm
+session changes, a prompt cache miss, never a wrong answer). Everything
+else passes with a §3 reason, counted. The edge sees only the share of the enclaves' authorizes
 the control balancer's route sends it (`fastpath_edge_route_weight`,
 `infra/fastpath_edge_backend.tf`): the rest go to Python directly and the
 decide path never sees them. Nothing of I1 is undone: the decide path
@@ -51,8 +55,14 @@ ssh tr-fastpath-9 --zone=us-central1-a --project=quill-cloud-proxy
    per node (`fastpath-watch.md`, "The edge's decide counts"). In the
    report: `periods` counting one line a minute for every node over the
    span;
-   `i2.comparable` at least 3,000 over at least 24 hours;
-   `i2.agree_full_ratio` at least 0.995 with every `i2.differ_by_field`
+   on a release with G15c, the I3 gate (`fastpath-watch.md`, the `i3`
+   figures; `fast-admission-e2-g15-async.md` §6.2) over at least 24
+   hours, which takes the place of `i2.comparable` at least 3,000 (the
+   contract's "With G15c pinned, I3's gate is I2's"); before G15c,
+   `i2.comparable` at least 3,000 over at least 24 hours; either way
+   `i2.agree_full_ratio` at least 0.995 (on G15c it counts sync and
+   async-v1 comparisons alike, so every `i2.differ_by_field` explained is
+   what holds the sync requests to the bar) with every `i2.differ_by_field`
    explained; `i2.differ_estimate`, `i2.row_idempotency_fingerprint` and
    `i2.fields_other` zero; `i2.would_admit_python_refused` zero beyond
    key-revocation lag (decision 17); `i2.cohort_by_class` accounted for;
@@ -164,12 +174,9 @@ the decide path on (`fastpath/internal/service/service.go`,
 rows' inserts, `edge.DecideConfig`). With the table all off, a request
 that reaches the decide row (every gate before it passed, in `Decide`'s
 order) passes `decide.off` while the node's copy is fresh and
-`cache.decide` while it is unread or stale; one naming a
-`cache_affinity_key` passes `body.cache_affinity` after the row, whatever
-it says; every other request passes at an earlier gate, as the shadow
-counted it. Below, "the row's reason" is one of those three:
-`decide.off`, `cache.decide`, or `body.cache_affinity` for a request
-naming a key. Nothing is answered, so nothing changes for traffic, and the
+`cache.decide` while it is unread or stale; every other request passes at
+an earlier gate, as the shadow counted it. Below, "the row's reason" is
+one of those two: `decide.off` or `cache.decide`. Nothing is answered, so nothing changes for traffic, and the
 attribute goes on first and the row after.
 
 1. Set it: `fastpath-edge-decide = "true"` in `local.fastpath_edge_snapshot`,
@@ -223,8 +230,7 @@ attribute goes on first and the row after.
    passed={...}` (`decide_path.go`, `flush`, one a minute): the row's
    reason for the requests that reached the row (`decide.off` with the
    copy fresh, `cache.decide` for any that reached it before its first
-   read, `body.cache_affinity` for one naming a key), the rest at earlier
-   gates:
+   read), the rest at earlier gates:
 
    ```bash
    journalctl -u fastpath -n 500 | grep 'fastpath edge decide:'
@@ -240,6 +246,39 @@ From here the decide path's alerts are live (`fastpath-alerts.md`:
 decide path counts passes).
 
 ## 3. The workspace enters the cohort
+
+On a G15c release, `fastpath_edge_decide_async=true` goes out first,
+through a Python deploy (`scripts/deploy/rollout.sh`;
+`fast-admission-e2-g15-async.md` §6.2 step 4): it decides nothing while
+no workspace's row is on, and without it a decided workspace's async-v1
+requests keep passing `async.off`. Then the rows, below.
+
+The policy is fetched with the internal token, and while no row is on
+the switch changes nothing the edge counts: `async.off` is the decision
+gate's reason only for a workspace whose row is on (`decide.go`, after
+`DecideView.gate`), so with the rows off an async-v1 request counts
+`decide.off` either way. Before the rows, read the setting from the
+revision serving each control-plane region (`TR_CONTROL_PLANE_REGIONS` in
+`scripts/deploy/_lib.sh`; a gateway-only region has no service), not
+from the service's template, which can name a revision that serves no
+traffic during a staged rollout or after a rollback:
+
+```bash
+for r in us-central1 us-east4 europe-west4 southamerica-east1; do
+  rev=$(gcloud run services describe trusted-router --region=$r --project=quill-cloud-proxy \
+    --format=json | python3 scripts/deploy/resolve_active_revision.py) || continue
+  echo "$r $rev $(gcloud run revisions describe "$rev" --region=$r --project=quill-cloud-proxy \
+    --format=json | python3 -c 'import json,sys; print([v.get("value") for v in json.load(sys.stdin)["spec"]["containers"][0]["env"] if v["name"]=="TR_FASTPATH_EDGE_DECIDE_ASYNC"])')"
+done
+```
+
+Each line ends `['true']`. `resolve_active_revision.py` refuses a
+service whose traffic is not on one revision; a region it refuses is read
+again once the rollout ends. After `decide on` (below), the decide path's
+`decide.by_name.passed` carries no `async.off`: that workspace's async-v1
+requests are answered beside its sync ones. `async.off` there is an
+instance still signing from the revision before, or a policy held from
+before it, gone within 60 s.
 
 An operator-owned workspace first, then the pilot workspace (§11). The
 decide path sees only what the balancer sends the edge: an enclave's
@@ -267,8 +306,8 @@ or after the workspace; the region is the authorizations'
 (`choose_region(body.region)`, decision 10), so a request of the
 workspace whose region is another passes `decide.off` on reaching the
 row with the copy fresh (`cache.decide` with it unread or stale, which
-the gate checks before it looks the row up, `DecideView.gate`;
-`body.cache_affinity` if it names a key). It writes one row,
+the gate checks before it looks the row up, `DecideView.gate`). It writes
+one row,
 `(WORKSPACE, gcp,
 us-central1, true, changed_at)`, `changed_at` the commit's timestamp
 (`store/decide.go`, `SetDecide`), and answers
@@ -291,7 +330,7 @@ region, no longer count `decide.off` (one whose region resolves
 elsewhere still does: the lookup is by workspace, cloud and region,
 `DecideView.gate`). If `answered` stays 0 while the workspace sends, the
 line's `passed` by reason says where its requests went (an eligibility
-gate, `body.cache_affinity`, the admit: `owner.*` and `budget.spent`, or
+gate, the admit: `owner.*` and `budget.spent`, or
 the insert: `insert.*`), and `unavailable` with `unavailable_by_code`
 counts those answered 503 for an insert of unknown outcome, which
 neither `answered` nor `passed` counts:
@@ -305,8 +344,8 @@ gcloud logging read 'logName="projects/quill-cloud-proxy/logs/fastpath_journal" 
 A node whose `answered` stays 0 while the workspace sends: `decide status`
 for the row; the node's journal for `fastpath edge decide copy: read
 failed` (`decideCopy.run`: the copy held ages out after 15 s, and a
-request that reaches the row then passes `cache.decide`, or
-`body.cache_affinity` naming a key); the policy's pilot set
+request that reaches the row then passes `cache.decide`); the policy's
+pilot set
 (`policy.not_pilot_workspace`), the switch (`owner.off`), and the rest of
 §3 by the line's `passed` reasons, each the gate a request tripped. A
 request Go answered carries Python's `timing` shape with `spanner_rpcs`
@@ -378,25 +417,16 @@ and `audit`, below). Read, each against the line of §11 it answers to:
   the set does not name, `policy.records_not_durable` and the rest), the
   models and the evaluator, the compose, then the decide row
   (`decide.off` for a request that passed everything before it while the
-  copy was fresh, `cache.decide` while it was unread or stale), and after
-  the row, for a request naming a `cache_affinity_key`,
-  `body.cache_affinity` in place of the row's reason (`decide.go`, the
-  override after `DecideGate`: such a request is never admitted, whatever
-  the row says). So a request of a workspace outside the pilot set counts
+  copy was fresh, `cache.decide` while it was unread or stale). So a
+  request of a workspace outside the pilot set counts
   `policy.not_pilot_workspace` before any key is read when the set is
   empty, and otherwise only when its key and workspace facts were fresh
   and eligible; and a pilot workspace's with no row on counts `decide.off`
-  only when nothing earlier passed it and it names no
+  only when nothing earlier passed it, whether or not it names a
   `cache_affinity_key`. The decide path's `passed` is its own count, not
-  the shadow's: it counts the requests naming a `cache_affinity_key`
-  (as `body.cache_affinity` when they reach the row, else at the earlier
-  gate they tripped, `cache.key` for one), which the shadow's classes and
-  `i2.stale_rate` leave out once the body was parsed (a request the boot
-  check passes before the parse carries no affinity flag, `decide.go`,
-  `bootPass` before `ParseRequest`, and is counted with the cohort's
-  passes on both sides), and a stale decide copy is a pass here where
-  the shadow still compares the decision (`shadow_full.go`, `ForShadow`),
-  so its shares are not the shadow's rates. Read it as counts: against
+  the shadow's: a stale decide copy is a pass here where the shadow still
+  compares the decision (`shadow_full.go`, `ForShadow`), so its shares
+  are not the shadow's rates. Read it as counts: against
   the same node's lines of the hour before, and after a day against the
   day before; a reason that was absent and is not is the thing to
   explain. After the pipeline, from the decide path alone
@@ -414,15 +444,18 @@ and `audit`, below). Read, each against the line of §11 it answers to:
   was proven not applied. Each of the last group past the share the
   owner's load explains is a thing to explain.
 - `decide.by_name.slow`: `at_edge` and `in_all` 0 (decision 12;
-  `edge_decide_pass_slow`).
+  `edge_decide_pass_slow`). Each `at_edge` pass is also counted under the
+  phase it spent the most time in (`at_edge.body`, `at_edge.boot`,
+  `at_edge.decide`, `at_edge.admit`), which sum to `at_edge`; the alert's
+  runbook row says what each means.
 - The shadow's figures are now of the passes alone: a request Go answers
   never reaches it. With one pilot workspace deciding, `i2.comparable` can
   be 0 and `i2.agree_full_ratio` null, and that is the expected shape, not
-  a failure. Where comparable requests remain (a pilot workspace's,
-  naming no `cache_affinity_key`, that reached the row with no row on,
-  counted `decide.off` under the shadow's `decide=`, or `cache.decide`
-  with the copy stale; the shadow's `decide=` counts no affinity result),
-  `i2.agree_full_ratio` holds its gate, and `i2.would_admit_python_refused`
+  a failure. Where comparable requests remain (a pilot workspace's that
+  reached the row with no row on, counted `decide.off` under the shadow's
+  `decide=`, or `cache.decide` with the copy stale),
+  `i2.agree_full_ratio` holds its gate (`i2.differ_affinity_warm` of its
+  differs being Python's warm re-ranks, counted against it), and `i2.would_admit_python_refused`
   (beyond revocation lag), `i2.differ_estimate`,
   `i2.row_idempotency_fingerprint` and `i2.fields_other` are 0.
 - `periods.NODE.decide`: one line a minute from each node; fewer is a node
@@ -468,6 +501,64 @@ rendering `settle_outbox_enabled` the same in every region (decision 11)
 and on the policy's `fastpath_pilot_regions` naming it. A workspace leaves
 the cohort as it entered, `decide off`, and nothing else of it changes.
 
+## 6. Windowed keys
+
+Keys with a daily, weekly or monthly spend window (`tr_key_limit`) are
+gated apart from the decide rows, by the setting
+`fastpath_pilot_key_windows`, which the edge policy carries
+(`docs/design/fast-admission-e2-key-windows.md` §5). Absent, which is off,
+every windowed key passes `key.key_window` or `key.key_window_alert`, its
+reason before windows joined the cohort; `alert` covers alert-only keys,
+which Python never checks and the edge decides as uncapped ones; `enforce`
+covers every windowed key. An enforcing key is admitted only after one
+strong read of its `tr_key_limit` rows (at most 300 ms, inside the decide
+budget) finds Python's check allowing it; any other verdict passes with its
+`key_window.*` reason, and Python answers the 429 itself.
+
+The shadow composes windowed keys under every setting, and for an enforcing
+key reads its rows too, off the request path. Its line's `windows` map
+counts the reads (`read.made`, `read.none` when its limiter or no reader
+skipped one), their latency buckets, the verdicts, and how Python's
+`RateLimit-Limit`, `-Remaining` and `-Reset` compared with Go's
+(`window.agree`; `window.differ.limit`, `.remaining.<size>`, `.reset`,
+`.window`; `window.reset_1s`, the two clocks; `window.same_inputs.agree` or
+`.disagree` where both read the same limit and remaining). The classes:
+Python's 429 `key_window_limit_exceeded` to a key the shadow did not read is
+`window_unchecked`; to one it read and would admit, a race candidate when
+the 429 names a window whose limit Go holds, with that limit, and a
+`RateLimit-Remaining` below what Go's rows leave there. Every refusal of
+what Go admits has that shape, a defect of Go's read included, so the
+shadow re-reads the rows after Python's answer, within the same limiter,
+at exactly the read timestamp Python's 429 names
+(`X-TR-Key-Window-Read-Timestamp`, the snapshot its window check summed):
+Go's remaining there equal to Python's is `window_race` (Go sums Python's
+rows as Python does, so a settle landed between the two first reads;
+counted, traced on a `window race` line, never paged one by one); any
+other remaining, the critical `would_admit_python_refused` (Go read the
+rows Python read and left another remaining, however busy the key); no
+timestamp on the 429 or one that does not parse
+(`race.unconfirmed.read_at_none`, `.read_at_malformed`: look for a Python
+deploy without the header) or no re-read that settles it (limiter, failed
+or late read, a timestamp past version retention, rows not the key's
+shards, the window reset since), `window_race_unconfirmed`, which pages
+too. Any other window refusal of
+what Go admits is the would-admit outright. Go's `key_window.*` pass is
+`python_answered_go_passed.key_window.*` against Python's 200 (benign) and
+`passed.key_window.*` against its 429. `edge_window_race` alerts (not the
+critical page) when the last hour's races pass 0.05% of the window reads
+(at least 3), or one key races more than 3 times in an hour.
+
+Before the setting moves, per §8.3, from `fastpathwatch edge`: a count
+gate with no calendar minimum (Joseph's decision of 2026-10-30), 20,000
+compared enforcing requests with zero disagreements: no
+`window.same_inputs.disagree`, `window_race_ratio` at most 0.05%, no window
+`would_admit_python_refused` (alert-only keys included) and no
+`window_race_unconfirmed` left unexplained, `key_window.unread` under 0.1%,
+and the window reads' latency buckets putting p99 under 50 ms. The setting
+moves in `rollout.sh`, a Python deploy, `off` straight to `enforce`; the
+`alert` stage is skipped, and the decide rows are untouched. `edge_decide_window_unread` (`fastpath-alerts.md`) watches the
+reads once it is on.
+
 ## The way back, fastest first
 
 As §9 and decision 17 give it. Each step leaves the ones after it
@@ -482,11 +573,28 @@ untouched, and what the edge admitted settles through Python as before.
 
    `decide status WORKSPACE` exits 0. This is the first step of any abuse
    pause or key revocation for a workspace that decides (decision 17).
+
+   **Windowed keys only**, every workspace: `fastpath_pilot_key_windows`
+   back to `off` in `scripts/deploy/rollout.sh`, a Python deploy; the edge
+   passes every windowed key `key.key_window` from its first policy without
+   the member, within the policy's 60 s life (§6).
 2. **Every workspace**, within the same bound:
 
    ```bash
    fastpathctl -database $DB decide-off-all
    ```
+
+   **Async-v1 only**, every workspace: `TR_FASTPATH_EDGE_DECIDE_ASYNC=false`
+   in `scripts/deploy/rollout.sh`, a Python deploy. The edge stops deciding
+   async-v1 at its first verified policy from a new instance: those
+   requests then pass `async.off`, and a deciding workspace's sync
+   requests are still answered (`fast-admission-e2-g15-async.md` §6.2
+   step 5). Until a node fetches such a policy it keeps deciding async-v1
+   on the copy it holds; if every fetch fails, that copy expires at its
+   `not_after` (60 s) and the node passes every request, sync and async-v1,
+   `cache.policy`, which is not this switch but the broader fallback.
+   Slower than the rows, minutes, for a fault that is the async members'
+   alone.
 
 3. **The switch**, `fastpathctl -database $DB disable WORKSPACE`
    (`fastpath-turn-off.md`): each node's copy of the switch drops the
@@ -501,8 +609,8 @@ untouched, and what the edge admitted settles through Python as before.
    one at a time, the other serving: minutes to hours, the leases' drain.
    A node not yet cycled keeps `-edge-decide`, and with the rows off it
    answers nothing: a request that reaches the row passes the row's
-   reason (step 2: `decide.off`, `cache.decide` with the copy stale, or
-   `body.cache_affinity` naming a key), the rest pass earlier. The
+   reason (step 2: `decide.off`, or `cache.decide` with the copy stale),
+   the rest pass earlier. The
    attribute is the way back for the path, not for a workspace.
 5. **The route**, `fastpath_edge_route_weight = 0`
    (`infra/fastpath_edge_backend.tf`): a one-line change merged and

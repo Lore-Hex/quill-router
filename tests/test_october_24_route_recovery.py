@@ -74,9 +74,9 @@ def test_sambanova_minimax_m3_delisting_is_a_feed_tombstone_not_a_credit_hold():
         e.provider == "sambanova" and e.model_id == "minimax/minimax-m3" for e in MODEL_ENDPOINTS.values()
     )
     assert "minimax/minimax-m3" not in sambanova.CATALOG.spec.expected_models
-    assert {
-        model_id for model_id, row in rows.items() if row.get("routable_reason") == "provider-canary-failed"
-    } == {"deepseek/deepseek-v3.1", "deepseek/deepseek-v3.2", "google/gemma-4-31b-it"}
+    # Other routes can recover independently on the next authenticated canary.
+    # Their live health is not part of MiniMax-M3's tombstone contract.
+    assert retired["routable_reason"] != "provider-canary-failed"
 
 
 def test_nvidia_unavailable_function_is_held_without_disabling_working_route():
@@ -94,19 +94,17 @@ def test_ended_union_preview_is_not_silently_replaced():
     assert not any(e.model_id == "stealth/union-alpha" for e in MODEL_ENDPOINTS.values())
 
 
-def test_pearl_gemma_relist_recovers_the_feed_tombstone_without_rerouting():
-    # Pearl relisted google/gemma-4-31B-it on 2026-10-25 at the price the
-    # 2026-10-24 tombstone kept, so the machine-owned tombstone recovers in
-    # place; the other providers' routes are untouched either way.
+def test_pearl_gemma_relist_does_not_override_confirmed_inference_hold():
+    # Discovery relisted the exact ID, but October 28 authenticated inference
+    # still returned model_not_found. A listing alone cannot release the hold.
     row = next(
         row for row in json.loads(pearl.MANIFEST_PATH.read_text())["models"]
         if row["id"] == "google/gemma-4-31b-it"
     )
     assert row["upstream_id"] == "google/gemma-4-31B-it"
-    assert row["routable"] is True
-    assert "routable_reason" not in row
-    assert "missing_since" not in row
+    assert row["routable"] is False
+    assert row["routable_reason"] == "provider-model-not-found"
     assert (row["input_token_price_per_m"], row["output_token_price_per_m"]) == (90_000, 340_000)
     routes = [e for e in MODEL_ENDPOINTS.values() if e.model_id == "google/gemma-4-31b-it"]
-    assert [e.upstream_id for e in routes if e.provider == "pearl"] == ["google/gemma-4-31B-it"]
+    assert not [e for e in routes if e.provider == "pearl"]
     assert {e.provider for e in routes} - {"pearl"}

@@ -35,7 +35,29 @@ locals {
   # tiers and parameter tables, so the evaluator answers min_privacy and
   # requested_parameters), G15a's optional async_settle and billing_valid,
   # and the auditor's call deadlines and stall watchdog.
-  fastpath_release        = "892bd7593c948b58587ef281dd703cc24a044623"
+  # 620e0ca00: main after #2118, with G15b's async compose (the edge
+  # renders async-v1's additions), option A (the edge decides requests
+  # carrying a cache affinity key in the cold order; Python's warm re-rank
+  # counts as differ.affinity_warm) and G15c's async admission, dark while
+  # edge_decide is false, with the shadow's per-population async counts.
+  # fc1ed83bb: the merge of #2130, a deadline on each of the process's
+  # startup calls (its ring join and first membership scan among them) and
+  # a watchdog on its start and the session's warming that marks the node
+  # unhealthy and exits, so systemd restarts it.
+  # 0f0b1829a: the merge of #2133, the start before the service runs
+  # bounded too: a deadline on each secret read, and a watch that exits the
+  # process if it has not reached the service within 15 s per secret read
+  # plus a minute.
+  # cae6c5479: main after streams increments 5+6 (#2226) and the in-flight
+  # 429 shadow fix (#2229): the edge tells the owner whether a decided
+  # request streams, composes eligible streams, and decides them only with
+  # fastpath_edge_streams on; the shadow counts Python's in-flight 429 to
+  # an inflight.key pass as passed. The pilot leases streams; the edge
+  # switch stays off.
+  # b2d12a046: the edge composes async-v1 streams outside async admission
+  # for its decide shadow (#2242), so gate E can count them. Carries
+  # everything since 2b3f846f3.
+  fastpath_release        = "b2d12a046d97a4b638dc31845b97367f2ed6d513"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
@@ -83,7 +105,8 @@ locals {
   # passes the flag: a node from before that script carries the attribute
   # and passes nothing, so the script reaches the fleet first, as I1's did,
   # through nodes added under new names: 9 and 10 beside 7 and 8, which
-  # then leave the backend and are removed.
+  # then leave the backend and are removed. On since the I3 soak was green;
+  # with every decide row off it still answers nothing.
   fastpath_edge_snapshot = tomap({
     fastpath-edge-snapshot-url        = "${local.fastpath_edge_upstream}/internal/fastpath/routing-snapshot"
     fastpath-edge-snapshot-public-key = "oTQF4Efsi6G7_38Nca4HjiB7QUoNDkNSzaOw26Kt9IM"
@@ -92,7 +115,7 @@ locals {
     fastpath-edge-shadow              = "true"
     fastpath-edge-policy-url          = "${local.fastpath_edge_upstream}/internal/fastpath/edge-policy"
     fastpath-edge-decide-shadow       = "true"
-    fastpath-edge-decide              = "false"
+    fastpath-edge-decide              = "true"
   })
 }
 

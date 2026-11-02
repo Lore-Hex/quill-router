@@ -39,6 +39,16 @@ def test_dispatches_both_secondary_clouds_with_exact_release(api):
     assert all(c[c.index("--ref") + 1] == "main" for c in dispatches)
 
 
+@pytest.mark.parametrize("result", ["success", "skipped", "failure"])
+def test_reusable_rollout_jobs_keep_all_promotion_gates(api, result):
+    api["jobs"] = {"rollout / " + name: result for name in r.REQUIRED_JOBS}
+    if result == "success":
+        assert r.completed_release() == "a" * 40
+    else:
+        with pytest.raises(r.Refused, match="fully verified"):
+            r.completed_release()
+
+
 @pytest.mark.parametrize("job", sorted(r.REQUIRED_JOBS))
 @pytest.mark.parametrize("result", ["skipped", "failure", "cancelled"])
 def test_requires_all_completion_gates(api, job, result):

@@ -25,7 +25,7 @@ from trusted_router.verification_gates import missing_identity_verification_requ
 
 def register_identity_verify_routes(router: APIRouter) -> None:
     @router.post("/auth/identity/session")
-    async def create_identity_session(
+    def create_identity_session(
         principal: ManagementPrincipal,
         settings: SettingsDep,
     ) -> JSONResponse:

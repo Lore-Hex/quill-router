@@ -72,7 +72,8 @@ def test_ci_shards_record_durations_using_existing_split_weights() -> None:
         steps = jobs[job_name]["steps"]
         test_index = next(i for i, step in enumerate(steps)
                           if "uv run pytest" in step.get("run", ""))
-        assert steps[test_index - 1]["run"] == f"cp .test_durations {path}"
+        profile = ".test_durations" if clock == "default" else ".test_durations-post-cutover"
+        assert steps[test_index - 1]["run"] == f"cp {profile} {path}"
         command = steps[test_index]["run"]
         assert f"--store-durations --durations-path={path} --clean-durations" in command
         assert "--splitting-algorithm least_duration" in command
@@ -121,6 +122,7 @@ def test_ci_runs_the_suite_again_past_every_scheduled_cutover() -> None:
 def test_native_spanner_job_runs_both_focused_server_gates() -> None:
     jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
     job = jobs["spanner-emulator"]
+    assert job["timeout-minutes"] == 40
     assert job["env"]["TR_CONFORMANCE_EMULATOR_SCHEMA"] == "1"
     assert job["env"]["SPANNER_EMULATOR_HOST"] == "127.0.0.1:9010"
     assert job["services"]["spanner"]["image"] == "gcr.io/cloud-spanner-emulator/emulator@sha256:c6f3402f2599684f295a0fdefb6fbbbfb18a0e43e309ff5456ccb452a4570a79"
@@ -151,7 +153,7 @@ def test_p5_object_budgets_run_in_a_fresh_package_only_session() -> None:
     ]
     assert {path.name for path in ROOT.glob("tests/test_async_settle_shadow_v2_gate*.py")} == PACKAGE_MODULES
     assert step["if"] == "${{ !cancelled() }}"
-    assert step["timeout-minutes"] == 12
+    assert step["timeout-minutes"] == 22
     assert "continue-on-error" not in step
 
 
@@ -192,7 +194,8 @@ def test_proof_oracle_ci_split(request, tmp_path):
                        '-m', 'proof_oracle', 'tests/test_async_settle_proof_oracle.py',
                        'tests/test_async_settle_shadow_v2_gate_window.py',
                        '--splits', '6', '--group', '${{', 'matrix.shard', '}}',
-                       '--splitting-algorithm', 'least_duration']
+                       '--splitting-algorithm', 'least_duration', '--store-durations',
+                       '--durations-path=durations-${{', 'matrix.shard', '}}.json', '--clean-durations']
     assert job['runs-on'] == 'ubuntu-24.04'
     assert job['timeout-minutes'] == 45
     assert job['strategy']['matrix'] == {'clock': ['default', 'post-cutover'], 'shard': [1, 2, 3, 4, 5, 6]}

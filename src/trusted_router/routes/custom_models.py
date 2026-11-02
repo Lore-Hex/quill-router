@@ -28,13 +28,13 @@ from trusted_router.types import ErrorType
 
 def register_custom_model_routes(router: APIRouter) -> None:
     @router.get("/custom-models")
-    async def list_custom_models(principal: ManagementPrincipal) -> dict[str, Any]:
+    def list_custom_models(principal: ManagementPrincipal) -> dict[str, Any]:
         owner_user_id = _owner_user_id(principal)
         models = STORE.list_custom_models_for_user(owner_user_id)
         return {"data": [custom_model_owner_shape(model) for model in models]}
 
     @router.post("/custom-models")
-    async def create_custom_model(
+    def create_custom_model(
         body: CustomModelCreateRequest,
         principal: ManagementPrincipal,
         settings: SettingsDep,
@@ -92,14 +92,14 @@ def register_custom_model_routes(router: APIRouter) -> None:
         return JSONResponse({"data": custom_model_owner_shape(model)}, status_code=201)
 
     @router.get("/custom-models/{model_id:path}")
-    async def get_custom_model(
+    def get_custom_model(
         model_id: str,
         principal: ManagementPrincipal,
     ) -> dict[str, Any]:
         return {"data": custom_model_owner_shape(_require_owner_model(model_id, principal))}
 
     @router.patch("/custom-models/{model_id:path}")
-    async def patch_custom_model(
+    def patch_custom_model(
         model_id: str,
         body: CustomModelPatchRequest,
         principal: ManagementPrincipal,
@@ -139,7 +139,7 @@ def register_custom_model_routes(router: APIRouter) -> None:
         return {"data": custom_model_owner_shape(updated)}
 
     @router.delete("/custom-models/{model_id:path}")
-    async def delete_custom_model(
+    def delete_custom_model(
         model_id: str,
         principal: ManagementPrincipal,
     ) -> dict[str, Any]:

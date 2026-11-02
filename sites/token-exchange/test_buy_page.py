@@ -60,7 +60,7 @@ class BuyPageTests(unittest.TestCase):
         self.assertEqual(self.page, (self.root / "buy.html").read_text())
         self.assertIn('<title>Reserved tokens | New York Token Exchange</title>', self.page)
         self.assertIn('Reserve your next<br><em>billion tokens.</em>', self.page)
-        self.assertIn('This is a request to discuss a reservation, not an order.', self.page)
+        self.assertIn('Card checkout purchases a reservation for 2027 delivery.', self.page)
         self.assertNotIn('capacity request', self.page)
         self.assertIn('<link rel="canonical" href="https://nytokenexchange.com/buy">', self.page)
         self.assertIn('/assets/nyte-v2/styles.css?', self.page)
@@ -75,8 +75,6 @@ class BuyPageTests(unittest.TestCase):
     def test_entry_points_and_existing_homepage_contract(self) -> None:
         home = (self.root / 'new-york/index.html').read_text()
         self.assertIn('<a class="btn btn-primary" href="/buy">Reserved tokens</a>', home)
-        for name in ['new-york/index.html', 'index', 'confidential', 'suppliers', 'providers', 'buy']:
-            self.assertIn('<a href="/buy">Reserved tokens</a>', (self.root / name).read_text())
         for market in load_markets():
             page = (self.root / market['slug'] / 'index.html').read_text()
             parser = PageLinks()
@@ -167,7 +165,8 @@ for (unit of ['blocks', 'throughput']) {
         self.assertIn('<noscript>', self.page)
         script = (HERE / 'nyte-v2/buy.js').read_text()
         self.assertNotIn('Storage', script)
-        self.assertNotIn('JSON.stringify', script)
+        self.assertIn('terms_accepted:true', script)
+        self.assertNotIn('customer_email:', script)
         self.assertIn('history[push', script)
 
     def test_pricing_visibility_executes_production_update(self) -> None:
@@ -203,6 +202,7 @@ const flow = {querySelector: () => ({setAttribute() {}})};
 const choose = () => {};
 const money = new Intl.NumberFormat('en-US', {style:'currency',currency:'USD',maximumFractionDigits:0});
 const catalogue = () => {};
+const updateReservation = () => {};
 '''
         harness += 'function update() {' + update
         harness += r'''

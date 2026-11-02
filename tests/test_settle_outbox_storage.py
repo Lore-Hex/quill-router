@@ -349,7 +349,7 @@ def test_outbox_schema_uses_generated_shard_and_sparse_due_index() -> None:
     retirement = (
         root / "scripts/deploy/retire_settle_outbox_hot_index.sh"
     ).read_text()
-    workflow = (root / ".github/workflows/deploy.yml").read_text()
+    workflow = (root / ".github/workflows/deploy-production.yml").read_text()
 
     assert "queue_shard INT64 NOT NULL AS (" in migration
     assert "FARM_FINGERPRINT(CONCAT(authorization_id, '#', intent_kind))" in migration

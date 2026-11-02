@@ -13,7 +13,7 @@ from trusted_router.types import ErrorType
 
 def register_user_model_public_routes(router: APIRouter) -> None:
     @router.get("/models/user-provided")
-    async def list_public_user_models(
+    def list_public_user_models(
         kind: Literal["machine", "agent", "human"] | None = Query(default=None),
     ) -> dict[str, Any]:
         return {
@@ -24,7 +24,7 @@ def register_user_model_public_routes(router: APIRouter) -> None:
         }
 
     @router.get("/models/user-provided/{model_id:path}")
-    async def get_public_user_model(model_id: str) -> dict[str, Any]:
+    def get_public_user_model(model_id: str) -> dict[str, Any]:
         model = STORE.get_user_model(normalize_user_provided_model_id(model_id))
         if model is None or not model.enabled or model.status != "active":
             raise api_error(404, "Resource not found", ErrorType.NOT_FOUND)

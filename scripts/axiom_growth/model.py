@@ -34,6 +34,11 @@ def domain(value: object) -> str:
 DATASET = "trustedrouter-marketing"
 SOURCE_DATASET = "trusted-router-logs"
 EDGE_REGION = "eu-central-1.aws.edge.axiom.co"
+ACQUISITION_SERVICE_FILTER = (
+    '(resource.labels.service_name="trusted-router-public" OR '
+    'resource.labels.service_name="trusted-router-control" OR '
+    'resource.labels.service_name="trusted-router")'
+)
 BROWSER_EVENTS = frozenset(
     f"acquisition.{name}" for name in (
         "landing_viewed", "landing_engaged", "sign_in_opened",
@@ -48,6 +53,8 @@ BROWSER_EVENTS = frozenset(
         "home.token_exchange_clicked",
         "exchange.landing_viewed", "exchange.landing_engaged",
         "nyte.cta_clicked", "nyte.video_played", "nyte.form_submitted", "nyte.outbound_clicked",
+        "nyte.resale_listed", "nyte.resale_withdrawn",
+        "nyte.reserve_checkout_started", "nyte.reserve_checkout_succeeded",
         "nyte.buy_step_1_viewed", "nyte.buy_step_2_viewed", "nyte.buy_step_3_viewed", "nyte.buy_step_4_viewed", "nyte.buy_completed",
         "home.cta_clicked.hero", "home.cta_clicked.migration", "home.cta_clicked.closing",
         # Server-confirmed exchange downloads use the same Cloud Logging source.
@@ -289,6 +296,7 @@ def safe_path(value):
 
 
 PUBLIC_LANDINGS = frozenset(('/' + p) for p in (
+    'manage-reservation',
     'confidential', 'trusted-cowork', 'suppliers', 'index', 'badge', 'buy', 'neocloud-accelerator',
     '', 'pricing', 'models', 'providers', 'leaderboard', 'blog', 'docs', 'trust', 'status',
     'choose', 'marketplace', 'support', 'vibe-coders', 'agents', 'quickstart',

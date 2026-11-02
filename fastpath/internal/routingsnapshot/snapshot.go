@@ -61,7 +61,16 @@ type Snapshot struct {
 	endpointsByModel map[string][]int
 	endpointIndex    map[string]int
 	requested        map[string]bool
+	// billingValid is whether every epoch of every endpoint publishes
+	// billing_valid (BillingValidPublished).
+	billingValid bool
 }
+
+// BillingValidPublished reports every epoch of every endpoint carrying
+// billing_valid: a compiler that publishes it does so for each epoch, and
+// without it the edge cannot tell a price build_snapshot refuses (the async
+// gate async.unpublished, docs/design/fast-admission-e2-g15-async.md §6.1).
+func (s *Snapshot) BillingValidPublished() bool { return s.billingValid }
 
 // Plane is the cloud and region a snapshot was compiled for.
 type Plane struct {
@@ -146,7 +155,8 @@ type Epoch struct {
 	// section 3.2): whether every raw price value of the effective endpoint
 	// at starts_at is a strict non-negative int64, as build_snapshot checks
 	// before it builds the async billing snapshot. Nil is unpublished
-	// (unknown); present, it is a bool, never null. Nothing reads it yet.
+	// (unknown); present, it is a bool, never null. gwauth's async-v1
+	// billing snapshot reads it.
 	BillingValid *bool `json:"billing_valid,omitempty"`
 }
 
@@ -628,6 +638,7 @@ func (s *Snapshot) validate() error {
 	}
 	s.endpointsByModel = make(map[string][]int, len(s.Models))
 	s.endpointIndex = make(map[string]int, len(s.Endpoints))
+	s.billingValid = true
 	for i := range s.Endpoints {
 		e := &s.Endpoints[i]
 		if e.ContextLength < 0 {
@@ -646,6 +657,7 @@ func (s *Snapshot) validate() error {
 		}
 		for j, epoch := range e.Epochs {
 			p := epoch.Price
+			s.billingValid = s.billingValid && epoch.BillingValid != nil
 			if j > 0 && epoch.StartsAt <= e.Epochs[j-1].StartsAt {
 				return fmt.Errorf("endpoint %q: epochs must increase", e.ID)
 			}

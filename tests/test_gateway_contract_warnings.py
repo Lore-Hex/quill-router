@@ -22,6 +22,10 @@ from trusted_router.storage import STORE
 REQUEST_ID = "rlog_" + "a" * 32
 
 
+def test_include_reasoning_has_a_stable_diagnostic_category() -> None:
+    assert "include_reasoning" in PARAMETER_CATEGORIES
+
+
 @pytest.fixture
 def warnings(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[dict[str, Any]]]:
     events: list[dict[str, Any]] = []

@@ -21,6 +21,7 @@ import (
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/gwauth"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/gwstate"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/keywindow"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/routingsnapshot"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store"
 )
@@ -45,6 +46,9 @@ type authorizeFile struct {
 		} `json:"jwk"`
 	} `json:"boot_test_key"`
 	Cases []authorizeCase `json:"cases"`
+	// SnapshotBody is the routing snapshot the cases compose over when the
+	// file carries its own (P6's async file); empty, the golden v3 body.
+	SnapshotBody string `json:"snapshot_body"`
 }
 
 type creditRowCase struct {
@@ -130,31 +134,46 @@ type authorizeExpect struct {
 		// for a request it answered without a lease (§10.1): nil when it
 		// wrote none.
 		Reservation *int64 `json:"reservation_microdollars"`
+		// Response and AsyncShape are P6's for a passed async-v1 case:
+		// Python's 200 (but for shape C) and its async members' shape.
+		Response   string `json:"response"`
+		AsyncShape string `json:"async_shape"`
 	} `json:"python"`
-	// Affinity is a body.cache_affinity case's record of Python's bytes
-	// with its sessions remembered and with none (G13, §10.1).
+	// AsyncShape is P6's shape of an answered case's async members (none,
+	// A or B).
+	AsyncShape string `json:"async_shape"`
+	// Shadow is a body.stream case's record of Python's 200 to a stream
+	// Stage D lets in, which Go composes for the shadow alone when the edge
+	// policy carries no fastpath_edge_streams
+	// (docs/design/fast-admission-streams.md section 8.4): an answer's
+	// fields, its rows the pilot's lease's when Python.Leased, else today's
+	// path's, ids and all.
+	Shadow *authorizeExpect `json:"shadow"`
+	// Affinity is a cache affinity case's record (§1 item 5, §10.1): the
+	// case's answer is Python's with no session (the cold order, which Go
+	// decides), and this is Python's answer with its sessions remembered,
+	// classed by the generator's rule (affinity_cold, the same bytes, or
+	// affinity_warm, a re-rank).
 	Affinity *affinityExpect `json:"affinity"`
 }
 
 type affinityExpect struct {
 	Class          string           `json:"class"`
-	Fingerprint    string           `json:"fingerprint"`
-	Material       string           `json:"fingerprint_material"`
-	Scope          string           `json:"idempotency_scope"`
-	DecideRegion   string           `json:"decide_region"`
 	Sessions       [][]any          `json:"sessions"`
 	Response       string           `json:"response"`
-	ColdResponse   string           `json:"cold_response"`
 	Timing         map[string]int64 `json:"timing"`
-	ColdTiming     map[string]int64 `json:"cold_timing"`
 	Candidates     []string         `json:"candidates"`
 	ColdCandidates []string         `json:"cold_candidates"`
 	Estimate       int64            `json:"estimate_microdollars"`
 	ColdEstimate   int64            `json:"cold_estimate_microdollars"`
-	// The lease's hold (§5, "The two figures") in each run.
-	Reservation     int64 `json:"reservation_microdollars"`
-	ColdReservation int64 `json:"cold_reservation_microdollars"`
 }
+
+// The generator's classes of Python's answer with sessions remembered
+// (scripts/fastpath/affinity_rule.py).
+const (
+	goldenAffinityCold = "affinity_cold"
+	goldenAffinityWarm = "affinity_warm"
+)
 
 func timingOfMap(t map[string]int64) gwauth.Timing {
 	return gwauth.Timing{TotalMS: t["total_ms"], SpannerRPCs: t["spanner_rpcs"], KeyLookupMS: t["key_lookup_ms"],
@@ -255,6 +274,24 @@ func snapshotFor(t *testing.T, p *routingsnapshot.EdgePolicy) *routingsnapshot.S
 	if err != nil {
 		t.Fatal(err)
 	}
+	return regionsFor(s, p)
+}
+
+// snapshotOver is snapshotFor over the file's own snapshot when it carries
+// one (P6's async file), else the golden v3 body.
+func snapshotOver(t *testing.T, f authorizeFile, p *routingsnapshot.EdgePolicy) *routingsnapshot.Snapshot {
+	t.Helper()
+	if f.SnapshotBody == "" {
+		return snapshotFor(t, p)
+	}
+	s, err := routingsnapshot.Parse([]byte(f.SnapshotBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return regionsFor(s, p)
+}
+
+func regionsFor(s *routingsnapshot.Snapshot, p *routingsnapshot.EdgePolicy) *routingsnapshot.Snapshot {
 	if p.MultiRegionEnabled {
 		return s
 	}
@@ -441,7 +478,7 @@ func caseInputs(t *testing.T, f authorizeFile, c authorizeCase) (DecideInputs, *
 	return DecideInputs{
 		Request: DecideRequest{At: c.at(), Method: http.MethodPost, Path: c.Request.Path, EscapedPath: c.Request.Path,
 			Header: c.header(), Body: c.body(), Boot: bootSeenOf(t, f, c)},
-		Snapshot: snapshotFor(t, p),
+		Snapshot: snapshotOver(t, f, p),
 		Policy:   p,
 		Lookup:   cache.Lookup,
 		Decide:   decideAll(p, c.Facts.Key.WorkspaceID, c.at()),
@@ -455,6 +492,12 @@ func caseInputs(t *testing.T, f authorizeFile, c authorizeCase) (DecideInputs, *
 func postAdmission(reason string) bool {
 	return strings.HasPrefix(reason, "owner.") || strings.HasPrefix(reason, "insert.") ||
 		reason == "inflight.key" || reason == "budget.spent"
+}
+
+// windowReason are the edge policy's key-windows mode's reasons, a decision
+// gate: the pipeline reaches a Decision for them, and passes.
+func windowReason(reason string) bool {
+	return reason == PassKeyWindow || reason == PassKeyWindowAlert
 }
 
 func endOfLifeOf(t *testing.T, c authorizeCase) time.Time {
@@ -473,7 +516,7 @@ func endOfLifeOf(t *testing.T, c authorizeCase) time.Time {
 // reason, or, for a reason after the admit, reaches a Decision.
 func TestEveryGoldenCaseThroughThePipeline(t *testing.T) {
 	f := authorizeGoldens(t)
-	answered, passes, admitted, evaluatorPassed := 0, 0, 0, 0
+	answered, passes, admitted, evaluatorPassed, shadowStreams := 0, 0, 0, 0, 0
 	affinity := map[string]int{}
 	seen := map[string]bool{}
 	for _, c := range f.Cases {
@@ -499,25 +542,15 @@ func TestEveryGoldenCaseThroughThePipeline(t *testing.T) {
 			if !checkAnswered(t, c, d.ForShadow()) {
 				continue
 			}
+			if c.Expect.Affinity != nil {
+				if !checkAffinity(t, c, d) {
+					continue
+				}
+				affinity[c.Expect.Affinity.Class]++
+			}
 			answered++
 		case "pass":
 			seen[c.Expect.Reason] = true
-			if c.Expect.Affinity != nil {
-				// G13: composed for the shadow, passed with its reason,
-				// never admittable.
-				if d.Pass != gwauth.ReasonCacheAffinity || d.ForShadow() == nil {
-					t.Errorf("%s: passed %q, shadow %v", c.Name, d.Pass, d.ForShadow() != nil)
-					continue
-				}
-				if _, ok := d.Admit(); ok {
-					t.Errorf("%s: an affinity decision is admittable", c.Name)
-					continue
-				}
-				if checkAffinity(t, c, d) {
-					affinity[c.Expect.Affinity.Class]++
-				}
-				continue
-			}
 			if postAdmission(c.Expect.Reason) {
 				if d.Pass != "" || d.ForShadow() == nil {
 					t.Errorf("%s: passed %q before the admit; Python's reason is %s", c.Name, d.Pass, c.Expect.Reason)
@@ -532,8 +565,36 @@ func TestEveryGoldenCaseThroughThePipeline(t *testing.T) {
 				t.Errorf("%s: passed %q, want %q", c.Name, d.Pass, c.Expect.Reason)
 				continue
 			}
-			if d.ForShadow() != nil {
+			if windowReason(c.Expect.Reason) {
+				// The policy's mode is a decision gate (key-windows section
+				// 4.7): the goldens' policy carries none (off), so the
+				// windowed key passes with its reason, composed for the
+				// shadow.
+				if d.ForShadow() == nil || d.DecideGate != c.Expect.Reason {
+					t.Errorf("%s: no decision behind the window gate (gate %q)", c.Name, d.DecideGate)
+					continue
+				}
+			} else if c.Expect.Reason == gwauth.ReasonStream && d.ForShadow() != nil {
+				// A stream composed for the shadow alone (streams section
+				// 8.4): body.stream its decision gate, and Python's leased
+				// answer, where Python leased it, is Go's bytes and rows.
+				if d.DecideGate != gwauth.ReasonStream {
+					t.Errorf("%s: a stream's decision behind gate %q", c.Name, d.DecideGate)
+					continue
+				}
+				if s := c.Expect.Shadow; s != nil && c.Expect.Python.Leased {
+					shadowCase := c
+					shadowCase.Expect = *s
+					if !checkAnswered(t, shadowCase, d.ForShadow()) {
+						continue
+					}
+					shadowStreams++
+				}
+			} else if d.ForShadow() != nil {
 				t.Errorf("%s: a decision for a request passed before the decide row", c.Name)
+				continue
+			} else if c.Expect.Shadow != nil && c.Expect.Python.Leased {
+				t.Errorf("%s: Python's leased stream, and no decision for the shadow", c.Name)
 				continue
 			}
 			passes++
@@ -546,58 +607,53 @@ func TestEveryGoldenCaseThroughThePipeline(t *testing.T) {
 	if evaluatorPassed != len(evaluatorPasses) {
 		t.Errorf("%d of the %d evaluator passes seen", evaluatorPassed, len(evaluatorPasses))
 	}
+	if shadowStreams != 1 {
+		t.Errorf("%d streams composed for the shadow as Python leased them, want the goldens' 1", shadowStreams)
+	}
 	if answered < 160 || passes < 90 || admitted < 10 {
 		t.Fatalf("answered %d, passes %d, admitted %d: fewer than the goldens hold", answered, passes, admitted)
 	}
-	if affinity[ClassAffinityCold] < 6 || affinity[ClassAffinityWarm] < 10 {
+	if affinity[goldenAffinityCold] < 6 || affinity[goldenAffinityWarm] < 10 {
 		t.Fatalf("affinity %v: fewer than the goldens hold", affinity)
 	}
 }
 
-// checkAffinity holds a decision to a body.cache_affinity case (G13): Go's
-// 200 is Python's cold bytes (no session in its process), its candidates
-// and estimate the cold ones, and Python's bytes with its sessions
-// remembered compare as the case's class: affinity_cold when they are the
-// same, affinity_warm when they are Go's decision with the remembered
-// endpoint promoted (its own estimate with fallbacks off).
+// checkAffinity holds an answered decision whose body names a
+// cache_affinity_key (§1 item 5) to the case's record of Python's answer
+// with its sessions remembered: the decision is Go's cold order (Python's
+// answer with no session, which checkAnswered holds byte for byte), and
+// the shadow compares Python's warm bytes as any cohort answer, rows read
+// back: agree_full when the session changed nothing (affinity_cold), and
+// otherwise a differ whose one field is differ.affinity_warm, its rows
+// read against Go's decision in Python's order (affinity_warm).
 func checkAffinity(t *testing.T, c authorizeCase, d Decided) bool {
 	t.Helper()
 	a, dec := c.Expect.Affinity, d.ForShadow()
-	ok := true
-	check := func(what string, got, want any) {
-		if !reflect.DeepEqual(got, want) {
-			t.Errorf("%s: %s %v, want %v", c.Name, what, got, want)
-			ok = false
-		}
-	}
-	check("affinity", dec.Affinity, true)
-	check("region", dec.Region, a.DecideRegion)
-	check("fingerprint", dec.Identity.Fingerprint, a.Fingerprint)
-	check("scope", dec.Identity.Scope, a.Scope)
-	check("material", string(dec.Identity.Material), a.Material)
-	check("estimate", dec.Estimate, a.ColdEstimate)
-	check("reservation", dec.Reservation, a.ColdReservation)
-	check("candidates", dec.Candidates, a.ColdCandidates)
-	check("workspace", dec.Workspace, c.Facts.Key.WorkspaceID)
-	if !ok {
-		return false
-	}
-	composed, err := dec.Finish(c.Admitted.Envelope, endOfLifeOf(t, c))
-	if err != nil {
-		t.Errorf("%s: Finish: %v", c.Name, err)
-		return false
-	}
-	if got := composed.Render(timingOfMap(a.ColdTiming), false); string(got) != a.ColdResponse {
-		t.Errorf("%s: the cold 200 differs\n got %s\nwant %s", c.Name, got, a.ColdResponse)
+	if !dec.Affinity || !slices.Equal(dec.Candidates, a.ColdCandidates) || dec.Estimate != a.ColdEstimate {
+		t.Errorf("%s: affinity %v, candidates %v at %d, want the cold %v at %d", c.Name, dec.Affinity, dec.Candidates,
+			dec.Estimate, a.ColdCandidates, a.ColdEstimate)
 		return false
 	}
 	r := compareFull(d, pyAnswer{status: 200, body: []byte(a.Response)})
-	if r.class != a.Class || len(r.fields) != 0 || r.decided || !r.affinity {
-		t.Errorf("%s: Python's warm bytes compare as %+v, want %s", c.Name, r, a.Class)
+	if !r.decided || !r.rows {
+		t.Errorf("%s: Python's warm bytes compare as %+v, not as the cohort's with rows read", c.Name, r)
 		return false
 	}
-	if (a.Class == ClassAffinityWarm) == slices.Equal(a.Candidates, a.ColdCandidates) {
-		t.Errorf("%s: class %s with candidates %v over %v", c.Name, a.Class, a.Candidates, a.ColdCandidates)
+	switch a.Class {
+	case goldenAffinityCold:
+		if r.class != ClassAgreeFull || len(r.fields) != 0 || r.warm != nil || a.Response != c.Expect.Response {
+			t.Errorf("%s: Python's bytes with sessions compare as %+v, want agree_full", c.Name, r)
+			return false
+		}
+	case goldenAffinityWarm:
+		if r.class != ClassDifferAny || !slices.Equal(r.fields, []string{FieldAffinityWarm}) || r.warm == nil ||
+			!slices.Equal(r.warm.Candidates, a.Candidates) || r.warm.Estimate != a.Estimate ||
+			slices.Equal(a.Candidates, a.ColdCandidates) {
+			t.Errorf("%s: Python's warm bytes compare as %+v, want differ with %s alone", c.Name, r, FieldAffinityWarm)
+			return false
+		}
+	default:
+		t.Errorf("%s: class %q", c.Name, a.Class)
 		return false
 	}
 	return true
@@ -663,6 +719,15 @@ func rowsAreGoldens(t *testing.T, c authorizeCase, composed gwauth.Composed) boo
 		"idempotency_fingerprint": a.IdempotencyFingerprint, "stage_d_boot_kid": a.StageDBootKid,
 		"invocation_nonce": nonce,
 	}
+	// A stream's two columns, NULL for any other request.
+	var pricing, seq any
+	if a.PricingSnapshot != nil {
+		pricing = *a.PricingSnapshot
+	}
+	if a.HeartbeatSeq != nil {
+		seq = num(*a.HeartbeatSeq)
+	}
+	gotA["pricing_snapshot"], gotA["heartbeat_seq"] = pricing, seq
 	gotR := map[string]any{
 		"reservation_id": r.ReservationID, "workspace_id": r.WorkspaceID, "key_hash": r.KeyHash,
 		"ws_shard": num(0), "credit_shard": num(0), "key_shard": num(0), "credit_reserved_micro": num(0),
@@ -710,18 +775,18 @@ func rowsAreGoldens(t *testing.T, c authorizeCase, composed gwauth.Composed) boo
 func TestEveryGoldenReasonIsNamed(t *testing.T) {
 	named := map[string]bool{}
 	for _, r := range []string{PassBootSignature, PassBootUnverified, PassBootMissing, PassKeyMissing, PassKeyDisabled,
-		PassKeyExpired, PassKeyScope, PassKeyFederated, PassKeyApp, PassKeyCap, PassKeyWindow, PassKeyBudgetStrict,
-		PassWorkspaceMissing, PassWorkspacePaused, PassWorkspaceInDebt, PassWorkspaceTier, PassWorkspaceFederated,
+		PassKeyExpired, PassKeyScope, PassKeyFederated, PassKeyApp, PassKeyCap, PassKeyWindow, PassKeyWindowAlert,
+		PassKeyBudgetStrict, PassWorkspaceMissing, PassWorkspacePaused, PassWorkspaceInDebt, PassWorkspaceTier, PassWorkspaceFederated,
 		PassWorkspaceDeleted, PassWorkspaceBroadcast, PassPilotOff, PassNotPilotWorkspace, PassPilotRegion,
 		PassRecordsNotDurable, PassAsyncSettleShadow, PassMonitorKey, PassDigestNotAccepted, PassEvaluateRefused,
 		PassEstimateOverflow, PassCandidatesBYOK, PassCandidatesEstimated, PassCandidatesPrivate,
-		gwauth.ReasonTagsMergedInvalid} {
+		PassStreamUndeclared, PassStreamHold, gwauth.ReasonTagsMergedInvalid} {
 		named[r] = true
 	}
 	for _, c := range authorizeGoldens(t).Cases {
 		r := c.Expect.Reason
 		if c.Expect.Outcome == "pass" && !named[r] && !postAdmission(r) && !strings.HasPrefix(r, "body.") &&
-			!strings.HasPrefix(r, "header.") {
+			!strings.HasPrefix(r, "header.") && !strings.HasPrefix(r, PassStreamStageD) {
 			t.Errorf("%s: reason %q is not one the pipeline names", c.Name, r)
 		}
 	}
@@ -855,7 +920,15 @@ func TestTheRouteWalkerGapIsGated(t *testing.T) {
 		{"daily window", map[string]any{"limit_daily_microdollars": 5}, PassKeyWindow},
 		{"weekly window", map[string]any{"limit_weekly_microdollars": 5}, PassKeyWindow},
 		{"monthly window alert only", map[string]any{"limit_monthly_microdollars": 5, "budget_alert_only": true},
+			PassKeyWindowAlert},
+		{"daily window alert only false", map[string]any{"limit_daily_microdollars": 5, "budget_alert_only": false},
 			PassKeyWindow},
+		{"alert only and a cap", map[string]any{"limit_microdollars": 5, "limit_daily_microdollars": 5,
+			"budget_alert_only": true}, PassKeyCap},
+		{"alert only and strict", map[string]any{"limit_weekly_microdollars": 5, "budget_alert_only": true,
+			"budget_strict": true}, PassKeyWindowAlert},
+		{"window with alert only not a bool", map[string]any{"limit_daily_microdollars": 5,
+			"budget_alert_only": "false"}, PassKeyShape},
 		{"lifetime cap", map[string]any{"limit_microdollars": 5}, PassKeyCap},
 		{"shard count zero", map[string]any{"usage_shard_count": 0}, PassKeyShape},
 		{"shard count past 64", map[string]any{"usage_shard_count": 65}, PassKeyShape},
@@ -864,6 +937,7 @@ func TestTheRouteWalkerGapIsGated(t *testing.T) {
 		{"budget strict", map[string]any{"budget_strict": true}, PassKeyBudgetStrict},
 		// Positive controls: what the cohort's keys carry decides.
 		{"alert only alone", map[string]any{"budget_alert_only": true}, ""},
+		{"alert only not a bool, no window", map[string]any{"budget_alert_only": "yes"}, ""},
 		{"two shards", map[string]any{"usage_shard_count": 2}, ""},
 	} {
 		c := base
@@ -873,6 +947,140 @@ func TestTheRouteWalkerGapIsGated(t *testing.T) {
 		if got := Decide(in); got.Pass != v.want {
 			t.Errorf("%s: passed %q, want %q", v.name, got.Pass, v.want)
 		}
+	}
+}
+
+// windowedInputs are the base case's inputs with the key's stored body
+// changed by fields and the policy's fastpath_pilot_key_windows set to mode
+// ("" leaves it absent).
+func windowedInputs(t *testing.T, fields map[string]any, mode string) DecideInputs {
+	t.Helper()
+	f := authorizeGoldens(t)
+	c := authorizeCaseNamed(t, "answer:app_categories_empty")
+	body := keyBodyWith(t, c, fields)
+	c.Key.KeyBody = &body
+	in, _ := caseInputs(t, f, c)
+	p := *in.Policy
+	p.FastpathPilotKeyWindows = nil
+	if mode != "" {
+		p.FastpathPilotKeyWindows = &mode
+	}
+	in.Policy = &p
+	return in
+}
+
+// TestTheKeyWindowsModeIsADecisionGate (docs/design/
+// fast-admission-e2-key-windows.md sections 4.7 and 5): a windowed key is
+// composed whatever the policy's mode, so the shadow compares it; the mode
+// then gates it beside the decide row: absent or off passes every windowed
+// key with today's reason, alert covers the alert-only ones, enforce every
+// one. An enforcing key's decision carries its window check, an alert-only
+// key's none (it is decided as an uncapped one). A lifetime cap and a
+// strict key pass whatever the mode.
+func TestTheKeyWindowsModeIsADecisionGate(t *testing.T) {
+	enforcing := map[string]any{"limit_daily_microdollars": 5000, "limit_monthly_microdollars": 90000,
+		"usage_shard_count": 4}
+	alertOnly := map[string]any{"limit_weekly_microdollars": 7, "budget_alert_only": true}
+	daily, monthly := int64(5000), int64(90000)
+	check := &WindowCheck{Limits: keywindow.Limits{Daily: &daily, Monthly: &monthly}, Shards: 4}
+	for _, v := range []struct {
+		name    string
+		fields  map[string]any
+		mode    string
+		pass    string
+		windows *WindowCheck
+	}{
+		{"enforcing, mode absent", enforcing, "", PassKeyWindow, check},
+		{"enforcing, alert", enforcing, routingsnapshot.KeyWindowsAlert, PassKeyWindow, check},
+		{"enforcing, enforce", enforcing, routingsnapshot.KeyWindowsEnforce, "", check},
+		{"alert only, mode absent", alertOnly, "", PassKeyWindowAlert, nil},
+		{"alert only, alert", alertOnly, routingsnapshot.KeyWindowsAlert, "", nil},
+		{"alert only, enforce", alertOnly, routingsnapshot.KeyWindowsEnforce, "", nil},
+		// Positive control: a key without windows is not gated by any mode.
+		{"no windows, mode absent", map[string]any{"budget_alert_only": true}, "", "", nil},
+	} {
+		d := Decide(windowedInputs(t, v.fields, v.mode))
+		dec := d.ForShadow()
+		if d.Pass != v.pass || d.DecideGate != v.pass || dec == nil {
+			t.Errorf("%s: passed %q at gate %q (decision %v), want %q", v.name, d.Pass, d.DecideGate, dec != nil, v.pass)
+			continue
+		}
+		if !reflect.DeepEqual(dec.Windows, v.windows) {
+			t.Errorf("%s: window check %+v, want %+v", v.name, dec.Windows, v.windows)
+		}
+		if _, ok := d.Admit(); ok != (v.pass == "") {
+			t.Errorf("%s: Admit %v with pass %q", v.name, ok, d.Pass)
+		}
+	}
+	for _, mode := range []string{"", routingsnapshot.KeyWindowsAlert, routingsnapshot.KeyWindowsEnforce} {
+		for _, v := range []struct {
+			name   string
+			fields map[string]any
+			want   string
+		}{
+			{"cap", map[string]any{"limit_microdollars": 5, "limit_daily_microdollars": 5}, PassKeyCap},
+			{"cap, alert only", map[string]any{"limit_microdollars": 5, "limit_daily_microdollars": 5,
+				"budget_alert_only": true}, PassKeyCap},
+			{"shape", map[string]any{"limit_daily_microdollars": 5.5}, PassKeyShape},
+		} {
+			if d := Decide(windowedInputs(t, v.fields, mode)); d.Pass != v.want || d.ForShadow() != nil {
+				t.Errorf("%s under %q: passed %q (decision %v), want %q", v.name, mode, d.Pass, d.ForShadow() != nil,
+					v.want)
+			}
+		}
+	}
+}
+
+// TestAnUncoveredWindowedKeyKeepsItsReason: while the mode does not cover a
+// windowed key, any gate after the key's facts passes it with its window
+// reason, as when its windows kept it out of the cohort (behaviour under
+// off is today's); once covered, the gate's own reason shows. A strict
+// windowed key is key.key_window under off, key.budget_strict once covered.
+func TestAnUncoveredWindowedKeyKeepsItsReason(t *testing.T) {
+	enforcing := map[string]any{"limit_daily_microdollars": 5000}
+	strict := map[string]any{"limit_daily_microdollars": 5000, "budget_strict": true}
+	strictAlert := map[string]any{"limit_daily_microdollars": 5000, "budget_strict": true, "budget_alert_only": true}
+	paused := func(r *gwstate.Read) { r.CreditState.Paused = true }
+	for _, v := range []struct {
+		name   string
+		fields map[string]any
+		mode   string
+		change func(*gwstate.Read)
+		want   string
+	}{
+		{"paused, off", enforcing, "", paused, PassKeyWindow},
+		{"paused, alert", enforcing, routingsnapshot.KeyWindowsAlert, paused, PassKeyWindow},
+		{"paused, enforce", enforcing, routingsnapshot.KeyWindowsEnforce, paused, PassWorkspacePaused},
+		{"stale credit, off", enforcing, "", func(r *gwstate.Read) { r.Credit = gwstate.Stale }, PassKeyWindow},
+		{"stale credit, enforce", enforcing, routingsnapshot.KeyWindowsEnforce,
+			func(r *gwstate.Read) { r.Credit = gwstate.Stale }, PassCacheWorkspace},
+		{"strict, off", strict, "", nil, PassKeyWindow},
+		{"strict, alert", strict, routingsnapshot.KeyWindowsAlert, nil, PassKeyWindow},
+		{"strict, enforce", strict, routingsnapshot.KeyWindowsEnforce, nil, PassKeyBudgetStrict},
+		{"strict alert only, off", strictAlert, "", nil, PassKeyWindowAlert},
+		{"strict alert only, alert", strictAlert, routingsnapshot.KeyWindowsAlert, nil, PassKeyBudgetStrict},
+		// Before the windows' place in the order, the earlier reason shows.
+		{"disabled, off", map[string]any{"limit_daily_microdollars": 5000, "disabled": true}, "", nil,
+			PassKeyDisabled},
+	} {
+		in := windowedInputs(t, v.fields, v.mode)
+		if v.change != nil {
+			in = withRead(t, in, v.change)
+		}
+		if d := Decide(in); d.Pass != v.want || d.ForShadow() != nil {
+			t.Errorf("%s: passed %q (decision %v), want %q", v.name, d.Pass, d.ForShadow() != nil, v.want)
+		}
+	}
+	// The decide row off: the window gate is first among the decision gates.
+	in := windowedInputs(t, enforcing, "")
+	in.Decide = DecideView{}
+	if d := Decide(in); d.Pass != PassKeyWindow || d.ForShadow() == nil {
+		t.Errorf("decide copy stale: passed %q", d.Pass)
+	}
+	in = windowedInputs(t, enforcing, routingsnapshot.KeyWindowsEnforce)
+	in.Decide = DecideView{}
+	if d := Decide(in); d.Pass != PassCacheDecide || d.ForShadow() == nil {
+		t.Errorf("decide copy stale, enforce: passed %q", d.Pass)
 	}
 }
 

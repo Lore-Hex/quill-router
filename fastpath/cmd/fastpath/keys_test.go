@@ -346,3 +346,29 @@ func TestTheNodeChecksItsEnvironmentBeforeAnything(t *testing.T) {
 		}
 	}
 }
+
+// TestADeafSecretReadEnds: a secret read whose answer never comes ends at
+// secretDeadline with an error, so the start fails and systemd restarts it.
+func TestADeafSecretReadEnds(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(release) })
+	old := secretDeadline
+	secretDeadline = 50 * time.Millisecond
+	t.Cleanup(func() { secretDeadline = old })
+	opts := []option.ClientOption{option.WithEndpoint(srv.URL + "/"), option.WithHTTPClient(srv.Client())}
+	began := time.Now()
+	_, err := readSecret(context.Background(), "projects/p/secrets/key/versions/1", opts...)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("a deaf read: %v", err)
+	}
+	if took := time.Since(began); took > 5*time.Second {
+		t.Fatalf("a deaf read took %v", took)
+	}
+}

@@ -54,14 +54,13 @@ def test_incumbent_uses_only_recent_accepted_publication(monkeypatch, gap):
     next_job = advance(svc, wall, mono, job.slot+gap)
     before = svc.store.database.snapshot_execute_sql_calls
     svc.submit_publisher(next_job.slot, wall[0])
-    # An older accepted publication needs authoritative storage reconciliation
-    # before renewal; its age is still inside the three-slot holder window.
+    # The third slot is still the holder's recovery turn: all K slots use the
+    # won-claim transaction fence without spending two extra preflight reads.
     trace = outcome(svc, next_job, "published")
     assert len(waits) == 1
     # Incumbents issue only the observation snapshot, with no claim snapshot.
-    assert svc.store.database.snapshot_execute_sql_calls-before == (1 if gap <= 2 else 3)
-    if gap <= 2:
-        assert trace["claim_at_ns"] == next_job.slot*m.SLOT_US*1000
+    assert svc.store.database.snapshot_execute_sql_calls-before == 1
+    assert trace["claim_at_ns"] == next_job.slot*m.SLOT_US*1000
 
 
 def test_follower_committed_claim_is_one_measured_snapshot(sdk_database, monkeypatch):  # noqa: F811

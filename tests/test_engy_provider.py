@@ -187,12 +187,14 @@ def test_engy_fetch_fails_closed_without_key(monkeypatch: pytest.MonkeyPatch) ->
         engy.fetch()
 
 
-def test_engy_is_prepaid_zdr_but_not_confidential_or_byok() -> None:
+def test_engy_is_not_zdr_without_verified_worker_restriction() -> None:
     provider = PROVIDERS["engy"]
     assert provider.supports_prepaid is True
     assert provider.supports_byok is False
-    assert provider.stores_content is False
-    assert provider.provider_zero_data_retention is True
+    assert provider.stores_content is True
+    assert provider.provider_zero_data_retention is False
+    assert "provider.zdr=true" in provider.provider_policy
+    assert "independently operated workers" in provider.provider_policy
     assert provider.provider_confidential_compute is False
     assert provider.provider_e2ee is False
     assert OPENAI_COMPATIBLE_PROVIDERS["engy"] == (

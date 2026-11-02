@@ -144,10 +144,15 @@ PROVIDER_JURISDICTION_SG = "SG"
 # starts where this one stopped instead of repeating it. Keys must be provider
 # slugs whose provider_headquarters_country is None.
 PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
+    "maple": (
+        "Checked maple.ai/privacy and maple.ai/terms on 2026-10-28. They name "
+        "Maple Privacy Labs Inc.; the pilot has not established the contracting "
+        "entity's headquarters or inference residency. No country-filter claim."
+    ),
     "hixtube": (
         "Checked the operator's Neocloud-in-a-Box repository and pilot runbook. "
         "The Hixtube brand and separate hosting project are defined, but the "
-        "contracting legal entity is not yet declared. A planned US VM location "
+        "contracting legal entity is not yet declared. The Finland GPU location "
         "does not establish headquarters; excluded from corporate jurisdiction filters."
     ),
     "fortanix": (
@@ -599,8 +604,13 @@ PROVIDERS: dict[str, Provider] = {
             "Contracted Zero Data Retention is active for TrustedRouter's managed "
             "OpenAI account, effective July 28, 2026, and live enforcement was "
             "verified on July 29, 2026. This guarantee applies only to "
-            "TrustedRouter-funded routes; customer BYOK credentials use the "
-            "data controls on the customer's own OpenAI organization or project."
+            "reviewed TrustedRouter-funded routes; customer BYOK credentials use the "
+            "data controls on the customer's own OpenAI organization or project. "
+            "The organization and Default project were rechecked on October 28, 2026: "
+            "ordinary ZDR, not Private Safety Processing (PSP). PSP retains encrypted "
+            "safety records and never qualifies for TrustedRouter's strict ZDR filter. "
+            "Models with persistent cache state are also excluded from strict ZDR. "
+            "New models do not automatically inherit ZDR approval."
         ),
         provider_policy_url=(
             "https://developers.openai.com/api/docs/guides/your-data"
@@ -632,8 +642,14 @@ PROVIDERS: dict[str, Provider] = {
         prepaid_zero_data_retention_effective_on="2026-07-28",
         provider_policy=(
             "TrustedRouter's managed Vertex AI account is covered by contractual "
-            "Zero Data Retention. This guarantee applies only to TrustedRouter-funded "
-            "routes. TrustedRouter does not invoke Google Search or Maps "
+            "Zero Data Retention, but eligibility is reviewed per model and feature. "
+            "Durable caching was disabled on October 29, 2026 and memory-only caching "
+            "verified in four regions. Affected Gemini routes remain excluded from "
+            "strict ZDR pending prior data expiration and model-specific review. "
+            "Safety-retention and unreviewed "
+            "routes are also excluded, even when described upstream as ZDR-aligned. "
+            "This guarantee applies only to reviewed TrustedRouter-funded routes. "
+            "TrustedRouter does not invoke Google Search or Maps "
             "grounding or Gemini Live session resumption on these routes. Google AI "
             "Studio is classified separately."
         ),
@@ -1109,9 +1125,11 @@ PROVIDERS: dict[str, Provider] = {
         name="Makora",
         supports_prepaid=True,
         provider_policy=(
-            "No provider-ZDR claim is tracked here. Makora's inference and "
-            "privacy documentation are linked for users who need to review API "
-            "data handling."
+            "Makora's Developer Pro and pay-as-you-go tiers advertise ZDR, but "
+            "permit encrypted on-host SSD caches with no fixed deletion deadline "
+            "and retention of flagged content for safety investigations. Starter "
+            "and Developer tiers retain content for 30 days. No training on any "
+            "tier. These routes remain excluded from strict ZDR."
         ),
         provider_policy_url="https://www.makora.com/privacy-policy",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
@@ -1150,10 +1168,13 @@ PROVIDERS: dict[str, Provider] = {
         supports_prepaid=True,
         supports_byok=False,
         provider_policy=(
-            "No provider-ZDR claim is tracked here. Cloudflare's Workers AI "
-            "documentation is linked for model and data-handling review."
+            "Workers AI documents no input/output retention after ordinary "
+            "stateless inference and no model training. Stateful features, "
+            "customer-enabled logging/caching, and safety, security or legal "
+            "exceptions may retain content. No exception-free commitment is "
+            "verified for this account; these routes remain outside strict ZDR."
         ),
-        provider_policy_url="https://developers.cloudflare.com/workers-ai/",
+        provider_policy_url="https://developers.cloudflare.com/workers-ai/platform/data-usage/",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     "inceptron": Provider(
@@ -1232,16 +1253,18 @@ PROVIDERS: dict[str, Provider] = {
         name="Engy",
         supports_prepaid=True,
         supports_byok=False,
-        stores_content=False,
-        provider_zero_data_retention=True,
+        stores_content=True,
+        provider_zero_data_retention=False,
         provider_confidential_compute=False,
         provider_e2ee=False,
         provider_policy=(
-            "Engy states that prompts, outputs, tool arguments, images, and "
-            "embeddings are not stored or used for training. It retains "
-            "request metadata such as model, token counts, cost, and latency. "
-            "Engy's verified-inference sampling is not a user-verifiable TEE "
-            "attestation, so this route is ZDR but not confidential or E2EE."
+            "Engy's October 21 policy distinguishes its no-content-logging "
+            "gateway from independent GPU workers. End-to-end ZDR requires "
+            "provider.zdr=true or a verified account/key setting; TrustedRouter "
+            "has not verified that setting for this route. Requests without it "
+            "may reach independently operated workers. Integrity audits may "
+            "retain output token IDs on qwen3.6-35b-a3b for 30 days. These routes "
+            "are not strict ZDR, confidential inference or verified E2EE."
         ),
         provider_policy_url="https://engy.ai/privacy",
         # No country recorded: see PROVIDER_JURISDICTION_UNVERIFIED["engy"].
@@ -1744,12 +1767,17 @@ PROVIDERS: dict[str, Provider] = {
         name="Sail Research",
         supports_prepaid=True,
         supports_byok=False,
+        stores_content=False,
+        provider_zero_data_retention=True,
         provider_policy=(
-            "No contractual zero-retention, confidential-compute, or E2EE claim "
-            "is tracked for TrustedRouter's Sail Research account. This route is "
-            "Standard."
+            "Sail's public DPA and security documentation provide default ZDR "
+            "for inference: Sail and its subprocessors process prompts and "
+            "outputs ephemerally in memory, without persistent storage or "
+            "training absent written consent. Files API uploads and stateful "
+            "Sailboxes are excluded. This is policy-backed ZDR, not verified "
+            "confidential compute or E2EE."
         ),
-        provider_policy_url="https://docs.sailresearch.com/",
+        provider_policy_url="https://docs.sailresearch.com/security",
     ),
     "perplexity": Provider(
         slug="perplexity",
@@ -1885,10 +1913,12 @@ PROVIDERS: dict[str, Provider] = {
         supports_prepaid=True,
         supports_byok=False,
         provider_policy=(
-            "No contractual zero-retention, confidential-compute, or E2EE claim "
-            "is tracked for TrustedRouter's Arcee account. This route is Standard."
+            "Arcee's July 24 privacy policy permits collection of inputs and "
+            "outputs to provide and improve its services. No route-specific "
+            "ZDR exception is verified for TrustedRouter's account. These "
+            "routes remain Standard, not confidential compute or E2EE."
         ),
-        provider_policy_url="https://docs.arcee.ai/",
+        provider_policy_url="https://www.arcee.ai/privacy-policy",
     ),
     "perceptron": Provider(
         slug="perceptron",
@@ -2022,10 +2052,12 @@ PROVIDERS: dict[str, Provider] = {
         slug="boundless", name="Boundless", supports_prepaid=True, supports_byok=False,
         provider_headquarters_country="US",
         provider_policy=(
-            "Boundless advertises no prompt/output retention or training. Its legal terms "
-            "permit retention needed to provide, secure, improve or maintain the service "
-            "and do not warrant third-party infrastructure retention practices. These "
-            "routes remain Standard, not ZDR, confidential compute or E2EE."
+            "Boundless's October 27 terms prohibit persistent input/output storage "
+            "after real-time processing, while retaining content-free request "
+            "records for up to 90 days. The terms still disclaim third-party "
+            "infrastructure practices; an equivalent downstream retention "
+            "commitment is not verified. Routes remain outside strict ZDR, "
+            "confidential compute and E2EE."
         ),
         provider_policy_url="https://inference.boundless.network/terms",
     ),
@@ -2054,17 +2086,20 @@ PROVIDERS: dict[str, Provider] = {
     ),
     "hixtube": Provider(
         slug="hixtube", name="Hixtube", supports_prepaid=True, supports_byok=False,
-        provider_zero_data_retention=False, provider_confidential_compute=False,
+        stores_content=False, provider_zero_data_retention=True, provider_confidential_compute=False,
         provider_e2ee=False,
         provider_policy=(
-            "Hixtube is an independently hosted integration pilot using the Apache-2.0 "
-            "Neocloud-in-a-Box toolkit. Its ordinary inference routes use standard "
-            "TLS, not verified confidential computing or provider-side E2EE. "
+            "Hixtube commits to no persistent storage of prompts, outputs or tool content "
+            "and no training on customer content. Content-free operational and billing "
+            "metadata remain. Prefix/KV caches can remain in volatile memory until eviction "
+            "or shutdown; ZDR does not mean immediate per-request memory erasure. "
+            "The current inference node is hosted by Verda in Finland through Spheron. "
+            "Standard TLS, not verified confidential computing or provider-side E2EE; "
+            "the infrastructure operator can access workload memory. "
             "Checkpoint identity, context limits and retirement are declared per route; "
-            "high availability has not been established. "
-            "Routes are published only after authenticated catalog and inference checks."
+            "high availability has not been established."
         ),
-        provider_policy_url="https://github.com/Lore-Hex/token-exchange-neocloud-in-a-box",
+        provider_policy_url="https://hixtube.com/privacy.html",
     ),
     "coralbricks": Provider(
         slug="coralbricks", name="CoralBricks", supports_prepaid=True, supports_byok=False,
@@ -2196,13 +2231,16 @@ PROVIDERS: dict[str, Provider] = {
         name="Featherless AI",
         supports_prepaid=True,
         supports_byok=False,
+        stores_content=False,
+        provider_zero_data_retention=True,
         provider_policy=(
-            "Featherless routes are limited to chat models explicitly available "
-            "on TrustedRouter's current plan with exact prices in Featherless's "
-            "authenticated catalog. No contractual ZDR, confidential-compute, or "
-            "E2EE claim is tracked for this account, so these routes are Standard."
+            "Featherless's published privacy policy states that prompts and "
+            "completions are neither collected nor stored. Account, payment and "
+            "usage metadata, including token counts and sampler settings, may "
+            "be retained. This is policy-backed ZDR, not verified confidential "
+            "compute or E2EE."
         ),
-        provider_policy_url="https://docs.featherless.ai/",
+        provider_policy_url="https://featherless.ai/legal/privacy-policy",
         # Featherless's terms identify the API operator as a Delaware LLC.
         # https://featherless.ai/legal/terms-of-service
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
@@ -2432,10 +2470,32 @@ PROVIDERS: dict[str, Provider] = {
         provider_confidential_compute=False,
         provider_e2ee=False,
     ),
+    "maple": Provider(
+        slug="maple",
+        name="Maple",
+        supports_prepaid=True,
+        supports_byok=False,
+        stores_content=False,
+        prepaid_zero_data_retention=True,
+        provider_confidential_compute=True,
+        provider_e2ee=True,
+        provider_policy=(
+            "The managed uncensored DeepSeek route uses Maple Transport V2 from "
+            "inside TrustedRouter's measured enclave. Each request verifies a "
+            "pinned Nitro image, which enforces the reviewed dedicated GPU worker "
+            "and immutable model weights. Unexpected measurements fail closed; "
+            "there is no plaintext fallback. API prompt/response zero retention "
+            "was confirmed for TrustedRouter's account on October 28, 2026. "
+            "Account and billing metadata are separate from prompt/response content. "
+            "These guarantees do not cover Maple saved chats, other models or BYOK."
+        ),
+        provider_policy_url="https://maple.ai/privacy",
+    ),
 }
 
 GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
     {
+        "maple",
         "fortanix",
         "byteplus",
         "abliterate",
@@ -2600,7 +2660,6 @@ TIER_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
     ),
     ADVANCED_MODEL_ID: (
         "moonshotai/kimi-k3",
-        "z-ai/glm-5.3",
         "anthropic/claude-opus-5",
         "openai/gpt-6-sol",
         "anthropic/claude-fable-5",
@@ -4058,6 +4117,17 @@ _MODEL_ORIGIN_INDEPENDENT_SAO10K = ModelOrigin(
 MODEL_ORIGINS: dict[str, ModelOrigin] = {
     # --- United States ---
     "trustedrouter": _MODEL_ORIGIN_US_TRUSTEDROUTER,
+    "reflection": ModelOrigin(
+        country=PROVIDER_JURISDICTION_US,
+        lab_name="Reflection AI",
+        source_url="https://reflection.ai/legal/privacy-policy",
+        note=(
+            "Reflection AI, Inc.'s August 28, 2026 privacy policy lists its "
+            "contact address in New York. Its first-party Beam announcement "
+            "(https://reflection.ai/blog/introducing-beam) identifies the lab "
+            "as the model's developer. This describes the developer, not inference residency."
+        ),
+    ),
     "inception": ModelOrigin(
         country=PROVIDER_JURISDICTION_US,
         lab_name="Inception Labs",
@@ -4339,6 +4409,19 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
         ),
     ),
     # --- No single creator country ---
+    "decision-models": ModelOrigin(
+        country=None,
+        lab_name="Baseten / Base Labs decision-model namespace",
+        source_url="https://www.baseten.co/blog/decisions-for-a-penny-introducing-joey-1/",
+        note=(
+            "Baseten's October 29 announcement identifies Base Labs as the "
+            "post-training team for joey-1, elephant-1, and mammoth-1, built "
+            "from Qwen3.5 weights. This API namespace does not establish a "
+            "single origin country for the underlying weights and post-training. "
+            "It is distinct from the decisionmodelsio serving namespace; "
+            "neither provider jurisdiction is inferred as model origin."
+        ),
+    ),
     "sao10k": _MODEL_ORIGIN_INDEPENDENT_SAO10K,
     "Sao10K": _MODEL_ORIGIN_INDEPENDENT_SAO10K,
     "abliteration": ModelOrigin(

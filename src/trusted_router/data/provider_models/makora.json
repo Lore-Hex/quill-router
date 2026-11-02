@@ -3,9 +3,9 @@
   "provider": "makora",
   "source": "https://inference.makora.com/v1/models",
   "pricing_source": "https://inference.makora.com/v1/models",
-  "generated_at": "2026-10-26T06:59:20Z",
+  "generated_at": "2026-11-01T19:12:14Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 20,
+  "model_count": 21,
   "models": [
     {
       "id": "deepseek/deepseek-v4-flash",
@@ -483,9 +483,9 @@
         "seed",
         "max_tokens"
       ],
-      "input_token_price_per_m": 650000,
-      "output_token_price_per_m": 15000000,
-      "cached_input_token_price_per_m": 230000
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 13000000,
+      "cached_input_token_price_per_m": 200000
     },
     {
       "id": "z-ai/glm-5.3-flash",
@@ -566,7 +566,7 @@
         "seed"
       ],
       "input_token_price_per_m": 140000,
-      "output_token_price_per_m": 4400000,
+      "output_token_price_per_m": 3000000,
       "cached_input_token_price_per_m": 100000
     },
     {
@@ -691,7 +691,7 @@
         "seed",
         "max_tokens"
       ],
-      "input_token_price_per_m": 130000,
+      "input_token_price_per_m": 110000,
       "output_token_price_per_m": 280000,
       "cached_input_token_price_per_m": 2000
     },
@@ -814,6 +814,26 @@
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 1200000,
       "cached_input_token_price_per_m": 6000
+    },
+    {
+      "display_name": "Cloudflare/clef-flash",
+      "title": "Cloudflare/clef-flash",
+      "model_type": "discovery",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [],
+      "endpoints": [],
+      "status": 1,
+      "id": "cloudflare/clef-flash",
+      "upstream_id": "Cloudflare/clef-flash",
+      "routable": false,
+      "routable_reason": "unsupported-chat-endpoint",
+      "context_length": 16384,
+      "input_token_price_per_m": 18000,
+      "output_token_price_per_m": 0,
+      "cached_input_token_price_per_m": 0
     }
   ]
 }

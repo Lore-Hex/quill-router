@@ -144,6 +144,22 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
         description="Formerly System1 Models. Models use the decisionmodelsio-eu namespace. The EU route remains EU-only.",
     ),
     "privatemode": ProviderBrand("https://www.privatemode.ai/"),
+    "maple": ProviderBrand(
+        "https://maple.ai/",
+        description=(
+            "Encrypted inference using Maple Transport V2 inside TrustedRouter's "
+            "measured gateway. The dedicated uncensored DeepSeek checkpoint is "
+            "separate from stock DeepSeek."
+        ),
+        resources=(
+            ("API documentation", "https://maple.ai/docs/proxy/api"),
+            ("Models", "https://maple.ai/docs/proxy/models"),
+            ("Pricing", "https://maple.ai/pricing"),
+            ("Privacy policy", "https://maple.ai/privacy"),
+            ("Service status", "https://maple.ai/status"),
+            ("Reviewed dedicated workload", "https://github.com/MaplePrivacyLabs/inference-deepseek-uncensored/tree/76a8e5fdaa7dbade1640025829ba0bfeae7a3495"),
+        ),
+    ),
     "upstage": ProviderBrand("https://www.upstage.ai/"),
     "alibaba": ProviderBrand("https://www.alibabacloud.com/"),
     "anthropic": ProviderBrand("https://www.anthropic.com/"),

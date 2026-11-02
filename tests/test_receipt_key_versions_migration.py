@@ -589,7 +589,7 @@ def test_receipt_version_index_ddl_is_exact_for_postgres_and_dsql() -> None:
 
 
 def test_deploy_applies_receipt_version_schema_before_router_rollout() -> None:
-    workflow = (ROOT / ".github/workflows/deploy.yml").read_text()
+    workflow = (ROOT / ".github/workflows/deploy-production.yml").read_text()
     migrate = workflow.index("scripts/deploy/migrate_receipt_key_versions.sh")
     backfill = workflow.index("python -m trusted_router.receipt_key_backfill_cli")
     deploy = workflow.index("\n  deploy:\n")

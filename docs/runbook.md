@@ -367,19 +367,10 @@ cloud, without changing it:
 bash scripts/deploy/deploy_mutex.sh status
 ```
 
-Break glass only after running `status`, checking that the recorded owner is no
-longer active, and confirming that no GitHub Actions or manual production deploy
-is still running. Use the generation printed by `status`; the precondition keeps
-this command from deleting a replacement lock acquired after the inspection:
-
-```bash
-gcloud storage rm \
-  gs://tr-deploy-mutex-quill-cloud-proxy/locks/trusted-router-production.json \
-  --if-generation-match=GENERATION
-```
-
-Normal recovery does not require manual removal: locks expire after 90 minutes,
-and the next acquirer can take over an expired generation safely.
+For a retained reservation, follow the [coordinator recovery procedure](design/two-cloud-rollouts.md#recovery).
+Verify the exact owner has stopped, outstanding cloud operations have completed,
+and cloud health has been checked before explicit recovery. Do not delete the
+coordinator object or rely on elapsed time to release it.
 
 In deploy workflow status, **deployed** now means the primary is live: all four
 regional revisions are warm, and `us-central1` has completed its 10/50/100 ramp
@@ -807,6 +798,203 @@ build (`a31daa4`) one pass read a flat ~309 MB, about 287 ReadDPU per minute
 against a baseline of 6.
 
 ## <a id="settle-outbox"></a>Settle outbox: flip, verify, monitor, roll back
+
+### Dedicated warm worker (GCP release companion)
+
+Every GCP production release runs `settle-drain-worker` in
+`.github/workflows/deploy-production.yml` after `rollout-secondaries` succeeds.
+It invokes `scripts/deploy/settle_drain_worker.sh` under the parent's
+`TR_DEPLOY_MUTEX_OPERATION`; finalization waits for the worker as well as the
+other release jobs. A `TR_DEPLOY_HOLD_REGIONS` hold covering `us-central1` or
+`all` logs `held: settle-drain worker not deployed` and exits successfully before
+any cloud call. With a healthy parent, finalization can then release the reservation.
+
+The script requires the inherited GCP lease, checks the bake gate, and uses the
+**serving router revision's image and service account**. Normally it requires
+successful CI for that exact source commit. Only the same release's reviewed
+`hotfix=true` workflow input skips that CI check, with the parent's hotfix warning;
+lease, bake, image/source validation and post-deploy verification still run.
+A real worker deployment or verification failure retains the parent's GCP
+reservation. Follow the [coordinator recovery procedure](design/two-cloud-rollouts.md#recovery)
+for that case; no independent lease is acquired or released.
+
+The service `trusted-router-settle-drain` runs `TR_SERVICE_SURFACE=settle-drain`
+in **us-central1**, with min=max=1, always-allocated 1 CPU and 2 GiB memory.
+The only HTTP route is `GET /health`, used by startup/liveness probes, with
+internal ingress and no unauthenticated invoker. Direct VPC egress uses the
+router's `TR_CLOUD_RUN_NETWORK` / `TR_CLOUD_RUN_SUBNET` (default `default`)
+and `private-ranges-only`, so fastpath-envelope retries can reach private
+front doors. Image, runtime identity, exact env/secret bindings, absence of
+volumes and invoker IAM are checked after each deploy.
+
+First deployment enables fast drain on this service. Router fast drain,
+async admission and protection stay **false**; fresh fleet health alone cannot
+open admission. The worker drains NULL-version retry rows and publishes fleet-v1.
+Keep the five-minute legacy scheduler and existing shadow-v2 router pins.
+
+An enabled worker can be replaced directly. During revision overlap, row claims
+remain conditional on lease expiry; reservation first-writer claims prevent a
+second money apply, health writes reject an older observation, and the shared
+publish cadence admits one winner per interval. Service min=max=1 remains the
+steady-state limit; a brief old/new overlap does not require stopping the worker.
+
+Worker-only pins (prefix `TR_SETTLE_OUTBOX_`):
+
+| Setting | Value |
+| --- | ---: |
+| `FAST_DRAIN_ENABLED` | `true` |
+| `POLL_INTERVAL_SECONDS` | `1` |
+| `PASS_BUDGET_SECONDS` | `2` |
+| `LEASE_SECONDS` | `30` |
+| `WORKER_CONCURRENCY` | `4` |
+| `CLAIM_BATCH` | `4` |
+| `HEALTH_PUBLISH_INTERVAL_SECONDS` | `1` |
+| `STALL_SECONDS` | `26` |
+
+Use the router's Spanner database/service account, protection=true, settle
+outbox enabled, typed/generation records and both durable analytics outboxes,
+with operational sink=outbox. The sole application secret is `TR_SENTRY_DSN`,
+using the router's Secret Manager binding. No gateway/provider/payment/signing
+or ClickHouse credentials are mounted. No analytics drains, auto-refill,
+shadows, startup harness, routing/edge publishers or synthetic starters run.
+**No purge or reaping runs on the worker.** The legacy scheduler retains its
+existing purge and limit-200 reaper, once per pass.
+
+Completed scan/apply units service due publication of
+`settle_drain_control / fleet-v1`. The existing bounded snapshot includes all
+unresolved versions, leased and dead rows; its ages/completeness remain honest.
+A busy pass can publish at completed slots. There is no timer heartbeat and no
+publication from failed claims. If useful drain progress stops, evidence ages
+out and new admission closes at five seconds. Local timers suppress not-due
+cadence transactions. The worker drains both NULL and async versions: an open
+reservation blocked by an accepted async sibling parks under protection; once
+terminal, the NULL row has the same outcome/alert/state as an ordinary loser.
+
+Liveness uses completed units and the existing **local** Spanner RPC counters.
+RPC starts only refresh process liveness; they never publish fleet health.
+An apply can span multiple transactions, so these counters distinguish useful
+I/O from a wedged unit. The existing per-RPC cap is 20 s; retry backoff is at
+most 4 s, cleanup at most 2 s, and a leased front-door call between Spanner RPCs
+is bounded to 5 s (normally 1.5 s). The 26 s minimum allows the longest 20+5 s
+gap plus one second scheduling margin. No money RPC bound or priority changes.
+A monitor checks every 0.1 s; at `STALL_SECONDS` without local progress it dumps
+all thread stacks (no locals) and calls `os._exit(70)`. `/health` uses the same
+threshold. Caught fast failures stay live, never refresh fleet evidence, and do
+not cause restart storms. Persistent blocking can still cause repeated exits.
+The dump uses the shared `stall_dump_fd` helper: on Cloud Run's Linux /proc,
+its separate nonblocking stderr descriptor cannot wait on a full logging pipe.
+It never cancels or re-arms the listener's faulthandler timer. The worker deployment
+also pins `TR_LOOP_STALL_EXIT_SECONDS=30` because CPU stays allocated:
+that C watchdog covers an event-loop/GIL wedge even when the drain's Python
+monitor cannot run. Only the listener owns the process-wide delayed timer.
+
+Crash/wedge arithmetic, measured from a claim immediately followed by failure:
+`max(30, 26.1 + E + R) + 1 + 0.8 + A` seconds, where E is stack-dump/exit
+time, R is measured replacement startup and A is claim/apply/resolve time.
+Lease expiry runs concurrently with detection/startup, not afterward. With
+illustrative E≤1, R=10 and A=5 this is **43.9 s**; these are acceptance-budget
+placeholders, not measurements. With those A/E values, startup must be under
+about 26 s to fit 60. Ordinary process death omits the 26.1 s detection term.
+If a GIL wedge prevents the Python monitor running, use the listener's 30 s
+threshold in place of 26.1 s: the same illustrative budgets total **47.8 s**.
+Late stalls add time already spent since acceptance. Outages, large backlogs,
+park retries and OS scheduling cannot prove a universal 60 s bound. E≤1 s is
+an operational budget to verify, not a hard real-time guarantee: nonblocking
+writes remove the unbounded stderr-backpressure wait, but do not bound CPU
+scheduling. On platforms without /proc the shared helper retains #2145's logged
+blocking fallback, so that budget does not apply. Measure exit and cold start
+and verify the nonblocking descriptor in the Linux image before rollout;
+if the measured sum fails, the smallest timing change is shortening replacement
+startup (or a separately reviewed tighter RPC budget to lower STALL), not
+lengthening leases or weakening fencing.
+
+Legacy bulk candidate SQL adds `AND async_version IS NULL` **before** its
+`LIMIT @limit` (`2 * caller_limit`, at most 1000), retaining
+`FORCE_INDEX=tr_settle_outbox_due_v2`, sparse predicates and ordering. An async
+prefix can no longer hide NULL-version candidates. Bulk leases remain 300 s.
+After the NULL-row loop, a bounded recovery phase uses the pass's remaining
+240 s budget. It scans the 16 shards with the same low-priority, no-retry,
+200 ms, limit-2 query mechanics, restricted to async versions. It reads
+`settle_drain_control / fleet-v1` by complete primary key only when needed.
+Ownership is fresh only if strict parsing succeeds and **both** observation
+and heartbeat ages satisfy `0 <= age < 5`; p95 and completeness are not part of
+ownership. Missing/invalid/unreadable/future/stale health permits recovery.
+Each recovery claim takes at most one row, with `min(configured lease, 30 s)`,
+and immediately applies it before another claim. It never publishes health.
+Protection off leaves async rows untouched and logs only a bounded due count.
+
+For a worker that stays absent, last-resort recovery is one watchdog interval
+(300 s) plus at most one short lease (30 s) plus apply time, provided the row
+fits the pass's remaining budget/capacity. The 60 s objective applies to the
+healthy worker and crash reclaim, not the five-minute backup. An arbitrarily
+large backlog or a pass whose NULL work consumes its budget can require more
+watchdog passes; alert on accepted-row age rather than claiming a hard bound.
+
+Idle worker upper rates, excluding session/retry overhead: **16 read-only
+shard queries/s + 1 unresolved snapshot scan/s + 1 health-cadence transaction/s
++ 1 fleet-publish transaction/s**. No housekeeping cadence transaction. The
+watchdog adds at most **16** bounded read-only recovery queries per idle pass
+(16/300 = **0.0533/s**), no health read or new writes when empty. Existing
+NULL candidate/reaper operations remain. SQL limits bound returned rows;
+version filtering on the existing due index does not promise a physical scan
+bound under an arbitrarily large version-skewed backlog. Keep the 45% CPU alarm.
+
+Worker handlers replace non-worker records with logger, severity and exception
+class only, removing message, args, exception/stack text and every extra field.
+Worker events contain fixed codes, aggregate counts and exception classes.
+Other surfaces retain their logging. Direct `ops_alert` pages reach the same
+Sentry destination with the existing allowlisted alarm fingerprints, but no raw
+message, customer tags, breadcrumbs or exception data. Idle logs are a minute
+summary; fleet snapshots are DEBUG. Confirm a test money alert reaches paging
+before enabling admission.
+
+The config-as-code off switch is the single
+`"TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED": "true"` pin in
+`scripts/deploy/settle_drain_config.py`. Change it to `"false"` and release to
+keep the service deployed, idle and healthy. No other pin needs to change.
+A normal stop should disable async admission first if it has subsequently been
+enabled and resolve accepted rows. Off logs once and initializes no Spanner
+store. SIGTERM stops new claims and joins for at most eight seconds; in-flight
+work retains its fences and abandoned claims expire normally. Never clear leases
+manually; retain the legacy watchdog.
+
+For an emergency stop, update **only** the worker service, then land the idle
+literal so the next release preserves the stop:
+
+```bash
+gcloud run services update trusted-router-settle-drain \
+  --project=quill-cloud-proxy --region=us-central1 \
+  --update-env-vars=TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED=false
+```
+
+This temporary update takes effect as the idle revision replaces the active one;
+it does not revoke in-flight work. The next release reapplies the literal, so an
+enabled literal will turn the worker back on. Confirm the serving worker has
+fast drain false and `/health` is idle, and that fleet-v1 stops refreshing.
+
+Post-deploy acceptance (before opening any async pilot):
+
+- Verify the deployed image/service account match the serving router, min=max=1
+  with one steady-state instance, always-allocated CPU, private ingress/invocation,
+  expected network/subnet/egress, probes and sole Sentry binding. Allow only brief
+  revision overlap and confirm the old revision drains away.
+- Sample fleet-v1 `observed_at` age every few seconds using complete-primary-key
+  reads; verify cadence while enabled and no publication while idle. Routers
+  must still have async admission/protection/fast drain false.
+- Verify the idle Spanner operation rate above and that existing Spanner alerts
+  stay OK; do not change the 45% CPU alarm. Check booking/outbox latency on any rows.
+- Retry one real due NULL-version fastpath-envelope row through the worker:
+  confirm it reaches its private front door, receives a terminal decision and
+  resolves durably instead of repeatedly parking as leased-undecided. Verify
+  network/firewall/IAM reachability with authorized evidence; do not add customer
+  identifiers to worker logs.
+- Confirm a test money alert reaches Sentry paging. Rehearse crash, wedge and
+  worker-absent recovery; verify Linux's nonblocking dump/exit and **measure
+  replacement-start timing**, dump/exit E and apply A against the arithmetic above.
+  Require measured p95 <=5 s and <=60 s within the declared healthy-worker/restart
+  envelope before opening admission; the documented timing examples are budgets,
+  not production measurements.
+
 
 Durably recover completed charges whose settle intent was recorded but whose
 inline settle result was lost. See `docs/design/durable-settle-outbox.md`.

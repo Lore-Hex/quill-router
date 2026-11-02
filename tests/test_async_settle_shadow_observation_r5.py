@@ -114,11 +114,12 @@ def test_every_port_method_with_each_owned_lock_held(monkeypatch, sealing):
     bucket = dict(phase="settle", dimensions=dict(adapter="openai", route_type="chat.completions", streamed=False),
                   **dict.fromkeys(COUNTS, 0), eligible_demand=1)
     bucket.update(settle_attempts=1, C=1, requested_eligible=1)
-    # All six entry points have valid inputs; no early schema rejection can
+    # All entry points have valid inputs; no early schema rejection can
     # hide a deeper acquisition. Complete_event reaches contextual validation.
     assert svc.port.complete_event(reservation, original_page, event)
     methods = {
         "call": lambda: svc.port.call(lambda: True),
+        "record_startup_unprovisioned": lambda: svc.port.record_startup_unprovisioned(NOW_US),
         "reserve": lambda: svc.port.reserve(NOW_US),
         "finalize": lambda: svc.port.finalize(reservation, event, fold_owed=True),
         "fail_fold": lambda: svc.port.fail_fold(reservation),

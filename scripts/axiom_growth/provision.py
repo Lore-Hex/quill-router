@@ -22,8 +22,7 @@ def source_filter():
     events = ' OR '.join(f'jsonPayload.event="{event}"'
                          for event in sorted(m.BROWSER_EVENTS | m.CONVERSION_EVENTS))
     return ('(resource.type="cloud_run_revision" '
-            '(resource.labels.service_name="trusted-router-public" OR '
-            'resource.labels.service_name="trusted-router") '
+            f'{m.ACQUISITION_SERVICE_FILTER} '
             f'({events})) OR ({gateway_attempts.source_filter()})')
 
 

@@ -264,6 +264,7 @@ def publication_repo(tmp_path: Path, publication_script: str) -> PublicationRepo
         "GIT_COMMITTER_EMAIL": "test@example.invalid",
         "GITHUB_RUN_ID": "42", "GITHUB_REPOSITORY": "fixture/quill-router",
         "GITHUB_SERVER_URL": "https://github.invalid", "GITHUB_API_URL": "https://api.github.invalid",
+        "GITHUB_OUTPUT": str(tmp_path / "github-output"),
         "GH_TOKEN": "offline-fixture",  # noqa: S105 -- deliberately fake credential
         "PYTHONDONTWRITEBYTECODE": "1",
     }
@@ -303,6 +304,7 @@ def publication_repo(tmp_path: Path, publication_script: str) -> PublicationRepo
 
 def assert_snapshot_published(repo: PublicationRepo, result: subprocess.CompletedProcess[str]) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
+    assert Path(repo.env["GITHUB_OUTPUT"]).read_text() == "validated=true\n"
     dispatched_sha = repo.dispatched_sha
     assert dispatched_sha != repo.base
     answers = [json.loads(event[2]) for event in repo.events if event[0] == "poll" and event[2]]
@@ -369,6 +371,8 @@ def assert_ci_completed_before_publication(
 
 
 def assert_snapshot_withheld(repo: PublicationRepo, result: subprocess.CompletedProcess[str]) -> None:
+    output = Path(repo.env["GITHUB_OUTPUT"])
+    assert not output.exists() or "validated=true" not in output.read_text()
     assert repo.dispatched_sha != repo.base
     assert repo.main == (repo.moved or repo.base), result.stdout + result.stderr
     assert not any(call[0] == "api" for call in repo.calls)
@@ -492,6 +496,7 @@ def test_publication_recomputes_when_main_moved(publication_repo: PublicationRep
 def test_publication_does_nothing_without_staged_changes(publication_repo: PublicationRepo) -> None:
     result = publication_repo.run(changed=False)
     assert result.returncode == 0, result.stdout + result.stderr
+    assert Path(publication_repo.env["GITHUB_OUTPUT"]).read_text() == "validated=true\n"
     assert publication_repo.main == publication_repo.base
     assert publication_repo.calls == []
     assert publication_repo.events == []  # Includes even no-op pushes.
@@ -709,15 +714,16 @@ def test_model_discovery_gap_alerts_without_freezing_safe_provider_updates() -> 
     assert "gap_attention=true" in coverage
     assert "tee /tmp/coverage-summary.txt" in coverage
 
-    # Speech sources hold independently of refresh.py; both summaries feed
-    # the held-price issue.
+    # Audio sources hold independently of refresh.py; all three summaries
+    # feed the held-price issue.
     refresh_step = workflow[
         workflow.index("- name: Refresh provider-direct prices (with self-heal)") :
         workflow.index("- name: Sanity-check for price spikes + record deltas")
     ]
     assert "python -m scripts.pricing.speech | tee /tmp/speech-summary.txt" in refresh_step
+    assert "python -m scripts.pricing.transcription | tee /tmp/transcription-summary.txt" in refresh_step
     held_issue = workflow[workflow.index("- name: Reconcile held-price issue") :]
-    assert "for summary in /tmp/refresh-summary.txt /tmp/speech-summary.txt; do" in held_issue
+    assert "for summary in /tmp/refresh-summary.txt /tmp/speech-summary.txt /tmp/transcription-summary.txt; do" in held_issue
     assert 'for summary in ${summaries}; do' in held_issue
     assert "sed -n '/^Held for price review/,/^$/p' \"${summary}\"" in held_issue
     alert = workflow[workflow.index(final_alert) :]

@@ -163,6 +163,20 @@ def _describe_for_agents(schema: dict[str, Any]) -> None:
     )
 
 
+def _restore_integer_bounds(published: Any, model_schema: Any) -> None:
+    """Recover exact integer bounds lost by FastAPI's float-typed OpenAPI model."""
+    if isinstance(published, dict) and isinstance(model_schema, dict):
+        if model_schema.get("type") == "integer":
+            for bound in ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"):
+                if type(model_schema.get(bound)) is int:
+                    published[bound] = model_schema[bound]
+        for key in published.keys() & model_schema.keys():
+            _restore_integer_bounds(published[key], model_schema[key])
+    elif isinstance(published, list) and isinstance(model_schema, list):
+        for public_item, model_item in zip(published, model_schema, strict=True):
+            _restore_integer_bounds(public_item, model_item)
+
+
 def build_public_schema() -> dict[str, Any]:
     # Importing trusted_router.main normally constructs its ASGI app. Isolate
     # that one import from ambient shell/.env credentials and force the memory
@@ -213,6 +227,16 @@ def build_public_schema() -> dict[str, Any]:
     _canonicalize_operation_ids(schema["paths"])
     _describe_for_agents(schema)
     _prune_components(schema)
+    from trusted_router.schemas import (
+        EarningsTransferRequest,
+        UserModelCreateRequest,
+        UserModelPatchRequest,
+    )
+
+    for model in (EarningsTransferRequest, UserModelCreateRequest, UserModelPatchRequest):
+        _restore_integer_bounds(
+            schema["components"]["schemas"][model.__name__], model.model_json_schema()
+        )
     # Prove the final graph is closed after pruning.
     components = schema.get("components", {})
     for section, name in _component_refs(schema):

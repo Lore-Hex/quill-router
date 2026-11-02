@@ -23,11 +23,10 @@ import (
 // one entry handed over twice, and lines that are not counts.
 var edgeEntries = []logEntry{
 	{"1", "tr-fastpath-5", `2026/10/24 12:00:00 fastpath edge decide shadow: snapshot=s1 policy=p1 agree_full=990 ` +
-		`differ=4 would_admit_python_refused=1 read_back=3 classes={"agree_full":990,"differ":4,"stale.key":5,` +
-		`"would_admit_python_refused.403.forbidden":1} fields={"differ.estimate_float":1,"differ.timing":3,` +
-		`"other":3,"row.idempotency_fingerprint":2} rows={"agree":40,"differ":2} decide={"decide.off":995} ` +
-		`cohort={"agree_full":990,"differ":4,"would_admit_python_refused.403.forbidden":1} ` +
-		`affinity={"affinity_cold":30,"affinity_warm":10,"differ":2}`},
+		`differ=6 would_admit_python_refused=1 read_back=3 classes={"agree_full":990,"differ":6,"stale.key":5,` +
+		`"would_admit_python_refused.403.forbidden":1} fields={"differ.affinity_warm":2,"differ.estimate_float":1,` +
+		`"differ.timing":3,"other":3,"row.idempotency_fingerprint":2} rows={"agree":40,"differ":2} ` +
+		`decide={"decide.off":997} cohort={"agree_full":990,"differ":6,"would_admit_python_refused.403.forbidden":1}`},
 	{"2", "tr-fastpath-5", `2026/10/24 12:00:00 fastpath edge decide shadow: dropped=0 evictions=1 cache_unrefreshed=0 ` +
 		`cache_dropped=0 cache_read_failures=0`},
 	{"3", "tr-fastpath-5", `2026/10/24 12:00:00 fastpath edge decide: answered=7 read_back=1 unavailable=2 refunded=1 ` +
@@ -65,7 +64,8 @@ func edgeDeps(entries []logEntry, failWith error) (deps, *[]string) {
 
 // TestTheEdgeReportSumsTheSpansLines: the span's count lines summed, each
 // entry once, with the I2 figures: agree_full over the comparable requests
-// (agree_full and differ), the requests Go would answer by class, the
+// (agree_full and differ, Python's warm re-ranks among the differs and
+// counted by name), the requests Go would answer by class, the
 // differences by field, the estimate's and the fingerprint's, the fields
 // past the line's bound,
 // would_admit_python_refused by class, the stale passes over every request
@@ -88,17 +88,16 @@ func TestTheEdgeReportSumsTheSpansLines(t *testing.T) {
 		t.Fatalf("%v: %s", err, out.Bytes())
 	}
 	g := r.I2
-	if g.Comparable != 999 || g.AgreeFull != 995 || g.AgreeFullRatio == nil || *g.AgreeFullRatio != 995.0/999 ||
-		g.CohortEligible != 1000 || !maps.Equal(g.CohortByClass, map[string]int64{"agree_full": 995, "differ": 4,
-		"would_admit_python_refused.403.forbidden": 1}) || g.FieldsOther != 3 || g.Differ != 4 || g.DifferEstimate != 1 || g.RowIdempotencyFingerprint != 2 || g.WouldAdmitPythonRefused != 1 ||
-		!maps.Equal(g.WouldAdmitByClass, map[string]int64{"403.forbidden": 1}) || g.Stale != 6 ||
-		!maps.Equal(g.StaleByCache, map[string]int64{"key": 6}) || g.Followed != 1008 || g.StaleRate == nil ||
-		*g.StaleRate != 6.0/1008 || g.Unavailable != 3 ||
+	if g.Comparable != 1001 || g.AgreeFull != 995 || g.AgreeFullRatio == nil || *g.AgreeFullRatio != 995.0/1001 ||
+		g.CohortEligible != 1002 || !maps.Equal(g.CohortByClass, map[string]int64{"agree_full": 995, "differ": 6,
+		"would_admit_python_refused.403.forbidden": 1}) || g.FieldsOther != 3 || g.Differ != 6 ||
+		g.DifferAffinityWarm != 2 || g.DifferEstimate != 1 || g.RowIdempotencyFingerprint != 2 ||
+		g.WouldAdmitPythonRefused != 1 || !maps.Equal(g.WouldAdmitByClass, map[string]int64{"403.forbidden": 1}) ||
+		g.Stale != 6 || !maps.Equal(g.StaleByCache, map[string]int64{"key": 6}) || g.Followed != 1010 ||
+		g.StaleRate == nil || *g.StaleRate != 6.0/1010 || g.Unavailable != 3 ||
 		!maps.Equal(g.UnavailableByCode, map[string]int64{"failed_precondition": 2, "deadline_exceeded": 1}) ||
-		!maps.Equal(g.DifferByField, map[string]int64{"differ.estimate_float": 1, "differ.timing": 3, "other": 3,
-			"row.idempotency_fingerprint": 2}) ||
-		!maps.Equal(g.AffinityByClass, map[string]int64{"affinity_cold": 30, "affinity_warm": 10, "differ": 2}) ||
-		g.AffinityWarmShare == nil || *g.AffinityWarmShare != 0.25 {
+		!maps.Equal(g.DifferByField, map[string]int64{"differ.affinity_warm": 2, "differ.estimate_float": 1,
+			"differ.timing": 3, "other": 3, "row.idempotency_fingerprint": 2}) {
 		t.Fatalf("the I2 figures: %s", out.Bytes())
 	}
 	if r.Decide.Counts["answered"] != 7 || r.Decide.ByName["passed"]["owner.busy"] != 3 ||
@@ -113,6 +112,69 @@ func TestTheEdgeReportSumsTheSpansLines(t *testing.T) {
 	if !r.Since.Equal(time.Date(2026, 10, 24, 11, 0, 0, 0, time.UTC)) ||
 		!r.Until.Equal(time.Date(2026, 10, 24, 13, 0, 0, 0, time.UTC)) {
 		t.Fatalf("the span: %v to %v", r.Since, r.Until)
+	}
+}
+
+// TestTheEdgeReportPrintsTheAsyncFigures (docs/design/
+// fast-admission-e2-g15-async.md §5, §6.2): the settlement-header pass
+// share over followed, and each I3 figure as one number summed over the
+// span's lines: async_seen and its share of followed, async_compared in all
+// and by population with each population's agreement and the two daily
+// rates over the span, each async field over both populations, and
+// async_python_admitted.
+func TestTheEdgeReportPrintsTheAsyncFigures(t *testing.T) {
+	entries := []logEntry{
+		{"1", "tr-fastpath-5", `2026/10/24 12:00:00 fastpath edge decide shadow: snapshot=s1 policy=p1 agree_full=300 ` +
+			`differ=4 would_admit_python_refused=0 read_back=0 classes={"agree_full":300,"differ":4,` +
+			`"python_answered_go_passed.header.settlement_async":10,"passed.header.settlement_async":2,` +
+			`"python_answered_go_passed.async.unpublished":6} fields={} rows={} decide={"async.off":300,"decide.off":4} ` +
+			`cohort={} async_seen={"plain":40,"affinity":250,"unparsed":2} async_compared={"plain.agree":30,` +
+			`"plain.differ":1,"affinity.agree":200,"affinity.differ":2} async_fields={"plain.differ.billing_snapshot":1,` +
+			`"affinity.differ.async_shape":2} async_shape={"plain.snapshot":31,"affinity.snapshot":202} ` +
+			`async_python_admitted={"affinity":1}`},
+		{"2", "tr-fastpath-6", `2026/10/24 12:01:00 fastpath edge decide shadow: snapshot=s1 policy=p1 agree_full=9 ` +
+			`differ=0 would_admit_python_refused=0 read_back=0 classes={"agree_full":9,` +
+			`"python_answered_go_passed.async.off":1} fields={} rows={} decide={"async.off":9} cohort={} ` +
+			`async_seen={"plain":10} async_compared={"plain.agree":9} async_fields={} async_shape={"plain.snapshot":9} ` +
+			`async_python_admitted={}`},
+	}
+	d, _ := edgeDeps(entries, nil)
+	var out bytes.Buffer
+	code, err := run(context.Background(), []string{"edge", "-project", "p", "-since", "2026-10-22T13:00:00Z"}, &out, d)
+	if code != 0 || err != nil {
+		t.Fatalf("%d %v", code, err)
+	}
+	var r edgeReport
+	if err := json.Unmarshal(out.Bytes(), &r); err != nil {
+		t.Fatalf("%v: %s", err, out.Bytes())
+	}
+	is := func(p *float64, want float64) bool { return p != nil && *p == want }
+	if g := r.I2; g.Followed != 332 || g.SettlementHeaderPasses != 12 || !is(g.SettlementHeaderPassShare, 12.0/332) {
+		t.Errorf("the settlement header share: %s", out.Bytes())
+	}
+	g := r.I3
+	if g.AsyncSeen != 302 || !is(g.AsyncSeenShare, 302.0/332) || g.AsyncCompared != 242 ||
+		!is(g.AsyncComparedPerDay, 121) || g.AsyncComparedPlain != 40 || !is(g.AsyncComparedPlainPerDay, 20) ||
+		!is(g.AsyncComparedPlainAgreeRatio, 39.0/40) || g.AsyncComparedAffinity != 202 ||
+		!is(g.AsyncComparedAffinityAgreeRatio, 200.0/202) || g.AsyncBillingSnapshot != 1 || g.AsyncShape != 2 ||
+		g.AsyncBillingSnapshotHash != 0 || g.AsyncEligible != 0 || g.AsyncPythonAdmitted != 1 {
+		t.Errorf("the I3 figures: %s", out.Bytes())
+	}
+	// A release's lines before G15c carry no async maps: every I3 count is
+	// zero, and no ratio of nothing is printed.
+	d, _ = edgeDeps(edgeEntries, nil)
+	out.Reset()
+	if code, err := run(context.Background(), []string{"edge", "-project", "p", "-since", "2026-10-24T11:00:00Z"}, &out,
+		d); code != 0 || err != nil {
+		t.Fatalf("%d %v", code, err)
+	}
+	r = edgeReport{}
+	if err := json.Unmarshal(out.Bytes(), &r); err != nil {
+		t.Fatal(err)
+	}
+	if g := r.I3; g.AsyncSeen != 0 || g.AsyncCompared != 0 || g.AsyncComparedPlainAgreeRatio != nil ||
+		g.AsyncComparedAffinityAgreeRatio != nil || !is(g.AsyncSeenShare, 0) {
+		t.Errorf("before G15c: %+v", g)
 	}
 }
 
@@ -263,5 +325,40 @@ func TestTheLogReaderPagesPacesAndBacksOff(t *testing.T) {
 		if err == nil || len(f.asked) != want {
 			t.Errorf("%s: %v after %d reads, want an error after %d", name, err, len(f.asked), want)
 		}
+	}
+}
+
+// TestTheEdgeReportPrintsTheWindowRaceFigures (docs/design/
+// fast-admission-e2-key-windows.md section 8.3): the shadow's window reads,
+// its confirmed read races and their share of the reads (the gate's 0.05%),
+// and the unconfirmed candidates, summed over the span's lines; the races
+// are not would-admits, the unconfirmed not races.
+func TestTheEdgeReportPrintsTheWindowRaceFigures(t *testing.T) {
+	entries := []logEntry{
+		{"1", "tr-fastpath-5", `2026/10/24 12:00:00 fastpath edge decide shadow: snapshot=s1 policy=p1 agree_full=1990 ` +
+			`differ=0 would_admit_python_refused=1 read_back=0 classes={"agree_full":1990,` +
+			`"window_race.429.key_window_limit_exceeded":2,"window_race_unconfirmed.429.key_window_limit_exceeded":1,` +
+			`"would_admit_python_refused.429.key_window_limit_exceeded":1} fields={} rows={} decide={"on":1994} ` +
+			`cohort={} windows={"read.made":1500,"verdict.admit":1500,"race.confirmed":2}`},
+		{"2", "tr-fastpath-6", `2026/10/24 12:01:00 fastpath edge decide shadow: snapshot=s1 policy=p1 agree_full=500 ` +
+			`differ=0 would_admit_python_refused=0 read_back=0 classes={"agree_full":500,` +
+			`"window_race.429.key_window_limit_exceeded":1} fields={} rows={} decide={"on":501} cohort={} ` +
+			`windows={"read.made":500,"race.confirmed":1}`},
+	}
+	d, _ := edgeDeps(entries, nil)
+	var out bytes.Buffer
+	if code, err := run(context.Background(), []string{"edge", "-project", "p", "-since", "2026-10-22T13:00:00Z"},
+		&out, d); code != 0 || err != nil {
+		t.Fatalf("%d %v", code, err)
+	}
+	var r edgeReport
+	if err := json.Unmarshal(out.Bytes(), &r); err != nil {
+		t.Fatalf("%v: %s", err, out.Bytes())
+	}
+	g := r.I2
+	if g.WindowReads != 2000 || g.WindowRace != 3 || g.WindowRaceUnconfirmed != 1 || g.WindowRaceRatio == nil ||
+		*g.WindowRaceRatio != 3.0/2000 || g.WouldAdmitPythonRefused != 1 ||
+		len(g.WouldAdmitByClass) != 1 || g.WouldAdmitByClass["429.key_window_limit_exceeded"] != 1 {
+		t.Errorf("the window race figures: %s", out.Bytes())
 	}
 }

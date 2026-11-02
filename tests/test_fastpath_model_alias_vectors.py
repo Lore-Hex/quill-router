@@ -51,3 +51,18 @@ def test_the_vectors_cover_every_rule() -> None:
     assert cases["z-ai/glm-5.3"] == "z-ai/glm-5.3"
     rewritten = sum(1 for model_id, canonical in cases.items() if model_id != canonical)
     assert 100 < rewritten < len(cases)
+
+
+def test_scheduled_retirements_do_not_change_alias_vectors() -> None:
+    result = subprocess.run(  # noqa: S603 - fixed test code, no shell or caller input
+        [sys.executable, "-c", "\n".join([
+            "from scripts.fastpath import model_alias_vectors as vectors",
+            "before = vectors.render()",
+            "for retirement in vectors.provider_retirements():",
+            "    for model_id in retirement.model_ids:",
+            "        vectors.MODELS.pop(model_id, None)",
+            "assert vectors.render() == before",
+        ])],
+        env=os.environ.copy(), cwd=ROOT, capture_output=True, text=True, timeout=300, check=False,
+    )
+    assert result.returncode == 0, result.stderr

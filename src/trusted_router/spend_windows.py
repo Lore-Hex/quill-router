@@ -14,6 +14,7 @@ counted; a window boundary mid-request books to the window the settle lands in).
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import math
 from dataclasses import dataclass
@@ -57,6 +58,11 @@ class KeyWindowLimitDecision:
     resets_at: dt.datetime
     reset_seconds: int
     allowed: bool
+    # The read timestamp of the one snapshot the check evaluated, Unix
+    # nanoseconds: every row it summed is as of this instant. None where no
+    # single snapshot was read (the strict path's read-write transaction, the
+    # in-memory store). Metadata only, so it takes no part in equality.
+    read_timestamp_ns: int | None = dataclasses.field(default=None, compare=False)
 
 
 @dataclass(frozen=True)
@@ -179,6 +185,30 @@ def spend_window_headers(
     if retry_after:
         headers["Retry-After"] = str(max(1, decision.reset_seconds))
     return headers
+
+
+# The internal authorize route's header naming the read timestamp of the
+# snapshot its window refusal evaluated (key_window_read_timestamp_headers).
+KEY_WINDOW_READ_TIMESTAMP_HEADER = "X-TR-Key-Window-Read-Timestamp"
+
+
+def key_window_read_timestamp_headers(decision: KeyWindowLimitDecision) -> dict[str, str]:
+    """The read timestamp of the snapshot a window decision evaluated, as RFC 3339
+    UTC with nine fractional digits, for the INTERNAL gateway authorize route only.
+
+    The fast-path edge's decide shadow re-reads tr_key_limit at exactly this
+    instant to tell a settle that landed between its own read and Python's (a
+    race) from a parity defect of its own read (docs/design/
+    fast-admission-e2-key-windows.md section 8.2 item 3). It carries nothing
+    but the instant. Customer-facing routes and the response middleware use
+    spend_window_headers alone and never send it. Empty when the decision has
+    no single snapshot timestamp.
+    """
+    if decision.read_timestamp_ns is None:
+        return {}
+    seconds, nanos = divmod(decision.read_timestamp_ns, 1_000_000_000)
+    instant = dt.datetime(1970, 1, 1, tzinfo=dt.UTC) + dt.timedelta(seconds=seconds)
+    return {KEY_WINDOW_READ_TIMESTAMP_HEADER: f"{instant:%Y-%m-%dT%H:%M:%S}.{nanos:09d}Z"}
 
 
 def remember_spend_window_decision(

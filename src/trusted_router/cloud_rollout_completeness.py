@@ -367,7 +367,7 @@ ROLLOUT_REGISTRY: dict[str, CloudRollout] = {
                 script="scripts/deploy/rollout.sh",
                 reason=(
                     "GCP has no bring-up script a human runs: rollout.sh is a step of the "
-                    "deploy JOB (.github/workflows/deploy.yml), which runs on every merge to "
+                    "deploy JOB (.github/workflows/deploy-production.yml), which runs on every merge to "
                     "main. Ending rollout.sh itself in this verifier would put a public HTTPS "
                     "fetch of trustedrouter.com/status.json in the MIDDLE of the deploy of the "
                     "cloud that SERVES trustedrouter.com — the deploy that repairs an outage "
@@ -379,7 +379,7 @@ ROLLOUT_REGISTRY: dict[str, CloudRollout] = {
                     "not about GCP being checked differently from anyone else."
                 ),
                 compensating_control=CompensatingControl(
-                    workflow=".github/workflows/deploy.yml",
+                    workflow=".github/workflows/deploy-production.yml",
                     job="verify-cloud-complete",
                     description=(
                         "Runs 'bash scripts/deploy/verify_gcp_complete.sh' — nothing else — "

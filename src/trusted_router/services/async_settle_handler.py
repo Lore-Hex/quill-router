@@ -277,6 +277,14 @@ def _handle(raw: bytes, *, kind: str, runtime: Runtime | None, settings: Setting
                 expected.update(journal_region=runtime.effective_journal_region, epoch=runtime.epoch,
                                 iss=runtime.signer.trusted.iss, aud="router-settlement")
                 verify_ticket(value.ticket, [runtime.signer.trusted], expected, now)
+                if not settings.async_settle_accept_region_allowed():
+                    # The enqueue's batch DML and commit are serial round trips
+                    # to the leader; outside the measured regions they cannot
+                    # fit the handoff, and a timed-out attempt leaves its row
+                    # locks for every retry of the same identity. Accept
+                    # nothing new here; accepted work still resolves.
+                    metric("region_not_accepting")
+                    return duplicate(outbox, row) or sync_required("unsupported_cohort")
                 if not settings.async_settle_pilot_allows(claims.workspace_id):
                     return duplicate(outbox, row) or sync_required("not_eligible")
                 if not claims.async_eligible:
@@ -321,14 +329,16 @@ def _handle(raw: bytes, *, kind: str, runtime: Runtime | None, settings: Setting
                             return finish(existing, outbox)
                         return result
                     raise unavailable() from exc
-                metric("unknown_outcome")
+                # The class only (e.g. DeadlineExceeded): never exception text,
+                # which can carry request or row identifiers.
+                metric("unknown_outcome", reason=type(exc).__name__)
                 # Retry exactly the same identity while handoff time remains.
                 # A miss after this is still unknown; never authorize repricing.
                 if time.monotonic() < deadline:
                     try:
                         enqueue(outbox, row, deadline)
-                    except Exception:
-                        metric("unknown_outcome")
+                    except Exception as retry_exc:
+                        metric("unknown_outcome", reason=type(retry_exc).__name__)
                 result = duplicate(outbox, row)
                 if result is not None and time.monotonic() < deadline:
                     return result

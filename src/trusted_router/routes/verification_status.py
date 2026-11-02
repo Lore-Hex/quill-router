@@ -22,7 +22,7 @@ from trusted_router.verification_gates import missing_identity_verification_requ
 
 def register_verification_status_routes(router: APIRouter) -> None:
     @router.get("/auth/verification-status")
-    async def verification_status(
+    def verification_status(
         principal: ManagementPrincipal,
         settings: SettingsDep,
     ) -> dict[str, dict[str, Any]]:
@@ -66,7 +66,7 @@ def register_verification_status_routes(router: APIRouter) -> None:
         }
 
     @router.put("/auth/username")
-    async def claim_creator_username(
+    def claim_creator_username(
         body: CreatorUsernameRequest,
         principal: ManagementPrincipal,
     ) -> dict[str, dict[str, str]]:

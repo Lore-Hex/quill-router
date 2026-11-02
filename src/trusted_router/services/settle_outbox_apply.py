@@ -530,10 +530,13 @@ def _apply_leased(
             auth.id,
             success=decision.success,
             actual_microdollars=decision.charge,
-            selected_usage_type=usage_type,
+            # A reap the lease decided books credits, with the snapshot's
+            # records (docs/design/fast-admission-streams.md section 6.3).
+            selected_usage_type=UsageType.CREDITS if decision.outcome is not None else usage_type,
             generation=decision.generation,
             authorization_snapshot=auth,
             mark_intent=None,
+            outcome=decision.outcome,
         )
     except _TRANSIENT_STORE_EXCS:
         # The store, not the row: parked, as the typed path parks it, with
@@ -630,11 +633,13 @@ def _apply_typed(
         if reservation is None:
             return ApplyOutcome.RESERVATION_MISSING
         actual_micro = int(reservation.get("actual_micro") or 0)
+        if (row.async_version == 1 or getattr(
+                getattr(typed_store, "trust_settings", None), "async_settle_protection", False
+        )) and not reservation.get("settled"):
+            # The async fence can reject a NULL-version sibling while the
+            # reservation is still open. A rejected claim is not a free release.
+            return ApplyOutcome.PARK_TYPED_UNAVAILABLE
         if row.async_version == 1:
-            # A legacy writer rejected by the async predicate has NOT observed
-            # a terminal reservation. Keep responsibility pending until apply.
-            if not reservation.get("settled"):
-                return ApplyOutcome.PARK_TYPED_UNAVAILABLE
             from trusted_router.services.settle_outbox_drain import spanner_settle_outbox
 
             persisted = spanner_settle_outbox().get(row.authorization_id, row.intent_kind)

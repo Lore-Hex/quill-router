@@ -463,7 +463,7 @@ def assert_cohort_tree(source: str, expected: set[str]) -> None:
         call = guard.test.operand
         assert isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == 'in_v2_cohort', name
         workspace = 'workspace' if name == '_v2_install_hook' else 'authorization.workspace_id'
-        approved = ast.parse('in_v2_cohort(settings.async_settle_shadow_policy, '+workspace+
+        approved = ast.parse('in_v2_cohort(settings.regional_async_settle_shadow_policy(), '+workspace+
             ', settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids)', mode='eval').body
         assert ast.dump(call) == ast.dump(approved), name
         assert len(guard.body) == 1 and isinstance(guard.body[0], ast.Return) and not guard.orelse, name

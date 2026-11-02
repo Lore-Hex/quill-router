@@ -58,6 +58,22 @@ policy:
   A second SIGTERM or any SIGINT starts ordinary graceful shutdown without
   waiting for the drain window. If one recurs, check the serving revision's
   entry point before anything else.
+- A run of `503`s from one instance id, each with tens of seconds of latency
+  and "connection to the instance had an error", while that instance's own
+  output stops and its CPU stays flat, is a process whose event loop stopped
+  (two in europe-west4 on 2026-10-28, silent for one and two minutes). With
+  `TR_LOOP_STALL_EXIT_SECONDS=30`, which `scripts/deploy/rollout.sh` sets
+  for this service because it keeps CPU allocated between requests, the same
+  runner ends such a process once its loop has gone about 30 seconds (29
+  at the least) without a tick. `faulthandler` first writes every thread's
+  stack to stderr under a
+  `Timeout (0:00:30)!` line and exits with status 1. It writes them through a
+  non-blocking descriptor of its own, so a backed-up stderr loses the stacks
+  rather than holding the exit. Read the stacks from the instance's stderr:
+  the frame each thread is waiting in is the cause, and it belongs in the
+  follow-up. An exit with no stacks points at the log pipe, and a
+  `serve.stall_dump_blocking` warning at startup means the descriptor fell
+  back to stderr itself.
 - Successful billing calls taking at least 10 seconds are counted. More than
   two per minute for three consecutive minutes opens one incident.
 - The general Spanner contention policy has three independent gates: more than

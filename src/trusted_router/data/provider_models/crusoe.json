@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Crusoe Managed Inference routes. Generated from https://api.inference.crusoecloud.com/v1/models; prices are provider cost in integer microdollars per million tokens and catalog applies markup.",
   "provider": "crusoe",
   "source": "https://api.inference.crusoecloud.com/v1/models",
-  "generated_at": "2026-10-26T06:59:20Z",
+  "generated_at": "2026-11-01T19:12:14Z",
   "price_scale": "microdollars_per_million",
   "model_count": 22,
   "models": [
@@ -123,7 +123,8 @@
         "user"
       ],
       "status": 1,
-      "routable": true
+      "routable": true,
+      "missing_since": "2026-11-01"
     },
     {
       "id": "deepseek/deepseek-v4-pro",
@@ -188,7 +189,8 @@
         "truncation",
         "user"
       ],
-      "status": 1
+      "status": 1,
+      "missing_since": "2026-11-01"
     },
     {
       "id": "google/gemma-4-31b-it",
@@ -483,7 +485,8 @@
         "truncation",
         "user"
       ],
-      "status": 1
+      "status": 1,
+      "missing_since": "2026-11-01"
     },
     {
       "id": "nvidia/nemotron-3-super-120b-a12b",
@@ -548,7 +551,8 @@
         "truncation",
         "user"
       ],
-      "status": 1
+      "status": 1,
+      "missing_since": "2026-11-01"
     },
     {
       "id": "nvidia/nemotron-3-ultra-550b",
@@ -1283,7 +1287,7 @@
       "status": 1,
       "id": "nvidia/nemotron-3.5-super-vl",
       "upstream_id": "nvidia/NVIDIA-Nemotron-3.5-Super-VL",
-      "context_length": 262144,
+      "context_length": 1048576,
       "supported_parameters": [
         "background",
         "cache_salt",

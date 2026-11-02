@@ -15,7 +15,8 @@ import (
 
 // CandidateOf is a route candidate as the snapshot describes its endpoint:
 // the endpoint's model, upstream model and provider, the provider's name,
-// its inference location (re-ordered by Stage) and its Wafer ZDR flag.
+// its inference location (re-ordered by Stage), its Wafer ZDR flag, and its
+// usage type and price epochs (the async-v1 billing snapshot's).
 func CandidateOf(e routingsnapshot.EndpointFacts) Candidate {
 	l := e.InferenceLocation
 	return Candidate{
@@ -38,6 +39,8 @@ func CandidateOf(e routingsnapshot.EndpointFacts) Candidate {
 			{Key: "serving_region_status", Value: l.ServingRegionStatus},
 		},
 		WaferZDRRequired: e.WaferZDRRequired,
+		UsageType:        e.UsageType,
+		Epochs:           e.Epochs,
 	}
 }
 

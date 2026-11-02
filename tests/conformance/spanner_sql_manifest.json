@@ -28,7 +28,7 @@
     "storage_gcp_settle_outbox:intent_insert_statements": "ac90a685c8db7258d2fd70897317680b0027a40bf59619426bea39001c0d9d9c",
     "storage_gcp_settle_outbox:resolved_intent_statements": "64f1ed43cb1ced684e9ce72e489c7152b538d1fe29863bf4165425884656c435",
     "storage_gcp_settle_outbox:speculative_done_statements": "e292de31c54e6ab2d1106ae773cd992b89f07f0e21a3e56b79316f55cd7aba26",
-    "storage_gcp_settle_outbox:shard_due_statement": "2e9432553701bdfff964d70013e1f680fecc7e4269ab01fcc301e86c5a8e07d0",
+    "storage_gcp_settle_outbox:shard_due_statement": "9f7f8898c774ed20030ce17b132181a045ac5732d840be4886d24d33f66a5bdb",
     "storage_gcp_shadow_observation:entity_point_statement": "55bfe94f7e7b088e014e23ecd096fdca691ac7a092a084ea1fadc43de8d22c8d",
     "storage_gcp_shadow_observation:read_shadow_health_statement": "128f680910723ba42df17187b92374b6bc5e76b43e719d962121553d25d80058"
   },
@@ -758,7 +758,7 @@
       ]
     },
     "storage_gcp:_read_entity_from:1": {
-      "fingerprint": "2b7b7caacc1847915f4223450b740d1953db7ac56028eede7653c147573e0c66",
+      "fingerprint": "1e9b79e7eeb9f4a9c42223ce9d37c71a34abd3bcf3c3cf08eae96a7316236ed9",
       "scenarios": [
         {
           "bindings": {},
@@ -884,7 +884,7 @@
       ]
     },
     "storage_gcp_authorize:key_window_limit_decision:1": {
-      "fingerprint": "5a317b9f2927443ca6d6686b5cb1d1b6ff036c6d744d511a3b5f24c63e3b2ad7",
+      "fingerprint": "c3a6a446d41d22101d05f45a45017f26d4e033b012295550785b6dc5e92d332b",
       "scenarios": [
         {
           "bindings": {},
@@ -2592,10 +2592,21 @@
       ]
     },
     "storage_gcp_settle_outbox:due:1": {
-      "fingerprint": "2e92263eb28c5169bb261735117cf6b738b51be377b33a3c7375b28124a395aa",
+      "fingerprint": "0afc4b52c7449d3ab5a421ec8100ea217371f22a43bd9d2bebbcc7083b9ea53c",
       "scenarios": [
         {
-          "bindings": {},
+          "bindings": {
+            "legacy_only": false
+          },
+          "types": {
+            "limit": "INT64",
+            "now": "TIMESTAMP"
+          }
+        },
+        {
+          "bindings": {
+            "legacy_only": true
+          },
           "types": {
             "limit": "INT64",
             "now": "TIMESTAMP"
@@ -4258,10 +4269,22 @@
       ]
     },
     "storage_gcp_settle_outbox:shard_due_statement:1": {
-      "fingerprint": "2e9432553701bdfff964d70013e1f680fecc7e4269ab01fcc301e86c5a8e07d0",
+      "fingerprint": "9f7f8898c774ed20030ce17b132181a045ac5732d840be4886d24d33f66a5bdb",
       "scenarios": [
         {
-          "bindings": {},
+          "bindings": {
+            "async_only": false
+          },
+          "types": {
+            "shard": "INT64",
+            "now": "TIMESTAMP",
+            "limit": "INT64"
+          }
+        },
+        {
+          "bindings": {
+            "async_only": true
+          },
           "types": {
             "shard": "INT64",
             "now": "TIMESTAMP",
@@ -4657,6 +4680,31 @@
           }
         }
       ]
+    },
+    "storage_gcp:reserved_resale_position_page:1": {
+      "fingerprint": "c085bd2d7bd045dd724e37f03faba4443f382c7515b64b26d949bd333d9bdbfa",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "kind": "STRING",
+            "cursor": "STRING",
+            "limit": "INT64"
+          }
+        }
+      ]
+    },
+    "storage_gcp:extend:1": {
+      "fingerprint": "ba639fdfc735e9b5ed8c55dbbe6764a318b50518c7aa5ba3167d16e93de0f714",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "renewed_expires_at": "TIMESTAMP",
+            "rid": "STRING"
+          }
+        }
+      ]
     }
   },
   "sinks": {
@@ -4682,7 +4730,7 @@
     "storage_gcp:SpannerStore.list_trust_tier_workspace_ids": "23274f4aadb7fb256a7d77dceeb8cc3eea2a821cfc5b57bc85ef38e3c20c7d49",
     "storage_gcp:SpannerStore.list_receipt_keys": "034fc4c2aa0e3f4e61b560cf0918985acb48d2df2ac8deeef6fa8bce0e0b4638",
     "storage_gcp:SpannerStore.backfill_receipt_key_versions_page.txn": "85683da9c98e0d338df286358ddabd4130fbcf122e9e2f5ea70c5e051e0142e0",
-    "storage_gcp:SpannerStore._read_entity_from": "2b7b7caacc1847915f4223450b740d1953db7ac56028eede7653c147573e0c66",
+    "storage_gcp:SpannerStore._read_entity_from": "1e9b79e7eeb9f4a9c42223ce9d37c71a34abd3bcf3c3cf08eae96a7316236ed9",
     "storage_gcp:SpannerStore._list_entities": "0d51ca2b76f1edd118b7b084e59f0af0f47d03b841aa83cb4a6e68dbac36d8b6",
     "storage_gcp:SpannerStore.readiness_check": "4ac951f6c468ea8adee1537d86aaaf0514fb06e519e5c409ed07d11b42ca76b5",
     "storage_gcp:SpannerStore.has_credit_grant": "936d17a630cfae5293b90e54ecc73bfaa5a17f5055b0602bbb35e1c7fb076f66",
@@ -4717,12 +4765,12 @@
     "storage_gcp_authorize:_apply_custom_model_markup_payout_tx": "a1a06d4c1dcc22a836e086dc1700440a90dad6d8c8966466902930955a34e3f0",
     "storage_gcp_authorize:authorize_atomic.txn": "37002b308853018c3eb0d515605b8c3b4326b15251b5fe9ff6dfd3382f270fdf",
     "storage_gcp_authorize:typed_finalize_atomic.speculative_batch": "d5ec6f537d513b1b627c55e57e00db0a64e7d8c02d384b4705f56cd386b5ff39",
-    "storage_gcp_authorize:key_window_limit_decision": "5a317b9f2927443ca6d6686b5cb1d1b6ff036c6d744d511a3b5f24c63e3b2ad7",
-    "storage_gcp_authorize:reap_expired_reservations_result": "792c0c08242dcd713034dd26eb9821673662536d20a3af9b1a2308dfe186a7d1",
+    "storage_gcp_authorize:key_window_limit_decision": "c3a6a446d41d22101d05f45a45017f26d4e033b012295550785b6dc5e92d332b",
+    "storage_gcp_authorize:reap_expired_reservations_result": "76f87cfbce638ce09d5a5b94b6857ce9eedb1744378bbd4ca44adba975cad470",
     "storage_gcp_authorize:typed_finalize_atomic.txn": "cf8aa92c4f2b5cfbdc8ffb0c0f72d83b57b90f9785e629ff8d5a26ee8e4d9f97",
     "storage_gcp_authorize:key_lifetime_cap_precheck": "4e9ee17c7e9363a1fc3a9d614f15148ad6fb20ff04d272785809beef92ab0b4c",
     "storage_gcp_authorize:credit_exhaustion_precheck": "bb08ce1cf8b8bf81a7db4487ec13fff5656d75ea7cb911c1325fc1770c5ef740",
-    "storage_gcp_authorize:_finalize_reaped_reservation_atomic.txn": "cf57850af170dd898ca10dc42d13165830d8cc4cccac5d56c4dbc803196c2842",
+    "storage_gcp_authorize:_finalize_reaped_reservation_atomic.txn": "ec7b9d637ebd5967cb799505d4eddcd5a8f1aa37a95359db455fa25609359d15",
     "storage_gcp_authorize:settle_atomic.txn": "5415d0c16b4dd6fc436ca4e86128d9173d00879624bb16f236b578b00a7935d8",
     "storage_gcp_authorize:_outbox_table_available": "40f44f259524be5dc275f8a3400fc40fc5b8fe850c0482362de0382296e3f910",
     "storage_gcp_batch_dml:execute_batch_dml": "cf69cc8e1a62f4028bd2370e9d3d22e5f6f28856795ef05514f1f8dbc5130169",
@@ -4777,7 +4825,7 @@
     "storage_gcp_key_escrow:rebalance_key_limit_headroom.read_counters": "97c18154956915443e297e62ef40c5767eac208107bedd2a0fcf0127a39cd49c",
     "storage_gcp_key_shard_admin:_typed_key_state": "73a4a569ff114b9a2347b324dccc1c4756c9e380b1cd87971af930e2677001f5",
     "storage_gcp_key_shard_admin:reshard_key_usage.txn": "8eaa4a729d9eeb516e0cc65370c34c1f6529bd298c0879974bd8c03a5b276717",
-    "storage_gcp_keys:SpannerApiKeys.list_with_usage_for_workspace": "614f2667ef559acac550195fd45a158a07dd663c5da435a74a463befbabedc96",
+    "storage_gcp_keys:SpannerApiKeys.list_with_usage_for_workspace": "0d1807404835e427a88c46085cefbbbfc33365a4bc42bf07d4710cb0768fd5ce",
     "storage_gcp_keys:SpannerApiKeys._delete_batch.delete_batch_txn": "f186ed3fbbe47f2878dee911eebadd6eb29a70a908f63e8a8c35ebc8d068b8c2",
     "storage_gcp_keys:SpannerApiKeys.update.txn": "8b2b096b220bf2a685d9f9a730627e35da13babfb74af02b6476766e4ea0bb72",
     "storage_gcp_legacy_reservations:legacy_reservation_snapshot": "c5b3818e113170d5fda5422e9c83441ee7119014e4a74afd80330cf735b965d7",
@@ -4799,8 +4847,8 @@
     "storage_gcp_settle_outbox:SpannerSettleOutbox.attach_auto_refill.txn": "2d57f7ddcaa46d8dc462a815ad5a3d13db3214a9f20bb466e8694da26410d67e",
     "storage_gcp_settle_outbox:SpannerSettleOutbox._claim_auto_refill_one.txn": "adf4f3f8adccb10352be73e9c02627d4e690ac44ee5d742e2aa0c0ab23c9dd4a",
     "storage_gcp_settle_outbox:SpannerSettleOutbox.resolve_auto_refill.txn": "6171c7a3fa9aa00810f6edccf2b0285ce9b0b38bf2b180a0ea0bccbad7358d48",
-    "storage_gcp_settle_outbox:SpannerSettleOutbox.due": "2e92263eb28c5169bb261735117cf6b738b51be377b33a3c7375b28124a395aa",
-    "storage_gcp_settle_outbox:SpannerSettleOutbox.claim_shard": "e2b991b30f4ba9f53d07c821c29642dc5b13688bca5b7a4455ef5a9ceaa35ff7",
+    "storage_gcp_settle_outbox:SpannerSettleOutbox.due": "0afc4b52c7449d3ab5a421ec8100ea217371f22a43bd9d2bebbcc7083b9ea53c",
+    "storage_gcp_settle_outbox:SpannerSettleOutbox.due_shard": "e0c19b4d39b0b5523488e345cdbb91fc00e30cd6c04f10b54f78f4fc54a5ff3d",
     "storage_gcp_settle_outbox:SpannerSettleOutbox.due_auto_refills": "4212fa7c7a13fb2b0fb5857fb78c18818d4e7503051eb1408e3a0b735c430f85",
     "storage_gcp_settle_outbox:SpannerSettleOutbox.get_auto_refill": "7031c426879971878bb247d141dfde3ab31c019225af2586f3baedf11a29649d",
     "storage_gcp_settle_outbox:SpannerSettleOutbox.auto_refill_pending_freshness": "042778fa0f70b513e671340a005e55a970a251cff104f834935066de93b88cf3",
@@ -4844,7 +4892,9 @@
     "trust_tier_bulk:iter_trust_tier_bulk": "846b000f05dbc96b50d63bfe4627e9f72b6a21d9103315b740330286a5f9cfe5",
     "trust_tier_bulk:select_trust_tier_candidates": "2047f3a799e1b13534cceb2c4e19dd904a12c244704184e7b9cc629fc5ff8bc2",
     "storage_account_closure:close_spanner.txn.rows": "d17299f98937c19aed4e65bd1f5ff91cfab3d1ee93c558fe9df621d3bf5ddde1",
-    "storage_gcp:SpannerStore._update_workspace_tx": "621d1f16006a6075cafc6dc8a6243ac906a43772044dec1223d34b33c01bb7fd"
+    "storage_gcp:SpannerStore._update_workspace_tx": "621d1f16006a6075cafc6dc8a6243ac906a43772044dec1223d34b33c01bb7fd",
+    "storage_gcp:SpannerStore.reserved_resale_position_page": "c085bd2d7bd045dd724e37f03faba4443f382c7515b64b26d949bd333d9bdbfa",
+    "storage_gcp:SpannerStore.extend_reservation_expiry.extend": "ba639fdfc735e9b5ed8c55dbbe6764a318b50518c7aa5ba3167d16e93de0f714"
   },
   "non_google_sql": {
     "analytics_sink:_post_rows:1": {
@@ -4884,8 +4934,12 @@
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
     },
     "operational_analytics:activity_generations:1": {
-      "fingerprint": "dbecda7db667610039a37a70b1c7a04edccc680253e2f531a89e7d862d06cb19",
+      "fingerprint": "4508099392c3e46d092285baed3b402730b8a8ba63cdf44be64735aed0f451bf",
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
+    },
+    "operational_analytics:routing_traffic:1": {
+      "fingerprint": "24143e3a3eefcc7a3bf9a0af91a2fc5f5b20ad2ce93d995901b204a795e78db5",
+      "reason": "Bounded read-only ClickHouse route aggregates, proven against replicated and standalone schemas in test_clickhouse_replay_functional"
     },
     "operational_analytics:client_reliability_summary:1": {
       "fingerprint": "626ec3bb7eb8e4e06f6e1c77d66629df32cd5320d947499e54d8f847d1dcb1a5",

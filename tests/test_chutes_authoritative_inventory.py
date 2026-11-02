@@ -75,10 +75,15 @@ def test_stale_snapshot_cannot_bypass_chutes_manifest(
 
 
 @pytest.mark.parametrize("usage_type", ["Credits", "BYOK"])
-def test_real_qwen_evidence_hold_rejects_a_reintroduced_snapshot_route(usage_type: str) -> None:
-    model_id = "qwen/qwen3-235b-a22b-thinking-2507"
+@pytest.mark.parametrize("model_id,native", [
+    ("qwen/qwen3-235b-a22b-thinking-2507", "Qwen/Qwen3-235B-A22B-Thinking-2507-TEE"),
+    ("mistralai/mistral-nemo", "unsloth/Mistral-Nemo-Instruct-2407-TEE"),
+])
+def test_real_runtime_hold_rejects_a_reintroduced_snapshot_route(
+    usage_type: str, model_id: str, native: str,
+) -> None:
     stale = ModelEndpoint(
         id=f"{model_id}@chutes/{usage_type}", model_id=model_id, provider="chutes",
-        upstream_id="Qwen/Qwen3-235B-A22B-Thinking-2507-TEE", usage_type=usage_type,
+        upstream_id=native, usage_type=usage_type,
     )
     assert catalog_ingest._filter_unserved_provider_endpoints({stale.id: stale}) == {}

@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 
 def register_byok_routes(router: APIRouter) -> None:
     @router.get("/byok/providers")
-    async def byok_providers(principal: ManagementPrincipal) -> dict[str, list[dict[str, Any]]]:
+    def byok_providers(principal: ManagementPrincipal) -> dict[str, list[dict[str, Any]]]:
         configs = STORE.list_byok_providers(principal.workspace.id)
         # Prefer a post-split row when both exist, and never expose the retired
         # `gemini` storage key as a third public provider.
@@ -39,7 +39,7 @@ def register_byok_routes(router: APIRouter) -> None:
         return {"data": list(rows.values())}
 
     @router.get("/byok/providers/{provider}")
-    async def byok_provider(provider: str, principal: ManagementPrincipal) -> dict[str, Any]:
+    def byok_provider(provider: str, principal: ManagementPrincipal) -> dict[str, Any]:
         slug = _require_byok_provider(provider)
         config = _get_byok_provider(principal.workspace.id, slug)
         if config is None:
@@ -49,7 +49,7 @@ def register_byok_routes(router: APIRouter) -> None:
         return {"data": shape}
 
     @router.put("/byok/providers/{provider}")
-    async def upsert_byok_provider(
+    def upsert_byok_provider(
         provider: str,
         body: UpsertByokRequest,
         principal: ManagementPrincipal,
@@ -148,7 +148,7 @@ def register_byok_routes(router: APIRouter) -> None:
         )
 
     @router.delete("/byok/providers/{provider}")
-    async def delete_byok_provider(
+    def delete_byok_provider(
         provider: str,
         principal: ManagementPrincipal,
     ) -> dict[str, Any]:

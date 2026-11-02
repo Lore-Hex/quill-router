@@ -235,5 +235,5 @@ def publish_health(database: Any) -> dict[str, Any]:
         _write_control(transaction, HEALTH_ID, value)
 
     database.run_in_transaction(txn, timeout_secs=READ_DEADLINE_SECONDS)
-    logging.getLogger(__name__).info("async_drain.health %s", json.dumps(value))
+    logging.getLogger(__name__).debug("async_drain.health %s", json.dumps(value))
     return value

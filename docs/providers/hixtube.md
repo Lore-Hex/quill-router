@@ -1,10 +1,10 @@
-# Hixtube Pilot
+# Hixtube
 
-Hixtube's planned service uses the Apache-2.0
+Hixtube's live service uses the Apache-2.0
 [Neocloud-in-a-Box toolkit](https://github.com/Lore-Hex/token-exchange-neocloud-in-a-box).
 It must run in a separate cloud project, not on TrustedRouter production resources.
 
-- Intended API base: `https://api.hixtube.com/v1`.
+- API base: `https://api.hixtube.com/v1`.
 - Catalog/pricing: public metadata `GET /models`, Provider Catalog v2;
   inference and discovery canaries require authentication.
 - Selected checkpoint: `dealignai/deepseek-v4.1-flash-1017-uncensored-fp8`.
@@ -16,7 +16,15 @@ It must run in a separate cloud project, not on TrustedRouter production resourc
 - The parser remains model-neutral and also accepts the earlier Qwen CPU pilot.
   Only the live, authenticated catalog and successful canaries establish routes.
 - Credential: `HIXTUBE_API_KEY`, secret name `trustedrouter-hixtube-api-key`.
-- Standard TLS only. No ZDR, confidential-compute or E2EE eligibility.
+- ZDR under the [Hixtube data-handling policy](https://hixtube.com/privacy.html).
+  No persistent prompt/output/tool-content storage or training. Content-free
+  billing and operational metadata remain. Prefix/KV caches can persist in
+  volatile memory until eviction or shutdown, not on disk.
+- Standard TLS only. No confidential-compute or E2EE eligibility; the host
+  operator can access workload memory. Never infer attestation from ZDR.
+- Current inference location: Verda Finland, rented through Spheron. No
+  provider-side geographic failover or request-level region selector. This
+  does not pin gateway, client, transit or billing-system geography.
 - Exact prices come from the operator-approved catalog, not another provider.
 - Credits only; measured integer input/output usage follows normal settlement.
 
@@ -48,11 +56,21 @@ matching the node's opt-in weekly serving lease. It never invents or extends
 that cutoff. The generated manifest expires at the earliest declared retirement;
 catalog refresh is not lease renewal, and a missing cutoff is still rejected.
 
-Ordinary inference through a pinned test certificate has passed; this is not
-trusted public DNS/TLS, 24-hour availability or production-gateway evidence.
-No generated manifest or upstream credential is included in this integration.
-The inactive parser and versioned schema may deploy before the endpoint is
-ready; publishing a live manifest still requires every activation gate above.
+Public system-root TLS, authenticated JSON/SSE inference and exact usage/charge
+reconciliation passed through the canonical, AWS, Azure and Azure Sydney entry
+points on October 27, 2026. The published provider checker passed 18 required
+checks. These are launch checks, not a completed 24-hour availability or
+full multi-domain tau2 evaluation. The generated manifest is public; credentials
+remain in independent cloud secret stores.
+
+## Privacy Release Gate
+
+Before publishing the ZDR label, verify the exact serving image has content and
+access logging disabled, no swap or disk-backed inference cache, and disabled
+crash dumps. A zero core-size limit alone is insufficient when the host pipes
+crashes to a collector. Keep the operator audit outside this reusable integration
+documentation and re-check these settings after each serving lifecycle change.
+The public policy must be live before the catalog flags are enabled.
 
 ## Long Completions
 

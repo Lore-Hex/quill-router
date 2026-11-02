@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import threading
-from json import JSONDecodeError
 from typing import Any
 
 from fastapi import Request
@@ -26,7 +25,7 @@ _CLIENT_EVENT_RATE_LIMITS = InMemoryRateLimits(lock=threading.RLock())
 async def json_body(request: Request) -> dict[str, Any]:
     try:
         body = await request.json()
-    except JSONDecodeError as exc:
+    except ValueError as exc:
         raise api_error(400, "Malformed JSON", "bad_request") from exc
     if not isinstance(body, dict):
         raise api_error(400, "JSON body must be an object", "bad_request")

@@ -96,6 +96,7 @@ def builder_cases() -> list[SQLCase]:
         SQLCase("drain-health-cadence-point", [control_statement("health-publish-v1")]),
         SQLCase("drain-health-unresolved", [unresolved_statement()]),
         SQLCase("drain-shard-due", [shard_due_statement(pt, 0, NOW.isoformat().replace("+00:00", "Z"))]),
+        SQLCase("drain-shard-due-async-only", [shard_due_statement(pt, 0, NOW.isoformat().replace("+00:00", "Z"), async_only=True)]),
     ])
     # Exercise generated-column membership for inline done inserts and for
     # pending rows resolved to done/dead, without changing production INSERTs.

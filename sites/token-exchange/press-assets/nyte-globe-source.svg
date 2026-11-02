@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 500" width="1000" height="500" role="img" aria-label="NY Token Exchange globe mark">
+  <g fill="none" stroke="currentColor" stroke-width="15" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="500" cy="250" r="220"/>
+    <ellipse cx="500" cy="250" rx="105" ry="220"/>
+    <path d="M500 30V470 M500 30H960 M310 140H875 M220 250H785 M130 360H690 M40 470H500"/>
+  </g>
+</svg>

@@ -50,7 +50,30 @@ Fields, all required:
   async-settle runtime can issue tickets (a signer, an authority epoch of at
   least 1 and a journal region), and whether its store writes typed records
   (the ``typed`` the async-v1 authorize branch passes). Go (G15a) reads it as
-  optional; Python always publishes it.
+  optional; Python always publishes it. Inside it one member is optional:
+  ``admission_workspaces``, the sorted async-settle pilot set
+  (``async_settle_pilot_workspace_ids``), present only while admission is on
+  and the set is non-empty (an empty set admits every workspace, which is the
+  member absent). Python answers a workspace the set leaves out as with
+  admission off, so the edge composes that answer and passes only the
+  workspaces it names (docs/design/fast-admission-e2-g15-async.md section
+  4.1). ``null`` and an empty array are refused.
+
+Two fields are optional:
+
+- ``fastpath_pilot_key_windows``: ``"alert"`` or ``"enforce"``, the setting of
+  that name (docs/design/fast-admission-e2-key-windows.md section 5): which
+  keys with spend windows the pilot covers. Absent when the setting is
+  ``off``, so the default body is byte-identical to one from before the field
+  existed, and Go reads absent as ``off``. ``null`` and ``"off"`` are refused,
+  so each mode has exactly one encoding.
+- ``fastpath_edge_streams``: ``true`` when the settings
+  ``fastpath_edge_streams``, ``fastpath_pilot_streams`` and
+  ``reap_snapshot_booking_enabled`` are all on
+  (docs/design/fast-admission-streams.md section 5.4): the edge may decide
+  streams. Absent otherwise, so the default body is byte-identical to one
+  from before the field existed, and Go reads absent as off; ``null`` and
+  ``false`` are refused.
 """
 
 from __future__ import annotations
@@ -65,6 +88,9 @@ KIND: Final = "tr-edge-policy"
 # Fixed by the contract: Go checks the same offsets.
 REFRESH_SECONDS: Final = 15
 LIFETIME_SECONDS: Final = 60
+# Settings.parse_pilot_workspaces bounds the async-settle pilot set; Go
+# (routingsnapshot.maxAdmissionWorkspaces) bounds admission_workspaces alike.
+MAX_ADMISSION_WORKSPACES: Final = 32
 
 Flag = Annotated[bool, Field(strict=True)]
 PositiveInt = Annotated[int, Field(strict=True, ge=1, le=(1 << 63) - 1)]
@@ -102,6 +128,26 @@ class EdgeAsyncSettle(Frozen):
     edge_decide: Flag
     ticket_authority: Flag
     typed_records: Flag
+    # Optional: the pilot set admission covers, present only with admission
+    # on and a non-empty set (an empty set admits every workspace, which is
+    # the member absent). The canonical bytes omit it when absent.
+    admission_workspaces: tuple[WorkspaceId, ...] | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
+
+    @model_validator(mode="after")
+    def admission_set(self) -> Self:
+        workspaces = self.admission_workspaces
+        if workspaces is None:
+            if "admission_workspaces" in self.model_fields_set:
+                raise ValueError("admission_workspaces is absent for every workspace, never null")
+            return self
+        if not self.admission_enabled:
+            raise ValueError("admission_workspaces requires admission_enabled")
+        if not 1 <= len(workspaces) <= MAX_ADMISSION_WORKSPACES:
+            raise ValueError("admission_workspaces must name 1 to 32 workspaces")
+        _sorted_unique(workspaces, "admission_workspaces")
+        return self
 
 
 class EdgePolicyV1(Frozen):
@@ -126,9 +172,21 @@ class EdgePolicyV1(Frozen):
     multi_region_enabled: Flag
     internal_models: tuple[Identity, ...]
     async_settle: EdgeAsyncSettle
+    # Optional: absent is "off", and the canonical bytes omit it then.
+    fastpath_pilot_key_windows: Literal["alert", "enforce"] | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
+    # Optional: absent is off, and the canonical bytes omit it then.
+    fastpath_edge_streams: Flag | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
 
     @model_validator(mode="after")
     def consistent(self) -> Self:
+        if self.fastpath_pilot_key_windows is None and "fastpath_pilot_key_windows" in self.model_fields_set:
+            raise ValueError("fastpath_pilot_key_windows is absent when off, never null")
+        if self.fastpath_edge_streams is not True and "fastpath_edge_streams" in self.model_fields_set:
+            raise ValueError("fastpath_edge_streams is absent when off, never null or false")
         if (self.refresh_at != self.issued_at + REFRESH_SECONDS
                 or self.not_after != self.issued_at + LIFETIME_SECONDS):
             raise ValueError("edge policy window")

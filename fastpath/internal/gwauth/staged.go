@@ -18,6 +18,10 @@ type Staged struct {
 	payload      pyjson.Object // without the two front-door keys
 	inserted     []byte
 	readBack     []byte
+	async        Async
+	// pricing is a stream's pricing snapshot (StageDOK), "" for any other
+	// request.
+	pricing string
 }
 
 // Stage builds the rows' fields and encodes the 200 body but its timing.
@@ -44,9 +48,31 @@ func Stage(in ComposeInput) (Staged, error) {
 	in.Candidates = slices.Clone(in.Candidates)
 	in.Regions = slices.Clone(in.Regions)
 
+	if in.Async != nil {
+		a := *in.Async
+		a.Request.RequestedParameters = slices.Clone(a.Request.RequestedParameters)
+		in.Async = &a
+	}
+	// The async-v1 additions, priced at the same instant as the estimate:
+	// the evaluator's price epoch is chosen by the instant's unix seconds.
+	async, err := asyncAdditions(in.Async, in.Candidates, in.At.Unix())
+	if err != nil {
+		return Staged{}, err
+	}
+
+	// A stream Stage D lets in: the frozen prices at the estimate's epoch.
+	var stream *streamPricing
+	if in.StageDReason == StageDOK {
+		canonical, candidates, err := pricingSnapshot(in.Candidates, in.At.Unix())
+		if err != nil {
+			return Staged{}, err
+		}
+		stream = &streamPricing{snapshot: canonical, candidates: candidates}
+	}
+
 	generationID := GenerationID(in.AuthorizationID)
 	tags := mergeTags(in.KeyTags, in.RequestTags)
-	data, err := responseData(in, generationID, tags)
+	data, err := responseData(in, generationID, tags, async, stream)
 	if err != nil {
 		return Staged{}, err
 	}
@@ -69,17 +95,33 @@ func Stage(in ComposeInput) (Staged, error) {
 	if err != nil {
 		return Staged{}, err
 	}
-	return Staged{
+	staged := Staged{
 		in:           in,
 		generationID: generationID,
-		payload:      payloadMembers(in, tags),
+		payload:      payloadMembers(in, tags, stream),
 		inserted:     inserted,
 		readBack:     readBack,
-	}, nil
+		async:        async,
+	}
+	if stream != nil {
+		staged.pricing = stream.snapshot
+	}
+	return staged, nil
+}
+
+// streamPricing is a stream's pricing snapshot (pricingSnapshot): the
+// row's text and the 200's candidate_prices.
+type streamPricing struct {
+	snapshot   string
+	candidates []any
 }
 
 // Input is what Stage was given, its instant as Python holds it.
 func (s Staged) Input() ComposeInput { return s.in }
+
+// Async is the async-v1 additions Stage spliced into the 200: AsyncNone
+// for an input without them.
+func (s Staged) Async() Async { return s.async }
 
 // Finish adds the front door's envelope and end of life to the payload,
 // encodes it as json_body does (sorted, ASCII, compact) and returns the two
@@ -110,6 +152,14 @@ func (s Staged) Finish(envelope string, endOfLife time.Time) (Composed, error) {
 		return Composed{}, composeErr("the payload: %v", err)
 	}
 	in := s.in
+	// A stream's row carries its pricing snapshot and heartbeat_seq 0
+	// (storage_gcp.py: heartbeat_seq is 0 when pricing_snapshot is set).
+	var pricing *string
+	var heartbeatSeq *int64
+	if s.pricing != "" {
+		text, zero := s.pricing, int64(0)
+		pricing, heartbeatSeq = &text, &zero
+	}
 	return Composed{
 		GenerationID: s.generationID,
 		Authorization: AuthorizationRow{
@@ -126,6 +176,8 @@ func (s Staged) Finish(envelope string, endOfLife time.Time) (Composed, error) {
 			IdempotencyFingerprint: in.IdempotencyFingerprint,
 			StageDBootKid:          in.BootKid,
 			InvocationNonce:        cloneString(in.InvocationNonce),
+			PricingSnapshot:        pricing,
+			HeartbeatSeq:           heartbeatSeq,
 		},
 		Reservation: ReservationRow{
 			ReservationID:          in.ReservationID,
@@ -157,24 +209,4 @@ type StageDSettings struct {
 	HeartbeatEnabled            bool
 	RequireHeartbeatDeclaration bool
 	PilotWorkspaces             []string
-}
-
-// StageDReasonOf is _stage_d_eligibility_reason (gateway.py) for a request
-// in the cohort, with the policy's settings and the boot's
-// declares_usage_heartbeat (§6). The cohort has an accepted boot and never
-// streams, so the reason is one of the five below; boot_not_accepted
-// cannot occur, and nothing after not_streaming is reached.
-func StageDReasonOf(s StageDSettings, workspaceID string, bootDeclaresHeartbeat bool) string {
-	switch {
-	case !s.EligibilityEnabled:
-		return "stage_d_disabled"
-	case len(s.PilotWorkspaces) > 0 && !slices.Contains(s.PilotWorkspaces, workspaceID):
-		return "workspace_not_pilot"
-	case !s.HeartbeatEnabled:
-		return "heartbeats_disabled"
-	case s.RequireHeartbeatDeclaration && !bootDeclaresHeartbeat:
-		return "heartbeat_undeclared"
-	default:
-		return "not_streaming"
-	}
 }

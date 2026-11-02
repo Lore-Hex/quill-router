@@ -122,6 +122,13 @@ func TestTheReasons(t *testing.T) {
 		{"header partner", ReasonIdempotencyKey, bodyOf(`"idempotency_key":"k"`),
 			Headers{ContentType: []string{"application/json"}, IdempotencyKey: []string{"partner:x"}}},
 		{"settlement", ReasonSettlementAsync, bodyOf(),
+			Headers{ContentType: []string{"application/json"}, SettlementMode: []string{"sync"}}},
+		{"settlement repeated", ReasonSettlementAsync, bodyOf(),
+			Headers{ContentType: []string{"application/json"}, SettlementMode: []string{"async-v1", "async-v1"}}},
+		{"settlement spaced", ReasonSettlementAsync, bodyOf(),
+			Headers{ContentType: []string{"application/json"}, SettlementMode: []string{" async-v1"}}},
+		// Exactly ["async-v1"] is composed (G15c), not passed here.
+		{"settlement async-v1", "", bodyOf(),
 			Headers{ContentType: []string{"application/json"}, SettlementMode: []string{"async-v1"}}},
 		{"video header", ReasonVideoProviders, bodyOf(),
 			Headers{ContentType: []string{"application/json"}, VideoAllowedProviders: true}},
@@ -132,10 +139,10 @@ func TestTheReasons(t *testing.T) {
 	}
 }
 
-// TestACacheAffinityKeyParsesAndIsFlagged (G13): a body naming a
+// TestACacheAffinityKeyParsesAndIsFlagged (§1 item 5): a body naming a
 // cache_affinity_key is not the request half's to pass; it parses with
 // CacheAffinity set, the key excluded from the dump as the schema excludes
-// it, so the decide pipeline composes the cold order and gates after.
+// it, and Go decides it in the cold order.
 func TestACacheAffinityKeyParsesAndIsFlagged(t *testing.T) {
 	key := strings.Repeat("a", 64)
 	r, p := ParseRequest(bodyOf(`"cache_affinity_key":"`+key+`"`, `"cache_affinity_explicit":true`), jsonHeaders)
@@ -155,40 +162,53 @@ func TestACacheAffinityKeyParsesAndIsFlagged(t *testing.T) {
 	}
 }
 
-// TestAPassAfterTheKeyIsReadCarriesAffinity (§11, G13): a body naming a
-// cache_affinity_key that the parse then passes on its tags, its
-// attribution, a routing input, a missing key identifier, or a cohort or
-// header reason, passes with Affinity; one the schema refuses before the
-// key is read (a lax type, a dict key, a field it refuses), or one without
-// the key, does not.
-func TestAPassAfterTheKeyIsReadCarriesAffinity(t *testing.T) {
+// TestACohortPassKeepsTheParse: a body that parsed whole and then passes a
+// cohort reason returns its parse, so the shadow can count an async-v1
+// request's population (G15 §4.4); a body the parse refuses returns none.
+func TestACohortPassKeepsTheParse(t *testing.T) {
+	key := `"cache_affinity_key":"` + strings.Repeat("a", 64) + `"`
+	async := Headers{ContentType: []string{"application/json"}, SettlementMode: []string{"async-v1"}}
+	r, p := ParseRequest(bodyOf(key, `"stream":true`), async)
+	if p.Reason != ReasonStream || !r.CacheAffinity || !r.Async.V1 {
+		t.Errorf("a stream: pass %q, affinity %v, async-v1 %v", p.Reason, r.CacheAffinity, r.Async.V1)
+	}
+	r, p = ParseRequest(bodyOf(key, `"max_tokens":"64"`), async)
+	if p.Reason != ReasonLaxType || r.CacheAffinity || r.Async.V1 {
+		t.Errorf("a lax type: pass %q, affinity %v, async-v1 %v", p.Reason, r.CacheAffinity, r.Async.V1)
+	}
+}
+
+// TestACacheAffinityKeyChangesNoPass: a body naming a cache_affinity_key
+// passes with the reason its tags, attribution, routing inputs, key
+// identifier, cohort fields, headers or schema give; the key adds none of
+// its own (one off its pattern is the schema's refusal).
+func TestACacheAffinityKeyChangesNoPass(t *testing.T) {
 	key := `"cache_affinity_key":"` + strings.Repeat("a", 64) + `"`
 	for _, c := range []struct {
-		name     string
-		body     []byte
-		headers  Headers
-		reason   string
-		affinity bool
+		name    string
+		body    []byte
+		headers Headers
+		reason  string
 	}{
-		{"tag non-ASCII", bodyOf(key, `"tags":{"x":"é"}`), jsonHeaders, ReasonTags, true},
-		{"tag value", bodyOf(key, `"tags":{"x":1}`), jsonHeaders, ReasonRefused, true},
-		{"tag reserved", bodyOf(key, `"tags":{"aws:x":"x"}`), jsonHeaders, ReasonRefused, true},
-		{"referer", bodyOf(key, `"http_referer":"https://user@example.com"`), jsonHeaders, ReasonReferer, true},
-		{"categories", bodyOf(key, `"app_categories":["BAD"]`), jsonHeaders, ReasonRefused, true},
-		{"huge tokens", bodyOf(key, `"estimated_input_tokens":9223372036854775808`), jsonHeaders, ReasonEvaluatorInput, true},
-		{"no key identifier", []byte(`{"model":"z-ai/glm-5.3",` + key + `}`), jsonHeaders, ReasonRefused, true},
-		{"stream", bodyOf(key, `"stream":true`), jsonHeaders, ReasonStream, true},
+		{"tag non-ASCII", bodyOf(key, `"tags":{"x":"é"}`), jsonHeaders, ReasonTags},
+		{"tag value", bodyOf(key, `"tags":{"x":1}`), jsonHeaders, ReasonRefused},
+		{"tag reserved", bodyOf(key, `"tags":{"aws:x":"x"}`), jsonHeaders, ReasonRefused},
+		{"referer", bodyOf(key, `"http_referer":"https://user@example.com"`), jsonHeaders, ReasonReferer},
+		{"categories", bodyOf(key, `"app_categories":["BAD"]`), jsonHeaders, ReasonRefused},
+		{"huge tokens", bodyOf(key, `"estimated_input_tokens":9223372036854775808`), jsonHeaders, ReasonEvaluatorInput},
+		{"no key identifier", []byte(`{"model":"z-ai/glm-5.3",` + key + `}`), jsonHeaders, ReasonRefused},
+		{"stream", bodyOf(key, `"stream":true`), jsonHeaders, ReasonStream},
 		{"settlement header", bodyOf(key),
-			Headers{ContentType: []string{"application/json"}, SettlementMode: []string{"async-v1"}}, ReasonSettlementAsync, true},
-		{"before the key: lax type", bodyOf(key, `"max_tokens":"64"`), jsonHeaders, ReasonLaxType, false},
-		{"before the key: dict key", bodyOf(key, `"tags":{" k":"v"}`), jsonHeaders, ReasonDictKeyStrip, false},
-		{"before the key: refused field", bodyOf(key, `"region":5`), jsonHeaders, ReasonRefused, false},
-		{"before the key: bad key", bodyOf(`"cache_affinity_key":"not-hex"`, `"tags":{"x":"é"}`), jsonHeaders, ReasonRefused, false},
-		{"no key", bodyOf(`"tags":{"x":"é"}`), jsonHeaders, ReasonTags, false},
+			Headers{ContentType: []string{"application/json"}, SettlementMode: []string{"sync"}}, ReasonSettlementAsync},
+		{"before the key: lax type", bodyOf(key, `"max_tokens":"64"`), jsonHeaders, ReasonLaxType},
+		{"before the key: dict key", bodyOf(key, `"tags":{" k":"v"}`), jsonHeaders, ReasonDictKeyStrip},
+		{"before the key: refused field", bodyOf(key, `"region":5`), jsonHeaders, ReasonRefused},
+		{"before the key: bad key", bodyOf(`"cache_affinity_key":"not-hex"`, `"tags":{"x":"é"}`), jsonHeaders, ReasonRefused},
+		{"no key", bodyOf(`"tags":{"x":"é"}`), jsonHeaders, ReasonTags},
 	} {
 		_, p := ParseRequest(c.body, c.headers)
-		if p.Reason != c.reason || p.Affinity != c.affinity {
-			t.Errorf("%s: pass %q affinity %v, want %q %v", c.name, p.Reason, p.Affinity, c.reason, c.affinity)
+		if p.Reason != c.reason {
+			t.Errorf("%s: pass %q, want %q", c.name, p.Reason, c.reason)
 		}
 	}
 }

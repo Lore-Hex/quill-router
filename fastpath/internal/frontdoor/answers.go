@@ -50,6 +50,9 @@ const (
 	PastCutoff Status = "past_cutoff"
 	// Failed: the gateway retries, as today after an error.
 	Failed Status = "failed"
+	// Pending: a disposition with no winner or record found yet; never a
+	// refund.
+	Pending Status = "pending"
 	// Invalid: a request no retry makes good: an envelope whose seal does
 	// not hold, or what the owner cannot take.
 	Invalid Status = "invalid"
@@ -85,7 +88,9 @@ type OwnerHeartbeat struct {
 	Usage      int64
 	Running    int64
 	Echoed     time.Time
-	Basis      []byte
+	// EchoGranted is the gateway's, sent only when set (HeartbeatOf).
+	EchoGranted bool `json:",omitempty"`
+	Basis       []byte
 }
 
 // HeartbeatAnswer is a heartbeat's answer, the owner's and the front

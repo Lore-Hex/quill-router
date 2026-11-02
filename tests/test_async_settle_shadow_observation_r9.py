@@ -59,7 +59,12 @@ async def test_admission_after_scope_sample(monkeypatch, revoke):
         svc.tick(wall[0], publisher=True)
         svc.submit_publisher(wall[0]//m.SLOT_US, wall[0])
         await svc.publisher_job
-        assert claims == [100.2], status(svc)
+        # Actual admission remains recorded, but its 200ms delay must not
+        # move the next scheduled boundary. Single-worker exclusion and the
+        # server slot fence still guard the next claim.
+        assert claims == [100.2, 102.], status(svc)
+        assert svc.state.last_actual_start == 102., status(svc)
+        assert svc.state.last_start_boundary == 102., status(svc)
 
 
 @pytest.mark.asyncio

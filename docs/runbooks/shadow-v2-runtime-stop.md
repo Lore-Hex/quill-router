@@ -43,6 +43,16 @@ is no automatic clear. Wait for failed breaker writes to finish (or terminate
 the stopped processes) before clearing, otherwise a pending retry can stop the
 fleet again. Stop and clear must be serialized by the operator's incident workflow.
 
+`TR_ASYNC_SETTLE_SHADOW_REGIONS` optionally limits shadow v2 to a comma-separated
+set of serving regions. Empty preserves the existing fleet-wide behavior; with
+an explicit set, this process's `TR_SERVING_REGION` must be nonempty and listed,
+and a configured `TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION` must also be listed.
+Excluded processes install no shadow v2 runtime or startup harness and do not
+fall back to v1; async admission and billing are unchanged. This scope avoids
+far-region client deadlines tripping the per-process breaker while the database
+is healthy, as happened from southamerica-east1 against nam6 on 2026-10-28.
+The stop marker still stops all participating processes sharing the database.
+
 ## Runtime behavior and evidence
 
 Every installed Service performs a startup point read before exposing shadow

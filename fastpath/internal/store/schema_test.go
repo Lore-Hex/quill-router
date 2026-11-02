@@ -35,6 +35,7 @@ func TestSchemaIsAsWritten(t *testing.T) {
 	}
 	want := map[string]string{
 		"tr_credit_balance":        " |  | ",
+		"tr_key_limit":             " |  | ",
 		"tr_reservation":           " |  | ",
 		"tr_gateway_authorization": " |  | ",
 		"tr_entities":              " |  | ",

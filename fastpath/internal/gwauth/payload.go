@@ -16,7 +16,7 @@ import (
 // dict with an empty default factory (tags when the merged map is empty);
 // a field with any other default is always written. The order here is
 // immaterial: Canonical sorts.
-func payloadMembers(in ComposeInput, tags []ComposeTag) pyjson.Object {
+func payloadMembers(in ComposeInput, tags []ComposeTag, stream *streamPricing) pyjson.Object {
 	first := in.Candidates[0]
 	models := make([]string, len(in.Candidates))
 	endpoints := make([]string, len(in.Candidates))
@@ -60,6 +60,14 @@ func payloadMembers(in ComposeInput, tags []ComposeTag) pyjson.Object {
 	}
 	if in.InvocationNonce != nil {
 		p = append(p, pyjson.Member{Key: "invocation_nonce", Value: *in.InvocationNonce})
+	}
+	if stream != nil {
+		// A stream Stage D lets in: the row's pricing snapshot, and its
+		// heartbeat_seq, 0 until the first heartbeat.
+		p = append(p,
+			pyjson.Member{Key: "pricing_snapshot", Value: stream.snapshot},
+			pyjson.Member{Key: "heartbeat_seq", Value: int64(0)},
+		)
 	}
 	return p
 }

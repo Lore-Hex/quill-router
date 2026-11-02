@@ -12,6 +12,7 @@ import httpx
 import pytest
 
 from trusted_router.services import fastpath_frontdoor as fd
+from trusted_router.storage_models import ApiKey
 
 
 class _Door:
@@ -499,3 +500,81 @@ def test_the_narrowest_cohort_is_eligible_and_each_departure_names_itself() -> N
         ("records_durable", False, "records"),
     ]:
         assert fd.pilot_reason(**{**_ELIGIBLE, field: value}) == reason, field
+
+
+def _key(**fields: Any) -> ApiKey:
+    return ApiKey(hash="kh", salt="", secret_hash="", lookup_hash="lh", name="k", label="k",
+                  workspace_id="ws-1", creator_user_id=None, **fields)
+
+
+_KEYS: dict[str, dict[str, Any]] = {
+    "no windows": {},
+    "enforcing windows": {"limit_daily_microdollars": 1_000, "limit_monthly_microdollars": 9_000},
+    "alert-only windows": {"limit_weekly_microdollars": 5_000, "budget_alert_only": True},
+    "lifetime cap": {"limit_microdollars": 10_000},
+    "lifetime cap with alert-only windows": {
+        "limit_microdollars": 10_000, "limit_daily_microdollars": 1_000, "budget_alert_only": True},
+    "lifetime cap with enforcing windows": {"limit_microdollars": 10_000, "limit_daily_microdollars": 1_000},
+}
+# key_capped by mode (e2-key-windows section 5): `alert` covers alert-only
+# keys, `enforce` both; a lifetime cap is never covered.
+_CAPPED: dict[str, dict[str, bool]] = {
+    "no windows": {"off": False, "alert": False, "enforce": False},
+    "enforcing windows": {"off": True, "alert": True, "enforce": False},
+    "alert-only windows": {"off": True, "alert": False, "enforce": False},
+    "lifetime cap": {"off": True, "alert": True, "enforce": True},
+    "lifetime cap with alert-only windows": {"off": True, "alert": True, "enforce": True},
+    "lifetime cap with enforcing windows": {"off": True, "alert": True, "enforce": True},
+}
+
+
+@pytest.mark.parametrize("mode", ["off", "alert", "enforce"])
+@pytest.mark.parametrize("kind", list(_KEYS))
+def test_key_capped_is_the_lifetime_cap_or_windows_the_mode_does_not_cover(mode: str, kind: str) -> None:
+    capped = fd.pilot_key_capped(mode, _key(**_KEYS[kind]))
+    assert capped is _CAPPED[kind][mode]
+    assert fd.pilot_reason(**{**_ELIGIBLE, "key_capped": capped}) == ("key_cap" if capped else None)
+
+
+def test_the_truth_table_covers_each_mode_both_ways() -> None:
+    """Every mode keeps some key out, and only `off` keeps every windowed
+    key out, so the table above cannot pass vacuously."""
+    for mode in ("off", "alert", "enforce"):
+        assert any(row[mode] for row in _CAPPED.values()), mode
+    windowed = ("enforcing windows", "alert-only windows")
+    assert [mode for mode in ("off", "alert", "enforce") if all(_CAPPED[k][mode] for k in windowed)] == ["off"]
+
+
+@pytest.mark.parametrize(("name", "fields"), [
+    # budget_alert_only as Go reads it: a JSON bool, or absent. Python's
+    # authorize reads it by truthiness; the edge answers key_shape.
+    ("an integer alert flag", {"limit_daily_microdollars": 1_000, "budget_alert_only": 1}),
+    ("a string alert flag", {"limit_daily_microdollars": 1_000, "budget_alert_only": "true"}),
+    ("a zero alert flag", {"limit_daily_microdollars": 1_000, "budget_alert_only": 0}),
+    ("a null alert flag", {"limit_daily_microdollars": 1_000, "budget_alert_only": None}),
+    # Each configured limit as an integer in int64; Python's int() reads more.
+    ("a string limit", {"limit_daily_microdollars": "1000"}),
+    ("a float limit", {"limit_weekly_microdollars": 1000.0}),
+    ("a boolean limit", {"limit_monthly_microdollars": True}),
+    ("a limit past int64", {"limit_daily_microdollars": 1 << 63}),
+    ("one malformed limit beside a good one", {
+        "limit_daily_microdollars": 1_000, "limit_weekly_microdollars": "5000", "budget_alert_only": True}),
+])
+def test_a_key_the_edge_reads_as_key_shape_is_covered_by_no_mode(name: str, fields: dict[str, Any]) -> None:
+    for mode in ("off", "alert", "enforce"):
+        assert fd.pilot_key_capped(mode, _key(**fields)) is True, (name, mode)
+    # Positive control: well-formed windows are covered by enforce.
+    assert fd.pilot_key_capped("enforce", _key(limit_daily_microdollars=1_000, limit_weekly_microdollars=5_000)) is False
+
+
+def test_int64_bounds_are_inclusive() -> None:
+    for limit in ((1 << 63) - 1, -(1 << 63), 0):
+        assert fd.pilot_key_capped("enforce", _key(limit_daily_microdollars=limit)) is False, limit
+    assert fd.pilot_key_capped("enforce", _key(limit_daily_microdollars=-(1 << 63) - 1)) is True
+
+
+def test_a_mode_outside_the_setting_covers_nothing() -> None:
+    windowed = _key(limit_daily_microdollars=1_000, budget_alert_only=True)
+    for mode in ("", "OFF", "Alert", "enforcing"):
+        assert fd.pilot_key_capped(mode, windowed) is True, mode
+    assert fd.pilot_key_capped("", _key()) is False

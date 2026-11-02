@@ -67,8 +67,13 @@ from trusted_router.pricing import (
 from trusted_router.provider_compat import byok_storage_provider_candidates
 from trusted_router.provider_contracts import (
     BEDROCK_GATEWAY_REGIONS,
+    BEDROCK_RUNTIME_GATEWAY_REGIONS,
+    BEDROCK_RUNTIME_PROFILES,
     EXPLICIT_GATEWAY_REGIONS_BY_PROVIDER_MODEL,
+    MAPLE_GATEWAY_REGIONS,
+    MAPLE_MODEL_ID,
     UNSUPPORTED_GATEWAY_REGIONS_BY_PROVIDER_MODEL,
+    qualified_gateway_origin_names,
 )
 from trusted_router.provider_lifecycle import provider_retirements
 from trusted_router.provider_locations import inference_location_metadata
@@ -694,9 +699,17 @@ def _retired_at(endpoint: ModelEndpoint) -> int | None:
 
 
 def _gateway_regions(endpoint: ModelEndpoint) -> GatewayRegions:
+    if endpoint.provider == "maple":
+        return GatewayRegions(
+            only=tuple(sorted(qualified_gateway_origin_names(MAPLE_GATEWAY_REGIONS))) if endpoint.model_id == MAPLE_MODEL_ID else (),
+            deny=(), requires_explicit_origin=True,
+        )
     if endpoint.provider == BEDROCK_PROVIDER:
         return GatewayRegions(
-            only=tuple(sorted(BEDROCK_GATEWAY_REGIONS)), deny=(), requires_explicit_origin=True,
+            only=tuple(sorted(
+                qualified_gateway_origin_names(BEDROCK_RUNTIME_GATEWAY_REGIONS) if endpoint.model_id in BEDROCK_RUNTIME_PROFILES
+                else BEDROCK_GATEWAY_REGIONS
+            )), deny=(), requires_explicit_origin=True,
         )
     required_regions = EXPLICIT_GATEWAY_REGIONS_BY_PROVIDER_MODEL.get((endpoint.provider, endpoint.model_id))
     if required_regions is not None:

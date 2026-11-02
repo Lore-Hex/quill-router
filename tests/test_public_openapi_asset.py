@@ -279,3 +279,25 @@ def test_public_openapi_documents_speech_wav(source: str) -> None:
     assert operation["responses"]["200"]["content"]["audio/wav"] == {
         "schema": {"type": "string", "format": "binary"}
     }
+
+
+@pytest.mark.parametrize("model_name,field_name", [
+    ("EarningsTransferRequest", "amount_microdollars"),
+    ("UserModelCreateRequest", "prompt_price_microdollars_per_million_tokens"),
+    ("UserModelCreateRequest", "completion_price_microdollars_per_million_tokens"),
+    ("UserModelPatchRequest", "prompt_price_microdollars_per_million_tokens"),
+    ("UserModelPatchRequest", "completion_price_microdollars_per_million_tokens"),
+])
+def test_published_int64_maximum_is_exactly_the_runtime_integer_bound(model_name, field_name):
+    from trusted_router import schemas
+
+    model = getattr(schemas, model_name)
+    runtime_bound = next(item.le for item in model.model_fields[field_name].metadata
+                         if hasattr(item, "le"))
+    assert type(runtime_bound) is int
+    assert runtime_bound == 9223372036854775807
+    for body in (JSON_PATH.read_bytes(), gzip.decompress(GZIP_PATH.read_bytes())):
+        field = json.loads(body)["components"]["schemas"][model_name]["properties"][field_name]
+        integer = next(part for part in field["anyOf"] if part["type"] == "integer") if "anyOf" in field else field
+        assert type(integer["maximum"]) is int
+        assert integer["maximum"] == runtime_bound

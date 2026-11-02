@@ -269,14 +269,19 @@ func pick(request string, k int64) int64 {
 }
 
 // HeartbeatOf is a gateway's heartbeat, with the envelope it echoes.
+// EchoGranted (owner.HeartbeatOf) is sent only when set, here and to the
+// owner: a node from before it refuses a request carrying it, so owners
+// take it before front doors, and front doors before the control plane
+// sends it (docs/design/fast-admission-streams.md section 4.6).
 type HeartbeatOf struct {
-	Envelope   string
-	GatewaySeq int64
-	Hash       []byte
-	Usage      int64
-	Running    int64
-	Echoed     time.Time
-	Basis      []byte
+	Envelope    string
+	GatewaySeq  int64
+	Hash        []byte
+	Usage       int64
+	Running     int64
+	Echoed      time.Time
+	EchoGranted bool `json:",omitempty"`
+	Basis       []byte
 }
 
 // Heartbeat sends a heartbeat to the owner its envelope names, through a
@@ -289,11 +294,49 @@ func (f *FrontDoor) Heartbeat(ctx context.Context, hb HeartbeatOf) HeartbeatAnsw
 	}
 	got, ok := f.heartbeatAt(ctx, env, OwnerHeartbeat{Lease: env.Lease, Auth: env.Auth,
 		GatewaySeq: hb.GatewaySeq, Hash: hb.Hash, Usage: hb.Usage, Running: hb.Running, Echoed: hb.Echoed,
-		Basis: hb.Basis})
+		EchoGranted: hb.EchoGranted, Basis: hb.Basis})
 	if !ok {
 		return HeartbeatAnswer{Status: Retry}
 	}
 	return got
+}
+
+// DispositionOf asks for an authorization's disposition by the envelope its
+// gateway echoes.
+type DispositionOf struct {
+	Envelope string
+}
+
+// DispositionAnswer is a disposition's answer: Settled with the stored
+// outcome (settled, refunded, reaped_snapshot or released) and its cost
+// when known; Pending when no winner or record is found; Invalid for an
+// envelope whose seal does not hold; Failed when the store was not read.
+type DispositionAnswer struct {
+	Status    Status
+	Outcome   string `json:",omitempty"`
+	Cost      int64  `json:",omitempty"`
+	CostKnown bool   `json:",omitempty"`
+}
+
+// Disposition reads an authorization's disposition, the read a refused
+// append answers from (store.Disposition), for the control plane's reaper
+// of a leased stream (docs/design/fast-admission-streams.md section 6.4). It
+// writes nothing and asks no owner: a winner the owner decided and the
+// auditor has not stored yet reads as pending, which the caller never takes
+// for a refund.
+func (f *FrontDoor) Disposition(ctx context.Context, d DispositionOf) DispositionAnswer {
+	env, err := OpenWith(f.keys(), d.Envelope)
+	if err != nil {
+		return DispositionAnswer{Status: Invalid}
+	}
+	got, err := f.cfg.Store.Disposition(ctx, env.Auth)
+	switch {
+	case err != nil:
+		return DispositionAnswer{Status: Failed}
+	case got.Outcome == "" || got.Outcome == string(Pending):
+		return DispositionAnswer{Status: Pending}
+	}
+	return DispositionAnswer{Status: Settled, Outcome: got.Outcome, Cost: got.Cost.Int64, CostKnown: got.Cost.Valid}
 }
 
 // SettleOf is a gateway's settle: the envelope it echoes, its charge, its

@@ -25,6 +25,10 @@ from scripts.pricing.openai_catalog import (
     discover_openai_chat_catalog,
     probe_openai_chat,
 )
+from trusted_router.provider_contracts import (
+    PEARL_GEMMA_4_31B_HOLD_REASON,
+    PEARL_GEMMA_4_31B_MODEL_ID,
+)
 
 SLUG = "pearl"
 BASE_URL = "https://inference.pearlresearch.ai/v1"
@@ -147,4 +151,5 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         manifest_path=MANIFEST_PATH,
         discovered_rows=_DISCOVERED_MANIFEST_ROWS,
         source_url=URL,
+        operator_hold_reasons={PEARL_GEMMA_4_31B_MODEL_ID: PEARL_GEMMA_4_31B_HOLD_REASON},
     )

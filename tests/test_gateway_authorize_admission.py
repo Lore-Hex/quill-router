@@ -93,3 +93,49 @@ def test_gateway_authorize_admission_limit_must_be_positive() -> None:
         match="TR_GATEWAY_AUTHORIZE_MAX_IN_FLIGHT_PER_KEY must be positive",
     ):
         Settings(environment="test", gateway_authorize_max_in_flight_per_key=0)
+
+
+def test_edge_full_shadow_reads_this_refusal_by_its_type_and_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The edge's full shadow tells this gate's 429 from any other by its
+    type and exact message (fastpath/internal/edge/shadow_full.go,
+    inFlightRefusal and inFlightMessage): a request the edge's decide path
+    passed at its own per-key in-flight limit that this gate refuses is the
+    same call, passed.inflight.key, never a paging would-admit. The ingress
+    limiter's 429 shares the type, so the message must stay distinct."""
+    import re
+    from pathlib import Path
+
+    subject = "lookup-admission-edge-pin"
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocking_authorize(*_args: object) -> dict[str, object]:
+        started.set()
+        assert release.wait(timeout=5)
+        return {"data": {"authorization_id": "gwa-admitted"}}
+
+    monkeypatch.setattr(gateway, "_authorize_gateway_sync", blocking_authorize)
+    settings = Settings(environment="test", gateway_authorize_max_in_flight_per_key=1)
+
+    async def refused() -> dict[str, object]:
+        first = asyncio.create_task(gateway.authorize_gateway(_request(), _body(subject), settings))
+        assert await asyncio.to_thread(started.wait, 5)
+        try:
+            with pytest.raises(HTTPException) as raised:
+                await gateway.authorize_gateway(_request(), _body(subject), settings)
+        finally:
+            release.set()
+            await first
+        assert raised.value.status_code == 429
+        detail = raised.value.detail
+        assert isinstance(detail, dict)
+        return detail
+
+    error = asyncio.run(refused())["error"]
+    assert isinstance(error, dict)
+    go = (Path(__file__).resolve().parents[1] / "fastpath/internal/edge/shadow_full.go").read_text()
+    pinned = dict(re.findall(r'^\s*(inFlightRefusal|inFlightMessage)\s*=\s*"([^"]*)"', go, re.M))
+    assert pinned == {"inFlightRefusal": error["type"], "inFlightMessage": error["message"]}
+    assert error["message"] != "Rate limit exceeded"

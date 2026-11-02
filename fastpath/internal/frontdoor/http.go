@@ -37,6 +37,9 @@ func Handler(fd *FrontDoor, local *Local) http.Handler {
 		mux.HandleFunc("POST /v1/refund", serve(func(ctx context.Context, r RefundOf) (TerminalAnswer, error) {
 			return fd.Refund(ctx, r), nil
 		}))
+		mux.HandleFunc("POST /v1/disposition", serve(func(ctx context.Context, d DispositionOf) (DispositionAnswer, error) {
+			return fd.Disposition(ctx, d), nil
+		}))
 		mux.HandleFunc("POST /peer/heartbeat", serve(func(ctx context.Context, r relayHeartbeat) (HeartbeatAnswer, error) {
 			return fd.RelayHeartbeat(ctx, r.Owner, r.Request)
 		}))
@@ -235,6 +238,12 @@ func (g Gateway) Settle(ctx context.Context, s SettleOf) (TerminalAnswer, error)
 func (g Gateway) Refund(ctx context.Context, r RefundOf) (TerminalAnswer, error) {
 	var ans TerminalAnswer
 	return ans, postURL(ctx, g.Client, g.Base+"/v1/refund", r, &ans)
+}
+
+// Disposition asks for an authorization's disposition by its envelope.
+func (g Gateway) Disposition(ctx context.Context, d DispositionOf) (DispositionAnswer, error) {
+	var ans DispositionAnswer
+	return ans, postURL(ctx, g.Client, g.Base+"/v1/disposition", d, &ans)
 }
 
 func post(ctx context.Context, c *http.Client, scheme, address, path string, req, ans any) error {

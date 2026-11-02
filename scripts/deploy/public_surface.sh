@@ -799,6 +799,8 @@ for index in "${!TARGET_REGIONS[@]}"; do
     --image "$LEGACY_IMAGE"
     --allow-unauthenticated
     --port 8080
+    # Same process-only liveness budget as rollout.sh; retain TCP startup.
+    --liveness-probe 'httpGet.path=/health,httpGet.port=8080,initialDelaySeconds=0,periodSeconds=10,timeoutSeconds=9,failureThreshold=6'
     --ingress "$INGRESS"
     --service-account "$PUBLIC_RUNTIME_SA"
     --concurrency "$PUBLIC_CONCURRENCY"
@@ -812,7 +814,7 @@ for index in "${!TARGET_REGIONS[@]}"; do
     --set-secrets "$SET_SECRETS"
   )
   if [ "$STAGE" = "companion" ]; then
-    gc run deploy "$PUBLIC_SERVICE" "${deploy_args[@]}" --quiet
+    gc_router_revision run deploy "$PUBLIC_SERVICE" "${deploy_args[@]}" --quiet
     continue
   fi
 
@@ -822,7 +824,7 @@ for index in "${!TARGET_REGIONS[@]}"; do
     echo "ERROR: refusing to widen ingress without durable recovery state for ${PUBLIC_SERVICE}/${target}" >&2
     exit 1
   fi
-  if ! new_revision="$(gc run deploy "$PUBLIC_SERVICE" \
+  if ! new_revision="$(gc_router_revision run deploy "$PUBLIC_SERVICE" \
       "${deploy_args[@]}" \
       --no-traffic \
       --format 'value(status.latestCreatedRevisionName)' \

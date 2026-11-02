@@ -38,6 +38,23 @@ def test_gateway_pairs_are_actual_records_and_http_is_not_inference_success(stat
     assert 'finish_reason' not in result  # HTTP status cannot supply the provider's stop reason.
 
 
+@pytest.mark.parametrize('field', ['message', 'MESSAGE'])
+def test_gateway_projects_both_launcher_message_fields(field):
+    # Confidential Space launchers wrote MESSAGE until 2026-10-06, message since.
+    entry = audit('end')
+    entry['jsonPayload'] = {field: entry['jsonPayload']['MESSAGE']}
+    row = ga.project(entry)
+    assert row is not None and row['http_status'] == 200
+
+
+@pytest.mark.parametrize('other', ['', None, 'unrelated launcher line'])
+def test_gateway_projects_the_field_that_holds_the_audit(other):
+    entry = audit('end')
+    entry['jsonPayload']['message'] = other
+    row = ga.project(entry)
+    assert row is not None and row['http_status'] == 200
+
+
 def test_missing_start_never_synthesized_from_elapsed_time():
     row = ga.snapshots([ga.project(audit('end', status=403))], [], NOW)[0]
     assert row['started_at'] is None and not row['paired']
@@ -292,6 +309,9 @@ def test_worker_release_preserves_main_ci_gate_and_existing_configuration():
         assert spec['default'] == 'keep' and spec['options'] == ['keep', 'true', 'false']
     assert 'new_gateway="$old_gateway"' in run and 'new_owners="$old_owners"' in run and 'keep) ;;' in run
     assert '--update-env-vars "GROWTH_GATEWAY_ATTEMPTS_ENABLED=$new_gateway,GROWTH_BILLING_OWNERS_ENABLED=$new_owners"' in run
+    assert '--memory 1Gi' in run
+    assert '.resources.limits.memory' in run and '--memory "$old_memory"' in run
+    assert 'test -n "$old_memory"' in run and 'test "$old_memory" != null' in run
 
 
 @pytest.mark.parametrize('cell,label', [('run_request', 'Run my first API request'),

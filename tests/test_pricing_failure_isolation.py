@@ -358,15 +358,29 @@ def test_unpriceable_headline_holds_only_its_model_and_reports_it(
     assert "3 failed (kept committed state; absent providers remain absent)" in out
 
 
+@pytest.mark.parametrize("active_count", [2, 3])
 def test_crusoe_mass_prune_rejection_is_isolated_and_keeps_committed_data(
     refresh_run: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    active_count: int,
 ) -> None:
-    before = crusoe.MANIFEST_PATH.read_bytes()
+    # Pin the >=50% guard precondition instead of borrowing the changing
+    # live catalog, whose active routes can fall below half its tombstones.
+    committed = {
+        "id": "moonshotai/kimi-k2.6", "upstream_id": "moonshotai/Kimi-K2.6",
+        "input_token_price_per_m": 600_000, "output_token_price_per_m": 2_000_000,
+        "routable": True,
+    }
+    rows = [committed]
+    for index in range(1, 4):
+        row = {**committed, "id": f"acme/model-{index}", "upstream_id": f"native-{index}"}
+        if index >= active_count:
+            row.update(routable=False, routable_reason="delisted-upstream", missing_since="2026-10-01")
+        rows.append(row)
+    before = (json.dumps({"provider": "crusoe", "model_count": 4, "models": rows}, indent=1) + "\r\n").encode()
     path = refresh.PROVIDER_MANIFEST_DIR / "crusoe.json"
     path.write_bytes(before)
-    committed = next(row for row in json.loads(before)["models"] if row["id"] == "moonshotai/kimi-k2.6")
     price = refresh._price_to_pricing_block(ModelPrice(
         committed["input_token_price_per_m"], committed["output_token_price_per_m"],
     ))

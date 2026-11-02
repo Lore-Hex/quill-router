@@ -13,23 +13,17 @@ import (
 
 // §3's request reasons, in its table's order.
 const (
-	ReasonContentType    = "body.content_type"
-	ReasonUnparseable    = "body.unparseable"
-	ReasonDuplicateKey   = "body.duplicate_key"
-	ReasonFloat          = "body.float"
-	ReasonLaxType        = "body.lax_type"
-	ReasonStripAmbiguous = "body.strip_ambiguous"
-	ReasonDictKeyStrip   = "body.dict_key_strip"
-	ReasonRefused        = "body.refused"
-	ReasonAPIKeyHash     = "body.api_key_hash"
-	ReasonStream         = "body.stream"
-	ReasonServiceTier    = "body.service_tier"
-	// ReasonCacheAffinity is not the request half's: a body naming a
-	// cache_affinity_key parses (Request.CacheAffinity) and the decide
-	// pipeline composes Go's cold order, then passes with this reason after
-	// the compose (edge.Decide), so the shadow measures Python's order
-	// against it while nothing admits it (§3 "Decision gates").
-	ReasonCacheAffinity   = "body.cache_affinity"
+	ReasonContentType     = "body.content_type"
+	ReasonUnparseable     = "body.unparseable"
+	ReasonDuplicateKey    = "body.duplicate_key"
+	ReasonFloat           = "body.float"
+	ReasonLaxType         = "body.lax_type"
+	ReasonStripAmbiguous  = "body.strip_ambiguous"
+	ReasonDictKeyStrip    = "body.dict_key_strip"
+	ReasonRefused         = "body.refused"
+	ReasonAPIKeyHash      = "body.api_key_hash"
+	ReasonStream          = "body.stream"
+	ReasonServiceTier     = "body.service_tier"
 	ReasonPricedExtra     = "body.priced_extra"
 	ReasonCanonicalModel  = "body.canonical_model"
 	ReasonCustomModel     = "body.custom_model"
@@ -68,8 +62,9 @@ var chatArmRouteTypes = map[string]bool{"chat.completions": true, "responses": t
 	"embeddings": true, "decide": true}
 
 // cohort applies §3's request reasons after body.refused, in order. object
-// is the decoded body; r is its parse.
-func (r *Request) cohort(object pyjson.Object, h Headers) Pass {
+// is the decoded body; r is its parse. With streams a stream does not pass
+// as body.stream (ParseRequestStreams).
+func (r *Request) cohort(object pyjson.Object, h Headers, streams bool) Pass {
 	values := make(map[string]any, len(object))
 	for _, m := range object {
 		values[m.Key] = m.Value
@@ -78,7 +73,7 @@ func (r *Request) cohort(object pyjson.Object, h Headers) Pass {
 	switch {
 	case present("api_key_hash"):
 		return passFor(ReasonAPIKeyHash)
-	case values["stream"] == true:
+	case values["stream"] == true && !streams:
 		return passFor(ReasonStream)
 	case present("service_tier"):
 		return passFor(ReasonServiceTier)
@@ -111,9 +106,10 @@ func (r *Request) cohort(object pyjson.Object, h Headers) Pass {
 	if p := r.idempotencyHeaders(h); p.Passed() {
 		return p
 	}
-	if len(h.SettlementMode) > 0 {
-		// Python takes the async path only for exactly ["async-v1"]; Go
-		// passes any value rather than tell them apart.
+	if len(h.SettlementMode) > 0 && !exactlyAsyncV1(h.SettlementMode) {
+		// Python takes the async path only for exactly ["async-v1"], which
+		// the edge composes (async.go, G15c); any other present value passes
+		// rather than be told apart from it.
 		return passFor(ReasonSettlementAsync)
 	}
 	if h.VideoAllowedProviders {

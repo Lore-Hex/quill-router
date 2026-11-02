@@ -21,7 +21,8 @@
       "routable": true,
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 600000,
-      "cached_input_token_price_per_m": 15000
+      "cached_input_token_price_per_m": 15000,
+      "missing_since": "2026-11-01"
     },
     {
       "display_name": "solar-pro3",
@@ -43,7 +44,8 @@
       "routable": true,
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 600000,
-      "cached_input_token_price_per_m": 15000
+      "cached_input_token_price_per_m": 15000,
+      "missing_since": "2026-11-01"
     },
     {
       "display_name": "solar-pro4",
@@ -70,7 +72,7 @@
   ],
   "source": "https://api.upstage.ai/v1/models",
   "pricing_source": "https://www.upstage.ai/pricing/api",
-  "generated_at": "2026-10-26T06:59:20Z",
+  "generated_at": "2026-11-01T19:12:14Z",
   "price_scale": "microdollars_per_million",
   "model_count": 3
 }

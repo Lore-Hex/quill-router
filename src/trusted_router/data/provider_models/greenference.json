@@ -294,9 +294,9 @@
         "request_id_header": "X-Request-Id",
         "account_quota_error_codes": []
       },
-      "input_token_price_per_m": 446500,
-      "output_token_price_per_m": 446500,
-      "cached_input_token_price_per_m": 223250
+      "input_token_price_per_m": 80000,
+      "output_token_price_per_m": 250000,
+      "cached_input_token_price_per_m": 40000
     },
     {
       "display_name": "Qwen: Qwen3.5 9B",
@@ -496,13 +496,13 @@
         "request_id_header": "X-Request-Id",
         "account_quota_error_codes": []
       },
-      "input_token_price_per_m": 140000,
-      "output_token_price_per_m": 490000,
-      "cached_input_token_price_per_m": 28000
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 20000
     }
   ],
   "source": "https://llm.eu.greenference.com/trustedrouter/v1/models",
-  "generated_at": "2026-10-26T06:59:20Z",
+  "generated_at": "2026-11-01T19:12:14Z",
   "price_scale": "microdollars_per_million",
   "model_count": 10
 }

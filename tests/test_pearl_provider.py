@@ -183,6 +183,27 @@ def test_pearl_catalog_is_prepaid_only_and_standard_privacy() -> None:
     assert all(endpoint.id.endswith("@pearl/prepaid") for endpoint in endpoints)
 
 
+def test_pearl_refresh_cannot_clear_confirmed_model_not_found(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = tmp_path / "pearl.json"
+    monkeypatch.setattr(pearl, "MANIFEST_PATH", manifest)
+    monkeypatch.setattr(pearl, "UPSTREAM_ID_MAP", {})
+    payload = {"data": [_model_row(
+        "google/gemma-4-31B-it", prompt="0.00000009", completion="0.00000034", cached="0.00000005",
+    )]}
+    prices, rows = pearl._parse_catalog(payload)
+    rows["google/gemma-4-31b-it"]["routable"] = True
+    monkeypatch.setattr(pearl, "_DISCOVERED_MANIFEST_ROWS", rows)
+    result = ProviderPricingResult(slug="pearl", prices=prices, source="api", fetched_url=pearl.URL)
+    pearl.write_provider_manifest(result)
+    pearl.write_provider_manifest(result)
+    row = json.loads(manifest.read_text())["models"][0]
+    assert row["routable"] is False
+    assert row["routable_reason"] == "provider-model-not-found"
+    assert row["upstream_id"] == "google/gemma-4-31B-it"
+
+
 @pytest.mark.provider_health
 def test_pearl_serves_glm_5_3() -> None:
     # Live provider state: provider-catalog-health.yml reports it hourly, and

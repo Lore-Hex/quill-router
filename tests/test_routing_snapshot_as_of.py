@@ -42,6 +42,8 @@ RETIREMENTS = {
 _PIN = """
 import sys
 from datetime import UTC, datetime
+from tests.snapshot_retirement_fixture import install
+install()
 from trusted_router import catalog_data, provider_lifecycle
 def pin(seconds):
     instant = datetime.fromtimestamp(seconds, UTC)
@@ -65,6 +67,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from trusted_router.detached_jws import TrustedKey, b64encode
 from trusted_router.routing_snapshot_signing import PURPOSE, RoutingSnapshotSigner
 from trusted_router.services.routing_snapshot_publisher import AsOfSource, SnapshotIdentity
+from trusted_router.services import routing_snapshot_publisher
+routing_snapshot_publisher.WORKER_MODULE = "tests.snapshot_retirement_fixture"
 now = int(sys.argv[2])
 pin(now)
 settings = Settings(environment="test", sentry_dsn=None, auto_model_order="")
@@ -114,7 +118,8 @@ print(json.dumps({"digest": hashlib.sha256(rs.canonical_snapshot_bytes(snapshot)
 
 
 def _run(script: str, *args: int) -> dict[str, Any]:
-    env = {**os.environ, "TR_ENVIRONMENT": "test", "PYTHONPATH": str(ROOT / "src")}
+    env = {**os.environ, "TR_ENVIRONMENT": "test",
+           "PYTHONPATH": os.pathsep.join((str(ROOT), str(ROOT / "src")))}
     # Only the pins decide the clocks: not the session's lifecycle override.
     env.pop(provider_lifecycle.LIFECYCLE_CLOCK_OVERRIDE_ENV, None)
     result = subprocess.run(  # noqa: S603 - fixed Python script, no shell or caller input

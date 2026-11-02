@@ -126,6 +126,10 @@ def test_collector_memory_and_rate_caps_reset() -> None:
     *[('nyte.cta_clicked', {'cta': cta, 'position': position})
       for cta in ('download_apple_silicon', 'download_intel_mac')
       for position in ('hero', 'close')],
+    ('nyte.reserve_checkout_started', {'unit': 'blocks', 'underlying_kind': 'index', 'grade': 'A'}),
+    ('nyte.reserve_checkout_succeeded', {}),
+    ('nyte.resale_listed', {'grade': 'A'}),
+    ('nyte.resale_withdrawn', {'grade': 'B'}),
     ('nyte.buy_step_1_viewed', {'unit': 'blocks', 'underlying_kind': 'index', 'grade': 'A'}),
     ('nyte.buy_step_2_viewed', {'unit': 'blocks', 'underlying_kind': 'index', 'grade': 'A'}),
     ('nyte.buy_step_3_viewed', {'unit': 'blocks', 'underlying_kind': 'index', 'grade': 'A'}),
@@ -142,18 +146,20 @@ def test_nyte_events_survive_logging_and_export(
     client: TestClient, caplog: pytest.LogCaptureFixture, name: str, properties: dict[str, str],
 ) -> None:
     from scripts.axiom_growth.model import project_event
+    from scripts.axiom_growth.provision import source_filter
     from trusted_router.main import _ApplicationConsoleFormatter
 
     caplog.set_level(logging.INFO, logger='trusted_router.acquisition')
     response = client.post('/token-exchange/events', headers=HEADERS, json={
-        'event': name, 'visitor_id': str(uuid4()), 'page': '/buy' if name.startswith('nyte.buy_') else '/confidential', **properties,
+        'event': name, 'visitor_id': str(uuid4()), 'page': '/manage-reservation' if name.startswith('nyte.resale_') else '/buy' if name.startswith(('nyte.buy_', 'nyte.reserve_')) else '/confidential', **properties,
     })
     assert response.status_code == 204
     record = next(r for r in caplog.records if getattr(r, 'event', '') == 'acquisition.' + name)
     serialized = json.loads(_ApplicationConsoleFormatter().format(record))
     exported = project_event({**serialized, '_time': '2026-10-21T17:00:00Z'}, source='cloud_logging')
+    assert f'jsonPayload.event="acquisition.{name}"' in source_filter()
     assert exported['site_domain'] == 'nytokenexchange.com'
-    assert exported['page_path'] == ('/buy' if name.startswith('nyte.buy_') else '/confidential')
+    assert exported['page_path'] == ('/manage-reservation' if name.startswith('nyte.resale_') else '/buy' if name.startswith(('nyte.buy_', 'nyte.reserve_')) else '/confidential')
     for key, value in properties.items():
         assert exported[key] == value
 
@@ -189,24 +195,41 @@ def test_capacity_metadata_rejects_private_or_inconsistent_fields(client: TestCl
     assert response.status_code == 422
 
 
-@pytest.mark.parametrize("pathname", [
+_BROWSER_PATHS = [
     route + suffix for route in ("/neocloud-accelerator", "/trusted-cowork", "/buy")
     for suffix in ("", ".html")
-])
+]
+
+
+@pytest.fixture(scope="module")
+def browser_payloads() -> dict[str, list[dict]]:
+    # One bounded Node startup per worker, fresh isolated VM for every page.
+    # Preserve stderr on timeout to distinguish runner/startup stalls from JS.
+    harness = Path(__file__).parent / "js" / "exchange_analytics_harness.cjs"
+    try:
+        result = subprocess.run(  # noqa: S603
+            ["node", str(harness), *_BROWSER_PATHS],  # noqa: S607
+            check=True, capture_output=True, text=True, timeout=10,
+        )
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(f"analytics harness exceeded 10s; progress: {exc.stderr!r}")
+    payloads = json.loads(result.stdout)
+    assert set(payloads) == set(_BROWSER_PATHS), result.stderr
+    return payloads
+
+
+@pytest.mark.xdist_group("exchange-browser-payloads")
+@pytest.mark.parametrize("pathname", _BROWSER_PATHS)
 def test_nyte_browser_payloads_survive_collector_logging_and_export(
     client: TestClient, caplog: pytest.LogCaptureFixture, pathname: str,
+    browser_payloads: dict[str, list[dict]],
 ) -> None:
     from scripts.axiom_growth.model import project_event
     from scripts.axiom_growth.provision import source_filter
     from trusted_router.main import _ApplicationConsoleFormatter
 
     canonical = pathname.removesuffix(".html")
-    harness = Path(__file__).parent / "js" / "exchange_analytics_harness.cjs"
-    result = subprocess.run(  # noqa: S603
-        ["node", str(harness), pathname],  # noqa: S607
-        check=True, capture_output=True, text=True, timeout=10,
-    )
-    payloads = json.loads(result.stdout)
+    payloads = browser_payloads[pathname]
     assert [payload["event"] for payload in payloads] == [
         "exchange.landing_viewed", "exchange.landing_engaged",
     ]

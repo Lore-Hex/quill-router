@@ -1,6 +1,8 @@
 {% from "public/_catalog_privacy.html" import privacy_badges %}
 {% macro provider_privacy_badges(item) -%}
-  {% if item.provider_policy_varies|default(false) %}
+  {% if item.retention and not item.retention.strict_zdr_eligible %}
+    <span class="pill warn" data-retention="{{ item.retention.mode }}" title="{{ item.retention.detail }}">{{ item.retention.label }}</span>
+  {% elif item.provider_policy_varies|default(false) %}
     <span class="pill warn">{{ item.provider_policy_variation_label }}</span>
   {% else %}
     {{ privacy_badges(item.provider_confidential_compute is sameas true and item.provider_e2ee is sameas true, item.provider_zero_data_retention is sameas true) }}

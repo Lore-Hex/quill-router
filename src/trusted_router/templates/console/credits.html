@@ -51,9 +51,10 @@
         </div>
         <span class="credits-other credits-money-field">
           <span class="credits-money-prefix" aria-hidden="true">$</span>
-          <input type="number" name="other_amount" inputmode="numeric" min="1" max="10000" step="1" aria-label="Amount in US dollars" data-checkout-amount>
+          <input type="number" name="other_amount" inputmode="decimal" min="1" max="{{ checkout_max_credit_dollars }}" step="0.01" aria-label="Amount in US dollars" data-checkout-amount>
         </span>
       </fieldset>
+      <p data-checkout-maximum-message>Maximum credit: ${{ checkout_max_credit_dollars }}. Stripe's $10,000 total includes processing fees.</p>
 
       {% if wallet_only_billing %}
       <input type="hidden" name="payment_method" value="stablecoin">

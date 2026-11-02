@@ -28,7 +28,7 @@ picker and footer share one ordered directory and highlight the current market.
 - Static pages fetch the public `/token-exchange/evidence/{profile}.json` feed
   from TrustedRouter on load and every minute. There is no direct Spanner
   access, inference, cookie, or third-party pixel on these sites. The brochure form
-  is the only submitted form; the separate NYTE `/buy` wizard keeps request
+  submits a resource request; NYTE `/buy` can also post a bounded card reservation request. The call wizard keeps request
   fields in memory and hands them directly to Calendly. Allowlisted UTM fields pass to intake. The first-party
   `/token-exchange/events` collector records visible visits and ten-second
   engagement. A random 30-minute per-tab identifier joins brochure downloads
@@ -67,11 +67,43 @@ also requires the enclave's existing TXT-writer role to cover the two delegated
 NYTE challenge records; see quill-cloud-proxy's `docs/nyte-api.md`. Never publish
 DNS records to bypass qualification.
 
+The page registry is `PAGES` in `nyte_v2.py`. A new page needs one word: its
+`group`. The build refuses a missing or unknown group.
+
+```text
+# Who is this page for?
+#   buying tokens     -> buy
+#   selling capacity  -> sell
+#   anything else     -> exchange
+```
+
+The header always has Buy, Sell and Exchange. Labels and menu descriptions
+live in the registry. NEW chips appear automatically for 14 days from the body
+file's first Git commit, capped at the three newest pages. The browser handles
+expiration without another deployment. There are no manual dates or overrides.
+Site CI fetches full history (`fetch-depth: 0`) to supply creation dates.
+Without usable full history, the site still builds with no NEW chips. A body
+with no recorded addition also gets no chip; dates are never guessed. Git tracks
+source-file additions, not first publication, and a file move can lose that history.
+New standard pages use `nyte-v2/<key>.html`; separately rendered pages can specify
+their body file with `body`.
+Adding a registered page does not require updating navigation test lists or counts.
+The terms utility page remains outside the menu; Media kit stays in the footer
+and retains its separate layout. Buyer deck opens `/#deck`.
+
 The redesign is built from `nyte-v2/` through `nyte_v2.py`. Its pages are
 New York's homepage, `/confidential`, `/trusted-cowork`, `/suppliers`, `/providers`,
-`/index`, `/buy`, and `/neocloud-accelerator`; its shared
+`/index`, `/buy`, `/reserved-tokens-terms`, and `/neocloud-accelerator`; its shared
 assets are under `assets/nyte-v2/`. Back up live objects before an authorized
 release and preserve concurrent content and unrelated market pages.
+The NYTE Confidential API page loads `assets/nyte-v2/live-evidence.js`, a
+byte-identical build copy of the approved evidence renderer. A New York-only
+release must not overwrite `assets/live-evidence.js`, which other markets use.
+The Token Exchange Sites workflow builds and tests but does not publish. A
+redesign release must publish its complete HTML and asset dependency set,
+including both extensionless and `.html` page objects. Do not preserve obsolete
+live HTML by applying navigation-only replacements when deploying the approved
+redesign. `/index.html` still maps to `new-york/index.html`, not the Index page.
 
 ### NYTE Token Index and open-source supplier stack
 
@@ -109,7 +141,7 @@ does not verify an authenticated confidential inference request or its attestati
 `/trusted-cowork` and `/trusted-cowork.html` use the shared NYTE shell and
 `assets/nyte-v2/cowork.css`. Keep Trusted Cowork, Reserved tokens and Neocloud
 accelerator in the navigation on every NYTE page. The shared navigation collapses
-at 1280 px and below, including its no-JavaScript fallback.
+at 800 px and below, including its no-JavaScript fallback.
 
 The Apple silicon and Intel Mac download links emit `nyte.cta_clicked` with
 `download_apple_silicon` or `download_intel_mac`, plus `nyte.outbound_clicked`
@@ -131,9 +163,11 @@ one-month term, next month in local time, and NYTE Index grade A. Allowlisted
 clicks reach scheduling without editing a field; contact details can be entered
 in Calendly, and a supplied email is validated before handoff. Index-grade token blocks show blocks × the
 published dated grade price; throughput, named models and undecided requests
-show no price. This is a request to discuss a reservation, not an order or executable quote. Capacity derivatives remain roadmap offerings.
+show no price. These call-request estimates are not orders or executable quotes.
+The separate card panel below uses the authoritative discounted quote and fixed
+2027 window described below. Capacity derivatives remain roadmap offerings.
 
-The wizard never submits a form or writes request data to browser storage.
+The call wizard never submits contact fields to TrustedRouter or writes request data to browser storage. Card checkout submits only grade, lots and explicit terms acceptance.
 Only step, unit, grade and the allowlisted facility ID are written to page history. Contact details and the
 request summary go directly to Calendly's iframe/link prefill, without its widget
 script. Without JavaScript, the offer, editable model/provider text fields and
@@ -188,10 +222,210 @@ retry. Preserve DNS, certificates, URL maps and other bucket objects. Verify the
 public routes, aliases, navigation, catalogue CORS, Calendly handoff, and privacy
 signals after the separately authorized publish.
 
+### 2027 card reservations
+
+Step 2 of `/buy` offers card checkout only for index-grade 1B-token lots, all
+four grades AAA/A/B/C. The existing call path remains available for every
+selection. Specific models, throughput and facilities have no card option.
+The fixed card window is January 1 through December 31, 2027, with unused tokens
+expiring December 31 and a full refund on request within 30 days of purchase.
+The first successful-payment webhook records the purchase time durably; retries
+preserve it. The ops notification includes that time and the 30-day deadline.
+After 30 days, the only exit is NYTE’s resale program. NYTE is the only buyer of
+listed lots; holders do not sell to or contract with each other, and there is no
+peer-to-peer transfer. Reservations are transferable
+only through that program: holders list lots, NYTE resells them to new buyers ahead
+of new inventory, and each sale returns the resale price minus a 5% resale fee to
+the original card, capped at what the holder paid for those lots. The `/manage-reservation` page emails a signed, single-use, 15-minute link.
+Full refund requests are recorded durably for ops to refund in Stripe; resale
+listing and withdrawal use the same holder session. The terms version is `2026-10-28-v6`, replacing v5. Full refunds return the entire Stripe payment including both purchase fees; resale proceeds and caps use the per-lot price excluding purchase fees.
+Delivery is through a TrustedRouter account via the NYTE API. The terms live at
+`/reserved-tokens-terms` and its `.html` alias, in the shared NYTE shell and New
+York sitemap. These are prepaid inference services, not securities or investments.
+
+The anonymous actions are `GET /token-exchange/reserve/quote?grade=&lots=` and
+`POST /token-exchange/reserve/checkout` on trustedrouter.com. They reuse the
+brief's canonical-origin CORS policy. Checkout uses the brief rate limiter;
+quote reads use the bounded metadata collector limiter so editing the quantity
+does not consume the five-per-hour checkout limit. No customer email is posted
+by the page: Stripe-hosted Checkout collects it.
+
+The quote publishes the index price/date, discount, per-lot cents, lot subtotal,
+exchange fee cents/rate, Stripe processing fee cents/rate/fixed cents, and total.
+The page independently recomputes the whole breakdown and refuses any mismatch
+or stale index. At session creation, the server uses `content/token_index.py`:
+
+- Per-lot cents: `ROUND_HALF_UP(index USD × 100 × (10000 − discount_bps) / 10000)`.
+- Subtotal: per-lot cents × lots (the fee-exclusive refund/resale cap basis).
+- NYTE exchange fee: `ROUND_HALF_UP(subtotal × 10 / 10000)` (0.1%).
+- Card processing fee: Stripe at cost, using `credit = subtotal + exchange fee`
+  and `ceil((credit + 30) × 10000 / 9710) − credit` at 2.9% plus 30 cents.
+  This does not use the credit top-up surcharge multiplier or 80-cent floor.
+- Total charged: subtotal + exchange fee + card processing fee. Fee lines are
+  omitted only when zero; there are no promotions or automatic tax additions.
+
+Checkout Session and PaymentIntent metadata retain every quote field except
+`max_lots`, including the full charge and fee inputs. The webhook validates the
+paid amount against that snapshot, without consulting today's index or rates.
+New inventory and resale buyers use the same checkout breakdown.
+
+`TR_RESALE_ENABLED` remains false. Historical import and webhook recording share
+one validated payment snapshot. Positions store the full `total_cents`; older
+positions without it retain their lot-subtotal fallback. Full-refund obligations,
+acknowledgements and payment evidence use that full total, including both purchase
+fees. A subtotal-only refund cannot complete a v6 full-refund obligation. Seller
+resale proceeds and caps remain based on `per_lot_cents`, excluding purchase fees.
+
+Live sale configuration in `scripts/deploy/rollout.sh`:
+
+- `TR_RESERVED_TOKENS_CHECKOUT_ENABLED=true` enables sales.
+- `TR_RESERVED_TOKENS_DISCOUNT_BPS=1000` retains Joseph’s approved 10% discount.
+- `TR_RESERVED_TOKENS_EXCHANGE_FEE_BPS=10` sets the approved 0.1% exchange fee.
+  Missing discount or exchange fee refuses quotes/checkout with 503. Any other
+  exchange fee fails configuration validation and requires a new terms version.
+- `TR_RESERVED_TOKENS_MAX_LOTS_PER_CHECKOUT` defaults to 100. Larger orders go to
+  the call. Stripe amount limits also fail closed.
+- `TR_RESERVED_TOKENS_MAX_PRICE_AGE_DAYS` defaults to 45 and must be at least 1.
+  Invalid, future, or older snapshot dates (UTC) refuse quotes and checkout.
+- The existing `TR_STRIPE_SECRET_KEY`, signed webhook secret and SES configuration
+  are reused. Checkout/quote remain on the actions surface; holder management
+  uses the control surface, which has durable storage. The actions surface has
+  no webhook signing secret or durable credit store.
+
+Before enabling, confirm Stripe's account settings for this 2027 pre-sale, customer receipts, statement descriptor and tax
+handling, and confirm the existing webhook receives `checkout.session.completed`.
+Keep release gates intact; this local implementation does not authorize publish.
+The approved discount is already in config-as-code. Release both action paths
+in the Python/Terraform URL maps, backend, growth worker/source filter and static assets/terms/sitemap together in their reviewed workflows.
+
+The signed webhook intercepts `kind=reserved_tokens_2027` before all credit
+handling, even if a session contains workspace/refill metadata. It verifies the
+paid USD amount against locked metadata, logs `acquisition.reserved_tokens_recorded`
+and emails the existing enterprise inquiry recipient: `TR_PARTNER_INQUIRY_EMAIL`
+(`joseph@jperla.com` in rollout), falling back to `enterprise@trustedrouter.com`
+just like the enterprise brief. No buyer email/name is included. Stripe remains the payment/contact record. When resale is enabled, every completed purchase also
+creates a durable NYTE position. With resale disabled, checkout retains the
+original notification-only path without accessing the resale ledger. No token
+allowance, current balance credit or fulfillment is created. Full refunds
+requested within 30 days of purchase are recorded for ops and handled in Stripe.
+Checkout Session and PaymentIntent metadata lock `refund_window_days=30`, the
+NYTE-only transfer policy, resale priority, 500-basis-point fee, original-card
+refund method and original-lot-price cap; there is no fixed `refundable_until`.
+The server computes `refund_deadline_at` as `purchase_completed_at + 30 days`.
+`purchase_completed_at` is the persisted time of the first successful-payment
+webhook, first write wins; webhook retries preserve it. Checkout Session
+creation time is never the purchase time or the refund-window anchor.
+
+Every completed purchase is a separate position. Its stable ID is `nyte_pos_`
+followed by the full SHA-256 hex digest of `nyte:reserved-position:v1:` plus the
+Stripe Checkout Session ID. Domain separation avoids reuse across identifier
+schemes; Stripe’s high-entropy session ID prevents guessing without adding a
+rotating secret or a mapping store. The ID is an order reference, not an access
+credential. It and the computed refund deadline appear in the structured log
+and the ops notification email (the ID also appears in the subject). Retries and
+different event IDs for the same session preserve the position ID. Stripe receipts
+remain the buyer’s reference and operations can reconcile them with that email.
+The static success page has no authenticated order lookup, so it stays generic:
+no position/session ID or order details are added to the success URL or analytics.
+
+Notification leases and completion markers are persisted by session ID in the
+isolated `reserved_notification` entity kind, with an existing webhook dedup key
+for the log. Concurrent/repeated events do not send another completed notification;
+unpaid or invalid payments cannot claim it. Failed sends return a retryable 503;
+an abandoned lease expires after 120 seconds. SES offers no idempotency key, so a
+crash after email acceptance but before committing the sent marker can repeat an
+email on retry. This cannot duplicate a charge or create credits. Stripe delivery
+retries/manual replay recover temporary notification failures.
+
+`nyte.reserve_checkout_started` carries only bounded unit/index/grade values.
+`nyte.reserve_checkout_succeeded` is a browser-return funnel signal with no order
+details; it is not payment verification. Both honor GPC/DNT and flow through the
+collector, structured log fields and growth source filter. Only the signed
+webhook establishes the paid reservation.
+
+### Holder management and resale (local implementation; disabled by default)
+
+`/manage-reservation` and its `.html` alias use the shared NYTE shell. The API is
+`POST /token-exchange/reservations` on trustedrouter.com, explicitly routed to
+**control**, with canonical NYTE-origin CORS, bounded JSON requests and rate
+limits. No account or credit workspace is created. The HTTP email response is
+always “if we have reservations for that address, we sent a link”; valid addresses
+receive a link even if no position exists when resale is enabled. With resale
+disabled, all holder API actions return the inert generic response without
+sending email or touching the ledger. Email is used only for sending and
+Stripe lookup, never included in analytics or application logs. Stripe retains
+contact data; NYTE's holder index contains only a domain-separated email hash.
+
+Links use the shared OAuth HMAC-signature utility, domain-separated for NYTE,
+and the existing control Stripe secret. They expire after 15 minutes, have an
+atomic durable single-use marker, and exchange for a separate 15-minute bearer
+session. The browser keeps the session only in memory. The email-link fragment
+is removed immediately; it never enters server URLs or analytics. Redemption
+requires a button press to avoid email scanners consuming links. Refreshing or
+losing the session requires another link. Rotating the Stripe secret invalidates
+outstanding links. Repeated mutations use stable request IDs.
+
+`TR_RESALE_ENABLED=false` and `TR_RESALE_FEE_BPS=500` are the defaults and are
+pinned in `scripts/deploy/rollout.sh`. The flag gates every holder API action
+and new checkout position/allocation work. Existing refund obligations still
+reconcile lifecycle webhooks while the flag is off. Both modes retain unbound
+refund failure evidence for mapped NYTE payments and for unmapped payments whose
+own PaymentIntent metadata identifies a reservation; other payments create no
+NYTE state. Checkout/import first creates a non-sellable pending position and
+payment mapping, then reads Stripe, then atomically applies retained evidence and
+the snapshot before marking held or allocating. Allocation is allowed only for
+an unfinished purchase with the flag on and its notification not yet sent;
+imports, backfills, disabled finalization and already-notified replays finalize
+unfinished allocation as historical new inventory. Replay/import also repairs
+older pending allocation without changing purchase time or adverse evidence.
+The explicit ops refund CLI remains available for
+obligations already owed. Config loading rejects any resale fee other than 500 with an
+error explaining that a fee change requires a new terms version. v6 replaces v5 for new checkouts;
+already-created v3/v4/v5 sessions without fee keys remain accepted with zero
+purchase fees. v6 requires complete fee metadata. The terms keep
+email requests to enterprise@trustedrouter.com visible while self-service is
+unavailable; include the position ID or Stripe payment reference.
+
+Listed lots sell FIFO within each grade before new inventory at the buyer's
+locked checkout price. Allocation, seller lot counts, buyer position, event/session
+idempotency and refund records commit together. Stripe refunds run after the HTTP
+webhook response; failures stay in the durable queue and email ops. Run
+`uv run python -m scripts.retry_nyte_resale_refunds` with the control deployment's
+configuration periodically and after an alert. The CLI processes at most 100
+entries and prints a continuation cursor. Full refund requests are visible with
+`--full-refunds`; ops issues the full original-payment refund in Stripe, then
+reconciles it with `--ack-full-refund-session cs_... --refund-id re_...`. The CLI
+verifies payment, full amount and successful Stripe status before closing it.
+
+“Find older reservations” performs authenticated, bounded Stripe customer and
+session reads for that exact purchase email. It imports paid reserved-token
+sessions without allocating historical sales against today's listings. The
+existing `reserved_notification` row supplies `purchase_completed_at`. Missing
+completion timestamps remain unknown and cannot list or request a self-service
+refund; ops must reconcile them, never substitute `session.created`. Refunded or
+disputed payments are reconciled into existing positions as well as new imports;
+external changes block selling and atomically withdraw active listings. Refund
+evidence matching NYTE fills is exempt. Allocation status is independent of
+purchase time: an import racing the first webhook stays pending and that webhook
+allocates once; a completed legacy notification establishes historical status.
+
+Storage reuses #2125's `Store` protocol and entity transaction pattern across
+memory, native Spanner and Postgres. No new physical table or schema migration is
+needed. The existing migration-derived schema/SQL manifest and native emulator
+suite remain the schema gate; `tests/conformance/test_nyte_resale_ledger.py` exercises
+these entity transactions on all registered backends. See
+[`docs/nyte-resale.md`](../../docs/nyte-resale.md) for the entity schema, money
+examples, retry limits and operational setup. No Spanner body scans are used.
+
+`nyte.resale_listed` and `nyte.resale_withdrawn` carry only the grade and the
+existing bounded visitor/page context, honor GPC/DNT, and pass the browser,
+collector, structured-log and growth-source allowlists. No email, Stripe ID,
+position ID, capability, lot count or amount enters these analytics events.
+
 ### Neocloud accelerator (local implementation; publish separately)
 
 `/neocloud-accelerator` and `/neocloud-accelerator.html` render the NYTE shell
-with page key `accelerator`. The navigation follows Reserved tokens; `/buy`’s
+with page key `accelerator`. The navigation lists it under Sell; `/buy`’s
 seller line and `/suppliers#open-stack` link here. Only New York’s sitemap lists
 it. The page describes capacity reservations for inference service from planned
 facilities: 1B-token lots of Grade B · Professional (DeepSeek-class models),
@@ -233,12 +467,21 @@ fact sheets. `press.py` builds a deterministic ZIP from an explicit public-asset
 allowlist. It never includes the private commercial decks or the large demo MP4.
 The video remains available separately at its existing public URL.
 
-`press-assets/` holds the approved-mark derivatives (outlined SVGs and transparent
-PNGs) and an unmodified 1920 x 1080 homepage capture from October 15, 2026.
+`press-assets/` holds the NYTE globe and **NY Token Exchange** wordmark supplied
+by Joseph on October 28, 2026, as outlined SVGs and transparent PNGs. These are
+NYTE assets, not the TrustedRouter routing mark. The globe source is
+`nyte-globe-source.svg`; black and white exports preserve its 2:1 aspect ratio.
+Combined globe-and-name exports come first in the kit: `nyte-horizontal-*` is the
+primary one-line 2400 x 480 logo; `nyte-lockup-*` is the alternate stacked 2400 x 1080 version.
+Both include outlined lettering and transparent backgrounds in each color variant.
+The separate homepage capture remains an explicitly dated October 15 illustration.
 Regenerate the logos with `uv run --no-project --with fonttools --with brotli
 sites/token-exchange/export_press_logos.py` and `rsvg-convert` installed.
+The wordmark uses locally licensed Arial Bold; pass `--font /path/to/Arial-Bold.ttf`
+outside macOS. The font itself is not distributed. Exports have no external font dependency.
 The normal build uses the checked-in exports and has no new dependencies.
-The social card and video still reuse the existing public source assets.
+The media-kit social card uses the new globe and short wordmark; the video still
+retains its dated illustrative-demo source. Other sites' shared marks are untouched.
 
 Run `node sites/token-exchange/verify-press.cjs http://127.0.0.1:8089` after
 building and serving the site. It checks 320/390/768/1440px layouts, images,
@@ -318,7 +561,7 @@ and publish with the observed generation precondition to reject concurrent edits
 (85.95 seconds, H.264/AAC, 1920×1080; SHA-256
 `869f48547224c9524d556aed0cca77d09bd241866a7efaaf0410d24f317907de`).
 `media/nyte-routing-demo-poster.jpg` is a
-1280px still from that video. The build copies both into `assets/`. All market
+800px still from that video. The build copies both into `assets/`. All market
 homepages show native controls with `playsinline` and `preload="none"`, with no
 autoplay. Captions are already burned into the supplied video. Publish the MP4
 as `video/mp4` and the poster as `image/jpeg` before publishing homepage links.

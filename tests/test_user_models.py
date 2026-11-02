@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import socket
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -29,6 +30,7 @@ from trusted_router.services.user_model_secrets import (
     USER_MODEL_SIGNING_PURPOSE,
 )
 from trusted_router.storage import STORE, InMemoryStore
+from trusted_router.storage_models import CreditMovement
 from trusted_router.storage_user_models import InMemoryUserProvidedModels
 
 HEADERS = {"x-trustedrouter-user": "user-model-owner@example.com"}
@@ -1118,6 +1120,91 @@ def test_public_user_model_health_reports_dispatch_and_probe_degradation(
         ]
         == "degraded"
     )
+
+
+@pytest.mark.parametrize("before", [
+    "99999999999",
+    "not-a-date",
+    "2026-13-01T00:00:00Z",
+    "2026-02-30",
+    "0001-01-01T00:00:00+05:00",
+    "9999-12-31T23:59:59-05:00",
+    "",
+])
+def test_owner_earnings_rejects_invalid_before(client: TestClient, before: str) -> None:
+    response = client.get(
+        "/v1/user-models/earnings", headers=HEADERS, params={"before": before}
+    )
+    assert response.status_code == 400, response.text
+    assert response.json() == {"error": {
+        "code": 400,
+        "message": "before must be an ISO 8601 timestamp",
+        "type": "bad_request",
+        "source": "router",
+    }}
+
+
+@pytest.mark.parametrize(("before", "canonical"), [
+    ("2026-10-30T00:00:00Z", "2026-10-30T00:00:00Z"),
+    ("2026-10-30T00:00:00", "2026-10-30T00:00:00Z"),
+    ("2026-10-30T02:00:00+02:00", "2026-10-30T00:00:00Z"),
+    ("20261030", "2026-10-30T00:00:00Z"),
+    ("2026-10-30", "2026-10-30T00:00:00Z"),
+    ("0001-01-01T00:00:00Z", "0001-01-01T00:00:00Z"),
+    ("9999-12-31T23:59:59.999999Z", "9999-12-31T23:59:59.999999Z"),
+])
+def test_owner_earnings_before_normalizes_and_filters_strictly(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    before: str,
+    canonical: str,
+) -> None:
+    from trusted_router.storage import _parse_iso_timestamp as parse_memory
+    from trusted_router.storage_gcp import _iso_timestamp
+    from trusted_router.storage_gcp import _parse_iso_timestamp as parse_gcp
+    from trusted_router.storage_postgres import _parse_timestamp as parse_postgres
+
+    user = STORE.ensure_user(HEADERS["x-trustedrouter-user"])
+    account_id = f"user:{user.id}"
+    cutoff = datetime.fromisoformat(canonical.replace("Z", "+00:00"))
+    # At the representable extremes only one side exists. Always seed equality
+    # as well, so changing the store's strict comparison to <= fails this test.
+    timestamps = {"equal": cutoff}
+    if cutoff > datetime.min.replace(tzinfo=UTC):
+        timestamps["earlier"] = cutoff - timedelta(microseconds=1)
+    if cutoff < datetime.max.replace(tzinfo=UTC):
+        timestamps["later"] = cutoff + timedelta(microseconds=1)
+    for movement_id, timestamp in timestamps.items():
+        STORE.in_memory_target.credit_movements[(account_id, movement_id)] = CreditMovement(
+            account_id=account_id,
+            movement_id=movement_id,
+            kind="custom_model_payout",
+            amount_microdollars=1,
+            created_at=timestamp.isoformat().replace("+00:00", "Z"),
+        )
+
+    received: list[str | None] = []
+    original = InMemoryStore.list_credit_movements
+
+    def recording_movements(
+        store: InMemoryStore, account_id: str, *, kinds: list[str] | None = None,
+        limit: int = 50, before: str | None = None,
+    ) -> list[CreditMovement]:
+        received.append(before)
+        return original(store, account_id, kinds=kinds, limit=limit, before=before)
+
+    monkeypatch.setattr(InMemoryStore, "list_credit_movements", recording_movements)
+    response = client.get(
+        "/v1/user-models/earnings", headers=HEADERS, params={"before": before}
+    )
+    assert response.status_code == 200, response.text
+    assert received == [canonical]
+    assert [row["movement_id"] for row in response.json()["data"]["recent"]] == (
+        ["earlier"] if "earlier" in timestamps else []
+    )
+    for parse in (parse_memory, parse_gcp, parse_postgres):
+        assert parse(canonical) == cutoff
+        assert _iso_timestamp(parse(canonical)) == canonical
 
 
 def test_owner_earnings_api_lists_summary_models_movements_and_transfers(

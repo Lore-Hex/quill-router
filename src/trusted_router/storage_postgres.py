@@ -3114,6 +3114,60 @@ class PostgresStore(OperationalAnalyticsReads):
 
         return self._run_transaction(txn)
 
+    def reserved_resale_position_page(self, *, cursor: str | None = None, limit: int = 100) -> dict[str, Any]:
+        if not 1 <= limit <= 100:
+            raise ValueError("Invalid reservation page size")
+
+        def txn(tx: Any) -> dict[str, Any]:
+            rows = tx.execute("SELECT id FROM tr_entities WHERE kind=%s AND id>%s ORDER BY id LIMIT %s",
+                              ("nyte_position", cursor or "", limit + 1)).fetchall()
+            ids = [row[0] for row in rows]
+            return {"ids": ids[:limit], "cursor": ids[limit - 1] if len(ids) > limit else None}
+
+        return self._run_transaction(txn)
+
+    def reserved_resale(self, command: dict[str, Any]) -> dict[str, Any]:
+        from trusted_router.storage_resale import execute
+
+        def txn(tx: Any) -> dict[str, Any]:
+            self._insert_entity_once_tx(tx, "nyte_mutex", "v1", {})
+            self._read_entity_tx(tx, "nyte_mutex", "v1", dict, for_update=True)
+            return execute(
+                # Serialize eligibility with notification completion as well
+                # as competing NYTE ledger commands (ordinary Postgres is RC).
+                lambda kind, key: self._read_entity_tx(tx, kind, key, dict, for_update=kind == "reserved_notification") or {},
+                lambda kind, key, row: self._write_entity_tx(tx, kind, key, row),
+                command,
+            )
+
+        return self._run_transaction(txn)
+
+    def claim_reserved_notification(self, session_id: str, owner: str, *, now: int) -> tuple[str, int]:
+        def txn(tx: Any) -> tuple[str, int]:
+            self._insert_entity_once_tx(tx, "reserved_notification", session_id, {"sent": False})
+            row = self._read_entity_tx(tx, "reserved_notification", session_id, dict, for_update=True) or {}
+            purchase_completed_at = int(row.get("purchase_completed_at", now))
+            if row.get("sent"):
+                return "sent", purchase_completed_at
+            if row.get("lease_until", 0) > now:
+                return "busy", purchase_completed_at
+            self._write_entity_tx(tx, "reserved_notification", session_id, {
+                "owner": owner, "lease_until": now + 120, "sent": False,
+                "purchase_completed_at": purchase_completed_at,
+            })
+            return "claimed", purchase_completed_at
+
+        return self._run_transaction(txn)
+
+    def finish_reserved_notification(self, session_id: str, owner: str, *, sent: bool) -> None:
+        def txn(tx: Any) -> None:
+            row = self._read_entity_tx(tx, "reserved_notification", session_id, dict, for_update=True) or {}
+            if row.get("owner") == owner:
+                row.update(sent=sent, lease_until=0)
+                self._write_entity_tx(tx, "reserved_notification", session_id, row)
+
+        self._run_transaction(txn)
+
     def record_webhook_event_once(self, source: str, event_id: str) -> bool:
         return self._run_transaction(
             lambda conn: self._insert_entity_once_tx(
@@ -7443,6 +7497,45 @@ class PostgresStore(OperationalAnalyticsReads):
                         **{key: value for key, value in data.items() if key in known}
                     )
                 )
+            return samples
+
+        return self._run_transaction(list_samples)
+
+    def provider_balanced_benchmark_samples(
+        self,
+        *,
+        cutoff: str | None,
+        per_provider_limit: int,
+        limit: int,
+    ) -> list[ProviderBenchmarkSample]:
+        if limit <= 0 or per_provider_limit <= 0:
+            return []
+
+        def list_samples(conn: Any) -> list[ProviderBenchmarkSample]:
+            # Public pages must not run one historical JSON scan per provider.
+            # Range-seek the recent index once, then cap each provider fairly.
+            window = " AND indexed_at >= %s::timestamptz" if cutoff is not None else ""
+            params: tuple[Any, ...] = (cutoff,) if cutoff is not None else ()
+            rows = conn.execute(
+                "WITH ranked AS ("  # noqa: S608 - fixed predicate; all values are bound.
+                "SELECT body, id, indexed_at, ROW_NUMBER() OVER ("
+                "PARTITION BY body ->> 'provider' "
+                "ORDER BY indexed_at DESC, id DESC"
+                ") AS provider_rank FROM tr_entities "
+                "WHERE kind = 'provider_benchmark'"
+                + window
+                + ") SELECT body FROM ranked WHERE provider_rank <= %s "
+                "ORDER BY indexed_at DESC, id DESC LIMIT %s",
+                (*params, per_provider_limit, limit),
+            ).fetchall()
+            known = {field.name for field in dataclasses.fields(ProviderBenchmarkSample)}
+            samples: list[ProviderBenchmarkSample] = []
+            for row in rows:
+                raw = row[0]
+                data = json.loads(raw) if isinstance(raw, str) else dict(raw)
+                samples.append(ProviderBenchmarkSample(
+                    **{key: value for key, value in data.items() if key in known}
+                ))
             return samples
 
         return self._run_transaction(list_samples)

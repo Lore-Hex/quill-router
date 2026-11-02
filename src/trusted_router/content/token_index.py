@@ -9,8 +9,8 @@ AS_OF_ISO = "2026-10-26"
 QUOTES: dict[str, dict[str, object]] = {
     "ALL": {
         "label": "NYTE Token Index",
-        "value": 382,
-        "change_7d": -2.5
+        "value": 380,
+        "change_7d": -3.0
     },
     "AAA": {
         "label": "AAA Frontier",
@@ -19,13 +19,13 @@ QUOTES: dict[str, dict[str, object]] = {
     },
     "A": {
         "label": "A Advanced",
-        "value": 863,
-        "change_7d": -2.3
+        "value": 985,
+        "change_7d": -5.7
     },
     "B": {
         "label": "B Professional",
-        "value": 187,
-        "change_7d": 11.3
+        "value": 219,
+        "change_7d": 3.2
     },
     "C": {
         "label": "C Efficient",
@@ -51,9 +51,9 @@ GRADES: list[dict[str, object]] = [
         "examples": [
             "GPT-6.1 Sol",
             "Claude Sonnet 5.5",
-            "Grok 4.7",
             "Kimi K3",
-            "GLM-5.3"
+            "Gemini 4 Argon",
+            "Claude Opus 5"
         ]
     },
     {
@@ -62,9 +62,10 @@ GRADES: list[dict[str, object]] = [
         "use": "Production assistants, structured analysis, code review, document work at scale.",
         "examples": [
             "DeepSeek V4.1 Flash 1017",
+            "GLM-5.3",
+            "Grok 4.7",
             "Claude Haiku 5.5",
             "Muse Spark Open",
-            "GLM-5.3 Flash",
             "Gemini 3.8 Flash"
         ]
     },
@@ -82,8 +83,8 @@ GRADES: list[dict[str, object]] = [
     }
 ]
 CHART_ALT: dict[str, str] = {
-    "nyte": "Line chart of the NYTE Token Index in US dollars per billion tokens from October 2025 to October 2026, peaking near $918 in January and ending near $382.",
-    "grades": "Log-scale chart of the four NYTE grade indices in US dollars per billion tokens from October 2025 to October 2026, ending with Frontier near $1,794, Advanced near $863, Professional near $187, Efficient near $27."
+    "nyte": "Line chart of the NYTE Token Index in US dollars per billion tokens from October 2025 to October 2026, peaking near $918 in January and ending near $380.",
+    "grades": "Log-scale chart of the four NYTE grade indices in US dollars per billion tokens from October 2025 to October 2026, ending with Frontier near $1,794, Advanced near $985, Professional near $219, Efficient near $27."
 }
 
 

@@ -664,11 +664,9 @@ def test_embeddings_and_model_endpoints(
         for item in openai_endpoints
         if item["provider"] == "openai"
     }
-    assert openai_by_usage["Credits"]["provider_zero_data_retention"] is True
-    assert (
-        openai_by_usage["Credits"]["zero_data_retention_scope"]
-        == "trustedrouter_prepaid"
-    )
+    assert openai_by_usage["Credits"]["provider_zero_data_retention"] is False
+    assert openai_by_usage["Credits"]["zero_data_retention_scope"] is None
+    assert openai_by_usage["Credits"]["retention"]["mode"] == "durable_cache"
     assert openai_by_usage["BYOK"]["provider_zero_data_retention"] is False
     assert openai_by_usage["BYOK"]["zero_data_retention_scope"] is None
 

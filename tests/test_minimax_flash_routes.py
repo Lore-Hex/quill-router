@@ -10,7 +10,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from scripts.pricing.providers import gmi, novita, together, venice
+from scripts.pricing.providers import gmi, novita, together, venice, wafer, zro
 from trusted_router import provider_lifecycle
 from trusted_router.catalog import MODELS, endpoints_for_model
 from trusted_router.catalog_data import _PROVIDER_UNSERVED_CREDITS_MODELS
@@ -45,7 +45,7 @@ def test_flash_has_verified_prepaid_routes_and_preserves_native_ids() -> None:
     routes = {e.provider: e for e in endpoints_for_model(MODEL) if e.usage_type == "Credits"}
     # The 2026-10-25 refresh added six prepaid hosts that price and canary
     # the launch model; each keeps its own native id.
-    assert {p: e.upstream_id for p, e in routes.items()} == {
+    expected = {
         "boundless": MODEL,  # Boundless lists the canonical id at the launch price
         "featherless": NATIVE,  # Featherless serves the HF id with tools
         "gmi": NATIVE,
@@ -57,8 +57,24 @@ def test_flash_has_verified_prepaid_routes_and_preserves_native_ids() -> None:
         "together": NATIVE,
         "venice": "minimax-m3-1-flash",
         "wafer": "MiniMax-M3.1-Flash",  # Wafer serves MiniMax's own id
-        "zro": "minimax-m3.1-flash",  # ZRO serves the bare model name
     }
+    wafer_row = next(row for row in json.loads(wafer.MANIFEST_PATH.read_text())["models"] if row["id"] == MODEL)
+    assert wafer_row["upstream_id"] == expected["wafer"]
+    if wafer_row.get("routable") is False:
+        assert wafer_row["routable_reason"] == "delisted-upstream"
+        assert wafer_row["missing_since"] == "2026-11-01"
+        expected.pop("wafer")
+    assert {p: e.upstream_id for p, e in routes.items()} == expected
+    # ZRO rejected this exact route and removed it from discovery on Nov 1.
+    # Preserve its native ID for a future successful recovery canary.
+    zro_row = next(row for row in json.loads(zro.MANIFEST_PATH.read_text())["models"] if row["id"] == MODEL)
+    assert zro_row["upstream_id"] == "minimax-m3.1-flash"
+    assert zro_row["routable"] is False
+    if zro_row["routable_reason"] == "delisted-upstream":
+        assert zro_row["missing_since"] == "2026-11-01"
+    else:
+        assert zro_row["routable_reason"] == "provider-canary-failed"
+    assert "zro" not in routes
     # NIM declares no tool support and carries NVIDIA's conservative hosted
     # rate, so it never wins cheapest-route selection for this model.
     assert {p: endpoint_capabilities(MODELS[MODEL], e)["tools"] for p, e in routes.items()} == {

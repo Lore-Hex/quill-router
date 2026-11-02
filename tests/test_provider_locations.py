@@ -43,6 +43,16 @@ def test_unreviewed_provider_stays_unknown_despite_jurisdiction_or_privacy() -> 
     assert not provider_model_locations("deepinfra").model_regions
 
 
+def test_hixtube_location_does_not_imply_attestation_or_gateway_residency() -> None:
+    claim = provider_inference_locations("hixtube")
+    assert claim.locations == ("Finland (EU)",)
+    assert "not hardware-attested" in claim.declaration
+    assert "does not pin TrustedRouter gateway geography" in claim.trustedrouter_pinning
+    assert "No provider-side geographic failover" in claim.routing
+    assert not PROVIDERS["hixtube"].provider_confidential_compute
+    assert not PROVIDERS["hixtube"].provider_e2ee
+
+
 def _snapshot(regions: object) -> dict:
     return {"provider": "telnyx", "generated_at": "2026-09-26T12:00:00Z", "models": [
         {"id": "z-ai/glm-5.3-flash", "provider_regions": regions},

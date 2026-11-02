@@ -348,9 +348,11 @@ def test_model_storage_flag_is_gateway_scoped_endpoint_flag_is_provider_scoped(
         endpoint for endpoint in meta["endpoints"] if endpoint["provider"] == "openai"
     ]
     by_usage = {endpoint["usage_type"]: endpoint for endpoint in openai_endpoints}
-    assert by_usage["Credits"]["stores_content"] is False
-    assert by_usage["Credits"]["provider_zero_data_retention"] is True
-    assert by_usage["Credits"]["zero_data_retention_scope"] == "trustedrouter_prepaid"
+    # An unreviewed model remains conservative even on a managed ZDR account.
+    assert by_usage["Credits"]["stores_content"] is True
+    assert by_usage["Credits"]["provider_zero_data_retention"] is False
+    assert by_usage["Credits"]["zero_data_retention_scope"] is None
+    assert by_usage["Credits"]["retention"]["mode"] == "unverified"
     assert by_usage["BYOK"]["stores_content"] is True
     assert by_usage["BYOK"]["provider_zero_data_retention"] is False
     assert by_usage["BYOK"]["zero_data_retention_scope"] is None
@@ -894,11 +896,16 @@ def test_closed_provider_zdr_claims_are_route_scoped(monkeypatch: pytest.MonkeyP
     ]
     assert vertex_endpoints
     assert all(endpoint.usage_type == "Credits" for endpoint in vertex_endpoints)
-    assert all(
-        endpoint_privacy_tier(endpoint) == PRIVACY_TIER_ZERO_RETENTION
-        for endpoint in vertex_endpoints
-    )
-    assert all(endpoint_zero_data_retention(endpoint) is True for endpoint in vertex_endpoints)
+    from trusted_router.managed_retention import managed_retention_policy
+
+    for endpoint in vertex_endpoints:
+        retention = managed_retention_policy(
+            endpoint.provider, endpoint.model_id, endpoint.upstream_id, endpoint.usage_type,
+        )
+        assert retention is not None
+        assert endpoint_zero_data_retention(endpoint) is retention.permits_strict_zdr
+    assert not any(endpoint_zero_data_retention(endpoint) for endpoint in vertex_endpoints
+                   if endpoint.model_id == "fixture/vertex-chat")
 
     # OpenAI's guarantee is deliberately narrower: it belongs to
     # TrustedRouter's managed prepaid account, starts on July 28, and was
@@ -911,13 +918,15 @@ def test_closed_provider_zdr_claims_are_route_scoped(monkeypatch: pytest.MonkeyP
     ]
     assert any(endpoint.usage_type == "Credits" for endpoint in openai_endpoints)
     assert any(endpoint.usage_type == "BYOK" for endpoint in openai_endpoints)
-    # Chat's account-level commitment is not evidence for video or transcription.
-    unverified_retention_models = {"openai/sora-2", "openai/sora-2-pro", "openai/whisper-1"}
-    assert all(
-        endpoint_zero_data_retention(endpoint)
-        is (endpoint.usage_type == "Credits" and endpoint.model_id not in unverified_retention_models)
-        for endpoint in openai_endpoints
-    )
+    # The account commitment is not evidence for unreviewed or future models.
+    for endpoint in openai_endpoints:
+        retention = managed_retention_policy(
+            endpoint.provider, endpoint.model_id, endpoint.upstream_id, endpoint.usage_type,
+        )
+        assert retention is not None
+        assert endpoint_zero_data_retention(endpoint) is retention.permits_strict_zdr
+    assert not any(endpoint_zero_data_retention(endpoint) for endpoint in openai_endpoints
+                   if endpoint.model_id == "fixture/openai-chat")
 
 
 def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:

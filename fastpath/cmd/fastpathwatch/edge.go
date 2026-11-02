@@ -61,8 +61,11 @@ func (s *edgeSums) add(l edge.CountsLine) {
 
 // i2 are the I2 gates' figures (§11). The comparable requests are those
 // whose answers were compared, agree_full and differ (Go would answer, and
-// Python answered a 200 that is not a replay), and agree_full_ratio is
-// agree_full's share of them. The cohort-eligible requests are every one Go
+// Python answered a 200 that is not a replay, a request naming a
+// cache_affinity_key included), and agree_full_ratio is agree_full's share
+// of them; differ_affinity_warm is the differs that are Python's warm
+// re-rank of Go's cold order (differ.affinity_warm, §1 item 5), counted in
+// differ. The cohort-eligible requests are every one Go
 // would answer (each counts its decide row's gate), by class: the
 // comparable ones and the rest (would_admit_python_refused, Python's errors
 // and unavailable answers, the scope taken, replays, unread), which the
@@ -80,6 +83,7 @@ type i2 struct {
 	CohortEligible            int64            `json:"cohort_eligible"`
 	CohortByClass             map[string]int64 `json:"cohort_by_class"`
 	Differ                    int64            `json:"differ"`
+	DifferAffinityWarm        int64            `json:"differ_affinity_warm"`
 	DifferByField             map[string]int64 `json:"differ_by_field"`
 	DifferEstimate            int64            `json:"differ_estimate"`
 	RowIdempotencyFingerprint int64            `json:"row_idempotency_fingerprint"`
@@ -92,11 +96,49 @@ type i2 struct {
 	StaleRate                 *float64         `json:"stale_rate"`
 	Unavailable               int64            `json:"unavailable"`
 	UnavailableByCode         map[string]int64 `json:"unavailable_by_code"`
-	// The cache affinity requests Go composed for comparison alone (G13),
-	// by class, and affinity_warm's share of those that compared cold or
-	// warm: the measure of §1 item 5's revisit.
-	AffinityByClass   map[string]int64 `json:"affinity_by_class"`
-	AffinityWarmShare *float64         `json:"affinity_warm_share"`
+	// SettlementHeaderPasses are the classes passed under
+	// header.settlement_async (any X-TR-Settlement-Mode but exactly
+	// async-v1, which G15c composes), and SettlementHeaderPassShare their
+	// share of followed: a pass share under one reason, not the async-v1
+	// share of traffic (docs/design/fast-admission-e2-g15-async.md §5).
+	SettlementHeaderPasses    int64    `json:"settlement_header_passes"`
+	SettlementHeaderPassShare *float64 `json:"settlement_header_pass_share"`
+	// WindowReads are the shadow's window reads of enforcing windowed keys
+	// (its windows map's read.made); WindowRace the confirmed read races
+	// among them (window_race.*, docs/design/fast-admission-e2-key-windows.md
+	// section 8.3) and WindowRaceRatio their share, the gate's 0.05%;
+	// WindowRaceUnconfirmed the candidates no re-read at Python's read
+	// timestamp settled, which page.
+	WindowReads           int64    `json:"window_reads"`
+	WindowRace            int64    `json:"window_race"`
+	WindowRaceUnconfirmed int64    `json:"window_race_unconfirmed"`
+	WindowRaceRatio       *float64 `json:"window_race_ratio"`
+}
+
+// i3 are the I3 gate's figures (docs/design/fast-admission-e2-g15-async.md
+// §4.4, §5, §6.2), each one number from the shadow's async-v1 maps:
+// async_seen (every followed request whose X-TR-Settlement-Mode is exactly
+// async-v1, plain, affinity and unparsed) and its share of followed; the
+// async-v1 requests whose async members were compared, in all and by
+// population, each as a daily rate over the span (the soak's projection),
+// and the agreement ratio of each population; the async members that
+// differed, by field, both populations summed; and Python's shape C answers
+// (its admission on), which restart the sample.
+type i3 struct {
+	AsyncSeen                       int64    `json:"async_seen"`
+	AsyncSeenShare                  *float64 `json:"async_seen_share"`
+	AsyncCompared                   int64    `json:"async_compared"`
+	AsyncComparedPerDay             *float64 `json:"async_compared_per_day"`
+	AsyncComparedPlain              int64    `json:"async_compared_plain"`
+	AsyncComparedPlainPerDay        *float64 `json:"async_compared_plain_per_day"`
+	AsyncComparedPlainAgreeRatio    *float64 `json:"async_compared_plain_agree_ratio"`
+	AsyncComparedAffinity           int64    `json:"async_compared_affinity"`
+	AsyncComparedAffinityAgreeRatio *float64 `json:"async_compared_affinity_agree_ratio"`
+	AsyncBillingSnapshotHash        int64    `json:"async_fields_billing_snapshot_hash"`
+	AsyncBillingSnapshot            int64    `json:"async_fields_billing_snapshot"`
+	AsyncEligible                   int64    `json:"async_fields_async_eligible"`
+	AsyncShape                      int64    `json:"async_fields_async_shape"`
+	AsyncPythonAdmitted             int64    `json:"async_python_admitted"`
 }
 
 // edgeReport is the report's answer.
@@ -110,6 +152,7 @@ type edgeReport struct {
 	DecideShadow *edgeSums                   `json:"decide_shadow"`
 	Decide       *edgeSums                   `json:"decide"`
 	I2           i2                          `json:"i2"`
+	I3           i3                          `json:"i3"`
 
 	seen map[string]bool
 }
@@ -150,8 +193,7 @@ func (r *edgeReport) gates() {
 	g := i2{AgreeFull: sh.Counts["agree_full"], Differ: sh.Counts["differ"],
 		WouldAdmitPythonRefused: sh.Counts["would_admit_python_refused"], DifferByField: map[string]int64{},
 		WouldAdmitByClass: map[string]int64{}, StaleByCache: map[string]int64{}, CohortByClass: map[string]int64{},
-		AffinityByClass: map[string]int64{},
-		Unavailable:     r.Decide.Counts["unavailable"], UnavailableByCode: map[string]int64{}}
+		Unavailable: r.Decide.Counts["unavailable"], UnavailableByCode: map[string]int64{}}
 	g.Comparable = g.AgreeFull + g.Differ
 	for _, n := range sh.ByName["decide"] {
 		g.CohortEligible += n
@@ -159,19 +201,13 @@ func (r *edgeReport) gates() {
 	for class, n := range sh.ByName["cohort"] {
 		g.CohortByClass[class] = n
 	}
-	for class, n := range sh.ByName["affinity"] {
-		g.AffinityByClass[class] = n
-	}
-	if cold, warm := g.AffinityByClass[edge.ClassAffinityCold], g.AffinityByClass[edge.ClassAffinityWarm]; cold+warm > 0 {
-		share := float64(warm) / float64(cold+warm)
-		g.AffinityWarmShare = &share
-	}
 	for field, n := range sh.ByName["fields"] {
 		g.DifferByField[field] = n
 		if strings.HasPrefix(field, "differ.estimate") {
 			g.DifferEstimate += n
 		}
 	}
+	g.DifferAffinityWarm = sh.ByName["fields"][edge.FieldAffinityWarm]
 	g.RowIdempotencyFingerprint = sh.ByName["fields"]["row.idempotency_fingerprint"]
 	g.FieldsOther = sh.ByName["fields"]["other"]
 	for class, n := range sh.ByName["classes"] {
@@ -183,19 +219,84 @@ func (r *edgeReport) gates() {
 			g.StaleByCache[c] = n
 			g.Stale += n
 		}
+		if strings.HasSuffix(class, "."+edge.PassSettlementHeader) {
+			g.SettlementHeaderPasses += n
+		}
+		switch {
+		case strings.HasPrefix(class, edge.ClassWindowRace+"."):
+			g.WindowRace += n
+		case strings.HasPrefix(class, edge.ClassWindowRaceUnconfirmed+"."):
+			g.WindowRaceUnconfirmed += n
+		}
 	}
 	for code, n := range r.Decide.ByName["unavailable_by_code"] {
 		g.UnavailableByCode[code] = n
 	}
-	if g.Comparable > 0 {
-		ratio := float64(g.AgreeFull) / float64(g.Comparable)
-		g.AgreeFullRatio = &ratio
-	}
-	if g.Followed > 0 {
-		rate := float64(g.Stale) / float64(g.Followed)
-		g.StaleRate = &rate
-	}
+	g.AgreeFullRatio = ratio(g.AgreeFull, g.Comparable)
+	g.StaleRate = ratio(g.Stale, g.Followed)
+	g.SettlementHeaderPassShare = ratio(g.SettlementHeaderPasses, g.Followed)
+	g.WindowReads = sh.ByName["windows"]["read.made"]
+	g.WindowRaceRatio = ratio(g.WindowRace, g.WindowReads)
 	r.I2 = g
+	r.I3 = r.asyncGates(g.Followed)
+}
+
+// asyncGates fills the I3 figures from the shadow's async-v1 maps, over
+// followed (every request the shadow followed).
+func (r *edgeReport) asyncGates(followed int64) i3 {
+	sh := r.DecideShadow
+	var g i3
+	for _, n := range sh.ByName["async_seen"] {
+		g.AsyncSeen += n
+	}
+	agree := map[string]int64{}
+	for key, n := range sh.ByName["async_compared"] {
+		pop, outcome, _ := strings.Cut(key, ".")
+		g.AsyncCompared += n
+		switch pop {
+		case edge.AsyncPlain:
+			g.AsyncComparedPlain += n
+		case edge.AsyncAffinity:
+			g.AsyncComparedAffinity += n
+		}
+		if outcome == "agree" {
+			agree[pop] += n
+		}
+	}
+	for key, n := range sh.ByName["async_fields"] {
+		_, field, _ := strings.Cut(key, ".")
+		switch field {
+		case edge.FieldBillingSnapshotHash:
+			g.AsyncBillingSnapshotHash += n
+		case edge.FieldBillingSnapshot:
+			g.AsyncBillingSnapshot += n
+		case edge.FieldAsyncEligible:
+			g.AsyncEligible += n
+		case edge.FieldAsyncShape:
+			g.AsyncShape += n
+		}
+	}
+	for _, n := range sh.ByName["async_python_admitted"] {
+		g.AsyncPythonAdmitted += n
+	}
+	g.AsyncSeenShare = ratio(g.AsyncSeen, followed)
+	g.AsyncComparedPlainAgreeRatio = ratio(agree[edge.AsyncPlain], g.AsyncComparedPlain)
+	g.AsyncComparedAffinityAgreeRatio = ratio(agree[edge.AsyncAffinity], g.AsyncComparedAffinity)
+	if days := r.Until.Sub(r.Since).Hours() / 24; days > 0 {
+		perDay := float64(g.AsyncCompared) / days
+		plainPerDay := float64(g.AsyncComparedPlain) / days
+		g.AsyncComparedPerDay, g.AsyncComparedPlainPerDay = &perDay, &plainPerDay
+	}
+	return g
+}
+
+// ratio is n over of, nil when of is 0.
+func ratio(n, of int64) *float64 {
+	if of == 0 {
+		return nil
+	}
+	r := float64(n) / float64(of)
+	return &r
 }
 
 // edgeFilter selects the span's lines of the edge's decide path and shadow

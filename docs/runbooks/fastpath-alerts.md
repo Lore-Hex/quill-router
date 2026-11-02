@@ -76,11 +76,28 @@ page names does not change.
 | `no_boot_binding` | A winner's boot binding is stated by no record. | As `unreadable_pending_work`. |
 | `drain_overdue` | A lease is still draining past its holds' longest life and the grace. | Find why with `status`. A fleet must not stop while it drains (`fastpath-turn-off.md`). |
 | `pending_work_overdue` | A pack's pending work was not done in time. | The pending worker logs a failed Spanner call by its class alone (`auditor: spanner write records failed: Unavailable`, see [The auditor's own lines](#the-auditors-own-lines)), not the error's text; a pack waiting on a record not yet staged logs nothing. The alerts above, on the same subject or lease, name the causes it knows. `status` shows the workspace's pending packs and staged records; a winner whose full record is not staged waits for it. |
-| `edge_would_admit_python_refused` | The edge's decide shadow (`-edge-decide-shadow`) would have answered an authorize Python refused (a 4xx or its pause 503); the subject names the routing snapshot and edge policy digests, the message the class (`would_admit_python_refused.<status>.<type>`). Nothing was answered: the shadow only observes. | Before I2 this blocks turning decide on. A refusal for a key or workspace changed within the facts' 15 s age is the expected revocation lag (decision 17); otherwise find which gate Go missed (`docs/design/fast-admission-e2-decide.md` §3, §11) and, if any workspace decides already, `fastpathctl decide off` it. |
+| `edge_would_admit_python_refused` | The edge's decide shadow (`-edge-decide-shadow`) would have answered an authorize Python refused (a 4xx or its pause 503); the subject names the routing snapshot and edge policy digests, the message the class (`would_admit_python_refused.<status>.<type>`). Nothing was answered: the shadow only observes. Python's per-key in-flight 429 (`rate_limited`, "Too many concurrent requests for this API key": one Python process's count of one key's authorizes at the policy's `gateway_authorize_max_in_flight_per_key`) to a request the decide path passed at its own in-flight limit is `passed.inflight.key`, counted and never paged, since Go answered nothing (`docs/design/fast-admission-e2-decide.md` decision 14, §11). `would_admit_python_refused.429.rate_limited` still pages when Go's in-flight gate was not asked (a workspace not deciding) or let the request in and a later step passed it (`owner.*`, `budget.spent`, `insert.*`): read the decide line's `passed` for those minutes and Python's `billing.authorize_admission_limited` lines by Cloud Run instance; one hot key against busy Python instances is decision 14's per-process count, not a gate Go misses, and no spend rides on it (the front door's hold bounds what Go answers). A spend-window 429 (`key_window_limit_exceeded`) of a key whose rows the shadow read and would admit is a race candidate when the 429 names a window whose limit Go holds, with that limit, and a `RateLimit-Remaining` below what Go's rows leave there. That alone proves nothing, so the shadow re-reads the rows after Python's answer. If Go's fresh remaining in that window is at or below Python's, a settle landed between the reads: `window_race.429.key_window_limit_exceeded`, counted and never paged here (`edge_window_race` watches its rate). If it is still above Python's, Go's read misses what Python sees: this alert. If no re-read settles it (the limiter, a failed or late re-read, rows that are not the key's shards, the window reset since), it is `window_race_unconfirmed.429.key_window_limit_exceeded`, and it pages here too, since it cannot be told from a defect. Each candidate is traced on its own line (`fastpath edge decide shadow window race: class=... key=<first 8 of the key hash> window=... go=<first remaining> reread=<re-read remaining, -1 for none> python=... gap=...`). The message carries the window counts (`windows=`, `race.confirmed`, `race.refuted`, `race.unconfirmed.<why>`). | Before I2 this blocks turning decide on. A window refusal that pages, with `race.refuted` or the same inputs as Go, more remaining, another limit or a window Go holds none for, is a parity bug in the window check (`docs/design/fast-admission-e2-key-windows.md` §4.4, §8.3); set `fastpath_pilot_key_windows` back to off if it is `enforce`. With `race.unconfirmed.<why>`, read the race line and the window counts: `limiter` or `unread` repeated means the shadow's reads are starved or failing, and `reset` is a window boundary between the reads, which explains itself. A refusal for a key or workspace changed within the facts' 15 s age is the expected revocation lag (decision 17); otherwise find which gate Go missed (`docs/design/fast-admission-e2-decide.md` §3, §11) and, if any workspace decides already, `fastpathctl decide off` it. |
 | `edge_decide_unavailable` | In the last period (a minute) the edge's decide path (`-edge-decide`) answered an authorize with decision 1's 503: its insert's outcome not known, its hold kept. The message counts them by the insert's gRPC code. | Read the codes as the transaction's errors, not causes (`fastpath/internal/store/gatewayauth.go`, `ClassifyInsert`): an unavailable answer is one whose read-back did not find our row, and the commit may or may not have applied; the enclave's retry finds the row through Python's replay if it did. `failed_precondition` can follow a re-sent commit Spanner no longer remembers, one that applied included, and does not establish clock skew: the reservation's `created_at` is the commit's timestamp, so a node clock ahead does not by itself fail the insert (`docs/design/fast-admission-e2-decide.md` §8.4). `deadline_exceeded` can be the local 1.5 s deadline or a deadline error the transaction returned; failures the client retries can exhaust the local deadline. Several nodes at once point at what they share, Spanner among it, without proving it. For sustained answers (`edge_decide_unavailable_sustained`), `fastpathctl decide off` the deciding workspaces, then find the cause. |
 | `edge_decide_unavailable_sustained` | Unavailable answers in three periods with no 200 between them (a period that answered nothing neither adds to the run nor ends it, so a fault under sparse traffic is seen): a cause that persists, not one lost commit. | `fastpathctl decide off` the workspaces deciding (or `decide-off-all`, `fastpath-turn-off.md`) at once, then find the cause by code as for `edge_decide_unavailable`. Their requests pass to Python while it lasts. |
-| `edge_decide_pass_slow` | A request the decide path passed spent over 1 s at the edge before it was forwarded (`at_edge`), or Python's answer to it, or the edge's failure to reach Python, came over 25 s after it arrived (`in_all`); decision 12's budgets. | `at_edge`: the owner's admit or the insert ran to its budget; the decide line's `passed` counts of the same minute (`budget.spent`, `insert.failed`, `owner.*`) say which. `in_all`: the enclave had already given up the attempt; with `at_edge` beside it, `fastpathctl decide off` until the edge's time is found; alone, Python was slow. The shadow alone gives no baseline for this kind: only the decide path (`-edge-decide`) counts passes, so it first fires at I2. |
+| `edge_decide_pass_slow` | A request the decide path passed spent over 1 s at the edge before it was forwarded (`at_edge`), or Python's answer to it, or the edge's failure to reach Python, came over 25 s after it arrived (`in_all`); decision 12's budgets. | `at_edge` is the total; each such pass is counted again under the phase of its time at the edge it spent the most time in (the longest phase, not the one in which it crossed 1 s; `slowPhase` in `fastpath/internal/edge/decide_path.go`), so the phase counts add up to `at_edge`. `at_edge.body`: reading the request's body from the balancer; a slow caller or a congested node, and on one node only, that node. `at_edge.boot`: the boot check's read of the boot, from Spanner (request tag `fastpath-read-boot`, `store/boot.go`) on a cache miss, bounded by `BootWait` (`-edge-boot-wait`, 2 s) and kept `BootTTL` (10 min; a boot not found a tenth of that), so each boot is read again every ten minutes on each node. One isolated `at_edge.boot` is a single slow Spanner read and needs no action. Repeated ones, on several nodes or in several minutes, point at Spanner's read latency: read the latency of request tag `fastpath-read-boot` (Spanner's query statistics and the `SPANNER_SYS` tables by request tag), and look for a Spanner incident; a read that runs out its 2 s also makes the verdict `unread`, so `boot.unread` in the decide line's `passed` sits beside the `at_edge.boot` count. `at_edge.decide`: the decide pipeline, which reads only what the node holds in memory; one is CPU starvation or a GC pause, and several mean the node is overloaded (read its CPU). `at_edge.admit`: the admission after the decision, where the owner's admit or the insert ran to its budget (or an enforcing windowed key's window read); the decide line's `passed` counts of the same minute (`budget.spent`, `insert.failed`, `owner.*`, `key_window.unread`) say which. A pass with none of those reasons beside it is slow in its body, its boot or the pipeline, which the phase names. Lines from before the phase counts carry `at_edge` alone. `in_all`: the enclave had already given up the attempt; with `at_edge` beside it, `fastpathctl decide off` until the edge's time is found; alone, Python was slow. The shadow alone gives no baseline for this kind: only the decide path (`-edge-decide`) counts passes, so it first fires at I2. |
+| `edge_decide_window_unread` | In the last period more than 1% of the decide path's window reads (at least three) failed or ran past their 300 ms budget, so those enforcing windowed keys passed to Python (`key_window.unread`; `docs/design/fast-admission-e2-key-windows.md` §4.2). The message carries the period's window counts. | Nothing was admitted unchecked: each such request was Python's to answer, so money is not at risk, only coverage. Read the decide line's `windows` latency buckets of the same minutes, and Spanner's read latency for `tr_key_limit` (request tag `fastpath-read-key-windows`). Several nodes at once point at Spanner. If it persists, publish the edge policy without `fastpath_pilot_key_windows` (the setting back to `off`, seen within the policy's 60 s): every windowed key then passes `key.key_window` before any read. |
+| `edge_window_race` | The decide shadow's confirmed window races (`window_race.*`, each confirmed by a re-read at Python's own read timestamp that left exactly Python's remaining) ran past what a read race explains: over the last hour, more than 0.05% of its window reads (and at least 3 races), or one key more than 3 times (the message names the key by the first 8 characters of its hash). Not the critical page: each race was confirmed. | A hot key whose settles land between the edge's read and Python's, or settles slower than usual. Read the race lines (`fastpath edge decide shadow window race:`) for the keys and gaps, and `fastpathwatch edge`'s `window_race_ratio`. Above the gate's 0.05% over its span, `enforce` waits, or goes back to off, until it is explained (`fastpath-edge-decide.md` §6). |
 | `other` | An alert whose message is none of the auditor's or the edge's. | Read the entry's message. |
+
+## The control plane's lines
+
+Three policies page on lines the control plane writes for streams on the lease
+(`infra/fastpath_control_plane_alerts.tf`; `docs/design/fast-admission-streams.md`
+§4.4 and §6.4), each also counted by a log-based metric of the same name
+(`logging.googleapis.com/user/fastpath_control_plane_<kind>`). Find the
+lines with `gcloud logging read 'resource.type="cloud_run_revision" AND
+textPayload:"ERROR trusted_router.fastpath fastpath.<event> "'`.
+
+| Kind | What happened | What to do |
+|---|---|---|
+| `heartbeat_divergence` | An owner refused a leased stream's heartbeat the control plane's transaction had accepted (`status=rejected`), or a front door could not open its envelope (`status=invalid`). The enclave was told `out_of_cohort` and stopped the stream, which settles what it delivered. | Gate P (§8.3) needs none. Read the authorization's heartbeat lines and the owner's records: a `rejected` means the two validations disagree, a defect to fix before streams move on; an `invalid` means the envelope's key is no longer accepted (`fastpath-key-rotation.md`: the old key must stay accepted for a hold's life). Set `fastpath_pilot_streams` off until it is explained. |
+| `settled_without_intent` | The reaper found a leased stream's row expired, and the lease answered that a settle won, but no settle intent remained for Python to write the settle's records: the charge is booked, its generation record is missing. The row is left, its expiry pushed out, so the line repeats each pass. | Find the settle in the lease's records (`tr_lease_record` for the authorization, or the record topic's export) and the settle route's lines for it. Write the records by hand only once the cause is known; money is not at risk, the record is. |
+| `leased_reap_overdue` | The reaper found a leased stream's row expired, and the lease still gave no disposition (pending, a failed or unserved read, no front door) though the hold's end of life plus 15 minutes has passed: the owner releases or reaps every hold by its end of life plus its grace, and the auditor drains a stopped owner's lease within its overdue allowance. The row is left, its expiry pushed out, so the line repeats each pass. | Read the lease's state and drain (`drain_overdue` and `pending_work_overdue` alerts on the same lease name the cause) and the `/v1/disposition` lines (`fastpath leased reap disposition unanswered`). Money is not at risk: Python books nothing for the row; its records wait for the lease's answer. |
 
 ## The edge's counts
 
@@ -89,7 +106,10 @@ as INFO lines of the same journal (`fastpath edge decide: ...` and
 `fastpath edge decide shadow: ...`), each a count of that minute alone. The
 decide path's line counts its answers, its `unavailable` answers by the
 insert's gRPC code (`unavailable_by_code`), its passes by reason and its
-slow passes; the alerts above are raised from the same minute's counts.
+slow passes, and its window checks (`windows`: reads made, `unread`, latency
+buckets, verdicts); the shadow's line adds its own `windows`, with how
+Python's `RateLimit-*` headers compared (`window.agree`,
+`window.differ.*`, `window.same_inputs.*`); the alerts above are raised from the same minute's counts.
 `fastpathwatch edge` sums a span's lines (`fastpath-watch.md`), for the I2
 gates or for an incident's minutes.
 
@@ -165,6 +185,47 @@ skips what it has applied.
 A member that restarts again and again, a call stuck each time, points
 at Spanner from that node: compare with the other nodes'
 lines, and take a dump before the next restart.
+
+### A start that stalls
+
+A process's start has three budgets, one after the other. First, before
+the service runs, it reads its secrets (the envelope keys and the edge's
+token), each read with a 15 s deadline, and makes its Spanner and Pub/Sub
+clients, all of it watched for 15 s per secret read plus a minute
+(`service.StartStall`), so reads that each nearly run out still fit: a read
+that runs out of time fails the start with its error, and one deaf to its
+deadline trips the watch, which logs `fastpath: the start stalled before
+its parts began` and exits with code 1. Then it warms
+the Spanner client's session: one read with a 2 min deadline
+(`store.WarmSessionWait`), since it waits behind the client's own session
+creations, watched for 2 min 15 s (`service.WarmStall`). Then its parts
+start: the Spanner calls they make before they run (the ring row's join,
+the first read of the members, the first read of the switch) each have a
+15 s deadline (`service.StartDeadline`), and the parts' start as a whole
+has a minute (`service.StartStall`). A process whose start stalls
+anywhere exits within the sum of the four (the first budget, `WarmStall`,
+`StartStall` and `service.FailStop`): under six minutes for a node's two or
+three secret reads. Without these bounds a stalled read held the start
+for good: the auditor never started, and the edge, which serves before
+the node's other parts, answered the balancer serving all the while. A
+join or a read of the members that runs out of time fails the process,
+which logs
+
+```
+fastpath: service: joining the ring as the process started: ...
+```
+
+(or `reading the members as the process started`, or `the Spanner
+client's session` for the warming) and exits; systemd starts it again
+five seconds later, with a Spanner client of its own. A call deaf to its
+deadline trips a watchdog instead: a warming still under way past
+`WarmStall` fails with `service: the Spanner client's session was not
+warm within its limit`, a parts' start past `StartStall` with `service:
+the process had not started within its limit`, and either exits within
+`service.FailStop`, as above. A switch read that runs out
+of time is logged and the node starts, admitting for no workspace until a
+later read succeeds. A node that restarts again and again this way points
+at Spanner from that node, as above.
 
 ### The auditor's own lines
 

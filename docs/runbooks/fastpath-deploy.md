@@ -166,7 +166,20 @@ it to the first before the second is pinned anywhere. Nodes replaced by one appl
 then never mix an owner that states the field with an auditor that does
 not read it. The first such field was the hold's boot binding on its
 first heartbeat record: one release read it and stated none, and the one
-after it states it.
+after it states it. The second is a stream's reap deadline
+(`record.Snapshot.ReapDeadline`, docs/design/fast-admission-streams.md
+section 4.6 item 4): the release that reads it leaves the owner's
+`RecordReapFloor` off, and the one after it, pinned as above, turns it on
+in the service's defaults. Until then each owner still waits for the floor
+before it reaps a stream's hold itself; only an auditor that drains a lease
+reaps at the heartbeat's deadline plus the grace.
+
+A field on a front door's or an owner's request (`EchoGranted` on a
+heartbeat) is refused by a node from before it, which decodes strictly. It
+is sent only when set, so nothing changes until a gateway sets it: owners
+take it before front doors, and the control plane sets it only once every
+owner and front door runs a release that takes it (check as "Taking a
+pinned release" below does).
 
 ## Turning the edge on
 
@@ -262,6 +275,14 @@ same hours at the previous one, read from the balancer's metrics
 - Request counts on the edge backend rise about in proportion to the
   weight; both nodes `HEALTHY`; no `TR Fast path` alert; the decide
   shadow's `dropped` stays 0.
+
+At 100 control's authorize route has no direct requests of its own in the
+window, so the step to 100 reads control's side from before the step: its
+authorize 5xx rate and its p50 and p99 by proxy continent over the same
+hours of the day before, at 50 (the 1 h read against the same hour 24 h
+earlier, the 24 h read against the 24 h before the step). The edge's own
+read at 50 over those hours is beside it, so a change in the edge and a
+change in the day's traffic are told apart.
 
 A gate failing means the previous weight (or 0, which is R0), the same
 one-line change merged and applied; the balancer takes it at once. Keep
@@ -363,3 +384,24 @@ take stops it before either role starts, on both nodes, restarted into the
 same refusal. So a new flag lands with or after the pin of a release that
 takes it, never before: `tests/test_fastpath_p1.py` holds the unit's flags
 to the command of the release `infra/fastpath.tf` pins.
+
+## Streams on the lease: the release order
+
+`docs/design/fast-admission-streams.md` §10 ships streams in increments,
+and three of its steps wait on the fleet's release, checked as "Taking a
+pinned release" does:
+
+1. Increment 2b, which turns on the owner's `RecordReapFloor` (each stream
+   heartbeat's and hand-off's reap deadline in its record) and adds the
+   skew allowance to the floor, is pinned only once every member runs
+   increment 2, the release that reads the field (#2207). Until 2b an
+   auditor that drains a lease reaps a stream at the heartbeat's deadline
+   plus the grace, without the floor.
+2. Python's increment 4, which sets `EchoGranted` and lets
+   `fastpath_pilot_streams` admit streams, moves only once 2b is pinned on
+   every owner and front door: a node from before increment 2 refuses a
+   heartbeat carrying `EchoGranted`.
+3. While any leased stream is open, no node's release goes below 2b, and
+   the control plane's below Python's increment 3. To go further back, turn
+   the streams settings off and wait out a hold's life (2 h 20 min) plus
+   the grace plus the drain's overdue allowance first.

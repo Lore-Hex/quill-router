@@ -10,6 +10,7 @@ from google.cloud import spanner
 from google.cloud.spanner_v1 import param_types
 
 from trusted_router.spend_windows import KeyWindowLimitExceeded, utcnow
+from trusted_router.storage_gcp_authorize import key_window_limit_decision
 from trusted_router.storage_gcp_strict_budget import reserve_strict_key
 
 
@@ -125,3 +126,35 @@ def test_native_byok_exclusion_does_not_reserve(database):
     seed(database, include_byok=False)
     assert reserve(database, 200, byok=True)[0] == "no_hold"
     assert reserve(database, 100)[0] == "accepted"
+
+
+def test_native_window_check_names_its_snapshots_read_timestamp(database):
+    """key_window_limit_decision's read_timestamp_ns is the instant its rows are
+    as of: a read pinned to it sees exactly the rows the decision summed, not a
+    settle committed after it, which a strong read does see (key windows
+    section 8.2 item 3)."""
+    from google.protobuf.timestamp_pb2 import Timestamp
+    from proto.datetime_helpers import DatetimeWithNanoseconds
+
+    seed(database, used=20)
+    before = utcnow()
+    decision = key_window_limit_decision(
+        database, param_types, key_hash="key", estimate=90, window_limits={"daily": 100}
+    )
+    assert decision is not None and not decision.allowed and decision.remaining == 80
+    assert decision.read_timestamp_ns is not None
+    seconds, nanos = divmod(decision.read_timestamp_ns, 1_000_000_000)
+    pinned = DatetimeWithNanoseconds.from_timestamp_pb(Timestamp(seconds=seconds, nanos=nanos))
+    assert abs((pinned - before).total_seconds()) < 60
+    with database.batch() as batch:
+        batch.update("tr_key_limit", columns=("key_hash", "shard", "day_usage"), values=[("key", 0, 70)])
+    usage = "SELECT day_usage FROM tr_key_limit WHERE key_hash='key' AND shard=0"
+    with database.snapshot(read_timestamp=pinned) as snapshot:
+        assert [list(row) for row in snapshot.execute_sql(usage)] == [[20]]
+    with database.snapshot() as snapshot:
+        assert [list(row) for row in snapshot.execute_sql(usage)] == [[70]]
+    later = key_window_limit_decision(
+        database, param_types, key_hash="key", estimate=90, window_limits={"daily": 100}
+    )
+    assert later is not None and later.remaining == 30
+    assert later.read_timestamp_ns is not None and later.read_timestamp_ns > decision.read_timestamp_ns

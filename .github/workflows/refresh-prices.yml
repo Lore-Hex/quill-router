@@ -263,7 +263,7 @@ jobs:
         run: |
           set -o pipefail
           uv run python -m scripts.pricing.speech | tee /tmp/speech-summary.txt
-          uv run python -m scripts.pricing.transcription
+          uv run python -m scripts.pricing.transcription | tee /tmp/transcription-summary.txt
           uv run python -m scripts.pricing.refresh | tee /tmp/refresh-summary.txt
           uv run python -m scripts.pricing.openrouter_reasoning
 
@@ -366,6 +366,7 @@ jobs:
       # pass duplicated a subset of that run and added ~2 h, during which main
       # usually moved and the validated snapshot was discarded unpublished.
       - name: Commit, verify, and push if changed
+        id: publication
         run: |
           set -euo pipefail
           git config user.name "trustedrouter-pricing-bot"
@@ -387,6 +388,7 @@ jobs:
 
           if git diff --cached --quiet; then
             echo "No price changes this hour — nothing to commit."
+            echo "validated=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -552,8 +554,13 @@ jobs:
           # snapshot for hours because deploy.yml never auto-fired.
           gh workflow run deploy.yml --ref main --repo "${GITHUB_REPOSITORY}"
           echo "  dispatched deploy.yml for new snapshot"
+          echo "validated=true" >> "$GITHUB_OUTPUT"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Catalog refresh validated
+        if: steps.publication.outputs.validated == 'true'
+        run: echo "Validated catalog publication or no changes; deployment health is checked separately."
 
       - name: Reconcile model-discovery coverage issue
         if: always()
@@ -643,10 +650,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          # Language-model providers (refresh.py) and speech price sources
-          # (speech.py) hold independently and report under the same heading.
+          # Language-model, speech, and transcription sources hold independently
+          # and report under the same heading.
           summaries=""
-          for summary in /tmp/refresh-summary.txt /tmp/speech-summary.txt; do
+          for summary in /tmp/refresh-summary.txt /tmp/speech-summary.txt /tmp/transcription-summary.txt; do
             if [ -s "${summary}" ] && grep -q '^Held for price review' "${summary}"; then
               summaries="${summaries} ${summary}"
             fi

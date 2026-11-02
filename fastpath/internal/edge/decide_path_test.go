@@ -5,9 +5,12 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
+	"errors"
 	"go/ast"
 	"go/parser"
 	gotoken "go/token"
+	"io"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -23,11 +26,14 @@ import (
 	"testing"
 	"time"
 
+	"cloud.google.com/go/spanner"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/frontdoor"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/gwauth"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/gwstate"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/keywindow"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/routingsnapshot"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store"
 )
@@ -110,6 +116,15 @@ type decideEdge struct {
 
 func newDecideEdge(t *testing.T, f authorizeFile, c authorizeCase, py *fakePython) *decideEdge {
 	t.Helper()
+	return newDecideEdgeWith(t, f, c, py, nil)
+}
+
+// newDecideEdgeWith is newDecideEdge with the full shadow on too when
+// shadow is not nil, as production runs both (-edge-decide and
+// -edge-decide-shadow): the shadow follows what the decide path passes.
+func newDecideEdgeWith(t *testing.T, f authorizeFile, c authorizeCase, py *fakePython,
+	shadow *DecideShadowConfig) *decideEdge {
+	t.Helper()
 	if py == nil {
 		py = newFakePython(t)
 	}
@@ -138,17 +153,27 @@ func newDecideEdge(t *testing.T, f authorizeFile, c authorizeCase, py *fakePytho
 		Snapshot: SnapshotConfig{URL: snapshotURL, Keys: keys, Plane: "gcp/us-central1"},
 		Policy:   PolicyConfig{URL: policyURL, Keys: keys, Plane: "gcp/us-central1"},
 		Admitter: h.holder,
-		Decide:   &DecideConfig{Cache: h.cache, Decides: &fakeDecides{}, Rows: h.rows, Mint: pinnedMint(c)}})
+		Decide:   &DecideConfig{Cache: h.cache, Decides: &fakeDecides{}, Rows: h.rows, Mint: pinnedMint(c)},
+		DecideShadow: func() *DecideShadowConfig {
+			if shadow != nil && shadow.Cache == nil {
+				shadow.Cache = h.cache
+			}
+			return shadow
+		}()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	snap := snapshotFor(t, h.policy)
+	snap := snapshotOver(t, f, h.policy)
 	e.poller.current.Store(hold(snap, routingsnapshot.Claims{CompiledAt: snap.CompiledAt, NotAfter: snap.NotAfter,
 		SHA256: "golden-snapshot"}))
 	e.policy.current.Store(&heldPolicy{policy: h.policy, claims: routingsnapshot.PolicyClaims{IssuedAt: h.policy.IssuedAt,
 		NotAfter: h.policy.NotAfter, SHA256: "golden-policy"}})
 	view := decideAll(h.policy, c.Facts.Key.WorkspaceID, c.at())
 	e.decider.decides.current.Store(&view)
+	if e.full != nil {
+		e.full.decides.current.Store(&view)
+		t.Cleanup(e.WaitDecideShadow)
+	}
 	h.holder.Bind(h.admitter)
 	h.edge = e
 	t.Cleanup(e.WaitDecide)
@@ -237,10 +262,23 @@ func insertOf(t *testing.T, c authorizeCase) (store.InsertOutcome, codes.Code) {
 	return store.Unknown, fault.code
 }
 
+// bodyStreams is whether a case's body asks for a stream (body.stream true).
+func bodyStreams(t *testing.T, body []byte) bool {
+	t.Helper()
+	var b struct {
+		Stream *bool `json:"stream"`
+	}
+	if err := json.Unmarshal(body, &b); err != nil {
+		t.Fatalf("case body: %v", err)
+	}
+	return b.Stream != nil && *b.Stream
+}
+
 // TestEveryGoldenCaseThroughTheDecidePath: with the decide path on, every
 // answered case is answered by the edge with Python's 200 byte for byte
 // (timing values aside), Python never reached, its rows inserted as Python
-// wrote them, and nothing refunded; the unavailable case is Python's 503
+// wrote them, and nothing refunded (a request naming a cache_affinity_key
+// among them, in Python's cold order, §1 item 5); the unavailable case is Python's 503
 // exactly, Retry-After 1, the hold kept, counted by its insert's code; every
 // pass case reaches Python
 // with its §3 reason counted, the owner asked only for a reason after the
@@ -249,7 +287,7 @@ func insertOf(t *testing.T, c authorizeCase) (store.InsertOutcome, codes.Code) {
 func TestEveryGoldenCaseThroughTheDecidePath(t *testing.T) {
 	f := authorizeGoldens(t)
 	py := newFakePython(t)
-	answered, unavailable, passed, refunded := 0, 0, 0, 0
+	answered, unavailable, passed, refunded, affinity, streams := 0, 0, 0, 0, 0, 0
 	unavailableCodes := map[string]int{}
 	for _, c := range f.Cases {
 		h := newDecideEdge(t, f, c, py)
@@ -286,16 +324,24 @@ func TestEveryGoldenCaseThroughTheDecidePath(t *testing.T) {
 			if len(rows) != 1 || !rowsAreGoldens(t, c, rows[0]) {
 				t.Errorf("%s: %d inserts", c.Name, len(rows))
 			}
-			// The lease is asked for the reservation, not the rows' estimate.
+			// The lease is asked for the reservation, not the rows' estimate,
+			// and for a stream's hold as a stream.
 			want := frontdoor.AuthorizeOf{Workspace: c.Facts.Key.WorkspaceID, Request: c.IDs.AuthorizationID,
-				Estimate: c.Expect.Reservation, Boot: []byte(c.Boot.Kid)}
+				Estimate: c.Expect.Reservation, Stream: bodyStreams(t, c.body()), Boot: []byte(c.Boot.Kid)}
 			if len(asked) != 1 || asked[0].Workspace != want.Workspace || asked[0].Request != want.Request ||
-				asked[0].Estimate != want.Estimate || string(asked[0].Boot) != string(want.Boot) || asked[0].Stream ||
+				asked[0].Estimate != want.Estimate || string(asked[0].Boot) != string(want.Boot) ||
+				asked[0].Stream != want.Stream ||
 				asked[0].OpenHeartbeat {
 				t.Errorf("%s: the admit %+v, want %+v", c.Name, asked, want)
 			}
+			if want.Stream {
+				streams++
+			}
 			if len(refunds) != 0 || counts.Answered != 1 || (counts.ReadBack == 1) != (outcome == store.Landed) {
 				t.Errorf("%s: refunds %d, counts %+v", c.Name, len(refunds), counts)
+			}
+			if c.Expect.Affinity != nil {
+				affinity++
 			}
 			answered++
 		case c.Expect.Outcome == "unavailable":
@@ -345,13 +391,17 @@ func TestEveryGoldenCaseThroughTheDecidePath(t *testing.T) {
 			t.Errorf("%s: %d still in flight", c.Name, n)
 		}
 	}
-	t.Logf("%d answered, %d unavailable, %d passed (%d refunded)", answered, unavailable, passed, refunded)
-	if answered != 174 || unavailable != 3 || refunded != 7 {
-		t.Fatalf("answered %d, unavailable %d, refunded %d: not the goldens' counts", answered, unavailable, refunded)
+	t.Logf("%d answered (%d naming a cache_affinity_key), %d unavailable, %d passed (%d refunded)", answered, affinity,
+		unavailable, passed, refunded)
+	// The streams' (the edge policy carrying fastpath_edge_streams): 30
+	// answered, one unavailable, one refunded.
+	if answered != 192+30 || streams != 30 || affinity != 18 || unavailable != 3+1 || refunded != 7+1 {
+		t.Fatalf("answered %d (%d streams, %d with a cache affinity key), unavailable %d, refunded %d: not the goldens' counts",
+			answered, streams, affinity, unavailable, refunded)
 	}
 	// The goldens' three unavailable answers, a code each: the clock ahead
 	// of Spanner's among them (§8.4).
-	if !maps.Equal(unavailableCodes, map[string]int{"deadline_exceeded": 1, "failed_precondition": 1, "aborted": 1}) {
+	if !maps.Equal(unavailableCodes, map[string]int{"deadline_exceeded": 1 + 1, "failed_precondition": 1, "aborted": 1}) {
 		t.Fatalf("the unavailable answers' codes: %v", unavailableCodes)
 	}
 }
@@ -460,6 +510,122 @@ func TestTheInFlightLimitIsPerLookupHash(t *testing.T) {
 	k.leave("other")
 	if len(k.n) != 0 {
 		t.Errorf("entries left: %v", k.n)
+	}
+}
+
+// orderedShadowCache orders only the asynchronous shadow lookup, not the
+// enforcing path's lookup or eviction. Neither path waits on the other in
+// production, so a refusal can invalidate the cache before the shadow runs.
+type orderedShadowCache struct {
+	KeyCache
+	allow <-chan struct{}
+	read  chan struct{}
+}
+
+func (c *orderedShadowCache) Lookup(hash string, at time.Time) gwstate.Read {
+	<-c.allow
+	r := c.KeyCache.Lookup(hash, at)
+	close(c.read)
+	return r
+}
+
+// TestPythonsInFlightRefusalOfAnInFlightPassIsAPass: with the decide path
+// and the full shadow both on, an inflight.key pass refused by Python's
+// matching in-flight gate is passed.inflight.key, not a would-admit page.
+// Other refusals still page when the shadow holds a warm key. If Python's
+// enforcing eviction wins the race with the shadow lookup, the shadow must
+// instead report stale.key: it cannot decide from an invalidated cache.
+// Both orderings are intentional; neither may depend on goroutine scheduling.
+func TestPythonsInFlightRefusalOfAnInFlightPassIsAPass(t *testing.T) {
+	f := authorizeGoldens(t)
+	c := authorizeCaseNamed(t, "answer:app_categories_empty")
+	inFlight := errorBody(429, "rate_limited", "Too many concurrent requests for this API key")
+	for _, tc := range []struct {
+		name    string
+		atLimit bool // a request of the key holds the one slot
+		status  int
+		body    []byte
+		pass    string
+		want    string
+		pages   bool
+		late    bool // Python's cache eviction happens before the shadow lookup
+	}{
+		{"in_flight_refusal", true, 429, inFlight, PassInFlightKey, ClassGoPassed + "." + PassInFlightKey, false, false},
+		{"payment_required", true, 402, errorBody(402, "payment_required", "Insufficient credits"), PassInFlightKey,
+			ClassWouldAdmit + ".402.payment_required", true, false},
+		{"payment_required_after_eviction", true, 402, errorBody(402, "payment_required", "Insufficient credits"), PassInFlightKey,
+			"stale.key", false, true},
+		{"ingress_limiter", true, 429, errorBody(429, "rate_limited", "Rate limit exceeded"), PassInFlightKey,
+			ClassWouldAdmit + ".429.rate_limited", true, false},
+		{"window", true, 429, errorBody(429, "key_window_limit_exceeded", "API key daily spend limit exceeded; x"),
+			PassInFlightKey, ClassWouldAdmit + ".429.key_window_limit_exceeded", true, false},
+		{"owner_busy", false, 429, inFlight, PassOwnerBusy, ClassWouldAdmit + ".429.rate_limited", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var alerts []string
+			shadow := &DecideShadowConfig{Decides: &fakeDecides{}, Rows: &fakeRows{by: map[string]store.AuthorizationForCompare{}},
+				SampleEvery: 1, ReadsPerSecond: 1e9, Alert: func(kind, _, what string) {
+					mu.Lock()
+					defer mu.Unlock()
+					alerts = append(alerts, kind+"|"+what)
+				}}
+			h := newDecideEdgeWith(t, f, c, nil, shadow)
+			allow, read := make(chan struct{}), make(chan struct{})
+			h.edge.full.cfg.Cache = &orderedShadowCache{KeyCache: h.cache, allow: allow, read: read}
+			if !tc.late {
+				close(allow)
+			}
+			h.policy.GatewayAuthorizeMaxInFlightPerKey = 1
+			release := make(chan struct{})
+			var wg sync.WaitGroup
+			if tc.atLimit {
+				var held atomic.Int32
+				h.rows.insert = func(context.Context) store.InsertOutcome {
+					if held.Add(1) == 1 {
+						<-release
+					}
+					return store.Inserted
+				}
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					h.edge.ServeHTTP(httptest.NewRecorder(), request(c, context.Background()))
+				}()
+				waitFor(t, func() bool { return held.Load() == 1 })
+			} else {
+				h.admitter.authorize = func(context.Context, frontdoor.AuthorizeOf) frontdoor.Authorized {
+					return frontdoor.Authorized{Status: frontdoor.Busy}
+				}
+			}
+			answer := answerWith(tc.status, tc.body, "Retry-After", "1")
+			respond := func(w http.ResponseWriter) {
+				if !tc.late {
+					<-read
+				}
+				answer(w)
+			}
+			h.python.respond.Store(&respond)
+			rec := h.send(t, c)
+			if tc.late {
+				close(allow)
+			}
+			h.edge.WaitDecideShadow()
+			close(release)
+			wg.Wait()
+			got := h.edge.DecideShadowCounts().Classes
+			if rec.Code != tc.status || h.edge.DecideCounts().Passed[tc.pass] != 1 || got[tc.want] != 1 {
+				t.Fatalf("Python's %d to a pass: edge %d, passes %v, classes %v, want %s", tc.status, rec.Code,
+					h.edge.DecideCounts().Passed, got, tc.want)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if paged := len(alerts) == 1 && alerts[0] == AlertWouldAdmit+
+				"|the edge would have answered an authorize Python refused: "+tc.want; paged != tc.pages ||
+				(!tc.pages && len(alerts) != 0) {
+				t.Errorf("alerts %q, want a page %v", alerts, tc.pages)
+			}
+		})
 	}
 }
 
@@ -792,10 +958,11 @@ func TestUnavailableAnswersAreCountedByCodeAndAlerted(t *testing.T) {
 
 // TestSlowPassesAreCountedAndAlerted (decision 12, G12): a pass that spent
 // more than SlowAtEdge at the edge before it was forwarded is counted
-// at_edge, and one whose answer from Python, or the proxy's failure to
-// reach it, came more than SlowInAll after its arrival is counted in_all;
-// a period with either raises AlertSlowPass. At the contract's thresholds
-// the same passes count neither.
+// at_edge, and under its phase (here a slow insert's, at_edge.admit), and
+// one whose answer from Python, or the proxy's failure to reach it, came
+// more than SlowInAll after its arrival is counted in_all; a period with
+// either raises AlertSlowPass. At the contract's thresholds the same passes
+// count neither.
 func TestSlowPassesAreCountedAndAlerted(t *testing.T) {
 	h, c := baseDecide(t)
 	var raised alerts
@@ -808,11 +975,18 @@ func TestSlowPassesAreCountedAndAlerted(t *testing.T) {
 	if c := h.edge.DecideCounts(); len(c.Slow) != 0 || len(raised.taken()) != 0 {
 		t.Fatalf("a fast pass is slow: %+v", c)
 	}
-	h.edge.decider.slowAtEdge = 0
+	// The insert takes twice the threshold, and nothing else a tenth of
+	// it: the pass is slow in its admission.
+	h.edge.decider.slowAtEdge = 100 * time.Millisecond
+	h.rows.insert = func(context.Context) store.InsertOutcome {
+		time.Sleep(2 * h.edge.decider.slowAtEdge)
+		return store.Failed
+	}
 	h.send(t, c)
-	if got := h.edge.DecideCounts().Slow; !maps.Equal(got, map[string]int64{"at_edge": 1}) {
+	if got := h.edge.DecideCounts().Slow; !maps.Equal(got, map[string]int64{"at_edge": 1, "at_edge.admit": 1}) {
 		t.Fatalf("slow at the edge: %v", got)
 	}
+	h.rows.insert = func(context.Context) store.InsertOutcome { return store.Failed }
 	h.edge.decider.slowAtEdge, h.edge.decider.slowInAll = SlowAtEdge, 0
 	h.send(t, c)
 	// Python not reached: the proxy's failure is the pass's end.
@@ -823,17 +997,138 @@ func TestSlowPassesAreCountedAndAlerted(t *testing.T) {
 	if rec := h.send(t, c); rec.Code != http.StatusBadGateway {
 		t.Fatalf("Python not reached: %d", rec.Code)
 	}
-	if got := h.edge.DecideCounts().Slow; !maps.Equal(got, map[string]int64{"at_edge": 1, "in_all": 2}) {
+	if got := h.edge.DecideCounts().Slow; !maps.Equal(got, map[string]int64{"at_edge": 1, "at_edge.admit": 1,
+		"in_all": 2}) {
 		t.Fatalf("slow in all: %v", got)
 	}
 	h.edge.decider.flush()
-	if !strings.Contains(h.logs.all(), `passed={"insert.failed":3} slow={"at_edge":1,"in_all":2}`) {
+	if !strings.Contains(h.logs.all(),
+		`passed={"insert.failed":3} slow={"at_edge":1,"at_edge.admit":1,"in_all":2}`) {
 		t.Fatalf("the period's line: %s", h.logs.all())
 	}
 	got := raised.taken()
-	if len(got) != 1 || len(got[AlertSlowPass]) != 1 ||
-		!strings.Contains(got[AlertSlowPass][0], `{"at_edge":1,"in_all":2}`) {
+	if len(got) != 1 || len(got[AlertSlowPass]) != 1 || !strings.Contains(got[AlertSlowPass][0],
+		`forwarded passes over 1s at the edge (at_edge) or over 0s in all (in_all): `+
+			`{"at_edge":1,"at_edge.admit":1,"in_all":2}; each at_edge pass is counted again under the phase`) {
 		t.Fatalf("the alerts: %v", got)
+	}
+}
+
+// slowBody is a request body whose first read waits: a caller that sends
+// its body slowly.
+type slowBody struct {
+	r     io.Reader
+	delay time.Duration
+	once  sync.Once
+}
+
+func (b *slowBody) Read(p []byte) (int, error) {
+	b.once.Do(func() { time.Sleep(b.delay) })
+	return b.r.Read(p)
+}
+
+// TestASlowPassIsCountedUnderItsPhase: a pass slow at the edge is counted
+// at_edge and under the phase it spent the most time in. A cold boot read
+// (the boot's first, from the store) twice the threshold is the boot's,
+// even when the pass is the pipeline's own (boot.signature, a body that is
+// not the one signed), with no owner, insert or budget reason beside it;
+// the next request reads the boot from the cache and counts nothing. A
+// body read slowly is the body's. A fast pass counts nothing.
+func TestASlowPassIsCountedUnderItsPhase(t *testing.T) {
+	f := authorizeGoldens(t)
+	c := authorizeCaseNamed(t, "answer:app_categories_empty")
+	const threshold = 100 * time.Millisecond
+	unsigned := func(body io.Reader) *http.Request {
+		req := request(c, context.Background())
+		req.Body, req.ContentLength = io.NopCloser(body), -1
+		return req
+	}
+	send := func(h *decideEdge, req *http.Request) int {
+		rec := httptest.NewRecorder()
+		h.edge.ServeHTTP(rec, req)
+		h.edge.decider.refunds.Wait()
+		return rec.Code
+	}
+
+	// A fast pass: the insert fails, the boot read and the body take no
+	// time, and the contract's threshold holds.
+	h := newDecideEdge(t, f, c, nil)
+	h.rows.insert = func(context.Context) store.InsertOutcome { return store.Failed }
+	if code := h.send(t, c).Code; code != http.StatusTeapot || h.edge.DecideCounts().Passed[PassInsertFailed] != 1 {
+		t.Fatalf("a failed insert: %d, counts %+v", code, h.edge.DecideCounts())
+	}
+	if got := h.edge.DecideCounts().Slow; len(got) != 0 {
+		t.Fatalf("a fast pass is slow: %v", got)
+	}
+
+	// A cold boot read twice the threshold, the pipeline passing on the
+	// signature: the boot's.
+	h = newDecideEdge(t, f, c, nil)
+	b := bootsOf(t, f, c)
+	b.slow = 2 * threshold
+	h.edge.cfg.Boots, h.edge.decider.slowAtEdge = b, threshold
+	body := append(c.body(), ' ')
+	if code := send(h, unsigned(bytes.NewReader(body))); code != http.StatusTeapot {
+		t.Fatalf("a cold boot read: %d", code)
+	}
+	counts := h.edge.DecideCounts()
+	if !maps.Equal(counts.Passed, map[string]int64{PassBootSignature: 1}) || b.reads.Load() != 1 ||
+		!maps.Equal(counts.Slow, map[string]int64{"at_edge": 1, "at_edge.boot": 1}) {
+		t.Fatalf("a cold boot read: %d reads, counts %+v", b.reads.Load(), counts)
+	}
+	// The boot is cached now (BootTTL): the same request is fast.
+	send(h, unsigned(bytes.NewReader(body)))
+	counts = h.edge.DecideCounts()
+	if counts.Passed[PassBootSignature] != 2 || b.reads.Load() != 1 ||
+		!maps.Equal(counts.Slow, map[string]int64{"at_edge": 1, "at_edge.boot": 1}) {
+		t.Fatalf("a cached boot: %d reads, counts %+v", b.reads.Load(), counts)
+	}
+	h.edge.decider.flush()
+	if !strings.Contains(h.logs.all(), `passed={"boot.signature":2} slow={"at_edge":1,"at_edge.boot":1}`) {
+		t.Fatalf("the period's line: %s", h.logs.all())
+	}
+
+	// A body whose read takes twice the threshold, the insert failing: the
+	// body's.
+	h = newDecideEdge(t, f, c, nil)
+	h.rows.insert = func(context.Context) store.InsertOutcome { return store.Failed }
+	h.edge.decider.slowAtEdge = threshold
+	req := request(c, context.Background())
+	req.Body = io.NopCloser(&slowBody{r: bytes.NewReader(c.body()), delay: 2 * threshold})
+	if code := send(h, req); code != http.StatusTeapot {
+		t.Fatalf("a slow body: %d", code)
+	}
+	counts = h.edge.DecideCounts()
+	if !maps.Equal(counts.Passed, map[string]int64{PassInsertFailed: 1}) ||
+		!maps.Equal(counts.Slow, map[string]int64{"at_edge": 1, "at_edge.body": 1}) {
+		t.Fatalf("a slow body: counts %+v", counts)
+	}
+}
+
+// TestTheSlowPhaseIsTheLongest: slowPhase names the phase between two
+// marks that took the most time, the earlier of two that took the same,
+// whichever phase the pass crossed the threshold in.
+func TestTheSlowPhaseIsTheLongest(t *testing.T) {
+	t0 := time.Unix(1_800_000_000, 0)
+	at := func(ms int) time.Time { return t0.Add(time.Duration(ms) * time.Millisecond) }
+	for _, tc := range []struct {
+		name                             string
+		read, checked, routed, forwarded int
+		phase                            string
+	}{
+		{"body", 900, 950, 951, 1100, SlowPhaseBody},
+		{"boot", 1, 1300, 1301, 1302, SlowPhaseBoot},
+		{"decide", 1, 2, 1200, 1201, SlowPhaseDecide},
+		{"admit", 1, 2, 3, 1600, SlowPhaseAdmit},
+		// Crossed 1 s in the boot read, but the body took longer.
+		{"longest, not crossing", 600, 1100, 1101, 1102, SlowPhaseBody},
+		{"a tie is the earlier", 1, 601, 602, 1202, SlowPhaseBoot},
+		{"all instant", 0, 0, 0, 0, SlowPhaseBody},
+	} {
+		m := edgeMarks{arrived: t0, read: at(tc.read), checked: at(tc.checked)}
+		if got := slowPhase(m, at(tc.routed), at(tc.forwarded)); got != tc.phase {
+			t.Errorf("%s: %s, want %s", tc.name, got, tc.phase)
+		}
 	}
 }
 
@@ -888,5 +1183,315 @@ func TestSparseUnavailableAnswersAreSustained(t *testing.T) {
 	}
 	if sustained != 1 {
 		t.Fatalf("%d sustained alerts over %d sparse unavailable periods, want 1", sustained, SustainedPeriods)
+	}
+}
+
+// TestAnEnforcingWindowedKeyIsNeverAdmittedUnread (docs/design/
+// fast-admission-e2-key-windows.md section 4.2): under every mode, enforce
+// included, a key whose windows Python's authorize enforces passes
+// (key_window.unread) without asking the owner when the decide path has no
+// window reader; an alert-only key the mode covers is answered as an
+// uncapped one, and under off it passes with its reason.
+func TestAnEnforcingWindowedKeyIsNeverAdmittedUnread(t *testing.T) {
+	f := authorizeGoldens(t)
+	base := authorizeCaseNamed(t, "answer:app_categories_empty")
+	enforcing := map[string]any{"limit_daily_microdollars": 5000}
+	alertOnly := map[string]any{"limit_daily_microdollars": 5000, "budget_alert_only": true}
+	for _, v := range []struct {
+		name   string
+		fields map[string]any
+		mode   string
+		pass   string
+	}{
+		{"enforcing, enforce", enforcing, routingsnapshot.KeyWindowsEnforce, keywindow.PassUnread},
+		{"enforcing, alert", enforcing, routingsnapshot.KeyWindowsAlert, PassKeyWindow},
+		{"enforcing, absent", enforcing, "", PassKeyWindow},
+		{"alert only, absent", alertOnly, "", PassKeyWindowAlert},
+		{"alert only, alert", alertOnly, routingsnapshot.KeyWindowsAlert, ""},
+		{"alert only, enforce", alertOnly, routingsnapshot.KeyWindowsEnforce, ""},
+	} {
+		c := base
+		body := keyBodyWith(t, c, v.fields)
+		c.Key.KeyBody = &body
+		h := newDecideEdge(t, f, c, nil)
+		if v.mode != "" {
+			mode := v.mode
+			h.policy.FastpathPilotKeyWindows = &mode
+		}
+		rec := h.send(t, c)
+		admits, _, _ := h.admitter.seen()
+		counts := h.edge.DecideCounts()
+		if v.pass != "" {
+			if rec.Code != http.StatusTeapot || len(admits) != 0 || counts.Passed[v.pass] != 1 {
+				t.Errorf("%s: %d, %d admits, passed %v; want a pass %q", v.name, rec.Code, len(admits), counts.Passed,
+					v.pass)
+			}
+			continue
+		}
+		if rec.Code != http.StatusOK || len(admits) != 1 || counts.Answered != 1 {
+			t.Errorf("%s: %d, %d admits, passed %v; want answered", v.name, rec.Code, len(admits), counts.Passed)
+		}
+	}
+}
+
+// fakeWindows is a ShadowWindowReader: what it answers, and each read's key,
+// deadline and, for a read at a timestamp, that timestamp. readAt answers a
+// read at a timestamp; nil answers it as read does.
+type fakeWindows struct {
+	mu     sync.Mutex
+	read   func(ctx context.Context) ([]keywindow.Row, error)
+	readAt func(ctx context.Context, at time.Time) ([]keywindow.Row, error)
+	calls  []windowCall
+}
+
+type windowCall struct {
+	keyHash  string
+	deadline time.Time
+	at       time.Time // zero for a strong read
+}
+
+func (f *fakeWindows) ReadKeyWindows(ctx context.Context, keyHash string) ([]keywindow.Row, error) {
+	deadline, _ := ctx.Deadline()
+	f.mu.Lock()
+	f.calls = append(f.calls, windowCall{keyHash: keyHash, deadline: deadline})
+	read := f.read
+	f.mu.Unlock()
+	return read(ctx)
+}
+
+func (f *fakeWindows) ReadKeyWindowsAt(ctx context.Context, keyHash string, at time.Time) ([]keywindow.Row, error) {
+	deadline, _ := ctx.Deadline()
+	f.mu.Lock()
+	f.calls = append(f.calls, windowCall{keyHash: keyHash, deadline: deadline, at: at})
+	read, readAt := f.read, f.readAt
+	f.mu.Unlock()
+	if readAt != nil {
+		return readAt(ctx, at)
+	}
+	return read(ctx)
+}
+
+func (f *fakeWindows) seen() []windowCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.calls)
+}
+
+// dailyRows are a key's tr_key_limit rows for a daily limit at at: shards
+// rows, the first holding used of the day and every one the limit mirrored.
+func dailyRows(at time.Time, limit, used int64, shards int) []keywindow.Row {
+	day, _, _ := keywindow.Floors(at)
+	rows := make([]keywindow.Row, shards)
+	for i := range rows {
+		rows[i] = keywindow.Row{Shard: int64(i), DayUsage: spanner.NullInt64{Valid: true},
+			DayStart: spanner.NullTime{Time: day, Valid: true}, DayLimit: spanner.NullInt64{Int64: limit, Valid: true}}
+	}
+	rows[0].DayUsage.Int64 = used
+	return rows
+}
+
+// windowedDecideEdge is a decide edge over the plain answered case with its
+// key's body changed by fields, the policy's mode set (absent for ""), and
+// reads answered by read.
+func windowedDecideEdge(t *testing.T, fields map[string]any, mode string,
+	read func(context.Context) ([]keywindow.Row, error)) (*decideEdge, authorizeCase, *fakeWindows) {
+	t.Helper()
+	return windowedDecideEdgeOf(t, "answer:app_categories_empty", fields, mode, read)
+}
+
+// windowedDecideEdgeOf is windowedDecideEdge over the golden case named.
+func windowedDecideEdgeOf(t *testing.T, name string, fields map[string]any, mode string,
+	read func(context.Context) ([]keywindow.Row, error)) (*decideEdge, authorizeCase, *fakeWindows) {
+	t.Helper()
+	f := authorizeGoldens(t)
+	c := authorizeCaseNamed(t, name)
+	body := keyBodyWith(t, c, fields)
+	c.Key.KeyBody = &body
+	h := newDecideEdge(t, f, c, nil)
+	if mode != "" {
+		h.policy.FastpathPilotKeyWindows = &mode
+	}
+	windows := &fakeWindows{read: read}
+	h.edge.decider.cfg.Windows = windows
+	return h, c, windows
+}
+
+// TestTheWindowCheckDecidesAnEnforcingKey (docs/design/
+// fast-admission-e2-key-windows.md sections 4.2 to 4.4): under enforce the
+// decide path reads the key's rows once, by its key hash, within
+// WindowReadBudget, and admits only on an allowed verdict, whose 200 counts
+// the read among its Spanner calls; every other verdict passes with its
+// key_window.* reason before the owner is asked. Rows the cached shard count
+// does not expect (the key's shards grew or shrank since) pass. An
+// alert-only key, and an enforcing key under alert, are never read.
+func TestTheWindowCheckDecidesAnEnforcingKey(t *testing.T) {
+	enforcing := map[string]any{"limit_daily_microdollars": 1_000_000, "usage_shard_count": 2}
+	failed := errors.New("synthetic read failure")
+	for _, v := range []struct {
+		name string
+		rows func(at time.Time) ([]keywindow.Row, error)
+		pass string
+	}{
+		{"headroom", func(at time.Time) ([]keywindow.Row, error) { return dailyRows(at, 1_000_000, 0, 2), nil }, ""},
+		{"spent", func(at time.Time) ([]keywindow.Row, error) {
+			return dailyRows(at, 1_000_000, 1_000_000, 2), nil
+		}, keywindow.PassExceeded},
+		{"mirror drifted", func(at time.Time) ([]keywindow.Row, error) { return dailyRows(at, 2_000_000, 0, 2), nil },
+			keywindow.PassConfigDrift},
+		{"no rows", func(time.Time) ([]keywindow.Row, error) { return nil, nil }, keywindow.PassRows},
+		{"a shard missing", func(at time.Time) ([]keywindow.Row, error) {
+			return dailyRows(at, 1_000_000, 0, 2)[:1], nil
+		}, keywindow.PassRows},
+		{"read failed", func(time.Time) ([]keywindow.Row, error) { return nil, failed }, keywindow.PassUnread},
+		{"the key's shards grew", func(at time.Time) ([]keywindow.Row, error) {
+			return dailyRows(at, 1_000_000, 0, 3), nil
+		}, keywindow.PassRows},
+	} {
+		var at time.Time
+		h, c, windows := windowedDecideEdge(t, enforcing, routingsnapshot.KeyWindowsEnforce,
+			func(context.Context) ([]keywindow.Row, error) { return v.rows(at) })
+		at = c.at()
+		before := time.Now()
+		rec := h.send(t, c)
+		admits, _, _ := h.admitter.seen()
+		calls := windows.seen()
+		if len(calls) != 1 || calls[0].keyHash != c.Facts.Key.Hash ||
+			calls[0].deadline.After(time.Now().Add(WindowReadBudget)) || calls[0].deadline.Before(before) {
+			t.Errorf("%s: reads %+v", v.name, calls)
+		}
+		counts := h.edge.DecideCounts()
+		if counts.Windows["reads"] != 1 || counts.Windows[windowOutcome(keywindow.Verdict{Pass: v.pass,
+			Decided: v.pass == "", Allowed: v.pass == ""})] != 1 {
+			t.Errorf("%s: window counts %v", v.name, counts.Windows)
+		}
+		if v.pass != "" {
+			if rec.Code != http.StatusTeapot || len(admits) != 0 || counts.Passed[v.pass] != 1 {
+				t.Errorf("%s: %d, %d admits, passed %v; want %q", v.name, rec.Code, len(admits), counts.Passed, v.pass)
+			}
+			continue
+		}
+		if rec.Code != http.StatusOK || len(admits) != 1 || counts.Answered != 1 ||
+			!bytes.Contains(rec.Body.Bytes(), []byte(`"spanner_rpcs":2,`)) {
+			t.Errorf("%s: %d, %d admits, passed %v: %s", v.name, rec.Code, len(admits), counts.Passed, rec.Body.Bytes())
+		}
+	}
+	for _, v := range []struct {
+		name   string
+		fields map[string]any
+		mode   string
+	}{
+		{"alert only, enforce", map[string]any{"limit_daily_microdollars": 5, "budget_alert_only": true},
+			routingsnapshot.KeyWindowsEnforce},
+		{"enforcing, alert", enforcing, routingsnapshot.KeyWindowsAlert},
+		{"enforcing, absent", enforcing, ""},
+	} {
+		h, c, windows := windowedDecideEdge(t, v.fields, v.mode, func(context.Context) ([]keywindow.Row, error) {
+			return nil, failed
+		})
+		h.send(t, c)
+		if calls := windows.seen(); len(calls) != 0 {
+			t.Errorf("%s: read %d times", v.name, len(calls))
+		}
+	}
+}
+
+// TestTheWindowCheckIsAgainstTheEstimate (section 4.2): Python checks the
+// model estimate, never the reservation the lease holds, which the output
+// hold cap makes smaller. With what the day has left between the two, the
+// key passes key_window.exceeded, though the reservation would fit; with the
+// estimate's room it is answered (the positive control).
+func TestTheWindowCheckIsAgainstTheEstimate(t *testing.T) {
+	const name = "answer:estimate:hold_cap:deepseek/deepseek-v4-flash:1000+131072"
+	const limit = int64(10_000_000)
+	fields := map[string]any{"limit_daily_microdollars": limit}
+	f := authorizeGoldens(t)
+	c := authorizeCaseNamed(t, name)
+	body := keyBodyWith(t, c, fields)
+	c.Key.KeyBody = &body
+	in, _ := caseInputs(t, f, c)
+	at := c.at()
+	mode := routingsnapshot.KeyWindowsEnforce
+	in.Policy.FastpathPilotKeyWindows = &mode
+	dec := Decide(in).ForShadow()
+	if dec == nil || dec.Windows == nil || dec.Reservation >= dec.Estimate {
+		t.Fatalf("the case must hold a reservation below its estimate: %+v", dec)
+	}
+	// What the day has left: the reservation and half the way to the
+	// estimate.
+	left := dec.Reservation + (dec.Estimate-dec.Reservation)/2
+	for _, v := range []struct {
+		left int64
+		pass string
+	}{
+		{left, keywindow.PassExceeded},
+		{dec.Estimate, ""},
+	} {
+		h, c, _ := windowedDecideEdgeOf(t, name, fields, routingsnapshot.KeyWindowsEnforce,
+			func(context.Context) ([]keywindow.Row, error) { return dailyRows(at, limit, limit-v.left, 1), nil })
+		rec := h.send(t, c)
+		admits, _, _ := h.admitter.seen()
+		counts := h.edge.DecideCounts()
+		if v.pass != "" {
+			if rec.Code != http.StatusTeapot || len(admits) != 0 || counts.Passed[v.pass] != 1 {
+				t.Errorf("%d left: %d, %d admits, passed %v; want %q", v.left, rec.Code, len(admits), counts.Passed,
+					v.pass)
+			}
+			continue
+		}
+		if rec.Code != http.StatusOK || len(admits) != 1 || admits[0].Estimate != dec.Reservation {
+			t.Errorf("%d left: %d, %d admits, passed %v", v.left, rec.Code, len(admits), counts.Passed)
+		}
+	}
+}
+
+// TestASlowWindowReadPassesWithinItsBudget: a read that does not answer ends
+// at WindowReadBudget and passes (key_window.unread), well inside the decide
+// budget, without asking the owner.
+func TestASlowWindowReadPassesWithinItsBudget(t *testing.T) {
+	h, c, windows := windowedDecideEdge(t, map[string]any{"limit_daily_microdollars": 5},
+		routingsnapshot.KeyWindowsEnforce, func(ctx context.Context) ([]keywindow.Row, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		})
+	start := time.Now()
+	rec := h.send(t, c)
+	took := time.Since(start)
+	admits, _, _ := h.admitter.seen()
+	if rec.Code != http.StatusTeapot || len(admits) != 0 || len(windows.seen()) != 1 ||
+		h.edge.DecideCounts().Passed[keywindow.PassUnread] != 1 {
+		t.Fatalf("%d, %d admits, passed %v", rec.Code, len(admits), h.edge.DecideCounts().Passed)
+	}
+	if took < WindowReadBudget || took > DecideBudget {
+		t.Fatalf("the pass came %v after the request", took)
+	}
+	if WindowReadBudget >= DecideBudget {
+		t.Fatal("the window read's budget must end inside the decide budget")
+	}
+}
+
+// TestUnreadWindowChecksAreAlerted: a period whose window reads failed past
+// WindowUnreadShare, at least WindowUnreadMin of them, raises
+// AlertWindowUnread once; fewer, or none, raise nothing.
+func TestUnreadWindowChecksAreAlerted(t *testing.T) {
+	for _, v := range []struct {
+		reads, unread int64
+		alert         bool
+	}{
+		{3, 3, true},
+		{200, 3, true},
+		{400, 3, false},
+		{2, 2, false},
+		{100, 0, false},
+	} {
+		h, _ := baseDecide(t)
+		a := &alerts{}
+		h.edge.decider.cfg.Alert = a.raise
+		h.edge.decider.count(func(t *decideTally) {
+			t.windows["reads"], t.windows["unread"] = v.reads, v.unread
+		})
+		h.edge.decider.flush()
+		if got := len(a.taken()[AlertWindowUnread]); (got == 1) != v.alert || got > 1 {
+			t.Errorf("%d unread of %d: %d alerts", v.unread, v.reads, got)
+		}
 	}
 }

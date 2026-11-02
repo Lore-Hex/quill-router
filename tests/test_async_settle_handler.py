@@ -27,13 +27,22 @@ from trusted_router.async_settle_ticket import verify_lookup_ticket, verify_tick
 from trusted_router.routes.settlements import status
 from trusted_router.services import async_settle_handler as handler
 from trusted_router.services.async_settle import snapshot_projection
-from trusted_router.services.settle_outbox_drain import drain_settle_outbox
+from trusted_router.services.settle_outbox_worker import drain_pass
 from trusted_router.storage import InMemoryStore, configure_store
 from trusted_router.storage_gcp_async_settle import ReservationNotOpen, enqueue
 
 ROOT = Path(__file__).parent / 'fixtures/async_settlement'
 WIRE = json.loads((ROOT / 'request_v1.json').read_text())
 NOW = 1791244801
+
+
+def _drain_async(*, limit=10, start_shard=0, concurrency=4):
+    # Accepted async rows now belong to the dedicated warm worker; the legacy
+    # watchdog deliberately cannot put them under its 300-second batch lease.
+    return drain_pass(limit, start_shard=start_shard, settings=settings(settle_outbox_fast_drain_enabled=True,
+        settle_outbox_poll_interval_seconds=1, settle_outbox_pass_budget_seconds=2,
+        settle_outbox_lease_seconds=30, settle_outbox_worker_concurrency=concurrency,
+        settle_outbox_claim_batch=4, settle_outbox_health_publish_interval_seconds=1))
 
 
 def _outbox(store):
@@ -256,7 +265,7 @@ def test_drain_and_status_ownership(env, kind):
         with pytest.raises(HTTPException) as exc:
             status(sid, SimpleNamespace(workspace=SimpleNamespace(id=ws), api_key=owner))
         assert exc.value.status_code == 404
-    result = drain_settle_outbox(10)
+    result = _drain_async()
     assert result['outcomes'] == {'settled_now': 1}
     view = status(sid, principal)['data']['trusted_router_settlement']
     assert view['settlement_status'] == ('settled' if kind == 'settle' else 'refunded')
@@ -349,9 +358,9 @@ def test_billing_matrix_enqueue_drain_and_sync_fallback(env, case, monkeypatch, 
     monkeypatch.setattr(settle_outbox_apply, 'endpoint_for_id', lambda _: None)
     assert call(env, body).status_code == 202
     if finalizer == 'drain':
-        assert drain_settle_outbox(10)['outcomes'] == {'settled_now': 1}
+        assert _drain_async()['outcomes'] == {'settled_now': 1}
     assert call(env, body, synchronous=True).status_code == 200
-    assert drain_settle_outbox(10)['outcomes'] == {}
+    assert _drain_async()['outcomes'] == {}
     expected = case['expected_charge_micro']
     assert _typed_credit(env[1], 'ws-v1')['total_usage'] == expected
     assert _typed_key(env[1], key.hash)['usage'] == expected
@@ -437,7 +446,7 @@ def test_enqueue_wins_reaper_and_legacy_fence(env):
                                guard_outbox=reaper, outbox_available=True, async_fence=True)
         assert result['outcome'] != 'settled'
     assert _typed_credit(env[1], 'ws-v1')['total_usage'] == 0
-    assert drain_settle_outbox(10)['outcomes'] == {'settled_now': 1}
+    assert _drain_async()['outcomes'] == {'settled_now': 1}
     assert _typed_credit(env[1], 'ws-v1')['total_usage'] == 2
 
 
@@ -551,7 +560,7 @@ def test_mark_park_never_rewrites_async_metadata(env):
     call(env, body)
     outbox = _outbox(env[0])
     frozen = outbox.get(auth.id, 'settle')
-    claimed = outbox.claim(limit=1)[0]
+    claimed = outbox.claim_shard(shard=env[1].settle_outbox[(auth.id, 'settle')]['queue_shard'], lease_seconds=30)[0]
     keys = ('actual_cost_micro', 'payload_hash', 'snapshot_hash', 'workspace_id', 'settle_body')
     assert not outbox.park(auth.id, 'settle', lease_owner='stale', retry_after_seconds=1, note='test')
     assert outbox.mark(auth.id, 'settle', done=True, lease_owner='stale') is None
@@ -646,12 +655,21 @@ def test_literal_status_and_timestamps(env, monkeypatch, kind):
     stamp = '2026-10-06T00:00:00Z'
     monkeypatch.setattr(storage_gcp_async_settle, '_iso_now', lambda: stamp)
     monkeypatch.setattr(storage_gcp_settle_outbox, '_iso_now', lambda: stamp)
+    import datetime as dt
+
+    from trusted_router.services import settle_outbox_worker
+    class Clock(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return dt.datetime.fromisoformat(stamp.replace('Z', '+00:00'))
+    # Warm apply checks lease expiry against UTC, so pin both clocks.
+    monkeypatch.setattr(settle_outbox_worker, 'dt', SimpleNamespace(datetime=Clock, UTC=dt.UTC))
     body, auth, key = prepare(env, kind=kind)
     call(env, body)
     principal = SimpleNamespace(workspace=SimpleNamespace(id='ws-v1'), api_key=key)
     for completed in (False, True):
         if completed:
-            drain_settle_outbox(10)
+            _drain_async()
         view = status(auth.id+'.'+kind, principal)
         literal = json.loads(json.dumps(view).replace(auth.id, 'auth-v1'))
         state = ('settled' if kind == 'settle' else 'refunded') if completed else 'pending'
@@ -686,7 +704,11 @@ def test_sibling_refund_reports_charge_winner(env):
     refund = copy.deepcopy(body)
     refund['terminal'].update(terminal_kind='refund', charge_micro=0)
     call(env, refund)
-    drain_settle_outbox(10)
+    # Establish the charge winner explicitly: warm slots do not impose the
+    # legacy batch's global insertion order across shards.
+    shard = env[1].settle_outbox[(auth.id, 'settle')]['queue_shard']
+    assert _drain_async(limit=1, start_shard=shard, concurrency=1)['outcomes'] == {'settled_now': 1}
+    _drain_async()
     view = status(auth.id+'.refund', SimpleNamespace(
         workspace=SimpleNamespace(id='ws-v1'), api_key=key))['data']['trusted_router_settlement']
     assert view['settlement_status'] == 'settled'
@@ -698,7 +720,7 @@ def test_sync_fallback_does_not_impersonate_worker_lease(env):
     body, auth, _ = prepare(env)
     call(env, body)
     outbox = _outbox(env[0])
-    claimed = outbox.claim(limit=1)[0]
+    claimed = outbox.claim_shard(shard=env[1].settle_outbox[(auth.id, 'settle')]['queue_shard'], lease_seconds=30)[0]
     assert call(env, body, synchronous=True).status_code == 200
     row = outbox.get(auth.id, 'settle')
     assert row.lease_owner == claimed.lease_owner and row.status == 'pending'
@@ -778,7 +800,7 @@ def test_accepted_amount_survives_evaluator_disagreement(env, monkeypatch):
     result = call(env, body)
     assert result.status_code == 202
     assert json.loads(result.body)['data']['trusted_router_settlement']['cost_microdollars'] == 2
-    assert drain_settle_outbox(10)['outcomes'] == {'settled_now': 1}
+    assert _drain_async()['outcomes'] == {'settled_now': 1}
     assert call(env, body).status_code == 200
 
 
@@ -1022,7 +1044,7 @@ def test_pilot_rollback_drains_truthfully(env, flip):
     assert call(env, body).status_code == 202
     assert status(sid, principal)['data']['trusted_router_settlement']['settlement_status'] == 'pending'
     assert env[3].async_settle_protection
-    assert drain_settle_outbox(10)['outcomes'] == {'settled_now': 1}
+    assert _drain_async()['outcomes'] == {'settled_now': 1}
     terminal = status(sid, principal)['data']['trusted_router_settlement']
     assert terminal['settlement_status'] == 'settled' and terminal['cost_microdollars'] == 2
     assert call(env, body).status_code == 200
@@ -1052,6 +1074,175 @@ def test_pilot_durable_fleet_health_flip(env):
     clock[0] += 1
     assert not cache.eligible('ws-v1', 5000000)
     assert call(env, body).status_code == 202
-    assert drain_settle_outbox(10)['outcomes'] == {'settled_now': 1}
+    assert _drain_async()['outcomes'] == {'settled_now': 1}
     principal = SimpleNamespace(workspace=SimpleNamespace(id='ws-v1'), api_key=key)
     assert status(auth.id + '.settle', principal)['data']['trusted_router_settlement']['settlement_status'] == 'settled'
+
+
+# 2026-10-31: every async-v1 handoff from europe-west4 timed out. Its batch DML
+# and commit are serial round trips to the US leader, longer than the 500 ms
+# handoff, and each timed-out attempt left row locks for the retries of the
+# same identity. Fresh acceptance is scoped to measured serving regions.
+ACCEPT = 'us-central1,us-east4'
+
+
+def _regional(env, serving, accept=ACCEPT):
+    cfg = settings(settle_outbox_enabled=True, serving_region=serving, async_settle_accept_regions=accept)
+    env[0].trust_settings = cfg
+    return (*env[:3], cfg)
+
+
+def _count_transactions(env, monkeypatch):
+    run = env[1].run_in_transaction
+    calls = []
+
+    def counted(fn, **kwargs):
+        calls.append(kwargs.get('transaction_tag'))
+        return run(fn, **kwargs)
+
+    monkeypatch.setattr(env[1], 'run_in_transaction', counted)
+    return calls
+
+
+@pytest.mark.parametrize('raw,expected', [('', frozenset()), (' , ', frozenset()),
+                                          (' us-central1,us-east4,us-central1 ', frozenset({'us-central1', 'us-east4'}))])
+def test_accept_regions_parse(raw, expected):
+    assert settings(async_settle_accept_regions=raw).async_settle_accept_region_ids == expected
+
+
+@pytest.mark.parametrize('raw', ['US-central1', 'us_central1', 'us central1', 'a' * 33])
+def test_accept_regions_reject_invalid(raw):
+    with pytest.raises(ValueError, match='invalid async settle accept region set'):
+        settings(async_settle_accept_regions=raw)
+
+
+@pytest.mark.parametrize('accept,serving,allowed', [
+    ('', '', True), ('', 'europe-west4', True), (ACCEPT, 'us-central1', True), (ACCEPT, 'us-east4', True),
+    (ACCEPT, 'europe-west4', False), (ACCEPT, 'southamerica-east1', False),
+    # The primary_region fallback must not opt an unpinned boot in.
+    (ACCEPT, '', False),
+])
+def test_accept_region_needs_explicit_listed_serving_pin(accept, serving, allowed):
+    cfg = settings(async_settle_accept_regions=accept, serving_region=serving, primary_region='us-central1')
+    assert cfg.async_settle_accept_region_allowed() is allowed
+
+
+@pytest.mark.parametrize('serving', ['europe-west4', ''])
+def test_region_outside_accept_set_opens_no_transaction(env, monkeypatch, caplog, serving):
+    import logging
+    body, auth, key = prepare(env)
+    env = _regional(env, serving)
+    before = copy.deepcopy((env[1].typed, env[1].gateway_authorizations, env[1].reservations))
+    calls = _count_transactions(env, monkeypatch)
+    with caplog.at_level(logging.INFO, logger=handler.logger.name):
+        result = call(env, body)
+    assert result.status_code == 200
+    assert json.loads(result.body) == json.loads((ROOT/'sync_required_v1.json').read_text())['unsupported_cohort']
+    assert calls == []
+    assert not env[1].settle_outbox
+    assert (env[1].typed, env[1].gateway_authorizations, env[1].reservations) == before
+    assert 'metric=async_settle_region_not_accepting' in caplog.text
+    # The synchronous snapshot recovery the enclave falls back to still books once.
+    assert call(env, body, synchronous=True).status_code == 200
+    assert _typed_credit(env[1], 'ws-v1')['total_usage'] == 2
+    assert _typed_key(env[1], key.hash)['usage'] == 2
+    assert not env[1].settle_outbox
+
+
+def test_region_outside_accept_set_still_resolves_accepted_intent(env):
+    body, auth, _ = prepare(env)
+    assert call(env, body).status_code == 202  # accepted in a listed region
+    europe = _regional(env, 'europe-west4')
+    retry = call(europe, body)
+    assert retry.status_code == 202
+    assert json.loads(retry.body)['data']['acceptance']['status'] == 'duplicate'
+    assert _typed_credit(env[1], 'ws-v1')['total_usage'] == 0
+    assert call(europe, body, synchronous=True).status_code == 200
+    assert env[1].settle_outbox[(auth.id, 'settle')]['status'] == 'done'
+    assert _typed_credit(env[1], 'ws-v1')['total_usage'] == 2
+
+
+def test_region_gate_runs_after_ticket_authority(env):
+    rt = env[2]
+    body, _, _ = prepare(env)
+    claims = verify_lookup_ticket(body['settlement_ticket'], [rt.signer.trusted], NOW).model_dump()
+    claims['journal_region'] = 'europe-west4'
+    body['settlement_ticket'] = rt.signer.sign(claims, NOW)
+    body['terminal']['journal_region'] = 'europe-west4'
+    with pytest.raises(HTTPException) as exc:
+        call(_regional(env, 'europe-west4'), body)
+    assert exc.value.status_code == 401
+
+
+def test_listed_region_still_accepts(env, monkeypatch):
+    body, auth, _ = prepare(env)
+    env = _regional(env, 'us-east4')
+    calls = _count_transactions(env, monkeypatch)
+    assert call(env, body).status_code == 202
+    assert calls == ['tr_async_settle_enqueue']
+    assert env[1].settle_outbox[(auth.id, 'settle')]['async_version'] == 1
+
+
+@pytest.mark.parametrize('serving,code', [('', 503), ('europe-west4', 200)], ids=['ungated', 'europe-gated'])
+def test_cross_region_handoff_model(env, monkeypatch, caplog, serving, code):
+    """The incident's shape: the batch returns after the 500 ms handoff."""
+    import logging
+    body, _, _ = prepare(env)
+    if serving:
+        env = _regional(env, serving)
+    clock = [100.0]
+    monkeypatch.setattr(time, 'monotonic', lambda: clock[0])
+    original = _FakeTransaction.batch_update
+    batches = []
+
+    def leader_round_trips(self, statements, *args, **kwargs):
+        batches.append(len(statements))
+        clock[0] += .55  # begin + DML from europe-west4 to the US leader
+        return original(self, statements, *args, **kwargs)
+
+    monkeypatch.setattr(_FakeTransaction, 'batch_update', leader_round_trips)
+    with caplog.at_level(logging.INFO, logger=handler.logger.name):
+        if code == 503:
+            with pytest.raises(HTTPException) as exc:
+                handler.handle(json.dumps(body).encode(), kind='settle', runtime=env[2],
+                               settings=env[3], started=100.0)
+            assert exc.value.status_code == 503
+            assert batches == [4]
+            assert 'metric=async_settle_unknown_outcome reason=DeadlineExceeded ' in caplog.text
+            assert 'metric=async_settle_rejected' in caplog.text
+        else:
+            result = handler.handle(json.dumps(body).encode(), kind='settle', runtime=env[2],
+                                    settings=env[3], started=100.0)
+            assert result.status_code == code
+            assert json.loads(result.body)['data']['reason'] == 'unsupported_cohort'
+            assert batches == []
+            assert 'unknown_outcome' not in caplog.text
+    assert not env[1].settle_outbox
+
+
+def test_unknown_outcome_names_only_the_exception_class(env, monkeypatch, caplog):
+    import logging
+
+    from google.api_core.exceptions import DeadlineExceeded
+    body, auth, _ = prepare(env)
+
+    def lost(fn, **kwargs):
+        raise DeadlineExceeded('lost reply for ' + auth.id)
+
+    monkeypatch.setattr(env[1], 'run_in_transaction', lost)
+    with caplog.at_level(logging.INFO, logger=handler.logger.name):
+        with pytest.raises(HTTPException) as exc:
+            call(env, body)
+    assert exc.value.status_code == 503
+    lines = [r.getMessage() for r in caplog.records if 'unknown_outcome' in r.getMessage()]
+    assert lines == ['metric=async_settle_unknown_outcome reason=DeadlineExceeded value=1'] * 2
+    assert auth.id not in caplog.text
+
+
+def test_rollout_pins_accept_regions_to_measured_regions():
+    rollout = (Path(__file__).parents[1] / 'scripts/deploy/rollout.sh').read_text()
+    pins = [line.strip().strip('"') for line in rollout.splitlines()
+            if line.strip().startswith('"TR_ASYNC_SETTLE_ACCEPT_REGIONS=')]
+    assert pins == ['TR_ASYNC_SETTLE_ACCEPT_REGIONS=' + ACCEPT]
+    cfg = settings(async_settle_accept_regions=pins[0].split('=', 1)[1], serving_region='europe-west4')
+    assert not cfg.async_settle_accept_region_allowed()

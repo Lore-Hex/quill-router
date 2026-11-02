@@ -3,10 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
 
 from tests.pinned_manifests import OPENAI_GPT_5_5, serve_manifest_rows
 from trusted_router.catalog import (
+    MODEL_ENDPOINTS,
     MODELS,
     PRIVACY_TIER_STANDARD,
     PRIVACY_TIER_ZERO_RETENTION,
@@ -20,20 +22,24 @@ from trusted_router.catalog import (
     provider_to_openrouter_shape,
 )
 from trusted_router.config import Settings
+from trusted_router.dashboard import _model_detail_view
 from trusted_router.routing import chat_route_endpoint_candidates
 
 
 @pytest.fixture(autouse=True)
 def openai_routes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """OpenAI's GPT-5.5 routes, built from its pinned manifest row: the contract
-    covers OpenAI's prepaid routes whatever OpenAI lists today."""
-    serve_manifest_rows(monkeypatch, tmp_path, "openai", [OPENAI_GPT_5_5])
+    """A reviewed existing model; newly discovered models do not inherit approval."""
+    serve_manifest_rows(monkeypatch, tmp_path, "openai", [{
+        **OPENAI_GPT_5_5,
+        "id": "openai/gpt-4.1", "upstream_id": "gpt-4.1",
+        "display_name": "gpt-4.1", "title": "gpt-4.1",
+    }])
 
 
 def _first_party_openai_endpoints() -> tuple[ModelEndpoint, ModelEndpoint]:
     endpoints = [
         endpoint
-        for endpoint in endpoints_for_model("openai/gpt-5.5")
+        for endpoint in endpoints_for_model("openai/gpt-4.1")
         if endpoint.provider == "openai"
     ]
     credits = next(endpoint for endpoint in endpoints if endpoint.usage_type == "Credits")
@@ -69,7 +75,7 @@ def test_openai_catalog_metadata_does_not_extend_tr_contract_to_byok() -> None:
     assert provider_shape["prepaid_zero_data_retention"] is True
     assert provider_shape["zero_data_retention_scope"] == "trustedrouter_prepaid"
 
-    shape = model_to_openrouter_shape(MODELS["openai/gpt-5.5"])
+    shape = model_to_openrouter_shape(MODELS["openai/gpt-4.1"])
     endpoint_shapes = [
         endpoint
         for endpoint in shape["trustedrouter"]["endpoints"]
@@ -85,7 +91,7 @@ def test_openai_catalog_metadata_does_not_extend_tr_contract_to_byok() -> None:
 def test_openai_zdr_filter_selects_credits_and_never_inherits_byok() -> None:
     candidates = chat_route_endpoint_candidates(
         {
-            "model": "openai/gpt-5.5",
+            "model": "openai/gpt-4.1",
             "provider": {"only": ["openai"], "min_privacy": "zdr"},
         },
         Settings(environment="test"),
@@ -121,9 +127,19 @@ def test_public_pages_explain_active_openai_prepaid_scope(client: TestClient) ->
     assert "verified on July 29, 2026" in providers.text
     assert "customer BYOK credentials" in providers.text
 
-    model = client.get("/models/openai/gpt-5.5")
+    model = client.get("/models/openai/gpt-4.1")
     assert model.status_code == 200
     assert "Credits" in model.text
-    assert "BYOK" not in model.text
+    # Policy disclosures mention BYOK to explain the exclusion, but the table
+    # must still publish only TR-funded Credits routes with the scoped badge.
+    soup = BeautifulSoup(model.text, "html.parser")
+    rows = soup.select(".model-route-table tbody tr")
+    view = _model_detail_view(MODELS["openai/gpt-4.1"], test_mode=True)
+    assert rows and len(rows) == len(view["endpoints"])
+    assert all(MODEL_ENDPOINTS[row["endpoint_id"]].usage_type == "Credits" for row in view["endpoints"])
+    openai = soup.select_one("#provider-openai")
+    assert openai.select_one('[data-privacy="zdr"]')
+    assert "customer BYOK credentials" in openai.get_text()
+    assert "customer's own OpenAI organization or project" in openai.get_text()
     assert ">ZDR<" in model.text
     assert "no verified privacy claim" not in model.text

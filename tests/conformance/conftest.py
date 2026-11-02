@@ -344,6 +344,27 @@ def validate_gap_registrations(items, *, require_all=True):
         assert matched == expected, f"Dead gap registration: {sorted(expected - matched)}"
 
 
+@pytest.hookimpl(specname="pytest_collection_modifyitems")
+def pytest_nyte_emulator_selection(config, items):
+    # NYTE keeps the full service matrix on all other backends. Deselect
+    # native duplicates before store/schema fixtures run (also visible in
+    # --collect-only); each retained tuple and rationale lives in its test file.
+    omitted = []
+    for item in items:
+        if item.path.name != "test_nyte_resale_ledger.py":
+            continue
+        params = getattr(getattr(item, "callspec", None), "params", {})
+        reason = item.module.emulator_case_reason(item.originalname, params)
+        if reason is None:
+            omitted.append(item)
+        elif params.get("store") == "spanner-emulator":
+            item.user_properties.append(("native_storage_contract", reason))
+    if omitted:
+        omitted_set = set(omitted)
+        items[:] = [item for item in items if item not in omitted_set]
+        config.hook.pytest_deselected(items=omitted)
+
+
 def pytest_collection_modifyitems(items):
     validate_gap_registrations(items, require_all=False)
     for item in items:

@@ -120,6 +120,11 @@ _storage_error_logger = logging.getLogger(__name__)
 
 _APP_CONSOLE_HANDLER_MARKER = "_trusted_router_app_console"
 _ACQUISITION_CLOUD_FIELDS = (
+    "stripe_session_id", "stripe_customer_id", "lots", "per_lot_cents",
+    "list_price_cents", "discount_bps", "index_as_of", "usable_from",
+    "usable_until", "refund_window_days", "purchase_completed_at", "refund_deadline_at", "terms_version",
+    "position_id", "transfer_policy", "resale_fee_bps", "resale_priority",
+    "resale_payout_method", "resale_payout_cap",
     "anonymous_fingerprint",
     "account_fingerprint",
     "workspace_fingerprint",
@@ -215,7 +220,7 @@ def _configure_application_logging() -> None:
 
 
 def _v2_install_hook(app: Any, settings: Settings, backend: Any, workspace: str) -> None:
-    if not in_v2_cohort(settings.async_settle_shadow_policy, workspace,
+    if not in_v2_cohort(settings.regional_async_settle_shadow_policy(), workspace,
                         settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
         return None
     from trusted_router.services.async_settle_shadow_cohort_runtime import install
@@ -244,6 +249,14 @@ def create_app(
             "temporary TR_ALLOW_DEPLOYED_COMBINED_SURFACE=true migration bridge is "
             "explicitly enabled"
         )
+    if surface == "settle-drain":
+        # Deliberately before ALL normal app initialization/installers. The
+        # worker needs the billing store, not analytics readers or publishers.
+        from trusted_router.services.settle_outbox_worker import create_worker_app
+        if configure_store_arg and settings.settle_outbox_fast_drain_enabled:
+            configure_store(create_store(settings))
+        _configure_application_logging()
+        return create_worker_app(settings)
     validate_auto_model_order(settings.auto_model_order)
     if configure_store_arg:
         configure_store(create_store(settings))
@@ -321,7 +334,7 @@ def create_app(
         from trusted_router.services.async_settle import load_runtime
         from trusted_router.storage import typed_billing_store
         app.state.async_settle = load_runtime(settings, typed_billing_store(STORE))
-        # An expired v2 canary installs nothing: not v2, and not v1 either,
+        # An expired or region-excluded v2 canary installs neither v2 nor v1,
         # because v1 still requires the raw policy pin to be empty.
         if settings.effective_async_settle_shadow_policy() == "shadow-v2" and settings.async_settle_shadow_workspace_ids and not settings.async_settle_enabled:
             from trusted_router.services.async_settle_shadow_health import (
@@ -732,6 +745,9 @@ def create_app(
     if surface in {"combined", "actions"}:
         register_public_action_routes(app, settings)
     if surface in {"combined", "control"}:
+        from trusted_router.routes.resale import register as register_resale
+
+        register_resale(app, settings)
         register_bedrock_group_buy_control_routes(app, settings)
     api = _make_api_router(settings, surface)
     if surface in {"combined", "control"}:
@@ -813,6 +829,10 @@ def _make_api_router(settings: Settings, surface: str) -> APIRouter:
 
     @router.get("/health")
     async def health() -> dict[str, str]:
+        # Cloud Run liveness: keep this handler async and dependency-free;
+        # storage checks belong in /ready. HTTP latency still includes loop
+        # scheduling and server instrumentation, so allow bounded CPU stalls
+        # in the deployment policy. Never reject during SIGTERM listener drain.
         return {"status": "ok"}
 
     @router.get("/ready")
@@ -847,7 +867,7 @@ def _make_api_router(settings: Settings, surface: str) -> APIRouter:
     if surface in {"combined", "public", "observer"}:
 
         @router.get("/coverage/openrouter")
-        async def coverage() -> dict[str, Any]:
+        def coverage() -> dict[str, Any]:
             from trusted_router.openrouter_coverage import ROUTE_COVERAGE
 
             return {

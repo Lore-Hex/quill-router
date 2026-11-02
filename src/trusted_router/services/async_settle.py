@@ -28,12 +28,15 @@ from trusted_router.billing_snapshot import (
     require_eligible,
 )
 from trusted_router.catalog_data import ModelEndpoint
-from trusted_router.config import Settings
+from trusted_router.config import Settings, in_v2_cohort
 from trusted_router.detached_jws import TrustedKey, b64encode
 from trusted_router.storage_models import GatewayAuthorization, generation_id_for_authorization
 
 CACHE_SECONDS = 5.0
 TIER_CAPS = {2: 25_000_000, 3: 100_000_000}
+# Enclaves reject future-issued tickets without clock tolerance. Backdate the
+# whole window, preserving the 300s contract bound (240s remain at default TTL).
+TICKET_CLOCK_SKEW_ALLOWANCE_SECONDS = 60
 
 
 @dataclass(frozen=True)
@@ -191,9 +194,11 @@ class Runtime:
 
 
 def load_runtime(settings: Settings, backend: Any) -> Runtime:
-    """Application construction only. Invalid/missing mounted key disables tickets."""
+    """Application construction only. Invalid key or lifetime disables tickets."""
     signer = None
     try:
+        if settings.async_settle_ticket_ttl_seconds <= TICKET_CLOCK_SKEW_ALLOWANCE_SECONDS:
+            raise ValueError("ticket lifetime must exceed clock skew allowance")
         path = settings.async_settle_ticket_private_key_file
         if not path or path == settings.speculation_shadow_private_key_file:
             raise ValueError("separate key required")
@@ -253,14 +258,22 @@ def snapshot_projection(*, authorization: GatewayAuthorization, snapshot: Billin
                 or authorization.settlement != "local" or authorization.settled):
             return result
         digest = canonical_hash(snapshot)
-        if not settings.async_settle_admission_enabled:
+        # A workspace or enclave region outside negotiation gets the admission-off answer
+        # byte for byte (shape B): no ticket, no status URL. The enclave
+        # binds async settlement only from async_eligible true. The edge
+        # composes this answer for non-pilots from admission_workspaces;
+        # pilots pass to Python, which checks their stored enclave region here
+        # (docs/design/fast-admission-e2-g15-async.md section 4.1).
+        if (not settings.async_settle_admission_enabled
+                or not settings.async_settle_pilot_allows(authorization.workspace_id)
+                or not settings.async_settle_negotiation_region_allowed(authorization.region)):
             result.update(billing_snapshot=snapshot.model_dump(mode="json"), billing_snapshot_hash=digest)
             return result
-        eligible = bool(settings.async_settle_pilot_allows(authorization.workspace_id)
-                        and runtime.admission is not None
+        eligible = bool(runtime.admission is not None
                         and runtime.admission.eligible(authorization.workspace_id,
                                                        settings.async_settle_pilot_cap_micro))
         issued = int(time.time()) if now is None else now
+        valid_from = issued - TICKET_CLOCK_SKEW_ALLOWANCE_SECONDS
         signer = runtime.signer
         claims = dict(
             authorization_id=authorization.id,
@@ -271,7 +284,7 @@ def snapshot_projection(*, authorization: GatewayAuthorization, snapshot: Billin
             snapshot_hash=digest, route_type=requested.route_type, streamed=requested.streamed,
             reservation_id=authorization.credit_reservation_id, settle_origin="typed",
             async_eligible=eligible, iss=signer.trusted.iss, aud=signer.trusted.aud,
-            iat=issued, exp=issued + settings.async_settle_ticket_ttl_seconds,
+            iat=valid_from, exp=valid_from + settings.async_settle_ticket_ttl_seconds,
         )
         ticket = signer.sign(claims, issued)
         result.update(billing_snapshot=snapshot.model_dump(mode="json"),
@@ -281,6 +294,29 @@ def snapshot_projection(*, authorization: GatewayAuthorization, snapshot: Billin
     except Exception:
         return {"async_eligible": False}  # Never invalidate a committed hold.
     return result
+
+
+# The requested parameters an async-v1 authorize may name; any other makes
+# the answer async_eligible false only. The edge's authorize goldens carry
+# this set (scripts/fastpath/authorize_vectors.py, authorize_async_cases_v1.json).
+ORDINARY_PARAMETERS: frozenset[str] = frozenset({
+    "temperature", "top_p", "max_tokens", "max_completion_tokens", "max_output_tokens",
+    "stop", "seed", "frequency_penalty", "presence_penalty", "logit_bias",
+    "logprobs", "top_logprobs", "response_format", "reasoning_effort", "stream",
+})
+
+
+def has_authorize_feature_extras(body: Any, *, shadow_v2: bool = False) -> bool:
+    """Separate the enclave's advisory lease echo from inference features.
+
+    spend_lease.go adds this observation after chatAuthorizeBody. It supplies
+    no billing authority or eligibility facts here. Consequential admission
+    and every other unknown member remain unsupported. Keep v1 unchanged.
+    """
+    extras = body.model_extra
+    if shadow_v2 and extras:
+        return bool(extras.keys() - {"spend_lease_echo"})
+    return bool(extras)
 
 
 def authorize_additions(*, request: Any, body: Any, authorization: GatewayAuthorization,
@@ -294,19 +330,19 @@ def authorize_additions(*, request: Any, body: Any, authorization: GatewayAuthor
 
         # Replays lack a persisted async snapshot in PR B. Never re-freeze a
         # newer catalog against an older authorization. PR C owns retry storage.
-        if replay or body.model_extra or body.route_type not in {"chat.completions", "responses"}:
+        shadow_v2 = (
+            in_v2_cohort(settings.effective_async_settle_shadow_policy(), authorization.workspace_id,
+                         settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids)
+            and request.headers.getlist("X-TR-Settlement-Shadow-Policy") == ["shadow-v2"]
+        )
+        if replay or has_authorize_feature_extras(body, shadow_v2=shadow_v2) or body.route_type not in {"chat.completions", "responses"}:
             return {"async_eligible": False}
         # Recognizing the enclave's modality field must not expand the
         # text-only settlement optimization's previous eligibility boundary.
         if "input_modalities" in body.model_fields_set:
             return {"async_eligible": False}
         # Unknown adapter features must not silently acquire an exact total.
-        ordinary_parameters = {
-            "temperature", "top_p", "max_tokens", "max_completion_tokens", "max_output_tokens",
-            "stop", "seed", "frequency_penalty", "presence_penalty", "logit_bias",
-            "logprobs", "top_logprobs", "response_format", "reasoning_effort", "stream",
-        }
-        if set(body.requested_parameters or ()) - ordinary_parameters:
+        if set(body.requested_parameters or ()) - ORDINARY_PARAMETERS:
             return {"async_eligible": False}
         requested = Eligibility(
             typed=typed, usage_type=authorization.usage_type.value,
