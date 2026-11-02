@@ -14,6 +14,7 @@ from fastapi import APIRouter, Request, Response
 from fastapi.routing import APIRoute
 from starlette.concurrency import run_in_threadpool
 
+from trusted_router.async_settle_timing import route_scope, stamp
 from trusted_router.auth import InferencePrincipal, Principal
 from trusted_router.errors import api_error
 from trusted_router.gateway_timing import _scope
@@ -38,12 +39,14 @@ class AsyncSettlementRoute(APIRoute):
             try:
                 with _scope(), anyio.fail_after(2):
                     require_internal_gateway(request, settings)
+                    authenticated = stamp()
                     raw = await request.body()
-                    return await run_in_threadpool(
-                        handle, raw, kind="refund" if request.url.path.endswith("/refund") else "settle",
-                        runtime=getattr(request.app.state, "async_settle", None), settings=settings,
-                        started=started, synchronous=modes == ["sync"],
-                    )
+                    with route_scope(started, authenticated, enabled=modes == ["async-v1"]):
+                        return await run_in_threadpool(
+                            handle, raw, kind="refund" if request.url.path.endswith("/refund") else "settle",
+                            runtime=getattr(request.app.state, "async_settle", None), settings=settings,
+                            started=started, synchronous=modes == ["sync"],
+                        )
             except TimeoutError as exc:
                 raise unavailable() from exc
 

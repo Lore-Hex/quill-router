@@ -11,6 +11,7 @@ from urllib.parse import quote
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 
+from trusted_router import async_settle_timing as timing
 from trusted_router import billing_snapshot as billing
 from trusted_router.async_settle_ticket import TicketClaims, verify_lookup_ticket, verify_ticket
 from trusted_router.config import Settings
@@ -35,6 +36,7 @@ def metric(event: str, *, reason: str = "", value: float = 1) -> None:
 
 
 def sync_required(reason: str) -> JSONResponse:
+    timing.outcome("sync_required")
     metric("sync_required", reason=reason)
     return JSONResponse({"data": {"acceptance": {"status": "sync_required", "payload_hash": None,
                                                "settlement_status": None}, "reason": reason}})
@@ -177,6 +179,7 @@ def settlement(row: SettleOutboxRow, *, resolve: bool = True) -> dict[str, Any]:
 
 
 def response(row: SettleOutboxRow, *, duplicate: bool = False) -> JSONResponse:
+    timing.outcome("duplicate" if duplicate else "accepted")
     view = settlement(row, resolve=duplicate)
     return JSONResponse({"data": {"acceptance": {
         "status": "duplicate" if duplicate else "accepted", "payload_hash": row.payload_hash,
@@ -185,6 +188,7 @@ def response(row: SettleOutboxRow, *, duplicate: bool = False) -> JSONResponse:
 
 
 def duplicate(outbox: SpannerSettleOutbox, row: SettleOutboxRow) -> JSONResponse | None:
+    timing.stop_validation()
     existing = outbox.get(row.authorization_id, row.intent_kind)
     if existing is None:
         return None
@@ -238,6 +242,7 @@ def _handle(raw: bytes, *, kind: str, runtime: Runtime | None, settings: Setting
             outbox = spanner_settle_outbox()
             excluded = billing.exclusion(value.observed)
             if synchronous or excluded:
+                timing.stop_validation()
                 existing = outbox.get(claims.authorization_id, kind)
                 if existing is not None:
                     if (existing.async_version != 1
@@ -252,6 +257,7 @@ def _handle(raw: bytes, *, kind: str, runtime: Runtime | None, settings: Setting
             except HTTPException:
                 # MF5: an evaluator disagreement can reject NEW acceptance, but
                 # cannot reprice or invalidate a previously accepted payload.
+                timing.stop_validation()
                 existing = outbox.get(claims.authorization_id, kind)
                 if (existing is not None and existing.async_version == 1
                         and existing.payload_hash == billing.canonical_hash(value.terminal)):
@@ -261,6 +267,7 @@ def _handle(raw: bytes, *, kind: str, runtime: Runtime | None, settings: Setting
             row = intent(value, claims, amount)
             # Expired/disabled/admission-flipped retries still resolve accepted work.
             if synchronous or now >= claims.exp or not settings.async_settle_admission_enabled:
+                timing.stop_validation()
                 existing = outbox.get(row.authorization_id, kind)
                 if existing is not None:
                     result = duplicate(outbox, row)
@@ -289,15 +296,17 @@ def _handle(raw: bytes, *, kind: str, runtime: Runtime | None, settings: Setting
                     return duplicate(outbox, row) or sync_required("not_eligible")
                 if not claims.async_eligible:
                     return duplicate(outbox, row) or sync_required("not_eligible")
-                if runtime.admission is None or not runtime.admission.eligible(
-                        claims.workspace_id, settings.async_settle_pilot_cap_micro):
+                if runtime.admission is None or not timing.eligible(
+                        runtime.admission, claims.workspace_id, settings.async_settle_pilot_cap_micro):
                     return duplicate(outbox, row) or sync_required(admission_reason(
                         runtime, claims.workspace_id, settings.async_settle_pilot_cap_micro))
             # Sync fallback also freezes before applying: identical money primitive,
             # no catalog lookup. Expired tickets may create only synchronous work.
+            timing.stop_validation()
             deadline = started + (2 if synchronous else 0.5)
             try:
-                enqueue(outbox, row, deadline)
+                with timing.measure("enqueue_ms"):
+                    enqueue(outbox, row, deadline)
             except ReservationNotOpen:
                 result = duplicate(outbox, row)
                 if result is not None:
@@ -331,12 +340,14 @@ def _handle(raw: bytes, *, kind: str, runtime: Runtime | None, settings: Setting
                     raise unavailable() from exc
                 # The class only (e.g. DeadlineExceeded): never exception text,
                 # which can carry request or row identifiers.
+                timing.outcome("unknown")
                 metric("unknown_outcome", reason=type(exc).__name__)
                 # Retry exactly the same identity while handoff time remains.
                 # A miss after this is still unknown; never authorize repricing.
                 if time.monotonic() < deadline:
                     try:
-                        enqueue(outbox, row, deadline)
+                        with timing.measure("enqueue_ms"):
+                            enqueue(outbox, row, deadline)
                     except Exception as retry_exc:
                         metric("unknown_outcome", reason=type(retry_exc).__name__)
                 result = duplicate(outbox, row)
@@ -344,7 +355,9 @@ def _handle(raw: bytes, *, kind: str, runtime: Runtime | None, settings: Setting
                     return result
                 raise unavailable() from exc
             metric("accepted")
-            metric("handoff_ms", value=(time.monotonic()-started)*1000)
+            finished = time.monotonic()
+            timing.save_total(finished)
+            metric("handoff_ms", value=(finished-started)*1000)
             metric("remaining_budget_ms", value=max(0, deadline-time.monotonic())*1000)
             return finish(row, outbox) if synchronous else response(row)
     except HTTPException:
@@ -357,11 +370,13 @@ def _handle(raw: bytes, *, kind: str, runtime: Runtime | None, settings: Setting
 
 def handle(raw: bytes, *, kind: str, runtime: Runtime | None, settings: Settings,
            started: float, synchronous: bool = False) -> JSONResponse:
-    try:
-        result = _handle(raw, kind=kind, runtime=runtime, settings=settings,
-                         started=started, synchronous=synchronous)
-        if time.monotonic() >= started + 2:
-            raise unavailable()
-        return result
-    except transient_store_error_types() as exc:
-        raise unavailable() from exc
+    entered = timing.stamp()
+    with timing.handoff_scope(started, entered, enabled=not synchronous):
+        try:
+            result = _handle(raw, kind=kind, runtime=runtime, settings=settings,
+                             started=started, synchronous=synchronous)
+            if time.monotonic() >= started + 2:
+                raise unavailable()
+            return result
+        except transient_store_error_types() as exc:
+            raise unavailable() from exc

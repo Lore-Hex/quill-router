@@ -6,6 +6,7 @@ from typing import Any
 
 from google.api_core.exceptions import DeadlineExceeded, FailedPrecondition
 
+from trusted_router import async_settle_timing as timing
 from trusted_router.storage_gcp_authorize import _dispose_open_transaction
 from trusted_router.storage_gcp_batch_dml import DmlStatement, execute_batch_dml
 from trusted_router.storage_gcp_io import (
@@ -68,10 +69,11 @@ def enqueue(outbox: SpannerSettleOutbox, row: SettleOutboxRow, deadline: float) 
 
     with spanner_rpc_deadline(deadline):
         try:
-            run_in_transaction_with_retry(
-                outbox._database, transaction, total_budget_seconds=max(0, deadline-time.monotonic()),
-                transaction_tag="tr_async_" + row.intent_kind + "_enqueue",
-            )
+            with timing.transaction_run():
+                run_in_transaction_with_retry(
+                    outbox._database, timing.callback(transaction), total_budget_seconds=max(0, deadline-time.monotonic()),
+                    transaction_tag="tr_async_" + row.intent_kind + "_enqueue",
+                )
             if time.monotonic() >= deadline:
                 raise DeadlineExceeded("Async handoff outcome requires reconciliation")
         except BaseException:
