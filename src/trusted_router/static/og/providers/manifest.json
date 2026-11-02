@@ -640,10 +640,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 12,
+    "model_count": 13,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 12,
+    "route_count": 13,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
@@ -1000,10 +1000,10 @@
   },
   "zai": {
     "card_version": 2,
-    "model_count": 10,
+    "model_count": 11,
     "name": "Z.AI",
     "privacy": "Policy documented",
-    "route_count": 19,
+    "route_count": 21,
     "route_mode": "Prepaid + BYOK",
     "slug": "zai"
   },

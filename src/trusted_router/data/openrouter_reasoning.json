@@ -2854,6 +2854,16 @@
       ],
       "default_effort": "max"
     },
+    "z-ai/glm-5.3-flashx-legal": {
+      "mandatory": true,
+      "default_enabled": true,
+      "supported_efforts": [
+        "max",
+        "high",
+        "low"
+      ],
+      "default_effort": "max"
+    },
     "z-ai/glm-5.3-prime": {
       "mandatory": true,
       "default_enabled": true,

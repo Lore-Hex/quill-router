@@ -349,9 +349,9 @@
         "max_tokens"
       ],
       "routable": true,
-      "input_token_price_per_m": 1100000,
-      "output_token_price_per_m": 3500000,
-      "cached_input_token_price_per_m": 230000
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 1500000,
+      "cached_input_token_price_per_m": 30000
     },
     {
       "display_name": "Qwen: Qwen3.8-27B",
@@ -524,6 +524,6 @@
       "cached_input_token_price_per_m": 3000
     }
   ],
-  "generated_at": "2026-11-02T12:14:32Z",
+  "generated_at": "2026-11-02T21:57:06Z",
   "model_count": 12
 }
