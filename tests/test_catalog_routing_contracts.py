@@ -2827,44 +2827,67 @@ def test_parasail_glm_53_routes_publish_verified_prices() -> None:
         _assert_parasail_route_follows_its_row(model_id)
 
 
-def test_model_shape_publishes_cache_read_price_when_tiers_carry_one() -> None:
-    """/v1/models hid the cache-read discount even where billing applied it.
+@pytest.mark.parametrize("model_cached", [None, 60_000])
+@pytest.mark.parametrize("route_cached", [None, 0, 30_000])
+@pytest.mark.parametrize("headline_first", [False, True])
+def test_model_shape_cache_read_comes_from_headline_route(
+    monkeypatch, model_cached: int | None, route_cached: int | None, headline_first: bool,
+) -> None:
+    from trusted_router import catalog
+    from trusted_router.pricing import _flat_tier
 
-    More than a thousand endpoints billed cache reads at a discounted
-    per-model price while the public model payload showed only prompt and
-    completion — a customer comparing us against a provider's own pricing
-    page could not see the discount at all. Same OR-convention field the
-    per-endpoint payloads have always used.
-    """
-    from trusted_router.catalog import MODELS, model_to_openrouter_shape
-
-    model = MODELS["deepseek/deepseek-v4-flash"]
-    tiers = model.price_tiers or ()
-    assert tiers and tiers[0].prompt_cached_price_microdollars_per_million_tokens, (
-        "fixture drift: deepseek-v4-flash no longer carries a cached tier price; "
-        "pick another model with one for this test"
+    # The model aggregate and its cheapest serving route can have different
+    # cache rates. Publication must use the same route as the headline prompt.
+    model = Model(
+        "test/cache-headline", "Cache headline", "deepinfra", 4096,
+        price_tiers=_flat_tier(300_000, 600_000, prompt_cached=model_cached),
     )
-
-    shape = model_to_openrouter_shape(model)
-
-    # Dollars per token: the tier's microdollars per million tokens over 10**12.
-    assert Decimal(shape["pricing"]["input_cache_read"]) == (
-        Decimal(tiers[0].prompt_cached_price_microdollars_per_million_tokens) / Decimal(10**12)
+    headline = ModelEndpoint(
+        "test/cache-headline@deepinfra/prepaid", model.id, "deepinfra", "Credits",
+        prompt_price_microdollars_per_million_tokens=100_000,
+        completion_price_microdollars_per_million_tokens=200_000,
+        price_tiers=_flat_tier(100_000, 200_000, prompt_cached=route_cached),
     )
+    other = replace(
+        headline, id="test/cache-headline@novita/prepaid", provider="novita",
+        prompt_price_microdollars_per_million_tokens=300_000,
+        completion_price_microdollars_per_million_tokens=600_000,
+        price_tiers=_flat_tier(300_000, 600_000, prompt_cached=90_000),
+    )
+    routes = [headline, other] if headline_first else [other, headline]
+    monkeypatch.setattr(catalog, "endpoints_for_model", lambda _id, **_kw: routes)
+
+    pricing = model_to_openrouter_shape(model)["pricing"]
+
+    assert Decimal(pricing["prompt"]) == Decimal(100_000) / Decimal(10**12)
+    assert Decimal(pricing["completion"]) == Decimal(200_000) / Decimal(10**12)
+    if route_cached is None:
+        assert "input_cache_read" not in pricing
+    else:
+        assert Decimal(pricing["input_cache_read"]) == Decimal(route_cached) / Decimal(10**12)
 
 
-def test_model_shape_omits_cache_read_price_when_absent() -> None:
-    from trusted_router.catalog import MODELS, model_to_openrouter_shape
+@pytest.mark.parametrize("model_cached", [None, 0, 60_000])
+def test_model_shape_without_routes_uses_its_own_cache_rate(monkeypatch, model_cached: int | None) -> None:
+    from trusted_router import catalog
+    from trusted_router.pricing import _flat_tier
 
-    for model in MODELS.values():
-        tiers = model.price_tiers or ()
-        if tiers and all(
-            t.prompt_cached_price_microdollars_per_million_tokens is None for t in tiers
-        ):
-            shape = model_to_openrouter_shape(model)
-            assert "input_cache_read" not in shape["pricing"]
-            return
-    raise AssertionError("no model without a cached tier price found — test needs a new subject")
+    model = Model(
+        "test/cache-no-routes", "Cache without routes", "deepinfra", 4096,
+        prompt_price_microdollars_per_million_tokens=300_000,
+        completion_price_microdollars_per_million_tokens=600_000,
+        price_tiers=_flat_tier(300_000, 600_000, prompt_cached=model_cached),
+    )
+    monkeypatch.setattr(catalog, "endpoints_for_model", lambda _id, **_kw: [])
+
+    pricing = model_to_openrouter_shape(model)["pricing"]
+
+    assert Decimal(pricing["prompt"]) == Decimal(300_000) / Decimal(10**12)
+    assert Decimal(pricing["completion"]) == Decimal(600_000) / Decimal(10**12)
+    if model_cached is None:
+        assert "input_cache_read" not in pricing
+    else:
+        assert Decimal(pricing["input_cache_read"]) == Decimal(model_cached) / Decimal(10**12)
 
 
 # Live provider state. provider-catalog-health.yml reports these hourly; the
