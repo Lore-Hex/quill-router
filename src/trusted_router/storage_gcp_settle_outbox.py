@@ -183,6 +183,7 @@ def intent_insert_statements(
     next_attempt_at: str,
     resolved: bool = False,
     async_metadata: bool = False,
+    refill_next_attempt_at: str | None = None,
 ) -> list[DmlStatement]:
     """INSERT-as-claim of one intent, plus the retention clears the intent implies.
 
@@ -191,7 +192,8 @@ def intent_insert_statements(
     status done, one attempt, ``terminal_at`` armed, frozen body dropped and no
     settlement due time (so it never enters the sparse due index). The one-commit
     settle records and resolves its intent in the commit that applies the charge.
-    Refill work is attached identically either way: it has its own due time.
+    Refill work is attached identically either way: it has its own due time,
+    ``refill_next_attempt_at``, the settlement's ``next_attempt_at`` unless given.
 
     Both callers share this builder so a fold cannot silently drop the enqueue's
     retention clears (lesson: folding moves only the statements you copy). Row
@@ -226,7 +228,9 @@ def intent_insert_statements(
         "auto_refill_status": "pending" if auto_refill_requested else None,
         "auto_refill_attempts": 0,
         "auto_refill_last_error": None,
-        "auto_refill_next_attempt_at": (next_attempt_at if auto_refill_requested else None),
+        "auto_refill_next_attempt_at": (
+            (refill_next_attempt_at or next_attempt_at) if auto_refill_requested else None
+        ),
         "auto_refill_lease_owner": None,
         "auto_refill_leased_until": None,
         "auto_refill_enqueued_at": now if auto_refill_requested else None,
@@ -497,7 +501,14 @@ class SpannerSettleOutbox:
         self._async_fence = async_fence
 
     # ── enqueue (INSERT-as-claim, refresh-latest on a still-pending row) ──────
-    def enqueue(self, row: SettleOutboxRow, *, initial_delay_seconds: int = 0, preserve_existing: bool = False) -> str:
+    def enqueue(
+        self,
+        row: SettleOutboxRow,
+        *,
+        initial_delay_seconds: int = 0,
+        preserve_existing: bool = False,
+        refill_delay_seconds: int | None = None,
+    ) -> str:
         """Record a settle intent. Idempotent by (authorization_id, intent_kind):
 
         - no row yet -> INSERT a pending row (ENQ_INSERTED)
@@ -511,10 +522,19 @@ class SpannerSettleOutbox:
         next_attempt_at = (
             _iso_after_seconds(initial_delay_seconds) if initial_delay_seconds > 0 else now
         )
+        # A refill attached to a new row is due with it unless the caller gives
+        # it its own delay (a settle the drain charges at once, whose refill
+        # still waits for the charge).
+        refill_next_attempt_at = (
+            None
+            if refill_delay_seconds is None
+            else _iso_after_seconds(refill_delay_seconds) if refill_delay_seconds > 0 else now
+        )
 
         def insert_txn(transaction: Any) -> None:
             statements = intent_insert_statements(
                 pt, row, now=now, next_attempt_at=next_attempt_at,
+                refill_next_attempt_at=refill_next_attempt_at,
             )
             # INSERT-as-claim and its retention clears are independent. A failed
             # INSERT stops the batch; the caller's existing replay path is unchanged.

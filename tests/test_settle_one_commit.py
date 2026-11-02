@@ -704,14 +704,14 @@ def test_a_contended_one_commit_defers_to_the_drain_and_charges_once(
     aid = authorized["authorization_id"]
     row = db.settle_outbox[(aid, "settle")]
     assert row["status"] == "pending" and row["auto_refill_status"] == "pending"
-    # A refill shares the intent's due time, so it keeps the grace and
-    # follows the charge.
-    assert dt.datetime.fromisoformat(row["next_attempt_at"].replace("Z", "+00:00")) > (
-        dt.datetime.now(dt.UTC) + timedelta(seconds=50)
-    )
+    # The charge is due at once; the refill keeps the grace to follow it.
+    now = dt.datetime.now(dt.UTC)
+    assert dt.datetime.fromisoformat(row["next_attempt_at"].replace("Z", "+00:00")) <= now
+    assert dt.datetime.fromisoformat(
+        row["auto_refill_next_attempt_at"].replace("Z", "+00:00")
+    ) > now + timedelta(seconds=50)
     assert _money(db, "ws-one-commit", key.hash)[0] == 0
 
-    db.settle_outbox[(aid, "settle")]["next_attempt_at"] = "2000-01-01T00:00:00Z"
     first = drain_mod.drain_settle_outbox(10)
     assert first["outcomes"] == {ApplyOutcome.SETTLED_NOW: 1}
     assert drain_mod.drain_settle_outbox(10)["claimed"] == 0

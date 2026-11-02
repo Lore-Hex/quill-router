@@ -25,7 +25,7 @@
     "storage_gcp_request_records:gateway_authorization_settled_statement": "ae5e93de4af73f80e254209da33db4f523641496d30a61d994dce60f137f1952",
     "storage_gcp_request_records:gateway_authorization_retention_clear_statement": "e2b6e9ed483274375b390da089a0927566fcd480026e88c0f9b445ffe1e332d5",
     "storage_gcp_settle_outbox:done_retention_statements": "b1d3fa9f8a69938adbc56f212e2ab4ed09e3de2ff37a4d36af7a788f71271cab",
-    "storage_gcp_settle_outbox:intent_insert_statements": "ac90a685c8db7258d2fd70897317680b0027a40bf59619426bea39001c0d9d9c",
+    "storage_gcp_settle_outbox:intent_insert_statements": "23c15275275aa5d300ccdab7ec0ab6f7dd1a905d8bd8671a9fca5b2dc78154a7",
     "storage_gcp_settle_outbox:resolved_intent_statements": "64f1ed43cb1ced684e9ce72e489c7152b538d1fe29863bf4165425884656c435",
     "storage_gcp_settle_outbox:speculative_done_statements": "e292de31c54e6ab2d1106ae773cd992b89f07f0e21a3e56b79316f55cd7aba26",
     "storage_gcp_settle_outbox:shard_due_statement": "9f7f8898c774ed20030ce17b132181a045ac5732d840be4886d24d33f66a5bdb",
@@ -2470,7 +2470,7 @@
       ]
     },
     "storage_gcp_settle_outbox:intent_insert_statements:1": {
-      "fingerprint": "ac90a685c8db7258d2fd70897317680b0027a40bf59619426bea39001c0d9d9c",
+      "fingerprint": "23c15275275aa5d300ccdab7ec0ab6f7dd1a905d8bd8671a9fca5b2dc78154a7",
       "scenarios": [
         {
           "bindings": {
@@ -4839,7 +4839,7 @@
     "storage_gcp_request_records:read_gateway_authorization_by_gateway_request_id": "35327f025b4c16f9c73c53adc04fb1f9d78da8dcb1cceb1edc16ada6a77baf90",
     "storage_gcp_settle_outbox:_resolve_done_retention_tx": "5f60121b3a9a6040d4c5db3d01b32da0b28bb49a716a5a2fb3386a43d5416de7",
     "storage_gcp_settle_outbox:_mark_done_tx": "d18c2a9ba8bf5498d523f66de836eb28463f3f4fc86d62509d69d0da31c31d4f",
-    "storage_gcp_settle_outbox:SpannerSettleOutbox.enqueue.insert_txn": "41fe4f962cfba96ab0bf427d3c0768d751718688df425588401620198defae55",
+    "storage_gcp_settle_outbox:SpannerSettleOutbox.enqueue.insert_txn": "e9797501b3c284f654dd485b9f0bc172b9e7f674e382072f515b2e8480a6e404",
     "storage_gcp_settle_outbox:SpannerSettleOutbox.enqueue.refresh_txn": "c157ed2a8282a3d8fccc627bea6ca45e7e1b79ac473a9c58d5723d3ef27bdcb6",
     "storage_gcp_settle_outbox:SpannerSettleOutbox._claim_one.txn": "f0c353eaf71bd1e39f55d411a4bcca80d2532ae7b3125c915cab981d0a8e777b",
     "storage_gcp_settle_outbox:SpannerSettleOutbox.mark.txn": "3ea0d355ba9fc666b7c0ce5b1af0e50db7b8a28edbcf4c33631a81d82509f885",

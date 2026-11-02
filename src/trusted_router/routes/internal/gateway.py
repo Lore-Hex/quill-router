@@ -4747,14 +4747,10 @@ def _settle_gateway_authorization(
                 # Grace so inline finalize wins the benign race; the drain only
                 # sees rows whose inline attempt is dead >=60s, avoiding replays.
                 # A contended one commit leaves an inserted intent to the drain
-                # with no inline finalize to race, so it is due at once, unless
-                # it carries a refill, which shares this due time and waits for
-                # the charge.
-                initial_delay_seconds=(
-                    0
-                    if one_commit_transient and settle_intent.auto_refill_workspace_id is None
-                    else 60
-                ),
+                # with no inline finalize to race, so it is due at once; its
+                # refill keeps the grace, so it follows the charge.
+                initial_delay_seconds=0 if one_commit_transient else 60,
+                refill_delay_seconds=60,
             )
             # The intent is durable at this exact point. Any later attachment,
             # inline-finalize, or response-side failure must report

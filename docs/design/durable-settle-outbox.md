@@ -278,16 +278,18 @@ lease-claims due `pending` rows and for each:
   contention on its credit and key rows. A decline, or an enqueue that finds
   an existing row (the unknown-outcome case above), keeps the two-commit flow.
   Behind `TR_SETTLE_CONTENTION_DEFERS_TO_DRAIN` (`false` is the way back). The
-  intent is due at once (no inline finalize to race), unless it carries a
-  refill, which shares the due time and keeps the 60 s grace so it follows the
-  charge. These settles take the drain's accepted losses (§6 addendum: no
+  intent is due at once (no inline finalize to race); a refill attached to it
+  gets its own due time, keeping the 60 s grace so it follows the charge. These settles take the drain's accepted losses (§6 addendum: no
   metadata broadcast, budget-alert email or provider-error benchmark), and for
   a contended burst that is every generation in it, not a rare crash. The
   inline route's other post-settle work is skipped too: routing-state and
   cache-affinity observation, and the user-provided model's dispatch outcome.
   Each logs `settle timing ... commit_path=deferred`. Until the drain charges
-  it the hold stays booked, so a bursting workspace carries its holds a little
-  longer (the drain's fast worker: concurrency 4, claim batch 4).
+  it the hold stays booked. The dedicated drain worker
+  (`trusted-router-settle-drain`, 1 s poll, concurrency 4, claim batch 4)
+  applies one intent per workspace at a time in each process, so a bursting
+  workspace's deferred charges queue there rather than contend; its holds stay
+  booked for the queue's length.
 
 ## 8. Rollout (default-off, Joseph-gated)
 
