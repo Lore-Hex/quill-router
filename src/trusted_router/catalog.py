@@ -655,7 +655,9 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
     # A routing pool has no routes of its own; it publishes what a request
     # naming it is sure to get on the routes it can reach.
     pool_parameters, pool_modalities = _routing_pool_discovery(model)
-    context_length = published_context_length(model)
+    # A window no route states is unknown, not zero tokens; 0 reads as a
+    # model that accepts no input.
+    context_length = published_context_length(model) or None
     # Discovery fields are a union over the model's own routes. A private
     # proxy (for example a named decision model) is served through another
     # model's routes, so it keeps its own declarations instead.
@@ -769,8 +771,15 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         pricing = fetch_pricing()
     # The endpoint payloads have always published input_cache_read; the model
     # headline never did, so /v1/models hid the cache-read discount on more
-    # than a thousand endpoints. OR convention, same field name.
-    model_tiers = getattr(model, "price_tiers", ()) or ()
+    # than a thousand endpoints. OR convention, same field name. The cache rate
+    # belongs to the route whose prompt rate is the headline: pairing the
+    # cheapest route's prompt with another route's cache rate published a
+    # cached read above the uncached one.
+    headline_route = (
+        min(endpoints, key=lambda e: e.prompt_price_microdollars_per_million_tokens)
+        if not is_meta and endpoints else model
+    )
+    model_tiers = getattr(headline_route, "price_tiers", ()) or ()
     model_cached = (
         model_tiers[0].prompt_cached_price_microdollars_per_million_tokens if model_tiers else None
     )

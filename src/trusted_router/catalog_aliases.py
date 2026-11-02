@@ -9,6 +9,18 @@ MODEL_LISTING_ALIASES = {
     "qwen/qwen-3-8-27b": "qwen/qwen3.8-27b",
     "lightning-ai/qwen3.8-27b": "qwen/qwen3.8-27b",
     "cerebras/qwen-3.8-27b": "qwen/qwen3.8-27b",
+    # Nebius publishes its native Hugging Face spellings, which duplicated
+    # models already listed under their catalog ids.
+    "Qwen/Qwen3-235B-A22B-Instruct-2507": "qwen/qwen3-235b-a22b-instruct-2507",
+    "Qwen/Qwen3-Embedding-8B": "qwen/qwen3-embedding-8b",
+    "Qwen/Qwen3.5-397B-A17B": "qwen/qwen3.5-397b-a17b",
+    "moonshotai/Kimi-K2.6": "moonshotai/kimi-k2.6",
+    "moonshotai/Kimi-K2.7-Code": "moonshotai/kimi-k2.7-code",
+    "zai-org/GLM-5.1": "z-ai/glm-5.1",
+    "zai-org/glm-5.1": "z-ai/glm-5.1",
+    "zai-org/GLM-5.2": "z-ai/glm-5.2",
+    "MiniMaxAI/MiniMax-M3": "minimax/minimax-m3",
+    "deepseek-ai/DeepSeek-V4-Pro": "deepseek/deepseek-v4-pro",
 }
 
 

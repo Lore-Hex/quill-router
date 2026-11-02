@@ -50,13 +50,72 @@ def test_published_catalog_has_one_qwen_listing_with_all_existing_routes() -> No
     from trusted_router.public_catalog_aliases import canonical_public_model_id
     from trusted_router.routes.catalog import _public_catalog_payload
 
-    canonical = "qwen/qwen3.8-27b"
     rows = _public_catalog_payload((0, "listing-alias-regression")).shapes
-    assert sum(row["id"] == canonical for row in rows) == 1
+    assert sum(row["id"] == "qwen/qwen3.8-27b" for row in rows) == 1
     assert not set(MODEL_LISTING_ALIASES).intersection(row["id"] for row in rows)
-    routes = {(e.provider, e.usage_type, e.upstream_id) for e in endpoints_for_model(canonical)}
-    for alias in MODEL_LISTING_ALIASES:
+    for alias, canonical in MODEL_LISTING_ALIASES.items():
+        if alias not in MODELS or canonical not in MODELS:
+            continue
+        assert sum(row["id"] == canonical for row in rows) == 1
+        routes = {(e.provider, e.usage_type, e.upstream_id) for e in endpoints_for_model(canonical)}
         assert canonical_public_model_id(alias, MODELS) == canonical
         for endpoint in endpoints_for_model(alias):
             assert (endpoint.provider, endpoint.usage_type, endpoint.upstream_id) in routes
             assert MODEL_ENDPOINTS[endpoint.id] == endpoint
+            # A copied route carries what the alias's route is reviewed to
+            # accept: a tools request naming the canonical id must route.
+            suffix = "byok" if endpoint.is_byok else "prepaid"
+            copy = MODEL_ENDPOINTS[f"{canonical}@{endpoint.provider}/{suffix}"]
+            if copy.upstream_id == endpoint.upstream_id:
+                assert copy.supported_parameters == endpoint.supported_parameters
+                assert copy.input_modalities == endpoint.input_modalities
+
+
+def test_published_catalog_lists_no_ids_differing_only_in_case() -> None:
+    from trusted_router.routes.catalog import _public_catalog_payload
+
+    rows = _public_catalog_payload((0, "case-duplicate-regression")).shapes
+    folded = [row["id"].casefold() for row in rows]
+    assert len(folded) == len(set(folded))
+
+
+def test_published_cache_read_never_exceeds_the_headline_prompt() -> None:
+    from trusted_router.routes.catalog import _public_catalog_payload
+
+    for row in _public_catalog_payload((0, "cache-price-regression")).shapes:
+        pricing = row["pricing"]
+        if "input_cache_read" in pricing and "prompt" in pricing:
+            assert float(pricing["input_cache_read"]) <= float(pricing["prompt"]), row["id"]
+
+
+def test_headline_cache_read_is_the_headline_routes_own(monkeypatch) -> None:
+    from trusted_router import catalog
+    from trusted_router.catalog import META_MODEL_IDS, MODELS, endpoints_for_model
+    from trusted_router.money import microdollars_per_million_tokens_to_token_decimal
+    from trusted_router.pricing import _flat_tier
+
+    # qwen/qwen3-235b-a22b paired Nscale's prompt (cheapest, no cache rate)
+    # with Telnyx's cached read, which was above that prompt.
+    model = next(
+        m for m in MODELS.values()
+        if m.supports_chat and m.id not in META_MODEL_IDS and endpoints_for_model(m.id)
+    )
+    template = endpoints_for_model(model.id)[0]
+
+    def route(name: str, prompt: int, cached: int | None):
+        return replace(
+            template, id=f"{template.id}-{name}",
+            prompt_price_microdollars_per_million_tokens=prompt,
+            published_prompt_price_microdollars_per_million_tokens=prompt,
+            price_tiers=_flat_tier(prompt, 633_000, prompt_cached=cached),
+        )
+
+    dear = route("dear", 633_000, 422_000)
+    for cheap, expected in ((route("cheap", 211_000, None), None), (route("cheap", 211_000, 50_000), 50_000)):
+        routes = [dear, cheap]
+        monkeypatch.setattr(catalog, "endpoints_for_model", lambda _id, routes=routes, **_kw: routes)
+        shaped = catalog.model_to_openrouter_shape(replace(model, price_tiers=dear.price_tiers))
+        published = shaped["pricing"].get("input_cache_read")
+        assert published == (
+            None if expected is None else microdollars_per_million_tokens_to_token_decimal(expected)
+        )
