@@ -7501,6 +7501,45 @@ class PostgresStore(OperationalAnalyticsReads):
 
         return self._run_transaction(list_samples)
 
+    def provider_balanced_benchmark_samples(
+        self,
+        *,
+        cutoff: str | None,
+        per_provider_limit: int,
+        limit: int,
+    ) -> list[ProviderBenchmarkSample]:
+        if limit <= 0 or per_provider_limit <= 0:
+            return []
+
+        def list_samples(conn: Any) -> list[ProviderBenchmarkSample]:
+            # Public pages must not run one historical JSON scan per provider.
+            # Range-seek the recent index once, then cap each provider fairly.
+            window = " AND indexed_at >= %s::timestamptz" if cutoff is not None else ""
+            params: tuple[Any, ...] = (cutoff,) if cutoff is not None else ()
+            rows = conn.execute(
+                "WITH ranked AS ("  # noqa: S608 - fixed predicate; all values are bound.
+                "SELECT body, id, indexed_at, ROW_NUMBER() OVER ("
+                "PARTITION BY body ->> 'provider' "
+                "ORDER BY indexed_at DESC, id DESC"
+                ") AS provider_rank FROM tr_entities "
+                "WHERE kind = 'provider_benchmark'"
+                + window
+                + ") SELECT body FROM ranked WHERE provider_rank <= %s "
+                "ORDER BY indexed_at DESC, id DESC LIMIT %s",
+                (*params, per_provider_limit, limit),
+            ).fetchall()
+            known = {field.name for field in dataclasses.fields(ProviderBenchmarkSample)}
+            samples: list[ProviderBenchmarkSample] = []
+            for row in rows:
+                raw = row[0]
+                data = json.loads(raw) if isinstance(raw, str) else dict(raw)
+                samples.append(ProviderBenchmarkSample(
+                    **{key: value for key, value in data.items() if key in known}
+                ))
+            return samples
+
+        return self._run_transaction(list_samples)
+
     def provider_route_benchmark_samples(
         self,
         *,
