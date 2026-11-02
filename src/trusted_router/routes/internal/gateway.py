@@ -242,6 +242,7 @@ from trusted_router.storage_errors import (
     LeasedOutcomeUnknown,
     StoreConflict,
     conflict_store_error_types,
+    is_transient_store_error,
     transient_store_error_types,
 )
 from trusted_router.storage_gcp_io import spanner_rpc_budget
@@ -4684,6 +4685,10 @@ def _settle_gateway_authorization(
         )
     one_commit_result: TypedFinalizeResult | None = None
     one_commit_ms = 0.0
+    # The one-commit attempt lost to the store (contention, deadline,
+    # overload) rather than declining: its counter rows are hot.
+    one_commit_transient = False
+    enqueue_outcome: str | None = None
     settle_one_commit = (
         getattr(_typed_store, "typed_settle_one_commit_result", None) if is_typed else None
     )
@@ -4710,7 +4715,8 @@ def _settle_gateway_authorization(
                         intent_initial_delay_seconds=60,
                     ),
                 )
-        except Exception:
+        except Exception as exc:
+            one_commit_transient = is_transient_store_error(exc)
             logger.warning(
                 "one-commit settle failed; using the durable two-commit settle "
                 "authorization_id=%s",
@@ -4818,6 +4824,28 @@ def _settle_gateway_authorization(
             "Settlement durability is temporarily unavailable",
             ErrorType.SERVICE_UNAVAILABLE,
         )
+
+    if (
+        one_commit_transient
+        and outbox_enqueued
+        and enqueue_outcome == ENQ_INSERTED
+        and durable_intent is not None
+    ):
+        # The one-commit settle lost to the store on the workspace's and key's
+        # counter rows, and the intent this delivery inserted is durable (an
+        # insert proves the one-commit did not land). An inline finalize would
+        # spend the rest of the route's budget on the same hot rows, doubling
+        # the contention that failed it (2026-11-02: every settle in an
+        # 8-minute burst on one workspace did both, ~18 s each). Leave it to
+        # the drain, as an inline finalize failure does; the drain's accepted
+        # losses (settle_outbox_drain.py, SF7) apply to these settles too.
+        logger.warning(
+            "settlement deferred to the drain after a contended one-commit "
+            "settle authorization_id=%s",
+            authorization.id,
+        )
+        _release_user_model_slot_safely(authorization)
+        return {"data": _intent_durable_gateway_data(authorization, durable_intent)}
 
     finalize_start = perf_counter()
     finalize_result = TypedFinalizeResult(

@@ -24,7 +24,7 @@ from typing import Any
 import anyio
 import pytest
 from fastapi import BackgroundTasks
-from google.api_core.exceptions import AlreadyExists, DeadlineExceeded
+from google.api_core.exceptions import Aborted, AlreadyExists, DeadlineExceeded
 from google.api_core.exceptions import DeadlineExceeded as _CommitDeadlineExceeded
 from google.cloud.spanner_v1 import param_types
 from google.cloud.spanner_v1 import param_types as _sdk_param_types
@@ -636,6 +636,10 @@ def test_aborted_one_commit_falls_back_to_the_two_commit_settle(
     prod_store: tuple[Any, FakeSpannerDatabase, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # The fake's runner gives up with a RuntimeError, not a store error, so
+    # this is the non-transient failure: the inline two-commit settle runs.
+    # Spanner's own Aborted / DeadlineExceeded defer to the drain instead
+    # (test_a_contended_one_commit_defers_to_the_drain_and_charges_once).
     _store, db, key = prod_store
     authorized = _authorize_route(key, "one-commit-fallback")
     refused = _refuse_one_commit(monkeypatch, db)
@@ -653,6 +657,58 @@ def test_aborted_one_commit_falls_back_to_the_two_commit_settle(
     assert _money(db, "ws-one-commit", key.hash) == (cost, 0, cost, 0)
     assert db.settle_outbox[(authorized["authorization_id"], "settle")]["status"] == "done"
     assert len(db.analytics_outbox) == 1
+
+
+@pytest.mark.parametrize("error", [Aborted("wounded on the credit row"), DeadlineExceeded("budget spent")])
+def test_a_contended_one_commit_defers_to_the_drain_and_charges_once(
+    prod_store: tuple[Any, FakeSpannerDatabase, Any],
+    error: Exception,
+) -> None:
+    """The one-commit attempt loses to the store before committing. The
+    settle records its intent and leaves the charge to the drain: no inline
+    finalize on the hot counter rows, nothing charged yet, and the drain
+    charges exactly once."""
+    store, db, key = prod_store
+    authorized = _authorize_route(key, f"one-commit-contended-{type(error).__name__}")
+    original_run = FakeSpannerDatabase.run_in_transaction
+
+    def run(database: Any, fn: Any, **kwargs: Any) -> Any:
+        if kwargs.get("transaction_tag") == "tr_settle_one_commit":
+            raise error
+        return original_run(database, fn, **kwargs)
+
+    inline_calls: list[str] = []
+
+    def inline_finalize(*_args: Any, **_kwargs: Any) -> Any:
+        # The route swallows an inline failure into intent_durable, so count
+        # the call rather than raise.
+        inline_calls.append("tr_finalize")
+        raise RuntimeError("inline finalize")
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(FakeSpannerDatabase, "run_in_transaction", run)
+        patch.setattr(type(store), "typed_finalize_gateway_authorization_result", inline_finalize)
+        log = CommitLog(patch)
+
+        data, _tasks = _settle_route(authorized)
+
+        assert data["disposition"] == "intent_durable" and data["settled"] is False
+        assert data["finalization_outcome"] == "pending"
+        assert data["cost_microdollars"] == 49
+        assert log.take() == ["auto:SpannerSettleOutbox.enqueue.insert_txn"]
+    assert inline_calls == []
+    aid = authorized["authorization_id"]
+    assert db.settle_outbox[(aid, "settle")]["status"] == "pending"
+    assert _money(db, "ws-one-commit", key.hash)[0] == 0
+
+    db.settle_outbox[(aid, "settle")]["next_attempt_at"] = "2000-01-01T00:00:00Z"
+    first = drain_mod.drain_settle_outbox(10)
+    assert first["outcomes"] == {ApplyOutcome.SETTLED_NOW: 1}
+    assert drain_mod.drain_settle_outbox(10)["claimed"] == 0
+    row = db.settle_outbox[(aid, "settle")]
+    assert row["status"] == "done" and row["actual_cost_micro"] == 49
+    assert _money(db, "ws-one-commit", key.hash) == (49, 0, 49, 0)
+    assert len(db.generation_records) == 1
 
 
 def test_unknown_outcome_one_commit_falls_back_without_double_booking(
@@ -869,10 +925,13 @@ def test_one_commit_attempt_is_budgeted_and_leaves_the_fallback_its_budget(
     monkeypatch.setattr(FakeSpannerDatabase, "run_in_transaction", run)
     data, _tasks = _settle_route(authorized)
 
-    assert data["disposition"] == "finalized"
+    # A deadline on the attempt is the store's answer, so the settle defers
+    # to the drain rather than finalizing inline on the same rows.
+    assert data["disposition"] == "intent_durable"
+    assert "tr_finalize" not in remaining
     assert remaining["tr_settle_one_commit"] <= storage_gcp_authorize.ONE_COMMIT_SETTLE_BUDGET_SECONDS
-    # The durable fallback still has (nearly) the whole route budget.
-    assert remaining["enqueue"] > 15.0 and remaining["tr_finalize"] > 15.0
+    # The durable enqueue still has (nearly) the whole route budget.
+    assert remaining["enqueue"] > 15.0
 
 
 @pytest.mark.usefixtures("fixed_catalog")

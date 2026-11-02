@@ -267,6 +267,19 @@ lease-claims due `pending` rows and for each:
   Before the one commit lands nothing is durable and the enclave's redelivery
   covers it, exactly as before the enqueue committed; the reaper still
   serializes against it on the `settled=false` claim.
+- **A contended one commit defers to the drain (2026-11):** when the attempt
+  fails with a transient store error (`is_transient_store_error`: aborted,
+  deadline, unavailable, overload) and the fallback enqueue then inserts the
+  intent, the settle answers `intent_durable` without the inline finalize and
+  the drain charges it. The insert proves the one commit did not land; the
+  inline finalize would have spent the rest of the route's budget on the same
+  hot counter rows. On 2026-11-02 one workspace's 8-minute burst ran every
+  settle through both (p50 ~18 s), and that second pass was most of the
+  contention on its credit and key rows. A decline, or an enqueue that finds
+  an existing row (the unknown-outcome case above), keeps the two-commit flow.
+  These settles take the drain's accepted losses (§6 addendum: no metadata
+  broadcast, budget-alert email or provider-error benchmark) and charge after
+  the intent's 60 s grace.
 
 ## 8. Rollout (default-off, Joseph-gated)
 
