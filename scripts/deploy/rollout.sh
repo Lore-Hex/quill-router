@@ -718,8 +718,10 @@ ENV_VARS=(
   # inherits either; false is the way back. The pilot's switch is on for
   # gate P (2026-11-01): both nodes on 2b3f846f3, increment 3 in every
   # control plane region, snapshot booking on, the stream alerts enabled.
-  # The edge's is on after gate E (2026-11-02): both nodes on b2d12a046
-  # (increments 5 and 6), the count read from the decide shadow.
+  # The edge's is on after gate P (2026-11-01: 1,109 leased streams settled,
+  # none diverged or overdue) and gate E (2026-11-02: 3,042 streams compared
+  # on the decide shadow, all agree_full), both nodes on b2d12a046
+  # (increments 5 and 6, #2242).
   "TR_FASTPATH_PILOT_STREAMS=true"
   "TR_FASTPATH_EDGE_STREAMS=true"
   # Arms the authorize-time billing-pause gate (trust_eligibility

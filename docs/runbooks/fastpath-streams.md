@@ -74,8 +74,8 @@ AND textPayload:"trusted_router.fastpath"'`.
 
 ## Gate E (§8.5)
 
-With increment 5 deployed on the edge and `TR_FASTPATH_EDGE_STREAMS` still
-`false`, the edge composes every stream Stage D lets in for its decide
+Passed 2026-11-02. With increment 5 deployed on the edge and
+`TR_FASTPATH_EDGE_STREAMS` still `false`, the edge composes every stream Stage D lets in for its decide
 shadow alone (`body.stream` is its decision gate, so the shadow line's
 `decide` map counts it under `body.stream`) and compares Python's 200 and
 rows with it. A count gate, no calendar minimum: e2-decide's I2 bar over
@@ -97,12 +97,15 @@ and the hold (`stream.stage_d:<reason>`, `stream.undeclared`,
 
 ## The way back, fastest first
 
-1. `TR_FASTPATH_EDGE_STREAMS=false`, if it is on: the edge stops deciding
-   streams within the policy's 60 s.
-2. `TR_FASTPATH_PILOT_STREAMS=false` and deploy: no new stream is leased.
+1. `fastpathctl decide off WORKSPACE` (`fastpath-turn-off.md`): the edge
+   stops answering anything for the workspace, streams included, at its next
+   read of the row.
+2. `TR_FASTPATH_EDGE_STREAMS=false` and deploy: the edge stops deciding
+   streams within the policy's 60 s of the deploy.
+3. `TR_FASTPATH_PILOT_STREAMS=false` and deploy: no new stream is leased.
    Streams already leased keep heartbeating their owners and settle through
    the lease; the heartbeat route follows the row, not the setting.
-3. To go further back than that: wait out a hold's life (2 h 20 min) plus
+4. To go further back than that: wait out a hold's life (2 h 20 min) plus
    the grace plus the drain's overdue allowance with no leased stream open.
    Until then no node goes below increment 2b and no control plane below
    increment 3.
