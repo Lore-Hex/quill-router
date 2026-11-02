@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Crusoe Managed Inference routes. Generated from https://api.inference.crusoecloud.com/v1/models; prices are provider cost in integer microdollars per million tokens and catalog applies markup.",
   "provider": "crusoe",
   "source": "https://api.inference.crusoecloud.com/v1/models",
-  "generated_at": "2026-11-02T07:28:46Z",
+  "generated_at": "2026-11-02T09:15:41Z",
   "price_scale": "microdollars_per_million",
   "model_count": 22,
   "models": [
@@ -384,10 +384,12 @@
       "supported_parameters": [
         "background",
         "cache_salt",
+        "chat_template",
         "chat_template_kwargs",
         "conversation",
         "frequency_penalty",
         "include",
+        "include_stop_str_in_output",
         "instructions",
         "logit_bias",
         "logprobs",
@@ -421,7 +423,8 @@
         "top_logprobs",
         "top_p",
         "truncation",
-        "user"
+        "user",
+        "verbosity"
       ],
       "status": 1
     },
