@@ -10,9 +10,9 @@ import (
 )
 
 // heartbeatAt sends a heartbeat to its owner, and if this front door cannot
-// reach it, through a peer within PeerWait. It reports whether an owner
-// answered. A request that ended is no evidence that its owner is
-// unreachable.
+// reach it, through a peer within PeerWait; one this node owns goes through
+// none (peer). It reports whether an owner answered. A request that ended
+// is no evidence that its owner is unreachable.
 func (f *FrontDoor) heartbeatAt(ctx context.Context, env Envelope, req OwnerHeartbeat) (HeartbeatAnswer, bool) {
 	octx, cancel := context.WithTimeout(ctx, f.cfg.OwnerWait)
 	got, err := f.cfg.Owners.Heartbeat(octx, env.Owner, req)
@@ -43,8 +43,9 @@ func (f *FrontDoor) heartbeatAt(ctx context.Context, env Envelope, req OwnerHear
 }
 
 // terminalAt sends a terminal to its owner, and if this front door cannot
-// reach it, through a peer. It reports whether an owner answered. A request
-// that ended is no evidence that its owner is unreachable.
+// reach it, through a peer; one this node owns goes through none (peer). It
+// reports whether an owner answered. A request that ended is no evidence
+// that its owner is unreachable.
 func (f *FrontDoor) terminalAt(ctx context.Context, env Envelope, req OwnerTerminal) (OwnerTerminalAnswer, bool) {
 	octx, cancel := context.WithTimeout(ctx, f.cfg.OwnerWait)
 	got, err := f.cfg.Owners.Terminal(octx, env.Owner, req)
@@ -77,9 +78,15 @@ func (f *FrontDoor) terminalAt(ctx context.Context, env Envelope, req OwnerTermi
 // peer is the front door a request whose owner this one cannot reach is
 // sent through: of the live members, serving and taking leases, neither
 // this node nor the owner, the one rendezvous hashing picks for the
-// authorization, so a retry goes through the same peer.
+// authorization, so a retry goes through the same peer. A request this
+// node owns has none: a peer could only relay it back to this process's
+// owner, which has just not answered, and the relay would spend the
+// caller's budget, past the control plane's own, before this front door
+// answered Retry or took the terminal to the drain log (2026-11-02: an
+// owner node's heartbeats timed out at the control plane while the peer's,
+// at OwnerWait, were answered).
 func (f *FrontDoor) peer(env Envelope) (string, bool) {
-	if f.cfg.Peers == nil {
+	if f.cfg.Peers == nil || env.Owner == f.cfg.Self {
 		return "", false
 	}
 	view, _ := f.cfg.Members.View()

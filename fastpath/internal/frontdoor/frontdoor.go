@@ -84,7 +84,8 @@ type Config struct {
 	// Self is this node's address, Peers the other nodes' front doors: a
 	// terminal or a heartbeat whose owner this one cannot reach is sent
 	// through one of them, a heartbeat's within PeerWait, since its own
-	// budget is five seconds (§4.3). Without Peers it is sent through none.
+	// budget is five seconds (§4.3). Without Peers it is sent through none,
+	// nor is one whose owner is Self.
 	Self     string
 	Peers    Peers
 	PeerWait time.Duration

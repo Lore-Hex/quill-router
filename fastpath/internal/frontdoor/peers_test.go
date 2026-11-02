@@ -247,6 +247,32 @@ func TestAHeartbeatTriesItsPeerWithinItsCap(t *testing.T) {
 	}
 }
 
+// TestARequestThisNodeOwnsGoesThroughNoPeer: a heartbeat or a terminal
+// whose owner is this node, and is not answered here, is not sent through a
+// peer, which could only relay it back to this process: the heartbeat gets
+// Retry and the terminal goes to the drain log, each within OwnerWait, not
+// OwnerWait and a peer's wait more.
+func TestARequestThisNodeOwnsGoesThroughNoPeer(t *testing.T) {
+	ctx := context.Background()
+	f := newPeers(t)
+	f.owners.unreachable["node-a"] = true
+	f.peers.heartbeat = HeartbeatAnswer{Status: Accepted, Deadline: start.Add(time.Minute)}
+	f.peers.terminal = OwnerTerminalAnswer{Status: Won, Kind: record.Settle, Charge: 55}
+	sealed := sealedAt(t, "node-a", "lease-1", "gwa-1")
+	if got := f.door.Heartbeat(ctx, HeartbeatOf{Envelope: sealed, GatewaySeq: 1}); got.Status != Retry {
+		t.Fatalf("a heartbeat this node owns, not answered here: %+v", got)
+	}
+	if got := f.door.Settle(ctx, settle(sealed)); got.Status != Recorded || len(f.store.appended) != 1 ||
+		f.store.appended[0].Cause != "unreachable" {
+		t.Fatalf("a settle this node owns, not answered here: %+v, %+v", got, f.store.appended)
+	}
+	for _, e := range f.ev.all() {
+		if strings.HasPrefix(e, "peer ") {
+			t.Fatalf("a request this node owns went through a peer: %q", f.ev.all())
+		}
+	}
+}
+
 // TestAFrontDoorCutOffFromTwoOwnersWithdraws: calls to two owners that fail
 // here while a peer reaches them, within the window, withdraw the front
 // door: its row says so, and it takes no new request. It serves again once
