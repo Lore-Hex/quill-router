@@ -312,3 +312,59 @@ whole-suite pass. Final focused, full local, exact-head/main CI, normal deployme
 and a fresh guarded price publication remain required for this follow-up.
 The separate owner-stall CI timeout is not established as a flake or repaired by
 these catalog changes; its assertion and two-second deadline are unchanged.
+
+## November 2 post-cutover refusal coverage
+
+PR 2249 merged as `277b8882e8849743d25f3a5c2b338d08f29d8141` after
+42,821 local tests passed with 87.35% coverage. Its independent merged-source
+CI 41378709070 passed all 46 jobs at 03:06:58 UTC. Scheduled refresh 41379164189
+then generated `8f8c7beeeef3fc163bc7013caffcac1faccae604`; this is a fresh
+candidate, not a retry or publication of the failed `2e658` snapshot.
+
+Candidate CI 41379527628 found a distinct failure in post-cutover shard 4.
+At the job's lifecycle clock of May 1, 2027, all 108,864 privacy/parameter
+comparisons agreed and 80,544 dropped routes, but none of the remaining live
+routes produced a named capability refusal. The differential test's required
+non-vacuity assertion correctly failed. An isolated exact-source run reproduced
+the same failure unchanged; this was not an observed routing mismatch.
+
+The follow-up supplies a test-only model with a standard-privacy tool route and
+a ZDR route without tools. Both the real compiler and real routing filters
+consume those explicit declarations alongside every live model. Preserve the
+existing comparison loop and its required nonzero refusal assertion. Four
+additional cases require exact HTTP 400 parameter attribution under no-store
+and ZDR, and positively check the tool route when the privacy floor permits it.
+No production routing, privacy declarations, catalog data, lifecycle clock,
+provider hold, deadline, watchdog or release gate is changed. The five focused
+cases pass on both merged main and the exact rejected catalog at the CI clock;
+full local and exact-head qualification remain required before merge.
+
+### Owner-stall test clock synchronization
+
+The initial refusal-fixture head `8dbd34b` passed the full local suite
+(42,825 passed, 87.36% coverage), but did not qualify in CI. Attempt 1 of
+41381543184 failed the unchanged startup-listener 250 ms assertion. One complete
+recheck passed that shard but failed the unchanged owner-stall case
+`lands-fixed-claim` at its two-second wait for publication at simulated time six.
+All 46 jobs stopped: 43 succeeded, the test shard, coverage and final gate failed.
+Neither attempt is a passing release qualification.
+
+An isolated controlled schedule reproduced a race in the owner-stall test:
+its total tick count can exceed ten while the intermediate time-four publisher
+is still pending. Advancing the fake clock immediately to six expires that
+worker and lets the real lifecycle correctly account slot six as missed while
+the old job remains outstanding. Holding the clock at six then cannot produce
+the expected publication because in-slot retries are forbidden. Twenty ordinary
+isolated runs passed; the original CI log lacks the state observations needed
+to prove that the runner followed this exact sequence.
+
+For completed unknown commits only, wait for the time-four lifecycle cursor and
+job completion before advancing the clock again. Keep the never-returning worker
+case unchanged so the real watchdog still has to quarantine it. Both controlled
+landed/absent-commit regressions failed at the original publication assertion
+before this synchronization and pass afterward; all 19 owner-stall tests pass.
+The original two-second waits, all publication/accounting assertions, production
+code, watchdog, admission bounds and no-retry rule remain unchanged. This repairs
+a reproduced test scheduling defect, not evidence of a production stall repair
+or retrospective clearance of either failed CI attempt. Fresh full local gates
+and exact-head/main CI remain required for the amended tree.
