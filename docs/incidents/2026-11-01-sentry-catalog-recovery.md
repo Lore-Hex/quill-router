@@ -258,3 +258,57 @@ exactly seven Nemo spellings; canonicalization and the Go port are unchanged.
 Its parity test remains mandatory. The first local full-suite run was stopped
 to update that artifact and is not a full-suite pass; a fresh complete run and
 exact-head CI are required on the corrected tree.
+
+## November 2 catalog-consistency follow-up
+
+PR 2246 passed the full local suite (42,817 passed, 87.37% coverage), exact-head
+CI and merged-source CI (46 successful jobs each). GCP release
+`187d96f2e1974656e64e9975bd23b6ed26faf50c`, workflow 41361909321, completed all
+15 jobs at 01:16:49 UTC. Independent checks at 01:19:12-01:19:32 found all nine
+CP, public and worker services ready on the expected immutable image, with
+matching generations and single 100% traffic. Public checks confirmed the Nemo
+exclusion and Streamlake MiMo exclusion while retaining Atlas Cloud and
+DigitalOcean MiMo routes. Earlier repaired routes and tariffs also passed.
+The unchanged completeness script passed its public analytics/lag and static
+enablement checks; this is not evidence of database rows moving. Newer release
+owners remain active, and these observations do not qualify AWS or Azure for
+the two additional route holds.
+
+Scheduled price refresh 41359879207 produced unpublished snapshot
+`2e658303a140632e34e926e6ad7b729f63edefdd`. CI 41360242287 rejected it; publication
+failed at 23:35:19 UTC on November 1. The new catalog tombstones the unavailable
+Mistral Large route. Registry construction consequently omits its private
+Archimedes alias, but `_expand_model_id` previously turned an empty private-proxy
+expansion back into the alias's own ID. `CatalogInputs.live` then emitted a
+requested-model reference absent from `models`, and the unchanged snapshot
+validator correctly rejected it. This was reproduced at the exact failed source.
+
+Reject a private proxy whose backing model is absent with the existing HTTP 400
+`model_not_supported` error, before it can become a dangling expansion. The
+snapshot records that refusal. Do not substitute Large 4 or another model, drop
+the privacy/usage overrides, silently select a fallback, or relax referential
+integrity. Two new regressions (Archimedes and a named decision model) failed on
+unchanged runtime code; they cover standalone and mixed-model requests and
+continue to reject a deliberately dangling snapshot reference.
+
+The generated snapshot also exposed catalog-dependent test preconditions:
+
+- Legacy Mistral Large vision metadata is now tested with a concrete fixture;
+  the public live-catalog check retains Large 4's unknown reasoning-effort rule.
+- ZRO's rejected route progresses to the existing two-miss delisted state, and
+  Wafer's Flash route is also delisted. Native IDs and exact absence remain
+  asserted; no route is re-enabled to satisfy an inventory assertion.
+- Crusoe's mass-prune test now explicitly supplies four baseline rows with two
+  or three active routes, exercising the unchanged 50% guard and byte-exact
+  rollback. It no longer assumes half a changing live catalog remains active.
+- Historical snapshot tests use a temporary copy of the DeepInfra manifest
+  with the retired Turbo fixture row. The real lifecycle filters, compiler,
+  as-of worker, signing and verification still run. No production manifest,
+  retirement rule, worker deadline or signature rule changes.
+
+The first repaired-snapshot focused run retained three failures (the historical
+Turbo precondition and Wafer inventory), with 140 tests passing. It is not a
+whole-suite pass. Final focused, full local, exact-head/main CI, normal deployment
+and a fresh guarded price publication remain required for this follow-up.
+The separate owner-stall CI timeout is not established as a flake or repaired by
+these catalog changes; its assertion and two-second deadline are unchanged.

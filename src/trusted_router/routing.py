@@ -24,6 +24,7 @@ from trusted_router.catalog import (
     PRIVACY_TIER_ALIASES,
     PRIVACY_TIER_TRUSTED,
     PRIVACY_TIER_ZERO_RETENTION,
+    PRIVATE_PROXY_MODEL_TARGETS,
     PROVIDER_JURISDICTION_US,
     PROVIDERS,
     ROUTING_MODEL_ALIAS_TARGETS,
@@ -1196,6 +1197,14 @@ def _expand_model_id(model_id: str, settings: Settings) -> list[str]:
     meta_candidates = meta_candidate_models(model_id)
     if meta_candidates:
         return [candidate.id for candidate in meta_candidates]
+    if model_id in PRIVATE_PROXY_MODEL_TARGETS:
+        # A missing backing model is a refusal, never a concrete alias model
+        # or permission to silently choose a different private-proxy target.
+        raise api_error(
+            400,
+            f"Model does not support chat completions: {model_id}",
+            ErrorType.MODEL_NOT_SUPPORTED,
+        )
     return [model_id]
 
 
