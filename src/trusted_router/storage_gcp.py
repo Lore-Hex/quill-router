@@ -142,6 +142,7 @@ from trusted_router.storage_gcp_counters import (
     credit_shard_count,
     distribute_credit_amount,
     key_usage_shard_count,
+    leased_key_usage_shard,
 )
 from trusted_router.storage_gcp_credit_debt import CreditRowsIncomplete
 from trusted_router.storage_gcp_credit_debt import cover_or_mark as cover_or_mark_credit
@@ -5179,6 +5180,36 @@ class SpannerStore(OperationalAnalyticsReads):
 
         return run_in_transaction_with_retry(self._database, extend, transaction_tag="tr_leased_reap_extend") == 1
 
+    def _leased_key_usage_shard_count(self, key_hash: str) -> int:
+        from trusted_router.storage_gcp_leased_key_usage import (
+            CACHE_INIT_LOCK,
+            LeasedKeyUsageShardCache,
+        )
+
+        # Lazy initialization also supports stores constructed without __init__.
+        with CACHE_INIT_LOCK:
+            cache = getattr(self, "_leased_key_usage_counts", None)
+            if cache is None:
+                cache = LeasedKeyUsageShardCache()
+                self._leased_key_usage_counts = cache
+        return int(cache.get(key_hash, lambda: self._read_leased_key_usage_shard_count(key_hash)))
+
+    def _read_leased_key_usage_shard_count(self, key_hash: str) -> int:
+        from trusted_router.storage_gcp_io import spanner_rpc_deadline
+        from trusted_router.storage_gcp_leased_key_usage import READ_DEADLINE_SECONDS
+
+        # The cache separately bounds the caller's wait, including SDK session
+        # checkout. The independent read gets a longer budget and no retries.
+        with spanner_rpc_deadline(time.monotonic() + READ_DEADLINE_SECONDS):
+            with self._database.snapshot(exact_staleness=dt.timedelta(seconds=5)) as snapshot:
+                key = self._read_entity_from(
+                    snapshot, "api_key", key_hash, ApiKey,
+                    timeout=READ_DEADLINE_SECONDS,
+                )
+        if key is None:
+            raise ValueError("leased key configuration missing")
+        return key_usage_shard_count(key)
+
     def typed_finalize_leased_result(
         self,
         authorization_id: str,
@@ -5265,13 +5296,20 @@ class SpannerStore(OperationalAnalyticsReads):
         persist_generation = bool(getattr(self, "_generation_records_enabled", False))
         # The key's usage, by the settled usage type as today's settle books
         # it; a refund books nothing. The scope row holds nothing on the key
-        # and is unsharded, so this is today's zero-hold booking.
+        # and records shard zero. Pick the usage shard before the transaction;
+        # retries reuse it, and a removed shard uses the existing zero fallback.
         key_usage = int(actual_microdollars) if success else 0
+        key_shard = (
+            leased_key_usage_shard(
+                authorization_id, self._leased_key_usage_shard_count(authorization.key_hash),
+            )
+            if key_usage > 0 else UNSHARDED
+        )
         key_release = {
             "reservation_id": authorization.credit_reservation_id,
             "key_hash": authorization.key_hash,
             "key_reserved_micro": 0,
-            "key_shard": UNSHARDED,
+            "key_shard": key_shard,
         }
         missing_key_releases: list[dict[str, Any]] = []
 
@@ -7145,7 +7183,14 @@ class SpannerStore(OperationalAnalyticsReads):
     ) -> T | None:
         return self._read_entity_from(transaction, kind, entity_id, cls)
 
-    def _read_entity_from(self, reader: Any, kind: str, entity_id: str, cls: type[T]) -> T | None:
+    def _read_entity_from(
+        self, reader: Any, kind: str, entity_id: str, cls: type[T],
+        *, timeout: float | None = None,
+    ) -> T | None:
+        rpc_options: dict[str, Any] = {} if timeout is None else {
+            "timeout": timeout, "retry": None,
+            "request_options": {"priority": "PRIORITY_LOW"},
+        }
         rows = list(
             reader.execute_sql(
                 "SELECT body FROM tr_entities WHERE kind=@kind AND id=@id",
@@ -7154,6 +7199,7 @@ class SpannerStore(OperationalAnalyticsReads):
                     "kind": self._param_types.STRING,
                     "id": self._param_types.STRING,
                 },
+                **rpc_options,
             )
         )
         if not rows:

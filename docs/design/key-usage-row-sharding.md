@@ -50,6 +50,18 @@ partitioned lifetime budget.
 Credit and key shard choices are independent, so one unlucky mapping cannot
 recreate a combined hot row.
 
+Leased authorizations hold nothing on the key and still record shard 0 on
+their scope row. Successful leased finalization instead books usage on
+`SHA256(authorization_id UTF-8)[:8]` interpreted as an unsigned big-endian
+integer modulo `usage_shard_count`. A two-minute local LRU cache of at most
+10,000 entries loads the count through a stale point read outside the
+transaction. Only a cold miss waits, at most 100 ms; the independent read
+has a 500 ms deadline, and a late result fills the cache. Refresh failures keep
+the last good count and retry after 10 s. Lookup fallback uses shard 0 only
+when no count is known, also retrying after 10 s. After shrink, a missing selected
+row re-books on shard 0; after growth, an older count selects existing rows.
+Refunds book nothing; strict and single-shard keys still book on shard 0.
+
 ## Activation and reversal
 
 `scripts/shard_workspace.py` operates credit rows and all eligible API-key rows

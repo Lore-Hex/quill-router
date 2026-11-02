@@ -304,9 +304,17 @@ class SpannerApiKeys:
             # Metadata edits do not touch typed counter configuration. Besides
             # avoiding unnecessary hot-row writes, this preserves an existing
             # escrow partition exactly.
-            apply_key_patch(key, patch)
-            self._io.write_entity("api_key", key.hash, key)
-            return key
+            # Re-read under the write transaction: an older JSON snapshot
+            # must not undo a concurrent reshard's count and orphan live rows.
+            def metadata_txn(transaction: Any) -> ApiKey | None:
+                current = self._io.read_entity_tx(transaction, "api_key", key_hash, ApiKey)
+                if current is None:
+                    return None
+                apply_key_patch(current, patch)
+                self._io.write_entity_tx(transaction, "api_key", key_hash, current)
+                return current
+
+            return run_in_transaction_with_retry(self._io.database, metadata_txn)
 
         # A cap edit must repartition against strongly-read usage and holds in
         # the same transaction. A snapshot followed by a batch could race an

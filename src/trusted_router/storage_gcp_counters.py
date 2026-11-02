@@ -8,6 +8,7 @@ can be repartitioned without touching money/usage state.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Sequence
 from typing import Any
 
@@ -104,6 +105,13 @@ def key_usage_shard_count(value: Any) -> int:
             f"key usage_shard_count must not exceed {MAX_KEY_USAGE_SHARDS}"
         )
     return count
+
+
+def leased_key_usage_shard(authorization_id: str, n: int) -> int:
+    """Stable zero-hold booking shard; scope rows continue to record zero."""
+    count = key_usage_shard_count({"usage_shard_count": n})
+    digest = hashlib.sha256(authorization_id.encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big", signed=False) % count
 
 
 def distribute_credit_amount(amount: int, shard_count: int) -> tuple[int, ...]:
