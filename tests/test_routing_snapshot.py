@@ -630,6 +630,45 @@ def test_each_requested_model_means_what_routing_says(live, settings) -> None:
     assert "trustedrouter/synth" in refused and "trustedrouter/auto" not in refused
 
 
+@pytest.mark.parametrize("alias", [
+    catalog_data.ARCHIMEDES_1_0_MODEL_ID,
+    catalog_data.NAMED_DECISION_MODELS[0].id,
+])
+def test_missing_private_proxy_target_is_a_refusal_not_a_dangling_expansion(
+    monkeypatch, settings, catalog_clock, alias,
+) -> None:
+    from tests.fixture_routes import drop_routes
+
+    target = catalog_data.PRIVATE_PROXY_MODEL_TARGETS[alias]
+    for model_id in (alias, target):
+        drop_routes(monkeypatch, model_id)
+        monkeypatch.delitem(catalog_registry.MODELS, model_id, raising=False)
+    inputs = CatalogInputs.live(settings)
+    snapshot = _compile(settings, inputs)
+    entry = next(row for row in snapshot.requested_models if row.id == alias)
+    assert entry.private_proxy is True
+    assert entry.refused_status == 400
+    assert entry.expands_to == ()
+    companion = next(model.id for model in inputs.models if model.id not in {
+        row.id for row in inputs.requested_models
+    })
+    for models in ([alias], [alias, companion], [companion, alias]):
+        assert _requested(snapshot, models) == _python_requested({"models": models}, settings) == 400
+        with pytest.raises(HTTPException) as unsupported:
+            routing._requested_model_ids({"models": models}, settings)
+        assert unsupported.value.detail["error"] == {
+            "code": 400, "type": "model_not_supported", "source": "router",
+            "message": f"Model does not support chat completions: {alias}",
+        }
+    # The compiler must represent the refusal, not relax referential integrity.
+    raw = snapshot.model_dump(mode="json")
+    refused = next(row for row in raw["requested_models"] if row["id"] == alias)
+    refused["refused_status"] = None
+    refused["expands_to"] = [target]
+    with pytest.raises(ValueError, match="requested model expands to an unknown model"):
+        RoutingSnapshotV3.model_validate(raw)
+
+
 def test_every_other_spelling_means_itself_with_no_overrides(live, settings) -> None:
     snapshot, _inputs = live
     for spelling in _spellings(snapshot):
@@ -711,6 +750,8 @@ def test_compiling_twice_gives_identical_bytes(live, settings) -> None:
 _SUBPROCESS = """
 import hashlib, json, sys
 from datetime import UTC, datetime
+from tests.snapshot_retirement_fixture import install
+install()
 resolved = datetime.fromtimestamp(int(sys.argv[3]), UTC)
 from trusted_router import catalog_data
 catalog_data._utc_now = lambda: resolved
@@ -737,7 +778,7 @@ def _compile_in_subprocess(at: int, horizon: int, resolved: int, seed: str = "0"
     env = {
         **os.environ, "PYTHONHASHSEED": seed, "TR_ENVIRONMENT": "test",
         "TR_LIFECYCLE_CLOCK_OVERRIDE": _instant(resolved).isoformat().replace("+00:00", "Z"),
-        "PYTHONPATH": str(ROOT / "src"),
+        "PYTHONPATH": os.pathsep.join((str(ROOT), str(ROOT / "src"))),
     }
     result = subprocess.run(  # noqa: S603 - fixed Python script, no shell or caller input
         [sys.executable, "-c", _SUBPROCESS, str(at), str(horizon), str(resolved)], env=env,
