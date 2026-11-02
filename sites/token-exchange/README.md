@@ -30,16 +30,14 @@ picker and footer share one ordered directory and highlight the current market.
   access, inference, cookie, or third-party pixel on these sites. The brochure form
   submits a resource request; NYTE `/buy` can also post a bounded card reservation request. The call wizard keeps request
   fields in memory and hands them directly to Calendly. Allowlisted UTM fields pass to intake. The first-party
-  `/token-exchange/events` collector records visible visits, ten-second
-  engagement, clicks and form submissions, with the referring site or the
-  page's own campaign tags as the source. A random 90-day visitor identifier,
-  hashed before logging and never tied to an email, joins a visitor's pages,
-  brochure downloads and card reservations, and rides on links to
-  trustedrouter.com and sister markets so sign-ups and purchases join up by
-  market. GPC/DNT and `?tx_internal=1` opt out. The growth worker exports these
-  metadata-only events to `trustedrouter-marketing` in Axiom. Deploy the
-  collector, worker, and exact-event logging sink before the static tracking
-  asset. The field reference is in docs/marketing/token-exchange.md.
+  `/token-exchange/events` collector records visits, ten-second engagement,
+  clicks and form submissions, sourced from the page's campaign tags or the
+  referring site. A random 90-day visitor identifier, hashed and never tied to
+  an email, rides on links to trustedrouter.com and sister markets so sign-ups
+  and purchases join up; GPC/DNT and `?tx_internal=1` opt out. The growth worker
+  exports these metadata-only events to `trustedrouter-marketing` in Axiom.
+  Deploy the collector, worker, and exact-event logging sink before the static
+  tracking asset.
 
 The HTTPS proxy also retains independent flagship certificates
 `token-exchange-global-20260920` and `token-exchange-new-york-20260920` for each
