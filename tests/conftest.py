@@ -454,3 +454,16 @@ def nonreservation_stripe_payment(monkeypatch):
     monkeypatch.setattr(resale.stripe.PaymentIntent, "retrieve", lambda payment, **kw: {
         "id": payment, "metadata": {"kind": "billing"},
     })
+
+
+@pytest.fixture(autouse=True)
+def leased_key_usage_reads_finish(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    # Depend on monkeypatch so worker methods/slots stay installed until idle.
+    yield
+    import sys
+
+    cache = sys.modules.get("trusted_router.storage_gcp_leased_key_usage")
+    if cache is not None:
+        assert cache._wait_for_idle_reads(5.0), (
+            "Leaked leased key usage read: background reader still in flight after 5 s at test teardown"
+        )

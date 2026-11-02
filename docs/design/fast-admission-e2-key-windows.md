@@ -126,15 +126,27 @@ booked at the **settle's** instant, not the authorize's.
   (`:888-945`), whatever the reservation's holds.
 - **The leased (pilot) finalize** (`typed_finalize_leased_result`,
   `storage_gcp.py:5163-5289`) books `actual` on success, nothing on a
-  refund, through `_release_key_or_skip_deleted` with hold 0 on shard 0
-  (`storage_gcp.py:5234-5272`); the drain's `_apply_leased`
+  refund, through `_release_key_or_skip_deleted` with hold 0 on
+  `leased_key_usage_shard(authorization_id, usage_shard_count)`: SHA-256 of
+  the ID's UTF-8 bytes, first eight bytes as an unsigned big-endian integer,
+  modulo the configured count. The scope row still records `key_shard = 0`;
+  the drain's `_apply_leased`
   (`settle_outbox_apply.py:489`) calls the same method.
 
 So for a windowed key with no lifetime cap the key counter is touched
 identically on the leased and the unleased paths: no hold at authorize, the
 actual charge at the terminal. The one difference is the shard the usage
-lands on (shard 0 on the leased path, the reservation's random shard on the
-other), which the window check sums away.
+lands on (derived from the authorization ID on the leased path, the
+reservation's random shard on the other), which the window check sums away.
+The count is cached locally for two minutes in a 10,000-entry LRU and loaded
+outside the settle transaction with a five-second-stale point read. Only
+a cold miss waits at most 100 ms for the read; the independent read has a
+500 ms RPC deadline and no RPC retries. A late successful read fills the cache
+whenever it completes. Expired counts are served without waiting; refresh
+failures keep the last good count and retry after 10 s. Lookup fallback uses shard 0 only when no count is known, also retrying
+after 10 s. A stale larger count after shrink reaches a missing row and the
+existing release helper re-books on shard 0; a stale smaller count selects
+an existing row. Single-shard and strict keys continue to use shard 0.
 
 ### 2.5 Alert-only keys
 
@@ -420,7 +432,7 @@ authorization, and Python settles it as any leased one (§2.4):
 | Terminal | Python unleased, windowed key | Leased (Python pilot or edge) |
 |---|---|---|
 | authorize | no key write; `key_reserved_micro = 0` on a random key shard | no key write; `key_reserved_micro = 0`, key shard 0 |
-| success | `release_key(hold 0, actual)` on the reservation's shard: usage and windows at the settle instant | `_release_key_or_skip_deleted(hold 0, actual)` on shard 0: the same columns at the settle instant |
+| success | `release_key(hold 0, actual)` on the reservation's shard: usage and windows at the settle instant | `_release_key_or_skip_deleted(hold 0, actual)` on the derived usage shard: the same columns at the settle instant |
 | refund | `release_key(0, 0)`: no usage, may roll a start forward | nothing booked |
 | reap | `_release_key_or_skip_deleted(res, snapshot charge or 0)` | the same call on the same row shape |
 | drain | books the frozen charge | `_apply_leased` books the frozen charge |
@@ -430,13 +442,10 @@ A refund's rolled start changes no decision: a stale start and a rolled
 start with zero usage both count zero. The window check sums every shard,
 so the shard a booking lands on changes no decision either.
 
-Two known differences, neither a window-parity issue: (1) the leased
-finalize books every usage on shard 0, so a hot key with
-`usage_shard_count > 1` concentrates its settle writes on one row. This is
-already true of uncapped pilot keys; picking a random shard in
-`typed_finalize_leased_result` is a Python-only follow-up. (2) Settles
-that only the drain completes send no alert on either path (the drain must
-not send them, `settle_outbox_apply.py:140`).
+Leased finalization spreads usage across the configured shards (§2.4)
+without changing the edge's scope row or authorize behavior. Settles that
+only the drain completes still send no alert on either path (the drain
+must not send them, `settle_outbox_apply.py:140`).
 
 ## 7. Golden vectors
 
