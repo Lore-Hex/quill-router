@@ -13,12 +13,13 @@ import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import quote
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from trusted_router import async_settle_timing as timing
 from trusted_router.async_settle_ticket import PURPOSE, TicketSigner
 from trusted_router.billing_snapshot import (
     BillingSnapshot,
@@ -225,10 +226,13 @@ def load_runtime(settings: Settings, backend: Any) -> Runtime:
         health_read: Callable[[], dict[str, Any] | None] | None = None
         if settings.async_settle_admission_enabled:
             from trusted_router.storage_gcp_async_admission import read_health
+            timed_health_read = timing.read(read_health, "health")
             # Recheck at use, so disabling admission also stops health RPCs.
             def health_read() -> dict[str, Any] | None:
-                return read_health(backend._database) if settings.async_settle_admission_enabled else None
-        admission = AdmissionCache(lambda ws: read_admission(backend._database, ws), health_read=health_read)
+                return timed_health_read(backend._database) if settings.async_settle_admission_enabled else None
+        admission = AdmissionCache(timing.read(lambda ws: read_admission(backend._database, ws), "workspace"),
+                                   health_read=health_read)
+        admission.lock = cast(Any, timing.AdmissionLock(admission.lock))
     return Runtime(signer, admission, settings.effective_serving_region,
                    settings.async_settle_authority_epoch, journal_region=settings.primary_region)
 
@@ -270,8 +274,8 @@ def snapshot_projection(*, authorization: GatewayAuthorization, snapshot: Billin
             result.update(billing_snapshot=snapshot.model_dump(mode="json"), billing_snapshot_hash=digest)
             return result
         eligible = bool(runtime.admission is not None
-                        and runtime.admission.eligible(authorization.workspace_id,
-                                                       settings.async_settle_pilot_cap_micro))
+                        and timing.eligible(runtime.admission, authorization.workspace_id,
+                                            settings.async_settle_pilot_cap_micro, projection=True))
         issued = int(time.time()) if now is None else now
         valid_from = issued - TICKET_CLOCK_SKEW_ALLOWANCE_SECONDS
         signer = runtime.signer
