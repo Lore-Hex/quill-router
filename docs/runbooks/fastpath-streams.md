@@ -2,14 +2,15 @@
 
 What `docs/design/fast-admission-streams.md` §5, §8.3 and §10 ask of an
 operator. Two settings, both literals in `scripts/deploy/rollout.sh`
-(the pilot's on since 2026-11-01 for gate P, the edge's `false`):
+(the pilot's on since 2026-11-01 for gate P, the edge's since 2026-11-02
+after gate E):
 
 - `TR_FASTPATH_PILOT_STREAMS`: Python's pilot admits a stream the enclave
   heartbeats under a lease (§5.1's rule, below);
 - `TR_FASTPATH_EDGE_STREAMS`: the edge may decide streams too. The edge
   policy carries `fastpath_edge_streams: true` only when it,
   `TR_FASTPATH_PILOT_STREAMS` and `TR_REAP_SNAPSHOT_BOOKING_ENABLED` are all
-  on. It stays `false` until gate E (§8.5) passes and increment 5 is pinned.
+  on. It stayed `false` until gate E (§8.5) passed with increment 5 pinned.
 
 ## Before `TR_FASTPATH_PILOT_STREAMS` moves
 
