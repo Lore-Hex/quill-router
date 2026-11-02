@@ -88,18 +88,34 @@ def test_published_cache_read_never_exceeds_the_headline_prompt() -> None:
             assert float(pricing["input_cache_read"]) <= float(pricing["prompt"]), row["id"]
 
 
-def test_headline_cache_read_is_the_headline_routes_own() -> None:
-    from trusted_router.catalog import MODELS, endpoints_for_model, model_to_openrouter_shape
+def test_headline_cache_read_is_the_headline_routes_own(monkeypatch) -> None:
+    from trusted_router import catalog
+    from trusted_router.catalog import META_MODEL_IDS, MODELS, endpoints_for_model
     from trusted_router.money import microdollars_per_million_tokens_to_token_decimal
+    from trusted_router.pricing import _flat_tier
 
-    # Nscale is the cheapest prompt and states no cache rate; Telnyx's cache
-    # rate (above Nscale's prompt) must not be paired with Nscale's prompt.
-    model = MODELS["qwen/qwen3-235b-a22b"]
-    pricing = model_to_openrouter_shape(model)["pricing"]
-    assert "input_cache_read" not in pricing
-    # Where the headline route states one, it is published.
-    claude = model_to_openrouter_shape(MODELS["anthropic/claude-sonnet-4.5"])["pricing"]
-    cheapest = min(endpoints_for_model("anthropic/claude-sonnet-4.5"),
-                   key=lambda e: e.prompt_price_microdollars_per_million_tokens)
-    cached = cheapest.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
-    assert claude["input_cache_read"] == microdollars_per_million_tokens_to_token_decimal(cached)
+    # qwen/qwen3-235b-a22b paired Nscale's prompt (cheapest, no cache rate)
+    # with Telnyx's cached read, which was above that prompt.
+    model = next(
+        m for m in MODELS.values()
+        if m.supports_chat and m.id not in META_MODEL_IDS and endpoints_for_model(m.id)
+    )
+    template = endpoints_for_model(model.id)[0]
+
+    def route(name: str, prompt: int, cached: int | None):
+        return replace(
+            template, id=f"{template.id}-{name}",
+            prompt_price_microdollars_per_million_tokens=prompt,
+            published_prompt_price_microdollars_per_million_tokens=prompt,
+            price_tiers=_flat_tier(prompt, 633_000, prompt_cached=cached),
+        )
+
+    dear = route("dear", 633_000, 422_000)
+    for cheap, expected in ((route("cheap", 211_000, None), None), (route("cheap", 211_000, 50_000), 50_000)):
+        routes = [dear, cheap]
+        monkeypatch.setattr(catalog, "endpoints_for_model", lambda _id, routes=routes, **_kw: routes)
+        shaped = catalog.model_to_openrouter_shape(replace(model, price_tiers=dear.price_tiers))
+        published = shaped["pricing"].get("input_cache_read")
+        assert published == (
+            None if expected is None else microdollars_per_million_tokens_to_token_decimal(expected)
+        )
