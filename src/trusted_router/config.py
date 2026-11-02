@@ -1037,6 +1037,7 @@ class Settings(BaseSettings):
     _async_settle_accept_region_ids: frozenset[str] = PrivateAttr(default=frozenset())
     async_settle_enabled: bool = False
     async_settle_protection: bool = False
+    async_settle_admission_refresh_enabled: bool = False
     async_settle_ticket_kid: str = ""
     async_settle_ticket_issuer: str = ""
     async_settle_ticket_audience: str = ""

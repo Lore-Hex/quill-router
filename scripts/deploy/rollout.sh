@@ -789,6 +789,8 @@ ENV_VARS=(
   # Admission-on edge policy passes async-v1 authorizes to Python.
   "TR_ASYNC_SETTLE_ENABLED=true"
   "TR_ASYNC_SETTLE_PROTECTION=true"
+  # 2026-11-02: read ahead; preserve synchronous admission freshness limits.
+  "TR_ASYNC_SETTLE_ADMISSION_REFRESH_ENABLED=true"
   # 2026-11-02: the probe workspace (R2 cohort, #2187) rejoins the R3 pilot
   # so its provider-pinned first-party requests produce handoff timing samples.
   # The pilot cap is per workspace; the probe does not draw on the customer cap.

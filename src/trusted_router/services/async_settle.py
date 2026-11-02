@@ -64,6 +64,8 @@ class AdmissionCache:
         self.health: DrainHealth | None = None
         self.health_read, self.wall_clock = health_read, wall_clock
         self.health_read_at = float("-inf")
+        self.last_evaluated_at = float("-inf")
+        self.evaluated_at: dict[str, float] = {}
 
     def eligible(self, workspace_id: str, pilot_cap: int) -> bool:
         # Lock coalesces concurrent misses, including failures. Timestamp at
@@ -72,6 +74,7 @@ class AdmissionCache:
             return False
         try:
             now = self.clock()
+            self.last_evaluated_at = now
             if self.health_read is not None and not 0 <= now - self.health_read_at < 1:
                 self.health_read_at = now
                 self.health = None
@@ -89,6 +92,8 @@ class AdmissionCache:
                 if workspace_id not in self.entries and len(self.entries) >= 4096:
                     self.entries = {ws: entry for ws, entry in self.entries.items()
                                     if 0 <= now - entry[0] < CACHE_SECONDS}
+                    self.evaluated_at = {ws: at for ws, at in self.evaluated_at.items()
+                                         if ws in self.entries}
                     if len(self.entries) >= 4096:
                         return False  # Capacity never evicts still-fresh evidence.
                 value = None
@@ -98,6 +103,7 @@ class AdmissionCache:
                     value = None  # Never log exception text or credentials.
                 cached = (now, value)
                 self.entries[workspace_id] = cached
+            self.evaluated_at[workspace_id] = now
             now = self.clock()
             value, health = cached[1], self.health
             return bool(
