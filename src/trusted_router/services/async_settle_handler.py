@@ -193,6 +193,8 @@ def duplicate(outbox: SpannerSettleOutbox, row: SettleOutboxRow) -> JSONResponse
     if existing is None:
         return None
     if existing.async_version != 1 or existing.payload_hash != row.payload_hash:
+        # A proven conflict is a rejection, even after an uncertain enqueue.
+        timing.outcome("rejected")
         raise api_error(409, "Settlement intent already exists with a different payload", "conflict")
     metric("duplicate")
     return response(existing, duplicate=True)

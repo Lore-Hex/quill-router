@@ -2,6 +2,7 @@
 # ruff: noqa: F811 - shared env fixture
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import math
@@ -566,3 +567,36 @@ def test_zero_remainder_uses_unrounded_clock_readings(monkeypatch, caplog, accep
     row = one(caplog)
     assert row['unclassified_ms'] == 0
     assert row['total_ms'] == pytest.approx(sum(row[key] for key in fields), abs=.004)
+
+
+@pytest.mark.parametrize('elapsed_ms', [10, 501])
+def test_definitive_conflict_after_uncertain_enqueue_is_rejected(env, monkeypatch, clock, caplog, elapsed_ms):
+    # From the exact-head review of 12574688a: after an uncertain enqueue, reconciliation that
+    # proves a different payload answers 409, and the line must say rejected, not unknown.
+    # 10 ms leaves budget for the handler's retry; 501 ms exhausts the 500 ms handoff budget.
+    body, _, _ = prepare(env)
+    assert call(env, body).status_code == 202
+    original = copy.deepcopy(env[1].settle_outbox)
+    changed = copy.deepcopy(body)
+    changed['raw_usage']['input_tokens'] = 3
+    changed['terminal']['usage'].update(uncached_input_tokens=3, total_prompt_tokens=3)
+    changed['terminal']['charge_micro'] = 3
+    run = env[1].run_in_transaction
+    calls = []
+
+    def timeout_once(fn, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            clock.advance(elapsed_ms)
+            raise DeadlineExceeded('uncertain outcome before the callback')
+        return run(fn, **kwargs)
+
+    monkeypatch.setattr(env[1], 'run_in_transaction', timeout_once)
+    caplog.clear()
+    with caplog.at_level(logging.INFO), pytest.raises(HTTPException) as raised:
+        call(env, changed)
+    assert raised.value.status_code == 409
+    assert raised.value.detail['error']['message'] == 'Settlement intent already exists with a different payload'
+    assert env[1].settle_outbox == original
+    assert len(calls) == (2 if elapsed_ms == 10 else 1)
+    assert one(caplog)['outcome'] == 'rejected'
