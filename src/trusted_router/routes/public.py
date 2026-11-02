@@ -955,8 +955,9 @@ async def _handle_enterprise_brief(settings: Settings, request: Request) -> Resp
             except ValueError:
                 visitor_id = None
             referrer_host, page_path = payload.get("referrer_host"), payload.get("page")
+            # Deliveries keep the creative label dashboards have always grouped them by.
             touch = exchange_site_touch(
-                page_url, campaign,
+                page_url, {"utm_content": "brief", **campaign},
                 referrer_host=referrer_host if isinstance(referrer_host, str) else None,
                 page_path=page_path if isinstance(page_path, str) else "/",
             )

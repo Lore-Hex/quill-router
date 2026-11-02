@@ -12,10 +12,11 @@
   const area = name => name === 'local' ? localStorage : sessionStorage;
   const read = (name, key) => { try { return JSON.parse(area(name).getItem(key) || 'null'); } catch { return null; } };
   const write = (name, key, value) => { try { if (value === null) area(name).removeItem(key); else area(name).setItem(key, JSON.stringify(value)); } catch { /* optional */ } };
+  const privacy = () => !!(navigator.globalPrivacyControl || navigator.doNotTrack === '1');
   // ?tx_internal=1 marks this browser as the team's on this domain; ?tx_internal=0 clears it.
-  if (query.get('tx_internal') === '1') write('local', 'exchange-internal', true);
-  if (query.get('tx_internal') === '0') write('local', 'exchange-internal', null);
-  const disabled = () => !!(navigator.globalPrivacyControl || navigator.doNotTrack === '1' || read('local', 'exchange-internal') === true);
+  if (!privacy() && query.get('tx_internal') === '1') write('local', 'exchange-internal', true);
+  if (!privacy() && query.get('tx_internal') === '0') write('local', 'exchange-internal', null);
+  const disabled = () => privacy() || read('local', 'exchange-internal') === true;
   const market = (document.body && document.body.dataset && document.body.dataset.market) || '';
   const currentPage = () => { const path = location.pathname.replace(/\.html$/, ''); return path === '/' || PAGE.test(path) ? path : '/'; };
   const campaign = {};
@@ -31,7 +32,9 @@
   } catch { /* opaque referrer */ }
   // A visit keeps its landing source for 30 idle minutes, so later pages carry the same source.
   let visit = read('session', 'exchange-visit');
-  if (!visit || typeof visit !== 'object' || typeof visit.campaign !== 'object' || !(now - visit.at >= 0 && now - visit.at < VISIT_MS)) visit = {campaign: {}, referrer_host: ''};
+  const sane = visit && typeof visit === 'object' && visit.campaign && typeof visit.campaign === 'object' && !Array.isArray(visit.campaign)
+    && typeof visit.referrer_host === 'string' && now - visit.at >= 0 && now - visit.at < VISIT_MS;
+  if (!sane) visit = {campaign: {}, referrer_host: ''};
   if (Object.keys(campaign).length) visit = {campaign, referrer_host: referrer};
   else if (referrer) visit = {campaign: {}, referrer_host: referrer};
   visit.at = now;
@@ -89,7 +92,8 @@
     hosts.delete(location.hostname);
     return hosts;
   };
-  document.addEventListener('click', e => {
+  const onClick = e => {
+    if (e.type === 'auxclick' && e.button !== 1) return;
     const el = e.target && e.target.closest ? e.target.closest('a,button') : null;
     if (!el) return;
     const cta = (el.dataset && el.dataset.cta) || CTA_TEXT[(el.textContent || '').trim()];
@@ -112,7 +116,10 @@
       }
     }
     track('nyte.outbound_clicked', {destination_host:host, cta:cta || 'source'});
-  }, true);
+  };
+  // Capture phase, so the link carries the visitor before the browser follows it; middle clicks too.
+  document.addEventListener('click', onClick, true);
+  document.addEventListener('auxclick', onClick, true);
   let timer;
   function visible() {
     clearTimeout(timer);

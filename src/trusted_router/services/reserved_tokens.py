@@ -142,7 +142,7 @@ def reservation_quote(settings: Settings, grade: str, lots: int) -> dict[str, An
 
 
 def create_reservation_checkout(
-    settings: Settings, body: ReservationRequest, *, site_host: str = "nytokenexchange.com",
+    settings: Settings, body: ReservationRequest, *, site_host: str = "",
 ) -> dict[str, str]:
     quote = reservation_quote(settings, body.grade, body.lots)
     if body.terms_accepted is not True:
@@ -285,8 +285,12 @@ def handle_reservation_event(event: dict[str, Any], settings: Settings, backgrou
     details.update(position_id=position_id, purchase_completed_at=purchased_at.isoformat(), refund_deadline_at=refund_deadline.isoformat(), stripe_session_id=session_id, stripe_customer_id=obj.get("customer") if isinstance(obj.get("customer"), str) else None)
     try:
         if STORE.record_webhook_event_once(KIND, session_id):
+            try:
+                attribution = purchase_attribution(metadata, total)
+            except Exception:  # noqa: BLE001 - analytics never blocks the payment record
+                attribution = {}
             log.info("acquisition.reserved_tokens_recorded", extra={
-                "event": "acquisition.reserved_tokens_recorded", **details, **purchase_attribution(metadata, total),
+                "event": "acquisition.reserved_tokens_recorded", **details, **attribution,
             })
         sent = get_email_service(settings).send(EmailMessage(
             to=settings.partner_inquiry_email or "enterprise@trustedrouter.com",

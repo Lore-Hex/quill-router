@@ -208,6 +208,7 @@ def project_event(
         output["exchange_market"] = market
         if row.get("device_category") in {"desktop", "mobile", "tablet", "unknown"}:
             output["device_category"] = row["device_category"]
+    if event.startswith("acquisition.nyte."):
         for field in ("cta", "position", "form", "unit", "underlying_kind", "grade"):
             output[field] = safe_label(row.get(field))
         output["destination_host"] = domain(row.get("destination_host"))
