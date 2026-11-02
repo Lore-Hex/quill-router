@@ -813,6 +813,7 @@ def test_rollout_keeps_shadow_canary_4_opted_out_with_pilot_pins(
         async_settle_shadow_cohort_runtime,
         async_settle_shadow_health,
     )
+    from trusted_router.services.edge_policy_publisher import admission_workspaces
 
     # Stale inherited values must never leak into the rendered pins.
     run = harness.run(
@@ -878,13 +879,19 @@ def test_rollout_keeps_shadow_canary_4_opted_out_with_pilot_pins(
     assert not hasattr(app.state, "async_settle_shadow")
     assert config.async_settle_enabled is True
     assert config.async_settle_admission_enabled is True
-    assert config.async_settle_pilot_workspace_ids == {"45819281-0ce9-4811-a0cd-c660ab3a116d"}
+    assert config.async_settle_pilot_workspace_ids == {
+        "45819281-0ce9-4811-a0cd-c660ab3a116d", "162e441a-5d13-414f-92bd-7c6cd805faa3",
+    }
+    assert admission_workspaces(config) == {"admission_workspaces": [
+        "162e441a-5d13-414f-92bd-7c6cd805faa3", "45819281-0ce9-4811-a0cd-c660ab3a116d",
+    ]}
     assert config.async_settle_pilot_cap_micro == 5000000
     assert config.async_settle_protection is True
     assert not config.settle_outbox_fast_drain_enabled
     assert config.async_settle_shadow_workspace_ids == set()
     for workspace in ("162e441a-5d13-414f-92bd-7c6cd805faa3", "45819281-0ce9-4811-a0cd-c660ab3a116d",
                       "stale-opt-in"):
+        assert config.async_settle_pilot_allows(workspace) is (workspace != "stale-opt-in")
         assert not in_v2_cohort(config.regional_async_settle_shadow_policy(), workspace,
                                config.async_settle_enabled, config.async_settle_shadow_workspace_ids)
 
@@ -926,7 +933,9 @@ def test_rendered_shadow_pins_install_only_in_serving_regions(
     assert config.effective_async_settle_shadow_policy() == ""
     assert config.async_settle_shadow_workspace_ids == set()
     assert config.async_settle_admission_enabled is True
-    assert config.async_settle_pilot_workspace_ids == {"45819281-0ce9-4811-a0cd-c660ab3a116d"}
+    assert config.async_settle_pilot_workspace_ids == {
+        "45819281-0ce9-4811-a0cd-c660ab3a116d", "162e441a-5d13-414f-92bd-7c6cd805faa3",
+    }
     assert config.async_settle_pilot_cap_micro == 5000000
     assert config.async_settle_protection is True
     assert not config.settle_outbox_fast_drain_enabled
@@ -4103,7 +4112,7 @@ def test_rollout_pins_async_admission_and_protection_without_inheritance(
         "TR_ASYNC_SETTLE_TICKET_ISSUER": "https://api.trustedrouter.com",
         "TR_ASYNC_SETTLE_TICKET_AUDIENCE": "router-settlement",
         "TR_ASYNC_SETTLE_AUTHORITY_EPOCH": "1",
-        "TR_ASYNC_SETTLE_PILOT_WORKSPACES": "45819281-0ce9-4811-a0cd-c660ab3a116d",
+        "TR_ASYNC_SETTLE_PILOT_WORKSPACES": "45819281-0ce9-4811-a0cd-c660ab3a116d,162e441a-5d13-414f-92bd-7c6cd805faa3",
         "TR_ASYNC_SETTLE_PILOT_CAP_MICRO": "5000000",
     }
     hostile = {
