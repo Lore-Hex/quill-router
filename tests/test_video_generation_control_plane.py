@@ -31,6 +31,7 @@ VIDEO_MODELS = {
     "openai/sora-2",
     "openai/sora-2-pro",
     "runway/gen-4.5",
+    "kling/v4",
     "kling/v3-pro",
     "kling/o3-pro",
     "alibaba/wan-2.7",
@@ -59,6 +60,7 @@ NATIVE_VIDEO_PROVIDERS = {
     "alibaba/wan-2.7": ("alibaba",),
     "x-ai/grok-imagine-video": ("grok",),
     "runway/gen-4.5": ("runway",),
+    "kling/v4": ("runway",),
     "openai/sora-2": ("openai",),
     "openai/sora-2-pro": ("openai",),
     "kling/v3-pro": ("kling",),
@@ -69,6 +71,7 @@ NATIVE_VIDEO_PROVIDERS = {
 }
 
 NATIVE_ONLY_VIDEO_MODELS = {
+    "kling/v4",
     "minimax/h3-max",
     "x-ai/grok-imagine-video",
     "decart/lucy-2.5",
@@ -192,7 +195,11 @@ def test_video_router_rejects_text_models_and_honors_provider_filters() -> None:
 
 @pytest.mark.parametrize(
     ("model_id", "provider", "resolution"),
-    [("minimax/hailuo-3", "atlas-cloud", "2K"), ("bytedance/seedance-2.5", "venice", "480p")],
+    [
+        ("minimax/hailuo-3", "atlas-cloud", "2K"),
+        ("bytedance/seedance-2.5", "venice", "480p"),
+        ("kling/v4", "runway", "1080p"),
+    ],
 )
 def test_video_authorize_and_settle_bill_exact_fixed_microdollars(
     client: TestClient,

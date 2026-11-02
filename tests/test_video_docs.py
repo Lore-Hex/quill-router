@@ -16,6 +16,7 @@ def test_video_docs_are_public_discoverable_and_truthful(client: TestClient) -> 
     assert "google/veo-3.1-fast" in response.text
     assert "openai/sora-2-pro" in response.text
     assert "runway/gen-4.5" in response.text
+    assert "kling/v4" in response.text
     assert "kling/o3-pro" in response.text
     assert "alibaba/wan-2.7" in response.text
     assert "shengshu/vidu-q3" in response.text
