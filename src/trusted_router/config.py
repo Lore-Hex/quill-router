@@ -1176,6 +1176,12 @@ class Settings(BaseSettings):
     settle_outbox_lease_seconds: int = Field(default=300, ge=2, le=300)
     settle_outbox_pass_budget_seconds: float = Field(default=240, gt=0, le=240)
     settle_outbox_enabled: bool = False
+    # A settle whose one-commit attempt failed with a transient store error
+    # leaves its durably inserted intent to the drain instead of finalizing
+    # inline on the same hot counter rows (docs/design/durable-settle-outbox.md
+    # §7, "A contended one commit defers to the drain"). False keeps the inline
+    # two-commit fallback.
+    settle_contention_defers_to_drain: bool = False
     # Expand/contract switch for per-request Spanner records. ``legacy`` keeps
     # writing gateway authorizations and generation repair rows to tr_entities
     # while every region learns to read the typed table. ``typed`` moves new
