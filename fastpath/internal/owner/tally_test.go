@@ -98,7 +98,8 @@ func TestTheTallySaysWhereAHeartbeatWaited(t *testing.T) {
 
 // TestAFailedPublishIsCountedOnce: a publish refused past the lease's
 // cutoff is one failure, however often the flusher waits on it again
-// before a renewal lets it republish, and the republish is acknowledged.
+// before a renewal lets it republish, and the republish is acknowledged,
+// its wait counted from the record's first hand-over.
 func TestAFailedPublishIsCountedOnce(t *testing.T) {
 	f := tallyFixture(t)
 	ctx := context.Background()
@@ -129,7 +130,8 @@ func TestAFailedPublishIsCountedOnce(t *testing.T) {
 		return len(f.lease.inflight) == 0
 	})
 	<-refunded
-	if tl := f.owner.TakeTally(); tl.PublishFailures != 1 || tl.Acks != 1 {
+	// The republished record waited from its first hand-over.
+	if tl := f.owner.TakeTally(); tl.PublishFailures != 1 || tl.Acks != 1 || tl.AckMax != 58*time.Second {
 		t.Fatalf("the tally: %+v", tl)
 	}
 }
