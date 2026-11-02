@@ -10,9 +10,9 @@ import (
 )
 
 // heartbeatAt sends a heartbeat to its owner, and if this front door cannot
-// reach it, through a peer within PeerWait. It reports whether an owner
-// answered. A request that ended is no evidence that its owner is
-// unreachable.
+// reach it, through a peer within PeerWait; one this node owns goes through
+// none (peer). It reports whether an owner answered. A request that ended
+// is no evidence that its owner is unreachable.
 func (f *FrontDoor) heartbeatAt(ctx context.Context, env Envelope, req OwnerHeartbeat) (HeartbeatAnswer, bool) {
 	octx, cancel := context.WithTimeout(ctx, f.cfg.OwnerWait)
 	got, err := f.cfg.Owners.Heartbeat(octx, env.Owner, req)
@@ -43,8 +43,9 @@ func (f *FrontDoor) heartbeatAt(ctx context.Context, env Envelope, req OwnerHear
 }
 
 // terminalAt sends a terminal to its owner, and if this front door cannot
-// reach it, through a peer. It reports whether an owner answered. A request
-// that ended is no evidence that its owner is unreachable.
+// reach it, through a peer; one this node owns goes through none (peer). It
+// reports whether an owner answered. A request that ended is no evidence
+// that its owner is unreachable.
 func (f *FrontDoor) terminalAt(ctx context.Context, env Envelope, req OwnerTerminal) (OwnerTerminalAnswer, bool) {
 	octx, cancel := context.WithTimeout(ctx, f.cfg.OwnerWait)
 	got, err := f.cfg.Owners.Terminal(octx, env.Owner, req)
