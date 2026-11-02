@@ -198,6 +198,13 @@ class ExchangeTests(unittest.TestCase):
         )
         self.assertEqual(sorted(listed), sorted(m["domain"] for m in load_markets()))
 
+    def test_the_app_names_every_market_from_the_same_registry(self) -> None:
+        # Rule: the collector and the export worker take each domain's market slug from markets.json.
+        listed = json.loads(
+            (Path(__file__).parents[2] / "src" / "trusted_router" / "data" / "token_exchange_markets.json").read_text()
+        )
+        self.assertEqual(listed, {m["domain"]: m["slug"] for m in load_markets()})
+
     def test_publish_refuses_until_the_app_accepts_every_domain(self) -> None:
         with mock.patch.object(deploy, "brochure_gaps", return_value=["newcitytokenexchange.com"]), \
                 tempfile.TemporaryDirectory() as directory, \

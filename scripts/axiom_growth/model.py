@@ -60,6 +60,8 @@ BROWSER_EVENTS = frozenset(
         # Server-confirmed exchange downloads use the same Cloud Logging source.
         # Never accept these as browser-submitted conversion claims.
         "enterprise_brief_delivered", "enterprise_security_pack_delivered",
+        # The Stripe webhook's record of a paid /buy reservation: the money truth for the exchange funnel.
+        "reserved_tokens_recorded",
     )
 )
 CONVERSION_EVENTS = frozenset(
@@ -82,7 +84,7 @@ EVIDENCE_FIELDS = ("customer_domain", "customer_domain_verified", "customer_doma
                    "domain_observed_at", "first_referrer_domain", "first_purchase_at",
                    "identity_link_status", "payment_method", "first_touch_basis")
 FIELDS = ("event", "anonymous_fingerprint", "amount_microdollars", "referer_host", "signup_path", "site_domain",
-          "page_path", "cta", "position", "form", "destination_host", "unit", "underlying_kind", "grade", "device_category", "reward_placement", "reward_action", "observation_id",
+          "market", "exchange_market", "exchange_visitor_fingerprint", "page_path", "cta", "position", "form", "destination_host", "unit", "underlying_kind", "grade", "device_category", "reward_placement", "reward_action", "observation_id",
           *DIMENSIONS, *ATTEMPT_FIELDS, *IDENTITY_FIELDS, *FIRST_FIELDS, *EVIDENCE_FIELDS)
 MAX_ROWS = 20_000
 PAGE_SIZE = 1000
@@ -91,6 +93,28 @@ SECRET_RE = re.compile(
     r"(?i)(?:sk[-_]|xaat-|xapt-|bearer|password|secret|token|authorization|"
     r"\b\d{1,3}(?:\.\d{1,3}){3}\b|https?://)"
 )
+# The Token Exchange sites. The worker image carries only this module, so the list lives here;
+# tests pin it to src/trusted_router/data/token_exchange_markets.json and sites/token-exchange/markets.json.
+EXCHANGE_MARKETS_BY_DOMAIN = {
+    "thetokenexchange.com": "global", "nytokenexchange.com": "new-york",
+    "chicagotokenexchange.com": "chicago", "sftokenexchange.com": "san-francisco",
+    "texastokenexchange.com": "texas", "usatokenexchange.com": "united-states",
+    "eutokenexchange.com": "europe", "londontoken.exchange": "london",
+    "dubaitokenexchange.com": "dubai", "riyadhtokenexchange.com": "riyadh",
+    "hktokenexchange.com": "hong-kong", "shanghaitokenexchange.com": "shanghai",
+    "tokyotokenexchange.com": "tokyo",
+}
+EXCHANGE_DOMAINS = frozenset(EXCHANGE_MARKETS_BY_DOMAIN)
+EXCHANGE_MARKETS = frozenset(EXCHANGE_MARKETS_BY_DOMAIN.values())
+_EXCHANGE_LABELS = EXCHANGE_DOMAINS | frozenset("www." + d for d in EXCHANGE_DOMAINS)
+# Our public campaign and product names contain "token"; strip them before the secret test.
+_PUBLIC_TOKEN_PHRASES = re.compile(r"token-?exchange")
+# Exchange pages are static files we publish: one short slug per page is the whole vocabulary.
+EXCHANGE_PATH_RE = re.compile(r"/(?:[a-z0-9][a-z0-9-]{0,39})?\Z")
+EXCHANGE_SERVER_EVENTS = frozenset((
+    "acquisition.enterprise_brief_delivered", "acquisition.enterprise_security_pack_delivered",
+    "acquisition.reserved_tokens_recorded",
+))
 
 
 def timestamp(value: object) -> str:
@@ -115,8 +139,13 @@ def timestamp(value: object) -> str:
 def safe_label(value: object) -> str:
     if not isinstance(value, str) or not value:
         return ""
-    # This public campaign name contains "token", but is not a credential.
-    if not LABEL_RE.fullmatch(value) or (value != "token-exchange-launch" and SECRET_RE.search(value)):
+    if not LABEL_RE.fullmatch(value):
+        return "(redacted)"
+    # Our exchange domains and campaign names contain "token" but are public, not credentials.
+    lowered = value.lower()
+    if lowered in _EXCHANGE_LABELS:
+        return value
+    if SECRET_RE.search(_PUBLIC_TOKEN_PHRASES.sub("", lowered)):
         return "(redacted)"
     return value
 
@@ -133,6 +162,7 @@ def project_event(
     if not isinstance(fingerprint, str) or not re.fullmatch(r"[a-f0-9]{64}", fingerprint):
         raise ValueError("Missing or invalid pseudonymous visitor fingerprint")
     event = str(row["event"])
+    exchange = event.startswith(("acquisition.exchange.", "acquisition.nyte.")) or event in EXCHANGE_SERVER_EVENTS
     output: dict[str, object] = {
         "_time": timestamp(row.get("_time")),
         "event": event,
@@ -156,7 +186,7 @@ def project_event(
         value = row.get(field)
         if field == "landing_path":
             # Dynamic paths can contain account IDs, e-mails, or secrets.
-            output[field] = safe_path(value)
+            output[field] = safe_path(value, exchange=exchange)
         else:
             output[field] = safe_label(value)
     for field in IDENTITY_FIELDS:
@@ -170,15 +200,23 @@ def project_event(
     if event in {"acquisition.landing_viewed", "acquisition.landing_engaged"}:
         output["page_path"] = safe_path(row.get("page_path"))
     output['utm_source'] = canonical_source(output['utm_source'], output['referrer_domain'])
-    if event.startswith(("acquisition.exchange.", "acquisition.nyte.")) or event in {
-        "acquisition.enterprise_brief_delivered", "acquisition.enterprise_security_pack_delivered",
-    }:
+    if exchange:
         output["site_domain"] = domain(row.get("site_domain"))
-        output["page_path"] = safe_path(row.get("page_path"))
-    if event.startswith("acquisition.nyte."):
+        output["page_path"] = safe_path(row.get("page_path"), exchange=True)
+        market = row.get("market") if row.get("market") in EXCHANGE_MARKETS else EXCHANGE_MARKETS_BY_DOMAIN.get(str(output["site_domain"]), "")
+        output["market"] = market
+        output["exchange_market"] = market
+        if row.get("device_category") in {"desktop", "mobile", "tablet", "unknown"}:
+            output["device_category"] = row["device_category"]
         for field in ("cta", "position", "form", "unit", "underlying_kind", "grade"):
             output[field] = safe_label(row.get(field))
         output["destination_host"] = domain(row.get("destination_host"))
+    # A visitor who arrived from an exchange site carries its market and a hashed exchange visitor ID
+    # on trustedrouter.com events, so sign-ups, first calls and purchases join back to exchange visits.
+    if row.get("exchange_market") in EXCHANGE_MARKETS:
+        output["exchange_market"] = row["exchange_market"]
+    if HASH.fullmatch(str(row.get("exchange_visitor_fingerprint") or "")):
+        output["exchange_visitor_fingerprint"] = row["exchange_visitor_fingerprint"]
     if row.get('first_utm_source'):
         output['first_utm_source'] = canonical_source(row['first_utm_source'], output['first_referrer_domain'])
     output['identity_link_status'] = (
@@ -193,7 +231,7 @@ def project_event(
         output['payment_method'] = payment_method
         output['purchase_path'] = 'auto_refill' if payment_method == 'stripe_auto_refill' else (
             'stablecoin_api' if payment_method in {'usdc', 'stablecoin'} else 'checkout')
-    if event == "acquisition.credit_purchase_completed":
+    if event in {"acquisition.credit_purchase_completed", "acquisition.reserved_tokens_recorded"}:
         amount = row.get("amount_microdollars")
         if type(amount) is not int or not 0 < amount < 10**15:
             raise ValueError("Purchase amount must be positive integer microdollars")
@@ -273,7 +311,7 @@ def digest(value):
     return hashlib.sha256(value.encode()).hexdigest()
 
 
-def safe_path(value):
+def safe_path(value, exchange=False):
     if not isinstance(value, str) or not value:
         return '(unknown)'
     if value in {'(unknown)', '(unclassified)', '(account flow)'}:
@@ -282,6 +320,9 @@ def safe_path(value):
     if not value.startswith('/') or value.startswith('//') or len(value) > 4096:
         return '(unclassified)'
     path = value.split('?', 1)[0].split('#', 1)[0].lower().rstrip('/') or '/'
+    if exchange and EXCHANGE_PATH_RE.fullmatch(path):
+        # Exchange pages are static files we publish; a new page counts under its own slug.
+        return path
     if path in PUBLIC_LANDINGS:
         return path
     for family in ('/openrouter-alternative/lp/', '/openrouter-alternative/test/'):
@@ -421,6 +462,8 @@ def build_journeys(events, daily, end):
             'last_tagged_landing':safe_path(observed[-1].get('landing_path')),
             'referrer_domain':domain(acquisition.get('referrer_domain')),
             'first_referrer_domain':referrer, 'first_referrer_host':referrer,
+            'exchange_market':next((r['exchange_market'] for r in (acquisition, *observed) if r.get('exchange_market')), ''),
+            'exchange_visitor_fingerprint':next((r['exchange_visitor_fingerprint'] for r in (acquisition, *observed) if r.get('exchange_visitor_fingerprint')), ''),
             'customer_domain':domain(evidence.get('customer_domain')),
             'customer_domain_verified':evidence.get('customer_domain_verified') is True,
             'customer_domain_basis':evidence.get('customer_domain_basis') or 'not_linked',

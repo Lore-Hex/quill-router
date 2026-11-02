@@ -39,18 +39,35 @@ The TrustedRouter homepage banner links to `nytokenexchange.com` with
 The growth worker exports it and server-confirmed brochure/security-pack
 deliveries to `trustedrouter-marketing`. Deploy the worker and refresh its
 exact-event logging sink when adding event names; a website deploy alone is
-insufficient. Standalone sites send `acquisition.exchange.landing_viewed`
-when visible and `acquisition.exchange.landing_engaged` after ten continuous
-visible seconds, once each per page load. `site_domain` and bounded `page_path`
-identify the market and page. There is no polling or database write per event.
-A random per-tab ID (30-minute storage lifetime), hashed with the market hostname
-before logging, joins visits to successful brochure downloads on that site.
-GPC and DNT suppress events and storage. Requests omit cookies and credentials.
-The event collector limits bodies to 2 KiB, accepts only owned origins and
-two fixed event names, and caps traffic in bounded per-process memory.
-The ID is not a cross-domain user identity and is not tied to a submitted email.
-Downloads without this ID remain unlinked; do not claim a complete
-cross-domain visit-to-purchase funnel. Historical untracked visits cannot be recovered.
+insufficient. Every exchange site loads the same `analytics.js`. It sends
+`acquisition.exchange.landing_viewed` when a page is visible and
+`acquisition.exchange.landing_engaged` after ten continuous visible seconds, once
+each per page load, plus the `acquisition.nyte.*` click, form and `/buy` events
+(the `nyte.` prefix is historical; `site_domain` and `market` say which site).
+There is no polling or database write per event. `page_path` is the page's own
+slug: one path segment of letters, digits and dashes, up to 40 characters, so a
+new page or button needs no list change in the browser, the collector or the
+export worker. Anything else is rejected or counted as `/`.
+
+Source: the page's own campaign tags win; otherwise the referring site's hostname
+is the source (`referer_host`, `utm_medium=referral`); a visit with neither is
+`direct`. The site's own name is never recorded as its source. A visit keeps its
+landing source for 30 idle minutes.
+
+Visitor ID: a random UUID kept 90 days in the browser's local storage and hashed
+before logging (`anonymous_fingerprint`, repeated as `exchange_visitor_fingerprint`).
+It rides as `tx_vid`, with `exchange_market`, on links to trustedrouter.com and to
+sister exchange sites. trustedrouter.com stores the same hash in its first-party
+attribution touch (console landings included when the link carries tags) and
+stamps `exchange_market` and `exchange_visitor_fingerprint` onto `landing_*`,
+`signup_completed`, `api_key_created`, `first_successful_api_call`,
+`checkout_started` and `credit_purchase_completed`. The hash is never tied to a
+submitted email. `?tx_internal=1` turns tracking off in that browser on that
+domain (`?tx_internal=0` turns it back on); GPC and DNT suppress events and
+storage. Requests omit cookies and credentials. The collector limits bodies to
+2 KiB, accepts only owned origins and a fixed list of event names, and caps
+traffic in bounded per-process memory. Visits before 27 Oct 2026 (New York) or
+before a market's next publish are not recoverable.
 
 - `POST /token-exchange/brief` belongs to the **actions** service surface.
   Keep its exact path in `scripts/deploy/service_surface_url_map.py` during
@@ -76,6 +93,39 @@ cross-domain visit-to-purchase funnel. Historical untracked visits cannot be rec
   marketing event properties. `acquisition.enterprise_brief_delivered` records
   the existing consent-aware, pseudonymous first-party attribution context.
   It means the server offered the file, not that a human read it.
+
+## Exchange analytics reference
+
+Dataset `trustedrouter-marketing` in Axiom. Count distinct `event_id`, never rows:
+the export repeats rows.
+
+| Field | On which events | Values |
+| --- | --- | --- |
+| `site_domain` | exchange events | the exchange hostname |
+| `market` | exchange events | slug from `sites/token-exchange/markets.json` (`new-york`, `global`, `chicago`, ...) |
+| `page_path` | exchange events | `/` or one slug such as `/buy` |
+| `utm_source`, `utm_medium`, `utm_campaign`, `creative_id` | all | the page's tags; else the referrer host and `referral`; else `direct` and `none` |
+| `referrer_domain` | all | the referring site's hostname |
+| `device_category` | exchange events | `desktop`, `mobile`, `tablet`, `unknown` |
+| `cta`, `position` | `nyte.cta_clicked` | button slug from `data-cta` or its label; `header`, `hero`, `section`, `close`; mailto links log `contact_email` |
+| `destination_host` | `nyte.outbound_clicked` | `trustedrouter.com`, `github.com`, `calendly.com` or a sister exchange domain |
+| `form` | `nyte.form_submitted` | `buyer_deck` |
+| `exchange_visitor_fingerprint` | exchange events, and trustedrouter.com events of visitors who arrived from an exchange link | 64-hex hash; the join key between the two sites |
+| `exchange_market` | the same | the market the visitor came from |
+| `amount_microdollars` | `reserved_tokens_recorded`, `credit_purchase_completed` | the paid amount |
+
+Server-confirmed events: `enterprise_brief_delivered` and
+`enterprise_security_pack_delivered` (deck and security pack, with the page's
+visitor ID when the browser sent one) and `reserved_tokens_recorded` (the Stripe
+webhook for a paid `/buy` reservation, with `site_domain`, `market`, the visitor
+hash from the checkout request and the total). Adding an event name still means
+changing the collector's list, the worker's list and redeploying the worker,
+which refreshes the Cloud Logging sink filter; adding a page, button, form or
+destination value does not.
+
+Internal traffic: a browser that visited any exchange page with `?tx_internal=1`
+sends nothing from that domain. Exclude `utm_source` values used by smoke tests
+in reports.
 
 ## Assets and copy
 

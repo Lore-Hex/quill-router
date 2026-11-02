@@ -16,9 +16,13 @@ const assert = require('node:assert/strict');
     await page.route('https://trustedrouter.com/token-exchange/events', async route => {
       if (route.request().method() === 'POST') {
         const body = route.request().postDataJSON();
-        assert(['exchange.landing_viewed', 'exchange.landing_engaged'].includes(body.event));
+        // Visits plus the shared click tracker: clicks name a button or an outbound host, never a person.
+        assert(['exchange.landing_viewed', 'exchange.landing_engaged', 'nyte.cta_clicked', 'nyte.outbound_clicked'].includes(body.event));
+        if (body.event === 'nyte.cta_clicked') assert.match(body.cta, /^[a-z0-9][a-z0-9_-]{0,39}$/);
+        if (body.event === 'nyte.outbound_clicked') assert.match(body.destination_host, /^[a-z0-9.-]+$/);
         assert.equal(typeof body.visitor_id, 'string');
         assert(!JSON.stringify(body).includes('should-not-pass'));
+        assert(!/@|email/.test(JSON.stringify(body)));
         tracking.get(page).push(body);
       }
       return route.fulfill({status:204, headers:{'Access-Control-Allow-Origin':'http://127.0.0.1:8089'}});

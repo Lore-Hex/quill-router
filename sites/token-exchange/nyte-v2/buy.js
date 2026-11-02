@@ -111,7 +111,7 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       const response = await fetch(`${reserveEndpoint}/checkout`, {method:'POST', mode:'cors', credentials:'omit',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({grade:selected('grade').value, lots:get('blocks').valueAsNumber, terms_accepted:true})});
+        body:JSON.stringify({grade:selected('grade').value, lots:get('blocks').valueAsNumber, terms_accepted:true, visitor_id:window.TokenExchangeAnalytics?.context?.().visitor_id})});
       if (!response.ok) throw new Error('Checkout could not start. Please try again or book a call.');
       const payload = await response.json();
       const url = new URL(payload.url);

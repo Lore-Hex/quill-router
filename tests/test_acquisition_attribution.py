@@ -821,6 +821,24 @@ def test_stripe_purchase_attribution_follows_ledger_idempotency(
     assert messages.count("acquisition.credit_purchase_completed") == 1
 
 
+def test_console_landing_from_an_exchange_link_keeps_the_exchange_touch(client: TestClient) -> None:
+    visitor = "11111111-1111-4111-8111-111111111111"
+    response = client.get(
+        "/console/api-keys?utm_source=nytokenexchange.com&utm_medium=referral"
+        f"&exchange_market=new-york&tx_vid={visitor}",
+        follow_redirects=False,
+    )
+    name = acquisition_module.ATTRIBUTION_COOKIE_NAME
+    cookie = response.cookies.get(name) or client.cookies.get(name)
+    assert cookie, "a tagged console landing sets the attribution cookie"
+    context = decode_attribution_cookie(cookie, client.app.state.settings)
+    assert context is not None
+    assert context.first_touch["utm_source"] == "nytokenexchange.com"
+    assert context.first_touch["exchange_market"] == "new-york"
+    assert context.first_touch["exchange_visitor_fingerprint"] == acquisition_module.exchange_visitor_fingerprint(visitor)
+    assert visitor not in cookie
+
+
 def test_public_pageviews_cover_marketing_but_not_console(
     client: TestClient,
     caplog: pytest.LogCaptureFixture,

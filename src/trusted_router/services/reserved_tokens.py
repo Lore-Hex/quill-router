@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import uuid
 from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
@@ -11,7 +12,7 @@ from typing import Any, Literal
 
 import stripe
 from fastapi import BackgroundTasks
-from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt
+from pydantic import UUID4, BaseModel, ConfigDict, StrictBool, StrictInt
 
 from trusted_router.config import Settings
 from trusted_router.content import token_index
@@ -47,6 +48,40 @@ class ReservationRequest(BaseModel):
     grade: Literal["AAA", "A", "B", "C"]
     lots: StrictInt
     terms_accepted: StrictBool
+    # The page's exchange visitor ID, so the paid reservation joins the visit that started it.
+    visitor_id: UUID4 | None = None
+
+
+def exchange_attribution_metadata(site_host: str, visitor_id: uuid.UUID | None) -> dict[str, str]:
+    """Which exchange site and (hashed) visitor started a checkout; rides in Stripe metadata to the webhook."""
+    from trusted_router.acquisition import exchange_visitor_fingerprint
+    from trusted_router.exchange_analytics import market_for
+
+    host = site_host.lower()
+    market = market_for(host)
+    fields = {"site_domain": host if market else "", "market": market}
+    if visitor_id is not None:
+        fields["visitor_fingerprint"] = exchange_visitor_fingerprint(str(visitor_id))
+    return {key: value for key, value in fields.items() if value}
+
+
+def purchase_attribution(metadata: dict[str, Any], total_cents: int) -> dict[str, Any]:
+    """Metadata-only fields for the growth export: the exchange site, market, hashed visitor and amount."""
+    from trusted_router.acquisition import exchange_visitor_fingerprint
+
+    fingerprint = metadata.get("visitor_fingerprint")
+    known = isinstance(fingerprint, str) and re.fullmatch(r"[a-f0-9]{64}", fingerprint) is not None
+    anonymous = fingerprint if known else exchange_visitor_fingerprint(uuid.uuid4().hex)
+    site = metadata.get("site_domain")
+    market = metadata.get("market")
+    return {
+        "anonymous_fingerprint": anonymous,
+        "exchange_visitor_fingerprint": anonymous if known else "",
+        "site_domain": site if isinstance(site, str) else "",
+        "market": market if isinstance(market, str) else "",
+        "page_path": "/buy",
+        "amount_microdollars": total_cents * 10_000,
+    }
 
 
 def _utc_now() -> datetime:
@@ -106,13 +141,19 @@ def reservation_quote(settings: Settings, grade: str, lots: int) -> dict[str, An
     }
 
 
-def create_reservation_checkout(settings: Settings, body: ReservationRequest) -> dict[str, str]:
+def create_reservation_checkout(
+    settings: Settings, body: ReservationRequest, *, site_host: str = "nytokenexchange.com",
+) -> dict[str, str]:
     quote = reservation_quote(settings, body.grade, body.lots)
     if body.terms_accepted is not True:
         raise api_error(422, "Accept the reserved tokens terms before checkout", ErrorType.BAD_REQUEST)
     if not settings.stripe_secret_key:
         raise api_error(503, "Card checkout is not configured", ErrorType.SERVICE_UNAVAILABLE)
-    metadata = {"kind": KIND, **{key: str(value) for key, value in quote.items() if key != "max_lots"}}
+    metadata = {
+        "kind": KIND,
+        **exchange_attribution_metadata(site_host, body.visitor_id),
+        **{key: str(value) for key, value in quote.items() if key != "max_lots"},
+    }
     # Use the same SDK/key as stripe_billing, but no workspace, saved payment
     # method, top-up surcharge, mock purchase or credit-acquisition callbacks.
     line_items: list[Any] = [{"price_data": {
@@ -244,7 +285,9 @@ def handle_reservation_event(event: dict[str, Any], settings: Settings, backgrou
     details.update(position_id=position_id, purchase_completed_at=purchased_at.isoformat(), refund_deadline_at=refund_deadline.isoformat(), stripe_session_id=session_id, stripe_customer_id=obj.get("customer") if isinstance(obj.get("customer"), str) else None)
     try:
         if STORE.record_webhook_event_once(KIND, session_id):
-            log.info("acquisition.reserved_tokens_recorded", extra={"event": "acquisition.reserved_tokens_recorded", **details})
+            log.info("acquisition.reserved_tokens_recorded", extra={
+                "event": "acquisition.reserved_tokens_recorded", **details, **purchase_attribution(metadata, total),
+            })
         sent = get_email_service(settings).send(EmailMessage(
             to=settings.partner_inquiry_email or "enterprise@trustedrouter.com",
             subject=f"NYTE 2027 reservation · {position_id}",
