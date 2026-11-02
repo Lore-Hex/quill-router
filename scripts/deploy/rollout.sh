@@ -787,12 +787,7 @@ ENV_VARS=(
   # R3: customer pilot only, after the probe drain measurement, single crash
   # trial and rollback rehearsal. Apply on R1 protection, retain worker drain.
   # Admission-on edge policy passes async-v1 authorizes to Python.
-  # RB3 (2026-11-01): fresh admission off for the fast path's gate E, which
-  # needs the edge to compose this workspace's async-v1 streams (an admitted
-  # workspace passes at policy.async_admission). Protection, signer, epoch,
-  # the pilot list, the cap and the dedicated worker drain stay, so accepted
-  # work drains and pending stays truthful. Back to true after gate E.
-  "TR_ASYNC_SETTLE_ENABLED=false"
+  "TR_ASYNC_SETTLE_ENABLED=true"
   "TR_ASYNC_SETTLE_PROTECTION=true"
   "TR_ASYNC_SETTLE_PILOT_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d"
   "TR_ASYNC_SETTLE_PILOT_CAP_MICRO=5000000"
