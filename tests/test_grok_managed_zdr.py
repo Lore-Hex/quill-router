@@ -21,6 +21,7 @@ from trusted_router.catalog_privacy import (
     provider_privacy_tier,
 )
 from trusted_router.config import Settings
+from trusted_router.provider_og import provider_og_facts
 from trusted_router.routing import chat_route_endpoint_candidates
 
 
@@ -86,3 +87,13 @@ def test_grok_provider_page_describes_the_managed_scope(client):
     assert "x-zero-data-retention" in response.text
     assert "BYOK" in response.text
     assert "not confidential compute" in response.text
+
+
+@pytest.mark.parametrize("provider", ["grok", "openai", "google-vertex", "coralbricks"])
+def test_managed_zdr_social_cards_do_not_claim_byok_coverage(provider):
+    assert provider_og_facts(provider).privacy == "TR-funded ZDR"
+
+
+def test_provider_wide_zdr_and_confidential_social_labels_are_unchanged():
+    assert provider_og_facts("together").privacy == "Zero retention"
+    assert provider_og_facts("maple").privacy == "Confidential + ZDR"

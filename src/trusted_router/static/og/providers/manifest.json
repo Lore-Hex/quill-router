@@ -183,7 +183,7 @@
     "card_version": 2,
     "model_count": 2,
     "name": "CoralBricks",
-    "privacy": "Zero retention",
+    "privacy": "TR-funded ZDR",
     "route_count": 2,
     "route_mode": "Prepaid",
     "slug": "coralbricks"
@@ -345,7 +345,7 @@
     "card_version": 2,
     "model_count": 14,
     "name": "Google Vertex AI",
-    "privacy": "Zero retention",
+    "privacy": "TR-funded ZDR",
     "route_count": 14,
     "route_mode": "Prepaid",
     "slug": "google-vertex"
@@ -363,7 +363,7 @@
     "card_version": 2,
     "model_count": 9,
     "name": "xAI Grok",
-    "privacy": "Policy documented",
+    "privacy": "TR-funded ZDR",
     "route_count": 16,
     "route_mode": "Prepaid + BYOK",
     "slug": "grok"
@@ -651,7 +651,7 @@
     "card_version": 2,
     "model_count": 34,
     "name": "OpenAI",
-    "privacy": "Zero retention",
+    "privacy": "TR-funded ZDR",
     "route_count": 60,
     "route_mode": "Prepaid + BYOK",
     "slug": "openai"
