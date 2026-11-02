@@ -2,7 +2,7 @@
   "_about": "Provider-native Chutes TEE model catalog. Refreshed hourly from the authenticated Chutes OpenAI-compatible models API.",
   "provider": "chutes",
   "source": "https://llm.chutes.ai/v1/models",
-  "generated_at": "2026-11-01T19:12:14Z",
+  "generated_at": "2026-11-02T07:28:46Z",
   "price_scale": "microdollars_per_million",
   "model_count": 17,
   "models": [
@@ -247,7 +247,9 @@
       "input_token_price_per_m": 104000,
       "output_token_price_per_m": 416000,
       "cached_input_token_price_per_m": 10400,
-      "missing_since": "2026-11-01"
+      "missing_since": "2026-11-01",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Qwen/Qwen3.5-397B-A17B",
@@ -480,7 +482,9 @@
       "input_token_price_per_m": 24500,
       "output_token_price_per_m": 97800,
       "cached_input_token_price_per_m": 2450,
-      "missing_since": "2026-11-01"
+      "missing_since": "2026-11-01",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Qwen/Qwen3.8-27B",

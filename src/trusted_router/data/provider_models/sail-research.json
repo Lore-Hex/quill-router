@@ -86,11 +86,12 @@
       "id": "moonshotai/kimi-k2.6",
       "upstream_id": "moonshotai/Kimi-K2.6",
       "created": 1700000000,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 1000000,
       "output_token_price_per_m": 4000000,
       "cached_input_token_price_per_m": 200000,
-      "missing_since": "2026-11-01"
+      "missing_since": "2026-11-01",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "openai/gpt-oss-120b",
@@ -109,11 +110,12 @@
       "id": "openai/gpt-oss-120b",
       "upstream_id": "openai/gpt-oss-120b",
       "created": 1700000000,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 60000,
       "output_token_price_per_m": 400000,
       "cached_input_token_price_per_m": 30000,
-      "missing_since": "2026-11-01"
+      "missing_since": "2026-11-01",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "zai-org/GLM-5.2-FP8",
@@ -269,11 +271,12 @@
       "id": "deepseek/deepseek-v4.1-flash",
       "upstream_id": "deepseek-ai/DeepSeek-V4.1-Flash",
       "created": 1700000000,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 90000,
       "output_token_price_per_m": 300000,
       "cached_input_token_price_per_m": 6000,
-      "missing_since": "2026-11-01"
+      "missing_since": "2026-11-01",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
@@ -301,7 +304,7 @@
   ],
   "source": "https://api.sailresearch.com/v1/models",
   "pricing_source": "https://docs.sailresearch.com/pricing",
-  "generated_at": "2026-11-01T19:12:14Z",
+  "generated_at": "2026-11-02T07:28:46Z",
   "price_scale": "microdollars_per_million",
   "model_count": 13
 }

@@ -20,11 +20,12 @@
       "retirement_at": "2026-10-26T00:00:00Z",
       "replacement_model_id": "moonshotai/kimi-k3",
       "context_length": 262144,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 250000,
       "output_token_price_per_m": 800000,
       "cached_input_token_price_per_m": 60000,
-      "missing_since": "2026-11-01"
+      "missing_since": "2026-11-01",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "DeepSeek V4 Flash Latest",
@@ -279,7 +280,7 @@
   ],
   "source": "https://api.arcee.ai/api/v1/models",
   "pricing_source": "https://api.arcee.ai/api/v1/models",
-  "generated_at": "2026-11-01T19:12:14Z",
+  "generated_at": "2026-11-02T07:28:46Z",
   "price_scale": "microdollars_per_million",
   "model_count": 12
 }

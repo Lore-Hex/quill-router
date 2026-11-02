@@ -3,7 +3,7 @@
   "source": "https://api.novita.ai/openai/v1/models",
   "price_source": "https://novita.ai/pricing",
   "price_scale_to_microdollars_per_million_tokens": 100,
-  "generated_at": "2026-11-01T19:12:14Z",
+  "generated_at": "2026-11-02T07:28:46Z",
   "model_count": 175,
   "models": [
     {
@@ -82,7 +82,9 @@
       ],
       "status": 1,
       "upstream_id": "baidu/ernie-4.5-21B-a3b",
-      "missing_since": "2026-11-01"
+      "missing_since": "2026-11-01",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "baidu/ernie-4.5-21B-a3b-thinking",

@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Crusoe Managed Inference routes. Generated from https://api.inference.crusoecloud.com/v1/models; prices are provider cost in integer microdollars per million tokens and catalog applies markup.",
   "provider": "crusoe",
   "source": "https://api.inference.crusoecloud.com/v1/models",
-  "generated_at": "2026-11-01T19:12:14Z",
+  "generated_at": "2026-11-02T07:28:46Z",
   "price_scale": "microdollars_per_million",
   "model_count": 22,
   "models": [
@@ -123,8 +123,9 @@
         "user"
       ],
       "status": 1,
-      "routable": true,
-      "missing_since": "2026-11-01"
+      "routable": false,
+      "missing_since": "2026-11-01",
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "deepseek/deepseek-v4-pro",
@@ -190,7 +191,9 @@
         "user"
       ],
       "status": 1,
-      "missing_since": "2026-11-01"
+      "missing_since": "2026-11-01",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "google/gemma-4-31b-it",
@@ -486,7 +489,9 @@
         "user"
       ],
       "status": 1,
-      "missing_since": "2026-11-01"
+      "missing_since": "2026-11-01",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "nvidia/nemotron-3-super-120b-a12b",
@@ -552,7 +557,9 @@
         "user"
       ],
       "status": 1,
-      "missing_since": "2026-11-01"
+      "missing_since": "2026-11-01",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "nvidia/nemotron-3-ultra-550b",

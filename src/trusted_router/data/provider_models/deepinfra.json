@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for DeepInfra models whose live /v1/openai/models feed is ahead of the shared snapshot. Verified against https://api.deepinfra.com/v1/openai/models on 2026-06-20. DeepInfra uses mixed-case upstream author/model IDs, so the enclave preserves upstream_id verbatim for this provider.",
   "provider": "deepinfra",
   "source": "https://api.deepinfra.com/v1/openai/models",
-  "generated_at": "2026-11-01T19:12:14Z",
+  "generated_at": "2026-11-02T07:28:46Z",
   "model_count": 124,
   "models": [
     {
@@ -977,7 +977,9 @@
         "structured-outputs",
         "json-mode"
       ],
-      "missing_since": "2026-11-01"
+      "missing_since": "2026-11-01",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "inclusionAI/Ling-3.0-flash",
@@ -1034,7 +1036,9 @@
         "structured-outputs",
         "json-mode"
       ],
-      "missing_since": "2026-11-01"
+      "missing_since": "2026-11-01",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
@@ -1510,7 +1514,9 @@
         "structured-outputs",
         "json-mode"
       ],
-      "missing_since": "2026-11-01"
+      "missing_since": "2026-11-01",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "NousResearch/Hermes-3-Llama-3.1-70B",
@@ -1536,7 +1542,9 @@
         "structured-outputs",
         "json-mode"
       ],
-      "missing_since": "2026-11-01"
+      "missing_since": "2026-11-01",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "nvidia/Nemotron-3-Nano-30B-A3B",
@@ -1724,7 +1732,9 @@
         "json-mode",
         "reasoning"
       ],
-      "missing_since": "2026-11-01"
+      "missing_since": "2026-11-01",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "openai/gpt-oss-120b-Ultra",
@@ -3346,7 +3356,9 @@
       "input_token_price_per_m": 1000000,
       "output_token_price_per_m": 2700000,
       "cached_input_token_price_per_m": 50000,
-      "missing_since": "2026-11-01"
+      "missing_since": "2026-11-01",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "deepseek-ai/DeepSeek-V4.1-Flash-1017",

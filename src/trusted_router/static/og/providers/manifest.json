@@ -145,10 +145,10 @@
   },
   "chutes": {
     "card_version": 2,
-    "model_count": 13,
+    "model_count": 10,
     "name": "Chutes",
     "privacy": "Confidential + ZDR",
-    "route_count": 26,
+    "route_count": 20,
     "route_mode": "Prepaid + BYOK",
     "slug": "chutes"
   },
@@ -244,10 +244,10 @@
   },
   "deepinfra": {
     "card_version": 2,
-    "model_count": 91,
+    "model_count": 89,
     "name": "DeepInfra",
     "privacy": "Policy documented",
-    "route_count": 174,
+    "route_count": 170,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepinfra"
   },
@@ -541,10 +541,10 @@
   },
   "mistral": {
     "card_version": 2,
-    "model_count": 11,
+    "model_count": 9,
     "name": "Mistral",
     "privacy": "Policy documented",
-    "route_count": 19,
+    "route_count": 15,
     "route_mode": "Prepaid + BYOK",
     "slug": "mistral"
   },
@@ -586,10 +586,10 @@
   },
   "nebius": {
     "card_version": 2,
-    "model_count": 28,
+    "model_count": 36,
     "name": "Nebius Token Factory",
     "privacy": "Zero retention",
-    "route_count": 54,
+    "route_count": 70,
     "route_mode": "Prepaid + BYOK",
     "slug": "nebius"
   },
@@ -631,10 +631,10 @@
   },
   "nscale": {
     "card_version": 2,
-    "model_count": 20,
+    "model_count": 4,
     "name": "Nscale",
     "privacy": "Policy documented",
-    "route_count": 20,
+    "route_count": 4,
     "route_mode": "Prepaid",
     "slug": "nscale"
   },
@@ -793,10 +793,10 @@
   },
   "sail-research": {
     "card_version": 2,
-    "model_count": 11,
+    "model_count": 8,
     "name": "Sail Research",
     "privacy": "Zero retention",
-    "route_count": 11,
+    "route_count": 8,
     "route_mode": "Prepaid",
     "slug": "sail-research"
   },
@@ -856,10 +856,10 @@
   },
   "streamlake": {
     "card_version": 2,
-    "model_count": 20,
+    "model_count": 19,
     "name": "StreamLake",
     "privacy": "Policy documented",
-    "route_count": 20,
+    "route_count": 19,
     "route_mode": "Prepaid",
     "slug": "streamlake"
   },
@@ -874,10 +874,10 @@
   },
   "telnyx": {
     "card_version": 2,
-    "model_count": 19,
+    "model_count": 12,
     "name": "Telnyx",
     "privacy": "Zero retention",
-    "route_count": 38,
+    "route_count": 24,
     "route_mode": "Prepaid + BYOK",
     "slug": "telnyx"
   },
@@ -910,10 +910,10 @@
   },
   "together": {
     "card_version": 2,
-    "model_count": 12,
+    "model_count": 10,
     "name": "Together",
     "privacy": "Zero retention",
-    "route_count": 24,
+    "route_count": 20,
     "route_mode": "Prepaid + BYOK",
     "slug": "together"
   },
@@ -973,10 +973,10 @@
   },
   "wafer": {
     "card_version": 2,
-    "model_count": 10,
+    "model_count": 9,
     "name": "Wafer",
     "privacy": "Policy documented",
-    "route_count": 20,
+    "route_count": 18,
     "route_mode": "Prepaid + BYOK",
     "slug": "wafer"
   },

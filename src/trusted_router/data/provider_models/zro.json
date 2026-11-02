@@ -246,7 +246,7 @@
         "prompt_caching"
       ],
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 600000,
       "cached_input_token_price_per_m": 12000,
@@ -255,7 +255,7 @@
   ],
   "source": "https://zro.moonmath.ai/v1/models",
   "pricing_source": "https://zro.moonmath.ai/docs/models",
-  "generated_at": "2026-11-01T19:12:14Z",
+  "generated_at": "2026-11-02T07:28:46Z",
   "price_scale": "microdollars_per_million",
   "model_count": 9
 }

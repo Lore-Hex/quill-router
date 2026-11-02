@@ -18,7 +18,7 @@
       "id": "mistralai/codestral-2508",
       "upstream_id": "codestral-2508",
       "context_length": 256000,
-      "created": 1793560278,
+      "created": 1793604468,
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 900000,
       "supports_reasoning": false,
@@ -53,7 +53,9 @@
         "function-calling"
       ],
       "cached_input_token_price_per_m": 50000,
-      "missing_since": "2026-11-01"
+      "missing_since": "2026-11-01",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "mistral-medium-latest",
@@ -78,13 +80,14 @@
       "created": 1792497862,
       "input_token_price_per_m": 1500000,
       "output_token_price_per_m": 7500000,
-      "routable": true,
+      "routable": false,
       "supports_reasoning": true,
       "supported_features": [
         "function-calling"
       ],
       "cached_input_token_price_per_m": 150000,
-      "missing_since": "2026-11-01"
+      "missing_since": "2026-11-01",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "mistral-small-2603",
@@ -104,7 +107,7 @@
       "id": "mistralai/mistral-small-2603",
       "upstream_id": "mistral-small-2603",
       "context_length": 262144,
-      "created": 1793560278,
+      "created": 1793604468,
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 600000,
       "supports_reasoning": true,
@@ -131,7 +134,7 @@
       "id": "mistralai/ministral-14b-2512",
       "upstream_id": "ministral-14b-2512",
       "context_length": 262144,
-      "created": 1793560278,
+      "created": 1793604468,
       "supports_reasoning": false,
       "supported_features": [
         "function-calling"
@@ -158,7 +161,7 @@
       "id": "mistralai/ministral-3b-2512",
       "upstream_id": "ministral-3b-2512",
       "context_length": 131072,
-      "created": 1793560278,
+      "created": 1793604468,
       "supports_reasoning": false,
       "supported_features": [
         "function-calling"
@@ -185,7 +188,7 @@
       "id": "mistralai/ministral-8b-2512",
       "upstream_id": "ministral-8b-2512",
       "context_length": 262144,
-      "created": 1793560278,
+      "created": 1793604468,
       "supports_reasoning": false,
       "supported_features": [
         "function-calling"
@@ -212,7 +215,7 @@
       "id": "mistralai/mistral-large-4",
       "upstream_id": "mistral-large-4",
       "context_length": 1048576,
-      "created": 1793560278,
+      "created": 1793604468,
       "supports_reasoning": true,
       "supported_features": [
         "function-calling"
@@ -223,7 +226,7 @@
     }
   ],
   "source": "https://api.mistral.ai/v1/models",
-  "generated_at": "2026-11-01T19:12:14Z",
+  "generated_at": "2026-11-02T07:28:46Z",
   "price_scale": "microdollars_per_million",
   "model_count": 8,
   "pricing_source": "https://docs.mistral.ai/inference/pricing"
