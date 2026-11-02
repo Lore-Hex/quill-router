@@ -891,6 +891,21 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 		o.Run(ctx)
 		return nil
 	})
+	p.run("owner tally", func(ctx context.Context) error {
+		t := time.NewTicker(time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				// The period's last part: a stopping node's answers are
+				// what a hand-off's slow ones would be.
+				log.Print(ownerTallyLine(o.TakeTally()))
+				return nil
+			case <-t.C:
+				log.Print(ownerTallyLine(o.TakeTally()))
+			}
+		}
+	})
 	l, err := frontdoor.NewLocal(o, cfg.Address, cfg.Region, cfg.Key)
 	if err != nil {
 		return err
@@ -1291,4 +1306,20 @@ func writeAlertOf(w io.Writer, subject, what, kind string) {
 	// agent's special field included, is parsed but outranked by the
 	// priority (seen in Cloud Logging as INFO alerts, 2026-10-14).
 	fmt.Fprintln(w, "<3>"+string(line))
+}
+
+// ownerTallyLine is the owner's period line: what its records waited from
+// hand-over to acknowledgement, the most a lease awaited at once, the
+// publishes that failed, and how long heartbeats and terminals took to
+// answer, each slow count past a second, the front door's wait for an owner.
+func ownerTallyLine(t owner.Tally) string {
+	var avg time.Duration
+	if t.Acks > 0 {
+		avg = t.AckTotal / time.Duration(t.Acks)
+	}
+	return fmt.Sprintf("fastpath owner: acks=%d ack_avg_ms=%d ack_max_ms=%d acks_slow=%d depth_max=%d "+
+		"publish_failures=%d heartbeats=%d heartbeat_max_ms=%d heartbeats_slow=%d terminals=%d "+
+		"terminal_max_ms=%d terminals_slow=%d", t.Acks, avg.Milliseconds(), t.AckMax.Milliseconds(), t.AcksSlow,
+		t.DepthMax, t.PublishFailures, t.Heartbeats, t.HeartbeatMax.Milliseconds(), t.HeartbeatsSlow, t.Terminals,
+		t.TerminalMax.Milliseconds(), t.TerminalsSlow)
 }

@@ -194,6 +194,8 @@ func add(xs ...int64) (int64, bool) {
 type Owner struct {
 	cfg Config
 	pub Publisher
+	// tally is the period's, for the log line (TakeTally).
+	tally tally
 
 	// ctx ends when the owner stops; writers are its shortfall writers,
 	// which outlive the leases they write for. rounds are its renewal
@@ -410,11 +412,14 @@ type decision struct {
 // publish, and done, closed once it is acknowledged (at ackedAt, before the
 // cutoff or not).
 type sent struct {
-	seq          int64
-	data         []byte
-	freed        int64
-	waiter       Waiter
-	done         chan struct{}
+	seq      int64
+	data     []byte
+	freed    int64
+	waiter   Waiter
+	done     chan struct{}
+	handedAt time.Time
+	// failCounted is whether this publish's failure is in the tally.
+	failCounted  bool
 	acked        bool
 	ackedAt      time.Time
 	beforeCutoff bool
