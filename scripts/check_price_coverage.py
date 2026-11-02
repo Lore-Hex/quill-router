@@ -900,7 +900,18 @@ def _provider_glm_model_ids(payload: Any) -> set[str]:
     return discovered
 
 
-def _is_required_provider_glm_model_id(model_id: str) -> bool:
+# Reviewed provider GLM ids that stay review warnings until the provider
+# publishes a price. A suffix alone never proves equivalence, so each pair is
+# named here after checking the provider's own catalog and pricing page.
+_REVIEWED_UNPRICED_PROVIDER_GLM_IDS: frozenset[tuple[str, str]] = frozenset({
+    # parasail-glm-53-flash-fast / zai-org/GLM-5.3-Flash-fast: a speed tier of
+    # the GLM-5.3 Flash Parasail already serves; its pricing page lists no rate
+    # for it (2026-11-02). It blocked every provider's catalog publication.
+    ("parasail", "z-ai/glm-5.3-flash-fast"),
+})
+
+
+def _is_required_provider_glm_model_id(model_id: str, slug: str | None = None) -> bool:
     """Return true for new flagship GLM releases that must be published.
 
     Provider APIs expose many legacy GLM variants. Those are useful visibility
@@ -908,6 +919,8 @@ def _is_required_provider_glm_model_id(model_id: str) -> bool:
     published flagship line; future GLM 5.x and 6.x+ releases should fail closed
     until the catalog has explicit routes/prices.
     """
+    if (slug, model_id) in _REVIEWED_UNPRICED_PROVIDER_GLM_IDS:
+        return False
     match = re.match(r"^z-ai/glm-(\d+)(?:\.(\d+))?(?:-[a-z0-9-]+)?$", model_id)
     if not match:
         return False
@@ -1019,14 +1032,14 @@ def _model_discovery_audit(
             model_id
             for model_id in missing
             if _required_discovery_model(slug, model_id)
-            or _is_required_provider_glm_model_id(model_id)
+            or _is_required_provider_glm_model_id(model_id, slug)
         )
         optional_missing = sorted(missing - set(required_missing))
         required_new_unresolved = sorted(
             model_id
             for model_id in unresolved_live & new_unresolved
             if _required_discovery_model(slug, model_id)
-            or _is_required_provider_glm_model_id(model_id)
+            or _is_required_provider_glm_model_id(model_id, slug)
         )
         older_unresolved = sorted(unresolved_live - set(required_new_unresolved))
         if required_missing:
@@ -1078,7 +1091,7 @@ def _model_discovery_audit(
             continue
         missing = sorted(discovered - published)
         required_missing = [
-            model_id for model_id in missing if _is_required_provider_glm_model_id(model_id)
+            model_id for model_id in missing if _is_required_provider_glm_model_id(model_id, slug)
         ]
         optional_missing = [model_id for model_id in missing if model_id not in required_missing]
         if required_missing:

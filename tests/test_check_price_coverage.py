@@ -938,6 +938,49 @@ def test_provider_glm_required_gate_targets_current_flagships() -> None:
     assert not check_price_coverage._is_required_provider_glm_model_id("z-ai/glm-4.7-h")
 
 
+def test_reviewed_unpriced_glm_tier_is_exempt_only_at_its_provider() -> None:
+    required = check_price_coverage._is_required_provider_glm_model_id
+    # Parasail listed GLM-5.3 Flash's fast tier with no published price.
+    assert not required("z-ai/glm-5.3-flash-fast", "parasail")
+    # The same id at another provider, or with no provider, is still a release.
+    assert required("z-ai/glm-5.3-flash-fast", "together")
+    assert required("z-ai/glm-5.3-flash-fast")
+    # A suffix never proves equivalence: an unreviewed tier still blocks.
+    assert required("z-ai/glm-5.3-fast", "parasail")
+    assert required("z-ai/glm-6-fast", "parasail")
+
+
+@pytest.mark.parametrize(
+    ("live_id", "blocks"),
+    [("zai-org/GLM-5.3-Flash-fast", False), ("zai-org/GLM-6-fast", True)],
+)
+def test_parasail_audit_blocks_only_unreviewed_glm_ids(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, live_id: str, blocks: bool,
+) -> None:
+    rows = [{"id": "z-ai/glm-5.3-flash", "upstream_id": "zai-org/GLM-5.3-Flash"}]
+    (tmp_path / "parasail.json").write_text(json.dumps({"models": rows}), encoding="utf-8")
+    monkeypatch.setattr(check_price_coverage, "MANIFEST_DIR", tmp_path)
+    monkeypatch.setattr(
+        check_price_coverage, "_GLM_DISCOVERABLE_PROVIDER_APIS",
+        (("parasail", "https://api.parasail.io/v1/models", ("PARASAIL_API_KEY",)),),
+    )
+    monkeypatch.setattr(
+        check_price_coverage, "_DISCOVERABLE_MANIFEST_PROVIDERS",
+        (("parasail", "https://api.parasail.io/v1/models", ("PARASAIL_API_KEY",),
+          check_price_coverage._normalize_glm_model_id),),
+    )
+    warnings, _info = check_price_coverage._model_discovery_audit(
+        fetch_text=lambda _url: "No model announcements",
+        fetch_json=lambda _url, _env: {"data": [{"id": "zai-org/GLM-5.3-Flash"}, {"id": live_id}]},
+        published_model_ids={"z-ai/glm-5.3-flash"},
+    )
+    tier = check_price_coverage._normalize_glm_model_id(live_id)
+    blocking = [w for w in warnings if tier in w and ("current model API" in w or "required" in w)]
+    assert bool(blocking) is blocks, warnings
+    # The reviewed tier is still visible for review.
+    assert any(tier in w for w in warnings), warnings
+
+
 def test_direct_provider_discovery_uses_route_canonical_ids() -> None:
     normalizers = {
         slug: normalize
