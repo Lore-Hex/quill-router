@@ -368,3 +368,33 @@ code, watchdog, admission bounds and no-retry rule remain unchanged. This repair
 a reproduced test scheduling defect, not evidence of a production stall repair
 or retrospective clearance of either failed CI attempt. Fresh full local gates
 and exact-head/main CI remain required for the amended tree.
+
+### Kling Video 3.0 audit returned no rates
+
+Normal refresh 41396613445 failed its coverage gate at November 2 05:57 UTC,
+before commit, generated-source CI or publication. Its only hard coverage
+failure was the Kling Video 3.0 credit contract. The unrelated provider-scoped
+discovery warnings were not publication blockers.
+
+A bounded read using the unchanged discovery fetcher at 05:58:57 returned the
+expected 66 credits per USD from the official policy but no parsed per-second
+rates from the 76,870-character guide response. Other fresh reads of the same
+official guide returned all existing rates (2, 6, 8, 9 and 12 credits/second).
+The original workflow did not retain its fetched documents, so these reads
+reproduce the empty-result failure mode, not its exact response body or the
+provider-side cause of incomplete delivery.
+
+The auditor already retries fetch/parser failures three times, but an empty
+rate set was treated as a completed parse and skipped that retry loop. Use the
+same three-attempt budget for an empty guide. If no complete result arrives,
+keep publication blocked, including when a later attempt times out. A nonempty
+rate mismatch or a changed credits-per-dollar value still fails immediately;
+never retry an observed price change away. The expected rates, source URLs,
+fixed-cost billing, publication gate and last known-good catalog are unchanged.
+This does not activate Kling 4.0 or duplicate the separately held PR 2179.
+
+Six regression cases failed on the original auditor. All 16 video-price audit
+tests pass after the correction, including persistent missing data, a later
+timeout, a zero rate, a partial changed rate table and credit-policy drift.
+Full local and exact-head/main CI remain required before a fresh guarded
+catalog refresh can qualify this correction in production.

@@ -167,12 +167,25 @@ def _audit_kling(fetch_text: Callable[[str], str]) -> VideoPriceAudit:
     last_error: Exception | None = None
     credits_per_usd: int | None = None
     rates: frozenset[int] | None = None
+    missing_rates_seen = False
     for _attempt in range(3):
         try:
             credits_per_usd = parse_kling_credit_policy(
                 fetch_text(KLING_CREDITS_POLICY_URL)
             )
+            if credits_per_usd != _KLING_CREDITS_PER_USD:
+                return _provider_failure(
+                    "kling",
+                    "does not match the production Video 3.0 credit contract",
+                    hard=True,
+                )
             rates = parse_kling_video3_rates(fetch_text(KLING_VIDEO_GUIDE_URL))
+            if not rates:
+                # An incomplete SSR response must use the same bounded retry
+                # budget, without turning persistent missing data into a pass.
+                missing_rates_seen = True
+                last_error = ValueError("Video 3.0 guide contains no credit rates")
+                continue
             break
         except Exception as exc:  # noqa: BLE001 - network/parser errors are audit results
             last_error = exc
@@ -181,7 +194,7 @@ def _audit_kling(fetch_text: Callable[[str], str]) -> VideoPriceAudit:
         return _provider_failure(
             "kling",
             f"unavailable ({type(last_error).__name__}: {last_error})",
-            hard=False,
+            hard=missing_rates_seen,
         )
     assert credits_per_usd is not None
     assert rates is not None
