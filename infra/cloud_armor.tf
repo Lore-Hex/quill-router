@@ -13,10 +13,11 @@
 # their own credentials before it merges (see "Cloud Armor policies" in
 # README.md); otherwise the post-merge apply fails on the permission check.
 #
-# Attachments: the backend services belong to the deploy scripts
-# (scripts/deploy/public_surface_edge.sh, internal_surface_edge.sh), not to
-# this root. The check blocks at the end only verify, on every plan, that each
-# backend still uses its policy.
+# Attachments: the original control/public/internal backend services belong
+# to the deploy scripts (public_surface_edge.sh, internal_surface_edge.sh).
+# Their checks below verify the live attachments. The fast-path edge and
+# control_terminal_c1 backends belong to this root and reference legacy_edge
+# directly, including its enforced rules and trusted client-IP overwrite.
 #
 # Two live descriptions still say "previewed" from the rollout. Every rule is
 # enforced (preview = false). They are kept verbatim so that adoption is a
@@ -296,5 +297,14 @@ check "public_backend_uses_public_edge" {
   assert {
     condition     = endswith(coalesce(data.google_compute_backend_service.public.security_policy, "-"), "/securityPolicies/${google_compute_security_policy.public_edge.name}")
     error_message = "trusted-router-public-backend no longer uses the trusted-router-public-edge Cloud Armor policy."
+  }
+}
+
+# The direct terminal backend is Terraform-owned; checking the resource avoids
+# a data-source read before its first creation.
+check "terminal_backend_uses_legacy_edge" {
+  assert {
+    condition     = google_compute_backend_service.control_terminal_c1.security_policy == google_compute_security_policy.legacy_edge.id
+    error_message = "The terminal backend must use the control backend's legacy edge policy."
   }
 }

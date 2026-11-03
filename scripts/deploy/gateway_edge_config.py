@@ -14,6 +14,7 @@ if __package__:
     from .service_surface_url_map import (
         _MATCHER_NAME,
         _PATTERNS,
+        billing_override_rules,
         existing_gateway_backend,
         rewrite_url_map,
     )
@@ -21,6 +22,7 @@ else:
     from service_surface_url_map import (
         _MATCHER_NAME,
         _PATTERNS,
+        billing_override_rules,
         existing_gateway_backend,
         rewrite_url_map,
     )
@@ -84,14 +86,14 @@ def regions(primary: str, failovers: str, enclaves: str) -> list[str]:
 OUTPUT_ONLY = {"id", "creationTimestamp", "selfLink", "kind", "fingerprint", "usedBy"}
 # API defaults can be absent from imports and present on read-back. Normalize
 # only known defaults, never discard unknown fields: additions must be reviewed.
-BACKEND_DEFAULTS = {
+BACKEND_DEFAULTS: dict[str, Any] = {
     "description": "", "affinityCookieTtlSec": 0, "port": 80, "portName": "http",
     "timeoutSec": 30, "protocol": "HTTP", "sessionAffinity": "NONE",
     "compressionMode": "DISABLED", "connectionDraining": {"drainingTimeoutSec": 0},
     "customRequestHeaders": [], "customResponseHeaders": [], "healthChecks": [],
     "iap": {"enabled": False}, "enableCDN": False,
 }
-OUTLIER_DEFAULTS = {
+OUTLIER_DEFAULTS: dict[str, Any] = {
     "consecutiveErrors": 5, "consecutiveGatewayFailure": 3,
     "enforcingConsecutiveErrors": 0, "enforcingConsecutiveGatewayFailure": 100,
     "interval": {"seconds": 1, "nanos": 0},
@@ -247,7 +249,7 @@ def candidate(live: dict[str, Any], gateway: str, domains: list[str]) -> dict[st
         raise ValueError("requires existing service-surface matcher; run public cutover first")
     gateway = str(gateway)
     previous_gateway = existing_gateway_backend(live)
-    if len(matchers[0].get("pathRules", [])) != 4 + bool(previous_gateway):
+    if len(matchers[0].get("pathRules", [])) != 4 + bool(previous_gateway) + len(billing_override_rules(live)):
         raise ValueError("unrecognized live path rules; refusing to discard them")
     links = []
     for patterns in _PATTERNS.values():

@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -189,6 +190,48 @@ _PATTERNS: dict[Surface, tuple[str, ...]] = {
     "control": CONTROL_PATH_PATTERNS,
     "internal": INTERNAL_PATH_PATTERNS,
 }
+# The enclave's terminal POSTs. The disposition GET stays on /internal/*: it is
+# a recovery read, and pathRules only support a trailing /*, which would also
+# capture the by-gateway-request-id lookup.
+TERMINAL_PATH_PATTERNS = (
+    "/internal/gateway/settle",
+    "/internal/gateway/heartbeat",
+    "/internal/gateway/refund",
+    "/v1/internal/gateway/settle",
+    "/v1/internal/gateway/heartbeat",
+    "/v1/internal/gateway/refund",
+)
+TERMINAL_BACKEND_NAME = "trusted-router-control-terminal-c1-backend"
+
+
+def terminal_route_weight() -> int:
+    """One switch for Terraform and every renderer caller; fail closed on drift."""
+    source = (Path(__file__).resolve().parents[2] / "infra/control_terminal_backend.tf").read_text()
+    weights = re.findall(r"^\s*terminal_c1_route_weight\s*=\s*(\d+)\s*$", source, re.MULTILINE)
+    if len(weights) != 1 or not 0 <= int(weights[0]) <= 100:
+        raise ValueError("expected one terminal_c1_route_weight integer in [0, 100]")
+    return int(weights[0])
+
+
+def billing_override_rules(existing: dict[str, Any]) -> list[dict[str, Any]]:
+    """Recognize the narrow overrides without confusing them with gateway/*."""
+    found = []
+    seen: set[str] = set()
+    for matcher in existing.get("pathMatchers", []):
+        if matcher.get("name") != _MATCHER_NAME:
+            continue
+        for rule in matcher.get("pathRules", []):
+            paths = set(rule.get("paths", []))
+            if paths & (set(TERMINAL_PATH_PATTERNS) | {"/internal/gateway/authorize"}):
+                kind = "authorize" if paths == {"/internal/gateway/authorize"} else "terminals"
+                expected = {"/internal/gateway/authorize"} if kind == "authorize" else set(TERMINAL_PATH_PATTERNS)
+                if paths != expected or kind in seen or not rule.get("routeAction"):
+                    raise ValueError("ambiguous billing override; refusing to discard live routing")
+                seen.add(kind)
+                found.append(rule)
+    return found
+
+
 _MATCHER_NAME = "trusted-router-service-surfaces"
 _OUTPUT_ONLY_KEYS = {
     "creationTimestamp",
@@ -233,12 +276,14 @@ def is_gateway_path(path: str) -> bool:
 
 def existing_gateway_backend(existing: dict[str, Any]) -> str | None:
     """Preserve an installed override; refuse partial/ambiguous gateway rules."""
+    overrides = billing_override_rules(existing)
     rules = [
         rule
         for matcher in existing.get("pathMatchers", [])
         if matcher.get("name") == _MATCHER_NAME
         for rule in matcher.get("pathRules", [])
-        if any(is_gateway_path(path.removesuffix("*")) for path in rule.get("paths", []))
+        if rule not in overrides
+        and any(is_gateway_path(path.removesuffix("*")) for path in rule.get("paths", []))
     ]
     if not rules:
         return None
@@ -294,9 +339,9 @@ def rewrite_url_map(
 ) -> dict[str, Any]:
     """Render four surfaces, optionally overriding gateway backend placement.
 
-    Omitting gateway_backend retains the original four-surface output. CLI
-    callers that rewrite a live map can explicitly preserve an installed
-    override with --preserve-gateway-backend.
+    Terminal routing always uses the shared Terraform switch. An existing
+    authorize override is retained verbatim. CLI callers can also preserve an
+    installed gateway wildcard override with --preserve-gateway-backend.
     """
     if existing.get("defaultUrlRedirect") is not None:
         raise ValueError("cannot convert a redirect-only URL map into the HTTPS service map")
@@ -362,6 +407,24 @@ def rewrite_url_map(
         path_matchers[-1]["pathRules"].append(
             {"paths": list(GATEWAY_PATH_PATTERNS), "service": gateway_backend}
         )
+    # Exact terminals beat both /internal/* and an optional gateway/* override.
+    # Use the control backend, not an optional internal/gateway split backend.
+    weight = terminal_route_weight()
+    terminal_backend = control_backend.rsplit("/", 1)[0] + "/" + TERMINAL_BACKEND_NAME if "/" in control_backend else TERMINAL_BACKEND_NAME
+    terminal_rule = {
+        "paths": list(TERMINAL_PATH_PATTERNS),
+        "routeAction": {
+            "timeout": {"seconds": 30},
+            "weightedBackendServices": [
+                {"backendService": control_backend, "weight": 100 - weight},
+                {"backendService": terminal_backend, "weight": weight},
+            ],
+        },
+    }
+    path_matchers[-1]["pathRules"].append(terminal_rule)
+    for override in billing_override_rules(existing):
+        if override["paths"] == ["/internal/gateway/authorize"]:
+            path_matchers[-1]["pathRules"].append(copy.deepcopy(override))
     host_rules.append(
         {
             "hosts": first_party_hosts(tuple(domain_set)),
@@ -382,10 +445,18 @@ def rewrite_url_map(
         host = str(test.get("host") or "")
         if _is_first_party_host(host, managed_hosts):
             path = str(test.get("path") or "/")
-            test["service"] = (
-                gateway_backend if gateway_backend and is_gateway_path(path)
-                else backend_for[route_surface(path)]
-            )
+            if path in TERMINAL_PATH_PATTERNS:
+                test["service"] = terminal_backend if weight == 100 else control_backend
+            elif path == "/internal/gateway/authorize" and any(
+                rule["paths"] == [path] for rule in billing_override_rules(existing)
+            ):
+                # The authorize rule and its live test assertions stay unchanged.
+                continue
+            else:
+                test["service"] = (
+                    gateway_backend if gateway_backend and is_gateway_path(path)
+                    else backend_for[route_surface(path)]
+                )
     return result
 
 

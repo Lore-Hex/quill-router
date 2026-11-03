@@ -124,7 +124,7 @@ def test_gateway_generator_contract_and_all_registered_routes():
                           configure_store_arg=False, init_observability=False)
     assert gateway_paths <= route_paths(internal)
     for path in paths | {"/internal/gateway", "/v1/internal/gateway", "/internal/gatewayish/x"}:
-        wanted = GATEWAY if path in gateway_paths or path in {
+        wanted = GATEWAY if (path in gateway_paths and path not in URL_MAP.TERMINAL_PATH_PATTERNS) or path in {
             "/internal/gateway", "/v1/internal/gateway"} else _resolve_backend(old, "trustedrouter.com", path)
         assert _resolve_backend(generated, "trustedrouter.com", path) == wanted, path
     assert generated["tests"][0]["service"] == GATEWAY
@@ -141,12 +141,21 @@ def test_other_edge_cutovers_preserve_gateway(tmp_path, edge):
     harness = DeployScriptHarness(tmp_path / edge)
     before = CONFIG.candidate(live_map(), GATEWAY,
                              ["trustedrouter.com", "allyrouter.com", "uptimerouter.com"])
+    authorize = {
+        "paths": ["/internal/gateway/authorize"],
+        "routeAction": {"timeout": {"seconds": 24}, "weightedBackendServices": [
+            {"backendService": f"{BASE}/global/backendServices/trusted-router-control-backend", "weight": 0},
+            {"backendService": f"{BASE}/global/backendServices/tr-fastpath-edge-backend", "weight": 100},
+        ]},
+    }
+    before["pathMatchers"][-1]["pathRules"].append(authorize)
     (harness.root / "url-map-state.json").write_text(json.dumps(before))
     result = harness.run(f"scripts/deploy/{edge}_surface_edge.sh", args=("cutover",),
                          extra_env={f"TR_{edge.upper()}_EDGE_STATE_DIR": str(tmp_path / "state")})
     assert result.returncode == 0, summarise(result)
     after = json.loads((harness.root / "url-map-state.json").read_text())
     assert URL_MAP.existing_gateway_backend(after) == GATEWAY
+    assert authorize in after["pathMatchers"][-1]["pathRules"]
     assert _resolve_backend(after, "trustedrouter.com", "/internal/other") .endswith(
         "/trusted-router-internal-backend" if edge == "internal" else "/trusted-router-control-backend")
 
@@ -339,7 +348,7 @@ def test_cutover_capture_and_rollback_preserve_other_routes(tmp_path, monkeypatc
     result = run(harness, "cutover")
     assert result.returncode == 0, summarise(result)
     after = json.loads((harness.root / "url-map-state.json").read_text())
-    assert _resolve_backend(after, "trustedrouter.com", "/internal/gateway/settle") == GATEWAY
+    assert _resolve_backend(after, "trustedrouter.com", "/internal/gateway/settle").endswith("/trusted-router-control-backend")
     assert _resolve_backend(after, "trustedrouter.com", "/internal/other").endswith("/" + internal)
     capture = json.loads((harness.root / "state/trusted-router-control-map.pre-gateway-cutover.capture.json").read_text())
     assert json.loads(base64.b64decode(capture["source_json_base64"])) == before
@@ -377,7 +386,7 @@ def test_generator_refuses_partial_gateway_rule():
     live = live_map()
     live["pathMatchers"][-1]["pathRules"].append(
         {"paths": ["/internal/gateway/authorize"], "service": GATEWAY})
-    with pytest.raises(ValueError, match="ambiguous gateway"):
+    with pytest.raises(ValueError, match="ambiguous billing override"):
         URL_MAP.existing_gateway_backend(live)
 
 

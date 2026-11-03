@@ -2,9 +2,9 @@
 # 2026-10-19 (docs/design/fast-admission-enclave-direct.md, E1): every host
 # the control plane and the token exchange sites answer on, routed to the
 # public and control Cloud Run backends and the exchange sites' bucket. The
-# backend services, the backend bucket and the forwarding rule are not
-# managed here and are named by their self links. The edge's route for the
-# enclave's calls is added here once this map is state.
+# original backend services, the backend bucket and forwarding rule are
+# named by self links. The fast-path edge and direct us-central1 terminal
+# backend are Terraform-owned resources referenced by their route actions.
 #
 # The exchange sites' rules come from sites/token-exchange/markets.json, one
 # matcher for a market's domain and one for its aliases' redirects, in the
@@ -110,6 +110,31 @@ resource "google_compute_url_map" "control" {
     path_rule {
       paths   = ["/internal", "/internal/*", "/v1/internal", "/v1/internal/*"]
       service = "projects/${local.gcp_project_id}/global/backendServices/trusted-router-control-backend"
+    }
+    # The enclave's terminal POSTs, sent to Cloud Run in us-central1 beside the
+    # Spanner leader once local.terminal_c1_route_weight is 100
+    # (docs/runbooks/control-terminals-us-central1.md). The disposition GET stays
+    # on /internal/*: it is a recovery read, every region reads the same
+    # database, and a path rule cannot match its interior authorization id.
+    path_rule {
+      paths = [
+        "/internal/gateway/settle", "/internal/gateway/heartbeat", "/internal/gateway/refund",
+        "/v1/internal/gateway/settle", "/v1/internal/gateway/heartbeat", "/v1/internal/gateway/refund",
+      ]
+      route_action {
+        # Never inherit another backend's deadline, including at weight zero.
+        timeout {
+          seconds = 30
+        }
+        weighted_backend_services {
+          backend_service = "projects/${local.gcp_project_id}/global/backendServices/trusted-router-control-backend"
+          weight          = 100 - local.terminal_c1_route_weight
+        }
+        weighted_backend_services {
+          backend_service = google_compute_backend_service.control_terminal_c1.id
+          weight          = local.terminal_c1_route_weight
+        }
+      }
     }
     # The enclave's authorize (docs/design/fast-admission-enclave-direct.md,
     # E1): a share of it through the fast path's edge, which checks the boot

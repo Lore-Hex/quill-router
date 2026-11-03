@@ -144,7 +144,7 @@ STUBBED_COMMANDS: tuple[str, ...] = (
 #: Directories whose real contents the scripts read (SQL schemas, the package
 #: they tar up). Copied rather than symlinked so nothing a script does can
 #: reach the checkout the test suite is running from.
-MIRRORED = ("clickhouse", "src", "scripts")
+MIRRORED = ("clickhouse", "src", "scripts", "infra")
 
 #: ~10MB of web assets no deploy script reads; the drain installer excludes the
 #: same three by name when it builds its payload.
@@ -840,7 +840,7 @@ services = []
 def collect(value):
     if isinstance(value, dict):
         for key, item in value.items():
-            if key in {"defaultService", "service"} and isinstance(item, str):
+            if key in {"defaultService", "service", "backendService"} and isinstance(item, str):
                 services.append(item)
             collect(item)
     elif isinstance(value, list):
