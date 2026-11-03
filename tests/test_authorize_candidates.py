@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from fastapi import HTTPException
 
 from trusted_router import authorize_candidates
 from trusted_router.authorize_candidates import (
@@ -228,3 +229,50 @@ def test_a_stream_reserves_its_whole_budget_for_now() -> None:
     )
     assert outcome.model_reservation == outcome.model_estimate == _credits_cost(resolved, 131_072)
     assert outcome.model_reservation > _credits_cost(resolved, HOLD_OUTPUT_TOKENS)
+
+
+def _decide_refusal(model: str, route_type: str = "decide") -> str:
+    request = _request(model, route_type)
+    plan = plan_route(request, Settings(environment="test"), region="us-central1")
+    with pytest.raises(HTTPException) as refusal:
+        resolve_candidates(plan, request, region="us-central1", at=AT)
+    assert refusal.value.status_code == 400
+    error = refusal.value.detail["error"]
+    assert error["type"] == "model_not_supported"
+    return str(error["message"])
+
+
+def test_an_unknown_model_on_decide_is_called_unknown_not_unchatty() -> None:
+    assert _decide_refusal("nope/unknown-model") == (
+        "Unknown model: nope/unknown-model. A decision takes a decision model or a chat model "
+        "from GET /v1/models"
+    )
+    # Chat keeps its own wording.
+    assert _decide_refusal("nope/unknown-model", "chat.completions") == (
+        "Model does not support chat completions: nope/unknown-model"
+    )
+
+
+def test_openrouters_jev_name_is_answered_with_ours_by_an_older_gateway() -> None:
+    from trusted_router.catalog_data import DECIDE_MODEL_ALIASES
+
+    assert DECIDE_MODEL_ALIASES["typesafe/jev-1.13"] == "typesafe-ai/jev"
+    assert "typesafe/jev-1.13" not in MODELS
+    assert MODELS["typesafe-ai/jev"].supports_decide
+    assert _decide_refusal("typesafe/jev-1.13") == (
+        'Unknown model: typesafe/jev-1.13. Send "model": "typesafe-ai/jev"'
+    )
+
+
+def test_a_known_model_with_no_decide_or_chat_surface_says_decisions() -> None:
+    model = next(
+        m.id for m in sorted(MODELS.values(), key=lambda m: m.id)
+        if not (m.supports_chat or m.supports_decide or m.supports_embeddings)
+    )
+    assert _decide_refusal(model) == f"Model does not support decisions: {model}"
+
+
+def test_a_decision_model_with_a_suffix_is_told_to_drop_it() -> None:
+    assert _decide_refusal("typesafe-ai/jev:nitro") == (
+        "Decision model typesafe-ai/jev takes no variant suffix or fallback models"
+    )

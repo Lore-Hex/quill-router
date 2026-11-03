@@ -103,7 +103,7 @@ def _model_spellings() -> list[str]:
         *PRIVATE_PROXY_MODEL_TARGETS,
         "gpt-4.1", "gpt-4.1-2025-04-14", "openai/gpt-4.1-2025-04-14", "gpt-4o-mini",
         "nyte/auto", "trustedrouter/auto-routing", "trustedrouter/auto:nitro",
-        "trustedrouter/confidential-2025-04-14", "nope/unknown-model",
+        "trustedrouter/confidential-2025-04-14", "nope/unknown-model", "typesafe/jev-1.13", "typesafe-ai/jev:nitro",
         f"{plain[0]}:nitro", f"{plain[1]}:floor", f"{plain[2]}-2026-01-01",
         f"{next(iter(NAMED_DECISION_MODEL_PROVIDERS))}:nitro",
     ]
@@ -230,6 +230,29 @@ def _reference_context_candidates(candidates: Any, body: GatewayAuthorizeRequest
     return RoutingCandidates(kept, candidates.effective_preferences)
 
 
+def _reference_decide_refusal(exc: HTTPException, body: GatewayAuthorizeRequest) -> HTTPException:
+    """An independent statement of the approved decide wording (#jev-alias).
+
+    On route_type "decide", a model the chat arm cannot take is named for what
+    it is: unknown (with OpenRouter's Jev spelling answered by our id), or
+    known but unable to decide. Chat routes keep the frozen message.
+    """
+    prefix = "Model does not support chat completions: "
+    message = exc.detail.get("error", {}).get("message", "") if isinstance(exc.detail, dict) else ""
+    if body.route_type != "decide" or not message.startswith(prefix):
+        return exc
+    model = message.removeprefix(prefix)
+    if model in MODELS and MODELS[model].supports_decide:
+        text = f"Decision model {model} takes no variant suffix or fallback models"
+    elif model in MODELS:
+        text = f"Model does not support decisions: {model}"
+    elif model == "typesafe/jev-1.13":
+        text = 'Unknown model: typesafe/jev-1.13. Send "model": "typesafe-ai/jev"'
+    else:
+        text = f"Unknown model: {model}. A decision takes a decision model or a chat model from GET /v1/models"
+    return api_error(exc.status_code, text, exc.detail["error"]["type"])
+
+
 def _run(module: types.ModuleType, case: dict[str, Any], backend: str,
          monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> str:
     _deterministic_ids(monkeypatch)
@@ -282,7 +305,11 @@ def _run(module: types.ModuleType, case: dict[str, Any], backend: str,
             old_chat = module.chat_route_endpoint_candidates
 
             def reference_chat(*args: Any, **kwargs: Any) -> Any:
-                return _reference_context_candidates(old_chat(*args, **kwargs), body)
+                try:
+                    candidates = old_chat(*args, **kwargs)
+                except HTTPException as exc:
+                    raise _reference_decide_refusal(exc, body) from None
+                return _reference_context_candidates(candidates, body)
 
             scope.setattr(module, "chat_route_endpoint_candidates", reference_chat)
             old_available = module.provider_model_available_from_gateway_region

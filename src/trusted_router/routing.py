@@ -45,6 +45,7 @@ from trusted_router.catalog import (
     meta_candidate_models,
 )
 from trusted_router.catalog_capabilities import union_supported_parameters
+from trusted_router.catalog_data import DECIDE_MODEL_ALIASES
 from trusted_router.catalog_energy import GREEN_MODEL_ID, renewable_provider_slugs
 from trusted_router.config import Settings, get_settings
 from trusted_router.errors import api_error
@@ -293,11 +294,37 @@ def chat_route_candidates(
     return candidates
 
 
+def _unsupported_model_error(model_id: str, model: Model | None, *, decide: bool) -> HTTPException:
+    if not decide:
+        return api_error(
+            400,
+            f"Model does not support chat completions: {model_id}",
+            ErrorType.MODEL_NOT_SUPPORTED,
+        )
+    # A decision runs on a hosted decision model or on any chat model; "chat
+    # completions" would send the caller looking for the wrong problem.
+    if model is not None and model.supports_decide:
+        # A hosted decision model reaches this arm only through a spelling
+        # its own path does not take: a variant suffix or a fallback list.
+        message = f"Decision model {model_id} takes no variant suffix or fallback models"
+    elif model is not None:
+        message = f"Model does not support decisions: {model_id}"
+    elif model_id in DECIDE_MODEL_ALIASES:
+        message = f"Unknown model: {model_id}. Send \"model\": \"{DECIDE_MODEL_ALIASES[model_id]}\""
+    else:
+        message = (
+            f"Unknown model: {model_id}. A decision takes a decision model or a chat model "
+            "from GET /v1/models"
+        )
+    return api_error(400, message, ErrorType.MODEL_NOT_SUPPORTED)
+
+
 def chat_route_endpoint_candidates(
     inputs: NormalizedRoutingInputs | dict[str, Any],
     settings: Settings | None = None,
     *,
     defer_no_fallback_selection: bool = False,
+    decide: bool = False,
 ) -> RoutingCandidates[tuple[Model, ModelEndpoint]]:
     inputs = _coerce_routing_inputs(inputs, settings)
     raw_ids, prefs = list(inputs.model_ids), inputs.preferences
@@ -306,11 +333,7 @@ def chat_route_endpoint_candidates(
     for model_id in raw_ids:
         model = MODELS.get(model_id)
         if model is None or not model.supports_chat:
-            raise api_error(
-                400,
-                f"Model does not support chat completions: {model_id}",
-                ErrorType.MODEL_NOT_SUPPORTED,
-            )
+            raise _unsupported_model_error(model_id, model, decide=decide)
         for endpoint in endpoints_for_model(model.id):
             if endpoint.id in seen:
                 continue
