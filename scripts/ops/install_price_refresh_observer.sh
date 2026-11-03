@@ -39,7 +39,11 @@ test -r /run/systemd/resolve/stub-resolv.conf
 backup="/var/backups/tr-price-refresh-$(date -u +%Y%m%dT%H%M%SZ)"
 install -d -m 0700 "$backup" /etc/tr-price-refresh
 for path in /opt/tr-price-refresh /etc/systemd/system/price-refresh-observer.service /etc/systemd/system/price-refresh-observer.timer /etc/tr-price-refresh/ingest.dsn; do
-  if [[ -e "$path" ]]; then cp -a --parents "$path" "$backup/"; fi
+  if [[ -e "$path" ]]; then
+    # GNU cp 9.1 --parents can fail restoring absolute parents outside /.
+    install -d -m 0700 "$backup$(dirname "$path")"
+    cp -a -- "$path" "$backup$path"
+  fi
 done
 install -d -m 0755 /opt/tr-price-refresh
 install -m 0644 "$staging/scripts/price_refresh_alerts.py" /opt/tr-price-refresh/price_refresh_alerts.py
