@@ -121,21 +121,30 @@ def coordinate(script: Path, directory: Path, *, poll_seconds: float = 1,
             # A timeout is no cancellation: siblings ramping together may be
             # part way, and a killed ramp is left split. Let each refuse its
             # next shift and roll back first (staged_traffic.sh shift_traffic).
+            # A cancellation during the wait ends it, never the kill below.
             deadline = time.monotonic() + abort_grace
-            while active and time.monotonic() < deadline:
-                time.sleep(poll_seconds)
-                active = [worker for worker in active if worker.poll() is None]
-        for worker in active:
             try:
-                os.killpg(worker.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-        for worker in active:
-            try:
-                worker.wait(timeout=30)
-            except subprocess.TimeoutExpired:
-                os.killpg(worker.pid, signal.SIGKILL)
-                worker.wait()
+                while active and time.monotonic() < deadline:
+                    time.sleep(poll_seconds)
+                    active = [worker for worker in active if worker.poll() is None]
+            except InterruptedError:
+                stop([worker for _, worker, _ in workers if worker.poll() is None])
+                raise
+        stop(active)
+
+
+def stop(active: list[subprocess.Popen]) -> None:
+    for worker in active:
+        try:
+            os.killpg(worker.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    for worker in active:
+        try:
+            worker.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            os.killpg(worker.pid, signal.SIGKILL)
+            worker.wait()
 
 
 def main() -> int:

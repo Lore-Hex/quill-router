@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
+import signal
 import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -36,6 +40,8 @@ event('ramp')
 (ready.parent / (region + '.started')).touch()
 if region == os.environ.get('FAIL_EARLY'):
     sys.exit(1)
+if os.environ.get('HANG') or region == os.environ.get('HANG_REGION'):
+    time.sleep(60)
 if os.environ.get('SIBLING_ABORT'):
     # staged_traffic.sh: a shift after a sibling's failure rolls back instead.
     wait_for(abort.exists)
@@ -46,19 +52,24 @@ if os.environ.get('BARRIER'):
     # No region canaries until every region has begun its ramp.
     wait_for(lambda: all((ready.parent / (name + '.started')).exists()
                          for name in ('europe-west4', 'us-east4', 'southamerica-east1')))
-if os.environ.get('HANG') or region == os.environ.get('HANG_REGION'):
-    time.sleep(60)
 if os.environ.get('FAIL_LATE') and region == 'us-east4':
     wait_for(abort.exists)
     event('retained')
     event('billing')
     sys.exit(0)
 event('canary')
+bad = os.environ.get('BAD_HANDOFF_REGION')
+if bad and region != bad:
+    # staged_traffic.sh checks the abort file again before its handoff.
+    wait_for(abort.exists)
+    time.sleep(.2)
+    event('rolled_back')
+    sys.exit(1)
 if not os.environ.get('NO_HANDOFF'):
     # Match staged_traffic.sh: readers must never observe a partial handoff.
     pending = pathlib.Path(str(ready) + '.tmp')
-    pending.write_text(region + '\\n' + region + '-new\\n' +
-                       os.environ.get('HANDOFF_OPERATION', 'operation1') + '\\n')
+    operation = 'old-operation' if region == bad else os.environ.get('HANDOFF_OPERATION', 'operation1')
+    pending.write_text(region + '\\n' + region + '-new\\n' + operation + '\\n')
     pending.replace(ready)
 event('drain')
 if region == os.environ.get('FAIL_LATE'):
@@ -72,6 +83,19 @@ event('billing')
     script = tmp_path / "worker.sh"
     script.write_text(f'#!/bin/bash\nexec {sys.executable} "{program}" "$2"\n')
     return script
+
+
+def record_children(monkeypatch: pytest.MonkeyPatch) -> list:
+    children = []
+    popen = coordinator.subprocess.Popen
+
+    def record_child(*args, **kwargs):
+        child = popen(*args, **kwargs)
+        children.append(child)
+        return child
+
+    monkeypatch.setattr(coordinator.subprocess, "Popen", record_child)
+    return children
 
 
 def events(tmp_path: Path) -> list[list[str]]:
@@ -164,21 +188,52 @@ def test_together_a_failure_rolls_back_in_flight_siblings(worker: Path, tmp_path
 
 
 def test_together_a_wrong_operation_handoff_fails_like_a_worker(worker: Path, tmp_path: Path, monkeypatch) -> None:
-    # Siblings may be mid-ramp: they roll back at their next shift rather
-    # than being killed part way.
-    monkeypatch.setenv("HANDOFF_OPERATION", "old-operation")
+    # Siblings may be mid-ramp: the coordinator's abort rolls them back at
+    # their next check rather than killing them part way.
+    monkeypatch.setenv("BAD_HANDOFF_REGION", "europe-west4")
+    monkeypatch.setenv("WAIT", "3")
     assert coordinate(worker, tmp_path, poll_seconds=.005, serial=False) == 1
-    assert (tmp_path / "abort").exists()
+    log = events(tmp_path)
+    assert ["us-east4", "rolled_back"] in log and ["southamerica-east1", "rolled_back"] in log
+    assert ["europe-west4", "billing"] in log
 
 
 def test_together_a_timeout_lets_siblings_roll_back_before_the_kill(worker: Path, tmp_path: Path,
                                                                       monkeypatch) -> None:
     monkeypatch.setenv("HANG_REGION", "europe-west4")
     monkeypatch.setenv("SIBLING_ABORT", "1")
+    children = record_children(monkeypatch)
+    started = time.monotonic()
     with pytest.raises(TimeoutError, match="retaining reservation"):
-        coordinate(worker, tmp_path, poll_seconds=.005, timeout=1, serial=False, abort_grace=10)
+        coordinate(worker, tmp_path, poll_seconds=.005, timeout=1, serial=False, abort_grace=2)
+    # The hung worker is killed once the grace ends, not when its sleep does.
+    assert time.monotonic() - started < 10
+    assert all(child.poll() is not None for child in children)
     log = events(tmp_path)
     assert ["us-east4", "rolled_back"] in log and ["southamerica-east1", "rolled_back"] in log
+    assert ["europe-west4", "rolled_back"] not in log
+
+
+def test_together_a_cancellation_during_the_grace_still_kills(worker: Path, tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HANG", "1")
+    children = record_children(monkeypatch)
+
+    def interrupted(signum: int, _frame: object) -> None:
+        raise InterruptedError(f"signal {signum}")
+
+    previous = signal.signal(signal.SIGINT, interrupted)
+    # The timeout comes at 1 s and the grace would last 30: cancel inside it.
+    timer = threading.Timer(2, os.kill, (os.getpid(), signal.SIGINT))
+    timer.start()
+    started = time.monotonic()
+    try:
+        with pytest.raises(InterruptedError):
+            coordinate(worker, tmp_path, poll_seconds=.005, timeout=1, serial=False, abort_grace=30)
+    finally:
+        timer.cancel()
+        signal.signal(signal.SIGINT, previous)
+    assert time.monotonic() - started < 15
+    assert len(children) == 3 and all(child.poll() is not None for child in children)
 
 
 def test_together_held_regions_finish_without_a_handoff(worker: Path, tmp_path: Path, monkeypatch) -> None:
