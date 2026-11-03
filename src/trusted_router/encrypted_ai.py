@@ -72,7 +72,8 @@ TIERS: tuple[tuple[str, str], ...] = (
 def _domain(value: str) -> str:
     """Casefolded, without "www.": how titles, domains and the listing data
     are compared."""
-    return value.strip().casefold().removeprefix("www.")
+    # A fully qualified "muse.ai." is the same host as "muse.ai".
+    return value.strip().casefold().rstrip(".").removeprefix("www.")
 
 
 @dataclass(frozen=True)
@@ -182,7 +183,9 @@ def _placement(directory_: Directory, title: str, domain: str) -> tuple[bool, Li
         None,
     )
     by_title = next(
-        (listing for listing in directory_.listings if title_key and title_key in listing.matches),
+        (listing for listing in directory_.listings
+         if title_key and (title_key in listing.matches
+                           or any(_domain_matches(title_key, match) for match in listing.matches))),
         None,
     )
     if by_domain is not None:

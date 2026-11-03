@@ -122,6 +122,9 @@ def _with_listing_data(monkeypatch: pytest.MonkeyPatch, **changes: Any) -> None:
     ("Fambot", "fambot.com"),  # the company itself, before it confirmed
     ("Meta Agent", "app.muse.ai"),  # a subdomain of a curated company's domain
     ("x", "www.chat.trymaple.ai"),
+    ("x", "muse.ai."),  # a fully qualified host is the same host
+    ("x", "app.muse.ai."),
+    ("app.muse.ai", ""),  # a dotted title naming a listed domain
 ])
 def test_traffic_naming_a_curated_company_does_not_rank_unconfirmed(title: str, ref: str) -> None:
     snapshot = aggregate_encrypted_ai([_row(title, ref, CONF, t1=9, t7=9, t30=9)], generated_at=GENERATED_AT)
@@ -149,6 +152,15 @@ def test_a_confirmed_company_ranks_under_its_listing(monkeypatch: pytest.MonkeyP
     # Its name from another domain still does not rank, with or without its listing.
     spoof = aggregate_encrypted_ai([_row("Fambot", "evil.example", CONF, t7=5, t30=5)], generated_at=GENERATED_AT)
     assert all(not w["apps"] for w in directory_view(spoof)["windows"])
+    # Its own domain carrying another listed company's name does not rank either.
+    other = aggregate_encrypted_ai([_row("Maple AI", "fambot.com", CONF, t7=5, t30=5)], generated_at=GENERATED_AT)
+    assert all(not w["apps"] for w in directory_view(other)["windows"])
+
+
+def test_a_lookalike_domain_is_not_a_listed_one() -> None:
+    snapshot = aggregate_encrypted_ai([_row("x", "notmuse.ai", CONF, t7=1, t30=1)], generated_at=GENERATED_AT)
+    week = next(w for w in directory_view(snapshot)["windows"] if w["name"] == "week")
+    assert [a["domain"] for a in week["apps"]] == ["notmuse.ai"]
 
 
 def test_hidden_entries_compare_like_domains(monkeypatch: pytest.MonkeyPatch) -> None:
