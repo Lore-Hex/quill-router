@@ -298,10 +298,10 @@
   },
   "featherless": {
     "card_version": 2,
-    "model_count": 59,
+    "model_count": 60,
     "name": "Featherless AI",
     "privacy": "Zero retention",
-    "route_count": 59,
+    "route_count": 60,
     "route_mode": "Prepaid",
     "slug": "featherless"
   },
@@ -496,10 +496,10 @@
   },
   "makora": {
     "card_version": 2,
-    "model_count": 7,
+    "model_count": 8,
     "name": "Makora",
     "privacy": "Policy documented",
-    "route_count": 13,
+    "route_count": 15,
     "route_mode": "Prepaid + BYOK",
     "slug": "makora"
   },

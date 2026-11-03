@@ -589,7 +589,8 @@
       "routable": true,
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 1200000,
-      "supported_features": []
+      "supported_features": [],
+      "missing_since": "2026-11-03"
     },
     {
       "display_name": "Qwen/Qwen3.5-27B",
@@ -1316,7 +1317,8 @@
       "title": "Qwen/Qwen3-VL-2B-Instruct",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -1341,7 +1343,8 @@
       "title": "Qwen/Qwen3-VL-30B-A3B-Instruct",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -1366,7 +1369,8 @@
       "title": "Qwen/Qwen3-VL-32B-Instruct",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -1391,7 +1395,8 @@
       "title": "Qwen/Qwen3-VL-4B-Instruct",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -1416,7 +1421,8 @@
       "title": "Qwen/Qwen3-VL-8B-Instruct",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -1480,8 +1486,7 @@
       "supported_features": [
         "tools"
       ],
-      "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable": true,
       "input_token_price_per_m": 468000,
       "output_token_price_per_m": 1820000
     },
@@ -1582,11 +1587,36 @@
       "routable": true,
       "input_token_price_per_m": 550000,
       "output_token_price_per_m": 2200000
+    },
+    {
+      "display_name": "stepfun-ai/StepFun-Prover-Preview-32B",
+      "title": "stepfun-ai/StepFun-Prover-Preview-32B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "stepfun-ai/stepfun-prover-preview-32b",
+      "upstream_id": "stepfun-ai/StepFun-Prover-Preview-32B",
+      "context_length": 32768,
+      "supported_features": [
+        "tools"
+      ],
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 1060000,
+      "output_token_price_per_m": 2600000
     }
   ],
   "source": "https://api.featherless.ai/v1/models",
   "pricing_source": "https://featherless.ai/docs/request-pricing-and-credits",
-  "generated_at": "2026-11-03T18:14:38Z",
+  "generated_at": "2026-11-03T19:48:25Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 64
+  "model_count": 65
 }

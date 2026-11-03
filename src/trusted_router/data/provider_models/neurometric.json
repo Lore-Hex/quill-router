@@ -379,8 +379,8 @@
       "status": 1,
       "id": "neurometric/document-structured-extraction",
       "upstream_id": "neurometric/document-structured-extraction",
-      "context_length": 8192,
-      "max_output_tokens": 4096,
+      "context_length": 49152,
+      "max_output_tokens": 24576,
       "supported_features": [
         "chat",
         "completion",
@@ -557,8 +557,8 @@
       "status": 1,
       "id": "neurometric/grounded-document-qa",
       "upstream_id": "neurometric/grounded-document-qa",
-      "context_length": 8192,
-      "max_output_tokens": 4096,
+      "context_length": 49152,
+      "max_output_tokens": 24576,
       "supported_features": [
         "chat",
         "completion",
@@ -722,6 +722,6 @@
       "routable_reason": "delisted-upstream"
     }
   ],
-  "generated_at": "2026-11-03T18:14:38Z",
+  "generated_at": "2026-11-03T19:48:25Z",
   "model_count": 13
 }
