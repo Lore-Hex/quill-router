@@ -110,6 +110,8 @@ def _to_micro_per_m(usd: str) -> int:
 
 def _parse_price_cell(text: str) -> tuple[list[tuple[int | None, int]], bool]:
     """Parse a Gemini "Paid Tier" cell. Returns (tier_list, was_tiered)."""
+    # Markdoc can retain HTML entities in comparisons even after normalization.
+    text = BeautifulSoup(text, "html.parser").get_text(" ", strip=True)
     tiered_match = _TIERED_PRICE_RE.search(text)
     if tiered_match:
         low_usd, threshold_value, threshold_unit, high_usd = tiered_match.groups()
@@ -151,10 +153,7 @@ def _price_from_rows(rows: list[tuple[str, str]]) -> dict[str, object] | None:
         prompt[0] != completion[0]
         for prompt, completion in zip(prompt_tiers, completion_tiers, strict=False)
     ):
-        return {
-            "prompt_micro_per_m": prompt_tiers[0][1],
-            "completion_micro_per_m": completion_tiers[0][1],
-        }
+        return None
 
     tiers: list[dict[str, int | None]] = []
     for index, ((threshold, prompt_micro), (_threshold, completion_micro)) in enumerate(
