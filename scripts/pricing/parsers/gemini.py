@@ -1,10 +1,9 @@
 # LLM-MAINTAINED FILE — re-validated every hour by scripts/pricing/refresh.py.
 #
 # Parses the server-rendered page at ai.google.dev/gemini-api/docs/pricing.
-# The page is served as a mix of markdown-style headings (## Model Name) and
-# markdown tables (| col | col | col |). We also accept full HTML as a
-# fallback for captured fixtures.
-"""Google Gemini pricing parser for official page and legacy fixtures."""
+# The official redirect now serves Markdoc tabs/tables. Retain Markdown and
+# full HTML support for older captured fixtures.
+"""Google Gemini Standard pricing from Markdoc, Markdown, and HTML."""
 
 from __future__ import annotations
 
@@ -62,7 +61,7 @@ _SKIP_HEADING_SUBSTRINGS = (
 def _model_id_from_heading(heading: str) -> str | None:
     """Map stable Gemini pricing headings without a per-release code edit."""
 
-    cleaned = heading.strip()
+    cleaned = re.sub(r'\s*\{%\s*id="[^"]+"\s*%\}\s*$', "", heading).strip()
     lowered = cleaned.casefold()
     for banned in _SKIP_HEADING_SUBSTRINGS:
         if banned in lowered:
@@ -222,6 +221,35 @@ def _parse_markdown(md: str) -> dict[str, dict[str, object]]:
     return out
 
 
+def _parse_markdoc(source: str) -> dict[str, dict[str, object]]:
+    out: dict[str, dict[str, object]] = {}
+    for section in re.split(r"(?m)^## ", source):
+        heading, separator, body = section.partition("\n")
+        or_id = _model_id_from_heading(heading)
+        if not separator or or_id is None:
+            continue
+        # Select the named Standard tab, not whichever tariff appears first.
+        standard = re.search(
+            r'\{%\s*tab\s+title="Standard"\s*%\}(.*?)\{%\s*/tab\s*%\}',
+            body, re.DOTALL,
+        )
+        if standard is None:
+            continue
+        table = re.search(r"\{%\s*table\s*%\}(.*?)\{%\s*/table\s*%\}",
+                          standard.group(1), re.DOTALL)
+        if table is None:
+            continue
+        rows: list[tuple[str, str]] = []
+        for row in re.split(r"(?m)^[ \t]*---[ \t]*$", table.group(1)):
+            cells = re.split(r"(?m)^[ \t]*\* ", row)[1:]
+            if len(cells) == 3:
+                rows.append((cells[0].strip(), cells[2].strip()))
+        price = _price_from_rows(rows)
+        if price is not None and or_id not in out:
+            out[or_id] = price
+    return out
+
+
 def _standard_table(heading: Tag) -> Tag | None:
     """Return the official page's Standard table before the next model."""
 
@@ -273,4 +301,6 @@ def parse(html: str) -> dict:
 
     if re.search(r"<h2\b", html, re.IGNORECASE) and re.search(r"<table\b", html, re.IGNORECASE):
         return _parse_html(html)
+    if re.search(r"\{%\s*(?:tabs?|table)\b", html):
+        return _parse_markdoc(html)
     return _parse_markdown(html)
