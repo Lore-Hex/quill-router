@@ -1,8 +1,8 @@
 {
   "revision": "ddfbd1e62",
   "combined/False": {
-    "routes_sha256": "fd70db9d985eca8d1d0f9fde502f2d54762774435f4ff3e15df29c8b016ce294",
-    "route_count": 863,
+    "routes_sha256": "230dcb3badb98486f34f1872af5de49ffde570ce37256b36e2ba5025378f77fc",
+    "route_count": 865,
     "startup": [
       "create_app.<locals>._warm_stage_d_policy"
     ],
@@ -19,8 +19,8 @@
     ]
   },
   "combined/True": {
-    "routes_sha256": "b5b5fcbbd4478da150e197d986c0f396ee709775d029e1caa4a2729a2f0554ff",
-    "route_count": 867,
+    "routes_sha256": "b1bdac6b5e9635179d09c127843aef636baa510f74b70f4bc637b0fd61550ecb",
+    "route_count": 869,
     "startup": [
       "install.<locals>.start",
       "create_app.<locals>._warm_stage_d_policy",
@@ -49,8 +49,8 @@
     ]
   },
   "public/False": {
-    "routes_sha256": "f41a082d8fea6da64e71de8dc0b83c1e277036fd5069990514d3105180436a79",
-    "route_count": 368,
+    "routes_sha256": "2f76a369a78e60c0d84b0adac3974dcc96df8d95008e570a448b98ee5a061f66",
+    "route_count": 370,
     "startup": [],
     "shutdown": [
       "create_app.<locals>._close_post_commit"
@@ -64,8 +64,8 @@
     ]
   },
   "public/True": {
-    "routes_sha256": "f41a082d8fea6da64e71de8dc0b83c1e277036fd5069990514d3105180436a79",
-    "route_count": 368,
+    "routes_sha256": "2f76a369a78e60c0d84b0adac3974dcc96df8d95008e570a448b98ee5a061f66",
+    "route_count": 370,
     "startup": [],
     "shutdown": [
       "create_app.<locals>._close_post_commit"
@@ -188,8 +188,8 @@
     ]
   },
   "observer/False": {
-    "routes_sha256": "25cee28cb4052b7bb2903b195dac13092b0b7f29a2f0457c8fe89ff0fa066457",
-    "route_count": 370,
+    "routes_sha256": "0f08a6ab61b1b732a456b13bd77335416b02a801740dd44f145c98ae54c31605",
+    "route_count": 372,
     "startup": [],
     "shutdown": [
       "create_app.<locals>._close_post_commit"
@@ -203,8 +203,8 @@
     ]
   },
   "observer/True": {
-    "routes_sha256": "25cee28cb4052b7bb2903b195dac13092b0b7f29a2f0457c8fe89ff0fa066457",
-    "route_count": 370,
+    "routes_sha256": "0f08a6ab61b1b732a456b13bd77335416b02a801740dd44f145c98ae54c31605",
+    "route_count": 372,
     "startup": [
       "create_app.<locals>._start_synthetic_loop",
       "create_app.<locals>._start_remediator_loop"
