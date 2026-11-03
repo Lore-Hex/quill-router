@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from scripts.check_price_spike import _load_provider_manifests
+from scripts.pricing import refresh
 from scripts.pricing.base import (
     ModelPrice,
     PriceTier,
@@ -84,6 +85,46 @@ def test_markdoc_selects_standard_and_preserves_both_cached_context_tiers() -> N
         PriceTier(200_000, 1_250_000, 10_000_000, 125_000),
         PriceTier(None, 2_500_000, 15_000_000, 250_000),
     ]
+
+
+@pytest.mark.parametrize("less,greater", [("&lt;", "&gt;"), ("&#60;", "&#62;")])
+@pytest.mark.parametrize("model,heading,rates", [
+    (MODEL, "Gemini 2.5 Pro", ("1.25", "2.50", "10.00", "15.00", "0.125", "0.25")),
+    ("google/gemini-3.1-pro-preview", "Gemini 3.1 Pro Preview",
+     ("2.00", "4.00", "12.00", "18.00", "0.20", "0.40")),
+])
+def test_encoded_context_comparisons_survive_parser_and_manifest(
+    tmp_path: Path, less: str, greater: str, model: str, heading: str, rates: tuple[str, ...],
+) -> None:
+    def cell(low: str, high: str) -> str:
+        return f"${low}, prompts {less}= 200k tokens\n  ${high}, prompts {greater} 200k"
+
+    source = f'## {heading} {{% id="pro" %}}\n' + _tab("Standard", _table(
+        cell(*rates[:2]), cell(*rates[2:4]), cell(*rates[4:])
+        + "\n  $4.50 / 1,000,000 tokens per hour (storage price)",
+    ))
+    price = _prices(source)[model]
+    expected = [
+        PriceTier(200_000, int(float(rates[0]) * 1_000_000),
+                  int(float(rates[2]) * 1_000_000), int(float(rates[4]) * 1_000_000)),
+        PriceTier(None, int(float(rates[1]) * 1_000_000),
+                  int(float(rates[3]) * 1_000_000), int(float(rates[5]) * 1_000_000)),
+    ]
+    assert price.tiers == expected
+    row = {"id": model}
+    assert provider._refresh_price(row, _result({model: price}), model)
+    assert [tier["max_prompt_tokens"] for tier in row["price_tiers"]] == [200_000, None]
+    assert len(_load_row(tmp_path, row)) == 5
+
+
+@pytest.mark.parametrize("completion", ["$10.00", "$10.00, prompts <= 100k tokens "
+                                      "$15.00, prompts > 100k tokens"])
+def test_mismatched_context_tiers_are_not_flat_prices(completion: str) -> None:
+    source = "## Gemini 2.5 Pro\n" + _tab("Standard", _table(
+        "$1.25, prompts <= 200k tokens $2.50, prompts > 200k tokens",
+        completion, "$0.125",
+    ))
+    assert MODEL not in parser.parse(source)
 
 
 def test_markdoc_does_not_use_batch_or_another_models_standard_table() -> None:
@@ -172,3 +213,46 @@ def test_price_spike_gate_still_rejects_explicit_null_cache(tmp_path: Path) -> N
            "cached_input_token_price_per_m": None}
     with pytest.raises(ValueError, match="price must be a non-negative number"):
         _load_row(tmp_path, row)
+
+
+@pytest.mark.parametrize("threshold", [None, 100_000, 300_000])
+def test_context_boundary_loss_is_rejected_before_row_mutation(threshold: int | None) -> None:
+    row = {"id": MODEL}
+    assert provider._refresh_price(row, _result(_prices(_page())), MODEL)
+    before = copy.deepcopy(row)
+    tiers = [PriceTier(None, 2_500_000, 15_000_000, 250_000)]
+    if threshold is not None:
+        tiers.insert(0, PriceTier(threshold, 1_250_000, 10_000_000, 125_000))
+    with pytest.raises(ValueError, match="context tier boundaries"):
+        provider._refresh_price(row, _result({MODEL: ModelPrice(tiers=tiers)}), MODEL)
+    assert row == before
+
+
+def test_unchanged_context_boundaries_allow_updated_rates() -> None:
+    row = {"id": MODEL}
+    assert provider._refresh_price(row, _result(_prices(_page())), MODEL)
+    price = ModelPrice(tiers=[PriceTier(200_000, 1_300_000, 11_000_000, 130_000),
+                              PriceTier(None, 2_600_000, 16_000_000, 260_000)])
+    assert provider._refresh_price(row, _result({MODEL: price}), MODEL)
+    assert row["price_tiers"][1]["input_token_price_per_m"] == 2_600_000
+
+
+def test_manifest_refresh_retains_file_and_reports_lost_tiers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    row = {"id": MODEL}
+    assert provider._refresh_price(row, _result(_prices(_page())), MODEL)
+    path = tmp_path / "google-ai-studio.json"
+    original = json.dumps({"models": [row], "generated_at": "2026-11-02T12:14:32Z"})
+    path.write_text(original)
+    monkeypatch.setattr(provider, "MANIFEST_PATH", path)
+    monkeypatch.setattr(provider, "_DISCOVERED_MANIFEST_ROWS", {MODEL: {"id": MODEL}})
+    monkeypatch.setattr(refresh, "_import_provider", lambda _slug: provider)
+    notes, failures = refresh._write_provider_manifests({"gemini": _result({
+        MODEL: ModelPrice(1_250_000, 10_000_000, prompt_cached_micro_per_m=125_000),
+    })})
+    assert notes == []
+    assert len(failures) == 1
+    assert failures[0][0] == "gemini"
+    assert "stage=manifest" in failures[0][1]
+    assert path.read_text() == original

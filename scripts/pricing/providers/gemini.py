@@ -237,6 +237,14 @@ def _refresh_price(row: dict[str, Any], result: ProviderPricingResult, model_id:
         tier.prompt_cached_micro_per_m is None for tier in price.tiers
     ):
         raise ValueError(f"gemini: {model_id}: previously published cached price is missing")
+    # A changed context boundary needs explicit review, not a flat-price fallback.
+    previous_boundaries = [previous["max_prompt_tokens"]
+                           for previous in row.get("price_tiers", [])
+                           if previous.get("max_prompt_tokens") is not None]
+    new_boundaries = [tier.max_prompt_tokens for tier in price.tiers
+                      if tier.max_prompt_tokens is not None]
+    if previous_boundaries and previous_boundaries != new_boundaries:
+        raise ValueError(f"gemini: {model_id}: previously published context tier boundaries changed")
     tier = price.tiers[0]
     row["input_token_price_per_m"] = tier.prompt_micro_per_m
     row["output_token_price_per_m"] = tier.completion_micro_per_m
