@@ -311,7 +311,7 @@ def test_primary_job_budget_covers_gates_and_bounded_cleanup() -> None:
     assert collector.index("poll_deadline=$((SECONDS + 900))") < collector.index("while IFS=")
 
 
-def test_secondaries_ramp_serially() -> None:
+def test_secondaries_ramp_under_one_coordinator() -> None:
     workflow = (ROOT / ".github/workflows/deploy-production.yml").read_text(encoding="utf-8")
     rollout = workflow.split("\n  rollout-secondaries:\n", 1)[1].split(
         "\n  public-surface-companion:\n", 1
@@ -330,9 +330,11 @@ def test_secondaries_ramp_serially() -> None:
     assert 'echo "TR_DEPLOY_MUTEX_OPERATION=${DEPLOY_MUTEX_OPERATION}"' in rollout
     assert 'echo "TR_DEPLOY_MUTEX_GENERATION=${DEPLOY_MUTEX_GENERATION}"' in rollout
 
-    ramp_step = rollout.index("- name: Ramp secondaries serially with supervised overlapping drains\n")
+    ramp_step = rollout.index("- name: Ramp secondaries with supervised overlapping drains\n")
     ramp = rollout[ramp_step : rollout.index("- name: Deploy synthetic monitor", ramp_step)]
     assert "run: python3 scripts/deploy/coordinate_secondaries.py" in ramp
+    # The serial fallback is a repository variable, not a code change.
+    assert "TR_DEPLOY_SECONDARIES_SERIAL: ${{ vars.TR_DEPLOY_SECONDARIES_SERIAL }}" in ramp
     assert "run: |" not in ramp
 
     script = (ROOT / "scripts/deploy/ramp_secondaries.sh").read_text(encoding="utf-8")

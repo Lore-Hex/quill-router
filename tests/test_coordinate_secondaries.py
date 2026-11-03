@@ -27,7 +27,7 @@ def event(name):
     with open(os.environ['EVENTS'], 'a') as stream:
         stream.write(json.dumps([region, name]) + '\\n')
 def wait_for(condition):
-    deadline = time.monotonic() + 20
+    deadline = time.monotonic() + float(os.environ.get('WAIT', '20'))
     while not condition():
         if time.monotonic() > deadline:
             raise RuntimeError('test worker handshake timed out')
@@ -36,6 +36,15 @@ event('ramp')
 (ready.parent / (region + '.started')).touch()
 if region == os.environ.get('FAIL_EARLY'):
     sys.exit(1)
+if os.environ.get('SIBLING_ABORT'):
+    # staged_traffic.sh: a shift after a sibling's failure rolls back instead.
+    wait_for(abort.exists)
+    event('rolled_back')
+    sys.exit(1)
+if os.environ.get('BARRIER'):
+    # No region canaries until every region has begun its ramp.
+    wait_for(lambda: all((ready.parent / (name + '.started')).exists()
+                         for name in ('europe-west4', 'us-east4', 'southamerica-east1')))
 if os.environ.get('HANG'):
     time.sleep(60)
 if os.environ.get('FAIL_LATE') and region == 'us-east4':
@@ -123,6 +132,51 @@ def test_timeout_reaps_workers_without_starting_another(worker: Path, tmp_path: 
     assert len(children) == 1 and children[0].poll() is not None
     if (tmp_path / "events").exists():
         assert events(tmp_path) == [["europe-west4", "ramp"]]
+
+
+def test_ramps_start_together_by_default(worker: Path, tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("BARRIER", "1")
+    assert coordinate(worker, tmp_path, poll_seconds=.005, serial=False) == 0
+    log = events(tmp_path)
+    regions = list(REGIONS)
+    last_ramp = max(log.index([region, "ramp"]) for region in regions)
+    for region in regions:
+        assert log.index([region, "canary"]) > last_ramp
+        assert [region, "retained"] in log and [region, "billing"] in log
+
+
+def test_serial_ramps_never_overlap_a_sibling_ramp(worker: Path, tmp_path: Path, monkeypatch) -> None:
+    # The barrier needs every ramp begun before any canary: serial cannot.
+    monkeypatch.setenv("BARRIER", "1")
+    monkeypatch.setenv("WAIT", "1")
+    assert coordinate(worker, tmp_path, poll_seconds=.005) == 1
+    assert ["us-east4", "ramp"] not in events(tmp_path)
+
+
+def test_together_a_failure_rolls_back_in_flight_siblings(worker: Path, tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("FAIL_EARLY", "southamerica-east1")
+    monkeypatch.setenv("SIBLING_ABORT", "1")
+    assert coordinate(worker, tmp_path, poll_seconds=.005, serial=False) == 1
+    log = events(tmp_path)
+    assert ["europe-west4", "rolled_back"] in log and ["us-east4", "rolled_back"] in log
+    assert not [event for event in log if event[1] == "canary"]
+
+
+def test_together_a_wrong_operation_handoff_stops_the_rollout(worker: Path, tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HANDOFF_OPERATION", "old-operation")
+    with pytest.raises(ValueError, match="invalid retention handoff"):
+        coordinate(worker, tmp_path, poll_seconds=.005, serial=False)
+    assert (tmp_path / "abort").exists()
+
+
+@pytest.mark.parametrize(("value", "serial"), [("1", True), (" 1 ", True), ("", False), ("0", False), ("true", False)])
+def test_the_repository_variable_restores_serial_ramps(monkeypatch, value: str, serial: bool) -> None:
+    monkeypatch.setenv("TR_DEPLOY_SECONDARIES_SERIAL", value)
+    seen = {}
+    monkeypatch.setattr(coordinator.signal, "signal", lambda *_: None)
+    monkeypatch.setattr(coordinator, "coordinate", lambda *_, **kwargs: seen.update(kwargs) or 0)
+    assert coordinator.main() == 0
+    assert seen == {"serial": serial}
 
 
 def test_outer_fence_required(worker: Path, tmp_path: Path, monkeypatch) -> None:
