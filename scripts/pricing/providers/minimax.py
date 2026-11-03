@@ -221,3 +221,34 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         encoding="utf-8",
     )
     return [f"minimax: refreshed provider_models/minimax.json ({len(updated)} priced rows)"]
+
+
+def confirmed_manifest_quarantines(
+    result: ProviderPricingResult, before_rows: list[Any], after_rows: list[Any],
+) -> frozenset[str]:
+    """Confirm retained tombstones only for already-effective reviewed retirements."""
+    if result.source != "api":
+        return frozenset()
+    previous = {
+        row["id"]: row for row in before_rows
+        if isinstance(row, dict) and isinstance(row.get("id"), str)
+    }
+    confirmed = set()
+    for row in after_rows:
+        if not isinstance(row, dict) or row.get("routable") is not False:
+            continue
+        model_id = row.get("id")
+        if not isinstance(model_id, str) or model_id not in previous:
+            continue
+        before = previous[model_id]
+        if (
+            model_id not in _DISCOVERED_MANIFEST_ROWS
+            and row.get("routable_reason") == "delisted-upstream"
+            and row.get("upstream_id") == before.get("upstream_id")
+            and isinstance(row.get("missing_since"), str)
+            and bool(row["missing_since"])
+            and row["missing_since"] == before.get("missing_since")
+            and provider_model_retired(SLUG, model_id, before.get("upstream_id"))
+        ):
+            confirmed.add(model_id)
+    return frozenset(confirmed)

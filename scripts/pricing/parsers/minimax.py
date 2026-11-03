@@ -19,34 +19,56 @@ def parse(html: str) -> dict[str, dict[str, object]]:
         html,
         flags=re.I | re.S,
     )
+    markdown_tabs = re.search(r"^[ \t]*>[ \t]*\[tab\]", html, flags=re.I | re.M)
+    if standard_match is None and markdown_tabs:
+        standard_sections = list(re.finditer(
+            r"^[ \t]*>[ \t]*\[tab\][ \t]+Standard[ \t]*\r?\n(.*?)"
+            r"(?=^[ \t]*>[ \t]*\[|^#{1,6}[ \t]|\Z)",
+            html,
+            flags=re.I | re.S | re.M,
+        ))
+        if len(standard_sections) == 1:
+            standard_match = standard_sections[0]
     if standard_match:
         tiers: list[dict[str, int | None]] = []
+        invalid_tiers = False
         for line in standard_match.group(1).splitlines():
-            if "MiniMax-M3" not in line or not line.lstrip().startswith("|"):
+            line = re.sub(r"^[ \t]*>[ \t]?", "", line)
+            if not line.lstrip().startswith("|"):
                 continue
             cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            if not re.match(r"^\*{0,2}MiniMax-M3\*{0,2}(?=\s)", cells[0], flags=re.I):
+                continue
             if len(cells) < 4:
+                invalid_tiers = True
                 continue
             amounts = [re.findall(r"\$([0-9.]+)", cell) for cell in cells[1:4]]
             if any(not values for values in amounts):
+                invalid_tiers = True
+                continue
+            finite = re.search(r"(?:≤|<=)\s*512k\b", cells[0], flags=re.I)
+            uncapped = re.search(r">\s*512k\b|512k\s*(?:~|-|to)\s*1m\b", cells[0], flags=re.I)
+            if bool(finite) == bool(uncapped):
+                invalid_tiers = True
                 continue
             tiers.append(
                 {
-                    "max_prompt_tokens": 512_000 if "512k" in cells[0] and "≤" in cells[0] else None,
+                    "max_prompt_tokens": 512_000 if finite else None,
                     "prompt_micro_per_m": _money_to_micro_per_m(amounts[0][-1]),
                     "completion_micro_per_m": _money_to_micro_per_m(amounts[1][-1]),
                     "prompt_cached_micro_per_m": _money_to_micro_per_m(amounts[2][-1]),
                 }
             )
-        if len(tiers) >= 2:
+        if not invalid_tiers and len(tiers) == 2:
             tiers.sort(key=lambda tier: tier["max_prompt_tokens"] is None)
-            prices["minimax/minimax-m3"] = {"tiers": tiers[:2]}
+            if [tier["max_prompt_tokens"] for tier in tiers] == [512_000, None]:
+                prices["minimax/minimax-m3"] = {"tiers": tiers}
 
     m3_tiers = re.findall(
         r"MiniMax-M3\s+Context\s+([^$]+?)\s+\$([0-9.]+)\$([0-9.]+)\s+\$([0-9.]+)\$([0-9.]+)\s+\$([0-9.]+)\$([0-9.]+)",
         text,
     )
-    if len(m3_tiers) >= 2:
+    if len(m3_tiers) >= 2 and standard_match is None and not markdown_tabs:
         tiers: list[dict[str, int | None]] = []
         for (
             label,
