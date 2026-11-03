@@ -57,11 +57,11 @@ locals {
   # TR_FASTPATH_EDGE_STREAMS=true in scripts/deploy/rollout.sh, #2252):
   # the edge decides eligible streams for the workspaces whose decide rows
   # are on.
-  # a49bc8d3e: main after a front door relays no request its own node owns
-  # (#2256), the owner's per-minute line of where its answers wait (#2257)
-  # and the slow-pass timing (#2245). The edge switch is on; decide rows
-  # choose where the edge answers.
-  fastpath_release        = "a49bc8d3e9697586196b69f11cd9ac75064a6112"
+  # 18f991f73: answers every front door call within the control plane's
+  # budget (1.2 s, waits that fit it, budget cuts kept out of the
+  # evidence), refuses flag-shaped ids in fastpathctl and adds decide
+  # delete (#2275).
+  fastpath_release        = "18f991f730d1720c5690fcdb451658a307d73339"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
