@@ -8,13 +8,13 @@ locals {
 }
 
 resource "google_compute_backend_service" "control_terminal_c1" {
-  project                = local.gcp_project_id
-  name                   = "trusted-router-control-terminal-c1-backend"
-  description            = "Direct us-central1 Cloud Run for gateway terminal billing"
-  protocol               = "HTTP"
-  load_balancing_scheme  = "EXTERNAL_MANAGED"
-  compression_mode       = "AUTOMATIC"
-  security_policy        = google_compute_security_policy.legacy_edge.id
+  project               = local.gcp_project_id
+  name                  = "trusted-router-control-terminal-c1-backend"
+  description           = "Direct us-central1 Cloud Run for gateway terminal billing"
+  protocol              = "HTTP"
+  load_balancing_scheme = "EXTERNAL_MANAGED"
+  compression_mode      = "AUTOMATIC"
+  security_policy       = google_compute_security_policy.legacy_edge.id
   custom_request_headers = [
     "X-TrustedRouter-Client-IP:{client_ip_address}",
   ]
