@@ -43,6 +43,13 @@ PUBLIC_BACKEND = "public-backend"
 LEGACY_BACKEND = "legacy-backend"
 
 
+@pytest.fixture(params=[False, True])
+def terminal_enabled(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> bool:
+    enabled = bool(request.param)
+    monkeypatch.setattr(URL_MAP, "terminal_route_enabled", lambda: enabled)
+    return enabled
+
+
 def _emitted_map() -> dict[str, Any]:
     return URL_MAP.rewrite_url_map(
         {"name": "trusted-router-control-map", "defaultService": LEGACY_BACKEND},
@@ -85,7 +92,7 @@ def _concrete(path: str) -> str:
     return re.sub(r"\{[^}]+\}", "sample", path)
 
 
-def test_every_combined_route_sent_to_public_is_mounted_by_public() -> None:
+def test_every_combined_route_sent_to_public_is_mounted_by_public(terminal_enabled: bool) -> None:
     """The T1 URL map must never send public traffic to a missing handler.
 
     This supersedes the parked four-process contract that every route mounted
@@ -401,7 +408,7 @@ def test_entire_group_buy_stays_on_the_t2_legacy_control_slot() -> None:
     assert URL_MAP.route_surface("/v1/bedrock-group-buy/pledge") == "control"
 
 
-def test_every_emitted_nonpublic_wildcard_has_an_exact_bare_twin() -> None:
+def test_every_emitted_nonpublic_wildcard_has_an_exact_bare_twin(terminal_enabled: bool) -> None:
     emitted = _emitted_map()
     matchers = emitted["pathMatchers"]
     matcher = next(
@@ -452,7 +459,9 @@ def test_every_emitted_nonpublic_wildcard_has_an_exact_bare_twin() -> None:
         ("/v1/health", PUBLIC_BACKEND),
     ),
 )
-def test_emitted_map_routes_representative_paths(path: str, backend: str) -> None:
+def test_emitted_map_routes_representative_paths(path: str, backend: str, terminal_enabled: bool) -> None:
+    if terminal_enabled and path in URL_MAP.TERMINAL_PATH_PATTERNS:
+        backend = URL_MAP.TERMINAL_BACKEND_NAME
     assert _emitted_backend(_emitted_map(), path) == backend
 
 
@@ -488,7 +497,7 @@ def test_carrier_texml_is_public_but_notification_mutations_are_control(prefix: 
     assert URL_MAP.route_surface(f"{prefix}/notify/phone/start") == "control"
 
 
-def test_rewrite_preserves_explicit_unrelated_hosts_but_defaults_unknown_to_public() -> None:
+def test_rewrite_preserves_explicit_unrelated_hosts_but_defaults_unknown_to_public(terminal_enabled: bool) -> None:
     existing = {
         "name": "trusted-router-control",
         "id": "123",
@@ -580,12 +589,12 @@ def test_rewrite_preserves_explicit_unrelated_hosts_but_defaults_unknown_to_publ
         "actions-backend",
         "control-backend",
         "internal-backend",
-    }
+    } | ({URL_MAP.TERMINAL_BACKEND_NAME} if terminal_enabled else set())
     assert result["tests"][0]["service"] == "public-backend"
     assert result["tests"][1]["service"] == "other-backend"
 
 
-def test_one_service_cutover_keeps_every_nonpublic_pattern_on_legacy() -> None:
+def test_one_service_cutover_keeps_every_nonpublic_pattern_on_legacy(terminal_enabled: bool) -> None:
     legacy = "projects/p/global/backendServices/trusted-router-control-backend"
     public = "projects/p/global/backendServices/trusted-router-public-backend"
     result = URL_MAP.rewrite_url_map(
@@ -683,14 +692,15 @@ def test_rewrite_refuses_reserved_matcher_owned_by_unrelated_host() -> None:
 
 
 @pytest.mark.parametrize("prefix", ["", "/v1"])
-def test_terminal_methods_and_regional_disposition_routing(prefix: str) -> None:
+def test_terminal_methods_and_regional_disposition_routing(prefix: str, terminal_enabled: bool) -> None:
     app = create_app(Settings(environment="test", service_surface="combined"),
                      configure_store_arg=False, init_observability=False)
     methods = {route.path: route.methods for route in _routes_of(app) if hasattr(route, "methods")}
     for terminal in ("settle", "heartbeat", "refund"):
         path = f"{prefix}/internal/gateway/{terminal}"
         assert methods[path] == {"POST"}
-        assert _emitted_backend(_emitted_map(), path) == LEGACY_BACKEND
+        expected = URL_MAP.TERMINAL_BACKEND_NAME if terminal_enabled else LEGACY_BACKEND
+        assert _emitted_backend(_emitted_map(), path) == expected
     disposition = f"{prefix}/internal/gateway/authorizations/{{authorization_id}}/disposition"
     assert methods[disposition] == {"GET"}
     # Disposition deliberately remains regional: the lookup and drains

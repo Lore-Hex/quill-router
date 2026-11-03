@@ -4,7 +4,7 @@
 # Cloud Run service; this resource only references their existing us-central1
 # NEG and never changes its membership. See docs/runbooks/control-terminals-us-central1.md.
 locals {
-  terminal_c1_route_enabled = false
+  terminal_c1_route_enabled = true
 }
 
 resource "google_compute_backend_service" "control_terminal_c1" {
