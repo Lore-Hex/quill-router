@@ -298,10 +298,10 @@
   },
   "featherless": {
     "card_version": 2,
-    "model_count": 36,
+    "model_count": 59,
     "name": "Featherless AI",
     "privacy": "Zero retention",
-    "route_count": 36,
+    "route_count": 59,
     "route_mode": "Prepaid",
     "slug": "featherless"
   },
@@ -496,10 +496,10 @@
   },
   "makora": {
     "card_version": 2,
-    "model_count": 8,
+    "model_count": 7,
     "name": "Makora",
     "privacy": "Policy documented",
-    "route_count": 15,
+    "route_count": 13,
     "route_mode": "Prepaid + BYOK",
     "slug": "makora"
   },
@@ -586,10 +586,10 @@
   },
   "nebius": {
     "card_version": 2,
-    "model_count": 36,
+    "model_count": 37,
     "name": "Nebius Token Factory",
     "privacy": "Zero retention",
-    "route_count": 70,
+    "route_count": 72,
     "route_mode": "Prepaid + BYOK",
     "slug": "nebius"
   },
@@ -640,10 +640,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 13,
+    "model_count": 14,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 13,
+    "route_count": 14,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },

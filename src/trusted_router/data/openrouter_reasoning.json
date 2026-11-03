@@ -2691,7 +2691,29 @@
       ],
       "default_effort": "high"
     },
+    "x-ai/grok-4.6:batch": {
+      "mandatory": true,
+      "default_enabled": true,
+      "supported_efforts": [
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "default_effort": "high"
+    },
     "x-ai/grok-4.7": {
+      "mandatory": true,
+      "default_enabled": true,
+      "supported_efforts": [
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "default_effort": "high"
+    },
+    "x-ai/grok-4.7:batch": {
       "mandatory": true,
       "default_enabled": true,
       "supported_efforts": [

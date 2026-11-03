@@ -140,7 +140,7 @@
     }
   ],
   "source": "https://api.aionlabs.ai/v1/models",
-  "generated_at": "2026-11-03T10:37:22Z",
+  "generated_at": "2026-11-03T18:14:38Z",
   "price_scale": "microdollars_per_million",
   "model_count": 6
 }

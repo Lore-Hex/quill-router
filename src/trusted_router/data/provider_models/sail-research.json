@@ -304,7 +304,7 @@
   ],
   "source": "https://api.sailresearch.com/v1/models",
   "pricing_source": "https://docs.sailresearch.com/pricing",
-  "generated_at": "2026-11-03T10:37:22Z",
+  "generated_at": "2026-11-03T18:14:38Z",
   "price_scale": "microdollars_per_million",
   "model_count": 13
 }
