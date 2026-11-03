@@ -46,11 +46,13 @@ func (e *events) all() []string {
 	return append([]string(nil), e.list...)
 }
 
-// fakeOwners answers as each address's owner is set to: unreachable, or
-// with the answer set for it (an authorize's by shard).
+// fakeOwners answers as each address's owner is set to: unreachable,
+// holding the call until its context ends, or with the answer set for it
+// (an authorize's by shard).
 type fakeOwners struct {
 	ev          *events
 	unreachable map[string]bool
+	holding     map[string]bool
 	// pinging, when set, hears of each ping, which then waits for pingGate.
 	pinging    chan string
 	pingGate   chan struct{}
@@ -65,6 +67,10 @@ type fakeOwners struct {
 func (f *fakeOwners) reach(ctx context.Context, address string) error {
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if f.holding[address] {
+		<-ctx.Done()
+		return ctx.Err()
 	}
 	if f.unreachable[address] {
 		return ErrUnreachable

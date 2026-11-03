@@ -169,7 +169,15 @@ func Defaults() Config {
 			// auditors must read first"; this release is pinned only once
 			// every member runs increment 2's).
 			RecordReapFloor: true},
-		FrontDoor: frontdoor.Config{OwnerWait: time.Second, PublishWait: 5 * time.Second, PeerWait: 800 * time.Millisecond,
+		// The control plane gives a call to a front door 1.5 s
+		// (fastpath_front_door_timeout_seconds), the connection's 0.25 s
+		// included, so the front door answers within 1.2 s: an owner's full
+		// wait, then a peer's, for a heartbeat; an owner's, part of a peer's
+		// and the drain log append's for a terminal (2026-11-02: an owner
+		// past its second, then a peer's 0.8 s, answered after the control
+		// plane had stopped waiting).
+		FrontDoor: frontdoor.Config{OwnerWait: 800 * time.Millisecond, PublishWait: 5 * time.Second,
+			PeerWait: 400 * time.Millisecond, AnswerWithin: 1200 * time.Millisecond, AppendWithin: 200 * time.Millisecond,
 			WithdrawWithin: 5 * time.Second, ProbeEvery: 2 * time.Second, RevokeAfter: 15 * time.Second,
 			RevokeEvery: time.Second},
 		Runtime: auditor.Config{CommitEvery: time.Second, MaxBatch: 100, Retry: time.Second, ForgetAfter: 10 * time.Minute,

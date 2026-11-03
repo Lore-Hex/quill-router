@@ -11,10 +11,12 @@ import (
 
 // heartbeatAt sends a heartbeat to its owner, and if this front door cannot
 // reach it, through a peer within PeerWait; one this node owns goes through
-// none (peer). It reports whether an owner answered. A request that ended
-// is no evidence that its owner is unreachable.
-func (f *FrontDoor) heartbeatAt(ctx context.Context, env Envelope, req OwnerHeartbeat) (HeartbeatAnswer, bool) {
-	octx, cancel := context.WithTimeout(ctx, f.cfg.OwnerWait)
+// none (peer). Both calls end with hops, the request's answer budget
+// (budget), so the peer gets what the owner's call left of it. It reports
+// whether an owner answered. A request that ended is no evidence that its
+// owner is unreachable, nor is a budget that left its peer no time.
+func (f *FrontDoor) heartbeatAt(ctx, hops context.Context, env Envelope, req OwnerHeartbeat) (HeartbeatAnswer, bool) {
+	octx, cancel := context.WithTimeout(hops, f.cfg.OwnerWait)
 	got, err := f.cfg.Owners.Heartbeat(octx, env.Owner, req)
 	cancel()
 	if err == nil {
@@ -26,7 +28,10 @@ func (f *FrontDoor) heartbeatAt(ctx context.Context, env Envelope, req OwnerHear
 	}
 	f.failedHere(env.Owner)
 	if peer, ok := f.peer(env); ok {
-		pctx, cancel := context.WithTimeout(ctx, f.cfg.PeerWait)
+		if hops.Err() != nil {
+			return HeartbeatAnswer{}, false
+		}
+		pctx, cancel := context.WithTimeout(hops, f.cfg.PeerWait)
 		got, err = f.cfg.Peers.Heartbeat(pctx, peer, env.Owner, req)
 		cancel()
 		if err == nil {
@@ -43,11 +48,12 @@ func (f *FrontDoor) heartbeatAt(ctx context.Context, env Envelope, req OwnerHear
 }
 
 // terminalAt sends a terminal to its owner, and if this front door cannot
-// reach it, through a peer; one this node owns goes through none (peer). It
-// reports whether an owner answered. A request that ended is no evidence
-// that its owner is unreachable.
-func (f *FrontDoor) terminalAt(ctx context.Context, env Envelope, req OwnerTerminal) (OwnerTerminalAnswer, bool) {
-	octx, cancel := context.WithTimeout(ctx, f.cfg.OwnerWait)
+// reach it, through a peer; one this node owns goes through none (peer).
+// Both calls end with hops, as a heartbeat's do (heartbeatAt). It reports
+// whether an owner answered. A request that ended is no evidence that its
+// owner is unreachable, nor is a budget that left its peer no time.
+func (f *FrontDoor) terminalAt(ctx, hops context.Context, env Envelope, req OwnerTerminal) (OwnerTerminalAnswer, bool) {
+	octx, cancel := context.WithTimeout(hops, f.cfg.OwnerWait)
 	got, err := f.cfg.Owners.Terminal(octx, env.Owner, req)
 	cancel()
 	if err == nil {
@@ -59,7 +65,10 @@ func (f *FrontDoor) terminalAt(ctx context.Context, env Envelope, req OwnerTermi
 	}
 	f.failedHere(env.Owner)
 	if peer, ok := f.peer(env); ok {
-		pctx, cancel := context.WithTimeout(ctx, f.cfg.OwnerWait)
+		if hops.Err() != nil {
+			return OwnerTerminalAnswer{}, false
+		}
+		pctx, cancel := context.WithTimeout(hops, f.cfg.OwnerWait)
 		got, err = f.cfg.Peers.Terminal(pctx, peer, env.Owner, req)
 		cancel()
 		if err == nil {

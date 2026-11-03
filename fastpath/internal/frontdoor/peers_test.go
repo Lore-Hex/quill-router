@@ -43,10 +43,14 @@ func (f *fakePeers) Heartbeat(ctx context.Context, peer, owner string, _ OwnerHe
 	return f.heartbeat, nil
 }
 
-func (f *fakePeers) Terminal(_ context.Context, peer, owner string, _ OwnerTerminal) (OwnerTerminalAnswer, error) {
+func (f *fakePeers) Terminal(ctx context.Context, peer, owner string, _ OwnerTerminal) (OwnerTerminalAnswer, error) {
 	f.ev.add("peer %s %s", peer, owner)
 	if f.onCall != nil {
 		f.onCall()
+	}
+	if f.holding {
+		<-ctx.Done()
+		return OwnerTerminalAnswer{}, ctx.Err()
 	}
 	if f.unreachable[owner] {
 		return OwnerTerminalAnswer{}, ErrUnreachable
@@ -244,6 +248,122 @@ func TestAHeartbeatTriesItsPeerWithinItsCap(t *testing.T) {
 		GatewaySeq: 1})
 	if got.Status != Retry || time.Since(began) > 500*time.Millisecond {
 		t.Fatalf("a heartbeat whose peer holds it: %+v after %v", got, time.Since(began))
+	}
+}
+
+// budgeted is newPeers with an answer budget of half a second, whose owner
+// and peer each wait 400 ms, and whose settle publish waits five seconds:
+// unbudgeted, a request whose owner and peer both hold it would be
+// answered after 800 ms, a settle whose publish holds after five seconds.
+func budgeted(t *testing.T) *peersFixture {
+	t.Helper()
+	f := newPeers(t)
+	f.door.cfg.OwnerWait, f.door.cfg.PeerWait, f.door.cfg.PublishWait = 400*time.Millisecond,
+		400*time.Millisecond, 5*time.Second
+	f.door.cfg.AnswerWithin, f.door.cfg.AppendWithin = 500*time.Millisecond, 50*time.Millisecond
+	f.owners.holding = map[string]bool{}
+	return f
+}
+
+// withinBudget fails the test if an answer took longer than the budget,
+// with room for the scheduler.
+func withinBudget(t *testing.T, what string, began time.Time, f *peersFixture) {
+	t.Helper()
+	if took := time.Since(began); took > f.door.cfg.AnswerWithin+150*time.Millisecond {
+		t.Fatalf("%s answered after %v, past the budget of %v", what, took, f.door.cfg.AnswerWithin)
+	}
+}
+
+// TestASlowOwnerAndPeerAreAnsweredWithinTheBudget: a heartbeat or a
+// terminal whose owner holds it for the owner's full wait still goes
+// through its peer, which holds it too, and is answered within the answer
+// budget, before the control plane's own budget for the call ends: the
+// heartbeat Retry, the terminal Recorded in the drain log, from the time
+// the budget kept for the append (2026-11-02: an owner past its wait and
+// then a peer's answered after the control plane had stopped waiting).
+func TestASlowOwnerAndPeerAreAnsweredWithinTheBudget(t *testing.T) {
+	ctx := context.Background()
+	f := budgeted(t)
+	f.owners.holding["node-b"] = true
+	f.peers.holding = true
+	sealed := sealedAt(t, "node-b", "lease-1", "gwa-1")
+
+	began := time.Now()
+	if got := f.door.Heartbeat(ctx, HeartbeatOf{Envelope: sealed, GatewaySeq: 1}); got.Status != Retry {
+		t.Fatalf("a heartbeat whose owner and peer hold it: %+v", got)
+	}
+	withinBudget(t, "a heartbeat", began, f)
+
+	began = time.Now()
+	if got := f.door.Settle(ctx, settle(sealed)); got.Status != Recorded {
+		t.Fatalf("a settle whose owner and peer hold it: %+v", got)
+	}
+	withinBudget(t, "a settle", began, f)
+	began = time.Now()
+	if got := f.door.Refund(ctx, RefundOf{Envelope: sealed, Money: []byte("{}")}); got.Status != Recorded {
+		t.Fatalf("a refund whose owner and peer hold it: %+v", got)
+	}
+	withinBudget(t, "a refund", began, f)
+	if len(f.store.appended) != 2 || f.store.appended[0].Cause != "unreachable" ||
+		f.store.appended[1].Cause != "unreachable" {
+		t.Fatalf("appended %+v", f.store.appended)
+	}
+	// Each request went to its peer after its owner's full wait.
+	var peers int
+	for _, e := range f.ev.all() {
+		if strings.HasPrefix(e, "peer ") {
+			peers++
+		}
+	}
+	if peers != 3 {
+		t.Fatalf("%d requests tried a peer: %q", peers, f.ev.all())
+	}
+
+	// A settle whose publish holds is Failed within the budget too: the
+	// control plane retries it.
+	f.records.holding = true
+	began = time.Now()
+	if got := f.door.Settle(ctx, settle(sealed)); got.Status != Failed {
+		t.Fatalf("a settle whose publish holds: %+v", got)
+	}
+	withinBudget(t, "a settle whose publish holds", began, f)
+}
+
+// TestAnAuthorizeIsAnsweredWithinTheBudget: an authorize whose shard's
+// owner holds it for the owner's full wait asks the other shard's owner
+// for no more than the budget leaves, and is Busy within it.
+func TestAnAuthorizeIsAnsweredWithinTheBudget(t *testing.T) {
+	f := budgeted(t)
+	f.door.cfg.Shards = func(string) int64 { return 2 }
+	for _, o := range []string{"node-a", "node-b", "node-c", "node-d", "node-e"} {
+		f.owners.holding[o] = true
+	}
+	began := time.Now()
+	if got := f.door.Authorize(context.Background(), AuthorizeOf{Workspace: "ws-1", Request: "gwa-1", Estimate: 40,
+		Boot: []byte("boot")}); got.Status != Busy {
+		t.Fatalf("an authorize whose owners hold it: %+v", got)
+	}
+	withinBudget(t, "an authorize", began, f)
+}
+
+// TestAnAnswerBudgetLeavesRoomForItsSteps: New takes an answer budget only
+// with time kept for a terminal's append, and room for it after an
+// owner's full wait.
+func TestAnAnswerBudgetLeavesRoomForItsSteps(t *testing.T) {
+	f := newDoor(t, 1)
+	cfg := f.door.cfg
+	for _, c := range []struct{ answer, append time.Duration }{
+		{-time.Second, 0}, {0, -time.Second}, {2 * time.Second, 0}, {time.Second + 200*time.Millisecond, 200 * time.Millisecond},
+		{time.Second, 100 * time.Millisecond},
+	} {
+		cfg.AnswerWithin, cfg.AppendWithin = c.answer, c.append
+		if _, err := New(cfg); err == nil {
+			t.Fatalf("an answer budget of %v keeping %v after an owner's wait of %v", c.answer, c.append, cfg.OwnerWait)
+		}
+	}
+	cfg.AnswerWithin, cfg.AppendWithin = time.Second+201*time.Millisecond, 200*time.Millisecond
+	if _, err := New(cfg); err != nil {
+		t.Fatal(err)
 	}
 }
 

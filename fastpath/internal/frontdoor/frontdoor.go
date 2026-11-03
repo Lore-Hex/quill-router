@@ -80,6 +80,17 @@ type Config struct {
 	OwnerWait time.Duration
 	// PublishWait bounds a full record's publish (§4.9).
 	PublishWait time.Duration
+	// AnswerWithin bounds a gateway's authorize, heartbeat and terminal from
+	// its arrival: each is answered within it however slow its owner and
+	// peer are, a settle's publish included, so the answer reaches the
+	// control plane inside that caller's own budget for the call
+	// (fastpath_front_door_timeout_seconds), which must exceed it. The
+	// owner's call gets OwnerWait of it at most, a peer's what is left, up
+	// to its own wait; a terminal keeps the last AppendWithin of it for its
+	// drain log append, which New checks an owner's full wait leaves room
+	// for. Zero bounds a request only by its own context.
+	AnswerWithin time.Duration
+	AppendWithin time.Duration
 
 	// Self is this node's address, Peers the other nodes' front doors: a
 	// terminal or a heartbeat whose owner this one cannot reach is sent
@@ -174,6 +185,10 @@ func New(cfg Config) (*FrontDoor, error) {
 		return nil, errors.New("frontdoor: peers need this node's address and a wait, withdrawing a window and " +
 			"a probe interval, and revoking an interval and the holds' life")
 	}
+	if cfg.AnswerWithin < 0 || cfg.AppendWithin < 0 ||
+		(cfg.AnswerWithin > 0 && (cfg.AppendWithin <= 0 || cfg.OwnerWait+cfg.AppendWithin >= cfg.AnswerWithin)) {
+		return nil, errors.New("frontdoor: an answer budget past an owner's full wait and the drain log append's")
+	}
 	if cfg.Clock == nil {
 		cfg.Clock = time.Now
 	}
@@ -236,20 +251,27 @@ func (f *FrontDoor) Authorize(ctx context.Context, a AuthorizeOf) Authorized {
 	if k > 1 {
 		shards = append(shards, (shard+1)%k)
 	}
+	_, hops, cancelBudget := f.budget(ctx, 0)
+	defer cancelBudget()
 	view, _ := f.cfg.Members.View()
 	for _, s := range shards {
 		m, ok := view.Owner(ring.ShardKey(a.Workspace, s))
 		if !ok {
 			continue
 		}
-		octx, cancel := context.WithTimeout(ctx, f.cfg.OwnerWait)
+		if hops.Err() != nil {
+			// The answer budget is spent: no other shard's owner is asked.
+			break
+		}
+		octx, cancel := context.WithTimeout(hops, f.cfg.OwnerWait)
 		got, err := f.cfg.Owners.Authorize(octx, m.Address, OwnerAuthorize{Workspace: a.Workspace, Shard: s,
 			Estimate: a.Estimate, Stream: a.Stream, Boot: a.Boot, OpenHeartbeat: a.OpenHeartbeat})
 		cancel()
 		switch {
 		case err == nil:
 			f.reached(m.Address)
-		case ctx.Err() == nil:
+		case hops.Err() == nil:
+			// Neither the request nor its budget ended first.
 			f.failedHere(m.Address)
 		}
 		switch {
@@ -261,6 +283,26 @@ func (f *FrontDoor) Authorize(ctx context.Context, a AuthorizeOf) Authorized {
 		}
 	}
 	return Authorized{Status: Busy}
+}
+
+// budget is a gateway request's answer budget (AnswerWithin): answer ends
+// AnswerWithin from now, and hops, which bounds the calls to owners and
+// peers and a settle's publish, ends keep before it, so what follows them,
+// a terminal's drain log append, has that long. Both end with ctx too, and
+// without AnswerWithin only with it. Its clock is the process's, as every
+// call's own wait is.
+func (f *FrontDoor) budget(ctx context.Context, keep time.Duration) (answer, hops context.Context,
+	cancel context.CancelFunc) {
+	if f.cfg.AnswerWithin <= 0 {
+		return ctx, ctx, func() {}
+	}
+	by := time.Now().Add(f.cfg.AnswerWithin)
+	answer, cancelAnswer := context.WithDeadline(ctx, by)
+	hops, cancelHops := context.WithDeadline(answer, by.Add(-keep))
+	return answer, hops, func() {
+		cancelHops()
+		cancelAnswer()
+	}
 }
 
 // pick is the shard a request's own hash picks, of k.
@@ -293,7 +335,9 @@ func (f *FrontDoor) Heartbeat(ctx context.Context, hb HeartbeatOf) HeartbeatAnsw
 	if err != nil {
 		return HeartbeatAnswer{Status: Invalid}
 	}
-	got, ok := f.heartbeatAt(ctx, env, OwnerHeartbeat{Lease: env.Lease, Auth: env.Auth,
+	_, hops, cancel := f.budget(ctx, 0)
+	defer cancel()
+	got, ok := f.heartbeatAt(ctx, hops, env, OwnerHeartbeat{Lease: env.Lease, Auth: env.Auth,
 		GatewaySeq: hb.GatewaySeq, Hash: hb.Hash, Usage: hb.Usage, Running: hb.Running, Echoed: hb.Echoed,
 		EchoGranted: hb.EchoGranted, Basis: hb.Basis})
 	if !ok {
@@ -381,14 +425,16 @@ func (f *FrontDoor) Settle(ctx context.Context, s SettleOf) TerminalAnswer {
 	// The publish may outlive the request: it publishes its own copy.
 	full := slices.Clone(s.Full)
 	digest := sha256.Sum256(full)
-	pctx, cancel := context.WithTimeout(ctx, f.cfg.PublishWait)
+	answer, hops, cancelBudget := f.budget(ctx, f.cfg.AppendWithin)
+	defer cancelBudget()
+	pctx, cancel := context.WithTimeout(hops, f.cfg.PublishWait)
 	_, err = f.cfg.Records.Publish(env.Auth, settlelog.FullRecord, full).Wait(pctx)
 	cancel()
 	if err != nil {
 		return TerminalAnswer{Status: Failed}
 	}
 	req := OwnerTerminal{Lease: env.Lease, Auth: env.Auth, Kind: record.Settle, Charge: s.Charge, Digest: digest[:]}
-	return f.terminal(ctx, env, req, rowID(req, s.Money), s.Money)
+	return f.terminal(ctx, answer, hops, env, req, rowID(req, s.Money), s.Money)
 }
 
 // rowID names a terminal's drain-log row by all it states, its kind, charge,
@@ -412,16 +458,19 @@ func (f *FrontDoor) Refund(ctx context.Context, r RefundOf) TerminalAnswer {
 		return TerminalAnswer{Status: Invalid}
 	}
 	req := OwnerTerminal{Lease: env.Lease, Auth: env.Auth, Kind: record.Refund}
-	return f.terminal(ctx, env, req, rowID(req, r.Money), r.Money)
+	answer, hops, cancel := f.budget(ctx, f.cfg.AppendWithin)
+	defer cancel()
+	return f.terminal(ctx, answer, hops, env, req, rowID(req, r.Money), r.Money)
 }
 
 // terminal sends a terminal to the owner its envelope names, through a peer
-// if this front door cannot reach it. If no owner answers, or the owner
-// answers that it may never publish it, the terminal goes to the lease's
-// drain log at once, under the row ID given.
-func (f *FrontDoor) terminal(ctx context.Context, env Envelope, req OwnerTerminal, recordID string,
+// if this front door cannot reach it, the calls ending with hops. If no
+// owner answers, or the owner answers that it may never publish it, the
+// terminal goes to the lease's drain log at once, under the row ID given,
+// the append ending with answer (budget).
+func (f *FrontDoor) terminal(ctx, answer, hops context.Context, env Envelope, req OwnerTerminal, recordID string,
 	money []byte) TerminalAnswer {
-	got, ok := f.terminalAt(ctx, env, req)
+	got, ok := f.terminalAt(ctx, hops, env, req)
 	cause := "unreachable"
 	switch {
 	case !ok:
@@ -436,7 +485,7 @@ func (f *FrontDoor) terminal(ctx context.Context, env Envelope, req OwnerTermina
 		// The gateway stopped waiting: it retries.
 		return TerminalAnswer{Status: Failed}
 	}
-	return f.appendTerminal(ctx, env, req, recordID, money, cause)
+	return f.appendTerminal(answer, env, req, recordID, money, cause)
 }
 
 // appendTerminal appends a terminal to its lease's drain log, with the

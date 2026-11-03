@@ -849,6 +849,29 @@ func TestTheOverdueAllowancesAreTenMinutes(t *testing.T) {
 	}
 }
 
+// TestTheFrontDoorAnswersWithinTheControlPlanesBudget: the front door's
+// waits compose to an answer within its budget, 1.2 s, which the control
+// plane's 1.5 s for a call (fastpath_front_door_timeout_seconds, its
+// connection's 0.25 s included; tests/test_fastpath_frontdoor.py holds
+// Python to it) outlasts: a heartbeat's peer gets its full wait after an
+// owner's full wait, and a terminal's peer still gets some of its own
+// before the append's time.
+func TestTheFrontDoorAnswersWithinTheControlPlanesBudget(t *testing.T) {
+	fd := Defaults().agreed().FrontDoor
+	const controlPlane, connection = 1500 * time.Millisecond, 250 * time.Millisecond
+	switch {
+	case fd.AnswerWithin <= 0 || fd.AnswerWithin+connection > controlPlane:
+		t.Fatalf("an answer budget of %v in the control plane's %v, %v of it the connection's", fd.AnswerWithin,
+			controlPlane, connection)
+	case fd.OwnerWait+fd.PeerWait > fd.AnswerWithin:
+		t.Fatalf("a heartbeat's owner wait %v and peer wait %v past the budget %v", fd.OwnerWait, fd.PeerWait,
+			fd.AnswerWithin)
+	case fd.OwnerWait+fd.AppendWithin >= fd.AnswerWithin || fd.AppendWithin <= 0:
+		t.Fatalf("a terminal's owner wait %v and append %v leave its peer nothing of %v", fd.OwnerWait,
+			fd.AppendWithin, fd.AnswerWithin)
+	}
+}
+
 // lines is a goroutine-safe writer that keeps what was written.
 type lines struct {
 	mu  sync.Mutex
