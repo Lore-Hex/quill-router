@@ -1,7 +1,8 @@
 [Unit]
 Description=TrustedRouter independent price refresh observer
 Wants=network-online.target
-After=network-online.target
+Requires=systemd-resolved.service
+After=network-online.target systemd-resolved.service
 
 [Service]
 Type=oneshot
@@ -20,6 +21,9 @@ TasksMax=8
 UMask=0077
 NoNewPrivileges=yes
 ProtectSystem=strict
+# GCE's upstream DNS uses the blocked metadata address. Keep that block and
+# use the existing loopback resolver only inside this service's mount namespace.
+BindReadOnlyPaths=/run/systemd/resolve/stub-resolv.conf:/etc/resolv.conf
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes

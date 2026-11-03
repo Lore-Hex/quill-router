@@ -48,3 +48,18 @@ Sentry check-in. Confirm the next scheduled check without manual dispatch.
 Rollback restores the saved files from `/var/backups/tr-price-refresh-*` and
 the previous heartbeat ownership. Do not disable both observers or resolve
 the watchdog incident until a real check succeeds.
+
+## First-start DNS correction
+
+The initial service start failed before enabling its timer. The host resolver
+listed `169.254.169.254`, so the service's intentional metadata-address block
+also blocked DNS. The same observer completed successfully outside that network
+restriction. The host already runs systemd-resolved on `127.0.0.53`.
+
+The service now bind-mounts the existing stub resolver configuration over
+`/etc/resolv.conf` in its own mount namespace, with an explicit dependency on
+systemd-resolved. Host-wide DNS and both metadata-address blocks are unchanged.
+An isolated production-host check resolved GitHub using this mapping and could
+not connect to metadata port 80. A regression test failed on the original unit
+before the mapping was added. Installation checks that the resolver is active
+before replacing any service files.
