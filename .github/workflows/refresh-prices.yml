@@ -517,16 +517,39 @@ jobs:
 
             # The create-status response currently omits `creator` and `sha`.
             # Re-read this exact status from the SHA-scoped endpoint before
-            # trusting it for protected-main promotion.
-            verified_status=$(gh api \
-              "repos/${GITHUB_REPOSITORY}/statuses/${SNAPSHOT_SHA}" \
-              --jq "map(select(.id == ${status_id}))[0] // empty")
-            if [ -z "${verified_status}" ] || \
-               [ "$(jq -r .context <<<"${verified_status}")" != "${context}" ] || \
-               [ "$(jq -r .state <<<"${verified_status}")" != "success" ] || \
-               [ "$(jq -r .target_url <<<"${verified_status}")" != "${ci_url}" ] || \
-               [ "$(jq -r .creator.login <<<"${verified_status}")" != "github-actions[bot]" ]; then
-              echo "failed to verify exact snapshot status '${context}'"
+            # trusting it for protected-main promotion. A new status can be
+            # absent from a readback; retry only that absence, never a POST,
+            # API error, or a present status with mismatched evidence.
+            verified_status=""
+            for status_read in $(seq 1 5); do
+              verified_status=$(gh api \
+                "repos/${GITHUB_REPOSITORY}/statuses/${SNAPSHOT_SHA}" \
+                --jq "map(select(.id == ${status_id}))[0] // empty")
+              if [ -n "${verified_status}" ]; then break; fi
+              if [ "${status_read}" -lt 5 ]; then sleep 2; fi
+            done
+            if [ -z "${verified_status}" ]; then
+              echo "exact snapshot status '${context}' id=${status_id} not visible after 5 reads"
+              exit 1
+            fi
+            if [ "$(jq -r .url <<<"${verified_status}")" != "${expected_status_url}" ]; then
+              echo "failed to verify exact snapshot status '${context}': SHA-scoped URL mismatch"
+              exit 1
+            fi
+            if [ "$(jq -r .context <<<"${verified_status}")" != "${context}" ]; then
+              echo "failed to verify exact snapshot status '${context}': context mismatch"
+              exit 1
+            fi
+            if [ "$(jq -r .state <<<"${verified_status}")" != "success" ]; then
+              echo "failed to verify exact snapshot status '${context}': state mismatch"
+              exit 1
+            fi
+            if [ "$(jq -r .target_url <<<"${verified_status}")" != "${ci_url}" ]; then
+              echo "failed to verify exact snapshot status '${context}': CI URL mismatch"
+              exit 1
+            fi
+            if [ "$(jq -r .creator.login <<<"${verified_status}")" != "github-actions[bot]" ]; then
+              echo "failed to verify exact snapshot status '${context}': creator mismatch"
               exit 1
             fi
           done
