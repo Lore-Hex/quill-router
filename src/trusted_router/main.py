@@ -154,6 +154,13 @@ _ACQUISITION_CLOUD_FIELDS = (
     "elapsed_ms",
     "failure_reason",
     "finish_reason",
+    # Token Exchange funnel fields: the referring site, the market, and the hashed exchange visitor
+    # that joins exchange visits to trustedrouter.com sign-ups and purchases.
+    "referer_host",
+    "market",
+    "exchange_market",
+    "exchange_visitor_fingerprint",
+    "amount_microdollars",
 )
 
 

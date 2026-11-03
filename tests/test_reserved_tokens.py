@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
@@ -86,6 +87,20 @@ def test_invalid_body(checkout: tuple[TestClient, Mock], patch: dict[str, Any]) 
     create.assert_not_called()
 
 
+def test_checkout_metadata_names_the_exchange_site_market_and_hashed_visitor(checkout: tuple[TestClient, Mock]) -> None:
+    client, create = checkout
+    visitor = "11111111-1111-4111-8111-111111111111"
+    response = client.post(PATH, json={"grade": "A", "lots": 1, "terms_accepted": True, "visitor_id": visitor}, headers=HEADERS)
+    assert response.status_code == 200
+    metadata = create.call_args.kwargs["metadata"]
+    assert (metadata["site_domain"], metadata["market"]) == ("nytokenexchange.com", "new-york")
+    expected = reserve.exchange_attribution_metadata("nytokenexchange.com", uuid.UUID(visitor))["visitor_fingerprint"]
+    assert metadata["visitor_fingerprint"] == expected
+    assert visitor not in json.dumps(metadata)
+    assert client.post(PATH, json={"grade": "A", "lots": 1, "terms_accepted": True, "visitor_id": "reader@example.com"}, headers=HEADERS).status_code == 422
+    create.assert_called_once()
+
+
 def test_missing_terms(checkout: tuple[TestClient, Mock]) -> None:
     client, create = checkout
     assert client.post(PATH, json={"grade": "A", "lots": 1}, headers=HEADERS).status_code == 422
@@ -108,7 +123,7 @@ def test_stripe_parameters_and_quote(checkout: tuple[TestClient, Mock], settings
     assert not {"customer_email", "customer", "allow_promotion_codes", "automatic_tax"} & args.keys()
     assert args["success_url"] == "https://nytokenexchange.com/buy?reserved=success"
     assert args["cancel_url"] == "https://nytokenexchange.com/buy?step=2&grade=B&unit=blocks"
-    assert args["metadata"] == {"kind": reserve.KIND, **{
+    assert args["metadata"] == {"kind": reserve.KIND, "site_domain": "nytokenexchange.com", "market": "new-york", **{
         key: str(value) for key, value in quote.json().items() if key != "max_lots"
     }}
     assert args["metadata"]["refund_window_days"] == "30"

@@ -39,18 +39,21 @@ The TrustedRouter homepage banner links to `nytokenexchange.com` with
 The growth worker exports it and server-confirmed brochure/security-pack
 deliveries to `trustedrouter-marketing`. Deploy the worker and refresh its
 exact-event logging sink when adding event names; a website deploy alone is
-insufficient. Standalone sites send `acquisition.exchange.landing_viewed`
-when visible and `acquisition.exchange.landing_engaged` after ten continuous
-visible seconds, once each per page load. `site_domain` and bounded `page_path`
-identify the market and page. There is no polling or database write per event.
-A random per-tab ID (30-minute storage lifetime), hashed with the market hostname
-before logging, joins visits to successful brochure downloads on that site.
-GPC and DNT suppress events and storage. Requests omit cookies and credentials.
-The event collector limits bodies to 2 KiB, accepts only owned origins and
-two fixed event names, and caps traffic in bounded per-process memory.
-The ID is not a cross-domain user identity and is not tied to a submitted email.
-Downloads without this ID remain unlinked; do not claim a complete
-cross-domain visit-to-purchase funnel. Historical untracked visits cannot be recovered.
+insufficient. Every exchange site loads the same `analytics.js`. It sends
+`acquisition.exchange.landing_viewed` when a page is visible and
+`acquisition.exchange.landing_engaged` after ten continuous visible seconds, once
+each per page load, plus the `acquisition.nyte.*` click, form and `/buy` events.
+`site_domain` and `market` name the site; `page_path` is the page's own slug (one
+segment, up to 40 characters), so a new page needs no list change. The source is
+the page's campaign tags, else the referring site's hostname, else `direct`; the
+site's own name is never its source. A random visitor ID kept 90 days in the
+browser is hashed before logging and travels as `tx_vid` with `exchange_market`
+on links to trustedrouter.com and sister sites, where the same hash is stored as
+a first-party touch and stamped onto sign-up, first-call and purchase events. It
+is never tied to a submitted email. `?tx_internal=1` turns tracking off in that
+browser; GPC and DNT suppress events and storage. Requests omit cookies and
+credentials. The collector limits bodies to 2 KiB, accepts only owned origins and
+a fixed list of event names, and caps traffic in bounded per-process memory.
 
 - `POST /token-exchange/brief` belongs to the **actions** service surface.
   Keep its exact path in `scripts/deploy/service_surface_url_map.py` during

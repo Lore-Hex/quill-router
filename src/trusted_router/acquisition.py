@@ -28,6 +28,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import Request, Response
 
 from trusted_router.config import Settings
+from trusted_router.exchange_analytics import EXCHANGE_MARKET_SLUGS, HOST_RE, PAGE_RE, market_for
 from trusted_router.google_ads_conversions import encrypt_google_ads_click_id
 from trusted_router.marketing_experiments import (
     ONBOARDING_EXPERIMENT_ID,
@@ -73,8 +74,12 @@ _TOUCH_FIELDS = frozenset(
         "landing_path",
         "referer_host",
         "captured_at",
+        # Set when the visitor arrived from a Token Exchange site (tx_vid and exchange_market on the link).
+        "exchange_market",
+        "exchange_visitor_fingerprint",
     }
 )
+_EXCHANGE_VISITOR_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 _USAGE_CHECK_CACHE_MAX = 50_000
 _POST_SIGNUP_MILESTONES = frozenset(
     {
@@ -673,22 +678,33 @@ def exchange_site_campaign(request: Request, campaign: object) -> dict[str, str]
     return fields
 
 
-def exchange_site_touch(page_url: str, campaign: dict[str, str]) -> dict[str, str]:
-    """The funnel touch for a Token Exchange page's brochure download.
+def exchange_visitor_fingerprint(visitor_id: str) -> str:
+    """One hash per exchange visitor ID: the same on every exchange domain and on trustedrouter.com,
+    so exchange visits join to later sign-ups, first calls and purchases. Never tied to an email."""
+    return _fingerprint(f"exchange-visitor:{visitor_id}")
 
-    Defaults match the tagged links these pages used before the form (build.py tracked_url),
-    and the page's own campaign fields override them one by one, as they did on those links."""
-    host = (urlsplit(page_url).hostname or "")[:128]
-    touch = {
-        "utm_source": host,
-        "utm_medium": "referral",
-        "utm_campaign": "token-exchange-launch",
-        "utm_content": "brief",
-        **campaign,
-    }
-    # The exported log keeps landing_path but not referer_host, so the path names the site.
-    touch["landing_path"] = f"{host}/"
-    touch["referer_host"] = host
+
+def exchange_site_touch(
+    page_url: str, campaign: dict[str, str], *, referrer_host: str | None = None, page_path: str = "/",
+) -> dict[str, str]:
+    """The funnel touch for an event on a Token Exchange page.
+
+    The page's own campaign fields win. Otherwise the referring site is the source, and a visit
+    with no tags and no referrer is direct. The site's own name is never recorded as its source."""
+    host = (urlsplit(page_url).hostname or "")[:128].lower()
+    referrer = _safe_text((referrer_host or "").lower(), 128)
+    if not HOST_RE.fullmatch(referrer) or referrer == host:
+        referrer = ""
+    tagged = {name: value for name, value in campaign.items() if not (name == "utm_source" and value.lower() == host)}
+    touch = {"utm_source": "direct", "utm_medium": "none", **tagged}
+    if referrer:
+        touch["referer_host"] = referrer
+        if "utm_source" not in tagged:
+            touch["utm_source"] = referrer
+            touch["utm_medium"] = "referral"
+    touch["site_domain"] = host
+    touch["exchange_market"] = market_for(host)
+    touch["landing_path"] = page_path if PAGE_RE.fullmatch(page_path or "") else "/"
     touch["captured_at"] = iso_now()
     return touch
 
@@ -699,19 +715,20 @@ def log_exchange_site_funnel_event(
 ) -> None:
     if _privacy_signal_enabled(request) or acquisition_request_is_automated(request):
         return
-    log.info(
-        f"acquisition.{event}",
-        extra={
-            "event": f"acquisition.{event}",
-            "anonymous_fingerprint": _fingerprint(
-                f"exchange:{touch.get('referer_host', '')}:{visitor_id or uuid.uuid4().hex}"
-            ),
-            "site_domain": touch.get("referer_host", ""),
-            "page_path": touch.get("page_path", "/"),
-            **(properties or {}),
-            **_safe_touch_log_fields(touch),
-        },
-    )
+    fingerprint = exchange_visitor_fingerprint(visitor_id or uuid.uuid4().hex)
+    fields: dict[str, object] = {
+        "event": f"acquisition.{event}",
+        "anonymous_fingerprint": fingerprint,
+        "site_domain": touch.get("site_domain", ""),
+        "market": touch.get("exchange_market", ""),
+        "page_path": touch.get("landing_path", "/"),
+        "device_category": device_category(request.headers.get("user-agent", "")),
+        **(properties or {}),
+        **_safe_touch_log_fields(touch),
+    }
+    # The join key is only meaningful when the browser supplied its ID.
+    fields["exchange_visitor_fingerprint"] = fingerprint if visitor_id else ""
+    log.info(f"acquisition.{event}", extra=fields)
 
 
 def onboarding_exposure(request: Request, *, user_id: str, workspace_id: str, record: bool = True) -> str:
@@ -770,6 +787,8 @@ def _log_conversion(
             record.google_click_id_kind and record.encrypted_google_click_id
         ),
     }
+    for name in ("exchange_market", "exchange_visitor_fingerprint"):
+        fields[name] = record.last_touch.get(name) or record.first_touch.get(name)
     if extra:
         fields.update(extra)
     log.info(event, extra=fields)
@@ -789,6 +808,8 @@ def _safe_touch_log_fields(touch: dict[str, str]) -> dict[str, object]:
         "experiment_cell_id": touch.get("experiment_cell_id"),
         "landing_path": touch.get("landing_path"),
         "referer_host": touch.get("referer_host"),
+        "exchange_market": touch.get("exchange_market"),
+        "exchange_visitor_fingerprint": touch.get("exchange_visitor_fingerprint"),
         "has_gclid": bool(touch.get("gclid_fingerprint")),
         "has_gbraid": bool(touch.get("gbraid_fingerprint")),
         "has_wbraid": bool(touch.get("wbraid_fingerprint")),
@@ -823,6 +844,13 @@ def _touch_from_request(request: Request, settings: Settings) -> dict[str, str]:
     if "twclid" in click_fields:
         touch.setdefault("utm_source", "x")
         touch.setdefault("utm_medium", "paid_social")
+    # Links from the Token Exchange sites carry the visitor's exchange ID and market.
+    exchange_visitor = str(request.query_params.get("tx_vid") or "").strip().lower()
+    if _EXCHANGE_VISITOR_RE.fullmatch(exchange_visitor):
+        touch["exchange_visitor_fingerprint"] = exchange_visitor_fingerprint(exchange_visitor)
+    exchange_market = str(request.query_params.get("exchange_market") or "").strip().lower()
+    if exchange_market in EXCHANGE_MARKET_SLUGS:
+        touch["exchange_market"] = exchange_market
     touch.setdefault("utm_source", "direct")
     touch.setdefault("utm_medium", "none")
     touch["landing_path"] = request.url.path[:256]
@@ -862,7 +890,7 @@ def _validated_touch(value: Any) -> dict[str, str]:
     for key, raw_value in value.items():
         if key not in _TOUCH_FIELDS or not isinstance(raw_value, str):
             continue
-        if key in _CLICK_FINGERPRINT_FIELDS:
+        if key in _CLICK_FINGERPRINT_FIELDS or key == "exchange_visitor_fingerprint":
             if re.fullmatch(r"[a-f0-9]{64}", raw_value):
                 touch[key] = raw_value
             continue
@@ -897,6 +925,10 @@ def _should_capture_request(request: Request) -> bool:
     ):
         return False
     path = request.url.path
+    if path.startswith("/console") and _has_explicit_campaign_touch(request):
+        # The exchange sites hand visitors straight to the console with campaign tags;
+        # keep that touch instead of counting the sign-up as direct.
+        return True
     excluded = (
         "/auth",
         "/console",
@@ -932,6 +964,8 @@ def _has_explicit_campaign_touch(request: Request) -> bool:
             "utm_content",
             "tr_exp",
             "tr_cell",
+            "tx_vid",
+            "exchange_market",
             *_RAW_CLICK_ID_FIELDS,
         )
     )

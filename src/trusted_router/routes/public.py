@@ -844,7 +844,7 @@ async def _handle_exchange_event(settings: Settings, request: Request) -> Respon
     if not accept_event(_inquiry_client_identity(request, settings)):
         return Response(status_code=429, headers={**headers, "Retry-After": "60"})
     campaign = exchange_site_campaign(request, event.campaign)
-    touch = {**exchange_site_touch(origin + "/", campaign), "page_path": event.page}
+    touch = exchange_site_touch(origin + "/", campaign, referrer_host=event.referrer_host, page_path=event.page)
     log_exchange_site_funnel_event(
         request, event.event, touch,
         visitor_id=str(event.visitor_id),
@@ -954,7 +954,13 @@ async def _handle_enterprise_brief(settings: Settings, request: Request) -> Resp
                 visitor_id = str(visitor) if str(visitor) == payload.get("visitor_id") else None
             except ValueError:
                 visitor_id = None
-            touch = exchange_site_touch(page_url, campaign)
+            referrer_host, page_path = payload.get("referrer_host"), payload.get("page")
+            # Deliveries keep the creative label dashboards have always grouped them by.
+            touch = exchange_site_touch(
+                page_url, {"utm_content": "brief", **campaign},
+                referrer_host=referrer_host if isinstance(referrer_host, str) else None,
+                page_path=page_path if isinstance(page_path, str) else "/",
+            )
             if visitor_id:
                 log_exchange_site_funnel_event(request, event, touch, visitor_id=visitor_id)
             else:
@@ -1002,7 +1008,8 @@ async def _handle_reservation(settings: Settings, request: Request, *, checkout:
                     return error("request_too_large", 413)
                 body.extend(chunk)
             parsed_body = ReservationRequest.model_validate_json(body)
-            result = await run_in_threadpool(create_reservation_checkout, settings, parsed_body)
+            site_host = (urlparse(origin).hostname if origin else request.url.hostname) or ""
+            result = await run_in_threadpool(create_reservation_checkout, settings, parsed_body, site_host=site_host)
         else:
             grade = request.query_params.get("grade", "")
             lots_raw = request.query_params.get("lots", "")

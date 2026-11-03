@@ -46,14 +46,6 @@ dialog?.addEventListener('click',e=>{if(e.target===dialog)dialog.close();});
 const video=document.getElementById('filmVid');
 document.getElementById('filmPlay')?.addEventListener('click',()=>{video.controls=true;video.play().catch(()=>{document.getElementById('film').classList.remove('playing');});});
 video?.addEventListener('playing',()=>{document.getElementById('film').classList.add('playing');window.TokenExchangeAnalytics?.track('nyte.video_played');},{once:true});
-const ctas={'Download for Apple silicon':'download_apple_silicon','Download for Intel Mac':'download_intel_mac','Start building':'api_quick_start','Get the buyer deck':'buyer_deck','Get the provider deck':'provider_deck','Get your API key':'api_key','Read documentation':'documentation','Apply as a provider':'apply_provider','List spare capacity':'spare_capacity','Get the open-source stack':'open_source_stack','Operator guide':'operator_guide','Explore the index':'index'};
-document.addEventListener('click',e=>{
- const el=e.target.closest('a,button');if(!el)return;
- const cta=ctas[el.textContent.trim()];
- const position=el.closest('header')?'header':el.closest('.close-photo,.cw-download')?'close':el.closest('[class^="hero"]')?'hero':'section';
- if(cta)window.TokenExchangeAnalytics?.track('nyte.cta_clicked',{cta,position});
- if(el.tagName==='A'){const url=new URL(el.href,location.href);if(['trustedrouter.com','github.com'].includes(url.hostname))window.TokenExchangeAnalytics?.track('nyte.outbound_clicked',{destination_host:url.hostname,cta:cta||'source'});}
-});
 })();
 /* The brochure form is TrustedRouter's email-gated download, posted there from this
    domain; the server allows the exchange origins. Without JavaScript the button stays

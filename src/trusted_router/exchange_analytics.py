@@ -1,29 +1,63 @@
 """Small, bounded metadata collector for the owned static exchange sites."""
 from __future__ import annotations
 
+import json
+import re
 import threading
 import time
 from collections import OrderedDict
+from pathlib import Path
 from typing import Literal
 
-from pydantic import UUID4, BaseModel, ConfigDict, Field, model_validator
+from pydantic import UUID4, BaseModel, ConfigDict, Field, field_validator, model_validator
+
+# Canonical exchange domain -> market slug, mirrored from sites/token-exchange/markets.json.
+EXCHANGE_MARKETS: dict[str, str] = json.loads(
+    (Path(__file__).parent / "data" / "token_exchange_markets.json").read_text()
+)
+EXCHANGE_DOMAINS = frozenset(EXCHANGE_MARKETS)
+EXCHANGE_MARKET_SLUGS = frozenset(EXCHANGE_MARKETS.values())
+# Hosts an exchange page may report an outbound click to: the product, the code,
+# the sales calendar and the sister markets.
+OUTBOUND_HOSTS = frozenset({"trustedrouter.com", "github.com", "calendly.com"}) | EXCHANGE_DOMAINS
+# One short slug names a page or a button, so a new page or button needs no list
+# change here, in the browser script or in the export worker. Anything else is rejected.
+PAGE_PATTERN = r"^/(?:[a-z0-9][a-z0-9-]{0,39})?$"
+SLUG_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,39}$"
+HOST_PATTERN = r"^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$"
+PAGE_RE = re.compile(PAGE_PATTERN)
+HOST_RE = re.compile(HOST_PATTERN)
+
+
+def market_for(host: str) -> str:
+    """The market slug of an exchange hostname, or empty for anything else."""
+    return EXCHANGE_MARKETS.get(host.lower(), "")
 
 
 class ExchangeEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
     event: Literal["exchange.landing_viewed", "exchange.landing_engaged", "nyte.cta_clicked", "nyte.video_played", "nyte.form_submitted", "nyte.outbound_clicked", "nyte.buy_step_1_viewed", "nyte.buy_step_2_viewed", "nyte.buy_step_3_viewed", "nyte.buy_step_4_viewed", "nyte.buy_completed", "nyte.reserve_checkout_started", "nyte.reserve_checkout_succeeded", "nyte.resale_listed", "nyte.resale_withdrawn"]
     visitor_id: UUID4
-    page: Literal["/", "/providers", "/badge", "/confidential", "/trusted-cowork", "/suppliers", "/index", "/buy", "/neocloud-accelerator", "/reserved-tokens-terms", "/manage-reservation"] = "/"
+    page: str = Field("/", pattern=PAGE_PATTERN)
     campaign: dict[str, str] = Field(default_factory=dict, max_length=5)
+    # The referring site's hostname only, never a URL; absent on a direct visit.
+    referrer_host: str | None = Field(None, pattern=HOST_PATTERN, max_length=253)
 
-    cta: Literal["download_apple_silicon", "download_intel_mac", "api_quick_start", "buyer_deck", "provider_deck", "api_key", "documentation", "apply_provider", "spare_capacity", "open_source_stack", "operator_guide", "index", "source"] | None = None
+    cta: str | None = Field(None, pattern=SLUG_PATTERN)
     position: Literal["header", "hero", "section", "close"] | None = None
-    form: Literal["buyer_deck"] | None = None
-    destination_host: Literal["trustedrouter.com", "github.com"] | None = None
+    form: str | None = Field(None, pattern=SLUG_PATTERN)
+    destination_host: str | None = Field(None, max_length=253)
 
     unit: Literal["blocks", "throughput", "unsure"] | None = None
     underlying_kind: Literal["index", "model", "facility"] | None = None
     grade: Literal["AAA", "A", "B", "C", "none"] | None = None
+
+    @field_validator("destination_host")
+    @classmethod
+    def known_destination(cls, value: str | None) -> str | None:
+        if value is not None and value not in OUTBOUND_HOSTS:
+            raise ValueError("Unknown outbound destination")
+        return value
 
     @model_validator(mode="after")
     def event_properties(self) -> ExchangeEvent:
