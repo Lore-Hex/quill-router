@@ -705,9 +705,11 @@ ENV_VARS=(
   "TR_STAGE_D_PILOT_WORKSPACE_IDS="
   # The fast path's pilot (docs/design/fast-admission-pilot.md): Joseph's
   # workspace and, on his word (2026-10-16), one customer's, admitted by the
-  # front doors from the us-central1 control plane. Rollback: Joseph's ID
-  # alone, or TR_FASTPATH_PILOT_ENABLED=false.
-  "TR_FASTPATH_PILOT_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d,84cbb802-e054-486a-9226-e3cda4a799fb"
+  # front doors from the us-central1 control plane; from 2026-11-03 also P1's
+  # synthetic workspace, his own and outside async settle admission, so the
+  # edge answers its load tests. Rollback: drop an ID, or
+  # TR_FASTPATH_PILOT_ENABLED=false.
+  "TR_FASTPATH_PILOT_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d,84cbb802-e054-486a-9226-e3cda4a799fb,8b682b96-d8ef-4631-b0ee-bbf41816f1f8"
   "TR_FASTPATH_PILOT_ENABLED=true"
   # Which keys with spend windows the pilot covers, here and on the edge
   # through the edge policy (docs/design/fast-admission-e2-key-windows.md

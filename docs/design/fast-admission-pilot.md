@@ -112,7 +112,9 @@ Three, all in the control plane's settings (`config.py`), none on by
 default, in the order they are turned on:
 
 1. `TR_FASTPATH_PILOT_WORKSPACES`: the pilot set, Joseph's workspace and,
-   from 2026-10-16, one customer's, by ID.
+   from 2026-10-16, one customer's and, from 2026-11-03, P1's synthetic
+   workspace (his own, outside async settle admission, for load tests the
+   edge answers), by ID.
 2. The fast path's own switch for that workspace:
    `fastpathctl -database $DB enable WORKSPACE` (W1). The front door
    answers `off` until it is on.
@@ -188,7 +190,7 @@ The pilot's first minutes, from 04:55Z, ran with them:
 ## What is not in the pilot
 
 Streams (a small share of requests; left out on Joseph's word,
-2026-10-16); any workspace but the two in the set; the 503 in place of 402
+2026-10-16); any workspace but the three in the set; the 503 in place of 402
 when a balance's headroom sits in leases (the fallback reserves today, so a
 large lease allocation on a small balance can refuse a request today's
 path would have taken; each workspace's room is checked before it joins
