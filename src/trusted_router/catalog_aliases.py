@@ -12,6 +12,7 @@ MODEL_LISTING_ALIASES = {
     # Nebius publishes its native Hugging Face spellings, which duplicated
     # models already listed under their catalog ids.
     "Qwen/Qwen3-235B-A22B-Instruct-2507": "qwen/qwen3-235b-a22b-instruct-2507",
+    "Qwen/Qwen3-30B-A3B-Instruct-2507": "qwen/qwen3-30b-a3b-instruct-2507",
     "Qwen/Qwen3-Embedding-8B": "qwen/qwen3-embedding-8b",
     "Qwen/Qwen3.5-397B-A17B": "qwen/qwen3.5-397b-a17b",
     "moonshotai/Kimi-K2.6": "moonshotai/kimi-k2.6",
