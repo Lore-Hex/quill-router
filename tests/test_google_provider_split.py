@@ -113,7 +113,7 @@ def test_google_vertex_ingest_rejects_third_party_publishers() -> None:
 
 
 def test_ai_studio_price_feed_cannot_price_or_invent_vertex_routes() -> None:
-    model_id = "google/gemini-2.5-flash"
+    model_id = "google/gemini-3.6-flash"
     result = ProviderPricingResult(
         slug="gemini",
         prices={model_id: ModelPrice(300_000, 2_500_000)},

@@ -1020,8 +1020,8 @@ def test_gateway_uses_legacy_gemini_envelope_identity_for_ai_studio(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     serve_on_fixture_route(
-        monkeypatch, "google/gemini-2.5-flash", "google-ai-studio", author="google-ai-studio",
-        usage_type="BYOK", upstream_id="gemini-2.5-flash",
+        monkeypatch, "google/gemini-3.6-flash", "google-ai-studio", author="google-ai-studio",
+        usage_type="BYOK", upstream_id="gemini-3.6-flash",
     )
     client, key = _client_and_key()
     STORE.upsert_byok_provider(
@@ -1035,7 +1035,7 @@ def test_gateway_uses_legacy_gemini_envelope_identity_for_ai_studio(
         "/v1/internal/gateway/authorize",
         json={
             "api_key_hash": key["hash"],
-            "model": "google/gemini-2.5-flash",
+            "model": "google/gemini-3.6-flash",
             "provider": {"only": ["google-ai-studio"], "usage": "byok"},
             "estimated_input_tokens": 10,
             "max_output_tokens": 10,
