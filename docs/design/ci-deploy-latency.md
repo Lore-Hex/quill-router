@@ -19,21 +19,27 @@ waiting and remain an independent safety gate.
 
 ### Supervised overlapping retention
 
-The primary rollout is unchanged. Secondary traffic ramps remain serial, but
-each completed ramp retains a separate worker for its full retention window.
-Before admitting the next region, the worker must complete an additional
-one-minute canary at 100% and the billing-error gate. Its atomic handoff names
-the region, new revision and current deployment operation.
+The primary rollout is unchanged. The three secondary traffic ramps start
+together, after the primary's ramp and canary have passed on the same image,
+and each retains a separate worker for its full retention window. Each worker
+completes an additional one-minute canary at 100% and the billing-error gate
+before its atomic handoff, which names the region, new revision and current
+deployment operation and is checked as it appears. With the repository
+variable TR_DEPLOY_SECONDARIES_SERIAL=1 the ramps are serial instead (#695):
+a handoff admits the next region.
 
 The old-revision drain tag, minimum capacity, readiness checks, full 15-minute
 retention and rollback monitor remain owned by the worker. The original final
 canary and billing gate still run. The coordinator joins all three workers
 before any workflow completion, public-surface rollout or lease finalization.
-At most three secondary workers run; there is never more than one ramp being
-admitted at a time. Direct use of ramp_secondaries.sh remains serial.
+At most three secondary workers run. Direct use of ramp_secondaries.sh
+remains serial.
 
-A failed worker stops further admissions and signals other workers to refuse
-new traffic shifts. Existing drains finish under their monitors. Cancellation
+A failed worker, or a handoff that names the wrong revision or operation,
+stops further admissions and signals other workers to refuse new traffic
+shifts and roll back. On a worker timeout the coordinator gives the others
+three minutes to do so before it stops them. Existing drains finish under
+their monitors. Cancellation
 or a 35-minute per-worker timeout reaps the process groups, leaves drain tags
 in place and retains the cloud reservation for explicit recovery. Regional
 rollback requires the current deployment fence. Operator holds, revision

@@ -463,8 +463,9 @@ jobs:
       # but gate primary-live only on us-central1's warm plus its unchanged
       # 10/50/100 ramp and 3-minute single-region synthetic watch. Secondary
       # warms continue through those primary ramp/canary steps and are joined
-      # before this job can succeed. Warm processes never move traffic, so the
-      # serial traffic containment required by #695 is unchanged.
+      # before this job can succeed. Warm processes never move traffic; the
+      # secondaries' traffic moves only after the primary's ramp and canary
+      # pass (rollout-secondaries, coordinate_secondaries.py).
       #
       # Hotfix mode (workflow_dispatch input `hotfix: true`): the
       # watchdogs skip baseline + use --skip-baseline so a sick prod
@@ -864,8 +865,10 @@ jobs:
     if: ${{ github.repository == 'Lore-Hex/quill-router' && success() && needs.deploy.result == 'success' }}
     runs-on: ubuntu-latest
     # Finalization owns the cloud reservation through all completion gates.
-    # Three serial ramps now each retain the old warm revision for 15 minutes
-    # (up to 20), in addition to staging, canaries and completion gates.
+    # The three ramps run together by default and each retains the old warm
+    # revision for 15 minutes (up to 20), in addition to staging, canaries and
+    # completion gates. The limit still covers the serial fallback
+    # (vars.TR_DEPLOY_SECONDARIES_SERIAL=1).
     timeout-minutes: 85
     env:
       PROJECT_ID: quill-cloud-proxy
@@ -916,8 +919,11 @@ jobs:
             echo "extra=" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Ramp secondaries serially with supervised overlapping drains
+      - name: Ramp secondaries with supervised overlapping drains
         env:
+          # 1 restores the #695 serial ramps (a handoff admits the next
+          # region) without a code change; unset ramps all three together.
+          TR_DEPLOY_SECONDARIES_SERIAL: ${{ vars.TR_DEPLOY_SECONDARIES_SERIAL }}
           PREV_EU: ${{ needs.deploy.outputs.previous_europe_west4_revision }}
           PREV_US_EAST4: ${{ needs.deploy.outputs.previous_us_east4_revision }}
           PREV_SOUTHAMERICA_EAST1: ${{ needs.deploy.outputs.previous_southamerica_east1_revision }}
@@ -971,7 +977,7 @@ jobs:
 
       # No cross-region "final watchdog" step. Each region's health is
       # gated by its own per-region canary above (us-central1 first,
-      # then each secondary sequentially, each with its own 3-min
+      # then the secondaries together, each with its own 3-min
       # watchdog AFTER the staged_traffic 10/50/100 ramp). The prior cross-
       # region watchdog at this point caused recurring spurious
       # rollbacks: by the time it ran, earlier regions had finished

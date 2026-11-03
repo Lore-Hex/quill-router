@@ -231,8 +231,11 @@ ramp_secondary() {
 
 # Incident containment from #695 (billing 5xx, 2026-08-20): every secondary
 # no-traffic warm was joined successfully by the deploy job before this script
-# was started. Keep the three secondary 10/50/100 ramps explicit, serial, and
-# stop-on-failure; no traffic move ever overlaps a sibling traffic move.
+# was started. Run without --region, the three secondary 10/50/100 ramps here
+# are explicit, serial and stop-on-failure. The workflow instead runs one
+# worker per region (coordinate_secondaries.py): together by default, serial
+# with TR_DEPLOY_SECONDARIES_SERIAL=1. A worker refuses its next shift and
+# rolls back once a sibling has failed (staged_traffic.sh shift_traffic).
 
 held=""
 ramped=""
