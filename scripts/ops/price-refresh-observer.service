@@ -1,0 +1,42 @@
+[Unit]
+Description=TrustedRouter independent price refresh observer
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+DynamicUser=yes
+StateDirectory=tr-price-refresh
+StateDirectoryMode=0700
+LoadCredential=sentry-dsn:/etc/tr-price-refresh/ingest.dsn
+Environment=GITHUB_REPOSITORY=Lore-Hex/quill-router
+Environment=TR_PRICE_REFRESH_PUBLIC_API=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 /opt/tr-price-refresh/price_refresh_alerts.py --state-file /var/lib/tr-price-refresh/state.json --dsn-file %d/sentry-dsn
+TimeoutStartSec=9min
+MemoryMax=96M
+CPUQuota=10%
+TasksMax=8
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+IPAddressDeny=169.254.169.254/32
+IPAddressDeny=fd20:ce::254/128
+

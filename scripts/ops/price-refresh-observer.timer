@@ -1,0 +1,12 @@
+[Unit]
+Description=Check catalog publication independently of GitHub scheduling
+
+[Timer]
+OnCalendar=*-*-* *:23:00 UTC
+RandomizedDelaySec=30
+AccuracySec=10s
+Persistent=true
+Unit=price-refresh-observer.service
+
+[Install]
+WantedBy=timers.target

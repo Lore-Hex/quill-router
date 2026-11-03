@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
@@ -44,6 +49,10 @@ def timestamp(value: str) -> datetime:
 
 
 def gh(path: str, data: dict[str, Any] | None = None) -> Any:
+    if os.environ.get("TR_PRICE_REFRESH_PUBLIC_API") == "1":
+        if data is not None:
+            raise ValueError("Public observer cannot write to GitHub")
+        return public_gh(path)
     endpoint = path if path.startswith("search/") else f"repos/{REPOSITORY}/{path}"
     args = ["gh", "api", endpoint]
     if data is not None:
@@ -57,6 +66,91 @@ def gh(path: str, data: dict[str, Any] | None = None) -> Any:
         # Never echo CLI output: it can contain request headers or credentials.
         raise RuntimeError("GitHub monitoring API request failed")
     return json.loads(result.stdout)
+
+
+def public_gh(path: str) -> Any:
+    """Anonymous metadata-only reads: no personal or repository write token."""
+    if "://" in path or ".." in path or not path.startswith(("actions/", "search/issues?q=repo:" + REPOSITORY)):
+        raise ValueError("Unexpected public monitoring API path")
+    endpoint = path if path.startswith("search/") else f"repos/{REPOSITORY}/{path}"
+    request = Request("https://api.github.com/" + endpoint, headers={
+        "Accept": "application/vnd.github+json", "User-Agent": "TrustedRouter-price-observer",
+        "X-GitHub-Api-Version": "2022-11-28",
+    })
+    try:
+        with build_opener(NoRedirect()).open(request, timeout=15) as response:
+            raw = response.read(2_000_001)
+        if len(raw) > 2_000_000:
+            raise ValueError("Monitoring API response is too large")
+        return json.loads(raw)
+    except (HTTPError, URLError, TimeoutError) as exc:
+        raise RuntimeError("GitHub monitoring API request failed") from exc
+
+
+def read_local_state(path: Path, remote: dict[str, Any]) -> dict[str, Any]:
+    state = {**remote, "sent": dict(remote["sent"])}
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return state
+    with os.fdopen(descriptor) as handle:
+        raw = handle.read(65_537)
+    if len(raw) > 65_536:
+        raise ValueError("Monitoring state is too large")
+    local = json.loads(raw)
+    if not isinstance(local, dict) or not isinstance(local.get("sent"), dict):
+        raise ValueError("Monitoring state is invalid")
+    for value in [local.get("last_validated_at"), *local["sent"].values()]:
+        if value is not None:
+            timestamp(value)
+    state.update(local)
+    # Import the bot observer's cooldowns without modifying its issue ledger.
+    for kind, value in remote["sent"].items():
+        previous = state["sent"].get(kind)
+        if previous is None or timestamp(value) > timestamp(previous):
+            state["sent"][kind] = value
+    validated = remote.get("last_validated_at")
+    if validated and (not state.get("last_validated_at")
+                      or timestamp(validated) > timestamp(state["last_validated_at"])):
+        state["last_validated_at"] = validated
+    return state
+
+
+def write_local_state(path: Path, state: dict[str, Any]) -> None:
+    raw = json.dumps(state, sort_keys=True).encode()
+    if len(raw) > 65_536:
+        raise ValueError("Monitoring state is too large")
+    descriptor, temporary = tempfile.mkstemp(prefix=".price-observer-", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(raw)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
+@contextmanager
+def local_state_lock(path: Path) -> Iterator[bool]:
+    if not path.is_absolute():
+        raise ValueError("Monitoring state path must be absolute")
+    descriptor = os.open(path.with_suffix(path.suffix + ".lock"),
+                         os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            yield False
+        else:
+            yield True
+    finally:
+        os.close(descriptor)
 
 
 def read_state() -> tuple[int | None, dict[str, Any]]:
@@ -200,9 +294,11 @@ def report(kind: str, details: dict[str, Any], state: dict[str, Any], now: datet
     return True
 
 
-def observe(*, dry_run: bool = False) -> None:
-    now = datetime.now(UTC)
+def observe(*, dry_run: bool = False, state_path: Path | None = None) -> None:
     number, state = read_state()
+    if state_path is not None:
+        state = read_local_state(state_path, state)
+    now = datetime.now(UTC)
     if any(timestamp(value) > now for value in
            [state.get("last_validated_at"), *state["sent"].values()] if value is not None):
         raise ValueError("Monitoring state contains a future timestamp")
@@ -252,6 +348,10 @@ def observe(*, dry_run: bool = False) -> None:
         state["last_failure"] = failure_key
     unhealthy = bool(current_failure) or stale
     status = "Attention required" if unhealthy else "Recovered"
+    if state_path is not None:
+        write_local_state(state_path, state)
+        print(f"Price refresh monitoring: {status}; durable local ledger")
+        return
     body = (f"{status}. This ledger bounds Sentry error delivery across workflow runs.\n\n"
             f"Last validated refresh: {state['last_validated_at'] or 'not yet observed'}.\n\n"
             "A validated refresh means publication (or no changes), not a superseded run. "
@@ -265,29 +365,50 @@ def observe(*, dry_run: bool = False) -> None:
     print(f"Price refresh monitoring: {status}; ledger #{number}")
 
 
-def main(*, dry_run: bool = False) -> None:
+def main(*, dry_run: bool = False, state_path: Path | None = None,
+         heartbeat_enabled: bool = True) -> None:
     if os.environ.get("GITHUB_REPOSITORY") != REPOSITORY:
         raise ValueError("Monitoring is restricted to the production repository")
+    if os.environ.get("TR_PRICE_REFRESH_PUBLIC_API") == "1" and state_path is None:
+        raise ValueError("Public observer requires local state")
     if dry_run:
-        observe(dry_run=True)
+        observe(dry_run=True, state_path=state_path)
         return
-    check_in_id = uuid4().hex
-    started = time.monotonic()
-    heartbeat("in_progress", check_in_id)
-    try:
-        observe()
-    except Exception:
-        heartbeat("error", check_in_id, time.monotonic() - started)
-        raise
-    # Only a fully successful read, report and durable-state write earns OK.
-    heartbeat("ok", check_in_id, time.monotonic() - started)
+    with local_state_lock(state_path) if state_path else nullcontext(True) as acquired:
+        if not acquired:
+            print("Price refresh observer is already running")
+            return
+        check_in_id = uuid4().hex
+        started = time.monotonic()
+        if heartbeat_enabled:
+            heartbeat("in_progress", check_in_id)
+        try:
+            observe(state_path=state_path)
+        except Exception:
+            if heartbeat_enabled:
+                heartbeat("error", check_in_id, time.monotonic() - started)
+            raise
+        # Only a fully successful read, report and durable-state write earns OK.
+        if heartbeat_enabled:
+            heartbeat("ok", check_in_id, time.monotonic() - started)
 
 
 if __name__ == "__main__":
     try:
         parser = argparse.ArgumentParser(description=__doc__)
         parser.add_argument("--dry-run", action="store_true")
-        main(dry_run=parser.parse_args().dry_run)
+        parser.add_argument("--state-file", type=Path)
+        parser.add_argument("--dsn-file", type=Path)
+        parser.add_argument("--no-heartbeat", action="store_true")
+        args = parser.parse_args()
+        if args.dsn_file is not None:
+            with args.dsn_file.open() as handle:
+                dsn = handle.read(4097).strip()
+            if len(dsn) > 4096:
+                raise ValueError("Invalid ingestion credential")
+            os.environ["TR_SENTRY_DSN"] = dsn
+        main(dry_run=args.dry_run, state_path=args.state_file,
+             heartbeat_enabled=not args.no_heartbeat)
     except Exception as exc:
         # Suppress exception strings/tracebacks: URLs can contain the DSN.
         print(f"::error::Price refresh monitoring failed ({type(exc).__name__}); inspect configuration and delivery", file=sys.stderr)

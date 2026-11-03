@@ -36,4 +36,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TR_SENTRY_DSN: ${{ secrets.PRICE_REFRESH_SENTRY_DSN }}
           TR_REFRESH_RUN_ID: ${{ github.event.workflow_run.id }}
-        run: python3 scripts/price_refresh_alerts.py
+        # The independent systemd observer owns the watchdog heartbeat.
+        # Completion events must not hide an outage of that observer.
+        run: python3 scripts/price_refresh_alerts.py --no-heartbeat
