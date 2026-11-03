@@ -117,8 +117,31 @@ elif [ "${command}" = api ] && [ -n "${endpoint}" ]; then
       jq -c '.[-1] | del(.sha, .creator)' "${statuses}"
     fi
   elif [ "${method}" = GET ]; then
+    # Simulate only the final newly-created status missing from the readback.
+    # Never create another status or dispatch another CI run to make it visible.
+    missing_reads=$(jq -r '.status_missing_reads // 0' "${scenario}")
+    if [ "$(jq length "${statuses}")" -eq 4 ]; then
+      reads=0
+      if [ -f "${TMPDIR}/status-read-count" ]; then read -r reads < "${TMPDIR}/status-read-count"; fi
+      reads=$((reads + 1))
+      printf '%s\n' "${reads}" > "${TMPDIR}/status-read-count"
+      if [ "${reads}" -le "${missing_reads}" ]; then
+        printf '\n'
+        exit 0
+      fi
+    fi
     case "${fault}" in
       get_empty) printf '\n' ;;
+      get_error) echo 'simulated API read failure' >&2; exit 1 ;;
+      get_url|get_context|get_state|get_target)
+        case "${fault}" in
+          get_url) replacement='.url = "https://api.github.invalid/another-sha"' ;;
+          get_context) replacement='.context = "another-test"' ;;
+          get_state) replacement='.state = "failure"' ;;
+          get_target) replacement='.target_url = "https://github.invalid/another-run"' ;;
+        esac
+        jq -c --arg url "${url}" \
+          "map(select(.url == \$url)) | (${filter}) | ${replacement}" "${statuses}" ;;
       creator)
         jq -c --arg url "${url}" \
           "map(select(.url == \$url) | .creator.login = \"someone-else\") | ${filter}" "${statuses}" ;;
