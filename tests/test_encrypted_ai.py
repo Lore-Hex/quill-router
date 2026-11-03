@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -11,6 +11,7 @@ from trusted_router import encrypted_ai
 from trusted_router.catalog import MODELS, endpoints_for_model
 from trusted_router.catalog_data import PRIVACY_TIER_CONFIDENTIAL
 from trusted_router.catalog_privacy import endpoint_privacy_tier
+from trusted_router.config import Settings
 from trusted_router.encrypted_ai import (
     aggregate_encrypted_ai,
     directory,
@@ -50,9 +51,8 @@ def test_the_listing_data_is_well_formed() -> None:
         assert listing.verify_url is None or listing.verify_url.startswith("https://"), listing.slug
         assert listing.tier != "verified", "verified is earned on the exchange, never curated"
         assert len(listing.description) <= 160, listing.slug
-        for match in listing.matches:
-            # Bare words ("tab", "jo") would pin another app's traffic on a listing.
-            assert "." in match or " " in match, (listing.slug, match)
+        # Traffic naming the company by its name or URL domain is held out.
+        assert listing.name.casefold() in listing.matches, listing.slug
     assert data.consumer_categories <= {slug for slug, _ in data.categories}
 
 
@@ -109,12 +109,45 @@ def test_the_view_says_so_when_no_consumer_agent_verified() -> None:
     assert week["consumer_count"] == 0 and week["apps"][0]["category"] == "other"
 
 
-def test_a_listed_app_on_the_exchange_moves_up_to_verified() -> None:
-    snapshot = aggregate_encrypted_ai([_row("Fambot", "fambot.com", CONF, t7=5, t30=5)], generated_at=GENERATED_AT)
+def _with_listing_data(monkeypatch: pytest.MonkeyPatch, **changes: Any) -> None:
+    import dataclasses
+
+    real = directory()
+    monkeypatch.setattr(encrypted_ai, "directory", lambda: dataclasses.replace(real, **changes))
+
+
+@pytest.mark.parametrize(("title", "ref"), [
+    ("Maple AI", "evil.example"),  # a curated company's name, any domain
+    ("x", "muse.ai"),  # a curated company's domain, any name
+    ("Fambot", "fambot.com"),  # the company itself, before it confirmed
+])
+def test_traffic_naming_a_curated_company_does_not_rank_unconfirmed(title: str, ref: str) -> None:
+    snapshot = aggregate_encrypted_ai([_row(title, ref, CONF, t1=9, t7=9, t30=9)], generated_at=GENERATED_AT)
     view = directory_view(snapshot)
-    week = next(w for w in view["windows"] if w["name"] == "week")
+    assert all(not w["apps"] for w in view["windows"])
+    # Curated cards never move: Maple stays self-attested, Muse and Fambot on the watchlist.
+    assert {"maple-ai"} <= {listing.slug for listing in view["curated"]["self_attested"]}
+    assert {"muse", "fambot"} <= {listing.slug for listing in view["curated"]["watchlist"]}
+
+
+def test_a_confirmed_company_ranks_under_its_listing(monkeypatch: pytest.MonkeyPatch) -> None:
+    import dataclasses
+
+    real = directory()
+    _with_listing_data(monkeypatch, listings=tuple(
+        dataclasses.replace(listing, confirmed=True) if listing.slug == "fambot" else listing
+        for listing in real.listings
+    ))
+    snapshot = aggregate_encrypted_ai([_row("Fambot", "fambot.com", CONF, t7=5, t30=5)], generated_at=GENERATED_AT)
+    week = next(w for w in directory_view(snapshot)["windows"] if w["name"] == "week")
     assert week["apps"][0]["listing"].slug == "fambot" and week["consumer_count"] == 1
-    assert "fambot" not in {listing.slug for listing in view["curated"]["watchlist"]}
+    assert week["apps"][0]["category"] == "family"
+
+
+def test_hidden_entries_compare_like_domains(monkeypatch: pytest.MonkeyPatch) -> None:
+    _with_listing_data(monkeypatch, hidden=frozenset({encrypted_ai._domain("WWW.Acme.com")}))
+    snapshot = aggregate_encrypted_ai([_row("Acme", "www.acme.com", CONF, t7=1, t30=1)], generated_at=GENERATED_AT)
+    assert not snapshot["windows"]["week"]["apps"]
 
 
 def test_the_page_renders_every_tier_and_never_says_not_encrypted(client: Any) -> None:
@@ -139,32 +172,93 @@ def test_the_page_headline_with_a_snapshot(client: Any, monkeypatch: pytest.Monk
     assert "kilocode.ai" in html and "12,345" in html
 
 
-@pytest.mark.parametrize(("minute", "built"), [(0, True), (15, True), (7, False)])
-def test_the_builder_publishes_the_ranking_quarter_hourly(
-    monkeypatch: pytest.MonkeyPatch, minute: int, built: bool
-) -> None:
-    inserted: list[bytes] = []
+def _run_builder(monkeypatch: pytest.MonkeyPatch, *, age: float | None,
+                 rows: Any = None) -> list[set[str]]:
+    inserted: list[set[str]] = []
     monkeypatch.setenv("CH_PASSWORD", "test")
-    monkeypatch.setattr(snapshot_builder, "_utcnow", lambda: dt.datetime(2026, 11, 3, 22, minute, tzinfo=dt.UTC))
+    monkeypatch.setattr(snapshot_builder, "_utcnow", lambda: dt.datetime(2026, 11, 3, 22, 7, tzinfo=dt.UTC))
     fakes: dict[str, Any] = {
         "_status_inputs": ([], []), "_evidence_samples": [], "_samples": [], "_video_samples": [],
         "_client_reliability_rows": [], "_client_reliability_signals": {},
     }
     for name, value in fakes.items():
         monkeypatch.setattr(snapshot_builder, name, lambda *_a, _v=value, **_k: _v)
-    monkeypatch.setattr(snapshot_builder, "_encrypted_ai_rows",
-                        lambda _p: [_row("Acme", "acme.com", CONF, t7=1, t30=1)])
+    monkeypatch.setattr(snapshot_builder, "_encrypted_ai_age_seconds", lambda _p, *, now: age)
+
+    def encrypted_rows(_password: str) -> Any:
+        if isinstance(rows, Exception):
+            raise rows
+        return rows if rows is not None else [_row("Acme", "acme.com", CONF, t7=1, t30=1)]
+
+    monkeypatch.setattr(snapshot_builder, "_encrypted_ai_rows", encrypted_rows)
 
     def fake_query(_password: str, sql: str, *, input_bytes: bytes | None = None, **_k: Any) -> str:
         assert sql.startswith("INSERT INTO public_analytics_snapshots")
-        inserted.append(input_bytes or b"")
+        inserted.append({json.loads(line)["name"] for line in (input_bytes or b"").decode().splitlines()})
         return ""
 
     monkeypatch.setattr(snapshot_builder, "_query", fake_query)
     assert snapshot_builder.main() == 0
-    names = {json.loads(line)["name"] for line in inserted[0].decode().splitlines()}
-    assert ("encrypted_ai" in names) is built
-    assert "apps" in names
+    return inserted
+
+
+@pytest.mark.parametrize(("age", "built"), [(None, True), (14 * 60, True), (13 * 60, False), (-5, True)])
+def test_the_builder_rebuilds_the_ranking_when_it_is_old(
+    monkeypatch: pytest.MonkeyPatch, age: float | None, built: bool
+) -> None:
+    inserted = _run_builder(monkeypatch, age=age)
+    assert "apps" in inserted[0] and "encrypted_ai" not in inserted[0]
+    assert (inserted[1:] == [{"encrypted_ai"}]) is built
+
+
+@pytest.mark.parametrize("failure", [RuntimeError("query"), ValueError("schema"), json.JSONDecodeError("x", "y", 0)])
+def test_a_failed_ranking_build_never_stops_the_core_snapshots(
+    monkeypatch: pytest.MonkeyPatch, failure: Exception
+) -> None:
+    inserted = _run_builder(monkeypatch, age=None, rows=failure)
+    assert len(inserted) == 1 and "leaderboard" in inserted[0]
+
+
+def test_hostile_app_titles_are_escaped(client: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    from trusted_router.routes import public as public_routes
+
+    snapshot = aggregate_encrypted_ai(
+        [_row('<script>alert(1)</script>"', "evil.example", CONF, t7=1, t30=1)], generated_at=GENERATED_AT
+    )
+    monkeypatch.setattr(public_routes, "_encrypted_ai_snapshot", lambda _settings: snapshot)
+    html = client.get("/encrypted-ai").text
+    assert "<script>alert(1)" not in html and "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+
+
+def test_the_page_reader_backs_off_and_never_serves_a_stale_ranking(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    from trusted_router.routes import public as public_routes
+
+    clock = [1_000.0]
+    reads: list[str] = []
+    fresh = {"generated_at": dt.datetime.now(dt.UTC).isoformat().replace("+00:00", "Z"), "windows": {}}
+    stale = {"generated_at": "2020-01-01T00:00:00Z", "windows": {}}
+    answers: list[Any] = [fresh, RuntimeError("down"), stale]
+
+    def read(name: str) -> Any:
+        reads.append(name)
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(public_routes, "_ENCRYPTED_AI_CACHE", None)
+    monkeypatch.setattr(public_routes.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(public_routes, "_precomputed_public_analytics_snapshot", read)
+    settings = cast(Settings, SimpleNamespace(environment="production"))
+    assert public_routes._encrypted_ai_snapshot(settings) == fresh
+    assert public_routes._encrypted_ai_snapshot(settings) == fresh and len(reads) == 1  # cached
+    clock[0] += 60
+    assert public_routes._encrypted_ai_snapshot(settings) == fresh  # read failed: last good, still fresh
+    assert public_routes._encrypted_ai_snapshot(settings) == fresh and len(reads) == 2  # no retry storm
+    monkeypatch.setattr(public_routes, "_ENCRYPTED_AI_CACHE", (clock[0], stale))
+    assert public_routes._encrypted_ai_snapshot(settings) is None  # too old to call "this week"
 
 
 def test_the_builder_query_reads_names_and_counts_only(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -5,7 +5,7 @@
   <div>
     <div class="kicker">Encrypted AI directory · Confidential compute · Verifiable</div>
     <h1>Encrypted AI apps, ranked by tokens you can verify.</h1>
-    <p class="lead">Encrypted AI runs your prompt inside attested hardware that the app, the router and the cloud cannot read. Many apps say "private" and mean a retention policy. This directory ranks apps by the encrypted tokens they actually sent, and links the evidence so you can check it yourself.</p>
+    <p class="lead">Encrypted AI runs your prompt inside attested hardware that the app, the router and the cloud cannot read: a property you can check, not a retention policy you have to trust. This directory ranks apps by the encrypted tokens they actually sent, and links the evidence so you can check it yourself.</p>
     <div class="hero-actions">
       <a class="btn primary" href="#get-listed">Get your app listed</a>
       <a class="btn" href="/docs/receipts#verify">How verification works <span aria-hidden="true">→</span></a>
@@ -111,7 +111,7 @@
           {% for a in w.apps %}
           <tr data-eai-category="{{ a.category }}">
             <td>{{ a.rank }}</td>
-            <td>{% if a.url %}<a href="{{ a.url }}" rel="nofollow noopener" target="_blank">{{ a.name }}</a>{% else %}{{ a.name }}{% endif %}{% if a.domain %}<div class="eai-cat">{{ a.domain }}</div>{% endif %}</td>
+            <td>{% if a.url %}<a href="{{ a.url }}" rel="nofollow ugc noopener" target="_blank">{{ a.name }}</a>{% else %}{{ a.name }}{% endif %}{% if a.domain %}<div class="eai-cat">{{ a.domain }}</div>{% endif %}</td>
             <td>{{ view.category_labels.get(a.category, "Other") }}</td>
             <td class="eai-num">{{ "{:,}".format(a.encrypted_tokens) }}</td>
             <td class="eai-num">{{ "{:.0%}".format(a.encrypted_share) }}</td>
@@ -126,12 +126,12 @@
     {% endif %}
   </div>
   {% endfor %}
-  <p class="eai-note">Ranked by tokens served on Confidential routes. Apps name themselves with request headers; counts only, never a prompt, workspace or key. Share encrypted is the app's encrypted tokens over all its tokens on the exchange in the window.</p>
+  <p class="eai-note">Ranked by tokens served on Confidential routes. App names and domains are self-reported in request headers, as on other AI routers; we show counts only, never a prompt, workspace or key. Share encrypted is the app's encrypted tokens over all its tokens on the exchange in the window. Traffic that names a company listed below is ranked only after that company confirms it.</p>
 </section>
 
 {% set tier_copy = {
   "self_attested": ("Encrypted, self-attested", "Apps that run their own confidential compute, not through the exchange. The claim is theirs; Verify goes to where they publish the evidence."),
-  "on_device": ("On-device", "Apps that keep inference on your own device. Nothing to attest on our side; the claim is theirs."),
+  "on_device": ("On-device or local-first", "Apps that keep your model or your data on your own machine, by their own description. Nothing to attest on our side; the claim is theirs."),
   "watchlist": ("Watchlist", "Personal AI agents we have not observed sending encrypted tokens. \"Not verified\" means we have no evidence either way, not that they are unencrypted."),
 } %}
 {% for tier in ["self_attested", "on_device", "watchlist"] %}
@@ -143,7 +143,7 @@
     {% for l in listings %}
     <article class="eai-card" data-eai-category="{{ l.category }}">
       <div class="eai-meta">
-        <span class="eai-badge {{ tier }}">{% if tier == "watchlist" %}Not verified{% elif tier == "on_device" %}On-device, self-attested{% else %}Self-attested{% endif %}</span>
+        <span class="eai-badge {{ tier }}">{% if tier == "watchlist" %}Not verified{% elif tier == "on_device" %}Local, self-attested{% else %}Self-attested{% endif %}</span>
         <span class="eai-cat">{{ view.category_labels.get(l.category, "Other") }}{% if l.yc_batch %} · YC {{ l.yc_batch }}{% endif %}</span>
       </div>
       <h3><a href="{{ l.url }}" rel="nofollow noopener" target="_blank">{{ l.name }}</a></h3>
@@ -163,7 +163,7 @@
   <div class="marketing-copy">
     <h2>Get listed: two headers, no application.</h2>
     <p>Send your requests through a Confidential route and name your app. <code>HTTP-Referer</code> is your app's unique id (its URL); <code>X-NYTE-Title</code> is the name we show. <code>X-OpenRouter-Title</code> and <code>X-Title</code> work too. Your app appears in the verified ranking within 15 minutes of its first encrypted request.</p>
-    <p>Already listed on the watchlist or as self-attested? Route through the exchange and your listing moves up to Verified encrypted automatically. To hide your app from every view, or to claim and correct a listing, email <a href="mailto:help@trustedrouter.com?subject=Encrypted%20AI%20directory">help@trustedrouter.com</a>.</p>
+    <p>Already listed on the watchlist or as self-attested? Route through the exchange, then claim your listing and we will move it up to Verified encrypted. To hide your app from every view, or to claim and correct a listing, email <a href="mailto:help@trustedrouter.com?subject=Encrypted%20AI%20directory">help@trustedrouter.com</a>.</p>
   </div>
   <div class="copy-terminal">
     <div class="code-head"><span>Appear in the ranking</span><span>HTTP headers</span></div>

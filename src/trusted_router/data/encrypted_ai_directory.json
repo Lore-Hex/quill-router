@@ -36,10 +36,10 @@
      "description": "A personal assistant for mail, calendar and everyday work that runs its model locally on Mac and Windows.",
      "verify_url": "https://underdog.ai/", "matches": ["underdog.ai"]},
     {"slug": "logical", "name": "Logical", "url": "https://logical.io", "tier": "on_device", "category": "assistant", "yc_batch": "Fall 2025",
-     "description": "A Mac desktop assistant that finds to-dos in email, chats and threads and helps act on them.",
+     "description": "A Mac assistant that finds to-dos in email, chats and threads and helps act on them; the company says it runs on your Mac.",
      "verify_url": "https://logical.io", "matches": ["logical.io"]},
     {"slug": "epicenter", "name": "Epicenter", "url": "https://epicenter.so", "tier": "on_device", "category": "assistant", "yc_batch": "Summer 2025",
-     "description": "An open-source, local-first suite of apps that share one folder of plain text and SQLite as memory.",
+     "description": "An open-source, local-first suite of apps that keep their shared memory as plain text and SQLite on your machine.",
      "verify_url": "https://epicenter.so", "matches": ["epicenter.so"]},
 
     {"slug": "muse", "name": "Muse", "url": "https://muse.ai", "tier": "watchlist", "category": "assistant",

@@ -9,6 +9,10 @@ visitor can check at /trust and /docs/receipts.
 
 Three kinds of listing:
 - verified: observed on the exchange with encrypted tokens in the window.
+  Its name and referer domain are self-reported headers, so observed traffic
+  is never matched to a curated company: traffic that names one (by title or
+  domain) is held out of the ranking unless an operator confirmed that
+  company's claim (``confirmed`` in the listing data).
 - self_attested / on_device: curated, the vendor's own claim, linked to the
   page where it can be checked.
 - watchlist: curated, "Not verified" -- a statement about our evidence, never
@@ -16,7 +20,8 @@ Three kinds of listing:
 
 Privacy: the snapshot carries app names, referer domains and token counts
 only, never a workspace, key or prompt. ``hidden`` in the listing data drops
-an app from every view (OpenRouter's opt-out).
+an app from the verified ranking (OpenRouter's opt-out); exchange-wide
+totals still count its tokens.
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
+from urllib.parse import urlparse
 from typing import Any
 
 from trusted_router.catalog import MODELS, endpoints_for_model
@@ -37,7 +43,7 @@ LISTINGS_PATH = Path(__file__).parent / "data" / "encrypted_ai_directory.json"
 
 # (window name, label, snapshot field suffix). The builder sums each window.
 WINDOWS: tuple[tuple[str, str, str], ...] = (
-    ("day", "Today", "1"),
+    ("day", "Last 24 hours", "1"),
     ("week", "This week", "7"),
     ("month", "This month", "30"),
 )
@@ -58,9 +64,15 @@ _NOT_APPS = frozenset({
 TIERS: tuple[tuple[str, str], ...] = (
     ("verified", "Verified encrypted"),
     ("self_attested", "Encrypted, self-attested"),
-    ("on_device", "On-device"),
+    ("on_device", "On-device or local-first"),
     ("watchlist", "Watchlist"),
 )
+
+
+def _domain(value: str) -> str:
+    """Casefolded, without "www.": how titles, domains and the listing data
+    are compared."""
+    return value.strip().casefold().removeprefix("www.")
 
 
 @dataclass(frozen=True)
@@ -73,8 +85,12 @@ class Listing:
     description: str
     verify_url: str | None = None
     yc_batch: str | None = None
-    # Titles and referer domains this listing's own traffic would carry.
+    # Titles and referer domains naming this company. Observed traffic that
+    # carries one is held out of the ranking unless ``confirmed``.
     matches: tuple[str, ...] = ()
+    # An operator confirmed the company's claim to this traffic (a workspace
+    # binding); only then may its observed tokens rank, under its listing.
+    confirmed: bool = False
 
 
 @dataclass(frozen=True)
@@ -102,7 +118,11 @@ def directory() -> Directory:
             description=str(item["description"]),
             verify_url=item.get("verify_url"),
             yc_batch=item.get("yc_batch"),
-            matches=tuple(str(m).casefold() for m in item.get("matches", ())),
+            # The company's own name and URL domain always count.
+            matches=tuple(dict.fromkeys(_domain(str(m)) for m in (
+                item["name"], urlparse(str(item["url"])).hostname or "", *item.get("matches", ()),
+            ) if str(m).strip())),
+            confirmed=bool(item.get("confirmed", False)),
         )
         if listing.tier not in tiers - {"verified"} or listing.category not in known:
             raise ValueError(f"encrypted AI listing {listing.slug}: bad tier or category")
@@ -111,7 +131,7 @@ def directory() -> Directory:
         categories=categories,
         consumer_categories=frozenset(str(c) for c in raw["consumer_categories"]),
         listings=tuple(listings),
-        hidden=frozenset(str(h).casefold() for h in raw.get("hidden", ())),
+        hidden=frozenset(_domain(str(h)) for h in raw.get("hidden", ())),
     )
 
 
@@ -142,13 +162,8 @@ def is_confidential_route(provider: str, model: str) -> bool:
     return provider in _confidential_providers()
 
 
-def _domain(value: str) -> str:
-    domain = value.strip().casefold()
-    return domain.removeprefix("www.")
-
-
 def _match(directory_: Directory, title: str, domain: str) -> Listing | None:
-    keys = {title.strip().casefold(), domain}
+    keys = {_domain(title), domain} - {""}
     for listing in directory_.listings:
         if keys & set(listing.matches):
             return listing
@@ -176,7 +191,7 @@ def aggregate_encrypted_ai(rows: Iterable[Mapping[str, Any]], *, generated_at: s
                 exchange[name]["requests"] += int(row.get(f"r{suffix}") or 0)
         if title.casefold() in _NOT_APPS and not domain:
             continue
-        if title.casefold() in hidden or (domain and domain in hidden):
+        if _domain(title) in hidden or (domain and domain in hidden):
             continue
         key = domain or title.casefold()
         app = per_app.setdefault(key, {
@@ -222,24 +237,33 @@ def aggregate_encrypted_ai(rows: Iterable[Mapping[str, Any]], *, generated_at: s
 
 
 def directory_view(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
-    """Everything the page renders: the verified ranking per window joined to
-    curated listings, the curated tiers, and the headline counts."""
+    """Everything the page renders: the observed ranking per window, the
+    curated tiers, and the headline counts.
+
+    Curated listings always stay in their own tier. Observed traffic that
+    names a curated company ranks only once an operator confirmed that
+    company's claim; otherwise anyone could put a named company in the
+    Verified table with two headers.
+    """
     directory_ = directory()
+    labels = dict(directory_.categories)
     windows: list[dict[str, Any]] = []
     for name, label, _suffix in WINDOWS:
         window = ((snapshot or {}).get("windows") or {}).get(name) or {}
         apps: list[dict[str, Any]] = []
-        for rank, app in enumerate(window.get("apps") or [], start=1):
+        for app in window.get("apps") or []:
             listing = _match(directory_, str(app.get("name") or ""), str(app.get("domain") or ""))
+            if listing is not None and not listing.confirmed:
+                continue
             category = listing.category if listing else next(
-                (c for c in app.get("categories") or () if c in dict(directory_.categories)), "other"
+                (c for c in app.get("categories") or () if c in labels), "other"
             )
             apps.append({
                 **app,
-                "rank": rank,
+                "rank": len(apps) + 1,
                 "listing": listing,
                 "category": category,
-                "url": listing.url if listing else (f"https://{app['domain']}" if app.get("domain") else None),
+                "url": f"https://{app['domain']}" if app.get("domain") else None,
                 "consumer": category in directory_.consumer_categories,
             })
         windows.append({
@@ -249,12 +273,8 @@ def directory_view(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
             "consumer_count": sum(1 for a in apps if a["consumer"]),
             "exchange_encrypted_tokens": int(window.get("exchange_encrypted_tokens") or 0),
         })
-    verified_slugs = {a["listing"].slug for w in windows for a in w["apps"] if a["listing"]}
     curated = {
-        tier: [
-            listing for listing in directory_.listings
-            if listing.tier == tier and listing.slug not in verified_slugs
-        ]
+        tier: [listing for listing in directory_.listings if listing.tier == tier]
         for tier, _label in TIERS if tier != "verified"
     }
     return {
@@ -265,5 +285,5 @@ def directory_view(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
         "tiers": dict(TIERS),
         "curated": curated,
         "categories": directory_.categories,
-        "category_labels": dict(directory_.categories),
+        "category_labels": labels,
     }
