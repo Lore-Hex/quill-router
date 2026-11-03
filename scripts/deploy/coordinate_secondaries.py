@@ -65,7 +65,7 @@ def coordinate(script: Path, directory: Path, *, poll_seconds: float = 1,
         return True
 
     try:
-        for region, revision in revisions.items():
+        for region in revisions:
             check_workers()
             if failed:
                 break
