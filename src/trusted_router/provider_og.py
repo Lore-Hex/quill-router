@@ -45,8 +45,10 @@ def provider_og_facts(provider_slug: str) -> ProviderOgFacts:
 
     if provider_confidential_inference(provider, prepaid=True):
         privacy = "Confidential + ZDR"
-    elif provider.provider_zero_data_retention or provider.prepaid_zero_data_retention:
+    elif provider.provider_zero_data_retention:
         privacy = "Zero retention"
+    elif provider.prepaid_zero_data_retention:
+        privacy = "TR-funded ZDR"
     elif provider.provider_confidential_compute:
         privacy = "Provider TEE claim"
     else:

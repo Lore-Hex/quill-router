@@ -787,16 +787,20 @@ PROVIDERS: dict[str, Provider] = {
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     # xAI Grok — OpenAI-compatible chat completions at api.x.ai/v1.
-    # As of 2026-07, headline model is grok-4.5 ($2/$6 per M, 500k ctx).
     "grok": Provider(
         slug="grok",
         name="xAI Grok",
         supports_prepaid=True,
+        prepaid_zero_data_retention=True,
+        prepaid_zero_data_retention_effective_on="2026-11-02",
         provider_policy=(
-            "xAI documents no training on API requests and 30-day default audit "
-            "retention, with ZDR as an enterprise feature."
+            "TR-funded routes use TrustedRouter's xAI team with zero data retention "
+            "enabled, confirmed by x-zero-data-retention: true on the authenticated "
+            "key endpoint. xAI documents no persistence of prompts or outputs under "
+            "ZDR; operational metadata may be retained. BYOK is not covered by this "
+            "account setting. This is provider ZDR, not confidential compute."
         ),
-        provider_policy_url="https://docs.x.ai/docs/resources/faq-api/security",
+        provider_policy_url="https://docs.x.ai/developers/faq/security",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     # Novita — multi-model serverless inference. OpenAI-compatible
