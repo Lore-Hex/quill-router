@@ -103,7 +103,7 @@ def _model_spellings() -> list[str]:
         *PRIVATE_PROXY_MODEL_TARGETS,
         "gpt-4.1", "gpt-4.1-2025-04-14", "openai/gpt-4.1-2025-04-14", "gpt-4o-mini",
         "nyte/auto", "trustedrouter/auto-routing", "trustedrouter/auto:nitro",
-        "trustedrouter/confidential-2025-04-14", "nope/unknown-model", "typesafe/jev-1.13",
+        "trustedrouter/confidential-2025-04-14", "nope/unknown-model", "typesafe/jev-1.13", "typesafe-ai/jev:nitro",
         f"{plain[0]}:nitro", f"{plain[1]}:floor", f"{plain[2]}-2026-01-01",
         f"{next(iter(NAMED_DECISION_MODEL_PROVIDERS))}:nitro",
     ]
@@ -242,7 +242,9 @@ def _reference_decide_refusal(exc: HTTPException, body: GatewayAuthorizeRequest)
     if body.route_type != "decide" or not message.startswith(prefix):
         return exc
     model = message.removeprefix(prefix)
-    if model in MODELS:
+    if model in MODELS and MODELS[model].supports_decide:
+        text = f"Decision model {model} takes no variant suffix or fallback models"
+    elif model in MODELS:
         text = f"Model does not support decisions: {model}"
     elif model == "typesafe/jev-1.13":
         text = 'Unknown model: typesafe/jev-1.13. Send "model": "typesafe-ai/jev"'

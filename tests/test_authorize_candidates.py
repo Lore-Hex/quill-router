@@ -270,3 +270,9 @@ def test_a_known_model_with_no_decide_or_chat_surface_says_decisions() -> None:
         if not (m.supports_chat or m.supports_decide or m.supports_embeddings)
     )
     assert _decide_refusal(model) == f"Model does not support decisions: {model}"
+
+
+def test_a_decision_model_with_a_suffix_is_told_to_drop_it() -> None:
+    assert _decide_refusal("typesafe-ai/jev:nitro") == (
+        "Decision model typesafe-ai/jev takes no variant suffix or fallback models"
+    )
