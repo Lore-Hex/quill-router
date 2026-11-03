@@ -4107,6 +4107,16 @@ _MODEL_ORIGIN_CN_XIAOMI = ModelOrigin(
     ),
 )
 
+_MODEL_ORIGIN_CN_STEPFUN = ModelOrigin(
+    country=PROVIDER_JURISDICTION_CN,
+    lab_name="StepFun",
+    source_url="https://www.stepfun.com/legal/terms",
+    note=(
+        "StepFun's terms name Shanghai StepFun Intelligent Technology Co., "
+        "Ltd. as the company providing its models and services."
+    ),
+)
+
 _MODEL_ORIGIN_INDEPENDENT_SAO10K = ModelOrigin(
     country=None,
     lab_name="Sao10K (independent model author)",
@@ -4339,15 +4349,9 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
     "MiniMaxAI": _MODEL_ORIGIN_CN_MINIMAX,
     "xiaomi": _MODEL_ORIGIN_CN_XIAOMI,
     "xiaomimimo": _MODEL_ORIGIN_CN_XIAOMI,
-    "stepfun": ModelOrigin(
-        country=PROVIDER_JURISDICTION_CN,
-        lab_name="StepFun",
-        source_url="https://www.stepfun.com/legal/terms",
-        note=(
-            "StepFun's terms name Shanghai StepFun Intelligent Technology Co., "
-            "Ltd. as the company providing its models and services."
-        ),
-    ),
+    "stepfun": _MODEL_ORIGIN_CN_STEPFUN,
+    # StepFun's native publisher: https://huggingface.co/stepfun-ai/Step-3.5-Flash
+    "stepfun-ai": _MODEL_ORIGIN_CN_STEPFUN,
     "moonshotai": ModelOrigin(
         country=PROVIDER_JURISDICTION_CN,
         lab_name="Moonshot AI (Kimi)",

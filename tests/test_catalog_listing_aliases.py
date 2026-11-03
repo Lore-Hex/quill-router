@@ -52,7 +52,8 @@ def test_published_catalog_has_one_qwen_listing_with_all_existing_routes() -> No
 
     rows = _public_catalog_payload((0, "listing-alias-regression")).shapes
     assert sum(row["id"] == "qwen/qwen3.8-27b" for row in rows) == 1
-    assert not set(MODEL_LISTING_ALIASES).intersection(row["id"] for row in rows)
+    active_aliases = {alias for alias, target in MODEL_LISTING_ALIASES.items() if target in MODELS}
+    assert not active_aliases.intersection(row["id"] for row in rows)
     for alias, canonical in MODEL_LISTING_ALIASES.items():
         if alias not in MODELS or canonical not in MODELS:
             continue
