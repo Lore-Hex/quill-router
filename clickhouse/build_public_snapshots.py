@@ -17,6 +17,7 @@ from typing import Any
 from trusted_router.apps import aggregate_apps
 from trusted_router.catalog import MODELS, endpoints_for_model
 from trusted_router.client_reliability import build_client_reliability
+from trusted_router.encrypted_ai import aggregate_encrypted_ai
 from trusted_router.storage_models import (
     ProviderBenchmarkSample,
     SyntheticProbeSample,
@@ -36,6 +37,10 @@ CLIENT_ROLLUP_LIMIT = 100_000
 # Published rows and calibration rows are fetched by separate queries, each
 # with its own CLIENT_ROLLUP_LIMIT, so neither scope can truncate the other.
 CLIENT_ROLLUP_SCOPES = ("fleet", "fleet_all")
+# The encrypted AI directory sums 30 days of generations; a quarter-hourly
+# rebuild is plenty for a weekly ranking (the reader accepts an hour's age).
+ENCRYPTED_AI_EVERY_MINUTES = 15
+ENCRYPTED_AI_ROW_LIMIT = 20_000
 
 
 def _query(
@@ -120,6 +125,35 @@ FORMAT JSONEachRow
 """,
     )
     return _dataclass_rows(ProviderBenchmarkSample, output)
+
+
+def _encrypted_ai_rows(password: str) -> list[dict[str, Any]]:
+    """Tokens and requests per (app, referer domain, provider, model), summed
+    over the last 1, 7 and 30 days. Names, domains and counts only."""
+    output = _query(
+        password,
+        f"""
+SELECT
+  app,
+  domain(coalesce(http_referer, '')) AS ref,
+  provider,
+  model,
+  groupUniqArrayArray(8)(app_categories) AS categories,
+  sumIf(tokens_prompt + tokens_completion, created_at >= now64(3) - INTERVAL 1 DAY) AS t1,
+  countIf(created_at >= now64(3) - INTERVAL 1 DAY) AS r1,
+  sumIf(tokens_prompt + tokens_completion, created_at >= now64(3) - INTERVAL 7 DAY) AS t7,
+  countIf(created_at >= now64(3) - INTERVAL 7 DAY) AS r7,
+  sum(tokens_prompt + tokens_completion) AS t30,
+  count() AS r30
+FROM activity_generations FINAL
+WHERE created_at >= now64(3) - INTERVAL 30 DAY AND synthetic = 0
+GROUP BY app, ref, provider, model
+ORDER BY t30 DESC
+LIMIT {ENCRYPTED_AI_ROW_LIMIT}
+FORMAT JSONEachRow
+""",
+    )
+    return [json.loads(line) for line in output.splitlines() if line.strip()]
 
 
 def _evidence_samples(password: str) -> list[ProviderBenchmarkSample]:
@@ -400,11 +434,15 @@ def build_snapshots(
     }
 
 
+def _utcnow() -> dt.datetime:
+    return dt.datetime.now(dt.UTC)
+
+
 def main() -> int:
     password = os.environ.get("CH_PASSWORD", "")
     if not password:
         raise SystemExit("CH_PASSWORD is required")
-    now = dt.datetime.now(dt.UTC)
+    now = _utcnow()
     generated_at = now.isoformat(timespec="milliseconds").replace("+00:00", "Z")
     status_samples, status_rollups = _status_inputs(password)
     evidence_rows = None
@@ -429,6 +467,15 @@ def main() -> int:
     )
     if evidence_rows is None:
         snapshots.pop("leaderboard_evidence", None)
+    if now.minute % ENCRYPTED_AI_EVERY_MINUTES == 0:
+        try:
+            snapshots["encrypted_ai"] = aggregate_encrypted_ai(
+                _encrypted_ai_rows(password), generated_at=generated_at
+            )
+        except RuntimeError:
+            # The directory must not stop health publication; its last
+            # snapshot stays until the reader's freshness bound expires it.
+            print(json.dumps({"event": "encrypted_ai_build_failed"}), file=sys.stderr)
     rows = [
         {
             "name": name,

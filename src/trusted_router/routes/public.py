@@ -85,6 +85,7 @@ from trusted_router.dashboard import (
     public_competitor_compare_index_html,
     public_contact_html,
     public_dpa_html,
+    public_encrypted_ai_html,
     public_fusion_html,
     public_google_search_experiment_html,
     public_hipaa_readiness_html,
@@ -129,6 +130,7 @@ from trusted_router.domains import (
     request_hostname,
     status_hostname_for_domain,
 )
+from trusted_router.encrypted_ai import directory_view
 from trusted_router.exchange_analytics import ExchangeEvent, accept_event
 from trusted_router.marketing_experiments import (
     GOOGLE_SEARCH_CELLS_BY_ID,
@@ -274,6 +276,7 @@ FLEET_SNAPSHOT_CACHE_SECONDS = 30
 _LEADERBOARD_CACHE: tuple[float, dict[str, Any]] | None = None
 _VIDEO_LEADERBOARD_CACHE: tuple[float, dict[str, Any]] | None = None
 _APPS_CACHE: tuple[float, dict[str, Any]] | None = None
+_ENCRYPTED_AI_CACHE: tuple[float, dict[str, Any] | None] | None = None
 _STATUS_RESPONSE_CACHE: OrderedDict[str, _CachedPublicBody] = OrderedDict()
 _STATUS_RESPONSE_REFRESHING: set[str] = set()
 _STATUS_RESPONSE_CACHE_LOCK = threading.RLock()
@@ -1849,6 +1852,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     def apps() -> str:
         return public_apps_html(settings, apps=_apps_snapshot(settings))
 
+    @public_html_route("/encrypted-ai")
+    def encrypted_ai() -> str:
+        return public_encrypted_ai_html(settings, view=directory_view(_encrypted_ai_snapshot(settings)))
+
     @public_html_route("/resources")
     def resources() -> str:
         return public_page_html(settings, "resources")
@@ -3246,6 +3253,25 @@ def _apps_snapshot(settings: Settings) -> dict[str, Any]:
     return payload
 
 
+def _encrypted_ai_snapshot(settings: Settings) -> dict[str, Any] | None:
+    """The quarter-hourly encrypted-token ranking, or None while it is
+    unavailable (the page then shows the curated tiers alone). Never a
+    per-view live read: the builder on the analytics node owns the query."""
+    global _ENCRYPTED_AI_CACHE
+    if settings.environment == "test":
+        return None
+    now = time.monotonic()
+    if _ENCRYPTED_AI_CACHE is not None and now - _ENCRYPTED_AI_CACHE[0] < STATUS_SNAPSHOT_CACHE_SECONDS:
+        return _ENCRYPTED_AI_CACHE[1]
+    try:
+        payload = _precomputed_public_analytics_snapshot("encrypted_ai")
+    except Exception as exc:
+        _log_public_analytics_snapshot_read_failure("encrypted_ai", exc)
+        return _ENCRYPTED_AI_CACHE[1] if _ENCRYPTED_AI_CACHE is not None else None
+    _ENCRYPTED_AI_CACHE = (now, payload)
+    return payload
+
+
 def _precomputed_public_analytics_snapshot(name: str) -> dict[str, Any] | None:
     reader = getattr(STORE, "public_analytics_snapshot", None)
     if not callable(reader):
@@ -3253,7 +3279,12 @@ def _precomputed_public_analytics_snapshot(name: str) -> dict[str, Any] | None:
     return current_public_analytics_snapshot(
         name,
         reader=reader,
-        max_age_seconds=(2_147_483_647 if name == "client_reliability" else 600),
+        max_age_seconds=(
+            2_147_483_647 if name == "client_reliability"
+            # Rebuilt every 15 minutes: an hour allows three missed builds.
+            else 3_600 if name == "encrypted_ai"
+            else 600
+        ),
     )
 
 

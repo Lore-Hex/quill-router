@@ -1,0 +1,222 @@
+{% extends "public/_base.html" %}
+{% set week = view.windows | selectattr("name", "equalto", "week") | first %}
+{% block hero %}
+<section class="public-hero marketing-hero eai-hero">
+  <div>
+    <div class="kicker">Encrypted AI directory · Confidential compute · Verifiable</div>
+    <h1>Encrypted AI apps, ranked by tokens you can verify.</h1>
+    <p class="lead">Encrypted AI runs your prompt inside attested hardware that the app, the router and the cloud cannot read. Many apps say "private" and mean a retention policy. This directory ranks apps by the encrypted tokens they actually sent, and links the evidence so you can check it yourself.</p>
+    <div class="hero-actions">
+      <a class="btn primary" href="#get-listed">Get your app listed</a>
+      <a class="btn" href="/docs/receipts#verify">How verification works <span aria-hidden="true">→</span></a>
+    </div>
+  </div>
+  <div class="eai-headline" aria-live="polite">
+    {% if not view.available %}
+    <strong>Ranking updating</strong>
+    <span>The verified ranking refreshes every 15 minutes. The listings below are current.</span>
+    {% elif week.consumer_count == 0 %}
+    <strong>No consumer agent has verified yet.</strong>
+    <span>Not one personal AI agent sent encrypted tokens through the exchange this week. The first one to do it tops this page.</span>
+    {% else %}
+    <strong>{{ week.consumer_count }} consumer agent{{ "s" if week.consumer_count != 1 else "" }} verified this week.</strong>
+    <span>Ranked below by encrypted tokens.</span>
+    {% endif %}
+    {% if view.available %}
+    <dl class="eai-stats">
+      <div><dt>Encrypted tokens this week</dt><dd>{{ "{:,}".format(week.exchange_encrypted_tokens) }}</dd></div>
+      <div><dt>Apps verified this week</dt><dd>{{ week.apps | length }}</dd></div>
+    </dl>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}
+
+{% block body %}
+<style nonce="{{ csp_nonce() }}">
+  .eai-hero { align-items: center; }
+  .eai-headline { border: 1px solid var(--line, #d9dde3); border-radius: 12px; padding: 24px; display: grid; gap: 10px; }
+  .eai-headline strong { font-size: 1.45rem; line-height: 1.2; text-wrap: balance; }
+  .eai-headline span { color: var(--muted, #5b6472); }
+  .eai-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 8px 0 0; }
+  .eai-stats div { border-top: 1px solid var(--line, #d9dde3); padding-top: 10px; }
+  .eai-stats dt { font-size: .78rem; letter-spacing: .04em; text-transform: uppercase; color: var(--muted, #5b6472); }
+  .eai-stats dd { margin: 4px 0 0; font-size: 1.3rem; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .eai-section { margin-top: 56px; }
+  .eai-section > header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+  .eai-section > header p { margin: 4px 0 0; color: var(--muted, #5b6472); max-width: 70ch; }
+  .eai-tabs, .eai-filters { display: flex; flex-wrap: wrap; gap: 8px; }
+  .eai-tabs button, .eai-filters button { border: 1px solid var(--line, #d9dde3); background: transparent; border-radius: 999px; padding: 6px 12px; font: inherit; font-size: .88rem; cursor: pointer; color: inherit; }
+  .eai-tabs button[aria-pressed="true"], .eai-filters button[aria-pressed="true"] { background: var(--ink, #111827); color: var(--paper, #fff); border-color: var(--ink, #111827); }
+  .eai-tabs button:focus-visible, .eai-filters button:focus-visible { outline: 2px solid var(--accent, #2563eb); outline-offset: 2px; }
+  .eai-filterbar { display: grid; gap: 10px; margin-top: 28px; }
+  .eai-filterbar .label { font-size: .78rem; letter-spacing: .04em; text-transform: uppercase; color: var(--muted, #5b6472); }
+  .eai-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .eai-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+  .eai-card { border: 1px solid var(--line, #d9dde3); border-radius: 12px; padding: 18px; display: grid; gap: 8px; align-content: start; }
+  .eai-card h3 { margin: 0; font-size: 1.05rem; }
+  .eai-card h3 a { color: inherit; }
+  .eai-card p { margin: 0; color: var(--muted, #5b6472); font-size: .93rem; }
+  .eai-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .eai-badge { display: inline-block; border-radius: 999px; padding: 2px 9px; font-size: .74rem; font-weight: 600; letter-spacing: .02em; border: 1px solid currentColor; white-space: nowrap; }
+  .eai-badge.verified { color: #0f7a4a; }
+  .eai-badge.self_attested { color: #8a5a00; }
+  .eai-badge.on_device { color: #2457a6; }
+  .eai-badge.watchlist { color: #6b7280; }
+  .eai-cat { font-size: .8rem; color: var(--muted, #5b6472); }
+  .eai-actions { display: flex; flex-wrap: wrap; gap: 12px; font-size: .9rem; margin-top: 4px; }
+  .eai-empty { border: 1px dashed var(--line, #d9dde3); border-radius: 12px; padding: 20px; color: var(--muted, #5b6472); }
+  .eai-note { font-size: .88rem; color: var(--muted, #5b6472); max-width: 75ch; }
+  [data-eai-hidden] { display: none !important; }
+  @media (prefers-color-scheme: dark) {
+    .eai-badge.verified { color: #4ade80; }
+    .eai-badge.self_attested { color: #fbbf24; }
+    .eai-badge.on_device { color: #93c5fd; }
+    .eai-badge.watchlist { color: #9ca3af; }
+  }
+</style>
+
+<div class="eai-filterbar" aria-label="Filter listings">
+  <div><span class="label" id="eai-cat-label">Category</span>
+    <div class="eai-filters" role="group" aria-labelledby="eai-cat-label" data-eai-filter="category">
+      <button type="button" data-value="" aria-pressed="true">All</button>
+      {% for slug, label in view.categories %}<button type="button" data-value="{{ slug }}" aria-pressed="false">{{ label }}</button>{% endfor %}
+    </div>
+  </div>
+  <div><span class="label" id="eai-tier-label">Tier</span>
+    <div class="eai-filters" role="group" aria-labelledby="eai-tier-label" data-eai-filter="tier">
+      <button type="button" data-value="" aria-pressed="true">All</button>
+      {% for slug, label in view.tiers.items() %}<button type="button" data-value="{{ slug }}" aria-pressed="false">{{ label }}</button>{% endfor %}
+    </div>
+  </div>
+</div>
+
+<section class="eai-section" id="verified" data-eai-tier="verified">
+  <header>
+    <div>
+      <h2>Verified encrypted</h2>
+      <p>Apps observed sending tokens to Confidential routes on the exchange: an attested gateway to attested provider hardware. Every one of these requests could carry a signed receipt.</p>
+    </div>
+    <div class="eai-tabs" role="group" aria-label="Ranking window">
+      {% for w in view.windows %}<button type="button" data-eai-window="{{ w.name }}" aria-pressed="{{ 'true' if w.name == view.default_window else 'false' }}">{{ w.label }}</button>{% endfor %}
+    </div>
+  </header>
+  {% for w in view.windows %}
+  <div data-eai-window-panel="{{ w.name }}" {% if w.name != view.default_window %}hidden{% endif %}>
+    {% if w.apps %}
+    <div class="table-wrap">
+      <table class="home-table">
+        <thead><tr><th>#</th><th>App</th><th>Category</th><th class="eai-num">Encrypted tokens</th><th class="eai-num">Share encrypted</th><th>Evidence</th></tr></thead>
+        <tbody>
+          {% for a in w.apps %}
+          <tr data-eai-category="{{ a.category }}">
+            <td>{{ a.rank }}</td>
+            <td>{% if a.url %}<a href="{{ a.url }}" rel="nofollow noopener" target="_blank">{{ a.name }}</a>{% else %}{{ a.name }}{% endif %}{% if a.domain %}<div class="eai-cat">{{ a.domain }}</div>{% endif %}</td>
+            <td>{{ view.category_labels.get(a.category, "Other") }}</td>
+            <td class="eai-num">{{ "{:,}".format(a.encrypted_tokens) }}</td>
+            <td class="eai-num">{{ "{:.0%}".format(a.encrypted_share) }}</td>
+            <td><a href="/docs/receipts#verify">Verify</a></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="eai-empty">{% if view.available %}No app sent encrypted tokens through the exchange {{ w.label | lower }}.{% else %}The verified ranking is refreshing; check back in a few minutes.{% endif %} <a href="#get-listed">Be the first.</a></p>
+    {% endif %}
+  </div>
+  {% endfor %}
+  <p class="eai-note">Ranked by tokens served on Confidential routes. Apps name themselves with request headers; counts only, never a prompt, workspace or key. Share encrypted is the app's encrypted tokens over all its tokens on the exchange in the window.</p>
+</section>
+
+{% set tier_copy = {
+  "self_attested": ("Encrypted, self-attested", "Apps that run their own confidential compute, not through the exchange. The claim is theirs; Verify goes to where they publish the evidence."),
+  "on_device": ("On-device", "Apps that keep inference on your own device. Nothing to attest on our side; the claim is theirs."),
+  "watchlist": ("Watchlist", "Personal AI agents we have not observed sending encrypted tokens. \"Not verified\" means we have no evidence either way, not that they are unencrypted."),
+} %}
+{% for tier in ["self_attested", "on_device", "watchlist"] %}
+{% set listings = view.curated[tier] %}
+{% if listings %}
+<section class="eai-section" id="{{ tier | replace('_', '-') }}" data-eai-tier="{{ tier }}">
+  <header><div><h2>{{ tier_copy[tier][0] }}</h2><p>{{ tier_copy[tier][1] }}</p></div></header>
+  <div class="eai-cards">
+    {% for l in listings %}
+    <article class="eai-card" data-eai-category="{{ l.category }}">
+      <div class="eai-meta">
+        <span class="eai-badge {{ tier }}">{% if tier == "watchlist" %}Not verified{% elif tier == "on_device" %}On-device, self-attested{% else %}Self-attested{% endif %}</span>
+        <span class="eai-cat">{{ view.category_labels.get(l.category, "Other") }}{% if l.yc_batch %} · YC {{ l.yc_batch }}{% endif %}</span>
+      </div>
+      <h3><a href="{{ l.url }}" rel="nofollow noopener" target="_blank">{{ l.name }}</a></h3>
+      <p>{{ l.description }}</p>
+      <div class="eai-actions">
+        {% if l.verify_url %}<a href="{{ l.verify_url }}" rel="nofollow noopener" target="_blank">Verify</a>{% endif %}
+        <a href="mailto:help@trustedrouter.com?subject={{ ('Claim this listing: ' ~ l.name) | urlencode }}">Claim this listing</a>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+{% endfor %}
+
+<section class="eai-section marketing-split" id="get-listed" aria-label="Get listed">
+  <div class="marketing-copy">
+    <h2>Get listed: two headers, no application.</h2>
+    <p>Send your requests through a Confidential route and name your app. <code>HTTP-Referer</code> is your app's unique id (its URL); <code>X-NYTE-Title</code> is the name we show. <code>X-OpenRouter-Title</code> and <code>X-Title</code> work too. Your app appears in the verified ranking within 15 minutes of its first encrypted request.</p>
+    <p>Already listed on the watchlist or as self-attested? Route through the exchange and your listing moves up to Verified encrypted automatically. To hide your app from every view, or to claim and correct a listing, email <a href="mailto:help@trustedrouter.com?subject=Encrypted%20AI%20directory">help@trustedrouter.com</a>.</p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Appear in the ranking</span><span>HTTP headers</span></div>
+    <pre><code>POST https://api.trustedrouter.com/v1/chat/completions
+HTTP-Referer: https://yourapp.com
+X-NYTE-Title: Your App
+
+{"model": "trustedrouter/confidential", ...}</code></pre>
+  </div>
+</section>
+
+<section class="eai-section" id="how-we-verify">
+  <header><div><h2>How a listing is verified</h2></div></header>
+  <div class="eai-cards">
+    <article class="eai-card"><h3>Attested gateway</h3><p>The request terminates in an enclave whose code measurement is published and checked by anyone at <a href="/trust">/trust</a>.</p></article>
+    <article class="eai-card"><h3>Attested provider</h3><p>Confidential routes run on provider hardware with its own attestation, never on a host that can read the prompt.</p></article>
+    <article class="eai-card"><h3>Signed receipts</h3><p>Any response can carry a receipt binding the request to both attestations. <a href="/docs/receipts#verify">Verify one yourself</a>.</p></article>
+  </div>
+</section>
+{% endblock %}
+
+{% block body_scripts %}
+<script nonce="{{ csp_nonce() }}">
+(function () {
+  var filters = { category: "", tier: "" };
+  function apply() {
+    document.querySelectorAll("[data-eai-tier]").forEach(function (section) {
+      var tierOk = !filters.tier || section.getAttribute("data-eai-tier") === filters.tier;
+      if (tierOk) { section.removeAttribute("data-eai-hidden"); } else { section.setAttribute("data-eai-hidden", ""); }
+      section.querySelectorAll("[data-eai-category]").forEach(function (item) {
+        var ok = !filters.category || item.getAttribute("data-eai-category") === filters.category;
+        if (ok) { item.removeAttribute("data-eai-hidden"); } else { item.setAttribute("data-eai-hidden", ""); }
+      });
+    });
+  }
+  document.querySelectorAll("[data-eai-filter]").forEach(function (group) {
+    var key = group.getAttribute("data-eai-filter");
+    group.querySelectorAll("button").forEach(function (button) {
+      button.addEventListener("click", function () {
+        group.querySelectorAll("button").forEach(function (b) { b.setAttribute("aria-pressed", "false"); });
+        button.setAttribute("aria-pressed", "true");
+        filters[key] = button.getAttribute("data-value");
+        apply();
+      });
+    });
+  });
+  document.querySelectorAll("[data-eai-window]").forEach(function (button) {
+    button.addEventListener("click", function () {
+      var name = button.getAttribute("data-eai-window");
+      document.querySelectorAll("[data-eai-window]").forEach(function (b) { b.setAttribute("aria-pressed", String(b === button)); });
+      document.querySelectorAll("[data-eai-window-panel]").forEach(function (panel) { panel.hidden = panel.getAttribute("data-eai-window-panel") !== name; });
+    });
+  });
+})();
+</script>
+{% endblock %}

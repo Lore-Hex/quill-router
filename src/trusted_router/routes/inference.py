@@ -1108,7 +1108,9 @@ async def _candidate_stream_bytes(
 
 def _app_name(request: Request) -> str:
     return (
-        request.headers.get("x-title")
+        request.headers.get("x-nyte-title")
+        or request.headers.get("x-openrouter-title")
+        or request.headers.get("x-title")
         or request.headers.get("http-referer")
         or request.headers.get("referer")
         or "TrustedRouter"
