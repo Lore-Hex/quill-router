@@ -215,7 +215,10 @@ fi
 deploy_mutex_assert
 
 shift_traffic() {
-  deploy_mutex_assert
+  # Callers run this as `if ! shift_traffic`, which disables errexit inside
+  # the function. Check the fence explicitly so a lost lease stops the shift.
+  # No rollback here: rollback_to_old would refuse without the fence too.
+  deploy_mutex_assert || return 1
   if [ -n "${TR_SECONDARY_ABORT_FILE:-}" ] && [ -e "$TR_SECONDARY_ABORT_FILE" ]; then
     rollback_to_old "another secondary failed; refusing further traffic shifts"
     return 1

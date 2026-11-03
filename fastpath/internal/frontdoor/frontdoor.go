@@ -80,12 +80,26 @@ type Config struct {
 	OwnerWait time.Duration
 	// PublishWait bounds a full record's publish (§4.9).
 	PublishWait time.Duration
+	// AnswerWithin bounds every gateway request from its arrival (budget):
+	// each is answered within it however slow its owner and peer are, so
+	// the answer reaches the control plane inside that caller's own budget
+	// for the call (fastpath_front_door_timeout_seconds), which must exceed
+	// it. New takes it only when a settle's publish, an owner's and a
+	// peer's full waits and the append's time fit in it with room to spare,
+	// so each call runs to its own wait, and only a scheduler that runs
+	// late leaves one less: such a call is no evidence about whom it
+	// called. Zero bounds a request only by its own context.
+	AnswerWithin time.Duration
+	// AppendWithin is the end of AnswerWithin a terminal keeps for its
+	// drain log append and a refused append's disposition read: the calls
+	// to the owner and the peer end before it.
+	AppendWithin time.Duration
 
 	// Self is this node's address, Peers the other nodes' front doors: a
 	// terminal or a heartbeat whose owner this one cannot reach is sent
-	// through one of them, a heartbeat's within PeerWait, since its own
-	// budget is five seconds (§4.3). Without Peers it is sent through none,
-	// nor is one whose owner is Self.
+	// through one of them within PeerWait, which, after an owner's full
+	// wait, fits in the answer budget (§4.3). Without Peers it is sent
+	// through none, nor is one whose owner is Self.
 	Self     string
 	Peers    Peers
 	PeerWait time.Duration
@@ -174,6 +188,11 @@ func New(cfg Config) (*FrontDoor, error) {
 		return nil, errors.New("frontdoor: peers need this node's address and a wait, withdrawing a window and " +
 			"a probe interval, and revoking an interval and the holds' life")
 	}
+	if cfg.AnswerWithin < 0 || cfg.AppendWithin < 0 || (cfg.AnswerWithin > 0 && (cfg.AppendWithin <= 0 ||
+		cfg.PublishWait+cfg.OwnerWait+cfg.PeerWait+cfg.AppendWithin >= cfg.AnswerWithin)) {
+		return nil, errors.New("frontdoor: an answer budget past a publish's, an owner's and a peer's full waits " +
+			"and the drain log append's")
+	}
 	if cfg.Clock == nil {
 		cfg.Clock = time.Now
 	}
@@ -236,20 +255,28 @@ func (f *FrontDoor) Authorize(ctx context.Context, a AuthorizeOf) Authorized {
 	if k > 1 {
 		shards = append(shards, (shard+1)%k)
 	}
+	_, hops, cancelBudget := f.budget(ctx, 0)
+	defer cancelBudget()
 	view, _ := f.cfg.Members.View()
 	for _, s := range shards {
 		m, ok := view.Owner(ring.ShardKey(a.Workspace, s))
 		if !ok {
 			continue
 		}
-		octx, cancel := context.WithTimeout(ctx, f.cfg.OwnerWait)
+		if hops.Err() != nil {
+			// The answer budget is spent: no other shard's owner is asked.
+			break
+		}
+		octx, cancel := context.WithTimeout(hops, f.cfg.OwnerWait)
 		got, err := f.cfg.Owners.Authorize(octx, m.Address, OwnerAuthorize{Workspace: a.Workspace, Shard: s,
 			Estimate: a.Estimate, Stream: a.Stream, Boot: a.Boot, OpenHeartbeat: a.OpenHeartbeat})
+		short := cut(octx)
 		cancel()
 		switch {
 		case err == nil:
 			f.reached(m.Address)
-		case ctx.Err() == nil:
+		case ctx.Err() == nil && !short:
+			// Neither the request nor its budget ended first.
 			f.failedHere(m.Address)
 		}
 		switch {
@@ -261,6 +288,37 @@ func (f *FrontDoor) Authorize(ctx context.Context, a AuthorizeOf) Authorized {
 		}
 	}
 	return Authorized{Status: Busy}
+}
+
+// errBudget is the cause of a context the answer budget ended.
+var errBudget = errors.New("frontdoor: the answer budget is spent")
+
+// budget is a gateway request's answer budget (AnswerWithin): answer ends
+// AnswerWithin from now, and hops, which bounds the calls to owners and
+// peers and a settle's publish, ends keep before it, so what follows them,
+// a terminal's drain log append, has that long. Both end with ctx too, and
+// without AnswerWithin only with it; either ending at the budget has
+// errBudget for its cause (cut). Its clock is the process's, as every
+// call's own wait is.
+func (f *FrontDoor) budget(ctx context.Context, keep time.Duration) (answer, hops context.Context,
+	cancel context.CancelFunc) {
+	if f.cfg.AnswerWithin <= 0 {
+		return ctx, ctx, func() {}
+	}
+	by := time.Now().Add(f.cfg.AnswerWithin)
+	answer, cancelAnswer := context.WithDeadlineCause(ctx, by, errBudget)
+	hops, cancelHops := context.WithDeadlineCause(answer, by.Add(-keep), errBudget)
+	return answer, hops, func() {
+		cancelHops()
+		cancelAnswer()
+	}
+}
+
+// cut reports whether the answer budget, not the call's own wait nor its
+// callee, ended a call made under it: read before the call's own cancel.
+// Such a call is no evidence about whom it called.
+func cut(call context.Context) bool {
+	return errors.Is(context.Cause(call), errBudget)
 }
 
 // pick is the shard a request's own hash picks, of k.
@@ -293,7 +351,9 @@ func (f *FrontDoor) Heartbeat(ctx context.Context, hb HeartbeatOf) HeartbeatAnsw
 	if err != nil {
 		return HeartbeatAnswer{Status: Invalid}
 	}
-	got, ok := f.heartbeatAt(ctx, env, OwnerHeartbeat{Lease: env.Lease, Auth: env.Auth,
+	_, hops, cancel := f.budget(ctx, 0)
+	defer cancel()
+	got, ok := f.heartbeatAt(ctx, hops, env, OwnerHeartbeat{Lease: env.Lease, Auth: env.Auth,
 		GatewaySeq: hb.GatewaySeq, Hash: hb.Hash, Usage: hb.Usage, Running: hb.Running, Echoed: hb.Echoed,
 		EchoGranted: hb.EchoGranted, Basis: hb.Basis})
 	if !ok {
@@ -330,7 +390,9 @@ func (f *FrontDoor) Disposition(ctx context.Context, d DispositionOf) Dispositio
 	if err != nil {
 		return DispositionAnswer{Status: Invalid}
 	}
-	got, err := f.cfg.Store.Disposition(ctx, env.Auth)
+	answer, _, cancel := f.budget(ctx, 0)
+	defer cancel()
+	got, err := f.cfg.Store.Disposition(answer, env.Auth)
 	switch {
 	case err != nil:
 		return DispositionAnswer{Status: Failed}
@@ -381,14 +443,18 @@ func (f *FrontDoor) Settle(ctx context.Context, s SettleOf) TerminalAnswer {
 	// The publish may outlive the request: it publishes its own copy.
 	full := slices.Clone(s.Full)
 	digest := sha256.Sum256(full)
-	pctx, cancel := context.WithTimeout(ctx, f.cfg.PublishWait)
+	// The publish has its own wait, PublishWait, which New fits in the
+	// budget ahead of the owner's and the peer's, so they keep theirs.
+	answer, hops, cancelBudget := f.budget(ctx, f.cfg.AppendWithin)
+	defer cancelBudget()
+	pctx, cancel := context.WithTimeout(hops, f.cfg.PublishWait)
 	_, err = f.cfg.Records.Publish(env.Auth, settlelog.FullRecord, full).Wait(pctx)
 	cancel()
 	if err != nil {
 		return TerminalAnswer{Status: Failed}
 	}
 	req := OwnerTerminal{Lease: env.Lease, Auth: env.Auth, Kind: record.Settle, Charge: s.Charge, Digest: digest[:]}
-	return f.terminal(ctx, env, req, rowID(req, s.Money), s.Money)
+	return f.terminal(ctx, answer, hops, env, req, rowID(req, s.Money), s.Money)
 }
 
 // rowID names a terminal's drain-log row by all it states, its kind, charge,
@@ -412,19 +478,22 @@ func (f *FrontDoor) Refund(ctx context.Context, r RefundOf) TerminalAnswer {
 		return TerminalAnswer{Status: Invalid}
 	}
 	req := OwnerTerminal{Lease: env.Lease, Auth: env.Auth, Kind: record.Refund}
-	return f.terminal(ctx, env, req, rowID(req, r.Money), r.Money)
+	answer, hops, cancel := f.budget(ctx, f.cfg.AppendWithin)
+	defer cancel()
+	return f.terminal(ctx, answer, hops, env, req, rowID(req, r.Money), r.Money)
 }
 
 // terminal sends a terminal to the owner its envelope names, through a peer
-// if this front door cannot reach it. If no owner answers, or the owner
-// answers that it may never publish it, the terminal goes to the lease's
-// drain log at once, under the row ID given.
-func (f *FrontDoor) terminal(ctx context.Context, env Envelope, req OwnerTerminal, recordID string,
+// if this front door cannot reach it, the calls ending with hops. If no
+// owner answers, or the owner answers that it may never publish it, the
+// terminal goes to the lease's drain log at once, under the row ID given
+// and with the cause terminalAt names, the append ending with answer
+// (budget).
+func (f *FrontDoor) terminal(ctx, answer, hops context.Context, env Envelope, req OwnerTerminal, recordID string,
 	money []byte) TerminalAnswer {
-	got, ok := f.terminalAt(ctx, env, req)
-	cause := "unreachable"
+	got, cause := f.terminalAt(ctx, hops, env, req)
 	switch {
-	case !ok:
+	case cause != "":
 	case got.Status == PastCutoff:
 		cause = "past_cutoff"
 	case got.Status == Won:
@@ -436,7 +505,7 @@ func (f *FrontDoor) terminal(ctx context.Context, env Envelope, req OwnerTermina
 		// The gateway stopped waiting: it retries.
 		return TerminalAnswer{Status: Failed}
 	}
-	return f.appendTerminal(ctx, env, req, recordID, money, cause)
+	return f.appendTerminal(answer, env, req, recordID, money, cause)
 }
 
 // appendTerminal appends a terminal to its lease's drain log, with the

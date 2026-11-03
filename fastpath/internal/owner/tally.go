@@ -8,7 +8,7 @@ import (
 // slowAnswer is the wait past which a request counts as slow: the front
 // door gives an owner this long (frontdoor.Config.OwnerWait) before it
 // takes the owner for one not reached.
-const slowAnswer = time.Second
+const slowAnswer = 500 * time.Millisecond
 
 // Tally is what the owner's leases did over a period, for its log line: the
 // records acknowledged and how long each waited from its hand-over to its

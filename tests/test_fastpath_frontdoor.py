@@ -4,15 +4,20 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from collections.abc import Set as AbstractSet
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 
+from trusted_router.config import Settings
 from trusted_router.services import fastpath_frontdoor as fd
 from trusted_router.storage_models import ApiKey
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class _Door:
@@ -578,3 +583,46 @@ def test_a_mode_outside_the_setting_covers_nothing() -> None:
     for mode in ("", "OFF", "Alert", "enforcing"):
         assert fd.pilot_key_capped(mode, windowed) is True, mode
     assert fd.pilot_key_capped("", _key()) is False
+
+
+_GO_MILLISECONDS = {"time.Millisecond": 1, "time.Second": 1000}
+
+
+def _go_milliseconds(expression: str) -> int:
+    """A Go duration literal of the defaults' form, `time.Second` or
+    `800 * time.Millisecond`, in whole milliseconds."""
+    found = re.fullmatch(r"(?:(\d+) \* )?(time\.Millisecond|time\.Second)", expression.strip())
+    assert found, expression
+    return int(found.group(1) or 1) * _GO_MILLISECONDS[found.group(2)]
+
+
+def _front_door_defaults() -> dict[str, int]:
+    """The front door's waits as the node's defaults set them
+    (fastpath/internal/service/service.go, Defaults), in milliseconds."""
+    service = (ROOT / "fastpath" / "internal" / "service" / "service.go").read_text(encoding="utf-8")
+    found = re.search(r"FrontDoor: frontdoor\.Config\{(.*?)\},\n", service, re.S)
+    assert found, "the front door's defaults"
+    fields = dict(re.findall(r"(\w+): ([^,]+)", found.group(1)))
+    names = ("PublishWait", "OwnerWait", "PeerWait", "AnswerWithin", "AppendWithin")
+    return {name: _go_milliseconds(fields[name]) for name in names}
+
+
+def test_the_control_plane_waits_longer_than_the_front_door_takes_to_answer() -> None:
+    """A call's budget outlasts the front door's answer budget, and the
+    connection's allowance with it, so a heartbeat whose owner and peer are
+    slow is answered Retry, and a terminal recorded in the drain log, while
+    the control plane still waits, and neither counts against its breaker
+    (2026-11-02: an owner past its second and then a peer's 0.8 s answered
+    after the 1.5 s had passed). Whatever a deploy sets is held to it too."""
+    waits = _front_door_defaults()
+    # The front door's own composition (frontdoor.New and service_test.go
+    # hold it too): a settle's publish, an owner's and a peer's full waits
+    # and the append's time all fit in its answer budget.
+    steps = ("PublishWait", "OwnerWait", "PeerWait", "AppendWithin")
+    assert waits["AppendWithin"] > 0 and sum(waits[name] for name in steps) < waits["AnswerWithin"]
+    default = Settings.model_fields["fastpath_front_door_timeout_seconds"].default
+    rollout = (ROOT / "scripts" / "deploy" / "rollout.sh").read_text(encoding="utf-8")
+    deployed = [float(value) for value in re.findall(r"TR_FASTPATH_FRONT_DOOR_TIMEOUT_SECONDS=([0-9.]+)", rollout)]
+    connection = round(fd.CONNECT_TIMEOUT_SECONDS * 1000)
+    for budget in (default, *deployed):
+        assert round(budget * 1000) >= waits["AnswerWithin"] + connection, (budget, waits)

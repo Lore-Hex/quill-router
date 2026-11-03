@@ -121,7 +121,11 @@ default, in the order they are turned on:
 `TR_FASTPATH_PILOT_REGIONS` is `us-central1` and stays so until the fast
 path has nodes elsewhere. `TR_FASTPATH_FRONT_DOOR_TIMEOUT_SECONDS` is the
 whole budget of one call, 1.5 s, spent inline on a customer request; past
-it the request takes today's path.
+it the request takes today's path. The front door answers every call within
+1.2 s however slow its owner and peer are (`frontdoor.Config.AnswerWithin`,
+in which a settle's 0.25 s publish, an owner's 0.5 s, a peer's 0.25 s and a
+terminal's 0.15 s drain log append fit), so the setting is never below 1.2 s
+and the connection's 0.25 s.
 
 ## How it turns off
 

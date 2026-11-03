@@ -196,3 +196,49 @@ func TestDecideOffAllStopsEveryWorkspaceDeciding(t *testing.T) {
 		t.Fatalf("again: %d rows, %v", off, err)
 	}
 }
+
+// TestDeleteDecideRemovesOneRow: deleting removes the workspace's row for
+// that cloud and region alone, says it found one, and leaves the
+// workspace's other rows and another workspace's as they were; deleting it
+// again finds none; a row under a malformed workspace, such as a flag a
+// command took for one, can be removed; and a key the table cannot hold is
+// refused.
+func TestDeleteDecideRemovesOneRow(t *testing.T) {
+	s := spikeStore(t)
+	ctx := context.Background()
+	ws, other := storetest.UniqueID("ws"), storetest.UniqueID("ws")
+	junk := "-" + storetest.UniqueID("h")
+	for _, k := range [][3]string{{ws, "gcp", "us-central1"}, {ws, "gcp", "europe-west4"}, {other, "gcp", "us-central1"},
+		{junk, "gcp", "us-central1"}} {
+		if _, err := s.SetDecide(ctx, k[0], k[1], k[2], true); err != nil {
+			t.Fatalf("setting %q: %v", k, err)
+		}
+	}
+	found, at, err := s.DeleteDecide(ctx, ws, "gcp", "us-central1")
+	if err != nil || !found || at.IsZero() {
+		t.Fatalf("deleting a row: found %v at %v, %v", found, at, err)
+	}
+	if got, want := strings.Join(decideRows(t, s, ws), " "), "gcp/europe-west4=on"; got != want {
+		t.Fatalf("the workspace's rows are %s, want %s", got, want)
+	}
+	if got, want := strings.Join(decideRows(t, s, other), " "), "gcp/us-central1=on"; got != want {
+		t.Fatalf("another workspace's rows are %s, want %s", got, want)
+	}
+	if found, at, err := s.DeleteDecide(ctx, ws, "gcp", "us-central1"); err != nil || found || at.IsZero() {
+		t.Fatalf("deleting it again: found %v at %v, %v", found, at, err)
+	}
+	if found, _, err := s.DeleteDecide(ctx, junk, "gcp", "us-central1"); err != nil || !found {
+		t.Fatalf("deleting the malformed workspace's row: found %v, %v", found, err)
+	}
+	if got := decideRows(t, s, junk); len(got) != 0 {
+		t.Fatalf("the malformed workspace's rows after: %v", got)
+	}
+	for _, key := range [][3]string{{"", "gcp", "us-central1"}, {ws, "GCP", "europe-west4"}, {ws, "gcp", ""}} {
+		if _, _, err := s.DeleteDecide(ctx, key[0], key[1], key[2]); err == nil {
+			t.Errorf("%q was taken", key)
+		}
+	}
+	if got, want := strings.Join(decideRows(t, s, ws), " "), "gcp/europe-west4=on"; got != want {
+		t.Fatalf("after the refused keys the workspace's rows are %s, want %s", got, want)
+	}
+}

@@ -1133,9 +1133,12 @@ class Settings(BaseSettings):
     # on, and turned on only after gate E. Both off by default.
     fastpath_pilot_streams: bool = False
     fastpath_edge_streams: bool = False
-    # The front door answers an admitted authorize in a few milliseconds; the
-    # owner behind it waits at most a second. A request past this budget
-    # takes today's path, so the budget is spent inline on a customer request.
+    # The front door answers an admitted authorize in a few milliseconds, and
+    # any call within 1.2 s however slow its owner and peer are (its
+    # AnswerWithin), which this budget, the connection's 0.25 s included,
+    # must outlast (tests/test_fastpath_frontdoor.py). A request past this
+    # budget takes today's path, so the budget is spent inline on a customer
+    # request.
     fastpath_front_door_timeout_seconds: float = 1.5
     _fastpath_pilot_workspace_ids: frozenset[str] = PrivateAttr(default=frozenset())
     _fastpath_pilot_region_ids: frozenset[str] = PrivateAttr(default=frozenset({"us-central1"}))

@@ -78,7 +78,9 @@ func TestTheCommandRefusesWhatItCannotDo(t *testing.T) {
 		{"-database", "d", "decide", "maybe", "ws"}, {"-database", "d", "decide", "on", ""},
 		{"-database", "d", "decide", "on", "ws", "more"}, {"-database", "d", "decide", "on", "ws", "-region", "r", "more"},
 		{"-database", "d", "decide", "on", "ws", "-cloud", "GCP"}, {"-database", "d", "-region", "", "decide", "status", "ws"},
-		{"-database", "d", "decide", "off", "ws", "-nope"}, {"-database", "d", "decide-off-all", "ws"}} {
+		{"-database", "d", "decide", "off", "ws", "-nope"}, {"-database", "d", "decide-off-all", "ws"},
+		{"-database", "d", "decide", "delete"}, {"-database", "d", "decide", "delete", ""},
+		{"-database", "d", "decide", "delete", "ws", "-cloud", "GCP"}, {"-database", "d", "decide", "delete", "ws", "more"}} {
 		if code, err := run(context.Background(), args, &bytes.Buffer{}, never); code != 2 || err == nil {
 			t.Errorf("%q: exit %d, %v", args, code, err)
 		}
@@ -86,6 +88,31 @@ func TestTheCommandRefusesWhatItCannotDo(t *testing.T) {
 	if _, err := run(context.Background(), []string{"-database", "d"}, &bytes.Buffer{}, never); err == nil ||
 		!strings.HasPrefix(err.Error(), "usage:") {
 		t.Errorf("no command: %v, want the usage", err)
+	}
+}
+
+// TestAFlagAfterTheCommandIsNotAnID: Go's flags end at the command, so a
+// flag after it, -h among them, would be taken for the workspace or the
+// address; each such word, and each id not of a workspace's or an
+// address's form, is refused with the usage, exit 2, and none reaches the
+// store, so no row is written for it.
+func TestAFlagAfterTheCommandIsNotAnID(t *testing.T) {
+	never := func(context.Context, string) (*store.Store, func(), error) {
+		t.Fatal("the store was opened")
+		return nil, nil, nil
+	}
+	for _, args := range [][]string{
+		{"enable", "-h"}, {"disable", "-h"}, {"status", "--help"}, {"audit", "-funded"}, {"enable", "-database"},
+		{"decide", "on", "-h"}, {"decide", "off", "-h"}, {"decide", "status", "-h"}, {"decide", "on", "-region"},
+		{"decide", "off", "-h", "-cloud", "gcp"}, {"node", "-h"}, {"leave", "-h"}, {"closed", "--help"},
+		{"enable", "a workspace"}, {"disable", "ws\n"}, {"status", "ws;"}, {"audit", strings.Repeat("w", 65)},
+		{"decide", "on", "ws id"}, {"decide", "off", strings.Repeat("w", 65)}, {"enable", "_ws"},
+		{"node", "10.0.0.7 :8080"}, {"leave", "node/a"}, {"closed", ":8080"}, {"node", strings.Repeat("n", 256)},
+	} {
+		code, err := run(context.Background(), append([]string{"-database", "d"}, args...), &bytes.Buffer{}, never)
+		if code != 2 || err == nil || !strings.Contains(err.Error(), "usage:") {
+			t.Errorf("%q: exit %d, %v; want 2 and the usage", args, code, err)
+		}
 	}
 }
 
@@ -229,6 +256,69 @@ func TestDecideSetsWhoDecidesAtTheEdge(t *testing.T) {
 	}
 }
 
+// TestDecideDeleteRemovesARow: decide delete removes the workspace's row
+// for the cloud and region alone, exit 0, so status no longer finds it
+// while the other region's is kept; deleting it again finds none, exit 3;
+// and a row written under a malformed workspace, as -h once was, can be
+// removed though no other verb takes that workspace.
+func TestDecideDeleteRemovesARow(t *testing.T) {
+	open := onShared(t)
+	ctx := context.Background()
+	ws := storetest.UniqueID("ws")
+	do := func(args ...string) (int, map[string]any) {
+		t.Helper()
+		var out bytes.Buffer
+		code, err := run(ctx, append([]string{"-database", "d"}, args...), &out, open)
+		if err != nil {
+			t.Fatalf("%q: %v", args, err)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+			t.Fatalf("%q wrote %q: %v", args, out.String(), err)
+		}
+		return code, got
+	}
+	for _, args := range [][]string{{"decide", "on", ws}, {"decide", "on", ws, "-region", "europe-west4"}} {
+		if code, _ := do(args...); code != 0 {
+			t.Fatalf("%q: exit %d", args, code)
+		}
+	}
+	if code, got := do("decide", "delete", ws); code != 0 || got["deleted"] != true || got["cloud"] != "gcp" ||
+		got["region"] != "us-central1" || got["at"] == nil {
+		t.Fatalf("decide delete: exit %d, %v", code, got)
+	}
+	if code, got := do("decide", "status", ws); code != 0 || got["found"] != false || len(got["rows"].([]any)) != 1 {
+		t.Fatalf("the deleted row's status: exit %d, %v", code, got)
+	}
+	if code, got := do("decide", "status", ws, "-region", "europe-west4"); code != 3 || got["found"] != true {
+		t.Fatalf("the other region's row: exit %d, %v", code, got)
+	}
+	if code, got := do("decide", "delete", ws); code != 3 || got["deleted"] != false {
+		t.Fatalf("deleting it again: exit %d, %v", code, got)
+	}
+	s, _, err := open(ctx, "d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	junk := "-" + storetest.UniqueID("h")
+	if _, err := s.SetDecide(ctx, junk, "gcp", "us-central1", false); err != nil {
+		t.Fatal(err)
+	}
+	if code, got := do("decide", "delete", junk, "-cloud", "gcp", "-region", "us-central1"); code != 0 ||
+		got["deleted"] != true {
+		t.Fatalf("deleting the malformed workspace's row: exit %d, %v", code, got)
+	}
+	rows, _, err := s.ReadDecide(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rows {
+		if r.Workspace == junk {
+			t.Fatalf("the malformed workspace's row is still there: %+v", r)
+		}
+	}
+}
+
 // TestDecideOffAllTurnsEveryRowOff, on a database of its own, since it
 // reaches every workspace: every row on is turned off and counted, and
 // each workspace's status then says it does not decide; the switch is left
@@ -274,7 +364,7 @@ func TestAnAnswerNotWrittenIsAFailure(t *testing.T) {
 	open := onOwn(t)
 	ws := storetest.UniqueID("ws")
 	for _, args := range [][]string{{"enable", ws}, {"status", ws}, {"disable", ws}, {"disable-all"}, {"decide", "on", ws},
-		{"decide", "status", ws}, {"decide-off-all"}} {
+		{"decide", "status", ws}, {"decide", "delete", ws}, {"decide-off-all"}} {
 		code, err := run(context.Background(), append([]string{"-database", "d"}, args...), full{}, open)
 		if code != 1 || err == nil {
 			t.Errorf("%q with its answer not written: exit %d, %v", args, code, err)

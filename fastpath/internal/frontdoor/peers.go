@@ -11,30 +11,38 @@ import (
 
 // heartbeatAt sends a heartbeat to its owner, and if this front door cannot
 // reach it, through a peer within PeerWait; one this node owns goes through
-// none (peer). It reports whether an owner answered. A request that ended
-// is no evidence that its owner is unreachable.
-func (f *FrontDoor) heartbeatAt(ctx context.Context, env Envelope, req OwnerHeartbeat) (HeartbeatAnswer, bool) {
-	octx, cancel := context.WithTimeout(ctx, f.cfg.OwnerWait)
+// none (peer). Both calls end with hops, the request's answer budget
+// (budget), which New fits both full waits in. It reports whether an owner
+// answered. A request that ended is no evidence that its owner is
+// unreachable, nor is a call the budget cut short (cut): the budget ran
+// out, not the owner's wait or the peer's.
+func (f *FrontDoor) heartbeatAt(ctx, hops context.Context, env Envelope, req OwnerHeartbeat) (HeartbeatAnswer, bool) {
+	octx, cancel := context.WithTimeout(hops, f.cfg.OwnerWait)
 	got, err := f.cfg.Owners.Heartbeat(octx, env.Owner, req)
+	short := cut(octx)
 	cancel()
 	if err == nil {
 		f.reached(env.Owner)
 		return got, true
 	}
-	if ctx.Err() != nil {
+	if ctx.Err() != nil || short {
 		return HeartbeatAnswer{}, false
 	}
 	f.failedHere(env.Owner)
 	if peer, ok := f.peer(env); ok {
-		pctx, cancel := context.WithTimeout(ctx, f.cfg.PeerWait)
+		if hops.Err() != nil {
+			return HeartbeatAnswer{}, false
+		}
+		pctx, cancel := context.WithTimeout(hops, f.cfg.PeerWait)
 		got, err = f.cfg.Peers.Heartbeat(pctx, peer, env.Owner, req)
+		short = cut(pctx)
 		cancel()
 		if err == nil {
 			f.reached(env.Owner)
 			f.unreachedHere(env.Owner)
 			return got, true
 		}
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || short {
 			return HeartbeatAnswer{}, false
 		}
 	}
@@ -43,36 +51,54 @@ func (f *FrontDoor) heartbeatAt(ctx context.Context, env Envelope, req OwnerHear
 }
 
 // terminalAt sends a terminal to its owner, and if this front door cannot
-// reach it, through a peer; one this node owns goes through none (peer). It
-// reports whether an owner answered. A request that ended is no evidence
-// that its owner is unreachable.
-func (f *FrontDoor) terminalAt(ctx context.Context, env Envelope, req OwnerTerminal) (OwnerTerminalAnswer, bool) {
-	octx, cancel := context.WithTimeout(ctx, f.cfg.OwnerWait)
+// reach it, through a peer within PeerWait; one this node owns goes through
+// none (peer). Both calls end with hops, as a heartbeat's do (heartbeatAt).
+// It answers the owner's answer, or why there is none, the drain log row's
+// cause: unreachable, when no owner answered within its wait, or budget,
+// when the answer budget ran out first, which, as an ended request, is no
+// evidence that the owner is unreachable.
+func (f *FrontDoor) terminalAt(ctx, hops context.Context, env Envelope, req OwnerTerminal) (OwnerTerminalAnswer, string) {
+	const unreachable, budget = "unreachable", "budget"
+	if hops.Err() != nil {
+		return OwnerTerminalAnswer{}, budget
+	}
+	octx, cancel := context.WithTimeout(hops, f.cfg.OwnerWait)
 	got, err := f.cfg.Owners.Terminal(octx, env.Owner, req)
+	short := cut(octx)
 	cancel()
 	if err == nil {
 		f.reached(env.Owner)
-		return got, true
+		return got, ""
 	}
 	if ctx.Err() != nil {
-		return OwnerTerminalAnswer{}, false
+		return OwnerTerminalAnswer{}, unreachable
+	}
+	if short {
+		return OwnerTerminalAnswer{}, budget
 	}
 	f.failedHere(env.Owner)
 	if peer, ok := f.peer(env); ok {
-		pctx, cancel := context.WithTimeout(ctx, f.cfg.OwnerWait)
+		if hops.Err() != nil {
+			return OwnerTerminalAnswer{}, budget
+		}
+		pctx, cancel := context.WithTimeout(hops, f.cfg.PeerWait)
 		got, err = f.cfg.Peers.Terminal(pctx, peer, env.Owner, req)
+		short = cut(pctx)
 		cancel()
 		if err == nil {
 			f.reached(env.Owner)
 			f.unreachedHere(env.Owner)
-			return got, true
+			return got, ""
 		}
 		if ctx.Err() != nil {
-			return OwnerTerminalAnswer{}, false
+			return OwnerTerminalAnswer{}, unreachable
+		}
+		if short {
+			return OwnerTerminalAnswer{}, budget
 		}
 	}
 	f.unreachedAnywhere(env)
-	return OwnerTerminalAnswer{}, false
+	return OwnerTerminalAnswer{}, unreachable
 }
 
 // peer is the front door a request whose owner this one cannot reach is
