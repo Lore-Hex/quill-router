@@ -13,20 +13,20 @@ Every public page sets `og:image`; this is where each kind of page gets it.
 
 ## The default card
 
-The default card is the homepage card with the homepage card's words, rendered
-from the shared template `docs/marketing/og-card.html`: the river photo, the
-dark left shade, the mark and wordmark, an Archivo headline with a pale-green
-italic second line, a one-line subhead and `trustedrouter.com` bottom-left.
-Only the words are variables.
+The default card is the homepage card, rendered from the homepage card's own
+HTML (`docs/homepage/social-card.html`) with the headline and subhead swapped
+in by the script: the river photo, the dark left shade, the mark and wordmark,
+an Archivo headline with a pale-green italic second line, a one-line subhead
+and `trustedrouter.com` bottom-left. There is no second copy of the design.
 
 ```bash
 uv run python scripts/generate_og_card.py          # rewrites static/og.png
 ```
 
-The words live in `DEFAULT_CARD` in the script. Keep them in step with
-`docs/homepage/social-card.html`, so a shared link anywhere on the site says
-what the homepage says. The script needs the repo's Playwright Chromium
-(`npm ci`; Node 18 or newer) and Pillow.
+The words are `DEFAULT_CARD` in the script, the homepage card's own, and a
+test keeps them equal to the homepage file, so a shared link anywhere on the
+site says what the homepage says. The script needs the repo's Playwright
+Chromium (`npm ci`; Node 18 or newer) and Pillow.
 
 `/og.png` is served by `routes/public.py` with a one-hour cache. Social
 networks cache the image behind a link for days: links shared before a deploy
@@ -36,10 +36,9 @@ have re-scrape tools; X re-fetches on its own).
 ## Hard requirements (every card)
 
 - **Dimensions:** exactly **1200 × 630 px**. Other ratios get cropped.
-- **Format:** PNG under **300 KB**. The template's photo is about 600 KB at
-  full colour; the script reduces it to a median-cut palette, 128 to 160
-  colours, which looks the same at full size. No dithering: it showed as grain
-  in the sky.
+- **Format:** PNG under **300 KB**. The photo is about 600 KB at full colour;
+  the script reduces it to a median-cut palette, 128 to 160 colours, which
+  looks the same at full size. No dithering: it showed as grain in the sky.
 - **Headline:** at most 7 words over two lines. The script shrinks the type
   from 76 px until both lines fit in 840 px, so the river stays visible.
 - **Legible at thumbnail size:** the headline must read at about 250 px wide.
