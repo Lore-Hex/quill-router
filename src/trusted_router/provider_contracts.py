@@ -60,6 +60,10 @@ _NATIVE_HOSTED_MODEL_EXCEPTIONS = frozenset({
 # own BYOK credentials. Crusoe (held October 3) was cleared on October 5 after
 # its replacement key passed paid-path canaries.
 PREPAID_PROVIDER_HOLD_REASONS: dict[str, str] = {
+    # November 3: six independent production model probes return HTTP 402
+    # prepaid_credit_exhausted on the managed account. Catalog discovery can
+    # still succeed. Re-enable only after funding and a paid-path canary.
+    "inceptron": "operator-credit-exhausted",
     # Sonar is now reformulated as Agent API calls. Its reported input/search
     # costs no longer reconcile with the old fixed-fee catalog contract.
     # Keep managed billing dark until a reviewed adapter accounts for them.

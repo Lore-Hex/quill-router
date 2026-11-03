@@ -136,6 +136,8 @@ def test_wave2_provider_privacy_and_gateway_registration() -> None:
 
 
 def test_wave2_manifests_publish_only_live_eligible_routes() -> None:
+    from trusted_router.provider_contracts import PREPAID_PROVIDER_HOLD_REASONS
+
     manifests = {
         provider.SLUG: json.loads(provider.MANIFEST_PATH.read_text(encoding="utf-8"))
         for provider in (inceptron, morph, atlas_cloud, streamlake)
@@ -159,7 +161,11 @@ def test_wave2_manifests_publish_only_live_eligible_routes() -> None:
     # the refresh tombstoned entirely is simply not expected.
     for slug in ("inceptron", "morph", "atlas-cloud"):
         live_rows = [row for row in manifests[slug]["models"] if row.get("routable") is not False]
-        assert slug in route_providers or not live_rows, slug
+        if slug in PREPAID_PROVIDER_HOLD_REASONS:
+            assert not any(endpoint.provider == slug and endpoint.usage_type == "Credits"
+                           for endpoint in built.values())
+        else:
+            assert slug in route_providers or not live_rows, slug
     streamlake_route_models = {
         endpoint.model_id
         for endpoint in built.values()
@@ -182,10 +188,12 @@ def test_wave2_manifests_publish_only_live_eligible_routes() -> None:
 
 @pytest.mark.provider_health
 def test_wave2_providers_serve_routes() -> None:
+    from trusted_router.provider_contracts import PREPAID_PROVIDER_HOLD_REASONS
+
     # Live provider state: provider-catalog-health.yml reports it hourly, and
     # the price refresh does not wait on it.
     route_providers = {endpoint.provider for endpoint in MODEL_ENDPOINTS.values()}
-    assert {"inceptron", "morph", "atlas-cloud"} <= route_providers
+    assert {"inceptron", "morph", "atlas-cloud"} - PREPAID_PROVIDER_HOLD_REASONS.keys() <= route_providers
 
 
 def test_wave2_exact_upstream_ids_are_committed() -> None:

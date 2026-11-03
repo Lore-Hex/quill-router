@@ -62,7 +62,7 @@ def test_held_perplexity_tariff_is_available_only_for_settlement() -> None:
     )
 
 
-@pytest.mark.parametrize("provider", ["crusoe", "sambanova", "lightning"])
+@pytest.mark.parametrize("provider", ["crusoe", "sambanova", "lightning", "inceptron"])
 def test_rejected_operator_credentials_block_only_prepaid(
     monkeypatch: pytest.MonkeyPatch, provider: str,
 ) -> None:
