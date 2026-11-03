@@ -970,7 +970,8 @@ func TestAHandOffInterruptsTheReleasePass(t *testing.T) {
 // the same load rather than a fixed time a busy runner can pass: waiting
 // out a pass that kept the lock, or ordering the holds past the deadline,
 // each costs about one ordering of them; a hand-off that takes the lock
-// between batches costs one batch, under a third of an ordering.
+// between batches costs about its deadline and a batch, well under a
+// third of an ordering.
 func TestAHandOffInterruptsAScan(t *testing.T) {
 	for _, c := range []struct {
 		name  string
