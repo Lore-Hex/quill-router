@@ -34,6 +34,8 @@ sha=$2
 tar -xf "$staging/observer.tar" -C "$staging"
 /usr/bin/python3 -m py_compile "$staging/scripts/price_refresh_alerts.py"
 systemd-analyze verify "$staging/scripts/ops/price-refresh-observer.service" "$staging/scripts/ops/price-refresh-observer.timer"
+systemctl is-active --quiet systemd-resolved.service
+test -r /run/systemd/resolve/stub-resolv.conf
 backup="/var/backups/tr-price-refresh-$(date -u +%Y%m%dT%H%M%SZ)"
 install -d -m 0700 "$backup" /etc/tr-price-refresh
 for path in /opt/tr-price-refresh /etc/systemd/system/price-refresh-observer.service /etc/systemd/system/price-refresh-observer.timer /etc/tr-price-refresh/ingest.dsn; do

@@ -186,3 +186,17 @@ def test_service_is_restricted_and_independent_of_github():
     assert 'git merge-base --is-ancestor "$sha" origin/main' in installer
     assert "tr-ops-local.json" in installer
     assert "add-iam-policy-binding" not in installer
+
+
+def test_metadata_isolation_uses_loopback_dns_without_changing_host_resolver():
+    root = Path(__file__).resolve().parents[1]
+    service = (root / "scripts/ops/price-refresh-observer.service").read_text()
+    assert "BindReadOnlyPaths=/run/systemd/resolve/stub-resolv.conf:/etc/resolv.conf" in service
+    assert "Requires=systemd-resolved.service" in service
+    assert "After=network-online.target systemd-resolved.service" in service
+    assert "IPAddressDeny=169.254.169.254/32" in service
+    assert "IPAddressDeny=fd20:ce::254/128" in service
+    assert "IPAddressAllow=" not in service
+    installer = (root / "scripts/ops/install_price_refresh_observer.sh").read_text()
+    assert "systemctl is-active --quiet systemd-resolved.service" in installer
+    assert "test -r /run/systemd/resolve/stub-resolv.conf" in installer
