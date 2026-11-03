@@ -37,7 +37,7 @@ def parse(html: str) -> dict[str, dict[str, object]]:
             if not line.lstrip().startswith("|"):
                 continue
             cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
-            if not re.match(r"^\*{0,2}MiniMax-M3\*{0,2}(?=\s)", cells[0], flags=re.I):
+            if not re.match(r"^\*{0,2}MiniMax-M3\*{0,2}(?=\s|<br\s*/?>)", cells[0], flags=re.I):
                 continue
             if len(cells) < 4:
                 invalid_tiers = True
