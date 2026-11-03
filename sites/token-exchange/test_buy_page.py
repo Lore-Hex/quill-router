@@ -305,6 +305,7 @@ let unit = 'blocks', underlying = 'model';
 const selected = key => ({value:{unit,underlying,grade:'AAA'}[key], dataset:{price:'1799'}});
 const clean = value => value.trim().replace(/\s+/g, ' ');
 const document = {createElement: () => ({})};
+const location = {hostname:'londontoken.exchange'};
 '''
         harness += 'function scheduling() {' + scheduling + '\nscheduling();\n'
         harness += r'''
@@ -313,7 +314,7 @@ assert.equal(url.origin, 'https://calendly.com');
 assert.equal(url.pathname, '/joseph-perla/15min');
 assert.equal(url.searchParams.get('name'), fields.name.value);
 assert.equal(url.searchParams.get('email'), fields.email.value);
-assert.equal(url.searchParams.get('embed_domain'), 'nytokenexchange.com');
+assert.equal(url.searchParams.get('embed_domain'), 'londontoken.exchange');
 assert.equal(url.searchParams.get('embed_type'), 'Inline');
 assert.equal(url.searchParams.get('hide_gdpr_banner'), '1');
 assert(url.searchParams.get('a1').includes('company: Research & Co + 東京'));

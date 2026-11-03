@@ -206,15 +206,60 @@ def index_panel() -> str:
         result += f'<div class="idx-row"><span class="g">{code}</span><div class="d"><b>{name}</b><small>{description}</small></div><span class="p">${value:,}{movement(code)}</span></div>'
     return result + '</div>'
 
+def load_markets() -> list[dict]:
+    return json.loads((HERE / "markets.json").read_text())
+
+
+# Cities whose home page uses this design, with their own workload cards. Kept apart
+# from markets.json, which also drives the load balancer's Terraform.
+CITIES = json.loads((HERE / "nyte-cities.json").read_text())
+
+
+def uses_nyte(market: dict) -> bool:
+    """Whether a market's home page is rendered from this design."""
+    return market["slug"] == "new-york" or market["slug"] in CITIES
+
+
+def nyte_markets() -> list[dict]:
+    """Markets other than New York whose home page uses this design."""
+    return [market | CITIES[market["slug"]] for market in load_markets() if market["slug"] in CITIES]
+
+
+def host_brand_script() -> str:
+    """Rename the shared pages for visitors who reached them on a city's own domain.
+
+    Every path other than / on a city domain serves New York's pages. Those visitors keep
+    their city's name, with "by NYTE" to connect it to the seller named in the terms."""
+    hosts = {m["domain"]: [m["region"], m["name"]] for m in nyte_markets()}
+    if not hosts:
+        return ""
+    data = json.dumps(hosts, separators=(",", ":")).replace("<", "\\u003c")
+    return (
+        "<script>(()=>{const m=" + data + "[location.hostname];if(!m)return;"
+        "const b=document.querySelector('.hdr .brand');b.setAttribute('aria-label',m[1]+' home');"
+        "b.querySelector('.brand-place').textContent=m[0];const by=document.createElement('small');"
+        "by.className='brand-by';by.textContent='by NYTE';b.querySelector('.brand-line').after(by);"
+        "document.addEventListener('DOMContentLoaded',()=>{const n=m[1]+' · by NYTE';"
+        "document.title=document.title.replace('New York Token Exchange',n);"
+        "document.querySelectorAll('[data-exchange-name]').forEach(e=>{e.textContent=n});"
+        "const f=document.querySelector('.site-footer .brand>span');if(f&&f.firstChild)f.firstChild.textContent=n;"
+        "document.querySelectorAll('.market-links a').forEach(a=>{if(new URL(a.href).hostname===location.hostname)"
+        "a.setAttribute('aria-current','page');else a.removeAttribute('aria-current')})})})()</script>"
+    )
+
+
 def render_nyte(
     page: str = "home", *, content: str | None = None, extra_head: str = "",
-    image_url: str | None = None,
+    image_url: str | None = None, market: dict | None = None,
 ) -> str:
+    market = market or {"slug": "new-york", "domain": "nytokenexchange.com", "region": "New York", "name": "New York Token Exchange"}
     if image_url is None:
-        image_version = hashlib.sha256((HERE / "social-images/og-new-york.png").read_bytes()).hexdigest()[:12]
-        image_url = "https://nytokenexchange.com/assets/og-new-york.png?v=" + image_version
+        image_version = hashlib.sha256((HERE / f"social-images/og-{market['slug']}.png").read_bytes()).hexdigest()[:12]
+        image_url = f"https://{market['domain']}/assets/og-{market['slug']}.png?v=" + image_version
     entry = PAGES[page]
     path, title, description = entry["route"], entry["title"], entry["description"]
+    if market["slug"] != "new-york":
+        title = f"{market['name']}: enterprise AI from competing providers"
     version = hashlib.sha256((SOURCE / "styles.css").read_bytes() + (SOURCE / "app.js").read_bytes() + (HERE / "analytics.js").read_bytes()).hexdigest()[:12]
     if page in {"providers", "cowork"}:
         version = hashlib.sha256((version + (SOURCE / f"{page}.css").read_text()).encode()).hexdigest()[:12]
@@ -231,19 +276,20 @@ def render_nyte(
         content = buy_content()
         buy_version = hashlib.sha256((SOURCE / "buy.css").read_bytes() + (SOURCE / "buy.js").read_bytes()).hexdigest()[:12]
         extra_head += f'<link rel="stylesheet" href="/assets/nyte-v2/buy.css?v={buy_version}"><script src="/assets/nyte-v2/buy.js?v={buy_version}" defer></script>'
-    markets = json.loads((HERE / "markets.json").read_text())
     market_links = "".join(
-        '<a href="https://' + html.escape(market["domain"], quote=True) + '/"'
-        + (' aria-current="page"' if market["slug"] == "new-york" else '')
-        + '>' + html.escape(market["region"]) + '</a>' for market in markets
+        '<a href="https://' + html.escape(other["domain"], quote=True) + '/"'
+        + (' aria-current="page"' if other["slug"] == market["slug"] else '')
+        + '>' + html.escape(other["region"]) + '</a>' for other in load_markets()
     )
     if content is None:
         content = (SOURCE / f"{page}.html").read_text().replace("{{index_panel}}", index_panel())
+    if market["slug"] != "new-york":
+        content = city_home(content, market)
     if page == "accelerator":
         content = content.replace("{{facilities}}", facility_cards()).replace("{{facility_rate}}", FACILITY_RATE)
     result = (SOURCE / "shell.html").read_text()
     evidence_version = hashlib.sha256((HERE / "live-evidence.js").read_bytes()).hexdigest()[:12]
-    for key, value in dict(nav=render_nav(), buyer_deck=(SOURCE / "buyer-deck.html").read_text() if page in {"home", "api"} else "", extra_head=extra_head, image_url=html.escape(image_url, quote=True), title=html.escape(title), description=html.escape(description, quote=True), path=path, page=page, version=version, content=content, markets=market_links, evidence_script='<script src="/assets/nyte-v2/live-evidence.js?v=' + evidence_version + '" defer></script>' if page == "api" else "").items():
+    for key, value in dict(domain=market["domain"], market=market["slug"], region=html.escape(market["region"]), exchange_name=html.escape(market["name"]), host_brand=host_brand_script() if market["slug"] == "new-york" and page != "home" else "", nav=render_nav(), buyer_deck=(SOURCE / "buyer-deck.html").read_text() if page in {"home", "api"} else "", extra_head=extra_head, image_url=html.escape(image_url, quote=True), title=html.escape(title), description=html.escape(description, quote=True), path=path, page=page, version=version, content=content, markets=market_links, evidence_script='<script src="/assets/nyte-v2/live-evidence.js?v=' + evidence_version + '" defer></script>' if page == "api" else "").items():
         result = result.replace("{{" + key + "}}", value)
     if page == "providers":
         result = result.replace('<div class="legal">', '<div class="legal"><a href="https://trustedrouter.com/trust">Trust center</a>')
@@ -252,13 +298,29 @@ def render_nyte(
         if url.hostname != "trustedrouter.com":
             return match[0]
         query = dict(parse_qsl(url.query))
-        query.setdefault("utm_source", "nytokenexchange.com")
+        query.setdefault("utm_source", market["domain"])
         query.setdefault("utm_medium", "referral")
         query.setdefault("utm_campaign", "token-exchange-launch")
         query.setdefault("utm_content", page)
-        query.setdefault("exchange_market", "new-york")
+        query.setdefault("exchange_market", market["slug"])
         return 'href="' + html.escape(urlunsplit(url._replace(query=urlencode(query))), quote=True) + '"'
     return re.sub(r'href="([^"]+)"', tracked, result)
+
+def city_home(content: str, market: dict) -> str:
+    """New York's home page with the city's own workload cards.
+
+    The routing example drops New York's US rule: a city name never implies where a route runs."""
+    start = content.index('<div class="cards">')
+    end = content.index("</div>\n    </div>\n  </section>", start)
+    tags = {"CONFIDENTIAL": "cc", "ZDR": "zdr"}
+    cards = "".join(
+        f'<div class="card"><h3>{html.escape(card["title"])}</h3><p class="q">“{html.escape(card["prompt"])}”</p>'
+        '<div class="tags">' + "".join(f'<span class="tag {tags[t]}">{t}</span>' for t in card["tags"]) + "</div></div>"
+        for card in CITIES[market["slug"]]["workloads"]
+    )
+    content = content[:start] + '<div class="cards">' + cards + content[end:]
+    return content.replace('<span class="tag us">US</span>', "")
+
 
 def build_nyte(output: Path) -> None:
     for key, entry in PAGES.items():

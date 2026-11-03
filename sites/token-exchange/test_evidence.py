@@ -6,6 +6,7 @@ from pathlib import Path
 
 from build import load_markets, render
 from evidence import render_evidence
+from nyte_v2 import uses_nyte
 from refresh_evidence import ROUTES, project
 
 
@@ -14,7 +15,7 @@ class EvidenceTests(unittest.TestCase):
         markets = load_markets()
         self.assertEqual(len(markets), 13)
         for market in markets:
-            if market["slug"] == "new-york":
+            if uses_nyte(market):
                 continue  # New York v2 has dedicated page and browser coverage.
             with self.subTest(market=market['slug']):
                 page = render(market, markets, 'test')
@@ -52,7 +53,7 @@ class EvidenceTests(unittest.TestCase):
     def test_existing_page_structure_preserved(self):
         markets = load_markets()
         for market in markets:
-            if market["slug"] == "new-york":
+            if uses_nyte(market):
                 continue  # New York v2 has dedicated page and browser coverage.
             page = render(market, markets, 'test')
             self.assertLess(page.index('class="trust-intro"'), page.index('class="catalogue'))

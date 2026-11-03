@@ -170,7 +170,7 @@ async function localHtml(context) {
         const booking = new URL(src);
         assert.equal(booking.origin,'https://calendly.com');
         assert.equal(booking.pathname,'/joseph-perla/15min');
-        for (const [key,value] of Object.entries({embed_domain:'nytokenexchange.com',embed_type:'Inline',hide_gdpr_banner:'1',name,email})) {
+        for (const [key,value] of Object.entries({embed_domain:new URL(page.url()).hostname,embed_type:'Inline',hide_gdpr_banner:'1',name,email})) {
           assert.equal(booking.searchParams.get(key), value);
         }
         const summary = booking.searchParams.get('a1');

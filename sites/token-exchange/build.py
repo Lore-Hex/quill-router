@@ -15,7 +15,7 @@ from urllib.parse import urlencode
 
 from evidence import render_evidence, sector_art
 from member_badges import build_badges
-from nyte_v2 import PAGES, build_nyte, render_nyte
+from nyte_v2 import PAGES, build_nyte, render_nyte, uses_nyte
 from press import build_press
 from token_index_page import build_token_index
 
@@ -96,6 +96,8 @@ def provider_ticker(copies: int = 2) -> str:
 def render(market: dict, markets: list[dict], version: str) -> str:
     if market["slug"] == "new-york":
         return render_nyte()
+    if uses_nyte(market):
+        return render_nyte(market=market)
     profile = {"dubai": "dubai", "europe": "europe"}.get(market["slug"], "shared-gcp")
     catalogue, health = render_evidence(profile)
     headline = html.escape(market["headline"])
