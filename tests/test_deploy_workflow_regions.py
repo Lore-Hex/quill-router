@@ -319,8 +319,8 @@ def test_secondaries_ramp_under_one_coordinator() -> None:
 
     assert "needs: [deploy]" in rollout
     _assert_rollout_secondaries_requires_successful_deploy(workflow)
-    # Three sequential routing drains (15 minutes each, bounded at 20) must
-    # fit alongside the existing canaries and completion gates.
+    # Three routing drains (15 minutes each, bounded at 20), sequential under
+    # the serial fallback, must fit alongside the canaries and completion gates.
     assert "timeout-minutes: 85" in rollout
     first_step = rollout.index("- name: Import production deployment mutex fence")
     checkout = rollout.index("- uses: actions/checkout@v7")

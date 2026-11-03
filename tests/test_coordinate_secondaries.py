@@ -39,13 +39,14 @@ if region == os.environ.get('FAIL_EARLY'):
 if os.environ.get('SIBLING_ABORT'):
     # staged_traffic.sh: a shift after a sibling's failure rolls back instead.
     wait_for(abort.exists)
+    time.sleep(.2)  # the rollback itself takes time; a kill would cut it short
     event('rolled_back')
     sys.exit(1)
 if os.environ.get('BARRIER'):
     # No region canaries until every region has begun its ramp.
     wait_for(lambda: all((ready.parent / (name + '.started')).exists()
                          for name in ('europe-west4', 'us-east4', 'southamerica-east1')))
-if os.environ.get('HANG'):
+if os.environ.get('HANG') or region == os.environ.get('HANG_REGION'):
     time.sleep(60)
 if os.environ.get('FAIL_LATE') and region == 'us-east4':
     wait_for(abort.exists)
@@ -162,11 +163,28 @@ def test_together_a_failure_rolls_back_in_flight_siblings(worker: Path, tmp_path
     assert not [event for event in log if event[1] == "canary"]
 
 
-def test_together_a_wrong_operation_handoff_stops_the_rollout(worker: Path, tmp_path: Path, monkeypatch) -> None:
+def test_together_a_wrong_operation_handoff_fails_like_a_worker(worker: Path, tmp_path: Path, monkeypatch) -> None:
+    # Siblings may be mid-ramp: they roll back at their next shift rather
+    # than being killed part way.
     monkeypatch.setenv("HANDOFF_OPERATION", "old-operation")
-    with pytest.raises(ValueError, match="invalid retention handoff"):
-        coordinate(worker, tmp_path, poll_seconds=.005, serial=False)
+    assert coordinate(worker, tmp_path, poll_seconds=.005, serial=False) == 1
     assert (tmp_path / "abort").exists()
+
+
+def test_together_a_timeout_lets_siblings_roll_back_before_the_kill(worker: Path, tmp_path: Path,
+                                                                      monkeypatch) -> None:
+    monkeypatch.setenv("HANG_REGION", "europe-west4")
+    monkeypatch.setenv("SIBLING_ABORT", "1")
+    with pytest.raises(TimeoutError, match="retaining reservation"):
+        coordinate(worker, tmp_path, poll_seconds=.005, timeout=1, serial=False, abort_grace=10)
+    log = events(tmp_path)
+    assert ["us-east4", "rolled_back"] in log and ["southamerica-east1", "rolled_back"] in log
+
+
+def test_together_held_regions_finish_without_a_handoff(worker: Path, tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("NO_HANDOFF", "1")
+    assert coordinate(worker, tmp_path, poll_seconds=.005, serial=False) == 0
+    assert sorted(region for region, name in events(tmp_path) if name == "billing") == sorted(REGIONS)
 
 
 @pytest.mark.parametrize(("value", "serial"), [("1", True), (" 1 ", True), ("", False), ("0", False), ("true", False)])

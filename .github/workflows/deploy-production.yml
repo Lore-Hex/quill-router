@@ -977,7 +977,7 @@ jobs:
 
       # No cross-region "final watchdog" step. Each region's health is
       # gated by its own per-region canary above (us-central1 first,
-      # then each secondary sequentially, each with its own 3-min
+      # then the secondaries together, each with its own 3-min
       # watchdog AFTER the staged_traffic 10/50/100 ramp). The prior cross-
       # region watchdog at this point caused recurring spurious
       # rollbacks: by the time it ran, earlier regions had finished
