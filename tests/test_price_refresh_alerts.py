@@ -332,7 +332,7 @@ def test_independent_workflow_always_runs_trusted_main_without_dependencies():
     steps = workflow["jobs"]["report"]["steps"]
     assert steps[0]["with"]["ref"] == "main"
     assert steps[0]["with"]["persist-credentials"] is False
-    assert steps[1]["run"] == "python3 scripts/price_refresh_alerts.py"
+    assert steps[1]["run"] == "python3 scripts/price_refresh_alerts.py --no-heartbeat"
     assert "PRICE_REFRESH_SENTRY_DSN" in steps[1]["env"]["TR_SENTRY_DSN"]
 
 
