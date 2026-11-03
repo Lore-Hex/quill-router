@@ -52,8 +52,11 @@ locals {
   # 429 shadow fix (#2229): the edge tells the owner whether a decided
   # request streams, composes eligible streams, and decides them only with
   # fastpath_edge_streams on; the shadow counts Python's in-flight 429 to
-  # an inflight.key pass as passed. The pilot leases streams; the edge
-  # switch stays off.
+  # an inflight.key pass as passed. The pilot leases streams. The edge
+  # switch, off when this release shipped, is on since gate E (2026-11-02,
+  # TR_FASTPATH_EDGE_STREAMS=true in scripts/deploy/rollout.sh, #2252):
+  # the edge decides eligible streams for the workspaces whose decide rows
+  # are on.
   # a49bc8d3e: main after a front door relays no request its own node owns
   # (#2256), the owner's per-minute line of where its answers wait (#2257)
   # and the slow-pass timing (#2245). The edge switch is on; decide rows
