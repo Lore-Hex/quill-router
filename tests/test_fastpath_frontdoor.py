@@ -603,7 +603,8 @@ def _front_door_defaults() -> dict[str, int]:
     found = re.search(r"FrontDoor: frontdoor\.Config\{(.*?)\},\n", service, re.S)
     assert found, "the front door's defaults"
     fields = dict(re.findall(r"(\w+): ([^,]+)", found.group(1)))
-    return {name: _go_milliseconds(fields[name]) for name in ("OwnerWait", "PeerWait", "AnswerWithin", "AppendWithin")}
+    names = ("PublishWait", "OwnerWait", "PeerWait", "AnswerWithin", "AppendWithin")
+    return {name: _go_milliseconds(fields[name]) for name in names}
 
 
 def test_the_control_plane_waits_longer_than_the_front_door_takes_to_answer() -> None:
@@ -614,11 +615,11 @@ def test_the_control_plane_waits_longer_than_the_front_door_takes_to_answer() ->
     (2026-11-02: an owner past its second and then a peer's 0.8 s answered
     after the 1.5 s had passed). Whatever a deploy sets is held to it too."""
     waits = _front_door_defaults()
-    # The front door's own composition (service_test.go holds it too): a
-    # heartbeat's peer gets its full wait after its owner's, and a
-    # terminal's append keeps time after its owner's full wait.
-    assert waits["OwnerWait"] + waits["PeerWait"] <= waits["AnswerWithin"]
-    assert 0 < waits["AppendWithin"] and waits["OwnerWait"] + waits["AppendWithin"] < waits["AnswerWithin"]
+    # The front door's own composition (frontdoor.New and service_test.go
+    # hold it too): a settle's publish, an owner's and a peer's full waits
+    # and the append's time all fit in its answer budget.
+    steps = ("PublishWait", "OwnerWait", "PeerWait", "AppendWithin")
+    assert waits["AppendWithin"] > 0 and sum(waits[name] for name in steps) < waits["AnswerWithin"]
     default = Settings.model_fields["fastpath_front_door_timeout_seconds"].default
     rollout = (ROOT / "scripts" / "deploy" / "rollout.sh").read_text(encoding="utf-8")
     deployed = [float(value) for value in re.findall(r"TR_FASTPATH_FRONT_DOOR_TIMEOUT_SECONDS=([0-9.]+)", rollout)]

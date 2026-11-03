@@ -121,7 +121,9 @@ type fakeStore struct {
 	failAppend  bool
 	disposition store.Disposition
 	failDisp    bool
-	failRevoke  int
+	// holdDisp holds each disposition read until its context ends.
+	holdDisp   bool
+	failRevoke int
 	// With a gate, a revocation tells revoking and waits for its context
 	// to end, then a while more, and tells revoked. onRevoke runs in each.
 	gate              chan struct{}
@@ -159,8 +161,12 @@ func (f *fakeStore) Revoke(ctx context.Context, ref store.LeaseRef) (bool, time.
 	return true, start, nil
 }
 
-func (f *fakeStore) Disposition(_ context.Context, authorization string) (store.Disposition, error) {
+func (f *fakeStore) Disposition(ctx context.Context, authorization string) (store.Disposition, error) {
 	f.ev.add("disposition %s", authorization)
+	if f.holdDisp {
+		<-ctx.Done()
+		return store.Disposition{}, ctx.Err()
+	}
 	if f.failDisp {
 		return store.Disposition{}, errInjected
 	}
@@ -179,6 +185,9 @@ type fakeRecords struct {
 	fail      bool
 	holding   bool
 	published [][]byte
+	// slow, when set, is how long each acknowledgement takes, unless the
+	// wait for it ends first.
+	slow time.Duration
 }
 
 type held struct{}
@@ -186,6 +195,18 @@ type held struct{}
 func (held) Wait(ctx context.Context) (string, error) {
 	<-ctx.Done()
 	return "", ctx.Err()
+}
+
+// slowAck is an acknowledgement that takes its time.
+type slowAck time.Duration
+
+func (d slowAck) Wait(ctx context.Context) (string, error) {
+	select {
+	case <-time.After(time.Duration(d)):
+		return "id", nil
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
 }
 
 func (f *fakeRecords) Publish(authorization, kind string, data []byte) Waiter {
@@ -196,6 +217,9 @@ func (f *fakeRecords) Publish(authorization, kind string, data []byte) Waiter {
 	f.published = append(f.published, data)
 	if f.holding {
 		return held{}
+	}
+	if f.slow > 0 {
+		return slowAck(f.slow)
 	}
 	return answered{}
 }
