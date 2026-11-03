@@ -208,12 +208,45 @@ TERMINAL_CONFIG = Path(__file__).resolve().parents[2] / "infra/control_terminal_
 
 
 def terminal_route_enabled() -> bool:
-    """Read exactly one literal boolean assignment; never default on parse errors."""
+    """Accept one top-level locals block containing only our literal boolean.
+
+    This is deliberately not a general HCL parser. Comments are ignored, quoted
+    strings are kept intact, and heredocs/unterminated strings or comments are
+    refused. Any other use of the switch name (including in a string) fails.
+    """
     source = TERMINAL_CONFIG.read_text()
-    assignments = re.findall(r"^[ \t]*terminal_c1_route_enabled[ \t]*=(.*)$", source, re.MULTILINE)
-    if len(assignments) != 1 or assignments[0].strip() not in {"true", "false"}:
-        raise ValueError("expected exactly one terminal_c1_route_enabled = true or false")
-    return assignments[0].strip() == "true"
+    error = "expected exactly one top-level locals block containing only terminal_c1_route_enabled = true or false"
+    tokens = []
+    # Match strings before comments so URLs and comment-like string contents
+    # cannot hide an occurrence of the switch. Comments separate adjacent tokens.
+    lexer = (
+        r'(?P<string>"(?:\\[^\n]|[^"\\\n])*")'
+        r'|(?P<comment>/\*.*?\*/|(?:\#|//)[^\n]*)'
+        r'|(?P<space>\s+)|(?P<word>[A-Za-z_][A-Za-z_0-9-]*)'
+        r'|(?P<invalid>/\*|<<|")|(?P<symbol>.)'
+    )
+    for match in re.finditer(lexer, source, re.DOTALL):
+        if match.lastgroup == "invalid":
+            raise ValueError(error)
+        if match.lastgroup not in {"comment", "space"}:
+            tokens.append(match[0])
+    name = "terminal_c1_route_enabled"
+    if sum(lexeme.count(name) for lexeme in tokens) != 1 or tokens.count("locals") != 1:
+        raise ValueError(error)
+    start = tokens.index("locals")
+    block = tokens[start:start + 6]
+    if block not in (["locals", "{", name, "=", "true", "}"], ["locals", "{", name, "=", "false", "}"]):
+        raise ValueError(error)
+    depth = 0
+    for index, lexeme in enumerate(tokens):
+        if index == start and depth != 0:
+            raise ValueError(error)
+        depth += (lexeme == "{") - (lexeme == "}")
+        if depth < 0:
+            raise ValueError(error)
+    if depth != 0:
+        raise ValueError(error)
+    return block[4] == "true"
 
 
 def terminal_backend_link(control_backend: str) -> str:

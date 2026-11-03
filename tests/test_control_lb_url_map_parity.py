@@ -7,9 +7,9 @@ action routes). /token-exchange/events was missing from Terraform from 2026-10-1
 """
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import re
-import subprocess
 from copy import deepcopy
 from pathlib import Path
 from types import ModuleType
@@ -64,6 +64,17 @@ def test_terraform_routes_every_public_path_the_renderer_routes() -> None:
 
 
 BASE_COMMIT = "5f6d67c3b0f42aa5081237669c08cc0af11f341e"
+# Exact bytes from BASE_COMMIT; .txt keeps frozen code out of lint/collection.
+BASE_FIXTURES = {
+    "scripts/deploy/service_surface_url_map.py": (
+        "base_service_surface_url_map.py.txt",
+        "9ecf8df52b2b967c5f9d5bd962934dd481d5154b9740b9a497cf792642d150ed",
+    ),
+    "infra/control_lb_url_map.tf": (
+        "base_control_lb_url_map.tf.txt",
+        "beeac18f205da50d1d93fa2fc3f9b30c2fc489dce6af051581621c4b77475389",
+    ),
+}
 TERMINAL_PATHS = {
     "/internal/gateway/settle", "/internal/gateway/heartbeat", "/internal/gateway/refund",
     "/v1/internal/gateway/settle", "/v1/internal/gateway/heartbeat", "/v1/internal/gateway/refund",
@@ -72,10 +83,16 @@ BASE_LINK = "projects/quill-cloud-proxy/global/backendServices/"
 CONTROL = BASE_LINK + "trusted-router-control-backend"
 
 
-def _git_source(path: str) -> str:
-    return subprocess.check_output(  # noqa: S603 - fixed read-only Git source
-        ["git", "show", f"{BASE_COMMIT}:{path}"], cwd=ROOT, text=True,  # noqa: S607
-    )
+def _base_source(path: str) -> str:
+    filename, checksum = BASE_FIXTURES[path]
+    data = (ROOT / "tests/fixtures/terminal-route" / filename).read_bytes()
+    assert hashlib.sha256(data).hexdigest() == checksum, f"base fixture checksum mismatch: {BASE_COMMIT}:{path}"
+    return data.decode("utf-8")
+
+
+@pytest.mark.parametrize("path", BASE_FIXTURES)
+def test_frozen_base_fixture_checksum(path: str) -> None:
+    _base_source(path)
 
 
 def _switch(module: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, enabled: bool) -> None:
@@ -92,20 +109,73 @@ def _render(module: ModuleType, existing=None, internal=CONTROL, gateway=None):
 
 
 def test_terminal_route_default_is_off() -> None:
+    # Independent raw-source pin: do not trust the renderer to verify itself.
+    source = (ROOT / "infra/control_terminal_backend.tf").read_text()
+    assert re.findall(r"\blocals\s*\{[^{}]*\}", source) == [
+        "locals {\n  terminal_c1_route_enabled = false\n}",
+    ]
     assert _module().terminal_route_enabled() is False
 
 
-@pytest.mark.parametrize("assignment", ["", "1", '"false"', "False", "true # comment",
+@pytest.mark.parametrize("assignment", ["", "1", '"false"', "False", "true + false",
     "false\nterminal_c1_route_enabled = true", "false\nterminal_c1_route_enabled = 1"])
 def test_terminal_switch_rejects_malformed_or_duplicate_assignments(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, assignment: str,
 ) -> None:
     module = _module()
     config = tmp_path / "bad.tf"
-    config.write_text("terminal_c1_route_enabled = " + assignment + "\n")
+    config.write_text("locals {\n  terminal_c1_route_enabled = " + assignment + "\n}\n")
     monkeypatch.setattr(module, "TERMINAL_CONFIG", config)
     with pytest.raises(ValueError, match="exactly one"):
         _render(module)
+
+
+@pytest.mark.parametrize(("source", "expected"), [
+    pytest.param("/*\nterminal_c1_route_enabled = false\n*/\n"
+                 "locals { terminal_c1_route_enabled = true }", True, id="block-comment"),
+    pytest.param("locals { terminal_c1_route_enabled = true }", True, id="inline-true"),
+    pytest.param("# terminal_c1_route_enabled = true\n"
+                 "locals { terminal_c1_route_enabled = false // active\n}", False, id="line-comments"),
+    pytest.param("locals { /* disabled example */ terminal_c1_route_enabled = true # active\n}",
+                 True, id="inline-comments"),
+    pytest.param("locals { terminal_c1_route_enabled = false }\n"
+                 'resource "example" "example" { url = "https://example.com/#/*escaped\\\"*/" }',
+                 False, id="comment-markers-in-string"),
+])
+def test_terminal_switch_reads_active_local(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str, expected: bool,
+) -> None:
+    module = _module()
+    config = tmp_path / "active.tf"
+    config.write_text(source)
+    monkeypatch.setattr(module, "TERMINAL_CONFIG", config)
+    assert module.terminal_route_enabled() is expected
+
+
+@pytest.mark.parametrize("source", [
+    pytest.param("/* terminal_c1_route_enabled = false */", id="only-block-comment"),
+    pytest.param("# terminal_c1_route_enabled = false\n// terminal_c1_route_enabled = true", id="only-line-comments"),
+    pytest.param("terminal_c1_route_enabled = false", id="outside-locals"),
+    pytest.param("locals { terminal_c1_route_enabled = false }\nlocals { other = true }", id="two-locals"),
+    pytest.param("locals { terminal_c1_route_enabled = false other = true }", id="other-local"),
+    pytest.param('resource "example" "example" { locals { terminal_c1_route_enabled = true } }', id="nested-locals"),
+    pytest.param('locals { terminal_c1_route_enabled = false }\nvalue = "terminal_c1_route_enabled"', id="string-name"),
+    pytest.param('locals { terminal_c1_route_enabled = false }\nvalue = "// terminal_c1_route_enabled"', id="string-line-comment"),
+    pytest.param('locals { terminal_c1_route_enabled = false }\nvalue = "/* terminal_c1_route_enabled */"', id="string-block-comment"),
+    pytest.param('locals { terminal_c1_route_enabled = false }\nvalue = local.terminal_c1_route_enabled', id="extra-reference"),
+    pytest.param('locals { terminal_c1_route_enabled = false }\n/* unfinished', id="unclosed-comment"),
+    pytest.param('locals { terminal_c1_route_enabled = false }\nvalue = "unfinished', id="unclosed-string"),
+    pytest.param('locals { terminal_c1_route_enabled = false }\nvalue = <<EOF\ntext\nEOF', id="heredoc"),
+])
+def test_terminal_switch_refuses_unsupported_configuration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str,
+) -> None:
+    module = _module()
+    config = tmp_path / "unsupported.tf"
+    config.write_text(source)
+    monkeypatch.setattr(module, "TERMINAL_CONFIG", config)
+    with pytest.raises(ValueError, match="exactly one"):
+        module.terminal_route_enabled()
 
 
 def _terminal_dynamic(source: str) -> re.Match[str]:
@@ -159,7 +229,7 @@ def test_disabled_terraform_matcher_is_base_except_empty_dynamic_block() -> None
     without = source[:dynamic.start()] + source[dynamic.end():]
     def uncomment(text: str) -> str:
         return re.sub(r"\s+", " ", re.sub(r"^\s*#.*$", "", text, flags=re.MULTILINE)).strip()
-    assert uncomment(without) == uncomment(_git_source("infra/control_lb_url_map.tf"))
+    assert uncomment(without) == uncomment(_base_source("infra/control_lb_url_map.tf"))
 
 
 @pytest.mark.parametrize("shape", ["production", "internal", "gateway", "authorize"])
@@ -167,7 +237,7 @@ def test_disabled_renderer_differential_against_base(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shape: str,
 ) -> None:
     path = tmp_path / "base_renderer.py"
-    path.write_text(_git_source("scripts/deploy/service_surface_url_map.py"))
+    path.write_text(_base_source("scripts/deploy/service_surface_url_map.py"))
     spec = importlib.util.spec_from_file_location("base_renderer", path)
     assert spec is not None and spec.loader is not None
     base = importlib.util.module_from_spec(spec)

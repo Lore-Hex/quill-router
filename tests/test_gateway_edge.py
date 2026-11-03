@@ -550,7 +550,7 @@ def test_terminal_rule_schema_through_all_python_callers(tmp_path, caller, enabl
         (deploy / name).write_text((root / "scripts/deploy" / name).read_text())
     (tmp_path / "infra").mkdir()
     (tmp_path / "infra/control_terminal_backend.tf").write_text(
-        "terminal_c1_route_enabled = " + str(enabled).lower() + "\n")
+        "locals {\n  terminal_c1_route_enabled = " + str(enabled).lower() + "\n}\n")
     live = live_map()
     terminal_link = f"{BASE}/global/backendServices/{URL_MAP.TERMINAL_BACKEND_NAME}"
     rule: dict[str, Any] = {"paths": list(URL_MAP.TERMINAL_PATH_PATTERNS), "service": terminal_link}
