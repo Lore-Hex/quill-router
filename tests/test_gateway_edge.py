@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import base64
 import json
+import subprocess
+import sys
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -124,7 +127,7 @@ def test_gateway_generator_contract_and_all_registered_routes():
                           configure_store_arg=False, init_observability=False)
     assert gateway_paths <= route_paths(internal)
     for path in paths | {"/internal/gateway", "/v1/internal/gateway", "/internal/gatewayish/x"}:
-        wanted = GATEWAY if (path in gateway_paths and path not in URL_MAP.TERMINAL_PATH_PATTERNS) or path in {
+        wanted = GATEWAY if path in gateway_paths or path in {
             "/internal/gateway", "/v1/internal/gateway"} else _resolve_backend(old, "trustedrouter.com", path)
         assert _resolve_backend(generated, "trustedrouter.com", path) == wanted, path
     assert generated["tests"][0]["service"] == GATEWAY
@@ -348,7 +351,7 @@ def test_cutover_capture_and_rollback_preserve_other_routes(tmp_path, monkeypatc
     result = run(harness, "cutover")
     assert result.returncode == 0, summarise(result)
     after = json.loads((harness.root / "url-map-state.json").read_text())
-    assert _resolve_backend(after, "trustedrouter.com", "/internal/gateway/settle").endswith("/trusted-router-control-backend")
+    assert _resolve_backend(after, "trustedrouter.com", "/internal/gateway/settle") == GATEWAY
     assert _resolve_backend(after, "trustedrouter.com", "/internal/other").endswith("/" + internal)
     capture = json.loads((harness.root / "state/trusted-router-control-map.pre-gateway-cutover.capture.json").read_text())
     assert json.loads(base64.b64decode(capture["source_json_base64"])) == before
@@ -533,3 +536,71 @@ def test_operator_runbook_is_durable():
     for evidence in ("Prerequisites", "Failure drill", "Latency", "Cost", "25 s",
                      "9,500", "2.27P", "trusted-router-gateway-neg", "60 minutes"):
         assert evidence in doc
+
+
+@pytest.mark.parametrize("caller", ["public", "internal", "gateway"])
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("mutation", ["known", "extra-key", "route-action", "action-only",
+                                      "partial", "different-paths", "mixed", "wrong-service", "duplicate"])
+def test_terminal_rule_schema_through_all_python_callers(tmp_path, caller, enabled, mutation):
+    root = Path(__file__).resolve().parents[1]
+    deploy = tmp_path / "scripts/deploy"
+    deploy.mkdir(parents=True)
+    for name in ("service_surface_url_map.py", "gateway_edge_config.py"):
+        (deploy / name).write_text((root / "scripts/deploy" / name).read_text())
+    (tmp_path / "infra").mkdir()
+    (tmp_path / "infra/control_terminal_backend.tf").write_text(
+        "terminal_c1_route_enabled = " + str(enabled).lower() + "\n")
+    live = live_map()
+    terminal_link = f"{BASE}/global/backendServices/{URL_MAP.TERMINAL_BACKEND_NAME}"
+    rule: dict[str, Any] = {"paths": list(URL_MAP.TERMINAL_PATH_PATTERNS), "service": terminal_link}
+    if mutation == "extra-key":
+        rule["description"] = "operator-owned"
+    elif mutation in {"route-action", "action-only"}:
+        rule["routeAction"] = {"retryPolicy": {"numRetries": 2}}
+        if mutation == "action-only":
+            rule.pop("service")
+    elif mutation == "partial":
+        rule["paths"] = rule["paths"][:-1]
+    elif mutation == "different-paths":
+        rule["paths"] = ["/operator/other"]
+    elif mutation == "mixed":
+        rule["paths"].append("/internal/gateway/authorize")
+    elif mutation == "wrong-service":
+        rule["service"] = f"{BASE}/global/backendServices/other-backend"
+    live["pathMatchers"][-1]["pathRules"].append(rule)
+    if mutation == "duplicate":
+        live["pathMatchers"][-1]["pathRules"].append(deepcopy(rule))
+    source = tmp_path / "live.json"
+    source.write_text(json.dumps(live))
+    output = tmp_path / "candidate.json"
+    if caller == "gateway":
+        args = [str(deploy / "gateway_edge_config.py"), "candidate", "--input", str(source)]
+    else:
+        # These are the Python entry points/arguments used by the two shell
+        # cutovers. Execute them in a copy; never touch the checkout switch.
+        shell = (root / f"scripts/deploy/{caller}_surface_edge.sh").read_text()
+        assert 'python3 "${SCRIPT_DIR}/service_surface_url_map.py"' in shell
+        assert '--preserve-gateway-backend' in shell
+        control = f"{BASE}/global/backendServices/trusted-router-control-backend"
+        internal = f"{BASE}/global/backendServices/trusted-router-internal-backend" if caller == "internal" else control
+        args = [str(deploy / "service_surface_url_map.py"), "--input", str(source),
+                "--output", str(output), "--public-backend", f"{BASE}/global/backendServices/trusted-router-public-backend",
+                "--actions-backend", control, "--control-backend", control,
+                "--internal-backend", internal, "--domains", "trustedrouter.com,allyrouter.com,uptimerouter.com",
+                "--preserve-gateway-backend"]
+    result = subprocess.run([sys.executable, *args], capture_output=True, text=True)  # noqa: S603
+    if mutation != "known":
+        assert result.returncode != 0
+        assert "ambiguous billing override" in result.stderr
+        assert not output.exists(), "refusal must not emit a candidate"
+    else:
+        assert result.returncode == 0, result.stderr
+        rendered = json.loads(result.stdout if caller == "gateway" else output.read_text())
+        rules = rendered["pathMatchers"][-1]["pathRules"]
+        assert [r for r in rules if set(r["paths"]) & set(URL_MAP.TERMINAL_PATH_PATTERNS)] == (
+            [rule] if enabled else []
+        )
+        for path in URL_MAP.TERMINAL_PATH_PATTERNS:
+            expected = terminal_link if enabled else (GATEWAY if caller == "gateway" else internal)
+            assert _resolve_backend(rendered, "trustedrouter.com", path) == expected

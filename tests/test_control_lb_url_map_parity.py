@@ -9,8 +9,12 @@ from __future__ import annotations
 
 import importlib.util
 import re
+import subprocess
+from copy import deepcopy
 from pathlib import Path
 from types import ModuleType
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -59,60 +63,138 @@ def test_terraform_routes_every_public_path_the_renderer_routes() -> None:
     )
 
 
-def test_terminal_route_default_is_off() -> None:
-    source = (ROOT / "infra/control_terminal_backend.tf").read_text()
-    weights = re.findall(r"^\s*terminal_c1_route_weight\s*=\s*(\d+)\s*$", source, re.MULTILINE)
-    assert weights == ["0"], "Terminal centralization must land switched off"
-
-
-# POST paths are ready; disposition remains explicitly blocked on matching mode.
+BASE_COMMIT = "5f6d67c3b0f42aa5081237669c08cc0af11f341e"
 TERMINAL_PATHS = {
     "/internal/gateway/settle", "/internal/gateway/heartbeat", "/internal/gateway/refund",
     "/v1/internal/gateway/settle", "/v1/internal/gateway/heartbeat", "/v1/internal/gateway/refund",
 }
+BASE_LINK = "projects/quill-cloud-proxy/global/backendServices/"
+CONTROL = BASE_LINK + "trusted-router-control-backend"
 
 
-def test_terminal_rule_parity_paths_weights_backends_and_deadline() -> None:
-    module = _module()
-    source = (ROOT / "infra/control_lb_url_map.tf").read_text()
-    rules = re.findall(r"^    path_rule \{\n(.*?)^    \}", source, re.MULTILINE | re.DOTALL)
-    terminal = [rule for rule in rules if "local.terminal_c1_route_weight" in rule]
-    assert len(terminal) == 1, "Terraform must have exactly one terminal rule"
-    rule = terminal[0]
-    paths = re.search(r"paths\s*=\s*\[(.*?)\]", rule, re.DOTALL)
-    assert paths is not None
-    assert set(re.findall(r'"([^"]+)"', paths[1])) == TERMINAL_PATHS
-    assert set(module.TERMINAL_PATH_PATTERNS) == TERMINAL_PATHS
-    weight_source = (ROOT / "infra/control_terminal_backend.tf").read_text()
-    weight = re.search(r"terminal_c1_route_weight\s*=\s*(\d+)", weight_source)
-    assert weight is not None
-    w = int(weight[1])
-    assert re.search(r"seconds\s*=\s*30\b", rule)
-    services = re.findall(r"weighted_backend_services\s*\{(.*?)\}", rule, re.DOTALL)
-    # Interpolation contains braces, so inspect the complete block text instead.
-    assert len(services) == 2
-    assert re.search(r'backendServices/trusted-router-control-backend"\s+weight\s*=\s*100 - local.terminal_c1_route_weight', rule)
-    assert re.search(r'backend_service\s*=\s*google_compute_backend_service.control_terminal_c1.id\s+weight\s*=\s*local.terminal_c1_route_weight', rule)
-    base = "projects/quill-cloud-proxy/global/backendServices/"
-    control = base + "trusted-router-control-backend"
-    emitted = module.rewrite_url_map(
-        {"defaultService": control}, base + "trusted-router-public-backend",
-        control, control, "internal-backend", ["trustedrouter.com"],
-        gateway_backend="gateway-backend",
+def _git_source(path: str) -> str:
+    return subprocess.check_output(  # noqa: S603 - fixed read-only Git source
+        ["git", "show", f"{BASE_COMMIT}:{path}"], cwd=ROOT, text=True,  # noqa: S607
     )
-    emitted_rules = emitted["pathMatchers"][0]["pathRules"]
-    actual = [r for r in emitted_rules if set(r["paths"]) & TERMINAL_PATHS]
-    assert len(actual) == 1, "Renderer must have exactly one terminal rule"
-    assert actual[0] == {
-        "paths": list(module.TERMINAL_PATH_PATTERNS),
-        "routeAction": {
-            "timeout": {"seconds": 30},
-            "weightedBackendServices": [
-                {"backendService": control, "weight": 100 - w},
-                {"backendService": base + "trusted-router-control-terminal-c1-backend", "weight": w},
-            ],
-        },
-    }
+
+
+def _switch(module: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, enabled: bool) -> None:
+    config = tmp_path / "terminal.tf"
+    config.write_text("locals {\n  terminal_c1_route_enabled = " + str(enabled).lower() + "\n}\n")
+    monkeypatch.setattr(module, "TERMINAL_CONFIG", config)
+
+
+def _render(module: ModuleType, existing=None, internal=CONTROL, gateway=None):
+    return module.rewrite_url_map(
+        existing or {"defaultService": CONTROL}, BASE_LINK + "trusted-router-public-backend",
+        CONTROL, CONTROL, internal, ["trustedrouter.com"], gateway_backend=gateway,
+    )
+
+
+def test_terminal_route_default_is_off() -> None:
+    assert _module().terminal_route_enabled() is False
+
+
+@pytest.mark.parametrize("assignment", ["", "1", '"false"', "False", "true # comment",
+    "false\nterminal_c1_route_enabled = true", "false\nterminal_c1_route_enabled = 1"])
+def test_terminal_switch_rejects_malformed_or_duplicate_assignments(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, assignment: str,
+) -> None:
+    module = _module()
+    config = tmp_path / "bad.tf"
+    config.write_text("terminal_c1_route_enabled = " + assignment + "\n")
+    monkeypatch.setattr(module, "TERMINAL_CONFIG", config)
+    with pytest.raises(ValueError, match="exactly one"):
+        _render(module)
+
+
+def _terminal_dynamic(source: str) -> re.Match[str]:
+    match = re.search(r'^    dynamic "path_rule" \{\n(.*?)^    \}', source, re.MULTILINE | re.DOTALL)
+    assert match is not None
+    assert 'for_each = local.terminal_c1_route_enabled ? [1] : []' in match[1]
+    return match
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("surface", ["production", "internal", "gateway"])
+def test_terminal_rule_parity_paths_backends_and_plain_service(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, enabled: bool, surface: str,
+) -> None:
+    module = _module()
+    _switch(module, tmp_path, monkeypatch, enabled)
+    source = (ROOT / "infra/control_lb_url_map.tf").read_text()
+    dynamic = _terminal_dynamic(source)
+    # Evaluate this deliberately small HCL block's only two content attributes;
+    # additional route actions or policy attributes fail the complete match.
+    content = re.fullmatch(
+        r'\s*for_each = local\.terminal_c1_route_enabled \? \[1\] : \[\]\s*content \{\s*'
+        r'paths\s*=\s*\[(.*?)\]\s*service\s*=\s*google_compute_backend_service\.control_terminal_c1\.id\s*\}\s*',
+        dynamic[1], re.DOTALL,
+    )
+    assert content is not None, "Terminal rule must have only paths and service"
+    paths = set(re.findall(r'"([^"]+)"', content[1]))
+    assert paths == set(module.TERMINAL_PATH_PATTERNS) == TERMINAL_PATHS
+    resource = (ROOT / "infra/control_terminal_backend.tf").read_text()
+    name = re.search(r'^  name\s*=\s*"([^"]+)"', resource, re.MULTILINE)
+    assert name is not None
+    assert name[1] == module.TERMINAL_BACKEND_NAME
+    expected_link = BASE_LINK + name[1]
+    assert module.terminal_backend_link(CONTROL) == expected_link
+    internal = "internal-backend" if surface == "internal" else CONTROL
+    gateway = "gateway-backend" if surface == "gateway" else None
+    emitted = _render(module, internal=internal, gateway=gateway)
+    rules = emitted["pathMatchers"][0]["pathRules"]
+    terminals = [r for r in rules if set(r["paths"]) & TERMINAL_PATHS]
+    assert terminals == ([{"paths": list(module.TERMINAL_PATH_PATTERNS), "service": expected_link}] if enabled else [])
+    from tests.test_internal_surface_edge import _resolve_backend
+    for path in TERMINAL_PATHS:
+        assert _resolve_backend(emitted, "trustedrouter.com", path) == (
+            expected_link if enabled else gateway or internal
+        )
+
+
+def test_disabled_terraform_matcher_is_base_except_empty_dynamic_block() -> None:
+    source = (ROOT / "infra/control_lb_url_map.tf").read_text()
+    dynamic = _terminal_dynamic(source)
+    without = source[:dynamic.start()] + source[dynamic.end():]
+    def uncomment(text: str) -> str:
+        return re.sub(r"\s+", " ", re.sub(r"^\s*#.*$", "", text, flags=re.MULTILINE)).strip()
+    assert uncomment(without) == uncomment(_git_source("infra/control_lb_url_map.tf"))
+
+
+@pytest.mark.parametrize("shape", ["production", "internal", "gateway", "authorize"])
+def test_disabled_renderer_differential_against_base(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shape: str,
+) -> None:
+    path = tmp_path / "base_renderer.py"
+    path.write_text(_git_source("scripts/deploy/service_surface_url_map.py"))
+    spec = importlib.util.spec_from_file_location("base_renderer", path)
+    assert spec is not None and spec.loader is not None
+    base = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(base)
+    module = _module()
+    _switch(module, tmp_path, monkeypatch, False)
+    internal = "internal-backend" if shape == "internal" else CONTROL
+    gateway = "gateway-backend" if shape == "gateway" else None
+    live = _render(base, internal=internal, gateway=gateway)
+    authorize = {"paths": ["/internal/gateway/authorize"], "routeAction": {
+        "timeout": {"seconds": 24}, "weightedBackendServices": [
+            {"backendService": CONTROL, "weight": 0},
+            {"backendService": BASE_LINK + "tr-fastpath-edge-backend", "weight": 100},
+        ],
+    }}
+    if shape == "authorize":
+        live["pathMatchers"][0]["pathRules"].append(authorize)
+    expected = _render(base, deepcopy(live), internal, gateway)
+    actual = _render(module, deepcopy(live), internal, gateway)
+    if shape == "authorize":
+        # Base 5f6d67c3b drops authorize. Raw equality here conflicts with the
+        # explicit ruling to retain the PR's authorize preservation. Expose and
+        # constrain this sole exception, rather than disguising a patched base.
+        assert authorize not in expected["pathMatchers"][0]["pathRules"]
+        assert actual != expected
+        expected["pathMatchers"][0]["pathRules"].append(authorize)
+    assert actual == expected
 
 
 def test_renderer_preserves_live_authorize_override() -> None:
@@ -134,3 +216,15 @@ def test_renderer_preserves_live_authorize_override() -> None:
     rendered = module.rewrite_url_map(live, "public", "control", "control", "internal", ["trustedrouter.com"])
     assert authorize in rendered["pathMatchers"][0]["pathRules"]
     assert module.existing_gateway_backend(rendered) is None
+
+
+def test_terminal_override_with_extra_key_is_never_discarded() -> None:
+    module = _module()
+    live = _render(module)
+    live["pathMatchers"][0]["pathRules"].append({
+        "paths": list(module.TERMINAL_PATH_PATTERNS),
+        "service": module.terminal_backend_link(CONTROL),
+        "description": "operator-owned",
+    })
+    with pytest.raises(ValueError, match="ambiguous billing override"):
+        _render(module, live)

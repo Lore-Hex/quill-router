@@ -1,9 +1,10 @@
 # Gateway terminal billing in us-central1
 
-Status: **ready at 0%**. Joseph approved routing the enclave's terminal calls to
-us-central1 on 2026-11-03. POST settle, heartbeat and refund and their /v1
-aliases are routed by one weighted rule; raising its weight to 100 is the
-activation. The disposition GET stays on the regional control route (see
+Status: **disabled** (`terminal_c1_route_enabled = false`). Joseph approved
+routing the three POST operations (settle, heartbeat and refund), including
+their `/v1` aliases, to us-central1. Only those six exact URL paths move.
+The rule matches all HTTP methods at those paths; the application accepts POST.
+The disposition GET stays on the regional control route (see
 "Disposition" below). The control backend retains its four regional NEGs. The new
 `trusted-router-control-terminal-c1-backend` references only the existing
 `trusted-router-control-neg` in us-central1, directly to Cloud Run, without the
@@ -23,8 +24,12 @@ Terraform-owned URL map rather than rollout.sh's regional NEG reconciliation.
 Do not point `LB_BACKEND_SERVICE` at it: rollout would attach every region.
 `infra/cloud_armor.tf` owns its policy, `trusted-router-legacy-edge`. It has the
 same trusted client-IP overwrite as the control backend, HTTP,
-EXTERNAL_MANAGED, timeout 30 seconds and logging enabled at 0.1 with
-EXCLUDE_ALL_OPTIONAL. CDN is disabled for authenticated billing. Source:
+EXTERNAL_MANAGED, AUTOMATIC compression and logging enabled at 0.1 with
+EXCLUDE_ALL_OPTIONAL. Connection draining is explicitly zero. Health checks
+and port_name are omitted. timeout_sec does not apply to serverless NEG
+backends and is omitted: the API-reported timeoutSec 30 is not evidence of a
+30-second request deadline. CDN off is a deliberate exception to control's
+settings for authenticated billing. Source:
 `tests/fixtures/gateway-edge/control-backend.fixture.json`, `_edge_security.sh`
 and the existing Cloud Armor resource/checks. Existing policy rules are reused
 without modification.
@@ -41,42 +46,49 @@ router reads the same nam6 database, so its answer does not depend on where it
 is served. See the [URL map API](https://docs.cloud.google.com/compute/docs/reference/rest/v1/urlMaps)
 and [URL map matching](https://docs.cloud.google.com/load-balancing/docs/url-map-concepts).
 
-The shared switch is `local.terminal_c1_route_weight = 0` in
-`infra/control_terminal_backend.tf`. The renderer reads that exact local from
-the checked-out Terraform file, validates 0–100, and fails if missing or
-ambiguous; there is no second default or environment override. Change that
-single line to 100 to raise both configurations, or to 0 to roll back. The default-off pin in the tests
-will need an explicitly reviewed baseline update at activation. Raising it
-to 100 selects direct us-central1 Cloud Run for every terminal call; lowering it
-to 0 returns terminal calls to the original regional control backend. The
-route must explicitly set 30 seconds, even at zero weight: the authorize
-incident established that a zero-weight backend can still affect an implicit
-deadline. Do not use the edge backend's 8-second timeout or authorize's
-24-second route timeout here.
+The single switch is `terminal_c1_route_enabled = false` in
+`infra/control_terminal_backend.tf`. The renderer requires exactly one literal
+true/false assignment; malformed, missing or duplicate assignments fail. There
+is no second default or environment override.
+
+Activation changes that line to `true`; rollback changes it to `false`. Both
+changes go through review and **infra-apply.yml on merge**. Update the reviewed
+default-off test pin at activation. Inspect the plan and the live URL map after
+each apply. When false, Terraform's dynamic path_rule emits nothing and the
+renderer removes only a recognized plain terminal rule, restoring the existing
+internal/gateway wildcard behavior. When true, both writers emit one plain rule
+with only paths and service pointing directly to the new backend. There is no
+routeAction, weight, route timeout or retry policy. This retains the existing
+plain-service routing semantics rather than inferring deadlines from the
+backend's reported timeout. Cloud Run and client deadlines still apply.
+
+**Precedence:** when enabled, the six exact paths select us-central1 even when
+an internal-surface or gateway-surface cutover is installed. When disabled,
+those cutovers govern terminals again. Disposition, lookup, drains and authorize
+are outside this exact set. Authorize's separate route is preserved unchanged.
 
 `infra-apply.yml` validates Terraform on infra pull requests and plans/applies
-on main after merge (or its Terraform workflow_dispatch). Inspect the plan:
-only the new backend, terminal rule and associated checks should change. Keep
-all existing workflow gates. Terraform is unavailable on the preparation
-machine; local validate/plan/apply and cloud acceptance are **UNVERIFIED**.
-The scripts `public_surface_edge.sh`, `internal_surface_edge.sh` and
-`gateway_edge.sh` use the deploy-time renderer through manual prepare/cutover
-operations; `deploy.yml` does not automatically run these URL-map cutovers.
-For manual renderer application, use the existing prepare/verify/cutover and
-captured-map rollback procedure in [gateway-billing-edge.md](gateway-billing-edge.md),
-or the relevant public/internal surface runbook. Those cutovers also change
-their own surface assignments, so do not run one solely to activate terminals.
-Terraform is the production routing apply for this change. All renderer
-callers emit the same terminal split, preserve the existing authorize override,
-and give exact terminals precedence over a gateway wildcard. Do not invoke an
-older renderer after applying the Terraform map. Rollback to weight 0 must use
-the current renderer or Terraform; stale captures can contain unrelated old
-routes and must pass the existing capture guards.
+on main after merge. No local Terraform binary is installed; local
+fmt/validate/plan/apply and Google API acceptance are **UNVERIFIED**. Keep the
+workflow's existing gates. The public/internal/gateway edge scripts also use
+the renderer for their manual cutovers, reading the same boolean from their
+checkout. Do not run those broader surface cutovers solely to flip terminals,
+and do not use an older renderer after activation. A stale captured URL map
+can contain unrelated old routes; retain the existing capture/rollback guards.
+
+Before activation, verify the serving enclave digest against the reviewed
+source and inspect whether **QUILL_SETTLE_OUTBOX_BUCKET** is configured on each
+serving enclave. Verify bucket access, boot signing and writer health, and
+whether **QUILL_SETTLE_OUTBOX_SWEEP=on** is enabled with healthy replay workers.
+An environment value alone is not proof that writes/replay succeed. Record this
+recovery evidence, current Cloud Run caps and load, and Spanner headroom before
+merging the activation change. Observe successful terminal requests from all
+caller regions and rollback recovery through the reviewed workflow.
 
 ## Verify placement and latency
 
 Use bounded, identical before/after windows. Query Cloud Run request logs for
-all four paths, both aliases, grouped by resource.labels.location, method,
+the three POST operations and their aliases, grouped by resource.labels.location, method,
 status, revision and path class. Use request logs rather than sampled load
 balancer logs; the new backend deliberately samples only 10% at the LB.
 
@@ -87,20 +99,37 @@ resource.labels.service_name="trusted-router"
 log_id("run.googleapis.com/requests")
 timestamp>="2026-11-03T16:00:00Z"
 timestamp<"2026-11-03T16:30:00Z"
-httpRequest.requestUrl=~"https://[^/]+(/v1)?/internal/gateway/(settle|heartbeat|refund|authorizations/[^/]+/disposition)([?].*)?$"
+httpRequest.requestUrl=~"https://[^/]+(/v1)?/internal/gateway/(settle|heartbeat|refund)([?].*)?$"
 ' --project=quill-cloud-proxy --order=asc --limit=100000 \
   --format=json > /tmp/terminal-cloud-run.json
 ```
 
 Substitute the actual activation window and compare counts plus p50/p95/p99
 latency per location and route. If the export hits its limit, split the window;
-never treat a truncated export as a traffic denominator. At 0%, expect the old
-regional distribution. At 100%, new matched requests should appear only in
-us-central1 after propagation. Direct regional run.app callers bypass the
+never treat a truncated export as a traffic denominator. While disabled, expect
+the existing surface placement. When enabled, new matched requests should
+appear only in us-central1 after propagation. Direct regional run.app callers bypass the
 URL map and must be distinguished. Verify the backend's NEG membership,
-security policy, logging and timeout with `gcloud compute backend-services
+security policy, compression, draining, logging and API defaults with `gcloud compute backend-services
 describe trusted-router-control-terminal-c1-backend --global --format=json`;
-inspect the live URL map, including both weighted entries and explicit timeout.
+inspect the live URL map for exactly one plain service rule when enabled and
+no terminal override when disabled. Confirm no routeAction was introduced.
+
+Disposition is a separate check and **may still land in any region**. It must
+not be counted as failed centralization. Use the same windows for this GET:
+
+```sh
+gcloud logging read '
+resource.type="cloud_run_revision"
+resource.labels.service_name="trusted-router"
+log_id("run.googleapis.com/requests")
+timestamp>="2026-11-03T16:00:00Z"
+timestamp<"2026-11-03T16:30:00Z"
+httpRequest.requestMethod="GET"
+httpRequest.requestUrl=~"https://[^/]+(/v1)?/internal/gateway/authorizations/[^/]+/disposition([?].*)?$"
+' --project=quill-cloud-proxy --order=asc --limit=100000 \
+  --format=json > /tmp/disposition-cloud-run.json
+```
 
 Enclave latency is a different measurement: fetch `enclave.request_end` from
 `logName=projects/quill-cloud-proxy/logs/confidential-space-launcher` and parse
@@ -137,13 +166,13 @@ medians alone cannot establish a successful activation.
 
 ## Availability, capacity and canary risks
 
-At 100%, us-central1 Cloud Run answers all four terminal operations as well as
+When enabled, us-central1 Cloud Run answers the three terminal POSTs as well as
 all authorize calls already delivered through the us-central1 edge. This
-concentrates the billing failure domain. A weighted split is not regional
-failover: a zero-weight regional backend is not an automatic standby. During
+concentrates the billing failure domain. The single-region backend has no automatic regional failover. Disposition
+remains regional and can read recovery state from the shared database. During
 an Iowa Cloud Run outage, existing streams can lose heartbeat service and
 completed upstream requests can fail to settle immediately. Rolling the
-terminal weight back to 0 restores regional terminal paths after LB propagation,
+terminal switch back to false restores the prior surface routing after LB propagation,
 but it does not repair authorize's independent us-central1 dependency.
 
 **Enclave behavior** (quill-cloud-proxy `origin/main` at `fe6ce4f6`, read
@@ -155,20 +184,40 @@ heartbeat refuses the stream with 503 `heartbeat_unavailable` before any header
 (`cmd/enclave/main.go`, `preHeader`). A failed periodic heartbeat marks the
 stream lost and ends it with `TRFinishReason: "heartbeat_lost"`
 (`cmd/enclave/stage_d.go:216-253`). So while us-central1's Cloud Run is
-unavailable at 100%, new streams fail before their first byte (as their
+unavailable with terminals enabled, new streams fail before their first byte (as their
 authorize already would) and streams in flight are cut short. Do not claim
 streams survive a us-central1 outage.
 
-The available `enclave-go/internal/trustedrouter/client.go` posts settle/refund
-to the stated paths and pins them to the authorization's control-plane endpoint.
-Its `cmd/enclave/settlement_retry.go` has a process-local channel: default 1,024
-jobs, six attempts, a serial worker, first retry without delay, subsequent
-500 ms exponential delay capped at 15 s. Full queues drop the oldest job;
-disabled/full queues and exhausted retries log drops/give_up. Jobs retain the
-billing ID, usage and original authority. A process exit loses queued work.
-This is bounded best-effort retry, not a durable guarantee, and it does not
-change the global URL map's regional choice. Monitor retry enqueue/failure,
-drop_oldest/drop/give_up and reconciliation alongside request errors.
+At enclave source commit `fe6ce4f6d1a442c3e043e3d49182696288120399`,
+`cmd/enclave/settlement_retry.go` holds the **first retry after timeout or
+cancellation for 23 seconds from enqueue**. The original router request may
+still be running; the hold avoids overlapping it. Other errors keep the normal
+retry timing. Defaults are 1,024 in-memory jobs, six attempts, a serial worker,
+then 500 ms exponential delay capped at 15 seconds. Deferred retries wait on
+timers rather than blocking the queue; shutdown or a full deferred-job budget
+can bypass the hold. Monitor defer_full as well as deferred.
+
+Recovery is not uniformly log-only. `cmd/enclave/main.go:546-556` wires an
+optional durable outbox when `QUILL_SETTLE_OUTBOX_BUCKET` is set. The retry queue
+offers frozen terminal jobs to it on eviction, exhausted retries, full/disabled
+queue and unflushed shutdown. Sweeping/replay is separately gated by
+`QUILL_SETTLE_OUTBOX_SWEEP=on`. Offering to the asynchronous writer does not
+prove persistence: offers can be refused and writes/replays can fail. Abrupt
+process loss can still lose unparked or unwritten jobs. Jobs retain the frozen
+billing request and authority; retries do not create regional fallback behind
+the same centralized host. Inspect the serving configuration as an activation
+step; it was not queried during this change.
+
+Monitor `enclave.settlement_retry_deferred`, enqueue/failure/drop/give_up,
+`enclave.settle_outbox_parked` (including accepted=false), outbox skip, offer,
+write and replay failures, backlog and age, plus reconciliation and request
+errors. Verify successful persistence and replay when enabled.
+
+Cloud Armor rate-limit counters are **per backend**. Activation separates
+terminal counters from other control traffic, even though both backends attach
+`trusted-router-legacy-edge`. This changes the effective aggregation of that
+policy's limits; compare throttle/429 counts for both backends. See
+[Cloud Armor rate-limit scope](https://docs.cloud.google.com/armor/docs/rate-limiting-overview).
 
 `rollout.sh` uses `_lib.sh`'s effective default concurrency 8 and revision
 max-instances 12; us-central1's service minimum is 8. That gives 64 warm and
@@ -198,4 +247,4 @@ Require successful terminal samples in Iowa and end-to-end enclave probes from
 each caller region. Check sample counts as well as zero errors; observe rollback
 propagation and recovery before declaring success.
 
-Prepared terminal share: **0%**.
+Prepared terminal switch: **false (disabled)**.

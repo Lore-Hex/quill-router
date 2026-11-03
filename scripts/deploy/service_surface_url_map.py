@@ -204,31 +204,51 @@ TERMINAL_PATH_PATTERNS = (
 TERMINAL_BACKEND_NAME = "trusted-router-control-terminal-c1-backend"
 
 
-def terminal_route_weight() -> int:
-    """One switch for Terraform and every renderer caller; fail closed on drift."""
-    source = (Path(__file__).resolve().parents[2] / "infra/control_terminal_backend.tf").read_text()
-    weights = re.findall(r"^\s*terminal_c1_route_weight\s*=\s*(\d+)\s*$", source, re.MULTILINE)
-    if len(weights) != 1 or not 0 <= int(weights[0]) <= 100:
-        raise ValueError("expected one terminal_c1_route_weight integer in [0, 100]")
-    return int(weights[0])
+TERMINAL_CONFIG = Path(__file__).resolve().parents[2] / "infra/control_terminal_backend.tf"
+
+
+def terminal_route_enabled() -> bool:
+    """Read exactly one literal boolean assignment; never default on parse errors."""
+    source = TERMINAL_CONFIG.read_text()
+    assignments = re.findall(r"^[ \t]*terminal_c1_route_enabled[ \t]*=(.*)$", source, re.MULTILINE)
+    if len(assignments) != 1 or assignments[0].strip() not in {"true", "false"}:
+        raise ValueError("expected exactly one terminal_c1_route_enabled = true or false")
+    return assignments[0].strip() == "true"
+
+
+def terminal_backend_link(control_backend: str) -> str:
+    return control_backend.rsplit("/", 1)[0] + "/" + TERMINAL_BACKEND_NAME if "/" in control_backend else TERMINAL_BACKEND_NAME
 
 
 def billing_override_rules(existing: dict[str, Any]) -> list[dict[str, Any]]:
-    """Recognize the narrow overrides without confusing them with gateway/*."""
+    """Only discard our exact plain terminal rule; preserve authorize unchanged."""
     found = []
     seen: set[str] = set()
     for matcher in existing.get("pathMatchers", []):
         if matcher.get("name") != _MATCHER_NAME:
             continue
-        for rule in matcher.get("pathRules", []):
+        rules = matcher.get("pathRules", [])
+        controls = [rule["service"] for rule in rules
+                    if set(rule.get("paths", [])) == set(CONTROL_PATH_PATTERNS) and rule.get("service")]
+        control = controls[0] if len(controls) == 1 else existing.get("defaultService", "")
+        expected_link = terminal_backend_link(control)
+        for rule in rules:
             paths = set(rule.get("paths", []))
-            if paths & (set(TERMINAL_PATH_PATTERNS) | {"/internal/gateway/authorize"}):
-                kind = "authorize" if paths == {"/internal/gateway/authorize"} else "terminals"
-                expected = {"/internal/gateway/authorize"} if kind == "authorize" else set(TERMINAL_PATH_PATTERNS)
-                if paths != expected or kind in seen or not rule.get("routeAction"):
-                    raise ValueError("ambiguous billing override; refusing to discard live routing")
-                seen.add(kind)
-                found.append(rule)
+            terminal_target = str(rule.get("service", "")).rsplit("/", 1)[-1] == TERMINAL_BACKEND_NAME
+            if paths == {"/internal/gateway/authorize"} and not terminal_target:
+                kind = "authorize"
+                valid = bool(rule.get("routeAction"))
+            elif paths & set(TERMINAL_PATH_PATTERNS) or terminal_target:
+                kind = "terminals"
+                valid = (set(rule) == {"paths", "service"}
+                         and paths == set(TERMINAL_PATH_PATTERNS)
+                         and rule.get("service") == expected_link)
+            else:
+                continue
+            if not valid or kind in seen:
+                raise ValueError("ambiguous billing override; refusing to discard live routing")
+            seen.add(kind)
+            found.append(rule)
     return found
 
 
@@ -339,7 +359,7 @@ def rewrite_url_map(
 ) -> dict[str, Any]:
     """Render four surfaces, optionally overriding gateway backend placement.
 
-    Terminal routing always uses the shared Terraform switch. An existing
+    When enabled, terminal routing uses the shared Terraform switch. An existing
     authorize override is retained verbatim. CLI callers can also preserve an
     installed gateway wildcard override with --preserve-gateway-backend.
     """
@@ -407,21 +427,15 @@ def rewrite_url_map(
         path_matchers[-1]["pathRules"].append(
             {"paths": list(GATEWAY_PATH_PATTERNS), "service": gateway_backend}
         )
-    # Exact terminals beat both /internal/* and an optional gateway/* override.
-    # Use the control backend, not an optional internal/gateway split backend.
-    weight = terminal_route_weight()
-    terminal_backend = control_backend.rsplit("/", 1)[0] + "/" + TERMINAL_BACKEND_NAME if "/" in control_backend else TERMINAL_BACKEND_NAME
-    terminal_rule = {
-        "paths": list(TERMINAL_PATH_PATTERNS),
-        "routeAction": {
-            "timeout": {"seconds": 30},
-            "weightedBackendServices": [
-                {"backendService": control_backend, "weight": 100 - weight},
-                {"backendService": terminal_backend, "weight": weight},
-            ],
-        },
-    }
-    path_matchers[-1]["pathRules"].append(terminal_rule)
+    # When enabled, exact paths beat internal/* and gateway/* cutovers.
+    # When disabled, emit nothing: their plain-service semantics stay intact.
+    enabled = terminal_route_enabled()
+    terminal_backend = terminal_backend_link(control_backend)
+    if enabled:
+        path_matchers[-1]["pathRules"].append({
+            "paths": list(TERMINAL_PATH_PATTERNS),
+            "service": terminal_backend,
+        })
     for override in billing_override_rules(existing):
         if override["paths"] == ["/internal/gateway/authorize"]:
             path_matchers[-1]["pathRules"].append(copy.deepcopy(override))
@@ -445,8 +459,8 @@ def rewrite_url_map(
         host = str(test.get("host") or "")
         if _is_first_party_host(host, managed_hosts):
             path = str(test.get("path") or "/")
-            if path in TERMINAL_PATH_PATTERNS:
-                test["service"] = terminal_backend if weight == 100 else control_backend
+            if enabled and path in TERMINAL_PATH_PATTERNS:
+                test["service"] = terminal_backend
             elif path == "/internal/gateway/authorize" and any(
                 rule["paths"] == [path] for rule in billing_override_rules(existing)
             ):

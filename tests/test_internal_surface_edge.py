@@ -67,7 +67,7 @@ def test_emitted_internal_cutover_map_uses_google_path_precedence(
     emitted = json.loads((harness.root / "url-map-state.json").read_text())
     expected = {
         "/internal/gateway/authorize": "trusted-router-internal-backend",
-        "/internal/gateway/settle": "trusted-router-control-backend",
+        "/internal/gateway/settle": "trusted-router-internal-backend",
         "/v1/internal/gateway/authorize": "trusted-router-internal-backend",
         "/internal": "trusted-router-internal-backend",
         "/v1/internal": "trusted-router-internal-backend",

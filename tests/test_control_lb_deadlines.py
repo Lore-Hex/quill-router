@@ -40,7 +40,7 @@ def test_authorize_rule_is_byte_for_byte_unchanged() -> None:
     )
 
 
-def test_terminal_backend_matches_recorded_control_settings() -> None:
+def test_terminal_backend_matches_reviewed_control_subset() -> None:
     import json
 
     control = json.loads((ROOT / "tests/fixtures/gateway-edge/control-backend.fixture.json").read_text())
@@ -48,12 +48,19 @@ def test_terminal_backend_matches_recorded_control_settings() -> None:
     for field, value in {
         "protocol": control["protocol"],
         "load_balancing_scheme": control["loadBalancingScheme"],
-        "timeout_sec": control["timeoutSec"],
+        "compression_mode": control["compressionMode"],
         "enable": control["logConfig"]["enable"],
         "sample_rate": control["logConfig"]["sampleRate"],
         "optional_mode": control["logConfig"]["optionalMode"],
     }.items():
         assert re.search(rf"\b{field}\s*=\s*{re.escape(json.dumps(value))}(?:\s|$)", source), field
+    # Reviewed exceptions: CDN off; serverless timeout omitted (API reports 30).
+    # Optional/computed port name is omitted; serverless NEGs forbid health checks.
+    assert control["timeoutSec"] == 30 and control["portName"] == "http"
+    assert control["enableCDN"] is True
+    uncommented = re.sub(r"^\s*#.*$", "", source, flags=re.MULTILINE)
+    for field in ("timeout_sec", "port_name", "health_checks"):
+        assert not re.search(rf"\b{field}\s*=", uncommented), field
     assert control["securityPolicy"].endswith("/trusted-router-legacy-edge")
     assert re.search(r"security_policy\s*=\s*google_compute_security_policy\.legacy_edge\.id\s", source)
     assert 'name        = "trusted-router-legacy-edge"' in (ROOT / "infra/cloud_armor.tf").read_text()

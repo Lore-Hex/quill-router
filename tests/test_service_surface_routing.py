@@ -683,7 +683,7 @@ def test_rewrite_refuses_reserved_matcher_owned_by_unrelated_host() -> None:
 
 
 @pytest.mark.parametrize("prefix", ["", "/v1"])
-def test_terminal_methods_and_pending_disposition_routing(prefix: str) -> None:
+def test_terminal_methods_and_regional_disposition_routing(prefix: str) -> None:
     app = create_app(Settings(environment="test", service_surface="combined"),
                      configure_store_arg=False, init_observability=False)
     methods = {route.path: route.methods for route in _routes_of(app) if hasattr(route, "methods")}
@@ -693,7 +693,7 @@ def test_terminal_methods_and_pending_disposition_routing(prefix: str) -> None:
         assert _emitted_backend(_emitted_map(), path) == LEGACY_BACKEND
     disposition = f"{prefix}/internal/gateway/authorizations/{{authorization_id}}/disposition"
     assert methods[disposition] == {"GET"}
-    # No broad prefix is introduced without approval: the lookup and drains
+    # Disposition deliberately remains regional: the lookup and drains
     # retain their existing routing too.
     for path in (disposition, f"{prefix}/internal/gateway/authorizations/by-gateway-request-id/id",
                  f"{prefix}/internal/gateway/settle-outbox/drain"):

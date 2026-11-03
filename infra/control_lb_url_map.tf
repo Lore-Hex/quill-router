@@ -111,29 +111,17 @@ resource "google_compute_url_map" "control" {
       paths   = ["/internal", "/internal/*", "/v1/internal", "/v1/internal/*"]
       service = "projects/${local.gcp_project_id}/global/backendServices/trusted-router-control-backend"
     }
-    # The enclave's terminal POSTs, sent to Cloud Run in us-central1 beside the
-    # Spanner leader once local.terminal_c1_route_weight is 100
-    # (docs/runbooks/control-terminals-us-central1.md). The disposition GET stays
-    # on /internal/*: it is a recovery read, every region reads the same
-    # database, and a path rule cannot match its interior authorization id.
-    path_rule {
-      paths = [
-        "/internal/gateway/settle", "/internal/gateway/heartbeat", "/internal/gateway/refund",
-        "/v1/internal/gateway/settle", "/v1/internal/gateway/heartbeat", "/v1/internal/gateway/refund",
-      ]
-      route_action {
-        # Never inherit another backend's deadline, including at weight zero.
-        timeout {
-          seconds = 30
-        }
-        weighted_backend_services {
-          backend_service = "projects/${local.gcp_project_id}/global/backendServices/trusted-router-control-backend"
-          weight          = 100 - local.terminal_c1_route_weight
-        }
-        weighted_backend_services {
-          backend_service = google_compute_backend_service.control_terminal_c1.id
-          weight          = local.terminal_c1_route_weight
-        }
+    # Enabled exact terminal paths beat both internal/* and gateway/* surface
+    # cutovers. Disabled emits nothing, preserving their existing semantics.
+    # Disposition remains regional; see control-terminals-us-central1.md.
+    dynamic "path_rule" {
+      for_each = local.terminal_c1_route_enabled ? [1] : []
+      content {
+        paths = [
+          "/internal/gateway/settle", "/internal/gateway/heartbeat", "/internal/gateway/refund",
+          "/v1/internal/gateway/settle", "/v1/internal/gateway/heartbeat", "/v1/internal/gateway/refund",
+        ]
+        service = google_compute_backend_service.control_terminal_c1.id
       }
     }
     # The enclave's authorize (docs/design/fast-admission-enclave-direct.md,
