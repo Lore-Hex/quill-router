@@ -430,3 +430,72 @@ resource "google_compute_instance" "fastpath_node" {
     google_storage_bucket_iam_member.fastpath_releases_reader,
   ]
 }
+
+# --- The load generator ------------------------------------------------------
+
+# One machine of its own for the edge's 1,000 a second run, so the run does
+# not measure a generator beside the front door and owner it drives (P1's
+# results, "Next"). It runs no node unit and joins no membership: its script
+# only installs the pinned release's loadgen, fastpathwatch and load mix, and
+# the run is started by hand over OS Login (docs/runbooks/fastpath-p1.md).
+# It takes the nodes' service account for the release bucket and the
+# readiness read loadgen makes, and the default-allow-internal rule for the
+# front doors' port. Off is local.fastpath_loadgen = false, which removes it.
+locals {
+  fastpath_loadgen = true
+}
+
+resource "google_compute_instance" "fastpath_loadgen" {
+  count = local.fastpath_loadgen ? 1 : 0
+
+  project      = local.gcp_project_id
+  name         = "tr-fastpath-loadgen"
+  zone         = "us-central1-c"
+  machine_type = "e2-standard-8"
+
+  boot_disk {
+    initialize_params {
+      image = "debian-cloud/debian-12"
+      size  = 20
+    }
+  }
+
+  network_interface {
+    network    = "default"
+    subnetwork = "default"
+    # No access_config: no external address.
+  }
+
+  service_account {
+    email  = google_service_account.fastpath_node.email
+    scopes = ["cloud-platform"]
+  }
+
+  metadata = {
+    enable-oslogin   = "TRUE"
+    fastpath-release = local.fastpath_release
+  }
+
+  metadata_startup_script = <<-EOT
+    #!/bin/bash
+    set -euo pipefail
+    release="$(curl -sf -H 'Metadata-Flavor: Google' 'http://metadata.google.internal/computeMetadata/v1/instance/attributes/fastpath-release')"
+    install -d /opt/fastpath
+    for tool in loadgen fastpathwatch load-mix.json; do
+      gcloud storage cp "gs://${google_storage_bucket.fastpath_releases.name}/fastpath/$release/$tool" "/opt/fastpath/$tool"
+      chmod 0755 "/opt/fastpath/$tool"
+    done
+    echo "$release" > /opt/fastpath/release
+  EOT
+
+  labels = {
+    service = "fastpath"
+    stage   = "loadgen"
+  }
+
+  allow_stopping_for_update = true
+
+  depends_on = [
+    google_storage_bucket_iam_member.fastpath_releases_reader,
+  ]
+}
