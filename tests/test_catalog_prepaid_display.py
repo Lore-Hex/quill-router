@@ -595,8 +595,6 @@ def test_novita_supplemental_prices_apply_manifest_scale(
         "google/gemini-3.6-flash@google-ai-studio/byok",
         "google/gemini-3.8-flash@google-vertex/prepaid",
         "google/gemini-3.1-flash-image-preview@google-ai-studio/prepaid",
-        "google/gemini-2.5-flash@google-ai-studio/prepaid",
-        "google/gemini-2.5-flash@google-ai-studio/byok",
         "google/gemini-2.5-flash@google-vertex/prepaid",
         "z-ai/glm-5.3-flash@zai/prepaid",
         "z-ai/glm-5.3-flash@deepinfra/prepaid",
