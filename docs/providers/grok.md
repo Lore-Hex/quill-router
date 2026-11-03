@@ -21,10 +21,13 @@ and `x-zero-data-retention: true`, with the key and team not blocked or disabled
 | AWS eu-west-3 managed-key secret | 2026-11-02 18:39:44 |
 
 These are credential-policy checks, not paid inference or proof of every running
-gateway's loaded credentials. The encrypted Azure gateway bootstrap bundle was
-not independently inspected in this check. No credentials or request content
-were published. An earlier `/v1/models` check returned HTTP 200 without the ZDR
-header and was inconclusive, not evidence that ZDR was disabled.
+gateway's loaded credentials. On 2026-11-02 (America/Los_Angeles), Joseph
+explicitly confirmed that Azure's managed Grok credential belongs to the same
+xAI team where he enabled ZDR. Azure's team scope therefore has operator
+confirmation; the encrypted gateway bootstrap bundle was not independently
+inspected or decrypted. No credentials or request content were published. An
+earlier `/v1/models` check returned HTTP 200 without the ZDR header and was
+inconclusive, not evidence that ZDR was disabled.
 
 The [xAI security documentation](https://docs.x.ai/developers/faq/security)
 describes ZDR as a team-wide setting applying to all API keys in that team.
