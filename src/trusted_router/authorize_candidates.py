@@ -324,6 +324,7 @@ def resolve_candidates(
         resolved = chat_route_endpoint_candidates(
             normalized,
             defer_no_fallback_selection=True,
+            decide=request.route_type == "decide",
         )
         effective_preferences = resolved.effective_preferences
         endpoint_candidates = candidates_fitting_context(

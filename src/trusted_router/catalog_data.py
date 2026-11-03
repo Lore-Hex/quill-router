@@ -2742,6 +2742,16 @@ DECIDE_PATH_ALIASES: tuple[tuple[str, str], ...] = (
 )
 
 
+# Other routers' names for a hosted decision model. The attested gateway
+# rewrites these to the TrustedRouter id before it picks the hosted path (its
+# decide.ModelAliases is the authority); a gateway built before an entry
+# passes the caller's spelling through, and authorize answers it with the id
+# to send instead of calling it unknown.
+DECIDE_MODEL_ALIASES: dict[str, str] = {
+    "typesafe/jev-1.13": "typesafe-ai/jev",  # OpenRouter's Decisions API
+}
+
+
 def decide_url(api_base_url: str) -> str:
     """The decide route on the API host: it sits beside /v1, not under it."""
     return api_base_url.rstrip("/").removesuffix("/v1") + DECIDE_PATH
