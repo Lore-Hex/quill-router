@@ -80,6 +80,8 @@ ANTHROPIC_SONNET_45_RETIREMENT_AT = datetime(2026, 11, 30, 17, 0, tzinfo=UTC)
 MISTRAL_MEDIUM_35_RETIREMENT_AT = datetime(2027, 4, 30, 0, 0, tzinfo=UTC)
 # AI Studio redirects gemini-2.5-flash to 3.5 Flash-Lite on 1 Dec 2026 (date only).
 GOOGLE_AI_STUDIO_GEMINI_25_FLASH_RETIREMENT_AT = datetime(2026, 12, 1, 0, 0, tzinfo=UTC)
+# Lyceum redirects kimi-k2.7-code to kimi-k3 from 4 Nov 2026 (date only).
+LYCEUM_KIMI_K27_CODE_RETIREMENT_AT = datetime(2026, 11, 4, 0, 0, tzinfo=UTC)
 # 2026-10-30 10:00 PDT: Crusoe redirects four serverless models to replacements.
 CRUSOE_OCTOBER_30_RETIREMENT_AT = datetime(2026, 10, 30, 17, 0, tzinfo=UTC)
 TELNYX_NOVEMBER_2_RETIREMENT_AT = datetime(2026, 11, 2, 0, 0, tzinfo=UTC)
@@ -1165,6 +1167,16 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"gemini-2.5-flash"}),
         effective_at=GOOGLE_AI_STUDIO_GEMINI_25_FLASH_RETIREMENT_AT,
         replacement_model_ids=("google/gemini-3.5-flash-lite",),
+    ),
+    # Lyceum's November 3 notice answers moonshotai/kimi-k2.7-code with
+    # moonshotai/kimi-k3 (at K3 prices) from 4 November 2026. Retire the old
+    # identity rather than silently substitute weights and pricing.
+    _Retirement(
+        provider="lyceum",
+        model_ids=frozenset({"moonshotai/kimi-k2.7-code"}),
+        upstream_ids=frozenset({"moonshotai/kimi-k2.7-code"}),
+        effective_at=LYCEUM_KIMI_K27_CODE_RETIREMENT_AT,
+        replacement_model_ids=("moonshotai/kimi-k3",),
     ),
     # DigitalOcean's October 29 notices deprecate these Inference models on
     # 2026-11-09 (date only; 00:00 UTC conservatively); requests then 404.
