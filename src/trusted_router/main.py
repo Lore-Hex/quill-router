@@ -341,6 +341,10 @@ def create_app(
         from trusted_router.services.async_settle import load_runtime
         from trusted_router.storage import typed_billing_store
         app.state.async_settle = load_runtime(settings, typed_billing_store(STORE))
+        from trusted_router.services.async_settle_admission_refresh import (
+            install as install_admission_refresh,
+        )
+        install_admission_refresh(app, settings)
         # An expired or region-excluded v2 canary installs neither v2 nor v1,
         # because v1 still requires the raw policy pin to be empty.
         if settings.effective_async_settle_shadow_policy() == "shadow-v2" and settings.async_settle_shadow_workspace_ids and not settings.async_settle_enabled:

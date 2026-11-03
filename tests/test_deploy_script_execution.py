@@ -799,6 +799,27 @@ def test_rollout_supplies_full_source_revision_for_shadow_evidence(
 
 @pytest.mark.parametrize("region", ["us-central1", "us-east4", "europe-west4", "southamerica-east1"])
 @pytest.mark.parametrize("no_traffic", ["0", "1"])
+def test_rollout_pins_admission_refresh_without_inheritance(
+    harness: DeployScriptHarness, region: str, no_traffic: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = harness.run(
+        "scripts/deploy/rollout.sh",
+        extra_env={"TR_DEPLOY_TARGET_REGIONS": region,
+                   "TR_DEPLOY_NO_TRAFFIC": no_traffic,
+                   "TR_ASYNC_SETTLE_ADMISSION_REFRESH_ENABLED": "false"},
+    )
+    assert run.returncode == 0, summarise(run)
+    deploy = next(call for call in run.calls if call[3:5] == ["run", "deploy"])
+    rendered = _cloud_run_job_env(deploy)
+    assert rendered["TR_ASYNC_SETTLE_ADMISSION_REFRESH_ENABLED"] == "true"
+    monkeypatch.setenv("TR_ASYNC_SETTLE_ADMISSION_REFRESH_ENABLED",
+                       rendered["TR_ASYNC_SETTLE_ADMISSION_REFRESH_ENABLED"])
+    assert Settings(environment="test").async_settle_admission_refresh_enabled is True
+
+
+@pytest.mark.parametrize("region", ["us-central1", "us-east4", "europe-west4", "southamerica-east1"])
+@pytest.mark.parametrize("no_traffic", ["0", "1"])
 def test_rollout_keeps_shadow_canary_4_opted_out_with_pilot_pins(
     harness: DeployScriptHarness, region: str, monkeypatch: pytest.MonkeyPatch,
     no_traffic: str,
