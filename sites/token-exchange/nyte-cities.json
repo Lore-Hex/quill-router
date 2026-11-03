@@ -1,9 +1,9 @@
 {
   "london": {
     "workloads": [
-      {"title": "Financial services", "prompt": "Summarise the risk factors across these 30 broker research notes.", "tags": ["CONFIDENTIAL", "ZDR"]},
-      {"title": "Insurance", "prompt": "Pull the cover limits and exclusions from each policy schedule.", "tags": ["CONFIDENTIAL", "ZDR"]},
-      {"title": "Professional services", "prompt": "Check this client engagement letter against our standard terms.", "tags": ["CONFIDENTIAL", "ZDR"]}
+      {"title": "Financial services", "prompt": "Summarise the main risks in these broker research notes.", "tags": ["CONFIDENTIAL", "ZDR"]},
+      {"title": "Insurance", "prompt": "List the exclusions in each of these policy wordings.", "tags": ["CONFIDENTIAL", "ZDR"]},
+      {"title": "Professional services", "prompt": "Flag the clauses in this client contract that need a partner’s review.", "tags": ["CONFIDENTIAL", "ZDR"]}
     ]
   }
 }
