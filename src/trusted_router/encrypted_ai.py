@@ -32,8 +32,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
-from urllib.parse import urlparse
 from typing import Any
+from urllib.parse import urlparse
 
 from trusted_router.catalog import MODELS, endpoints_for_model
 from trusted_router.catalog_data import PRIVACY_TIER_CONFIDENTIAL
@@ -88,8 +88,8 @@ class Listing:
     # Titles and referer domains naming this company. Observed traffic that
     # carries one is held out of the ranking unless ``confirmed``.
     matches: tuple[str, ...] = ()
-    # An operator confirmed the company's claim to this traffic (a workspace
-    # binding); only then may its observed tokens rank, under its listing.
+    # An operator confirmed the company owns its listed domains; only then
+    # may traffic from those domains rank, under its listing.
     confirmed: bool = False
 
 
@@ -162,12 +162,34 @@ def is_confidential_route(provider: str, model: str) -> bool:
     return provider in _confidential_providers()
 
 
-def _match(directory_: Directory, title: str, domain: str) -> Listing | None:
-    keys = {_domain(title), domain} - {""}
-    for listing in directory_.listings:
-        if keys & set(listing.matches):
-            return listing
-    return None
+def _domain_matches(domain: str, match: str) -> bool:
+    """A referer domain belongs to a listed domain, or to a subdomain of it."""
+    return "." in match and (domain == match or domain.endswith("." + match))
+
+
+def _placement(directory_: Directory, title: str, domain: str) -> tuple[bool, Listing | None]:
+    """Whether observed traffic may rank, and the listing it ranks under.
+
+    Names and domains are self-reported, so traffic that names a curated
+    company -- its domain (or a subdomain), its name or a listed spelling --
+    is held out. The one exception is a confirmed company's own domain: that
+    traffic ranks under its listing, and a title alone never attaches it.
+    """
+    title_key = _domain(title)
+    by_domain = next(
+        (listing for listing in directory_.listings
+         if domain and any(_domain_matches(domain, match) for match in listing.matches)),
+        None,
+    )
+    by_title = next(
+        (listing for listing in directory_.listings if title_key and title_key in listing.matches),
+        None,
+    )
+    if by_domain is not None:
+        if by_domain.confirmed and by_title in (None, by_domain):
+            return True, by_domain
+        return False, None
+    return by_title is None, None
 
 
 def aggregate_encrypted_ai(rows: Iterable[Mapping[str, Any]], *, generated_at: str) -> dict[str, Any]:
@@ -240,10 +262,10 @@ def directory_view(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
     """Everything the page renders: the observed ranking per window, the
     curated tiers, and the headline counts.
 
-    Curated listings always stay in their own tier. Observed traffic that
-    names a curated company ranks only once an operator confirmed that
-    company's claim; otherwise anyone could put a named company in the
-    Verified table with two headers.
+    Observed traffic that names a curated company ranks only from that
+    company's own domain and only once an operator confirmed its claim (see
+    _placement); otherwise anyone could put a named company in the Verified
+    table with two headers. A confirmed company leaves its curated tier.
     """
     directory_ = directory()
     labels = dict(directory_.categories)
@@ -252,8 +274,8 @@ def directory_view(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
         window = ((snapshot or {}).get("windows") or {}).get(name) or {}
         apps: list[dict[str, Any]] = []
         for app in window.get("apps") or []:
-            listing = _match(directory_, str(app.get("name") or ""), str(app.get("domain") or ""))
-            if listing is not None and not listing.confirmed:
+            ranks, listing = _placement(directory_, str(app.get("name") or ""), str(app.get("domain") or ""))
+            if not ranks:
                 continue
             category = listing.category if listing else next(
                 (c for c in app.get("categories") or () if c in labels), "other"
@@ -273,8 +295,9 @@ def directory_view(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
             "consumer_count": sum(1 for a in apps if a["consumer"]),
             "exchange_encrypted_tokens": int(window.get("exchange_encrypted_tokens") or 0),
         })
+    # A confirmed company is verified: its curated card would say otherwise.
     curated = {
-        tier: [listing for listing in directory_.listings if listing.tier == tier]
+        tier: [listing for listing in directory_.listings if listing.tier == tier and not listing.confirmed]
         for tier, _label in TIERS if tier != "verified"
     }
     return {

@@ -120,6 +120,8 @@ def _with_listing_data(monkeypatch: pytest.MonkeyPatch, **changes: Any) -> None:
     ("Maple AI", "evil.example"),  # a curated company's name, any domain
     ("x", "muse.ai"),  # a curated company's domain, any name
     ("Fambot", "fambot.com"),  # the company itself, before it confirmed
+    ("Meta Agent", "app.muse.ai"),  # a subdomain of a curated company's domain
+    ("x", "www.chat.trymaple.ai"),
 ])
 def test_traffic_naming_a_curated_company_does_not_rank_unconfirmed(title: str, ref: str) -> None:
     snapshot = aggregate_encrypted_ai([_row(title, ref, CONF, t1=9, t7=9, t30=9)], generated_at=GENERATED_AT)
@@ -142,6 +144,11 @@ def test_a_confirmed_company_ranks_under_its_listing(monkeypatch: pytest.MonkeyP
     week = next(w for w in directory_view(snapshot)["windows"] if w["name"] == "week")
     assert week["apps"][0]["listing"].slug == "fambot" and week["consumer_count"] == 1
     assert week["apps"][0]["category"] == "family"
+    # Verified now: its watchlist card ("Not verified") goes.
+    assert "fambot" not in {listing.slug for listing in directory_view(snapshot)["curated"]["watchlist"]}
+    # Its name from another domain still does not rank, with or without its listing.
+    spoof = aggregate_encrypted_ai([_row("Fambot", "evil.example", CONF, t7=5, t30=5)], generated_at=GENERATED_AT)
+    assert all(not w["apps"] for w in directory_view(spoof)["windows"])
 
 
 def test_hidden_entries_compare_like_domains(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -275,3 +282,17 @@ def test_the_builder_query_reads_names_and_counts_only(monkeypatch: pytest.Monke
     for forbidden in ("workspace_id", "key_id", "user", "session_id", "tenant_id"):
         assert forbidden not in sql, forbidden
     assert "INTERVAL 30 DAY" in sql and "synthetic = 0" in sql and "LIMIT" in sql
+    assert "SETTINGS max_execution_time = " in sql
+
+
+def test_the_listing_loader_normalizes_hidden_entries(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    raw = json.loads(encrypted_ai.LISTINGS_PATH.read_text(encoding="utf-8"))
+    raw["hidden"] = ["WWW.Acme.COM", " Zed "]
+    path = tmp_path / "listings.json"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    monkeypatch.setattr(encrypted_ai, "LISTINGS_PATH", path)
+    encrypted_ai.directory.cache_clear()
+    try:
+        assert directory().hidden == frozenset({"acme.com", "zed"})
+    finally:
+        encrypted_ai.directory.cache_clear()
