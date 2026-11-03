@@ -2,9 +2,9 @@
   "_about": "Provider-native Telnyx inference routes, context windows, capabilities, and reconciled account-billable prices refreshed hourly from Telnyx-owned sources.",
   "provider": "telnyx",
   "source": "https://api.telnyx.com/v2/ai/openai/models",
-  "generated_at": "2026-11-02T21:57:06Z",
+  "generated_at": "2026-11-03T10:37:22Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 19,
+  "model_count": 20,
   "models": [
     {
       "display_name": "gemma-2b-it",
@@ -605,6 +605,39 @@
       "input_token_price_per_m": 68000,
       "output_token_price_per_m": 300000,
       "cached_input_token_price_per_m": 30000
+    },
+    {
+      "display_name": "DeepSeek-V4.1-Flash-1017",
+      "title": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4.1-flash-1017",
+      "upstream_id": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+      "provider_service_tiers": [
+        "default",
+        "flex"
+      ],
+      "pricing_source": "https://api.telnyx.com/v2/ai/openai/models",
+      "license": "mit",
+      "context_length": 1048576,
+      "max_output_tokens": 64000,
+      "provider_regions": [
+        "EU",
+        "USA"
+      ],
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 1200000,
+      "cached_input_token_price_per_m": 6000
     }
   ]
 }

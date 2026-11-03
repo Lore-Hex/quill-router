@@ -370,11 +370,11 @@
   },
   "hixtube": {
     "card_version": 2,
-    "model_count": 1,
+    "model_count": 0,
     "name": "Hixtube",
     "privacy": "Zero retention",
-    "route_count": 1,
-    "route_mode": "Prepaid",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
     "slug": "hixtube"
   },
   "huggingface": {
@@ -874,10 +874,10 @@
   },
   "telnyx": {
     "card_version": 2,
-    "model_count": 12,
+    "model_count": 13,
     "name": "Telnyx",
     "privacy": "Zero retention",
-    "route_count": 24,
+    "route_count": 26,
     "route_mode": "Prepaid + BYOK",
     "slug": "telnyx"
   },
