@@ -195,10 +195,13 @@ lines, summed, are its counts. It prints JSON:
   `async_settle` in the policy or no `billing_valid` in the snapshot it
   passes `async.unpublished` before the key is looked up; once the key's
   workspace is known it passes `policy.async_admission` when Python's
-  admission covers that workspace (admission on, and
-  `async_settle.admission_workspaces` absent or naming it). A workspace
-  the member leaves out is composed and compared as with admission off,
-  since Python answers it without a ticket. Because the admission gate
+  admission covers that workspace (admission on,
+  `async_settle.admission_workspaces` absent or naming it, and
+  `async_settle.admission_excluded_workspaces`, the fast-path workspaces
+  outside `TR_ASYNC_SETTLE_FASTPATH_OVERLAP_WORKSPACES`, not naming it;
+  G15 section 4.5). A workspace the members leave out is composed and
+  compared as with admission off, since Python answers it without a
+  ticket. Because the admission gate
   needs the key, an async-v1 request whose key the cache cannot answer
   for (cold, stale or missing) now passes `cache.key` or `key.missing`
   rather than `policy.async_admission`, even with the member absent, so

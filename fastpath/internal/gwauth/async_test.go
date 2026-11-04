@@ -304,7 +304,7 @@ func membersBytes(t *testing.T, members pyjson.Object) string {
 // accounted for.
 func TestEveryAsyncCaseIsPythonsBytes(t *testing.T) {
 	g := loadAsyncGoldens(t)
-	equal, membersOnly, admission, leftOut := 0, 0, 0, 0
+	equal, membersOnly, admission, leftOut, excluded := 0, 0, 0, 0, 0
 	shapes, reasons := map[string]int{}, map[string]int{}
 	for _, c := range g.cases {
 		if c.target == nil {
@@ -312,9 +312,14 @@ func TestEveryAsyncCaseIsPythonsBytes(t *testing.T) {
 		}
 		in, _ := asyncInputOf(t, g, c)
 		if c.asyncSettle.AdmissionEnabled && !in.Async.Policy.AdmissionEnabled {
-			// Admission on for a pilot set leaving the workspace out:
+			// Admission on for a pilot set leaving the workspace out, or
+			// excluding it as a fast-path workspace (G15 section 4.5):
 			// composed and byte-compared below as with admission off.
-			leftOut++
+			if x := c.asyncSettle.AdmissionExcludedWorkspaces; x != nil && slices.Contains(*x, in.WorkspaceID) {
+				excluded++
+			} else {
+				leftOut++
+			}
 		}
 		if in.Async.Policy.AdmissionEnabled {
 			// policy.async_admission: Python's ticket (or its shape A for a
@@ -393,9 +398,11 @@ func TestEveryAsyncCaseIsPythonsBytes(t *testing.T) {
 	}
 	// The admission cases: the four covered (the member absent, or naming
 	// the workspace; one a stream) refused, the three the member leaves out
-	// (one a stream) byte-equal.
-	if admission != 4 || leftOut != 3 {
-		t.Fatalf("%d admission on, %d left out by admission_workspaces", admission, leftOut)
+	// (one a stream) byte-equal, and the four admission_excluded_workspaces
+	// names (the member absent or naming it; one a stream, one shape A)
+	// byte-equal.
+	if admission != 4 || leftOut != 3 || excluded != 4 {
+		t.Fatalf("%d admission on, %d left out by admission_workspaces, %d excluded", admission, leftOut, excluded)
 	}
 	for _, r := range p6Reasons {
 		if reasons[r] == 0 {

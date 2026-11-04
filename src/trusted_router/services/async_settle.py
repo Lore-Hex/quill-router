@@ -299,9 +299,12 @@ def snapshot_projection(*, authorization: GatewayAuthorization, snapshot: Billin
         # A workspace or enclave region outside negotiation gets the admission-off answer
         # byte for byte (shape B): no ticket, no status URL. The enclave
         # binds async settlement only from async_eligible true. The edge
-        # composes this answer for non-pilots from admission_workspaces;
-        # pilots pass to Python, which checks their stored enclave region here
-        # (docs/design/fast-admission-e2-g15-async.md section 4.1).
+        # composes this answer for non-pilots from admission_workspaces, and
+        # for fast-path workspaces outside the overlap list (which
+        # async_settle_pilot_allows leaves out even with an empty pilot set)
+        # from admission_excluded_workspaces; pilots pass to Python, which
+        # checks their stored enclave region here
+        # (docs/design/fast-admission-e2-g15-async.md sections 4.1 and 4.5).
         if (not settings.async_settle_admission_enabled
                 or not settings.async_settle_pilot_allows(authorization.workspace_id)
                 or not settings.async_settle_negotiation_region_allowed(authorization.region)):

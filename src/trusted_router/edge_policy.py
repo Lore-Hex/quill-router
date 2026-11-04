@@ -57,7 +57,15 @@ Fields, all required:
   member absent). Python answers a workspace the set leaves out as with
   admission off, so the edge composes that answer and passes only the
   workspaces it names (docs/design/fast-admission-e2-g15-async.md section
-  4.1). ``null`` and an empty array are refused.
+  4.1). A second optional member, ``admission_excluded_workspaces``: the
+  fast-path pilot workspaces outside ``async_settle_fastpath_overlap_workspaces``
+  that admission would otherwise cover (all of them with no
+  ``admission_workspaces``, else the ones it names), sorted, present only
+  with admission on and at least one, and within ``admission_workspaces``
+  when that is present: async settle takes no request the fast path takes
+  (section 4.5). Go reads a workspace as covered when admission is on, the
+  first member is absent or names it, and the second does not name it.
+  ``null`` and an empty array are refused for both.
 
 Two fields are optional:
 
@@ -134,19 +142,32 @@ class EdgeAsyncSettle(Frozen):
     admission_workspaces: tuple[WorkspaceId, ...] | None = Field(
         default=None, exclude_if=lambda value: value is None,
     )
+    # Optional: the fast-path workspaces admission leaves out although
+    # admission_workspaces (or its absence) would cover them, present only
+    # with admission on and at least one (fast-admission-e2-g15-async.md
+    # section 4.5). The canonical bytes omit it when absent.
+    admission_excluded_workspaces: tuple[WorkspaceId, ...] | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
 
     @model_validator(mode="after")
     def admission_set(self) -> Self:
-        workspaces = self.admission_workspaces
-        if workspaces is None:
-            if "admission_workspaces" in self.model_fields_set:
-                raise ValueError("admission_workspaces is absent for every workspace, never null")
-            return self
-        if not self.admission_enabled:
-            raise ValueError("admission_workspaces requires admission_enabled")
-        if not 1 <= len(workspaces) <= MAX_ADMISSION_WORKSPACES:
-            raise ValueError("admission_workspaces must name 1 to 32 workspaces")
-        _sorted_unique(workspaces, "admission_workspaces")
+        for name, workspaces in (("admission_workspaces", self.admission_workspaces),
+                                 ("admission_excluded_workspaces", self.admission_excluded_workspaces)):
+            if workspaces is None:
+                if name in self.model_fields_set:
+                    raise ValueError(f"{name} is absent when it names none, never null")
+                continue
+            if not self.admission_enabled:
+                raise ValueError(f"{name} requires admission_enabled")
+            if not 1 <= len(workspaces) <= MAX_ADMISSION_WORKSPACES:
+                raise ValueError(f"{name} must name 1 to 32 workspaces")
+            _sorted_unique(workspaces, name)
+        # One encoding per answer: an excluded workspace is one the pilot set
+        # would cover (every workspace when it is absent).
+        excluded, covered = self.admission_excluded_workspaces, self.admission_workspaces
+        if excluded is not None and covered is not None and not set(excluded) <= set(covered):
+            raise ValueError("admission_excluded_workspaces must be within admission_workspaces")
         return self
 
 
