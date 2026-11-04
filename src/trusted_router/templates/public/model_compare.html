@@ -86,6 +86,11 @@
   </div>
 </section>
 
+{# Sign-up right where the visitor has just compared the two models. #}
+<div class="hero-actions">
+  <button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Try both models</button>
+</div>
+
 <section class="seo-two-col">
   <div class="panel">
     <div class="panel-head"><h2>{{ left.name }} routes</h2></div>
@@ -142,6 +147,9 @@
     <span class="eyebrow">Production choice</span>
     <h2>Pick a default model. Keep fallback enabled.</h2>
     <p>TrustedRouter is useful when you know the model you want, but still need provider rollover, budget limits, usage records, and a prompt path you can verify.</p>
+    <div class="hero-actions">
+      <button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Get your API key</button>
+    </div>
   </div>
   {# The example has to be a call the model accepts: a decision model answers
      the decide route and refuses chat; an embedding, image or video model has
