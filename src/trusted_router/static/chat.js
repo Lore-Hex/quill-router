@@ -1423,7 +1423,6 @@
         empty.innerHTML =
             '<img class="chat-empty-logo" src="/static/favicon.svg" width="40" height="40" alt="">' +
             "<h2>" + escapeHtml(heading) + "</h2>" +
-            (LOCKED_MODEL_ID ? '<p><a href="/console/custom-models">Custom Models</a></p>' : "") +
             '<div class="chat-suggest-grid">' + grid + "</div>";
         empty.addEventListener("click", (e) => {
             const btn = e.target && e.target.closest && e.target.closest(".chat-suggest");

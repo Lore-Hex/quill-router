@@ -33,22 +33,19 @@ def segregated_models(client: TestClient) -> list[dict[str, Any]]:
     models: list[dict[str, Any]] = []
     for kind in ("machine", "agent", "human"):
         prompt_price = 100_000_000_000 if kind == "human" else 100
-        response = client.post(
-            "/v1/user-models",
-            headers=_HEADERS,
-            json={
-                "name": f"Segregation {kind}",
-                "slug": f"segregation-{kind}",
-                "kind": kind,
-                "description": f"A {kind} used to prove catalog segregation.",
-                "display_name": f"segregation-{kind}-operator",
-                "endpoint_url": "https://owner.example/v1",
-                "prompt_price_microdollars_per_million_tokens": prompt_price,
-                "completion_price_microdollars_per_million_tokens": prompt_price,
-            },
+        from dataclasses import asdict
+
+        from trusted_router.storage import STORE
+        user = STORE.ensure_user("segregation-owner@example.com")
+        workspace = STORE.create_workspace(user.id, "Historical owner")
+        model = STORE.create_user_model(
+            owner_user_id=user.id, owner_workspace_id=workspace.id,
+            name=f"Segregation {kind}", slug=f"segregation-{kind}", kind=kind,
+            endpoint_url="https://owner.example/v1",
+            prompt_price_microdollars_per_million_tokens=prompt_price,
+            completion_price_microdollars_per_million_tokens=prompt_price,
         )
-        assert response.status_code == 201, response.text
-        models.append(response.json()["data"])
+        models.append(asdict(model))
     return models
 
 
@@ -135,23 +132,16 @@ def test_user_models_are_absent_from_every_frozen_catalog_surface(
     assert model_ids.isdisjoint(candidate_ids)
 
 
-def test_user_models_exist_only_in_dedicated_api_and_direct_detail_pages(
+def test_retired_models_have_no_dedicated_api_or_detail_pages(
     client: TestClient,
     segregated_models: list[dict[str, Any]],
 ) -> None:
     model_ids = {model["id"] for model in segregated_models}
     dedicated = client.get("/v1/models/user-provided")
-    assert dedicated.status_code == 200, dedicated.text
-    assert {model["id"] for model in dedicated.json()["data"]} == model_ids
-
+    assert dedicated.status_code == 404
     for model_id in model_ids:
-        api_detail = client.get(f"/v1/models/user-provided/{model_id}")
-        assert api_detail.status_code == 200, api_detail.text
-        assert api_detail.json()["data"]["id"] == model_id
-        html_detail = client.get(f"/models/{model_id}")
-        assert html_detail.status_code == 200, html_detail.text
-        assert "operated by a community member, not TrustedRouter" in html_detail.text
-        assert 'meta name="robots" content="noindex"' in html_detail.text
+        assert client.get(f"/v1/models/user-provided/{model_id}").status_code == 404
+        assert client.get(f"/models/{model_id}").status_code == 404
 
 
 def test_catalog_surfaces_make_no_outbound_fetches_in_test_mode(

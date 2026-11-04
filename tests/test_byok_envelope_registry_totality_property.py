@@ -1331,7 +1331,6 @@ def test_the_sealing_oracle_is_read_off_byok_crypto() -> None:
     assert SEALING_FUNCTIONS == {
         "encrypt_byok_secret": NAMESPACE_PROVIDER,
         "encrypt_control_secret": NAMESPACE_CONTROL,
-        "encrypt_user_model_secret": NAMESPACE_USER_MODEL,
     }, (
         "the namespace each encrypt_* function seals with has changed: "
         f"{SEALING_FUNCTIONS}. That is an AAD-format change, not a refactor."

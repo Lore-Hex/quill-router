@@ -535,7 +535,7 @@ ENV_VARS=(
   # section always worked; this is the switch that lets the gateway AUTHORIZE
   # and route to one. Off again = the gateway 404s user-model ids; in-flight
   # holds still settle, because settle does not read this flag.
-  "TR_USER_MODELS_DISPATCH_ENABLED=true"
+  "TR_USER_MODELS_DISPATCH_ENABLED=false"
   "TR_VERIFF_BASE_URL=https://stationapi.veriff.com"
   "TR_TELNYX_FROM_NUMBER=+17869471547"
   "TR_TELNYX_TEXML_ACCOUNT_ID=1eea716a-02e0-4d4f-96fa-36d1f556edca"

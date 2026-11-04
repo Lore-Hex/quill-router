@@ -68,7 +68,7 @@ from trusted_router.routes.compat import (
 )
 from trusted_router.routes.console import register_console_routes
 from trusted_router.routes.credit_transfers import register_credit_transfer_routes
-from trusted_router.routes.custom_models import register_custom_model_routes
+from trusted_router.routes.earnings import register_earnings_routes
 from trusted_router.routes.email_verify import register_email_verify_routes
 from trusted_router.routes.identity_verify import register_identity_verify_routes
 from trusted_router.routes.inference import register_inference_routes
@@ -96,8 +96,6 @@ from trusted_router.routes.public import register_public_action_routes, register
 from trusted_router.routes.ses_notifications import register_ses_notification_routes
 from trusted_router.routes.settlements import register_settlement_routes
 from trusted_router.routes.signup import register_signup_routes
-from trusted_router.routes.user_models import register_user_model_routes
-from trusted_router.routes.user_models_public import register_user_model_public_routes
 from trusted_router.routes.verification_status import register_verification_status_routes
 from trusted_router.routes.wallet_oauth import register_wallet_oauth_routes
 from trusted_router.routes.workspaces import register_workspace_routes
@@ -899,22 +897,13 @@ def _make_api_router(settings: Settings, surface: str) -> APIRouter:
     if surface in {"combined", "public"}:
         register_notify_public_routes(router)
 
-    if surface in {"combined", "public"}:
-        # Regional observer deployments use Postgres, whose deliberately
-        # narrow observer projection does not implement the cross-tenant
-        # published-model listing. Keep these anonymous Store-backed reads on
-        # the dedicated public surface instead of turning observer traffic
-        # into 500s (or widening the observer database role).
-        register_user_model_public_routes(router)
-
     if surface in {"combined", "control"}:
         register_authenticated_catalog_routes(router)
         register_auth_routes(router)
         register_byok_routes(router)
         register_billing_routes(router)
+        register_earnings_routes(router)
         register_broadcast_routes(router)
-        register_custom_model_routes(router)
-        register_user_model_routes(router)
         register_key_routes(router)
         register_oauth_app_routes(router)
         register_oauth_authorized_app_routes(router)

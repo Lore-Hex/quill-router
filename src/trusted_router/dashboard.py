@@ -1558,22 +1558,6 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             "fallbacks to return one OpenAI-compatible answer."
         ),
     ),
-    "docs/user-models": PublicPage(
-        template="public/user_models_docs.html",
-        title="User-Provided Models: Post Your Machine, Agent, Or Yourself",
-        description=(
-            "List your own HTTPS endpoint on TrustedRouter as a priced model — a machine, "
-            "an agent, or a person answering by hand — and keep 70% in credits."
-        ),
-    ),
-    "docs/custom-models": PublicPage(
-        template="public/custom_models_docs.html",
-        title="Custom Models: Hidden Prompts And Creator Markup",
-        description=(
-            "Publish a TrustedRouter catalog model with a hidden prompt, a stable "
-            "creator namespace, and an optional markup whose creator keeps 70%."
-        ),
-    ),
     "docs/x402": PublicPage(
         template="public/x402.html",
         title="x402 Stablecoin Funding For Agents",
@@ -1659,7 +1643,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             (
                 "What can we offer today?",
                 "Objective routing (price/throughput/latency with fallbacks), "
-                "privacy-tier routing (zdr/e2e/eu), composite and custom models, "
+                "privacy-tier routing (zdr/e2e/eu), composite models, "
                 "prepaid metering with per-key budgets, BYOK, and multi-region "
                 "attested gateways on two clouds. Self-hosted TrustedOS, marketplace "
                 "payouts, and per-model kernels (private beta) extend the platform "
