@@ -4400,5 +4400,5 @@ def test_rollout_negotiation_regions_are_literal_and_configured(tmp_path, monkey
     assert run.returncode == 0, summarise(run)
     deploy = next(call for call in run.calls if call[3:5] == ['run', 'deploy'])
     rendered = _cloud_run_job_env(deploy)
-    assert rendered['TR_ASYNC_SETTLE_NEGOTIATION_REGIONS'] == 'us-central1,us-west1'
+    assert rendered['TR_ASYNC_SETTLE_NEGOTIATION_REGIONS'] == 'us-central1,us-west1,us-east4'
     assert set(rendered['TR_ASYNC_SETTLE_NEGOTIATION_REGIONS'].split(',')) <= set(rendered['TR_REGIONS'].split(','))
