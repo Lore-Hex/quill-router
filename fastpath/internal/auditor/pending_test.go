@@ -93,7 +93,9 @@ func leaseRecords(t *testing.T, db *spanner.Client, auth string) map[string]stor
 // and a refund, has its outcomes published by the first sweep, which then
 // waits for the settle's staged record; once it is staged, the next sweep
 // writes the settle's generation and activity records and the refund's
-// disposition record, marks the pack done, and drops the staged record.
+// disposition record, marks the pack done, and drops the staged record. A
+// record staged again stays while its lease is open, and goes at the first
+// drop of retired leases' records once the lease has retired.
 func TestAPacksWorkIsDoneOnceItsFullRecordIsStaged(t *testing.T) {
 	if emulator == nil {
 		t.Skip(skipped)
@@ -123,8 +125,9 @@ func TestAPacksWorkIsDoneOnceItsFullRecordIsStaged(t *testing.T) {
 	round(rt)
 	topic := &fakeTopic{}
 	var alerts []string
+	clock := start
 	p, err := NewPending(PendingConfig{Store: f.s, Records: topic, Every: time.Hour, Limit: 1, Wait: time.Second,
-		Alert: func(auth, what string) { alerts = append(alerts, what) }})
+		Alert: func(auth, what string) { alerts = append(alerts, what) }, Clock: func() time.Time { return clock }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,6 +238,8 @@ func TestAPacksWorkIsDoneOnceItsFullRecordIsStaged(t *testing.T) {
 		}
 		return ok
 	}
+	// A sweep that drops retired leases' records, DropEvery past the last.
+	clock = clock.Add(DefaultDropEvery)
 	if p.sweep(ctx); !staged() {
 		t.Fatal("a record staged again went while its lease was open")
 	}
@@ -249,6 +254,13 @@ func TestAPacksWorkIsDoneOnceItsFullRecordIsStaged(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// The next sweep, before DropEvery has passed, drops nothing; the one
+	// at DropEvery drops it.
+	clock = clock.Add(DefaultDropEvery - time.Second)
+	if p.sweep(ctx); !staged() {
+		t.Fatal("a record staged again went before DropEvery had passed since the last drop")
+	}
+	clock = clock.Add(time.Second)
 	if p.sweep(ctx); staged() {
 		t.Fatal("a record staged again stayed once its lease retired")
 	}
@@ -677,6 +689,82 @@ func TestTheSweepDropsWhatRetiredLeasesStaged(t *testing.T) {
 	}
 }
 
+// droppings is a pending store with no pack pending, which counts the
+// sweeps' reads of retired leases' staged records.
+type droppings struct {
+	PendingStore
+	retired int
+	fail    bool
+}
+
+func (d *droppings) PendingPacks(context.Context, store.PendingPack, int) ([]store.PendingPack, error) {
+	return nil, nil
+}
+
+func (d *droppings) RetiredStaged(context.Context, int) ([]store.StagedKey, error) {
+	d.retired++
+	if d.fail {
+		return nil, errors.New("the scan failed")
+	}
+	return nil, nil
+}
+
+func (d *droppings) DropStaged(context.Context, ...store.StagedKey) error { return nil }
+
+// TestTheSweepDropsRetiredRecordsEveryDropEvery: the first sweep drops
+// what retired leases staged, and a later one only once DropEvery, a
+// minute by default, has passed by the sweep's clock since the last drop
+// began, though that drop failed; a clock that went back drops at once.
+func TestTheSweepDropsRetiredRecordsEveryDropEvery(t *testing.T) {
+	ctx := context.Background()
+	if DefaultDropEvery != time.Minute {
+		t.Fatalf("the default drop interval %v, want a minute", DefaultDropEvery)
+	}
+	for _, every := range []time.Duration{0, 10 * time.Second} {
+		want := every
+		if want == 0 {
+			want = DefaultDropEvery
+		}
+		clock := start
+		d := &droppings{}
+		p, err := NewPending(PendingConfig{Store: d, Records: &fakeTopic{}, Every: time.Second, Limit: 1,
+			Wait: time.Second, Alert: func(string, string) {}, Clock: func() time.Time { return clock },
+			DropEvery: every})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, step := range []struct {
+			at    time.Duration
+			drops int
+			fail  bool
+		}{
+			{0, 1, false},
+			{time.Second, 1, false},
+			{want / 2, 1, false},
+			{want - time.Nanosecond, 1, false},
+			{want, 2, true}, // the drop fails
+			{want + time.Second, 2, false},
+			{2*want - time.Nanosecond, 2, false},
+			{2 * want, 3, false},
+			{5 * want, 4, false},
+			{5*want + time.Second, 4, false},
+			{want, 5, false}, // the clock went back
+			{want + time.Second, 5, false},
+		} {
+			clock = start.Add(step.at)
+			d.fail = step.fail
+			p.sweep(ctx)
+			if d.retired != step.drops {
+				t.Fatalf("every %v: at %v, %d drops, want %d", every, step.at, d.retired, step.drops)
+			}
+		}
+	}
+	if _, err := NewPending(PendingConfig{Store: &droppings{}, Records: &fakeTopic{}, Every: time.Second, Limit: 1,
+		Wait: time.Second, Alert: func(string, string) {}, DropEvery: -time.Second}); err == nil {
+		t.Fatal("a negative drop interval is taken")
+	}
+}
+
 // TestTheStagerStagesFullRecords: a full record is staged under its
 // authorization and digest with its lease, and acknowledged; an outcome is
 // acknowledged and not staged; a message no retry stages is told and
@@ -933,9 +1021,10 @@ func TestAPackIsFirstSeenWhenItsPageIsRead(t *testing.T) {
 	f := pendingFixture(t, 2)
 	ctx := context.Background()
 	// The clock as the sweeps read it: the first sweep's first page at
-	// start, its second eleven minutes later (and its empty last page);
-	// the second sweep a second after that.
-	reads := []time.Duration{0, 11 * time.Minute, 11 * time.Minute}
+	// start, its second eleven minutes later (and its empty last page, and
+	// its look at when it last dropped retired leases' records); the
+	// second sweep a second after that.
+	reads := []time.Duration{0, 11 * time.Minute, 11 * time.Minute, 11 * time.Minute}
 	calls := 0
 	clock := func() time.Time {
 		calls++
@@ -951,7 +1040,7 @@ func TestAPackIsFirstSeenWhenItsPageIsRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	p.sweep(ctx)
-	if calls != 3 || len(alerts) != 0 {
+	if calls != 4 || len(alerts) != 0 {
 		t.Fatalf("the first sweep read the clock %d times and told %v", calls, alerts)
 	}
 	p.sweep(ctx)
