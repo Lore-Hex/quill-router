@@ -57,11 +57,11 @@ locals {
   # TR_FASTPATH_EDGE_STREAMS=true in scripts/deploy/rollout.sh, #2252):
   # the edge decides eligible streams for the workspaces whose decide rows
   # are on.
-  # 18f991f73: answers every front door call within the control plane's
-  # budget (1.2 s, waits that fit it, budget cuts kept out of the
-  # evidence), refuses flag-shaped ids in fastpathctl and adds decide
-  # delete (#2275).
-  fastpath_release        = "18f991f730d1720c5690fcdb451658a307d73339"
+  # 328a3651c: the auditor's pending sweep reads a pack's staged records
+  # in one call and works up to eight leases' packs at once, each lease's
+  # in order (#2298); at 1,000 a second the packs took about 25 minutes to
+  # clear one at a time.
+  fastpath_release        = "328a3651cbbc26315ddfc6566a45d348febd7df7"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
