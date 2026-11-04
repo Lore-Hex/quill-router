@@ -73,6 +73,15 @@ MUTATIONS = [
      '                            if cache.health is not None or cache.health_read_at == float("-inf"):\n'
      '                                cache.health, cache.health_read_at = health, started',
      'test_shared_health_failure_and_read_ahead_recovery[full]'),
+    ('read-ahead-keeps-out-unhealthy-records', REFRESH,
+     '                health = observe_health(cache.health_read(), now=clock(), wall=cache.wall_clock())\n',
+     '                health = observe_health(cache.health_read(), now=clock(), wall=cache.wall_clock())\n'
+     '                health = health if health is not None and health.p95_age_seconds <= 5 else None\n',
+     'test_unhealthy_read_ahead_record_closes_cached_only_admission'),
+    ('eligible-ignores-drain-p95', ADMISSION,
+     '                and 0 <= health.p95_age_seconds <= 5\n',
+     '                and 0 <= health.p95_age_seconds\n',
+     'test_unhealthy_read_ahead_record_closes_cached_only_admission'),
 ]
 
 
