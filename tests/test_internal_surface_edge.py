@@ -4,6 +4,7 @@ import base64
 import json
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -16,28 +17,37 @@ from .deploy_script_harness import (
 SCRIPT = "scripts/deploy/internal_surface_edge.sh"
 
 
-def _resolve_backend(url_map: dict[str, object], host: str, path: str) -> str:
+def _active_backend(rule: dict[str, Any]) -> str:
+    if "service" in rule:
+        return str(rule["service"])
+    active = [entry["backendService"] for entry in
+              rule["routeAction"]["weightedBackendServices"] if entry["weight"] > 0]
+    assert len(active) == 1, "deterministic helper requires a 0/100 route"
+    return str(active[0])
+
+
+def _resolve_backend(url_map: dict[str, Any], host: str, path: str) -> str:
     host_rule = next(
         rule
-        for rule in url_map["hostRules"]  # type: ignore[index]
-        if host in rule["hosts"]  # type: ignore[index]
+        for rule in url_map["hostRules"]
+        if host in rule["hosts"]
     )
     matcher = next(
         item
-        for item in url_map["pathMatchers"]  # type: ignore[index]
-        if item["name"] == host_rule["pathMatcher"]  # type: ignore[index]
+        for item in url_map["pathMatchers"]
+        if item["name"] == host_rule["pathMatcher"]
     )
     matches: list[tuple[int, int, str]] = []
-    for rule in matcher["pathRules"]:  # type: ignore[index]
+    for rule in matcher["pathRules"]:
         for pattern in rule["paths"]:
             if pattern.endswith("/*"):
                 prefix = pattern[:-1]
                 if path.startswith(prefix):
-                    matches.append((len(prefix), 0, rule["service"]))
+                    matches.append((len(prefix), 0, _active_backend(rule)))
             elif path == pattern:
-                matches.append((len(pattern), 1, rule["service"]))
+                matches.append((len(pattern), 1, _active_backend(rule)))
     if not matches:
-        return str(matcher["defaultService"])  # type: ignore[index]
+        return str(matcher["defaultService"])
     return max(matches) [2]
 
 
@@ -154,7 +164,7 @@ def test_cutover_keeps_public_and_control_backend_assignments_unchanged(
         if item["name"] == "trusted-router-service-surfaces"
     )
     services = {
-        path: rule["service"].rsplit("/", 1)[-1]
+        path: _active_backend(rule).rsplit("/", 1)[-1]
         for rule in matcher["pathRules"]
         for path in rule["paths"]
     }

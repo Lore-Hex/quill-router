@@ -4,11 +4,13 @@ import importlib.util
 import re
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
 from tests.route_inventory import effective_route_objects, route_paths
+from tests.test_internal_surface_edge import _active_backend
 from trusted_router.config import SERVICE_SURFACE_SECRET_OWNERS, Settings
 from trusted_router.main import create_app
 
@@ -41,7 +43,7 @@ PUBLIC_BACKEND = "public-backend"
 LEGACY_BACKEND = "legacy-backend"
 
 
-def _emitted_map() -> dict[str, object]:
+def _emitted_map() -> dict[str, Any]:
     return URL_MAP.rewrite_url_map(
         {"name": "trusted-router-control-map", "defaultService": LEGACY_BACKEND},
         PUBLIC_BACKEND,
@@ -52,7 +54,7 @@ def _emitted_map() -> dict[str, object]:
     )
 
 
-def _emitted_backend(url_map: dict[str, object], path: str) -> str:
+def _emitted_backend(url_map: dict[str, Any], path: str) -> str:
     """Select a pathRule using Google URL-map matching, not the simulator."""
     matchers = url_map["pathMatchers"]
     assert isinstance(matchers, list)
@@ -64,7 +66,7 @@ def _emitted_backend(url_map: dict[str, object], path: str) -> str:
     exact: list[tuple[int, str]] = []
     wildcard: list[tuple[int, str]] = []
     for rule in matcher["pathRules"]:
-        service = rule["service"]
+        service = _active_backend(rule)
         for pattern in rule["paths"]:
             if pattern.endswith("/*"):
                 prefix = pattern.removesuffix("/*")
@@ -408,7 +410,7 @@ def test_every_emitted_nonpublic_wildcard_has_an_exact_bare_twin() -> None:
         if item["name"] == "trusted-router-service-surfaces"
     )
     owners = {
-        pattern: rule["service"]
+        pattern: _active_backend(rule)
         for rule in matcher["pathRules"]
         for pattern in rule["paths"]
     }
@@ -573,7 +575,7 @@ def test_rewrite_preserves_explicit_unrelated_hosts_but_defaults_unknown_to_publ
         item for item in result["pathMatchers"] if item["name"] == "trusted-router-service-surfaces"
     )
     assert matcher["defaultService"] == "public-backend"
-    assert {rule["service"] for rule in matcher["pathRules"]} == {
+    assert {_active_backend(rule) for rule in matcher["pathRules"]} == {
         "public-backend",
         "actions-backend",
         "control-backend",
@@ -599,7 +601,7 @@ def test_one_service_cutover_keeps_every_nonpublic_pattern_on_legacy() -> None:
         for item in result["pathMatchers"]
         if item["name"] == "trusted-router-service-surfaces"
     )
-    rule_by_paths = {tuple(rule["paths"]): rule["service"] for rule in matcher["pathRules"]}
+    rule_by_paths = {tuple(rule["paths"]): _active_backend(rule) for rule in matcher["pathRules"]}
     for patterns in (
         URL_MAP.ACTIONS_PATH_PATTERNS,
         URL_MAP.CONTROL_PATH_PATTERNS,
@@ -678,3 +680,21 @@ def test_rewrite_refuses_reserved_matcher_owned_by_unrelated_host() -> None:
             "internal-backend",
             ["trustedrouter.com", "allyrouter.com", "uptimerouter.com"],
         )
+
+
+@pytest.mark.parametrize("prefix", ["", "/v1"])
+def test_terminal_methods_and_regional_disposition_routing(prefix: str) -> None:
+    app = create_app(Settings(environment="test", service_surface="combined"),
+                     configure_store_arg=False, init_observability=False)
+    methods = {route.path: route.methods for route in _routes_of(app) if hasattr(route, "methods")}
+    for terminal in ("settle", "heartbeat", "refund"):
+        path = f"{prefix}/internal/gateway/{terminal}"
+        assert methods[path] == {"POST"}
+        assert _emitted_backend(_emitted_map(), path) == LEGACY_BACKEND
+    disposition = f"{prefix}/internal/gateway/authorizations/{{authorization_id}}/disposition"
+    assert methods[disposition] == {"GET"}
+    # Disposition deliberately remains regional: the lookup and drains
+    # retain their existing routing too.
+    for path in (disposition, f"{prefix}/internal/gateway/authorizations/by-gateway-request-id/id",
+                 f"{prefix}/internal/gateway/settle-outbox/drain"):
+        assert _emitted_backend(_emitted_map(), _concrete(path)) == LEGACY_BACKEND

@@ -134,8 +134,13 @@ them. To change a rule:
 If a policy change merges before an owner applies it, the post-merge apply
 fails on the permission check. Apply it as an owner, then rerun the workflow.
 
-The backend services are not managed here; the deploy scripts in
-`scripts/deploy/` own them and their policy attachments. The `check` blocks at
+The original control/public/internal backend services are not managed here;
+the deploy scripts in `scripts/deploy/` own them and their policy attachments.
+The fast-path edge and direct us-central1 terminal backend are Terraform
+resources and attach `trusted-router-legacy-edge` directly. The terminal
+backend also installs the control backend's trusted client-IP overwrite; its
+fixed single-NEG membership must not be passed to rollout.sh's regional
+reconciler. See [terminal routing](../docs/runbooks/control-terminals-us-central1.md). The `check` blocks at
 the end of `cloud_armor.tf` read each backend on every plan and print
 "Check block assertion failed" when a backend no longer uses its policy. Read
 plan warnings, not only the summary line.
