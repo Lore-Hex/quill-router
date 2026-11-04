@@ -301,6 +301,6 @@ ceiling:
 | Its scan for retired leases' staged records, at the first sweep and then once a minute | the staging tag | once a minute | 0.06/s |
 | Sessions kept up | | now and then | 0.5/s |
 
-About 6.5 small calls a second a node, each a point read, a keyed write or
+About 6 small calls a second a node, each a point read, a keyed write or
 a scan of an index of the service's own, empty until a workspace is
-enabled; P0's two nodes, about 13 a second. That is P0's baseline load.
+enabled; P0's two nodes, about 12 a second. That is P0's baseline load.
