@@ -22,7 +22,9 @@ cause. The new manifest row therefore retains `provider-canary-failed`: Credits
 is disabled pending a successful normal canary. This discovery-only row does
 not itself publish a BYOK route or prove customer entitlement. All pre-existing
 manifest rows and operator holds remain unchanged. This is a scoped addition,
-not a full provider refresh. Routine Tencent discovery canaries require the
+not a full provider refresh. The original provider-wide `generated_at` remains
+unchanged so this addition does not extend other routes' freshness deadlines.
+Routine Tencent discovery canaries require the
 same nonnegative integer prompt/completion/total usage accounting as this
 canary, in addition to the existing PONG check; they cannot activate the route
 with a weaker acceptance check.
