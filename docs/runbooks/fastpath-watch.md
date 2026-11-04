@@ -298,7 +298,7 @@ ceiling:
 | The ticker's scan for leases past their expiry | `fastpath-scan-expired` | 1/s | 1.5/s |
 | The ticker's scan for leases draining | `fastpath-scan-draining` | 1/s | 1.5/s |
 | The pending work's sweep | `fastpath-pending-packs` | 0.2/s | 0.3/s |
-| Its staged records' scan | the staging tag | 0.2/s | 0.3/s |
+| Its scan for retired leases' staged records, at the first sweep and then once a minute | the staging tag | once a minute | 0.06/s |
 | Sessions kept up | | now and then | 0.5/s |
 
 About 6.5 small calls a second a node, each a point read, a keyed write or
