@@ -202,4 +202,7 @@ def test_public_policy_explains_standard_privacy_and_scoped_eu_claim(client):
     assert response.status_code == 200
     for text in ("Negbeta", "Standard", "future disk-backed", "180 days", "Cloudflare", "European Union"):
         assert text in response.text
+    for url in ("/static/provider-logos/negbeta.png", "/static/og/providers/negbeta.png",
+                "https://negbeta.com/", "https://inference.negbeta.com/docs"):
+        assert url in response.text
     assert "private@example.test" not in response.text

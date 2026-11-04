@@ -42,6 +42,10 @@ Sources reviewed November 4, 2026:
 - https://negbeta.com/inference/data-policy/
 - https://negbeta.com/inference/privacy/
 
+The local provider logo is a PNG rendering of Negbeta's official
+`https://negbeta.com/favicon.svg`, retrieved November 4, 2026. The social card
+uses the existing provider renderer and reports zero active routes while held.
+
 ## Release Gate
 
 The account owner authorized ongoing production traffic on November 4, 2026.

@@ -120,6 +120,9 @@ def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict
         return {"data": [{"id": "dealignai/deepseek-v4.1-flash-1017-uncensored-fp8"}]}
     if "inference.muna.ai" in url:
         return {"data": [{"id": "qwen/qwen-3.8-27b"}, {"id": "google/gemma-4-26b-a4b-it"}]}
+    if url == "https://inference.negbeta.com/v1/models":
+        assert _env_names == ("NEGBETA_API_KEY",)
+        return {"data": [{"id": "qwen/qwen3.8-27b"}, {"id": "deepseek/deepseek-v4.1-flash-1017"}]}
     if "inference.coralbricks.ai" in url:
         return {"data": [{"id": "deepseek-v4.1-flash-fast"}]}
     if "api.inference.boundless.network" in url or "zro.moonmath.ai" in url:
@@ -1081,6 +1084,7 @@ def test_model_discovery_reports_match_when_docs_models_are_published(
     assert warnings == []
     assert "zai: model discovery matched catalog (2 docs model(s)) ✓" in info
     assert any(item.startswith("minimax: model discovery matched catalog") for item in info)
+    assert any(item.startswith("negbeta: model discovery matched catalog") for item in info)
 
 
 def test_provider_model_discovery_warns_on_unpublished_manifest_model() -> None:

@@ -103,6 +103,16 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     "lyceum": ProviderBrand("https://lyceum.technology/"),
     "hixtube": ProviderBrand("https://hixtube.com/"),
     "greenference": ProviderBrand("https://greenference.com/"),
+    "negbeta": ProviderBrand(
+        "https://negbeta.com/",
+        description=(
+            "OpenAI-compatible inference on Negbeta's own serving stack. "
+            "TrustedRouter's managed key has a provider-declared EU scope."
+        ),
+        resources=(("API documentation", "https://inference.negbeta.com/docs"),
+                   ("Data handling", "https://negbeta.com/inference/data-policy/"),
+                   ("Privacy policy", "https://negbeta.com/inference/privacy/")),
+    ),
     "muna": ProviderBrand(
         "https://muna.ai/",
         description="Open-weight chat, vision and reasoning models served on Muna's own inference stack.",
