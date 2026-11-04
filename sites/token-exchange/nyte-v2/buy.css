@@ -5,8 +5,8 @@
 .buy-contract{border-block:1px solid var(--rule);padding:16px 0;margin-bottom:24px}.buy-contract summary{cursor:pointer;color:var(--t1)}.buy-contract dt{color:var(--t1);margin-top:16px}.buy-contract dd{margin:4px 0 0}
 .buy-fine{font-size:15px;line-height:1.6;color:var(--t3)}
 .buy-workspace{min-width:0;border:1px solid var(--rule);border-radius:8px;background:var(--panel);padding:28px}
-.buy-steps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));list-style:none;margin:0;padding:0 0 26px;gap:10px;border-bottom:1px solid var(--rule);font-size:12px;color:var(--t3)}
-.buy-steps span{display:block;width:28px;height:28px;line-height:26px;border:1px solid var(--control);border-radius:50%;text-align:center;margin-bottom:8px;font-family:var(--mono)}
+.buy-steps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));list-style:none;margin:0;padding:0 0 26px;gap:10px;border-bottom:1px solid var(--rule);font-size:12px;color:var(--t3);text-align:center}
+.buy-steps span{display:block;width:28px;height:28px;line-height:26px;border:1px solid var(--control);border-radius:50%;text-align:center;margin:0 auto 8px;font-family:var(--mono)}
 .buy-steps [aria-current]{color:var(--mint);font-weight:600}.buy-steps [aria-current] span{background:var(--mint);color:var(--ink)}
 .buy-step{padding:28px 0 0}.buy-step h2{font-size:clamp(28px,2.5vw,36px);margin:0 0 16px;scroll-margin-top:100px}.buy-step>p{color:var(--t2);font-size:15px}
 .buy-step fieldset{min-width:0;margin:24px 0 0;padding:0;border:0}.buy-step legend{font-size:14px;font-weight:600;margin-bottom:12px}.buy-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.buy-grid>.buy-field{margin:0}
@@ -17,7 +17,7 @@
 .buy-total{padding:16px;margin-top:24px;border:1px solid var(--rule);border-radius:4px;background:var(--bg-alt);overflow-wrap:anywhere}.buy-actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:26px}.buy-actions .btn{white-space:normal;text-align:center;padding:12px 18px}.buy-fallback{border-top:1px solid var(--rule);margin-top:28px;padding-top:20px;font-size:14px;color:var(--t2)}.buy-fallback a{display:block;margin-top:4px}
 #buy-calendar iframe{width:100%;height:740px;border:0;margin-top:24px;background:white;border-radius:4px}
 @media(max-width:1000px){.buy-layout{gap:32px;padding-top:36px;grid-template-columns:1fr}.buy-workspace{order:-1;padding:22px}.buy-grid{grid-template-columns:1fr}}
-@media(max-width:700px){.buy-layout{grid-template-columns:1fr;gap:48px;padding-top:16px}.buy-brand{padding:12px 0}.buy-brand h1{font-size:40px;margin:16px 0}.buy-brand .lede{font-size:17px}.buy-notes{margin:20px 0}.buy-notes h2{margin-top:24px}.buy-workspace{padding:22px 20px}.buy-steps{gap:6px;font-size:12px}.buy-step h2{font-size:29px}}
+@media(max-width:700px){.buy-layout{grid-template-columns:1fr;gap:48px;padding-top:16px;padding-bottom:48px}.buy-brand{padding:12px 0}.buy-brand h1{font-size:40px;margin:16px 0}.buy-brand .lede{font-size:17px}.buy-notes{margin:20px 0}.buy-notes h2{margin-top:24px}.buy-workspace{padding:22px 20px}.buy-steps{gap:6px;padding-bottom:18px;font-size:12px}.buy-step{padding-top:20px}.buy-actions .btn{flex:1}.buy-step h2{font-size:29px}}
 
 .buy-unit-list{list-style:none;margin:0;padding:0}.buy-unit-list li+li{margin-top:4px}.buy-unit-list label{display:flex;align-items:baseline;gap:10px;padding:10px 0;cursor:pointer;font-size:16px;line-height:1.6}.buy-seller{margin-top:24px}.buy-unit-list input{flex:none;accent-color:var(--mint)}.buy-field small{display:block;color:var(--t3);margin-top:6px}
 
