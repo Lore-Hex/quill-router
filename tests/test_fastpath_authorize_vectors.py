@@ -126,6 +126,17 @@ def test_the_vectors_are_what_the_app_answers_now(tmp_path: Path) -> None:
         )
 
 
+def test_retired_creator_vectors_always_pass_to_python_for_rejection() -> None:
+    cases = [case for case in _cases() if ":retired:" in case["name"]
+             or case["expect"].get("reason") == "body.custom_model"]
+    assert len(cases) == 13
+    for case in cases:
+        expect = case["expect"]
+        assert expect["outcome"] == "pass", case["name"]
+        assert expect["python"]["status"] == 410, case["name"]
+        assert expect["python"]["type"] == "model_not_supported", case["name"]
+
+
 def test_the_header_carries_pythons_internal_and_estimated_usage_models() -> None:
     """Decisions 7 and 19: Go holds its hardcoded sets equal to these, so a
     catalog that gains an internal_only model, or a changed estimated-usage

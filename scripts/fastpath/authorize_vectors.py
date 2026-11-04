@@ -1405,10 +1405,11 @@ def cases() -> list[dict[str, Any]]:
     add("pass:body.canonical_model:fallback", "body.canonical_model",
         body={"model": GLM, "models": ["trustedrouter/auto-routing"]})
     add("pass:body.custom_model", "body.custom_model", body={"model": "tr-custom-model/e2-missing"})
-    for prefix in ("tr-user-model/", "trustedrouter/user-"):
+    for prefix in ("tr-custom-model/", "tr-user-model/", "trustedrouter/user-", "nyte/user-"):
         for field in ("model", "models"):
             retired = prefix + "e2-missing"
-            add(f"pass:body.custom_model:{prefix}:{field}", "body.custom_model",
+            reason = "body.canonical_model" if prefix == "nyte/user-" else "body.custom_model"
+            add(f"pass:{reason}:retired:{prefix}:{field}", reason,
                 body={field: retired if field == "model" else [retired]})
     for field in ("custom_model_id", "custom_model_revision", "user_provided_model_id", "user_provided_model_revision"):
         add(f"pass:body.custom_model:{field}", "body.custom_model",
