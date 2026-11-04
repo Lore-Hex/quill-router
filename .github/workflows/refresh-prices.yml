@@ -190,6 +190,7 @@ jobs:
                       GREENFERENCE_API_KEY:trustedrouter-greenference-api-key \
                       HIXTUBE_API_KEY:trustedrouter-hixtube-api-key \
                       MUNA_API_KEY:trustedrouter-muna-api-key \
+                      NEGBETA_API_KEY:trustedrouter-negbeta-api-key \
                       CORALBRICKS_API_KEY:trustedrouter-coralbricks-api-key \
                       BOUNDLESS_API_KEY:trustedrouter-boundless-api-key \
                       ZRO_API_KEY:trustedrouter-zro-api-key \
