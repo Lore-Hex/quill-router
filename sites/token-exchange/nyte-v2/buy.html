@@ -1,9 +1,8 @@
 <div class="buy-layout wrap">
   <aside class="buy-brand" aria-label="About reserved tokens">
-    <p><a href="/manage-reservation">Manage my reservation →</a></p>
     <p class="buy-kicker">New York Token Exchange</p>
     <h1>Reserve your next<br><em>billion tokens.</em></h1>
-    <p class="lede">Reserve index-grade tokens by card for 2027 delivery, or shape a reservation request to discuss with Joseph.</p>
+    <p class="lede">Reserve index-grade tokens by card for 2027 delivery, or request a custom reservation from our team.</p>
     <div class="buy-notes"><h2>For buyers</h2><p>Choose a capability grade or a model and your timing, or request lots from a planned facility with a targeted launch. A 15-minute call helps define the next step.</p>
     <h2>For providers</h2><p>Have inference capacity to offer? <a href="/suppliers">Explore supplying NYTE</a> or <a href="/providers">request the provider deck</a>.</p></div>
     <details class="buy-contract"><summary>What we’ll discuss</summary><dl>
@@ -21,18 +20,18 @@
     </ol>
     <p class="buy-fine" id="buy-facility-unit-note" hidden>Facility lots are 1B tokens each</p>
     <section class="buy-step" data-step="1" aria-labelledby="buy-title-1">
-      <p class="buy-kicker">Step 1 of 4</p><h2 id="buy-title-1" tabindex="-1">What are you buying?</h2>
+      <h2 id="buy-title-1" tabindex="-1">What are you buying?</h2>
       <p>Tell us how you’d like to plan your inference use.</p>
       <fieldset><legend>Reservation unit</legend><ul class="buy-unit-list">
         <li><label><input type="radio" name="unit" value="blocks" checked> <span>1 billion tokens (a block to draw on over a term)</span></label></li>
         <li><label><input type="radio" name="unit" value="throughput"> <span>300 tokens per second (a reserved rate)</span></label></li>
         <li><label><input type="radio" name="unit" value="unsure"> <span>Not sure yet</span></label></li>
       </ul></fieldset>
-      <p class="buy-seller">Selling capacity? See <a href="/suppliers">/suppliers</a> or <a href="/providers">/providers</a>, or explore the <a href="/neocloud-accelerator">neocloud accelerator</a>.</p>
       <div class="buy-actions" data-js hidden><button class="btn btn-primary" type="button" data-next>Continue to details →</button></div>
+      <p class="buy-seller">Selling capacity? <span><a href="/suppliers">Suppliers</a> · <a href="/providers">Providers</a> · <a href="/neocloud-accelerator">Accelerator</a></span></p>
     </section>
     <section class="buy-step" data-step="2" aria-labelledby="buy-title-2">
-      <p class="buy-kicker">Step 2 of 4</p><h2 id="buy-title-2" tabindex="-1">What is it written on?</h2>
+      <h2 id="buy-title-2" tabindex="-1">What is it written on?</h2>
       <p>Use an index grade as your reference, name the model you need, or choose a planned facility with a targeted launch.</p>
       <fieldset><legend>Underlying tokens</legend><div class="buy-tabs">
         <label><input type="radio" name="underlying" value="index" checked> NYTE Index grade</label>
@@ -75,7 +74,7 @@
       <div class="buy-actions" data-js hidden><button class="btn btn-secondary" type="button" data-back>Back</button><button class="btn btn-primary" type="button" data-next>Continue to contact →</button></div>
     </section>
     <section class="buy-step" data-step="3" aria-labelledby="buy-title-3">
-      <p class="buy-kicker">Step 3 of 4</p><h2 id="buy-title-3" tabindex="-1">How do we reach you?</h2>
+      <h2 id="buy-title-3" tabindex="-1">How do we reach you?</h2>
       <p>Add your details to prefill your booking, or continue and enter them in Calendly.</p>
       <fieldset><legend>Contact details</legend>
         <label class="buy-field" for="buy-name">Full name (optional)<input id="buy-name" type="text" autocomplete="name" maxlength="120"></label>
@@ -86,13 +85,13 @@
       <div class="buy-actions" data-js hidden><button class="btn btn-secondary" type="button" data-back>Back</button><button class="btn btn-primary" type="button" data-next>Continue to scheduling →</button></div>
     </section>
     <section class="buy-step" data-step="4" aria-labelledby="buy-title-4">
-      <p class="buy-kicker">Step 4 of 4</p><h2 id="buy-title-4" tabindex="-1">Book a call with Joseph.</h2>
+      <h2 id="buy-title-4" tabindex="-1">Book a call with our team.</h2>
       <p>Choose a time for a 15-minute conversation about your reservation request.</p>
       <p id="buy-summary" class="buy-total" hidden></p>
       <div id="buy-calendar"></div>
       <div class="buy-actions" data-js hidden><button class="btn btn-secondary" type="button" data-back>Back</button></div>
     </section>
-    <p class="buy-fallback">Prefer to book directly? <a id="buy-calendly-link" href="https://calendly.com/joseph-perla/15min?embed_domain=nytokenexchange.com&amp;embed_type=Inline&amp;hide_gdpr_banner=1" target="_blank" rel="noopener noreferrer">Open Calendly in a new tab →</a></p>
+    <div class="buy-fallback"><p>Prefer to book directly? <a id="buy-calendly-link" href="https://calendly.com/joseph-perla/15min?embed_domain=nytokenexchange.com&amp;embed_type=Inline&amp;hide_gdpr_banner=1" target="_blank" rel="noopener noreferrer">Open Calendly in a new tab →</a></p><p>Already reserved? <a href="/manage-reservation">Manage my reservation →</a></p></div>
     <noscript><p class="buy-fine">JavaScript is off. Review the options above, then use the Calendly link to book directly and discuss your request. These fields are not submitted.</p></noscript>
   </div>
 </div>
