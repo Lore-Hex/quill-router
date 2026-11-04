@@ -221,6 +221,56 @@ def test_health_failure_preserves_cached_evidence_until_expiry(admission_rig, in
     assert rig.read.call_count == 2
 
 
+@pytest.mark.parametrize('initial_reader', ['full', 'read_ahead'])
+def test_shared_health_failure_and_read_ahead_recovery(admission_rig, initial_reader):
+    rig = admission_rig
+    rig.clock.value = 0
+    rig.cache.wall_clock = lambda: 100 + rig.clock()
+    assert (rig.health.call_count, rig.read.call_count) == (0, 0)
+    if initial_reader == 'full':
+        assert rig.cache.eligible('workspace', 0)
+    else:
+        assert not rig.cache.eligible('workspace', 0, cached_only=True)
+        assert (rig.health.call_count, rig.read.call_count) == (0, 0)
+        rig.worker.refresh_once(now=0)
+    assert rig.cache.health == DrainHealth(0, 1)
+    assert rig.cache.health_read_at == 0
+    assert (rig.health.call_count, rig.read.call_count) == (1, 1)
+    assert rig.cache.eligible('workspace', 0, cached_only=True)
+    assert (rig.health.call_count, rig.read.call_count) == (1, 1)
+    # Finish before workspace read-ahead is due (3s) or evidence expires (5s).
+    workspace_evidence = rig.cache.entries['workspace']
+    assert workspace_evidence == (0, Admission(0, 2))
+
+    rig.clock.value = 2
+    rig.health.side_effect = RuntimeError('health unavailable')
+    assert not rig.cache.eligible('workspace', 0)
+    assert rig.cache.health is None
+    assert rig.cache.health_read_at == 2
+    assert (rig.health.call_count, rig.read.call_count) == (2, 1)
+    assert not rig.cache.eligible('workspace', 0, cached_only=True)
+    assert (rig.health.call_count, rig.read.call_count) == (2, 1)
+
+    rig.clock.value = 2.25
+    rig.worker.refresh_once(now=2.25)
+    assert (rig.health.call_count, rig.read.call_count) == (3, 1)
+    assert rig.cache.health is None
+    assert rig.cache.health_read_at == 2
+    assert not rig.cache.eligible('workspace', 0, cached_only=True)
+    assert (rig.health.call_count, rig.read.call_count) == (3, 1)
+
+    rig.clock.value = 2.75
+    rig.health.side_effect = None
+    rig.health.return_value = healthy(observed_at=102.75, worker_heartbeat=102.75)
+    rig.worker.refresh_once(now=2.75)
+    assert (rig.health.call_count, rig.read.call_count) == (4, 1)
+    assert rig.cache.health == DrainHealth(2.75, 1)
+    assert rig.cache.health_read_at == 2.75
+    assert rig.cache.eligible('workspace', 0, cached_only=True)
+    assert (rig.health.call_count, rig.read.call_count) == (4, 1)
+    assert rig.cache.entries['workspace'] is workspace_evidence
+
+
 def different_valid_payload(env, body):
     changed = copy.deepcopy(body)
     changed['raw_usage']['output_tokens'] = 12
