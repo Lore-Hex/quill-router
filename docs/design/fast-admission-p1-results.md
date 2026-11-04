@@ -345,6 +345,82 @@ measured (the mix's one to four is the runbook's assumption too), so the
 heartbeat load per request is not compared. The pilot leaves streams out
 (Joseph, 2026-10-16).
 
+## Runs 11 to 17: 128 to 1,000 a second (2026-11-03 and 04)
+
+The climb resumed on the synthetic workspace with what "Next" asked for:
+a generator on a machine of its own in the network (`tr-fastpath-loadgen`,
+e2-standard-8, `infra/fastpath.tf`), and a mix of smaller charges,
+`fastpath/testdata/load-mix-small.json`: the same mix with production's
+stream share (2.9%) and its estimates capped at 1,915 micro-credits, about
+26 micro-credits booked a generation, so a minute at 1,000 a second books
+about 1.6 USD. Release `18f991f73`. Runs 11 to 15 drove `tr-fastpath-9`
+and `tr-fastpath-10` (two cores each); runs 16 and 17 drove
+`tr-fastpath-11` and `tr-fastpath-12` (four cores), which replaced them.
+
+| run | nodes | rate, duration | started | admitted / busy | settles / refunds |
+|---|---|---|---|---|---|
+| 11 | 2 cores | 128/s, 30 s | 3,840 | 3,778 / 62 | 3,735 / 43 |
+| 12 | 2 cores | 256/s, 30 s | 7,680 | 7,677 / 3 | 7,580 / 97 |
+| 13 | 2 cores | 512/s, 30 s | 15,360 | 15,312 / 48 | 15,073 / 239 |
+| 14 | 2 cores | 1,000/s, 30 s | 30,000 | 29,942 / 58 | 29,483 / 459 |
+| 15 | 2 cores | 1,000/s, 2 min | 120,000 | 119,822 / 178 | 117,736 / 1,851 |
+| 16 | 4 cores | 1,000/s, 30 s | 30,000 | 28,925 / 1,075 | 28,482 / 443 |
+| 17 | 4 cores | 1,000/s, 5 min | 300,000 | 299,582 / 418 | 294,936 / 4,646 |
+
+| run | authorize admitted p50 / p99 / max | settle p50 / p99 | busiest node CPU, a minute | Spanner high-priority CPU, us-central1 |
+|---|---|---|---|---|
+| 11 | 2.17 / 4.28 / 14.9 ms | 24.4 / 236 ms | 15% | under 5% |
+| 12 | 2.18 / 6.59 / 18.9 ms | 24.1 / 124 ms | about 20% | under 5% |
+| 13 | 1.91 / 10.19 / 66.7 ms | 24.3 / 228 ms | 25% | 8.1% |
+| 14 | 2.17 / 39.11 / 111 ms | 26.6 / 377 ms | 35% | 8.6% |
+| 15 | 2.43 / 64.03 / 216 ms | 30.1 / 326 ms | 77% | 31.6% |
+| 16 | 1.80 / 11.40 / 209 ms | 24.4 / 175 ms | 13% | 3.0% |
+| 17 | 1.73 / 27.03 / 989 ms | 24.6 / 175 ms | 82% (the owner) | 33.5% |
+
+**The audits** found no problem and no fault usage after every run, and
+every admitted authorization was decided once: settles and refunds, with
+the few recorded attempts, sum to the admitted count in each run but 15,
+whose stop cancelled 234 streams and one settle in flight (235); their
+holds were left to the reap, as the audit's open reservation after it
+showed, 0.04 USD. Runs 11
+to 15 booked 4.53 USD of granted credit, run 16 0.74 and run 17 7.76; no
+run calls a provider. Run 16's busy answers are its cold start: the
+workspace had been turned off and had no open lease. Run 17's owner was
+`tr-fastpath-11` alone, since one workspace's leases sit on one owner; the
+front door on 12 ran at about half.
+
+**Run 15 stopped.** The watch stopped it 30 seconds after its last start,
+`auditor has 2936 messages undelivered, past 1000`, turned the workspace
+off and revoked its 15 open leases; 234 streams in flight were cancelled.
+The auditor was not behind: its subscription's acknowledgements kept pace
+with its deliveries (1,084 a second against 912 at the busiest minute),
+and its backlog was gone within two minutes. The undelivered count
+includes what a member holds unacknowledged, and the auditor acknowledges
+a record only once its batched commit, every second, has made it durable
+(§4.8). At 1,000 records a second the count sits at about 1,000 to 1,500
+by construction, so P1's ceiling of 1,000, sized for one to 128 a second,
+is about a second of traffic at this rate; `-max-oldest 2m`, the age of the
+oldest message, never fired. Runs 16 and 17 ran with `-max-undelivered
+20000` and the age ceiling unchanged. The same count, through the shared
+subscription, stopped the pilot's own watches (`fast-admission-pilot.md`)
+after runs 15 and 16, turning the pilot workspaces' fast path off, the safe
+way; their 25-minute window keeps a peak that long, so they are restarted
+only once it has passed, and a load run now stops them first and restarts
+them after.
+
+**Two cores to four.** On two cores the nodes reached 77% CPU at 1,000 a
+second and the authorize p99 64 ms; four cores held five minutes at that
+rate with the p99 at 27 ms, still past the 10 ms budget at the tail.
+
+**The pending packs** were the slow part of run 17: they grew about 300 a
+minute during it, peaked at 2,178 six minutes after it and took about 25
+minutes to clear, while every other figure had settled. A member worked its
+packs one at a time and read each winner's staged record with a call of its
+own, about 200 a pack at this rate. #2298 reads a pack's records at once and
+works up to eight leases' packs together; its effect on real Spanner is the
+next run's to measure. Credit is booked at the commit, so the packs delay
+the generation and activity records, not the balance.
+
 ## The release the nodes ran
 
 Each pin's nodes ran the release before it, until 2026-10-17. A reset
@@ -379,15 +455,7 @@ which reads the release from the process.
 
 ## Next
 
-The climb stops at 128 a second for now, for three reasons. A run's spend
-is heavy-tailed, as run 10's shows. The generator runs on `tr-fastpath-1`
-beside its front door and owner, so past this rate a run measures the
-generator too. And the workspace has about 62 USD of room: 200 funded,
-91.5 booked, 46.3 reserved by its open leases.
-
-The design's figure for a lease is about 1,000 generations a second
-(§6). A sustained run there needs a generator on its own machine in the
-network, and either more funding or a mix of smaller charges, with the
-spend ceiling raised to match. At this mix a minute at 1,000 a second
-books 250 to 400 USD: runs 7 to 9 averaged about 4,200 micro-credits a
-generation, run 10 about 6,600.
+A run at 1,000 a second for five minutes and more with #2298 on the nodes,
+to see the pending packs keep pace; then the authorize p99 past the budget,
+on one owner per workspace. Past one workspace the load spreads over
+leases and owners, which these runs, one workspace each, do not measure.

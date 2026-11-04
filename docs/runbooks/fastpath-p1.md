@@ -47,11 +47,24 @@ on `main`.
 
 ## Each run
 
-From a node, over IAP:
+From the load generator's machine (`tr-fastpath-loadgen`, which carries the
+pinned release's `loadgen`, `fastpathwatch` and `load-mix.json` and runs no
+node), over IAP; up to 128 a second a node does as well, since a generator
+beside its front door and owner measures itself too past that:
 
 ```bash
-gcloud compute ssh tr-fastpath-11 --zone=us-central1-a --project=quill-cloud-proxy --tunnel-through-iap
+gcloud compute ssh tr-fastpath-loadgen --zone=us-central1-c --project=quill-cloud-proxy --tunnel-through-iap
 ```
+
+Past 128 a second, use `fastpath/testdata/load-mix-small.json` (copied to the
+machine) so a run's spend stays small, and raise `-max-undelivered` with the
+rate: the auditor acknowledges only after each one-second commit, so its
+count runs at about a second of records by construction, and 1,000 stops a
+run at 1,000 a second that is not behind (`fast-admission-p1-results.md`,
+run 15). `-max-oldest` stays the backlog's guard. The pilot's watches read
+the same subscriptions with a ceiling of 1,000: stop them (SIGTERM, which
+leaves their workspaces as they are) before a run that will pass it, and
+start them again once their 25-minute window has passed its peak.
 
 with `DB=projects/quill-cloud-proxy/instances/trusted-router-nam6/databases/trusted-router`,
 `WS` the workspace's ID, `FUNDED` the `credits_total_microdollars` the
