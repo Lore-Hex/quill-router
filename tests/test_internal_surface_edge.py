@@ -56,9 +56,7 @@ def test_emitted_internal_cutover_map_uses_google_path_precedence(
     tmp_path: Path,
     enabled: bool,
 ) -> None:
-    harness = DeployScriptHarness(tmp_path / "internal-map")
-    (harness.mirror / "infra/control_terminal_backend.tf").write_text(
-        "locals {\n  terminal_c1_route_enabled = " + str(enabled).lower() + "\n}\n")
+    harness = DeployScriptHarness(tmp_path / "internal-map", terminal_route_enabled=enabled)
     state_dir = tmp_path / "state"
 
     run = harness.run(

@@ -1,7 +1,13 @@
 # Gateway terminal billing in us-central1
 
-Status: **on from this activation PR’s merge (2026-11-04 UTC)**
-(`terminal_c1_route_enabled = true`). Joseph approved
+Status: **enabled in source by #2293 (`26a76af0b`), live since the infra apply
+completed 2026-11-04 02:10:10Z** (`terminal_c1_route_enabled = true`).
+That apply (infra run `41758763722`) changed one resource, the URL map: 0
+added, 1 changed, 0 destroyed. The operator's URL map readback at 02:10Z,
+repeated at 07:20Z, showed one plain rule, with no route action, sending the
+six terminal paths to `trusted-router-control-terminal-c1-backend`. The
+authorize rule kept its route action, and the `/internal/*` wildcard rule still
+sends every other internal path to the regional control backend. Joseph approved
 routing the three POST operations (settle, heartbeat and refund), including
 their `/v1` aliases, to us-central1. Only those six exact URL paths move.
 The rule matches all HTTP methods at those paths; the application accepts POST.
@@ -53,7 +59,7 @@ The single switch is `terminal_c1_route_enabled = true` in
 true/false assignment; malformed, missing or duplicate assignments fail. There
 is no second default or environment override.
 
-This activation sets that line to `true`; **rollback sets it to `false`**. Both
+The activation set that line to `true`; **rollback sets it to `false`**. Both
 changes go through review and **infra-apply.yml on merge**. The committed-state
 test `test_terminal_route_switch_is_on` pins this approval; update that pin to
 false in the rollback change. Routing behavior tests exercise both states.
@@ -73,7 +79,8 @@ are outside this exact set. Authorize's separate route is preserved unchanged.
 
 `infra-apply.yml` validates Terraform on infra pull requests and plans/applies
 on main after merge. No local Terraform binary is installed; local
-fmt/validate/plan/apply and Google API acceptance are **UNVERIFIED**. Keep the
+fmt/validate/plan/apply are **UNVERIFIED**; the successful activation
+apply and operator readback above confirm API acceptance. Keep the
 workflow's existing gates. The public/internal/gateway edge scripts also use
 the renderer for their manual cutovers, reading the same boolean from their
 checkout. Do not run those broader surface cutovers solely to flip terminals,
@@ -90,6 +97,12 @@ merging the activation change. Observe successful terminal requests from all
 caller regions and rollback recovery through the reviewed workflow.
 
 ## Verify placement and latency
+
+Operator verification for 2026-11-04 02:12–03:12Z confirmed that every settle,
+heartbeat and refund was answered in us-central1, all with 2xx status.
+Enclave-observed `settle_ms` p50 in that hour, compared with 00:45–01:45Z,
+fell from 752 to 225 ms in europe-west4 and from 295 to 136 ms in us-east4;
+us-central1 and us-west1 were unchanged.
 
 Use bounded, identical before/after windows. Query Cloud Run request logs for
 the three POST operations and their aliases, grouped by resource.labels.location, method,
@@ -251,4 +264,6 @@ Require successful terminal samples in Iowa and end-to-end enclave probes from
 each caller region. Check sample counts as well as zero errors; observe rollback
 propagation and recovery before declaring success.
 
-Prepared terminal switch: **true (on from this activation PR’s merge)**.
+Terminal switch: **true**, enabled in source by **#2293 (`26a76af0b`)** and
+live from the infra apply completed **2026-11-04 02:10:10Z**, confirmed by the
+**02:10Z** URL map readback. **Rollback: set the switch to false.**

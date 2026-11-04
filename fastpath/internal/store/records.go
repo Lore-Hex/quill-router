@@ -63,6 +63,10 @@ func (s *Store) StageRecord(ctx context.Context, r StagedRecord) error {
 			[]string{"authorization_id", "record_digest", "workspace_id", "lease_id", "body", "message_id", "publish_time"},
 			[]any{r.AuthorizationID, r.Digest, r.Ref.Workspace, r.Ref.LeaseID, r.Body, r.MessageID, r.PublishTime})})
 	}, spanner.TransactionOptions{TransactionTag: stagingTag})
+	if errors.Is(err, ErrNoLease) {
+		// The row FindLease found has gone (FindLease).
+		s.found.forget(r.Ref.LeaseID)
+	}
 	return err
 }
 

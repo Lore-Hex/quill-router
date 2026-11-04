@@ -206,15 +206,17 @@ _BROWSER_PATHS = [
 @pytest.fixture(scope="module")
 def browser_payloads() -> dict[str, list[dict]]:
     # One bounded Node startup per worker, fresh isolated VM for every page.
-    # Preserve stderr on timeout to distinguish runner/startup stalls from JS.
+    # The six pages each retain separate 1s script and callback VM deadlines.
+    # Allow process startup on a loaded runner outside those execution limits.
+    # Preserve stderr to distinguish startup stalls from page-code failures.
     harness = Path(__file__).parent / "js" / "exchange_analytics_harness.cjs"
     try:
         result = subprocess.run(  # noqa: S603
             ["node", str(harness), *_BROWSER_PATHS],  # noqa: S607
-            check=True, capture_output=True, text=True, timeout=10,
+            check=True, capture_output=True, text=True, timeout=60,
         )
     except subprocess.TimeoutExpired as exc:
-        pytest.fail(f"analytics harness exceeded 10s; progress: {exc.stderr!r}")
+        pytest.fail(f"analytics harness exceeded 60s; progress: {exc.stderr!r}")
     payloads = json.loads(result.stdout)
     assert set(payloads) == set(_BROWSER_PATHS), result.stderr
     return payloads

@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 HANDLER = 'src/trusted_router/services/async_settle_handler.py'
 MEMORY = 'src/trusted_router/services/async_settle_memory.py'
 ADMISSION = 'src/trusted_router/services/async_settle.py'
+REFRESH = 'src/trusted_router/services/async_settle_admission_refresh.py'
 MUTATIONS = [
     ('accept-before-eligibility', HANDLER,
      '            row = intent(value, claims, amount)',
@@ -47,6 +48,31 @@ MUTATIONS = [
      '                    result = duplicate_response(existing, row, resolve=not memory_mode)',
      '                    result = find_duplicate(row)',
      'test_duplicate_survives_writer_eviction[expired]'),
+    ('full-health-failure-keeps-evidence', ADMISSION,
+     '                self.health = None\n'
+     '                try:\n'
+     '                    self.health = decode_health(self.health_read(), now=self.clock(), wall=self.wall_clock())\n'
+     '                except Exception:\n'
+     '                    self.health = None',
+     '                try:\n'
+     '                    self.health = decode_health(self.health_read(), now=self.clock(), wall=self.wall_clock())\n'
+     '                except Exception:\n'
+     '                    pass',
+     'test_shared_health_failure_and_read_ahead_recovery[full]'),
+    ('failed-read-ahead-refreshes-health-timestamp', REFRESH,
+     '            except Exception:  # noqa: S110 - preserve old evidence on failed reads\n'
+     '                pass\n'
+     '        for workspace in workspaces:',
+     '            except Exception:  # noqa: S110 - preserve old evidence on failed reads\n'
+     '                with cache.lock:\n'
+     '                    cache.health_read_at = started\n'
+     '        for workspace in workspaces:',
+     'test_shared_health_failure_and_read_ahead_recovery[full]'),
+    ('read-ahead-cannot-recover-cleared-health', REFRESH,
+     '                            cache.health, cache.health_read_at = health, started',
+     '                            if cache.health is not None or cache.health_read_at == float("-inf"):\n'
+     '                                cache.health, cache.health_read_at = health, started',
+     'test_shared_health_failure_and_read_ahead_recovery[full]'),
 ]
 
 
