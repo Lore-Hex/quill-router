@@ -239,6 +239,9 @@ def test_shared_health_failure_and_read_ahead_recovery(admission_rig, initial_re
     assert rig.cache.eligible('workspace', 0, cached_only=True)
     assert (rig.health.call_count, rig.read.call_count) == (1, 1)
     # Finish before workspace read-ahead is due (3s) or evidence expires (5s).
+    # Health read-ahead reads only when its last attempt is at least
+    # HEALTH_SECONDS (0.5s) old and the slot is empty or that old: hence the
+    # reads at 2.25 (slot cleared at 2) and 2.75 (0.5s after 2.25) below.
     workspace_evidence = rig.cache.entries['workspace']
     assert workspace_evidence == (0, Admission(0, 2))
 
