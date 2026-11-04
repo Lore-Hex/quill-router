@@ -157,8 +157,11 @@ deploy; the fast path's switch changes at once.
   (`storage_gcp_counter_reconcile.py`): reservations and bookings of the
   leases with the synchronous holds.
 - `fastpathwatch -workspace WORKSPACE` for each workspace in the set, with
-  P1's ceilings and `-fresh 15m -window 20m`, since one Spanner CPU series a
-  few minutes late stopped the first watch (2026-10-16 02:00Z). The spend
+  P1's ceilings and `-fresh 15m -window 25m -misses 10`, since one Spanner
+  CPU series a few minutes late stopped the first watch (2026-10-16 02:00Z),
+  and Cloud Monitoring answers Internal in bursts over a minute long (three
+  stops 2026-10-29 01:33Z to 02:22Z); the window covers ten misses of 30
+  seconds and the 15 minutes. The spend
   ceiling counts the workspace's whole usage, today's path included, so it
   is set for each workspace above its own expected spend over the watch's
   life.
