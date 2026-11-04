@@ -137,9 +137,10 @@ the read of the request's headers fall outside every phase: a small
     (no idle one was free: the pass waited until another put one back,
     freed or freshly dialed), `new` (its own dial) or `none`.
   - `dns_ms`, `connect_ms` and `tls_ms` time this pass's own dial, if it
-    made one. On a `new` line they break down `conn_ms`. On another line
-    they are a dial that lost the race and was kept for the pool. A dial
-    still running when the pass ended reads 0.
+    made one. On a `new` line they break down `conn_ms`. On an `idle` or
+    `handed` line they are a dial that lost the race and was kept for the
+    pool. On a `none` line they are a dial that failed or was cut short. A
+    dial still running when the pass ended reads 0.
   - `dns_errors`, `connect_errors`, `tls_errors` and `write_errors` count
     failed attempts. A dial over several addresses can fail on one and
     connect on the next, so an error does not mean the pass failed.

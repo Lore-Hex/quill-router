@@ -689,3 +689,61 @@ func TestAWaitForAConnectionIsBucketedAtTheSYNRetries(t *testing.T) {
 		}
 	}
 }
+
+// idlePass is a pass answered on an idle connection, all its marks at at.
+func idlePass(at time.Time) *passTrace {
+	return &passTrace{arrived: at, forwarded: at, gotConn: at, wrote: at, headers: at, reused: true, wasIdle: true}
+}
+
+func TestFlushPassesDrainsABacklogThenWritesTheCounts(t *testing.T) {
+	release := make(chan struct{})
+	logs := &logLines{}
+	held := func(format string, args ...any) {
+		<-release
+		logs.logf(format, args...)
+	}
+	pt := newPassTimer(held, time.Hour)
+	pt.slow = 0
+	for range 5 {
+		pt.observe(idlePass(time.Now()), time.Now(), false)
+	}
+	e := &Edge{passes: pt}
+	flushed := make(chan struct{})
+	go func() {
+		e.FlushPasses()
+		close(flushed)
+	}()
+	select {
+	case <-flushed:
+		t.Fatal("FlushPasses returned with the writer held and lines queued")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-flushed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("FlushPasses did not return once the writer was released")
+	}
+	if got := logs.with(slowPrefix); len(got) != 5 || !strings.HasPrefix(logs.last(), countsPrefix) {
+		t.Fatalf("after the flush: %v", logs.all())
+	}
+}
+
+func TestAnAnswerSlowOnItsWayBackIsTheResponsePhase(t *testing.T) {
+	h, logs := newTimedHarness(t, timedOpts{})
+	h.edge.passes.slow = 0
+	h.respond = func(w http.ResponseWriter) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", "22")
+		w.WriteHeader(http.StatusPaymentRequired)
+		w.(http.Flusher).Flush() // the headers now, the body 200 ms later
+		time.Sleep(200 * time.Millisecond)
+		_, _ = w.Write([]byte(`{"error":{"code":402}}`))
+	}
+	h.authorize(t)
+	waitPasses(t, h, logs, 1, 1)
+	f := fields(t, logs.with(slowPrefix)[0])
+	if f["phase"] != PassPhaseResponse || ms(t, f, "response_ms") < 200 || ms(t, f, "python_ms") >= 200 {
+		t.Fatalf("an answer slow on its way back: %v", f)
+	}
+}

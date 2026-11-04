@@ -34,9 +34,10 @@ import (
 // handed (given over as another pass put it back, freed or freshly dialed:
 // this pass found no idle one and waited), new (this pass's own dial), or
 // none. The DNS, dial and TLS times are this pass's own dial's, if it made
-// one: they break down a new connection's conn phase; on another line they
-// are a dial that lost the race (kept for the pool), and a dial still
-// running when the pass ended reads 0.
+// one: they break down a new connection's conn phase; on an idle or handed
+// line they are a dial that lost the race (kept for the pool); on a none
+// line, a dial that failed or was cut short; a dial still running when the
+// pass ended reads 0.
 //
 // A pass slower than SlowPass in all gets one line of its phases, at most
 // SlowPassLines a period. Each period's counts are one line, written when
@@ -315,15 +316,19 @@ func (pt *passTimer) start(r *http.Request, arrived time.Time) *passTrace {
 // observe counts a pass that ended at done (aborted when the proxy's copy
 // broke off), queues the period's counts line first if the period has
 // ended, and the pass's line if it was slow and the period's bound allows.
+// The counting and the queueing share one hold of mu, so a pass is never
+// counted without its line queued or counted dropped.
 func (pt *passTimer) observe(p *passTrace, done time.Time, aborted bool) {
 	s := p.phases(done)
 	pt.mu.Lock()
-	var counts string
+	defer pt.mu.Unlock()
 	if pt.started.IsZero() {
 		pt.started = done
 	} else if took := done.Sub(pt.started); took >= pt.every {
-		counts = countsLine(pt.period, took)
+		counts := countsLine(pt.period, took)
+		// A counts line the queue cannot take is the new period's drop.
 		pt.period, pt.started, pt.logged = newPassTally(), done, 0
+		pt.emitLocked(counts)
 	}
 	slow := s.total > pt.slow
 	line := slow && pt.logged < pt.lines
@@ -347,12 +352,8 @@ func (pt *passTimer) observe(p *passTrace, done time.Time, aborted bool) {
 			}
 		}
 	}
-	pt.mu.Unlock()
-	if counts != "" {
-		pt.emit(counts)
-	}
 	if line {
-		pt.emit(fmt.Sprintf("fastpath edge pass slow: status=%s aborted=%t total_ms=%d phase=%s edge_ms=%d "+
+		pt.emitLocked(fmt.Sprintf("fastpath edge pass slow: status=%s aborted=%t total_ms=%d phase=%s edge_ms=%d "+
 			"conn_ms=%d write_ms=%d python_ms=%d response_ms=%d connection=%s idle_ms=%d dns_ms=%d connect_ms=%d "+
 			"tls_ms=%d dns_errors=%d connect_errors=%d tls_errors=%d write_errors=%d", statusName(s.status), aborted,
 			s.total.Milliseconds(), s.slowest, s.edge.Milliseconds(), s.conn.Milliseconds(), s.write.Milliseconds(),
@@ -370,11 +371,10 @@ func countsLine(t passTally, took time.Duration) string {
 		jsonOf(t.wait), t.slow, jsonOf(t.slowBy), t.unlogged, t.dropped)
 }
 
-// emit hands a line to the writer, starting it with the first; a line the
-// full queue cannot take, or one after FlushPasses, is counted dropped.
-func (pt *passTimer) emit(line string) {
-	pt.mu.Lock()
-	defer pt.mu.Unlock()
+// emitLocked hands a line to the writer, starting it with the first; a
+// line the full queue cannot take, or one after FlushPasses, is counted
+// dropped. mu is held.
+func (pt *passTimer) emitLocked(line string) {
 	if !pt.closed {
 		if !pt.writing {
 			pt.writing = true
@@ -416,7 +416,7 @@ func (e *Edge) FlushPasses() {
 	}
 	writing := pt.writing
 	pt.mu.Unlock()
-	// No line is queued once closed is set: emit checks it under the lock.
+	// No line is queued once closed is set: emitLocked checks it under mu.
 	close(pt.out)
 	if writing {
 		<-pt.writerStopped
