@@ -48,18 +48,18 @@ def test_terminal_backend_matches_reviewed_control_subset() -> None:
     for field, value in {
         "protocol": control["protocol"],
         "load_balancing_scheme": control["loadBalancingScheme"],
-        "compression_mode": control["compressionMode"],
         "enable": control["logConfig"]["enable"],
         "sample_rate": control["logConfig"]["sampleRate"],
         "optional_mode": control["logConfig"]["optionalMode"],
     }.items():
         assert re.search(rf"\b{field}\s*=\s*{re.escape(json.dumps(value))}(?:\s|$)", source), field
-    # Reviewed exceptions: CDN off; serverless timeout omitted (API reports 30).
+    # Reviewed exceptions: CDN off, and so no compression mode (the API takes
+    # one only with CDN on); serverless timeout omitted (API reports 30).
     # Optional/computed port name is omitted; serverless NEGs forbid health checks.
     assert control["timeoutSec"] == 30 and control["portName"] == "http"
-    assert control["enableCDN"] is True
+    assert control["enableCDN"] is True and control["compressionMode"] == "AUTOMATIC"
     uncommented = re.sub(r"^\s*#.*$", "", source, flags=re.MULTILINE)
-    for field in ("timeout_sec", "port_name", "health_checks"):
+    for field in ("timeout_sec", "port_name", "health_checks", "compression_mode"):
         assert not re.search(rf"\b{field}\s*=", uncommented), field
     assert control["securityPolicy"].endswith("/trusted-router-legacy-edge")
     assert re.search(r"security_policy\s*=\s*google_compute_security_policy\.legacy_edge\.id\s", source)

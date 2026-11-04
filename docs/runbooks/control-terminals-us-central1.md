@@ -24,8 +24,9 @@ Terraform-owned URL map rather than rollout.sh's regional NEG reconciliation.
 Do not point `LB_BACKEND_SERVICE` at it: rollout would attach every region.
 `infra/cloud_armor.tf` owns its policy, `trusted-router-legacy-edge`. It has the
 same trusted client-IP overwrite as the control backend, HTTP,
-EXTERNAL_MANAGED, AUTOMATIC compression and logging enabled at 0.1 with
-EXCLUDE_ALL_OPTIONAL. Connection draining is explicitly zero. Health checks
+EXTERNAL_MANAGED, and logging enabled at 0.1 with EXCLUDE_ALL_OPTIONAL. It sets no
+compression mode, unlike the control backend, since the API takes one only
+with CDN on and this backend keeps CDN off. Connection draining is explicitly zero. Health checks
 and port_name are omitted. timeout_sec does not apply to serverless NEG
 backends and is omitted: the API-reported timeoutSec 30 is not evidence of a
 30-second request deadline. CDN off is a deliberate exception to control's
@@ -110,7 +111,7 @@ never treat a truncated export as a traffic denominator. While disabled, expect
 the existing surface placement. When enabled, new matched requests should
 appear only in us-central1 after propagation. Direct regional run.app callers bypass the
 URL map and must be distinguished. Verify the backend's NEG membership,
-security policy, compression, draining, logging and API defaults with `gcloud compute backend-services
+security policy, draining, logging and API defaults with `gcloud compute backend-services
 describe trusted-router-control-terminal-c1-backend --global --format=json`;
 inspect the live URL map for exactly one plain service rule when enabled and
 no terminal override when disabled. Confirm no routeAction was introduced.
