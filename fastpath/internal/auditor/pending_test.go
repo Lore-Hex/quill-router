@@ -1358,6 +1358,25 @@ func TestASweepWorksLeasesAtOnceEachInItsOrder(t *testing.T) {
 	}
 }
 
+// TestTheDefaultIsTwoWorkers: a sweep with Workers 0 works two leases'
+// packs at once, never more, though more leases wait: pack work spreads out
+// rather than bursting into Spanner beside the live settles.
+func TestTheDefaultIsTwoWorkers(t *testing.T) {
+	if DefaultPendingWorkers != 2 {
+		t.Fatalf("the default workers %d, want 2", DefaultPendingWorkers)
+	}
+	const leases = 6
+	// The gate opens once every lease is under way, or two seconds after
+	// the first mark: so more workers than two would all be seen at once.
+	s := newSweepStore(leases, 1, leases)
+	sweepWith(t, s, 0, nil)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.peak != 2 || len(s.marked) != leases {
+		t.Fatalf("the default: %d packs worked at once at most, %d done; want 2, %d", s.peak, len(s.marked), leases)
+	}
+}
+
 // TestWorkersTellOneAtATime: workers that each tell of a winner whose work
 // cannot be read are heard one at a time, as one sweep was.
 func TestWorkersTellOneAtATime(t *testing.T) {

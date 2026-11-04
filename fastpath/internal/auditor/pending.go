@@ -65,8 +65,13 @@ type PendingConfig struct {
 // when PendingConfig.Workers is 0. A pack's work is Spanner calls and
 // outcome publishes, each waited on, so one worker at a time did some
 // seventy to a hundred packs a minute on 2026-11-04, while a thousand
-// settles a second made three hundred.
-const DefaultPendingWorkers = 8
+// settles a second made three hundred. Eight on each of two members
+// cleared the backlog in two minutes rather than twenty-five, but burst
+// into Spanner beside the live settles: high-priority CPU went from 33% to
+// 47%, and settles that failed and were tried again from 172 to 13,245
+// (2026-11-04). Two, with the staged records read a pack at once, keep up
+// with the settles while spreading the work out.
+const DefaultPendingWorkers = 2
 
 // DefaultDropEvery is how often, at most, the sweep drops retired leases'
 // staged records when PendingConfig.DropEvery is 0. The scan for them is a
