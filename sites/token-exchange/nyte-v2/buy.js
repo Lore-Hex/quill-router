@@ -92,7 +92,9 @@ document.addEventListener('DOMContentLoaded', () => {
           quote.subtotal_cents !== subtotal || quote.exchange_fee_cents !== exchangeFee ||
           quote.processing_fee_cents !== processingFee || quote.total_cents !== total) throw new Error('Quote unavailable. Please try again.');
       reserveQuote = quote;
-      get('reserve-price').textContent = `${cents.format(perLot / 100)} per lot · ${quote.discount_bps / 100}% early-reservation discount · ${lots} lot${lots === 1 ? '' : 's'}: ${cents.format(subtotal / 100)} + ${cents.format(exchangeFee / 100)} NYTE exchange fee (${quote.exchange_fee_bps / 100}%) + ${cents.format(processingFee / 100)} card processing fee = ${cents.format(total / 100)} USD total. Index as of ${quote.index_as_of}. Up to ${quote.max_lots} lots by card; larger orders by call.`;
+      // City domains name the billing entity; see host_brand_script in nyte_v2.py.
+      const billedBy = document.documentElement?.dataset.billedBy;
+      get('reserve-price').textContent = `${cents.format(perLot / 100)} per lot · ${quote.discount_bps / 100}% early-reservation discount · ${lots} lot${lots === 1 ? '' : 's'}: ${cents.format(subtotal / 100)} + ${cents.format(exchangeFee / 100)} NYTE exchange fee (${quote.exchange_fee_bps / 100}%) + ${cents.format(processingFee / 100)} card processing fee = ${cents.format(total / 100)} USD total${billedBy ? `, billed by ${billedBy}` : ''}. Index as of ${quote.index_as_of}. Up to ${quote.max_lots} lots by card; larger orders by call.`;
     } catch (error) {
       if (key !== reserveKey) return;
       reserveQuote = null;
@@ -246,7 +248,7 @@ document.addEventListener('DOMContentLoaded', () => {
       : `term: ${term}; start: ${get('start').value}`;
     const summary = `Unit: ${facility ? '1B-token lots' : unit}; quantity: ${quantity}; underlying: ${underlying}; ${timing}; company: ${clean(get('company').value) || 'not specified'}`;
     const url = new URL('https://calendly.com/joseph-perla/15min');
-    url.search = new URLSearchParams({embed_domain:'nytokenexchange.com', embed_type:'Inline', hide_gdpr_banner:'1',
+    url.search = new URLSearchParams({embed_domain:location.hostname, embed_type:'Inline', hide_gdpr_banner:'1',
       name:clean(get('name').value), email:get('email').value.trim(), a1:summary}).toString();
     get('calendly-link').href = url.href;
     get('summary').textContent = summary;
@@ -277,7 +279,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (step === 4) scheduling();
     else {
       get('calendar').replaceChildren();
-      get('calendly-link').href = 'https://calendly.com/joseph-perla/15min?embed_domain=nytokenexchange.com&embed_type=Inline&hide_gdpr_banner=1';
+      get('calendly-link').href = `https://calendly.com/joseph-perla/15min?embed_domain=${encodeURIComponent(location.hostname)}&embed_type=Inline&hide_gdpr_banner=1`;
     }
     get(`title-${step}`).focus({preventScroll:true});
     if (push) get(`title-${step}`).scrollIntoView({block:'start'});

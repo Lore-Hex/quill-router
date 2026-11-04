@@ -1,12 +1,7 @@
 """Render empty evidence panels; request-time data is the only value source."""
-import html
 
 
-def render_evidence(profile='shared-gcp'):
-    origin = 'https://azure.trustedrouter.com' if profile == 'dubai' else 'https://trustedrouter.com'
-    label = 'Azure service status' if profile == 'dubai' else ('Shared GCP service status' if profile == 'shared-gcp' else 'GCP service status')
-    release = ('https://trust.trustedrouter.com/trust/azure-release.json' if profile == 'dubai'
-               else 'https://trustedrouter.com/trust/gcp-release.json')
+def render_evidence():
     catalogue = (
         '<div class="catalogue evidence-reveal"><p class="catalogue-label">Confidential models</p>'
         '<p class="catalogue-summary">Tinfoil · Confidential + E2EE</p>'
@@ -15,12 +10,12 @@ def render_evidence(profile='shared-gcp'):
         '<p class="pricing-unit" data-live-price-unit hidden>USD / 1M tokens · input / output</p></div>'
     )
     health = (
-        '<div class="trust-evidence" data-evidence-profile="' + html.escape(profile, quote=True) + '">'
-        '<figure class="uptime-panel evidence-reveal"><figcaption data-live-caption data-uptime-label="' + label.replace('service status', 'uptime') + ' · 24h">' + label + '</figcaption>'
-        '<div data-live-services></div><div class="evidence-footer"><a href="' + origin + '/status">Service status</a></div></figure>'
+        '<div class="trust-evidence" data-evidence-profile="shared-gcp">'
+        '<figure class="uptime-panel evidence-reveal"><figcaption data-live-caption data-uptime-label="Shared GCP uptime · 24h">Shared GCP service status</figcaption>'
+        '<div data-live-services></div><div class="evidence-footer"><a href="https://trustedrouter.com/status">Service status</a></div></figure>'
         '<section class="attestation-panel evidence-reveal" aria-labelledby="attestation-title">'
         '<h3 id="attestation-title">Attestation</h3><div data-live-attestation></div>'
-        '<div class="evidence-footer"><a href="' + release + '">Published release</a></div></section></div>'
+        '<div class="evidence-footer"><a href="https://trustedrouter.com/trust/gcp-release.json">Published release</a></div></section></div>'
     )
     return catalogue, health
 

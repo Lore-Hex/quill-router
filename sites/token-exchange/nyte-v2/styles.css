@@ -57,6 +57,7 @@ header{position:sticky;top:0;z-index:30;height:var(--header);background:rgba(5,7
 .hdr{height:100%;display:flex;align-items:center;gap:32px}
 .brand{display:flex;align-items:center;gap:12px;color:var(--t1);font-size:18px;font-weight:600;letter-spacing:-.03em;margin-right:auto}
 .brand svg{width:30px;height:30px;flex:none}
+.brand-by{display:block;margin-top:3px;font-size:11px;font-weight:500;letter-spacing:.02em;color:#a9cdb9;white-space:nowrap}
 .nav{display:flex;align-items:center;gap:16px;order:1}
 .hdr>.btn-sm{order:2}
 .menu-btn svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round}
@@ -375,6 +376,7 @@ details p{color:var(--t2);padding:0 48px 24px 0;max-width:62ch}
   .hdr .brand{flex-shrink:0;font-size:14px;line-height:1.15;gap:8px}
   .hdr .brand>span{display:flex;flex-direction:column}
   .hdr .brand .brand-line{white-space:nowrap}
+  .hdr .brand-one>span{display:block;white-space:nowrap}
   .hdr>.btn-sm{margin-left:16px;font-size:13px;padding:8px 10px}
   .hero-api{padding:0;min-height:0;display:block}
   .hero-api .ph{position:relative;inset:auto;z-index:auto;height:300px;background-size:160% auto;background-position:30% 58%}

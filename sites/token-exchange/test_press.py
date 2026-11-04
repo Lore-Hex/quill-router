@@ -13,6 +13,7 @@ from urllib.parse import urljoin, urlparse
 from zipfile import ZipFile
 
 from build import build, load_markets
+from nyte_v2 import uses_nyte
 from press import ASSETS, HERE, build_press
 
 
@@ -159,7 +160,7 @@ class PressTests(unittest.TestCase):
                 legal = re.search(r'<div class="legal">(.*?)</div>', footer, re.S).group(1)
                 links = re.findall(r'<a\b[^>]*href="([^"]+)"[^>]*>Media kit</a>', legal)
                 self.assertEqual(len(links), 1)
-                expected = ("https://nytokenexchange.com/media-kit" if market["slug"] == "new-york"
+                expected = (f"https://{market['domain']}/media-kit" if uses_nyte(market)
                             else "https://trustedrouter.com/media-kit")
                 self.assertEqual(urljoin(f'https://{market["domain"]}/', unescape(links[0])), expected)
 

@@ -6,6 +6,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 from build import build, load_markets
+from nyte_v2 import uses_nyte
 
 
 class MediaParser(HTMLParser):
@@ -29,7 +30,7 @@ class HomepageVideoTests(unittest.TestCase):
             self.assertGreater((root / "assets/nyte-routing-demo.mp4").stat().st_size, 0)
             self.assertGreater((root / "assets/nyte-routing-demo-poster.jpg").stat().st_size, 0)
             for market in load_markets():
-                if market["slug"] == "new-york":
+                if uses_nyte(market):
                     continue  # Covered by test_nyte_v2 and the v2 browser verifier.
                 page = (root / market["slug"] / "index.html").read_text()
                 parser = MediaParser()

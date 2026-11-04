@@ -273,6 +273,48 @@ if(process.env.NYTE_NAV_SHOTS){
   await page.screenshot({path:`${process.env.NYTE_NAV_SHOTS}/nav-${width}.png`});
  }
 }
+// Cities on this design: their own home page, and New York's shared pages under the city's name.
+if(process.argv[2]){
+ const fs=require('node:fs'),path=require('node:path');const root=path.resolve(process.argv[2]);
+ const markets=JSON.parse(fs.readFileSync(path.join(__dirname,'markets.json')));
+ const cities=JSON.parse(fs.readFileSync(path.join(__dirname,'nyte-cities.json')));
+ for(const slug of Object.keys(cities)){
+  const market={...markets.find(m=>m.slug===slug),...cities[slug]};
+  const city=await browser.newContext();
+  await city.route(`https://${market.domain}/**`,r=>{const p=new URL(r.request().url()).pathname;const file=path.join(root,p==='/'?`${slug}/index.html`:p);
+   if(!file.startsWith(root+path.sep)||!fs.existsSync(file)||!fs.statSync(file).isFile())return r.fulfill({status:404,body:''});
+   return r.fulfill({path:file,contentType:file.endsWith('.css')?'text/css':file.endsWith('.js')?'text/javascript':path.extname(file)?undefined:'text/html'});});
+  await city.route(url=>!url.hostname.endsWith(market.domain),r=>r.abort());
+  const cityPage=await city.newPage();cityPage.on('pageerror',e=>failures.push(`${slug}: ${e.message}`));
+  for(const width of [390,1280]){
+   await cityPage.setViewportSize({width,height:900});
+   await cityPage.goto(`https://${market.domain}/`);
+   assert.equal(await cityPage.locator('.hdr .brand-place').innerText(),market.logo_place||market.region);
+   assert.equal(await cityPage.locator('.brand-by').count(),0,'the city home never names NYTE');
+   assert.equal(await cityPage.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,`${slug} home fits at ${width}px`);
+   await cityPage.goto(`https://${market.domain}/suppliers`);
+   assert.equal(await cityPage.locator('.hdr .brand-place').innerText(),market.logo_place||market.region);
+   assert.equal(await cityPage.locator('.brand-by').count(),0,'pages outside checkout keep the city name alone');
+   await cityPage.goto(`https://${market.domain}/confidential`);
+   assert.equal(await cityPage.evaluate(()=>document.body.dataset.market),slug,`${slug} analytics market`);
+   const signup=new URL(await cityPage.locator('a[href^="https://trustedrouter.com/"][href*="exchange_market="]').first().getAttribute('href'));
+   assert.equal(signup.searchParams.get('exchange_market'),slug);assert.equal(signup.searchParams.get('utm_source'),market.domain);
+   const place=market.faq_place??market.region;
+   assert.equal(await cityPage.locator('#place-faq').count(),place?1:0,`${slug} data-location FAQ`);
+   if(place){assert.equal(await cityPage.locator('#place-faq summary').textContent(),`Does ${place} mean our data stays in ${place}?`);
+    assert.equal(await cityPage.locator('#place-faq [data-us-only]').count(),market.us?1:0);}
+   await cityPage.goto(`https://${market.domain}/buy`);
+   assert.equal(await cityPage.locator('.hdr .brand-place').innerText(),market.logo_place||market.region);
+   assert.equal(await cityPage.locator('.hdr .brand-by').innerText(),'by NYTE');
+   assert.equal(await cityPage.locator('.buy-intro a, a[href*="manage-reservation"]').first().getAttribute('href'),'https://nytokenexchange.com/manage-reservation');
+   assert.equal(await cityPage.evaluate(()=>document.documentElement.dataset.billedBy),'New York Token Exchange (NYTE)','city checkout names who bills the card');
+   assert.equal(await cityPage.locator('[data-exchange-name]').textContent(),`${market.name} · by NYTE`);
+   assert.equal(await cityPage.locator('.market-links [aria-current=page]').innerText(),market.region);
+   assert.equal(await cityPage.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,`${slug} /buy fits at ${width}px`);
+  }
+  await city.close();
+ }
+}
 const noJs=await browser.newContext({javaScriptEnabled:false,viewport:{width:1100,height:900}});
 const noJsPage=await noJs.newPage();
 await noJsPage.goto(base+'/trusted-cowork');

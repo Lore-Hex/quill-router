@@ -6,7 +6,9 @@ const assert = require('node:assert/strict');
 
 (async () => {
   const allMarkets = JSON.parse(fs.readFileSync(path.join(__dirname, 'markets.json')));
-  const markets = allMarkets.filter(market => market.slug !== 'new-york');
+  // New York and the cities in nyte-cities.json use the v2 design, covered by verify-nyte-v2.cjs.
+  const nyteCities = JSON.parse(fs.readFileSync(path.join(__dirname, 'nyte-cities.json')));
+  const markets = allMarkets.filter(market => market.slug !== 'new-york' && !(market.slug in nyteCities));
   const output = process.argv[2] || '/tmp/token-exchange-build';
   const browser = await chromium.launch({ headless: true });
   const tracking = new Map();
@@ -147,7 +149,7 @@ const assert = require('node:assert/strict');
   });
   for (const [width, height] of [[390,700], [320,600]]) {
     await mobile.setViewportSize({width,height});
-    await mobile.goto('http://127.0.0.1:8089/london/');
+    await mobile.goto(`http://127.0.0.1:8089/${markets[0].slug}/`);
     await mobile.evaluate(() => document.fonts.ready);
     const initial = await heroGeometry();
     await mobile.evaluate(() => window.scrollTo({top:120,behavior:'instant'}));
@@ -163,7 +165,7 @@ const assert = require('node:assert/strict');
   assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   await mobile.close();
   const fallback = await newPage({javaScriptEnabled:false, viewport:{width:390,height:1000}});
-  await fallback.goto('http://127.0.0.1:8089/london/');
+  await fallback.goto('http://127.0.0.1:8089/hong-kong/');
   assert(await fallback.getByRole('navigation', {name:'Main navigation',exact:true}).isVisible());
   assert.equal(await fallback.getByRole('button', {name:'Menu',exact:true}).isVisible(), false);
   assert(await fallback.locator('.supplier-art').isVisible());
@@ -189,7 +191,7 @@ const assert = require('node:assert/strict');
     if (body.email === 'nope@invalid') return route.fulfill({status:422, headers:{...cors, 'Content-Type':'application/json'}, body:JSON.stringify({ok:false, error:'invalid_email'})});
     return route.fulfill({status:200, headers:{...cors, 'Content-Type':'application/pdf'}, body:Buffer.from('%PDF-1.4\n%stand-in\n')});
   });
-  await brochure.goto('http://127.0.0.1:8089/london/?utm_source=linkedin&utm_campaign=ny-launch&secret=dropped');
+  await brochure.goto('http://127.0.0.1:8089/hong-kong/?utm_source=linkedin&utm_campaign=ny-launch&secret=dropped');
   await brochure.getByRole('link', {name:'Get the buyer deck', exact:true}).first().click();
   await brochure.waitForFunction(() => location.hash === '#brochure');
   const form = brochure.locator('#brochure-form');

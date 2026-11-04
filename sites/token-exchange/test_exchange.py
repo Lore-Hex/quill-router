@@ -17,6 +17,7 @@ from urllib.request import Request
 import deploy
 from build import PROVIDERS, build, load_markets, render, tracked_url
 from deploy import certificate_requests, domains, publish_certificates, unrouted_hosts
+from nyte_v2 import uses_nyte
 
 RIYADH = ["riyadhtokenexchange.com", "www.riyadhtokenexchange.com"]
 REAL_BROCHURE_GAPS = deploy.brochure_gaps
@@ -279,7 +280,7 @@ class ExchangeTests(unittest.TestCase):
     def test_pages(self) -> None:
         markets = load_markets()
         for market in markets:
-            if market["slug"] == "new-york":
+            if uses_nyte(market):
                 continue  # New York v2 has dedicated page and browser coverage.
             page = render(market, markets, "test")
             self.assertIn(f'<link rel="canonical" href="https://{market["domain"]}/">', page)
@@ -315,7 +316,7 @@ class ExchangeTests(unittest.TestCase):
         self.assertEqual(PROVIDERS[:2], [("openai", "OpenAI"), ("databricks", "Databricks")])
         markets = load_markets()
         for market in markets:
-            if market["slug"] == "new-york":
+            if uses_nyte(market):
                 continue  # New York v2 has dedicated page and browser coverage.
             page = render(market, markets, "test")
             visible = page.split('<div class="hero-provider-group">', 1)[1].split('</div>', 1)[0]
@@ -342,7 +343,7 @@ class ExchangeTests(unittest.TestCase):
         markets = load_markets()
         expected = [f'https://{m["domain"]}/' for m in markets]
         for market in markets:
-            if market["slug"] == "new-york":
+            if uses_nyte(market):
                 continue  # New York v2 has dedicated page and browser coverage.
             with self.subTest(market=market["slug"]):
                 page = render(market, markets, "test")
