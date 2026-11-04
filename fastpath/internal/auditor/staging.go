@@ -109,9 +109,9 @@ func (s *Stager) Run(ctx context.Context, src StagedSource) error {
 	return err
 }
 
-// Wait returns once no transaction runs: the records left waiting are those
-// whose callers have stopped waiting, which no transaction takes. A caller
-// that stops the store waits for the stager's callbacks, then for this.
+// Wait returns once no transaction runs. A caller that stops the store waits
+// for the stager's callbacks, then for this: a record whose caller has
+// stopped waiting is dropped, not staged after.
 func (s *Stager) Wait() {
 	s.mu.Lock()
 	defer s.mu.Unlock()

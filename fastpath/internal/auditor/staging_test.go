@@ -236,3 +236,67 @@ func TestTheStagerTakesAtMostABatch(t *testing.T) {
 		}
 	}
 }
+
+// TestTheStagerWaitsForItsTransaction: Wait does not return while a
+// transaction runs, and does once it ends.
+func TestTheStagerWaitsForItsTransaction(t *testing.T) {
+	g := &gatedStaging{answers: map[string]error{}}
+	s, err := NewStager(g, func(string, string) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate, entered := g.hold()
+	m := fullRecord(t)
+	go s.Handle(context.Background(), m)
+	<-entered
+	waited := make(chan struct{})
+	go func() {
+		s.Wait()
+		close(waited)
+	}()
+	select {
+	case <-waited:
+		t.Fatal("Wait returned while a transaction ran")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(gate)
+	select {
+	case <-waited:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Wait did not return once the transaction ended")
+	}
+}
+
+// TestTheStagerTakesOnlyThoseStillWaiting: take drops the records whose
+// callers have stopped waiting, without counting them against the batch's
+// bounds, and a byte bound reached after one leaves the rest waiting.
+func TestTheStagerTakesOnlyThoseStillWaiting(t *testing.T) {
+	gone, cancel := context.WithCancel(context.Background())
+	cancel()
+	live := context.Background()
+	at := func(ctx context.Context, body []byte) *staging {
+		return &staging{ctx: ctx, r: store.StagedRecord{Body: body}}
+	}
+	s := &Stager{}
+	for range 10 {
+		s.waiting = append(s.waiting, at(gone, []byte("x")))
+	}
+	for range store.MaxStageRecords + 2 {
+		s.waiting = append(s.waiting, at(live, []byte("x")))
+	}
+	if got := len(s.take()); got != store.MaxStageRecords || len(s.waiting) != 2 {
+		t.Fatalf("took %d, left %d", got, len(s.waiting))
+	}
+	half := make([]byte, store.MaxStageBytes/2+1)
+	s.waiting = []*staging{at(live, half), at(gone, half), at(live, half), at(live, []byte("x"))}
+	if got := len(s.take()); got != 1 || len(s.waiting) != 2 {
+		t.Fatalf("took %d, left %d", got, len(s.waiting))
+	}
+	if got := len(s.take()); got != 2 || s.waiting != nil {
+		t.Fatalf("then took %d, left %v", got, s.waiting)
+	}
+	s.waiting = []*staging{at(gone, half), at(gone, half)}
+	if got := len(s.take()); got != 0 || s.waiting != nil {
+		t.Fatalf("of those gone took %d, left %v", got, s.waiting)
+	}
+}
