@@ -92,6 +92,45 @@ type StagedKey struct {
 	Digest          []byte
 }
 
+// MaxReadStaged bounds the staged records one ReadStagedBatch reads: a
+// pack's winners at a thousand settles a second are some two hundred.
+const MaxReadStaged = 500
+
+// ReadStagedBatch reads the staged records with up to MaxReadStaged
+// authorizations and digests, each a winner's, in one strong read, as
+// ReadStaged reads one: the join is never by authorization alone (§4.9).
+// It answers the records there are, each with its authorization and
+// digest, in no order of its own; a key with no record has no answer, and
+// a key given twice is answered once.
+func (s *Store) ReadStagedBatch(ctx context.Context, keys ...StagedKey) ([]StagedRecord, error) {
+	if len(keys) > MaxReadStaged {
+		return nil, fmt.Errorf("store: %d staged records read at once, past %d", len(keys), MaxReadStaged)
+	}
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	set := make([]spanner.KeySet, 0, len(keys))
+	for _, k := range keys {
+		set = append(set, spanner.Key{k.AuthorizationID, k.Digest})
+	}
+	var out []StagedRecord
+	err := s.client.Single().ReadWithOptions(ctx, "tr_lease_staged", spanner.KeySets(set...),
+		[]string{"authorization_id", "record_digest", "workspace_id", "lease_id", "body", "message_id", "publish_time"},
+		&spanner.ReadOptions{RequestTag: stagingTag}).Do(func(row *spanner.Row) error {
+		var r StagedRecord
+		if err := row.Columns(&r.AuthorizationID, &r.Digest, &r.Ref.Workspace, &r.Ref.LeaseID, &r.Body, &r.MessageID,
+			&r.PublishTime); err != nil {
+			return err
+		}
+		out = append(out, r)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MaxDropStaged bounds the staged records one DropStaged removes: each is
 // two of a commit's mutations, its row's and its index entry's.
 const MaxDropStaged = 1000

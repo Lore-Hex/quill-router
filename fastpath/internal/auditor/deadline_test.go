@@ -121,8 +121,8 @@ func (b *blocking) ScanDraining(ctx context.Context, _ string, _ store.LeaseRef,
 func (b *blocking) PendingPacks(ctx context.Context, _ store.PendingPack, _ int) ([]store.PendingPack, error) {
 	return nil, b.block(ctx, "PendingPacks")
 }
-func (b *blocking) ReadStaged(ctx context.Context, _ string, _ []byte) (store.StagedRecord, bool, error) {
-	return store.StagedRecord{}, false, b.block(ctx, "ReadStaged")
+func (b *blocking) ReadStagedBatch(ctx context.Context, _ ...store.StagedKey) ([]store.StagedRecord, error) {
+	return nil, b.block(ctx, "ReadStagedBatch")
 }
 func (b *blocking) WriteRecords(ctx context.Context, _ []store.LeaseRecord) error {
 	return b.block(ctx, "WriteRecords")
@@ -173,7 +173,7 @@ func TestEveryStoreCallHasADeadline(t *testing.T) {
 		"ticker ScanDraining":        func() error { _, err := ts.ScanDraining(ctx, "r", ref, 1); return err },
 		"pending PendingPacks":       func() error { _, err := ps.PendingPacks(ctx, store.PendingPack{}, 1); return err },
 		"pending LoadWinners":        func() error { _, _, err := ps.LoadWinners(ctx, ref); return err },
-		"pending ReadStaged":         func() error { _, _, err := ps.ReadStaged(ctx, "a", nil); return err },
+		"pending ReadStagedBatch":    func() error { _, err := ps.ReadStagedBatch(ctx); return err },
 		"pending WriteRecords":       func() error { return ps.WriteRecords(ctx, nil) },
 		"pending MarkPackDone":       func() error { _, err := ps.MarkPackDone(ctx, ref, 1); return err },
 		"pending DropStaged":         func() error { return ps.DropStaged(ctx) },

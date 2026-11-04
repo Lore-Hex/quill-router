@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -47,6 +48,62 @@ func TestStagedRecordsJoinByAuthorizationAndDigest(t *testing.T) {
 	got, ok, err := s.ReadStaged(ctx, a, []byte("compacted"))
 	if err != nil || !ok || string(got.Body) != "retry" {
 		t.Fatalf("the compacted copy: %+v %v %v", got, ok, err)
+	}
+}
+
+// TestStagedRecordsAreReadManyAtOnce: ReadStagedBatch reads, in one call,
+// the staged record of each authorization and digest there is one for, as
+// ReadStaged reads each: a compacted copy is not the original, and an
+// authorization staged under another digest, or not staged at all, has no
+// answer. A key given twice is answered once, none reads nothing, and more
+// than MaxReadStaged are refused.
+func TestStagedRecordsAreReadManyAtOnce(t *testing.T) {
+	s := spikeStore(t)
+	ctx := context.Background()
+	ref := wonLease(t, s)
+	var keys []StagedKey
+	want := map[string]StagedRecord{}
+	for i := range 3 {
+		a, _ := NewAuthorizationID(ref.LeaseID)
+		r := StagedRecord{AuthorizationID: a, Digest: []byte("original"), Ref: ref, Body: []byte("full " + a),
+			MessageID: "m-" + a, PublishTime: time.Now().UTC().Truncate(time.Microsecond)}
+		if err := s.StageRecord(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 {
+			compacted := r
+			compacted.Digest, compacted.Body = []byte("compacted"), []byte("retry")
+			if err := s.StageRecord(ctx, compacted); err != nil {
+				t.Fatal(err)
+			}
+		}
+		keys = append(keys, StagedKey{a, r.Digest})
+		want[a] = r
+	}
+	other, _ := NewAuthorizationID(ref.LeaseID)
+	asked := append(slices.Clone(keys), keys[1], StagedKey{keys[2].AuthorizationID, []byte("another")},
+		StagedKey{other, []byte("original")})
+	got, err := s.ReadStagedBatch(ctx, asked...)
+	if err != nil || len(got) != len(keys) {
+		t.Fatalf("read %d records, %v; want %d", len(got), err, len(keys))
+	}
+	for _, r := range got {
+		w, ok := want[r.AuthorizationID]
+		if !ok || string(r.Digest) != "original" || string(r.Body) != string(w.Body) || r.Ref != ref ||
+			r.MessageID != w.MessageID || !r.PublishTime.Equal(w.PublishTime) {
+			t.Fatalf("read %+v, want %+v", r, w)
+		}
+		one, ok, err := s.ReadStaged(ctx, r.AuthorizationID, r.Digest)
+		if !ok || err != nil || !reflect.DeepEqual(one, r) {
+			t.Fatalf("ReadStaged reads %+v %v %v, ReadStagedBatch %+v", one, ok, err, r)
+		}
+		delete(want, r.AuthorizationID)
+	}
+	if got, err := s.ReadStagedBatch(ctx); got != nil || err != nil {
+		t.Fatalf("no keys: %v %v", got, err)
+	}
+	if _, err := s.ReadStagedBatch(ctx, make([]StagedKey, MaxReadStaged+1)...); err == nil {
+		t.Fatal("more than MaxReadStaged read at once")
 	}
 }
 
