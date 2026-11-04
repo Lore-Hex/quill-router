@@ -32,8 +32,11 @@ The precheck returns every shard that could fund the estimate, in the
 request's own randomized order (`funded_shards`). The retry offers them to
 authorize, which bounds them like any other attempt
 (`MAX_CREDIT_SHARD_ATTEMPTS_PER_TRANSACTION`, four) and reserves on the first
-that still holds the estimate. A peer has to take every offered shard, not
-just one, to turn the retry into a 503.
+that still holds the estimate. A peer now has to take every offered shard,
+not just one, to turn the retry into a 503. In a fragmented workspace a
+funded shard is often a peer's just-repaired target, so the retry can win it
+and send that peer round again: the 503s fall where several shards are
+funded, and part of the race moves rather than disappears.
 
 The accounting does not change. The retry stays inside the hot path's own
 rules: the first authorize already offers four shards with no aggregate
