@@ -29,3 +29,10 @@
 .buy-reserve-terms { display: block; margin: 20px 0; }
 .buy-reserve-terms input { width: auto; margin-right: 8px; }
 .buy-reserve button:disabled { opacity: .55; cursor: not-allowed; }
+
+/* Phone readability: room between choices and lines, fine print at 15px. */
+.buy-brand>p:first-child{margin:0 0 28px}
+.buy-unit-list li+li{margin-top:4px}.buy-unit-list label{padding:10px 0;font-size:16px}
+.buy-seller{margin-top:24px;font-size:15px;color:var(--t2)}
+.buy-fine,.buy-brand .buy-fine{font-size:15px;line-height:1.6}
+@media(max-width:700px){.buy-layout{gap:48px;padding-bottom:64px}.buy-workspace{padding:22px 20px}.buy-steps{font-size:12px}.buy-brand .lede{font-size:17px}.buy-notes h2{margin-top:24px}.buy-brand .buy-fine{font-size:15px}}

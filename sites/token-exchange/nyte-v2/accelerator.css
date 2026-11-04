@@ -4,3 +4,8 @@
 .accelerator-roles ul{padding-left:22px;color:var(--t2)}.accelerator-roles li{padding:8px 0}
 .accelerator-process ol{padding-left:28px;margin:0;max-width:52em}.accelerator-process li{padding:24px 0 24px 12px;border-top:1px solid var(--rule)}.accelerator-process li::marker{color:var(--mint);font-family:var(--mono)}.accelerator-process .body{margin-top:10px}
 .accelerator-call .lede{margin:24px 0 32px}.accelerator-call .btn{white-space:normal;text-align:center}
+
+/* Phone readability: fine print at 15px and more room inside facility cards. */
+.accelerator-hero .fine,.accelerator-facilities .fine{font-size:15px;line-height:1.6;color:var(--t2)}
+.accelerator-facilities .facility-card{padding:24px 20px}.accelerator-facilities .facility-card p{font-size:15px;margin:10px 0}
+@media(max-width:700px){.accelerator-facilities .facility-grid{gap:20px}}
