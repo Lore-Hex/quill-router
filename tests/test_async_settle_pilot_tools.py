@@ -292,15 +292,39 @@ def test_pre_flip_seven_days_artifacts_and_chosen_settings(tmp_path):
 def test_serving_requires_exact_rendered_pilot_list(tmp_path, workspaces, expected):
     data = bundle(tmp_path)
     data['serving'][0]['pins'].update(TR_ASYNC_SETTLE_ENABLED='true', TR_ASYNC_SETTLE_PROTECTION='true',
-        TR_ASYNC_SETTLE_PILOT_WORKSPACES=workspaces, TR_ASYNC_SETTLE_PILOT_CAP_MICRO='5000000')
+        TR_ASYNC_SETTLE_PILOT_WORKSPACES=workspaces, TR_ASYNC_SETTLE_PILOT_CAP_MICRO='5000000',
+        TR_ASYNC_SETTLE_FASTPATH_OVERLAP_WORKSPACES=pilot.FASTPATH_OVERLAP_WORKSPACES)
     data['serving'][1]['pins'].update(TR_ASYNC_SETTLE_NEGOTIATE='on', TR_ASYNC_SETTLE_SHADOW='off')
     assert pilot.serving(data, admitted=True) is expected
+
+
+@pytest.mark.parametrize('overlap,expected', [
+    (pilot.FASTPATH_OVERLAP_WORKSPACES, True),
+    (None, False),
+    ('', False),
+    (pilot.PILOT_WORKSPACES, False),
+    ('162e441a-5d13-414f-92bd-7c6cd805faa3', False),
+])
+def test_serving_requires_the_operator_fastpath_overlap(tmp_path, overlap, expected):
+    data = bundle(tmp_path)
+    data['serving'][0]['pins'].update(TR_ASYNC_SETTLE_ENABLED='true', TR_ASYNC_SETTLE_PROTECTION='true',
+        TR_ASYNC_SETTLE_PILOT_WORKSPACES=pilot.PILOT_WORKSPACES, TR_ASYNC_SETTLE_PILOT_CAP_MICRO='5000000')
+    if overlap is not None:
+        data['serving'][0]['pins']['TR_ASYNC_SETTLE_FASTPATH_OVERLAP_WORKSPACES'] = overlap
+    data['serving'][1]['pins'].update(TR_ASYNC_SETTLE_NEGOTIATE='on', TR_ASYNC_SETTLE_SHADOW='off')
+    assert pilot.serving(data, admitted=True) is expected
+
+
+def test_overlap_constant_matches_the_rollout_pin():
+    rollout = (Path(__file__).resolve().parents[1] / 'scripts/deploy/rollout.sh').read_text()
+    assert f'"TR_ASYNC_SETTLE_FASTPATH_OVERLAP_WORKSPACES={pilot.FASTPATH_OVERLAP_WORKSPACES}"' in rollout
 
 
 def test_post_flip_real_timings_rollback_and_missing_data(tmp_path):
     data = bundle(tmp_path)
     data['serving'][0]['pins'].update(TR_ASYNC_SETTLE_ENABLED='true', TR_ASYNC_SETTLE_PROTECTION='true',
-        TR_ASYNC_SETTLE_PILOT_WORKSPACES=pilot.PILOT_WORKSPACES, TR_ASYNC_SETTLE_PILOT_CAP_MICRO='5000000')
+        TR_ASYNC_SETTLE_PILOT_WORKSPACES=pilot.PILOT_WORKSPACES, TR_ASYNC_SETTLE_PILOT_CAP_MICRO='5000000',
+        TR_ASYNC_SETTLE_FASTPATH_OVERLAP_WORKSPACES=pilot.FASTPATH_OVERLAP_WORKSPACES)
     data['serving'][1]['pins'].update(TR_ASYNC_SETTLE_NEGOTIATE='on', TR_ASYNC_SETTLE_SHADOW='off')
     data.update(rollback=artifact(tmp_path, 'rollback.json', dict(status='PASS', states=[
         'admission_on', 'pending', 'admission_off', 'drained', 'protection_off'])),
