@@ -499,7 +499,6 @@ def test_gateway_authorizes_every_liberty_alias_to_working_nemotron_hosts(
         "trustedrouter/liberty-1.0-1m",
         "trustedrouter/liberty-2.0",
         "trustedrouter/liberty-3.0",
-        "trustedrouter/liberty-4.0",
     ):
         authorize = client.post(
             "/v1/internal/gateway/authorize",

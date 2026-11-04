@@ -1143,13 +1143,13 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "thinkingmachines/inkling",
     )
     liberty_4 = models_by_id["trustedrouter/liberty-4.0"]
-    assert liberty_4["context_length"] == 262_144
+    assert liberty_4["context_length"] == 524_288
+    assert liberty_4["trustedrouter"]["route_kind"] == "fusion_panel"
     assert liberty_4["trustedrouter"]["auto_candidates"] == _carried(
-        "nvidia/nemotron-3-ultra-550b-a55b",
-        "trustedrouter/liberty-1.0-1m",
-        "trustedrouter/liberty-1.0",
-        "meta-models/muse-spark-open",
+        "nvidia/nemotron-3.5-super-vl",
         "reflection/beam-1.0",
+        "thinkingmachines/inkling",
+        "meta-models/muse-spark-open",
     )
     assert client.get("/v1/models/count").json()["data"]["count"] >= 5
     open_weight_models = client.get("/v1/models", params={"open_weights": "true"})

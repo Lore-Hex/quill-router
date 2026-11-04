@@ -3367,6 +3367,15 @@ LIBERTY_1_0_1M_MODEL_ORDER = (
     "nvidia/nemotron-3-ultra-550b-a55b",
 )
 
+# Panel first, then Muse Spark Open, which fuses the panel (Beam, Inkling and
+# Nemotron back it up as fusers). Every route is US-headquartered.
+LIBERTY_4_0_MODEL_ORDER = (
+    "nvidia/nemotron-3.5-super-vl",
+    "reflection/beam-1.0",
+    "thinkingmachines/inkling",
+    "meta-models/muse-spark-open",
+)
+
 SYNTH_FRONTIER_1_MODEL_ORDER = (
     "anthropic/claude-opus-4.8",
     "openai/gpt-5.5",
@@ -3626,13 +3635,6 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
         "openai/gpt-oss-120b",
         LIBERTY_1_0_1M_MODEL_ID,
         "thinkingmachines/inkling",
-    ),
-    LIBERTY_4_0_MODEL_ID: (
-        "nvidia/nemotron-3-ultra-550b-a55b",
-        LIBERTY_1_0_1M_MODEL_ID,
-        LIBERTY_1_0_MODEL_ID,
-        "meta-models/muse-spark-open",
-        "reflection/beam-1.0",
     ),
 }
 
@@ -4011,7 +4013,6 @@ for _advisor_model_id in (
     LIBERTY_2_0_MODEL_ID,
     PARASAIL_LIBERTY_2_0_MODEL_ID,
     LIBERTY_3_0_MODEL_ID,
-    LIBERTY_4_0_MODEL_ID,
 ):
     ORCHESTRATION_PRIMITIVE_BY_MODEL_ID[_advisor_model_id] = "advisor"
 
@@ -4042,6 +4043,7 @@ for _synth_model_id in (
     OPEN_PATCHER_S3_MODEL_ID,
     LIBERTY_1_0_MODEL_ID,
     LIBERTY_1_0_1M_MODEL_ID,
+    LIBERTY_4_0_MODEL_ID,
 ):
     ORCHESTRATION_PRIMITIVE_BY_MODEL_ID[_synth_model_id] = "synth"
 

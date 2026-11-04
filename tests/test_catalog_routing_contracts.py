@@ -1544,14 +1544,13 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
             ],
         ),
         LIBERTY_4_0_MODEL_ID: (
-            "advisor_orchestration",
-            262_144,
+            "fusion_panel",
+            524_288,
             [
-                "nvidia/nemotron-3-ultra-550b-a55b",
-                LIBERTY_1_0_1M_MODEL_ID,
-                LIBERTY_1_0_MODEL_ID,
-                "meta-models/muse-spark-open",
+                "nvidia/nemotron-3.5-super-vl",
                 "reflection/beam-1.0",
+                "thinkingmachines/inkling",
+                "meta-models/muse-spark-open",
             ],
         ),
     }

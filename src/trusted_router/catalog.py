@@ -58,6 +58,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     LIBERTY_2_0_MODEL_ID,
     LIBERTY_3_0_MODEL_ID,
     LIBERTY_4_0_MODEL_ID,
+    LIBERTY_4_0_MODEL_ORDER,
     MAPREDUCE_CATALOG_MODEL_ORDER,
     MAPREDUCE_MODEL_ID,
     META_MODEL_IDS,
