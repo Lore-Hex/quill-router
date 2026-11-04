@@ -16,7 +16,6 @@ from tests.test_paypal_processing_fees import _paypal_signature_headers, _verifi
 from tests.test_provider_trust_slice1b import paypal_event
 from tests.test_request_tagging import _create_tagged_key
 from tests.test_ses_notifications import _envelope, _self_signed_cert_and_key
-from tests.test_user_models import _body
 from trusted_router.main import create_app
 from trusted_router.storage import STORE
 
@@ -145,8 +144,10 @@ def test_egress_url_boundary(client, user_headers, monkeypatch, httpx_mock, url,
     ])
     if route == "model":
         response = client.post("/v1/user-models", headers=user_headers,
-                               json={**_body(), "endpoint_url": url})
-        success = 201
+                               json={"name": "Retired", "endpoint_url": url})
+        assert response.status_code == 404
+        assert httpx_mock.get_requests() == []
+        return
     else:
         # Catch any accidental fetch, including ports httpx accepts but urllib rejects.
         httpx_mock.add_response(url=url if url == VALID else None, is_optional=url != VALID,

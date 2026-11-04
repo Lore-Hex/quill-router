@@ -598,6 +598,7 @@ def test_settle_worker_follows_router_rollout_and_uses_the_regional_hold() -> No
         "TR_ASYNC_SETTLE_ENABLED": "true",
         "TR_ASYNC_SETTLE_PROTECTION": "true",
         "TR_ASYNC_SETTLE_ADMISSION_REFRESH_ENABLED": "true",
+        "TR_ASYNC_SETTLE_HANDOFF_MODE": "memory",
         "TR_ASYNC_SETTLE_PILOT_WORKSPACES": "45819281-0ce9-4811-a0cd-c660ab3a116d,162e441a-5d13-414f-92bd-7c6cd805faa3",
     }
     for pin, value in expected.items():

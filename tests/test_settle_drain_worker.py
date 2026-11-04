@@ -65,10 +65,28 @@ def inventory_settings(surface, enabled):
     ))
 
 
-def inventory(app):
-    routes = sorted((path, sorted(getattr(route, "methods", []) or []),
-                     getattr(getattr(route, "endpoint", None), "__qualname__", ""))
+def inventory(app, retired_route_delta=None):
+    routes = sorted([path, sorted(getattr(route, "methods", []) or []),
+                     getattr(getattr(route, "endpoint", None), "__qualname__", "")]
                     for path, route in effective_routes(app))
+    if retired_route_delta is not None:
+        # Reconstruct the unchanged baseline using only the reviewed creator
+        # removal and earnings extraction. Keep lifecycle/state pins untouched.
+        for added in retired_route_delta["added"]:
+            assert added in routes
+            assert added[0].removeprefix("/v1") in {
+                "/earnings", "/earnings/transfer", "/user-models/earnings", "/user-models/earnings/transfer",
+            }
+            routes.remove(added)
+        for removed in retired_route_delta["removed"]:
+            assert removed not in routes
+            assert removed[0].removeprefix("/v1").startswith((
+                "/console/custom-models", "/console/user-models", "/custom-models", "/user-models",
+                "/docs/custom-models", "/docs/user-models", "/user-chat", "/models/user-provided",
+                "/internal/gateway/resolve-custom-model",
+            ))
+            routes.append(removed)
+        routes.sort()
     return dict(routes_sha256=hashlib.sha256(json.dumps(routes).encode()).hexdigest(),
                 route_count=len(routes), startup=[f.__qualname__ for f in app.router.on_startup],
                 shutdown=[f.__qualname__ for f in app.router.on_shutdown],
@@ -80,8 +98,10 @@ def inventory(app):
 def test_existing_surfaces_match_main_inventory(surface, enabled):
     frozen = json.loads((Path(__file__).parent / "fixtures/settle_drain_surface_inventory.json").read_text())
     assert frozen["revision"] == "ddfbd1e62"
+    delta = json.loads((Path(__file__).parent / "fixtures/retired_creator_route_delta.json").read_text())
+    assert delta["base_revision"] == "43f8cf6e73c999bc2140147e854f2ff96b2f124b"
     app = create_app(inventory_settings(surface, enabled), configure_store_arg=False, init_observability=False)
-    assert inventory(app) == frozen[f"{surface}/{enabled}"]
+    assert inventory(app, delta["surfaces"][surface]) == frozen[f"{surface}/{enabled}"]
 
 
 def test_worker_surface_excludes_every_other_starter(monkeypatch):
@@ -89,7 +109,7 @@ def test_worker_surface_excludes_every_other_starter(monkeypatch):
     def forbidden(*args, **kwargs):
         raise AssertionError("unrelated worker initialization")
     for module in ["speculation_shadow", "routing_snapshot_publisher", "edge_policy_publisher",
-                   "async_settle_admission_refresh",
+                   "async_settle_admission_refresh", "async_settle_memory",
                    "async_settle_shadow", "async_settle_shadow_cohort_runtime",
                    "async_settle_shadow_health", "async_settle_shadow_startup_harness"]:
         monkeypatch.setattr(f"trusted_router.services.{module}.install", forbidden)
@@ -97,7 +117,7 @@ def test_worker_surface_excludes_every_other_starter(monkeypatch):
                  "validate_auto_model_order", "register_http_middleware", "StageDPolicyResolver"]:
         monkeypatch.setattr(f"trusted_router.main.{name}", forbidden)
     app = create_app(inventory_settings("settle-drain", True).model_copy(
-        update={"async_settle_admission_refresh_enabled": True}), configure_store_arg=False)
+        update={"async_settle_admission_refresh_enabled": True, "async_settle_handoff_mode": "memory"}), configure_store_arg=False)
     assert [r.path for r in app.routes] == ["/health"]
     assert [f.__name__ for f in app.router.on_startup] == ["_start_settle_drain"]
     assert [f.__name__ for f in app.router.on_shutdown] == ["_stop_settle_drain"]

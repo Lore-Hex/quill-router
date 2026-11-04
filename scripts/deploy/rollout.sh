@@ -535,7 +535,7 @@ ENV_VARS=(
   # section always worked; this is the switch that lets the gateway AUTHORIZE
   # and route to one. Off again = the gateway 404s user-model ids; in-flight
   # holds still settle, because settle does not read this flag.
-  "TR_USER_MODELS_DISPATCH_ENABLED=true"
+  "TR_USER_MODELS_DISPATCH_ENABLED=false"
   "TR_VERIFF_BASE_URL=https://stationapi.veriff.com"
   "TR_TELNYX_FROM_NUMBER=+17869471547"
   "TR_TELNYX_TEXML_ACCOUNT_ID=1eea716a-02e0-4d4f-96fa-36d1f556edca"
@@ -705,9 +705,11 @@ ENV_VARS=(
   "TR_STAGE_D_PILOT_WORKSPACE_IDS="
   # The fast path's pilot (docs/design/fast-admission-pilot.md): Joseph's
   # workspace and, on his word (2026-10-16), one customer's, admitted by the
-  # front doors from the us-central1 control plane. Rollback: Joseph's ID
-  # alone, or TR_FASTPATH_PILOT_ENABLED=false.
-  "TR_FASTPATH_PILOT_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d,84cbb802-e054-486a-9226-e3cda4a799fb"
+  # front doors from the us-central1 control plane; from 2026-11-03 also P1's
+  # synthetic workspace, his own and outside async settle admission, so the
+  # edge answers its load tests. Rollback: drop an ID, or
+  # TR_FASTPATH_PILOT_ENABLED=false.
+  "TR_FASTPATH_PILOT_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d,84cbb802-e054-486a-9226-e3cda4a799fb,8b682b96-d8ef-4631-b0ee-bbf41816f1f8"
   "TR_FASTPATH_PILOT_ENABLED=true"
   # Which keys with spend windows the pilot covers, here and on the edge
   # through the edge policy (docs/design/fast-admission-e2-key-windows.md
@@ -791,10 +793,17 @@ ENV_VARS=(
   "TR_ASYNC_SETTLE_PROTECTION=true"
   # 2026-11-02: read ahead; preserve synchronous admission freshness limits.
   "TR_ASYNC_SETTLE_ADMISSION_REFRESH_ENABLED=true"
+  # 2026-11-03: accept async handoffs in memory; a crash may lose queued settles (Joseph)
+  "TR_ASYNC_SETTLE_HANDOFF_MODE=memory"
   # 2026-11-02: the probe workspace (R2 cohort, #2187) rejoins the R3 pilot
   # so its provider-pinned first-party requests produce handoff timing samples.
   # The pilot cap is per workspace; the probe does not draw on the customer cap.
   "TR_ASYNC_SETTLE_PILOT_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d,162e441a-5d13-414f-92bd-7c6cd805faa3"
+  # Async settle takes no request the fast path takes (G15 section 4.5): a
+  # TR_FASTPATH_PILOT_WORKSPACES workspace is outside async admission, even
+  # with an empty pilot list above (every workspace), unless listed here. The
+  # operator workspace is in both pilots (R3) and keeps its async settles.
+  "TR_ASYNC_SETTLE_FASTPATH_OVERLAP_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d"
   "TR_ASYNC_SETTLE_PILOT_CAP_MICRO=5000000"
   # October 31: new async-v1 acceptance only where the 500 ms durable handoff
   # was measured to fit (accepted handoffs: us-central1 at most 92 ms, us-east4
@@ -818,10 +827,15 @@ ENV_VARS=(
   "TR_ASYNC_SETTLE_TICKET_ISSUER=https://api.trustedrouter.com"
   "TR_ASYNC_SETTLE_TICKET_AUDIENCE=router-settlement"
   "TR_ASYNC_SETTLE_AUTHORITY_EPOCH=1"
-  "TR_ASYNC_SETTLE_NEGOTIATION_REGIONS=us-central1,us-west1"
+  "TR_ASYNC_SETTLE_NEGOTIATION_REGIONS=us-central1,us-west1,us-east4"
   # Gate at authorize: 500 ms handoff budget; central p50/p99 64/103 ms,
   # east p50/p90/p99 257/308/487 ms. Europe: 139 unknown, 93 rejected,
   # 126 settle 503s tripping the deploy billing gate. West settles via central.
+  # 2026-11-04: those east and Europe numbers were Spanner commits made in
+  # their own regions' routers. Every enclave's settle now lands in
+  # us-central1 (terminal route, #2293), and the memory handoff (#2296)
+  # answers before any Spanner work (router p50/p99 7/11 ms). us-east4 joins
+  # first; Europe follows after an hour of measured us-east4 handoffs.
   # E2 routing snapshot publication: the literals of the key block above.
   "TR_ROUTING_SNAPSHOT_PUBLISH_ENABLED=${ROUTING_SNAPSHOT_PUBLISH_ENABLED}"
   "TR_ROUTING_SNAPSHOT_PRIVATE_KEY_FILE=${ROUTING_SNAPSHOT_KEY_FILE}"

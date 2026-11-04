@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -47,6 +48,62 @@ func TestStagedRecordsJoinByAuthorizationAndDigest(t *testing.T) {
 	got, ok, err := s.ReadStaged(ctx, a, []byte("compacted"))
 	if err != nil || !ok || string(got.Body) != "retry" {
 		t.Fatalf("the compacted copy: %+v %v %v", got, ok, err)
+	}
+}
+
+// TestStagedRecordsAreReadManyAtOnce: ReadStagedBatch reads, in one call,
+// the staged record of each authorization and digest there is one for, as
+// ReadStaged reads each: a compacted copy is not the original, and an
+// authorization staged under another digest, or not staged at all, has no
+// answer. A key given twice is answered once, none reads nothing, and more
+// than MaxReadStaged are refused.
+func TestStagedRecordsAreReadManyAtOnce(t *testing.T) {
+	s := spikeStore(t)
+	ctx := context.Background()
+	ref := wonLease(t, s)
+	var keys []StagedKey
+	want := map[string]StagedRecord{}
+	for i := range 3 {
+		a, _ := NewAuthorizationID(ref.LeaseID)
+		r := StagedRecord{AuthorizationID: a, Digest: []byte("original"), Ref: ref, Body: []byte("full " + a),
+			MessageID: "m-" + a, PublishTime: time.Now().UTC().Truncate(time.Microsecond)}
+		if err := s.StageRecord(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 {
+			compacted := r
+			compacted.Digest, compacted.Body = []byte("compacted"), []byte("retry")
+			if err := s.StageRecord(ctx, compacted); err != nil {
+				t.Fatal(err)
+			}
+		}
+		keys = append(keys, StagedKey{a, r.Digest})
+		want[a] = r
+	}
+	other, _ := NewAuthorizationID(ref.LeaseID)
+	asked := append(slices.Clone(keys), keys[1], StagedKey{keys[2].AuthorizationID, []byte("another")},
+		StagedKey{other, []byte("original")})
+	got, err := s.ReadStagedBatch(ctx, asked...)
+	if err != nil || len(got) != len(keys) {
+		t.Fatalf("read %d records, %v; want %d", len(got), err, len(keys))
+	}
+	for _, r := range got {
+		w, ok := want[r.AuthorizationID]
+		if !ok || string(r.Digest) != "original" || string(r.Body) != string(w.Body) || r.Ref != ref ||
+			r.MessageID != w.MessageID || !r.PublishTime.Equal(w.PublishTime) {
+			t.Fatalf("read %+v, want %+v", r, w)
+		}
+		one, ok, err := s.ReadStaged(ctx, r.AuthorizationID, r.Digest)
+		if !ok || err != nil || !reflect.DeepEqual(one, r) {
+			t.Fatalf("ReadStaged reads %+v %v %v, ReadStagedBatch %+v", one, ok, err, r)
+		}
+		delete(want, r.AuthorizationID)
+	}
+	if got, err := s.ReadStagedBatch(ctx); got != nil || err != nil {
+		t.Fatalf("no keys: %v %v", got, err)
+	}
+	if _, err := s.ReadStagedBatch(ctx, make([]StagedKey, MaxReadStaged+1)...); err == nil {
+		t.Fatal("more than MaxReadStaged read at once")
 	}
 }
 
@@ -249,5 +306,75 @@ func TestPendingPacksPageInKeyOrder(t *testing.T) {
 			t.Fatalf("the page after %+v: %+v %v, want %v", cursor, page, err, want)
 		}
 		cursor = page[0]
+	}
+}
+
+// TestStageRecordsAnswersEachInOneTransaction: StageRecords stages, in one
+// call, the records of leases that have not retired, and answers each as
+// StageRecord would: a retired lease's ErrRetired, a lease with no row's
+// ErrNoLease, an incomplete record's refusal. A record given twice leaves
+// one row, and those it refuses are not staged.
+func TestStageRecordsAnswersEachInOneTransaction(t *testing.T) {
+	s := spikeStore(t)
+	ctx := context.Background()
+	live, retired := wonLease(t, s), wonLease(t, s)
+	if _, err := s.client.Apply(ctx, []*spanner.Mutation{spanner.Update("tr_lease",
+		[]string{"workspace_id", "lease_id", "retire_at"},
+		[]any{retired.Workspace, retired.LeaseID, time.Now()})}); err != nil {
+		t.Fatal(err)
+	}
+	missing := LeaseRef{live.Workspace, NewLeaseID()}
+	record := func(ref LeaseRef, digest string) StagedRecord {
+		a, err := NewAuthorizationID(ref.LeaseID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return StagedRecord{AuthorizationID: a, Digest: []byte(digest), Ref: ref, Body: []byte("full " + digest),
+			MessageID: "m-" + digest, PublishTime: time.Now()}
+	}
+	first, second := record(live, "one"), record(live, "two")
+	incomplete := record(live, "three")
+	incomplete.MessageID = ""
+	rs := []StagedRecord{first, record(retired, "four"), second, record(missing, "five"), incomplete, first}
+	errs, err := s.StageRecords(ctx, rs)
+	if err != nil || len(errs) != len(rs) {
+		t.Fatalf("the batch: %v %v", errs, err)
+	}
+	if errs[0] != nil || errs[2] != nil || errs[5] != nil {
+		t.Fatalf("the live lease's records: %v", errs)
+	}
+	if !errors.Is(errs[1], ErrRetired) || !errors.Is(errs[3], ErrNoLease) || errs[4] == nil ||
+		errors.Is(errs[4], ErrRetired) || errors.Is(errs[4], ErrNoLease) {
+		t.Fatalf("the refused records: %v", errs)
+	}
+	for _, r := range []StagedRecord{first, second} {
+		got, ok, err := s.ReadStaged(ctx, r.AuthorizationID, r.Digest)
+		if err != nil || !ok || string(got.Body) != string(r.Body) {
+			t.Fatalf("%s: %+v %v %v", r.Digest, got, ok, err)
+		}
+	}
+	for _, r := range []StagedRecord{rs[1], rs[3], incomplete} {
+		if _, ok, err := s.ReadStaged(ctx, r.AuthorizationID, r.Digest); err != nil || ok {
+			t.Fatalf("%s was staged: %v %v", r.Digest, ok, err)
+		}
+	}
+	if errs, err := s.StageRecords(ctx, nil); errs != nil || err != nil {
+		t.Fatalf("none: %v %v", errs, err)
+	}
+	if errs, err := s.StageRecords(ctx, []StagedRecord{incomplete}); err != nil || len(errs) != 1 || errs[0] == nil {
+		t.Fatalf("only an incomplete record: %v %v", errs, err)
+	}
+	if _, err := s.StageRecords(ctx, make([]StagedRecord, MaxStageRecords+1)); err == nil {
+		t.Fatal("more than MaxStageRecords were taken")
+	}
+	big := record(live, "big")
+	big.Body = make([]byte, MaxStageBytes/2+1)
+	if _, err := s.StageRecords(ctx, []StagedRecord{big, big}); err == nil {
+		t.Fatal("more than MaxStageBytes were taken")
+	}
+	alone := record(live, "alone")
+	alone.Body = make([]byte, MaxStageBytes+1)
+	if errs, err := s.StageRecords(ctx, []StagedRecord{alone}); err != nil || errs[0] != nil {
+		t.Fatalf("one record past MaxStageBytes alone: %v %v", errs, err)
 	}
 }

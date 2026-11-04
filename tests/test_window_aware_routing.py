@@ -25,12 +25,10 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from tests.fixture_routes import serve_on_fixture_route
-from tests.test_custom_models import _create_custom_model
 from trusted_router import authorize_candidates, catalog, routing
 from trusted_router.catalog_data import AUTO_MODEL_ID, Model
 from trusted_router.config import Settings
 from trusted_router.main import create_app
-from trusted_router.routes.internal import gateway
 from trusted_router.routing import candidates_fitting_context, chat_route_endpoint_candidates
 from trusted_router.storage import STORE, InMemoryStore
 
@@ -186,20 +184,6 @@ def test_authorize_refuses_a_request_no_model_holds_before_any_hold(ladder):
     assert len(store.api_keys.reservations) == reservations
 
 
-def test_a_custom_models_hidden_prompt_counts(ladder, monkeypatch):
-    # The window check reads the prompt estimate the hold is reserved on,
-    # which adds the custom model's hidden prompt to the gateway's count.
-    monkeypatch.setattr(gateway, "estimate_tokens_from_text", lambda text: 5_000)
-    client, key_hash = _client_and_key(ladder)
-    custom = _create_custom_model(client, base_model_id=SMALL, hidden_prompt="policy")
-    # Positive control: 4,000 tokens fit the 8k base model on their own.
-    assert _models(_authorize(
-        client, key_hash, "base", model=SMALL, estimated_input_tokens=4_000,
-    )) == [SMALL]
-    refused = _authorize(client, key_hash, "custom", model=custom["id"], estimated_input_tokens=4_000)
-    assert refused.status_code == 400, refused.text
-    assert refused.json()["error"]["type"] == "context_length_exceeded"
-    assert "your messages resulted in 9000 tokens" in refused.json()["error"]["message"]
 
 
 def test_a_pool_publishes_the_largest_window_it_routes_to(ladder, client):

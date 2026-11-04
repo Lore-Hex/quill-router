@@ -2489,6 +2489,19 @@
       ],
       "default_effort": "high"
     },
+    "stealth/crouton-alpha": {
+      "mandatory": true,
+      "default_enabled": false,
+      "supported_efforts": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "minimal"
+      ],
+      "default_effort": "max"
+    },
     "stepfun/step-3.5-flash": {
       "mandatory": true,
       "default_enabled": false,
@@ -2541,6 +2554,16 @@
       ],
       "default_effort": "high"
     },
+    "tencent/hy4": {
+      "mandatory": false,
+      "default_enabled": true,
+      "supported_efforts": [
+        "high",
+        "low",
+        "none"
+      ],
+      "default_effort": "high"
+    },
     "tencent/hy4-preview": {
       "mandatory": false,
       "default_enabled": true,
@@ -2565,32 +2588,6 @@
       "default_effort": "high"
     },
     "thinkingmachines/inkling-small": {
-      "mandatory": false,
-      "default_enabled": true,
-      "supported_efforts": [
-        "max",
-        "high",
-        "medium",
-        "low",
-        "minimal",
-        "none"
-      ],
-      "default_effort": "high"
-    },
-    "thinkingmachines/inkling-small:free": {
-      "mandatory": false,
-      "default_enabled": true,
-      "supported_efforts": [
-        "max",
-        "high",
-        "medium",
-        "low",
-        "minimal",
-        "none"
-      ],
-      "default_effort": "high"
-    },
-    "thinkingmachines/inkling:free": {
       "mandatory": false,
       "default_enabled": true,
       "supported_efforts": [

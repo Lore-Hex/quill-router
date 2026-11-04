@@ -2742,6 +2742,16 @@ DECIDE_PATH_ALIASES: tuple[tuple[str, str], ...] = (
 )
 
 
+# Other routers' names for a hosted decision model. The attested gateway
+# rewrites these to the TrustedRouter id before it picks the hosted path (its
+# decide.ModelAliases is the authority); a gateway built before an entry
+# passes the caller's spelling through, and authorize answers it with the id
+# to send instead of calling it unknown.
+DECIDE_MODEL_ALIASES: dict[str, str] = {
+    "typesafe/jev-1.13": "typesafe-ai/jev",  # OpenRouter's Decisions API
+}
+
+
 def decide_url(api_base_url: str) -> str:
     """The decide route on the API host: it sits beside /v1, not under it."""
     return api_base_url.rstrip("/").removesuffix("/v1") + DECIDE_PATH
@@ -3846,7 +3856,6 @@ _PROVIDER_UNSERVED_CREDITS_MODELS: dict[str, frozenset[str]] = {
             "google/gemma-4-31b-it",
         }
     ),
-    "openai": frozenset({"openai/gpt-oss-120b", "openai/gpt-oss-20b"}),
     "deepseek": frozenset({"deepseek/deepseek-chat-v3.1", "deepseek/deepseek-v3.2"}),
     "nebius": frozenset({"google/gemma-2-2b-it", "meta-llama/Meta-Llama-3.1-8B-Instruct"}),
     "zai": frozenset({"z-ai/glm-4-32b", "z-ai/glm-4.7-flash"}),
@@ -4417,6 +4426,18 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
         ),
     ),
     # --- No single creator country ---
+    "zro": ModelOrigin(
+        country=None,
+        lab_name="Zro / MoonMath (API model namespace)",
+        source_url="https://zro.moonmath.ai/docs/models",
+        note=(
+            "Checked Zro's model documentation on 2026-11-04: Dolly 1 and "
+            "Dolly 2 are GLM variants, and Abyss 1 is a DeepSeek variant. "
+            "The API namespace combines upstream weights with provider variants "
+            "without establishing a single creator country. EU/US inference "
+            "placement is not model-creator country."
+        ),
+    ),
     "decision-models": ModelOrigin(
         country=None,
         lab_name="Baseten / Base Labs decision-model namespace",

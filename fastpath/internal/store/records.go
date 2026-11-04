@@ -30,6 +30,13 @@ type StagedRecord struct {
 // done, so nothing reads a record staged for it.
 var ErrRetired = errors.New("store: the lease has retired")
 
+// MaxStageRecords bounds the records StageRecords takes at once, and
+// MaxStageBytes their bodies, well inside a commit's limits.
+const (
+	MaxStageRecords = 256
+	MaxStageBytes   = 8 << 20
+)
+
 // StageRecord stages a full record, at least once, for a lease that has not
 // retired: one transaction, tagged apart, reads the lease's retirement and
 // writes the record, and writing it twice leaves one row. A pack's work
@@ -40,30 +47,100 @@ var ErrRetired = errors.New("store: the lease has retired")
 // other, so once a workspace's leases have retired and their staged records
 // are dropped, no staged record of it returns.
 func (s *Store) StageRecord(ctx context.Context, r StagedRecord) error {
-	if r.AuthorizationID == "" || len(r.Digest) == 0 || len(r.Body) == 0 || r.MessageID == "" {
-		return errors.New("store: a staged record has an authorization, a digest, a body and a message ID")
+	errs, err := s.StageRecords(ctx, []StagedRecord{r})
+	if err != nil {
+		return err
 	}
-	_, err := s.client.ReadWriteTransactionWithOptions(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
-		row, err := txn.ReadRowWithOptions(ctx, "tr_lease", r.Ref.key(), []string{"retire_at"},
-			&spanner.ReadOptions{RequestTag: stagingTag})
-		if spanner.ErrCode(err) == codes.NotFound {
-			return fmt.Errorf("%w: %v", ErrNoLease, r.Ref)
+	return errs[0]
+}
+
+// StageRecords stages records as StageRecord stages each, in one
+// transaction: it reads the retirement of every lease they name and writes
+// each whose lease has not retired. Each record's answer is its own, in
+// errs, as StageRecord's would be (ErrRetired, ErrNoLease, or one it is
+// refused for); err is the transaction's, and then none is staged. More than
+// MaxStageRecords, or more than one record with bodies past MaxStageBytes,
+// are refused: one record alone is staged whatever its size, as before.
+func (s *Store) StageRecords(ctx context.Context, rs []StagedRecord) (errs []error, err error) {
+	if len(rs) == 0 {
+		return nil, nil
+	}
+	if len(rs) > MaxStageRecords {
+		return nil, fmt.Errorf("store: %d records to stage at once, more than %d", len(rs), MaxStageRecords)
+	}
+	bytes := 0
+	for _, r := range rs {
+		bytes += len(r.Body)
+	}
+	if len(rs) > 1 && bytes > MaxStageBytes {
+		return nil, fmt.Errorf("store: %d bytes of records to stage at once, more than %d", bytes, MaxStageBytes)
+	}
+	valid := make([]error, len(rs))
+	seen := map[LeaseRef]bool{}
+	var keys []spanner.KeySet
+	for i, r := range rs {
+		if r.AuthorizationID == "" || len(r.Digest) == 0 || len(r.Body) == 0 || r.MessageID == "" {
+			valid[i] = errors.New("store: a staged record has an authorization, a digest, a body and a message ID")
+			continue
 		}
+		if !seen[r.Ref] {
+			seen[r.Ref] = true
+			keys = append(keys, r.Ref.key())
+		}
+	}
+	if len(keys) == 0 {
+		return valid, nil
+	}
+	_, err = s.client.ReadWriteTransactionWithOptions(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		// A retried attempt answers afresh.
+		errs = append([]error(nil), valid...)
+		retired := make(map[LeaseRef]bool, len(keys))
+		err := txn.ReadWithOptions(ctx, "tr_lease", spanner.KeySets(keys...),
+			[]string{"workspace_id", "lease_id", "retire_at"},
+			&spanner.ReadOptions{RequestTag: stagingTag}).Do(func(row *spanner.Row) error {
+			var ref LeaseRef
+			var at spanner.NullTime
+			if err := row.Columns(&ref.Workspace, &ref.LeaseID, &at); err != nil {
+				return err
+			}
+			retired[ref] = at.Valid
+			return nil
+		})
 		if err != nil {
 			return err
 		}
-		var retired spanner.NullTime
-		if err := row.Column(0, &retired); err != nil {
-			return err
+		var mutations []*spanner.Mutation
+		for i, r := range rs {
+			if errs[i] != nil {
+				continue
+			}
+			gone, found := retired[r.Ref]
+			switch {
+			case !found:
+				errs[i] = fmt.Errorf("%w: %v", ErrNoLease, r.Ref)
+			case gone:
+				errs[i] = fmt.Errorf("%w: %v", ErrRetired, r.Ref)
+			default:
+				mutations = append(mutations, spanner.InsertOrUpdate("tr_lease_staged",
+					[]string{"authorization_id", "record_digest", "workspace_id", "lease_id", "body", "message_id", "publish_time"},
+					[]any{r.AuthorizationID, r.Digest, r.Ref.Workspace, r.Ref.LeaseID, r.Body, r.MessageID, r.PublishTime}))
+			}
 		}
-		if retired.Valid {
-			return fmt.Errorf("%w: %v", ErrRetired, r.Ref)
+		if len(mutations) == 0 {
+			return nil
 		}
-		return txn.BufferWrite([]*spanner.Mutation{spanner.InsertOrUpdate("tr_lease_staged",
-			[]string{"authorization_id", "record_digest", "workspace_id", "lease_id", "body", "message_id", "publish_time"},
-			[]any{r.AuthorizationID, r.Digest, r.Ref.Workspace, r.Ref.LeaseID, r.Body, r.MessageID, r.PublishTime})})
+		return txn.BufferWrite(mutations)
 	}, spanner.TransactionOptions{TransactionTag: stagingTag})
-	return err
+	if err != nil {
+		return nil, err
+	}
+	for i, r := range rs {
+		if errors.Is(errs[i], ErrNoLease) {
+			// The row FindLease found has gone (FindLease).
+			s.found.forget(r.Ref.LeaseID)
+		}
+	}
+	return errs, nil
 }
 
 // ReadStaged reads the staged record with an authorization and a digest,
@@ -90,6 +167,45 @@ func (s *Store) ReadStaged(ctx context.Context, authorization string, digest []b
 type StagedKey struct {
 	AuthorizationID string
 	Digest          []byte
+}
+
+// MaxReadStaged bounds the staged records one ReadStagedBatch reads: a
+// pack's winners at a thousand settles a second are some two hundred.
+const MaxReadStaged = 500
+
+// ReadStagedBatch reads the staged records with up to MaxReadStaged
+// authorizations and digests, each a winner's, in one strong read, as
+// ReadStaged reads one: the join is never by authorization alone (§4.9).
+// It answers the records there are, each with its authorization and
+// digest, in no order of its own; a key with no record has no answer, and
+// a key given twice is answered once.
+func (s *Store) ReadStagedBatch(ctx context.Context, keys ...StagedKey) ([]StagedRecord, error) {
+	if len(keys) > MaxReadStaged {
+		return nil, fmt.Errorf("store: %d staged records read at once, past %d", len(keys), MaxReadStaged)
+	}
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	set := make([]spanner.KeySet, 0, len(keys))
+	for _, k := range keys {
+		set = append(set, spanner.Key{k.AuthorizationID, k.Digest})
+	}
+	var out []StagedRecord
+	err := s.client.Single().ReadWithOptions(ctx, "tr_lease_staged", spanner.KeySets(set...),
+		[]string{"authorization_id", "record_digest", "workspace_id", "lease_id", "body", "message_id", "publish_time"},
+		&spanner.ReadOptions{RequestTag: stagingTag}).Do(func(row *spanner.Row) error {
+		var r StagedRecord
+		if err := row.Columns(&r.AuthorizationID, &r.Digest, &r.Ref.Workspace, &r.Ref.LeaseID, &r.Body, &r.MessageID,
+			&r.PublishTime); err != nil {
+			return err
+		}
+		out = append(out, r)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // MaxDropStaged bounds the staged records one DropStaged removes: each is

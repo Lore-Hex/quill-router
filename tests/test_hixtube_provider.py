@@ -58,6 +58,21 @@ def test_catalog_preserves_price_capacity_and_native_identity():
     assert "support_contact" not in reliability and "incident_contact" not in reliability
 
 
+def test_retired_pilot_snapshot_is_not_advertised_as_an_active_route():
+    from trusted_router.catalog import MODEL_ENDPOINTS
+
+    raw = json.loads(p.MANIFEST_PATH.read_text())
+    pilot = next(row for row in raw["models"]
+                 if row["id"] == "dealignai/deepseek-v4.1-flash-1017-uncensored-fp8")
+    # A newly qualified lease may reopen this model, but cannot reuse the old cutoff.
+    if pilot["retirement_at"] == "2026-11-02T23:56:20Z":
+        assert pilot["lifecycle_status"] == "retired"
+        assert pilot["routable"] is False
+        assert pilot["routable_reason"] == "pilot-retired"
+        assert not any(endpoint.provider == "hixtube" and endpoint.model_id == pilot["id"]
+                       for endpoint in MODEL_ENDPOINTS.values())
+
+
 def test_catalog_v2_contract_requires_full_reliability():
     payload = catalog()
     del payload["data"][0]["reliability"]["capacity_scope"]

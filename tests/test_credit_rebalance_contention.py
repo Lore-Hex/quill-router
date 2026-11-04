@@ -1229,3 +1229,90 @@ def test_authorize_repairs_target_after_peer_settlement_before_future_overage(
     assert _typed_rows(database) == before
     assert _headrooms(database) == [0, -20]
     assert sum(row["total_credits"] for row in before.values()) == 190
+
+
+def test_precheck_retry_offers_every_funded_shard_after_peer_takes_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """2026-11-04: a 16-shard workspace whose shards held a little less than
+    each hold answered 503 after a peer took the one funded shard precheck
+    offered, on each of the three attempts. The retry offers every funded
+    shard precheck saw, in the request's own order, so one peer cannot empty
+    them all."""
+    from trusted_router import storage_gcp_authorize as authorize_mod
+
+    totals = [500] * 16
+    for funded in (3, 7, 11):
+        totals[funded] = 700
+    store, database, key = _seed(totals)
+    candidates = (0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14, 15, 3, 7, 11)
+    monkeypatch.setattr(store, "_credit_shard_candidates", lambda _ws: candidates)
+    monkeypatch.setattr(store, "_refresh_credit_shard_candidates", lambda _ws: candidates)
+    calls = _install_rebalance_spy(monkeypatch)
+    original = authorize_mod.authorize_atomic
+    attempts: list[tuple[int, ...]] = []
+
+    def peer_takes_first_candidate(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        tried = tuple(kwargs["credit_shard_candidates"])
+        attempts.append(tried)
+        if len(attempts) > 1:
+            # A peer's hold lands on the first shard we are about to try.
+            row = database.typed[CREDIT_BALANCE_TABLE][(WORKSPACE_ID, tried[0])]
+            row["reserved"] = int(row["reserved"]) + 200
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(authorize_mod, "authorize_atomic", peer_takes_first_candidate)
+
+    outcome, authorization = _typed_authorize(store, key, estimate=600)
+
+    assert outcome == AuthorizeOutcome.ACCEPTED
+    assert authorization is not None
+    assert attempts == [candidates[:4], (3, 7, 11)]
+    assert calls["count"] == 0
+    rows = _typed_rows(database)
+    assert rows[(WORKSPACE_ID, 3)]["reserved"] == 200
+    assert rows[(WORKSPACE_ID, 7)]["reserved"] == 600
+    assert sum(row["total_credits"] for row in rows.values()) == sum(totals)
+    assert sum(row["reserved"] for row in rows.values()) == 800
+
+
+def test_precheck_funded_shards_follow_candidate_order() -> None:
+    store, _database, _key = _seed([10, 90, 50, 80, 20])
+
+    precheck = credit_headroom_precheck(
+        store._database,
+        store._param_types,
+        workspace_id=WORKSPACE_ID,
+        shard_count=5,
+        shard_candidates=(4, 3, 2, 1, 0),
+        estimate=50,
+    )
+
+    assert precheck.outcome == RebalanceOutcome.NOT_NEEDED
+    assert precheck.funded_shards == (3, 2, 1)
+    assert precheck.candidate_shard == 3
+
+
+def test_precheck_retry_stays_inside_the_transaction_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router import storage_gcp_authorize as authorize_mod
+
+    totals = [500] * 16
+    for funded in range(8, 16):
+        totals[funded] = 700
+    store, _database, key = _seed(totals)
+    candidates = tuple(range(16))
+    monkeypatch.setattr(store, "_credit_shard_candidates", lambda _ws: candidates)
+    monkeypatch.setattr(store, "_refresh_credit_shard_candidates", lambda _ws: candidates)
+    original = authorize_mod.authorize_atomic
+    attempts: list[tuple[int, ...]] = []
+
+    def track(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        attempts.append(tuple(kwargs["credit_shard_candidates"]))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(authorize_mod, "authorize_atomic", track)
+
+    assert _typed_authorize(store, key, estimate=600)[0] == AuthorizeOutcome.ACCEPTED
+    assert attempts == [candidates[:4], (8, 9, 10, 11)]

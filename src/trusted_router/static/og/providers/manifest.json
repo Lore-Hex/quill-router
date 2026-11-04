@@ -46,10 +46,10 @@
   },
   "amazon-bedrock": {
     "card_version": 2,
-    "model_count": 39,
+    "model_count": 38,
     "name": "Amazon Bedrock",
     "privacy": "Policy documented",
-    "route_count": 39,
+    "route_count": 38,
     "route_mode": "Prepaid",
     "slug": "amazon-bedrock"
   },
@@ -298,10 +298,10 @@
   },
   "featherless": {
     "card_version": 2,
-    "model_count": 60,
+    "model_count": 59,
     "name": "Featherless AI",
     "privacy": "Zero retention",
-    "route_count": 60,
+    "route_count": 59,
     "route_mode": "Prepaid",
     "slug": "featherless"
   },
@@ -325,10 +325,10 @@
   },
   "gmi": {
     "card_version": 2,
-    "model_count": 79,
+    "model_count": 81,
     "name": "GMI Cloud",
     "privacy": "Policy documented",
-    "route_count": 86,
+    "route_count": 88,
     "route_mode": "Prepaid + BYOK",
     "slug": "gmi"
   },
@@ -487,19 +487,19 @@
   },
   "lyceum": {
     "card_version": 2,
-    "model_count": 13,
+    "model_count": 12,
     "name": "Lyceum",
     "privacy": "Policy documented",
-    "route_count": 13,
+    "route_count": 12,
     "route_mode": "Prepaid",
     "slug": "lyceum"
   },
   "makora": {
     "card_version": 2,
-    "model_count": 8,
+    "model_count": 9,
     "name": "Makora",
     "privacy": "Policy documented",
-    "route_count": 15,
+    "route_count": 17,
     "route_mode": "Prepaid + BYOK",
     "slug": "makora"
   },
@@ -586,10 +586,10 @@
   },
   "nebius": {
     "card_version": 2,
-    "model_count": 37,
+    "model_count": 38,
     "name": "Nebius Token Factory",
     "privacy": "Zero retention",
-    "route_count": 72,
+    "route_count": 74,
     "route_mode": "Prepaid + BYOK",
     "slug": "nebius"
   },
@@ -622,10 +622,10 @@
   },
   "novita": {
     "card_version": 2,
-    "model_count": 80,
+    "model_count": 82,
     "name": "Novita AI",
     "privacy": "Policy documented",
-    "route_count": 155,
+    "route_count": 159,
     "route_mode": "Prepaid + BYOK",
     "slug": "novita"
   },
@@ -649,10 +649,10 @@
   },
   "openai": {
     "card_version": 2,
-    "model_count": 34,
+    "model_count": 32,
     "name": "OpenAI",
     "privacy": "TR-funded ZDR",
-    "route_count": 60,
+    "route_count": 58,
     "route_mode": "Prepaid + BYOK",
     "slug": "openai"
   },
@@ -685,10 +685,10 @@
   },
   "pearl": {
     "card_version": 2,
-    "model_count": 6,
+    "model_count": 5,
     "name": "Pearl Research Labs",
     "privacy": "Policy documented",
-    "route_count": 6,
+    "route_count": 5,
     "route_mode": "Prepaid",
     "slug": "pearl"
   },
@@ -811,10 +811,10 @@
   },
   "sambanova": {
     "card_version": 2,
-    "model_count": 5,
+    "model_count": 3,
     "name": "SambaNova",
     "privacy": "Policy documented",
-    "route_count": 5,
+    "route_count": 3,
     "route_mode": "Prepaid",
     "slug": "sambanova"
   },
@@ -910,10 +910,10 @@
   },
   "together": {
     "card_version": 2,
-    "model_count": 10,
+    "model_count": 9,
     "name": "Together",
     "privacy": "Zero retention",
-    "route_count": 20,
+    "route_count": 18,
     "route_mode": "Prepaid + BYOK",
     "slug": "together"
   },
@@ -1018,10 +1018,10 @@
   },
   "zro": {
     "card_version": 2,
-    "model_count": 5,
+    "model_count": 6,
     "name": "Zro (MoonMath)",
     "privacy": "Zero retention",
-    "route_count": 5,
+    "route_count": 6,
     "route_mode": "Prepaid",
     "slug": "zro"
   }

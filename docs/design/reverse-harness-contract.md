@@ -1,5 +1,9 @@
 # Reverse-harness contract — serving a user-provided model to TrustedRouter
 
+> Historical design only. Custom and user-provided models were retired on
+> November 3, 2026. Registration, probes and enclave dispatch are removed.
+> See [the retirement note](../custom-models.md).
+
 **Status:** v1 (2026-08-16). Implemented by the open-source `reverse-harness` (Apache 2,
 TypeScript/Node reference: `npx @trustedrouter/reverse-harness`) and by any agent or machine that
 wants to be a model. This document is the whole wire contract; the harness holds its own queue and

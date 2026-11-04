@@ -259,7 +259,10 @@ def test_anthropic_models_credits_use_approved_hosts_only(reseller: str) -> None
         if e.model_id.startswith("anthropic/")
         and e.provider == "amazon-bedrock" and e.usage_type == "Credits"
     }
-    assert bedrock == BEDROCK_RUNTIME_PROFILES
+    assert bedrock == {
+        model_id: upstream_id for model_id, upstream_id in BEDROCK_RUNTIME_PROFILES.items()
+        if _listed_row("amazon-bedrock", model_id) is not None
+    }
     assert {
         e.model_id for e in built.values()
         if e.model_id.startswith("anthropic/")

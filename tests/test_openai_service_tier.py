@@ -194,31 +194,6 @@ def test_priority_rejects_unsupported_models_and_long_context() -> None:
     assert too_long.status_code == 400
 
 
-def test_priority_limit_includes_custom_model_hidden_prompt() -> None:
-    client, key = _client_and_key()
-    created = client.post(
-        "/v1/custom-models",
-        headers={"x-trustedrouter-user": "openai-priority@example.com"},
-        json={
-            "name": "Priority prompt",
-            "base_model_id": "openai/gpt-5.6-sol",
-            "hidden_prompt": "12345678",
-        },
-    )
-    assert created.status_code == 201, created.text
-
-    too_long = client.post(
-        "/v1/internal/gateway/authorize",
-        json={
-            "api_key_hash": key["hash"],
-            "model": created.json()["data"]["id"],
-            "service_tier": "priority",
-            "estimated_input_tokens": 271_999,
-            "max_output_tokens": 1,
-        },
-    )
-    assert too_long.status_code == 400
-    assert "272000" in too_long.text
 
 
 def test_auto_reserves_priority_but_settles_reported_default() -> None:

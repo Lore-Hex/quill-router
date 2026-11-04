@@ -3,9 +3,9 @@
   "provider": "makora",
   "source": "https://inference.makora.com/v1/models",
   "pricing_source": "https://inference.makora.com/v1/models",
-  "generated_at": "2026-11-03T19:48:25Z",
+  "generated_at": "2026-11-04T16:53:25Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 21,
+  "model_count": 22,
   "models": [
     {
       "id": "deepseek/deepseek-v4-flash",
@@ -483,9 +483,9 @@
         "seed",
         "max_tokens"
       ],
-      "input_token_price_per_m": 500000,
-      "output_token_price_per_m": 13000000,
-      "cached_input_token_price_per_m": 200000
+      "input_token_price_per_m": 360000,
+      "output_token_price_per_m": 12000000,
+      "cached_input_token_price_per_m": 160000
     },
     {
       "id": "z-ai/glm-5.3-flash",
@@ -833,6 +833,28 @@
       "routable_reason": "unsupported-chat-endpoint",
       "context_length": 16384,
       "input_token_price_per_m": 18000,
+      "output_token_price_per_m": 0,
+      "cached_input_token_price_per_m": 0
+    },
+    {
+      "display_name": "perplexity-ai/pplx-decider-v1.2",
+      "title": "perplexity-ai/pplx-decider-v1.2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "perplexity-ai/pplx-decider-v1.2",
+      "upstream_id": "perplexity-ai/pplx-decider-v1.2",
+      "context_length": 262144,
+      "input_token_price_per_m": 20000,
       "output_token_price_per_m": 0,
       "cached_input_token_price_per_m": 0
     }

@@ -373,7 +373,12 @@ def test_snapshot_worker_main_wires_both_rollup_scopes_into_one_insert(monkeypat
         "'fleet'",
         "'fleet_all'",
     ]
-    [body] = inserted
+    # The core snapshots go in one insert; the encrypted AI ranking follows in
+    # its own, so a failure there can never hold the core ones back.
+    body, *rest = inserted
+    assert [{json.loads(line)["name"] for line in extra.decode().splitlines()} for extra in rest] == [
+        {"encrypted_ai"}
+    ]
     payloads = {
         json.loads(line)["name"]: json.loads(json.loads(line)["payload"])
         for line in body.decode().splitlines()

@@ -121,8 +121,8 @@ func (b *blocking) ScanDraining(ctx context.Context, _ string, _ store.LeaseRef,
 func (b *blocking) PendingPacks(ctx context.Context, _ store.PendingPack, _ int) ([]store.PendingPack, error) {
 	return nil, b.block(ctx, "PendingPacks")
 }
-func (b *blocking) ReadStaged(ctx context.Context, _ string, _ []byte) (store.StagedRecord, bool, error) {
-	return store.StagedRecord{}, false, b.block(ctx, "ReadStaged")
+func (b *blocking) ReadStagedBatch(ctx context.Context, _ ...store.StagedKey) ([]store.StagedRecord, error) {
+	return nil, b.block(ctx, "ReadStagedBatch")
 }
 func (b *blocking) WriteRecords(ctx context.Context, _ []store.LeaseRecord) error {
 	return b.block(ctx, "WriteRecords")
@@ -136,8 +136,8 @@ func (b *blocking) DropStaged(ctx context.Context, _ ...store.StagedKey) error {
 func (b *blocking) RetiredStaged(ctx context.Context, _ int) ([]store.StagedKey, error) {
 	return nil, b.block(ctx, "RetiredStaged")
 }
-func (b *blocking) StageRecord(ctx context.Context, _ store.StagedRecord) error {
-	return b.block(ctx, "StageRecord")
+func (b *blocking) StageRecords(ctx context.Context, _ []store.StagedRecord) ([]error, error) {
+	return nil, b.block(ctx, "StageRecords")
 }
 
 // TestEveryStoreCallHasADeadline: each Spanner call of the runtime, the
@@ -173,13 +173,16 @@ func TestEveryStoreCallHasADeadline(t *testing.T) {
 		"ticker ScanDraining":        func() error { _, err := ts.ScanDraining(ctx, "r", ref, 1); return err },
 		"pending PendingPacks":       func() error { _, err := ps.PendingPacks(ctx, store.PendingPack{}, 1); return err },
 		"pending LoadWinners":        func() error { _, _, err := ps.LoadWinners(ctx, ref); return err },
-		"pending ReadStaged":         func() error { _, _, err := ps.ReadStaged(ctx, "a", nil); return err },
+		"pending ReadStagedBatch":    func() error { _, err := ps.ReadStagedBatch(ctx); return err },
 		"pending WriteRecords":       func() error { return ps.WriteRecords(ctx, nil) },
 		"pending MarkPackDone":       func() error { _, err := ps.MarkPackDone(ctx, ref, 1); return err },
 		"pending DropStaged":         func() error { return ps.DropStaged(ctx) },
 		"pending RetiredStaged":      func() error { _, err := ps.RetiredStaged(ctx, 1); return err },
 		"stager FindLease":           func() error { _, err := ss.FindLease(ctx, "lease-1"); return err },
-		"stager StageRecord":         func() error { return ss.StageRecord(ctx, store.StagedRecord{Ref: ref}) },
+		"stager StageRecords": func() error {
+			_, err := ss.StageRecords(ctx, []store.StagedRecord{{Ref: ref}})
+			return err
+		},
 	}
 	// Every method of every store interface is called.
 	if n := 9 + 3 + 7 + 2; len(calls) != n {
@@ -769,9 +772,9 @@ func (d *deafParts) RetiredStaged(context.Context, int) ([]store.StagedKey, erro
 
 func (d *deafParts) DropStaged(context.Context, ...store.StagedKey) error { return nil }
 
-func (d *deafParts) StageRecord(context.Context, store.StagedRecord) error {
-	d.maybe("StageRecord")
-	return nil
+func (d *deafParts) StageRecords(_ context.Context, rs []store.StagedRecord) ([]error, error) {
+	d.maybe("StageRecords")
+	return make([]error, len(rs)), nil
 }
 
 // TestAWedgedCallOfAnyPartFailsTheMember: every auditor part notes its
@@ -786,7 +789,7 @@ func TestAWedgedCallOfAnyPartFailsTheMember(t *testing.T) {
 		{"AuditorMarkDraining", "mark draining"},
 		{"ScanDraining", "scan draining"},
 		{"PendingPacks", "pending packs"},
-		{"StageRecord", "stage record"},
+		{"StageRecords", "stage records"},
 	} {
 		t.Run(c.deaf, func(t *testing.T) {
 			calls, l := newInFlight(), &lines{}
@@ -808,12 +811,14 @@ func TestAWedgedCallOfAnyPartFailsTheMember(t *testing.T) {
 					t.Fatal(err)
 				}
 				go func() { _ = p.Run(ctx) }()
-			case "StageRecord":
+			case "StageRecords":
 				s, err := newStager(d, func(string, string) {}, calls)
 				if err != nil {
 					t.Fatal(err)
 				}
-				go func() { _ = s.store.StageRecord(ctx, store.StagedRecord{Ref: store.LeaseRef{LeaseID: "lease-1"}}) }()
+				go func() {
+					_, _ = s.store.StageRecords(ctx, []store.StagedRecord{{Ref: store.LeaseRef{LeaseID: "lease-1"}}})
+				}()
 			default:
 				tk, err := NewTicker(TickerConfig{Store: d, Log: leaseLogFunc(nil), Region: "r", Every: time.Hour, Limit: 1,
 					Wait: time.Second, logf: l.logf, calls: calls})

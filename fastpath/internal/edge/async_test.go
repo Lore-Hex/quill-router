@@ -176,7 +176,7 @@ func TestEveryAsyncGoldenThroughThePipeline(t *testing.T) {
 	}
 	t.Logf("%d answered cases Python's bytes (by shape %v), %d pass cases with their reason (%d streams composed "+
 		"for the shadow)", answered, shapes, passes, shadowStreams)
-	if answered != 38 || shapes["A"] != 18 || shapes["B"] != 19 || shapes["none"] != 1 || passes != 22 ||
+	if answered != 42 || shapes["A"] != 19 || shapes["B"] != 22 || shapes["none"] != 1 || passes != 22 ||
 		shadowStreams != 1 {
 		t.Fatalf("answered %d (%v), passes %d, shadow streams %d: not the goldens' counts", answered, shapes, passes,
 			shadowStreams)
@@ -253,7 +253,7 @@ func TestEdgeDecideFalseNeverAdmitsAnAsyncRequest(t *testing.T) {
 		}
 	}
 	t.Logf("%d async-v1 requests passed with edge_decide false, %d answered with it true", dark, answered)
-	if dark != 38 || answered != dark {
+	if dark != 42 || answered != dark {
 		t.Fatalf("dark %d, answered %d: not the goldens' counts", dark, answered)
 	}
 }
@@ -318,10 +318,11 @@ func TestTheUnpublishedGateIsKeyless(t *testing.T) {
 }
 
 // admissionOn is the async_settle change for Python's admission on, its
-// admission_workspaces the given set (nil: the member absent).
+// admission_workspaces the given set (nil: the member absent), and no
+// admission_excluded_workspaces.
 func admissionOn(workspaces ...string) func(*routingsnapshot.AsyncSettle) {
 	return func(a *routingsnapshot.AsyncSettle) {
-		a.AdmissionEnabled, a.AdmissionWorkspaces = true, nil
+		a.AdmissionEnabled, a.AdmissionWorkspaces, a.AdmissionExcludedWorkspaces = true, nil, nil
 		if workspaces != nil {
 			w := slices.Clone(workspaces)
 			a.AdmissionWorkspaces = &w
@@ -329,14 +330,26 @@ func admissionOn(workspaces ...string) func(*routingsnapshot.AsyncSettle) {
 	}
 }
 
+// excluding is admissionOn with admission_excluded_workspaces the given set
+// (G15 §4.5: the fast-path workspaces outside the overlap list).
+func excluding(excluded []string, workspaces ...string) func(*routingsnapshot.AsyncSettle) {
+	return func(a *routingsnapshot.AsyncSettle) {
+		admissionOn(workspaces...)(a)
+		x := slices.Clone(excluded)
+		a.AdmissionExcludedWorkspaces = &x
+	}
+}
+
 // TestTheAdmissionGateReadsTheKeysWorkspace (G15 §4.1, per workspace): with
 // Python's admission on, every answered golden's async-v1 request passes
 // policy.async_admission, with no decision, when admission_workspaces is
 // absent (every workspace, as before the member) or names the key's
-// workspace; when the member leaves that workspace out, the request is
-// decided exactly as with admission off, Python's admission-off 200 byte
-// for byte (shape A or B: no ticket, no status URL). A request without the
-// header decides whatever the member says.
+// workspace; when the member leaves that workspace out, or
+// admission_excluded_workspaces names it (§4.5, a fast-path workspace, with
+// admission_workspaces absent or naming it), the request is decided exactly
+// as with admission off, Python's admission-off 200 byte for byte (shape A
+// or B: no ticket, no status URL). Excluding another workspace changes
+// nothing. A request without the header decides whatever the members say.
 func TestTheAdmissionGateReadsTheKeysWorkspace(t *testing.T) {
 	f := asyncAuthorizeGoldens(t)
 	covered, composed := 0, 0
@@ -357,6 +370,9 @@ func TestTheAdmissionGateReadsTheKeysWorkspace(t *testing.T) {
 			{"naming the workspace", admissionOn("a_"+ws, ws, "z_"+ws), true},
 			{"naming it alone", admissionOn(ws), true},
 			{"leaving it out", admissionOn("a_"+ws, "z_"+ws), false},
+			{"absent, excluding another", excluding([]string{"a_" + ws}), true},
+			{"absent, excluding it", excluding([]string{ws}), false},
+			{"naming it, excluding it", excluding([]string{ws}, "a_"+ws, ws, "z_"+ws), false},
 		} {
 			c := withAsyncSettle(t, f, golden, v.change)
 			in, _ := caseInputs(t, f, c)
@@ -384,7 +400,9 @@ func TestTheAdmissionGateReadsTheKeysWorkspace(t *testing.T) {
 		}
 	}
 	t.Logf("%d requests covered by admission, %d composed as with admission off", covered, composed)
-	if covered != 3*35 || composed != 35+4 {
+	// 39 answered async-v1 goldens and the one without the header, which
+	// every variant decides.
+	if covered != 4*39 || composed != 3*39+7 {
 		t.Fatalf("covered %d, composed %d: not the goldens' counts", covered, composed)
 	}
 }

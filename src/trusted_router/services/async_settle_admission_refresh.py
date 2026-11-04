@@ -7,7 +7,7 @@ from contextvars import Context
 from fastapi import FastAPI
 
 from trusted_router.config import Settings
-from trusted_router.services.async_settle import Admission, AdmissionCache, decode_health
+from trusted_router.services.async_settle import Admission, AdmissionCache, observe_health
 
 ACTIVE_SECONDS = 30 * 60
 HEALTH_SECONDS = 0.5
@@ -60,7 +60,11 @@ class AdmissionRefresher:
                 self._health_attempt = started
         if health_due and cache.health_read is not None:
             try:
-                health = decode_health(cache.health_read(), now=clock(), wall=cache.wall_clock())
+                # A valid record showing an unhealthy drain is a successful read:
+                # installing it closes cached-only admission at once, as a full-path
+                # read of the same record does. A failed read, or an invalid,
+                # incomplete or stale record, keeps the earlier evidence.
+                health = observe_health(cache.health_read(), now=clock(), wall=cache.wall_clock())
                 if health is not None:
                     with cache.lock:
                         if started > cache.health_read_at:
@@ -104,6 +108,10 @@ class AdmissionRefresher:
 
 def install(app: FastAPI, settings: Settings) -> None:
     """Register lifecycle hooks; constructing a cache/runtime starts no worker."""
+    # Share the existing serving-only lifecycle seam; create_app stays pinned.
+    if settings.async_settle_handoff_mode == "memory":
+        from trusted_router.services.async_settle_memory import install as install_memory
+        install_memory(app, settings)
     if not settings.async_settle_admission_refresh_enabled:
         return
     worker: AdmissionRefresher | None = None

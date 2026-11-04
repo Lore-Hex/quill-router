@@ -184,8 +184,9 @@ func Defaults() Config {
 			RevokeEvery: time.Second},
 		Runtime: auditor.Config{CommitEvery: time.Second, MaxBatch: 100, Retry: time.Second, ForgetAfter: 10 * time.Minute,
 			Wait: 5 * time.Second, DrainOverdue: 10 * time.Minute},
-		Ticker:   auditor.TickerConfig{Every: time.Second, Limit: 100, Wait: 5 * time.Second},
-		Pending:  auditor.PendingConfig{Every: 5 * time.Second, Limit: 100, Wait: 5 * time.Second, Overdue: 10 * time.Minute},
+		Ticker: auditor.TickerConfig{Every: time.Second, Limit: 100, Wait: 5 * time.Second},
+		Pending: auditor.PendingConfig{Every: 5 * time.Second, Limit: 100, Wait: 5 * time.Second, Overdue: 10 * time.Minute,
+			Workers: auditor.DefaultPendingWorkers, DropEvery: auditor.DefaultDropEvery},
 		Stopping: 10 * time.Second,
 		HandOff:  10 * time.Second,
 	}
@@ -1098,8 +1099,10 @@ func (p *parts) auditor(cfg Config, c Clients, s *store.Store, settle *settlelog
 		cfg.RecordSubscription, cfg.MaxOutstanding)), calls: &inFlight{}, fail: p.failing("stager")}
 	p.run("stager", func(ctx context.Context) error {
 		err := stager.Run(ctx, staged)
-		// The subscription can end before its callbacks have.
+		// The subscription can end before its callbacks have, and a
+		// callback's record can begin a transaction as it leaves.
 		staged.calls.wait()
+		stager.Wait()
 		return err
 	})
 	return nil

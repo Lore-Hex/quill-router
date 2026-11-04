@@ -261,6 +261,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/pricing",
     "/api/reference",
     "/apps",
+    "/encrypted-ai",
     "/resources",
     "/customers/robot-robot-human",
     "/careers",
@@ -1557,22 +1558,6 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             "fallbacks to return one OpenAI-compatible answer."
         ),
     ),
-    "docs/user-models": PublicPage(
-        template="public/user_models_docs.html",
-        title="User-Provided Models: Post Your Machine, Agent, Or Yourself",
-        description=(
-            "List your own HTTPS endpoint on TrustedRouter as a priced model — a machine, "
-            "an agent, or a person answering by hand — and keep 70% in credits."
-        ),
-    ),
-    "docs/custom-models": PublicPage(
-        template="public/custom_models_docs.html",
-        title="Custom Models: Hidden Prompts And Creator Markup",
-        description=(
-            "Publish a TrustedRouter catalog model with a hidden prompt, a stable "
-            "creator namespace, and an optional markup whose creator keeps 70%."
-        ),
-    ),
     "docs/x402": PublicPage(
         template="public/x402.html",
         title="x402 Stablecoin Funding For Agents",
@@ -1658,7 +1643,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             (
                 "What can we offer today?",
                 "Objective routing (price/throughput/latency with fallbacks), "
-                "privacy-tier routing (zdr/e2e/eu), composite and custom models, "
+                "privacy-tier routing (zdr/e2e/eu), composite models, "
                 "prepaid metering with per-key budgets, BYOK, and multi-region "
                 "attested gateways on two clouds. Self-hosted TrustedOS, marketplace "
                 "payouts, and per-model kernels (private beta) extend the platform "
@@ -2097,6 +2082,16 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             "only, never prompts or keys."
         ),
     ),
+    "encrypted-ai": PublicPage(
+        template="public/encrypted_ai.html",
+        og_card="apps.png",
+        title="Encrypted AI apps, ranked by tokens you can verify",
+        description=(
+            "The directory of encrypted AI apps: ranked weekly by tokens served on "
+            "confidential compute, with the attestation and receipts linked so anyone "
+            "can check. Self-attested apps and a watchlist of personal AI agents."
+        ),
+    ),
     "token-exchange": PublicPage(
         template="public/token_exchange.html",
         title="AI Token Exchange for Enterprise",
@@ -2519,6 +2514,28 @@ def public_apps_html(settings: Settings, *, apps: dict[str, object]) -> str:
             github_enabled=settings.github_oauth_enabled,
             static_version=_static_version(settings),
             apps=apps,
+        )
+    )
+
+
+def public_encrypted_ai_html(settings: Settings, *, view: dict[str, object]) -> str:
+    """Render /encrypted-ai: the verified ranking joined to the curated tiers
+    (see trusted_router.encrypted_ai.directory_view)."""
+    page = PUBLIC_PAGES["encrypted-ai"]
+    return (
+        _env()
+        .get_template(page.template)
+        .render(
+            api_base_url=settings.api_base_url,
+            site_url=f"https://{settings.trusted_domain}/encrypted-ai",
+            title=f"{page.title} | TrustedRouter",
+            heading=page.title,
+            description=page.description,
+            og_image=_og_image_url(settings, page.og_card),
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+            view=view,
         )
     )
 
@@ -4058,12 +4075,7 @@ def public_rankings_html(settings: Settings) -> str:
     )
 
 
-def public_chat_html(
-    settings: Settings,
-    *,
-    locked_model_id: str = "",
-    locked_model_label: str = "Custom model",
-) -> str:
+def public_chat_html(settings: Settings) -> str:
     """Render the public chat playground at /chat.
 
     The page itself is auth-free — anyone can load it and explore the
@@ -4075,11 +4087,6 @@ def public_chat_html(
 
     See docs (plan file) for the full architecture.
     """
-    storage_key = "tr_chat_state_v1"
-    if locked_model_id:
-        storage_key = "tr_user_chat_state_" + "".join(
-            ch if ch.isalnum() else "_" for ch in locked_model_id.lower()
-        )
     return (
         _env()
         .get_template("public/chat.html")
@@ -4107,9 +4114,7 @@ def public_chat_html(
             google_enabled=settings.google_oauth_enabled,
             github_enabled=settings.github_oauth_enabled,
             static_version=_static_version(settings),
-            storage_key=storage_key,
-            locked_model_id=locked_model_id,
-            locked_model_label=locked_model_label,
+            storage_key="tr_chat_state_v1",
         )
     )
 

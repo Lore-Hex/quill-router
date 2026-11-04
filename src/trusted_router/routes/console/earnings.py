@@ -101,7 +101,7 @@ def _render_page(request: Request, ctx: ConsoleDep, settings: SettingsDep) -> st
         ctx=ctx,
         active="earnings",
         page_title="Earnings",
-        page_subtitle="Credits earned by your user-provided models.",
+        page_subtitle="Your app revenue and previously earned credits.",
         summary={
             **summary,
             "total_earned_display": format_money_display(summary["total_earned"]),

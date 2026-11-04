@@ -57,11 +57,14 @@ locals {
   # TR_FASTPATH_EDGE_STREAMS=true in scripts/deploy/rollout.sh, #2252):
   # the edge decides eligible streams for the workspaces whose decide rows
   # are on.
-  # 18f991f73: answers every front door call within the control plane's
-  # budget (1.2 s, waits that fit it, budget cuts kept out of the
-  # evidence), refuses flag-shaped ids in fastpathctl and adds decide
-  # delete (#2275).
-  fastpath_release        = "18f991f730d1720c5690fcdb451658a307d73339"
+  # 328a3651c: the auditor's pending sweep reads a pack's staged records
+  # in one call and works up to eight leases' packs at once, each lease's
+  # in order (#2298); at 1,000 a second the packs took about 25 minutes to
+  # clear one at a time.
+  # 04b39913b: that sweep raised the billing store's CPU from 33% to 47% at
+  # 1,000 a second, so the auditor remembers the leases it has found, sweeps
+  # retired staged records once a minute, and runs two lease workers (#2303).
+  fastpath_release        = "04b39913b4f1c3cab8edcc4b88301d11fa4f441b"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
@@ -358,15 +361,23 @@ resource "google_compute_instance" "fastpath_node" {
   # (stage I2, "false" until the I2 switch), which the script 7 and 8 ran,
   # from before I2, did not read; 7 and 8 were drained, left the edge
   # backend one apply before their removal, then were removed.
+  #
+  # 11 and 12 took the places of 9 and 10 the same way, on four cores rather
+  # than two: at 1,000 generations a second (2026-11-04, P1's runs on
+  # tr-fastpath-loadgen) the two-core nodes reached 77% CPU with the
+  # authorize p99 at 64 ms; on four cores five minutes at that rate held,
+  # the p99 at 27 ms and every audit clean. The same script, release and
+  # metadata; 9 and 10 were drained, left the edge backend one apply before
+  # their removal, then were removed.
   for_each = {
-    "tr-fastpath-9"  = "us-central1-a"
-    "tr-fastpath-10" = "us-central1-b"
+    "tr-fastpath-11" = { zone = "us-central1-a", machine_type = "e2-standard-4" }
+    "tr-fastpath-12" = { zone = "us-central1-b", machine_type = "e2-standard-4" }
   }
 
   project      = local.gcp_project_id
   name         = each.key
-  zone         = each.value
-  machine_type = "e2-standard-2"
+  zone         = each.value.zone
+  machine_type = each.value.machine_type
 
   boot_disk {
     initialize_params {
@@ -427,6 +438,75 @@ resource "google_compute_instance" "fastpath_node" {
   depends_on = [
     google_spanner_database_iam_member.fastpath_node_database,
     google_pubsub_subscription_iam_member.fastpath_node_subscriber,
+    google_storage_bucket_iam_member.fastpath_releases_reader,
+  ]
+}
+
+# --- The load generator ------------------------------------------------------
+
+# One machine of its own for the edge's 1,000 a second run, so the run does
+# not measure a generator beside the front door and owner it drives (P1's
+# results, "Next"). It runs no node unit and joins no membership: its script
+# only installs the pinned release's loadgen, fastpathwatch and load mix, and
+# the run is started by hand over OS Login (docs/runbooks/fastpath-p1.md).
+# It takes the nodes' service account for the release bucket and the
+# readiness read loadgen makes, and the default-allow-internal rule for the
+# front doors' port. Off is local.fastpath_loadgen = false, which removes it.
+locals {
+  fastpath_loadgen = true
+}
+
+resource "google_compute_instance" "fastpath_loadgen" {
+  count = local.fastpath_loadgen ? 1 : 0
+
+  project      = local.gcp_project_id
+  name         = "tr-fastpath-loadgen"
+  zone         = "us-central1-c"
+  machine_type = "e2-standard-8"
+
+  boot_disk {
+    initialize_params {
+      image = "debian-cloud/debian-12"
+      size  = 20
+    }
+  }
+
+  network_interface {
+    network    = "default"
+    subnetwork = "default"
+    # No access_config: no external address.
+  }
+
+  service_account {
+    email  = google_service_account.fastpath_node.email
+    scopes = ["cloud-platform"]
+  }
+
+  metadata = {
+    enable-oslogin   = "TRUE"
+    fastpath-release = local.fastpath_release
+  }
+
+  metadata_startup_script = <<-EOT
+    #!/bin/bash
+    set -euo pipefail
+    release="$(curl -sf -H 'Metadata-Flavor: Google' 'http://metadata.google.internal/computeMetadata/v1/instance/attributes/fastpath-release')"
+    install -d /opt/fastpath
+    for tool in loadgen fastpathwatch load-mix.json; do
+      gcloud storage cp "gs://${google_storage_bucket.fastpath_releases.name}/fastpath/$release/$tool" "/opt/fastpath/$tool"
+      chmod 0755 "/opt/fastpath/$tool"
+    done
+    echo "$release" > /opt/fastpath/release
+  EOT
+
+  labels = {
+    service = "fastpath"
+    stage   = "loadgen"
+  }
+
+  allow_stopping_for_update = true
+
+  depends_on = [
     google_storage_bucket_iam_member.fastpath_releases_reader,
   ]
 }

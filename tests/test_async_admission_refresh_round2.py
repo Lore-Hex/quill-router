@@ -15,7 +15,12 @@ from tests.test_async_settle_drain import healthy
 from trusted_router import async_settle_timing as timing
 from trusted_router.config import Settings
 from trusted_router.services import async_settle_admission_refresh as refresh
-from trusted_router.services.async_settle import Admission, AdmissionCache, decode_health
+from trusted_router.services.async_settle import (
+    Admission,
+    AdmissionCache,
+    DrainHealth,
+    decode_health,
+)
 
 
 @pytest.fixture
@@ -323,8 +328,7 @@ def test_invalid_workspace_refresh_installs_nothing(rig, value):
 
 
 @pytest.mark.parametrize('overrides', [
-    {'complete': False}, {'p95_age_seconds': 6, 'oldest_unresolved_age_seconds': 6},
-    {'observed_at': 99, 'worker_heartbeat': 99}, {'sample_count': True},
+    {'complete': False}, {'observed_at': 99, 'worker_heartbeat': 99}, {'sample_count': True},
 ])
 def test_invalid_health_refresh_uses_existing_decoder(rig, overrides):
     warm(rig)
@@ -335,6 +339,23 @@ def test_invalid_health_refresh_uses_existing_decoder(rig, overrides):
     rig.worker.refresh_once()
     assert rig.cache.health is previous
     assert rig.cache.health_read_at == 0
+
+
+def test_unhealthy_health_refresh_replaces_evidence(rig):
+    # A valid, complete, fresh record whose drain p95 exceeds 5 s is an
+    # observation, not an invalid read: read-ahead installs it, and admission
+    # rejects it, exactly as the full path rejects the same record.
+    warm(rig)
+    rig.health.side_effect = None
+    unhealthy = healthy(p95_age_seconds=6, oldest_unresolved_age_seconds=6)
+    rig.health.return_value = unhealthy
+    rig.now[0] = 4
+    rig.worker.refresh_once()
+    assert rig.cache.health == DrainHealth(0, 6)
+    assert rig.cache.health_read_at == 4
+    assert decode_health(unhealthy, now=4, wall=104) is None
+    assert not rig.cache.eligible('ws', 0, cached_only=True)
+    assert not rig.cache.eligible('ws', 0)
 
 
 def test_slow_reads_use_start_timestamp_and_exact_health_decoder(rig):

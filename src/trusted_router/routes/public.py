@@ -85,6 +85,7 @@ from trusted_router.dashboard import (
     public_competitor_compare_index_html,
     public_contact_html,
     public_dpa_html,
+    public_encrypted_ai_html,
     public_fusion_html,
     public_google_search_experiment_html,
     public_hipaa_readiness_html,
@@ -129,6 +130,7 @@ from trusted_router.domains import (
     request_hostname,
     status_hostname_for_domain,
 )
+from trusted_router.encrypted_ai import directory_view
 from trusted_router.exchange_analytics import ExchangeEvent, accept_event
 from trusted_router.marketing_experiments import (
     GOOGLE_SEARCH_CELLS_BY_ID,
@@ -164,7 +166,6 @@ from trusted_router.receipt_keys import (
 from trusted_router.request_limits import normalized_client_identity
 from trusted_router.routes.mcp import MCP_PROTOCOL_VERSION
 from trusted_router.scopes import KNOWN_SCOPES
-from trusted_router.serialization import user_model_public_shape
 from trusted_router.services.email import EmailMessage, get_email_service
 from trusted_router.services.ops_chat import OpsChatSupportMessage, fanout_support_message
 from trusted_router.services.reserved_tokens import (
@@ -183,10 +184,6 @@ from trusted_router.services.trust_release import (
     validated_azure_metadata,
 )
 from trusted_router.storage import STORE
-from trusted_router.storage_custom_models import (
-    is_user_provided_model_id,
-    normalize_user_provided_model_id,
-)
 from trusted_router.storage_models import (
     ReceiptKey,
     SyntheticProbeSample,
@@ -204,6 +201,9 @@ from trusted_router.trust import aws_release, azure_release, gcp_release, trust_
 from trusted_router.views import render_template
 
 STATUS_SNAPSHOT_CACHE_SECONDS = 15
+# The encrypted AI ranking is rebuilt every 15 minutes: an hour allows three
+# missed builds before the page says the ranking is updating.
+ENCRYPTED_AI_MAX_AGE_SECONDS = 3_600
 LEGACY_MODEL_PAGE_REDIRECTS: dict[str, str] = {
     "deepseek/deepseek-chat-v3.1": "/models/deepseek/deepseek-v3.1",
     "google/gemini-3-pro-image": "/models/google/gemini-3.1-flash-image-preview",
@@ -274,6 +274,7 @@ FLEET_SNAPSHOT_CACHE_SECONDS = 30
 _LEADERBOARD_CACHE: tuple[float, dict[str, Any]] | None = None
 _VIDEO_LEADERBOARD_CACHE: tuple[float, dict[str, Any]] | None = None
 _APPS_CACHE: tuple[float, dict[str, Any]] | None = None
+_ENCRYPTED_AI_CACHE: tuple[float, dict[str, Any] | None] | None = None
 _STATUS_RESPONSE_CACHE: OrderedDict[str, _CachedPublicBody] = OrderedDict()
 _STATUS_RESPONSE_REFRESHING: set[str] = set()
 _STATUS_RESPONSE_CACHE_LOCK = threading.RLock()
@@ -1450,13 +1451,6 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     def x402_docs() -> str:
         return public_page_html(settings, "docs/x402")
 
-    @public_html_route("/docs/user-models")
-    def user_models_docs() -> str:
-        return public_page_html(settings, "docs/user-models")
-
-    @public_html_route("/docs/custom-models")
-    def custom_models_docs() -> str:
-        return public_page_html(settings, "docs/custom-models")
 
     @public_html_route("/eu")
     def eu() -> str:
@@ -1848,6 +1842,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/apps")
     def apps() -> str:
         return public_apps_html(settings, apps=_apps_snapshot(settings))
+
+    @public_html_route("/encrypted-ai")
+    def encrypted_ai() -> str:
+        return public_encrypted_ai_html(settings, view=directory_view(_encrypted_ai_snapshot(settings)))
 
     @public_html_route("/resources")
     def resources() -> str:
@@ -2450,21 +2448,6 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     def chat() -> str:
         return public_chat_html(settings)
 
-    @public_html_route("/user-chat")
-    def user_chat(model: str = Query(..., min_length=1)) -> str:
-        locked_model_id = model.strip().lower()
-        user_model = (
-            STORE.get_user_model(normalize_user_provided_model_id(locked_model_id))
-            if is_user_provided_model_id(locked_model_id)
-            else None
-        )
-        return public_chat_html(
-            settings,
-            locked_model_id=locked_model_id,
-            locked_model_label=(
-                "User-provided model" if user_model is not None else "Custom model"
-            ),
-        )
 
     @public_html_route("/synth")
     def synth() -> str:
@@ -2515,27 +2498,6 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
                 )
             return HTMLResponse(body)
         body = public_model_detail_html(settings, cleaned)
-        if body is None:
-            user_model = (
-                STORE.get_user_model(normalize_user_provided_model_id(cleaned))
-                if is_user_provided_model_id(cleaned)
-                else None
-            )
-            if user_model is not None and user_model.enabled and user_model.status == "active":
-                shape = user_model_public_shape(user_model)
-                body = render_template(
-                    "public/user_model_detail.html",
-                    api_base_url=settings.api_base_url,
-                    site_url=(f"https://{settings.trusted_domain}/models/{user_model.id}"),
-                    title=f"{user_model.name} | User-provided model",
-                    heading=user_model.name,
-                    description=shape["privacy_notice"],
-                    robots_meta="noindex",
-                    model=shape,
-                    google_enabled=settings.google_oauth_enabled,
-                    github_enabled=settings.github_oauth_enabled,
-                    static_version=settings.release,
-                )
         if body is None:
             return HTMLResponse(
                 public_model_not_found_html(settings, cleaned),
@@ -3246,6 +3208,31 @@ def _apps_snapshot(settings: Settings) -> dict[str, Any]:
     return payload
 
 
+def _encrypted_ai_snapshot(settings: Settings) -> dict[str, Any] | None:
+    """The quarter-hourly encrypted-token ranking, or None while it is
+    unavailable (the page then shows the curated tiers alone). Never a
+    per-view live read: the builder on the analytics node owns the query.
+    A failed read is cached too (no retry on every view), and a cached
+    ranking is served only while it is within the freshness bound."""
+    global _ENCRYPTED_AI_CACHE
+    if settings.environment == "test":
+        return None
+    now = time.monotonic()
+    if _ENCRYPTED_AI_CACHE is None or now - _ENCRYPTED_AI_CACHE[0] >= STATUS_SNAPSHOT_CACHE_SECONDS:
+        try:
+            payload = _precomputed_public_analytics_snapshot("encrypted_ai")
+        except Exception as exc:
+            _log_public_analytics_snapshot_read_failure("encrypted_ai", exc)
+            payload = _ENCRYPTED_AI_CACHE[1] if _ENCRYPTED_AI_CACHE is not None else None
+        _ENCRYPTED_AI_CACHE = (now, payload)
+    cached = _ENCRYPTED_AI_CACHE[1]
+    if cached is None:
+        return None
+    return current_public_analytics_snapshot(
+        "encrypted_ai", reader=lambda _name: cached, max_age_seconds=ENCRYPTED_AI_MAX_AGE_SECONDS
+    )
+
+
 def _precomputed_public_analytics_snapshot(name: str) -> dict[str, Any] | None:
     reader = getattr(STORE, "public_analytics_snapshot", None)
     if not callable(reader):
@@ -3253,7 +3240,11 @@ def _precomputed_public_analytics_snapshot(name: str) -> dict[str, Any] | None:
     return current_public_analytics_snapshot(
         name,
         reader=reader,
-        max_age_seconds=(2_147_483_647 if name == "client_reliability" else 600),
+        max_age_seconds=(
+            2_147_483_647 if name == "client_reliability"
+            else ENCRYPTED_AI_MAX_AGE_SECONDS if name == "encrypted_ai"
+            else 600
+        ),
     )
 
 

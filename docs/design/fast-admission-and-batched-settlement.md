@@ -1646,7 +1646,11 @@ which §4.11 now lists.
   finalize. Authorize's answer gains a frozen billing snapshot (#1390,
   below), its hash, a signed settlement ticket and `async_eligible`.
   - **It takes no request the fast path takes.** Its cohort leaves out
-    requests under leases, as #1390's eligibility does. It changes the
+    requests under leases, as #1390's eligibility does. Admission enforces
+    it per workspace: a fast-path pilot workspace is outside async
+    admission even when admission covers every workspace, unless the
+    operator lists it in `TR_ASYNC_SETTLE_FASTPATH_OVERLAP_WORKSPACES`
+    (`fast-admission-e2-g15-async.md` §4.5). It changes the
     synchronous path, which this design keeps for the synchronous cohort
     (§4.11) and as the comparator's reference (§8).
   - **It moves latency, not load.** A settle's answer stops waiting for the

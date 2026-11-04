@@ -1026,6 +1026,15 @@ class Settings(BaseSettings):
     _async_settle_shadow_stopped: bool = PrivateAttr(default=False)
     async_settle_pilot_workspaces: str = ""
     _async_settle_pilot_workspace_ids: frozenset[str] = PrivateAttr(default=frozenset())
+    # Async settle takes no request the fast path takes
+    # (docs/design/fast-admission-and-batched-settlement.md section 4.13;
+    # docs/design/fast-admission-e2-g15-async.md section 4.5): a workspace in
+    # the fast-path pilot set is outside async admission, even when the pilot
+    # set above is empty (every workspace), unless it is listed here. The
+    # list exists for the async-settle lane's own test workspace, which runs
+    # in both pilots; comma-separated, at most 32, empty by default.
+    async_settle_fastpath_overlap_workspaces: str = ""
+    _async_settle_fastpath_overlap_workspace_ids: frozenset[str] = PrivateAttr(default=frozenset())
     # Optional comma-separated serving-region allowlist for NEW async-v1
     # acceptance (the 500 ms durable handoff, D2). Empty keeps every region;
     # otherwise TR_SERVING_REGION must be explicit and listed. A region outside
@@ -1038,6 +1047,7 @@ class Settings(BaseSettings):
     async_settle_enabled: bool = False
     async_settle_protection: bool = False
     async_settle_admission_refresh_enabled: bool = False
+    async_settle_handoff_mode: Literal["outbox", "memory"] = "outbox"
     async_settle_ticket_kid: str = ""
     async_settle_ticket_issuer: str = ""
     async_settle_ticket_audience: str = ""
@@ -1644,7 +1654,37 @@ class Settings(BaseSettings):
     def async_settle_pilot_workspace_ids(self) -> frozenset[str]:
         return self._async_settle_pilot_workspace_ids
 
+    @model_validator(mode="after")
+    def parse_fastpath_overlap_workspaces(self) -> Settings:
+        ids = frozenset(
+            part.strip() for part in self.async_settle_fastpath_overlap_workspaces.split(",") if part.strip()
+        )
+        if len(ids) > 32 or any(re.fullmatch(r"[A-Za-z0-9_./:@+\-]{1,64}", value) is None for value in ids):
+            raise ValueError("invalid async settle fast path overlap workspace set")
+        self._async_settle_fastpath_overlap_workspace_ids = ids
+        return self
+
+    @property
+    def async_settle_fastpath_overlap_workspace_ids(self) -> frozenset[str]:
+        return self._async_settle_fastpath_overlap_workspace_ids
+
+    @property
+    def async_settle_fastpath_excluded_workspace_ids(self) -> frozenset[str]:
+        """The fast-path pilot set less the overlap list: the workspaces async
+        admission leaves out whatever its own pilot set says (section 4.13 of
+        fast-admission-and-batched-settlement.md). The pilot's set, not its
+        switch, so turning the fast path off never changes async admission."""
+        return self._fastpath_pilot_workspace_ids - self._async_settle_fastpath_overlap_workspace_ids
+
     def async_settle_pilot_allows(self, workspace_id: str) -> bool:
+        """Whether async admission covers the workspace (with admission on):
+        not a fast-path workspace outside the overlap list, and the pilot set
+        empty (every workspace) or naming it. Every admission decision reads
+        this, and the edge policy publishes both halves
+        (edge_policy_publisher.admission_workspaces), so the edge's
+        AsyncSettle.Admits agrees per workspace."""
+        if workspace_id in self.async_settle_fastpath_excluded_workspace_ids:
+            return False
         return not self._async_settle_pilot_workspace_ids or workspace_id in self._async_settle_pilot_workspace_ids
 
     @model_validator(mode="after")

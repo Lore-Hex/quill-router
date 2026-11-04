@@ -2,9 +2,9 @@
 # 2026-10-19 (docs/design/fast-admission-enclave-direct.md, E1): every host
 # the control plane and the token exchange sites answer on, routed to the
 # public and control Cloud Run backends and the exchange sites' bucket. The
-# backend services, the backend bucket and the forwarding rule are not
-# managed here and are named by their self links. The edge's route for the
-# enclave's calls is added here once this map is state.
+# original backend services, the backend bucket and forwarding rule are
+# named by self links. The fast-path edge and direct us-central1 terminal
+# backend are Terraform-owned resources referenced by their route actions.
 #
 # The exchange sites' rules come from sites/token-exchange/markets.json, one
 # matcher for a market's domain and one for its aliases' redirects, in the
@@ -93,7 +93,7 @@ resource "google_compute_url_map" "control" {
         "/google_oauth_callback", "/github_oauth_callback", "/console", "/console/*", "/provider", "/provider/*",
         "/mcp", "/chat-proxy", "/chat-proxy/*", "/auth", "/auth/*", "/byok", "/byok/*", "/credits", "/credits/*",
         "/billing", "/billing/*", "/broadcast", "/broadcast/*", "/custom-models", "/custom-models/*",
-        "/user-models", "/user-models/*", "/key", "/keys", "/keys/*", "/activity", "/generation", "/generation/*",
+        "/user-models", "/user-models/*", "/earnings", "/earnings/*", "/key", "/keys", "/keys/*", "/activity", "/generation", "/generation/*",
         "/client-events", "/workspaces", "/workspaces/*", "/organization", "/organization/*", "/chat/completions",
         "/messages", "/embeddings", "/responses", "/audio", "/audio/*", "/rerank", "/videos", "/videos/*",
         "/private", "/private/*", "/guardrails", "/guardrails/*", "/analytics", "/analytics/*",
@@ -110,6 +110,19 @@ resource "google_compute_url_map" "control" {
     path_rule {
       paths   = ["/internal", "/internal/*", "/v1/internal", "/v1/internal/*"]
       service = "projects/${local.gcp_project_id}/global/backendServices/trusted-router-control-backend"
+    }
+    # Enabled exact terminal paths beat both internal/* and gateway/* surface
+    # cutovers. Disabled emits nothing, preserving their existing semantics.
+    # Disposition remains regional; see control-terminals-us-central1.md.
+    dynamic "path_rule" {
+      for_each = local.terminal_c1_route_enabled ? [1] : []
+      content {
+        paths = [
+          "/internal/gateway/settle", "/internal/gateway/heartbeat", "/internal/gateway/refund",
+          "/v1/internal/gateway/settle", "/v1/internal/gateway/heartbeat", "/v1/internal/gateway/refund",
+        ]
+        service = google_compute_backend_service.control_terminal_c1.id
+      }
     }
     # The enclave's authorize (docs/design/fast-admission-enclave-direct.md,
     # E1): a share of it through the fast path's edge, which checks the boot

@@ -251,11 +251,41 @@
       "output_token_price_per_m": 600000,
       "cached_input_token_price_per_m": 12000,
       "missing_since": "2026-11-01"
+    },
+    {
+      "display_name": "Abyss 1",
+      "title": "abyss1",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "zro/abyss1",
+      "upstream_id": "abyss1",
+      "context_length": 1000000,
+      "supported_features": [
+        "chat",
+        "completion",
+        "streaming",
+        "tools",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 550000,
+      "cached_input_token_price_per_m": 5000
     }
   ],
   "source": "https://zro.moonmath.ai/v1/models",
   "pricing_source": "https://zro.moonmath.ai/docs/models",
-  "generated_at": "2026-11-03T19:48:25Z",
+  "generated_at": "2026-11-04T16:53:25Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 9
+  "model_count": 10
 }

@@ -24,7 +24,6 @@ import uuid
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import replace
-from datetime import datetime
 from functools import lru_cache
 from itertools import product
 from time import perf_counter
@@ -143,7 +142,6 @@ from trusted_router.provider_contracts import (
     SAKANA_FUGU_MODEL_ID,
 )
 from trusted_router.provider_locations import inference_location_metadata
-from trusted_router.provider_types import estimate_tokens_from_text
 from trusted_router.receipt_keys import (
     AWS_ATTESTATION_KIND,
     AZURE_ATTESTATION_KIND,
@@ -160,6 +158,7 @@ from trusted_router.request_attribution import (
     validate_request_attribution,
 )
 from trusted_router.request_tags import InvalidTags, merge_tags, tags_match, validate_tags
+from trusted_router.retired_models import reject_retired_models
 from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.routing import (
     RoutePreferences,
@@ -175,7 +174,6 @@ from trusted_router.schemas import (
     GatewayAuthorizeResponse,
     GatewayBootRegistrationRequest,
     GatewayHeartbeatRequest,
-    GatewayResolveCustomModelRequest,
     GatewaySettleRequest,
     GatewaySettleResponse,
     GatewayValidateRequest,
@@ -203,13 +201,7 @@ from trusted_router.services.settle_outbox_drain import (
 from trusted_router.services.user_model_gateway_health import (
     record_user_model_gateway_result,
 )
-from trusted_router.services.user_model_secrets import (
-    USER_MODEL_ENDPOINT_KEY_PURPOSE,
-    USER_MODEL_SECRET_NAMESPACE,
-    USER_MODEL_SIGNING_PURPOSE,
-)
 from trusted_router.services.user_model_slots import (
-    acquire_user_model_slot,
     release_user_model_slot,
 )
 from trusted_router.speech import SPEECH_MODELS
@@ -231,10 +223,6 @@ from trusted_router.storage import (
     typed_billing_store,
 )
 from trusted_router.storage_custom_models import (
-    is_creator_model_id,
-    is_custom_model_id,
-    is_user_provided_model_id,
-    normalize_custom_model_id,
     normalize_user_provided_model_id,
 )
 from trusted_router.storage_errors import (
@@ -263,7 +251,6 @@ from trusted_router.storage_models import (
     SettleOutboxRow,
     TypedFinalizeResult,
     UserModelPayout,
-    UserProvidedModel,
     decode_auth_record,
     generation_id_for_authorization,
     iso_now,
@@ -281,10 +268,8 @@ from trusted_router.transcription import TRANSCRIPTION_MODELS
 from trusted_router.types import ErrorType, UsageType
 from trusted_router.user_model_rules import (
     GATEWAY_RESERVATION_TTL_SECONDS,
-    dispatch_budget,
     is_owner_fault,
     user_model_gateway_pair,
-    user_model_is_on_the_clock,
 )
 from trusted_router.video_billing import (
     video_cost_microdollars,
@@ -1163,18 +1148,23 @@ def _authorize_gateway_sync_impl(
     body_dict, attribution = _gateway_authorize_body(body)
     _require_monitor_model_key(body_dict, api_key.lookup_hash, settings)
     requested_model_id = body.model
+    reject_retired_models(requested_model_id, *(body.models or []))
+    # Older enclaves could send a catalog base model plus a creator identity.
+    # Refuse that representation too, before replay or any billing hold.
+    if any(body_dict.get(field) is not None for field in (
+        "custom_model_id", "custom_model_revision",
+        "user_provided_model_id", "user_provided_model_revision",
+    )):
+        raise api_error(
+            410, "Custom models and user-provided models have been retired. Choose a catalog model.",
+            ErrorType.MODEL_NOT_SUPPORTED,
+        )
     # Only catalog video requests defer live preparation for early replay.
     # Classify the request string, never mutable model/catalog state.
-    catalog_video_request = body.route_type == "videos" and not (
-        is_custom_model_id(requested_model_id)
-        or is_user_provided_model_id(requested_model_id)
-    )
-    custom_model = None
-    user_model = None
+    catalog_video_request = body.route_type == "videos"
     route_model_id = str(body_dict.get("model") or body.model)
     native_retention_allowed = False
     def prepare_model() -> None:
-        nonlocal custom_model, user_model
         # Every guard below keys on the model id as a STRING, and routing rewrites
         # that string before it resolves a model (variant suffix, alias, dated
         # snapshot). `trev-1.0:nitro` and `trev-1.0-2026-09-19` therefore matched no
@@ -1213,63 +1203,8 @@ def _authorize_gateway_sync_impl(
                 "Private proxy models cannot be combined with models fallback arrays",
                 ErrorType.BAD_REQUEST,
             )
-        if any(is_creator_model_id(model_id) for model_id in (body.models or [])):
-            raise api_error(
-                400,
-                "Custom models cannot be used with models fallback arrays in v1",
-                ErrorType.BAD_REQUEST,
-            )
-        custom_model = None
-        user_model = None
-        if is_custom_model_id(requested_model_id):
-            normalized = normalize_custom_model_id(requested_model_id)
-            custom_model = STORE.get_custom_model(normalized)
-            if custom_model is None or not custom_model.enabled:
-                raise api_error(404, "Custom model not found", ErrorType.NOT_FOUND)
-            body_dict["model"] = custom_model.base_model_id
-            body_dict.pop("models", None)
-            body_dict["custom_model_id"] = custom_model.id
-            body_dict["custom_model_revision"] = custom_model.revision
-            _force_custom_model_credit_routes(body_dict)
-        elif is_user_provided_model_id(requested_model_id):
-            normalized = normalize_user_provided_model_id(requested_model_id)
-            user_model = STORE.get_user_model(normalized)
-            if (
-                user_model is None
-                or not user_model.enabled
-                or user_model.status != "active"
-                # Serving is gated until settle/refund exist for these
-                # authorizations; an unreleasable hold is worse than a 404.
-                or not settings.user_models_dispatch_enabled
-            ):
-                raise api_error(404, "Custom model not found", ErrorType.NOT_FOUND)
-            if not user_model_is_on_the_clock(user_model, datetime.now(dt.UTC)):
-                # The billing-path 5xx alert counts this 503; without a line the
-                # request log alone cannot tell it from storage contention.
-                logger.warning(
-                    "billing.authorize_user_model_off_the_clock workspace_id=%s request_id=%s "
-                    "user_model_id=%s kind=%s",
-                    workspace.id,
-                    getattr(request.state, "request_id", None),
-                    _log_value(user_model.id),
-                    _log_value(user_model.kind),
-                )
-                raise api_error(
-                    503,
-                    f"User-provided {user_model.kind} model {user_model.id} is off the clock",
-                    ErrorType.MODEL_OFF_THE_CLOCK,
-                )
-            # Same fingerprint discipline as prompt wrappers: a same-key retry
-            # after a material edit must 409, not replay stale frozen prices.
-            body_dict.pop("models", None)
-            body_dict["custom_model_id"] = user_model.id
-            body_dict["custom_model_revision"] = user_model.revision
-            _force_custom_model_credit_routes(
-                body_dict,
-                error_message="User-provided models do not support BYOK routes",
-            )
 
-    # Preserve main's validation order for non-video and creator-model requests.
+    # Preserve validation order for non-video requests.
     if not catalog_video_request:
         prepare_model()
     presented_idempotency_key = _gateway_idempotency_key(request, body)
@@ -1295,7 +1230,7 @@ def _authorize_gateway_sync_impl(
         # embeddings call exactly like a chat one.
         route_model_id = str(body_dict.get("model") or body.model)
         if route_model_id == POLYPHEMUS_MODEL_ID:
-            if body.route_type != POLYPHEMUS_SELECT_ROUTE_TYPE or custom_model is not None:
+            if body.route_type != POLYPHEMUS_SELECT_ROUTE_TYPE:
                 raise api_error(
                     400, "Polyphemus requires POST /v1/responses", ErrorType.MODEL_NOT_SUPPORTED
                 )
@@ -1324,7 +1259,7 @@ def _authorize_gateway_sync_impl(
     is_fetch_request = body.route_type == FETCH_ROUTE_TYPE
     if is_fetch_request:
         if (
-            body.model != FETCH_MODEL_ID or body.models or custom_model is not None
+            body.model != FETCH_MODEL_ID or body.models
             or body.estimated_input_tokens != 0 or body.output_estimate != 1
             or body.service_tier or body.inference_receipt or not body.request_fingerprint
             or body.additional_cost_reservation_microdollars
@@ -1399,6 +1334,11 @@ def _authorize_gateway_sync_impl(
         fallback: list[tuple[Model, ModelEndpoint]] | None = None,
     ) -> dict[str, Any]:
         gateway_timing_phase("post_commit_ms")
+        if existing_authorization.custom_model_id or existing_authorization.user_provided_model_id:
+            raise api_error(
+                410, "Custom models and user-provided models have been retired. Choose a catalog model.",
+                ErrorType.MODEL_NOT_SUPPORTED,
+            )
         if body.route_type == POLYPHEMUS_SELECT_ROUTE_TYPE:
             # The selector has no upstream idempotency contract. Never repeat
             # selection (including concurrent replays) on an existing hold.
@@ -1454,7 +1394,7 @@ def _authorize_gateway_sync_impl(
             broadcast_destinations=broadcast_destinations,
             endpoint_candidates=existing_candidates,
             idempotent_replay=True,
-            custom_model=custom_model,
+            custom_model=None,
             stage_d_reason_override="replayed",
             async_request=request, async_body=body,
             async_federated=bool(workspace.federated_home or api_key.federated_home),
@@ -1523,15 +1463,14 @@ def _authorize_gateway_sync_impl(
         body_region=body.region,
         video_resolution=body.video_resolution,
         video_allowed_providers=video_allowed_providers,
-        custom_model=custom_model is not None,
+        custom_model=False,
     )
     route_plan = plan_route(candidate_request, settings, region=region)
     route_preferences = route_plan.preferences
     effective_route_preferences = route_preferences
     if not catalog_video_request:
-        # Main prepares and validates creator models before fingerprinting.
-        # Its resolution-triggered replay still precedes live routing and any
-        # user-model slot acquisition; only catalog requests replay earlier.
+        # Fingerprint before resolution-triggered replay; video requests can
+        # replay earlier using their frozen execution envelope.
         fingerprint_body, request_fingerprint = prepare_fingerprint()
         if body.video_resolution is not None:
             replay = _lookup_replay()
@@ -1547,35 +1486,8 @@ def _authorize_gateway_sync_impl(
     # The prompt estimate the hold is reserved on; chat routing also sends a
     # request only to models whose window holds it.
     input_tokens = body.estimated_input_tokens
-    if custom_model is not None and custom_model.hidden_prompt.strip():
-        input_tokens += estimate_tokens_from_text(custom_model.hidden_prompt)
-    user_model_candidate = None
-    if user_model is not None:
-        if is_image_request:
-            raise api_error(
-                400,
-                "User-provided models do not support image generation",
-                ErrorType.MODEL_NOT_SUPPORTED,
-            )
-        if video_allowed_providers is not None:
-            # Owner-dispatch sentinels bypass catalog candidate construction;
-            # they cannot satisfy an enclave video capability constraint.
-            raise api_error(
-                400, "Video provider constraints require catalog video routes",
-                ErrorType.MODEL_NOT_SUPPORTED,
-            )
-        if _required_privacy_postures(route_preferences):
-            # The owner's endpoint carries no tracked privacy posture, so a
-            # privacy floor fails closed, as it does for any unknown route.
-            raise api_error(
-                400,
-                "User-provided models cannot meet a provider privacy floor",
-                ErrorType.MODEL_NOT_SUPPORTED,
-            )
-        user_model_candidate = _user_model_gateway_candidate(user_model)
     resolved_candidates = resolve_candidates(
         route_plan, candidate_request, region=region, at=pricing_effective_at,
-        user_model_candidate=user_model_candidate,
         prompt_tokens=input_tokens,
         completion_tokens=body.max_tokens or body.max_completion_tokens or 0,
     )
@@ -1616,13 +1528,7 @@ def _authorize_gateway_sync_impl(
             additional_cost_reservation=additional_cost_reservation,
             video_resolution=body.video_resolution,
             at=pricing_effective_at,
-            user_model_prices=(
-                (
-                    user_model.prompt_price_microdollars_per_million_tokens,
-                    user_model.completion_price_microdollars_per_million_tokens,
-                )
-                if user_model is not None else None
-            ),
+            user_model_prices=None,
             partner_mode=partner_mode,
             rerank=rerank,
             stream=bool(body.stream),
@@ -1668,24 +1574,9 @@ def _authorize_gateway_sync_impl(
     receipt_fee_basis_points = (
         SIGNED_RECEIPT_TOTAL_FEE_BASIS_POINTS if body.inference_receipt else 0
     )
-    if receipt_fee_basis_points and user_model is None and partner_mode is None:
+    if receipt_fee_basis_points and partner_mode is None:
         model_estimate = signed_receipt_price_microdollars(model_estimate, receipt_fee_basis_points)
         model_reservation = signed_receipt_price_microdollars(model_reservation, receipt_fee_basis_points)
-    custom_model_markup_basis_points = (
-        int(custom_model.markup_basis_points) if custom_model is not None else 0
-    )
-    custom_model_owner_user_id = (
-        str(custom_model.owner_user_id) if custom_model is not None else ""
-    )
-    if custom_model_markup_basis_points > 0:
-        model_estimate += custom_model_markup_microdollars(
-            model_estimate,
-            custom_model_markup_basis_points,
-        )
-        model_reservation += custom_model_markup_microdollars(
-            model_reservation,
-            custom_model_markup_basis_points,
-        )
     # Video candidates are either fixed-quote or output-token billed. Reserve
     # the largest possible route charge, not the sum of mutually exclusive routes.
     estimate = max(model_estimate, additional_cost_reservation) if is_video_request else model_estimate + additional_cost_reservation
@@ -1702,7 +1593,7 @@ def _authorize_gateway_sync_impl(
         route_type=body.route_type,
         retention_allowed=native_retention_allowed,
         model_usage_type=model_usage_type,
-        custom_model=custom_model,
+        custom_model=None,
         broadcast_destinations=broadcast_destinations,
         requested_model_id=requested_model_id,
         endpoint=endpoint,
@@ -1719,17 +1610,13 @@ def _authorize_gateway_sync_impl(
         # only the base, those caps would claw the app markup back at settle.
         estimate += app_markup_microdollars(estimate, app_markup_basis_points)
         reservation += app_markup_microdollars(reservation, app_markup_basis_points)
-    # Minted up front so a user-model concurrency slot can be keyed by it
-    # before the reservation exists. It is a fresh uuid — never derived from
+    # Use a fresh uuid, never derived from
     # the caller's Idempotency-Key: a deterministic id would outlive its
     # 30-day authorization row inside the 400-day tr_credit_movement PK
-    # (silently dropping a later payout) and let a mismatching concurrent
-    # request release the winner's slot.
+    # (silently dropping a later payout).
     authorization_id = _new_gateway_authorization_id()
     standard_endpoint_pricing = (
-        custom_model is None
-        and user_model is None
-        and partner_mode is None
+        partner_mode is None
         and additional_cost_reservation == 0
         and not native_batch_eligible
     )
@@ -1799,25 +1686,7 @@ def _authorize_gateway_sync_impl(
         if is_fetch_request:
             pricing_document["fetch_upstream_cost_microdollars"] = FETCH_UPSTREAM_COST_MICRODOLLARS
         pricing_snapshot = canonical_pricing_snapshot(pricing_document)
-    user_model_slot_acquired = False
-    if user_model is not None:
-        user_model_slot_acquired = acquire_user_model_slot(
-            user_model.id,
-            authorization_id,
-            limit=user_model.max_concurrency,
-            kind=user_model.kind,
-        )
-        if not user_model_slot_acquired:
-            raise api_error(
-                429,
-                f"User-provided model {user_model.id} is at capacity "
-                f"({user_model.max_concurrency} concurrent)",
-                ErrorType.RATE_LIMITED,
-            )
 
-    def release_user_model_slot_after_error() -> None:
-        if user_model is not None and user_model_slot_acquired:
-            release_user_model_slot(user_model.id, authorization_id)
 
     credit_reservation_id: str | None = None
     idempotent_replay = False
@@ -1890,7 +1759,6 @@ def _authorize_gateway_sync_impl(
         )
 
         def release_after_error() -> None:
-            release_user_model_slot_after_error()
             if admitted is not None:
                 # Admitted under a lease, but no authorization row: give the
                 # hold back now, so it is not held until the lease drains.
@@ -1933,25 +1801,15 @@ def _authorize_gateway_sync_impl(
                         api_key.limit_microdollars is not None
                         and (has_credit_candidate or api_key.include_byok_in_limit)
                     ),
-                    custom_model_id=custom_model.id if custom_model else None,
-                    custom_model_revision=custom_model.revision if custom_model else None,
-                    custom_model_markup_basis_points=(
-                        custom_model_markup_basis_points
-                    ),
-                    custom_model_owner_user_id=custom_model_owner_user_id,
-                    user_provided_model_id=user_model.id if user_model else None,
-                    user_provided_model_revision=user_model.revision if user_model else None,
-                    user_model_prompt_price_microdollars_per_m=(
-                        user_model.prompt_price_microdollars_per_million_tokens
-                        if user_model
-                        else None
-                    ),
-                    user_model_completion_price_microdollars_per_m=(
-                        user_model.completion_price_microdollars_per_million_tokens
-                        if user_model
-                        else None
-                    ),
-                    user_model_owner_user_id=user_model.owner_user_id if user_model else None,
+                    custom_model_id=None,
+                    custom_model_revision=None,
+                    custom_model_markup_basis_points=0,
+                    custom_model_owner_user_id="",
+                    user_provided_model_id=None,
+                    user_provided_model_revision=None,
+                    user_model_prompt_price_microdollars_per_m=None,
+                    user_model_completion_price_microdollars_per_m=None,
+                    user_model_owner_user_id=None,
                     additional_cost_reservation_microdollars=additional_cost_reservation,
                     native_batch_eligible=native_batch_eligible,
                     expires_at=expires_at,
@@ -1980,7 +1838,6 @@ def _authorize_gateway_sync_impl(
             # back: the hold stays, so a row that landed keeps it and a
             # replay is served under it; a row that did not land leaves the
             # hold to end uncharged at its end of life. Only the slot goes.
-            release_user_model_slot_after_error()
             logger.error(
                 "fastpath pilot hold kept, insert outcome unknown authorization_id=%s workspace_id=%s",
                 authorization_id,
@@ -2065,13 +1922,11 @@ def _authorize_gateway_sync_impl(
                 release_after_error()
                 return _replay_response(existing_authorization, endpoint_candidates)
         if outcome == "billing_paused":
-            release_user_model_slot_after_error()
             if settings.speculative_provider_shadow_enabled:
                 with speculation_shadow.isolate("reason"):
                     speculation_shadow.reason("billing_paused")
             raise api_error(403, "billing_paused", ErrorType.FORBIDDEN)
         if outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS:
-            release_user_model_slot_after_error()
             record_free_credit_exhausted_safely(workspace.id)
             raise _insufficient_credits_error(
                 workspace, reservation=reservation, estimate=estimate, body=body, input_tokens=input_tokens,
@@ -2109,7 +1964,6 @@ def _authorize_gateway_sync_impl(
                 ErrorType.CONFLICT,
             )
         if authorization is None:
-            release_user_model_slot_after_error()
             raise api_error(500, "gateway authorize failed", ErrorType.INTERNAL_ERROR)
         if outcome == AuthorizeOutcome.REPLAY:
             # concurrent-race replay: respond from the STORED authorization.
@@ -2145,7 +1999,6 @@ def _authorize_gateway_sync_impl(
             window_decision = key_limit_reservation.window_decision
             remember_spend_window_decision(request, window_decision)
         except KeyWindowLimitExceeded as exc:
-            release_user_model_slot_after_error()
             remember_spend_window_decision(request, exc.decision)
             # InMemory twin of the typed window rejection (same 429 shape).
             raise api_error(
@@ -2155,13 +2008,11 @@ def _authorize_gateway_sync_impl(
                 headers=spend_window_headers(exc.decision, retry_after=True),
             ) from exc
         except KeyLimitExceeded as exc:
-            release_user_model_slot_after_error()
             remember_spend_window_decision(request, exc.decision)
             raise api_error(
                 402, "API key spend limit exceeded", ErrorType.KEY_LIMIT_EXCEEDED
             ) from exc
         except ValueError as exc:
-            release_user_model_slot_after_error()
             raise api_error(
                 402, "API key spend limit exceeded", ErrorType.KEY_LIMIT_EXCEEDED
             ) from exc
@@ -2190,7 +2041,6 @@ def _authorize_gateway_sync_impl(
                     )
                 credit_reservation_id = credit_reservation.id
             except BillingPausedError as exc:
-                release_user_model_slot_after_error()
                 if settings.speculative_provider_shadow_enabled:
                     with speculation_shadow.isolate("reason"):
                         speculation_shadow.reason("billing_paused")
@@ -2206,7 +2056,6 @@ def _authorize_gateway_sync_impl(
                 # local settlement. Reversing the order would strand real
                 # money that was deliberately moved here.
                 if not _deferred_settlement_applies(settings, api_key):
-                    release_user_model_slot_after_error()
                     STORE.refund_key_limit(
                         api_key.hash,
                         key_limit_reservation.reserved_microdollars,
@@ -2248,19 +2097,15 @@ def _authorize_gateway_sync_impl(
             app_markup_basis_points=app_markup_basis_points,
             receipt_fee_basis_points=receipt_fee_basis_points,
             app_owner_user_id=app_owner_user_id,
-            custom_model_id=custom_model.id if custom_model else None,
-            custom_model_revision=custom_model.revision if custom_model else None,
-            custom_model_markup_basis_points=custom_model_markup_basis_points,
-            custom_model_owner_user_id=custom_model_owner_user_id,
-            user_provided_model_id=user_model.id if user_model else None,
-            user_provided_model_revision=user_model.revision if user_model else None,
-            user_model_prompt_price_microdollars_per_m=(
-                user_model.prompt_price_microdollars_per_million_tokens if user_model else None
-            ),
-            user_model_completion_price_microdollars_per_m=(
-                user_model.completion_price_microdollars_per_million_tokens if user_model else None
-            ),
-            user_model_owner_user_id=user_model.owner_user_id if user_model else None,
+            custom_model_id=None,
+            custom_model_revision=None,
+            custom_model_markup_basis_points=0,
+            custom_model_owner_user_id="",
+            user_provided_model_id=None,
+            user_provided_model_revision=None,
+            user_model_prompt_price_microdollars_per_m=None,
+            user_model_completion_price_microdollars_per_m=None,
+            user_model_owner_user_id=None,
             additional_cost_reservation_microdollars=additional_cost_reservation,
             native_batch_eligible=native_batch_eligible,
             video_pricing_snapshot=video_snapshot,
@@ -2286,13 +2131,11 @@ def _authorize_gateway_sync_impl(
             with gateway_phase("store_ms", after="post_commit_ms"):
                 authorization = create_authorization()
         except BillingPausedError as exc:
-            release_user_model_slot_after_error()
             if settings.speculative_provider_shadow_enabled:
                 with speculation_shadow.isolate("reason"):
                     speculation_shadow.reason("billing_paused")
             raise api_error(403, "billing_paused", ErrorType.FORBIDDEN) from exc
         except DeferredSettlementCapReached as cap_exc:
-            release_user_model_slot_after_error()
             # The key-limit escrow taken above must come back: nothing on this
             # plane would ever release it for a request that never became an
             # authorization (the reaper only sees authorizations).
@@ -2310,7 +2153,6 @@ def _authorize_gateway_sync_impl(
                 headers={"Retry-After": "30"},
             ) from cap_exc
         except StoreConflict as conflict_exc:
-            release_user_model_slot_after_error()
             # DSQL OCC exhausted its retries (a hot outstanding row under
             # burst load will do this). Same rule as the cap arm: the escrow
             # committed OUTSIDE this transaction, so nothing downstream will
@@ -2337,10 +2179,8 @@ def _authorize_gateway_sync_impl(
                 headers={"Retry-After": "1"},
             ) from conflict_exc
         except BaseException:
-            release_user_model_slot_after_error()
             raise
         if authorization.id != authorization_id:
-            release_user_model_slot_after_error()
 
             def refund_replay_hold(
                 refund: Callable[[], Any], event_name: str, reserved_microdollars: int
@@ -2424,7 +2264,7 @@ def _authorize_gateway_sync_impl(
         broadcast_destinations=broadcast_destinations,
         endpoint_candidates=endpoint_candidates,
         idempotent_replay=idempotent_replay,
-        custom_model=custom_model,
+        custom_model=None,
         stage_d_reason_override=stage_d_reason,
         async_request=request, async_body=body,
         async_federated=bool(workspace.federated_home or api_key.federated_home),
@@ -2491,94 +2331,6 @@ def _gateway_key_info_sync(
     return {"data": self_key_shape(api_key)}
 
 
-def _gateway_resolve_custom_model_sync(
-    request: Request,
-    body: GatewayResolveCustomModelRequest,
-    settings: Settings,
-) -> dict[str, Any]:
-    require_internal_gateway(request, settings)
-    api_key = _api_key_for_gateway_lookup(
-        api_key_hash=body.api_key_hash,
-        api_key_lookup_hash=body.api_key_lookup_hash,
-    )
-    if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
-        raise api_error(401, "Invalid API key", ErrorType.INVALID_API_KEY)
-    _assert_gateway_key_scope(api_key)
-    workspace = STORE.get_workspace(api_key.workspace_id)
-    if workspace is None:
-        raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
-    assert_workspace_billing_active(workspace)
-    if not is_creator_model_id(body.model):
-        raise api_error(400, "Model is not a custom model", ErrorType.BAD_REQUEST)
-    if is_user_provided_model_id(body.model):
-        normalized = normalize_user_provided_model_id(body.model)
-        user_model = STORE.get_user_model(normalized)
-        if (
-            user_model is None
-            or not user_model.enabled
-            or user_model.status != "active"
-            or not settings.user_models_dispatch_enabled
-        ):
-            raise api_error(404, "Custom model not found", ErrorType.NOT_FOUND)
-        budget = dispatch_budget(user_model.kind)
-        return {
-            "data": {
-                "workspace_id": workspace.id,
-                "api_key_hash": api_key.hash,
-                "route_type": body.route_type,
-                "custom_model": {
-                    "id": user_model.id,
-                    "name": user_model.name,
-                    "kind": "user_provided",
-                    "user_model_kind": user_model.kind,
-                    # The envelopes below are bound (AAD) to the OWNER's
-                    # workspace, a per-secret purpose, and the user_model
-                    # namespace — not to the caller's workspace above; the
-                    # enclave must decrypt with exactly these.
-                    "secret_namespace": USER_MODEL_SECRET_NAMESPACE,
-                    "owner_workspace_id": user_model.owner_workspace_id,
-                    "owner_user_id": user_model.owner_user_id,
-                    "endpoint_url": user_model.endpoint_url,
-                    "upstream_model_id": user_model.upstream_model_id,
-                    "revision": user_model.revision,
-                    "supports_streaming": user_model.supports_streaming,
-                    "endpoint_encrypted_secret": encrypted_secret_payload(
-                        user_model.encrypted_endpoint_api_key
-                    ),
-                    "endpoint_secret_purpose": USER_MODEL_ENDPOINT_KEY_PURPOSE,
-                    "signing_encrypted_secret": encrypted_secret_payload(
-                        user_model.encrypted_signing_secret
-                    ),
-                    "signing_secret_purpose": USER_MODEL_SIGNING_PURPOSE,
-                    "connect_timeout_seconds": budget.connect,
-                    "first_byte_timeout_seconds": budget.first_byte,
-                    "idle_timeout_seconds": budget.idle,
-                    "total_timeout_seconds": budget.total,
-                },
-            }
-        }
-    else:
-        normalized = normalize_custom_model_id(body.model)
-        custom_model = STORE.get_custom_model(normalized)
-    if custom_model is None or not custom_model.enabled:
-        raise api_error(404, "Custom model not found", ErrorType.NOT_FOUND)
-    return {
-        "data": {
-            "workspace_id": workspace.id,
-            "api_key_hash": api_key.hash,
-            "route_type": body.route_type,
-            "custom_model": {
-                "id": custom_model.id,
-                "name": custom_model.name,
-                "kind": "prompt_wrapper",
-                "base_model_id": custom_model.base_model_id,
-                "hidden_prompt": custom_model.hidden_prompt,
-                "revision": custom_model.revision,
-            },
-        }
-    }
-
-
 def register(router: APIRouter) -> None:
     # Every handler below does synchronous storage IO. They run it via
     # run_in_threadpool so a slow/contended transaction on one request never
@@ -2610,13 +2362,6 @@ def register(router: APIRouter) -> None:
     ) -> dict[str, Any]:
         return await run_in_threadpool(_gateway_key_info_sync, request, body, settings)
 
-    @router.post("/internal/gateway/resolve-custom-model")
-    async def gateway_resolve_custom_model(
-        request: Request,
-        body: GatewayResolveCustomModelRequest,
-        settings: SettingsDep,
-    ) -> dict[str, Any]:
-        return await run_in_threadpool(_gateway_resolve_custom_model_sync, request, body, settings)
 
     @router.post("/internal/gateway/authorize", responses={200: {"model": GatewayAuthorizeResponse}})
     async def gateway_authorize(
@@ -3321,15 +3066,8 @@ def _gateway_authorize_response(
             **stage_d,
             **async_additions,
             "tags": dict(authorization.tags),
-            "custom_model": None
-            if custom_model is None
-            else {
-                "id": custom_model.id,
-                "name": custom_model.name,
-                "base_model_id": custom_model.base_model_id,
-                "hidden_prompt": custom_model.hidden_prompt,
-                "revision": custom_model.revision,
-            },
+            # Keep the wire shape for rolling upgrades; never send creator data.
+            "custom_model": None,
             "route_candidates": [
                 _gateway_candidate_payload(
                     candidate_model,
@@ -3727,14 +3465,6 @@ def _require_monitor_model_key(
     from trusted_router.internal_model_access import require_internal_model_key
 
     require_internal_model_key(body, api_key_lookup_hash, settings)
-
-
-def _force_custom_model_credit_routes(
-    body: dict[str, Any],
-    *,
-    error_message: str = "Custom models do not support BYOK routes",
-) -> None:
-    _force_credit_routes(body, error_message=error_message)
 
 
 def _force_partner_credit_routes(body: dict[str, Any]) -> None:
@@ -5900,29 +5630,6 @@ def _gateway_byok_payload(byok_config: Any | None, workspace_id: str) -> dict[st
         "byok_key_hint": byok_config.key_hint,
         "byok_provider": envelope_provider,
     }
-
-
-def _user_model_gateway_candidate(
-    user_model: UserProvidedModel,
-) -> tuple[Model, ModelEndpoint]:
-    """Build the Credits-only authorization sentinel for owner dispatch.
-
-    User-provided models deliberately do not enter the frozen catalog.  The
-    gateway still needs a stable model/endpoint pair for its reservation
-    record, so this pair exists only inside the authorization response; the
-    enclave resolves the actual owner dispatch block separately.
-    """
-    return user_model_gateway_pair(
-        model_id=user_model.id,
-        name=user_model.name,
-        revision=user_model.revision,
-        prompt_price_microdollars_per_m=(user_model.prompt_price_microdollars_per_million_tokens),
-        completion_price_microdollars_per_m=(
-            user_model.completion_price_microdollars_per_million_tokens
-        ),
-        owner_user_id=user_model.owner_user_id,
-        upstream_model_id=user_model.upstream_model_id,
-    )
 
 
 def _authorized_user_model_pair(

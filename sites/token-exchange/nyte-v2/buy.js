@@ -254,7 +254,7 @@ document.addEventListener('DOMContentLoaded', () => {
     get('summary').textContent = summary;
     get('summary').hidden = false;
     const iframe = document.createElement('iframe');
-    iframe.title = 'Book a 15-minute reserved tokens call with Joseph on Calendly';
+    iframe.title = 'Book a 15-minute reserved tokens call with our team on Calendly';
     iframe.referrerPolicy = 'no-referrer';
     iframe.src = url.href;
     get('calendar').replaceChildren(iframe);

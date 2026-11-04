@@ -112,7 +112,9 @@ Three, all in the control plane's settings (`config.py`), none on by
 default, in the order they are turned on:
 
 1. `TR_FASTPATH_PILOT_WORKSPACES`: the pilot set, Joseph's workspace and,
-   from 2026-10-16, one customer's, by ID.
+   from 2026-10-16, one customer's and, from 2026-11-03, P1's synthetic
+   workspace (his own, outside async settle admission, for load tests the
+   edge answers), by ID.
 2. The fast path's own switch for that workspace:
    `fastpathctl -database $DB enable WORKSPACE` (W1). The front door
    answers `off` until it is on.
@@ -155,8 +157,11 @@ deploy; the fast path's switch changes at once.
   (`storage_gcp_counter_reconcile.py`): reservations and bookings of the
   leases with the synchronous holds.
 - `fastpathwatch -workspace WORKSPACE` for each workspace in the set, with
-  P1's ceilings and `-fresh 15m -window 20m`, since one Spanner CPU series a
-  few minutes late stopped the first watch (2026-10-16 02:00Z). The spend
+  P1's ceilings and `-fresh 15m -window 25m -misses 10`, since one Spanner
+  CPU series a few minutes late stopped the first watch (2026-10-16 02:00Z),
+  and Cloud Monitoring answers Internal in bursts over a minute long (three
+  stops 2026-10-29 01:33Z to 02:22Z); the window covers ten misses of 30
+  seconds and the 15 minutes. The spend
   ceiling counts the workspace's whole usage, today's path included, so it
   is set for each workspace above its own expected spend over the watch's
   life.
@@ -188,7 +193,7 @@ The pilot's first minutes, from 04:55Z, ran with them:
 ## What is not in the pilot
 
 Streams (a small share of requests; left out on Joseph's word,
-2026-10-16); any workspace but the two in the set; the 503 in place of 402
+2026-10-16); any workspace but the three in the set; the 503 in place of 402
 when a balance's headroom sits in leases (the fallback reserves today, so a
 large lease allocation on a small balance can refuse a request today's
 path would have taken; each workspace's room is checked before it joins

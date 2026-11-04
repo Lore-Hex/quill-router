@@ -36,6 +36,9 @@ func (s *Store) Load(ctx context.Context, ref LeaseRef) (Loaded, error) {
 	defer ro.Close()
 	row, err := ro.ReadRowWithOptions(ctx, "tr_lease", ref.key(), leaseColumns, &spanner.ReadOptions{RequestTag: tag("load")})
 	if spanner.ErrCode(err) == codes.NotFound {
+		// The row FindLease found, if it found this one, has gone
+		// (FindLease).
+		s.found.forget(ref.LeaseID)
 		return Loaded{}, fmt.Errorf("%w: %v", ErrNoLease, ref)
 	}
 	if err != nil {

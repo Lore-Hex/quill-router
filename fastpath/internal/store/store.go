@@ -59,6 +59,8 @@ type Store struct {
 	// leased is the leased inserts' transactions and the client's session
 	// (gatewayauth.go).
 	leased leasedInserts
+	// found is the leases FindLease found, by ID (lease.go).
+	found foundLeases
 }
 
 // New returns a store of the database client reads and writes.

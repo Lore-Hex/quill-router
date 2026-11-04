@@ -69,7 +69,9 @@ def env(monkeypatch):
         configure_store(InMemoryStore())
 
 
-def prepare(env, case=None, kind='settle'):
+def prepare(env, case=None, kind='settle', authorize=None):
+    # authorize: extra authorize_gateway_typed arguments (a leased one's id
+    # and fast-path envelope).
     store, db, rt, cfg = env
     snapshot = billing.parse_snapshot(json.dumps(case['snapshot'] if case else WIRE['billing_snapshot']))
     first = snapshot.candidates[0]
@@ -82,6 +84,7 @@ def prepare(env, case=None, kind='settle'):
         candidate_model_ids=[c.model_id for c in snapshot.candidates], region='us-central1',
         endpoint_id=first.endpoint_id, candidate_endpoint_ids=[c.endpoint_id for c in snapshot.candidates],
         idempotency_key=None, idempotency_fingerprint=None, expires_at='2099-01-01T00:00:00Z',
+        **(authorize or {}),
     )
     assert auth is not None
     # Authorize primitive does not create an invocation nonce itself.
@@ -1012,6 +1015,101 @@ def test_pilot_workspace_settle(env, allowlist, expected):
     assert bool(env[1].settle_outbox) is (expected == 202)
     if expected == 200:
         assert json.loads(result.body)['data']['reason'] == 'not_eligible'
+
+
+@pytest.mark.parametrize('allowlist', ['', 'ws-v1'])
+@pytest.mark.parametrize('overlap,expected', [('', 200), ('ws-v1', 202)])
+def test_fastpath_workspace_settle(env, allowlist, overlap, expected):
+    """A ticket issued before the workspace joined the fast-path pilot set
+    (G15 section 4.5): the settler answers sync_required not_eligible and
+    writes nothing, as for a workspace leaving the pilot set, unless the
+    overlap list names it; with the pilot set empty (every workspace) too."""
+    body, _, _ = prepare(env)
+    cfg = env[3]
+    cfg.async_settle_pilot_workspaces = allowlist
+    cfg.parse_pilot_workspaces()
+    cfg.fastpath_pilot_workspaces = 'ws-v1'
+    cfg.parse_fastpath_pilot()
+    cfg.async_settle_fastpath_overlap_workspaces = overlap
+    cfg.parse_fastpath_overlap_workspaces()
+    result = call(env, body)
+    assert result.status_code == expected
+    assert bool(env[1].settle_outbox) is (expected == 202)
+    if expected == 200:
+        assert json.loads(result.body)['data']['reason'] == 'not_eligible'
+
+
+LEASED = {'authorization_id': 'gwa-leased-overlap', 'fastpath_envelope': 'sealed-overlap',
+          'fastpath_end_of_life': '2099-01-01T00:00:00Z'}
+
+
+def test_a_leased_authorization_in_both_pilots_settles_through_the_async_path(env, monkeypatch):
+    """The overlap workspace (G15 section 4.5) is in the fast-path pilot set
+    and admitted to async settle, so a request Python's pilot leased (the
+    authorization's fastpath_envelope set, its scope reservation holding
+    nothing) is still ticketed: shape C, async_eligible true. Its async
+    settle is accepted (202), and the drain finishes it through the lease
+    (settle_outbox_apply._apply_leased): the frozen charge goes to the front
+    door once, the authorization is settled at that charge with the key's
+    usage booked, the credit row untouched (the lease booked the usage), the
+    scope row claimed, and the status URL says settled. Without the overlap
+    list the same authorization gets the admission-off answer: no ticket."""
+    from tests.test_fastpath_frontdoor import _Door, _transport
+    from trusted_router.routes.internal import gateway
+    from trusted_router.services import fastpath_frontdoor as fd
+
+    store, db, rt, cfg = env
+    cfg.fastpath_pilot_workspaces = 'ws-v1'
+    cfg.parse_fastpath_pilot()
+    cfg.async_settle_fastpath_overlap_workspaces = 'ws-v1'
+    cfg.parse_fastpath_overlap_workspaces()
+    body, auth, key = prepare(env, authorize=LEASED)
+    assert auth.fastpath_envelope == 'sealed-overlap' and auth.credit_reservation_id is not None
+    assert body['settlement_ticket']
+    assert db.reservations[auth.credit_reservation_id]['credit_reserved_micro'] == 0
+    charge = body['terminal']['charge_micro']
+    assert charge > 0
+    door = _Door({'/v1/settle': {'Status': 'won', 'Kind': 'settle', 'Charge': charge, 'Outcome': '',
+                                 'Cost': 0, 'CostKnown': False}})
+    client = fd.FrontDoorClient(lambda _budget: ('10.0.0.1:8080',), timeout_seconds=1.5, clock=lambda: 0.0,
+                                transport=_transport({'10.0.0.1:8080': door}))
+    monkeypatch.setattr(gateway, '_fastpath_client', client)
+    credit_before = dict(_typed_credit(db, 'ws-v1'))
+
+    accepted = call(env, body)
+    assert accepted.status_code == 202
+    assert door.seen == []  # Nothing asked of the lease before the drain.
+    principal = SimpleNamespace(workspace=SimpleNamespace(id='ws-v1'), api_key=key)
+    sid = auth.id + '.settle'
+    assert status(sid, principal)['data']['trusted_router_settlement']['settlement_status'] == 'pending'
+    assert _drain_async()['outcomes'] == {'settled_now': 1}
+
+    settled = store.get_gateway_authorization(auth.id)
+    assert settled.settled and settled.finalization_outcome == 'settled'
+    assert settled.finalized_cost_microdollars == charge
+    ((path, sent),) = door.seen
+    assert path == '/v1/settle' and sent['Envelope'] == 'sealed-overlap' and sent['Charge'] == charge
+    assert _typed_credit(db, 'ws-v1') == credit_before
+    key_row = _typed_key(db, key.hash)
+    assert key_row['usage'] == charge and key_row['reserved'] == 0
+    assert db.reservations[auth.credit_reservation_id]['settled']
+    terminal = status(sid, principal)['data']['trusted_router_settlement']
+    assert terminal['settlement_status'] == 'settled' and terminal['cost_microdollars'] == charge
+    # A replay of the accepted settle answers the settled outcome and asks
+    # the front door nothing more.
+    assert call(env, body).status_code == 200
+    assert len(door.seen) == 1
+
+    # The control: without the overlap list the fast-path workspace is
+    # outside async admission, and the same leased authorization gets the
+    # admission-off answer (shape B, no ticket).
+    cfg.async_settle_fastpath_overlap_workspaces = ''
+    cfg.parse_fastpath_overlap_workspaces()
+    snapshot = billing.parse_snapshot(json.dumps(WIRE['billing_snapshot']))
+    shape_b = snapshot_projection(authorization=auth, snapshot=snapshot, requested=billing.Eligibility(),
+                                  runtime=rt, settings=cfg, now=NOW)
+    assert list(shape_b) == ['async_eligible', 'billing_snapshot', 'billing_snapshot_hash']
+    assert shape_b['async_eligible'] is False
 
 
 @pytest.mark.parametrize('tier', [2, 3])

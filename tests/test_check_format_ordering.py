@@ -1266,13 +1266,6 @@ def test_the_probe_reports_the_format_a_real_call_produced() -> None:
     assert dict(observed.by_entry_point) == {
         "src/trusted_router/byok_crypto.py:encrypt_byok_secret": (V2,),
         "src/trusted_router/byok_crypto.py:encrypt_control_secret": (V2,),
-        "src/trusted_router/byok_crypto.py:encrypt_user_model_secret": (V2,),
-        "src/trusted_router/services/user_model_secrets.py:encrypt_user_model_endpoint_key": (
-            V2,
-        ),
-        "src/trusted_router/services/user_model_secrets.py:encrypt_user_model_signing_secret": (
-            V2,
-        ),
     }
 
 
@@ -1495,9 +1488,6 @@ def test_the_real_tree_has_a_probe_for_every_entry_point_it_declares() -> None:
     assert scan.entry_points == (
         "src/trusted_router/byok_crypto.py:encrypt_byok_secret",
         "src/trusted_router/byok_crypto.py:encrypt_control_secret",
-        "src/trusted_router/byok_crypto.py:encrypt_user_model_secret",
-        "src/trusted_router/services/user_model_secrets.py:encrypt_user_model_endpoint_key",
-        "src/trusted_router/services/user_model_secrets.py:encrypt_user_model_signing_secret",
     )
     assert set(scan.entry_points) == set(gate._WRITE_PROBES)
 

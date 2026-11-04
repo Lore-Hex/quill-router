@@ -24,11 +24,12 @@
         "completion",
         "tools"
       ],
-      "lifecycle_status": "active",
+      "lifecycle_status": "retired",
       "deprecation_at": null,
       "retirement_at": "2026-11-02T23:56:20Z",
       "replacement_model_id": null,
-      "routable": true,
+      "routable": false,
+      "routable_reason": "pilot-retired",
       "reliability": {
         "first_token_timeout_seconds": 30.0,
         "completion_timeout_seconds": 3540.0,

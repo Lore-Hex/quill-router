@@ -166,8 +166,6 @@
     authSessionPath: "/auth/session",
     keyCookieName: "tr_chat_key",
     storageKey: {{ storage_key|default('tr_chat_state_v1')|tojson }},
-    lockedModelId: {{ locked_model_id|default('')|tojson }},
-    lockedModelLabel: {{ locked_model_label|default('Custom model')|tojson }},
   };
 </script>
 {# Markdown + code highlighting + XSS sanitization loaded from CDN.
