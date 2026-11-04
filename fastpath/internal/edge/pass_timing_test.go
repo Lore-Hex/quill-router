@@ -4,15 +4,20 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/tls"
+	"errors"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
+	"net/textproto"
 	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -30,9 +35,19 @@ func (l *logLines) with(prefix string) []string {
 	return out
 }
 
+// last is the last line logged, or "" for none.
+func (l *logLines) last() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.lines) == 0 {
+		return ""
+	}
+	return l.lines[len(l.lines)-1]
+}
+
 const (
-	slowLine   = "fastpath edge pass slow: "
-	countsLine = "fastpath edge pass: "
+	slowPrefix   = "fastpath edge pass slow: "
+	countsPrefix = "fastpath edge pass: "
 )
 
 // timedOpts shape the timed harness's way to Python.
@@ -44,6 +59,8 @@ type timedOpts struct {
 	dialDelay, firstReadDelay, pythonDelay time.Duration
 	// closed leaves nothing listening where Python was.
 	closed bool
+	// logf, when set, is the edge's log instead of the collected one.
+	logf func(string, ...any)
 }
 
 // newTimedHarness is newHarness with the edge's log collected and the way to
@@ -92,8 +109,12 @@ func newTimedHarness(t *testing.T, o timedOpts) (*harness, *logLines) {
 		upstream.Close()
 	}
 	logs := &logLines{}
+	logf := o.logf
+	if logf == nil {
+		logf = logs.logf
+	}
 	e, err := New(Config{Token: token, Upstream: target, Boots: h.boots, BootWait: 200 * time.Millisecond,
-		Clock: func() time.Time { return h.now }, Transport: transport, Logf: logs.logf})
+		Clock: func() time.Time { return h.now }, Transport: transport, Logf: logf})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,13 +156,27 @@ func (h *harness) authorize(t *testing.T) {
 	_, _ = io.ReadAll(resp.Body)
 }
 
+// signedRequest is a signed authorize with the token, for a caller of its own.
+func (h *harness) signedRequest(t *testing.T, ctx context.Context) *http.Request {
+	t.Helper()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.server.URL+authorizePath,
+		strings.NewReader(authorizeBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set(TokenHeader, token)
+	req.Header.Set(BootHeader, h.header("boot-1", http.MethodPost, authorizePath, []byte(authorizeBody)))
+	return req
+}
+
 // waitPasses waits for the edge's counts and slow lines (waitFor is
-// decide_test.go's): a pass is counted once the proxy returns, which is
-// after its answer reached the caller.
+// decide_test.go's): a pass is counted once the proxy returns, after its
+// answer reached the caller, and its lines are written by the writer
+// goroutine.
 func waitPasses(t *testing.T, h *harness, logs *logLines, passes int64, lines int) {
 	t.Helper()
 	waitFor(t, func() bool {
-		return h.edge.PassCounts().Passes == passes && len(logs.with(slowLine)) == lines
+		return h.edge.PassCounts().Passes == passes && len(logs.with(slowPrefix)) == lines
 	})
 }
 
@@ -161,12 +196,20 @@ func ms(t *testing.T, f map[string]string, name string) int64 {
 	t.Helper()
 	v, err := strconv.ParseInt(f[name], 10, 64)
 	if err != nil {
-		t.Fatalf("%s=%q is not a whole number of milliseconds", name, f[name])
+		t.Fatalf("%s=%q is not a whole number", name, f[name])
 	}
 	return v
 }
 
-func TestTheFirstPassDialsAndTheNextReusesItsConnection(t *testing.T) {
+func total(m map[string]int64) int64 {
+	var n int64
+	for _, v := range m {
+		n += v
+	}
+	return n
+}
+
+func TestTheFirstPassDialsAndTheNextTakesItIdle(t *testing.T) {
 	h, logs := newTimedHarness(t, timedOpts{})
 	h.edge.passes.slow = 0 // every pass gets its line
 	h.authorize(t)
@@ -175,16 +218,16 @@ func TestTheFirstPassDialsAndTheNextReusesItsConnection(t *testing.T) {
 	h.authorize(t)
 	waitPasses(t, h, logs, 2, 2)
 
-	got := logs.with(slowLine)
+	got := logs.with(slowPrefix)
 	first, second := fields(t, got[0]), fields(t, got[1])
-	if first["connection"] != "new" || first["attempts"] != "1" || first["status"] != "402" {
+	if first["connection"] != PassConnNew || first["status"] != "402" || first["aborted"] != "false" {
 		t.Fatalf("first pass: %s", got[0])
 	}
-	if second["connection"] != "reused" || second["attempts"] != "1" || second["status"] != "402" {
+	if second["connection"] != PassConnIdle || second["status"] != "402" || ms(t, second, "idle_ms") < 0 {
 		t.Fatalf("second pass: %s", got[1])
 	}
 	c := h.edge.PassCounts()
-	if c.Connection["new"] != 1 || c.Connection["reused"] != 1 || len(c.Setup) != 1 || c.Slow != 2 {
+	if c.Connection[PassConnNew] != 1 || c.Connection[PassConnIdle] != 1 || total(c.Wait) != 1 || c.Slow != 2 {
 		t.Fatalf("counts: %+v", c)
 	}
 }
@@ -194,32 +237,32 @@ func TestEachLinesPhasesAddUpToItsTotal(t *testing.T) {
 	h.edge.passes.slow = 0
 	h.authorize(t)
 	waitPasses(t, h, logs, 1, 1)
-	f := fields(t, logs.with(slowLine)[0])
+	f := fields(t, logs.with(slowPrefix)[0])
 	sum := ms(t, f, "edge_ms") + ms(t, f, "conn_ms") + ms(t, f, "write_ms") + ms(t, f, "python_ms") +
 		ms(t, f, "response_ms")
 	// Each phase is rounded down to its millisecond.
-	if total := ms(t, f, "total_ms"); sum > total || sum < total-5 {
-		t.Fatalf("phases sum to %d ms, the total is %d: %v", sum, total, f)
+	if all := ms(t, f, "total_ms"); sum > all || sum < all-5 {
+		t.Fatalf("phases sum to %d ms, the total is %d: %v", sum, all, f)
 	}
 }
 
 func TestASlowDialIsTheConnPhase(t *testing.T) {
-	// The reused pass has the threshold's 250 ms to stay fast on a busy
+	// The idle pass has the threshold's 400 ms to stay fast on a busy
 	// runner; the dial is well past it.
-	h, logs := newTimedHarness(t, timedOpts{dialDelay: 400 * time.Millisecond})
-	h.edge.passes.slow = 250 * time.Millisecond
+	h, logs := newTimedHarness(t, timedOpts{dialDelay: 600 * time.Millisecond})
+	h.edge.passes.slow = 400 * time.Millisecond
 	h.authorize(t)
 	waitPasses(t, h, logs, 1, 1)
-	f := fields(t, logs.with(slowLine)[0])
-	if f["phase"] != PassPhaseConn || f["connection"] != "new" || ms(t, f, "conn_ms") < 400 {
+	f := fields(t, logs.with(slowPrefix)[0])
+	if f["phase"] != PassPhaseConn || f["connection"] != PassConnNew || ms(t, f, "conn_ms") < 600 {
 		t.Fatalf("a slow dial: %v", f)
 	}
-	// The next pass reuses the connection: fast, so counted, not logged.
+	// The next pass takes the connection idle: fast, so counted, not logged.
 	time.Sleep(50 * time.Millisecond)
 	h.authorize(t)
 	waitPasses(t, h, logs, 2, 1)
 	c := h.edge.PassCounts()
-	if c.Slow != 1 || c.SlowBy[PassPhaseConn] != 1 || c.Setup["le_1s"] != 1 || c.Connection["reused"] != 1 {
+	if c.Slow != 1 || c.SlowBy[PassPhaseConn] != 1 || c.Wait["le_1s"] != 1 || c.Connection[PassConnIdle] != 1 {
 		t.Fatalf("counts: %+v", c)
 	}
 }
@@ -229,8 +272,8 @@ func TestASlowTLSHandshakeIsTheConnPhaseAndItsTLS(t *testing.T) {
 	h.edge.passes.slow = 100 * time.Millisecond
 	h.authorize(t)
 	waitPasses(t, h, logs, 1, 1)
-	f := fields(t, logs.with(slowLine)[0])
-	if f["phase"] != PassPhaseConn || ms(t, f, "tls_ms") < 150 || f["tls_failed"] != "false" || f["status"] != "402" {
+	f := fields(t, logs.with(slowPrefix)[0])
+	if f["phase"] != PassPhaseConn || ms(t, f, "tls_ms") < 150 || f["tls_errors"] != "0" || f["status"] != "402" {
 		t.Fatalf("a slow handshake: %v", f)
 	}
 }
@@ -240,12 +283,47 @@ func TestASlowPythonIsThePythonPhase(t *testing.T) {
 	h.edge.passes.slow = 100 * time.Millisecond
 	h.authorize(t)
 	waitPasses(t, h, logs, 1, 1)
-	f := fields(t, logs.with(slowLine)[0])
+	f := fields(t, logs.with(slowPrefix)[0])
 	if f["phase"] != PassPhasePython || ms(t, f, "python_ms") < 150 {
 		t.Fatalf("a slow Python: %v", f)
 	}
 	if c := h.edge.PassCounts(); c.SlowBy[PassPhasePython] != 1 {
 		t.Fatalf("counts: %+v", c)
+	}
+}
+
+func TestA1xxReachesTheCallerAndDoesNotEndThePythonPhase(t *testing.T) {
+	h, logs := newTimedHarness(t, timedOpts{})
+	h.edge.passes.slow = 0
+	h.respond = func(w http.ResponseWriter) {
+		w.Header().Set("Link", "</x>; rel=preload")
+		w.WriteHeader(http.StatusEarlyHints)
+		time.Sleep(200 * time.Millisecond)
+		w.Header().Del("Link")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusPaymentRequired)
+		_, _ = w.Write([]byte(`{"error":{"code":402}}`))
+	}
+	var hints atomic.Int32
+	trace := &httptrace.ClientTrace{Got1xxResponse: func(code int, _ textproto.MIMEHeader) error {
+		if code == http.StatusEarlyHints {
+			hints.Add(1)
+		}
+		return nil
+	}}
+	resp, err := plainClient.Do(h.signedRequest(t, httptrace.WithClientTrace(context.Background(), trace)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	waitPasses(t, h, logs, 1, 1)
+	if hints.Load() != 1 || resp.StatusCode != http.StatusPaymentRequired {
+		t.Fatalf("the 103 or the 402 did not reach the caller: hints=%d status=%d", hints.Load(), resp.StatusCode)
+	}
+	f := fields(t, logs.with(slowPrefix)[0])
+	if f["phase"] != PassPhasePython || ms(t, f, "python_ms") < 200 {
+		t.Fatalf("Python's time after its 1xx: %v", f)
 	}
 }
 
@@ -257,13 +335,225 @@ func TestAPythonNotReachedIsUnreachedWithNoConnection(t *testing.T) {
 		t.Fatalf("status %d, want the proxy's 502", resp.StatusCode)
 	}
 	waitPasses(t, h, logs, 1, 1)
-	f := fields(t, logs.with(slowLine)[0])
-	if f["status"] != "unreached" || f["connection"] != "none" || f["dial_failed"] != "true" {
+	f := fields(t, logs.with(slowPrefix)[0])
+	// No phase is asserted: a refused dial on loopback takes about as long as
+	// the edge's own work.
+	if f["status"] != "unreached" || f["connection"] != PassConnNone || ms(t, f, "connect_errors") < 1 {
 		t.Fatalf("an unreached Python: %v", f)
 	}
-	if c := h.edge.PassCounts(); c.Connection["none"] != 1 || len(c.Setup) != 0 {
+	if c := h.edge.PassCounts(); c.Connection[PassConnNone] != 1 || len(c.Wait) != 0 {
 		t.Fatalf("counts: %+v", c)
 	}
+}
+
+func TestAnAnswerThatBreaksOffIsCountedAborted(t *testing.T) {
+	h, logs := newTimedHarness(t, timedOpts{})
+	h.edge.passes.slow = 0
+	h.respond = func(w http.ResponseWriter) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", "100")
+		w.WriteHeader(http.StatusPaymentRequired)
+		_, _ = w.Write([]byte(`{"error":`))
+		w.(http.Flusher).Flush()
+		panic(http.ErrAbortHandler) // the connection closes 91 bytes short
+	}
+	h.authorize(t)
+	waitPasses(t, h, logs, 1, 1)
+	f := fields(t, logs.with(slowPrefix)[0])
+	if f["aborted"] != "true" || f["status"] != "402" {
+		t.Fatalf("an answer that broke off: %v", f)
+	}
+	if c := h.edge.PassCounts(); c.Aborted != 1 {
+		t.Fatalf("counts: %+v", c)
+	}
+}
+
+func TestACallerThatHangsUpMidAnswerIsCountedAborted(t *testing.T) {
+	h, logs := newTimedHarness(t, timedOpts{})
+	h.edge.passes.slow = 0
+	h.respond = func(w http.ResponseWriter) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", "22")
+		w.WriteHeader(http.StatusPaymentRequired)
+		_, _ = w.Write([]byte(`{"error":`))
+		w.(http.Flusher).Flush()
+		time.Sleep(600 * time.Millisecond)
+		_, _ = w.Write([]byte(`{"code":402}}`))
+	}
+	resp := h.signed(t, "boot-1", http.MethodPost, authorizePath, authorizeBody, nil)
+	_ = resp.Body.Close() // the caller hangs up with the answer half read
+	waitPasses(t, h, logs, 1, 1)
+	if c := h.edge.PassCounts(); c.Aborted != 1 {
+		t.Fatalf("counts: %+v", c)
+	}
+	if f := fields(t, logs.with(slowPrefix)[0]); f["aborted"] != "true" {
+		t.Fatalf("a caller that hung up: %v", f)
+	}
+}
+
+func TestAConnectionDialedForAnotherPassIsHanded(t *testing.T) {
+	// A's caller gives up while A's dial is held; B arrives, finds no idle
+	// connection, and is handed A's fresh one when it lands (the
+	// transport's late binding: Reused but not WasIdle).
+	h, logs := newTimedHarness(t, timedOpts{dialDelay: 800 * time.Millisecond})
+	h.edge.passes.slow = 0
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if resp, err := plainClient.Do(h.signedRequest(t, ctx)); err == nil {
+		_ = resp.Body.Close()
+		t.Fatal("A was answered")
+	}
+	waitPasses(t, h, logs, 1, 1)
+	h.authorize(t)
+	waitPasses(t, h, logs, 2, 2)
+	b := fields(t, logs.with(slowPrefix)[1])
+	if b["connection"] != PassConnHanded || ms(t, b, "conn_ms") < 200 {
+		t.Fatalf("B, handed A's dial: %v", b)
+	}
+	c := h.edge.PassCounts()
+	// A had no connection; B waited for one, and its wait is counted.
+	if c.Connection[PassConnNone] != 1 || c.Connection[PassConnHanded] != 1 || total(c.Wait) != 1 {
+		t.Fatalf("counts: %+v", c)
+	}
+}
+
+func TestTheHooksCountErrorsAndAFailedWriteKeepsItsTime(t *testing.T) {
+	t0 := time.Now()
+	p := &passTrace{arrived: t0, forwarded: t0}
+	hooks := p.hooks()
+	failed := errors.New("refused")
+	hooks.DNSStart(httptrace.DNSStartInfo{})
+	hooks.DNSDone(httptrace.DNSDoneInfo{Err: failed})
+	// A dial over two addresses: the first refused, the second connects.
+	// The dial spans the first start to the last end.
+	hooks.ConnectStart("tcp", "[::1]:1")
+	hooks.ConnectDone("tcp", "[::1]:1", failed)
+	time.Sleep(10 * time.Millisecond)
+	hooks.ConnectStart("tcp", "127.0.0.1:1")
+	time.Sleep(10 * time.Millisecond)
+	hooks.ConnectDone("tcp", "127.0.0.1:1", nil)
+	hooks.TLSHandshakeStart()
+	hooks.TLSHandshakeDone(tls.ConnectionState{}, nil)
+	hooks.GotConn(httptrace.GotConnInfo{})
+	hooks.WroteRequest(httptrace.WroteRequestInfo{Err: failed})
+	s := p.phases(time.Now().Add(time.Second))
+	if s.connection != PassConnNew || s.dnsErrors != 1 || s.connectErrors != 1 || s.tlsErrors != 0 ||
+		s.writeErrors != 1 || s.connect < 20*time.Millisecond {
+		t.Fatalf("errors and the dial's span: %+v", s)
+	}
+	// The write never ended: the rest is the write's, none Python's.
+	if s.slowest != PassPhaseWrite || s.python != 0 || s.response != 0 || s.write < time.Second {
+		t.Fatalf("a failed write: %+v", s)
+	}
+}
+
+func TestTheBranchesThatPassBeforeTheBootCheckAreTimed(t *testing.T) {
+	h, logs := newTimedHarness(t, timedOpts{})
+	h.edge.passes.slow = 0
+	// No boot header: passed unread, timed.
+	resp := h.send(t, http.MethodPost, authorizePath, authorizeBody, map[string]string{TokenHeader: token})
+	_, _ = io.ReadAll(resp.Body)
+	waitPasses(t, h, logs, 1, 1)
+	// A body past the bound: passed unchecked, timed.
+	resp = h.send(t, http.MethodPost, authorizePath, strings.Repeat("a", maxBody+1),
+		map[string]string{TokenHeader: token, BootHeader: "kid=boot-1,sig=x"})
+	_, _ = io.ReadAll(resp.Body)
+	waitPasses(t, h, logs, 2, 2)
+}
+
+func TestAHookThatFiresLateRacesNothing(t *testing.T) {
+	// A dial the transport keeps for its pool can report after the pass has
+	// ended; run with -race, this fails without the trace's lock.
+	p := &passTrace{arrived: time.Now(), forwarded: time.Now()}
+	hooks := p.hooks()
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for range 200 {
+			hooks.DNSStart(httptrace.DNSStartInfo{})
+			hooks.DNSDone(httptrace.DNSDoneInfo{})
+			hooks.ConnectStart("tcp", "127.0.0.1:1")
+			hooks.ConnectDone("tcp", "127.0.0.1:1", nil)
+			hooks.TLSHandshakeStart()
+			hooks.TLSHandshakeDone(tls.ConnectionState{}, nil)
+		}
+	}()
+	for range 200 {
+		_ = p.phases(time.Now())
+	}
+	wg.Wait()
+}
+
+func TestASlowLogHoldsNoPass(t *testing.T) {
+	release := make(chan struct{})
+	logs := &logLines{}
+	blocked := func(format string, args ...any) {
+		<-release
+		logs.logf(format, args...)
+	}
+	h, _ := newTimedHarness(t, timedOpts{logf: blocked})
+	defer close(release)
+	h.edge.passes.slow = 0
+	h.edge.passes.out = make(chan string, 1)
+	// The handlers' returns, which a log written on them would hold.
+	returned := make(chan struct{}, 3)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.edge.ServeHTTP(w, r)
+		returned <- struct{}{}
+	}))
+	// Closed after the deferred release: Close waits for the handlers,
+	// which a log written on them would hold until then.
+	t.Cleanup(server.Close)
+	h.server = server
+	// A connection each, so that a handler held by the log fails the test
+	// below within seconds instead of holding the next request behind it.
+	client := &http.Client{Timeout: 10 * time.Second,
+		Transport: &http.Transport{DisableKeepAlives: true, DisableCompression: true}}
+	for range 3 {
+		resp, err := client.Do(h.signedRequest(t, context.Background()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+	}
+	for range 3 {
+		select {
+		case <-returned:
+		case <-time.After(5 * time.Second):
+			t.Fatal("a handler waited for the log")
+		}
+	}
+	// One line is with the blocked writer, at most one in the queue, the
+	// rest dropped.
+	if c := h.edge.PassCounts(); c.Passes != 3 || c.Dropped < 1 {
+		t.Fatalf("counts: %+v", c)
+	}
+}
+
+func TestFlushPassesWritesTheQueueThenTheLastPeriod(t *testing.T) {
+	h, logs := newTimedHarness(t, timedOpts{})
+	h.edge.passes.slow = 0
+	h.authorize(t)
+	h.authorize(t)
+	waitFor(t, func() bool { return h.edge.PassCounts().Passes == 2 })
+	h.edge.FlushPasses()
+	// FlushPasses returns once every line is written, the counts last.
+	if got := logs.with(slowPrefix); len(got) != 2 {
+		t.Fatalf("slow lines: %v", got)
+	}
+	counts := logs.with(countsPrefix)
+	if len(counts) != 1 || fields(t, counts[0])["passes"] != "2" || !strings.HasPrefix(logs.last(), countsPrefix) {
+		t.Fatalf("the last period's counts: %v", logs.all())
+	}
+	// A pass after it is still counted; its line is dropped.
+	h.authorize(t)
+	waitFor(t, func() bool { return h.edge.PassCounts().Passes == 3 })
+	if c := h.edge.PassCounts(); c.Dropped != 1 {
+		t.Fatalf("counts: %+v", c)
+	}
+	h.edge.FlushPasses() // once is enough; again is nothing
 }
 
 func TestAPeriodsSlowLinesAreBoundedAndTheRestCounted(t *testing.T) {
@@ -279,32 +569,30 @@ func TestAPeriodsSlowLinesAreBoundedAndTheRestCounted(t *testing.T) {
 	}
 }
 
-func TestAPeriodsCountsAreLoggedByThePassAfterIt(t *testing.T) {
-	h, logs := newTimedHarness(t, timedOpts{})
-	h.edge.passes.every = time.Second
-	h.edge.passes.slow = 0
-	h.edge.passes.lines = 1
-	h.authorize(t)
-	h.authorize(t)
-	waitPasses(t, h, logs, 2, 1)
-	if got := logs.with(countsLine); len(got) != 0 {
-		t.Fatalf("counts logged before the period ended: %v", got)
+func TestAPeriodsCountsAreWrittenByThePassAfterIt(t *testing.T) {
+	logs := &logLines{}
+	pt := newPassTimer(logs.logf, time.Minute)
+	pt.slow = time.Hour // no slow lines
+	t0 := time.Now()
+	pass := func(at time.Duration) *passTrace {
+		i := t0.Add(at)
+		return &passTrace{arrived: i, forwarded: i, gotConn: i, wrote: i, headers: i, reused: true, wasIdle: true}
 	}
-	time.Sleep(1100 * time.Millisecond)
-	h.authorize(t)
-	// The new period logs its own first slow line.
-	waitPasses(t, h, logs, 3, 2)
-	got := logs.with(countsLine)
-	if len(got) != 1 {
-		t.Fatalf("counts lines: %v", got)
+	pt.observe(pass(0), t0.Add(10*time.Millisecond), false)
+	pt.observe(pass(30*time.Second), t0.Add(30*time.Second), true)
+	pt.mu.Lock()
+	queued, writing := len(pt.out), pt.writing
+	pt.mu.Unlock()
+	if queued != 0 || writing {
+		t.Fatal("a line was written inside the period")
 	}
-	f := fields(t, got[0])
-	if f["passes"] != "2" || f["slow"] != "2" || f["unlogged"] != "1" || ms(t, f, "seconds") < 1 {
-		t.Fatalf("the period's counts: %s", got[0])
-	}
-	if !strings.Contains(got[0], `connection={"new":1,"reused":1}`) &&
-		!strings.Contains(got[0], `connection={"new":2}`) {
-		t.Fatalf("the period's connections: %s", got[0])
+	pt.observe(pass(61*time.Second), t0.Add(61*time.Second), false)
+	waitFor(t, func() bool { return len(logs.with(countsPrefix)) == 1 })
+	line := logs.with(countsPrefix)[0]
+	f := fields(t, line)
+	if f["passes"] != "2" || f["aborted"] != "1" || f["seconds"] != "60" || f["slow"] != "0" ||
+		!strings.Contains(line, `connection={"idle":2}`) {
+		t.Fatalf("the period's counts: %s", line)
 	}
 }
 
@@ -332,10 +620,10 @@ func TestTheLinesNameNoRequest(t *testing.T) {
 	h.authorize(t)
 	h.authorize(t)
 	waitPasses(t, h, logs, 2, 2)
-	waitFor(t, func() bool { return len(logs.with(countsLine)) == 1 })
+	waitFor(t, func() bool { return len(logs.with(countsPrefix)) == 1 })
 	upstream, _ := url.Parse(h.upstream.URL)
 	edgeHost, _ := url.Parse(h.server.URL)
-	for _, line := range append(logs.with(slowLine), logs.with(countsLine)...) {
+	for _, line := range append(logs.with(slowPrefix), logs.with(countsPrefix)...) {
 		for _, secret := range []string{"lookup-1", "boot-1", token, "/internal", upstream.Host, upstream.Hostname(),
 			edgeHost.Host, `"model"`} {
 			if strings.Contains(line, secret) {
@@ -355,16 +643,18 @@ func TestPhasesTellAPassApart(t *testing.T) {
 		edge, conn, write, python, response int
 		slowest, connection                 string
 	}{
-		{"answered", &passTrace{arrived: at(0), forwarded: at(1), gotConn: at(3), wrote: at(4), firstByte: at(10),
-			reused: true}, at(12), 1, 2, 1, 6, 2, PassPhasePython, "reused"},
-		{"no connection: the rest is conn's", &passTrace{arrived: at(0), forwarded: at(1), getConn: at(1)},
-			at(3001), 1, 3000, 0, 0, 0, PassPhaseConn, "none"},
-		{"no first byte: the rest is Python's", &passTrace{arrived: at(0), forwarded: at(1), gotConn: at(2),
-			wrote: at(3)}, at(2003), 1, 1, 1, 2000, 0, PassPhasePython, "new"},
+		{"answered on an idle connection", &passTrace{arrived: at(0), forwarded: at(1), gotConn: at(3), wrote: at(4),
+			headers: at(10), reused: true, wasIdle: true}, at(12), 1, 2, 1, 6, 2, PassPhasePython, PassConnIdle},
+		{"handed a connection another pass put back", &passTrace{arrived: at(0), forwarded: at(1), gotConn: at(900),
+			wrote: at(901), headers: at(905), reused: true}, at(906), 1, 899, 1, 4, 1, PassPhaseConn, PassConnHanded},
+		{"no connection: the rest is conn's", &passTrace{arrived: at(0), forwarded: at(1)},
+			at(3001), 1, 3000, 0, 0, 0, PassPhaseConn, PassConnNone},
+		{"no final headers: the rest is Python's", &passTrace{arrived: at(0), forwarded: at(1), gotConn: at(2),
+			wrote: at(3)}, at(2003), 1, 1, 1, 2000, 0, PassPhasePython, PassConnNew},
 		{"a tie goes to the earlier phase", &passTrace{arrived: at(0), forwarded: at(5), gotConn: at(10), wrote: at(10),
-			firstByte: at(12)}, at(14), 5, 5, 0, 2, 2, PassPhaseEdge, "new"},
+			headers: at(12)}, at(14), 5, 5, 0, 2, 2, PassPhaseEdge, PassConnNew},
 		{"a mark before the last is not an end", &passTrace{arrived: at(0), forwarded: at(2), gotConn: at(1)},
-			at(9), 2, 7, 0, 0, 0, PassPhaseConn, "new"},
+			at(9), 2, 7, 0, 0, 0, PassPhaseConn, PassConnNew},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			s := c.p.phases(c.done)
@@ -382,16 +672,20 @@ func TestPhasesTellAPassApart(t *testing.T) {
 	}
 }
 
-func TestANewConnectionsSetupIsBucketedAtTheSYNRetries(t *testing.T) {
+func TestAWaitForAConnectionIsBucketedAtTheSYNRetries(t *testing.T) {
 	for took, want := range map[time.Duration]string{
-		10 * time.Millisecond:   "le_10ms",
-		11 * time.Millisecond:   "le_100ms",
-		time.Second:             "le_1s",
-		1200 * time.Millisecond: "le_2s",
-		3050 * time.Millisecond: "gt_2s",
+		10 * time.Millisecond:           "le_10ms",
+		11 * time.Millisecond:           "le_100ms",
+		100 * time.Millisecond:          "le_100ms",
+		101 * time.Millisecond:          "le_1s",
+		time.Second:                     "le_1s",
+		1200 * time.Millisecond:         "le_2s",
+		2 * time.Second:                 "le_2s",
+		2*time.Second + time.Nanosecond: "gt_2s",
+		3050 * time.Millisecond:         "gt_2s",
 	} {
-		if got := setupBucket(took); got != want {
-			t.Fatalf("setupBucket(%v) = %q, want %q", took, got, want)
+		if got := waitBucket(took); got != want {
+			t.Fatalf("waitBucket(%v) = %q, want %q", took, got, want)
 		}
 	}
 }

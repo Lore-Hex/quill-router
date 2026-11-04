@@ -36,11 +36,11 @@
 // 503 when the insert's outcome is not known; every other request still
 // passes to Python unchanged (decide_path.go).
 //
-// Every authorize the edge passes to Python is timed, from its arrival to
-// its answer written back, in phases that tell the edge's own time, the
-// connection to Python, Python's answer and the answer's way back apart; a
-// slow pass is logged with its phases, and each period's counts in one line
-// (pass_timing.go).
+// Every authorize the edge passes to Python with the internal token is
+// timed, from its arrival to its answer written back, in phases that tell
+// the edge's own time, the connection to Python, Python's answer and the
+// answer's way back apart; a slow pass is logged with its phases, and each
+// period's counts in one line (pass_timing.go).
 package edge
 
 import (
