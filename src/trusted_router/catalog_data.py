@@ -259,7 +259,7 @@ PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
 # Jurisdiction and privacy controls that already exist. Reuse these; a second
 # mechanism for the same rule is a second thing to keep true:
 #   * US_PROVIDER_ONLY_MODEL_IDS (below) is the request-time rule that pins
-#     OpenPatcher and Athena ids to US-operated providers. routing.py turns a
+#     OpenPatcher, Athena and Liberty 4.0 ids to US-operated providers. routing.py turns a
 #     match into provider_jurisdiction=US on the request.
 #   * The provider.jurisdiction request preference in routing.py filters
 #     candidate endpoints against provider_headquarters_country. It accepts only

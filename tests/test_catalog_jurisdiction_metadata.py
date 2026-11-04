@@ -15,7 +15,7 @@ from collections import Counter
 
 import pytest
 
-from trusted_router.catalog import MODELS, PROVIDERS
+from trusted_router.catalog import MODELS, PROVIDERS, model_to_openrouter_shape
 from trusted_router.catalog_data import (
     EU_FOCUSED_PROVIDER_ORDER,
     MODEL_ORIGIN_REQUIRED_MODEL_COUNT,
@@ -272,3 +272,15 @@ def test_eu_focused_route_has_no_provider_with_an_unverified_jurisdiction_left_u
             provider.provider_headquarters_country is not None
             or slug in PROVIDER_JURISDICTION_UNVERIFIED
         )
+
+
+def test_liberty_4_is_pinned_to_us_providers() -> None:
+    # Liberty 4.0 is advertised as served only by US-headquartered providers;
+    # the pin is this request-time rule, mirrored by the gateway preset.
+    shape = model_to_openrouter_shape(MODELS["trustedrouter/liberty-4.0"])
+    assert cast_dict(shape["trustedrouter"])["required_provider_jurisdiction"] == PROVIDER_JURISDICTION_US
+
+
+def cast_dict(value: object) -> dict[str, object]:
+    assert isinstance(value, dict)
+    return value
