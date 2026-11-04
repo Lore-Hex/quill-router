@@ -1149,6 +1149,16 @@ def _authorize_gateway_sync_impl(
     _require_monitor_model_key(body_dict, api_key.lookup_hash, settings)
     requested_model_id = body.model
     reject_retired_models(requested_model_id, *(body.models or []))
+    # Older enclaves could send a catalog base model plus a creator identity.
+    # Refuse that representation too, before replay or any billing hold.
+    if any(body_dict.get(field) is not None for field in (
+        "custom_model_id", "custom_model_revision",
+        "user_provided_model_id", "user_provided_model_revision",
+    )):
+        raise api_error(
+            410, "Custom models and user-provided models have been retired. Choose a catalog model.",
+            ErrorType.MODEL_NOT_SUPPORTED,
+        )
     # Only catalog video requests defer live preparation for early replay.
     # Classify the request string, never mutable model/catalog state.
     catalog_video_request = body.route_type == "videos"
@@ -1324,6 +1334,11 @@ def _authorize_gateway_sync_impl(
         fallback: list[tuple[Model, ModelEndpoint]] | None = None,
     ) -> dict[str, Any]:
         gateway_timing_phase("post_commit_ms")
+        if existing_authorization.custom_model_id or existing_authorization.user_provided_model_id:
+            raise api_error(
+                410, "Custom models and user-provided models have been retired. Choose a catalog model.",
+                ErrorType.MODEL_NOT_SUPPORTED,
+            )
         if body.route_type == POLYPHEMUS_SELECT_ROUTE_TYPE:
             # The selector has no upstream idempotency contract. Never repeat
             # selection (including concurrent replays) on an existing hold.

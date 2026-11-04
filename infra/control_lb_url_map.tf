@@ -93,7 +93,7 @@ resource "google_compute_url_map" "control" {
         "/google_oauth_callback", "/github_oauth_callback", "/console", "/console/*", "/provider", "/provider/*",
         "/mcp", "/chat-proxy", "/chat-proxy/*", "/auth", "/auth/*", "/byok", "/byok/*", "/credits", "/credits/*",
         "/billing", "/billing/*", "/broadcast", "/broadcast/*", "/custom-models", "/custom-models/*",
-        "/user-models", "/user-models/*", "/key", "/keys", "/keys/*", "/activity", "/generation", "/generation/*",
+        "/user-models", "/user-models/*", "/earnings", "/earnings/*", "/key", "/keys", "/keys/*", "/activity", "/generation", "/generation/*",
         "/client-events", "/workspaces", "/workspaces/*", "/organization", "/organization/*", "/chat/completions",
         "/messages", "/embeddings", "/responses", "/audio", "/audio/*", "/rerank", "/videos", "/videos/*",
         "/private", "/private/*", "/guardrails", "/guardrails/*", "/analytics", "/analytics/*",

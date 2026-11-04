@@ -291,7 +291,6 @@ def test_owner_dispatch_cannot_bypass_video_constraints(monkeypatch):
         name="Demo", kind="machine", status="active",
     )
     monkeypatch.setattr(SpannerStore, "get_user_model", lambda *args: owner_model)
-    monkeypatch.setattr(gateway, "user_model_is_on_the_clock", lambda *args: True)
     body = GatewayAuthorizeRequest(
         api_key_hash=key.hash, model=owner_model.id, route_type="videos",
         max_output_tokens=1, idempotency_key="owner-video", request_fingerprint="a" * 64,
@@ -301,6 +300,6 @@ def test_owner_dispatch_cannot_bypass_video_constraints(monkeypatch):
         gateway._authorize_gateway_sync(
             request("byteplus"), body, Settings(environment="test", user_models_dispatch_enabled=True),
         )
-    assert error.value.status_code == 400
-    assert "catalog video routes" in error.value.detail["error"]["message"]
+    assert error.value.status_code == 410
+    assert "retired" in error.value.detail["error"]["message"]
     assert database.typed == before

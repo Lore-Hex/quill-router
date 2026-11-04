@@ -228,6 +228,10 @@ def test_disabled_terraform_matcher_is_base_except_empty_dynamic_block() -> None
     source = (ROOT / "infra/control_lb_url_map.tf").read_text()
     dynamic = _terminal_dynamic(source)
     without = source[:dynamic.start()] + source[dynamic.end():]
+    # Creator retirement adds only these two earnings aliases; all prior
+    # routing, including disabled terminal behavior, must stay identical.
+    assert without.count('"/earnings", "/earnings/*", ') == 1
+    without = without.replace('"/earnings", "/earnings/*", ', "")
     def uncomment(text: str) -> str:
         return re.sub(r"\s+", " ", re.sub(r"^\s*#.*$", "", text, flags=re.MULTILINE)).strip()
     assert uncomment(without) == uncomment(_base_source("infra/control_lb_url_map.tf"))
@@ -258,14 +262,28 @@ def test_disabled_renderer_differential_against_base(
         live["pathMatchers"][0]["pathRules"].append(authorize)
     expected = _render(base, deepcopy(live), internal, gateway)
     actual = _render(module, deepcopy(live), internal, gateway)
+    expected_control = next(r for r in expected["pathMatchers"][0]["pathRules"] if "/v1" in r["paths"])
+    assert "/earnings" not in expected_control["paths"]
+    index = expected_control["paths"].index("/user-models/*") + 1
+    expected_control["paths"][index:index] = ["/earnings", "/earnings/*"]
     if shape == "authorize":
         # Base 5f6d67c3b drops authorize. Raw equality here conflicts with the
         # explicit ruling to retain the PR's authorize preservation. Expose and
-        # constrain this sole exception, rather than disguising a patched base.
+        # constrain this exception, rather than disguising a patched base.
         assert authorize not in expected["pathMatchers"][0]["pathRules"]
         assert actual != expected
         expected["pathMatchers"][0]["pathRules"].append(authorize)
     assert actual == expected
+
+
+def test_earnings_aliases_route_to_control_in_both_renderers() -> None:
+    from tests.test_internal_surface_edge import _resolve_backend
+
+    rendered = _render(_module())
+    for path in ("/earnings", "/earnings/transfer"):
+        assert _resolve_backend(rendered, "trustedrouter.com", path) == CONTROL
+    assert any({"/earnings", "/earnings/*"} <= rule
+               for rule in _terraform_rule_paths("trusted-router-control-backend"))
 
 
 @pytest.mark.parametrize("enabled", [False, True])
