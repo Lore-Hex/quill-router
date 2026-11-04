@@ -1099,8 +1099,10 @@ func (p *parts) auditor(cfg Config, c Clients, s *store.Store, settle *settlelog
 		cfg.RecordSubscription, cfg.MaxOutstanding)), calls: &inFlight{}, fail: p.failing("stager")}
 	p.run("stager", func(ctx context.Context) error {
 		err := stager.Run(ctx, staged)
-		// The subscription can end before its callbacks have.
+		// The subscription can end before its callbacks have, and a
+		// callback's record can begin a transaction as it leaves.
 		staged.calls.wait()
+		stager.Wait()
 		return err
 	})
 	return nil
