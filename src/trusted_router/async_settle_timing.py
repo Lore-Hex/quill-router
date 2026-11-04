@@ -243,7 +243,8 @@ class AdmissionLock:
         self.release()
 
 
-def eligible(cache: Any, workspace: str, cap: int, *, projection: bool = False) -> bool:
+def eligible(cache: Any, workspace: str, cap: int, *, projection: bool = False,
+             queued_micro: int = 0, cached_only: bool = False) -> bool:
     timing = current()
     token = None
     if projection:
@@ -257,6 +258,8 @@ def eligible(cache: Any, workspace: str, cap: int, *, projection: bool = False) 
         timing.admitting = True
     try:
         with measure("admission_ms"):
+            if cached_only:
+                return bool(cache.eligible(workspace, cap, queued_micro=queued_micro, cached_only=True))
             return bool(cache.eligible(workspace, cap))
     finally:
         if timing is not None:

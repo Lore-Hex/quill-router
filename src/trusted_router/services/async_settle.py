@@ -13,11 +13,12 @@ import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Protocol, cast
 from urllib.parse import quote
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from fastapi.responses import JSONResponse
 
 from trusted_router import async_settle_timing as timing
 from trusted_router.async_settle_ticket import PURPOSE, TicketSigner
@@ -31,7 +32,11 @@ from trusted_router.billing_snapshot import (
 from trusted_router.catalog_data import ModelEndpoint
 from trusted_router.config import Settings, in_v2_cohort
 from trusted_router.detached_jws import TrustedKey, b64encode
-from trusted_router.storage_models import GatewayAuthorization, generation_id_for_authorization
+from trusted_router.storage_models import (
+    GatewayAuthorization,
+    SettleOutboxRow,
+    generation_id_for_authorization,
+)
 
 CACHE_SECONDS = 5.0
 TIER_CAPS = {2: 25_000_000, 3: 100_000_000}
@@ -67,7 +72,8 @@ class AdmissionCache:
         self.last_evaluated_at = float("-inf")
         self.evaluated_at: dict[str, float] = {}
 
-    def eligible(self, workspace_id: str, pilot_cap: int) -> bool:
+    def eligible(self, workspace_id: str, pilot_cap: int, *,
+                 queued_micro: int = 0, cached_only: bool = False) -> bool:
         # Lock coalesces concurrent misses, including failures. Timestamp at
         # read START, so a slow read cannot turn old evidence into fresh data.
         if not self.lock.acquire(timeout=0.2):
@@ -75,7 +81,11 @@ class AdmissionCache:
         try:
             now = self.clock()
             self.last_evaluated_at = now
-            if self.health_read is not None and not 0 <= now - self.health_read_at < 1:
+            # Cached-only admission uses successful health evidence younger than
+            # CACHE_SECONDS, whether read here or by read-ahead. Failed read-ahead
+            # neither extends nor revokes it. The full path keeps its refresh and
+            # fail-closed rule below.
+            if not cached_only and self.health_read is not None and not 0 <= now - self.health_read_at < 1:
                 self.health_read_at = now
                 self.health = None
                 try:
@@ -88,6 +98,13 @@ class AdmissionCache:
                     self.clock() - self.health.observed_at if self.health is not None else None,
                 )
             cached = self.entries.get(workspace_id)
+            if cached_only and (cached is None or not 0 <= now - cached[0] < CACHE_SECONDS):
+                self.evaluated_at[workspace_id] = now
+                # Register demand for read-ahead without inventing evidence or
+                # reading on the request path. Full-path pruning stays below.
+                if cached is None and len(self.entries) < 4096:
+                    self.entries[workspace_id] = (float("-inf"), None)
+                return False
             if cached is None or not 0 <= now - cached[0] < CACHE_SECONDS:
                 if workspace_id not in self.entries and len(self.entries) >= 4096:
                     self.entries = {ws: entry for ws, entry in self.entries.items()
@@ -110,7 +127,7 @@ class AdmissionCache:
                 0 <= now - cached[0] < CACHE_SECONDS
                 and value is not None and type(value.tier) is int and value.tier in TIER_CAPS
                 and type(value.pending_micro) is int and value.pending_micro >= 0
-                and value.pending_micro <= (pilot_cap or TIER_CAPS[value.tier])
+                and value.pending_micro + queued_micro <= (pilot_cap or TIER_CAPS[value.tier])
                 and health is not None and 0 <= now - health.observed_at < CACHE_SECONDS
                 and 0 <= health.p95_age_seconds <= 5
             )
@@ -185,6 +202,16 @@ def decode_health(value: dict[str, Any] | None, *, now: float, wall: float) -> D
     return DrainHealth(now - (wall - observed), value["p95_age_seconds"])
 
 
+class HandoffQueue(Protocol):
+    """Request-side queue interface, also resolvable by runtime type reflection."""
+
+    def get(self, authorization_id: str, intent_kind: str) -> SettleOutboxRow | None: ...
+
+    def pending(self, workspace_id: str) -> int: ...
+
+    def accept(self, row: SettleOutboxRow) -> JSONResponse: ...
+
+
 @dataclass
 class Runtime:
     signer: TicketSigner | None
@@ -194,6 +221,7 @@ class Runtime:
     # Journal authority stays primary even when observation is regional.
     # Direct constructors predating serving-region labels use region for both.
     journal_region: str | None = None
+    memory: HandoffQueue | None = None
 
     @property
     def effective_journal_region(self) -> str:

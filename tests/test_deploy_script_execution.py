@@ -807,11 +807,15 @@ def test_rollout_pins_admission_refresh_without_inheritance(
         "scripts/deploy/rollout.sh",
         extra_env={"TR_DEPLOY_TARGET_REGIONS": region,
                    "TR_DEPLOY_NO_TRAFFIC": no_traffic,
-                   "TR_ASYNC_SETTLE_ADMISSION_REFRESH_ENABLED": "false"},
+                   "TR_ASYNC_SETTLE_ADMISSION_REFRESH_ENABLED": "false",
+                   "TR_ASYNC_SETTLE_HANDOFF_MODE": "outbox"},
     )
     assert run.returncode == 0, summarise(run)
     deploy = next(call for call in run.calls if call[3:5] == ["run", "deploy"])
     rendered = _cloud_run_job_env(deploy)
+    assert rendered["TR_ASYNC_SETTLE_HANDOFF_MODE"] == "memory"
+    monkeypatch.setenv("TR_ASYNC_SETTLE_HANDOFF_MODE", rendered["TR_ASYNC_SETTLE_HANDOFF_MODE"])
+    assert Settings(environment="test").async_settle_handoff_mode == "memory"
     assert rendered["TR_ASYNC_SETTLE_ADMISSION_REFRESH_ENABLED"] == "true"
     monkeypatch.setenv("TR_ASYNC_SETTLE_ADMISSION_REFRESH_ENABLED",
                        rendered["TR_ASYNC_SETTLE_ADMISSION_REFRESH_ENABLED"])

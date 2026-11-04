@@ -27,6 +27,7 @@ def router_revision():
     env = dict(TR_GCP_PROJECT_ID="quill-cloud-proxy", TR_SPANNER_INSTANCE_ID="test-instance",
                TR_SPANNER_DATABASE_ID="test-database", TR_RELEASE="a" * 7,
                TR_SOURCE_REVISION="a" * 40, TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED="false",
+               TR_ASYNC_SETTLE_HANDOFF_MODE="memory",
                TR_STRIPE_SECRET_KEY="must-not-copy", TR_INTERNAL_GATEWAY_TOKEN="must-not-copy")  # noqa: S106
     return {"spec": {"serviceAccountName": "router@quill-cloud-proxy.iam.gserviceaccount.com",
                      "containers": [{"image": "us-central1-docker.pkg.dev/test/router@sha256:" + "b" * 64,
@@ -40,6 +41,8 @@ def test_worker_plan_validates_with_only_sentry_and_does_not_mutate_router():
     plan = worker_plan(original)
     cfg = Settings(sentry_dsn="https://public@example.com/1", **{name.removeprefix("TR_").lower(): value for name, value in plan["env"].items()})
     assert cfg.service_surface == "settle-drain" and cfg.settle_outbox_fast_drain_enabled
+    assert cfg.async_settle_handoff_mode == "outbox"
+    assert "TR_ASYNC_SETTLE_HANDOFF_MODE" not in plan["env"]
     assert cfg.settle_outbox_stall_seconds == 26
     assert plan["env"]["TR_LOOP_STALL_EXIT_SECONDS"] == "30"
     assert plan["secrets"] == {"TR_SENTRY_DSN": {"name": "trustedrouter-sentry-dsn", "key": "latest"}}
