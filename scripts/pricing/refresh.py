@@ -173,6 +173,7 @@ PROVIDER_SLUGS = [
     "greenference",
     "hixtube",
     "muna",
+    "negbeta",
     "coralbricks",
     "boundless",
     "zro",

@@ -2126,6 +2126,25 @@ PROVIDERS: dict[str, Provider] = {
         ),
         provider_policy_url="https://trust.coralbricks.ai/",
     ),
+    "negbeta": Provider(
+        slug="negbeta", name="Negbeta", supports_prepaid=True, supports_byok=False,
+        stores_content=True, provider_zero_data_retention=False,
+        provider_confidential_compute=False, provider_e2ee=False,
+        provider_headquarters_country="GB", renewable_energy_inference=False,
+        provider_policy=(
+            "Negbeta Limited operates its own serving software on rented GPU capacity. "
+            "The TrustedRouter route is provider-declared EU-only; this is not an attested "
+            "location or a guarantee about other Negbeta routes. No training on customer "
+            "content and no prompt/output logging are declared. Current prefix caches are "
+            "memory-only, shared per model server, evicted by LRU and cleared on restart. "
+            "The published data policy permits future disk-backed prompt caching, so these "
+            "routes remain Standard, not strict ZDR, Confidential or provider-side E2EE. "
+            "Operational metadata is retained for 180 days; IP addresses and user agents "
+            "for 30 days. Cloudflare terminates TLS and may process traffic outside the EU. "
+            "Renewable electricity coverage is unverified."
+        ),
+        provider_policy_url="https://negbeta.com/inference/data-policy/",
+    ),
     "muna": Provider(
         slug="muna", name="Muna", supports_prepaid=True, supports_byok=False,
         stores_content=True, provider_zero_data_retention=False,
@@ -2511,6 +2530,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "greenference",
         "hixtube",
         "muna",
+        "negbeta",
         "coralbricks",
         "boundless",
         "zro",
