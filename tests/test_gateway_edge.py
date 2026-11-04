@@ -115,7 +115,9 @@ def mutations(calls):
     return [c for c in calls if any(x in c for x in ("import", "create", "update", "add-backend"))]
 
 
-def test_gateway_generator_contract_and_all_registered_routes():
+@pytest.mark.parametrize("enabled", [False, True])
+def test_gateway_generator_contract_and_all_registered_routes(monkeypatch, enabled):
+    monkeypatch.setattr(URL_MAP, "terminal_route_enabled", lambda: enabled)
     old = live_map()
     generated = CONFIG.candidate(old, GATEWAY, ["trustedrouter.com", "allyrouter.com", "uptimerouter.com"])
     app = create_app(Settings(environment="test", service_surface="combined"),
@@ -129,9 +131,12 @@ def test_gateway_generator_contract_and_all_registered_routes():
     for path in paths | {"/internal/gateway", "/v1/internal/gateway", "/internal/gatewayish/x"}:
         wanted = GATEWAY if path in gateway_paths or path in {
             "/internal/gateway", "/v1/internal/gateway"} else _resolve_backend(old, "trustedrouter.com", path)
+        if enabled and path in URL_MAP.TERMINAL_PATH_PATTERNS:
+            wanted = f"{BASE}/global/backendServices/{URL_MAP.TERMINAL_BACKEND_NAME}"
         assert _resolve_backend(generated, "trustedrouter.com", path) == wanted, path
     assert generated["tests"][0]["service"] == GATEWAY
-    # No argument means the exact old four-surface output, including map tests.
+    # Removing the gateway override restores the original surface and terminal
+    # routing for this switch state, including map tests.
     assert URL_MAP.rewrite_url_map(generated,
         *[f"{BASE}/global/backendServices/{b}" for b in (
             "trusted-router-public-backend", "trusted-router-control-backend",
@@ -344,14 +349,19 @@ def test_fleet_preflight_refuses_unsafe_failover(tmp_path, monkeypatch, fault):
 
 
 @pytest.mark.parametrize("internal", ["trusted-router-control-backend", "trusted-router-internal-backend"])
-def test_cutover_capture_and_rollback_preserve_other_routes(tmp_path, monkeypatch, internal):
+@pytest.mark.parametrize("enabled", [False, True])
+def test_cutover_capture_and_rollback_preserve_other_routes(tmp_path, monkeypatch, internal, enabled):
+    monkeypatch.setattr(URL_MAP, "terminal_route_enabled", lambda: enabled)
     before = live_map(internal)
     replace_response(monkeypatch, r"url-maps describe .*--format=json", before)
     harness = DeployScriptHarness(tmp_path / "cutover")
+    (harness.mirror / "infra/control_terminal_backend.tf").write_text(
+        "locals {\n  terminal_c1_route_enabled = " + str(enabled).lower() + "\n}\n")
     result = run(harness, "cutover")
     assert result.returncode == 0, summarise(result)
     after = json.loads((harness.root / "url-map-state.json").read_text())
-    assert _resolve_backend(after, "trustedrouter.com", "/internal/gateway/settle") == GATEWAY
+    expected = f"{BASE}/global/backendServices/{URL_MAP.TERMINAL_BACKEND_NAME}" if enabled else GATEWAY
+    assert _resolve_backend(after, "trustedrouter.com", "/internal/gateway/settle") == expected
     assert _resolve_backend(after, "trustedrouter.com", "/internal/other").endswith("/" + internal)
     capture = json.loads((harness.root / "state/trusted-router-control-map.pre-gateway-cutover.capture.json").read_text())
     assert json.loads(base64.b64decode(capture["source_json_base64"])) == before
@@ -542,7 +552,7 @@ def test_operator_runbook_is_durable():
 @pytest.mark.parametrize("enabled", [False, True])
 @pytest.mark.parametrize("mutation", ["known", "extra-key", "route-action", "action-only",
                                       "partial", "different-paths", "mixed", "wrong-service", "duplicate"])
-def test_terminal_rule_schema_through_all_python_callers(tmp_path, caller, enabled, mutation):
+def test_terminal_rule_schema_through_all_python_callers(tmp_path, monkeypatch, caller, enabled, mutation):
     root = Path(__file__).resolve().parents[1]
     deploy = tmp_path / "scripts/deploy"
     deploy.mkdir(parents=True)
@@ -551,6 +561,9 @@ def test_terminal_rule_schema_through_all_python_callers(tmp_path, caller, enabl
     (tmp_path / "infra").mkdir()
     (tmp_path / "infra/control_terminal_backend.tf").write_text(
         "locals {\n  terminal_c1_route_enabled = " + str(enabled).lower() + "\n}\n")
+    # Build the live baseline without an override, then insert exactly the rule
+    # under test. The subprocess reads its own requested state from the temp HCL.
+    monkeypatch.setattr(URL_MAP, "terminal_route_enabled", lambda: False)
     live = live_map()
     terminal_link = f"{BASE}/global/backendServices/{URL_MAP.TERMINAL_BACKEND_NAME}"
     rule: dict[str, Any] = {"paths": list(URL_MAP.TERMINAL_PATH_PATTERNS), "service": terminal_link}

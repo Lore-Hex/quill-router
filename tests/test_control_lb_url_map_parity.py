@@ -108,13 +108,14 @@ def _render(module: ModuleType, existing=None, internal=CONTROL, gateway=None):
     )
 
 
-def test_terminal_route_default_is_off() -> None:
+def test_terminal_route_switch_is_on() -> None:
     # Independent raw-source pin: do not trust the renderer to verify itself.
+    # Switched on 2026-11-03 (Joseph approved routing terminals to us-central1).
     source = (ROOT / "infra/control_terminal_backend.tf").read_text()
     assert re.findall(r"\blocals\s*\{[^{}]*\}", source) == [
-        "locals {\n  terminal_c1_route_enabled = false\n}",
+        "locals {\n  terminal_c1_route_enabled = true\n}",
     ]
-    assert _module().terminal_route_enabled() is False
+    assert _module().terminal_route_enabled() is True
 
 
 @pytest.mark.parametrize("assignment", ["", "1", '"false"', "False", "true + false",
@@ -267,8 +268,12 @@ def test_disabled_renderer_differential_against_base(
     assert actual == expected
 
 
-def test_renderer_preserves_live_authorize_override() -> None:
+@pytest.mark.parametrize("enabled", [False, True])
+def test_renderer_preserves_live_authorize_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, enabled: bool,
+) -> None:
     module = _module()
+    _switch(module, tmp_path, monkeypatch, enabled)
     authorize = {
         "paths": ["/internal/gateway/authorize"],
         "routeAction": {
@@ -288,9 +293,16 @@ def test_renderer_preserves_live_authorize_override() -> None:
     assert module.existing_gateway_backend(rendered) is None
 
 
-def test_terminal_override_with_extra_key_is_never_discarded() -> None:
+@pytest.mark.parametrize("enabled", [False, True])
+def test_terminal_override_with_extra_key_is_never_discarded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, enabled: bool,
+) -> None:
     module = _module()
+    # Test the unknown rule itself, not an accidental duplicate of a rule
+    # emitted while constructing the live fixture with the committed switch.
+    _switch(module, tmp_path, monkeypatch, False)
     live = _render(module)
+    _switch(module, tmp_path, monkeypatch, enabled)
     live["pathMatchers"][0]["pathRules"].append({
         "paths": list(module.TERMINAL_PATH_PATTERNS),
         "service": module.terminal_backend_link(CONTROL),

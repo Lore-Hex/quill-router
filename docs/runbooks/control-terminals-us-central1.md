@@ -1,6 +1,7 @@
 # Gateway terminal billing in us-central1
 
-Status: **disabled** (`terminal_c1_route_enabled = false`). Joseph approved
+Status: **on from this activation PR’s merge (2026-11-04 UTC)**
+(`terminal_c1_route_enabled = true`). Joseph approved
 routing the three POST operations (settle, heartbeat and refund), including
 their `/v1` aliases, to us-central1. Only those six exact URL paths move.
 The rule matches all HTTP methods at those paths; the application accepts POST.
@@ -47,14 +48,16 @@ router reads the same nam6 database, so its answer does not depend on where it
 is served. See the [URL map API](https://docs.cloud.google.com/compute/docs/reference/rest/v1/urlMaps)
 and [URL map matching](https://docs.cloud.google.com/load-balancing/docs/url-map-concepts).
 
-The single switch is `terminal_c1_route_enabled = false` in
+The single switch is `terminal_c1_route_enabled = true` in
 `infra/control_terminal_backend.tf`. The renderer requires exactly one literal
 true/false assignment; malformed, missing or duplicate assignments fail. There
 is no second default or environment override.
 
-Activation changes that line to `true`; rollback changes it to `false`. Both
-changes go through review and **infra-apply.yml on merge**. Update the reviewed
-default-off test pin at activation. Inspect the plan and the live URL map after
+This activation sets that line to `true`; **rollback sets it to `false`**. Both
+changes go through review and **infra-apply.yml on merge**. The committed-state
+test `test_terminal_route_switch_is_on` pins this approval; update that pin to
+false in the rollback change. Routing behavior tests exercise both states.
+Inspect the plan and the live URL map after
 each apply. When false, Terraform's dynamic path_rule emits nothing and the
 renderer removes only a recognized plain terminal rule, restoring the existing
 internal/gateway wildcard behavior. When true, both writers emit one plain rule
@@ -248,4 +251,4 @@ Require successful terminal samples in Iowa and end-to-end enclave probes from
 each caller region. Check sample counts as well as zero errors; observe rollback
 propagation and recovery before declaring success.
 
-Prepared terminal switch: **false (disabled)**.
+Prepared terminal switch: **true (on from this activation PR’s merge)**.
