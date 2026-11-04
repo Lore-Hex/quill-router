@@ -2,9 +2,12 @@
 
 Status: **enabled in source by #2293 (`26a76af0b`), live since the infra apply
 completed 2026-11-04 02:10:10Z** (`terminal_c1_route_enabled = true`).
-Infra apply run `41758763722` changed only the URL map. The operator's 02:10Z
-readback confirmed one plain six-path terminal rule with no route action;
-authorize and `/internal/*` were unchanged. Joseph approved
+That apply (infra run `41758763722`) changed one resource, the URL map: 0
+added, 1 changed, 0 destroyed. The operator's URL map readback at 02:10Z,
+repeated at 07:20Z, showed one plain rule, with no route action, sending the
+six terminal paths to `trusted-router-control-terminal-c1-backend`. The
+authorize rule kept its route action, and the `/internal/*` wildcard rule still
+sends every other internal path to the regional control backend. Joseph approved
 routing the three POST operations (settle, heartbeat and refund), including
 their `/v1` aliases, to us-central1. Only those six exact URL paths move.
 The rule matches all HTTP methods at those paths; the application accepts POST.
