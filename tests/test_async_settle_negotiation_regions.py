@@ -1,6 +1,7 @@
 """Negotiate on the enclave's stored region, before it binds async settlement."""
 from __future__ import annotations
 
+import importlib.util
 import json
 from pathlib import Path
 
@@ -15,7 +16,10 @@ from tests.test_gateway_authorize_spanner_operations import (
 from tests.test_settle_outbox_drain import _client
 from trusted_router.billing_snapshot import BillingSnapshot, Eligibility
 from trusted_router.config import Settings
-from trusted_router.enclave_regions import ENCLAVE_REGIONS
+from trusted_router.enclave_regions import (
+    ENCLAVE_REGIONS,
+    ENCLAVE_REGIONS_WITHOUT_LOCAL_CONTROL_PLANE,
+)
 from trusted_router.services.async_settle import snapshot_projection
 
 
@@ -163,10 +167,25 @@ def test_the_deployed_negotiation_regions_decide_the_projection(region):
         assert actual['async_eligible'] is False
 
 
-def test_the_router_where_settles_land_accepts_them():
-    # With the terminal route on (infra/control_terminal_backend.tf, pinned by
-    # test_terminal_route_switch_is_on), every enclave's settle lands in
-    # us-central1, so the negotiated regions' settles are accepted there.
-    config = settings(async_settle_accept_regions=deployed_pin('TR_ASYNC_SETTLE_ACCEPT_REGIONS'),
-                      serving_region='us-central1', primary_region='us-central1')
-    assert config.async_settle_accept_region_allowed()
+def terminal_route_enabled() -> bool:
+    """The terminal route's switch (infra/control_terminal_backend.tf), read as the renderer reads it."""
+    path = ROLLOUT.parent / 'service_surface_url_map.py'
+    spec = importlib.util.spec_from_file_location('service_surface_url_map', path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.terminal_route_enabled()
+
+
+def test_every_negotiated_region_settles_where_it_is_accepted():
+    # With the terminal route on, every enclave's settle lands in us-central1.
+    # With it off, a region settles in its own router. The exception is a
+    # region with no control plane of its own, which settles through
+    # us-central1. A negotiated region whose router would refuse its settles
+    # is a pin to revisit (docs/runbooks/control-terminals-us-central1.md).
+    route_on = terminal_route_enabled()
+    accept = deployed_pin('TR_ASYNC_SETTLE_ACCEPT_REGIONS')
+    for region in sorted(deployed_negotiation_regions()):
+        lands = 'us-central1' if route_on or region in ENCLAVE_REGIONS_WITHOUT_LOCAL_CONTROL_PLANE else region
+        config = settings(async_settle_accept_regions=accept, serving_region=lands, primary_region='us-central1')
+        assert config.async_settle_accept_region_allowed(), (region, lands, route_on)
