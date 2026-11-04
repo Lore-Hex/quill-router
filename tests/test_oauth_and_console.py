@@ -1340,7 +1340,6 @@ def test_console_workspace_selector_persists_session_workspace(
     console_pages = (
         "/console/api-keys",
         "/console/byok",
-        "/console/custom-models",
         "/console/routing",
         "/console/activity",
         "/console/broadcast",

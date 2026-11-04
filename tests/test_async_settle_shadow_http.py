@@ -33,10 +33,29 @@ from trusted_router.services.async_settle_shadow import Runtime
 from trusted_router.storage_models import generation_id_for_authorization
 
 
+def frozen_namespace(tree):
+    namespace = dict(vars(gateway))
+    # The retired routes no longer import creator helpers. The immutable
+    # baseline still needs its own imports, without replacing injected ports.
+    imports = []
+    for node in tree.body:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            if isinstance(node, ast.ImportFrom) and node.module == '__future__':
+                continue
+            missing = [alias for alias in node.names
+                       if (alias.asname or alias.name.split('.')[0]) not in namespace]
+            if missing:
+                imported = copy.copy(node)
+                imported.names = missing
+                imports.append(imported)
+    exec(compile(ast.Module(body=imports, type_ignores=[]), '<frozen imports>', 'exec'), namespace)
+    return namespace
+
+
 def frozen_routes():
     path = Path(__file__).parent / 'fakes/shadow_main_routes_internal_gateway.py.txt'
     tree = ast.parse(path.read_text())
-    namespace = dict(vars(gateway))
+    namespace = frozen_namespace(tree)
     # All entry, registration and money functions come from the pinned source;
     # the shared injected catalog/clock/backend ports stay identical in both legs.
     functions = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]

@@ -227,13 +227,9 @@ def build_public_schema() -> dict[str, Any]:
     _canonicalize_operation_ids(schema["paths"])
     _describe_for_agents(schema)
     _prune_components(schema)
-    from trusted_router.schemas import (
-        EarningsTransferRequest,
-        UserModelCreateRequest,
-        UserModelPatchRequest,
-    )
+    from trusted_router.schemas import EarningsTransferRequest
 
-    for model in (EarningsTransferRequest, UserModelCreateRequest, UserModelPatchRequest):
+    for model in (EarningsTransferRequest,):
         _restore_integer_bounds(
             schema["components"]["schemas"][model.__name__], model.model_json_schema()
         )

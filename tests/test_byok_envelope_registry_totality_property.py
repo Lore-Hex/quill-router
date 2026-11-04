@@ -1,5 +1,11 @@
 """Proof that the retired-V1 census registry covers every envelope surface.
 
+Creator-model writers were retired in November 2026. Their two persisted
+credential fields remain in the read-only census under their historical AAD
+namespace. RETIRED_FIELD_FAMILIES explicitly classifies only those fields;
+tests require them to remain stored and to have no active sealing call sites.
+All other fields still require a namespace derived from their live writer.
+
 `byok_aad_backfill` decides what to scan from one source-of-truth registry,
 `MIGRATED_SURFACES`, exposed through `MIGRATED_KINDS` and `_fields_for_kind`.
 It currently names five
@@ -1000,6 +1006,10 @@ DERIVED_MODEL_FIELDS = envelope_fields(MODULES_BY_PATH.values())
 DERIVED_FIELD_NAMES = frozenset(name for fields in DERIVED_MODEL_FIELDS.values() for name in fields)
 DERIVED_KINDS = entity_kinds(SRC, frozenset(DERIVED_MODEL_FIELDS))
 DERIVED_FAMILIES = sealed_families(SRC, DERIVED_FIELD_NAMES)
+RETIRED_FIELD_FAMILIES = {
+    ("UserProvidedModel", "encrypted_endpoint_api_key"): NAMESPACE_USER_MODEL,
+    ("UserProvidedModel", "encrypted_signing_secret"): NAMESPACE_USER_MODEL,
+}
 # Seeded with the DERIVED kinds, never with `MIGRATED_KINDS`: a scope that
 # widens by reading the registry it audits would narrow again if a kind were
 # dropped from the registry, which is the direction that must never fail open.
@@ -1035,7 +1045,9 @@ def _derived_pairs() -> set[tuple[str, str, str]]:
     for model, fields in DERIVED_MODEL_FIELDS.items():
         kinds = DERIVED_KINDS.get(model) or {UNPLACED_KIND}
         for field in fields:
-            families = DERIVED_FAMILIES.get(field) or {UNSEALED_FAMILY}
+            families = DERIVED_FAMILIES.get(field) or {
+                RETIRED_FIELD_FAMILIES.get((model, field), UNSEALED_FAMILY)
+            }
             for kind in kinds:
                 for family in families:
                     pairs.add((kind, field, family))
@@ -1331,7 +1343,6 @@ def test_the_sealing_oracle_is_read_off_byok_crypto() -> None:
     assert SEALING_FUNCTIONS == {
         "encrypt_byok_secret": NAMESPACE_PROVIDER,
         "encrypt_control_secret": NAMESPACE_CONTROL,
-        "encrypt_user_model_secret": NAMESPACE_USER_MODEL,
     }, (
         "the namespace each encrypt_* function seals with has changed: "
         f"{SEALING_FUNCTIONS}. That is an AAD-format change, not a refactor."
@@ -1361,14 +1372,17 @@ def test_every_envelope_bearing_model_resolves_to_exactly_one_kind() -> None:
 
 
 def test_every_envelope_field_has_exactly_one_sealing_family() -> None:
-    """Every envelope field must be sealed, and by only one of the two families.
+    """Active fields have a writer; explicitly retired fields retain audit coverage.
 
     A field with no sealing call site is either dead or written through an
     indirection this scan cannot see; either way the family in the registry is
     then an unchecked assertion rather than a derived fact, and re-encrypting
     under a guessed namespace is how a secret becomes unrecoverable.
     """
-    unsealed = sorted(name for name in DERIVED_FIELD_NAMES if not DERIVED_FAMILIES.get(name))
+    unsealed = sorted(
+        (model, name) for model, fields in DERIVED_MODEL_FIELDS.items() for name in fields
+        if not DERIVED_FAMILIES.get(name) and (model, name) not in RETIRED_FIELD_FAMILIES
+    )
     assert not unsealed, (
         f"envelope field(s) {unsealed} have no encrypt_byok_secret / "
         f"encrypt_control_secret call site anywhere in {SRC.name}. The backfill "
@@ -1380,6 +1394,15 @@ def test_every_envelope_field_has_exactly_one_sealing_family() -> None:
         f"field(s) sealed under more than one namespace: {mixed}. One AAD family per "
         f"field is what makes the backfill's re-encryption decidable."
     )
+
+
+def test_retired_envelope_fields_remain_audited_but_have_no_writer() -> None:
+    assert not hasattr(byok_crypto, "encrypt_user_model_secret")
+    for (model, field), family in RETIRED_FIELD_FAMILIES.items():
+        assert field in DERIVED_MODEL_FIELDS[model]
+        assert field not in DERIVED_FAMILIES
+        assert family == NAMESPACE_USER_MODEL
+        assert ("user_provided_model", field, family) in _registry_pairs()
 
 
 def test_the_registry_covers_every_envelope_location_exactly() -> None:
@@ -1849,8 +1872,6 @@ def test_the_derivation_reproduces_todays_registry() -> None:
         "encrypted_secret": {NAMESPACE_PROVIDER},
         "encrypted_api_key": {NAMESPACE_CONTROL},
         "encrypted_headers": {NAMESPACE_CONTROL},
-        "encrypted_endpoint_api_key": {NAMESPACE_USER_MODEL},
-        "encrypted_signing_secret": {NAMESPACE_USER_MODEL},
     }
     # The derived scope of the adapter-kind guard. Pinned because it replaced a
     # hand-written module list: a fixed point that quietly stopped widening

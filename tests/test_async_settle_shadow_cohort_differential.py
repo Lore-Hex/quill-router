@@ -35,6 +35,7 @@ _FRESH_CLIENT = oracle._client
 def reuse_frozen_compilation(monkeypatch, path=None):
     """Compile the unchanged oracle once; rebuild its globals for every request."""
     path = path or Path(oracle.__file__).parent/'fakes/shadow_main_routes_internal_gateway.py.txt'
+    tree = ast.parse(path.read_text())
     if path not in _COMPILED:
         functions = [n for n in ast.parse(path.read_text()).body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
         _COMPILED[path] = (compile(ast.Module(body=functions, type_ignores=[]), str(path), 'exec'), {})
@@ -43,7 +44,7 @@ def reuse_frozen_compilation(monkeypatch, path=None):
         # Existing compiled endpoints retain this globals dictionary. Refresh
         # it for each oracle leg, including its frozen per-request caches.
         namespace.clear()
-        namespace.update(vars(oracle.gateway))
+        namespace.update(oracle.frozen_namespace(tree))
         exec(code, namespace)  # noqa: S102 - unchanged pinned oracle, separate globals
         return namespace
     monkeypatch.setattr(oracle, 'frozen_routes', frozen_routes)

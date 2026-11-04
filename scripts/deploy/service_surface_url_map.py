@@ -102,6 +102,8 @@ CONTROL_PATH_PATTERNS = (
     "/custom-models/*",
     "/user-models",
     "/user-models/*",
+    "/earnings",
+    "/earnings/*",
     "/key",
     "/keys",
     "/keys/*",

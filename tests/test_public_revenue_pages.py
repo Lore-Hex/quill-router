@@ -187,7 +187,7 @@ def test_signup_grant_amount_is_not_advertised(client: TestClient) -> None:
 
 
 def test_creator_cashout_copy_is_processor_neutral(client: TestClient) -> None:
-    for path in ("/sign-in-with-trustedrouter", "/docs/custom-models"):
+    for path in ("/sign-in-with-trustedrouter",):
         response = client.get(path)
         assert response.status_code == 200, f"{path} returned {response.status_code}"
         assert "$100" in response.text
@@ -195,7 +195,6 @@ def test_creator_cashout_copy_is_processor_neutral(client: TestClient) -> None:
 
     for path in (
         Path("docs/sign-in-with-trustedrouter.md"),
-        Path("docs/custom-models.md"),
     ):
         source = path.read_text(encoding="utf-8")
         assert "$100" in source

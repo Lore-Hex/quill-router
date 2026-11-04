@@ -52,7 +52,6 @@ from trusted_router.byok_crypto import (
     decrypt_user_model_secret,
     encrypt_byok_secret,
     encrypt_control_secret,
-    encrypt_user_model_secret,
 )
 from trusted_router.byok_v1_attestations import V1_ALGORITHM_LITERAL
 from trusted_router.catalog import PROVIDERS
@@ -317,9 +316,7 @@ def test_user_model_secrets_are_v2_and_open_only_in_their_namespace() -> None:
     so they must not be sealed as `control` (never shipped to the enclave) nor
     as `provider` (BYOK keys). Every cross-namespace open must fail."""
     purpose = "user_model_signing"
-    sealed = encrypt_user_model_secret(
-        "owner-signing-secret", _settings(), workspace_id=WORKSPACE, purpose=purpose
-    )
+    sealed = _seal_legacy_user_model_secret("owner-signing-secret", purpose)
     assert sealed.algorithm == ALGORITHM_V2
     assert (
         decrypt_user_model_secret(sealed, _settings(), workspace_id=WORKSPACE, purpose=purpose)
@@ -396,5 +393,34 @@ def _seal_v1(secret: str, *, workspace_id: str, context: str):
         encrypted_dek=_b64(_wrap_dek(dek, dek_nonce, aad, _settings())),
         dek_nonce=_b64(dek_nonce),
         ciphertext=_b64(AESGCM(dek).encrypt(nonce, secret.encode(), aad)),
+        nonce=_b64(nonce),
+    )
+
+
+def _seal_legacy_user_model_secret(raw_secret: str, purpose: str):
+    import secrets
+
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+    from trusted_router.byok_crypto import _b64, _key_ref, _wrap_dek
+    settings = _settings()
+    workspace_id = WORKSPACE
+    plaintext = raw_secret.strip().encode("utf-8")
+    if not plaintext:
+        raise ValueError("raw user-model secret is empty")
+
+    dek = secrets.token_bytes(32)
+    nonce = secrets.token_bytes(12)
+    dek_nonce = secrets.token_bytes(12)
+    aad = _aad_v2(NAMESPACE_USER_MODEL, workspace_id, purpose)
+
+    ciphertext = AESGCM(dek).encrypt(nonce, plaintext, aad)
+    encrypted_dek = _wrap_dek(dek, dek_nonce, aad, settings)
+    return EncryptedSecretEnvelope(
+        algorithm=ALGORITHM_V2,
+        key_ref=_key_ref(settings),
+        encrypted_dek=_b64(encrypted_dek),
+        dek_nonce=_b64(dek_nonce),
+        ciphertext=_b64(ciphertext),
         nonce=_b64(nonce),
     )
