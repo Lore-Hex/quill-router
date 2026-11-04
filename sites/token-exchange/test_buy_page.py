@@ -93,7 +93,7 @@ class BuyPageTests(unittest.TestCase):
         for label in ['1 billion tokens (a block to draw on over a term)',
                       '300 tokens per second (a reserved rate)', 'Not sure yet']:
             self.assertIn(label, first)
-        self.assertIn('Selling capacity? See <a href="/suppliers">/suppliers</a> or <a href="/providers">/providers</a>', first)
+        self.assertIn('Selling capacity? <a href="/suppliers">Suppliers</a> · <a href="/providers">Providers</a> · <a href="/neocloud-accelerator">Accelerator</a>', first)
         self.assertRegex(self.page, r'id="buy-blocks"[^>]*value="1"')
         self.assertRegex(self.page, r'id="buy-rate"[^>]*value="300"')
         self.assertIn('300 tok/s', self.page)
