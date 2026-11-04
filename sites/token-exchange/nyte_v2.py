@@ -231,7 +231,7 @@ def host_brand_script(names_seller: bool = False) -> str:
     Every path other than / on a city domain serves New York's pages. Those visitors keep
     their city's name. Checkout, reservations and their terms add "by NYTE", since the receipt and
     contract name NYTE as the seller."""
-    hosts = {m["domain"]: [m.get("logo_place", m["region"]), m["name"], bool(m.get("logo_one_line"))] for m in nyte_markets()}
+    hosts = {m["domain"]: [m.get("logo_place", m["region"]), m["name"], bool(m.get("logo_one_line")), m.get("faq_place", m["region"]), bool(m.get("us"))] for m in nyte_markets()}
     if not hosts:
         return ""
     data = json.dumps(hosts, separators=(",", ":")).replace("<", "\\u003c")
@@ -246,6 +246,9 @@ def host_brand_script(names_seller: bool = False) -> str:
         "document.title=document.title.replace('New York Token Exchange',n);"
         "document.querySelectorAll('[data-exchange-name]').forEach(e=>{e.textContent=n});"
         "const f=document.querySelector('.site-footer .brand>span');if(f&&f.firstChild)f.firstChild.textContent=n;"
+        # The data-location FAQ names the visitor's city; an empty place drops it.
+        "const q=document.getElementById('place-faq');if(q){if(!m[3])q.remove();else{q.querySelectorAll('[data-place]').forEach(e=>{e.textContent=m[3]});"
+        "if(!m[4])q.querySelector('[data-us-only]').remove()}}"
         "document.querySelectorAll('.market-links a').forEach(a=>{if(new URL(a.href).hostname===location.hostname)"
         "a.setAttribute('aria-current','page');else a.removeAttribute('aria-current')})})})()</script>"
     )

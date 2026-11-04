@@ -295,6 +295,11 @@ if(process.argv[2]){
    await cityPage.goto(`https://${market.domain}/suppliers`);
    assert.equal(await cityPage.locator('.hdr .brand-place').innerText(),market.logo_place||market.region);
    assert.equal(await cityPage.locator('.brand-by').count(),0,'pages outside checkout keep the city name alone');
+   await cityPage.goto(`https://${market.domain}/confidential`);
+   const place=market.faq_place??market.region;
+   assert.equal(await cityPage.locator('#place-faq').count(),place?1:0,`${slug} data-location FAQ`);
+   if(place){assert.equal(await cityPage.locator('#place-faq summary').textContent(),`Does ${place} mean our data stays in ${place}?`);
+    assert.equal(await cityPage.locator('#place-faq [data-us-only]').count(),market.us?1:0);}
    await cityPage.goto(`https://${market.domain}/buy`);
    assert.equal(await cityPage.locator('.hdr .brand-place').innerText(),market.logo_place||market.region);
    assert.equal(await cityPage.locator('.hdr .brand-by').innerText(),'by NYTE');

@@ -7,6 +7,7 @@
     ]
   },
   "global": {
+    "faq_place": "",
     "logo_place": "The",
     "logo_one_line": true,
     "workloads": [
@@ -16,6 +17,7 @@
     ]
   },
   "chicago": {
+    "us": true,
     "workloads": [
       {"title": "Industrial operations", "prompt": "Pull the maintenance steps for this pump out of the service manual.", "tags": ["CONFIDENTIAL", "ZDR"]},
       {"title": "Logistics", "prompt": "Classify each of these freight invoices by carrier and charge type.", "tags": ["CONFIDENTIAL", "ZDR"]},
@@ -23,6 +25,7 @@
     ]
   },
   "san-francisco": {
+    "us": true,
     "workloads": [
       {"title": "Agent products", "prompt": "Plan the steps to reconcile this month’s expense reports.", "tags": ["CONFIDENTIAL", "ZDR"]},
       {"title": "Developer platforms", "prompt": "Review this pull request and flag anything that could leak customer data.", "tags": ["CONFIDENTIAL", "ZDR"]},
@@ -30,6 +33,7 @@
     ]
   },
   "texas": {
+    "us": true,
     "workloads": [
       {"title": "Energy and engineering", "prompt": "Find every pressure limit mentioned in these well inspection reports.", "tags": ["CONFIDENTIAL", "ZDR"]},
       {"title": "Enterprise software", "prompt": "Sort these support tickets by product area and urgency.", "tags": ["CONFIDENTIAL", "ZDR"]},
@@ -37,6 +41,8 @@
     ]
   },
   "united-states": {
+    "faq_place": "the United States",
+    "us": true,
     "workloads": [
       {"title": "Enterprise procurement", "prompt": "Compare the pricing terms in these three vendor proposals.", "tags": ["CONFIDENTIAL", "ZDR"]},
       {"title": "Security teams", "prompt": "List the data retention commitments in this vendor contract.", "tags": ["CONFIDENTIAL", "ZDR"]},

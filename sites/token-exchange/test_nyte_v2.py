@@ -317,6 +317,6 @@ class NavigationRegistryTests(unittest.TestCase):
             (self.assertIn if page == 'buy' else self.assertNotIn)("'by NYTE'", rendered)
             self.assertNotIn('"nytokenexchange.com"', rendered)
             for market in nyte_markets():
-                self.assertIn(f'"{market["domain"]}":["{market.get("logo_place", market["region"])}","{market["name"]}",{str(bool(market.get("logo_one_line"))).lower()}]', rendered)
+                self.assertIn(f'"{market["domain"]}":["{market.get("logo_place", market["region"])}","{market["name"]}",{str(bool(market.get("logo_one_line"))).lower()},"{market.get("faq_place", market["region"])}",{str(bool(market.get("us"))).lower()}]', rendered)
         self.assertIn('data-exchange-name>New York Token Exchange', render_nyte('buy'))
         self.assertIn("dataset.billedBy='New York Token Exchange (NYTE)'", render_nyte('buy'))
