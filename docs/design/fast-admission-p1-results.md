@@ -378,8 +378,8 @@ and `tr-fastpath-10` (two cores each); runs 16 and 17 drove
 | 17 | 1.73 / 27.03 / 989 ms | 24.6 / 175 ms | 82% (the owner) | 33.5% |
 
 **The audits** found no problem and no fault usage after every run, and
-every admitted authorization was decided once: settles and refunds, with
-the few recorded attempts, sum to the admitted count in each run but 15,
+every admitted authorization was decided once: settles and refunds sum to
+the admitted count in each run but 15,
 whose stop cancelled 234 streams and one settle in flight (235); their
 holds were left to the reap, as the audit's open reservation after it
 showed, 0.04 USD. Runs 11
@@ -398,8 +398,10 @@ and its backlog was gone within two minutes. The undelivered count
 includes what a member holds unacknowledged, and the auditor acknowledges
 a record only once its batched commit, every second, has made it durable
 (§4.8). At 1,000 records a second the count sits at about 1,000 to 1,500
-by construction, so P1's ceiling of 1,000, sized for one to 128 a second,
-is about a second of traffic at this rate; `-max-oldest 2m`, the age of the
+by construction, and higher while a commit round runs long, as on two
+cores at 77% CPU (2,936 is about three seconds of records); so P1's
+ceiling of 1,000, sized for one to 128 a second, is about a second of
+traffic at this rate; `-max-oldest 2m`, the age of the
 oldest message, never fired. Runs 16 and 17 ran with `-max-undelivered
 20000` and the age ceiling unchanged. The same count, through the shared
 subscription, stopped the pilot's own watches (`fast-admission-pilot.md`)

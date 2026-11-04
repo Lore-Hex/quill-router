@@ -10,7 +10,7 @@ import (
 // hours of production's settled reservations; load-mix-small.json is the
 // same mix with production's stream share and its estimates capped at
 // 1,915 micro-credits, so a minute at 1,000 a second books about 1.6 USD
-// rather than 250 to 400 (the 2026-11-04 runs).
+// rather than 250 to 400 (the 2026-11-03 and 04 runs).
 func TestTheCheckedInMixesAreOnesTheGeneratorTakes(t *testing.T) {
 	for _, c := range []struct {
 		path         string

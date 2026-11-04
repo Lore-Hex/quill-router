@@ -49,8 +49,8 @@ on `main`.
 
 From the load generator's machine (`tr-fastpath-loadgen`, which carries the
 pinned release's `loadgen`, `fastpathwatch` and `load-mix.json` and runs no
-node), over IAP; up to 128 a second a node does as well, since a generator
-beside its front door and owner measures itself too past that:
+node), over IAP; up to 128 a second a node does as well, since past that
+rate a generator beside its front door and owner measures itself too:
 
 ```bash
 gcloud compute ssh tr-fastpath-loadgen --zone=us-central1-c --project=quill-cloud-proxy --tunnel-through-iap
