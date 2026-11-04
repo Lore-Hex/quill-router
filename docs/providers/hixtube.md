@@ -28,6 +28,12 @@ It must run in a separate cloud project, not on TrustedRouter production resourc
 - Exact prices come from the operator-approved catalog, not another provider.
 - Credits only; measured integer input/output usage follows normal settlement.
 
+The finite pilot retired at `2026-11-02T23:56:20Z`. Its last catalog row is
+retained for historical metadata but is explicitly non-routable. On November 4,
+the catalog endpoint was refusing HTTPS connections. This is not a renewed
+serving lease. Reopening requires a fresh future retirement declaration and
+the authenticated canaries below; do not extend the saved cutoff manually.
+
 ## Activation Order
 
 The integration code alone does not establish a live route. Keep activation held
