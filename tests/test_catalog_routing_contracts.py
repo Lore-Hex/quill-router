@@ -50,6 +50,7 @@ from trusted_router.catalog import (
     LIBERTY_1_0_MODEL_ID,
     LIBERTY_2_0_MODEL_ID,
     LIBERTY_3_0_MODEL_ID,
+    LIBERTY_4_0_MODEL_ID,
     MAPREDUCE_MODEL_ID,
     META_MODEL_IDS,
     MISTRAL_LARGE_MODEL_ID,
@@ -1540,6 +1541,17 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
                 "openai/gpt-oss-120b",
                 LIBERTY_1_0_1M_MODEL_ID,
                 "thinkingmachines/inkling",
+            ],
+        ),
+        LIBERTY_4_0_MODEL_ID: (
+            "advisor_orchestration",
+            262_144,
+            [
+                "nvidia/nemotron-3-ultra-550b-a55b",
+                LIBERTY_1_0_1M_MODEL_ID,
+                LIBERTY_1_0_MODEL_ID,
+                "meta-models/muse-spark-open",
+                "reflection/beam-1.0",
             ],
         ),
     }

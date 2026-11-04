@@ -2960,6 +2960,8 @@ PARASAIL_LIBERTY_2_0_MODEL_ID = "parasail/liberty-2.0"
 
 LIBERTY_3_0_MODEL_ID = "trustedrouter/liberty-3.0"
 
+LIBERTY_4_0_MODEL_ID = "trustedrouter/liberty-4.0"
+
 US_PROVIDER_ONLY_MODEL_IDS = frozenset(
     {
         OPEN_PATCHER_S1_MODEL_ID,
@@ -2969,6 +2971,7 @@ US_PROVIDER_ONLY_MODEL_IDS = frozenset(
         ATHENA_1_0_MODEL_ID,
         ATHENA_2_0_MODEL_ID,
         ATHENA_MODEL_ID,
+        LIBERTY_4_0_MODEL_ID,
     }
 )
 
@@ -3078,6 +3081,7 @@ META_MODEL_IDS = frozenset(
         LIBERTY_2_0_MODEL_ID,
         PARASAIL_LIBERTY_2_0_MODEL_ID,
         LIBERTY_3_0_MODEL_ID,
+        LIBERTY_4_0_MODEL_ID,
         SYNTH_MODEL_ID,
         IRIS_MODEL_ID,
         PROMETHEUS_MODEL_ID,
@@ -3623,6 +3627,13 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
         LIBERTY_1_0_1M_MODEL_ID,
         "thinkingmachines/inkling",
     ),
+    LIBERTY_4_0_MODEL_ID: (
+        "nvidia/nemotron-3-ultra-550b-a55b",
+        LIBERTY_1_0_1M_MODEL_ID,
+        LIBERTY_1_0_MODEL_ID,
+        "meta-models/muse-spark-open",
+        "reflection/beam-1.0",
+    ),
 }
 
 
@@ -4000,6 +4011,7 @@ for _advisor_model_id in (
     LIBERTY_2_0_MODEL_ID,
     PARASAIL_LIBERTY_2_0_MODEL_ID,
     LIBERTY_3_0_MODEL_ID,
+    LIBERTY_4_0_MODEL_ID,
 ):
     ORCHESTRATION_PRIMITIVE_BY_MODEL_ID[_advisor_model_id] = "advisor"
 
@@ -4075,8 +4087,8 @@ _MODEL_ORIGIN_US_TRUSTEDROUTER = ModelOrigin(
     source_url="https://trustedrouter.com/",
     note=(
         "First-party record: the Liberty, Athena, OpenPatcher, and orchestration "
-        "families are built by TrustedRouter, a US company. The OpenPatcher and "
-        "Athena ids in US_PROVIDER_ONLY_MODEL_IDS additionally force US-operated "
+        "families are built by TrustedRouter, a US company. The OpenPatcher, "
+        "Athena and Liberty 4.0 ids in US_PROVIDER_ONLY_MODEL_IDS additionally force US-operated "
         "provider routes at request time."
     ),
 )

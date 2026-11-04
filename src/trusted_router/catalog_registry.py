@@ -59,6 +59,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     LIBERTY_1_0_MODEL_ID,
     LIBERTY_2_0_MODEL_ID,
     LIBERTY_3_0_MODEL_ID,
+    LIBERTY_4_0_MODEL_ID,
     MAPREDUCE_CATALOG_MODEL_ORDER,
     MAPREDUCE_MODEL_ID,
     META_MODEL_IDS,
@@ -652,6 +653,15 @@ MODELS: dict[str, Model] = {
             PARASAIL_LIBERTY_2_0_OUTPUT_MICRODOLLARS_PER_MILLION
         ),
         minimum_charge_microdollars=(PARASAIL_LIBERTY_2_0_MINIMUM_CHARGE_MICRODOLLARS),
+    ),
+    LIBERTY_4_0_MODEL_ID: Model(
+        id=LIBERTY_4_0_MODEL_ID,
+        name="TrustedRouter Liberty 4.0",
+        provider="trustedrouter",
+        context_length=262_144,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
     ),
     LIBERTY_3_0_MODEL_ID: Model(
         id=LIBERTY_3_0_MODEL_ID,

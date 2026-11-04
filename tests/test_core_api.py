@@ -913,6 +913,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "trustedrouter/liberty-1.0-1m",
         "trustedrouter/liberty-2.0",
         "trustedrouter/liberty-3.0",
+        "trustedrouter/liberty-4.0",
     }.issubset(model_ids)
     # Archimedes is offered exactly while the model behind it is.
     assert ("trustedrouter/archimedes-1.0" in model_ids) == (MISTRAL_LARGE_MODEL_ID in MODELS)
@@ -1140,6 +1141,15 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "openai/gpt-oss-120b",
         "trustedrouter/liberty-1.0-1m",
         "thinkingmachines/inkling",
+    )
+    liberty_4 = models_by_id["trustedrouter/liberty-4.0"]
+    assert liberty_4["context_length"] == 262_144
+    assert liberty_4["trustedrouter"]["auto_candidates"] == _carried(
+        "nvidia/nemotron-3-ultra-550b-a55b",
+        "trustedrouter/liberty-1.0-1m",
+        "trustedrouter/liberty-1.0",
+        "meta-models/muse-spark-open",
+        "reflection/beam-1.0",
     )
     assert client.get("/v1/models/count").json()["data"]["count"] >= 5
     open_weight_models = client.get("/v1/models", params={"open_weights": "true"})
