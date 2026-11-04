@@ -359,15 +359,14 @@ resource "google_compute_instance" "fastpath_node" {
   # from before I2, did not read; 7 and 8 were drained, left the edge
   # backend one apply before their removal, then were removed.
   #
-  # 11 and 12 take the places of 9 and 10 the same way, on four cores rather
-  # than two: at 1,000 generations a second for two minutes (2026-11-04,
-  # P1's runs on tr-fastpath-loadgen) the two-core nodes reached 77% CPU and
-  # the auditor subscription fell behind, so the load could not be held.
-  # Nothing else changes: the same script, release and metadata. 9 and 10
-  # keep two cores until they are drained and removed.
+  # 11 and 12 took the places of 9 and 10 the same way, on four cores rather
+  # than two: at 1,000 generations a second (2026-11-04, P1's runs on
+  # tr-fastpath-loadgen) the two-core nodes reached 77% CPU with the
+  # authorize p99 at 64 ms; on four cores five minutes at that rate held,
+  # the p99 at 27 ms and every audit clean. The same script, release and
+  # metadata; 9 and 10 were drained, left the edge backend one apply before
+  # their removal, then were removed.
   for_each = {
-    "tr-fastpath-9"  = { zone = "us-central1-a", machine_type = "e2-standard-2" }
-    "tr-fastpath-10" = { zone = "us-central1-b", machine_type = "e2-standard-2" }
     "tr-fastpath-11" = { zone = "us-central1-a", machine_type = "e2-standard-4" }
     "tr-fastpath-12" = { zone = "us-central1-b", machine_type = "e2-standard-4" }
   }
