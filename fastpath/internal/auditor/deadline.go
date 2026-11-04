@@ -296,16 +296,10 @@ func (s boundPendingStore) LoadWinners(ctx context.Context, ref store.LeaseRef) 
 	})
 }
 
-func (s boundPendingStore) ReadStaged(ctx context.Context, authorization string, digest []byte) (store.StagedRecord, bool, error) {
-	type staged struct {
-		r  store.StagedRecord
-		ok bool
-	}
-	got, err := call(s.bound, ctx, "read staged", "", func(ctx context.Context) (staged, error) {
-		r, ok, err := s.s.ReadStaged(ctx, authorization, digest)
-		return staged{r, ok}, err
+func (s boundPendingStore) ReadStagedBatch(ctx context.Context, keys ...store.StagedKey) ([]store.StagedRecord, error) {
+	return call(s.bound, ctx, "read staged", "", func(ctx context.Context) ([]store.StagedRecord, error) {
+		return s.s.ReadStagedBatch(ctx, keys...)
 	})
-	return got.r, got.ok, err
 }
 
 func (s boundPendingStore) WriteRecords(ctx context.Context, records []store.LeaseRecord) error {

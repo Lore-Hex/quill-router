@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -429,17 +430,41 @@ type fakePending struct {
 	staged                        bool
 	body                          []byte
 	failWrite, failMark, failDrop bool
+	failRead, perAuth             bool
+	missing                       map[string]bool
+	reads                         []int
 	written                       [][]store.LeaseRecord
 	retired                       [][]store.StagedKey
 }
 
-func (f *fakePending) ReadStaged(_ context.Context, auth string, digest []byte) (store.StagedRecord, bool, error) {
-	*f.events = append(*f.events, "read "+auth)
+// ReadStagedBatch answers each key's record, unless staged is unset or its
+// authorization is missing, in the order opposite to the keys', since the
+// store promises none.
+func (f *fakePending) ReadStagedBatch(_ context.Context, keys ...store.StagedKey) ([]store.StagedRecord, error) {
+	e := "read"
+	for _, k := range keys {
+		e += " " + k.AuthorizationID
+	}
+	*f.events = append(*f.events, e)
+	f.reads = append(f.reads, len(keys))
+	if f.failRead {
+		return nil, errors.New("the read failed")
+	}
 	body := f.body
 	if body == nil {
 		body = []byte(`{"boot":"Ym9vdC0x"}`)
 	}
-	return store.StagedRecord{AuthorizationID: auth, Digest: digest, Body: body}, f.staged, nil
+	var out []store.StagedRecord
+	for _, k := range slices.Backward(keys) {
+		if f.staged && !f.missing[k.AuthorizationID] {
+			b := body
+			if f.perAuth {
+				b = encoded(map[string]any{"boot": boot, "a": k.AuthorizationID})
+			}
+			out = append(out, store.StagedRecord{AuthorizationID: k.AuthorizationID, Digest: k.Digest, Body: b})
+		}
+	}
+	return out, nil
 }
 
 func (f *fakePending) WriteRecords(_ context.Context, records []store.LeaseRecord) error {
@@ -510,7 +535,7 @@ func TestAPacksWorkIsDoneInItsOrder(t *testing.T) {
 		return done, events, alerts, s, topic
 	}
 	done, events, alerts, s, topic := run(func(*fakePending, *fakeTopic) {})
-	want := []string{"read a", "read b", "publish a", "publish b", "publish c", "write", "mark", "drop a b"}
+	want := []string{"read a b", "publish a", "publish b", "publish c", "write", "mark", "drop a b"}
 	if !done || !slices.Equal(events, want) || len(alerts) != 0 {
 		t.Fatalf("done %v, %v, told %v; want %v", done, events, alerts, want)
 	}
@@ -525,13 +550,16 @@ func TestAPacksWorkIsDoneInItsOrder(t *testing.T) {
 			t.Fatalf("a record with no boot binding: %+v", r)
 		}
 	}
-	upToOutcomes := []string{"read a", "read b", "publish a", "publish b", "publish c"}
+	upToOutcomes := []string{"read a b", "publish a", "publish b", "publish c"}
 	for name, c := range map[string]struct {
 		change func(*fakePending, *fakeTopic)
 		want   []string
 		wrote  int
 	}{
-		"a full record not staged": {func(s *fakePending, _ *fakeTopic) { s.staged = false }, []string{"read a"}, 0},
+		"a full record not staged": {func(s *fakePending, _ *fakeTopic) { s.staged = false }, []string{"read a b"}, 0},
+		"b's full record not staged": {func(s *fakePending, _ *fakeTopic) { s.missing = map[string]bool{"b": true} },
+			[]string{"read a b"}, 0},
+		"a read that failed": {func(s *fakePending, _ *fakeTopic) { s.failRead = true }, []string{"read a b"}, 0},
 		"a's outcome not acknowledged": {func(_ *fakePending, tp *fakeTopic) { tp.failAuth["a"] = true },
 			upToOutcomes, 0},
 		"b's outcome not acknowledged": {func(_ *fakePending, tp *fakeTopic) { tp.failAuth["b"] = true },
@@ -954,5 +982,339 @@ func TestAReapsWorkReadsNoBootBindingFromABasis(t *testing.T) {
 		len(s.written) != 0 || len(topic.data) != 0 {
 		t.Fatalf("a reap whose record states no boot binding: done %v, %v, told %v, wrote %d, published %d", done, events,
 			alerts, len(s.written), len(topic.data))
+	}
+}
+
+// widePack is a pack of n settles, w0 to w(n-1), and two releases.
+func widePack(n int) store.Pack {
+	pack := store.Pack{CommitVersion: 7}
+	for i := range n {
+		a := fmt.Sprintf("w%d", i)
+		pack.Winners = append(pack.Winners, store.Winner{AuthorizationID: a, Kind: "settle", Charge: 4,
+			Work: encoded(Work{V: 1, Digest: sum(a)})})
+	}
+	for _, a := range []string{"r0", "r1"} {
+		pack.Winners = append(pack.Winners, store.Winner{AuthorizationID: a, Kind: "release",
+			Work: encoded(Work{V: 1, Boot: boot})})
+	}
+	return pack
+}
+
+// TestAPacksStagedRecordsAreReadInFewCalls: a pack's staged full records
+// are read readBatch at a time, not one a winner, and each winner's records
+// carry its own staged record, in whatever order the store answers; once a
+// read finds one not staged, no more are read and nothing is published.
+func TestAPacksStagedRecordsAreReadInFewCalls(t *testing.T) {
+	ctx := context.Background()
+	const n = 200
+	run := func(change func(*fakePending)) (bool, *fakePending, *fakeTopic) {
+		var events []string
+		s := &fakePending{events: &events, staged: true, perAuth: true}
+		change(s)
+		topic := &fakeTopic{failAuth: map[string]bool{}}
+		p, err := NewPending(PendingConfig{Store: s, Records: topic, Every: time.Hour, Limit: 1, Wait: time.Second,
+			Alert: func(auth, what string) { t.Errorf("told %s: %s", auth, what) }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		done, _ := p.Do(ctx, store.LeaseRef{Workspace: "ws", LeaseID: "l"}, widePack(n))
+		return done, s, topic
+	}
+	done, s, topic := run(func(*fakePending) {})
+	if !done || !slices.Equal(s.reads, []int{n}) || len(topic.sent) != n+2 {
+		t.Fatalf("done %v, reads of %v keys, %d published; want one read of %d keys", done, s.reads, len(topic.sent), n)
+	}
+	records := 0
+	for _, batch := range s.written {
+		for _, r := range batch {
+			records++
+			if r.Kind == "disposition" {
+				continue
+			}
+			var full struct {
+				A string `json:"a"`
+			}
+			if err := json.Unmarshal(r.Body, &full); err != nil || full.A != r.AuthorizationID ||
+				!bytes.Equal(r.WinnerDigest, sum(r.AuthorizationID)) {
+				t.Fatalf("%s's %s record carries %q's staged record (%v)", r.AuthorizationID, r.Kind, full.A, err)
+			}
+		}
+	}
+	if records != 2*n+2 {
+		t.Fatalf("%d records written, want %d", records, 2*n+2)
+	}
+
+	saved := readBatch
+	defer func() { readBatch = saved }()
+	readBatch = 64
+	if done, s, _ := run(func(*fakePending) {}); !done || !slices.Equal(s.reads, []int{64, 64, 64, 8}) {
+		t.Fatalf("readBatch 64: done %v, reads of %v keys", done, s.reads)
+	}
+	// w70 is the second read's: no third, and nothing published or written.
+	if done, s, topic := run(func(s *fakePending) { s.missing = map[string]bool{"w70": true} }); done ||
+		!slices.Equal(s.reads, []int{64, 64}) || len(topic.sent) != 0 || len(s.written) != 0 {
+		t.Fatalf("w70 not staged: done %v, reads of %v keys, %d published, %d written", done, s.reads,
+			len(topic.sent), len(s.written))
+	}
+}
+
+// sweepStore is a pending store of leases' packs, each of winners settles
+// (one when 0), whose every call takes latency, and whose marks the test
+// watches: how many are under way at once, of all leases and of each, and
+// in what order they come. The first marks wait until want are under way
+// or two seconds have passed, so a sweep that works fewer leases at once
+// than it should is seen to, and every mark is held a little after.
+type sweepStore struct {
+	PendingStore
+	rows       []store.PendingPack
+	want       int
+	winners    int
+	latency    time.Duration
+	failPage   int // the PendingPacks call, counted from 1, that fails; 0 is none
+	unreadable bool
+
+	mu      sync.Mutex
+	pages   int
+	reads   int
+	loads   map[store.LeaseRef]int
+	under   int
+	peak    int
+	underOf map[store.LeaseRef]int
+	overlap bool
+	marked  []store.PendingPack
+	gate    chan struct{}
+	opened  sync.Once
+	timer   *time.Timer
+}
+
+func newSweepStore(leases, packs, want int) *sweepStore {
+	s := &sweepStore{want: want, loads: map[store.LeaseRef]int{}, underOf: map[store.LeaseRef]int{},
+		gate: make(chan struct{})}
+	for l := range leases {
+		ref := store.LeaseRef{Workspace: "ws", LeaseID: fmt.Sprintf("lease-%02d", l)}
+		for v := 1; v <= packs; v++ {
+			s.rows = append(s.rows, store.PendingPack{Ref: ref, CommitVersion: int64(v)})
+		}
+	}
+	return s
+}
+
+// keyAfter is whether a comes after b in the packs' key order.
+func keyAfter(a, b store.PendingPack) bool {
+	if a.Ref.Workspace != b.Ref.Workspace {
+		return a.Ref.Workspace > b.Ref.Workspace
+	}
+	if a.Ref.LeaseID != b.Ref.LeaseID {
+		return a.Ref.LeaseID > b.Ref.LeaseID
+	}
+	return a.CommitVersion > b.CommitVersion
+}
+
+func (s *sweepStore) PendingPacks(_ context.Context, after store.PendingPack, limit int) ([]store.PendingPack, error) {
+	time.Sleep(s.latency)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pages++
+	if s.pages == s.failPage {
+		return nil, errors.New("a failure the test injected")
+	}
+	var page []store.PendingPack
+	for _, r := range s.rows {
+		if keyAfter(r, after) && len(page) < limit {
+			page = append(page, r)
+		}
+	}
+	return page, nil
+}
+
+func (s *sweepStore) LoadWinners(_ context.Context, ref store.LeaseRef) ([]store.Pack, time.Time, error) {
+	time.Sleep(s.latency)
+	s.mu.Lock()
+	s.loads[ref]++
+	s.mu.Unlock()
+	var packs []store.Pack
+	for _, r := range s.rows {
+		if r.Ref != ref {
+			continue
+		}
+		pack := store.Pack{CommitVersion: r.CommitVersion}
+		for i := range max(s.winners, 1) {
+			a := fmt.Sprintf("%s/%d/%d", ref.LeaseID, r.CommitVersion, i)
+			work := encoded(Work{V: 1, Digest: sum(a)})
+			if s.unreadable {
+				work = []byte("not json")
+			}
+			pack.Winners = append(pack.Winners, store.Winner{AuthorizationID: a, Kind: "settle", Charge: 4, Work: work})
+		}
+		packs = append(packs, pack)
+	}
+	return packs, time.Time{}, nil
+}
+
+func (s *sweepStore) ReadStagedBatch(_ context.Context, keys ...store.StagedKey) ([]store.StagedRecord, error) {
+	time.Sleep(s.latency)
+	s.mu.Lock()
+	s.reads++
+	s.mu.Unlock()
+	out := make([]store.StagedRecord, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, store.StagedRecord{AuthorizationID: k.AuthorizationID, Digest: k.Digest,
+			Body: []byte(`{"boot":"Ym9vdC0x"}`)})
+	}
+	return out, nil
+}
+
+func (s *sweepStore) WriteRecords(context.Context, []store.LeaseRecord) error {
+	time.Sleep(s.latency)
+	return nil
+}
+
+func (s *sweepStore) DropStaged(context.Context, ...store.StagedKey) error {
+	time.Sleep(s.latency)
+	return nil
+}
+
+func (s *sweepStore) open() { s.opened.Do(func() { close(s.gate) }) }
+
+func (s *sweepStore) MarkPackDone(_ context.Context, ref store.LeaseRef, v int64) (bool, error) {
+	time.Sleep(s.latency)
+	s.mu.Lock()
+	s.under++
+	s.peak = max(s.peak, s.under)
+	s.underOf[ref]++
+	s.overlap = s.overlap || s.underOf[ref] > 1
+	s.marked = append(s.marked, store.PendingPack{Ref: ref, CommitVersion: v})
+	if s.timer == nil {
+		s.timer = time.AfterFunc(2*time.Second, s.open)
+	}
+	if s.under >= s.want {
+		s.open()
+	}
+	s.mu.Unlock()
+	<-s.gate
+	// Held a little past the gate, so work started past the bound would
+	// be seen under way with it.
+	time.Sleep(5 * time.Millisecond)
+	s.mu.Lock()
+	s.under--
+	s.underOf[ref]--
+	s.mu.Unlock()
+	return true, nil
+}
+
+// sweepWith is a sweep of s's packs, Limit 4 a page, with workers workers.
+func sweepWith(t testing.TB, s *sweepStore, workers int, alert func(string, string)) {
+	t.Helper()
+	if alert == nil {
+		alert = func(auth, what string) { t.Errorf("told %s: %s", auth, what) }
+	}
+	p, err := NewPending(PendingConfig{Store: s, Records: &fakeTopic{}, Every: time.Hour, Limit: 4, Wait: time.Second,
+		Workers: workers, Alert: alert})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.sweepPacks(context.Background())
+}
+
+// TestASweepWorksLeasesAtOnceEachInItsOrder: a sweep works Workers leases'
+// packs at once, never more, and never two packs of one lease at once; it
+// works each lease's packs once each, in commit order, reading them once
+// though they run on from one page to the next; and it returns once every
+// pack's work is done. One worker works them in the order the sweep read
+// them, as the sweep did before it had workers. A lease the sweep held for
+// the next page, whose read then failed, is still worked.
+func TestASweepWorksLeasesAtOnceEachInItsOrder(t *testing.T) {
+	const leases, packs, workers = 6, 3, 3
+	s := newSweepStore(leases, packs, workers)
+	sweepWith(t, s, workers, nil)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.peak != workers || s.overlap {
+		t.Fatalf("%d packs worked at once at most, want %d; two of one lease at once: %v", s.peak, workers, s.overlap)
+	}
+	if len(s.marked) != leases*packs {
+		t.Fatalf("the sweep returned with %d packs done of %d", len(s.marked), leases*packs)
+	}
+	byLease := map[store.LeaseRef][]int64{}
+	for _, m := range s.marked {
+		byLease[m.Ref] = append(byLease[m.Ref], m.CommitVersion)
+	}
+	for ref, versions := range byLease {
+		if !slices.Equal(versions, []int64{1, 2, 3}) || s.loads[ref] != 1 {
+			t.Fatalf("%s: packs worked %v, its packs read %d times; want [1 2 3], once", ref.LeaseID, versions,
+				s.loads[ref])
+		}
+	}
+	if len(byLease) != leases {
+		t.Fatalf("%d leases worked, want %d", len(byLease), leases)
+	}
+
+	one := newSweepStore(leases, packs, 1)
+	sweepWith(t, one, 1, nil)
+	if !slices.Equal(one.marked, one.rows) || one.peak != 1 {
+		t.Fatalf("one worker: %v at most %d at once, want %v", one.marked, one.peak, one.rows)
+	}
+
+	failing := newSweepStore(leases, packs, 1)
+	failing.failPage = 2
+	sweepWith(t, failing, workers, nil)
+	slices.SortFunc(failing.marked, func(a, b store.PendingPack) int {
+		if keyAfter(a, b) {
+			return 1
+		}
+		return -1
+	})
+	if !slices.Equal(failing.marked, failing.rows[:4]) {
+		t.Fatalf("the second page's read failed: %v worked, want the first page's, %v", failing.marked, failing.rows[:4])
+	}
+}
+
+// TestWorkersTellOneAtATime: workers that each tell of a winner whose work
+// cannot be read are heard one at a time, as one sweep was.
+func TestWorkersTellOneAtATime(t *testing.T) {
+	s := newSweepStore(4, 1, 1)
+	s.unreadable = true
+	var in, told atomic.Int32
+	var overlap atomic.Bool
+	sweepWith(t, s, 4, func(_, what string) {
+		if what != AlertUnreadableWork {
+			t.Errorf("told %s", what)
+		}
+		if in.Add(1) > 1 {
+			overlap.Store(true)
+		}
+		time.Sleep(20 * time.Millisecond)
+		in.Add(-1)
+		told.Add(1)
+	})
+	if overlap.Load() || told.Load() != 4 {
+		t.Fatalf("told %d times, two at once: %v", told.Load(), overlap.Load())
+	}
+}
+
+// BenchmarkASweep sweeps 8 leases' packs, two each of 100 settles, through
+// a store whose every call takes a millisecond: as the sweep did before,
+// a staged record read a winner and one pack at a time; with the reads
+// batched; and with the default workers too. store-reads/pack is the
+// staged records' reads a pack.
+func BenchmarkASweep(b *testing.B) {
+	for _, c := range []struct {
+		name           string
+		batch, workers int
+	}{{"a-read-a-winner/one-worker", 1, 1}, {"batched/one-worker", store.MaxReadStaged, 1},
+		{"batched/default-workers", store.MaxReadStaged, 0}} {
+		b.Run(c.name, func(b *testing.B) {
+			saved := readBatch
+			readBatch = c.batch
+			defer func() { readBatch = saved }()
+			reads, packs := 0, 0
+			for b.Loop() {
+				s := newSweepStore(8, 2, 1)
+				s.winners, s.latency = 100, time.Millisecond
+				sweepWith(b, s, c.workers, nil)
+				reads, packs = reads+s.reads, packs+len(s.marked)
+			}
+			b.ReportMetric(float64(reads)/float64(packs), "store-reads/pack")
+		})
 	}
 }
