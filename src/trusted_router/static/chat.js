@@ -27,8 +27,6 @@
     // ── Constants ─────────────────────────────────────────────────────
     const CHAT_CONFIG = window.__TR_CHAT__ || {};
     const CONTROLS = window.TrustedRouterChatControls;
-    const LOCKED_MODEL_ID = (CHAT_CONFIG.lockedModelId || "").trim();
-    const LOCKED_MODEL_LABEL = (CHAT_CONFIG.lockedModelLabel || "Custom model").trim();
     const STORAGE_KEY = CHAT_CONFIG.storageKey || "tr_chat_state_v1";
     const KEY_STORAGE_PREFIX = "tr_chat_key";
     const KEY_COOKIE =
@@ -52,8 +50,8 @@
     const AUTH_SESSION_PATH =
         CHAT_CONFIG.authSessionPath ||
         "/auth/session";
-    const URL_MODEL_ID = LOCKED_MODEL_ID ? "" : queryModelId();
-    const DEFAULT_MODEL_ID = LOCKED_MODEL_ID || URL_MODEL_ID || "trustedrouter/plato";
+    const URL_MODEL_ID = queryModelId();
+    const DEFAULT_MODEL_ID = URL_MODEL_ID || "trustedrouter/plato";
     // What a slot falls back to when the model it was given cannot chat. Not
     // DEFAULT_MODEL_ID: with a ?model= deep link that IS the model being
     // replaced. Set once the catalog says so; see dropModelsThatCannotChat.
@@ -201,7 +199,7 @@
     }
 
     function applyUrlModelOverride() {
-        if (!URL_MODEL_ID || LOCKED_MODEL_ID) return;
+        if (!URL_MODEL_ID) return;
         const chat = ensureActiveChat();
         const slot = chat.models[0] || _defaultSlot();
         chat.models[0] = slot;
@@ -504,16 +502,6 @@
                 // extension with provider-specific context.
                 MODELS = data.map((m) => normalizeModel(m));
             }
-            if (LOCKED_MODEL_ID && !MODELS.some((m) => m.id === LOCKED_MODEL_ID)) {
-                MODELS.push({
-                    id: LOCKED_MODEL_ID,
-                    name: LOCKED_MODEL_LABEL || LOCKED_MODEL_ID,
-                    provider: "trustedrouter",
-                    capabilities: [],
-                    free: false,
-                    internal_only: false,
-                });
-            }
             dropModelsThatCannotChat();
             renderModelPicker();
             renderModelsBar();
@@ -668,7 +656,7 @@
     function newChat() {
         const chat = {
             id: newChatId(),
-            title: LOCKED_MODEL_ID ? LOCKED_MODEL_LABEL : "New chat",
+            title: "New chat",
             created_at: isoNow(),
             updated_at: isoNow(),
             models: [
@@ -896,22 +884,11 @@
         if (!bar) return;
         bar.innerHTML = "";
         const chat = ensureActiveChat();
-        if (LOCKED_MODEL_ID) {
-            chat.models = [{
-                ...chat.models[0],
-                model_id: LOCKED_MODEL_ID,
-                system_prompt: "",
-                params: chat.models[0] ? { ...DEFAULT_PARAMS, ...chat.models[0].params } : { ...DEFAULT_PARAMS },
-                enabled: true,
-                label: LOCKED_MODEL_LABEL,
-            }];
-        }
-
         chat.models.forEach((slot, idx) => {
             bar.appendChild(makeModelPill(chat, slot, idx));
         });
 
-        if (!LOCKED_MODEL_ID && chat.models.length < MAX_MODELS_PER_CHAT) {
+        if (chat.models.length < MAX_MODELS_PER_CHAT) {
             const addBtn = document.createElement("button");
             addBtn.type = "button";
             addBtn.className = "chat-model-add";
@@ -942,7 +919,7 @@
         pill.type = "button";
         pill.className = "chat-model-pill";
         pill.title = slot.model_id;
-        if (!LOCKED_MODEL_ID) pill.dataset.action = "toggle-model-dropdown";
+        pill.dataset.action = "toggle-model-dropdown";
         pill.dataset.slotIdx = String(idx);
         const label =
             slot.label ||
@@ -968,25 +945,23 @@
             (chat.models.length > 1
                 ? '<span class="chat-model-pill-num">#' + (idx + 1) + "</span>"
                 : "") +
-            (LOCKED_MODEL_ID ? "" : '<span class="chat-model-pill-caret">▾</span>');
+            '<span class="chat-model-pill-caret">▾</span>';
         wrap.appendChild(pill);
         // Inline × close button — OR-style one-click model removal.
         // Visible on hover; on mobile (no hover) it's always visible.
         // For the LAST model the action becomes "reset to default"
         // rather than "remove" so the user is never stuck with zero.
-        if (!LOCKED_MODEL_ID) {
-            const closer = document.createElement("button");
-            closer.type = "button";
-            closer.className = "chat-model-pill-close";
-            closer.dataset.action = "remove-model";
-            closer.dataset.slotIdx = String(idx);
-            closer.title = chat.models.length > 1
-                ? "Remove this model from the chat"
-                : "Reset to default model";
-            closer.setAttribute("aria-label", closer.title);
-            closer.innerHTML = "×";
-            wrap.appendChild(closer);
-        }
+        const closer = document.createElement("button");
+        closer.type = "button";
+        closer.className = "chat-model-pill-close";
+        closer.dataset.action = "remove-model";
+        closer.dataset.slotIdx = String(idx);
+        closer.title = chat.models.length > 1
+            ? "Remove this model from the chat"
+            : "Reset to default model";
+        closer.setAttribute("aria-label", closer.title);
+        closer.innerHTML = "×";
+        wrap.appendChild(closer);
         if (openDropdownSlotIdx === idx) {
             wrap.appendChild(makeModelDropdown(chat, slot, idx));
         }
@@ -1251,7 +1226,6 @@
     }
 
     function addModel() {
-        if (LOCKED_MODEL_ID) return;
         const chat = ensureActiveChat();
         if (chat.models.length >= MAX_MODELS_PER_CHAT) return;
         chat.models.push({
@@ -1270,7 +1244,6 @@
     }
 
     function duplicateModel(idx) {
-        if (LOCKED_MODEL_ID) return;
         const chat = ensureActiveChat();
         const src = chat.models[idx];
         if (!src || chat.models.length >= MAX_MODELS_PER_CHAT) return;
@@ -1289,7 +1262,6 @@
     }
 
     function removeModel(idx) {
-        if (LOCKED_MODEL_ID) return;
         const chat = ensureActiveChat();
         if (chat.models.length > 1) {
             chat.models.splice(idx, 1);
@@ -1419,7 +1391,7 @@
                     "</span></button>",
             )
             .join("");
-        const heading = LOCKED_MODEL_ID ? LOCKED_MODEL_LABEL : "What are we working on?";
+        const heading = "What are we working on?";
         empty.innerHTML =
             '<img class="chat-empty-logo" src="/static/favicon.svg" width="40" height="40" alt="">' +
             "<h2>" + escapeHtml(heading) + "</h2>" +
@@ -2723,7 +2695,6 @@
     let pickerTargetSlot = 0;
 
     function selectModel(modelId) {
-        if (LOCKED_MODEL_ID) return;
         const chat = ensureActiveChat();
         const slot = chat.models[pickerTargetSlot] || chat.models[0];
         if (slot && slot.model_id !== modelId) {
@@ -2752,7 +2723,6 @@
     }
 
     function openModelPicker(slotIdx) {
-        if (LOCKED_MODEL_ID) return;
         pickerTargetSlot = typeof slotIdx === "number" ? slotIdx : 0;
         if (pickerEl) return;
         pickerEl = document.createElement("div");

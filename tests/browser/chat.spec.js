@@ -187,4 +187,6 @@ test("retired user-chat is unavailable and ordinary chat has no creator-model li
   await page.goto(`/chat?model=${MODEL}`);
   await expect(page.locator("[data-chat-usage]")).toBeVisible();
   await expect(page.locator('a[href*="custom-models"], a[href*="user-models"]')).toHaveCount(0);
+  expect(await page.evaluate(() => Object.keys(window.__TR_CHAT__))).not.toContain("lockedModelId");
+  await expect(page.locator('[data-action="toggle-model-dropdown"]').first()).toBeVisible();
 });

@@ -821,20 +821,6 @@ body.console {
   background: var(--danger-bg);
 }
 
-.custom-model-list {
-  display: grid;
-  gap: 16px;
-}
-
-.custom-model-card {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 16px;
-  background: var(--bg);
-}
-
-.custom-model-card-head,
-.custom-model-actions,
 .row-actions,
 .inline-check {
   display: flex;
@@ -853,87 +839,12 @@ body.console {
   accent-color: var(--blue);
 }
 
-.custom-model-card-head {
-  justify-content: space-between;
-  margin-bottom: 14px;
-}
-
-.custom-model-card h3 {
-  margin: 0 0 8px;
-  font-size: 16px;
-  letter-spacing: 0;
-}
-
-.custom-model-card textarea {
-  min-height: 160px;
-}
-
-.custom-model-slug-input {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  align-items: center;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel);
-  overflow: hidden;
-}
-
-.custom-model-slug-input span {
-  color: var(--muted);
-  background: var(--panel2);
-  border-right: 1px solid var(--line);
-  padding: 10px 12px;
-  font-family: var(--code-font, ui-monospace, SFMono-Regular, Menlo, monospace);
-  font-size: 13px;
-}
-
-.custom-model-slug-input input {
-  border: 0;
-  background: transparent;
-  min-height: 40px;
-}
-
 .form-hint {
   display: block;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
   margin-top: 6px;
-}
-
-.custom-model-picker {
-  display: block;
-}
-
-.custom-model-picker-button {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) max-content;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel);
-  color: var(--ink);
-  padding: 10px 12px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.custom-model-picker-button:hover {
-  border-color: var(--blue);
-}
-
-.custom-model-picker-button span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 700;
-}
-
-.custom-model-picker-button code {
-  color: var(--muted);
 }
 
 .row-actions {

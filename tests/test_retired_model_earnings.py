@@ -318,7 +318,8 @@ def test_earnings_console_renders_and_transfers_with_idempotent_flash(
 
     page = client.get("/console/earnings")
     assert page.status_code == 200
-    assert "You receive 70% of custom model and registered app markup" in page.text
+    assert "You receive 70% of registered app markup" in page.text
+    assert "Previously earned model revenue remains available" in page.text
     assert "cash out at least $100 in USD." in page.text
     assert "Routable" not in page.text
     assert "Earning model" in page.text

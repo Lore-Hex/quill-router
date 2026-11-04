@@ -135,6 +135,12 @@ def test_retired_ui_docs_and_openapi_are_removed(client, user_headers):
         assert page.status_code == 200, path
         for link in ["/custom-models", "/user-models", "resolve-custom-model"]:
             assert link not in page.text, (path, link)
+    chat = client.get("/chat")
+    assert chat.status_code == 200
+    assert "lockedModelId" not in chat.text
+    script = client.get("/static/chat.js")
+    assert script.status_code == 200
+    assert "LOCKED_MODEL" not in script.text
 
 
 @pytest.mark.parametrize("terminal", ["settle", "refund"])
