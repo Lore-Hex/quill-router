@@ -308,3 +308,68 @@ func TestPendingPacksPageInKeyOrder(t *testing.T) {
 		cursor = page[0]
 	}
 }
+
+// TestStageRecordsAnswersEachInOneTransaction: StageRecords stages, in one
+// call, the records of leases that have not retired, and answers each as
+// StageRecord would: a retired lease's ErrRetired, a lease with no row's
+// ErrNoLease, an incomplete record's refusal. A record given twice leaves
+// one row, and those it refuses are not staged.
+func TestStageRecordsAnswersEachInOneTransaction(t *testing.T) {
+	s := spikeStore(t)
+	ctx := context.Background()
+	live, retired := wonLease(t, s), wonLease(t, s)
+	if _, err := s.client.Apply(ctx, []*spanner.Mutation{spanner.Update("tr_lease",
+		[]string{"workspace_id", "lease_id", "retire_at"},
+		[]any{retired.Workspace, retired.LeaseID, time.Now()})}); err != nil {
+		t.Fatal(err)
+	}
+	missing := LeaseRef{live.Workspace, NewLeaseID()}
+	record := func(ref LeaseRef, digest string) StagedRecord {
+		a, err := NewAuthorizationID(ref.LeaseID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return StagedRecord{AuthorizationID: a, Digest: []byte(digest), Ref: ref, Body: []byte("full " + digest),
+			MessageID: "m-" + digest, PublishTime: time.Now()}
+	}
+	first, second := record(live, "one"), record(live, "two")
+	incomplete := record(live, "three")
+	incomplete.MessageID = ""
+	rs := []StagedRecord{first, record(retired, "four"), second, record(missing, "five"), incomplete, first}
+	errs, err := s.StageRecords(ctx, rs)
+	if err != nil || len(errs) != len(rs) {
+		t.Fatalf("the batch: %v %v", errs, err)
+	}
+	if errs[0] != nil || errs[2] != nil || errs[5] != nil {
+		t.Fatalf("the live lease's records: %v", errs)
+	}
+	if !errors.Is(errs[1], ErrRetired) || !errors.Is(errs[3], ErrNoLease) || errs[4] == nil ||
+		errors.Is(errs[4], ErrRetired) || errors.Is(errs[4], ErrNoLease) {
+		t.Fatalf("the refused records: %v", errs)
+	}
+	for _, r := range []StagedRecord{first, second} {
+		got, ok, err := s.ReadStaged(ctx, r.AuthorizationID, r.Digest)
+		if err != nil || !ok || string(got.Body) != string(r.Body) {
+			t.Fatalf("%s: %+v %v %v", r.Digest, got, ok, err)
+		}
+	}
+	for _, r := range []StagedRecord{rs[1], rs[3], incomplete} {
+		if _, ok, err := s.ReadStaged(ctx, r.AuthorizationID, r.Digest); err != nil || ok {
+			t.Fatalf("%s was staged: %v %v", r.Digest, ok, err)
+		}
+	}
+	if errs, err := s.StageRecords(ctx, nil); errs != nil || err != nil {
+		t.Fatalf("none: %v %v", errs, err)
+	}
+	if errs, err := s.StageRecords(ctx, []StagedRecord{incomplete}); err != nil || len(errs) != 1 || errs[0] == nil {
+		t.Fatalf("only an incomplete record: %v %v", errs, err)
+	}
+	if _, err := s.StageRecords(ctx, make([]StagedRecord, MaxStageRecords+1)); err == nil {
+		t.Fatal("more than MaxStageRecords were taken")
+	}
+	big := record(live, "big")
+	big.Body = make([]byte, MaxStageBytes/2+1)
+	if _, err := s.StageRecords(ctx, []StagedRecord{big, big}); err == nil {
+		t.Fatal("more than MaxStageBytes were taken")
+	}
+}
