@@ -3856,7 +3856,6 @@ _PROVIDER_UNSERVED_CREDITS_MODELS: dict[str, frozenset[str]] = {
             "google/gemma-4-31b-it",
         }
     ),
-    "openai": frozenset({"openai/gpt-oss-120b", "openai/gpt-oss-20b"}),
     "deepseek": frozenset({"deepseek/deepseek-chat-v3.1", "deepseek/deepseek-v3.2"}),
     "nebius": frozenset({"google/gemma-2-2b-it", "meta-llama/Meta-Llama-3.1-8B-Instruct"}),
     "zai": frozenset({"z-ai/glm-4-32b", "z-ai/glm-4.7-flash"}),

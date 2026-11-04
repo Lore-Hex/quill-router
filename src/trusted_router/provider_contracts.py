@@ -73,6 +73,11 @@ PREPAID_PROVIDER_HOLD_REASONS: dict[str, str] = {
 PROVIDER_INCIDENT_HOLD_REASONS = {"lightning": "provider-security-incident"}
 OPERATOR_HELD_PROVIDER_MODELS = frozenset(
     {
+        # OpenAI publishes these weights but its hosted API does not serve
+        # them. A customer key cannot turn publisher identity into a route.
+        # Keep actual GPT-OSS hosts available for prepaid and BYOK requests.
+        ("openai", "openai/gpt-oss-20b"),
+        ("openai", "openai/gpt-oss-120b"),
         ("sakana", SAKANA_NAMAZU_MODEL_ID),
         # A listed alias is not proof of serving availability. Require a
         # reviewed recovery before refresh can re-enable this route.
