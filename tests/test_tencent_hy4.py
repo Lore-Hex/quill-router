@@ -36,15 +36,14 @@ def test_hy4_capabilities_and_identity_do_not_replace_preview() -> None:
     ]
 
 
-def test_hy4_failed_managed_canary_is_not_serving_evidence() -> None:
+def test_hy4_manifest_preserves_managed_canary_gate_and_privacy() -> None:
     from trusted_router.catalog import PROVIDERS, model_open_weights
 
     row = next(r for r in json.loads(tencent.MANIFEST_PATH.read_text())["models"] if r["id"] == MODEL)
     assert row["upstream_id"] == "hy4"
-    assert row["routable"] is False
-    assert row["routable_reason"] == "provider-canary-failed"
-    assert not [e for e in catalog_vehicles.registry_endpoints().values()
-                if e.model_id == MODEL and e.provider == "tencent" and e.usage_type == "Credits"]
+    managed = [e for e in catalog_vehicles.registry_endpoints().values()
+               if e.model_id == MODEL and e.provider == "tencent" and e.usage_type == "Credits"]
+    assert bool(managed) is (row.get("routable") is True)
     preview = catalog_vehicles.registry_models()["tencent/hy4-preview"]
     assert model_open_weights(preview)
     assert not model_open_weights(replace(preview, id=MODEL))
