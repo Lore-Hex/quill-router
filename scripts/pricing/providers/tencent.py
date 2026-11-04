@@ -12,7 +12,7 @@ from bs4 import BeautifulSoup, Tag
 from scripts.pricing.base import ModelPrice, PriceTier, ProviderPricingResult, fetch_html
 from scripts.pricing.model_ids import canonicalize_unqualified_model_id
 from scripts.pricing.providers._direct_openai import DirectOpenAIProvider, DirectOpenAIProviderSpec
-from trusted_router.provider_lifecycle import TENCENT_OFF_PEAK_PRICES
+from trusted_router.provider_lifecycle import TENCENT_HY4_LIST_PRICE, TENCENT_OFF_PEAK_PRICES
 
 SLUG = "tencent"
 BASE_URL = "https://tokenhub-intl.tencentcloudmaas.com/v1"
@@ -27,6 +27,24 @@ _METADATA: dict[str, dict[str, Any]] = {}
 _MODEL_NAMES: dict[str, str] = {}
 _EXPLICIT_MAP: dict[str, str] = {}
 _SCHEDULED_NAMES = {"deepseek-v4.1-flash", "deepseek-v4-flash 0731 ga", "deepseek-v4-pro 0813 ga"}
+# New in the November table, but not yet approved for Tencent scheduled billing.
+# Do not infer its runtime schedule from a similarly named DeepSeek route.
+_UNSUPPORTED_PRICE_NAMES = {"deepseek-v4.1-flash-1017"}
+_PRICE_HEADERS = [
+    "Model Name", "Condition (token)", "Peak/Off-Peak Billing",
+    "Input Tokens (USD / million tokens)", "Output Tokens (USD / million tokens)",
+    "Cache (USD / million tokens)",
+]
+_CACHE_WRITE_HEADERS = [
+    "Cache Write - 5min (USD / million tokens)", "Cache Write - 1h (USD / million tokens)",
+]
+_HY4_DISCOUNT_NOTICE = (
+    "Hy4 Limited-Time Discount Notes: From the date of this notice until 23:59:59 "
+    "on December 31, 2026 (Beijing Time), Hy4 model inference fees are settled at "
+    "50% of the list price. The discount applies only to usage actually incurred "
+    "during the above period. After the period expires, the model fees will be "
+    "settled at the list price again."
+)
 
 
 def _name(value: str) -> str:
@@ -134,13 +152,18 @@ def _singapore_table(html: str) -> Tag:
 
 def parse_prices(html: str) -> dict[str, ModelPrice]:
     rows = _rows(_singapore_table(html))
-    if len(rows[0]) != 6 or any("USD / million tokens" not in c for c in rows[0][3:]):
-        raise ValueError("tencent: unexpected currency or price units")
+    if not rows or rows[0] not in (_PRICE_HEADERS, _PRICE_HEADERS + _CACHE_WRITE_HEADERS):
+        raise ValueError("tencent: unexpected pricing columns, currency or units")
     grouped: dict[str, list[tuple[str, str, PriceTier]]] = {}
+    unsupported_cache_writes: set[str] = set()
     for cells in rows[1:]:
-        if len(cells) != 6:
+        if len(cells) != len(rows[0]):
             raise ValueError("tencent: malformed pricing row")
-        name, condition, period, prompt, completion, cache = cells
+        name, condition, period, prompt, completion, cache = cells[:6]
+        if any(value != "-" for value in cells[6:]):
+            # PriceTier cannot represent explicit cache-write charges. Exclude
+            # the entire model, including any other tiers, until supported.
+            unsupported_cache_writes.add(_name(name))
         values = [int(Decimal(value) * 1_000_000) for value in (prompt, completion)]
         cached = None if cache == "-" else int(Decimal(cache) * 1_000_000)
         if min(values) <= 0 or cached is not None and not 0 <= cached <= values[0]:
@@ -148,7 +171,7 @@ def parse_prices(html: str) -> dict[str, ModelPrice]:
         grouped.setdefault(_name(name), []).append((condition, period, PriceTier(None, *values, cached)))
     prices: dict[str, ModelPrice] = {}
     for name, entries in grouped.items():
-        if "vendor direct" in name:
+        if "vendor direct" in name or name in unsupported_cache_writes or name in _UNSUPPORTED_PRICE_NAMES:
             continue
         if name in _SCHEDULED_NAMES and [e[1] for e in entries] != ["OFF-PEAK", "PEAK"]:
             raise ValueError("tencent: scheduled pricing format changed; review runtime billing")
@@ -169,6 +192,18 @@ def parse_prices(html: str) -> dict[str, ModelPrice]:
             prices[name] = ModelPrice(tiers=[PriceTier(512 * 1024, low.prompt_micro_per_m, low.completion_micro_per_m, low.prompt_cached_micro_per_m), high])
         else:
             raise ValueError(f"tencent: unsupported pricing condition for {name}")
+    if "hy4" in grouped:
+        expected = TENCENT_HY4_LIST_PRICE
+        price = prices.get("hy4")
+        if price is None or price.tiers != [PriceTier(
+            None, expected.prompt_microdollars_per_million_tokens,
+            expected.completion_microdollars_per_million_tokens,
+            expected.prompt_cached_microdollars_per_million_tokens,
+        )]:
+            raise ValueError("tencent: HY4 list tariff changed; review runtime billing")
+        notice = " ".join(BeautifulSoup(html, "html.parser").get_text(" ", strip=True).split())
+        if _HY4_DISCOUNT_NOTICE not in notice:
+            raise ValueError("tencent: HY4 promotion changed; review runtime billing")
     return prices
 
 

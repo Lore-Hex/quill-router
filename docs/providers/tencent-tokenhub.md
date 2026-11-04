@@ -6,6 +6,39 @@ TrustedRouter calls the Tencent Cloud Singapore/global OpenAI-compatible API
 directly at `https://tokenhub-intl.tencentcloudmaas.com/v1`. It does not call
 OpenRouter or the unrelated tokenhub.com service.
 
+## HY4 General Release
+
+`tencent/hy4` uses native ID `hy4`, distinct from `tencent/hy4-preview`.
+Tencent's [model table](https://intl.cloud.tencent.com/document/product/1300/78934)
+documents text/image input, text output, 1,048,576-token context, 65,536-token
+output, tools, structured output, reasoning, and caching. Preview remains
+text-only. No GA weights, precision, ZDR, or Confidential claim is inferred from
+Preview or from the routing gateway's attestation.
+
+The authenticated account catalog reported `hy4` online at 2026-11-04 07:31 UTC.
+One 256-token native-thinking canary failed acceptance at 07:40 UTC; no inference
+retry occurred. Its boolean result does not establish a provider error or root
+cause. The new manifest row therefore retains `provider-canary-failed`: Credits
+is disabled pending a successful normal canary. This discovery-only row does
+not itself publish a BYOK route or prove customer entitlement. All pre-existing
+manifest rows and operator holds remain unchanged. This is a scoped addition,
+not a full provider refresh.
+
+The [Singapore tariff](https://intl.cloud.tencent.com/document/product/1300/78937)
+lists USD/M input 0.834, output 2.501, cache read 0.042. The November 4 notice
+discounts GA HY4 inference by 50% through December 31, 2026 23:59:59 Beijing time.
+The runtime uses the half-open interval `2026-11-03T16:00:00Z` through
+`2026-12-31T16:00:00Z`: input 0.417, output **1.2505**, cache read 0.021, before
+the normal TR markup. List prices stay in the manifest; authorization selects
+and locks the applicable price, including across expiry. Preview is not discounted.
+
+The refresh parser accepts the reviewed six/eight-column layouts, validates the
+HY4 list tariff and promotion notice, and rejects unknown headers or schedules.
+Models with explicit cache-write charges are excluded until billing supports
+them. The new Tencent DeepSeek-V4.1-Flash-1017 scheduled row is also excluded
+pending separate review; adding HY4 does not enable it or infer another route's
+schedule. Existing Tencent time-of-day prices are unchanged.
+
 ## Routing
 
 Use a model ID from `GET /v1/models`, then pin Tencent explicitly:

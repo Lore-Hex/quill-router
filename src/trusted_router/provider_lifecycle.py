@@ -169,6 +169,13 @@ TENCENT_OFF_PEAK_PRICES = {
     "deepseek/deepseek-v4-pro-0813": ProviderPrice(660_000, 1_980_000, 22_000),
 }
 
+# Tencent's November 4 notice discounts GA HY4 only, not HY4 Preview.
+# Store list prices in the manifest; lock the applicable rate at authorization.
+TENCENT_HY4_PROMOTION_START = datetime(2026, 11, 4, tzinfo=_BEIJING_TIME).astimezone(UTC)
+TENCENT_HY4_PROMOTION_END = datetime(2027, 1, 1, tzinfo=_BEIJING_TIME).astimezone(UTC)
+TENCENT_HY4_LIST_PRICE = ProviderPrice(834_000, 2_501_000, 42_000)
+TENCENT_HY4_PROMOTION_PRICE = ProviderPrice(417_000, 1_250_500, 21_000)
+
 
 def _tencent_period(at: datetime) -> str:
     local = at.astimezone(_BEIJING_TIME)
@@ -1866,6 +1873,17 @@ def provider_pricing_schedule(
     """Public timing metadata for a provider's variable token pricing."""
     effective_at = _effective_time(at)
 
+    if provider_slug == "tencent" and model_id == "tencent/hy4":
+        return {
+            "kind": "limited_time_discount", "timezone": "Asia/Shanghai",
+            "starts_at": TENCENT_HY4_PROMOTION_START.isoformat().replace("+00:00", "Z"),
+            "ends_at": TENCENT_HY4_PROMOTION_END.isoformat().replace("+00:00", "Z"),
+            "current_period": (
+                "promotion" if TENCENT_HY4_PROMOTION_START <= effective_at < TENCENT_HY4_PROMOTION_END else "list"
+            ),
+            "discount_percent": 50, "rate_locked_at": "authorization",
+        }
+
     if provider_slug == "tencent" and model_id in TENCENT_OFF_PEAK_PRICES:
         return {
             "kind": "time_of_day", "timezone": "Asia/Shanghai",
@@ -1947,6 +1965,12 @@ def provider_price_microdollars(
     early and makes the exact advertised transition deterministic.
     """
     effective_at = _effective_time(at)
+    if provider_slug == "tencent" and model_id == "tencent/hy4":
+        return (
+            TENCENT_HY4_PROMOTION_PRICE
+            if TENCENT_HY4_PROMOTION_START <= effective_at < TENCENT_HY4_PROMOTION_END
+            else TENCENT_HY4_LIST_PRICE
+        )
     if provider_slug == "tencent" and model_id in TENCENT_OFF_PEAK_PRICES:
         price = TENCENT_OFF_PEAK_PRICES[model_id]
         multiplier = 2 if _tencent_period(effective_at) == "peak" else 1
