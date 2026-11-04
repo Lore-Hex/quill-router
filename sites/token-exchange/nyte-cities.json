@@ -41,6 +41,7 @@
     ]
   },
   "united-states": {
+    "logo_place": "US",
     "faq_place": "the United States",
     "us": true,
     "workloads": [
@@ -50,6 +51,7 @@
     ]
   },
   "europe": {
+    "logo_place": "European",
     "workloads": [
       {"title": "Enterprise procurement", "prompt": "List the subprocessors named in this data processing agreement.", "tags": ["CONFIDENTIAL", "ZDR"]},
       {"title": "Multilingual products", "prompt": "Translate this product page into German, French and Spanish, keeping our terms.", "tags": ["CONFIDENTIAL", "ZDR"]},
