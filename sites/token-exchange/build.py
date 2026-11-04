@@ -98,8 +98,7 @@ def render(market: dict, markets: list[dict], version: str) -> str:
         return render_nyte()
     if uses_nyte(market):
         return render_nyte(market=market)
-    profile = {"dubai": "dubai", "europe": "europe"}.get(market["slug"], "shared-gcp")
-    catalogue, health = render_evidence(profile)
+    catalogue, health = render_evidence()
     headline = html.escape(market["headline"])
     accent = html.escape(market.get("headline_accent", ""))
     if accent:

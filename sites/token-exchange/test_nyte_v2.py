@@ -317,6 +317,11 @@ class NavigationRegistryTests(unittest.TestCase):
             (self.assertIn if page == 'buy' else self.assertNotIn)("'by NYTE'", rendered)
             self.assertNotIn('"nytokenexchange.com"', rendered)
             for market in nyte_markets():
-                self.assertIn(f'"{market["domain"]}":["{market.get("logo_place", market["region"])}","{market["name"]}",{str(bool(market.get("logo_one_line"))).lower()},"{market.get("faq_place", market["region"])}",{str(bool(market.get("us"))).lower()}]', rendered)
+                self.assertIn(f'"{market["domain"]}":{{"slug":"{market["slug"]}","name":"{market["name"]}"', rendered)
         self.assertIn('data-exchange-name>New York Token Exchange', render_nyte('buy'))
+        # The reservations API accepts only New York's origin, so city visitors manage there.
+        self.assertIn("location.replace('https://nytokenexchange.com'", render_nyte('manage'))
+        self.assertNotIn('location.replace', render_nyte('buy'))
+        with self.assertRaises(ValueError):
+            render_nyte('buy', market=nyte_markets()[0])
         self.assertIn("dataset.billedBy='New York Token Exchange (NYTE)'", render_nyte('buy'))

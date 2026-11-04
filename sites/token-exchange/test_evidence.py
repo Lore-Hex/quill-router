@@ -19,8 +19,7 @@ class EvidenceTests(unittest.TestCase):
                 continue  # New York v2 has dedicated page and browser coverage.
             with self.subTest(market=market['slug']):
                 page = render(market, markets, 'test')
-                profile = market['slug'] if market['slug'] in ('new-york', 'dubai', 'europe') else 'shared-gcp'
-                self.assertIn(f'data-evidence-profile="{profile}"', page)
+                self.assertIn('data-evidence-profile="shared-gcp"', page)
                 self.assertIn('/assets/live-evidence.js?v=test', page)
                 self.assertIn('data-live-prices', page)
                 self.assertNotIn('99.93', page)
@@ -35,16 +34,11 @@ class EvidenceTests(unittest.TestCase):
                 self.assertIn('https://trustedrouter.com/models?filter=e2e', page)
 
     def test_source_bindings_and_review_links(self):
-        for profile in ('new-york', 'shared-gcp', 'europe', 'dubai'):
-            _, health = render_evidence(profile)
-            if profile == 'dubai':
-                self.assertIn('https://azure.trustedrouter.com/status', health)
-                self.assertIn('https://trust.trustedrouter.com/trust/azure-release.json', health)
-                self.assertNotIn('GCP uptime', health)
-            else:
-                self.assertIn('https://trustedrouter.com/status', health)
-                self.assertIn('https://trustedrouter.com/trust/gcp-release.json', health)
-                self.assertNotIn('azure.trustedrouter.com', health)
+        _, health = render_evidence()
+        self.assertIn('https://trustedrouter.com/status', health)
+        self.assertIn('https://trustedrouter.com/trust/gcp-release.json', health)
+        self.assertIn('Shared GCP uptime', health)
+        self.assertNotIn('azure.trustedrouter.com', health)
 
     def test_no_snapshot_loaded_by_builder(self):
         source = Path(__file__).with_name('build.py').read_text()
@@ -84,33 +78,9 @@ class ArchivedRefreshTests(unittest.TestCase):
             ('model_inference', 'Model Inference', 97),
             ('eu_regional_api', 'EU Regional API', 80),
             ('us_east4_regional_api', 'US East Regional API', 99),
-            ('uaenorth_gateway', 'UAE North Gateway (Dubai)', 90),
         )]
         return endpoints, {'data': dict(
             components=components, generated_at='2026-09-24T00:00:00Z')}
-
-    def test_europe_refresh_requires_its_regional_component_and_gcp_release(self):
-        endpoints, status = self.regional_refresh_inputs()
-        result = project(endpoints, status, '2026-09-24T00:00:00Z',
-                         self.data['attestation'], market='europe')
-        self.assertEqual(result['status']['name'], 'EU Regional API')
-        self.assertEqual(result['status']['uptime'], 80)
-        self.assertEqual(result['status']['history'][0]['uptime_percent'], 80)
-        self.assertEqual(result['status']['source'], 'https://trustedrouter.com/status.json')
-        self.assertEqual(result['uptime_label'], 'GCP uptime')
-        self.assertEqual([c['id'] for c in result['service_history']],
-                         ['canonical_api', 'model_inference'])
-        for release in (None, {'platform': 'azure-confidential-containers-sev-snp'},
-                        {'platform': 'aws-nitro-enclaves'}):
-            with self.subTest(release=release):
-                with self.assertRaisesRegex(ValueError, 'GCP release'):
-                    project(endpoints, status, '2026-09-24T00:00:00Z',
-                            release, market='europe')
-        status['data']['components'] = [c for c in status['data']['components']
-                                        if c['id'] != 'eu_regional_api']
-        with self.assertRaises(StopIteration):
-            project(endpoints, status, '2026-09-24T00:00:00Z',
-                    self.data['attestation'], market='europe')
 
     def test_shared_profile_discards_all_regional_rows_and_requires_shared_history(self):
         endpoints, status = self.regional_refresh_inputs()
@@ -133,61 +103,6 @@ class ArchivedRefreshTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'canonical API'):
                     project(endpoints, incomplete, '2026-09-24T00:00:00Z',
                             self.data['attestation'], market='shared-gcp')
-
-    def test_tokyo_refresh_omits_regional_history_and_rejects_wrong_scope(self):
-        endpoints = [{'data': [dict(
-            provider=provider, usage_type='Credits', provider_name='Tinfoil',
-            pricing=dict(prompt='0.000001', completion='0.000002'),
-            trustedrouter=dict(provider_e2ee=True, provider_confidential_compute=True,
-                               provider_zero_data_retention=True,
-                               privacy_tier_label='Confidential + E2EE'),
-        )]} for _, _, provider in ROUTES]
-        components = [dict(id=key, name=key, description=key,
-                           last_checked_at='2026-09-24T00:00:00Z',
-                           uptime_24h_percent=None, history=[])
-                      for key in ('canonical_api', 'model_inference', 'us_east4_regional_api')]
-        status = {'data': dict(components=components, generated_at='2026-09-24T00:00:00Z')}
-        result = project(endpoints, status, '2026-09-24T00:00:00Z',
-                         self.data['attestation'], market='tokyo')
-        self.assertNotIn('status', result)
-        self.assertEqual([c['id'] for c in result['service_history']],
-                         ['canonical_api', 'model_inference'])
-        london = project(endpoints, status, '2026-09-24T00:00:00Z',
-                         self.data['attestation'], market='london')
-        self.assertEqual(london, result)
-        with self.assertRaisesRegex(ValueError, 'GCP release'):
-            project(endpoints, status, '2026-09-24T00:00:00Z',
-                    {'platform': 'azure-confidential-containers-sev-snp'}, market='tokyo')
-        components.pop(0)
-        with self.assertRaisesRegex(ValueError, 'canonical API'):
-            project(endpoints, status, '2026-09-24T00:00:00Z',
-                    self.data['attestation'], market='tokyo')
-
-    def test_dubai_refresh_rejects_wrong_platform_and_unaccepted_policy(self):
-        endpoints = [{'data': [dict(
-            provider=provider, usage_type='Credits', provider_name='Tinfoil',
-            pricing=dict(prompt='0.000001', completion='0.000002'),
-            trustedrouter=dict(provider_e2ee=True, provider_confidential_compute=True,
-                               provider_zero_data_retention=True,
-                               privacy_tier_label='Confidential + E2EE'),
-        )]} for _, _, provider in ROUTES]
-        component = dict(id='uaenorth_gateway', name='UAE North Gateway (Dubai)',
-                         last_checked_at='2026-09-24T00:00:00Z',
-                         uptime_24h_percent=None, sample_count_24h=0, history=[])
-        status = {'data': dict(components=[component], generated_at='2026-09-24T00:00:00Z')}
-        with self.assertRaisesRegex(ValueError, 'Azure release'):
-            project(endpoints, status, '2026-09-24T00:00:00Z',
-                    self.data['attestation'], market='dubai')
-        release = dict(platform='azure-confidential-containers-sev-snp',
-                       accepted_hostdata=[], regions=[dict(
-                           attestation_url='https://api-azure.trustedrouter.com/attestation',
-                           origin_hostname='quill-enclave-uaenorth.uaenorth.azurecontainer.io',
-                           hostdata='a' * 64)])
-        with self.assertRaisesRegex(ValueError, 'not accepted'):
-            project(endpoints, status, '2026-09-24T00:00:00Z', release, market='dubai')
-        status['data']['components'][0]['id'] = 'us_east4_regional_api'
-        with self.assertRaises(StopIteration):
-            project(endpoints, status, '2026-09-24T00:00:00Z', release, market='dubai')
 
     def test_refresh_refuses_missing_selected_route(self):
         with self.assertRaises(StopIteration):

@@ -99,7 +99,9 @@ New York's homepage, `/confidential`, `/trusted-cowork`, `/suppliers`, `/provide
 assets are under `assets/nyte-v2/`. Cities listed in `nyte-cities.json` get the
 same homepage under their own name, with their own workload cards. On a city's
 domain every path other than `/` serves New York's pages; those pages then show the
-city's name with "by NYTE". Back up live objects before an authorized
+city's name and keep its analytics attribution. Checkout and its terms add "by NYTE",
+the seller on the receipt, and `/manage-reservation` moves to New York's domain,
+the only origin the reservations API accepts. Back up live objects before an authorized
 release and preserve concurrent content and unrelated market pages.
 The NYTE Confidential API page loads `assets/nyte-v2/live-evidence.js`, a
 byte-identical build copy of the approved evidence renderer. A New York-only

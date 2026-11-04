@@ -11,30 +11,27 @@ from pathlib import Path
 from string import Template
 
 from build import HERE, load_markets
-from nyte_v2 import CITIES, uses_nyte
+from nyte_v2 import uses_nyte
 
 
 def prepare(output):
     template = Template((HERE / 'social-card.html').read_text())
+    nyte_card = Template((HERE / 'nyte-v2/social-card.html').read_text())
+    nyte_headline = re.search(r'<h1>(.*?)</h1>', (HERE / 'nyte-v2/home.html').read_text(), re.S).group(1)
     for market in load_markets():
-        market = market | CITIES.get(market['slug'], {})
-        headline = html.escape(market['headline'])
-        accent = html.escape(market['headline_accent'] + '.')
-        if market['slug'] == 'united-states':
-            headline = headline.replace('the United States.', 'the U.S.')
-            accent = accent.replace('the United States.', 'the U.S.')
-        headline = headline.replace(accent, f'<span class="headline-accent">{accent}</span>', 1)
-        # The card breaks its line before the italic accent on every market.
-        headline = headline.replace(' <span class="headline-accent">', '<br><span class="headline-accent">', 1)
+        if uses_nyte(market):
+            card, headline = nyte_card, nyte_headline
+        else:
+            card = template
+            headline = html.escape(market['headline'])
+            accent = html.escape(market['headline_accent'] + '.')
+            headline = headline.replace(accent, f'<span class="headline-accent">{accent}</span>', 1)
+            # The card breaks its line before the italic accent on every market.
+            headline = headline.replace(' <span class="headline-accent">', '<br><span class="headline-accent">', 1)
         folder = output / f"social-{market['slug']}"
         folder.mkdir(parents=True, exist_ok=True)
-        card = template
-        if uses_nyte(market):
-            card = Template((HERE / 'nyte-v2/social-card.html').read_text())
-            headline = re.search(r'<h1>(.*?)</h1>', (HERE / 'nyte-v2/home.html').read_text(), re.S).group(1)
         (folder / 'index.html').write_text(card.substitute(
             name=html.escape(market['name']), headline=headline))
-
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)

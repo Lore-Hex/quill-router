@@ -225,30 +225,45 @@ def nyte_markets() -> list[dict]:
     return [market | CITIES[market["slug"]] for market in load_markets() if market["slug"] in CITIES]
 
 
-def host_brand_script(names_seller: bool = False) -> str:
-    """Rename the shared pages for visitors who reached them on a city's own domain.
+def host_brand_script(page: str) -> str:
+    """Rename a shared page for visitors who reached it on a city's own domain.
 
     Every path other than / on a city domain serves New York's pages. Those visitors keep
-    their city's name. Checkout, reservations and their terms add "by NYTE", since the receipt and
-    contract name NYTE as the seller."""
-    hosts = {m["domain"]: [m.get("logo_place", m["region"]), m["name"], bool(m.get("logo_one_line")), m.get("faq_place", m["region"]), bool(m.get("us"))] for m in nyte_markets()}
+    their city's name and attribution. Checkout and its terms add "by NYTE", since the receipt
+    and contract name NYTE as the seller. Reservations are managed on New York's domain,
+    the only origin the reservations API accepts."""
+    hosts = {
+        m["domain"]: {
+            "slug": m["slug"], "name": m["name"], "logo": m.get("logo_place", m["region"]),
+            "one": bool(m.get("logo_one_line")), "faq": m.get("faq_place", m["region"]), "us": bool(m.get("us")),
+        }
+        for m in nyte_markets()
+    }
     if not hosts:
         return ""
     data = json.dumps(hosts, separators=(",", ":")).replace("<", "\\u003c")
+    if page == "manage":
+        return ("<script>(()=>{if(" + data + "[location.hostname])location.replace("
+                "'https://nytokenexchange.com'+location.pathname+location.search+location.hash)})()</script>")
+    names_seller = page in {"buy", "reserved-terms"}
     return (
-        "<script>(()=>{const m=" + data + "[location.hostname];if(!m)return;"
-        "const b=document.querySelector('.hdr .brand');b.setAttribute('aria-label',m[1]+' home');"
-        "b.querySelector('.brand-place').textContent=m[0];if(m[2])b.classList.add('brand-one');"
+        "<script>(()=>{const c=" + data + "[location.hostname];if(!c)return;document.body.dataset.market=c.slug;"
+        "const b=document.querySelector('.hdr .brand');b.setAttribute('aria-label',c.name+' home');"
+        "b.querySelector('.brand-place').textContent=c.logo;if(c.one)b.classList.add('brand-one');"
         + ("const by=document.createElement('small');by.className='brand-by';by.textContent='by NYTE';"
            "b.querySelector('.brand-line').after(by);"
            "document.documentElement.dataset.billedBy='New York Token Exchange (NYTE)';" if names_seller else "")
-        + "document.addEventListener('DOMContentLoaded',()=>{const n=m[1]" + ("+' · by NYTE'" if names_seller else "") + ";"
+        + "document.addEventListener('DOMContentLoaded',()=>{const n=c.name" + ("+' · by NYTE'" if names_seller else "") + ";"
         "document.title=document.title.replace('New York Token Exchange',n);"
         "document.querySelectorAll('[data-exchange-name]').forEach(e=>{e.textContent=n});"
         "const f=document.querySelector('.site-footer .brand>span');if(f&&f.firstChild)f.firstChild.textContent=n;"
         # The data-location FAQ names the visitor's city; an empty place drops it.
-        "const q=document.getElementById('place-faq');if(q){if(!m[3])q.remove();else{q.querySelectorAll('[data-place]').forEach(e=>{e.textContent=m[3]});"
-        "if(!m[4])q.querySelector('[data-us-only]').remove()}}"
+        "const q=document.getElementById('place-faq');if(q){if(!c.faq)q.remove();else{q.querySelectorAll('[data-place]').forEach(e=>{e.textContent=c.faq});"
+        "if(!c.us)q.querySelector('[data-us-only]').remove()}}"
+        "document.querySelectorAll('a[href]').forEach(a=>{const u=new URL(a.href);"
+        "if(u.pathname==='/manage-reservation'&&u.hostname===location.hostname){a.href='https://nytokenexchange.com/manage-reservation';return}"
+        "if(u.hostname==='trustedrouter.com'&&u.searchParams.get('exchange_market')==='new-york'){"
+        "u.searchParams.set('utm_source',location.hostname);u.searchParams.set('exchange_market',c.slug);a.href=u.href}});"
         "document.querySelectorAll('.market-links a').forEach(a=>{if(new URL(a.href).hostname===location.hostname)"
         "a.setAttribute('aria-current','page');else a.removeAttribute('aria-current')})})})()</script>"
     )
@@ -258,14 +273,17 @@ def render_nyte(
     page: str = "home", *, content: str | None = None, extra_head: str = "",
     image_url: str | None = None, market: dict | None = None,
 ) -> str:
-    market = market or {"slug": "new-york", "domain": "nytokenexchange.com", "region": "New York", "name": "New York Token Exchange"}
+    market = market or next(m for m in load_markets() if m["slug"] == "new-york")
     market = market | CITIES.get(market["slug"], {})
+    city = market["slug"] != "new-york"
+    if city and page != "home":
+        raise ValueError("City domains serve New York's shared pages; only their home page is rendered per city.")
     if image_url is None:
         image_version = hashlib.sha256((HERE / f"social-images/og-{market['slug']}.png").read_bytes()).hexdigest()[:12]
         image_url = f"https://{market['domain']}/assets/og-{market['slug']}.png?v=" + image_version
     entry = PAGES[page]
     path, title, description = entry["route"], entry["title"], entry["description"]
-    if market["slug"] != "new-york":
+    if city:
         title = f"{market['name']}: enterprise AI from competing providers"
     version = hashlib.sha256((SOURCE / "styles.css").read_bytes() + (SOURCE / "app.js").read_bytes() + (HERE / "analytics.js").read_bytes()).hexdigest()[:12]
     if page in {"providers", "cowork"}:
@@ -290,13 +308,13 @@ def render_nyte(
     )
     if content is None:
         content = (SOURCE / f"{page}.html").read_text().replace("{{index_panel}}", index_panel())
-    if market["slug"] != "new-york":
+    if city:
         content = city_home(content, market)
     if page == "accelerator":
         content = content.replace("{{facilities}}", facility_cards()).replace("{{facility_rate}}", FACILITY_RATE)
     result = (SOURCE / "shell.html").read_text()
     evidence_version = hashlib.sha256((HERE / "live-evidence.js").read_bytes()).hexdigest()[:12]
-    for key, value in dict(domain=market["domain"], market=market["slug"], region=html.escape(market.get("logo_place", market["region"])), brand_class=" brand-one" if market.get("logo_one_line") else "", exchange_name=html.escape(market["name"]), host_brand=host_brand_script(page in {"buy", "manage", "reserved-terms"}) if market["slug"] == "new-york" and page != "home" else "", nav=render_nav(), buyer_deck=(SOURCE / "buyer-deck.html").read_text() if page in {"home", "api"} else "", extra_head=extra_head, image_url=html.escape(image_url, quote=True), title=html.escape(title), description=html.escape(description, quote=True), path=path, page=page, version=version, content=content, markets=market_links, evidence_script='<script src="/assets/nyte-v2/live-evidence.js?v=' + evidence_version + '" defer></script>' if page == "api" else "").items():
+    for key, value in dict(domain=market["domain"], market=market["slug"], region=html.escape(market.get("logo_place", market["region"])), brand_class=" brand-one" if market.get("logo_one_line") else "", exchange_name=html.escape(market["name"]), host_brand="" if city or page == "home" else host_brand_script(page), nav=render_nav(), buyer_deck=(SOURCE / "buyer-deck.html").read_text() if page in {"home", "api"} else "", extra_head=extra_head, image_url=html.escape(image_url, quote=True), title=html.escape(title), description=html.escape(description, quote=True), path=path, page=page, version=version, content=content, markets=market_links, evidence_script='<script src="/assets/nyte-v2/live-evidence.js?v=' + evidence_version + '" defer></script>' if page == "api" else "").items():
         result = result.replace("{{" + key + "}}", value)
     if page == "providers":
         result = result.replace('<div class="legal">', '<div class="legal"><a href="https://trustedrouter.com/trust">Trust center</a>')
@@ -317,15 +335,15 @@ def city_home(content: str, market: dict) -> str:
     """New York's home page with the city's own workload cards.
 
     The routing example drops New York's US rule: a city name never implies where a route runs."""
-    start = content.index('<div class="cards">')
-    end = content.index("</div>\n    </div>\n  </section>", start)
+    start = content.index("<!-- workloads -->")
+    end = content.index("<!-- /workloads -->", start) + len("<!-- /workloads -->")
     tags = {"CONFIDENTIAL": "cc", "ZDR": "zdr"}
     cards = "".join(
         f'<div class="card"><h3>{html.escape(card["title"])}</h3><p class="q">“{html.escape(card["prompt"])}”</p>'
         '<div class="tags">' + "".join(f'<span class="tag {tags[t]}">{t}</span>' for t in card["tags"]) + "</div></div>"
         for card in CITIES[market["slug"]]["workloads"]
     )
-    content = content[:start] + '<div class="cards">' + cards + content[end:]
+    content = content[:start] + cards + content[end:]
     return content.replace('<span class="tag us">US</span>', "")
 
 

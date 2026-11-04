@@ -296,6 +296,9 @@ if(process.argv[2]){
    assert.equal(await cityPage.locator('.hdr .brand-place').innerText(),market.logo_place||market.region);
    assert.equal(await cityPage.locator('.brand-by').count(),0,'pages outside checkout keep the city name alone');
    await cityPage.goto(`https://${market.domain}/confidential`);
+   assert.equal(await cityPage.evaluate(()=>document.body.dataset.market),slug,`${slug} analytics market`);
+   const signup=new URL(await cityPage.locator('a[href^="https://trustedrouter.com/"][href*="exchange_market="]').first().getAttribute('href'));
+   assert.equal(signup.searchParams.get('exchange_market'),slug);assert.equal(signup.searchParams.get('utm_source'),market.domain);
    const place=market.faq_place??market.region;
    assert.equal(await cityPage.locator('#place-faq').count(),place?1:0,`${slug} data-location FAQ`);
    if(place){assert.equal(await cityPage.locator('#place-faq summary').textContent(),`Does ${place} mean our data stays in ${place}?`);
@@ -303,6 +306,7 @@ if(process.argv[2]){
    await cityPage.goto(`https://${market.domain}/buy`);
    assert.equal(await cityPage.locator('.hdr .brand-place').innerText(),market.logo_place||market.region);
    assert.equal(await cityPage.locator('.hdr .brand-by').innerText(),'by NYTE');
+   assert.equal(await cityPage.locator('.buy-intro a, a[href*="manage-reservation"]').first().getAttribute('href'),'https://nytokenexchange.com/manage-reservation');
    assert.equal(await cityPage.evaluate(()=>document.documentElement.dataset.billedBy),'New York Token Exchange (NYTE)','city checkout names who bills the card');
    assert.equal(await cityPage.locator('[data-exchange-name]').textContent(),`${market.name} · by NYTE`);
    assert.equal(await cityPage.locator('.market-links [aria-current=page]').innerText(),market.region);
