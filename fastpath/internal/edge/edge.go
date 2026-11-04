@@ -35,6 +35,12 @@
 // node's front door, inserts its two rows and writes the 200, or Python's
 // 503 when the insert's outcome is not known; every other request still
 // passes to Python unchanged (decide_path.go).
+//
+// Every authorize the edge passes to Python is timed, from its arrival to
+// its answer written back, in phases that tell the edge's own time, the
+// connection to Python, Python's answer and the answer's way back apart; a
+// slow pass is logged with its phases, and each period's counts in one line
+// (pass_timing.go).
 package edge
 
 import (
@@ -192,6 +198,8 @@ type Edge struct {
 	// decide path is.
 	full    *fullShadow
 	decider *decider
+	// passes times the authorizes passed to Python (pass_timing.go).
+	passes *passTimer
 }
 
 type cachedBoot struct {
@@ -234,7 +242,7 @@ func New(cfg Config) (*Edge, error) {
 	if cfg.Logf == nil {
 		cfg.Logf = log.Printf
 	}
-	e := &Edge{cfg: cfg, boots: map[string]cachedBoot{}}
+	e := &Edge{cfg: cfg, boots: map[string]cachedBoot{}, passes: newPassTimer(cfg.Logf, cfg.ShadowEvery)}
 	if cfg.Snapshot.URL != nil {
 		p, err := newPoller(cfg.Snapshot, cfg.Upstream, cfg.Token, cfg.Transport, cfg.Clock, cfg.Logf)
 		if err != nil {
@@ -278,7 +286,9 @@ func New(cfg Config) (*Edge, error) {
 	upstream := *cfg.Upstream
 	upstream.Path, upstream.RawPath = "", ""
 	e.proxy = &httputil.ReverseProxy{
-		Transport: cfg.Transport,
+		// The transport is the configured one; an authorize's pass carries
+		// the hooks that time it (pass_timing.go).
+		Transport: tracedTransport{base: cfg.Transport},
 		// Every write reaches the enclave as Python made it, so a response
 		// Python streams is streamed.
 		FlushInterval: -1,
@@ -407,6 +417,8 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if e.full != nil || e.decider != nil {
 		at = e.cfg.Clock()
 	}
+	// An authorize's pass to Python is timed from its arrival.
+	pass := e.passes.start(r, arrived)
 	headers := r.Header.Values(BootHeader)
 	// A boot header the request names as hop-by-hop (`Connection:
 	// X-TR-Boot-Auth`) is dropped by the proxy: Python sees none.
@@ -417,7 +429,7 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			out = e.shadow.attach(call, out, Absent, nil)
 		}
 		out = e.beginFull(out, at, nil, BootSeen{Verdict: Absent})
-		e.proxy.ServeHTTP(w, out)
+		e.forward(w, out, pass)
 		return
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxBody+1))
@@ -438,7 +450,7 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			e.shadow.submit(comparison{call: call, passed: "the request body is over the comparator's bound"})
 		}
 		out = e.beginFull(out, at, nil, BootSeen{Verdict: Unchecked})
-		e.proxy.ServeHTTP(w, out)
+		e.forward(w, out, pass)
 		return
 	}
 	// The path as the proxy sends it and Python reads it: an empty one (a
@@ -468,7 +480,7 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		out = e.shadow.attach(call, out, verdict, body)
 	}
 	out = e.beginFull(out, at, body, seen)
-	e.proxy.ServeHTTP(w, out)
+	e.forward(w, out, pass)
 }
 
 // Run polls the routing snapshot and the edge policy and runs the shadow

@@ -113,6 +113,38 @@ Python's `RateLimit-*` headers compared (`window.agree`,
 `fastpathwatch edge` sums a span's lines (`fastpath-watch.md`), for the I2
 gates or for an incident's minutes.
 
+The decide path's slow passes (`at_edge.*`) end at the forwarding. The rest
+of an authorize's way, to Python and back, is timed for every authorize the
+edge passes, with or without `-edge-decide` (`fastpath/internal/edge/pass_timing.go`):
+
+- `fastpath edge pass slow: ...`: one line for each pass over 500 ms in
+  all, at most 30 a minute. The line gives Python's `status` (`unreached`
+  when no answer came) and `total_ms`. It also gives five phases that add up
+  to the total: `edge_ms` (arrival to forwarding), `conn_ms` (forwarding to
+  a connection to Python), `write_ms`, `python_ms` (request written to
+  Python's first byte) and `response_ms` (first byte to the answer written
+  back). `phase` names the longest. `connection` is `reused` (with
+  `idle_ms`), `new` or `none`. For a new connection, `dns_ms`, `connect_ms`
+  and `tls_ms` break down its `conn_ms`. `attempts` is more than 1 when the
+  transport retried on another connection.
+- `fastpath edge pass: ...`: the counts since the last such line. It is
+  written by the first pass after a minute has passed, so a quiet node writes
+  none. `seconds` is the span covered. `connection` counts passes by
+  connection kind. `new_setup` buckets each new connection's `conn_ms`
+  (`le_10ms` to `gt_2s`): a lost SYN is resent after a second, then again
+  two seconds later, so lost SYNs show up as `le_2s` and `gt_2s`.
+  `slow_by_phase` counts slow passes by `phase`, and `unlogged` counts those
+  past the 30 lines.
+
+No line carries a body, an id, a key, a path or an address. The slow lines
+of a span:
+
+```bash
+gcloud logging read 'logName="projects/quill-cloud-proxy/logs/fastpath_journal" AND jsonPayload.MESSAGE:"fastpath edge pass"' \
+  --project=quill-cloud-proxy --freshness=1h --limit=100 \
+  --format='table(timestamp,labels."compute.googleapis.com/resource_name",jsonPayload.MESSAGE)'
+```
+
 ## Subscription lag
 
 The incident's resource names the subscription:
