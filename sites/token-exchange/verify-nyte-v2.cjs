@@ -297,7 +297,7 @@ if(process.argv[2]){
    await cityPage.goto(`https://${market.domain}/buy`);
    assert.equal(await cityPage.locator('.hdr .brand-place').innerText(),market.region);
    assert.equal(await cityPage.locator('.hdr .brand-by').innerText(),'by NYTE');
-   assert.equal(await cityPage.locator('#buy-billed-by').getAttribute('hidden'),null,'city checkout names who bills the card');
+   assert.equal(await cityPage.evaluate(()=>document.documentElement.dataset.billedBy),'New York Token Exchange (NYTE)','city checkout names who bills the card');
    assert.equal(await cityPage.locator('[data-exchange-name]').textContent(),`${market.name} · by NYTE`);
    assert.equal(await cityPage.locator('.market-links [aria-current=page]').innerText(),market.region);
    assert.equal(await cityPage.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,`${slug} /buy fits at ${width}px`);

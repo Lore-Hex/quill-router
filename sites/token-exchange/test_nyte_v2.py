@@ -319,4 +319,4 @@ class NavigationRegistryTests(unittest.TestCase):
             for market in nyte_markets():
                 self.assertIn(f'"{market["domain"]}":["{market["region"]}","{market["name"]}"]', rendered)
         self.assertIn('data-exchange-name>New York Token Exchange', render_nyte('buy'))
-        self.assertIn('<p id="buy-billed-by" hidden>Billed by New York Token Exchange (NYTE)</p>', render_nyte('buy'))
+        self.assertIn("dataset.billedBy='New York Token Exchange (NYTE)'", render_nyte('buy'))
