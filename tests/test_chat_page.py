@@ -149,9 +149,10 @@ def test_chat_js_defaults_to_plato_alias() -> None:
     js = Path("src/trusted_router/static/chat.js").read_text()
 
     assert (
-        'const DEFAULT_MODEL_ID = LOCKED_MODEL_ID || URL_MODEL_ID || "trustedrouter/plato";'
+        'const DEFAULT_MODEL_ID = URL_MODEL_ID || "trustedrouter/plato";'
         in js
     )
+    assert "LOCKED_MODEL_ID" not in js
     assert 'placeholder="trustedrouter/plato"' in js
     assert '|| "anthropic/claude-sonnet-4.6"' not in js
 
