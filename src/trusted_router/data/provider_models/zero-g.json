@@ -100,6 +100,7 @@
         "reasoning_effort",
         "response_format",
         "stop",
+        "stream",
         "temperature",
         "tool_choice",
         "tools",
@@ -151,6 +152,7 @@
         "presence_penalty",
         "reasoning_effort",
         "stop",
+        "stream",
         "temperature",
         "top_k",
         "top_p"
@@ -203,6 +205,7 @@
         "presence_penalty",
         "reasoning_effort",
         "response_format",
+        "stream",
         "temperature",
         "tool_choice",
         "tools",
@@ -223,5 +226,5 @@
     }
   ],
   "model_count": 4,
-  "generated_at": "2026-10-15T12:03:30Z"
+  "generated_at": "2026-11-04T16:53:25Z"
 }

@@ -2,8 +2,8 @@
   "_about": "Provider-native GMI Cloud catalog. Account-visible models are intersected with GMI's official billing feed; explicitly approved routes omitted from /v1/models remain current only after an exact visible-content PONG canary succeeds.",
   "provider": "gmi",
   "source": "https://console.gmicloud.ai/api/v1/billing/model_prices",
-  "generated_at": "2026-11-03T19:48:25Z",
-  "model_count": 111,
+  "generated_at": "2026-11-04T16:53:25Z",
+  "model_count": 113,
   "models": [
     {
       "id": "z-ai/glm-5.2",
@@ -2667,6 +2667,46 @@
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
       "cached_input_token_price_per_m": 200000
+    },
+    {
+      "display_name": "ricursiveAI/Ripple-65B-Preview",
+      "title": "gmicloud/Ripple-65B-Preview",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "gmicloud/ripple-65b-preview",
+      "upstream_id": "gmicloud/Ripple-65B-Preview",
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 600000
+    },
+    {
+      "display_name": "tencent/hy4",
+      "title": "tencent/hy4",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "tencent/hy4",
+      "upstream_id": "tencent/hy4",
+      "context_length": 1000000,
+      "input_token_price_per_m": 834000,
+      "output_token_price_per_m": 2501000,
+      "cached_input_token_price_per_m": 42000
     }
   ],
   "price_scale": "microdollars_per_million"

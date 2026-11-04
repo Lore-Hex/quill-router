@@ -432,11 +432,12 @@
         "seed",
         "max_tokens"
       ],
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 140000,
       "output_token_price_per_m": 450000,
       "cached_input_token_price_per_m": 15000,
-      "missing_since": "2026-11-03"
+      "missing_since": "2026-11-03",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "DeepSeek: DeepSeek V4.1 Flash",
@@ -525,6 +526,6 @@
       "cached_input_token_price_per_m": 3000
     }
   ],
-  "generated_at": "2026-11-03T19:48:25Z",
+  "generated_at": "2026-11-04T16:53:25Z",
   "model_count": 12
 }
