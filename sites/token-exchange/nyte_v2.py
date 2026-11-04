@@ -242,6 +242,7 @@ def host_brand_script(names_seller: bool = False) -> str:
         + ("const by=document.createElement('small');by.className='brand-by';by.textContent='by NYTE';"
            "b.querySelector('.brand-line').after(by);" if names_seller else "")
         + "document.addEventListener('DOMContentLoaded',()=>{const n=m[1]" + ("+' · by NYTE'" if names_seller else "") + ";"
+        "const bill=document.getElementById('buy-billed-by');if(bill)bill.hidden=false;"
         "document.title=document.title.replace('New York Token Exchange',n);"
         "document.querySelectorAll('[data-exchange-name]').forEach(e=>{e.textContent=n});"
         "const f=document.querySelector('.site-footer .brand>span');if(f&&f.firstChild)f.firstChild.textContent=n;"
