@@ -85,6 +85,7 @@ def test_hy4_discovery_requires_account_availability_and_successful_canary(
         assert MODEL not in catalog.discovered_rows
         assert all(p["model"] != "hy4" for p in probes)
     assert all(p["base_url"] == tencent.BASE_URL and p["max_tokens"] == 256 for p in probes)
+    assert all(p["require_usage"] is True and p["expected_content"] == "PONG" for p in probes)
 
 
 def test_hy4_price_table_keeps_list_prices_and_preview_distinct() -> None:

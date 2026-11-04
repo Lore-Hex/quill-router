@@ -22,7 +22,10 @@ cause. The new manifest row therefore retains `provider-canary-failed`: Credits
 is disabled pending a successful normal canary. This discovery-only row does
 not itself publish a BYOK route or prove customer entitlement. All pre-existing
 manifest rows and operator holds remain unchanged. This is a scoped addition,
-not a full provider refresh.
+not a full provider refresh. Routine Tencent discovery canaries require the
+same nonnegative integer prompt/completion/total usage accounting as this
+canary, in addition to the existing PONG check; they cannot activate the route
+with a weaker acceptance check.
 
 The [Singapore tariff](https://intl.cloud.tencent.com/document/product/1300/78937)
 lists USD/M input 0.834, output 2.501, cache read 0.042. The November 4 notice

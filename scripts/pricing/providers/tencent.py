@@ -251,6 +251,7 @@ CATALOG = DirectOpenAIProvider(
         # Published combo leaves have a pinned provider set in catalog_registry.
         operator_hold_reasons={"deepseek/deepseek-v4-pro-0813": "immutable-release-route-set"},
         canary_max_tokens=256, canary_expected_content="PONG",
+        canary_require_usage=True,
         canary_prompt="Reply exactly PONG",
         expected_models=("tencent/hy3", "z-ai/glm-5.3-flash"),
     ), manifest_path=MANIFEST_PATH,
