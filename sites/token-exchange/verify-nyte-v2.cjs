@@ -289,14 +289,14 @@ if(process.argv[2]){
   for(const width of [390,1280]){
    await cityPage.setViewportSize({width,height:900});
    await cityPage.goto(`https://${market.domain}/`);
-   assert.equal(await cityPage.locator('.hdr .brand-place').innerText(),market.region);
+   assert.equal(await cityPage.locator('.hdr .brand-place').innerText(),market.logo_place||market.region);
    assert.equal(await cityPage.locator('.brand-by').count(),0,'the city home never names NYTE');
    assert.equal(await cityPage.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,`${slug} home fits at ${width}px`);
    await cityPage.goto(`https://${market.domain}/suppliers`);
-   assert.equal(await cityPage.locator('.hdr .brand-place').innerText(),market.region);
+   assert.equal(await cityPage.locator('.hdr .brand-place').innerText(),market.logo_place||market.region);
    assert.equal(await cityPage.locator('.brand-by').count(),0,'pages outside checkout keep the city name alone');
    await cityPage.goto(`https://${market.domain}/buy`);
-   assert.equal(await cityPage.locator('.hdr .brand-place').innerText(),market.region);
+   assert.equal(await cityPage.locator('.hdr .brand-place').innerText(),market.logo_place||market.region);
    assert.equal(await cityPage.locator('.hdr .brand-by').innerText(),'by NYTE');
    assert.equal(await cityPage.evaluate(()=>document.documentElement.dataset.billedBy),'New York Token Exchange (NYTE)','city checkout names who bills the card');
    assert.equal(await cityPage.locator('[data-exchange-name]').textContent(),`${market.name} · by NYTE`);

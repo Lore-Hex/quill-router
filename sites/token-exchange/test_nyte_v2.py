@@ -293,7 +293,7 @@ class NavigationRegistryTests(unittest.TestCase):
         for market in nyte_markets():
             page = render_nyte(market=market)
             self.assertIn(f'<link rel="canonical" href="https://{market["domain"]}/">', page)
-            self.assertIn(f'<span class="brand-place">{market["region"]}</span>', page)
+            self.assertIn(f'<span class="brand-place">{market.get("logo_place", market["region"])}</span>', page)
             self.assertIn(f'<span>{market["name"]}<small>', page)
             self.assertIn(f'href="https://{market["domain"]}/" aria-current="page"', page)
             self.assertIn(f'utm_source={market["domain"]}', page)
@@ -317,6 +317,6 @@ class NavigationRegistryTests(unittest.TestCase):
             (self.assertIn if page == 'buy' else self.assertNotIn)("'by NYTE'", rendered)
             self.assertNotIn('"nytokenexchange.com"', rendered)
             for market in nyte_markets():
-                self.assertIn(f'"{market["domain"]}":["{market["region"]}","{market["name"]}"]', rendered)
+                self.assertIn(f'"{market["domain"]}":["{market.get("logo_place", market["region"])}","{market["name"]}",{str(bool(market.get("logo_one_line"))).lower()}]', rendered)
         self.assertIn('data-exchange-name>New York Token Exchange', render_nyte('buy'))
         self.assertIn("dataset.billedBy='New York Token Exchange (NYTE)'", render_nyte('buy'))
