@@ -92,7 +92,9 @@ document.addEventListener('DOMContentLoaded', () => {
           quote.subtotal_cents !== subtotal || quote.exchange_fee_cents !== exchangeFee ||
           quote.processing_fee_cents !== processingFee || quote.total_cents !== total) throw new Error('Quote unavailable. Please try again.');
       reserveQuote = quote;
-      get('reserve-price').textContent = `${cents.format(perLot / 100)} per lot · ${quote.discount_bps / 100}% early-reservation discount · ${lots} lot${lots === 1 ? '' : 's'}: ${cents.format(subtotal / 100)} + ${cents.format(exchangeFee / 100)} NYTE exchange fee (${quote.exchange_fee_bps / 100}%) + ${cents.format(processingFee / 100)} card processing fee = ${cents.format(total / 100)} USD total${document.documentElement.dataset.billedBy ? `, billed by ${document.documentElement.dataset.billedBy}` : ''}. Index as of ${quote.index_as_of}. Up to ${quote.max_lots} lots by card; larger orders by call.`;
+      // City domains name the billing entity; see host_brand_script in nyte_v2.py.
+      const billedBy = document.documentElement?.dataset.billedBy;
+      get('reserve-price').textContent = `${cents.format(perLot / 100)} per lot · ${quote.discount_bps / 100}% early-reservation discount · ${lots} lot${lots === 1 ? '' : 's'}: ${cents.format(subtotal / 100)} + ${cents.format(exchangeFee / 100)} NYTE exchange fee (${quote.exchange_fee_bps / 100}%) + ${cents.format(processingFee / 100)} card processing fee = ${cents.format(total / 100)} USD total${billedBy ? `, billed by ${billedBy}` : ''}. Index as of ${quote.index_as_of}. Up to ${quote.max_lots} lots by card; larger orders by call.`;
     } catch (error) {
       if (key !== reserveKey) return;
       reserveQuote = null;
