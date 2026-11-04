@@ -291,6 +291,9 @@ if(process.argv[2]){
    assert.equal(await cityPage.locator('.hdr .brand-place').innerText(),market.region);
    assert.equal(await cityPage.locator('.brand-by').count(),0,'the city home never names NYTE');
    assert.equal(await cityPage.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,`${slug} home fits at ${width}px`);
+   await cityPage.goto(`https://${market.domain}/suppliers`);
+   assert.equal(await cityPage.locator('.hdr .brand-place').innerText(),market.region);
+   assert.equal(await cityPage.locator('.brand-by').count(),0,'pages outside checkout keep the city name alone');
    await cityPage.goto(`https://${market.domain}/buy`);
    assert.equal(await cityPage.locator('.hdr .brand-place').innerText(),market.region);
    assert.equal(await cityPage.locator('.hdr .brand-by').innerText(),'by NYTE');

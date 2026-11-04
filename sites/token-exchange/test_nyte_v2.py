@@ -299,7 +299,7 @@ class NavigationRegistryTests(unittest.TestCase):
             self.assertIn(f'utm_source={market["domain"]}', page)
             self.assertIn(f'exchange_market={market["slug"]}', page)
             self.assertNotIn('nytokenexchange.com/"', page.split('class="market-links"')[0])
-            # A city name never implies where a route runs, and NYTE is named only on shared pages.
+            # A city name never implies where a route runs, and NYTE is named only at checkout.
             self.assertNotIn('class="tag us"', page)
             self.assertNotIn('New York', page.split('class="market-links"')[0])
             self.assertNotIn('by NYTE', page)
@@ -314,7 +314,7 @@ class NavigationRegistryTests(unittest.TestCase):
         self.assertIn('<span class="brand-place">New York</span>', home)
         for page in ('buy', 'api', 'sup'):
             rendered = render_nyte(page)
-            self.assertIn("'by NYTE'", rendered)
+            (self.assertIn if page == 'buy' else self.assertNotIn)("'by NYTE'", rendered)
             self.assertNotIn('"nytokenexchange.com"', rendered)
             for market in nyte_markets():
                 self.assertIn(f'"{market["domain"]}":["{market["region"]}","{market["name"]}"]', rendered)

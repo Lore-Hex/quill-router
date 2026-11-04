@@ -225,11 +225,12 @@ def nyte_markets() -> list[dict]:
     return [market | CITIES[market["slug"]] for market in load_markets() if market["slug"] in CITIES]
 
 
-def host_brand_script() -> str:
+def host_brand_script(names_seller: bool = False) -> str:
     """Rename the shared pages for visitors who reached them on a city's own domain.
 
     Every path other than / on a city domain serves New York's pages. Those visitors keep
-    their city's name, with "by NYTE" to connect it to the seller named in the terms."""
+    their city's name. Checkout, reservations and their terms add "by NYTE", since the receipt and
+    contract name NYTE as the seller."""
     hosts = {m["domain"]: [m["region"], m["name"]] for m in nyte_markets()}
     if not hosts:
         return ""
@@ -237,9 +238,10 @@ def host_brand_script() -> str:
     return (
         "<script>(()=>{const m=" + data + "[location.hostname];if(!m)return;"
         "const b=document.querySelector('.hdr .brand');b.setAttribute('aria-label',m[1]+' home');"
-        "b.querySelector('.brand-place').textContent=m[0];const by=document.createElement('small');"
-        "by.className='brand-by';by.textContent='by NYTE';b.querySelector('.brand-line').after(by);"
-        "document.addEventListener('DOMContentLoaded',()=>{const n=m[1]+' · by NYTE';"
+        "b.querySelector('.brand-place').textContent=m[0];"
+        + ("const by=document.createElement('small');by.className='brand-by';by.textContent='by NYTE';"
+           "b.querySelector('.brand-line').after(by);" if names_seller else "")
+        + "document.addEventListener('DOMContentLoaded',()=>{const n=m[1]" + ("+' · by NYTE'" if names_seller else "") + ";"
         "document.title=document.title.replace('New York Token Exchange',n);"
         "document.querySelectorAll('[data-exchange-name]').forEach(e=>{e.textContent=n});"
         "const f=document.querySelector('.site-footer .brand>span');if(f&&f.firstChild)f.firstChild.textContent=n;"
@@ -289,7 +291,7 @@ def render_nyte(
         content = content.replace("{{facilities}}", facility_cards()).replace("{{facility_rate}}", FACILITY_RATE)
     result = (SOURCE / "shell.html").read_text()
     evidence_version = hashlib.sha256((HERE / "live-evidence.js").read_bytes()).hexdigest()[:12]
-    for key, value in dict(domain=market["domain"], market=market["slug"], region=html.escape(market["region"]), exchange_name=html.escape(market["name"]), host_brand=host_brand_script() if market["slug"] == "new-york" and page != "home" else "", nav=render_nav(), buyer_deck=(SOURCE / "buyer-deck.html").read_text() if page in {"home", "api"} else "", extra_head=extra_head, image_url=html.escape(image_url, quote=True), title=html.escape(title), description=html.escape(description, quote=True), path=path, page=page, version=version, content=content, markets=market_links, evidence_script='<script src="/assets/nyte-v2/live-evidence.js?v=' + evidence_version + '" defer></script>' if page == "api" else "").items():
+    for key, value in dict(domain=market["domain"], market=market["slug"], region=html.escape(market["region"]), exchange_name=html.escape(market["name"]), host_brand=host_brand_script(page in {"buy", "manage", "reserved-terms"}) if market["slug"] == "new-york" and page != "home" else "", nav=render_nav(), buyer_deck=(SOURCE / "buyer-deck.html").read_text() if page in {"home", "api"} else "", extra_head=extra_head, image_url=html.escape(image_url, quote=True), title=html.escape(title), description=html.escape(description, quote=True), path=path, page=page, version=version, content=content, markets=market_links, evidence_script='<script src="/assets/nyte-v2/live-evidence.js?v=' + evidence_version + '" defer></script>' if page == "api" else "").items():
         result = result.replace("{{" + key + "}}", value)
     if page == "providers":
         result = result.replace('<div class="legal">', '<div class="legal"><a href="https://trustedrouter.com/trust">Trust center</a>')
