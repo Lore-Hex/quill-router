@@ -473,9 +473,11 @@ def test_the_snapshot_attributes_terraform_sets_pass_the_startup_script() -> Non
     # Each entry names its zone and machine type: { zone = ..., machine_type = ... }.
     for_each = re.search(r"^\s*for_each\s*=\s*\{\n(.*?)^\s*\}$", resource, re.M | re.S)
     assert for_each
-    assert re.findall(
+    nodes = re.findall(r'^\s*"tr-fastpath-\d+"\s*=', for_each.group(1), re.M)
+    placed = re.findall(
         r'^\s*"tr-fastpath-\d+"\s*=\s*\{\s*zone\s*=\s*"us-central1-[a-z]",\s*machine_type\s*=\s*"[a-z0-9-]+"\s*\}$',
         for_each.group(1), re.M)
+    assert nodes and len(placed) == len(nodes), (nodes, placed)
     metadata = re.search(r"^\s*metadata\s*=\s*merge\(\{[^}]*\},\s*([^\n]*)\)$", resource, re.M)
     assert metadata and metadata.group(1) == "local.fastpath_edge_snapshot", metadata
 
