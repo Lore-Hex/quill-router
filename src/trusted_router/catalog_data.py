@@ -4427,6 +4427,18 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
         ),
     ),
     # --- No single creator country ---
+    "zro": ModelOrigin(
+        country=None,
+        lab_name="Zro / MoonMath (API model namespace)",
+        source_url="https://zro.moonmath.ai/docs/models",
+        note=(
+            "Checked Zro's model documentation on 2026-11-04: Dolly 1 and "
+            "Dolly 2 are GLM variants, and Abyss 1 is a DeepSeek variant. "
+            "The API namespace combines upstream weights with provider variants "
+            "without establishing a single creator country. EU/US inference "
+            "placement is not model-creator country."
+        ),
+    ),
     "decision-models": ModelOrigin(
         country=None,
         lab_name="Baseten / Base Labs decision-model namespace",
