@@ -11,11 +11,13 @@ from pathlib import Path
 from string import Template
 
 from build import HERE, load_markets
+from nyte_v2 import CITIES, uses_nyte
 
 
 def prepare(output):
     template = Template((HERE / 'social-card.html').read_text())
     for market in load_markets():
+        market = market | CITIES.get(market['slug'], {})
         headline = html.escape(market['headline'])
         accent = html.escape(market['headline_accent'] + '.')
         if market['slug'] == 'united-states':
@@ -27,7 +29,7 @@ def prepare(output):
         folder = output / f"social-{market['slug']}"
         folder.mkdir(parents=True, exist_ok=True)
         card = template
-        if market['slug'] == 'new-york':
+        if uses_nyte(market):
             card = Template((HERE / 'nyte-v2/social-card.html').read_text())
             headline = re.search(r'<h1>(.*?)</h1>', (HERE / 'nyte-v2/home.html').read_text(), re.S).group(1)
         (folder / 'index.html').write_text(card.substitute(
