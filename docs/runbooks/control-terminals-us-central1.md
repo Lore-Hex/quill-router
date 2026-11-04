@@ -96,6 +96,23 @@ recovery evidence, current Cloud Run caps and load, and Spanner headroom before
 merging the activation change. Observe successful terminal requests from all
 caller regions and rollback recovery through the reviewed workflow.
 
+**Async settle negotiation depends on where settles land.**
+`TR_ASYNC_SETTLE_NEGOTIATION_REGIONS` in `scripts/deploy/rollout.sh` has
+included us-east4 since 2026-11-04. Two things made that safe. This route
+sends every enclave's settle to us-central1. The memory handoff
+(`TR_ASYNC_SETTLE_HANDOFF_MODE=memory`) answers before any Spanner work.
+
+If this route is rolled back, us-east4 settles land in the us-east4 router.
+That router is in `TR_ASYNC_SETTLE_ACCEPT_REGIONS` and runs the memory
+handoff too, so the settles stay async. A region whose own router is not in
+the accept list falls back to synchronous settles there. Europe is such a
+region today.
+
+If the handoff also goes back to `outbox`, revisit the negotiation pin in the
+same change. The 2026-10-31 measurements that kept us-east4 and Europe out
+apply again: us-east4's p99 was 487 ms against the 500 ms budget, and Europe
+was over budget.
+
 ## Verify placement and latency
 
 Operator verification for 2026-11-04 02:12–03:12Z confirmed that every settle,
