@@ -372,4 +372,9 @@ func TestStageRecordsAnswersEachInOneTransaction(t *testing.T) {
 	if _, err := s.StageRecords(ctx, []StagedRecord{big, big}); err == nil {
 		t.Fatal("more than MaxStageBytes were taken")
 	}
+	alone := record(live, "alone")
+	alone.Body = make([]byte, MaxStageBytes+1)
+	if errs, err := s.StageRecords(ctx, []StagedRecord{alone}); err != nil || errs[0] != nil {
+		t.Fatalf("one record past MaxStageBytes alone: %v %v", errs, err)
+	}
 }

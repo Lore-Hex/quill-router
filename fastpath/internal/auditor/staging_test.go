@@ -14,14 +14,14 @@ import (
 // gatedStaging is a StagingStore whose StageRecords, while gate is set,
 // tells entered and waits for gate to close: the records that come
 // meanwhile wait for the next transaction. It notes each transaction's
-// authorizations, fails the next one when fail is set, and answers
-// ErrRetired for those in retired.
+// authorizations, fails the next one when fail is set, and gives each
+// record in answers its answer there.
 type gatedStaging struct {
 	mu      sync.Mutex
 	gate    chan struct{}
 	entered chan struct{}
 	fail    bool
-	retired map[string]bool
+	answers map[string]error
 	batches [][]string
 }
 
@@ -44,9 +44,7 @@ func (g *gatedStaging) StageRecords(_ context.Context, rs []store.StagedRecord) 
 	errs := make([]error, len(rs))
 	for i, r := range rs {
 		auths = append(auths, r.AuthorizationID)
-		if g.retired[r.AuthorizationID] {
-			errs[i] = store.ErrRetired
-		}
+		errs[i] = g.answers[r.AuthorizationID]
 	}
 	g.batches = append(g.batches, auths)
 	if g.fail {
@@ -94,13 +92,21 @@ func waitFor(t *testing.T, s *Stager, n int) {
 
 // TestTheStagerStagesWhatComesMeanwhileTogether: the records that come
 // while a transaction stages another go in one transaction after it, each
-// answered as it would be alone: a retired lease's acknowledged, the rest
-// acknowledged once staged. A transaction that fails asks for each of its
-// records again, and one whose caller stops waiting is asked for again
-// though it may be staged.
+// answered as it would be alone: one its lease's retirement refuses is
+// acknowledged, one with no lease is told and acknowledged, one whose write
+// failed is asked for again, and the rest are acknowledged once staged. A
+// transaction that fails asks for each of its records again. One whose
+// caller stops waiting is asked for again and no later transaction takes
+// it, and Wait returns once none runs.
 func TestTheStagerStagesWhatComesMeanwhileTogether(t *testing.T) {
-	g := &gatedStaging{retired: map[string]bool{}}
-	s, err := NewStager(g, func(string, string) {})
+	g := &gatedStaging{answers: map[string]error{}}
+	var mu sync.Mutex
+	var alerts []string
+	s, err := NewStager(g, func(auth, what string) {
+		mu.Lock()
+		defer mu.Unlock()
+		alerts = append(alerts, auth+" "+what)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +140,11 @@ func TestTheStagerStagesWhatComesMeanwhileTogether(t *testing.T) {
 	wgFirst := run(ctx, first)
 	<-entered
 	rest := []*fakeStaged{fullRecord(t), fullRecord(t), fullRecord(t), fullRecord(t), fullRecord(t)}
-	g.retired[rest[2].auth] = true
+	g.mu.Lock()
+	g.answers[rest[1].auth] = errInjected
+	g.answers[rest[2].auth] = store.ErrRetired
+	g.answers[rest[3].auth] = store.ErrNoLease
+	g.mu.Unlock()
 	wgRest := run(ctx, rest...)
 	waitFor(t, s, len(rest))
 	close(gate)
@@ -144,7 +154,11 @@ func TestTheStagerStagesWhatComesMeanwhileTogether(t *testing.T) {
 		!slices.Equal(slices.Sorted(slices.Values(g.batches[1])), auths(rest...)) {
 		t.Fatalf("the transactions: %v", g.batches)
 	}
-	settled("staged together", 1, 0, append([]*fakeStaged{first}, rest...)...)
+	settled("staged together", 1, 0, first, rest[0], rest[2], rest[3], rest[4])
+	settled("its write failed", 0, 1, rest[1])
+	if want := []string{rest[3].auth + " " + AlertFullRecordNoLease}; !slices.Equal(alerts, want) {
+		t.Fatalf("told %v, want %v", alerts, want)
+	}
 
 	g.mu.Lock()
 	g.batches = nil
@@ -185,18 +199,16 @@ func TestTheStagerStagesWhatComesMeanwhileTogether(t *testing.T) {
 	close(gate)
 	wgHolder.Wait()
 	settled("the holder", 1, 0, holder)
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		g.mu.Lock()
-		n := len(g.batches)
-		g.mu.Unlock()
-		if n == 2 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("the record whose caller left was not staged: %v", g.batches)
-		}
-		time.Sleep(time.Millisecond)
+	s.Wait()
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if len(g.batches) != 1 || !slices.Equal(g.batches[0], []string{holder.auth}) {
+		t.Fatalf("the transactions after a caller left: %v", g.batches)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.running || len(s.waiting) != 0 {
+		t.Fatalf("after Wait: running %v, %d waiting", s.running, len(s.waiting))
 	}
 }
 

@@ -59,7 +59,8 @@ func (s *Store) StageRecord(ctx context.Context, r StagedRecord) error {
 // each whose lease has not retired. Each record's answer is its own, in
 // errs, as StageRecord's would be (ErrRetired, ErrNoLease, or one it is
 // refused for); err is the transaction's, and then none is staged. More than
-// MaxStageRecords, or bodies past MaxStageBytes, are refused.
+// MaxStageRecords, or more than one record with bodies past MaxStageBytes,
+// are refused: one record alone is staged whatever its size, as before.
 func (s *Store) StageRecords(ctx context.Context, rs []StagedRecord) (errs []error, err error) {
 	if len(rs) == 0 {
 		return nil, nil
@@ -71,7 +72,7 @@ func (s *Store) StageRecords(ctx context.Context, rs []StagedRecord) (errs []err
 	for _, r := range rs {
 		bytes += len(r.Body)
 	}
-	if bytes > MaxStageBytes {
+	if len(rs) > 1 && bytes > MaxStageBytes {
 		return nil, fmt.Errorf("store: %d bytes of records to stage at once, more than %d", bytes, MaxStageBytes)
 	}
 	valid := make([]error, len(rs))

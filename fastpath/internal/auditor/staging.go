@@ -71,12 +71,15 @@ type Stager struct {
 	alert func(authorization, what string)
 
 	mu      sync.Mutex
+	idle    *sync.Cond // on mu: running has become false
 	waiting []*staging
 	running bool
 }
 
-// staging is one record waiting for its transaction, and its answer.
+// staging is one record waiting for its transaction, its caller's context,
+// and its answer.
 type staging struct {
+	ctx  context.Context
 	r    store.StagedRecord
 	done chan error
 }
@@ -92,13 +95,29 @@ func newStager(s StagingStore, alert func(authorization, what string), calls *in
 	if s == nil || alert == nil {
 		return nil, errors.New("auditor: a stager needs a store and someone to tell")
 	}
-	return &Stager{store: boundStagingStore{s: s, bound: bound{d: StoreDeadline, j: newJournal(nil), calls: calls}},
-		alert: alert}, nil
+	st := &Stager{store: boundStagingStore{s: s, bound: bound{d: StoreDeadline, j: newJournal(nil), calls: calls}},
+		alert: alert}
+	st.idle = sync.NewCond(&st.mu)
+	return st, nil
 }
 
-// Run stages what src delivers until ctx ends or src fails.
+// Run stages what src delivers until ctx ends or src fails, and returns
+// once no transaction it began still runs (Wait).
 func (s *Stager) Run(ctx context.Context, src StagedSource) error {
-	return src.Receive(ctx, s.Handle)
+	err := src.Receive(ctx, s.Handle)
+	s.Wait()
+	return err
+}
+
+// Wait returns once no transaction runs: the records left waiting are those
+// whose callers have stopped waiting, which no transaction takes. A caller
+// that stops the store waits for the stager's callbacks, then for this.
+func (s *Stager) Wait() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for s.running {
+		s.idle.Wait()
+	}
 }
 
 // Handle stages one message. A full record's lease is the one its
@@ -154,7 +173,7 @@ func (s *Stager) Handle(ctx context.Context, m Staged) {
 // own error, or the transaction's, or ctx's if it ends first, when r may
 // still be staged, as a redelivery would stage it again.
 func (s *Stager) stage(ctx context.Context, r store.StagedRecord) error {
-	w := &staging{r: r, done: make(chan error, 1)}
+	w := &staging{ctx: ctx, r: r, done: make(chan error, 1)}
 	s.mu.Lock()
 	s.waiting = append(s.waiting, w)
 	start := !s.running
@@ -179,6 +198,7 @@ func (s *Stager) drain(ctx context.Context) {
 		batch := s.take()
 		if len(batch) == 0 {
 			s.running = false
+			s.idle.Broadcast()
 			s.mu.Unlock()
 			return
 		}
@@ -198,20 +218,29 @@ func (s *Stager) drain(ctx context.Context) {
 	}
 }
 
-// take removes from waiting the next transaction's records: the oldest, up
-// to store.MaxStageRecords and store.MaxStageBytes, and at least one. Its
-// caller holds mu.
+// take removes from waiting the next transaction's records: the oldest
+// whose callers still wait, up to store.MaxStageRecords and
+// store.MaxStageBytes, and at least one if any waits. A record whose caller
+// has stopped waiting is dropped: it was asked for again, and its
+// redelivery stages it. Its caller holds mu.
 func (s *Stager) take() []*staging {
-	n, bytes := 0, 0
-	for n < len(s.waiting) && n < store.MaxStageRecords {
-		size := len(s.waiting[n].r.Body)
-		if n > 0 && bytes+size > store.MaxStageBytes {
+	var batch []*staging
+	bytes, n := 0, 0
+	for ; n < len(s.waiting) && len(batch) < store.MaxStageRecords; n++ {
+		w := s.waiting[n]
+		if w.ctx != nil && w.ctx.Err() != nil {
+			continue
+		}
+		if len(batch) > 0 && bytes+len(w.r.Body) > store.MaxStageBytes {
 			break
 		}
-		bytes += size
-		n++
+		bytes += len(w.r.Body)
+		batch = append(batch, w)
 	}
-	batch := s.waiting[:n:n]
+	clear(s.waiting[:n])
 	s.waiting = s.waiting[n:]
+	if len(s.waiting) == 0 {
+		s.waiting = nil
+	}
 	return batch
 }
