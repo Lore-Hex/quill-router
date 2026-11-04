@@ -4958,7 +4958,7 @@
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
     },
     "operational_analytics:public_snapshot:1": {
-      "fingerprint": "e8cb22c032aefa3d225424c22c12e552cf2dcbb947eea1974e31755cead545b0",
+      "fingerprint": "e0aaf61977c812d957cc64c2417cde1b33812fd0662dc894655be1fbf934a0e1",
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
     },
     "operational_analytics_direct:flush:1": {

@@ -261,6 +261,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/pricing",
     "/api/reference",
     "/apps",
+    "/encrypted-ai",
     "/resources",
     "/customers/robot-robot-human",
     "/careers",
@@ -2097,6 +2098,16 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             "only, never prompts or keys."
         ),
     ),
+    "encrypted-ai": PublicPage(
+        template="public/encrypted_ai.html",
+        og_card="apps.png",
+        title="Encrypted AI apps, ranked by tokens you can verify",
+        description=(
+            "The directory of encrypted AI apps: ranked weekly by tokens served on "
+            "confidential compute, with the attestation and receipts linked so anyone "
+            "can check. Self-attested apps and a watchlist of personal AI agents."
+        ),
+    ),
     "token-exchange": PublicPage(
         template="public/token_exchange.html",
         title="AI Token Exchange for Enterprise",
@@ -2519,6 +2530,28 @@ def public_apps_html(settings: Settings, *, apps: dict[str, object]) -> str:
             github_enabled=settings.github_oauth_enabled,
             static_version=_static_version(settings),
             apps=apps,
+        )
+    )
+
+
+def public_encrypted_ai_html(settings: Settings, *, view: dict[str, object]) -> str:
+    """Render /encrypted-ai: the verified ranking joined to the curated tiers
+    (see trusted_router.encrypted_ai.directory_view)."""
+    page = PUBLIC_PAGES["encrypted-ai"]
+    return (
+        _env()
+        .get_template(page.template)
+        .render(
+            api_base_url=settings.api_base_url,
+            site_url=f"https://{settings.trusted_domain}/encrypted-ai",
+            title=f"{page.title} | TrustedRouter",
+            heading=page.title,
+            description=page.description,
+            og_image=_og_image_url(settings, page.og_card),
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+            view=view,
         )
     )
 

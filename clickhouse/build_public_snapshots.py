@@ -17,6 +17,7 @@ from typing import Any
 from trusted_router.apps import aggregate_apps
 from trusted_router.catalog import MODELS, endpoints_for_model
 from trusted_router.client_reliability import build_client_reliability
+from trusted_router.encrypted_ai import aggregate_encrypted_ai
 from trusted_router.storage_models import (
     ProviderBenchmarkSample,
     SyntheticProbeSample,
@@ -36,6 +37,13 @@ CLIENT_ROLLUP_LIMIT = 100_000
 # Published rows and calibration rows are fetched by separate queries, each
 # with its own CLIENT_ROLLUP_LIMIT, so neither scope can truncate the other.
 CLIENT_ROLLUP_SCOPES = ("fleet", "fleet_all")
+# The encrypted AI directory sums 30 days of generations; a quarter-hourly
+# rebuild is plenty for a weekly ranking (the reader accepts an hour's age).
+# Rebuilt when the published one is older than this, not on a clock minute:
+# the one-minute timer drifts, so an exact-minute gate fires by luck.
+ENCRYPTED_AI_REBUILD_SECONDS = 14 * 60
+ENCRYPTED_AI_ROW_LIMIT = 20_000
+ENCRYPTED_AI_MAX_EXECUTION_SECONDS = 60
 
 
 def _query(
@@ -120,6 +128,71 @@ FORMAT JSONEachRow
 """,
     )
     return _dataclass_rows(ProviderBenchmarkSample, output)
+
+
+def _encrypted_ai_rows(password: str) -> list[dict[str, Any]]:
+    """Tokens and requests per (app, referer domain, provider, model), summed
+    over the last 1, 7 and 30 days. Names, domains and counts only."""
+    output = _query(
+        password,
+        f"""
+SELECT
+  app,
+  domain(coalesce(http_referer, '')) AS ref,
+  provider,
+  model,
+  groupUniqArrayArray(8)(app_categories) AS categories,
+  sumIf(tokens_prompt + tokens_completion, created_at >= now64(3) - INTERVAL 1 DAY) AS t1,
+  countIf(created_at >= now64(3) - INTERVAL 1 DAY) AS r1,
+  sumIf(tokens_prompt + tokens_completion, created_at >= now64(3) - INTERVAL 7 DAY) AS t7,
+  countIf(created_at >= now64(3) - INTERVAL 7 DAY) AS r7,
+  sum(tokens_prompt + tokens_completion) AS t30,
+  count() AS r30
+FROM activity_generations FINAL
+WHERE created_at >= now64(3) - INTERVAL 30 DAY AND synthetic = 0
+GROUP BY app, ref, provider, model
+ORDER BY t30 DESC
+LIMIT {ENCRYPTED_AI_ROW_LIMIT}
+SETTINGS max_execution_time = {ENCRYPTED_AI_MAX_EXECUTION_SECONDS}
+FORMAT JSONEachRow
+""",
+    )
+    return [json.loads(line) for line in output.splitlines() if line.strip()]
+
+
+def _encrypted_ai_age_seconds(password: str, *, now: dt.datetime) -> float | None:
+    """Seconds since the published encrypted_ai snapshot, None if none."""
+    output = _query(
+        password,
+        """
+SELECT toUnixTimestamp64Milli(max(generated_at)) AS ms
+FROM public_analytics_snapshots
+WHERE name = 'encrypted_ai'
+FORMAT JSONEachRow
+""",
+    )
+    line = next((line for line in output.splitlines() if line.strip()), "")
+    ms = json.loads(line).get("ms") if line else None
+    # max() over no rows is the epoch, not NULL.
+    if not ms or int(ms) <= 0:
+        return None
+    return now.timestamp() - int(ms) / 1000
+
+
+def _publish_encrypted_ai(password: str, *, now: dt.datetime, generated_at: str) -> None:
+    """Build and insert the encrypted AI snapshot on its own.
+
+    Runs after the core snapshots are inserted, and nothing it does can stop
+    them: any failure leaves the last snapshot to the reader's freshness bound.
+    """
+    try:
+        age = _encrypted_ai_age_seconds(password, now=now)
+        if age is not None and 0 <= age < ENCRYPTED_AI_REBUILD_SECONDS:
+            return
+        payload = aggregate_encrypted_ai(_encrypted_ai_rows(password), generated_at=generated_at)
+        _insert_snapshots(password, {"encrypted_ai": payload}, now=now, generated_at=generated_at)
+    except Exception as exc:  # noqa: BLE001 - isolation is the point; see docstring.
+        print(json.dumps({"event": "encrypted_ai_build_failed", "error": type(exc).__name__}), file=sys.stderr)
 
 
 def _evidence_samples(password: str) -> list[ProviderBenchmarkSample]:
@@ -400,11 +473,15 @@ def build_snapshots(
     }
 
 
+def _utcnow() -> dt.datetime:
+    return dt.datetime.now(dt.UTC)
+
+
 def main() -> int:
     password = os.environ.get("CH_PASSWORD", "")
     if not password:
         raise SystemExit("CH_PASSWORD is required")
-    now = dt.datetime.now(dt.UTC)
+    now = _utcnow()
     generated_at = now.isoformat(timespec="milliseconds").replace("+00:00", "Z")
     status_samples, status_rollups = _status_inputs(password)
     evidence_rows = None
@@ -429,6 +506,15 @@ def main() -> int:
     )
     if evidence_rows is None:
         snapshots.pop("leaderboard_evidence", None)
+    _insert_snapshots(password, snapshots, now=now, generated_at=generated_at)
+    print(json.dumps({"snapshots": len(snapshots), "generated_at": generated_at}))
+    _publish_encrypted_ai(password, now=now, generated_at=generated_at)
+    return 0
+
+
+def _insert_snapshots(
+    password: str, snapshots: dict[str, dict[str, Any]], *, now: dt.datetime, generated_at: str
+) -> None:
     rows = [
         {
             "name": name,
@@ -444,8 +530,6 @@ def main() -> int:
         "INSERT INTO public_analytics_snapshots FORMAT JSONEachRow",
         input_bytes=body,
     )
-    print(json.dumps({"snapshots": len(rows), "generated_at": generated_at}))
-    return 0
 
 
 if __name__ == "__main__":
