@@ -2180,7 +2180,10 @@ existence check, not re-verification of the discarded signed terminal.
    `TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED=true`; verify healthy fresh fleet
    publication; reverify the already-installed signer/epoch pins, enclave public
    keyring and signature roundtrip on all serving revisions. Then pin
-   `TR_ASYNC_SETTLE_PILOT_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d`,
+   `TR_ASYNC_SETTLE_PILOT_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d,162e441a-5d13-414f-92bd-7c6cd805faa3`,
+   `TR_ASYNC_SETTLE_FASTPATH_OVERLAP_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d`
+   (the operator workspace is in the fast-path pilot too; without this pin
+   admission skips it, and post-flip blocks on `pilot_only_admission`),
    `TR_ASYNC_SETTLE_PILOT_CAP_MICRO=5000000`, and finally
    `TR_ASYNC_SETTLE_ENABLED=true`. Enable enclave
    `TR_ASYNC_SETTLE_NEGOTIATE=on` only with those protections verified, and
