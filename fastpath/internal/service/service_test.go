@@ -849,6 +849,18 @@ func TestTheOverdueAllowancesAreTenMinutes(t *testing.T) {
 	}
 }
 
+// TestThePendingWorkIsTwoWorkersDroppingOnceAMinute: the pending sweep
+// works two leases' packs at once by default, and drops retired leases'
+// staged records at most once a minute, and the defaults come through the
+// configuration's setup.
+func TestThePendingWorkIsTwoWorkersDroppingOnceAMinute(t *testing.T) {
+	for name, cfg := range map[string]Config{"the defaults": Defaults(), "after the setup": Defaults().agreed()} {
+		if cfg.Pending.Workers != 2 || cfg.Pending.DropEvery != time.Minute {
+			t.Fatalf("%s: %d workers, dropping every %v", name, cfg.Pending.Workers, cfg.Pending.DropEvery)
+		}
+	}
+}
+
 // TestTheFrontDoorAnswersWithinTheControlPlanesBudget: the front door's
 // waits compose to an answer within its budget, 1.2 s, which the control
 // plane's 1.5 s for a call (fastpath_front_door_timeout_seconds, its

@@ -186,7 +186,7 @@ func Defaults() Config {
 			Wait: 5 * time.Second, DrainOverdue: 10 * time.Minute},
 		Ticker: auditor.TickerConfig{Every: time.Second, Limit: 100, Wait: 5 * time.Second},
 		Pending: auditor.PendingConfig{Every: 5 * time.Second, Limit: 100, Wait: 5 * time.Second, Overdue: 10 * time.Minute,
-			Workers: auditor.DefaultPendingWorkers},
+			Workers: auditor.DefaultPendingWorkers, DropEvery: auditor.DefaultDropEvery},
 		Stopping: 10 * time.Second,
 		HandOff:  10 * time.Second,
 	}

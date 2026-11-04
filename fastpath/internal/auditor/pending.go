@@ -48,6 +48,10 @@ type PendingConfig struct {
 	// lease's packs by one worker at a time, in the order the sweep read
 	// them; 0 is DefaultPendingWorkers.
 	Workers int
+	// DropEvery is how often, at most, a sweep drops the staged records of
+	// leases that have retired or gone (store.RetiredStaged), timed by
+	// Clock; 0 is DefaultDropEvery.
+	DropEvery time.Duration
 
 	// The tests' own: each Store call's deadline (StoreDeadline), where
 	// the sweep's lines go (the standard logger) and where its calls are
@@ -61,8 +65,22 @@ type PendingConfig struct {
 // when PendingConfig.Workers is 0. A pack's work is Spanner calls and
 // outcome publishes, each waited on, so one worker at a time did some
 // seventy to a hundred packs a minute on 2026-11-04, while a thousand
-// settles a second made three hundred.
-const DefaultPendingWorkers = 8
+// settles a second made three hundred. Eight on each of two members
+// cleared the backlog in two minutes rather than twenty-five, but burst
+// into Spanner beside the live settles: high-priority CPU went from 33% to
+// 47%, and settles that failed and were tried again from 172 to 13,245
+// (2026-11-04). Two, with the staged records read a pack at once, keep up
+// with the settles while spreading the work out.
+const DefaultPendingWorkers = 2
+
+// DefaultDropEvery is how often, at most, the sweep drops retired leases'
+// staged records when PendingConfig.DropEvery is 0. The scan for them is a
+// join over every staged record, which costs more as the stage fills:
+// every five seconds on two members, it took 6.5 to 9.4 Spanner
+// CPU-seconds a minute at a thousand settles a second (2026-11-04). What
+// it drops nothing needs, so dropping it a minute later costs only the
+// rows' room.
+const DefaultDropEvery = time.Minute
 
 // Pending does the winners' pending work (§4.8, §4.9): for each pack whose
 // work is not done, every winner's outcome is published to the record topic,
@@ -72,13 +90,14 @@ const DefaultPendingWorkers = 8
 // records are dropped. A pack whose work cannot be done yet, a staged record
 // not there or a write that failed, waits for the next sweep, and holds up
 // none after it. A staged record no pack drops, such as one a crash left
-// between a mark and its drop, goes once its lease retires. Every write is idempotent on its authorization, and an outcome
+// between a mark and its drop, goes once its lease retires, at a sweep at
+// most DropEvery later. Every write is idempotent on its authorization, and an outcome
 // published twice is the same message, so members that sweep at once, or a
 // sweep after a crash, do no harm. Packs share no winner, so a sweep works
 // several leases' packs at once (Workers); a lease's own packs it works one
 // at a time, in commit order, as one sweep did all of them.
 //
-// Only the sweep's goroutine reads and writes firstSaw and told.
+// Only the sweep's goroutine reads and writes firstSaw, told and dropped.
 type Pending struct {
 	cfg PendingConfig
 	// firstSaw is when each pack whose work is not done was first seen,
@@ -86,19 +105,24 @@ type Pending struct {
 	// forgotten at the next sweep.
 	firstSaw map[string]time.Time
 	told     map[string]bool
+	// dropped is when a sweep last began dropping retired leases' staged
+	// records; zero before the first.
+	dropped time.Time
 }
 
 // NewPending is the pending work with its configuration.
 func NewPending(cfg PendingConfig) (*Pending, error) {
 	if cfg.Store == nil || cfg.Records == nil || cfg.Every <= 0 || cfg.Limit < 1 || cfg.Wait <= 0 || cfg.Alert == nil ||
-		cfg.Overdue < 0 || cfg.Workers < 0 {
+		cfg.Overdue < 0 || cfg.Workers < 0 || cfg.DropEvery < 0 {
 		return nil, errors.New("auditor: pending work needs a store, the record topic, an interval, a page size, " +
-			"a publish wait, someone to tell, a non-negative overdue allowance and a non-negative number of workers")
+			"a publish wait, someone to tell, a non-negative overdue allowance, a non-negative number of workers " +
+			"and a non-negative drop interval")
 	}
 	if cfg.Clock == nil {
 		cfg.Clock = time.Now
 	}
 	cfg.Workers = cmp.Or(cfg.Workers, DefaultPendingWorkers)
+	cfg.DropEvery = cmp.Or(cfg.DropEvery, DefaultDropEvery)
 	// The workers tell from their own goroutines and the sweep from its;
 	// whoever is told still hears one alert at a time, as from one sweep.
 	var telling sync.Mutex
@@ -128,10 +152,17 @@ func (p *Pending) Run(ctx context.Context) error {
 }
 
 // sweep does the work of every pack not done, then drops the staged records
-// of leases that have retired.
+// of leases that have retired, at the first sweep and then once DropEvery
+// has passed since the last drop began, whether or not it finished: a scan
+// that failed waits as one that did not. A clock that went back drops at
+// once rather than wait for it to come round again.
 func (p *Pending) sweep(ctx context.Context) {
 	p.sweepPacks(ctx)
-	p.dropRetired(ctx)
+	now := p.cfg.Clock()
+	if p.dropped.IsZero() || now.Sub(p.dropped) >= p.cfg.DropEvery || now.Before(p.dropped) {
+		p.dropped = now
+		p.dropRetired(ctx)
+	}
 }
 
 // sweepPacks does the work of every pack not done, a page at a time. A

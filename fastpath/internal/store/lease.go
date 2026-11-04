@@ -1,8 +1,11 @@
 package store
 
 import (
+	"cmp"
+	"container/list"
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"cloud.google.com/go/spanner"
@@ -102,7 +105,31 @@ func (s *Store) ReadLease(ctx context.Context, ref LeaseRef) (Lease, time.Time, 
 // settle log keys a lease's records by its ID, and the auditor loads the
 // lease by its workspace and ID. A lease ID names one lease, and its
 // workspace never changes.
+//
+// So the store remembers each answer it found (foundLeases), and finds a
+// lease once while it stays among the MaxFoundLeases most recently found:
+// the stager finds a lease for every full record, a thousand a second at
+// a thousand settles a second (2026-11-04, the top query by CPU). An ID no
+// lease has, and a read that failed, are never remembered. A lease's row
+// can go after it found it, seven days after the lease retired, and then
+// FindLease still answers its key, as the read before the row went did;
+// every caller reads the row by that key next, and that read answers
+// ErrNoLease as FindLease would have (StageRecord, Load), and forgets the
+// lease. The lease ID is never another lease's: an owner mints it at
+// random (NewLeaseID), and a grant refuses one another workspace has.
 func (s *Store) FindLease(ctx context.Context, leaseID string) (LeaseRef, error) {
+	if ref, ok := s.found.get(leaseID); ok {
+		return ref, nil
+	}
+	ref, err := s.findLease(ctx, leaseID)
+	if err == nil {
+		s.found.put(ref)
+	}
+	return ref, err
+}
+
+// findLease reads the row key of the lease with an ID.
+func (s *Store) findLease(ctx context.Context, leaseID string) (LeaseRef, error) {
 	ro := s.client.Single()
 	defer ro.Close()
 	ref, found := LeaseRef{LeaseID: leaseID}, false
@@ -120,6 +147,67 @@ func (s *Store) FindLease(ctx context.Context, leaseID string) (LeaseRef, error)
 		return LeaseRef{}, ErrNoLease
 	}
 	return ref, nil
+}
+
+// MaxFoundLeases bounds the leases FindLease remembers: some minutes of a
+// node's leases, at a few a second, in a few hundred kilobytes.
+const MaxFoundLeases = 4096
+
+// foundLeases are the leases FindLease found, by ID, the most recently
+// used limit of them (MaxFoundLeases when 0); the zero value is empty. It
+// is safe for concurrent use: the stager finds leases from many goroutines.
+type foundLeases struct {
+	mu    sync.Mutex
+	limit int
+	at    map[string]*list.Element
+	// order holds each lease's LeaseRef, the most recently used first.
+	order list.List
+}
+
+func (f *foundLeases) get(leaseID string) (LeaseRef, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	e, ok := f.at[leaseID]
+	if !ok {
+		return LeaseRef{}, false
+	}
+	f.order.MoveToFront(e)
+	return e.Value.(LeaseRef), true
+}
+
+func (f *foundLeases) put(ref LeaseRef) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if e, ok := f.at[ref.LeaseID]; ok {
+		e.Value = ref
+		f.order.MoveToFront(e)
+		return
+	}
+	if f.at == nil {
+		f.at = map[string]*list.Element{}
+	}
+	f.at[ref.LeaseID] = f.order.PushFront(ref)
+	for f.order.Len() > cmp.Or(f.limit, MaxFoundLeases) {
+		oldest := f.order.Back()
+		f.order.Remove(oldest)
+		delete(f.at, oldest.Value.(LeaseRef).LeaseID)
+	}
+}
+
+// forget forgets a lease whose row was not there.
+func (f *foundLeases) forget(leaseID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if e, ok := f.at[leaseID]; ok {
+		f.order.Remove(e)
+		delete(f.at, leaseID)
+	}
+}
+
+func (f *foundLeases) len() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.order.Len()
 }
 
 // RenewResult is one lease's renewal: whether the lease took it, and the
