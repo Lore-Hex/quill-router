@@ -24,7 +24,6 @@
     {% endif %}
     {% if view.available %}
     <dl class="eai-stats">
-      <div><dt>Encrypted tokens this week</dt><dd>{{ "{:,}".format(week.exchange_encrypted_tokens) }}</dd></div>
       <div><dt>Apps verified this week</dt><dd>{{ week.apps | length }}</dd></div>
     </dl>
     {% endif %}
@@ -106,15 +105,14 @@
     {% if w.apps %}
     <div class="table-wrap">
       <table class="home-table">
-        <thead><tr><th>#</th><th>App</th><th>Category</th><th class="eai-num">Encrypted tokens</th><th class="eai-num">Share encrypted</th><th>Evidence</th></tr></thead>
+        <thead><tr><th>#</th><th>App</th><th>Category</th><th class="eai-num">Share encrypted</th><th>Evidence</th></tr></thead>
         <tbody>
           {% for a in w.apps %}
           <tr data-eai-category="{{ a.category }}">
             <td>{{ a.rank }}</td>
             <td>{% if a.url %}<a href="{{ a.url }}" rel="nofollow ugc noopener" target="_blank">{{ a.name }}</a>{% else %}{{ a.name }}{% endif %}{% if a.domain %}<div class="eai-cat">{{ a.domain }}</div>{% endif %}</td>
             <td>{{ view.category_labels.get(a.category, "Other") }}</td>
-            <td class="eai-num">{{ "{:,}".format(a.encrypted_tokens) }}</td>
-            <td class="eai-num">{{ "{:.0%}".format(a.encrypted_share) }}</td>
+            <td class="eai-num">{{ "<1%" if 0 < a.encrypted_share < 0.01 else "{:.0%}".format(a.encrypted_share) }}</td>
             <td><a href="/docs/receipts#verify">Verify</a></td>
           </tr>
           {% endfor %}
@@ -126,7 +124,7 @@
     {% endif %}
   </div>
   {% endfor %}
-  <p class="eai-note">Ranked by tokens served on Confidential routes. App names and domains are self-reported in request headers, as on other AI routers; we show counts only, never a prompt, workspace or key. Share encrypted is the app's encrypted tokens over all its tokens on the exchange in the window. Traffic that names a company listed below is ranked only after that company confirms it.</p>
+  <p class="eai-note">Ranked by tokens served on Confidential routes. App names and domains are self-reported in request headers, as on other AI routers; we never show a prompt, workspace, key or token count. Share encrypted is the app's encrypted tokens over all its tokens on the exchange in the window. Traffic that names a company listed below is ranked only after that company confirms it.</p>
 </section>
 
 {% set tier_copy = {

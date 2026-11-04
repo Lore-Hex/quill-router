@@ -3,14 +3,19 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"cloud.google.com/go/spanner"
+	"cloud.google.com/go/spanner/apiv1/spannerpb"
+	"google.golang.org/api/option"
+	"google.golang.org/grpc"
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store/storetest"
 )
@@ -416,6 +421,209 @@ func TestFindLeaseFindsItsWorkspace(t *testing.T) {
 	}
 	if _, err := s.FindLease(ctx, storetest.UniqueID("l")); !errors.Is(err, ErrNoLease) {
 		t.Fatalf("finding a lease never granted: %v", err)
+	}
+}
+
+// findReads is a store of the shared database whose FindLease reads are
+// counted: each statement tagged find-lease sent.
+func findReads(t *testing.T) (*Store, *spanner.Client, *atomic.Int64) {
+	t.Helper()
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	n := &atomic.Int64{}
+	stream := func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string,
+		streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+		s, err := streamer(ctx, desc, cc, method, opts...)
+		return taggedStream{ClientStream: s, tag: tag("find-lease"), n: n}, err
+	}
+	c, err := emulator.Client(context.Background(), "spike",
+		option.WithGRPCDialOption(grpc.WithChainStreamInterceptor(stream)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(c.Close)
+	s, err := New(c, testConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s, c, n
+}
+
+// taggedStream counts in n the requests it sends with tag.
+type taggedStream struct {
+	grpc.ClientStream
+	tag string
+	n   *atomic.Int64
+}
+
+func (s taggedStream) SendMsg(m any) error {
+	if r, ok := m.(interface {
+		GetRequestOptions() *spannerpb.RequestOptions
+	}); ok && r.GetRequestOptions().GetRequestTag() == s.tag {
+		s.n.Add(1)
+	}
+	return s.ClientStream.SendMsg(m)
+}
+
+// TestFindLeaseReadsALeaseOnce: a lease found is found again without a
+// read, from any number of goroutines at once; an ID no lease has is read
+// each time it is looked for, never remembered.
+func TestFindLeaseReadsALeaseOnce(t *testing.T) {
+	s, _, reads := findReads(t)
+	ctx := context.Background()
+	ref := grantLease(t, s, 10, 100)
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 10 {
+				if got, err := s.FindLease(ctx, ref.LeaseID); err != nil || got != ref {
+					t.Errorf("finding %s: %+v %v", ref.LeaseID, got, err)
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	// The goroutines' first finds may all read before one remembers it.
+	if n := reads.Load(); n < 1 || n > 8 {
+		t.Fatalf("80 finds of one lease read it %d times", n)
+	}
+	before := reads.Load()
+	for range 5 {
+		if got, err := s.FindLease(ctx, ref.LeaseID); err != nil || got != ref {
+			t.Fatalf("finding %s: %+v %v", ref.LeaseID, got, err)
+		}
+	}
+	if n := reads.Load() - before; n != 0 {
+		t.Fatalf("a lease found, found 5 times more, read %d times", n)
+	}
+	missing := storetest.UniqueID("l")
+	before = reads.Load()
+	for range 3 {
+		if _, err := s.FindLease(ctx, missing); !errors.Is(err, ErrNoLease) {
+			t.Fatalf("finding a lease never granted: %v", err)
+		}
+	}
+	if n := reads.Load() - before; n != 3 {
+		t.Fatalf("3 finds of a lease never granted read %d times", n)
+	}
+	// A lease granted after its ID was looked for is found.
+	later := grantLease(t, s, 10, 100)
+	if _, err := s.FindLease(ctx, later.LeaseID+"x"); !errors.Is(err, ErrNoLease) {
+		t.Fatalf("finding a lease never granted: %v", err)
+	}
+	if got, err := s.FindLease(ctx, later.LeaseID); err != nil || got != later {
+		t.Fatalf("finding %s: %+v %v", later.LeaseID, got, err)
+	}
+}
+
+// TestFindLeaseFailsWithoutRemembering: a read that fails is not
+// remembered: the next find reads again.
+func TestFindLeaseFailsWithoutRemembering(t *testing.T) {
+	s, _, reads := findReads(t)
+	ref := grantLease(t, s, 10, 100)
+	ended, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := s.FindLease(ended, ref.LeaseID); err == nil || errors.Is(err, ErrNoLease) {
+		t.Fatalf("a find whose context had ended: %v", err)
+	}
+	before := reads.Load()
+	if got, err := s.FindLease(context.Background(), ref.LeaseID); err != nil || got != ref {
+		t.Fatalf("finding %s: %+v %v", ref.LeaseID, got, err)
+	}
+	if n := reads.Load() - before; n != 1 {
+		t.Fatalf("the find after one that failed read %d times", n)
+	}
+}
+
+// TestALeaseWhoseRowWentIsForgotten: FindLease answers a lease it found
+// after its row has gone, seven days after it retired; the read by that key
+// that follows answers ErrNoLease, as FindLease would have, and FindLease
+// then reads again, and answers ErrNoLease itself.
+func TestALeaseWhoseRowWentIsForgotten(t *testing.T) {
+	s, c, reads := findReads(t)
+	ctx := context.Background()
+	for name, next := range map[string]func(LeaseRef) error{
+		"Load": func(ref LeaseRef) error { _, err := s.Load(ctx, ref); return err },
+		"StageRecord": func(ref LeaseRef) error {
+			return s.StageRecord(ctx, StagedRecord{AuthorizationID: "gwa-x", Digest: []byte{1}, Ref: ref,
+				Body: []byte("body"), MessageID: "m"})
+		},
+	} {
+		ref := grantLease(t, s, 10, 100)
+		if got, err := s.FindLease(ctx, ref.LeaseID); err != nil || got != ref {
+			t.Fatalf("finding %s: %+v %v", ref.LeaseID, got, err)
+		}
+		if _, err := c.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+			_, err := txn.Update(ctx, spanner.Statement{SQL: `DELETE FROM tr_lease WHERE workspace_id = @w AND lease_id = @l`,
+				Params: ref.params()})
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := s.FindLease(ctx, ref.LeaseID); err != nil || got != ref {
+			t.Fatalf("finding %s, remembered: %+v %v", ref.LeaseID, got, err)
+		}
+		if err := next(ref); !errors.Is(err, ErrNoLease) {
+			t.Fatalf("%s of a lease whose row went: %v", name, err)
+		}
+		before := reads.Load()
+		if _, err := s.FindLease(ctx, ref.LeaseID); !errors.Is(err, ErrNoLease) {
+			t.Fatalf("finding a lease whose row went, after a read did not find it: %v", err)
+		}
+		if n := reads.Load() - before; n != 1 {
+			t.Fatalf("the find after a read did not find the row read %d times", n)
+		}
+	}
+}
+
+// TestFoundLeasesKeepTheMostRecentlyUsed: the leases found are bounded by
+// their limit, and the least recently used goes first.
+func TestFoundLeasesKeepTheMostRecentlyUsed(t *testing.T) {
+	f := foundLeases{limit: 3}
+	ref := func(i int) LeaseRef {
+		return LeaseRef{Workspace: fmt.Sprintf("w%d", i), LeaseID: fmt.Sprintf("l%d", i)}
+	}
+	for i := range 3 {
+		f.put(ref(i))
+	}
+	if _, ok := f.get("l0"); !ok { // l0 is now the most recently used
+		t.Fatal("l0 forgotten under the limit")
+	}
+	f.put(ref(3))
+	if _, ok := f.get("l1"); ok {
+		t.Fatal("l1, the least recently used, kept past the limit")
+	}
+	for _, i := range []int{0, 2, 3} {
+		if got, ok := f.get(fmt.Sprintf("l%d", i)); !ok || got != ref(i) {
+			t.Fatalf("l%d: %+v %v", i, got, ok)
+		}
+	}
+	if n := f.len(); n != 3 {
+		t.Fatalf("%d remembered, past the limit of 3", n)
+	}
+	f.forget("l2")
+	if _, ok := f.get("l2"); ok || f.len() != 2 {
+		t.Fatalf("l2 forgotten: still there %v, %d remembered", ok, f.len())
+	}
+	// The default bound, from goroutines at once.
+	var d foundLeases
+	var wg sync.WaitGroup
+	for g := range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range MaxFoundLeases {
+				d.put(ref(g*MaxFoundLeases + i))
+				d.get(fmt.Sprintf("l%d", i))
+			}
+		}()
+	}
+	wg.Wait()
+	if n := d.len(); n != MaxFoundLeases {
+		t.Fatalf("%d remembered, want the bound %d", n, MaxFoundLeases)
 	}
 }
 

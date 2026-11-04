@@ -188,7 +188,24 @@ def test_the_page_headline_with_a_snapshot(client: Any, monkeypatch: pytest.Monk
     monkeypatch.setattr(public_routes, "_encrypted_ai_snapshot", lambda _settings: snapshot)
     html = client.get("/encrypted-ai").text
     assert "No consumer agent has verified yet." in html
-    assert "kilocode.ai" in html and "12,345" in html
+    assert "kilocode.ai" in html
+    # The page ranks by encrypted tokens but never prints a token count.
+    assert "12,345" not in html and "12345" not in html
+
+
+def test_the_shipped_directory_hides_robot_robot_and_human() -> None:
+    rows = [
+        _row("Robot, Robot, and Human", "robotrobotandhuman.com", CONF, t7=9_000, t30=9_000),
+        _row("Robot, Robot, and Human", "", CONF, t7=9_000, t30=9_000),
+        _row("Kilo Code", "kilocode.ai", CONF, t7=10, t30=10),
+    ]
+    week = aggregate_encrypted_ai(rows, generated_at=GENERATED_AT)["windows"]["week"]
+    assert [a["domain"] for a in week["apps"]] == ["kilocode.ai"]
+
+
+def test_removed_listings_stay_removed() -> None:
+    slugs = {listing.slug for listing in encrypted_ai.directory().listings}
+    assert not slugs & {"apple-private-cloud-compute", "confident-security", "anonrouter"}
 
 
 def _run_builder(monkeypatch: pytest.MonkeyPatch, *, age: float | None,

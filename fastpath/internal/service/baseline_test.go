@@ -122,10 +122,11 @@ var baseline = map[string]float64{
 	// each once a second.
 	"ExecuteStreamingSql fastpath-scan-expired":  1.5,
 	"ExecuteStreamingSql fastpath-scan-draining": 1.5,
-	// The pending work's sweep and its staged records' scan, each every five
-	// seconds.
+	// The pending work's sweep, every five seconds, and its scan for retired
+	// leases' staged records, at the first sweep and then once a minute
+	// (auditor.DefaultDropEvery): at most one in the window.
 	"ExecuteStreamingSql fastpath-pending-packs": 0.3,
-	"ExecuteStreamingSql fastpath-staging":       0.3,
+	"ExecuteStreamingSql fastpath-staging":       0.06,
 	// The client's sessions, kept up now and then.
 	"BatchCreateSessions": 0.5,
 	"CreateSession":       0.5,
@@ -135,7 +136,9 @@ var baseline = map[string]float64{
 // observed are the calls an idle node must be seen making, each at least as
 // often as this, half its measured rate: so the count is shown to work, a
 // part of the node that stopped calling is seen, and a measurement of
-// nothing does not pass.
+// nothing does not pass. The scan for retired leases' staged records, once
+// a minute, may not fall in the window; the node must have made it since
+// it started (observedSinceStart).
 var observed = map[string]float64{
 	"Commit fastpath-heartbeat":                  0.5,
 	"ExecuteSql fastpath-heartbeat":              0.5,
@@ -144,8 +147,12 @@ var observed = map[string]float64{
 	"ExecuteStreamingSql fastpath-scan-expired":  0.5,
 	"ExecuteStreamingSql fastpath-scan-draining": 0.5,
 	"ExecuteStreamingSql fastpath-pending-packs": 0.1,
-	"ExecuteStreamingSql fastpath-staging":       0.1,
 }
+
+// observedSinceStart are the calls an idle node must have made at least
+// once since it started: the pending work's first sweep scans for retired
+// leases' staged records.
+var observedSinceStart = []string{"ExecuteStreamingSql fastpath-staging"}
 
 // TestAnIdleNodesLoadIsTheBaseline: a node with both roles, its front door
 // and owner and its auditor, idle and with no workspace enabled, makes the
@@ -199,6 +206,12 @@ func TestAnIdleNodesLoadIsTheBaseline(t *testing.T) {
 	for k, least := range observed {
 		if rates[k] < least {
 			t.Errorf("%s at %.2f/s, under the %.2f/s an idle node makes", k, rates[k], least)
+		}
+	}
+	all := c.snapshot()
+	for _, k := range observedSinceStart {
+		if all[k] < 1 {
+			t.Errorf("%s never made since the node started", k)
 		}
 	}
 }

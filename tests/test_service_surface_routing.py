@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.deploy_script_harness import BASELINE_TERMINAL_ROUTE_ENABLED
 from tests.route_inventory import effective_route_objects, route_paths
 from tests.test_internal_surface_edge import _active_backend
 from trusted_router.config import SERVICE_SURFACE_SECRET_OWNERS, Settings
@@ -44,10 +45,17 @@ LEGACY_BACKEND = "legacy-backend"
 
 
 @pytest.fixture(params=[False, True])
-def terminal_enabled(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> bool:
+def terminal_enabled(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, terminal_route_baseline: None,
+) -> bool:
     enabled = bool(request.param)
     monkeypatch.setattr(URL_MAP, "terminal_route_enabled", lambda: enabled)
     return enabled
+
+
+@pytest.fixture(autouse=True)
+def terminal_route_baseline(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(URL_MAP, "terminal_route_enabled", lambda: BASELINE_TERMINAL_ROUTE_ENABLED)
 
 
 def _emitted_map() -> dict[str, Any]:

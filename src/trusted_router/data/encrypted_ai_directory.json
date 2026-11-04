@@ -7,11 +7,10 @@
     {"slug": "concierge-calls", "label": "Concierge calls"},
     {"slug": "scheduling", "label": "Scheduling"},
     {"slug": "shopping", "label": "Shopping"},
-    {"slug": "infrastructure", "label": "Infrastructure"},
     {"slug": "other", "label": "Other"}
   ],
   "consumer_categories": ["assistant", "family", "bills-and-subscriptions", "travel", "concierge-calls", "scheduling", "shopping"],
-  "hidden": [],
+  "hidden": ["robotrobotandhuman.com", "Robot, Robot, and Human"],
   "listings": [
     {"slug": "tinfoil-chat", "name": "Tinfoil Private AI", "url": "https://chat.tinfoil.sh", "tier": "self_attested", "category": "assistant", "yc_batch": "Spring 2025",
      "description": "Tinfoil's consumer chat app on web and iOS, running models in confidential-computing enclaves.",
@@ -22,15 +21,6 @@
     {"slug": "maple-ai", "name": "Maple AI", "url": "https://trymaple.ai", "tier": "self_attested", "category": "assistant",
      "description": "Private AI chat from OpenSecret, running inference in GPU trusted execution environments.",
      "verify_url": "https://trymaple.ai/proof", "matches": ["trymaple.ai", "maple ai"]},
-    {"slug": "apple-private-cloud-compute", "name": "Apple Private Cloud Compute", "url": "https://security.apple.com/documentation/private-cloud-compute", "tier": "self_attested", "category": "infrastructure",
-     "description": "The reference point: Apple's server-side compute for Apple Intelligence, with published software images, a transparency log and a research environment.",
-     "verify_url": "https://security.apple.com/blog/pcc-security-research/", "matches": []},
-    {"slug": "confident-security", "name": "Confident Security", "url": "https://confident.security", "tier": "self_attested", "category": "infrastructure",
-     "description": "A verifiably private AI inference API for businesses, built on its open-source OpenPCC standard.",
-     "verify_url": "https://docs.confident.security", "matches": ["confident.security", "confident security"]},
-    {"slug": "anonrouter", "name": "AnonRouter", "url": "https://anonrouter.ai", "tier": "self_attested", "category": "infrastructure",
-     "description": "An OpenAI-compatible model router with trusted-execution and end-to-end encrypted routing tiers.",
-     "verify_url": "https://anonrouter.ai/security", "matches": ["anonrouter.ai"]},
 
     {"slug": "underdog", "name": "Underdog", "url": "https://underdog.ai/", "tier": "on_device", "category": "assistant",
      "description": "A personal assistant for mail, calendar and everyday work that runs its model locally on Mac and Windows.",

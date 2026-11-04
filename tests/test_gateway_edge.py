@@ -16,7 +16,13 @@ from scripts.deploy import service_surface_url_map as URL_MAP
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 
-from .deploy_script_harness import SCRIPT_FIXTURES, DeployScriptHarness, ScriptFixture, summarise
+from .deploy_script_harness import (
+    BASELINE_TERMINAL_ROUTE_ENABLED,
+    SCRIPT_FIXTURES,
+    DeployScriptHarness,
+    ScriptFixture,
+    summarise,
+)
 from .route_inventory import route_paths
 from .test_internal_surface_edge import _resolve_backend
 
@@ -77,6 +83,9 @@ def revision(region):
 
 @pytest.fixture(autouse=True)
 def cloud_fixture(monkeypatch):
+    # Establish the explicit baseline before live_map() renders fixture input.
+    # Terminal-specific tests override this state in their own bodies.
+    monkeypatch.setattr(URL_MAP, "terminal_route_enabled", lambda: BASELINE_TERMINAL_ROUTE_ENABLED)
     responses = [
         (r"projects describe.*projectNumber", "44325983244"),
         (r"backend-services describe trusted-router-gateway-backend .*--format=json",
@@ -354,9 +363,7 @@ def test_cutover_capture_and_rollback_preserve_other_routes(tmp_path, monkeypatc
     monkeypatch.setattr(URL_MAP, "terminal_route_enabled", lambda: enabled)
     before = live_map(internal)
     replace_response(monkeypatch, r"url-maps describe .*--format=json", before)
-    harness = DeployScriptHarness(tmp_path / "cutover")
-    (harness.mirror / "infra/control_terminal_backend.tf").write_text(
-        "locals {\n  terminal_c1_route_enabled = " + str(enabled).lower() + "\n}\n")
+    harness = DeployScriptHarness(tmp_path / "cutover", terminal_route_enabled=enabled)
     result = run(harness, "cutover")
     assert result.returncode == 0, summarise(result)
     after = json.loads((harness.root / "url-map-state.json").read_text())
