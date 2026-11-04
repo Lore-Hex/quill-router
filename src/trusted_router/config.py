@@ -1038,6 +1038,7 @@ class Settings(BaseSettings):
     async_settle_enabled: bool = False
     async_settle_protection: bool = False
     async_settle_admission_refresh_enabled: bool = False
+    async_settle_handoff_mode: Literal["outbox", "memory"] = "outbox"
     async_settle_ticket_kid: str = ""
     async_settle_ticket_issuer: str = ""
     async_settle_ticket_audience: str = ""

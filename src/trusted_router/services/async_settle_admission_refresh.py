@@ -104,6 +104,10 @@ class AdmissionRefresher:
 
 def install(app: FastAPI, settings: Settings) -> None:
     """Register lifecycle hooks; constructing a cache/runtime starts no worker."""
+    # Share the existing serving-only lifecycle seam; create_app stays pinned.
+    if settings.async_settle_handoff_mode == "memory":
+        from trusted_router.services.async_settle_memory import install as install_memory
+        install_memory(app, settings)
     if not settings.async_settle_admission_refresh_enabled:
         return
     worker: AdmissionRefresher | None = None
