@@ -13,7 +13,6 @@ resource "google_compute_backend_service" "control_terminal_c1" {
   description           = "Direct us-central1 Cloud Run for gateway terminal billing"
   protocol              = "HTTP"
   load_balancing_scheme = "EXTERNAL_MANAGED"
-  compression_mode      = "AUTOMATIC"
   security_policy       = google_compute_security_policy.legacy_edge.id
   custom_request_headers = [
     "X-TrustedRouter-Client-IP:{client_ip_address}",
@@ -21,6 +20,9 @@ resource "google_compute_backend_service" "control_terminal_c1" {
   # timeout_sec does not apply to serverless NEGs; leave the API default.
   # port_name is optional/computed and is deliberately not configured.
   # Authenticated billing reads must never be cached (exception to control).
+  # The API takes a compression mode only with CDN on, so this backend sets
+  # none (a second exception; the apply of 2026-11-04 00:04Z was refused
+  # with one).
   enable_cdn = false
   # The live control backend reports drainingTimeoutSec 0; Terraform's
   # default is 300, which a serverless NEG backend does not use.
