@@ -277,8 +277,9 @@ if(process.env.NYTE_NAV_SHOTS){
 if(process.argv[2]){
  const fs=require('node:fs'),path=require('node:path');const root=path.resolve(process.argv[2]);
  const markets=JSON.parse(fs.readFileSync(path.join(__dirname,'markets.json')));
- for(const slug of Object.keys(JSON.parse(fs.readFileSync(path.join(__dirname,'nyte-cities.json'))))){
-  const market=markets.find(m=>m.slug===slug);
+ const cities=JSON.parse(fs.readFileSync(path.join(__dirname,'nyte-cities.json')));
+ for(const slug of Object.keys(cities)){
+  const market={...markets.find(m=>m.slug===slug),...cities[slug]};
   const city=await browser.newContext();
   await city.route(`https://${market.domain}/**`,r=>{const p=new URL(r.request().url()).pathname;const file=path.join(root,p==='/'?`${slug}/index.html`:p);
    if(!file.startsWith(root+path.sep)||!fs.existsSync(file)||!fs.statSync(file).isFile())return r.fulfill({status:404,body:''});

@@ -256,6 +256,7 @@ def render_nyte(
     image_url: str | None = None, market: dict | None = None,
 ) -> str:
     market = market or {"slug": "new-york", "domain": "nytokenexchange.com", "region": "New York", "name": "New York Token Exchange"}
+    market = market | CITIES.get(market["slug"], {})
     if image_url is None:
         image_version = hashlib.sha256((HERE / f"social-images/og-{market['slug']}.png").read_bytes()).hexdigest()[:12]
         image_url = f"https://{market['domain']}/assets/og-{market['slug']}.png?v=" + image_version

@@ -30,7 +30,7 @@ const feed = http.createServer((req,res) => {
 });
 const site = http.createServer((req,res) => {
   let file = decodeURIComponent(new URL(req.url,'http://localhost').pathname);
-  if (file === '/') file = req.headers.host.startsWith('nytokenexchange.com') ? '/confidential.html' : '/chicago/index.html';
+  if (file === '/') file = req.headers.host.startsWith('nytokenexchange.com') ? '/confidential.html' : '/hong-kong/index.html';
   const target = path.join(output,file);
   if (!target.startsWith(path.resolve(output)+path.sep) || !fs.existsSync(target)) {res.writeHead(404);res.end();return;}
   const type = target.endsWith('.js') ? 'text/javascript' : target.endsWith('.css') ? 'text/css' : target.endsWith('.html') ? 'text/html' : 'application/octet-stream';
@@ -39,7 +39,7 @@ const site = http.createServer((req,res) => {
 (async () => {
   await new Promise(r=>feed.listen(8092,'127.0.0.1',r));
   await new Promise(r=>site.listen(8091,'127.0.0.1',r));
-  const browser = await chromium.launch({headless:true, args:['--no-proxy-server','--host-resolver-rules=MAP nytokenexchange.com 127.0.0.1, MAP chicagotokenexchange.com 127.0.0.1']});
+  const browser = await chromium.launch({headless:true, args:['--no-proxy-server','--host-resolver-rules=MAP nytokenexchange.com 127.0.0.1, MAP hktokenexchange.com 127.0.0.1']});
   try {
     const context = await browser.newContext({reducedMotion:'reduce'});
     const errors=[];
@@ -49,7 +49,7 @@ const site = http.createServer((req,res) => {
       catch { await route.abort('connectionrefused'); }
     });
     const pages=[];
-    for (const domain of ['nytokenexchange.com','chicagotokenexchange.com']) {
+    for (const domain of ['nytokenexchange.com','hktokenexchange.com']) {
       const page=await context.newPage();await page.clock.install();page.on('pageerror',e=>errors.push(e.message));
       await page.goto(`http://${domain}:8091/`);
       await page.waitForFunction(()=>document.querySelector('[data-live-services]').textContent.includes('99.95%'));

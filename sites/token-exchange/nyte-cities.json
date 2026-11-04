@@ -7,6 +7,7 @@
     ]
   },
   "global": {
+    "name": "Global Token Exchange",
     "workloads": [
       {"title": "Enterprise platforms", "prompt": "Answer this customer question using our internal policy documents.", "tags": ["CONFIDENTIAL", "ZDR"]},
       {"title": "AI product teams", "prompt": "Draft a reply to this support ticket in our product’s tone.", "tags": ["CONFIDENTIAL", "ZDR"]},
