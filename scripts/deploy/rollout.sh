@@ -799,6 +799,11 @@ ENV_VARS=(
   # so its provider-pinned first-party requests produce handoff timing samples.
   # The pilot cap is per workspace; the probe does not draw on the customer cap.
   "TR_ASYNC_SETTLE_PILOT_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d,162e441a-5d13-414f-92bd-7c6cd805faa3"
+  # Async settle takes no request the fast path takes (G15 section 4.5): a
+  # TR_FASTPATH_PILOT_WORKSPACES workspace is outside async admission, even
+  # with an empty pilot list above (every workspace), unless listed here. The
+  # operator workspace is in both pilots (R3) and keeps its async settles.
+  "TR_ASYNC_SETTLE_FASTPATH_OVERLAP_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d"
   "TR_ASYNC_SETTLE_PILOT_CAP_MICRO=5000000"
   # October 31: new async-v1 acceptance only where the 500 ms durable handoff
   # was measured to fit (accepted handoffs: us-central1 at most 92 ms, us-east4

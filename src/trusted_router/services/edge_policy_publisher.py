@@ -177,17 +177,33 @@ def typed_records(typed_store: Any) -> bool:
 
 
 def admission_workspaces(settings: Settings) -> dict[str, list[str]]:
-    """async_settle's optional ``admission_workspaces``: the sorted pilot set
-    while admission is on and the set is non-empty, else nothing (admission
-    off covers no workspace; an empty set covers every one,
-    ``Settings.async_settle_pilot_allows``). Python answers a workspace the
-    set leaves out as with admission off (``async_settle.snapshot_projection``),
-    which the edge composes itself (docs/design/fast-admission-e2-g15-async.md
-    section 4.1)."""
-    pilots = settings.async_settle_pilot_workspace_ids
-    if not settings.async_settle_admission_enabled or not pilots:
+    """async_settle's optional members, the workspaces Python's admission
+    covers (``Settings.async_settle_pilot_allows``), both only while
+    admission is on (off covers no workspace):
+
+    - ``admission_workspaces``: the sorted pilot set when it is non-empty
+      (an empty set covers every workspace, the member absent);
+    - ``admission_excluded_workspaces``: the fast-path workspaces outside the
+      overlap list (``async_settle_fastpath_excluded_workspace_ids``) that the
+      first member would otherwise cover, sorted, when there are any: all of
+      them with no pilot set, else those it names. So the member is present
+      only when it changes an answer, and a body whose pilot set leaves every
+      fast-path workspace out is byte-identical to one from before the member
+      existed. At most 32, as the fast-path set is.
+
+    Python answers a workspace they leave out as with admission off
+    (``async_settle.snapshot_projection``), which the edge composes itself
+    (docs/design/fast-admission-e2-g15-async.md sections 4.1 and 4.5)."""
+    if not settings.async_settle_admission_enabled:
         return {}
-    return {"admission_workspaces": sorted(pilots)}
+    pilots = settings.async_settle_pilot_workspace_ids
+    excluded = settings.async_settle_fastpath_excluded_workspace_ids
+    if pilots:
+        excluded &= pilots
+    return {
+        **({"admission_excluded_workspaces": sorted(excluded)} if excluded else {}),
+        **({"admission_workspaces": sorted(pilots)} if pilots else {}),
+    }
 
 
 def settings_facts(

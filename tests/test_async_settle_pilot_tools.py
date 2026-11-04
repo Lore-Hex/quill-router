@@ -140,6 +140,43 @@ def test_pilot_config_environment(monkeypatch):
     assert not cfg.async_settle_pilot_allows('ws-v3')
 
 
+@pytest.mark.parametrize('value', ['a b', ','.join(str(i) for i in range(33))])
+def test_fastpath_overlap_config_validation(value):
+    with pytest.raises(ValueError):
+        Settings(environment='test', async_settle_fastpath_overlap_workspaces=value)
+
+
+def test_fastpath_overlap_config_environment(monkeypatch):
+    monkeypatch.setenv('TR_ASYNC_SETTLE_FASTPATH_OVERLAP_WORKSPACES', ' ws-v1, ws-v1, ')
+    monkeypatch.setenv('TR_FASTPATH_PILOT_WORKSPACES', 'ws-v1,ws-fp')
+    cfg = Settings(environment='test')
+    assert cfg.async_settle_fastpath_overlap_workspace_ids == frozenset({'ws-v1'})
+    assert cfg.async_settle_fastpath_excluded_workspace_ids == frozenset({'ws-fp'})
+    assert Settings(environment='test', async_settle_fastpath_overlap_workspaces='').async_settle_fastpath_overlap_workspace_ids == frozenset()
+
+
+@pytest.mark.parametrize('pilots', ['', 'ws-a', 'ws-a,ws-fp', 'ws-fp,ws-both'])
+@pytest.mark.parametrize('overlap', ['', 'ws-fp', 'ws-both', 'ws-a'])
+@pytest.mark.parametrize('fastpath', ['', 'ws-fp', 'ws-fp,ws-both'])
+def test_pilot_allows_leaves_fastpath_workspaces_out_unless_overlapping(pilots, overlap, fastpath):
+    """Async settle takes no request the fast path takes (G15 section 4.5):
+    async_settle_pilot_allows is the pilot set's answer (empty: every
+    workspace), less the fast-path set's workspaces that the overlap list
+    does not name; the fast-path pilot's switch does not enter it."""
+    for enabled in (False, True):
+        cfg = Settings(environment='test', async_settle_pilot_workspaces=pilots,
+                       async_settle_fastpath_overlap_workspaces=overlap, fastpath_pilot_workspaces=fastpath,
+                       fastpath_pilot_enabled=enabled)
+        listed = {ws for ws in pilots.split(',') if ws}
+        on_fastpath = {ws for ws in fastpath.split(',') if ws}
+        overlapping = {ws for ws in overlap.split(',') if ws}
+        for ws in ('ws-a', 'ws-fp', 'ws-both', 'ws-neither'):
+            by_pilot = not listed or ws in listed
+            excluded = ws in on_fastpath and ws not in overlapping
+            assert cfg.async_settle_pilot_allows(ws) is (by_pilot and not excluded), (ws, pilots, overlap, fastpath)
+        assert cfg.async_settle_fastpath_excluded_workspace_ids == on_fastpath - overlapping
+
+
 def test_header_probe_exact_bound_and_sync_cleanup():
     requests = []
     def respond(request):

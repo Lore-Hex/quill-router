@@ -35,10 +35,11 @@ var (
 // EdgePolicy is a parsed v1 edge policy body: the live control-plane facts
 // the edge gates on before it would answer an authorize itself. Every
 // exported field is a wire field; ParseEdgePolicy refuses any other field, a
-// missing one (async_settle, its admission_workspaces,
-// fastpath_pilot_key_windows and fastpath_edge_streams alone may be
-// absent), a float, a duplicate key, null anywhere but monitor_lookup_hash,
-// and a body that is not its own canonical encoding.
+// missing one (async_settle, its admission_workspaces and
+// admission_excluded_workspaces, fastpath_pilot_key_windows and
+// fastpath_edge_streams alone may be absent), a float, a duplicate key,
+// null anywhere but monitor_lookup_hash, and a body that is not its own
+// canonical encoding.
 type EdgePolicy struct {
 	V                                 int64         `json:"v"`
 	Kind                              string        `json:"kind"`
@@ -123,6 +124,16 @@ type AsyncSettle struct {
 	// workspace it leaves out Python answers as with admission off (G15
 	// section 4.1). Admits reads it.
 	AdmissionWorkspaces *[]string `json:"admission_workspaces,omitempty"`
+	// AdmissionExcludedWorkspaces is optional: the fast-path pilot
+	// workspaces outside settings.async_settle_fastpath_overlap_workspaces
+	// that AdmissionWorkspaces (or its absence, every workspace) would
+	// otherwise cover, sorted and unique, 1 to maxAdmissionWorkspaces of
+	// them, present only with AdmissionEnabled and, with AdmissionWorkspaces,
+	// within it. Async settle takes no request the fast path takes
+	// (docs/design/fast-admission-e2-g15-async.md section 4.5): Python
+	// answers a workspace it names as with admission off, so the edge
+	// composes that answer. Absent excludes none. Admits reads it.
+	AdmissionExcludedWorkspaces *[]string `json:"admission_excluded_workspaces,omitempty"`
 	// TicketAuthority is whether the publisher holds a ticket signer, an
 	// authority epoch of at least 1 and a non-empty journal region.
 	TicketAuthority bool `json:"ticket_authority"`
@@ -138,33 +149,55 @@ type AsyncSettle struct {
 // Settings.parse_pilot_workspaces bounds the pilot set it is.
 const maxAdmissionWorkspaces = 32
 
-// Admits is whether Python's async admission covers the workspace: admission
-// on, and admission_workspaces absent or naming it. Python answers a request
-// it does not cover exactly as with admission off (shape A or B, no ticket),
-// which the edge composes; one it covers is Python's to ticket.
+// Admits is whether Python's async admission covers the workspace
+// (Settings.async_settle_pilot_allows with admission on): admission on,
+// admission_workspaces absent or naming it, and admission_excluded_workspaces
+// not naming it. Python answers a request it does not cover exactly as with
+// admission off (shape A or B, no ticket), which the edge composes; one it
+// covers is Python's to ticket.
 func (a *AsyncSettle) Admits(workspace string) bool {
 	if !a.AdmissionEnabled {
+		return false
+	}
+	if a.AdmissionExcludedWorkspaces != nil && slices.Contains(*a.AdmissionExcludedWorkspaces, workspace) {
 		return false
 	}
 	return a.AdmissionWorkspaces == nil || slices.Contains(*a.AdmissionWorkspaces, workspace)
 }
 
 func (a *AsyncSettle) validate() error {
-	w := a.AdmissionWorkspaces
-	if w == nil {
-		return nil
+	for _, member := range []struct {
+		name string
+		set  *[]string
+	}{
+		{"admission_workspaces", a.AdmissionWorkspaces},
+		{"admission_excluded_workspaces", a.AdmissionExcludedWorkspaces},
+	} {
+		w := member.set
+		if w == nil {
+			continue
+		}
+		switch {
+		case !a.AdmissionEnabled:
+			return fmt.Errorf("async_settle.%s without admission_enabled", member.name)
+		case len(*w) == 0 || len(*w) > maxAdmissionWorkspaces:
+			return fmt.Errorf("async_settle.%s must name 1 to %d workspaces", member.name, maxAdmissionWorkspaces)
+		case !sortedUnique(*w):
+			return fmt.Errorf("async_settle.%s must be sorted and unique", member.name)
+		}
+		for _, value := range *w {
+			if !workspaceID.MatchString(value) {
+				return fmt.Errorf("async_settle.%s: %q", member.name, value)
+			}
+		}
 	}
-	switch {
-	case !a.AdmissionEnabled:
-		return errors.New("async_settle.admission_workspaces without admission_enabled")
-	case len(*w) == 0 || len(*w) > maxAdmissionWorkspaces:
-		return fmt.Errorf("async_settle.admission_workspaces must name 1 to %d workspaces", maxAdmissionWorkspaces)
-	case !sortedUnique(*w):
-		return errors.New("async_settle.admission_workspaces must be sorted and unique")
-	}
-	for _, value := range *w {
-		if !workspaceID.MatchString(value) {
-			return fmt.Errorf("async_settle.admission_workspaces: %q", value)
+	// One encoding per answer, as parse_edge_policy holds it: an excluded
+	// workspace is one admission_workspaces would cover.
+	if x, w := a.AdmissionExcludedWorkspaces, a.AdmissionWorkspaces; x != nil && w != nil {
+		for _, value := range *x {
+			if !slices.Contains(*w, value) {
+				return errors.New("async_settle.admission_excluded_workspaces must be within admission_workspaces")
+			}
 		}
 	}
 	return nil
