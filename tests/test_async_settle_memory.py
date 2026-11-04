@@ -278,6 +278,9 @@ def test_unhealthy_read_ahead_record_closes_cached_only_admission(admission_rig)
     # A valid, fresh record of an unhealthy drain is a successful read: it
     # replaces the healthy evidence at once instead of being kept out like a
     # failed read, so cached-only admission closes without waiting for expiry.
+    # Health read-ahead reads only when its last attempt is at least
+    # HEALTH_SECONDS (0.5s) old and the slot is empty or that old: hence the
+    # reads at 0, 0.5 and 1.0 below.
     rig = admission_rig
     rig.clock.value = 0
     rig.cache.wall_clock = lambda: 100 + rig.clock()
@@ -305,6 +308,29 @@ def test_unhealthy_read_ahead_record_closes_cached_only_admission(admission_rig)
     assert rig.cache.health == DrainHealth(1.0, 1)
     assert rig.cache.eligible('workspace', 0, cached_only=True)
     assert (rig.health.call_count, rig.read.call_count) == (3, 1)
+
+
+@pytest.mark.parametrize('reader', ['full', 'read_ahead'])
+def test_health_evidence_keeps_its_observation_time(admission_rig, reader):
+    # Evidence is as old as the drain's observation, not as the read: a record
+    # read 4.5 s after it was observed admits for only 0.5 s more, through
+    # either reader, with no further read.
+    rig = admission_rig
+    rig.clock.value = 0
+    rig.cache.wall_clock = lambda: 100 + rig.clock()
+    rig.health.return_value = healthy(observed_at=95.5, worker_heartbeat=100)
+    if reader == 'full':
+        assert rig.cache.eligible('workspace', 0)
+    else:
+        assert not rig.cache.eligible('workspace', 0, cached_only=True)
+        rig.worker.refresh_once(now=0)
+    assert rig.cache.health == DrainHealth(-4.5, 1)
+    assert (rig.health.call_count, rig.read.call_count) == (1, 1)
+    rig.clock.value = 0.4
+    assert rig.cache.eligible('workspace', 0, cached_only=True)
+    rig.clock.value = 0.5
+    assert not rig.cache.eligible('workspace', 0, cached_only=True)
+    assert (rig.health.call_count, rig.read.call_count) == (1, 1)
 
 
 def different_valid_payload(env, body):

@@ -82,6 +82,10 @@ MUTATIONS = [
      '                and 0 <= health.p95_age_seconds <= 5\n',
      '                and 0 <= health.p95_age_seconds\n',
      'test_unhealthy_read_ahead_record_closes_cached_only_admission'),
+    ('health-evidence-dated-at-read', ADMISSION,
+     '    return DrainHealth(now - (wall - observed), value["p95_age_seconds"])\n',
+     '    return DrainHealth(now, value["p95_age_seconds"])\n',
+     'test_health_evidence_keeps_its_observation_time[read_ahead]'),
 ]
 
 
