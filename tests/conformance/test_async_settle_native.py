@@ -396,11 +396,11 @@ def test_native_inline_grace_counts_from_due_time(c1_database, monkeypatch):  # 
     database = c1_database
     now = datetime.now(UTC).replace(microsecond=0)
     columns = ('authorization_id', 'intent_kind', 'settle_origin', 'actual_cost_micro', 'status',
-               'attempts', 'async_version', 'created_at', 'next_attempt_at')
+               'attempts', 'async_version', 'last_error', 'created_at', 'next_attempt_at')
 
-    def row(aid, age, due, attempts=0, version=None, status='pending'):
+    def row(aid, age, due, attempts=0, version=None, status='pending', note=None):
         created = now - timedelta(seconds=age)
-        return (aid, 'settle', 'typed', 1, status, attempts, version, created,
+        return (aid, 'settle', 'typed', 1, status, attempts, version, note, created,
                 None if due is None else created + timedelta(seconds=due))
 
     def iso(value):
@@ -416,7 +416,8 @@ def test_native_inline_grace_counts_from_due_time(c1_database, monkeypatch):  # 
 
     # Rows that are not in their grace keep their creation age, each enough to close it.
     others = [row('no-due', 31, None), row('async', 32, 60, version=1), row('retried', 33, 60, attempts=1),
-              row('dead', 34, None, status='dead'), row('done', 35, None, status='done'), row('old', 90, 60)]
+              row('dead', 34, None, status='dead'), row('done', 35, None, status='done'), row('old', 90, 60),
+              row('parked', 36, 3600, note='typed store unavailable')]
     for other in others:
         with database.batch() as batch:
             batch.insert('tr_settle_outbox', columns=columns, values=[other])
@@ -425,16 +426,19 @@ def test_native_inline_grace_counts_from_due_time(c1_database, monkeypatch):  # 
         with database.batch() as batch:
             batch.delete('tr_settle_outbox', KeySet(keys=[[other[0], 'settle']]))
 
-    # The read itself: never-attempted, non-async pending rows in [since, until), oldest first, bounded.
+    # The read itself: non-async pending rows the drain has neither attempted nor parked,
+    # created in [since, until), oldest first, bounded. Rows sit on both bounds.
+    edges = [row('at-since', 66, 60), row('at-until', 5, 60), row('young-legacy', 1, 60)]
     with database.batch() as batch:
-        batch.insert('tr_settle_outbox', columns=columns, values=others)
+        batch.insert('tr_settle_outbox', columns=columns, values=others + edges)
     sql, params, types = admission.grace_statement(iso(now - timedelta(seconds=66)), iso(now - timedelta(seconds=5)))
     with database.snapshot() as snapshot:
         found = list(snapshot.execute_sql(sql, params=params, param_types=types))
-    assert found == [[now - timedelta(seconds=31), None],
+    assert found == [[now - timedelta(seconds=66), now - timedelta(seconds=6)],
+                     [now - timedelta(seconds=31), None],
                      [now - timedelta(seconds=30), now + timedelta(seconds=30)]]
     monkeypatch.setattr(admission, 'GRACE_ROW_LIMIT', 1)
     sql, params, types = admission.grace_statement(iso(now - timedelta(seconds=66)), iso(now - timedelta(seconds=5)))
     with database.snapshot() as snapshot:
         assert list(snapshot.execute_sql(sql, params=params, param_types=types)) == [
-            [now - timedelta(seconds=31), None]]
+            [now - timedelta(seconds=66), now - timedelta(seconds=6)]]

@@ -209,7 +209,9 @@ def test_backlog_wall_sample_parity_with_money_summarizer(created: Any, monkeypa
     database = SimpleNamespace(snapshot=lambda **options: nullcontext(snapshot),
         run_in_transaction=lambda callback, **kwargs: callback(object()))
     monkeypatch.setattr(time, "time", lambda: 1791676800.0)
-    monkeypatch.setattr(money, "_query", lambda transaction, statement: [(created, 1, "pending")] if transaction is snapshot else [])
+    # The backlog read alone returns the row; the inline-grace read finds none.
+    monkeypatch.setattr(money, "_query", lambda transaction, statement: [(created, 1, "pending")]
+                        if transaction is snapshot and statement == money.unresolved_statement() else [])
     monkeypatch.setattr(money, "_write_control", lambda *args: None)
     baseline = money.publish_health(database)
     health = obj("health", "empty")

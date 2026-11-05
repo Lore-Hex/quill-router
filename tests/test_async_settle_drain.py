@@ -413,17 +413,21 @@ def test_sparse_health_query_orders_before_limit_and_tracks_status(fake_store):
 
 
 def grace_rows(fake_store, *specs):
-    """One row per (age, due, attempts, async_version, status): created `age`
-    seconds ago, next_attempt_at `due` seconds after creation (None: NULL)."""
+    """One row per (age, due, attempts, async_version, status[, last_error]): created
+    `age` seconds ago, next_attempt_at `due` seconds after creation (None: NULL)."""
     store, db = fake_store
     seed(store, len(specs))
     now = dt.datetime.now(dt.UTC)
-    for i, (age, due, attempts, version, status) in enumerate(specs):
+    for i, (age, due, attempts, version, status, *note) in enumerate(specs):
         created = now - dt.timedelta(seconds=age)
         db.settle_outbox[(f'fast-{i}', 'settle')].update(
             created_at=created.isoformat(), attempts=attempts, async_version=version, status=status,
+            last_error=note[0] if note else None,
             next_attempt_at=None if due is None else (created + dt.timedelta(seconds=due)).isoformat())
     return db
+
+
+PARKED = 'typed store unavailable'  # park's note: a park keeps attempts and moves next_attempt_at
 
 
 @pytest.mark.parametrize('spec, closed', [
@@ -435,12 +439,14 @@ def grace_rows(fake_store, *specs):
     ((20, 60, 1, None, 'pending'), True),      # attempted: retries are lag
     ((20, 60, 0, 1, 'pending'), True),         # an async row
     ((20, None, 0, None, 'dead'), True),
-    ((30, 3600, 0, None, 'pending'), False),   # parked, still within 60 s
-    ((65.5, 3600, 0, None, 'pending'), True),  # parked: counts from 60 s at the latest
+    ((10, 70, 0, None, 'pending', PARKED), True),    # due at once, claimed, then parked for 60 s
+    ((30, 3600, 0, None, 'pending', PARKED), True),  # parked for an hour: drain lag, not grace
+    ((30, 3600, 0, None, 'pending'), False),   # written due later than 60 s: in grace until 60 s
+    ((65.5, 3600, 0, None, 'pending'), True),  # ... and counted from 60 s at the latest
     ((20, None, 0, None, 'pending'), True),    # no due time to read
     ((20, -10, 0, None, 'pending'), True),     # due before it was written: counts from creation
 ], ids=['grace', 'just-due', 'overdue', 'old', 'due-at-once', 'attempted', 'async', 'dead',
-        'parked', 'parked-past-grace', 'no-due-time', 'due-before-creation'])
+        'parked-contended', 'parked', 'due-late', 'due-late-past-grace', 'no-due-time', 'due-before-creation'])
 def test_inline_grace_counts_from_due_time(fake_store, spec, closed):
     db = grace_rows(fake_store, spec)
     value = publish_health(db)
@@ -455,13 +461,38 @@ def test_inline_grace_recounts_only_its_share_of_equal_ages(fake_store):
     assert value['p50_age_seconds'] == 0 and value['p95_age_seconds'] >= 30
 
 
-def test_inline_grace_rows_past_the_read_limit_keep_their_creation_age(fake_store, monkeypatch):
+def test_inline_grace_not_read_past_the_row_bound(fake_store, monkeypatch):
     from trusted_router import storage_gcp_async_admission as adapter
     db = grace_rows(fake_store, (31, 60, 0, None, 'pending'), (30, 60, 0, None, 'pending'))
     assert publish_health(db)['p95_age_seconds'] == 0
+    reads = []
+    original = _FakeSnapshot.execute_sql
+    def spy(self, sql, **kwargs):
+        reads.append(sql)
+        return original(self, sql, **kwargs)
+    monkeypatch.setattr(_FakeSnapshot, 'execute_sql', spy)
     monkeypatch.setattr(adapter, 'GRACE_ROW_LIMIT', 1)
-    value = publish_health(db)  # the oldest is recounted, the other is not
-    assert 30 <= value['p95_age_seconds'] < 31
+    value = publish_health(db)  # two rows in range, bound one: no base rows read, creation ages stand
+    assert len(reads) == 1 and value['p95_age_seconds'] >= 31
+
+
+def test_inline_grace_read_failure_publishes_creation_ages(fake_store, monkeypatch, caplog):
+    import logging
+
+    from trusted_router import storage_gcp_async_admission as adapter
+    db = grace_rows(fake_store, (30, 60, 0, None, 'pending'))
+    original = _FakeSnapshot.execute_sql
+    def failing(self, sql, **kwargs):
+        if sql.startswith('SELECT unresolved_at, next_attempt_at'):
+            raise RuntimeError('grace read failed')
+        return original(self, sql, **kwargs)
+    monkeypatch.setattr(_FakeSnapshot, 'execute_sql', failing)
+    monkeypatch.setattr(adapter, '_read_failure_logs', {})
+    with caplog.at_level(logging.WARNING):
+        value = publish_health(db)
+    assert value['p95_age_seconds'] >= 30 and read_health(db) == value  # a record still goes out
+    assert [r.getMessage().split(' elapsed_ms=')[0] for r in caplog.records] == [
+        'async admission read failed operation=drain_grace reason=other']
 
 
 def test_inline_grace_read_only_when_a_row_could_turn_the_gate(fake_store, monkeypatch):

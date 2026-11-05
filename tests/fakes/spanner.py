@@ -2865,7 +2865,7 @@ def _execute_settle_outbox_sql(
     if sql.startswith("SELECT unresolved_at, next_attempt_at FROM tr_settle_outbox"
                       "@{FORCE_INDEX=tr_settle_outbox_unresolved} "):  # rows in their inline grace
         for needle in ("unresolved_at IS NOT NULL", "unresolved_at >= @since", "unresolved_at < @until",
-                       "status='pending'", "async_version IS NULL", "attempts=0",
+                       "status='pending'", "async_version IS NULL", "attempts=0", "last_error IS NULL",
                        "ORDER BY unresolved_at LIMIT @limit"):  # ascending: the bound keeps the oldest
             _require_pred(sql, needle, "fleet-health-grace")
         since, until = _utc_datetime(p["since"]), _utc_datetime(p["until"])
@@ -2878,7 +2878,7 @@ def _execute_settle_outbox_sql(
                 ).fetchone()
                 if (unresolved is not None and since <= _utc_datetime(unresolved) < until
                         and record.get("status") == "pending" and record.get("async_version") is None
-                        and int(record.get("attempts") or 0) == 0):
+                        and int(record.get("attempts") or 0) == 0 and record.get("last_error") is None):
                     rows.append([unresolved, record.get("next_attempt_at")])
         rows.sort(key=lambda row: _utc_datetime(row[0]))
         return rows[:p["limit"]]

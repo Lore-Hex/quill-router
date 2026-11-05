@@ -16,7 +16,7 @@ from trusted_router.storage_gcp_io import remaining_rpc_budget, spanner_rpc_dead
 READ_DEADLINE_SECONDS = 0.5
 ROW_LIMIT = 1000
 logger = logging.getLogger(__name__)
-_ReadOperation = Literal["admission", "drain_health"]
+_ReadOperation = Literal["admission", "drain_health", "drain_grace"]
 _read_failure_lock = threading.Lock()
 _read_failure_logs: dict[tuple[_ReadOperation, str], tuple[float, int]] = {}
 
@@ -37,7 +37,7 @@ def _report_read_failure(operation: _ReadOperation, error: Exception, started: f
             break
     now = time.monotonic()
     key = (operation, reason)
-    # Bounded to two operations times eight reasons, regardless of customers.
+    # Bounded to three operations times eight reasons, regardless of customers.
     # Count repeats without letting one cause suppress another kind of failure.
     with _read_failure_lock:
         next_log, failures = _read_failure_logs.get(key, (0., 0))
@@ -133,7 +133,7 @@ HEALTH_P95_LIMIT_SECONDS = 5
 # The longest grace a settle intent's writer gives its own inline settle before
 # the drain may take the row: routes/internal/gateway.py enqueues its two-commit
 # and fast-path pilot intents due 60 s after it writes them. A row due sooner
-# is read as due; a row due later (parked, say) still counts from 60 s.
+# is read as due; a row written due later still counts from 60 s.
 INLINE_GRACE_SECONDS = 60
 GRACE_ROW_LIMIT = 100
 
@@ -141,15 +141,16 @@ GRACE_ROW_LIMIT = 100
 def grace_statement(since: str, until: str) -> tuple[str, dict[str, Any], dict[str, Any]]:
     """Unresolved rows that may still be in their inline grace, created in [since, until).
 
-    A non-async pending row its drain has never attempted. The range is on the
-    unresolved index; status, async_version, attempts and next_attempt_at come
-    from the base rows of that bounded range only.
+    A non-async pending row the drain has neither attempted nor parked: a failed
+    apply counts an attempt, and both a failure and a park write last_error.
+    The range is on the unresolved index; the other columns come from the base
+    rows of that range only.
     """
     return (
         "SELECT unresolved_at, next_attempt_at FROM tr_settle_outbox"
         "@{FORCE_INDEX=tr_settle_outbox_unresolved} "
         "WHERE unresolved_at IS NOT NULL AND unresolved_at >= @since AND unresolved_at < @until "
-        "AND status='pending' AND async_version IS NULL AND attempts=0 "
+        "AND status='pending' AND async_version IS NULL AND attempts=0 AND last_error IS NULL "
         "ORDER BY unresolved_at LIMIT @limit",
         {"since": since, "until": until, "limit": GRACE_ROW_LIMIT},
         {"since": param_types.TIMESTAMP, "until": param_types.TIMESTAMP, "limit": param_types.INT64},
@@ -169,28 +170,37 @@ def _timestamp(value: Any) -> float:
 def _ages_from_due(reader: Any, observed: float, ages: list[float]) -> list[float]:
     """The unresolved ages, with a row in its inline grace counted from when it falls due.
 
-    A row is in its grace while it is not an async row, is pending and has never
-    been attempted: its writer settles it inline and gave the drain the row only
-    from next_attempt_at, at most INLINE_GRACE_SECONDS after writing it. Until
-    then its age is not drain lag, so it counts from that due time instead of
-    from its creation. Every other row, dead or retried ones included, keeps its
-    creation age.
+    A row is in its grace while it is not an async row, is pending, and the drain
+    has neither attempted nor parked it: its writer settles it inline and gave
+    the drain the row only from next_attempt_at, at most INLINE_GRACE_SECONDS
+    after writing it. Until then its age is not drain lag, so it counts from
+    that due time instead of from its creation. Every other row, dead, retried
+    and parked ones included, keeps its creation age.
 
     Only a row whose creation age is over HEALTH_P95_LIMIT_SECONDS and at most
     INLINE_GRACE_SECONDS + HEALTH_P95_LIMIT_SECONDS (plus a second's margin) can
     be over the limit by creation age but not by due age; younger rows are under
-    it either way and older ones over it. So the base rows are read only when
-    such a row exists, and only for that range. Rows past GRACE_ROW_LIMIT keep
-    their creation age.
+    it either way and older ones over it. So the base rows are read only for
+    that range, and only when it holds at least one and at most GRACE_ROW_LIMIT
+    rows (the same snapshot's backlog says how many); with more, every age
+    stays a creation age. If the read fails, so do they: the evidence before
+    this read existed, and a record still goes out.
     """
     import datetime as dt
+    import time
 
     span = INLINE_GRACE_SECONDS + HEALTH_P95_LIMIT_SECONDS + 1
-    if not any(HEALTH_P95_LIMIT_SECONDS < age <= span for age in ages):
+    in_range = sum(HEALTH_P95_LIMIT_SECONDS < age <= span for age in ages)
+    if not 0 < in_range <= GRACE_ROW_LIMIT:
         return ages
     def iso(seconds: float) -> str:
         return dt.datetime.fromtimestamp(seconds, dt.UTC).isoformat().replace("+00:00", "Z")
-    rows = _query(reader, grace_statement(iso(observed - span), iso(observed - HEALTH_P95_LIMIT_SECONDS)))
+    started = time.monotonic()
+    try:
+        rows = _query(reader, grace_statement(iso(observed - span), iso(observed - HEALTH_P95_LIMIT_SECONDS)))
+    except Exception as error:  # any failure: publish the creation ages, never no record
+        _report_read_failure("drain_grace", error, started)
+        return ages
     due: dict[float, list[float]] = {}
     for row in rows:
         try:

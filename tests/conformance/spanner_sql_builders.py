@@ -95,18 +95,19 @@ def builder_cases() -> list[SQLCase]:
         unresolved_statement,
     )
     from trusted_router.storage_gcp_settle_outbox import shard_due_statement
-    # In the range, only the never-attempted, non-async pending row is in its grace;
-    # an async, an attempted and a dead row there are not.
+    # In the range, only the non-async pending row the drain has neither attempted
+    # nor parked is in its grace; an async, an attempted, a dead and a parked row are not.
     grace_seed = [(
         "INSERT INTO tr_settle_outbox (authorization_id, intent_kind, settle_origin, actual_cost_micro, "
-        "status, attempts, async_version, created_at, next_attempt_at) "
-        "VALUES (@id, 'settle', 'repair', 1, @status, @attempts, @version, @created, @due)",
-        {"id": f"grace-health-{i}", "status": status, "attempts": attempts, "version": version,
+        "status, attempts, async_version, last_error, created_at, next_attempt_at) "
+        "VALUES (@id, 'settle', 'repair', 1, @status, @attempts, @version, @note, @created, @due)",
+        {"id": f"grace-health-{i}", "status": status, "attempts": attempts, "version": version, "note": note,
          "created": NOW + timedelta(seconds=i), "due": NOW + timedelta(seconds=60 + i)},
-        {"id": pt.STRING, "status": pt.STRING, "attempts": pt.INT64, "version": pt.INT64,
+        {"id": pt.STRING, "status": pt.STRING, "attempts": pt.INT64, "version": pt.INT64, "note": pt.STRING,
          "created": pt.TIMESTAMP, "due": pt.TIMESTAMP},
-    ) for i, (version, attempts, status) in enumerate(
-        ((None, 0, "pending"), (1, 0, "pending"), (None, 1, "pending"), (None, 0, "dead")))]
+    ) for i, (version, attempts, status, note) in enumerate(
+        ((None, 0, "pending", None), (1, 0, "pending", None), (None, 1, "pending", None),
+         (None, 0, "dead", None), (None, 0, "pending", "typed store unavailable")))]
     cases.extend([
         SQLCase("drain-health-point", [control_statement("fleet-v1")]),
         SQLCase("drain-health-cadence-point", [control_statement("health-publish-v1")]),
