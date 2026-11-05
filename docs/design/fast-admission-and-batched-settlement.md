@@ -601,8 +601,8 @@ lease's expiry minus a skew allowance.
    is the ceiling the rows carry and Python's Stage D heartbeat cuts a
    stream at. The owner's heartbeat bounds a running charge by the lease's
    hold, r, so a stream admitted under a lease would be cut at r: both
-   front doors keep streams out of the lease cohort until an admission
-   carries e beside r.
+   front doors lease a stream only while its reservation is its estimate
+   (`stream.hold`) until an admission carries e beside r.
 4. Answer with a **signed envelope** that the gateway echoes on heartbeat,
    settle and refund:
    - the authorization ID `A` and the generation ID;

@@ -958,8 +958,7 @@ def _run_case(case: dict[str, Any], sessions: tuple[tuple[str, float], ...], *,
         error = _error(body) if response.status_code != 200 else {}
         # The credit reservation Python's typed store wrote for a request it
         # answered without a lease (a stream, say): at most HOLD_OUTPUT_TOKENS
-        # of the output budget, or the whole budget for a stream (§5, "The
-        # two figures").
+        # of the output budget, a stream's too (§5, "The two figures").
         reserved = (
             {"reservation_microdollars": reservations[0]["credit_reserved_micro"]}
             if len(reservations) == 1 and not leased else {}
