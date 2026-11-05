@@ -84,6 +84,8 @@ GOOGLE_AI_STUDIO_GEMINI_25_FLASH_RETIREMENT_AT = datetime(2026, 12, 1, 0, 0, tzi
 LYCEUM_KIMI_K27_CODE_RETIREMENT_AT = datetime(2026, 11, 4, 0, 0, tzinfo=UTC)
 # Friendli drops GLM-5.1 from its Model APIs at 00:00 UTC on 20 Nov 2026.
 FRIENDLI_GLM_51_RETIREMENT_AT = datetime(2026, 11, 20, 0, 0, tzinfo=UTC)
+# Tinfoil deprecates kimi-k3 on 12 Nov 2026 (date only) for kimi-k3-1-pro.
+TINFOIL_KIMI_K3_RETIREMENT_AT = datetime(2026, 11, 12, 0, 0, tzinfo=UTC)
 # 2026-10-30 10:00 PDT: Crusoe redirects four serverless models to replacements.
 CRUSOE_OCTOBER_30_RETIREMENT_AT = datetime(2026, 10, 30, 17, 0, tzinfo=UTC)
 TELNYX_NOVEMBER_2_RETIREMENT_AT = datetime(2026, 11, 2, 0, 0, tzinfo=UTC)
@@ -1196,6 +1198,15 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"zai-org/GLM-5.1"}),
         effective_at=FRIENDLI_GLM_51_RETIREMENT_AT,
         replacement_model_ids=("z-ai/glm-5.3",),
+    ),
+    # Tinfoil's November 5 notice replaces kimi-k3 with kimi-k3-1-pro and
+    # deprecates kimi-k3 on 12 November 2026 (date only, so 00:00 UTC).
+    _Retirement(
+        provider="tinfoil",
+        model_ids=frozenset({"moonshotai/kimi-k3"}),
+        upstream_ids=frozenset({"kimi-k3"}),
+        effective_at=TINFOIL_KIMI_K3_RETIREMENT_AT,
+        replacement_model_ids=("moonshotai/kimi-k3.1-pro",),
     ),
     # DigitalOcean's October 29 notices deprecate these Inference models on
     # 2026-11-09 (date only; 00:00 UTC conservatively); requests then 404.
