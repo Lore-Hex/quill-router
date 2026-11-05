@@ -1301,8 +1301,6 @@ def test_a_release_host_that_never_finishes_keeps_the_last_verified_set_and_sign
     from tests.fakes.release_host import ReleaseHost, plain_http_client_factory
     from trusted_router import stage_d_policy
 
-    monkeypatch.setattr(stage_d_policy, "_FETCH_TIMEOUT_SECONDS", 0.3)
-    monkeypatch.setattr(stage_d_policy, "REFRESH_TIMEOUT_SECONDS", 1.5)
     host = ReleaseHost(_stage_d_document(1200))
     settings = _settings(key)
     resolver = _real_resolver(settings, plain_http_client_factory, Ticks(),
@@ -1314,6 +1312,10 @@ def test_a_release_host_that_never_finishes_keeps_the_last_verified_set_and_sign
         first = publisher.current()
         digests = json.loads(first.body)["accepted_image_digests"]
         assert digests == sorted(resolver.accepted_image_digests()) and digests
+        # Establish the healthy baseline with production budgets. The short
+        # deadlines exercise the stalled refresh, not CI's setup scheduling.
+        monkeypatch.setattr(stage_d_policy, "_FETCH_TIMEOUT_SECONDS", 0.3)
+        monkeypatch.setattr(stage_d_policy, "REFRESH_TIMEOUT_SECONDS", 1.5)
         host.mode = "header-drip"
         host.document = _stage_d_document(1201)
         clock.now = first.refresh_at
