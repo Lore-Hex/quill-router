@@ -104,15 +104,18 @@ def test_each_streamlake_route_has_its_own_usage_canary(monkeypatch: pytest.Monk
     assert adapter.discovered_rows['deepseek/deepseek-v4.1-flash']['routable'] is False
 
 
+@pytest.mark.parametrize('failure_reason', ['provider-canary-failed', 'delisted-upstream'])
 @pytest.mark.parametrize('healthy', [False, True])
 def test_deprecated_mimo_route_requires_fresh_success_to_recover(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, healthy: bool,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, healthy: bool, failure_reason: str,
 ) -> None:
     model = 'xiaomi/mimo-v2.5-pro'
     native = 'MiMo-V2.5-Pro'
     committed = json.loads(streamlake.MANIFEST_PATH.read_text())
     row, = [row for row in committed['models'] if row['id'] == model]
     assert row['upstream_id'] == native
+    # Exercise both recovery states independently of the hourly catalog snapshot.
+    row.update(routable=False, routable_reason=failure_reason)
     manifest = tmp_path / 'models.json'
     manifest.write_text(json.dumps({'provider': 'streamlake', 'models': [row]}))
     checked = []

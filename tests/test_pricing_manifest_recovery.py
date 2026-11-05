@@ -10,6 +10,23 @@ import pytest
 
 from scripts.pricing import refresh
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
+from scripts.pricing.manifest import models_requiring_canary
+
+
+def test_returning_delisted_routes_are_rechecked_without_overriding_operator_holds(
+    tmp_path: Path,
+) -> None:
+    manifest = tmp_path / "models.json"
+    manifest.write_text(json.dumps({"models": [
+        {"id": "healthy", "routable": True},
+        {"id": "failed", "routable": False, "routable_reason": "provider-canary-failed"},
+        {"id": "returned", "routable": False, "routable_reason": "delisted-upstream"},
+        {"id": "manual", "routable": False, "routable_reason": "attestation-review-pending"},
+        {"id": "curated", "routable": False},
+    ]}))
+    assert models_requiring_canary(
+        manifest, {"new", "healthy", "failed", "returned", "manual", "curated"},
+    ) == {"new", "failed", "returned"}
 
 
 @pytest.mark.parametrize("existing", [False, True])
