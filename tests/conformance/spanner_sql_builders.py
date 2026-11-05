@@ -89,12 +89,30 @@ def builder_cases() -> list[SQLCase]:
     ])
     from trusted_router.storage_gcp_async_admission import admission_statement
     cases.append(SQLCase("async_admission", [admission_statement("admission-ws")]))
-    from trusted_router.storage_gcp_async_admission import control_statement, unresolved_statement
+    from trusted_router.storage_gcp_async_admission import (
+        control_statement,
+        grace_statement,
+        unresolved_statement,
+    )
     from trusted_router.storage_gcp_settle_outbox import shard_due_statement
+    # In the range, only the never-attempted, non-async pending row is in its grace;
+    # an async, an attempted and a dead row there are not.
+    grace_seed = [(
+        "INSERT INTO tr_settle_outbox (authorization_id, intent_kind, settle_origin, actual_cost_micro, "
+        "status, attempts, async_version, created_at, next_attempt_at) "
+        "VALUES (@id, 'settle', 'repair', 1, @status, @attempts, @version, @created, @due)",
+        {"id": f"grace-health-{i}", "status": status, "attempts": attempts, "version": version,
+         "created": NOW + timedelta(seconds=i), "due": NOW + timedelta(seconds=60 + i)},
+        {"id": pt.STRING, "status": pt.STRING, "attempts": pt.INT64, "version": pt.INT64,
+         "created": pt.TIMESTAMP, "due": pt.TIMESTAMP},
+    ) for i, (version, attempts, status) in enumerate(
+        ((None, 0, "pending"), (1, 0, "pending"), (None, 1, "pending"), (None, 0, "dead")))]
     cases.extend([
         SQLCase("drain-health-point", [control_statement("fleet-v1")]),
         SQLCase("drain-health-cadence-point", [control_statement("health-publish-v1")]),
         SQLCase("drain-health-unresolved", [unresolved_statement()]),
+        SQLCase("drain-health-grace", [grace_statement("2026-01-01T00:00:00Z", "2026-01-01T00:00:10Z")],
+                seed=grace_seed, expected_rows=[[NOW, NOW + timedelta(seconds=60)]]),
         SQLCase("drain-shard-due", [shard_due_statement(pt, 0, NOW.isoformat().replace("+00:00", "Z"))]),
         SQLCase("drain-shard-due-async-only", [shard_due_statement(pt, 0, NOW.isoformat().replace("+00:00", "Z"), async_only=True)]),
     ])

@@ -206,7 +206,7 @@ def test_backlog_wall_sample_parity_with_money_summarizer(created: Any, monkeypa
     from trusted_router import storage_gcp_async_admission as money
 
     snapshot = object()
-    database = SimpleNamespace(snapshot=lambda: nullcontext(snapshot),
+    database = SimpleNamespace(snapshot=lambda **options: nullcontext(snapshot),
         run_in_transaction=lambda callback, **kwargs: callback(object()))
     monkeypatch.setattr(time, "time", lambda: 1791676800.0)
     monkeypatch.setattr(money, "_query", lambda transaction, statement: [(created, 1, "pending")] if transaction is snapshot else [])

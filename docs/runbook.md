@@ -880,8 +880,14 @@ the lease runs out as before (also logged as `async_drain.release_failed`).
 because the worker is stopping (`reason=stop`) keeps its lease until it lapses,
 and an expired lease (`reason=lease`) has nothing to free. While fewer than 20
 rows are unresolved (pending or dead), the published p95 is the oldest one's
-age, counted from its creation. So any single row unresolved for more than 5 s,
-whether leased, backing off or dead, closes admission until it is resolved.
+age. A row's age counts from its creation, except a settle intent in its inline
+grace: a pending row that is not async and that the drain has never attempted.
+The two-commit settle and the fast-path pilot write those due 60 s later, so
+that their own inline settle can finish first, and the p95 counts each from
+when it falls due (`next_attempt_at`, at most 60 s after it was written). So
+one async, retried or dead row more than 5 s old, or one intent more than 5 s
+past due, closes admission until it is resolved.
+`oldest_unresolved_age_seconds` still counts every row from its creation.
 
 The worker drains both NULL and async versions: an open
 reservation blocked by an accepted async sibling parks under protection; once

@@ -385,3 +385,56 @@ def test_native_release_claim_frees_only_its_own_pending_claim(c1_database, monk
     # No other row was written: the never-claimed one was never updated at all.
     assert state('release-idle', 'settle') == ('pending', None, None)
     assert outbox.get('release-idle', 'settle').updated_at is None
+
+
+def test_native_inline_grace_counts_from_due_time(c1_database, monkeypatch):  # noqa: F811 - shared fixture
+    """Run the grace read and the publisher on GoogleSQL: the fake checks predicates only as substrings."""
+    from google.cloud.spanner_v1 import KeySet
+
+    from trusted_router import storage_gcp_async_admission as admission
+
+    database = c1_database
+    now = datetime.now(UTC).replace(microsecond=0)
+    columns = ('authorization_id', 'intent_kind', 'settle_origin', 'actual_cost_micro', 'status',
+               'attempts', 'async_version', 'created_at', 'next_attempt_at')
+
+    def row(aid, age, due, attempts=0, version=None, status='pending'):
+        created = now - timedelta(seconds=age)
+        return (aid, 'settle', 'typed', 1, status, attempts, version, created,
+                None if due is None else created + timedelta(seconds=due))
+
+    def iso(value):
+        return value.isoformat().replace('+00:00', 'Z')
+
+    # Alone, a row in its inline grace keeps admission open; its creation age is still the oldest.
+    with database.batch() as batch:
+        batch.insert('tr_settle_outbox', columns=columns,
+                     values=[row('grace', 30, 60), row('young', 1, 0, version=1)])
+    value = admission.publish_health(database)
+    assert value['backlog_count'] == 2 and value['p95_age_seconds'] <= 5
+    assert value['oldest_unresolved_age_seconds'] >= 30
+
+    # Rows that are not in their grace keep their creation age, each enough to close it.
+    others = [row('no-due', 31, None), row('async', 32, 60, version=1), row('retried', 33, 60, attempts=1),
+              row('dead', 34, None, status='dead'), row('done', 35, None, status='done'), row('old', 90, 60)]
+    for other in others:
+        with database.batch() as batch:
+            batch.insert('tr_settle_outbox', columns=columns, values=[other])
+        value = admission.publish_health(database)
+        assert value['p95_age_seconds'] > 5 or other[0] == 'done', other[0]
+        with database.batch() as batch:
+            batch.delete('tr_settle_outbox', KeySet(keys=[[other[0], 'settle']]))
+
+    # The read itself: never-attempted, non-async pending rows in [since, until), oldest first, bounded.
+    with database.batch() as batch:
+        batch.insert('tr_settle_outbox', columns=columns, values=others)
+    sql, params, types = admission.grace_statement(iso(now - timedelta(seconds=66)), iso(now - timedelta(seconds=5)))
+    with database.snapshot() as snapshot:
+        found = list(snapshot.execute_sql(sql, params=params, param_types=types))
+    assert found == [[now - timedelta(seconds=31), None],
+                     [now - timedelta(seconds=30), now + timedelta(seconds=30)]]
+    monkeypatch.setattr(admission, 'GRACE_ROW_LIMIT', 1)
+    sql, params, types = admission.grace_statement(iso(now - timedelta(seconds=66)), iso(now - timedelta(seconds=5)))
+    with database.snapshot() as snapshot:
+        assert list(snapshot.execute_sql(sql, params=params, param_types=types)) == [
+            [now - timedelta(seconds=31), None]]
