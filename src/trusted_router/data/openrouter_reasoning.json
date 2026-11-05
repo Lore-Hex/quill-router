@@ -2450,6 +2450,12 @@
       "supported_efforts": [],
       "default_effort": null
     },
+    "ricursiveai/ripple-65b-preview": {
+      "mandatory": false,
+      "default_enabled": false,
+      "supported_efforts": [],
+      "default_effort": null
+    },
     "sakana/fugu-max": {
       "mandatory": true,
       "default_enabled": true,

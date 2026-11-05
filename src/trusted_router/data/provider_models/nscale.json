@@ -589,11 +589,33 @@
       "routable": true,
       "input_token_price_per_m": 1400000,
       "output_token_price_per_m": 4400000
+    },
+    {
+      "display_name": "Mistral-Large-3-675B-Instruct-2512-NVFP4",
+      "title": "mistralai/Mistral-Large-3-675B-Instruct-2512-NVFP4",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "mistralai/mistral-large-3-675b-instruct-2512-nvfp4",
+      "upstream_id": "mistralai/Mistral-Large-3-675B-Instruct-2512-NVFP4",
+      "context_length": 262144,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 2500000
     }
   ],
   "source": "https://inference.api.nscale.com/v1/models",
   "pricing_source": "https://docs.nscale.com/docs/ai-services/models",
-  "generated_at": "2026-11-04T16:53:25Z",
+  "generated_at": "2026-11-05T01:52:57Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 26
+  "model_count": 27
 }

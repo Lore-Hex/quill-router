@@ -28,10 +28,10 @@
   },
   "akashml": {
     "card_version": 2,
-    "model_count": 7,
+    "model_count": 8,
     "name": "AkashML",
     "privacy": "Policy documented",
-    "route_count": 7,
+    "route_count": 8,
     "route_mode": "Prepaid",
     "slug": "akashml"
   },
@@ -46,10 +46,10 @@
   },
   "amazon-bedrock": {
     "card_version": 2,
-    "model_count": 38,
+    "model_count": 39,
     "name": "Amazon Bedrock",
     "privacy": "Policy documented",
-    "route_count": 38,
+    "route_count": 39,
     "route_mode": "Prepaid",
     "slug": "amazon-bedrock"
   },
@@ -100,10 +100,10 @@
   },
   "baseten": {
     "card_version": 2,
-    "model_count": 20,
+    "model_count": 21,
     "name": "Baseten",
     "privacy": "Zero retention",
-    "route_count": 39,
+    "route_count": 41,
     "route_mode": "Prepaid + BYOK",
     "slug": "baseten"
   },
@@ -244,10 +244,10 @@
   },
   "deepinfra": {
     "card_version": 2,
-    "model_count": 89,
+    "model_count": 90,
     "name": "DeepInfra",
     "privacy": "Policy documented",
-    "route_count": 170,
+    "route_count": 172,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepinfra"
   },
@@ -280,10 +280,10 @@
   },
   "engy": {
     "card_version": 2,
-    "model_count": 9,
+    "model_count": 10,
     "name": "Engy",
     "privacy": "Policy documented",
-    "route_count": 9,
+    "route_count": 10,
     "route_mode": "Prepaid",
     "slug": "engy"
   },
@@ -298,19 +298,19 @@
   },
   "featherless": {
     "card_version": 2,
-    "model_count": 59,
+    "model_count": 60,
     "name": "Featherless AI",
     "privacy": "Zero retention",
-    "route_count": 59,
+    "route_count": 60,
     "route_mode": "Prepaid",
     "slug": "featherless"
   },
   "fireworks": {
     "card_version": 2,
-    "model_count": 12,
+    "model_count": 13,
     "name": "Fireworks AI",
     "privacy": "Policy documented",
-    "route_count": 24,
+    "route_count": 26,
     "route_mode": "Prepaid + BYOK",
     "slug": "fireworks"
   },
@@ -883,10 +883,10 @@
   },
   "telnyx": {
     "card_version": 2,
-    "model_count": 13,
+    "model_count": 14,
     "name": "Telnyx",
     "privacy": "Zero retention",
-    "route_count": 26,
+    "route_count": 28,
     "route_mode": "Prepaid + BYOK",
     "slug": "telnyx"
   },

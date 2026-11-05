@@ -265,8 +265,37 @@
       "input_token_price_per_m": 30000,
       "output_token_price_per_m": 120000,
       "cached_input_token_price_per_m": 6000
+    },
+    {
+      "display_name": "kimi-k3.1-pro",
+      "title": "kimi-k3.1-pro",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k3.1-pro",
+      "upstream_id": "kimi-k3.1-pro",
+      "context_length": 1113088,
+      "routable": true,
+      "supported_features": [
+        "chat",
+        "completion",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "input_token_price_per_m": 1400000,
+      "output_token_price_per_m": 7000000,
+      "cached_input_token_price_per_m": 140000
     }
   ],
-  "generated_at": "2026-11-04T16:53:25Z",
-  "model_count": 9
+  "generated_at": "2026-11-05T01:52:57Z",
+  "model_count": 10
 }

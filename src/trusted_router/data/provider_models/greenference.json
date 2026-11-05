@@ -149,8 +149,7 @@
       },
       "input_token_price_per_m": 76000,
       "output_token_price_per_m": 228000,
-      "cached_input_token_price_per_m": 38000,
-      "missing_since": "2026-11-04"
+      "cached_input_token_price_per_m": 38000
     },
     {
       "display_name": "Qwen: Qwen3 30B A3B",
@@ -199,8 +198,7 @@
       },
       "input_token_price_per_m": 95000,
       "output_token_price_per_m": 285000,
-      "cached_input_token_price_per_m": 47500,
-      "missing_since": "2026-11-04"
+      "cached_input_token_price_per_m": 47500
     },
     {
       "display_name": "Qwen: Qwen3 32B",
@@ -249,8 +247,7 @@
       },
       "input_token_price_per_m": 95000,
       "output_token_price_per_m": 285000,
-      "cached_input_token_price_per_m": 47500,
-      "missing_since": "2026-11-04"
+      "cached_input_token_price_per_m": 47500
     },
     {
       "display_name": "Qwen: Qwen3 8B",
@@ -501,11 +498,12 @@
       },
       "input_token_price_per_m": 100000,
       "output_token_price_per_m": 400000,
-      "cached_input_token_price_per_m": 20000
+      "cached_input_token_price_per_m": 20000,
+      "missing_since": "2026-11-05"
     }
   ],
   "source": "https://llm.eu.greenference.com/trustedrouter/v1/models",
-  "generated_at": "2026-11-04T16:53:25Z",
+  "generated_at": "2026-11-05T01:52:57Z",
   "price_scale": "microdollars_per_million",
   "model_count": 10
 }
