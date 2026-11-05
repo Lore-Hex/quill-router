@@ -3367,12 +3367,11 @@ LIBERTY_1_0_1M_MODEL_ORDER = (
     "nvidia/nemotron-3-ultra-550b-a55b",
 )
 
-# Panel first, then Muse Spark Open, which fuses the panel (Beam, Inkling and
-# Nemotron back it up as fusers). Every route is US-headquartered.
+# The panel; Muse Spark Open also fuses it, backed up by Beam then Nemotron.
+# Every member runs on a US-headquartered 1M route.
 LIBERTY_4_0_MODEL_ORDER = (
     "nvidia/nemotron-3.5-super-vl",
     "reflection/beam-1.0",
-    "thinkingmachines/inkling",
     "meta-models/muse-spark-open",
 )
 

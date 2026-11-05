@@ -1545,11 +1545,10 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
         ),
         LIBERTY_4_0_MODEL_ID: (
             "fusion_panel",
-            524_288,
+            1_048_576,
             [
                 "nvidia/nemotron-3.5-super-vl",
                 "reflection/beam-1.0",
-                "thinkingmachines/inkling",
                 "meta-models/muse-spark-open",
             ],
         ),
