@@ -79,6 +79,11 @@ def test_hourly_refresh_cannot_restore_retired_tinfoil_kimi_k26(
 def test_tinfoil_feed_discovers_kimi_k3_only_when_published(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Tinfoil retires kimi-k3 on 2026-11-12; discovery is checked before it.
+    monkeypatch.setattr(
+        provider_lifecycle, "_utc_now",
+        lambda: provider_lifecycle.TINFOIL_KIMI_K3_RETIREMENT_AT - timedelta(seconds=1),
+    )
     monkeypatch.setattr(tinfoil, "UPSTREAM_ID_MAP", dict(tinfoil.UPSTREAM_ID_MAP))
     payload = {
         "data": [
