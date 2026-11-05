@@ -82,6 +82,8 @@ MISTRAL_MEDIUM_35_RETIREMENT_AT = datetime(2027, 4, 30, 0, 0, tzinfo=UTC)
 GOOGLE_AI_STUDIO_GEMINI_25_FLASH_RETIREMENT_AT = datetime(2026, 12, 1, 0, 0, tzinfo=UTC)
 # Lyceum redirects kimi-k2.7-code to kimi-k3 from 4 Nov 2026 (date only).
 LYCEUM_KIMI_K27_CODE_RETIREMENT_AT = datetime(2026, 11, 4, 0, 0, tzinfo=UTC)
+# Friendli drops GLM-5.1 from its Model APIs at 00:00 UTC on 20 Nov 2026.
+FRIENDLI_GLM_51_RETIREMENT_AT = datetime(2026, 11, 20, 0, 0, tzinfo=UTC)
 # 2026-10-30 10:00 PDT: Crusoe redirects four serverless models to replacements.
 CRUSOE_OCTOBER_30_RETIREMENT_AT = datetime(2026, 10, 30, 17, 0, tzinfo=UTC)
 TELNYX_NOVEMBER_2_RETIREMENT_AT = datetime(2026, 11, 2, 0, 0, tzinfo=UTC)
@@ -1177,6 +1179,16 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"moonshotai/kimi-k2.7-code"}),
         effective_at=LYCEUM_KIMI_K27_CODE_RETIREMENT_AT,
         replacement_model_ids=("moonshotai/kimi-k3",),
+    ),
+    # Friendli's November 5 notice removes zai-org/GLM-5.1 from its Model
+    # APIs at 00:00 UTC on 20 November 2026; GLM-5.3 is the recommended
+    # replacement. Dedicated endpoints are unaffected.
+    _Retirement(
+        provider="friendli",
+        model_ids=frozenset({"z-ai/glm-5.1"}),
+        upstream_ids=frozenset({"zai-org/GLM-5.1"}),
+        effective_at=FRIENDLI_GLM_51_RETIREMENT_AT,
+        replacement_model_ids=("z-ai/glm-5.3",),
     ),
     # DigitalOcean's October 29 notices deprecate these Inference models on
     # 2026-11-09 (date only; 00:00 UTC conservatively); requests then 404.
