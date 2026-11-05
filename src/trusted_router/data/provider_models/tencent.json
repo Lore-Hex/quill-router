@@ -506,8 +506,7 @@
       "upstream_id": "hy4",
       "context_length": 1048576,
       "created": 1793577600,
-      "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable": true,
       "supported_features": [
         "function-calling",
         "json-mode",

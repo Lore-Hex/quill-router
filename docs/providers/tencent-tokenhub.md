@@ -15,12 +15,19 @@ output, tools, structured output, reasoning, and caching. Preview remains
 text-only. No GA weights, precision, ZDR, or Confidential claim is inferred from
 Preview or from the routing gateway's attestation.
 
-The authenticated account catalog reported `hy4` online at 2026-11-04 07:31 UTC.
-One 256-token native-thinking canary failed acceptance at 07:40 UTC; no inference
-retry occurred. Its boolean result does not establish a provider error or root
-cause. The new manifest row therefore retains `provider-canary-failed`: Credits
-is disabled pending a successful normal canary. This discovery-only row does
-not itself publish a BYOK route or prove customer entitlement. All pre-existing
+The initial November 4 canary failed; its boolean result did not establish the
+cause. A subsequent read of the matching managed account found HY4 inactive
+with `INSUFFICIENT_BALANCE` and pay-as-you-go disabled. After the authorized
+account fix, an independent read at 2026-11-05 18:00 UTC confirmed HY4 active.
+Fresh bounded JSON (18:01 UTC) and streaming (18:06 UTC) acceptance checks both
+passed with exact native model, expected output, normal completion and valid
+integer usage. Each used 256 output tokens and native thinking defaults, with
+no retries or fallback. Streaming also verified the terminal usage and done
+events. No credentials or response contents were logged.
+
+The manifest now enables HY4 for the normal router release path. These upstream
+checks do not by themselves prove the router release is live; that requires
+the normal production gates and routed acceptance checks. All pre-existing
 manifest rows and operator holds remain unchanged. This is a scoped addition,
 not a full provider refresh. The original provider-wide `generated_at` remains
 unchanged so this addition does not extend other routes' freshness deadlines.
@@ -101,9 +108,11 @@ application log.
 The shared direct-provider registry controls bootstrap and cloud deployment
 wiring. Deploy gateway support before publishing a newly enabled provider.
 
-A `402` with code `401006` means the default online inference service has not
-been activated or does not match the model, even if the account has funds.
-Enable only the desired pay-as-you-go services in the matching Singapore site.
+A `402` with code `401006` was observed during HY4 onboarding. Tencent's error
+table associates that code with service/model mapping but documents HTTP400;
+the status discrepancy alone does not identify the cause. Inspect the matching
+account's endpoint state and spendable balance before changing configuration.
+Enable only the authorized pay-as-you-go services in the matching Singapore site.
 Do not purchase reserved throughput or dedicated instances for catalog canaries.
 
 The small discovery canaries use the models' native thinking defaults. In the

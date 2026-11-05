@@ -43,7 +43,10 @@ def test_hy4_manifest_preserves_managed_canary_gate_and_privacy() -> None:
     assert row["upstream_id"] == "hy4"
     managed = [e for e in catalog_vehicles.registry_endpoints().values()
                if e.model_id == MODEL and e.provider == "tencent" and e.usage_type == "Credits"]
-    assert bool(managed) is (row.get("routable") is True)
+    assert row["routable"] is True
+    assert "routable_reason" not in row
+    assert managed
+    assert all(e.upstream_id == "hy4" for e in managed)
     preview = catalog_vehicles.registry_models()["tencent/hy4-preview"]
     assert model_open_weights(preview)
     assert not model_open_weights(replace(preview, id=MODEL))
@@ -188,8 +191,8 @@ def test_hy4_future_serving_page_discloses_discount_expiry(
 ) -> None:
     from trusted_router import catalog
 
-    # A synthetic serving route tests the rendering contract, not the held
-    # production account's entitlement. Monkeypatch restores the registry.
+    # Pin a synthetic route to test both pricing periods independently of
+    # live account state. Monkeypatch restores the registry.
     preview = catalog.MODELS["tencent/hy4-preview"]
     template = next(e for e in catalog_vehicles.registry_endpoints().values()
                     if e.model_id == preview.id and e.provider == "tencent" and e.usage_type == "Credits")
