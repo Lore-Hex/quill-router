@@ -37,7 +37,13 @@ stream admitted with a hold below its spend ceiling would be cut at the hold:
 
 ### 2.2 A stream's hold is its ceiling
 
-Since `6ea0f9eff`, `d15f3c0be` and `63b64d601`, a stream reserves its
+This section records the code as this design found it. Since 2026-11-05 a
+stream's reservation is bounded at `HOLD_OUTPUT_TOKENS` like any catalog
+request's (`fast-admission-e2-decide.md`, "Streams"; §11 item 1): the
+`stream` branches below are gone, and a leased stream is one whose budget
+fits the bound, where the reservation still equals the estimate.
+
+Since `6ea0f9eff`, `d15f3c0be` and `63b64d601`, a stream reserved its
 estimate on both sides:
 
 - **Python.** `finish_candidates` (`authorize_candidates.py:355`) prices
@@ -776,7 +782,9 @@ the shadow, admission on, and Stage D off.
 - **`stream_open_heartbeat`**: a quill-cloud-proxy change, then Python
   sends `OpenHeartbeat` from `GatewayBoot.declares_stream_open_heartbeat`
   (`storage_models.py:2008`); the owners already take it.
-- **Lowering stream reservations**, or an admission carrying e beside r.
+- **An admission carrying e beside r**, so a stream whose budget passes
+  `HOLD_OUTPUT_TOKENS` can be leased at its lowered reservation (done
+  2026-11-05) without being cut at it.
 - Streaming `/v1/messages` (never heartbeated), service tiers, markups,
   keys with caps: unchanged exclusions.
 
