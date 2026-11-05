@@ -8,6 +8,9 @@ from decimal import ROUND_HALF_UP, Decimal
 from bs4 import BeautifulSoup, Tag
 
 _SERVERLESS_IDS = {
+    "thinkingmachines/Inkling-2-Small:peft:262144:sampling-nvfp4": (
+        "thinkingmachines/inkling-2-small"
+    ),
     "thinkingmachines/Inkling-Small:peft:262144:sampling-nvfp4": (
         "thinkingmachines/inkling-small"
     ),
