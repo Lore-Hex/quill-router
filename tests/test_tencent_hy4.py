@@ -210,7 +210,13 @@ def test_hy4_future_serving_page_discloses_discount_expiry(
     monkeypatch.setattr("trusted_router.provider_lifecycle._utc_now", lambda: at)
     response = client.get(f"/models/{MODEL}/pricing")
     assert response.status_code == 200
-    text = " ".join(BeautifulSoup(response.text, "html.parser").get_text(" ", strip=True).split())
+    soup = BeautifulSoup(response.text, "html.parser")
+    pricing_table = soup.select_one("table[data-reference-table]")
+    assert pricing_table is not None
+    assert [header.get_text(strip=True) for header in pricing_table.select("thead th")] == [
+        "Provider", "Input", "Cached input", "Output", "Schedule",
+    ]
+    text = " ".join(soup.get_text(" ", strip=True).split())
     assert "50% off list prices" in text
     assert "2026-11-03T16:00:00Z" in text
     assert "2026-12-31T16:00:00Z" in text
