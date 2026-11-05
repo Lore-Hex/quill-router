@@ -50,17 +50,17 @@
   <div class="matrix-row">
     <span>Privacy posture</span><span>{{ comparison.left_privacy }}</span><span>{{ comparison.right_privacy }}</span>
   </div>
-  {% if comparison.left_ttft != 'not enough data' or comparison.right_ttft != 'not enough data' %}
+  {% if comparison.has_ttft %}
   <div class="matrix-row">
     <span>Fastest measured p50 TTFT</span><span>{{ comparison.left_ttft }}{% if comparison.left_ttft_provider %} via <a href="/providers/{{ comparison.left_ttft_provider }}">{{ comparison.left_ttft_provider }}</a>{% endif %}</span><span>{{ comparison.right_ttft }}{% if comparison.right_ttft_provider %} via <a href="/providers/{{ comparison.right_ttft_provider }}">{{ comparison.right_ttft_provider }}</a>{% endif %}</span>
   </div>
   {% endif %}
-  {% if comparison.left_throughput != 'not enough data' or comparison.right_throughput != 'not enough data' %}
+  {% if comparison.has_throughput %}
   <div class="matrix-row">
     <span>Highest measured throughput</span><span>{{ comparison.left_throughput }}{% if comparison.left_throughput_provider %} via <a href="/providers/{{ comparison.left_throughput_provider }}">{{ comparison.left_throughput_provider }}</a>{% endif %}</span><span>{{ comparison.right_throughput }}{% if comparison.right_throughput_provider %} via <a href="/providers/{{ comparison.right_throughput_provider }}">{{ comparison.right_throughput_provider }}</a>{% endif %}</span>
   </div>
   {% endif %}
-  {% if comparison.left_uptime != 'not enough data' or comparison.right_uptime != 'not enough data' %}
+  {% if comparison.has_uptime %}
   <div class="matrix-row">
     <span>Recent route uptime range</span><span>{{ comparison.left_uptime }}</span><span>{{ comparison.right_uptime }}</span>
   </div>

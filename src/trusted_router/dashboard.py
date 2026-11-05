@@ -6124,6 +6124,8 @@ def _model_route_evidence(
             else ""
         ),
         "uptime_range": uptime_range,
+        "has_throughput": fastest_throughput is not None,
+        "has_uptime": bool(uptime_values),
         "route_count": len(endpoints),
         "provider_count": (
             len(_endpoint_provider_views(endpoints, fallback_provider=model.provider))
@@ -6335,6 +6337,10 @@ def _comparison_view(
         "right_throughput_provider": right_evidence["fastest_throughput_provider"],
         "left_uptime": left_evidence["uptime_range"],
         "right_uptime": right_evidence["uptime_range"],
+        # Rows and FAQ answers with no measurement for either model are left out.
+        "has_ttft": left_measured is not None or right_measured is not None,
+        "has_throughput": bool(left_evidence["has_throughput"] or right_evidence["has_throughput"]),
+        "has_uptime": bool(left_evidence["has_uptime"] or right_evidence["has_uptime"]),
     }
 
 
@@ -6348,6 +6354,14 @@ def _model_comparison_faq_items(
     right_price = str(comparison["right_price"])
     left_ttft = str(comparison["left_ttft"])
     right_ttft = str(comparison["right_ttft"])
+    faster = (
+        (
+            f"Is {left.name} or {right.name} faster?",
+            f"Current measured p50 time to first token is {left_ttft} for {left.name} "
+            f"and {right_ttft} for {right.name}. These are routed probe measurements, "
+            "not vendor-advertised speeds, and update as new samples arrive.",
+        ),
+    ) if comparison["has_ttft"] else ()
     return (
         (
             f"Which should I use, {left.name} or {right.name}?",
@@ -6359,12 +6373,7 @@ def _model_comparison_faq_items(
             f"and {right_price} for {right.name}. The comparison uses current catalog "
             "prices and updates as provider pricing changes.",
         ),
-        (
-            f"Is {left.name} or {right.name} faster?",
-            f"Current measured p50 time to first token is {left_ttft} for {left.name} "
-            f"and {right_ttft} for {right.name}. These are routed probe measurements, "
-            "not vendor-advertised speeds, and update as new samples arrive.",
-        ),
+        *faster,
         (
             f"Can I test {left.name} and {right.name} with the same API?",
             _same_api_answer(left, right),

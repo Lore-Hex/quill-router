@@ -1407,7 +1407,13 @@ def test_model_comparison_pages_are_public(
     assert response.status_code == 200
     assert "MoonshotAI: Kimi K2.6 vs Z.ai: GLM 5.1" in response.text
     assert "Practical read" in response.text
-    assert "Cheapest route" in response.text
+    assert "Cheapest route adds the rate for one million input" in response.text
+    assert "Compare routes" not in response.text
+    # Without probe measurements the speed row and its FAQ answer are left out
+    # rather than saying "not enough data".
+    assert "not enough data" not in response.text
+    assert "Fastest measured p50 TTFT" not in response.text
+    assert "MoonshotAI: Kimi K2.6 or Z.ai: GLM 5.1 faster?" not in response.text
     assert 'href="https://aiiq.org/models/kimi-k2.6/"' in response.text
     assert "IQ 116" in response.text
     assert "/models/moonshotai/kimi-k2.6/pricing" in response.text
