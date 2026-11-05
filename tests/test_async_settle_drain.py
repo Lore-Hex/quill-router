@@ -490,6 +490,10 @@ def test_inline_grace_not_read_from_a_truncated_backlog(fake_store, monkeypatch)
         reads.append(sql)
         return original(self, sql, **kwargs)
     monkeypatch.setattr(_FakeSnapshot, 'execute_sql', spy)
+    monkeypatch.setattr(adapter, 'HEALTH_ROW_LIMIT', 2)
+    value = publish_health(db)  # exactly at the bound and complete: read, and the grace row recounted
+    assert len(reads) == 2 and value['complete'] is True and value['p50_age_seconds'] == 0
+    reads.clear()
     monkeypatch.setattr(adapter, 'HEALTH_ROW_LIMIT', 1)
     value = publish_health(db)  # the covering read is truncated: its count of the range proves nothing
     assert len(reads) == 1 and value['complete'] is False
