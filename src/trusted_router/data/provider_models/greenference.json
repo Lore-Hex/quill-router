@@ -480,7 +480,7 @@
       "deprecation_at": null,
       "retirement_at": null,
       "replacement_model_id": null,
-      "routable": true,
+      "routable": false,
       "reliability": {
         "first_token_timeout_seconds": 30.0,
         "completion_timeout_seconds": 300.0,
@@ -499,11 +499,12 @@
       "input_token_price_per_m": 100000,
       "output_token_price_per_m": 400000,
       "cached_input_token_price_per_m": 20000,
-      "missing_since": "2026-11-05"
+      "missing_since": "2026-11-05",
+      "routable_reason": "delisted-upstream"
     }
   ],
   "source": "https://llm.eu.greenference.com/trustedrouter/v1/models",
-  "generated_at": "2026-11-05T01:52:57Z",
+  "generated_at": "2026-11-05T06:28:19Z",
   "price_scale": "microdollars_per_million",
   "model_count": 10
 }

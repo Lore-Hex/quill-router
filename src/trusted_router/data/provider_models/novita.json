@@ -3,7 +3,7 @@
   "source": "https://api.novita.ai/openai/v1/models",
   "price_source": "https://novita.ai/pricing",
   "price_scale_to_microdollars_per_million_tokens": 100,
-  "generated_at": "2026-11-05T01:52:57Z",
+  "generated_at": "2026-11-05T06:28:19Z",
   "model_count": 177,
   "models": [
     {
@@ -5313,9 +5313,9 @@
       "created": 1793757877,
       "context_length": 1000000,
       "max_output_tokens": 64000,
-      "input_token_price_per_m": 8340,
-      "output_token_price_per_m": 25010,
-      "cached_input_token_price_per_m": 420
+      "input_token_price_per_m": 4170,
+      "output_token_price_per_m": 12505,
+      "cached_input_token_price_per_m": 210
     },
     {
       "id": "z-ai/glm-5.3-flashx",

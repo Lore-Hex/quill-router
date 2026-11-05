@@ -1624,7 +1624,8 @@
       "title": "moonshotai/Kimi-K3.1-Pro",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -1644,7 +1645,7 @@
   ],
   "source": "https://api.featherless.ai/v1/models",
   "pricing_source": "https://featherless.ai/docs/request-pricing-and-credits",
-  "generated_at": "2026-11-05T01:52:57Z",
+  "generated_at": "2026-11-05T06:28:19Z",
   "price_scale": "microdollars_per_million",
   "model_count": 66
 }

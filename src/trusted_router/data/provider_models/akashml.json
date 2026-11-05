@@ -347,11 +347,12 @@
         "stop",
         "seed"
       ],
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 1200000,
       "output_token_price_per_m": 14000000,
       "cached_input_token_price_per_m": 1200000,
-      "missing_since": "2026-11-05"
+      "missing_since": "2026-11-05",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Kimi K3.1 Pro",
@@ -394,7 +395,7 @@
     }
   ],
   "source": "https://api.akashml.com/v1/models",
-  "generated_at": "2026-11-05T01:52:57Z",
+  "generated_at": "2026-11-05T06:28:19Z",
   "price_scale": "microdollars_per_million",
   "model_count": 10
 }

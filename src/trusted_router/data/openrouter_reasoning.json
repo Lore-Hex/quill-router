@@ -943,6 +943,12 @@
       "supported_efforts": [],
       "default_effort": null
     },
+    "inclusionai/ling-3.0-tiny": {
+      "mandatory": false,
+      "default_enabled": true,
+      "supported_efforts": [],
+      "default_effort": null
+    },
     "inclusionai/ling-3.1-flash": {
       "mandatory": false,
       "default_enabled": true,

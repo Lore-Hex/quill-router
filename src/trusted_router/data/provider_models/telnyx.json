@@ -2,7 +2,7 @@
   "_about": "Provider-native Telnyx inference routes, context windows, capabilities, and reconciled account-billable prices refreshed hourly from Telnyx-owned sources.",
   "provider": "telnyx",
   "source": "https://api.telnyx.com/v2/ai/openai/models",
-  "generated_at": "2026-11-05T01:52:57Z",
+  "generated_at": "2026-11-05T06:28:19Z",
   "price_scale": "microdollars_per_million",
   "model_count": 21,
   "models": [
@@ -241,7 +241,9 @@
       "pricing_source": "https://api.telnyx.com/v2/ai/openai/models",
       "license": "modified-mit",
       "max_output_tokens": null,
-      "missing_since": "2026-11-05"
+      "missing_since": "2026-11-05",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Kimi-K2.6",
@@ -372,7 +374,9 @@
       "pricing_source": "https://api.telnyx.com/v2/ai/openai/models",
       "license": "mit",
       "max_output_tokens": null,
-      "missing_since": "2026-11-05"
+      "missing_since": "2026-11-05",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "GLM-5.2",
