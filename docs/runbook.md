@@ -872,10 +872,16 @@ A pass starts no new apply after its 2 s budget. A row whose claim finishes
 past the budget is handed back at once rather than held for the 30 s lease
 (`async_drain.deferred ... reason=deadline released=1`), since an unapplied row
 ages in the published p95 and one such row closed admission fleet-wide on
-2026-11-05. `released=0` means the claim was no longer this worker's;
-`released=error` means the release write failed and the lease runs out as
-before (with `async_drain.release_failed`). A claim deferred because the worker
-is stopping (`reason=stop`) keeps its lease until it lapses.
+2026-11-05. `released=0` means the row was no longer this worker's claim, or no
+longer pending. `released=error` means the release raised: its 1 s budget ran
+out or the write failed. Whether it took effect is then unknown; if it did not,
+the lease runs out as before (also logged as `async_drain.release_failed`).
+`released=none` marks a deferral that tries no release: a claim deferred
+because the worker is stopping (`reason=stop`) keeps its lease until it lapses,
+and an expired lease (`reason=lease`) has nothing to free. While fewer than 20
+rows are unresolved (pending or dead), the published p95 is the oldest one's
+age, counted from its creation. So any single row unresolved for more than 5 s,
+whether leased, backing off or dead, closes admission until it is resolved.
 
 The worker drains both NULL and async versions: an open
 reservation blocked by an accepted async sibling parks under protection; once

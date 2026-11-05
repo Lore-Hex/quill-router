@@ -48,6 +48,9 @@ def setup_slot(monkeypatch, *, prior=True, reason=None, missing_hash=False):
             stop.set()
         elif reason == 'deadline':
             clock[0] = 10.
+        elif reason == 'stop_and_deadline':
+            stop.set()
+            clock[0] = 10.
         elif reason == 'lease':
             row.leased_until = PRIOR
         elif reason == 'missing_lease':
@@ -124,6 +127,17 @@ def test_exact_deferred_all_reasons(monkeypatch, caplog, reason):
     # worker's claim keeps its lease, and an expired lease has nothing to free.
     assert box.releases == ([(NEW, LEASE)] if reason == 'deadline' else [])
     assert 'SENTINEL_' not in caplog.text
+
+
+def test_a_stopping_worker_keeps_a_claim_that_also_crossed_the_budget(monkeypatch, caplog):
+    # Stop is checked first: a stopping worker's claim keeps its lease even
+    # when the pass budget has run out too, as the runbook says.
+    box, stop, calls = setup_slot(monkeypatch, reason='stop_and_deadline')
+    with caplog.at_level(logging.INFO):
+        assert worker._apply_slot(box, 0, 30, 10., stop) == (1, 'deferred', 0)
+    assert caplog.records[-1].getMessage() == (
+        f'async_drain.deferred ref={REF} owner={NEW} reason=stop released=none')
+    assert box.releases == [] and not calls
 
 
 @pytest.mark.parametrize('result', [False, 'exception'])
