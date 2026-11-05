@@ -2179,6 +2179,20 @@ class _FakeTransaction:
             new = dict(rec, lease_owner=p["owner"], leased_until=p["lease"], updated_at=p["now"])
             self.pending_writes.append(("update_settle_outbox", pk, new))
             return 1
+        if sql.startswith("UPDATE tr_settle_outbox SET lease_owner=NULL, leased_until=NULL, "
+                          "updated_at=@now WHERE"):  # release a deferred claim
+            _require_pred(sql, "authorization_id=@aid AND intent_kind=@kind", "release")
+            _require_pred(sql, "status='pending'", "release")
+            _require_pred(sql, "AND lease_owner=@owner", "release")
+            pk = (p["aid"], p["kind"])
+            rec = self._settle_outbox_current(pk)
+            # SQL equality with a NULL owner matches no row.
+            if (p.get("owner") is None or rec is None or rec["status"] != "pending"
+                    or rec.get("lease_owner") != p["owner"]):
+                return 0
+            new = dict(rec, lease_owner=None, leased_until=None, updated_at=p["now"])
+            self.pending_writes.append(("update_settle_outbox", pk, new))
+            return 1
         if sql.startswith("UPDATE tr_settle_outbox SET status='pending'"):  # park
             _require_pred(sql, "authorization_id=@aid AND intent_kind=@kind", "park")
             _require_pred(sql, "AND status='pending' AND attempts=@attempts", "park")

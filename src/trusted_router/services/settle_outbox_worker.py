@@ -154,6 +154,21 @@ def _apply_slot_inner(outbox: SpannerSettleOutbox, shard: int, lease: int,
         _WORKSPACES.leave(row.workspace_id)
 
 
+def _release_deadline_claim(outbox: SpannerSettleOutbox, row: SettleOutboxRow) -> str:
+    """Hand a row claimed after the pass budget ran out straight back to the queue.
+
+    Kept, the claim's lease would hold the row unapplied for the whole lease
+    while it ages in the fleet's drain health, and a p95 age over 5 s closes
+    async admission everywhere. A claim deferred because the worker is stopping
+    keeps its lease, as before. If the release fails, the lease runs out as before.
+    """
+    try:
+        return "1" if outbox.release_claim(row) else "0"
+    except Exception as exc:
+        _audit_log(logging.WARNING, "async_drain.release_failed error_class=%s", type(exc).__name__)
+        return "error"
+
+
 def _apply_claimed(outbox: SpannerSettleOutbox, row: SettleOutboxRow,
                    prior_lease: tuple[str | None, str | None], deadline: float,
                    stop: threading.Event | None, claim_seconds: float) -> tuple[int, str, int]:
@@ -175,8 +190,9 @@ def _apply_claimed(outbox: SpannerSettleOutbox, row: SettleOutboxRow,
           or dt.datetime.fromisoformat(row.leased_until.replace('Z', '+00:00')) <= now):
         reason = "lease"
     if reason is not None:
-        _audit_log(logging.INFO, "async_drain.deferred ref=%s owner=%s reason=%s",
-                   ref, row.lease_owner or "none", reason)
+        released = _release_deadline_claim(outbox, row) if reason == "deadline" else "none"
+        _audit_log(logging.INFO, "async_drain.deferred ref=%s owner=%s reason=%s released=%s",
+                   ref, row.lease_owner or "none", reason, released)
         return 1, "deferred", 0
     started = time.monotonic()
     error_note = None
