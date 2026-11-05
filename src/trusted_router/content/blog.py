@@ -50,6 +50,33 @@ FEATURED_SLUGS: tuple[str, ...] = (
 
 BLOG_POSTS: tuple[BlogPost, ...] = (
     BlogPost(
+        slug="combo-models-beat-the-best-model",
+        title="Many models beat one model",
+        description=(
+            "Combo models put many models behind one model id, by fusing their answers or "
+            "routing each task to the right one. Today we launch three: Prometheus 4.0, "
+            "Liberty 4.0 and Polyphemus 1.0."
+        ),
+        published_date="2026-11-04",
+        source_label="Joseph Perla",
+        source_url=None,
+        body_html="""
+<p>Many models beat one model. We call these combo models: you send one request to one model id, and underneath it there are many models doing the work. Some combos fuse, where a panel of models each answers and a synthesizer writes the final answer from all of them. Some combos route, where we look at the task and send it to the model best suited to it. Either way you write the same code you would for a single model.</p>
+
+<p>Why does a panel beat its best member? Because models fail in different places. One hallucinates a date, another misses a primary source, a third gets the math wrong. A good synthesizer keeps what survives cross-examination and drops the rest. On hard research tasks, we typically see a fused panel score about 20% higher than the best single model sitting on it. It even works when every member is the same model: run one model several times, fuse its own answers, and it gets better too.</p>
+
+<p>Today we are launching three combo models.</p>
+
+<p><strong>Prometheus 4.0</strong> (<span class="mono">trustedrouter/prometheus-4.0</span>) is our open-weights fusion, updated to each lab's newest model: MiMo 2.6 Pro, GLM 5.3, Kimi K3, DeepSeek V4.1 Flash, MiniMax M3 and Qwen 3.8. Every model in it is downloadable. Earlier versions of Prometheus beat Fable 5, GPT-5.5 and Claude Opus on deep research, built from nothing but open weights. This is the one most people should reach for, and the rolling <span class="mono">trustedrouter/prometheus</span> alias points at it.</p>
+
+<p><strong>Liberty 4.0</strong> (<span class="mono">trustedrouter/liberty-4.0</span>) is all American. NVIDIA's Nemotron 3.5, Reflection's Beam and Meta's Muse Spark each answer, and Muse Spark then fuses the answers into one. If one model is down, Liberty fuses whatever came back, and if Muse Spark is down, Beam steps in to fuse. It takes up to 1M tokens of context, and every call goes only to US-based providers. If you need to know where your model came from and who served it, this is the answer.</p>
+
+<p><strong>Polyphemus 1.0</strong> (<span class="mono">trustedrouter/polyphemus-1.0</span>) is a routing combo. It reads your task, picks the right model for it, and runs that model, so you get the strengths of many models under one id. It remembers your session so follow-up turns stay cache-friendly.</p>
+
+<p>All three are live on TrustedRouter now. Same key, same base URL, one model id. Stop picking a model. Pick a combo.</p>
+""",
+    ),
+    BlogPost(
         slug="intelligence-gets-an-exchange",
         title="Intelligence is becoming a commodity. Today it gets an exchange.",
         description=(
