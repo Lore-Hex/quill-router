@@ -432,6 +432,7 @@ PARKED = 'typed store unavailable'  # park's note: a park keeps attempts and mov
 
 @pytest.mark.parametrize('spec, closed', [
     ((30, 60, 0, None, 'pending'), False),     # in its inline grace
+    ((5.5, 60, 0, None, 'pending'), False),    # just past 5 s: the first age the read recounts
     ((63, 60, 0, None, 'pending'), False),     # due 3 s ago
     ((65.5, 60, 0, None, 'pending'), True),    # due 5.5 s ago
     ((90, 60, 0, None, 'pending'), True),      # past the read range
@@ -445,7 +446,7 @@ PARKED = 'typed store unavailable'  # park's note: a park keeps attempts and mov
     ((65.5, 3600, 0, None, 'pending'), True),  # ... and counted from 60 s at the latest
     ((20, None, 0, None, 'pending'), True),    # no due time to read
     ((20, -10, 0, None, 'pending'), True),     # due before it was written: counts from creation
-], ids=['grace', 'just-due', 'overdue', 'old', 'due-at-once', 'attempted', 'async', 'dead',
+], ids=['grace', 'grace-past-5s', 'just-due', 'overdue', 'old', 'due-at-once', 'attempted', 'async', 'dead',
         'parked-contended', 'parked', 'due-late', 'due-late-past-grace', 'no-due-time', 'due-before-creation'])
 def test_inline_grace_counts_from_due_time(fake_store, spec, closed):
     db = grace_rows(fake_store, spec)
@@ -471,9 +472,27 @@ def test_inline_grace_not_read_past_the_row_bound(fake_store, monkeypatch):
         reads.append(sql)
         return original(self, sql, **kwargs)
     monkeypatch.setattr(_FakeSnapshot, 'execute_sql', spy)
+    monkeypatch.setattr(adapter, 'GRACE_ROW_LIMIT', 2)
+    assert publish_health(db)['p95_age_seconds'] == 0  # exactly at the bound: read
+    assert len(reads) == 2
+    reads.clear()
     monkeypatch.setattr(adapter, 'GRACE_ROW_LIMIT', 1)
     value = publish_health(db)  # two rows in range, bound one: no base rows read, creation ages stand
     assert len(reads) == 1 and value['p95_age_seconds'] >= 31
+
+
+def test_inline_grace_not_read_from_a_truncated_backlog(fake_store, monkeypatch):
+    from trusted_router import storage_gcp_async_admission as adapter
+    db = grace_rows(fake_store, (90, 60, 0, None, 'pending'), (30, 60, 0, None, 'pending'))
+    reads = []
+    original = _FakeSnapshot.execute_sql
+    def spy(self, sql, **kwargs):
+        reads.append(sql)
+        return original(self, sql, **kwargs)
+    monkeypatch.setattr(_FakeSnapshot, 'execute_sql', spy)
+    monkeypatch.setattr(adapter, 'HEALTH_ROW_LIMIT', 1)
+    value = publish_health(db)  # the covering read is truncated: its count of the range proves nothing
+    assert len(reads) == 1 and value['complete'] is False
 
 
 def test_inline_grace_read_failure_publishes_creation_ages(fake_store, monkeypatch, caplog):
