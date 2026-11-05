@@ -424,6 +424,10 @@ def _mark_done_tx(
         ))
     return True
 
+# Wall-clock budget for handing back a deferred claim (release_claim).
+RELEASE_BUDGET_SECONDS = 1.0
+
+
 def _iso_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -738,7 +742,10 @@ class SpannerSettleOutbox:
                 },
             )
 
-        return run_in_transaction_with_retry(self._database, release_txn) == 1
+        # The release runs after the pass budget, and its pass waits for it. One
+        # that cannot finish quickly is not worth that wait: the lease runs out.
+        return run_in_transaction_with_retry(
+            self._database, release_txn, total_budget_seconds=RELEASE_BUDGET_SECONDS) == 1
 
     def mark(
         self,

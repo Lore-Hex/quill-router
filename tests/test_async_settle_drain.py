@@ -274,9 +274,14 @@ def test_batch_tail_expired_claim_never_applied(monkeypatch, expired):
     calls = []
     monkeypatch.setattr(drain, 'apply_frozen_settle', lambda row: calls.append(row) or ApplyOutcome.SETTLED_NOW)
     monkeypatch.setattr(drain, '_resolve_row', lambda *args, **kw: None)
-    box = SimpleNamespace(due_shard=lambda **kw: [row], claim_candidates=lambda rows, **kw: rows, _database=None, _pt=None, _async_fence=False)
+    released = []
+    box = SimpleNamespace(due_shard=lambda **kw: [row], claim_candidates=lambda rows, **kw: rows,
+                          release_claim=lambda value: released.append(value) or True,
+                          _database=None, _pt=None, _async_fence=False)
     assert worker._apply_slot(box, 0, 30, 1. if expired == 'budget' else 10.) == (1, 'deferred', 0)
     assert calls == []
+    # A claim past the budget is handed back; an expired lease has nothing to free.
+    assert released == ([row] if expired == 'budget' else [])
 
 
 def test_settings_and_loop_stop(fake_store, monkeypatch):

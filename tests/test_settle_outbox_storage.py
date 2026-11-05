@@ -278,6 +278,42 @@ def test_release_claim_without_an_owner_changes_nothing() -> None:
     assert db.settle_outbox[("gwa-release-none", "settle")] == before
 
 
+def test_release_claim_frees_only_the_claimed_intent() -> None:
+    store, db = make_fake_store()
+    ob = _outbox(store)
+    ob.enqueue(_row("gwa-release-kind"))
+    ob.enqueue(_row("gwa-release-kind", kind="refund"))
+    claims = {job.intent_kind: job for job in ob.claim(lease_seconds=300)}
+    assert set(claims) == {"settle", "refund"}
+
+    assert ob.release_claim(claims["refund"]) is True
+    refund = db.settle_outbox[("gwa-release-kind", "refund")]
+    settle = db.settle_outbox[("gwa-release-kind", "settle")]
+    assert refund["lease_owner"] is None and refund["leased_until"] is None
+    # The settle intent of the same authorization keeps its claim.
+    assert (settle["lease_owner"], settle["leased_until"]) == (
+        claims["settle"].lease_owner, claims["settle"].leased_until)
+
+
+def test_release_claim_uses_a_short_transaction_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    from trusted_router import storage_gcp_settle_outbox as adapter
+    seen: dict[str, object] = {}
+
+    def run(database, func, **kwargs):
+        seen.update(kwargs)
+        return 1
+
+    monkeypatch.setattr(adapter, "run_in_transaction_with_retry", run)
+    store, _db = make_fake_store()
+    row = _row("gwa-release-budget")
+    row.lease_owner = "soworker_" + "c" * 32
+    assert _outbox(store).release_claim(row) is True
+    # The pass waits for its slots, so a slow release would hold every other
+    # row; it gives up quickly and leaves the lease to run out instead.
+    assert seen == {"total_budget_seconds": adapter.RELEASE_BUDGET_SECONDS}
+    assert adapter.RELEASE_BUDGET_SECONDS <= 1.0
+
+
 def test_enqueue_initial_delay_defers_claim_until_default_row_is_due() -> None:
     store, _db = make_fake_store()
     ob = _outbox(store)
