@@ -393,9 +393,10 @@ func TestEveryGoldenCaseThroughTheDecidePath(t *testing.T) {
 	}
 	t.Logf("%d answered (%d naming a cache_affinity_key), %d unavailable, %d passed (%d refunded)", answered, affinity,
 		unavailable, passed, refunded)
-	// The streams' (the edge policy carrying fastpath_edge_streams): 30
-	// answered, one unavailable, one refunded.
-	if answered != 192+30 || streams != 30 || affinity != 18 || unavailable != 3+1 || refunded != 7+1 {
+	// The streams' (the edge policy carrying fastpath_edge_streams): 28
+	// answered, one unavailable, one refunded; the two past the hold bound
+	// pass as stream.hold.
+	if answered != 192+28 || streams != 28 || affinity != 18 || unavailable != 3+1 || refunded != 7+1 {
 		t.Fatalf("answered %d (%d streams, %d with a cache affinity key), unavailable %d, refunded %d: not the goldens' counts",
 			answered, streams, affinity, unavailable, refunded)
 	}

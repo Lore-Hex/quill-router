@@ -1531,7 +1531,6 @@ def _authorize_gateway_sync_impl(
             user_model_prices=None,
             partner_mode=partner_mode,
             rerank=rerank,
-            stream=bool(body.stream),
         )
     except NamedChainRefusal as refusal:
         if refusal.event == "filtered":

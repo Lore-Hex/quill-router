@@ -223,12 +223,14 @@ def test_a_key_spend_limit_compares_the_estimate_on_the_legacy_path(
     assert refused.json()["error"]["type"] == "key_limit_exceeded"
 
 
-def test_a_stream_with_max_tokens_131072_reserves_its_whole_budget_for_now(
+def test_a_stream_with_max_tokens_131072_reserves_the_bounded_hold(
     client: TestClient, user_headers: dict[str, str],
 ) -> None:
-    """Until every plane runs the Stage D heartbeat reader that caps at the
-    estimate, a stream's reservation is its estimate: the reader deployed
-    before this change would cut a stream admitted with a lower one."""
+    """A stream takes the same bounded credit hold as any catalog request,
+    while its estimate, the Stage D cap it is cut at, prices the whole
+    budget. A client streaming with the model's whole output window as
+    max_tokens held twenty times what it spent, and refused itself 402s on a
+    balance that covered dozens of its streams."""
     created = client.post("/v1/keys", headers=user_headers, json={"name": "stream hold"}).json()
     key_hash, workspace_id = created["data"]["hash"], created["data"]["workspace_id"]
     reserved_before = STORE.credit_money[workspace_id].reserved_microdollars
@@ -240,9 +242,9 @@ def test_a_stream_with_max_tokens_131072_reserves_its_whole_budget_for_now(
     authorization = STORE.get_gateway_authorization(response.json()["data"]["authorization_id"])
     assert authorization is not None
     reserved = STORE.credit_money[workspace_id].reserved_microdollars - reserved_before
-    assert reserved == authorization.estimated_microdollars
-    at_the_bound, _reserved_at_the_bound = _figures(client, key_hash, workspace_id, "max_tokens", HOLD_OUTPUT_TOKENS)
-    assert reserved > at_the_bound
+    at_the_bound, reserved_at_the_bound = _figures(client, key_hash, workspace_id, "max_tokens", HOLD_OUTPUT_TOKENS)
+    assert reserved == reserved_at_the_bound == at_the_bound
+    assert reserved < authorization.estimated_microdollars
 
 
 def test_sharded_credit_headroom_is_judged_for_the_reservation() -> None:

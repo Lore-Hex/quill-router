@@ -602,8 +602,8 @@ and the client's whole output budget. The reservation is the credit hold:
 the same price at `min(budget, HOLD_OUTPUT_TOKENS)` output tokens,
 `HOLD_OUTPUT_TOKENS` being 16,384 in Python and in the evaluator's
 `HoldOutputTokens`. They are equal for user-provided models, partner
-billing, videos (whose settle is held to the ceiling), streams (for now:
-see "Streams" below), and whenever the budget is at most 16,384. Every
+billing, videos (whose settle is held to the ceiling), and whenever the
+budget is at most 16,384; a stream's are not (see "Streams" below). Every
 reader of either, and which it reads:
 
 | Reader | Figure |
@@ -634,17 +634,20 @@ whatever makes up the charge. The reservation is not in the 200 body or on the a
 the goldens (§10.1) record it as `reservation_microdollars` from what the
 front door was asked.
 
-**Streams.** A stream's reservation is its estimate for now, in
-`finish_candidates` (`stream`) and in the evaluator (`Request.Stream`)
-alike: the Stage D heartbeat reader deployed before this change bounds a
-stream's running charge by the reservation row's `credit_reserved_micro`,
-so during a mixed-version deploy or a rollback a stream admitted with a
-lower reservation would be cut at `usage_exceeds_cap` by an instance
-running that reader. Non-stream requests take the reduced reservation now.
-Follow-up: lower stream reservations once every plane runs the reader that
-caps at the estimate (`storage_gcp_stage_d._cap_micro` here); the change
-is the one `or stream` in `finish_candidates` and the `req.Stream` branch
-in `Evaluate`, with the `hold_cap` goldens' stream cases.
+**Streams.** Since 2026-11-05 a stream takes the same bounded reservation
+as any catalog request, in `finish_candidates` and in the evaluator alike.
+Every plane has run the Stage D reader that cuts a stream at the estimate
+(`storage_gcp_stage_d._cap_micro`), never at `credit_reserved_micro`, since
+#2065; Stage D's `cap_micro` stays the estimate. Until then a stream held
+its whole budget's price: a client streaming with a large `max_tokens`
+against a small balance held about twenty times what each stream cost, was
+refused 402s on a balance that covered dozens of its streams, and its
+authorizes, refunds and refusals queued on the workspace's credit row
+(`docs/incidents/2026-11-05-stream-hold-convoy.md`). A lease still cuts a
+stream at its hold, so a stream whose budget passes `HOLD_OUTPUT_TOKENS`
+stays out of the lease cohort (`stream.hold`,
+[`fast-admission-streams.md`](fast-admission-streams.md) §5.1 item 5)
+until an admission carries the ceiling beside the hold.
 
 Absent, because `None` with a `None` default: `key_reserved_microdollars`,
 `custom_model_id`, `custom_model_revision`, `user_provided_model_id`,

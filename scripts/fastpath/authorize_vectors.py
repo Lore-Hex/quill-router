@@ -1151,9 +1151,14 @@ def streams_cases(add: Any) -> None:
         for at in INSTANTS:
             add(f"answer:stream:model:{model}@{at}", body={"model": model, "region": region, "stream": True},
                 at=at, policy=streams)
-    # A stream's reservation is its estimate: past HOLD_OUTPUT_TOKENS too.
-    for tokens_out in (HOLD_OUTPUT_TOKENS, HOLD_OUTPUT_TOKENS + 1, 131_072):
-        add(f"answer:stream:hold_cap:{FLASH}:1000+{tokens_out}", policy=streams,
+    # A stream's reservation prices at most HOLD_OUTPUT_TOKENS of its budget,
+    # as any catalog request's does. A lease cuts its stream at the hold, so a
+    # stream whose hold is below its estimate stays out of the lease cohort on
+    # both sides: Python's pilot and Go's streamGate pass it as stream.hold.
+    add(f"answer:stream:hold_cap:{FLASH}:1000+{HOLD_OUTPUT_TOKENS}", policy=streams,
+        body={"model": FLASH, "stream": True, "estimated_input_tokens": 1_000, "max_output_tokens": HOLD_OUTPUT_TOKENS})
+    for tokens_out in (HOLD_OUTPUT_TOKENS + 1, 131_072):
+        add(f"pass:stream.hold:{FLASH}:1000+{tokens_out}", "stream.hold", policy=streams,
             body={"model": FLASH, "stream": True, "estimated_input_tokens": 1_000, "max_output_tokens": tokens_out})
     add("answer:stream:fallback_models", body={"model": FLASH, "models": [GLM, GEMINI], "stream": True},
         policy=streams)
@@ -1247,10 +1252,10 @@ def cases() -> list[dict[str, Any]]:
             body={"model": FLASH, "estimated_input_tokens": 1_000, "max_output_tokens": tokens_out})
     add(f"answer:estimate:hold_cap:{GEMINI}:8000+max_tokens:131072",
         body={"model": GEMINI, "estimated_input_tokens": 8_000, "max_output_tokens": None, "max_tokens": 131_072})
-    # A stream's reservation is its estimate for now (finish_candidates,
-    # stream): Go passes a stream to Python (body.stream), whose typed store
-    # writes the whole budget's price into the reservation row, recorded as
-    # the pass case's python.reservation_microdollars.
+    # A stream's reservation is bounded as the answers' are: Go passes a
+    # stream to Python (body.stream), whose typed store writes the bounded
+    # price into the reservation row, recorded as the pass case's
+    # python.reservation_microdollars.
     for tokens_out in (HOLD_OUTPUT_TOKENS, 131_072):
         add(f"pass:body.stream:hold_cap:{FLASH}:1000+{tokens_out}", "body.stream",
             body={"model": FLASH, "stream": True, "estimated_input_tokens": 1_000, "max_output_tokens": tokens_out})

@@ -216,19 +216,14 @@ def test_hold_output_tokens_is_the_bound_both_paths_share() -> None:
     assert f"const HoldOutputTokens = {HOLD_OUTPUT_TOKENS:_}" in evaluator
 
 
-def test_a_stream_reserves_its_whole_budget_for_now() -> None:
-    """The Stage D heartbeat reader deployed before this change bounds a
-    stream's running charge by the credit hold, so a stream's reservation
-    stays its estimate until every plane runs the reader that caps at the
-    estimate (finish_candidates, ``stream``)."""
+def test_finish_candidates_prices_no_stream_differently() -> None:
+    """A stream takes the same bounded hold as any catalog request: Stage D
+    cuts a stream at the estimate, never at the credit hold, so the pipeline
+    reads no stream flag."""
+    assert "stream" not in inspect.signature(finish_candidates).parameters
     request, plan, resolved = _candidates(_multi_route_chat_model())
-    outcome = finish_candidates(
-        plan, resolved, route_type=request.route_type, byok_providers=frozenset(),
-        estimated_input_tokens=1_000, output_tokens=131_072, service_tier=None,
-        additional_cost_reservation=0, video_resolution=None, at=AT, stream=True,
-    )
-    assert outcome.model_reservation == outcome.model_estimate == _credits_cost(resolved, 131_072)
-    assert outcome.model_reservation > _credits_cost(resolved, HOLD_OUTPUT_TOKENS)
+    estimate, reservation = _figures(request, plan, resolved, 131_072)
+    assert reservation == _credits_cost(resolved, HOLD_OUTPUT_TOKENS) < estimate == _credits_cost(resolved, 131_072)
 
 
 def _decide_refusal(model: str, route_type: str = "decide") -> str:
