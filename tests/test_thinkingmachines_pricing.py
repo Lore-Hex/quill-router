@@ -261,3 +261,17 @@ def test_tinker_glm_5_3_sampler_route_is_published_with_verified_contract(
     assert endpoint.upstream_id == "zai-org/GLM-5.3:peft:262144"
     assert endpoint.prompt_price_microdollars_per_million_tokens == 5_127_300
     assert endpoint.completion_price_microdollars_per_million_tokens == 12_818_250
+
+
+def test_inkling_2_small_is_cataloged_without_an_open_weights_badge() -> None:
+    from trusted_router.catalog import endpoints_for_model, model_open_weights
+
+    model = MODELS["thinkingmachines/inkling-2-small"]
+    assert model.context_length == 262_144
+    assert model.input_modalities == ("text", "image")
+    assert not model_open_weights(model)
+    assert model_open_weights(MODELS["thinkingmachines/inkling-small"])
+    assert {
+        (endpoint.provider, endpoint.upstream_id)
+        for endpoint in endpoints_for_model(model.id)
+    } == {("thinkingmachines", "thinkingmachines/Inkling-2-Small:peft:262144:sampling-nvfp4")}
