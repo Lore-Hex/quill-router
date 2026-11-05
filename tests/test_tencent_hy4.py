@@ -182,6 +182,14 @@ def test_hy4_price_is_locked_at_authorization_across_promotion_expiry(
     )
 
 
+def test_hy4_catalog_history_discovers_both_promotion_boundaries() -> None:
+    from scripts.update_model_changes import read_snapshot
+
+    snapshot = read_snapshot("2026-11-03T15:59:59Z", freshness_at="2026-11-05T18:06:26Z")
+    assert "2026-11-03T16:00:00Z" in snapshot["cutovers"]
+    assert "2026-12-31T16:00:00Z" in snapshot["cutovers"]
+
+
 @pytest.mark.parametrize("at,period", [
     (datetime(2026, 11, 4, tzinfo=UTC), "Promotion"),
     (datetime(2027, 1, 1, tzinfo=UTC), "List"),
