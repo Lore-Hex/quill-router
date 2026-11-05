@@ -151,7 +151,7 @@
     <p class="muted-copy">Credits prices are shown as USD per million tokens and billed internally as integer microdollars, not floats. Cached input appears when the provider publishes a distinct cache-read rate.</p>
     {% endif %}
     {% if model.endpoints %}
-    <table>
+    <table data-reference-table>
       <thead>
         <tr>
           <th>Provider</th>
@@ -171,6 +171,13 @@
           <td>
             {% if endpoint.pricing_schedule %}
             {% set schedule = endpoint.pricing_schedule %}
+            {% if schedule.kind == 'limited_time_discount' %}
+            {{ schedule.discount_percent }}% off list prices from
+            <time datetime="{{ schedule.starts_at }}">{{ schedule.starts_at }}</time> until
+            <time datetime="{{ schedule.ends_at }}">{{ schedule.ends_at }}</time> (exclusive, UTC).
+            {{ 'Promotion' if schedule.current_period == 'promotion' else 'List' }} rates currently apply,
+            locked at authorization.
+            {% else %}
             {{ endpoint.provider }} authorization-time pricing. Rates effective {{ schedule.effective_at }}.
             {% if schedule.kind == 'time_of_day' %}
             Weekday peak windows are {% for window in schedule.peak_windows %}{{ window.start }}–{{ window.end }} UTC{% if not loop.last %} and {% endif %}{% endfor %}.
@@ -182,6 +189,7 @@
             {% endif %}
             {% if schedule.upstream_redirect %}
             {{ schedule.upstream_redirect.reason }}. Billed at Flash prices.
+            {% endif %}
             {% endif %}
             {% else %}
             Flat

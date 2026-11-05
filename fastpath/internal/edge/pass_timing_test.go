@@ -729,21 +729,58 @@ func TestFlushPassesDrainsABacklogThenWritesTheCounts(t *testing.T) {
 	}
 }
 
-func TestAnAnswerSlowOnItsWayBackIsTheResponsePhase(t *testing.T) {
-	h, logs := newTimedHarness(t, timedOpts{})
-	h.edge.passes.slow = 0
-	h.respond = func(w http.ResponseWriter) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Content-Length", "22")
-		w.WriteHeader(http.StatusPaymentRequired)
-		w.(http.Flusher).Flush() // the headers now, the body 200 ms later
-		time.Sleep(200 * time.Millisecond)
-		_, _ = w.Write([]byte(`{"error":{"code":402}}`))
+type delayedHeaderHandoff struct {
+	http.RoundTripper
+	delay time.Duration
+}
+
+func (d delayedHeaderHandoff) RoundTrip(r *http.Request) (*http.Response, error) {
+	resp, err := d.RoundTripper.RoundTrip(r)
+	if err == nil {
+		time.Sleep(d.delay)
 	}
-	h.authorize(t)
-	waitPasses(t, h, logs, 1, 1)
-	f := fields(t, logs.with(slowPrefix)[0])
-	if f["phase"] != PassPhaseResponse || ms(t, f, "response_ms") < 200 || ms(t, f, "python_ms") >= 200 {
-		t.Fatalf("an answer slow on its way back: %v", f)
+	return resp, err
+}
+
+func TestAnAnswerSlowOnItsWayBackIsTheResponsePhase(t *testing.T) {
+	for _, delay := range []time.Duration{0, 100 * time.Millisecond} {
+		t.Run(delay.String(), func(t *testing.T) {
+			h, logs := newTimedHarness(t, timedOpts{})
+			h.edge.passes.slow = 0
+			transport := h.edge.proxy.Transport.(tracedTransport)
+			transport.base = delayedHeaderHandoff{RoundTripper: transport.base, delay: delay}
+			h.edge.proxy.Transport = transport
+			headersReceived := make(chan struct{})
+			modifyResponse := h.edge.proxy.ModifyResponse
+			h.edge.proxy.ModifyResponse = func(resp *http.Response) error {
+				if err := modifyResponse(resp); err != nil {
+					return err
+				}
+				close(headersReceived)
+				return nil
+			}
+			h.respond = func(w http.ResponseWriter) {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Content-Length", "22")
+				w.WriteHeader(http.StatusPaymentRequired)
+				w.(http.Flusher).Flush()
+				// Start the body delay after the proxy marks its final headers,
+				// not while the transport may still be handing them back.
+				select {
+				case <-headersReceived:
+				case <-time.After(5 * time.Second):
+					t.Error("the proxy did not receive the final headers")
+					return
+				}
+				time.Sleep(200 * time.Millisecond)
+				_, _ = w.Write([]byte(`{"error":{"code":402}}`))
+			}
+			h.authorize(t)
+			waitPasses(t, h, logs, 1, 1)
+			f := fields(t, logs.with(slowPrefix)[0])
+			if f["phase"] != PassPhaseResponse || ms(t, f, "response_ms") < 200 || ms(t, f, "python_ms") >= 200 {
+				t.Fatalf("an answer slow on its way back: %v", f)
+			}
+		})
 	}
 }
