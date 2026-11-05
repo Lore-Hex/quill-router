@@ -522,6 +522,9 @@ func (p *parts) edge(cfg Config, s *store.Store) (err error) {
 		// What the decide shadow follows ends with its requests; its reads
 		// end with them, and then the cache may close.
 		e.WaitDecideShadow()
+		// The timed passes' last counts, after their queued lines, once no
+		// handler can time another (pass_timing.go).
+		e.FlushPasses()
 		close(followed)
 		transport.CloseIdleConnections()
 		return nil

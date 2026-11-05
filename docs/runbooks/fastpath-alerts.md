@@ -113,6 +113,64 @@ Python's `RateLimit-*` headers compared (`window.agree`,
 `fastpathwatch edge` sums a span's lines (`fastpath-watch.md`), for the I2
 gates or for an incident's minutes.
 
+The decide path's slow passes (`at_edge.*`) end at the forwarding. The rest
+of an authorize's way, to Python and back, is timed for every authorize the
+edge passes with the internal token, with or without `-edge-decide`
+(`fastpath/internal/edge/pass_timing.go`). The timing starts when the
+handler runs, so the balancer's connection to the edge, the accept queue and
+the read of the request's headers fall outside every phase: a small
+`edge_ms` does not clear the edge's front door.
+
+- `fastpath edge pass slow: ...`: one line for each pass over 500 ms in
+  all, at most 30 in each counts period (so up to 60 can fall in one minute
+  across a period's end).
+  - `status` is Python's (`unreached` when no answer came). `aborted=true`
+    means the proxy's copy of the answer broke off: the caller hung up, or
+    Python's answer stopped short. The caller did not get it whole.
+  - Five phases add up to `total_ms`: `edge_ms` (arrival to forwarding),
+    `conn_ms` (forwarding to a connection to Python), `write_ms`,
+    `python_ms` (request written to Python's final response headers; a 1xx
+    does not end it) and `response_ms` (those headers to the answer written
+    back, or to the abort). A phase whose end never came takes the rest.
+    `phase` names the longest.
+  - `connection` is `idle` (taken from the pool, with `idle_ms`), `handed`
+    (no idle one was free: the pass waited until another put one back,
+    freed or freshly dialed), `new` (its own dial) or `none`.
+  - `dns_ms`, `connect_ms` and `tls_ms` time this pass's own dial, if it
+    made one. On a `new` line they break down `conn_ms`. On an `idle` or
+    `handed` line they are a dial that lost the race and was kept for the
+    pool. On a `none` line they are a dial that failed or was cut short. A
+    dial still running when the pass ended reads 0.
+  - `dns_errors`, `connect_errors`, `tls_errors` and `write_errors` count
+    failed attempts. A dial over several addresses can fail on one and
+    connect on the next, so an error does not mean the pass failed.
+- `fastpath edge pass: ...`: the counts since the last such line. The line
+  is written by the first pass after a minute has passed, and the last one
+  when the service stops, so a quiet node writes none.
+  - `seconds` is the span covered.
+  - `connection` counts passes by connection kind, and `aborted` the
+    aborted ones.
+  - `conn_wait` buckets the `conn_ms` of each pass that found no idle
+    connection (`new` or `handed`), from `le_10ms` to `gt_2s`. A lost SYN
+    is resent after a second, then again two seconds later, so lost SYNs
+    show up as `le_2s` and `gt_2s`.
+  - `slow_by_phase` counts slow passes by `phase`. `unlogged` counts slow
+    passes past the 30 lines. `dropped` counts lines the writer's queue
+    could not take: the lines go through one writer goroutine, so a slow
+    log never holds a pass.
+
+No line carries a body, an id, a key, a path or an address. The slow lines
+of a span, and the counts:
+
+```bash
+gcloud logging read 'logName="projects/quill-cloud-proxy/logs/fastpath_journal" AND jsonPayload.MESSAGE:"fastpath edge pass slow"' \
+  --project=quill-cloud-proxy --freshness=1h --limit=100 \
+  --format='table(timestamp,labels."compute.googleapis.com/resource_name",jsonPayload.MESSAGE)'
+gcloud logging read 'logName="projects/quill-cloud-proxy/logs/fastpath_journal" AND jsonPayload.MESSAGE:"fastpath edge pass: seconds"' \
+  --project=quill-cloud-proxy --freshness=1h --limit=100 \
+  --format='table(timestamp,labels."compute.googleapis.com/resource_name",jsonPayload.MESSAGE)'
+```
+
 ## Subscription lag
 
 The incident's resource names the subscription:
