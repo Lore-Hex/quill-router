@@ -1825,7 +1825,7 @@ def test_openrouter_alternatives_page_matches_comparison_intent(
     assert alternatives["itemListElement"][1]["name"] == "Requesty"
     assert alternatives["numberOfItems"] == 10
     assert "Which OpenRouter alternative can I self-host?" in response.text
-    assert response.text.count("Create my API key") == 3
+    assert response.text.count("Create my API key") == 4
 
 
 def test_exact_intent_search_landings_are_message_matched(client: TestClient) -> None:
