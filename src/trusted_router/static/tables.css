@@ -1,0 +1,229 @@
+/* Shared data tables. Three patterns:
+   A (.tbl-a)  two things compared across many attributes; both columns stay visible on phones.
+   B (.tbl-b)  up to about four short columns; each row becomes a labelled card on phones.
+   C (.tbl-c)  many columns; scrolls sideways with the first column pinned.
+   Colours come from the page's own variables. A page may override any --tbl-* token on .tbl-wrap. */
+.tbl-wrap {
+  --tbl-bg: transparent;
+  --tbl-edge: 0px;
+  --tbl-surface: var(--surface-page, #050706);
+  --tbl-head-bg: transparent;
+  --tbl-line: var(--border-hairline, #1e2621);
+  --tbl-line-strong: var(--border-default, #33403a);
+  --tbl-label: var(--text-muted, #adbbb2);
+  --tbl-name: var(--text-display, #edf8f5);
+  --tbl-cell: var(--text-body, #c3c9c3);
+  --tbl-muted: var(--text-muted, #adbbb2);
+  --tbl-link: var(--tr-color-link-base, #c0e1ff);
+  --tbl-top: #1c3e2e;
+  --tbl-focus: var(--tr-color-accent-base, #cce8d7);
+
+  container-type: inline-size;
+  min-width: 0;
+  background: var(--tbl-bg);
+}
+
+.tbl {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-variant-numeric: tabular-nums;
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--tbl-cell);
+}
+
+.tbl :is(th, td) {
+  padding: 14px 12px;
+  text-align: left;
+  vertical-align: top;
+  border: 0;
+  border-bottom: 1px solid var(--tbl-line);
+  background: transparent;
+  color: var(--tbl-cell);
+  font-size: 16px;
+  font-weight: 450;
+  line-height: 1.5;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.tbl :is(th, td):first-child { padding-left: var(--tbl-edge); }
+.tbl :is(th, td):last-child { padding-right: var(--tbl-edge); }
+
+/* Header and attribute labels: the only text under 15px. */
+.tbl thead th {
+  padding-top: 8px;
+  padding-bottom: 10px;
+  border-bottom-color: var(--tbl-line-strong);
+  background: var(--tbl-head-bg);
+  color: var(--tbl-label);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  line-height: 1.3;
+  text-transform: uppercase;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+.tbl tbody th {
+  color: var(--tbl-name);
+  font-family: inherit;
+  font-size: 17px;
+  font-weight: 550;
+}
+
+.tbl-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.tbl .tbl-num { text-align: right; white-space: nowrap; }
+.tbl .tbl-sub { display: block; margin-top: 2px; color: var(--tbl-muted); font-size: 15px; }
+.tbl .tbl-empty { color: var(--tbl-muted); }
+.tbl .table-note { display: block; margin-top: 2px; color: var(--tbl-muted); font-size: 15px; line-height: 1.5; }
+.tbl a.table-note { color: var(--tbl-link); }
+.tbl a { color: var(--tbl-link); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 4px; }
+.tbl tbody th a { color: inherit; }
+.tbl code { font-size: 15px; overflow-wrap: anywhere; }
+.tbl-tag {
+  display: inline-block;
+  margin-left: 10px;
+  color: var(--tbl-muted);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  vertical-align: 2px;
+}
+
+/* A: two-item comparison */
+.tbl-a .tbl-a-label { width: 24%; }
+.tbl-a thead th.tbl-item {
+  color: var(--tbl-name);
+  font-family: inherit;
+  font-size: 18px;
+  font-weight: 550;
+  letter-spacing: -0.01em;
+  text-transform: none;
+  white-space: normal;
+}
+.tbl-a tbody th {
+  padding-top: 17px;
+  color: var(--tbl-label);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  line-height: 1.3;
+  text-transform: uppercase;
+}
+
+@container (max-width: 640px) {
+  .tbl-a, .tbl-a thead, .tbl-a tbody { display: block; }
+  .tbl-a tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 16px; }
+  .tbl-a tr { padding-inline: var(--tbl-edge); }
+  .tbl-a thead tr { border-bottom: 1px solid var(--tbl-line-strong); background: var(--tbl-head-bg); }
+  .tbl-a thead th { padding: 8px 0 12px; border: 0; background: none; }
+  .tbl-a thead th.tbl-a-label { display: none; }
+  .tbl-a tbody tr { padding: 14px var(--tbl-edge); border-bottom: 1px solid var(--tbl-line); }
+  .tbl-a tbody th { grid-column: 1 / -1; padding: 0 0 6px; border: 0; }
+  .tbl-a tbody td { padding: 0; border: 0; }
+  .tbl-a :is(th, td):is(:first-child, :last-child) { padding-left: 0; padding-right: 0; }
+}
+
+/* B: short lookup. Only the top row, the best option, has its own colour. */
+.tbl-b tr.tbl-top > * { background: var(--tbl-top); }
+.tbl-b tr.tbl-top > :first-child { padding-left: max(12px, var(--tbl-edge)); }
+.tbl-b tr.tbl-top > :last-child { padding-right: max(12px, var(--tbl-edge)); }
+
+@container (max-width: 640px) {
+  .tbl-b thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .tbl-b, .tbl-b tbody, .tbl-b tr, .tbl-b tbody th, .tbl-b td { display: block; }
+  .tbl-b tr { margin: 0 var(--tbl-edge) 8px; padding: 16px 16px 8px; border: 1px solid var(--tbl-line-strong); border-radius: 2px; }
+  .tbl-b tbody th { padding: 0 0 10px; border: 0; font-size: 18px; }
+  .tbl-b td { display: grid; grid-template-columns: 7.5rem minmax(0, 1fr); column-gap: 12px; padding: 10px 0; border: 0; border-top: 1px solid var(--tbl-line); }
+  .tbl-b td::before {
+    content: attr(data-label);
+    padding-top: 3px;
+    color: var(--tbl-label);
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    line-height: 1.3;
+    text-transform: uppercase;
+  }
+  .tbl-b .tbl-num { text-align: left; white-space: normal; }
+  .tbl-b tr.tbl-top { border-color: var(--tbl-top); background: var(--tbl-top); }
+  .tbl-b tr.tbl-top > * { background: none; }
+  .tbl-b :is(th, td):first-child,
+  .tbl-b :is(th, td):last-child,
+  .tbl-b tr.tbl-top > *,
+  .tbl-b tr.tbl-top > :is(:first-child, :last-child) { padding-left: 0; padding-right: 0; }
+}
+
+/* C: wide data. Pinned first column; while columns are hidden to the right the
+   edge fades and an arrow nudges that way (tables.js sets the state). */
+.tbl-c-frame { position: relative; min-width: 0; }
+.tbl-scroll {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--tbl-line-strong) transparent;
+}
+.tbl-scroll.can-scroll-right { mask-image: linear-gradient(to right, #000 calc(100% - 48px), transparent); }
+.tbl-scroll:focus-visible { outline: none; }
+.tbl-c-frame:has(> .tbl-scroll:focus-visible)::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 2px solid var(--tbl-focus);
+  pointer-events: none;
+  z-index: 3;
+}
+.tbl-c :is(th, td) { white-space: nowrap; }
+.tbl-c .tbl-wrap-text { min-width: 16rem; max-width: 22rem; white-space: normal; }
+.tbl-c :is(th, td):first-child { position: sticky; left: 0; z-index: 1; background: var(--tbl-surface); }
+.tbl-c thead th:first-child { z-index: 2; background: var(--tbl-head-bg, var(--tbl-surface)); }
+
+.tbl-arrow {
+  display: none;
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  z-index: 4;
+  width: 32px;
+  height: 32px;
+  margin-top: -16px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--tbl-line-strong);
+  border-radius: 999px;
+  background: var(--tbl-surface);
+  color: var(--tbl-name);
+  pointer-events: none;
+  animation: tbl-nudge 1.6s ease-in-out infinite;
+}
+.tbl-c-frame.can-scroll-right:not(.tbl-scrolled) .tbl-arrow { display: flex; }
+
+@keyframes tbl-nudge {
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(5px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tbl-arrow { animation: none; }
+}
+
+@container (max-width: 640px) {
+  .tbl-c :is(th, td):first-child {
+    min-width: 9.5rem;
+    max-width: 10.5rem;
+    padding-right: 12px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    box-shadow: inset -1px 0 0 var(--tbl-line-strong);
+  }
+  .tbl-c :is(th, td):not(:first-child) { padding-left: 16px; padding-right: 16px; }
+  .tbl-scroll { padding-bottom: 8px; }
+}

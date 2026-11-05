@@ -215,10 +215,10 @@ def test_the_comparison_page_names_each_maker(client: TestClient) -> None:
         soup = _soup(client, f"/compare/models/{left}/vs/{right}")
         row = next(
             row
-            for row in soup.select(".matrix-row")
-            if row.span and row.span.get_text() == "Publisher"
+            for row in soup.select(".tbl-a tbody tr")
+            if row.th and row.th.get_text() == "Publisher"
         )
-        cells = row.find_all("span", recursive=False)[1:]
+        cells = row.find_all("td", recursive=False)
         assert [_shown(cell) for cell in cells] == [
             SHOWN_PUBLISHER[left],
             SHOWN_PUBLISHER[right],

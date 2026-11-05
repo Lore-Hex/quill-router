@@ -1,6 +1,6 @@
-/* Native scrolling with edge fades; no extra navigation controls. */
+/* Code blocks: native scrolling with edge fades. Tables use the shared tables.js. */
 (() => {
-  document.querySelectorAll('.openrouter-article .model-table-wrap, .openrouter-article .seo-evidence-table-wrap, .openrouter-article .copy-terminal pre').forEach((viewport) => {
+  document.querySelectorAll('.openrouter-article .copy-terminal pre').forEach((viewport) => {
     const frame = document.createElement('div');
     frame.className = 'horizontal-overflow-frame';
     viewport.before(frame);
