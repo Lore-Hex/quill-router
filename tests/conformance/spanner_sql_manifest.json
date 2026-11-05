@@ -2629,6 +2629,20 @@
         }
       ]
     },
+    "storage_gcp_settle_outbox:release_txn:1": {
+      "fingerprint": "0d512932b164415503a6337c0e0d318e598a8ffb6828c0879df8a6cb41525256",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "aid": "STRING",
+            "kind": "STRING",
+            "now": "TIMESTAMP",
+            "owner": "STRING"
+          }
+        }
+      ]
+    },
     "storage_gcp_settle_outbox:txn:2": {
       "fingerprint": "3ea0d355ba9fc666b7c0ce5b1af0e50db7b8a28edbcf4c33631a81d82509f885",
       "scenarios": [
@@ -4842,6 +4856,7 @@
     "storage_gcp_settle_outbox:SpannerSettleOutbox.enqueue.insert_txn": "e9797501b3c284f654dd485b9f0bc172b9e7f674e382072f515b2e8480a6e404",
     "storage_gcp_settle_outbox:SpannerSettleOutbox.enqueue.refresh_txn": "c157ed2a8282a3d8fccc627bea6ca45e7e1b79ac473a9c58d5723d3ef27bdcb6",
     "storage_gcp_settle_outbox:SpannerSettleOutbox._claim_one.txn": "f0c353eaf71bd1e39f55d411a4bcca80d2532ae7b3125c915cab981d0a8e777b",
+    "storage_gcp_settle_outbox:SpannerSettleOutbox.release_claim.release_txn": "0d512932b164415503a6337c0e0d318e598a8ffb6828c0879df8a6cb41525256",
     "storage_gcp_settle_outbox:SpannerSettleOutbox.mark.txn": "3ea0d355ba9fc666b7c0ce5b1af0e50db7b8a28edbcf4c33631a81d82509f885",
     "storage_gcp_settle_outbox:SpannerSettleOutbox.park.txn": "cc64cd3d3a3f175b60549a053e8caa7ad1b5ce3811aecef12e28287d304cdbe6",
     "storage_gcp_settle_outbox:SpannerSettleOutbox.attach_auto_refill.txn": "2d57f7ddcaa46d8dc462a815ad5a3d13db3214a9f20bb466e8694da26410d67e",

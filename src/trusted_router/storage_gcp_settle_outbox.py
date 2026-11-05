@@ -707,6 +707,39 @@ class SpannerSettleOutbox:
 
         return run_in_transaction_with_retry(self._database, txn) == 1
 
+    def release_claim(self, row: SettleOutboxRow) -> bool:
+        """Hand back a claim its worker deferred without applying the row.
+
+        The row goes back to the unleased state `park` leaves, due again at
+        once instead of when the claim's lease runs out. Only the claim's own
+        owner token matches, so a row that another worker has claimed since,
+        or that has been resolved, is left as it is.
+        """
+        if not row.lease_owner:
+            return False
+        now = _iso_now()
+
+        def release_txn(transaction: Any) -> int:
+            return transaction.execute_update(
+                "UPDATE tr_settle_outbox SET lease_owner=NULL, leased_until=NULL, "
+                "updated_at=@now WHERE authorization_id=@aid AND intent_kind=@kind "
+                "AND status='pending' AND lease_owner=@owner",
+                params={
+                    "now": now,
+                    "aid": row.authorization_id,
+                    "kind": row.intent_kind,
+                    "owner": row.lease_owner,
+                },
+                param_types={
+                    "now": self._pt.TIMESTAMP,
+                    "aid": self._pt.STRING,
+                    "kind": self._pt.STRING,
+                    "owner": self._pt.STRING,
+                },
+            )
+
+        return run_in_transaction_with_retry(self._database, release_txn) == 1
+
     def mark(
         self,
         authorization_id: str,

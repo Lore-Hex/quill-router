@@ -866,7 +866,18 @@ unresolved versions, leased and dead rows; its ages/completeness remain honest.
 A busy pass can publish at completed slots. There is no timer heartbeat and no
 publication from failed claims. If useful drain progress stops, evidence ages
 out and new admission closes at five seconds. Local timers suppress not-due
-cadence transactions. The worker drains both NULL and async versions: an open
+cadence transactions.
+
+A pass starts no new apply after its 2 s budget. A row whose claim finishes
+past the budget is handed back at once rather than held for the 30 s lease
+(`async_drain.deferred ... reason=deadline released=1`), since an unapplied row
+ages in the published p95 and one such row closed admission fleet-wide on
+2026-11-05. `released=0` means the claim was no longer this worker's;
+`released=error` means the release write failed and the lease runs out as
+before (with `async_drain.release_failed`). A claim deferred because the worker
+is stopping (`reason=stop`) keeps its lease until it lapses.
+
+The worker drains both NULL and async versions: an open
 reservation blocked by an accepted async sibling parks under protection; once
 terminal, the NULL row has the same outcome/alert/state as an ordinary loser.
 

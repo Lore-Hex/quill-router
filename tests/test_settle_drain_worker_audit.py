@@ -73,8 +73,14 @@ def setup_slot(monkeypatch, *, prior=True, reason=None, missing_hash=False):
     monkeypatch.setattr(drain, 'apply_frozen_settle', apply)
     monkeypatch.setattr(drain, '_resolve_row', resolve)
     monkeypatch.setattr(SpannerSettleOutbox, 'mark', lambda *args, **kwargs: 'done')
-    box = SimpleNamespace(due_shard=lambda **kw: [row], claim_candidates=claim,
-                          _database=None, _pt=None, _async_fence=True)
+    releases = []
+
+    def release_claim(value):
+        releases.append((value.lease_owner, value.leased_until))
+        return True
+
+    box = SimpleNamespace(due_shard=lambda **kw: [row], claim_candidates=claim, release_claim=release_claim,
+                          releases=releases, _database=None, _pt=None, _async_fence=True)
     return box, stop, calls
 
 
@@ -112,7 +118,32 @@ def test_exact_deferred_all_reasons(monkeypatch, caplog, reason):
         assert worker._apply_slot(box, 0, 30, 10., stop) == (1, 'deferred', 0)
     assert len(caplog.records) == 2 and not calls
     assert caplog.records[-1].getMessage() == (
-        f'async_drain.deferred ref={REF} owner={NEW} reason={"lease" if reason == "missing_lease" else reason}')
+        f'async_drain.deferred ref={REF} owner={NEW} reason={"lease" if reason == "missing_lease" else reason} '
+        f'released={"1" if reason == "deadline" else "none"}')
+    # Only a claim the pass budget ran out on is handed back; a stopping
+    # worker's claim keeps its lease, and an expired lease has nothing to free.
+    assert box.releases == ([(NEW, LEASE)] if reason == 'deadline' else [])
+    assert 'SENTINEL_' not in caplog.text
+
+
+@pytest.mark.parametrize('result', [False, 'exception'])
+def test_exact_deadline_release_outcomes(monkeypatch, caplog, result):
+    box, stop, calls = setup_slot(monkeypatch, reason='deadline')
+
+    def release_claim(value):
+        if result == 'exception':
+            raise RuntimeError('SENTINEL_AUTHORIZATION SENTINEL_WORKSPACE')
+        return result
+
+    box.release_claim = release_claim
+    with caplog.at_level(logging.INFO):
+        assert worker._apply_slot(box, 0, 30, 10., stop) == (1, 'deferred', 0)
+    assert not calls
+    expected = [f'async_drain.deferred ref={REF} owner={NEW} reason=deadline '
+                f'released={"error" if result == "exception" else "0"}']
+    if result == 'exception':
+        expected.insert(0, 'async_drain.release_failed error_class=RuntimeError')
+    assert caplog.messages[1:] == expected
     assert 'SENTINEL_' not in caplog.text
 
 
@@ -138,6 +169,7 @@ def test_logging_failure_cannot_change_claim_apply_or_resolution(monkeypatch, re
     assert worker._apply_slot(box, 0, 30, 10., stop) == (
         (1, 'deferred', 0) if reason else (1, 'settled_now', 987654321))
     assert len(calls) == (0 if reason else 1)
+    assert box.releases == ([(NEW, LEASE)] if reason == 'deadline' else [])
 
 
 @pytest.mark.parametrize('value', [None, '', 'SENTINEL_AUTHORIZATION', 'A' * 64, '0' * 63, '0' * 64 + '\n'])
