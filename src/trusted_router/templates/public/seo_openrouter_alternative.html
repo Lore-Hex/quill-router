@@ -33,12 +33,12 @@
 <!-- ==== OA-05: Comparison table ==== -->
 <section class="panel" aria-labelledby="alternatives-table-heading">
  <div class="panel-head"><h2 id="alternatives-table-heading">TrustedRouter vs 9 OpenRouter alternatives</h2></div>
- <div class="model-table-wrap">
- <table class="openrouter-alternatives-table v2-stack">
+ <div class="tbl-wrap">
+ <table class="tbl tbl-b openrouter-alternatives-table">
  <caption class="v2-sr">OpenRouter alternatives compared by type, attested gateway and platform fee.</caption>
  <thead><tr><th scope="col">Gateway</th><th scope="col">Type</th><th scope="col">Attested gateway</th><th scope="col">Platform fee</th></tr></thead>
  <tbody>
- <tr class="v2-row-tr"><th scope="row" data-label="Gateway"><a href="/compare/openrouter">TrustedRouter</a></th><td data-label="Type">Hosted router; on-prem option</td><td data-label="Attested gateway">Yes</td><td data-label="Platform fee">5.5% max on text and embeddings; as low as 0.1% at enterprise scale</td></tr><tr class="v2-row-ref"><th scope="row" data-label="Gateway"><a href="/compare/openrouter">OpenRouter</a></th><td data-label="Type">Hosted router</td><td data-label="Attested gateway">No</td><td data-label="Platform fee">5.5% on credit purchases; 8% on Business</td></tr><tr><th scope="row" data-label="Gateway"><a href="/compare/requesty">Requesty</a></th><td data-label="Type">Hosted router</td><td data-label="Attested gateway">No</td><td data-label="Platform fee">5% markup</td></tr><tr><th scope="row" data-label="Gateway"><a href="/compare/vercel-ai-gateway">Vercel AI Gateway</a></th><td data-label="Type">Hosted router</td><td data-label="Attested gateway">No</td><td data-label="Platform fee">No markup; team-wide zero retention billed per request</td></tr><tr><th scope="row" data-label="Gateway"><a href="/compare/cloudflare-ai-gateway">Cloudflare AI Gateway</a></th><td data-label="Type">Edge gateway</td><td data-label="Attested gateway">No</td><td data-label="Platform fee">5% on Unified Billing credits</td></tr><tr><th scope="row" data-label="Gateway"><a href="/compare/litellm">LiteLLM</a></th><td data-label="Type">Self-hosted proxy</td><td data-label="Attested gateway">No</td><td data-label="Platform fee">None; you run it and pay each provider</td></tr><tr><th scope="row" data-label="Gateway"><a href="/compare/portkey">Portkey (Palo Alto Networks)</a></th><td data-label="Type">Gateway for your own keys</td><td data-label="Attested gateway">No</td><td data-label="Platform fee">Gateway plans plus your provider bills</td></tr><tr><th scope="row" data-label="Gateway"><a href="/compare/helicone">Helicone (Mintlify)</a></th><td data-label="Type">Observability proxy</td><td data-label="Attested gateway">No</td><td data-label="Platform fee">Observability plans plus your provider bills</td></tr><tr><th scope="row" data-label="Gateway"><a href="/compare/aws-bedrock">Amazon Bedrock</a></th><td data-label="Type">Cloud platform</td><td data-label="Attested gateway">No</td><td data-label="Platform fee">Cloud list price per model</td></tr><tr><th scope="row" data-label="Gateway"><a href="/compare/google-vertex-ai">Google Vertex AI</a></th><td data-label="Type">Cloud platform</td><td data-label="Attested gateway">No</td><td data-label="Platform fee">Cloud list price; premium on open models</td></tr><tr><th scope="row" data-label="Gateway"><a href="/providers">Direct provider APIs</a></th><td data-label="Type">One provider per account</td><td data-label="Attested gateway">Not applicable</td><td data-label="Platform fee">Provider list price</td></tr>
+ <tr class="tbl-top"><th scope="row" data-label="Gateway"><a href="/compare/openrouter">TrustedRouter</a></th><td data-label="Type">Hosted router; on-prem option</td><td data-label="Attested gateway">Yes</td><td data-label="Platform fee">5.5% max on text and embeddings; as low as 0.1% at enterprise scale</td></tr><tr class="tbl-ref"><th scope="row" data-label="Gateway"><a href="/compare/openrouter">OpenRouter</a><span class="tbl-tag">Reference</span></th><td data-label="Type">Hosted router</td><td data-label="Attested gateway">No</td><td data-label="Platform fee">5.5% on credit purchases; 8% on Business</td></tr><tr><th scope="row" data-label="Gateway"><a href="/compare/requesty">Requesty</a></th><td data-label="Type">Hosted router</td><td data-label="Attested gateway">No</td><td data-label="Platform fee">5% markup</td></tr><tr><th scope="row" data-label="Gateway"><a href="/compare/vercel-ai-gateway">Vercel AI Gateway</a></th><td data-label="Type">Hosted router</td><td data-label="Attested gateway">No</td><td data-label="Platform fee">No markup; team-wide zero retention billed per request</td></tr><tr><th scope="row" data-label="Gateway"><a href="/compare/cloudflare-ai-gateway">Cloudflare AI Gateway</a></th><td data-label="Type">Edge gateway</td><td data-label="Attested gateway">No</td><td data-label="Platform fee">5% on Unified Billing credits</td></tr><tr><th scope="row" data-label="Gateway"><a href="/compare/litellm">LiteLLM</a></th><td data-label="Type">Self-hosted proxy</td><td data-label="Attested gateway">No</td><td data-label="Platform fee">None; you run it and pay each provider</td></tr><tr><th scope="row" data-label="Gateway"><a href="/compare/portkey">Portkey (Palo Alto Networks)</a></th><td data-label="Type">Gateway for your own keys</td><td data-label="Attested gateway">No</td><td data-label="Platform fee">Gateway plans plus your provider bills</td></tr><tr><th scope="row" data-label="Gateway"><a href="/compare/helicone">Helicone (Mintlify)</a></th><td data-label="Type">Observability proxy</td><td data-label="Attested gateway">No</td><td data-label="Platform fee">Observability plans plus your provider bills</td></tr><tr><th scope="row" data-label="Gateway"><a href="/compare/aws-bedrock">Amazon Bedrock</a></th><td data-label="Type">Cloud platform</td><td data-label="Attested gateway">No</td><td data-label="Platform fee">Cloud list price per model</td></tr><tr><th scope="row" data-label="Gateway"><a href="/compare/google-vertex-ai">Google Vertex AI</a></th><td data-label="Type">Cloud platform</td><td data-label="Attested gateway">No</td><td data-label="Platform fee">Cloud list price; premium on open models</td></tr><tr><th scope="row" data-label="Gateway"><a href="/providers">Direct provider APIs</a></th><td data-label="Type">One provider per account</td><td data-label="Attested gateway">Not applicable</td><td data-label="Platform fee">Provider list price</td></tr>
  </tbody>
  </table>
  </div>
@@ -80,10 +80,10 @@
 <!-- ==== OA-07: Pricing (new) ==== -->
 <section class="panel" id="pricing" aria-labelledby="pricing-heading">
  <div class="panel-head"><h2 id="pricing-heading">What TrustedRouter costs</h2></div>
- <div class="model-table-wrap">
- <table class="v2-price-table v2-stack">
+ <div class="tbl-wrap">
+ <table class="tbl tbl-a v2-price-table">
  <caption class="v2-sr">TrustedRouter pricing: pay as you go and enterprise.</caption>
- <thead><tr><th scope="col"></th><th scope="col">Pay as you go</th><th scope="col">Enterprise</th></tr></thead>
+ <thead><tr><th scope="col" class="tbl-a-label"><span class="v2-sr">Plan detail</span></th><th scope="col" class="tbl-item">Pay as you go</th><th scope="col" class="tbl-item">Enterprise</th></tr></thead>
  <tbody>
  <tr><th scope="row" data-label="">Platform fee</th><td data-label="Pay as you go">5.5% on top of provider prices, at most, on text and embedding models</td><td data-label="Enterprise">Falls with volume, to as low as 0.1%</td></tr>
  <tr><th scope="row" data-label="">Subscription or seats</th><td data-label="Pay as you go">None</td><td data-label="Enterprise">None</td></tr>
@@ -98,14 +98,14 @@
  <h3>Compared with buying through a hyperscaler</h3>
  <p>Amazon Bedrock sets one list price per model. On TrustedRouter, competing providers serve the same model, so you pay the going rate instead of one cloud's list price.</p>
  </div>
- <div class="model-table-wrap">
- <table class="v2-saving-table v2-stack">
+ <div class="tbl-wrap">
+ <table class="tbl tbl-b v2-saving-table">
  <caption class="v2-sr">Monthly cost of 100M input and 20M output tokens, Amazon Bedrock vs TrustedRouter, list prices on October 19, 2026.</caption>
- <thead><tr><th scope="col">Same model</th><th scope="col">Amazon Bedrock</th><th scope="col">Trusted<wbr>Router</th><th scope="col">You save</th></tr></thead>
+ <thead><tr><th scope="col">Same model</th><th scope="col" class="tbl-num">Amazon Bedrock</th><th scope="col" class="tbl-num">Trusted<wbr>Router</th><th scope="col" class="tbl-num">You save</th></tr></thead>
  <tbody>
- <tr><th scope="row" data-label="Same model">gpt-oss-120b</th><td data-label="Amazon Bedrock">$27.00</td><td data-label="TrustedRouter">$6.75</td><td data-label="You save">75%</td></tr>
- <tr><th scope="row" data-label="Same model">DeepSeek V3.2</th><td data-label="Amazon Bedrock">$99.00</td><td data-label="TrustedRouter">$35.45</td><td data-label="You save">64%</td></tr>
- <tr><th scope="row" data-label="Same model">Qwen3 235B (2507)</th><td data-label="Amazon Bedrock">$39.60</td><td data-label="TrustedRouter">$21.10</td><td data-label="You save">47%</td></tr>
+ <tr><th scope="row" data-label="Same model">gpt-oss-120b</th><td class="tbl-num" data-label="Amazon Bedrock">$27.00</td><td class="tbl-num" data-label="TrustedRouter">$6.75</td><td class="tbl-num" data-label="You save">75%</td></tr>
+ <tr><th scope="row" data-label="Same model">DeepSeek V3.2</th><td class="tbl-num" data-label="Amazon Bedrock">$99.00</td><td class="tbl-num" data-label="TrustedRouter">$35.45</td><td class="tbl-num" data-label="You save">64%</td></tr>
+ <tr><th scope="row" data-label="Same model">Qwen3 235B (2507)</th><td class="tbl-num" data-label="Amazon Bedrock">$39.60</td><td class="tbl-num" data-label="TrustedRouter">$21.10</td><td class="tbl-num" data-label="You save">47%</td></tr>
  </tbody>
  </table>
  </div>
@@ -205,10 +205,10 @@
 <!-- ==== OA-11: OpenRouter vs TrustedRouter as a real table (replaces .compare-matrix) ==== -->
 <section class="panel" id="openrouter-vs-trustedrouter" aria-labelledby="head-to-head-heading">
  <div class="panel-head"><h2 id="head-to-head-heading">OpenRouter vs TrustedRouter</h2></div>
- <div class="model-table-wrap">
- <table class="v2-matrix-table v2-stack">
+ <div class="tbl-wrap">
+ <table class="tbl tbl-a v2-matrix-table">
  <caption class="v2-sr">OpenRouter compared with TrustedRouter.</caption>
- <thead><tr><th scope="col"></th><th scope="col">OpenRouter</th><th scope="col">Trusted<wbr>Router</th></tr></thead>
+ <thead><tr><th scope="col" class="tbl-a-label"><span class="v2-sr">Attribute</span></th><th scope="col" class="tbl-item">OpenRouter</th><th scope="col" class="tbl-item">Trusted<wbr>Router</th></tr></thead>
  <tbody>
  <tr><th scope="row" data-label="">API</th><td data-label="OpenRouter">OpenAI compatible</td><td data-label="TrustedRouter">OpenAI compatible; OpenRouter routing fields accepted</td></tr><tr><th scope="row" data-label="">Platform fee</th><td data-label="OpenRouter">5.5% on credit purchases (Standard); 8% (Business)</td><td data-label="TrustedRouter">5.5% max on text and embeddings; as low as 0.1% at enterprise scale</td></tr><tr><th scope="row" data-label="">EU routing</th><td data-label="OpenRouter">In-region routing on Business and Enterprise plans only</td><td data-label="TrustedRouter">EU gateway on every account; EU-only providers by allowlist</td></tr><tr><th scope="row" data-label="">Prompt and output logging</th><td data-label="OpenRouter">Off by default; opt in for a 1% discount</td><td data-label="TrustedRouter">Never logged</td></tr><tr><th scope="row" data-label="">Hardware attestation</th><td data-label="OpenRouter">No</td><td data-label="TrustedRouter">Running build attested; every build signed</td></tr><tr><th scope="row" data-label="">Gateway source</th><td data-label="OpenRouter">Closed</td><td data-label="TrustedRouter">Source-available (BUSL-1.1); on-prem gateway Apache-2.0</td></tr><tr><th scope="row" data-label="">Ownership</th><td data-label="OpenRouter">Stripe agreed to acquire (announced Aug 19, 2026)</td><td data-label="TrustedRouter">Independent</td></tr>
  </tbody>

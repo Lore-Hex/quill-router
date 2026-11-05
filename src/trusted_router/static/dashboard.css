@@ -258,7 +258,6 @@ blockquote { margin:0 0 12px; padding-left:14px; border-left:3px solid var(--gre
   .model-route-table td[data-label]::before { content:attr(data-label); display:block; color:var(--muted); font-size:12px; font-weight:600; margin-bottom:3px; }
   .model-route-table td:first-child { padding-bottom:12px; }
 }
-.openrouter-alternatives-table { min-width:820px; }
 .provider-chip-list { display:flex; flex-wrap:wrap; gap:5px; min-width:160px; max-width:320px; }
 .provider-chip-list .pill { max-width:160px; overflow:hidden; text-overflow:ellipsis; }
 .provider-identity { display:inline-flex; align-items:center; gap:9px; min-width:0; color:var(--text); text-decoration:none; }
@@ -302,11 +301,6 @@ blockquote { margin:0 0 12px; padding-left:14px; border-left:3px solid var(--gre
 .seo-evidence-stats div:last-child { border-right:0; }
 .seo-evidence-stats strong { display:block; font-size:24px; font-variant-numeric:tabular-nums; }
 .seo-evidence-stats span { display:block; margin-top:4px; color:var(--muted); font-size:11px; line-height:1.3; }
-.seo-evidence-table-wrap { overflow:auto; border:1px solid var(--line); border-radius:8px; background:var(--panel); }
-.seo-evidence-table { min-width:1060px; }
-.seo-evidence-table td:first-child { min-width:230px; }
-.seo-evidence-table td:first-child code { display:block; margin-top:4px; color:var(--muted); font-size:11px; }
-.seo-evidence-table td:last-child { min-width:220px; }
 .table-note { display:block; margin-top:4px; color:var(--muted); font-size:11px; line-height:1.35; }
 a.table-note { color:var(--accent); }
 .seo-provider-strip { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); margin-top:16px; border:1px solid var(--line); border-radius:8px; overflow:hidden; }

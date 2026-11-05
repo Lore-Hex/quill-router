@@ -22,68 +22,43 @@
   </div>
 </section>
 
-<section class="compare-matrix" aria-label="{{ left.name }} and {{ right.name }} comparison">
-  <div class="matrix-row matrix-head">
-    <span></span><strong>{{ left.name }}</strong><strong>{{ right.name }}</strong>
-  </div>
-  <div class="matrix-row">
-    <span>Model id</span><span><code>{{ left.id }}</code></span><span><code>{{ right.id }}</code></span>
-  </div>
-  <div class="matrix-row">
-    <span>Publisher</span><span>{{ publisher_identity(left) }}</span><span>{{ publisher_identity(right) }}</span>
-  </div>
-  <div class="matrix-row">
-    <span>AI IQ</span>
-    <span>
+<section class="tbl-wrap model-compare-table" aria-label="{{ left.name }} and {{ right.name }} comparison">
+  <table class="tbl tbl-a">
+    <caption class="tbl-sr">{{ left.name }} compared with {{ right.name }}</caption>
+    <thead><tr><th scope="col" class="tbl-a-label"><span class="tbl-sr">Attribute</span></th><th scope="col" class="tbl-item">{{ left.name }}</th><th scope="col" class="tbl-item">{{ right.name }}</th></tr></thead>
+    <tbody>
+    <tr><th scope="row">Model id</th><td><code>{{ left.id }}</code></td><td><code>{{ right.id }}</code></td></tr>
+    <tr><th scope="row">Publisher</th><td>{{ publisher_identity(left) }}</td><td>{{ publisher_identity(right) }}</td></tr>
+    <tr><th scope="row">AI IQ</th><td>
       {% if left.ai_iq %}
-      <a class="ai-iq-link" href="{{ left.ai_iq.url }}" rel="nofollow noopener"><strong>IQ {{ left.ai_iq.iq }}</strong><span>#{{ left.ai_iq.rank }}</span></a>
-      {% else %}—{% endif %}
-    </span>
-    <span>
+      <a class="ai-iq-link" href="{{ left.ai_iq.url }}" rel="nofollow noopener"><strong>IQ {{ left.ai_iq.iq }}</strong> <span class="tbl-sub">#{{ left.ai_iq.rank }}</span></a>
+      {% else %}<span class="tbl-empty">—</span>{% endif %}
+    </td><td>
       {% if right.ai_iq %}
-      <a class="ai-iq-link" href="{{ right.ai_iq.url }}" rel="nofollow noopener"><strong>IQ {{ right.ai_iq.iq }}</strong><span>#{{ right.ai_iq.rank }}</span></a>
-      {% else %}—{% endif %}
-    </span>
-  </div>
-  <div class="matrix-row">
-    <span>Context</span><span>{{ left.context_length }} tokens</span><span>{{ right.context_length }} tokens</span>
-  </div>
-  <div class="matrix-row">
-    <span>Credits provider routes</span><span>{{ left.endpoint_count }}</span><span>{{ right.endpoint_count }}</span>
-  </div>
-  <div class="matrix-row">
-    <span>Cheapest route</span><span>{{ comparison.left_price }}</span><span>{{ comparison.right_price }}</span>
-  </div>
-  <div class="matrix-row">
-    <span>Cached input</span><span>{{ left.cached_prompt_price }}</span><span>{{ right.cached_prompt_price }}</span>
-  </div>
-  <div class="matrix-row">
-    <span>Privacy posture</span><span>{{ comparison.left_privacy }}</span><span>{{ comparison.right_privacy }}</span>
-  </div>
-  <div class="matrix-row">
-    <span>Fastest measured p50 TTFT</span><span>{{ comparison.left_ttft }}{% if comparison.left_ttft_provider %} via <a href="/providers/{{ comparison.left_ttft_provider }}">{{ comparison.left_ttft_provider }}</a>{% endif %}</span><span>{{ comparison.right_ttft }}{% if comparison.right_ttft_provider %} via <a href="/providers/{{ comparison.right_ttft_provider }}">{{ comparison.right_ttft_provider }}</a>{% endif %}</span>
-  </div>
-  <div class="matrix-row">
-    <span>Highest measured throughput</span><span>{{ comparison.left_throughput }}{% if comparison.left_throughput_provider %} via <a href="/providers/{{ comparison.left_throughput_provider }}">{{ comparison.left_throughput_provider }}</a>{% endif %}</span><span>{{ comparison.right_throughput }}{% if comparison.right_throughput_provider %} via <a href="/providers/{{ comparison.right_throughput_provider }}">{{ comparison.right_throughput_provider }}</a>{% endif %}</span>
-  </div>
-  <div class="matrix-row">
-    <span>Recent route uptime range</span><span>{{ comparison.left_uptime }}</span><span>{{ comparison.right_uptime }}</span>
-  </div>
-  <div class="matrix-row">
-    <span>Modes</span>
-    <span>
+      <a class="ai-iq-link" href="{{ right.ai_iq.url }}" rel="nofollow noopener"><strong>IQ {{ right.ai_iq.iq }}</strong> <span class="tbl-sub">#{{ right.ai_iq.rank }}</span></a>
+      {% else %}<span class="tbl-empty">—</span>{% endif %}
+    </td></tr>
+    <tr><th scope="row">Context</th><td>{{ left.context_length }} tokens</td><td>{{ right.context_length }} tokens</td></tr>
+    <tr><th scope="row">Credits provider routes</th><td>{{ left.endpoint_count }}</td><td>{{ right.endpoint_count }}</td></tr>
+    <tr><th scope="row">Cheapest route</th><td>{{ comparison.left_price }}</td><td>{{ comparison.right_price }}</td></tr>
+    <tr><th scope="row">Cached input</th><td>{{ left.cached_prompt_price }}</td><td>{{ right.cached_prompt_price }}</td></tr>
+    <tr><th scope="row">Privacy posture</th><td>{{ comparison.left_privacy }}</td><td>{{ comparison.right_privacy }}</td></tr>
+    <tr><th scope="row">Fastest measured p50 TTFT</th><td>{{ comparison.left_ttft }}{% if comparison.left_ttft_provider %}<span class="tbl-sub">via <a href="/providers/{{ comparison.left_ttft_provider }}">{{ comparison.left_ttft_provider }}</a></span>{% endif %}</td><td>{{ comparison.right_ttft }}{% if comparison.right_ttft_provider %}<span class="tbl-sub">via <a href="/providers/{{ comparison.right_ttft_provider }}">{{ comparison.right_ttft_provider }}</a></span>{% endif %}</td></tr>
+    <tr><th scope="row">Highest measured throughput</th><td>{{ comparison.left_throughput }}{% if comparison.left_throughput_provider %}<span class="tbl-sub">via <a href="/providers/{{ comparison.left_throughput_provider }}">{{ comparison.left_throughput_provider }}</a></span>{% endif %}</td><td>{{ comparison.right_throughput }}{% if comparison.right_throughput_provider %}<span class="tbl-sub">via <a href="/providers/{{ comparison.right_throughput_provider }}">{{ comparison.right_throughput_provider }}</a></span>{% endif %}</td></tr>
+    <tr><th scope="row">Recent route uptime range</th><td>{{ comparison.left_uptime }}</td><td>{{ comparison.right_uptime }}</td></tr>
+    <tr><th scope="row">Modes</th><td>
       {% if left.supports_chat %}<span class="pill">chat</span>{% endif %}
       {% if left.supports_decide %}<span class="pill">decide</span>{% endif %}
       {% if left.supports_messages %}<span class="pill">messages</span>{% endif %}
       {% if left.supports_embeddings %}<span class="pill">embeddings</span>{% endif %}
-    </span>
-    <span>
+    </td><td>
       {% if right.supports_chat %}<span class="pill">chat</span>{% endif %}
       {% if right.supports_decide %}<span class="pill">decide</span>{% endif %}
       {% if right.supports_messages %}<span class="pill">messages</span>{% endif %}
       {% if right.supports_embeddings %}<span class="pill">embeddings</span>{% endif %}
-    </span>
-  </div>
+    </td></tr>
+    </tbody>
+  </table>
 </section>
 
 <section class="seo-two-col">

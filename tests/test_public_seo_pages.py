@@ -1784,7 +1784,8 @@ def test_openrouter_alternatives_page_matches_comparison_intent(
     )
     assert "What the Stripe deal means for OpenRouter users" in main.get_text()
     assert "$6.75" in main.get_text()
-    assert len(main.select("table.v2-stack")) == 4
+    assert len(main.select("div.tbl-wrap > table.tbl")) == 4
+    assert len(main.select("table.tbl-c")) == 1
     forbidden_domains = (
         "openrouter.ai", "requesty.ai", "portkey.ai", "litellm.ai", "vercel.com",
         "cloudflare.com", "helicone.ai", "amazon.com", "google.com",

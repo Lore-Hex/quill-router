@@ -7,27 +7,11 @@
 .v2-price-body{padding-top:16px;padding-bottom:4px}
 .v2-price-body h3{margin:20px 0 6px;font-size:17px}
 .v2-price-body .v2-table-note{padding:0 0 12px}
-.openrouter-alternatives-table th[scope="row"],.v2-saving-table th[scope="row"]{font-weight:550;text-align:left;text-transform:none;letter-spacing:normal;font-size:14px;font-family:inherit}
-.v2-row-tr th,.v2-row-tr td{background:var(--surface-raised);color:var(--text-display)}
-.v2-row-ref th,.v2-row-ref td{color:var(--text-muted)}
-.v2-price-table,.v2-saving-table{width:100%}
-.v2-price-table th[scope="row"],.v2-saving-table th[scope="row"]{text-align:left;font-weight:550}
-.v2-saving-table td{font-variant-numeric:tabular-nums}
 .v2-dates{margin:6px 0 0;color:var(--text-muted);font-size:13px;letter-spacing:.02em}
 .v2-quote{margin:20px 0 4px;padding:4px 0 4px 18px;border-left:2px solid var(--sage)}
 .v2-quote p{margin:0 0 6px;color:var(--text-display);font-size:17px;line-height:1.5}
 .v2-quote .v2-quote-cite{color:var(--text-muted);font-size:13px}
-.v2-matrix-table{width:100%}
-.v2-matrix-table th[scope="row"]{text-align:left;font-weight:550}
 
-@media (max-width:720px){
-  .v2-stack{min-width:0 !important;width:100%}
-  .v2-stack thead{display:none}
-  .v2-stack tr{display:block;padding:12px 16px;border-top:1px solid var(--border-hairline)}
-  .v2-stack th[scope="row"]{display:block;padding:0 0 6px;font-size:15px;border:0}
-  .v2-stack td{display:grid;grid-template-columns:minmax(0,42%) minmax(0,1fr);gap:12px;padding:5px 0;border:0}
-  .v2-stack td::before{content:attr(data-label);color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em;line-height:1.6}
-}
 /* Keep dated section headings inside the narrowest supported viewport. */
 @media (max-width:720px){
   .panel-head{flex-wrap:wrap}
@@ -65,8 +49,7 @@
 .openrouter-article .seo-evidence-head .eyebrow{padding:0}
 .openrouter-article .quote-feature{display:block}
 .openrouter-article .quote-feature>div:first-child{margin-bottom:24px}
-.openrouter-article main>section:has(>.model-table-wrap,>.horizontal-overflow-frame>.model-table-wrap){max-width:1112px}
-.openrouter-article .model-table-wrap{border:1px solid var(--border-hairline);background:var(--surface-card)}
+.openrouter-article main>section:has(>.tbl-wrap){max-width:1112px}
 .openrouter-article .v2-price-body{max-width:720px;margin:28px auto 0}
 .openrouter-article .v2-table-note{padding:16px 0 0;font-size:14px;line-height:1.6}
 .openrouter-article .v2-price-body .v2-table-note{font-size:14px;line-height:1.6;padding-top:0}
@@ -182,7 +165,7 @@
 .openrouter-article main > .v2-head { margin-bottom: 24px; }
 .openrouter-article main > .v2-head + .marketing-grid { margin-top: 0; }
 .openrouter-article .quote-feature p:last-child { margin-bottom: 0; }
-.openrouter-article .v2-price-body + :is(.model-table-wrap,.horizontal-overflow-frame) { margin-top: 24px; }
+.openrouter-article .v2-price-body + .tbl-wrap { margin-top: 24px; }
 
 /* Quiet reading surfaces; reserve rules for comparing data. */
 .openrouter-article main :is(h1,h2,h3) { text-wrap: balance; }
@@ -203,39 +186,7 @@
 .openrouter-article [aria-labelledby="sources-heading"] li { margin-bottom: 24px; }
 .openrouter-article [aria-labelledby="sources-heading"] li > strong { display: block; margin-bottom: 6px; color: var(--text-display); }
 
-@media (max-width: 720px) {
-  .openrouter-article .model-table-wrap { border: 0; background: none; }
-  .openrouter-article .v2-stack tr { padding: 20px 0; }
-  .openrouter-article .v2-stack tr:first-child { border-top: 0; }
-  .openrouter-article .v2-stack th[scope="row"] { font-size: 18px; padding-bottom: 12px; }
-  .openrouter-article .v2-stack td { grid-template-columns: 1fr; gap: 4px; padding: 8px 0; font-size: 16px; line-height: 1.5; }
-  .openrouter-article .v2-stack td::before { font-size: 13px; text-transform: none; letter-spacing: 0; }
-  .openrouter-article .v2-row-tr :is(th,td) { background: none; }
-  .openrouter-article .seo-evidence-table { min-width: 1000px; }
-  .openrouter-article .seo-evidence-table-wrap { border: 0; border-radius: 0; }
-  .openrouter-article .seo-evidence-table td { padding: 16px 12px; font-size: 16px; }
-  .openrouter-article .seo-evidence-table :is(.table-note,code) { font-size: 14px; line-height: 1.5; }
-}
-.openrouter-article .seo-evidence-table td:first-child { min-width: 290px; }
-.openrouter-article .seo-evidence-table td:first-child code { overflow-wrap: normal; }
-
-@media (min-width: 721px) {
-  .openrouter-article .v2-stack :is(th,td) { padding: 14px 16px; font-size: 16px; line-height: 1.5; }
-  .openrouter-article .v2-stack thead th { font-size: 13px; }
-  .openrouter-article .v2-stack th[scope="row"] { text-transform: none; }
-}
-
-@media (max-width: 720px) {
-  .openrouter-article .v2-stack :is(th,td) { background: none; }
-}
 .openrouter-article .seo-evidence-head { align-items: start; }
-.openrouter-article .seo-evidence-table td { font-size: 14px; line-height: 1.5; }
-.openrouter-article .seo-evidence-table :is(.table-note,code) { font-size: 13px; line-height: 1.5; }
-
-@media (max-width: 720px) {
-  .openrouter-article .seo-evidence-table td { font-size: 16px; }
-  .openrouter-article .seo-evidence-table :is(.table-note,code) { font-size: 14px; }
-}
 
 /* Editorial hierarchy: bright prose, quieter but legible supporting information. */
 .openrouter-article {
@@ -265,10 +216,6 @@
   line-height: 1.65;
 }
 .openrouter-article .v2-price-body { margin-top: 32px; }
-.openrouter-article .v2-row-ref :is(th,td) { color: var(--text-body); }
-.openrouter-article .v2-stack :is(th,td) { color: var(--text-body); }
-.openrouter-article .v2-stack th { color: var(--text-display); }
-.openrouter-article .v2-stack th[scope="row"] { font-weight: 600; }
 
 @media (max-width: 720px) {
   .openrouter-article main h2 { font-size: 28px; }
@@ -277,55 +224,16 @@
   .openrouter-article main > .v2-head { margin-top: 64px; }
   .openrouter-article main > .public-hero,
   .openrouter-article main > .v2-head + .marketing-grid { margin-top: 0; }
-  .openrouter-article .model-table-wrap { overflow-x: auto; background: var(--surface-card); }
-  .openrouter-article .v2-stack { display: table; min-width: 620px !important; border-collapse: separate; border-spacing: 0; }
-  .openrouter-article .v2-stack thead { display: table-header-group; }
-  .openrouter-article .v2-stack tbody { display: table-row-group; }
-  .openrouter-article .v2-stack tr { display: table-row; padding: 0; }
-  .openrouter-article .v2-stack :is(th,td),
-  .openrouter-article .v2-stack th[scope="row"] {
-    display: table-cell; padding: 14px 12px; font-size: 15px; line-height: 1.5;
-    vertical-align: top; border-bottom: 1px solid var(--border-hairline);
-    text-transform: none; letter-spacing: 0;
-  }
-  .openrouter-article .v2-stack thead th { font-size: 14px; }
-  .openrouter-article .v2-stack td::before { content: none; }
-  .openrouter-article .v2-stack th:first-child {
-    position: sticky; left: 0; z-index: 1; background: var(--surface-card);
-    min-width: 120px; max-width: 160px;
-  }
-  .openrouter-article .v2-saving-table { min-width: 0 !important; width: 100%; table-layout: fixed; }
-  .openrouter-article .v2-saving-table :is(th,td),
-  .openrouter-article .v2-saving-table th[scope="row"] { padding: 12px 6px; font-size: 14px; }
-  .openrouter-article .v2-saving-table thead th { font-size: 13px; overflow-wrap: normal; }
-  .openrouter-article .v2-saving-table th:first-child { position: static; width: 34%; min-width: 0; }
-  .openrouter-article .v2-saving-table td { white-space: nowrap; }
-}
-
-@media (max-width: 720px) {
-  .openrouter-article :is(.v2-matrix-table,.v2-price-table) { min-width: 0 !important; table-layout: fixed; width: 100%; }
-  .openrouter-article :is(.v2-matrix-table,.v2-price-table) :is(th,td),
-  .openrouter-article :is(.v2-matrix-table,.v2-price-table) th[scope="row"] { padding: 12px 8px; font-size: 14px; }
-  .openrouter-article :is(.v2-matrix-table,.v2-price-table) th:first-child { width: 26%; min-width: 0; max-width: none; position: static; }
 }
 
 /* Sage surfaces make comparison groups visible at every viewport width. */
-.openrouter-article .model-table-wrap,
-.openrouter-article .seo-evidence-table-wrap,
 .openrouter-article .v2-table-note { background: #10231b; }
-.openrouter-article .v2-stack :is(th,td),
-.openrouter-article .seo-evidence-table :is(th,td) { background: transparent; }
-.openrouter-article .v2-stack thead th,
-.openrouter-article .seo-evidence-table thead th { background: #183226; }
-.openrouter-article .v2-row-tr :is(th,td) { background: #1c3e2e; }
 .openrouter-article main h2 { color: #d9f2e3; }
 .openrouter-article .seo-evidence-stats strong { color: #b7e4ca; }
 .openrouter-article .seo-evidence-stats { grid-template-columns: repeat(5,minmax(0,1fr)); }
 
 @media (max-width: 720px) {
   .openrouter-article .seo-evidence-stats { grid-template-columns: repeat(2,minmax(0,1fr)); }
-  .openrouter-article .v2-stack th:first-child { background: #183226; }
-  .openrouter-article .v2-row-tr th:first-child { background: #1c3e2e; }
 }
 .openrouter-article [aria-labelledby="quick-answer-heading"] .panel-body > p:first-child {
   color: #b7e4ca; font-size: 23px; line-height: 1.5; margin-bottom: 28px;
@@ -392,3 +300,18 @@
 
 /* Keep signup actions at the bottom CTA’s line height in every text context. */
 .openrouter-article main .btn[data-action="open-signin"] { line-height: 1.6; }
+
+/* Shared tables (tables.css) take this page's sage colours. */
+.openrouter-article .tbl-wrap {
+  --tbl-bg: #10231b;
+  --tbl-surface: #10231b;
+  --tbl-head-bg: #183226;
+  --tbl-edge: 16px;
+  --tbl-label: #f2faf6;
+  --tbl-name: #f2faf6;
+  --tbl-cell: #dce5e0;
+  --tbl-muted: #c5d1ca;
+  --tbl-line: var(--border-hairline);
+  --tbl-line-strong: var(--border-hairline);
+  --tbl-focus: #b7e4ca;
+}

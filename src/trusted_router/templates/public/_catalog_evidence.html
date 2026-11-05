@@ -17,15 +17,16 @@
     {% if not compact_catalog_evidence %}<div><strong>{{ catalog_evidence.measured_sample_count }}</strong><span>recent availability samples</span></div>{% endif %}
   </div>
 
-  <div class="seo-evidence-table-wrap">
-    <table class="seo-evidence-table">
+  <div class="tbl-wrap seo-evidence-table-wrap"><div class="tbl-scroll">
+    <table class="tbl tbl-c seo-evidence-table">
+      <caption class="tbl-sr">Current models with their providers, prices and privacy</caption>
       <thead>
         <tr>
           <th>Model</th>
           <th>Providers</th>
-          <th>Context</th>
-          <th>Input</th>
-          <th>Output</th>
+          <th class="tbl-num">Context</th>
+          <th class="tbl-num">Input</th>
+          <th class="tbl-num">Output</th>
           <th>Privacy</th>
           {% if not compact_catalog_evidence %}<th>Measured route</th>{% endif %}
         </tr>
@@ -33,7 +34,7 @@
       <tbody>
         {% for model in catalog_evidence.models %}
         <tr>
-          <td><a href="{{ model.detail_href }}"><strong>{{ model.name }}</strong></a><code>{{ model.id }}</code></td>
+          <td><a href="{{ model.detail_href }}"><strong>{{ model.name }}</strong></a><code class="tbl-sub">{{ model.id }}</code></td>
           <td>
             <div class="provider-logo-list" aria-label="{{ model.provider_count }} providers">
               {% for provider in model.providers[:4] %}
@@ -43,14 +44,14 @@
             </div>
             <span class="table-note">{{ model.route_count }} routes</span>
           </td>
-          <td>{{ model.context_length }}</td>
-          <td>{{ model.prompt_price }}</td>
-          <td>{{ model.completion_price }}</td>
+          <td class="tbl-num">{{ model.context_length }}</td>
+          <td class="tbl-num">{{ model.prompt_price }}</td>
+          <td class="tbl-num">{{ model.completion_price }}</td>
           <td>
             {% if model.has_confidential %}<span class="pill good">Confidential + ZDR</span>{% elif model.has_zdr %}<span class="pill good">ZDR</span>{% elif model.has_e2e %}<span class="pill">Provider E2EE</span>{% else %}<span class="pill">varies</span>{% endif %}
             {% if model.benchmark_count %}<a class="table-note" href="{{ model.detail_href }}/benchmarks">{{ model.benchmark_count }} cited scores</a>{% endif %}
           </td>
-          {% if not compact_catalog_evidence %}<td>
+          {% if not compact_catalog_evidence %}<td class="tbl-wrap-text">
             {% if model.sample_count %}
             <strong>{% if model.p50_ttft_ms is not none %}{{ model.p50_ttft_ms }} ms TTFT{% else %}measured{% endif %}</strong>
             <span class="table-note">{{ model.measurement_provider }}{% if model.p50_tokens_per_second is not none %} · {{ '%.0f'|format(model.p50_tokens_per_second) }} tok/s{% endif %}{% if model.availability is not none %} · {{ '%.2f'|format(model.availability * 100) }}% available{% endif %} · n={{ model.sample_count }}</span>
@@ -62,7 +63,7 @@
         {% endfor %}
       </tbody>
     </table>
-  </div>
+  </div></div>
 
   <div class="seo-provider-strip" aria-label="Related providers">
     {% for provider in catalog_evidence.providers %}

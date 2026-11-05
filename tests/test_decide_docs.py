@@ -31,7 +31,8 @@ def test_decide_docs_list_exactly_the_models_the_catalog_advertises(client: Test
         assert f'<span class="mono">{model_id}</span>' in text, (
             f"{model_id} missing from the docs table"
         )
-    assert text.count('<tr><td><span class="mono">') - 4 == len(NATIVE_DECISION_MODEL_IDS) + 1, (
+    listed = text.count('<tr><td><span class="mono">') + text.count('<tr><th scope="row"><span class="mono">')
+    assert listed - 4 == len(NATIVE_DECISION_MODEL_IDS) + 1, (
         "the docs table lists a model the catalog does not advertise"
     )
 
