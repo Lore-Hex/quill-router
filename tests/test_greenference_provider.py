@@ -113,11 +113,15 @@ def test_published_manifest_redacts_contacts_and_preserves_native_routes():
     from trusted_router.catalog import MODEL_ENDPOINTS
 
     raw = json.loads((Path(__file__).resolve().parents[1] / "src/trusted_router/data/provider_models/greenference.json").read_text())
-    assert len(raw["models"]) >= 10
+    assert raw["models"]
     assert "support_contact" not in json.dumps(raw)
     assert "incident_contact" not in json.dumps(raw)
-    for row in raw["models"]:
-        endpoint = MODEL_ENDPOINTS[row["id"] + "@greenference/prepaid"]
+    active = {row["id"]: row for row in raw["models"] if row.get("routable") is not False}
+    endpoints = {endpoint.model_id: endpoint for endpoint in MODEL_ENDPOINTS.values()
+                 if endpoint.provider == p.SLUG and endpoint.usage_type == "Credits"}
+    assert endpoints.keys() == active.keys()
+    for model_id, row in active.items():
+        endpoint = endpoints[model_id]
         assert endpoint.upstream_id == row["upstream_id"]
         assert endpoint.usage_type == "Credits"
 
@@ -128,12 +132,52 @@ def test_public_provider_page_and_cache_pricing(client):
     response = client.get("/providers/greenference")
     assert response.status_code == 200
     assert "Greenference" in response.text
-    assert "glm-5.3-flash" in response.text
     assert "https://greenference.com/legal/dpa" in response.text
     assert "greenference.png" in response.text
-    assert "Cached" in response.text
-    endpoint = MODEL_ENDPOINTS["z-ai/glm-5.3-flash@greenference/prepaid"]
-    cached = endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
-    assert f"${cached / 1_000_000:g}/1M" in response.text
+    for endpoint in MODEL_ENDPOINTS.values():
+        if endpoint.provider != p.SLUG or endpoint.usage_type != "Credits":
+            continue
+        assert f'/models/{endpoint.model_id}' in response.text
+        for tier in endpoint.price_tiers:
+            cached = tier.prompt_cached_price_microdollars_per_million_tokens
+            if cached is not None:
+                assert "Cached" in response.text
+                assert f"${cached / 1_000_000:g}/1M" in response.text
     assert "support_contact" not in response.text
     assert "incident_contact" not in response.text
+
+
+@pytest.mark.parametrize("retired_count", [0, 1, 2])
+def test_catalog_and_page_follow_manifest_lifecycle(client, monkeypatch, tmp_path, retired_count):
+    from trusted_router import catalog_ingest, dashboard
+    from trusted_router.pricing import _customer_price
+
+    _, discovered = p.discover(catalog("greenference/fixture-model"))
+    base = discovered["greenference/fixture-model"]
+    rows = []
+    for index in range(2):
+        rows.append({**base, "id": f"greenference/fixture-{index}",
+                     "upstream_id": f"greenference/fixture-{index}",
+                     "input_token_price_per_m": 140000,
+                     "output_token_price_per_m": 490000,
+                     "cached_input_token_price_per_m": 28000,
+                     "routable": index >= retired_count,
+                     "routable_reason": "delisted-upstream" if index < retired_count else "available"})
+    manifest = {"models": rows, "price_scale": "microdollars_per_million"}
+    (tmp_path / "greenference.json").write_text(json.dumps(manifest))
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
+    models, endpoints = catalog_ingest._supplemental_provider_models_and_endpoints()
+    assert {endpoint.model_id for endpoint in endpoints.values()} == {
+        row["id"] for row in rows if row["routable"]
+    }
+    monkeypatch.setattr(dashboard, "_public_models_for_seo", lambda: list(models.values()))
+    monkeypatch.setattr(dashboard, "endpoints_for_model", lambda model_id: [
+        endpoint for endpoint in endpoints.values() if endpoint.model_id == model_id
+    ])
+    response = client.get("/providers/greenference")
+    assert response.status_code == 200
+    for row in rows:
+        assert (f'/models/{row["id"]}' in response.text) is row["routable"]
+    if retired_count < 2:
+        assert "Cached" in response.text
+        assert f"${_customer_price(28000) / 1_000_000:g}/1M" in response.text

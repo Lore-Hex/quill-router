@@ -341,9 +341,8 @@ func (s boundStagingStore) FindLease(ctx context.Context, leaseID string) (store
 	})
 }
 
-func (s boundStagingStore) StageRecord(ctx context.Context, r store.StagedRecord) error {
-	_, err := call(s.bound, ctx, "stage record", r.Ref.LeaseID, func(ctx context.Context) (struct{}, error) {
-		return struct{}{}, s.s.StageRecord(ctx, r)
+func (s boundStagingStore) StageRecords(ctx context.Context, rs []store.StagedRecord) ([]error, error) {
+	return call(s.bound, ctx, "stage records", "", func(ctx context.Context) ([]error, error) {
+		return s.s.StageRecords(ctx, rs)
 	})
-	return err
 }

@@ -12,6 +12,7 @@ import threading
 import time
 from collections import Counter
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -65,10 +66,28 @@ def inventory_settings(surface, enabled):
     ))
 
 
-def inventory(app):
-    routes = sorted((path, sorted(getattr(route, "methods", []) or []),
-                     getattr(getattr(route, "endpoint", None), "__qualname__", ""))
+def inventory(app, retired_route_delta=None):
+    routes = sorted([path, sorted(getattr(route, "methods", []) or []),
+                     getattr(getattr(route, "endpoint", None), "__qualname__", "")]
                     for path, route in effective_routes(app))
+    if retired_route_delta is not None:
+        # Reconstruct the unchanged baseline using only the reviewed creator
+        # removal and earnings extraction. Keep lifecycle/state pins untouched.
+        for added in retired_route_delta["added"]:
+            assert added in routes
+            assert added[0].removeprefix("/v1") in {
+                "/earnings", "/earnings/transfer", "/user-models/earnings", "/user-models/earnings/transfer",
+            }
+            routes.remove(added)
+        for removed in retired_route_delta["removed"]:
+            assert removed not in routes
+            assert removed[0].removeprefix("/v1").startswith((
+                "/console/custom-models", "/console/user-models", "/custom-models", "/user-models",
+                "/docs/custom-models", "/docs/user-models", "/user-chat", "/models/user-provided",
+                "/internal/gateway/resolve-custom-model",
+            ))
+            routes.append(removed)
+        routes.sort()
     return dict(routes_sha256=hashlib.sha256(json.dumps(routes).encode()).hexdigest(),
                 route_count=len(routes), startup=[f.__qualname__ for f in app.router.on_startup],
                 shutdown=[f.__qualname__ for f in app.router.on_shutdown],
@@ -80,8 +99,10 @@ def inventory(app):
 def test_existing_surfaces_match_main_inventory(surface, enabled):
     frozen = json.loads((Path(__file__).parent / "fixtures/settle_drain_surface_inventory.json").read_text())
     assert frozen["revision"] == "ddfbd1e62"
+    delta = json.loads((Path(__file__).parent / "fixtures/retired_creator_route_delta.json").read_text())
+    assert delta["base_revision"] == "43f8cf6e73c999bc2140147e854f2ff96b2f124b"
     app = create_app(inventory_settings(surface, enabled), configure_store_arg=False, init_observability=False)
-    assert inventory(app) == frozen[f"{surface}/{enabled}"]
+    assert inventory(app, delta["surfaces"][surface]) == frozen[f"{surface}/{enabled}"]
 
 
 def test_worker_surface_excludes_every_other_starter(monkeypatch):
@@ -297,6 +318,37 @@ def test_stopped_claim_is_reclaimable_at_worker_lease_expiry(fake_store, monkeyp
     assert pending["status"] == "pending"
     assert box.claim_shard(shard=0, lease_seconds=30) == []
     stamp[0] += dt.timedelta(seconds=31)
+    [reclaimed] = box.claim_shard(shard=0, lease_seconds=30)
+    assert reclaimed.authorization_id == "fast-0"
+
+
+def test_claim_past_the_pass_budget_is_released_and_reclaimable_at_once(fake_store, monkeypatch, caplog):
+    # Production 2026-11-05 06:53Z: a claim that crossed the 2 s budget held its
+    # row for the whole 30 s lease, and the row's age closed async admission.
+    from trusted_router import storage_gcp_settle_outbox as adapter
+    box = seed(fake_store[0], 1)
+    fake_store[1].settle_outbox[("fast-0", "settle")]["queue_shard"] = 0
+    stamp = [dt.datetime.now(dt.UTC)]
+    monkeypatch.setattr(adapter, "_iso_now", lambda: stamp[0].replace(microsecond=0).isoformat().replace("+00:00", "Z"))
+    clock = [0.]
+    monkeypatch.setattr(worker, "time", SimpleNamespace(monotonic=lambda: clock[0], time=time.time))
+    original = SpannerSettleOutbox.claim_candidates
+    applied = []
+    def claim(self, candidates, **kwargs):
+        result = original(self, candidates, **kwargs)
+        clock[0] = 2.5  # the claim itself runs past the pass budget
+        return result
+    monkeypatch.setattr(drain, "apply_frozen_settle", lambda row: applied.append(row) or ApplyOutcome.SETTLED_NOW)
+    with monkeypatch.context() as patch, caplog.at_level(logging.INFO):
+        patch.setattr(SpannerSettleOutbox, "claim_candidates", claim)
+        assert worker._apply_slot(box, 0, 30, 2., threading.Event()) == (1, "deferred", 0)
+    assert applied == []
+    [deferred] = [r.getMessage() for r in caplog.records if "async_drain.deferred" in r.getMessage()]
+    assert deferred.endswith(" reason=deadline released=1")
+    [pending] = list(fake_store[1].settle_outbox.values())
+    assert pending["status"] == "pending"
+    assert pending["lease_owner"] is None and pending["leased_until"] is None
+    # Due again at once: no lease to wait out, unlike a claim deferred at stop.
     [reclaimed] = box.claim_shard(shard=0, lease_seconds=30)
     assert reclaimed.authorization_id == "fast-0"
 

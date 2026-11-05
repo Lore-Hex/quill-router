@@ -252,6 +252,40 @@ def test_a_workspace_outside_the_pilot_set_gets_the_admission_off_answer(allowli
     assert {k: pilot[k] for k in list(off)[1:]} == {k: off[k] for k in list(off)[1:]}
 
 
+@pytest.mark.parametrize('allowlist', ['', 'ws-v1', 'other,ws-v1'])
+@pytest.mark.parametrize('overlap', ['', 'other', 'ws-v1'])
+@pytest.mark.parametrize('fastpath', ['', 'other', 'ws-v1', 'other,ws-v1'])
+def test_a_fastpath_workspace_gets_the_admission_off_answer(allowlist, overlap, fastpath):
+    """Async settle takes no request the fast path takes (G15 section 4.5):
+    a workspace in the fast-path pilot set, not in the overlap list, gets
+    Python's admission-off answer byte for byte (shape B: no ticket, no
+    status URL, no admission read) with admission on, whether the pilot set
+    is empty (every workspace) or names it. Every other combination is
+    ticketed (shape C) as before: the control."""
+    import json
+
+    def answer(*, admission: bool, rt=None):
+        config = settings(async_settle_pilot_workspaces=allowlist, async_settle_pilot_cap_micro=5000000,
+                          fastpath_pilot_workspaces=fastpath, async_settle_fastpath_overlap_workspaces=overlap)
+        config.async_settle_enabled = admission
+        return projection(authorization=authorization(), endpoints=[endpoint()], requested=Eligibility(),
+                          runtime=rt or runtime(), settings=config, now=1_800_000_000)
+
+    excluded = 'ws-v1' in fastpath.split(',') and overlap != 'ws-v1'
+    rt = runtime()
+    on, off = answer(admission=True, rt=rt), answer(admission=False)
+    assert list(off) == ['async_eligible', 'billing_snapshot', 'billing_snapshot_hash']
+    if excluded:
+        assert json.dumps(on) == json.dumps(off)
+        assert on['async_eligible'] is False
+        assert not rt.admission.entries
+    else:
+        assert list(on) == ['async_eligible', 'billing_snapshot', 'billing_snapshot_hash', 'settlement_ticket',
+                            'settlement_status_url']
+        assert on['async_eligible'] is True
+        assert {k: on[k] for k in list(off)[1:]} == {k: off[k] for k in list(off)[1:]}
+
+
 @pytest.mark.parametrize('tier', [1, 2, 3])
 @pytest.mark.parametrize('amount', [5000000, 5000001])
 def test_pilot_authorize_cap_override(tier, amount):

@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Venice models whose live /v1/models feed is ahead of the shared snapshot. Verified against https://api.venice.ai/api/v1/models on 2026-06-22.",
   "provider": "venice",
   "source": "https://api.venice.ai/api/v1/models?type=text",
-  "generated_at": "2026-11-03T19:48:25Z",
+  "generated_at": "2026-11-05T11:29:32Z",
   "model_count": 50,
   "models": [
     {
@@ -1309,9 +1309,9 @@
       ],
       "context_length": 1000000,
       "max_output_tokens": 131072,
-      "input_token_price_per_m": 3750000,
-      "output_token_price_per_m": 18750000,
-      "cached_input_token_price_per_m": 375000
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000,
+      "cached_input_token_price_per_m": 200000
     },
     {
       "display_name": "Kimi K3.1 Pro Highspeed",
@@ -1337,9 +1337,9 @@
       ],
       "context_length": 1000000,
       "max_output_tokens": 131072,
-      "input_token_price_per_m": 7500000,
-      "output_token_price_per_m": 37500000,
-      "cached_input_token_price_per_m": 750000
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 25000000,
+      "cached_input_token_price_per_m": 375000
     },
     {
       "display_name": "DeepSeek V4.1 Flash 1017 Uncensored",

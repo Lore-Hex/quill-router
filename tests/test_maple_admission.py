@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from tests.fixture_routes import serve_on_fixture_route
 from trusted_router.catalog import MODEL_ENDPOINTS
 from trusted_router.catalog_data import model_vendor_provider_slugs
 from trusted_router.catalog_deployment import apply_gateway_admission_holds
@@ -17,6 +18,13 @@ from trusted_router.provider_contracts import (
     qualified_gateway_origin_names,
 )
 from trusted_router.routing_snapshot import _gateway_regions
+
+
+def _fixture_route(monkeypatch, provider, model):
+    return serve_on_fixture_route(
+        monkeypatch, model, provider, author=model.split("/", 1)[0],
+        upstream_id=MAPLE_NATIVE_ID if provider == "maple" else BEDROCK_RUNTIME_PROFILES[model],
+    )
 
 
 @pytest.mark.parametrize("provider,model", [
@@ -34,7 +42,7 @@ def test_runtime_catalog_uses_real_control_plane_region_settings(monkeypatch, pr
     monkeypatch.delenv("TR_PRIMARY_REGION", raising=False)
     monkeypatch.setenv("TR_ENVIRONMENT", "production")
     monkeypatch.setenv(setting, region)
-    endpoint = next(e for e in MODEL_ENDPOINTS.values() if e.provider == provider and e.model_id == model)
+    endpoint = _fixture_route(monkeypatch, provider, model)
     endpoints = {endpoint.id: endpoint}
     apply_gateway_admission_holds({}, endpoints)
     assert endpoints == {endpoint.id: endpoint}
@@ -211,7 +219,7 @@ def test_native_gateway_origin_authorization_and_snapshot_follow_qualification(m
     from trusted_router.authorize_candidates import CandidateRequest, plan_route, resolve_candidates
     from trusted_router.config import Settings
 
-    endpoint = next(e for e in MODEL_ENDPOINTS.values() if e.provider == provider and e.model_id == model)
+    endpoint = _fixture_route(monkeypatch, provider, model)
     contract = "MAPLE_GATEWAY_REGIONS" if provider == "maple" else "BEDROCK_RUNTIME_GATEWAY_REGIONS"
     for qualified in (frozenset({fleet}), frozenset({"us-central1"}), frozenset()):
         monkeypatch.setattr(provider_contracts, contract, qualified)

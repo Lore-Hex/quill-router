@@ -1069,6 +1069,14 @@ def normalize_routing_inputs(
 ) -> NormalizedRoutingInputs:
     """Build the one routing object selectors and Stage C are allowed to read."""
 
+    from trusted_router.retired_models import reject_retired_models
+
+    fallback_models = body.get("models")
+    reject_retired_models(
+        body.get("model"),
+        *(fallback_models if isinstance(fallback_models, list) else []),
+    )
+
     model_ids, preferences = _routing_for_body(body, settings)
     return NormalizedRoutingInputs(
         model_ids=tuple(model_ids),

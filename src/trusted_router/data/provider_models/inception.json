@@ -33,7 +33,8 @@
       "routable": true,
       "input_token_price_per_m": 250000,
       "output_token_price_per_m": 750000,
-      "cached_input_token_price_per_m": 25000
+      "cached_input_token_price_per_m": 25000,
+      "missing_since": "2026-11-04"
     },
     {
       "display_name": "Inception: Mercury 2.5",
@@ -67,7 +68,8 @@
       "routable": true,
       "input_token_price_per_m": 200000,
       "output_token_price_per_m": 750000,
-      "cached_input_token_price_per_m": 20000
+      "cached_input_token_price_per_m": 20000,
+      "missing_since": "2026-11-04"
     },
     {
       "display_name": "Inception: Mercury 3",
@@ -103,7 +105,7 @@
     }
   ],
   "source": "https://api.inceptionlabs.ai/v1/models",
-  "generated_at": "2026-11-03T19:48:25Z",
+  "generated_at": "2026-11-04T16:53:25Z",
   "price_scale": "microdollars_per_million",
   "model_count": 3,
   "pricing_source": "https://docs.inceptionlabs.ai/get-started/models.md"

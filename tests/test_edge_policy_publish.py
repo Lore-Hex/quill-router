@@ -553,6 +553,168 @@ def test_parse_edge_policy_holds_admission_workspaces_strictly() -> None:
             pytest.fail(name)
 
 
+def test_admission_excluded_workspaces_is_the_fastpath_set_less_the_overlap(key) -> None:
+    """async_settle.admission_excluded_workspaces (G15 section 4.5): with
+    admission on, the fast-path pilot set less the overlap list, within the
+    pilot set when that is non-empty, sorted; absent when that leaves none
+    (so a pilot set that names no fast-path workspace, as deployed, publishes
+    the same bytes as before the member), with admission off, and whatever
+    the fast-path pilot's switch. Every workspace it names is one
+    async_settle_pilot_allows refuses and admission_workspaces would cover."""
+    fastpath = "ws-synthetic-f2,ws-synthetic-f1"
+    for admission in (False, True):
+        for enabled in (False, True):
+            for pilots, overlap, expected in (
+                ("", "", ["ws-synthetic-f1", "ws-synthetic-f2"]),
+                ("", "ws-synthetic-f1", ["ws-synthetic-f2"]),
+                ("", "ws-synthetic-f1,ws-synthetic-f2", None),
+                ("ws-synthetic-a", "", None),
+                ("ws-synthetic-a,ws-synthetic-f2", "", ["ws-synthetic-f2"]),
+                ("ws-synthetic-a,ws-synthetic-f2", "ws-synthetic-f2", None),
+            ):
+                settings = _settings(key, async_settle_protection=True, async_settle_pilot_workspaces=pilots,
+                                     async_settle_fastpath_overlap_workspaces=overlap,
+                                     fastpath_pilot_workspaces=fastpath, fastpath_pilot_enabled=enabled)
+                settings.async_settle_enabled = admission
+                body = _publisher(settings, Clock(T0)).current().body
+                published = json.loads(body)["async_settle"]
+                want = expected if admission else None
+                case = (admission, enabled, pilots, overlap)
+                if want is None:
+                    assert "admission_excluded_workspaces" not in published, case
+                else:
+                    assert published["admission_excluded_workspaces"] == want, case
+                    assert not any(settings.async_settle_pilot_allows(ws) for ws in want), case
+                    assert set(want) <= set(published.get("admission_workspaces", want)), case
+                assert canonical_edge_policy_bytes(parse_edge_policy(body)) == body
+    # The control: without the fast-path set, nothing is excluded.
+    settings = _settings(key, async_settle_protection=True)
+    settings.async_settle_enabled = True
+    assert "admission_excluded_workspaces" not in json.loads(_publisher(settings, Clock(T0)).current().body)["async_settle"]
+
+
+def test_the_deployed_pilot_sets_publish_no_excluded_member() -> None:
+    """With rollout.sh's own pilot sets (the async pilot set names no
+    fast-path workspace outside the overlap list) the body carries no
+    admission_excluded_workspaces, so a Go node that predates the member
+    reads it unchanged; emptying the async pilot set would publish the
+    member (the reason nodes must ship first, G15 section 4.5)."""
+    rendered = _rendered_rollout_env()
+    common = dict(
+        fastpath_pilot_workspaces=rendered["TR_FASTPATH_PILOT_WORKSPACES"],
+        async_settle_fastpath_overlap_workspaces=rendered["TR_ASYNC_SETTLE_FASTPATH_OVERLAP_WORKSPACES"],
+    )
+    deployed = VECTORS.fixture_settings(async_settle_enabled=True, async_settle_protection=True,
+                                        async_settle_pilot_workspaces=rendered["TR_ASYNC_SETTLE_PILOT_WORKSPACES"],
+                                        **common)
+    assert "admission_excluded_workspaces" not in publisher_module.admission_workspaces(deployed)
+    every = VECTORS.fixture_settings(async_settle_enabled=True, async_settle_protection=True,
+                                     async_settle_pilot_workspaces="", **common)
+    assert publisher_module.admission_workspaces(every)["admission_excluded_workspaces"] == sorted(
+        every.async_settle_fastpath_excluded_workspace_ids)
+    # The operator workspace is in both pilots and keeps its admission.
+    overlap = deployed.async_settle_fastpath_overlap_workspace_ids
+    assert overlap and overlap <= deployed.fastpath_pilot_workspace_ids & deployed.async_settle_pilot_workspace_ids
+    assert all(deployed.async_settle_pilot_allows(ws) for ws in overlap)
+
+
+def _rendered_rollout_env() -> dict[str, str]:
+    """The TR_ settings rollout.sh's ENV_VARS array pins, as written."""
+    text = (ROOT / "scripts" / "deploy" / "rollout.sh").read_text()
+    return dict(re.findall(r'^\s*"(TR_[A-Z0-9_]+)=([^"]*)"\s*$', text, flags=re.MULTILINE))
+
+
+def test_parse_edge_policy_holds_admission_excluded_workspaces_strictly() -> None:
+    """The member Go reads (routingsnapshot.AsyncSettle): present only with
+    admission on, 1 to 32 workspace ids sorted and unique, within
+    admission_workspaces when that is present; null, empty, too many,
+    unsorted, duplicated, malformed, outside the pilot set or with admission
+    off is refused. A present member round-trips to its own canonical bytes."""
+    body = json.loads(_golden_body())
+
+    def with_members(admission: bool, excluded: Any = None, workspaces: Any = None, *,
+                     present: bool = True) -> bytes:
+        decoded = json.loads(json.dumps(body))
+        decoded["async_settle"]["admission_enabled"] = admission
+        decoded["async_settle"].pop("admission_workspaces", None)
+        decoded["async_settle"].pop("admission_excluded_workspaces", None)
+        if present:
+            decoded["async_settle"]["admission_excluded_workspaces"] = excluded
+        if workspaces is not None:
+            decoded["async_settle"]["admission_workspaces"] = workspaces
+        return json.dumps(decoded, sort_keys=True, separators=(",", ":")).encode()
+
+    thirty_two = [f"ws-synthetic-{i:02d}" for i in range(32)]
+    for excluded, workspaces in ((["ws-synthetic-a"], None), (thirty_two, None),
+                                 (["ws-synthetic-a"], ["ws-synthetic-a", "ws-synthetic-b"]),
+                                 (["ws-synthetic-a", "ws-synthetic-b"], ["ws-synthetic-a", "ws-synthetic-b"])):
+        raw = with_members(True, excluded, workspaces)
+        policy = parse_edge_policy(raw)
+        assert policy.async_settle.admission_excluded_workspaces == tuple(excluded)
+        assert canonical_edge_policy_bytes(policy) == raw
+    for admission in (False, True):
+        raw = with_members(admission, present=False)
+        assert parse_edge_policy(raw).async_settle.admission_excluded_workspaces is None
+    for name, raw in {
+        "admission off": with_members(False, ["ws-synthetic-a"]),
+        "null": with_members(True, None),
+        "empty": with_members(True, []),
+        "thirty-three": with_members(True, [*thirty_two, "ws-synthetic-99"]),
+        "unsorted": with_members(True, ["ws-synthetic-b", "ws-synthetic-a"]),
+        "duplicate": with_members(True, ["ws-synthetic-a", "ws-synthetic-a"]),
+        "space": with_members(True, ["ws a"]),
+        "an integer": with_members(True, [1]),
+        "a string": with_members(True, "ws-synthetic-a"),
+        "outside admission_workspaces": with_members(True, ["ws-synthetic-a"], ["ws-synthetic-b"]),
+        "partly outside": with_members(True, ["ws-synthetic-a", "ws-synthetic-b"], ["ws-synthetic-b"]),
+    }.items():
+        with pytest.raises(ValidationError):
+            parse_edge_policy(raw)
+            pytest.fail(name)
+
+
+def test_the_admission_vectors_are_what_the_python_publisher_writes_now() -> None:
+    # fastpath/testdata/edge_policy_admission_v1.json is the admission
+    # members' shared vector (G15 sections 4.1 and 4.5); the Go reader holds
+    # its Admits to every case (routingsnapshot's TestTheAsyncAdmissionVectors).
+    assert VECTORS.OUTPUT_ADMISSION.read_text() == VECTORS.render_admission(), (
+        "fastpath/testdata/edge_policy_admission_v1.json is stale: run "
+        "`uv run python scripts/fastpath/edge_policy_vectors.py` and check the Go reader"
+    )
+
+
+def test_every_admission_vector_is_python_s_own_admission_answer() -> None:
+    """Each publisher case's admits is what Python's admission decides for
+    that workspace under those settings (admission on and
+    async_settle_pilot_allows, the check snapshot_projection and the
+    settlement handler make), recomputed here from the case's settings, and
+    what its published members say; the refused spellings are refused."""
+    vectors = json.loads(VECTORS.OUTPUT_ADMISSION.read_text())
+    cases, probes = vectors["cases"], vectors["probes"]
+    published = [c for c in cases if c["settings"] is not None]
+    assert len(published) == 2 * len(VECTORS.ADMISSION_PILOTS) * len(VECTORS.ADMISSION_OVERLAPS) * 2
+    assert len(cases) - len(published) == len(VECTORS.ADMISSION_REFUSED) + 1
+    answers = set()
+    for case in cases:
+        if not case["accept"]:
+            with pytest.raises(ValidationError):
+                parse_edge_policy(case["body"])
+            continue
+        parsed = parse_edge_policy(case["body"]).async_settle
+        assert canonical_edge_policy_bytes(parse_edge_policy(case["body"])).decode("ascii") == case["body"]
+        s = case["settings"]
+        settings = VECTORS.admission_settings(s["admission"], s["pilots"], s["overlap"], s["fastpath"])
+        for ws in probes:
+            python = settings.async_settle_admission_enabled and settings.async_settle_pilot_allows(ws)
+            members = (parsed.admission_enabled
+                       and ws not in (parsed.admission_excluded_workspaces or ())
+                       and (parsed.admission_workspaces is None or ws in parsed.admission_workspaces))
+            assert case["admits"][ws] is python is members, (case["name"], ws)
+            answers.add((ws, python))
+    # Every probe is both admitted and left out somewhere.
+    assert answers == {(ws, value) for ws in probes for value in (False, True)}
+
+
 def test_edge_decide_reads_its_environment_variable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TR_FASTPATH_EDGE_DECIDE_ASYNC", "true")
     assert Settings(environment="test", sentry_dsn=None).fastpath_edge_decide_async is True
@@ -1139,8 +1301,6 @@ def test_a_release_host_that_never_finishes_keeps_the_last_verified_set_and_sign
     from tests.fakes.release_host import ReleaseHost, plain_http_client_factory
     from trusted_router import stage_d_policy
 
-    monkeypatch.setattr(stage_d_policy, "_FETCH_TIMEOUT_SECONDS", 0.3)
-    monkeypatch.setattr(stage_d_policy, "REFRESH_TIMEOUT_SECONDS", 1.5)
     host = ReleaseHost(_stage_d_document(1200))
     settings = _settings(key)
     resolver = _real_resolver(settings, plain_http_client_factory, Ticks(),
@@ -1152,6 +1312,10 @@ def test_a_release_host_that_never_finishes_keeps_the_last_verified_set_and_sign
         first = publisher.current()
         digests = json.loads(first.body)["accepted_image_digests"]
         assert digests == sorted(resolver.accepted_image_digests()) and digests
+        # Establish the healthy baseline with production budgets. The short
+        # deadlines exercise the stalled refresh, not CI's setup scheduling.
+        monkeypatch.setattr(stage_d_policy, "_FETCH_TIMEOUT_SECONDS", 0.3)
+        monkeypatch.setattr(stage_d_policy, "REFRESH_TIMEOUT_SECONDS", 1.5)
         host.mode = "header-drip"
         host.document = _stage_d_document(1201)
         clock.now = first.refresh_at

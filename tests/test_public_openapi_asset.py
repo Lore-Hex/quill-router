@@ -283,10 +283,6 @@ def test_public_openapi_documents_speech_wav(source: str) -> None:
 
 @pytest.mark.parametrize("model_name,field_name", [
     ("EarningsTransferRequest", "amount_microdollars"),
-    ("UserModelCreateRequest", "prompt_price_microdollars_per_million_tokens"),
-    ("UserModelCreateRequest", "completion_price_microdollars_per_million_tokens"),
-    ("UserModelPatchRequest", "prompt_price_microdollars_per_million_tokens"),
-    ("UserModelPatchRequest", "completion_price_microdollars_per_million_tokens"),
 ])
 def test_published_int64_maximum_is_exactly_the_runtime_integer_bound(model_name, field_name):
     from trusted_router import schemas

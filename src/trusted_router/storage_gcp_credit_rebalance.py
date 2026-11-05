@@ -21,10 +21,14 @@ class RebalanceOutcome:
 
 @dataclass(frozen=True)
 class CreditHeadroomPrecheck:
-    """Lock-free affordability result plus a directly usable shard, if any."""
+    """Lock-free affordability result plus the directly usable shards, if any."""
 
     outcome: str
     candidate_shard: int | None = None
+    # Every shard that could fund the estimate, in the caller's candidate
+    # order. A peer can take one between this snapshot and the retry; the
+    # retry tries the rest in the same transaction.
+    funded_shards: tuple[int, ...] = ()
 
 
 class _RebalanceInvariantError(RuntimeError):
@@ -68,9 +72,9 @@ def credit_headroom_precheck(
 
     if sum(headroom.values()) < estimate:
         return CreditHeadroomPrecheck(RebalanceOutcome.INSUFFICIENT)
-    for candidate in candidates:
-        if headroom[candidate] >= estimate:
-            return CreditHeadroomPrecheck(RebalanceOutcome.NOT_NEEDED, candidate)
+    funded = tuple(candidate for candidate in candidates if headroom[candidate] >= estimate)
+    if funded:
+        return CreditHeadroomPrecheck(RebalanceOutcome.NOT_NEEDED, funded[0], funded)
     return CreditHeadroomPrecheck(RebalanceOutcome.MOVED)
 
 

@@ -61,7 +61,13 @@ locals {
   # in one call and works up to eight leases' packs at once, each lease's
   # in order (#2298); at 1,000 a second the packs took about 25 minutes to
   # clear one at a time.
-  fastpath_release        = "328a3651cbbc26315ddfc6566a45d348febd7df7"
+  # 04b39913b: that sweep raised the billing store's CPU from 33% to 47% at
+  # 1,000 a second, so the auditor remembers the leases it has found, sweeps
+  # retired staged records once a minute, and runs two lease workers (#2303).
+  # f1208a3d4: the stager groups the records that arrive while one staging
+  # transaction runs into the next one, up to 256 records or 8 MiB, instead
+  # of committing once a record (#2318).
+  fastpath_release        = "f1208a3d49f37e929aab323d34189b379c48917d"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"

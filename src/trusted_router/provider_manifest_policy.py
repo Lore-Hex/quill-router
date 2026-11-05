@@ -44,6 +44,7 @@ EXPIRING_PROVIDER_MANIFEST_SLUGS = frozenset(
         "greenference",
         "hixtube",
         "muna",
+        "negbeta",
         "coralbricks",
         "boundless",
         "zro",

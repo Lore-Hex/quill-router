@@ -106,8 +106,9 @@ const (
 	// billing_valid, so Go cannot build Python's answer. PassAsyncAdmission
 	// is the first gate once the key's workspace is known: Python's
 	// admission covers that workspace (async_settle.Admits), so the ticket is
-	// Python's; a workspace its admission_workspaces leaves out is composed
-	// as with admission off, Python's own answer to it. PassAsyncOff is a
+	// Python's; a workspace its admission_workspaces leaves out, or its
+	// admission_excluded_workspaces names (§4.5), is composed as with
+	// admission off, Python's own answer to it. PassAsyncOff is a
 	// decision gate after the compose, beside the decide row's: the policy's
 	// edge_decide is false, so the request is composed (and compared by the
 	// shadow) but never answered.
@@ -680,9 +681,10 @@ func asyncPolicyPass(r gwauth.Request, p *routingsnapshot.EdgePolicy, s *routing
 // asyncAdmissionPass is an async-v1 request's admission gate, once the key's
 // workspace is known (asyncPolicyPass passed, so the policy's object is
 // present): PassAsyncAdmission when Python's admission covers the workspace
-// (a ticket is Python's), else "": admission off, or admission_workspaces
-// leaves the workspace out, and Python answers it as with admission off
-// (docs/design/fast-admission-e2-g15-async.md section 4.1).
+// (a ticket is Python's), else "": admission off, admission_workspaces
+// leaves the workspace out, or admission_excluded_workspaces names it (a
+// fast-path workspace, section 4.5), and Python answers it as with
+// admission off (docs/design/fast-admission-e2-g15-async.md section 4.1).
 func asyncAdmissionPass(r gwauth.Request, p *routingsnapshot.EdgePolicy, workspace string) string {
 	if r.Async.V1 && p.AsyncSettle.Admits(workspace) {
 		return PassAsyncAdmission

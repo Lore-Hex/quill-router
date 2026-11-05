@@ -19,10 +19,11 @@
       "upstream_id": "DeepSeek-V3.1",
       "context_length": 131072,
       "max_output_tokens": 7168,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 3000000,
       "output_token_price_per_m": 4500000,
-      "missing_since": "2026-11-03"
+      "missing_since": "2026-11-03",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "DeepSeek-V3.2",
@@ -42,10 +43,11 @@
       "upstream_id": "DeepSeek-V3.2",
       "context_length": 32768,
       "max_output_tokens": 7168,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 3000000,
       "output_token_price_per_m": 4500000,
-      "missing_since": "2026-11-03"
+      "missing_since": "2026-11-03",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "gemma-4-31B-it",
@@ -165,7 +167,7 @@
     }
   ],
   "source": "https://api.sambanova.ai/v1/models",
-  "generated_at": "2026-11-03T19:48:25Z",
+  "generated_at": "2026-11-05T11:29:32Z",
   "price_scale": "microdollars_per_million",
   "model_count": 7
 }

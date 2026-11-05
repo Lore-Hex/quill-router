@@ -274,6 +274,65 @@ def test_shared_health_failure_and_read_ahead_recovery(admission_rig, initial_re
     assert rig.cache.entries['workspace'] is workspace_evidence
 
 
+def test_unhealthy_read_ahead_record_closes_cached_only_admission(admission_rig):
+    # A valid, fresh record of an unhealthy drain is a successful read: it
+    # replaces the healthy evidence at once instead of being kept out like a
+    # failed read, so cached-only admission closes without waiting for expiry.
+    # Health read-ahead reads only when its last attempt is at least
+    # HEALTH_SECONDS (0.5s) old and the slot is empty or that old: hence the
+    # reads at 0, 0.5 and 1.0 below.
+    rig = admission_rig
+    rig.clock.value = 0
+    rig.cache.wall_clock = lambda: 100 + rig.clock()
+    assert not rig.cache.eligible('workspace', 0, cached_only=True)
+    rig.worker.refresh_once(now=0)
+    assert rig.cache.health == DrainHealth(0, 1)
+    assert rig.cache.eligible('workspace', 0, cached_only=True)
+    assert (rig.health.call_count, rig.read.call_count) == (1, 1)
+
+    rig.clock.value = 0.5
+    rig.health.return_value = healthy(observed_at=100.5, worker_heartbeat=100.5,
+                                      p95_age_seconds=6, oldest_unresolved_age_seconds=6)
+    rig.worker.refresh_once(now=0.5)
+    assert (rig.health.call_count, rig.read.call_count) == (2, 1)
+    assert rig.cache.health == DrainHealth(0.5, 6)
+    assert rig.cache.health_read_at == 0.5
+    assert not rig.cache.eligible('workspace', 0, cached_only=True)
+    assert handler.admission_reason(SimpleNamespace(admission=rig.cache), 'workspace', 0) == 'drain_unhealthy'
+    assert (rig.health.call_count, rig.read.call_count) == (2, 1)
+
+    rig.clock.value = 1.0
+    rig.health.return_value = healthy(observed_at=101.0, worker_heartbeat=101.0)
+    rig.worker.refresh_once(now=1.0)
+    assert (rig.health.call_count, rig.read.call_count) == (3, 1)
+    assert rig.cache.health == DrainHealth(1.0, 1)
+    assert rig.cache.eligible('workspace', 0, cached_only=True)
+    assert (rig.health.call_count, rig.read.call_count) == (3, 1)
+
+
+@pytest.mark.parametrize('reader', ['full', 'read_ahead'])
+def test_health_evidence_keeps_its_observation_time(admission_rig, reader):
+    # Evidence is as old as the drain's observation, not as the read: a record
+    # read 4.5 s after it was observed admits for only 0.5 s more, through
+    # either reader, with no further read.
+    rig = admission_rig
+    rig.clock.value = 0
+    rig.cache.wall_clock = lambda: 100 + rig.clock()
+    rig.health.return_value = healthy(observed_at=95.5, worker_heartbeat=100)
+    if reader == 'full':
+        assert rig.cache.eligible('workspace', 0)
+    else:
+        assert not rig.cache.eligible('workspace', 0, cached_only=True)
+        rig.worker.refresh_once(now=0)
+    assert rig.cache.health == DrainHealth(-4.5, 1)
+    assert (rig.health.call_count, rig.read.call_count) == (1, 1)
+    rig.clock.value = 0.4
+    assert rig.cache.eligible('workspace', 0, cached_only=True)
+    rig.clock.value = 0.5
+    assert not rig.cache.eligible('workspace', 0, cached_only=True)
+    assert (rig.health.call_count, rig.read.call_count) == (1, 1)
+
+
 def different_valid_payload(env, body):
     changed = copy.deepcopy(body)
     changed['raw_usage']['output_tokens'] = 12

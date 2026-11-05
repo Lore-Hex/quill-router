@@ -1386,10 +1386,10 @@ def test_model_seo_cluster_pages_are_public_and_not_openrouter_links(
 
 
 def _serve_glm_51(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The comparison peer, GLM 5.1, on Z.AI's and Friendli's routes as fixtures
+    """The comparison peer, GLM 5.1, on Z.AI's and Fireworks' routes as fixtures
     (a model's providers page is linked once two hosts serve it): the catalog
     carries it even if every host has delisted it."""
-    for host in ("zai", "friendli"):
+    for host in ("zai", "fireworks"):
         serve_on_fixture_route(
             monkeypatch, "z-ai/glm-5.1", host, author="zai",
             model=Model(
@@ -1406,9 +1406,14 @@ def test_model_comparison_pages_are_public(
 
     assert response.status_code == 200
     assert "MoonshotAI: Kimi K2.6 vs Z.ai: GLM 5.1" in response.text
-    assert "Compare routes" in response.text
     assert "Practical read" in response.text
-    assert "cheapest route" in response.text
+    assert "Cheapest route adds the rate for one million input" in response.text
+    assert "Compare routes" not in response.text
+    # Without probe measurements the speed row and its FAQ answer are left out
+    # rather than saying "not enough data".
+    assert "not enough data" not in response.text
+    assert "Fastest measured p50 TTFT" not in response.text
+    assert "MoonshotAI: Kimi K2.6 or Z.ai: GLM 5.1 faster?" not in response.text
     assert 'href="https://aiiq.org/models/kimi-k2.6/"' in response.text
     assert "IQ 116" in response.text
     assert "/models/moonshotai/kimi-k2.6/pricing" in response.text
@@ -1826,7 +1831,7 @@ def test_openrouter_alternatives_page_matches_comparison_intent(
     assert alternatives["itemListElement"][1]["name"] == "Requesty"
     assert alternatives["numberOfItems"] == 10
     assert "Which OpenRouter alternative can I self-host?" in response.text
-    assert response.text.count("Create my API key") == 3
+    assert response.text.count("Create my API key") == 4
 
 
 def test_exact_intent_search_landings_are_message_matched(client: TestClient) -> None:

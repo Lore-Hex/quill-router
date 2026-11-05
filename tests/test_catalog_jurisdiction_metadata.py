@@ -15,7 +15,7 @@ from collections import Counter
 
 import pytest
 
-from trusted_router.catalog import MODELS, PROVIDERS
+from trusted_router.catalog import MODELS, PROVIDERS, model_to_openrouter_shape
 from trusted_router.catalog_data import (
     EU_FOCUSED_PROVIDER_ORDER,
     MODEL_ORIGIN_REQUIRED_MODEL_COUNT,
@@ -231,6 +231,18 @@ def test_meta_models_publisher_has_the_same_origin_as_meta() -> None:
     )
 
 
+@pytest.mark.parametrize("native", ["dolly1-security", "dolly2-security", "abyss1"])
+def test_zro_namespace_does_not_infer_weights_origin_from_serving_region(native) -> None:
+    origin = model_origin_for_model_id(f"zro/{native}")
+    assert origin is not None
+    assert origin.country is None
+    assert origin.lab_name == "Zro / MoonMath (API model namespace)"
+    assert origin.source_url == "https://zro.moonmath.ai/docs/models"
+    assert "GLM" in origin.note and "DeepSeek" in origin.note
+    assert "not model-creator country" in origin.note
+    assert model_origin_for_model_id(f"zro-unknown/{native}") is None
+
+
 def test_chinese_origin_weights_can_be_served_by_a_non_chinese_operator() -> None:
     # The two tables answer different questions, and this is the case that
     # proves it: GLM weights are Chinese, the routed Z.ai API operator is not.
@@ -260,3 +272,15 @@ def test_eu_focused_route_has_no_provider_with_an_unverified_jurisdiction_left_u
             provider.provider_headquarters_country is not None
             or slug in PROVIDER_JURISDICTION_UNVERIFIED
         )
+
+
+def test_liberty_4_is_pinned_to_us_providers() -> None:
+    # Liberty 4.0 is advertised as served only by US-headquartered providers;
+    # the pin is this request-time rule, mirrored by the gateway preset.
+    shape = model_to_openrouter_shape(MODELS["trustedrouter/liberty-4.0"])
+    assert cast_dict(shape["trustedrouter"])["required_provider_jurisdiction"] == PROVIDER_JURISDICTION_US
+
+
+def cast_dict(value: object) -> dict[str, object]:
+    assert isinstance(value, dict)
+    return value

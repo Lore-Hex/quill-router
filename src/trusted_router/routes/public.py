@@ -166,7 +166,6 @@ from trusted_router.receipt_keys import (
 from trusted_router.request_limits import normalized_client_identity
 from trusted_router.routes.mcp import MCP_PROTOCOL_VERSION
 from trusted_router.scopes import KNOWN_SCOPES
-from trusted_router.serialization import user_model_public_shape
 from trusted_router.services.email import EmailMessage, get_email_service
 from trusted_router.services.ops_chat import OpsChatSupportMessage, fanout_support_message
 from trusted_router.services.reserved_tokens import (
@@ -185,10 +184,6 @@ from trusted_router.services.trust_release import (
     validated_azure_metadata,
 )
 from trusted_router.storage import STORE
-from trusted_router.storage_custom_models import (
-    is_user_provided_model_id,
-    normalize_user_provided_model_id,
-)
 from trusted_router.storage_models import (
     ReceiptKey,
     SyntheticProbeSample,
@@ -1456,13 +1451,6 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     def x402_docs() -> str:
         return public_page_html(settings, "docs/x402")
 
-    @public_html_route("/docs/user-models")
-    def user_models_docs() -> str:
-        return public_page_html(settings, "docs/user-models")
-
-    @public_html_route("/docs/custom-models")
-    def custom_models_docs() -> str:
-        return public_page_html(settings, "docs/custom-models")
 
     @public_html_route("/eu")
     def eu() -> str:
@@ -2460,21 +2448,6 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     def chat() -> str:
         return public_chat_html(settings)
 
-    @public_html_route("/user-chat")
-    def user_chat(model: str = Query(..., min_length=1)) -> str:
-        locked_model_id = model.strip().lower()
-        user_model = (
-            STORE.get_user_model(normalize_user_provided_model_id(locked_model_id))
-            if is_user_provided_model_id(locked_model_id)
-            else None
-        )
-        return public_chat_html(
-            settings,
-            locked_model_id=locked_model_id,
-            locked_model_label=(
-                "User-provided model" if user_model is not None else "Custom model"
-            ),
-        )
 
     @public_html_route("/synth")
     def synth() -> str:
@@ -2525,27 +2498,6 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
                 )
             return HTMLResponse(body)
         body = public_model_detail_html(settings, cleaned)
-        if body is None:
-            user_model = (
-                STORE.get_user_model(normalize_user_provided_model_id(cleaned))
-                if is_user_provided_model_id(cleaned)
-                else None
-            )
-            if user_model is not None and user_model.enabled and user_model.status == "active":
-                shape = user_model_public_shape(user_model)
-                body = render_template(
-                    "public/user_model_detail.html",
-                    api_base_url=settings.api_base_url,
-                    site_url=(f"https://{settings.trusted_domain}/models/{user_model.id}"),
-                    title=f"{user_model.name} | User-provided model",
-                    heading=user_model.name,
-                    description=shape["privacy_notice"],
-                    robots_meta="noindex",
-                    model=shape,
-                    google_enabled=settings.google_oauth_enabled,
-                    github_enabled=settings.github_oauth_enabled,
-                    static_version=settings.release,
-                )
         if body is None:
             return HTMLResponse(
                 public_model_not_found_html(settings, cleaned),

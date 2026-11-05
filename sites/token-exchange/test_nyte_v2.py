@@ -286,3 +286,42 @@ class NavigationRegistryTests(unittest.TestCase):
             side_effect=[CompletedProcess([], 0, "false\n"), CompletedProcess([], 1, "")],
         ):
             self.assertEqual(page_added("sample.html"), "")
+
+    def test_city_home_uses_the_new_york_design_under_its_own_name(self):
+        from nyte_v2 import nyte_markets
+
+        for market in nyte_markets():
+            page = render_nyte(market=market)
+            self.assertIn(f'<link rel="canonical" href="https://{market["domain"]}/">', page)
+            self.assertIn(f'<span class="brand-place">{market.get("logo_place", market["region"])}</span>', page)
+            self.assertIn(f'<span>{market["name"]}<small>', page)
+            self.assertIn(f'href="https://{market["domain"]}/" aria-current="page"', page)
+            self.assertIn(f'utm_source={market["domain"]}', page)
+            self.assertIn(f'exchange_market={market["slug"]}', page)
+            self.assertNotIn('nytokenexchange.com/"', page.split('class="market-links"')[0])
+            # A city name never implies where a route runs, and NYTE is named only at checkout.
+            self.assertNotIn('class="tag us"', page)
+            self.assertNotIn('New York', page.split('class="market-links"')[0])
+            self.assertNotIn('by NYTE', page)
+            for card in market["workloads"]:
+                self.assertIn(f'<h3>{card["title"]}</h3>', page)
+
+    def test_shared_pages_keep_the_visiting_city_name(self):
+        from nyte_v2 import nyte_markets
+
+        home = render_nyte()
+        self.assertNotIn('by NYTE', home)
+        self.assertIn('<span class="brand-place">New York</span>', home)
+        for page in ('buy', 'api', 'sup'):
+            rendered = render_nyte(page)
+            (self.assertIn if page == 'buy' else self.assertNotIn)("'by NYTE'", rendered)
+            self.assertNotIn('"nytokenexchange.com"', rendered)
+            for market in nyte_markets():
+                self.assertIn(f'"{market["domain"]}":{{"slug":"{market["slug"]}","name":"{market["name"]}"', rendered)
+        self.assertIn('data-exchange-name>New York Token Exchange', render_nyte('buy'))
+        # The reservations API accepts only New York's origin, so city visitors manage there.
+        self.assertIn("location.replace('https://nytokenexchange.com'", render_nyte('manage'))
+        self.assertNotIn('location.replace', render_nyte('buy'))
+        with self.assertRaises(ValueError):
+            render_nyte('buy', market=nyte_markets()[0])
+        self.assertIn("dataset.billedBy='New York Token Exchange (NYTE)'", render_nyte('buy'))

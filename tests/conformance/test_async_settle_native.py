@@ -318,3 +318,70 @@ def test_native_drain_version_partition(c1_database, monkeypatch):  # noqa: F811
     candidates = outbox.due_shard(shard=shard, async_only=True)
     assert ids(outbox.claim_candidates(candidates, lease_seconds=30)) == [async_id]
     assert outbox.get(async_id, 'settle').leased_until == (NOW + timedelta(seconds=30)).isoformat().replace('+00:00', 'Z')
+
+
+def test_native_release_claim_frees_only_its_own_pending_claim(c1_database, monkeypatch):  # noqa: F811 - shared fixture
+    """Run release_claim on GoogleSQL: the fake checks its predicates only as substrings."""
+    from google.cloud.spanner_v1 import param_types as pt
+
+    from trusted_router import storage_gcp_settle_outbox as outbox_module
+
+    database = c1_database
+    clock = [NOW]
+    monkeypatch.setattr(outbox_module, '_iso_now', lambda: clock[0].isoformat().replace('+00:00', 'Z'))
+    keys = [('release-own', 'settle'), ('release-own', 'refund'), ('release-stale', 'settle'),
+            ('release-dead', 'settle'), ('release-idle', 'settle')]
+    with database.batch() as batch:
+        batch.insert('tr_settle_outbox',
+            columns=('authorization_id', 'intent_kind', 'settle_origin', 'actual_cost_micro',
+                     'created_at', 'next_attempt_at'),
+            values=[(aid, kind, 'typed', 1, NOW - timedelta(seconds=3), NOW - timedelta(seconds=1))
+                    for aid, kind in keys])
+    outbox = outbox_module.SpannerSettleOutbox(database, pt)
+
+    def claim(aid, kind):
+        [row] = outbox.claim_candidates([outbox.get(aid, kind)], lease_seconds=30)
+        return row
+
+    def state(aid, kind):
+        row = outbox.get(aid, kind)
+        return row.status, row.lease_owner, row.leased_until
+
+    # Its own live claim goes back at once and is due again. Both intents of the
+    # authorization carry one owner here, as a batch claim's rows do, so only
+    # the key keeps each release to its own intent.
+    settle = claim('release-own', 'settle')
+    database.run_in_transaction(lambda transaction: transaction.execute_update(
+        "UPDATE tr_settle_outbox SET lease_owner=@owner, leased_until=@lease "
+        "WHERE authorization_id=@aid AND intent_kind=@kind",
+        params={'owner': settle.lease_owner, 'lease': NOW + timedelta(seconds=30),
+                'aid': 'release-own', 'kind': 'refund'},
+        param_types={'owner': pt.STRING, 'lease': pt.TIMESTAMP, 'aid': pt.STRING, 'kind': pt.STRING}))
+    refund = outbox.get('release-own', 'refund')
+    assert (refund.lease_owner, refund.leased_until) == (settle.lease_owner, settle.leased_until)
+    assert outbox.release_claim(refund) is True
+    assert state('release-own', 'refund') == ('pending', None, None)
+    assert state('release-own', 'settle') == ('pending', settle.lease_owner, settle.leased_until)
+    assert outbox.release_claim(settle) is True
+    assert state('release-own', 'settle') == ('pending', None, None)
+    assert claim('release-own', 'refund').lease_owner != settle.lease_owner
+
+    # A claim another worker took after this one's lease lapsed stays with it.
+    stale = claim('release-stale', 'settle')
+    clock[0] += timedelta(seconds=31)
+    current = claim('release-stale', 'settle')
+    assert outbox.release_claim(stale) is False
+    assert state('release-stale', 'settle') == ('pending', current.lease_owner, current.leased_until)
+
+    # A row that is no longer pending is untouched, even with the owner still on it.
+    dead = claim('release-dead', 'settle')
+    database.run_in_transaction(lambda transaction: transaction.execute_update(
+        "UPDATE tr_settle_outbox SET status='dead' WHERE authorization_id=@aid AND intent_kind=@kind",
+        params={'aid': 'release-dead', 'kind': 'settle'},
+        param_types={'aid': pt.STRING, 'kind': pt.STRING}))
+    assert outbox.release_claim(dead) is False
+    assert state('release-dead', 'settle') == ('dead', dead.lease_owner, dead.leased_until)
+
+    # No other row was written: the never-claimed one was never updated at all.
+    assert state('release-idle', 'settle') == ('pending', None, None)
+    assert outbox.get('release-idle', 'settle').updated_at is None

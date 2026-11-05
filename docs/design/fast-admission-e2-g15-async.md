@@ -72,8 +72,8 @@ when its value changes (`async_settle.py:247`, `257`, `277-280`).
 | Shape | Members, in order | When (§2.3 has every branch) |
 |---|---|---|
 | A, false only | `async_eligible: false` | any pre-check, exclusion, snapshot, authority or authorization guard fails |
-| B, admission off | `async_eligible: false`, `billing_snapshot`, `billing_snapshot_hash` | every check passes and `async_settle_admission_enabled` is false, or the workspace is outside a non-empty `async_settle_pilot_workspaces` (`async_settle.py:262-265`, §4.1 per workspace); an absent `invocation_nonce` does not prevent it |
-| C, admission on | `async_eligible: <bool>`, `billing_snapshot`, `billing_snapshot_hash`, `settlement_ticket`, `settlement_status_url` | every check passes, admission is on, the pilot set allows the workspace (an empty set allows every one) and signing succeeds (`async_settle.py:266-286`); `async_eligible` is the admission answer (the cap and drain health), and the ticket is signed even when it is false |
+| B, admission off | `async_eligible: false`, `billing_snapshot`, `billing_snapshot_hash` | every check passes and `async_settle_admission_enabled` is false, or the workspace is outside a non-empty `async_settle_pilot_workspaces` (`async_settle.py:262-265`, §4.1 per workspace), or it is a fast-path pilot workspace outside `async_settle_fastpath_overlap_workspaces` (§4.5); an absent `invocation_nonce` does not prevent it |
+| C, admission on | `async_eligible: <bool>`, `billing_snapshot`, `billing_snapshot_hash`, `settlement_ticket`, `settlement_status_url` | every check passes, admission is on, the pilot set allows the workspace (an empty set allows every one, §4.5 leaves the fast-path workspaces out) and signing succeeds (`async_settle.py:266-286`); `async_eligible` is the admission answer (the cap and drain health), and the ticket is signed even when it is false |
 
 **`billing_snapshot`** is `BillingSnapshot.model_dump(mode="json")`, in
 field declaration order (`billing_snapshot.py:256-264`), each candidate
@@ -295,6 +295,7 @@ optional set:
 | `typed_records` | the `typed` expression of `gateway.py:3182-3185` |
 | `edge_decide` | a new setting, `fastpath_edge_decide_async`, default false, rendered by `rollout.sh` as a literal `false` until I4 (§6.2) |
 | `admission_workspaces` (optional) | the sorted `async_settle_pilot_workspace_ids`, present only while admission is on and the set is non-empty (`edge_policy_publisher.admission_workspaces`); absent with admission on is every workspace, as an empty pilot set admits every one (§4.1, per workspace) |
+| `admission_excluded_workspaces` (optional) | the sorted fast-path pilot workspaces outside `async_settle_fastpath_overlap_workspaces` that `admission_workspaces` (or its absence) would cover, present only while admission is on and there is one; within `admission_workspaces` when that is present (§4.5) |
 
 The publisher is installed before the runtime (`main.py:313-323`), so P5
 reads `app.state.async_settle` when it signs, not when it installs, and
@@ -319,7 +320,9 @@ answers true only if, within the last 5 s (`CACHE_SECONDS`, `35`):
   complete, observed and heartbeated less than 5 s ago by the wall clock,
   p95 drain age at most 5 s (`decode_health`, `async_settle.py:166-175`).
 
-Plus `async_settle_pilot_allows(workspace)` (`config.py:1527-1528`).
+Plus `async_settle_pilot_allows(workspace)` (`config.py`), which since
+§4.5 also refuses a fast-path pilot workspace outside
+`async_settle_fastpath_overlap_workspaces`.
 
 Could the edge answer it? Not from what it holds: its credit cache has the
 tier and pause causes but a 15 s maximum age, three times the bound; the
@@ -448,7 +451,10 @@ requests pass again; with the per-workspace refinement every other
 workspace keeps being decided. If admission then grows to most traffic
 (a large pilot set, or an empty one, which covers every workspace) and
 async-v1 is the default, I2's coverage falls back to the sync minority.
-That is the trigger for (b).
+That is the trigger for (b). §4.5 bounds this for the fast path's own
+workspaces: admission never covers them (but the overlap list), so the
+edge keeps deciding their async-v1 requests even when the pilot set is
+empty.
 
 A variant, rejected: answer shape A even with admission on. Legal (§2.3)
 and safe in money (§3.5), but it silently demotes every edge-decided
@@ -589,6 +595,82 @@ way), `iss` the signing key's; each signature verified with its own key;
 classed by the admission inputs' ages, not as `differ`;
 `settlement_status_url` equal after restaging under Python's id. `iat`,
 `exp` and the signature are nondeterministic and never compared as bytes.
+
+### 4.5 Fast-path workspaces stay outside async admission
+
+The batched-settlement design says async settle "takes no request the
+fast path takes" (`fast-admission-and-batched-settlement.md` §4.13). Before
+this rule nothing enforced it: an empty `async_settle_pilot_workspaces`
+admits every workspace, so with async-v1 the default and admission for
+all, `Admits` would be true for every workspace and the edge would pass
+every async-v1 request, answering none. Only Python can sign the ticket
+(option (b) is G16), so the edge can only stay useful by keeping out of
+admission what it answers.
+
+The rule, one predicate in both languages:
+
+- **Python.** `Settings.async_settle_pilot_allows(workspace)` is false for
+  a workspace in `fastpath_pilot_workspace_ids` that is not in
+  `async_settle_fastpath_overlap_workspaces` (`TR_`, default empty, at most
+  32), whatever the pilot set says; otherwise it is the pilot set's answer
+  as before. Every admission decision reads it: `snapshot_projection`
+  (authorize: the workspace gets shape B or A, byte for byte the
+  admission-off answer, no ticket, no status URL, no admission cache read)
+  and the settlement handler (a ticket issued before the workspace joined
+  the fast-path set answers `sync_required` `not_eligible`, as one for a
+  workspace that left the pilot set; accepted work still resolves). The
+  rule follows the fast-path set, not `fastpath_pilot_enabled`, so turning
+  the fast path off never moves async admission. It never errors: a
+  request it refuses gets exactly what admission off gives (§3.5).
+- **The policy.** `async_settle.admission_excluded_workspaces` names those
+  workspaces that admission would otherwise cover: all of them with no
+  pilot set, else the ones the set names (`edge_policy_publisher.admission_workspaces`).
+  Present only with admission on and at least one, sorted, unique, 1 to
+  32, and within `admission_workspaces` when that is present, so each
+  answer has one encoding; both readers refuse null, empty, unsorted,
+  duplicated or outside spellings.
+- **Go.** `AsyncSettle.Admits` is admission on, `admission_workspaces`
+  absent or naming the workspace, and `admission_excluded_workspaces` not
+  naming it. A workspace it refuses is composed as with admission off,
+  Python's own answer (§4.1).
+
+Why a member and not an explicit `admission_workspaces` when admission is
+"all": the explicit list would have to name every workspace but the
+fast-path ones, which is unbounded, while `admission_workspaces` is capped
+at 32 (`maxAdmissionWorkspaces`). The excluded set is bounded by the
+fast-path set's own cap of 32. Publishing the excluded set rather than
+the overlap list keeps Go's answer a function of the policy alone, and
+its absence means "exclude nothing", which is exactly what a publisher
+from before the rule meant.
+
+**The overlap list** exists for the async-settle lane's own test
+workspace, which is in both pilots (R3): `rollout.sh` sets it to that one
+workspace, which keeps its current behaviour. There, a request Python's
+pilot leases (`fastpath_envelope` set; its scope reservation holds
+nothing) is still ticketed, its async settle accepted, and the drain
+finishes it through the lease (`settle_outbox_apply._apply_leased`: the
+frozen charge to the front door, the key's usage booked, the credit row
+untouched); `test_a_leased_authorization_in_both_pilots_settles_through_the_async_path`
+pins it.
+
+**Parity.** `fastpath/testdata/edge_policy_admission_v1.json`
+(`scripts/fastpath/edge_policy_vectors.py`) holds the publisher's body for
+every combination of admission, pilot set, overlap list and fast-path set,
+with Python's own admission answer per workspace; Go's `Admits` must give
+each (`TestTheAsyncAdmissionVectors`). The authorize goldens add four
+`fastpath_excluded` cases whose Python 200 the edge answers byte for
+byte, and the admission-on cases name the cohort workspace in the overlap
+list.
+
+**Order.** Go first and deployed: an older node refuses a policy with the
+member and passes every request (§4.1's order). With today's settings the
+member is absent (the async pilot set names no fast-path workspace outside
+the overlap list), so the Python change publishes the same bytes and can
+ship in either order; the member first appears when the pilot set is
+emptied or names another fast-path workspace, which must wait for the
+nodes. During a Python rollout an old instance still tickets a fast-path
+workspace the new ones refuse; §3.6's rule applies (a missed or extra
+async settle, never money).
 
 ## 5. Measurements (production, read-only)
 

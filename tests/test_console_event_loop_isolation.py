@@ -26,19 +26,13 @@ import pytest
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.routes.console import credits as console_credits
-from trusted_router.routes.console import user_models as console_user_models
-from trusted_router.services import user_model_probe
 from trusted_router.storage import STORE, InMemoryStore
-from trusted_router.storage_models import UserProvidedModel
 from trusted_router.storage_rate_limits import InMemoryRateLimits
 
 _ROOT = Path(__file__).resolve().parents[1]
 _CONSOLE_DIR = _ROOT / "src" / "trusted_router" / "routes" / "console"
 _ASYNC_CONSOLE_HANDLERS = {
     "console_credit_stripe_details",
-    "console_create_user_model",
-    "console_update_user_model",
-    "console_clock_in_user_model",
 }
 
 
@@ -124,10 +118,10 @@ def _nested_function(
 
 def test_console_route_async_split_and_worker_boundaries_are_total() -> None:
     routes = _console_route_functions()
-    assert len(routes) == 63, "guard must inspect every decorated console route"
+    assert len(routes) == 52, "guard must inspect every decorated console route"
     async_routes = {node.name for node in routes if isinstance(node, ast.AsyncFunctionDef)}
     assert async_routes == _ASYNC_CONSOLE_HANDLERS
-    assert sum(isinstance(node, ast.FunctionDef) for node in routes) == 59
+    assert sum(isinstance(node, ast.FunctionDef) for node in routes) == 51
 
     by_name = {node.name: node for node in routes}
     for name in ("confirm_account_deletion", "review_account_deletion", "delete_account"):
@@ -139,68 +133,20 @@ def test_console_route_async_split_and_worker_boundaries_are_total() -> None:
         "_load_workspace_payments",
         "render_stripe_details",
     }
-    assert _offload_targets(by_name["console_create_user_model"]) == ["create_and_render"]
-    assert set(_offload_targets(by_name["console_update_user_model"])) == {
-        "_require_owner_model",
-        "update_model",
-    }
-    assert (
-        _offload_targets(by_name["console_clock_in_user_model"]).count("_require_owner_model") == 1
-    )
-    assert (
-        _offload_targets(by_name["console_clock_in_user_model"]).count(
-            "STORE.set_user_model_online"
-        )
-        == 2
-    )
-
-    create_callback = ast.unparse(
-        _nested_function(by_name["console_create_user_model"], "create_and_render")
-    )
-    for blocking_call in (
-        "STORE.create_user_model",
-        "encrypt_user_model_endpoint_key",
-        "encrypt_user_model_signing_secret",
-        "_render_page",
-    ):
-        assert blocking_call in create_callback
-
-    update_callback = ast.unparse(
-        _nested_function(by_name["console_update_user_model"], "update_model")
-    )
-    assert "STORE.update_user_model" in update_callback
-    assert "encrypt_user_model_endpoint_key" in update_callback
+    assert not any("user_model" in name or "custom_model" in name for name in by_name)
 
     stripe_render_callback = ast.unparse(
-        _nested_function(
-            by_name["console_credit_stripe_details"], "render_stripe_details"
-        )
+        _nested_function(by_name["console_credit_stripe_details"], "render_stripe_details")
     )
     assert "render_template" in stripe_render_callback
     assert "is_wallet_only_user" in stripe_render_callback
 
 
-def test_probe_keeps_worker_boundaries_and_limiter_stays_storage_free() -> None:
-    probe_path = _ROOT / "src" / "trusted_router" / "services" / "user_model_probe.py"
-    probe_tree = ast.parse(probe_path.read_text(encoding="utf-8"), filename=str(probe_path))
-    probe = next(
-        node
-        for node in ast.walk(probe_tree)
-        if isinstance(node, ast.AsyncFunctionDef) and node.name == "probe_user_model"
-    )
-    assert "_decrypt_probe_secrets" in _offload_targets(probe)
-    recorded = _nested_function(probe, "recorded_result")
-    assert _offload_targets(recorded) == ["_recorded_result"]
-
-    middleware_path = _ROOT / "src" / "trusted_router" / "middleware.py"
-    middleware_tree = ast.parse(
-        middleware_path.read_text(encoding="utf-8"), filename=str(middleware_path)
-    )
-    limiter = next(
-        node
-        for node in ast.walk(middleware_tree)
-        if isinstance(node, ast.AsyncFunctionDef) and node.name == "_rate_limit_request"
-    )
+def test_limiter_stays_storage_free() -> None:
+    path = _ROOT / "src" / "trusted_router" / "middleware.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    limiter = next(node for node in ast.walk(tree)
+                   if isinstance(node, ast.AsyncFunctionDef) and node.name == "_rate_limit_request")
     assert _offload_targets(limiter) == []
     source = ast.unparse(limiter)
     assert "ingress_rate_limits.hit" in source
@@ -246,9 +192,7 @@ def test_sync_console_handler_runs_storage_off_loop_and_keeps_heartbeat_alive(
     storage_thread: dict[str, int] = {}
     original = InMemoryStore.list_api_keys_with_usage
 
-    def blocking_list_api_keys_with_usage(
-        self: InMemoryStore, workspace_id: str
-    ) -> Any:
+    def blocking_list_api_keys_with_usage(self: InMemoryStore, workspace_id: str) -> Any:
         storage_thread["id"] = threading.get_ident()
         started.set()
         assert release.wait(timeout=2.0), "console storage ran on the blocked event loop"
@@ -277,86 +221,6 @@ def test_sync_console_handler_runs_storage_off_loop_and_keeps_heartbeat_alive(
                 release.set()
             response = await asyncio.wait_for(request, timeout=5.0)
             assert response.status_code == 200
-
-    asyncio.run(asyncio.wait_for(scenario(), timeout=10.0))
-
-
-def test_async_console_kms_store_and_template_segment_runs_off_loop(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    settings = Settings(
-        environment="test",
-        custom_models_require_verification=False,
-    )
-    app = create_app(settings, init_observability=False)
-    raw_session = _active_console_session(app, "async-console-loop@example.com")
-    started = threading.Event()
-    release = threading.Event()
-    threads: dict[str, list[int]] = {"kms": [], "store": [], "template": []}
-    original_create = InMemoryStore.create_user_model
-    original_endpoint_encrypt = console_user_models.encrypt_user_model_endpoint_key
-    original_signing_encrypt = console_user_models.encrypt_user_model_signing_secret
-    original_render = console_user_models.render
-
-    async def validated_endpoint(url: str, _settings: Settings) -> str:
-        await asyncio.sleep(0)
-        return url.rstrip("/")
-
-    def endpoint_encrypt(*args: Any, **kwargs: Any) -> Any:
-        threads["kms"].append(threading.get_ident())
-        return original_endpoint_encrypt(*args, **kwargs)
-
-    def signing_encrypt(*args: Any, **kwargs: Any) -> Any:
-        threads["kms"].append(threading.get_ident())
-        return original_signing_encrypt(*args, **kwargs)
-
-    def blocking_create(self: InMemoryStore, **kwargs: Any) -> UserProvidedModel:
-        threads["store"].append(threading.get_ident())
-        started.set()
-        assert release.wait(timeout=2.0), "async console storage blocked the event loop"
-        return original_create(self, **kwargs)
-
-    def render_in_worker(*args: Any, **kwargs: Any) -> str:
-        threads["template"].append(threading.get_ident())
-        return original_render(*args, **kwargs)
-
-    monkeypatch.setattr(console_user_models, "validate_endpoint_url", validated_endpoint)
-    monkeypatch.setattr(console_user_models, "encrypt_user_model_endpoint_key", endpoint_encrypt)
-    monkeypatch.setattr(console_user_models, "encrypt_user_model_signing_secret", signing_encrypt)
-    monkeypatch.setattr(console_user_models, "render", render_in_worker)
-    monkeypatch.setattr(InMemoryStore, "create_user_model", blocking_create)
-
-    async def scenario() -> None:
-        loop_thread = threading.get_ident()
-        transport = httpx.ASGITransport(app=app)
-        form = {
-            "name": "Worker model",
-            "slug": "worker-model",
-            "kind": "machine",
-            "display_name": "worker",
-            "endpoint_url": "https://owner.example/v1",
-            "endpoint_api_key": "owner-secret",
-            "max_concurrency": "4",
-            "prompt_price_microdollars_per_million_tokens": "100",
-            "completion_price_microdollars_per_million_tokens": "200",
-        }
-        async with httpx.AsyncClient(
-            transport=transport,
-            base_url="http://testserver",
-            cookies={"tr_session": raw_session},
-        ) as client:
-            request = asyncio.create_task(client.post("/console/user-models", data=form))
-            try:
-                await _wait_until_started(started)
-                await _five_heartbeats()
-                assert threads["store"] == [threads["store"][0]]
-                assert threads["store"][0] != loop_thread
-                assert threads["kms"] and all(tid != loop_thread for tid in threads["kms"])
-            finally:
-                release.set()
-            response = await asyncio.wait_for(request, timeout=5.0)
-            assert response.status_code == 201, response.text
-            assert threads["template"] and all(tid != loop_thread for tid in threads["template"])
 
     asyncio.run(asyncio.wait_for(scenario(), timeout=10.0))
 
@@ -398,9 +262,7 @@ def test_stripe_fragment_template_render_runs_off_loop_and_keeps_heartbeat_alive
             base_url="http://testserver",
             cookies={"tr_session": raw_session},
         ) as client:
-            request = asyncio.create_task(
-                client.get("/console/credits/stripe-details")
-            )
+            request = asyncio.create_task(client.get("/console/credits/stripe-details"))
             try:
                 await _wait_until_started(started)
                 await _five_heartbeats()
@@ -477,57 +339,3 @@ def test_public_read_rate_limit_stays_inline(
         assert seen_threads == [loop_thread]
 
     asyncio.run(scenario())
-
-
-def test_probe_kms_and_result_recording_run_off_loop(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    settings = Settings(environment="test")
-    user = STORE.ensure_user("probe-loop@example.com")
-    workspace = STORE.list_workspaces_for_user(user.id)[0]
-    model = STORE.create_user_model(
-        owner_user_id=user.id,
-        owner_workspace_id=workspace.id,
-        name="Probe worker",
-        slug="probe-worker",
-        kind="machine",
-        display_name="worker",
-        endpoint_url="https://owner.example/v1",
-        supports_streaming=False,
-    )
-    started = threading.Event()
-    release = threading.Event()
-    threads: dict[str, int] = {}
-    original_record = InMemoryStore.record_user_model_probe
-
-    def blocking_decrypt(_model: UserProvidedModel, _settings: Settings) -> Any:
-        threads["decrypt"] = threading.get_ident()
-        started.set()
-        assert release.wait(timeout=2.0), "probe KMS work blocked the event loop"
-        return "signing-secret", None
-
-    async def successful_probe(*_args: Any, **_kwargs: Any) -> bytes:
-        return b'{"choices":[{"message":{"content":"pong"}}]}'
-
-    def record_result(self: InMemoryStore, model_id: str, **kwargs: Any) -> Any:
-        threads["record"] = threading.get_ident()
-        return original_record(self, model_id, **kwargs)
-
-    monkeypatch.setattr(user_model_probe, "_decrypt_probe_secrets", blocking_decrypt)
-    monkeypatch.setattr(user_model_probe, "_probe_once", successful_probe)
-    monkeypatch.setattr(InMemoryStore, "record_user_model_probe", record_result)
-
-    async def scenario() -> None:
-        loop_thread = threading.get_ident()
-        task = asyncio.create_task(user_model_probe.probe_user_model(model, settings))
-        try:
-            await _wait_until_started(started)
-            await _five_heartbeats()
-            assert threads["decrypt"] != loop_thread
-        finally:
-            release.set()
-        result = await asyncio.wait_for(task, timeout=5.0)
-        assert result.ok is True
-        assert threads["record"] != loop_thread
-
-    asyncio.run(asyncio.wait_for(scenario(), timeout=10.0))

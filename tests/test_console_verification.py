@@ -207,10 +207,6 @@ def test_verification_copy_describes_independent_checks() -> None:
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
-    public = (root / "src/trusted_router/templates/public/user_models_docs.html").read_text()
-    assert "available without a verified phone once email and funding requirements are met" in public
-    assert "other regions require identity verification first" in public
-    assert 'class="pill">in order' not in public
     docs = (root / "docs/sign-in-with-trustedrouter.md").read_text()
     assert "identity does not imply a verified phone" in docs
     assert "other regions require identity verification first" in docs
@@ -249,9 +245,7 @@ def test_round3_regional_copy_and_links() -> None:
     paths = [
         "src/trusted_router/templates/console/settings.html",
         "src/trusted_router/templates/console/account/verification.html",
-        "src/trusted_router/templates/public/user_models_docs.html",
         "src/trusted_router/templates/public/notify.html",
-        "src/trusted_router/content/blog.py",
         "docs/sign-in-with-trustedrouter.md",
     ]
     for path in paths:
@@ -282,14 +276,13 @@ def test_round3_notify_example_is_directly_eligible() -> None:
     assert "other regions require identity verification first" in source
 
 
-def test_round3_blog_does_not_require_phone_before_identity() -> None:
-    from pathlib import Path
+def test_retired_creator_blog_no_longer_advertises_verification_onboarding() -> None:
+    from trusted_router.content.blog import BLOG_POSTS_BY_SLUG
 
-    root = Path(__file__).resolve().parents[1]
-    source = (root / "src/trusted_router/content/blog.py").read_text()
-    assert "which is what unlocks phone verification" not in source
-    assert "and then a government ID check" not in source
-    assert "Identity verification does not require a verified phone" in source
+    post = BLOG_POSTS_BY_SLUG["you-are-a-model-provider"]
+    assert "retired" in post.title
+    assert "which is what unlocks phone verification" not in post.body_html
+    assert "and then a government ID check" not in post.body_html
 
 
 def test_round3_oauth_design_warns_against_inferring_lower_tiers() -> None:

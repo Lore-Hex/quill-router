@@ -187,7 +187,7 @@ def test_signup_grant_amount_is_not_advertised(client: TestClient) -> None:
 
 
 def test_creator_cashout_copy_is_processor_neutral(client: TestClient) -> None:
-    for path in ("/sign-in-with-trustedrouter", "/docs/custom-models"):
+    for path in ("/sign-in-with-trustedrouter",):
         response = client.get(path)
         assert response.status_code == 200, f"{path} returned {response.status_code}"
         assert "$100" in response.text
@@ -195,7 +195,6 @@ def test_creator_cashout_copy_is_processor_neutral(client: TestClient) -> None:
 
     for path in (
         Path("docs/sign-in-with-trustedrouter.md"),
-        Path("docs/custom-models.md"),
     ):
         source = path.read_text(encoding="utf-8")
         assert "$100" in source
@@ -363,7 +362,7 @@ def test_paid_search_landing_pages_drive_a_runnable_first_call(
     assert migration_page.status_code == 200
     assert "Switch from OpenRouter in one base URL." in migration_page.text
     assert "import os" in migration_page.text
-    assert migration_page.text.count("Create my API key") == 3
+    assert migration_page.text.count("Create my API key") == 4
     assert "No card required." in migration_page.text
     assert '<a class="btn primary" href="/chat">' not in migration_page.text
 

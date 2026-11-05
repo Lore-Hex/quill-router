@@ -5943,10 +5943,14 @@ class SpannerStore(OperationalAnalyticsReads):
                 if verdict == rebalance_mod.RebalanceOutcome.NOT_NEEDED:
                     if precheck.candidate_shard is None:  # pragma: no cover - invariant
                         raise RuntimeError("credit headroom precheck omitted its candidate")
-                    # The bounded random prefix missed a funded later shard.
-                    # Retry that exact row instead of either returning a false
-                    # 402 or expanding into an all-shard write transaction.
-                    result = run_tracked((precheck.candidate_shard,))
+                    # The bounded random prefix missed funded later shards.
+                    # Retry those rows (bounded like any authorize) instead of
+                    # either returning a false 402 or expanding into an
+                    # all-shard write transaction. One row alone lost to a
+                    # peer's hold three times in a row on 2026-11-04.
+                    result = run_tracked(
+                        precheck.funded_shards or (precheck.candidate_shard,)
+                    )
                     continue
                 if verdict == rebalance_mod.RebalanceOutcome.INCOMPLETE and not forced_reload_done:
                     # The observed shard set doesn't match the count we hold —

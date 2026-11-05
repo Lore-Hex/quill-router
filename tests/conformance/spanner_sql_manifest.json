@@ -1663,7 +1663,7 @@
       ]
     },
     "storage_gcp_credit_rebalance:credit_headroom_precheck:1": {
-      "fingerprint": "15c97b5c833dbfb491026d5514d81c2ee6ffacbc80f65f2d77ade45ca56e8266",
+      "fingerprint": "c6fdfb845fad7bf45a376a44aa302c722829a437d10c25b10399874d747be456",
       "scenarios": [
         {
           "bindings": {},
@@ -2623,6 +2623,20 @@
             "aid": "STRING",
             "kind": "STRING",
             "lease": "TIMESTAMP",
+            "now": "TIMESTAMP",
+            "owner": "STRING"
+          }
+        }
+      ]
+    },
+    "storage_gcp_settle_outbox:release_txn:1": {
+      "fingerprint": "0d512932b164415503a6337c0e0d318e598a8ffb6828c0879df8a6cb41525256",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "aid": "STRING",
+            "kind": "STRING",
             "now": "TIMESTAMP",
             "owner": "STRING"
           }
@@ -4807,7 +4821,7 @@
     "storage_gcp_credit_debt:write_credit_rows": "838ea86390b66f42f90dea765136326596a5c5b3ecb6c85f627717e27c7c7ad8",
     "storage_gcp_credit_json_cleanup:_inspect_reader": "8e30b9701e22a9c56307bfecca369515b6693c3bc760830118d0532b31cff3b1",
     "storage_gcp_credit_json_cleanup:legacy_credit_workspace_ids": "31c5139361245bdf1d10f540c13ccd18d91aa1c79ccc0973aaca6b798aad59d2",
-    "storage_gcp_credit_rebalance:credit_headroom_precheck": "15c97b5c833dbfb491026d5514d81c2ee6ffacbc80f65f2d77ade45ca56e8266",
+    "storage_gcp_credit_rebalance:credit_headroom_precheck": "c6fdfb845fad7bf45a376a44aa302c722829a437d10c25b10399874d747be456",
     "storage_gcp_credit_rebalance:rebalance_credit_for_estimate.txn": "d971a743772de1e818491d53f55337900dc9a1434a0d686157bd811525020632",
     "storage_gcp_credit_shard_admin:_typed_state": "03f3c5d102c5aa80066c888daa1862cd2c35adefbe02dfd34663aac0583255a1",
     "storage_gcp_credit_shard_admin:reshard_credit_account.txn": "9c05541b6c3c2d41ae51f34f2ad429f477c0a54ed4cf1e61108f81e579f96a91",
@@ -4842,6 +4856,7 @@
     "storage_gcp_settle_outbox:SpannerSettleOutbox.enqueue.insert_txn": "e9797501b3c284f654dd485b9f0bc172b9e7f674e382072f515b2e8480a6e404",
     "storage_gcp_settle_outbox:SpannerSettleOutbox.enqueue.refresh_txn": "c157ed2a8282a3d8fccc627bea6ca45e7e1b79ac473a9c58d5723d3ef27bdcb6",
     "storage_gcp_settle_outbox:SpannerSettleOutbox._claim_one.txn": "f0c353eaf71bd1e39f55d411a4bcca80d2532ae7b3125c915cab981d0a8e777b",
+    "storage_gcp_settle_outbox:SpannerSettleOutbox.release_claim.release_txn": "0d512932b164415503a6337c0e0d318e598a8ffb6828c0879df8a6cb41525256",
     "storage_gcp_settle_outbox:SpannerSettleOutbox.mark.txn": "3ea0d355ba9fc666b7c0ce5b1af0e50db7b8a28edbcf4c33631a81d82509f885",
     "storage_gcp_settle_outbox:SpannerSettleOutbox.park.txn": "cc64cd3d3a3f175b60549a053e8caa7ad1b5ce3811aecef12e28287d304cdbe6",
     "storage_gcp_settle_outbox:SpannerSettleOutbox.attach_auto_refill.txn": "2d57f7ddcaa46d8dc462a815ad5a3d13db3214a9f20bb466e8694da26410d67e",

@@ -180,10 +180,13 @@ test("thinking and usage arrive before the stream completes", async ({ page, con
   }
 });
 
-test("user-chat shares the same usage UI and keeps its custom model locked", async ({ page, context }) => {
+test("retired user-chat is unavailable and ordinary chat has no creator-model link", async ({ page, context }) => {
   await setup(page, context);
-  await page.goto("/user-chat?model=trustedrouter/user-testslug");
+  const retired = await page.goto("/user-chat?model=trustedrouter/user-testslug");
+  expect(retired.status()).toBe(404);
+  await page.goto(`/chat?model=${MODEL}`);
   await expect(page.locator("[data-chat-usage]")).toBeVisible();
-  await expect(page.locator(".chat-model-pill")).toHaveAttribute("title", "trustedrouter/user-testslug");
-  await expect(page.locator('[data-action="add-model"]')).toHaveCount(0);
+  await expect(page.locator('a[href*="custom-models"], a[href*="user-models"]')).toHaveCount(0);
+  expect(await page.evaluate(() => Object.keys(window.__TR_CHAT__))).not.toContain("lockedModelId");
+  await expect(page.locator('[data-action="toggle-model-dropdown"]').first()).toBeVisible();
 });

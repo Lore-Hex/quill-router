@@ -73,6 +73,7 @@ SENSITIVE_STRING_FRAGMENTS: tuple[str, ...] = (
     "greenference_api_key",
     "hixtube_api_key",
     "muna_api_key",
+    "negbeta_api_key",
     "privatemode_api_key",
     "confidential_ai_api_key",
     "cohere_api_key",

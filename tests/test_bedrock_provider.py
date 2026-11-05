@@ -137,6 +137,8 @@ def test_legacy_mantle_catalog_waits_for_each_cloud_gateway_upgrade(monkeypatch,
     models, endpoints = dict(MODELS), dict(MODEL_ENDPOINTS)
     baseline = {key for key, ep in endpoints.items()
                 if ep.provider == "amazon-bedrock" and ep.model_id not in bedrock.runtime.PROFILES}
+    available_runtime = {ep.model_id for ep in endpoints.values()
+                         if ep.provider == "amazon-bedrock" and ep.model_id in bedrock.runtime.PROFILES}
     assert baseline
     other_qwen = {key for key, ep in endpoints.items()
                   if ep.model_id == "qwen/qwen3-32b" and ep.provider != "amazon-bedrock"}
@@ -148,7 +150,8 @@ def test_legacy_mantle_catalog_waits_for_each_cloud_gateway_upgrade(monkeypatch,
                    for ep in endpoints.values())
     runtime = {ep.model_id for ep in endpoints.values()
                if ep.provider == "amazon-bedrock" and ep.model_id in bedrock.runtime.PROFILES}
-    assert runtime == (set(bedrock.runtime.PROFILES) if region != "unknown" else set())
+    # Qualification permits an available route; it cannot revive a failed canary.
+    assert runtime == (available_runtime if region != "unknown" else set())
 
 
 @pytest.mark.parametrize("region,allowed", [

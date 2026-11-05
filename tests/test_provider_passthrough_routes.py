@@ -77,3 +77,26 @@ def test_hosting_not_model_author_controls_eligibility(
     assert _filter_unserved_provider_endpoints(
         {endpoint.id: endpoint}, explicit_model_ids=frozenset({model_id}),
     ) == {endpoint.id: endpoint}
+
+
+@pytest.mark.parametrize("model_id", ["openai/gpt-oss-20b", "openai/gpt-oss-120b"])
+@pytest.mark.parametrize("usage_type", ["Credits", "BYOK"])
+def test_openai_authorship_does_not_create_a_hosted_gpt_oss_route(
+    model_id: str, usage_type: str,
+) -> None:
+    template = next(iter(MODEL_ENDPOINTS.values()))
+    endpoint = replace(template, id="publisher-not-host", provider="openai",
+                       model_id=model_id, upstream_id=None, usage_type=usage_type)
+    assert _filter_unserved_provider_endpoints({endpoint.id: endpoint}) == {}
+    assert provider_model_operator_held("openai", model_id)
+    assert not any(ep.provider == "openai" and ep.model_id == model_id
+                   for ep in MODEL_ENDPOINTS.values())
+
+
+@pytest.mark.parametrize("provider", ["cerebras", "together", "tinfoil"])
+@pytest.mark.parametrize("usage_type", ["Credits", "BYOK"])
+def test_gpt_oss_actual_hosts_keep_both_billing_modes(provider: str, usage_type: str) -> None:
+    model_id = "openai/gpt-oss-120b"
+    assert not provider_model_operator_held(provider, model_id)
+    assert any(ep.provider == provider and ep.model_id == model_id and ep.usage_type == usage_type
+               for ep in MODEL_ENDPOINTS.values())

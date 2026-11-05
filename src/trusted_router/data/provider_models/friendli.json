@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for FriendliAI serverless Model API routes. Verified against https://api.friendli.ai/serverless/v1/models on 2026-06-22.",
   "provider": "friendli",
   "source": "https://api.friendli.ai/serverless/v1/models",
-  "generated_at": "2026-11-03T19:48:25Z",
+  "generated_at": "2026-11-05T11:29:32Z",
   "model_count": 12,
   "models": [
     {
@@ -190,6 +190,8 @@
     {
       "id": "z-ai/glm-5.1",
       "upstream_id": "zai-org/GLM-5.1",
+      "retirement_at": "2026-11-20T00:00:00Z",
+      "replacement_model_id": "z-ai/glm-5.3",
       "display_name": "zai-org/GLM-5.1",
       "title": "zai-org/GLM-5.1",
       "context_length": 202752,

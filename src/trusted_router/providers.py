@@ -124,6 +124,7 @@ OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
     "amazon-bedrock": (("BEDROCK_API_KEY",), "https://bedrock-mantle.us-east-1.api.aws/v1"),
     "greenference": (("GREENFERENCE_API_KEY",), "https://llm.eu.greenference.com/trustedrouter/v1"),
     "muna": (("MUNA_API_KEY",), "https://inference.muna.ai/v1"),
+    "negbeta": (("NEGBETA_API_KEY",), "https://inference.negbeta.com/v1"),
     "coralbricks": (("CORALBRICKS_API_KEY",), "https://inference.coralbricks.ai/v1"),
     "boundless": (("BOUNDLESS_API_KEY",), "https://api.inference.boundless.network/v1"),
     "zro": (("ZRO_API_KEY",), "https://zro.moonmath.ai/v1"),

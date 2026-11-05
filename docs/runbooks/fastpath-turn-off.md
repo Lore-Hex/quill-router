@@ -86,12 +86,14 @@ named are taken to have ended only from the expiry plus a hold's longest
 life, 2 hours 20 minutes, plus the grace, a minute. Closing returns what its
 donors held. Then the pending worker does each pack's work and drops its
 winners' staged records, and once the lease has retired, closed with its
-work done, it drops the rest of the lease's staged records.
+work done, it drops the rest of the lease's staged records, about a
+minute later.
 
 These are the earliest times, not limits. The auditor ticks every second
-and the pending worker sweeps every five seconds by default, and a step
-that fails waits for the next. Only the check below says when the workspace
-is done.
+and the pending worker sweeps every five seconds by default, dropping
+retired leases' staged records at its first sweep and then at most once a
+minute, and a step that fails waits for the next. Only the check below
+says when the workspace is done.
 
 Every node keeps running meanwhile: the auditor, the ticker, the stager and
 the pending worker are what end the leases. A fleet stopped with a lease

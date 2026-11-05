@@ -81,10 +81,12 @@ class AdmissionCache:
         try:
             now = self.clock()
             self.last_evaluated_at = now
-            # Cached-only admission uses successful health evidence younger than
-            # CACHE_SECONDS, whether read here or by read-ahead. Failed read-ahead
-            # neither extends nor revokes it. The full path keeps its refresh and
-            # fail-closed rule below.
+            # Cached-only admission uses the latest health observation younger
+            # than CACHE_SECONDS, read here or by read-ahead, and admits only a
+            # healthy one. A read-ahead read that fails, or returns an invalid,
+            # incomplete or stale record, neither extends nor revokes it; a valid
+            # record of an unhealthy drain replaces it. The full path keeps its
+            # refresh and fail-closed rule below.
             if not cached_only and self.health_read is not None and not 0 <= now - self.health_read_at < 1:
                 self.health_read_at = now
                 self.health = None
@@ -190,16 +192,25 @@ def parse_health_record(body: Any) -> dict[str, Any] | None:
         return None
 
 
-def decode_health(value: dict[str, Any] | None, *, now: float, wall: float) -> DrainHealth | None:
-    """Translate durable wall time to monotonic evidence time without rejuvenation."""
+def observe_health(value: dict[str, Any] | None, *, now: float, wall: float) -> DrainHealth | None:
+    """Evidence from a valid, complete and fresh record, whether or not the drain is healthy.
+
+    Translates durable wall time to monotonic evidence time without rejuvenation.
+    eligible() rejects an unhealthy observation, so installing one only closes admission.
+    """
     if not valid_health_record(value) or value is None or not value["complete"]:
         return None
     observed, heartbeat = value["observed_at"], value["worker_heartbeat"]
     if (not all(type(n) in (int, float) and math.isfinite(n) and n >= 0 for n in (now, wall))
-            or not (0 <= wall - observed < CACHE_SECONDS and 0 <= wall - heartbeat < CACHE_SECONDS)
-            or value["p95_age_seconds"] > 5):
+            or not (0 <= wall - observed < CACHE_SECONDS and 0 <= wall - heartbeat < CACHE_SECONDS)):
         return None
     return DrainHealth(now - (wall - observed), value["p95_age_seconds"])
+
+
+def decode_health(value: dict[str, Any] | None, *, now: float, wall: float) -> DrainHealth | None:
+    """Healthy evidence only: observe_health() with the drain's p95 age at most 5 s."""
+    health = observe_health(value, now=now, wall=wall)
+    return health if health is not None and health.p95_age_seconds <= 5 else None
 
 
 class HandoffQueue(Protocol):
@@ -299,9 +310,12 @@ def snapshot_projection(*, authorization: GatewayAuthorization, snapshot: Billin
         # A workspace or enclave region outside negotiation gets the admission-off answer
         # byte for byte (shape B): no ticket, no status URL. The enclave
         # binds async settlement only from async_eligible true. The edge
-        # composes this answer for non-pilots from admission_workspaces;
-        # pilots pass to Python, which checks their stored enclave region here
-        # (docs/design/fast-admission-e2-g15-async.md section 4.1).
+        # composes this answer for non-pilots from admission_workspaces, and
+        # for fast-path workspaces outside the overlap list (which
+        # async_settle_pilot_allows leaves out even with an empty pilot set)
+        # from admission_excluded_workspaces; pilots pass to Python, which
+        # checks their stored enclave region here
+        # (docs/design/fast-admission-e2-g15-async.md sections 4.1 and 4.5).
         if (not settings.async_settle_admission_enabled
                 or not settings.async_settle_pilot_allows(authorization.workspace_id)
                 or not settings.async_settle_negotiation_region_allowed(authorization.region)):

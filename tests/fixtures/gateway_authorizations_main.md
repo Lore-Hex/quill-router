@@ -1,5 +1,13 @@
 # Recorded main authorization fixtures
 
+## November 2026 retirement
+
+Custom and user-provided models are retired. The historical recordings below
+remain unchanged: catalog and ordinary chat replay still compare against them,
+while creator requests now return 410 without altering the recorded money or
+authorization. The retirement tests also cover explicit creator identities on
+catalog requests. Historical holds remain eligible for settlement or refund.
+
 `gateway_authorizations_main.json` was generated from **896a9f0d**, using its
 actual gateway writer, schemas, normalization, catalog, storage, and test
 fixtures in a separate archive outside this checkout. No current gateway

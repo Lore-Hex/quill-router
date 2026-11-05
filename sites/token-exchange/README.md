@@ -96,7 +96,12 @@ and retains its separate layout. Buyer deck opens `/#deck`.
 The redesign is built from `nyte-v2/` through `nyte_v2.py`. Its pages are
 New York's homepage, `/confidential`, `/trusted-cowork`, `/suppliers`, `/providers`,
 `/index`, `/buy`, `/reserved-tokens-terms`, and `/neocloud-accelerator`; its shared
-assets are under `assets/nyte-v2/`. Back up live objects before an authorized
+assets are under `assets/nyte-v2/`. Cities listed in `nyte-cities.json` get the
+same homepage under their own name, with their own workload cards. On a city's
+domain every path other than `/` serves New York's pages; those pages then show the
+city's name and keep its analytics attribution. Checkout and its terms add "by NYTE",
+the seller on the receipt, and `/manage-reservation` moves to New York's domain,
+the only origin the reservations API accepts. Back up live objects before an authorized
 release and preserve concurrent content and unrelated market pages.
 The NYTE Confidential API page loads `assets/nyte-v2/live-evidence.js`, a
 byte-identical build copy of the approved evidence renderer. A New York-only
@@ -653,7 +658,8 @@ and jurisdictional review.
 
 ## Live evidence contract
 
-All 13 markets use `live-evidence.js` and the backend's `token_exchange.py`.
+Every market still on the older template, and New York's `/confidential`, use
+`live-evidence.js` and the backend's `token_exchange.py`.
 The feed reads the same effective catalog endpoints used by `/models`, selecting
 exactly one Tinfoil Credits route with confidential compute and E2EE. It displays
 exact USD/1M decimal prices and links to the model's provider table. The catalog's

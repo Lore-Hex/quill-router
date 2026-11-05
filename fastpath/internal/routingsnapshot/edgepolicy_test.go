@@ -513,6 +513,170 @@ func TestTheAdmissionWorkspacesMemberIsOptional(t *testing.T) {
 	}
 }
 
+// TestTheAdmissionExcludedWorkspacesMemberIsOptional (docs/design/
+// fast-admission-e2-g15-async.md section 4.5): Go ships before Python
+// publishes the member, so an async_settle without it excludes nothing; with
+// it, Admits refuses exactly the workspaces it names, with admission_workspaces
+// absent (every workspace) or present, and the body verifies under a manifest
+// signed for it and encodes back to its own bytes. Present with admission
+// off, empty, more than 32, unsorted, duplicated, null, malformed, naming a
+// workspace admission_workspaces leaves out, or out of canonical order is
+// refused.
+func TestTheAdmissionExcludedWorkspacesMemberIsOptional(t *testing.T) {
+	m, published := policyGolden(t)
+	raw := withoutAsyncSettle(t, published)
+	object := func(admission bool, excluded, workspaces string) string {
+		members := ""
+		if excluded != "" {
+			members += `"admission_excluded_workspaces":` + excluded + `,`
+		}
+		if workspaces != "" {
+			members += `"admission_workspaces":` + workspaces + `,`
+		}
+		return fmt.Sprintf(`{"admission_enabled":%t,%s"edge_decide":true,"ticket_authority":true,"typed_records":true}`,
+			admission, members)
+	}
+	probes := []string{"ws_a", "ws_b", "ws_c", "ws_f1", "ws_f2", ""}
+	for _, c := range []struct {
+		excluded, workspaces string
+		admitted             []string
+	}{
+		// Absent: every workspace (the positive control for the exclusions).
+		{"", "", probes},
+		// Every workspace but the fast-path ones.
+		{`["ws_f1","ws_f2"]`, "", []string{"ws_a", "ws_b", "ws_c", ""}},
+		{`["ws_f1"]`, "", []string{"ws_a", "ws_b", "ws_c", "ws_f2", ""}},
+		// A pilot set less its fast-path workspaces.
+		{`["ws_f1"]`, `["ws_a","ws_f1"]`, []string{"ws_a"}},
+		{`["ws_f1","ws_f2"]`, `["ws_f1","ws_f2"]`, nil},
+		{"", `["ws_a","ws_f1"]`, []string{"ws_a", "ws_f1"}},
+	} {
+		body := withAsyncSettle(t, raw, object(true, c.excluded, c.workspaces))
+		p, err := ParseEdgePolicy(body)
+		if err != nil || p.AsyncSettle == nil || (p.AsyncSettle.AdmissionExcludedWorkspaces == nil) != (c.excluded == "") {
+			t.Fatalf("%s %s: %v, %+v", c.excluded, c.workspaces, err, p)
+		}
+		for _, ws := range probes {
+			if got, want := p.AsyncSettle.Admits(ws), slices.Contains(c.admitted, ws); got != want {
+				t.Errorf("%s %s: Admits(%q) %v, want %v", c.excluded, c.workspaces, ws, got, want)
+			}
+		}
+		encoded, err := json.Marshal(p)
+		var generic any
+		decoder := json.NewDecoder(bytes.NewReader(encoded))
+		decoder.UseNumber()
+		if err != nil || decoder.Decode(&generic) != nil || !bytes.Equal(canonical(generic), body) {
+			t.Fatalf("%s %s: does not round trip:\n%s\n%s", c.excluded, c.workspaces, canonical(generic), body)
+		}
+	}
+	// Admission off admits nothing, the member or not.
+	if p, err := ParseEdgePolicy(withAsyncSettle(t, raw, object(false, "", ""))); err != nil || p.AsyncSettle.Admits("ws_a") {
+		t.Fatalf("admission off: %v, %+v", err, p)
+	}
+	signed := withAsyncSettle(t, raw, object(true, `["ws_f1"]`, ""))
+	s := testKeySigner(t, m)
+	verified, _, err := VerifyEdgePolicy(s.signPolicy(t, signed), []TrustedKey{goldenKey(t, m)}, signed,
+		policyOptions(m, policyIssuedAt))
+	if err != nil || verified.AsyncSettle.Admits("ws_f1") || !verified.AsyncSettle.Admits("ws_a") {
+		t.Fatalf("a signed body with admission_excluded_workspaces: %v, %+v", err, verified)
+	}
+	thirtyThree := make([]string, 33)
+	for i := range thirtyThree {
+		thirtyThree[i] = fmt.Sprintf("ws_%02d", i)
+	}
+	tooMany, _ := json.Marshal(thirtyThree)
+	for name, body := range map[string][]byte{
+		"admission off":   withAsyncSettle(t, raw, object(false, `["ws_f1"]`, "")),
+		"empty":           withAsyncSettle(t, raw, object(true, `[]`, "")),
+		"thirty-three":    withAsyncSettle(t, raw, object(true, string(tooMany), "")),
+		"unsorted":        withAsyncSettle(t, raw, object(true, `["ws_f2","ws_f1"]`, "")),
+		"duplicate":       withAsyncSettle(t, raw, object(true, `["ws_f1","ws_f1"]`, "")),
+		"null":            withAsyncSettle(t, raw, object(true, `null`, "")),
+		"null element":    withAsyncSettle(t, raw, object(true, `[null]`, "")),
+		"space":           withAsyncSettle(t, raw, object(true, `["ws f1"]`, "")),
+		"an integer":      withAsyncSettle(t, raw, object(true, `[1]`, "")),
+		"a string":        withAsyncSettle(t, raw, object(true, `"ws_f1"`, "")),
+		"outside the set": withAsyncSettle(t, raw, object(true, `["ws_f1"]`, `["ws_a"]`)),
+		"partly outside":  withAsyncSettle(t, raw, object(true, `["ws_a","ws_f1"]`, `["ws_a"]`)),
+		"misplaced": withAsyncSettle(t, raw,
+			`{"admission_enabled":true,"admission_workspaces":["ws_f1"],"admission_excluded_workspaces":["ws_f1"],"edge_decide":true,"ticket_authority":true,"typed_records":true}`),
+	} {
+		if got, err := ParseEdgePolicy(body); err == nil {
+			t.Errorf("%s: accepted as %+v", name, got.AsyncSettle)
+		}
+	}
+	// The positive control for the refusals: the same splice accepts a set
+	// within admission_workspaces.
+	if _, err := ParseEdgePolicy(withAsyncSettle(t, raw, object(true, `["ws_f1"]`, `["ws_a","ws_f1"]`))); err != nil {
+		t.Fatalf("the refusals' control: %v", err)
+	}
+}
+
+// TestTheAsyncAdmissionVectors (fastpath/testdata/edge_policy_admission_v1.json,
+// written by scripts/fastpath/edge_policy_vectors.py; tests/
+// test_edge_policy_publish.py holds Python to the same cases): the
+// publisher's body for every combination of admission, the async pilot set,
+// the fast-path overlap list and the fast-path set, and Python's own
+// admission answer for each probe workspace (async_settle_pilot_allows with
+// admission on). Admits agrees with Python on every one, so the edge passes
+// exactly the async-v1 requests Python would ticket; the members' other
+// spellings are refused by both readers.
+func TestTheAsyncAdmissionVectors(t *testing.T) {
+	var file struct {
+		Generator string   `json:"generator"`
+		Probes    []string `json:"probes"`
+		Cases     []struct {
+			Name     string          `json:"name"`
+			Settings json.RawMessage `json:"settings"`
+			Body     string          `json:"body"`
+			Accept   bool            `json:"accept"`
+			Admits   map[string]bool `json:"admits"`
+		} `json:"cases"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(testdata(t, "edge_policy_admission_v1.json")))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&file); err != nil {
+		t.Fatal(err)
+	}
+	accepted, refused, excluded, admitted, left := 0, 0, 0, 0, 0
+	for _, c := range file.Cases {
+		p, err := ParseEdgePolicy([]byte(c.Body))
+		if (err == nil) != c.Accept {
+			t.Errorf("%s: accepted %v, Python's %v (%v)", c.Name, err == nil, c.Accept, err)
+			continue
+		}
+		if err != nil {
+			refused++
+			continue
+		}
+		accepted++
+		if p.AsyncSettle == nil || len(c.Admits) != len(file.Probes) {
+			t.Fatalf("%s: no async_settle or not every probe answered", c.Name)
+		}
+		if p.AsyncSettle.AdmissionExcludedWorkspaces != nil {
+			excluded++
+		}
+		for _, ws := range file.Probes {
+			want, ok := c.Admits[ws]
+			if !ok {
+				t.Fatalf("%s: no answer for %s", c.Name, ws)
+			}
+			if got := p.AsyncSettle.Admits(ws); got != want {
+				t.Errorf("%s: Admits(%s) %v, Python's %v", c.Name, ws, got, want)
+			}
+			if want {
+				admitted++
+			} else {
+				left++
+			}
+		}
+	}
+	if accepted != 32 || refused != 6 || excluded != 5 || admitted == 0 || left == 0 {
+		t.Fatalf("%d accepted (%d with the member), %d refused, %d admitted and %d left-out answers: "+
+			"not the vectors' 32 (5) and 6", accepted, excluded, refused, admitted, left)
+	}
+}
+
 // keyWindowsMember matches a fastpath_pilot_key_windows member, whatever its
 // value, so the tests run on a golden body with or without one.
 var keyWindowsMember = regexp.MustCompile(`"fastpath_pilot_key_windows":("[^"]*"|[^,]*),`)

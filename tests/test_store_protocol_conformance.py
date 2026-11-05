@@ -238,7 +238,7 @@ def test_typed_billing_store_helper_unwraps_the_module_proxy() -> None:
 
 # Exactly the modules an enclave can reach, derived from the paths the enclave
 # itself dials (quill-cloud-proxy enclave-go/internal/trustedrouter/client.go):
-#   /internal/gateway/{authorize,settle,refund,validate,key,resolve-custom-model}
+#   /internal/gateway/{authorize,settle,refund,validate,key}
 #   /internal/gateway/fetch-image
 #   /internal/gateway/video/jobs/...
 # The rest of routes/internal is payment webhooks (adyen, paypal, webhook) and

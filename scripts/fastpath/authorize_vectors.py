@@ -335,6 +335,9 @@ DEFAULT_POLICY: dict[str, Any] = {
 NO_ASYNC_AUTHORITY: dict[str, bool] = {
     "admission_enabled": False, "edge_decide": False, "ticket_authority": False, "typed_records": True,
 }
+# Admission on for every workspace, the cohort's (a fast-path pilot
+# workspace) included through the overlap list (G15 section 4.5).
+OVERLAP_ADMISSION: dict[str, Any] = {"admission_enabled": True, "fastpath_overlap_workspaces": [COHORT_WS]}
 ASYNC_POLICY: dict[str, Any] = {
     **DEFAULT_POLICY,
     "async_settle": {"admission_enabled": False, "edge_decide": True, "ticket_authority": True,
@@ -394,7 +397,10 @@ def ticket_key_file() -> str:
 
 def async_settle_of(policy: dict[str, Any]) -> dict[str, Any]:
     """The case's async-settle facts: the four booleans, and optionally
-    admission_workspaces, the async-settle pilot set (absent: empty)."""
+    admission_workspaces, the async-settle pilot set (absent: empty), and
+    fastpath_overlap_workspaces, the fast-path workspaces admission still
+    covers (absent: none; the cohort workspace is a fast-path one, G15
+    section 4.5). The policy publishes what they decide, not the overlap."""
     return policy.get("async_settle", NO_ASYNC_AUTHORITY)
 
 
@@ -409,6 +415,7 @@ def settings_for(policy: dict[str, Any], key: dict[str, Any]) -> Settings:
         async_settle_enabled=facts["admission_enabled"],
         async_settle_protection=facts["admission_enabled"],
         async_settle_pilot_workspaces=",".join(facts.get("admission_workspaces", ())),
+        async_settle_fastpath_overlap_workspaces=",".join(facts.get("fastpath_overlap_workspaces", ())),
         async_settle_pilot_cap_micro=0,
         async_settle_ticket_ttl_seconds=300,
         async_settle_ticket_kid=TICKET_KID,
@@ -468,7 +475,8 @@ def edge_policy_body(policy: dict[str, Any], key: dict[str, Any], at: real_dt.da
         "edge_decide": settings.fastpath_edge_decide_async,
         "ticket_authority": policy["async_settle"]["ticket_authority"],
         "typed_records": policy["async_settle"]["typed_records"],
-        # The pilot set as the publisher writes it: only with admission on.
+        # The pilot set and the excluded fast-path workspaces as the
+        # publisher writes them: only with admission on.
         **admission_workspaces(settings),
     }} if "async_settle" in policy else {}
     return {
@@ -1405,6 +1413,15 @@ def cases() -> list[dict[str, Any]]:
     add("pass:body.canonical_model:fallback", "body.canonical_model",
         body={"model": GLM, "models": ["trustedrouter/auto-routing"]})
     add("pass:body.custom_model", "body.custom_model", body={"model": "tr-custom-model/e2-missing"})
+    for prefix in ("tr-custom-model/", "tr-user-model/", "trustedrouter/user-", "nyte/user-"):
+        for field in ("model", "models"):
+            retired = prefix + "e2-missing"
+            reason = "body.canonical_model" if prefix == "nyte/user-" else "body.custom_model"
+            add(f"pass:{reason}:retired:{prefix}:{field}", reason,
+                body={field: retired if field == "model" else [retired]})
+    for field in ("custom_model_id", "custom_model_revision", "user_provided_model_id", "user_provided_model_revision"):
+        add(f"pass:body.custom_model:{field}", "body.custom_model",
+            body={field: 0 if field.endswith("revision") else "retired"})
     add("pass:body.tags", "body.tags", body={"tags": {"k": "café"}})
     add("pass:body.referer", "body.referer", body={"http_referer": "https://user@example.com/x"})
     add("pass:body.referer:space", "body.referer", body={"http_referer": "https://example.com/a b"})
@@ -1736,11 +1753,12 @@ def async_cases() -> list[dict[str, Any]]:
     # The edge passes these on its policy: admission on (Python tickets the
     # request: recorded as shape C, never the ticket; the ticket's claims
     # need the body's invocation_nonce, without which Python answers shape
-    # A), and its async switch off.
+    # A), and its async switch off. The cohort workspace is a fast-path
+    # pilot one, so admission covers it only through the overlap list (§4.5).
     add("pass:policy.async_admission:async.C", "policy.async_admission",
-        body={"invocation_nonce": "nonce-e2-async-admission"}, policy={"async_settle": {"admission_enabled": True}})
+        body={"invocation_nonce": "nonce-e2-async-admission"}, policy={"async_settle": OVERLAP_ADMISSION})
     add("pass:policy.async_admission:async.A:no_invocation_nonce", "policy.async_admission",
-        policy={"async_settle": {"admission_enabled": True}})
+        policy={"async_settle": OVERLAP_ADMISSION})
     # Admission on for a pilot set (§4.1, per workspace): the policy names it
     # in async_settle.admission_workspaces. A set naming the key's workspace
     # passes as above (Python tickets it); one leaving it out is answered as
@@ -1748,7 +1766,20 @@ def async_cases() -> list[dict[str, Any]]:
     # ticket, no status URL, even with an invocation_nonce to sign with).
     add("pass:policy.async_admission:async.C:admission_workspaces_named", "policy.async_admission",
         body={"invocation_nonce": "nonce-e2-async-admission"},
+        policy={"async_settle": {**OVERLAP_ADMISSION, "admission_workspaces": [COHORT_WS, OTHER_WS]}})
+    # Async settle takes no request the fast path takes (§4.5): without the
+    # overlap list, admission leaves the fast-path cohort workspace out with
+    # no pilot set (every workspace) or one naming it. The policy says so in
+    # async_settle.admission_excluded_workspaces, and the edge answers as
+    # with admission off, Python's own shape B or A.
+    add("answer:async.B:fastpath_excluded", body={"invocation_nonce": "nonce-e2-async-admission"},
+        policy={"async_settle": {"admission_enabled": True}})
+    add("answer:async.B:fastpath_excluded:admission_workspaces_named",
+        body={"invocation_nonce": "nonce-e2-async-admission"},
         policy={"async_settle": {"admission_enabled": True, "admission_workspaces": [COHORT_WS, OTHER_WS]}})
+    add("answer:async.A:route_type:embeddings:fastpath_excluded",
+        body={"route_type": "embeddings", "invocation_nonce": "nonce-e2-async-admission"},
+        policy={"async_settle": {"admission_enabled": True}})
     add("answer:async.B:admission_workspaces_other", body={"invocation_nonce": "nonce-e2-async-admission"},
         policy={"async_settle": {"admission_enabled": True, "admission_workspaces": [OTHER_WS]}})
     add("answer:async.A:route_type:embeddings:admission_workspaces_other",
@@ -1805,10 +1836,13 @@ def async_streams_cases(add: Any) -> None:
     # composed for the shadow alone: Python's leased answer recorded beside it.
     add("pass:body.stream:async.B:member_absent", "body.stream", body={"stream": True},
         policy={**streams, "fastpath_edge_streams": False})
+    add("answer:async.B:stream:fastpath_excluded",
+        body={"stream": True, "invocation_nonce": "nonce-e2-async-admission"},
+        policy={**streams, "async_settle": {"admission_enabled": True}})
     # Python's admission covers the workspace: a ticket is Python's.
     add("pass:policy.async_admission:async.C:stream", "policy.async_admission",
         body={"stream": True, "invocation_nonce": "nonce-e2-async-admission"},
-        policy={**streams, "async_settle": {"admission_enabled": True}})
+        policy={**streams, "async_settle": OVERLAP_ADMISSION})
     # A stream Stage D does not let in: Python answers it unleased, its
     # async members as ever.
     add("pass:stream.stage_d:stage_d_disabled:async.B", "stream.stage_d:stage_d_disabled", body={"stream": True},

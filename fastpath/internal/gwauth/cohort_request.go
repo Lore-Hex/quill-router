@@ -80,6 +80,10 @@ func (r *Request) cohort(object pyjson.Object, h Headers, streams bool) Pass {
 	case r.additionalCost || r.inferenceReceipt || present("video_resolution") ||
 		present("speech_input_characters") || present("transcription_duration_ms"):
 		return passFor(ReasonPricedExtra)
+	case present("custom_model_id") || present("custom_model_revision") ||
+		present("user_provided_model_id") || present("user_provided_model_revision"):
+		// Let Python reject legacy creator identities before admission or replay.
+		return passFor(ReasonCustomModel)
 	}
 	requested := append([]string{r.Model}, r.Models...)
 	for _, m := range requested {
@@ -89,9 +93,10 @@ func (r *Request) cohort(object pyjson.Object, h Headers, streams bool) Pass {
 	}
 	for _, m := range requested {
 		lower := strings.ToLower(m)
-		// is_creator_model_id, and the partner model, whose billing mode
-		// the evaluator does not reproduce.
+		// Retired creator models, and the partner model whose billing mode
+		// the evaluator does not reproduce, must reach Python.
 		if strings.HasPrefix(lower, "tr-custom-model/") || strings.HasPrefix(lower, "tr-user-model/") ||
+			strings.HasPrefix(lower, "trustedrouter/user-") || strings.HasPrefix(lower, "nyte/user-") ||
 			strings.Contains(lower, "parasail/liberty-2.0") {
 			return passFor(ReasonCustomModel)
 		}

@@ -522,6 +522,9 @@ func (p *parts) edge(cfg Config, s *store.Store) (err error) {
 		// What the decide shadow follows ends with its requests; its reads
 		// end with them, and then the cache may close.
 		e.WaitDecideShadow()
+		// The timed passes' last counts, after their queued lines, once no
+		// handler can time another (pass_timing.go).
+		e.FlushPasses()
 		close(followed)
 		transport.CloseIdleConnections()
 		return nil
@@ -1099,8 +1102,10 @@ func (p *parts) auditor(cfg Config, c Clients, s *store.Store, settle *settlelog
 		cfg.RecordSubscription, cfg.MaxOutstanding)), calls: &inFlight{}, fail: p.failing("stager")}
 	p.run("stager", func(ctx context.Context) error {
 		err := stager.Run(ctx, staged)
-		// The subscription can end before its callbacks have.
+		// The subscription can end before its callbacks have, and a
+		// callback's record can begin a transaction as it leaves.
 		staged.calls.wait()
+		stager.Wait()
 		return err
 	})
 	return nil

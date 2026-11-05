@@ -126,6 +126,17 @@ def test_the_vectors_are_what_the_app_answers_now(tmp_path: Path) -> None:
         )
 
 
+def test_retired_creator_vectors_always_pass_to_python_for_rejection() -> None:
+    cases = [case for case in _cases() if ":retired:" in case["name"]
+             or case["expect"].get("reason") == "body.custom_model"]
+    assert len(cases) == 13
+    for case in cases:
+        expect = case["expect"]
+        assert expect["outcome"] == "pass", case["name"]
+        assert expect["python"]["status"] == 410, case["name"]
+        assert expect["python"]["type"] == "model_not_supported", case["name"]
+
+
 def test_the_header_carries_pythons_internal_and_estimated_usage_models() -> None:
     """Decisions 7 and 19: Go holds its hardcoded sets equal to these, so a
     catalog that gains an internal_only model, or a changed estimated-usage
@@ -689,14 +700,30 @@ def test_the_async_header_carries_pythons_sets_snapshot_and_policy() -> None:
         "admission_enabled": False, "edge_decide": True, "ticket_authority": True, "typed_records": True}
     names = [case["name"] for case in vectors["cases"]]
     assert names == sorted(names) and len(set(names)) == len(names)
-    named = other = 0
+    named = other = excluded = 0
     for case in vectors["cases"]:
         name = case["name"]
         effective = {**vectors["policy"], **case["policy_patch"]}["async_settle"]
         assert effective["admission_enabled"] is (
-            name.startswith("pass:policy.async_admission:") or ":admission_workspaces_" in name), name
+            name.startswith("pass:policy.async_admission:") or ":admission_workspaces_" in name
+            or ":fastpath_excluded" in name), name
         assert "settlement_ticket" not in json.dumps(case), name
         assert "settlement_status_url" not in json.dumps(case), name
+        # Async settle takes no request the fast path takes (G15 §4.5): the
+        # cohort workspace is a fast-path one, so without the overlap list
+        # admission excludes it (the policy names it in
+        # admission_excluded_workspaces) and the edge answers Python's
+        # admission-off shape, with or without a pilot set naming it.
+        excluded_set = effective.get("admission_excluded_workspaces")
+        assert (excluded_set is not None) is (":fastpath_excluded" in name), name
+        if excluded_set is not None:
+            excluded += 1
+            workspace = case["facts"]["key"]["workspace_id"]
+            assert excluded_set == [workspace], name
+            assert workspace in {**vectors["policy"], **case["policy_patch"]}["fastpath_pilot_workspaces"], name
+            assert case["expect"]["outcome"] == "answer" and case["expect"]["async_shape"] in ("A", "B"), name
+            assert json.loads(case["expect"]["response"])["data"]["async_eligible"] is False, name
+            continue
         # Admission on for a pilot set (§4.1, per workspace): one naming the
         # key's workspace passes (Python tickets it); one leaving it out is
         # answered, Python's admission-off shape for that workspace.
@@ -717,7 +744,7 @@ def test_the_async_header_carries_pythons_sets_snapshot_and_policy() -> None:
             assert case["expect"]["outcome"] == "answer" and case["expect"]["async_shape"] in ("A", "B"), name
             data = json.loads(case["expect"]["response"])["data"]
             assert data["async_eligible"] is False, name
-    assert named == 1 and other == 3
+    assert named == 1 and other == 3 and excluded == 4
     # The edge's async switch off is a pass with Python's admission-off answer.
     (off,) = [case for case in vectors["cases"] if case["expect"].get("reason") == "async.off"]
     assert off["policy_patch"]["async_settle"]["edge_decide"] is False
@@ -773,7 +800,7 @@ def test_an_async_stream_carries_the_same_members_as_without_stream() -> None:
     by_name = {case["name"]: case for case in _load(ASYNC_CASES)["cases"]}
     plain = json.loads(by_name["answer:async.B:single:openai/gpt-4.1"]["expect"]["response"])["data"]
     streamed_bodies = [case for case in by_name.values() if json.loads(case["request"]["body"]).get("stream") is True]
-    assert len(streamed_bodies) == 9
+    assert len(streamed_bodies) == 10
     for name in ("answer:async.B:stream", "pass:body.stream:async.B:member_absent"):
         expect = by_name[name]["expect"]
         streamed = json.loads((expect.get("shadow") or expect)["response"])["data"]

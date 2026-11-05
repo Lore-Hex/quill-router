@@ -1558,22 +1558,6 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             "fallbacks to return one OpenAI-compatible answer."
         ),
     ),
-    "docs/user-models": PublicPage(
-        template="public/user_models_docs.html",
-        title="User-Provided Models: Post Your Machine, Agent, Or Yourself",
-        description=(
-            "List your own HTTPS endpoint on TrustedRouter as a priced model — a machine, "
-            "an agent, or a person answering by hand — and keep 70% in credits."
-        ),
-    ),
-    "docs/custom-models": PublicPage(
-        template="public/custom_models_docs.html",
-        title="Custom Models: Hidden Prompts And Creator Markup",
-        description=(
-            "Publish a TrustedRouter catalog model with a hidden prompt, a stable "
-            "creator namespace, and an optional markup whose creator keeps 70%."
-        ),
-    ),
     "docs/x402": PublicPage(
         template="public/x402.html",
         title="x402 Stablecoin Funding For Agents",
@@ -1659,7 +1643,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             (
                 "What can we offer today?",
                 "Objective routing (price/throughput/latency with fallbacks), "
-                "privacy-tier routing (zdr/e2e/eu), composite and custom models, "
+                "privacy-tier routing (zdr/e2e/eu), composite models, "
                 "prepaid metering with per-key budgets, BYOK, and multi-region "
                 "attested gateways on two clouds. Self-hosted TrustedOS, marketplace "
                 "payouts, and per-model kernels (private beta) extend the platform "
@@ -4091,12 +4075,7 @@ def public_rankings_html(settings: Settings) -> str:
     )
 
 
-def public_chat_html(
-    settings: Settings,
-    *,
-    locked_model_id: str = "",
-    locked_model_label: str = "Custom model",
-) -> str:
+def public_chat_html(settings: Settings) -> str:
     """Render the public chat playground at /chat.
 
     The page itself is auth-free — anyone can load it and explore the
@@ -4108,11 +4087,6 @@ def public_chat_html(
 
     See docs (plan file) for the full architecture.
     """
-    storage_key = "tr_chat_state_v1"
-    if locked_model_id:
-        storage_key = "tr_user_chat_state_" + "".join(
-            ch if ch.isalnum() else "_" for ch in locked_model_id.lower()
-        )
     return (
         _env()
         .get_template("public/chat.html")
@@ -4140,9 +4114,7 @@ def public_chat_html(
             google_enabled=settings.google_oauth_enabled,
             github_enabled=settings.github_oauth_enabled,
             static_version=_static_version(settings),
-            storage_key=storage_key,
-            locked_model_id=locked_model_id,
-            locked_model_label=locked_model_label,
+            storage_key="tr_chat_state_v1",
         )
     )
 
@@ -6152,6 +6124,8 @@ def _model_route_evidence(
             else ""
         ),
         "uptime_range": uptime_range,
+        "has_throughput": fastest_throughput is not None,
+        "has_uptime": bool(uptime_values),
         "route_count": len(endpoints),
         "provider_count": (
             len(_endpoint_provider_views(endpoints, fallback_provider=model.provider))
@@ -6363,6 +6337,10 @@ def _comparison_view(
         "right_throughput_provider": right_evidence["fastest_throughput_provider"],
         "left_uptime": left_evidence["uptime_range"],
         "right_uptime": right_evidence["uptime_range"],
+        # Rows and FAQ answers with no measurement for either model are left out.
+        "has_ttft": left_measured is not None or right_measured is not None,
+        "has_throughput": bool(left_evidence["has_throughput"] or right_evidence["has_throughput"]),
+        "has_uptime": bool(left_evidence["has_uptime"] or right_evidence["has_uptime"]),
     }
 
 
@@ -6376,6 +6354,14 @@ def _model_comparison_faq_items(
     right_price = str(comparison["right_price"])
     left_ttft = str(comparison["left_ttft"])
     right_ttft = str(comparison["right_ttft"])
+    faster = (
+        (
+            f"Is {left.name} or {right.name} faster?",
+            f"Current measured p50 time to first token is {left_ttft} for {left.name} "
+            f"and {right_ttft} for {right.name}. These are routed probe measurements, "
+            "not vendor-advertised speeds, and update as new samples arrive.",
+        ),
+    ) if comparison["has_ttft"] else ()
     return (
         (
             f"Which should I use, {left.name} or {right.name}?",
@@ -6387,12 +6373,7 @@ def _model_comparison_faq_items(
             f"and {right_price} for {right.name}. The comparison uses current catalog "
             "prices and updates as provider pricing changes.",
         ),
-        (
-            f"Is {left.name} or {right.name} faster?",
-            f"Current measured p50 time to first token is {left_ttft} for {left.name} "
-            f"and {right_ttft} for {right.name}. These are routed probe measurements, "
-            "not vendor-advertised speeds, and update as new samples arrive.",
-        ),
+        *faster,
         (
             f"Can I test {left.name} and {right.name} with the same API?",
             _same_api_answer(left, right),

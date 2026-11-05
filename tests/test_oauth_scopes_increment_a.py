@@ -182,7 +182,6 @@ def test_missing_scope_uses_insufficient_scope_not_invalid_api_key(
     [
         ("/v1/internal/gateway/validate", {}),
         ("/v1/internal/gateway/key", {}),
-        ("/v1/internal/gateway/resolve-custom-model", {"model": "custom/not-found"}),
         ("/v1/internal/gateway/authorize", {"model": "anthropic/claude-sonnet-5"}),
     ],
 )
@@ -257,8 +256,12 @@ def test_scoped_inference_key_passes_all_gateway_sites_including_media(
     assert key_info.status_code == 200, key_info.text
     assert key_info.json()["data"]["hash"] == key.hash
     assert key_info.json()["data"]["scopes"] == [SCOPE_INFERENCE]
-    assert resolved.status_code == 200, resolved.text
-    assert resolved.json()["data"]["custom_model"]["id"] == custom_model.id
+    assert resolved.status_code == 404, resolved.text
+    retired = client.post(
+        "/v1/internal/gateway/authorize",
+        json={**lookup, "model": custom_model.id, "estimated_input_tokens": 16},
+    )
+    assert retired.status_code == 410, retired.text
     assert authorized.status_code == 200, authorized.text
     assert authorized.json()["data"]["authorization_id"]
     assert authorized.json()["data"]["model"] == "google/gemini-3.1-flash-image"

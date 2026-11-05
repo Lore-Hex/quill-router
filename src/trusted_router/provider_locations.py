@@ -32,6 +32,18 @@ class InferenceLocations:
 _NO_TR_PIN = "Not supported by the current TrustedRouter integration."
 
 PROVIDER_INFERENCE_LOCATIONS = {
+    "negbeta": InferenceLocations(
+        locations=("European Union",),
+        scope="TrustedRouter's managed key only; Negbeta's broader service also uses non-EU capacity.",
+        routing="Provider declares that EU marketplace traffic stays in the EU; no cross-region failover for this key.",
+        provider_pinning="Key-scoped agreement; X-Serving-Region reports eu, not a country or hardware-attested location.",
+        trustedrouter_pinning="Select provider.only=[negbeta] with allow_fallbacks=false; this does not pin gateway geography or TLS transit.",
+        declaration="EU inference by provider declaration. The original application named Madrid; current responses establish only the declared eu region.",
+        evidence="Application, current data policy, authenticated catalog and bounded JSON/SSE checks on both current models; not attested residency.",
+        reviewed_on="2026-11-04",
+        sources=(("API and serving-region header", "https://inference.negbeta.com/docs"),
+                 ("Data handling and locations", "https://negbeta.com/inference/data-policy/")),
+    ),
     "hixtube": InferenceLocations(
         locations=("Finland (EU)",),
         scope="Current DeepSeek inference runs on a single Verda Finland GPU node rented through Spheron.",

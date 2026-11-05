@@ -7,6 +7,7 @@ from pathlib import Path
 
 from build import build, load_markets
 from member_badges import build_badges
+from nyte_v2 import uses_nyte
 
 
 class MemberBadgeTests(unittest.TestCase):
@@ -49,7 +50,7 @@ class MemberBadgeTests(unittest.TestCase):
 
     def test_all_markets_link_private_deck_and_badge(self):
         for market in load_markets():
-            if market["slug"] == "new-york":
+            if uses_nyte(market):
                 self.assertIn('href="/providers"', (self.root / "suppliers").read_text())
                 continue  # v2 moves supplier CTAs to /suppliers.
             home = (self.root / market["slug"] / "index.html").read_text()
