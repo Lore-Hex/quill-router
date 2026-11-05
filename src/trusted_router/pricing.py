@@ -153,6 +153,24 @@ def _provider_manifest_customer_price(
     return _customer_price(cost_microdollars_per_million)
 
 
+def _provider_manifest_cached_customer_price(
+    cost_microdollars_per_million: int,
+    *,
+    provider_slug: str,
+    apply_markup: bool,
+) -> int:
+    """Honor Hixtube's positive cache-read tariff below the generic token floor."""
+    if provider_slug == "hixtube" and apply_markup and cost_microdollars_per_million > 0:
+        return int(
+            (Decimal(cost_microdollars_per_million) * _PRICE_MARKUP_RATIO).to_integral_value(
+                rounding=ROUND_CEILING
+            )
+        )
+    return _provider_manifest_customer_price(
+        cost_microdollars_per_million, apply_markup=apply_markup,
+    )
+
+
 def customer_fixed_price_microdollars(cost_microdollars: int) -> int:
     """Apply the standard markup to a fixed provider charge.
 
@@ -588,6 +606,7 @@ def _provider_manifest_price_tiers(
     *,
     price_scale: int = 1,
     apply_markup: bool = True,
+    provider_slug: str = "",
 ) -> tuple[PriceTier, ...]:
     if "price_tiers" not in raw_model:
         return _flat_tier(
@@ -601,6 +620,7 @@ def _provider_manifest_price_tiers(
     assert isinstance(raw_tiers, list)
 
     tiers: list[PriceTier] = []
+    previous_cached_price: int | None = None
     for raw_tier in raw_tiers:
         assert isinstance(raw_tier, dict)
         raw_threshold = raw_tier.get("max_prompt_tokens")
@@ -622,10 +642,21 @@ def _provider_manifest_price_tiers(
             price_scale=price_scale,
         )
         cached_price = (
-            _provider_manifest_customer_price(cached_cost, apply_markup=apply_markup)
+            _provider_manifest_cached_customer_price(
+                cached_cost, provider_slug=provider_slug, apply_markup=apply_markup,
+            )
             if cached_cost is not None
             else None
         )
+        # Hixtube's retained zero-price floor must not invert a later paid tier.
+        if cached_price is not None:
+            if (
+                provider_slug == "hixtube"
+                and previous_cached_price is not None
+                and cached_price < previous_cached_price
+            ):
+                raise ValueError("provider manifest has decreasing retail cached prices")
+            previous_cached_price = cached_price
         tiers.append(
             PriceTier(
                 max_prompt_tokens=threshold,
