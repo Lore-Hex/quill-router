@@ -397,8 +397,8 @@ needs no analytics read; the largest spenders carry most of the traffic
   that came from a change of facts (tier below 3, balance under $40, a
   federated home, a deletion, a probe, a bypass), the cap is a guard:
   when a run would disable more than 10% of the enabled set or 20
-  workspaces, whichever is larger, for those causes, it disables none of them that run and raises
-  `fastpath_enabler_mass_disable`, since a sudden mass change of facts is
+  workspaces, whichever is larger, for those causes, it disables none of
+  them that run and raises `fastpath_enabler_mass_disable`, since a sudden mass change of facts is
   more likely a reading defect than a fact. A rank past the margin of
   §5.2 is not guarded but paced: each run disables at most the same
   number, lowest rank first, and raises nothing, since a large rank
