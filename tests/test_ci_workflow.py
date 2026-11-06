@@ -229,6 +229,52 @@ def test_provider_health_is_monitored_separately_from_release_correctness() -> N
     assert "--workflow ci.yml" in deploy
 
 
+# proof-oracle's clocks: both, except on a push to main, which runs the
+# default clock only (post-cutover-daily.yml runs the other on main).
+ORACLE_CLOCKS = ("${{ fromJSON(github.event_name == 'push' && '[\"default\"]' "
+                 "|| '[\"default\", \"post-cutover\"]') }}")
+
+
+def test_the_post_cutover_clock_leaves_main_pushes_for_a_daily_run() -> None:
+    # A post-cutover red means main will break on a scheduled date, not that
+    # the commit is broken, so a push to main runs neither post-cutover suite:
+    # deploy.yml's gate-on-ci waits for that run, and every deploy waited in
+    # the queue its 14 extra jobs joined. Pull requests and dispatches (the
+    # price refresh's publication gate) still run both, and so does main, once
+    # a day, in a workflow that gates nothing.
+    from scripts.ci.commit_scope import PUSH_SKIP_CONDITION, SKIPPED_ON_PUSH
+
+    ci = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
+    assert {name for name, job in ci.items() if job.get("if") == PUSH_SKIP_CONDITION} == SKIPPED_ON_PUSH
+    assert ci["proof-oracle"]["strategy"]["matrix"]["clock"] == ORACLE_CLOCKS
+    daily = yaml.safe_load((ROOT / ".github/workflows/post-cutover-daily.yml").read_text())
+    # PyYAML reads the key `on` as True.
+    triggers = daily.get("on", daily.get(True))
+    # No push or pull_request trigger, and not named CI: deploy.yml's gate
+    # (`gh run list --workflow ci.yml`), the fast path release (a
+    # workflow_run of "CI") and the price refresh read ci.yml's runs only.
+    assert set(triggers) == {"schedule", "workflow_dispatch"}
+    assert len(triggers["schedule"]) == 1
+    assert daily["name"] != "CI"
+    assert daily["permissions"] == {"contents": "read"}
+    jobs = daily["jobs"]
+    assert set(jobs) == {"test-post-cutover", "proof-oracle"}
+    for name in jobs:
+        # The same suites, step for step, so the daily run checks what a
+        # pull request's run checks.
+        assert jobs[name]["steps"] == ci[name]["steps"], name
+        assert jobs[name]["runs-on"] == ci[name]["runs-on"], name
+        assert jobs[name]["timeout-minutes"] == ci[name]["timeout-minutes"], name
+        assert jobs[name]["strategy"]["fail-fast"] is False, name
+        assert jobs[name]["if"] == "github.repository == 'Lore-Hex/quill-router'", name
+        assert "needs" not in jobs[name], name
+    assert jobs["test-post-cutover"]["env"] == ci["test-post-cutover"]["env"]
+    assert jobs["test-post-cutover"]["strategy"]["matrix"] == ci["test-post-cutover"]["strategy"]["matrix"]
+    assert jobs["proof-oracle"]["permissions"] == ci["proof-oracle"]["permissions"]
+    assert jobs["proof-oracle"]["strategy"]["matrix"] == {
+        "clock": ["post-cutover"], "shard": ci["proof-oracle"]["strategy"]["matrix"]["shard"]}
+
+
 def test_proof_oracle_ci_split(request, tmp_path):
     import shlex
 
@@ -247,7 +293,7 @@ def test_proof_oracle_ci_split(request, tmp_path):
                        '--durations-path=durations-${{', 'matrix.shard', '}}.json', '--clean-durations']
     assert job['runs-on'] == 'ubuntu-24.04'
     assert job['timeout-minutes'] == 45
-    assert job['strategy']['matrix'] == {'clock': ['default', 'post-cutover'], 'shard': [1, 2, 3, 4, 5, 6]}
+    assert job['strategy']['matrix'] == {'clock': ORACLE_CLOCKS, 'shard': [1, 2, 3, 4, 5, 6]}
     assert job['strategy']['fail-fast'] is False
     assert job['permissions'] == {'contents': 'read'}
     assert 'continue-on-error' not in job
@@ -325,7 +371,12 @@ def test_data_only_commits_skip_only_the_jobs_that_read_no_catalog_data():
     # were among 19 queued runs while the organization's queue starved for two
     # hours. The scope job classifies the commit; a job skips only when its
     # `if` is the data-only condition, and every job that reads the data runs.
-    from scripts.ci.commit_scope import DATA_ONLY_CONDITION, SKIPPED_FOR_DATA_ONLY
+    from scripts.ci.commit_scope import (
+        DATA_ONLY_CONDITION,
+        PUSH_SKIP_CONDITION,
+        SKIPPED_FOR_DATA_ONLY,
+        SKIPPED_ON_PUSH,
+    )
 
     jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
     skipped = {name for name, job in jobs.items() if DATA_ONLY_CONDITION in str(job.get("if", ""))}
@@ -340,7 +391,13 @@ def test_data_only_commits_skip_only_the_jobs_that_read_no_catalog_data():
         if name != "coverage":
             assert jobs[name]["if"] == DATA_ONLY_CONDITION, name
     for name in ALWAYS_RUN_JOBS:
-        assert "if" not in jobs[name] or name == "ci", name
+        # The post-cutover suite reads the data too. It runs on every commit
+        # of every event but a push to main, the price refresh's dispatches
+        # included (test_the_post_cutover_clock_leaves_main_pushes...).
+        if name in SKIPPED_ON_PUSH:
+            assert jobs[name]["if"] == PUSH_SKIP_CONDITION, name
+        else:
+            assert "if" not in jobs[name] or name == "ci", name
     # The jobs that read the published catalog: the suite under both clocks,
     # lint's catalog history check, the production import and the browser
     # smoke (which starts the app on the committed snapshot).
@@ -399,7 +456,8 @@ def test_summary_job_derives_the_run_conclusion_from_every_job():
     assert set(summary["needs"]) == set(jobs) - {"ci"}
     assert summary["if"] == "${{ !cancelled() }}"
     assert summary["env"] == {"NEEDS": "${{ toJSON(needs) }}",
-                              "DATA_ONLY": "${{ needs.scope.outputs.data_only }}"}
+                              "DATA_ONLY": "${{ needs.scope.outputs.data_only }}",
+                              "EVENT_NAME": "${{ github.event_name }}"}
     assert [step["run"] for step in summary["steps"] if "run" in step] == [
         "python3 scripts/ci/commit_scope.py summarize"]
     assert "continue-on-error" not in summary

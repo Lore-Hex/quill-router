@@ -100,6 +100,27 @@ regional/public checks and durable lease finalization remain production-gated.
 Cloud release reconciliation recognizes reusable-job names (rollout / JOB)
 and still requires all GCP production gates before AWS/Azure promotion.
 
+### Coverage through sys.monitoring
+
+The default suite's coverage pass ran on coverage.py's C tracer with branch
+coverage, at about three times the plain suite's cost (#2368). Before Python
+3.14, sys.monitoring cannot measure branches, so `[tool.coverage.run]` sets
+`core = "sysmon"` and `branch = false`. The twelve default shards fell from a
+median of 25.5 minutes to between 7 and 11. Two tests in
+tests/test_ci_workflow.py keep a configuration change from bringing the
+tracer back.
+
+### Post-cutover suites leave the push run
+
+A push to main no longer runs test-post-cutover or proof-oracle's
+post-cutover clock. Together they were 14 of the run's 46 jobs, about 200
+runner-minutes. A red in them means main will break on a scheduled date. That
+is no reason to hold the deploy, which gate-on-ci holds until the push run
+concludes. They still run on pull requests and on dispatches, including the
+price refresh's publication gate. post-cutover-daily.yml runs both on main
+once a day, outside every gate. commit_scope.py's summary accepts
+test-post-cutover's skip on a push only.
+
 ## Validation and measurement
 
 Tests cover process handoffs, late failures, serial fallback, malformed tokens,

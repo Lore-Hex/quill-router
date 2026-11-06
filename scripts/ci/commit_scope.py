@@ -15,8 +15,9 @@ before `uv sync`:
              and the scope output (DATA_ONLY) and exits non-zero unless every
              job succeeded, allowing a skipped job only when it is one of the
              jobs ci.yml skips for a data-only commit AND the commit was
-             data-only. A heavy job skipped on a code commit, a failed scope
-             job, or a job in any other state fails the run.
+             data-only, or one of the jobs ci.yml skips on a push to main
+             (EVENT_NAME is push). A heavy job skipped on a code commit, a
+             failed scope job, or a job in any other state fails the run.
 
 The hourly price refresh publishes commits that touch only DATA_ONLY_PATHS
 and gates publication on the ci.yml run of that commit. Every job in
@@ -28,6 +29,12 @@ the coverage floor over the Python suite). The jobs that do read them
 clocks and the browser smoke) run on every commit. tests/test_ci_workflow.py
 holds the workflow text to these two lists, and holds DATA_ONLY_PATHS to the
 files refresh-prices.yml stages.
+
+SKIPPED_ON_PUSH is the post-cutover suite. It runs on pull requests and on
+dispatches (the price refresh's publication gate), and on main once a day
+(post-cutover-daily.yml), but not on a push to main: its red means main will
+break on a scheduled date, not that the commit is broken, and deploy.yml's
+gate waits for the push run of the commit it ships.
 """
 
 from __future__ import annotations
@@ -75,6 +82,12 @@ SKIPPED_FOR_DATA_ONLY: frozenset[str] = frozenset({
 
 DATA_ONLY_CONDITION = "needs.scope.outputs.data_only != 'true'"
 
+# Jobs whose `if` in ci.yml is PUSH_SKIP_CONDITION: they skip on a push to
+# main and run on every other event.
+SKIPPED_ON_PUSH: frozenset[str] = frozenset({"test-post-cutover"})
+
+PUSH_SKIP_CONDITION = "github.event_name != 'push'"
+
 # One record of `git diff --raw` without -z: modes, abbreviated or full object
 # ids, a status letter (a rename or copy carries a score, R100, which this
 # does not match and so classifies false) and the path. Git quotes paths with
@@ -119,7 +132,7 @@ def classify(records: list[str]) -> bool:
     return bool(records) and all(is_data_change(record) for record in records)
 
 
-def summarize(needs: dict[str, dict[str, object]], data_only: str) -> list[str]:
+def summarize(needs: dict[str, dict[str, object]], data_only: str, event_name: str = "") -> list[str]:
     """Return the reasons the run must fail; an empty list means success."""
     failures: list[str] = []
     scope = needs.get("scope", {}).get("result")
@@ -133,6 +146,8 @@ def summarize(needs: dict[str, dict[str, object]], data_only: str) -> list[str]:
             continue
         if result == "skipped" and job in SKIPPED_FOR_DATA_ONLY and data_only == "true":
             continue
+        if result == "skipped" and job in SKIPPED_ON_PUSH and event_name == "push":
+            continue
         failures.append(f"{job}: {result}")
     return failures
 
@@ -141,7 +156,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("classify", help="stdin: git diff --no-renames --raw; stdout: true|false")
-    sub.add_parser("summarize", help="env NEEDS (JSON), DATA_ONLY; exit 1 on any failure")
+    sub.add_parser("summarize", help="env NEEDS (JSON), DATA_ONLY, EVENT_NAME; exit 1 on any failure")
     args = parser.parse_args(argv)
     if args.command == "classify":
         # Records are split on "\n" alone: str.splitlines also splits on
@@ -152,10 +167,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     needs = json.loads(os.environ["NEEDS"])
     data_only = os.environ.get("DATA_ONLY", "")
+    event_name = os.environ.get("EVENT_NAME", "")
     for job, info in sorted(needs.items()):
         print(f"{job}: {info.get('result')}")
     print(f"data_only: {data_only or '<unset>'}")
-    failures = summarize(needs, data_only)
+    print(f"event_name: {event_name or '<unset>'}")
+    failures = summarize(needs, data_only, event_name)
     for failure in failures:
         print(f"::error title=CI job did not succeed::{failure}")
     return 1 if failures else 0

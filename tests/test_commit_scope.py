@@ -171,6 +171,19 @@ def test_a_skipped_job_outside_the_list_fails_even_on_a_data_only_commit() -> No
     assert summarize({**needs(), "new-job": {"result": "skipped"}}, "true") == ["new-job: skipped"]
 
 
+def test_the_post_cutover_suite_may_skip_only_on_a_push() -> None:
+    for data_only in ("true", "false"):
+        assert summarize(needs(test_post_cutover="skipped"), data_only, "push") == []
+        for event in ("pull_request", "workflow_dispatch", "schedule", "", "PUSH"):
+            assert summarize(needs(test_post_cutover="skipped"), data_only, event) == [
+                "test-post-cutover: skipped"]
+    # A push excuses only that job, and only its skip.
+    assert summarize(needs(test="skipped"), "false", "push") == ["test: skipped"]
+    assert summarize(needs(proofs="skipped"), "false", "push") == ["proofs: skipped"]
+    for result in ("failure", "cancelled", "timed_out", None):
+        assert summarize(needs(test_post_cutover=result), "false", "push") == [f"test-post-cutover: {result}"]
+
+
 @pytest.mark.parametrize("separator", ["\u2028", "\u2029", "\u0085"])
 def test_a_unicode_line_separator_in_a_path_is_not_the_data_file(monkeypatch, capsys, separator: str) -> None:
     """git prints these literally when core.quotePath is off; splitting on
@@ -207,3 +220,11 @@ def test_summarize_command_exits_non_zero_with_an_annotation(monkeypatch, capsys
     monkeypatch.setenv("NEEDS", json.dumps(needs(test="failure")))
     assert main(["summarize"]) == 1
     assert "::error title=CI job did not succeed::test: failure" in capsys.readouterr().out
+    # The event reaches the summary: a push excuses the post-cutover skip.
+    monkeypatch.setenv("NEEDS", json.dumps(needs(test_post_cutover="skipped")))
+    assert main(["summarize"]) == 1
+    assert "test-post-cutover: skipped" in capsys.readouterr().out
+    monkeypatch.setenv("EVENT_NAME", "push")
+    assert main(["summarize"]) == 0
+    out = capsys.readouterr().out
+    assert "::error" not in out and "event_name: push" in out

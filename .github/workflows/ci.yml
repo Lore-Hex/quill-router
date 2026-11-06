@@ -478,7 +478,16 @@ jobs:
   # skip and this is the plain suite once more. It is a separate job rather
   # than a second step in `test` so the two clocks report separately -- a red
   # here means "this will break on <date>", not "this is broken".
+  #
+  # So it runs on pull requests and on dispatches (the price refresh gates
+  # publication on its run), but not on a push to main: a date main will
+  # break on is no reason to hold the deploy that deploy.yml's gate-on-ci
+  # holds for that run, and on main it was about 100 runner-minutes a commit
+  # in a queue that every deploy waited in. post-cutover-daily.yml runs it on
+  # main once a day, with the proof oracle's post-cutover clock, and
+  # commit_scope.py's summary accepts its skip on a push only.
   test-post-cutover:
+    if: github.event_name != 'push'
     # Sharded for the same reason as `test`: gate-on-ci waits for the whole
     # run, so the slowest job sets deploy latency. Leaving this one unsharded
     # would just move the bottleneck here.
@@ -561,7 +570,8 @@ jobs:
           retention-days: 7
 
   # Frozen reference tracing is intentionally separate from coverage tracing.
-  # Both lifecycle clocks retain the complete matrix; no cloud identity needed.
+  # Both lifecycle clocks run the complete matrix wherever both run (a push
+  # to main runs the default clock only); no cloud identity needed.
   # The oracle builds its catalog from each case's fixture body
   # (tests/test_async_settle_proof.py `catalog`), not from the published
   # snapshot, so a data-only commit cannot change its result and skips it.
@@ -575,7 +585,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        clock: [default, post-cutover]
+        # The post-cutover clock runs where test-post-cutover runs: not on a
+        # push to main (see that job), and daily on main in
+        # post-cutover-daily.yml.
+        clock: ${{ fromJSON(github.event_name == 'push' && '["default"]' || '["default", "post-cutover"]') }}
         # Four-group runs 38924732345 took 43 to 45+ minutes with 1,252 cases.
         # Six groups per clock bound estimated single-worker work per group
         # to about two thirds of the four-group work; keep the 45-minute cap.
@@ -889,6 +902,7 @@ jobs:
     env:
       NEEDS: ${{ toJSON(needs) }}
       DATA_ONLY: ${{ needs.scope.outputs.data_only }}
+      EVENT_NAME: ${{ github.event_name }}
     steps:
       - uses: actions/checkout@v7
       - name: Every job succeeded, or was skipped for a data-only commit
