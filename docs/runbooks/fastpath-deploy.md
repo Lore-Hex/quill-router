@@ -178,8 +178,12 @@ docs/design/fast-admission-streams.md section 12.4): the release that reads
 it leaves the owner's `RecordCeiling` off, and its auditors keep the
 ceiling in `tr_lease_hold.ceiling`, so `scripts/deploy/migrate_fastpath.sh`
 gives the table that column before any auditor or owner of that release
-is deployed. The release after it, pinned as above, turns `RecordCeiling`
-on.
+is deployed. Before pinning that release, find `tr_lease_hold.ceiling:
+added` or `tr_lease_hold.ceiling: already present` in the migration step
+of a successful control-plane deploy at or after its merge: an auditor of
+that release on a database without the column stops committing and
+reaping until the column is there. The release after it, pinned as above,
+turns `RecordCeiling` on.
 
 A field on a front door's or an owner's request (`EchoGranted` on a
 heartbeat) is refused by a node from before it, which decodes strictly. It

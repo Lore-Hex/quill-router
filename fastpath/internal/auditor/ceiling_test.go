@@ -22,7 +22,8 @@ func ceiled(seq int64, auth string, gseq, running int64) record.Record {
 // carrying a stream's ceiling stores it as the row's, the bound a reap of
 // the hold charges up to; a later heartbeat stores the one its record states,
 // none for a record without one. A hand-off's hold carries its ceiling to
-// the row, and keeps it under a newer heartbeat that states none.
+// the row, and a newer heartbeat that states none clears it, as it does a
+// heartbeat's.
 func TestAHoldsRowKeepsAStreamsCeiling(t *testing.T) {
 	put := func(t *testing.T, l *Lease) map[string]store.HoldRow {
 		t.Helper()
@@ -50,7 +51,8 @@ func TestAHoldsRowKeepsAStreamsCeiling(t *testing.T) {
 	snap := &record.Snapshot{GatewaySeq: 2, Hash: sum("h"), Usage: []byte(`{"tokens":2}`), Running: 250,
 		Deadline: deadline}
 	held := []record.HeldHold{{Auth: "h", Estimate: 100, Ceiling: 300, Deadline: deadline, Boot: boot, Snapshot: snap,
-		SnapshotSeq: 1, Basis: []byte("terms")}, {Auth: "n", Estimate: 50, Deadline: deadline, Boot: boot}}
+		SnapshotSeq: 1, Basis: []byte("terms")}, {Auth: "k", Estimate: 100, Ceiling: 300, Deadline: deadline, Boot: boot,
+		Snapshot: snap, SnapshotSeq: 1, Basis: []byte("terms")}, {Auth: "n", Estimate: 50, Deadline: deadline, Boot: boot}}
 	m := load(t, "open")
 	if err := m.LoadWinners(loaded("open").Lease, nil); err != nil {
 		t.Fatal(err)
@@ -60,7 +62,10 @@ func TestAHoldsRowKeepsAStreamsCeiling(t *testing.T) {
 	apply(t, m, Applied, hb(1, "h", 1, 1), chunkRec(2, held...), hb(3, "h", 3, 40),
 		manifestRec(4, digestOf(t, held...), 2))
 	rows = put(t, m)
-	if got := rows["h"]; !got.Ceiling.Valid || got.Ceiling.Int64 != 300 || got.RunningCharge.Int64 != 40 {
+	if got := rows["h"]; got.Ceiling.Valid || got.RunningCharge.Int64 != 40 {
+		t.Fatalf("a handed-off stream's row under a newer heartbeat with no ceiling: %+v", got)
+	}
+	if got := rows["k"]; !got.Ceiling.Valid || got.Ceiling.Int64 != 300 || got.RunningCharge.Int64 != 250 {
 		t.Fatalf("a handed-off stream's row: %+v", got)
 	}
 	if got := rows["n"].Ceiling; got.Valid {
@@ -68,11 +73,11 @@ func TestAHoldsRowKeepsAStreamsCeiling(t *testing.T) {
 	}
 
 	// The ceiling is in the commit, and a member that loads the row has it.
-	again, err := Load(ref, store.Loaded{Lease: loaded("open").Lease, Holds: []store.HoldRow{rows["h"]}}, 2*time.Second)
+	again, err := Load(ref, store.Loaded{Lease: loaded("open").Lease, Holds: []store.HoldRow{rows["k"]}}, 2*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := again.openHolds(); len(got) != 1 || got[0].Ceiling != rows["h"].Ceiling {
+	if got := again.openHolds(); len(got) != 1 || got[0].Ceiling != rows["k"].Ceiling {
 		t.Fatalf("the loaded rows: %+v", got)
 	}
 }

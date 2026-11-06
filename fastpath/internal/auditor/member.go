@@ -380,9 +380,8 @@ func (l *Lease) manifest(r record.Record) {
 			if len(row.Boot) == 0 {
 				row.Boot = older.Boot
 			}
-			if !row.Ceiling.Valid {
-				row.Ceiling = older.Ceiling
-			}
+			// The ceiling is the newer snapshot's, as a heartbeat's is: one
+			// that states none bounds its running charge by the hold.
 		}
 		row.Listed = true
 		l.holds[held.Auth] = &hold{row: row}
