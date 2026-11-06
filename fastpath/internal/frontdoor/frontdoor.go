@@ -218,6 +218,11 @@ type AuthorizeOf struct {
 	// authorize as it did, and refuses a declared one, so owners take it
 	// before front doors send it, and front doors before gateways.
 	OpenHeartbeat bool `json:",omitempty"`
+	// Ceiling is a stream's spend ceiling when above Estimate, the row's
+	// estimate beside the lease's hold (owner.Admission.Ceiling); zero when
+	// they are equal. It is sent only when set, in the order OpenHeartbeat
+	// is: owners and front doors take it before gateways send it.
+	Ceiling int64 `json:",omitempty"`
 }
 
 // Authorized is an authorize's answer: Admitted with the sealed envelope and
@@ -241,7 +246,7 @@ func (f *FrontDoor) keys() [][]byte {
 // Busy at once. A withdrawn front door takes no new request: Busy.
 func (f *FrontDoor) Authorize(ctx context.Context, a AuthorizeOf) Authorized {
 	k := f.cfg.Shards(a.Workspace)
-	if a.Workspace == "" || k < 1 || a.Estimate < 0 || len(a.Boot) == 0 {
+	if a.Workspace == "" || k < 1 || a.Estimate < 0 || a.Ceiling < 0 || len(a.Boot) == 0 {
 		return Authorized{Status: Invalid}
 	}
 	if !f.cfg.Enabled(a.Workspace) {
@@ -269,7 +274,7 @@ func (f *FrontDoor) Authorize(ctx context.Context, a AuthorizeOf) Authorized {
 		}
 		octx, cancel := context.WithTimeout(hops, f.cfg.OwnerWait)
 		got, err := f.cfg.Owners.Authorize(octx, m.Address, OwnerAuthorize{Workspace: a.Workspace, Shard: s,
-			Estimate: a.Estimate, Stream: a.Stream, Boot: a.Boot, OpenHeartbeat: a.OpenHeartbeat})
+			Estimate: a.Estimate, Stream: a.Stream, Boot: a.Boot, OpenHeartbeat: a.OpenHeartbeat, Ceiling: a.Ceiling})
 		short := cut(octx)
 		cancel()
 		switch {

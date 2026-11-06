@@ -875,3 +875,158 @@ Decided by Joseph on 2026-10-30, on this design's first review:
    shadow and decides them only when the edge's member is present. The same
    choice drops the `alert` stage and the 7-day minimum from the E2 key
    windows' gate (`fast-admission-e2-key-windows.md` §8.3).
+
+## 12. The ceiling beside the hold
+
+Plan for §11 item 1's next step, 2026-11-05. With #2337 (open at this
+writing) a stream's reservation r prices at most `HOLD_OUTPUT_TOKENS` of
+its budget, while Stage D still cuts it at its estimate e. A lease cuts it
+at r, so a stream with r < e passes as `stream.hold`, and coding agents'
+streams (32k to 64k output tokens) leave the fast path. Here the admission
+carries e beside r: the lease reserves room for r and the owner cuts the
+stream at e. Line citations are against `origin/main` at `b7bf9cfcf` with
+PR 1 (§12.4) applied; before #2337 a stream's r is its e on both paths
+(`authorize_candidates.py:471-484`, `routingsnapshot/evaluate.go:416-420`),
+so `stream.hold` never passes.
+
+### 12.1 How a running charge is bounded today
+
+- **Admission.** Python sends r as the admission's estimate
+  (`gateway.py:1734`), the edge `Decision.Reservation`
+  (`edge/decide_path.go:329`). The hold keeps it as `h.estimate`, and
+  room is r plus its buffer (`owner/requests.go:143`).
+- **Heartbeat.** The owner refuses a running charge above `h.estimate`
+  (`requests.go:301`). The heartbeat record refuses a snapshot whose
+  running charge passes the record's estimate (`record/record.go:271`,
+  `:317`), and so does a hand-off's held hold (`:338`).
+- **Reap.** The owner reaps at the last running charge through `decide`
+  (`owner/adopt.go:376`, `:403`); the reap record refuses a charge above
+  its estimate (`record.go:275`). The auditor reaps `min(running,
+  estimate)` (`auditor/runtime.go:634`), and `store.Reap` refuses a charge
+  above the hold row's estimate and raises nothing (`store/reap.go:54`,
+  `:128`).
+- **Python.** The heartbeat transaction cuts at `_cap_micro`, e
+  (`storage_gcp_stage_d.py:298`, `usage_exceeds_cap` at `:143`).
+
+So for r < e the owner would cut where Python does not. Hence
+`stream.hold`: Python's `pilot_stream_reason` (`hold_is_ceiling`,
+`gateway.py:1758`; `fastpath_frontdoor.py:594`) and the edge's
+`streamGate` (`edge/decide.go:665`).
+
+### 12.2 What changes
+
+1. **The admission carries e.** `owner.Admission.Ceiling`, zero when e
+   equals r, only for a stream, never below r. `held`, room, the buffer,
+   checkpoints' open sums, the drain log's raise and the envelope stay at
+   r.
+2. **The owner cuts at e.** The heartbeat refuses a running charge above
+   the hold's ceiling. A heartbeat record, a reap record and a hand-off's
+   held hold carry `ceil` (only when above `est`), and a snapshot's running
+   charge and a reap's charge are bounded by it.
+3. **A reap may charge above r.** The owner's `decide` already books a
+   reap's charge above its hold through the shortfall, as a settle's
+   (`requests.go:465-479`). The auditor's reap caps at the ceiling, and
+   `store.Reap` raises the lease's allocation, `door_raised` and the first
+   donor's reservation by `max(charge - estimate, 0)` in the reap's own
+   transaction, as `Append` does for a front door's settle
+   (`store/drain.go:92-110`), and writes it to the row's `door_raise`.
+   `tr_lease_accounted` (`schema/fastpath.sql:235`) is unchanged:
+   `door_raised` becomes every drain-log row's raise, a reap's included.
+   The hold row gains a nullable `ceiling`.
+4. **Front doors send e.** Python and the edge send `Ceiling = estimate`
+   for a stream whose reservation is below it, and `stream.hold` goes.
+
+**The envelope does not carry e.** §11 item 1 named it. A front door
+reads only the hold from it, for the drain log's raise
+(`frontdoor/frontdoor.go:525`), and `Open` refuses an envelope with a
+field it does not know (`frontdoor/envelope.go:71`), so e there would
+cost a release of its own for no reader.
+
+### 12.3 Money
+
+A stream's uncovered in-flight cost, `max(0, actual - r)`, reaches e - r
+at a reap and has no bound at a settle, as for any catalog request.
+
+- **Settle above r: covered.** The owner's `decide` puts what the lease
+  has no room for into the shortfall total and the allocation
+  (`requests.go:465-479`). The owner's larger-of write and the auditor's
+  raise in the booking commit reserve it on the first donor shard,
+  whatever its headroom. A shard left negative is covered from the
+  others, or every shard is marked in debt, and money coming in repays it
+  first (batched settlement §4.2, §4.7). A front door's drain-log settle
+  raises in its append (`drain.go:92-110`). Every catalog request has
+  used these since #2065, its reservation below its estimate and its
+  settle uncapped. `CreditDebt` models a settle above its hold (`Charges`
+  {0, 3} against a hold of 1) under `HoldsCoveredInSpanner`,
+  `ShortfallIsTheDeficit`, `DebtMarksEveryShard` and `RepaysDebtFirst`.
+- **An owner's reap above r: covered** by the same `decide`, once the
+  record carries the ceiling.
+- **The auditor's reap above r: not covered today.** `CreditDebt`'s
+  assumption A2 is that a reap charges at most its hold
+  (`proofs/CreditDebt.tla:73-75`); its mutant `reap-above-the-hold`
+  breaks `HoldsCoveredInSpanner` (`proofs/manifest.toml:1758-1769`), since
+  `AuditorReap` books with no raise (`CreditDebt.tla:601-609`). Batched
+  settlement says the same: "A reap never needs it" (§4.2, `:390`) and the
+  assumption list (`:2208`). Item 3's raise closes it.
+- **Python's path carries e - r once #2337 is deployed.** A Python-path
+  stream then reserves r and is cut at e. Its settle and its snapshot reap
+  book the whole charge against the recorded hold
+  (`storage_gcp_authorize.py:1585-1591`), and the overrun is taken from the
+  balance. The lease adds no exposure that path lacks; on both the trust
+  allowance bounds holds, not overruns. A grant counts a listed draining
+  lease's open holds at their estimates, r (`store/grant.go:304-316`), as
+  it counts every catalog hold whose settle may pass r; a reap's raise is
+  an overrun, like a settle's, and PR 2 keeps the grant reading r.
+
+**Invariants.** §4.7's per-shard identity and `HoldsCoveredInSpanner`
+keep their statements. `AllocationAccounted` keeps its statement too, once
+`DoorRaised(l)` (`CreditDebt.tla:779`) counts a reaped hold's raise. No
+new invariant: the existing `HoldsCoveredInSpanner` is the claim an
+unraised reap above the hold breaks. `TerminalOrder` and `AuditorCommit`
+bound no amount (`ReapAtLastSnapshot` is about which snapshot), and
+`LeaseLifecycle` and `KeyCapFence` read no charge, so only `CreditDebt`
+changes:
+
+- A2 becomes "a reap charges at most its hold's ceiling, and what passes
+  the hold is raised in the reap's own transaction", and the two comments
+  that state the old one say so too: WHAT IS ABSTRACTED ("which is at most
+  one", `CreditDebt.tla:45`) and `CreditDebt.cfg:16-18` ("A reap charges 0
+  or 1, at most its hold");
+- `AuditorReap` raises `Pos(a - 1)` as `FrontDoorAppend` does
+  (`CreditDebt.tla:505-521`), `DoorRaised` counts it, and `Reaps` becomes
+  {0, 1, 3} in every configuration but `refund`, which pins `Reaps` to {0};
+- `reap-above-the-hold` becomes `reap-without-its-raise`, breaking
+  `HoldsCoveredInSpanner` on the main configuration, where the sibling
+  mutants run, and a new mutant leaves the
+  reap's raise out of `DoorRaised`, breaking `AllocationAccounted`;
+- the guard table is swept again (`proofs/guard_sweep.py`).
+
+### 12.4 PRs
+
+Each merges dark. A wire field is taken by owners and front doors before
+gateways send it, as `OpenHeartbeat` was (`frontdoor/http.go:125` decodes
+strictly). A record field is read by every auditor before an owner writes
+it (`docs/runbooks/fastpath-deploy.md`, "A record field the auditors must
+read first").
+
+| # | Where | What | Deploy |
+|---|---|---|---|
+| 1 | Go | `Admission.Ceiling`, `AuthorizeOf.Ceiling` and `OwnerAuthorize.Ceiling` (omitempty); the owner refuses a ceiling below the hold, a negative one or one on a hold that is not a stream, and keeps it on the hold; the heartbeat bound stays r. Tests: the hold keeps the ceiling and takes room for r, a heartbeat past r is still refused and the records are byte for byte those without a ceiling; the ceiling crosses the network and the process; a node from before refuses only an authorize that carries one | any order: no gateway sends it |
+| 2 | Go, proofs, schema | records read `ceil` (heartbeat, reap, held hold), bounded as §12.2 item 2; the auditor's member keeps it from heartbeat and hand-off records (`auditor/member.go:242`, `:356`) in `tr_lease_hold.ceiling`, its load and commit included, and reaps at `min(running, ceiling)`; `store.Reap`'s raise (item 3); `Config.RecordCeiling`, off; `CreditDebt` as §12.3; batched settlement §4.2 and its assumption list rewritten. Tests: record validation both ways, `store.Reap` against the emulator (the raise on the lease, the donor and the row, none at or below the hold), the auditor's reap, the DDL conformance check and `test_spanner_ddl_carriers.py` | the column, then every auditor and owner |
+| 3 | Go | once 2 is pinned on every auditor and owner: `RecordCeiling` on by default; the heartbeat is bounded at the ceiling only with `RecordCeiling` on, since without it the owner would write a snapshot above `est` with no `ceil`, which record validation refuses (`record.go:317`); with it the heartbeat record, the hand-off and the reap record carry it; loadgen plays a stream past its hold. Tests: a running charge between r and e taken and recorded with `ceil`, above e refused; an owner's reap above r raises the shortfall by exactly the lease's lack; `RecordCeiling` off writes the records of 1 | the release pinned fleet-wide |
+| 4 | Go + Python + vectors | a setting `fastpath_stream_ceiling` (off) and the edge policy's optional member of that name, Go accepting it first; with it, Python's client and the edge send `Ceiling` for a stream whose reservation is below its estimate, and `stream.hold` no longer passes. `authorize_vectors.py` records `ceiling_microdollars` beside `reservation_microdollars`, and the two `pass:stream.hold` cases both ways; the edge's tests hold its `AuthorizeOf.Ceiling` to Python's | dark until the runbook finds #2337 deployed and 3 pinned on every owner, front door and auditor |
+| 5 | Go + Python | once the setting has been on through a count gate of leased streams past the bound with zero divergence: the setting, the member and `stream.hold` removed | after the gate |
+
+**Rollback.** Turn the setting off first; once the hold's life and the
+grace have passed no hold has a ceiling. While the setting is on, owners
+and front doors stay at 1 or later: one from before refuses an authorize
+carrying `Ceiling` with a 400, which a front door counts as an owner it
+cannot reach (`frontdoor.go:283-285`) and Python as no answer. While a
+hold may have a ceiling, an owner below 3 cuts its stream at r (refused,
+not overcharged). Auditors stay at 2 or later until every record carrying
+`ceil` has been applied (each lease's commit version is past it, or the
+lease is closed): one from before refuses such a record (`record.go:185`)
+and stops the lease at a gap, losing the charge after it
+(`docs/runbooks/fastpath-deploy.md`, "A record field the auditors must
+read first"). An unapplied record can outlive the hold's life plus the
+grace.
