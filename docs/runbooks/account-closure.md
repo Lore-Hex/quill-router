@@ -4,7 +4,7 @@ Customers can open https://trustedrouter.com/console/account/preferences and
 select **Delete account**, or go directly to
 https://trustedrouter.com/console/account/delete after signing in.
 
-The confirmation explains that this disables access, not personal-data erasure.
+The confirmation explains the access, workspace, key and credit effects of closure.
 It requires an active cookie session, same-origin POST, a session-bound CSRF
 token, the exact word `DELETE`, and a separate acknowledgment checkbox. An API
 key cannot close an account, and the form cannot select a different user.
