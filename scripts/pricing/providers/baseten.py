@@ -25,6 +25,10 @@ from scripts.pricing.base import (
 )
 from scripts.pricing.manifest import write_discovered_chat_manifest
 from scripts.pricing.openai_catalog import discover_openai_chat_catalog
+from trusted_router.provider_contracts import (
+    BASETEN_SYSTEMONE_HOLD_REASON,
+    BASETEN_SYSTEMONE_PREFIX,
+)
 from trusted_router.provider_lifecycle import provider_model_retired
 
 SLUG = "baseten"
@@ -110,6 +114,12 @@ def fetch() -> ProviderPricingResult:
             str(row.get("upstream_id") or ""),
         )
     }
+    # https://www.baseten.co/resources/changelog/elephant-1-and-mammoth-1-available-on-baseten
+    # These use /v1/systemone despite the feed's text output modality.
+    for row in discovered.values():
+        if str(row["upstream_id"]).startswith(BASETEN_SYSTEMONE_PREFIX):
+            row.update(model_type="decision", endpoints=["decide"], routable=False,
+                       routable_reason=BASETEN_SYSTEMONE_HOLD_REASON)
     _DISCOVERED_MANIFEST_ROWS = discovered
 
     notes: list[str] = []
@@ -133,4 +143,9 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         manifest_path=MANIFEST_PATH,
         discovered_rows=_DISCOVERED_MANIFEST_ROWS,
         source_url=URL,
+        operator_hold_reasons={
+            model_id: BASETEN_SYSTEMONE_HOLD_REASON
+            for model_id, row in _DISCOVERED_MANIFEST_ROWS.items()
+            if str(row["upstream_id"]).startswith(BASETEN_SYSTEMONE_PREFIX)
+        },
     )
