@@ -425,3 +425,82 @@ func TestAStreamsCeilingIsKeptAndRaisesNothingYet(t *testing.T) {
 		t.Fatalf("refused admissions left %+v", b)
 	}
 }
+
+// TestRecordCeilingWritesAStreamsCeiling (docs/design/fast-admission-streams.md
+// section 12.4, PR 2): with RecordCeiling on, a stream admitted with a
+// ceiling above its hold has its ceiling on its heartbeat records, its hold
+// in a hand-off and its reap record, each of which an auditor reads as the
+// bound on the running charge; a stream without one, and every record with
+// RecordCeiling off, carries none. The heartbeat's bound stays the hold.
+func TestRecordCeilingWritesAStreamsCeiling(t *testing.T) {
+	ctx := context.Background()
+	ceilings := func(rs []record.Record) map[string]int64 {
+		out := map[string]int64{}
+		for _, r := range rs {
+			switch r.Kind {
+			case record.Heartbeat, record.Reap:
+				out[string(r.Kind)+" "+r.Auth] = r.Ceiling
+			case record.Handoff:
+				for _, h := range r.Holds {
+					out["held "+h.Auth] = h.Ceiling
+				}
+			}
+		}
+		return out
+	}
+	for _, on := range []bool{true, false} {
+		// A heartbeat and a reap.
+		f, _, _ := adoptFixture(t, func(c *Config) { c.RecordCeiling = on })
+		got, err := f.lease.Admit(Admission{Estimate: 500, Stream: true, Boot: boot, Ceiling: 800})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ceiled, plain := got.Auth, f.admit(t, 100, true)
+		var granted time.Time
+		for _, a := range []string{ceiled, plain} {
+			if granted, err = f.lease.Heartbeat(ctx, a, HeartbeatOf{GatewaySeq: 1, Hash: sum("h1"), Usage: 10,
+				Running: 90, Basis: []byte("terms")}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := f.lease.Heartbeat(ctx, ceiled, HeartbeatOf{GatewaySeq: 2, Hash: sum("h2"), Usage: 11,
+			Running: 501, Echoed: granted}); !errors.Is(err, ErrRejected) {
+			t.Fatalf("RecordCeiling %v: a running charge past the hold: %v, want %v", on, err, ErrRejected)
+		}
+		f.clock.advance(granted.Add(time.Minute).Sub(start))
+		renewAndReap(t, f)
+		want := map[string]int64{"hb " + ceiled: 0, "hb " + plain: 0, "reap " + ceiled: 0, "reap " + plain: 0}
+		if on {
+			want["hb "+ceiled], want["reap "+ceiled] = 800, 800
+		}
+		if got := ceilings(f.log.records(t, "lease-1")); fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Fatalf("RecordCeiling %v: the ceilings recorded %v, want %v", on, got, want)
+		}
+
+		// A hand-off.
+		g := newFixture(t, 1000, nil, func(c *Config) { c.Grace, c.RecordCeiling = time.Minute, on })
+		l, err := g.owner.Take("lease-2", "ws-1", 1000, start.Add(3*time.Hour))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err = l.Admit(Admission{Estimate: 500, Stream: true, Boot: boot, Ceiling: 800})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ceiled, plain = got.Auth, admitOn(t, l, 100, true)
+		if _, err := l.Heartbeat(ctx, ceiled, HeartbeatOf{GatewaySeq: 1, Hash: sum("s1"), Usage: 1, Running: 1,
+			Basis: []byte("t")}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := l.handoff(ctx); err != nil {
+			t.Fatal(err)
+		}
+		want = map[string]int64{"hb " + ceiled: 0, "held " + ceiled: 0, "held " + plain: 0}
+		if on {
+			want["hb "+ceiled], want["held "+ceiled] = 800, 800
+		}
+		if got := ceilings(g.log.records(t, "lease-2")); fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Fatalf("RecordCeiling %v: the hand-off's ceilings %v, want %v", on, got, want)
+		}
+	}
+}

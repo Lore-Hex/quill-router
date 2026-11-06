@@ -332,6 +332,7 @@ func (l *Lease) Heartbeat(ctx context.Context, auth string, hb HeartbeatOf) (tim
 	if l.o.cfg.RecordReapFloor {
 		r.Snapshot.ReapDeadline = reapDeadline
 	}
+	r.Ceiling = l.recordCeiling(h)
 	if !h.heartbeat {
 		// The hold's first heartbeat record carries the reap's basis and
 		// the authorization's boot binding, the owner's statement of it
@@ -439,6 +440,15 @@ type terminalOf struct {
 	snapSeq int64
 }
 
+// recordCeiling is the ceiling a hold's records carry: a stream's, when
+// above its hold and Config.RecordCeiling is on, else none.
+func (l *Lease) recordCeiling(h *hold) int64 {
+	if l.o.cfg.RecordCeiling && h.ceiling > h.estimate {
+		return h.ceiling
+	}
+	return 0
+}
+
 // decide decides an undecided auth's terminal, with l.mu held (§4.2,
 // §4.5): the first wins. The decision moves the books once its record is
 // handed over: the hold's estimate out of held, a settle's or a reap's
@@ -480,6 +490,9 @@ func (l *Lease) decide(auth string, t terminalOf) (*sent, error) {
 		Digest: t.digest, Drain: t.drain, SnapshotSeq: t.snapSeq}
 	if t.kind == record.Refund || t.kind == record.Release {
 		r.Boot = h.boot
+	}
+	if t.kind == record.Reap {
+		r.Ceiling = l.recordCeiling(h)
 	}
 	s, err := l.handOver(r, freed)
 	if err != nil {

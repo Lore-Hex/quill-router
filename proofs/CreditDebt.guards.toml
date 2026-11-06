@@ -1,15 +1,15 @@
 # Every guard of every action, and what breaks when it alone is removed.
 # Written by proofs/guard_sweep.py. Each `why` is written by hand and kept.
 
-inputs_sha256 = "e747376896b4e98a435b4d75a4ed8ed70c278cc7ef8dc039a03cb3fe18273703"
+inputs_sha256 = "5e11d541eb277c98d4fa4cca2fb59e27a4d1d2f5f42de2afdee440cabc1cb23c"
 
 # The distinct states each configuration reaches with every guard in place.
 [states]
-"CreditDebt.cfg" = 82439
-"CreditDebt.money.cfg" = 309212
+"CreditDebt.cfg" = 90409
+"CreditDebt.money.cfg" = 326603
 "CreditDebt.refund.cfg" = 5605
-"CreditDebt.silent.cfg" = 41731
-"CreditDebt.two.cfg" = 164733
+"CreditDebt.silent.cfg" = 45163
+"CreditDebt.two.cfg" = 182973
 
 [[guard]]
 action = "Grant"
@@ -379,7 +379,7 @@ A row for a hold whose owner's record is already stored loses to it (BookedOnce)
 [[guard]]
 action = "FrontDoorAppend"
 text = '''/\ ~hold[h].reaped'''
-breaks = "BookedOnce"
+breaks = "AllocationAccounted"
 
 [[guard]]
 action = "MarkDraining"

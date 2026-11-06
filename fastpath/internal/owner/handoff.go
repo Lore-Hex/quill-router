@@ -162,7 +162,8 @@ func (l *Lease) handoff(ctx context.Context) (*sent, error) {
 			return nil, nil
 		}
 		h := l.holds[auth]
-		held := record.HeldHold{Auth: h.auth, Estimate: h.estimate, Deadline: h.endOfLife.UTC(), Boot: h.boot}
+		held := record.HeldHold{Auth: h.auth, Estimate: h.estimate, Ceiling: l.recordCeiling(h),
+			Deadline: h.endOfLife.UTC(), Boot: h.boot}
 		if h.heartbeat {
 			usage, err := json.Marshal(map[string]int64{"tokens": h.usage})
 			if err != nil {

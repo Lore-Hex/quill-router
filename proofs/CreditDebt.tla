@@ -42,7 +42,8 @@
 (* WHAT IS ABSTRACTED                                                       *)
 (*                                                                          *)
 (*   - Every hold's estimate is one unit. A terminal charges any amount in  *)
-(*     Charges; a reap charges any amount in Reaps, which is at most one.   *)
+(*     Charges; a reap charges any amount in Reaps, at most its hold's      *)
+(*     ceiling, which may be above the hold.                                *)
 (*   - A lease has one donor shard. The design spreads an allocation over   *)
 (*     several; the identity is per shard either way.                       *)
 (*   - Time. When a lease expires, when its boundary may be stored and      *)
@@ -70,9 +71,11 @@
 (*   A1. The log stores a lease's records in the order its owner decided    *)
 (*       them: they share one ordering key. What the auditor does with a    *)
 (*       gap is AuditorCommit's. Mutant store-out-of-order.                 *)
-(*   A2. A reap charges at most its hold. A heartbeat's running charge is   *)
-(*       capped at the hold (section 4.8), and a reap charges the last one. *)
-(*       Mutant reap-above-the-hold.                                        *)
+(*   A2. A reap charges at most its hold's ceiling, and what passes the     *)
+(*       hold is raised in the reap's own transaction. A heartbeat's        *)
+(*       running charge is capped at the ceiling (section 4.8; fast         *)
+(*       admission streams section 12), and a reap charges the last one.    *)
+(*       Mutant reap-without-its-raise.                                     *)
 (*                                                                          *)
 (* THE TWO CLAIMS OF SECTION 4.2                                            *)
 (*                                                                          *)
@@ -120,9 +123,10 @@
 (*   landed.                                                                *)
 (*                                                                          *)
 (*   AllocationAccounted. A lease's allocation is its grant, plus the       *)
-(*   shortfall total stored and the front doors' raises, less the returns   *)
-(*   applied (the history variable `returned`). Every raise of the          *)
-(*   allocation, and of the reservation behind it, is one of those.         *)
+(*   shortfall total stored and the raises of the front doors' appends and  *)
+(*   the auditor's reaps, less the returns applied (the history variable    *)
+(*   `returned`). Every raise of the allocation, and of the reservation     *)
+(*   behind it, is one of those.                                            *)
 (*                                                                          *)
 (* THE CLAIMS OF SECTION 4.7 AND INVARIANT 11                               *)
 (*                                                                          *)
@@ -160,7 +164,8 @@ CONSTANTS
     Allowance,    \* the trust tier's allowance
     Floor,        \* headroom a grant leaves outside leases
     Charges,      \* what a settle may charge for a hold
-    Reaps,        \* what a reap may charge: a heartbeat's running charge
+    Reaps,        \* what a reap may charge: a heartbeat's running charge,
+                  \* at most the hold's ceiling
     MaxHolds,     \* fast admissions in a behaviour
     MaxSync,      \* synchronous reservations in a behaviour
     MaxPays,      \* payments in a behaviour
@@ -532,19 +537,23 @@ MarkDraining(l) ==
                     log, owner, write, due, bounds >>
 
 \* What booking a charge does to the lease's donor shard: matched, so that
-\* the shard's headroom does not move.
-Book(l, a, rise) ==
+\* the shard's headroom does not move. `over` is a raise that is not a
+\* shortfall, what a reap's charge passes its hold by, which raises the
+\* allocation and the reservation behind it in the same transaction.
+BookRaised(l, a, rise, over) ==
     /\ LET d  == donor[l]
-           r2 == [reserved EXCEPT ![d] = @ + rise - a]
+           r2 == [reserved EXCEPT ![d] = @ + rise + over - a]
            u2 == [usage EXCEPT ![d] = @ + a]
            sq == Squared(credits, u2, r2)
        IN /\ sfStored' = [sfStored EXCEPT ![l] = @ + rise]
-          /\ alloc' = [alloc EXCEPT ![l] = @ + rise]
+          /\ alloc' = [alloc EXCEPT ![l] = @ + rise + over]
           /\ booked' = [booked EXCEPT ![l] = @ + a]
           /\ reserved' = r2
           /\ usage' = u2
           /\ credits' = sq.c
           /\ mark' = sq.m
+
+Book(l, a, rise) == BookRaised(l, a, rise, 0)
 
 \* The next stored record. A terminal's shortfall total is stored first, then
 \* its charge is booked.
@@ -597,14 +606,16 @@ AuditorApplyRow(l, h) ==
     /\ UNCHANGED << st, donor, sealed, returned, out, log, owner, write, due, bounds >>
 
 \* A hold with no terminal anywhere is reaped at its last heartbeat's
-\* running charge.
+\* running charge, at most its ceiling. What that passes the hold by is
+\* raised in the reap's own transaction, on the allocation and the first
+\* donor's reservation, as a front door's append raises its settle.
 AuditorReap(l, h, a) ==
     /\ sealed[l]
     /\ Live(l)
     /\ h \in Mine(l)
     /\ ~Applied(h)
     /\ hold[h].row = "none"
-    /\ Book(l, a, 0)
+    /\ BookRaised(l, a, 0, Pos(a - 1))
     /\ hold' = [hold EXCEPT ![h].reaped = TRUE, ![h].b = a]
     /\ UNCHANGED << sync, synced, st, donor, sealed, returned, out, log, owner, write, due, bounds >>
 
@@ -773,11 +784,12 @@ StoredShortfallIsTheLarger ==
              /\ sfStored'[l] # sfStored[l] => ended \/ applied]_vars
 
 \* A lease's allocation is its grant, plus the shortfall total stored and
-\* the front doors' raises, less the returns applied: every raise of the
-\* allocation, and of the reservation behind it, is one of those, at the
-\* amount it names.
+\* the raises of the drain log's rows, a front door's append's and a reap's,
+\* less the returns applied: every raise of the allocation, and of the
+\* reservation behind it, is one of those, at the amount it names.
 DoorRaised(l) ==
-    SumOver([h \in Holds |-> IF hold[h].row # "none" THEN Pos(hold[h].ra - 1) ELSE 0], Mine(l))
+    SumOver([h \in Holds |-> (IF hold[h].row # "none" THEN Pos(hold[h].ra - 1) ELSE 0)
+                              + (IF hold[h].reaped THEN Pos(hold[h].b - 1) ELSE 0)], Mine(l))
 AllocationAccounted ==
     \A l \in Leases :
         Live(l) => alloc[l] = LeaseSize + sfStored[l] + DoorRaised(l) - returned[l]

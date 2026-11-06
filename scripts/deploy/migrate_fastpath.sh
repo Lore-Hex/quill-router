@@ -9,8 +9,9 @@
 # infra.sh, migrate_request_retention.sh, migrate_spend_lease.sh), and this
 # leaves them as they are.
 #
-# Idempotent: every table and index is guarded by an INFORMATION_SCHEMA
-# existence check, and every index is checked read-write on every run. The
+# Idempotent: every table, index and later column is guarded by an
+# INFORMATION_SCHEMA existence check, and every index is checked read-write
+# on every run. The
 # tables are new and empty: nothing reads or writes them until a fast path
 # node runs, and none admits for a workspace the switch, tr_fastpath_workspace,
 # does not enable, which none is. tr_fastpath_edge_decide, empty, has no
@@ -22,11 +23,18 @@
 # Each statement is its own schema update, as in the other migrations: the
 # conformance extractor (tests/conformance/spanner_schema_source.py) reads
 # one statement per dispatch. So on the first run each index is added to a
-# table made by an earlier update: seventeen updates, each waited on, and six
+# table made by an earlier update: eighteen updates, each waited on, and six
 # of them index builds, which add schema versions Spanner keeps and throttles
 # on, and whose version changes can abort a transaction in flight, which its
 # client retries. The tables are empty and nothing reads or writes them yet.
 # Reruns apply nothing.
+#
+# A column a table gains later is nullable and has no default, so it needs
+# no backfill, and a database whose table predates it gets it from the same
+# check on its next run: tr_lease_hold.ceiling, a stream's spend ceiling
+# (docs/design/fast-admission-streams.md section 12.4, PR 2), which every
+# auditor and owner of that release reads and writes, so it is applied
+# before any of them is deployed.
 #
 # Usage:
 #   SPANNER_INSTANCE_ID=... SPANNER_DATABASE_ID=... [GCP_PROJECT_ID=...] \
@@ -62,6 +70,15 @@ apply_ddl() {
   log "applying: $1"
   gcloud spanner databases ddl update "$DATABASE" \
     --instance="$INSTANCE" "${PROJECT_ARG[@]}" --ddl="$1"
+}
+
+column_exists() {
+  local table="$1" column="$2" n
+  n=$(gcloud spanner databases execute-sql "$DATABASE" \
+        --instance="$INSTANCE" "${PROJECT_ARG[@]}" \
+        --sql="SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='' AND table_name='${table}' AND column_name='${column}'" \
+        --format='value(rows[0])') || exit $?
+  [ "${n:-0}" != "0" ]
 }
 
 wait_index_read_write() {
@@ -196,6 +213,13 @@ else
     ) PRIMARY KEY (workspace_id, lease_id, authorization_id),
     INTERLEAVE IN PARENT tr_lease ON DELETE CASCADE"
   log "tr_lease_hold: created"
+fi
+
+if column_exists tr_lease_hold ceiling; then
+  log "tr_lease_hold.ceiling: already present"
+else
+  apply_ddl "ALTER TABLE tr_lease_hold ADD COLUMN ceiling INT64"
+  log "tr_lease_hold.ceiling: added"
 fi
 
 if table_exists tr_lease_handoff; then

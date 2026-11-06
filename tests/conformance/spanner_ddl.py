@@ -9,7 +9,7 @@ SOURCE_DIGESTS = {'scripts/deploy/infra.sh': '259931cd73d94d0f3fc535b5f8a6ef523a
  'scripts/deploy/migrate_async_settle_admission.sh': '1fac3e0df16cfa720f4d385a4018e2b350c08a346d4951cf53ca6d8e863aeb1b',
  'scripts/deploy/migrate_async_settle_drain_health.sh': '588828c2e795532cf485fd3c771bf524a133015d57e0bdfad0d3208fc62bfb61',
  'scripts/deploy/migrate_entity_ttl.sh': 'ad4f59b3608ff39a158244b71405ed427b5e47542665afb85370afd2cbebaa9f',
- 'scripts/deploy/migrate_fastpath.sh': '865106b0e630a97c65212fc9be196743fee6c570f999b652d498d9022e63a7e6',
+ 'scripts/deploy/migrate_fastpath.sh': '6a8de07386bf6b0db60e2876488c18481f82c3e391f999df27ced179b7b56f6b',
  'scripts/deploy/migrate_gateway_request_index.sh': '5b9a4b18007649f3108214ab2274d216b989909a5098cf38944cad7c7ad480f2',
  'scripts/deploy/migrate_generation_records.sh': 'de31377ce0ddc13926509564bf93426edb3f5fe897072ef9886db160864c0951',
  'scripts/deploy/migrate_money_primitives.sh': 'a35e4012706fa88f48be8f8d6b5abc7a3f828d36bceea59191784b58007d7e41',
@@ -257,6 +257,7 @@ DDL = ('CREATE TABLE tr_entities (kind STRING(64) NOT NULL, id STRING(512) NOT N
  'ALTER TABLE tr_entities ADD COLUMN ephemeral_expires_at TIMESTAMP AS (CASE WHEN kind = '
  "'rate_limit' THEN SAFE.TIMESTAMP_SECONDS(SAFE_CAST(JSON_QUERY(body, '$.expires_at') AS "
  'INT64)) END) STORED',
+ 'ALTER TABLE tr_lease_hold ADD COLUMN ceiling INT64',
  'ALTER TABLE tr_entities ADD COLUMN kid STRING(43)',
  'ALTER TABLE tr_entities ADD COLUMN att_sha256 STRING(43)',
  'ALTER TABLE tr_gateway_authorization ADD COLUMN spend_lease_id STRING(64)',
