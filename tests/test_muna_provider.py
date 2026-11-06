@@ -146,19 +146,28 @@ def test_registration_privacy_secret_wiring_and_routes():
     root = Path(__file__).resolve().parents[1]
     assert "MUNA_API_KEY:trustedrouter-muna-api-key" in (root / ".github/workflows/refresh-prices.yml").read_text()
     assert 'ensure_secret_from_env_file "MUNA_API_KEY" "trustedrouter-muna-api-key"' in (root / "scripts/deploy/secrets.sh").read_text()
-    for model_id, native in (("qwen/qwen3.8-27b", "qwen/qwen-3.8-27b"),
-                             ("google/gemma-4-26b-a4b-it", "google/gemma-4-26b-a4b-it")):
-        endpoint = MODEL_ENDPOINTS[f"{model_id}@muna/prepaid"]
-        assert endpoint.upstream_id == native and endpoint.usage_type == "Credits"
-        assert "tools" in endpoint.supported_parameters
-        assert "tool_choice" not in endpoint.supported_parameters
-        assert endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens is not None
+    rows = json.loads(p.MANIFEST_PATH.read_text())["models"]
+    assert len(rows) == 3
+    for row in rows:
+        model_id = row["id"]
+        assert row["routable"] is False
+        assert row["routable_reason"] == "provider-canary-failed"
+        assert row["cached_input_token_price_per_m"] > 0
+        assert f"{model_id}@muna/prepaid" not in MODEL_ENDPOINTS
         assert f"{model_id}@muna/byok" not in MODEL_ENDPOINTS
 
 
-def test_public_page_includes_cache_and_retention_exception(client):
+def test_committed_quarantines_require_live_canary_before_reactivation():
+    from scripts.pricing.manifest import models_requiring_canary
+
+    ids = {row["id"] for row in json.loads(p.MANIFEST_PATH.read_text())["models"]}
+    assert models_requiring_canary(p.MANIFEST_PATH, ids) == ids
+
+
+def test_public_page_keeps_retention_disclosure_without_unavailable_routes(client):
     response = client.get("/providers/muna")
     assert response.status_code == 200
-    for text in ("Muna", "qwen3.8-27b", "Cached", "30 days", "https://muna.ai/zdr", "United States"):
+    for text in ("Muna", "30 days", "https://muna.ai/zdr", "United States"):
         assert text in response.text
+    assert 'href="/models/qwen/qwen3.8-27b"' not in response.text
     assert "yusuf@muna.ai" not in response.text
