@@ -1076,6 +1076,135 @@ func TestAStreamedAnswerIsNeverHeldBack(t *testing.T) {
 	h.drain(t, 1)
 }
 
+// TestAnAnswerAheadOfTheTransportsLastBodyReadArrivesWhole: Go's transport
+// writes a body of known length and then reads it once more, to check that
+// nothing is past it. Python can answer before that read, and the server,
+// writing the answer's headers to the enclave, closes the body it has read
+// to its end; the read must still find the body ended, or the transport
+// drops its connection to Python in the middle of the answer. The read is
+// held here until the enclave has Python's first bytes, as a write
+// goroutine the scheduler leaves waiting would be; on CI, beside the TLC
+// comparisons, TestAStreamedAnswerIsNeverHeldBack failed so. The cases:
+// unsigned with the shadow off, unsigned through the shadow's tap, and with
+// no internal token.
+func TestAnAnswerAheadOfTheTransportsLastBodyReadArrivesWhole(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		shadow, token bool
+	}{
+		{"unsigned", false, true},
+		{"unsigned_tapped", true, true},
+		{"no_token", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := &http.Transport{DisableCompression: true}
+			t.Cleanup(base.CloseIdleConnections)
+			held := lastReadHeld{base: base, release: make(chan struct{}), result: make(chan error, 1)}
+			h := newSnapshotEdge(t, tc.shadow, func(cfg *Config) { cfg.Transport = held })
+			if tc.shadow {
+				h.serveGolden(t, h.clock.now().Unix()+60)
+				h.poll(t)
+			}
+			rest := make(chan struct{})
+			var once, heldOnce sync.Once
+			t.Cleanup(func() { once.Do(func() { close(rest) }) })
+			t.Cleanup(func() { heldOnce.Do(func() { close(held.release) }) })
+			h.python.onAuthorize(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Trailer", "X-Python-Trailer")
+				w.WriteHeader(http.StatusOK)
+				_, _ = io.WriteString(w, `{"data":`)
+				w.(http.Flusher).Flush()
+				<-rest
+				_, _ = io.WriteString(w, `{}}`)
+				w.Header().Set("X-Python-Trailer", "done")
+			})
+			req, err := http.NewRequest(http.MethodPost, h.server.URL+"/internal/gateway/authorize",
+				strings.NewReader(`{"model":"m"}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.token {
+				req.Header.Set(TokenHeader, token)
+			}
+			resp, err := plainClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { resp.Body.Close() })
+			first := make([]byte, len(`{"data":`))
+			read := make(chan error, 1)
+			go func() {
+				_, err := io.ReadFull(resp.Body, first)
+				read <- err
+			}()
+			select {
+			case err := <-read:
+				if err != nil || string(first) != `{"data":` {
+					t.Fatalf("the first bytes: %q %v", first, err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("no first bytes")
+			}
+			// The server wrote the answer's headers before these bytes, and
+			// closed the body as it did; the transport's last read comes now.
+			heldOnce.Do(func() { close(held.release) })
+			select {
+			case err := <-held.result:
+				if err != io.EOF {
+					t.Fatalf("the transport's read past the body's length got %v, not its end", err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("the transport made no read past the body's length")
+			}
+			once.Do(func() { close(rest) })
+			got, err := io.ReadAll(resp.Body)
+			if err != nil || string(got) != `{}}` || resp.Trailer.Get("X-Python-Trailer") != "done" {
+				t.Fatalf("the rest %q %v, trailer %v", got, err, resp.Trailer)
+			}
+		})
+	}
+}
+
+// lastReadHeld is a transport that holds a request body's read past the
+// body's declared length until release is closed, and gives that read's
+// error to result.
+type lastReadHeld struct {
+	base    http.RoundTripper
+	release chan struct{}
+	result  chan error
+}
+
+func (l lastReadHeld) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.Body == nil || r.ContentLength <= 0 {
+		return l.base.RoundTrip(r)
+	}
+	out := r.Clone(r.Context())
+	out.Body = &pastLengthHeld{ReadCloser: r.Body, left: r.ContentLength, release: l.release, result: l.result}
+	return l.base.RoundTrip(out)
+}
+
+type pastLengthHeld struct {
+	io.ReadCloser
+	left    int64
+	release <-chan struct{}
+	result  chan<- error
+}
+
+func (b *pastLengthHeld) Read(p []byte) (int, error) {
+	if b.left > 0 {
+		n, err := b.ReadCloser.Read(p)
+		b.left -= int64(n)
+		return n, err
+	}
+	<-b.release
+	n, err := b.ReadCloser.Read(p)
+	select {
+	case b.result <- err:
+	default:
+	}
+	return n, err
+}
+
 // TestAComparatorThatPanicsCountsItAndTheEdgeServesOn: an observation that
 // fails is counted as passed, never a crash of the node.
 func TestAComparatorThatPanicsCountsItAndTheEdgeServesOn(t *testing.T) {

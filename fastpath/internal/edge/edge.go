@@ -404,6 +404,11 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r = r.WithContext(withCaller(r))
+	// Once read to its end, the body stays at it for the transport's last
+	// read (eofHeld).
+	if r.Body != nil && r.Body != http.NoBody {
+		r.Body = &eofHeld{ReadCloser: r.Body}
+	}
 	if !e.tokenOK(r) {
 		e.proxy.ServeHTTP(w, r)
 		return
@@ -481,6 +486,29 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	out = e.beginFull(out, at, body, seen)
 	e.forward(w, out, pass)
+}
+
+// eofHeld is a request body that, once a read of it has said io.EOF, says
+// io.EOF again without reading its source. Go's transport writes a body of
+// known length and then reads once more, to check that nothing is past it.
+// Python can answer before that read, and the server, writing the answer's
+// headers to the enclave, closes a body read to its end: the read would
+// fail, and the transport would drop its connection to Python in the middle
+// of the answer it is passing on
+// (TestAnAnswerAheadOfTheTransportsLastBodyReadArrivesWhole). Its reads come
+// one at a time, the edge's and then the transport's, so eof needs no lock.
+type eofHeld struct {
+	io.ReadCloser
+	eof bool
+}
+
+func (b *eofHeld) Read(p []byte) (int, error) {
+	if b.eof {
+		return 0, io.EOF
+	}
+	n, err := b.ReadCloser.Read(p)
+	b.eof = err == io.EOF
+	return n, err
 }
 
 // Run polls the routing snapshot and the edge policy and runs the shadow
