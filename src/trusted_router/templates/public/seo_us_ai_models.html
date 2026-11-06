@@ -1,5 +1,12 @@
 {% extends "public/_base.html" %}
 {% block body %}
+<section class="panel" aria-label="US model shortlist">
+  <div class="panel-head"><h2>Start with open weights. Choose the operator separately.</h2></div>
+  <div class="panel-body">
+    <p>Looking for American open-weight AI? Start with the <a href="#us-open-weights">US-lab shortlist below</a>, then compare the serving provider's price, policy and measured performance. Liberty combines US-lab open-weight components behind one model ID; individual models remain available for direct evaluation.</p>
+    <p><strong>Three separate checks:</strong> the lab that built the model, the company operating the endpoint, and the physical inference location. A US company is not a data-residency guarantee. Use the request controls below for operator jurisdiction and verify processing-location requirements separately.</p>
+  </div>
+</section>
 <section class="marketing-split" aria-label="US AI models and US-operated routes">
   <div class="marketing-copy">
     <span class="eyebrow">American labs, and the operators who serve them</span>
@@ -66,7 +73,7 @@ reply = client.chat.completions.create(
   </div>
 </section>
 
-<section class="panel" aria-label="US open-weight models">
+<section class="panel" id="us-open-weights" aria-label="US open-weight models">
   <div class="panel-head"><h2>Open weights from US labs</h2><span class="pill">{{ region.open_weight_count }} routes</span></div>
   <div class="panel-body">
     <p>The labs themselves. Weights you can download, run anywhere, and inspect.</p>
