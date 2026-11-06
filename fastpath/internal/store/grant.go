@@ -424,7 +424,7 @@ func (s *Store) AuditSums(ctx context.Context, workspace string) (Sums, error) {
 	err := ro.QueryWithOptions(ctx, spanner.Statement{
 		SQL: `SELECT COALESCE(SUM(total_credits), 0), COALESCE(SUM(total_usage), 0), COALESCE(SUM(reserved), 0)
 		        FROM tr_credit_balance WHERE workspace_id = @w`, Params: params},
-		spanner.QueryOptions{RequestTag: tag("audit")}).Do(func(row *spanner.Row) error {
+		lowPriority("audit")).Do(func(row *spanner.Row) error {
 		return row.Columns(&out.Credits, &out.Usage, &out.Reserved)
 	})
 	if err != nil {
@@ -434,7 +434,7 @@ func (s *Store) AuditSums(ctx context.Context, workspace string) (Sums, error) {
 	err = ro.QueryWithOptions(ctx, spanner.Statement{
 		SQL: `SELECT state, COUNT(*), COALESCE(SUM(consumed), 0), COALESCE(SUM(fault_usage), 0)
 		        FROM tr_lease WHERE workspace_id = @w GROUP BY state`, Params: params},
-		spanner.QueryOptions{RequestTag: tag("audit")}).Do(func(row *spanner.Row) error {
+		lowPriority("audit")).Do(func(row *spanner.Row) error {
 		var state string
 		var n, c, f int64
 		if err := row.Columns(&state, &n, &c, &f); err != nil {
@@ -474,7 +474,7 @@ func (s *Store) CheckBookedUsage(ctx context.Context, workspace string) ([]strin
 	var usage []int64
 	err := ro.QueryWithOptions(ctx, spanner.Statement{
 		SQL: `SELECT shard, total_usage FROM tr_credit_balance WHERE workspace_id = @w ORDER BY shard`, Params: params},
-		spanner.QueryOptions{RequestTag: tag("audit")}).Do(func(row *spanner.Row) error {
+		lowPriority("audit")).Do(func(row *spanner.Row) error {
 		var shard, u int64
 		if err := row.Columns(&shard, &u); err != nil {
 			return err
@@ -501,7 +501,7 @@ func (s *Store) CheckBookedUsage(ctx context.Context, workspace string) ([]strin
 	err = ro.QueryWithOptions(ctx, spanner.Statement{
 		SQL: `SELECT lease_id, credit_shard, consumed FROM tr_lease_donor WHERE workspace_id = @w
 		       ORDER BY lease_id, credit_shard`, Params: params},
-		spanner.QueryOptions{RequestTag: tag("audit")}).Do(func(row *spanner.Row) error {
+		lowPriority("audit")).Do(func(row *spanner.Row) error {
 		var lease string
 		var shard, consumed int64
 		if err := row.Columns(&lease, &shard, &consumed); err != nil {
@@ -526,7 +526,7 @@ func (s *Store) CheckBookedUsage(ctx context.Context, workspace string) ([]strin
 	}
 	err = ro.QueryWithOptions(ctx, spanner.Statement{
 		SQL: `SELECT lease_id, consumed, fault_usage FROM tr_lease WHERE workspace_id = @w ORDER BY lease_id`, Params: params},
-		spanner.QueryOptions{RequestTag: tag("audit")}).Do(func(row *spanner.Row) error {
+		lowPriority("audit")).Do(func(row *spanner.Row) error {
 		var lease string
 		var consumed, fault int64
 		if err := row.Columns(&lease, &consumed, &fault); err != nil {
@@ -586,7 +586,7 @@ func (s *Store) CheckWinners(ctx context.Context, workspace string) ([]string, e
 	err := ro.QueryWithOptions(ctx, spanner.Statement{
 		SQL: `SELECT lease_id, commit_version, pack FROM tr_lease_winners WHERE workspace_id = @w
 		       ORDER BY lease_id, commit_version`, Params: map[string]any{"w": workspace}},
-		spanner.QueryOptions{RequestTag: tag("audit")}).Do(func(row *spanner.Row) error {
+		lowPriority("audit")).Do(func(row *spanner.Row) error {
 		var lease string
 		var version int64
 		var body []byte
@@ -620,7 +620,7 @@ func (s *Store) CheckWinners(ctx context.Context, workspace string) ([]string, e
 	err = ro.QueryWithOptions(ctx, spanner.Statement{
 		SQL:    `SELECT lease_id, consumed, fault_usage FROM tr_lease WHERE workspace_id = @w ORDER BY lease_id`,
 		Params: map[string]any{"w": workspace}},
-		spanner.QueryOptions{RequestTag: tag("audit")}).Do(func(row *spanner.Row) error {
+		lowPriority("audit")).Do(func(row *spanner.Row) error {
 		var lease string
 		var consumed, fault int64
 		if err := row.Columns(&lease, &consumed, &fault); err != nil {

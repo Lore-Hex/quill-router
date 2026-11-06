@@ -7,7 +7,8 @@
 # and each topic's archive; and two on the auditor's, which a member whose
 # commits are wedged stops (2026-10-26): its oldest unacked message, at a
 # tighter threshold than the others', and messages waiting while none is
-# acked. What each means and what to do: docs/runbooks/fastpath-alerts.md.
+# acked; and one on the fleet audit's summary line gone quiet. What each
+# means and what to do: docs/runbooks/fastpath-alerts.md.
 #
 # The channels exist already (the reliability scripts made them) and are
 # read here, not managed. The applying identity's role adds and changes
@@ -38,10 +39,11 @@ locals {
     ],
     [for subscription in google_pubsub_subscription.fastpath_archive : subscription.name],
   )
-  # Every kind of fastpath/internal/auditor/alerts.go, the edge's (the Alert
-  # constants of fastpath/internal/edge: shadow_full.go's decide shadow and
-  # decide_path.go's decide path), and "other", which the service gives an
-  # alert of no kind it knows. A policy each: Cloud
+  # Every kind of fastpath/internal/auditor/alerts.go, the fleet audit's
+  # (the Kind constants of fastpath/internal/auditor/fleet.go), the edge's
+  # (the Alert constants of fastpath/internal/edge: shadow_full.go's decide
+  # shadow and decide_path.go's decide path), and "other", which the service
+  # gives an alert of no kind it knows. A policy each: Cloud
   # Monitoring sends a policy at most 20 notifications a day, so a kind that
   # keeps firing cannot use up a money fault's.
   fastpath_alert_kinds = toset([
@@ -58,6 +60,8 @@ locals {
     "no_boot_binding",
     "drain_overdue",
     "pending_work_overdue",
+    "fleet_audit_fault",
+    "fleet_audit_stale",
     "edge_would_admit_python_refused",
     "edge_decide_unavailable",
     "edge_decide_unavailable_sustained",
@@ -99,7 +103,7 @@ resource "google_monitoring_alert_policy" "fastpath_alert" {
   }
 
   documentation {
-    content   = "A fast path node wrote a `${each.key}` alert; the entry's `subject` names the lease or authorization. What it means and what to do: docs/runbooks/fastpath-alerts.md in Lore-Hex/quill-router."
+    content   = "A fast path node wrote a `${each.key}` alert; the entry's `subject` names the lease, the authorization or, for the fleet audit's, the workspace. What it means and what to do: docs/runbooks/fastpath-alerts.md in Lore-Hex/quill-router."
     mime_type = "text/markdown"
   }
 
@@ -228,6 +232,77 @@ resource "google_monitoring_alert_policy" "fastpath_auditor_no_acks" {
 
   documentation {
     content   = "The fast path auditor has acknowledged nothing for five minutes while messages wait on its subscription. What to do: docs/runbooks/fastpath-alerts.md in Lore-Hex/quill-router."
+    mime_type = "text/markdown"
+  }
+
+  notification_channels = local.fastpath_alert_channels
+}
+
+# The fleet audit's summary line (FleetSummaryLine in
+# fastpath/internal/auditor/fleet.go), which whichever node owns the ring key
+# fleet-audit writes once a pass, a pass an hour, counted from the nodes'
+# journal. No line from any node for 90 minutes is fleet_audit_stale: no
+# owner runs it, or its owner cannot read the workspaces due. A node cannot
+# see its own silence, so this is Cloud Monitoring's to see, where a leased
+# workspace left unaudited is the owner's own fleet_audit_stale alert above.
+# The count is summed over the nodes, so the key moving from one node to
+# another is not an absence. The policy is on with the nodes' attribute
+# (local.fastpath_fleet_audit in infra/fastpath.tf), so it pages nobody
+# while the audit is dark.
+locals {
+  fastpath_fleet_audit_summary_filter = join(" AND ", [
+    "logName=\"projects/${local.gcp_project_id}/logs/fastpath_journal\"",
+    "jsonPayload.MESSAGE:\"fastpath fleet audit: due=\"",
+  ])
+}
+
+resource "google_logging_metric" "fastpath_fleet_audit_summary" {
+  project     = local.gcp_project_id
+  name        = "fastpath_fleet_audit_summary"
+  description = "A fast path node wrote the fleet audit's summary line (docs/design/fast-admission-widening.md section 7)."
+  filter      = local.fastpath_fleet_audit_summary_filter
+
+  metric_descriptor {
+    metric_kind = "DELTA"
+    value_type  = "INT64"
+    unit        = "1"
+  }
+}
+
+resource "google_monitoring_alert_policy" "fastpath_fleet_audit_absent" {
+  project      = local.gcp_project_id
+  display_name = "TR Fast path: fleet_audit_stale, no summary"
+  combiner     = "OR"
+  severity     = "ERROR"
+  enabled      = local.fastpath_fleet_audit
+
+  conditions {
+    display_name = "No fast path node wrote the fleet audit's summary line for 90 minutes"
+    condition_absent {
+      filter = join(" AND ", [
+        "resource.type = \"gce_instance\"",
+        "metric.type = \"logging.googleapis.com/user/${google_logging_metric.fastpath_fleet_audit_summary.name}\"",
+      ])
+      duration = "5400s"
+
+      aggregations {
+        alignment_period     = "600s"
+        per_series_aligner   = "ALIGN_SUM"
+        cross_series_reducer = "REDUCE_SUM"
+      }
+
+      trigger {
+        count = 1
+      }
+    }
+  }
+
+  alert_strategy {
+    auto_close = "1800s"
+  }
+
+  documentation {
+    content   = "No fast path node has written the fleet audit's summary line (`fastpath fleet audit: due=...`) for 90 minutes: `fleet_audit_stale`. What to do: docs/runbooks/fastpath-alerts.md in Lore-Hex/quill-router."
     mime_type = "text/markdown"
   }
 

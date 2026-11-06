@@ -127,6 +127,16 @@ locals {
     fastpath-edge-decide-shadow       = "true"
     fastpath-edge-decide              = "true"
   })
+  # The fleet audit (docs/design/fast-admission-widening.md section 7): true
+  # gives every node fastpath-fleet-audit "true", so whichever node owns the
+  # ring key fleet-audit audits every workspace the switch names, a pass an
+  # hour, and turns on the policy on its summary line's absence
+  # (infra/fastpath_alerts.tf). Off until its activation: a node from before
+  # the startup script that reads the attribute passes nothing, so the
+  # script reaches the fleet first through nodes added under new names, as
+  # the decide attribute's did, and the pin must take -fleet-audit
+  # (docs/runbooks/fastpath-deploy.md, "A flag the unit passes").
+  fastpath_fleet_audit = false
 }
 
 # --- The topics and the auditor's subscriptions ---------------------------
@@ -405,6 +415,7 @@ resource "google_compute_instance" "fastpath_node" {
     fastpath-release           = local.fastpath_release
     fastpath-edge-upstream     = local.fastpath_edge_upstream
     fastpath-edge-token-secret = local.fastpath_edge_token_secret
+    fastpath-fleet-audit       = local.fastpath_fleet_audit ? "true" : "false"
   }, local.fastpath_edge_snapshot)
 
   metadata_startup_script = templatefile("${path.module}/fastpath_node_startup.sh.tftpl", {

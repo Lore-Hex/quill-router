@@ -87,6 +87,13 @@ def test_every_alert_kind_has_a_policy_and_a_runbook_entry() -> None:
         "edge_would_admit_python_refused",
     ]
     kinds += edge_kinds
+    # The fleet audit gives its alerts their kinds itself, as the edge does:
+    # the Kind constants of fleet.go.
+    fleet = _read("fastpath", "internal", "auditor", "fleet.go")
+    fleet_kinds = re.findall(r'^\tKind\w+\s+= "(\w+)"$', fleet, re.M)
+    assert sorted(fleet_kinds) == ["fleet_audit_fault", "fleet_audit_stale"]
+    assert "writeAlertOf(alertOutput, subject, what, kind)" in _read("fastpath", "internal", "service", "service.go")
+    kinds += fleet_kinds
     # Each kind its own policy, so a kind that keeps firing cannot use up
     # another's daily notifications.
     listed = re.search(r"fastpath_alert_kinds = toset\(\[(.*?)\]\)", POLICIES.read_text(encoding="utf-8"), re.S)
@@ -96,7 +103,7 @@ def test_every_alert_kind_has_a_policy_and_a_runbook_entry() -> None:
     for kind in [*kinds, "other"]:
         assert re.search(rf"^\| `{kind}` \| ", runbook, re.M), kind
     # The policies point at the runbook, and the service's comment names it.
-    assert POLICIES.read_text(encoding="utf-8").count("docs/runbooks/fastpath-alerts.md") == 5
+    assert POLICIES.read_text(encoding="utf-8").count("docs/runbooks/fastpath-alerts.md") == 6
     assert "docs/runbooks/fastpath-alerts.md" in _read("fastpath", "internal", "service", "service.go")
 
 
@@ -153,7 +160,7 @@ def test_the_channels_are_read_not_managed() -> None:
         "    data.google_monitoring_notification_channel.fastpath_ops_chat.name,\n"
         "  ]"
     ) in tf
-    assert tf.count("notification_channels = local.fastpath_alert_channels") == 4
+    assert tf.count("notification_channels = local.fastpath_alert_channels") == 5
 
 
 def test_the_auditor_has_its_own_tighter_policies() -> None:

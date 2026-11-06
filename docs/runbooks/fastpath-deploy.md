@@ -396,6 +396,31 @@ same refusal. So a new flag lands with or after the pin of a release that
 takes it, never before: `tests/test_fastpath_p1.py` holds the unit's flags
 to the command of the release `infra/fastpath.tf` pins.
 
+## Turning the fleet audit on
+
+The fleet audit (`docs/design/fast-admission-widening.md` §7,
+`fastpath-alerts.md`, "The fleet audit") runs on a node started with
+`-fleet-audit`, which the startup script passes when the instance attribute
+`fastpath-fleet-audit` is `true`. One literal, `local.fastpath_fleet_audit`
+in `infra/fastpath.tf`, sets the attribute on every node and enables the
+policy on the summary line's absence, so the two move together. In order:
+
+1. Pin a release whose command takes `-fleet-audit` ("A flag the unit
+   passes"; `tests/test_fastpath_fleet_audit.py` refuses the literal `true`
+   under a pin that does not).
+2. Bring the startup script that reads the attribute to every node, through
+   nodes added under new names, as for the decide attribute: a node keeps
+   the script it was created with.
+3. Set the literal `true` and apply. A node takes the flag when its unit is
+   written again: drained, its unit stopped and its startup script run
+   again, one node at a time.
+4. Read the summaries (`fastpath-alerts.md`); once one with `complete=true`
+   covers the pilot set, stop `/var/tmp/pilot-audit-hourly.sh`
+   (`docs/design/fast-admission-pilot.md`).
+
+Turning it off is the literal `false` and the same unit rewrite; the
+absence policy is disabled by the same apply.
+
 ## Streams on the lease: the release order
 
 `docs/design/fast-admission-streams.md` §10 ships streams in increments,

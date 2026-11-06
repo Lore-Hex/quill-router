@@ -140,19 +140,29 @@ deploy; the fast path's switch changes at once.
 
 ## What it checks
 
-- The audit after every hour of the pilot, and before and after a switch:
+- The fleet audit (`docs/design/fast-admission-widening.md` §7,
+  `docs/runbooks/fastpath-alerts.md`, "The fleet audit"), which retires the
+  hourly script: a role of the fast-path service on whichever node owns the
+  ring key `fleet-audit`, a pass an hour over every workspace the switch
+  names enabled or changed within 26 hours, with `fastpathctl audit`'s
+  checks but `-funded`, each fault a `fleet_audit_fault` alert naming the
+  workspace and the check, each pass a summary line whose absence for 90
+  minutes, or a leased workspace unaudited for three hours, is
+  `fleet_audit_stale`. It merges dark: it runs once the nodes carry
+  `fastpath-fleet-audit = "true"` (`local.fastpath_fleet_audit` in
+  `infra/fastpath.tf`, which also turns on the absence policy). Until then,
+  and only until its first summary with `complete=true` covers the pilot
+  set, `/var/tmp/pilot-audit-hourly.sh` keeps running
+  `fastpathctl -database $DB -funded CREDITS audit WORKSPACE` for each
+  workspace in the set every hour on the node that carries it, logging to
+  `/var/tmp/pilot-audit.log` and writing an alert of kind `other` on any
+  problem; it does not survive the node's reset or replacement. Once that
+  summary is seen, the script is stopped and started on no node again. The
+  audit by hand, before and after a switch, stays:
   `fastpathctl -database $DB -funded CREDITS audit WORKSPACE` exits 0,
   CREDITS the sum of the workspace's `total_credits` at the time. It counts
   the workspace's synchronous holds in flight beside its leases' (#1821,
-  running from 2026-10-17 05:10Z). On `tr-fastpath-7` (on `tr-fastpath-1`
-  until that node was retired on 2026-10-20, then on `tr-fastpath-3` and
-  `tr-fastpath-5` until each was retired in turn),
-  `/var/tmp/pilot-audit-hourly.sh` runs it for each workspace in the set
-  every hour, logs to `/var/tmp/pilot-audit.log`, and writes an alert of
-  kind `other` on any problem, which **TR Fast path: other** notifies; a
-  funding it cannot read is logged and waits for the next hour. Like the
-  watches, it does not survive the node's reset or replacement: it is
-  started again on the node that carries it.
+  running from 2026-10-17 05:10Z).
 - The counter reconciler's combined identity on the workspace
   (`storage_gcp_counter_reconcile.py`): reservations and bookings of the
   leases with the synchronous holds.

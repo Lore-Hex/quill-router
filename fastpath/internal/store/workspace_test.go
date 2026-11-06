@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -347,5 +348,75 @@ func TestDoneNamesEachThingLeft(t *testing.T) {
 		if done, why := left.Done(); done || len(why) != 1 {
 			t.Errorf("%+v: done %v, %v; want one reason", left, done, why)
 		}
+	}
+}
+
+// TestFleetDueReadsTheSwitchNotTheLeases: the workspaces due are those whose
+// switch is on or changed since the bound, each with whether it has a lease
+// open or draining; a workspace off since before the bound is not due,
+// though it has an open lease still, and a closed lease is no lease.
+func TestFleetDueReadsTheSwitchNotTheLeases(t *testing.T) {
+	s := spikeStore(t)
+	ctx := context.Background()
+	exec := func(sql string, params map[string]any) {
+		t.Helper()
+		if _, err := shared.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+			_, err := txn.Update(ctx, spanner.Statement{SQL: sql, Params: params})
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	grant := func(ws string) string {
+		t.Helper()
+		req := grantOf(ws, 10)
+		if got, err := s.Grant(ctx, req); err != nil || got.Refused != "" {
+			t.Fatalf("the grant in %s: %+v %v", ws, got, err)
+		}
+		return req.LeaseID
+	}
+	idle, open, draining, closed, offLong := seedWorkspace(t, 100), seedWorkspace(t, 100), seedWorkspace(t, 100),
+		seedWorkspace(t, 100), seedWorkspace(t, 100)
+	grant(open)
+	exec(`UPDATE tr_lease SET state = 'draining', fence_time = TIMESTAMP_ADD(expiry, INTERVAL 1 SECOND),
+	       drained_by = 'owner' WHERE workspace_id = @w AND lease_id = @l`,
+		map[string]any{"w": draining, "l": grant(draining)})
+	exec(`UPDATE tr_lease SET state = 'closed', fence_time = TIMESTAMP_ADD(expiry, INTERVAL 1 SECOND),
+	       drained_by = 'owner', closed_at = CURRENT_TIMESTAMP(), close_kind = 'auditor'
+	       WHERE workspace_id = @w AND lease_id = @l`, map[string]any{"w": closed, "l": grant(closed)})
+	grant(offLong)
+	// closed is turned off now, so it is due by its change alone; offLong
+	// was turned off thirty hours ago, its open lease left as it was.
+	if _, _, err := s.SetWorkspace(ctx, closed, false); err != nil {
+		t.Fatal(err)
+	}
+	longAgo := time.Now().Add(-30 * time.Hour).UTC()
+	exec(`UPDATE tr_fastpath_workspace SET enabled = FALSE, changed_at = @at WHERE workspace_id = @w`,
+		map[string]any{"w": offLong, "at": longAgo})
+	due, err := s.FleetDue(ctx, time.Now().Add(-26*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]FleetWorkspace{}
+	var order []string
+	for _, w := range due {
+		switch w.Workspace {
+		case idle, open, draining, closed, offLong:
+			got[w.Workspace] = w
+			order = append(order, w.Workspace)
+		}
+	}
+	want := map[string][2]bool{idle: {true, false}, open: {true, true}, draining: {true, true}, closed: {false, false}}
+	if len(got) != len(want) {
+		t.Fatalf("due %v, want %v", got, want)
+	}
+	for ws, w := range want {
+		if g, ok := got[ws]; !ok || g.Enabled != w[0] || g.Leased != w[1] || g.ChangedAt.IsZero() ||
+			g.ChangedAt.Location() != time.UTC {
+			t.Errorf("%s: %+v, want enabled %v and leased %v", ws, g, w[0], w[1])
+		}
+	}
+	if !slices.IsSorted(order) {
+		t.Errorf("due out of workspace order: %v", order)
 	}
 }

@@ -118,6 +118,9 @@ func run() error {
 		"answer the authorizes the edge decides itself: admit through the node's front door, insert the rows and "+
 			"answer (docs/design/fast-admission-e2-decide.md section 1), for the workspaces the decide table names; "+
 			"needs -edge-snapshot-url and -edge-policy-url; every other request still passes to Python")
+	flag.BoolVar(&cfg.FleetAudit, "fleet-audit", false,
+		"audit every workspace the switch names, an hour a pass, while this node owns the ring key fleet-audit "+
+			"(docs/design/fast-admission-widening.md section 7); needs -roles admission; off audits nothing")
 	debugAddress := flag.String("debug-address", service.DebugAddress,
 		"where the goroutine dump is served, GET /debug/goroutines (docs/runbooks/fastpath-alerts.md): a loopback IP address "+
 			"and port only; empty serves none")

@@ -75,6 +75,21 @@ elif [ -n "$edge_upstream$edge_token_secret" ]; then
   echo "fastpath: the edge needs both its upstream and its token secret; the startup script stops here" | systemd-cat -t fastpath -p err
   exit 1
 fi
+# The fleet audit (docs/design/fast-admission-widening.md section 7):
+# fastpath-fleet-audit "true" passes -fleet-audit, and the node audits every
+# workspace the switch names while it owns the ring key fleet-audit; absent
+# or "false", the default, it audits nothing. Every node is given the same
+# value, so whichever node owns the key runs it, and the pinned release must
+# take the flag before the attribute is "true" (tests/test_fastpath_fleet_audit.py).
+fleet_audit="$(attribute fastpath-fleet-audit)" || exit 1
+fleet_flags=""
+case "$fleet_audit" in
+  true) fleet_flags="-fleet-audit" ;;
+  ""|false) ;;
+  *)
+    echo "fastpath: fastpath-fleet-audit is true, false or absent; the startup script stops here" | systemd-cat -t fastpath -p err
+    exit 1 ;;
+esac
 # The edge's routing snapshot and shadow comparator (docs/design/
 # routing-snapshot-v1.md, E2) run when the instance's metadata names the
 # snapshot's URL, the manifest key's public key and kid, and its plane, all
@@ -208,7 +223,7 @@ ExecStart=/opt/fastpath/fastpath \
   -project ${project} \
   -key-secret ${key_secret} \
   -topics settle-log,records \
-  -subscriptions auditor,stager $edge_flags $snapshot_flags
+  -subscriptions auditor,stager $edge_flags $snapshot_flags $fleet_flags
 # SIGUSR1 marks the node leaving (the deploy runbook); SIGTERM stops it.
 KillSignal=SIGTERM
 TimeoutStopSec=30
