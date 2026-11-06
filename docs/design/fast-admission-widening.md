@@ -574,7 +574,13 @@ detect a kill from the switch table, whose rows cannot say who wrote them
   resume` refuses while any row is enabled and held, and prints those
   rows. The operator resolves each with PR 4's `enable`, which clears the
   hold, or `disable`, which keeps it, and resumes. An enabled and held row
-  from a rollback therefore never reaches the enabler.
+  from a rollback therefore never reaches the enabler. The check counts
+  per-workspace holds only, never `*`. A row brought back with an older
+  `enable` after a kill carries no hold of its own (a kill turns off only
+  enabled rows, which have none, and a PR 4 kill covers them with `*` and
+  a kill row), so resume does not list it; it lists only rows that had a
+  PR 4 hold (a `disable`, a watch's trip, a backfill) and were enabled
+  with the older binary.
 - **Resuming backfills first, by construction.** A stop made during the
   rollback by an older `disable` or `disable-all` wrote no hold. So
   `fastpathctl enabler resume` removes `#pause` only in the same
@@ -870,11 +876,19 @@ Fastest first, each narrower than the next:
    under a pause (§5.6). During a rollback below PR 4 the enabler stays
    paused until every node is on PR 4 again (§5.6), so `resume` and
    `release-all` are not available yet: the way back from a kill then is
-   the older binary's `enable` for each workspace to bring back. After
-   the roll-forward, `enabler resume` lists those workspaces as enabled
-   and held; the operator resolves each with PR 4's `enable` or
-   `disable`, resumes, and then runs `release-all` to clear `*` and the
-   kill rows.
+   the older binary's `enable` for each workspace to bring back. Those
+   rows carry no hold of their own, so after the roll-forward `enabler
+   resume` does not list them: its enabled-and-held check counts
+   per-workspace holds only, never `*`, and lists only rows that had a
+   PR 4 hold and were enabled with the older binary. Then:
+   - **After a PR 4 kill** (`*` and a kill row exist): `release-all`
+     removes them, and the enabler's next run enables every kill-stopped
+     row still off that is eligible and unheld. So before `release-all`,
+     `disable` with PR 4, which holds, any of those that should stay off.
+   - **After an older-release kill** there is no `*` and no kill row:
+     resume holds the rows it left off, reason `paused`, and they come
+     back only with `fastpathctl release-stamped TS -yes`, TS being the
+     older `disable-all`'s printed `at`.
 7. `TR_FASTPATH_PILOT_ENABLED=false`: every new authorize takes today's
    path at once.
 
@@ -1106,7 +1120,12 @@ step.
    enabler run after the watch has exited; `release` under `#pause`
    refused, writing nothing; `resume` refused while a row is enabled and
    held, listing it, and accepted once PR 4's `enable` or `disable` has
-   resolved it; `SetWorkspace` executing the fixture's statements.
+   resolved it; the rollback sequence of §8.3: pause, rollback, a PR 4
+   `disable-all` stopping A, B and C, an older-style `enable A`, roll
+   forward, `resume` listing nothing and holding nothing (A has no hold, B
+   and C are under the kill), PR 4 `disable C`, `release-all`, and after
+   the enabler's next run A and B enabled, C off and held with reason
+   `operator`; `SetWorkspace` executing the fixture's statements.
 5. **Python's "all".** Settings `fastpath_pilot_all` (false) and
    `fastpath_pilot_exclude` (at most 64), read from
    `scripts/deploy/fastpath_lists.sh`; validators: all mode needs the typed
