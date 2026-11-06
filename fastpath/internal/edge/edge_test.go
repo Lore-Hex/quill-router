@@ -1,6 +1,7 @@
 package edge
 
 import (
+	"bufio"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -14,7 +15,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -725,16 +728,22 @@ func (l lateTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 // TestTheBodyIsTheProxysWhileTheAnswerStreams: the transport, having sent
 // the declared length, reads the body once more to find its end, and that
 // read can come after Python's first bytes reached the caller. It finds the
-// end, and the answer streams on to its trailer: the server does not read
-// and close the body under the proxy as the answer's headers go out, which
-// failed that read and had the transport close the connection the answer
-// was streaming on.
+// end, and the answer streams on to its trailer, on each path that passes
+// the body as it came: the server's close of its body as the answer's
+// headers go out failed that read, and had the transport close the
+// connection the answer was streaming on.
 func TestTheBodyIsTheProxysWhileTheAnswerStreams(t *testing.T) {
-	for name, headers := range map[string]map[string]string{
-		"with the token, unsigned": {TokenHeader: token},
-		"without the token":        {},
+	for _, c := range []struct {
+		name    string
+		headers map[string]string
+		body    string
+	}{
+		{"with the token, unsigned", map[string]string{TokenHeader: token}, authorizeBody},
+		{"without the token", map[string]string{}, authorizeBody},
+		{"past the bound", map[string]string{TokenHeader: token, BootHeader: "kid=boot-1,sig=AA"},
+			strings.Repeat("x", maxBody+1)},
 	} {
-		t.Run(name, func(t *testing.T) {
+		t.Run(c.name, func(t *testing.T) {
 			let, release, found := make(chan struct{}), make(chan struct{}), make(chan error, 1)
 			open := func(c chan struct{}) {
 				select {
@@ -743,8 +752,10 @@ func TestTheBodyIsTheProxysWhileTheAnswerStreams(t *testing.T) {
 					close(c)
 				}
 			}
+			var got atomic.Int64
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				_, _ = io.ReadAll(r.Body)
+				n, _ := io.Copy(io.Discard, r.Body)
+				got.Store(n)
 				w.Header().Set("Trailer", "X-Python-Trailer")
 				w.WriteHeader(http.StatusOK)
 				_, _ = io.WriteString(w, `{"data":`)
@@ -763,11 +774,11 @@ func TestTheBodyIsTheProxysWhileTheAnswerStreams(t *testing.T) {
 			server := httptest.NewServer(e)
 			t.Cleanup(server.Close)
 			t.Cleanup(func() { open(let); open(release) })
-			req, err := http.NewRequest(http.MethodPost, server.URL+authorizePath, strings.NewReader(authorizeBody))
+			req, err := http.NewRequest(http.MethodPost, server.URL+authorizePath, strings.NewReader(c.body))
 			if err != nil {
 				t.Fatal(err)
 			}
-			for k, v := range headers {
+			for k, v := range c.headers {
 				req.Header.Set(k, v)
 			}
 			resp, err := plainClient.Do(req)
@@ -778,6 +789,9 @@ func TestTheBodyIsTheProxysWhileTheAnswerStreams(t *testing.T) {
 			first := make([]byte, len(`{"data":`))
 			if _, err := io.ReadFull(resp.Body, first); err != nil || string(first) != `{"data":` {
 				t.Fatalf("the first bytes: %q %v", first, err)
+			}
+			if got.Load() != int64(len(c.body)) {
+				t.Fatalf("Python read %d bytes of %d", got.Load(), len(c.body))
 			}
 			open(let)
 			select {
@@ -792,6 +806,62 @@ func TestTheBodyIsTheProxysWhileTheAnswerStreams(t *testing.T) {
 			rest, err := io.ReadAll(resp.Body)
 			if err != nil || string(rest) != `{}}` || resp.Trailer.Get("X-Python-Trailer") != "done" {
 				t.Fatalf("the rest %q %v, trailer %v", rest, err, resp.Trailer)
+			}
+		})
+	}
+}
+
+// TestABodyThatFailsToReadClosesTheConnection: a chunked body with a
+// malformed chunk is answered, and the connection closes after the answer;
+// the bytes after the bad chunk are never read as a request of their own,
+// so a request pipelined behind it reaches neither Python nor the caller.
+func TestABodyThatFailsToReadClosesTheConnection(t *testing.T) {
+	for name, headers := range map[string]string{
+		"with the token, unsigned": TokenHeader + ": " + token + "\r\n",
+		"without the token":        "",
+		"with the token, signed":   TokenHeader + ": " + token + "\r\n" + BootHeader + ": kid=boot-1,sig=AA\r\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			var mu sync.Mutex
+			var paths []string
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				paths = append(paths, r.URL.Path)
+				mu.Unlock()
+				_, _ = io.Copy(io.Discard, r.Body)
+				_, _ = io.WriteString(w, "ok "+r.URL.Path)
+			}))
+			t.Cleanup(upstream.Close)
+			target, _ := url.Parse(upstream.URL)
+			e, err := New(Config{Token: token, Upstream: target, Boots: &boots{by: map[string]Boot{}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			server := httptest.NewServer(e)
+			t.Cleanup(server.Close)
+			conn, err := net.Dial("tcp", server.Listener.Addr().String())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			_, _ = io.WriteString(conn, "POST "+authorizePath+" HTTP/1.1\r\nHost: edge.example\r\n"+headers+
+				"Transfer-Encoding: chunked\r\n\r\n5\r\nhello\r\nzz\r\n"+
+				"GET /pipelined HTTP/1.1\r\nHost: edge.example\r\n\r\n")
+			_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+			read := bufio.NewReader(conn)
+			var answers []string
+			for {
+				resp, err := http.ReadResponse(read, nil)
+				if err != nil {
+					break
+				}
+				body, _ := io.ReadAll(resp.Body)
+				answers = append(answers, fmt.Sprintf("%d %q", resp.StatusCode, body))
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if len(answers) != 1 || slices.Contains(paths, "/pipelined") {
+				t.Fatalf("answers %v, Python saw %v", answers, paths)
 			}
 		})
 	}

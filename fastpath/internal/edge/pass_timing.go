@@ -480,16 +480,7 @@ func (t tracedTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 // forward passes a request to Python, timing it when pass is not nil. A
 // copy that breaks off makes the proxy panic with http.ErrAbortHandler,
 // which the server handles; the pass is counted, aborted, on the way.
-//
-// The request's body is read while the answer is written: the transport,
-// having sent the declared length, reads once more to find the end, and
-// that read can come after Python's first bytes went out. By default the
-// server, as it writes the answer's headers, reads what is left of the
-// body itself and closes it; the transport's last read then fails, and it
-// closes the connection the answer is still streaming on, cutting the
-// answer short. Full duplex leaves the body to the proxy alone.
 func (e *Edge) forward(w http.ResponseWriter, r *http.Request, pass *passTrace) {
-	_ = http.NewResponseController(w).EnableFullDuplex()
 	if pass == nil {
 		e.proxy.ServeHTTP(w, r)
 		return

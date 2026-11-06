@@ -404,8 +404,12 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r = r.WithContext(withCaller(r))
+	// r is the context's copy: the server's own request keeps its body.
+	if r.ContentLength > 0 {
+		r.Body = &endAtLength{ReadCloser: r.Body, left: r.ContentLength}
+	}
 	if !e.tokenOK(r) {
-		e.forward(w, r, nil)
+		e.proxy.ServeHTTP(w, r)
 		return
 	}
 	// An authorize to compare, when the shadow is on and a snapshot held;
@@ -481,6 +485,40 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	out = e.beginFull(out, at, body, seen)
 	e.forward(w, out, pass)
+}
+
+// endAtLength is a request body of a declared length that ends there for
+// every reader on the edge: a read past the length is io.EOF, and the
+// server's body is not read again.
+//
+// The proxy's transport, having sent the declared length, reads the body
+// once more to find its end, and that read can come after Python's first
+// bytes went out. As the answer's headers are written, the HTTP/1 server
+// reads what is left of its body and closes it; a read of the server's
+// body after that fails, and the transport closes the connection the
+// answer is still streaming on, cutting the answer short. Full duplex
+// would keep the body open, but it also gives up the server's rule that a
+// body which failed to read (a malformed chunk) closes the connection
+// after the answer, so the bytes after it are never read as a request.
+//
+// A body with no declared length (chunked) needs nothing: the transport
+// sends it chunked and writes the last chunk only once the body's read
+// returned io.EOF (transferWriter.writeBody), so no read follows the end.
+type endAtLength struct {
+	io.ReadCloser
+	left int64
+}
+
+func (b *endAtLength) Read(p []byte) (int, error) {
+	if b.left <= 0 {
+		return 0, io.EOF
+	}
+	if int64(len(p)) > b.left {
+		p = p[:b.left]
+	}
+	n, err := b.ReadCloser.Read(p)
+	b.left -= int64(n)
+	return n, err
 }
 
 // Run polls the routing snapshot and the edge policy and runs the shadow
