@@ -64,9 +64,15 @@ opens a window of CANCEL_WINDOW_SECONDS. When it has passed without a
 delivery, nothing more is cancelled until a rollout is delivered again. With
 no delivery known, nothing is cancelled.
 
+The window reads run history. Deleting or re-running a cancelled deploy run
+drops it from the cancelled listing and reopens the window.
+
 The trade-off: a cancelled older commit no longer ships by itself. If the
-superseding push's CI or build then fails, re-run the cancelled CI run and
-then its deploy, or dispatch a hotfix. A cancelled deploying commit also gets
+superseding push's CI or build then fails, re-run the cancelled CI run, then
+its deploy; confirm-current-main ships it, since a red successor is never
+ready. A hotfix dispatch ships main's head without its CI gate, so use one
+only when that commit is known good (its red was a flake, say). A cancelled
+deploying commit also gets
 no fast path release (fastpath-release.yml builds one only after green CI),
 so pin fastpath_release only to a commit whose release exists. A
 non-deploying commit's CI run is never touched.
@@ -128,9 +134,9 @@ _PREPARATION_JOBS = frozenset({"cancel-superseded", "gate-on-ci", "build-image"}
 _TEST_SHARD_PREFIX = "test ("
 # After the last delivered rollout, cancel-older may cancel for this long
 # from its first cancellation, then stops until a rollout is delivered.
-# Replayed over the 62 deploying pushes from 2026-10-28 to 11-06, it allowed
-# all 13 cancellations the other rules allowed (a 2 h bound on the time since
-# a delivery allowed 5).
+# Replayed over the deploying pushes from 2026-10-28 to 11-06, it allowed 13
+# of the 14 cancellations the other rules allowed; the one it held off came
+# after a manual cancel. A 2 h bound on the time since a delivery allowed 5.
 CANCEL_WINDOW_SECONDS = 4 * 3600
 # cancel-older stops after this long; each gh call is capped at what is left,
 # well inside deploy.yml's cancel-superseded timeout-minutes.
@@ -439,6 +445,11 @@ def cancel_older(repo: str, this: str, now: float) -> list[str]:
         ci_details = _gh_json(["run", "view", str(ci[0]["databaseId"]), "--repo", repo, "--json", "jobs"], deadline)
         if tests_started(ci_details.get("jobs") if isinstance(ci_details, dict) else None) is not False:
             continue
+        # Both cancels or neither: a deploy cancelled without time left to
+        # cancel its CI would leave that run going, and nothing would take it up.
+        if deadline - _monotonic() < 2 * GH_TIMEOUT_SECONDS:
+            print("superseded_deploy: not enough time left to cancel a deploy and its CI; leaving the rest alone")
+            break
         # The deploy first: cancelled CI under a live deploy would turn that
         # deploy's gate red instead of leaving it cancelled.
         if not _gh_ok(["run", "cancel", str(run_id), "--repo", repo], deadline):

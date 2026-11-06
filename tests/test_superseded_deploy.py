@@ -610,7 +610,7 @@ def _cancel_responses(**overrides: tuple[str, int]) -> dict[str, tuple[str, int]
     responses = {
         "--status success": (json.dumps([{"databaseId": 90, "updatedAt": _ago(600)}]), 0),
         "run view 90 --repo": (DELIVERED_JOBS, 0),
-        "--status cancelled": ("[]", 0),
+        "--status cancelled --limit 100": ("[]", 0),
         "--workflow deploy.yml --branch main --event push": (json.dumps([THIS_RUN, OLDER_RUN]), 0),
         "compare/bbb...aaa --jq": (json.dumps({"status": "ahead"}), 0),
         "run view 2 --repo": (PREPARING, 0),
@@ -719,6 +719,11 @@ def test_cancel_older_leaves_a_commit_another_deploy_reads(tmp_path, monkeypatch
     assert _cancels(calls) == []
 
 
+def test_an_unknown_answer_about_the_commits_other_deploys_cancels_nothing(tmp_path, monkeypatch):
+    calls = _run_cancel(tmp_path, monkeypatch, **{"--workflow deploy.yml --commit bbb": ("", 1)})
+    assert _cancels(calls) == []
+
+
 def test_a_completed_other_deploy_of_the_commit_does_not_hold_it(tmp_path, monkeypatch):
     others = [{"databaseId": 2, "status": "in_progress"}, {"databaseId": 5, "status": "completed"}]
     calls = _run_cancel(tmp_path, monkeypatch, **{"--workflow deploy.yml --commit bbb": (json.dumps(others), 0)})
@@ -732,7 +737,7 @@ def test_a_completed_other_deploy_of_the_commit_does_not_hold_it(tmp_path, monke
     {"run view 90 --repo": (json.dumps({"jobs": [      # a partial delivery
         *[{"name": f"rollout / {name}", "conclusion": "success"} for name in DELIVERY[:-1]],
         {"name": "rollout / finalize-cloud", "conclusion": "failure"}]}), 0)},
-    {"--status cancelled": ("", 1)},                    # the cancellations are unknown
+    {"--status cancelled --limit 100": ("", 1)},                    # the cancellations are unknown
 ])
 def test_cancel_older_cancels_nothing_without_a_known_delivery_and_window(tmp_path, monkeypatch, override):
     calls = _run_cancel(tmp_path, monkeypatch, **override)
@@ -749,8 +754,19 @@ def test_the_cancel_window_runs_from_the_first_cancellation_after_a_delivery(
                              {"databaseId": 30, "updatedAt": _ago(first_cancel_ago)},
                              # Before the delivery: not part of this window.
                              {"databaseId": 20, "updatedAt": _ago(9 * 3600)}]), 0)
-    calls = _run_cancel(tmp_path, monkeypatch, **{"--status success": delivered, "--status cancelled": cancelled})
+    calls = _run_cancel(tmp_path, monkeypatch, **{"--status success": delivered, "--status cancelled --limit 100": cancelled})
     assert _cancels(calls) == (["run cancel 2", "run cancel 7"] if cancels else [])
+
+
+def test_the_window_closes_at_its_first_cancellation_while_cancelling_goes_on(tmp_path, monkeypatch):
+    delivered = (json.dumps([{"databaseId": 90, "updatedAt": _ago(6 * 3600)}]), 0)
+    # The newest cancellation is an hour old; the first, five. Measured from
+    # the newest, the window would slide forever and never bound starvation.
+    cancelled = (json.dumps([{"databaseId": 31, "updatedAt": _ago(3600)},
+                             {"databaseId": 30, "updatedAt": _ago(5 * 3600)}]), 0)
+    calls = _run_cancel(tmp_path, monkeypatch, **{"--status success": delivered,
+                                                 "--status cancelled --limit 100": cancelled})
+    assert _cancels(calls) == []
 
 
 def test_the_delivery_is_the_newest_run_that_delivered(tmp_path, monkeypatch):
@@ -771,10 +787,20 @@ def test_the_deadline_holds_before_each_candidate(tmp_path, monkeypatch, capsys)
     assert "out of time; leaving the remaining runs alone" in capsys.readouterr().out
 
 
-def test_the_deadline_caps_each_call_even_between_the_two_cancels(tmp_path, monkeypatch, capsys):
+def test_a_deploy_is_not_cancelled_without_time_to_cancel_its_ci_too(tmp_path, monkeypatch, capsys):
+    # Nine calls read the window, the queue and the candidate; two cancels need
+    # two calls' worth of time, and only half of one is left.
+    calls = _run_cancel(tmp_path, monkeypatch, deadline_after_calls=10)
+    assert len(calls) == 9 and _cancels(calls) == []
+    assert "not enough time left to cancel a deploy and its CI" in capsys.readouterr().out
+
+
+def test_the_deadline_caps_each_call(tmp_path, monkeypatch):
+    # With time for the pair checked but the CI cancel out of time, the deploy
+    # is cancelled and the CI call never runs past the deadline.
+    monkeypatch.setattr(superseded, "GH_TIMEOUT_SECONDS", 1)
     calls = _run_cancel(tmp_path, monkeypatch, deadline_after_calls=10)
     assert _cancels(calls) == ["run cancel 2"]
-    assert "its CI run could not be cancelled" in capsys.readouterr().out
 
 
 def test_cancel_older_leaves_the_ci_when_the_deploy_cancel_fails(tmp_path, monkeypatch):
@@ -825,6 +851,13 @@ def test_the_cancel_job_runs_beside_the_deploy_and_never_fails_its_run():
     # (checkout, runner, timeout), the step cannot fail, and every gh call is
     # capped at the deadline, inside the timeout with room for the checkout.
     assert job["continue-on-error"] is True
+    # A job that times out is cancelled, which continue-on-error does not
+    # cover; each step's own timeout makes a hang a step failure first.
+    steps = job["steps"]
+    assert all(isinstance(step.get("timeout-minutes"), int) for step in steps)
+    assert sum(step["timeout-minutes"] for step in steps) < job["timeout-minutes"]
+    script_step = next(step for step in steps if "run" in step)
+    assert script_step["timeout-minutes"] * 60 >= superseded.CANCEL_DEADLINE_SECONDS + 60
     assert run.rstrip().endswith('|| echo "::warning::cancel-older exited non-zero; nothing was cancelled after that point"')
     assert job["timeout-minutes"] * 60 >= superseded.CANCEL_DEADLINE_SECONDS + 120
     checkout = job["steps"][0]

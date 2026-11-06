@@ -61,11 +61,12 @@ jobs:
   # rollout, it cancels for four hours from its first cancellation and then
   # stops until a rollout is delivered, so a stream of pushes cannot keep main
   # undeployed. If the superseding push then goes red, re-run the cancelled
-  # CI and its deploy, or dispatch a hotfix. scripts/deploy/superseded_deploy.py
-  # --mode cancel-older says why for each run. No job needs this one, and it
-  # never fails the run (continue-on-error covers checkout, runner and timeout
-  # too): reconcile_cloud_releases.py reads a failed run as an undelivered
-  # release.
+  # CI run and then its deploy (a hotfix dispatch ships main's head without
+  # its CI gate). scripts/deploy/superseded_deploy.py --mode cancel-older says
+  # why for each run. No job needs this one, and it must not fail the run:
+  # reconcile_cloud_releases.py reads a failed run as an undelivered release.
+  # continue-on-error covers a failed step, checkout or runner, and each step's
+  # own timeout turns a hang into a step failure before the job's timeout.
   cancel-superseded:
     if: github.repository == 'Lore-Hex/quill-router' && github.event_name == 'push'
     runs-on: ubuntu-latest
@@ -78,10 +79,12 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v7
+        timeout-minutes: 3
         with:
           sparse-checkout: scripts/deploy/superseded_deploy.py
           sparse-checkout-cone-mode: false
       - name: Cancel the older pushes' preparing deploys and their untested CI
+        timeout-minutes: 10
         run: >-
           python3 scripts/deploy/superseded_deploy.py --mode cancel-older
           --repo "${GITHUB_REPOSITORY}" --base "${GITHUB_SHA}"
