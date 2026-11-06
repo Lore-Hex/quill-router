@@ -149,7 +149,9 @@ def test_the_script_passes_the_flag_only_for_true() -> None:
     refused = _run_fleet_block(**{"fastpath-fleet-audit": "yes"})
     assert refused.returncode == 1 and "fastpath-fleet-audit is true, false or absent" in refused.stderr
     script = SCRIPT.read_text(encoding="utf-8")
-    assert "-subscriptions auditor,stager $edge_flags $snapshot_flags $fleet_flags" in script
+    unit_line = re.search(r"^  -subscriptions auditor,stager \$edge_flags \$snapshot_flags( \$\w+)*$",
+                          script, re.M)
+    assert unit_line and "$fleet_flags" in unit_line.group(0).split(), unit_line
     # Not among the unit's unconditional flags, which the pinned release
     # must take whatever the attribute says.
     assert "fleet-audit" not in _unit_flags(script)

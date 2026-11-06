@@ -270,7 +270,7 @@ def drain_settle_outbox(
     logger.info(
         "gateway.reaped count=%s released_hold_micro=%s started_marker_share=%.6f "
         "snapshot_bookings=%s out_of_cohort_share=%.6f not_eligible=%s guarded=%s "
-        "guard_lost=%s errors=%s refunded=%s",
+        "guard_lost=%s errors=%s refunded=%s orphans_closed=%s",
         reap_result.count,
         reap_result.released_hold_micro,
         reap_result.started_marker_share,
@@ -281,6 +281,7 @@ def drain_settle_outbox(
         reap_result.guard_lost,
         reap_result.errors,
         reap_result.refunded,
+        reap_result.orphans_closed,
     )
     _reconcile_leased(reap_result)
     if reap_result.count >= _REAP_BURST_ALERT_THRESHOLD:
@@ -697,7 +698,7 @@ def housekeeping(outbox: SpannerSettleOutbox, *, reap_snapshot_booking_enabled: 
     logger.info(
         "gateway.reaped count=%s released_hold_micro=%s started_marker_share=%.6f "
         "snapshot_bookings=%s out_of_cohort_share=%.6f not_eligible=%s guarded=%s "
-        "guard_lost=%s errors=%s refunded=%s",
+        "guard_lost=%s errors=%s refunded=%s orphans_closed=%s",
         reap_result.count,
         reap_result.released_hold_micro,
         reap_result.started_marker_share,
@@ -708,6 +709,7 @@ def housekeeping(outbox: SpannerSettleOutbox, *, reap_snapshot_booking_enabled: 
         reap_result.guard_lost,
         reap_result.errors,
         reap_result.refunded,
+        reap_result.orphans_closed,
     )
     _reconcile_leased(reap_result)
     if reap_result.count >= _REAP_BURST_ALERT_THRESHOLD:

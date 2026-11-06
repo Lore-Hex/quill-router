@@ -11,6 +11,7 @@
 //	fastpathctl -database projects/P/instances/I/databases/D decide on|off|status WORKSPACE [-cloud gcp] [-region us-central1]
 //	fastpathctl -database D decide delete WORKSPACE [-cloud gcp] [-region us-central1]
 //	fastpathctl -database projects/P/instances/I/databases/D decide-off-all
+//	fastpathctl -database projects/P/instances/I/databases/D ready WORKSPACE [-required-tier N] [-floor F]
 //
 // disable revokes the workspace's open leases with the switch, and
 // disable-all turns every workspace off and revokes every open lease, the one
@@ -48,14 +49,25 @@
 // deciding. decide-off-all turns every row off. None of them touches the
 // switch or the leases: disable is still what turns a workspace off.
 //
-// Flags go before the command, or for decide after the workspace too: Go's
-// flags end at the command, so a word after it is the workspace or address
-// however it looks. A WORKSPACE is a workspace's id as the routing snapshot
-// takes one, beginning with a letter or digit, and an ADDRESS a node's
-// host:port; anything else, a flag such as -h among them, is refused with
-// the usage, exit 2, before the store is opened. decide delete alone takes
-// any workspace the table can hold, so a row written under a malformed one
-// can be removed.
+// ready asks the store whether a grant could reach the workspace with the
+// fleet's money settings (docs/design/fast-admission-widening.md, (b) and
+// section 8.2), read only and by the grant's own check
+// (store.GrantReadiness): enabled, not in debt, not paused, every credit
+// shard at -required-tier or above and not latched, and headroom above
+// -floor. Both default to the node's own defaults, today's values, and are
+// held to the node's bounds. It exits 0 when a grant could reach the
+// workspace, 3 when one would be refused, with the refusal beside, and 2
+// for a setting out of bounds, before the store is opened. Only a grant
+// weighs the allowance against a lease's amount, so ready takes none.
+//
+// Flags go before the command, or for decide and ready after the workspace
+// too: Go's flags end at the command, so a word after it is the workspace or
+// address however it looks. A WORKSPACE is a workspace's id as the routing
+// snapshot takes one, beginning with a letter or digit, and an ADDRESS a
+// node's host:port; anything else, a flag such as -h among them, is refused
+// with the usage, exit 2, before the store is opened. decide delete alone
+// takes any workspace the table can hold, so a row written under a malformed
+// one can be removed.
 // With SPANNER_EMULATOR_HOST set, the client reaches the emulator instead.
 package main
 
@@ -77,7 +89,8 @@ import (
 )
 
 // notDone is status's exit code for a workspace turned off with something of
-// the fast path left of it, and decide status's for a workspace that decides.
+// the fast path left of it, decide status's for a workspace that decides,
+// and ready's for a workspace a grant would refuse.
 const notDone = 3
 
 func main() {
@@ -88,13 +101,14 @@ func main() {
 	os.Exit(code)
 }
 
-// open is the store at the database, closed by its second result.
-func open(ctx context.Context, database string) (*store.Store, func(), error) {
+// open is the store at the database with the configuration, closed by its
+// second result.
+func open(ctx context.Context, database string, cfg store.Config) (*store.Store, func(), error) {
 	client, err := spanner.NewClient(ctx, database)
 	if err != nil {
 		return nil, nil, err
 	}
-	s, err := store.New(client, service.Defaults().Store)
+	s, err := store.New(client, cfg)
 	if err != nil {
 		client.Close()
 		return nil, nil, err
@@ -114,13 +128,18 @@ var addressForm = regexp.MustCompile(`^[A-Za-z0-9\[][A-Za-z0-9._:\[\]\-]{0,254}$
 
 // run is the command, its exit code and what went wrong.
 func run(ctx context.Context, args []string, out io.Writer,
-	open func(context.Context, string) (*store.Store, func(), error)) (int, error) {
+	open func(context.Context, string, store.Config) (*store.Store, func(), error)) (int, error) {
 	fs := flag.NewFlagSet("fastpathctl", flag.ContinueOnError)
 	database := fs.String("database", "", "the database: projects/P/instances/I/databases/D")
 	timeout := fs.Duration("timeout", 30*time.Second, "how long the command may take")
 	funded := fs.Int64("funded", -1, "audit: the micro-credits that funded the workspace, which its credit rows must sum to")
 	cloud := fs.String("cloud", "gcp", "decide: the edge plane's cloud")
 	region := fs.String("region", "us-central1", "decide: the region of the authorizations")
+	cfg := service.Defaults()
+	fs.Var(service.Money{P: &cfg.Store.RequiredTier}, "required-tier",
+		"ready: the trust tier the fleet's leases need (the node's -required-tier)")
+	fs.Var(service.Money{P: &cfg.Store.Floor}, "floor",
+		"ready: the headroom the fleet's grants leave outside leases, in microdollars (the node's -floor)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0, nil
@@ -128,7 +147,8 @@ func run(ctx context.Context, args []string, out io.Writer,
 		return 2, err
 	}
 	usage := errors.New("usage: fastpathctl -database D enable|disable|status|audit WORKSPACE, node|leave|closed ADDRESS, " +
-		"decide on|off|status|delete WORKSPACE [-cloud C] [-region R], disable-all or decide-off-all")
+		"decide on|off|status|delete WORKSPACE [-cloud C] [-region R], ready WORKSPACE [-required-tier N] [-floor F], " +
+		"disable-all or decide-off-all")
 	if *database == "" || fs.NArg() < 1 {
 		return 2, usage
 	}
@@ -147,6 +167,23 @@ func run(ctx context.Context, args []string, out io.Writer,
 			return 2, usage
 		}
 	}
+	if command == "ready" {
+		if fs.NArg() < 2 {
+			return 2, usage
+		}
+		// -required-tier and -floor may follow the workspace.
+		if err := fs.Parse(fs.Args()[2:]); err != nil {
+			return 2, err
+		}
+		if fs.NArg() != 0 {
+			return 2, usage
+		}
+	}
+	// The money settings are ready's, and held to the node's bounds whatever
+	// the command, so none opens a store the node would refuse.
+	if err := service.CheckMoney(cfg); err != nil {
+		return 2, err
+	}
 	switch {
 	case command == "disable-all" || command == "decide-off-all":
 		if fs.NArg() != 1 {
@@ -162,10 +199,14 @@ func run(ctx context.Context, args []string, out io.Writer,
 		if err := store.CheckDecideKey(workspace, *cloud, *region); err != nil {
 			return 2, err
 		}
+	case command == "ready":
+		if !workspaceForm.MatchString(workspace) {
+			return 2, fmt.Errorf("%q is not a workspace's id: %w", workspace, usage)
+		}
 	case command != "enable" && command != "disable" && command != "status" && command != "node" && command != "leave" &&
 		command != "closed" && command != "audit":
-		return 2, fmt.Errorf("%q is not enable, disable, status, audit, node, leave, closed, decide, disable-all or "+
-			"decide-off-all", command)
+		return 2, fmt.Errorf("%q is not enable, disable, status, audit, node, leave, closed, decide, ready, disable-all "+
+			"or decide-off-all", command)
 	case fs.NArg() != 2 || workspace == "":
 		return 2, usage
 	case (command == "node" || command == "leave" || command == "closed") && !addressForm.MatchString(workspace):
@@ -175,7 +216,7 @@ func run(ctx context.Context, args []string, out io.Writer,
 	}
 	ctx, cancel := context.WithTimeout(ctx, *timeout)
 	defer cancel()
-	s, closeStore, err := open(ctx, *database)
+	s, closeStore, err := open(ctx, *database, cfg.Store)
 	if err != nil {
 		return 1, err
 	}
@@ -236,6 +277,16 @@ func run(ctx context.Context, args []string, out io.Writer,
 					code = notDone
 				}
 			}
+		}
+	case "ready":
+		why, err := s.GrantReadiness(ctx, workspace)
+		if err != nil {
+			return 1, err
+		}
+		answer = map[string]any{"workspace": workspace, "ready": why == "", "refused": string(why),
+			"required_tier": cfg.Store.RequiredTier, "floor": cfg.Store.Floor}
+		if why != "" {
+			code = notDone
 		}
 	case "enable", "disable":
 		revoked, at, err := s.SetWorkspace(ctx, workspace, command == "enable")

@@ -2177,6 +2177,7 @@ def test_reaper_pass_emits_metrics_and_burst_alert(
             guard_lost=1,
             errors=2,
             refunded=17,
+            orphans_closed=3,
         ),
     )
     monkeypatch.setattr(
@@ -2198,7 +2199,7 @@ def test_reaper_pass_emits_metrics_and_burst_alert(
         "gateway.reaped count=20 released_hold_micro=4000 "
         "started_marker_share=0.250000 snapshot_bookings=3 "
         "out_of_cohort_share=0.100000 not_eligible=4 guarded=5 "
-        "guard_lost=1 errors=2 refunded=17"
+        "guard_lost=1 errors=2 refunded=17 orphans_closed=3"
     ) in caplog.text
     assert len(alerts) == 1
     assert alerts[0][1] == ["gateway", "reaped-burst"]

@@ -90,6 +90,50 @@ case "$fleet_audit" in
     echo "fastpath: fastpath-fleet-audit is true, false or absent; the startup script stops here" | systemd-cat -t fastpath -p err
     exit 1 ;;
 esac
+# The money settings (docs/design/fast-admission-widening.md, (b)): the
+# trust tier a lease needs, a workspace's allowance and the floor a grant
+# leaves, in microdollars, from fastpath-required-tier, fastpath-allowance
+# and fastpath-floor. Each flag is passed only when its attribute is there,
+# so a node without them runs the release's defaults, today's values: tier
+# 1, the allowance 1 << 50, no floor. The pinned release must take
+# -allowance and -floor before either attribute is set
+# (tests/test_fastpath_money_settings.py). Each is held here to the bounds
+# the release holds it to (service.CheckMoney), so a value it would refuse,
+# stopping the whole process restarted into the same refusal, stops the
+# script instead and the unit keeps what it had.
+required_tier="$(attribute fastpath-required-tier)" || exit 1
+allowance="$(attribute fastpath-allowance)" || exit 1
+floor="$(attribute fastpath-floor)" || exit 1
+# A whole number of at most 16 digits with no leading zero, from $2 to
+# 1 << 50.
+money_setting() {
+  case "$1" in
+    ""|*[!0-9]*|0?*|?????????????????*) return 1 ;;
+  esac
+  [ "$1" -ge "$2" ] && [ "$1" -le 1125899906842624 ]
+}
+money_flags=""
+case "$required_tier" in
+  "") ;;
+  0|1|2|3) money_flags="-required-tier $required_tier" ;;
+  *)
+    echo "fastpath: fastpath-required-tier is 0 to 3 or absent; the startup script stops here" | systemd-cat -t fastpath -p err
+    exit 1 ;;
+esac
+if [ -n "$allowance" ]; then
+  if ! money_setting "$allowance" 10000000; then
+    echo "fastpath: fastpath-allowance is 10000000 to 1125899906842624 microdollars or absent; the startup script stops here" | systemd-cat -t fastpath -p err
+    exit 1
+  fi
+  money_flags="$money_flags -allowance $allowance"
+fi
+if [ -n "$floor" ]; then
+  if [ "$floor" != 0 ] && ! money_setting "$floor" 1000000; then
+    echo "fastpath: fastpath-floor is 0, 1000000 to 1125899906842624 microdollars, or absent; the startup script stops here" | systemd-cat -t fastpath -p err
+    exit 1
+  fi
+  money_flags="$money_flags -floor $floor"
+fi
 # The edge's routing snapshot and shadow comparator (docs/design/
 # routing-snapshot-v1.md, E2) run when the instance's metadata names the
 # snapshot's URL, the manifest key's public key and kid, and its plane, all
@@ -223,7 +267,7 @@ ExecStart=/opt/fastpath/fastpath \
   -project ${project} \
   -key-secret ${key_secret} \
   -topics settle-log,records \
-  -subscriptions auditor,stager $edge_flags $snapshot_flags $fleet_flags
+  -subscriptions auditor,stager $edge_flags $snapshot_flags $money_flags $fleet_flags
 # SIGUSR1 marks the node leaving (the deploy runbook); SIGTERM stops it.
 KillSignal=SIGTERM
 TimeoutStopSec=30

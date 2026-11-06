@@ -132,6 +132,51 @@ func TestGrantRefusesWhatTheDesignRefuses(t *testing.T) {
 	}
 }
 
+// TestTheRequiredTierIsTheNodes: a workspace at tier 2 is granted under
+// today's RequiredTier 1 and refused under 3 (docs/design/fast-admission-
+// widening.md, (b)); an operator's override to 3 with its identity met is
+// granted, Python having written the effective tier on every shard beside
+// the override's; an override whose effective tier stayed 1 is still
+// refused, since the grant reads the effective tier, not the override's.
+func TestTheRequiredTierIsTheNodes(t *testing.T) {
+	ctx := context.Background()
+	today := spikeStore(t, func(c *Config) { c.RequiredTier = 1 })
+	widened := spikeStore(t)
+	ws := seedWorkspace(t, 100, 100)
+	setRows(t, ws, map[string]any{"trust_tier": int64(2)})
+	if got, err := today.Grant(ctx, grantOf(ws, 10)); err != nil || got.Refused != "" {
+		t.Fatalf("tier 2 under RequiredTier 1: %+v %v", got, err)
+	}
+	before := readRows(t, ws)
+	if got, err := widened.Grant(ctx, grantOf(ws, 10)); err != nil || got.Refused != RefusedTier {
+		t.Fatalf("tier 2 under RequiredTier 3: %+v %v, want refused for the tier", got, err)
+	}
+	if why, err := widened.GrantReadiness(ctx, ws); err != nil || why != RefusedTier {
+		t.Fatalf("readiness at tier 2 under RequiredTier 3: %q %v", why, err)
+	}
+	if after := readRows(t, ws); !slices.Equal(after, before) {
+		t.Fatalf("the refused grant wrote rows %+v", after)
+	}
+	setRows(t, ws, map[string]any{"trust_tier": int64(3), "trust_override_tier": int64(3)})
+	if why, err := widened.GrantReadiness(ctx, ws); err != nil || why != "" {
+		t.Fatalf("readiness at tier 3 by the override: %q %v", why, err)
+	}
+	if got, err := widened.Grant(ctx, grantOf(ws, 10)); err != nil || got.Refused != "" {
+		t.Fatalf("tier 3 by the override under RequiredTier 3: %+v %v", got, err)
+	}
+	capped := seedWorkspace(t, 100)
+	setRows(t, capped, map[string]any{"trust_tier": int64(1), "trust_override_tier": int64(3)})
+	if got, err := widened.Grant(ctx, grantOf(capped, 10)); err != nil || got.Refused != RefusedTier {
+		t.Fatalf("an override capped at 1: %+v %v, want refused for the tier", got, err)
+	}
+	// One shard behind is the workspace behind: the least shard's tier.
+	split := seedWorkspace(t, 100, 100)
+	setRow(t, split, 1, map[string]any{"trust_tier": int64(2)})
+	if got, err := widened.Grant(ctx, grantOf(split, 10)); err != nil || got.Refused != RefusedTier {
+		t.Fatalf("one shard at tier 2: %+v %v, want refused for the tier", got, err)
+	}
+}
+
 // TestExposureCountsWhatTheDesignCounts: an open or draining lease counts
 // its remaining allocation; a draining lease whose open holds are listed
 // counts their estimates; a closed lease counts nothing (§4.2).

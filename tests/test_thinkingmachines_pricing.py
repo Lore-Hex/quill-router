@@ -11,6 +11,8 @@ from tests.pinned_manifests import THINKINGMACHINES_GLM_5_3, serve_manifest_rows
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS
 
 SERVERLESS = [
+    {"tinker_id": "thinkingmachines/Inkling-2-Small:peft:262144:sampling-nvfp4",
+     "input": "$0.30", "cached_input": "$0.03", "output": "$1.00"},
     {"tinker_id": "thinkingmachines/Inkling-Small:peft:262144:sampling-nvfp4",
      "input": "$0.30", "cached_input": "$0.06", "output": "$1.20"},
     {"tinker_id": "thinkingmachines/Inkling:peft:262144:sampling-nvfp4",
@@ -30,6 +32,7 @@ def test_fetch_uses_named_json_prices_not_html_column_positions(monkeypatch):
     assert result.source == "api"
     assert result.prices["z-ai/glm-5.3"] == ModelPrice(4_860_000, 12_150_000, prompt_cached_micro_per_m=972_000)
     assert result.prices["thinkingmachines/inkling"] == ModelPrice(1_000_000, 4_050_000, prompt_cached_micro_per_m=170_000)
+    assert result.prices["thinkingmachines/inkling-2-small"] == ModelPrice(300_000, 1_000_000, prompt_cached_micro_per_m=30_000)
     assert set(result.prices) == set(thinkingmachines.EXPECTED_MODELS)
 
 
@@ -171,6 +174,11 @@ def test_manifest_writer_updates_integer_rates(tmp_path, monkeypatch) -> None:  
                         "output_token_price_per_m": 1,
                     },
                     {
+                        "id": "thinkingmachines/inkling-2-small",
+                        "input_token_price_per_m": 1,
+                        "output_token_price_per_m": 1,
+                    },
+                    {
                         "id": "z-ai/glm-5.3",
                         "input_token_price_per_m": 1,
                         "output_token_price_per_m": 1,
@@ -193,6 +201,11 @@ def test_manifest_writer_updates_integer_rates(tmp_path, monkeypatch) -> None:  
                 prompt_micro_per_m=300_000,
                 completion_micro_per_m=1_200_000,
                 prompt_cached_micro_per_m=60_000,
+            ),
+            "thinkingmachines/inkling-2-small": ModelPrice(
+                prompt_micro_per_m=300_000,
+                completion_micro_per_m=1_000_000,
+                prompt_cached_micro_per_m=30_000,
             ),
             "z-ai/glm-5.3": ModelPrice(
                 prompt_micro_per_m=4_860_000,
@@ -218,6 +231,9 @@ def test_manifest_writer_updates_integer_rates(tmp_path, monkeypatch) -> None:  
         rows["thinkingmachines/inkling-small"]["cached_input_token_price_per_m"]
         == 60_000
     )
+    assert rows["thinkingmachines/inkling-2-small"]["input_token_price_per_m"] == 300_000
+    assert rows["thinkingmachines/inkling-2-small"]["output_token_price_per_m"] == 1_000_000
+    assert rows["thinkingmachines/inkling-2-small"]["cached_input_token_price_per_m"] == 30_000
     assert rows["z-ai/glm-5.3"]["input_token_price_per_m"] == 4_860_000
     assert rows["z-ai/glm-5.3"]["output_token_price_per_m"] == 12_150_000
     assert rows["z-ai/glm-5.3"]["cached_input_token_price_per_m"] == 972_000
@@ -245,3 +261,17 @@ def test_tinker_glm_5_3_sampler_route_is_published_with_verified_contract(
     assert endpoint.upstream_id == "zai-org/GLM-5.3:peft:262144"
     assert endpoint.prompt_price_microdollars_per_million_tokens == 5_127_300
     assert endpoint.completion_price_microdollars_per_million_tokens == 12_818_250
+
+
+def test_inkling_2_small_is_cataloged_without_an_open_weights_badge() -> None:
+    from trusted_router.catalog import endpoints_for_model, model_open_weights
+
+    model = MODELS["thinkingmachines/inkling-2-small"]
+    assert model.context_length == 262_144
+    assert model.input_modalities == ("text", "image")
+    assert not model_open_weights(model)
+    assert model_open_weights(MODELS["thinkingmachines/inkling-small"])
+    assert {
+        (endpoint.provider, endpoint.upstream_id)
+        for endpoint in endpoints_for_model(model.id)
+    } == {("thinkingmachines", "thinkingmachines/Inkling-2-Small:peft:262144:sampling-nvfp4")}
