@@ -16,6 +16,7 @@ from trusted_router.catalog import (
 )
 from trusted_router.catalog_ingest import _PROVIDER_MODELS_DIR
 from trusted_router.config import Settings
+from trusted_router.provider_contracts import PREPAID_PROVIDER_HOLD_REASONS
 from trusted_router.provider_lifecycle import provider_model_retired
 from trusted_router.routing import video_route_endpoint_candidates
 from trusted_router.security import lookup_hash_api_key
@@ -124,7 +125,8 @@ def _manifest_dark_routes() -> set[tuple[str, str]]:
 
 def test_launch_video_catalog_is_explicit_and_credits_only() -> None:
     # The launch routes are an explicit list. One leaves the catalog only when
-    # its own provider's committed manifest marks the row dark.
+    # its own provider's committed manifest marks the row dark, or the
+    # operator explicitly holds that provider's managed billing routes.
     dark = _manifest_dark_routes()
     for model_id in VIDEO_MODELS:
         model = MODELS[model_id]
@@ -139,6 +141,7 @@ def test_launch_video_catalog_is_explicit_and_credits_only() -> None:
         expected = [
             host for host in hosts
             if (host, model_id) not in dark and not provider_model_retired(host, model_id)
+            and host not in PREPAID_PROVIDER_HOLD_REASONS
         ]
         assert [endpoint.provider for endpoint in endpoints] == expected
         assert all(endpoint.usage_type == "Credits" for endpoint in endpoints)

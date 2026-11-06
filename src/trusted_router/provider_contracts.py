@@ -65,6 +65,10 @@ _NATIVE_HOSTED_MODEL_EXCEPTIONS = frozenset({
 # own BYOK credentials. Crusoe (held October 3) was cleared on October 5 after
 # its replacement key passed paid-path canaries.
 PREPAID_PROVIDER_HOLD_REASONS: dict[str, str] = {
+    # November 6: direct API HTTP 429 / code 1102, "Account balance not
+    # enough". Joseph requested the managed route stay unavailable. Clear
+    # only after funding and a successful paid-path recovery canary.
+    "kling": "operator-credit-exhausted",
     # Sonar is now reformulated as Agent API calls. Its reported input/search
     # costs no longer reconcile with the old fixed-fee catalog contract.
     # Keep managed billing dark until a reviewed adapter accounts for them.
