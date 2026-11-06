@@ -783,7 +783,8 @@ on `owner.off`; with it the pass is named and cheaper.
 ### 8.1 The bars every step reads
 
 Read with `fastpathwatch edge -since` the step's start, the fleet audit's
-summaries since then, and the enabler's reports. A step's own traffic only:
+summaries since then (its `ended=true` lines alone: a start or progress
+line is not a pass), and the enabler's reports. A step's own traffic only:
 counts from before it do not count.
 
 1. The fleet audit: at least two complete passes over every workspace of

@@ -261,7 +261,7 @@ locals {
 resource "google_logging_metric" "fastpath_fleet_audit_summary" {
   project     = local.gcp_project_id
   name        = "fastpath_fleet_audit_summary"
-  description = "A fast path node wrote the fleet audit's summary line (docs/design/fast-admission-widening.md section 7)."
+  description = "A fast path node wrote one of the fleet audit's lines, a pass's start, progress or summary (docs/design/fast-admission-widening.md section 7)."
   filter      = local.fastpath_fleet_audit_summary_filter
 
   metric_descriptor {
@@ -279,7 +279,7 @@ resource "google_monitoring_alert_policy" "fastpath_fleet_audit_absent" {
   enabled      = local.fastpath_fleet_audit
 
   conditions {
-    display_name = "No fast path node wrote the fleet audit's summary line for 90 minutes"
+    display_name = "No fast path node wrote a fleet audit line for 90 minutes"
     condition_absent {
       filter = join(" AND ", [
         "resource.type = \"gce_instance\"",
@@ -304,7 +304,7 @@ resource "google_monitoring_alert_policy" "fastpath_fleet_audit_absent" {
   }
 
   documentation {
-    content   = "No fast path node has written the fleet audit's summary line (`fastpath fleet audit: due=...`) for 90 minutes: `fleet_audit_stale`. What to do: docs/runbooks/fastpath-alerts.md in Lore-Hex/quill-router."
+    content   = "No fast path node has written any of the fleet audit's lines, a pass's start, progress or summary (`fastpath fleet audit: due=...`), for 90 minutes: `fleet_audit_stale`. What to do: docs/runbooks/fastpath-alerts.md in Lore-Hex/quill-router."
     mime_type = "text/markdown"
   }
 
