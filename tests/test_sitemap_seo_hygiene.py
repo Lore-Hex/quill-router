@@ -104,7 +104,20 @@ def test_every_sitemap_page_has_clean_search_metadata(test_settings: Settings) -
             issues.append(f"{path}: noindex page is listed in sitemap")
         if parser.canonical != url:
             issues.append(f"{path}: canonical {parser.canonical!r} != {url!r}")
-        if not parser.title or len(parser.title) > 60:
+        # 60 characters is a display budget, not a limit on model identity.
+        # Long comparisons must contain precisely the two complete names,
+        # without boilerplate; every other page keeps the normal budget.
+        comparison_prefix = "/compare/models/"
+        if path.startswith(comparison_prefix) and "/vs/" in path:
+            left_id, right_id = path[len(comparison_prefix):].split("/vs/", 1)
+            left_name = dashboard._hero_model_name(dashboard.MODELS[left_id])
+            right_name = dashboard._hero_model_name(dashboard.MODELS[right_id])
+            identity = " ".join(f"{left_name} vs {right_name}".split())
+            if not parser.title.startswith(identity):
+                issues.append(f"{path}: comparison title lost model identity")
+            if len(parser.title) > 60 and parser.title != identity:
+                issues.append(f"{path}: long comparison title contains boilerplate")
+        elif not parser.title or len(parser.title) > 60:
             issues.append(f"{path}: title length {len(parser.title)}")
         description_length = len(parser.description or "")
         if path == "/":

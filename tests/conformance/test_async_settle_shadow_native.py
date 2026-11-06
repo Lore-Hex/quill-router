@@ -2,7 +2,7 @@
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 
@@ -41,6 +41,11 @@ def test_shadow_native_sample_uniqueness(native_emulator_resources, backend):
     from trusted_router.async_settle_shadow_evidence import SAMPLE
     database, _ = native_emulator_resources
     row = sample_row()
+    # A day the store keeps whatever the calendar says, as the cap test's:
+    # the sample's times move with it, since its day is its authorize's.
+    shift = (date(2099, 11, 28) - date.fromisoformat(row['authorization_day'])).days * 86_400_000_000
+    row.update(authorization_day='2099-11-28', authorize_at_us=row['authorize_at_us'] + shift,
+               observed_at_us=row['observed_at_us'] + shift)
     row['authorization_id'] = 'shadow-' + uuid4().hex
     identity = row['authorization_day'] + '/' + row['authorization_id']
     def insert(_):

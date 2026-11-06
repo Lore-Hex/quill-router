@@ -44,6 +44,7 @@ _DEFAULT_MODEL_IDS: tuple[str, ...] = (
 )
 
 _PAGE_FOCUS_TERMS: dict[str, tuple[str, ...]] = {
+    "abliterated-deepseek": ("deepseek-v4.1-flash-1017-uncensored",),
     "azure-openai-alternative": ("gpt-5", "claude-opus", "gemini"),
     "aws-bedrock-alternative": ("claude", "llama", "mistral"),
     "china-ai-models": ("deepseek", "kimi", "glm", "qwen", "minimax"),
