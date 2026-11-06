@@ -26,7 +26,10 @@ def account(client):
 def payload(client):
     page = client.get("/console/account/delete")
     assert page.status_code == 200
-    assert "does not erase your personal data" in page.text
+    assert "I understand this disables my account and access to remaining credits." in page.text
+    assert "personal data" not in page.text.lower()
+    assert "data erasure" not in page.text.lower()
+    assert "mailto:security@trustedrouter.com" not in page.text
     assert page.headers["cache-control"] == "private, no-store"
     token = re.search(r'name="csrf_token" value="([a-f0-9]+)"', page.text).group(1)
     return {"csrf_token": token, "confirmation": "DELETE", "acknowledge": "yes"}
@@ -38,6 +41,9 @@ def final_payload(client):
     assert review.status_code == 200
     assert "Final confirmation" in review.text
     assert "Your account is still active" in review.text
+    assert "personal data" not in review.text.lower()
+    assert "data erasure" not in review.text.lower()
+    assert "mailto:security@trustedrouter.com" not in review.text
     assert review.headers["cache-control"] == "private, no-store"
     token = re.search(r'name="final_token" value="([a-f0-9.]+)"', review.text).group(1)
     return {"csrf_token": data["csrf_token"], "final_token": token, "confirm_close": "yes"}
@@ -54,7 +60,10 @@ def test_close_revokes_sessions_keys_and_keeps_account_tombstone(client, account
     response = client.post("/console/account/delete/confirm", data=data, headers={"Origin": "http://testserver"})
     assert response.status_code == 200
     assert "Account closed" in response.text
-    assert "Account closure is not data erasure" in response.text
+    assert "Your account is disabled on this service." in response.text
+    assert "personal-data deletion" not in response.text.lower()
+    assert "data erasure" not in response.text.lower()
+    assert "mailto:security@trustedrouter.com" not in response.text
     assert "Max-Age=0" in response.headers["set-cookie"]
     closed = STORE.find_user_by_email(user.email)
     assert closed.id == user.id and closed.disabled and closed.account_closed_at

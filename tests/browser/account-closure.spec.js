@@ -19,7 +19,9 @@ for (const width of [320, 390, 1280]) {
     await page.goto("/console/account/delete");
     await page.evaluate(() => document.fonts.ready);
     await expect(page.getByRole("heading", { name: "Delete account", exact: true })).toBeVisible();
-    await expect(page.getByText("This closes access; it does not erase your personal data.", { exact: false })).toBeVisible();
+    await expect(page.getByText("I understand this disables my account and access to remaining credits.", { exact: true })).toBeVisible();
+    await expect(page.getByText(/personal.?data|data erasure/i)).toHaveCount(0);
+    await expect(page.locator('a[href^="mailto:security@trustedrouter.com"]')).toHaveCount(0);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: `/tmp/tr-account-close-${width}.png`, fullPage: true });
     const input = page.getByLabel("Type DELETE to confirm");
@@ -31,11 +33,15 @@ for (const width of [320, 390, 1280]) {
     await submit.click();
     await expect(page.getByRole("heading", { name: "Final confirmation", exact: true })).toBeVisible();
     await expect(page.getByText("Your account is still active.")).toBeVisible();
+    await expect(page.getByText(/personal.?data|data erasure/i)).toHaveCount(0);
+    await expect(page.locator('a[href^="mailto:security@trustedrouter.com"]')).toHaveCount(0);
     await expect(page.getByRole("link", { name: "Keep my account" })).toHaveAttribute("href", "/console/account/preferences");
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: `/tmp/tr-account-final-${width}.png`, fullPage: true });
     await page.getByRole("button", { name: "Yes, close my account" }).click();
     await expect(page.getByRole("heading", { name: "Account closed", exact: true })).toBeVisible();
+    await expect(page.getByText(/personal.?data|data erasure/i)).toHaveCount(0);
+    await expect(page.locator('a[href^="mailto:security@trustedrouter.com"]')).toHaveCount(0);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: `/tmp/tr-account-closed-${width}.png`, fullPage: true });
   });
