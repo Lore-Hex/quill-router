@@ -1090,9 +1090,14 @@ func TestASlowPassIsCountedUnderItsPhase(t *testing.T) {
 	if !strings.Contains(h.logs.all(), `passed={"boot.signature":2} slow={"at_edge":1,"at_edge.boot":1}`) {
 		t.Fatalf("the period's line: %s", h.logs.all())
 	}
-	// The edge's own time, alone in its period: alerted.
+	// The edge's own time, alone in its period: alerted, and not again in
+	// the next.
 	if got := raised.taken(); len(got) != 1 || len(got[AlertSlowPass]) != 1 {
 		t.Fatalf("a lone slow boot read's alerts: %v", got)
+	}
+	h.edge.decider.flush()
+	if got := raised.taken(); len(got) != 0 {
+		t.Fatalf("the period after a slow boot read: %v", got)
 	}
 
 	// A body whose read takes twice the threshold, the insert failing: the
@@ -1166,26 +1171,51 @@ func TestAPassIsTheEdgesOwnButForItsBody(t *testing.T) {
 	}
 }
 
-// TestALoneSlowBodyReadRaisesNoAlert: a pass slow at the edge only by its
-// body's read is counted (at_edge, at_edge.body) but raises no
-// AlertSlowPass by itself, since the body's read waits on the caller and the
-// load balancer; another within SlowBodyPeriods periods on the node raises
-// it, the current period and the nine before counted, and not one ten
-// periods before; two in one period raise it. A pass whose body's read was
-// its longest phase but whose time after the read was over the threshold
-// too is the edge's own, and raises it at once, as a pass slow in all does
-// alone in its period.
+// expectSlowAlert checks what a flush raised: nothing, or one AlertSlowPass
+// whose message counts recent at_edge.body passes in the last ten periods.
+func expectSlowAlert(t *testing.T, raised *alerts, step string, alerted bool, recent int) {
+	t.Helper()
+	got := raised.taken()
+	if !alerted {
+		if len(got) != 0 {
+			t.Fatalf("%s: alerted %v", step, got)
+		}
+		return
+	}
+	if len(got) != 1 || len(got[AlertSlowPass]) != 1 || !strings.Contains(got[AlertSlowPass][0],
+		fmt.Sprintf("; at_edge.body in the last 10 periods: %d", recent)) {
+		t.Fatalf("%s: the alerts %v", step, got)
+	}
+}
+
+// slowOwnTotal is the decide path's own slow passes since it started.
+func slowOwnTotal(dp *decider) int64 {
+	dp.mu.Lock()
+	defer dp.mu.Unlock()
+	return dp.total.slowOwn
+}
+
+// TestALoneSlowBodyReadRaisesNoAlert: a request whose body the edge reads
+// slowly is counted at_edge and at_edge.body, not as the edge's own, and
+// alone raises no AlertSlowPass. One whose body's read was its longest
+// phase but whose time after the read was over the threshold too is the
+// edge's own and raises it at once, as a pass slow in all does alone in its
+// period. The threshold leaves a loaded runner's time after a read well
+// under it.
 func TestALoneSlowBodyReadRaisesNoAlert(t *testing.T) {
 	f := authorizeGoldens(t)
 	c := authorizeCaseNamed(t, "answer:app_categories_empty")
-	const threshold = 100 * time.Millisecond
-	h := newDecideEdge(t, f, c, nil)
+	const threshold = 250 * time.Millisecond
 	var raised alerts
-	h.edge.decider.cfg.Alert = raised.raise
 	failed := func(context.Context) store.InsertOutcome { return store.Failed }
-	h.rows.insert = failed
-	h.edge.decider.slowAtEdge = threshold
-	slow := func(delay time.Duration) {
+	edge := func() *decideEdge {
+		h := newDecideEdge(t, f, c, nil)
+		h.edge.decider.cfg.Alert = raised.raise
+		h.edge.decider.slowAtEdge = threshold
+		h.rows.insert = failed
+		return h
+	}
+	slow := func(h *decideEdge, delay time.Duration) {
 		t.Helper()
 		req := request(c, context.Background())
 		req.Body = io.NopCloser(&slowBody{r: bytes.NewReader(c.body()), delay: delay})
@@ -1196,85 +1226,100 @@ func TestALoneSlowBodyReadRaisesNoAlert(t *testing.T) {
 			t.Fatalf("a slow body: %d", rec.Code)
 		}
 	}
-	quiet := func(periods int) {
-		for range periods {
-			h.edge.decider.flush()
-		}
-	}
-	expect := func(step string, alerted bool, recent int) {
-		t.Helper()
-		got := raised.taken()
-		if !alerted {
-			if len(got) != 0 {
-				t.Fatalf("%s: alerted %v", step, got)
-			}
-			return
-		}
-		if len(got) != 1 || len(got[AlertSlowPass]) != 1 || !strings.Contains(got[AlertSlowPass][0],
-			fmt.Sprintf("; at_edge.body in the last %d periods: %d", SlowBodyPeriods, recent)) {
-			t.Fatalf("%s: the alerts %v", step, got)
-		}
-	}
 
-	// A lone one: counted, the period's line says so, and no alert.
-	slow(2 * threshold)
-	if got := h.edge.DecideCounts().Slow; !maps.Equal(got, map[string]int64{"at_edge": 1, "at_edge.body": 1}) {
-		t.Fatalf("a slow body: %v", got)
+	// A lone one: counted, not the edge's own, the period's line says so,
+	// and no alert.
+	h := edge()
+	slow(h, 2*threshold)
+	if got, own := h.edge.DecideCounts().Slow, slowOwnTotal(h.edge.decider); own != 0 ||
+		!maps.Equal(got, map[string]int64{"at_edge": 1, "at_edge.body": 1}) {
+		t.Fatalf("a slow body: %v, own %d", got, own)
 	}
 	h.edge.decider.flush()
 	if !strings.Contains(h.logs.all(), `passed={"insert.failed":1} slow={"at_edge":1,"at_edge.body":1}`) {
 		t.Fatalf("the period's line: %s", h.logs.all())
 	}
-	expect("a lone slow body", false, 0)
-	// The next period's: two within the periods.
-	slow(2 * threshold)
-	h.edge.decider.flush()
-	expect("a second in the next period", true, 2)
-	// Eight quiet periods, then one: the one before is in the current
-	// period's nine before.
-	quiet(SlowBodyPeriods - 2)
-	slow(2 * threshold)
-	h.edge.decider.flush()
-	expect("a second nine periods on", true, 2)
-	// Nine quiet periods, then one: the one before is ten periods back.
-	quiet(SlowBodyPeriods - 1)
-	slow(2 * threshold)
-	h.edge.decider.flush()
-	expect("one ten periods on", false, 0)
-	// Ten quiet periods, then two in one period.
-	quiet(SlowBodyPeriods)
-	slow(2 * threshold)
-	slow(2 * threshold)
-	h.edge.decider.flush()
-	expect("two in one period", true, 2)
+	expectSlowAlert(t, &raised, "a lone slow body", false, 0)
 
 	// The body's read the longest phase, and the insert's wait after it
 	// over the threshold too: the edge's own, alerted at once.
-	h = newDecideEdge(t, f, c, nil)
-	h.edge.decider.cfg.Alert = raised.raise
-	h.edge.decider.slowAtEdge = threshold
+	h = edge()
 	h.rows.insert = func(context.Context) store.InsertOutcome {
 		time.Sleep(3 * threshold / 2)
 		return store.Failed
 	}
-	slow(3 * threshold)
-	if got := h.edge.DecideCounts().Slow; !maps.Equal(got, map[string]int64{"at_edge": 1, "at_edge.body": 1}) {
-		t.Fatalf("a slow body and a slow insert: %v", got)
+	slow(h, 3*threshold)
+	if got, own := h.edge.DecideCounts().Slow, slowOwnTotal(h.edge.decider); own != 1 ||
+		!maps.Equal(got, map[string]int64{"at_edge": 1, "at_edge.body": 1}) {
+		t.Fatalf("a slow body and a slow insert: %v, own %d", got, own)
 	}
 	h.edge.decider.flush()
-	expect("a slow body and a slow insert", true, 1)
+	expectSlowAlert(t, &raised, "a slow body and a slow insert", true, 1)
 
 	// Python's answer past SlowInAll, alone in its period: alerted at once.
-	h = newDecideEdge(t, f, c, nil)
-	h.edge.decider.cfg.Alert = raised.raise
-	h.rows.insert = failed
+	h = edge()
 	h.edge.decider.slowInAll = 0
 	h.send(t, c)
 	if got := h.edge.DecideCounts().Slow; !maps.Equal(got, map[string]int64{"in_all": 1}) {
 		t.Fatalf("slow in all: %v", got)
 	}
 	h.edge.decider.flush()
-	expect("slow in all", true, 0)
+	expectSlowAlert(t, &raised, "slow in all", true, 0)
+}
+
+// TestSlowBodyReadsAlertInPairsWithinTenPeriods: the window, on counts made
+// as a pass makes them, with no timing. A lone at_edge.body raises nothing;
+// another within ten periods raises AlertSlowPass, the current period and
+// the nine before counted and not one ten before; two in one period raise
+// it. The edge's own slow pass raises it at once and only in its period,
+// and is no at_edge.body for the window: a lone body pass after it raises
+// nothing.
+func TestSlowBodyReadsAlertInPairsWithinTenPeriods(t *testing.T) {
+	h, _ := baseDecide(t)
+	dp := h.edge.decider
+	var raised alerts
+	dp.cfg.Alert = raised.raise
+	body := func(n int) {
+		for range n {
+			dp.count(func(t *decideTally) { t.slow["at_edge"]++; t.slow["at_edge."+SlowPhaseBody]++ })
+		}
+	}
+	own := func(phase string) {
+		dp.count(func(t *decideTally) { t.slow["at_edge"]++; t.slow["at_edge."+phase]++; t.slowOwn++ })
+	}
+	quiet := func(periods int) {
+		for range periods {
+			dp.flush()
+		}
+	}
+	step := func(name string, alerted bool, recent int) {
+		t.Helper()
+		dp.flush()
+		expectSlowAlert(t, &raised, name, alerted, recent)
+	}
+
+	body(1)
+	step("a lone body read", false, 0)
+	body(1)
+	step("a second in the next period", true, 2)
+	quiet(8)
+	body(1)
+	step("a second nine periods on", true, 2)
+	quiet(9)
+	body(1)
+	step("one ten periods on", false, 0)
+	quiet(10)
+	body(2)
+	step("two in one period", true, 2)
+	quiet(10)
+	own(SlowPhaseBoot)
+	step("the edge's own boot read", true, 0)
+	step("the period after it", false, 0)
+	own(SlowPhaseAdmit)
+	step("the edge's own admission", true, 0)
+	quiet(2)
+	body(1)
+	step("a lone body read after the edge's own", false, 0)
 }
 
 // TestTheDecideLineCountsItsPeriodAlone: each period's line carries that

@@ -90,8 +90,8 @@ const (
 	// SlowInAll after its arrival (decision 12). The message's counts name
 	// each pass slow at the edge's phase too (at_edge.<phase>, slowPhase).
 	// A pass slow at the edge only by its body's read raises it only beside
-	// another such pass on the node within SlowBodyPeriods (decideTally's
-	// slowOwn says which passes are the edge's own).
+	// another at_edge.body pass on the node within SlowBodyPeriods
+	// (decideTally's slowOwn says which passes are the edge's own).
 	AlertSlowPass = "edge_decide_pass_slow"
 	// AlertWindowUnread: more than WindowUnreadShare of the period's window
 	// reads (at least WindowUnreadMin of them) failed or ran past their
@@ -111,11 +111,13 @@ const (
 	SlowInAll  = 25 * time.Second
 	// SlowBodyPeriods is how many periods, the current one included, a pass
 	// slow at the edge only by its body's read looks back over for another
-	// on the node. The body comes from the caller through the load
-	// balancer, so its read waits on them: a lone slow read is their stall,
-	// with nothing on the node to act on, and is counted (at_edge.body) but
-	// raises no AlertSlowPass. Two within these periods are a pattern, a
-	// busy node or a path that keeps stalling, and raise it.
+	// at_edge.body pass on the node. The body comes from the caller through
+	// the load balancer, so its read waits on them: a lone slow read is
+	// taken for their stall, with nothing on the node to act on, and is
+	// counted (at_edge.body) but raises no AlertSlowPass. Two within these
+	// periods are a pattern, a busy node or a path that keeps stalling, and
+	// raise it. Lone ones this many periods apart or more never raise it,
+	// however often they come; the decide line counts each.
 	SlowBodyPeriods = 10
 	// WindowUnreadShare and WindowUnreadMin make AlertWindowUnread: ten
 	// times the rollout gate's 0.1% (key-windows section 8.3), and not for

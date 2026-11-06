@@ -180,12 +180,15 @@ The flow, per request, in this order:
     longest of those four phases (`at_edge.body`, `at_edge.boot`,
     `at_edge.decide`, `at_edge.admit`). The body comes from the caller
     through the load balancer, so its read waits on them: a pass slow only
-    by that read (its longest phase, with what followed the read under 1 s)
-    is counted but alerts only beside another such pass on the node within
-    ten periods (`SlowBodyPeriods`), the pattern of a congested node or a
-    path that keeps stalling; one alone is a stall outside the edge
-    (2026-11-05: a 4.2 s authorize from the europe-west4 enclave, edge node
-    and enclave both idle). Every other slow pass alerts at once.
+    by that read (its longest phase, with what followed the read no more
+    than 1 s) is counted but alerts only beside another `at_edge.body`
+    pass on the node within ten periods (`SlowBodyPeriods`), the pattern
+    of a congested node or a path that keeps stalling; one alone is taken
+    for a stall outside the edge (2026-11-05: a 4.2 s authorize from a
+    europe-west4 enclave, while the node, at about 2% CPU, answered a
+    us-central1 caller in 0.18 s). Lone ones ten periods apart or more
+    never alert, however often they recur; the decide lines and
+    `fastpathwatch edge` show them. Every other slow pass alerts at once.
 13. **Response encoding.** Identity-encoded JSON, `Content-Type:
     application/json`, `Content-Length`, and the bytes FastAPI's pydantic-core
     fast path writes for the 200 (§6): insertion order, raw UTF-8,
@@ -1770,7 +1773,7 @@ unavailable answer raises `edge_decide_unavailable`, three such periods
 with no 200 between them `edge_decide_unavailable_sustained` (a period
 that answered nothing neither adds to the run nor ends it), and a pass past decision 12's 1 s at
 the edge or 25 s in all `edge_decide_pass_slow` (one slow only by its body's read, beside
-another within ten periods; decision 12); each kind has its policy
+another `at_edge.body` within ten periods; decision 12); each kind has its policy
 (`infra/fastpath_alerts.tf`) and runbook row
 (`docs/runbooks/fastpath-alerts.md`).
 
