@@ -160,11 +160,25 @@ BEDROCK_RUNTIME_GATEWAY_REGIONS: frozenset[str] = frozenset({
 # Clairic needs the native /ai/run adapter. Publish only after the GCP fleet
 # rolls; older AWS/Azure gateways must not send extraction tasks to chat.
 CLAIRIC_GATEWAY_REGIONS = frozenset({"us-central1", "us-east4", "europe-west4", "us-west1"})
+# Baseten's System One models, reviewed against its published contract
+# (https://docs.baseten.co/reference/inference-api/system-one): POST
+# /v1/systemone, input-only tariff in /models. They route only as decisions,
+# never as chat. Any other decision-models/ ID remains held until reviewed.
+BASETEN_SYSTEMONE_MODEL_IDS: frozenset[str] = frozenset({
+    "decision-models/baseten-elephant-9b-latest",
+    "decision-models/baseten-mammoth-27b-latest",
+    "decision-models/baseten-joey-2b-latest",
+})
+# The gateway's Baseten System One adapter (quill-cloud-proxy) must be deployed
+# to a fleet before it can serve these. Older gateways send hosted decisions to
+# /evaluate, which Baseten does not serve.
+BASETEN_SYSTEMONE_GATEWAY_REGIONS = frozenset({"us-central1", "us-east4", "europe-west4", "us-west1"})
 # Regolo's decision adapter also requires a cloud-local credential. The Azure
 # bundle has no Regolo entry; only the GCP fleet is verified for this route.
 EXPLICIT_GATEWAY_REGIONS_BY_PROVIDER_MODEL = {
     ("cloudflare-workers-ai", "cloudflare/clairic"): CLAIRIC_GATEWAY_REGIONS,
     ("regolo", "cloudflare/clef-flash"): frozenset({"us-central1", "us-east4", "europe-west4", "us-west1"}),
+    **{("baseten", model_id): BASETEN_SYSTEMONE_GATEWAY_REGIONS for model_id in BASETEN_SYSTEMONE_MODEL_IDS},
 }
 
 # Fugu reports additive provider-side orchestration tokens only after a call.
@@ -178,6 +192,10 @@ EXPLICIT_GATEWAY_REGIONS_BY_PROVIDER_MODEL = {
 # make ordinary Namazu calls fail nondeterministically. Keep the discovered
 # model visible but globally unroutable until canonical steering can guarantee
 # a supported egress region without bypassing Sakana's geographic policy.
+
+
+def baseten_systemone_model_reviewed(model_id: str, upstream_id: str | None = None) -> bool:
+    return model_id in BASETEN_SYSTEMONE_MODEL_IDS and (upstream_id or model_id) == model_id
 
 
 def provider_model_operator_held(
@@ -195,12 +213,13 @@ def provider_model_operator_held(
     ):
         return True
     # System One decisions share /models with chat but use a different API.
-    # Block prepaid and BYOK until that native adapter is qualified.
+    # Only reviewed IDs, under their exact native ID, may route, and catalog
+    # ingest admits them only as decide routes. Everything else stays held.
     if provider_slug == "baseten" and (
         native_id.startswith(BASETEN_SYSTEMONE_PREFIX)
         or model_id.startswith(BASETEN_SYSTEMONE_PREFIX)
     ):
-        return True
+        return not baseten_systemone_model_reviewed(model_id, upstream_id)
     if native_prefix is not None and not native_id.startswith(native_prefix):
         if (provider_slug, native_id) not in _NATIVE_HOSTED_MODEL_EXCEPTIONS:
             return True

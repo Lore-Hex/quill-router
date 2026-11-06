@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from trusted_router.pricing import provider_manifest_price_profile_is_valid
+from trusted_router.provider_contracts import baseten_systemone_model_reviewed
 
 # Every provider whose live scraper can fall back to a committed manifest is
 # quarantined independently when that manifest ages out. All of them have CI
@@ -91,6 +92,7 @@ def decision_manifest_price_is_valid(row: dict[str, Any]) -> bool:
         and (
             re.fullmatch(r"decisionmodelsio(?:-eu)?/[a-z0-9]+(?:-[a-z0-9]+)*", model_id) is not None
             or (model_id == "cloudflare/clef-flash" and row.get("upstream_id") == "clef-flash")
+            or (row.get("upstream_id") == model_id and baseten_systemone_model_reviewed(model_id, model_id))
         )
         and (
             hold is None
