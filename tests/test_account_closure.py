@@ -38,6 +38,8 @@ def final_payload(client):
     assert review.status_code == 200
     assert "Final confirmation" in review.text
     assert "Your account is still active" in review.text
+    assert "This closes access; it does not erase your personal data." not in review.text
+    assert 'href="mailto:security@trustedrouter.com"' not in review.text
     assert review.headers["cache-control"] == "private, no-store"
     token = re.search(r'name="final_token" value="([a-f0-9.]+)"', review.text).group(1)
     return {"csrf_token": data["csrf_token"], "final_token": token, "confirm_close": "yes"}
