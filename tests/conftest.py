@@ -274,10 +274,12 @@ def pytest_collection_modifyitems(items):
 # November 6. Retention/midnight witnesses own their clocks separately.
 _FIXED_SHADOW_EVIDENCE_FILES = frozenset({
     'test_async_settle_shadow_accounting.py',
+    'test_async_settle_shadow_lifecycle.py',
     'test_async_settle_shadow_r11_validity.py',
     'test_async_settle_shadow_r8_retry_class.py',
     'test_async_settle_shadow_revision.py',
     'test_async_settle_shadow_sdk_retry.py',
+    'test_async_settle_shadow_winners.py',
 })
 
 
