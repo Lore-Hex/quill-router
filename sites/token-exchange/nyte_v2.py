@@ -296,7 +296,7 @@ def host_brand_script(page: str) -> str:
 
 def render_nyte(
     page: str = "home", *, content: str | None = None, extra_head: str = "",
-    image_url: str | None = None, market: dict | None = None,
+    image_url: str | None = None, market: dict | None = None, late_head: str = "",
 ) -> str:
     market = market or next(m for m in load_markets() if m["slug"] == "new-york")
     market = market | CITIES.get(market["slug"], {})
@@ -314,7 +314,8 @@ def render_nyte(
     if city:
         title = f"{market['name']}: enterprise AI from competing providers"
     version = hashlib.sha256((SOURCE / "styles.css").read_bytes() + (SOURCE / "app.js").read_bytes() + (HERE / "analytics.js").read_bytes()).hexdigest()[:12]
-    if page in {"providers", "cowork"}:
+    cowork_v3 = page == "cowork" and uses_brand_v3("cowork")
+    if page == "providers" or (page == "cowork" and not cowork_v3):
         version = hashlib.sha256((version + (SOURCE / f"{page}.css").read_text()).encode()).hexdigest()[:12]
         extra_head += '<link rel="stylesheet" href="/assets/nyte-v2/' + page + '.css?v=' + version + '">'
     if page == "accelerator":
@@ -358,7 +359,7 @@ def render_nyte(
         extra_head += f'<link rel="stylesheet" href="/assets/nyte-v2/brand-v3.css?v={brand_version}">'
         extra_head += '<link rel="icon" href="/assets/nyte-v2/logos/favicon.svg" type="image/svg+xml">'
     # A rebuilt page's own sheet loads after brand-v3.css.
-    extra_head += home_head
+    extra_head += home_head + late_head
     result = (SOURCE / "shell.html").read_text()
     evidence_version = hashlib.sha256((HERE / "live-evidence.js").read_bytes()).hexdigest()[:12]
     for key, value in dict(domain=market["domain"], market=market["slug"], region=html.escape(market.get("logo_place", market["region"])), brand_class=" brand-one" if market.get("logo_one_line") else "", exchange_name=html.escape(market["name"]), host_brand="" if city or page == "home" else host_brand_script(page), nav=render_nav(), buyer_deck=(SOURCE / "buyer-deck.html").read_text() if page in {"home", "api"} else "", extra_head=extra_head, image_url=html.escape(image_url, quote=True), title=html.escape(title), description=html.escape(description, quote=True), path=path, page=page, version=version, content=content, markets=market_links, evidence_script='<script src="/assets/nyte-v2/live-evidence.js?v=' + evidence_version + '" defer></script>' if page == "api" else "").items():
@@ -379,7 +380,7 @@ def render_nyte(
     return re.sub(r'href="([^"]+)"', tracked, result)
 
 # Pages with a body rebuilt for brand v3: page key -> body and sheet name in nyte-v2/.
-V3_BODIES = {"home": "home-v3", "api": "api-v3"}
+V3_BODIES = {"home": "home-v3", "api": "api-v3", "cowork": "cowork-v3"}
 # Kit icon arrow-up-right, drawn in the text colour.
 ARROW_UP_RIGHT = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 19 L15.5 8.5"/><path d="M8 5 L19 5 L19 16"/></svg>'
 
@@ -433,7 +434,7 @@ def build_nyte(output: Path) -> None:
     shutil.copytree(SOURCE / "assets", assets, dirs_exist_ok=True)
     # NYTE can publish its approved evidence renderer without changing other markets.
     shutil.copyfile(HERE / "live-evidence.js", assets / "live-evidence.js")
-    for name in ("styles.css", "app.js", "fonts.css", "providers.css", "cowork.css", "buy.css", "buy.js", "manage.js", "accelerator.css", "brand-v3.css", "home-v3.css", "api-v3.css"):
+    for name in ("styles.css", "app.js", "fonts.css", "providers.css", "cowork.css", "buy.css", "buy.js", "manage.js", "accelerator.css", "brand-v3.css", "home-v3.css", "api-v3.css", "cowork-v3.css"):
         shutil.copyfile(SOURCE / name, assets / name)
     for page, entry in PAGES.items():
         if page == "home" or entry.get("builder"):

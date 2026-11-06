@@ -1,0 +1,149 @@
+/* Trusted Cowork, brand v3 design (HANDOFF-nyte-cowork-index-v3-2026-11-06). Loads after
+   brand-v3.css, only when cowork is switched on in nyte-brand-v3.json. Lead colour: lime. */
+[data-nyte-page="cowork"] header .wrap,[data-nyte-page="cowork"] main .wrap{max-width:1440px;padding:0 64px}
+[data-nyte-page="cowork"] main section{padding:128px 0}
+:where([data-nyte-page="cowork"] main) :where(h1,h2,h3,p,figure,dl,dd,ol){margin:0}
+[data-nyte-page="cowork"] main h2{font-size:72px;line-height:1;font-weight:300;letter-spacing:-.015em;color:var(--ink)}
+.cw3-bar{display:block;width:40px;height:4px;background:var(--ink)}
+.cw3-label,.cw-rules dt{font:500 13px/1.2 var(--font-condensed);letter-spacing:.1em;text-transform:uppercase}
+.cw3-mono,.cw-rules dd,.cw3-n{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+
+/* Kit buttons: 48 px, 1.5 px ink rule; orange only for the one main action. */
+[data-nyte-page="cowork"] main .btn{min-height:48px;height:48px;padding:0 22px;border:1.5px solid var(--ink);background:transparent;color:var(--ink);font:500 16px/1 var(--font-sans);white-space:nowrap}
+[data-nyte-page="cowork"] main .btn:hover{background:var(--ink);color:var(--cream);border-color:var(--ink)}
+[data-nyte-page="cowork"] main .btn-primary{background:var(--orange)}
+[data-nyte-page="cowork"] main .btns{gap:12px;flex-wrap:wrap}
+[data-nyte-page="cowork"] main :is(a,summary,.btn):focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+
+/* Hero: lime field, screenshot inside, ink Band closes it. */
+.cw-hero.cw3-hero{display:block;min-height:0;padding:96px 0 64px;background:var(--lime);color:var(--ink)}
+.cw3-hero-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;align-items:end}
+.cw3-hero-head{grid-column:span 7}
+.cw3-hero-head .cw3-label{margin:16px 0 24px}
+.cw3-hero h1{font-size:104px;line-height:.96;font-weight:300;letter-spacing:-.02em;color:var(--ink);text-shadow:none}
+.cw3-hero h1 em,.cw3-download h2 em{color:var(--ink)}
+.cw3-hero-side{grid-column:9/span 4;padding-bottom:8px}
+.cw3-hero .lede{margin:0 0 32px;max-width:none;font-size:22px;line-height:1.45;color:var(--ink);text-shadow:none}
+.cw3-hero .cw-screenshot{margin:64px 0 0;padding:0;border:1.5px solid var(--ink);border-radius:0;background:var(--panel)}
+.cw3-hero .cw-screenshot img{display:block;width:100%;height:auto;border:0;border-radius:0;box-shadow:none}
+.cw3-band{background:var(--lime);line-height:0}
+.cw3-band .v3-band{display:block;width:100%;height:120px}
+
+/* How it works */
+.cw3-how .cw3-bar{background:var(--lime)}
+.cw3-how h2{margin-top:32px;max-width:1000px}
+.cw3-steps{list-style:none;padding:0;margin-top:64px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));column-gap:24px}
+.cw3-steps li{border-top:2.5px solid var(--ink);padding-top:24px}
+.cw3-step-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:32px}
+.cw3-n{font-size:14px}
+.cw3-step-top svg{width:32px;height:32px;fill:none;stroke:var(--ink);stroke-width:1.5}
+.cw3-steps h3{margin-bottom:12px;font-size:24px;line-height:1.2;font-weight:500;letter-spacing:0;color:var(--ink)}
+.cw3-steps p{max-width:400px;font-size:17px;line-height:1.55;color:var(--ink)}
+.cw3-mono{font-size:16px}
+
+/* Only trusted tokens: sky field, kit illustration, ruled fact strip. */
+.cw3-trust{background:var(--sky);color:var(--ink)}
+.cw3-trust .wrap{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));grid-template-rows:auto 1fr auto;column-gap:24px;grid-template-areas:
+  "head head head head head head . art art art art art"
+  "cta cta cta cta cta cta . art art art art art"
+  "facts facts facts facts facts facts facts facts facts facts facts facts"}
+.cw3-trust-head{grid-area:head}
+.cw3-trust h2{margin:32px 0}
+.cw3-trust .cw-boundary{max-width:600px;font-size:22px;line-height:1.45;color:var(--ink)}
+.cw3-trust-cta{grid-area:cta;margin-top:40px}
+.cw3-art{grid-area:art;display:block;width:100%;height:auto;border:1.5px solid var(--ink)}
+.cw3-trust .cw-rules{grid-area:facts;margin-top:64px}
+.cw-rules dl{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border-top:2.5px solid var(--ink);border-bottom:1.5px solid var(--ink)}
+.cw-rules dl>div{padding:24px 24px 28px}
+.cw-rules dl>div:first-child{padding-left:0}
+.cw-rules dl>div+div{border-left:1.5px solid var(--ink)}
+.cw-rules dt{margin-bottom:12px}
+.cw-rules dd{font-size:22px;line-height:1.3;overflow-wrap:anywhere}
+.cw3-trust .btn-secondary:hover{color:var(--sky)}
+
+/* Common questions: rules, kit chevron, first item open. */
+.cw3-faq .wrap{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px}
+.cw3-faq-head{grid-column:span 4}
+.cw3-faq-head .cw3-bar{background:var(--lime)}
+[data-nyte-page="cowork"] .cw3-faq h2{margin-top:32px;font-size:48px;line-height:1.05;letter-spacing:-.01em;position:static}
+.cw3-faq-list{grid-column:6/span 7;border-top:2.5px solid var(--ink)}
+.cw3-faq details,.cw3-faq details:first-child{border-top:0;border-bottom:1.5px solid var(--stone)}
+.cw3-faq summary{display:flex;justify-content:space-between;align-items:center;gap:24px;min-height:0;padding:24px 0;font-size:19px;line-height:1.3;font-weight:500;color:var(--ink)}
+.cw3-faq summary::after{content:none}
+.cw3-faq summary svg{flex:none;width:24px;height:24px;fill:none;stroke:var(--ink);stroke-width:1.5}
+.cw3-faq details[open] summary svg{transform:rotate(180deg)}
+.cw3-faq details p{max-width:640px;padding:0 64px 28px 0;font-size:17px;line-height:1.55;color:var(--ink)}
+.cw3-faq details a{color:var(--deep-purple);text-decoration:underline;text-underline-offset:4px}
+
+/* Download: purple field. */
+.cw-download.cw3-download{padding:128px 0;border:0;background:var(--purple);color:var(--ink);text-align:left}
+.cw3-download .wrap{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;align-items:end}
+.cw3-download-head{grid-column:span 7}
+.cw3-download h2{margin-top:32px}
+.cw3-download-side{grid-column:9/span 4}
+.cw3-download-side p{margin-bottom:24px;font-size:19px;color:var(--ink)}
+.cw3-download .btns{justify-content:flex-start}
+
+@media (max-width:1100px){
+  .cw3-hero h1{font-size:72px}
+  .cw3-hero-grid,.cw3-download .wrap{grid-template-columns:1fr;row-gap:32px}
+  .cw3-hero-head,.cw3-hero-side,.cw3-download-head,.cw3-download-side{grid-column:1}
+  .cw3-trust .wrap{grid-template-columns:1fr;grid-template-rows:none;grid-template-areas:"head" "art" "facts" "cta"}
+  .cw3-art{margin-top:40px;max-width:640px}
+  .cw3-trust .cw-rules{margin-top:40px}
+  .cw3-trust-cta{margin-top:32px}
+  .cw-rules dl{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .cw-rules dl>div:nth-child(n+3){border-top:1.5px solid var(--ink)}
+  .cw-rules dl>div:nth-child(3){padding-left:0;border-left:0}
+  .cw3-faq .wrap{grid-template-columns:1fr}
+  .cw3-faq-head,.cw3-faq-list{grid-column:1}
+  .cw3-faq-list{margin-top:32px}
+}
+@media (max-width:900px){
+  .cw3-steps{grid-template-columns:1fr;row-gap:40px}
+}
+@media (max-width:600px){
+  [data-nyte-page="cowork"] header .wrap,[data-nyte-page="cowork"] main .wrap{padding:0 20px}
+  [data-nyte-page="cowork"] main section{padding:96px 0}
+  [data-nyte-page="cowork"] main h2{font-size:40px;line-height:1.02}
+  .cw3-label{font-size:13px}
+  .cw-hero.cw3-hero{padding:48px 0 40px}
+  .cw3-hero-grid{row-gap:0}
+  .cw3-hero-head .cw3-label{margin:16px 0 20px}
+  .cw3-hero h1{margin-bottom:24px;font-size:48px;line-height:1;letter-spacing:-.02em}
+  .cw3-hero-side{padding:0}
+  .cw3-hero .lede{margin-bottom:28px;font-size:19px}
+  [data-nyte-page="cowork"] main .btns{display:grid;gap:12px;justify-content:stretch}
+  .cw3-trust-cta .btn{display:flex;width:100%;height:52px;min-height:52px}
+  [data-nyte-page="cowork"] main .btns .btn{width:100%;height:52px;min-height:52px;padding:0 20px}
+  .cw3-hero .cw-screenshot{margin-top:40px}
+  .cw3-band .v3-band{height:96px}
+  .cw3-how h2{margin-top:32px}
+  .cw3-steps{margin-top:40px}
+  .cw3-steps li{padding-top:20px}
+  .cw3-step-top{margin-bottom:20px}
+  .cw3-steps h3{margin-bottom:8px;font-size:22px}
+  .cw3-trust h2{margin:32px 0 24px}
+  .cw3-trust .cw-boundary{font-size:19px}
+  .cw3-art{margin-top:32px}
+  .cw-rules dl{display:block;border-bottom:0}
+  .cw-rules dl>div,.cw-rules dl>div:first-child,.cw-rules dl>div:nth-child(3){display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:baseline;padding:16px 0;border-left:0;border-top:0;border-bottom:1.5px solid var(--ink)}
+  .cw-rules dl>div+div{border-left:0}
+  .cw-rules dt{margin:0}
+  .cw-rules dd{font-size:16px}
+  [data-nyte-page="cowork"] .cw3-faq h2{font-size:32px}
+  .cw3-faq summary{gap:16px;min-height:64px;padding:20px 0}
+  .cw3-faq details p{padding:0 0 24px}
+  .cw-download.cw3-download{padding:96px 0}
+  .cw3-download .wrap{row-gap:0}
+  .cw3-download h2{margin:32px 0 20px}
+  .cw3-download-side p{margin-bottom:28px;font-size:17px}
+}
+/* Narrow phones (320-360 px, usually short too) keep both downloads and the top of the
+   screenshot in the first screen. Width-based, so the hero never moves as browser chrome hides. */
+@media (max-width:360px){
+  .cw-hero.cw3-hero{padding-top:20px}
+  .cw3-hero-head .cw3-label{margin:10px 0 12px}
+  .cw3-hero h1{margin-bottom:16px;font-size:34px}
+  .cw3-hero .lede{margin-bottom:20px;font-size:17px;line-height:1.45}
+}
