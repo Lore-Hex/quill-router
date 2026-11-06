@@ -58,7 +58,7 @@
 </section>
 
 {% if provider.id in ['maple', 'abliteration', 'abliterate'] %}
-<section class="panel"><div class="panel-body"><p><a href="/abliterated-deepseek">Explore abliterated DeepSeek for cyberdefense and research</a>, including Maple's dedicated checkpoint and the distinction from Abliteration and Abliterate. Use this provider's model list and policy below to verify its own offerings; these are separate providers, not interchangeable privacy guarantees.</p></div></section>
+<section class="panel"><div class="panel-body"><p><a href="/abliterated-deepseek">Explore abliterated (uncensored) DeepSeek for cyberdefense</a>, including Maple's dedicated checkpoint and the distinction from Abliteration and Abliterate. Use this provider's model list and policy below to verify its own offerings; these are separate providers, not interchangeable privacy guarantees.</p></div></section>
 {% endif %}
 {% if provider.id == 'maple' and provider.confidential_inference_verified and served_models|selectattr('id', 'equalto', 'dealignai/deepseek-v4.1-flash-1017-uncensored')|list %}
 {% include "public/_maple_api.html" %}
