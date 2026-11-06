@@ -107,6 +107,14 @@ type Config struct {
 	// pinned once every member runs the first, sets it in the service's
 	// defaults. The owner applies the floor to its own reaps either way.
 	RecordReapFloor bool
+	// RecordCeiling has a stream's heartbeat records, its hold in a
+	// hand-off and its reap record carry its ceiling when above its hold
+	// (record.Record.Ceiling; docs/design/fast-admission-streams.md section
+	// 12). An auditor from before the field refuses such a record, so it
+	// takes two releases as RecordReapFloor did: the release that reads it
+	// leaves this off. The heartbeat's bound stays the hold either way
+	// (section 12.4, PR 3).
+	RecordCeiling bool
 }
 
 // StreamReap is a stream hold's reap floor
@@ -377,6 +385,10 @@ type hold struct {
 	// boot declares the heartbeat at stream open (§4.5).
 	admitted      time.Time
 	openHeartbeat bool
+	// ceiling is a stream's spend ceiling, never below estimate: the
+	// admission's Ceiling, else estimate. Only its records read it, with
+	// Config.RecordCeiling (recordCeiling).
+	ceiling int64
 	// The latest valid heartbeat: the gateway's sequence and hash, the
 	// usage, the running charge, the deadline granted and the one it
 	// echoed, and the owner sequence number of its record; heartbeat is

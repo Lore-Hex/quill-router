@@ -68,6 +68,8 @@ type OwnerAuthorize struct {
 	Boot      []byte
 	// OpenHeartbeat is the authorize's, sent only when set (AuthorizeOf).
 	OpenHeartbeat bool `json:",omitempty"`
+	// Ceiling is the authorize's, sent only when set (AuthorizeOf).
+	Ceiling int64 `json:",omitempty"`
 }
 
 // OwnerAdmitted is an owner's answer to an authorize: Admitted with the

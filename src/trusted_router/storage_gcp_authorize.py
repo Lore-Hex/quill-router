@@ -848,6 +848,7 @@ class SettleOutcome:
     GUARD_LOST = "guard_lost"  # reaper candidate changed after its decisive read
     AUTHORIZATION_NOT_TYPED = "authorization_not_typed"
     LEASED_STREAM = "leased_stream"  # reaper: a heartbeated leased row, the lease's to reap; nothing written
+    ORPHAN_CLOSED = "orphan_closed"  # reaper: a zero-hold row its settled authorization never claimed
 
 
 class _SettleError(Exception):
@@ -886,6 +887,7 @@ class ReapPassResult:
     guard_lost: int = 0
     errors: int = 0
     refunded: int = 0
+    orphans_closed: int = 0
     # The heartbeated leased rows the pass left to their leases: the
     # reconcile reads each one's disposition.
     leased: tuple[str, ...] = ()
@@ -898,6 +900,7 @@ class ReapPassResult:
             SettleOutcome.GUARD_LOST: self.guard_lost,
             SettleOutcome.ERROR: self.errors,
             SettleOutcome.LEASED_STREAM: len(self.leased),
+            SettleOutcome.ORPHAN_CLOSED: self.orphans_closed,
             "refunded": self.refunded,
             "snapshot_booked": self.snapshot_bookings,
         }
@@ -1335,6 +1338,7 @@ def reap_expired_reservations_result(
     guard_lost = 0
     errors = 0
     refunded = 0
+    orphans_closed = 0
     leased: list[str] = []
     for (
         reservation_id,
@@ -1404,6 +1408,9 @@ def reap_expired_reservations_result(
         if result.outcome == SettleOutcome.GUARD_LOST:
             guard_lost += 1
             continue
+        if result.outcome == SettleOutcome.ORPHAN_CLOSED:
+            orphans_closed += 1
+            continue
         if result.outcome == SettleOutcome.ERROR:
             errors += 1
             continue
@@ -1427,6 +1434,7 @@ def reap_expired_reservations_result(
         guard_lost=guard_lost,
         errors=errors,
         refunded=refunded,
+        orphans_closed=orphans_closed,
         leased=tuple(leased),
     )
 
@@ -1537,11 +1545,44 @@ def _finalize_reaped_reservation_atomic(
         authorization = read_gateway_authorization(transaction, pt, authorization_id)
         if authorization is None:
             return _ReapOneResult(SettleOutcome.AUTHORIZATION_NOT_TYPED)
-        if (
-            authorization.settled
-            or authorization.credit_reservation_id != reservation_id
-        ):
+        if authorization.credit_reservation_id != reservation_id:
             raise _ReapGuardLost("authorization terminal/binding guard lost")
+        if authorization.settled:
+            # A settled authorization whose reservation holds nothing is an
+            # orphaned zero-hold row: a pilot lease settled before the leased
+            # finalize claimed its scope row (#1793) left it unsettled, and
+            # without this it is guard-lost on every pass forever. Closing it
+            # books and releases nothing. A row that still holds money stays
+            # guard-lost for a person to look at.
+            if int(res.get("credit_reserved_micro") or 0) or int(
+                res.get("key_reserved_micro") or 0
+            ):
+                raise _ReapGuardLost("authorization terminal/binding guard lost")
+            if not claim_reservation(
+                transaction,
+                pt,
+                reservation_id,
+                actual_micro=0,
+                settled_usage_type="Credits",
+                terminal_at=reap_timestamp,
+                defer_retention=True,
+                outbox_available=guard_outbox,
+                expires_before=reap_timestamp,
+                async_fence=async_fence,
+            ):
+                raise _ReapGuardLost("orphaned zero-hold claim guard lost")
+            if (
+                complete_reservation_retention(
+                    transaction,
+                    pt,
+                    reservation_id,
+                    terminal_at=reap_timestamp,
+                    outbox_available=guard_outbox,
+                )
+                != 1
+            ):
+                raise _ReapGuardLost("reservation retention guard lost")
+            return _ReapOneResult(SettleOutcome.ORPHAN_CLOSED)
 
         started_marker = authorization.started_at is not None
         out_of_cohort = authorization.pricing_snapshot is None

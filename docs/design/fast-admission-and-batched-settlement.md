@@ -382,13 +382,24 @@ The second is closed as fast as each writer can close it:
     booking nor an intent is retried from the gateway's queue on both
     paths, and one the gateway gives up on is §4.8's loss on both.
 - **Every writer changes these columns by arithmetic inside its own
-  transaction.** The owner's and the front door's raises, and the auditor's
-  bookings and returns, each read the row and write the difference. None
-  stores a figure it computed from an earlier read. A raise does not advance
-  the auditor's commit version (§4.8), so it neither fails a member's commit
-  nor is lost under it.
-- A reap never needs it. It charges a heartbeat's running charge, which is
-  capped at the hold (§4.8).
+  transaction.** The owner's, the front door's and the reap's raises, and
+  the auditor's bookings and returns, each read the row and write the
+  difference. None stores a figure it computed from an earlier read. A
+  raise does not advance the auditor's commit version (§4.8), so it neither
+  fails a member's commit nor is lost under it.
+- **The auditor's reap reserves in its own transaction.** It charges a
+  heartbeat's running charge, which is capped at the hold's ceiling (§4.8):
+  the hold itself, or for a stream a spend ceiling above it, the request's
+  estimate where the hold is its credit reservation
+  (`fast-admission-streams.md` §12). If the charge is above the hold's
+  estimate, the reap raises the lease's allocation, its first donor's and
+  that shard's `reserved` by the difference, in the transaction that writes
+  its drain-log row and under the same conditions, as a front door's append
+  does, and the row keeps the raise.
+  - So `door_raised` is every drain-log row's raise, a reap's included, and
+    the lease's accounting is unchanged.
+  - An owner's reap above the hold needs nothing more: its record carries
+    the shortfall total, as a settle's does.
 
 Two things follow, and §4.13 rests on both:
 
@@ -398,19 +409,21 @@ Two things follow, and §4.13 rests on both:
   to be. A hold whose terminal is stored and not yet booked is not open,
   and its charge, less the shortfall its record carries, is still inside
   the stored allocation. The same goes for a row in a draining lease's
-  drain log, whose append has made its raise already. So the claim holds
-  with everything stored counted as booked, too: the charges and returns
-  come out, and the shortfall their records carry goes in. Three rules give
-  it: the auditor's raise and the front door's, each in the transaction
-  that books the charge or stores its row; the lease's one order; and
-  `pending`. The owner's own write is not needed for it.
+  drain log, whose append or reap has made its raise already. So the claim
+  holds with everything stored counted as booked, too: the charges and
+  returns come out, and the shortfall their records carry goes in. Three
+  rules give it: the raises of the auditor's commit, a front door's append
+  and a reap, each in the transaction that books the charge or stores its
+  row; the lease's one order; and `pending`. The owner's own write is not
+  needed for it.
 - **Spanner's headroom counts an overrun that a lease had no room for:**
   - an owner's, within one write of the owner deciding it, or two when a
     write for the lease was already in flight;
   - or when the auditor books its record, if the owner's write did not
     land;
   - a front door's, with the append that records it, which follows its
-    record's publish.
+    record's publish;
+  - a reap's, with the drain-log row that records it.
 
   Grants and Python's own reservations read that headroom. Until one of
   those writes lands they read it too high, by the overrun.
@@ -601,8 +614,8 @@ lease's expiry minus a skew allowance.
    is the ceiling the rows carry and Python's Stage D heartbeat cuts a
    stream at. The owner's heartbeat bounds a running charge by the lease's
    hold, r, so a stream admitted under a lease would be cut at r: both
-   front doors keep streams out of the lease cohort until an admission
-   carries e beside r.
+   front doors lease a stream only while its reservation is its estimate
+   (`stream.hold`) until an admission carries e beside r.
 4. Answer with a **signed envelope** that the gateway echoes on heartbeat,
    settle and refund:
    - the authorization ID `A` and the generation ID;
@@ -1133,8 +1146,9 @@ synchronous holds, through `settle_atomic`.
   the commit that stores the checkpoint (one guard on every write, above).
 - The audit proves the owner's accounting consistent, not its prices right: an
   owner that priced every record wrongly, but consistently, would pass it.
-  A heartbeat's running charge, and so a reap's, is capped at its hold; a
-  settle can overrun its hold and is booked in full, as today (§4.2). Two
+  A heartbeat's running charge, and so a reap's, is capped at its hold's
+  ceiling, the hold itself but for a stream's (§4.2); a settle can overrun
+  its hold and is booked in full, as today (§4.2). Two
   checks cover pricing: the
   shadow comparator compares every per-authorization charge with Python's
   before cutover (§8), and afterwards a sampled job reprices records from
@@ -1793,8 +1807,8 @@ which §4.11 now lists.
   hold, the credit reservation, is the same price at most
   `HOLD_OUTPUT_TOKENS` (16,384; `authorize_candidates.hold_output_tokens`,
   the evaluator's `HoldOutputTokens`) output tokens for a catalog text
-  route; for a user-provided model, partner billing, a video and, for now,
-  a stream it is the estimate. A catalog text route's settle bills what the provider reports,
+  route, a stream's included; for a user-provided model, partner billing
+  and a video it is the estimate. A catalog text route's settle bills what the provider reports,
   capped at neither figure (a video's, a user-provided model's and
   Polyphemus's settle are held to the estimate), and nothing in authorize
   bounds that charge (cache-creation premiums and counts above the budget
@@ -2205,8 +2219,10 @@ What the table's short names hide:
   - that the log stores a lease's records in the order its owner decided
     them, under one ordering key (§4.2). A log that stores a later record
     without an earlier one must break §4.2's first claim;
-  - that a reap charges at most its hold, since a heartbeat's running charge
-    is capped at the hold (§4.8). A reap above it must break the same claim;
+  - that a reap charges at most its hold's ceiling, since a heartbeat's
+    running charge is capped there (§4.8), and that what it charges above
+    the hold is raised in the reap's own transaction (§4.2). A reap above
+    the hold without that raise must break the same claim;
   - that Pub/Sub gives a member every record of a lease not acknowledged, in
     the order stored (§4.8). Redelivery that skips one must break Invariant
     4;
@@ -2439,7 +2455,9 @@ leases, and was retired on 2026-09-27.
    workspace its tier. Then move keyed requests, capped keys, payouts and the
    remaining route types (§4.11) one at a time; then retire the Python hot
    path. The stages of that retirement are in
-   `fast-admission-enclave-direct.md`.
+   `fast-admission-enclave-direct.md`. Widening to every eligible
+   workspace, and the stale-reconciliation rule, are decided in
+   `fast-admission-widening.md`.
 
 ## 9. Not decided here
 

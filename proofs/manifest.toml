@@ -1686,6 +1686,7 @@ code = [
     "fastpath/internal/creditdebt/creditdebt.go",
     "fastpath/internal/store/credit.go",
     "fastpath/internal/store/grant.go",
+    "fastpath/internal/store/reap.go",
 ]
 tests = [
     "tests/test_credit_debt.py",
@@ -1694,6 +1695,7 @@ tests = [
     "fastpath/internal/store/credit_test.go",
     "fastpath/internal/store/grant_test.go",
     "fastpath/internal/store/debt_walk_test.go",
+    "fastpath/internal/store/reapraise_test.go",
 ]
 
 # Section 4.2's first claim, and what keeps it.
@@ -1755,18 +1757,14 @@ new = '''
 Admit(l) ==
 '''
 
-# Assumption A2.
+# Assumption A2: a reap may charge past its hold, up to its ceiling, only
+# because it raises what it passes the hold by in its own transaction
+# (docs/design/fast-admission-streams.md section 12.2 item 3).
 [[CreditDebt.mutants]]
-name = "reap-above-the-hold"
+name = "reap-without-its-raise"
 violates = "HoldsCoveredInSpanner"
-old = '''
-    /\ hold[h].row = "none"
-    /\ Book(l, a, 0)
-    /\ hold' = [hold EXCEPT ![h].reaped = TRUE, ![h].b = a]'''
-new = '''
-    /\ hold[h].row = "none"
-    /\ Book(l, a + 1, 0)
-    /\ hold' = [hold EXCEPT ![h].reaped = TRUE, ![h].b = a + 1]'''
+old = '    /\ BookRaised(l, a, 0, Pos(a - 1))'
+new = '    /\ BookRaised(l, a, 0, 0)'
 
 # Section 4.2's second claim: the owner's write.
 
@@ -1836,8 +1834,8 @@ new = '''
 [[CreditDebt.mutants]]
 name = "booking-is-not-matched"
 violates = "ShardIdentity"
-old = '        r2 == [reserved EXCEPT ![d] = @ + rise - a]'
-new = '        r2 == [reserved EXCEPT ![d] = @ + rise]'
+old = '        r2 == [reserved EXCEPT ![d] = @ + rise + over - a]'
+new = '        r2 == [reserved EXCEPT ![d] = @ + rise + over]'
 
 [[CreditDebt.mutants]]
 name = "book-a-losing-row"
@@ -1948,6 +1946,14 @@ new = '''
            sq   == Squared(credits, usage, r2)
        IN /\ sfStored' = [sfStored EXCEPT ![l] = @ + rise]
           /\ alloc' = [alloc EXCEPT ![l] = @ + write[l]]'''
+
+# A reap's raise is a raise of the drain log's, counted with the front
+# doors' (section 12.3): the allocation it raises is accounted for.
+[[CreditDebt.mutants]]
+name = "a-reaps-raise-left-out-of-the-accounting"
+violates = "AllocationAccounted"
+old = '                              + (IF hold[h].reaped THEN Pos(hold[h].b - 1) ELSE 0)], Mine(l))'
+new = '                              + 0], Mine(l))'
 
 # A winner is booked at the amount its terminal names, which the auditor
 # does not choose.

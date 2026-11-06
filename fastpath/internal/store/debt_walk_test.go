@@ -1127,7 +1127,7 @@ func (d *debtWalk) checkHolds(l *debtLease) {
 	}).Do(func(r *spanner.Row) error {
 		var h HoldRow
 		if err := r.Columns(&h.AuthorizationID, &h.Estimate, &h.Deadline, &h.Listed, &h.SnapshotSeq, &h.SnapshotHash,
-			&h.SnapshotUsage, &h.RunningCharge, &h.SnapshotOwnerSeq, &h.ReapBasis, &h.Boot); err != nil {
+			&h.SnapshotUsage, &h.RunningCharge, &h.SnapshotOwnerSeq, &h.ReapBasis, &h.Boot, &h.Ceiling); err != nil {
 			return err
 		}
 		rows = append(rows, h)
@@ -1698,7 +1698,7 @@ func (d *debtWalk) checkEveryLeasesHoldsAndPacks() {
 		var lease string
 		var h HoldRow
 		if err := r.Columns(&lease, &h.AuthorizationID, &h.Estimate, &h.Deadline, &h.Listed, &h.SnapshotSeq, &h.SnapshotHash,
-			&h.SnapshotUsage, &h.RunningCharge, &h.SnapshotOwnerSeq, &h.ReapBasis, &h.Boot); err != nil {
+			&h.SnapshotUsage, &h.RunningCharge, &h.SnapshotOwnerSeq, &h.ReapBasis, &h.Boot, &h.Ceiling); err != nil {
 			return err
 		}
 		holds[lease] = append(holds[lease], h)

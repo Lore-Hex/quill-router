@@ -22,7 +22,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -94,6 +96,12 @@ type Config struct {
 	Runtime   auditor.Config
 	Ticker    auditor.TickerConfig
 	Pending   auditor.PendingConfig
+	// FleetAudit runs the fleet audit (auditor.Fleet,
+	// docs/design/fast-admission-widening.md §7) on the admission node,
+	// which audits while it owns the ring key auditor.FleetKey; off, the
+	// default, it audits nothing. Fleet is its settings.
+	FleetAudit bool
+	Fleet      auditor.FleetConfig
 
 	// Alert tells a person what the auditor finds that needs one; nil logs
 	// it.
@@ -187,6 +195,15 @@ func Defaults() Config {
 		Ticker: auditor.TickerConfig{Every: time.Second, Limit: 100, Wait: 5 * time.Second},
 		Pending: auditor.PendingConfig{Every: 5 * time.Second, Limit: 100, Wait: 5 * time.Second, Overdue: 10 * time.Minute,
 			Workers: auditor.DefaultPendingWorkers, DropEvery: auditor.DefaultDropEvery},
+		// The fleet audit's figures (docs/design/fast-admission-widening.md
+		// §7): a pass an hour, its line written as it begins and every 30
+		// minutes as it goes, so no line for 90 minutes is an audit stopped,
+		// not a slow pass; a new owner begins within a minute of the ring's
+		// change; switches changed within 26 hours; at most five workspaces
+		// a second, ten seconds each; a leased workspace unaudited for three
+		// hours told.
+		Fleet: auditor.FleetConfig{Every: time.Hour, Check: time.Minute, Progress: 30 * time.Minute,
+			Within: 26 * time.Hour, Rate: 5, Deadline: 10 * time.Second, Stale: 3 * time.Hour},
 		Stopping: 10 * time.Second,
 		HandOff:  10 * time.Second,
 	}
@@ -258,6 +275,9 @@ func (c Config) valid() error {
 		// The edge leaves with the admission node, whose Leave it follows; a
 		// process without one would answer the balancer serving for ever.
 		return errors.New("service: an edge runs beside an admission node")
+	case c.FleetAudit && !c.Admission:
+		// The key's owner is one of the members that take leases.
+		return errors.New("service: the fleet audit runs on an admission node, of which the ring picks its owner")
 	case !c.Admission && !c.Auditor:
 		return errors.New("service: a process runs an admission node, an auditor member, or both")
 	case c.Address == "":
@@ -271,6 +291,63 @@ func (c Config) valid() error {
 		return errors.New("service: an auditor member needs its subscriptions to the settle log and the record topic")
 	case c.MaxOutstanding < 1 || c.Ring <= 0 || c.Switch <= 0 || c.Stopping <= 0 || c.HandOff < 0:
 		return errors.New("service: a positive subscription bound, ring interval and stopping time, and a hand-off time")
+	}
+	return nil
+}
+
+// The money settings' bounds (docs/design/fast-admission-widening.md,
+// (b)), in microdollars, which the node's flags and fastpathctl ready hold
+// to, and the node's startup script with them.
+const (
+	// MaxMoney bounds the allowance and the floor: Defaults' allowance,
+	// 1 << 50, which bounds nothing.
+	MaxMoney int64 = 1 << 50
+	// MinFloor is the least floor but none, a dollar, so a floor written in
+	// dollars is refused.
+	MinFloor int64 = 1_000_000
+)
+
+// Money is a money setting's flag value: a decimal integer written plainly,
+// with no sign, leading zero, underscore or base prefix, so that a value
+// such as 020000000 is refused rather than read in octal as a smaller one.
+type Money struct{ P *int64 }
+
+func (m Money) String() string {
+	if m.P == nil {
+		return "0"
+	}
+	return strconv.FormatInt(*m.P, 10)
+}
+
+func (m Money) Set(s string) error {
+	if !plainDecimal.MatchString(s) {
+		return fmt.Errorf("%q is not a plain decimal integer", s)
+	}
+	v, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return err
+	}
+	*m.P = v
+	return nil
+}
+
+var plainDecimal = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
+
+// CheckMoney says what is wrong with the store's money settings, nil when
+// nothing is: the tier leases need 0 to 3; the allowance at least the
+// owner's largest top-up, so one can be granted (a figure written in
+// dollars is below it), and at most MaxMoney; the floor none, or MinFloor
+// to MaxMoney.
+func CheckMoney(c Config) error {
+	st := c.Store
+	switch {
+	case st.RequiredTier < 0 || st.RequiredTier > 3:
+		return fmt.Errorf("service: the required tier is 0 to 3, not %d", st.RequiredTier)
+	case st.Allowance < c.Owner.TopUps.Max || st.Allowance > MaxMoney:
+		return fmt.Errorf("service: the allowance is %d to %d microdollars, not %d", c.Owner.TopUps.Max, MaxMoney,
+			st.Allowance)
+	case st.Floor != 0 && (st.Floor < MinFloor || st.Floor > MaxMoney):
+		return fmt.Errorf("service: the floor is 0 or %d to %d microdollars, not %d", MinFloor, MaxMoney, st.Floor)
 	}
 	return nil
 }
@@ -946,6 +1023,18 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 		return err
 	}
 	p.run("front door", door.Run)
+	if cfg.FleetAudit {
+		fc := cfg.Fleet
+		fc.Store, fc.Members, fc.Self, fc.Clock = s, members, cfg.Address, time.Now
+		// Its alerts are written as the edge's are, the kind given
+		// (docs/runbooks/fastpath-alerts.md).
+		fc.Alert = func(kind, subject, what string) { writeAlertOf(alertOutput, subject, what, kind) }
+		fleet, err := auditor.NewFleet(fc)
+		if err != nil {
+			return err
+		}
+		p.run("fleet audit", fleet.Run)
+	}
 	// The edge, made before the node, admits through its front door.
 	p.admitter.Bind(door)
 

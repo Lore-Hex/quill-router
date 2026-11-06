@@ -5,7 +5,8 @@
 # given there; it reaches no database. It takes only what the script sends:
 # any other command, query or output format is refused, exit 4.
 #
-# $FAKE_SPANNER/table/NAME, index/NAME: a table or an index that exists.
+# $FAKE_SPANNER/table/NAME, index/NAME: a table or an index that exists;
+# column/TABLE.NAME: a column a table gained after it was first applied.
 # $FAKE_SPANNER/events: each query, "Q <query>", and each statement,
 # "S <statement>", a line each, in the order sent.
 # $FAKE_SPANNER/fail-query-at, fail-statement-at: if present, the query, or
@@ -64,6 +65,8 @@ case "$command" in
       if [ -e "$state/table/${BASH_REMATCH[1]}" ]; then echo 1; else echo 0; fi
     elif [[ $query =~ ^SELECT\ COUNT\(\*\)\ FROM\ INFORMATION_SCHEMA\.INDEXES\ WHERE\ table_schema=\'\'\ AND\ index_name=\'([a-z_]+)\'$ ]]; then
       if [ -e "$state/index/${BASH_REMATCH[1]}" ]; then echo 1; else echo 0; fi
+    elif [[ $query =~ ^SELECT\ COUNT\(\*\)\ FROM\ INFORMATION_SCHEMA\.COLUMNS\ WHERE\ table_schema=\'\'\ AND\ table_name=\'([a-z_]+)\'\ AND\ column_name=\'([a-z_]+)\'$ ]]; then
+      if [ -e "$state/column/${BASH_REMATCH[1]}.${BASH_REMATCH[2]}" ]; then echo 1; else echo 0; fi
     elif [[ $query =~ ^SELECT\ INDEX_STATE\ FROM\ INFORMATION_SCHEMA\.INDEXES\ WHERE\ table_schema=\'\'\ AND\ index_name=\'([a-z_]+)\'$ ]]; then
       name="${BASH_REMATCH[1]}"
       waits="$state/waits/$name"
@@ -90,6 +93,10 @@ case "$command" in
       touch "$state/table/${BASH_REMATCH[1]}"
     elif [[ $statement =~ ^CREATE\ (UNIQUE\ )?INDEX\ ([a-z_]+) ]]; then
       touch "$state/index/${BASH_REMATCH[2]}"
+    elif [[ $statement =~ ^ALTER\ TABLE\ ([a-z_]+)\ ADD\ COLUMN\ ([a-z_]+)\  ]]; then
+      [ -e "$state/table/${BASH_REMATCH[1]}" ] || refuse "a column of a table that is not there: $statement"
+      [ ! -e "$state/column/${BASH_REMATCH[1]}.${BASH_REMATCH[2]}" ] || refuse "a column that is there: $statement"
+      touch "$state/column/${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
     else
       refuse "the statement $statement"
     fi

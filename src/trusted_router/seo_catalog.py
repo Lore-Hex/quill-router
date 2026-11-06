@@ -64,6 +64,17 @@ _PAGE_FOCUS_TERMS: dict[str, tuple[str, ...]] = {
     "vertex-ai-alternative": ("gemini", "claude"),
 }
 
+# Model-family guides should not fill spare rows with unrelated frontier models.
+_MODEL_PAGE_LABELS: dict[str, str] = {
+    "abliterated-deepseek": "Abliterated DeepSeek",
+    "claude-api-privacy": "Claude",
+    "deepseek-api-privacy": "DeepSeek",
+    "glm-5-api": "GLM",
+    "gpt-oss-120b-api": "GPT-OSS 120B",
+    "kimi-k2-api": "Kimi",
+    "minimax-m3-api": "MiniMax",
+}
+
 _DEFAULT_PROVIDER_SLUGS: tuple[str, ...] = (
     "tinfoil",
     "anthropic",
@@ -107,8 +118,10 @@ def seo_catalog_evidence(page_key: str, *, test_mode: bool = False) -> dict[str,
         selected_models,
         public_models=public_models,
         measured_rows=measured_providers,
+        include_defaults=page_key not in _MODEL_PAGE_LABELS,
     )
     return {
+        "focus_label": _MODEL_PAGE_LABELS.get(page_key),
         "model_count": len(public_models),
         "provider_count": sum(not provider.internal_only for provider in PROVIDERS.values()),
         "route_count": len(public_endpoints),
@@ -150,6 +163,8 @@ def _select_models(
             model.id,
         )
     )
+    if page_key in _MODEL_PAGE_LABELS:
+        return focused[:_MAX_MODELS]
     selected: list[Model] = []
     for model in focused:
         if model not in selected:
@@ -245,6 +260,7 @@ def _provider_rows(
     *,
     public_models: Sequence[Model],
     measured_rows: Sequence[Mapping[str, object]],
+    include_defaults: bool = True,
 ) -> list[dict[str, object]]:
     measured_by_slug = {
         str(row.get("provider")): row
@@ -261,9 +277,10 @@ def _provider_rows(
         for endpoint in endpoints_for_model(model.id):
             if endpoint.provider not in ordered_slugs:
                 ordered_slugs.append(endpoint.provider)
-    for slug in _DEFAULT_PROVIDER_SLUGS:
-        if slug in PROVIDERS and slug not in ordered_slugs:
-            ordered_slugs.append(slug)
+    if include_defaults:
+        for slug in _DEFAULT_PROVIDER_SLUGS:
+            if slug in PROVIDERS and slug not in ordered_slugs:
+                ordered_slugs.append(slug)
     return [
         _provider_row(
             slug,

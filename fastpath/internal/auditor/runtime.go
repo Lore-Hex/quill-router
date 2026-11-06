@@ -603,6 +603,7 @@ type reapRecord struct {
 	Lease      string    `json:"lease"`
 	Auth       string    `json:"a"`
 	Estimate   int64     `json:"est"`
+	Ceiling    int64     `json:"ceil,omitempty"`
 	Charge     int64     `json:"charge"`
 	At         time.Time `json:"at"`
 	GatewaySeq int64     `json:"gseq,omitempty"`
@@ -617,25 +618,32 @@ type reapRecord struct {
 type reapMoney struct {
 	Charge   int64 `json:"charge"`
 	Estimate int64 `json:"est"`
+	Ceiling  int64 `json:"ceil,omitempty"`
 }
 
 // reap reaps an open hold at a tick published at at (§4.8): at its latest
-// accepted snapshot's running charge, capped at its estimate, which is the
-// lease's hold (the credit reservation, at most HoldOutputTokens of the
-// output budget, not the row's ceiling). The owner accepts no heartbeat
-// whose running charge passes the hold, so an abandoned stream is charged
-// its last accepted snapshot, at most the hold. Its full record goes to
-// the record topic first, then its row to the drain log, which the member
-// applies as the hold's winner at a later tick unless a terminal was there
-// first. It reports false if the member was dropped to be read again.
+// accepted snapshot's running charge, capped at its ceiling when its row has
+// one (a stream's spend ceiling, docs/design/fast-admission-streams.md
+// section 12), else at its estimate, which is the lease's hold (the credit
+// reservation, at most HoldOutputTokens of the output budget). The owner
+// accepts no heartbeat whose running charge passes the bound its record
+// states, so an abandoned stream is charged its last accepted snapshot, and
+// store.Reap raises the lease by what that passes the hold. Its full record
+// goes to the record topic first, then its row to the drain log, which the
+// member applies as the hold's winner at a later tick unless a terminal was
+// there first. It reports false if the member was dropped to be read again.
 func (rt *Runtime) reap(ctx context.Context, h *held, hold store.HoldRow, at time.Time) bool {
+	bound, ceiling := hold.Estimate, int64(0)
+	if hold.Ceiling.Valid {
+		bound, ceiling = hold.Ceiling.Int64, hold.Ceiling.Int64
+	}
 	var charge int64
 	if hold.RunningCharge.Valid {
-		charge = min(hold.RunningCharge.Int64, hold.Estimate)
+		charge = min(hold.RunningCharge.Int64, bound)
 	}
 	full := encoded(reapRecord{V: 1, Lease: h.ref.LeaseID, Auth: hold.AuthorizationID, Estimate: hold.Estimate,
-		Charge: charge, At: at, GatewaySeq: hold.SnapshotSeq.Int64, Hash: hold.SnapshotHash, Usage: hold.SnapshotUsage,
-		OwnerSeq: hold.SnapshotOwnerSeq.Int64, Basis: hold.ReapBasis, Boot: hold.Boot})
+		Ceiling: ceiling, Charge: charge, At: at, GatewaySeq: hold.SnapshotSeq.Int64, Hash: hold.SnapshotHash,
+		Usage: hold.SnapshotUsage, OwnerSeq: hold.SnapshotOwnerSeq.Int64, Basis: hold.ReapBasis, Boot: hold.Boot})
 	wctx, cancel := context.WithTimeout(ctx, rt.cfg.Wait)
 	_, err := rt.cfg.Records.Publish(hold.AuthorizationID, settlelog.FullRecord, full).Wait(wctx)
 	cancel()
@@ -645,8 +653,8 @@ func (rt *Runtime) reap(ctx context.Context, h *held, hold store.HoldRow, at tim
 	digest := sha256.Sum256(full)
 	refused, _, err := rt.cfg.Store.Reap(ctx, h.ref, h.lease.version, at, store.ReapRow{
 		AuthorizationID: hold.AuthorizationID, RecordID: "reap-" + hold.AuthorizationID, Charge: charge,
-		Estimate: hold.Estimate, SnapshotOwnerSeq: hold.SnapshotOwnerSeq.Int64, Digest: digest[:],
-		Money: encoded(reapMoney{Charge: charge, Estimate: hold.Estimate})})
+		Estimate: hold.Estimate, Ceiling: ceiling, SnapshotOwnerSeq: hold.SnapshotOwnerSeq.Int64, Digest: digest[:],
+		Money: encoded(reapMoney{Charge: charge, Estimate: hold.Estimate, Ceiling: ceiling})})
 	if err == nil && (refused == store.RefusedVersion || refused == store.RefusedGap) {
 		h.lease = nil
 		return false

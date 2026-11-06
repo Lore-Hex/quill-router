@@ -3337,10 +3337,11 @@ SYNTH_PROMETHEUS_3_MODEL_ORDER = (
 DEEPSEEK_V4_1_FLASH_MODEL_ID = "deepseek/deepseek-v4.1-flash"
 MIMO_2_6_PRO_MODEL_ID = "xiaomi/mimo-v2.6-pro"
 
+# Kimi K3 -> Kimi K3.1 Pro on 2026-11-05, mirroring the gateway graph.
 SYNTH_PROMETHEUS_4_MODEL_ORDER = (
     MIMO_2_6_PRO_MODEL_ID,
     "z-ai/glm-5.3",
-    "moonshotai/kimi-k3",
+    "moonshotai/kimi-k3.1-pro",
     DEEPSEEK_V4_1_FLASH_MODEL_ID,
     "minimax/minimax-m3",
     "qwen/qwen3.8-2.4t-a95b",

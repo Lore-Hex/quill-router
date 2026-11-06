@@ -180,8 +180,9 @@ CREATE TABLE tr_lease (
   state STRING(16) NOT NULL,
   -- The money (§4.2, §4.7): L as granted, the allocation reserved across the
   -- donors, and what is booked against it. The allocation grows by the
-  -- owner's shortfall writes (shortfall_total) and the front doors' raises
-  -- (door_raised), and shrinks by returns (returned); consumption beyond it
+  -- owner's shortfall writes (shortfall_total) and the drain log's raises,
+  -- a front door's append's or an auditor's reap's (door_raised), and
+  -- shrinks by returns (returned); consumption beyond it
   -- is booked as usage (fault_usage). The last three columns are the
   -- spike's, so that the accounting is a check on the row.
   granted INT64 NOT NULL,
@@ -292,6 +293,13 @@ CREATE TABLE tr_lease_hold (
 ) PRIMARY KEY (workspace_id, lease_id, authorization_id),
   INTERLEAVE IN PARENT tr_lease ON DELETE CASCADE;
 
+-- A stream's spend ceiling, when above its estimate
+-- (docs/design/fast-admission-streams.md section 12): a reap of the hold
+-- charges its running charge up to it, and what passes the estimate raises
+-- the lease. NULL for every other hold. Added to the table after it was
+-- first applied, and nullable, so a row from before reads as one with none.
+ALTER TABLE tr_lease_hold ADD COLUMN ceiling INT64;
+
 -- The chunks of a forced exit's hand-off (§4.2) that the auditor has applied
 -- and whose manifest it has not, each the chunk's holds as its record listed
 -- them (opaque here). A member that takes the lease over mid-hand-off reads
@@ -328,7 +336,8 @@ CREATE INDEX tr_lease_winners_by_work ON tr_lease_winners (work_done_at);
 -- or its owner is gone, and the auditor's reaps. A record's ID is minted by
 -- whoever appends it and reused on that append's retries. Rows are read in
 -- the order of their commit, then their ID, since two appends can share a
--- commit timestamp. door_raise is the raise the append made (§4.2).
+-- commit timestamp. door_raise is the raise the append or the reap made
+-- (§4.2).
 CREATE TABLE tr_lease_drain (
   workspace_id STRING(64) NOT NULL,
   lease_id STRING(32) NOT NULL,

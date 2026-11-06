@@ -39,7 +39,14 @@ class ProviderPageTests(unittest.TestCase):
 
     def test_request_only_no_pdf_or_private_slides(self):
         self.assertEqual((self.root / "providers").read_text(), self.page)
-        self.assertFalse(list(self.root.rglob("*.pdf")))
+        # Public identity PDFs do not make the commercial provider deck public.
+        self.assertEqual(
+            {p.relative_to(self.root).as_posix() for p in self.root.rglob("*.pdf")},
+            {"assets/press/nyte-brand-guidelines-v1.pdf"}
+            | {f"assets/press/guide/{name}.pdf" for name in (
+                "horizontal", "stacked-lockup", "one-line-name", "stacked-name", "wordmark", "globe",
+            )},
+        )
         for resource in self.parser.links + self.parser.resources:
             self.assertNotIn(".pdf", resource.lower())
             self.assertNotIn("slide-", resource.lower())

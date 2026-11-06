@@ -16,8 +16,24 @@ import (
 // (docs/design/fast-admission-production-rollout.md, W4).
 var migration = filepath.Join("..", "..", "scripts", "deploy", "migrate_fastpath.sh")
 
-// created names what a statement creates.
-var created = regexp.MustCompile(`^CREATE (TABLE|(?:UNIQUE )?(?:NULL_FILTERED )?INDEX) (\w+)`)
+// created names what a statement creates: a table, an index, or a column
+// a table gains after it was first applied.
+var created = regexp.MustCompile(`^CREATE (TABLE|(?:UNIQUE )?(?:NULL_FILTERED )?INDEX) (\w+)|^ALTER TABLE (\w+) ADD COLUMN (\w+)`)
+
+// object is what a statement creates, and its kind: "table", "index" or
+// "column", a column named table.column.
+func object(s string) (kind, name string, ok bool) {
+	m := created.FindStringSubmatch(s)
+	switch {
+	case m == nil:
+		return "", "", false
+	case m[3] != "":
+		return "column", m[3] + "." + m[4], true
+	case m[1] == "TABLE":
+		return "table", m[2], true
+	}
+	return "index", m[2], true
+}
 
 // words is a statement with its whitespace made single spaces.
 func words(s string) string { return strings.Join(strings.Fields(s), " ") }
@@ -29,23 +45,23 @@ var production = map[string]bool{"tr_credit_balance": true, "tr_key_limit": true
 	"tr_entities": true, "tr_gateway_authorization": true}
 
 // ownStatements are fastpath.sql's statements but production's, and what
-// each creates, and whether it is an index.
-func ownStatements(t *testing.T) (statements, names []string, index []bool) {
+// each creates, and its kind.
+func ownStatements(t *testing.T) (statements, names, kinds []string) {
 	t.Helper()
 	all, err := Statements()
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, s := range all {
-		m := created.FindStringSubmatch(s)
-		if m == nil {
+		kind, name, ok := object(s)
+		if !ok {
 			t.Fatalf("a statement that creates nothing: %q", s)
 		}
-		if !production[m[2]] {
-			statements, names, index = append(statements, words(s)), append(names, m[2]), append(index, m[1] != "TABLE")
+		if !production[name] {
+			statements, names, kinds = append(statements, words(s)), append(names, name), append(kinds, kind)
 		}
 	}
-	return statements, names, index
+	return statements, names, kinds
 }
 
 // database is the stand-in database testdata/gcloud answers from.
@@ -56,22 +72,18 @@ type database struct{ dir string }
 func newDatabase(t *testing.T, existing ...string) database {
 	t.Helper()
 	d := database{t.TempDir()}
-	for _, sub := range []string{"table", "index", "waits"} {
+	for _, sub := range []string{"table", "index", "column", "waits"} {
 		if err := os.Mkdir(filepath.Join(d.dir, sub), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	_, names, index := ownStatements(t)
+	_, names, kinds := ownStatements(t)
 	for _, name := range existing {
 		i := slices.Index(names, name)
 		if i < 0 {
 			t.Fatalf("%s is none of the service's objects", name)
 		}
-		kind := "table"
-		if index[i] {
-			kind = "index"
-		}
-		d.set(t, filepath.Join(kind, name), "")
+		d.set(t, filepath.Join(kinds[i], name), "")
 	}
 	return d
 }
@@ -170,7 +182,7 @@ func migrate(t *testing.T, d database) (bool, string) {
 // each index read-write; run again, it applies nothing and checks each index
 // again.
 func TestTheMigrationAppliesTheSchema(t *testing.T) {
-	want, names, index := ownStatements(t)
+	want, names, kinds := ownStatements(t)
 	d := newDatabase(t)
 	if ok, out := migrate(t, d); !ok {
 		t.Fatalf("the first run failed:\n%s", out)
@@ -181,7 +193,7 @@ func TestTheMigrationAppliesTheSchema(t *testing.T) {
 	for run := 1; run <= 2; run++ {
 		checked := d.readinessChecked(t)
 		for i, name := range names {
-			if index[i] != (checked[name] == run) {
+			if (kinds[i] == "index") != (checked[name] == run) {
 				t.Errorf("run %d: %s's state read %d times", run, name, checked[name])
 			}
 		}
@@ -269,9 +281,9 @@ func TestAMigrationThatCannotReadOrWriteFails(t *testing.T) {
 // it is, and the run passes; one that never is fails the run, and nothing
 // is sent after its last read.
 func TestTheMigrationWaitsForEachIndex(t *testing.T) {
-	_, names, index := ownStatements(t)
+	_, names, kinds := ownStatements(t)
 	for i, name := range names {
-		if !index[i] {
+		if kinds[i] != "index" {
 			continue
 		}
 		for _, existing := range [][]string{nil, names} {
@@ -294,5 +306,36 @@ func TestTheMigrationWaitsForEachIndex(t *testing.T) {
 				t.Fatalf("%s never read-write: the run went on after it, to %q", name, last)
 			}
 		}
+	}
+}
+
+// TestATableMadeBeforeItsColumnGainsIt: a database with every one of the
+// service's objects but a column a table gained later, as production's is
+// when the column is new, gets that column and nothing else; run again, it
+// applies nothing.
+func TestATableMadeBeforeItsColumnGainsIt(t *testing.T) {
+	want, names, kinds := ownStatements(t)
+	columns := 0
+	for i, name := range names {
+		if kinds[i] != "column" {
+			continue
+		}
+		columns++
+		d := newDatabase(t, slices.Delete(slices.Clone(names), i, i+1)...)
+		if ok, out := migrate(t, d); !ok {
+			t.Fatalf("with every object but %s the run failed:\n%s", name, out)
+		}
+		if got := d.applied(t); len(got) != 1 || got[0] != want[i] {
+			t.Fatalf("with every object but %s the run applied %q", name, got)
+		}
+		if ok, out := migrate(t, d); !ok {
+			t.Fatalf("the rerun failed:\n%s", out)
+		}
+		if got := d.applied(t); len(got) != 1 {
+			t.Fatalf("the rerun applied %q", got[1:])
+		}
+	}
+	if columns != 1 {
+		t.Fatalf("fastpath.sql gives its tables %d columns later, and the test expects tr_lease_hold.ceiling", columns)
 	}
 }

@@ -52,7 +52,7 @@ CONTRACT = ROOT / "docs" / "design" / "fast-admission-e2-decide.md"
 STREAM_PASSES = {
     "stream.stage_d:stage_d_disabled", "stream.stage_d:workspace_not_pilot", "stream.stage_d:heartbeats_disabled",
     "stream.stage_d:heartbeat_undeclared", "stream.stage_d:route", "stream.stage_d:settlement_backend",
-    "stream.undeclared",
+    "stream.undeclared", "stream.hold",
 }
 SECTION_3 = {
     "body.content_type", "body.unparseable", "body.duplicate_key", "body.float", "body.lax_type",
@@ -564,18 +564,25 @@ def test_the_facts_are_the_stored_rows_in_section_10_3s_shapes() -> None:
         assert len(tags) == 2 and tags == sorted(tags), name
 
 
-def test_a_streams_reservation_is_its_estimate_for_now() -> None:
+def test_a_streams_reservation_is_bounded_like_any_other() -> None:
     """Go passes a stream to Python (body.stream); Python's typed store
-    reserved the whole budget's price, where the same non-stream request
-    reserves at most HOLD_OUTPUT_TOKENS of it (§5, "The two figures")."""
-    by_name = {case["name"]: case["expect"] for case in [*_cases("answer"), *_cases("pass")]}
-    flash = "deepseek/deepseek-v4-flash:1000+131072"
-    answered = by_name[f"answer:estimate:hold_cap:{flash}"]
-    streamed = by_name[f"pass:body.stream:hold_cap:{flash}"]["python"]
-    assert streamed["status"] == 200 and not streamed["leased"]
-    assert streamed["reservation_microdollars"] == answered["estimate_microdollars"] > answered["reservation_microdollars"]
-    at_the_bound = by_name["pass:body.stream:hold_cap:deepseek/deepseek-v4-flash:1000+16384"]["python"]
-    assert at_the_bound["reservation_microdollars"] == answered["reservation_microdollars"]
+    reserves the same bounded hold as the matching non-stream request, at
+    most HOLD_OUTPUT_TOKENS of the budget, below the estimate (§5, "The two
+    figures"). A pilot stream past the bound passes both sides as stream.hold,
+    where a lease would cut it at the hold."""
+    cases = [*_cases("answer"), *_cases("pass")]
+    by_name = {case["name"]: case["expect"] for case in cases}
+    for tokens_out in (16384, 131072):
+        flash = f"deepseek/deepseek-v4-flash:1000+{tokens_out}"
+        answered = by_name[f"answer:estimate:hold_cap:{flash}"]
+        streamed = by_name[f"pass:body.stream:hold_cap:{flash}"]["python"]
+        assert streamed["status"] == 200 and not streamed["leased"]
+        assert streamed["reservation_microdollars"] == answered["reservation_microdollars"]
+    past = by_name["answer:estimate:hold_cap:deepseek/deepseek-v4-flash:1000+131072"]
+    assert past["reservation_microdollars"] < past["estimate_microdollars"]
+    for tokens_out in (16385, 131072):
+        held = by_name[f"pass:stream.hold:deepseek/deepseek-v4-flash:1000+{tokens_out}"]
+        assert held["reason"] == "stream.hold" and not held["python"]["leased"], held
 
 
 # ------------------------------------------------------------------ async --

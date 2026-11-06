@@ -845,12 +845,18 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     ),
     "abliterated-deepseek": PublicPage(
         template="public/seo_abliterated_deepseek.html",
-        title="Abliterated DeepSeek API: Uncensored, Private Inference",
+        title="Abliterated DeepSeek: Uncensored API for Cyberdefense",
         description=(
-            "Try dealignai's abliterated DeepSeek V4.1 Flash through TrustedRouter. "
-            "One API key, live pricing, streaming, and Maple's dedicated Confidential route."
+            "Use abliterated (uncensored) DeepSeek for cyberdefense: SOC alert triage, "
+            "defensive code review and incident response via Maple's Confidential API."
         ),
         faq_items=(
+            ("Are abliterated DeepSeek and uncensored DeepSeek the same model?",
+             "For this dealignai checkpoint, yes: the publisher lists UNCENSORED and ABLITERATED names for the same release. Abliterated describes the modification to refusal behavior; uncensored is the broader label used to find this model. Other providers may use these labels for different checkpoints, so select the exact model ID."),
+            ("How can I use uncensored DeepSeek for cyberdefense?",
+             "Evaluate it for SOC alert triage, defensive code review, detection-rule review, threat modeling and incident-response reporting. Give it sanitized evidence, ask it to distinguish observations from hypotheses, and have an analyst verify its conclusions and proposed changes."),
+            ("Does abliterated DeepSeek connect directly to my SIEM or run security tools?",
+             "The Maple route accepts text through Chat Completions; it does not advertise tool calling. Your application can supply selected, sanitized SIEM alerts or code excerpts and collect the response. Keep execution and approval in your own security workflow."),
             ("Which abliterated DeepSeek model is this?",
              "The model ID is dealignai/deepseek-v4.1-flash-1017-uncensored. It is a third-party checkpoint by dealignai, distinct from stock DeepSeek and from the separately named Abliteration provider's models."),
             ("Is abliterated DeepSeek the same as stock DeepSeek?",
@@ -4815,6 +4821,14 @@ def llms_txt(settings: Settings) -> str:
         f"- [Extended index with full page text](https://{domain}/llms-full.txt)",
         f"- [Machine-readable URL list](https://{domain}/sitemap.xml)",
         "",
+        "## Model API Guides",
+        f"- [Abliterated / uncensored DeepSeek for cyberdefense](https://{domain}/abliterated-deepseek): dealignai's modified checkpoint, Maple API instructions, SOC triage and incident-response examples.",
+        f"- [DeepSeek API privacy](https://{domain}/deepseek-api-privacy): provider policy and routing controls.",
+        f"- [GPT-OSS 120B API](https://{domain}/gpt-oss-120b-api): current routes, pricing and integration guide.",
+        f"- [Kimi API](https://{domain}/kimi-k2-api): model-family guide and current catalog evidence.",
+        f"- [GLM API](https://{domain}/glm-5-api): model-family guide and current catalog evidence.",
+        f"- [MiniMax API](https://{domain}/minimax-m3-api): model-family guide and current catalog evidence.",
+        "",
         "## Catalog",
         f"- Public model pages: {model_count}",
         f"- Provider pages: {provider_count}",
@@ -4882,6 +4896,7 @@ def docs_llms_txt(settings: Settings) -> str:
             "- After a Python install: trustedrouter models --json",
             "- Authentication: set TRUSTEDROUTER_API_KEY; never pass API keys as command arguments.",
             f"- Evals guide: https://{domain}/docs/evals",
+            f"- Abliterated / uncensored DeepSeek cyberdefense guide: https://{domain}/abliterated-deepseek",
             f"- Provider conformance suite: https://{domain}/docs/provider-conformance",
             f"- Synth guide: https://{domain}/docs/synth",
             f"- Responses web search: https://{domain}/docs/web-search",

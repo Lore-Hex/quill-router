@@ -72,8 +72,8 @@ func (r *fakeRecords) published() ([]string, [][]byte) {
 }
 
 // adoptFixture is an owner with a store and the record topic, and a grace
-// of a minute.
-func adoptFixture(t *testing.T) (*fixture, *fakeSpanner, *fakeRecords) {
+// of a minute, with the changes given.
+func adoptFixture(t *testing.T, changes ...func(*Config)) (*fixture, *fakeSpanner, *fakeRecords) {
 	t.Helper()
 	sp := newFakeSpanner()
 	sp.expiry = start.Add(10 * time.Minute)
@@ -81,6 +81,9 @@ func adoptFixture(t *testing.T) (*fixture, *fakeSpanner, *fakeRecords) {
 	f := newFixture(t, 1000, nil, func(c *Config) {
 		c.Spanner, c.Node, c.RenewEvery, c.Window, c.KeyStatus = sp, "owner-1", time.Hour, 30*time.Second, 7
 		c.Grace, c.Records = time.Minute, rec
+		for _, change := range changes {
+			change(c)
+		}
 	})
 	return f, sp, rec
 }

@@ -42,7 +42,8 @@ A stream in the pilot's cohort joins only when (§5.1):
   candidate in credits, standard pricing, no priority or auto tier;
 - the boot declared usage heartbeats (`stream.undeclared`);
 - `reap_snapshot_booking_enabled` is on (`stream.snapshot_booking`);
-- its reservation is its estimate (`stream.hold`, the tripwire).
+- its reservation is its estimate (`stream.hold`, the tripwire): since
+  2026-11-05 only a stream whose output budget is at most 16,384 tokens.
 
 A stream passed over is logged as `fastpath pilot passed over reason=<one of
 those> workspace_id=...`.
