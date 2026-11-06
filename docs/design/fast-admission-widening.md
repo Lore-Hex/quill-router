@@ -489,7 +489,12 @@ detect a kill from the switch table, whose rows cannot say who wrote them
   kills cannot share a timestamp, since `DisableAll`'s update conflicts
   with every other switch write. While `*` exists the enabler writes
   nothing and reports `held: fleet`. `fastpathctl release-all` deletes
-  `*` and every `tr_fastpath_kill` row in one transaction.
+  `*` and every `tr_fastpath_kill` row in one transaction. It refuses,
+  writing nothing, while `#pause` exists ("resume first"), reading
+  `#pause` in that transaction: released first, the kill rows would be
+  gone before resume could skip the rows they stamped, and resume would
+  hold the whole allow-list one row at a time. So under a pause the only
+  order is `enabler resume`, then `release-all`.
 - Why a table of its own and not hold rows keyed (`*`, `kill_at`): the
   hold table is keyed by workspace id alone, and every enabler write reads
   `*`, `#pause`, `#armed` and the workspace's hold by that key. A second
@@ -561,7 +566,8 @@ detect a kill from the switch table, whose rows cannot say who wrote them
   `release-all`; two kills during one pause each have their row, so
   `release-all` undoes both, and only them. Resume takes no timestamp from
   the operator: it reads the kills' timestamps from the rows the kills
-  wrote.
+  wrote. The order is fixed: `release-all` refuses while `#pause` exists,
+  so the kill rows are still there when resume reads them.
 - **A kill by an older `disable-all`** recorded no timestamp, so its rows
   are held one by one at resume like any other stop since the pause. That
   fails safe: they stay off after `release-all`. Bringing them back is an
@@ -827,7 +833,9 @@ Fastest first, each narrower than the next:
    the capped rate of §5.3.
 5. `fastpathctl decide wildcard off`, or `decide-off-all`.
 6. `fastpathctl disable-all`: every workspace off, every lease revoked, the
-   enabler held.
+   enabler held. Undone by `fastpathctl release-all`; if the enabler is
+   also paused, `enabler resume` comes first, since `release-all` refuses
+   under a pause (§5.6).
 7. `TR_FASTPATH_PILOT_ENABLED=false`: every new authorize takes today's
    path at once.
 
@@ -1028,7 +1036,9 @@ step.
    just after it; a second `pause` leaving the first `held_at`; each
    `disable-all`'s `tr_fastpath_kill` row equal to the `changed_at` of
    every row it turned off, and a row stopped before it keeping its own;
-   `release-all` deleting `*` and every kill row in one commit; the
+   `release-all` deleting `*` and every kill row in one commit;
+   `release-all` while `#pause` exists refused, writing nothing, `*`, the
+   kill rows and every switch row as they were; the
    sequence the review described: paused, an older-style unheld `disable
    W` at T1, then `disable-all`, `resume`, `release-all`, and W still held
    while the kill's rows are enabled again by the next run; the same with
