@@ -226,9 +226,10 @@ raw `co_filename` when that frame resumes. Coverage 7.13.5 uses
 CTracer on CPython 3.12 whenever it measures branches, because its
 sys.monitoring core cannot measure them there. This repository measures lines
 through sys.monitoring (`[tool.coverage.run]` in pyproject.toml), which hashes
-`co_filename` only at `PY_START` and registers no resume callback, so these
-calls come only from a run that asks for branches. These C calls have the resumed owner or test as their immediate
-Python caller, without a guard caller frame. They are outside the guard's
+`co_filename` only at `PY_START` and registers no resume callback. So these
+calls come only from a run on the C tracer: one that asks for branches, or
+that overrides the configured core. These C calls have the resumed owner or
+test as their immediate Python caller, without a guard caller frame. They are outside the guard's
 no-user-protocol contract. The witness permits only filename hash/equality
 calls from those two exact code identities and still requires zero
 calls attributed to the guard, plus the original inventory assertions.

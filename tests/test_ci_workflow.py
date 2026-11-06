@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tomllib
 from pathlib import Path
 
@@ -72,18 +73,45 @@ def test_coverage_measures_lines_through_sys_monitoring() -> None:
     # cannot measure branches. Asked to (branch = true, or --cov-branch on a
     # command), coverage falls back to its C tracer with only a warning,
     # bringing back about three times the plain suite's cost. timid, an
-    # environment COVERAGE_CORE or another --cov-config would also displace
-    # the setting.
+    # environment COVERAGE_CORE or COVERAGE_RCFILE, or another --cov-config
+    # would also displace the setting.
     run = tomllib.loads((ROOT / "pyproject.toml").read_text())["tool"]["coverage"]["run"]
     assert run["core"] == "sysmon"
     assert "timid" not in run
     version = tuple(int(part) for part in (ROOT / ".python-version").read_text().strip().split(".")[:2])
     if version < (3, 14):
         assert run["branch"] is False
-    for path in sorted((ROOT / ".github/workflows").glob("*.yml")):
+    addopts = " ".join(tomllib.loads((ROOT / "pyproject.toml").read_text())["tool"]["pytest"]
+                       ["ini_options"].get("addopts", []))
+    for token in ("--cov-branch", "--cov-config"):
+        assert token not in addopts, f"pytest addopts name {token}"
+    workflows = sorted([*(ROOT / ".github/workflows").glob("*.yml"), *(ROOT / ".github/workflows").glob("*.yaml")])
+    for path in workflows:
         text = path.read_text()
-        for token in ("--cov-branch", "--cov-config", "COVERAGE_CORE"):
+        for token in ("--cov-branch", "--cov-config", "COVERAGE_CORE", "COVERAGE_RCFILE"):
             assert token not in text, f"{path.name} names {token}"
+
+
+def test_coverage_from_the_repository_root_resolves_to_sys_monitoring(monkeypatch) -> None:
+    # coverage.py reads the first configuration it finds: COVERAGE_RCFILE or
+    # .coveragerc, then .coveragerc.toml, setup.cfg, tox.ini and pyproject.toml.
+    # A file ahead of pyproject.toml, even one with only a [report] section,
+    # replaces all of pyproject's settings without a warning, and the run
+    # falls back to the C tracer. So ask coverage itself what a run started
+    # from the root would use.
+    import coverage
+
+    for name in ("COVERAGE_CORE", "COVERAGE_RCFILE"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.chdir(ROOT)
+    cov = coverage.Coverage()
+    read = [os.path.realpath(name) for name in cov.config.config_files_read]
+    assert read == [os.path.realpath(ROOT / "pyproject.toml")]
+    assert cov.get_option("run:core") == "sysmon"
+    assert cov.get_option("run:timid") is False
+    version = tuple(int(part) for part in (ROOT / ".python-version").read_text().strip().split(".")[:2])
+    if version < (3, 14):
+        assert cov.get_option("run:branch") is False
 
 
 def test_ci_shards_record_durations_using_existing_split_weights() -> None:
