@@ -252,6 +252,11 @@ per-shape latencies above, request logs, the tags' own code paths).
 Separate Spanner server latency from network and application latency. Inspect
 the `method`, `status`, and serving-region labels. `ABORTED` is tracked by the
 contention policy; unexpected statuses are tracked by the API-failure policy.
+That policy pages only when more than one failure a minute lasts five
+minutes. Short bursts of `CANCELLED` or `DEADLINE_EXCEEDED` on
+`ExecuteStreamingSql` are usually the fast-fail reads (200-500 ms deadlines, no
+retry, LOW priority: settle-drain shard scans and admission reads) during a
+latency blip; they recover on the next pass.
 
 For a gateway billing-path incident:
 

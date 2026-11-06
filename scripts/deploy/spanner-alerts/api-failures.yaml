@@ -15,8 +15,13 @@ conditions:
       # Exclude every observed spelling so expected transaction retries do not
       # page as API failures.
       filter: 'resource.type = "spanner_instance" AND resource.labels.instance_id = "trusted-router-nam6" AND metric.type = "spanner.googleapis.com/api/api_request_count" AND metric.labels.status != "OK" AND metric.labels.status != "Aborted" AND metric.labels.status != "aborted" AND metric.labels.status != "AlreadyExists" AND metric.labels.status != "already_exists"'
+      # Per-minute points held for 5 minutes, as the condition name says.
+      # A 300s alignment with a 300s duration fired on one burst of about six
+      # failures (fast-fail reads with 200-500 ms deadlines in a short latency
+      # blip); the latency policy's one-minute condition covers single slow
+      # minutes.
       aggregations:
-        - alignmentPeriod: 300s
+        - alignmentPeriod: 60s
           perSeriesAligner: ALIGN_RATE
           crossSeriesReducer: REDUCE_SUM
       comparison: COMPARISON_GT

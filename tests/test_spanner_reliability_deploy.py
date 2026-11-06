@@ -37,6 +37,25 @@ def test_api_failure_alert_excludes_retry_status_case_variants() -> None:
         assert f'metric.labels.status != "{status}"' in policy
 
 
+def test_api_failure_alert_needs_failures_in_every_minute_of_five() -> None:
+    policy = yaml.safe_load(
+        (DEPLOY / "spanner-alerts" / "api-failures.yaml").read_text(encoding="utf-8")
+    )
+    (condition,) = policy["conditions"]
+    threshold = condition["conditionThreshold"]
+
+    # A duration no longer than the alignment lets one burst page.
+    assert threshold["aggregations"] == [
+        {
+            "alignmentPeriod": "60s",
+            "perSeriesAligner": "ALIGN_RATE",
+            "crossSeriesReducer": "REDUCE_SUM",
+        }
+    ]
+    assert threshold["duration"] == "300s"
+    assert threshold["thresholdValue"] == 0.016666667
+
+
 def test_high_priority_cpu_alert_keeps_short_spikes_visible() -> None:
     policy = (DEPLOY / "spanner-alerts" / "high-priority-cpu.yaml").read_text(
         encoding="utf-8"
