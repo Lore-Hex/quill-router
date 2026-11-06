@@ -19,7 +19,7 @@ async function load(page, reveal = false, empty = false, management = false) {
     const url = new URL(route.request().url());
     if (url.pathname.startsWith('/static/')) return route.fulfill({path:path.join(root,'src/trusted_router',url.pathname)});
     if (url.pathname.includes('social-rewards')) return route.fulfill({json:{enabled:false,eligible:false}});
-    return route.fulfill({contentType:'text/html',body:html});
+    return route.fulfill({contentType:'text/html',body:html,headers:{'Referrer-Policy':'same-origin','Cache-Control':'private, no-store'}});
   });
   await page.goto('https://keys.test/console/api-keys');
   await page.evaluate(() => document.fonts.ready);
@@ -125,4 +125,20 @@ test('workspace members do not see the management creation form', async ({page})
   await load(page);
   await expect(page.locator('form[action="/console/api-keys/management"]')).toHaveCount(0);
   await expect(page.getByText('Only workspace owners and managers', {exact:false})).toBeVisible();
+});
+
+test('management form sends the origin and explicit confirmation', async ({page}) => {
+  await load(page,false,false,true);
+  await page.getByText('Create a management key',{exact:true}).click();
+  const form = page.locator('form[action="/console/api-keys/management"]');
+  await form.getByRole('textbox',{name:'Name',exact:true}).fill('Billing administration');
+  await form.getByRole('checkbox').check();
+  const sent = page.waitForRequest(request => request.method() === 'POST' && request.url().endsWith('/console/api-keys/management'));
+  await form.getByRole('button',{name:'Create management key',exact:true}).click();
+  const request = await sent;
+  expect(request.headers().origin).toBe('https://keys.test');
+  const fields = new URLSearchParams(request.postData());
+  expect(fields.get('name')).toBe('Billing administration');
+  expect(fields.get('acknowledge')).toBe('yes');
+  expect(fields.get('csrf_token')).toBe('fixture-not-a-real-token');
 });

@@ -48,7 +48,7 @@ def test_create_management_key_and_one_time_safe_reveal(client: TestClient, owne
     response = client.post(PATH, data=form(client), headers=ORIGIN)
     assert response.status_code == 200
     assert response.headers["cache-control"] == "private, no-store"
-    assert response.headers["referrer-policy"] == "no-referrer"
+    assert response.headers["referrer-policy"] == "same-origin"
     soup = BeautifulSoup(response.text, "html.parser")
     secret = soup.select_one("#created-api-key").get_text()
     key = STORE.get_key_by_raw(secret)

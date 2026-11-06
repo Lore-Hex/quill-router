@@ -35,7 +35,7 @@ _FLASH = {
     ),
 }
 
-_HEADERS = {"Cache-Control": "private, no-store", "Referrer-Policy": "no-referrer"}
+_HEADERS = {"Cache-Control": "private, no-store", "Referrer-Policy": "same-origin"}
 
 
 def _management_key_token(ctx: ConsoleContext) -> str:
