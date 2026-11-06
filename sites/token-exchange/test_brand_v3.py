@@ -38,6 +38,9 @@ class BrandV3Tests(unittest.TestCase):
             self.assertIn(hook, page)
         self.assertEqual(page.count('data-open="deck"'), 2)
         self.assertNotIn('/assets/nyte-v2/press/', page)
+        # analytics.js names CTA positions from these classes (hero: class starting "hero", close: .closing).
+        self.assertIn('<section class="hero-home v3-hero">', page)
+        self.assertIn('<section class="v3-cta closing">', page)
         self.assertIn('<ol class="v3-team-list">', london)
         self.assertNotIn('<div class="card">', london)
         self.assertNotIn('class="tag us"', london)
