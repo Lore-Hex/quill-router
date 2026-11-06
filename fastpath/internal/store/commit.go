@@ -26,10 +26,13 @@ const (
 // latest valid snapshot, and what a reap of it needs. Deadline is the one a
 // reap waits for, plus the grace: a stream's reap floor when its snapshot
 // carries one (record.Snapshot.ReapAfter), else the heartbeat's, or a hold
-// with no heartbeat's end of life.
+// with no heartbeat's end of life. Ceiling is a stream's spend ceiling, only
+// when above Estimate (record.Record.Ceiling): a reap of the hold charges
+// its running charge up to it, else up to Estimate.
 type HoldRow struct {
 	AuthorizationID  string
 	Estimate         int64
+	Ceiling          spanner.NullInt64
 	Deadline         time.Time
 	Listed           bool
 	SnapshotSeq      spanner.NullInt64
@@ -43,11 +46,20 @@ type HoldRow struct {
 
 var holdColumns = []string{"workspace_id", "lease_id", "authorization_id", "estimate", "deadline", "listed",
 	"snapshot_seq", "snapshot_hash", "snapshot_usage", "running_charge", "snapshot_owner_seq", "reap_basis",
-	"boot_binding"}
+	"boot_binding", "ceiling"}
 
 func (h HoldRow) values(ref LeaseRef) []any {
 	return []any{ref.Workspace, ref.LeaseID, h.AuthorizationID, h.Estimate, h.Deadline, h.Listed, h.SnapshotSeq,
-		h.SnapshotHash, h.SnapshotUsage, h.RunningCharge, h.SnapshotOwnerSeq, h.ReapBasis, h.Boot}
+		h.SnapshotHash, h.SnapshotUsage, h.RunningCharge, h.SnapshotOwnerSeq, h.ReapBasis, h.Boot, h.Ceiling}
+}
+
+// reapBound is what a reap of the hold may charge: its ceiling when it has
+// one, else its estimate.
+func reapBound(estimate int64, ceiling spanner.NullInt64) int64 {
+	if ceiling.Valid {
+		return ceiling.Int64
+	}
+	return estimate
 }
 
 // Winner is the terminal a commit stores as its authorization's winner, with
@@ -145,7 +157,7 @@ func (r CommitRequest) validate() error {
 	put := map[string]bool{}
 	for _, h := range r.PutHolds {
 		if h.AuthorizationID == "" || h.Estimate < 0 || put[h.AuthorizationID] || won[h.AuthorizationID] ||
-			h.SnapshotSeq.Valid != h.RunningCharge.Valid {
+			h.SnapshotSeq.Valid != h.RunningCharge.Valid || (h.Ceiling.Valid && h.Ceiling.Int64 <= h.Estimate) {
 			return fmt.Errorf("store: hold %s is not one open hold", h.AuthorizationID)
 		}
 		put[h.AuthorizationID] = true

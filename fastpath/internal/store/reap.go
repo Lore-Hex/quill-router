@@ -24,14 +24,16 @@ const (
 )
 
 // ReapRow is the auditor's reap of an open hold of a draining lease (§4.8):
-// the hold's latest snapshot's running charge, capped at its estimate, the
-// heartbeat record the charge came from, and the full record the auditor
-// built and published for it (Digest, Money).
+// the hold's latest snapshot's running charge, capped at its ceiling when it
+// has one (zero when it has none), else at its estimate, the heartbeat
+// record the charge came from, and the full record the auditor built and
+// published for it (Digest, Money).
 type ReapRow struct {
 	AuthorizationID  string
 	RecordID         string
 	Charge           int64
 	Estimate         int64
+	Ceiling          int64
 	SnapshotOwnerSeq int64
 	Digest           []byte
 	Money            []byte
@@ -45,16 +47,21 @@ type ReapRow struct {
 // none. It is taken only at a tick past the hold's deadline plus
 // Config.Grace, tick being the time of the tick the member applied, so no
 // settle the hold may still have can lose to it. The reap is the hold's: its
-// estimate, and its latest snapshot's running charge capped at the
-// estimate, from that snapshot's owner record, or nothing for a hold with no
-// snapshot; another is an error. It does not advance the version: the
-// commit that applies the row books it. It returns the refusal, if any, and
-// the row's commit.
+// estimate and ceiling, and its latest snapshot's running charge capped at
+// the ceiling, or at the estimate for a hold with none, from that
+// snapshot's owner record, or nothing for a hold with no snapshot; another
+// is an error. A charge above the estimate raises the lease's allocation,
+// its first donor's and that shard's reservation by the difference, in the
+// same transaction as the row, as an append's does (docs/design/
+// fast-admission-streams.md section 12.2 item 3), and the row keeps it as
+// its door_raise. It does not advance the version: the commit that applies
+// the row books it. It returns the refusal, if any, and the row's commit.
 func (s *Store) Reap(ctx context.Context, ref LeaseRef, readVersion int64, tick time.Time, r ReapRow) (Refusal, time.Time, error) {
-	if r.AuthorizationID == "" || r.RecordID == "" || r.Charge < 0 || r.Charge > r.Estimate || len(r.Money) == 0 ||
+	if r.AuthorizationID == "" || r.RecordID == "" || r.Estimate < 0 || r.Charge < 0 ||
+		(r.Ceiling != 0 && r.Ceiling <= r.Estimate) || r.Charge > max(r.Ceiling, r.Estimate) || len(r.Money) == 0 ||
 		len(r.Digest) == 0 {
 		return "", time.Time{}, errors.New("store: a reap names its authorization, its record and the record's digest, " +
-			"and charges at most the hold")
+			"and charges at most the hold's ceiling, or the hold for one with none")
 	}
 	var refused Refusal
 	resp, err := s.client.ReadWriteTransactionWithOptions(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
@@ -107,7 +114,8 @@ func (s *Store) Reap(ctx context.Context, ref LeaseRef, readVersion int64, tick 
 			return nil
 		}
 		row, err = txn.ReadRowWithOptions(ctx, "tr_lease_hold", spanner.Key{ref.Workspace, ref.LeaseID, r.AuthorizationID},
-			[]string{"estimate", "deadline", "running_charge", "snapshot_owner_seq"}, &spanner.ReadOptions{RequestTag: tag("reap")})
+			[]string{"estimate", "ceiling", "deadline", "running_charge", "snapshot_owner_seq"},
+			&spanner.ReadOptions{RequestTag: tag("reap")})
 		if spanner.ErrCode(err) == codes.NotFound {
 			refused = RefusedNoHold
 			return nil
@@ -117,24 +125,50 @@ func (s *Store) Reap(ctx context.Context, ref LeaseRef, readVersion int64, tick 
 		}
 		var estimate int64
 		var deadline time.Time
-		var running, seq spanner.NullInt64
-		if err := row.Columns(&estimate, &deadline, &running, &seq); err != nil {
+		var ceiling, running, seq spanner.NullInt64
+		if err := row.Columns(&estimate, &ceiling, &deadline, &running, &seq); err != nil {
 			return err
 		}
 		if tick.Before(deadline.Add(s.cfg.Grace)) {
 			refused = RefusedNotDue
 			return nil
 		}
-		if want := min(running.Int64, estimate); r.Estimate != estimate || r.Charge != want || r.SnapshotOwnerSeq != seq.Int64 {
-			return fmt.Errorf("store: a reap of %s at %d of %d from record %d, and the hold is %d of %d from record %d",
-				r.AuthorizationID, r.Charge, r.Estimate, r.SnapshotOwnerSeq, want, estimate, seq.Int64)
+		if want := min(running.Int64, reapBound(estimate, ceiling)); r.Estimate != estimate || r.Ceiling != ceiling.Int64 ||
+			r.Charge != want || r.SnapshotOwnerSeq != seq.Int64 {
+			return fmt.Errorf("store: a reap of %s at %d of %d (ceiling %d) from record %d, and the hold is %d of %d "+
+				"(ceiling %d) from record %d", r.AuthorizationID, r.Charge, r.Estimate, r.Ceiling, r.SnapshotOwnerSeq, want,
+				estimate, ceiling.Int64, seq.Int64)
 		}
+		// What the reap charges above the hold is raised here, as an
+		// append raises a front door's settle (Append): the lease draining,
+		// as read above, so the raise lands on no closed lease.
+		raise := max(r.Charge-r.Estimate, 0)
+		if raise > 0 {
+			params["raise"] = raise
+			n, err := txn.UpdateWithOptions(ctx, spanner.Statement{
+				SQL: `UPDATE tr_lease SET allocation = allocation + @raise, door_raised = door_raised + @raise
+				       WHERE workspace_id = @w AND lease_id = @l AND state = 'draining'`,
+				Params: params,
+			}, spanner.QueryOptions{RequestTag: tag("reap")})
+			if err != nil {
+				return err
+			}
+			if n != 1 {
+				return errors.New("store: the lease changed inside its own transaction")
+			}
+			if err := raiseFirstDonor(ctx, txn, ref, raise, "reap"); err != nil {
+				return err
+			}
+		}
+		// The row last: a statement that writes a commit timestamp bars
+		// later statements on its table.
 		params["r"], params["charge"], params["estimate"], params["seq"] = r.RecordID, r.Charge, r.Estimate, r.SnapshotOwnerSeq
-		params["digest"], params["money"] = r.Digest, r.Money
+		params["digest"], params["money"], params["raise"] = r.Digest, r.Money, raise
 		_, err = txn.UpdateWithOptions(ctx, spanner.Statement{
 			SQL: `INSERT INTO tr_lease_drain (workspace_id, lease_id, authorization_id, record_id, kind, charge, estimate,
-			                                 record_digest, money, snapshot_owner_seq, cause, commit_ts)
-			      VALUES (@w, @l, @a, @r, 'reap', @charge, @estimate, @digest, @money, @seq, 'reap', PENDING_COMMIT_TIMESTAMP())`,
+			                                 door_raise, record_digest, money, snapshot_owner_seq, cause, commit_ts)
+			      VALUES (@w, @l, @a, @r, 'reap', @charge, @estimate, @raise, @digest, @money, @seq, 'reap',
+			              PENDING_COMMIT_TIMESTAMP())`,
 			Params: params,
 		}, spanner.QueryOptions{RequestTag: tag("reap")})
 		return err

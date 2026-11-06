@@ -247,6 +247,9 @@ func (l *Lease) heartbeat(r record.Record) {
 	// stream's reap floor when its record carries one (record.Snapshot
 	// ReapDeadline), else the heartbeat's.
 	h.row.Deadline = s.ReapAfter()
+	// And its ceiling, which bounds the snapshot's running charge and a
+	// reap of the hold, the one the record states (record.Record.Ceiling).
+	h.row.Ceiling = ceilingOf(r.Ceiling)
 	h.row.SnapshotSeq = spanner.NullInt64{Int64: s.GatewaySeq, Valid: true}
 	h.row.SnapshotHash, h.row.SnapshotUsage = s.Hash, s.Usage
 	h.row.RunningCharge = spanner.NullInt64{Int64: s.Running, Valid: true}
@@ -353,8 +356,8 @@ func (l *Lease) manifest(r record.Record) {
 		if l.winners[held.Auth] {
 			continue
 		}
-		row := store.HoldRow{AuthorizationID: held.Auth, Estimate: held.Estimate, Deadline: held.Deadline,
-			Boot: held.Boot}
+		row := store.HoldRow{AuthorizationID: held.Auth, Estimate: held.Estimate, Ceiling: ceilingOf(held.Ceiling),
+			Deadline: held.Deadline, Boot: held.Boot}
 		if s := held.Snapshot; s != nil {
 			row.SnapshotSeq = spanner.NullInt64{Int64: s.GatewaySeq, Valid: true}
 			row.SnapshotHash, row.SnapshotUsage = s.Hash, s.Usage
@@ -377,12 +380,21 @@ func (l *Lease) manifest(r record.Record) {
 			if len(row.Boot) == 0 {
 				row.Boot = older.Boot
 			}
+			if !row.Ceiling.Valid {
+				row.Ceiling = older.Ceiling
+			}
 		}
 		row.Listed = true
 		l.holds[held.Auth] = &hold{row: row}
 		l.put[held.Auth] = true
 	}
 	l.list(r.Seq)
+}
+
+// ceilingOf is a hold row's ceiling from a record's: none for zero, which a
+// record writes for a hold with none.
+func ceilingOf(c int64) spanner.NullInt64 {
+	return spanner.NullInt64{Int64: c, Valid: c != 0}
 }
 
 func (l *Lease) list(seq int64) {

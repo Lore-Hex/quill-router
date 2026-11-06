@@ -67,6 +67,13 @@ type Record struct {
 	// estimate.
 	Auth     string `json:"a,omitempty"`
 	Estimate int64  `json:"est,omitempty"`
+	// Ceiling is a stream's spend ceiling, on a heartbeat or a reap, only
+	// when above Estimate (docs/design/fast-admission-streams.md section
+	// 12): it bounds the snapshot's running charge, or the reap's charge, in
+	// Estimate's place. A reader from before the field refuses a record
+	// carrying it, so an owner writes it only once every auditor reads it
+	// (owner Config.RecordCeiling).
+	Ceiling int64 `json:"ceil,omitempty"`
 	// A terminal's charge (a settle's, or a reap's, its snapshot's running
 	// charge), and the owner's shortfall total after it (§4.2).
 	Charge    int64 `json:"charge,omitempty"`
@@ -102,8 +109,8 @@ type Record struct {
 
 // Snapshot is a heartbeat's: the gateway's sequence, from 1, and the
 // snapshot's hash, its measured usage, opaque here, the running charge
-// priced from it and capped at the hold, and the hold's deadline as the
-// heartbeat's answer granted it.
+// priced from it and capped at the hold, or at its ceiling when its record
+// carries one, and the hold's deadline as the heartbeat's answer granted it.
 //
 // ReapDeadline, when set, is a stream's reap floor
 // (docs/design/fast-admission-streams.md section 4.6 item 4): the deadline
@@ -149,10 +156,12 @@ type CheckpointOf struct {
 // authorization, estimate and deadline, the boot binding a disposition of it
 // needs (§4.9), heartbeat or none, and, if it has one, its last valid
 // snapshot, whose deadline is the hold's, with the owner sequence number of
-// the record that carried it and the basis its first carried.
+// the record that carried it and the basis its first carried. Ceiling is a
+// stream's, as a heartbeat record carries it (Record.Ceiling).
 type HeldHold struct {
 	Auth        string    `json:"a"`
 	Estimate    int64     `json:"est"`
+	Ceiling     int64     `json:"ceil,omitempty"`
 	Deadline    time.Time `json:"deadline"`
 	Boot        []byte    `json:"boot"`
 	Snapshot    *Snapshot `json:"hb,omitempty"`
@@ -208,7 +217,7 @@ func (r Record) Validate() error {
 	if !identifier(r.Lease, maxLease) {
 		return fmt.Errorf("record: lease %q", r.Lease)
 	}
-	if r.Estimate < 0 || r.Charge < 0 || r.Shortfall < 0 || r.SnapshotSeq < 0 || r.TickNumber < 0 {
+	if r.Estimate < 0 || r.Ceiling < 0 || r.Charge < 0 || r.Shortfall < 0 || r.SnapshotSeq < 0 || r.TickNumber < 0 {
 		return bad("a negative number")
 	}
 	// What each kind may carry beyond the version, lease and kind: a field
@@ -247,6 +256,9 @@ func (r Record) Validate() error {
 	if !got.auth && r.Estimate != 0 {
 		return bad("an estimate without an authorization")
 	}
+	if r.Ceiling != 0 && ((r.Kind != Heartbeat && r.Kind != Reap) || r.Ceiling <= r.Estimate) {
+		return bad("only a heartbeat or a reap carries a ceiling, and only one above its estimate")
+	}
 	if got.auth && !identifier(r.Auth, maxAuth) {
 		return bad("authorization %q", r.Auth)
 	}
@@ -268,12 +280,13 @@ func (r Record) Validate() error {
 		if r.First != (len(r.Basis) > 0) || (!r.First && (r.Seq == 1 || r.Snapshot.GatewaySeq == 1)) {
 			return bad("a hold's first heartbeat, and only it, carries the reap's basis")
 		}
-		if err := r.Snapshot.validate(r.Estimate); err != nil {
+		if err := r.Snapshot.validate(bound(r.Estimate, r.Ceiling)); err != nil {
 			return bad("%v", err)
 		}
 	case Reap:
-		if r.Charge > r.Estimate || r.Drain != "" || r.SnapshotSeq >= r.Seq {
-			return bad("a reap charges at most its hold, at an earlier heartbeat record's snapshot, and adopts no row")
+		if r.Charge > bound(r.Estimate, r.Ceiling) || r.Drain != "" || r.SnapshotSeq >= r.Seq {
+			return bad("a reap charges at most its hold, or its ceiling when it carries one, at an earlier " +
+				"heartbeat record's snapshot, and adopts no row")
 		}
 	case Release:
 		if r.Charge != 0 || r.Drain != "" {
@@ -313,10 +326,21 @@ func (r Record) Validate() error {
 	return nil
 }
 
-func (s *Snapshot) validate(estimate int64) error {
-	if s.GatewaySeq < 1 || len(s.Hash) != DigestSize || len(s.Usage) == 0 || s.Running < 0 || s.Running > estimate ||
+// bound is what a hold's running charge, and a reap of it, may reach: its
+// ceiling when it has one, else its estimate.
+func bound(estimate, ceiling int64) int64 {
+	if ceiling != 0 {
+		return ceiling
+	}
+	return estimate
+}
+
+// validate checks a snapshot of a hold whose running charge may reach
+// bound.
+func (s *Snapshot) validate(bound int64) error {
+	if s.GatewaySeq < 1 || len(s.Hash) != DigestSize || len(s.Usage) == 0 || s.Running < 0 || s.Running > bound ||
 		!utc(s.Deadline) {
-		return fmt.Errorf("snapshot %+v of a hold of %d", *s, estimate)
+		return fmt.Errorf("snapshot %+v of a hold bounded at %d", *s, bound)
 	}
 	if !s.ReapDeadline.IsZero() && (!utc(s.ReapDeadline) || !s.ReapDeadline.After(s.Deadline)) {
 		return fmt.Errorf("snapshot %+v: a reap deadline is UTC and after the deadline", *s)
@@ -328,6 +352,8 @@ func (h HeldHold) validate(seq int64) error {
 	switch {
 	case !identifier(h.Auth, maxAuth) || h.Estimate < 0 || !utc(h.Deadline) || len(h.Boot) == 0:
 		return errors.New("an authorization, an estimate, a UTC deadline and a boot binding")
+	case h.Ceiling != 0 && h.Ceiling <= h.Estimate:
+		return errors.New("a ceiling only above the estimate")
 	case (h.Snapshot == nil) != (h.SnapshotSeq == 0) || (h.Snapshot == nil && len(h.Basis) > 0):
 		return errors.New("a snapshot with its record's number and basis, or none of them")
 	case h.Snapshot == nil:
@@ -335,7 +361,7 @@ func (h HeldHold) validate(seq int64) error {
 	case h.SnapshotSeq < 1 || h.SnapshotSeq >= seq || len(h.Basis) == 0 || !h.Deadline.Equal(h.Snapshot.Deadline):
 		return errors.New("a snapshot from an earlier record, with its basis and the hold's deadline")
 	}
-	return h.Snapshot.validate(h.Estimate)
+	return h.Snapshot.validate(bound(h.Estimate, h.Ceiling))
 }
 
 // The longest IDs the store's columns hold: a lease ID, an authorization ID

@@ -52,15 +52,16 @@ func TestStatementsAreTheFastPathsTablesAndIndexes(t *testing.T) {
 	}
 	var names []string
 	for _, s := range statements {
-		m := created.FindStringSubmatch(s)
-		if m == nil {
+		_, name, ok := object(s)
+		if !ok {
 			t.Fatalf("a statement that creates nothing: %q", s)
 		}
-		names = append(names, m[2])
+		names = append(names, name)
 	}
 	want := "tr_credit_balance tr_key_limit tr_reservation tr_reservation_by_expiry tr_reservation_by_idemp " +
 		"tr_reservation_by_authorization tr_gateway_authorization " +
-		"tr_entities tr_lease tr_lease_by_state tr_lease_by_owner tr_lease_by_id tr_lease_donor tr_lease_hold tr_lease_handoff tr_lease_winners " +
+		"tr_entities tr_lease tr_lease_by_state tr_lease_by_owner tr_lease_by_id tr_lease_donor tr_lease_hold " +
+		"tr_lease_hold.ceiling tr_lease_handoff tr_lease_winners " +
 		"tr_lease_winners_by_work tr_lease_drain tr_lease_drain_by_commit tr_lease_record tr_lease_staged " +
 		"tr_lease_staged_by_lease tr_fastpath_workspace tr_fastpath_member tr_fastpath_edge_decide"
 	if got := strings.Join(names, " "); got != want {
