@@ -62,7 +62,7 @@ except where marked new.
 |---|---|---|---|
 | Edge policy `fastpath_pilot_enabled`, the pilot set or **all minus exclude (new)**, `fastpath_pilot_regions` | `rollout.sh`, a Python deploy | whom Python and the edge consider | Python's `pilot_reason`, the edge's policy gates |
 | `tr_fastpath_workspace` (W1) | **the enabler (new)**; `fastpathctl enable`, `disable`, `disable-all` | who may be granted | the owner, the front door, `Store.Grant`; **the edge and Python, as a copy (new)** |
-| `tr_fastpath_workspace_hold` **(new)** | operators only: `fastpathctl disable` (by default), `disable-all`, `enabler pause`, `hold-backfill`; `enable`, `release`, `release-all` and `enabler resume` remove rows. Never the enabler | whom the enabler must not enable, and whether it may write at all | the enabler, in each enable's transaction |
+| `tr_fastpath_workspace_hold` **(new)** | operators only: `fastpathctl disable` (by default), `disable-all`, `enabler pause`, `hold-backfill`, and `enabler resume`'s backfill; `enable`, `release`, `release-all` and `enabler resume` remove rows. Never the enabler | whom the enabler must not enable, and whether it may write at all | the enabler, in each enable's transaction |
 | `tr_fastpath_edge_decide`, with **a wildcard row (new)** | `fastpathctl decide` | whether the edge answers itself or leaves the request to Python's front door call | the edge |
 | `Store.Grant` refusals | the credit rows | tier, latch, pause, debt, allowance, floor | every grant |
 | The node attribute `fastpath-edge-decide` | Terraform | whether the decide path runs at all | the node's startup |
@@ -84,7 +84,9 @@ workspace: it does not newly enable a workspace whose
 reconciler writes it per workspace on every shard,
 `storage_trust_reconciliation.py:509-514`), is older than
 `trust_reconcile_max_age_seconds` (3,600 s) or absent. A workspace at its
-tier by operator override counts as fresh. The freeze stops enables only:
+tier by operator override counts as fresh; one whose tier 3 rests on an
+identity bypass is enabled only from the include list ((c)). The freeze
+stops enables only:
 every disable, for any cause (§5.3), goes on. When more than half of a
 run's otherwise-eligible candidates are stale, which points at the
 reconciler rather than at workspaces, the enabler raises
@@ -194,9 +196,9 @@ reconciler rather than at workspaces, the enabler raises
   under either. PR 1's test computes the figure from the runtime catalog
   as above, not from the routing snapshot fixture or the provider files,
   and fails when it passes a quarter of the floor, so a price rise is
-  reviewed rather than absorbed. A hold larger than the floor that meets a lease holding the
-  rest gets 402 until PR 7's 503, and 503 after it; WS6 waits for PR 7 for
-  that reason.
+  reviewed rather than absorbed. A hold larger than the floor that meets
+  a lease holding the rest gets 402 until PR 7's 503, and 503 after it;
+  WS6 waits for PR 7 for that reason.
 - **$100 and $40.** Below about $40 a grant leaves at most $20 for leases
   past the floor, so most leases are refused and each request pays a front
   door hop to be passed. The gap between enabling and disabling keeps a
@@ -214,6 +216,7 @@ the workspace is never in `tr_fastpath_workspace`; "grant" is a
 | Excluded | Where | Notes |
 |---|---|---|
 | Effective tier below 3 | enabler, grant (`RefusedTier`), edge `workspace.tier` | the stored effective tier, override included |
+| Tier 3 resting on an identity bypass, off the include list | enabler; counted in the report as `bypass` | the admin route sets `identity_bypass` for any workspace at any tier (`routes/internal/admin.py:54-72`), so the enabler does not trust it: a bypassed override reaches leases only for a workspace an operator also put on `fastpath_enabler_include` |
 | Latched (`trust_latched_at`) | grant at once; enabler disables | a latch is tier 0 (`grant.go:351`) |
 | Paused (any `billing_pause_causes`) | grant (`RefusedPaused`); enabler disables; edge `workspace.paused` | |
 | In debt (any shard marked) | grant (`RefusedInDebt`); enabler disables; edge `workspace.in_debt` | |
@@ -246,6 +249,13 @@ at minutes 12, 27, 42 and 57, five minutes after the tier job
 (`scripts/deploy/trust_tier_job.sh`, `7,22,37,52`). It is deployed by its
 own script with its own environment, and on every control-plane deploy
 rather than behind `TR_TRUST_JOBS_DEPLOY=1`. Details in §5.
+
+The tier job can run for most of its fifteen minutes (one worker took
+about 12 of its 14 minutes, which is why it now runs eight,
+`trust_tier_job.sh:32-35`), so the enabler may read while it is still
+writing. That is harmless: a
+tier not yet written is read at the next run, and each enable rechecks
+the workspace's credit rows in its own transaction (§5.3).
 
 **Why Python and that cadence.** Every input is a Python fact: the
 effective tier and its watermark, the settings that name probe, monitor,
@@ -334,6 +344,15 @@ largest first, ties by id, among workspaces otherwise eligible. Workspaces
 on `fastpath_enabler_include` (at most 32: the current pilot set, carried
 over) are exempt from the rank and from nothing else.
 
+The rank has a margin. A workspace joins at rank `max_rank` or better,
+and leaves for its rank only past `max_rank + max(5, max_rank / 10)`.
+Lifetime usage moves slowly and workspaces near the boundary trade places
+on small differences, so without a margin the enabler would enable and
+disable them in turn, each disable revoking leases. A margin of a tenth,
+at least five, absorbs those near-ties, while a real fall in rank still
+leaves at the next run. It needs no memory of earlier runs, which a rule
+of N runs out of rank would.
+
 The rank uses lifetime usage because the snapshot already holds it and it
 needs no analytics read; the largest spenders carry most of the traffic
 (§4.11) and have the longest payment history.
@@ -352,12 +371,16 @@ needs no analytics read; the largest spenders carry most of the traffic
 - **Disables** each enabled workspace that is latched, paused, in debt or
   held, with no cap: these are the safe direction and already refused by
   the grant. For any other cause that came from a change of facts (tier
-  below 3, balance under $40, a federated home, a deletion, a probe), it
-  disables at most 10% of the enabled set or 20 workspaces a run, whichever
-  is larger; past that it disables none for those causes and raises
+  below 3, balance under $40, a federated home, a deletion, a probe, a
+  bypass, or a rank past the margin of §5.2), it disables at most 10% of
+  the enabled set or 20 workspaces a run, whichever is larger; past that
+  it disables none for those causes and raises
   `fastpath_enabler_mass_disable`, since a sudden mass change of facts is
-  more likely a reading defect than a fact. A cause that came from the
-  operator, a lower `max_rank` or a new exclude entry, is applied whole.
+  more likely a reading defect than a fact. A rank disable is capped even
+  when the operator lowered `max_rank`, since the job cannot tell that
+  from usage moving; a lower `max_rank` therefore drains at the capped
+  rate, and a rollback that must be fast uses the exclude list, `pause`,
+  `disable` or `disable-all` (§8.3). A new exclude entry is applied whole.
   No freeze holds back a disable.
 - Writes nothing for a workspace whose state already matches, so the table
   sees writes only on change.
@@ -366,13 +389,15 @@ needs no analytics read; the largest spenders carry most of the traffic
 
 Every run, dry-run or not, logs one JSON line with: eligible, enabled,
 would enable and would disable by reason, excluded by each reason of (c),
-held, frozen, capped, enabled rows outside the include list, and in apply
-mode the commit times. The lists of workspaces to enable and disable go in
-the job's own log, which only operators read. Each would-enable whose
+held, frozen, capped, `bypass`, enabled rows outside the include list, and
+in apply mode the commit times. The lists of workspaces to enable and
+disable go in the job's own log, which only operators read. Each would-enable whose
 workspace already has a disabled row is listed apart, with that row's
-`changed_at` and whether it carries a hold: a disabled row with no hold
-is either the enabler's own earlier disable or a disable from before PR
-4, and WS1 reads that list before anything applies (§8.2).
+`changed_at`. A held workspace is never a would-enable, so every entry is
+an unheld disabled row: either the enabler's own earlier disable, or a
+stop that wrote no hold. Before the enabler has applied anything, every
+entry is the second kind, which is why WS1 and WS2 require the list empty
+(§8.2).
 
 ### 5.5 How it writes
 
@@ -409,16 +434,17 @@ detect a kill from the switch table, whose rows cannot say who wrote them
   transaction as the switch and the revocations. While it exists the
   enabler writes nothing and reports `held: fleet`. `fastpathctl
   release-all` removes it.
-- `fastpathctl enabler pause` and `resume` write and remove the row
-  `#pause`. While it exists the enabler reads and reports and writes
+- `fastpathctl enabler pause` writes the row `#pause`, with its
+  `held_at`. While it exists the enabler reads and reports and writes
   nothing, and the allow-list stays as it is: the way to stop the enabler
-  without a kill or a deploy.
+  without a kill or a deploy. `fastpathctl enabler resume` removes it,
+  only together with the backfill described below.
 - The enabler's own disables write no hold, so a workspace that refills or
   regains its tier joins again.
 - `*` and `#pause` can never be workspace ids (`fastpathctl` takes ids
   beginning with a letter or digit).
 - **Rows disabled before PR 4 get a hold.** Today's `disable` writes only
-  `enabled = false` (the P1 runbook ends with one,
+  `enabled = false` (the P1 runbook's "Way back" is one,
   `docs/runbooks/fastpath-p1.md:181`), and the include list is exempt from
   the rank, so the enabler would enable such a workspace again.
   `fastpathctl hold-backfill`, from PR 4, writes a hold, reason
@@ -433,11 +459,24 @@ detect a kill from the switch table, whose rows cannot say who wrote them
   the release on every node, since `fastpathctl` reaches operators only
   through the release bucket (`infra/fastpath_node_startup.sh.tftpl:180-184`).
 - **Rolling back below PR 4.** Before any node or `fastpathctl` goes back
-  to a release without PR 4, the enabler is paused (`fastpathctl enabler
-  pause`, while PR 4's binary is still in hand) or set to `off` in its job
-  settings, and it stays so until every node is on PR 4 again. The hold
-  table is schema and stays; an older binary just does not read or write
-  it.
+  to a release without PR 4, the enabler is paused with `fastpathctl
+  enabler pause`, while PR 4's binary is still in hand, and stays paused
+  until every node is on PR 4 again. Setting the job's mode to `off`
+  instead is not enough here: it leaves no time to backfill from. The
+  hold table is schema and stays; an older binary just does not read or
+  write it.
+- **Resuming backfills first, by construction.** A stop made during the
+  rollback by an older `disable` or `disable-all` wrote no hold. So
+  `fastpathctl enabler resume` removes `#pause` only in the same
+  transaction as a backfill since the pause: it writes a hold, reason
+  `paused`, for every `enabled = false` row whose `changed_at` is at or
+  after the pause row's `held_at`. While paused the enabler wrote
+  nothing, so every such row is an operator's stop. There is no resume
+  without that backfill. If a fleet kill happened during the rollback, its
+  workspaces are now held one by one, which is enough; running
+  `disable-all` again from PR 4 also writes the fleet hold, and the
+  runbook does so. The first report after a resume lists would-enables
+  with a disabled row (§5.4), and the runbook reads it.
 
 ### 5.7 Settings and deploy
 
@@ -631,8 +670,8 @@ Any alert, or any bar missed, is the way back (§8.3), then the cause.
 | Step | What changes | Its own gate, beyond §8.1 |
 |---|---|---|
 | WS0 | Nodes re-pinned with `-required-tier 3`, `-allowance` and `-floor` (PR 1), after the P1 synthetic workspace reaches effective tier 3 (below) and every pilot workspace passes `fastpathctl ready` at those values | 2,000 leased settles on the current set since the re-pin; zero `RefusedTier` |
-| WS1 | `fastpathctl hold-backfill` run (PR 4); the enabler in `dry-run` | four consecutive runs whose reports were read: every current pilot workspace eligible, every exclusion of (c) counted where it should be, and the list of would-enables with a disabled row (§5.4) read and empty, each entry either held or explained as the enabler's own |
-| WS2 | Entry: every node's release, and so every `fastpathctl` in use, carries PR 4. The enabler in `apply` with `max_rank` 0 (it keeps the include list and enables nobody new); then, once a run's report shows the enabled set within the include list and nothing to disable, `TR_FASTPATH_PILOT_ALL=true` with the explicit list emptied | 2,000 leased settles under all mode; no `workspace` pass from Python for an enabled workspace (its switch copy works) |
+| WS1 | `fastpathctl hold-backfill` run (PR 4); the enabler in `dry-run` | four consecutive runs whose reports were read: every current pilot workspace eligible, every exclusion of (c) counted where it should be, and the list of would-enables with a disabled row (§5.4) empty, that is, no unheld disabled row among the would-enables |
+| WS2 | Entry, in this order: every node's release, and so every `fastpathctl` in use, carries PR 4; `hold-backfill` run again, which holds any stop an older node made since WS1's run (it is idempotent, and the enabler has written no disable yet); a dry-run report taken after it with that list empty. Then the enabler in `apply` with `max_rank` 0 (it keeps the include list and enables nobody new); then, once a run's report shows the enabled set within the include list and nothing to disable, `TR_FASTPATH_PILOT_ALL=true` with the explicit list emptied | 2,000 leased settles under all mode; no `workspace` pass from Python for an enabled workspace (its switch copy works) |
 | WS3 | The wildcard row on for `gcp`, `us-central1`, then the include list's own on rows deleted, so they decide under the wildcard | 2,000 authorizes with `decided.via` `wildcard`; no `edge_decide_unavailable_sustained` |
 | WS4 | `max_rank` 10: the ten largest tier-3 workspaces | 10,000 leased settles from the step's workspaces, and at least five of them granted a lease |
 | WS5 | `max_rank` 100 | 20,000 leased settles from the step's workspaces, and at least 50 granted |
@@ -647,10 +686,13 @@ identity is approved or the override sets `identity_bypass`
 3 --identity-bypass`, a flag PR 1 adds, which the script accepts only for
 a workspace with no API key that it funded by its own admin grant: the
 operator's own synthetic workspace, from which nobody else can spend, so
-identity verification proves nothing about it. Every other workspace,
-the pilot's customer workspace included, reaches tier 3 only with an
-approved owner, never by bypass. `fastpathctl ready -required-tier 3`
-reads the effective tier the grant reads, so it proves either way.
+identity verification proves nothing about it. The script is not the
+limit: the admin route accepts a bypass for any workspace. The enabler
+is: it never enables a workspace whose tier 3 rests on a bypass unless it
+is on the include list, where the P1 synthetic workspace is. The pilot's
+customer workspace is expected to reach tier 3 with an approved owner.
+`fastpathctl ready -required-tier 3` reads the effective tier the grant
+reads, so it proves either way.
 
 Why WS2's report gate: an enabled row outside the include list, from a hand
 `enable` or an old test, is inert under the explicit list and live under
@@ -676,8 +718,9 @@ Fastest first, each narrower than the next:
 2. `fastpathctl disable WORKSPACE`: off the allow-list, held, its leases
    revoked and drained (W2).
 3. `fastpathctl enabler pause`: nothing joins or leaves until resumed.
-4. Lower `max_rank` or add to `fastpath_pilot_exclude`, a deploy: the
-   enabler disables the step's workspaces at its next run.
+4. Add to `fastpath_pilot_exclude`, a deploy: the enabler disables those
+   workspaces whole at its next run. Lowering `max_rank` also works, at
+   the capped rate of §5.3.
 5. `fastpathctl decide wildcard off`, or `decide-off-all`.
 6. `fastpathctl disable-all`: every workspace off, every lease revoked, the
    enabler held.
@@ -853,17 +896,21 @@ step.
    Go schema, guarded by `INFORMATION_SCHEMA` (W4); `fastpathctl disable`
    writes a hold unless `-no-hold`; `enable` removes the hold in its
    transaction; `release`; `disable-all` writes the fleet hold in its
-   transaction; `release-all`; `enabler pause` and `resume`;
+   transaction; `release-all`; `enabler pause`, and `enabler resume`
+   with its backfill since the pause in the same transaction;
    `hold-backfill` (§5.6); `switch_statements_v1.json`, embedded by
-   `SetWorkspace`; the rollback rule of §5.6 in
+   `SetWorkspace`; the rollback and resume rules of §5.6 in
    `docs/runbooks/fastpath-deploy.md`. Order: before PR 6;
-   `hold-backfill` run before WS1; every node's release carries it before
-   WS2; the enabler paused or off before any rollback below it. Tests: the
-   migration test holding the statement to the Go schema; `disable-all`'s
-   one transaction writing the fleet hold, the switch and the revocations;
-   `enable` clearing a hold; `hold-backfill` holding every disabled row
-   without one, leaving enabled and already-held rows alone, and a second
-   run writing nothing; `SetWorkspace` executing the fixture's
+   `hold-backfill` run before WS1 and again at WS2's entry; every node's
+   release carries it before WS2; the enabler paused, not merely set off,
+   before any rollback below it. Tests: the migration test holding the
+   statement to the Go schema; `disable-all`'s one transaction writing the
+   fleet hold, the switch and the revocations; `enable` clearing a hold;
+   `hold-backfill` holding every disabled row without one, leaving enabled
+   and already-held rows alone, and a second run writing nothing; `resume`
+   holding every row disabled at or after the pause, none disabled before
+   it, and removing `#pause` in the same commit, with no way to remove
+   `#pause` otherwise; `SetWorkspace` executing the fixture's
    statements.
 5. **Python's "all".** Settings `fastpath_pilot_all` (false) and
    `fastpath_pilot_exclude` (at most 64), read from
@@ -894,8 +941,11 @@ step.
    (b); `fastpath_enabler_mass_disable` and `fastpath_enabler_trust_stale`
    alerts. Order: after PRs 4 and 5. Tests:
    an eligibility table with one fact flipped per row of (c); the rank and
-   the include list; the run aborting on a failed chunk with no write; the
-   caps, and the operator's causes applied whole; on the emulator, a
+   the include list; the rank's margin (a workspace at `max_rank + 1`
+   kept, one past the margin disabled, each counted in the cap); a
+   bypassed tier 3 refused off the include list and enabled on it, and
+   counted; the run aborting on a failed chunk with no write; the caps,
+   and an exclude entry applied whole; on the emulator, a
    `disable` and a `disable-all` committed between the run's read and its
    enable leave the workspace off; the pause row stopping every write; no
    code path of the enabler writing the hold table; the report listing a
