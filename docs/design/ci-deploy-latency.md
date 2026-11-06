@@ -53,7 +53,9 @@ all three successful runs. Of 42,436 observed tests, 41,577 had three samples,
 Use the median for three or more samples and the maximum for sparse new cases.
 Preserve previously known weights for tests not observed in these runs.
 
-Refresh with at least three independent successful runs per profile:
+Refresh with at least three independent successful runs per profile. A push to
+main runs no post-cutover shard, so take post-cutover runs from pull requests or
+from post-cutover-daily.yml:
 
 ```sh
 gh run download RUN_ID -p 'durations-*' -D /tmp/ci-durations/RUN_ID
@@ -99,6 +101,27 @@ regional/public checks and durable lease finalization remain production-gated.
 
 Cloud release reconciliation recognizes reusable-job names (rollout / JOB)
 and still requires all GCP production gates before AWS/Azure promotion.
+
+### Coverage through sys.monitoring
+
+The default suite's coverage pass ran on coverage.py's C tracer with branch
+coverage, at about three times the plain suite's cost (#2368). Before Python
+3.14, sys.monitoring cannot measure branches, so `[tool.coverage.run]` sets
+`core = "sysmon"` and `branch = false`. The twelve default shards fell from a
+median of 25.5 minutes to between 7 and 11. Two tests in
+tests/test_ci_workflow.py keep a configuration change from bringing the
+tracer back.
+
+### Post-cutover suites leave the push run
+
+A push to main no longer runs test-post-cutover or proof-oracle's
+post-cutover clock. Together they were 14 of the run's 46 jobs, about 215
+runner-minutes over 20 green main runs. A red in them means main will break on a scheduled date. That
+is no reason to hold the deploy, which gate-on-ci holds until the push run
+concludes. They still run on pull requests and on dispatches, including the
+price refresh's publication gate. post-cutover-daily.yml runs both on main
+once a day, outside every gate. commit_scope.py's summary accepts
+test-post-cutover's skip on a push only.
 
 ## Validation and measurement
 
