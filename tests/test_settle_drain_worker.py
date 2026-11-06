@@ -207,19 +207,29 @@ def test_busy_pass_publishes_without_hiding_backlog(fake_store, monkeypatch):
     for row in fake_store[1].settle_outbox.values():
         row["created_at"] = "2020-01-01T00:00:00Z"
     original = worker.publish_health
+    ticks = [0.0]
     observations = []
     def publish(db):
         value = original(db)
-        observations.append((time.monotonic(), value))
+        observations.append((ticks[0], value))
         return value
-    def apply(row):
-        time.sleep(.025)
-        return ApplyOutcome.SETTLED_NOW
+    class ProgressClock(worker.WorkerCadence):
+        def progressed(self, database, settings, stop):
+            ticks[0] += 1 / 32
+            super().progressed(database, settings, stop)
+    # The pass advances on completed work, not CPU scheduling. Distributed
+    # cadence arbitration has separate tests; this witness covers local cadence
+    # and the real health projection while a busy pass still has a backlog.
+    monkeypatch.setattr(worker, "time", SimpleNamespace(monotonic=lambda: ticks[0], time=time.time))
+    monkeypatch.setattr(worker, "claim_health_publish", lambda *_: True)
     monkeypatch.setattr(worker, "publish_health", publish)
-    monkeypatch.setattr(drain, "apply_frozen_settle", apply)
-    worker.drain_pass(32, settings=config(settle_outbox_health_publish_interval_seconds=.04))
-    assert len(observations) >= 3
-    assert all(b[0] - a[0] < .2 for a, b in zip(observations, observations[1:], strict=False))
+    monkeypatch.setattr(drain, "apply_frozen_settle", lambda row: ApplyOutcome.SETTLED_NOW)
+    result = worker.drain_pass(32, settings=config(settle_outbox_health_publish_interval_seconds=1 / 16,
+                                                  settle_outbox_pass_budget_seconds=10),
+                               cadence=ProgressClock(progress_at=0))
+    assert result["claimed"] == 32
+    assert len(observations) >= 16
+    assert [observed for observed, _ in observations] == [1 / 32 + i / 16 for i in range(len(observations))]
     assert observations[0][1]["p95_age_seconds"] > 5
     assert observations[0][1]["backlog_count"] > 0
 

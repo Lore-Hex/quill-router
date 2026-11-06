@@ -319,14 +319,6 @@ def test_store_on_loop_detector_is_not_vacuous() -> None:
     assert _store_on_loop(offloaded) == set()
 
 
-async def _wait_until_started(started: threading.Event) -> None:
-    for _ in range(400):
-        if started.is_set():
-            return
-        await asyncio.sleep(0.005)
-    raise AssertionError("blocked Store call never started")
-
-
 def test_blocked_broadcast_store_read_does_not_freeze_health(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -341,23 +333,25 @@ def test_blocked_broadcast_store_read_does_not_freeze_health(
         creator_user_id=user.id,
         management=True,
     )
-    started = threading.Event()
     release = threading.Event()
     observed: dict[str, Any] = {}
     original = InMemoryStore.list_broadcast_destinations
 
-    def blocking_list(self: InMemoryStore, workspace_id: str) -> Any:
-        observed["thread"] = threading.get_ident()
-        started.set()
-        # On a regression this runs ON the loop: /health cannot be served, so
-        # nobody sets release and the wait times out (recorded, not hung).
-        observed["released_while_blocked"] = release.wait(timeout=2.0)
-        return original(self, workspace_id)
-
-    monkeypatch.setattr(InMemoryStore, "list_broadcast_destinations", blocking_list)
-
     async def scenario() -> None:
         loop_thread = threading.get_ident()
+        loop = asyncio.get_running_loop()
+        started = asyncio.Event()
+
+        def blocking_list(self: InMemoryStore, workspace_id: str) -> Any:
+            observed["thread"] = threading.get_ident()
+            # Fail directly on an inline Store call, without blocking the loop
+            # or relying on a race between two short wall-clock deadlines.
+            assert observed["thread"] != loop_thread, "Store read ran on the event loop"
+            loop.call_soon_threadsafe(started.set)
+            observed["released_while_blocked"] = release.wait(timeout=30.0)
+            return original(self, workspace_id)
+
+        monkeypatch.setattr(InMemoryStore, "list_broadcast_destinations", blocking_list)
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             listing = asyncio.create_task(
@@ -366,12 +360,21 @@ def test_blocked_broadcast_store_read_does_not_freeze_health(
                     headers={"Authorization": f"Bearer {raw_key}"},
                 )
             )
+            waiting_for_store = asyncio.create_task(started.wait())
             try:
-                await _wait_until_started(started)
-                health = await asyncio.wait_for(client.get("/health"), timeout=1.0)
+                await asyncio.wait(
+                    {listing, waiting_for_store}, return_when=asyncio.FIRST_COMPLETED,
+                )
+                if listing.done():
+                    await listing
+                assert not listing.done()
+                health = await client.get("/health")
                 assert health.status_code == 200
+                assert not listing.done(), "Store read completed before /health"
             finally:
                 release.set()
+                waiting_for_store.cancel()
+                await asyncio.gather(waiting_for_store, return_exceptions=True)
             response = await asyncio.wait_for(listing, timeout=5.0)
             assert response.status_code == 200, response.text
             assert response.json() == {"data": []}

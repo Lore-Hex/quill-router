@@ -2,6 +2,8 @@
 
 MAPLE_MODEL_ID = "dealignai/deepseek-v4.1-flash-1017-uncensored"
 MAPLE_NATIVE_ID = "deepseek-v4-1-flash-1017-uncensored"
+BASETEN_SYSTEMONE_PREFIX = "decision-models/"
+BASETEN_SYSTEMONE_HOLD_REASON = "systemone-adapter-not-implemented"
 # The Transport V2 helper and cloud-local key must be verified in each fleet
 # before its region is admitted. Unknown regions remain unavailable.
 MAPLE_GATEWAY_REGIONS: frozenset[str] = frozenset({
@@ -178,6 +180,13 @@ def provider_model_operator_held(
         return True
     native_prefix = _NATIVE_HOSTED_MODEL_PREFIXES.get(provider_slug)
     native_id = upstream_id or model_id
+    # System One decisions share /models with chat but use a different API.
+    # Block prepaid and BYOK until that native adapter is qualified.
+    if provider_slug == "baseten" and (
+        native_id.startswith(BASETEN_SYSTEMONE_PREFIX)
+        or model_id.startswith(BASETEN_SYSTEMONE_PREFIX)
+    ):
+        return True
     if native_prefix is not None and not native_id.startswith(native_prefix):
         if (provider_slug, native_id) not in _NATIVE_HOSTED_MODEL_EXCEPTIONS:
             return True
