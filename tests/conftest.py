@@ -279,6 +279,9 @@ _FIXED_SHADOW_EVIDENCE_FILES = frozenset({
     'test_async_settle_shadow_r8_retry_class.py',
     'test_async_settle_shadow_revision.py',
     'test_async_settle_shadow_sdk_retry.py',
+    # Publishes a 2026-10-12 manifest through the evidence store, which retires
+    # that day at 00:00Z on November 12; on October 6 the day is still ahead.
+    'test_async_settle_shadow_v2_pack_round7_history.py',
     'test_async_settle_shadow_winners.py',
 })
 
