@@ -1832,7 +1832,9 @@ by its name and still counts against the 99.5%, `differ_affinity_warm`
 saying how many of the differs it is); every other cohort-eligible request (Go would answer, each
 counted by its decide row's gate) accounted for by class
 (`cohort_by_class`: Python's errors, unavailable answers and unread
-answers, the scope taken, replays); zero `differ.estimate*` and zero
+answers, the scope taken, replays, and Python's per-key in-flight 429
+read through, `passed.inflight.key` or `inflight_unchecked.*`); zero
+`differ.estimate*` and zero
 `row.idempotency_fingerprint`, with no field counted `other` (a period's
 fields past the line's bound, which could hide either); zero
 `would_admit_python_refused` beyond key-revocation lag; the stale-pass rate
