@@ -614,8 +614,8 @@ lease's expiry minus a skew allowance.
    is the ceiling the rows carry and Python's Stage D heartbeat cuts a
    stream at. The owner's heartbeat bounds a running charge by the lease's
    hold, r, so a stream admitted under a lease would be cut at r: both
-   front doors keep streams out of the lease cohort until an admission
-   carries e beside r.
+   front doors lease a stream only while its reservation is its estimate
+   (`stream.hold`) until an admission carries e beside r.
 4. Answer with a **signed envelope** that the gateway echoes on heartbeat,
    settle and refund:
    - the authorization ID `A` and the generation ID;
@@ -1807,8 +1807,8 @@ which §4.11 now lists.
   hold, the credit reservation, is the same price at most
   `HOLD_OUTPUT_TOKENS` (16,384; `authorize_candidates.hold_output_tokens`,
   the evaluator's `HoldOutputTokens`) output tokens for a catalog text
-  route; for a user-provided model, partner billing, a video and, for now,
-  a stream it is the estimate. A catalog text route's settle bills what the provider reports,
+  route, a stream's included; for a user-provided model, partner billing
+  and a video it is the estimate. A catalog text route's settle bills what the provider reports,
   capped at neither figure (a video's, a user-provided model's and
   Polyphemus's settle are held to the estimate), and nothing in authorize
   bounds that charge (cache-creation premiums and counts above the budget
@@ -2455,7 +2455,9 @@ leases, and was retired on 2026-09-27.
    workspace its tier. Then move keyed requests, capped keys, payouts and the
    remaining route types (§4.11) one at a time; then retire the Python hot
    path. The stages of that retirement are in
-   `fast-admission-enclave-direct.md`.
+   `fast-admission-enclave-direct.md`. Widening to every eligible
+   workspace, and the stale-reconciliation rule, are decided in
+   `fast-admission-widening.md`.
 
 ## 9. Not decided here
 

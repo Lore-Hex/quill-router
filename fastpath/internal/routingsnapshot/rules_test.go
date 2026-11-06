@@ -252,13 +252,16 @@ func TestTheReservationPricesAtMostHoldOutputTokens(t *testing.T) {
 		t.Errorf("max_tokens %d: reservation %d, want below %d; estimate %d, want the reservation",
 			HoldOutputTokens-1, reservation, bound, estimate)
 	}
-	// A stream's reservation is its estimate for now (the Stage D heartbeat
-	// reader deployed before this bounds a stream by the credit hold).
+	// A stream's reservation is bounded the same (Stage D cuts a stream at
+	// the estimate, not the credit hold).
 	r := baseRequest()
-	r.Model, r.MaxTokens, r.Stream = "google/gemini-3.1-pro-preview", ptr(int64(131_072)), ptr(true)
-	if got := s.Evaluate(r); got.Outcome != Answered || got.Reservation != got.ModelEstimate || got.Reservation <= bound {
-		t.Errorf("a stream with max_tokens 131,072: reservation %d, want the estimate %d (above %d): %+v",
-			got.Reservation, got.ModelEstimate, bound, got.Refusal)
+	r.Model, r.MaxTokens = "google/gemini-3.1-pro-preview", ptr(int64(131_072))
+	plain := s.Evaluate(r)
+	r.Stream = ptr(true)
+	if got := s.Evaluate(r); got.Outcome != Answered || got.Reservation != plain.Reservation ||
+		got.ModelEstimate != plain.ModelEstimate || got.Reservation >= got.ModelEstimate {
+		t.Errorf("a stream with max_tokens 131,072: reservation %d and estimate %d, want the non-stream's %d and %d: %+v",
+			got.Reservation, got.ModelEstimate, plain.Reservation, plain.ModelEstimate, got.Refusal)
 	}
 }
 

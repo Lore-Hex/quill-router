@@ -1539,8 +1539,8 @@ func TestTheReservationPricesAtMostHoldOutputTokens(t *testing.T) {
 // TestPythonsReservationOnPassedGoldens: a golden Go passes that Python
 // answered without a lease records the credit reservation Python wrote
 // (python.reservation_microdollars, §10.1). Where the evaluator reads the
-// body, it is the evaluator's reservation: the whole budget's price for a
-// stream (for now), at most HoldOutputTokens of it otherwise.
+// body, it is the evaluator's reservation: at most HoldOutputTokens of the
+// budget's price, a stream's too.
 func TestPythonsReservationOnPassedGoldens(t *testing.T) {
 	f := authorizeGoldens(t)
 	checked, streams := 0, 0
@@ -1560,9 +1560,6 @@ func TestPythonsReservationOnPassedGoldens(t *testing.T) {
 		}
 		if req.Stream != nil && *req.Stream {
 			streams++
-			if r.Reservation != r.ModelEstimate {
-				t.Errorf("%s: a stream's reservation %d, want its estimate %d", c.Name, r.Reservation, r.ModelEstimate)
-			}
 		}
 		if got := *c.Expect.Python.Reservation; got != r.Reservation {
 			t.Errorf("%s: Python reserved %d, the evaluator %d (estimate %d)", c.Name, got, r.Reservation, r.ModelEstimate)

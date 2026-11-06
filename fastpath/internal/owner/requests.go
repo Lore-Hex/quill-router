@@ -63,12 +63,12 @@ const (
 // HoldOutputTokens of the output budget, not the authorization row's spend
 // ceiling), whether it is a stream, which heartbeats, and the boot binding
 // of the enclave that asked. A heartbeat's running charge is bounded by e
-// (heartbeat below). A stream's reservation is its whole budget's price,
-// its ceiling, so for a stream the bound is Stage D's cap; both front doors
-// keep streams out of the lease cohort (Python fastpath_frontdoor "stream",
-// gwauth ReasonStream) until the rest of
-// docs/design/fast-admission-streams.md ships, and admit one only while
-// its reservation equals its estimate.
+// (heartbeat below). Both front doors admit a stream only while its
+// reservation equals its estimate, its ceiling (Python
+// fastpath_frontdoor "stream.hold", the edge's PassStreamHold), so for a
+// leased stream the bound is Stage D's cap. A stream's reservation prices at
+// most HoldOutputTokens of its budget, so only a stream whose budget fits
+// that bound is leased.
 type Admission struct {
 	Estimate int64
 	Stream   bool

@@ -2,11 +2,11 @@
 {% block body %}
 <section class="marketing-split" aria-label="Abliterated DeepSeek API">
   <div class="marketing-copy">
-    <span class="eyebrow">A distinct checkpoint. A private API path.</span>
-    <h2>Explore more with abliterated DeepSeek.</h2>
-    <p>Bring cyberdefense analysis, creative writing, research questions and your own evaluation prompts to <strong>DeepSeek V4.1 Flash Uncensored by dealignai</strong>. Use it through TrustedRouter with one API key and Credits, alongside the rest of your model stack.</p>
+    <span class="eyebrow">Uncensored DeepSeek API · Cyberdefense workflows</span>
+    <h2>Abliterated DeepSeek for cyberdefense and security research.</h2>
+    <p>Use <strong>abliterated DeepSeek</strong>, also listed as <strong>uncensored DeepSeek</strong>, for security analysis, SOC investigations and incident-response drafting. Start with <strong>DeepSeek V4.1 Flash Uncensored by dealignai</strong>. Use it through TrustedRouter with one API key and Credits, alongside the rest of your model stack.</p>
     <p>This is a dedicated modified checkpoint, not a prompt layered onto stock DeepSeek. The publisher describes a weight-level change to refusal behavior. It deserves its own evaluation: fewer refusals are not a guarantee of accuracy, quality or suitability for a task.</p>
-    <p><a class="btn primary" href="/models/dealignai/deepseek-v4.1-flash-1017-uncensored">See live pricing and try the model</a> <a class="btn" href="#maple-api">Copy the API request</a></p>
+    <p><a class="btn primary" href="/models/dealignai/deepseek-v4.1-flash-1017-uncensored">Try uncensored DeepSeek — see live pricing</a> <a class="btn" href="#maple-api">Copy the API request</a></p>
     <p><code>dealignai/deepseek-v4.1-flash-1017-uncensored</code></p>
   </div>
   <div class="panel">
@@ -28,9 +28,17 @@
     <p>The checkpoint's model card and a hosted API's supported features are different things. Use the route contract below for your integration, and the <a href="/models/dealignai/deepseek-v4.1-flash-1017-uncensored">live model page</a> for availability, context, prices and provider measurements.</p>
   </div>
 </section>
+<section class="panel" aria-label="Abliterated and uncensored DeepSeek explained">
+  <div class="panel-head"><h2>Abliterated vs. uncensored DeepSeek: two names for this checkpoint</h2></div>
+  <div class="panel-body">
+    <p>Searching for an <strong>uncensored DeepSeek API</strong>? This is the same dealignai release promoted here as abliterated DeepSeek. The publisher provides both UNCENSORED and ABLITERATED names. “Abliterated” describes the weight-level modification to refusal behavior; “uncensored” is the broader discovery term.</p>
+    <p>For a security team, the useful question is whether the model can discuss the attack behavior in your evidence and produce a defensible analysis. Compare its answers with stock DeepSeek on your own cases: track unnecessary refusals, unsupported claims, missed indicators and analyst review time.</p>
+    <p><a href="#cyberdefense-prompts">Try the cyberdefense prompt examples</a> or <a href="#maple-api">integrate the text API</a>.</p>
+  </div>
+</section>
 {% include "public/_maple_api.html" %}
 <section class="panel" aria-label="Abliterated DeepSeek for cyberdefense">
-  <div class="panel-head"><h2>Put it to work on cyberdefense</h2></div>
+  <div class="panel-head"><h2>Uncensored DeepSeek for SOC triage and incident response</h2></div>
   <div class="panel-body">
     <p>Security work needs room to discuss attacks in order to understand and defend against them. Evaluate this checkpoint as an analyst assistant for authorized defensive work, with human review before taking action.</p>
     <ul>
@@ -40,6 +48,22 @@
     </ul>
     <p>Start with: <q>Review these sanitized authentication alerts. Separate observations from hypotheses, identify missing evidence, and suggest defensive checks. Do not invent events or take actions.</q></p>
     <p>Keep credentials out of prompts, limit access to authorized data, and treat logs and retrieved documents as untrusted input. Require human approval for operational changes. Measure false positives and missed findings on your own evaluation set.</p>
+  </div>
+</section>
+<section class="panel" id="cyberdefense-prompts" aria-label="Cyberdefense prompts for DeepSeek">
+  <div class="panel-head"><h2>Cyberdefense prompts to try with abliterated DeepSeek</h2></div>
+  <div class="panel-body">
+    <h3>SOC alert triage and SIEM investigation</h3>
+    <p>Supply selected alerts with timestamps, event types and anonymized entities. Ask for a timeline, competing explanations and the next evidence an analyst should collect.</p>
+    <blockquote>Review the sanitized alerts below. Build a timeline using only the supplied events. Separate observed facts from hypotheses, identify gaps, and suggest defensive checks to distinguish benign activity from a possible account compromise. Cite the event IDs behind each conclusion.</blockquote>
+    <h3>Detection engineering and defensive code review</h3>
+    <p>Use text excerpts of a detection rule or code you are authorized to review. Ask the model to explain assumptions, identify coverage gaps and propose benign validation cases.</p>
+    <blockquote>Review this detection rule and its documented purpose. Explain what it detects, likely sources of false positives, and missing telemetry that could affect coverage. Suggest benign test cases and improvements for an analyst to review before deployment.</blockquote>
+    <h3>Incident response and threat modeling</h3>
+    <p>Turn verified findings into a reviewable incident report, or examine the trust boundaries in a system description. Keep evidence references attached to recommendations.</p>
+    <blockquote>Draft an incident-response summary from these verified findings. Include the timeline, affected assets, confirmed impact, unresolved questions and recommended containment or recovery steps. Mark assumptions explicitly and list the approvals needed before operational changes.</blockquote>
+    <p>Paste one of these prompts into the <code>messages</code> field of the <a href="#maple-api">Maple API request</a>. The current route is text-only and does not advertise tool calling; your application supplies the evidence and handles any subsequent actions.</p>
+    <p><a class="btn primary" href="/models/dealignai/deepseek-v4.1-flash-1017-uncensored">Compare pricing and start a cyberdefense evaluation</a> <a class="btn" href="/docs/evals">Build a repeatable evaluation</a></p>
   </div>
 </section>
 <section class="marketing-grid three" aria-label="Evaluate and explore">

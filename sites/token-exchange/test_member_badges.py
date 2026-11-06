@@ -25,7 +25,14 @@ class MemberBadgeTests(unittest.TestCase):
         for copy in ("NYTE requires every AI route", "not an optional tier", "not a live verification result", "provider-side E2EE", "fail closed", "client TLS terminates inside the attested gateway", "route-specific evidence"):
             self.assertIn(copy, self.page)
         self.assertIn('href="https://trustedrouter.com/badge"', self.page)
-        self.assertFalse(list(self.root.rglob("*.pdf")))
+        # Only the explicitly public brand guide/logo exports may be published.
+        self.assertEqual(
+            {p.relative_to(self.root).as_posix() for p in self.root.rglob("*.pdf")},
+            {"assets/press/nyte-brand-guidelines-v1.pdf"}
+            | {f"assets/press/guide/{name}.pdf" for name in (
+                "horizontal", "stacked-lockup", "one-line-name", "stacked-name", "wordmark", "globe",
+            )},
+        )
 
     def test_two_accessible_enterprise_badges_and_download_links(self):
         self.assertEqual(len(list((self.root / "assets" / "badges").glob("*.svg"))), 2)

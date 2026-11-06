@@ -655,6 +655,12 @@ func TestPhasesTellAPassApart(t *testing.T) {
 			headers: at(12)}, at(14), 5, 5, 0, 2, 2, PassPhaseEdge, PassConnNew},
 		{"a mark before the last is not an end", &passTrace{arrived: at(0), forwarded: at(2), gotConn: at(1)},
 			at(9), 2, 7, 0, 0, 0, PassPhaseConn, PassConnNew},
+		{"a write marked after the headers ended by them", &passTrace{arrived: at(0), forwarded: at(1), gotConn: at(2),
+			wrote: at(11), headers: at(10)}, at(210), 1, 1, 8, 0, 200, PassPhaseResponse, PassConnNew},
+		{"a write not yet marked ended by the headers", &passTrace{arrived: at(0), forwarded: at(1), gotConn: at(2),
+			headers: at(10)}, at(210), 1, 1, 8, 0, 200, PassPhaseResponse, PassConnNew},
+		{"a write that failed keeps the rest", &passTrace{arrived: at(0), forwarded: at(1), gotConn: at(2),
+			headers: at(10), writeErrors: 1}, at(210), 1, 1, 208, 0, 0, PassPhaseWrite, PassConnNew},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			s := c.p.phases(c.done)
@@ -732,9 +738,22 @@ func TestFlushPassesDrainsABacklogThenWritesTheCounts(t *testing.T) {
 type delayedHeaderHandoff struct {
 	http.RoundTripper
 	delay time.Duration
+	// wroteAfter, when set, holds the transport's WroteRequest hook until it
+	// is closed, as a write goroutine scheduled late does.
+	wroteAfter <-chan struct{}
 }
 
 func (d delayedHeaderHandoff) RoundTrip(r *http.Request) (*http.Response, error) {
+	if d.wroteAfter != nil {
+		r = r.WithContext(httptrace.WithClientTrace(r.Context(), &httptrace.ClientTrace{
+			WroteRequest: func(httptrace.WroteRequestInfo) {
+				select {
+				case <-d.wroteAfter:
+				case <-time.After(5 * time.Second):
+				}
+			},
+		}))
+	}
 	resp, err := d.RoundTripper.RoundTrip(r)
 	if err == nil {
 		time.Sleep(d.delay)
@@ -743,14 +762,23 @@ func (d delayedHeaderHandoff) RoundTrip(r *http.Request) (*http.Response, error)
 }
 
 func TestAnAnswerSlowOnItsWayBackIsTheResponsePhase(t *testing.T) {
-	for _, delay := range []time.Duration{0, 100 * time.Millisecond} {
-		t.Run(delay.String(), func(t *testing.T) {
+	for _, c := range []struct {
+		name      string
+		delay     time.Duration
+		lateWrote bool
+	}{{"0s", 0, false}, {"100ms", 100 * time.Millisecond, false}, {"the write marked after the headers", 0, true}} {
+		t.Run(c.name, func(t *testing.T) {
 			h, logs := newTimedHarness(t, timedOpts{})
 			h.edge.passes.slow = 0
-			transport := h.edge.proxy.Transport.(tracedTransport)
-			transport.base = delayedHeaderHandoff{RoundTripper: transport.base, delay: delay}
-			h.edge.proxy.Transport = transport
 			headersReceived := make(chan struct{})
+			handoff := delayedHeaderHandoff{delay: c.delay}
+			if c.lateWrote {
+				handoff.wroteAfter = headersReceived
+			}
+			transport := h.edge.proxy.Transport.(tracedTransport)
+			handoff.RoundTripper = transport.base
+			transport.base = handoff
+			h.edge.proxy.Transport = transport
 			modifyResponse := h.edge.proxy.ModifyResponse
 			h.edge.proxy.ModifyResponse = func(resp *http.Response) error {
 				if err := modifyResponse(resp); err != nil {

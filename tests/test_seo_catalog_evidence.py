@@ -178,3 +178,51 @@ def test_seo_measurements_use_cached_snapshot_shape(
     assert minimax["p50_tokens_per_second"] == 88.5
     assert minimax["availability"] == 0.99
     assert minimax["sample_count"] == 37
+
+
+def test_model_guides_do_not_backfill_unrelated_models_or_providers() -> None:
+    from trusted_router.seo_catalog import _MODEL_PAGE_LABELS
+
+    for page_key, label in _MODEL_PAGE_LABELS.items():
+        evidence = seo_catalog_evidence(page_key, test_mode=True)
+        assert evidence['focus_label'] == label
+        models = evidence['models']
+        assert models, page_key
+        for row in models:
+            assert any(term in f"{row['id']} {row['name']}".lower()
+                       for term in _PAGE_FOCUS_TERMS[page_key]), (page_key, row['id'])
+        serving_providers = {
+            endpoint.provider for row in models for endpoint in endpoints_for_model(row['id'])
+        }
+        assert {row['slug'] for row in evidence['providers']} <= serving_providers, page_key
+
+
+def test_sparse_model_guide_and_empty_family_keep_their_topic(monkeypatch) -> None:
+    from trusted_router.catalog import Model
+    from trusted_router.seo_catalog import _select_models
+
+    wanted = Model(id='openai/gpt-oss-120b', name='GPT-OSS 120B', provider='openai', context_length=8192)
+    unrelated = Model(id='anthropic/claude-opus-4.8', name='Claude Opus 4.8', provider='anthropic', context_length=8192)
+    monkeypatch.setattr('trusted_router.seo_catalog.endpoints_for_model', lambda _: [])
+    assert _select_models('gpt-oss-120b-api', [wanted, unrelated], measured_by_model={}) == [wanted]
+    assert _select_models('gpt-oss-120b-api', [unrelated], measured_by_model={}) == []
+    assert unrelated in _select_models('best-llm-router', [wanted, unrelated], measured_by_model={})
+
+
+def test_empty_model_evidence_links_to_catalog_without_implying_availability(client, monkeypatch) -> None:
+    monkeypatch.setattr('trusted_router.seo_catalog.MODELS', {})
+    response = client.get('/abliterated-deepseek')
+    evidence = BeautifulSoup(response.text, 'html.parser').select_one('.seo-evidence')
+    assert response.status_code == 200
+    assert evidence is not None
+    assert 'No matching models are currently listed' in evidence.get_text()
+    assert evidence.select_one('a[href="/models"]') is not None
+    assert evidence.select_one('.seo-provider-row') is None
+
+
+def test_agent_indexes_link_to_canonical_uncensored_deepseek_guide(client) -> None:
+    for path in ('/llms.txt', '/docs/llms.txt'):
+        response = client.get(path)
+        assert response.status_code == 200
+        assert 'https://trustedrouter.com/abliterated-deepseek' in response.text
+        assert 'uncensored DeepSeek' in response.text
