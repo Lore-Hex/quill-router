@@ -798,7 +798,8 @@ def test_a_deploy_is_not_cancelled_without_time_to_cancel_its_ci_too(tmp_path, m
 def test_the_deadline_caps_each_call(tmp_path, monkeypatch):
     # With time for the pair checked but the CI cancel out of time, the deploy
     # is cancelled and the CI call never runs past the deadline.
-    monkeypatch.setattr(superseded, "GH_TIMEOUT_SECONDS", 1)
+    # Twice this fits the 50 s the clock leaves, and no real call nears it.
+    monkeypatch.setattr(superseded, "GH_TIMEOUT_SECONDS", 20)
     calls = _run_cancel(tmp_path, monkeypatch, deadline_after_calls=10)
     assert _cancels(calls) == ["run cancel 2"]
 
@@ -846,10 +847,10 @@ def test_the_cancel_job_runs_beside_the_deploy_and_never_fails_its_run():
     run = next(step["run"] for step in job["steps"] if "run" in step)
     assert "superseded_deploy.py --mode cancel-older" in run
     assert '--base "${GITHUB_SHA}"' in run
-    # A failed or timed-out job fails the run, and reconcile_cloud_releases.py
-    # reads a failed run as an undelivered release: the job continues on error
-    # (checkout, runner, timeout), the step cannot fail, and every gh call is
-    # capped at the deadline, inside the timeout with room for the checkout.
+    # A failed job fails the run, and reconcile_cloud_releases.py reads a
+    # failed run as an undelivered release: the job continues on error (a
+    # failed step, checkout or runner), the step cannot fail, and every gh call
+    # is capped at the deadline, inside the timeout with room for the checkout.
     assert job["continue-on-error"] is True
     # A job that times out is cancelled, which continue-on-error does not
     # cover; each step's own timeout makes a hang a step failure first.

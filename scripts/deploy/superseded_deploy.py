@@ -72,10 +72,9 @@ superseding push's CI or build then fails, re-run the cancelled CI run, then
 its deploy; confirm-current-main ships it, since a red successor is never
 ready. A hotfix dispatch ships main's head without its CI gate, so use one
 only when that commit is known good (its red was a flake, say). A cancelled
-deploying commit also gets
-no fast path release (fastpath-release.yml builds one only after green CI),
-so pin fastpath_release only to a commit whose release exists. A
-non-deploying commit's CI run is never touched.
+deploying commit also gets no fast path release (fastpath-release.yml builds
+one only after green CI), so pin fastpath_release only to a commit whose
+release exists. A non-deploying commit's CI run is never touched.
 
 Every unknown answer cancels nothing. Every gh call is capped at the time
 left before CANCEL_DEADLINE_SECONDS. The mode always exits 0, since this job
