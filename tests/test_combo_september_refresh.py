@@ -17,7 +17,7 @@ from trusted_router.catalog import (
     "alias,version,primitive,components",
     [
         ("prometheus", "4.0", "synth", [
-            "xiaomi/mimo-v2.6-pro", "z-ai/glm-5.3", "moonshotai/kimi-k3",
+            "xiaomi/mimo-v2.6-pro", "z-ai/glm-5.3", "moonshotai/kimi-k3.1-pro",
             "deepseek/deepseek-v4.1-flash", "minimax/minimax-m3", "qwen/qwen3.8-2.4t-a95b",
         ]),
         ("zeus", "3.0", "synth", [

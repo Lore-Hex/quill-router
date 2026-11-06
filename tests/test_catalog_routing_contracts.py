@@ -1925,6 +1925,9 @@ def test_prometheus_versions_are_frozen_and_rolling_alias_uses_4_0() -> None:
     assert [model.id for model in meta_candidate_models(PROMETHEUS_MODEL_ID)] == (
         _cataloged_model_ids(list(SYNTH_PROMETHEUS_4_MODEL_ORDER))
     )
+    prometheus_4_ids = [model.id for model in meta_candidate_models(PROMETHEUS_4_0_MODEL_ID)]
+    assert "moonshotai/kimi-k3.1-pro" in prometheus_4_ids
+    assert "moonshotai/kimi-k3" not in prometheus_4_ids
 
 
 def test_trustedrouter_meta_models_are_credits_only_not_byok() -> None:
