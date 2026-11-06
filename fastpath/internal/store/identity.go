@@ -27,7 +27,7 @@ func (s *Store) CheckIdentity(ctx context.Context, workspace string) ([]string, 
 	defer ro.Close()
 	query := func(sql string, each func(*spanner.Row) error) error {
 		return ro.QueryWithOptions(ctx, spanner.Statement{SQL: sql, Params: map[string]any{"w": workspace}},
-			spanner.QueryOptions{RequestTag: tag("check-identity")}).Do(each)
+			lowPriority("check-identity")).Do(each)
 	}
 	var reserved, headroom []int64
 	var marks []bool

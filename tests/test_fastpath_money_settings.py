@@ -132,7 +132,9 @@ def test_the_money_flags_wait_for_metadata_and_a_release_that_takes_them() -> No
     script = SCRIPT.read_text(encoding="utf-8")
     for attribute in _MONEY_ATTRIBUTES:
         assert f"$(attribute {attribute})" in script, attribute
-    assert "-subscriptions auditor,stager $edge_flags $snapshot_flags $money_flags\n" in script
+    unit_line = re.search(r"^  -subscriptions auditor,stager \$edge_flags \$snapshot_flags( \$\w+)*$",
+                          script, re.M)
+    assert unit_line and "$money_flags" in unit_line.group(0).split(), unit_line
     flags = {"required-tier", "allowance", "floor"}
     assert not flags & _unit_flags(script)
     head = _command_flags((ROOT / "fastpath" / "cmd" / "fastpath" / "main.go").read_text(encoding="utf-8"))

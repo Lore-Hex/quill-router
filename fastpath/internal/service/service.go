@@ -96,6 +96,12 @@ type Config struct {
 	Runtime   auditor.Config
 	Ticker    auditor.TickerConfig
 	Pending   auditor.PendingConfig
+	// FleetAudit runs the fleet audit (auditor.Fleet,
+	// docs/design/fast-admission-widening.md §7) on the admission node,
+	// which audits while it owns the ring key auditor.FleetKey; off, the
+	// default, it audits nothing. Fleet is its settings.
+	FleetAudit bool
+	Fleet      auditor.FleetConfig
 
 	// Alert tells a person what the auditor finds that needs one; nil logs
 	// it.
@@ -189,6 +195,15 @@ func Defaults() Config {
 		Ticker: auditor.TickerConfig{Every: time.Second, Limit: 100, Wait: 5 * time.Second},
 		Pending: auditor.PendingConfig{Every: 5 * time.Second, Limit: 100, Wait: 5 * time.Second, Overdue: 10 * time.Minute,
 			Workers: auditor.DefaultPendingWorkers, DropEvery: auditor.DefaultDropEvery},
+		// The fleet audit's figures (docs/design/fast-admission-widening.md
+		// §7): a pass an hour, its line written as it begins and every 30
+		// minutes as it goes, so no line for 90 minutes is an audit stopped,
+		// not a slow pass; a new owner begins within a minute of the ring's
+		// change; switches changed within 26 hours; at most five workspaces
+		// a second, ten seconds each; a leased workspace unaudited for three
+		// hours told.
+		Fleet: auditor.FleetConfig{Every: time.Hour, Check: time.Minute, Progress: 30 * time.Minute,
+			Within: 26 * time.Hour, Rate: 5, Deadline: 10 * time.Second, Stale: 3 * time.Hour},
 		Stopping: 10 * time.Second,
 		HandOff:  10 * time.Second,
 	}
@@ -260,6 +275,9 @@ func (c Config) valid() error {
 		// The edge leaves with the admission node, whose Leave it follows; a
 		// process without one would answer the balancer serving for ever.
 		return errors.New("service: an edge runs beside an admission node")
+	case c.FleetAudit && !c.Admission:
+		// The key's owner is one of the members that take leases.
+		return errors.New("service: the fleet audit runs on an admission node, of which the ring picks its owner")
 	case !c.Admission && !c.Auditor:
 		return errors.New("service: a process runs an admission node, an auditor member, or both")
 	case c.Address == "":
@@ -1005,6 +1023,18 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 		return err
 	}
 	p.run("front door", door.Run)
+	if cfg.FleetAudit {
+		fc := cfg.Fleet
+		fc.Store, fc.Members, fc.Self, fc.Clock = s, members, cfg.Address, time.Now
+		// Its alerts are written as the edge's are, the kind given
+		// (docs/runbooks/fastpath-alerts.md).
+		fc.Alert = func(kind, subject, what string) { writeAlertOf(alertOutput, subject, what, kind) }
+		fleet, err := auditor.NewFleet(fc)
+		if err != nil {
+			return err
+		}
+		p.run("fleet audit", fleet.Run)
+	}
 	// The edge, made before the node, admits through its front door.
 	p.admitter.Bind(door)
 
