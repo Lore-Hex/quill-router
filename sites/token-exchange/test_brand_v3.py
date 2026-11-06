@@ -42,6 +42,27 @@ class BrandV3Tests(unittest.TestCase):
         self.assertNotIn('<div class="card">', london)
         self.assertNotIn('class="tag us"', london)
 
+    def test_v3_confidential_keeps_hooks_and_rollback_body(self):
+        with mock.patch.dict(os.environ, {"NYTE_BRAND_V3_PREVIEW": "1"}):
+            page = render_nyte("api")
+        self.assertIn('/assets/nyte-v2/api-v3.css?v=', page)
+        self.assertGreater(page.index('/assets/nyte-v2/api-v3.css'), page.index(SHEET))
+        self.assertIn('class="v3-band" preserveAspectRatio="none"', page)
+        self.assertIn('aria-label="A request stops at a closed gate; the provider beyond stays empty"', page)
+        for hook in ('data-evidence-profile="new-york"', 'data-evidence-style="v3"', 'data-live-attestation', 'data-live-services',
+                     'data-live-caption', 'data-uptime-label="GCP uptime · 24h"', 'data-live-prices', 'data-price-layout="table"',
+                     'data-live-price-unit', 'id="start"', 'id="place-faq"', 'data-place', 'data-us-only', 'data-open="deck"'):
+            self.assertIn(hook, page)
+        self.assertEqual(page.count('href="/confidential#start">Start building</a>'), 3)
+        # No photos, third-party logos or hand-drawn icons on the v3 page.
+        for removed in ('ph-gondola', 'close-photo', '/assets/nyte-v2/press/', 'class="ico"'):
+            self.assertNotIn(removed, page)
+        with mock.patch.dict(os.environ, {"NYTE_BRAND_V3_PREVIEW": ""}), mock.patch.object(nyte_v2, "BRAND_V3_PAGES", set()):
+            legacy = render_nyte("api")
+        self.assertNotIn('api-v3.css', legacy)
+        self.assertIn('ph-gondola', legacy)
+        self.assertNotIn('data-evidence-style', legacy)
+
     def test_listed_pages_exist(self):
         self.assertLessEqual(nyte_v2.BRAND_V3_PAGES, set(PAGES))
 

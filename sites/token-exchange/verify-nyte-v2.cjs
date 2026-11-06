@@ -65,7 +65,7 @@ modelCount=813;providerRows=[{id:'restored',routing_status:'active'}];await page
 await page.waitForFunction(()=>document.querySelector('[data-catalog-models]').textContent==='813');
 await page.clock.resume();
 await page.getByRole('button',{name:'Menu',exact:true}).click();await page.locator('nav').getByRole('link',{name:'Confidential API',exact:true}).click();await page.waitForURL('**/confidential');
-await page.locator('.privacy-price').first().waitFor();assert.match(await page.locator('[data-live-price-unit]').textContent(),/^Updated .* UTC$/);assert.equal(await page.locator('.tbl-foot').count(),0);assert.equal(await page.locator('.health-bar').count(),24);assert.equal(await page.locator('.build-digest').count(),1);
+await page.locator('.privacy-price').first().waitFor();assert.match(await page.locator('[data-live-price-unit]').textContent(),/^Updated .* UTC$/);assert.equal(await page.locator('.tbl-foot').count(),0);assert.equal(await page.locator('.health-bar').count(),0);assert.equal(await page.locator('.uptime-figure').count(),1);assert.equal(await page.locator('.uptime-figure').textContent(),'100.00%');assert.equal(await page.locator('.build-digest').count(),1);assert.equal(await page.locator('.att-unproven dd').textContent(),'Not proven by attestation');assert.equal(await page.locator('.privacy-provider').first().textContent(),'Confidential + E2EE');
 assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
 await page.locator('.hero-api a',{hasText:'Start building'}).click();await page.waitForURL('**/confidential#start');
 await page.getByRole('button',{name:'Get the buyer deck',exact:true}).click();assert(await page.locator('dialog').isVisible());
@@ -74,7 +74,7 @@ await page.locator('input[name=email]').fill('preview@example.com');await page.g
 success=true;const download=page.waitForEvent('download');await page.getByRole('button',{name:'Download the deck',exact:true}).click();assert.equal((await download).suggestedFilename(),'NYTE-Buyer-Deck.pdf');await page.waitForFunction(()=>document.getElementById('brochure-status').dataset.state==='success');
 await page.keyboard.press('Escape');assert(!(await page.locator('dialog').isVisible()));
 await page.waitForTimeout(200);assert(events.some(e=>e.event==='nyte.form_submitted'&&e.form==='buyer_deck'));assert(events.some(e=>e.event==='nyte.cta_clicked'&&e.cta==='api_quick_start'));assert(events.every(e=>!('email' in e)));
-evidence={...evidence,generated_at:'2000-01-01T00:00:00Z'};await page.reload();await page.waitForTimeout(200);assert.equal(await page.locator('.build-digest').count(),0);assert.equal(await page.locator('.health-bar').count(),0);assert(await page.getByRole('link',{name:'Published release'}).isVisible());
+evidence={...evidence,generated_at:'2000-01-01T00:00:00Z'};await page.reload();await page.waitForTimeout(200);assert.equal(await page.locator('.build-digest').count(),0);assert.equal(await page.locator('.uptime-figure').count(),0);assert(await page.getByRole('link',{name:'Published release'}).isVisible());
 
 await page.setViewportSize({width:1440,height:900});
 await page.goto(base+'/index');

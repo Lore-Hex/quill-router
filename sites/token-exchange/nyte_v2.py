@@ -335,14 +335,20 @@ def render_nyte(
         + '>' + html.escape(other["region"]) + '</a>' for other in load_markets()
     )
     home_v3 = page == "home" and uses_brand_v3("home")
+    # Pages rebuilt for brand v3 keep their pre-v3 body for rollback.
+    v3_body = page in V3_BODIES and uses_brand_v3(page)
     home_head = ""
     if content is None:
-        body = "home-v3.html" if home_v3 else f"{page}.html"
+        body = f"{V3_BODIES[page]}.html" if v3_body else f"{page}.html"
         content = (SOURCE / body).read_text().replace("{{index_panel}}", index_panel())
-    if home_v3:
-        content = content.replace("{{band_purple}}", band_svg("band-purple.svg"))
-        home_version = hashlib.sha256((SOURCE / "home-v3.css").read_bytes()).hexdigest()[:12]
-        home_head = f'<link rel="stylesheet" href="/assets/nyte-v2/home-v3.css?v={home_version}">'
+    if v3_body:
+        content = (content.replace("{{band_purple}}", band_svg("band-purple.svg"))
+                   .replace("{{band_ink}}", band_svg("band-ink.svg"))
+                   .replace("{{fails_closed}}", illustration_svg("fails-closed.svg"))
+                   .replace("{{arrow}}", ARROW_UP_RIGHT))
+        sheet = V3_BODIES[page] + ".css"
+        sheet_version = hashlib.sha256((SOURCE / sheet).read_bytes()).hexdigest()[:12]
+        home_head = f'<link rel="stylesheet" href="/assets/nyte-v2/{sheet}?v={sheet_version}">'
     if city:
         content = city_home(content, market, v3=home_v3)
     if page == "accelerator":
@@ -351,7 +357,7 @@ def render_nyte(
         brand_version = hashlib.sha256((SOURCE / "brand-v3.css").read_bytes()).hexdigest()[:12]
         extra_head += f'<link rel="stylesheet" href="/assets/nyte-v2/brand-v3.css?v={brand_version}">'
         extra_head += '<link rel="icon" href="/assets/nyte-v2/logos/favicon.svg" type="image/svg+xml">'
-    # The v3 home sheet loads after brand-v3.css.
+    # A rebuilt page's own sheet loads after brand-v3.css.
     extra_head += home_head
     result = (SOURCE / "shell.html").read_text()
     evidence_version = hashlib.sha256((HERE / "live-evidence.js").read_bytes()).hexdigest()[:12]
@@ -371,6 +377,19 @@ def render_nyte(
         query.setdefault("exchange_market", market["slug"])
         return 'href="' + html.escape(urlunsplit(url._replace(query=urlencode(query))), quote=True) + '"'
     return re.sub(r'href="([^"]+)"', tracked, result)
+
+# Pages with a body rebuilt for brand v3: page key -> body and sheet name in nyte-v2/.
+V3_BODIES = {"home": "home-v3", "api": "api-v3"}
+# Kit icon arrow-up-right, drawn in the text colour.
+ARROW_UP_RIGHT = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 19 L15.5 8.5"/><path d="M8 5 L19 5 L19 16"/></svg>'
+
+
+def illustration_svg(name: str) -> str:
+    """Inline a kit illustration; its own aria-label stays as the alt text. Slice keeps its centre when cropped."""
+    svg = (SOURCE / name).read_text().strip()
+    svg = re.sub(r'\s(width|height)="[^"]*"', "", svg, count=2)
+    return svg.replace("<svg ", '<svg class="v3-illustration" preserveAspectRatio="xMidYMid slice" focusable="false" ', 1)
+
 
 def band_svg(name: str) -> str:
     """Inline a kit Band file, stretched across the page with its 24 px pitch kept (GFX-01)."""
@@ -414,7 +433,7 @@ def build_nyte(output: Path) -> None:
     shutil.copytree(SOURCE / "assets", assets, dirs_exist_ok=True)
     # NYTE can publish its approved evidence renderer without changing other markets.
     shutil.copyfile(HERE / "live-evidence.js", assets / "live-evidence.js")
-    for name in ("styles.css", "app.js", "fonts.css", "providers.css", "cowork.css", "buy.css", "buy.js", "manage.js", "accelerator.css", "brand-v3.css", "home-v3.css"):
+    for name in ("styles.css", "app.js", "fonts.css", "providers.css", "cowork.css", "buy.css", "buy.js", "manage.js", "accelerator.css", "brand-v3.css", "home-v3.css", "api-v3.css"):
         shutil.copyfile(SOURCE / name, assets / name)
     for page, entry in PAGES.items():
         if page == "home" or entry.get("builder"):

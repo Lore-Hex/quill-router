@@ -189,22 +189,16 @@ dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
 .hero .btn-primary:hover,.hero-api .btn-primary:hover,.cw-hero .btn-primary:hover,.hero-pv .btn-primary:hover,.accelerator-hero .btn-primary:hover{background:var(--ink);color:var(--cream);border-color:var(--ink)}
 .hero .btn-secondary:hover,.hero-api .btn-secondary:hover,.cw-hero .btn-secondary:hover,.hero-pv .btn-secondary:hover,.accelerator-hero .btn-secondary:hover{background:var(--ink);color:var(--lead)}
 .hero{padding-bottom:104px}
-.hero-api,.cw-hero,.hero-pv{min-height:0;padding:104px 0}
-.hero-api .inner{margin-left:0;width:min(720px,100%)}
+.cw-hero,.hero-pv{min-height:0;padding:104px 0}
 .film{border-color:var(--ink)}
 .close-photo{background:var(--ink)}
 .hs-art{aspect-ratio:auto;align-items:center;padding:48px 28px}
-@media(max-width:1000px){.hero-api{padding:72px 0}}
 @media(max-width:800px){
   .hero-pv .inner,.cw-intro{min-height:0}
   .hero-pv,.cw-hero{padding:56px 0}
   .cw-hero .inner{padding:0}
 }
 @media(max-width:600px){
-  .hero-api{padding:48px 0}
-  .hero-api .inner{padding:0}
-  .hero-api .lede{color:var(--ink)}
-  .hero-api+.press.one figure{border-top:0}
   .hs-art{min-height:0;padding:20px 16px}
 }
 .film .play span{color:var(--cream)}
@@ -228,11 +222,14 @@ dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
   [data-market="new-york"] .site-footer .brand>span::before{width:112px;height:67px}
 }
 
-/* Footer (kit Footer): large globe mark bleeding off the right, ruled city rail. */
-.site-footer{position:relative;overflow:hidden}
-.site-footer::before{content:"";position:absolute;right:-220px;top:40px;width:900px;height:440px;background:url(logos/mark-footer.svg) right top/contain no-repeat;pointer-events:none}
-.site-footer>*{position:relative}
-.site-footer .footer-markets{margin-top:72px;padding:10px 0;background:transparent;border-top:1.5px solid var(--dark-rule);border-bottom:1.5px solid var(--dark-rule)}
+/* Footer (kit Footer): the globe mark sits right of the name and contact in the top
+   row, in the layout and never behind text; on phones it follows the city rail. */
+.site-footer{overflow:hidden;--globe-bleed:60px}
+.site-footer .footer-top{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:1fr auto auto 1fr;align-items:center;column-gap:48px}
+.site-footer .footer-top .brand{grid-column:1;grid-row:2}
+.site-footer .footer-contact{grid-column:1;grid-row:3;margin-top:12px}
+.site-footer .footer-top::after{content:"";grid-column:2;grid-row:1/-1;width:min(560px,42vw);aspect-ratio:245.4/120;margin-right:calc(-1 * var(--globe-bleed));background:url(logos/mark-footer.svg) right center/contain no-repeat}
+.site-footer .footer-markets{margin-top:48px;padding:10px 0;background:transparent;border-top:1.5px solid var(--dark-rule);border-bottom:1.5px solid var(--dark-rule)}
 .site-footer .market-links a{padding:0 12px;font-size:15px}
 .site-footer .market-links a[aria-current="page"]{background:transparent;color:var(--cream);font-weight:500;box-shadow:inset 0 -3px 0 var(--purple)}
 .site-footer .geo-prev:not([hidden]),.site-footer .geo-next:not([hidden]){background:var(--ink);top:10px}
@@ -242,8 +239,14 @@ dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
 .site-footer .legal a{color:var(--cream)}
 .site-footer .footer-contact a{color:var(--cream);font-size:17px}
 @media(max-width:600px){
-  .site-footer::before{right:-120px;top:auto;bottom:-40px;width:460px;height:225px}
-  .site-footer .footer-markets{margin-top:32px}
+  .site-footer{display:flex;flex-direction:column}
+  .site-footer .footer-top{grid-template-columns:minmax(0,1fr) 44px;grid-template-rows:none;column-gap:12px}
+  .site-footer .footer-top .brand{grid-row:1}
+  .site-footer .footer-contact{grid-column:1/-1;grid-row:2;margin-top:0}
+  .site-footer .footer-top::after{content:none}
+  .site-footer .footer-markets{margin-top:32px;order:1}
+  .site-footer::after{content:"";order:2;align-self:stretch;margin:40px -20px 0;aspect-ratio:245.4/120;background:url(logos/mark-footer.svg) center/contain no-repeat}
+  .site-footer .legal{order:3;margin-top:24px;padding-top:12px;border-top:1.5px solid var(--dark-rule)}
 }
 
 /* Token Index page (own sheet): kit headings, square corners, one orange action per view. */
@@ -253,14 +256,49 @@ dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
 [data-nyte-page="index"] .ti-tile .btn-primary{background:transparent;color:var(--ink);border-color:var(--ink)}
 [data-nyte-page="index"] .ti-tile .btn-primary:hover{background:var(--ink);color:var(--cream)}
 [data-nyte-page="index"] .ti-eyebrow{font-family:var(--font-condensed);letter-spacing:.1em}
-/* The Confidential hero ends with its buttons (verify-nyte-v2: at most 80px after them, 40px on phones). */
-.hero-api{padding-bottom:80px}
-@media(max-width:1000px){.hero-api{padding-bottom:72px}}
-@media(max-width:600px){.hero-api{padding-bottom:40px}}
 /* Trusted Cowork on phones: the hero fills the first screen so the app screenshot
    peeks in at the bottom, as it did under the photo banner (verify-nyte-v2). */
 @media(max-width:800px){
   .cw-hero{display:flex;align-items:flex-end;min-height:calc(var(--cw-viewport,100svh) - var(--header) - 110px);padding:24px 0 32px}
   .cw-hero .wrap{width:100%}
   .cw-intro{padding-bottom:0}
+}
+
+/* Pages rebuilt in brand v3 (home-v3, api-v3): kit grid, eyebrow bar, buttons,
+   chips, Band and closing field. Page sheets load after this and add their own. */
+:where([data-nyte-page="home"],[data-nyte-page="api"]) main .wrap{max-width:1440px;padding:0 64px}
+:where([data-nyte-page="home"],[data-nyte-page="api"]) main section{padding:128px 0}
+:where([data-nyte-page="home"],[data-nyte-page="api"]) main :is(h1,h2,h3,p,blockquote,figure){margin:0}
+:where([data-nyte-page="home"],[data-nyte-page="api"]) main h2{font-size:clamp(40px,5vw,72px);line-height:1;font-weight:300;letter-spacing:-.015em}
+:where([data-nyte-page="home"],[data-nyte-page="api"]) main .lede{font-size:22px;line-height:1.45;max-width:640px;color:inherit}
+.v3-bar{display:block;width:40px;height:4px;background:var(--ink)}
+.v3-label{font:500 15px/1.2 var(--font-condensed);letter-spacing:.1em;text-transform:uppercase;font-style:normal}
+:where([data-nyte-page="home"],[data-nyte-page="api"]) main .btn{min-height:48px;height:48px;padding:0 22px;gap:10px;border:1.5px solid var(--ink);background:transparent;color:var(--ink);font:500 16px/1 var(--font-sans)}
+:where([data-nyte-page="home"],[data-nyte-page="api"]) main .btn:hover{background:var(--ink);color:var(--cream);border-color:var(--ink)}
+:where([data-nyte-page="home"],[data-nyte-page="api"]) main .btn-primary{background:var(--orange);border-color:var(--ink)}
+:where([data-nyte-page="home"],[data-nyte-page="api"]) main .btn svg{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5}
+:where([data-nyte-page="home"],[data-nyte-page="api"]) main .btns{gap:12px}
+.v3-chip{display:inline-flex;align-items:center;gap:6px;padding:6px 9px;border:1.5px solid var(--ink);font:500 14px/1 var(--font-mono);letter-spacing:.04em;white-space:nowrap}
+.v3-band{display:block;width:100%;height:120px}
+.v3-cta .wrap{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;align-items:end}
+.v3-cta .wrap>div:first-child{grid-column:span 7}
+.v3-cta h2{margin-top:32px}
+.v3-cta .lede{margin-top:24px}
+.v3-cta .btns{grid-column:8/span 5;justify-content:flex-end}
+[data-nyte-page="home"] header .wrap,[data-nyte-page="api"] header .wrap{max-width:1440px;padding:0 64px}
+[data-nyte-page="home"] .site-footer,[data-nyte-page="api"] .site-footer{padding-inline:max(64px,calc((100% - 1312px)/2));--globe-bleed:64px}
+@media (max-width:1100px){
+  .v3-cta .wrap{grid-template-columns:1fr;row-gap:32px}
+  .v3-cta .wrap>div:first-child,.v3-cta .btns{grid-column:1;justify-content:flex-start}
+}
+@media (max-width:600px){
+  :where([data-nyte-page="home"],[data-nyte-page="api"]) main .wrap{padding:0 20px}
+  :where([data-nyte-page="home"],[data-nyte-page="api"]) main section{padding:72px 0}
+  :where([data-nyte-page="home"],[data-nyte-page="api"]) main .lede{font-size:20px}
+  :where([data-nyte-page="home"],[data-nyte-page="api"]) main .btns{flex-direction:column;align-items:stretch;width:100%}
+  :where([data-nyte-page="home"],[data-nyte-page="api"]) main .btns .btn{flex:none;width:100%;justify-content:center;font-size:16px;padding:0 16px}
+  .v3-cta h2{margin-top:24px}
+  .v3-cta .lede{margin-top:16px}
+  [data-nyte-page="home"] header .wrap,[data-nyte-page="api"] header .wrap{padding:0 20px}
+  [data-nyte-page="home"] .site-footer,[data-nyte-page="api"] .site-footer{padding-inline:20px}
 }

@@ -1,0 +1,96 @@
+
+  <section class="hero-api">
+    <div class="wrap">
+      <div class="inner">
+        <i class="v3-bar" aria-hidden="true"></i>
+        <h1>Frontier AI for sensitive work.</h1>
+        <p class="lede">For prompts that carry client material, regulated records or your own source code. <span class="d">Every request runs on verified confidential hardware, encrypted end to end, and is never stored.</span></p>
+        <div class="btns">
+          <a class="btn btn-primary" href="/confidential#start">Start building</a>
+          <a class="btn btn-secondary" href="https://trustedrouter.com/console/api-keys" target="_blank" rel="noopener">Get your API key{{arrow}}</a>
+        </div>
+      </div>
+      <div class="v3-api-art">{{fails_closed}}</div>
+    </div>
+  </section>
+  {{band_ink}}
+
+  <section class="v3-quote" aria-label="In the press">
+    <div class="wrap">
+      <div class="v3-eyebrow"><i class="v3-bar" aria-hidden="true"></i><span class="v3-label" aria-hidden="true">In the press</span></div>
+      <figure><blockquote>“Neither TrustedRouter nor the data center running the model can read a customer’s prompts or outputs.”</blockquote><figcaption class="v3-label">Semafor</figcaption></figure>
+    </div>
+  </section>
+
+  <section class="v3-prot">
+    <div class="wrap">
+      <i class="v3-bar" aria-hidden="true"></i>
+      <h2>Layers of protection. <em>Live evidence.</em></h2>
+      <ol class="v3-prot-list">
+        <li><span class="n" aria-hidden="true">01</span><div><h3>Confidential compute</h3><p>Your prompt is processed inside a verified environment the provider can’t see into.</p></div></li>
+        <li><span class="n" aria-hidden="true">02</span><div><h3>End-to-end encryption</h3><p>The request stays encrypted on its way to and from that environment.</p></div></li>
+        <li><span class="n" aria-hidden="true">03</span><div><h3>Zero data retention</h3><p>Prompts and outputs are discarded once the response is sent.</p></div></li>
+        <li><span class="n" aria-hidden="true">04</span><div><h3>Refused, never downgraded</h3><p>If no route meets all three, the request stops. Nothing reaches a provider.</p></div></li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="v3-evidence">
+    <div class="wrap">
+      <div class="ev trust-evidence" data-evidence-profile="new-york" data-evidence-style="v3" aria-label="Live evidence">
+        <div class="ev-sec"><h3>Attestation</h3><div data-live-attestation></div><a class="ev-link" href="https://trustedrouter.com/trust/gcp-release.json" target="_blank" rel="noopener">Published release{{arrow}}</a></div>
+        <div class="ev-sec"><h3 data-live-caption data-uptime-label="GCP uptime · 24h">GCP service status</h3><div data-live-services></div><a class="ev-link" href="https://trustedrouter.com/status" target="_blank" rel="noopener">Live status{{arrow}}</a></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="v3-models">
+    <div class="wrap">
+      <i class="v3-bar" aria-hidden="true"></i>
+      <h2>Models on confidential routes.</h2>
+      <div class="model-head" aria-hidden="true"><span>Model</span><span>Protections</span><span>Input / 1M</span><span>Output / 1M</span></div><div class="live-models" data-live-prices data-price-layout="table"><a href="https://trustedrouter.com/models?filter=e2e" target="_blank" rel="noopener">Browse Tinfoil model routes</a></div><p class="pricing-unit" data-live-price-unit hidden></p>
+    </div>
+  </section>
+
+  <section id="start" class="v3-start">
+    <div class="wrap">
+      <div class="v3-start-copy">
+        <i class="v3-bar" aria-hidden="true"></i>
+        <h2>Keep your SDK. <em>Confidential inference.</em></h2>
+        <p>Use your OpenAI client with the confidential endpoint and set your request to require confidential routing.</p>
+      </div>
+      <div class="code" tabindex="0" role="region" aria-label="Python quick start"><pre><span class="l"><span class="k">from</span> openai <span class="k">import</span> OpenAI</span><span class="l">&nbsp;</span><span class="l">client = OpenAI(</span><span class="l chg">    base_url=<span class="s">"https://api.confidential.nytokenexchange.com/v1"</span>,</span><span class="l">    api_key=TR_API_KEY,</span><span class="l">)</span><span class="l">&nbsp;</span><span class="l">reply = client.chat.completions.create(</span><span class="l">    model=<span class="s">"nyte/auto"</span>,</span><span class="l">    messages=[{<span class="s">"role"</span>: <span class="s">"user"</span>, <span class="s">"content"</span>: <span class="s">"Summarize this deposition."</span>}],</span><span class="l chg">    extra_body={<span class="s">"provider"</span>: {<span class="s">"min_privacy"</span>: <span class="s y">"confidential"</span>}},</span><span class="l">)</span></pre></div>
+      <div class="btns">
+        <a class="btn btn-primary" href="https://trustedrouter.com/console/api-keys" target="_blank" rel="noopener">Get your API key{{arrow}}</a>
+        <a class="btn btn-secondary" href="https://trustedrouter.com/docs" target="_blank" rel="noopener">Read documentation{{arrow}}</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="v3-faq">
+    <div class="wrap faq">
+      <div><i class="v3-bar" aria-hidden="true"></i><h2>Common questions</h2></div>
+      <div class="v3-faq-list">
+        <details><summary>What happens when no route qualifies?</summary><p>The request is refused with an error. It is never sent to a provider that misses your requirements.</p></details>
+        <details id="place-faq"><summary><span>Does <span data-place>New York</span> mean our data stays in <span data-place>New York</span>?</span></summary><p>The name is the market. Where requests run is set by your route rules.<span data-us-only> Restrict to US-hosted providers in one setting.</span></p></details>
+        <details><summary>Do we need a new account?</summary><p>No. Your TrustedRouter account, balance and key limits carry over. Set approved routes and spending limits before anything reaches production.</p></details>
+        <details><summary>Which models run on confidential routes?</summary><p>The models above, with more added as providers qualify. The live catalog shows every route and its protections.</p></details>
+        <details><summary>How do we run a pilot?</summary><p>Bring one representative workload. Over 30 days we compare quality, cost and privacy on your own task set, then set your approved routes and spending limits for production.</p></details>
+        <details><summary>Is this a securities or crypto exchange?</summary><p>No. NYTE sells AI inference, billed by the token.</p></details>
+      </div>
+    </div>
+  </section>
+
+  <section class="v3-cta closing">
+    <div class="wrap">
+      <div>
+        <i class="v3-bar" aria-hidden="true"></i>
+        <h2>Start with one workload.</h2>
+        <p class="lede">A 30-day pilot on your own tasks.</p>
+      </div>
+      <div class="btns">
+        <a class="btn btn-primary" href="/confidential#start">Start building</a>
+        <button class="btn btn-secondary" data-open="deck">Get the buyer deck</button>
+      </div>
+    </div>
+  </section>
