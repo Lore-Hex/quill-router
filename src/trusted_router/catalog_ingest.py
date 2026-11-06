@@ -45,6 +45,7 @@ from trusted_router.pricing import (
     _flat_tier,
     _optional_customer_price_from_dollars_per_token,
     _priced,
+    _provider_manifest_cached_customer_price,
     _provider_manifest_customer_price,
     _provider_manifest_exact_integer,
     _provider_manifest_optional_price_cost,
@@ -1333,8 +1334,9 @@ def _supplemental_provider_models_and_endpoints(
                     apply_markup=apply_markup,
                 )
                 cached_price = (
-                    _provider_manifest_customer_price(
+                    _provider_manifest_cached_customer_price(
                         cached_cost,
+                        provider_slug=provider_slug,
                         apply_markup=apply_markup,
                     )
                     if cached_cost is not None
@@ -1348,6 +1350,7 @@ def _supplemental_provider_models_and_endpoints(
                         cached_price,
                         price_scale=price_scale,
                         apply_markup=apply_markup,
+                        provider_slug=provider_slug,
                     )
                 except ValueError:
                     # A malformed pricing tier is an accounting ambiguity. Do
