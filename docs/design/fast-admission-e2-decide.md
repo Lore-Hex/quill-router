@@ -612,15 +612,15 @@ and the client's whole output budget. The reservation is the credit hold:
 the same price at `min(budget, HOLD_OUTPUT_TOKENS)` output tokens,
 `HOLD_OUTPUT_TOKENS` being 16,384 in Python and in the evaluator's
 `HoldOutputTokens`. They are equal for user-provided models, partner
-billing, videos (whose settle is held to the ceiling), streams (for now:
-see "Streams" below), and whenever the budget is at most 16,384. Every
+billing, videos (whose settle is held to the ceiling), and whenever the
+budget is at most 16,384; a stream is no exception (see "Streams" below). Every
 reader of either, and which it reads:
 
 | Reader | Figure |
 |---|---|
 | Workspace credit admission against the available balance (`reserve_credit`, `reserve_credit_with_pause`, `credit_exhaustion_precheck`, the memory and Postgres `reserve`), the typed credit counters' `reserved`, the reservation row's `credit_reserved_micro`, and its release at settle, refund and reap (`storage_gcp_counter_dml`, `storage_gcp_authorize` settle; the outbox resolves the reservation by id and releases the recorded hold) | reservation |
 | Key admission: the lifetime cap, the spend windows and the strict windows (`reserve_key`, `reserve_strict_key`, `key_window_limit_decision`, `key_lifetime_cap_precheck`, the memory and Postgres `reserve_key_limit`), the key counters' reserved and the reservation row's `key_reserved_micro`, released at settle, refund and reap as recorded | estimate: a key cap is a promise to the key's owner that outstanding spend ceilings count against it (docs/routing-controls-20260927.md, "Strict spending"); the key counter carries what it admitted, so its release is the recorded hold, symmetric as before. The edge has no key gate: a capped, windowed or strict key passes to Python (`key.key_cap`, `key.key_window`, `key.key_window_alert`, `key.budget_strict`) |
-| The fast path's lease: `_fastpath_admission` and the edge's admit (`frontdoor.AuthorizeOf.Estimate`, the owner's `Admission.Estimate`, the hold row's `Estimate`, the signed envelope), the drain's raise (`max(charge - hold, 0)`), the owner's and the record's bound on a heartbeat's running charge, and the Go reaper's cap on an abandoned hold's charge | reservation. The owner accepts no heartbeat whose running charge passes the hold, so a stream admitted under a lease would be cut at the reservation: both front doors keep streams out of the lease cohort (Python `fastpath_frontdoor` reason `stream`, Go `gwauth.ReasonStream`) until an admission carries the ceiling beside the hold; an abandoned hold is charged its last accepted snapshot, at most the reservation (Python's snapshot reaper charges the recorded running charge and releases the recorded hold) |
+| The fast path's lease: `_fastpath_admission` and the edge's admit (`frontdoor.AuthorizeOf.Estimate`, the owner's `Admission.Estimate`, the hold row's `Estimate`, the signed envelope), the drain's raise (`max(charge - hold, 0)`), the owner's and the record's bound on a heartbeat's running charge, and the Go reaper's cap on an abandoned hold's charge | reservation. The owner accepts no heartbeat whose running charge passes the hold, so a stream admitted under a lease would be cut at the reservation: both front doors lease a stream only while its reservation is its estimate (Python `fastpath_frontdoor` and the edge's `streamGate`, reason `stream.hold`), until an admission carries the ceiling beside the hold; an abandoned hold is charged its last accepted snapshot, at most the reservation (Python's snapshot reaper charges the recorded running charge and releases the recorded hold) |
 | The insufficient-credits 402 and its `billing.insufficient_credits` line (`reserved_microdollars`, beside the estimate) | reservation |
 | The authorization row's `estimated_microdollars` (Python and `gwauth.AuthorizationRow`; `storage_gcp_request_records` readback), the payload's `estimated_microdollars`, the 200's `estimated_cost` and `estimated_cost_microdollars` (Python and `gwauth/response.go`, so the shadow's byte comparison of the 200 and of the rows is unchanged; the shadow compares no reservation, the goldens' `reservation_microdollars` does), the replay of a stored authorization, the fast path settle's full-record money metadata (`fastpath_settle`), and the `billing.authorize_contention` and `authorize_conflict_after_escrow` diagnostics | estimate |
 | Stage D: the gateway's `cap_micro` (`_gateway_stage_d_payload`), the heartbeat's `cap_micro` and its `usage_exceeds_cap` refusal (`storage_gcp_stage_d._cap_micro`), which cut a stream whose running charge passes it | estimate |
@@ -644,17 +644,20 @@ whatever makes up the charge. The reservation is not in the 200 body or on the a
 the goldens (§10.1) record it as `reservation_microdollars` from what the
 front door was asked.
 
-**Streams.** A stream's reservation is its estimate for now, in
-`finish_candidates` (`stream`) and in the evaluator (`Request.Stream`)
-alike: the Stage D heartbeat reader deployed before this change bounds a
-stream's running charge by the reservation row's `credit_reserved_micro`,
-so during a mixed-version deploy or a rollback a stream admitted with a
-lower reservation would be cut at `usage_exceeds_cap` by an instance
-running that reader. Non-stream requests take the reduced reservation now.
-Follow-up: lower stream reservations once every plane runs the reader that
-caps at the estimate (`storage_gcp_stage_d._cap_micro` here); the change
-is the one `or stream` in `finish_candidates` and the `req.Stream` branch
-in `Evaluate`, with the `hold_cap` goldens' stream cases.
+**Streams.** Since 2026-11-05 a stream takes the same bounded reservation
+as any catalog request, in `finish_candidates` and in the evaluator alike.
+Every plane has run the Stage D reader that cuts a stream at the estimate
+(`storage_gcp_stage_d._cap_micro`), never at `credit_reserved_micro`, since
+#2065; Stage D's `cap_micro` stays the estimate. Until then a stream held
+its whole budget's price: a client streaming with a large `max_tokens`
+against a small balance held about twenty times what each stream cost, was
+refused 402s on a balance that covered dozens of its streams, and its
+authorizes, refunds and refusals queued on the workspace's credit row
+(`docs/incidents/2026-11-05-stream-hold-convoy.md`). A lease still cuts a
+stream at its hold, so a stream whose budget passes `HOLD_OUTPUT_TOKENS`
+stays out of the lease cohort (`stream.hold`,
+[`fast-admission-streams.md`](fast-admission-streams.md) §5.1 item 5)
+until an admission carries the ceiling beside the hold.
 
 Absent, because `None` with a `None` default: `key_reserved_microdollars`,
 `custom_model_id`, `custom_model_revision`, `user_provided_model_id`,

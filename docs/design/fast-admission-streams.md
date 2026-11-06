@@ -37,7 +37,13 @@ stream admitted with a hold below its spend ceiling would be cut at the hold:
 
 ### 2.2 A stream's hold is its ceiling
 
-Since `6ea0f9eff`, `d15f3c0be` and `63b64d601`, a stream reserves its
+This section records the code as this design found it. Since 2026-11-05 a
+stream's reservation is bounded at `HOLD_OUTPUT_TOKENS` like any catalog
+request's (`fast-admission-e2-decide.md`, "Streams"; §11 item 1): the
+`stream` branches below are gone, and a leased stream is one whose budget
+fits the bound, where the reservation still equals the estimate.
+
+Since `6ea0f9eff`, `d15f3c0be` and `63b64d601`, a stream reserved its
 estimate on both sides:
 
 - **Python.** `finish_candidates` (`authorize_candidates.py:355`) prices
@@ -434,9 +440,10 @@ doors, in addition to today's cohort:
 4. `reap_snapshot_booking_enabled` is on (`config.py:1128`): the lease
    always charges an abandoned stream its snapshot, so Python's path must
    too, or the lease would charge where Python does not (§7);
-5. `reservation == estimate`, a tripwire: if the e2-decide "Streams"
-   follow-up ever lowers a stream's reservation, streams fall out of the
-   cohort instead of being cut at the hold.
+5. `reservation == estimate`, a tripwire. Since 2026-11-05 (§11 item 1)
+   a stream's reservation is bounded at `HOLD_OUTPUT_TOKENS` of its
+   budget, so a stream whose budget passes it falls out of the cohort
+   (`stream.hold`) instead of being cut at the hold.
 
 `OpenHeartbeat` is not sent: no boot declares `stream_open_heartbeat`
 (§3.2), so no leased stream is released by the first-heartbeat allowance.
@@ -631,9 +638,9 @@ Residual risks:
    time to first byte grows by the same. Measured in §8.3.
 4. **A held e for up to 2 h 20 min** when a stream dies before its first
    byte (§6.5), until enclaves declare `stream_open_heartbeat`.
-5. **The reservation tripwire.** Lowering stream reservations takes every
-   stream off the lease until an admission carries e beside r (§11 item
-   1).
+5. **The reservation tripwire.** Lowered stream reservations (2026-11-05)
+   take every stream whose budget passes `HOLD_OUTPUT_TOKENS` off the
+   lease until an admission carries e beside r (§11 item 1).
 6. **The edge's composition.** A stream's 200 and row carry the full price
    document; a byte off in `candidate_prices` changes what the enclave
    cuts at. §8.4's shadow compares both before the edge decides.
@@ -775,7 +782,9 @@ the shadow, admission on, and Stage D off.
 - **`stream_open_heartbeat`**: a quill-cloud-proxy change, then Python
   sends `OpenHeartbeat` from `GatewayBoot.declares_stream_open_heartbeat`
   (`storage_models.py:2008`); the owners already take it.
-- **Lowering stream reservations**, or an admission carrying e beside r.
+- **An admission carrying e beside r**, so a stream whose budget passes
+  `HOLD_OUTPUT_TOKENS` can be leased at its lowered reservation (done
+  2026-11-05) without being cut at it.
 - Streaming `/v1/messages` (never heartbeated), service tiers, markups,
   keys with caps: unchanged exclusions.
 
@@ -823,6 +832,10 @@ Decided by Joseph on 2026-10-30, on this design's first review:
    (§5.1 item 5). e2-decide's "Streams" follow-up, lowering stream
    reservations, waits for a design that carries the ceiling beside the
    hold (e beside r in the admission, the envelope and the record).
+   Revised by Joseph on 2026-11-05: stream reservations are lowered now
+   (`docs/incidents/2026-11-05-stream-hold-convoy.md`). The tripwire stays,
+   so a stream whose budget passes `HOLD_OUTPUT_TOKENS` leaves the lease
+   cohort until e beside r ships; one within it stays.
 2. **One row transaction per leased heartbeat** stays (§4.1): exact parity
    with today's validity rules and the row's snapshot for reap records.
    Dropping it is §9's, a design of its own.
