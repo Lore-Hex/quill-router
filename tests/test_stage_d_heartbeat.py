@@ -814,6 +814,7 @@ def test_reaper_strong_reread_skips_a_heartbeat_renewed_after_scan(
         SettleOutcome.GUARD_LOST: 0,
         SettleOutcome.ERROR: 0,
         SettleOutcome.LEASED_STREAM: 0,
+        SettleOutcome.ORPHAN_CLOSED: 0,
         "refunded": 0,
         "snapshot_booked": 0,
     }
@@ -1101,6 +1102,75 @@ def test_reaper_lost_write_guard_rolls_back_every_money_write(
     assert db.typed[CREDIT_BALANCE_TABLE][("workspace", 0)]["total_usage"] == 0
     assert db.gateway_authorizations["gwa-stage-d-fixture"]["settled"] is False
     assert db.generation_records == {}
+
+
+def _seed_orphaned_reservation(*, hold: int) -> FakeSpannerDatabase:
+    """A settled authorization whose reservation row was never claimed: the
+    shape a pilot lease settled before #1793 left behind."""
+    db, _authorization = _seed(settled=True, credit_reserved_micro=hold)
+    db.reservations["reservation"]["settled"] = False
+    db.gateway_authorizations["gwa-stage-d-fixture"]["settled"] = True
+    _seed_reaper_counters(db, hold=hold)
+    return db
+
+
+def test_reaper_closes_an_orphaned_zero_hold_reservation_and_books_nothing() -> None:
+    db = _seed_orphaned_reservation(hold=0)
+    reap_now = NOW + timedelta(seconds=31)
+
+    result = reap_expired_reservations_result(db, _ParamTypes, now=reap_now)
+
+    assert result.orphans_closed == 1
+    assert result.outcome_counts[SettleOutcome.ORPHAN_CLOSED] == 1
+    assert result.count == 0
+    assert result.guard_lost == 0
+    assert result.errors == 0
+    assert result.released_hold_micro == 0
+    reservation = db.reservations["reservation"]
+    assert reservation["settled"] is True
+    assert reservation["actual_micro"] == 0
+    assert reservation["terminal_at"] == reap_now
+    assert db.typed[CREDIT_BALANCE_TABLE][("workspace", 0)]["reserved"] == 0
+    assert db.typed[CREDIT_BALANCE_TABLE][("workspace", 0)]["total_usage"] == 0
+    assert db.typed[KEY_LIMIT_TABLE][("key", 0)]["usage"] == 0
+    assert db.generation_records == {}
+
+    again = reap_expired_reservations_result(
+        db, _ParamTypes, now=reap_now + timedelta(minutes=5)
+    )
+    assert again.orphans_closed == 0
+    assert again.guard_lost == 0
+
+
+def test_reaper_leaves_a_settled_authorizations_held_reservation_guard_lost() -> None:
+    db = _seed_orphaned_reservation(hold=300)
+
+    result = reap_expired_reservations_result(
+        db, _ParamTypes, now=NOW + timedelta(seconds=31)
+    )
+
+    assert result.orphans_closed == 0
+    assert result.guard_lost == 1
+    assert db.reservations["reservation"]["settled"] is False
+    assert db.typed[CREDIT_BALANCE_TABLE][("workspace", 0)]["reserved"] == 300
+    assert db.typed[KEY_LIMIT_TABLE][("key", 0)]["reserved"] == 300
+
+
+def test_reaper_orphan_retention_guard_rolls_back_the_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = _seed_orphaned_reservation(hold=0)
+    monkeypatch.setattr(
+        authorize_mod, "complete_reservation_retention", lambda *_args, **_kwargs: 0
+    )
+
+    result = reap_expired_reservations_result(
+        db, _ParamTypes, now=NOW + timedelta(seconds=31)
+    )
+
+    assert result.orphans_closed == 0
+    assert result.guard_lost == 1
+    assert db.reservations["reservation"]["settled"] is False
 
 
 def test_refund_before_reap_wins_the_reservation_and_authorization_guards() -> None:
