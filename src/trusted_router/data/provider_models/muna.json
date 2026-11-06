@@ -31,7 +31,8 @@
       "deprecation_at": null,
       "retirement_at": null,
       "replacement_model_id": null,
-      "routable": true,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
       "reliability": {
         "first_token_timeout_seconds": 60.0,
         "completion_timeout_seconds": 600.0,
@@ -83,7 +84,8 @@
       "deprecation_at": null,
       "retirement_at": null,
       "replacement_model_id": null,
-      "routable": true,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
       "reliability": {
         "first_token_timeout_seconds": 60.0,
         "completion_timeout_seconds": 600.0,
@@ -135,7 +137,8 @@
       "deprecation_at": null,
       "retirement_at": null,
       "replacement_model_id": null,
-      "routable": true,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
       "reliability": {
         "first_token_timeout_seconds": 60.0,
         "completion_timeout_seconds": 600.0,
