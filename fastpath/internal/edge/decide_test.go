@@ -458,7 +458,7 @@ func decideAll(p *routingsnapshot.EdgePolicy, workspace string, at time.Time) De
 	for _, r := range p.ConfiguredRegions {
 		on[DecideKey{workspace, p.Plane.Cloud, r}] = true
 	}
-	return DecideView{On: on, ReadAt: at, MaxAge: decideStaleness * DecideEvery}
+	return DecideView{Rows: on, ReadAt: at, MaxAge: decideStaleness * DecideEvery}
 }
 
 func pinnedMint(c authorizeCase) Mint {
@@ -1181,12 +1181,12 @@ func TestTheDecideRowIsLastAndTheShadowStillDecides(t *testing.T) {
 		want string
 	}{
 		{"never read", DecideView{}, PassCacheDecide},
-		{"past three intervals", DecideView{On: in.Decide.On, ReadAt: at.Add(-16 * time.Second), MaxAge: 15 * time.Second},
+		{"past three intervals", DecideView{Rows: in.Decide.Rows, ReadAt: at.Add(-16 * time.Second), MaxAge: 15 * time.Second},
 			PassCacheDecide},
-		{"no row", DecideView{On: map[DecideKey]bool{}, ReadAt: at, MaxAge: 15 * time.Second}, PassDecideOff},
-		{"another region's row", DecideView{On: map[DecideKey]bool{{c.Facts.Key.WorkspaceID, "gcp", "us-east4"}: true},
+		{"no row", DecideView{Rows: map[DecideKey]bool{}, ReadAt: at, MaxAge: 15 * time.Second}, PassDecideOff},
+		{"another region's row", DecideView{Rows: map[DecideKey]bool{{c.Facts.Key.WorkspaceID, "gcp", "us-east4"}: true},
 			ReadAt: at, MaxAge: 15 * time.Second}, PassDecideOff},
-		{"its row", DecideView{On: map[DecideKey]bool{{c.Facts.Key.WorkspaceID, "gcp", "us-central1"}: true},
+		{"its row", DecideView{Rows: map[DecideKey]bool{{c.Facts.Key.WorkspaceID, "gcp", "us-central1"}: true},
 			ReadAt: at.Add(-15 * time.Second), MaxAge: 15 * time.Second}, ""},
 	} {
 		in := in
@@ -1399,7 +1399,7 @@ func TestOnlyACompleteDecisionIsAdmittable(t *testing.T) {
 	if d, ok := Decide(in).Admit(); !ok || d == nil {
 		t.Fatal("positive control: the base case is not admittable")
 	}
-	for _, view := range []DecideView{{}, {On: map[DecideKey]bool{}, ReadAt: in.Request.At, MaxAge: 15 * time.Second}} {
+	for _, view := range []DecideView{{}, {Rows: map[DecideKey]bool{}, ReadAt: in.Request.At, MaxAge: 15 * time.Second}} {
 		in := in
 		in.Decide = view
 		got := Decide(in)

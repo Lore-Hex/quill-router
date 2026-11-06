@@ -204,18 +204,21 @@ type decider struct {
 // passed by §3 reason, the forwarded passes slow at the edge (at_edge, and
 // at_edge.<phase> by the phase each spent the most time in) or in all
 // (in_all), and the window checks (windows: reads made, unread,
-// latency.<bucket>, verdict.<outcome>). slowOwn, not logged, counts the
+// latency.<bucket>, verdict.<outcome>), and every answer (answered and
+// unavailable) by where its decide row's answer came from (via: own or
+// wildcard, Decided.Via; logged as decided_via, docs/design/
+// fast-admission-widening.md section 6.1). slowOwn, not logged, counts the
 // at_edge passes the edge's own time made slow: each counted under the
 // boot, decide or admit phase, and each counted under the body's whose time
 // after the body's read alone was over SlowAtEdge.
 type decideTally struct {
 	answered, readBack, refunded, refundFailed, slowOwn int64
-	unavailable, passed, slow, windows                  map[string]int64
+	unavailable, passed, slow, windows, via             map[string]int64
 }
 
 func newDecideTally() decideTally {
 	return decideTally{unavailable: map[string]int64{}, passed: map[string]int64{}, slow: map[string]int64{},
-		windows: map[string]int64{}}
+		windows: map[string]int64{}, via: map[string]int64{}}
 }
 
 func newDecider(cfg DecideConfig, logf func(string, ...any), clock func() time.Time, every time.Duration) *decider {
@@ -288,8 +291,11 @@ func (e *Edge) decide(w http.ResponseWriter, r *http.Request, at time.Time, mark
 	seen BootSeen) (answered bool, passed decidePassed) {
 	dp := e.decider
 	arrived := marks.arrived
+	// One admitter for the request: its switch copy is the pipeline's
+	// not_enabled gate, and it admits what the pipeline decides.
+	admitter := e.cfg.Admitter.Load()
 	in := DecideInputs{Request: RequestOf(r, at, body, seen), Lookup: dp.cfg.Cache.Lookup, Decide: dp.decides.view(),
-		Mint: dp.cfg.Mint}
+		Enabled: enabledOf(admitter), Mint: dp.cfg.Mint}
 	if e.poller != nil {
 		if h := e.poller.snapshot(); h != nil {
 			in.Snapshot = h.snapshot
@@ -331,7 +337,6 @@ func (e *Edge) decide(w http.ResponseWriter, r *http.Request, at time.Time, mark
 		return pass(PassInFlightKey)
 	}
 	defer dp.inflight.leave(d.LookupHash)
-	admitter := e.cfg.Admitter.Load()
 	if admitter == nil {
 		return pass(PassOwnerUnreachable)
 	}
@@ -387,20 +392,20 @@ func (e *Edge) decide(w http.ResponseWriter, r *http.Request, at time.Time, mark
 	}
 	switch outcome {
 	case store.Inserted:
-		dp.count(func(t *decideTally) { t.answered++ })
+		dp.count(func(t *decideTally) { t.answered++; t.via[decided.Via]++ })
 		writeAnswer(w, http.StatusOK, composed.Render(timing(rpcs+1), false))
 		return true, passed
 	case store.Landed:
 		// The commit's answer was lost or AlreadyExists, and the row read
 		// back is ours: Python's bytes after a read-back (§6).
-		dp.count(func(t *decideTally) { t.answered++; t.readBack++ })
+		dp.count(func(t *decideTally) { t.answered++; t.readBack++; t.via[decided.Via]++ })
 		writeAnswer(w, http.StatusOK, composed.Render(timing(rpcs+2), true))
 		return true, passed
 	case store.Unknown:
 		// The commit may have applied: never refunded. Python's 503, the
 		// hold kept; the enclave's retry finds the row through Python's
 		// replay, or inserts. Counted by the insert's code.
-		dp.count(func(t *decideTally) { t.unavailable[codeName(code)]++ })
+		dp.count(func(t *decideTally) { t.unavailable[codeName(code)]++; t.via[decided.Via]++ })
 		writeAnswer(w, gwauth.UnavailableStatus, gwauth.Unavailable(timing(rpcs+2)))
 		return true, passed
 	case store.ScopeTaken:
@@ -554,10 +559,11 @@ func pauseAnswer(resp *http.Response) bool {
 // 503s of an outcome not known (and by the insert's gRPC code), the refunds
 // sent and failed, the requests it passed by §3 reason, the forwarded
 // passes slow at the edge (at_edge, and at_edge.<phase> by slowPhase) or in
-// all (in_all), and its window checks (decideTally's windows).
+// all (in_all), its window checks (decideTally's windows), and its answers
+// by where the decide row's answer came from (DecidedVia: own or wildcard).
 type DecideCounts struct {
 	Answered, ReadBack, Unavailable, Refunded, RefundFailed int64
-	UnavailableByCode, Passed, Slow, Windows                map[string]int64
+	UnavailableByCode, Passed, Slow, Windows, DecidedVia    map[string]int64
 }
 
 // DecideCounts are the counts now; zero with the decide path off.
@@ -571,7 +577,8 @@ func (e *Edge) DecideCounts() DecideCounts {
 	t := dp.total
 	return DecideCounts{Answered: t.answered, ReadBack: t.readBack, Unavailable: sum(t.unavailable),
 		Refunded: t.refunded, RefundFailed: t.refundFailed, UnavailableByCode: maps.Clone(t.unavailable),
-		Passed: maps.Clone(t.passed), Slow: maps.Clone(t.slow), Windows: maps.Clone(t.windows)}
+		Passed: maps.Clone(t.passed), Slow: maps.Clone(t.slow), Windows: maps.Clone(t.windows),
+		DecidedVia: maps.Clone(t.via)}
 }
 
 func sum(m map[string]int64) int64 {
@@ -633,8 +640,9 @@ func (dp *decider) flush() {
 	}
 	dp.mu.Unlock()
 	dp.logf("fastpath edge decide: answered=%d read_back=%d unavailable=%d refunded=%d refund_failed=%d "+
-		"unavailable_by_code=%s passed=%s slow=%s windows=%s", p.answered, p.readBack, unavailable, p.refunded,
-		p.refundFailed, jsonOf(p.unavailable), jsonOf(p.passed), jsonOf(p.slow), jsonOf(p.windows))
+		"unavailable_by_code=%s passed=%s slow=%s windows=%s decided_via=%s", p.answered, p.readBack, unavailable,
+		p.refunded, p.refundFailed, jsonOf(p.unavailable), jsonOf(p.passed), jsonOf(p.slow), jsonOf(p.windows),
+		jsonOf(p.via))
 	if unavailable > 0 {
 		dp.alert(AlertUnavailable, fmt.Sprintf("the edge answered %d authorizes unavailable, their insert's "+
 			"outcome not known; by the insert's gRPC code: %s", unavailable, jsonOf(p.unavailable)))

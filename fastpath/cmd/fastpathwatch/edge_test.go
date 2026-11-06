@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -360,5 +361,60 @@ func TestTheEdgeReportPrintsTheWindowRaceFigures(t *testing.T) {
 		*g.WindowRaceRatio != 3.0/2000 || g.WouldAdmitPythonRefused != 1 ||
 		len(g.WouldAdmitByClass) != 1 || g.WouldAdmitByClass["429.key_window_limit_exceeded"] != 1 {
 		t.Errorf("the window race figures: %s", out.Bytes())
+	}
+}
+
+// TestTheEdgeReportTakesTheLargestDistinctKeys: distinct_keys is a node's
+// figure since its set began (distinct_keys_since), not a period's, so the
+// report's is the largest any line carries, never a sum over periods or
+// nodes, and only from a set begun at or after the span's start: a node up
+// since before it would count the earlier traffic's keys, so its lines,
+// and a line with no start, are counted excluded and their figure not
+// taken, though it is larger. The period counts beside it are still summed.
+func TestTheEdgeReportTakesTheLargestDistinctKeys(t *testing.T) {
+	spanStart := time.Date(2026, 10, 24, 11, 0, 0, 0, time.UTC).Unix()
+	line := func(id, node string, keys int, since string) logEntry {
+		return logEntry{id, node, `2026/10/24 12:00:00 fastpath edge decide shadow: dropped=1 evictions=0 distinct_keys=` +
+			strconv.Itoa(keys) + since + ` cache_unrefreshed=0 cache_dropped=0 cache_read_failures=0`}
+	}
+	at := func(unix int64) string { return " distinct_keys_since=" + strconv.FormatInt(unix, 10) }
+	d, _ := edgeDeps([]logEntry{
+		line("1", "tr-fastpath-5", 150, at(spanStart)), line("2", "tr-fastpath-6", 230, at(spanStart+600)),
+		line("3", "tr-fastpath-5", 180, at(spanStart)), line("4", "tr-fastpath-6", 230, at(spanStart+600)),
+		// Begun a second before the span, and a node with no start: larger,
+		// and not taken.
+		line("5", "tr-fastpath-7", 900, at(spanStart-1)), line("6", "tr-fastpath-8", 950, ""),
+	}, nil)
+	var out bytes.Buffer
+	if code, err := run(context.Background(), []string{"edge", "-project", "p", "-since", "2026-10-24T11:00:00Z"}, &out,
+		d); code != 0 || err != nil {
+		t.Fatalf("%d %v", code, err)
+	}
+	var r edgeReport
+	if err := json.Unmarshal(out.Bytes(), &r); err != nil {
+		t.Fatalf("%v: %s", err, out.Bytes())
+	}
+	if r.I2.DistinctKeys != 230 || r.I2.DistinctKeysExcludedLines != 2 || r.DecideShadow.Counts["dropped"] != 6 {
+		t.Fatalf("distinct_keys %d (%d lines excluded, sums %v), want 230 with 2 excluded beside 6 dropped",
+			r.I2.DistinctKeys, r.I2.DistinctKeysExcludedLines, r.DecideShadow.Counts)
+	}
+	for _, name := range []string{"distinct_keys", "distinct_keys_since"} {
+		if _, summed := r.DecideShadow.Counts[name]; summed {
+			t.Errorf("%s was summed: %v", name, r.DecideShadow.Counts)
+		}
+	}
+	// Every set begun before the span: the bar cannot be read, and says so.
+	d, _ = edgeDeps([]logEntry{line("1", "tr-fastpath-5", 400, at(spanStart-3600))}, nil)
+	out.Reset()
+	if code, err := run(context.Background(), []string{"edge", "-project", "p", "-since", "2026-10-24T11:00:00Z"}, &out,
+		d); code != 0 || err != nil {
+		t.Fatalf("%d %v", code, err)
+	}
+	r = edgeReport{}
+	if err := json.Unmarshal(out.Bytes(), &r); err != nil {
+		t.Fatalf("%v: %s", err, out.Bytes())
+	}
+	if r.I2.DistinctKeys != 0 || r.I2.DistinctKeysExcludedLines != 1 {
+		t.Fatalf("a set begun before the span: %d, %d excluded", r.I2.DistinctKeys, r.I2.DistinctKeysExcludedLines)
 	}
 }

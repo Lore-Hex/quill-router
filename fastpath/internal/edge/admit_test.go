@@ -18,6 +18,8 @@ func (s stubAdmitter) Refund(context.Context, frontdoor.RefundOf) frontdoor.Term
 	return frontdoor.TerminalAnswer{Status: s.status}
 }
 
+func (s stubAdmitter) Enabled(string) bool { return true }
+
 // The node's front door is an admitter.
 var _ Admitter = (*frontdoor.FrontDoor)(nil)
 

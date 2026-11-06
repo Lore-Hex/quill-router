@@ -804,3 +804,179 @@ func TestTheStreamsMemberVectors(t *testing.T) {
 		t.Fatalf("%d accepted (%d with the member), %d refused: not the vectors' 8 (1) and 4", accepted, on, refused)
 	}
 }
+
+// allGolden is the all-mode golden pair (scripts/fastpath/edge_policy_vectors.py
+// writes edge_policy_all_v1.{body,manifest}.json;
+// tests/test_edge_policy_publish.py holds Python to the same files): the
+// golden body with fastpath_pilot_all, fastpath_pilot_exclude and the
+// explicit list emptied, signed by the same TEST key.
+func allGolden(t *testing.T) (manifestFile, []byte) {
+	t.Helper()
+	var m manifestFile
+	decoder := json.NewDecoder(bytes.NewReader(testdata(t, "edge_policy_all_v1.manifest.json")))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&m); err != nil {
+		t.Fatal(err)
+	}
+	return m, testdata(t, "edge_policy_all_v1.body.json")
+}
+
+// TestTheAllModeGoldenPolicyVerifies (docs/design/fast-admission-widening.md
+// section 6.3): Go reads the members Python will publish before it
+// publishes them, so the all-mode golden pair verifies, PilotAll is true and
+// Covers is every workspace but the exclude list's; every other field is
+// the golden body's, which reads as the explicit list.
+func TestTheAllModeGoldenPolicyVerifies(t *testing.T) {
+	m, raw := allGolden(t)
+	if !m.TestKey || m.Kid != TestKID || m.Generator != "scripts/fastpath/edge_policy_vectors.py" {
+		t.Fatalf("the all-mode golden policy must be signed by the named test key, not %+v", m)
+	}
+	p, _, err := VerifyEdgePolicy(m.JWS, []TrustedKey{goldenKey(t, m)}, raw, policyOptions(m, policyIssuedAt))
+	if err != nil {
+		t.Fatal(err)
+	}
+	exclude := []string{"ws-synthetic-excluded-a", "ws-synthetic-excluded-b"}
+	if !p.PilotAll() || p.FastpathPilotExclude == nil || !slices.Equal(*p.FastpathPilotExclude, exclude) ||
+		len(p.FastpathPilotWorkspaces) != 0 || !p.CoversAny() {
+		t.Fatalf("all mode: %+v", p)
+	}
+	for workspace, want := range map[string]bool{"ws-synthetic-excluded-a": false, "ws-synthetic-excluded-b": false,
+		"ws-synthetic-pilot-1": true, "ws-any-other": true} {
+		if p.Covers(workspace) != want {
+			t.Errorf("all mode covers %s: %v, want %v", workspace, !want, want)
+		}
+	}
+	_, published := policyGolden(t)
+	golden, err := ParseEdgePolicy(published)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if golden.PilotAll() || golden.FastpathPilotAll != nil || golden.FastpathPilotExclude != nil ||
+		!golden.Covers("ws-synthetic-pilot-1") || golden.Covers("ws-any-other") {
+		t.Fatalf("the golden body reads as the explicit list: %+v", golden)
+	}
+	p.FastpathPilotAll, p.FastpathPilotExclude, p.FastpathPilotWorkspaces = nil, nil, golden.FastpathPilotWorkspaces
+	if a, b := canonical(p), canonical(golden); !bytes.Equal(a, b) {
+		t.Fatalf("all mode changed another field:\n%s\n%s", a, b)
+	}
+	// The golden manifest does not bind the all-mode body.
+	gm, _ := policyGolden(t)
+	if _, _, err := VerifyEdgePolicy(gm.JWS, []TrustedKey{goldenKey(t, gm)}, raw, policyOptions(gm, policyIssuedAt)); reason(err) != "manifest binding" {
+		t.Fatalf("the golden manifest over the all-mode body: %v", err)
+	}
+}
+
+// allMembers matches the all-mode members, whatever their values, so the
+// tests splice their own in.
+var allMembers = []*regexp.Regexp{
+	regexp.MustCompile(`"fastpath_pilot_all":[^,]*,`),
+	regexp.MustCompile(`"fastpath_pilot_exclude":(\[[^\]]*\]|[^,]*),`),
+}
+
+// withAllMembers is the all-mode golden body with fastpath_pilot_all set to
+// all and fastpath_pilot_exclude to exclude (raw JSON each, "" removes it),
+// each in its canonical place, and the explicit list set to pilots.
+func withAllMembers(t *testing.T, raw []byte, all, exclude, pilots string) []byte {
+	t.Helper()
+	out := raw
+	for _, member := range allMembers {
+		if len(member.FindAll(out, -1)) != 1 {
+			t.Fatalf("the all-mode golden body has no single %s", member)
+		}
+		out = member.ReplaceAll(out, nil)
+	}
+	splice := func(before, name, value string) {
+		if value == "" {
+			return
+		}
+		at := []byte(`"` + before + `":`)
+		if bytes.Count(out, at) != 1 {
+			t.Fatalf("the body has no single %s", before)
+		}
+		out = bytes.Replace(out, at, append([]byte(`"`+name+`":`+value+`,`), at...), 1)
+	}
+	splice("fastpath_pilot_enabled", "fastpath_pilot_all", all)
+	splice("fastpath_pilot_regions", "fastpath_pilot_exclude", exclude)
+	from := []byte(`"fastpath_pilot_workspaces":[]`)
+	if bytes.Count(out, from) != 1 {
+		t.Fatal("the all-mode golden body has no single empty fastpath_pilot_workspaces")
+	}
+	return bytes.Replace(out, from, []byte(`"fastpath_pilot_workspaces":`+pilots), 1)
+}
+
+// excludeOf is n synthetic workspace ids, sorted, as a JSON array.
+func excludeOf(n int) string {
+	ids := make([]string, n)
+	for i := range ids {
+		ids[i] = fmt.Sprintf(`"ws-synthetic-x%02d"`, i)
+	}
+	return "[" + strings.Join(ids, ",") + "]"
+}
+
+// TestTheAllModeMembersAreOptional, the parser vectors of
+// docs/design/fast-admission-widening.md section 11 (PR 3): both absent is
+// the explicit list (the golden body today); fastpath_pilot_all only as
+// true, with fastpath_pilot_exclude, sorted, unique, 0 to 64 workspace ids,
+// and the explicit list empty. false, null, an exclude list without all,
+// all without one, an unsorted or repeated list, 65 entries, an id out of
+// form, an explicit list beside all and a member out of canonical order are
+// refused, as Python's parse_edge_policy refuses them
+// (test_the_all_mode_members_are_strict).
+func TestTheAllModeMembersAreOptional(t *testing.T) {
+	_, raw := allGolden(t)
+	absent := withAllMembers(t, raw, "", "", `["ws-synthetic-pilot-1","ws-synthetic-pilot-2"]`)
+	p, err := ParseEdgePolicy(absent)
+	if err != nil || p.PilotAll() || p.FastpathPilotAll != nil || p.FastpathPilotExclude != nil {
+		t.Fatalf("absent members: %v, %+v", err, p)
+	}
+	if !p.Covers("ws-synthetic-pilot-1") || p.Covers("ws-any-other") || !p.CoversAny() {
+		t.Fatalf("absent members read as the explicit list: %+v", p)
+	}
+	nobody := withAllMembers(t, raw, "", "", `[]`)
+	if p, err := ParseEdgePolicy(nobody); err != nil || p.CoversAny() || p.Covers("ws-synthetic-pilot-1") {
+		t.Fatalf("an empty explicit list covers nobody: %v, %+v", err, p)
+	}
+	for name, exclude := range map[string]string{"none excluded": `[]`, "one": `["ws-a"]`, "64": excludeOf(64)} {
+		got, err := ParseEdgePolicy(withAllMembers(t, raw, "true", exclude, `[]`))
+		if err != nil || !got.PilotAll() || !got.CoversAny() || !got.Covers("ws-synthetic-pilot-1") {
+			t.Errorf("%s: %v, %+v", name, err, got)
+		}
+		if name == "one" && got != nil && got.Covers("ws-a") {
+			t.Errorf("%s: covers the workspace it excludes", name)
+		}
+	}
+	for _, v := range []struct{ name, all, exclude, pilots string }{
+		{"false", "false", `[]`, `[]`},
+		{"false, no list", "false", "", `[]`},
+		{"null", "null", `[]`, `[]`},
+		{"null, no list", "null", "", `[]`},
+		{"an integer", "1", `[]`, `[]`},
+		{"a string", `"true"`, `[]`, `[]`},
+		{"an exclude list without all", "", `["ws-a"]`, `[]`},
+		{"an empty exclude list without all", "", `[]`, `[]`},
+		{"a null exclude list", "true", "null", `[]`},
+		{"all without an exclude list", "true", "", `[]`},
+		{"unsorted", "true", `["ws-b","ws-a"]`, `[]`},
+		{"duplicated", "true", `["ws-a","ws-a"]`, `[]`},
+		{"65 entries", "true", excludeOf(65), `[]`},
+		{"an id out of form", "true", `["ws a"]`, `[]`},
+		{"the wildcard", "true", `["*"]`, `[]`},
+		{"an explicit list beside all", "true", `[]`, `["ws-synthetic-pilot-1"]`},
+		{"an exclude list of objects", "true", `[{"id":"ws-a"}]`, `[]`},
+	} {
+		if got, err := ParseEdgePolicy(withAllMembers(t, raw, v.all, v.exclude, v.pilots)); err == nil {
+			t.Errorf("%s: accepted as %+v", v.name, got)
+		}
+	}
+	// Out of canonical order: fastpath_pilot_all after fastpath_pilot_enabled.
+	misplaced := bytes.Replace(withAllMembers(t, raw, "", `[]`, `[]`), []byte(`"fastpath_pilot_regions":`),
+		[]byte(`"fastpath_pilot_all":true,"fastpath_pilot_regions":`), 1)
+	if _, err := ParseEdgePolicy(misplaced); err == nil || !strings.Contains(err.Error(), "canonical") {
+		t.Errorf("a misplaced member: %v", err)
+	}
+	// The positive control for the refusals: the same splice, as published,
+	// is the golden body's own bytes.
+	if got := withAllMembers(t, raw, "true", `["ws-synthetic-excluded-a","ws-synthetic-excluded-b"]`, `[]`); !bytes.Equal(got, raw) {
+		t.Fatalf("the splice does not rebuild the golden body:\n%s\n%s", got, raw)
+	}
+}

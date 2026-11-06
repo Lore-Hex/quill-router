@@ -36,8 +36,9 @@ var (
 // the edge gates on before it would answer an authorize itself. Every
 // exported field is a wire field; ParseEdgePolicy refuses any other field, a
 // missing one (async_settle, its admission_workspaces and
-// admission_excluded_workspaces, fastpath_pilot_key_windows and
-// fastpath_edge_streams alone may be absent), a float, a duplicate key,
+// admission_excluded_workspaces, fastpath_pilot_key_windows,
+// fastpath_edge_streams, fastpath_pilot_all and fastpath_pilot_exclude
+// alone may be absent), a float, a duplicate key,
 // null anywhere but monitor_lookup_hash, and a body that is not its own
 // canonical encoding.
 type EdgePolicy struct {
@@ -80,6 +81,47 @@ type EdgePolicy struct {
 	// it (EdgeStreams) and still passes every stream until the increment
 	// that decides them.
 	FastpathEdgeStreams *bool `json:"fastpath_edge_streams,omitempty"`
+	// FastpathPilotAll is optional: true when the control plane's pilot
+	// covers every workspace but FastpathPilotExclude, in place of the
+	// explicit FastpathPilotWorkspaces, which is then empty
+	// (docs/design/fast-admission-widening.md sections 1 and 6.3). Absent
+	// is the explicit list, the only form of it: the publisher leaves the
+	// member out rather than write false, and false is refused. Go ships
+	// first (PilotAll, Covers); Python publishes it only once every node
+	// reads it.
+	FastpathPilotAll *bool `json:"fastpath_pilot_all,omitempty"`
+	// FastpathPilotExclude is optional: the workspaces all mode leaves out,
+	// sorted and unique, 0 to maxPilotExclude of them, present exactly
+	// when FastpathPilotAll is.
+	FastpathPilotExclude *[]string `json:"fastpath_pilot_exclude,omitempty"`
+}
+
+// maxPilotExclude bounds fastpath_pilot_exclude as Settings bounds
+// fastpath_pilot_exclude (docs/design/fast-admission-widening.md section
+// 11, PR 5).
+const maxPilotExclude = 64
+
+// PilotAll is the policy's fastpath_pilot_all, false when the publisher
+// does not carry it.
+func (p *EdgePolicy) PilotAll() bool {
+	return p.FastpathPilotAll != nil && *p.FastpathPilotAll
+}
+
+// Covers is whether the pilot covers the workspace, Python's
+// fastpath_covers: in all mode, any workspace fastpath_pilot_exclude does
+// not name; otherwise one fastpath_pilot_workspaces names (empty is
+// nobody, unlike stage_d's set).
+func (p *EdgePolicy) Covers(workspace string) bool {
+	if p.PilotAll() {
+		return !slices.Contains(*p.FastpathPilotExclude, workspace)
+	}
+	return slices.Contains(p.FastpathPilotWorkspaces, workspace)
+}
+
+// CoversAny is whether the pilot covers any workspace at all: all mode, or
+// an explicit list that names one. The edge reads it before any key.
+func (p *EdgePolicy) CoversAny() bool {
+	return p.PilotAll() || len(p.FastpathPilotWorkspaces) > 0
 }
 
 // EdgeStreams is the policy's fastpath_edge_streams, false when the
@@ -305,6 +347,9 @@ func (p *EdgePolicy) validate() error {
 	if s := p.FastpathEdgeStreams; s != nil && !*s {
 		return errors.New("fastpath_edge_streams is absent when off, never false")
 	}
+	if err := p.validatePilotAll(); err != nil {
+		return err
+	}
 	if a := p.AsyncSettle; a != nil {
 		if err := a.validate(); err != nil {
 			return err
@@ -318,6 +363,37 @@ func (p *EdgePolicy) validate() error {
 	for _, region := range regions {
 		if !identity.MatchString(region) {
 			return fmt.Errorf("configured_regions: %q", region)
+		}
+	}
+	return nil
+}
+
+// validatePilotAll holds fastpath_pilot_all and fastpath_pilot_exclude to
+// one encoding per answer, as parse_edge_policy does: all present only as
+// true; the exclude list present exactly with it, sorted, unique, 0 to
+// maxPilotExclude workspace ids; and the explicit list empty with it,
+// since all mode reads none of it.
+func (p *EdgePolicy) validatePilotAll() error {
+	all, exclude := p.FastpathPilotAll, p.FastpathPilotExclude
+	switch {
+	case all != nil && !*all:
+		return errors.New("fastpath_pilot_all is absent when off, never false")
+	case all == nil && exclude != nil:
+		return errors.New("fastpath_pilot_exclude without fastpath_pilot_all")
+	case all == nil:
+		return nil
+	case exclude == nil:
+		return errors.New("fastpath_pilot_all without fastpath_pilot_exclude")
+	case len(p.FastpathPilotWorkspaces) != 0:
+		return errors.New("fastpath_pilot_workspaces must be empty with fastpath_pilot_all")
+	case len(*exclude) > maxPilotExclude:
+		return fmt.Errorf("fastpath_pilot_exclude must name at most %d workspaces", maxPilotExclude)
+	case !sortedUnique(*exclude):
+		return errors.New("fastpath_pilot_exclude must be sorted and unique")
+	}
+	for _, value := range *exclude {
+		if !workspaceID.MatchString(value) {
+			return fmt.Errorf("fastpath_pilot_exclude: %q", value)
 		}
 	}
 	return nil

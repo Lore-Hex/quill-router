@@ -9,12 +9,23 @@ import (
 
 // Admitter takes an authorize to its shard's owner and a refund of the hold
 // it made: the node's own front door (frontdoor.FrontDoor), in the edge's
-// process. The edge calls neither yet; it will admit the requests it
-// decides (E2), as Python's pilot does through the front door's HTTP
-// surface.
+// process, which the decide path admits the requests it decides through,
+// as Python's pilot does through the front door's HTTP surface. Enabled is
+// the front door's copy of the switch, which the decide pipeline reads as
+// a decision gate (PassWorkspaceNotEnabled) before it would admit.
 type Admitter interface {
 	Authorize(ctx context.Context, a frontdoor.AuthorizeOf) frontdoor.Authorized
 	Refund(ctx context.Context, r frontdoor.RefundOf) frontdoor.TerminalAnswer
+	Enabled(workspace string) bool
+}
+
+// enabledOf is the switch copy of an admitter for DecideInputs.Enabled: nil
+// for none bound.
+func enabledOf(a Admitter) func(string) bool {
+	if a == nil {
+		return nil
+	}
+	return a.Enabled
 }
 
 // LateAdmitter holds the edge's admitter, bound once it exists: a process
