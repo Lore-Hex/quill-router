@@ -405,7 +405,7 @@ func (e *Edge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	r = r.WithContext(withCaller(r))
 	if !e.tokenOK(r) {
-		e.proxy.ServeHTTP(w, r)
+		e.forward(w, r, nil)
 		return
 	}
 	// An authorize to compare, when the shadow is on and a snapshot held;
