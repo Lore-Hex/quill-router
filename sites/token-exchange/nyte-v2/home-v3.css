@@ -176,3 +176,4 @@ main .tags{gap:8px}
   [data-nyte-page="home"] .site-footer{padding-inline:20px}
   .film .play{padding-bottom:4%}
 }
+@media (max-width:600px){.film .play span{height:40px;padding:0 14px;gap:8px;font-size:15px}}
