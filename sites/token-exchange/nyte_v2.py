@@ -224,6 +224,15 @@ def uses_brand_v3(page: str) -> bool:
     return os.environ.get("NYTE_BRAND_V3_PREVIEW") == "1" or page in BRAND_V3_PAGES
 
 
+def legacy_share_image_used(market: dict) -> bool:
+    """Whether any built page still points at the pre-v3 og-{slug}.png."""
+    if not uses_nyte(market) or not (HERE / f"social-images/og-v3-{market['slug']}.png").exists():
+        return True
+    if market["slug"] == "new-york":
+        return not all(uses_brand_v3(page) for page in PAGES)
+    return not uses_brand_v3("home")
+
+
 def brand_v3_share_image_used(slug: str) -> bool:
     """New York's image is shared by all its pages; a city's only by its home page."""
     if slug == "new-york":
@@ -325,16 +334,25 @@ def render_nyte(
         + (' aria-current="page"' if other["slug"] == market["slug"] else '')
         + '>' + html.escape(other["region"]) + '</a>' for other in load_markets()
     )
+    home_v3 = page == "home" and uses_brand_v3("home")
+    home_head = ""
     if content is None:
-        content = (SOURCE / f"{page}.html").read_text().replace("{{index_panel}}", index_panel())
+        body = "home-v3.html" if home_v3 else f"{page}.html"
+        content = (SOURCE / body).read_text().replace("{{index_panel}}", index_panel())
+    if home_v3:
+        content = content.replace("{{band_purple}}", band_svg("band-purple.svg"))
+        home_version = hashlib.sha256((SOURCE / "home-v3.css").read_bytes()).hexdigest()[:12]
+        home_head = f'<link rel="stylesheet" href="/assets/nyte-v2/home-v3.css?v={home_version}">'
     if city:
-        content = city_home(content, market)
+        content = city_home(content, market, v3=home_v3)
     if page == "accelerator":
         content = content.replace("{{facilities}}", facility_cards()).replace("{{facility_rate}}", FACILITY_RATE)
     if uses_brand_v3(page):
         brand_version = hashlib.sha256((SOURCE / "brand-v3.css").read_bytes()).hexdigest()[:12]
         extra_head += f'<link rel="stylesheet" href="/assets/nyte-v2/brand-v3.css?v={brand_version}">'
         extra_head += '<link rel="icon" href="/assets/nyte-v2/logos/favicon.svg" type="image/svg+xml">'
+    # The v3 home sheet loads after brand-v3.css.
+    extra_head += home_head
     result = (SOURCE / "shell.html").read_text()
     evidence_version = hashlib.sha256((HERE / "live-evidence.js").read_bytes()).hexdigest()[:12]
     for key, value in dict(domain=market["domain"], market=market["slug"], region=html.escape(market.get("logo_place", market["region"])), brand_class=" brand-one" if market.get("logo_one_line") else "", exchange_name=html.escape(market["name"]), host_brand="" if city or page == "home" else host_brand_script(page), nav=render_nav(), buyer_deck=(SOURCE / "buyer-deck.html").read_text() if page in {"home", "api"} else "", extra_head=extra_head, image_url=html.escape(image_url, quote=True), title=html.escape(title), description=html.escape(description, quote=True), path=path, page=page, version=version, content=content, markets=market_links, evidence_script='<script src="/assets/nyte-v2/live-evidence.js?v=' + evidence_version + '" defer></script>' if page == "api" else "").items():
@@ -354,18 +372,35 @@ def render_nyte(
         return 'href="' + html.escape(urlunsplit(url._replace(query=urlencode(query))), quote=True) + '"'
     return re.sub(r'href="([^"]+)"', tracked, result)
 
-def city_home(content: str, market: dict) -> str:
+def band_svg(name: str) -> str:
+    """Inline a kit Band file, stretched across the page with its 24 px pitch kept (GFX-01)."""
+    svg = (SOURCE / name).read_text().strip()
+    svg = re.sub(r'\s(width|height|role|aria-label)="[^"]*"', "", svg, count=4)
+    return svg.replace("<svg ", '<svg class="v3-band" preserveAspectRatio="none" aria-hidden="true" focusable="false" ', 1)
+
+
+def city_home(content: str, market: dict, v3: bool = False) -> str:
     """New York's home page with the city's own workload cards.
 
     The routing example drops New York's US rule: a city name never implies where a route runs."""
     start = content.index("<!-- workloads -->")
     end = content.index("<!-- /workloads -->", start) + len("<!-- /workloads -->")
     tags = {"CONFIDENTIAL": "cc", "ZDR": "zdr"}
-    cards = "".join(
-        f'<div class="card"><h3>{html.escape(card["title"])}</h3><p class="q">“{html.escape(card["prompt"])}”</p>'
-        '<div class="tags">' + "".join(f'<span class="tag {tags[t]}">{t}</span>' for t in card["tags"]) + "</div></div>"
-        for card in CITIES[market["slug"]]["workloads"]
-    )
+    def chips(card: dict) -> str:
+        return '<div class="tags">' + "".join(f'<span class="tag {tags[t]}">{t}</span>' for t in card["tags"]) + "</div>"
+
+    workloads = CITIES[market["slug"]]["workloads"]
+    if v3:
+        cards = "".join(
+            f'<li><span class="n" aria-hidden="true">{n:02d}</span><h3>{html.escape(card["title"])}</h3>'
+            f'<p class="q">“{html.escape(card["prompt"])}”</p>{chips(card)}</li>'
+            for n, card in enumerate(workloads, 1)
+        )
+    else:
+        cards = "".join(
+            f'<div class="card"><h3>{html.escape(card["title"])}</h3><p class="q">“{html.escape(card["prompt"])}”</p>{chips(card)}</div>'
+            for card in workloads
+        )
     content = content[:start] + cards + content[end:]
     return content.replace('<span class="tag us">US</span>', "")
 
@@ -379,7 +414,7 @@ def build_nyte(output: Path) -> None:
     shutil.copytree(SOURCE / "assets", assets, dirs_exist_ok=True)
     # NYTE can publish its approved evidence renderer without changing other markets.
     shutil.copyfile(HERE / "live-evidence.js", assets / "live-evidence.js")
-    for name in ("styles.css", "app.js", "fonts.css", "providers.css", "cowork.css", "buy.css", "buy.js", "manage.js", "accelerator.css", "brand-v3.css"):
+    for name in ("styles.css", "app.js", "fonts.css", "providers.css", "cowork.css", "buy.css", "buy.js", "manage.js", "accelerator.css", "brand-v3.css", "home-v3.css"):
         shutil.copyfile(SOURCE / name, assets / name)
     for page, entry in PAGES.items():
         if page == "home" or entry.get("builder"):

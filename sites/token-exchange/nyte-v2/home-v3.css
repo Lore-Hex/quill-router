@@ -1,0 +1,178 @@
+/* NYTE home, brand v3 design pass (HANDOFF-nyte-home-v3-2026-11-06). Loads after
+   brand-v3.css, only when home is switched on in nyte-brand-v3.json. */
+main .wrap{max-width:1440px;padding:0 64px}
+main section{padding:128px 0}
+main h1,main h2,main h3,main p,main blockquote,main figure{margin:0}
+main h2{font-size:clamp(40px,5vw,72px);line-height:1;font-weight:300;letter-spacing:-.015em}
+main .lede{font-size:22px;line-height:1.45;max-width:640px;color:inherit}
+.v3-bar{display:block;width:40px;height:4px;background:var(--ink)}
+.v3-label,.v3-press figcaption{font:500 15px/1.2 var(--font-condensed);letter-spacing:.1em;text-transform:uppercase;font-style:normal}
+
+/* Kit buttons */
+main .btn{min-height:48px;height:48px;padding:0 22px;gap:10px;border:1.5px solid var(--ink);background:transparent;color:var(--ink);font:500 16px/1 var(--font-sans)}
+main .btn:hover{background:var(--ink);color:var(--cream);border-color:var(--ink)}
+main .btn-primary{background:var(--orange);border-color:var(--ink)}
+main .btn svg,.film .play svg{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5}
+main .btns{gap:12px}
+
+/* Kit chips: one outline chip */
+main .tags .tag,main .v3-route-rules .tag{height:auto;padding:6px 9px;background:transparent;border:1.5px solid var(--ink);color:var(--ink);font:500 14px/1 var(--font-mono);letter-spacing:.04em}
+main .tags{gap:8px}
+
+/* Hero */
+.v3-hero{padding:112px 0 96px;text-align:center}
+.v3-hero .wrap{display:flex;flex-direction:column;align-items:center}
+.v3-hero .v3-bar{background:var(--purple)}
+.v3-hero h1{margin-top:32px;max-width:1040px;font-size:clamp(48px,7.2vw,104px);line-height:.96;font-weight:300;letter-spacing:-.02em}
+.v3-hero h1 em{color:var(--deep-purple)}
+.v3-hero .lede{margin-top:40px}
+.v3-hero .btns{margin-top:40px;justify-content:center}
+.v3-band{display:block;width:100%;height:120px}
+
+/* Walkthrough */
+.v3-walk{background:var(--ink);padding:45px 0}
+.v3-walk .film{margin:0 auto;max-width:1120px;border:0;border-radius:0;box-shadow:none}
+.film .play{place-items:center;padding:0;background:transparent}
+.film .play span{gap:12px;height:64px;padding:0 28px;border:1.5px solid var(--cream);border-radius:0;background:var(--ink);color:var(--cream);font:500 18px/1 var(--font-sans);backdrop-filter:none}
+.film .play:hover span{background:var(--cream);color:var(--ink)}
+
+/* Press */
+.v3-quotes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px}
+.v3-quotes figure{border-top:2.5px solid var(--ink);padding-top:20px;display:flex;flex-direction:column;gap:20px}
+.v3-quotes blockquote{font-size:28px;line-height:1.25;font-weight:300}
+
+/* Case study */
+.v3-case{background:var(--ink);color:var(--cream)}
+.v3-case .wrap{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;align-items:start}
+.v3-case-figure{grid-column:span 6}
+.v3-case-figure .v3-bar{background:var(--lime);margin-bottom:12px}
+.v3-big{margin-top:40px;font-size:clamp(80px,11.6vw,168px);line-height:.9;font-weight:300;letter-spacing:-.03em;color:var(--lime);font-variant-numeric:tabular-nums}
+.v3-case-figure .lede{margin-top:24px}
+.v3-case-quote{grid-column:8/span 5;padding-top:72px;display:flex;flex-direction:column;gap:28px;align-items:flex-start}
+.v3-case-quote blockquote{font-size:40px;line-height:1.15;font-weight:300}
+.v3-case-quote cite{color:var(--ink-2-dark)}
+.v3-case .btn{border-color:var(--cream);color:var(--cream)}
+.v3-case .btn:hover{background:var(--cream);color:var(--ink);border-color:var(--cream)}
+
+/* Three layers */
+.v3-layers{background:var(--purple);color:var(--ink)}
+.v3-layers .wrap{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;grid-template-areas:"head head head head head . route route route route route route" "cta cta cta cta cta . route route route route route route" "list list list list list list list list list list list list"}
+.v3-layers-head{grid-area:head;display:flex;flex-direction:column;gap:32px;align-items:flex-start}
+.v3-layers-cta{grid-area:cta;justify-self:start;align-self:start;margin-top:32px}
+.v3-route{grid-area:route;align-self:start;background:var(--cream);border:1.5px solid var(--ink)}
+.v3-route-req{display:flex;gap:14px;padding:18px 20px;border-bottom:2.5px solid var(--ink);font:400 15px/1.5 var(--font-mono)}
+.v3-route-req b{font-weight:500}
+.v3-route-rules{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding:14px 20px;border-bottom:1.5px solid var(--stone)}
+.v3-route-row{display:flex;align-items:center;gap:12px;padding:16px 20px;border-bottom:1.5px solid var(--stone)}
+.v3-route-row .m{flex:1;font-size:17px;font-weight:500}
+.v3-route-row small{margin-left:8px;font:400 15px var(--font-mono);color:var(--ink-2)}
+.v3-route-row.win{padding:18px 20px;background:var(--yellow-tint);border-bottom-color:var(--ink)}
+.v3-chip{display:inline-flex;align-items:center;gap:6px;padding:6px 9px;border:1.5px solid var(--ink);font:500 14px/1 var(--font-mono);letter-spacing:.04em;white-space:nowrap}
+.v3-chip svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2}
+.v3-chip.no{background:var(--stone);border-color:var(--stone);color:var(--ink-2)}
+.v3-chip.ok{background:var(--lime);border-color:var(--lime)}
+.v3-route-proof{padding:14px 20px;font:400 15px/1.5 var(--font-mono);color:var(--ink-2);overflow-wrap:anywhere}
+.v3-layer-list{grid-area:list;list-style:none;margin:96px 0 0;padding:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px}
+.v3-layer-list li{display:grid;grid-template-columns:56px 1fr;column-gap:8px;border-top:2.5px solid var(--ink);padding-top:20px}
+.v3-layer-list .n{font-size:48px;line-height:1;font-weight:300}
+.v3-layer-list h3,.v3-team-list h3{font-size:24px;line-height:1.2;font-weight:500;letter-spacing:0}
+.v3-layer-list p{margin-top:10px;font-size:17px;line-height:1.55}
+.v3-ladder{display:flex;flex-direction:column;gap:6px;width:160px;margin-top:20px}
+.v3-ladder i{display:block;height:6px;background:var(--lilac)}
+.v3-ladder i.on{background:var(--ink)}
+
+/* Stats */
+.v3-stats{padding:128px 0 112px}
+.v3-stats .stats{gap:24px}
+.v3-stats .stat,.v3-stats .stat+.stat{padding:0;border-left:0;margin:0}
+.v3-stats .stat .v{margin-top:28px;font-size:96px;line-height:1;font-weight:300;letter-spacing:-.02em;white-space:nowrap}
+.v3-stats .stat .l{margin-top:16px;max-width:260px;font-size:17px;line-height:1.55;color:var(--ink)}
+.v3-labs{margin-top:80px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:16px;padding:18px 0;border-top:1.5px solid var(--ink);border-bottom:1.5px solid var(--ink);font:500 15px var(--font-mono);letter-spacing:.02em}
+
+/* Teams */
+.v3-teams{background:var(--sky)}
+.v3-teams h2{margin-top:32px;max-width:980px}
+.v3-team-list{list-style:none;margin:64px 0 0;padding:0;border-top:2.5px solid var(--ink)}
+.v3-team-list li{display:grid;grid-template-columns:64px 300px minmax(0,1fr) auto;align-items:baseline;column-gap:12px;padding:24px 0;border-bottom:1.5px solid var(--ink)}
+.v3-team-list .n{font:400 15px var(--font-mono)}
+.v3-team-list .q{font-size:19px;line-height:1.45}
+.v3-team-list .tags{justify-content:flex-end;flex-wrap:nowrap}
+
+/* Closing CTA */
+.v3-cta{background:var(--lime)}
+.v3-cta .wrap{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;align-items:end}
+.v3-cta .wrap>div:first-child{grid-column:span 7}
+.v3-cta h2{margin-top:32px}
+.v3-cta .lede{margin-top:24px}
+.v3-cta .btns{grid-column:8/span 5;justify-content:flex-end}
+
+@media (max-width:1100px){
+  .v3-case .wrap{grid-template-columns:1fr}
+  .v3-case-figure,.v3-case-quote{grid-column:1}
+  .v3-case-quote{padding-top:56px}
+  .v3-layers .wrap{grid-template-columns:1fr;grid-template-areas:"head" "list" "route" "cta"}
+  .v3-layer-list{margin-top:48px}
+  .v3-route{margin-top:48px}
+  .v3-stats .stats{grid-template-columns:1fr 1fr;row-gap:48px}
+  .v3-stats .stat .v{font-size:72px}
+  .v3-team-list li{grid-template-columns:48px minmax(0,1fr);row-gap:10px}
+  .v3-team-list .q,.v3-team-list .tags{grid-column:2}
+  .v3-team-list .tags{justify-content:flex-start;flex-wrap:wrap}
+  .v3-cta .wrap{grid-template-columns:1fr;row-gap:32px}
+  .v3-cta .wrap>div:first-child,.v3-cta .btns{grid-column:1;justify-content:flex-start}
+}
+@media (max-width:600px){
+  main .wrap{padding:0 20px}
+  main section{padding:72px 0}
+  main .lede{font-size:20px}
+  .v3-hero{padding:56px 0 48px;text-align:left}
+  .v3-hero .wrap{align-items:flex-start}
+  .v3-hero h1{margin-top:24px;font-size:48px}
+  .v3-hero .lede,.v3-hero .btns{margin-top:24px}
+  main .btns{flex-direction:column;align-items:stretch;width:100%}
+  main .btns .btn{flex:none;width:100%;justify-content:center;font-size:16px;padding:0 16px}
+  .v3-band{height:96px}
+  .v3-walk{padding:48px 0}
+  .film .play span{height:48px;padding:0 16px;font-size:16px}
+  .v3-quotes{grid-template-columns:1fr;gap:32px}
+  .v3-quotes figure{padding-top:16px;gap:14px}
+  .v3-quotes blockquote{font-size:24px}
+  .v3-big{margin-top:28px}
+  .v3-case-quote{padding-top:48px;gap:20px}
+  .v3-case-quote blockquote{font-size:28px;line-height:1.2}
+  .v3-layer-list{grid-template-columns:1fr;gap:28px;margin-top:40px}
+  .v3-layer-list li{grid-template-columns:40px 1fr;padding-top:16px}
+  .v3-layer-list .n{font-size:32px}
+  .v3-route-req{display:block;padding:14px 16px}
+  .v3-route-req b{display:block}
+  .v3-route-rules{padding:12px 16px}
+  .v3-route-row,.v3-route-row.win{flex-direction:column;align-items:flex-start;gap:8px;padding:14px 16px}
+  .v3-route-proof{padding:12px 16px}
+  .v3-stats{padding:72px 0 64px}
+  .v3-stats .stats{gap:40px 16px}
+  .v3-stats .stat .v{margin-top:18px;font-size:56px}
+  .v3-stats .stat .v span{font-size:32px}
+  .v3-stats .stat .l{margin-top:10px}
+  .v3-labs{margin-top:48px;justify-content:flex-start;gap:10px 20px;padding:14px 0}
+  .v3-teams h2,.v3-cta h2{margin-top:24px}
+  .v3-team-list{margin-top:40px}
+  .v3-team-list li{grid-template-columns:40px minmax(0,1fr);padding:20px 0}
+  .v3-team-list .q{font-size:18px}
+  .v3-cta .lede{margin-top:16px}
+}
+
+/* Fixes after the first check. The poster has content in its centre, so the
+   play button sits low as before; the fee word steps down so four stats fit. */
+.film .play{place-items:end center;padding:0 0 5%}
+.v3-stats .stat .v span{font-size:.5em}
+[data-nyte-page="home"] header .wrap{max-width:1440px;padding:0 64px}
+[data-nyte-page="home"] .site-footer{padding-inline:max(64px,calc((100% - 1312px)/2))}
+@media (max-width:900px){
+  .v3-quotes{grid-template-columns:1fr;gap:32px}
+  .v3-layer-list{grid-template-columns:1fr;gap:28px}
+}
+@media (max-width:600px){
+  [data-nyte-page="home"] header .wrap{padding:0 20px}
+  [data-nyte-page="home"] .site-footer{padding-inline:20px}
+  .film .play{padding-bottom:4%}
+}

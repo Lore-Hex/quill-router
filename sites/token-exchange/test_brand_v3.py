@@ -27,6 +27,21 @@ class BrandV3Tests(unittest.TestCase):
         self.assertIn('<link rel="icon" href="/assets/nyte-v2/logos/favicon.svg"', page)
         self.assertIn('/assets/og-v3-new-york.png?v=', page)
 
+    def test_v3_home_keeps_actions_and_city_workloads(self):
+        from nyte_v2 import load_markets
+        with mock.patch.dict(os.environ, {"NYTE_BRAND_V3_PREVIEW": "1"}):
+            page = render_nyte("home")
+            london = render_nyte("home", market=next(m for m in load_markets() if m["slug"] == "london"))
+        self.assertIn('/assets/nyte-v2/home-v3.css?v=', page)
+        self.assertIn('class="v3-band" preserveAspectRatio="none"', page)
+        for hook in ('id="film"', 'id="filmVid"', 'id="filmPlay"', 'href="/buy"', 'href="/confidential#start"', 'data-catalog-models', 'data-catalog-providers'):
+            self.assertIn(hook, page)
+        self.assertEqual(page.count('data-open="deck"'), 2)
+        self.assertNotIn('/assets/nyte-v2/press/', page)
+        self.assertIn('<ol class="v3-team-list">', london)
+        self.assertNotIn('<div class="card">', london)
+        self.assertNotIn('class="tag us"', london)
+
     def test_listed_pages_exist(self):
         self.assertLessEqual(nyte_v2.BRAND_V3_PAGES, set(PAGES))
 
