@@ -1728,7 +1728,9 @@ counts, per snapshot and policy digest:
   passed at any step but its in-flight gate (after the gate let it in:
   `owner.*`, `budget.spent`, a window, `compose.refused`, `insert.*`; or
   before it, when the
-  decide path's own decision passed what the shadow's admits), or
+  decide path's own decision passed what the shadow's admits, such as
+  `decide.off`, or `workspace.not_enabled` when the node's copy of the
+  switch turns the workspace off), or
   `inflight_unchecked.not_decided` when no decide path ran (the shadow
   alone). Go's gate holds a slot only while the decide path decides a
   request (decision 14: from the admit to the answer or the pass); a pass
@@ -1742,7 +1744,11 @@ counts, per snapshot and policy digest:
   path was switched off for a workspace whose requests the pipeline would
   admit: every one passed at `owner.off`, so Go's count of its key stayed
   near zero while a Python instance's reached the limit, and one request
-  paged. With the owner off, every such 429 would page.
+  paged. With the owner off, every such 429 would page. Now that the node
+  reads the switch itself (`docs/design/fast-admission-widening.md`
+  §6.1), such a workspace's requests pass at `workspace.not_enabled`,
+  before the gate, and the same 429 is
+  `inflight_unchecked.workspace.not_enabled`.
 - `stale.<cache>`: Go would pass for `cache.<cache>`.
 - `python_unavailable` (decision 1's 503: Python's own insert outcome) and
   `python_error.<status>` (any other 5xx): not refusals on the facts.

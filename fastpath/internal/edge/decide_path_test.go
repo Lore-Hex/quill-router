@@ -545,7 +545,9 @@ func (c *orderedShadowCache) Lookup(hash string, at time.Time) gwstate.Read {
 // matching in-flight gate is passed.inflight.key, not a would-admit page;
 // an owner.busy or owner.off pass that Python's gate refuses (Go's slot given
 // back at the pass: its count of the key is zero while Python answers) is
-// inflight_unchecked.<pass>, not a page either.
+// inflight_unchecked.<pass>, not a page either, and so is a
+// workspace.not_enabled pass, before the gate (no slot taken, no owner
+// asked).
 // Other refusals still page when the shadow holds a warm key, after an
 // owner pass too. If Python's
 // enforcing eviction wins the race with the shadow lookup, the shadow must
@@ -580,6 +582,10 @@ func TestPythonsInFlightRefusalOfAnInFlightPassIsAPass(t *testing.T) {
 			ClassWouldAdmit + ".402.payment_required", true, false},
 		{"owner_off_ingress_limiter", false, 429, errorBody(429, "rate_limited", "Rate limit exceeded"), PassOwnerOff,
 			ClassWouldAdmit + ".429.rate_limited", true, false},
+		{"workspace_not_enabled", false, 429, inFlight, PassWorkspaceNotEnabled,
+			ClassInFlightUnchecked + "." + PassWorkspaceNotEnabled, false, false},
+		{"workspace_not_enabled_payment_required", false, 402, errorBody(402, "payment_required", "Insufficient credits"),
+			PassWorkspaceNotEnabled, ClassWouldAdmit + ".402.payment_required", true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var mu sync.Mutex
@@ -621,6 +627,13 @@ func TestPythonsInFlightRefusalOfAnInFlightPassIsAPass(t *testing.T) {
 				h.admitter.authorize = func(context.Context, frontdoor.AuthorizeOf) frontdoor.Authorized {
 					return frontdoor.Authorized{Status: owner}
 				}
+				if tc.pass == PassWorkspaceNotEnabled {
+					// The node's copy of the switch turns the workspace off:
+					// a pass before the gate, with no slot taken.
+					h.admitter.mu.Lock()
+					h.admitter.off = map[string]bool{c.Facts.Key.WorkspaceID: true}
+					h.admitter.mu.Unlock()
+				}
 			}
 			answer := answerWith(tc.status, tc.body, "Retry-After", "1")
 			var during atomic.Int64 // Go's count of the key while Python answers
@@ -650,6 +663,9 @@ func TestPythonsInFlightRefusalOfAnInFlightPassIsAPass(t *testing.T) {
 			// which is what makes Python's in-flight 429 unchecked.
 			if !tc.atLimit && during.Load() != 0 {
 				t.Errorf("Go held %d slots of the key while Python answered a %s pass", during.Load(), tc.pass)
+			}
+			if asked, _, _ := h.admitter.seen(); tc.pass == PassWorkspaceNotEnabled && len(asked) != 0 {
+				t.Errorf("a workspace the switch copy turns off asked the owner %d times", len(asked))
 			}
 			// The period's line (WaitDecideShadow logs it) counts a
 			// would-admit and nothing else: its would_admit_python_refused is
