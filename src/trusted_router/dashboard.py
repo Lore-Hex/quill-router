@@ -173,6 +173,7 @@ _MODEL_DISCOVERY_PRIORITY_INDEX = {
     model_id: index for index, model_id in enumerate(MODEL_DISCOVERY_PRIORITY)
 }
 SEO_CORE_PATHS: tuple[str, ...] = (
+    "/abliterated-deepseek",
     "/azure-openai-alternative",
     "/deepseek-api-privacy",
     "/glm-5-api",
@@ -842,6 +843,24 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
         ),
     ),
+    "abliterated-deepseek": PublicPage(
+        template="public/seo_abliterated_deepseek.html",
+        title="Abliterated DeepSeek API: Uncensored, Private Inference",
+        description=(
+            "Try dealignai's abliterated DeepSeek V4.1 Flash through TrustedRouter. "
+            "One API key, live pricing, streaming, and Maple's dedicated Confidential route."
+        ),
+        faq_items=(
+            ("Which abliterated DeepSeek model is this?",
+             "The model ID is dealignai/deepseek-v4.1-flash-1017-uncensored. It is a third-party checkpoint by dealignai, distinct from stock DeepSeek and from the separately named Abliteration provider's models."),
+            ("Is abliterated DeepSeek the same as stock DeepSeek?",
+             "No. The publisher describes a weight-level edit to refusal behavior, not a system-prompt wrapper. Evaluate the modified checkpoint separately for your own tasks; lower refusal rates do not prove better accuracy."),
+            ("Which API features can I use?",
+             "The current Maple integration supports text Chat Completions, streaming and non-streaming, and cached-input billing. Images, tools, structured-output schemas and BYOK are not currently advertised on this route. Check the model page for current availability and pricing."),
+            ("How do I keep the request on the Confidential route?",
+             "Use provider.only=[\"maple\"], provider.allow_fallbacks=false and provider.min_privacy=\"confidential\". The request fails closed if no qualified route is available. Account and billing records are separate from prompt and output retention."),
+        ),
+    ),
     "deepseek-api-privacy": PublicPage(
         template="public/seo_deepseek_api_privacy.html",
         title="DeepSeek API Privacy & Zero Data Retention",
@@ -964,8 +983,8 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         template="public/seo_best_llm_router.html",
         title="Best AI Router & LLM Gateway 2026: Providers Compared",
         description=(
-            "Compare AI routers and LLM gateways for model choice, failover, cost, and "
-            "verifiable privacy: TrustedRouter, OpenRouter, LiteLLM, Portkey, and Requesty."
+            "Choose an AI router by cost, failover, model choice and privacy. Compare "
+            "hosted gateways with self-hosted proxies, then test your workload with one API."
         ),
         faq_items=(
             (
@@ -2183,8 +2202,8 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         og_card="us-ai-models.png",
         title="US AI Models & US-Operated Providers",
         description=(
-            "Which AI models come from US labs, which providers are operated by US "
-            "companies, and how to require US-operated routes on a request. Both facts, kept apart."
+            "Find open-weight AI models from US labs and compare US-operated providers. "
+            "See the Liberty shortlist and routing controls; operator country is not data residency."
         ),
         og_alt="US AI model origins and US-operated provider routes on TrustedRouter",
         faq_items=(
