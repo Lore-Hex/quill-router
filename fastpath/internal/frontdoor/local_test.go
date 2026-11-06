@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -274,6 +277,64 @@ func TestTheOwnerSealsWhatItAdmits(t *testing.T) {
 		if got := f.local.Authorize(bad); got.Status != Invalid {
 			t.Fatalf("%+v: %+v", bad, got)
 		}
+	}
+}
+
+// TestAStreamsCeilingReachesItsOwner: an authorize's ceiling reaches the
+// owner over the network and in the process
+// (docs/design/fast-admission-streams.md section 12). A stream's ceiling
+// above its hold is admitted, with the hold alone under the lease and in the
+// envelope; one below the hold, or on a hold that is not a stream, the owner
+// refuses, Invalid.
+func TestAStreamsCeilingReachesItsOwner(t *testing.T) {
+	for _, network := range []bool{true, false} {
+		t.Run(fmt.Sprint("network=", network), func(t *testing.T) {
+			ctx := context.Background()
+			f := newLocal(t)
+			var owners Owners = Direct{"node-a": f.local}
+			address := "node-a"
+			if network {
+				srv := httptest.NewServer(Handler(nil, f.local))
+				t.Cleanup(srv.Close)
+				owners, address = HTTPOwners{Client: &http.Client{Timeout: 5 * time.Second}, Scheme: "http"},
+					srv.Listener.Addr().String()
+			}
+			authorize := func(req OwnerAuthorize) OwnerAdmitted {
+				t.Helper()
+				for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+					got, err := owners.Authorize(ctx, address, req)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if got.Status != Busy {
+						return got
+					}
+				}
+				t.Fatal("no lease came to admit the request")
+				return OwnerAdmitted{}
+			}
+			got := authorize(OwnerAuthorize{Workspace: "ws-1", Estimate: 40, Stream: true, Boot: []byte("boot"),
+				Ceiling: 90})
+			if got.Status != Admitted {
+				t.Fatalf("a stream with a ceiling above its hold: %+v", got)
+			}
+			e, err := Open(key, got.Envelope)
+			if err != nil || e.Estimate != 40 || !e.Stream {
+				t.Fatalf("the envelope %+v: %v", e, err)
+			}
+			if l, ok := f.owner.Lease(e.Lease); !ok || l.Books().Held != 40 {
+				t.Fatalf("the hold under its lease: %v", ok)
+			}
+			for _, bad := range []OwnerAuthorize{
+				{Workspace: "ws-1", Estimate: 40, Stream: true, Boot: []byte("boot"), Ceiling: 39},
+				{Workspace: "ws-1", Estimate: 40, Boot: []byte("boot"), Ceiling: 90},
+				{Workspace: "ws-1", Estimate: 40, Stream: true, Boot: []byte("boot"), Ceiling: -1},
+			} {
+				if got := authorize(bad); got.Status != Invalid {
+					t.Fatalf("%+v: %+v", bad, got)
+				}
+			}
+		})
 	}
 }
 

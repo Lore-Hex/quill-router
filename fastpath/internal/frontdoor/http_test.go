@@ -134,23 +134,31 @@ func TestANodeServesItsGatewaysOverTheNetwork(t *testing.T) {
 
 // TestAGatewaysAuthorizeCrossesTheNetworkWhole: a gateway's authorize over
 // the network reaches its shard's owner with all it says, the boot's
-// declaration of the heartbeat at stream open too.
+// declaration of the heartbeat at stream open and a stream's ceiling too.
 func TestAGatewaysAuthorizeCrossesTheNetworkWhole(t *testing.T) {
 	f := newDoor(t, 1)
 	f.owners.admitted[0] = OwnerAdmitted{Status: Admitted, Envelope: "sealed", EndOfLife: start.Add(time.Hour)}
 	srv := httptest.NewServer(Handler(f.door, nil))
 	t.Cleanup(srv.Close)
 	gw := Gateway{Client: &http.Client{Timeout: 5 * time.Second}, Base: srv.URL}
-	for _, open := range []bool{true, false} {
-		got, err := gw.Authorize(context.Background(), AuthorizeOf{Workspace: "ws-1", Request: "r", Estimate: 40,
-			Stream: true, Boot: []byte("boot"), OpenHeartbeat: open})
+	for _, a := range []AuthorizeOf{
+		{Workspace: "ws-1", Request: "r", Estimate: 40, Stream: true, Boot: []byte("boot"), OpenHeartbeat: true},
+		{Workspace: "ws-1", Request: "r", Estimate: 40, Stream: true, Boot: []byte("boot")},
+		{Workspace: "ws-1", Request: "r", Estimate: 40, Stream: true, Boot: []byte("boot"), Ceiling: 90},
+	} {
+		got, err := gw.Authorize(context.Background(), a)
 		if err != nil || got.Status != Admitted {
 			t.Fatalf("the authorize: %+v %v", got, err)
 		}
 	}
+	if got, err := gw.Authorize(context.Background(), AuthorizeOf{Workspace: "ws-1", Request: "r", Estimate: 40,
+		Stream: true, Boot: []byte("boot"), Ceiling: -1}); err != nil || got.Status != Invalid {
+		t.Fatalf("a negative ceiling: %+v %v", got, err)
+	}
 	want := []OwnerAuthorize{
 		{Workspace: "ws-1", Estimate: 40, Stream: true, Boot: []byte("boot"), OpenHeartbeat: true},
 		{Workspace: "ws-1", Estimate: 40, Stream: true, Boot: []byte("boot")},
+		{Workspace: "ws-1", Estimate: 40, Stream: true, Boot: []byte("boot"), Ceiling: 90},
 	}
 	if !reflect.DeepEqual(f.owners.authorizes, want) {
 		t.Fatalf("the owner was sent %+v, want %+v", f.owners.authorizes, want)
@@ -281,6 +289,19 @@ func TestAnUndeclaredAuthorizeReadsAsBefore(t *testing.T) {
 	}
 	if gatewaysAuthorize.Workspace != "ws-1" || ownersAuthorize.Workspace != "ws-1" || !ownersAuthorize.Stream {
 		t.Fatalf("what the nodes from before read: %+v, %+v", gatewaysAuthorize, ownersAuthorize)
+	}
+	// A stream's ceiling (docs/design/fast-admission-streams.md section 12)
+	// is sent the same way: only when set, so a node from before it refuses
+	// only an authorize that carries one.
+	got, err := gw.Authorize(ctx, AuthorizeOf{Workspace: "ws-1", Request: "r", Estimate: 40, Stream: true,
+		Boot: []byte("boot"), Ceiling: 90})
+	if err == nil && got.Status == Admitted {
+		t.Fatalf("a ceiling, the gateway's authorize to a front door from before: %+v", got)
+	}
+	admitted, err := owners.Authorize(ctx, owner.Listener.Addr().String(), OwnerAuthorize{Workspace: "ws-1",
+		Estimate: 40, Stream: true, Boot: []byte("boot"), Ceiling: 90})
+	if err == nil && admitted.Status == Admitted {
+		t.Fatalf("a ceiling, the authorize to an owner from before: %+v", admitted)
 	}
 }
 

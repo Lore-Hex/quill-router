@@ -2,9 +2,9 @@
   "name": "NY Token Exchange",
   "short_name": "NYTE",
   "website": "https://nytokenexchange.com",
-  "updated": "2026-10-28",
+  "updated": "2026-11-05",
   "contact": "help@trustedrouter.com",
-  "one_sentence": "NY Token Exchange (NYTE), powered by TrustedRouter, helps enterprises buy AI inference across providers with model choice, cost controls and verifiable privacy requirements.",
+  "one_sentence": "NY Token Exchange (NYTE) is the marketplace for buyers and sellers of inference.",
   "boilerplate": "NY Token Exchange (NYTE) is an enterprise AI inference service powered by TrustedRouter and operated by Lore Hex Corp, a Delaware corporation. It brings model and provider selection, routing, cost controls and privacy requirements into one OpenAI-compatible API. Buyers can evaluate representative workloads and select providers against their quality, cost and confidentiality requirements. Inference providers can apply to make capacity available through the exchange. NYTE requires confidential AI routes, with verification evidence and eligibility assessed for the selected route. AI tokens measure model inputs and outputs; NYTE is not a securities or cryptocurrency exchange. Learn more at nytokenexchange.com.",
   "founder_bio": "Joseph Perla is the founder and CEO of Lore Hex Corp, the company behind TrustedRouter and NY Token Exchange. TrustedRouter was built around the principle that a model gateway should not become another place that collects every prompt. Its gateway publishes source code and hardware-attestation evidence so customers can verify the software handling their requests.",
   "facts": [

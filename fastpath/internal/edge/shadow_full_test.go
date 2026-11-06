@@ -495,12 +495,13 @@ func TestEveryGoldenCaseThroughTheDecideShadow(t *testing.T) {
 		"read-back", classes, rowsAgree, affinityAgree, readBack)
 	// A request naming a cache_affinity_key is the cohort's (§1 item 5):
 	// its cold answer is agree_full with its rows read back, like any.
-	// The streams (streams section 8.4): 30 answered with the policy's
+	// The streams (streams section 8.4): 28 answered with the policy's
 	// fastpath_edge_streams, one composed for the shadow alone, and one
-	// unavailable.
-	if classes[ClassAgreeFull] != 192+30+1+5+2+notLeasedRows || rowsAgree != 192+30+1 || notLeasedRows != 1 ||
+	// unavailable; the two past the hold bound pass as stream.hold.
+	if classes[ClassAgreeFull] != 192+28+1+5+2+notLeasedRows || rowsAgree != 192+28+1 || notLeasedRows != 1 ||
 		affinityAgree != 18 || readBack != 1 ||
-		classes[ClassPythonUnavailable] != 2+1 || classes[ClassPythonAnsweredGoPassed+"."+PassEvaluate] != 1 {
+		classes[ClassPythonUnavailable] != 2+1 || classes[ClassPythonAnsweredGoPassed+"."+PassEvaluate] != 1 ||
+		classes[ClassPythonAnsweredGoPassed+"."+PassStreamHold] != 2 {
 		t.Fatalf("agree_full %d, rows %d (%d with a cache affinity key), read back %d, unavailable %d: not the goldens' "+
 			"counts", classes[ClassAgreeFull], rowsAgree, affinityAgree, readBack, classes[ClassPythonUnavailable])
 	}

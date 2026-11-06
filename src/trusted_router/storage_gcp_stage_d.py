@@ -299,10 +299,9 @@ def _cap_micro(authorization: Any) -> int:
     """The spend ceiling is the authorization's estimate, not the reservation.
 
     The reservation row's credit_reserved_micro is the credit hold: for a
-    non-stream catalog route authorize prices it at no more than
+    catalog route, a stream included, authorize prices it at no more than
     HOLD_OUTPUT_TOKENS of the output budget (authorize_candidates.
-    hold_output_tokens); a stream's reservation is its estimate for now. The
-    estimate prices the whole budget, and it is what the gateway exports as
+    hold_output_tokens). The estimate prices the whole budget, and it is what the gateway exports as
     cap_micro and cuts a stream at. Capping the running charge at the
     reservation would end a stream whose charge passed its credit hold,
     however many tokens that is.

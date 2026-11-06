@@ -63,12 +63,12 @@ const (
 // HoldOutputTokens of the output budget, not the authorization row's spend
 // ceiling), whether it is a stream, which heartbeats, and the boot binding
 // of the enclave that asked. A heartbeat's running charge is bounded by e
-// (heartbeat below). A stream's reservation is its whole budget's price,
-// its ceiling, so for a stream the bound is Stage D's cap; both front doors
-// keep streams out of the lease cohort (Python fastpath_frontdoor "stream",
-// gwauth ReasonStream) until the rest of
-// docs/design/fast-admission-streams.md ships, and admit one only while
-// its reservation equals its estimate.
+// (heartbeat below). Both front doors admit a stream only while its
+// reservation equals its estimate, its ceiling (Python
+// fastpath_frontdoor "stream.hold", the edge's PassStreamHold), so for a
+// leased stream the bound is Stage D's cap. A stream's reservation prices at
+// most HoldOutputTokens of its budget, so only a stream whose budget fits
+// that bound is leased.
 type Admission struct {
 	Estimate int64
 	Stream   bool
@@ -77,11 +77,22 @@ type Admission struct {
 	// stream with none issued by the first-heartbeat allowance is released
 	// (§4.5).
 	OpenHeartbeat bool
+	// Ceiling is a stream's spend ceiling when it is above the hold: the
+	// authorization row's estimate and Stage D's cap, where Estimate is the
+	// credit reservation (docs/design/fast-admission-streams.md section 12).
+	// Zero is a ceiling equal to the hold; only a stream has another. The
+	// owner keeps it and bounds nothing by it yet: a heartbeat's running
+	// charge stays bounded by Estimate until every auditor reads a record's
+	// ceiling (section 12.4, PR 3). Room is taken for Estimate alone.
+	Ceiling int64
 }
 
 func (a Admission) valid() error {
 	if a.Estimate < 0 || len(a.Boot) == 0 || len(a.Boot) > maxBoot {
 		return fmt.Errorf("owner: an estimate of %d with a boot binding of %d bytes", a.Estimate, len(a.Boot))
+	}
+	if a.Ceiling < 0 || (a.Ceiling != 0 && (!a.Stream || a.Ceiling < a.Estimate)) {
+		return fmt.Errorf("owner: a ceiling of %d for a hold of %d (stream %t)", a.Ceiling, a.Estimate, a.Stream)
 	}
 	return nil
 }
@@ -133,7 +144,7 @@ func (l *Lease) Admit(a Admission) (Admitted, error) {
 		return Admitted{}, ErrNoRoom
 	}
 	h := &hold{auth: auth, estimate: a.Estimate, overrun: over, stream: a.Stream, boot: append([]byte(nil), a.Boot...),
-		openHeartbeat: a.Stream && a.OpenHeartbeat}
+		openHeartbeat: a.Stream && a.OpenHeartbeat, ceiling: max(a.Ceiling, a.Estimate)}
 	l.held += h.estimate
 	l.buffer += h.counted()
 	l.holds[auth] = h
@@ -283,7 +294,8 @@ func (l *Lease) Heartbeat(ctx context.Context, auth string, hb HeartbeatOf) (tim
 	// count reported after the prompt moves those tokens to the cheaper
 	// rate, and the control plane's rule checks each count, not the charge
 	// (docs/design/fast-admission-streams.md section 4.6 item 2). It never
-	// passes the hold.
+	// passes the hold. A stream's ceiling does not raise that bound yet: the
+	// record refuses a snapshot above its estimate (section 12.1).
 	if hb.GatewaySeq < 1 || len(hb.Hash) != record.DigestSize || (!h.heartbeat && len(hb.Basis) == 0) ||
 		(hb.EchoGranted && !hb.Echoed.IsZero()) || (h.heartbeat && echoed.IsZero()) || hb.Usage < h.usage ||
 		hb.Running < 0 || hb.Running > h.estimate {

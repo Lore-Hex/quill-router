@@ -377,6 +377,10 @@ type hold struct {
 	// boot declares the heartbeat at stream open (§4.5).
 	admitted      time.Time
 	openHeartbeat bool
+	// ceiling is a stream's spend ceiling, never below estimate: the
+	// admission's Ceiling, else estimate. Nothing reads it yet
+	// (Admission.Ceiling).
+	ceiling int64
 	// The latest valid heartbeat: the gateway's sequence and hash, the
 	// usage, the running charge, the deadline granted and the one it
 	// echoed, and the owner sequence number of its record; heartbeat is

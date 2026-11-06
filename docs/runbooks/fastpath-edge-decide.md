@@ -444,7 +444,13 @@ and `audit`, below). Read, each against the line of §11 it answers to:
   was proven not applied. Each of the last group past the share the
   owner's load explains is a thing to explain.
 - `decide.by_name.slow`: `at_edge` and `in_all` 0 (decision 12;
-  `edge_decide_pass_slow`). Each `at_edge` pass is also counted under the
+  `edge_decide_pass_slow`), but for a lone `at_edge.body` that raised no
+  alert and that the alert's runbook row places outside the edge (either
+  the node's CPU low that minute and the node answering its other calls
+  of those seconds at their usual latency, or the same caller stalling
+  through the other node too); one it cannot place counts like any
+  `at_edge`.
+  Each `at_edge` pass is also counted under the
   phase it spent the most time in (`at_edge.body`, `at_edge.boot`,
   `at_edge.decide`, `at_edge.admit`), which sum to `at_edge`; the alert's
   runbook row says what each means.

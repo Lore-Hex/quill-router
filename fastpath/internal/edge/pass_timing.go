@@ -212,11 +212,19 @@ func (p *passTrace) phases(done time.Time) passPhases {
 	default:
 		s.connection = PassConnNew
 	}
+	// The transport hands the final headers back while its write goroutine
+	// may not yet have run the WroteRequest hook, so the write's end can be
+	// marked after the headers, or not at all by the pass's end. A request
+	// answered with final headers and no failed write was written by them.
+	wrote := p.wrote
+	if !p.headers.IsZero() && p.writeErrors == 0 && (wrote.IsZero() || p.headers.Before(wrote)) {
+		wrote = p.headers
+	}
 	from := p.arrived
 	for _, phase := range []struct {
 		to   time.Time
 		took *time.Duration
-	}{{p.forwarded, &s.edge}, {p.gotConn, &s.conn}, {p.wrote, &s.write}, {p.headers, &s.python}, {done, &s.response}} {
+	}{{p.forwarded, &s.edge}, {p.gotConn, &s.conn}, {wrote, &s.write}, {p.headers, &s.python}, {done, &s.response}} {
 		if phase.to.IsZero() || phase.to.Before(from) {
 			// Its end never came: the rest is this phase's.
 			*phase.took = span(from, done)
