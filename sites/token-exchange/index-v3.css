@@ -105,16 +105,15 @@ body[data-nyte-page="index"]{background:var(--ink)}
 .ti3 .ti3-note p.ti3-limits{grid-column:9/span 4;font-weight:500}
 .ti3 .ti3-note a{color:var(--ink);text-decoration:underline;text-decoration-thickness:1.5px;text-underline-offset:4px}
 
-/* Operators: sky field, copy left, a Stone photo placeholder right (caption left off). */
+/* Operators: sky field, copy left. The canvas's photo slot is left out until there is a real photo. */
 .ti3 .ti3-supply{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;padding:0 0 0 64px;border:0;background:var(--sky);color:var(--ink)}
-.ti3 .ti3-supply-copy{grid-column:span 6;padding:128px 0}
+.ti3 .ti3-supply-copy{grid-column:span 8;padding:128px 0}
 .ti3 .ti3-supply .ti3-bar{background:var(--ink)}
 .ti3 .ti3-supply h2{margin-bottom:32px}
 .ti3 .ti3-supply-copy>p{max-width:600px;color:var(--ink)}
 .ti3 .index-actions{gap:12px;margin:40px 0 32px;align-items:center}
 .ti3 .index-actions a{text-decoration:none}
 .ti3 .ti3-supply .index-small{max-width:560px;font-size:15px;color:var(--ink)}
-.ti3 .ti3-photo{grid-column:8/span 5;min-height:720px;background:var(--stone);border-left:1.5px solid var(--ink)}
 .ti3-band{background:var(--ink);line-height:0}
 .ti3-band .v3-band{display:block;width:100%;height:120px}
 
@@ -130,8 +129,7 @@ body[data-nyte-page="index"]{background:var(--ink)}
   .ti3 .ti3-note .ti3-bar,.ti3 .ti3-note p,.ti3 .ti3-note p.ti3-limits{grid-column:1}
   .ti3 .ti3-note .ti3-bar{margin:0}
   .ti3 .ti3-supply{grid-template-columns:1fr;padding:0}
-  .ti3 .ti3-supply-copy{grid-column:1;padding:96px 64px 48px}
-  .ti3 .ti3-photo{grid-column:1;min-height:440px;border-left:0;border-top:1.5px solid var(--ink)}
+  .ti3 .ti3-supply-copy{grid-column:1;padding:96px 64px}
 }
 @media (max-width:600px){
   [data-nyte-page="index"] header .wrap{padding:0 20px}
@@ -173,10 +171,9 @@ body[data-nyte-page="index"]{background:var(--ink)}
   .ti3 .ti3-note .ti3-bar{margin-bottom:24px}
   .ti3 .ti3-note p{margin-bottom:20px}
   .ti3 .ti3-note p.ti3-limits{margin:0}
-  .ti3 .ti3-supply-copy{padding:96px 20px 48px}
+  .ti3 .ti3-supply-copy{padding:72px 20px}
   .ti3 .ti3-supply h2{margin-bottom:24px}
   .ti3 .index-actions{display:grid;gap:12px;margin:32px 0 24px}
   .ti3 .index-actions .btn{white-space:normal;text-align:center;line-height:1.2}
-  .ti3 .ti3-photo{min-height:440px}
   .ti3-band .v3-band{height:96px}
 }
