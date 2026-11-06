@@ -3,7 +3,7 @@
   "source": "https://api.novita.ai/openai/v1/models",
   "price_source": "https://novita.ai/pricing",
   "price_scale_to_microdollars_per_million_tokens": 100,
-  "generated_at": "2026-11-05T11:29:32Z",
+  "generated_at": "2026-11-06T22:16:27Z",
   "model_count": 177,
   "models": [
     {
@@ -3407,7 +3407,8 @@
       "context_length": 131000,
       "max_output_tokens": 32000,
       "routable": false,
-      "routable_reason": "awaiting-price"
+      "routable_reason": "awaiting-price",
+      "missing_since": "2026-11-06"
     },
     {
       "id": "minimax/m2-her",

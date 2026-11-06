@@ -25,6 +25,7 @@ _NAME_TO_OR_ID = {
     "Gemini 3.1 Flash-Lite Preview": "google/gemini-3.1-flash-lite-preview",
     "Gemini 3.1 Pro Preview": "google/gemini-3.1-pro-preview",
     "Gemini 3 Flash Preview": "google/gemini-3-flash-preview",
+    "Gemini Omni 1.2 Flash": "google/gemini-omni-1.2-flash",
     "Gemini 2.5 Pro": "google/gemini-2.5-pro",
     "Gemini 2.5 Flash": "google/gemini-2.5-flash",
     "Gemini 2.5 Flash-Lite": "google/gemini-2.5-flash-lite",
@@ -35,7 +36,8 @@ _NAME_TO_OR_ID = {
 }
 
 _STANDARD_MODEL_HEADING_RE = re.compile(
-    r"^Gemini\s+(?P<version>\d+(?:\.\d+)?)\s+"
+    r"^Gemini\s+(?:(?P<family>Omni|Argon|Nova)\s+)?"
+    r"(?P<version>\d+(?:\.\d+)?)\s+"
     r"(?P<variant>Pro|Flash(?:[ -]Lite)?|Argon)$",
     re.IGNORECASE,
 )
@@ -74,7 +76,11 @@ def _model_id_from_heading(heading: str) -> str | None:
     if match is None:
         return None
     variant = match.group("variant").casefold().replace(" ", "-")
-    return f"google/gemini-{match.group('version')}-{variant}"
+    family = match.group("family")
+    version = match.group("version")
+    if family:
+        return f"google/gemini-{family.casefold()}-{version}-{variant}"
+    return f"google/gemini-{version}-{variant}"
 
 
 # "$1.25, prompts <= 200k tokens $2.50, prompts > 200k tokens" — a
@@ -230,12 +236,12 @@ def _parse_markdoc(source: str) -> dict[str, dict[str, object]]:
         # Select the named Standard tab, not whichever tariff appears first.
         standard = re.search(
             r'\{%\s*tab\s+title="Standard"\s*%\}(.*?)\{%\s*/tab\s*%\}',
-            body, re.DOTALL,
+            body,
+            re.DOTALL,
         )
         if standard is None:
             continue
-        table = re.search(r"\{%\s*table\s*%\}(.*?)\{%\s*/table\s*%\}",
-                          standard.group(1), re.DOTALL)
+        table = re.search(r"\{%\s*table\s*%\}(.*?)\{%\s*/table\s*%\}", standard.group(1), re.DOTALL)
         if table is None:
             continue
         rows: list[tuple[str, str]] = []

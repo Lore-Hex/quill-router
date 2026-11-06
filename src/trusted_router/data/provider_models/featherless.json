@@ -862,7 +862,7 @@
       "status": 1,
       "id": "stepfun-ai/step-3.7-flash",
       "upstream_id": "stepfun-ai/Step-3.7-Flash",
-      "context_length": 32768,
+      "context_length": 262144,
       "max_output_tokens": 32768,
       "supported_features": [
         "tools"
@@ -1645,7 +1645,7 @@
   ],
   "source": "https://api.featherless.ai/v1/models",
   "pricing_source": "https://featherless.ai/docs/request-pricing-and-credits",
-  "generated_at": "2026-11-05T11:29:32Z",
+  "generated_at": "2026-11-06T22:16:27Z",
   "price_scale": "microdollars_per_million",
   "model_count": 66
 }

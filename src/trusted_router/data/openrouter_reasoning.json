@@ -484,6 +484,17 @@
       ],
       "default_effort": "high"
     },
+    "deepseek/deepseek-v4-flash-0731:batch": {
+      "mandatory": false,
+      "default_enabled": true,
+      "supported_efforts": [
+        "max",
+        "high",
+        "low",
+        "none"
+      ],
+      "default_effort": "high"
+    },
     "deepseek/deepseek-v4-flash-vision-exp": {
       "mandatory": false,
       "default_enabled": true,
@@ -864,6 +875,24 @@
       ],
       "default_effort": "minimal"
     },
+    "google/gemini-omni-1.1-flash": {
+      "mandatory": true,
+      "default_enabled": false,
+      "supported_efforts": [
+        "high",
+        "low"
+      ],
+      "default_effort": "low"
+    },
+    "google/gemini-omni-1.2-flash": {
+      "mandatory": true,
+      "default_enabled": false,
+      "supported_efforts": [
+        "high",
+        "low"
+      ],
+      "default_effort": "low"
+    },
     "google/gemma-4-26b-a4b-it": {
       "mandatory": false,
       "default_enabled": false,
@@ -990,6 +1019,17 @@
       ],
       "default_effort": "medium"
     },
+    "meta/muse-glimmer-30b:batch": {
+      "mandatory": true,
+      "default_enabled": false,
+      "supported_efforts": [
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "default_effort": "medium"
+    },
     "meta/muse-spark-1.1": {
       "mandatory": true,
       "default_enabled": false,
@@ -1082,18 +1122,6 @@
       "supported_efforts": [],
       "default_effort": null
     },
-    "minimax/minimax-m2": {
-      "mandatory": true,
-      "default_enabled": false,
-      "supported_efforts": [],
-      "default_effort": null
-    },
-    "minimax/minimax-m2.1": {
-      "mandatory": true,
-      "default_enabled": false,
-      "supported_efforts": [],
-      "default_effort": null
-    },
     "minimax/minimax-m2.5": {
       "mandatory": true,
       "default_enabled": false,
@@ -1123,6 +1151,12 @@
         "low"
       ],
       "default_effort": "max"
+    },
+    "minimax/minimax-m3:batch": {
+      "mandatory": false,
+      "default_enabled": false,
+      "supported_efforts": [],
+      "default_effort": null
     },
     "mistralai/mistral-large-4-0": {
       "mandatory": false,
@@ -1298,12 +1332,6 @@
       "default_effort": "high"
     },
     "nvidia/nemotron-3.5-content-safety": {
-      "mandatory": false,
-      "default_enabled": true,
-      "supported_efforts": [],
-      "default_effort": null
-    },
-    "nvidia/nemotron-3.5-content-safety:free": {
       "mandatory": false,
       "default_enabled": true,
       "supported_efforts": [],
@@ -2390,6 +2418,17 @@
       ],
       "default_effort": "xhigh"
     },
+    "qwen/qwen3.8-27b:batch": {
+      "mandatory": false,
+      "default_enabled": true,
+      "supported_efforts": [
+        "xhigh",
+        "medium",
+        "low",
+        "none"
+      ],
+      "default_effort": "xhigh"
+    },
     "qwen/qwen3.8-flash": {
       "mandatory": false,
       "default_enabled": true,
@@ -2600,6 +2639,19 @@
       "default_effort": "high"
     },
     "thinkingmachines/inkling-small": {
+      "mandatory": false,
+      "default_enabled": true,
+      "supported_efforts": [
+        "max",
+        "high",
+        "medium",
+        "low",
+        "minimal",
+        "none"
+      ],
+      "default_effort": "high"
+    },
+    "thinkingmachines/inkling-small:batch": {
       "mandatory": false,
       "default_enabled": true,
       "supported_efforts": [

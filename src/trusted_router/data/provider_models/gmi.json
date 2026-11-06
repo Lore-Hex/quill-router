@@ -2,7 +2,7 @@
   "_about": "Provider-native GMI Cloud catalog. Account-visible models are intersected with GMI's official billing feed; explicitly approved routes omitted from /v1/models remain current only after an exact visible-content PONG canary succeeds.",
   "provider": "gmi",
   "source": "https://console.gmicloud.ai/api/v1/billing/model_prices",
-  "generated_at": "2026-11-05T11:29:32Z",
+  "generated_at": "2026-11-06T22:16:27Z",
   "model_count": 113,
   "models": [
     {
@@ -1442,7 +1442,8 @@
       "context_length": 131072,
       "input_token_price_per_m": 50000,
       "output_token_price_per_m": 250000,
-      "routable": true
+      "routable": true,
+      "missing_since": "2026-11-06"
     },
     {
       "display_name": "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8",
@@ -2026,7 +2027,8 @@
       "context_length": 65536,
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 1000000,
-      "cached_input_token_price_per_m": 50000
+      "cached_input_token_price_per_m": 50000,
+      "missing_since": "2026-11-06"
     },
     {
       "display_name": "Grok 4.6",
@@ -2124,7 +2126,8 @@
       "context_length": 1050000,
       "input_token_price_per_m": 140000,
       "output_token_price_per_m": 280000,
-      "cached_input_token_price_per_m": 2800
+      "cached_input_token_price_per_m": 2800,
+      "missing_since": "2026-11-06"
     },
     {
       "display_name": "MiMo-V2.5-Pro",
@@ -2145,7 +2148,8 @@
       "context_length": 1050000,
       "input_token_price_per_m": 435000,
       "output_token_price_per_m": 870000,
-      "cached_input_token_price_per_m": 3600
+      "cached_input_token_price_per_m": 3600,
+      "missing_since": "2026-11-06"
     },
     {
       "display_name": "Qwen3.8 Flash",
@@ -2582,7 +2586,8 @@
       "context_length": 32768,
       "input_token_price_per_m": 100000,
       "output_token_price_per_m": 500000,
-      "cached_input_token_price_per_m": 50000
+      "cached_input_token_price_per_m": 50000,
+      "missing_since": "2026-11-06"
     },
     {
       "display_name": "StepFun: Step-5-Preview",
