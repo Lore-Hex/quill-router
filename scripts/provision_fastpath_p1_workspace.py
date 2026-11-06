@@ -9,8 +9,18 @@ Dry-run is the default; ``--apply`` changes production, and is idempotent:
 a second run finds the workspace, the grant's event already applied, and
 sets the same override again.
 
+An override reaches tier 2 or 3 only with the owner's identity approved or
+``identity_bypass`` set (``effective_trust_tier``). ``--identity-bypass``
+sets it, for the operator's own synthetic workspace alone: it is refused
+for a workspace with an API key (as every run is) or funded by anything
+but this script's own grant, its event on this workspace and its amount
+the whole of the credit rows' (docs/design/fast-admission-widening.md,
+section 8.2). Nobody else can spend from such a workspace, so identity
+verification proves nothing about it.
+
 Example:
   uv run python scripts/provision_fastpath_p1_workspace.py --email joseph@jperla.com --apply
+  uv run python scripts/provision_fastpath_p1_workspace.py --email joseph@jperla.com --tier 3 --identity-bypass --apply
 """
 
 from __future__ import annotations
@@ -51,17 +61,40 @@ def _credits(store: Any, workspace_id: str) -> int:
     return sum(row[3] or 0 for row in _shard_tiers(store, workspace_id))
 
 
-def _grant_credited(store: Any, workspace_id: str, event_id: str) -> list[int]:
-    """What this workspace's grant events for the funding event credited:
-    a grant's trust event (kind "grant"), by its credited amount; a
-    payment's fact of the same ID proves nothing of the funding."""
+def _trust_events(store: Any, workspace_id: str) -> list[tuple[str, str, int]]:
+    """This workspace's trust events: event ID, kind and credited amount."""
     with store._database.snapshot() as snap:
         rows = snap.execute_sql(
             "SELECT event_id, kind, credited_micro FROM tr_trust_event WHERE workspace_id=@pk",
             params={"pk": workspace_id},
             param_types={"pk": store._param_types.STRING},
         )
-        return [int(row[2] or 0) for row in rows if str(row[0]) == event_id and str(row[1]) == "grant"]
+        return [(str(row[0]), str(row[1]), int(row[2] or 0)) for row in rows]
+
+
+def _grant_credited(store: Any, workspace_id: str, event_id: str) -> list[int]:
+    """What this workspace's grant events for the funding event credited:
+    a grant's trust event (kind "grant"), by its credited amount; a
+    payment's fact of the same ID proves nothing of the funding."""
+    return [credited for eid, kind, credited in _trust_events(store, workspace_id) if eid == event_id and kind == "grant"]
+
+
+def _other_funding(store: Any, workspace_id: str, event_id: str, funding_microdollars: int) -> str | None:
+    """Why the workspace is funded by something other than this script's
+    own grant, or None when it is not: every trust event of the workspace
+    must be the funding event's grant, of the funding's amount, and the
+    credit rows must hold that grant and nothing else (a trial credit or a
+    credit with no trust event shows there alone). A workspace not yet
+    funded holds nothing."""
+    others = [(eid, kind) for eid, kind, credited in _trust_events(store, workspace_id)
+              if not (eid == event_id and kind == "grant" and credited == funding_microdollars)]
+    if others:
+        return f"it has {len(others)} trust events other than the grant {event_id}"
+    granted = sum(_grant_credited(store, workspace_id, event_id))
+    credits = _credits(store, workspace_id)
+    if credits != granted:
+        return f"its credit rows hold {credits} microdollars, and its own grant credited {granted}"
+    return None
 
 
 def _open_reservations(store: Any, workspace_id: str) -> int:
@@ -85,6 +118,7 @@ def provision(
     operator: str,
     reason: str,
     apply: bool,
+    identity_bypass: bool = False,
 ) -> dict[str, Any]:
     user = store.find_user_by_email(email)
     if user is None:
@@ -108,6 +142,7 @@ def provision(
         "funding_microdollars": funding_microdollars,
         "funding_event_id": funding_event_id,
         "tier": tier,
+        "identity_bypass": identity_bypass,
     }
     if workspace is not None:
         # Nothing but leases may spend from it: no key, disabled or not (a
@@ -119,6 +154,10 @@ def provision(
         open_holds = _open_reservations(store, workspace.id)
         if open_holds:
             raise ValueError(f"workspace {workspace.id} has {open_holds} unsettled reservations; wait for them to settle")
+        if identity_bypass:
+            why = _other_funding(store, workspace.id, funding_event_id, funding_microdollars)
+            if why is not None:
+                raise ValueError(f"workspace {workspace.id} takes no identity bypass: {why}")
         result["shards_before"] = _shard_tiers(store, workspace.id)
         result["credits_total_microdollars"] = _credits(store, workspace.id)
     if not apply:
@@ -149,10 +188,20 @@ def provision(
     # The audit's baseline: what the credit rows hold now, pre-existing
     # funding of the operator's own workspace included.
     result["credits_total_microdollars"] = _credits(store, workspace.id)
+    if identity_bypass:
+        # Again once the grant is in, so the bypass is set only on a
+        # workspace this grant alone funds.
+        why = _other_funding(store, workspace.id, funding_event_id, funding_microdollars)
+        if why is not None:
+            raise ValueError(f"workspace {workspace.id} takes no identity bypass: {why}")
     record = store.set_workspace_trust_override(
-        workspace.id, tier=tier, identity_bypass=False, operator_identity=operator, reason=reason
+        workspace.id, tier=tier, identity_bypass=identity_bypass, operator_identity=operator, reason=reason
     )
-    result["override"] = {"tier": record.tier, "set_at": record.set_at.isoformat()}
+    result["override"] = {
+        "tier": record.tier,
+        "identity_bypass": record.identity_bypass,
+        "set_at": record.set_at.isoformat(),
+    }
     result["shards_after"] = _shard_tiers(store, workspace.id)
     if any(row[1] is None or row[1] < tier for row in result["shards_after"]):
         raise RuntimeError("a credit shard's effective tier is still below the override")
@@ -166,6 +215,12 @@ def main(argv: list[str] | None = None, *, store: Any | None = None) -> int:
     parser.add_argument("--fund-usd", default="100")
     parser.add_argument("--funding-event-id", default=DEFAULT_FUNDING_EVENT)
     parser.add_argument("--tier", type=int, default=1)
+    parser.add_argument(
+        "--identity-bypass",
+        action="store_true",
+        help="set the override's identity bypass, so it reaches tier 2 or 3 without an approved owner; refused "
+        "for a workspace with an API key or funded by anything but this script's own grant",
+    )
     parser.add_argument("--operator", default=None, help="recorded with the override; the email by default")
     parser.add_argument("--reason", default="fastpath P1 synthetic workspace")
     parser.add_argument("--apply", action="store_true")
@@ -188,6 +243,7 @@ def main(argv: list[str] | None = None, *, store: Any | None = None) -> int:
             operator=args.operator or args.email,
             reason=args.reason,
             apply=args.apply,
+            identity_bypass=args.identity_bypass,
         )
     except (ValueError, RuntimeError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

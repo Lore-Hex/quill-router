@@ -22,7 +22,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -271,6 +273,63 @@ func (c Config) valid() error {
 		return errors.New("service: an auditor member needs its subscriptions to the settle log and the record topic")
 	case c.MaxOutstanding < 1 || c.Ring <= 0 || c.Switch <= 0 || c.Stopping <= 0 || c.HandOff < 0:
 		return errors.New("service: a positive subscription bound, ring interval and stopping time, and a hand-off time")
+	}
+	return nil
+}
+
+// The money settings' bounds (docs/design/fast-admission-widening.md,
+// (b)), in microdollars, which the node's flags and fastpathctl ready hold
+// to, and the node's startup script with them.
+const (
+	// MaxMoney bounds the allowance and the floor: Defaults' allowance,
+	// 1 << 50, which bounds nothing.
+	MaxMoney int64 = 1 << 50
+	// MinFloor is the least floor but none, a dollar, so a floor written in
+	// dollars is refused.
+	MinFloor int64 = 1_000_000
+)
+
+// Money is a money setting's flag value: a decimal integer written plainly,
+// with no sign, leading zero, underscore or base prefix, so that a value
+// such as 020000000 is refused rather than read in octal as a smaller one.
+type Money struct{ P *int64 }
+
+func (m Money) String() string {
+	if m.P == nil {
+		return "0"
+	}
+	return strconv.FormatInt(*m.P, 10)
+}
+
+func (m Money) Set(s string) error {
+	if !plainDecimal.MatchString(s) {
+		return fmt.Errorf("%q is not a plain decimal integer", s)
+	}
+	v, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return err
+	}
+	*m.P = v
+	return nil
+}
+
+var plainDecimal = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
+
+// CheckMoney says what is wrong with the store's money settings, nil when
+// nothing is: the tier leases need 0 to 3; the allowance at least the
+// owner's largest top-up, so one can be granted (a figure written in
+// dollars is below it), and at most MaxMoney; the floor none, or MinFloor
+// to MaxMoney.
+func CheckMoney(c Config) error {
+	st := c.Store
+	switch {
+	case st.RequiredTier < 0 || st.RequiredTier > 3:
+		return fmt.Errorf("service: the required tier is 0 to 3, not %d", st.RequiredTier)
+	case st.Allowance < c.Owner.TopUps.Max || st.Allowance > MaxMoney:
+		return fmt.Errorf("service: the allowance is %d to %d microdollars, not %d", c.Owner.TopUps.Max, MaxMoney,
+			st.Allowance)
+	case st.Floor != 0 && (st.Floor < MinFloor || st.Floor > MaxMoney):
+		return fmt.Errorf("service: the floor is 0 or %d to %d microdollars, not %d", MinFloor, MaxMoney, st.Floor)
 	}
 	return nil
 }

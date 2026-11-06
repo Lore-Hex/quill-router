@@ -25,6 +25,8 @@ on `main`.
    uv run python scripts/provision_fastpath_p1_workspace.py --email joseph@jperla.com --apply
    ```
 
+   Tier 1 was P1's; the widening's WS0 reruns it with `--tier 3
+   --identity-bypass` ("The money settings" in `fastpath-deploy.md`).
    It prints the workspace's ID and `credits_total_microdollars`, what
    the credit rows hold once the grant is in (`100` USD is `100000000`
    micro-credits, plus whatever an owned workspace of the name already
@@ -97,8 +99,11 @@ FRONT=$(gcloud spanner databases execute-sql trusted-router --instance=trusted-r
    given after `-run`, so no load runs unwatched and `-max-spend` counts
    the whole run. The generator asks the store, as a grant would, whether
    the workspace is enabled, funded and at the tier, with the fleet's
-   `-required-tier` and `-floor` (the node's unit passes neither, so the
-   service's defaults in `fastpath/internal/service/service.go` apply),
+   `-required-tier` and `-floor` (its defaults are the service's, in
+   `fastpath/internal/service/service.go`, which a node runs unless its
+   metadata names the money settings, "The money settings" in
+   `fastpath-deploy.md`; once the nodes run them, the generator is given
+   the same two),
    and refuses to start otherwise. Past any of W3's ceilings for P1, or
    once the watch cannot see, it stops the generator and turns the
    workspace off, exiting 3 and printing why
