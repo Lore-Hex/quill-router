@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -360,5 +361,30 @@ func TestTheEdgeReportPrintsTheWindowRaceFigures(t *testing.T) {
 		*g.WindowRaceRatio != 3.0/2000 || g.WouldAdmitPythonRefused != 1 ||
 		len(g.WouldAdmitByClass) != 1 || g.WouldAdmitByClass["429.key_window_limit_exceeded"] != 1 {
 		t.Errorf("the window race figures: %s", out.Bytes())
+	}
+}
+
+// TestTheEdgeReportTakesTheLargestDistinctKeys: distinct_keys is a node's
+// figure since its shadow started, not a period's, so the report's is the
+// largest any line carries, never a sum over periods or nodes; the
+// period counts beside it are still summed.
+func TestTheEdgeReportTakesTheLargestDistinctKeys(t *testing.T) {
+	line := func(id, node string, dropped, keys int) logEntry {
+		return logEntry{id, node, `2026/10/24 12:00:00 fastpath edge decide shadow: dropped=` + strconv.Itoa(dropped) +
+			` evictions=0 distinct_keys=` + strconv.Itoa(keys) + ` cache_unrefreshed=0 cache_dropped=0 cache_read_failures=0`}
+	}
+	d, _ := edgeDeps([]logEntry{line("1", "tr-fastpath-5", 1, 150), line("2", "tr-fastpath-6", 1, 230),
+		line("3", "tr-fastpath-5", 1, 180), line("4", "tr-fastpath-6", 1, 230)}, nil)
+	var out bytes.Buffer
+	if code, err := run(context.Background(), []string{"edge", "-project", "p", "-since", "2026-10-24T11:00:00Z"}, &out,
+		d); code != 0 || err != nil {
+		t.Fatalf("%d %v", code, err)
+	}
+	var r edgeReport
+	if err := json.Unmarshal(out.Bytes(), &r); err != nil {
+		t.Fatalf("%v: %s", err, out.Bytes())
+	}
+	if r.I2.DistinctKeys != 230 || r.DecideShadow.Counts["distinct_keys"] != 230 || r.DecideShadow.Counts["dropped"] != 4 {
+		t.Fatalf("distinct_keys %d (sums %v), want 230 beside 4 dropped", r.I2.DistinctKeys, r.DecideShadow.Counts)
 	}
 }

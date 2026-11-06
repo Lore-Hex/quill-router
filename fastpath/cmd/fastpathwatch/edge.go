@@ -45,8 +45,20 @@ func newEdgeSums() *edgeSums {
 	return &edgeSums{Counts: map[string]int64{}, ByName: map[string]map[string]int64{}}
 }
 
+// highWater are the counts a line carries that are not its period's: each
+// a node's figure since it started, so the span's is the largest any line
+// carries, never a sum. distinct_keys is the shadow's distinct keys among
+// its comparable requests (docs/design/fast-admission-widening.md section
+// 8.1 item 3): the largest node's figure, so a key two nodes saw is not
+// counted twice.
+var highWater = map[string]bool{"distinct_keys": true}
+
 func (s *edgeSums) add(l edge.CountsLine) {
 	for k, v := range l.Counts {
+		if highWater[k] {
+			s.Counts[k] = max(s.Counts[k], v)
+			continue
+		}
 		s.Counts[k] += v
 	}
 	for name, m := range l.ByName {
@@ -76,6 +88,10 @@ func (s *edgeSums) add(l edge.CountsLine) {
 // would_admit_python_refused by class, the stale passes against every
 // request the shadow followed, and the decide path's unavailable answers by
 // the insert's gRPC code.
+//
+// DistinctKeys is the widening's count of distinct API keys among the
+// comparable requests: the largest node's distinct_keys (highWater), which
+// counts since that node's shadow started and stops at its bound.
 type i2 struct {
 	Comparable                int64            `json:"comparable"`
 	AgreeFull                 int64            `json:"agree_full"`
@@ -113,6 +129,7 @@ type i2 struct {
 	WindowRace            int64    `json:"window_race"`
 	WindowRaceUnconfirmed int64    `json:"window_race_unconfirmed"`
 	WindowRaceRatio       *float64 `json:"window_race_ratio"`
+	DistinctKeys          int64    `json:"distinct_keys"`
 }
 
 // i3 are the I3 gate's figures (docs/design/fast-admission-e2-g15-async.md
@@ -195,6 +212,7 @@ func (r *edgeReport) gates() {
 		WouldAdmitByClass: map[string]int64{}, StaleByCache: map[string]int64{}, CohortByClass: map[string]int64{},
 		Unavailable: r.Decide.Counts["unavailable"], UnavailableByCode: map[string]int64{}}
 	g.Comparable = g.AgreeFull + g.Differ
+	g.DistinctKeys = sh.Counts["distinct_keys"]
 	for _, n := range sh.ByName["decide"] {
 		g.CohortEligible += n
 	}

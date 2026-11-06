@@ -18,8 +18,14 @@ to fastpath/testdata/edge_policy_admission_v1.json: bodies the publisher
 writes from each combination of admission, the async pilot set, the
 fast-path overlap list and the fast-path set, each with Python's own
 admission answer per workspace, which Go's AsyncSettle.Admits must give, and
-the members' other spellings, refused by both readers. Workspace ids,
-digests and the monitor key are synthetic.
+the members' other spellings, refused by both readers, and the all-mode
+golden files (docs/design/fast-admission-widening.md sections 6.3 and 11,
+PR 3) to fastpath/testdata/edge_policy_all_v1.{body,manifest}.json: the
+same body with fastpath_pilot_all and fastpath_pilot_exclude, the explicit
+list emptied, signed alike. The publisher writes neither member until PR 5,
+so this body is the golden one with the members set through Python's own
+EdgePolicyV1; PR 5 builds it from settings, to the same bytes. Workspace
+ids, digests and the monitor key are synthetic.
 tests/test_edge_policy_publish.py fails when the files are not what this
 script writes now.
 
@@ -44,7 +50,11 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (  # noqa: E402
 )
 
 from trusted_router.config import Settings  # noqa: E402
-from trusted_router.edge_policy import EdgePolicyV1, canonical_edge_policy_bytes  # noqa: E402
+from trusted_router.edge_policy import (  # noqa: E402
+    EdgePolicyV1,
+    canonical_edge_policy_bytes,
+    parse_edge_policy,
+)
 from trusted_router.routing_snapshot_signing import (  # noqa: E402
     EdgePolicySigner,
     RoutingSnapshotSigner,
@@ -60,6 +70,8 @@ OUTPUT_BODY = ROOT / "fastpath" / "testdata" / "edge_policy_v1.body.json"
 OUTPUT_MANIFEST = ROOT / "fastpath" / "testdata" / "edge_policy_v1.manifest.json"
 OUTPUT_STREAMS = ROOT / "fastpath" / "testdata" / "edge_policy_streams_v1.json"
 OUTPUT_ADMISSION = ROOT / "fastpath" / "testdata" / "edge_policy_admission_v1.json"
+OUTPUT_ALL_BODY = ROOT / "fastpath" / "testdata" / "edge_policy_all_v1.body.json"
+OUTPUT_ALL_MANIFEST = ROOT / "fastpath" / "testdata" / "edge_policy_all_v1.manifest.json"
 GENERATOR = "scripts/fastpath/edge_policy_vectors.py"
 
 ISSUED_AT = calendar.timegm((2026, 10, 19, 0, 0, 0))  # 2026-10-19T00:00Z
@@ -264,7 +276,33 @@ def render_admission() -> str:
                       indent=1, sort_keys=True) + "\n"
 
 
+# All mode's exclude list: two synthetic workspaces, so the Go reader is
+# exercised on a list of more than one.
+ALL_EXCLUDE = ("ws-synthetic-excluded-a", "ws-synthetic-excluded-b")
+
+
+def all_policy() -> EdgePolicyV1:
+    """The golden policy in all mode: fastpath_pilot_all true, the exclude
+    list, and the explicit list emptied, as PR 5's validator requires;
+    every other field the golden body's."""
+    decoded = {**json.loads(render_body()), "fastpath_pilot_workspaces": [], "fastpath_pilot_all": True,
+               "fastpath_pilot_exclude": list(ALL_EXCLUDE)}
+    return parse_edge_policy(json.dumps(decoded, sort_keys=True, separators=(",", ":")))
+
+
+def render_all_body() -> bytes:
+    return canonical_edge_policy_bytes(all_policy())
+
+
+def render_all_manifest() -> str:
+    return _manifest(render_all_body())
+
+
 def render_manifest() -> str:
+    return _manifest(render_body())
+
+
+def _manifest(body: bytes) -> str:
     manifest = {
         "generator": GENERATOR,
         "test_key": True,
@@ -273,7 +311,7 @@ def render_manifest() -> str:
         "iss": TEST_KEY.iss,
         "aud": TEST_KEY.aud,
         "public_key_b64url": TEST_KEY.public_key_b64url,
-        "jws": golden_signer().sign(render_body()),
+        "jws": golden_signer().sign(body),
     }
     return json.dumps(manifest, indent=1, sort_keys=True) + "\n"
 
@@ -283,5 +321,8 @@ if __name__ == "__main__":
     OUTPUT_MANIFEST.write_text(render_manifest())
     OUTPUT_STREAMS.write_text(render_streams())
     OUTPUT_ADMISSION.write_text(render_admission())
+    OUTPUT_ALL_BODY.write_bytes(render_all_body())
+    OUTPUT_ALL_MANIFEST.write_text(render_all_manifest())
     print(f"wrote {OUTPUT_BODY.relative_to(ROOT)}, {OUTPUT_MANIFEST.relative_to(ROOT)}, "
-          f"{OUTPUT_STREAMS.relative_to(ROOT)} and {OUTPUT_ADMISSION.relative_to(ROOT)}")
+          f"{OUTPUT_STREAMS.relative_to(ROOT)}, {OUTPUT_ADMISSION.relative_to(ROOT)}, "
+          f"{OUTPUT_ALL_BODY.relative_to(ROOT)} and {OUTPUT_ALL_MANIFEST.relative_to(ROOT)}")

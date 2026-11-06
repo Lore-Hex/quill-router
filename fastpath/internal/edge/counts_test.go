@@ -62,10 +62,14 @@ func TestTheDecideLineReadsBackAsItsCounts(t *testing.T) {
 		"unavailable": want.Unavailable, "refunded": want.Refunded, "refund_failed": want.RefundFailed}) ||
 		!maps.Equal(got.ByName["unavailable_by_code"], want.UnavailableByCode) ||
 		!maps.Equal(got.ByName["passed"], want.Passed) || !maps.Equal(got.ByName["slow"], want.Slow) ||
-		!maps.Equal(got.ByName["windows"], want.Windows) || len(got.ByName) != 4 {
+		!maps.Equal(got.ByName["windows"], want.Windows) ||
+		!maps.Equal(got.ByName["decided_via"], want.DecidedVia) || len(got.ByName) != 5 {
 		t.Fatalf("read back %+v, counted %+v", got, want)
 	}
-	if want.Answered != 1 || want.Unavailable != 1 || want.Refunded != 2 || want.Slow["at_edge"] != 1 {
+	// Each answer, the 200 and the 503, by its decide row's source: the
+	// workspace's own row.
+	if want.Answered != 1 || want.Unavailable != 1 || want.Refunded != 2 || want.Slow["at_edge"] != 1 ||
+		!maps.Equal(want.DecidedVia, map[string]int64{store.DecideViaOwn: 2}) {
 		t.Fatalf("not the period's requests: %+v", want)
 	}
 }
@@ -95,7 +99,14 @@ func TestTheDecideShadowLinesReadBackAsTheirCounts(t *testing.T) {
 	sums := map[string]map[string]int64{}
 	counts := map[string]int64{}
 	digests := 0
+	// distinct_keys is no period's count: a node's largest figure is its
+	// count, never a sum.
+	var distinct int64
 	for _, l := range lines {
+		if n, ok := l.Counts["distinct_keys"]; ok {
+			distinct = max(distinct, n)
+			delete(l.Counts, "distinct_keys")
+		}
 		if l.Of != CountsDecideShadow {
 			t.Fatalf("a line of %q", l.Of)
 		}
@@ -137,6 +148,10 @@ func TestTheDecideShadowLinesReadBackAsTheirCounts(t *testing.T) {
 	}
 	if want.Classes[ClassAgreeFull] != 1 || want.Classes[ClassDifferAny] != 1 || would != 1 || want.Evictions == 0 {
 		t.Fatalf("not the period's requests: %+v", want)
+	}
+	// The agree_full and the differ are one key's: one distinct key.
+	if distinct != int64(want.DistinctKeys) || want.DistinctKeys != 1 {
+		t.Fatalf("distinct_keys read back %d, counted %d; want 1", distinct, want.DistinctKeys)
 	}
 	// The cache's counts, each the sum of the periods'.
 	cache := h.cache.Counters()

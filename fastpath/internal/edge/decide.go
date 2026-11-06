@@ -98,6 +98,13 @@ const (
 	PassDigestNotAccepted  = "policy.digest_not_accepted"
 	PassRegionsMismatch    = "policy.regions_mismatch"
 	PassDecideOff          = "decide.off"
+	// PassWorkspaceNotEnabled is a decision gate beside the decide row's
+	// (docs/design/fast-admission-widening.md section 6.1): the node's copy
+	// of the switch, tr_fastpath_workspace, does not enable the workspace,
+	// so the front door would answer Off (owner.off). It is checked after
+	// the compose, so the shadow still compares every covered workspace's
+	// request, enabled or not.
+	PassWorkspaceNotEnabled = "workspace.not_enabled"
 
 	// The async-v1 gates (docs/design/fast-admission-e2-g15-async.md §4.1,
 	// §6.1), for a request whose X-TR-Settlement-Mode is exactly
@@ -231,7 +238,12 @@ type DecideInputs struct {
 	// Lookup is the cache's (gwstate.Cache.Lookup); nil is a cold cache.
 	Lookup func(lookupHash string, now time.Time) gwstate.Read
 	Decide DecideView
-	Mint   Mint
+	// Enabled is the node's copy of the switch (the front door's own,
+	// Admitter.Enabled); nil when the edge has no front door bound, which
+	// then answers nothing (owner.unreachable), and the not_enabled gate is
+	// not read.
+	Enabled func(workspace string) bool
+	Mint    Mint
 }
 
 // Decision is a request in the cohort: what the edge would admit and the
@@ -309,11 +321,12 @@ func (d *Decision) Restage(authorizationID, reservationID, idempotencyKey string
 // decide; DecideGate is then the decision gate's reason ("" for on; for a
 // windowed key the policy's mode does not cover, PassKeyWindow or
 // PassKeyWindowAlert; else the decide row's PassDecideOff or
-// PassCacheDecide; else, for an async-v1 request while the policy's
-// edge_decide is false, PassAsyncOff), and Pass is it. A windowed key the
-// mode does not cover passes with its window reason whatever gate after
-// the key's facts passes it, as it did when its windows kept it out of the
-// cohort. Only Admit hands out a decision to admit, and only when Pass is
+// PassCacheDecide; else, for a workspace the switch copy does not enable,
+// PassWorkspaceNotEnabled; else, for an async-v1 request while the
+// policy's edge_decide is false, PassAsyncOff), and Pass is it. A windowed
+// key the mode does not cover passes with its window reason whatever gate
+// after the key's facts passes it, as it did when its windows kept it out
+// of the cohort. Only Admit hands out a decision to admit, and only when Pass is
 // "". LookupHash and Workspace are what the request named and what the
 // cache said of its key, "" when not known: the shadow and the decide path
 // evict them when Python refuses the key.
@@ -326,6 +339,12 @@ type Decided struct {
 	DecideGate string
 	LookupHash string
 	Workspace  string
+	// Via is where the decide row's answer came from, once the decide row
+	// was read on a fresh copy (DecideView.decides): store.DecideViaOwn,
+	// store.DecideViaWildcard or store.DecideViaNone; "" when the request
+	// did not reach it. The decide path counts each answer by it
+	// (decided_via).
+	Via string
 	// Read is what the cache held for the lookup hash (zero when not
 	// looked up).
 	Read gwstate.Read
@@ -433,11 +452,12 @@ func Decide(in DecideInputs) Decided {
 	// The policy's gates a key is not needed for, before the cache is read:
 	// with the pilot off, or this region or no workspace in it, the key is
 	// never looked up (and never filled and refreshed). The workspace's own
-	// membership needs the key (below, policyPass).
+	// membership needs the key (below, policyPass). All mode covers some
+	// workspace always (CoversAny).
 	switch {
 	case !policy.FastpathPilotEnabled:
 		return pass(PassPilotOff)
-	case len(policy.FastpathPilotWorkspaces) == 0:
+	case !policy.CoversAny():
 		return pass(PassNotPilotWorkspace)
 	case !slices.Contains(policy.FastpathPilotRegions, policy.Plane.Region):
 		return pass(PassPilotRegion)
@@ -624,7 +644,7 @@ func Decide(in DecideInputs) Decided {
 	out.shadowOnly = decision
 	// The decision gates, in order: a stream without the policy's
 	// fastpath_edge_streams, the policy's mode for a windowed key, the
-	// decide row, and async-v1's edge_decide.
+	// decide row, the switch copy, and async-v1's edge_decide.
 	switch {
 	case darkStream:
 		// Composed for the shadow, answered by Python, even for a workspace
@@ -634,7 +654,12 @@ func Decide(in DecideInputs) Decided {
 	case windowGate != "":
 		out.DecideGate = windowGate
 	default:
-		out.DecideGate = in.Decide.gate(key.WorkspaceID, policy.Plane.Cloud, region, at)
+		out.DecideGate, out.Via = in.Decide.decides(key.WorkspaceID, policy.Plane.Cloud, region, at)
+	}
+	if out.DecideGate == "" && in.Enabled != nil && !in.Enabled(key.WorkspaceID) {
+		// Named here rather than at the front door's Off, and cheaper: no
+		// in-flight count, no window read, no admit (widening section 6.1).
+		out.DecideGate = PassWorkspaceNotEnabled
 	}
 	if out.DecideGate == "" && r.Async.V1 && !policy.AsyncSettle.EdgeDecide {
 		// Composed for the shadow, answered by Python, even for a workspace
@@ -890,8 +915,9 @@ func policyPass(p *routingsnapshot.EdgePolicy, s *routingsnapshot.Snapshot, key 
 	switch {
 	case !p.FastpathPilotEnabled:
 		return PassPilotOff
-	case !slices.Contains(p.FastpathPilotWorkspaces, key.WorkspaceID):
-		// Empty is nobody (Python's pilot set), unlike stage_d's.
+	case !p.Covers(key.WorkspaceID):
+		// The explicit list, empty for nobody (Python's pilot set, unlike
+		// stage_d's), or all mode less its exclude list (fastpath_covers).
 		return PassNotPilotWorkspace
 	case !slices.Contains(p.FastpathPilotRegions, p.Plane.Region):
 		return PassPilotRegion
@@ -935,11 +961,13 @@ func regionsAgree(p *routingsnapshot.EdgePolicy, s routingsnapshot.Settings) boo
 }
 
 // DecideView is a node's copy of tr_fastpath_edge_decide (§9, decision
-// 10): the rows on, by workspace, cloud and region, and when the read that
-// made it began. Its zero value is a copy never read: stale, so nobody
-// decides.
+// 10): every row, on or off, by workspace, cloud and region, its decide the
+// value, the wildcard rows (store.DecideWildcard) among them, and when the
+// read that made it began. Off rows are kept: a workspace's own off row
+// wins over an on wildcard (docs/design/fast-admission-widening.md section
+// 6.1). Its zero value is a copy never read: stale, so nobody decides.
 type DecideView struct {
-	On     map[DecideKey]bool
+	Rows   map[DecideKey]bool
 	ReadAt time.Time
 	// MaxAge is how old the copy may be (three refresh intervals).
 	MaxAge time.Duration
@@ -948,17 +976,35 @@ type DecideView struct {
 // DecideKey is a decide row's key.
 type DecideKey struct{ Workspace, Cloud, Region string }
 
-// gate is the row's reason for a request at now: "" when the row is on,
-// PassCacheDecide when the copy is older than MaxAge (or was never read),
-// else PassDecideOff.
+// gate is the row's reason for a request at now (decides, without where
+// the answer came from).
 func (v DecideView) gate(workspace, cloud, region string, now time.Time) string {
+	reason, _ := v.decides(workspace, cloud, region, now)
+	return reason
+}
+
+// decides is the decide row's reason for a request at now and where the
+// answer came from: PassCacheDecide, and no source, when the copy is older
+// than MaxAge (or was never read), whatever its rows; else section 6.1's
+// rule: the workspace's own row for the cloud and region, on or off; else
+// the wildcard's for them; else off. "" is on. The wildcard row is never
+// read as a workspace's own: a workspace named "*", were there one (no
+// workspace is: fastpathctl takes ids beginning with a letter or digit),
+// reads as one without a row of its own.
+func (v DecideView) decides(workspace, cloud, region string, now time.Time) (string, string) {
 	if v.ReadAt.IsZero() || now.Sub(v.ReadAt) > v.MaxAge || now.Before(v.ReadAt.Add(-time.Second)) {
-		return PassCacheDecide
+		return PassCacheDecide, ""
 	}
-	if !v.On[DecideKey{workspace, cloud, region}] {
-		return PassDecideOff
+	own, ownFound := false, false
+	if workspace != store.DecideWildcard {
+		own, ownFound = v.Rows[DecideKey{workspace, cloud, region}]
 	}
-	return ""
+	wildcard, wildcardFound := v.Rows[DecideKey{store.DecideWildcard, cloud, region}]
+	decide, via := store.EffectiveDecide(own, ownFound, wildcard, wildcardFound)
+	if !decide {
+		return PassDecideOff, via
+	}
+	return "", via
 }
 
 // The decide copy's numbers (decision 10): read every 5 s, all off when
@@ -1021,13 +1067,13 @@ func (d *decideCopy) run(ctx context.Context) {
 			}
 			failing = true
 		case err == nil:
-			on := map[DecideKey]bool{}
+			// Every row, off ones too: an off row is an override under the
+			// wildcard (DecideView.decides).
+			all := make(map[DecideKey]bool, len(rows))
 			for _, row := range rows {
-				if row.Decide {
-					on[DecideKey{strings.Clone(row.Workspace), row.Cloud, row.Region}] = true
-				}
+				all[DecideKey{strings.Clone(row.Workspace), row.Cloud, row.Region}] = row.Decide
 			}
-			d.current.Store(&DecideView{On: on, ReadAt: at, MaxAge: decideStaleness * d.every})
+			d.current.Store(&DecideView{Rows: all, ReadAt: at, MaxAge: decideStaleness * d.every})
 			failing = false
 		}
 		select {

@@ -2077,3 +2077,101 @@ def test_every_streams_member_vector_is_what_python_reads() -> None:
         if case["switches"] is not None:
             settings = VECTORS.fixture_settings().model_copy(update=case["switches"])
             assert publisher_module.edge_streams_on(settings) is case["edge_streams"], case["name"]
+
+
+# --------------------------------- fastpath_pilot_all and fastpath_pilot_exclude --
+
+
+def _all_body() -> bytes:
+    return VECTORS.OUTPUT_ALL_BODY.read_bytes()
+
+
+def test_the_all_mode_golden_files_are_what_the_script_writes_now() -> None:
+    # fastpath/testdata/edge_policy_all_v1.{body,manifest}.json are the
+    # all-mode members' golden files (docs/design/fast-admission-widening.md
+    # section 11, PR 3); the Go reader holds them too (routingsnapshot's
+    # TestTheAllModeGoldenPolicyVerifies).
+    stale = (
+        "fastpath/testdata/edge_policy_all_v1.*.json is stale: run "
+        "`uv run python scripts/fastpath/edge_policy_vectors.py` and check the Go reader"
+    )
+    assert _all_body() == VECTORS.render_all_body(), stale
+    assert VECTORS.OUTPUT_ALL_MANIFEST.read_text() == VECTORS.render_all_manifest(), stale
+
+
+def test_the_all_mode_golden_body_is_the_golden_one_with_the_members() -> None:
+    body = _all_body()
+    assert body.isascii() and not body.endswith(b"\n")
+    policy = parse_edge_policy(body)
+    assert canonical_edge_policy_bytes(policy) == body
+    assert policy.fastpath_pilot_all is True
+    assert policy.fastpath_pilot_exclude == VECTORS.ALL_EXCLUDE and len(VECTORS.ALL_EXCLUDE) > 1
+    assert policy.fastpath_pilot_workspaces == ()
+    assert all(ws.startswith("ws-synthetic-") for ws in VECTORS.ALL_EXCLUDE)
+    # Every other field is the golden body's.
+    decoded, golden = json.loads(body), json.loads(_golden_body())
+    assert set(decoded) - set(golden) == {"fastpath_pilot_all", "fastpath_pilot_exclude"}
+    assert {k: v for k, v in decoded.items() if k in golden and k != "fastpath_pilot_workspaces"} == {
+        k: v for k, v in golden.items() if k != "fastpath_pilot_workspaces"}
+
+
+def test_the_all_mode_golden_manifest_verifies_and_binds_the_body() -> None:
+    body = _all_body()
+    token = json.loads(VECTORS.OUTPUT_ALL_MANIFEST.read_text())["jws"]
+    claims = _golden_verify(token, body)
+    assert claims.sha256 == hashlib.sha256(body).hexdigest() and claims.size == len(body)
+    # The default golden manifest does not bind the all-mode body.
+    with pytest.raises(ValueError, match="manifest binding"):
+        _golden_verify(_golden_manifest()["jws"], body)
+
+
+def test_the_publisher_writes_no_all_mode_member() -> None:
+    # PR 5 publishes them; until then the default body is byte-identical to
+    # one from before the members existed.
+    for member in (b"fastpath_pilot_all", b"fastpath_pilot_exclude"):
+        assert member not in VECTORS.render_body()
+        assert member not in _golden_body()
+    assert parse_edge_policy(_golden_body()).fastpath_pilot_all is None
+
+
+_EXCLUDE_64 = [f"ws-synthetic-x{i:02d}" for i in range(64)]
+
+
+@pytest.mark.parametrize(("name", "edit"), [
+    ("an empty exclude list", lambda d: {**d, "fastpath_pilot_exclude": []}),
+    ("64 excluded", lambda d: {**d, "fastpath_pilot_exclude": _EXCLUDE_64}),
+])
+def test_the_all_mode_members_parse_and_stay_canonical(name: str, edit: Any) -> None:
+    raw = json.dumps(edit(json.loads(_all_body())), sort_keys=True, separators=(",", ":"))
+    policy = parse_edge_policy(raw)
+    assert policy.fastpath_pilot_all is True, name
+    assert canonical_edge_policy_bytes(policy) == raw.encode("ascii"), name
+
+
+def _without_all_members(d: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in d.items() if k not in ("fastpath_pilot_all", "fastpath_pilot_exclude")}
+
+
+@pytest.mark.parametrize(("name", "edit"), [
+    ("all false", lambda d: {**d, "fastpath_pilot_all": False}),
+    ("all null", lambda d: {**d, "fastpath_pilot_all": None}),
+    ("all an integer", lambda d: {**d, "fastpath_pilot_all": 1}),
+    ("all a string", lambda d: {**d, "fastpath_pilot_all": "true"}),
+    ("exclude null", lambda d: {**d, "fastpath_pilot_exclude": None}),
+    ("exclude without all", lambda d: {
+        **_without_all_members(d), "fastpath_pilot_exclude": ["ws-synthetic-excluded-a"]}),
+    ("an empty exclude without all", lambda d: {**_without_all_members(d), "fastpath_pilot_exclude": []}),
+    ("all without exclude", lambda d: {k: v for k, v in d.items() if k != "fastpath_pilot_exclude"}),
+    ("exclude unsorted", lambda d: {**d, "fastpath_pilot_exclude": d["fastpath_pilot_exclude"][::-1]}),
+    ("exclude duplicated", lambda d: {**d, "fastpath_pilot_exclude": ["ws-synthetic-excluded-a"] * 2}),
+    ("65 excluded", lambda d: {**d, "fastpath_pilot_exclude": sorted([*_EXCLUDE_64, "ws-synthetic-x64"])}),
+    ("an exclude id out of form", lambda d: {**d, "fastpath_pilot_exclude": ["ws synthetic"]}),
+    ("the wildcard excluded", lambda d: {**d, "fastpath_pilot_exclude": ["*"]}),
+    ("an explicit list with all", lambda d: {**d, "fastpath_pilot_workspaces": ["ws-synthetic-pilot-1"]}),
+])
+def test_the_all_mode_members_are_strict(name: str, edit: Any) -> None:
+    decoded = json.loads(_all_body())
+    # Positive control: the untouched all-mode body re-encoded parses.
+    parse_edge_policy(json.dumps(decoded, sort_keys=True, separators=(",", ":")))
+    with pytest.raises((ValueError, ValidationError)):
+        parse_edge_policy(json.dumps(edit(decoded), sort_keys=True, separators=(",", ":")))

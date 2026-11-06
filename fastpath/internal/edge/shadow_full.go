@@ -236,7 +236,17 @@ type fullShadow struct {
 	// cacheAt is the cache's counts at the last line, which logs the
 	// period's: the cache keeps running totals.
 	cacheAt gwstate.Counters
+	// keys are the lookup hashes of the comparable requests (agree_full
+	// and differ) since the shadow started, at most maxDistinctKeys of
+	// them: distinct_keys, the widening's count of distinct API keys
+	// (docs/design/fast-admission-widening.md section 8.1 item 3).
+	keys map[string]struct{}
 }
+
+// maxDistinctKeys bounds the shadow's set of distinct keys: past it the
+// count stays there ("at least"), five times the widening's gate of 200,
+// and the set's memory stays small (a 64-byte hash each).
+const maxDistinctKeys = 1000
 
 // fullTally is one snapshot's and policy's counts: the classes, the
 // fields that differ (differ.<field>, row.<column>), the row read-backs by
@@ -328,7 +338,7 @@ func newFullShadow(cfg DecideShadowConfig, logf func(string, ...any), clock func
 	}
 	sh := &fullShadow{cfg: cfg, logf: logf, clock: clock, every: every,
 		decides: newDecideCopy(cfg.Decides, cfg.DecideEvery, clock, logf), jobs: make(chan struct{}, cfg.Jobs),
-		budget: maxShadowBytes, tallies: map[string]*fullTally{}, totals: newFullTally()}
+		budget: maxShadowBytes, tallies: map[string]*fullTally{}, totals: newFullTally(), keys: map[string]struct{}{}}
 	sh.limiter.tokens = cfg.ReadsPerSecond
 	sh.windowLimiter.tokens = cfg.ReadsPerSecond
 	return sh, nil
@@ -428,7 +438,7 @@ func (e *Edge) beginFull(r *http.Request, at time.Time, body []byte, boot BootSe
 	}
 	job := &fullJob{held: int64(len(body)), answer: make(chan pyAnswer, 1), arrived: time.Now(), in: DecideInputs{
 		Request: RequestOf(r, at, body, boot),
-		Lookup:  sh.cfg.Cache.Lookup, Decide: sh.decides.view(), Mint: sh.cfg.Mint,
+		Lookup:  sh.cfg.Cache.Lookup, Decide: sh.decides.view(), Enabled: enabledOf(e.Admitter()), Mint: sh.cfg.Mint,
 	}}
 	if p, ok := r.Context().Value(decidePassedKey{}).(decidePassed); ok {
 		job.decidePass = p.reason
@@ -553,6 +563,7 @@ func (sh *fullShadow) follow(job *fullJob) {
 		}
 		sh.readRows(d, &r, a.latency)
 	}
+	r.key = decided.LookupHash
 	sh.record(job.digest, r)
 	sh.release(job.held + decodedHeld + job.finished())
 }
@@ -615,6 +626,9 @@ type fullResult struct {
 	windows  []string
 	stream   string
 	race     *raceCandidate
+	// key is the request's lookup hash (Decided.LookupHash), for
+	// distinct_keys; never logged.
+	key string
 }
 
 // asyncResult is one followed request's async-v1 counts (asyncCounts): its
@@ -1440,6 +1454,10 @@ func (sh *fullShadow) record(digest string, r fullResult) {
 		t = newFullTally()
 		sh.tallies[digest] = t
 	}
+	if comparable := r.class == ClassAgreeFull || r.class == ClassDifferAny; comparable && r.key != "" &&
+		len(sh.keys) < maxDistinctKeys {
+		sh.keys[r.key] = struct{}{}
+	}
 	for _, tally := range []*fullTally{t, sh.totals} {
 		tally.classes[r.class]++
 		for _, f := range r.fields {
@@ -1560,9 +1578,14 @@ func (sh *fullShadow) flush() {
 		sh.logf(line, args...)
 	}
 	// Every count of the line is the period's, the cache's too: its own
-	// are totals, so the line logs what they grew by since the last.
-	line := "fastpath edge decide shadow: dropped=%d evictions=%d"
-	args := []any{sh.dropped.Swap(0), sh.periodEvictions.Swap(0)}
+	// are totals, so the line logs what they grew by since the last. The
+	// one exception is distinct_keys, the node's distinct keys among its
+	// comparable requests since the shadow started, a number only and
+	// bounded (maxDistinctKeys): a key seen in two periods is one key, so
+	// a reader takes a node's largest figure, never a sum
+	// (fastpathwatch's edge report).
+	line := "fastpath edge decide shadow: dropped=%d evictions=%d distinct_keys=%d"
+	args := []any{sh.dropped.Swap(0), sh.periodEvictions.Swap(0), len(sh.keys)}
 	if c, ok := sh.cfg.Cache.(cacheCounters); ok {
 		n, was := c.Counters(), sh.cacheAt
 		sh.cacheAt = n
@@ -1590,6 +1613,9 @@ type DecideShadowCounts struct {
 	Async              map[string]map[string]int
 	ReadBack           int
 	Dropped, Evictions int64
+	// DistinctKeys is distinct_keys: the distinct lookup hashes among the
+	// comparable requests (agree_full and differ), at most maxDistinctKeys.
+	DistinctKeys int
 }
 
 // DecideShadowCounts are the counts now; zero with the shadow off.
@@ -1600,10 +1626,12 @@ func (e *Edge) DecideShadowCounts() DecideShadowCounts {
 	sh := e.full
 	sh.mu.Lock()
 	t := sh.totals.clone()
+	keys := len(sh.keys)
 	sh.mu.Unlock()
 	return DecideShadowCounts{Classes: t.classes, Fields: t.fields, Rows: t.rows, Decide: t.decide, Cohort: t.cohort,
 		Windows: t.windows, Streams: t.streams,
-		Async: t.async, ReadBack: t.readBack, Dropped: sh.dropped.Load(), Evictions: sh.evictions.Load()}
+		Async: t.async, ReadBack: t.readBack, Dropped: sh.dropped.Load(), Evictions: sh.evictions.Load(),
+		DistinctKeys: keys}
 }
 
 // DecideShadowOn reports the full-response shadow configured.

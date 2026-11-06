@@ -11,10 +11,14 @@ for the shadow alone); then, in `Decide`'s order (`decide.go`; §3), the
 edge policy Python publishes, whose pilot set must name the workspace
 (decision 11: `fastpath_pilot_enabled`, `fastpath_pilot_workspaces`,
 `fastpath_pilot_regions` and `records_durable`, rendered from
-`scripts/deploy/rollout.sh`'s `TR_FASTPATH_PILOT_*`), and a row of
-`tr_fastpath_edge_decide` for the workspace, cloud and region that says
-`decide` (§9, decision 10), checked last of the gates so that the shadow
-compares a complete decision for a workspace not yet deciding. A request
+`scripts/deploy/rollout.sh`'s `TR_FASTPATH_PILOT_*`; or, once Python
+publishes it, all mode, every workspace but `fastpath_pilot_exclude`), and
+a row of `tr_fastpath_edge_decide` for the workspace, cloud and region that
+says `decide`, or with none of its own the wildcard row `*` of that cloud
+and region (§9, decision 10; `docs/design/fast-admission-widening.md`
+§6.1), checked last of the gates so that the shadow compares a complete
+decision for a workspace not yet deciding. Beside the row, the node's copy
+of the switch must enable the workspace (`workspace.not_enabled`, below). A request
 naming a `cache_affinity_key` is decided like any other, in the cold
 order (the design's §1 item 5: Python's affinity sessions live in each
 Cloud Run instance's memory and almost never warm across instances, so
@@ -139,11 +143,33 @@ rows kept (`DecideOffAll`). Each node with `-edge-decide` copies the whole table
 `decideCopy.run`), so a row turned off is seen by a node within 10 s of the
 commit when its reads succeed. A node whose read fails keeps its last copy,
 deciding as that copy said, until the copy is 15 s old (three intervals,
-`DecideView.gate`), and then decides nothing (`cache.decide`); so a row
+`DecideView.decides`), and then decides nothing (`cache.decide`); so a row
 turned off is honoured within 10 s, or by the time the copy a node holds is
 15 s old, whichever a node's reads give.
 The row touches neither the switch nor the leases: what the edge admitted
 settles as before.
+
+**The wildcard row** (`docs/design/fast-admission-widening.md` §6). The
+row `('*', gcp, us-central1)` decides for every workspace with no row of
+its own for that cloud and region; a workspace's own row, on or off, wins
+over it, so `decide off WORKSPACE` writes an override that holds under the
+wildcard, and `decide on WORKSPACE` decides with the wildcard off. With no
+wildcard row the table means what it meant before. The node's copy keeps
+every row, off ones too (`decideCopy.run`); the decision for a workspace is
+its own row, else the wildcard's, else off (`DecideView.decides`,
+`store.EffectiveDecide`). `*` is never a workspace's id: `fastpathctl`
+takes ids beginning with a letter or digit, so `decide on|off|status`
+refuse it, and the wildcard has commands of its own:
+
+```bash
+fastpathctl -database $DB decide wildcard on|off|status [-cloud gcp] [-region us-central1]
+```
+
+`decide wildcard status` exits 3 while the wildcard row is on and 0 while
+it is off or absent. The row is written only once `fastpathwatch edge`
+shows every node on a release that reads it (widening §6.3): a node from
+before reads `*` as a workspace's id, which no request carries, so it
+decides nobody new, and needs nothing for a rollback.
 
 Start from a table that says nobody decides, and prove it:
 
@@ -153,13 +179,44 @@ fastpathctl -database $DB decide status WORKSPACE
 ```
 
 `decide-off-all` answers `{"rows_turned_off":N,"at":...}`, `N` the rows it
-found on (0 for a table all off already). `decide status` exits 0 while the
-workspace does not decide in that cloud and region and 3 while it does
-(`fastpath/cmd/fastpathctl/main.go`, `notDone`), with every row of the
-workspace's beside, under `rows`. `"found": false` says there is no row
-for the cloud and region asked about, not that the workspace decides
-nowhere: a row of another cloud or region is listed under `rows` and may
-say on. Read them; `decide-off-all` turns every row off whatever its key.
+found on (0 for a table all off already), the wildcard's among them; every
+row it turned off keeps `at` as its `changed_at`. `decide status` reports
+the effective answer for the workspace in that cloud and region, by its own
+row or the wildcard: it exits 0 while the workspace does not decide there
+and 3 while it does (`fastpath/cmd/fastpathctl/main.go`, `notDone`), with
+`via` (`own`, `wildcard` or `none`: which row the answer came from), the
+wildcard row of that cloud and region under `wildcard` (null for none), and
+every row of the workspace's own beside, under `rows`. `"found": false`
+says the workspace has no row of its own for the cloud and region asked
+about, not that it decides nowhere: under an on wildcard it decides (exit
+3, `via` `wildcard`), and a row of another cloud or region is listed under
+`rows` and may say on. Read them; `decide-off-all` turns every row off
+whatever its key.
+
+The way back from `decide-off-all` is exact, and nobody reconstructs who
+was on:
+
+```bash
+fastpathctl -database $DB decide-restore -at AT
+```
+
+with `AT` the `at` `decide-off-all` printed, as printed. It turns back on
+exactly the rows whose `changed_at` is `AT` and are off, and answers
+`{"rows_turned_on":N,"restored":AT,"at":...}`; an off override set before
+the kill keeps its own `changed_at` and stays off, and a row turned off
+again after it keeps its later one. It exits 3 when no row matched (a
+mistyped `AT`, or a restore already done: restored rows take the restore's
+commit timestamp).
+
+`decide delete WORKSPACE [-cloud gcp] [-region us-central1]` removes the
+workspace's own row there and only ever stops one deciding: under an on
+wildcard it refuses, exit 2 and nothing written, to remove an off row,
+since the workspace would then decide; `-follow-wildcard` removes it anyway
+and answers `"follows_wildcard": true`. An on row is removed always. `decide
+delete '*'` removes the wildcard row itself (`"wildcard": true`), so every
+workspace without a row of its own stops deciding in that cloud and region;
+`decide wildcard off` is the same stop and keeps the row for
+`decide-restore`, which is why the way back below uses it.
 
 ## 2. The node attribute
 
@@ -502,6 +559,23 @@ the cause.
 
 One workspace, or one group, at a time, each with step 4's reads at an
 hour and a day before the next; the pilot workspace after the operator's.
+From WS3 of `docs/design/fast-admission-widening.md` (§8.2) the wildcard
+row decides instead: `decide wildcard on` for `gcp`, `us-central1`, after
+every node runs a release that reads it, then the include list's own on
+rows deleted (`decide delete WORKSPACE`), so they decide under it. The
+decide path's count line then attributes each answer, the 200s and the
+503s, to the row it came from (`decided_via={"own":N,"wildcard":M}`, the
+design's `decided.via`), which `fastpathwatch edge` sums under
+`decide.by_name.decided_via`; WS3's gate counts the `wildcard` ones. A
+request whose decide row says on, by either, for a workspace the node's
+copy of the switch does not enable passes `workspace.not_enabled`
+(`decide.go`, after the compose, so the shadow still compares it) rather
+than reaching the front door's `owner.off`. The shadow's per-node line
+carries `distinct_keys`, the distinct API keys among its comparable
+requests since the node's shadow started, at most 1000 and a number only;
+it is no period's count, so `fastpathwatch edge` takes the largest
+figure any line carries (`i2.distinct_keys`) rather than a sum. A node
+started before the step's start counts the keys it saw before it too.
 A row is per cloud and region: another region's row waits on `rollout.sh`
 rendering `settle_outbox_enabled` the same in every region (decision 11)
 and on the policy's `fastpath_pilot_regions` naming it. A workspace leaves
@@ -584,11 +658,26 @@ untouched, and what the edge admitted settles through Python as before.
    back to `off` in `scripts/deploy/rollout.sh`, a Python deploy; the edge
    passes every windowed key `key.key_window` from its first policy without
    the member, within the policy's 60 s life (§6).
-2. **Every workspace**, within the same bound:
+   Under the wildcard, `decide off WORKSPACE` writes an own off row,
+   which wins over it; `decide status WORKSPACE` exits 0 with `via` `own`.
+   Never `decide delete` an off row to undo a step under an on wildcard:
+   it refuses (exit 2), since the workspace would start deciding.
+2. **Every workspace the wildcard decides**, within the same bound, its
+   own on rows still deciding:
+
+   ```bash
+   fastpathctl -database $DB decide wildcard off
+   ```
+
+   **Every workspace**, within the same bound:
 
    ```bash
    fastpathctl -database $DB decide-off-all
    ```
+
+   It prints `at`; `decide-restore -at AT` later turns back on exactly the
+   rows it turned off, the wildcard's among them, and no override set
+   before it.
 
    **Async-v1 only**, every workspace: `TR_FASTPATH_EDGE_DECIDE_ASYNC=false`
    in `scripts/deploy/rollout.sh`, a Python deploy. The edge stops deciding
