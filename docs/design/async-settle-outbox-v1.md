@@ -1234,8 +1234,9 @@ retried and parked rows keep their creation age; so does a contended
 one-commit intent, which is written due at once. Only a row created between 5
 and 66 seconds before the observation can be over the limit by creation age
 and not by due age. So the publisher reads base rows only for that range, in
-the same snapshot as the covering read, and only when the covering read shows
-between 1 and 100 rows there; with more, every age stays a creation age. If
+the same snapshot as the covering read, and only when that read was not cut
+short at its 10,000-row bound and shows between 1 and 100 rows there;
+otherwise every age stays a creation age. If
 that read fails, the publisher logs `async admission read failed
 operation=drain_grace` and publishes creation ages, the evidence it had before
 this read existed:

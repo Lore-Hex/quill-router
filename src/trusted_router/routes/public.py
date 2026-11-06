@@ -1479,6 +1479,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     def seo_deepseek_api_privacy() -> str:
         return public_page_html(settings, "deepseek-api-privacy")
 
+    @public_html_route("/abliterated-deepseek")
+    def seo_abliterated_deepseek() -> str:
+        return public_page_html(settings, "abliterated-deepseek")
+
     @public_html_route("/glm-5-api")
     def seo_glm_5_api() -> str:
         return public_page_html(settings, "glm-5-api")

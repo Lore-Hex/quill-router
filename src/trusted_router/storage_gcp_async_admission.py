@@ -183,12 +183,16 @@ def _ages_from_due(reader: Any, observed: float, ages: list[float]) -> list[floa
     it either way and older ones over it. So the base rows are read only for
     that range, and only when it holds at least one and at most GRACE_ROW_LIMIT
     rows (the same snapshot's backlog says how many); with more, every age
-    stays a creation age. If the read fails, so do they: the evidence before
-    this read existed, and a record still goes out.
+    stays a creation age. A truncated backlog cannot say how many, and its
+    record is incomplete and never admits, so it is not read. If the read
+    fails, every age stays a creation age too: the evidence before this read
+    existed, and a record still goes out.
     """
     import datetime as dt
     import time
 
+    if len(ages) > HEALTH_ROW_LIMIT:
+        return ages
     span = INLINE_GRACE_SECONDS + HEALTH_P95_LIMIT_SECONDS + 1
     in_range = sum(HEALTH_P95_LIMIT_SECONDS < age <= span for age in ages)
     if not 0 < in_range <= GRACE_ROW_LIMIT:
