@@ -136,9 +136,9 @@ func run(ctx context.Context, args []string, out io.Writer,
 	cloud := fs.String("cloud", "gcp", "decide: the edge plane's cloud")
 	region := fs.String("region", "us-central1", "decide: the region of the authorizations")
 	cfg := service.Defaults()
-	fs.Int64Var(&cfg.Store.RequiredTier, "required-tier", cfg.Store.RequiredTier,
+	fs.Var(service.Money{P: &cfg.Store.RequiredTier}, "required-tier",
 		"ready: the trust tier the fleet's leases need (the node's -required-tier)")
-	fs.Int64Var(&cfg.Store.Floor, "floor", cfg.Store.Floor,
+	fs.Var(service.Money{P: &cfg.Store.Floor}, "floor",
 		"ready: the headroom the fleet's grants leave outside leases, in microdollars (the node's -floor)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {

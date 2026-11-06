@@ -201,7 +201,7 @@ def _unit_flags(script: str) -> set[str]:
 def _command_flags(source: str) -> set[str]:
     """The flags the command's main.go declares, on the command line or on
     a flag set a helper is given (fs)."""
-    return set(re.findall(r'(?:flag|fs)\.\w+\((?:&[^,]+, )?"([a-z][a-z-]*)"', source))
+    return set(re.findall(r'(?:flag|fs)\.\w+\((?:[^,"()]+, )?"([a-z][a-z-]*)"', source))
 
 
 def _source_at(commit: str, path: str) -> str:
@@ -500,6 +500,8 @@ def test_a_flag_the_pinned_command_lacks_is_found() -> None:
     assert _unit_flags(unit) == {"roles", "hold-boot"}
     assert _command_flags(command) == {"roles", "boot"}
     assert _command_flags(command + '\tfs.Int64Var(&cfg.Floor, "floor", cfg.Floor, "")\n') == {"roles", "boot", "floor"}
+    money = '\tfs.Var(service.Money{P: &cfg.Allowance}, "allowance", "")\n'
+    assert _command_flags(command + money) == {"roles", "boot", "allowance"}
     assert _unit_flags(unit) - _command_flags(command) == {"hold-boot"}
     given = 'edge_flags="-edge-address $x:8081 -edge-upstream $u"\n' + unit
     assert _unit_flags(given) == {"roles", "hold-boot", "edge-address", "edge-upstream"}

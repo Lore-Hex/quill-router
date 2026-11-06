@@ -85,7 +85,8 @@ func TestTheCommandRefusesWhatItCannotDo(t *testing.T) {
 		{"-database", "d", "ready", "ws", "-required-tier", "4"}, {"-database", "d", "ready", "ws", "-floor", "20"},
 		{"-database", "d", "-required-tier", "-1", "ready", "ws"}, {"-database", "d", "ready", "ws", "-floor", "-1"},
 		{"-database", "d", "ready", "ws", "-floor", "1125899906842625"}, {"-database", "d", "ready", "ws", "-nope"},
-		{"-database", "d", "-floor", "20", "status", "ws"}} {
+		{"-database", "d", "-floor", "20", "status", "ws"}, {"-database", "d", "ready", "ws", "-floor", "020000000"},
+		{"-database", "d", "ready", "ws", "-required-tier", "0x3"}} {
 		if code, err := run(context.Background(), args, &bytes.Buffer{}, never); code != 2 || err == nil {
 			t.Errorf("%q: exit %d, %v", args, code, err)
 		}

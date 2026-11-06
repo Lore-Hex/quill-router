@@ -124,7 +124,7 @@ func run() error {
 			"and port only; empty serves none")
 	flag.Parse()
 
-	if err := service.CheckMoney(cfg); err != nil {
+	if err := parsed(flag.Args(), cfg); err != nil {
 		return err
 	}
 	switch *roles {
@@ -236,12 +236,23 @@ func run() error {
 // parsed. The node's startup script passes each only when the instance's
 // metadata names it.
 func moneyFlags(fs *flag.FlagSet, cfg *store.Config) {
-	fs.Int64Var(&cfg.RequiredTier, "required-tier", cfg.RequiredTier, "the trust tier leases need, 0 to 3")
-	fs.Int64Var(&cfg.Allowance, "allowance", cfg.Allowance,
+	fs.Var(service.Money{P: &cfg.RequiredTier}, "required-tier", "the trust tier leases need, 0 to 3")
+	fs.Var(service.Money{P: &cfg.Allowance}, "allowance",
 		"a workspace's most exposure in leases, across its regions and shards, in microdollars: at least the "+
 			"owner's largest top-up, at most 1 << 50")
-	fs.Int64Var(&cfg.Floor, "floor", cfg.Floor,
+	fs.Var(service.Money{P: &cfg.Floor}, "floor",
 		"the headroom a grant leaves the workspace outside leases, in microdollars: 0, or 1000000 to 1 << 50")
+}
+
+// parsed holds the parsed command line to what the node runs with: no
+// argument left over, since the flag parser stops at the first one and
+// would silently drop every flag after it (the startup script passes the
+// money flags last), and the money settings within their bounds.
+func parsed(args []string, cfg service.Config) error {
+	if len(args) != 0 {
+		return fmt.Errorf("arguments %q after the flags: every setting is a flag, and the parser stops at the first", args)
+	}
+	return service.CheckMoney(cfg)
 }
 
 // startBudget is how long the start before service.Run may take: each of

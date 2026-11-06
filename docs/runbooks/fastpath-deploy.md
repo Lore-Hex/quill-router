@@ -449,7 +449,7 @@ values are tier 3, an allowance of 1000000000 ($1,000) and a floor of
    wait for its leases and the balancer, stop the unit, run
    `sudo google_metadata_script_runner startup`, and read the running
    arguments from the process
-   (`tr -d '\0' < /proc/$(systemctl show -p MainPID --value fastpath)/cmdline`):
+   (`tr '\0' ' ' < /proc/$(systemctl show -p MainPID --value fastpath)/cmdline`):
    they must end in `-required-tier 3 -allowance 1000000000 -floor 20000000`
    before the next node is touched. Until every node is taken, a grant
    may still be made at today's values, so WS0's gate (section 8.2 of the

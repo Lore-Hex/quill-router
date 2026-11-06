@@ -22,7 +22,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -286,6 +288,32 @@ const (
 	// dollars is refused.
 	MinFloor int64 = 1_000_000
 )
+
+// Money is a money setting's flag value: a decimal integer written plainly,
+// with no sign, leading zero, underscore or base prefix, so that a value
+// such as 020000000 is refused rather than read in octal as a smaller one.
+type Money struct{ P *int64 }
+
+func (m Money) String() string {
+	if m.P == nil {
+		return "0"
+	}
+	return strconv.FormatInt(*m.P, 10)
+}
+
+func (m Money) Set(s string) error {
+	if !plainDecimal.MatchString(s) {
+		return fmt.Errorf("%q is not a plain decimal integer", s)
+	}
+	v, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return err
+	}
+	*m.P = v
+	return nil
+}
+
+var plainDecimal = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
 
 // CheckMoney says what is wrong with the store's money settings, nil when
 // nothing is: the tier leases need 0 to 3; the allowance at least the
