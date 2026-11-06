@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import sys
 import types
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -370,7 +372,11 @@ def test_sequence_below_durable_watermark_is_rejected() -> None:
 
 
 # Each release URL's fetch deadline and the refresh's join, shrunk so a
-# hang shows within a second or two.
+# hang shows within a second or two. Only ever around the hang itself: a
+# healthy fetch (a priming refresh, a positive control) runs on the
+# production deadlines, because on a loaded CI runner a healthy local fetch
+# has outlived even SHORT_REFRESH_TIMEOUT (run 42185972310: TimeoutError on
+# the priming refresh, its fetch ending later in WriteTimeout).
 SHORT_FETCH_TIMEOUT = 0.3
 SHORT_REFRESH_TIMEOUT = 1.5
 
@@ -397,13 +403,19 @@ def release_host(hosts: Any) -> Any:
     return hosts()
 
 
-@pytest.fixture
-def short_timeouts(monkeypatch: pytest.MonkeyPatch) -> float:
+@contextlib.contextmanager
+def short_timeouts(*, fetch: bool = True) -> Iterator[float]:
+    """Within it, the refresh's join and, with ``fetch``, each release URL's
+    fetch deadline are shrunk; it yields the refresh timeout. Leave
+    ``fetch`` off when the hang is past the fetches (a verification), so the
+    healthy fetches before it keep the production deadline."""
     import trusted_router.stage_d_policy as stage_d_policy
 
-    monkeypatch.setattr(stage_d_policy, "_FETCH_TIMEOUT_SECONDS", SHORT_FETCH_TIMEOUT)
-    monkeypatch.setattr(stage_d_policy, "REFRESH_TIMEOUT_SECONDS", SHORT_REFRESH_TIMEOUT)
-    return SHORT_REFRESH_TIMEOUT
+    with pytest.MonkeyPatch.context() as patch:
+        if fetch:
+            patch.setattr(stage_d_policy, "_FETCH_TIMEOUT_SECONDS", SHORT_FETCH_TIMEOUT)
+        patch.setattr(stage_d_policy, "REFRESH_TIMEOUT_SECONDS", SHORT_REFRESH_TIMEOUT)
+        yield SHORT_REFRESH_TIMEOUT
 
 
 class BlockingVerifier(FakeVerifier):
@@ -415,9 +427,12 @@ class BlockingVerifier(FakeVerifier):
         super().__init__()
         self.gate = threading.Event()
         self.gate.set()
+        self.waiting = threading.Event()
 
     def verify(self, document: bytes, bundle: bytes, **kwargs: Any) -> None:
         super().verify(document, bundle, **kwargs)
+        if not self.gate.is_set():
+            self.waiting.set()
         self.gate.wait(30)
 
 
@@ -461,7 +476,7 @@ HANGS = ["header-drip", "deflate-forever"]
 
 @pytest.mark.parametrize("mode", HANGS)
 def test_a_release_host_that_never_finishes_fails_the_refresh_within_its_timeout(
-    release_host: Any, short_timeouts: float, mode: str,
+    release_host: Any, mode: str,
 ) -> None:
     """Through the real httpx client, neither a header drip nor endless empty
     deflate blocks trips any httpx timeout. The refresh still fails within
@@ -477,19 +492,21 @@ def test_a_release_host_that_never_finishes_fails_the_refresh_within_its_timeout
     release_host.mode = mode
     release_host.document = _policy_document(1201)
     try:
-        started = time.monotonic()
-        refreshing: list[bool] = []
-        publisher = threading.Thread(target=lambda: refreshing.append(resolver.refresh_now()),
-                                     daemon=True)
-        publisher.start()
-        resolver.kick()
-        kick_worker = resolver._worker
-        assert kick_worker is not None
-        publisher.join(5)
-        kick_worker.join(5)
-        assert not publisher.is_alive() and not kick_worker.is_alive(), "a refresh hung"
-        assert refreshing == [False]
-        assert time.monotonic() - started < 2 * short_timeouts + 1
+        with short_timeouts() as refresh_timeout:
+            started = time.monotonic()
+            refreshing: list[bool] = []
+            publisher = threading.Thread(
+                target=lambda: refreshing.append(resolver.refresh_now()), daemon=True)
+            publisher.start()
+            resolver.kick()
+            kick_worker = resolver._worker
+            assert kick_worker is not None
+            publisher.join(5)
+            kick_worker.join(5)
+            assert not publisher.is_alive() and not kick_worker.is_alive(), "a refresh hung"
+            assert refreshing == [False]
+            # Two refreshes, one after the other, each bounded by its timeout.
+            assert time.monotonic() - started < 2 * refresh_timeout + 1
         assert resolver.current_policy() is verified and watermark.highest == 1200
         assert resolver._refresh_lock.acquire(timeout=1)
         resolver._refresh_lock.release()
@@ -506,12 +523,20 @@ def test_a_release_host_that_never_finishes_fails_the_refresh_within_its_timeout
 
 @pytest.mark.parametrize("mode", HANGS)
 def test_a_primary_that_never_finishes_falls_back_within_one_refresh(
-    hosts: Any, short_timeouts: float, mode: str,
+    hosts: Any, mode: str,
 ) -> None:
     """Each release URL has its own fetch deadline: a hung primary times out
     and the fallback serves the policy in the same refresh, so a primary
-    that never finishes cannot keep a healthy fallback out."""
+    that never finishes cannot keep a healthy fallback out.
+
+    On the production deadlines, not short_timeouts: the fallback's healthy
+    fetches get exactly one fetch deadline, so a deadline short enough to
+    make the hang quick is too short for a healthy fetch on a loaded runner.
+    This also proves REFRESH_TIMEOUT_SECONDS has room for a hung primary and
+    a fallback."""
     import time
+
+    import trusted_router.stage_d_policy as stage_d_policy
 
     primary, fallback = hosts(1200), hosts(1201)
     primary.mode = mode
@@ -519,8 +544,10 @@ def test_a_primary_that_never_finishes_falls_back_within_one_refresh(
     resolver = _served_resolver([primary.release_url, fallback.release_url], watermark)
     try:
         started = time.monotonic()
-        assert _within(5, resolver.refresh) is True
-        assert time.monotonic() - started < short_timeouts
+        # True only if the network part returned within the refresh's join.
+        assert _within(stage_d_policy.REFRESH_TIMEOUT_SECONDS + 5, resolver.refresh) is True
+        # The primary was held for its whole fetch deadline, not refused.
+        assert time.monotonic() - started >= stage_d_policy._FETCH_TIMEOUT_SECONDS
         assert resolver.current_policy().sequence == 1201  # type: ignore[union-attr]
         assert (primary.requests, fallback.requests, watermark.highest) == (1, 2, 1201)
     finally:
@@ -531,30 +558,35 @@ def test_a_primary_that_never_finishes_falls_back_within_one_refresh(
 
 
 def test_a_primary_below_the_watermark_falls_back_to_a_newer_release(
-    hosts: Any, short_timeouts: float,
+    hosts: Any,
 ) -> None:
     """The watermark is read before the network part and passed in as a
     floor: a validly signed primary below it is skipped for the fallback, so
     a fresh instance does not end up with an empty set."""
+    import trusted_router.stage_d_policy as stage_d_policy
+
+    # Healthy fetches only: wait out the whole refresh timeout before
+    # calling one hung.
+    bound = stage_d_policy.REFRESH_TIMEOUT_SECONDS + 5
     primary, fallback = hosts(1199), hosts(1201)
     watermark = FakeWatermark()
     watermark.highest = 1200
     resolver = _served_resolver([primary.release_url, fallback.release_url], watermark)
     assert resolver.current_policy() is None
-    assert _within(5, resolver.refresh) is True
+    assert _within(bound, resolver.refresh) is True
     assert resolver.current_policy().sequence == 1201  # type: ignore[union-attr]
     assert watermark.highest == 1201
     assert (primary.requests, fallback.requests) == (2, 2)
     # Positive control: with every release below the watermark, nothing is accepted.
     fallback.document = _policy_document(1198)
     watermark.highest = 1202
-    assert _within(5, resolver.refresh) is False
+    assert _within(bound, resolver.refresh) is False
     assert resolver.current_policy().sequence == 1201  # type: ignore[union-attr]
     assert watermark.highest == 1202
 
 
 def test_a_verification_that_hangs_fails_the_refresh_and_its_late_result_is_discarded(
-    release_host: Any, short_timeouts: float,
+    release_host: Any,
 ) -> None:
     watermark = FakeWatermark()
     verifier = BlockingVerifier()
@@ -564,7 +596,8 @@ def test_a_verification_that_hangs_fails_the_refresh_and_its_late_result_is_disc
     release_host.document = _policy_document(1201)
     verifier.gate.clear()
     try:
-        assert _within(5, resolver.refresh) is False
+        with short_timeouts(fetch=False):
+            assert _within(5, resolver.refresh) is False
         assert resolver.current_policy() is verified and watermark.highest == 1200
     finally:
         verifier.gate.set()
@@ -581,27 +614,35 @@ def test_a_verification_that_hangs_fails_the_refresh_and_its_late_result_is_disc
 
 
 def test_no_second_fetch_starts_while_an_abandoned_one_runs(
-    release_host: Any, short_timeouts: float, caplog: pytest.LogCaptureFixture,
+    release_host: Any, caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A hang the fetch deadlines do not cover costs one thread, not one per
     refresh, and is logged once, then once more when it ends."""
     import logging
     import time
 
+    import trusted_router.stage_d_policy as stage_d_policy
+
     caplog.set_level(logging.INFO, logger="trusted_router.stage_d_policy")
     verifier = BlockingVerifier()
     resolver = _served_resolver([release_host.release_url], FakeWatermark(), verifier)
     verifier.gate.clear()
     try:
-        assert _within(5, resolver.refresh) is False
+        with short_timeouts(fetch=False):
+            assert _within(5, resolver.refresh) is False
         abandoned = _network_thread(resolver)
         assert abandoned.is_alive()
+        # Its fetches are done and it is stuck in the verification.
+        assert verifier.waiting.wait(10)
         requests, verifications = release_host.requests, len(verifier.calls)
+        # Back on the production refresh timeout, so a refresh that joined
+        # the abandoned thread would take all of it.
+        refresh_timeout = stage_d_policy.REFRESH_TIMEOUT_SECONDS
         for _ in range(3):
             started = time.monotonic()
-            assert _within(5, resolver.refresh) is False
+            assert _within(refresh_timeout, resolver.refresh) is False
             # Failed at once: no join, no fetch, no verification, no thread.
-            assert time.monotonic() - started < short_timeouts / 2
+            assert time.monotonic() - started < refresh_timeout / 2
             assert _network_thread(resolver) is abandoned and abandoned.is_alive()
         assert (release_host.requests, len(verifier.calls)) == (requests, verifications)
     finally:
