@@ -82,7 +82,7 @@ jobs:
           --store-durations --durations-path=durations-${{ matrix.shard }}.json --clean-durations
       - name: Upload this shard's durations
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: durations-post-cutover-${{ matrix.shard }}
           path: durations-${{ matrix.shard }}.json
@@ -130,7 +130,7 @@ jobs:
           --store-durations --durations-path=durations-${{ matrix.shard }}.json --clean-durations
       - name: Upload oracle durations separately from the full suites
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: durations-oracle-${{ matrix.clock }}-${{ matrix.shard }}
           path: durations-${{ matrix.shard }}.json
