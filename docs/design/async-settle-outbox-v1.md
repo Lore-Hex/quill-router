@@ -1218,6 +1218,33 @@ SELECT unresolved_at, actual_cost_micro, status FROM tr_settle_outbox@{FORCE_IND
 and sums then describe only the bounded observation, never the full backlog.
 Empty is healthy only after a complete fleet observation with a fresh heartbeat.
 
+**Inline grace (November 2026).** `p50_age_seconds` and `p95_age_seconds`
+count a row in its inline grace from when it falls due, not from its creation;
+`oldest_unresolved_age_seconds` remains every row's creation age. A row is in
+its grace while it is not an async row (`async_version IS NULL`), is pending,
+and the drain has neither attempted nor parked it (`attempts=0` and
+`last_error IS NULL`: a failed apply counts an attempt, and both a failure and
+a park write `last_error`). The two-commit settle and the fast-path pilot write
+such intents due 60 s later so their own inline settle can finish first. The
+drain cannot take one before then, so its age until then is not drain lag.
+Counted from creation, one intent left to the drain closed admission
+fleet-wide for about 55 s, as it did in production on 2026-11-05. The due time
+is `next_attempt_at`, but never later than 60 s after creation. Async, dead,
+retried and parked rows keep their creation age; so does a contended
+one-commit intent, which is written due at once. Only a row created between 5
+and 66 seconds before the observation can be over the limit by creation age
+and not by due age. So the publisher reads base rows only for that range, in
+the same snapshot as the covering read, and only when that read was not cut
+short at its 10,000-row bound and shows between 1 and 100 rows there;
+otherwise every age stays a creation age. If
+that read fails, the publisher logs `async admission read failed
+operation=drain_grace` and publishes creation ages, the evidence it had before
+this read existed:
+
+```sql
+SELECT unresolved_at, next_attempt_at FROM tr_settle_outbox@{FORCE_INDEX=tr_settle_outbox_unresolved} WHERE unresolved_at IS NOT NULL AND unresolved_at >= @since AND unresolved_at < @until AND status='pending' AND async_version IS NULL AND attempts=0 AND last_error IS NULL ORDER BY unresolved_at LIMIT @limit
+```
+
 Before observing health, workers transactionally claim the complete control key
 `(kind='settle_drain_control', id='health-publish-v1')` using the same cadence
 primitive as housekeeping. At most one worker wins per publish interval

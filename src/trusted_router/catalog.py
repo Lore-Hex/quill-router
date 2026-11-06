@@ -533,7 +533,7 @@ _OPEN_WEIGHT_PREFIXES = (
     "qwen/",
     # Reflection's released Beam 1.0 weights are Apache-2.0, not a preview claim.
     "reflection/beam-1.0",
-    "tencent/hy4",
+    "tencent/hy4-preview",
     "thinkingmachines/",
     "xiaomi/mimo",
     "z-ai/glm",

@@ -488,6 +488,37 @@
       "cached_input_token_price_per_m": 33000
     },
     {
+      "display_name": "Hy4",
+      "title": "hy4",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "tencent/hy4",
+      "upstream_id": "hy4",
+      "context_length": 1048576,
+      "created": 1793577600,
+      "routable": true,
+      "supported_features": [
+        "function-calling",
+        "json-mode",
+        "reasoning-effort",
+        "prompt-cache"
+      ],
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 834000,
+      "output_token_price_per_m": 2501000,
+      "cached_input_token_price_per_m": 42000
+    },
+    {
       "display_name": "Hy4 preview",
       "title": "hy4-preview",
       "model_type": "chat",
@@ -738,5 +769,5 @@
   "pricing_source": "https://intl.cloud.tencent.com/document/product/1300/78937",
   "generated_at": "2026-10-26T06:59:20Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 24
+  "model_count": 25
 }

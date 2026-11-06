@@ -22,8 +22,9 @@ from trusted_router.storage import STORE
 REQUEST_ID = "rlog_" + "a" * 32
 
 
-def test_include_reasoning_has_a_stable_diagnostic_category() -> None:
-    assert "include_reasoning" in PARAMETER_CATEGORIES
+@pytest.mark.parametrize("parameter", ["include_reasoning", "thinking", "enable_thinking"])
+def test_reasoning_has_a_stable_diagnostic_category(parameter: str) -> None:
+    assert parameter in PARAMETER_CATEGORIES
 
 
 @pytest.fixture

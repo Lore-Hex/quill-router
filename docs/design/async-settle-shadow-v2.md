@@ -661,6 +661,13 @@ policy and uncertainty handling; no such change is authorized here. Missing
 progress is unknown; a fresh complete backlog above p95=5 s gives known no;
 empty backlog is an actual observation, never fabricated worker health.
 
+Since November 2026 the money publisher counts a settle intent in its inline
+grace from when it falls due rather than from its creation
+(async-settle-outbox-v1.md, "Inline grace"). This summarizer still counts
+every row from its creation, so while such an intent is 5 to 65 s old it
+predicts `drain_unhealthy` where money admission stays open. Shadow v2 is off
+in production; port the rule before it is re-enabled.
+
 Prediction means “the tier/cap/backlog-age predicate would say yes/no on these
 fresh observations **if** a proven fast-drain service were installed.” Label
 `prediction_basis=counterfactual_backlog_v2`; it proves neither worker liveness,

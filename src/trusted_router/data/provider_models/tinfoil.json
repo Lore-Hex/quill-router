@@ -37,6 +37,8 @@
     {
       "id": "moonshotai/kimi-k3",
       "upstream_id": "kimi-k3",
+      "retirement_at": "2026-11-12T00:00:00Z",
+      "replacement_model_id": "moonshotai/kimi-k3.1-pro",
       "display_name": "Kimi K3",
       "title": "moonshotai/kimi-k3",
       "context_length": 262144,

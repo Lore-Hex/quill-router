@@ -34,6 +34,8 @@ PARAMETER_CATEGORIES = frozenset(
         "reasoning",
         "reasoning_effort",
         "include_reasoning",
+        "thinking",
+        "enable_thinking",
         "provider",
         "metadata",
         "tags",

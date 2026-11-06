@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -322,8 +322,13 @@ def test_tinfoil_deepseek_route_is_confidential_and_uses_live_prices(
 def test_tinfoil_kimi_k3_route_is_confidential_and_uses_live_capabilities(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
+    # Tinfoil retires kimi-k3 on 2026-11-12; the route is checked before it.
+    monkeypatch.setattr(
+        provider_lifecycle, "_utc_now",
+        lambda: provider_lifecycle.TINFOIL_KIMI_K3_RETIREMENT_AT - timedelta(seconds=1),
+    )
     serve_manifest_rows(monkeypatch, tmp_path, "tinfoil", [TINFOIL_KIMI_K3])
-    endpoint = MODEL_ENDPOINTS["moonshotai/kimi-k3@tinfoil/prepaid"]
+    endpoint = MODEL_ENDPOINTS[f"{TINFOIL_KIMI_K3['id']}@tinfoil/prepaid"]
     provider = PROVIDERS["tinfoil"]
 
     assert endpoint.upstream_id == "kimi-k3"
