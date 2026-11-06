@@ -198,3 +198,113 @@ def test_the_audit_baseline_is_the_rows_total(monkeypatch: Any, capsys: Any) -> 
     assert code == 0 and plan["credits_total_microdollars"] == 100_000_000
     code, result, _ = _run(store, capsys, "--apply")
     assert code == 0 and result["funded"] == "applied" and result["credits_total_microdollars"] == 200_000_000
+
+
+def test_tier_3_needs_the_identity_bypass_and_reaches_every_shard(monkeypatch: Any, capsys: Any) -> None:
+    """An override of 3 without an approved owner stays at 1 (the identity
+    ceiling), so the apply fails; with --identity-bypass, on a workspace
+    nothing but its own grant funds, every shard's effective tier is 3 and
+    the override records the bypass."""
+    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-clickhouse")
+    store, db = make_fake_store()
+    user = _owner(store)
+    code, _, err = _run(store, capsys, "--tier", "3", "--apply")
+    assert code == 1 and "below the override" in err
+    workspace = next(w for w in store.list_workspaces_for_user(user.id) if w.name == "fastpath-synthetic")
+    assert db.typed[CREDIT_BALANCE_TABLE][(workspace.id, 0)]["trust_tier"] == 1
+    store._write_entity("credit", workspace.id, {"workspace_id": workspace.id, "shard_count": 2})
+    db.typed[CREDIT_BALANCE_TABLE][(workspace.id, 1)] = dict(db.typed[CREDIT_BALANCE_TABLE][(workspace.id, 0)], shard=1,
+                                                             total_credits=0)
+    code, plan, _ = _run(store, capsys, "--tier", "3", "--identity-bypass")
+    assert code == 0 and plan["identity_bypass"] is True and "override" not in plan
+    code, result, err = _run(store, capsys, "--tier", "3", "--identity-bypass", "--apply")
+    assert code == 0, err
+    assert result["funded"] == "already applied" and result["override"]["identity_bypass"] is True
+    rows = [db.typed[CREDIT_BALANCE_TABLE][(workspace.id, shard)] for shard in (0, 1)]
+    assert all(r["trust_tier"] == 3 and r["trust_override_tier"] == 3 for r in rows), rows
+    assert [row[1] for row in result["shards_after"]] == [3, 3]
+    override = next(rec for pk, rec in db.typed["tr_trust_override"].items() if pk[0] == workspace.id)
+    assert override["tier"] == 3 and override["identity_bypass"]
+
+
+def test_a_new_workspace_reaches_tier_3_with_the_bypass(monkeypatch: Any, capsys: Any) -> None:
+    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-clickhouse")
+    store, db = make_fake_store()
+    _owner(store)
+    code, result, err = _run(store, capsys, "--tier", "3", "--identity-bypass", "--apply")
+    assert code == 0, err
+    assert result["created_workspace"] and result["funded"] == "applied"
+    assert db.typed[CREDIT_BALANCE_TABLE][(result["workspace_id"], 0)]["trust_tier"] == 3
+
+
+def test_the_bypass_is_refused_for_a_workspace_with_a_key(monkeypatch: Any, capsys: Any) -> None:
+    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-clickhouse")
+    store, db = make_fake_store()
+    user = _owner(store)
+    workspace = store.create_workspace(user.id, "fastpath-synthetic", trial_credit_microdollars=0)
+    store.api_keys.create(workspace_id=workspace.id, name="k", creator_user_id=None, limit_microdollars=None)
+    before = copy.deepcopy(db.typed)
+    for extra in ((), ("--apply",)):
+        code, _, err = _run(store, capsys, "--tier", "3", "--identity-bypass", *extra)
+        assert code == 1 and "API keys" in err, extra
+    assert db.typed == before
+    assert not any(pk[0] == workspace.id for pk in db.typed.get("tr_trust_override", {}))
+
+
+def test_the_bypass_is_refused_for_funding_other_than_its_own_grant(monkeypatch: Any, capsys: Any) -> None:
+    """Another grant, a payment, or credit no trust event explains: each is
+    funding the script did not give, so no bypass is set, in the dry run or
+    the apply, before the grant is made."""
+    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-clickhouse")
+
+    def other_grant(store: Any, workspace_id: str) -> None:
+        assert store.credit_workspace_typed_direct(
+            workspace_id, 100_000_000, "another_grant",
+            provenance=p1.CreditProvenance(source="grant", provider="operator", external_ref=None,
+                                           occurred_at=p1.datetime.now(p1.UTC)))
+
+    def payment(store: Any, workspace_id: str) -> None:
+        assert store.credit_workspace_typed_direct(
+            workspace_id, 95_000_000, "evt_synthetic_checkout",
+            provenance=p1.CreditProvenance(source="checkout", provider="stripe", external_ref="pi_synthetic",
+                                           occurred_at=p1.datetime.now(p1.UTC)),
+            payment_amount_microdollars=100_000_000, currency="usd")
+
+    def trial(store: Any, workspace_id: str) -> None:
+        store._database.typed[CREDIT_BALANCE_TABLE][(workspace_id, 0)]["total_credits"] += 5_000_000
+
+    for fund, why in ((other_grant, "trust events other than the grant"), (payment, "trust events other than the grant"),
+                      (trial, "credit rows hold 5000000")):
+        store, db = make_fake_store()
+        user = _owner(store)
+        workspace = store.create_workspace(user.id, "fastpath-synthetic", trial_credit_microdollars=0)
+        fund(store, workspace.id)
+        before = copy.deepcopy(db.typed)
+        for extra in ((), ("--apply",)):
+            code, _, err = _run(store, capsys, "--tier", "3", "--identity-bypass", *extra)
+            assert code == 1 and "takes no identity bypass" in err and why in err, (fund.__name__, extra, err)
+        assert db.typed == before, fund.__name__
+        # Without the bypass the same workspace is provisioned as before,
+        # at the tier its identity allows.
+        code, result, err = _run(store, capsys, "--apply")
+        assert code == 0 and result["override"]["identity_bypass"] is False, (fund.__name__, err)
+
+
+def test_the_bypass_is_checked_again_once_the_grant_is_in(monkeypatch: Any, capsys: Any) -> None:
+    """A workspace the apply creates has nothing to check before its grant:
+    funding it was made with (a trial credit here) is found once the grant
+    is in (the trial credit's own trust event), and stops the apply before
+    the override is set."""
+    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-clickhouse")
+    store, db = make_fake_store()
+    user = _owner(store)
+    real = store.create_workspace
+
+    def with_trial(user_id: str, name: str, **_: Any) -> Any:
+        return real(user_id, name, trial_credit_microdollars=5_000_000)
+
+    monkeypatch.setattr(store, "create_workspace", with_trial)
+    code, _, err = _run(store, capsys, "--tier", "3", "--identity-bypass", "--apply")
+    assert code == 1 and "takes no identity bypass" in err and "other than the grant" in err, err
+    workspace = next(w for w in store.list_workspaces_for_user(user.id) if w.name == "fastpath-synthetic")
+    assert not any(pk[0] == workspace.id for pk in db.typed.get("tr_trust_override", {}))

@@ -51,13 +51,13 @@ func TestMain(m *testing.M) {
 }
 
 // onShared is the command's store, on the test's database.
-func onShared(t *testing.T) func(context.Context, string) (*store.Store, func(), error) {
+func onShared(t *testing.T) func(context.Context, string, store.Config) (*store.Store, func(), error) {
 	t.Helper()
 	if shared == nil {
 		t.Skip(skipped)
 	}
-	return func(context.Context, string) (*store.Store, func(), error) {
-		s, err := store.New(shared, service.Defaults().Store)
+	return func(_ context.Context, _ string, cfg store.Config) (*store.Store, func(), error) {
+		s, err := store.New(shared, cfg)
 		return s, func() {}, err
 	}
 }
@@ -65,7 +65,7 @@ func onShared(t *testing.T) func(context.Context, string) (*store.Store, func(),
 // TestTheCommandRefusesWhatItCannotDo: no database, no workspace, another
 // command, each exit 2, and none reaches the store.
 func TestTheCommandRefusesWhatItCannotDo(t *testing.T) {
-	never := func(context.Context, string) (*store.Store, func(), error) {
+	never := func(context.Context, string, store.Config) (*store.Store, func(), error) {
 		t.Fatal("the store was opened")
 		return nil, nil, nil
 	}
@@ -80,7 +80,12 @@ func TestTheCommandRefusesWhatItCannotDo(t *testing.T) {
 		{"-database", "d", "decide", "on", "ws", "-cloud", "GCP"}, {"-database", "d", "-region", "", "decide", "status", "ws"},
 		{"-database", "d", "decide", "off", "ws", "-nope"}, {"-database", "d", "decide-off-all", "ws"},
 		{"-database", "d", "decide", "delete"}, {"-database", "d", "decide", "delete", ""},
-		{"-database", "d", "decide", "delete", "ws", "-cloud", "GCP"}, {"-database", "d", "decide", "delete", "ws", "more"}} {
+		{"-database", "d", "decide", "delete", "ws", "-cloud", "GCP"}, {"-database", "d", "decide", "delete", "ws", "more"},
+		{"-database", "d", "ready"}, {"-database", "d", "ready", ""}, {"-database", "d", "ready", "ws", "more"},
+		{"-database", "d", "ready", "ws", "-required-tier", "4"}, {"-database", "d", "ready", "ws", "-floor", "20"},
+		{"-database", "d", "-required-tier", "-1", "ready", "ws"}, {"-database", "d", "ready", "ws", "-floor", "-1"},
+		{"-database", "d", "ready", "ws", "-floor", "1125899906842625"}, {"-database", "d", "ready", "ws", "-nope"},
+		{"-database", "d", "-floor", "20", "status", "ws"}} {
 		if code, err := run(context.Background(), args, &bytes.Buffer{}, never); code != 2 || err == nil {
 			t.Errorf("%q: exit %d, %v", args, code, err)
 		}
@@ -97,7 +102,7 @@ func TestTheCommandRefusesWhatItCannotDo(t *testing.T) {
 // address's form, is refused with the usage, exit 2, and none reaches the
 // store, so no row is written for it.
 func TestAFlagAfterTheCommandIsNotAnID(t *testing.T) {
-	never := func(context.Context, string) (*store.Store, func(), error) {
+	never := func(context.Context, string, store.Config) (*store.Store, func(), error) {
 		t.Fatal("the store was opened")
 		return nil, nil, nil
 	}
@@ -108,6 +113,7 @@ func TestAFlagAfterTheCommandIsNotAnID(t *testing.T) {
 		{"enable", "a workspace"}, {"disable", "ws\n"}, {"status", "ws;"}, {"audit", strings.Repeat("w", 65)},
 		{"decide", "on", "ws id"}, {"decide", "off", strings.Repeat("w", 65)}, {"enable", "_ws"},
 		{"node", "10.0.0.7 :8080"}, {"leave", "node/a"}, {"closed", ":8080"}, {"node", strings.Repeat("n", 256)},
+		{"ready", "-h"}, {"ready", "-required-tier"}, {"ready", "ws id"},
 	} {
 		code, err := run(context.Background(), append([]string{"-database", "d"}, args...), &bytes.Buffer{}, never)
 		if code != 2 || err == nil || !strings.Contains(err.Error(), "usage:") {
@@ -154,7 +160,7 @@ func TestStatusSaysWhenAWorkspaceIsDone(t *testing.T) {
 
 // onOwn is the command's store, on a database of the test's own, for a
 // command that touches every workspace.
-func onOwn(t *testing.T) func(context.Context, string) (*store.Store, func(), error) {
+func onOwn(t *testing.T) func(context.Context, string, store.Config) (*store.Store, func(), error) {
 	t.Helper()
 	if emulator == nil {
 		t.Skip(skipped)
@@ -164,8 +170,8 @@ func onOwn(t *testing.T) func(context.Context, string) (*store.Store, func(), er
 		t.Fatal(err)
 	}
 	t.Cleanup(db.Close)
-	return func(context.Context, string) (*store.Store, func(), error) {
-		s, err := store.New(db, service.Defaults().Store)
+	return func(_ context.Context, _ string, cfg store.Config) (*store.Store, func(), error) {
+		s, err := store.New(db, cfg)
 		return s, func() {}, err
 	}
 }
@@ -296,7 +302,7 @@ func TestDecideDeleteRemovesARow(t *testing.T) {
 	if code, got := do("decide", "delete", ws); code != 3 || got["deleted"] != false {
 		t.Fatalf("deleting it again: exit %d, %v", code, got)
 	}
-	s, _, err := open(ctx, "d")
+	s, _, err := open(ctx, "d", service.Defaults().Store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -555,7 +561,7 @@ func TestAuditHoldsTheRowsToTheIdentity(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	s, _, err := open(ctx, "d")
+	s, _, err := open(ctx, "d", service.Defaults().Store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -679,7 +685,7 @@ func TestAuditHoldsEachShardAndSumsExactly(t *testing.T) {
 	if _, err := shared.Apply(ctx, rows); err != nil {
 		t.Fatal(err)
 	}
-	s, _, err := open(ctx, "d")
+	s, _, err := open(ctx, "d", service.Defaults().Store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -789,4 +795,101 @@ func TestAuditHoldsEachShardAndSumsExactly(t *testing.T) {
 		t.Fatalf("sums past int64: exit %d, %v", code, err)
 	}
 	_ = version
+}
+
+// TestReadySaysWhetherAGrantCouldReachTheWorkspace: ready asks the grant's
+// own check with the money settings given, read only, and exits 0 when a
+// grant could reach the workspace and 3 with the refusal when one would be
+// refused: not enabled; a shard at tier 2 under -required-tier 3 but not
+// under today's tier 1; the override's tier 3 (the effective tier Python
+// writes on every shard) passing; headroom at the floor refused and above it
+// passing. The settings go before the command or after the workspace.
+func TestReadySaysWhetherAGrantCouldReachTheWorkspace(t *testing.T) {
+	open := onShared(t)
+	ctx := context.Background()
+	ready := func(args ...string) (int, map[string]any) {
+		t.Helper()
+		var out bytes.Buffer
+		code, err := run(ctx, append([]string{"-database", "d"}, args...), &out, open)
+		if err != nil {
+			t.Fatalf("%q: %v", args, err)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+			t.Fatalf("%q wrote %q: %v", args, out.String(), err)
+		}
+		return code, got
+	}
+	seed := func(credits, tier int64) string {
+		t.Helper()
+		ws := storetest.UniqueID("ws")
+		if _, err := shared.Apply(ctx, []*spanner.Mutation{storetest.Enabled(ws), spanner.InsertMap("tr_credit_balance",
+			map[string]any{"workspace_id": ws, "shard": int64(0), "total_credits": credits, "trust_tier": tier})}); err != nil {
+			t.Fatal(err)
+		}
+		return ws
+	}
+	// The tiers are set by a statement, as Python's override writes them,
+	// leaving the credit as it was.
+	setTier := func(ws string, tier, override int64) {
+		t.Helper()
+		if _, err := shared.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+			_, err := txn.Update(ctx, spanner.Statement{
+				SQL:    "UPDATE tr_credit_balance SET trust_tier = @t, trust_override_tier = @o WHERE workspace_id = @w",
+				Params: map[string]any{"w": ws, "t": tier, "o": override}})
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	never := storetest.UniqueID("ws")
+	if code, got := ready("ready", never); code != notDone || got["ready"] != false ||
+		got["refused"] != string(store.RefusedNotEnabled) {
+		t.Fatalf("a workspace never enabled: exit %d, %v", code, got)
+	}
+	ws := seed(100_000_000, 2)
+	if code, got := ready("ready", ws); code != 0 || got["ready"] != true || got["refused"] != "" ||
+		got["required_tier"] != float64(1) || got["floor"] != float64(0) {
+		t.Fatalf("tier 2 at today's settings: exit %d, %v", code, got)
+	}
+	for _, args := range [][]string{
+		{"ready", ws, "-required-tier", "3", "-floor", "20000000"},
+		{"-required-tier", "3", "-floor", "20000000", "ready", ws},
+		{"-floor", "20000000", "ready", ws, "-required-tier", "3"},
+	} {
+		if code, got := ready(args...); code != notDone || got["ready"] != false ||
+			got["refused"] != string(store.RefusedTier) || got["required_tier"] != float64(3) ||
+			got["floor"] != float64(20_000_000) {
+			t.Fatalf("%q, tier 2: exit %d, %v", args, code, got)
+		}
+	}
+	// The override to tier 3: Python writes the effective tier on every
+	// shard with the override's, and the grant reads the effective one.
+	setTier(ws, 3, 3)
+	if code, got := ready("ready", ws, "-required-tier", "3", "-floor", "20000000"); code != 0 || got["ready"] != true {
+		t.Fatalf("tier 3 by the override: exit %d, %v", code, got)
+	}
+	// An override whose effective tier stayed 1 (no approved owner and no
+	// bypass) is still refused: the override's column is not the tier.
+	capped := seed(100_000_000, 1)
+	setTier(capped, 1, 3)
+	if code, got := ready("ready", capped, "-required-tier", "3"); code != notDone ||
+		got["refused"] != string(store.RefusedTier) {
+		t.Fatalf("an override capped at 1: exit %d, %v", code, got)
+	}
+	at := seed(20_000_000, 3)
+	if code, got := ready("ready", at, "-required-tier", "3", "-floor", "20000000"); code != notDone ||
+		got["refused"] != string(store.RefusedFloor) {
+		t.Fatalf("headroom at the floor: exit %d, %v", code, got)
+	}
+	if code, got := ready("ready", at, "-required-tier", "3", "-floor", "19000000"); code != 0 || got["ready"] != true {
+		t.Fatalf("headroom above the floor: exit %d, %v", code, got)
+	}
+	// A store that cannot be opened is exit 1.
+	broken := func(context.Context, string, store.Config) (*store.Store, func(), error) {
+		return nil, nil, errors.New("no store")
+	}
+	if code, err := run(ctx, []string{"-database", "d", "ready", ws}, &bytes.Buffer{}, broken); code != 1 || err == nil {
+		t.Fatalf("no store: exit %d, %v", code, err)
+	}
 }

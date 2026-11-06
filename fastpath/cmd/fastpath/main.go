@@ -28,6 +28,7 @@ import (
 	"cloud.google.com/go/spanner"
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/service"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/store"
 )
 
 func main() {
@@ -70,7 +71,7 @@ func run() error {
 		"the owner's deadline for a publish")
 	flag.DurationVar(&cfg.Store.MaxLife, "max-life", cfg.Store.MaxLife, "a hold's longest life")
 	flag.DurationVar(&cfg.Store.Grace, "grace", cfg.Store.Grace, "the reaper's grace")
-	flag.Int64Var(&cfg.Store.RequiredTier, "required-tier", cfg.Store.RequiredTier, "the trust tier leases need")
+	moneyFlags(flag.CommandLine, &cfg.Store)
 	flag.DurationVar(&cfg.Owner.HeartbeatEvery, "heartbeat-every", cfg.Owner.HeartbeatEvery,
 		"the deadline each heartbeat's answer grants")
 	flag.DurationVar(&cfg.Owner.RenewEvery, "renew-every", cfg.Owner.RenewEvery, "how often an owner renews its leases")
@@ -123,6 +124,9 @@ func run() error {
 			"and port only; empty serves none")
 	flag.Parse()
 
+	if err := service.CheckMoney(cfg); err != nil {
+		return err
+	}
 	switch *roles {
 	case "admission":
 		cfg.Admission = true
@@ -224,6 +228,20 @@ func run() error {
 	err = service.Run(ctx, cfg, service.Clients{Spanner: sp, PubSub: ps})
 	fmt.Fprintf(os.Stderr, "fastpath: stopped after %v\n", time.Since(began).Round(time.Second))
 	return err
+}
+
+// moneyFlags declares the store's money settings on fs
+// (docs/design/fast-admission-widening.md, (b)), each defaulting to cfg's,
+// today's values; service.CheckMoney holds them to their bounds once
+// parsed. The node's startup script passes each only when the instance's
+// metadata names it.
+func moneyFlags(fs *flag.FlagSet, cfg *store.Config) {
+	fs.Int64Var(&cfg.RequiredTier, "required-tier", cfg.RequiredTier, "the trust tier leases need, 0 to 3")
+	fs.Int64Var(&cfg.Allowance, "allowance", cfg.Allowance,
+		"a workspace's most exposure in leases, across its regions and shards, in microdollars: at least the "+
+			"owner's largest top-up, at most 1 << 50")
+	fs.Int64Var(&cfg.Floor, "floor", cfg.Floor,
+		"the headroom a grant leaves the workspace outside leases, in microdollars: 0, or 1000000 to 1 << 50")
 }
 
 // startBudget is how long the start before service.Run may take: each of

@@ -385,6 +385,79 @@ same refusal. So a new flag lands with or after the pin of a release that
 takes it, never before: `tests/test_fastpath_p1.py` holds the unit's flags
 to the command of the release `infra/fastpath.tf` pins.
 
+## The money settings: required tier, allowance and floor
+
+`docs/design/fast-admission-widening.md`, (b) and step WS0 of section
+8.2. The node takes `-required-tier`, `-allowance` and `-floor`, the
+last two in microdollars, and the startup script passes each only when
+the instance's metadata names it: `fastpath-required-tier`,
+`fastpath-allowance`, `fastpath-floor`. With none of them a node runs
+the release's defaults, today's values: tier 1, the allowance `1 << 50`,
+no floor. The script refuses a value the release would refuse (the tier
+0 to 3; the allowance 10000000 to 1125899906842624; the floor 0 or
+1000000 to 1125899906842624), so the unit keeps what it had. The design's
+values are tier 3, an allowance of 1000000000 ($1,000) and a floor of
+20000000 ($20). In this order, each step done before the next starts:
+
+1. **The release and the script.** A release that takes `-allowance` and
+   `-floor` is pinned and every node runs it ("Taking a pinned release");
+   `tests/test_fastpath_money_settings.py` holds the pin to that once any
+   of the attributes is in `infra/fastpath.tf`. Every node runs a startup
+   script that reads the attributes, which reaches the fleet through nodes
+   added under new names, as "Turning the edge on" says; a node from
+   before carries the attributes and passes nothing.
+2. **The P1 synthetic workspace at effective tier 3.** An override alone
+   stops at tier 1 without an approved owner, so the provisioner sets the
+   override's identity bypass, which it refuses for a workspace with an
+   API key or with funding other than its own grant. Dry run first, then
+   `--apply`; `shards_after` must read 3 on every shard:
+
+   ```bash
+   uv run python scripts/provision_fastpath_p1_workspace.py --email joseph@jperla.com --tier 3 --identity-bypass
+   uv run python scripts/provision_fastpath_p1_workspace.py --email joseph@jperla.com --tier 3 --identity-bypass --apply
+   ```
+
+3. **Every pilot workspace ready at the design's values.** For each
+   workspace of `TR_FASTPATH_PILOT_WORKSPACES` (`scripts/deploy/rollout.sh`),
+   from a node:
+
+   ```bash
+   /opt/fastpath/fastpathctl -database $DB ready $WS -required-tier 3 -floor 20000000
+   ```
+
+   `ready` asks the grant's own check, read only (`store.GrantReadiness`):
+   exit 0 when a grant could reach the workspace; 3 when one would be
+   refused, with the refusal in `refused` (not enabled, in debt, paused, a
+   shard below the tier or latched, or headroom not above the floor); 2 for
+   a setting out of bounds or a malformed command, before the store is
+   opened; 1 when the store cannot be read. Any exit but 0 stops here: a
+   customer's workspace is expected at tier 3 with an approved owner, and
+   one that is not is a finding, not a reason to lower the tier.
+4. **The allowance against honest traffic.** At each pilot workspace's
+   busiest hour, read `LeaseReserved` with
+   `/opt/fastpath/fastpathctl -database $DB status $WS` (it exits 3 while
+   the workspace is on; the answer is printed either way). If any is above
+   a quarter of the allowance, 250000000, the allowance is four times the
+   highest read instead, and the design note is amended with the new
+   exposure bound before the next step.
+5. **The re-pin (W8).** The three attributes go into the nodes' metadata
+   in `infra/fastpath.tf`, `fastpath-required-tier = "3"`,
+   `fastpath-allowance = "1000000000"` and `fastpath-floor = "20000000"`,
+   with the allowance step 4 settled on, and are applied. A node takes
+   them as it took the decide shadow's ("Turning the edge policy and the
+   decide shadow on"), one at a time, the other serving: mark it leaving,
+   wait for its leases and the balancer, stop the unit, run
+   `sudo google_metadata_script_runner startup`, and read the running
+   arguments from the process
+   (`tr -d '\0' < /proc/$(systemctl show -p MainPID --value fastpath)/cmdline`):
+   they must end in `-required-tier 3 -allowance 1000000000 -floor 20000000`
+   before the next node is touched. Until every node is taken, a grant
+   may still be made at today's values, so WS0's gate (section 8.2 of the
+   design) counts from the last node's restart.
+
+The way back is the attributes removed and each node taken the same way,
+which returns it to today's values.
+
 ## Streams on the lease: the release order
 
 `docs/design/fast-admission-streams.md` §10 ships streams in increments,

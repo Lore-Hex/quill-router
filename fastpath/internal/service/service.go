@@ -275,6 +275,37 @@ func (c Config) valid() error {
 	return nil
 }
 
+// The money settings' bounds (docs/design/fast-admission-widening.md,
+// (b)), in microdollars, which the node's flags and fastpathctl ready hold
+// to, and the node's startup script with them.
+const (
+	// MaxMoney bounds the allowance and the floor: Defaults' allowance,
+	// 1 << 50, which bounds nothing.
+	MaxMoney int64 = 1 << 50
+	// MinFloor is the least floor but none, a dollar, so a floor written in
+	// dollars is refused.
+	MinFloor int64 = 1_000_000
+)
+
+// CheckMoney says what is wrong with the store's money settings, nil when
+// nothing is: the tier leases need 0 to 3; the allowance at least the
+// owner's largest top-up, so one can be granted (a figure written in
+// dollars is below it), and at most MaxMoney; the floor none, or MinFloor
+// to MaxMoney.
+func CheckMoney(c Config) error {
+	st := c.Store
+	switch {
+	case st.RequiredTier < 0 || st.RequiredTier > 3:
+		return fmt.Errorf("service: the required tier is 0 to 3, not %d", st.RequiredTier)
+	case st.Allowance < c.Owner.TopUps.Max || st.Allowance > MaxMoney:
+		return fmt.Errorf("service: the allowance is %d to %d microdollars, not %d", c.Owner.TopUps.Max, MaxMoney,
+			st.Allowance)
+	case st.Floor != 0 && (st.Floor < MinFloor || st.Floor > MaxMoney):
+		return fmt.Errorf("service: the floor is 0 or %d to %d microdollars, not %d", MinFloor, MaxMoney, st.Floor)
+	}
+	return nil
+}
+
 // agreed is the configuration with the times every part must agree on set
 // from the store's: the owner's skew allowance, window, grace and hold life,
 // the front door's hold life, and the auditor's skew allowance, grace and
