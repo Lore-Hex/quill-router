@@ -3,9 +3,9 @@
   <div class="seo-evidence-head">
     <div>
       {% if not compact_catalog_evidence %}<span class="eyebrow">Live catalog evidence</span>{% endif %}
-      <h2 id="seo-evidence-heading">{% if compact_catalog_evidence %}Current models, routes, prices, and privacy.{% else %}Current routes, prices, privacy, and measured performance.{% endif %}</h2>
+      <h2 id="seo-evidence-heading">{% if catalog_evidence.focus_label %}{{ catalog_evidence.focus_label }} routes, prices, and privacy.{% elif compact_catalog_evidence %}Current models, routes, prices, and privacy.{% else %}Current routes, prices, privacy, and measured performance.{% endif %}</h2>
     </div>
-    <p>Catalog facts come from the routes currently configured in TrustedRouter.{% if not compact_catalog_evidence %} Performance uses the same cached metadata snapshot as the public leaderboard. Prompts and outputs are not part of these measurements.{% endif %}</p>
+    <p>Catalog facts come from the routes currently configured in TrustedRouter.{% if catalog_evidence.focus_label %} The totals below cover the entire TrustedRouter catalog; the model table and related providers focus on {{ catalog_evidence.focus_label }}.{% endif %}{% if not compact_catalog_evidence %} Performance uses the same cached metadata snapshot as the public leaderboard. Prompts and outputs are not part of these measurements.{% endif %}</p>
   </div>
 
   <div class="seo-evidence-stats" aria-label="Current TrustedRouter catalog facts">
@@ -59,11 +59,14 @@
             {% endif %}
           </td>{% endif %}
         </tr>
+        {% else %}
+        <tr><td colspan="{{ 6 if compact_catalog_evidence else 7 }}">No matching models are currently listed. <a href="/models">Browse the current catalog</a> for alternatives.</td></tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
 
+  {% if catalog_evidence.providers %}<p class="table-note">Provider summaries cover each provider's full catalog.</p>{% endif %}
   <div class="seo-provider-strip" aria-label="Related providers">
     {% for provider in catalog_evidence.providers %}
     <div class="seo-provider-row">
