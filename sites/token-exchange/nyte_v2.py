@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import html
 import json
+import os
 import re
 import runpy
 import shutil
@@ -214,6 +215,14 @@ def load_markets() -> list[dict]:
 # from markets.json, which also drives the load balancer's Terraform.
 CITIES = json.loads((HERE / "nyte-cities.json").read_text())
 
+# Pages repainted with the NYTE brand v3 (nyte-v2/brand-v3.css). Empty means
+# production is unchanged. NYTE_BRAND_V3_PREVIEW=1 repaints every page in a local build.
+BRAND_V3_PAGES = set(json.loads((HERE / "nyte-brand-v3.json").read_text())["pages"])
+
+
+def uses_brand_v3(page: str) -> bool:
+    return os.environ.get("NYTE_BRAND_V3_PREVIEW") == "1" or page in BRAND_V3_PAGES
+
 
 def uses_nyte(market: dict) -> bool:
     """Whether a market's home page is rendered from this design."""
@@ -312,6 +321,9 @@ def render_nyte(
         content = city_home(content, market)
     if page == "accelerator":
         content = content.replace("{{facilities}}", facility_cards()).replace("{{facility_rate}}", FACILITY_RATE)
+    if uses_brand_v3(page):
+        brand_version = hashlib.sha256((SOURCE / "brand-v3.css").read_bytes()).hexdigest()[:12]
+        extra_head += f'<link rel="stylesheet" href="/assets/nyte-v2/brand-v3.css?v={brand_version}">'
     result = (SOURCE / "shell.html").read_text()
     evidence_version = hashlib.sha256((HERE / "live-evidence.js").read_bytes()).hexdigest()[:12]
     for key, value in dict(domain=market["domain"], market=market["slug"], region=html.escape(market.get("logo_place", market["region"])), brand_class=" brand-one" if market.get("logo_one_line") else "", exchange_name=html.escape(market["name"]), host_brand="" if city or page == "home" else host_brand_script(page), nav=render_nav(), buyer_deck=(SOURCE / "buyer-deck.html").read_text() if page in {"home", "api"} else "", extra_head=extra_head, image_url=html.escape(image_url, quote=True), title=html.escape(title), description=html.escape(description, quote=True), path=path, page=page, version=version, content=content, markets=market_links, evidence_script='<script src="/assets/nyte-v2/live-evidence.js?v=' + evidence_version + '" defer></script>' if page == "api" else "").items():
@@ -356,7 +368,7 @@ def build_nyte(output: Path) -> None:
     shutil.copytree(SOURCE / "assets", assets, dirs_exist_ok=True)
     # NYTE can publish its approved evidence renderer without changing other markets.
     shutil.copyfile(HERE / "live-evidence.js", assets / "live-evidence.js")
-    for name in ("styles.css", "app.js", "fonts.css", "providers.css", "cowork.css", "buy.css", "buy.js", "manage.js", "accelerator.css"):
+    for name in ("styles.css", "app.js", "fonts.css", "providers.css", "cowork.css", "buy.css", "buy.js", "manage.js", "accelerator.css", "brand-v3.css"):
         shutil.copyfile(SOURCE / name, assets / name)
     for page, entry in PAGES.items():
         if page == "home" or entry.get("builder"):
