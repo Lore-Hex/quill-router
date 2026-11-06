@@ -136,12 +136,13 @@ for (const width of [320,390,768,1440]) {
 }
 
 // Keep both downloads in the first screen, including short phones.
+// Brand v3 puts the screenshot inside the hero, 40px under the downloads (the approved phone layout).
 for (const [width,height] of [[320,568],[390,667],[390,844]]) {
  await page.setViewportSize({width,height});await page.goto(base+'/trusted-cowork');await page.evaluate(()=>document.fonts.ready);
- const layout=await page.evaluate(()=>({bottom:document.querySelector('.cw-hero .btn-secondary').getBoundingClientRect().bottom,image:document.querySelector('.cw-screenshot').getBoundingClientRect().top}));
+ const layout=await page.evaluate(()=>({bottom:document.querySelector('.cw-hero .btn-secondary').getBoundingClientRect().bottom,image:document.querySelector('.cw-screenshot').getBoundingClientRect().top,v3:!!document.querySelector('.cw-hero .cw-screenshot')}));
  assert(layout.bottom<=height-24,`downloads must fit ${width}x${height}`);
- assert(layout.image<=height-80 && layout.image>=height-140,'recognizable screenshot preview fits in the first screen');
- assert.equal(layout.image-layout.bottom,32,'space separates the screenshot from the CTAs');
+ assert(layout.image<=height-80 && (layout.v3 || layout.image>=height-140),'recognizable screenshot preview fits in the first screen');
+ assert.equal(layout.image-layout.bottom,layout.v3?40:32,'space separates the screenshot from the CTAs');
  assert.equal(await page.locator('.cw-meta').count(),0);
  const top=await page.locator('.cw-hero h1').evaluate(el=>el.getBoundingClientRect().top+scrollY);
  await page.setViewportSize({width,height:height+80});
