@@ -640,6 +640,17 @@ func TestPythonsInFlightRefusalOfAnInFlightPassIsAPass(t *testing.T) {
 			if !tc.atLimit && during.Load() != 0 {
 				t.Errorf("Go held %d slots of the key while Python answered a %s pass", during.Load(), tc.pass)
 			}
+			// The period's line (WaitDecideShadow logs it) counts a
+			// would-admit and nothing else: its would_admit_python_refused is
+			// fastpathwatch's i2 figure, which the I2 gate needs at zero.
+			counted := regexp.MustCompile(` would_admit_python_refused=(\d+) `).FindAllStringSubmatch(h.logs.all(), -1)
+			want := "0"
+			if tc.pages {
+				want = "1"
+			}
+			if len(counted) != 1 || counted[0][1] != want {
+				t.Errorf("the period line's would-admit count %v, want %s", counted, want)
+			}
 			mu.Lock()
 			defer mu.Unlock()
 			if paged := len(alerts) == 1 && alerts[0] == AlertWouldAdmit+
