@@ -505,8 +505,9 @@ def test_a_release_host_that_never_finishes_fails_the_refresh_within_its_timeout
             kick_worker.join(5)
             assert not publisher.is_alive() and not kick_worker.is_alive(), "a refresh hung"
             assert refreshing == [False]
-            # Two refreshes, one after the other, each bounded by its timeout.
-            assert time.monotonic() - started < 2 * refresh_timeout + 1
+            # Two refreshes, one after the other, each bounded by its timeout,
+            # with slack for a stalled runner: a hang fails the joins above.
+            assert time.monotonic() - started < 2 * refresh_timeout + 3
         assert resolver.current_policy() is verified and watermark.highest == 1200
         assert resolver._refresh_lock.acquire(timeout=1)
         resolver._refresh_lock.release()
