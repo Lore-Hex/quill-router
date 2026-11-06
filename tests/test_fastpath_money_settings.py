@@ -222,14 +222,14 @@ def test_the_floor_check_counts_a_current_credit_endpoint_and_nothing_retired(mo
             **fields,
         )
 
-    retired = endpoint_of(id="openai/o1-pro@openai/floor-test", model_id="openai/o1-pro", provider="openai",
+    retired = endpoint_of(id="floor-test-retired", model_id="openai/o1-pro", provider="openai",
                           upstream_id="o1-pro", usage_type="Credits")
-    byok = endpoint_of(id="floor-test/byok@openai/byok", model_id="floor-test/byok", provider="openai",
+    byok = endpoint_of(id="floor-test-byok", model_id="floor-test/byok", provider="openai",
                        upstream_id="floor-test-byok", usage_type="BYOK")
     monkeypatch.setitem(catalog.MODEL_ENDPOINTS, retired.id, retired)
     monkeypatch.setitem(catalog.MODEL_ENDPOINTS, byok.id, byok)
     assert _highest_credit_output_rate() == baseline
-    current = endpoint_of(id="floor-test/current@openai/prepaid", model_id="floor-test/current", provider="openai",
+    current = endpoint_of(id="floor-test-current", model_id="floor-test/current", provider="openai",
                           upstream_id="floor-test-current", usage_type="Credits")
     monkeypatch.setitem(catalog.MODEL_ENDPOINTS, current.id, current)
     assert _highest_credit_output_rate() == (priced, current.id)
