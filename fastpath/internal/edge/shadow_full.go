@@ -240,7 +240,11 @@ type fullShadow struct {
 	// and differ) since the shadow started, at most maxDistinctKeys of
 	// them: distinct_keys, the widening's count of distinct API keys
 	// (docs/design/fast-admission-widening.md section 8.1 item 3).
-	keys map[string]struct{}
+	// keysSince is when the set began, by the edge's clock: a step's gate
+	// counts only its own traffic, so a reader takes the figure only from
+	// a set begun at or after the step's start (distinct_keys_since).
+	keys      map[string]struct{}
+	keysSince time.Time
 }
 
 // maxDistinctKeys bounds the shadow's set of distinct keys: past it the
@@ -339,6 +343,11 @@ func newFullShadow(cfg DecideShadowConfig, logf func(string, ...any), clock func
 	sh := &fullShadow{cfg: cfg, logf: logf, clock: clock, every: every,
 		decides: newDecideCopy(cfg.Decides, cfg.DecideEvery, clock, logf), jobs: make(chan struct{}, cfg.Jobs),
 		budget: maxShadowBytes, tallies: map[string]*fullTally{}, totals: newFullTally(), keys: map[string]struct{}{}}
+	if clock != nil {
+		sh.keysSince = clock()
+	} else {
+		sh.keysSince = time.Now()
+	}
 	sh.limiter.tokens = cfg.ReadsPerSecond
 	sh.windowLimiter.tokens = cfg.ReadsPerSecond
 	return sh, nil
@@ -1583,9 +1592,12 @@ func (sh *fullShadow) flush() {
 	// comparable requests since the shadow started, a number only and
 	// bounded (maxDistinctKeys): a key seen in two periods is one key, so
 	// a reader takes a node's largest figure, never a sum
-	// (fastpathwatch's edge report).
-	line := "fastpath edge decide shadow: dropped=%d evictions=%d distinct_keys=%d"
-	args := []any{sh.dropped.Swap(0), sh.periodEvictions.Swap(0), len(sh.keys)}
+	// (fastpathwatch's edge report). distinct_keys_since is when the set
+	// began, in unix seconds floored (an integer, as the line's reader
+	// takes every plain count): the figure counts traffic from then, so a
+	// reader takes it only from a set begun at or after its span's start.
+	line := "fastpath edge decide shadow: dropped=%d evictions=%d distinct_keys=%d distinct_keys_since=%d"
+	args := []any{sh.dropped.Swap(0), sh.periodEvictions.Swap(0), len(sh.keys), sh.keysSince.Unix()}
 	if c, ok := sh.cfg.Cache.(cacheCounters); ok {
 		n, was := c.Counters(), sh.cacheAt
 		sh.cacheAt = n
@@ -1614,8 +1626,10 @@ type DecideShadowCounts struct {
 	ReadBack           int
 	Dropped, Evictions int64
 	// DistinctKeys is distinct_keys: the distinct lookup hashes among the
-	// comparable requests (agree_full and differ), at most maxDistinctKeys.
-	DistinctKeys int
+	// comparable requests (agree_full and differ), at most maxDistinctKeys,
+	// counted since DistinctKeysSince (distinct_keys_since).
+	DistinctKeys      int
+	DistinctKeysSince time.Time
 }
 
 // DecideShadowCounts are the counts now; zero with the shadow off.
@@ -1631,7 +1645,7 @@ func (e *Edge) DecideShadowCounts() DecideShadowCounts {
 	return DecideShadowCounts{Classes: t.classes, Fields: t.fields, Rows: t.rows, Decide: t.decide, Cohort: t.cohort,
 		Windows: t.windows, Streams: t.streams,
 		Async: t.async, ReadBack: t.readBack, Dropped: sh.dropped.Load(), Evictions: sh.evictions.Load(),
-		DistinctKeys: keys}
+		DistinctKeys: keys, DistinctKeysSince: sh.keysSince}
 }
 
 // DecideShadowOn reports the full-response shadow configured.

@@ -179,8 +179,9 @@ func (s *Store) DecideRestore(ctx context.Context, at time.Time) (int64, time.Ti
 // there, whether it was the wildcard, whether it was removed, and the
 // commit's time. Refused is a row left in place because removing it would
 // make the workspace decide: an off row under an on wildcard for its cloud
-// and region, deleted without followWildcard; FollowsWildcard is such a row
-// removed with it, the workspace now deciding under the wildcard.
+// and region, deleted without followWildcard. FollowsWildcard is a
+// workspace's own row removed, on or off, while the wildcard there is on:
+// the workspace now decides under the wildcard.
 type DecideDeleted struct {
 	Found, Wildcard, Deleted, Refused, FollowsWildcard bool
 	At                                                 time.Time
@@ -224,14 +225,15 @@ func (s *Store) DeleteDecide(ctx context.Context, workspace, cloud, region strin
 			return err
 		}
 		out.Found = true
-		// An off row under an on wildcard (the wildcard row itself is
-		// never one: off, it is the wildcard).
-		if !decide {
+		if !out.Wildcard {
+			// The wildcard decides for the workspace once its own row is
+			// gone: an off row would start it deciding, refused without
+			// followWildcard; an on row leaves it deciding.
 			wildcard, wildcardFound, err := read(DecideWildcard)
 			if err != nil {
 				return err
 			}
-			if wildcardFound && wildcard && !followWildcard {
+			if !decide && wildcardFound && wildcard && !followWildcard {
 				out.Refused = true
 				return nil
 			}

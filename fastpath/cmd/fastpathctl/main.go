@@ -57,8 +57,10 @@
 // unless -follow-wildcard, which removes it and says so. decide delete '*'
 // removes the wildcard row itself, so every workspace without a row of its
 // own stops deciding there. decide wildcard on, off and status set and read
-// the wildcard row (status exits 3 while it is on); decide wildcard off is
-// the same stop as deleting it and keeps the row for decide-restore.
+// the wildcard row (status exits 3 while it is on); on and off write only
+// gcp/us-central1, the one cloud and region the widening covers, and refuse
+// any other, exit 2; decide wildcard off is the same stop as deleting it
+// and keeps the row for decide-restore.
 // decide-off-all turns every row off, the wildcard's too, and prints the
 // commit timestamp they all keep; decide-restore -at that timestamp turns
 // back on exactly the rows whose changed_at it is and that are off, exit 3
@@ -143,6 +145,15 @@ var workspaceForm = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_./:@+\-]{0,63}$`)
 // address or a bracketed IPv6 one, beginning with a letter, a digit or the
 // bracket, so a flag after the command is not taken for an address.
 var addressForm = regexp.MustCompile(`^[A-Za-z0-9\[][A-Za-z0-9._:\[\]\-]{0,254}$`)
+
+// The one cloud and region decide wildcard on and off write
+// (docs/design/fast-admission-widening.md section 4(c): the AWS and Azure
+// planes and every region but us-central1 stay out). status reads any, and
+// decide delete '*' removes any, both the stop direction.
+const (
+	wildcardCloud  = "gcp"
+	wildcardRegion = "us-central1"
+)
 
 // decideStatus is decide status's answer from the whole table and whether
 // the workspace decides in the cloud and region by section 6.1's rule
@@ -281,6 +292,10 @@ func run(ctx context.Context, args []string, out io.Writer,
 	case command == "decide" && verb == "wildcard":
 		if wildcardVerb != "on" && wildcardVerb != "off" && wildcardVerb != "status" {
 			return 2, fmt.Errorf("decide wildcard %q is not on, off or status: %w", wildcardVerb, usage)
+		}
+		if wildcardVerb != "status" && (*cloud != wildcardCloud || *region != wildcardRegion) {
+			return 2, fmt.Errorf("decide wildcard %s: the wildcard row names only %s/%s, not %s/%s", wildcardVerb,
+				wildcardCloud, wildcardRegion, *cloud, *region)
 		}
 		if err := store.CheckDecideKey(workspace, *cloud, *region); err != nil {
 			return 2, err

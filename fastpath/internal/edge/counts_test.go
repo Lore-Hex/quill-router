@@ -106,6 +106,11 @@ func TestTheDecideShadowLinesReadBackAsTheirCounts(t *testing.T) {
 		if n, ok := l.Counts["distinct_keys"]; ok {
 			distinct = max(distinct, n)
 			delete(l.Counts, "distinct_keys")
+			// When the set began, beside it on each line.
+			if since := l.Counts["distinct_keys_since"]; since != h.edge.DecideShadowCounts().DistinctKeysSince.Unix() {
+				t.Fatalf("distinct_keys_since %d, the set's %v", since, h.edge.DecideShadowCounts().DistinctKeysSince)
+			}
+			delete(l.Counts, "distinct_keys_since")
 		}
 		if l.Of != CountsDecideShadow {
 			t.Fatalf("a line of %q", l.Of)

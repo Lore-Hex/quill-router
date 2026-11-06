@@ -318,7 +318,10 @@ func TestDeleteDecideOnlyEverStopsOneDecidingUnderTheWildcard(t *testing.T) {
 		got.Refused || got.FollowsWildcard {
 		t.Fatalf("an off row with no wildcard in its region: %+v, %v", got, err)
 	}
-	if got, err := s.DeleteDecide(ctx, on, "gcp", "us-central1", false); err != nil || !got.Deleted || got.Refused {
+	// An on row goes always, and the workspace keeps deciding through the
+	// wildcard, which the answer says.
+	if got, err := s.DeleteDecide(ctx, on, "gcp", "us-central1", false); err != nil || !got.Deleted || got.Refused ||
+		!got.FollowsWildcard {
 		t.Fatalf("an on row under an on wildcard: %+v, %v", got, err)
 	}
 	got, err = s.DeleteDecide(ctx, off, "gcp", "us-central1", true)
@@ -340,7 +343,7 @@ func TestDeleteDecideOnlyEverStopsOneDecidingUnderTheWildcard(t *testing.T) {
 		t.Fatalf("an off row under an off wildcard: %+v, %v", got, err)
 	}
 	got, err = s.DeleteDecide(ctx, DecideWildcard, "gcp", "us-central1", false)
-	if err != nil || !got.Found || !got.Deleted || !got.Wildcard || got.Refused {
+	if err != nil || !got.Found || !got.Deleted || !got.Wildcard || got.Refused || got.FollowsWildcard {
 		t.Fatalf("the wildcard row: %+v, %v", got, err)
 	}
 	if rows := decideRows(t, s, DecideWildcard); len(rows) != 0 {

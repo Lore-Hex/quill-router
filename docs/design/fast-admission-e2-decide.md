@@ -306,7 +306,11 @@ order:
 6. The rest of the policy, the evaluation (the requested models first for
    `candidates.private_proxy` and `candidates.estimated_usage`), the
    identity, the compose.
-7. The decide row last (`cache.decide`, `decide.off`).
+7. The decide row last (`cache.decide`, `decide.off`; with no row of the
+   workspace's own, the wildcard row's,
+   [`fast-admission-widening.md`](fast-admission-widening.md) §6.1), then
+   beside it the node's copy of the switch (`workspace.not_enabled`, the
+   front door's own copy; added by the widening, §6.1).
 
 The decide row is checked after everything else so the shadow can compare
 a complete decision for a workspace that does not yet decide: `Decide`
@@ -377,7 +381,10 @@ destination pointer), `tags.merged_invalid` (the merged tag map fails
 require, `gateway.py:2985-3000`), `policy.monitor_key`,
 `policy.lookup_hash_mismatch`, `policy.digest_not_accepted`,
 `policy.regions_mismatch` (the policy's regions disagree with the
-snapshot's `settings`), `decide.off`.
+snapshot's `settings`), `decide.off`, `workspace.not_enabled` (a decision
+gate after the decide row: the node's copy of the switch does not enable
+the workspace, which the front door would answer `Off`;
+`fast-admission-widening.md` §6.1).
 
 **Evaluation:** `evaluate.<outcome>` for any result but `Answered`:
 `evaluate.refused` for an evaluator refusal (Python refuses it too) and

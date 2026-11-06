@@ -107,10 +107,12 @@ ssh tr-fastpath-11 --zone=us-central1-a --project=quill-cloud-proxy
    cache, the workspace's own membership in `policyPass` after the key's
    and the workspace's gates). The workspace is enabled on the
    switch (`fastpathctl -database $DB enable WORKSPACE`, idempotent;
-   `fastpath-p1.md`): for one the switch does not enable, a request that
-   reaches the admit is answered `Off` by the front door, which the decide
-   path passes `owner.off` (`fastpath/internal/edge/decide_path.go`,
-   `ownerPass`). Decide rows are
+   `fastpath-p1.md`): for one the node's copy of the switch does not
+   enable, a request whose decide row says on passes
+   `workspace.not_enabled` before any admit (`fastpath/internal/edge/decide.go`,
+   the front door's own copy read as a decision gate after the compose);
+   `owner.off` (`decide_path.go`, `ownerPass`) is then only a front door
+   whose copy changed between the two reads. Decide rows are
    us-central1 only until `rollout.sh` renders `settle_outbox_enabled`
    the same in every region (decision 11).
 4. **The alerts are quiet** over the soak: no `TR Fast path` incident
@@ -211,12 +213,18 @@ commit timestamp).
 `decide delete WORKSPACE [-cloud gcp] [-region us-central1]` removes the
 workspace's own row there and only ever stops one deciding: under an on
 wildcard it refuses, exit 2 and nothing written, to remove an off row,
-since the workspace would then decide; `-follow-wildcard` removes it anyway
-and answers `"follows_wildcard": true`. An on row is removed always. `decide
+since the workspace would then decide; `-follow-wildcard` removes it anyway.
+An on row is removed always. Whenever the row removed leaves the workspace
+deciding under an on wildcard, an off row with the flag or an on row, the
+answer says `"follows_wildcard": true`. `decide
 delete '*'` removes the wildcard row itself (`"wildcard": true`), so every
 workspace without a row of its own stops deciding in that cloud and region;
 `decide wildcard off` is the same stop and keeps the row for
-`decide-restore`, which is why the way back below uses it.
+`decide-restore`, which is why the way back below uses it. `decide wildcard
+on` and `off` write only `gcp`, `us-central1` (widening §4(c): the AWS and
+Azure planes and every other region stay out) and refuse any other
+`-cloud` or `-region`, exit 2 and nothing written; `status` and `decide
+delete '*'` take any.
 
 ## 2. The node attribute
 
@@ -403,7 +411,8 @@ for the row; the node's journal for `fastpath edge decide copy: read
 failed` (`decideCopy.run`: the copy held ages out after 15 s, and a
 request that reaches the row then passes `cache.decide`); the policy's
 pilot set
-(`policy.not_pilot_workspace`), the switch (`owner.off`), and the rest of
+(`policy.not_pilot_workspace`), the switch (`workspace.not_enabled`, or
+rarely `owner.off`), and the rest of
 §3 by the line's `passed` reasons, each the gate a request tripped. A
 request Go answered carries Python's `timing` shape with `spanner_rpcs`
 1, or 2 after a read-back (`decide_path.go`, `timing`; §6).
@@ -491,7 +500,9 @@ and `audit`, below). Read, each against the line of §11 it answers to:
   count was at the policy's limit; `owner.unreachable` when no admitter
   was bound; `budget.spent` when the 1.5 s decide budget was spent before
   or during the admit; `owner.off`, `owner.busy`, `owner.invalid` and
-  `owner.failed` by the front door's answer (`Off` is the switch);
+  `owner.failed` by the front door's answer (`Off` is the switch, which
+  the pipeline's `workspace.not_enabled` names first, so `owner.off` is
+  only a copy that changed between the two reads);
   `compose.refused` when `Finish` refused; `insert.scope_taken` when the
   commit reported `AlreadyExists` and the one read-back found no
   authorization row under our id, or one naming another reservation
@@ -572,10 +583,17 @@ copy of the switch does not enable passes `workspace.not_enabled`
 (`decide.go`, after the compose, so the shadow still compares it) rather
 than reaching the front door's `owner.off`. The shadow's per-node line
 carries `distinct_keys`, the distinct API keys among its comparable
-requests since the node's shadow started, at most 1000 and a number only;
-it is no period's count, so `fastpathwatch edge` takes the largest
-figure any line carries (`i2.distinct_keys`) rather than a sum. A node
-started before the step's start counts the keys it saw before it too.
+requests since the node's shadow started, at most 1000 and a number only,
+and `distinct_keys_since`, when that set began (unix seconds, floored).
+It is no period's count, so `fastpathwatch edge -since STEP_START` takes
+the largest figure of the lines whose set began at or after `-since`
+(`i2.distinct_keys`), never a sum, and counts the other lines, a set
+begun before the step or a node too old to say, under
+`i2.distinct_keys_excluded_lines`. A step's figure is its own traffic
+only (widening §8.1): a node up since before the step carries keys from
+before it, so while every line is excluded `distinct_keys` is 0 and the
+bar cannot be read until a node's shadow restarts after the step's start
+(the next node cycle, or a deploy).
 A row is per cloud and region: another region's row waits on `rollout.sh`
 rendering `settle_outbox_enabled` the same in every region (decision 11)
 and on the policy's `fastpath_pilot_regions` naming it. A workspace leaves
@@ -694,9 +712,11 @@ untouched, and what the edge admitted settles through Python as before.
 3. **The switch**, `fastpathctl -database $DB disable WORKSPACE`
    (`fastpath-turn-off.md`): each node's copy of the switch drops the
    workspace within three seconds (`fastpath/internal/service/switch.go`,
-   a copy older than three intervals enables nothing), the front door then
-   answers `Off` to a request that reaches the admit, which the decide
-   path passes `owner.off`, and the workspace's leases are revoked. It is
+   a copy older than three intervals enables nothing), the decide path
+   then passes the workspace's requests `workspace.not_enabled` before any
+   admit (the front door's `Off`, `owner.off`, only for a copy that
+   changed between the two reads), and the workspace's leases are
+   revoked. It is
    the turn-off runbook's lever,
    broader than decide, and leaves the decide rows as they are.
 4. **The node attribute**, `fastpath-edge-decide = "false"` in

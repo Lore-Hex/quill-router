@@ -362,6 +362,12 @@ func TestDistinctKeysCountsAKeyOnceAndIsBounded(t *testing.T) {
 	}
 	sh.flush()
 	logs := h.logs.all()
+	// When the set began (the edge's clock at the shadow's start) is beside
+	// it, so a reader can tell a set older than its span.
+	if got := h.edge.DecideShadowCounts().DistinctKeysSince; !got.Equal(c.at()) ||
+		!strings.Contains(logs, fmt.Sprintf(" distinct_keys_since=%d ", c.at().Unix())) {
+		t.Fatalf("distinct_keys_since %v, want the shadow's start %v: %s", got, c.at(), logs)
+	}
 	if !strings.Contains(logs, fmt.Sprintf(" distinct_keys=%d ", maxDistinctKeys)) || strings.Contains(logs, key) ||
 		strings.Contains(logs, "key-1") {
 		t.Fatalf("the line: %s", logs)
