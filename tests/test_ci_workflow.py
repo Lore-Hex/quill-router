@@ -242,11 +242,21 @@ def test_the_post_cutover_clock_leaves_main_pushes_for_a_daily_run() -> None:
     # the queue its 14 extra jobs joined. Pull requests and dispatches (the
     # price refresh's publication gate) still run both, and so does main, once
     # a day, in a workflow that gates nothing.
+    import copy
+    import re
+
     from scripts.ci.commit_scope import PUSH_SKIP_CONDITION, SKIPPED_ON_PUSH
 
-    ci = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    ci = workflow["jobs"]
+    # The literal, not only the constant: summarize() excuses the skip on a
+    # push alone, so a condition that also skipped the refresh's dispatches
+    # would fail every publication.
+    assert PUSH_SKIP_CONDITION == "github.event_name != 'push'"
     assert {name for name, job in ci.items() if job.get("if") == PUSH_SKIP_CONDITION} == SKIPPED_ON_PUSH
     assert ci["proof-oracle"]["strategy"]["matrix"]["clock"] == ORACLE_CLOCKS
+    # The daily jobs inherit nothing from ci.yml's top level.
+    assert "env" not in workflow and "defaults" not in workflow
     daily = yaml.safe_load((ROOT / ".github/workflows/post-cutover-daily.yml").read_text())
     # PyYAML reads the key `on` as True.
     triggers = daily.get("on", daily.get(True))
@@ -255,24 +265,31 @@ def test_the_post_cutover_clock_leaves_main_pushes_for_a_daily_run() -> None:
     # workflow_run of "CI") and the price refresh read ci.yml's runs only.
     assert set(triggers) == {"schedule", "workflow_dispatch"}
     assert len(triggers["schedule"]) == 1
+    # Daily: a fixed minute and hour, every day.
+    assert re.fullmatch(r"\d{1,2} \d{1,2} \* \* \*", triggers["schedule"][0]["cron"])
     assert daily["name"] != "CI"
     assert daily["permissions"] == {"contents": "read"}
     jobs = daily["jobs"]
     assert set(jobs) == {"test-post-cutover", "proof-oracle"}
+    def comparable(job: dict) -> dict:
+        # Everything but when the job runs and the oracle's clocks.
+        job = copy.deepcopy(job)
+        job.pop("if", None)
+        job.pop("needs", None)
+        job["strategy"]["matrix"].pop("clock", None)
+        return job
+
     for name in jobs:
-        # The same suites, step for step, so the daily run checks what a
-        # pull request's run checks.
-        assert jobs[name]["steps"] == ci[name]["steps"], name
-        assert jobs[name]["runs-on"] == ci[name]["runs-on"], name
-        assert jobs[name]["timeout-minutes"] == ci[name]["timeout-minutes"], name
-        assert jobs[name]["strategy"]["fail-fast"] is False, name
+        # The same jobs (steps, env, services, runner, timeout, permissions,
+        # matrix), so the daily run checks what a pull request's run checks,
+        # and nothing can let it pass without running.
+        assert comparable(jobs[name]) == comparable(ci[name]), name
         assert jobs[name]["if"] == "github.repository == 'Lore-Hex/quill-router'", name
         assert "needs" not in jobs[name], name
-    assert jobs["test-post-cutover"]["env"] == ci["test-post-cutover"]["env"]
-    assert jobs["test-post-cutover"]["strategy"]["matrix"] == ci["test-post-cutover"]["strategy"]["matrix"]
-    assert jobs["proof-oracle"]["permissions"] == ci["proof-oracle"]["permissions"]
-    assert jobs["proof-oracle"]["strategy"]["matrix"] == {
-        "clock": ["post-cutover"], "shard": ci["proof-oracle"]["strategy"]["matrix"]["shard"]}
+        assert "continue-on-error" not in jobs[name], name
+        assert all("continue-on-error" not in step for step in jobs[name]["steps"]), name
+        assert jobs[name]["strategy"]["fail-fast"] is False, name
+    assert jobs["proof-oracle"]["strategy"]["matrix"]["clock"] == ["post-cutover"]
 
 
 def test_proof_oracle_ci_split(request, tmp_path):

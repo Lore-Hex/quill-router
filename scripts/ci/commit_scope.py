@@ -26,7 +26,8 @@ checks, the frozen-main settle oracle with its fixture catalog, the BYOK
 write-format diff, the frontend build, the Spanner conformance suites and
 the coverage floor over the Python suite). The jobs that do read them
 (lint's catalog history check, the production import, both Python suite
-clocks and the browser smoke) run on every commit. tests/test_ci_workflow.py
+clocks and the browser smoke) run on every commit, the post-cutover suite on
+every event but a push to main. tests/test_ci_workflow.py
 holds the workflow text to these two lists, and holds DATA_ONLY_PATHS to the
 files refresh-prices.yml stages.
 

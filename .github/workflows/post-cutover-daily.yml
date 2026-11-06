@@ -20,7 +20,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: post-cutover-daily
+  group: post-cutover-daily-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

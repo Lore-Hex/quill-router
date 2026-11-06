@@ -53,7 +53,9 @@ all three successful runs. Of 42,436 observed tests, 41,577 had three samples,
 Use the median for three or more samples and the maximum for sparse new cases.
 Preserve previously known weights for tests not observed in these runs.
 
-Refresh with at least three independent successful runs per profile:
+Refresh with at least three independent successful runs per profile. A push to
+main runs no post-cutover shard, so take post-cutover runs from pull requests or
+from post-cutover-daily.yml:
 
 ```sh
 gh run download RUN_ID -p 'durations-*' -D /tmp/ci-durations/RUN_ID
@@ -113,8 +115,8 @@ tracer back.
 ### Post-cutover suites leave the push run
 
 A push to main no longer runs test-post-cutover or proof-oracle's
-post-cutover clock. Together they were 14 of the run's 46 jobs, about 200
-runner-minutes. A red in them means main will break on a scheduled date. That
+post-cutover clock. Together they were 14 of the run's 46 jobs, about 215
+runner-minutes over 20 green main runs. A red in them means main will break on a scheduled date. That
 is no reason to hold the deploy, which gate-on-ci holds until the push run
 concludes. They still run on pull requests and on dispatches, including the
 price refresh's publication gate. post-cutover-daily.yml runs both on main

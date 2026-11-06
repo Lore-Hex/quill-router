@@ -37,14 +37,16 @@ concurrency:
 # queued runs, and merges and deploys stalled. The `scope` job classifies the
 # commit by its changed paths against the commit before it. Jobs that read
 # the catalog data (lint's history check, the production import, both Python
-# suite clocks, the browser smoke) run on every commit; the others carry
+# suite clocks, the browser smoke) run on every commit, the post-cutover clock
+# on every event but a push to main (see test-post-cutover); the others carry
 #   if: needs.scope.outputs.data_only != 'true'
 # and skip only when EVERY changed path is catalog data AND the base commit
 # has a completed ci.yml run that concluded success. That second condition is
 # the induction that keeps a skip honest: the summary job makes a success
 # conclusion mean "every job that ran passed and every skip was legitimate",
 # so the skipped jobs' inputs (the code) were validated at the base and are
-# unchanged here. Without it a data-only commit on top of an unvalidated base
+# unchanged here. A base validated by a push run was validated on the default
+# clock alone, since a push runs neither post-cutover suite. Without it a data-only commit on top of an unvalidated base
 # (a base whose run is still running or failed, or a force push whose old tip
 # differs from the new one only in data) would inherit code no run checked.
 # An empty comparison, a missing base commit or an unvalidated base runs the
@@ -289,7 +291,9 @@ jobs:
         # are four to five times the estimates. These are estimates, not
         # timeout bounds, and exclude queue delay.
         # Oct 27: 6,271 IDs were missing weights. Profile at least three green
-        # runs, keeping coverage and post-cutover timings separate:
+        # runs, keeping coverage and post-cutover timings separate (a push to
+        # main runs no post-cutover shard: take those from pull request runs
+        # or post-cutover-daily.yml's):
         #   gh run download <run> -p 'durations-*' -D /tmp/ci-durations/<run>
         #   uv run python scripts/ci/merge_shard_durations.py /tmp/ci-durations .test_durations /tmp/default.json --profile default
         # Repeat with --profile post-cutover; review both profiles before commit.
@@ -482,7 +486,7 @@ jobs:
   # So it runs on pull requests and on dispatches (the price refresh gates
   # publication on its run), but not on a push to main: a date main will
   # break on is no reason to hold the deploy that deploy.yml's gate-on-ci
-  # holds for that run, and on main it was about 100 runner-minutes a commit
+  # holds for that run, and on main it was about 90 runner-minutes a commit
   # in a queue that every deploy waited in. post-cutover-daily.yml runs it on
   # main once a day, with the proof oracle's post-cutover clock, and
   # commit_scope.py's summary accepts its skip on a push only.
@@ -874,8 +878,9 @@ jobs:
   # The run's conclusion, derived from every job's result. GitHub concludes a
   # run success when its jobs succeeded or were skipped; this job accepts a
   # skipped job only when it is one of the jobs above that carry the data-only
-  # condition AND `scope` classified the commit as data-only, and fails on a
-  # failed `scope`, a failed job, or a skip for any other reason. The deploy
+  # condition AND `scope` classified the commit as data-only, or the
+  # post-cutover suite on a push to main, and fails on a failed `scope`, a
+  # failed job, or a skip for any other reason. The deploy
   # gate and the price-refresh gate read the run's conclusion, which this job
   # now determines; branch protection can also require the `CI` check.
   # !cancelled() rather than always(): a cancelled run releases its slot.
@@ -905,5 +910,5 @@ jobs:
       EVENT_NAME: ${{ github.event_name }}
     steps:
       - uses: actions/checkout@v7
-      - name: Every job succeeded, or was skipped for a data-only commit
+      - name: Every job succeeded, or was skipped for a data-only commit or a push
         run: python3 scripts/ci/commit_scope.py summarize

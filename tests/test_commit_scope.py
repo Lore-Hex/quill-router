@@ -207,6 +207,7 @@ def test_classify_command_reads_raw_records_from_stdin(monkeypatch, capsys) -> N
 
 
 def test_summarize_command_exits_non_zero_with_an_annotation(monkeypatch, capsys) -> None:
+    monkeypatch.delenv("EVENT_NAME", raising=False)
     skipped = {name: "skipped" for name in SKIPPED_FOR_DATA_ONLY}
     monkeypatch.setenv("NEEDS", json.dumps(needs(**skipped)))
     monkeypatch.setenv("DATA_ONLY", "true")
