@@ -51,6 +51,38 @@ permissions:
   actions: read     # for the CI-green gate (gh run list)
 
 jobs:
+  # A push that deploys supersedes the deploys of older pushes that are still
+  # preparing: each would ship a subset of this commit, one rollout before this
+  # one ships it all. While such a deploy's CI run has not started a test
+  # shard, this cancels the deploy and then the CI run, so the organization's
+  # runners (60 at once; a CI run is 46 jobs) go to this commit's run. A deploy
+  # in the production queue or rolling out, a CI run already testing, and a
+  # non-deploying commit's run are left alone. While no rollout has been
+  # delivered for two hours it cancels nothing, so a stream of pushes cannot
+  # keep main undeployed. scripts/deploy/superseded_deploy.py --mode
+  # cancel-older says why for each run. No job needs this one, and it never
+  # fails: reconcile_cloud_releases.py reads a failed run as an undelivered
+  # release.
+  cancel-superseded:
+    if: github.repository == 'Lore-Hex/quill-router' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: write   # to cancel the superseded runs
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: scripts/deploy/superseded_deploy.py
+          sparse-checkout-cone-mode: false
+      - name: Cancel the older pushes' preparing deploys and their untested CI
+        run: >-
+          python3 scripts/deploy/superseded_deploy.py --mode cancel-older
+          --repo "${GITHUB_REPOSITORY}" --base "${GITHUB_SHA}"
+          || echo "::warning::cancel-older exited non-zero; nothing was cancelled after that point"
+
   gate-on-ci:
     if: github.repository == 'Lore-Hex/quill-router'
     runs-on: ubuntu-latest

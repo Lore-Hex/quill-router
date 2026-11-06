@@ -578,3 +578,210 @@ def test_build_and_ci_prepare_outside_the_serialized_rollout():
     before = entry["jobs"]["gate-on-ci"]["steps"][0]["run"]
     admitted = production["jobs"]["gate-on-ci"]["steps"][0]["run"]
     assert before == admitted
+
+
+# --mode cancel-older: a deploying push cancels the preparing deploys of older
+# pushes it supersedes, and their CI runs that have not started a test shard.
+
+CANCEL_ARGS = ["--mode", "cancel-older", "--repo", "o/r", "--base", "aaa"]
+DELIVERY = ("deploy", "rollout-secondaries", "public-surface-companion", "verify-cloud-complete", "finalize-cloud")
+DELIVERED_JOBS = json.dumps({"jobs": [{"name": f"rollout / {name}", "conclusion": "success"} for name in DELIVERY]})
+OLDER_RUN = {"databaseId": 2, "status": "in_progress", "headSha": "bbb", "headBranch": "main", "event": "push"}
+PREPARING = json.dumps({"jobs": [{"name": "cancel-superseded", "status": "completed", "conclusion": "success"},
+                                 {"name": "gate-on-ci", "status": "in_progress", "conclusion": ""},
+                                 {"name": "build-image", "status": "completed", "conclusion": "success"}]})
+UNTESTED_CI = json.dumps({"jobs": [{"name": "scope", "status": "completed"}, {"name": "lint", "status": "in_progress"},
+                                   {"name": "test (1)", "status": "queued"}, {"name": "test-post-cutover (1)",
+                                                                              "status": "in_progress"}]})
+
+
+def _ago(seconds: float) -> str:
+    import time
+    from datetime import UTC, datetime
+
+    return datetime.fromtimestamp(time.time() - seconds, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _cancel_responses(**overrides: tuple[str, int]) -> dict[str, tuple[str, int]]:
+    # The fake answers with the first key found in the argv, in this order.
+    responses = {
+        "--status success": (json.dumps([{"databaseId": 90, "updatedAt": _ago(600)}]), 0),
+        "run view 90 --repo": (DELIVERED_JOBS, 0),
+        "--workflow deploy.yml --branch main --event push": (json.dumps([THIS_RUN, OLDER_RUN]), 0),
+        "compare/bbb...aaa": (json.dumps({"status": "ahead"}), 0),
+        "run view 2 --repo": (PREPARING, 0),
+        "--workflow ci.yml --commit bbb": (json.dumps([{"databaseId": 7, "status": "queued"}]), 0),
+        "run view 7 --repo": (UNTESTED_CI, 0),
+        "run cancel 2 --repo": ("", 0),
+        "run cancel 7 --repo": ("", 0),
+    }
+    responses.update(overrides)
+    return responses
+
+
+def _cancels(log: Path) -> list[str]:
+    return [line.split(" --repo")[0] for line in log.read_text().splitlines() if line.startswith("run cancel")]
+
+
+def test_cancel_older_cancels_a_preparing_older_deploy_then_its_untested_ci(tmp_path, monkeypatch, capsys):
+    log = _fake_gh(tmp_path, monkeypatch, responses=_cancel_responses())
+    assert superseded.main(CANCEL_ARGS) == 0
+    # The deploy first, so its gate never sees its CI cancelled; never this run.
+    assert _cancels(log) == ["run cancel 2", "run cancel 7"]
+    assert "cancelled deploy run 2 of bbb, and its CI run 7" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("status", ["in_progress", "completed"])
+def test_cancel_older_leaves_a_ci_run_already_testing(tmp_path, monkeypatch, status):
+    testing = json.dumps({"jobs": [{"name": "test (3)", "status": status}]})
+    log = _fake_gh(tmp_path, monkeypatch, responses=_cancel_responses(**{"run view 7 --repo": (testing, 0)}))
+    assert superseded.main(CANCEL_ARGS) == 0
+    assert _cancels(log) == []
+
+
+@pytest.mark.parametrize("answer", [
+    (json.dumps([{"databaseId": 7, "status": "completed"}]), 0),  # CI concluded: the gate decides
+    ("[]", 0),                                                    # no CI run found yet
+    ("", 1),                                                      # lookup failed
+])
+def test_cancel_older_leaves_a_deploy_whose_ci_is_done_or_unknown(tmp_path, monkeypatch, answer):
+    log = _fake_gh(tmp_path, monkeypatch, responses=_cancel_responses(**{"--workflow ci.yml --commit bbb": answer}))
+    assert superseded.main(CANCEL_ARGS) == 0
+    assert _cancels(log) == []
+
+
+@pytest.mark.parametrize("answer", [("{}", 0), ("", 1), ("not json", 0)])
+def test_cancel_older_leaves_a_ci_run_whose_jobs_are_unknown(tmp_path, monkeypatch, answer):
+    log = _fake_gh(tmp_path, monkeypatch, responses=_cancel_responses(**{"run view 7 --repo": answer}))
+    assert superseded.main(CANCEL_ARGS) == 0
+    assert _cancels(log) == []
+
+
+@pytest.mark.parametrize("job", ["rollout / gate-on-ci", "rollout / admit-cloud", "rollout / deploy", "a-new-job"])
+def test_cancel_older_leaves_a_deploy_past_preparation(tmp_path, monkeypatch, job):
+    jobs = json.dumps({"jobs": [*json.loads(PREPARING)["jobs"], {"name": job, "status": "in_progress"}]})
+    log = _fake_gh(tmp_path, monkeypatch, responses=_cancel_responses(**{"run view 2 --repo": (jobs, 0)}))
+    assert superseded.main(CANCEL_ARGS) == 0
+    assert _cancels(log) == []
+
+
+@pytest.mark.parametrize("answer", [
+    (json.dumps({"status": "behind"}), 0), (json.dumps({"status": "diverged"}), 0),
+    (json.dumps({"status": "identical"}), 0), ("", 1), ("SLEEP", 0),
+])
+def test_cancel_older_leaves_a_commit_this_does_not_descend_from(tmp_path, monkeypatch, answer):
+    monkeypatch.setattr(superseded, "GH_TIMEOUT_SECONDS", HANG_TIMEOUT)
+    log = _fake_gh(tmp_path, monkeypatch, responses=_cancel_responses(**{"compare/bbb...aaa": answer}))
+    assert superseded.main(CANCEL_ARGS) == 0
+    assert _cancels(log) == []
+
+
+@pytest.mark.parametrize("run", [
+    {**OLDER_RUN, "event": "workflow_dispatch"},
+    {**OLDER_RUN, "headBranch": "release"},
+    {**OLDER_RUN, "headSha": "aaa"},
+    {**OLDER_RUN, "status": "completed"},
+    {**OLDER_RUN, "databaseId": None},
+])
+def test_cancel_older_only_cancels_other_older_main_pushes(tmp_path, monkeypatch, run):
+    queue = (json.dumps([THIS_RUN, run]), 0)
+    log = _fake_gh(tmp_path, monkeypatch, responses=_cancel_responses(
+        **{"--workflow deploy.yml --branch main --event push": queue}))
+    assert superseded.main(CANCEL_ARGS) == 0
+    assert _cancels(log) == []
+
+
+@pytest.mark.parametrize("delivery", [
+    (json.dumps([{"databaseId": 90, "updatedAt": _ago(3 * 3600)}]), 0),  # last delivery 3 h ago
+    ("[]", 0),                                                            # none known
+    ("", 1),                                                              # lookup failed
+])
+def test_cancel_older_cancels_nothing_while_deploys_are_not_getting_through(tmp_path, monkeypatch, delivery):
+    log = _fake_gh(tmp_path, monkeypatch, responses=_cancel_responses(**{"--status success": delivery}))
+    assert superseded.main(CANCEL_ARGS) == 0
+    assert _cancels(log) == []
+    # It stops before it even reads the queue.
+    assert "--event push" not in log.read_text()
+
+
+def test_a_green_run_whose_rollout_was_skipped_is_no_delivery(tmp_path, monkeypatch):
+    skipped = json.dumps({"jobs": [{"name": "gate-on-ci", "conclusion": "success"},
+                                   {"name": "rollout / confirm-current-main", "conclusion": "success"},
+                                   *[{"name": f"rollout / {name}", "conclusion": "skipped"} for name in DELIVERY]]})
+    log = _fake_gh(tmp_path, monkeypatch, responses=_cancel_responses(**{"run view 90 --repo": (skipped, 0)}))
+    assert superseded.main(CANCEL_ARGS) == 0
+    assert _cancels(log) == []
+
+
+def test_cancel_older_leaves_the_ci_when_the_deploy_cancel_fails(tmp_path, monkeypatch):
+    log = _fake_gh(tmp_path, monkeypatch, responses=_cancel_responses(**{"run cancel 2 --repo": ("", 1)}))
+    assert superseded.main(CANCEL_ARGS) == 0
+    assert _cancels(log) == ["run cancel 2"]
+
+
+def test_cancel_older_always_exits_zero(tmp_path, monkeypatch):
+    _fake_gh(tmp_path, monkeypatch, exit_code=1)
+    assert superseded.main(CANCEL_ARGS) == 0
+
+    def broken(*args: object) -> list[str]:
+        raise RuntimeError("unexpected")
+
+    monkeypatch.setattr(superseded, "cancel_older", broken)
+    assert superseded.main(CANCEL_ARGS) == 0
+
+
+def test_cancel_older_stops_at_its_deadline(tmp_path, monkeypatch):
+    monkeypatch.setattr(superseded, "CANCEL_DEADLINE_SECONDS", -1)
+    log = _fake_gh(tmp_path, monkeypatch, responses=_cancel_responses())
+    assert superseded.main(CANCEL_ARGS) == 0
+    assert _cancels(log) == []
+
+
+def test_the_other_modes_still_need_a_head():
+    with pytest.raises(SystemExit):
+        superseded.main(["--repo", "o/r", "--base", "aaa"])
+    with pytest.raises(SystemExit):
+        superseded.main(["--mode", "ancestry", "--repo", "o/r", "--base", "aaa"])
+
+
+def test_the_cancel_job_runs_beside_the_deploy_and_never_fails_its_run():
+    entry = yaml.safe_load(WORKFLOW.read_text())
+    jobs = entry["jobs"]
+    job = jobs["cancel-superseded"]
+    # A push only: a manual dispatch supersedes nothing.
+    assert job["if"] == "github.repository == 'Lore-Hex/quill-router' && github.event_name == 'push'"
+    # The only job that may cancel runs; the workflow's own token stays read-only.
+    assert job["permissions"] == {"actions": "write", "contents": "read"}
+    assert entry["permissions"]["actions"] == "read"
+    assert all(name == "cancel-superseded" or "actions" not in other.get("permissions", {})
+               or other["permissions"]["actions"] == "read" for name, other in jobs.items())
+    # Nothing waits for it, and it waits for nothing.
+    assert "needs" not in job
+    for name, other in jobs.items():
+        needs = other.get("needs", [])
+        assert "cancel-superseded" not in ([needs] if isinstance(needs, str) else needs), name
+    run = next(step["run"] for step in job["steps"] if "run" in step)
+    assert "superseded_deploy.py --mode cancel-older" in run
+    assert '--base "${GITHUB_SHA}"' in run
+    # A failed or timed-out job fails the run, and reconcile_cloud_releases.py
+    # reads a failed run as an undelivered release: the step cannot fail, and
+    # the script stops well inside the job's timeout (one more gh call's worth).
+    assert run.rstrip().endswith('|| echo "::warning::cancel-older exited non-zero; nothing was cancelled after that point"')
+    assert "continue-on-error" not in job
+    assert job["timeout-minutes"] * 60 >= superseded.CANCEL_DEADLINE_SECONDS + 2 * superseded.GH_TIMEOUT_SECONDS + 60
+    checkout = job["steps"][0]
+    assert checkout["with"]["sparse-checkout"] == "scripts/deploy/superseded_deploy.py"
+
+
+def test_ci_names_its_test_shards_as_cancel_older_reads_them():
+    jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
+    # No `name:`, so GitHub names each shard "test (N)" from the matrix.
+    assert "name" not in jobs["test"]
+    assert list(jobs["test"]["strategy"]["matrix"]) == ["shard"]
+    assert superseded._TEST_SHARD_PREFIX == "test ("
+    # And the delivery set is the cloud reconciler's.
+    from scripts.deploy.reconcile_cloud_releases import REQUIRED_JOBS
+
+    assert superseded._DELIVERY_JOBS == REQUIRED_JOBS
+    # Every job deploy.yml runs before the reusable rollout, its own canceller included.
+    assert superseded._PREPARATION_JOBS == set(yaml.safe_load(WORKFLOW.read_text())["jobs"]) - {"rollout"}

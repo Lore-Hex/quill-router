@@ -40,6 +40,28 @@ The narrower check deploy.yml runs after the lease is held: exit 0 when BASE
 is still on main (the compare is `identical` or `ahead`), 1 otherwise or when
 unknown. Main is protected against force-pushes, but a lease wait lasts hours
 and this is the last point before production changes.
+
+    superseded_deploy.py --mode cancel-older --repo OWNER/NAME --base SHA
+
+deploy.yml's cancel-superseded job runs this for its own commit. An older push's
+deploy that is still preparing would ship a subset of this commit, one rollout
+before this one ships all of it, and its CI run of 46 jobs holds the
+organization's runners (60 at once) that this commit's run waits for. So it
+cancels that deploy, and then its CI run, only when all of these hold:
+- the deploy is a push run on main, other than this one, not completed;
+- its commit is an ancestor of this one (the compare is `ahead`);
+- every job it has is outside the rollout (cancel-superseded, gate-on-ci,
+  build-image), so it is neither in the production queue nor rolling out;
+- its CI run has not started a test shard. A run already testing is left to
+  finish, and its deploy to the supersede rule above.
+Nothing is cancelled while no rollout has been delivered for
+STALE_AFTER_SECONDS. A stream of pushes must not keep cancelling every
+deploy; that is the starvation 2026-10-21 showed, and while deploys are not
+getting through the older runs keep their chance. A non-deploying commit's
+CI run is never touched: its result may be wanted for a fast path release.
+Every unknown answer cancels nothing, and the mode always exits 0, since
+this job failing would mark a delivered release's run as failed for
+reconcile_cloud_releases.py.
 """
 
 from __future__ import annotations
@@ -49,7 +71,9 @@ import fnmatch
 import json
 import subprocess
 import sys
+import time
 from collections.abc import Iterable
+from datetime import datetime
 
 # Must equal `on.push.paths` in .github/workflows/deploy.yml (a test pins it).
 DEPLOY_PATHS = (
@@ -77,6 +101,23 @@ GH_TIMEOUT_SECONDS: float = 60
 # `gh run list` statuses of a run that has not started: waiting for its
 # concurrency group, a runner, or an approval.
 _WAITING_RUN_STATUSES = frozenset({"pending", "queued", "waiting", "requested"})
+# The rollout jobs whose success proves a release was delivered, with the
+# reusable workflow's "rollout / " prefix removed (reconcile_cloud_releases.py
+# requires the same set).
+_DELIVERY_JOBS = frozenset({"deploy", "rollout-secondaries", "public-surface-companion",
+                            "verify-cloud-complete", "finalize-cloud"})
+# deploy.yml's jobs outside the rollout: a run whose every job is one of these
+# is neither in the production queue nor rolling out. Every push run has its
+# own cancel-superseded job.
+_PREPARATION_JOBS = frozenset({"cancel-superseded", "gate-on-ci", "build-image"})
+# ci.yml's test matrix job is named "test (N)" for shard N.
+_TEST_SHARD_PREFIX = "test ("
+# cancel-older cancels nothing while main has gone this long without a
+# delivered rollout.
+STALE_AFTER_SECONDS = 2 * 3600
+# cancel-older stops looking after this long, well inside deploy.yml's
+# cancel-superseded timeout-minutes: a job that times out fails the run.
+CANCEL_DEADLINE_SECONDS: float = 8 * 60
 
 
 def touches_deploy_paths(files: Iterable[str]) -> bool:
@@ -204,23 +245,163 @@ def successor_ready(repo: str, base: str, head: str) -> tuple[bool, str]:
         if run["status"] == "completed":
             # An older preparation can finish AFTER a newer release ships.
             # Never downgrade it; skipped/partial rollouts do not prove delivery.
-            required = {"deploy", "rollout-secondaries", "public-surface-companion",
-                        "verify-cloud-complete", "finalize-cloud"}
             delivered = {str(name).removeprefix("rollout / "): result for name, result in jobs.items()}
-            if all(delivered.get(name) == "success" for name in required):
+            if all(delivered.get(name) == "success" for name in _DELIVERY_JOBS):
                 return True, f"newer release {successor[:9]} already completed all production gates"
         elif all(jobs.get(name) == "success" for name in ("gate-on-ci", "build-image")):
             return True, f"newer release {successor[:9]} has green CI and a prepared image queued for rollout"
     return False, "no newer prepared green release can take over; shipping the current eligible release"
 
 
+def _gh_ok(args: list[str]) -> bool:
+    """One `gh` call that answers no JSON (a cancel); whether it succeeded."""
+
+    try:
+        result = subprocess.run(  # noqa: S603 - fixed gh invocation; arguments are run ids and names
+            ["gh", *args],  # noqa: S607
+            capture_output=True,
+            text=True,
+            timeout=GH_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        print(f"superseded_deploy: gh {args[0]} {args[1]} did not finish: {exc}", file=sys.stderr)
+        return False
+    if result.returncode != 0:
+        print(f"superseded_deploy: gh {args[0]} {args[1]} failed: {result.stderr.strip()[:300]}", file=sys.stderr)
+        return False
+    return True
+
+
+def delivered(jobs: object) -> bool:
+    """Whether a deploy run's jobs (`gh run view --json jobs`) show a delivered rollout."""
+
+    if not isinstance(jobs, list):
+        return False
+    results = {str(job.get("name", "")).removeprefix("rollout / "): job.get("conclusion")
+               for job in jobs if isinstance(job, dict)}
+    return all(results.get(name) == "success" for name in _DELIVERY_JOBS)
+
+
+def preparing(jobs: object) -> bool:
+    """Whether every job a deploy run has is a preparation job; a run with none has not started."""
+
+    if not isinstance(jobs, list):
+        return False
+    return all(isinstance(job, dict) and job.get("name") in _PREPARATION_JOBS for job in jobs)
+
+
+def tests_started(jobs: object) -> bool | None:
+    """Whether a CI run has started a test shard; None when its jobs are unknown."""
+
+    if not isinstance(jobs, list):
+        return None
+    return any(isinstance(job, dict) and str(job.get("name", "")).startswith(_TEST_SHARD_PREFIX)
+               and job.get("status") in ("in_progress", "completed") for job in jobs)
+
+
+def recently_delivered(repo: str, now: float, deadline: float) -> bool:
+    """Whether a deploy run on main delivered a rollout within STALE_AFTER_SECONDS of NOW.
+
+    Unknown, including past DEADLINE (time.monotonic()), reads as not delivered.
+    """
+
+    runs = _gh_json(["run", "list", "--repo", repo, "--workflow", DEPLOY_WORKFLOW, "--branch", MAIN_BRANCH,
+                     "--status", "success", "--limit", "20", "--json", "databaseId,updatedAt"])
+    if not isinstance(runs, list):
+        return False
+    for run in runs:  # newest first
+        if time.monotonic() > deadline:
+            return False
+        if not isinstance(run, dict) or not run.get("databaseId"):
+            continue
+        try:
+            updated = datetime.fromisoformat(str(run.get("updatedAt")).replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            continue
+        if now - updated > STALE_AFTER_SECONDS:
+            return False
+        details = _gh_json(["run", "view", str(run["databaseId"]), "--repo", repo, "--json", "jobs"])
+        if isinstance(details, dict) and delivered(details.get("jobs")):
+            return True
+    return False
+
+
+def cancel_older(repo: str, this: str, now: float) -> list[str]:
+    """Cancel the preparing deploys of older main pushes that THIS supersedes, then their CI runs.
+
+    Returns one line for each deploy cancelled. See the module docstring for
+    what qualifies; any unknown answer leaves the run alone.
+    """
+
+    deadline = time.monotonic() + CANCEL_DEADLINE_SECONDS
+    if not recently_delivered(repo, now, deadline):
+        print("superseded_deploy: no rollout delivered in the last "
+              f"{STALE_AFTER_SECONDS // 3600} h, or none known; cancelling nothing")
+        return []
+    runs = _gh_json(["run", "list", "--repo", repo, "--workflow", DEPLOY_WORKFLOW, "--branch", MAIN_BRANCH,
+                     "--event", "push", "--limit", "100",
+                     "--json", "databaseId,status,headSha,headBranch,event"])
+    if not isinstance(runs, list):
+        print("superseded_deploy: the deploy queue is unknown; cancelling nothing")
+        return []
+    cancelled: list[str] = []
+    for run in runs:
+        if time.monotonic() > deadline:
+            print("superseded_deploy: out of time; leaving the remaining runs alone")
+            break
+        if not isinstance(run, dict) or run.get("event") != "push" or run.get("headBranch") != MAIN_BRANCH:
+            continue
+        sha, run_id = run.get("headSha"), run.get("databaseId")
+        if not sha or sha == this or not run_id:
+            continue
+        if run.get("status") not in _WAITING_RUN_STATUSES | {"in_progress"}:
+            continue
+        lineage = _gh_json(["api", f"repos/{repo}/compare/{sha}...{this}"])
+        if not isinstance(lineage, dict) or lineage.get("status") != "ahead":
+            continue
+        details = _gh_json(["run", "view", str(run_id), "--repo", repo, "--json", "jobs"])
+        if not isinstance(details, dict) or not preparing(details.get("jobs")):
+            continue
+        ci = _gh_json(["run", "list", "--repo", repo, "--workflow", CI_WORKFLOW, "--commit", str(sha),
+                       "--event", "push", "--limit", "1", "--json", "databaseId,status"])
+        if not isinstance(ci, list) or not ci or not isinstance(ci[0], dict) or not ci[0].get("databaseId"):
+            continue
+        if ci[0].get("status") == "completed":
+            continue
+        ci_details = _gh_json(["run", "view", str(ci[0]["databaseId"]), "--repo", repo, "--json", "jobs"])
+        if tests_started(ci_details.get("jobs") if isinstance(ci_details, dict) else None) is not False:
+            continue
+        # The deploy first: cancelled CI under a live deploy would turn that
+        # deploy's gate red instead of leaving it cancelled.
+        if not _gh_ok(["run", "cancel", str(run_id), "--repo", repo]):
+            continue
+        ci_cancelled = _gh_ok(["run", "cancel", str(ci[0]["databaseId"]), "--repo", repo])
+        cancelled.append(f"deploy run {run_id} of {str(sha)[:9]}, and its CI run {ci[0]['databaseId']}"
+                         + ("" if ci_cancelled else " (its CI run could not be cancelled)"))
+    return cancelled
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", required=True)
     parser.add_argument("--base", required=True)
-    parser.add_argument("--head", required=True)
-    parser.add_argument("--mode", choices=("supersede", "ancestry"), default="supersede")
+    parser.add_argument("--head")
+    parser.add_argument("--mode", choices=("supersede", "ancestry", "cancel-older"), default="supersede")
     args = parser.parse_args(argv)
+    if args.mode == "cancel-older":
+        try:
+            cancelled = cancel_older(args.repo, args.base, time.time())
+        except Exception as exc:  # noqa: BLE001 - this job must never fail a deploy run
+            print(f"superseded_deploy: cancel-older stopped: {type(exc).__name__}: {exc}", file=sys.stderr)
+            return 0
+        for line in cancelled:
+            print(f"superseded_deploy: cancelled {line}, superseded by {args.base[:9]}")
+        if not cancelled:
+            print(f"superseded_deploy: nothing that {args.base[:9]} supersedes is cancellable")
+        return 0
+    if not args.head:
+        parser.error("--head is required for --mode supersede and --mode ancestry")
     compare = _gh_json(["api", f"repos/{args.repo}/compare/{args.base}...{args.head}"])
     if compare is None:
         return 1
