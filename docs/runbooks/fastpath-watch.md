@@ -165,8 +165,8 @@ lines, summed, are its counts. It prints JSON:
   `python_unavailable`, `unread.*`, the scope taken, replays, and
   `passed.inflight.key`, Python's per-key in-flight 429 to a request the
   decide path passed at its own in-flight limit, and
-  `inflight_unchecked.*`, the same 429 to a request it passed after its
-  in-flight gate let it in, or did not decide). Then
+  `inflight_unchecked.*`, the same 429 to a request it passed at any other
+  step, or did not decide). Then
   `differ` and `differ_by_field` (every `differ.*` and `row.*` field),
   `differ_affinity_warm` (the differs whose Python 200 is Go's decision
   re-ranked for an endpoint a Python process remembered for the request's

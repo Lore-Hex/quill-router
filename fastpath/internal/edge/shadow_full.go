@@ -79,11 +79,13 @@ const (
 	// ClassInFlightUnchecked: Python refused at its per-key in-flight gate
 	// (429 rate_limited, "Too many concurrent requests for this API key",
 	// read through) a request Go would decide, which the decide path passed
-	// after its own in-flight gate let it in (owner.*, budget.spent, a
-	// window, insert.*) or did not decide: Go's count held no slot for it
-	// while Python's counted it, so Go's decision carries no in-flight
-	// verdict to compare (inFlightAgreed). Neither an agreement nor a
-	// would-admit: counted by the decide path's pass, never paged.
+	// at any step but its own in-flight gate (after the gate let it in:
+	// owner.*, budget.spent, a window, insert.*; or before it, when its own
+	// decision passed what the shadow's admits) or did not decide: Go's
+	// count held no slot for it while Python's counted it, so Go's decision
+	// carries no in-flight verdict to compare (inFlightAgreed). Neither an
+	// agreement nor a would-admit: counted by the decide path's pass, never
+	// paged.
 	ClassInFlightUnchecked = "inflight_unchecked"
 	// ClassWindowRace: Go read the key's windows and would have admitted,
 	// Python refused a window it read more spent (its 429 names a window
@@ -600,10 +602,11 @@ func (sh *fullShadow) safeCompare(d Decided, a pyAnswer, w *windowRead, decidePa
 //
 // Any other request is inflight_unchecked.<the decide path's pass>
 // (inflight_unchecked.not_decided with no decide path): Go's gate holds a
-// slot only while the decide path decides a request, and a pass gives the
-// slot back (decidePath's deferred leave) before Python's authorize takes
-// Python's. The key's requests that Go passed are in Python's count and
-// never in Go's, so Go's count says nothing of what Python's gate saw.
+// slot only while the decide path decides a request. A pass after the gate
+// gives the slot back (decidePath's deferred leave) before Python's
+// authorize takes Python's, and a pass before it never took one. The key's
+// requests that Go passed are in Python's count and never in Go's, so Go's
+// count says nothing of what Python's gate saw.
 //
 // Only that refusal: any other refusal (a 401, a 402, a window, the ingress
 // limiter's 429, a 429 not read through) is a gate the pipeline holds or no

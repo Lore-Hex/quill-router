@@ -1558,9 +1558,10 @@ func TestAnUnreadRefusalIsStillARefusal(t *testing.T) {
 // passed.inflight.key of Python's per-key in-flight 429, read through, to a
 // request the decide path passed at inflight.key, and
 // inflight_unchecked.<pass> of the same 429 to a request the decide path
-// passed after its gate let it in (owner.off, owner.busy, budget.spent,
-// insert.failed: Go's slot was given back at the pass) or did not decide
-// (not_decided: the shadow alone). Neither pages. It makes neither of
+// passed at another step (owner.off, owner.busy, budget.spent,
+// insert.failed: Go's slot was given back at the pass; cache.key, before
+// the gate: none was taken) or did not decide (not_decided: the shadow
+// alone). Neither pages. It makes neither of
 // anything else, after any pass: not that 429 unread (its type and message
 // unknown), not another message or type, not a 503, not a 200.
 func TestOnlyAnInFlightPassAgreesWithAnInFlightRefusal(t *testing.T) {
@@ -1582,6 +1583,9 @@ func TestOnlyAnInFlightPassAgreesWithAnInFlightRefusal(t *testing.T) {
 		{pyAnswer{status: 429, body: inFlight}, PassOwnerBusy, unchecked + "owner.busy"},
 		{pyAnswer{status: 429, body: inFlight}, PassBudgetSpent, unchecked + "budget.spent"},
 		{pyAnswer{status: 429, body: inFlight}, PassInsertFailed, unchecked + "insert.failed"},
+		// Before the gate: the decide path's own decision passed what the
+		// shadow's admits (its cache read went the other way).
+		{pyAnswer{status: 429, body: inFlight}, "cache.key", unchecked + "cache.key"},
 	} {
 		got := inFlightAgreed(compareWindowed(d, v.a, nil), v.a, v.decidePass)
 		if got.class != v.want || !got.decided || got.fields != nil || got.race != nil {

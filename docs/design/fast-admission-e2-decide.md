@@ -1704,15 +1704,17 @@ counts, per snapshot and policy digest:
   answered with a slot free.
 - `inflight_unchecked.<pass>`: Python's in-flight 429 (the same 429, read
   through) to a request the pipeline would admit, which the decide path
-  passed after its in-flight gate let it in (`owner.*`, `budget.spent`, a
-  window, `insert.*`), or `inflight_unchecked.not_decided` when no decide
-  path ran (the shadow alone). Go's gate holds a slot only while the
-  decide path decides a request (decision 14: from the admit to the
-  answer or the pass); a pass gives it back before Python's authorize
-  takes Python's. A key's requests that Go passes are in Python's count
-  and never in Go's, so Go's count says nothing of what Python's gate saw:
-  neither an agreement nor a would-admit, and Go answered nothing. Counted
-  by the pass, never paged. An earlier text paged this case as "the
+  passed at any step but its in-flight gate (after the gate let it in:
+  `owner.*`, `budget.spent`, a window, `insert.*`; or before it, when the
+  decide path's own decision passed what the shadow's admits), or
+  `inflight_unchecked.not_decided` when no decide path ran (the shadow
+  alone). Go's gate holds a slot only while the decide path decides a
+  request (decision 14: from the admit to the answer or the pass); a pass
+  after the gate gives it back before Python's authorize takes Python's,
+  and a pass before it never took one. A key's requests that Go passes
+  are in Python's count and never in Go's, so Go's count says nothing of
+  what Python's gate saw: neither an agreement nor a would-admit, and Go
+  answered nothing. Counted by the pass, never paged. An earlier text paged this case as "the
   per-process count of decision 14 disagreeing across processes, not
   known to happen". It happened on 2026-11-06 at 03:55Z, after the fast
   path was switched off for a workspace whose requests the pipeline would
