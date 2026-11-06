@@ -367,7 +367,7 @@ def models_requiring_canary(
     *,
     failure_reason: str = "provider-canary-failed",
 ) -> frozenset[str]:
-    """Return only new routes and routes held by a previous failed canary."""
+    """Recheck new, failed, and returning delisted routes before activation."""
 
     if not manifest_path.exists():
         return frozenset(discovered_model_ids)
@@ -384,7 +384,8 @@ def models_requiring_canary(
     return frozenset(
         model_id
         for model_id in discovered_model_ids
-        if model_id not in existing or existing[model_id].get("routable_reason") == failure_reason
+        if model_id not in existing
+        or existing[model_id].get("routable_reason") in {failure_reason, "delisted-upstream"}
     )
 
 

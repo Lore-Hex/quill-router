@@ -259,7 +259,7 @@ PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
 # Jurisdiction and privacy controls that already exist. Reuse these; a second
 # mechanism for the same rule is a second thing to keep true:
 #   * US_PROVIDER_ONLY_MODEL_IDS (below) is the request-time rule that pins
-#     OpenPatcher and Athena ids to US-operated providers. routing.py turns a
+#     OpenPatcher, Athena and Liberty 4.0 ids to US-operated providers. routing.py turns a
 #     match into provider_jurisdiction=US on the request.
 #   * The provider.jurisdiction request preference in routing.py filters
 #     candidate endpoints against provider_headquarters_country. It accepts only
@@ -2960,6 +2960,8 @@ PARASAIL_LIBERTY_2_0_MODEL_ID = "parasail/liberty-2.0"
 
 LIBERTY_3_0_MODEL_ID = "trustedrouter/liberty-3.0"
 
+LIBERTY_4_0_MODEL_ID = "trustedrouter/liberty-4.0"
+
 US_PROVIDER_ONLY_MODEL_IDS = frozenset(
     {
         OPEN_PATCHER_S1_MODEL_ID,
@@ -2969,6 +2971,7 @@ US_PROVIDER_ONLY_MODEL_IDS = frozenset(
         ATHENA_1_0_MODEL_ID,
         ATHENA_2_0_MODEL_ID,
         ATHENA_MODEL_ID,
+        LIBERTY_4_0_MODEL_ID,
     }
 )
 
@@ -3078,6 +3081,7 @@ META_MODEL_IDS = frozenset(
         LIBERTY_2_0_MODEL_ID,
         PARASAIL_LIBERTY_2_0_MODEL_ID,
         LIBERTY_3_0_MODEL_ID,
+        LIBERTY_4_0_MODEL_ID,
         SYNTH_MODEL_ID,
         IRIS_MODEL_ID,
         PROMETHEUS_MODEL_ID,
@@ -3361,6 +3365,14 @@ LIBERTY_1_0_MODEL_ORDER = (
 LIBERTY_1_0_1M_MODEL_ORDER = (
     "thinkingmachines/inkling-1m",
     "nvidia/nemotron-3-ultra-550b-a55b",
+)
+
+# The panel; Muse Spark Open also fuses it, backed up by Beam then Nemotron.
+# Every member runs on a US-headquartered 1M route.
+LIBERTY_4_0_MODEL_ORDER = (
+    "nvidia/nemotron-3.5-super-vl",
+    "reflection/beam-1.0",
+    "meta-models/muse-spark-open",
 )
 
 SYNTH_FRONTIER_1_MODEL_ORDER = (
@@ -4030,6 +4042,7 @@ for _synth_model_id in (
     OPEN_PATCHER_S3_MODEL_ID,
     LIBERTY_1_0_MODEL_ID,
     LIBERTY_1_0_1M_MODEL_ID,
+    LIBERTY_4_0_MODEL_ID,
 ):
     ORCHESTRATION_PRIMITIVE_BY_MODEL_ID[_synth_model_id] = "synth"
 
@@ -4075,8 +4088,8 @@ _MODEL_ORIGIN_US_TRUSTEDROUTER = ModelOrigin(
     source_url="https://trustedrouter.com/",
     note=(
         "First-party record: the Liberty, Athena, OpenPatcher, and orchestration "
-        "families are built by TrustedRouter, a US company. The OpenPatcher and "
-        "Athena ids in US_PROVIDER_ONLY_MODEL_IDS additionally force US-operated "
+        "families are built by TrustedRouter, a US company. The OpenPatcher, "
+        "Athena and Liberty 4.0 ids in US_PROVIDER_ONLY_MODEL_IDS additionally force US-operated "
         "provider routes at request time."
     ),
 )

@@ -4,6 +4,7 @@
     "storage_gcp_async_admission:admission_statement": "7fba577deb934bafbcfabc57b04c3595cf715498b4e97ba87258f98decd7c152",
     "storage_gcp_async_admission:control_statement": "c6511216f97d996b4eac532738b7f174b6c1262797d1b09f5ec8e7ad3f8fee6e",
     "storage_gcp_async_admission:unresolved_statement": "05f77ca07838ed74f3157d8a711c21bc82b81ea4281f11c91978fbbbb20a32f4",
+    "storage_gcp_async_admission:grace_statement": "4b1ef19e7b8a0e2745b387b4043d36c6999295ff20639f6f12a4fcc7476cf37b",
     "storage_gcp_async_settle:async_reservation_admission_statement": "7d91ca741f0f5f3ac21cd1c44e0f2701e125c5b6a0c7c372b04729c112263ba1",
     "storage_gcp_async_settle_shadow:finalization_statement": "32ac2efa5936b82f57d56e9eb2866b63565beb69488969b31372aeeabd519892",
     "storage_gcp_async_settle_shadow:point_statement": "a3cf34a64cae9802ae478dcd46888403e9726f98e309f7e10c3485149538ba09",
@@ -4277,6 +4278,19 @@
         {
           "bindings": {},
           "types": {
+            "limit": "INT64"
+          }
+        }
+      ]
+    },
+    "storage_gcp_async_admission:grace_statement:1": {
+      "fingerprint": "4b1ef19e7b8a0e2745b387b4043d36c6999295ff20639f6f12a4fcc7476cf37b",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "since": "TIMESTAMP",
+            "until": "TIMESTAMP",
             "limit": "INT64"
           }
         }

@@ -82,6 +82,10 @@ MISTRAL_MEDIUM_35_RETIREMENT_AT = datetime(2027, 4, 30, 0, 0, tzinfo=UTC)
 GOOGLE_AI_STUDIO_GEMINI_25_FLASH_RETIREMENT_AT = datetime(2026, 12, 1, 0, 0, tzinfo=UTC)
 # Lyceum redirects kimi-k2.7-code to kimi-k3 from 4 Nov 2026 (date only).
 LYCEUM_KIMI_K27_CODE_RETIREMENT_AT = datetime(2026, 11, 4, 0, 0, tzinfo=UTC)
+# Friendli drops GLM-5.1 from its Model APIs at 00:00 UTC on 20 Nov 2026.
+FRIENDLI_GLM_51_RETIREMENT_AT = datetime(2026, 11, 20, 0, 0, tzinfo=UTC)
+# Tinfoil deprecates kimi-k3 on 12 Nov 2026 (date only) for kimi-k3-1-pro.
+TINFOIL_KIMI_K3_RETIREMENT_AT = datetime(2026, 11, 12, 0, 0, tzinfo=UTC)
 # 2026-10-30 10:00 PDT: Crusoe redirects four serverless models to replacements.
 CRUSOE_OCTOBER_30_RETIREMENT_AT = datetime(2026, 10, 30, 17, 0, tzinfo=UTC)
 TELNYX_NOVEMBER_2_RETIREMENT_AT = datetime(2026, 11, 2, 0, 0, tzinfo=UTC)
@@ -168,6 +172,13 @@ TENCENT_OFF_PEAK_PRICES = {
     "deepseek/deepseek-v4-flash-0731": ProviderPrice(220_000, 660_000, 7_000),
     "deepseek/deepseek-v4-pro-0813": ProviderPrice(660_000, 1_980_000, 22_000),
 }
+
+# Tencent's November 4 notice discounts GA HY4 only, not HY4 Preview.
+# Store list prices in the manifest; lock the applicable rate at authorization.
+TENCENT_HY4_PROMOTION_START_AT = datetime(2026, 11, 4, tzinfo=_BEIJING_TIME).astimezone(UTC)
+TENCENT_HY4_PROMOTION_END_AT = datetime(2027, 1, 1, tzinfo=_BEIJING_TIME).astimezone(UTC)
+TENCENT_HY4_LIST_PRICE = ProviderPrice(834_000, 2_501_000, 42_000)
+TENCENT_HY4_PROMOTION_PRICE = ProviderPrice(417_000, 1_250_500, 21_000)
 
 
 def _tencent_period(at: datetime) -> str:
@@ -1178,6 +1189,25 @@ _RETIREMENTS = (
         effective_at=LYCEUM_KIMI_K27_CODE_RETIREMENT_AT,
         replacement_model_ids=("moonshotai/kimi-k3",),
     ),
+    # Friendli's November 5 notice removes zai-org/GLM-5.1 from its Model
+    # APIs at 00:00 UTC on 20 November 2026; GLM-5.3 is the recommended
+    # replacement. Dedicated endpoints are unaffected.
+    _Retirement(
+        provider="friendli",
+        model_ids=frozenset({"z-ai/glm-5.1"}),
+        upstream_ids=frozenset({"zai-org/GLM-5.1"}),
+        effective_at=FRIENDLI_GLM_51_RETIREMENT_AT,
+        replacement_model_ids=("z-ai/glm-5.3",),
+    ),
+    # Tinfoil's November 5 notice replaces kimi-k3 with kimi-k3-1-pro and
+    # deprecates kimi-k3 on 12 November 2026 (date only, so 00:00 UTC).
+    _Retirement(
+        provider="tinfoil",
+        model_ids=frozenset({"moonshotai/kimi-k3"}),
+        upstream_ids=frozenset({"kimi-k3"}),
+        effective_at=TINFOIL_KIMI_K3_RETIREMENT_AT,
+        replacement_model_ids=("moonshotai/kimi-k3.1-pro",),
+    ),
     # DigitalOcean's October 29 notices deprecate these Inference models on
     # 2026-11-09 (date only; 00:00 UTC conservatively); requests then 404.
     # Retire only DigitalOcean's routes; other providers' routes stay.
@@ -1866,6 +1896,17 @@ def provider_pricing_schedule(
     """Public timing metadata for a provider's variable token pricing."""
     effective_at = _effective_time(at)
 
+    if provider_slug == "tencent" and model_id == "tencent/hy4":
+        return {
+            "kind": "limited_time_discount", "timezone": "Asia/Shanghai",
+            "starts_at": TENCENT_HY4_PROMOTION_START_AT.isoformat().replace("+00:00", "Z"),
+            "ends_at": TENCENT_HY4_PROMOTION_END_AT.isoformat().replace("+00:00", "Z"),
+            "current_period": (
+                "promotion" if TENCENT_HY4_PROMOTION_START_AT <= effective_at < TENCENT_HY4_PROMOTION_END_AT else "list"
+            ),
+            "discount_percent": 50, "rate_locked_at": "authorization",
+        }
+
     if provider_slug == "tencent" and model_id in TENCENT_OFF_PEAK_PRICES:
         return {
             "kind": "time_of_day", "timezone": "Asia/Shanghai",
@@ -1947,6 +1988,12 @@ def provider_price_microdollars(
     early and makes the exact advertised transition deterministic.
     """
     effective_at = _effective_time(at)
+    if provider_slug == "tencent" and model_id == "tencent/hy4":
+        return (
+            TENCENT_HY4_PROMOTION_PRICE
+            if TENCENT_HY4_PROMOTION_START_AT <= effective_at < TENCENT_HY4_PROMOTION_END_AT
+            else TENCENT_HY4_LIST_PRICE
+        )
     if provider_slug == "tencent" and model_id in TENCENT_OFF_PEAK_PRICES:
         price = TENCENT_OFF_PEAK_PRICES[model_id]
         multiplier = 2 if _tencent_period(effective_at) == "peak" else 1

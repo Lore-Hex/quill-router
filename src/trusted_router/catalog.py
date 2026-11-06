@@ -57,6 +57,8 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     LIBERTY_1_0_MODEL_ORDER,
     LIBERTY_2_0_MODEL_ID,
     LIBERTY_3_0_MODEL_ID,
+    LIBERTY_4_0_MODEL_ID,
+    LIBERTY_4_0_MODEL_ORDER,
     MAPREDUCE_CATALOG_MODEL_ORDER,
     MAPREDUCE_MODEL_ID,
     META_MODEL_IDS,
@@ -522,13 +524,16 @@ _OPEN_WEIGHT_PREFIXES = (
     "google/gemma",
     "ibm-granite/",
     "meta-llama/",
+    # Meta publishes Muse Spark Open's weights on Hugging Face under its own
+    # Muse Model License, as it does Llama's.
+    "meta-models/muse-spark-open",
     "mistralai/mistral-large-4",
     "moonshotai/kimi",
     "nvidia/nemotron",
     "qwen/",
     # Reflection's released Beam 1.0 weights are Apache-2.0, not a preview claim.
     "reflection/beam-1.0",
-    "tencent/hy4",
+    "tencent/hy4-preview",
     "thinkingmachines/",
     "xiaomi/mimo",
     "z-ai/glm",

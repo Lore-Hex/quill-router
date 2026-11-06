@@ -66,10 +66,18 @@ def inventory_settings(surface, enabled):
     ))
 
 
-def inventory(app, retired_route_delta=None):
+def inventory(app, retired_route_delta=None, *, abliterated_page=False):
     routes = sorted([path, sorted(getattr(route, "methods", []) or []),
                      getattr(getattr(route, "endpoint", None), "__qualname__", "")]
                     for path, route in effective_routes(app))
+    if abliterated_page:
+        # Account for exactly the reviewed landing page and its slash alias.
+        # Keep the frozen inventory's other routes and lifecycle pins intact.
+        for path in ("/abliterated-deepseek", "/abliterated-deepseek/"):
+            added = [path, ["GET", "HEAD"],
+                     "register_public_routes.<locals>.seo_abliterated_deepseek"]
+            assert routes.count(added) == 1
+            routes.remove(added)
     if retired_route_delta is not None:
         # Reconstruct the unchanged baseline using only the reviewed creator
         # removal and earnings extraction. Keep lifecycle/state pins untouched.
@@ -102,7 +110,8 @@ def test_existing_surfaces_match_main_inventory(surface, enabled):
     delta = json.loads((Path(__file__).parent / "fixtures/retired_creator_route_delta.json").read_text())
     assert delta["base_revision"] == "43f8cf6e73c999bc2140147e854f2ff96b2f124b"
     app = create_app(inventory_settings(surface, enabled), configure_store_arg=False, init_observability=False)
-    assert inventory(app, delta["surfaces"][surface]) == frozen[f"{surface}/{enabled}"]
+    assert inventory(app, delta["surfaces"][surface],
+                     abliterated_page=surface in {"combined", "public", "observer"}) == frozen[f"{surface}/{enabled}"]
 
 
 def test_worker_surface_excludes_every_other_starter(monkeypatch):
