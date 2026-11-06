@@ -77,9 +77,13 @@ locals {
   # RecordCeiling off, which needs tr_lease_hold.ceiling, live since
   # 2026-11-06 18:15Z (#2355); the fleet audit, off by default (#2356).
   # 5c5f11fad: a declared-length request body ends at its length, so the
-  # transport's last read no longer cuts Python's answer short (#2358); Go
-  # reads the policy's "all" and the wildcard decide row, dark (#2359); the
-  # shadow counts Python's in-flight 429 to any pass but inflight.key as
+  # transport's last read no longer cuts Python's answer short (#2358); a
+  # workspace whose decide row is on but that the node's switch copy leaves
+  # off passes at workspace.not_enabled, before the in-flight gate, where it
+  # passed at owner.off; Go reads the policy's "all", dark until a policy
+  # carries it, and the wildcard decide row, dark until one is written; the
+  # decide line gains decided_via= and the shadow line distinct_keys= (#2359);
+  # the shadow counts Python's in-flight 429 to any pass but inflight.key as
   # inflight_unchecked.<pass>, never paged (#2367: the 2026-11-06 03:55Z,
   # 18:27Z and 19:27Z edge_would_admit_python_refused pages).
   fastpath_release        = "5c5f11fade1ce4d168c4223e3ff1801ca15c8853"
