@@ -3,16 +3,17 @@ const { execFileSync } = require('node:child_process');
 const path = require('node:path');
 const root = path.resolve(__dirname, '../..');
 const secret = 'sk-tr-demo-not-a-real-key';
-function fixture(reveal = false, empty = false) {
+function fixture(reveal = false, empty = false, management = false) {
   return execFileSync(process.env.TEST_PYTHON || path.join(root, '.venv/bin/python'), ['-c', `
 from jinja2 import Environment, FileSystemLoader
 env = Environment(loader=FileSystemLoader('src/trusted_router/templates'))
 key=dict(name='Production',label='sk-tr-v1-...demo',hash='demo',disabled=False,limit_input='',limit_display='none',usage_display='$1.25',windows=[dict(name=w,input='',limit_display=None) for w in ['daily','weekly','monthly']])
-print(env.get_template('console/api_keys.html').render(user={'id':'test-user'},user_email='preview@example.test',workspaces=[dict(id='preview',name='Personal Workspace')],current_workspace_id='preview',page_title='API Keys',page_subtitle='Long-lived keys for your applications.',active='api-keys',keys=[] if ${empty ? 'True' : 'False'} else [key],created_key='${secret}' if ${reveal ? 'True' : 'False'} else None,suggested=dict(daily=20,weekly=100,monthly=200)))
+key['management'] = ${management ? 'True' : 'False'}
+print(env.get_template('console/api_keys.html').render(user={'id':'test-user'},user_email='preview@example.test',workspaces=[dict(id='preview',name='Personal Workspace')],current_workspace=dict(id='preview',name='Personal Workspace'),current_workspace_id='preview',page_title='API Keys',page_subtitle='Long-lived keys for your applications.',active='api-keys',keys=[] if ${empty ? 'True' : 'False'} else [key],created_key='${secret}' if ${reveal ? 'True' : 'False'} else None,can_manage=${management ? 'True' : 'False'},created_management_key=${management && reveal ? 'True' : 'False'},management_key_token='fixture-not-a-real-token',suggested=dict(daily=20,weekly=100,monthly=200)))
 `], { cwd: root, encoding: 'utf8' });
 }
-async function load(page, reveal = false, empty = false) {
-  const html = fixture(reveal, empty);
+async function load(page, reveal = false, empty = false, management = false) {
+  const html = fixture(reveal, empty, management);
   await page.addInitScript(() => Object.defineProperty(navigator, 'clipboard', {value: {writeText: async value => {window.copied = value;}}}));
   await page.route('https://keys.test/**', route => {
     const url = new URL(route.request().url());
@@ -66,4 +67,62 @@ test('empty workspace exposes the creation form', async ({page}) => {
   await load(page,false,true);
   await expect(page.getByRole('button',{name:'Create key',exact:true})).toBeVisible();
   await expect(page.getByText('No keys yet. Create one above.')).toBeVisible();
+});
+
+for (const width of [320, 390, 1440]) {
+  test(`management warnings and confirmation at ${width}px`, async ({page}, testInfo) => {
+    await page.setViewportSize({width,height:1000});
+    await load(page,false,false,true);
+    expect(await page.locator('.panel-head-actions').evaluate(el => {
+      const parent = el.closest('.panel-head').getBoundingClientRect();
+      return Array.from(el.children).every(child => {
+        const box = child.getBoundingClientRect();
+        return box.left >= parent.left && box.right <= parent.right;
+      });
+    })).toBe(true);
+    await page.getByRole('link',{name:'Management keys',exact:true}).click();
+    await page.getByText('Create a management key',{exact:true}).click();
+    const form = page.locator('form[action="/console/api-keys/management"]');
+    await expect(form).toBeVisible();
+    await expect(page.getByText('Broad access to Personal Workspace')).toBeVisible();
+    await form.getByRole('textbox',{name:'Name',exact:true}).fill('Billing administration');
+    expect(await form.evaluate(el => el.checkValidity())).toBe(false);
+    await form.getByRole('checkbox').check();
+    expect(await form.evaluate(el => el.checkValidity())).toBe(true);
+    await expect(form.locator('[name="csrf_token"]')).toHaveValue('fixture-not-a-real-token');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    expect(await form.evaluate(el => Array.from(el.querySelectorAll('input,button,label')).every(node => {
+      const box = node.getBoundingClientRect();
+      return box.left >= 0 && box.right <= innerWidth;
+    }))).toBe(true);
+    await page.screenshot({path:testInfo.outputPath(`management-create-${width}.png`),fullPage:true});
+    await page.locator('#management-keys').evaluate(el => el.scrollIntoView());
+    await page.screenshot({path:testInfo.outputPath(`management-viewport-${width}.png`)});
+  });
+  test(`management reveal never suggests sharing with agents at ${width}px`, async ({page}, testInfo) => {
+    await page.setViewportSize({width,height:1000});
+    await load(page,true,false,true);
+    await expect(page.getByText('Management key created for Personal Workspace.')).toBeVisible();
+    await expect(page.locator('#created-agent-message')).toHaveCount(0);
+    await expect(page.getByRole('button',{name:'Copy complete agent message'})).toHaveCount(0);
+    await page.getByRole('button',{name:'Copy API key',exact:true}).click();
+    await expect.poll(() => page.evaluate(() => window.copied)).toBe(secret);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({path:testInfo.outputPath(`management-reveal-${width}.png`),fullPage:true});
+  });
+}
+
+test('management creation is usable without JavaScript', async ({browser}) => {
+  const context = await browser.newContext({javaScriptEnabled:false});
+  const page = await context.newPage();
+  await load(page,false,false,true);
+  await page.getByText('Create a management key',{exact:true}).click();
+  await expect(page.getByRole('button',{name:'Create management key',exact:true})).toBeVisible();
+  await context.close();
+});
+
+test('workspace members do not see the management creation form', async ({page}) => {
+  await load(page);
+  await expect(page.locator('form[action="/console/api-keys/management"]')).toHaveCount(0);
+  await expect(page.getByText('Only workspace owners and managers', {exact:false})).toBeVisible();
 });

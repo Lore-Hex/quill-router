@@ -29,7 +29,14 @@
 <section class="panel">
   <div class="panel-head"><h2>Save this key. It will not be shown again</h2><span class="pill warn">one time reveal</span></div>
   <div class="panel-body">
-    {{ api_key_reveal(created_key, "created") }}
+    {% if created_management_key %}
+    <div class="management-key-warning" role="status">
+      <strong>Management key created for {{ current_workspace.name }}.</strong>
+      <p>This key grants workspace administration, including managing other keys and accessing billing information. Store it in a server-side secret manager. Never put it in client-side code, a public repository, or an agent chat.</p>
+      <p>Copy it now. You cannot retrieve it later. Existing keys are still active; replace them in your integrations before disabling any old key.</p>
+    </div>
+    {% endif %}
+    {{ api_key_reveal(created_key, "created", show_agent=not created_management_key) }}
   </div>
 </section>
 {% endif %}
@@ -48,6 +55,7 @@
       <p class="panel-kicker">Monitor usage, budgets, and access for this workspace.</p>
     </div>
     <div class="panel-head-actions">
+      {% if can_manage %}<a class="btn" href="#management-keys">Management keys</a>{% endif %}
       <span class="pill">{{ keys|length }} total</span>
       {% if keys %}
       <button class="btn" type="button" data-action="open-new-key">New key</button>
@@ -61,7 +69,7 @@
       <tbody>
         {% for k in keys %}
         <tr class="key-row{% if k.disabled %} key-row-disabled{% endif %}">
-          <td data-col="Name">{{ k.name }}</td>
+          <td data-col="Name"><span class="key-name">{{ k.name }}</span><span class="pill{% if k.management %} warn{% endif %}">{{ 'Management' if k.management else 'Standard' }}</span></td>
           <td data-col="Label"><code>{{ k.label }}</code></td>
           <td data-col="Budgets">
             <form class="key-budget-form" method="post" action="/console/api-keys/{{ k.hash }}/limit">
@@ -120,5 +128,31 @@
   </div>
 </section>
 {% endif %}
+<section class="management-keys-section" id="management-keys" aria-labelledby="management-keys-heading">
+  <h2 id="management-keys-heading">Management keys</h2>
+  <p>For workspace administration. For balance alerts, use an ordinary API key with <code>GET /v1/credits/summary</code> (a scoped key needs <code>balance:read</code>).</p>
+  {% if can_manage %}
+  <details class="management-key-create"{% if management_form_open %} open{% endif %}>
+    <summary>Create a management key</summary>
+    <form class="form" method="post" action="/console/api-keys/management" aria-describedby="management-key-warning">
+      <input type="hidden" name="csrf_token" value="{{ management_key_token }}">
+      <div class="management-key-warning" id="management-key-warning">
+        <strong>Broad access to {{ current_workspace.name }}</strong>
+        <ul>
+          <li>Anyone with this key can administer this workspace, including creating and disabling other keys and accessing billing information. It is not a read-only balance key.</li>
+          <li>Keep it in a server-side secret manager. Never put it in client-side code, a public repository, or an agent chat.</li>
+          <li>The secret is shown only once. A lost Signup key cannot be retrieved; create a replacement here without the old key.</li>
+          <li>Creating a replacement does not revoke existing keys. Update your integrations, then disable the old key. If it was exposed, disable it immediately.</li>
+        </ul>
+      </div>
+      <label>Name<input name="name" required maxlength="120" placeholder="Billing administration" autocomplete="off"></label>
+      <label class="budget-action-check"><input type="checkbox" name="acknowledge" value="yes" required> <span>I understand this key grants workspace administration and I will store it securely.</span></label>
+      <button class="btn primary" type="submit">Create management key</button>
+    </form>
+  </details>
+  {% else %}
+  <p>Only workspace owners and managers can create management keys. Ask a workspace owner or manager for access.</p>
+  {% endif %}
+</section>
 </div>
 {% endblock %}

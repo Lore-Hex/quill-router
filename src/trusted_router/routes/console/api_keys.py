@@ -7,6 +7,8 @@ All mutations are form POSTs -> 303 redirects with ?saved=/?error= flash params
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 from typing import Any
 
 from fastapi import FastAPI, Form, HTTPException, Request
@@ -16,7 +18,8 @@ from trusted_router.acquisition import track_console
 from trusted_router.auth import SettingsDep
 from trusted_router.errors import assert_workspace_billing_active
 from trusted_router.money import dollars_to_microdollars, key_limit_dollars, microdollars_to_decimal
-from trusted_router.routes.console._shared import ConsoleDep, money, render
+from trusted_router.routes.console._shared import ConsoleContext, ConsoleDep, money, render
+from trusted_router.routes.console.social_rewards import _same_origin
 from trusted_router.spend_windows import WINDOWS, suggested_window_limits
 from trusted_router.storage import STORE, ApiKey, ApiKeyUsageSnapshot
 
@@ -27,7 +30,21 @@ _FLASH = {
     "saved:deleted": ("success", "Key deleted."),
     "error:limit": ("error", "Budgets must be non-negative dollar amounts."),
     "error:delete-active": ("error", "Disable the key first, then delete it."),
+    "error:management-confirmation": (
+        "error", "Confirm the management-key permissions before creating a key.",
+    ),
 }
+
+_HEADERS = {"Cache-Control": "private, no-store", "Referrer-Policy": "no-referrer"}
+
+
+def _management_key_token(ctx: ConsoleContext) -> str:
+    # Bind confirmation to both the signed-in session and selected workspace.
+    return hmac.new(
+        ctx.session.secret_hash.encode(),
+        f"management-key:{ctx.session.hash}:{ctx.user.id}:{ctx.workspace.id}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
 
 
 def key_list_context(workspace_id: str) -> dict[str, Any]:
@@ -50,6 +67,7 @@ def register(app: FastAPI) -> None:
         settings: Any,
         *,
         created_key: str | None = None,
+        created_management_key: bool = False,
         saved: str | None = None,
         error: str | None = None,
     ) -> Response:
@@ -66,9 +84,13 @@ def register(app: FastAPI) -> None:
             page_title="API Keys",
             page_subtitle="Long-lived keys for your applications.",
             created_key=created_key,
+            created_management_key=created_management_key,
+            can_manage=ctx.can_manage,
+            management_key_token=_management_key_token(ctx) if ctx.can_manage else None,
+            management_form_open=error == "management-confirmation",
             flash=flash,
             **key_list_context(ctx.workspace.id),
-        ), headers={"Cache-Control": "private, no-store"})
+        ), headers=_HEADERS)
 
     @app.get("/console/api-keys")
     def console_api_keys(
@@ -117,6 +139,36 @@ def register(app: FastAPI) -> None:
             budget_strict=_checkbox(budget_strict),
         )
         return _render_page(ctx, settings, created_key=raw)
+
+    @app.post("/console/api-keys/management")
+    def console_create_management_key(
+        request: Request,
+        ctx: ConsoleDep,
+        settings: SettingsDep,
+        name: str = Form(..., min_length=1, max_length=120),
+        csrf_token: str = Form("", max_length=64),
+        acknowledge: str = Form(""),
+    ) -> Response:
+        _same_origin(request, settings)
+        if not STORE.user_can_manage(ctx.user.id, ctx.workspace.id):
+            raise HTTPException(403, "Requires workspace manager role")
+        if not hmac.compare_digest(csrf_token.encode(), _management_key_token(ctx).encode()):
+            raise HTTPException(403, "Invalid confirmation. Reload the page and try again.")
+        if acknowledge != "yes":
+            return RedirectResponse(
+                "/console/api-keys?error=management-confirmation#management-keys",
+                status_code=303, headers=_HEADERS,
+            )
+        if not name.strip():
+            raise HTTPException(400, "A key name is required")
+        assert_workspace_billing_active(ctx.workspace)
+        raw, _ = STORE.create_api_key(
+            workspace_id=ctx.workspace.id,
+            name=name.strip(),
+            creator_user_id=ctx.user.id,
+            management=True,
+        )
+        return _render_page(ctx, settings, created_key=raw, created_management_key=True)
 
     @app.post("/console/api-keys/{key_hash}/limit")
     def console_update_api_key_limit(
@@ -220,6 +272,7 @@ def _key_view(snapshot: ApiKeyUsageSnapshot) -> dict[str, Any]:
     return {
         "hash": key.hash,
         "name": key.name,
+        "management": key.management,
         "label": key.label,
         "limit_display": limit_display,
         "limit_input": (
