@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
 from tests.fixture_routes import bypass_catalog_caches
-from trusted_router import provider_precision
+from trusted_router import provider_lifecycle, provider_precision
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, model_to_openrouter_shape
 from trusted_router.catalog_data import Model, ModelEndpoint
 from trusted_router.config import Settings
@@ -211,6 +211,12 @@ def test_missing_snapshot_fails_closed(tmp_path, monkeypatch) -> None:
 def test_catalog_and_endpoint_api_expose_same_reviewed_metadata(
     client, monkeypatch, provider, quantization,
 ) -> None:
+    # Tinfoil stopped listing glm-5-3-flash; its route retires on 2026-11-06
+    # 19:00 UTC, so the reviewed route is checked just before the cutover.
+    monkeypatch.setattr(
+        provider_lifecycle, "_utc_now",
+        lambda: provider_lifecycle.NOVEMBER_6_DELISTED_RETIREMENT_AT - timedelta(seconds=1),
+    )
     _serve_reviewed_routes(monkeypatch, "z-ai/glm-5.3-flash")
     endpoint = _reviewed_endpoint(provider, "z-ai/glm-5.3-flash")
     model = model_to_openrouter_shape(MODELS[endpoint.model_id])
@@ -229,6 +235,12 @@ def test_catalog_and_endpoint_api_expose_same_reviewed_metadata(
 def test_model_page_exposes_reviewed_sources_without_claiming_runtime_proof(
     test_settings: Settings, monkeypatch,
 ) -> None:
+    # Tinfoil stopped listing glm-5-3-flash; its route retires on 2026-11-06
+    # 19:00 UTC, so the reviewed route is checked just before the cutover.
+    monkeypatch.setattr(
+        provider_lifecycle, "_utc_now",
+        lambda: provider_lifecycle.NOVEMBER_6_DELISTED_RETIREMENT_AT - timedelta(seconds=1),
+    )
     _serve_reviewed_routes(monkeypatch, "z-ai/glm-5.3-flash")
     html = public_model_detail_html(test_settings, "z-ai/glm-5.3-flash")
     assert html is not None

@@ -88,6 +88,9 @@ FRIENDLI_GLM_51_RETIREMENT_AT = datetime(2026, 11, 20, 0, 0, tzinfo=UTC)
 TINFOIL_KIMI_K3_RETIREMENT_AT = datetime(2026, 11, 12, 0, 0, tzinfo=UTC)
 # Cloudflare Workers AI deprecates older catalog models on 20 Nov 2026 (date only).
 CLOUDFLARE_WORKERS_AI_NOV_20_RETIREMENT_AT = datetime(2026, 11, 20, 0, 0, tzinfo=UTC)
+# 2026-11-06 19:00 UTC: Novita, Tinfoil and Chutes no longer list these routes
+# in their public model APIs; the hourly refresh already marks them dark.
+NOVEMBER_6_DELISTED_RETIREMENT_AT = datetime(2026, 11, 6, 19, 0, tzinfo=UTC)
 # 2026-10-30 10:00 PDT: Crusoe redirects four serverless models to replacements.
 CRUSOE_OCTOBER_30_RETIREMENT_AT = datetime(2026, 10, 30, 17, 0, tzinfo=UTC)
 TELNYX_NOVEMBER_2_RETIREMENT_AT = datetime(2026, 11, 2, 0, 0, tzinfo=UTC)
@@ -1251,6 +1254,53 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"@cf/meta-llama/llama-2-7b-chat-hf-lora", "@cf/google/gemma-2b-it-lora", "@cf/google/gemma-7b-it-lora", "@cf/meta/llama-3.1-8b-instruct-fp8", "@cf/meta/llama-3.2-1b-instruct", "@cf/meta/llama-3.2-3b-instruct"}),
         effective_at=CLOUDFLARE_WORKERS_AI_NOV_20_RETIREMENT_AT,
         replacement_model_ids=("google/gemma-4-26b-a4b-it",),
+    ),
+    # Delisted without a notice: https://api.novita.ai/openai/v1/models,
+    # https://inference.tinfoil.sh/v1/models and https://llm.chutes.ai/v1/models
+    # no longer list these IDs (checked 2026-11-06 19:00 UTC; the manifests
+    # have marked them missing since 2026-10-10 and 2026-11-01). Retire only
+    # these providers' routes; replacements are quoted, never substituted.
+    _Retirement(
+        provider="novita",
+        model_ids=frozenset({"deepseek/deepseek-v4-flash"}),
+        upstream_ids=frozenset({"deepseek/deepseek-v4-flash"}),
+        effective_at=NOVEMBER_6_DELISTED_RETIREMENT_AT,
+        replacement_model_ids=("deepseek/deepseek-v4-flash-0731",),
+    ),
+    _Retirement(
+        provider="novita",
+        model_ids=frozenset({"qwen/qwen3-235b-a22b-instruct-2507"}),
+        upstream_ids=frozenset({"qwen/qwen3-235b-a22b-instruct-2507"}),
+        effective_at=NOVEMBER_6_DELISTED_RETIREMENT_AT,
+        replacement_model_ids=("qwen/qwen3.5-397b-a17b",),
+    ),
+    _Retirement(
+        provider="tinfoil",
+        model_ids=frozenset({"z-ai/glm-5.3-flash"}),
+        upstream_ids=frozenset({"glm-5-3-flash"}),
+        effective_at=NOVEMBER_6_DELISTED_RETIREMENT_AT,
+        replacement_model_ids=("z-ai/glm-5.3",),
+    ),
+    _Retirement(
+        provider="chutes",
+        model_ids=frozenset({"mistralai/mistral-nemo"}),
+        upstream_ids=frozenset({"unsloth/Mistral-Nemo-Instruct-2407-TEE"}),
+        effective_at=NOVEMBER_6_DELISTED_RETIREMENT_AT,
+        replacement_model_ids=("google/gemma-4-31b-turbo",),
+    ),
+    _Retirement(
+        provider="chutes",
+        model_ids=frozenset({"qwen/qwen3-235b-a22b-thinking-2507"}),
+        upstream_ids=frozenset({"Qwen/Qwen3-235B-A22B-Thinking-2507-TEE"}),
+        effective_at=NOVEMBER_6_DELISTED_RETIREMENT_AT,
+        replacement_model_ids=("qwen/qwen3.5-397b-a17b",),
+    ),
+    _Retirement(
+        provider="chutes",
+        model_ids=frozenset({"qwen/qwen3-32b"}),
+        upstream_ids=frozenset({"Qwen/Qwen3-32B-TEE"}),
+        effective_at=NOVEMBER_6_DELISTED_RETIREMENT_AT,
+        replacement_model_ids=("qwen/qwen3.8-27b",),
     ),
     # DigitalOcean's October 29 notices deprecate these Inference models on
     # 2026-11-09 (date only; 00:00 UTC conservatively); requests then 404.

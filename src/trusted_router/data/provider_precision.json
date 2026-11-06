@@ -222,32 +222,6 @@
   },
   {
     "provider": "chutes",
-    "model_id": "mistralai/mistral-nemo",
-    "upstream_id": "unsloth/Mistral-Nemo-Instruct-2407-TEE",
-    "quantization": "bf16",
-    "label": "BF16",
-    "weight_formats": [
-      "bf16"
-    ],
-    "kv_cache_dtype": null,
-    "model_repository": "unsloth/Mistral-Nemo-Instruct-2407",
-    "model_revision": "e9976040f42d8a5590ed58cefe973061b3f973b5",
-    "reviewed_on": "2026-09-27",
-    "sources": [
-      {
-        "title": "Published chute serving code (mutable; hash recorded)",
-        "url": "https://api.chutes.ai/chutes/code/7725a31d-28df-5bb7-9d29-c23b49df5472",
-        "sha256": "36a058616fb35eac8db156d9dfec78efa448088594e3cbea827e1c7c49e930a3"
-      },
-      {
-        "title": "Pinned weight configuration",
-        "url": "https://huggingface.co/unsloth/Mistral-Nemo-Instruct-2407/resolve/e9976040f42d8a5590ed58cefe973061b3f973b5/config.json"
-      }
-    ],
-    "notes": "Pinned model configuration declares BF16, with no weight quantization override in the reviewed serving code."
-  },
-  {
-    "provider": "chutes",
     "model_id": "moonshotai/kimi-k2.6",
     "upstream_id": "moonshotai/Kimi-K2.6-TEE",
     "quantization": "int4",
@@ -271,58 +245,6 @@
       }
     ],
     "notes": "INT4 packed weight groups in the text model; excluded modules retain higher precision."
-  },
-  {
-    "provider": "chutes",
-    "model_id": "qwen/qwen3-235b-a22b-thinking-2507",
-    "upstream_id": "Qwen/Qwen3-235B-A22B-Thinking-2507-TEE",
-    "quantization": "bf16",
-    "label": "BF16",
-    "weight_formats": [
-      "bf16"
-    ],
-    "kv_cache_dtype": null,
-    "model_repository": "Qwen/Qwen3-235B-A22B-Thinking-2507",
-    "model_revision": "4cd68849b2a0fadb84866c703b133aa8c8636130",
-    "reviewed_on": "2026-09-27",
-    "sources": [
-      {
-        "title": "Published chute serving code (mutable; hash recorded)",
-        "url": "https://api.chutes.ai/chutes/code/21d129e5-8426-5c29-a6be-844e0f5f5e30",
-        "sha256": "6feb49aedc20419a3562b1c6b350c7d8e89987f242716621fbd7b8678fac0858"
-      },
-      {
-        "title": "Pinned weight configuration",
-        "url": "https://huggingface.co/Qwen/Qwen3-235B-A22B-Thinking-2507/resolve/4cd68849b2a0fadb84866c703b133aa8c8636130/config.json"
-      }
-    ],
-    "notes": "Pinned model configuration declares BF16, with no weight quantization override in the reviewed serving code."
-  },
-  {
-    "provider": "chutes",
-    "model_id": "qwen/qwen3-32b",
-    "upstream_id": "Qwen/Qwen3-32B-TEE",
-    "quantization": "fp8",
-    "label": "FP8",
-    "weight_formats": [
-      "fp8"
-    ],
-    "kv_cache_dtype": null,
-    "model_repository": "Qwen/Qwen3-32B-FP8",
-    "model_revision": "aa55da1ecc13d006e8b8e4f54579b1ea8c3db2df",
-    "reviewed_on": "2026-09-27",
-    "sources": [
-      {
-        "title": "Published chute serving code (mutable; hash recorded)",
-        "url": "https://api.chutes.ai/chutes/code/ac059e33-eb27-541c-b9a9-24b214036475",
-        "sha256": "cbdc6e3fa0c3d68f20b160463a88bf8aabe2a06b4c234f66c31407610c4e998c"
-      },
-      {
-        "title": "Pinned weight configuration",
-        "url": "https://huggingface.co/Qwen/Qwen3-32B-FP8/resolve/aa55da1ecc13d006e8b8e4f54579b1ea8c3db2df/config.json"
-      }
-    ],
-    "notes": "Pinned weight configuration declares FP8 quantization; excluded modules can retain higher precision."
   },
   {
     "provider": "chutes",

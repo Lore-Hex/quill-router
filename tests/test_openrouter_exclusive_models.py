@@ -13,7 +13,7 @@ from tests.pinned_manifests import (
     build_manifest_rows,
     serve_manifest_rows,
 )
-from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, PROVIDERS, endpoints_for_model
+from trusted_router.catalog import PROVIDERS, endpoints_for_model
 from trusted_router.catalog_privacy import endpoint_zero_data_retention
 
 _UNION = "stealth/union-alpha"
@@ -159,20 +159,3 @@ def test_union_route_uses_existing_billing_and_standard_privacy(
     assert PROVIDERS["openrouter"].provider_confidential_compute is False
     assert PROVIDERS["openrouter"].provider_e2ee is False
     assert PROVIDERS["openrouter"].supports_byok is False
-
-
-@pytest.mark.provider_health
-def test_openrouter_serves_the_union_preview() -> None:
-    # Live provider state: provider-catalog-health.yml reports it hourly, and
-    # the price refresh does not wait on it.
-    assert f"{_UNION}@openrouter/prepaid" in MODEL_ENDPOINTS
-
-
-@pytest.mark.provider_health
-def test_openrouter_lists_the_union_preview_as_a_262k_text_and_image_chat_model() -> None:
-    # Live provider state: provider-catalog-health.yml reports it hourly, and
-    # the price refresh does not wait on it.
-    model = MODELS[_UNION]
-    assert model.supports_chat
-    assert model.context_length == 262144
-    assert model.input_modalities == ("text", "image")

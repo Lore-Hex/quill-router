@@ -377,20 +377,21 @@ _NATIVE_PROVIDER_LINEUPS = [
     ),
     (
         "minimax",
-        6,
+        2,
         [
+            # MiniMax's /v1/models stopped listing the M2.x family on
+            # 2026-10-19; M3 and M3.1 Flash are its lineup today.
             "minimax/minimax-m3",
-            "minimax/minimax-m2.7",
-            "minimax/minimax-m2.7-highspeed",
-            "minimax/minimax-m2.5-highspeed",
+            "minimax/minimax-m3.1-flash",
         ],
     ),
     (
         "google-ai-studio",
         5,
         [
-            "google/gemini-3.5-flash",
+            # gemini-3.5-flash retired on AI Studio on 2026-10-10.
             "google/gemini-3.6-flash",
+            "google/gemini-3.8-flash",
             "google/gemini-3.1-flash-image-preview",
         ],
     ),
@@ -2140,12 +2141,12 @@ def test_phala_is_not_classified_as_verified_e2ee() -> None:
 
 
 _VENICE_PRIVATE_MODELS = frozenset({
+    # Venice's /api/v1/models stopped listing qwen3-5-9b (2026-10-25) and
+    # glm-4.7-flash (2026-10-20).
     "qwen/qwen3-235b-a22b-thinking-2507",
-    "qwen/qwen3.5-9b",
     "qwen/qwen3.6-27b",
     "z-ai/glm-4.6",
     "z-ai/glm-4.7",
-    "z-ai/glm-4.7-flash",
     "z-ai/glm-5",
     "z-ai/glm-5.1",
     "z-ai/glm-5.2",
@@ -2930,8 +2931,8 @@ def test_model_shape_without_routes_uses_its_own_cache_rate(monkeypatch, model_c
                 ("anthropic/claude-sonnet-4.6", "anthropic"),
                 ("openai/gpt-4.1-mini", "openai"),
                 ("google/gemini-2.5-flash", "google-ai-studio"),
-                ("google/gemini-3.5-flash", "google-ai-studio"),
                 ("google/gemini-3.6-flash", "google-ai-studio"),
+                ("google/gemini-3.8-flash", "google-ai-studio"),
                 ("deepseek/deepseek-v4-flash", "deepseek"),
                 ("mistralai/mistral-small-2603", "mistral"),
                 ("meta-llama/llama-3.1-8b-instruct", "novita"),

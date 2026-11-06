@@ -4391,7 +4391,6 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
     "minimaxai": _MODEL_ORIGIN_CN_MINIMAX,
     "MiniMaxAI": _MODEL_ORIGIN_CN_MINIMAX,
     "xiaomi": _MODEL_ORIGIN_CN_XIAOMI,
-    "xiaomimimo": _MODEL_ORIGIN_CN_XIAOMI,
     "stepfun": _MODEL_ORIGIN_CN_STEPFUN,
     # StepFun's native publisher: https://huggingface.co/stepfun-ai/Step-3.5-Flash
     "stepfun-ai": _MODEL_ORIGIN_CN_STEPFUN,

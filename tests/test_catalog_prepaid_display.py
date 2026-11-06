@@ -567,15 +567,15 @@ def test_novita_supplemental_prices_apply_manifest_scale(
     (tmp_path / "novita.json").write_text(json.dumps({
         "provider": "novita", "price_scale_to_microdollars_per_million_tokens": 100,
         "models": [{
-            "id": "qwen/qwen3-235b-a22b-instruct-2507",
-            "upstream_id": "qwen/qwen3-235b-a22b-instruct-2507",
+            "id": "qwen/qwen3.5-397b-a17b",
+            "upstream_id": "qwen/qwen3.5-397b-a17b",
             "model_type": "chat", "endpoints": ["chat/completions"],
             "input_token_price_per_m": 900, "output_token_price_per_m": 5800,
         }],
     }))
     monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
     _, endpoints = catalog_ingest._supplemental_provider_models_and_endpoints()
-    endpoint = endpoints["qwen/qwen3-235b-a22b-instruct-2507@novita/prepaid"]
+    endpoint = endpoints["qwen/qwen3.5-397b-a17b@novita/prepaid"]
 
     assert endpoint.prompt_price_microdollars_per_million_tokens == 94_950
     assert endpoint.completion_price_microdollars_per_million_tokens == 611_900
@@ -613,13 +613,13 @@ def test_novita_supplemental_prices_apply_manifest_scale(
         "google/gemma-4-31b-it@tinfoil/prepaid",
         "z-ai/glm-5.1@zai/prepaid",
         "qwen/qwen3-vl-30b-a3b-instruct@novita/prepaid",
-        "deepseek/deepseek-v4-flash@novita/prepaid",
-        "deepseek/deepseek-v4-flash@novita/byok",
+        "deepseek/deepseek-v4-flash-0731@novita/prepaid",
+        "deepseek/deepseek-v4-flash-0731@novita/byok",
         "qwen/qwen3.6-27b@novita/prepaid",
         "qwen/qwen3.6-27b@novita/byok",
         "qwen/qwen3.6-35b-a3b@novita/prepaid",
         "qwen/qwen3.6-35b-a3b@novita/byok",
-        "qwen/qwen3-235b-a22b-instruct-2507@novita/prepaid",
+        "qwen/qwen3.5-397b-a17b@novita/prepaid",
     ],
 )
 def test_the_routes_these_rules_were_written_against_are_still_served(endpoint_id: str) -> None:

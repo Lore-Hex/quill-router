@@ -3441,7 +3441,6 @@ def test_rotation_candidates_cover_the_routes_we_probe() -> None:
     assert "moonshotai/kimi-k2.7-code" in pool.get("kimi", [])
     assert "moonshotai/kimi-k2.7-code-highspeed" in pool.get("kimi", [])
     assert "z-ai/glm-5.3" in pool.get("tinfoil", [])
-    assert "z-ai/glm-5.3-flash" in pool.get("tinfoil", [])
     assert "z-ai/glm-5.3-flash" in pool.get("fireworks", [])
     assert "z-ai/glm-5.3-fast" in pool.get("fireworks", [])
     assert "z-ai/glm-5.3-flash" in pool.get("wandb", [])
