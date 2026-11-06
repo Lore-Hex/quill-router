@@ -76,6 +76,17 @@ func (s *edgeSums) add(l edge.CountsLine) {
 // would_admit_python_refused by class, the stale passes against every
 // request the shadow followed, and the decide path's unavailable answers by
 // the insert's gRPC code.
+//
+// DistinctKeys is the widening's count of distinct API keys among the
+// comparable requests (docs/design/fast-admission-widening.md section 8.1
+// item 3): the largest distinct_keys of a line whose set began at or after
+// the span's start (distinct_keys_since), so a key two nodes saw is not
+// counted twice and a step counts only its own traffic.
+// DistinctKeysExcludedLines are the lines carrying a figure that was not
+// taken: a set begun before the span's start, or a line with no start (a
+// node from before distinct_keys_since). While every line is excluded the
+// bar cannot be read: the figure is 0 until a node's shadow restarts after
+// the span's start.
 type i2 struct {
 	Comparable                int64            `json:"comparable"`
 	AgreeFull                 int64            `json:"agree_full"`
@@ -113,6 +124,9 @@ type i2 struct {
 	WindowRace            int64    `json:"window_race"`
 	WindowRaceUnconfirmed int64    `json:"window_race_unconfirmed"`
 	WindowRaceRatio       *float64 `json:"window_race_ratio"`
+	// DistinctKeys and DistinctKeysExcludedLines: above.
+	DistinctKeys              int64 `json:"distinct_keys"`
+	DistinctKeysExcludedLines int64 `json:"distinct_keys_excluded_lines"`
 }
 
 // i3 are the I3 gate's figures (docs/design/fast-admission-e2-g15-async.md
@@ -155,6 +169,9 @@ type edgeReport struct {
 	I3           i3                          `json:"i3"`
 
 	seen map[string]bool
+	// distinctKeys is the largest distinct_keys taken, distinctExcluded
+	// the lines whose figure was not (i2's DistinctKeys).
+	distinctKeys, distinctExcluded int64
 }
 
 // add counts one entry's line; a count line that does not read fails the
@@ -176,6 +193,7 @@ func (r *edgeReport) add(e logEntry) error {
 	sums := r.Decide
 	if l.Of == edge.CountsDecideShadow {
 		sums = r.DecideShadow
+		r.distinct(l)
 	}
 	sums.add(l)
 	if l.Digest == "" {
@@ -187,6 +205,25 @@ func (r *edgeReport) add(e logEntry) error {
 	return nil
 }
 
+// distinct takes a shadow line's distinct_keys out of its counts, which are
+// the period's to sum and this is not: the node's figure since its set
+// began (distinct_keys_since), taken as the span's when it is the largest
+// of a set begun at or after the span's start, else counted excluded.
+func (r *edgeReport) distinct(l edge.CountsLine) {
+	keys, ok := l.Counts["distinct_keys"]
+	if !ok {
+		return
+	}
+	since, began := l.Counts["distinct_keys_since"]
+	delete(l.Counts, "distinct_keys")
+	delete(l.Counts, "distinct_keys_since")
+	if !began || since < r.Since.Unix() {
+		r.distinctExcluded++
+		return
+	}
+	r.distinctKeys = max(r.distinctKeys, keys)
+}
+
 // gates fills the I2 figures from the sums.
 func (r *edgeReport) gates() {
 	sh := r.DecideShadow
@@ -195,6 +232,7 @@ func (r *edgeReport) gates() {
 		WouldAdmitByClass: map[string]int64{}, StaleByCache: map[string]int64{}, CohortByClass: map[string]int64{},
 		Unavailable: r.Decide.Counts["unavailable"], UnavailableByCode: map[string]int64{}}
 	g.Comparable = g.AgreeFull + g.Differ
+	g.DistinctKeys, g.DistinctKeysExcludedLines = r.distinctKeys, r.distinctExcluded
 	for _, n := range sh.ByName["decide"] {
 		g.CohortEligible += n
 	}

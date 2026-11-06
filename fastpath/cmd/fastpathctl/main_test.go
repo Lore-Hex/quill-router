@@ -894,3 +894,204 @@ func TestReadySaysWhetherAGrantCouldReachTheWorkspace(t *testing.T) {
 		t.Fatalf("no store: exit %d, %v", code, err)
 	}
 }
+
+// doOn runs the command on the store open gives, and decodes its answer.
+func doOn(t *testing.T, open func(context.Context, string, store.Config) (*store.Store, func(), error),
+	args ...string) (int, map[string]any, error) {
+	t.Helper()
+	var out bytes.Buffer
+	code, err := run(context.Background(), append([]string{"-database", "d"}, args...), &out, open)
+	var got map[string]any
+	if out.Len() > 0 {
+		if jerr := json.Unmarshal(out.Bytes(), &got); jerr != nil {
+			t.Fatalf("%q wrote %q: %v", args, out.String(), jerr)
+		}
+	}
+	return code, got, err
+}
+
+// TestTheWildcardCommandsRefuseWhatTheyCannotDo: decide wildcard takes on,
+// off or status alone; '*' is no workspace for any other decide verb;
+// -follow-wildcard is decide delete's and -at decide-restore's, which needs
+// a timestamp; each exit 2, and none reaches the store.
+func TestTheWildcardCommandsRefuseWhatTheyCannotDo(t *testing.T) {
+	never := func(context.Context, string, store.Config) (*store.Store, func(), error) {
+		t.Fatal("the store was opened")
+		return nil, nil, nil
+	}
+	for _, args := range [][]string{
+		{"decide", "wildcard"}, {"decide", "wildcard", "maybe"}, {"decide", "wildcard", "delete"},
+		{"decide", "wildcard", "on", "more"}, {"decide", "wildcard", "on", "-cloud", "GCP"},
+		{"decide", "wildcard", "on", "-follow-wildcard"}, {"decide", "on", "*"}, {"decide", "off", "*"},
+		{"decide", "status", "*"}, {"enable", "*"}, {"decide", "on", "ws", "-follow-wildcard"},
+		{"-follow-wildcard", "status", "ws"}, {"-follow-wildcard", "decide-off-all"}, {"decide-restore"},
+		{"decide-restore", "-at", ""}, {"decide-restore", "-at", "yesterday"}, {"decide-restore", "-at", "1792368000"},
+		{"decide-restore", "-at", "2026-11-06T00:00:00Z", "more"}, {"-at", "2026-11-06T00:00:00Z", "decide-off-all"},
+		{"decide", "delete", "ws", "-at", "2026-11-06T00:00:00Z"}, {"decide-restore", "-at", "0001-01-01T00:00:00Z"},
+		// The wildcard row names only gcp/us-central1 (widening section 4(c)).
+		{"decide", "wildcard", "on", "-region", "europe-west4"}, {"decide", "wildcard", "off", "-region", "us-east4"},
+		{"-cloud", "aws", "decide", "wildcard", "on"}, {"decide", "wildcard", "on", "-cloud", "azure"},
+	} {
+		if code, err := run(context.Background(), append([]string{"-database", "d"}, args...), &bytes.Buffer{},
+			never); code != 2 || err == nil {
+			t.Errorf("%q: exit %d, %v", args, code, err)
+		}
+	}
+}
+
+// TestDecideStatusIsTheEffectiveAnswer (docs/design/fast-admission-widening.md
+// section 6.2): a workspace with no row of its own decides under an on
+// wildcard, exit 3 and via wildcard; its off override holds under it, exit 0
+// and via own; with the wildcard off, a rowless workspace does not decide,
+// via wildcard; in another region, with no wildcard there, via none. decide
+// wildcard status reads the wildcard row itself, exit 3 while it is on.
+func TestDecideStatusIsTheEffectiveAnswer(t *testing.T) {
+	open := onOwn(t)
+	rowless, override := storetest.UniqueID("ws"), storetest.UniqueID("ws")
+	if code, got, err := doOn(t, open, "decide", "status", rowless); code != 0 || err != nil || got["via"] != "none" ||
+		got["decide"] != false || got["wildcard"] != nil {
+		t.Fatalf("before the wildcard: exit %d, %v, %v", code, err, got)
+	}
+	if code, got, err := doOn(t, open, "decide", "wildcard", "status"); code != 0 || err != nil || got["found"] != false {
+		t.Fatalf("the wildcard before it is set: exit %d, %v, %v", code, err, got)
+	}
+	// status reads any cloud and region, though on and off write only one.
+	if code, got, err := doOn(t, open, "decide", "wildcard", "status", "-region", "europe-west4"); code != 0 ||
+		err != nil || got["region"] != "europe-west4" || got["found"] != false {
+		t.Fatalf("the wildcard of another region: exit %d, %v, %v", code, err, got)
+	}
+	if code, got, err := doOn(t, open, "decide", "wildcard", "on"); code != 0 || err != nil || got["wildcard"] != true ||
+		got["workspace"] != "*" || got["decide"] != true || got["cloud"] != "gcp" || got["region"] != "us-central1" {
+		t.Fatalf("decide wildcard on: exit %d, %v, %v", code, err, got)
+	}
+	if code, _, err := doOn(t, open, "decide", "off", override); code != 0 || err != nil {
+		t.Fatalf("decide off: exit %d, %v", code, err)
+	}
+	code, got, err := doOn(t, open, "decide", "status", rowless)
+	if code != 3 || err != nil || got["decide"] != true || got["via"] != "wildcard" || got["found"] != false ||
+		got["wildcard"].(map[string]any)["decide"] != true {
+		t.Fatalf("a rowless workspace under the wildcard: exit %d, %v, %v", code, err, got)
+	}
+	code, got, err = doOn(t, open, "decide", "status", override)
+	if code != 0 || err != nil || got["decide"] != false || got["via"] != "own" || got["found"] != true {
+		t.Fatalf("an off override under the wildcard: exit %d, %v, %v", code, err, got)
+	}
+	if code, got, err := doOn(t, open, "decide", "status", rowless, "-region", "europe-west4"); code != 0 || err != nil ||
+		got["via"] != "none" {
+		t.Fatalf("another region, no wildcard there: exit %d, %v, %v", code, err, got)
+	}
+	if code, got, err := doOn(t, open, "decide", "wildcard", "status"); code != 3 || err != nil || got["decide"] != true {
+		t.Fatalf("decide wildcard status, on: exit %d, %v, %v", code, err, got)
+	}
+	if code, _, err := doOn(t, open, "decide", "wildcard", "off"); code != 0 || err != nil {
+		t.Fatalf("decide wildcard off: exit %d, %v", code, err)
+	}
+	if code, got, err := doOn(t, open, "decide", "status", rowless); code != 0 || err != nil || got["decide"] != false ||
+		got["via"] != "wildcard" {
+		t.Fatalf("a rowless workspace under the wildcard off: exit %d, %v, %v", code, err, got)
+	}
+	if code, got, err := doOn(t, open, "decide", "wildcard", "status"); code != 0 || err != nil || got["found"] != true ||
+		got["decide"] != false {
+		t.Fatalf("decide wildcard status, off: exit %d, %v, %v", code, err, got)
+	}
+}
+
+// TestDecideDeleteRefusesToStartOneDeciding (section 6.2): under an on
+// wildcard, decide delete of a workspace's off row is refused, exit 2 and
+// the row kept, since the workspace would start deciding; -follow-wildcard
+// removes it and says so, and the workspace then decides under the
+// wildcard. decide delete '*' removes the wildcard row itself, with no
+// flag, and every rowless workspace then does not decide.
+func TestDecideDeleteRefusesToStartOneDeciding(t *testing.T) {
+	open := onOwn(t)
+	override, rowless := storetest.UniqueID("ws"), storetest.UniqueID("ws")
+	for _, args := range [][]string{{"decide", "wildcard", "on"}, {"decide", "off", override}} {
+		if code, _, err := doOn(t, open, args...); code != 0 || err != nil {
+			t.Fatalf("%q: exit %d, %v", args, code, err)
+		}
+	}
+	code, got, err := doOn(t, open, "decide", "delete", override)
+	if code != 2 || err == nil || !strings.Contains(err.Error(), "-follow-wildcard") || got["refused"] != true ||
+		got["deleted"] != false {
+		t.Fatalf("an off row under the wildcard: exit %d, %v, %v", code, err, got)
+	}
+	if code, got, _ := doOn(t, open, "decide", "status", override); code != 0 || got["found"] != true || got["via"] != "own" {
+		t.Fatalf("the refused row: exit %d, %v", code, got)
+	}
+	code, got, err = doOn(t, open, "decide", "delete", override, "-follow-wildcard")
+	if code != 0 || err != nil || got["deleted"] != true || got["follows_wildcard"] != true || got["refused"] != false {
+		t.Fatalf("followed: exit %d, %v, %v", code, err, got)
+	}
+	if code, got, _ := doOn(t, open, "decide", "status", override); code != 3 || got["via"] != "wildcard" {
+		t.Fatalf("the workspace after it followed: exit %d, %v", code, got)
+	}
+	// An own on row is removed always; the workspace keeps deciding through
+	// the wildcard, which the answer says.
+	if code, _, err := doOn(t, open, "decide", "on", rowless); code != 0 || err != nil {
+		t.Fatalf("decide on: exit %d, %v", code, err)
+	}
+	code, got, err = doOn(t, open, "decide", "delete", rowless)
+	if code != 0 || err != nil || got["deleted"] != true || got["follows_wildcard"] != true || got["refused"] != false {
+		t.Fatalf("an on row under the wildcard: exit %d, %v, %v", code, err, got)
+	}
+	if code, got, _ := doOn(t, open, "decide", "status", rowless); code != 3 || got["via"] != "wildcard" {
+		t.Fatalf("the workspace after its on row went: exit %d, %v", code, got)
+	}
+	code, got, err = doOn(t, open, "decide", "delete", "*")
+	if code != 0 || err != nil || got["deleted"] != true || got["wildcard"] != true || got["follows_wildcard"] != false {
+		t.Fatalf("decide delete '*': exit %d, %v, %v", code, err, got)
+	}
+	for _, ws := range []string{override, rowless} {
+		if code, got, _ := doOn(t, open, "decide", "status", ws); code != 0 || got["decide"] != false || got["via"] != "none" {
+			t.Errorf("%s after the wildcard's delete: exit %d, %v", ws, code, got)
+		}
+	}
+	if code, got, _ := doOn(t, open, "decide", "delete", "*"); code != 3 || got["deleted"] != false {
+		t.Fatalf("deleting the wildcard again: exit %d, %v", code, got)
+	}
+}
+
+// TestDecideRestoreUndoesExactlyTheKill (section 6.2): decide-off-all turns
+// the wildcard off with every row and prints the commit timestamp they keep;
+// decide-restore -at it turns back on exactly those rows, so an off
+// override from before the kill stays off, and each workspace decides as it
+// did; restoring again, or at another instant, turns on nothing, exit 3.
+func TestDecideRestoreUndoesExactlyTheKill(t *testing.T) {
+	open := onOwn(t)
+	own, rowless, override := storetest.UniqueID("ws"), storetest.UniqueID("ws"), storetest.UniqueID("ws")
+	for _, args := range [][]string{{"decide", "wildcard", "on"}, {"decide", "on", own}, {"decide", "off", override}} {
+		if code, _, err := doOn(t, open, args...); code != 0 || err != nil {
+			t.Fatalf("%q: exit %d, %v", args, code, err)
+		}
+	}
+	code, kill, err := doOn(t, open, "decide-off-all")
+	if code != 0 || err != nil || kill["rows_turned_off"] != float64(2) {
+		t.Fatalf("decide-off-all: exit %d, %v, %v", code, err, kill)
+	}
+	for _, args := range [][]string{{"decide", "status", own}, {"decide", "status", rowless}, {"decide", "wildcard", "status"}} {
+		if code, got, _ := doOn(t, open, args...); code != 0 || got["decide"] != false {
+			t.Errorf("%q after the kill: exit %d, %v", args, code, got)
+		}
+	}
+	at := kill["at"].(string)
+	code, got, err := doOn(t, open, "decide-restore", "-at", at)
+	if code != 0 || err != nil || got["rows_turned_on"] != float64(2) || got["restored"] != at || got["at"] == nil {
+		t.Fatalf("decide-restore: exit %d, %v, %v", code, err, got)
+	}
+	for _, v := range []struct {
+		ws   string
+		code int
+		via  string
+	}{{own, 3, "own"}, {rowless, 3, "wildcard"}, {override, 0, "own"}} {
+		if code, got, _ := doOn(t, open, "decide", "status", v.ws); code != v.code || got["via"] != v.via {
+			t.Errorf("%s after the restore: exit %d, %v; want %d via %s", v.ws, code, got, v.code, v.via)
+		}
+	}
+	if code, got, err := doOn(t, open, "decide-restore", "-at", at); code != 3 || err != nil || got["rows_turned_on"] != float64(0) {
+		t.Fatalf("restoring again: exit %d, %v, %v", code, err, got)
+	}
+	if code, got, _ := doOn(t, open, "-at", "2026-11-06T00:00:00Z", "decide-restore"); code != 3 ||
+		got["rows_turned_on"] != float64(0) {
+		t.Fatalf("another instant: exit %d, %v", code, got)
+	}
+}

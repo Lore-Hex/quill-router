@@ -67,7 +67,7 @@ Fields, all required:
   first member is absent or names it, and the second does not name it.
   ``null`` and an empty array are refused for both.
 
-Two fields are optional:
+Four fields are optional:
 
 - ``fastpath_pilot_key_windows``: ``"alert"`` or ``"enforce"``, the setting of
   that name (docs/design/fast-admission-e2-key-windows.md section 5): which
@@ -82,6 +82,16 @@ Two fields are optional:
   streams. Absent otherwise, so the default body is byte-identical to one
   from before the field existed, and Go reads absent as off; ``null`` and
   ``false`` are refused.
+- ``fastpath_pilot_all`` and ``fastpath_pilot_exclude``
+  (docs/design/fast-admission-widening.md sections 1 and 6.3): ``true`` and
+  the sorted, unique workspaces the pilot leaves out (0 to 64), when the
+  pilot covers every workspace but those instead of the explicit
+  ``fastpath_pilot_workspaces``, which is then empty. Both absent
+  otherwise, so the default body is byte-identical to one from before the
+  fields existed, and Go reads absent as the explicit list; ``null`` and
+  ``false`` are refused, and the exclude list is present exactly with
+  ``fastpath_pilot_all``. Go reads them first (PR 3 of the widening); the
+  publisher writes neither until PR 5.
 """
 
 from __future__ import annotations
@@ -99,6 +109,8 @@ LIFETIME_SECONDS: Final = 60
 # Settings.parse_pilot_workspaces bounds the async-settle pilot set; Go
 # (routingsnapshot.maxAdmissionWorkspaces) bounds admission_workspaces alike.
 MAX_ADMISSION_WORKSPACES: Final = 32
+# fastpath_pilot_exclude's bound (Go: routingsnapshot.maxPilotExclude).
+MAX_PILOT_EXCLUDE: Final = 64
 
 Flag = Annotated[bool, Field(strict=True)]
 PositiveInt = Annotated[int, Field(strict=True, ge=1, le=(1 << 63) - 1)]
@@ -201,6 +213,14 @@ class EdgePolicyV1(Frozen):
     fastpath_edge_streams: Flag | None = Field(
         default=None, exclude_if=lambda value: value is None,
     )
+    # Optional, together: absent is the explicit list, and the canonical
+    # bytes omit both then.
+    fastpath_pilot_all: Flag | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
+    fastpath_pilot_exclude: tuple[WorkspaceId, ...] | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
 
     @model_validator(mode="after")
     def consistent(self) -> Self:
@@ -208,6 +228,7 @@ class EdgePolicyV1(Frozen):
             raise ValueError("fastpath_pilot_key_windows is absent when off, never null")
         if self.fastpath_edge_streams is not True and "fastpath_edge_streams" in self.model_fields_set:
             raise ValueError("fastpath_edge_streams is absent when off, never null or false")
+        self._pilot_all_consistent()
         if (self.refresh_at != self.issued_at + REFRESH_SECONDS
                 or self.not_after != self.issued_at + LIFETIME_SECONDS):
             raise ValueError("edge policy window")
@@ -220,6 +241,25 @@ class EdgePolicyV1(Frozen):
         if len(set(regions)) != len(regions) or self.primary_region not in regions:
             raise ValueError("configured_regions must be unique and include primary_region")
         return self
+
+    def _pilot_all_consistent(self) -> None:
+        # One encoding per answer, as Go's validatePilotAll holds it.
+        pilot_all, exclude = self.fastpath_pilot_all, self.fastpath_pilot_exclude
+        if pilot_all is not True and "fastpath_pilot_all" in self.model_fields_set:
+            raise ValueError("fastpath_pilot_all is absent when off, never null or false")
+        if exclude is None and "fastpath_pilot_exclude" in self.model_fields_set:
+            raise ValueError("fastpath_pilot_exclude is absent with the explicit list, never null")
+        if pilot_all is None:
+            if exclude is not None:
+                raise ValueError("fastpath_pilot_exclude requires fastpath_pilot_all")
+            return
+        if exclude is None:
+            raise ValueError("fastpath_pilot_all requires fastpath_pilot_exclude")
+        if self.fastpath_pilot_workspaces:
+            raise ValueError("fastpath_pilot_workspaces must be empty with fastpath_pilot_all")
+        if len(exclude) > MAX_PILOT_EXCLUDE:
+            raise ValueError(f"fastpath_pilot_exclude must name at most {MAX_PILOT_EXCLUDE} workspaces")
+        _sorted_unique(exclude, "fastpath_pilot_exclude")
 
 
 def canonical_edge_policy_bytes(policy: EdgePolicyV1) -> bytes:
