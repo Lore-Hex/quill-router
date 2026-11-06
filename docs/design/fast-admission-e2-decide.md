@@ -1744,10 +1744,11 @@ counts, per snapshot and policy digest:
   path was switched off for a workspace whose requests the pipeline would
   admit: every one passed at `owner.off`, so Go's count of its key stayed
   near zero while a Python instance's reached the limit, and one request
-  paged. With the owner off, every such 429 would page. Now that the node
-  reads the switch itself (`docs/design/fast-admission-widening.md`
-  §6.1), such a workspace's requests pass at `workspace.not_enabled`,
-  before the gate, and the same 429 is
+  paged. With the owner off, every such 429 would page. Now that the
+  pipeline reads the node's switch copy as a decision gate beside the
+  decide row (`docs/design/fast-admission-widening.md` §6.1), such a
+  workspace's requests pass at `workspace.not_enabled`, before the
+  in-flight gate, and the same 429 is
   `inflight_unchecked.workspace.not_enabled`.
 - `stale.<cache>`: Go would pass for `cache.<cache>`.
 - `python_unavailable` (decision 1's 503: Python's own insert outcome) and
