@@ -16,8 +16,8 @@ class CoworkTests(unittest.TestCase):
             self.assertEqual(page, (root / "trusted-cowork.html").read_text())
             self.assertIn('rel="canonical" href="https://nytokenexchange.com/trusted-cowork"', page)
             for arch in ("arm64", "x64"):
-                self.assertIn(f"v0.4.0-alpha.3/Trusted-Cowork-0.4.0-alpha.3-mac-{arch}.dmg", page)
-            self.assertIn("v0.4.0-alpha.3", page)
+                self.assertIn(f"v0.4.0-alpha.4/Trusted-Cowork-0.4.0-alpha.4-mac-{arch}.dmg", page)
+            self.assertIn("v0.4.0-alpha.4", page)
             self.assertNotIn("v0.4.0-alpha.2/", page)
             for text in ("nyte/confidential", "fails closed", "Data collection", "deny", "asks before exposing any data to tool use"):
                 self.assertIn(text, page)
