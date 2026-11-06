@@ -471,24 +471,23 @@ preconditions above. These local changes do not authorize publishing.
 `https://nytokenexchange.com/media-kit` (also `/media-kit.html`) is the public
 press resource. `press.json` is the shared source for page copy and the TXT/JSON
 fact sheets. `press.py` builds a deterministic ZIP from an explicit public-asset
-allowlist. It never includes the private commercial decks or the large demo MP4.
+allowlist. The only PDFs are the public Brand Guidelines V1 and six logo exports;
+private commercial decks, internal prompts, the draft review manual and the large demo MP4 are excluded.
 The video remains available separately at its existing public URL.
 
-`press-assets/` holds the NYTE globe and **NY Token Exchange** wordmark supplied
-by Joseph on October 28, 2026, as outlined SVGs and transparent PNGs. These are
-NYTE assets, not the TrustedRouter routing mark. The globe source is
-`nyte-globe-source.svg`; black and white exports preserve its 2:1 aspect ratio.
-Combined globe-and-name exports come first in the kit: `nyte-horizontal-*` is the
-primary one-line 2400 x 480 logo; `nyte-lockup-*` is the alternate stacked 2400 x 1080 version.
-Both include outlined lettering and transparent backgrounds in each color variant.
-The separate homepage capture remains an explicitly dated October 15 illustration.
-Regenerate the logos with `uv run --no-project --with fonttools --with brotli
-sites/token-exchange/export_press_logos.py` and `rsvg-convert` installed.
-The wordmark uses locally licensed Arial Bold; pass `--font /path/to/Arial-Bold.ttf`
-outside macOS. The font itself is not distributed. Exports have no external font dependency.
+The November 5, 2026 release uses the supplied `NYTE-Complete-Media-Kit.zip`
+design and the newer `NYTE_Plain_Logos_From_Guide (1).zip` logo exports.
+`press-assets/guide/` preserves all six supplied vector configurations byte for
+byte, as SVG/PDF and transparent 2400-pixel-wide PNG. The primary horizontal
+lockup pairs the globe with NYTE. The cream stacked-name export is shown on ink;
+the other ink exports are shown on light backgrounds. Do not regenerate these
+outlines with the historical Arial exporter or recolor them. The old October
+assets remain in source for compatibility but are absent from the new kit.
+Four supplied campaign PNGs and the public brand guide are in `press-assets/`.
+The marketplace campaign artwork is the new social card. The homepage capture
+and video still retain their dated illustrative labels. Other sites' shared
+marks, analytics, checkout and inference services are untouched.
 The normal build uses the checked-in exports and has no new dependencies.
-The media-kit social card uses the new globe and short wordmark; the video still
-retains its dated illustrative-demo source. Other sites' shared marks are untouched.
 
 Run `node sites/token-exchange/verify-press.cjs http://127.0.0.1:8089` after
 building and serving the site. It checks 320/390/768/1440px layouts, images,
