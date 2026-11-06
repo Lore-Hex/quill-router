@@ -3370,13 +3370,10 @@ LIBERTY_1_0_1M_MODEL_ORDER = (
 
 # The panel; Muse Spark Open also fuses it, backed up by Beam then Nemotron.
 # Every member runs on a US-headquartered 1M route.
-# Inkling 2 Small (256K) joined 2026-11-05; the gateway drops it from
-# requests too long for its window.
 LIBERTY_4_0_MODEL_ORDER = (
     "nvidia/nemotron-3.5-super-vl",
     "reflection/beam-1.0",
     "meta-models/muse-spark-open",
-    "thinkingmachines/inkling-2-small",
 )
 
 SYNTH_FRONTIER_1_MODEL_ORDER = (

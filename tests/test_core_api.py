@@ -1149,7 +1149,6 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "nvidia/nemotron-3.5-super-vl",
         "reflection/beam-1.0",
         "meta-models/muse-spark-open",
-        "thinkingmachines/inkling-2-small",
     )
     assert client.get("/v1/models/count").json()["data"]["count"] >= 5
     open_weight_models = client.get("/v1/models", params={"open_weights": "true"})
