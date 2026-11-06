@@ -2439,7 +2439,9 @@ leases, and was retired on 2026-09-27.
    workspace its tier. Then move keyed requests, capped keys, payouts and the
    remaining route types (§4.11) one at a time; then retire the Python hot
    path. The stages of that retirement are in
-   `fast-admission-enclave-direct.md`.
+   `fast-admission-enclave-direct.md`. Widening to every eligible
+   workspace, and the stale-reconciliation rule, are decided in
+   `fast-admission-widening.md`.
 
 ## 9. Not decided here
 
