@@ -398,9 +398,9 @@ needs no analytics read; the largest spenders carry most of the traffic
   federated home, a deletion, a probe, a bypass), the cap is a guard:
   when a run would disable more than 10% of the enabled set or 20
   workspaces, whichever is larger, for those causes, it disables none of
-  them that run and raises `fastpath_enabler_mass_disable`, since a sudden mass change of facts is
-  more likely a reading defect than a fact. A rank past the margin of
-  §5.2 is not guarded but paced: each run disables at most the same
+  them that run and raises `fastpath_enabler_mass_disable`, since a
+  sudden mass change of facts is more likely a reading defect than a
+  fact. A rank past the margin of §5.2 is not guarded but paced: each run disables at most the same
   number, lowest rank first, and raises nothing, since a large rank
   change comes from the operator lowering `max_rank` and a small one from
   usage moving, and the job cannot tell them apart. A lower `max_rank`
