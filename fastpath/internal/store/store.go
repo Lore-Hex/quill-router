@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/spanner"
+	sppb "cloud.google.com/go/spanner/apiv1/spannerpb"
 )
 
 // Config holds what the store's statements take from the deployment.
@@ -106,4 +107,12 @@ func readTimestamp(ro *spanner.ReadOnlyTransaction) (time.Time, error) {
 // its statements.
 func tag(operation string) string {
 	return "fastpath-" + operation
+}
+
+// lowPriority are the options of an audit's statements: the operation's
+// request tag, at low priority, so an audit, the fleet audit's of every
+// workspace due each hour among them (docs/design/fast-admission-widening.md
+// §7), yields to the requests whose rows it reads.
+func lowPriority(operation string) spanner.QueryOptions {
+	return spanner.QueryOptions{RequestTag: tag(operation), Priority: sppb.RequestOptions_PRIORITY_LOW}
 }

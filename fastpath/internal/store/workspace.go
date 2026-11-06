@@ -112,6 +112,49 @@ func (s *Store) EnabledWorkspaces(ctx context.Context) (map[string]bool, time.Ti
 	return out, read, err
 }
 
+// FleetWorkspace is a workspace the fleet audit is due to audit
+// (docs/design/fast-admission-widening.md §7): its switch, when the switch
+// last changed, and whether it has a lease open or draining.
+type FleetWorkspace struct {
+	Workspace string
+	Enabled   bool
+	ChangedAt time.Time
+	Leased    bool
+}
+
+// FleetDue reads the workspaces the fleet audit is due to audit, in
+// workspace order: every row of the switch that is enabled or changed at or
+// after since, in one strong read at low priority. Each comes with whether
+// it has a lease open or draining, read by the workspace's key in tr_lease,
+// never through the leases' state index, so no lease of a workspace that is
+// not due is read, and who is due is never found by reading leases.
+func (s *Store) FleetDue(ctx context.Context, since time.Time) ([]FleetWorkspace, error) {
+	ro := s.client.Single()
+	defer ro.Close()
+	var out []FleetWorkspace
+	err := ro.QueryWithOptions(ctx, spanner.Statement{
+		SQL: `SELECT w.workspace_id, w.enabled, w.changed_at,
+		             EXISTS (SELECT 1 FROM tr_lease@{FORCE_INDEX=_BASE_TABLE} l
+		                      WHERE l.workspace_id = w.workspace_id AND l.state IN ('open', 'draining'))
+		        FROM tr_fastpath_workspace w
+		       WHERE w.enabled OR w.changed_at >= @since
+		       ORDER BY w.workspace_id`,
+		Params: map[string]any{"since": since},
+	}, lowPriority("fleet-due")).Do(func(row *spanner.Row) error {
+		var w FleetWorkspace
+		if err := row.Columns(&w.Workspace, &w.Enabled, &w.ChangedAt, &w.Leased); err != nil {
+			return err
+		}
+		w.ChangedAt = w.ChangedAt.UTC()
+		out = append(out, w)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // WorkspaceStatus is what turning a workspace off waits for (the production
 // rollout's W2), as one read-only snapshot of its rows read by its keys.
 type WorkspaceStatus struct {
