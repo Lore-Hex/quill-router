@@ -146,8 +146,9 @@ deploy; the fast path's switch changes at once.
   ring key `fleet-audit`, a pass an hour over every workspace the switch
   names enabled or changed within 26 hours, with `fastpathctl audit`'s
   checks but `-funded`, each fault a `fleet_audit_fault` alert naming the
-  workspace and the check, each pass a summary line whose absence for 90
-  minutes, or a leased workspace unaudited for three hours, is
+  workspace and the check, each pass a line as it begins, every 30 minutes
+  as it goes and as it ends, whose absence for 90 minutes, or a leased
+  workspace unaudited for three hours, is
   `fleet_audit_stale`. It merges dark: it runs once the nodes carry
   `fastpath-fleet-audit = "true"` (`local.fastpath_fleet_audit` in
   `infra/fastpath.tf`, which also turns on the absence policy). Until then,

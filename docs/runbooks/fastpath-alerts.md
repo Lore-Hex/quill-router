@@ -23,7 +23,8 @@ chat:
   the auditor's subscription for five minutes and not one is acknowledged
   in that time: the whole subscription has stopped.
 - **TR Fast path: fleet_audit_stale, no summary**, when no node has
-  written the fleet audit's summary line for 90 minutes (a log-based
+  written the fleet audit's line (each pass's start, its progress every 30
+  minutes, its summary) for 90 minutes (a log-based
   metric, `logging.googleapis.com/user/fastpath_fleet_audit_summary`,
   summed over the nodes, absent): no node runs the audit, or the one that
   owns it cannot read the workspaces due. It is enabled with the nodes'
@@ -85,7 +86,7 @@ page names does not change.
 | `drain_overdue` | A lease is still draining past its holds' longest life and the grace. | Find why with `status`. A fleet must not stop while it drains (`fastpath-turn-off.md`). |
 | `pending_work_overdue` | A pack's pending work was not done in time. | The pending worker logs a failed Spanner call by its class alone (`auditor: spanner write records failed: Unavailable`, see [The auditor's own lines](#the-auditors-own-lines)), not the error's text; a pack waiting on a record not yet staged logs nothing. The alerts above, on the same subject or lease, name the causes it knows. `status` shows the workspace's pending packs and staged records; a winner whose full record is not staged waits for it. |
 | `fleet_audit_fault` | The fleet audit found a workspace whose rows do not keep one of `fastpathctl audit`'s checks: the subject is the workspace, the message the check (`identity`, `winners`, `booked_usage` or `sums`) and its first three problems. See [The fleet audit](#the-fleet-audit). | Money may be wrong: turn the workspace off (`fastpath-turn-off.md`) and run `fastpathctl audit` on it for every problem. `identity` is a credit shard's reservation that its live leases and synchronous holds do not sum to, a lease its donors do not sum to, or debt marks that disagree; `winners` an authorization decided twice, or a lease's packs charging other than it booked; `booked_usage` a shard's usage below what its retained leases booked on it; `sums` sums past int64. Credit rows that are not shards 0 to n-1 fail the `identity` and `booked_usage` checks. |
-| `fleet_audit_stale` | A workspace with a lease open or draining that the fleet audit has not audited for three hours: each pass its checks failed (read the owner's `auditor: fleet audit:` lines) or the pass ran out of its hour before reaching it (its summary's `leased_audited` below `leased_due`). The policy of the same name with "no summary" is the audit itself silent. | Read the summaries and the failure lines on the node that owns the key. A Spanner failure class repeated points at Spanner from that node; passes that never reach every leased workspace mean the fleet outgrew five workspaces a second. Until it is audited, run `fastpathctl audit` on the workspace by hand. |
+| `fleet_audit_stale` | A workspace with a lease open or draining that the fleet audit has not audited for three hours: each pass its checks failed (read the owner's `auditor: fleet audit:` lines) or the pass ran out of its hour before reaching it (its summary's `leased_audited` below `leased_due`). The policy of the same name with "no summary" is the audit itself silent: no line at all, neither a pass's start, its progress every 30 minutes nor its summary, for 90 minutes. | Read the summaries and the failure lines on the node that owns the key. A Spanner failure class repeated points at Spanner from that node; passes that never reach every leased workspace mean the fleet outgrew five workspaces a second. Until it is audited, run `fastpathctl audit` on the workspace by hand. |
 | `edge_would_admit_python_refused` | The edge's decide shadow (`-edge-decide-shadow`) would have answered an authorize Python refused (a 4xx or its pause 503); the subject names the routing snapshot and edge policy digests, the message the class (`would_admit_python_refused.<status>.<type>`). Nothing was answered: the shadow only observes. Python's per-key in-flight 429 (`rate_limited`, "Too many concurrent requests for this API key": one Python process's count of one key's authorizes at the policy's `gateway_authorize_max_in_flight_per_key`) to a request the decide path passed at its own in-flight limit is `passed.inflight.key`, counted and never paged, since Go answered nothing (`docs/design/fast-admission-e2-decide.md` decision 14, §11). `would_admit_python_refused.429.rate_limited` still pages when Go's in-flight gate was not asked (a workspace not deciding) or let the request in and a later step passed it (`owner.*`, `budget.spent`, `insert.*`): read the decide line's `passed` for those minutes and Python's `billing.authorize_admission_limited` lines by Cloud Run instance; one hot key against busy Python instances is decision 14's per-process count, not a gate Go misses, and no spend rides on it (the front door's hold bounds what Go answers). A spend-window 429 (`key_window_limit_exceeded`) of a key whose rows the shadow read and would admit is a race candidate when the 429 names a window whose limit Go holds, with that limit, and a `RateLimit-Remaining` below what Go's rows leave there. That alone proves nothing, so the shadow re-reads the rows after Python's answer. If Go's fresh remaining in that window is at or below Python's, a settle landed between the reads: `window_race.429.key_window_limit_exceeded`, counted and never paged here (`edge_window_race` watches its rate). If it is still above Python's, Go's read misses what Python sees: this alert. If no re-read settles it (the limiter, a failed or late re-read, rows that are not the key's shards, the window reset since), it is `window_race_unconfirmed.429.key_window_limit_exceeded`, and it pages here too, since it cannot be told from a defect. Each candidate is traced on its own line (`fastpath edge decide shadow window race: class=... key=<first 8 of the key hash> window=... go=<first remaining> reread=<re-read remaining, -1 for none> python=... gap=...`). The message carries the window counts (`windows=`, `race.confirmed`, `race.refuted`, `race.unconfirmed.<why>`). | Before I2 this blocks turning decide on. A window refusal that pages, with `race.refuted` or the same inputs as Go, more remaining, another limit or a window Go holds none for, is a parity bug in the window check (`docs/design/fast-admission-e2-key-windows.md` §4.4, §8.3); set `fastpath_pilot_key_windows` back to off if it is `enforce`. With `race.unconfirmed.<why>`, read the race line and the window counts: `limiter` or `unread` repeated means the shadow's reads are starved or failing, and `reset` is a window boundary between the reads, which explains itself. A refusal for a key or workspace changed within the facts' 15 s age is the expected revocation lag (decision 17); otherwise find which gate Go missed (`docs/design/fast-admission-e2-decide.md` §3, §11) and, if any workspace decides already, `fastpathctl decide off` it. |
 | `edge_decide_unavailable` | In the last period (a minute) the edge's decide path (`-edge-decide`) answered an authorize with decision 1's 503: its insert's outcome not known, its hold kept. The message counts them by the insert's gRPC code. | Read the codes as the transaction's errors, not causes (`fastpath/internal/store/gatewayauth.go`, `ClassifyInsert`): an unavailable answer is one whose read-back did not find our row, and the commit may or may not have applied; the enclave's retry finds the row through Python's replay if it did. `failed_precondition` can follow a re-sent commit Spanner no longer remembers, one that applied included, and does not establish clock skew: the reservation's `created_at` is the commit's timestamp, so a node clock ahead does not by itself fail the insert (`docs/design/fast-admission-e2-decide.md` §8.4). `deadline_exceeded` can be the local 1.5 s deadline or a deadline error the transaction returned; failures the client retries can exhaust the local deadline. Several nodes at once point at what they share, Spanner among it, without proving it. For sustained answers (`edge_decide_unavailable_sustained`), `fastpathctl decide off` the deciding workspaces, then find the cause. |
 | `edge_decide_unavailable_sustained` | Unavailable answers in three periods with no 200 between them (a period that answered nothing neither adds to the run nor ends it, so a fault under sparse traffic is seen): a cause that persists, not one lost commit. | `fastpathctl decide off` the workspaces deciding (or `decide-off-all`, `fastpath-turn-off.md`) at once, then find the cause by code as for `edge_decide_unavailable`. Their requests pass to Python while it lasts. |
@@ -107,17 +108,25 @@ begins within a minute. Each pass, an hour apart, reads the workspaces
 reading leases), and audits them at most five a second, each in a 10 s
 deadline, at low priority, with no retry within the pass: those with a lease
 open or draining first, then those whose switch changed, then the rest, the
-least recently audited first. Each workspace gets `fastpathctl audit`'s
+least recently tried first, so a workspace whose checks keep failing takes
+its turn rather than going first in every pass. Each workspace gets `fastpathctl audit`'s
 checks, each its own read-only transaction by the workspace's keys:
 `CheckIdentity` (the synchronous holds counted beside the leases'),
 `CheckWinners`, `CheckBookedUsage` and `AuditSums`. There is no `-funded`:
 the counter reconciler's combined identity covers the credit rows.
 
-Each pass ends with one line in the journal, whatever it found:
+Each pass writes one line in the journal as it begins, one at least every
+30 minutes as it goes (its counts so far, `ended=false`), and one as it
+ends, its summary (`ended=true`), whatever it found:
 
 ```
-fastpath fleet audit: due=3 audited=3 leased_due=2 leased_audited=2 faults=0 failed=0 stale=0 complete=true took_ms=812
+fastpath fleet audit: due=3 audited=3 leased_due=2 leased_audited=2 faults=0 failed=0 stale=0 complete=true took_ms=812 ended=true
 ```
+
+A pass may run its whole hour, so two summaries can be two hours apart;
+the lines the absence policy counts, all three kinds, are never more than an
+hour and a minute apart while the audit runs. Read passes from the
+`ended=true` lines alone.
 
 `due` and `audited` count every workspace due and those whose checks all
 ran; `leased_*` the same for those with a lease; `failed` the workspaces
@@ -126,7 +135,8 @@ audited. A pass stops when its hour is up or the key moves, and says so
 here. A failed check is logged by its class alone, at most once every 30 s
 a check (`auditor: fleet audit: the identity check of a workspace failed:
 DeadlineExceeded`), as the auditor's other lines are. What the owner
-remembers (each workspace's last audit, when it first saw it leased) is
+remembers (each workspace's last try and last audit, when it first saw it
+leased) is
 its own: a new owner counts a workspace's three hours from its first pass.
 
 ```bash

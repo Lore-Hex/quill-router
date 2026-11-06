@@ -741,12 +741,17 @@ on `owner.off`; with it the pass is named and cheaper.
 
 - **Where.** A role of the fast-path service on whichever node owns the
   ring key `fleet-audit`, so it moves with node replacement and runs
-  exactly once in the fleet. Each run logs a summary line; an absence of
-  that line for 90 minutes raises `fleet_audit_stale`.
+  exactly once in the fleet. Each run logs a line as it begins, at least
+  every 30 minutes as it goes and a summary as it ends; an absence of those
+  lines for 90 minutes raises `fleet_audit_stale`. A run may take its whole
+  hour, so two summaries can be two hours apart; the lines at its start and
+  as it goes keep them within an hour and a minute of each other, so only
+  an audit that stopped is absent.
 - **Whom.** Every workspace whose `tr_fastpath_workspace` row is enabled or
   changed within 26 hours, read from that table, never by scanning leases.
   Workspaces with an open or draining lease first, then those whose switch
-  changed, then the rest in rotation.
+  changed, then the rest in rotation, each group by when it was last tried,
+  so a workspace whose checks keep failing does not go first in every run.
 - **What.** The checks `fastpathctl audit` makes today, per workspace, each
   in one read-only transaction by the workspace's keys:
   `store.CheckIdentity`, `CheckWinners`, `CheckBookedUsage` and

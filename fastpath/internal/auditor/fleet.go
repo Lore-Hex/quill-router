@@ -49,16 +49,20 @@ const (
 	CheckSums        = "sums"         // store.AuditSums: the sums exact
 )
 
-// FleetSummaryLine is the line each pass writes once it ends, whatever it
-// found, a pass with no workspace due included: the policy on its absence
-// (infra/fastpath_alerts.tf) counts the lines by their beginning, up to the
-// first count. due and audited are every workspace due and those whose
-// checks all ran; leased_due and leased_audited, those with a lease open or
-// draining; faults the fault lines written; failed the workspaces whose
-// checks did not all run; stale the stale lines written; complete whether
-// every workspace due was audited.
+// FleetSummaryLine is the line a pass writes as it begins, at least every
+// FleetConfig.Progress while it runs, and once it ends, whatever it found, a
+// pass with no workspace due included: ended=false on the first two, its
+// counts so far and complete=false, ended=true on the last, its summary.
+// The policy on the lines' absence (infra/fastpath_alerts.tf) counts every
+// one by their beginning, up to the first count, so a pass that runs its
+// whole hour still writes one well within the policy's window. due and
+// audited are every workspace due and those whose checks all ran;
+// leased_due and leased_audited, those with a lease open or draining;
+// faults the fault lines written; failed the workspaces whose checks did
+// not all run; stale the stale lines written; complete whether every
+// workspace due was audited.
 const FleetSummaryLine = "fastpath fleet audit: due=%d audited=%d leased_due=%d leased_audited=%d faults=%d " +
-	"failed=%d stale=%d complete=%t took_ms=%d"
+	"failed=%d stale=%d complete=%t took_ms=%d ended=%t"
 
 // FleetStore is what the fleet audit reads in Spanner; *store.Store has it.
 type FleetStore interface {
@@ -89,6 +93,11 @@ type FleetConfig struct {
 	// begins within Check of the ring's change.
 	Every time.Duration
 	Check time.Duration
+	// Progress is how often, at most, a pass under way writes its line with
+	// its counts so far (FleetSummaryLine): with the line at its start, the
+	// lines are never further apart than Every and Check, or Progress, so
+	// the absence policy's 90 minutes see only an audit that stopped.
+	Progress time.Duration
 	// Within is how recently a switch changed for its workspace to be due
 	// though it is off, and to come second in a pass.
 	Within time.Duration
@@ -117,12 +126,13 @@ type FleetConfig struct {
 // fastpathctl audit's checks, each check one read-only transaction by the
 // workspace's keys at low priority. Workspaces with a lease open or draining
 // go first, then those whose switch changed, then the rest, each group the
-// least recently audited first, so a pass that cannot reach them all
-// rotates through them. A fault is an alert naming the workspace and the
-// check; each pass ends with its summary line.
+// least recently tried first, so a pass that cannot reach them all
+// rotates through them, a workspace whose checks keep failing among them. A
+// fault is an alert naming the workspace and the check; each pass writes its
+// line as it begins, as it goes and as it ends.
 //
-// What it remembers, the passes' times, each workspace's last audit and
-// when each was first seen leased, is the tenure's: it is forgotten when
+// What it remembers, the passes' times, each workspace's last try and last
+// audit and when each was first seen leased, is the tenure's: it is forgotten when
 // the node finds it no longer owns the key, so a node that owns it again
 // starts afresh, as the node that took it over did. Only Run's goroutine
 // reads and writes it.
@@ -132,7 +142,11 @@ type Fleet struct {
 	logf func(format string, args ...any)
 
 	// began is when the tenure's last pass began; zero before its first.
+	// tried is when each workspace's checks last began, which orders a
+	// pass; audited when they last all ran, which the stale workspaces are
+	// told from.
 	began       time.Time
+	tried       map[string]time.Time
 	audited     map[string]time.Time
 	leasedSince map[string]time.Time
 }
@@ -140,9 +154,9 @@ type Fleet struct {
 // NewFleet is the fleet audit with its configuration.
 func NewFleet(cfg FleetConfig) (*Fleet, error) {
 	if cfg.Store == nil || cfg.Members == nil || cfg.Self == "" || cfg.Alert == nil || cfg.Every <= 0 ||
-		cfg.Check <= 0 || cfg.Within <= 0 || cfg.Rate < 1 || cfg.Deadline <= 0 || cfg.Stale <= 0 {
+		cfg.Check <= 0 || cfg.Progress <= 0 || cfg.Within <= 0 || cfg.Rate < 1 || cfg.Deadline <= 0 || cfg.Stale <= 0 {
 		return nil, errors.New("auditor: the fleet audit needs a store, the members, its own address, someone to " +
-			"tell, an interval, an ownership check's interval, a window for changed switches, a rate, a deadline " +
+			"tell, an interval, an ownership check's interval, a progress interval, a window for changed switches, a rate, a deadline " +
 			"and a stale allowance")
 	}
 	if cfg.Clock == nil {
@@ -152,7 +166,8 @@ func NewFleet(cfg FleetConfig) (*Fleet, error) {
 		cfg.sleep = sleep
 	}
 	j := newJournal(cfg.logf)
-	return &Fleet{cfg: cfg, j: j, logf: j.logf, audited: map[string]time.Time{}, leasedSince: map[string]time.Time{}}, nil
+	return &Fleet{cfg: cfg, j: j, logf: j.logf, tried: map[string]time.Time{},
+		audited: map[string]time.Time{}, leasedSince: map[string]time.Time{}}, nil
 }
 
 // Run asks every Check whether the node owns FleetKey, and while it does
@@ -175,6 +190,7 @@ func (f *Fleet) Run(ctx context.Context) error {
 func (f *Fleet) round(ctx context.Context) {
 	if !f.owns() {
 		f.began = time.Time{}
+		clear(f.tried)
 		clear(f.audited)
 		clear(f.leasedSince)
 		return
@@ -205,13 +221,15 @@ func fleetGroup(w store.FleetWorkspace, changedSince time.Time) int {
 }
 
 // fleetOrder is the order a pass audits the workspaces due: by group, then
-// the least recently audited first (one never audited before any), then by
-// workspace.
-func fleetOrder(due []store.FleetWorkspace, audited map[string]time.Time, changedSince time.Time) []store.FleetWorkspace {
+// the least recently tried first (one never tried before any), then by
+// workspace. A try counts whether or not the checks all ran, so a
+// workspace whose checks keep failing takes its turn in the rotation and
+// does not go first in every pass.
+func fleetOrder(due []store.FleetWorkspace, tried map[string]time.Time, changedSince time.Time) []store.FleetWorkspace {
 	out := slices.Clone(due)
 	slices.SortStableFunc(out, func(a, b store.FleetWorkspace) int {
 		return cmp.Or(cmp.Compare(fleetGroup(a, changedSince), fleetGroup(b, changedSince)),
-			audited[a.Workspace].Compare(audited[b.Workspace]), strings.Compare(a.Workspace, b.Workspace))
+			tried[a.Workspace].Compare(tried[b.Workspace]), strings.Compare(a.Workspace, b.Workspace))
 	})
 	return out
 }
@@ -219,8 +237,10 @@ func fleetOrder(due []store.FleetWorkspace, audited map[string]time.Time, change
 // pass reads the workspaces due and audits them in fleetOrder, at most Rate
 // a second, until they are done, Every has passed since it began, or the
 // node no longer owns the key; then it tells of the stale workspaces, unless
-// the key moved, and writes its summary. A read of the workspaces due that
-// fails writes no summary, and is tried again at the next round.
+// the key moved, and writes its summary. It writes its line with its counts
+// so far as it begins and at least every Progress as it goes. A read of the
+// workspaces due that fails writes no line, and is tried again at the next
+// round.
 func (f *Fleet) pass(ctx context.Context, began time.Time) {
 	since := began.Add(-f.cfg.Within)
 	dctx, cancel := context.WithTimeout(ctx, f.cfg.Deadline)
@@ -249,10 +269,17 @@ func (f *Fleet) pass(ctx context.Context, began time.Time) {
 		}
 	}
 	var audited, leasedAudited, faults, failed, stale int
+	line := func(ended bool) time.Time {
+		now := f.cfg.Clock()
+		f.logf(FleetSummaryLine, len(due), audited, len(leased), leasedAudited, faults, failed, stale,
+			ended && audited == len(due), now.Sub(began).Milliseconds(), ended)
+		return now
+	}
+	wrote := line(false)
 	moved := false
 	interval := time.Second / time.Duration(f.cfg.Rate)
 	var last time.Time
-	for _, w := range fleetOrder(due, f.audited, since) {
+	for _, w := range fleetOrder(due, f.tried, since) {
 		// Each workspace's checks begin at least 1/Rate after the last's
 		// began, however long those took.
 		if !last.IsZero() && f.cfg.sleep(ctx, last.Add(interval).Sub(f.cfg.Clock())) != nil {
@@ -265,7 +292,11 @@ func (f *Fleet) pass(ctx context.Context, began time.Time) {
 			moved = true
 			break
 		}
+		if f.cfg.Clock().Sub(wrote) >= f.cfg.Progress {
+			wrote = line(false)
+		}
 		last = f.cfg.Clock()
+		f.tried[w.Workspace] = last
 		found, ok := f.audit(ctx, w.Workspace)
 		faults += found
 		if !ok {
@@ -293,8 +324,7 @@ func (f *Fleet) pass(ctx context.Context, began time.Time) {
 			}
 		}
 	}
-	f.logf(FleetSummaryLine, len(due), audited, len(leased), leasedAudited, faults, failed, stale, audited == len(due),
-		f.cfg.Clock().Sub(began).Milliseconds())
+	line(true)
 }
 
 // audit runs a workspace's checks under one Deadline, each one read-only

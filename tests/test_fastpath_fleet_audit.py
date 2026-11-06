@@ -64,16 +64,24 @@ def test_the_absence_policy_counts_the_line_the_audit_writes() -> None:
     metric = _block(tf, "google_logging_metric", "fastpath_fleet_audit_summary")
     assert "filter      = local.fastpath_fleet_audit_summary_filter" in metric
     assert 'metric_kind = "DELTA"' in metric and 'value_type  = "INT64"' in metric
-    # The Go side writes the line through the logger the journal keeps,
-    # once a pass, a pass with nothing due included.
+    # The Go side writes the line through the logger the journal keeps, in
+    # one place: as a pass begins, as it goes and as it ends, a pass with
+    # nothing due included, ended=false or true telling which.
     fleet = _read("fastpath", "internal", "auditor", "fleet.go")
     assert fleet.count("f.logf(FleetSummaryLine,") == 1
+    assert line.endswith(" ended=%t")
+    assert "wrote := line(false)" in fleet and "wrote = line(false)" in fleet and "\tline(true)\n" in fleet
 
 
 def test_the_absence_condition_fires_on_ninety_minutes_of_no_line_from_any_node() -> None:
-    """No summary from any node for 90 minutes, the series summed over the
-    nodes so the key moving between them is not an absence; past the pass's
-    hour, so one late pass does not page."""
+    """No line from any node for 90 minutes, the series summed over the
+    nodes so the key moving between them is not an absence. A pass that runs
+    its whole hour writes its summary only at its end, two hours after the
+    summary of a short pass before it, so the window counts the line each
+    pass writes as it begins and every 30 minutes as it goes too: the lines
+    are never further apart than Every and Check (61 minutes), well inside
+    the window, and only an audit that stopped pages (the Go test
+    TestTheLinesNeverGoQuietForAPass holds the gap)."""
     tf = POLICIES.read_text(encoding="utf-8")
     policy = _block(tf, "google_monitoring_alert_policy", "fastpath_fleet_audit_absent")
     assert policy.count("conditions {") == 1 and policy.count("condition_absent {") == 1
@@ -91,10 +99,12 @@ def test_the_absence_condition_fires_on_ninety_minutes_of_no_line_from_any_node(
     (alignment,) = re.findall(r'^\s+alignment_period\s+= "(\d+)s"$', policy, re.M)
     assert int(alignment) < int(duration)
     service = _read("fastpath", "internal", "service", "service.go")
-    defaults = re.search(r"Fleet: auditor\.FleetConfig\{Every: time\.Hour, Check: time\.Minute, Within: 26 \* time\.Hour, "
-                         r"Rate: 5,\n\s+Deadline: 10 \* time\.Second, Stale: 3 \* time\.Hour\}", service)
+    defaults = re.search(r"Fleet: auditor\.FleetConfig\{Every: time\.Hour, Check: time\.Minute, "
+                         r"Progress: 30 \* time\.Minute,\n\s+Within: 26 \* time\.Hour, Rate: 5, "
+                         r"Deadline: 10 \* time\.Second, Stale: 3 \* time\.Hour\}", service)
     assert defaults, "the fleet audit's defaults"
-    assert 60 * 60 < int(duration)
+    every, check, progress = 60 * 60, 60, 30 * 60
+    assert max(every + check, progress) < int(duration)
     assert 'display_name = "TR Fast path: fleet_audit_stale, no summary"' in policy
     assert 'severity     = "ERROR"' in policy
     assert "notification_channels = local.fastpath_alert_channels" in policy

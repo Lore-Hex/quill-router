@@ -144,6 +144,8 @@ type fleetFixture struct {
 	mu      sync.Mutex
 	alerts  []string // kind subject: what
 	lines   []string
+	// at is when each of lines was written, on the test's clock.
+	at []time.Time
 }
 
 func newFleetFixture() *fleetFixture {
@@ -154,7 +156,7 @@ func newFleetFixture() *fleetFixture {
 func (f *fleetFixture) fleet(t *testing.T, self string, changes ...func(*FleetConfig)) *Fleet {
 	t.Helper()
 	cfg := FleetConfig{Store: f.store, Members: f.members, Self: self, Every: time.Hour, Check: time.Minute,
-		Within: 26 * time.Hour, Rate: 5, Deadline: 10 * time.Second, Stale: 3 * time.Hour, Clock: f.clock.now,
+		Progress: 30 * time.Minute, Within: 26 * time.Hour, Rate: 5, Deadline: 10 * time.Second, Stale: 3 * time.Hour, Clock: f.clock.now,
 		Alert: func(kind, subject, what string) {
 			f.mu.Lock()
 			defer f.mu.Unlock()
@@ -169,7 +171,7 @@ func (f *fleetFixture) fleet(t *testing.T, self string, changes ...func(*FleetCo
 		logf: func(format string, args ...any) {
 			f.mu.Lock()
 			defer f.mu.Unlock()
-			f.lines = append(f.lines, fmt.Sprintf(format, args...))
+			f.lines, f.at = append(f.lines, fmt.Sprintf(format, args...)), append(f.at, f.clock.now())
 		}}
 	for _, change := range changes {
 		change(&cfg)
@@ -187,16 +189,35 @@ func (f *fleetFixture) told() []string {
 	return slices.Clone(f.alerts)
 }
 
+// summaries are the lines that end a pass.
 func (f *fleetFixture) summaries() []string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	var out []string
-	for _, l := range f.lines {
-		if strings.HasPrefix(l, "fastpath fleet audit: ") {
+	for _, l := range f.audit() {
+		if strings.HasSuffix(l, " ended=true") {
 			out = append(out, l)
 		}
 	}
 	return out
+}
+
+// audit is every line the absence policy counts, a pass's start and
+// progress among them, and when each was written.
+func (f *fleetFixture) audit() []string {
+	lines, _ := f.auditAt()
+	return lines
+}
+
+func (f *fleetFixture) auditAt() ([]string, []time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []string
+	var at []time.Time
+	for i, l := range f.lines {
+		if strings.HasPrefix(l, "fastpath fleet audit: due=") {
+			out, at = append(out, l), append(at, f.at[i])
+		}
+	}
+	return out, at
 }
 
 // TestTheFleetAuditsInItsOrder: leased workspaces first, then those whose
@@ -447,8 +468,8 @@ func TestAStaleLeasedWorkspaceIsTold(t *testing.T) {
 	}
 }
 
-// TestEveryPassWritesItsSummary: a pass with nothing due writes its line,
-// complete, so the line's absence means no pass ran, not that nothing was
+// TestEveryPassWritesItsSummary: a pass with nothing due writes its lines,
+// its start and its summary, complete, so the line's absence means no pass ran, not that nothing was
 // due; a read of the workspaces due that fails writes none and is tried at
 // the next round, not an Every later.
 func TestEveryPassWritesItsSummary(t *testing.T) {
@@ -458,7 +479,7 @@ func TestEveryPassWritesItsSummary(t *testing.T) {
 	f.store.dueErr = errors.New("unavailable")
 	fl := f.fleet(t, "node-a")
 	fl.round(ctx)
-	if got := f.summaries(); len(got) != 0 {
+	if got := f.audit(); len(got) != 0 {
 		t.Fatalf("a failed read wrote %q", got)
 	}
 	f.mu.Lock()
@@ -470,15 +491,115 @@ func TestEveryPassWritesItsSummary(t *testing.T) {
 	f.store.dueErr = nil
 	f.clock.advance(time.Minute)
 	fl.round(ctx)
-	got := f.summaries()
-	if len(got) != 1 || got[0] != "fastpath fleet audit: due=0 audited=0 leased_due=0 leased_audited=0 faults=0 "+
-		"failed=0 stale=0 complete=true took_ms=0" {
-		t.Fatalf("a pass with nothing due: %q", got)
+	got := f.audit()
+	if want := []string{
+		"fastpath fleet audit: due=0 audited=0 leased_due=0 leased_audited=0 faults=0 failed=0 stale=0 " +
+			"complete=false took_ms=0 ended=false",
+		"fastpath fleet audit: due=0 audited=0 leased_due=0 leased_audited=0 faults=0 failed=0 stale=0 " +
+			"complete=true took_ms=0 ended=true",
+	}; !slices.Equal(got, want) {
+		t.Fatalf("a pass with nothing due: %q, want %q", got, want)
 	}
 	// A node that does not own the key writes nothing.
 	f.fleet(t, "node-b").round(ctx)
-	if got := f.summaries(); len(got) != 1 {
+	if got := f.audit(); len(got) != 2 {
 		t.Fatalf("a node not the owner wrote %q", got)
+	}
+}
+
+// TestTheLinesNeverGoQuietForAPass: back to back, a pass with nothing due
+// and then one that runs its whole hour, every workspace's checks taking
+// their full ten seconds, the rounds a minute apart as Run's: the lines the
+// absence policy counts are never 90 minutes apart, nor further apart than
+// Every and Check, though the two summaries are two hours apart: the long
+// pass writes a line as it begins and another half an hour in.
+func TestTheLinesNeverGoQuietForAPass(t *testing.T) {
+	ctx := context.Background()
+	f := newFleetFixture()
+	f.members.serving([]string{"node-a"})
+	f.store.took = 2500 * time.Millisecond // four checks: the ten seconds
+	fl := f.fleet(t, "node-a")
+	start := f.clock.now()
+	fl.round(ctx)
+	for i := range 1000 {
+		f.store.due = append(f.store.due, store.FleetWorkspace{Workspace: fmt.Sprintf("w-%04d", i), Enabled: true})
+	}
+	for f.clock.now().Sub(start) < 4*time.Hour {
+		f.clock.advance(time.Minute)
+		fl.round(ctx)
+	}
+	lines, at := f.auditAt()
+	sums := f.summaries()
+	if len(sums) < 3 || !strings.Contains(sums[0], "due=0 ") || !strings.Contains(sums[1], "complete=false") ||
+		!strings.Contains(sums[1], "took_ms=3600000 ") {
+		t.Fatalf("not a short pass and then an hour-long one: %q", sums)
+	}
+	// The hour-long pass wrote its counts as it went, half an hour in.
+	progressed := false
+	for _, l := range lines {
+		var took int64
+		if i := strings.Index(l, " took_ms="); i >= 0 && strings.HasSuffix(l, " ended=false") {
+			_, _ = fmt.Sscanf(l[i:], " took_ms=%d", &took)
+		}
+		progressed = progressed || (took >= (30*time.Minute).Milliseconds() && took < time.Hour.Milliseconds())
+	}
+	if !progressed {
+		t.Fatalf("no line as the hour-long pass went: %q", lines)
+	}
+	var widest time.Duration
+	for i := 1; i < len(at); i++ {
+		widest = max(widest, at[i].Sub(at[i-1]))
+	}
+	if widest >= 90*time.Minute || widest > time.Hour+time.Minute {
+		t.Fatalf("the lines were %v apart at widest: %q at %v", widest, lines, at)
+	}
+	if end := f.clock.now(); end.Sub(at[len(at)-1]) >= 90*time.Minute {
+		t.Fatalf("no line since %v", at[len(at)-1])
+	}
+}
+
+// TestAFailingWorkspaceTakesItsTurn: a workspace whose checks keep failing
+// is never audited, but it was tried, so the rotation passes it by until
+// the others have had their turn, rather than putting it first in every
+// pass; the tries are the tenure's; and it is still told stale from its
+// last audit, not its last try.
+func TestAFailingWorkspaceTakesItsTurn(t *testing.T) {
+	ctx := context.Background()
+	f := newFleetFixture()
+	f.members.serving([]string{"node-a"})
+	f.store.due = []store.FleetWorkspace{{Workspace: "l", Enabled: true, Leased: true},
+		{Workspace: "r-a", Enabled: true}, {Workspace: "r-b", Enabled: true}, {Workspace: "r-c", Enabled: true},
+		{Workspace: "r-d", Enabled: true}}
+	f.store.failing = map[string]error{"r-a": errors.New("unavailable")}
+	// Three a pass.
+	fl := f.fleet(t, "node-a", func(c *FleetConfig) { c.Every = 600 * time.Millisecond })
+	for i, want := range [][]string{{"l", "r-a", "r-b"}, {"l", "r-c", "r-d"}, {"l", "r-a", "r-b"}} {
+		f.store.reset()
+		fl.round(ctx)
+		if got := f.store.audited(); !slices.Equal(got, want) {
+			t.Fatalf("pass %d audited %v, want %v", i+1, got, want)
+		}
+	}
+	// The key lost and taken back: the tries are forgotten with the
+	// tenure, so the order starts afresh.
+	f.members.serving([]string{"node-a"}, "node-a")
+	fl.round(ctx)
+	f.members.serving([]string{"node-a"})
+	f.store.reset()
+	fl.round(ctx)
+	if got, want := f.store.audited(), []string{"l", "r-a", "r-b"}; !slices.Equal(got, want) {
+		t.Fatalf("the key taken back: audited %v, want %v", got, want)
+	}
+	// Leased and failing every try: told stale from when it was first
+	// seen, however often it was tried.
+	f.store.due[1].Leased = true
+	f.store.reset()
+	for f.store.due[1].Leased && len(f.told()) == 0 && f.clock.now().Before(time.Date(2026, 11, 6, 4, 0, 0, 0, time.UTC)) {
+		f.clock.advance(time.Minute)
+		fl.round(ctx)
+	}
+	if got := f.told(); len(got) == 0 || !strings.HasPrefix(got[0], "fleet_audit_stale r-a: ") {
+		t.Fatalf("the failing workspace, tried every pass: told %q", got)
 	}
 }
 

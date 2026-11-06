@@ -238,10 +238,12 @@ resource "google_monitoring_alert_policy" "fastpath_auditor_no_acks" {
   notification_channels = local.fastpath_alert_channels
 }
 
-# The fleet audit's summary line (FleetSummaryLine in
+# The fleet audit's line (FleetSummaryLine in
 # fastpath/internal/auditor/fleet.go), which whichever node owns the ring key
-# fleet-audit writes once a pass, a pass an hour, counted from the nodes'
-# journal. No line from any node for 90 minutes is fleet_audit_stale: no
+# fleet-audit writes as each pass begins, every 30 minutes as it goes and as
+# it ends, a pass an hour, counted from the nodes' journal: the lines are
+# never more than an hour and a minute apart, though a pass may run its
+# whole hour. No line from any node for 90 minutes is fleet_audit_stale: no
 # owner runs it, or its owner cannot read the workspaces due. A node cannot
 # see its own silence, so this is Cloud Monitoring's to see, where a leased
 # workspace left unaudited is the owner's own fleet_audit_stale alert above.

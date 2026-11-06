@@ -403,7 +403,15 @@ The fleet audit (`docs/design/fast-admission-widening.md` §7,
 `-fleet-audit`, which the startup script passes when the instance attribute
 `fastpath-fleet-audit` is `true`. One literal, `local.fastpath_fleet_audit`
 in `infra/fastpath.tf`, sets the attribute on every node and enables the
-policy on the summary line's absence, so the two move together. In order:
+policy on the audit's lines' absence, so the two move together.
+
+Who owns the ring key `fleet-audit` ignores the flag: the ring picks the
+owner among every live, serving member with the owner role, whether or not
+it runs with `-fleet-audit`. A node that owns the key without the flag
+audits nothing, and the absence policy cannot see it: a metric-absence
+condition fires only on a series that has reported before, and an audit
+that never started never reported. So the literal set `true` proves nothing
+by itself; the gate below is what does. In order:
 
 1. Pin a release whose command takes `-fleet-audit` ("A flag the unit
    passes"; `tests/test_fastpath_fleet_audit.py` refuses the literal `true`
@@ -411,12 +419,31 @@ policy on the summary line's absence, so the two move together. In order:
 2. Bring the startup script that reads the attribute to every node, through
    nodes added under new names, as for the decide attribute: a node keeps
    the script it was created with.
-3. Set the literal `true` and apply. A node takes the flag when its unit is
-   written again: drained, its unit stopped and its startup script run
-   again, one node at a time.
-4. Read the summaries (`fastpath-alerts.md`); once one with `complete=true`
-   covers the pilot set, stop `/var/tmp/pilot-audit-hourly.sh`
-   (`docs/design/fast-admission-pilot.md`).
+3. Set the literal `true` and apply. A node takes the flag only when its
+   unit is written again, one node at a time, the other serving, exactly as
+   "Turning the edge policy and the decide shadow on" takes a metadata
+   change: mark it leaving, wait for its leases and the balancer, stop the
+   unit, run `sudo google_metadata_script_runner startup`, and read the
+   running command line from the process (`-fleet-audit` in it). A reset is
+   not enough.
+4. **Gate: every node rewritten, then a line from the owner.** The step is
+   not done until every node's running command line carries `-fleet-audit`
+   and a line of the audit has been seen from the node that owns the key,
+   within a minute or two of the last rewrite (a new owner begins within a
+   minute; its first line is written as its pass begins):
+
+   ```bash
+   gcloud logging read 'logName="projects/quill-cloud-proxy/logs/fastpath_journal" AND jsonPayload.MESSAGE:"fastpath fleet audit: due="' \
+     --project=quill-cloud-proxy --freshness=30m --limit=10 \
+     --format='table(timestamp,labels."compute.googleapis.com/resource_name",jsonPayload.MESSAGE)'
+   ```
+
+   No line means the owner runs without the flag, or its start failed:
+   check every node's command line again before going on. Only once a line
+   is seen does the absence policy watch anything.
+5. Read the summaries (`ended=true`, `fastpath-alerts.md`); once one with
+   `complete=true` covers the pilot set, stop
+   `/var/tmp/pilot-audit-hourly.sh` (`docs/design/fast-admission-pilot.md`).
 
 Turning it off is the literal `false` and the same unit rewrite; the
 absence policy is disabled by the same apply.

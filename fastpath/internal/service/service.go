@@ -196,13 +196,14 @@ func Defaults() Config {
 		Pending: auditor.PendingConfig{Every: 5 * time.Second, Limit: 100, Wait: 5 * time.Second, Overdue: 10 * time.Minute,
 			Workers: auditor.DefaultPendingWorkers, DropEvery: auditor.DefaultDropEvery},
 		// The fleet audit's figures (docs/design/fast-admission-widening.md
-		// §7): a pass an hour, so its summary's absence for 90 minutes is a
-		// pass missed; a new owner begins within a minute of the ring's
+		// §7): a pass an hour, its line written as it begins and every 30
+		// minutes as it goes, so no line for 90 minutes is an audit stopped,
+		// not a slow pass; a new owner begins within a minute of the ring's
 		// change; switches changed within 26 hours; at most five workspaces
 		// a second, ten seconds each; a leased workspace unaudited for three
 		// hours told.
-		Fleet: auditor.FleetConfig{Every: time.Hour, Check: time.Minute, Within: 26 * time.Hour, Rate: 5,
-			Deadline: 10 * time.Second, Stale: 3 * time.Hour},
+		Fleet: auditor.FleetConfig{Every: time.Hour, Check: time.Minute, Progress: 30 * time.Minute,
+			Within: 26 * time.Hour, Rate: 5, Deadline: 10 * time.Second, Stale: 3 * time.Hour},
 		Stopping: 10 * time.Second,
 		HandOff:  10 * time.Second,
 	}

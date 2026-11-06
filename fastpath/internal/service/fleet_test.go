@@ -23,8 +23,8 @@ func TestTheFleetAuditIsDarkByDefault(t *testing.T) {
 	if cfg.FleetAudit {
 		t.Fatal("the defaults run the fleet audit")
 	}
-	want := auditor.FleetConfig{Every: time.Hour, Check: time.Minute, Within: 26 * time.Hour, Rate: 5,
-		Deadline: 10 * time.Second, Stale: 3 * time.Hour}
+	want := auditor.FleetConfig{Every: time.Hour, Check: time.Minute, Progress: 30 * time.Minute,
+		Within: 26 * time.Hour, Rate: 5, Deadline: 10 * time.Second, Stale: 3 * time.Hour}
 	if !reflect.DeepEqual(cfg.Fleet, want) {
 		t.Fatalf("the fleet audit's defaults %+v, want %+v", cfg.Fleet, want)
 	}
