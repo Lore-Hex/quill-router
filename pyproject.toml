@@ -86,7 +86,14 @@ markers = [
 ]
 
 [tool.coverage.run]
-branch = true
+# Line coverage, measured through sys.monitoring: ci.yml sets
+# COVERAGE_CORE=sysmon wherever pytest collects coverage. Before Python 3.14,
+# sys.monitoring cannot measure branches, and asked to, coverage falls back to
+# its C tracer with only a warning. The tracer with branches made coverage
+# cost about three times the plain suite: on a sample of 2,424 tests it took
+# 588 s against 171 s plain, and sysmon line coverage took 180 s.
+# tests/test_ci_workflow.py holds the two settings together.
+branch = false
 source = ["trusted_router"]
 
 [tool.coverage.report]

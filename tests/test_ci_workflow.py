@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 
 import yaml
@@ -63,6 +64,26 @@ def test_ci_runs_python_suite_once_with_coverage() -> None:
     # DDL. Sharding is safe only because each matrix job gets its own service
     # containers.
     assert "--splits" in workflow and "--group" in workflow
+
+
+def test_coverage_measures_lines_through_sys_monitoring() -> None:
+    # Every step that collects coverage runs it on sys.monitoring. Before
+    # Python 3.14 that core cannot measure branches, and given branch = true
+    # coverage falls back to its C tracer with only a warning, bringing back
+    # about three times the plain suite's cost. So branch coverage stays off
+    # while the interpreter is older than 3.14 (pyproject.toml says so too).
+    jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
+    collecting = sorted(name for name, job in jobs.items() for step in job.get("steps", [])
+                        if "--cov=trusted_router" in step.get("run", ""))
+    assert collecting == ["spanner-emulator", "test"]
+    assert jobs["test"]["env"]["COVERAGE_CORE"] == "sysmon"
+    p5 = next(step for step in jobs["spanner-emulator"]["steps"]
+              if step.get("name") == "P5 package object budgets")
+    assert p5["env"] == {"COVERAGE_CORE": "sysmon"}
+    run = tomllib.loads((ROOT / "pyproject.toml").read_text())["tool"]["coverage"]["run"]
+    version = tuple(int(part) for part in (ROOT / ".python-version").read_text().strip().split(".")[:2])
+    if version < (3, 14):
+        assert run["branch"] is False
 
 
 def test_ci_shards_record_durations_using_existing_split_weights() -> None:

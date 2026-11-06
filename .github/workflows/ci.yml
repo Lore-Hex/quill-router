@@ -203,6 +203,9 @@ jobs:
         # 22 min gives 2.1x median / 1.5x projection; the 40-min job limit
         # gives 2.2x its 1080 s median so a ~2x slower runner still fits.
         timeout-minutes: 22
+        # The suite's coverage core, as in the test job.
+        env:
+          COVERAGE_CORE: sysmon
         run: >-
           uv run pytest -q tests/test_async_settle_shadow_v2_gate*.py
           -m "not proof_oracle" -n 2
@@ -297,6 +300,10 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       TEST_SHARDS: "12"
+      # Coverage through sys.monitoring, line coverage only (pyproject.toml's
+      # [tool.coverage.run] says why): about 5% over the plain suite, where
+      # the C tracer with branches cost about three times it.
+      COVERAGE_CORE: sysmon
       TR_CONFORMANCE_POSTGRES_DSN: postgresql://postgres:tr@localhost:5432/postgres
       # Spanner's PostgreSQL dialect, via PGAdapter + the Spanner emulator.
       # Needs no GCP credentials, so it runs on every PR like any other
