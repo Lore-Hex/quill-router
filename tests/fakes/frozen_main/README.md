@@ -223,9 +223,11 @@ The metadata witness attributes every protocol call to its immediate Python
 caller. Calls from `tests/fakes/frozen_package.py` (the callback or any helper)
 are failures. A third-party C tracer can hash and compare a resumed frame's
 raw `co_filename` when that frame resumes. Coverage 7.13.5 uses
-CTracer on CPython 3.12 with this repository's branch-coverage configuration;
-requesting its sys.monitoring core falls back because that core cannot measure
-branches on 3.12. These C calls have the resumed owner or test as their immediate
+CTracer on CPython 3.12 whenever it measures branches, because its
+sys.monitoring core cannot measure them there. This repository measures lines
+through sys.monitoring (`[tool.coverage.run]` in pyproject.toml), which hashes
+`co_filename` only at `PY_START` and registers no resume callback, so these
+calls come only from a run that asks for branches. These C calls have the resumed owner or test as their immediate
 Python caller, without a guard caller frame. They are outside the guard's
 no-user-protocol contract. The witness permits only filename hash/equality
 calls from those two exact code identities and still requires zero
