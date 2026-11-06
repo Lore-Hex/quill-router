@@ -268,6 +268,41 @@ def pytest_collection_modifyitems(items):
     yield
 
 
+
+# These witnesses use signed October 6 evidence. Their wall clock must stay in
+# that evidence window; the real calendar crossed its retention cutoff on
+# November 6. Retention/midnight witnesses own their clocks separately.
+_FIXED_SHADOW_EVIDENCE_FILES = frozenset({
+    'test_async_settle_shadow_accounting.py',
+    'test_async_settle_shadow_lifecycle.py',
+    'test_async_settle_shadow_r11_validity.py',
+    'test_async_settle_shadow_r8_retry_class.py',
+    'test_async_settle_shadow_revision.py',
+    'test_async_settle_shadow_sdk_retry.py',
+    'test_async_settle_shadow_winners.py',
+})
+
+
+@pytest.fixture(autouse=True)
+def fixed_shadow_evidence_date(request, monkeypatch):
+    if request.node.path.name not in _FIXED_SHADOW_EVIDENCE_FILES:
+        return
+    import datetime as dt
+    import time
+
+    from tests.test_async_settle_shadow import NOW
+
+    real_datetime = dt.datetime
+    monkeypatch.setattr(time, 'time', lambda: NOW)
+
+    class EvidenceDateTime(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return real_datetime.fromtimestamp(time.time(), tz)
+
+    monkeypatch.setattr(dt, 'datetime', EvidenceDateTime)
+
+
 @pytest.fixture
 def shadow_deadline_clock(monkeypatch):
     """Deterministic budgets for fake shadow I/O, without freezing asyncio.
