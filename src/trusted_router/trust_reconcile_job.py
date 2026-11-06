@@ -55,9 +55,9 @@ def _provider_mapping(
         if record.provider == provider
     )
     source = canonical_mapping(source_records)
-    # Payments are listed by PaymentIntent.created and stamped from a scan-
-    # visible created time, so a local payment inside the window must appear
-    # in the source. Adverse facts are stamped occurred_at=Event.created and the
+    # Payments are listed by both PaymentIntent.created and Checkout Session.created,
+    # so a local payment inside the window must appear in the source even when
+    # those clocks cross its boundary. Adverse facts use Event.created and the
     # live writer moves that on every status change, while the scan lists
     # refunds/disputes by the OBJECT's created: an old pending refund that
     # succeeds inside this window would be local-only by clock alone. Adverse
