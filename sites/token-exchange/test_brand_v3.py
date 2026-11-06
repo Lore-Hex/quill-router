@@ -17,6 +17,16 @@ class BrandV3Tests(unittest.TestCase):
             self.assertIn(SHEET, render_nyte("reserved-terms"))
             self.assertNotIn(SHEET, render_nyte("home"))
 
+    def test_favicon_and_share_image_follow_the_switch(self):
+        with mock.patch.dict(os.environ, {"NYTE_BRAND_V3_PREVIEW": ""}), mock.patch.object(nyte_v2, "BRAND_V3_PAGES", set()):
+            page = render_nyte("home")
+        self.assertNotIn('logos/favicon.svg', page)
+        self.assertIn('/assets/og-new-york.png?v=', page)
+        with mock.patch.dict(os.environ, {"NYTE_BRAND_V3_PREVIEW": "1"}):
+            page = render_nyte("home")
+        self.assertIn('<link rel="icon" href="/assets/nyte-v2/logos/favicon.svg"', page)
+        self.assertIn('/assets/og-v3-new-york.png?v=', page)
+
     def test_listed_pages_exist(self):
         self.assertLessEqual(nyte_v2.BRAND_V3_PAGES, set(PAGES))
 

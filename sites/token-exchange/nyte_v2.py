@@ -224,6 +224,13 @@ def uses_brand_v3(page: str) -> bool:
     return os.environ.get("NYTE_BRAND_V3_PREVIEW") == "1" or page in BRAND_V3_PAGES
 
 
+def brand_v3_share_image_used(slug: str) -> bool:
+    """New York's image is shared by all its pages; a city's only by its home page."""
+    if slug == "new-york":
+        return any(uses_brand_v3(page) for page in PAGES)
+    return uses_brand_v3("home")
+
+
 def uses_nyte(market: dict) -> bool:
     """Whether a market's home page is rendered from this design."""
     return market["slug"] == "new-york" or market["slug"] in CITIES
@@ -288,8 +295,11 @@ def render_nyte(
     if city and page != "home":
         raise ValueError("City domains serve New York's shared pages; only their home page is rendered per city.")
     if image_url is None:
-        image_version = hashlib.sha256((HERE / f"social-images/og-{market['slug']}.png").read_bytes()).hexdigest()[:12]
-        image_url = f"https://{market['domain']}/assets/og-{market['slug']}.png?v=" + image_version
+        image_name = f"og-{market['slug']}.png"
+        if uses_brand_v3(page) and (HERE / f"social-images/og-v3-{market['slug']}.png").exists():
+            image_name = f"og-v3-{market['slug']}.png"
+        image_version = hashlib.sha256((HERE / "social-images" / image_name).read_bytes()).hexdigest()[:12]
+        image_url = f"https://{market['domain']}/assets/{image_name}?v=" + image_version
     entry = PAGES[page]
     path, title, description = entry["route"], entry["title"], entry["description"]
     if city:
@@ -324,6 +334,7 @@ def render_nyte(
     if uses_brand_v3(page):
         brand_version = hashlib.sha256((SOURCE / "brand-v3.css").read_bytes()).hexdigest()[:12]
         extra_head += f'<link rel="stylesheet" href="/assets/nyte-v2/brand-v3.css?v={brand_version}">'
+        extra_head += '<link rel="icon" href="/assets/nyte-v2/logos/favicon.svg" type="image/svg+xml">'
     result = (SOURCE / "shell.html").read_text()
     evidence_version = hashlib.sha256((HERE / "live-evidence.js").read_bytes()).hexdigest()[:12]
     for key, value in dict(domain=market["domain"], market=market["slug"], region=html.escape(market.get("logo_place", market["region"])), brand_class=" brand-one" if market.get("logo_one_line") else "", exchange_name=html.escape(market["name"]), host_brand="" if city or page == "home" else host_brand_script(page), nav=render_nav(), buyer_deck=(SOURCE / "buyer-deck.html").read_text() if page in {"home", "api"} else "", extra_head=extra_head, image_url=html.escape(image_url, quote=True), title=html.escape(title), description=html.escape(description, quote=True), path=path, page=page, version=version, content=content, markets=market_links, evidence_script='<script src="/assets/nyte-v2/live-evidence.js?v=' + evidence_version + '" defer></script>' if page == "api" else "").items():
