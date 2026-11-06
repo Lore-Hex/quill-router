@@ -85,6 +85,7 @@ from trusted_router.dashboard import (
     public_competitor_compare_index_html,
     public_contact_html,
     public_dpa_html,
+    public_encrypted_ai_html,
     public_fusion_html,
     public_google_search_experiment_html,
     public_hipaa_readiness_html,
@@ -129,6 +130,7 @@ from trusted_router.domains import (
     request_hostname,
     status_hostname_for_domain,
 )
+from trusted_router.encrypted_ai import directory_view
 from trusted_router.exchange_analytics import ExchangeEvent, accept_event
 from trusted_router.marketing_experiments import (
     GOOGLE_SEARCH_CELLS_BY_ID,
@@ -164,9 +166,13 @@ from trusted_router.receipt_keys import (
 from trusted_router.request_limits import normalized_client_identity
 from trusted_router.routes.mcp import MCP_PROTOCOL_VERSION
 from trusted_router.scopes import KNOWN_SCOPES
-from trusted_router.serialization import user_model_public_shape
 from trusted_router.services.email import EmailMessage, get_email_service
 from trusted_router.services.ops_chat import OpsChatSupportMessage, fanout_support_message
+from trusted_router.services.reserved_tokens import (
+    ReservationRequest,
+    create_reservation_checkout,
+    reservation_quote,
+)
 from trusted_router.services.trust_release import (
     ResolvedTrustRelease,
     TrustReleaseResolver,
@@ -178,10 +184,6 @@ from trusted_router.services.trust_release import (
     validated_azure_metadata,
 )
 from trusted_router.storage import STORE
-from trusted_router.storage_custom_models import (
-    is_user_provided_model_id,
-    normalize_user_provided_model_id,
-)
 from trusted_router.storage_models import (
     ReceiptKey,
     SyntheticProbeSample,
@@ -199,6 +201,9 @@ from trusted_router.trust import aws_release, azure_release, gcp_release, trust_
 from trusted_router.views import render_template
 
 STATUS_SNAPSHOT_CACHE_SECONDS = 15
+# The encrypted AI ranking is rebuilt every 15 minutes: an hour allows three
+# missed builds before the page says the ranking is updating.
+ENCRYPTED_AI_MAX_AGE_SECONDS = 3_600
 LEGACY_MODEL_PAGE_REDIRECTS: dict[str, str] = {
     "deepseek/deepseek-chat-v3.1": "/models/deepseek/deepseek-v3.1",
     "google/gemini-3-pro-image": "/models/google/gemini-3.1-flash-image-preview",
@@ -269,6 +274,7 @@ FLEET_SNAPSHOT_CACHE_SECONDS = 30
 _LEADERBOARD_CACHE: tuple[float, dict[str, Any]] | None = None
 _VIDEO_LEADERBOARD_CACHE: tuple[float, dict[str, Any]] | None = None
 _APPS_CACHE: tuple[float, dict[str, Any]] | None = None
+_ENCRYPTED_AI_CACHE: tuple[float, dict[str, Any] | None] | None = None
 _STATUS_RESPONSE_CACHE: OrderedDict[str, _CachedPublicBody] = OrderedDict()
 _STATUS_RESPONSE_REFRESHING: set[str] = set()
 _STATUS_RESPONSE_CACHE_LOCK = threading.RLock()
@@ -839,11 +845,11 @@ async def _handle_exchange_event(settings: Settings, request: Request) -> Respon
     if not accept_event(_inquiry_client_identity(request, settings)):
         return Response(status_code=429, headers={**headers, "Retry-After": "60"})
     campaign = exchange_site_campaign(request, event.campaign)
-    touch = {**exchange_site_touch(origin + "/", campaign), "page_path": event.page}
+    touch = exchange_site_touch(origin + "/", campaign, referrer_host=event.referrer_host, page_path=event.page)
     log_exchange_site_funnel_event(
         request, event.event, touch,
         visitor_id=str(event.visitor_id),
-        properties=event.model_dump(include={"cta", "position", "form", "destination_host"}, exclude_none=True),
+        properties=event.model_dump(include={"cta", "position", "form", "destination_host", "unit", "underlying_kind", "grade"}, exclude_none=True),
     )
     return Response(status_code=204, headers=headers)
 
@@ -949,7 +955,13 @@ async def _handle_enterprise_brief(settings: Settings, request: Request) -> Resp
                 visitor_id = str(visitor) if str(visitor) == payload.get("visitor_id") else None
             except ValueError:
                 visitor_id = None
-            touch = exchange_site_touch(page_url, campaign)
+            referrer_host, page_path = payload.get("referrer_host"), payload.get("page")
+            # Deliveries keep the creative label dashboards have always grouped them by.
+            touch = exchange_site_touch(
+                page_url, {"utm_content": "brief", **campaign},
+                referrer_host=referrer_host if isinstance(referrer_host, str) else None,
+                page_path=page_path if isinstance(page_path, str) else "/",
+            )
             if visitor_id:
                 log_exchange_site_funnel_event(request, event, touch, visitor_id=visitor_id)
             else:
@@ -964,8 +976,75 @@ async def _handle_enterprise_brief(settings: Settings, request: Request) -> Resp
     )
 
 
+async def _handle_reservation(settings: Settings, request: Request, *, checkout: bool) -> Response:
+    origin = _exchange_origin(request)
+    headers = _brief_headers(origin)
+
+    def error(message: str, status: int) -> JSONResponse:
+        return JSONResponse({"error": message}, status_code=status, headers=headers)
+
+    # Same canonical exchange origins and same-origin allowance as the brief.
+    if origin is None:
+        raw_origin = request.headers.get("origin")
+        try:
+            parsed = urlparse(raw_origin) if raw_origin is not None else None
+        except ValueError:
+            return error("invalid_origin", 403)
+        if request.headers.get("sec-fetch-site") == "cross-site" or (
+            parsed is not None and (parsed.scheme not in {"http", "https"} or parsed.netloc != request.url.netloc)
+        ):
+            return error("invalid_origin", 403)
+    identity = _inquiry_client_identity(request, settings)
+    namespace = "reserve-checkout" if checkout else "reserve-quote"
+    allowed = _inquiry_rate_ok(f"{namespace}:{identity}") if checkout else accept_event(f"{namespace}:{identity}")
+    if not allowed:
+        return error("rate_limited", 429)
+    try:
+        if checkout:
+            if request.headers.get("content-type", "").split(";", 1)[0] != "application/json":
+                return error("invalid_request", 415)
+            body = bytearray()
+            async for chunk in request.stream():
+                if len(body) + len(chunk) > 2048:
+                    return error("request_too_large", 413)
+                body.extend(chunk)
+            parsed_body = ReservationRequest.model_validate_json(body)
+            site_host = (urlparse(origin).hostname if origin else request.url.hostname) or ""
+            result = await run_in_threadpool(create_reservation_checkout, settings, parsed_body, site_host=site_host)
+        else:
+            grade = request.query_params.get("grade", "")
+            lots_raw = request.query_params.get("lots", "")
+            if not lots_raw.isascii() or not lots_raw.isdigit() or len(lots_raw) > 9:
+                return error("invalid_lots", 422)
+            result = reservation_quote(settings, grade, int(lots_raw))
+    except ValidationError:
+        return error("Supply a grade, integer lots and terms_accepted=true", 422)
+    except HTTPException as exc:
+        return JSONResponse(exc.detail, status_code=exc.status_code, headers=headers)
+    except Exception:  # noqa: BLE001 - do not expose Stripe internals or submitted data
+        log.error("reserved_tokens.checkout_unavailable")
+        return error("Card checkout is temporarily unavailable; book a call or try again", 503)
+    return JSONResponse(result, headers=headers)
+
+
 def register_public_action_routes(app: FastAPI, settings: Settings) -> None:
     """Register anonymous actions on their credential-minimal bulkhead."""
+
+    @app.post("/token-exchange/reserve/checkout", include_in_schema=False)
+    async def reserve_checkout(request: Request) -> Response:
+        return await _handle_reservation(settings, request, checkout=True)
+
+    @app.get("/token-exchange/reserve/quote", include_in_schema=False)
+    async def reserve_quote(request: Request) -> Response:
+        return await _handle_reservation(settings, request, checkout=False)
+
+    @app.options("/token-exchange/reserve/checkout", include_in_schema=False)
+    @app.options("/token-exchange/reserve/quote", include_in_schema=False)
+    async def reserve_preflight(request: Request) -> Response:
+        response = await _handle_enterprise_brief_preflight(request)
+        if response.status_code == 204:
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        return response
 
     @app.post("/token-exchange/events", include_in_schema=False)
     async def exchange_event(request: Request) -> Response:
@@ -1130,7 +1209,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         response_class=HTMLResponse,
         include_in_schema=False,
     )
-    async def api_reference() -> Response:
+    def api_reference() -> Response:
         canonical_url = f"https://{settings.trusted_domain}/api/reference"
         if settings.service_surface == "observer":
             # Regional status/catalog observers intentionally expose no local
@@ -1209,7 +1288,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         methods=["GET", "HEAD"],
         include_in_schema=False,
     )
-    async def legacy_api_reference() -> RedirectResponse:
+    def legacy_api_reference() -> RedirectResponse:
         return RedirectResponse(url="/api/reference", status_code=301)
 
     @public_html_route("/", include_slash=False)
@@ -1251,146 +1330,141 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         )
 
     @public_html_route("/compare/openrouter")
-    async def compare_openrouter() -> HTMLResponse:
+    def compare_openrouter() -> HTMLResponse:
         body = public_competitor_compare_html(settings, "openrouter")
         assert body is not None
         return HTMLResponse(body)
 
     @public_html_route("/compare/vercel-ai-gateway")
-    async def compare_vercel_ai_gateway() -> HTMLResponse:
+    def compare_vercel_ai_gateway() -> HTMLResponse:
         body = public_competitor_compare_html(settings, "vercel-ai-gateway")
         assert body is not None
         return HTMLResponse(body)
 
     @public_html_route("/compare/litellm")
-    async def compare_litellm() -> HTMLResponse:
+    def compare_litellm() -> HTMLResponse:
         body = public_competitor_compare_html(settings, "litellm")
         assert body is not None
         return HTMLResponse(body)
 
     @public_html_route("/compare")
-    async def competitor_compare_index() -> HTMLResponse:
+    def competitor_compare_index() -> HTMLResponse:
         return HTMLResponse(public_competitor_compare_index_html(settings))
 
     @public_html_route("/docs/migrate-from-openrouter")
-    async def migrate_from_openrouter() -> str:
+    def migrate_from_openrouter() -> str:
         return public_page_html(settings, "docs/migrate-from-openrouter")
 
     @public_html_route("/docs/agent-setup")
-    async def agent_setup() -> str:
+    def agent_setup() -> str:
         return public_page_html(settings, "docs/agent-setup")
 
     @public_html_route("/docs/tagging")
-    async def tagging_docs() -> str:
+    def tagging_docs() -> str:
         return public_page_html(settings, "docs/tagging")
 
     @public_html_route("/docs/provider-routing")
-    async def provider_routing_docs() -> str:
+    def provider_routing_docs() -> str:
         return public_page_html(settings, "docs/provider-routing")
 
     @public_html_route("/performance-routing")
-    async def performance_routing_landing() -> str:
+    def performance_routing_landing() -> str:
         return public_page_html(settings, "performance-routing")
 
     @public_html_route("/spend-controls")
-    async def spend_controls_landing() -> str:
+    def spend_controls_landing() -> str:
         return public_page_html(settings, "spend-controls")
 
     @public_html_route("/prompt-caching")
-    async def prompt_caching_landing() -> str:
+    def prompt_caching_landing() -> str:
         return public_page_html(settings, "prompt-caching")
 
     @public_html_route("/model-precision")
-    async def model_precision_landing() -> str:
+    def model_precision_landing() -> str:
         return public_page_html(settings, "model-precision")
 
     @public_html_route("/docs/performance-routing")
-    async def performance_routing_docs() -> str:
+    def performance_routing_docs() -> str:
         return public_page_html(settings, "docs/performance-routing")
 
     @public_html_route("/docs/spend-controls")
-    async def spend_controls_docs() -> str:
+    def spend_controls_docs() -> str:
         return public_page_html(settings, "docs/spend-controls")
 
     @public_html_route("/docs/model-precision")
-    async def model_precision_docs() -> str:
+    def model_precision_docs() -> str:
         return public_page_html(settings, "docs/model-precision")
 
     @public_html_route("/docs/receipts")
-    async def receipts_docs() -> str:
+    def receipts_docs() -> str:
         return public_page_html(settings, "docs/receipts")
 
     @public_html_route("/docs/telemetry")
-    async def telemetry_docs() -> str:
+    def telemetry_docs() -> str:
         return public_page_html(settings, "docs/telemetry")
 
     @public_html_route("/docs/prompt-caching")
-    async def prompt_caching_docs() -> str:
+    def prompt_caching_docs() -> str:
         return public_page_html(settings, "docs/prompt-caching")
 
     @public_html_route("/docs/batch")
-    async def batch_docs() -> str:
+    def batch_docs() -> str:
         return public_page_html(settings, "docs/batch")
 
     @public_html_route("/docs/decide")
-    async def decide_docs() -> str:
+    def decide_docs() -> str:
         return public_page_html(settings, "docs/decide")
 
     @public_html_route("/docs/web-search")
-    async def web_search_docs() -> str:
+    def web_search_docs() -> str:
         return public_page_html(settings, "docs/web-search")
 
     @public_html_route("/docs/video")
-    async def video_docs() -> str:
+    def video_docs() -> str:
         return public_page_html(settings, "docs/video")
 
     @public_html_route("/docs/mcp")
-    async def mcp_docs() -> str:
+    def mcp_docs() -> str:
         return public_page_html(settings, "docs/mcp")
 
     @public_html_route("/docs/notify")
-    async def notify_docs() -> str:
+    def notify_docs() -> str:
         return public_page_html(settings, "docs/notify")
 
     @public_html_route("/docs/evals")
-    async def evals() -> str:
+    def evals() -> str:
         return public_page_html(settings, "docs/evals")
 
     @public_html_route("/docs/provider-conformance")
-    async def provider_conformance_docs() -> str:
+    def provider_conformance_docs() -> str:
         return public_page_html(settings, "docs/provider-conformance")
 
     @public_html_route("/docs/synth")
-    async def synth_docs() -> str:
+    def synth_docs() -> str:
         return public_page_html(settings, "docs/synth")
 
     @public_html_route("/docs/fusion")
-    async def fusion_docs() -> RedirectResponse:
+    def fusion_docs() -> RedirectResponse:
         return RedirectResponse(url="/docs/synth", status_code=301)
 
     @public_html_route("/docs/x402")
-    async def x402_docs() -> str:
+    def x402_docs() -> str:
         return public_page_html(settings, "docs/x402")
 
-    @public_html_route("/docs/user-models")
-    async def user_models_docs() -> str:
-        return public_page_html(settings, "docs/user-models")
-
-    @public_html_route("/docs/custom-models")
-    async def custom_models_docs() -> str:
-        return public_page_html(settings, "docs/custom-models")
 
     @public_html_route("/eu")
-    async def eu() -> str:
+    def eu() -> str:
         return public_page_html(settings, "eu")
 
     @public_html_route("/trustedos")
-    async def trustedos() -> str:
+    def trustedos() -> str:
         return public_page_html(settings, "trustedos")
 
     @public_html_route("/confidential-cowork")
-    async def confidential_cowork() -> str:
-        return public_page_html(settings, "confidential-cowork")
+    def confidential_cowork() -> RedirectResponse:
+        return RedirectResponse(
+            url="https://nytokenexchange.com/trusted-cowork", status_code=301
+        )
 
     # ── SEO landing pages ────────────────────────────────────────────
     # Top-level slugs targeting high-intent buyer queries. Each is a
@@ -1398,23 +1472,23 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     # Keep these top-level (not under /seo or /landing) — that hurts
     # ranking and looks defensive.
     @public_html_route("/azure-openai-alternative")
-    async def seo_azure_openai_alternative() -> str:
+    def seo_azure_openai_alternative() -> str:
         return public_page_html(settings, "azure-openai-alternative")
 
     @public_html_route("/deepseek-api-privacy")
-    async def seo_deepseek_api_privacy() -> str:
+    def seo_deepseek_api_privacy() -> str:
         return public_page_html(settings, "deepseek-api-privacy")
 
     @public_html_route("/glm-5-api")
-    async def seo_glm_5_api() -> str:
+    def seo_glm_5_api() -> str:
         return public_page_html(settings, "glm-5-api")
 
     @public_html_route("/gdpr-compliant-llm-api")
-    async def seo_gdpr_compliant_llm_api() -> str:
+    def seo_gdpr_compliant_llm_api() -> str:
         return public_page_html(settings, "gdpr-compliant-llm-api")
 
     @public_html_route("/chinese-ai-models-us-hosted")
-    async def seo_chinese_ai_models_us_hosted() -> str:
+    def seo_chinese_ai_models_us_hosted() -> str:
         return public_page_html(settings, "chinese-ai-models-us-hosted")
 
     # Jurisdiction directories. Their provider and model lists are rebuilt from
@@ -1433,75 +1507,75 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         return await _model_region_response(settings, "china-ai-models", background_tasks)
 
     @public_html_route("/minimax-m3-api")
-    async def seo_minimax_m3_api() -> str:
+    def seo_minimax_m3_api() -> str:
         return public_page_html(settings, "minimax-m3-api")
 
     @public_html_route("/best-llm-router")
-    async def seo_best_llm_router() -> str:
+    def seo_best_llm_router() -> str:
         return public_page_html(settings, "best-llm-router")
 
     @public_html_route("/llm-failover")
-    async def seo_llm_failover() -> str:
+    def seo_llm_failover() -> str:
         return public_page_html(settings, "llm-failover")
 
     @public_html_route("/groq-alternative")
-    async def seo_groq_alternative() -> str:
+    def seo_groq_alternative() -> str:
         return public_page_html(settings, "groq-alternative")
 
     @public_html_route("/vertex-ai-alternative")
-    async def seo_vertex_ai_alternative() -> str:
+    def seo_vertex_ai_alternative() -> str:
         return public_page_html(settings, "vertex-ai-alternative")
 
     @public_html_route("/llm-api-for-financial-services")
-    async def seo_llm_api_for_financial_services() -> str:
+    def seo_llm_api_for_financial_services() -> str:
         return public_page_html(settings, "llm-api-for-financial-services")
 
     @public_html_route("/llm-api-for-law-firms")
-    async def seo_llm_api_for_law_firms() -> str:
+    def seo_llm_api_for_law_firms() -> str:
         return public_page_html(settings, "llm-api-for-law-firms")
 
     @public_html_route("/llm-data-residency")
-    async def seo_llm_data_residency() -> str:
+    def seo_llm_data_residency() -> str:
         return public_page_html(settings, "llm-data-residency")
 
     @public_html_route("/no-log-llm-api")
-    async def seo_no_log_llm_api() -> str:
+    def seo_no_log_llm_api() -> str:
         return public_page_html(settings, "no-log-llm-api")
 
     @public_html_route("/anonymous-llm-api")
-    async def seo_anonymous_llm_api() -> str:
+    def seo_anonymous_llm_api() -> str:
         return public_page_html(settings, "anonymous-llm-api")
 
     @public_html_route("/cline-api-provider")
-    async def seo_cline_api_provider() -> str:
+    def seo_cline_api_provider() -> str:
         return public_page_html(settings, "cline-api-provider")
 
     @public_html_route("/sillytavern-api")
-    async def seo_sillytavern_api() -> str:
+    def seo_sillytavern_api() -> str:
         return public_page_html(settings, "sillytavern-api")
 
     @public_html_route("/aws-bedrock-alternative")
-    async def seo_aws_bedrock_alternative() -> str:
+    def seo_aws_bedrock_alternative() -> str:
         return public_page_html(settings, "aws-bedrock-alternative")
 
     @public_html_route("/llm-document-processing")
-    async def seo_llm_document_processing() -> str:
+    def seo_llm_document_processing() -> str:
         return public_page_html(settings, "llm-document-processing")
 
     @public_html_route("/gpt-oss-120b-api")
-    async def seo_gpt_oss_120b_api() -> str:
+    def seo_gpt_oss_120b_api() -> str:
         return public_page_html(settings, "gpt-oss-120b-api")
 
     @public_html_route("/latest-model-apis")
-    async def seo_latest_model_apis() -> str:
+    def seo_latest_model_apis() -> str:
         return public_page_html(settings, "latest-model-apis")
 
     @public_html_route("/eu-ai-act-llm-compliance")
-    async def seo_eu_ai_act_llm_compliance() -> str:
+    def seo_eu_ai_act_llm_compliance() -> str:
         return public_page_html(settings, "eu-ai-act-llm-compliance")
 
     @public_html_route("/x402-llm-api")
-    async def seo_x402_llm_api() -> str:
+    def seo_x402_llm_api() -> str:
         return public_page_html(settings, "x402-llm-api")
 
     def openrouter_landing_experiment_redirect(request: Request) -> RedirectResponse:
@@ -1536,7 +1610,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         )
 
     @public_html_route("/openrouter-alternative")
-    async def seo_openrouter_alternative(
+    def seo_openrouter_alternative(
         request: Request,
     ) -> Response:
         if request.query_params.get("utm_campaign") in OPENROUTER_LANDING_EXPERIMENT_CAMPAIGNS:
@@ -1544,11 +1618,11 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         return HTMLResponse(public_page_html(settings, "openrouter-alternative"))
 
     @public_html_route("/private-llm-api")
-    async def seo_private_llm_api() -> str:
+    def seo_private_llm_api() -> str:
         return public_page_html(settings, "private-llm-api")
 
     @public_html_route("/openrouter-alternative/quickstart")
-    async def experiment_openrouter_quickstart() -> str:
+    def experiment_openrouter_quickstart() -> str:
         return public_page_html(
             settings,
             "openrouter-alternative/quickstart",
@@ -1557,7 +1631,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         )
 
     @public_html_route("/openrouter-alternative/experiment")
-    async def experiment_openrouter_landing_router(
+    def experiment_openrouter_landing_router(
         request: Request,
     ) -> RedirectResponse:
         return openrouter_landing_experiment_redirect(request)
@@ -1566,7 +1640,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         "/openrouter-alternative/lp/{variant_slug}",
         include_slash=False,
     )
-    async def experiment_openrouter_landing_variant(
+    def experiment_openrouter_landing_variant(
         variant_slug: str,
     ) -> Response:
         if variant_slug not in OPENROUTER_PAID_LANDING_VARIANTS:
@@ -1581,14 +1655,14 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         "/openrouter-alternative/test/{cell_id}",
         include_slash=False,
     )
-    async def experiment_google_search_landing_cell(cell_id: str) -> Response:
+    def experiment_google_search_landing_cell(cell_id: str) -> Response:
         cell = GOOGLE_SEARCH_CELLS_BY_ID.get(cell_id)
         if cell is None:
             raise HTTPException(status_code=404)
         return HTMLResponse(public_google_search_experiment_html(settings, cell))
 
     @public_html_route("/private-llm-api/quickstart")
-    async def experiment_private_llm_quickstart() -> str:
+    def experiment_private_llm_quickstart() -> str:
         return public_page_html(
             settings,
             "private-llm-api/quickstart",
@@ -1597,69 +1671,69 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         )
 
     @public_html_route("/hipaa-llm-api")
-    async def seo_hipaa_llm_api() -> str:
+    def seo_hipaa_llm_api() -> str:
         return public_page_html(settings, "hipaa-llm-api")
 
     @public_html_route("/llm-zero-data-retention")
-    async def seo_llm_zero_data_retention() -> str:
+    def seo_llm_zero_data_retention() -> str:
         return public_page_html(settings, "llm-zero-data-retention")
 
     @public_html_route("/claude-api-privacy")
-    async def seo_claude_api_privacy() -> str:
+    def seo_claude_api_privacy() -> str:
         return public_page_html(settings, "claude-api-privacy")
 
     @public_html_route("/litellm-alternative")
-    async def seo_litellm_alternative() -> str:
+    def seo_litellm_alternative() -> str:
         return public_page_html(settings, "litellm-alternative")
 
     @public_html_route("/portkey-alternative")
-    async def seo_portkey_alternative() -> str:
+    def seo_portkey_alternative() -> str:
         return public_page_html(settings, "portkey-alternative")
 
     @public_html_route("/confidential-computing-llm")
-    async def seo_confidential_computing_llm() -> str:
+    def seo_confidential_computing_llm() -> str:
         return public_page_html(settings, "confidential-computing-llm")
 
     @public_html_route("/badge")
-    async def confidential_ai_badge() -> str:
+    def confidential_ai_badge() -> str:
         return public_page_html(settings, "badge")
 
     @public_html_route("/media-kit")
-    async def media_kit() -> str:
+    def media_kit() -> str:
         return public_page_html(settings, "media-kit")
 
     @public_html_route("/tinfoil-alternative")
-    async def seo_tinfoil_alternative() -> str:
+    def seo_tinfoil_alternative() -> str:
         return public_page_html(settings, "tinfoil-alternative")
 
     @public_html_route("/sign-in-with-trustedrouter")
-    async def seo_sign_in_with_trustedrouter() -> str:
+    def seo_sign_in_with_trustedrouter() -> str:
         return public_page_html(settings, "sign-in-with-trustedrouter")
 
     @public_html_route("/sign-in-as-ycombinator")
     @public_html_route("/sign-in-as-startx")
     @public_html_route("/sign-in-as-vc")
-    async def company_signin_guide(request: Request) -> str:
+    def company_signin_guide(request: Request) -> str:
         return public_page_html(settings, request.url.path.strip("/"))
 
     @public_html_route("/openai-compatible-llm-api")
-    async def seo_openai_compatible_llm_api() -> str:
+    def seo_openai_compatible_llm_api() -> str:
         return public_page_html(settings, "openai-compatible-llm-api")
 
     @public_html_route("/kimi-k2-api")
-    async def seo_kimi_k2_api() -> str:
+    def seo_kimi_k2_api() -> str:
         return public_page_html(settings, "kimi-k2-api")
 
     @public_html_route("/gemini-flash-alternative")
-    async def seo_gemini_flash_alternative() -> str:
+    def seo_gemini_flash_alternative() -> str:
         return public_page_html(settings, "gemini-flash-alternative")
 
     @public_html_route("/llm-provider-latency-benchmarks")
-    async def seo_llm_provider_latency_benchmarks() -> str:
+    def seo_llm_provider_latency_benchmarks() -> str:
         return public_page_html(settings, "llm-provider-latency-benchmarks")
 
     @public_html_route("/pricing")
-    async def pricing() -> str:
+    def pricing() -> str:
         return public_page_html(settings, "pricing")
 
     @public_html_route("/choose")
@@ -1689,7 +1763,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         )
 
     @app.get("/ai-iq/models.json")
-    async def ai_iq_models() -> JSONResponse:
+    def ai_iq_models() -> JSONResponse:
         payload = ai_iq_catalog_payload(
             (model_id for model_id in MODELS if model_id not in META_MODEL_IDS),
             test_mode=settings.environment == "test",
@@ -1700,30 +1774,30 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         )
 
     @public_html_route("/docs")
-    async def docs_hub() -> str:
+    def docs_hub() -> str:
         return public_page_html(settings, "docs")
 
     @public_html_route("/vibe-coders")
-    async def vibe_coders() -> str:
+    def vibe_coders() -> str:
         return public_page_html(settings, "vibe-coders")
 
     @app.get("/claude-code", include_in_schema=False)
-    async def claude_code_redirect() -> RedirectResponse:
+    def claude_code_redirect() -> RedirectResponse:
         return RedirectResponse(url="/vibe-coders", status_code=301)
 
     @public_html_route("/for-developers")
-    async def for_developers() -> str:
+    def for_developers() -> str:
         return public_page_html(settings, "for-developers")
 
     @public_html_route("/providers/marketplace")
-    async def provider_marketplace() -> str:
+    def provider_marketplace() -> str:
         return public_page_html(settings, "providers/marketplace")
 
     @app.get(
         "/providers/marketplace/catalog.schema.json",
         include_in_schema=False,
     )
-    async def provider_catalog_schema() -> JSONResponse:
+    def provider_catalog_schema() -> JSONResponse:
         return JSONResponse(
             PROVIDER_CATALOG_SCHEMA,
             media_type="application/schema+json",
@@ -1734,7 +1808,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         "/providers/marketplace/catalog.v2.schema.json",
         include_in_schema=False,
     )
-    async def provider_catalog_v2_schema() -> JSONResponse:
+    def provider_catalog_v2_schema() -> JSONResponse:
         return JSONResponse(
             PROVIDER_CATALOG_V2_SCHEMA,
             media_type="application/schema+json",
@@ -1751,7 +1825,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         methods=["GET", "HEAD"],
         include_in_schema=False,
     )
-    async def legacy_provider_apply() -> RedirectResponse:
+    def legacy_provider_apply() -> RedirectResponse:
         return RedirectResponse(url="/providers/marketplace", status_code=301)
 
     @app.api_route(
@@ -1759,58 +1833,62 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         methods=["GET", "HEAD"],
         include_in_schema=False,
     )
-    async def legacy_provider_catalog_schema() -> RedirectResponse:
+    def legacy_provider_catalog_schema() -> RedirectResponse:
         return RedirectResponse(
             url="/providers/marketplace/catalog.schema.json",
             status_code=301,
         )
 
     @public_html_route("/apps")
-    async def apps() -> str:
+    def apps() -> str:
         return public_apps_html(settings, apps=_apps_snapshot(settings))
 
+    @public_html_route("/encrypted-ai")
+    def encrypted_ai() -> str:
+        return public_encrypted_ai_html(settings, view=directory_view(_encrypted_ai_snapshot(settings)))
+
     @public_html_route("/resources")
-    async def resources() -> str:
+    def resources() -> str:
         return public_page_html(settings, "resources")
 
     @public_html_route("/token-exchange")
-    async def token_exchange() -> str:
+    def token_exchange() -> str:
         return public_page_html(settings, "token-exchange")
 
     @public_html_route("/new-york-token-exchange")
-    async def new_york_token_exchange() -> str:
+    def new_york_token_exchange() -> str:
         return public_page_html(settings, "new-york-token-exchange")
 
     @public_html_route("/token-exchange/savings")
-    async def token_exchange_savings() -> str:
+    def token_exchange_savings() -> str:
         return public_page_html(settings, "token-exchange/savings")
 
     @public_html_route("/token-exchange/security")
-    async def token_exchange_security() -> str:
+    def token_exchange_security() -> str:
         return public_page_html(settings, "token-exchange/security")
 
     @public_html_route("/green-tokens")
-    async def green_tokens() -> str:
+    def green_tokens() -> str:
         return public_page_html(settings, "green-tokens")
 
     @public_html_route("/index")
-    async def token_index() -> str:
+    def token_index() -> str:
         return public_page_html(settings, "index")
 
     @public_html_route("/customers/robot-robot-human")
-    async def customer_robot_robot_human() -> str:
+    def customer_robot_robot_human() -> str:
         return public_page_html(settings, "customers/robot-robot-human")
 
     @public_html_route("/careers")
-    async def careers() -> str:
+    def careers() -> str:
         return public_page_html(settings, "careers")
 
     @public_html_route("/blog")
-    async def blog() -> str:
+    def blog() -> str:
         return public_blog_index_html(settings)
 
     @public_html_route("/blog/{slug}")
-    async def blog_post(slug: str) -> Any:
+    def blog_post(slug: str) -> Any:
         if slug in {"zeus-terminal-bench-hard-72", "socrates-pro-plus-terminal-bench-hard-72"}:
             return RedirectResponse(
                 url="/blog/socrates-1.1-terminal-bench-hard-72", status_code=301
@@ -1821,55 +1899,55 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         return html
 
     @public_html_route("/security")
-    async def security() -> str:
+    def security() -> str:
         return public_page_html(settings, "security")
 
     @public_html_route("/about")
-    async def about() -> str:
+    def about() -> str:
         return public_about_html(settings)
 
     @public_html_route("/contact")
-    async def contact() -> str:
+    def contact() -> str:
         return public_contact_html(settings)
 
     @public_html_route("/legal")
-    async def legal() -> str:
+    def legal() -> str:
         return public_legal_html(settings)
 
     @public_html_route("/privacy")
-    async def privacy() -> str:
+    def privacy() -> str:
         return public_privacy_html(settings)
 
     @public_html_route("/sms")
-    async def sms_program() -> str:
+    def sms_program() -> str:
         return public_sms_html(settings)
 
     @public_html_route("/terms")
-    async def terms() -> str:
+    def terms() -> str:
         return public_terms_html(settings)
 
     @public_html_route("/support")
-    async def support() -> str:
+    def support() -> str:
         return public_support_html(settings)
 
     @public_html_route("/legal/dpa")
-    async def legal_dpa() -> str:
+    def legal_dpa() -> str:
         return public_dpa_html(settings)
 
     @public_html_route("/legal/baa")
-    async def legal_baa() -> str:
+    def legal_baa() -> str:
         return public_baa_html(settings)
 
     @public_html_route("/legal/soc2-readiness")
-    async def legal_soc2_readiness() -> str:
+    def legal_soc2_readiness() -> str:
         return public_soc2_readiness_html(settings)
 
     @public_html_route("/legal/hipaa-readiness")
-    async def legal_hipaa_readiness() -> str:
+    def legal_hipaa_readiness() -> str:
         return public_hipaa_readiness_html(settings)
 
     @public_html_route("/legal/subprocessors")
-    async def legal_subprocessors() -> str:
+    def legal_subprocessors() -> str:
         return public_subprocessors_html(settings)
 
     @app.api_route(
@@ -1877,7 +1955,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         methods=["GET", "HEAD"],
         response_class=PlainTextResponse,
     )
-    async def legal_procurement_json() -> PlainTextResponse:
+    def legal_procurement_json() -> PlainTextResponse:
         return PlainTextResponse(
             procurement_json(settings),
             media_type="application/json",
@@ -1889,7 +1967,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         methods=["GET", "HEAD"],
         response_class=PlainTextResponse,
     )
-    async def legal_soc2_readiness_json() -> PlainTextResponse:
+    def legal_soc2_readiness_json() -> PlainTextResponse:
         return PlainTextResponse(
             soc2_readiness_json(settings),
             media_type="application/json",
@@ -1901,7 +1979,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         methods=["GET", "HEAD"],
         response_class=PlainTextResponse,
     )
-    async def legal_hipaa_readiness_json() -> PlainTextResponse:
+    def legal_hipaa_readiness_json() -> PlainTextResponse:
         return PlainTextResponse(
             hipaa_readiness_json(settings),
             media_type="application/json",
@@ -1913,7 +1991,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         methods=["GET", "HEAD"],
         response_class=PlainTextResponse,
     )
-    async def legal_subprocessors_json() -> PlainTextResponse:
+    def legal_subprocessors_json() -> PlainTextResponse:
         return PlainTextResponse(
             subprocessors_json(settings),
             media_type="application/json",
@@ -1921,15 +1999,15 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         )
 
     @public_html_route("/benchmarks")
-    async def benchmarks() -> str:
+    def benchmarks() -> str:
         return public_benchmarks_html(settings)
 
     @public_html_route("/benchmarks/reports")
-    async def benchmark_reports() -> str:
+    def benchmark_reports() -> str:
         return public_benchmark_reports_index_html(settings)
 
     @app.get("/benchmarks/reports/{period}.json", include_in_schema=False)
-    async def benchmark_report_json(period: str) -> JSONResponse:
+    def benchmark_report_json(period: str) -> JSONResponse:
         report = monthly_benchmark_report(period)
         if report is None:
             return JSONResponse(
@@ -1942,18 +2020,18 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         )
 
     @public_html_route("/benchmarks/reports/{period}")
-    async def benchmark_report(period: str) -> HTMLResponse:
+    def benchmark_report(period: str) -> HTMLResponse:
         body = public_benchmark_report_html(settings, period)
         if body is None:
             raise HTTPException(status_code=404)
         return HTMLResponse(body)
 
     @public_html_route("/rankings")
-    async def rankings() -> str:
+    def rankings() -> str:
         return public_rankings_html(settings)
 
     @app.api_route("/robots.txt", methods=["GET", "HEAD"], response_class=PlainTextResponse)
-    async def robots() -> PlainTextResponse:
+    def robots() -> PlainTextResponse:
         return PlainTextResponse(
             robots_txt(settings),
             headers={"cache-control": "public, max-age=300, s-maxage=3600"},
@@ -1965,14 +2043,14 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         response_class=PlainTextResponse,
         include_in_schema=False,
     )
-    async def indexnow_key() -> PlainTextResponse:
+    def indexnow_key() -> PlainTextResponse:
         return PlainTextResponse(
             f"{INDEXNOW_KEY}\n",
             headers={"cache-control": "public, max-age=86400, s-maxage=86400"},
         )
 
     @app.api_route("/sitemap.xml", methods=["GET", "HEAD"])
-    async def sitemap() -> Response:
+    def sitemap() -> Response:
         return Response(
             sitemap_xml(settings),
             media_type="application/xml",
@@ -1980,7 +2058,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         )
 
     @app.api_route("/sitemap-core.xml", methods=["GET", "HEAD"])
-    async def sitemap_core() -> Response:
+    def sitemap_core() -> Response:
         return Response(
             sitemap_core_xml(settings),
             media_type="application/xml",
@@ -1988,7 +2066,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         )
 
     @app.api_route("/sitemap-providers.xml", methods=["GET", "HEAD"])
-    async def sitemap_providers() -> Response:
+    def sitemap_providers() -> Response:
         return Response(
             sitemap_providers_xml(settings),
             media_type="application/xml",
@@ -1996,7 +2074,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         )
 
     @app.api_route("/sitemap-models.xml", methods=["GET", "HEAD"])
-    async def sitemap_models() -> Response:
+    def sitemap_models() -> Response:
         return Response(
             sitemap_models_xml(settings),
             media_type="application/xml",
@@ -2004,7 +2082,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         )
 
     @app.api_route("/sitemap-comparisons.xml", methods=["GET", "HEAD"])
-    async def sitemap_comparisons() -> Response:
+    def sitemap_comparisons() -> Response:
         return Response(
             sitemap_comparisons_xml(settings),
             media_type="application/xml",
@@ -2013,7 +2091,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
 
     @app.get("/.well-known/mcp/server-card.json", include_in_schema=False)
     @app.get("/.well-known/mcp.json", include_in_schema=False)
-    async def mcp_discovery(request: Request) -> JSONResponse:
+    def mcp_discovery(request: Request) -> JSONResponse:
         """Where the MCP server is, for a client that has only the domain.
 
         Lives with the public documents rather than beside the MCP endpoint
@@ -2057,7 +2135,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         )
 
     @app.get("/.well-known/oauth-authorization-server", include_in_schema=False)
-    async def oauth_authorization_server_metadata(request: Request) -> JSONResponse:
+    def oauth_authorization_server_metadata(request: Request) -> JSONResponse:
         """Describe the delegated API-key authorization flow to public clients."""
         origin = f"https://{request_control_domain(request, settings)}"
         return JSONResponse(
@@ -2076,14 +2154,14 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         )
 
     @app.api_route("/llms.txt", methods=["GET", "HEAD"], response_class=PlainTextResponse)
-    async def llms() -> PlainTextResponse:
+    def llms() -> PlainTextResponse:
         return PlainTextResponse(
             llms_txt(settings),
             headers=public_document_headers("/llms.txt"),
         )
 
     @app.api_route("/docs/llms.txt", methods=["GET", "HEAD"], response_class=PlainTextResponse)
-    async def docs_llms() -> PlainTextResponse:
+    def docs_llms() -> PlainTextResponse:
         return PlainTextResponse(
             docs_llms_txt(settings),
             headers=public_document_headers("/docs/llms.txt"),
@@ -2094,7 +2172,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         methods=["GET", "HEAD"],
         response_class=PlainTextResponse,
     )
-    async def docs_llms_full() -> PlainTextResponse:
+    def docs_llms_full() -> PlainTextResponse:
         return PlainTextResponse(
             docs_llms_full_txt(settings),
             headers=public_document_headers("/docs/llms-full.txt"),
@@ -2106,7 +2184,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     # documents sat under /docs, which is discoverable only after you have
     # already found the index you were looking for.
     @app.api_route("/llms-full.txt", methods=["GET", "HEAD"], response_class=PlainTextResponse)
-    async def llms_full() -> PlainTextResponse:
+    def llms_full() -> PlainTextResponse:
         return PlainTextResponse(
             docs_llms_full_txt(settings),
             headers=public_document_headers("/llms-full.txt"),
@@ -2115,14 +2193,14 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @app.api_route(
         "/.well-known/llms.txt", methods=["GET", "HEAD"], response_class=PlainTextResponse
     )
-    async def well_known_llms() -> PlainTextResponse:
+    def well_known_llms() -> PlainTextResponse:
         return PlainTextResponse(
             llms_txt(settings),
             headers=public_document_headers("/llms.txt"),
         )
 
     @app.api_route("/api", methods=["GET", "HEAD"], include_in_schema=False)
-    async def api_alias() -> RedirectResponse:
+    def api_alias() -> RedirectResponse:
         """/api is the first URL an agent guesses for API docs. It 404'd."""
         return RedirectResponse(url="/docs", status_code=308)
 
@@ -2274,11 +2352,11 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         )
 
     @public_html_route("/models")
-    async def models(request: Request) -> str:
+    def models(request: Request) -> str:
         return public_models_html(settings, model_filter=request.query_params.get("filter", "all"))
 
     @public_html_route("/providers")
-    async def providers(request: Request) -> Response:
+    def providers(request: Request) -> Response:
         if _wants_html(request):
             return HTMLResponse(public_providers_html(settings))
         return JSONResponse(
@@ -2290,7 +2368,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         )
 
     @public_html_route("/providers/{provider_slug}/performance")
-    async def provider_performance(provider_slug: str) -> Response:
+    def provider_performance(provider_slug: str) -> Response:
         requested = provider_slug.strip()
         canonical = _canonical_public_provider_slug(requested)
         if canonical != requested:
@@ -2304,7 +2382,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         return HTMLResponse(body)
 
     @public_html_route("/providers/{provider_slug}")
-    async def provider_detail(provider_slug: str) -> Response:
+    def provider_detail(provider_slug: str) -> Response:
         requested = provider_slug.strip()
         canonical = _canonical_public_provider_slug(requested)
         if canonical != requested:
@@ -2318,13 +2396,13 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         return HTMLResponse(body)
 
     @public_html_route("/compare/models")
-    async def model_compare_index() -> HTMLResponse:
+    def model_compare_index() -> HTMLResponse:
         body = public_model_compare_index_html(settings)
         assert body is not None
         return HTMLResponse(body)
 
     @public_html_route("/compare/models/page/{page}")
-    async def model_compare_index_page(page: int) -> Response:
+    def model_compare_index_page(page: int) -> Response:
         if page == 1:
             return RedirectResponse(url="/compare/models", status_code=301)
         body = public_model_compare_index_html(settings, page=page)
@@ -2336,7 +2414,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         return HTMLResponse(body)
 
     @public_html_route("/compare/models/{left_author}/{left_slug}/vs/{right_author}/{right_slug}")
-    async def model_compare(
+    def model_compare(
         left_author: str,
         left_slug: str,
         right_author: str,
@@ -2360,38 +2438,23 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         return HTMLResponse(body)
 
     @public_html_route("/compare/{competitor_slug}")
-    async def competitor_compare(competitor_slug: str) -> HTMLResponse:
+    def competitor_compare(competitor_slug: str) -> HTMLResponse:
         body = public_competitor_compare_html(settings, competitor_slug.strip())
         if body is None:
             raise HTTPException(status_code=404)
         return HTMLResponse(body)
 
     @public_html_route("/chat")
-    async def chat() -> str:
+    def chat() -> str:
         return public_chat_html(settings)
 
-    @public_html_route("/user-chat")
-    async def user_chat(model: str = Query(..., min_length=1)) -> str:
-        locked_model_id = model.strip().lower()
-        user_model = (
-            STORE.get_user_model(normalize_user_provided_model_id(locked_model_id))
-            if is_user_provided_model_id(locked_model_id)
-            else None
-        )
-        return public_chat_html(
-            settings,
-            locked_model_id=locked_model_id,
-            locked_model_label=(
-                "User-provided model" if user_model is not None else "Custom model"
-            ),
-        )
 
     @public_html_route("/synth")
-    async def synth() -> str:
+    def synth() -> str:
         return public_fusion_html(settings)
 
     @public_html_route("/fusion")
-    async def fusion() -> RedirectResponse:
+    def fusion() -> RedirectResponse:
         return RedirectResponse(url="/synth", status_code=301)
 
     # Per-model detail page. Path captures `{author}/{slug}` (e.g.
@@ -2405,7 +2468,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         methods=["GET", "HEAD"],
         response_class=HTMLResponse,
     )
-    async def model_detail(model_id: str) -> Response:
+    def model_detail(model_id: str) -> Response:
         cleaned = model_id.strip()
         maybe_base_model_id, separator, maybe_section = cleaned.rpartition("/")
         legacy_model_id = (
@@ -2436,27 +2499,6 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             return HTMLResponse(body)
         body = public_model_detail_html(settings, cleaned)
         if body is None:
-            user_model = (
-                STORE.get_user_model(normalize_user_provided_model_id(cleaned))
-                if is_user_provided_model_id(cleaned)
-                else None
-            )
-            if user_model is not None and user_model.enabled and user_model.status == "active":
-                shape = user_model_public_shape(user_model)
-                body = render_template(
-                    "public/user_model_detail.html",
-                    api_base_url=settings.api_base_url,
-                    site_url=(f"https://{settings.trusted_domain}/models/{user_model.id}"),
-                    title=f"{user_model.name} | User-provided model",
-                    heading=user_model.name,
-                    description=shape["privacy_notice"],
-                    robots_meta="noindex",
-                    model=shape,
-                    google_enabled=settings.google_oauth_enabled,
-                    github_enabled=settings.github_oauth_enabled,
-                    static_version=settings.release,
-                )
-        if body is None:
             return HTMLResponse(
                 public_model_not_found_html(settings, cleaned),
                 status_code=404,
@@ -2464,7 +2506,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         return HTMLResponse(body)
 
     @app.get("/og.png")
-    async def og_image() -> FileResponse:
+    def og_image() -> FileResponse:
         return FileResponse(
             path=OG_PNG_PATH,
             media_type="image/png",
@@ -2473,7 +2515,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
 
     @app.get("/favicon.ico")
     @app.head("/favicon.ico")
-    async def favicon() -> FileResponse:
+    def favicon() -> FileResponse:
         return FileResponse(
             path=STATIC_DIR / "favicon.ico",
             media_type="image/x-icon",
@@ -2481,7 +2523,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         )
 
     @app.get("/trust/control-plane.json")
-    async def trust_control_plane() -> JSONResponse:
+    def trust_control_plane() -> JSONResponse:
         """What commit THIS control plane is running.
 
         The enclave release records answer "which gateway build is serving".
@@ -3166,6 +3208,31 @@ def _apps_snapshot(settings: Settings) -> dict[str, Any]:
     return payload
 
 
+def _encrypted_ai_snapshot(settings: Settings) -> dict[str, Any] | None:
+    """The quarter-hourly encrypted-token ranking, or None while it is
+    unavailable (the page then shows the curated tiers alone). Never a
+    per-view live read: the builder on the analytics node owns the query.
+    A failed read is cached too (no retry on every view), and a cached
+    ranking is served only while it is within the freshness bound."""
+    global _ENCRYPTED_AI_CACHE
+    if settings.environment == "test":
+        return None
+    now = time.monotonic()
+    if _ENCRYPTED_AI_CACHE is None or now - _ENCRYPTED_AI_CACHE[0] >= STATUS_SNAPSHOT_CACHE_SECONDS:
+        try:
+            payload = _precomputed_public_analytics_snapshot("encrypted_ai")
+        except Exception as exc:
+            _log_public_analytics_snapshot_read_failure("encrypted_ai", exc)
+            payload = _ENCRYPTED_AI_CACHE[1] if _ENCRYPTED_AI_CACHE is not None else None
+        _ENCRYPTED_AI_CACHE = (now, payload)
+    cached = _ENCRYPTED_AI_CACHE[1]
+    if cached is None:
+        return None
+    return current_public_analytics_snapshot(
+        "encrypted_ai", reader=lambda _name: cached, max_age_seconds=ENCRYPTED_AI_MAX_AGE_SECONDS
+    )
+
+
 def _precomputed_public_analytics_snapshot(name: str) -> dict[str, Any] | None:
     reader = getattr(STORE, "public_analytics_snapshot", None)
     if not callable(reader):
@@ -3173,7 +3240,11 @@ def _precomputed_public_analytics_snapshot(name: str) -> dict[str, Any] | None:
     return current_public_analytics_snapshot(
         name,
         reader=reader,
-        max_age_seconds=(2_147_483_647 if name == "client_reliability" else 600),
+        max_age_seconds=(
+            2_147_483_647 if name == "client_reliability"
+            else ENCRYPTED_AI_MAX_AGE_SECONDS if name == "encrypted_ai"
+            else 600
+        ),
     )
 
 

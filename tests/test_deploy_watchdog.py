@@ -316,11 +316,16 @@ def _run_staged_probe(
     interrupt_drain: bool = False,
     drain_remove_fails: bool = False,
     rollback_fails: bool = False,
+    region: str = "us-central1",
+    mutex_assert_failure_at: int | None = None,
+    extra_env: dict[str, str] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     stub_bin = tmp_path / "bin"
     stub_bin.mkdir()
     call_log = tmp_path / "calls.log"
     call_log.write_text("")
+    mutex_assert_count = tmp_path / "mutex-assert-count"
+    mutex_assert_count.write_text("0\n")
     tag_state = tmp_path / "tag-state"
     tag_state.write_text("")
     drain_state = tmp_path / "drain-state"
@@ -408,6 +413,17 @@ if [ "$1" = "-c" ]; then
   exec "$STAGED_REAL_PYTHON" "$@"
 fi
 printf 'python3 %s\\n' "$*" >>"$STAGED_CALL_LOG"
+if [[ "$1" == */cloud_rollout.py ]] && [ "$2" = "assert" ]; then
+  # Fence check: optionally lose the lease at the Nth assert (1-based).
+  count="$(( $(cat "$STAGED_MUTEX_ASSERT_COUNT") + 1 ))"
+  printf '%s\\n' "$count" >"$STAGED_MUTEX_ASSERT_COUNT"
+  if [ -n "$STAGED_MUTEX_ASSERT_FAILURE_AT" ] \\
+      && [ "$count" -ge "$STAGED_MUTEX_ASSERT_FAILURE_AT" ]; then
+    echo "deploy fence lost" >&2
+    exit 1
+  fi
+  exit 0
+fi
 if [[ " $* " == *" --duration-min 15 "* ]]; then
   if [ "$STAGED_INTERRUPT_DRAIN" = "1" ]; then
     kill -TERM "$PPID"
@@ -497,15 +513,88 @@ exit 0
         # direct/manual acquisition against a generation-aware storage stub.
         "TR_DEPLOY_MUTEX_OPERATION": "watchdog-test-operation",
         "TR_DEPLOY_MUTEX_GENERATION": "1",
+        "STAGED_MUTEX_ASSERT_COUNT": str(mutex_assert_count),
+        "STAGED_MUTEX_ASSERT_FAILURE_AT": (
+            "" if mutex_assert_failure_at is None else str(mutex_assert_failure_at)
+        ),
+        **(extra_env or {}),
     }
     run = subprocess.run(  # noqa: S603 - fixed local script and stubbed PATH
-        ["/bin/bash", str(script), "us-central1", "new-rev", "old-rev"],
+        ["/bin/bash", str(script), region, "new-rev", "old-rev"],
         capture_output=True,
         text=True,
         env=env,
         timeout=20,
     )
     return run, call_log.read_text().splitlines()
+
+
+def test_secondary_handoff_keeps_the_entire_drain_and_bound_fence(tmp_path: Path) -> None:
+    ready = tmp_path / "ready"
+    run, calls = _run_staged_probe(
+        tmp_path, console_code="303", session_code="401", region="europe-west4",
+        extra_env={"TR_SECONDARY_READY_FILE": str(ready),
+                   "TR_SECONDARY_ABORT_FILE": str(tmp_path / "abort"),
+                   "TR_SECONDARY_STARTED_AT": "2026-10-27T00:00:00Z",
+                   "TR_BILLING_5XX_GATE_SKIP": "true"},
+    )
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert ready.read_text().splitlines() == ["europe-west4", "new-rev", "watchdog-test-operation"]
+    drains = [line for line in calls if "--duration-min 15 " in line]
+    assert len(drains) == 1
+    assert "--rollback-after 1" in drains[0]
+    assert "--baseline-input" in drains[0]
+    assert calls.index(drains[0]) < next(i for i, line in enumerate(calls) if "--remove-tags=staged-drain" in line)
+
+
+def test_primary_cannot_use_secondary_handoff(tmp_path: Path) -> None:
+    ready = tmp_path / "ready"
+    run, _ = _run_staged_probe(tmp_path, console_code="303", session_code="401",
+                               extra_env={"TR_SECONDARY_READY_FILE": str(ready)})
+    assert run.returncode != 0
+    assert not ready.exists()
+    assert (tmp_path / "drain-state").read_text().strip() == "old-rev"
+
+
+def test_sibling_failure_refuses_another_traffic_shift(tmp_path: Path) -> None:
+    abort = tmp_path / "abort"
+    abort.touch()
+    run, calls = _run_staged_probe(tmp_path, console_code="303", session_code="401",
+                                 extra_env={"TR_SECONDARY_ABORT_FILE": str(abort)})
+    assert run.returncode != 0
+    assert not any("--to-revisions=new-rev=" in line for line in calls)
+    assert any("--to-revisions=old-rev=100" in line for line in calls)
+
+
+_STAGE_SHIFTS = (
+    "--to-revisions=new-rev=10,old-rev=90",
+    "--to-revisions=new-rev=50,old-rev=50",
+    "--to-revisions=new-rev=100 ",
+)
+
+
+@pytest.mark.parametrize("refused_stage", [0, 1, 2], ids=["10pct", "50pct", "100pct"])
+def test_lost_deploy_fence_stops_shift_traffic_before_update_traffic(
+    tmp_path: Path, refused_stage: int,
+) -> None:
+    # shift_traffic runs under `if !`, where bash ignores errexit, so the
+    # fence check must fail the shift explicitly. Assert 1 is the script-level
+    # check; asserts 2, 3 and 4 open the 10%, 50% and 100% shifts.
+    run, calls = _run_staged_probe(
+        tmp_path, console_code="302", session_code="401",
+        mutex_assert_failure_at=refused_stage + 2,
+    )
+    assert run.returncode != 0
+    assert "deploy fence lost" in run.stderr
+    traffic = [c for c in calls if c.startswith("gcloud run services update-traffic")]
+    for shift in _STAGE_SHIFTS[:refused_stage]:
+        assert any(shift in c for c in traffic), (shift, traffic)
+    for shift in _STAGE_SHIFTS[refused_stage:]:
+        assert not any(shift in c for c in traffic), (shift, traffic)
+    # Without the lease this run must not move traffic at all, rollback included.
+    assert not any("--to-revisions=old-rev=100" in c for c in traffic)
+    if refused_stage == 0:
+        assert not any("--to-revisions=" in c for c in traffic)
 
 
 def test_old_revision_stays_tagged_through_post_cutover_drain(tmp_path: Path) -> None:

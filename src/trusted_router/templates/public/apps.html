@@ -37,7 +37,7 @@ X-Title: My AI Product
       </tbody>
     </table>
   </div>
-  <p class="sdk-stack-note">Ranked by request volume over the recent traffic window, combining organic and synthetic-coverage requests. A further {{ "{:,}".format(apps.direct_requests) }} requests came from untitled / Direct traffic and are aggregated anonymously. Set <code>X-Title</code> to appear here.</p>
+  <p class="sdk-stack-note">Ranked by request volume over the recent traffic window, combining organic and synthetic-coverage requests. A further {{ "{:,}".format(apps.direct_requests) }} requests came from untitled / Direct traffic and are aggregated anonymously. Set <code>X-Title</code> to appear here. Apps on Confidential routes are also ranked in the <a href="/encrypted-ai">encrypted AI directory</a>.</p>
   {% else %}
   <div class="callout">
     <strong>No titled apps in the current window yet.</strong> Apps appear here as soon as they send an <code>X-Title</code> header; until then traffic stays anonymous in the Direct bucket{% if apps and apps.direct_requests %} ({{ "{:,}".format(apps.direct_requests) }} recent requests){% endif %}.

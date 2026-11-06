@@ -25,6 +25,10 @@ CATALOG = DirectOpenAIProvider(
         # Advertised by /models, but production returns model.not_accessible.
         # Keep the holds through refreshes until account access is verified.
         operator_hold_reasons={
+            # 2026-10-25: delisted and 404 model.not_accessible. Cover both
+            # canonical and historical manifest IDs until a reviewed canary.
+            "deepseek/deepseek-v4-flash": "provider-access-unavailable",
+            "deepseek/deepseek-v4-flash-latest": "provider-access-unavailable",
             "deepseek/deepseek-v4-pro": "provider-access-unavailable",
             "thinkingmachines/inkling-small": "provider-access-unavailable",
         },

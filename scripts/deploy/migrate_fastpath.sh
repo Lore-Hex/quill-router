@@ -4,10 +4,10 @@
 # statement as fastpath/schema/fastpath.sql has them; a Go test,
 # fastpath/schema/migration_test.go, holds the two equal. The production
 # tables and indexes fastpath.sql copies for the emulator (tr_credit_balance,
-# tr_reservation and its indexes, tr_entities, tr_gateway_authorization) are
-# production's own (migrate_typed_counters.sh, infra.sh,
-# migrate_request_retention.sh, migrate_spend_lease.sh), and this leaves them
-# as they are.
+# tr_key_limit, tr_reservation and its indexes, tr_entities,
+# tr_gateway_authorization) are production's own (migrate_typed_counters.sh,
+# infra.sh, migrate_request_retention.sh, migrate_spend_lease.sh), and this
+# leaves them as they are.
 #
 # Idempotent: every table and index is guarded by an INFORMATION_SCHEMA
 # existence check, and every index is checked read-write on every run. The

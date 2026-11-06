@@ -7,7 +7,7 @@ formatting invariants hold across the whole int range we care about.
 
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 import pytest
 from hypothesis import assume, example, given, settings
@@ -160,3 +160,82 @@ def test_dollars_to_microdollars_rejects_invalid() -> None:
         dollars_to_microdollars(float("nan"))
     with pytest.raises(ValueError):
         dollars_to_microdollars(float("inf"))
+
+
+@pytest.mark.parametrize("value", [
+    "1e1000000", "-1e1000000", "1e100", "-1e100", "NaN", "sNaN",
+    "Infinity", "-Infinity", "9223372036854.7758075", "-9223372036854.7758085",
+])
+def test_microdollar_conversion_rejects_overflow_as_value_error(value: str) -> None:
+    with pytest.raises(ValueError, match="dollar amount"):
+        dollars_to_microdollars(value)
+
+
+@st.composite
+def _lexical_dollars(draw):
+    # Vary spelling independently of numeric value, including long coefficients,
+    # leading signs/zeros, decimal places, and both exponent spellings.
+    sign = draw(st.sampled_from(["", "+", "-"]))
+    zeros = "0" * draw(st.integers(0, 12))
+    whole = draw(st.text("0123456789", min_size=1, max_size=40))
+    fraction = draw(st.text("0123456789", min_size=0, max_size=90))
+    exponent = draw(st.one_of(st.none(), st.integers(-1000, 30)))
+    value = sign + zeros + whole + ("." + fraction if fraction else "")
+    if exponent is not None:
+        value += draw(st.sampled_from(["e", "E"])) + f"{exponent:+d}"
+    return value
+
+
+def _assert_microdollar_conversion_matches_main(value: object) -> None:
+    # Frozen f8c287aa5 arithmetic; bounds are independent of production constants.
+    expected = int((Decimal(str(value)) * 1_000_000).to_integral_value(rounding=ROUND_HALF_UP))
+    if -(2**63) <= expected < 2**63:
+        assert dollars_to_microdollars(value) == expected
+    else:
+        with pytest.raises(ValueError, match="dollar amount"):
+            dollars_to_microdollars(value)
+
+
+@settings(max_examples=1000, database=None)
+@given(value=st.one_of(
+    _lexical_dollars(),
+    _lexical_dollars().map(Decimal),
+    st.floats(min_value=-1e14, max_value=1e14, allow_nan=False, allow_infinity=False),
+    st.integers(min_value=-(2**64), max_value=2**64),
+    st.decimals(min_value="-9223372036855", max_value="9223372036855",
+                places=24, allow_nan=False, allow_infinity=False),
+))
+@example(value="+000001E2")
+@example(value="2.5e-3")
+@example(value=Decimal("9223372036854.775807499999999"))
+@example(value=Decimal("-9223372036854.775808499999999"))
+@example(value=Decimal("0.0000005"))
+@example(value=Decimal("-0.0000005"))
+@example(value=Decimal("1e-1000000"))
+def test_microdollar_conversion_matches_main(value: object) -> None:
+    _assert_microdollar_conversion_matches_main(value)
+    _assert_microdollar_conversion_matches_main(str(value))
+
+
+@pytest.mark.parametrize("boundary", [
+    Decimal("-9223372036854.775808"), Decimal("9223372036854.775807"),
+    Decimal("1"), Decimal("20"), Decimal("9570.76"), Decimal("9992.50"),
+    Decimal("9776.66"), Decimal("10000"),
+])
+@pytest.mark.parametrize("offset", [
+    Decimal("-0.01"), Decimal("-0.000001"), Decimal("-0.0000005"), Decimal("0"),
+    Decimal("0.0000005"), Decimal("0.000001"), Decimal("0.01"),
+])
+@pytest.mark.parametrize("representation", [str, Decimal, float, int])
+def test_microdollar_conversion_matches_main_at_boundaries(boundary, offset, representation):
+    value = representation(boundary + offset)
+    _assert_microdollar_conversion_matches_main(value)
+    _assert_microdollar_conversion_matches_main(str(value))
+
+
+@pytest.mark.parametrize("value", [
+    "0", "+0", "-0", "-000.000000000000000000000000000000", "+0000E+10", "-0e-1000000",
+    Decimal("-0"), Decimal("0E-20"), Decimal("-0E+20"), -0.0, 0.0, 0,
+])
+def test_microdollar_conversion_matches_main_signed_zero(value):
+    _assert_microdollar_conversion_matches_main(value)

@@ -20,7 +20,7 @@ import (
 const (
 	fingerprintFile = "../../testdata/authorize_fingerprint_v1.json"
 	casesFile       = "../../testdata/authorize_cases_v1.json"
-	snapshotFile    = "../../testdata/routing_snapshot_v1.body.json"
+	snapshotFile    = "../../testdata/routing_snapshot_v3.body.json"
 	aliasFile       = "../../testdata/model_alias_vectors_v1.json"
 )
 
@@ -265,6 +265,11 @@ type casesFileT struct {
 		IDs struct {
 			Minted string `json:"minted_idempotency_key"`
 		} `json:"ids"`
+		// PolicyPatch's fastpath_edge_streams lets a stream past body.stream
+		// (ParseRequestStreams).
+		PolicyPatch struct {
+			EdgeStreams bool `json:"fastpath_edge_streams"`
+		} `json:"policy_patch"`
 		Key struct {
 			KeyBody *string `json:"key_body"`
 		} `json:"key"`
@@ -281,6 +286,12 @@ type casesFileT struct {
 			Fingerprint      string `json:"fingerprint"`
 			Material         string `json:"fingerprint_material"`
 			IdempotencyScope string `json:"idempotency_scope"`
+			// Affinity is a cache affinity case's record of Python's
+			// answer with sessions remembered (§1 item 5): an answer
+			// whose body names a cache_affinity_key.
+			Affinity *struct {
+				Class string `json:"class"`
+			} `json:"affinity"`
 		} `json:"expect"`
 	} `json:"cases"`
 }
@@ -321,11 +332,12 @@ func storedTags(t *testing.T, keyBody *string) ([]Tag, bool) {
 // a pass case whose reason is a request reason (or tags.merged_invalid)
 // passes with exactly that reason; every other case passes no request
 // reason; an answer has Python's exact fingerprint material, fingerprint
-// and scope, and its merged tags are the response's, in order.
+// and scope, is flagged for affinity exactly when its body names a
+// cache_affinity_key, and its merged tags are the response's, in order.
 func TestEveryAuthorizeCase(t *testing.T) {
 	var file casesFileT
 	readJSON(t, casesFile, &file)
-	requestReasons, answers := 0, 0
+	requestReasons, answers, affinityAnswers := 0, 0, 0
 	for _, c := range file.Cases {
 		body := c.Request.Body
 		if e := c.Request.BodyExpand; e != nil {
@@ -336,7 +348,7 @@ func TestEveryAuthorizeCase(t *testing.T) {
 		}
 		h := headersOf(c.Request.Headers)
 		keyTags, usable := storedTags(t, c.Key.KeyBody)
-		r, p := ParseRequest([]byte(body), h)
+		r, p := ParseRequestStreams([]byte(body), h, c.PolicyPatch.EdgeStreams)
 		if !p.Passed() {
 			_, p = MergeTags(keyTags, usable, r)
 		}
@@ -353,16 +365,25 @@ func TestEveryAuthorizeCase(t *testing.T) {
 		if c.Expect.Outcome != "answer" || p.Passed() {
 			continue
 		}
+		// The key is excluded from the material, so Python's identity is
+		// the same with or without a session.
+		if r.CacheAffinity != (c.Expect.Affinity != nil) {
+			t.Errorf("%s: flagged for affinity %v", c.Name, r.CacheAffinity)
+			continue
+		}
+		if c.Expect.Affinity != nil {
+			affinityAnswers++
+		}
 		answers++
+		material, fingerprint, scope := c.Expect.Material, c.Expect.Fingerprint, c.Expect.IdempotencyScope
 		id, p := IdentityOf(r, h, c.Facts.Key.WorkspaceID, c.Facts.Key.Hash, func() string { return c.IDs.Minted })
 		if p.Passed() {
 			t.Errorf("%s: %s", c.Name, p.Reason)
 			continue
 		}
-		if string(id.Material) != c.Expect.Material || id.Fingerprint != c.Expect.Fingerprint ||
-			id.Scope != c.Expect.IdempotencyScope {
+		if string(id.Material) != material || id.Fingerprint != fingerprint || id.Scope != scope {
 			t.Errorf("%s: material %s fingerprint %s scope %s\nwant %s %s %s", c.Name, id.Material, id.Fingerprint,
-				id.Scope, c.Expect.Material, c.Expect.Fingerprint, c.Expect.IdempotencyScope)
+				id.Scope, material, fingerprint, scope)
 		}
 		if c.Insert != "inserted" {
 			continue // after a read-back Python sorts the tags (§6)
@@ -386,9 +407,10 @@ func TestEveryAuthorizeCase(t *testing.T) {
 		}
 	}
 	// Positive control: every request reason has a case, and so does the
-	// answered path.
-	if requestReasons < 50 || answers < 100 {
-		t.Fatalf("%d request-reason cases, %d answers", requestReasons, answers)
+	// answered path, a cache affinity key's included.
+	if requestReasons < 50 || answers < 100 || affinityAnswers < 18 {
+		t.Fatalf("%d request-reason cases, %d answers, %d with a cache affinity key", requestReasons, answers,
+			affinityAnswers)
 	}
 }
 

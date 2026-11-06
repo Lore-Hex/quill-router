@@ -2,8 +2,8 @@
 -- scripts/deploy/migrate_fastpath.sh creates in production, statement for
 -- statement (docs/design/fast-admission-production-rollout.md, W4; a test
 -- holds the two equal), and copies of the production tables and indexes it
--- shares (tr_credit_balance, tr_reservation and its indexes by expiry, by
--- idempotency scope and by authorization, tr_entities,
+-- shares (tr_credit_balance, tr_key_limit, tr_reservation and its indexes
+-- by expiry, by idempotency scope and by authorization, tr_entities,
 -- tr_gateway_authorization), which the
 -- migration leaves alone. The emulator's databases in CI are made from it
 -- whole.
@@ -36,6 +36,35 @@ CREATE TABLE tr_credit_balance (
   source_updated_at TIMESTAMP OPTIONS (allow_commit_timestamp=true),
   updated_at TIMESTAMP OPTIONS (allow_commit_timestamp=true),
 ) PRIMARY KEY (workspace_id, shard);
+
+-- Key counters, as production's scripts/deploy/migrate_typed_counters.sh
+-- creates them, word for word; a test holds the two equal. The edge reads
+-- a windowed key's rows for its window check, outside any transaction
+-- (docs/design/fast-admission-e2-key-windows.md section 4.3): each window's
+-- usage and start, and the limits mirrored from the key's entity. The
+-- service never writes them. Databases older than the window columns have
+-- them nullable (the script adds them so), so the edge reads every one as
+-- nullable.
+CREATE TABLE tr_key_limit (
+    key_hash STRING(64) NOT NULL,
+    shard INT64 NOT NULL DEFAULT (0),
+    limit_micro INT64,
+    usage INT64 NOT NULL DEFAULT (0),
+    byok_usage INT64 NOT NULL DEFAULT (0),
+    reserved INT64 NOT NULL DEFAULT (0),
+    include_byok BOOL NOT NULL DEFAULT (true),
+    day_limit_micro INT64,
+    week_limit_micro INT64,
+    month_limit_micro INT64,
+    day_usage INT64 NOT NULL DEFAULT (0),
+    day_start TIMESTAMP,
+    week_usage INT64 NOT NULL DEFAULT (0),
+    week_start TIMESTAMP,
+    month_usage INT64 NOT NULL DEFAULT (0),
+    month_start TIMESTAMP,
+    source_updated_at TIMESTAMP OPTIONS (allow_commit_timestamp=true),
+    updated_at TIMESTAMP OPTIONS (allow_commit_timestamp=true),
+  ) PRIMARY KEY (key_hash, shard);
 
 -- Reservations, as production's scripts/deploy/migrate_typed_counters.sh
 -- creates them, word for word, with the index by expiry: today's

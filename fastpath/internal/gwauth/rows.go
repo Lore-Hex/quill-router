@@ -9,8 +9,9 @@ package gwauth
 import "time"
 
 // AuthorizationRow is an authorization's row in tr_gateway_authorization.
-// Of the table's typed columns only these three are written; the rest, and
-// terminal_at, are NULL, and settled is false.
+// Of the table's typed columns only these three are written, and for a
+// stream Stage D lets in pricing_snapshot and heartbeat_seq too; the rest,
+// and terminal_at, are NULL, and settled is false.
 type AuthorizationRow struct {
 	AuthorizationID        string
 	WorkspaceID            string
@@ -25,6 +26,10 @@ type AuthorizationRow struct {
 	IdempotencyFingerprint string
 	StageDBootKid          string
 	InvocationNonce        *string // nil writes NULL
+	// A stream's (Stage D "ok"): its pricing snapshot and heartbeat_seq 0;
+	// nil, NULL, for any other request.
+	PricingSnapshot *string
+	HeartbeatSeq    *int64
 }
 
 // ReservationRow is the authorization's row in tr_reservation. The shards,

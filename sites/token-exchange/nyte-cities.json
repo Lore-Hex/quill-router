@@ -1,0 +1,82 @@
+{
+  "london": {
+    "workloads": [
+      {"title": "Financial services", "prompt": "Summarise the main risks in these broker research notes.", "tags": ["CONFIDENTIAL", "ZDR"]},
+      {"title": "Insurance", "prompt": "List the exclusions in each of these policy wordings.", "tags": ["CONFIDENTIAL", "ZDR"]},
+      {"title": "Professional services", "prompt": "Flag the clauses in this client contract that need a partner’s review.", "tags": ["CONFIDENTIAL", "ZDR"]}
+    ]
+  },
+  "global": {
+    "faq_place": "",
+    "logo_place": "The",
+    "logo_one_line": true,
+    "workloads": [
+      {"title": "Enterprise platforms", "prompt": "Answer this customer question using our internal policy documents.", "tags": ["CONFIDENTIAL", "ZDR"]},
+      {"title": "AI product teams", "prompt": "Draft a reply to this support ticket in our product’s tone.", "tags": ["CONFIDENTIAL", "ZDR"]},
+      {"title": "Procurement and security", "prompt": "Compare these two vendor security questionnaires and list the gaps.", "tags": ["CONFIDENTIAL", "ZDR"]}
+    ]
+  },
+  "chicago": {
+    "us": true,
+    "workloads": [
+      {"title": "Industrial operations", "prompt": "Pull the maintenance steps for this pump out of the service manual.", "tags": ["CONFIDENTIAL", "ZDR"]},
+      {"title": "Logistics", "prompt": "Classify each of these freight invoices by carrier and charge type.", "tags": ["CONFIDENTIAL", "ZDR"]},
+      {"title": "Financial research", "prompt": "Summarize what changed between these two quarterly filings.", "tags": ["CONFIDENTIAL", "ZDR"]}
+    ]
+  },
+  "san-francisco": {
+    "us": true,
+    "workloads": [
+      {"title": "Agent products", "prompt": "Plan the steps to reconcile this month’s expense reports.", "tags": ["CONFIDENTIAL", "ZDR"]},
+      {"title": "Developer platforms", "prompt": "Review this pull request and flag anything that could leak customer data.", "tags": ["CONFIDENTIAL", "ZDR"]},
+      {"title": "Growing software teams", "prompt": "Turn these customer interview notes into a list of feature requests.", "tags": ["CONFIDENTIAL", "ZDR"]}
+    ]
+  },
+  "texas": {
+    "us": true,
+    "workloads": [
+      {"title": "Energy and engineering", "prompt": "Find every pressure limit mentioned in these well inspection reports.", "tags": ["CONFIDENTIAL", "ZDR"]},
+      {"title": "Enterprise software", "prompt": "Sort these support tickets by product area and urgency.", "tags": ["CONFIDENTIAL", "ZDR"]},
+      {"title": "Enterprise platforms", "prompt": "Summarize the key terms in this supplier agreement.", "tags": ["CONFIDENTIAL", "ZDR"]}
+    ]
+  },
+  "united-states": {
+    "logo_place": "US",
+    "faq_place": "the United States",
+    "us": true,
+    "workloads": [
+      {"title": "Enterprise procurement", "prompt": "Compare the pricing terms in these three vendor proposals.", "tags": ["CONFIDENTIAL", "ZDR"]},
+      {"title": "Security teams", "prompt": "List the data retention commitments in this vendor contract.", "tags": ["CONFIDENTIAL", "ZDR"]},
+      {"title": "Platform engineering", "prompt": "Explain what this internal service does from its code and README.", "tags": ["CONFIDENTIAL", "ZDR"]}
+    ]
+  },
+  "europe": {
+    "logo_place": "European",
+    "workloads": [
+      {"title": "Enterprise procurement", "prompt": "List the subprocessors named in this data processing agreement.", "tags": ["CONFIDENTIAL", "ZDR"]},
+      {"title": "Multilingual products", "prompt": "Translate this product page into German, French and Spanish, keeping our terms.", "tags": ["CONFIDENTIAL", "ZDR"]},
+      {"title": "Enterprise platforms", "prompt": "Summarise these customer complaints by theme.", "tags": ["CONFIDENTIAL", "ZDR"]}
+    ]
+  },
+  "dubai": {
+    "workloads": [
+      {"title": "Multilingual services", "prompt": "Summarise this Arabic contract in English.", "tags": ["CONFIDENTIAL", "ZDR"]},
+      {"title": "Financial and professional services", "prompt": "Flag every obligation with a deadline in this engagement letter.", "tags": ["CONFIDENTIAL", "ZDR"]},
+      {"title": "Enterprise platforms", "prompt": "Draft a reply to this customer enquiry in Arabic and English.", "tags": ["CONFIDENTIAL", "ZDR"]}
+    ]
+  },
+  "riyadh": {
+    "workloads": [
+      {"title": "Government and public services", "prompt": "Summarise this Arabic tender document in English.", "tags": ["CONFIDENTIAL", "ZDR"]},
+      {"title": "Energy and industry", "prompt": "List the safety steps in this Arabic operating manual.", "tags": ["CONFIDENTIAL", "ZDR"]},
+      {"title": "Enterprise platforms", "prompt": "Draft Arabic and English versions of this policy update.", "tags": ["CONFIDENTIAL", "ZDR"]}
+    ]
+  },
+  "tokyo": {
+    "workloads": [
+      {"title": "Enterprise documents", "prompt": "Summarize this Japanese board meeting record in English.", "tags": ["CONFIDENTIAL", "ZDR"]},
+      {"title": "Manufacturing", "prompt": "Find the torque specification in this Japanese assembly manual.", "tags": ["CONFIDENTIAL", "ZDR"]},
+      {"title": "Software platforms", "prompt": "Answer this customer question from our Japanese help center articles.", "tags": ["CONFIDENTIAL", "ZDR"]}
+    ]
+  }
+}

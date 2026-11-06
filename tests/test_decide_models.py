@@ -261,11 +261,13 @@ def test_the_named_models_are_the_eight_people_were_promised() -> None:
     # on record: mev-1.0 meant Gemma 4 E4B for a few hours on 2026-09-20, before
     # Joseph gave the name to Mercury 2 and Gemma became gemmev-1.0. And on
     # 2026-09-28 DeepInfra, gemmev-1.0's only host, dropped Gemma 4 E4B; Joseph
-    # moved the name to Gemma 4 26B A4B rather than ship gemmev-1.1. Otherwise do
+    # moved the name to Gemma 4 26B A4B rather than ship gemmev-1.1. On
+    # 2026-10-27, with Inception (its only host) retiring Mercury 2 on
+    # 2026-11-15, Joseph moved mev-1.0 to Mercury 3 the same way. Otherwise do
     # not do that to a name with traffic: ship a new name or a new version.
     assert [(named.id, named.backing_model_id) for named in NAMED_DECISION_MODELS] == [
         ("trustedrouter/trev-1.0", "openai/gpt-oss-120b"),
-        ("trustedrouter/mev-1.0", "inception/mercury-2"),
+        ("trustedrouter/mev-1.0", "inception/mercury-3"),
         ("trustedrouter/zev-1.0", "z-ai/glm-5.2-fast"),
         ("trustedrouter/lev-1.0", "meta-llama/llama-3.3-70b-instruct"),
         ("trustedrouter/gev-1.0", "google/gemini-3.1-flash-lite"),

@@ -80,6 +80,8 @@ class State:
     generation: int = 0
     job: PublisherJob | None = None
     last_actual_start: float = float("-inf")
+    # Monotonic slot boundary, independent of worker/admission overshoot.
+    last_start_boundary: float = float("-inf")
     retired_slots: int = 0
 
 
@@ -391,9 +393,16 @@ def _tick(state: State, stamp: int, *, shutdown: bool = False,
             d = replace(d, cursor=through, scheduled=d.scheduled+missed, missed=d.missed+missed,
                         publishers=frozenset(owners), ready=False)
             if start:
-                job = PublisherJob(slot, state.generation, max(at, state.last_actual_start+2),
+                boundary = max(at-(stamp % SLOT_US)/1_000_000,
+                               state.last_start_boundary+2)
+                job = PublisherJob(slot, state.generation, max(at, boundary),
                                    at+(250_000-stamp % SLOT_US)/1_000_000)
-                state = replace(state, job=job)
+                # Reserve feasible windows even if later missed/released.
+                # An impossible window admits no attempt: advancing its bound
+                # could perpetually starve later slots after a wall-clock step.
+                # Actual admission jitter never shifts the next reservation.
+                state = replace(state, job=job, last_start_boundary=(
+                    boundary if boundary <= job.latest_start_mono else state.last_start_boundary))
                 effects.append(StartPublisherCycle(job))
             if state.publisher_enabled:
                 d = _emit(d, effects)

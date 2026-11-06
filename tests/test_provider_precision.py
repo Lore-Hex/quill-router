@@ -28,7 +28,8 @@ def _endpoint(provider: str, model_id: str):
 
 def _records():
     return [ProviderPrecision.from_dict(row)
-            for row in json.loads(provider_precision._SNAPSHOT.read_text())]
+            for row in json.loads(provider_precision._SNAPSHOT.read_text())
+            if row.get("evidence_type", "published_serving_config") == "published_serving_config"]
 
 
 def _reviewed_endpoint(provider: str, model_id: str) -> ModelEndpoint:
@@ -170,7 +171,8 @@ def test_invalid_or_empty_snapshot_cannot_take_down_catalog(tmp_path, monkeypatc
 
 
 def test_duplicate_routes_fail_closed(tmp_path, monkeypatch) -> None:
-    row = json.loads(provider_precision._SNAPSHOT.read_text())[0]
+    row = next(row for row in json.loads(provider_precision._SNAPSHOT.read_text())
+               if row.get("evidence_type", "published_serving_config") == "published_serving_config")
     path = tmp_path / "duplicate.json"
     path.write_text(json.dumps([row, row]))
     provider_precision._precision_index.cache_clear()
@@ -189,7 +191,8 @@ def test_duplicate_routes_fail_closed(tmp_path, monkeypatch) -> None:
     {"evidence_type": "attested"},
 ])
 def test_invalid_evidence_cannot_be_published(change) -> None:
-    row = json.loads(provider_precision._SNAPSHOT.read_text())[0]
+    row = next(row for row in json.loads(provider_precision._SNAPSHOT.read_text())
+               if row.get("evidence_type", "published_serving_config") == "published_serving_config")
     with pytest.raises((TypeError, ValueError)):
         ProviderPrecision.from_dict({**row, **change})
 
@@ -241,3 +244,46 @@ def test_routing_documentation_distinguishes_metadata_from_filtering(client) -> 
     assert response.status_code == 200
     assert "filtering by it is not implemented" in response.text
     assert "runtime_verified" in response.text
+
+
+def test_featherless_declaration_is_exact_route_only_and_not_weight_verification(client, test_settings):
+    model_id = "minimax/minimax-m3.1-flash"
+    endpoint = _endpoint("featherless", model_id)
+    assert endpoint is not None
+    precision = endpoint_precision_metadata(endpoint)
+    assert precision["quantization"] == "fp4"
+    assert precision["evidence_type"] == "provider_declaration"
+    assert precision["runtime_verified"] is False
+    assert precision["model_repository"] is precision["model_revision"] is None
+    assert precision["kv_cache_dtype"] is None
+    assert "FP8" in precision["notes"]  # Preserve the conflicting generic model-page evidence.
+    for changed in (replace(endpoint, provider="novita"),
+                    replace(endpoint, upstream_id="MiniMaxAI/MiniMax-M3")):
+        assert endpoint_precision_metadata(changed) is None
+    precision["sources"][0]["url"] = "changed"
+    assert endpoint_precision_metadata(endpoint)["sources"][0]["url"].startswith("https://featherless.ai/")
+    shape = model_to_openrouter_shape(MODELS[model_id])
+    catalog_row = next(row for row in shape["trustedrouter"]["endpoints"] if row["id"] == endpoint.id)
+    response = client.get(f"/v1/models/{model_id}/endpoints")
+    assert response.status_code == 200
+    row = next(row for row in response.json()["data"] if row["endpoint_id"] == endpoint.id)
+    assert row["quantization"] == catalog_row["quantization"] == "fp4"
+    assert row["trustedrouter"]["precision"] == catalog_row["precision"]
+    assert row["context_length"] == 262_144
+    assert row["trustedrouter"]["capabilities"]["vision"] is True
+    html = public_model_detail_html(test_settings, model_id)
+    assert "FP4 (provider-declared)" in html
+    assert "Provider declaration, reviewed 2026-10-26" in html
+    assert "Per-request precision is not verified" in html
+
+
+@pytest.mark.parametrize("change", [
+    {"sources": []}, {"sources": [{"title": "Source", "url": "http://featherless.ai"}]},
+    {"model_repository": "MiniMaxAI/MiniMax-M3.1-Flash"}, {"model_revision": "a" * 40},
+    {"evidence_type": "published_serving_config"}, {"runtime_verified": True},
+])
+def test_provider_declaration_cannot_imply_reviewed_pins_or_runtime_proof(change):
+    row = next(row for row in json.loads(provider_precision._SNAPSHOT.read_text())
+               if row.get("evidence_type") == "provider_declaration")
+    with pytest.raises((ValueError, TypeError)):
+        ProviderPrecision.from_dict({**row, **change})

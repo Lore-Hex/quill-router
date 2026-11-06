@@ -23,6 +23,7 @@ from trusted_router.catalog import (
     endpoint_privacy_tier,
     endpoint_provider_policy,
     endpoint_provider_policy_url,
+    endpoint_retention_metadata,
     endpoint_stores_content,
     endpoint_zero_data_retention,
     endpoint_zero_data_retention_scope,
@@ -465,6 +466,7 @@ def _image_endpoint_shape(model: Any, endpoint: ModelEndpoint) -> dict[str, Any]
             "attested_gateway": provider.attested_gateway,
             "stores_content": endpoint_stores_content(endpoint),
             "provider_zero_data_retention": endpoint_zero_data_retention(endpoint),
+            "retention": endpoint_retention_metadata(endpoint),
             "zero_data_retention_scope": endpoint_zero_data_retention_scope(endpoint),
             "privacy_tier": endpoint_privacy_tier(endpoint),
             "privacy_tier_label": PRIVACY_TIER_LABELS[endpoint_privacy_tier(endpoint)],
@@ -487,13 +489,13 @@ def register_catalog_routes(router: APIRouter) -> None:
     _current_catalog_payload()
 
     @router.get("/embeddings/models")
-    async def embeddings_models() -> dict[str, list[dict[str, Any]]]:
+    def embeddings_models() -> dict[str, list[dict[str, Any]]]:
         return {
             "data": [model_to_openrouter_shape(m) for m in MODELS.values() if m.supports_embeddings]
         }
 
     @router.get("/images/models")
-    async def image_models() -> dict[str, list[dict[str, Any]]]:
+    def image_models() -> dict[str, list[dict[str, Any]]]:
         return {
             "data": [
                 _image_model_shape(model)
@@ -503,7 +505,7 @@ def register_catalog_routes(router: APIRouter) -> None:
         }
 
     @router.get("/images/models/{author}/{slug}/endpoints")
-    async def image_model_endpoints(
+    def image_model_endpoints(
         author: str,
         slug: str,
         request: Request,
@@ -588,7 +590,7 @@ def register_catalog_routes(router: APIRouter) -> None:
             ],
         },
     )
-    async def models(request: Request) -> Response:
+    def models(request: Request) -> Response:
         catalog_payload = _current_catalog_payload()
         include_endpoints = _includes_endpoints(request)
         if not _has_public_model_filters(request):
@@ -621,13 +623,13 @@ def register_catalog_routes(router: APIRouter) -> None:
         )
 
     @router.get("/models/count")
-    async def models_count(request: Request, response: Response) -> dict[str, dict[str, int]]:
+    def models_count(request: Request, response: Response) -> dict[str, dict[str, int]]:
         # Anonymous public catalogue data, readable by static exchange sites.
         response.headers["Access-Control-Allow-Origin"] = "*"
         return {"data": {"count": len(_public_model_shapes(request))}}
 
     @router.get("/models/picker")
-    async def models_picker(request: Request) -> Response:
+    def models_picker(request: Request) -> Response:
         catalog_payload = _current_catalog_payload()
         return _cached_json_response(
             request,
@@ -638,7 +640,7 @@ def register_catalog_routes(router: APIRouter) -> None:
         )
 
     @router.get("/models/{author}/{slug}/endpoints")
-    async def model_endpoints(
+    def model_endpoints(
         author: str,
         slug: str,
         request: Request,
@@ -655,7 +657,7 @@ def register_catalog_routes(router: APIRouter) -> None:
                     "provider_name": PROVIDERS[endpoint.provider].name,
                     "endpoint_id": endpoint.id,
                     "provider": endpoint.provider,
-                    "context_length": model.context_length,
+                    "context_length": endpoint.effective_context_length(_model),
                     "pricing": _endpoint_pricing_payload(endpoint),
                     "usage_type": endpoint.usage_type,
                     "upstream_id": endpoint.upstream_id,
@@ -679,6 +681,7 @@ def register_catalog_routes(router: APIRouter) -> None:
                         "attested_gateway": PROVIDERS[endpoint.provider].attested_gateway,
                         "stores_content": endpoint_stores_content(endpoint),
                         "provider_zero_data_retention": endpoint_zero_data_retention(endpoint),
+                        "retention": endpoint_retention_metadata(endpoint),
                         "zero_data_retention_scope": endpoint_zero_data_retention_scope(endpoint),
                         "privacy_tier": endpoint_privacy_tier(endpoint),
                         "privacy_tier_label": PRIVACY_TIER_LABELS[endpoint_privacy_tier(endpoint)],
@@ -720,7 +723,7 @@ def register_catalog_routes(router: APIRouter) -> None:
         }
 
     @router.get("/endpoints/zdr")
-    async def endpoints_zdr() -> dict[str, list[dict[str, Any]]]:
+    def endpoints_zdr() -> dict[str, list[dict[str, Any]]]:
         return {
             "data": [
                 {
@@ -753,7 +756,7 @@ def register_catalog_routes(router: APIRouter) -> None:
         }
 
     @router.get("/regions")
-    async def regions(settings: SettingsDep) -> dict[str, Any]:
+    def regions(settings: SettingsDep) -> dict[str, Any]:
         return {
             "data": region_payload(settings),
             "trustedrouter": {
@@ -763,7 +766,7 @@ def register_catalog_routes(router: APIRouter) -> None:
         }
 
     @router.get("/providers")
-    async def providers(response: Response) -> dict[str, list[dict[str, Any]]]:
+    def providers(response: Response) -> dict[str, list[dict[str, Any]]]:
         # No credentials are needed or allowed for cross-origin catalogue reads.
         response.headers["Access-Control-Allow-Origin"] = "*"
         return {
@@ -780,7 +783,7 @@ def register_authenticated_catalog_routes(router: APIRouter) -> None:
     """
 
     @router.get("/models/user")
-    async def models_user(
+    def models_user(
         _principal: ManagementPrincipal,
     ) -> dict[str, list[dict[str, Any]]]:
         return {"data": list(_current_catalog_payload().shapes)}

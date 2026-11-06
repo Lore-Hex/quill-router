@@ -664,11 +664,9 @@ def test_embeddings_and_model_endpoints(
         for item in openai_endpoints
         if item["provider"] == "openai"
     }
-    assert openai_by_usage["Credits"]["provider_zero_data_retention"] is True
-    assert (
-        openai_by_usage["Credits"]["zero_data_retention_scope"]
-        == "trustedrouter_prepaid"
-    )
+    assert openai_by_usage["Credits"]["provider_zero_data_retention"] is False
+    assert openai_by_usage["Credits"]["zero_data_retention_scope"] is None
+    assert openai_by_usage["Credits"]["retention"]["mode"] == "durable_cache"
     assert openai_by_usage["BYOK"]["provider_zero_data_retention"] is False
     assert openai_by_usage["BYOK"]["zero_data_retention_scope"] is None
 
@@ -915,6 +913,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "trustedrouter/liberty-1.0-1m",
         "trustedrouter/liberty-2.0",
         "trustedrouter/liberty-3.0",
+        "trustedrouter/liberty-4.0",
     }.issubset(model_ids)
     # Archimedes is offered exactly while the model behind it is.
     assert ("trustedrouter/archimedes-1.0" in model_ids) == (MISTRAL_LARGE_MODEL_ID in MODELS)
@@ -1142,6 +1141,14 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "openai/gpt-oss-120b",
         "trustedrouter/liberty-1.0-1m",
         "thinkingmachines/inkling",
+    )
+    liberty_4 = models_by_id["trustedrouter/liberty-4.0"]
+    assert liberty_4["context_length"] == 1_048_576
+    assert liberty_4["trustedrouter"]["route_kind"] == "fusion_panel"
+    assert liberty_4["trustedrouter"]["auto_candidates"] == _carried(
+        "nvidia/nemotron-3.5-super-vl",
+        "reflection/beam-1.0",
+        "meta-models/muse-spark-open",
     )
     assert client.get("/v1/models/count").json()["data"]["count"] >= 5
     open_weight_models = client.get("/v1/models", params={"open_weights": "true"})

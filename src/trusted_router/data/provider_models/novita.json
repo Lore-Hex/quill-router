@@ -3,8 +3,8 @@
   "source": "https://api.novita.ai/openai/v1/models",
   "price_source": "https://novita.ai/pricing",
   "price_scale_to_microdollars_per_million_tokens": 100,
-  "generated_at": "2026-10-20T12:05:14Z",
-  "model_count": 171,
+  "generated_at": "2026-11-05T11:29:32Z",
+  "model_count": 177,
   "models": [
     {
       "id": "Sao10K/L3-8B-Stheno-v3.2",
@@ -81,7 +81,10 @@
         "completions"
       ],
       "status": 1,
-      "upstream_id": "baidu/ernie-4.5-21B-a3b"
+      "upstream_id": "baidu/ernie-4.5-21B-a3b",
+      "missing_since": "2026-11-01",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "baidu/ernie-4.5-21B-a3b-thinking",
@@ -2847,7 +2850,10 @@
       "upstream_id": "xiaomimimo/mimo-v2.5-pro",
       "retirement_at": "2026-10-23T00:00:00Z",
       "replacement_model_id": "xiaomi/mimo-v2.6-pro",
-      "cached_input_token_price_per_m": 43
+      "cached_input_token_price_per_m": 43,
+      "missing_since": "2026-10-25",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "zai-org/autoglm-phone-9b-multilingual",
@@ -3507,8 +3513,14 @@
         "image",
         "video"
       ],
-      "output_modalities": ["text"],
-      "endpoints": ["chat/completions", "anthropic", "responses"],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions",
+        "anthropic",
+        "responses"
+      ],
       "status": 1,
       "created": 1792406343,
       "context_length": 1000000,
@@ -3943,10 +3955,12 @@
       "created": 1780040346,
       "context_length": 1048576,
       "max_output_tokens": 131072,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 1680,
       "output_token_price_per_m": 3360,
-      "cached_input_token_price_per_m": 34
+      "cached_input_token_price_per_m": 34,
+      "missing_since": "2026-10-25",
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "z-ai/glm-4.7-h",
@@ -4988,7 +5002,7 @@
     {
       "id": "inclusionai/ling-3.1-flash",
       "upstream_id": "inclusionai/ling-3.1-flash",
-      "display_name": "Ling 3.1 Flash",
+      "display_name": "Ling 3.1 Flash 1019",
       "title": "inclusionai/ling-3.1-flash",
       "model_type": "chat",
       "features": [
@@ -5008,7 +5022,7 @@
       ],
       "status": 1,
       "created": 1790563605,
-      "context_length": 262144,
+      "context_length": 1000000,
       "max_output_tokens": 262144,
       "routable": false,
       "routable_reason": "zero-price-unbillable",
@@ -5142,6 +5156,199 @@
       "input_token_price_per_m": 3000,
       "output_token_price_per_m": 12000,
       "cached_input_token_price_per_m": 60
+    },
+    {
+      "id": "moonshotai/kimi-k3.1-pro",
+      "upstream_id": "moonshotai/kimi-k3.1-pro",
+      "display_name": "Kimi K3.1 Pro",
+      "title": "moonshotai/kimi-k3.1-pro",
+      "model_type": "chat",
+      "features": [
+        "serverless",
+        "function-calling",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions",
+        "anthropic",
+        "responses"
+      ],
+      "status": 1,
+      "created": 1792803011,
+      "context_length": 1048576,
+      "max_output_tokens": 1048576,
+      "input_token_price_per_m": 20000,
+      "output_token_price_per_m": 100000,
+      "cached_input_token_price_per_m": 2000
+    },
+    {
+      "id": "moonshotai/kimi-k3.1-pro-highspeed",
+      "upstream_id": "moonshotai/kimi-k3.1-pro-highspeed",
+      "display_name": "Kimi K3.1 Pro Highspeed",
+      "title": "moonshotai/kimi-k3.1-pro-highspeed",
+      "model_type": "chat",
+      "features": [
+        "serverless",
+        "function-calling",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions",
+        "anthropic",
+        "responses"
+      ],
+      "status": 1,
+      "created": 1792803395,
+      "context_length": 1048576,
+      "max_output_tokens": 1048576,
+      "input_token_price_per_m": 40000,
+      "output_token_price_per_m": 200000,
+      "cached_input_token_price_per_m": 2000
+    },
+    {
+      "id": "nvrouter/auto",
+      "upstream_id": "nvrouter/auto",
+      "display_name": "Auto",
+      "title": "nvrouter/auto",
+      "model_type": "chat",
+      "features": [
+        "serverless",
+        "function-calling",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions",
+        "anthropic",
+        "responses"
+      ],
+      "status": 1,
+      "created": 1793083113,
+      "context_length": 1000000,
+      "max_output_tokens": 328000,
+      "routable": false,
+      "routable_reason": "zero-price-unbillable"
+    },
+    {
+      "id": "nvrouter/fusion",
+      "upstream_id": "nvrouter/fusion",
+      "display_name": "Fusion",
+      "title": "nvrouter/fusion",
+      "model_type": "chat",
+      "features": [
+        "serverless",
+        "function-calling",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions",
+        "anthropic",
+        "responses"
+      ],
+      "status": 1,
+      "created": 1793082715,
+      "context_length": 1000000,
+      "max_output_tokens": 328000,
+      "routable": false,
+      "routable_reason": "zero-price-unbillable"
+    },
+    {
+      "id": "tencent/hy4",
+      "upstream_id": "tencent/hy4",
+      "display_name": "Hy4",
+      "title": "tencent/hy4",
+      "model_type": "chat",
+      "features": [
+        "serverless",
+        "function-calling",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions",
+        "anthropic",
+        "responses"
+      ],
+      "status": 1,
+      "created": 1793757877,
+      "context_length": 1000000,
+      "max_output_tokens": 64000,
+      "input_token_price_per_m": 4170,
+      "output_token_price_per_m": 12505,
+      "cached_input_token_price_per_m": 210
+    },
+    {
+      "id": "z-ai/glm-5.3-flashx",
+      "upstream_id": "zai-org/glm-5.3-flashX",
+      "display_name": "GLM 5.3 FlashX",
+      "title": "zai-org/glm-5.3-flashX",
+      "model_type": "chat",
+      "features": [
+        "function-calling",
+        "structured-outputs",
+        "reasoning",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions",
+        "anthropic",
+        "responses"
+      ],
+      "status": 1,
+      "created": 1793786609,
+      "context_length": 1048576,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 3700,
+      "output_token_price_per_m": 12500,
+      "cached_input_token_price_per_m": 750
     }
   ]
 }

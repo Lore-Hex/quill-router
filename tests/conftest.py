@@ -283,7 +283,7 @@ def shadow_deadline_clock(monkeypatch):
         storage_gcp_async_settle_shadow,
         storage_gcp_io,
     )
-    from trusted_router.services import async_settle_shadow
+    from trusted_router.services import async_settle_shadow, async_settle_shadow_cohort_runtime
 
     class Clock:
         now = 16.0
@@ -295,7 +295,7 @@ def shadow_deadline_clock(monkeypatch):
             return getattr(time, name)
 
     clock = Clock()
-    for module in (async_settle_shadow, storage_gcp_async_settle_shadow,
+    for module in (async_settle_shadow, async_settle_shadow_cohort_runtime, storage_gcp_async_settle_shadow,
                    storage_gcp_async_admission, storage_gcp_io):
         monkeypatch.setattr(module, 'time', clock)
     return clock
@@ -444,3 +444,26 @@ def _p5_cache_lifetime(request, _p5_cache_counts):
                                item.get_closest_marker('proof_oracle')
                                for item in request.session.items)
         release_data_caches(shared=oracle_selection)
+
+
+@pytest.fixture
+def nonreservation_stripe_payment(monkeypatch):
+    """Keep generic refund/dispute webhook ownership checks explicit and offline."""
+    from trusted_router.services import resale
+
+    monkeypatch.setattr(resale.stripe.PaymentIntent, "retrieve", lambda payment, **kw: {
+        "id": payment, "metadata": {"kind": "billing"},
+    })
+
+
+@pytest.fixture(autouse=True)
+def leased_key_usage_reads_finish(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    # Depend on monkeypatch so worker methods/slots stay installed until idle.
+    yield
+    import sys
+
+    cache = sys.modules.get("trusted_router.storage_gcp_leased_key_usage")
+    if cache is not None:
+        assert cache._wait_for_idle_reads(5.0), (
+            "Leaked leased key usage read: background reader still in flight after 5 s at test teardown"
+        )

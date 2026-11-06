@@ -1,0 +1,9 @@
+{% extends "auth/_base.html" %}
+{% block body %}
+<h1>Account closed</h1>
+<p>Your account is disabled on this service. Your sessions and personal-workspace API keys can no longer start new requests here, and auto refill is off.</p>
+<p>Other regional services may take up to 24 hours to refresh cached API-key permissions. Contact support for urgent revocation across regions.</p>
+<p>Account closure is not data erasure. For personal-data deletion, email <a href="mailto:security@trustedrouter.com?subject=Account%20data%20erasure">security@trustedrouter.com</a>. Existing erasure requests remain open until we confirm their completion.</p>
+<p>For remaining credits or a payment already in progress, contact <a href="mailto:help@trustedrouter.com">help@trustedrouter.com</a>.</p>
+<div class="actions"><a class="btn" href="/">Return to homepage</a></div>
+{% endblock %}

@@ -84,6 +84,7 @@ _NEW_AUTOMATIC_FEED_MODELS = {
     "z-ai/glm-5.2",
     "sakana-ai/fugu-ultra-v1.1",
     "sakana-ai/sakana-namazu-v1.0",
+    "dealignai/deepseek-v4.1-flash-1017-uncensored-fp8",
     "decisionmodelsio/s1-fast",
     "decisionmodelsio-eu/s1-fast",
 }
@@ -115,8 +116,13 @@ def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict
         return {"data": [{"id": "z-ai/glm-5.3-flash"}]}
     if "llm.eu.greenference.com" in url:
         return {"data": [{"id": "greenference/glm-5.3-flash"}]}
+    if "api.hixtube.com" in url:
+        return {"data": [{"id": "dealignai/deepseek-v4.1-flash-1017-uncensored-fp8"}]}
     if "inference.muna.ai" in url:
         return {"data": [{"id": "qwen/qwen-3.8-27b"}, {"id": "google/gemma-4-26b-a4b-it"}]}
+    if url == "https://inference.negbeta.com/v1/models":
+        assert _env_names == ("NEGBETA_API_KEY",)
+        return {"data": [{"id": "qwen/qwen3.8-27b"}, {"id": "deepseek/deepseek-v4.1-flash-1017"}]}
     if "inference.coralbricks.ai" in url:
         return {"data": [{"id": "deepseek-v4.1-flash-fast"}]}
     if "api.inference.boundless.network" in url or "zro.moonmath.ai" in url:
@@ -192,7 +198,7 @@ def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict
     if "api.arcee.ai" in url:
         return {"data": [{"id": "trinity-large-thinking"}]}
     if "api.inceptionlabs.ai" in url:
-        return {"data": [{"id": "mercury-2"}]}
+        return {"data": [{"id": "mercury-2"}, {"id": "mercury-3"}]}
     if "inference.api.nscale.com" in url:
         return {"data": [{"id": "black-forest-labs/FLUX.1-schnell"}]}
     if "api.intelligence.io.solutions" in url:
@@ -254,6 +260,8 @@ def test_elevenlabs_coverage_requires_the_hourly_speech_refresher(
     import trusted_router.catalog as catalog
 
     monkeypatch.setattr(catalog, "GATEWAY_PREPAID_PROVIDER_SLUGS", {"elevenlabs"})
+    monkeypatch.setattr(check_price_coverage, "_OPTIONAL_STALE_MANIFEST_PROVIDER_SLUGS", set())
+    monkeypatch.setattr(check_price_coverage, "EXPIRING_PROVIDER_MANIFEST_SLUGS", set())
     if not refresher_present:
         monkeypatch.setattr(
             check_price_coverage, "_DEDICATED_LIVE_SCRAPERS",
@@ -933,6 +941,49 @@ def test_provider_glm_required_gate_targets_current_flagships() -> None:
     assert not check_price_coverage._is_required_provider_glm_model_id("z-ai/glm-4.7-h")
 
 
+def test_reviewed_unpriced_glm_tier_is_exempt_only_at_its_provider() -> None:
+    required = check_price_coverage._is_required_provider_glm_model_id
+    # Parasail listed GLM-5.3 Flash's fast tier with no published price.
+    assert not required("z-ai/glm-5.3-flash-fast", "parasail")
+    # The same id at another provider, or with no provider, is still a release.
+    assert required("z-ai/glm-5.3-flash-fast", "together")
+    assert required("z-ai/glm-5.3-flash-fast")
+    # A suffix never proves equivalence: an unreviewed tier still blocks.
+    assert required("z-ai/glm-5.3-fast", "parasail")
+    assert required("z-ai/glm-6-fast", "parasail")
+
+
+@pytest.mark.parametrize(
+    ("live_id", "blocks"),
+    [("zai-org/GLM-5.3-Flash-fast", False), ("zai-org/GLM-6-fast", True)],
+)
+def test_parasail_audit_blocks_only_unreviewed_glm_ids(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, live_id: str, blocks: bool,
+) -> None:
+    rows = [{"id": "z-ai/glm-5.3-flash", "upstream_id": "zai-org/GLM-5.3-Flash"}]
+    (tmp_path / "parasail.json").write_text(json.dumps({"models": rows}), encoding="utf-8")
+    monkeypatch.setattr(check_price_coverage, "MANIFEST_DIR", tmp_path)
+    monkeypatch.setattr(
+        check_price_coverage, "_GLM_DISCOVERABLE_PROVIDER_APIS",
+        (("parasail", "https://api.parasail.io/v1/models", ("PARASAIL_API_KEY",)),),
+    )
+    monkeypatch.setattr(
+        check_price_coverage, "_DISCOVERABLE_MANIFEST_PROVIDERS",
+        (("parasail", "https://api.parasail.io/v1/models", ("PARASAIL_API_KEY",),
+          check_price_coverage._normalize_glm_model_id),),
+    )
+    warnings, _info = check_price_coverage._model_discovery_audit(
+        fetch_text=lambda _url: "No model announcements",
+        fetch_json=lambda _url, _env: {"data": [{"id": "zai-org/GLM-5.3-Flash"}, {"id": live_id}]},
+        published_model_ids={"z-ai/glm-5.3-flash"},
+    )
+    tier = check_price_coverage._normalize_glm_model_id(live_id)
+    blocking = [w for w in warnings if tier in w and ("current model API" in w or "required" in w)]
+    assert bool(blocking) is blocks, warnings
+    # The reviewed tier is still visible for review.
+    assert any(tier in w for w in warnings), warnings
+
+
 def test_direct_provider_discovery_uses_route_canonical_ids() -> None:
     normalizers = {
         slug: normalize
@@ -1033,6 +1084,7 @@ def test_model_discovery_reports_match_when_docs_models_are_published(
     assert warnings == []
     assert "zai: model discovery matched catalog (2 docs model(s)) ✓" in info
     assert any(item.startswith("minimax: model discovery matched catalog") for item in info)
+    assert any(item.startswith("negbeta: model discovery matched catalog") for item in info)
 
 
 def test_provider_model_discovery_warns_on_unpublished_manifest_model() -> None:

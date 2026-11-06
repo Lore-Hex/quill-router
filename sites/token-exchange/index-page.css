@@ -13,3 +13,4 @@
 .token-index .index-small{font-size:14px;max-width:760px;color:var(--t3)}
 .ti-button,.ti-chip{min-height:44px}.ti-chart .ti-svg{overflow:visible}
 @media(max-width:600px){.token-index .ti-hero{padding-top:56px}}
+.token-index .ti-tile .btn{white-space:normal;text-align:center;margin-top:8px;font-size:13px;padding:8px;min-width:0}

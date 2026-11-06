@@ -33,9 +33,9 @@ def _request() -> Request:
     return Request({"type": "http", "method": "POST", "path": "/", "headers": []})
 
 
-def _seed_typed_gateway_store(**options: Any) -> tuple[SpannerStore, object, object]:
+def _seed_typed_gateway_store(*, workspace_id: str = "ws-rpc", **options: Any) -> tuple[SpannerStore, object, object]:
     store, database = make_fake_store(request_record_write_mode="typed", **options)
-    workspace = Workspace(id="ws-rpc", name="RPC", owner_user_id="user-rpc")
+    workspace = Workspace(id=workspace_id, name="RPC", owner_user_id="user-rpc")
     store._write_entity("workspace", workspace.id, workspace)
     store._write_entity("credit", workspace.id, CreditAccount(workspace_id=workspace.id))
     database.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(workspace.id, 0)] = {
@@ -965,9 +965,14 @@ def test_folded_pause_gateway_error_bytes_and_rollback(
     monkeypatch.setattr(gateway_timing, "perf_counter", lambda: 100.0)
     folded = storage_gcp_authorize.authorize_atomic
 
-    def parent_with_its_own_clock(*args: Any, created_at: Any = None, **kwargs: Any) -> Any:
+    def parent_with_its_own_clock(
+        *args: Any, created_at: Any = None, reservation: int | None = None, **kwargs: Any,
+    ) -> Any:
         # The frozen parent predates the caller's instant: it stamps its own
-        # reading, which no error byte or rollback below depends on.
+        # reading, which no error byte or rollback below depends on. It also
+        # predates the reservation beside the estimate: it held the estimate,
+        # which the reservation equals for this body's output budget.
+        assert reservation is None or reservation == kwargs["estimate"]
         return parent(*args, **kwargs)
 
     errors = []

@@ -229,6 +229,22 @@ def _refresh_price(row: dict[str, Any], result: ProviderPricingResult, model_id:
     price = result.prices.get(model_id)
     if price is None:
         return False
+    # A parser losing cache evidence must not silently raise the cache-hit rate.
+    # Validate before mutating the row so a failed refresh leaves it intact.
+    previous_prices = [row, *row.get("price_tiers", [])]
+    if any(previous.get("cached_input_token_price_per_m") is not None
+           for previous in previous_prices) and any(
+        tier.prompt_cached_micro_per_m is None for tier in price.tiers
+    ):
+        raise ValueError(f"gemini: {model_id}: previously published cached price is missing")
+    # A changed context boundary needs explicit review, not a flat-price fallback.
+    previous_boundaries = [previous["max_prompt_tokens"]
+                           for previous in row.get("price_tiers", [])
+                           if previous.get("max_prompt_tokens") is not None]
+    new_boundaries = [tier.max_prompt_tokens for tier in price.tiers
+                      if tier.max_prompt_tokens is not None]
+    if previous_boundaries and previous_boundaries != new_boundaries:
+        raise ValueError(f"gemini: {model_id}: previously published context tier boundaries changed")
     tier = price.tiers[0]
     row["input_token_price_per_m"] = tier.prompt_micro_per_m
     row["output_token_price_per_m"] = tier.completion_micro_per_m
@@ -238,7 +254,8 @@ def _refresh_price(row: dict[str, Any], result: ProviderPricingResult, model_id:
                 "max_prompt_tokens": price_tier.max_prompt_tokens,
                 "input_token_price_per_m": price_tier.prompt_micro_per_m,
                 "output_token_price_per_m": price_tier.completion_micro_per_m,
-                "cached_input_token_price_per_m": price_tier.prompt_cached_micro_per_m,
+                **({"cached_input_token_price_per_m": price_tier.prompt_cached_micro_per_m}
+                   if price_tier.prompt_cached_micro_per_m is not None else {}),
             }
             for price_tier in price.tiers
         ]

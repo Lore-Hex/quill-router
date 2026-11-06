@@ -12,7 +12,17 @@ from trusted_router.catalog_data import ModelEndpoint
 _CUTOFF = datetime(2026, 11, 2, tzinfo=UTC)
 _RETIRING = {
     "black-forest-labs/flux.1-schnell": ("black-forest-labs/FLUX.1-schnell", ()),
+    "deepseek/deepseek-r1-distill-llama-8b": ("deepseek-ai/DeepSeek-R1-Distill-Llama-8B", ()),
+    "deepseek/deepseek-r1-distill-qwen-14b": ("deepseek-ai/DeepSeek-R1-Distill-Qwen-14B", ()),
+    "deepseek/deepseek-r1-distill-qwen-7b": ("deepseek-ai/DeepSeek-R1-Distill-Qwen-7B", ()),
+    "meta-llama/llama-3.1-8b-instruct": (
+        "meta-llama/Llama-3.1-8B-Instruct", ("qwen/qwen3.8-27b",),
+    ),
+    "meta-llama/llama-4-scout-17b-16e-instruct": (
+        "meta-llama/Llama-4-Scout-17B-16E-Instruct", ("qwen/qwen3.8-27b",),
+    ),
     "mistralai/devstral-small-2505": ("mistralai/Devstral-Small-2505", ()),
+    "mistralai/mixtral-8x22b-instruct-v0.1": ("mistralai/mixtral-8x22b-instruct-v0.1", ()),
     "moonshotai/kimi-k2.5": ("moonshotai/Kimi-K2.5", ()),
     "nvidia/nemotron-3-nano-30b-a3b-bf16": ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", ()),
     "qwen/qwen2.5-coder-3b-instruct": ("Qwen/Qwen2.5-Coder-3B-Instruct", ()),
@@ -21,6 +31,8 @@ _RETIRING = {
     "openai/gpt-oss-120b": ("openai/gpt-oss-120b", ("z-ai/glm-5.3",)),
     "openai/gpt-oss-20b": ("openai/gpt-oss-20b", ("z-ai/glm-5.3",)),
     "qwen/qwen3-4b-instruct-2507": ("Qwen/Qwen3-4B-Instruct-2507", ("qwen/qwen3.8-27b",)),
+    "qwen/qwen3-4b-thinking-2507": ("Qwen/Qwen3-4B-Thinking-2507", ()),
+    "qwen/qwen3-8b": ("Qwen/Qwen3-8B", ("qwen/qwen3.8-27b",)),
     "qwen/qwen3-32b": ("Qwen/Qwen3-32B", ("qwen/qwen3.8-27b",)),
     "qwen/qwen2.5-coder-32b-instruct": ("Qwen/Qwen2.5-Coder-32B-Instruct", ("qwen/qwen3.8-27b",)),
     "qwen/qwen3-14b": ("Qwen/Qwen3-14B", ("qwen/qwen3.8-27b",)),
@@ -28,7 +40,14 @@ _RETIRING = {
         "Qwen/Qwen3-235B-A22B-Instruct-2507", ("qwen/qwen3.8-flash-next",),
     ),
 }
-_RETAINED = {"qwen/qwen3-embedding-8b": "Qwen/Qwen3-Embedding-8B"}
+_RETAINED = {
+    "qwen/qwen3-embedding-8b": "Qwen/Qwen3-Embedding-8B",
+    # The Oct 6 notice's recommended replacements, which Nscale's /v1/models
+    # began listing on 2026-10-25. They are routes, not retirements.
+    "qwen/qwen3.8-27b": "Qwen/Qwen3.8-27B",  # recommended for the Qwen3 family
+    "qwen/qwen3.8-flash-next-fp8": "Qwen/Qwen3.8-Flash-Next-FP8",  # the FP8 build of Flash Next
+    "z-ai/glm-5.3": "zai-org/GLM-5.3",  # recommended for gpt-oss; canary still failing
+}
 
 
 def test_nscale_cutoff_is_the_earliest_named_date_at_midnight_utc() -> None:
@@ -79,20 +98,31 @@ def test_nscale_replacements_are_quoted_not_substituted(model_id: str) -> None:
     assert entries[0].notice_id == f"nscale:{_CUTOFF.isoformat()}"
 
 
-def test_nscale_embedding_model_survives() -> None:
+def test_nscale_retained_models_survive() -> None:
     for model_id, native_id in _RETAINED.items():
         assert not provider_lifecycle.provider_model_retired(
             "nscale", model_id, native_id, at=_CUTOFF + timedelta(days=1),
         )
 
 
-def test_nscale_manifest_records_only_announced_retirements() -> None:
+@pytest.mark.parametrize("include_new_model", [False, True], ids=["current", "new-discovery"])
+def test_nscale_manifest_records_only_announced_retirements(include_new_model: bool) -> None:
     rows = {row["id"]: row for row in json.loads(nscale.MANIFEST_PATH.read_text())["models"]}
-    for model_id in _RETAINED:
+    if include_new_model:
+        model_id = "mistralai/mistral-large-3-675b-instruct-2512-nvfp4"
+        rows[model_id] = {
+            "id": model_id,
+            "upstream_id": "mistralai/Mistral-Large-3-675B-Instruct-2512-NVFP4",
+            "routable": False,
+            "routable_reason": "provider-canary-failed",
+        }
+    for model_id, native_id in _RETAINED.items():
+        assert rows[model_id]["upstream_id"] == native_id
         assert "retirement_at" not in rows[model_id]
     for model_id, (native_id, replacements) in _RETIRING.items():
         assert rows[model_id]["upstream_id"] == native_id
         assert rows[model_id]["retirement_at"] == "2026-11-02T00:00:00Z"
         assert rows[model_id].get("replacement_model_id") == (replacements[0] if replacements else None)
     annotated = {model_id for model_id, row in rows.items() if "retirement_at" in row}
-    assert annotated == set(rows) - set(_RETAINED)
+    # New discoveries are not part of the fixed October retirement notices.
+    assert annotated == set(_RETIRING)

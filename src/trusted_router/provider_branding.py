@@ -101,7 +101,18 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     "scaleway": ProviderBrand("https://www.scaleway.com/"),
     "regolo": ProviderBrand("https://regolo.ai/"),
     "lyceum": ProviderBrand("https://lyceum.technology/"),
+    "hixtube": ProviderBrand("https://hixtube.com/"),
     "greenference": ProviderBrand("https://greenference.com/"),
+    "negbeta": ProviderBrand(
+        "https://negbeta.com/",
+        description=(
+            "OpenAI-compatible inference on Negbeta's own serving stack. "
+            "TrustedRouter's managed key has a provider-declared EU scope."
+        ),
+        resources=(("API documentation", "https://inference.negbeta.com/docs"),
+                   ("Data handling", "https://negbeta.com/inference/data-policy/"),
+                   ("Privacy policy", "https://negbeta.com/inference/privacy/")),
+    ),
     "muna": ProviderBrand(
         "https://muna.ai/",
         description="Open-weight chat, vision and reasoning models served on Muna's own inference stack.",
@@ -143,6 +154,22 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
         description="Formerly System1 Models. Models use the decisionmodelsio-eu namespace. The EU route remains EU-only.",
     ),
     "privatemode": ProviderBrand("https://www.privatemode.ai/"),
+    "maple": ProviderBrand(
+        "https://maple.ai/",
+        description=(
+            "Encrypted inference using Maple Transport V2 inside TrustedRouter's "
+            "measured gateway. The dedicated uncensored DeepSeek checkpoint is "
+            "separate from stock DeepSeek."
+        ),
+        resources=(
+            ("API documentation", "https://maple.ai/docs/proxy/api"),
+            ("Models", "https://maple.ai/docs/proxy/models"),
+            ("Pricing", "https://maple.ai/pricing"),
+            ("Privacy policy", "https://maple.ai/privacy"),
+            ("Service status", "https://maple.ai/status"),
+            ("Reviewed dedicated workload", "https://github.com/MaplePrivacyLabs/inference-deepseek-uncensored/tree/76a8e5fdaa7dbade1640025829ba0bfeae7a3495"),
+        ),
+    ),
     "upstage": ProviderBrand("https://www.upstage.ai/"),
     "alibaba": ProviderBrand("https://www.alibabacloud.com/"),
     "anthropic": ProviderBrand("https://www.anthropic.com/"),

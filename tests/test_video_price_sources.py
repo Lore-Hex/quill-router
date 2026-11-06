@@ -131,3 +131,89 @@ def test_video_price_audit_retries_transient_kling_ssr_failure() -> None:
     assert attempts == 2
     assert result.warnings == ()
     assert result.hard_failures == ()
+
+
+@pytest.mark.parametrize("empty_attempts", [1, 2])
+def test_kling_empty_guide_uses_existing_bounded_retry(empty_attempts: int) -> None:
+    attempts = 0
+
+    def incomplete_guide(url: str) -> str:
+        nonlocal attempts
+        if url == KLING_VIDEO_GUIDE_URL:
+            attempts += 1
+            if attempts <= empty_attempts:
+                return "<html><body>Kling VIDEO 3.0 Model User Guide</body></html>"
+        return _official_documents(url)
+
+    result = audit_video_price_sources(incomplete_guide)
+
+    assert attempts == empty_attempts + 1
+    assert result.warnings == ()
+    assert result.hard_failures == ()
+    assert len(result.info) == 3
+
+
+@pytest.mark.parametrize("later_timeout", [False, True])
+def test_kling_missing_guide_rates_still_block_publication(later_timeout: bool) -> None:
+    attempts = 0
+
+    def missing_guide(url: str) -> str:
+        nonlocal attempts
+        if url == KLING_VIDEO_GUIDE_URL:
+            attempts += 1
+            if later_timeout and attempts > 1:
+                raise TimeoutError("guide unavailable")
+            return "<html><body>Loading</body></html>"
+        return _official_documents(url)
+
+    result = audit_video_price_sources(missing_guide)
+
+    assert attempts == 3
+    assert len(result.hard_failures) == 1
+    assert result.hard_failures == result.warnings
+    assert result.hard_failures[0].startswith("kling:")
+    assert len(result.info) == 2
+
+
+@pytest.mark.parametrize("empty_first", [False, True])
+@pytest.mark.parametrize("changed_guide", ["0 Credits/s", "6 Credits/s 8 Credits/s 9 Credits/s 14 Credits/s"])
+def test_kling_observed_rate_drift_is_not_retried(
+    empty_first: bool, changed_guide: str,
+) -> None:
+    attempts = 0
+
+    def changed_rates(url: str) -> str:
+        nonlocal attempts
+        if url == KLING_VIDEO_GUIDE_URL:
+            attempts += 1
+            if empty_first and attempts == 1:
+                return "Loading"
+            return changed_guide if attempts == int(empty_first) + 1 else KLING_GUIDE
+        return _official_documents(url)
+
+    result = audit_video_price_sources(changed_rates)
+
+    assert attempts == int(empty_first) + 1
+    assert len(result.hard_failures) == 1
+    assert result.hard_failures == result.warnings
+    assert "does not match" in result.hard_failures[0]
+
+
+def test_kling_credit_drift_cannot_be_hidden_by_empty_guide() -> None:
+    policy_attempts = 0
+
+    def changed_policy(url: str) -> str:
+        nonlocal policy_attempts
+        if url == KLING_CREDITS_POLICY_URL:
+            policy_attempts += 1
+            return KLING_POLICY.replace("66", "72") if policy_attempts == 1 else KLING_POLICY
+        if url == KLING_VIDEO_GUIDE_URL and policy_attempts == 1:
+            return "Loading"
+        return _official_documents(url)
+
+    result = audit_video_price_sources(changed_policy)
+
+    assert policy_attempts == 1
+    assert len(result.hard_failures) == 1
+    assert result.hard_failures == result.warnings
+    assert "does not match" in result.hard_failures[0]

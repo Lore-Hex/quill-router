@@ -1,6 +1,7 @@
 """Thin native adapter for independent health and immutable receipt checkpoints."""
 from __future__ import annotations
 
+import copy
 import datetime as dt
 import time
 from collections.abc import Callable
@@ -117,28 +118,80 @@ def read_shadow_health_statement() -> Statement:
 class ObservationStore:
     def __init__(self, database: Any, *, clock: Callable[[], float] = elapsed_clock,
                  wall: Callable[[], float] = time.time) -> None:
-        self.workspace_database = database
+        self.workspace_database = owned_database(database, lane="workspace")
         self.database, self.clock, self.wall = owned_database(database), clock, wall
         self.last_claim: dict[str, Any] | None = None
         self.won: tuple[str, int] | None = None  # (boot, slot) of the last claim committed here.
+        # Scheduling hints only; neither proves ownership. Unknown commits must
+        # be reconciled from the claim row in the next slot, never retried here.
+        self.claim_attempt: tuple[str, int] | None = None
+        self.claim_unknown = False
+        self.last_publication: tuple[str, int] | None = None
+        self.unpublished_since: int | None = None
+        self.owns_publisher_database = False
         self.startup_retention = False
         self.startup_claim_raw: bytes | None = None
         self.startup_publication_raw: bytes | None = None
         self.reconciliations: dict[str, set[tuple[str, ...]]] = {}
         self.used_reconciliations: dict[str, int] = {}
-        configure(self.database)
+        self.transport = configure(self.database)
+        self.workspace_transport = configure(self.workspace_database)
+        # Partial offline transports can exercise sessions without snapshot reads.
+        self.supports_runtime_stop = callable(getattr(self.database, "snapshot", None))
 
-    def session_ready(self) -> bool:
-        manager = getattr(self.database, "_sessions_manager", None)
+    def publisher_lane(self) -> ObservationStore:
+        """A worker owns its mutable hints and session; retirement cannot hit readers.
+
+        Cloning the adapter preserves explicit offline transports. Native clients
+        receive a distinct Sessions manager/API, including on worker replacement.
+        No state from an abandoned worker is subsequently merged into this lane.
+        """
+        lane = copy.copy(self)
+        lane.database = owned_database(self.database, lane="publisher")
+        lane.owns_publisher_database = lane.database is not self.database
+        lane.workspace_database = lane.database  # Preparation owns only this lane.
+        lane.transport = lane.workspace_transport = configure(lane.database)
+        lane.last_claim = lane.won = lane.claim_attempt = lane.last_publication = None
+        lane.claim_unknown = False
+        lane.unpublished_since = None
+        return lane
+
+    def close_publisher_lane(self) -> bool:
+        """The retired worker owns deletion and client closure, including retries."""
+        if not self.owns_publisher_database:
+            return True  # Explicit offline transports may share their database.
+        manager = self.database._sessions_manager
+        if not manager.close(self.clock):
+            return False
+        try:
+            self.database.spanner_api.transport.close()
+        except Exception:
+            return False
+        return True
+
+    def session_ready(self, *, workspace: bool = False) -> bool:
+        database = self.workspace_database if workspace else self.database
+        manager = getattr(database, "_sessions_manager", None)
         return not isinstance(manager, Sessions) or manager.ready
 
     def session_recovery_due(self) -> bool:
-        manager = getattr(self.database, "_sessions_manager", None)
-        return isinstance(manager, Sessions) and manager.recovery_due(self.clock)
+        return any(isinstance(manager, Sessions) and manager.recovery_due(self.clock)
+                   for manager in (getattr(self.database, "_sessions_manager", None),
+                                   getattr(self.workspace_database, "_sessions_manager", None)))
 
     def prepare_session(self, boot: str | None = None) -> bool:
         manager = getattr(self.database, "_sessions_manager", None)
-        return not isinstance(manager, Sessions) or manager.prepare(self.clock, boot)
+        ready = not isinstance(manager, Sessions) or manager.prepare(self.clock, boot)
+        workspace = getattr(self.workspace_database, "_sessions_manager", None)
+        if isinstance(workspace, Sessions) and workspace is not manager:
+            # Preserve the boot identity; the separate tr_lane label isolates
+            # reconciliation under Spanner's substring label matching.
+            workspace_boot = None if boot is None else f"{boot}-workspace"
+            workspace_ready = workspace.prepare(self.clock, workspace_boot)
+            # Prepare both even when the first lane failed or is quarantined;
+            # each retains its own five-second budget and recovery window.
+            ready = ready and workspace_ready
+        return ready
 
     def query(self, reader: Any, statement: Statement, budget: Budget, cap: float) -> list[Any]:
         sql, params, types = statement
@@ -243,6 +296,10 @@ class ObservationStore:
 
     def claim(self, boot: str, slot: int, claim_us: int, budget: Budget) -> bool:
         self.last_claim = None
+        self.claim_attempt = (boot, slot)
+        self.claim_unknown = False
+        if self.unpublished_since is None:
+            self.unpublished_since = slot
         original = None
         def run(tx: Any) -> bool:
             nonlocal original
@@ -260,12 +317,18 @@ class ObservationStore:
                 # hot row until it completes. A loss must roll back instead;
                 # like ABORTED it is recorded once, never retried in this slot.
                 raise ContentionLoss("slot_already_claimed")
+            if old is None or old["owner_boot_id"] != boot:
+                self.unpublished_since = slot
             row = Row.build(CLAIM_KIND, "local/publish", value)
             self.write(tx, [row], budget)
             if self.startup_retention:
                 original = row.body
             return True
-        landed = self.transaction(run, budget, CYCLE_SECONDS)
+        try:
+            landed = self.transaction(run, budget, CYCLE_SECONDS)
+        except UnknownCommit:
+            self.claim_unknown = True
+            raise
         if landed:
             self.won = (boot, slot)
         if landed and self.startup_retention:
@@ -282,6 +345,9 @@ class ObservationStore:
             self.write(tx, [row], budget)
             return True
         landed = self.transaction(run, budget, CYCLE_SECONDS)
+        if landed:
+            self.last_publication = (value["publisher_boot_id"], value["slot"])
+            self.unpublished_since = value["slot"] + 1
         if landed and self.startup_retention:
             self.startup_publication_raw = row.body
         return landed
@@ -307,7 +373,11 @@ class ObservationStore:
 
         # proto-plus preserves nanos on the wire; api_core's similarly named
         # datetime is marshalled as ordinary datetime and loses sub-microseconds.
-        seconds, nanos = divmod(claim_at_ns, 1_000_000_000)
+        # Spanner reports read timestamps at microsecond precision, including
+        # when it waits for this bound. Ceil (never floor) the bound so even a
+        # read exactly at floor_us(bound) is >= the original nanosecond claim.
+        # Stored claims, historical traces and the a1 ordering rules stay exact.
+        seconds, nanos = divmod(((claim_at_ns + 999) // 1000) * 1000, 1_000_000_000)
         bound = DatetimeWithNanoseconds.from_timestamp_pb(Timestamp(seconds=seconds, nanos=nanos))
         rows, observed_ns = self.snapshot_query(unresolved_statement(), budget, CYCLE_SECONDS,
                                                min_read_timestamp=bound)
@@ -443,8 +513,35 @@ class ObservationStore:
             proofs.add(proof)
         return True
 
+    def runtime_stop(self, row: Row | None, budget: Budget) -> Row | None:
+        """Reviewed stop/clear path: one key, one transaction, first stop wins.
+
+        A lost commit acknowledgement is safe to retry. Clear deletes only this
+        latch; ordinary immutable controls and retention remain unchanged.
+        """
+        from google.cloud.spanner_v1 import KeySet
+
+        if row is not None:
+            require(row.kind == CONTROL_KIND and row.key == "stop-v2", "stop_identity")
+            row.value()
+        budget = budget.child(WRITE_SECONDS)
+        def run(tx: Any) -> Row | None:
+            old = self.point(tx, entity_point_statement(CONTROL_KIND, "stop-v2"), budget, READ_SECONDS)
+            if row is None:
+                if old is not None:
+                    tx.delete("tr_entities", KeySet(keys=[(CONTROL_KIND, "stop-v2")]))
+                return None
+            if old is not None:
+                return old
+            self.write(tx, [row], budget)
+            return row
+        return self.transaction(run, budget, WRITE_SECONDS)
+
+    def read_runtime_stop(self) -> Row | None:
+        return self.read(CONTROL_KIND, "stop-v2", Budget(self.clock()+READ_SECONDS, self.clock))
+
     def control(self, row: Row, budget: Budget) -> None:
-        require(row.kind == CONTROL_KIND, "control_kind")
+        require(row.kind == CONTROL_KIND and row.key != "stop-v2", "control_kind")
         budget = budget.child(WRITE_SECONDS)
         def run(tx: Any) -> None:
             self.retention(tx, [row], budget)

@@ -125,99 +125,104 @@ def register(router: APIRouter) -> None:
         if not lookup_hash:
             raise api_error(400, "api_key_lookup_hash is required", ErrorType.BAD_REQUEST)
 
-        api_key = STORE.get_key_by_lookup_hash(lookup_hash)
-        if api_key is None:
-            # A genuine "no such key" — the peer caches this briefly so a
-            # leaked key in a retry loop cannot become sustained
-            # cross-border traffic. Distinct from a 5xx, which the peer
-            # must treat as an outage and NOT cache.
-            raise api_error(404, "Unknown API key", ErrorType.NOT_FOUND)
-
-        declared_features = {
-            token.strip()
-            for token in request.headers.get(
-                "x-trustedrouter-federation-features", ""
-            ).split(",")
-            if token.strip()
-        }
-        # The three planes deploy independently. A peer that can parse this
-        # record but drops `scopes` would import a delegated key as legacy and
-        # fail open, so scope support must be declared rather than assumed.
-        if api_key.scopes and "scopes" not in declared_features:
-            raise api_error(404, "Unknown API key", ErrorType.NOT_FOUND)
-
-        app_id = getattr(api_key, "app_id", "") or ""
-        app_suspended = False
-        app_markup_basis_points = 0
-        app_owner_user_id = ""
-        if app_id:
-            app = STORE.get_oauth_app(app_id)
-            if app is None:
-                # Match the unknown/scoped-key fail-closed wire shape so a peer
-                # cannot distinguish or cache an orphaned app key as valid.
+        # Key, app, owner, and workspace reads are synchronous Store IO on
+        # a peer's hot path: resolve the record on a worker thread.
+        def resolve() -> dict[str, Any]:
+            api_key = STORE.get_key_by_lookup_hash(lookup_hash)
+            if api_key is None:
+                # A genuine "no such key" — the peer caches this briefly so a
+                # leaked key in a retry loop cannot become sustained
+                # cross-border traffic. Distinct from a 5xx, which the peer
+                # must treat as an outage and NOT cache.
                 raise api_error(404, "Unknown API key", ErrorType.NOT_FOUND)
-            owner = (
-                STORE.get_user(app.owner_user_id)
-                if app.markup_basis_points > 0
-                else None
-            )
-            app_suspended = oauth_app_is_effectively_suspended(app, owner)
-            app_markup_basis_points = int(app.markup_basis_points)
-            app_owner_user_id = str(app.owner_user_id)
 
-        if getattr(api_key, "management", False):
-            raise api_error(
-                403,
-                "Management keys cannot be federated",
-                ErrorType.FORBIDDEN,
-            )
+            declared_features = {
+                token.strip()
+                for token in request.headers.get(
+                    "x-trustedrouter-federation-features", ""
+                ).split(",")
+                if token.strip()
+            }
+            # The three planes deploy independently. A peer that can parse this
+            # record but drops `scopes` would import a delegated key as legacy and
+            # fail open, so scope support must be declared rather than assumed.
+            if api_key.scopes and "scopes" not in declared_features:
+                raise api_error(404, "Unknown API key", ErrorType.NOT_FOUND)
 
-        workspace = STORE.get_workspace(api_key.workspace_id)
-        if workspace is None:
-            raise api_error(404, "Workspace is unavailable", ErrorType.NOT_FOUND)
+            app_id = getattr(api_key, "app_id", "") or ""
+            app_suspended = False
+            app_markup_basis_points = 0
+            app_owner_user_id = ""
+            if app_id:
+                app = STORE.get_oauth_app(app_id)
+                if app is None:
+                    # Match the unknown/scoped-key fail-closed wire shape so a peer
+                    # cannot distinguish or cache an orphaned app key as valid.
+                    raise api_error(404, "Unknown API key", ErrorType.NOT_FOUND)
+                owner = (
+                    STORE.get_user(app.owner_user_id)
+                    if app.markup_basis_points > 0
+                    else None
+                )
+                app_suspended = oauth_app_is_effectively_suspended(app, owner)
+                app_markup_basis_points = int(app.markup_basis_points)
+                app_owner_user_id = str(app.owner_user_id)
 
-        # An explicit allow-list. A field added to ApiKey later must be
-        # opted in here deliberately — the alternative (serialize the
-        # object and strip secrets) leaks the next secret-shaped field
-        # somebody adds.
-        record = {
-            "lookup_hash": api_key.lookup_hash,
-            "key_hash": api_key.hash,
-            "workspace_id": api_key.workspace_id,
-            "name": getattr(api_key, "name", "") or "",
-            "scopes": list(getattr(api_key, "scopes", [])),
-            "disabled": bool(getattr(api_key, "disabled", False)),
-            "expires_at": getattr(api_key, "expires_at", None),
-            "limit_microdollars": getattr(api_key, "limit_microdollars", None),
-            "limit_daily_microdollars": getattr(api_key, "limit_daily_microdollars", None),
-            "limit_weekly_microdollars": getattr(api_key, "limit_weekly_microdollars", None),
-            "limit_monthly_microdollars": getattr(api_key, "limit_monthly_microdollars", None),
-            "include_byok_in_limit": bool(
-                getattr(api_key, "include_byok_in_limit", True)
-            ),
-            "budget_alert_only": bool(getattr(api_key, "budget_alert_only", False)),
-            "budget_strict": bool(getattr(api_key, "budget_strict", False)),
-            "workspace_billing_paused": workspace_billing_paused(workspace),
-            # Lets the peer detect a changed record without diffing every
-            # field, and lets a future revocation feed say "anything older
-            # than X is stale".
-            "revision": getattr(api_key, "updated_at", None)
-            or getattr(api_key, "created_at", None),
-        }
-        if "abuse" in getattr(workspace, "billing_pause_causes", ()):
-            # An abuse suspension is final until cleared, and peers answer it
-            # with a 403 the gateway does not retry, as this plane does. Only
-            # suspended records carry the bit: every other record stays
-            # byte-identical, and old peers drop it harmlessly.
-            record["workspace_suspended"] = True
-        if app_id:
-            # Attribution and its restrictive suspension bit travel together.
-            # Old peers drop both harmlessly; legacy records remain byte-identical.
-            record["app_id"] = app_id
-            record["app_suspended"] = app_suspended
-            record["app_markup_basis_points"] = app_markup_basis_points
-            record["app_owner_user_id"] = app_owner_user_id
-        return {"data": record}
+            if getattr(api_key, "management", False):
+                raise api_error(
+                    403,
+                    "Management keys cannot be federated",
+                    ErrorType.FORBIDDEN,
+                )
+
+            workspace = STORE.get_workspace(api_key.workspace_id)
+            if workspace is None:
+                raise api_error(404, "Workspace is unavailable", ErrorType.NOT_FOUND)
+
+            # An explicit allow-list. A field added to ApiKey later must be
+            # opted in here deliberately — the alternative (serialize the
+            # object and strip secrets) leaks the next secret-shaped field
+            # somebody adds.
+            record = {
+                "lookup_hash": api_key.lookup_hash,
+                "key_hash": api_key.hash,
+                "workspace_id": api_key.workspace_id,
+                "name": getattr(api_key, "name", "") or "",
+                "scopes": list(getattr(api_key, "scopes", [])),
+                "disabled": bool(getattr(api_key, "disabled", False)),
+                "expires_at": getattr(api_key, "expires_at", None),
+                "limit_microdollars": getattr(api_key, "limit_microdollars", None),
+                "limit_daily_microdollars": getattr(api_key, "limit_daily_microdollars", None),
+                "limit_weekly_microdollars": getattr(api_key, "limit_weekly_microdollars", None),
+                "limit_monthly_microdollars": getattr(api_key, "limit_monthly_microdollars", None),
+                "include_byok_in_limit": bool(
+                    getattr(api_key, "include_byok_in_limit", True)
+                ),
+                "budget_alert_only": bool(getattr(api_key, "budget_alert_only", False)),
+                "budget_strict": bool(getattr(api_key, "budget_strict", False)),
+                "workspace_billing_paused": workspace_billing_paused(workspace),
+                # Lets the peer detect a changed record without diffing every
+                # field, and lets a future revocation feed say "anything older
+                # than X is stale".
+                "revision": getattr(api_key, "updated_at", None)
+                or getattr(api_key, "created_at", None),
+            }
+            if "abuse" in getattr(workspace, "billing_pause_causes", ()):
+                # An abuse suspension is final until cleared, and peers answer it
+                # with a 403 the gateway does not retry, as this plane does. Only
+                # suspended records carry the bit: every other record stays
+                # byte-identical, and old peers drop it harmlessly.
+                record["workspace_suspended"] = True
+            if app_id:
+                # Attribution and its restrictive suspension bit travel together.
+                # Old peers drop both harmlessly; legacy records remain byte-identical.
+                record["app_id"] = app_id
+                record["app_suspended"] = app_suspended
+                record["app_markup_basis_points"] = app_markup_basis_points
+                record["app_owner_user_id"] = app_owner_user_id
+            return {"data": record}
+
+        return await run_in_threadpool(resolve)
 
     @router.post("/internal/federation/apply-usage")
     async def federation_apply_usage(request: Request, settings: SettingsDep) -> dict[str, Any]:

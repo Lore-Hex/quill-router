@@ -597,7 +597,8 @@ def retained_pilot_fixture(tmp_path: Path, stage: str) -> tuple[dict[str, Any], 
         else:
             assert stage == 'post-flip'
             data['serving'][0]['pins'].update(TR_ASYNC_SETTLE_ENABLED='true', TR_ASYNC_SETTLE_PROTECTION='true',
-                TR_ASYNC_SETTLE_PILOT_WORKSPACES=pilot.PILOT, TR_ASYNC_SETTLE_PILOT_CAP_MICRO='5000000')
+                TR_ASYNC_SETTLE_PILOT_WORKSPACES=pilot.PILOT_WORKSPACES, TR_ASYNC_SETTLE_PILOT_CAP_MICRO='5000000',
+                TR_ASYNC_SETTLE_FASTPATH_OVERLAP_WORKSPACES=pilot.FASTPATH_OVERLAP_WORKSPACES)
             data['serving'][1]['pins'].update(TR_ASYNC_SETTLE_NEGOTIATE='on', TR_ASYNC_SETTLE_SHADOW='off')
             data.update(rollback=artifact(directory, 'rollback.json', dict(status='PASS', states=[
                 'admission_on', 'pending', 'admission_off', 'drained', 'protection_off'])),

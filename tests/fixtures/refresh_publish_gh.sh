@@ -76,6 +76,29 @@ elif [ "${command}" = run ] && [ "${subcommand}" = list ]; then
   fi
   record_event poll "${poll}" "${answer}" "${main_sha}"
   printf '%s\n' "${answer}"
+elif [ "${command}" = run ] && [ "${subcommand}" = view ]; then
+  # The run selected by id: the scenario's answer for this poll whose
+  # databaseId is the requested one, whatever else the listing holds.
+  poll=0
+  if [ -f "${TMPDIR}/poll-count" ]; then read -r poll < "${TMPDIR}/poll-count"; fi
+  poll=$((poll + 1))
+  printf '%s\n' "${poll}" > "${TMPDIR}/poll-count"
+  answer=$(jq -c --argjson index "$((poll - 1))" --arg id "${third}" \
+    '.polls[([$index, (.polls | length) - 1] | min)] | map(select((.databaseId | tostring) == $id))[0] // empty' \
+    "${scenario}")
+  main_sha=''
+  if [ -n "${answer}" ]; then
+    main_sha=$("${REAL_GIT}" --git-dir="${TMPDIR}/origin.git" rev-parse refs/heads/main)
+  fi
+  record_event poll "${poll}" "${answer}" "${main_sha}"
+  printf '%s\n' "${answer}"
+elif [ "${command}" = run ] && [ "${subcommand}" = cancel ]; then
+  # Only the run the poll found may be cancelled, and only once the poll has
+  # found it: the scenario's run id, never a guess.
+  if [ "${third}" != "$(jq -r '.polls[0][0].databaseId' "${scenario}")" ]; then
+    echo "Unexpected run cancel: ${third}" >&2
+    exit 1
+  fi
 elif [ "${command}" = api ] && [ -n "${endpoint}" ]; then
   fault=$(jq -r '.status_fault // empty' "${scenario}")
   if [ ! -f "${statuses}" ]; then printf '[]' > "${statuses}"; fi
@@ -94,8 +117,31 @@ elif [ "${command}" = api ] && [ -n "${endpoint}" ]; then
       jq -c '.[-1] | del(.sha, .creator)' "${statuses}"
     fi
   elif [ "${method}" = GET ]; then
+    # Simulate only the final newly-created status missing from the readback.
+    # Never create another status or dispatch another CI run to make it visible.
+    missing_reads=$(jq -r '.status_missing_reads // 0' "${scenario}")
+    if [ "$(jq length "${statuses}")" -eq 4 ]; then
+      reads=0
+      if [ -f "${TMPDIR}/status-read-count" ]; then read -r reads < "${TMPDIR}/status-read-count"; fi
+      reads=$((reads + 1))
+      printf '%s\n' "${reads}" > "${TMPDIR}/status-read-count"
+      if [ "${reads}" -le "${missing_reads}" ]; then
+        printf '\n'
+        exit 0
+      fi
+    fi
     case "${fault}" in
       get_empty) printf '\n' ;;
+      get_error) echo 'simulated API read failure' >&2; exit 1 ;;
+      get_url|get_context|get_state|get_target)
+        case "${fault}" in
+          get_url) replacement='.url = "https://api.github.invalid/another-sha"' ;;
+          get_context) replacement='.context = "another-test"' ;;
+          get_state) replacement='.state = "failure"' ;;
+          get_target) replacement='.target_url = "https://github.invalid/another-run"' ;;
+        esac
+        jq -c --arg url "${url}" \
+          "map(select(.url == \$url)) | (${filter}) | ${replacement}" "${statuses}" ;;
       creator)
         jq -c --arg url "${url}" \
           "map(select(.url == \$url) | .creator.login = \"someone-else\") | ${filter}" "${statuses}" ;;

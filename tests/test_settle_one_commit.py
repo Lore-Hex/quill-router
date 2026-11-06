@@ -15,6 +15,7 @@ from __future__ import annotations
 import copy
 import dataclasses
 import datetime as dt
+import json
 import re
 import time
 from collections.abc import Iterator
@@ -24,7 +25,7 @@ from typing import Any
 import anyio
 import pytest
 from fastapi import BackgroundTasks
-from google.api_core.exceptions import AlreadyExists, DeadlineExceeded
+from google.api_core.exceptions import Aborted, AlreadyExists, DeadlineExceeded
 from google.api_core.exceptions import DeadlineExceeded as _CommitDeadlineExceeded
 from google.cloud.spanner_v1 import param_types
 from google.cloud.spanner_v1 import param_types as _sdk_param_types
@@ -80,7 +81,10 @@ NOW_Z = NOW.isoformat().replace("+00:00", "Z")
 MODEL = "anthropic/claude-haiku-4.5"
 TOTAL_CREDIT = 50_000_000
 KEY_LIMIT = 40_000_000
-INTERNAL = Settings(environment="test", service_surface="internal", settle_outbox_enabled=True)
+INTERNAL = Settings(
+    environment="test", service_surface="internal", settle_outbox_enabled=True,
+    settle_contention_defers_to_drain=True,
+)
 
 
 def _iso(value: dt.datetime) -> str:
@@ -462,17 +466,17 @@ def _settle_body(authorized: dict[str, Any], *, success: bool = True) -> Gateway
 
 
 def _settle_route(
-    authorized: dict[str, Any], *, success: bool = True,
+    authorized: dict[str, Any], *, success: bool = True, settings: Settings = INTERNAL,
 ) -> tuple[dict[str, Any], BackgroundTasks]:
     tasks = BackgroundTasks()
     body = _settle_body(authorized, success=success)
     if success:
         data = gateway._settle_gateway_with_admission_sync(
-            body, settings=INTERNAL, background_tasks=tasks,
+            body, settings=settings, background_tasks=tasks,
         )["data"]
     else:
         data = gateway._settle_gateway_authorization(
-            body, success=False, settings=INTERNAL, background_tasks=tasks,
+            body, success=False, settings=settings, background_tasks=tasks,
         )["data"]
     return data, tasks
 
@@ -636,6 +640,10 @@ def test_aborted_one_commit_falls_back_to_the_two_commit_settle(
     prod_store: tuple[Any, FakeSpannerDatabase, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # The fake's runner gives up with a RuntimeError, not a store error, so
+    # this is the non-transient failure: the inline two-commit settle runs.
+    # Spanner's own Aborted / DeadlineExceeded defer to the drain instead
+    # (test_a_contended_one_commit_defers_to_the_drain_and_charges_once).
     _store, db, key = prod_store
     authorized = _authorize_route(key, "one-commit-fallback")
     refused = _refuse_one_commit(monkeypatch, db)
@@ -653,6 +661,194 @@ def test_aborted_one_commit_falls_back_to_the_two_commit_settle(
     assert _money(db, "ws-one-commit", key.hash) == (cost, 0, cost, 0)
     assert db.settle_outbox[(authorized["authorization_id"], "settle")]["status"] == "done"
     assert len(db.analytics_outbox) == 1
+
+
+@pytest.mark.parametrize("error", [Aborted("wounded on the credit row"), DeadlineExceeded("budget spent")])
+def test_a_contended_one_commit_defers_to_the_drain_and_charges_once(
+    prod_store: tuple[Any, FakeSpannerDatabase, Any],
+    error: Exception,
+) -> None:
+    """The one-commit attempt loses to the store before committing. The
+    settle records its intent and leaves the charge to the drain: no inline
+    finalize on the hot counter rows, nothing charged yet, and the drain
+    charges exactly once."""
+    store, db, key = prod_store
+    authorized = _authorize_route(key, f"one-commit-contended-{type(error).__name__}")
+    original_run = FakeSpannerDatabase.run_in_transaction
+
+    def run(database: Any, fn: Any, **kwargs: Any) -> Any:
+        if kwargs.get("transaction_tag") == "tr_settle_one_commit":
+            raise error
+        return original_run(database, fn, **kwargs)
+
+    inline_calls: list[str] = []
+
+    def inline_finalize(*_args: Any, **_kwargs: Any) -> Any:
+        # The route swallows an inline failure into intent_durable, so count
+        # the call rather than raise.
+        inline_calls.append("tr_finalize")
+        raise RuntimeError("inline finalize")
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(FakeSpannerDatabase, "run_in_transaction", run)
+        patch.setattr(type(store), "typed_finalize_gateway_authorization_result", inline_finalize)
+        log = CommitLog(patch)
+
+        data, _tasks = _settle_route(authorized)
+
+        assert data["disposition"] == "intent_durable" and data["settled"] is False
+        assert data["finalization_outcome"] == "pending"
+        assert data["cost_microdollars"] == 49
+        assert log.take() == ["auto:SpannerSettleOutbox.enqueue.insert_txn"]
+    assert inline_calls == []
+    aid = authorized["authorization_id"]
+    row = db.settle_outbox[(aid, "settle")]
+    assert row["status"] == "pending" and row["auto_refill_status"] == "pending"
+    # The charge is due at once; the refill keeps the grace to follow it.
+    now = dt.datetime.now(dt.UTC)
+    assert dt.datetime.fromisoformat(row["next_attempt_at"].replace("Z", "+00:00")) <= now
+    assert dt.datetime.fromisoformat(
+        row["auto_refill_next_attempt_at"].replace("Z", "+00:00")
+    ) > now + timedelta(seconds=50)
+    assert _money(db, "ws-one-commit", key.hash)[0] == 0
+
+    first = drain_mod.drain_settle_outbox(10)
+    assert first["outcomes"] == {ApplyOutcome.SETTLED_NOW: 1}
+    assert drain_mod.drain_settle_outbox(10)["claimed"] == 0
+    row = db.settle_outbox[(aid, "settle")]
+    assert row["status"] == "done" and row["actual_cost_micro"] == 49
+    assert _money(db, "ws-one-commit", key.hash) == (49, 0, 49, 0)
+    assert len(db.generation_records) == 1
+
+
+def _contend_one_commit(patch: pytest.MonkeyPatch, error: Exception) -> None:
+    original_run = FakeSpannerDatabase.run_in_transaction
+
+    def run(database: Any, fn: Any, **kwargs: Any) -> Any:
+        if kwargs.get("transaction_tag") in {"tr_settle_one_commit", "tr_refund_one_commit"}:
+            raise error
+        return original_run(database, fn, **kwargs)
+
+    patch.setattr(FakeSpannerDatabase, "run_in_transaction", run)
+
+
+def test_with_the_switch_off_a_contended_one_commit_finalizes_inline(
+    prod_store: tuple[Any, FakeSpannerDatabase, Any],
+) -> None:
+    _store, db, key = prod_store
+    authorized = _authorize_route(key, "one-commit-contended-switch-off")
+    off = INTERNAL.model_copy(update={"settle_contention_defers_to_drain": False})
+    with pytest.MonkeyPatch.context() as patch:
+        _contend_one_commit(patch, Aborted("wounded on the credit row"))
+        log = CommitLog(patch)
+        data, tasks = _settle_route(authorized, settings=off)
+        _run_background(tasks)
+        assert data["disposition"] == "finalized" and data["settled"] is True
+        assert log.take()[:2] == ["auto:SpannerSettleOutbox.enqueue.insert_txn", "tr_finalize"]
+    assert _money(db, "ws-one-commit", key.hash) == (49, 0, 49, 0)
+
+
+def test_a_contended_refund_is_due_at_once_and_drains_to_a_full_release(
+    prod_store: tuple[Any, FakeSpannerDatabase, Any],
+) -> None:
+    """A refund carries no refill, so its deferred intent is due at once: the
+    drain releases the hold without waiting out the inline-race grace."""
+    _store, db, key = prod_store
+    authorized = _authorize_route(key, "one-commit-contended-refund")
+    with pytest.MonkeyPatch.context() as patch:
+        _contend_one_commit(patch, Aborted("wounded on the credit row"))
+        data, _tasks = _settle_route(authorized, success=False)
+    assert data["disposition"] == "intent_durable"
+    aid = authorized["authorization_id"]
+    row = db.settle_outbox[(aid, "refund")]
+    assert row["auto_refill_status"] is None
+    assert dt.datetime.fromisoformat(row["next_attempt_at"].replace("Z", "+00:00")) <= dt.datetime.now(dt.UTC)
+    usage, credit_reserved, key_usage, key_reserved = _money(db, "ws-one-commit", key.hash)
+    assert (usage, key_usage) == (0, 0) and credit_reserved > 0 and key_reserved > 0
+
+    drained = drain_mod.drain_settle_outbox(10)
+    assert drained["claimed"] == 1
+    assert db.settle_outbox[(aid, "refund")]["status"] == "done"
+    assert _money(db, "ws-one-commit", key.hash) == (0, 0, 0, 0)
+
+
+def test_a_redelivery_after_a_deferred_settle_charges_once(
+    prod_store: tuple[Any, FakeSpannerDatabase, Any],
+) -> None:
+    """The enclave redelivers before the drain runs. The intent exists, so the
+    one commit declines and the enqueue refreshes: the inline finalize
+    charges, and the drain and a third delivery find it settled."""
+    _store, db, key = prod_store
+    authorized = _authorize_route(key, "one-commit-contended-redelivery")
+    aid = authorized["authorization_id"]
+    with pytest.MonkeyPatch.context() as patch:
+        _contend_one_commit(patch, Aborted("wounded on the credit row"))
+        first, _tasks = _settle_route(authorized)
+    assert first["disposition"] == "intent_durable"
+
+    second, tasks = _settle_route(authorized)
+    _run_background(tasks)
+    assert second["settled"] is True
+    assert db.settle_outbox[(aid, "settle")]["status"] == "done"
+    db.settle_outbox[(aid, "settle")]["next_attempt_at"] = "2000-01-01T00:00:00Z"
+    assert drain_mod.drain_settle_outbox(10)["claimed"] == 0
+    with pytest.MonkeyPatch.context() as patch:
+        _contend_one_commit(patch, Aborted("wounded on the credit row"))
+        third, _tasks = _settle_route(authorized)
+    assert third["settled"] is True and third["already_settled"] is True
+    assert _money(db, "ws-one-commit", key.hash) == (49, 0, 49, 0)
+    assert len(db.generation_records) == 1
+
+
+def test_a_deferred_then_drained_settle_books_what_the_inline_settle_books(
+    prod_store: tuple[Any, FakeSpannerDatabase, Any],
+) -> None:
+    """Differential: the same request settled inline and settled through the
+    drain move the credit and key counters by the same amounts and write the
+    same generation and activity records."""
+    _store, db, key = prod_store
+
+    def records() -> tuple[int, int]:
+        return len(db.generation_records), len(db.operational_analytics_outbox)
+
+    inline = _authorize_route(key, "differential-inline")
+    before, before_records = _money(db, "ws-one-commit", key.hash), records()
+    data, tasks = _settle_route(inline)
+    _run_background(tasks)
+    assert data["disposition"] == "finalized"
+    inline_delta = tuple(a - b for a, b in zip(_money(db, "ws-one-commit", key.hash), before, strict=True))
+    inline_records = tuple(a - b for a, b in zip(records(), before_records, strict=True))
+    inline_generation = next(iter(db.generation_records.values()))
+
+    deferred = _authorize_route(key, "differential-deferred")
+    before, before_records = _money(db, "ws-one-commit", key.hash), records()
+    with pytest.MonkeyPatch.context() as patch:
+        _contend_one_commit(patch, Aborted("wounded on the credit row"))
+        data, _tasks = _settle_route(deferred)
+    assert data["disposition"] == "intent_durable"
+    db.settle_outbox[(deferred["authorization_id"], "settle")]["next_attempt_at"] = "2000-01-01T00:00:00Z"
+    assert drain_mod.drain_settle_outbox(10)["outcomes"] == {ApplyOutcome.SETTLED_NOW: 1}
+    deferred_delta = tuple(a - b for a, b in zip(_money(db, "ws-one-commit", key.hash), before, strict=True))
+    deferred_records = tuple(a - b for a, b in zip(records(), before_records, strict=True))
+    deferred_generation = next(
+        g for g in db.generation_records.values() if g is not inline_generation
+    )
+
+    # Each settle books 49 and releases its own hold.
+    assert deferred_delta == inline_delta
+    assert inline_delta[0] == inline_delta[2] == 49
+    assert _money(db, "ws-one-commit", key.hash) == (98, 0, 98, 0)
+    assert deferred_records == inline_records == (1, 1)
+    assert _comparable_generation(deferred_generation) == _comparable_generation(inline_generation)
+
+
+def _comparable_generation(record: Any) -> dict[str, Any]:
+    """A generation record's payload without the two fields every record
+    owns: its id and the instant it was written."""
+    body = json.loads(record["payload"])
+    body.pop("id")
+    body.pop("created_at")
+    return body
 
 
 def test_unknown_outcome_one_commit_falls_back_without_double_booking(
@@ -869,10 +1065,13 @@ def test_one_commit_attempt_is_budgeted_and_leaves_the_fallback_its_budget(
     monkeypatch.setattr(FakeSpannerDatabase, "run_in_transaction", run)
     data, _tasks = _settle_route(authorized)
 
-    assert data["disposition"] == "finalized"
+    # A deadline on the attempt is the store's answer, so the settle defers
+    # to the drain rather than finalizing inline on the same rows.
+    assert data["disposition"] == "intent_durable"
+    assert "tr_finalize" not in remaining
     assert remaining["tr_settle_one_commit"] <= storage_gcp_authorize.ONE_COMMIT_SETTLE_BUDGET_SECONDS
-    # The durable fallback still has (nearly) the whole route budget.
-    assert remaining["enqueue"] > 15.0 and remaining["tr_finalize"] > 15.0
+    # The durable enqueue still has (nearly) the whole route budget.
+    assert remaining["enqueue"] > 15.0
 
 
 @pytest.mark.usefixtures("fixed_catalog")

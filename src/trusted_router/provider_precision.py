@@ -43,24 +43,23 @@ class ProviderPrecision:
     provider: str
     model_id: str
     upstream_id: str
-    quantization: Literal["bf16", "fp8", "nvfp4", "mxfp4", "int4"]
+    quantization: Literal["bf16", "fp4", "fp8", "nvfp4", "mxfp4", "int4"]
     label: str
     weight_formats: tuple[str, ...]
     kv_cache_dtype: str | None
-    model_repository: str
-    model_revision: str
+    model_repository: str | None
+    model_revision: str | None
     reviewed_on: date
     sources: tuple[PrecisionSource, ...]
     notes: str
-    evidence_type: Literal["published_serving_config"] = "published_serving_config"
+    evidence_type: Literal["published_serving_config", "provider_declaration"] = "published_serving_config"
     runtime_verified: Literal[False] = False
 
     def __post_init__(self) -> None:
-        for field in (self.provider, self.model_id, self.upstream_id, self.label,
-                      self.model_repository, self.model_revision, self.notes):
+        for field in (self.provider, self.model_id, self.upstream_id, self.label, self.notes):
             if not isinstance(field, str) or not field:
                 raise ValueError("invalid precision field")
-        if self.quantization not in ("bf16", "fp8", "nvfp4", "mxfp4", "int4"):
+        if self.quantization not in ("bf16", "fp4", "fp8", "nvfp4", "mxfp4", "int4"):
             raise ValueError("invalid weight format")
         if self.quantization not in self.weight_formats or not all(
             v in ("bf16", "fp4", "fp8", "nvfp4", "mxfp4", "int4") for v in self.weight_formats
@@ -68,10 +67,19 @@ class ProviderPrecision:
             raise ValueError("invalid weight formats")
         if self.kv_cache_dtype is not None and not isinstance(self.kv_cache_dtype, str):
             raise ValueError("invalid KV cache dtype")
-        if not re.fullmatch(r"[a-f0-9]{40}", self.model_revision) or len(self.sources) < 2:
-            raise ValueError("missing pinned precision evidence")
-        if self.runtime_verified is not False or self.evidence_type != "published_serving_config":
-            raise ValueError("published configs are not runtime proofs")
+        if self.evidence_type == "published_serving_config":
+            if (not isinstance(self.model_repository, str) or not self.model_repository
+                    or not isinstance(self.model_revision, str)
+                    or not re.fullmatch(r"[a-f0-9]{40}", self.model_revision)
+                    or len(self.sources) < 2):
+                raise ValueError("missing pinned precision evidence")
+        elif self.evidence_type == "provider_declaration":
+            if self.model_repository is not None or self.model_revision is not None or not self.sources:
+                raise ValueError("provider declaration needs a source, not inferred weight pins")
+        else:
+            raise ValueError("invalid precision evidence type")
+        if self.runtime_verified is not False:
+            raise ValueError("published precision metadata is not a runtime proof")
 
     @classmethod
     def from_dict(cls, row: dict[str, Any]) -> ProviderPrecision:

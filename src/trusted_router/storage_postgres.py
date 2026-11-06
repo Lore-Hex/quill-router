@@ -1265,7 +1265,9 @@ class PostgresStore(OperationalAnalyticsReads):
     ) -> list[tuple[str, int]]:
         # The owner row serializes count-and-insert on ordinary PostgreSQL.
         # Aurora DSQL/PGAdapter may abort instead; _run_transaction retries it.
-        self._read_entity_tx(conn, "user", owner_user_id, User, for_update=True)
+        owner = self._read_entity_tx(conn, "user", owner_user_id, User, for_update=True)
+        if owner is not None and owner.disabled:
+            raise ValueError("account_closed")
         owned = self._owner_workspace_shards_tx(conn, owner_user_id)
         if enforce_count and len(owned) >= self.max_workspaces_per_owner:
             raise WorkspaceOwnerLimitExceeded(
@@ -1743,78 +1745,85 @@ class PostgresStore(OperationalAnalyticsReads):
         billing_paused: bool | None = None,
         billing_pause_reason: str | None = None,
     ) -> Workspace | None:
-        def txn(conn: Any) -> Workspace | None:
-            workspace = self._read_entity_tx(
-                conn, "workspace", workspace_id, Workspace, for_update=True
-            )
-            if workspace is None:
-                return None
-            owner = self._read_entity_tx(
-                conn, "user", workspace.owner_user_id, User, for_update=True
-            )
-            if deleted is not None and deleted != workspace.deleted:
-                credit = self._read_entity_tx(
-                    conn, "credit", workspace_id, CreditAccount, for_update=True
-                )
-                if credit is None:
-                    raise RuntimeError("workspace is missing its credit account")
-                if deleted:
-                    removed = conn.execute(
-                        "DELETE FROM tr_owner_workspace "
-                        "WHERE owner_user_id = %s AND workspace_id = %s",
-                        (workspace.owner_user_id, workspace_id),
-                    )
-                    if removed.rowcount != 1:
-                        raise RuntimeError(
-                            "active workspace is missing from tr_owner_workspace"
-                        )
-                    changed = conn.execute(
-                        "UPDATE tr_credit_balance SET trust_tier = 0, "
-                        "trust_latched_at = COALESCE(trust_latched_at, CURRENT_TIMESTAMP), "
-                        "updated_at = CURRENT_TIMESTAMP WHERE workspace_id = %s",
-                        (workspace_id,),
-                    )
-                    if changed.rowcount != credit_shard_count(credit):
-                        raise RuntimeError(
-                            "archive trust latch did not cover every active shard"
-                        )
-                else:
-                    owned = self._require_owner_growth_tx(
-                        conn,
-                        workspace.owner_user_id,
-                        added_shards=credit_shard_count(credit),
-                        enforce_count=True,
-                    )
-                    self._insert_owner_inventory_tx(
-                        conn, workspace.owner_user_id, workspace_id
-                    )
-                    if owner is not None:
-                        owner.owner_workspace_count = len(owned) + 1
-                if deleted and owner is not None:
-                    owner.owner_workspace_count = len(
-                        self._owner_workspace_shards_tx(
-                            conn, workspace.owner_user_id
-                        )
-                    )
-                workspace.deleted = deleted
-            if name is not None:
-                workspace.name = name
-            if billing_paused is not None:
-                causes = set(workspace.billing_pause_causes)
-                if billing_paused:
-                    causes.add("migration")
-                else:
-                    causes.discard("migration")
-                workspace.billing_pause_causes = sorted(causes)
-                workspace.billing_paused = bool(causes)
-            if billing_pause_reason is not None:
-                workspace.billing_pause_reason = billing_pause_reason
-            if owner is not None:
-                self._write_entity_tx(conn, "user", owner.id, owner)
-            self._write_entity_tx(conn, "workspace", workspace_id, workspace)
-            return None if workspace.deleted else workspace
+        return self._run_transaction(lambda conn: self._update_workspace_tx(
+            conn, workspace_id, name=name, deleted=deleted,
+            billing_paused=billing_paused, billing_pause_reason=billing_pause_reason,
+        ))
 
-        return self._run_transaction(txn)
+    def _update_workspace_tx(
+        self, conn: Any, workspace_id: str, *, name: str | None = None,
+        deleted: bool | None = None, billing_paused: bool | None = None,
+        billing_pause_reason: str | None = None,
+    ) -> Workspace | None:
+        workspace = self._read_entity_tx(
+            conn, "workspace", workspace_id, Workspace, for_update=True
+        )
+        if workspace is None:
+            return None
+        owner = self._read_entity_tx(
+            conn, "user", workspace.owner_user_id, User, for_update=True
+        )
+        if deleted is not None and deleted != workspace.deleted:
+            credit = self._read_entity_tx(
+                conn, "credit", workspace_id, CreditAccount, for_update=True
+            )
+            if credit is None:
+                raise RuntimeError("workspace is missing its credit account")
+            if deleted:
+                removed = conn.execute(
+                    "DELETE FROM tr_owner_workspace "
+                    "WHERE owner_user_id = %s AND workspace_id = %s",
+                    (workspace.owner_user_id, workspace_id),
+                )
+                if removed.rowcount != 1:
+                    raise RuntimeError(
+                        "active workspace is missing from tr_owner_workspace"
+                    )
+                changed = conn.execute(
+                    "UPDATE tr_credit_balance SET trust_tier = 0, "
+                    "trust_latched_at = COALESCE(trust_latched_at, CURRENT_TIMESTAMP), "
+                    "updated_at = CURRENT_TIMESTAMP WHERE workspace_id = %s",
+                    (workspace_id,),
+                )
+                if changed.rowcount != credit_shard_count(credit):
+                    raise RuntimeError(
+                        "archive trust latch did not cover every active shard"
+                    )
+            else:
+                owned = self._require_owner_growth_tx(
+                    conn,
+                    workspace.owner_user_id,
+                    added_shards=credit_shard_count(credit),
+                    enforce_count=True,
+                )
+                self._insert_owner_inventory_tx(
+                    conn, workspace.owner_user_id, workspace_id
+                )
+                if owner is not None:
+                    owner.owner_workspace_count = len(owned) + 1
+            if deleted and owner is not None:
+                owner.owner_workspace_count = len(
+                    self._owner_workspace_shards_tx(
+                        conn, workspace.owner_user_id
+                    )
+                )
+            workspace.deleted = deleted
+        if name is not None:
+            workspace.name = name
+        if billing_paused is not None:
+            causes = set(workspace.billing_pause_causes)
+            if billing_paused:
+                causes.add("migration")
+            else:
+                causes.discard("migration")
+            workspace.billing_pause_causes = sorted(causes)
+            workspace.billing_paused = bool(causes)
+        if billing_pause_reason is not None:
+            workspace.billing_pause_reason = billing_pause_reason
+        if owner is not None:
+            self._write_entity_tx(conn, "user", owner.id, owner)
+        self._write_entity_tx(conn, "workspace", workspace_id, workspace)
+        return None if workspace.deleted else workspace
 
     def set_workspace_trust_override(
         self,
@@ -2164,7 +2173,12 @@ class PostgresStore(OperationalAnalyticsReads):
         emails: list[str],
         role: str = "member",
     ) -> list[Member]:
-        self._not_implemented("add_members")
+        members = [Member(workspace_id, self.ensure_user(email).id, role) for email in emails]
+        def txn(conn: Any) -> list[Member]:
+            for member in members:
+                self._write_entity_tx(conn, "member", member_id(workspace_id, member.user_id), member)
+            return members
+        return self._run_transaction(txn)
 
     def remove_members(self, workspace_id: str, user_ids: list[str]) -> None:
         self._not_implemented("remove_members")
@@ -2191,6 +2205,10 @@ class PostgresStore(OperationalAnalyticsReads):
 
     def get_user(self, user_id: str) -> User | None:
         return self._read_entity("user", user_id, User)
+
+    def close_user_account(self, user_id: str) -> User | None:
+        from trusted_router.storage_account_closure import close_postgres
+        return close_postgres(self, user_id)
 
     def find_user_by_email(self, email: str) -> User | None:
         record = self._read_entity("email_user", normalize_email(email), dict)
@@ -2616,7 +2634,8 @@ class PostgresStore(OperationalAnalyticsReads):
                 self._delete_entity_tx(conn, "auth_session_lookup", lookup_hash)
                 return None
             if verify_api_key(raw_token, session.salt, session.secret_hash):
-                return session
+                user = self._read_entity_tx(conn, "user", session.user_id, User)
+                return session if user and not user.disabled else None
             return None
 
         return self._run_transaction(get)
@@ -3094,6 +3113,60 @@ class PostgresStore(OperationalAnalyticsReads):
             return claimed
 
         return self._run_transaction(txn)
+
+    def reserved_resale_position_page(self, *, cursor: str | None = None, limit: int = 100) -> dict[str, Any]:
+        if not 1 <= limit <= 100:
+            raise ValueError("Invalid reservation page size")
+
+        def txn(tx: Any) -> dict[str, Any]:
+            rows = tx.execute("SELECT id FROM tr_entities WHERE kind=%s AND id>%s ORDER BY id LIMIT %s",
+                              ("nyte_position", cursor or "", limit + 1)).fetchall()
+            ids = [row[0] for row in rows]
+            return {"ids": ids[:limit], "cursor": ids[limit - 1] if len(ids) > limit else None}
+
+        return self._run_transaction(txn)
+
+    def reserved_resale(self, command: dict[str, Any]) -> dict[str, Any]:
+        from trusted_router.storage_resale import execute
+
+        def txn(tx: Any) -> dict[str, Any]:
+            self._insert_entity_once_tx(tx, "nyte_mutex", "v1", {})
+            self._read_entity_tx(tx, "nyte_mutex", "v1", dict, for_update=True)
+            return execute(
+                # Serialize eligibility with notification completion as well
+                # as competing NYTE ledger commands (ordinary Postgres is RC).
+                lambda kind, key: self._read_entity_tx(tx, kind, key, dict, for_update=kind == "reserved_notification") or {},
+                lambda kind, key, row: self._write_entity_tx(tx, kind, key, row),
+                command,
+            )
+
+        return self._run_transaction(txn)
+
+    def claim_reserved_notification(self, session_id: str, owner: str, *, now: int) -> tuple[str, int]:
+        def txn(tx: Any) -> tuple[str, int]:
+            self._insert_entity_once_tx(tx, "reserved_notification", session_id, {"sent": False})
+            row = self._read_entity_tx(tx, "reserved_notification", session_id, dict, for_update=True) or {}
+            purchase_completed_at = int(row.get("purchase_completed_at", now))
+            if row.get("sent"):
+                return "sent", purchase_completed_at
+            if row.get("lease_until", 0) > now:
+                return "busy", purchase_completed_at
+            self._write_entity_tx(tx, "reserved_notification", session_id, {
+                "owner": owner, "lease_until": now + 120, "sent": False,
+                "purchase_completed_at": purchase_completed_at,
+            })
+            return "claimed", purchase_completed_at
+
+        return self._run_transaction(txn)
+
+    def finish_reserved_notification(self, session_id: str, owner: str, *, sent: bool) -> None:
+        def txn(tx: Any) -> None:
+            row = self._read_entity_tx(tx, "reserved_notification", session_id, dict, for_update=True) or {}
+            if row.get("owner") == owner:
+                row.update(sent=sent, lease_until=0)
+                self._write_entity_tx(tx, "reserved_notification", session_id, row)
+
+        self._run_transaction(txn)
 
     def record_webhook_event_once(self, source: str, event_id: str) -> bool:
         return self._run_transaction(
@@ -4612,7 +4685,7 @@ class PostgresStore(OperationalAnalyticsReads):
     # Credit ledger ----------------------------------------------------------
 
     def get_credit_account(self, workspace_id: str) -> CreditAccount | None:
-        self._not_implemented("get_credit_account")
+        return self._read_entity("credit", workspace_id, CreditAccount)
 
     @staticmethod
     def _insert_credit_trust_event_tx(
@@ -7424,6 +7497,45 @@ class PostgresStore(OperationalAnalyticsReads):
                         **{key: value for key, value in data.items() if key in known}
                     )
                 )
+            return samples
+
+        return self._run_transaction(list_samples)
+
+    def provider_balanced_benchmark_samples(
+        self,
+        *,
+        cutoff: str | None,
+        per_provider_limit: int,
+        limit: int,
+    ) -> list[ProviderBenchmarkSample]:
+        if limit <= 0 or per_provider_limit <= 0:
+            return []
+
+        def list_samples(conn: Any) -> list[ProviderBenchmarkSample]:
+            # Public pages must not run one historical JSON scan per provider.
+            # Range-seek the recent index once, then cap each provider fairly.
+            window = " AND indexed_at >= %s::timestamptz" if cutoff is not None else ""
+            params: tuple[Any, ...] = (cutoff,) if cutoff is not None else ()
+            rows = conn.execute(
+                "WITH ranked AS ("  # noqa: S608 - fixed predicate; all values are bound.
+                "SELECT body, id, indexed_at, ROW_NUMBER() OVER ("
+                "PARTITION BY body ->> 'provider' "
+                "ORDER BY indexed_at DESC, id DESC"
+                ") AS provider_rank FROM tr_entities "
+                "WHERE kind = 'provider_benchmark'"
+                + window
+                + ") SELECT body FROM ranked WHERE provider_rank <= %s "
+                "ORDER BY indexed_at DESC, id DESC LIMIT %s",
+                (*params, per_provider_limit, limit),
+            ).fetchall()
+            known = {field.name for field in dataclasses.fields(ProviderBenchmarkSample)}
+            samples: list[ProviderBenchmarkSample] = []
+            for row in rows:
+                raw = row[0]
+                data = json.loads(raw) if isinstance(raw, str) else dict(raw)
+                samples.append(ProviderBenchmarkSample(
+                    **{key: value for key, value in data.items() if key in known}
+                ))
             return samples
 
         return self._run_transaction(list_samples)

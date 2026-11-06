@@ -230,6 +230,90 @@ def test_anonymous_mark_requires_an_unleased_row() -> None:
     assert ob.mark("gwa-anonymous-fence", "settle", done=True) == "done"
 
 
+def test_release_claim_hands_the_row_back_at_once() -> None:
+    store, db = make_fake_store()
+    ob = _outbox(store)
+    ob.enqueue(_row("gwa-release"))
+    [job] = ob.claim(lease_seconds=300)
+    assert ob.claim(lease_seconds=300) == []  # the claim's lease holds the row
+    record = db.settle_outbox[("gwa-release", "settle")]
+    attempts, next_attempt_at = record["attempts"], record["next_attempt_at"]
+
+    assert ob.release_claim(job) is True
+    record = db.settle_outbox[("gwa-release", "settle")]
+    assert record["status"] == "pending"
+    assert record["lease_owner"] is None and record["leased_until"] is None
+    assert (record["attempts"], record["next_attempt_at"]) == (attempts, next_attempt_at)
+    [again] = ob.claim(lease_seconds=300)  # due without waiting out the lease
+    assert again.authorization_id == "gwa-release"
+    assert again.lease_owner != job.lease_owner
+
+
+def test_release_claim_frees_only_its_own_live_claim() -> None:
+    store, db = make_fake_store()
+    ob = _outbox(store)
+    ob.enqueue(_row("gwa-release-fence"))
+    [job_a] = ob.claim(lease_seconds=300)
+    # A's lease lapses and worker B claims the row.
+    db.settle_outbox[("gwa-release-fence", "settle")]["leased_until"] = "2000-01-01T00:00:00Z"
+    [job_b] = ob.claim(lease_seconds=300)
+
+    assert ob.release_claim(job_a) is False  # A's late release leaves B's claim alone
+    record = db.settle_outbox[("gwa-release-fence", "settle")]
+    assert (record["lease_owner"], record["leased_until"]) == (job_b.lease_owner, job_b.leased_until)
+    # A resolved row stays resolved, even for the owner that resolved it.
+    assert ob.mark("gwa-release-fence", "settle", done=True, lease_owner=job_b.lease_owner) == "done"
+    assert ob.release_claim(job_b) is False
+    assert ob.get("gwa-release-fence", "settle").status == "done"
+
+
+def test_release_claim_without_an_owner_changes_nothing() -> None:
+    store, db = make_fake_store()
+    ob = _outbox(store)
+    ob.enqueue(_row("gwa-release-none"))
+    row = ob.get("gwa-release-none", "settle")
+    assert row is not None and row.lease_owner is None
+    before = dict(db.settle_outbox[("gwa-release-none", "settle")])
+    assert ob.release_claim(row) is False
+    assert db.settle_outbox[("gwa-release-none", "settle")] == before
+
+
+def test_release_claim_frees_only_the_claimed_intent() -> None:
+    store, db = make_fake_store()
+    ob = _outbox(store)
+    ob.enqueue(_row("gwa-release-kind"))
+    ob.enqueue(_row("gwa-release-kind", kind="refund"))
+    claims = {job.intent_kind: job for job in ob.claim(lease_seconds=300)}
+    assert set(claims) == {"settle", "refund"}
+
+    assert ob.release_claim(claims["refund"]) is True
+    refund = db.settle_outbox[("gwa-release-kind", "refund")]
+    settle = db.settle_outbox[("gwa-release-kind", "settle")]
+    assert refund["lease_owner"] is None and refund["leased_until"] is None
+    # The settle intent of the same authorization keeps its claim.
+    assert (settle["lease_owner"], settle["leased_until"]) == (
+        claims["settle"].lease_owner, claims["settle"].leased_until)
+
+
+def test_release_claim_uses_a_short_transaction_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    from trusted_router import storage_gcp_settle_outbox as adapter
+    seen: dict[str, object] = {}
+
+    def run(database, func, **kwargs):
+        seen.update(kwargs)
+        return 1
+
+    monkeypatch.setattr(adapter, "run_in_transaction_with_retry", run)
+    store, _db = make_fake_store()
+    row = _row("gwa-release-budget")
+    row.lease_owner = "soworker_" + "c" * 32
+    assert _outbox(store).release_claim(row) is True
+    # The pass waits for its slots, so a slow release would hold every other
+    # row; it gives up quickly and leaves the lease to run out instead.
+    assert seen == {"total_budget_seconds": adapter.RELEASE_BUDGET_SECONDS}
+    assert adapter.RELEASE_BUDGET_SECONDS <= 1.0
+
+
 def test_enqueue_initial_delay_defers_claim_until_default_row_is_due() -> None:
     store, _db = make_fake_store()
     ob = _outbox(store)
@@ -322,6 +406,27 @@ def test_fake_is_sql_sensitive_dropped_predicate_fails() -> None:
             "AND (leased_until IS NULL OR leased_until < @now)",  # dropped the PK
             params={"owner": "x", "lease": "z", "now": "z", "aid": "gwa-12", "kind": "settle"},
         )
+    # A release without its owner fence would free another worker's live claim.
+    with pytest.raises(AssertionError, match="release"):
+        _FakeTransaction(db).execute_update(
+            "UPDATE tr_settle_outbox SET lease_owner=NULL, leased_until=NULL, "
+            "updated_at=@now WHERE authorization_id=@aid AND intent_kind=@kind "
+            "AND status='pending'",  # dropped the owner fence
+            params={"now": "z", "aid": "gwa-12", "kind": "settle", "owner": "x"},
+        )
+    with pytest.raises(AssertionError, match="release"):
+        _FakeTransaction(db).execute_update(
+            "UPDATE tr_settle_outbox SET lease_owner=NULL, leased_until=NULL, "
+            "updated_at=@now WHERE status='pending' AND lease_owner=@owner",  # dropped the PK
+            params={"now": "z", "aid": "gwa-12", "kind": "settle", "owner": "x"},
+        )
+    with pytest.raises(AssertionError, match="release"):
+        _FakeTransaction(db).execute_update(
+            "UPDATE tr_settle_outbox SET lease_owner=NULL, leased_until=NULL, "
+            "updated_at=@now WHERE authorization_id=@aid AND intent_kind=@kind "
+            "AND lease_owner=@owner",  # dropped the pending-only guard
+            params={"now": "z", "aid": "gwa-12", "kind": "settle", "owner": "x"},
+        )
 
 
 def test_has_intent_freezes_on_pending_and_dead_only() -> None:
@@ -349,7 +454,7 @@ def test_outbox_schema_uses_generated_shard_and_sparse_due_index() -> None:
     retirement = (
         root / "scripts/deploy/retire_settle_outbox_hot_index.sh"
     ).read_text()
-    workflow = (root / ".github/workflows/deploy.yml").read_text()
+    workflow = (root / ".github/workflows/deploy-production.yml").read_text()
 
     assert "queue_shard INT64 NOT NULL AS (" in migration
     assert "FARM_FINGERPRINT(CONCAT(authorization_id, '#', intent_kind))" in migration

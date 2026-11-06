@@ -68,6 +68,7 @@ class AuthorizeInput:
     started: bool = field(default=False, init=False, repr=False, compare=False)
     reservation: Reservation | None = field(default=None, init=False, repr=False, compare=False)
     event: dict[str, Any] | None = field(default=None, init=False, repr=False, compare=False)
+    finalized: bool = field(default=False, init=False, repr=False, compare=False)
     result: str = field(default="rejected", init=False, repr=False, compare=False)
 
 
@@ -85,6 +86,17 @@ def authorize(settings: Settings, capability: tuple[str, ...], port: AuthorizePo
     No mutation of caller additions or billing DTOs. A replay records its own
     report obligation and never calls the signer or reconstructs prices.
     """
+    def finalize(reservation: Reservation, event: dict[str, Any]) -> bytes | None:
+        # Keep the existing bounded worker input even if a request-side lock
+        # collision prevents finalization. Failed exposure retains the fallback
+        # diagnostic below; a worker may complete evidence, never expose a binding.
+        if deferred:
+            inputs.event = event
+        raw = port.finalize(reservation, event, fold_owed=deferred or finish_obligation is not None)
+        if deferred:
+            inputs.finalized = raw is not None
+        return raw
+
     def finish(reservation: Reservation, event: dict[str, Any]) -> None:
         if deferred:
             inputs.event = event
@@ -120,7 +132,7 @@ def authorize(settings: Settings, capability: tuple[str, ...], port: AuthorizePo
                     original_locator=original_locator, revision=inputs.revision)
                 event = EVENT.parse(raw)
             require(event["identity"] == committed_identity(inputs.identity), "authorization_link_gap")
-            require(port.finalize(reservation, event, fold_owed=deferred or finish_obligation is not None) is not None, "unfinished_slot")
+            require(finalize(reservation, event) is not None, "unfinished_slot")
             finalized = True
             finish(reservation, event)
             return {}
@@ -175,7 +187,7 @@ def authorize(settings: Settings, capability: tuple[str, ...], port: AuthorizePo
                          proof_kind="none", comparison=None, prediction=None, retry_original=None,
                          completion_of=None, booking=dict(outcome="not_attempted", reference=None, winner=None))
             prepared = type(prepared)(prepared.decision, event)
-        finalized_body = port.finalize(reservation, event, fold_owed=deferred or finish_obligation is not None)
+        finalized_body = finalize(reservation, event)
         require(finalized_body is not None, "unfinished_slot")
         assert finalized_body is not None
         finalized = True
@@ -197,7 +209,7 @@ def authorize(settings: Settings, capability: tuple[str, ...], port: AuthorizePo
                 } else "missing_context"
                 event = {**prepared.event, "eligibility": "unknown", "facts": None, "candidates": None,
                          "diagnostic": dict(reason=reason, required_bytes=0, candidate_count=0)}
-                if port.finalize(reservation, event, fold_owed=deferred or finish_obligation is not None) is not None:
+                if finalize(reservation, event) is not None:
                     finish(reservation, event)
             except Exception:  # noqa: S110 - the journal keeps the unfinished slot
                 pass

@@ -1,16 +1,19 @@
 """Press downloads stay public, complete, reproducible and separate from decks."""
 
 import json
+import re
 import struct
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
+from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 from zipfile import ZipFile
 
 from build import build, load_markets
+from nyte_v2 import uses_nyte
 from press import ASSETS, HERE, build_press
 
 
@@ -87,12 +90,50 @@ class PressTests(unittest.TestCase):
             self.assertEqual(svg.getroot().tag, "{http://www.w3.org/2000/svg}svg")
             self.assertFalse(svg.findall(".//{http://www.w3.org/2000/svg}script"))
             self.assertFalse(svg.findall(".//{http://www.w3.org/2000/svg}text"))
-        expected = {name + ".png": (2400, 480) if "wordmark" in name else (1024, 1024) for name, *_ in ASSETS}
+        dimensions = {"lockup": (2400, 1080), "horizontal": (2400, 480), "wordmark": (2400, 480), "mark": (2048, 1024)}
+        expected = {name + ".png": dimensions[name.split("-")[1]] for name, *_ in ASSETS}
         expected.update({"nyte-social.png": (1200, 630), "nyte-homepage.png": (1920, 1080)})
         for filename, dimensions in expected.items():
             data = (assets / filename).read_bytes()
             self.assertEqual(data[:8], b"\x89PNG\r\n\x1a\n")
             self.assertEqual(struct.unpack(">II", data[16:24]), dimensions)
+
+    def test_kit_uses_the_nyte_globe_not_the_trustedrouter_mark(self):
+        assets = self.root / "assets/press"
+        self.assertIn('<h1 id="title">NY Token Exchange', self.page)
+        self.assertIn('src="/assets/press/nyte-mark-dark.svg"', self.page)
+        self.assertNotIn('href="/assets/mark.svg"', self.page)
+        self.assertNotIn('src="/assets/mark.svg"', self.page)
+        self.assertNotIn("Shared mark", self.page)
+        self.assertNotIn("NYTE uses the TrustedRouter routing mark", self.page)
+        self.assertEqual(json.loads((assets / "nyte-fact-sheet.json").read_text())["name"], "NY Token Exchange")
+        for variant in ("light", "dark", "mono"):
+            mark = ET.parse(assets / f"nyte-mark-{variant}.svg").getroot()  # noqa: S314
+            self.assertEqual(mark.attrib["viewBox"], "0 0 1000 500")
+            self.assertEqual(len(mark.findall(".//{http://www.w3.org/2000/svg}ellipse")), 1)
+            self.assertEqual(mark.attrib["aria-label"], "NY Token Exchange globe mark")
+            wordmark = ET.parse(assets / f"nyte-wordmark-{variant}.svg").getroot()  # noqa: S314
+            self.assertEqual(wordmark.attrib["aria-label"], "NY Token Exchange")
+            self.assertNotIn("TrustedRouter", ET.tostring(wordmark, encoding="unicode"))
+        for name in ("README.txt", "nyte-fact-sheet.txt"):
+            self.assertNotIn("mark is shared with TrustedRouter", (assets / name).read_text())
+        self.assertEqual((assets / "nyte-social.png").read_bytes(), (HERE / "press-assets/nyte-social.png").read_bytes())
+
+    def test_combined_logos_include_globe_and_outlined_name_and_appear_first(self):
+        assets = self.root / "assets/press"
+        self.assertEqual(ASSETS[0][0], "nyte-horizontal-light")
+        for kind, height in (("lockup", 450), ("horizontal", 200)):
+            for variant, color in (("light", "#000000"), ("dark", "#ffffff"), ("mono", "#000000")):
+                root = ET.parse(assets / f"nyte-{kind}-{variant}.svg").getroot()  # noqa: S314
+                self.assertEqual(root.attrib["aria-label"], "NY Token Exchange")
+                self.assertEqual(root.attrib["viewBox"], f"0 0 1000 {height}")
+                self.assertEqual(len(root.findall(".//{http://www.w3.org/2000/svg}ellipse")), 1)
+                groups = root.findall("{http://www.w3.org/2000/svg}g")
+                self.assertEqual(len(groups), 2)
+                name = groups[1].find("{http://www.w3.org/2000/svg}path")
+                self.assertEqual(name.attrib["fill"], color)
+                wordmark = ET.parse(assets / f"nyte-wordmark-{variant}.svg").getroot()  # noqa: S314
+                self.assertEqual(name.attrib["d"], wordmark.find("{http://www.w3.org/2000/svg}path").attrib["d"])
 
     def test_copy_single_source_and_claim_boundaries(self):
         data = json.loads((HERE / "press.json").read_text())
@@ -105,6 +146,23 @@ class PressTests(unittest.TestCase):
         for phrase in ("not a securities or cryptocurrency exchange", "not live products", "not an inference location", "Not every provider", "no guaranteed volume"):
             self.assertIn(phrase, self.page)
         self.assertIn("symbolic generated artwork", text)
+
+    def test_every_market_footer_links_to_its_media_kit(self):
+        markets = load_markets()
+        self.assertEqual(
+            {path.parent.name for path in self.root.glob("*/index.html")},
+            {market["slug"] for market in markets},
+        )
+        for market in markets:
+            with self.subTest(market=market["slug"]):
+                page = (self.root / market["slug"] / "index.html").read_text()
+                footer = re.search(r'<footer\b[^>]*>(.*?)</footer>', page, re.S).group(1)
+                legal = re.search(r'<div class="legal">(.*?)</div>', footer, re.S).group(1)
+                links = re.findall(r'<a\b[^>]*href="([^"]+)"[^>]*>Media kit</a>', legal)
+                self.assertEqual(len(links), 1)
+                expected = (f"https://{market['domain']}/media-kit" if uses_nyte(market)
+                            else "https://trustedrouter.com/media-kit")
+                self.assertEqual(urljoin(f'https://{market["domain"]}/', unescape(links[0])), expected)
 
     def test_new_york_discoverability_only(self):
         for market in load_markets():

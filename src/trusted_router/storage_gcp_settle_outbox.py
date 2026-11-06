@@ -183,6 +183,7 @@ def intent_insert_statements(
     next_attempt_at: str,
     resolved: bool = False,
     async_metadata: bool = False,
+    refill_next_attempt_at: str | None = None,
 ) -> list[DmlStatement]:
     """INSERT-as-claim of one intent, plus the retention clears the intent implies.
 
@@ -191,7 +192,8 @@ def intent_insert_statements(
     status done, one attempt, ``terminal_at`` armed, frozen body dropped and no
     settlement due time (so it never enters the sparse due index). The one-commit
     settle records and resolves its intent in the commit that applies the charge.
-    Refill work is attached identically either way: it has its own due time.
+    Refill work is attached identically either way: it has its own due time,
+    ``refill_next_attempt_at``, the settlement's ``next_attempt_at`` unless given.
 
     Both callers share this builder so a fold cannot silently drop the enqueue's
     retention clears (lesson: folding moves only the statements you copy). Row
@@ -226,7 +228,9 @@ def intent_insert_statements(
         "auto_refill_status": "pending" if auto_refill_requested else None,
         "auto_refill_attempts": 0,
         "auto_refill_last_error": None,
-        "auto_refill_next_attempt_at": (next_attempt_at if auto_refill_requested else None),
+        "auto_refill_next_attempt_at": (
+            (refill_next_attempt_at or next_attempt_at) if auto_refill_requested else None
+        ),
         "auto_refill_lease_owner": None,
         "auto_refill_leased_until": None,
         "auto_refill_enqueued_at": now if auto_refill_requested else None,
@@ -420,6 +424,10 @@ def _mark_done_tx(
         ))
     return True
 
+# Wall-clock budget for handing back a deferred claim (release_claim).
+RELEASE_BUDGET_SECONDS = 1.0
+
+
 def _iso_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -497,7 +505,14 @@ class SpannerSettleOutbox:
         self._async_fence = async_fence
 
     # ── enqueue (INSERT-as-claim, refresh-latest on a still-pending row) ──────
-    def enqueue(self, row: SettleOutboxRow, *, initial_delay_seconds: int = 0, preserve_existing: bool = False) -> str:
+    def enqueue(
+        self,
+        row: SettleOutboxRow,
+        *,
+        initial_delay_seconds: int = 0,
+        preserve_existing: bool = False,
+        refill_delay_seconds: int | None = None,
+    ) -> str:
         """Record a settle intent. Idempotent by (authorization_id, intent_kind):
 
         - no row yet -> INSERT a pending row (ENQ_INSERTED)
@@ -511,10 +526,19 @@ class SpannerSettleOutbox:
         next_attempt_at = (
             _iso_after_seconds(initial_delay_seconds) if initial_delay_seconds > 0 else now
         )
+        # A refill attached to a new row is due with it unless the caller gives
+        # it its own delay (a settle the drain charges at once, whose refill
+        # still waits for the charge).
+        refill_next_attempt_at = (
+            None
+            if refill_delay_seconds is None
+            else _iso_after_seconds(refill_delay_seconds) if refill_delay_seconds > 0 else now
+        )
 
         def insert_txn(transaction: Any) -> None:
             statements = intent_insert_statements(
                 pt, row, now=now, next_attempt_at=next_attempt_at,
+                refill_next_attempt_at=refill_next_attempt_at,
             )
             # INSERT-as-claim and its retention clears are independent. A failed
             # INSERT stops the batch; the caller's existing replay path is unchanged.
@@ -606,7 +630,7 @@ class SpannerSettleOutbox:
         return ENQ_EXISTS_TERMINAL
 
     # ── due / claim / mark ───────────────────────────────────────────────────
-    def due(self, *, limit: int = 100) -> list[SettleOutboxRow]:
+    def due(self, *, limit: int = 100, legacy_only: bool = False) -> list[SettleOutboxRow]:
         now = _iso_now()
         with self._database.snapshot() as snapshot:
             rows = list(
@@ -617,7 +641,8 @@ class SpannerSettleOutbox:
                     "WHERE queue_shard IS NOT NULL "
                     "AND next_attempt_at IS NOT NULL "
                     "AND status='pending' AND next_attempt_at <= @now "
-                    "ORDER BY next_attempt_at LIMIT @limit",
+                    + ("AND async_version IS NULL " if legacy_only else "")
+                    + "ORDER BY next_attempt_at LIMIT @limit",
                     params={"now": now, "limit": int(limit)},
                     param_types={"now": self._pt.TIMESTAMP, "limit": self._pt.INT64},
                 )
@@ -628,7 +653,7 @@ class SpannerSettleOutbox:
         owner = f"soworker_{uuid.uuid4().hex}"
         lease_until = _iso_after_seconds(lease_seconds)
         claimed: list[SettleOutboxRow] = []
-        for candidate in self.due(limit=limit * 2):
+        for candidate in self.due(limit=limit * 2, legacy_only=True):
             if len(claimed) >= limit:
                 break
             if self._claim_one(candidate, owner=owner, lease_until=lease_until):
@@ -637,14 +662,22 @@ class SpannerSettleOutbox:
                 claimed.append(candidate)
         return claimed
 
-    def claim_shard(self, *, shard: int, lease_seconds: int) -> list[SettleOutboxRow]:
-        """Fast mode: only one row for an already-running worker slot."""
-        sql, params, types = shard_due_statement(self._pt, shard, _iso_now())
+    def due_shard(self, *, shard: int, async_only: bool = False) -> list[SettleOutboxRow]:
+        """Bounded advisory scan; recovery can inspect without taking a lease."""
+        sql, params, types = shard_due_statement(self._pt, shard, _iso_now(), async_only=async_only)
         with self._database.snapshot() as snapshot:
             candidates = list(snapshot.execute_sql(sql, params=params, param_types=types,
                 timeout=0.2, retry=None, request_options={"priority": "PRIORITY_LOW"}))
-        for values in candidates:
-            row = _row_from_tuple(values)
+        return [_row_from_tuple(values) for values in candidates]
+
+    def claim_shard(self, *, shard: int, lease_seconds: int) -> list[SettleOutboxRow]:
+        """Fast mode: only one row for an already-running worker slot."""
+        return self.claim_candidates(self.due_shard(shard=shard), lease_seconds=lease_seconds)
+
+    def claim_candidates(self, candidates: list[SettleOutboxRow], *,
+                         lease_seconds: int) -> list[SettleOutboxRow]:
+        """Claim at most one advisory candidate with the existing owner fence."""
+        for row in candidates:
             owner = f"soworker_{uuid.uuid4().hex}"
             lease_until = _iso_after_seconds(lease_seconds)
             if self._claim_one(row, owner=owner, lease_until=lease_until):
@@ -677,6 +710,42 @@ class SpannerSettleOutbox:
             )
 
         return run_in_transaction_with_retry(self._database, txn) == 1
+
+    def release_claim(self, row: SettleOutboxRow) -> bool:
+        """Hand back a claim its worker deferred without applying the row.
+
+        The row goes back to the unleased state `park` leaves, due again at
+        once instead of when the claim's lease runs out. Only the claim's own
+        owner token matches, so a row that another worker has claimed since,
+        or that has been resolved, is left as it is.
+        """
+        if not row.lease_owner:
+            return False
+        now = _iso_now()
+
+        def release_txn(transaction: Any) -> int:
+            return transaction.execute_update(
+                "UPDATE tr_settle_outbox SET lease_owner=NULL, leased_until=NULL, "
+                "updated_at=@now WHERE authorization_id=@aid AND intent_kind=@kind "
+                "AND status='pending' AND lease_owner=@owner",
+                params={
+                    "now": now,
+                    "aid": row.authorization_id,
+                    "kind": row.intent_kind,
+                    "owner": row.lease_owner,
+                },
+                param_types={
+                    "now": self._pt.TIMESTAMP,
+                    "aid": self._pt.STRING,
+                    "kind": self._pt.STRING,
+                    "owner": self._pt.STRING,
+                },
+            )
+
+        # The release runs after the pass budget, and its pass waits for it. One
+        # that cannot finish quickly is not worth that wait: the lease runs out.
+        return run_in_transaction_with_retry(
+            self._database, release_txn, total_budget_seconds=RELEASE_BUDGET_SECONDS) == 1
 
     def mark(
         self,
@@ -1151,14 +1220,15 @@ def _is_already_exists(exc: Exception) -> bool:
     return isinstance(exc, AlreadyExists)
 
 
-def shard_due_statement(pt: Any, shard: int, now: str) -> tuple[str, dict[str, Any], dict[str, Any]]:
+def shard_due_statement(pt: Any, shard: int, now: str, *, async_only: bool = False) -> tuple[str, dict[str, Any], dict[str, Any]]:
     return (
         f"SELECT {', '.join(OUTBOX_COLUMNS)} FROM tr_settle_outbox"  # noqa: S608
         "@{FORCE_INDEX=tr_settle_outbox_due_v2} "
         "WHERE queue_shard IS NOT NULL AND queue_shard=@shard "
         "AND next_attempt_at IS NOT NULL AND status='pending' AND next_attempt_at <= @now "
         "AND (leased_until IS NULL OR leased_until < @now) "
-        "ORDER BY next_attempt_at LIMIT @limit",
+        + ("AND async_version IS NOT NULL " if async_only else "")
+        + "ORDER BY next_attempt_at LIMIT @limit",
         {"shard": shard, "now": now, "limit": 2},
         {"shard": pt.INT64, "now": pt.TIMESTAMP, "limit": pt.INT64},
     )

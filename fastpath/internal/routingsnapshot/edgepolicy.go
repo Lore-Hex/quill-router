@@ -35,8 +35,11 @@ var (
 // EdgePolicy is a parsed v1 edge policy body: the live control-plane facts
 // the edge gates on before it would answer an authorize itself. Every
 // exported field is a wire field; ParseEdgePolicy refuses any other field, a
-// missing one, a float, a duplicate key, null anywhere but
-// monitor_lookup_hash, and a body that is not its own canonical encoding.
+// missing one (async_settle, its admission_workspaces and
+// admission_excluded_workspaces, fastpath_pilot_key_windows and
+// fastpath_edge_streams alone may be absent), a float, a duplicate key,
+// null anywhere but monitor_lookup_hash, and a body that is not its own
+// canonical encoding.
 type EdgePolicy struct {
 	V                                 int64         `json:"v"`
 	Kind                              string        `json:"kind"`
@@ -58,6 +61,146 @@ type EdgePolicy struct {
 	PrimaryRegion                     string        `json:"primary_region"`
 	MultiRegionEnabled                bool          `json:"multi_region_enabled"`
 	InternalModels                    []string      `json:"internal_models"`
+	// AsyncSettle is optional: nil when the publisher does not carry it
+	// (unknown, docs/design/fast-admission-e2-g15-async.md section 6.1).
+	AsyncSettle *AsyncSettle `json:"async_settle,omitempty"`
+	// FastpathPilotKeyWindows is optional: settings.fastpath_pilot_key_windows,
+	// which keys with spend windows the cohort covers (KeyWindowsMode;
+	// docs/design/fast-admission-e2-key-windows.md section 5): "alert" or
+	// "enforce". Absent is off, the only form of it: the publisher leaves the
+	// member out rather than write "off", and parse_edge_policy refuses "off"
+	// as this does.
+	FastpathPilotKeyWindows *string `json:"fastpath_pilot_key_windows,omitempty"`
+	// FastpathEdgeStreams is optional: true when the control plane's
+	// fastpath_edge_streams, fastpath_pilot_streams and
+	// reap_snapshot_booking_enabled are all on, the edge's own switch for
+	// streams (docs/design/fast-admission-streams.md section 5.4). Absent is
+	// off, the only form of off: the publisher leaves the member out rather
+	// than write false, and false is refused. Go ships first; the edge reads
+	// it (EdgeStreams) and still passes every stream until the increment
+	// that decides them.
+	FastpathEdgeStreams *bool `json:"fastpath_edge_streams,omitempty"`
+}
+
+// EdgeStreams is the policy's fastpath_edge_streams, false when the
+// publisher does not carry it.
+func (p *EdgePolicy) EdgeStreams() bool {
+	return p.FastpathEdgeStreams != nil && *p.FastpathEdgeStreams
+}
+
+// The modes of fastpath_pilot_key_windows (KeyWindowsMode): off, the member
+// absent, covers no windowed key; alert the alert-only ones (whose windows
+// Python's authorize never checks); enforce every one. Only alert and
+// enforce are written.
+const (
+	KeyWindowsOff     = "off"
+	KeyWindowsAlert   = "alert"
+	KeyWindowsEnforce = "enforce"
+)
+
+// KeyWindowsMode is the policy's fastpath_pilot_key_windows, KeyWindowsOff
+// when the publisher does not carry it.
+func (p *EdgePolicy) KeyWindowsMode() string {
+	if p.FastpathPilotKeyWindows == nil {
+		return KeyWindowsOff
+	}
+	return *p.FastpathPilotKeyWindows
+}
+
+// AsyncSettle is the policy's async_settle object, four booleans the
+// publishing Python process reads from its settings and its async-settle
+// runtime when it signs (docs/design/fast-admission-e2-g15-async.md section
+// 3.4), and the optional admission_workspaces. Each boolean is required
+// inside the object; no other member is allowed. The edge's decide pipeline
+// reads them (edge/decide.go, G15c).
+type AsyncSettle struct {
+	// AdmissionEnabled is settings.async_settle_admission_enabled.
+	AdmissionEnabled bool `json:"admission_enabled"`
+	// AdmissionWorkspaces is optional: the workspaces Python's admission
+	// covers, settings.async_settle_pilot_workspace_ids, sorted and unique,
+	// 1 to maxAdmissionWorkspaces of them, present only with
+	// AdmissionEnabled. Absent with admission on is every workspace (an
+	// empty pilot set admits all, Settings.async_settle_pilot_allows); a
+	// workspace it leaves out Python answers as with admission off (G15
+	// section 4.1). Admits reads it.
+	AdmissionWorkspaces *[]string `json:"admission_workspaces,omitempty"`
+	// AdmissionExcludedWorkspaces is optional: the fast-path pilot
+	// workspaces outside settings.async_settle_fastpath_overlap_workspaces
+	// that AdmissionWorkspaces (or its absence, every workspace) would
+	// otherwise cover, sorted and unique, 1 to maxAdmissionWorkspaces of
+	// them, present only with AdmissionEnabled and, with AdmissionWorkspaces,
+	// within it. Async settle takes no request the fast path takes
+	// (docs/design/fast-admission-e2-g15-async.md section 4.5): Python
+	// answers a workspace it names as with admission off, so the edge
+	// composes that answer. Absent excludes none. Admits reads it.
+	AdmissionExcludedWorkspaces *[]string `json:"admission_excluded_workspaces,omitempty"`
+	// TicketAuthority is whether the publisher holds a ticket signer, an
+	// authority epoch of at least 1 and a non-empty journal region.
+	TicketAuthority bool `json:"ticket_authority"`
+	// TypedRecords is whether the publisher writes typed records, the
+	// expression gateway.py's async-v1 branch gates on.
+	TypedRecords bool `json:"typed_records"`
+	// EdgeDecide is fastpath_edge_decide_async: whether the edge may answer
+	// an async-v1 authorize itself.
+	EdgeDecide bool `json:"edge_decide"`
+}
+
+// maxAdmissionWorkspaces bounds admission_workspaces as
+// Settings.parse_pilot_workspaces bounds the pilot set it is.
+const maxAdmissionWorkspaces = 32
+
+// Admits is whether Python's async admission covers the workspace
+// (Settings.async_settle_pilot_allows with admission on): admission on,
+// admission_workspaces absent or naming it, and admission_excluded_workspaces
+// not naming it. Python answers a request it does not cover exactly as with
+// admission off (shape A or B, no ticket), which the edge composes; one it
+// covers is Python's to ticket.
+func (a *AsyncSettle) Admits(workspace string) bool {
+	if !a.AdmissionEnabled {
+		return false
+	}
+	if a.AdmissionExcludedWorkspaces != nil && slices.Contains(*a.AdmissionExcludedWorkspaces, workspace) {
+		return false
+	}
+	return a.AdmissionWorkspaces == nil || slices.Contains(*a.AdmissionWorkspaces, workspace)
+}
+
+func (a *AsyncSettle) validate() error {
+	for _, member := range []struct {
+		name string
+		set  *[]string
+	}{
+		{"admission_workspaces", a.AdmissionWorkspaces},
+		{"admission_excluded_workspaces", a.AdmissionExcludedWorkspaces},
+	} {
+		w := member.set
+		if w == nil {
+			continue
+		}
+		switch {
+		case !a.AdmissionEnabled:
+			return fmt.Errorf("async_settle.%s without admission_enabled", member.name)
+		case len(*w) == 0 || len(*w) > maxAdmissionWorkspaces:
+			return fmt.Errorf("async_settle.%s must name 1 to %d workspaces", member.name, maxAdmissionWorkspaces)
+		case !sortedUnique(*w):
+			return fmt.Errorf("async_settle.%s must be sorted and unique", member.name)
+		}
+		for _, value := range *w {
+			if !workspaceID.MatchString(value) {
+				return fmt.Errorf("async_settle.%s: %q", member.name, value)
+			}
+		}
+	}
+	// One encoding per answer, as parse_edge_policy holds it: an excluded
+	// workspace is one admission_workspaces would cover.
+	if x, w := a.AdmissionExcludedWorkspaces, a.AdmissionWorkspaces; x != nil && w != nil {
+		for _, value := range *x {
+			if !slices.Contains(*w, value) {
+				return errors.New("async_settle.admission_excluded_workspaces must be within admission_workspaces")
+			}
+		}
+	}
+	return nil
 }
 
 // PolicyClaims are an edge-policy manifest's claims; the canonical encoding
@@ -155,6 +298,17 @@ func (p *EdgePolicy) validate() error {
 	}
 	if !policyName.MatchString(p.AsyncSettleShadowPolicy) {
 		return errors.New("async_settle_shadow_policy")
+	}
+	if m := p.FastpathPilotKeyWindows; m != nil && *m != KeyWindowsAlert && *m != KeyWindowsEnforce {
+		return errors.New("fastpath_pilot_key_windows")
+	}
+	if s := p.FastpathEdgeStreams; s != nil && !*s {
+		return errors.New("fastpath_edge_streams is absent when off, never false")
+	}
+	if a := p.AsyncSettle; a != nil {
+		if err := a.validate(); err != nil {
+			return err
+		}
 	}
 	regions := p.ConfiguredRegions
 	if len(regions) == 0 || len(regions) != len(slices.Compact(slices.Sorted(slices.Values(regions)))) ||

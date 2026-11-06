@@ -16,6 +16,7 @@ import sys
 import time
 import typing
 from collections.abc import Iterator
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel
 
 from trusted_router import catalog_data, catalog_registry, provider_ranking, routing
+from trusted_router.billing_snapshot import raw_prices_valid
 from trusted_router.catalog import effective_endpoint
 from trusted_router.catalog_privacy import (
     endpoint_meets_privacy_requirement,
@@ -50,7 +52,7 @@ from trusted_router.routing_snapshot import (
     EPOCH_SECONDS,
     CatalogInputs,
     Plane,
-    RoutingSnapshotV1,
+    RoutingSnapshotV3,
     canonical_snapshot_bytes,
     compile_routing_snapshot,
     snapshot_settings_from,
@@ -71,7 +73,7 @@ def _instant(seconds: int) -> datetime:
     return EPOCH + timedelta(seconds=seconds)
 
 
-def _compile(settings: Settings, inputs: CatalogInputs) -> RoutingSnapshotV1:
+def _compile(settings: Settings, inputs: CatalogInputs) -> RoutingSnapshotV3:
     return compile_routing_snapshot(
         at=LIVE_AT, horizon=HORIZON, settings=snapshot_settings_from(settings),
         source_revision="test", plane=Plane(cloud="gcp", region="us-central1"), inputs=inputs,
@@ -99,7 +101,7 @@ def catalog_clock() -> Iterator[None]:
 
 
 @pytest.fixture(scope="module")
-def live(settings: Settings, catalog_clock: None) -> tuple[RoutingSnapshotV1, CatalogInputs]:
+def live(settings: Settings, catalog_clock: None) -> tuple[RoutingSnapshotV3, CatalogInputs]:
     inputs = CatalogInputs.live(settings)
     assert inputs.catalog_resolved_at == LIVE_AT
     return _compile(settings, inputs), inputs
@@ -148,6 +150,21 @@ def test_every_epoch_price_is_the_effective_endpoint_price_at_that_instant(live)
     assert scheduled == changing
 
 
+def test_every_epoch_publishes_whether_build_snapshot_accepts_its_raw_prices(live) -> None:
+    """billing_valid is raw_prices_valid of the same effective endpoint the
+    epoch's price is computed from (docs/design/fast-admission-e2-g15-async.md
+    section 3.2)."""
+    snapshot, inputs = live
+    raw = {e.id: e for e in inputs.endpoints}
+    epochs = 0
+    for entry in snapshot.endpoints:
+        for epoch in entry.epochs:
+            effective = effective_endpoint(raw[entry.id], at=_instant(epoch.starts_at))
+            assert epoch.billing_valid is raw_prices_valid(effective), (entry.id, epoch.starts_at)
+            epochs += 1
+    assert epochs >= len(snapshot.endpoints) > 1_000
+
+
 def test_availability_is_the_catalog_deadline_and_the_retirement(live) -> None:
     snapshot, inputs = live
     raw = {e.id: e for e in inputs.endpoints}
@@ -187,6 +204,203 @@ def test_privacy_is_what_the_routing_filters_ask(live) -> None:
     assert any(3 in e.privacy.meets for e in snapshot.endpoints)
 
 
+# --- provider.min_privacy, requested_parameters, provider.require_parameters ------------------
+
+MIN_PRIVACY_SPELLINGS = (None, "zdr", "confidential", "trusted", "no_store", "any")
+PARAMETER_LISTS = (
+    ["tools"], ["tool_choice"], ["response_format"], ["structured_outputs"],
+    ["tools", "response_format"], ["max_tokens"], ["max_completion_tokens"],
+    ["reasoning_effort"], ["reasoning"], ["logprobs"], [" tools ", ""], [],
+)
+
+
+def _snapshot_preferences(snapshot: RoutingSnapshotV3, body: dict[str, Any]) -> Any:
+    """The rule docs/design/routing-snapshot-v1.md gives Go for these three
+    inputs, read from the snapshot alone: the requirements, require_parameters,
+    the requested names and the capability-required ones; or the field a 400
+    names."""
+    provider = body.get("provider") or {}
+    requirements: set[int] = set()
+    spelling = provider.get("min_privacy")
+    if spelling is not None:
+        tier = snapshot.aliases.privacy_tiers.get(spelling.strip().lower()) if isinstance(spelling, str) else None
+        if tier is None:
+            return "provider.min_privacy"
+        requirements |= {tier} - {0}
+    require = provider.get("require_parameters", False)
+    if not isinstance(require, bool):
+        return "provider.require_parameters"
+    requested = {name.strip() for name in body.get("requested_parameters") or () if name.strip()}
+    described = body.get("route_type") in {None, "chat.completions", "responses"}
+    capability = sorted(requested & set(snapshot.parameters.capability_required)) if described else []
+    return requirements, require, requested, capability
+
+
+def _snapshot_keep(snapshot: RoutingSnapshotV3, entries: list[Any], preferences: Any,
+                   capability: list[str]) -> list[str]:
+    requirements, require, requested, _ = preferences
+    tables = snapshot.parameters
+    declared = {name for entry in entries for name in entry.supported_parameters}
+    kept = []
+    for entry in entries:
+        supported = set(entry.supported_parameters)
+        if not requirements <= set(entry.privacy.meets):
+            continue
+        if require and any(
+            supported.isdisjoint(tables.aliases.get(name, (name,))) for name in requested
+        ):
+            continue
+        if any(
+            supported.isdisjoint(tables.capability_required[name])
+            and not declared.isdisjoint(tables.capability_required[name])
+            and tables.capability_required[name] in tables.route_declared
+            for name in capability
+        ):
+            continue
+        kept.append(entry.id)
+    return kept
+
+
+def _snapshot_no_route(snapshot: RoutingSnapshotV3, entries: list[Any], preferences: Any) -> Any:
+    capability = preferences[3]
+    if not capability or not _snapshot_keep(snapshot, entries, preferences, []):
+        return "No route candidates match the requested provider filters", None
+    unsupported = [name for name in capability if not _snapshot_keep(snapshot, entries, preferences, [name])]
+    if unsupported:
+        plural = "s" if len(unsupported) > 1 else ""
+        return f"No route for the requested model supports the parameter{plural}: {', '.join(unsupported)}", unsupported[0]
+    return f"No route for the requested model supports these parameters together: {', '.join(capability)}", capability[0]
+
+
+@pytest.fixture
+def privacy_parameter_catalog(live, settings, monkeypatch):
+    """Keep named refusals exercised even when discovery removes their last live route."""
+    _snapshot, inputs = live
+    model = catalog_data.Model(
+        id="fixture/privacy-parameters", name="Privacy parameter fixture",
+        provider="fixture-standard", context_length=4096,
+        supported_parameters=("tools",),
+    )
+    providers = {
+        "fixture-standard": catalog_data.Provider(slug="fixture-standard", name="Standard fixture"),
+        "fixture-zdr": catalog_data.Provider(
+            slug="fixture-zdr", name="ZDR fixture", stores_content=False,
+            provider_zero_data_retention=True,
+        ),
+    }
+    endpoints = tuple(
+        catalog_data.ModelEndpoint(
+            id=f"{model.id}@{provider}/byok", model_id=model.id, provider=provider,
+            usage_type="BYOK", upstream_id="privacy-parameters",
+            supported_parameters=("tools",) if provider == "fixture-standard" else (),
+            input_modalities=("text",),
+        )
+        for provider in providers
+    )
+    for provider, declaration in providers.items():
+        monkeypatch.setitem(catalog_data.PROVIDERS, provider, declaration)
+    original_lookup = routing.endpoints_for_model
+    monkeypatch.setattr(
+        routing, "endpoints_for_model",
+        lambda model_id: endpoints if model_id == model.id else original_lookup(model_id),
+    )
+    inputs = replace(
+        inputs, providers={**inputs.providers, **providers},
+        models=(*inputs.models, model), endpoints=(*inputs.endpoints, *endpoints),
+    )
+    return _compile(settings, inputs), model, endpoints
+
+
+def test_privacy_and_parameter_filters_are_what_routing_filters(privacy_parameter_catalog) -> None:
+    """Every live chat model's routes, under every min_privacy tier and the
+    parameter lists, kept or refused by the snapshot's tables exactly as
+    routing keeps or refuses them (provider_route_preferences,
+    _apply_endpoint_provider_filters, _no_route_error)."""
+    snapshot, fixture_model, _endpoints = privacy_parameter_catalog
+    entries = {e.id: e for e in snapshot.endpoints}
+    models = [m for m in (*routing.MODELS.values(), fixture_model) if m.supports_chat]
+    compared = dropped = refusals = 0
+    for spelling in MIN_PRIVACY_SPELLINGS:
+        for require in (False, True):
+            for parameters in PARAMETER_LISTS:
+                for route_type in (None, "messages"):
+                    body: dict[str, Any] = {
+                        "provider": {"min_privacy": spelling, "require_parameters": require},
+                        "requested_parameters": parameters, "route_type": route_type,
+                    }
+                    preferences = _snapshot_preferences(snapshot, body)
+                    prefs = routing.provider_route_preferences(body)
+                    for model in models:
+                        candidates = [(model, e) for e in routing.endpoints_for_model(model.id)]
+                        if not candidates:
+                            continue
+                        mine = [entries[e.id] for _, e in candidates]
+                        python = [e.id for _, e in routing._apply_endpoint_provider_filters(candidates, prefs)]
+                        assert _snapshot_keep(snapshot, mine, preferences, preferences[3]) == python, (
+                            model.id, body)
+                        compared += 1
+                        dropped += len(python) < len(candidates)
+                        if not python:
+                            error = routing._no_route_error(candidates, prefs).detail["error"]
+                            assert _snapshot_no_route(snapshot, mine, preferences) == (
+                                error["message"], error.get("param")), (model.id, body)
+                            refusals += error.get("param") is not None
+    # Not vacuous: routes were dropped, and parameters were named.
+    assert compared > 1_000 and dropped > 100 and refusals > 0, (compared, dropped, refusals)
+
+
+@pytest.mark.parametrize("privacy", ["no_store", "zdr"])
+@pytest.mark.parametrize("parameter", ["tools", "tool_choice"])
+def test_snapshot_names_capability_refusal_after_privacy_filter(
+    privacy_parameter_catalog, privacy, parameter,
+) -> None:
+    snapshot, model, endpoints = privacy_parameter_catalog
+    candidates = [(model, endpoint) for endpoint in endpoints]
+    entries = [entry for entry in snapshot.endpoints if entry.model_id == model.id]
+    body = {"provider": {"min_privacy": privacy}, "requested_parameters": [parameter]}
+    prefs = routing.provider_route_preferences(body)
+    preferences = _snapshot_preferences(snapshot, body)
+    assert [e.id for _, e in routing._apply_endpoint_provider_filters(
+        candidates, replace(prefs, capability_parameters=frozenset()),
+    )] == [endpoints[1].id]
+    assert routing._apply_endpoint_provider_filters(candidates, prefs) == []
+    assert _snapshot_keep(snapshot, entries, preferences, preferences[3]) == []
+    error = routing._no_route_error(candidates, prefs)
+    assert error.status_code == 400
+    detail = error.detail["error"]
+    expected = f"No route for the requested model supports the parameter: {parameter}"
+    assert (detail["message"], detail["param"]) == (expected, parameter)
+    assert detail["unsupported_parameters"] == [parameter]
+    assert _snapshot_no_route(snapshot, entries, preferences) == (expected, parameter)
+
+    body["provider"]["min_privacy"] = "any"
+    prefs = routing.provider_route_preferences(body)
+    preferences = _snapshot_preferences(snapshot, body)
+    assert [e.id for _, e in routing._apply_endpoint_provider_filters(candidates, prefs)] == [endpoints[0].id]
+    assert _snapshot_keep(snapshot, entries, preferences, preferences[3]) == [endpoints[0].id]
+
+
+def test_min_privacy_and_require_parameters_spellings_are_what_routing_parses(live) -> None:
+    snapshot, _inputs = live
+    for spelling in (*snapshot.aliases.privacy_tiers, " ZDR ", "Confidential", "secret", "", "zdr\t",
+                     2, True, [], {}):
+        for require in (False, True, None, "true", 1, ...):
+            provider: dict[str, Any] = {"min_privacy": spelling}
+            if require is not ...:
+                provider["require_parameters"] = require
+            body = {"provider": provider}
+            try:
+                prefs = routing.provider_route_preferences(body)
+            except HTTPException as exc:
+                python: Any = exc.detail["error"]["message"].split(" must be", 1)[0]
+            else:
+                python = (frozenset(prefs.privacy_requirements), prefs.require_parameters)
+            mine = _snapshot_preferences(snapshot, body)
+            if not isinstance(mine, str):
+                mine = (frozenset(mine[0]), mine[1])
+            assert mine == python, body
+
+
 def test_gateway_regions_agree_with_the_provider_contract(live, settings) -> None:
     snapshot, inputs = live
     raw = {e.id: e for e in inputs.endpoints}
@@ -198,7 +412,7 @@ def test_gateway_regions_agree_with_the_provider_contract(live, settings) -> Non
         endpoint = raw[entry.id]
         rule = entry.gateway_regions
         assert rule.requires_explicit_origin == (
-            endpoint.provider == "amazon-bedrock"
+            endpoint.provider in {"amazon-bedrock", "maple"}
             or (endpoint.provider, endpoint.model_id) in {
                 ("cloudflare-workers-ai", "cloudflare/clairic"),
                 ("regolo", "cloudflare/clef-flash"),
@@ -233,7 +447,7 @@ def test_the_request_region_is_checked_even_when_it_is_not_configured(live) -> N
     assert "body_region=body.region," in source
     pipeline = inspect.getsource(authorize_candidates.resolve_candidates)
     assert " ".join('''request.body_region or (
-        "" if candidate_endpoint.provider == "amazon-bedrock"
+        "" if candidate_endpoint.provider in {"amazon-bedrock", "maple"}
         or (candidate_endpoint.provider, candidate_endpoint.model_id)
         in EXPLICIT_GATEWAY_REGIONS_BY_PROVIDER_MODEL else region
     )'''.split()) in " ".join(pipeline.split())
@@ -258,7 +472,7 @@ def test_the_request_region_is_checked_even_when_it_is_not_configured(live) -> N
         rule = entry.gateway_regions
         for body_region in (None, "", "europe-west4", "us-east4", "unknown-region"):
             checked = _gateway_region(settings, rule, body_region)
-            explicit_origin = endpoint.provider == "amazon-bedrock" or (
+            explicit_origin = endpoint.provider in {"amazon-bedrock", "maple"} or (
                 endpoint.provider, endpoint.model_id
             ) in {
                 ("cloudflare-workers-ai", "cloudflare/clairic"),
@@ -316,14 +530,14 @@ def test_providers_and_models(live) -> None:
 # --- model and provider spellings -------------------------------------------------------------
 
 
-def _strip_variant(snapshot: RoutingSnapshotV1, raw: str) -> tuple[str, dict[str, str]]:
+def _strip_variant(snapshot: RoutingSnapshotV3, raw: str) -> tuple[str, dict[str, str]]:
     for variant in snapshot.aliases.variant_suffixes:
         if raw.endswith(variant.suffix):
             return raw[: -len(variant.suffix)], {variant.preference: variant.value}
     return raw, {}
 
 
-def _resolve(snapshot: RoutingSnapshotV1, model_id: str) -> str:
+def _resolve(snapshot: RoutingSnapshotV3, model_id: str) -> str:
     aliases = snapshot.aliases
     for rewrite in aliases.router_prefix_rewrites:
         if model_id.startswith(rewrite.prefix):
@@ -344,7 +558,7 @@ def _resolve(snapshot: RoutingSnapshotV1, model_id: str) -> str:
     return model_id
 
 
-def _spellings(snapshot: RoutingSnapshotV1) -> list[str]:
+def _spellings(snapshot: RoutingSnapshotV3) -> list[str]:
     ids = [m.id for m in snapshot.models]
     out = {
         "", "nope/model", "gpt-unknown-2025-01-01", "trustedrouter/auto-routing",
@@ -374,7 +588,7 @@ def test_model_spellings_resolve_as_routing_resolves_them(live) -> None:
     assert rewritten > 100
 
 
-def _provider_filter(snapshot: RoutingSnapshotV1, items: list[str]) -> list[str] | int:
+def _provider_filter(snapshot: RoutingSnapshotV3, items: list[str]) -> list[str] | int:
     aliases, providers = snapshot.aliases, {p.slug for p in snapshot.providers}
     out: list[str] = []
     for item in items:
@@ -431,7 +645,7 @@ def _python_requested(body: dict[str, Any], settings: Settings) -> Any:
     return ids, normalized
 
 
-def _requested(snapshot: RoutingSnapshotV1, raws: list[str]) -> Any:
+def _requested(snapshot: RoutingSnapshotV3, raws: list[str]) -> Any:
     """The composition rule docs/design/routing-snapshot-v1.md gives Go."""
     entries = {r.id: r for r in snapshot.requested_models}
     ids: list[str] = []
@@ -485,6 +699,45 @@ def test_each_requested_model_means_what_routing_says(live, settings) -> None:
             assert set(entry.overrides.renewable_only) == renewable_provider_slugs()
     refused = {r.id for r in snapshot.requested_models if r.refused_status is not None}
     assert "trustedrouter/synth" in refused and "trustedrouter/auto" not in refused
+
+
+@pytest.mark.parametrize("alias", [
+    catalog_data.ARCHIMEDES_1_0_MODEL_ID,
+    catalog_data.NAMED_DECISION_MODELS[0].id,
+])
+def test_missing_private_proxy_target_is_a_refusal_not_a_dangling_expansion(
+    monkeypatch, settings, catalog_clock, alias,
+) -> None:
+    from tests.fixture_routes import drop_routes
+
+    target = catalog_data.PRIVATE_PROXY_MODEL_TARGETS[alias]
+    for model_id in (alias, target):
+        drop_routes(monkeypatch, model_id)
+        monkeypatch.delitem(catalog_registry.MODELS, model_id, raising=False)
+    inputs = CatalogInputs.live(settings)
+    snapshot = _compile(settings, inputs)
+    entry = next(row for row in snapshot.requested_models if row.id == alias)
+    assert entry.private_proxy is True
+    assert entry.refused_status == 400
+    assert entry.expands_to == ()
+    companion = next(model.id for model in inputs.models if model.id not in {
+        row.id for row in inputs.requested_models
+    })
+    for models in ([alias], [alias, companion], [companion, alias]):
+        assert _requested(snapshot, models) == _python_requested({"models": models}, settings) == 400
+        with pytest.raises(HTTPException) as unsupported:
+            routing._requested_model_ids({"models": models}, settings)
+        assert unsupported.value.detail["error"] == {
+            "code": 400, "type": "model_not_supported", "source": "router",
+            "message": f"Model does not support chat completions: {alias}",
+        }
+    # The compiler must represent the refusal, not relax referential integrity.
+    raw = snapshot.model_dump(mode="json")
+    refused = next(row for row in raw["requested_models"] if row["id"] == alias)
+    refused["refused_status"] = None
+    refused["expands_to"] = [target]
+    with pytest.raises(ValueError, match="requested model expands to an unknown model"):
+        RoutingSnapshotV3.model_validate(raw)
 
 
 def test_every_other_spelling_means_itself_with_no_overrides(live, settings) -> None:
@@ -568,6 +821,8 @@ def test_compiling_twice_gives_identical_bytes(live, settings) -> None:
 _SUBPROCESS = """
 import hashlib, json, sys
 from datetime import UTC, datetime
+from tests.snapshot_retirement_fixture import install
+install()
 resolved = datetime.fromtimestamp(int(sys.argv[3]), UTC)
 from trusted_router import catalog_data
 catalog_data._utc_now = lambda: resolved
@@ -594,7 +849,7 @@ def _compile_in_subprocess(at: int, horizon: int, resolved: int, seed: str = "0"
     env = {
         **os.environ, "PYTHONHASHSEED": seed, "TR_ENVIRONMENT": "test",
         "TR_LIFECYCLE_CLOCK_OVERRIDE": _instant(resolved).isoformat().replace("+00:00", "Z"),
-        "PYTHONPATH": str(ROOT / "src"),
+        "PYTHONPATH": os.pathsep.join((str(ROOT), str(ROOT / "src"))),
     }
     result = subprocess.run(  # noqa: S603 - fixed Python script, no shell or caller input
         [sys.executable, "-c", _SUBPROCESS, str(at), str(horizon), str(resolved)], env=env,
@@ -652,11 +907,11 @@ ALLOWED_FIELDS = frozenset({
     "models.supports_embeddings", "models.supports_decide", "models.context_length",
     "endpoints", "endpoints.id", "endpoints.model_id", "endpoints.provider",
     "endpoints.usage_type", "endpoints.upstream_model", "endpoints.supported_parameters",
-    "endpoints.input_modalities", "endpoints.privacy", "endpoints.privacy.stores_content",
+    "endpoints.input_modalities", "endpoints.context_length", "endpoints.privacy", "endpoints.privacy.stores_content",
     "endpoints.privacy.meets", "endpoints.gateway_regions", "endpoints.gateway_regions.only",
     "endpoints.gateway_regions.deny", "endpoints.gateway_regions.requires_explicit_origin",
     "endpoints.catalog_valid_until", "endpoints.retired_at", "endpoints.epochs",
-    "endpoints.epochs.starts_at", "endpoints.epochs.headline",
+    "endpoints.epochs.starts_at", "endpoints.epochs.headline", "endpoints.epochs.billing_valid",
     "endpoints.epochs.headline.prompt", "endpoints.epochs.headline.completion",
     "endpoints.epochs.price", "endpoints.epochs.price.endpoint_id",
     "endpoints.epochs.price.price_history_version", "endpoints.epochs.price.rates",
@@ -688,7 +943,9 @@ ALLOWED_FIELDS = frozenset({
     "aliases.variant_suffixes", "aliases.variant_suffixes.suffix",
     "aliases.variant_suffixes.preference", "aliases.variant_suffixes.value",
     "aliases.provider_aliases", "aliases.provider_group_aliases",
-    "aliases.router_provider_slugs",
+    "aliases.router_provider_slugs", "aliases.privacy_tiers",
+    "parameters", "parameters.capability_required", "parameters.aliases",
+    "parameters.route_declared",
     "requested_models", "requested_models.id", "requested_models.expands_to",
     "requested_models.refused_status", "requested_models.private_proxy",
     "requested_models.overrides", "requested_models.overrides.usage",
@@ -708,7 +965,8 @@ DATA_KEYED = frozenset({
     "aliases.router_base_rewrites", "aliases.alias_targets", "aliases.provider_aliases",
     "aliases.provider_group_aliases", "decision_chains", "ranking.default",
     "ranking.latency", "ranking.throughput", "ranking.prepaid_min_rank",
-    "ranking.model_provider_preference",
+    "ranking.model_provider_preference", "aliases.privacy_tiers",
+    "parameters.capability_required", "parameters.aliases",
 })
 SECRET_SHAPED = re.compile(
     r"secret|encrypt|password|credential|hidden|destination|webhook|api_key|key_hint|"
@@ -732,7 +990,7 @@ def _schema_paths(model: type[BaseModel], prefix: str = "") -> set[str]:
 
 
 def test_the_schema_carries_only_allowlisted_fields() -> None:
-    paths = _schema_paths(RoutingSnapshotV1)
+    paths = _schema_paths(RoutingSnapshotV3)
     assert paths == ALLOWED_FIELDS, (
         f"new fields {sorted(paths - ALLOWED_FIELDS)}; gone {sorted(ALLOWED_FIELDS - paths)}"
     )

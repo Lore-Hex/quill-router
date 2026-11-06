@@ -57,6 +57,8 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     LIBERTY_1_0_MODEL_ORDER,
     LIBERTY_2_0_MODEL_ID,
     LIBERTY_3_0_MODEL_ID,
+    LIBERTY_4_0_MODEL_ID,
+    LIBERTY_4_0_MODEL_ORDER,
     MAPREDUCE_CATALOG_MODEL_ORDER,
     MAPREDUCE_MODEL_ID,
     META_MODEL_IDS,
@@ -195,6 +197,7 @@ from trusted_router.catalog_privacy import (  # noqa: F401 - re-exported for bac
     endpoint_privacy_tier,
     endpoint_provider_policy,
     endpoint_provider_policy_url,
+    endpoint_retention_metadata,
     endpoint_stores_content,
     endpoint_zero_data_retention,
     endpoint_zero_data_retention_scope,
@@ -211,6 +214,7 @@ from trusted_router.catalog_registry import (  # noqa: F401 - built there, re-ex
 )
 from trusted_router.catalog_usage_policy import provider_usage_estimation_policy
 from trusted_router.image_generation import FIXED_IMAGE_PRICES_MICRODOLLARS
+from trusted_router.managed_retention import provider_retention_notice
 from trusted_router.model_aliases import router_model_aliases
 from trusted_router.money import (
     microdollars_per_million_tokens_to_token_decimal,
@@ -246,6 +250,7 @@ from trusted_router.provider_lifecycle import (
 )
 from trusted_router.provider_locations import inference_location_metadata, provider_geography
 from trusted_router.provider_precision import endpoint_precision_metadata, endpoint_quantization
+from trusted_router.reasoning_metadata import reasoning_metadata
 from trusted_router.request_capabilities import (
     endpoint_capabilities,
     model_capabilities,
@@ -519,13 +524,16 @@ _OPEN_WEIGHT_PREFIXES = (
     "google/gemma",
     "ibm-granite/",
     "meta-llama/",
+    # Meta publishes Muse Spark Open's weights on Hugging Face under its own
+    # Muse Model License, as it does Llama's.
+    "meta-models/muse-spark-open",
     "mistralai/mistral-large-4",
     "moonshotai/kimi",
     "nvidia/nemotron",
     "qwen/",
     # Reflection's released Beam 1.0 weights are Apache-2.0, not a preview claim.
     "reflection/beam-1.0",
-    "tencent/hy4",
+    "tencent/hy4-preview",
     "thinkingmachines/",
     "xiaomi/mimo",
     "z-ai/glm",
@@ -652,7 +660,9 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
     # A routing pool has no routes of its own; it publishes what a request
     # naming it is sure to get on the routes it can reach.
     pool_parameters, pool_modalities = _routing_pool_discovery(model)
-    context_length = published_context_length(model)
+    # A window no route states is unknown, not zero tokens; 0 reads as a
+    # model that accepts no input.
+    context_length = published_context_length(model) or None
     # Discovery fields are a union over the model's own routes. A private
     # proxy (for example a named decision model) is served through another
     # model's routes, so it keeps its own declarations instead.
@@ -766,8 +776,15 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         pricing = fetch_pricing()
     # The endpoint payloads have always published input_cache_read; the model
     # headline never did, so /v1/models hid the cache-read discount on more
-    # than a thousand endpoints. OR convention, same field name.
-    model_tiers = getattr(model, "price_tiers", ()) or ()
+    # than a thousand endpoints. OR convention, same field name. The cache rate
+    # belongs to the route whose prompt rate is the headline: pairing the
+    # cheapest route's prompt with another route's cache rate published a
+    # cached read above the uncached one.
+    headline_route = (
+        min(endpoints, key=lambda e: e.prompt_price_microdollars_per_million_tokens)
+        if not is_meta and endpoints else model
+    )
+    model_tiers = getattr(headline_route, "price_tiers", ()) or ()
     model_cached = (
         model_tiers[0].prompt_cached_price_microdollars_per_million_tokens if model_tiers else None
     )
@@ -897,6 +914,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
                 "attested_gateway": PROVIDERS[endpoint.provider].attested_gateway,
                 "stores_content": endpoint_stores_content(endpoint),
                 "provider_zero_data_retention": endpoint_zero_data_retention(endpoint),
+                "retention": endpoint_retention_metadata(endpoint),
                 "zero_data_retention_scope": endpoint_zero_data_retention_scope(endpoint),
                 "privacy_tier": endpoint_privacy_tier(endpoint),
                 "privacy_tier_label": PRIVACY_TIER_LABELS[endpoint_privacy_tier(endpoint)],
@@ -1015,6 +1033,20 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         },
         "per_request_limits": None,
         "supported_parameters": list(supported_parameters),
+        # OpenRouter's per-model effort metadata, narrowed to what the gateway
+        # honors on every route this model can be served from.
+        **(
+            {"reasoning": reasoning}
+            if (
+                reasoning := reasoning_metadata(
+                    model.id,
+                    supported_parameters,
+                    ((endpoint.provider, endpoint.upstream_id) for endpoint in endpoints),
+                )
+            )
+            is not None
+            else {}
+        ),
         "trustedrouter": tr_block,
     }
 
@@ -1045,6 +1077,8 @@ def provider_to_openrouter_shape(provider: Provider) -> dict[str, object]:
         "provider_confidential_compute": provider.provider_confidential_compute,
         "provider_e2ee": provider.provider_e2ee,
         "provider_policy": provider.provider_policy,
+        "retention_notice": provider_retention_notice(provider.slug),
+        "retention_requires_model_review": provider.slug in {"openai", "google-vertex"},
         "trusted_provider": provider_privacy_tier(provider) == PRIVACY_TIER_TRUSTED,
         "provider_policy_url": provider.provider_policy_url,
         "provider_headquarters_country": provider.provider_headquarters_country,

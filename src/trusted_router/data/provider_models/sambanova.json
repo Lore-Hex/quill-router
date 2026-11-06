@@ -20,9 +20,10 @@
       "context_length": 131072,
       "max_output_tokens": 7168,
       "routable": false,
-      "routable_reason": "provider-canary-failed",
       "input_token_price_per_m": 3000000,
-      "output_token_price_per_m": 4500000
+      "output_token_price_per_m": 4500000,
+      "missing_since": "2026-11-03",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "DeepSeek-V3.2",
@@ -43,9 +44,10 @@
       "context_length": 32768,
       "max_output_tokens": 7168,
       "routable": false,
-      "routable_reason": "provider-canary-failed",
       "input_token_price_per_m": 3000000,
-      "output_token_price_per_m": 4500000
+      "output_token_price_per_m": 4500000,
+      "missing_since": "2026-11-03",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "gemma-4-31B-it",
@@ -65,8 +67,7 @@
       "upstream_id": "gemma-4-31B-it",
       "context_length": 131072,
       "max_output_tokens": 131072,
-      "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable": true,
       "input_token_price_per_m": 380000,
       "output_token_price_per_m": 1150000
     },
@@ -135,10 +136,12 @@
       "upstream_id": "MiniMax-M3",
       "context_length": 1048576,
       "max_output_tokens": 1048576,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 600000,
       "output_token_price_per_m": 2400000,
-      "cached_input_token_price_per_m": 60000
+      "cached_input_token_price_per_m": 60000,
+      "missing_since": "2026-10-25",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "gpt-oss-120b",
@@ -164,7 +167,7 @@
     }
   ],
   "source": "https://api.sambanova.ai/v1/models",
-  "generated_at": "2026-10-20T12:05:14Z",
+  "generated_at": "2026-11-05T11:29:32Z",
   "price_scale": "microdollars_per_million",
   "model_count": 7
 }

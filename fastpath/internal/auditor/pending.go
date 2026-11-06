@@ -1,10 +1,12 @@
 package auditor
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"cloud.google.com/go/spanner"
@@ -18,7 +20,7 @@ import (
 type PendingStore interface {
 	PendingPacks(ctx context.Context, after store.PendingPack, limit int) ([]store.PendingPack, error)
 	LoadWinners(ctx context.Context, ref store.LeaseRef) ([]store.Pack, time.Time, error)
-	ReadStaged(ctx context.Context, authorization string, digest []byte) (store.StagedRecord, bool, error)
+	ReadStagedBatch(ctx context.Context, keys ...store.StagedKey) ([]store.StagedRecord, error)
 	WriteRecords(ctx context.Context, records []store.LeaseRecord) error
 	MarkPackDone(ctx context.Context, ref store.LeaseRef, version int64) (bool, error)
 	DropStaged(ctx context.Context, keys ...store.StagedKey) error
@@ -42,7 +44,43 @@ type PendingConfig struct {
 	Alert   func(authorization, what string)
 	Overdue time.Duration
 	Clock   func() time.Time
+	// Workers is how many leases' packs a sweep works at once, each
+	// lease's packs by one worker at a time, in the order the sweep read
+	// them; 0 is DefaultPendingWorkers.
+	Workers int
+	// DropEvery is how often, at most, a sweep drops the staged records of
+	// leases that have retired or gone (store.RetiredStaged), timed by
+	// Clock; 0 is DefaultDropEvery.
+	DropEvery time.Duration
+
+	// The tests' own: each Store call's deadline (StoreDeadline), where
+	// the sweep's lines go (the standard logger) and where its calls are
+	// noted under way (processCalls), each its default when zero.
+	deadline time.Duration
+	logf     func(format string, args ...any)
+	calls    *inFlight
 }
+
+// DefaultPendingWorkers is how many leases' packs a sweep works at once
+// when PendingConfig.Workers is 0. A pack's work is Spanner calls and
+// outcome publishes, each waited on, so one worker at a time did some
+// seventy to a hundred packs a minute on 2026-11-04, while a thousand
+// settles a second made three hundred. Eight on each of two members
+// cleared the backlog in two minutes rather than twenty-five, but burst
+// into Spanner beside the live settles: high-priority CPU went from 33% to
+// 47%, and settles that failed and were tried again from 172 to 13,245
+// (2026-11-04). Two, with the staged records read a pack at once, keep up
+// with the settles while spreading the work out.
+const DefaultPendingWorkers = 2
+
+// DefaultDropEvery is how often, at most, the sweep drops retired leases'
+// staged records when PendingConfig.DropEvery is 0. The scan for them is a
+// join over every staged record, which costs more as the stage fills:
+// every five seconds on two members, it took 6.5 to 9.4 Spanner
+// CPU-seconds a minute at a thousand settles a second (2026-11-04). What
+// it drops nothing needs, so dropping it a minute later costs only the
+// rows' room.
+const DefaultDropEvery = time.Minute
 
 // Pending does the winners' pending work (§4.8, §4.9): for each pack whose
 // work is not done, every winner's outcome is published to the record topic,
@@ -52,9 +90,14 @@ type PendingConfig struct {
 // records are dropped. A pack whose work cannot be done yet, a staged record
 // not there or a write that failed, waits for the next sweep, and holds up
 // none after it. A staged record no pack drops, such as one a crash left
-// between a mark and its drop, goes once its lease retires. Every write is idempotent on its authorization, and an outcome
+// between a mark and its drop, goes once its lease retires, at a sweep at
+// most DropEvery later. Every write is idempotent on its authorization, and an outcome
 // published twice is the same message, so members that sweep at once, or a
-// sweep after a crash, do no harm.
+// sweep after a crash, do no harm. Packs share no winner, so a sweep works
+// several leases' packs at once (Workers); a lease's own packs it works one
+// at a time, in commit order, as one sweep did all of them.
+//
+// Only the sweep's goroutine reads and writes firstSaw, told and dropped.
 type Pending struct {
 	cfg PendingConfig
 	// firstSaw is when each pack whose work is not done was first seen,
@@ -62,18 +105,35 @@ type Pending struct {
 	// forgotten at the next sweep.
 	firstSaw map[string]time.Time
 	told     map[string]bool
+	// dropped is when a sweep last began dropping retired leases' staged
+	// records; zero before the first.
+	dropped time.Time
 }
 
 // NewPending is the pending work with its configuration.
 func NewPending(cfg PendingConfig) (*Pending, error) {
 	if cfg.Store == nil || cfg.Records == nil || cfg.Every <= 0 || cfg.Limit < 1 || cfg.Wait <= 0 || cfg.Alert == nil ||
-		cfg.Overdue < 0 {
+		cfg.Overdue < 0 || cfg.Workers < 0 || cfg.DropEvery < 0 {
 		return nil, errors.New("auditor: pending work needs a store, the record topic, an interval, a page size, " +
-			"a publish wait, someone to tell and a non-negative overdue allowance")
+			"a publish wait, someone to tell, a non-negative overdue allowance, a non-negative number of workers " +
+			"and a non-negative drop interval")
 	}
 	if cfg.Clock == nil {
 		cfg.Clock = time.Now
 	}
+	cfg.Workers = cmp.Or(cfg.Workers, DefaultPendingWorkers)
+	cfg.DropEvery = cmp.Or(cfg.DropEvery, DefaultDropEvery)
+	// The workers tell from their own goroutines and the sweep from its;
+	// whoever is told still hears one alert at a time, as from one sweep.
+	var telling sync.Mutex
+	alert := cfg.Alert
+	cfg.Alert = func(subject, what string) {
+		telling.Lock()
+		defer telling.Unlock()
+		alert(subject, what)
+	}
+	cfg.Store = boundPendingStore{s: cfg.Store, bound: bound{d: cmp.Or(cfg.deadline, StoreDeadline),
+		j: newJournal(cfg.logf), calls: cmp.Or(cfg.calls, processCalls)}}
 	return &Pending{cfg: cfg, firstSaw: map[string]time.Time{}, told: map[string]bool{}}, nil
 }
 
@@ -92,18 +152,32 @@ func (p *Pending) Run(ctx context.Context) error {
 }
 
 // sweep does the work of every pack not done, then drops the staged records
-// of leases that have retired.
+// of leases that have retired, at the first sweep and then once DropEvery
+// has passed since the last drop began, whether or not it finished: a scan
+// that failed waits as one that did not. A clock that went back drops at
+// once rather than wait for it to come round again.
 func (p *Pending) sweep(ctx context.Context) {
 	p.sweepPacks(ctx)
-	p.dropRetired(ctx)
+	now := p.cfg.Clock()
+	if p.dropped.IsZero() || now.Sub(p.dropped) >= p.cfg.DropEvery || now.Before(p.dropped) {
+		p.dropped = now
+		p.dropRetired(ctx)
+	}
 }
 
-// sweepPacks does the work of every pack not done, a page at a time,
-// reading each lease's packs once a page.
+// sweepPacks does the work of every pack not done, a page at a time. A
+// lease's packs the sweep reads together, on a page and on from the page
+// before when the lease ran on from it, are one lease's work: its packs
+// read once, and worked in the order the sweep read them. Workers work at
+// most Workers leases at once and never one lease twice at once, while
+// the sweep reads on; it returns once every one of them is done. The
+// packs come in key order, so a lease's are read together.
 func (p *Pending) sweepPacks(ctx context.Context) {
 	var after store.PendingPack
 	seen := map[string]time.Time{}
 	complete := false
+	var held leaseWork
+	w := &leaseWorkers{slots: make(chan struct{}, p.cfg.Workers), running: map[store.LeaseRef]chan struct{}{}}
 	defer func() {
 		// Only a sweep that read every page says which packs are gone:
 		// one that ended early, a read failed or ctx ended, keeps what it
@@ -122,37 +196,93 @@ func (p *Pending) sweepPacks(ctx context.Context) {
 			}
 		}
 	}()
+	defer w.wg.Wait()
 	for ctx.Err() == nil {
 		page, err := p.cfg.Store.PendingPacks(ctx, after, p.cfg.Limit)
 		if err != nil {
-			return
+			break
 		}
 		// A pack is first seen when its page is read, not when the sweep
 		// began: a sweep's earlier pages can take long.
 		now := p.cfg.Clock()
-		var ref store.LeaseRef
-		var packs []store.Pack
-		read := false
 		for _, pp := range page {
 			p.overdue(pp, now, seen)
-			if !read || pp.Ref != ref {
-				ref, read = pp.Ref, true
-				if packs, _, err = p.cfg.Store.LoadWinners(ctx, ref); err != nil {
-					packs = nil
-				}
+			if len(held.versions) > 0 && pp.Ref != held.ref {
+				w.start(ctx, held, p.work)
+				held = leaseWork{}
 			}
-			for _, pack := range packs {
-				if pack.CommitVersion == pp.CommitVersion {
-					_, _ = p.Do(ctx, ref, pack)
-				}
-			}
+			held.ref = pp.Ref
+			held.versions = append(held.versions, pp.CommitVersion)
 		}
 		if len(page) < p.cfg.Limit {
 			complete = ctx.Err() == nil
-			return
+			break
 		}
+		// The page's last lease is held: the next page may carry it on.
 		after = page[len(page)-1]
 	}
+	if len(held.versions) > 0 {
+		w.start(ctx, held, p.work)
+	}
+}
+
+// leaseWork is a lease's packs a sweep read together, by commit version,
+// in the order it read them.
+type leaseWork struct {
+	ref      store.LeaseRef
+	versions []int64
+}
+
+// work does a lease's packs' work: it reads the lease's packs once, and
+// does each one's in turn, a pack whose work cannot be done holding up
+// none after it.
+func (p *Pending) work(ctx context.Context, lw leaseWork) {
+	packs, _, err := p.cfg.Store.LoadWinners(ctx, lw.ref)
+	if err != nil {
+		return
+	}
+	for _, v := range lw.versions {
+		for _, pack := range packs {
+			if pack.CommitVersion == v {
+				_, _ = p.Do(ctx, lw.ref, pack)
+			}
+		}
+	}
+}
+
+// leaseWorkers are a sweep's workers: slots bounds how many work at once,
+// and running is each lease's latest work, closed once it is done. Only
+// the sweep's goroutine starts work.
+type leaseWorkers struct {
+	slots   chan struct{}
+	running map[store.LeaseRef]chan struct{}
+	wg      sync.WaitGroup
+}
+
+// start has a worker do a lease's work once that lease's work before it
+// is done and a worker is free, and starts none once ctx has ended.
+func (w *leaseWorkers) start(ctx context.Context, lw leaseWork, work func(context.Context, leaseWork)) {
+	if before, ok := w.running[lw.ref]; ok {
+		select {
+		case <-before:
+		case <-ctx.Done():
+			return
+		}
+	}
+	select {
+	case w.slots <- struct{}{}:
+	case <-ctx.Done():
+		return
+	}
+	done := make(chan struct{})
+	w.running[lw.ref] = done
+	w.wg.Add(1)
+	go func() {
+		defer w.wg.Done()
+		defer func() { <-w.slots }()
+		defer close(done)
+		work(ctx, lw)
+	}()
 }
 
 // overdue tells of a pack pending longer than Overdue, once, from when the
@@ -208,13 +338,14 @@ type DispositionRecord struct {
 	Boot    []byte `json:"boot,omitempty"`
 }
 
-// winnerWork is a winner with its work read, its staged full record's body
-// and its boot binding.
+// winnerWork is a winner with its work read, its staged full record's body,
+// whether that was found, and its boot binding.
 type winnerWork struct {
 	store.Winner
 	work    Work
 	outcome string
 	body    []byte
+	found   bool
 	boot    []byte
 }
 
@@ -231,6 +362,55 @@ var recordBatch = struct {
 // stagedBatch bounds the staged records one drop removes.
 var stagedBatch = store.MaxDropStaged
 
+// readBatch bounds the staged records one read of a pack's takes.
+var readBatch = store.MaxReadStaged
+
+// readStaged reads the staged full records of a pack's settles and reaps,
+// readBatch at a time, each by its winner's authorization and digest
+// (§4.9), and gives each winner its record's body and, when its work
+// carries no boot binding, the one its record states. It reports whether
+// every one is staged, and reads no more once one is not.
+func (p *Pending) readStaged(ctx context.Context, winners []winnerWork) (bool, error) {
+	type key struct{ auth, digest string }
+	at := map[key][]int{}
+	var keys []store.StagedKey
+	for i := range winners {
+		w := &winners[i]
+		w.boot = w.work.Boot
+		if !w.staged() {
+			continue
+		}
+		k := key{w.AuthorizationID, string(w.work.Digest)}
+		if _, ok := at[k]; !ok {
+			keys = append(keys, store.StagedKey{AuthorizationID: w.AuthorizationID, Digest: w.work.Digest})
+		}
+		at[k] = append(at[k], i)
+	}
+	for len(keys) > 0 {
+		n := min(len(keys), readBatch)
+		records, err := p.cfg.Store.ReadStagedBatch(ctx, keys[:n]...)
+		if err != nil {
+			return false, err
+		}
+		for _, r := range records {
+			for _, i := range at[key{r.AuthorizationID, string(r.Digest)}] {
+				w := &winners[i]
+				w.body, w.found = r.Body, true
+				if len(w.work.Boot) == 0 {
+					w.boot = bootOf(r.Body)
+				}
+			}
+		}
+		for _, k := range keys[:n] {
+			if !winners[at[key{k.AuthorizationID, string(k.Digest)}][0]].found {
+				return false, nil
+			}
+		}
+		keys = keys[n:]
+	}
+	return true, nil
+}
+
 // bootOf is the boot binding a full record states (§4.9): a gateway's, an
 // owner's reap's and an auditor's reap's each carry it, as "boot".
 func bootOf(body []byte) []byte {
@@ -245,7 +425,8 @@ func bootOf(body []byte) []byte {
 
 // Do does a pack's work, and reports whether the pack is done. A settle's or
 // a reap's staged full record is read first, for its records and its boot
-// binding, which a refund's or a release's work carries itself. Then every
+// binding, which a refund's or a release's work carries itself: the pack's
+// in as few reads as readBatch allows. Then every
 // outcome is published, so a record written can be rebuilt from the topic's
 // export once the pack is gone; once every one is acknowledged the records
 // are written, in batches; once every one is written the pack is marked
@@ -266,21 +447,9 @@ func (p *Pending) Do(ctx context.Context, ref store.LeaseRef, pack store.Pack) (
 		}
 		winners = append(winners, ww)
 	}
-	for i := range winners {
-		w := &winners[i]
-		w.boot = w.work.Boot
-		if !w.staged() {
-			continue
-		}
-		r, ok, err := p.cfg.Store.ReadStaged(ctx, w.AuthorizationID, w.work.Digest)
-		if err != nil || !ok {
-			// Not staged yet: the record topic's consumer is behind.
-			return false, err
-		}
-		w.body = r.Body
-		if len(w.boot) == 0 {
-			w.boot = bootOf(r.Body)
-		}
+	if ok, err := p.readStaged(ctx, winners); err != nil || !ok {
+		// Not staged yet: the record topic's consumer is behind.
+		return false, err
 	}
 	for _, w := range winners {
 		if len(w.boot) == 0 {

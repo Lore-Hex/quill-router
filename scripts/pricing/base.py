@@ -28,6 +28,7 @@ import sys
 import tempfile
 import textwrap
 import time
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -705,6 +706,7 @@ def guard_manifest_prune(
     *,
     provider_slug: str | None = None,
     allow_confirmed_delistings: bool = False,
+    confirmed_disabled_ids: Collection[str] = (),
 ) -> list[Any]:
     """Keep the old manifest when one pass would disable 50% of its routes.
 
@@ -737,6 +739,14 @@ def guard_manifest_prune(
     disabled = old_routable_ids - new_routable_ids
     emptied_manifest = bool(old_rows) and not new_rows
     mass_prune = bool(disabled) and len(disabled) * 2 >= len(baseline_ids)
+    # Explicit adapter evidence may quarantine a retained row, never delete it.
+    # Unconfirmed losses still use the unchanged availability guard.
+    quarantined_ids = {
+        row["id"] for row in new_rows
+        if isinstance(row, dict) and isinstance(row.get("id"), str)
+        and row.get("routable") is False
+    }
+    confirmed_quarantine = bool(disabled) and disabled <= (set(confirmed_disabled_ids) & quarantined_ids)
     confirmed_delistings = False
     if allow_confirmed_delistings and disabled and not emptied_manifest:
         rows_by_id = {
@@ -754,7 +764,7 @@ def guard_manifest_prune(
             and bool(row["missing_since"])
             for model_id in disabled
         )
-    if not emptied_manifest and (not mass_prune or confirmed_delistings):
+    if not emptied_manifest and (not mass_prune or confirmed_delistings or confirmed_quarantine):
         return new_rows
 
     provider = f"{provider_slug}: " if provider_slug else ""

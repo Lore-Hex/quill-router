@@ -4,14 +4,20 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from collections.abc import Set as AbstractSet
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 
+from trusted_router.config import Settings
 from trusted_router.services import fastpath_frontdoor as fd
+from trusted_router.storage_models import ApiKey
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class _Door:
@@ -499,3 +505,124 @@ def test_the_narrowest_cohort_is_eligible_and_each_departure_names_itself() -> N
         ("records_durable", False, "records"),
     ]:
         assert fd.pilot_reason(**{**_ELIGIBLE, field: value}) == reason, field
+
+
+def _key(**fields: Any) -> ApiKey:
+    return ApiKey(hash="kh", salt="", secret_hash="", lookup_hash="lh", name="k", label="k",
+                  workspace_id="ws-1", creator_user_id=None, **fields)
+
+
+_KEYS: dict[str, dict[str, Any]] = {
+    "no windows": {},
+    "enforcing windows": {"limit_daily_microdollars": 1_000, "limit_monthly_microdollars": 9_000},
+    "alert-only windows": {"limit_weekly_microdollars": 5_000, "budget_alert_only": True},
+    "lifetime cap": {"limit_microdollars": 10_000},
+    "lifetime cap with alert-only windows": {
+        "limit_microdollars": 10_000, "limit_daily_microdollars": 1_000, "budget_alert_only": True},
+    "lifetime cap with enforcing windows": {"limit_microdollars": 10_000, "limit_daily_microdollars": 1_000},
+}
+# key_capped by mode (e2-key-windows section 5): `alert` covers alert-only
+# keys, `enforce` both; a lifetime cap is never covered.
+_CAPPED: dict[str, dict[str, bool]] = {
+    "no windows": {"off": False, "alert": False, "enforce": False},
+    "enforcing windows": {"off": True, "alert": True, "enforce": False},
+    "alert-only windows": {"off": True, "alert": False, "enforce": False},
+    "lifetime cap": {"off": True, "alert": True, "enforce": True},
+    "lifetime cap with alert-only windows": {"off": True, "alert": True, "enforce": True},
+    "lifetime cap with enforcing windows": {"off": True, "alert": True, "enforce": True},
+}
+
+
+@pytest.mark.parametrize("mode", ["off", "alert", "enforce"])
+@pytest.mark.parametrize("kind", list(_KEYS))
+def test_key_capped_is_the_lifetime_cap_or_windows_the_mode_does_not_cover(mode: str, kind: str) -> None:
+    capped = fd.pilot_key_capped(mode, _key(**_KEYS[kind]))
+    assert capped is _CAPPED[kind][mode]
+    assert fd.pilot_reason(**{**_ELIGIBLE, "key_capped": capped}) == ("key_cap" if capped else None)
+
+
+def test_the_truth_table_covers_each_mode_both_ways() -> None:
+    """Every mode keeps some key out, and only `off` keeps every windowed
+    key out, so the table above cannot pass vacuously."""
+    for mode in ("off", "alert", "enforce"):
+        assert any(row[mode] for row in _CAPPED.values()), mode
+    windowed = ("enforcing windows", "alert-only windows")
+    assert [mode for mode in ("off", "alert", "enforce") if all(_CAPPED[k][mode] for k in windowed)] == ["off"]
+
+
+@pytest.mark.parametrize(("name", "fields"), [
+    # budget_alert_only as Go reads it: a JSON bool, or absent. Python's
+    # authorize reads it by truthiness; the edge answers key_shape.
+    ("an integer alert flag", {"limit_daily_microdollars": 1_000, "budget_alert_only": 1}),
+    ("a string alert flag", {"limit_daily_microdollars": 1_000, "budget_alert_only": "true"}),
+    ("a zero alert flag", {"limit_daily_microdollars": 1_000, "budget_alert_only": 0}),
+    ("a null alert flag", {"limit_daily_microdollars": 1_000, "budget_alert_only": None}),
+    # Each configured limit as an integer in int64; Python's int() reads more.
+    ("a string limit", {"limit_daily_microdollars": "1000"}),
+    ("a float limit", {"limit_weekly_microdollars": 1000.0}),
+    ("a boolean limit", {"limit_monthly_microdollars": True}),
+    ("a limit past int64", {"limit_daily_microdollars": 1 << 63}),
+    ("one malformed limit beside a good one", {
+        "limit_daily_microdollars": 1_000, "limit_weekly_microdollars": "5000", "budget_alert_only": True}),
+])
+def test_a_key_the_edge_reads_as_key_shape_is_covered_by_no_mode(name: str, fields: dict[str, Any]) -> None:
+    for mode in ("off", "alert", "enforce"):
+        assert fd.pilot_key_capped(mode, _key(**fields)) is True, (name, mode)
+    # Positive control: well-formed windows are covered by enforce.
+    assert fd.pilot_key_capped("enforce", _key(limit_daily_microdollars=1_000, limit_weekly_microdollars=5_000)) is False
+
+
+def test_int64_bounds_are_inclusive() -> None:
+    for limit in ((1 << 63) - 1, -(1 << 63), 0):
+        assert fd.pilot_key_capped("enforce", _key(limit_daily_microdollars=limit)) is False, limit
+    assert fd.pilot_key_capped("enforce", _key(limit_daily_microdollars=-(1 << 63) - 1)) is True
+
+
+def test_a_mode_outside_the_setting_covers_nothing() -> None:
+    windowed = _key(limit_daily_microdollars=1_000, budget_alert_only=True)
+    for mode in ("", "OFF", "Alert", "enforcing"):
+        assert fd.pilot_key_capped(mode, windowed) is True, mode
+    assert fd.pilot_key_capped("", _key()) is False
+
+
+_GO_MILLISECONDS = {"time.Millisecond": 1, "time.Second": 1000}
+
+
+def _go_milliseconds(expression: str) -> int:
+    """A Go duration literal of the defaults' form, `time.Second` or
+    `800 * time.Millisecond`, in whole milliseconds."""
+    found = re.fullmatch(r"(?:(\d+) \* )?(time\.Millisecond|time\.Second)", expression.strip())
+    assert found, expression
+    return int(found.group(1) or 1) * _GO_MILLISECONDS[found.group(2)]
+
+
+def _front_door_defaults() -> dict[str, int]:
+    """The front door's waits as the node's defaults set them
+    (fastpath/internal/service/service.go, Defaults), in milliseconds."""
+    service = (ROOT / "fastpath" / "internal" / "service" / "service.go").read_text(encoding="utf-8")
+    found = re.search(r"FrontDoor: frontdoor\.Config\{(.*?)\},\n", service, re.S)
+    assert found, "the front door's defaults"
+    fields = dict(re.findall(r"(\w+): ([^,]+)", found.group(1)))
+    names = ("PublishWait", "OwnerWait", "PeerWait", "AnswerWithin", "AppendWithin")
+    return {name: _go_milliseconds(fields[name]) for name in names}
+
+
+def test_the_control_plane_waits_longer_than_the_front_door_takes_to_answer() -> None:
+    """A call's budget outlasts the front door's answer budget, and the
+    connection's allowance with it, so a heartbeat whose owner and peer are
+    slow is answered Retry, and a terminal recorded in the drain log, while
+    the control plane still waits, and neither counts against its breaker
+    (2026-11-02: an owner past its second and then a peer's 0.8 s answered
+    after the 1.5 s had passed). Whatever a deploy sets is held to it too."""
+    waits = _front_door_defaults()
+    # The front door's own composition (frontdoor.New and service_test.go
+    # hold it too): a settle's publish, an owner's and a peer's full waits
+    # and the append's time all fit in its answer budget.
+    steps = ("PublishWait", "OwnerWait", "PeerWait", "AppendWithin")
+    assert waits["AppendWithin"] > 0 and sum(waits[name] for name in steps) < waits["AnswerWithin"]
+    default = Settings.model_fields["fastpath_front_door_timeout_seconds"].default
+    rollout = (ROOT / "scripts" / "deploy" / "rollout.sh").read_text(encoding="utf-8")
+    deployed = [float(value) for value in re.findall(r"TR_FASTPATH_FRONT_DOOR_TIMEOUT_SECONDS=([0-9.]+)", rollout)]
+    connection = round(fd.CONNECT_TIMEOUT_SECONDS * 1000)
+    for budget in (default, *deployed):
+        assert round(budget * 1000) >= waits["AnswerWithin"] + connection, (budget, waits)

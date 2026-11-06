@@ -61,7 +61,7 @@ class WalletVerifyRequest(BaseModel):
 
 def register_wallet_oauth_routes(router: APIRouter) -> None:
     @router.post("/auth/wallet/challenge")
-    async def wallet_challenge(
+    def wallet_challenge(
         request: Request,
         body: WalletChallengeRequest,
         settings: SettingsDep,
@@ -105,7 +105,7 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
         )
 
     @router.post("/auth/wallet/verify")
-    async def wallet_verify(
+    def wallet_verify(
         request: Request,
         body: WalletVerifyRequest,
         settings: SettingsDep,
@@ -129,6 +129,8 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
         if existing_user is None:
             require_new_account_creation(settings)
         user = existing_user or STORE.create_wallet_user(body.address)
+        if user.disabled:
+            raise api_error(403, "This account is closed. Contact security@trustedrouter.com for assistance.", ErrorType.FORBIDDEN)
         workspaces = STORE.list_workspaces_for_user(user.id)
         workspace = workspaces[0] if workspaces else STORE.create_workspace(
             user.id,
@@ -169,12 +171,12 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
         return response
 
     @router.get("/auth/wallet/email")
-    async def wallet_email_form(request: Request, settings: SettingsDep) -> HTMLResponse:
+    def wallet_email_form(request: Request, settings: SettingsDep) -> HTMLResponse:
         session = _require_pending_session(request)
         return HTMLResponse(_form_page(address=session.label, error=None))
 
     @router.post("/auth/wallet/email")
-    async def wallet_email_submit(
+    def wallet_email_submit(
         request: Request,
         settings: SettingsDep,
         email: str = Form(..., min_length=3, max_length=320),

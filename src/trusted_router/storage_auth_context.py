@@ -19,7 +19,7 @@ def build_session_auth_context(
     user: User | None,
     memberships: Iterable[tuple[Member, Workspace]],
     requested_workspace_id: str | None,
-) -> SessionAuthContext:
+) -> SessionAuthContext | None:
     """Apply one workspace-selection contract to every storage backend.
 
     An explicit request or session binding must match exactly.  With neither,
@@ -28,6 +28,8 @@ def build_session_auth_context(
     but are omitted from the workspace list (matching
     ``list_workspaces_for_user``).  Deleted workspaces are never visible.
     """
+    if user is not None and user.disabled:
+        return None
     current_memberships = [
         (member, workspace) for member, workspace in memberships if not workspace.deleted
     ]

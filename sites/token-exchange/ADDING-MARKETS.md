@@ -1,11 +1,31 @@
 # Adding a Token Exchange city or region
 
 Use the approved New York page and the shared implementation in this directory
-as the design baseline. Dubai and Riyadh illustrate regional adaptations. A new
-market extends this system; it does not start a new page design. This guide is
-tracked so developers and coding agents receive it with the repository.
+as the design baseline. A new market extends this system; it does not start a
+new page design. This guide is tracked so developers and coding agents receive
+it with the repository.
 
-## Start with the current design
+## Default: New York's design through `nyte-cities.json`
+
+Most markets render New York's home page (`nyte-v2/`) with their own name and
+three workload cards. Every other path on a city domain serves New York's shared
+pages, which show the city's name in the browser. To add a market this way:
+
+- Add its `markets.json` record (see the table below; the domain fields matter
+  most) and its `nyte-cities.json` entry: three `workloads`, each a sector
+  `title`, an example `prompt` a customer would give the AI, and `tags`. Write
+  prompts without invented counts.
+- Optional keys: `logo_place` and `logo_one_line` when the header should not
+  read "<region> Token Exchange"; `faq_place` for the data-location question on
+  `/confidential` (an empty string drops it); `us` for markets where the
+  US-hosted setting applies.
+- Run `social.py`, capture `social-<slug>/` at 1200 x 630 into
+  `social-images/og-<slug>.png`, and review it.
+- Confirm the market can be offered card checkout before listing it: the
+  design leads to `/buy`. Hong Kong and Shanghai stay on the older template
+  below until that is confirmed for them.
+
+## Older template (Hong Kong and Shanghai)
 
 Read [README.md](README.md), applicable agent instructions, and any available
 local handoff. Inspect the branch, working tree and diff before editing; preserve

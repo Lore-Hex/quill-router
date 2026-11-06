@@ -345,6 +345,217 @@ measured (the mix's one to four is the runbook's assumption too), so the
 heartbeat load per request is not compared. The pilot leaves streams out
 (Joseph, 2026-10-16).
 
+## Runs 11 to 17: 128 to 1,000 a second (2026-11-03 and 04)
+
+The climb resumed on the synthetic workspace with what "Next" asked for:
+a generator on a machine of its own in the network (`tr-fastpath-loadgen`,
+e2-standard-8, `infra/fastpath.tf`), and a mix of smaller charges,
+`fastpath/testdata/load-mix-small.json`: the same mix with production's
+stream share (2.9%) and its estimates capped at 1,915 micro-credits, about
+26 micro-credits booked a generation, so a minute at 1,000 a second books
+about 1.6 USD. Release `18f991f73`. Runs 11 to 15 drove `tr-fastpath-9`
+and `tr-fastpath-10` (two cores each); runs 16 and 17 drove
+`tr-fastpath-11` and `tr-fastpath-12` (four cores), which replaced them.
+
+| run | nodes | rate, duration | started | admitted / busy | settles / refunds |
+|---|---|---|---|---|---|
+| 11 | 2 cores | 128/s, 30 s | 3,840 | 3,778 / 62 | 3,735 / 43 |
+| 12 | 2 cores | 256/s, 30 s | 7,680 | 7,677 / 3 | 7,580 / 97 |
+| 13 | 2 cores | 512/s, 30 s | 15,360 | 15,312 / 48 | 15,073 / 239 |
+| 14 | 2 cores | 1,000/s, 30 s | 30,000 | 29,942 / 58 | 29,483 / 459 |
+| 15 | 2 cores | 1,000/s, 2 min | 120,000 | 119,822 / 178 | 117,736 / 1,851 |
+| 16 | 4 cores | 1,000/s, 30 s | 30,000 | 28,925 / 1,075 | 28,482 / 443 |
+| 17 | 4 cores | 1,000/s, 5 min | 300,000 | 299,582 / 418 | 294,936 / 4,646 |
+
+| run | authorize admitted p50 / p99 / max | settle p50 / p99 | busiest node CPU, a minute | Spanner high-priority CPU, us-central1 |
+|---|---|---|---|---|
+| 11 | 2.17 / 4.28 / 14.9 ms | 24.4 / 236 ms | 15% | under 5% |
+| 12 | 2.18 / 6.59 / 18.9 ms | 24.1 / 124 ms | about 20% | under 5% |
+| 13 | 1.91 / 10.19 / 66.7 ms | 24.3 / 228 ms | 25% | 8.1% |
+| 14 | 2.17 / 39.11 / 111 ms | 26.6 / 377 ms | 35% | 8.6% |
+| 15 | 2.43 / 64.03 / 216 ms | 30.1 / 326 ms | 77% | 31.6% |
+| 16 | 1.80 / 11.40 / 209 ms | 24.4 / 175 ms | 13% | 3.0% |
+| 17 | 1.73 / 27.03 / 989 ms | 24.6 / 175 ms | 82% (the owner) | 33.5% |
+
+**The audits** found no problem and no fault usage after every run, and
+every admitted authorization was decided once: settles and refunds sum to
+the admitted count in each run but 15,
+whose stop cancelled 234 streams and one settle in flight (235); their
+holds were left to the reap, as the audit's open reservation after it
+showed, 0.04 USD. Runs 11
+to 15 booked 4.53 USD of granted credit, run 16 0.74 and run 17 7.76; no
+run calls a provider. Run 16's busy answers are its cold start: the
+workspace had been turned off and had no open lease. Run 17's owner was
+`tr-fastpath-11` alone, since one workspace's leases sit on one owner; the
+front door on 12 ran at about half.
+
+**Run 15 stopped.** The watch stopped it 30 seconds after its last start,
+`auditor has 2936 messages undelivered, past 1000`, turned the workspace
+off and revoked its 15 open leases; 234 streams in flight were cancelled.
+The auditor was not behind: its subscription's acknowledgements kept pace
+with its deliveries (1,084 a second against 912 at the busiest minute),
+and its backlog was gone within two minutes. The undelivered count
+includes what a member holds unacknowledged, and the auditor acknowledges
+a record only once its batched commit, every second, has made it durable
+(§4.8). At 1,000 records a second the count sits at about 1,000 to 1,500
+by construction, and higher while a commit round runs long, as on two
+cores at 77% CPU (2,936 is about three seconds of records); so P1's
+ceiling of 1,000, sized for one to 128 a second, is about a second of
+traffic at this rate; `-max-oldest 2m`, the age of the
+oldest message, never fired. Runs 16 and 17 ran with `-max-undelivered
+20000` and the age ceiling unchanged. The same count, through the shared
+subscription, stopped the pilot's own watches (`fast-admission-pilot.md`)
+after runs 15 and 16, turning the pilot workspaces' fast path off, the safe
+way; their 25-minute window keeps a peak that long, so they are restarted
+only once it has passed, and a load run now stops them first and restarts
+them after.
+
+**Two cores to four.** On two cores the nodes reached 77% CPU at 1,000 a
+second and the authorize p99 64 ms; four cores held five minutes at that
+rate with the p99 at 27 ms, still past the 10 ms budget at the tail.
+
+**The pending packs** were the slow part of run 17: they grew about 300 a
+minute during it, peaked at 2,178 six minutes after it and took about 25
+minutes to clear, while every other figure had settled. A member worked its
+packs one at a time and read each winner's staged record with a call of its
+own, about 200 a pack at this rate. #2298 reads a pack's records at once and
+works up to eight leases' packs together; its effect on real Spanner is the
+next run's to measure. Credit is booked at the commit, so the packs delay
+the generation and activity records, not the balance.
+
+## Runs 18 and 19: the pending packs and the store's load (2026-11-04)
+
+Both at 1,000 a second for five minutes on `tr-fastpath-11` and
+`tr-fastpath-12`, the small mix, the synthetic workspace. Run 18 ran
+`328a3651c` (#2298); run 19 ran `04b39913b` (#2303).
+
+| run | release | started | admitted / busy | settles / refunds | stopped |
+|---|---|---|---|---|---|
+| 18 | `328a3651c` | 269,799 | 268,166 / 1,631 | 263,162 / 4,065 | at 4 min 32 s, Spanner's CPU 47% |
+| 19 | `04b39913b` | 300,000 | 294,243 / 5,757 | 289,602 / 4,404 | 31 s after the last start, Spanner's CPU 39%, read two minutes late |
+
+| run | authorize admitted p50 / p90 / p99 / max | settle p50 / p99 | busiest node CPU, a minute | Spanner high-priority CPU, us-central1, a minute |
+|---|---|---|---|---|
+| 18 | 1.90 / 22.4 / 105 / 314 ms | 49.0 / 607 ms | not recorded | up to 47% |
+| 19 | 1.63 / 3.04 / 50.4 / 236 ms | 39.6 / 482 ms | 70% (the owner) | 34, 23, 39, 34, 40% |
+
+**The audits** found no problem and no fault usage after both. Each
+admitted authorization was decided once: settles and refunds, with the
+streams the stop cancelled (run 18: 892 streams and 47 settles; run 19:
+237 streams), sum to the admitted count. Run 18 had two authorize errors.
+Run 19 booked 7.75 USD of granted credit.
+
+**Run 18's packs** cleared within two minutes of its stop, against run
+17's 25 minutes: #2298 did what it was for. But the watch stopped it at 4
+minutes 32 seconds with Spanner's high-priority CPU at 47%, past the 35%
+ceiling, where run 17 had held 33.5%. The query statistics
+(`SPANNER_SYS.QUERY_STATS_TOP_MINUTE`) named two new costs. The
+auditor's stager looked up the lease of every full record, about 60,000
+times a minute, 15.5 CPU seconds a minute, and the sweep's scan for
+retired leases' staged records ran 24 times a minute, 6.5 to 9.4 CPU
+seconds a minute. #2303 keeps the lookup's answers (a lease's workspace
+never changes; a lease gone is forgotten), scans for retired records once
+a minute, and lowers the default workers from eight to two.
+
+**Run 19** started all 300,000 and none was refused at the generator. Its
+packs were at 0 two minutes after its last start. Its queries' CPU, all of
+them, was 12 to 16 CPU seconds a minute against 10 idle, and no lookup
+reached the top list; the largest, the pending sweep's winner scan, used
+under 4. What is left is the writes each generation makes: its staged
+record, its lease record and its share of the pack's, about three a
+generation, on an instance of one node (1,000 processing units). Spanner's
+CPU metric lags the nodes' by about two minutes; its five minutes under the
+load read 34, 23, 39, 34 and 40%, about 34% on average, so two of them
+passed the 35% ceiling. The watch saw the first of those, the third
+minute's 39%, two minutes late, 31 seconds after the last start, and
+stopped the run as its streams finished, turning the workspace off and
+revoking 16 leases.
+
+Run 19's authorize p90 fell from run 18's 22 ms to 3 ms, but its busy answers rose from
+run 17's 418 to 5,757, 1.9% of starts, and its p99, 50 ms, is past run
+17's 27 ms. The auditor's subscription peaked at 18,994 undelivered (about
+19 seconds of records) where run 15's was about 3,000, still under the
+run's 20,000 ceiling, and its oldest message stayed under `-max-oldest
+2m`. Both follow the store's commit latency at that CPU; neither is yet
+explained from the nodes' own figures.
+
+**What it says for scale.** At this write cost 1,000 generations a second
+put one node of Spanner at or past its 35% ceiling in most minutes, so one
+node carries at most about 900 to 1,000 a second there, and 1,100 to 1,300
+at the autoscaler's 45% target. The instance scales from 1 to 10 nodes
+(1,000 to 10,000 processing units); if these writes scale with the nodes,
+which no run has measured, that is at most 11,000 to 13,000 a second
+before the cap, short of the 19,000 to 76,000 a second that 1 quadrillion
+tokens a month needs at 5,000 to 20,000 tokens a request. Past that the
+writes a generation makes have to fall (staging and recording in batches)
+or the cap has to rise.
+
+## Run 20: staging in batches (2026-11-04)
+
+1,000 a second for five minutes from 22:59:09Z, on `tr-fastpath-11` and
+`tr-fastpath-12` running `f1208a3d4` (#2318, pinned by #2323), the small
+mix, the synthetic workspace, the same generator binary as run 19. The
+stager now stages the records that arrive while one staging transaction
+runs in the next one, at most 256 records or 8 MiB, where it committed
+once a record.
+
+| run | release | started | admitted / busy | settles / refunds | stopped |
+|---|---|---|---|---|---|
+| 19 | `04b39913b` | 300,000 | 294,243 / 5,757 | 289,602 / 4,404 | 31 s after the last start, Spanner's CPU 39% |
+| 20 | `f1208a3d4` | 300,000 | 298,573 / 1,427 | 294,099 / 4,474 | not stopped |
+
+| run | authorize admitted p50 / p90 / p99 / max | settle p50 / p99 | busiest node CPU, a minute | Spanner high-priority CPU, us-central1, a minute |
+|---|---|---|---|---|
+| 19 | 1.63 / 3.04 / 50.4 / 236 ms | 39.6 / 482 ms | 70% (the owner) | 34, 23, 39, 34, 40% |
+| 20 | 1.64 / 2.14 / 24.4 / 154 ms | 26.9 / 349 ms | 57% (`tr-fastpath-11`) | 16, 18, 16, 16, 22% |
+
+**The audit** found no problem and no fault usage. Each admitted
+authorization was decided once: 293,942 settles won and 157 recorded,
+4,469 refunds won and 5 recorded, 298,573 in all, the admitted count; all
+8,604 streams completed. The run booked 7.78 USD of granted credit. The
+workspace was turned off afterwards (`fastpathctl disable`, 23:07:17Z),
+revoking its 13 open leases; the audit after it found every lease closed.
+
+**The writes.** `SPANNER_SYS.TXN_STATS_TOP_10MINUTE`: run 19 fell in the
+ten minutes to 12:50Z; run 20, starting at 22:59:09Z, in the twenty to
+23:10Z, which also hold the nodes' cycling onto the release. The
+instance commits about 4,450 transactions in ten idle minutes.
+
+| transaction tag | run 19 commits | run 20 commits | run 20 average latency |
+|---|---|---|---|
+| `fastpath-staging` | 308,434 | 27,283 | 18 to 20 ms (run 19: 26) |
+| `fastpath-mark-pack-done` | 3,283 | 5,384 | 23 to 24 ms |
+| `fastpath-write-records` | 2,906 | 2,191 | 23 to 35 ms |
+| `fastpath-append` | 1,293 | 162 in the last ten minutes, under the top list's cut in the first | 30 ms (run 19: 41) |
+| all tags, less the idle commits | about 317,000 | about 37,000 | |
+
+A staging transaction carried about 11 records on average. Spanner's
+high-priority CPU over the five minutes averaged about 18% against run
+19's 34%, about 3% of it the instance's idle load, and no minute passed
+35%. The auditor's subscription peaked at 11,792 undelivered (run 19:
+18,994) and was at 70 two minutes after the last start; the stager's
+peaked at 661.
+
+**The busy answers** fell from 5,757 to 1,427, 0.48% of starts, still
+above run 17's 418. A busy answer is the owner finding no lease with room
+for the request; it then asks for a top-up, one ask at a time per shard
+and none within a second of the last. The appends that top up a lease
+fell in the same run, from 1,293 to at most about 325 (162 in the ten
+minutes that held most of the run, under the top list's cut of 164 in the
+first), and got faster; #2318 changed staging, not top-ups, so why they
+fell is not shown. Which of the cooldown, an outstanding ask or the
+grant's latency causes the busy answers left is not counted yet.
+
+**What it says for scale.** At this write cost 1,000 generations a second
+use about 15 points of one node's high-priority CPU over its idle 3%, on
+the five minutes' average, so one node carries about 2,100 a second at the
+35% ceiling and about 2,800 at the autoscaler's 45% target (the busiest
+minute, 22%, gives about 1,700 at 35%). If the writes scale with the
+nodes, which no run has measured, the instance's 10 nodes carry at most
+about 21,000 to 28,000 a second, the low end of the 19,000 to 76,000 a second that 1 quadrillion
+tokens a month needs. These are one workspace's numbers, on two nodes and
+one owner.
+
 ## The release the nodes ran
 
 Each pin's nodes ran the release before it, until 2026-10-17. A reset
@@ -379,15 +590,8 @@ which reads the release from the process.
 
 ## Next
 
-The climb stops at 128 a second for now, for three reasons. A run's spend
-is heavy-tailed, as run 10's shows. The generator runs on `tr-fastpath-1`
-beside its front door and owner, so past this rate a run measures the
-generator too. And the workspace has about 62 USD of room: 200 funded,
-91.5 booked, 46.3 reserved by its open leases.
-
-The design's figure for a lease is about 1,000 generations a second
-(§6). A sustained run there needs a generator on its own machine in the
-network, and either more funding or a mix of smaller charges, with the
-spend ceiling raised to match. At this mix a minute at 1,000 a second
-books 250 to 400 USD: runs 7 to 9 averaged about 4,200 micro-credits a
-generation, run 10 about 6,600.
+The busy answers at 1,000 a second (run 20): count the owner's refusals by
+cause, and change what the count names. Past one workspace the load
+spreads over leases and owners, which these runs, one workspace each, do
+not measure; a run across many workspaces measures whether the store's
+writes scale with its nodes.

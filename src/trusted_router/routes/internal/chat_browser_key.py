@@ -71,7 +71,7 @@ CHAT_BROWSER_KEY_COOKIE_MAX_AGE = 60 * 60 * 24  # 24h
 
 def register(router: APIRouter) -> None:
     @router.post("/internal/chat/issue-browser-key")
-    async def issue_chat_browser_key(
+    def issue_chat_browser_key(
         response: Response,
         ctx: ConsoleDep,
         settings: SettingsDep,

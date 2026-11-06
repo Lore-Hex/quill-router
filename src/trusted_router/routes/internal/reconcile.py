@@ -12,7 +12,7 @@ from trusted_router.storage import STORE
 
 def register(router: APIRouter) -> None:
     @router.post("/internal/reconcile/generation-activity")
-    async def reconcile_generation_activity(
+    def reconcile_generation_activity(
         request: Request,
         body: ReconcileGenerationActivityRequest,
         settings: SettingsDep,

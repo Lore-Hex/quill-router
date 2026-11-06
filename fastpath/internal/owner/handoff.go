@@ -171,6 +171,12 @@ func (l *Lease) handoff(ctx context.Context) (*sent, error) {
 			held.Deadline = h.deadline.UTC()
 			held.Snapshot = &record.Snapshot{GatewaySeq: h.gatewaySeq, Hash: h.hash, Usage: usage,
 				Running: h.running, Deadline: held.Deadline}
+			if l.o.cfg.RecordReapFloor && h.reapDeadline.After(h.deadline) {
+				// A stream's reap floor goes with its hold, so the auditor
+				// that drains the lease reaps it no sooner than the owner
+				// would have (StreamReap).
+				held.Snapshot.ReapDeadline = h.reapDeadline.UTC()
+			}
 			held.SnapshotSeq, held.Basis = h.snapSeq, h.basis
 		}
 		holds = append(holds, held)

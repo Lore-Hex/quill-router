@@ -42,11 +42,13 @@ from trusted_router.catalog import (
     model_open_weights,
     model_us_provider_available,
 )
+from trusted_router.catalog_aliases import is_listing_alias
 from trusted_router.catalog_data import (
     LIBERTY_1_0_1M_MODEL_ID,
     LIBERTY_1_0_MODEL_ID,
     LIBERTY_2_0_MODEL_ID,
     LIBERTY_3_0_MODEL_ID,
+    LIBERTY_4_0_MODEL_ID,
     PARASAIL_LIBERTY_2_0_MODEL_ID,
     PRIVACY_TIER_LABELS,
     PROVIDER_JURISDICTION_CN,
@@ -149,6 +151,7 @@ OPERATORS_PER_MODEL = 6
 # component model under them resolves to a US lab in MODEL_ORIGINS — which the
 # page states as a computed count, not as a slogan.
 LIBERTY_MODEL_IDS: tuple[str, ...] = (
+    LIBERTY_4_0_MODEL_ID,
     LIBERTY_3_0_MODEL_ID,
     LIBERTY_2_0_MODEL_ID,
     PARASAIL_LIBERTY_2_0_MODEL_ID,
@@ -236,6 +239,7 @@ def _directory_models() -> list[Model]:
         for model in MODELS.values()
         if model.id not in META_MODEL_IDS
         and not model.hidden_public_metadata
+        and not is_listing_alias(model.id, MODELS)
         and endpoints_for_model(model.id)
     ]
 

@@ -107,6 +107,10 @@ def remove_publication_guard(script: str, guard: str) -> str:
     elif guard == "unverified_commit_before_dispatch":
         before = "gh workflow run ci.yml"
         after = 'git commit --allow-empty -m "Never ran CI"\n' + before
+    elif guard == "poll_by_listing":
+        # Keep re-reading the branch listing after the run was found.
+        before = 'if [ -n "${ci_run_id}" ]; then\n    # Once the listing has found the run'
+        after = 'if false; then\n    # Once the listing has found the run'
     elif guard == "skip_branch_push":
         before = 'git push origin "HEAD:refs/heads/${BRANCH}"'
         after = f"if false; then {before}; fi"
@@ -169,13 +173,16 @@ class PublicationRepo:
         move_main: str | None = None, changed: bool = True, mutation: str | None = None,
         run_states: list[tuple[str, str | None]] | None = None,
         status_fault: str | None = None,
+        status_missing_reads: int = 0,
+        polls: list[list[dict[str, object]]] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         if changed:
             snapshot = self.clone / "src/trusted_router/data/openrouter_snapshot.json"
             snapshot.write_text('{"generated": true}\n')
             self.git("add", str(snapshot))
         states = run_states if run_states is not None else [("completed", conclusion)]
-        scenario: dict[str, object] = {"polls": [[{
+        # `polls` is the listing at each poll, verbatim; otherwise one run per poll.
+        scenario: dict[str, object] = {"polls": polls if polls is not None else [[{
             "databaseId": 1234, "headSha": self.base if wrong_sha else "$DISPATCHED_SHA",
             "status": status, "conclusion": outcome,
         }] for status, outcome in states]}
@@ -191,6 +198,7 @@ class PublicationRepo:
             scenario["move_main"] = {"clone": str(peer), "sha": self.moved}
         if status_fault:
             scenario["status_fault"] = status_fault
+        scenario["status_missing_reads"] = status_missing_reads
         (self.root / "scenario.json").write_text(json.dumps(scenario))
         script = remove_publication_guard(self.script, mutation) if mutation else self.script
         # Relocate only the workflow's fixed scratch paths. Gate logic and all
@@ -258,6 +266,7 @@ def publication_repo(tmp_path: Path, publication_script: str) -> PublicationRepo
         "GIT_COMMITTER_EMAIL": "test@example.invalid",
         "GITHUB_RUN_ID": "42", "GITHUB_REPOSITORY": "fixture/quill-router",
         "GITHUB_SERVER_URL": "https://github.invalid", "GITHUB_API_URL": "https://api.github.invalid",
+        "GITHUB_OUTPUT": str(tmp_path / "github-output"),
         "GH_TOKEN": "offline-fixture",  # noqa: S105 -- deliberately fake credential
         "PYTHONDONTWRITEBYTECODE": "1",
     }
@@ -268,6 +277,7 @@ def publication_repo(tmp_path: Path, publication_script: str) -> PublicationRepo
     # missing pathspecs before reaching the gate being tested.
     for name in (
         "src/trusted_router/data/openrouter_snapshot.json",
+        "src/trusted_router/data/openrouter_reasoning.json",
         "src/trusted_router/data/speech_pricing.json",
         "src/trusted_router/data/transcription_pricing.json",
         "src/trusted_router/data/provider_routing_evidence.json",
@@ -294,8 +304,11 @@ def publication_repo(tmp_path: Path, publication_script: str) -> PublicationRepo
     return repo
 
 
-def assert_snapshot_published(repo: PublicationRepo, result: subprocess.CompletedProcess[str]) -> None:
+def assert_snapshot_published(
+    repo: PublicationRepo, result: subprocess.CompletedProcess[str], *, status_gets: int = 4,
+) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
+    assert Path(repo.env["GITHUB_OUTPUT"]).read_text() == "validated=true\n"
     dispatched_sha = repo.dispatched_sha
     assert dispatched_sha != repo.base
     answers = [json.loads(event[2]) for event in repo.events if event[0] == "poll" and event[2]]
@@ -312,7 +325,8 @@ def assert_snapshot_published(repo: PublicationRepo, result: subprocess.Complete
     posts = [call for call in status_calls if "POST" in call]
     gets = [call for call in status_calls if "--method" not in call]
     endpoint = f'repos/{repo.env["GITHUB_REPOSITORY"]}/statuses/{dispatched_sha}'
-    assert len(posts) == len(gets) == 4
+    assert len(posts) == 4
+    assert len(gets) == status_gets
     assert all(endpoint in call for call in status_calls), "Status endpoints must use the dispatched SHA"
     assert repo.main == dispatched_sha, "Remote main must equal the dispatched SHA"
     assert [next(arg for arg in call if arg.startswith("context=")) for call in posts] == [
@@ -337,10 +351,16 @@ def assert_status_bridge_precedes_main_push(repo: PublicationRepo) -> None:
     assert len(pushes) == 1, "Expected exactly one generated main push"
     posts = [i for i, event in enumerate(events) if event[:2] == ["gh", "api"] and "POST" in event]
     gets = [i for i, event in enumerate(events) if event[:2] == ["gh", "api"] and "--method" not in event]
-    assert len(posts) == len(gets) == 4, "Every required status needs POST and verification"
-    assert all(post < get < pushes[0] for post, get in zip(posts, gets, strict=True)), (
+    assert len(posts) == 4, "Every required status needs exactly one POST"
+    assert all(index < pushes[0] for index in posts + gets), (
         "All status POSTs and verifications must precede the main push"
     )
+    for status_id, (post, next_post) in enumerate(zip(posts, posts[1:] + pushes, strict=True), 1):
+        readbacks = [index for index in gets if post < index < next_post]
+        assert 1 <= len(readbacks) <= 5, "Each status needs bounded verification before advancing"
+        for index in readbacks:
+            event = events[index]
+            assert event[event.index("--jq") + 1] == f"map(select(.id == {status_id}))[0] // empty"
 
 
 def assert_ci_completed_before_publication(
@@ -362,6 +382,8 @@ def assert_ci_completed_before_publication(
 
 
 def assert_snapshot_withheld(repo: PublicationRepo, result: subprocess.CompletedProcess[str]) -> None:
+    output = Path(repo.env["GITHUB_OUTPUT"])
+    assert not output.exists() or "validated=true" not in output.read_text()
     assert repo.dispatched_sha != repo.base
     assert repo.main == (repo.moved or repo.base), result.stdout + result.stderr
     assert not any(call[0] == "api" for call in repo.calls)
@@ -420,6 +442,58 @@ def test_publication_times_out_when_only_another_sha_passed(publication_repo: Pu
     assert_snapshot_withheld(publication_repo, result)
     assert "CI did not pass within" in result.stdout
     assert len([call for call in publication_repo.calls if call[:2] == ["run", "list"]]) == 480
+    # No run was ever found for the SHA, so there is nothing to cancel.
+    assert not any(call[:2] == ["run", "cancel"] for call in publication_repo.calls)
+
+
+def listing_with_a_second_run() -> list[list[dict[str, object]]]:
+    """Our run (1234) first; a second dispatch (5678) on the same branch and SHA
+    appears ahead of it in later listings and concludes success before ours."""
+    def ours(status: str, conclusion: str | None) -> dict[str, object]:
+        return {"databaseId": 1234, "headSha": "$DISPATCHED_SHA",
+                "status": status, "conclusion": conclusion}
+    other = {"databaseId": 5678, "headSha": "$DISPATCHED_SHA",
+             "status": "completed", "conclusion": "success"}
+    return [[ours("in_progress", None)], [other, ours("in_progress", None)],
+            [other, ours("completed", "failure")]]
+
+
+def test_poll_sticks_to_the_run_the_listing_first_selected(publication_repo: PublicationRepo) -> None:
+    result = publication_repo.run(polls=listing_with_a_second_run())
+    assert_snapshot_withheld(publication_repo, result)
+    assert "CI concluded 'failure'" in result.stdout
+    answers = [json.loads(event[2]) for event in publication_repo.events if event[0] == "poll"]
+    assert [answer["databaseId"] for answer in answers] == [1234, 1234, 1234]
+    repo = publication_repo.env["GITHUB_REPOSITORY"]
+    assert [call for call in publication_repo.calls if call[:2] == ["run", "view"]] == [
+        ["run", "view", "1234", "--repo", repo, "--json", "databaseId,headSha,status,conclusion"],
+    ] * 2
+    assert len([call for call in publication_repo.calls if call[:2] == ["run", "list"]]) == 1
+
+
+def test_poll_by_listing_mutation_is_detected(publication_repo: PublicationRepo) -> None:
+    # Re-reading the listing lets the other run's success publish our SHA.
+    result = publication_repo.run(polls=listing_with_a_second_run(), mutation="poll_by_listing")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert publication_repo.main == publication_repo.dispatched_sha
+    answers = [json.loads(event[2]) for event in publication_repo.events if event[0] == "poll"]
+    assert [answer["databaseId"] for answer in answers] == [1234, 5678]
+
+
+def test_publication_cancels_the_dispatched_run_it_stops_waiting_for(
+    publication_repo: PublicationRepo,
+) -> None:
+    # Deleting the temporary branch does not cancel its run. A run still
+    # queued when the gate gives up kept its jobs in the organization's
+    # queue after nothing could use its result (2026-10-26 starvation).
+    result = publication_repo.run(run_states=[("in_progress", None)])
+    assert_snapshot_withheld(publication_repo, result)
+    assert "CI did not pass within" in result.stdout
+    calls = publication_repo.calls
+    # Found by the listing once, then polled and cancelled by its id.
+    assert len([call for call in calls if call[:2] == ["run", "list"]]) == 1
+    assert len([call for call in calls if call[:2] == ["run", "view"]]) == 479
+    assert calls[-1] == ["run", "cancel", "1234", "--repo", publication_repo.env["GITHUB_REPOSITORY"]]
 
 
 @pytest.mark.parametrize("direction", ["forward", "backward"])
@@ -433,6 +507,7 @@ def test_publication_recomputes_when_main_moved(publication_repo: PublicationRep
 def test_publication_does_nothing_without_staged_changes(publication_repo: PublicationRepo) -> None:
     result = publication_repo.run(changed=False)
     assert result.returncode == 0, result.stdout + result.stderr
+    assert Path(publication_repo.env["GITHUB_OUTPUT"]).read_text() == "validated=true\n"
     assert publication_repo.main == publication_repo.base
     assert publication_repo.calls == []
     assert publication_repo.events == []  # Includes even no-op pushes.
@@ -606,10 +681,17 @@ def test_price_refresh_publishes_only_after_exact_snapshot_ci() -> None:
 
 def test_refresh_still_requires_billing_proofs_in_exact_snapshot_ci() -> None:
     # Excluding the redundant local oracle pass is safe only while the
-    # required exact-SHA CI includes every default/post-cutover proof shard.
+    # required exact-SHA CI includes every default/post-cutover proof shard
+    # for a commit that can change the oracle's result. The oracle builds its
+    # catalog from each case's fixture body, so a commit that touches only
+    # published catalog data cannot; ci.yml skips the shards for exactly that
+    # commit and runs them for a refresh that also rewrote a parser.
+    from scripts.ci.commit_scope import DATA_ONLY_CONDITION
+
     ci = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
     job = ci["jobs"]["proof-oracle"]
-    assert "if" not in job
+    assert job["if"] == DATA_ONLY_CONDITION
+    assert job["needs"] == "scope"
     assert "continue-on-error" not in job
     assert job["strategy"]["matrix"] == {
         "clock": ["default", "post-cutover"], "shard": [1, 2, 3, 4, 5, 6],
@@ -643,15 +725,16 @@ def test_model_discovery_gap_alerts_without_freezing_safe_provider_updates() -> 
     assert "gap_attention=true" in coverage
     assert "tee /tmp/coverage-summary.txt" in coverage
 
-    # Speech sources hold independently of refresh.py; both summaries feed
-    # the held-price issue.
+    # Audio sources hold independently of refresh.py; all three summaries
+    # feed the held-price issue.
     refresh_step = workflow[
         workflow.index("- name: Refresh provider-direct prices (with self-heal)") :
         workflow.index("- name: Sanity-check for price spikes + record deltas")
     ]
     assert "python -m scripts.pricing.speech | tee /tmp/speech-summary.txt" in refresh_step
+    assert "python -m scripts.pricing.transcription | tee /tmp/transcription-summary.txt" in refresh_step
     held_issue = workflow[workflow.index("- name: Reconcile held-price issue") :]
-    assert "for summary in /tmp/refresh-summary.txt /tmp/speech-summary.txt; do" in held_issue
+    assert "for summary in /tmp/refresh-summary.txt /tmp/speech-summary.txt /tmp/transcription-summary.txt; do" in held_issue
     assert 'for summary in ${summaries}; do' in held_issue
     assert "sed -n '/^Held for price review/,/^$/p' \"${summary}\"" in held_issue
     alert = workflow[workflow.index(final_alert) :]
@@ -670,7 +753,9 @@ def test_model_discovery_gap_alerts_without_freezing_safe_provider_updates() -> 
     assert "continue-on-error" not in spike_gate
 
 
-@pytest.mark.parametrize("fault", ["creator", "post_url", "get_empty"])
+@pytest.mark.parametrize("fault", [
+    "creator", "post_url", "get_empty", "get_url", "get_context", "get_state", "get_target", "get_error",
+])
 def test_publication_withholds_snapshot_when_status_verification_fails(
     publication_repo: PublicationRepo, fault: str,
 ) -> None:
@@ -680,6 +765,29 @@ def test_publication_withholds_snapshot_when_status_verification_fails(
     assert result.returncode != 0, result.stdout + result.stderr
     assert publication_repo.main == publication_repo.base
     assert not any(call[:3] == ["workflow", "run", "deploy.yml"] for call in publication_repo.calls)
+    gets = [call for call in publication_repo.calls if call[0] == "api" and "--method" not in call]
+    assert len(gets) == (0 if fault == "post_url" else 5 if fault == "get_empty" else 1)
+
+
+@pytest.mark.parametrize("missing_reads", [1, 4])
+def test_publication_waits_only_for_the_exact_missing_status(
+    publication_repo: PublicationRepo, missing_reads: int,
+) -> None:
+    result = publication_repo.run(status_missing_reads=missing_reads)
+    assert_snapshot_published(publication_repo, result, status_gets=4 + missing_reads)
+
+
+def test_publication_stops_when_exact_status_stays_missing(publication_repo: PublicationRepo) -> None:
+    result = publication_repo.run(status_missing_reads=5)
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert publication_repo.main == publication_repo.base
+    assert publication_repo.dispatches == [publication_repo.dispatch("ci.yml", "automation/price-refresh-42")]
+    output = Path(publication_repo.env["GITHUB_OUTPUT"])
+    assert not output.exists() or "validated=true" not in output.read_text()
+    assert "not visible after 5 reads" in result.stdout
+    status_calls = [call for call in publication_repo.calls if call[0] == "api"]
+    assert len([call for call in status_calls if "POST" in call]) == 4
+    assert len([call for call in status_calls if "--method" not in call]) == 8
 
 
 @pytest.mark.parametrize("mutation", ["poll_workflow", "poll_event"])

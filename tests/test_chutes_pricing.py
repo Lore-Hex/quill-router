@@ -373,11 +373,14 @@ def test_explicit_runtime_hold_applies_even_when_mass_prune_is_blocked(
     assert any("mass-prune guard" in note for note in notes)
 
 
-def test_confirmed_qwen_evidence_failure_is_a_persistent_operator_hold(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+@pytest.mark.parametrize("native,reason", [
+    (QWEN, "attestation-evidence-unavailable"),
+    ("unsloth/Mistral-Nemo-Instruct-2407-TEE", "provider-route-unavailable"),
+])
+def test_confirmed_runtime_failure_is_a_persistent_operator_hold(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, native: str, reason: str,
 ) -> None:
-    model_id = chutes._NATIVE_TO_MODEL_ID[QWEN]
-    reason = "attestation-evidence-unavailable"
+    model_id = chutes._NATIVE_TO_MODEL_ID[native]
     assert chutes._OPERATOR_HOLD_REASONS[model_id] == reason
     committed = _manifest_rows(chutes.MANIFEST_PATH)[model_id]
     assert committed["routable"] is False
@@ -389,18 +392,18 @@ def test_confirmed_qwen_evidence_failure_is_a_persistent_operator_hold(
         "routable_reason": "delisted-upstream",
         "missing_since": "2026-10-01",
     }]}))
-    payload = _catalog(_row(QWEN))
+    payload = _catalog(_row(native))
     _serve(monkeypatch, payload)
     for _ in range(2):
         chutes.write_provider_manifest(chutes.fetch())
         held = _manifest_rows(path)[model_id]
         assert held["routable"] is False
         assert held["routable_reason"] == reason
-        assert held["upstream_id"] == QWEN
+        assert held["upstream_id"] == native
     payload["data"].pop()
     for _ in range(2):
         chutes.write_provider_manifest(chutes.fetch())
-    payload["data"].append(_row(QWEN))
+    payload["data"].append(_row(native))
     chutes.write_provider_manifest(chutes.fetch())
     held = _manifest_rows(path)[model_id]
     assert held["routable"] is False

@@ -140,6 +140,13 @@ body.console:has(.credits-page) {
   letter-spacing: 0;
 }
 
+.credits-balance-held {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--tr-color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
 .credits-balance-amount {
   margin: 0;
   font-size: 44px;

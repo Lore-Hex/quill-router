@@ -204,6 +204,12 @@ class SpannerApiKeys:
         weakening the combined read just to make display counters stale would
         make the newly-created or deleted key itself stale too.
         """
+        max_int64 = 2**63 - 1
+        if offset >= max_int64:
+            return []
+        # Spanner evaluates LIMIT + OFFSET internally. An unbounded page must
+        # leave room for its offset rather than passing INT64_MAX as its limit.
+        page_limit = min(limit if limit is not None else max_int64, max_int64 - offset)
         pt = self._io.param_types
         with self._io.database.snapshot() as snapshot:
             rows = list(
@@ -213,8 +219,8 @@ class SpannerApiKeys:
                         "workspace_id": workspace_id,
                         "prefix": f"{workspace_id}#",
                         "include_disabled": include_disabled,
-                        "limit": limit if limit is not None else 2**63 - 1,
-                        "offset": min(offset, 2**63 - 1),
+                        "limit": page_limit,
+                        "offset": offset,
                     },
                     param_types={
                         "workspace_id": pt.STRING,
@@ -298,9 +304,17 @@ class SpannerApiKeys:
             # Metadata edits do not touch typed counter configuration. Besides
             # avoiding unnecessary hot-row writes, this preserves an existing
             # escrow partition exactly.
-            apply_key_patch(key, patch)
-            self._io.write_entity("api_key", key.hash, key)
-            return key
+            # Re-read under the write transaction: an older JSON snapshot
+            # must not undo a concurrent reshard's count and orphan live rows.
+            def metadata_txn(transaction: Any) -> ApiKey | None:
+                current = self._io.read_entity_tx(transaction, "api_key", key_hash, ApiKey)
+                if current is None:
+                    return None
+                apply_key_patch(current, patch)
+                self._io.write_entity_tx(transaction, "api_key", key_hash, current)
+                return current
+
+            return run_in_transaction_with_retry(self._io.database, metadata_txn)
 
         # A cap edit must repartition against strongly-read usage and holds in
         # the same transaction. A snapshot followed by a batch could race an

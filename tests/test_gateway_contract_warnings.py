@@ -22,6 +22,11 @@ from trusted_router.storage import STORE
 REQUEST_ID = "rlog_" + "a" * 32
 
 
+@pytest.mark.parametrize("parameter", ["include_reasoning", "thinking", "enable_thinking"])
+def test_reasoning_has_a_stable_diagnostic_category(parameter: str) -> None:
+    assert parameter in PARAMETER_CATEGORIES
+
+
 @pytest.fixture
 def warnings(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[dict[str, Any]]]:
     events: list[dict[str, Any]] = []

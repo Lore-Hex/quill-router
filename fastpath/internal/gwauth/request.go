@@ -51,6 +51,15 @@ type Request struct {
 	EstimatedInputTokens int64 // 1 when omitted
 	OutputEstimate       int64 // max_tokens, max_completion_tokens, max_output_tokens, else 512
 	RequestedRegion      *string
+	// CacheAffinity is whether the body names a cache_affinity_key. Go
+	// decides such a request in the cold order (§1 item 5); the shadow
+	// names a Python answer that is that order re-ranked for a session
+	// Python remembered (edge/affinity.go).
+	CacheAffinity bool
+	// Async is what authorize_additions reads of the request and its
+	// headers (docs/design/fast-admission-e2-g15-async.md §3.1), recorded
+	// for every parsed request; ComposeInput.Async carries it.
+	Async AsyncRequest
 
 	// attribution is validate_request_attribution's result (§7 step 4).
 	attribution attribution
@@ -61,7 +70,9 @@ type Request struct {
 }
 
 // Pass is why a request goes to Python; "" is none.
-type Pass struct{ Reason string }
+type Pass struct {
+	Reason string
+}
 
 // Passed reports whether the request goes to Python.
 func (p Pass) Passed() bool { return p.Reason != "" }
@@ -87,17 +98,33 @@ var jsonContentType = regexp.MustCompile(`(?i)^application/json(;[ \t]*charset=u
 
 // ParseRequest parses an authorize body strictly and applies the request
 // half of §3's cohort predicate. A Pass names the first §3 reason the
-// request trips; the Request is meaningful only without one.
+// request trips; the Request is meaningful only without one, but for a
+// cohort reason (the body parsed whole and then passed: body.stream,
+// header.settlement_async, ...), whose Request is the parse, so that the
+// shadow can count its CacheAffinity and Async.V1; it is never decided on.
+// Any earlier reason's Request is the zero one.
 func ParseRequest(body []byte, h Headers) (Request, Pass) {
+	return ParseRequestStreams(body, h, false)
+}
+
+// ParseRequestStreams is ParseRequest with streams the edge may decide
+// (the edge policy's fastpath_edge_streams, docs/design/fast-admission-streams.md
+// section 5.4): a stream then goes on past body.stream to the request's
+// other reasons, and the decide pipeline gates it on Stage D. Without
+// streams it is ParseRequest, and every stream passes as body.stream.
+func ParseRequestStreams(body []byte, h Headers, streams bool) (Request, Pass) {
 	r, object, p := parseBody(body, h)
 	if p.Passed() {
 		return Request{}, p
 	}
-	if p := r.cohort(object, h); p.Passed() {
-		return Request{}, p
+	if p := r.cohort(object, h, streams); p.Passed() {
+		return r, p
 	}
 	return r, Pass{}
 }
+
+// Streamed reports a body whose stream is true.
+func (r Request) Streamed() bool { return r.Routing.Stream != nil && *r.Routing.Stream }
 
 // parseBody is ParseRequest up to body.refused: the content type, the
 // decode and the schema.
@@ -127,6 +154,7 @@ func parseBody(body []byte, h Headers) (Request, pyjson.Object, Pass) {
 		return Request{}, nil, passFor(ReasonFloat)
 	}
 	r, p := parseSchema(object)
+	r.Async.V1 = exactlyAsyncV1(h.SettlementMode)
 	return r, object, p
 }
 
@@ -440,12 +468,17 @@ var literalModalities = map[string]bool{"text": true, "image": true, "audio": tr
 // build checks the schema's constraints and _gateway_authorize_body's
 // validators on values of the exact types, and holds the result.
 func build(object pyjson.Object, values map[string]any) (Request, Pass) {
-	refuse := func() (Request, Pass) { return Request{}, passFor(ReasonRefused) }
 	var r Request
+	refuse := func() (Request, Pass) { return Request{}, passFor(ReasonRefused) }
 	dumped := map[string]any{}
 	for _, m := range object {
 		f, isDeclared := declared[m.Key]
+		if m.Key == "input_modalities" {
+			r.Async.InputModalities = true // model_fields_set: present, null included
+		}
 		if !isDeclared {
+			// body.model_extra holds a null extra too.
+			r.Async.Undeclared = true
 			if m.Value != nil { // exclude_none drops a top-level null extra
 				r.Dump = append(r.Dump, pyjson.Member{Key: m.Key, Value: m.Value})
 			}
@@ -516,9 +549,21 @@ func build(object pyjson.Object, values map[string]any) (Request, Pass) {
 	}
 	r.BodyIdempotencyKey, r.InvocationNonce, r.RequestedRegion = str("idempotency_key"), str("invocation_nonce"),
 		str("region")
+	// The schema's pattern (hex64) admits no empty key.
+	r.CacheAffinity = str("cache_affinity_key") != nil
 	cost, _ := new(big.Int).SetString(string(dumped["additional_cost_reservation_microdollars"].(json.Number)), 10)
 	r.additionalCost = cost.Sign() != 0
 	r.inferenceReceipt = dumped["inference_receipt"].(bool)
+	// The rest of authorize_additions' request facts, as the schema holds
+	// them (stripped).
+	r.Async.Model, r.Async.RouteType, r.Async.ServiceTier = r.Model, str("route_type"), str("service_tier")
+	if params, ok := dumped["requested_parameters"].([]any); ok {
+		r.Async.RequestedParameters = make([]string, len(params))
+		for i, p := range params {
+			r.Async.RequestedParameters[i] = p.(string)
+		}
+	}
+	r.Async.InferenceReceipt, r.Async.AdditionalCost = r.inferenceReceipt, r.additionalCost
 
 	// _gateway_authorize_body: validate_tags(body.tags), when present.
 	if tags, ok := dumped["tags"].(pyjson.Object); ok {

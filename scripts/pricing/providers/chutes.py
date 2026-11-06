@@ -65,6 +65,8 @@ _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
 _OPERATOR_HOLD_REASONS = {
     # Repeated encrypted probes fail to obtain evidence (upstream HTTP 400).
     "qwen/qwen3-235b-a22b-thinking-2507": "attestation-evidence-unavailable",
+    # Repeated runtime 502s and absence from the authenticated TEE catalog.
+    "mistralai/mistral-nemo": "provider-route-unavailable",
 }
 
 

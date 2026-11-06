@@ -1,0 +1,133 @@
+{
+  "provider": "negbeta",
+  "models": [
+    {
+      "display_name": "DeepSeek V4.1 Flash 1017",
+      "title": "deepseek/deepseek-v4.1-flash-1017",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4.1-flash-1017",
+      "upstream_id": "deepseek/deepseek-v4.1-flash-1017",
+      "context_length": 1048576,
+      "max_output_tokens": 393216,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "json_mode",
+        "structured_outputs",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "lifecycle_status": "active",
+      "deprecation_at": null,
+      "retirement_at": null,
+      "replacement_model_id": null,
+      "routable": false,
+      "documentation": {
+        "description": "DeepSeek V4.1 Flash 1017, an open-weight (MIT) model from DeepSeek with a 1M-token context, reasoning, tool calling, structured output and image input.",
+        "input_format": "OpenAI Chat Completions request body, POST /v1/chat/completions (JSON): model, messages (system, user, assistant and tool roles; text and image_url content parts in user messages), and optional sampling parameters, max_tokens or max_completion_tokens, stop, tools and tool_choice, parallel_tool_calls, response_format (json_object or json_schema), reasoning_effort or reasoning, stream and stream_options. Reference: https://inference.negbeta.com/docs",
+        "output_format": "OpenAI chat.completion object: choices[].message with content, reasoning_content (the model's thinking, null when thinking is off) and tool_calls, finish_reason, and usage with prompt_tokens_details.cached_tokens. With stream: true, chat.completion.chunk server-sent events, then a usage chunk with empty choices, then data: [DONE]. The response header X-Serving-Region names the region that served the request.",
+        "example_input": "{\"model\":\"deepseek/deepseek-v4.1-flash-1017\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with the single word PONG.\"}],\"max_tokens\":16,\"reasoning_effort\":\"none\"}",
+        "example_output": "{\"id\":\"chatcmpl-...\",\"object\":\"chat.completion\",\"created\":1792627200,\"model\":\"deepseek/deepseek-v4.1-flash-1017\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"PONG\",\"reasoning_content\":null,\"tool_calls\":null},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":17,\"completion_tokens\":2,\"total_tokens\":19,\"prompt_tokens_details\":{\"cached_tokens\":0}}}"
+      },
+      "reliability": {
+        "first_token_timeout_seconds": 120.0,
+        "completion_timeout_seconds": 900.0,
+        "stream_idle_timeout_seconds": 30.0,
+        "capacity_scope": "model"
+      },
+      "provider_reliability": {
+        "provider_id": "negbeta",
+        "status_url": "https://inference.negbeta.com/status",
+        "regions": [
+          "eu"
+        ],
+        "request_id_header": "X-Request-Id",
+        "account_quota_error_codes": [
+          "insufficient_quota"
+        ]
+      },
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 1200000,
+      "cached_input_token_price_per_m": 30000,
+      "routable_reason": "gateway-rollout-pending"
+    },
+    {
+      "display_name": "Qwen3.8 27B",
+      "title": "qwen/qwen3.8-27b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.8-27b",
+      "upstream_id": "qwen/qwen3.8-27b",
+      "context_length": 262144,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "json_mode",
+        "structured_outputs",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "lifecycle_status": "active",
+      "deprecation_at": null,
+      "retirement_at": null,
+      "replacement_model_id": null,
+      "routable": false,
+      "documentation": {
+        "description": "Qwen3.8 27B, an open-weight (Apache-2.0) model from Qwen with reasoning, tool calling, structured output and image input.",
+        "input_format": "OpenAI Chat Completions request body, POST /v1/chat/completions (JSON): model, messages (system, user, assistant and tool roles; text and image_url content parts in user messages), and optional sampling parameters, max_tokens or max_completion_tokens, stop, tools and tool_choice, parallel_tool_calls, response_format (json_object or json_schema), reasoning_effort or reasoning, stream and stream_options. Reference: https://inference.negbeta.com/docs",
+        "output_format": "OpenAI chat.completion object: choices[].message with content, reasoning_content (the model's thinking, null when thinking is off) and tool_calls, finish_reason, and usage with prompt_tokens_details.cached_tokens. With stream: true, chat.completion.chunk server-sent events, then a usage chunk with empty choices, then data: [DONE]. The response header X-Serving-Region names the region that served the request.",
+        "example_input": "{\"model\":\"qwen/qwen3.8-27b\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with the single word PONG.\"}],\"max_tokens\":16,\"reasoning_effort\":\"none\"}",
+        "example_output": "{\"id\":\"chatcmpl-...\",\"object\":\"chat.completion\",\"created\":1792540800,\"model\":\"qwen/qwen3.8-27b\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"PONG\",\"reasoning_content\":null,\"tool_calls\":null},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":17,\"completion_tokens\":2,\"total_tokens\":19,\"prompt_tokens_details\":{\"cached_tokens\":0}}}"
+      },
+      "reliability": {
+        "first_token_timeout_seconds": 120.0,
+        "completion_timeout_seconds": 900.0,
+        "stream_idle_timeout_seconds": 30.0,
+        "capacity_scope": "model"
+      },
+      "provider_reliability": {
+        "provider_id": "negbeta",
+        "status_url": "https://inference.negbeta.com/status",
+        "regions": [
+          "eu"
+        ],
+        "request_id_header": "X-Request-Id",
+        "account_quota_error_codes": [
+          "insufficient_quota"
+        ]
+      },
+      "input_token_price_per_m": 190000,
+      "output_token_price_per_m": 1950000,
+      "cached_input_token_price_per_m": 45000,
+      "routable_reason": "gateway-rollout-pending"
+    }
+  ],
+  "source": "https://inference.negbeta.com/v1/models",
+  "generated_at": "2026-11-05T11:29:32Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 2
+}

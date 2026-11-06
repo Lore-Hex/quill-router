@@ -9,6 +9,7 @@
 package service
 
 import (
+	"cmp"
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
@@ -116,7 +117,20 @@ type Config struct {
 	// one. The front door reads its clock only for spans of time, which an
 	// offset leaves as they were, and an auditor's parts keep a true clock.
 	ClockOffset time.Duration
+	// Exit, when set, ends the process with a code: a part's failure that
+	// has not let the process exit within FailStop calls it with 1. The
+	// command sets os.Exit; nil leaves the process to its parts.
+	Exit func(code int)
 
+	// failStop, when set, is FailStop for a test; startDeadline, startStall
+	// and warmStall are StartDeadline, StartStall and WarmStall.
+	failStop, startDeadline, startStall, warmStall time.Duration
+	// warm, when set, warms the Spanner client's session in place of the
+	// store's WarmSession, for a test.
+	warm func() error
+	// ringStore, when set, is the ring's store, the membership's, for a
+	// test.
+	ringStore ring.Membership
 	// edgeMade, when set, is given the edge once it is made: the tests'
 	// view of it.
 	edgeMade func(*edge.Edge)
@@ -142,14 +156,37 @@ func Defaults() Config {
 				Max: 10_000_000, IdleAfter: 10 * time.Minute, MaxLife: time.Hour},
 			// The authorize-to-heartbeat latency, the provider's out of it:
 			// a declared stream's first heartbeat is sent at its opening.
-			FirstHeartbeat: 10 * time.Second},
-		FrontDoor: frontdoor.Config{OwnerWait: time.Second, PublishWait: 5 * time.Second, PeerWait: 800 * time.Millisecond,
+			FirstHeartbeat: 10 * time.Second,
+			// The control plane's figures for the same stream: the
+			// reservation's life (GATEWAY_RESERVATION_TTL_SECONDS) and a
+			// heartbeat's renewal (heartbeat_grace_seconds)
+			// (docs/design/fast-admission-streams.md section 4.6 item 4).
+			StreamReap: owner.StreamReap{AfterAdmission: 2 * time.Hour, AfterHeartbeat: 300 * time.Second},
+			// Increment 2b: every member reads a record's reap deadline
+			// since increment 2, so the owner states it, and the auditor
+			// that drains a lease honors the floor too
+			// (docs/runbooks/fastpath-deploy.md, "A record field the
+			// auditors must read first"; this release is pinned only once
+			// every member runs increment 2's).
+			RecordReapFloor: true},
+		// The control plane gives a call to a front door 1.5 s
+		// (fastpath_front_door_timeout_seconds), the connection's 0.25 s
+		// included, so the front door answers within 1.2 s, in which a
+		// settle's publish (0.25 s), an owner's full wait (0.5 s), a peer's
+		// (0.25 s, a relay to an owner the peer reaches) and the drain log
+		// append's 0.15 s all fit, with 50 ms to spare; an authorize's two
+		// owners fit too (2026-11-02: an owner past its second, then a
+		// peer's 0.8 s, answered after the control plane had stopped
+		// waiting).
+		FrontDoor: frontdoor.Config{OwnerWait: 500 * time.Millisecond, PublishWait: 250 * time.Millisecond,
+			PeerWait: 250 * time.Millisecond, AnswerWithin: 1200 * time.Millisecond, AppendWithin: 150 * time.Millisecond,
 			WithdrawWithin: 5 * time.Second, ProbeEvery: 2 * time.Second, RevokeAfter: 15 * time.Second,
 			RevokeEvery: time.Second},
 		Runtime: auditor.Config{CommitEvery: time.Second, MaxBatch: 100, Retry: time.Second, ForgetAfter: 10 * time.Minute,
 			Wait: 5 * time.Second, DrainOverdue: 10 * time.Minute},
-		Ticker:   auditor.TickerConfig{Every: time.Second, Limit: 100, Wait: 5 * time.Second},
-		Pending:  auditor.PendingConfig{Every: 5 * time.Second, Limit: 100, Wait: 5 * time.Second, Overdue: 10 * time.Minute},
+		Ticker: auditor.TickerConfig{Every: time.Second, Limit: 100, Wait: 5 * time.Second},
+		Pending: auditor.PendingConfig{Every: 5 * time.Second, Limit: 100, Wait: 5 * time.Second, Overdue: 10 * time.Minute,
+			Workers: auditor.DefaultPendingWorkers, DropEvery: auditor.DefaultDropEvery},
 		Stopping: 10 * time.Second,
 		HandOff:  10 * time.Second,
 	}
@@ -298,15 +335,6 @@ func Run(ctx context.Context, cfg Config, c Clients) error {
 	if err != nil {
 		return err
 	}
-	// The client's session before anything else uses it: no session take
-	// of the process's ever waits, so none is served on an ended context
-	// (which ends the client's session worker for good) and none blocks the
-	// client's close (store.WarmSession). Bounded by the client's own
-	// session creations, past Run's context: a node that cannot get a
-	// session does not start.
-	if err := s.WarmSession(); err != nil {
-		return fmt.Errorf("service: the Spanner client's session: %w", err)
-	}
 	settle, err := settlelog.OpenLog(c.PubSub, cfg.SettleTopic, cfg.publish())
 	if err != nil {
 		return err
@@ -321,25 +349,48 @@ func Run(ctx context.Context, cfg Config, c Clients) error {
 	if cfg.ClockOffset != 0 {
 		log.Printf("fastpath: the owner's clock readings offset by %v", cfg.ClockOffset)
 	}
-	return lifecycle(ctx, func(p *parts) {
-		// The edge first: one that cannot listen or has no upstream fails
-		// the process before the node takes its ring row.
-		if cfg.Edge.Address != "" {
-			if err := p.edge(cfg, s); err != nil {
-				p.startFailed(ctx, err)
-			}
+	return lifecycle(ctx, func(p *parts) { p.start(ctx, cfg, c, s, settle, records) })
+}
+
+// start starts the process's parts, ctx being Run's: the Spanner client's
+// session under WarmStall, then the edge, the admission node and the
+// auditor member under StartStall. A watchdog that fires fails the process,
+// which arms its exit (FailStop).
+func (p *parts) start(ctx context.Context, cfg Config, c Clients, s *store.Store, settle *settlelog.Log,
+	records *settlelog.Records) {
+	p.exit, p.failStop = cfg.Exit, cmp.Or(cfg.failStop, FailStop)
+	// The client's session before anything else uses it: no session take
+	// of the process's ever waits, so none is served on an ended context
+	// (which ends the client's session worker for good) and none blocks the
+	// client's close (store.WarmSession). Bounded by the client's own
+	// session creations, past Run's context: a node that cannot get a
+	// session does not start.
+	warm := s.WarmSession
+	if cfg.warm != nil {
+		warm = cfg.warm
+	}
+	if err := p.watch(cmp.Or(cfg.warmStall, WarmStall), ErrWarmStalled, warm); err != nil {
+		p.startFailed(ctx, fmt.Errorf("service: the Spanner client's session: %w", err))
+		return
+	}
+	defer p.watching(cmp.Or(cfg.startStall, StartStall), ErrStartStalled)()
+	// The edge first: one that cannot listen or has no upstream fails
+	// the process before the node takes its ring row.
+	if cfg.Edge.Address != "" {
+		if err := p.edge(cfg, s); err != nil {
+			p.startFailed(ctx, err)
 		}
-		if cfg.Admission && p.ctx.Err() == nil {
-			if err := p.admission(cfg, s, settle, records); err != nil {
-				p.startFailed(ctx, err)
-			}
+	}
+	if cfg.Admission && p.ctx.Err() == nil {
+		if err := p.admission(cfg, s, settle, records); err != nil {
+			p.startFailed(ctx, err)
 		}
-		if cfg.Auditor && p.ctx.Err() == nil {
-			if err := p.auditor(cfg, c, s, settle, records); err != nil {
-				p.startFailed(ctx, err)
-			}
+	}
+	if cfg.Auditor && p.ctx.Err() == nil {
+		if err := p.auditor(cfg, c, s, settle, records); err != nil {
+			p.startFailed(ctx, err)
 		}
-	})
+	}
 }
 
 // edge starts the edge's server: the enclave's control-plane calls, checked
@@ -393,10 +444,10 @@ func (p *parts) edge(cfg Config, s *store.Store) (err error) {
 	// (docs/runbooks/fastpath-alerts.md).
 	edgeAlert := func(kind, subject, what string) { writeAlertOf(alertOutput, subject, what, kind) }
 	if cfg.Edge.DecideShadow {
-		decideShadow = &edge.DecideShadowConfig{Cache: cache, Decides: s, Rows: s, Alert: edgeAlert}
+		decideShadow = &edge.DecideShadowConfig{Cache: cache, Decides: s, Rows: s, Windows: s, Alert: edgeAlert}
 	}
 	if cfg.Edge.Decide {
-		decide = &edge.DecideConfig{Cache: cache, Decides: s, Rows: s, Alert: edgeAlert}
+		decide = &edge.DecideConfig{Cache: cache, Decides: s, Rows: s, Windows: s, Alert: edgeAlert}
 	}
 	e, err := edge.New(edge.Config{Token: cfg.Edge.Token, Upstream: upstream, Boots: storeBoots{s}, BootWait: cfg.Edge.BootWait,
 		Clock: cfg.edgeClock, Transport: transport, Serving: p.serving, Snapshot: snapshot, Policy: policy,
@@ -471,6 +522,9 @@ func (p *parts) edge(cfg Config, s *store.Store) (err error) {
 		// What the decide shadow follows ends with its requests; its reads
 		// end with them, and then the cache may close.
 		e.WaitDecideShadow()
+		// The timed passes' last counts, after their queued lines, once no
+		// handler can time another (pass_timing.go).
+		e.FlushPasses()
 		close(followed)
 		transport.CloseIdleConnections()
 		return nil
@@ -589,6 +643,11 @@ type parts struct {
 	// admitter is the edge's: the admission node's front door, bound once
 	// it is made, and none on a process without one.
 	admitter edge.LateAdmitter
+	// exit, when set, ends the process failStop after its first failure
+	// unless it has ended by then (Config.Exit, FailStop). Set before any
+	// part runs.
+	exit     func(code int)
+	failStop time.Duration
 
 	mu  sync.Mutex
 	err error
@@ -601,14 +660,138 @@ func (p *parts) serving() bool {
 	return !p.retiring.Load() && p.ctx.Err() == nil
 }
 
-// fail ends the process with err, the first failure kept.
+// FailStop bounds how long a failed process takes to exit. A part's
+// failure stops the others, and the process exits once each has returned;
+// a part wedged in a call that does not heed its context would keep it
+// running, failed and serving nothing, and systemd restarts a unit only
+// once its process exits. So from the first failure the process has
+// FailStop, and then it exits with code 1 whatever still runs. Its parts
+// let go of what they hold when the failure cancels them, the auditor's
+// subscription its records among it (within its own releaseWait, 15 s), so
+// the exit loses nothing another member needs; 30 s is past that, and
+// past the HTTP server's Stopping.
+const FailStop = 30 * time.Second
+
+// fail ends the process with err, the first failure kept; the first arms
+// the process's exit (FailStop).
 func (p *parts) fail(err error) {
 	p.mu.Lock()
-	if p.err == nil {
+	first := p.err == nil
+	if first {
 		p.err = err
 	}
 	p.mu.Unlock()
+	if first && p.exit != nil {
+		exit, stop := p.exit, p.failStop
+		time.AfterFunc(stop, func() {
+			log.Printf("service: the process had not stopped %v after its failure (%v); exiting", stop, err)
+			exit(1)
+		})
+	}
 	p.cancel()
+}
+
+// StartDeadline bounds each Spanner call a process makes as it starts,
+// before its parts run: its ring row's join, the first read of the members
+// and the first read of the switch. Run's context has no deadline, nor have
+// Spanner's reads, so one that stalled would hold the start for good: the
+// auditor would never start, nor the admission node serve, while the edge,
+// which serves before them, answered the balancer serving all the while.
+// Each is one small transaction or strong read, well under a second; the
+// auditor's StoreDeadline, 15 s, leaves as much room here. A join or a read
+// of the members that runs out of time fails the process, which exits and
+// systemd starts again five seconds later with a Spanner client of its own:
+// the restart is the retry, so there is no loop here. A join that landed
+// after all does no harm, as the next start's join takes a newer epoch
+// still. The switch's read that fails is logged, as before, and the node
+// admits for no workspace until a later read succeeds.
+const StartDeadline = auditor.StoreDeadline
+
+// StartStall bounds the start of a process's parts, once its session is
+// warm: one still under way then, held by a call deaf to its deadline,
+// fails the process with ErrStartStalled, and the process then exits
+// within FailStop. It is four times StartDeadline, as the auditor's
+// CommitStall is its StoreDeadline's, so a start whose three calls each
+// take nearly their deadline still finishes.
+const StartStall = auditor.CommitStall
+
+// WarmStall bounds the warming of the Spanner client's session, the
+// start's first call, which has a budget of its own: its read waits behind
+// the client's session creations, so its deadline (store.WarmSessionWait,
+// 2 min) is longer than any of the parts' calls, and it runs before
+// StartStall's clock. A warming still under way StartDeadline past its
+// deadline, deaf to it, fails the process with ErrWarmStalled, and the
+// process then exits within FailStop. So a process exits within
+// WarmStall, StartStall and FailStop, under four minutes, however its
+// start stalls.
+const WarmStall = store.WarmSessionWait + StartDeadline
+
+// ErrStartStalled is Run's failure when its parts' start has run past
+// StartStall; ErrWarmStalled when warming the client's session has run past
+// WarmStall.
+var (
+	ErrStartStalled = errors.New("service: the process had not started within its limit, a Spanner call's " +
+		"deadline notwithstanding")
+	ErrWarmStalled = errors.New("service: the Spanner client's session was not warm within its limit, its " +
+		"deadline notwithstanding")
+)
+
+// watching fails the process with why once stall has passed; what it
+// returns notes the work watched ended. Set p.exit first, so that the
+// failure arms the process's exit.
+func (p *parts) watching(stall time.Duration, why error) (ended func()) {
+	t := time.AfterFunc(stall, func() { p.fail(fmt.Errorf("%w (%v)", why, stall)) })
+	return func() { t.Stop() }
+}
+
+// watch runs f, watching it as watching does.
+func (p *parts) watch(stall time.Duration, why error, f func() error) error {
+	defer p.watching(stall, why)()
+	return f()
+}
+
+// startCall runs one of the start's Spanner calls under StartDeadline.
+func startCall[T any](p *parts, cfg Config, what string, f func(context.Context) (T, error)) (T, error) {
+	ctx, cancel := context.WithTimeout(p.ctx, cmp.Or(cfg.startDeadline, StartDeadline))
+	defer cancel()
+	v, err := f(ctx)
+	if err != nil {
+		err = fmt.Errorf("service: %s as the process started: %w", what, err)
+	}
+	return v, err
+}
+
+// join takes the process's ring row, its join under StartDeadline; its
+// heartbeats then run until it is stopped.
+func (p *parts) join(cfg Config, s *store.Store) (*ring.Node, error) {
+	return startCall(p, cfg, "joining the ring", func(ctx context.Context) (*ring.Node, error) {
+		return ring.Start(ctx, cfg.membership(s), cfg.Address, roles(cfg), cfg.Ring)
+	})
+}
+
+// watchMembers reads the members, the first read under StartDeadline; the
+// later reads then run until it is stopped.
+func (p *parts) watchMembers(cfg Config, s *store.Store) (*ring.Watcher, error) {
+	return startCall(p, cfg, "reading the members", func(ctx context.Context) (*ring.Watcher, error) {
+		return ring.Watch(ctx, cfg.membership(s), cfg.Ring)
+	})
+}
+
+// membership is the ring's store: the process's, unless a test gives its
+// own.
+func (c Config) membership(s *store.Store) ring.Membership {
+	if c.ringStore != nil {
+		return c.ringStore
+	}
+	return s
+}
+
+// readSwitch reads the switch before the node serves, under StartDeadline.
+func (p *parts) readSwitch(cfg Config, sw *workspaceSwitch) error {
+	_, err := startCall(p, cfg, "reading the fast path's switch", func(ctx context.Context) (struct{}, error) {
+		return struct{}{}, sw.refresh(ctx)
+	})
+	return err
 }
 
 // startFailed ends a process whose part could not start: a failure, unless
@@ -688,12 +871,12 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 			}
 		}()
 	}
-	node, err := ring.Start(p.ctx, s, cfg.Address, roles(cfg), cfg.Ring)
+	node, err := p.join(cfg, s)
 	if err != nil {
 		return err
 	}
 	p.stop(node.Stop)
-	members, err := ring.Watch(p.ctx, s, cfg.Ring)
+	members, err := p.watchMembers(cfg, s)
 	if err != nil {
 		return err
 	}
@@ -703,8 +886,8 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 	// node that cannot read it admits for no workspace. The owner asks it
 	// as it makes each hold, and the front door before it routes.
 	sw := &workspaceSwitch{read: s.EnabledWorkspaces, every: cfg.Switch, clock: time.Now}
-	if err := sw.refresh(p.ctx); err != nil {
-		log.Printf("service: reading the fast path's switch: %v", err)
+	if err := p.readSwitch(cfg, sw); err != nil {
+		log.Print(err)
 	}
 	p.run("switch", func(ctx context.Context) error {
 		sw.run(ctx)
@@ -721,6 +904,21 @@ func (p *parts) admission(cfg Config, s *store.Store, settle *settlelog.Log,
 	p.run("owner", func(ctx context.Context) error {
 		o.Run(ctx)
 		return nil
+	})
+	p.run("owner tally", func(ctx context.Context) error {
+		t := time.NewTicker(time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				// The period's last part: a stopping node's answers are
+				// what a hand-off's slow ones would be.
+				log.Print(ownerTallyLine(o.TakeTally()))
+				return nil
+			case <-t.C:
+				log.Print(ownerTallyLine(o.TakeTally()))
+			}
+		}
 	})
 	l, err := frontdoor.NewLocal(o, cfg.Address, cfg.Region, cfg.Key)
 	if err != nil {
@@ -857,7 +1055,7 @@ func roles(cfg Config) []string {
 // deploy sees it live; one beside an admission node is on the node's row.
 func (p *parts) auditor(cfg Config, c Clients, s *store.Store, settle *settlelog.Log, records *settlelog.Records) error {
 	if !cfg.Admission {
-		node, err := ring.Start(p.ctx, s, cfg.Address, roles(cfg), cfg.Ring)
+		node, err := p.join(cfg, s)
 		if err != nil {
 			return err
 		}
@@ -871,6 +1069,13 @@ func (p *parts) auditor(cfg Config, c Clients, s *store.Store, settle *settlelog
 	}
 	sub := settlelog.Subscribe(c.PubSub, cfg.SettleSubscription, cfg.MaxOutstanding)
 	src := reporting{Source: auditor.FromSubscription(sub), fail: p.failing("auditor")}
+	// An auditor Spanner call under way past auditor.CommitStall, the
+	// runtime's, the ticker's, the pending work's or the stager's (one set
+	// of calls per process, which the runtime's watchdog reads), ends Run
+	// with auditor.ErrCommitStalled, which fails the process (run): the
+	// subscription asks again for every record the member held, so the other
+	// members take its leases, and the process exits (FailStop), which
+	// systemd starts again.
 	p.run("auditor", func(ctx context.Context) error { return rt.Run(ctx, src) })
 
 	tc := cfg.Ticker
@@ -897,8 +1102,10 @@ func (p *parts) auditor(cfg Config, c Clients, s *store.Store, settle *settlelog
 		cfg.RecordSubscription, cfg.MaxOutstanding)), calls: &inFlight{}, fail: p.failing("stager")}
 	p.run("stager", func(ctx context.Context) error {
 		err := stager.Run(ctx, staged)
-		// The subscription can end before its callbacks have.
+		// The subscription can end before its callbacks have, and a
+		// callback's record can begin a transaction as it leaves.
 		staged.calls.wait()
+		stager.Wait()
 		return err
 	})
 	return nil
@@ -1115,4 +1322,20 @@ func writeAlertOf(w io.Writer, subject, what, kind string) {
 	// agent's special field included, is parsed but outranked by the
 	// priority (seen in Cloud Logging as INFO alerts, 2026-10-14).
 	fmt.Fprintln(w, "<3>"+string(line))
+}
+
+// ownerTallyLine is the owner's period line: what its records waited from
+// hand-over to acknowledgement, the most a lease awaited at once, the
+// publishes that failed, and how long heartbeats and terminals took to
+// answer, each slow count past a second, the front door's wait for an owner.
+func ownerTallyLine(t owner.Tally) string {
+	var avg time.Duration
+	if t.Acks > 0 {
+		avg = t.AckTotal / time.Duration(t.Acks)
+	}
+	return fmt.Sprintf("fastpath owner: acks=%d ack_avg_ms=%d ack_max_ms=%d acks_slow=%d depth_max=%d "+
+		"publish_failures=%d heartbeats=%d heartbeat_max_ms=%d heartbeats_slow=%d terminals=%d "+
+		"terminal_max_ms=%d terminals_slow=%d", t.Acks, avg.Milliseconds(), t.AckMax.Milliseconds(), t.AcksSlow,
+		t.DepthMax, t.PublishFailures, t.Heartbeats, t.HeartbeatMax.Milliseconds(), t.HeartbeatsSlow, t.Terminals,
+		t.TerminalMax.Milliseconds(), t.TerminalsSlow)
 }

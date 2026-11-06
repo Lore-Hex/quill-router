@@ -351,9 +351,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--plan-sha256')
     parser.add_argument('--enclave-root', type=Path)
     # Required for release shadow-opt-in: the canary's runtime stop, e.g.
-    # 2026-10-24T15:30:00Z (UTC, future, at most 48 h ahead). Without it the
+    # 2026-10-24T15:30:00Z (UTC, future, at most 14 days ahead). Without it the
     # deployed routers treat the pins as expired and do nothing.
-    parser.add_argument('--expires-at')
+    parser.add_argument('--expires-at', help='Required for shadow-opt-in: future UTC instant ending in Z, at most 14 days ahead')
     args = parser.parse_args(argv)
     try:
         if args.command == 'validate-plan':

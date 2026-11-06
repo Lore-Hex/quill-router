@@ -6,6 +6,7 @@ from typing import Annotated, Any, cast
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
+from starlette.concurrency import run_in_threadpool
 
 from trusted_router.auth import (
     ManagementPrincipal,
@@ -57,7 +58,7 @@ log = logging.getLogger(__name__)
 
 def register_billing_routes(router: APIRouter) -> None:
     @router.get("/credits")
-    async def credits(principal: ManagementPrincipal) -> dict[str, dict[str, Any]]:
+    def credits(principal: ManagementPrincipal) -> dict[str, dict[str, Any]]:
         summary = live_credit_summary(principal.workspace.id)
         if summary is None:
             raise api_error(404, "Credit account not found", ErrorType.NOT_FOUND)
@@ -71,7 +72,7 @@ def register_billing_routes(router: APIRouter) -> None:
         }
 
     @router.get("/credits/summary")
-    async def credits_summary(
+    def credits_summary(
         principal: Annotated[
             Principal,
             Depends(require_scope(SCOPE_BALANCE_READ)),
@@ -83,7 +84,7 @@ def register_billing_routes(router: APIRouter) -> None:
         return {"data": dict(summary)}
 
     @router.post("/billing/checkout")
-    async def billing_checkout(
+    def billing_checkout(
         request: Request,
         body: CheckoutRequest,
         principal: ManagementPrincipal,
@@ -146,7 +147,7 @@ def register_billing_routes(router: APIRouter) -> None:
         )
 
     @router.post("/billing/paypal/orders/{order_id}/capture")
-    async def billing_paypal_capture(
+    def billing_paypal_capture(
         order_id: str,
         principal: ManagementPrincipal,
         settings: SettingsDep,
@@ -177,8 +178,12 @@ def register_billing_routes(router: APIRouter) -> None:
     ) -> JSONResponse:
         if not settings.x402_enabled:
             raise api_error(404, "route not found", ErrorType.NOT_FOUND)
-        principal = principal_from_request(request, settings)
-        if principal.api_key is None:
+        # Key lookup, the Store-backed rate limits, and the Stripe challenge
+        # are synchronous IO: run each segment on a worker thread so a slow
+        # Store or payment provider never stalls the shared event loop.
+        principal = await run_in_threadpool(principal_from_request, request, settings)
+        api_key = principal.api_key
+        if api_key is None:
             raise api_error(403, "An API key is required for x402 funding", ErrorType.FORBIDDEN)
         # No v1 delegated scope grants money movement through x402.
         if principal.scopes:
@@ -189,24 +194,28 @@ def register_billing_routes(router: APIRouter) -> None:
             )
         body = _validated_x402_body(X402FundingRequest, await json_body(request))
         validate_x402_funding_amount(body.amount, settings)
-        _enforce_x402_rate_limit(
-            namespace="x402_fund_key",
-            subject=principal.api_key.hash,
-            limit=settings.x402_rate_limit_key_per_window,
-            settings=settings,
-        )
-        _enforce_x402_rate_limit(
-            namespace="x402_fund_workspace",
-            subject=principal.workspace.id,
-            limit=settings.x402_rate_limit_workspace_per_window,
-            settings=settings,
-        )
-        challenge = create_x402_funding_challenge(
-            body=body,
-            workspace_id=principal.workspace.id,
-            initiating_user_id=_principal_user_id(principal),
-            settings=settings,
-        )
+
+        def limit_and_challenge() -> dict[str, Any]:
+            _enforce_x402_rate_limit(
+                namespace="x402_fund_key",
+                subject=api_key.hash,
+                limit=settings.x402_rate_limit_key_per_window,
+                settings=settings,
+            )
+            _enforce_x402_rate_limit(
+                namespace="x402_fund_workspace",
+                subject=principal.workspace.id,
+                limit=settings.x402_rate_limit_workspace_per_window,
+                settings=settings,
+            )
+            return create_x402_funding_challenge(
+                body=body,
+                workspace_id=principal.workspace.id,
+                initiating_user_id=_principal_user_id(principal),
+                settings=settings,
+            )
+
+        challenge = await run_in_threadpool(limit_and_challenge)
         return JSONResponse(
             x402_payment_required_response_body(challenge),
             status_code=402,
@@ -220,7 +229,7 @@ def register_billing_routes(router: APIRouter) -> None:
     ) -> dict[str, dict[str, Any]]:
         if not settings.x402_enabled:
             raise api_error(404, "route not found", ErrorType.NOT_FOUND)
-        principal = principal_from_request(request, settings)
+        principal = await run_in_threadpool(principal_from_request, request, settings)
         if principal.api_key is None:
             raise api_error(403, "An API key is required for x402 settlement", ErrorType.FORBIDDEN)
         # No v1 delegated scope grants money movement through x402.
@@ -231,24 +240,27 @@ def register_billing_routes(router: APIRouter) -> None:
                 ErrorType.INSUFFICIENT_SCOPE,
             )
         body = _validated_x402_body(X402SettleRequest, await json_body(request))
-        _enforce_x402_rate_limit(
-            namespace="x402_settle_workspace",
-            subject=principal.workspace.id,
-            limit=settings.x402_settle_workspace_per_window,
-            settings=settings,
-        )
-        _enforce_x402_rate_limit(
-            namespace="x402_settle",
-            subject=f"{principal.workspace.id}:{body.payment_intent_id}",
-            limit=settings.x402_settle_rate_limit_per_window,
-            settings=settings,
-        )
-        result = settle_x402_payment(
-            payment_intent_id=body.payment_intent_id,
-            workspace_id=principal.workspace.id,
-            settings=settings,
-        )
-        return {"data": result}
+
+        def limit_and_settle() -> dict[str, Any]:
+            _enforce_x402_rate_limit(
+                namespace="x402_settle_workspace",
+                subject=principal.workspace.id,
+                limit=settings.x402_settle_workspace_per_window,
+                settings=settings,
+            )
+            _enforce_x402_rate_limit(
+                namespace="x402_settle",
+                subject=f"{principal.workspace.id}:{body.payment_intent_id}",
+                limit=settings.x402_settle_rate_limit_per_window,
+                settings=settings,
+            )
+            return settle_x402_payment(
+                payment_intent_id=body.payment_intent_id,
+                workspace_id=principal.workspace.id,
+                settings=settings,
+            )
+
+        return {"data": await run_in_threadpool(limit_and_settle)}
 
     @router.post("/billing/portal")
     async def billing_portal(
@@ -256,7 +268,8 @@ def register_billing_routes(router: APIRouter) -> None:
         principal: ManagementPrincipal,
         settings: SettingsDep,
     ) -> dict[str, dict[str, str]]:
-        _reject_wallet_only_traditional_billing(principal)
+        # The wallet-only check may read the key creator from the Store.
+        await run_in_threadpool(_reject_wallet_only_traditional_billing, principal)
         body = await json_body(request)
         try:
             return_url = validate_billing_return_url(
@@ -264,12 +277,19 @@ def register_billing_routes(router: APIRouter) -> None:
             )
         except ValueError as exc:
             raise api_error(400, "return_url must be a valid absolute HTTP(S) URL", ErrorType.BAD_REQUEST) from exc
-        account = STORE.get_credit_account(principal.workspace.id)
-        customer_id = account.stripe_customer_id if account else None
-        return {"data": create_billing_portal_session(customer_id=customer_id, return_url=return_url, settings=settings)}
+
+        def portal_session() -> dict[str, str]:
+            # Store read plus a Stripe API call: worker thread, not the loop.
+            account = STORE.get_credit_account(principal.workspace.id)
+            customer_id = account.stripe_customer_id if account else None
+            return create_billing_portal_session(
+                customer_id=customer_id, return_url=return_url, settings=settings
+            )
+
+        return {"data": await run_in_threadpool(portal_session)}
 
     @router.post("/billing/payment-methods/setup")
-    async def billing_payment_method_setup(
+    def billing_payment_method_setup(
         request: Request,
         principal: ManagementPrincipal,
         settings: SettingsDep,
@@ -297,7 +317,7 @@ def register_billing_routes(router: APIRouter) -> None:
         )
 
     @router.post("/credits/coinbase")
-    async def credits_coinbase() -> JSONResponse:
+    def credits_coinbase() -> JSONResponse:
         return deprecated()
 
 

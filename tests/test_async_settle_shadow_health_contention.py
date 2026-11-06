@@ -237,7 +237,8 @@ def test_one_aborted_cycle_keeps_recent_accepted_incumbent(sdk_database):  # noq
     svc.submit_publisher(job.slot, NOW_US)
     outcome(svc, job, "lost_claim")
     assert svc.is_incumbent(job.slot+1)
-    assert not svc.is_incumbent(job.slot+2)
+    assert svc.is_incumbent(job.slot+2)  # Third slot since the accepted publication.
+    assert not svc.is_incumbent(job.slot+3)
 
 
 @pytest.mark.parametrize("rollback_error", [None, DeadlineExceeded, ServiceUnavailable])

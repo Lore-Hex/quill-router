@@ -1,26 +1,51 @@
 (() => {
 'use strict';
 const nav=document.getElementById('nav'), menu=document.getElementById('menuBtn');
-menu.addEventListener('click',()=>{const open=nav.classList.toggle('open');menu.setAttribute('aria-expanded',String(open));});
-document.addEventListener('keydown',e=>{if(e.key==='Escape' && nav.classList.contains('open')){nav.classList.remove('open');menu.setAttribute('aria-expanded','false');menu.focus();}});
-document.addEventListener('click',e=>{if(!e.target.closest('header')){nav.classList.remove('open');menu.setAttribute('aria-expanded','false');}});
-const active={home:'/',api:'/confidential',sup:'/suppliers',providers:'/providers',index:'/index'}[document.body.dataset.nytePage];
-document.querySelectorAll('nav a').forEach(a=>{if(a.getAttribute('href')===active){a.setAttribute('aria-current','page');a.classList.add('on');}});
+const groups=[...nav.querySelectorAll('.nav-group')];
+const closeGroups=()=>groups.forEach(group=>{group.classList.remove('open','pinned');group.querySelector('button').setAttribute('aria-expanded','false');});
+const closeMenu=()=>{nav.classList.remove('open');menu.setAttribute('aria-expanded','false');closeGroups();};
+const openGroup=group=>{closeGroups();group.classList.add('open');group.querySelector('button').setAttribute('aria-expanded','true');};
+groups.forEach(group=>{
+ const button=group.querySelector('button');
+ button.addEventListener('click',()=>{if(group.classList.contains('pinned'))closeGroups();else{openGroup(group);group.classList.add('pinned');}});
+ group.addEventListener('pointerenter',e=>{if(e.pointerType==='mouse' && innerWidth>800)openGroup(group);});
+ group.addEventListener('pointerleave',()=>{if(!group.contains(document.activeElement))closeGroups();});
+ group.addEventListener('focusin',()=>{if(innerWidth>800 && !group.classList.contains('open'))openGroup(group);});
+ group.addEventListener('focusout',e=>{if(!group.contains(e.relatedTarget))closeGroups();});
+});
+menu.addEventListener('click',()=>{const open=!nav.classList.contains('open');closeMenu();nav.classList.toggle('open',open);menu.setAttribute('aria-expanded',String(open));});
+document.addEventListener('keydown',e=>{if(e.key==='Escape' && !e.target.closest('dialog')){
+ const expanded=nav.querySelector('.nav-group.open button');
+ const phone=nav.classList.contains('open');
+ if(phone)menu.focus();else expanded?.focus();closeMenu();
+}});
+document.addEventListener('click',e=>{if(!e.target.closest('header'))closeMenu();});
+const active=document.body.dataset.nytePage==='home' ? '/' : location.pathname.replace(/\.html$/, '').replace(/\/$/, '') || '/';
+nav.querySelectorAll('a').forEach(a=>{if(a.getAttribute('href')===active){a.setAttribute('aria-current','page');a.classList.add('on');a.closest('.nav-group').querySelector('button').classList.add('on');}});
+const updateNew=()=>{
+ const today=new Date();today.setHours(0,0,0,0);
+ const dated=[...nav.querySelectorAll('a[data-added]')];
+ dated.forEach(item=>{item.querySelector('.tag').hidden=true;});
+ dated.filter(item=>{
+  const added=new Date(item.dataset.added+'T00:00:00');
+  const expires=new Date(added);expires.setDate(expires.getDate()+14);
+  return today>=added && today<expires;
+ })
+ .sort((a,b)=>b.dataset.added.localeCompare(a.dataset.added))
+ .slice(0,3).forEach(item=>{item.querySelector('.tag').hidden=false;});
+};
+updateNew();setInterval(updateNew,60000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)updateNew();});
 const dialog=document.getElementById('m-deck');
+const openDeckHash=()=>{if(location.hash==='#deck' && document.body.dataset.nytePage==='home' && !dialog?.open)dialog?.showModal();};
+window.addEventListener('hashchange',openDeckHash);openDeckHash();
+nav.querySelector('a[href="/#deck"]')?.addEventListener('click',()=>{if(document.body.dataset.nytePage==='home' && location.hash==='#deck')dialog?.showModal();});
 document.querySelectorAll('[data-open="deck"]').forEach(b=>b.addEventListener('click',()=>dialog.showModal()));
 dialog?.querySelector('[data-close]')?.addEventListener('click',()=>dialog.close());
 dialog?.addEventListener('click',e=>{if(e.target===dialog)dialog.close();});
 const video=document.getElementById('filmVid');
 document.getElementById('filmPlay')?.addEventListener('click',()=>{video.controls=true;video.play().catch(()=>{document.getElementById('film').classList.remove('playing');});});
 video?.addEventListener('playing',()=>{document.getElementById('film').classList.add('playing');window.TokenExchangeAnalytics?.track('nyte.video_played');},{once:true});
-const ctas={'Start building':'api_quick_start','Get the buyer deck':'buyer_deck','Get the provider deck':'provider_deck','Get your API key':'api_key','Read documentation':'documentation','Apply as a provider':'apply_provider','List spare capacity':'spare_capacity','Get the open-source stack':'open_source_stack','Operator guide':'operator_guide','Explore the index':'index'};
-document.addEventListener('click',e=>{
- const el=e.target.closest('a,button');if(!el)return;
- const cta=ctas[el.textContent.trim()];
- const position=el.closest('header')?'header':el.closest('.close-photo')?'close':el.closest('[class^="hero"]')?'hero':'section';
- if(cta)window.TokenExchangeAnalytics?.track('nyte.cta_clicked',{cta,position});
- if(el.tagName==='A'){const url=new URL(el.href,location.href);if(['trustedrouter.com','github.com'].includes(url.hostname))window.TokenExchangeAnalytics?.track('nyte.outbound_clicked',{destination_host:url.hostname,cta:cta||'source'});}
-});
 })();
 /* The brochure form is TrustedRouter's email-gated download, posted there from this
    domain; the server allows the exchange origins. Without JavaScript the button stays
@@ -139,6 +164,23 @@ document.querySelectorAll('.geo-scroll').forEach(container => {
   update();
 });
 
+/* Shared anonymous catalogue transport. Model IDs come from NYTE's CORS-enabled API;
+   the homepage count and provider catalogue retain their existing public origin. */
+window.NYTECatalog = {
+  async read(endpoint) {
+    const origin = endpoint === 'models' ? 'https://api.nytokenexchange.com' : 'https://trustedrouter.com';
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    try {
+      const response = await fetch(`${origin}/v1/${endpoint}`, {
+        mode:'cors', credentials:'omit', cache:'no-store', signal:controller.signal,
+      });
+      if (!response.ok) throw new Error('Catalogue unavailable');
+      return await response.json();
+    } finally { clearTimeout(timeout); }
+  },
+};
+
 /* Read the public catalogue at runtime; never substitute a build-time snapshot. */
 (() => {
   'use strict';
@@ -149,20 +191,12 @@ document.querySelectorAll('.geo-scroll').forEach(container => {
   const count = value => Number.isSafeInteger(value) && value >= 0;
   const clear = element => { element.textContent = '—'; };
   const read = async (endpoint, element, select) => {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
     try {
-      const response = await fetch(`https://trustedrouter.com/v1/${endpoint}`, {
-        mode: 'cors', credentials: 'omit', cache: 'no-store', signal: controller.signal,
-      });
-      if (!response.ok) throw new Error('Catalogue unavailable');
-      const value = select(await response.json());
+      const value = select(await window.NYTECatalog.read(endpoint));
       if (!count(value)) throw new Error('Invalid catalogue count');
       element.textContent = value.toLocaleString('en-US');
     } catch {
       clear(element);
-    } finally {
-      clearTimeout(timeout);
     }
   };
   let busy = false;
@@ -192,4 +226,19 @@ document.querySelectorAll('.geo-scroll').forEach(container => {
     if (!document.hidden) void refresh();
   });
   void refresh();
+})();
+
+/* Keep the mobile Cowork hero steady when browser chrome changes viewport height.
+   Width changes still refresh its size for rotation and responsive previews. */
+(() => {
+  if (document.body.dataset.nytePage !== 'cowork') return;
+  let width;
+  const sizeHero = () => {
+    const nextWidth = document.documentElement.clientWidth;
+    if (nextWidth === width) return;
+    width = nextWidth;
+    document.documentElement.style.setProperty('--cw-viewport', `${window.innerHeight}px`);
+  };
+  sizeHero();
+  window.addEventListener('resize', sizeHero, {passive: true});
 })();

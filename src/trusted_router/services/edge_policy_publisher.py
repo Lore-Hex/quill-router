@@ -9,24 +9,34 @@ edge gates on before it would answer an authorize itself: the accepted image
 digests (the verified Stage D policy plus the break-glass override, the set
 authorize checks a boot against), the Stage D settings, whether the settle
 records are durable, the pilot's gate, the per-key in-flight limit, the
-monitor key's lookup hash, the async-settle shadow cohort, the regions and
-the internal-only models. The manifest (routing_snapshot_signing.py,
-``EDGE_POLICY_TYP``) is signed with the routing snapshot's key under its own
-``typ``.
+monitor key's lookup hash, the async-settle shadow cohort, the regions, the
+internal-only models and the async-settle facts (admission, the edge's async
+switch, this process's ticket authority and typed records), and, only when
+it is not off, the pilot's key-windows mode. The manifest
+(routing_snapshot_signing.py, ``EDGE_POLICY_TYP``) is signed with the routing
+snapshot's key under its own ``typ``.
 
 A body is issued at the publisher's clock and signed in the background, by
-one worker at a time, never on a poll: the first poll at or after the cached
-copy's ``refresh_at`` (+15 s), or the first poll with no copy, starts the
-worker, which refreshes the Stage D policy, reads the other facts and signs.
+one worker at a time, never on a poll. Startup starts warming without waiting
+for the first copy; an early poll may get an immediate 503 ``compiling``.
+A timer renews at ``issued_at`` +30 s, halfway through the 60 s validity
+window, for 30 minutes after startup or the latest poll. Polls still start
+a refresh at ``refresh_at`` (+15 s) if no worker is running. This keeps
+sparsely polled instances warm without signing every 15 s in the background.
+The worker refreshes the Stage D policy, reads the other facts and signs.
 Meanwhile every poll is served the cached copy while it is within its
 ``not_after`` (+60 s), or answered 503 at once: ``compiling`` while the
 worker runs, ``digest-policy-unavailable`` or ``policy-error`` after it
-failed (no new worker for 5 s). So a signing happens at most once per
+failed (no new worker for 5 s). Once the idle window ends, timers stop; a
+later poll restarts them and may see ``compiling`` if its copy has expired.
+Bounded idle work and nonblocking polls cannot guarantee a warm copy after
+an arbitrarily long idle period. So a signing happens at most once per
 refresh interval and a poll never waits on a network round trip, holding no
 threadpool token that authorize shares. The edge polls at ``refresh_at``
 and trusts a body until its ``not_after``, then proxies everything to
-Python. A changed setting therefore reaches a polling edge within about
-15 s.
+Python. Timer-only fact sampling is every 30 s plus build latency; polls
+can trigger sampling after 15 s. Delivery also depends on polling and load
+balancing, so neither interval guarantees end-to-end setting propagation.
 
 Unlike the routing snapshot there is no worker process: every fact is this
 process's own live state (its settings, its Stage D policy resolver, its
@@ -38,7 +48,12 @@ calls ``StageDPolicyResolver.refresh_now()`` (two HTTPS fetches per release
 URL, each URL's within 5 s, and a Sigstore bundle check, together failed
 after 15 s, and three watermark reads or writes), so a body's set is the
 release's at ``issued_at`` (decide contract decision 17). That is at most
-four refreshes a minute, and only on an instance the edge polls. A refresh
+120 signatures and complete facts reads/hour with timer-only renewal, up
+to 240/hour with frequent polls, plus the startup publication. A successful
+primary-source refresh fetches two policy artifacts and verifies one bundle;
+Sigstore's online TUF refresh normally adds two requests with a warm cache.
+After the last poll, at most 60 refresh attempts on the successful path;
+failures retry at most every 5 s within the same idle window. A refresh
 takes at most ``REFRESH_BOUND_SECONDS`` (30 s, Spanner session creation
 aside) and may first wait out the resolver's own in-flight one, which is
 why it runs in the worker. If it fails nothing new is
@@ -86,6 +101,7 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
 
     from trusted_router.config import Settings
+    from trusted_router.services.async_settle import Runtime
     from trusted_router.stage_d_policy import StageDPolicyResolver
 
 log = logging.getLogger(__name__)
@@ -97,6 +113,13 @@ ERROR_RETRY_SECONDS = 5
 # A poll that finds no valid copy while the background signing is in flight
 # comes back this soon.
 COMPILING_RETRY_SECONDS = 2
+# Ten instances polled every 15 s globally see 150 s between round-robin
+# polls. Thirty minutes also accommodates substantial load-balancer skew.
+IDLE_TIMEOUT_SECONDS = 30 * 60
+# Internal renewal deadline, independent of the signed +15 s poll hint.
+# Leaves 30 s for a refresh; this is not a guarantee against a worker that
+# takes the full 65 s deadline (nor was the previous 45 s margin).
+BACKGROUND_RENEW_SECONDS = LIFETIME_SECONDS // 2
 # A signing worker running longer than this is abandoned: polls stop
 # reporting it as in flight and the next one starts a fresh worker. Its late
 # outcome, if any, is discarded. Above its worst case: refresh_now() may wait
@@ -138,11 +161,57 @@ class Publication:
         return self.issued_at <= now < self.refresh_at
 
 
+def ticket_authority(runtime: Runtime | None) -> bool:
+    """Whether this process's async-settle runtime can issue a ticket: the
+    authority facts ``async_settle.snapshot_projection`` answers
+    ``async_eligible: false`` without (a signer, an epoch of at least 1, a
+    journal region)."""
+    return (runtime is not None and runtime.signer is not None and runtime.epoch >= 1
+            and runtime.effective_journal_region != "")
+
+
+def typed_records(typed_store: Any) -> bool:
+    """The ``typed`` the gateway's async-v1 authorize branch passes to
+    ``authorize_additions``: a typed billing store writing typed records."""
+    return typed_store is not None and getattr(typed_store, "request_record_write_mode", "legacy") == "typed"
+
+
+def admission_workspaces(settings: Settings) -> dict[str, list[str]]:
+    """async_settle's optional members, the workspaces Python's admission
+    covers (``Settings.async_settle_pilot_allows``), both only while
+    admission is on (off covers no workspace):
+
+    - ``admission_workspaces``: the sorted pilot set when it is non-empty
+      (an empty set covers every workspace, the member absent);
+    - ``admission_excluded_workspaces``: the fast-path workspaces outside the
+      overlap list (``async_settle_fastpath_excluded_workspace_ids``) that the
+      first member would otherwise cover, sorted, when there are any: all of
+      them with no pilot set, else those it names. So the member is present
+      only when it changes an answer, and a body whose pilot set leaves every
+      fast-path workspace out is byte-identical to one from before the member
+      existed. At most 32, as the fast-path set is.
+
+    Python answers a workspace they leave out as with admission off
+    (``async_settle.snapshot_projection``), which the edge composes itself
+    (docs/design/fast-admission-e2-g15-async.md sections 4.1 and 4.5)."""
+    if not settings.async_settle_admission_enabled:
+        return {}
+    pilots = settings.async_settle_pilot_workspace_ids
+    excluded = settings.async_settle_fastpath_excluded_workspace_ids
+    if pilots:
+        excluded &= pilots
+    return {
+        **({"admission_excluded_workspaces": sorted(excluded)} if excluded else {}),
+        **({"admission_workspaces": sorted(pilots)} if pilots else {}),
+    }
+
+
 def settings_facts(
     settings: Settings, *, accepted: frozenset[str], durable: bool, internal: frozenset[str],
+    ticket_authority: bool, typed_records: bool,
 ) -> dict[str, Any]:
     """Every body field but the version, kind, plane and window, from these
-    settings and the three live facts that are not settings."""
+    settings and the five live facts that are not settings."""
     return {
         "accepted_image_digests": sorted(accepted),
         "stage_d": {
@@ -163,7 +232,34 @@ def settings_facts(
         "primary_region": settings.primary_region,
         "multi_region_enabled": settings.multi_region_enabled,
         "internal_models": sorted(internal),
+        "async_settle": {
+            "admission_enabled": settings.async_settle_admission_enabled,
+            "edge_decide": settings.fastpath_edge_decide_async,
+            "ticket_authority": ticket_authority,
+            "typed_records": typed_records,
+            **admission_workspaces(settings),
+        },
+        # Optional, published only when not off (docs/design/
+        # fast-admission-e2-key-windows.md section 5): the default body stays
+        # byte-identical, so a Go node that predates the member is unaffected.
+        **({} if settings.fastpath_pilot_key_windows == "off"
+           else {"fastpath_pilot_key_windows": settings.fastpath_pilot_key_windows}),
+        # Optional, published only when the edge may decide streams
+        # (docs/design/fast-admission-streams.md section 5.4): its own switch,
+        # the pilot's, and snapshot booking, which the lease always does, all
+        # on. Absent otherwise, so the default body stays byte-identical.
+        **({"fastpath_edge_streams": True} if edge_streams_on(settings) else {}),
     }
+
+
+def edge_streams_on(settings: Settings) -> bool:
+    """Whether the edge policy carries fastpath_edge_streams: the edge's
+    switch, the pilot's streams switch and reap snapshot booking, all on."""
+    return bool(
+        settings.fastpath_edge_streams
+        and settings.fastpath_pilot_streams
+        and settings.reap_snapshot_booking_enabled
+    )
 
 
 def build_policy(plane: BaseModel, issued_at: int, facts: dict[str, Any]) -> EdgePolicyV1:
@@ -201,16 +297,22 @@ class LiveFacts:
         self, settings: Settings, *,
         resolver: Callable[[], StageDPolicyResolver | None],
         typed_store: Callable[[], Any],
+        runtime: Callable[[], Runtime | None],
     ) -> None:
         self._settings, self._resolver, self._typed_store = settings, resolver, typed_store
+        self._runtime = runtime
 
     def __call__(self) -> dict[str, Any]:
         settings = self._settings
+        accepted = refreshed_accepted_image_digests(self._resolver(), settings)
+        store = self._typed_store()
         return settings_facts(
             settings,
-            accepted=refreshed_accepted_image_digests(self._resolver(), settings),
-            durable=records_durable(settings.settle_outbox_enabled, self._typed_store()),
+            accepted=accepted,
+            durable=records_durable(settings.settle_outbox_enabled, store),
             internal=internal_model_ids(),
+            ticket_authority=ticket_authority(self._runtime()),
+            typed_records=typed_records(store),
         )
 
 
@@ -218,6 +320,14 @@ def _spawn_thread(run: Callable[[], None]) -> threading.Thread:
     thread = threading.Thread(target=run, name="edge-policy-sign", daemon=True)
     thread.start()
     return thread
+
+
+def _schedule_refresh(delay: float, run: Callable[[], None]) -> threading.Timer:
+    timer = threading.Timer(delay, run)
+    timer.daemon = True
+    timer.name = "edge-policy-refresh"
+    timer.start()
+    return timer
 
 
 class EdgePolicyPublisher:
@@ -250,12 +360,65 @@ class EdgePolicyPublisher:
         self._failed: tuple[str, int] = ("", 0)
         self.signatures = 0
         self.attempts = 0
+        self._maintaining = False
+        self._stopped = False
+        self._active_until = 0.0
+        self._timer: Any = None
+
+    def start(self) -> None:
+        """Warm at startup, then refresh for a bounded idle window.
+
+        The lifespan returns without waiting for this worker.
+        Construction alone does no work (facts may not yet be installed).
+        """
+        with self._lock:
+            if self._maintaining or self._stopped:
+                return
+            self._maintaining = True
+            self._active_until = self._monotonic() + IDLE_TIMEOUT_SECONDS
+            self._maintain_locked()
+
+    def stop(self) -> None:
+        """Cancel scheduled refreshes and discard any in-flight outcome."""
+        with self._lock:
+            self._stopped = True
+            self._generation += 1
+            if self._timer is not None:
+                self._timer.cancel()
+                self._timer = None
+
+    def _maintain_locked(self) -> None:
+        if self._stopped or self._monotonic() >= self._active_until:
+            return
+        now = int(self._clock())
+        cached = self._cached
+        renew_at = cached.issued_at + BACKGROUND_RENEW_SECONDS if cached is not None else now
+        if cached is None or not cached.issued_at <= now < renew_at:
+            self._start_locked(now)
+        # While a worker runs, check again after the failure backoff. The
+        # timer itself never reads facts or signs and shares no request pool.
+        due = now + ERROR_RETRY_SECONDS
+        if cached is not None and cached.issued_at <= now < renew_at:
+            due = renew_at
+        elif self._failed[1] > now:
+            due = self._failed[1]
+        delay = min(max(1, due - self._clock()), self._active_until - self._monotonic())
+        self._timer = _schedule_refresh(max(0, delay), self._refresh_due)
+
+    def _refresh_due(self) -> None:
+        with self._lock:
+            self._timer = None
+            self._maintain_locked()
 
     def current(self) -> Publication:
         """The cached publication while it is within its not_after; raises
         PolicyUnavailable at once when there is none."""
         with self._lock:
             now = int(self._clock())
+            if self._maintaining and not self._stopped:
+                self._active_until = self._monotonic() + IDLE_TIMEOUT_SECONDS
+                if self._timer is None:
+                    self._maintain_locked()
             cached = self._cached
             if cached is not None and cached.current(now):
                 return cached
@@ -296,7 +459,7 @@ class EdgePolicyPublisher:
         return False
 
     def _start_locked(self, now: int) -> None:
-        if self._in_flight() or now < self._failed[1]:
+        if self._stopped or self._in_flight() or now < self._failed[1]:
             return
         self.attempts += 1
         self._generation += 1
@@ -362,6 +525,7 @@ def build_publisher(
     settings: Settings, *,
     resolver: Callable[[], StageDPolicyResolver | None] = lambda: None,
     typed_store: Callable[[], Any] = _typed_store,
+    runtime: Callable[[], Runtime | None] = lambda: None,
     facts: Callable[[], dict[str, Any]] | None = None,
     clock: Callable[[], float] = time.time,
     spawn: Callable[[Callable[[], None]], Any] = _spawn_thread,
@@ -374,7 +538,7 @@ def build_publisher(
     signer = EdgePolicySigner(load_signer(settings))
     return EdgePolicyPublisher(
         signer=signer, plane=plane_of(settings),
-        facts=facts or LiveFacts(settings, resolver=resolver, typed_store=typed_store),
+        facts=facts or LiveFacts(settings, resolver=resolver, typed_store=typed_store, runtime=runtime),
         clock=clock, spawn=spawn, monotonic=monotonic,
     )
 
@@ -382,13 +546,14 @@ def build_publisher(
 def install(app: FastAPI, settings: Settings) -> None:
     """Put the publisher, or why there is none, on ``app.state``.
 
-    The Stage D policy resolver is read from ``app.state`` at each poll: it is
-    installed after this runs.
+    The Stage D policy resolver and the async-settle runtime are read from
+    ``app.state`` at each signing: both are installed after this runs.
     """
     state = app.state
     try:
         state.edge_policy_publisher = build_publisher(
             settings, resolver=lambda: getattr(state, "stage_d_policy_resolver", None),
+            runtime=lambda: getattr(state, "async_settle", None),
         )
         state.edge_policy_status = "serving"
     except ValueError as exc:
@@ -396,3 +561,14 @@ def install(app: FastAPI, settings: Settings) -> None:
         state.edge_policy_status = "signer-unavailable"
         # load_signer's reasons name no key material.
         log.warning("edge policy publisher disabled: %s", exc)
+        return
+
+    @app.on_event("startup")
+    async def warm() -> None:
+        # Uvicorn waits for lifespan before opening its listener: warming
+        # must not delay readiness or consume capacity needed by authorize.
+        state.edge_policy_publisher.start()
+
+    @app.on_event("shutdown")
+    async def stop() -> None:
+        state.edge_policy_publisher.stop()

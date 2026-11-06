@@ -168,6 +168,7 @@ def generation_events(
             "created_at": gen.created_at,
             "date": gen.created_at[:10],
             "model": gen.model,
+            "requested_model": gen.requested_model or None,
             "provider_name": gen.provider_name,
             "app": gen.app,
             **({"app_id": gen.app_id} if gen.app_id else {}),

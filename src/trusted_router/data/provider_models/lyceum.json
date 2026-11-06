@@ -252,6 +252,8 @@
       "status": 1,
       "id": "moonshotai/kimi-k2.7-code",
       "upstream_id": "moonshotai/kimi-k2.7-code",
+      "retirement_at": "2026-11-04T00:00:00Z",
+      "replacement_model_id": "moonshotai/kimi-k3",
       "context_length": 262144,
       "max_output_tokens": 65536,
       "supported_features": [
@@ -739,7 +741,7 @@
   ],
   "source": "https://api.lyceum.technology/openai/v1/models",
   "pricing_source": "https://api.lyceum.technology/openai/v1/models",
-  "generated_at": "2026-10-20T12:05:14Z",
+  "generated_at": "2026-10-26T06:59:20Z",
   "price_scale": "microdollars_per_million",
   "model_count": 30
 }

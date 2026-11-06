@@ -702,6 +702,43 @@ it alerts on mismatch, never reprices an accepted intent. The first-writer
 reservation gate, not the lease alone, prevents double booking. Competing
 settle/refund intents retain the existing winner semantics.
 
+**Dedicated worker decision (dormant code change, October 2026).** Only the
+`settle-drain` surface runs the warm loop: one always-CPU Cloud Run instance in
+us-central1, using the router image. Only its environment enables fast drain;
+routers retain fast=false, their five-minute watchdog and unchanged shadow-v2
+pins. Worker pins: poll=1 s, pass=2 s, lease=30 s, concurrency=4, claim batch=4,
+health interval=1 s, stall=26 s; pass remains below lease. No deployment or
+router pin changes accompany this code.
+
+Fleet health follows completed drain work, including inside busy passes; no
+independent heartbeat or exception-path publication exists. Separate local RPC
+progress keeps the in-process stall monitor from mistaking multiple bounded
+transactions for a wedge. At 26 s without progress it dumps stacks and exits;
+HTTP health uses the same threshold. The immediate all-thread dump uses the
+listener's shared nonblocking stderr helper and leaves its delayed faulthandler
+timer untouched. The worker-only deployment draft pins the event-loop watchdog
+to 30 s with always-allocated CPU; only the listener owns that process-wide
+timer. The monitor never writes fleet health.
+Purge/reap stays exclusively on the existing bounded legacy scheduler.
+
+The legacy bulk candidate SQL excludes async versions before its limit. A
+separate short-lease recovery phase owns async work only when strict fleet
+health has observation or heartbeat age outside `[0,5)`, or is missing, invalid
+or unreadable. p95/completeness affect admission, not recovery ownership.
+Recovery requires protection, applies each claim immediately, uses the remaining
+pass budget and never publishes health. Its last-resort worker-absent envelope
+is one watchdog interval plus one short lease plus apply time, subject to pass
+capacity. It does not claim the healthy-worker/crash-reclaim 60 s target.
+
+The warm worker applies both versions. A protected NULL-version row rejected
+while an async sibling still owns an open reservation parks; terminal losing
+classification and paging match the unprotected NULL-sibling case. The only
+worker secret is Sentry DSN. Handler sanitization removes primitive payloads
+and extras while retaining logger/severity/exception class; direct money pages
+retain only the established alarm fingerprint. See the
+[runbook](../runbook.md#settle-outbox) for recovery arithmetic, cost, credential
+isolation, shutdown, paging and measured enablement gates.
+
 The current worker is a recovery mechanism: `docs/runbook.md#settle-outbox`
 describes a **five-minute** scheduler; `drain_settle_outbox` loops sequentially,
 clamps limit to 500, budgets 240 s and leases for 300 s. It does not batch
@@ -1073,8 +1110,10 @@ best-effort cleanup past 500 ms; it never extends the acceptance deadline.
 
 ### PR D dormant drain and health implementation
 
-The unchanged scheduler path is frozen against main
-`ecb794597f32b0775594f8944f40f935b7f07278`. Defaults preserve its SQL/parameters,
+The original scheduler path was frozen against main
+`ecb794597f32b0775594f8944f40f935b7f07278`. The dedicated-worker amendment above
+adds only NULL-version candidate filtering and bounded short-lease async recovery;
+the differential explicitly accounts for those advisory reads and preserves other SQL/parameters,
 response, 500-row limit clamp, sequential apply, 240-second pass budget,
 300-second lease and per-tick purge/reap. No scheduler, cron, warm-worker service
 or job is deployed by PR D. PR G/operators must measure and approve enablement.
@@ -1084,14 +1123,17 @@ admission rollback, through the same frozen-money apply and resolution helpers.
 | Setting (`TR_` environment prefix) | Default | Meaning and read point |
 |---|---:|---|
 | `settle_outbox_fast_drain_enabled` | false | Select fast pass at the drain entry; required by the callable warm loop. |
-| `settle_outbox_poll_interval_seconds` | 300 | Warm-loop interruptible delay after a pass; unused in legacy mode. |
+| `settle_outbox_poll_interval_seconds` | 300 | Warm-loop interruptible start-to-start poll interval; unused in legacy mode. |
 | `settle_outbox_health_publish_interval_seconds` | 2 | Fleet publisher cadence; validated positive and at most `CACHE_SECONDS=5`. Fast mode only. |
 | `settle_outbox_claim_batch` | 500 | Upper bound on a claim wave; fast mode further clamps to available worker slots. Unused in legacy mode, which retains the caller's limit and 500 clamp. |
 | `settle_outbox_worker_concurrency` | 1 | Maximum independent running apply slots per pass, validated 1–32; fast mode only. |
-| `settle_outbox_lease_seconds` | 300 | Lease assigned by each running slot; fast mode only. |
+| `settle_outbox_lease_seconds` | 300 | Fast-slot lease; watchdog async recovery clamps it to at most 30 s. |
+| `settle_outbox_stall_seconds` | 26 | Worker process exit/HTTP liveness threshold; validated 26–30 s. |
 | `settle_outbox_pass_budget_seconds` | 240 | Deadline for starting new work; must be below the lease in fast mode. Does not cancel in-flight money transactions. |
 
-Rollout pins all seven defaults explicitly, never copying ambient/live settings.
+Router rollout retains the original seven cadence pins explicitly. The separate
+worker deployment supplies its own cadence and stall threshold; router pins do
+not change with this code.
 `run_worker(settings, stop)` exposes the warm loop without installing a schedule.
 It passes `stop` into `drain_pass` and every executor slot. The wave loop and
 slots check it before starting claims; claims already in flight and their
@@ -1176,6 +1218,33 @@ SELECT unresolved_at, actual_cost_micro, status FROM tr_settle_outbox@{FORCE_IND
 and sums then describe only the bounded observation, never the full backlog.
 Empty is healthy only after a complete fleet observation with a fresh heartbeat.
 
+**Inline grace (November 2026).** `p50_age_seconds` and `p95_age_seconds`
+count a row in its inline grace from when it falls due, not from its creation;
+`oldest_unresolved_age_seconds` remains every row's creation age. A row is in
+its grace while it is not an async row (`async_version IS NULL`), is pending,
+and the drain has neither attempted nor parked it (`attempts=0` and
+`last_error IS NULL`: a failed apply counts an attempt, and both a failure and
+a park write `last_error`). The two-commit settle and the fast-path pilot write
+such intents due 60 s later so their own inline settle can finish first. The
+drain cannot take one before then, so its age until then is not drain lag.
+Counted from creation, one intent left to the drain closed admission
+fleet-wide for about 55 s, as it did in production on 2026-11-05. The due time
+is `next_attempt_at`, but never later than 60 s after creation. Async, dead,
+retried and parked rows keep their creation age; so does a contended
+one-commit intent, which is written due at once. Only a row created between 5
+and 66 seconds before the observation can be over the limit by creation age
+and not by due age. So the publisher reads base rows only for that range, in
+the same snapshot as the covering read, and only when that read was not cut
+short at its 10,000-row bound and shows between 1 and 100 rows there;
+otherwise every age stays a creation age. If
+that read fails, the publisher logs `async admission read failed
+operation=drain_grace` and publishes creation ages, the evidence it had before
+this read existed:
+
+```sql
+SELECT unresolved_at, next_attempt_at FROM tr_settle_outbox@{FORCE_INDEX=tr_settle_outbox_unresolved} WHERE unresolved_at IS NOT NULL AND unresolved_at >= @since AND unresolved_at < @until AND status='pending' AND async_version IS NULL AND attempts=0 AND last_error IS NULL ORDER BY unresolved_at LIMIT @limit
+```
+
 Before observing health, workers transactionally claim the complete control key
 `(kind='settle_drain_control', id='health-publish-v1')` using the same cadence
 primitive as housekeeping. At most one worker wins per publish interval
@@ -1206,15 +1275,11 @@ index/read remains bounded to 1,001 rows and retains its independent five-second
 freshness rule. Turning admission off stops health reads, including already
 constructed consumers; enabling it is a settings/application rollout.
 
-Housekeeping has its own fixed control key, `housekeeping-v1`, containing the
-last claimed UTC `observed_at`. A transaction admits at most one fast-mode
-purge/reap pass per 300 seconds across replicas. A crashed claimant delays the
-next pass until that interval ends. It does not change reaper SQL, the claim
-fence, retention, purge semantics, or the legacy scheduler path. The unit proof
-runs 31 polls over 300 seconds and observes only the passes at 0 and 300, then
-races six independent callers for the next interval and observes one winner.
-During mixed-mode rollout, the unchanged scheduler can still perform its
-ordinary housekeeping; this gate bounds additional fast-worker housekeeping.
+The existing `housekeeping-v1` cadence primitive remains available and tested,
+but the warm worker no longer calls it or runs purge/reap. The five-minute
+legacy pass alone retains its existing bounded housekeeping (including the
+limit-200 reaper). Fast polls add no housekeeping transactions or long reaping
+phases to the latency-critical loop.
 
 Structured aggregate logs add fleet pending age p50/p95/max, backlog frozen
 micro/count and dead count with completeness, per-row apply-plus-resolution
@@ -2142,7 +2207,10 @@ existence check, not re-verification of the discarded signed terminal.
    `TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED=true`; verify healthy fresh fleet
    publication; reverify the already-installed signer/epoch pins, enclave public
    keyring and signature roundtrip on all serving revisions. Then pin
-   `TR_ASYNC_SETTLE_PILOT_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d`,
+   `TR_ASYNC_SETTLE_PILOT_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d,162e441a-5d13-414f-92bd-7c6cd805faa3`,
+   `TR_ASYNC_SETTLE_FASTPATH_OVERLAP_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d`
+   (the operator workspace is in the fast-path pilot too; without this pin
+   admission skips it, and post-flip blocks on `pilot_only_admission`),
    `TR_ASYNC_SETTLE_PILOT_CAP_MICRO=5000000`, and finally
    `TR_ASYNC_SETTLE_ENABLED=true`. Enable enclave
    `TR_ASYNC_SETTLE_NEGOTIATE=on` only with those protections verified, and

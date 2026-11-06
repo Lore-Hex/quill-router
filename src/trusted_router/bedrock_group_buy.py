@@ -4,7 +4,6 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
-from urllib.parse import urlparse
 
 from trusted_router.money import (
     MICRODOLLARS_PER_DOLLAR,
@@ -17,6 +16,7 @@ from trusted_router.storage_models import (
     BedrockGroupBuyPledge,
     BedrockGroupBuyPublicMessage,
 )
+from trusted_router.url_validation import parse_url
 
 BEDROCK_GROUP_BUY_GOAL_MICRODOLLARS = 1_000_000 * MICRODOLLARS_PER_DOLLAR
 BEDROCK_GROUP_BUY_FOUNDING_MICRODOLLARS = 400_000 * MICRODOLLARS_PER_DOLLAR
@@ -303,8 +303,8 @@ def _company_url(values: Mapping[str, object]) -> str:
     value = str(values.get("company_url", "")).strip()
     if len(value) > 2048:
         raise ValueError("Company URL is too long")
-    parsed = urlparse(value)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+    parsed = parse_url(value)
+    if parsed is None or parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ValueError("Enter a complete https:// company URL")
     if parsed.username or parsed.password:
         raise ValueError("Company URL cannot contain credentials")

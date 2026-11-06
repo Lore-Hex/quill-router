@@ -27,7 +27,7 @@ def test_drain_index_migration_idempotent_and_fail_closed(tmp_path, monkeypatch,
 
 
 def test_health_index_in_migrations_block():
-    workflow = yaml.safe_load((harness.ROOT/'.github/workflows/deploy.yml').read_text())
+    workflow = yaml.safe_load((harness.ROOT/'.github/workflows/deploy-production.yml').read_text())
     steps = workflow['jobs']['migrate-schema']['steps']
     sibling = next(i for i, step in enumerate(steps) if step.get('run') == 'scripts/deploy/migrate_async_settle_admission.sh')
     added = steps[sibling+1]

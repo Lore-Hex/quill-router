@@ -587,10 +587,11 @@
       "id": "qwen/qwen3-tts-12hz-1.7b-base",
       "upstream_id": "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
       "routable": false,
-      "routable_reason": "delisted-upstream",
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 1200000,
-      "missing_since": "2026-09-30"
+      "supported_features": [],
+      "missing_since": "2026-11-03",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Qwen/Qwen3.5-27B",
@@ -849,7 +850,8 @@
       "title": "stepfun-ai/Step-3.7-Flash",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -874,7 +876,8 @@
       "title": "stepfun-ai/Step-5-Preview",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -890,11 +893,759 @@
       "routable": true,
       "input_token_price_per_m": 1000000,
       "output_token_price_per_m": 2700000
+    },
+    {
+      "display_name": "MiniMaxAI/MiniMax-M3.1-Flash",
+      "title": "MiniMaxAI/MiniMax-M3.1-Flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "minimax/minimax-m3.1-flash",
+      "upstream_id": "MiniMaxAI/MiniMax-M3.1-Flash",
+      "context_length": 262144,
+      "supported_features": [
+        "tools"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 600000
+    },
+    {
+      "display_name": "deepseek-ai/DeepSeek-V3.1",
+      "title": "deepseek-ai/DeepSeek-V3.1",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v3.1",
+      "upstream_id": "deepseek-ai/DeepSeek-V3.1",
+      "context_length": 131072,
+      "supported_features": [
+        "tools"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 285000,
+      "output_token_price_per_m": 1000000
+    },
+    {
+      "display_name": "deepseek-ai/DeepSeek-V3.1-Terminus",
+      "title": "deepseek-ai/DeepSeek-V3.1-Terminus",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v3.1-terminus",
+      "upstream_id": "deepseek-ai/DeepSeek-V3.1-Terminus",
+      "context_length": 131072,
+      "supported_features": [],
+      "routable": true,
+      "input_token_price_per_m": 285000,
+      "output_token_price_per_m": 1000000
+    },
+    {
+      "display_name": "deepseek-ai/DeepSeek-V3.2",
+      "title": "deepseek-ai/DeepSeek-V3.2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v3.2",
+      "upstream_id": "deepseek-ai/DeepSeek-V3.2",
+      "context_length": 131072,
+      "max_output_tokens": 32768,
+      "supported_features": [
+        "tools"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 264000,
+      "output_token_price_per_m": 410000
+    },
+    {
+      "display_name": "MiniMaxAI/MiniMax-M2",
+      "title": "MiniMaxAI/MiniMax-M2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "minimax/minimax-m2",
+      "upstream_id": "MiniMaxAI/MiniMax-M2",
+      "context_length": 204800,
+      "max_output_tokens": 32768,
+      "supported_features": [
+        "tools"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 277500,
+      "output_token_price_per_m": 1110000
+    },
+    {
+      "display_name": "MiniMaxAI/MiniMax-M2.1",
+      "title": "MiniMaxAI/MiniMax-M2.1",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "minimax/minimax-m2.1",
+      "upstream_id": "MiniMaxAI/MiniMax-M2.1",
+      "context_length": 204800,
+      "max_output_tokens": 32768,
+      "supported_features": [
+        "tools"
+      ],
+      "routable": false,
+      "routable_reason": "delisted-upstream",
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 1200000,
+      "missing_since": "2026-11-04"
+    },
+    {
+      "display_name": "moonshotai/Kimi-K2-Instruct",
+      "title": "moonshotai/Kimi-K2-Instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k2-instruct",
+      "upstream_id": "moonshotai/Kimi-K2-Instruct",
+      "context_length": 32768,
+      "max_output_tokens": 32768,
+      "supported_features": [
+        "tools"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 600000,
+      "output_token_price_per_m": 2500000
+    },
+    {
+      "display_name": "moonshotai/Kimi-K2-Instruct-0905",
+      "title": "moonshotai/Kimi-K2-Instruct-0905",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k2-instruct-0905",
+      "upstream_id": "moonshotai/Kimi-K2-Instruct-0905",
+      "context_length": 32768,
+      "max_output_tokens": 32768,
+      "supported_features": [
+        "tools"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 600000,
+      "output_token_price_per_m": 2500000
+    },
+    {
+      "display_name": "moonshotai/Kimi-K2-Thinking",
+      "title": "moonshotai/Kimi-K2-Thinking",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k2-thinking",
+      "upstream_id": "moonshotai/Kimi-K2-Thinking",
+      "context_length": 32768,
+      "max_output_tokens": 32768,
+      "supported_features": [
+        "tools"
+      ],
+      "routable": false,
+      "routable_reason": "delisted-upstream",
+      "input_token_price_per_m": 600000,
+      "output_token_price_per_m": 2500000,
+      "missing_since": "2026-11-04"
+    },
+    {
+      "display_name": "moonshotai/Kimi-Linear-48B-A3B-Instruct",
+      "title": "moonshotai/Kimi-Linear-48B-A3B-Instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-linear-48b-a3b-instruct",
+      "upstream_id": "moonshotai/Kimi-Linear-48B-A3B-Instruct",
+      "context_length": 32768,
+      "max_output_tokens": 32768,
+      "supported_features": [],
+      "routable": false,
+      "routable_reason": "delisted-upstream",
+      "input_token_price_per_m": 80000,
+      "output_token_price_per_m": 400000,
+      "missing_since": "2026-11-04"
+    },
+    {
+      "display_name": "Qwen/Qwen3-235B-A22B-Thinking-2507",
+      "title": "Qwen/Qwen3-235B-A22B-Thinking-2507",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-235b-a22b-thinking-2507",
+      "upstream_id": "Qwen/Qwen3-235B-A22B-Thinking-2507",
+      "context_length": 32768,
+      "max_output_tokens": 32768,
+      "supported_features": [
+        "tools"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 450000,
+      "output_token_price_per_m": 3500000
+    },
+    {
+      "display_name": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+      "title": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-30b-a3b-instruct-2507",
+      "upstream_id": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+      "context_length": 262144,
+      "max_output_tokens": 32768,
+      "supported_features": [
+        "tools"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 125000,
+      "output_token_price_per_m": 450000
+    },
+    {
+      "display_name": "Qwen/Qwen3-4B-Instruct-2507",
+      "title": "Qwen/Qwen3-4B-Instruct-2507",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-4b-instruct-2507",
+      "upstream_id": "Qwen/Qwen3-4B-Instruct-2507",
+      "context_length": 32768,
+      "supported_features": [
+        "tools"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 400000,
+      "output_token_price_per_m": 800000
+    },
+    {
+      "display_name": "Qwen/Qwen3-4B-Thinking-2507",
+      "title": "Qwen/Qwen3-4B-Thinking-2507",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-4b-thinking-2507",
+      "upstream_id": "Qwen/Qwen3-4B-Thinking-2507",
+      "context_length": 32768,
+      "supported_features": [
+        "tools"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 400000,
+      "output_token_price_per_m": 800000
+    },
+    {
+      "display_name": "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+      "title": "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-coder-30b-a3b-instruct",
+      "upstream_id": "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+      "context_length": 32768,
+      "max_output_tokens": 32768,
+      "supported_features": [
+        "tools"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 125000,
+      "output_token_price_per_m": 450000
+    },
+    {
+      "display_name": "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+      "title": "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-coder-480b-a35b-instruct",
+      "upstream_id": "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+      "context_length": 32768,
+      "supported_features": [
+        "tools"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 380000,
+      "output_token_price_per_m": 1550000
+    },
+    {
+      "display_name": "Qwen/Qwen3-Next-80B-A3B-Instruct",
+      "title": "Qwen/Qwen3-Next-80B-A3B-Instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-next-80b-a3b-instruct",
+      "upstream_id": "Qwen/Qwen3-Next-80B-A3B-Instruct",
+      "context_length": 32768,
+      "max_output_tokens": 32768,
+      "supported_features": [
+        "tools"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 125000,
+      "output_token_price_per_m": 1150000
+    },
+    {
+      "display_name": "Qwen/Qwen3-VL-2B-Instruct",
+      "title": "Qwen/Qwen3-VL-2B-Instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-vl-2b-instruct",
+      "upstream_id": "Qwen/Qwen3-VL-2B-Instruct",
+      "context_length": 32768,
+      "max_output_tokens": 32768,
+      "supported_features": [
+        "tools"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 320000,
+      "output_token_price_per_m": 1600000
+    },
+    {
+      "display_name": "Qwen/Qwen3-VL-30B-A3B-Instruct",
+      "title": "Qwen/Qwen3-VL-30B-A3B-Instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-vl-30b-a3b-instruct",
+      "upstream_id": "Qwen/Qwen3-VL-30B-A3B-Instruct",
+      "context_length": 131072,
+      "max_output_tokens": 32768,
+      "supported_features": [
+        "tools"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 500000
+    },
+    {
+      "display_name": "Qwen/Qwen3-VL-32B-Instruct",
+      "title": "Qwen/Qwen3-VL-32B-Instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-vl-32b-instruct",
+      "upstream_id": "Qwen/Qwen3-VL-32B-Instruct",
+      "context_length": 32768,
+      "max_output_tokens": 32768,
+      "supported_features": [
+        "tools"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 104000,
+      "output_token_price_per_m": 416000
+    },
+    {
+      "display_name": "Qwen/Qwen3-VL-4B-Instruct",
+      "title": "Qwen/Qwen3-VL-4B-Instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-vl-4b-instruct",
+      "upstream_id": "Qwen/Qwen3-VL-4B-Instruct",
+      "context_length": 32768,
+      "max_output_tokens": 32768,
+      "supported_features": [
+        "tools"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 400000,
+      "output_token_price_per_m": 800000
+    },
+    {
+      "display_name": "Qwen/Qwen3-VL-8B-Instruct",
+      "title": "Qwen/Qwen3-VL-8B-Instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-vl-8b-instruct",
+      "upstream_id": "Qwen/Qwen3-VL-8B-Instruct",
+      "context_length": 32768,
+      "max_output_tokens": 32768,
+      "supported_features": [
+        "tools"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 181800,
+      "output_token_price_per_m": 1351300
+    },
+    {
+      "display_name": "Qwen/Qwen3Guard-Gen-0.6B",
+      "title": "Qwen/Qwen3Guard-Gen-0.6B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3guard-gen-0.6b",
+      "upstream_id": "Qwen/Qwen3Guard-Gen-0.6B",
+      "context_length": 32768,
+      "supported_features": [
+        "tools"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 40000,
+      "output_token_price_per_m": 80000
+    },
+    {
+      "display_name": "Qwen/Qwen3Guard-Gen-8B",
+      "title": "Qwen/Qwen3Guard-Gen-8B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3guard-gen-8b",
+      "upstream_id": "Qwen/Qwen3Guard-Gen-8B",
+      "context_length": 32768,
+      "supported_features": [
+        "tools"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 468000,
+      "output_token_price_per_m": 1820000
+    },
+    {
+      "display_name": "stepfun-ai/Step-3.5-Flash",
+      "title": "stepfun-ai/Step-3.5-Flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "stepfun-ai/step-3.5-flash",
+      "upstream_id": "stepfun-ai/Step-3.5-Flash",
+      "context_length": 262144,
+      "max_output_tokens": 32768,
+      "supported_features": [
+        "tools"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 300000
+    },
+    {
+      "display_name": "XiaomiMiMo/MiMo-V2-Flash",
+      "title": "XiaomiMiMo/MiMo-V2-Flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "xiaomi/mimo-v2-flash",
+      "upstream_id": "XiaomiMiMo/MiMo-V2-Flash",
+      "context_length": 262144,
+      "max_output_tokens": 32768,
+      "supported_features": [],
+      "routable": false,
+      "routable_reason": "delisted-upstream",
+      "input_token_price_per_m": 107800,
+      "output_token_price_per_m": 280000,
+      "missing_since": "2026-11-04"
+    },
+    {
+      "display_name": "zai-org/GLM-4.6",
+      "title": "zai-org/GLM-4.6",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-4.6",
+      "upstream_id": "zai-org/GLM-4.6",
+      "context_length": 202752,
+      "max_output_tokens": 32768,
+      "supported_features": [
+        "tools"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 550000,
+      "output_token_price_per_m": 2200000
+    },
+    {
+      "display_name": "zai-org/GLM-4.7",
+      "title": "zai-org/GLM-4.7",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-4.7",
+      "upstream_id": "zai-org/GLM-4.7",
+      "context_length": 202752,
+      "supported_features": [
+        "tools"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 550000,
+      "output_token_price_per_m": 2200000
+    },
+    {
+      "display_name": "stepfun-ai/StepFun-Prover-Preview-32B",
+      "title": "stepfun-ai/StepFun-Prover-Preview-32B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "stepfun-ai/stepfun-prover-preview-32b",
+      "upstream_id": "stepfun-ai/StepFun-Prover-Preview-32B",
+      "context_length": 32768,
+      "supported_features": [
+        "tools"
+      ],
+      "routable": false,
+      "routable_reason": "delisted-upstream",
+      "input_token_price_per_m": 1060000,
+      "output_token_price_per_m": 2600000,
+      "missing_since": "2026-11-04"
+    },
+    {
+      "display_name": "moonshotai/Kimi-K3.1-Pro",
+      "title": "moonshotai/Kimi-K3.1-Pro",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k3.1-pro",
+      "upstream_id": "moonshotai/Kimi-K3.1-Pro",
+      "context_length": 262144,
+      "supported_features": [],
+      "routable": true,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     }
   ],
   "source": "https://api.featherless.ai/v1/models",
   "pricing_source": "https://featherless.ai/docs/request-pricing-and-credits",
-  "generated_at": "2026-10-20T12:05:14Z",
+  "generated_at": "2026-11-05T11:29:32Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 36
+  "model_count": 66
 }

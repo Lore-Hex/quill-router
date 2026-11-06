@@ -10,9 +10,11 @@ the refusals (status, body and headers), the stored authorization and the
 log lines must be identical, except for the explicitly checked reservation
 guidance and diagnostic added in #1926, and the idempotency-key-source
 observation line added in E4 R1 (exactly once, with its exact text, on every
-request that resolved its idempotency key; never otherwise). The frozen leg's
-chat candidate hook applies an independent specification of the subsequently approved context
-limit. Its provider hook independently requires an explicit upgraded origin
+request that resolved its idempotency key; never otherwise), and the
+authorize affinity measurement line (exactly once, with its exact text, on
+every 200; never otherwise). The frozen leg's
+chat candidate hook applies an independent specification of the subsequently approved model
+and host context limits. Its provider hook independently requires an explicit upgraded origin
 for the new native adapters, without changing the frozen file. Reservation
 quotes are compared too.
 
@@ -101,7 +103,7 @@ def _model_spellings() -> list[str]:
         *PRIVATE_PROXY_MODEL_TARGETS,
         "gpt-4.1", "gpt-4.1-2025-04-14", "openai/gpt-4.1-2025-04-14", "gpt-4o-mini",
         "nyte/auto", "trustedrouter/auto-routing", "trustedrouter/auto:nitro",
-        "trustedrouter/confidential-2025-04-14", "nope/unknown-model",
+        "trustedrouter/confidential-2025-04-14", "nope/unknown-model", "typesafe/jev-1.13", "typesafe-ai/jev:nitro",
         f"{plain[0]}:nitro", f"{plain[1]}:floor", f"{plain[2]}-2026-01-01",
         f"{next(iter(NAMED_DECISION_MODEL_PROVIDERS))}:nitro",
     ]
@@ -203,10 +205,16 @@ def _body_fields(case: dict[str, Any]) -> dict[str, Any]:
 def _reference_context_candidates(candidates: Any, body: GatewayAuthorizeRequest) -> Any:
     prompt = body.estimated_input_tokens
     completion = body.max_tokens or body.max_completion_tokens or 0
-    kept = [(model, endpoint) for model, endpoint in candidates
-            if model.context_length == 0 or prompt + completion <= model.context_length]
+    windows = []
+    kept = []
+    for model, endpoint in candidates:
+        known = [limit for limit in (model.context_length, endpoint.context_length) if limit > 0]
+        window = min(known) if known else 0
+        windows.append(window)
+        if not window or prompt + completion <= window:
+            kept.append((model, endpoint))
     if candidates and not kept:
-        window = max(model.context_length for model, _endpoint in candidates)
+        window = max(windows)
         if completion:
             message = (
                 f"This model's maximum context length is {window} tokens. However, you "
@@ -220,6 +228,29 @@ def _reference_context_candidates(candidates: Any, body: GatewayAuthorizeRequest
             )
         raise api_error(400, message, "context_length_exceeded", extra={"param": "messages"})
     return RoutingCandidates(kept, candidates.effective_preferences)
+
+
+def _reference_decide_refusal(exc: HTTPException, body: GatewayAuthorizeRequest) -> HTTPException:
+    """An independent statement of the approved decide wording (#jev-alias).
+
+    On route_type "decide", a model the chat arm cannot take is named for what
+    it is: unknown (with OpenRouter's Jev spelling answered by our id), or
+    known but unable to decide. Chat routes keep the frozen message.
+    """
+    prefix = "Model does not support chat completions: "
+    message = exc.detail.get("error", {}).get("message", "") if isinstance(exc.detail, dict) else ""
+    if body.route_type != "decide" or not message.startswith(prefix):
+        return exc
+    model = message.removeprefix(prefix)
+    if model in MODELS and MODELS[model].supports_decide:
+        text = f"Decision model {model} takes no variant suffix or fallback models"
+    elif model in MODELS:
+        text = f"Model does not support decisions: {model}"
+    elif model == "typesafe/jev-1.13":
+        text = 'Unknown model: typesafe/jev-1.13. Send "model": "typesafe-ai/jev"'
+    else:
+        text = f"Unknown model: {model}. A decision takes a decision model or a chat model from GET /v1/models"
+    return api_error(exc.status_code, text, exc.detail["error"]["type"])
 
 
 def _run(module: types.ModuleType, case: dict[str, Any], backend: str,
@@ -274,12 +305,21 @@ def _run(module: types.ModuleType, case: dict[str, Any], backend: str,
             old_chat = module.chat_route_endpoint_candidates
 
             def reference_chat(*args: Any, **kwargs: Any) -> Any:
-                return _reference_context_candidates(old_chat(*args, **kwargs), body)
+                try:
+                    candidates = old_chat(*args, **kwargs)
+                except HTTPException as exc:
+                    raise _reference_decide_refusal(exc, body) from None
+                return _reference_context_candidates(candidates, body)
 
             scope.setattr(module, "chat_route_endpoint_candidates", reference_chat)
             old_available = module.provider_model_available_from_gateway_region
 
             def reference_available(provider: str, model: str, region: str) -> bool:
+                if provider == "maple":
+                    return model == "dealignai/deepseek-v4.1-flash-1017-uncensored" and body.region in {
+                        "us-central1", "us-east4", "us-west1", "europe-west4",
+                        "aws-eu-west-1", "aws-eu-west-3", "azure-uaenorth", "azure-australiaeast",
+                    }
                 # Independent release contract, not the production allowlist:
                 # these native adapters are deployed and credentialed on GCP only.
                 if (provider, model) in {
@@ -313,6 +353,16 @@ def _run(module: types.ModuleType, case: dict[str, Any], backend: str,
         if reached_idempotency_key:
             outcome["logs"].remove(observation)
         assert not any("idempotency_key_source" in message for _level, message in outcome["logs"])
+        # The affinity measurement: one line per fresh 200, never otherwise.
+        # The matrix names no cache_affinity_key, so affinity is never consulted.
+        affinity = [entry for entry in outcome["logs"] if "authorize_affinity" in entry[1]]
+        if outcome["status"] == 200:
+            region = outcome["data"]["data"]["region"]
+            assert affinity == [
+                ("INFO", f"gateway.authorize_affinity affinity=none region={region}")
+            ], outcome["logs"]
+            outcome["logs"].remove(affinity[0])
+        assert outcome["status"] == 200 or not affinity, outcome["logs"]
     error = outcome.get("detail", {}).get("error", {})
     if module is gateway and error.get("type") == "insufficient_credits":
         assert outcome["status"] == 402 and len(quotes) == 1
@@ -330,9 +380,14 @@ def _run(module: types.ModuleType, case: dict[str, Any], backend: str,
             "it is not the final charge. Reduce the output-token limit (max_tokens, max_completion_tokens, "
             "or max_output_tokens) or request size, wait for in-flight requests to finish, or add credits."
         )
+        # The quote is the reserve call's amount, the reservation. The
+        # matrix's output budgets are at most 4,096, below HOLD_OUTPUT_TOKENS
+        # (authorize_candidates.hold_output_tokens), so the estimate the
+        # line also carries is the same figure.
         diagnostic = ("INFO", (
             f"billing.insufficient_credits workspace_id={key.workspace_id} key_id={key.hash} request_id=None "
-            f"model={body.model} estimated_microdollars={quote['estimate']} "
+            f"model={body.model} reserved_microdollars={quote['estimate']} "
+            f"estimated_microdollars={quote['estimate']} "
             f"estimated_input_tokens={quote['input']} output_token_budget={quote['output']}"
         ))
         assert outcome["logs"].count(diagnostic) == 1
@@ -478,7 +533,7 @@ def test_the_comparison_sees_a_difference(monkeypatch: pytest.MonkeyPatch,
     def off_by_one(*args: Any, **kwargs: Any) -> Any:
         outcome = real(*args, **kwargs)
         return authorize_candidates.CandidateOutcome(
-            outcome.candidates, outcome.service_tier, outcome.model_estimate + 1,
+            outcome.candidates, outcome.service_tier, outcome.model_estimate + 1, outcome.model_reservation + 1,
         )
 
     monkeypatch.setattr(gateway, "finish_candidates", off_by_one)
@@ -509,5 +564,22 @@ def test_the_comparison_rejects_missing_context_filter(monkeypatch, caplog) -> N
 
     monkeypatch.setattr(authorize_candidates, "candidates_fitting_context", lambda rows, **kw: rows)
     case = {"model": "anthropic/claude-haiku-4.5", "estimated_input_tokens": 2_000_000_000}
+    with pytest.raises(AssertionError, match="1 differences"):
+        _compare([case], "memory", monkeypatch, caplog)
+
+
+def test_the_comparison_rejects_ignoring_host_windows(monkeypatch, caplog) -> None:
+    from dataclasses import replace
+
+    from trusted_router.catalog import MODEL_ENDPOINTS
+    from trusted_router.catalog_data import ModelEndpoint
+
+    model_id = "anthropic/claude-haiku-4.5"
+    for endpoint_id, endpoint in list(MODEL_ENDPOINTS.items()):
+        if endpoint.model_id == model_id:
+            monkeypatch.setitem(MODEL_ENDPOINTS, endpoint_id, replace(endpoint, context_length=10))
+    case = {"model": model_id, "estimated_input_tokens": 11}
+    _compare([case], "memory", monkeypatch, caplog)
+    monkeypatch.setattr(ModelEndpoint, "effective_context_length", lambda self, model: model.context_length)
     with pytest.raises(AssertionError, match="1 differences"):
         _compare([case], "memory", monkeypatch, caplog)

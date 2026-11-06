@@ -125,8 +125,27 @@ the I2 gates of `docs/design/fast-admission-e2-decide.md` (§11) are judged
 by. It stops nothing, and needs logging read access only:
 
 ```bash
-fastpathwatch edge -project quill-cloud-proxy -since 2026-10-17T00:00:00Z -until 2026-10-24T00:00:00Z
+fastpathwatch edge -project quill-cloud-proxy -since 2026-10-24T00:00:00Z
 ```
+
+`-since` is the start of the sample the gates read, in RFC 3339, and
+`-until` is now when not given. The counts from before a node re-pin or a
+route weight change are kept apart and do not count (§11), and `-since`
+selects lines by their timestamp while each line carries the period (a
+minute) before it, so the period that crosses a change is not the
+sample's: on every node, find the first count line that is a full period
+after the last change (the node's restart onto the release, or the
+weight's apply), from the lines' timestamps per node (the read below, by
+`resource_name`), and give `-since` the latest of those. During a rolling
+re-pin the nodes still on the old release keep logging until each is
+restarted, so the last node's restart is the change. The report's
+`periods` then shows every node contributing one line a minute from
+`-since` on. The gates are a sample, not a calendar: at least 3,000
+comparable requests over at least 24 hours and at least three policy and
+two snapshot digests among them, and the ratios and zero counts below.
+On a release with G15c the `i3` figures' minimums take the place of the
+3,000 (`fast-admission-e2-decide.md`, "With G15c pinned, I3's gate is
+I2's"); the span, digest, ratio and zero-count rules stay.
 
 Each minute every node logs one line of its decide path's counts
 (`fastpath edge decide: ...`, with `-edge-decide`) and, with
@@ -137,20 +156,86 @@ lines, summed, are its counts. It prints JSON:
 
 - `i2`: the gates' figures. `comparable` is `agree_full` plus `differ`, the
   requests whose answers were compared (Go would answer, Python answered a
-  200 that is not a replay), and `agree_full_ratio` is `agree_full` over
-  it: the 99.5% gate. `cohort_eligible` is every request Go would have
+  200 that is not a replay; a request naming a `cache_affinity_key` is
+  compared like any other, since Go decides it in the cold order), and
+  `agree_full_ratio` is `agree_full` over it: the 99.5% gate. `cohort_eligible` is every request Go would have
   answered (each counts its decide row's gate) and `cohort_by_class` the
   same requests by class, the comparable ones and the rest the gate
   accounts for (`would_admit_python_refused.*`, `python_error.*`,
-  `python_unavailable`, `unread.*`, the scope taken, replays). Then
+  `python_unavailable`, `unread.*`, the scope taken, replays, and
+  `passed.inflight.key`, Python's per-key in-flight 429 to a request the
+  decide path passed at its own in-flight limit). Then
   `differ` and `differ_by_field` (every `differ.*` and `row.*` field),
+  `differ_affinity_warm` (the differs whose Python 200 is Go's decision
+  re-ranked for an endpoint a Python process remembered for the request's
+  `cache_affinity_key`, `differ.affinity_warm`: a warm session Go does not
+  reproduce, counted in `differ` and against the 99.5% like any differ),
   `differ_estimate` (the `differ.estimate*` fields),
   `row_idempotency_fingerprint` and `fields_other`: a period's fields past
   the line's bound are counted `other`, so a non-zero `fields_other` means
   the two zero gates cannot be read as zero. Then
   `would_admit_python_refused` and its classes; `stale` by cache,
-  `followed` (every request the shadow compared) and `stale_rate`; and the
-  decide path's `unavailable` answers by the insert's gRPC code.
+  `followed` (every request the shadow compared) and `stale_rate`; the
+  decide path's `unavailable` answers by the insert's gRPC code; and
+  `settlement_header_passes` and `settlement_header_pass_share`, the
+  results passed `header.settlement_async` (any `X-TR-Settlement-Mode` but
+  exactly `async-v1`, `sync` and repeated values included) over `followed`:
+  a pass share under one reason, not the async-v1 share of traffic
+  (`docs/design/fast-admission-e2-g15-async.md` §5). Lines of a
+  release before this one also carried `affinity=` (the requests naming a
+  `cache_affinity_key`, then measured apart); the report sums it under
+  `decide_shadow.by_name.affinity` and no figure reads it, so read a span
+  from the first line of a node on this release.
+- `i3`: the I3 gate's figures (`docs/design/fast-admission-e2-g15-async.md`
+  §4.4, §6.2), each one number. From G15c the shadow composes every
+  request whose `X-TR-Settlement-Mode` is exactly `async-v1` and, while
+  the policy's `async_settle.edge_decide` is false, passes it after the
+  compose with `async.off` (counted in `decide` beside the decide row's
+  gates), so Python answers it and the shadow compares it; with no
+  `async_settle` in the policy or no `billing_valid` in the snapshot it
+  passes `async.unpublished` before the key is looked up; once the key's
+  workspace is known it passes `policy.async_admission` when Python's
+  admission covers that workspace (admission on,
+  `async_settle.admission_workspaces` absent or naming it, and
+  `async_settle.admission_excluded_workspaces`, the fast-path workspaces
+  outside `TR_ASYNC_SETTLE_FASTPATH_OVERLAP_WORKSPACES`, not naming it;
+  G15 section 4.5). A workspace the members leave out is composed and
+  compared as with admission off, since Python answers it without a
+  ticket. Because the admission gate
+  needs the key, an async-v1 request whose key the cache cannot answer
+  for (cold, stale or missing) now passes `cache.key` or `key.missing`
+  rather than `policy.async_admission`, even with the member absent, so
+  after this release those reasons grow and `policy.async_admission`
+  shrinks by the same requests; neither is answered by the edge. Its line
+  carries five maps, each keyed by population first (`plain`, `affinity`
+  for a body naming a `cache_affinity_key`, and for `async_seen`
+  `unparsed`, a body the edge did not parse): `async_seen` (every such
+  request followed, whatever it passed with), `async_compared`
+  (`<pop>.agree` or `<pop>.differ`: Go composed it and Python's 200 was
+  read, by whether the async members alone matched byte for byte, an
+  affinity request's against the candidates its comparison used), `async_fields`
+  (`<pop>.differ.async_eligible`, `.differ.billing_snapshot`,
+  `.differ.billing_snapshot_hash`, `.differ.async_shape`), `async_shape`
+  (Go's composed shape, `snapshot` or `false_only.<reason>`) and
+  `async_python_admitted` (Python answered with a ticket, whatever the
+  edge did with the request, passed before the compose or composed: its
+  admission was on, so the members are not compared and the sample
+  restarts). The
+  report prints `async_seen` and `async_seen_share` (over `followed`),
+  `async_compared` with `async_compared_per_day`, `async_compared_plain`
+  with `async_compared_plain_per_day` (the two daily rates, over the span
+  from `-since` to `-until`, that project the soak's end),
+  `async_compared_plain_agree_ratio`, `async_compared_affinity` and
+  `async_compared_affinity_agree_ratio` (each at least 99.5%),
+  `async_fields_billing_snapshot_hash` (zero),
+  `async_fields_billing_snapshot`, `async_fields_async_eligible` and
+  `async_fields_async_shape` (zero beyond the explained price-epoch
+  boundary cases), each over both populations, and
+  `async_python_admitted` (zero). The I3 bars: `async_compared` at least
+  2,000 and `async_compared_plain` at least 250, read with `-since` the
+  last node's restart onto G15c as for I2. A line of a release before G15c
+  has none of these maps: its figures are zero, and a ratio of nothing is
+  `null`.
 - `decide_shadow` and `decide`: every count of the lines, summed.
 - `periods`: each node's lines that come once a minute, the decide line and
   the shadow's line of the requests it did not follow. A node that ran the
@@ -166,6 +251,28 @@ the API's 60 reads a minute, and backs off (doubling, six tries) on a 429
 or a 5xx: a week of three nodes is about 90 pages. Exit
 2 is its usage: `-project` and `-since` (RFC 3339) are needed, `-until` is
 now when not given.
+
+The report sums the shadow's lines over their digests and does not print
+them. The distinct digests of the span, which the gate counts, are read
+from the lines themselves, each line's `snapshot=` and `policy=` (one line
+a minute a node for each pair the minute compared under), counted only
+among the lines with comparable requests (`agree_full` plus `differ`
+above 0): a pair whose lines carried none is no evidence, and a line of a minute with no snapshot or policy held says
+`snapshot=none` or `policy=none` and compares nothing. Each dimension is
+counted apart, over the report's exact window:
+
+```bash
+gcloud logging read 'logName="projects/quill-cloud-proxy/logs/fastpath_journal" AND jsonPayload.MESSAGE:"fastpath edge decide shadow: snapshot=" AND timestamp>="2026-10-24T00:00:00Z" AND timestamp<"2026-10-26T00:00:00Z"' \
+  --project=quill-cloud-proxy --format='value(jsonPayload.MESSAGE)' \
+  | awk '{ split("", f); for (i = 1; i <= NF; i++) { n = index($i, "="); if (n) f[substr($i, 1, n - 1)] = substr($i, n + 1) }
+           if (f["agree_full"] + f["differ"] > 0) { s[f["snapshot"]] += f["agree_full"] + f["differ"]; p[f["policy"]] += f["agree_full"] + f["differ"] } }
+         END { for (d in s) print "snapshot", d, s[d]; for (d in p) print "policy", d, p[d] }'
+```
+
+It prints each snapshot digest and each policy digest with the comparable
+requests compared under it; the gate wants at least two of the first and
+three of the second. The `timestamp` bounds are the report's `since` and
+`until`.
 
 The lines themselves, to read a minute's by eye:
 
@@ -191,9 +298,9 @@ ceiling:
 | The ticker's scan for leases past their expiry | `fastpath-scan-expired` | 1/s | 1.5/s |
 | The ticker's scan for leases draining | `fastpath-scan-draining` | 1/s | 1.5/s |
 | The pending work's sweep | `fastpath-pending-packs` | 0.2/s | 0.3/s |
-| Its staged records' scan | the staging tag | 0.2/s | 0.3/s |
+| Its scan for retired leases' staged records, at the first sweep and then once a minute | the staging tag | once a minute | 0.06/s |
 | Sessions kept up | | now and then | 0.5/s |
 
-About 6.5 small calls a second a node, each a point read, a keyed write or
+About 6 small calls a second a node, each a point read, a keyed write or
 a scan of an index of the service's own, empty until a workspace is
-enabled; P0's two nodes, about 13 a second. That is P0's baseline load.
+enabled; P0's two nodes, about 12 a second. That is P0's baseline load.

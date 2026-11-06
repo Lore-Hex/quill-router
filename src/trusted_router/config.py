@@ -29,9 +29,10 @@ from trusted_router.trust_ownership import (
 
 logger = logging.getLogger(__name__)
 
-# Longest a shadow canary expiry may lie ahead of process start-up: one UTC
-# evidence day plus a day of margin. A typo cannot leave the shadow on for weeks.
-SHADOW_CANARY_MAX_SECONDS = 48 * 3600
+# One expiry covers the whole evidence window; renewal deploys are unacceptable.
+# Stop early via the runtime stop marker / CLI (#2053) or an opt-out PR; this
+# upper bound turns a forgotten canary off.
+SHADOW_CANARY_MAX_SECONDS = 14 * 86400
 _LOGGED_SHADOW_EXPIRY_ERRORS: set[str] = set()
 
 
@@ -273,7 +274,7 @@ SERVICE_SURFACE_SECRET_OWNERS: dict[str, frozenset[str]] = {
     "operational_analytics_clickhouse_password": frozenset(
         {"public", "control", "internal", "observer"}
     ),
-    "sentry_dsn": frozenset({"public", "control", "internal", "observer"}),
+    "sentry_dsn": frozenset({"public", "control", "internal", "observer", "settle-drain"}),
     "google_data_manager_kms_key_name": frozenset({"control"}),
     "attribution_cookie_key": frozenset({"public", "control"}),
     "attribution_cookie_secret": frozenset({"public", "control"}),
@@ -284,7 +285,7 @@ SERVICE_SURFACE_SECRET_OWNERS: dict[str, frozenset[str]] = {
     # still select internal_gateway_token by path.
     "observer_internal_token": frozenset({"internal", "observer"}),
     "stripe_webhook_secret": frozenset({"control"}),
-    "stripe_secret_key": frozenset({"control"}),
+    "stripe_secret_key": frozenset({"control", "actions"}),
     "paypal_client_id": frozenset({"control"}),
     "paypal_client_secret": frozenset({"control"}),
     "paypal_webhook_id": frozenset({"control"}),
@@ -471,6 +472,7 @@ class Settings(BaseSettings):
         "control",
         "internal",
         "observer",
+        "settle-drain",
     ] = "combined"
     # Temporary compatibility bridge for the pre-split GCP service.  This is
     # deliberately separate from ``service_surface`` so a missing surface env
@@ -873,6 +875,13 @@ class Settings(BaseSettings):
     retirement_notices_mode: Literal["off", "preview", "send"] = "off"
     retirement_notices_preview_email: str | None = None
 
+    resale_enabled: bool = False
+    resale_fee_bps: int = 500
+    reserved_tokens_checkout_enabled: bool = False
+    reserved_tokens_discount_bps: int | None = Field(default=None, ge=0, lt=10_000)
+    reserved_tokens_exchange_fee_bps: int | None = None
+    reserved_tokens_max_lots_per_checkout: int = Field(default=100, ge=1)
+    reserved_tokens_max_price_age_days: int = Field(default=45, ge=1)
     stablecoin_checkout_enabled: bool = True
     x402_enabled: bool = False
     x402_allow_mock_payments: bool = False
@@ -995,6 +1004,15 @@ class Settings(BaseSettings):
     async_settle_shadow_attachment_bucket: str = ""
     async_settle_shadow_policy: str = ""
     async_settle_shadow_health_region: str = ""
+    # Optional comma-separated serving-region allowlist for shadow v2 only.
+    # Empty preserves fleet-wide behavior; otherwise TR_SERVING_REGION must
+    # be explicit and listed. The health publisher region must also be listed.
+    async_settle_shadow_regions: str = ""
+    _async_settle_shadow_region_ids: frozenset[str] = PrivateAttr(default=frozenset())
+    # Enclave regions whose settlement router meets the async handoff budget.
+    # Empty preserves fleet-wide negotiation; this is not the serving region.
+    async_settle_negotiation_regions: str = ""
+    _async_settle_negotiation_region_ids: frozenset[str] = PrivateAttr(default=frozenset())
     async_settle_shadow_workspaces: str = ""
     _async_settle_shadow_workspace_ids: frozenset[str] = PrivateAttr(default=frozenset())
     # Runtime stop for a shadow v2 canary: an ISO-8601 instant with an explicit
@@ -1005,10 +1023,31 @@ class Settings(BaseSettings):
     # v1 still installs when workspaces are set and the raw policy is empty.
     async_settle_shadow_expires_at: str = ""
     _async_settle_shadow_expiry: float | None = PrivateAttr(default=None)
+    _async_settle_shadow_stopped: bool = PrivateAttr(default=False)
     async_settle_pilot_workspaces: str = ""
     _async_settle_pilot_workspace_ids: frozenset[str] = PrivateAttr(default=frozenset())
+    # Async settle takes no request the fast path takes
+    # (docs/design/fast-admission-and-batched-settlement.md section 4.13;
+    # docs/design/fast-admission-e2-g15-async.md section 4.5): a workspace in
+    # the fast-path pilot set is outside async admission, even when the pilot
+    # set above is empty (every workspace), unless it is listed here. The
+    # list exists for the async-settle lane's own test workspace, which runs
+    # in both pilots; comma-separated, at most 32, empty by default.
+    async_settle_fastpath_overlap_workspaces: str = ""
+    _async_settle_fastpath_overlap_workspace_ids: frozenset[str] = PrivateAttr(default=frozenset())
+    # Optional comma-separated serving-region allowlist for NEW async-v1
+    # acceptance (the 500 ms durable handoff, D2). Empty keeps every region;
+    # otherwise TR_SERVING_REGION must be explicit and listed. A region outside
+    # it answers sync_required before opening the enqueue transaction, so a
+    # region whose round trips to the Spanner leader cannot fit the handoff
+    # never strands a timed-out transaction's locks on the authorization.
+    # Snapshot-sync recovery and duplicates of accepted intents are unaffected.
+    async_settle_accept_regions: str = ""
+    _async_settle_accept_region_ids: frozenset[str] = PrivateAttr(default=frozenset())
     async_settle_enabled: bool = False
     async_settle_protection: bool = False
+    async_settle_admission_refresh_enabled: bool = False
+    async_settle_handoff_mode: Literal["outbox", "memory"] = "outbox"
     async_settle_ticket_kid: str = ""
     async_settle_ticket_issuer: str = ""
     async_settle_ticket_audience: str = ""
@@ -1036,6 +1075,11 @@ class Settings(BaseSettings):
     # gates on, signed with the routing snapshot's key above. Off by default:
     # the route is not registered and no edge-policy module is imported.
     edge_policy_publish_enabled: bool = False
+    # Published in the edge policy as async_settle.edge_decide
+    # (docs/design/fast-admission-e2-g15-async.md section 6.2): whether the
+    # edge may answer an async-v1 authorize itself. Off by default; rollout.sh
+    # renders it as a literal false until the I4 step.
+    fastpath_edge_decide_async: bool = False
 
     # Audited break-glass addition to the signed Stage D runtime policy. This
     # is deliberately empty and rollout.sh never inherits it from a revision.
@@ -1082,9 +1126,29 @@ class Settings(BaseSettings):
     fastpath_pilot_enabled: bool = False
     fastpath_pilot_workspaces: str = ""
     fastpath_pilot_regions: str = "us-central1"
-    # The front door answers an admitted authorize in a few milliseconds; the
-    # owner behind it waits at most a second. A request past this budget
-    # takes today's path, so the budget is spent inline on a customer request.
+    # Which keys with day, week or month spend windows the pilot covers
+    # (docs/design/fast-admission-e2-key-windows.md section 5): `off` none,
+    # `alert` the alert-only keys, `enforce` the alert-only and the enforcing
+    # keys. One definition, read by this process's pilot cohort and published
+    # in the edge policy for the Go edge. A lifetime cap or a strict budget
+    # still keeps a key out. Any other spelling refuses to start.
+    fastpath_pilot_key_windows: Literal["off", "alert", "enforce"] = "off"
+    # Streams on the lease (docs/design/fast-admission-streams.md section
+    # 5.4). `fastpath_pilot_streams`: this process's pilot admits a stream the
+    # enclave heartbeats under a lease (section 5.1's rule). It moves only
+    # once increment 2b's release is pinned on every owner and front door
+    # (docs/runbooks/fastpath-streams.md). `fastpath_edge_streams`: the Go
+    # edge may decide streams too; published in the edge policy only when it,
+    # `fastpath_pilot_streams` and `reap_snapshot_booking_enabled` are all
+    # on, and turned on only after gate E. Both off by default.
+    fastpath_pilot_streams: bool = False
+    fastpath_edge_streams: bool = False
+    # The front door answers an admitted authorize in a few milliseconds, and
+    # any call within 1.2 s however slow its owner and peer are (its
+    # AnswerWithin), which this budget, the connection's 0.25 s included,
+    # must outlast (tests/test_fastpath_frontdoor.py). A request past this
+    # budget takes today's path, so the budget is spent inline on a customer
+    # request.
     fastpath_front_door_timeout_seconds: float = 1.5
     _fastpath_pilot_workspace_ids: frozenset[str] = PrivateAttr(default=frozenset())
     _fastpath_pilot_region_ids: frozenset[str] = PrivateAttr(default=frozenset({"us-central1"}))
@@ -1116,6 +1180,9 @@ class Settings(BaseSettings):
     # a billing prod-behavior change — flip deliberately, per the design's
     # rollout section, after the shadow metrics are clean.
     settle_outbox_fast_drain_enabled: bool = False
+    # Exceeds the unchanged 20s RPC cap plus at most 5s front-door work
+    # between RPC starts, with one second scheduling margin.
+    settle_outbox_stall_seconds: float = Field(default=26, ge=26, le=30)
     settle_outbox_poll_interval_seconds: float = Field(default=300, gt=0, le=300)
     settle_outbox_health_publish_interval_seconds: float = Field(default=2, gt=0, le=5)
     settle_outbox_claim_batch: int = Field(default=500, ge=1, le=500)
@@ -1123,6 +1190,12 @@ class Settings(BaseSettings):
     settle_outbox_lease_seconds: int = Field(default=300, ge=2, le=300)
     settle_outbox_pass_budget_seconds: float = Field(default=240, gt=0, le=240)
     settle_outbox_enabled: bool = False
+    # A settle whose one-commit attempt failed with a transient store error
+    # leaves its durably inserted intent to the drain instead of finalizing
+    # inline on the same hot counter rows (docs/design/durable-settle-outbox.md
+    # §7, "A contended one commit defers to the drain"). False keeps the inline
+    # two-commit fallback.
+    settle_contention_defers_to_drain: bool = False
     # Expand/contract switch for per-request Spanner records. ``legacy`` keeps
     # writing gateway authorizations and generation repair rows to tr_entities
     # while every region learns to read the typed table. ``typed`` moves new
@@ -1417,6 +1490,20 @@ class Settings(BaseSettings):
             file_secret_settings,
         )
 
+    @field_validator("reserved_tokens_exchange_fee_bps")
+    @classmethod
+    def reserved_tokens_exchange_fee_matches_terms(cls, value: int | None) -> int | None:
+        if value is not None and value != 10:
+            raise ValueError("TR_RESERVED_TOKENS_EXCHANGE_FEE_BPS must equal 10; a fee change needs a new terms version")
+        return value
+
+    @field_validator("resale_fee_bps")
+    @classmethod
+    def resale_fee_matches_terms(cls, value: int) -> int:
+        if value != 500:
+            raise ValueError("TR_RESALE_FEE_BPS must equal 500; a fee change needs a new terms version")
+        return value
+
     @field_validator("remediator_mode")
     @classmethod
     def remediator_mode_is_known(cls, value: str) -> str:
@@ -1436,6 +1523,13 @@ class Settings(BaseSettings):
         if (self.settle_outbox_fast_drain_enabled
                 and self.settle_outbox_pass_budget_seconds >= self.settle_outbox_lease_seconds):
             raise ValueError("fast drain pass budget must be below its lease")
+        if self.service_surface == "settle-drain" and self.settle_outbox_fast_drain_enabled:
+            if self.settle_outbox_poll_interval_seconds > 1:
+                raise ValueError("warm drain poll interval must be at most one second")
+            if self.settle_outbox_lease_seconds > 30:
+                raise ValueError("warm drain lease must be at most 30 seconds for crash reclaim")
+            if self.settle_outbox_health_publish_interval_seconds > 2:
+                raise ValueError("warm drain health interval must be at most two seconds")
         return self
 
     @model_validator(mode="after")
@@ -1449,6 +1543,44 @@ class Settings(BaseSettings):
     @property
     def async_settle_shadow_workspace_ids(self) -> frozenset[str]:
         return self._async_settle_shadow_workspace_ids
+
+    @model_validator(mode="after")
+    def parse_shadow_regions(self) -> Settings:
+        regions = frozenset(part.strip() for part in self.async_settle_shadow_regions.split(",") if part.strip())
+        if any(re.fullmatch(r"[a-z0-9\-]{1,32}", value) is None for value in regions):
+            raise ValueError("invalid async settle shadow region set")
+        if (regions and self.async_settle_shadow_health_region
+                and self.async_settle_shadow_health_region not in regions):
+            raise ValueError("TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION must be in TR_ASYNC_SETTLE_SHADOW_REGIONS "
+                             "so the shadow health publisher is not excluded")
+        self._async_settle_shadow_region_ids = regions
+        return self
+
+    @model_validator(mode="after")
+    def parse_negotiation_regions(self) -> Settings:
+        regions = frozenset(part.strip() for part in self.async_settle_negotiation_regions.split(",") if part.strip())
+        if any(re.fullmatch(r"[a-z0-9\-]{1,32}", value) is None for value in regions):
+            raise ValueError("invalid async settle negotiation region set")
+        self._async_settle_negotiation_region_ids = regions
+        return self
+
+    def async_settle_negotiation_region_allowed(self, region: str | None) -> bool:
+        return not self._async_settle_negotiation_region_ids or (
+            bool(region) and region in self._async_settle_negotiation_region_ids)
+
+    @property
+    def async_settle_shadow_region_ids(self) -> frozenset[str]:
+        return self._async_settle_shadow_region_ids
+
+    def async_settle_shadow_region_allowed(self) -> bool:
+        # Fastpath uses this same process-region resolver. Require the explicit
+        # serving pin here: its primary_region fallback must not opt a boot in.
+        return not self._async_settle_shadow_region_ids or (
+            bool(self.serving_region) and self.effective_serving_region in self._async_settle_shadow_region_ids)
+
+    def regional_async_settle_shadow_policy(self) -> str:
+        """Region-filtered raw pin; preserve existing expiry checks at each layer."""
+        return self.async_settle_shadow_policy if self.async_settle_shadow_region_allowed() else ""
 
     @model_validator(mode="after")
     def parse_shadow_expiry(self) -> Settings:
@@ -1467,19 +1599,25 @@ class Settings(BaseSettings):
                 logger.warning("async settle shadow expiry invalid; shadow pins are off reason=%s", reason)
         return self
 
+    def stop_async_settle_shadow(self) -> None:
+        """Process-local terminal latch shared by every shadow entry point."""
+        self._async_settle_shadow_stopped = True
+
     def async_settle_shadow_live(self, now: float | None = None) -> bool:
         """Whether shadow pins may act now. Monotone: once False, never True again.
 
         Local and test environments without an expiry run unbounded; every
         deployed environment needs an unexpired ``async_settle_shadow_expires_at``.
         """
+        if self._async_settle_shadow_stopped or not self.async_settle_shadow_region_allowed():
+            return False
         expiry = self._async_settle_shadow_expiry
         if expiry is None:
             return self.environment.lower() in {"local", "test"}
         return (time.time() if now is None else now) < expiry
 
     def effective_async_settle_shadow_policy(self, now: float | None = None) -> str:
-        """The shadow policy pin, or "" once the canary expiry has passed."""
+        """The shadow policy pin, or "" outside its region, expiry or stop gates."""
         return self.async_settle_shadow_policy if self.async_settle_shadow_live(now) else ""
 
     @model_validator(mode="after")
@@ -1516,8 +1654,56 @@ class Settings(BaseSettings):
     def async_settle_pilot_workspace_ids(self) -> frozenset[str]:
         return self._async_settle_pilot_workspace_ids
 
+    @model_validator(mode="after")
+    def parse_fastpath_overlap_workspaces(self) -> Settings:
+        ids = frozenset(
+            part.strip() for part in self.async_settle_fastpath_overlap_workspaces.split(",") if part.strip()
+        )
+        if len(ids) > 32 or any(re.fullmatch(r"[A-Za-z0-9_./:@+\-]{1,64}", value) is None for value in ids):
+            raise ValueError("invalid async settle fast path overlap workspace set")
+        self._async_settle_fastpath_overlap_workspace_ids = ids
+        return self
+
+    @property
+    def async_settle_fastpath_overlap_workspace_ids(self) -> frozenset[str]:
+        return self._async_settle_fastpath_overlap_workspace_ids
+
+    @property
+    def async_settle_fastpath_excluded_workspace_ids(self) -> frozenset[str]:
+        """The fast-path pilot set less the overlap list: the workspaces async
+        admission leaves out whatever its own pilot set says (section 4.13 of
+        fast-admission-and-batched-settlement.md). The pilot's set, not its
+        switch, so turning the fast path off never changes async admission."""
+        return self._fastpath_pilot_workspace_ids - self._async_settle_fastpath_overlap_workspace_ids
+
     def async_settle_pilot_allows(self, workspace_id: str) -> bool:
+        """Whether async admission covers the workspace (with admission on):
+        not a fast-path workspace outside the overlap list, and the pilot set
+        empty (every workspace) or naming it. Every admission decision reads
+        this, and the edge policy publishes both halves
+        (edge_policy_publisher.admission_workspaces), so the edge's
+        AsyncSettle.Admits agrees per workspace."""
+        if workspace_id in self.async_settle_fastpath_excluded_workspace_ids:
+            return False
         return not self._async_settle_pilot_workspace_ids or workspace_id in self._async_settle_pilot_workspace_ids
+
+    @model_validator(mode="after")
+    def parse_accept_regions(self) -> Settings:
+        regions = frozenset(part.strip() for part in self.async_settle_accept_regions.split(",") if part.strip())
+        if any(re.fullmatch(r"[a-z0-9\-]{1,32}", value) is None for value in regions):
+            raise ValueError("invalid async settle accept region set")
+        self._async_settle_accept_region_ids = regions
+        return self
+
+    @property
+    def async_settle_accept_region_ids(self) -> frozenset[str]:
+        return self._async_settle_accept_region_ids
+
+    def async_settle_accept_region_allowed(self) -> bool:
+        # Like the shadow region gate: require the explicit serving pin, so the
+        # primary_region fallback cannot opt an unpinned boot in.
+        return not self._async_settle_accept_region_ids or (
+            bool(self.serving_region) and self.effective_serving_region in self._async_settle_accept_region_ids)
 
     @property
     def async_settle_admission_enabled(self) -> bool:
@@ -2054,7 +2240,7 @@ class Settings(BaseSettings):
         # the legacy service's complete authority and therefore its complete
         # pre-split startup requirements.
         gateway_surfaces = {"internal"}
-        sentry_surfaces = {"combined", "control", "internal", "observer"}
+        sentry_surfaces = {"combined", "control", "internal", "observer", "settle-drain"}
         account_surfaces = {"combined", "control"}
         email_surfaces = {"combined", "control", "actions"}
         if (surface in gateway_surfaces or deployed_combined_bridge) and not (
@@ -2099,6 +2285,20 @@ class Settings(BaseSettings):
                 missing.append(f"unset {environment_name} for TR_SERVICE_SURFACE={surface}")
         if self.bootstrap_management_key:
             missing.append("unset TR_BOOTSTRAP_MANAGEMENT_KEY")
+        if surface == "settle-drain":
+            for name, key_path in (
+                ("async_settle_ticket_private_key_file", self.async_settle_ticket_private_key_file),
+                ("routing_snapshot_private_key_file", self.routing_snapshot_private_key_file),
+                ("speculation_shadow_private_key_file", self.speculation_shadow_private_key_file),
+            ):
+                if key_path:
+                    missing.append(f"unset TR_{name.upper()} for TR_SERVICE_SURFACE=settle-drain")
+            if self.storage_backend != "spanner-clickhouse":
+                missing.append("TR_STORAGE_BACKEND=spanner-clickhouse for TR_SERVICE_SURFACE=settle-drain")
+            if not self.async_settle_protection:
+                missing.append("TR_ASYNC_SETTLE_PROTECTION=true for TR_SERVICE_SURFACE=settle-drain")
+            if self.operational_analytics_sink != "outbox":
+                missing.append("TR_OPERATIONAL_ANALYTICS_SINK=outbox for TR_SERVICE_SURFACE=settle-drain")
         storage_required = surface != "actions"
         if surface == "actions" and self.storage_backend != "memory":
             missing.append("TR_STORAGE_BACKEND=memory for TR_SERVICE_SURFACE=actions")
@@ -2123,9 +2323,10 @@ class Settings(BaseSettings):
                 missing.append("TR_REQUEST_RECORD_WRITE_MODE=typed")
             # Tenant activity, usage and provider analytics are read from
             # ClickHouse alone; without the reader the surface has no data.
-            if not self.operational_analytics_clickhouse_url:
+            # The drain only writes the durable outbox, never reads analytics.
+            if surface != "settle-drain" and not self.operational_analytics_clickhouse_url:
                 missing.append("TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL")
-            if not self.operational_analytics_clickhouse_password:
+            if surface != "settle-drain" and not self.operational_analytics_clickhouse_password:
                 missing.append("TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD")
         if (
             storage_required

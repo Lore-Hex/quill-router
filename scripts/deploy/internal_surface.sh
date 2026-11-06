@@ -398,7 +398,7 @@ ENV_VARS=(
   "TR_SETTLE_OUTBOX_ENABLED=$(legacy_env_required TR_SETTLE_OUTBOX_ENABLED)"
   "TR_ANALYTICS_OUTBOX_ENABLED=$(legacy_env_required TR_ANALYTICS_OUTBOX_ENABLED)"
   "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=$(legacy_env_required TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED)"
-  "TR_USER_MODELS_DISPATCH_ENABLED=$(legacy_env_required TR_USER_MODELS_DISPATCH_ENABLED)"
+  "TR_USER_MODELS_DISPATCH_ENABLED=false"
   "TR_ENABLE_LIVE_PROVIDERS=false"
   "TR_REMEDIATOR_IN_PROCESS_ENABLED=false"
   "TR_SYNTHETIC_SCHEDULER_INTERVAL_SECONDS=0"
@@ -685,6 +685,8 @@ for index in "${!TARGET_REGIONS[@]}"; do
   target="${TARGET_REGIONS[$index]}"
   deploy_args=(
     --region "$target" --image "$LEGACY_IMAGE" --allow-unauthenticated --port 8080
+    # Same process-only liveness budget as rollout.sh; retain TCP startup.
+    --liveness-probe 'httpGet.path=/health,httpGet.port=8080,initialDelaySeconds=0,periodSeconds=10,timeoutSeconds=9,failureThreshold=6'
     --ingress all --service-account "$INTERNAL_RUNTIME_SA"
     --concurrency 8 --cpu 1 --memory 2Gi --timeout 60
     --max-instances 40 --min-instances 2
@@ -692,7 +694,7 @@ for index in "${!TARGET_REGIONS[@]}"; do
     --set-env-vars "$SET_ENV_VARS" --set-secrets "$SET_SECRETS"
   )
   if [ "$STAGE" = companion ]; then
-    gc run deploy "$INTERNAL_SERVICE" "${deploy_args[@]}" --quiet
+    gc_router_revision run deploy "$INTERNAL_SERVICE" "${deploy_args[@]}" --quiet
     continue
   fi
 
@@ -702,7 +704,7 @@ for index in "${!TARGET_REGIONS[@]}"; do
     echo "ERROR: refusing to widen ingress without durable recovery state" >&2
     exit 1
   }
-  if ! new_revision="$(gc run deploy "$INTERNAL_SERVICE" "${deploy_args[@]}" \
+  if ! new_revision="$(gc_router_revision run deploy "$INTERNAL_SERVICE" "${deploy_args[@]}" \
       --no-traffic --format 'value(status.latestCreatedRevisionName)' --quiet)"; then
     fail_routed_region "$index" "no-traffic deploy failed"
   fi

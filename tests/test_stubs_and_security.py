@@ -564,9 +564,9 @@ def test_dashboard_emits_open_graph_and_twitter_card(client: TestClient) -> None
     assert '<link rel="icon" href="/favicon.ico" sizes="any">' in dashboard.text
     assert '<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">' in dashboard.text
     assert '<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">' in dashboard.text
-    title = "TrustedRouter: The AI router that shows its work"
-    description = "Verifiably confidential compute through a single OpenAI-compatible API. Hundreds of models, zero-retention routes and provider failover, no prompt logs."
-    social_card = "https://trustedrouter.com/static/homepage/social-card-v1.jpg"
+    title = "TrustedRouter: Encrypt all your AI chats"
+    description = "Access hundreds of models confidentially through a single OpenAI-compatible API."
+    social_card = "https://trustedrouter.com/static/homepage/social-card-v2.jpg"
     assert 'property="og:type" content="website"' in dashboard.text
     assert f'property="og:title" content="{title}"' in dashboard.text
     assert f'property="og:description" content="{description}"' in dashboard.text

@@ -313,45 +313,6 @@ def test_console_earnings_bulk_hydrates_model_names(
     assert all(model.name in response.text for model in models)
 
 
-def test_console_user_models_passes_authenticated_owner_to_serializer(
-    client: TestClient,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    user = STORE.ensure_user("user-model-owner-route@example.com")
-    workspace = STORE.list_workspaces_for_user(user.id)[0]
-    user.identity_status = "approved"
-    user.identity_verified_name = "Ada Console Owner"
-    STORE.create_user_model(
-        owner_user_id=user.id,
-        owner_workspace_id=workspace.id,
-        name="Owner reuse route model",
-        kind="machine",
-        endpoint_url="https://owner-reuse-route.example/v1",
-        slug="owner-reuse-route",
-        display_identity="verified_name",
-    )
-    raw_session, _session = STORE.create_auth_session(
-        user_id=user.id,
-        provider="test",
-        label="owner reuse route",
-        ttl_seconds=3600,
-        workspace_id=workspace.id,
-    )
-    client.cookies.set("tr_session", raw_session)
-    original_get_user = InMemoryStore.get_user
-    user_reads: list[str] = []
-
-    def count_user(store: InMemoryStore, user_id: str):
-        user_reads.append(user_id)
-        return original_get_user(store, user_id)
-
-    monkeypatch.setattr(InMemoryStore, "get_user", count_user)
-
-    response = client.get("/console/user-models")
-
-    assert response.status_code == 200
-    assert "Owner reuse route model" in response.text
-    assert user_reads == []
 
 
 def test_session_context_keeps_management_role_for_console_fallback() -> None:

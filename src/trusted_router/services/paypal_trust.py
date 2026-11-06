@@ -3,10 +3,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any
-from urllib.parse import urlparse
 
 from trusted_router.services.provider_trust import invalid, observation, timestamp, usd_micro
 from trusted_router.storage_models import AdverseTrustEvent
+from trusted_router.url_validation import parse_url
 
 PAYPAL_ADVERSE_EVENTS = frozenset({
     "PAYMENT.CAPTURE.REFUNDED", "PAYMENT.CAPTURE.REVERSED",
@@ -19,7 +19,9 @@ def _capture_reference(resource: Mapping[str, Any]) -> str:
     related = resource.get("supplementary_data", {}).get("related_ids", {})
     capture = str(related.get("capture_id") or "")
     for link in resource.get("links", []):
-        parsed = urlparse(str(link.get("href") or ""))
+        parsed = parse_url(str(link.get("href") or ""))
+        if parsed is None:
+            return invalid("Provider adverse and original payment references are required")
         path = parsed.path.split("/")
         if link.get("rel") == "up" and len(path) == 5 and path[1:4] == ["v2", "payments", "captures"]:
             linked = path[-1]

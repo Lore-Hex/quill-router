@@ -14,7 +14,7 @@ from trusted_router.types import ErrorType
 
 def register_signup_routes(router: APIRouter) -> None:
     @router.post("/signup")
-    async def signup(
+    def signup(
         body: SignupRequest,
         request: Request,
         settings: SettingsDep,

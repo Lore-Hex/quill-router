@@ -59,6 +59,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     LIBERTY_1_0_MODEL_ID,
     LIBERTY_2_0_MODEL_ID,
     LIBERTY_3_0_MODEL_ID,
+    LIBERTY_4_0_MODEL_ID,
     MAPREDUCE_CATALOG_MODEL_ORDER,
     MAPREDUCE_MODEL_ID,
     META_MODEL_IDS,
@@ -652,6 +653,15 @@ MODELS: dict[str, Model] = {
             PARASAIL_LIBERTY_2_0_OUTPUT_MICRODOLLARS_PER_MILLION
         ),
         minimum_charge_microdollars=(PARASAIL_LIBERTY_2_0_MINIMUM_CHARGE_MICRODOLLARS),
+    ),
+    LIBERTY_4_0_MODEL_ID: Model(
+        id=LIBERTY_4_0_MODEL_ID,
+        name="TrustedRouter Liberty 4.0",
+        provider="trustedrouter",
+        context_length=1_048_576,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
     ),
     LIBERTY_3_0_MODEL_ID: Model(
         id=LIBERTY_3_0_MODEL_ID,
@@ -1458,7 +1468,13 @@ MODELS[POLYPHEMUS_MODEL_ID] = Model(
 _polyphemus_endpoint = _endpoint(MODELS[POLYPHEMUS_MODEL_ID], usage_type="Credits")
 MODEL_ENDPOINTS[_polyphemus_endpoint.id] = _polyphemus_endpoint
 MODEL_ENDPOINTS.update(_INGESTED_ENDPOINTS)
-MODEL_ENDPOINTS.update(_SUPPLEMENTAL_ENDPOINTS)
+for _endpoint_id, _supplemental_endpoint in _SUPPLEMENTAL_ENDPOINTS.items():
+    _previous_endpoint = MODEL_ENDPOINTS.get(_endpoint_id)
+    if not _supplemental_endpoint.context_length and _previous_endpoint is not None:
+        _supplemental_endpoint = replace(
+            _supplemental_endpoint, context_length=_previous_endpoint.context_length,
+        )
+    MODEL_ENDPOINTS[_endpoint_id] = _supplemental_endpoint
 # A hosted decision model's vendor route came from `_build_endpoints`; its
 # fallback hosts (same model, different upstream id and price) are explicit.
 MODEL_ENDPOINTS.update(_decision_fallback_endpoints(_DECISION_MODELS))
@@ -1754,8 +1770,6 @@ MODEL_ENDPOINTS = _filter_unserved_provider_endpoints(
 )
 _settle_deepseek_v4_pro_0423_leaf(_DEEPSEEK_V4_PRO_0423_HOST_WINDOWS)
 
-consolidate_model_routes(MODELS, MODEL_ENDPOINTS)
-
 # Apply gateway rollout holds after every catalog source has merged and before
 # capabilities are derived. An hourly refresh must not reintroduce held routes.
 apply_gateway_admission_holds(MODELS, MODEL_ENDPOINTS)
@@ -1790,6 +1804,10 @@ for _proxy_id, _backing_id in PRIVATE_PROXY_MODEL_TARGETS.items():
                 value for value in _proxy.input_modalities if value not in _dropped
             ),
         )
+
+# Copy listing aliases' routes after normalization: reviewed contracts are keyed
+# by the alias's own id, so a copy made earlier lost what they grant (tools).
+consolidate_model_routes(MODELS, MODEL_ENDPOINTS)
 
 
 # Build tier aliases after ingestion and normalization so their context window

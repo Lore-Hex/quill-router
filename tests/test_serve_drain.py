@@ -399,3 +399,1034 @@ def test_real_sigterm_serves_fresh_connection_during_drain(tmp_path: Path) -> No
             if process.poll() is None:
                 process.kill()
                 process.wait(timeout=5)
+
+
+
+def _stall_server(monkeypatch: pytest.MonkeyPatch, stall: float | None) -> serve.DrainingServer:
+    server = serve.DrainingServer(
+        serve.build_config({"PORT": "8080"}), drain_seconds=3.0, stall_seconds=stall,
+    )
+    monkeypatch.setattr(server.config, "callback_notify", None, raising=False)
+    return server
+
+
+def _record_arming(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, object]]:
+    calls: list[tuple[str, object]] = []
+    monkeypatch.setattr(serve, "LoopStallDiagnostics", lambda *args, **kwargs: None)
+    monkeypatch.setattr(serve, "stall_dump_fd", lambda fd: calls.append(("dump_fd", fd)) or 99)
+    monkeypatch.setattr(serve.faulthandler, "dump_traceback_later",
+                        lambda timeout, exit=False, file=None: calls.append(("dump", (timeout, exit, file))))
+    monkeypatch.setattr(serve.faulthandler, "cancel_dump_traceback_later",
+                        lambda: calls.append(("cancel", None)))
+    return calls
+
+
+def test_each_second_of_ticks_rearms_the_stall_watchdog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _record_arming(monkeypatch)
+    clock = [1000.0]
+    monkeypatch.setattr(serve, "monotonic", lambda: clock[0])
+    server = _stall_server(monkeypatch, 30.0)
+
+    for counter in range(21):
+        asyncio.run(server.on_tick(counter))
+        clock[0] += 0.1
+
+    arm = ("dump", (30.0, True, 99))
+    assert calls == [("dump_fd", sys.stderr.fileno()), arm, arm, arm]
+
+
+def test_slow_ticks_rearm_the_stall_watchdog_on_every_tick(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Ten ticks 3.1 s apart would outlast a 30 s budget; each one re-arms.
+    calls = _record_arming(monkeypatch)
+    clock = [1000.0]
+    monkeypatch.setattr(serve, "monotonic", lambda: clock[0])
+    server = _stall_server(monkeypatch, 30.0)
+
+    for counter in range(10):
+        asyncio.run(server.on_tick(counter))
+        clock[0] += 3.1
+
+    assert calls.count(("dump", (30.0, True, 99))) == 10
+
+
+def test_without_a_stall_budget_ticks_arm_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _record_arming(monkeypatch)
+    server = _stall_server(monkeypatch, None)
+
+    for counter in range(21):
+        asyncio.run(server.on_tick(counter))
+
+    assert calls == []
+
+
+def test_shutdown_disarms_the_stall_watchdog(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _record_arming(monkeypatch)
+
+    async def stock_shutdown(self: object, sockets: object = None) -> None:
+        calls.append(("stock_shutdown", None))
+
+    monkeypatch.setattr(serve.uvicorn.Server, "shutdown", stock_shutdown)
+    server = _stall_server(monkeypatch, 30.0)
+
+    asyncio.run(server.shutdown())
+
+    assert calls == [("cancel", None), ("stock_shutdown", None)]
+
+
+@pytest.mark.parametrize(("raw", "expected"), [
+    (None, None), ("", None), (" ", None), ("30", 30.0), ("2", 2.0),
+    ("1.9", None), ("0", None), ("-5", None), ("nan", None), ("inf", None), ("thirty", None),
+])
+def test_stall_budget_comes_from_env(raw: str | None, expected: float | None) -> None:
+    env = {} if raw is None else {serve.LOOP_STALL_ENV: raw}
+    assert serve.loop_stall_seconds_from_env(env) == expected
+
+
+def test_trusted_router_rollout_sets_the_stall_budget_with_continuous_cpu() -> None:
+    rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
+    assert f'"{serve.LOOP_STALL_ENV}=30"' in rollout
+    assert "--no-cpu-throttling" in rollout
+
+
+_STALL_SCRIPT = """
+import os
+import socket
+import sys
+import time
+
+from starlette.applications import Starlette
+from starlette.responses import PlainTextResponse
+from starlette.routing import Route
+from trusted_router import serve
+
+FILL_STDERR = sys.argv[2] == "fill"
+
+def wedged_call():
+    time.sleep(30)
+
+async def block(request):
+    print("blocking", flush=True)
+    if FILL_STDERR:
+        os.set_blocking(2, False)
+        try:
+            while True:
+                os.write(2, b"x" * 4096)
+        except BlockingIOError:
+            pass
+        os.set_blocking(2, True)
+    wedged_call()
+    return PlainTextResponse("unreachable")
+
+async def health(request):
+    return PlainTextResponse("ok")
+
+async def slow(request):
+    # Holds the loop for a while on each request: ticks slow, never stop.
+    time.sleep(0.4)
+    return PlainTextResponse("ok")
+
+config = serve.build_config({})
+config.app = Starlette(routes=[Route("/block", block), Route("/health", health), Route("/slow", slow)])
+server = serve.DrainingServer(config, drain_seconds=0, stall_seconds=2.5)
+server.run(sockets=[socket.socket(fileno=int(sys.argv[1]))])
+"""
+
+
+def _run_stalled_server(tmp_path: Path, *, fill_stderr: bool) -> tuple[int, str]:
+    # A loop whose ticks are slowed by every request outlives several stall
+    # budgets; a loop blocked in a call then ends the process within one.
+    out_path = tmp_path / "stdout.log"
+    err_path = tmp_path / "stderr.log"
+    env = dict(os.environ, PYTHONPATH=str(ROOT / "src"))
+    read_end = write_end = None
+    if fill_stderr:
+        # A pipe nobody reads stands for a backed-up log collector.
+        read_end, write_end = os.pipe()
+    with socket.socket() as listener, out_path.open("w") as out, err_path.open("w") as err:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+        process = subprocess.Popen(  # noqa: S603 - fixed local test program
+            [sys.executable, "-c", _STALL_SCRIPT, str(listener.fileno()), "fill" if fill_stderr else "drain"],
+            cwd=tmp_path, env=env, pass_fds=(listener.fileno(),), stdout=out,
+            stderr=write_end if write_end is not None else err,
+        )
+        if write_end is not None:
+            os.close(write_end)
+
+        def get(path: str) -> int:
+            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
+            try:
+                connection.request("GET", path)
+                response = connection.getresponse()
+                response.read()
+                return response.status
+            finally:
+                connection.close()
+
+        try:
+            deadline = time.monotonic() + 10
+            while True:
+                assert process.poll() is None, out_path.read_text()
+                try:
+                    if get("/health") == 200:
+                        break
+                except (OSError, http.client.HTTPException):
+                    time.sleep(0.05)
+                assert time.monotonic() < deadline, out_path.read_text()
+
+            healthy_until = time.monotonic() + 6
+            while time.monotonic() < healthy_until:
+                assert get("/slow") == 200
+            assert process.poll() is None, out_path.read_text()
+
+            with pytest.raises((OSError, http.client.HTTPException)):
+                get("/block")
+            returncode = process.wait(timeout=8)
+            assert "blocking" in out_path.read_text()
+            return returncode, err_path.read_text()
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+            if read_end is not None:
+                os.close(read_end)
+
+
+def test_real_stalled_loop_exits_with_every_stack(tmp_path: Path) -> None:
+    returncode, logs = _run_stalled_server(tmp_path, fill_stderr=False)
+    assert returncode == 1, logs
+    assert "Timeout (0:00:02.500000)!" in logs
+    assert "in wedged_call" in logs
+
+
+@pytest.mark.skipif(not Path("/proc/self/fd").is_dir(), reason="the dump descriptor reopens stderr through /proc")
+def test_real_stalled_loop_exits_when_stderr_is_backed_up(tmp_path: Path) -> None:
+    # The dump cannot be written, but the exit is not held behind it.
+    returncode, _ = _run_stalled_server(tmp_path, fill_stderr=True)
+    assert returncode == 1
+
+
+@pytest.mark.skipif(not Path("/proc/self/fd").is_dir(), reason="the dump descriptor reopens stderr through /proc")
+def test_dump_descriptor_is_nonblocking_without_changing_stderr() -> None:
+    read_end, write_end = os.pipe()
+    try:
+        fd = serve.stall_dump_fd(write_end)
+        assert fd != write_end
+        assert os.get_blocking(write_end) is True
+        assert os.get_blocking(fd) is False
+        os.write(fd, b"stack")
+        assert os.read(read_end, 16) == b"stack"
+        os.close(fd)
+    finally:
+        os.close(read_end)
+        os.close(write_end)
+
+
+def test_dump_descriptor_falls_back_to_stderr_when_it_cannot_reopen(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    from trusted_router import stall_dump
+
+    before = stall_dump.DROPPED_DIAGNOSTIC_FAILURES
+
+    def refuse(*args: object, **kwargs: object) -> int:
+        raise FileNotFoundError("no /proc")
+
+    monkeypatch.setattr(serve.os, "open", refuse)
+    read_end, write_end = os.pipe()
+    try:
+        with caplog.at_level(logging.WARNING, logger="trusted_router.serve"):
+            assert serve.stall_dump_fd(write_end) == write_end
+        assert os.get_blocking(write_end) is True
+        assert stall_dump.DROPPED_DIAGNOSTIC_FAILURES == before + 1
+        assert not caplog.text
+    finally:
+        os.close(read_end)
+        os.close(write_end)
+
+
+def test_drain_immediate_dump_preserves_the_live_event_loop_watchdog() -> None:
+    # Run both real dump mechanisms in one process. Only the drain's immediate
+    # exit is intercepted so the existing C timer can prove it is still armed.
+    code = """
+import asyncio
+import faulthandler
+import time
+from trusted_router import serve
+from trusted_router.services import settle_outbox_worker as worker
+assert serve.stall_dump_fd is worker.stall_dump_fd
+original_arm = faulthandler.dump_traceback_later
+original_cancel = faulthandler.cancel_dump_traceback_later
+def arm(*args, **kwargs):
+    print('arm', flush=True)
+    return original_arm(*args, **kwargs)
+def cancel():
+    print('cancel', flush=True)
+    return original_cancel()
+faulthandler.dump_traceback_later = arm
+faulthandler.cancel_dump_traceback_later = cancel
+server = serve.DrainingServer(serve.build_config({}), drain_seconds=0, stall_seconds=2)
+asyncio.run(server.on_tick(0))
+worker.os._exit = lambda code: print(f'exit {code}', flush=True)
+worker._exit_stalled_worker()
+time.sleep(10)
+"""
+    process = subprocess.run(  # noqa: S603 - fixed test program, no external inputs
+        [sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True, timeout=30,
+    )
+    assert process.returncode == 1, process.stderr
+    assert process.stdout.splitlines() == ["arm", "exit 70"]
+    assert "in _exit_stalled_worker" in process.stderr  # immediate dump happened
+    assert "Timeout (0:00:02)!" in process.stderr  # original delayed timer fired
+
+
+@pytest.mark.skipif(not Path("/proc/self/fd").is_dir(), reason="the dump descriptor reopens stderr through /proc")
+def test_real_drain_stall_exits_when_stderr_is_backed_up() -> None:
+    # No socket required. Fill stderr after imports, then measure only dump+exit.
+    code = """
+import os
+import sys
+import time
+from trusted_router.services import settle_outbox_worker as worker
+fd = sys.stderr.fileno()
+os.set_blocking(fd, False)
+try:
+    while True:
+        os.write(fd, b'x' * 4096)
+except BlockingIOError:
+    pass
+os.set_blocking(fd, True)
+print(time.monotonic(), flush=True)
+worker._exit_stalled_worker()
+"""
+    read_end, write_end = os.pipe()
+    try:
+        process = subprocess.run(  # noqa: S603 - fixed test program, no external inputs
+            [sys.executable, "-c", code], cwd=ROOT, stdout=subprocess.PIPE,
+            stderr=write_end, text=True, timeout=30,
+        )
+        elapsed = time.monotonic() - float(process.stdout.strip())
+        assert process.returncode == 70
+        assert elapsed < 1, f"dump+exit exceeded the 1 s operational budget: {elapsed}"
+    finally:
+        os.close(read_end)
+        os.close(write_end)
+
+
+@pytest.mark.parametrize("block", ["loop", "gil", "rearm"])
+def test_early_stall_samples_survive_loop_and_gil_blocks(tmp_path: Path, block: str) -> None:
+    # This reproduces diagnostic blind spots, NOT the unproven Spanner incident.
+    # PyDLL deliberately retains the GIL in a sleeping native worker; a Python
+    # sampler thread cannot take a stack sample in that case. No sockets needed.
+    code = r'''
+import asyncio
+import ctypes
+import os
+import sys
+import threading
+import time
+from trusted_router import serve, stall_dump
+stall_dump.SAMPLE_SECONDS = (0.3, 0.8)
+stall_dump.PULSE_SECONDS = 0.05
+fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NONBLOCK, 0o600)
+serve.stall_dump_fd = lambda _: fd
+async def stock_shutdown(self, sockets=None):
+    pass
+serve.uvicorn.Server.shutdown = stock_shutdown
+server = serve.DrainingServer(serve.build_config({}), drain_seconds=0, stall_seconds=5)
+asyncio.run(server.on_tick(0))
+assert server._stall_diagnostics._ready.wait(2)
+time.sleep(0.1)
+if sys.argv[2] == 'gil':
+    def native_worker():
+        ctypes.PyDLL(None).sleep(2)
+    worker = threading.Thread(target=native_worker)
+    worker.start()
+    worker.join()
+elif sys.argv[2] == 'rearm':
+    original = serve.faulthandler.dump_traceback_later
+    def blocked_rearm(*args, **kwargs):
+        time.sleep(1.4)
+        original(*args, **kwargs)
+    serve.faulthandler.dump_traceback_later = blocked_rearm
+    server._stall_armed_at = None
+    asyncio.run(server.on_tick(1))
+else:
+    def blocked_loop():
+        time.sleep(1.4)
+    blocked_loop()
+asyncio.run(server.shutdown())
+time.sleep(0.2)
+os.close(fd)
+'''
+    dump = tmp_path / "early-stacks.log"
+    process = subprocess.run(  # noqa: S603 - fixed isolated diagnostic scenario
+        [sys.executable, "-c", code, str(dump), block], cwd=ROOT,
+        capture_output=True, text=True, timeout=15,
+    )
+    assert process.returncode == 0, process.stderr
+    logs = dump.read_text()
+    samples = [line for line in logs.splitlines() if "serve.loop_stall_sample " in line]
+    assert len(samples) == 2, logs
+    assert "threshold_seconds=0.3" in samples[0]
+    assert "threshold_seconds=0.8" in samples[1]
+    progress = "stalled" if block == "gil" else "running"
+    assert all(f"python_progress={progress}" in line for line in samples), logs
+    frame = {"loop": "blocked_loop", "gil": "native_worker", "rearm": "blocked_rearm"}[block]
+    assert f"in {frame}" in logs, logs
+    if block == "rearm":
+        assert all("loop_phase=rearm" in line for line in samples), logs
+    assert "Timeout (" not in logs  # Early samples did not replace/fire the exit timer.
+
+
+@pytest.mark.parametrize("mode", [
+    "healthy", "recover", "exit", "helper_exit", "full_pipe", "backed_up",
+])
+def test_stall_diagnostic_lifecycle(tmp_path: Path, mode: str) -> None:
+    code = r'''
+import asyncio
+import os
+import sys
+import threading
+import time
+from trusted_router import serve, stall_dump
+stall_dump.SAMPLE_SECONDS = (0.3, 0.8)
+stall_dump.PULSE_SECONDS = 0.05
+fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NONBLOCK, 0o600)
+if sys.argv[2] == 'backed_up':
+    os.close(fd)
+    read_end, fd = os.pipe()
+    os.set_blocking(fd, False)
+    try:
+        while True:
+            os.write(fd, b'x' * 4096)
+    except BlockingIOError:
+        pass
+serve.stall_dump_fd = lambda _: fd
+async def stock_shutdown(self, sockets=None):
+    pass
+serve.uvicorn.Server.shutdown = stock_shutdown
+server = serve.DrainingServer(serve.build_config({}), drain_seconds=0, stall_seconds=2)
+asyncio.run(server.on_tick(0))
+diagnostics = server._stall_diagnostics
+assert diagnostics is not None
+assert diagnostics._ready.wait(2)
+mode = sys.argv[2]
+if mode in {'exit', 'backed_up'}:
+    time.sleep(10)  # C exit timer must still kill this process after early dumps.
+elif mode == 'recover':
+    time.sleep(1.1)
+    asyncio.run(server.on_tick(1))
+    time.sleep(1.1)
+elif mode == 'helper_exit':
+    diagnostics._process.kill()
+    diagnostics._thread.join(timeout=3)
+    assert not diagnostics._thread.is_alive()
+    asyncio.run(server.on_tick(1))  # EPIPE cannot fail a serving tick.
+elif mode == 'full_pipe':
+    # Pause the actual reader and fill its pipe with valid pulse records.
+    # Neither the serving tick nor the pulse writer may wait for it.
+    import signal
+    os.kill(diagnostics._process.pid, signal.SIGSTOP)
+    try:
+        record = stall_dump._BEAT.pack(b'P', time.monotonic())
+        try:
+            while True:
+                os.write(diagnostics._fd, record)
+        except BlockingIOError:
+            pass
+        before = time.monotonic()
+        asyncio.run(server.on_tick(1))
+        assert time.monotonic() - before < 0.02
+        time.sleep(0.12)
+        assert diagnostics.dropped_records > 0
+    finally:
+        os.kill(diagnostics._process.pid, signal.SIGCONT)
+
+else:
+    # A blocked worker alone must neither trigger samples nor stop serving
+    # ticks; this control is green on main and does not prove an RPC bug.
+    release = threading.Event()
+    worker = threading.Thread(target=release.wait)
+    worker.start()
+    async def healthy():
+        for i in range(15):
+            await asyncio.sleep(0.1)
+            await server.on_tick(i + 1)
+    asyncio.run(healthy())
+    assert worker.is_alive()
+    release.set()
+    worker.join()
+before = time.monotonic()
+asyncio.run(server.shutdown())
+assert time.monotonic() - before < 0.5
+diagnostics._thread.join(timeout=3)
+assert not diagnostics._thread.is_alive()
+assert diagnostics._process.poll() is not None
+time.sleep(0.9)  # No late samples after shutdown, even though ticks have stopped.
+os.close(fd)
+'''
+    dump = tmp_path / "lifecycle-stacks.log"
+    process = subprocess.run(  # noqa: S603 - fixed isolated diagnostic scenario
+        [sys.executable, "-c", code, str(dump), mode], cwd=ROOT,
+        capture_output=True, text=True, timeout=15,
+    )
+    logs = dump.read_text()
+    assert process.returncode == (1 if mode in {"exit", "backed_up"} else 0), process.stderr + logs
+    count = logs.count("serve.loop_stall_sample ")
+    assert count == {"recover": 4, "exit": 2}.get(mode, 0), logs
+    assert ("Timeout (0:00:02)!" in logs) == (mode == "exit"), logs
+
+
+def test_stall_diagnostic_setup_failure_keeps_exit_watchdog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _record_arming(monkeypatch)
+
+    def fail(*args: object, **kwargs: object) -> None:
+        raise OSError("helper unavailable")
+
+    monkeypatch.setattr(serve, "LoopStallDiagnostics", fail)
+    server = _stall_server(monkeypatch, 30)
+    asyncio.run(server.on_tick(0))
+    assert calls[-1] == ("dump", (30, True, 99))
+
+
+def test_stall_diagnostic_fd_exhaustion_closes_partial_setup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router import stall_dump
+    from trusted_router.stall_dump import LoopStallDiagnostics
+
+    failures = stall_dump.DIAGNOSTIC_FAILURES
+    fd = os.open(tmp_path / "dump", os.O_WRONLY | os.O_CREAT | os.O_NONBLOCK, 0o600)
+    read_fd, write_fd = os.pipe()
+    monkeypatch.setattr(os, "pipe", lambda: (read_fd, write_fd))
+
+    def exhausted(*args: object) -> int:
+        raise OSError(errno.EMFILE, "no descriptors")
+
+    monkeypatch.setattr(os, "dup", exhausted)
+    try:
+        diagnostics = LoopStallDiagnostics(fd, 30)
+        assert diagnostics._finished.wait(2)
+        assert stall_dump.DIAGNOSTIC_FAILURES == failures + 1
+        for closed in (read_fd, write_fd):
+            with pytest.raises(OSError) as exc:
+                os.fstat(closed)
+            assert exc.value.errno == errno.EBADF
+    finally:
+        os.close(fd)
+
+
+def test_failed_helper_with_blocking_stderr_preserves_progress_and_exit(tmp_path: Path) -> None:
+    # Review F1 probe: separate nonblocking dump FD, production-style synchronous
+    # stderr handler, a full blocking stderr pipe, then Popen(EAGAIN).
+    code = r'''
+import asyncio
+import errno
+import logging
+import os
+import sys
+import time
+from trusted_router import serve, stall_dump
+stall_dump.SAMPLE_SECONDS = (0.3, 0.8)
+fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_NONBLOCK, 0o600)
+serve.stall_dump_fd = lambda _: fd
+serve.logger.addHandler(logging.StreamHandler(sys.stderr))
+def fail(*args, **kwargs):
+    raise OSError(errno.EAGAIN, 'helper start failed')
+stall_dump.subprocess.Popen = fail
+os.set_blocking(2, False)
+try:
+    while True:
+        os.write(2, b'x' * 4096)
+except BlockingIOError:
+    pass
+os.set_blocking(2, True)
+server = serve.DrainingServer(serve.build_config({}), drain_seconds=0, stall_seconds=2)
+async def run():
+    start = time.monotonic()
+    await server.on_tick(0)
+    print('armed', flush=True)
+    # Outlive the original budget while continuing to tick, then really stall.
+    for i in range(24):
+        await asyncio.sleep(0.1)
+        await server.on_tick(i + 1)
+    print('progress', time.monotonic() - start, flush=True)
+    server._stall_armed_at = None
+    await server.on_tick(25)
+    print('stall', time.monotonic(), flush=True)
+    time.sleep(10)
+asyncio.run(run())
+'''
+    read_fd, write_fd = os.pipe()
+    dump = tmp_path / "failure-dump"
+    try:
+        result = subprocess.run(  # noqa: S603 - fixed isolated failure probe
+            [sys.executable, "-c", code, str(dump)], cwd=ROOT,
+            stdout=subprocess.PIPE, stderr=write_fd, text=True, timeout=8,
+        )
+    finally:
+        os.close(read_fd)
+        os.close(write_fd)
+    assert result.returncode == 1, result.stdout
+    assert "armed\nprogress " in result.stdout, result.stdout
+    elapsed = time.monotonic() - float(result.stdout.split("stall ")[1])
+    assert 1.8 <= elapsed < 2.5, elapsed
+    assert "Timeout (0:00:02)!" in dump.read_text()
+
+
+@pytest.mark.parametrize("mode", ["spawn", "cleanup"])
+def test_slow_helper_start_and_cleanup_never_delay_tick(tmp_path: Path, mode: str) -> None:
+    code = r'''
+import asyncio
+import json
+import os
+import sys
+import threading
+import time
+from trusted_router import serve, stall_dump
+fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_NONBLOCK, 0o600)
+serve.stall_dump_fd = lambda _: fd
+original_popen = stall_dump.subprocess.Popen
+original_wait = original_popen.wait
+original_start = threading.Thread.start
+entered = threading.Event()
+cleaned = threading.Event()
+workers = []
+def popen(*args, **kwargs):
+    workers.append(threading.get_ident())
+    if sys.argv[2] == 'spawn':
+        entered.set()
+        time.sleep(0.5)
+    return original_popen(*args, **kwargs)
+def start(self):
+    if self.name == 'loop-stall-pulse' and sys.argv[2] == 'cleanup':
+        raise RuntimeError('pulse startup failure')
+    return original_start(self)
+def wait(self, *args, **kwargs):
+    workers.append(threading.get_ident())
+    entered.set()
+    time.sleep(0.5)
+    result = original_wait(self, *args, **kwargs)
+    cleaned.set()
+    return result
+original_popen.wait = wait
+stall_dump.subprocess.Popen = popen
+threading.Thread.start = start
+arms = []
+serve.faulthandler.dump_traceback_later = lambda *a, **kw: arms.append(time.monotonic())
+async def stock_shutdown(self, sockets=None):
+    pass
+serve.uvicorn.Server.shutdown = stock_shutdown
+server = serve.DrainingServer(serve.build_config({}), drain_seconds=0, stall_seconds=30)
+async def run():
+    loop_tid = threading.get_ident()
+    ready = []
+    begin = time.monotonic()
+    asyncio.get_running_loop().call_soon(lambda: ready.append(time.monotonic()))
+    await server.on_tick(0)
+    await asyncio.sleep(0)
+    first_tick = time.monotonic() - begin
+    for _ in range(300):
+        if entered.is_set():
+            break
+        await asyncio.sleep(0.01)
+    assert entered.is_set()
+    before = time.monotonic()
+    await server.shutdown()  # Also stop during partial startup/cleanup.
+    shutdown = time.monotonic() - before
+    for _ in range(400):
+        if cleaned.is_set():
+            break
+        await asyncio.sleep(0.01)
+    assert cleaned.is_set(), 'real cleanup was not exercised'
+    print(json.dumps(dict(arm=arms[0]-begin, ready=ready[0]-begin, tick=first_tick,
+                          shutdown=shutdown, off_loop=all(t != loop_tid for t in workers))))
+asyncio.run(run())
+'''
+    import json
+
+    result = subprocess.run(  # noqa: S603 - fixed isolated lifecycle probe
+        [sys.executable, "-c", code, str(tmp_path / "dump"), mode], cwd=ROOT,
+        capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    (tmp_path / "measurements.json").write_text(result.stdout)
+    measured = json.loads(result.stdout)
+    assert measured["arm"] < 0.01, measured
+    assert measured["ready"] < 0.01, measured
+    assert measured["tick"] < 0.01, measured
+    assert measured["shutdown"] < 0.01, measured
+    assert measured["off_loop"], measured
+
+
+def test_production_stall_thresholds_and_exit_budget(tmp_path: Path) -> None:
+    # No scaled constants: derive the exit budget from the deployed config.
+    import re
+
+    from trusted_router.stall_dump import SAMPLE_SECONDS
+
+    rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
+    match = re.search(r'"TR_LOOP_STALL_EXIT_SECONDS=(\d+)"', rollout)
+    assert match is not None
+    budget = serve.loop_stall_seconds_from_env({serve.LOOP_STALL_ENV: match[1]})
+    assert budget == 30
+    assert SAMPLE_SECONDS == (5.0, 15.0)
+    code = r'''
+import asyncio
+import os
+import sys
+import time
+from trusted_router import serve
+fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_NONBLOCK, 0o600)
+serve.stall_dump_fd = lambda _: fd
+server = serve.DrainingServer(serve.build_config({}), drain_seconds=0, stall_seconds=float(sys.argv[2]))
+asyncio.run(server.on_tick(0))
+print(time.monotonic(), flush=True)
+time.sleep(40)
+'''
+    dump = tmp_path / "production-stacks"
+    result = subprocess.run(  # noqa: S603 - fixed actual-configuration stall probe
+        [sys.executable, "-c", code, str(dump), str(budget)], cwd=ROOT,
+        capture_output=True, text=True, timeout=36,
+    )
+    assert result.returncode == 1, result.stderr
+    elapsed = time.monotonic() - float(result.stdout.strip())
+    assert 29.5 <= elapsed < 32, elapsed
+    logs = dump.read_text()
+    samples = re.findall(r"threshold_seconds=(\d+) loop_age_seconds=([\d.]+)", logs)
+    assert [int(threshold) for threshold, _ in samples] == [5, 15], logs
+    for threshold, age in samples:
+        assert float(threshold) <= float(age) < float(threshold) + 1.5, samples
+    assert "Timeout (0:00:30)!" in logs
+
+
+@pytest.mark.parametrize("state", ["available", "failed", "stopped"])
+def test_exit_arm_precedes_every_diagnostic_callback(
+    monkeypatch: pytest.MonkeyPatch, state: str,
+) -> None:
+    calls = _record_arming(monkeypatch)
+    clock = [1000.0]
+    monkeypatch.setattr(serve, "monotonic", lambda: clock[0])
+
+    class Diagnostics:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            calls.append(("setup", None))
+            if state == "failed":
+                raise OSError("unavailable")
+
+        def beat(self) -> None:
+            calls.append(("beat", None))
+
+        def stop(self) -> None:
+            calls.append(("stop", None))
+
+    monkeypatch.setattr(serve, "LoopStallDiagnostics", Diagnostics)
+    monkeypatch.setattr(serve, "diagnostic_failure", lambda fd: calls.append(("failed", fd)))
+    server = _stall_server(monkeypatch, 30)
+    asyncio.run(server.on_tick(1))
+    arm = ("dump", (30, True, 99))
+    assert calls[:3] == [("dump_fd", sys.stderr.fileno()), arm, ("setup", None)]
+    if state == "stopped":
+        assert server._stall_diagnostics is not None
+        server._stall_diagnostics.stop()
+    calls.clear()
+    clock[0] += 1.1
+    asyncio.run(server.on_tick(2))
+    assert calls == ([arm] if state == "failed" else [arm, ("beat", None)])
+
+
+def test_stop_before_bootstrap_does_not_allocate_or_register(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router import stall_dump
+
+    pending = []
+    monkeypatch.setattr(stall_dump._thread, "start_new_thread",
+                        lambda fn, args: pending.append((fn, args)) or 1)
+    monkeypatch.setattr(stall_dump.os, "pipe", lambda: pytest.fail("allocated after stop"))
+    monkeypatch.setattr(stall_dump.faulthandler, "register",
+                        lambda *a, **kw: pytest.fail("registered after stop"))
+    diagnostics = stall_dump.LoopStallDiagnostics(99, 30)
+    diagnostics.stop()
+    fn, args = pending.pop()
+    fn(*args)
+    assert diagnostics._finished.is_set()
+    assert diagnostics._process is None
+
+
+def test_failed_second_sampler_cannot_unregister_live_owner(tmp_path: Path) -> None:
+    code = r'''
+import os
+import signal
+import sys
+from trusted_router.stall_dump import LoopStallDiagnostics
+fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_NONBLOCK, 0o600)
+owner = LoopStallDiagnostics(fd, 30)
+assert owner._ready.wait(2)
+other = LoopStallDiagnostics(fd, 30)
+assert other._finished.wait(2)
+assert other._process is None
+os.kill(os.getpid(), signal.SIGUSR2)  # Would terminate if failure removed owner's handler.
+owner.stop()
+assert owner._finished.wait(3)
+assert owner._process.poll() is not None
+os.close(fd)
+'''
+    dump = tmp_path / "owner-dump"
+    result = subprocess.run(  # noqa: S603 - fixed signal ownership probe
+        [sys.executable, "-c", code, str(dump)], cwd=ROOT,
+        capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Current thread" in dump.read_text()
+
+
+# Run the application and the probe clock in DIFFERENT OS processes. An
+# asyncio.wait_for on the serving loop cannot time a CPU-starved HTTP request.
+_LIVENESS_SERVER = r'''
+import asyncio
+import json
+import socket
+import sys
+import time
+
+import sentry_sdk
+from sentry_sdk.transport import HttpTransport
+from trusted_router import sentry_config, serve
+from trusted_router.config import Settings
+from trusted_router.main import create_app
+
+# Retain the real integrations, sampling, transport queue and worker. Replace
+# only final envelope delivery so this regression cannot contact Sentry.
+def delivered(self, envelope):
+    print("LIVENESS_ENVELOPE", flush=True)
+HttpTransport._send_envelope = delivered
+# Test environment disables unrelated background IO. Bypass ONLY Sentry's
+# test suppression, exercising the production init_sentry configuration.
+sentry_config._running_under_pytest = lambda settings: False
+app = create_app(Settings(
+    environment="test", service_surface="internal", storage_backend="memory",
+    sentry_dsn="https://public@example.invalid/1", sentry_traces_sample_rate=1.0,
+), init_observability=True)
+client = sentry_sdk.get_client()
+assert client.is_active()
+assert {"fastapi", "starlette", "logging"} <= client.integrations.keys()
+print("LIVENESS_SENTRY_ACTIVE", flush=True)
+state = {"count": 0, "start": None}
+ready = asyncio.Event()
+block_seconds = float(sys.argv[2])
+cycles = int(sys.argv[3])
+
+@app.get("/liveness-test-work")
+async def work():
+    state["count"] += 1
+    if state["count"] == 8:
+        state["start"] = time.monotonic() + 2
+        ready.set()
+    await ready.wait()
+    for cycle in range(cycles):
+        await asyncio.sleep(max(0, state["start"] + cycle * 10 - time.monotonic()))
+        end = time.monotonic() + block_seconds
+        while time.monotonic() < end:
+            pass
+    return {"completed": True}
+
+@app.get("/liveness-test-status")
+async def status():
+    return state
+
+class Server(serve.DrainingServer):
+    async def on_tick(self, counter):
+        now = time.monotonic()
+        if self._stall_armed_at is None or now - self._stall_armed_at >= 1:
+            print("LIVENESS_TICK", now, flush=True)
+        return await super().on_tick(counter)
+
+config = serve.build_config({})
+config.app = app
+assert config.access_log  # Include synchronous Uvicorn access logging.
+server = Server(config, drain_seconds=3, stall_seconds=30)
+server.run(sockets=[socket.socket(fileno=int(sys.argv[1]))])
+'''
+
+_LIVENESS_PROBER = r'''
+import concurrent.futures
+import json
+import os
+import signal
+import socket
+import sys
+import time
+
+port, pid = int(sys.argv[1]), int(sys.argv[2])
+policy = json.loads(sys.argv[3])
+period = int(policy["periodSeconds"])
+timeout = int(policy["timeoutSeconds"])
+threshold = int(policy["failureThreshold"])
+mode = sys.argv[4]
+cycles = threshold + 1
+
+def get(path, budget):
+    started = time.monotonic()
+    deadline = started + budget
+    def remaining():
+        value = deadline - time.monotonic()
+        if value <= 0:
+            raise TimeoutError("external total HTTP deadline")
+        return value
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=remaining()) as conn:
+            conn.settimeout(remaining())
+            conn.sendall((f"GET {path} HTTP/1.1\r\nHost: instance\r\nConnection: close\r\n\r\n").encode())
+            data = b""
+            while True:
+                conn.settimeout(remaining())
+                chunk = conn.recv(65536)
+                if not chunk:
+                    break
+                data += chunk
+            head, body = data.split(b"\r\n\r\n", 1)
+            status = int(head.split(b" ", 2)[1])
+            result = {"status": status, "body": json.loads(body)}
+    except (OSError, ValueError) as exc:
+        result = {"error": type(exc).__name__}
+    return {**result, "started": started, "elapsed": time.monotonic() - started}
+
+def probe(origin, budget, count):
+    failures = maximum = 0
+    results = []
+    for index in range(count):
+        time.sleep(max(0, origin + index * period - time.monotonic()))
+        result = get("/health", budget)
+        failures = 0 if result.get("status") == 200 else failures + 1
+        maximum = max(maximum, failures)
+        results.append(result)
+    return {"results": results, "max_failures": maximum}
+
+assert get("/health", timeout)["status"] == 200
+if mode == "stopped":
+    stopped = time.monotonic()
+    os.kill(pid, signal.SIGSTOP)
+    # Worst phase: stop just after the previous successful probe, then wait
+    # almost a full period before the first failure attempt starts.
+    result = probe(stopped + period - 0.05, timeout, threshold)
+    result["stopped_elapsed"] = time.monotonic() - stopped
+    print(json.dumps(result), flush=True)
+else:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=9) as pool:
+        work = [pool.submit(get, "/liveness-test-work", cycles * period + 30) for _ in range(8)]
+        deadline = time.monotonic() + 10
+        while True:
+            status = get("/liveness-test-status", timeout)["body"]
+            if status["start"] is not None:
+                break
+            assert time.monotonic() < deadline
+            time.sleep(0.02)
+        assert status["count"] == 8
+        origin = status["start"] + 0.2
+        # Negative control: the old 2s deadline must reproduce the false kill,
+        # proving probes overlap the CPU bursts rather than idle intervals.
+        old = pool.submit(probe, origin, 2, cycles)
+        result = probe(origin, timeout, cycles)
+        result["old_policy"] = old.result()
+        result["work"] = [future.result() for future in work]
+        result["recovered"] = get("/health", timeout)
+        print(json.dumps(result), flush=True)
+'''
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="requires POSIX signals and inherited listener")
+@pytest.mark.parametrize("mode,block_seconds", [
+    ("reviewer-cpu", 0.4), ("eight-second-cpu", 1.0), ("stopped", 0.0),
+])
+def test_real_external_liveness_distinguishes_cpu_progress_from_sigstop(
+    tmp_path: Path, mode: str, block_seconds: float,
+) -> None:
+    import json
+    import re
+
+    # Read what will actually be deployed: shortening the timeout must make
+    # this real-server regression red, not leave a hardcoded probe green.
+    rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
+    match = re.search(r"--liveness-probe '([^']+)'", rollout)
+    assert match is not None
+    policy = dict(field.split("=", 1) for field in match[1].split(","))
+    threshold = int(policy["failureThreshold"])
+    period = int(policy["periodSeconds"])
+    timeout = int(policy["timeoutSeconds"])
+    env = {
+        key: value for key, value in os.environ.items()
+        if not key.startswith(("TR_", "UVICORN_", "AXIOM_", "SENTRY_"))
+        and key not in {"PYTEST_CURRENT_TEST", "WEB_CONCURRENCY", "FORWARDED_ALLOW_IPS"}
+    }
+    env.update(PYTHONPATH=str(ROOT / "src"), TR_STORAGE_BACKEND="memory", TR_ENVIRONMENT="test")
+    log_path = tmp_path / "server.log"
+    with socket.socket() as listener, log_path.open("w") as log:
+        try:
+            listener.bind(("127.0.0.1", 0))
+        except OSError as exc:
+            if exc.errno in {errno.EACCES, errno.EPERM}:
+                pytest.skip(f"operator must run real external liveness ({mode}): socket bind denied")
+            raise
+        port = listener.getsockname()[1]
+        process = subprocess.Popen(  # noqa: S603 - fixed local regression program
+            [sys.executable, "-c", _LIVENESS_SERVER, str(listener.fileno()),
+             str(block_seconds), str(threshold + 1)],
+            cwd=tmp_path, env=env, pass_fds=(listener.fileno(),),
+            stdout=log, stderr=subprocess.STDOUT,
+        )
+        try:
+            deadline = time.monotonic() + 30
+            while True:
+                assert process.poll() is None, log_path.read_text()
+                connection = http.client.HTTPConnection("127.0.0.1", port, timeout=0.2)
+                try:
+                    connection.request("GET", "/health")
+                    if connection.getresponse().status == 200:
+                        break
+                except (OSError, http.client.HTTPException):
+                    pass
+                finally:
+                    connection.close()
+                assert time.monotonic() < deadline, log_path.read_text()
+                time.sleep(0.05)
+            probe = subprocess.run(  # noqa: S603 - separate process owns all probe deadlines
+                [sys.executable, "-c", _LIVENESS_PROBER, str(port), str(process.pid),
+                 json.dumps(policy), mode],
+                cwd=tmp_path, env=env, capture_output=True, text=True,
+                timeout=(threshold + 1) * period + 40,
+            )
+            assert probe.returncode == 0, probe.stderr + log_path.read_text()
+            result = json.loads(probe.stdout)
+            (tmp_path / "probes.json").write_text(json.dumps(result, indent=2))
+            assert process.poll() is None, log_path.read_text()
+            if mode == "stopped":
+                assert result["max_failures"] == threshold, result
+                # Six 9s deadlines, starting at +10,+20,...,+60: ~69s.
+                # Allow 2s host scheduler tolerance, not server-loop time.
+                assert threshold * period + timeout - 1 <= result["stopped_elapsed"] <= threshold * period + timeout + 2, result
+                assert all(item.get("error") == "TimeoutError" for item in result["results"])
+            else:
+                assert result["max_failures"] == 0, result
+                assert result["old_policy"]["max_failures"] >= 4, result
+                assert all(item.get("status") == 200 for item in result["work"]), result
+                assert result["recovered"]["status"] == 200, result
+                ticks = [float(line.split()[1]) for line in log_path.read_text().splitlines()
+                         if line.startswith("LIVENESS_TICK ")]
+                assert len(ticks) > threshold
+                assert max(b - a for a, b in zip(ticks, ticks[1:], strict=False)) < 30
+            logs = log_path.read_text()
+            assert "LIVENESS_SENTRY_ACTIVE" in logs
+            assert "LIVENESS_ENVELOPE" in logs
+            assert '"GET /health HTTP/1.1" 200' in logs
+        finally:
+            # SIGKILL also cleans up a SIGSTOP'd process (SIGTERM would remain
+            # pending). Never leave a frozen child after assertion failure.
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=5)

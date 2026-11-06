@@ -18,7 +18,6 @@ domain never depends on the canonical domain to complete login.
 from __future__ import annotations
 
 import base64
-import hashlib
 import hmac
 import secrets
 from dataclasses import dataclass
@@ -182,6 +181,8 @@ def _persist_login(
     """Create-or-load the account and mint the session. Synchronous by design;
     the caller runs it on a worker thread."""
     existing_user = STORE.find_user_by_email(info.email)
+    if existing_user is not None and existing_user.disabled:
+        raise api_error(403, "This account is closed. Contact security@trustedrouter.com for assistance.", ErrorType.FORBIDDEN)
     first_time = existing_user is None
     delegated_signup = first_time and _is_credit_delegation_target(next_target)
     # `pending_reveal_raw_key` is the raw API key minted during signup; it
@@ -241,6 +242,8 @@ def _persist_login(
                         "Could not create or find user account; please retry sign-in",
                         ErrorType.INTERNAL_ERROR,
                     )
+                if concurrent.disabled:
+                    raise api_error(403, "This account is closed. Contact security@trustedrouter.com for assistance.", ErrorType.FORBIDDEN)
                 user_id = concurrent.id
                 if not concurrent.email_verified:
                     STORE.mark_user_email_verified(user_id)
@@ -505,12 +508,9 @@ def _state_signature(
         # Callers already reject disabled providers. Keeping this fail-closed
         # guard makes the helper safe if it is reused independently.
         raise RuntimeError(f"{provider.slug} OAuth client secret is unavailable")
-    digest = hmac.new(
-        secret.encode("utf-8"),
-        f"{provider.slug}:{unsigned_state}".encode(),
-        hashlib.sha256,
-    ).digest()
-    return _b64encode(digest)
+    from trusted_router.security import signed_token_signature
+
+    return signed_token_signature(secret, provider.slug, unsigned_state)
 
 
 def _b64encode(value: bytes) -> str:

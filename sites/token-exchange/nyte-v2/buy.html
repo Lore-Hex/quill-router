@@ -1,0 +1,97 @@
+<div class="buy-layout wrap">
+  <aside class="buy-brand" aria-label="About reserved tokens">
+    <p class="buy-kicker" data-exchange-name>New York Token Exchange</p>
+    <h1>Reserve your next<br><em>billion tokens.</em></h1>
+    <p class="lede">Reserve index-grade tokens by card for 2027 delivery, or request a custom reservation from our team.</p>
+    <div class="buy-notes"><h2>For buyers</h2><p>Choose a capability grade or a model and your timing, or request lots from a planned facility with a targeted launch. A 15-minute call helps define the next step.</p>
+    <h2>For providers</h2><p>Have inference capacity to offer? <a href="/suppliers">Explore supplying NYTE</a> or <a href="/providers">request the provider deck</a>.</p></div>
+    <details class="buy-contract"><summary>What we’ll discuss</summary><dl>
+      <dt>Volume and rate</dt><dd>A number of 1B-token blocks to draw on over a term, or reserved throughput in tokens per second.</dd>
+      <dt>Token accounting</dt><dd>The input, output and cached-input mix, and how usage would be counted.</dd>
+      <dt>Service requirements</dt><dd>Availability, time to first token and generation speed for your workload.</dd>
+      <dt>Term and delivery</dt><dd>Start date, duration, unused tokens and the provider responsible for delivery, subject to agreement.</dd>
+    </dl></details>
+    <p class="buy-fine">Card checkout purchases a reservation for 2027 delivery. The call path is a request to discuss a reservation, not an order. Capacity futures and derivatives are planned offerings, not live products. This is an inference service, not a securities or cryptocurrency exchange.</p>
+  </aside>
+  <div class="buy-workspace" id="buy-flow">
+    <p id="buy-reserved-success" class="buy-total" role="status" hidden>Thank you for your reservation. Stripe handles your payment confirmation. Your reserved tokens are for use January 1 through December 31, 2027; unused tokens expire December 31, 2027. Full refund on request within 30 days of purchase. After 30 days, exit is only through NYTE’s resale program.</p>
+    <ol class="buy-steps" aria-label="Request progress">
+      <li aria-current="step"><span>1</span> Tokens</li><li><span>2</span> Details</li><li><span>3</span> Contact</li><li><span>4</span> Book a call</li>
+    </ol>
+    <p class="buy-fine" id="buy-facility-unit-note" hidden>Facility lots are 1B tokens each</p>
+    <section class="buy-step" data-step="1" aria-labelledby="buy-title-1">
+      <h2 id="buy-title-1" tabindex="-1">What are you buying?</h2>
+      <p>Tell us how you’d like to plan your inference use.</p>
+      <fieldset><legend>Reservation unit</legend><ul class="buy-unit-list">
+        <li><label><input type="radio" name="unit" value="blocks" checked> <span>1 billion tokens (a block to draw on over a term)</span></label></li>
+        <li><label><input type="radio" name="unit" value="throughput"> <span>300 tokens per second (a reserved rate)</span></label></li>
+        <li><label><input type="radio" name="unit" value="unsure"> <span>Not sure yet</span></label></li>
+      </ul></fieldset>
+      <div class="buy-actions" data-js hidden><button class="btn btn-primary" type="button" data-next>Continue to details →</button></div>
+      <p class="buy-seller">Selling capacity? <span><a href="/suppliers">Suppliers</a> · <a href="/providers">Providers</a> · <a href="/neocloud-accelerator">Accelerator</a></span></p>
+    </section>
+    <section class="buy-step" data-step="2" aria-labelledby="buy-title-2">
+      <h2 id="buy-title-2" tabindex="-1">What is it written on?</h2>
+      <p>Use an index grade as your reference, name the model you need, or choose a planned facility with a targeted launch.</p>
+      <fieldset><legend>Underlying tokens</legend><div class="buy-tabs">
+        <label><input type="radio" name="underlying" value="index" checked> NYTE Index grade</label>
+        <label><input type="radio" name="underlying" value="model"> A specific model</label>
+        <label><input type="radio" name="underlying" value="facility"> A planned facility</label>
+      </div></fieldset>
+      <fieldset id="buy-grades"><legend>Choose a grade</legend>
+        <p class="buy-fine" id="buy-price-caption">USD per billion tokens · As of <time id="buy-as-of" datetime="{{as_of_iso}}">{{as_of}}</time>. Indicative, not an executable quote.</p>
+        <div class="buy-grid">{{grades}}</div>
+      </fieldset>
+      <fieldset id="buy-model-fields"><legend>Model and provider</legend>
+        <label class="buy-field" for="buy-model">Model<input id="buy-model" type="text" maxlength="160" list="buy-models" placeholder="Enter a model name or ID" autocomplete="off"></label><datalist id="buy-models"></datalist>
+        <label class="buy-field" for="buy-provider">Provider (optional)<input id="buy-provider" type="text" maxlength="120" list="buy-providers" placeholder="Any provider, or enter a preference" autocomplete="off"></label><datalist id="buy-providers"></datalist>
+        <p class="buy-fine" id="buy-catalog-status">Type a model and, optionally, a provider. Catalogue suggestions load when available; availability for your request is discussed on the call.</p>
+      </fieldset>
+      <fieldset id="buy-facility-fields"><legend>Planned facilities · targeted launches</legend>
+        <div class="facility-grid">{{facilities}}</div>
+        <p class="buy-fine">{{facility_rate}}</p>
+        <p class="buy-fine">Both facilities are planned with targeted launches; NYTE lists them as reservation requests, not live products. Pricing is discussed on the call.</p>
+      </fieldset>
+      <fieldset><legend>Size and timing</legend><div class="buy-grid">
+        <div id="buy-block-fields"><label class="buy-field" for="buy-blocks" id="buy-quantity-label">1 billion tokens per block</label><div class="buy-counter"><button type="button" data-block-delta="-1" aria-label="Remove one block" data-js hidden>−</button><input id="buy-blocks" type="number" min="1" max="1000000" step="1" value="1" aria-describedby="buy-lot-cap" required><button type="button" data-block-delta="1" aria-label="Add one block" data-js hidden>+</button></div><p class="buy-fine" id="buy-lot-cap" hidden></p></div>
+        <label class="buy-field" id="buy-rate-field" for="buy-rate">Tokens per second<input id="buy-rate" type="number" min="1" max="1000000000" step="1" value="300" aria-describedby="buy-rate-example" required><small id="buy-rate-example">300 tok/s</small></label>
+        <label class="buy-field" for="buy-term" id="buy-term-field">Term<select id="buy-term"><option value="1">1 month</option><option value="3">3 months</option><option value="6">6 months</option><option value="12">12 months</option></select></label>
+        <label class="buy-field" for="buy-start" id="buy-start-field">Desired start month<input id="buy-start" type="month"></label>
+      </div></fieldset>
+      <p class="buy-total" id="buy-total" aria-live="polite">For index-grade token blocks, an indicative total is the number of blocks × the dated grade price. Pricing for throughput or a specific model is discussed on the call.</p>
+      <section id="buy-reserve" class="buy-reserve" aria-labelledby="buy-reserve-title" hidden>
+        <h3 id="buy-reserve-title">Reserve now by card</h3>
+        <p>Some lots may be resold reservations. You pay the same current card price for your grade, whether lots come from resale or new inventory.</p>
+        <p id="buy-reserve-price" aria-live="polite">Loading the current reservation quote…</p>
+        <p>Each lot is 1 billion tokens of your selected NYTE Index grade. This is a reservation for 2027 delivery through a TrustedRouter account via the NYTE API. Your price is locked at purchase.</p>
+        <p><strong>Card reservation window: January 1, 2027 through December 31, 2027.</strong> Unused tokens expire December 31, 2027. Full refund on request within 30 days of purchase. After 30 days, exit is only through NYTE’s resale program. The desired start and term above apply to the call request only.</p>
+        <p>Reservations are transferable only through NYTE’s resale program. NYTE is the only buyer of listed lots; holders do not sell to or contract with each other, and there is no peer-to-peer transfer. You list lots; NYTE resells them to new buyers ahead of new inventory. Each sale returns the resale price minus a 5% resale fee to your original card, capped at what you paid for those lots. <a href="/manage-reservation">Manage my reservation</a> to request a refund, list lots, or withdraw unsold listed lots. Every completed purchase is a position with a stable ID.</p>
+        <label class="buy-reserve-terms"><input id="buy-reserve-terms" type="checkbox" required> I accept the <a href="/reserved-tokens-terms" target="_blank" rel="noopener">reserved tokens terms</a>.</label>
+        <button id="buy-reserve-button" class="btn btn-primary" type="button" disabled>Reserve now by card</button>
+        <p id="buy-reserve-error" role="status"></p>
+        <p class="buy-fine">Prefer to discuss your order, or need more lots? Continue below to book a call. Specific models, throughput and facilities are available by call only.</p>
+      </section>
+      <div class="buy-actions" data-js hidden><button class="btn btn-secondary" type="button" data-back>Back</button><button class="btn btn-primary" type="button" data-next>Continue to contact →</button></div>
+    </section>
+    <section class="buy-step" data-step="3" aria-labelledby="buy-title-3">
+      <h2 id="buy-title-3" tabindex="-1">How do we reach you?</h2>
+      <p>Add your details to prefill your booking, or continue and enter them in Calendly.</p>
+      <fieldset><legend>Contact details</legend>
+        <label class="buy-field" for="buy-name">Full name (optional)<input id="buy-name" type="text" autocomplete="name" maxlength="120"></label>
+        <label class="buy-field" for="buy-email">Work email (optional)<input id="buy-email" type="email" autocomplete="email" maxlength="254"></label>
+        <label class="buy-field" for="buy-company">Company (optional)<input id="buy-company" type="text" autocomplete="organization" maxlength="160"></label>
+      </fieldset>
+      <p class="buy-fine">Continuing sends these details and your request summary directly to Calendly to prefill your call. They are not saved by this page or included in our analytics.</p>
+      <div class="buy-actions" data-js hidden><button class="btn btn-secondary" type="button" data-back>Back</button><button class="btn btn-primary" type="button" data-next>Continue to scheduling →</button></div>
+    </section>
+    <section class="buy-step" data-step="4" aria-labelledby="buy-title-4">
+      <h2 id="buy-title-4" tabindex="-1">Book a call with our team.</h2>
+      <p>Choose a time for a 15-minute conversation about your reservation request.</p>
+      <p id="buy-summary" class="buy-total" hidden></p>
+      <div id="buy-calendar"></div>
+      <div class="buy-actions" data-js hidden><button class="btn btn-secondary" type="button" data-back>Back</button></div>
+    </section>
+    <div class="buy-fallback"><p>Prefer to book directly? <a id="buy-calendly-link" href="https://calendly.com/joseph-perla/15min?embed_domain=nytokenexchange.com&amp;embed_type=Inline&amp;hide_gdpr_banner=1" target="_blank" rel="noopener noreferrer">Open Calendly in a new tab →</a></p><p>Already reserved? <a href="/manage-reservation">Manage my reservation →</a></p></div>
+    <noscript><p class="buy-fine">JavaScript is off. Review the options above, then use the Calendly link to book directly and discuss your request. These fields are not submitted.</p></noscript>
+  </div>
+</div>

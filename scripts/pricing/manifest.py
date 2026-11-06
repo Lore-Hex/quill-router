@@ -166,6 +166,7 @@ def write_discovered_chat_manifest(
     source_url: str,
     pricing_source_url: str | None = None,
     operator_hold_reasons: dict[str, str] | None = None,
+    confirmed_disabled_ids: Collection[str] = (),
 ) -> list[str]:
     """Rebuild a chat-provider manifest from a fresh provider catalog.
 
@@ -281,7 +282,9 @@ def write_discovered_chat_manifest(
     # operator safety hold. Apply these at the final manifest boundary so a
     # delist/relist cycle cannot accidentally publish a held route.
     _apply_operator_holds(rebuilt, operator_hold_reasons)
-    guarded = guard_manifest_prune(rows, rebuilt, provider_slug=result.slug)
+    guarded = guard_manifest_prune(
+        rows, rebuilt, provider_slug=result.slug, confirmed_disabled_ids=confirmed_disabled_ids,
+    )
     operator_hold_only = False
     operator_hold_changes = 0
     if guarded is rows:
@@ -364,7 +367,7 @@ def models_requiring_canary(
     *,
     failure_reason: str = "provider-canary-failed",
 ) -> frozenset[str]:
-    """Return only new routes and routes held by a previous failed canary."""
+    """Recheck new, failed, and returning delisted routes before activation."""
 
     if not manifest_path.exists():
         return frozenset(discovered_model_ids)
@@ -381,7 +384,8 @@ def models_requiring_canary(
     return frozenset(
         model_id
         for model_id in discovered_model_ids
-        if model_id not in existing or existing[model_id].get("routable_reason") == failure_reason
+        if model_id not in existing
+        or existing[model_id].get("routable_reason") in {failure_reason, "delisted-upstream"}
     )
 
 

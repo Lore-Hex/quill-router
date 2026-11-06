@@ -30,6 +30,10 @@ else:
     from drain_capacity import timestamp
 
 PILOT = '45819281-0ce9-4811-a0cd-c660ab3a116d'
+PILOT_WORKSPACES = PILOT + ',162e441a-5d13-414f-92bd-7c6cd805faa3'
+# The operator workspace is in the fast-path pilot too (R3); without this pin
+# admission would drop it silently (G15 section 4.5).
+FASTPATH_OVERLAP_WORKSPACES = PILOT
 HEADER_BYTES = 12288
 
 
@@ -103,7 +107,8 @@ def serving(bundle: dict[str, Any], *, admitted: bool) -> bool:
             if pins.get('TR_ASYNC_SETTLE_ENABLED') != str(admitted).lower():
                 return False
             if admitted:
-                if (pins.get('TR_ASYNC_SETTLE_PILOT_WORKSPACES') != PILOT
+                if (pins.get('TR_ASYNC_SETTLE_PILOT_WORKSPACES') != PILOT_WORKSPACES
+                        or pins.get('TR_ASYNC_SETTLE_FASTPATH_OVERLAP_WORKSPACES') != FASTPATH_OVERLAP_WORKSPACES
                         or pins.get('TR_ASYNC_SETTLE_PILOT_CAP_MICRO') != '5000000'
                         or pins.get('TR_ASYNC_SETTLE_PROTECTION') != 'true'):
                     return False

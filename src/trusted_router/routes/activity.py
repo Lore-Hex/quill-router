@@ -78,7 +78,7 @@ def register_activity_routes(router: APIRouter) -> None:
         }
 
     @router.get("/generation")
-    async def generation(  # noqa: A002
+    def generation(  # noqa: A002
         id: str,
         principal: Annotated[Principal, Depends(require_scope(SCOPE_INFERENCE))],
     ) -> dict[str, Any]:
@@ -102,7 +102,7 @@ def register_activity_routes(router: APIRouter) -> None:
         return {"data": gen.to_openrouter_generation()}
 
     @router.get("/generation/content")
-    async def generation_content(id: str) -> JSONResponse:  # noqa: A002
+    def generation_content(id: str) -> JSONResponse:  # noqa: A002
         _ = id
         return error_response(
             404,

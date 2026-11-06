@@ -467,6 +467,12 @@ if [ "${TR_TRUST_JOBS_DEPLOY}" = "1" ]; then
 fi
 
 ENV_VARS=(
+  "TR_RESALE_ENABLED=false"
+  "TR_RESALE_FEE_BPS=500"
+  "TR_RESERVED_TOKENS_CHECKOUT_ENABLED=true"
+  "TR_RESERVED_TOKENS_MAX_LOTS_PER_CHECKOUT=100"
+  "TR_RESERVED_TOKENS_DISCOUNT_BPS=1000"
+  "TR_RESERVED_TOKENS_EXCHANGE_FEE_BPS=10"
   # PR3 binary deploys OFF. Migration and reviewed cohort evidence precede enable.
   "TR_SPECULATIVE_PROVIDER_SHADOW_ENABLED=false"
   'TR_SPECULATION_SHADOW_WORKSPACES=[]'
@@ -529,7 +535,7 @@ ENV_VARS=(
   # section always worked; this is the switch that lets the gateway AUTHORIZE
   # and route to one. Off again = the gateway 404s user-model ids; in-flight
   # holds still settle, because settle does not read this flag.
-  "TR_USER_MODELS_DISPATCH_ENABLED=true"
+  "TR_USER_MODELS_DISPATCH_ENABLED=false"
   "TR_VERIFF_BASE_URL=https://stationapi.veriff.com"
   "TR_TELNYX_FROM_NUMBER=+17869471547"
   "TR_TELNYX_TEXML_ACCOUNT_ID=1eea716a-02e0-4d4f-96fa-36d1f556edca"
@@ -617,6 +623,10 @@ ENV_VARS=(
   # Flipped 2026-07-04 with Joseph's authorization. Remove to revert — the
   # flag-off settle path is byte-identical.
   "TR_SETTLE_OUTBOX_ENABLED=true"
+  # A contended one-commit settle defers to the drain instead of finalizing
+  # inline on the same hot rows (docs/design/durable-settle-outbox.md §7).
+  # A literal, so no revision inherits it; false is the way back.
+  "TR_SETTLE_CONTENTION_DEFERS_TO_DRAIN=true"
   "TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED=false"
   "TR_SETTLE_OUTBOX_POLL_INTERVAL_SECONDS=300"
   "TR_SETTLE_OUTBOX_HEALTH_PUBLISH_INTERVAL_SECONDS=2"
@@ -695,10 +705,31 @@ ENV_VARS=(
   "TR_STAGE_D_PILOT_WORKSPACE_IDS="
   # The fast path's pilot (docs/design/fast-admission-pilot.md): Joseph's
   # workspace and, on his word (2026-10-16), one customer's, admitted by the
-  # front doors from the us-central1 control plane. Rollback: Joseph's ID
-  # alone, or TR_FASTPATH_PILOT_ENABLED=false.
-  "TR_FASTPATH_PILOT_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d,84cbb802-e054-486a-9226-e3cda4a799fb"
+  # front doors from the us-central1 control plane; from 2026-11-03 also P1's
+  # synthetic workspace, his own and outside async settle admission, so the
+  # edge answers its load tests. Rollback: drop an ID, or
+  # TR_FASTPATH_PILOT_ENABLED=false.
+  "TR_FASTPATH_PILOT_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d,84cbb802-e054-486a-9226-e3cda4a799fb,8b682b96-d8ef-4631-b0ee-bbf41816f1f8"
   "TR_FASTPATH_PILOT_ENABLED=true"
+  # Which keys with spend windows the pilot covers, here and on the edge
+  # through the edge policy (docs/design/fast-admission-e2-key-windows.md
+  # section 5): off, alert, enforce. Off until Go reads the policy member and
+  # section 8.3's gate passes for the mode. A literal, so no revision
+  # inherits it; off is the way back.
+  "TR_FASTPATH_PILOT_KEY_WINDOWS=off"
+  # Streams on the lease (docs/design/fast-admission-streams.md section
+  # 5.4): the pilot's switch, which moves only once increment 2b is pinned on
+  # every owner and front door (docs/runbooks/fastpath-streams.md), and the
+  # edge's own, which moves only after gate E. Literals, so no revision
+  # inherits either; false is the way back. The pilot's switch is on for
+  # gate P (2026-11-01): both nodes on 2b3f846f3, increment 3 in every
+  # control plane region, snapshot booking on, the stream alerts enabled.
+  # The edge's is on after gate P (2026-11-01: 1,109 leased streams settled,
+  # none diverged or overdue) and gate E (2026-11-02: 3,830 streams compared
+  # on the decide shadow, all agree_full), both nodes on b2d12a046
+  # (increments 5 and 6, #2242).
+  "TR_FASTPATH_PILOT_STREAMS=true"
+  "TR_FASTPATH_EDGE_STREAMS=true"
   # Arms the authorize-time billing-pause gate (trust_eligibility
   # .billing_paused_tx) on both the typed and legacy paths. The name predates
   # the spend-lease pilot's removal (2026-09); Settings keeps it False so only
@@ -710,23 +741,44 @@ ENV_VARS=(
   "TR_TRUST_RECONCILE_MAX_AGE_SECONDS=3600"
   "TR_HEARTBEAT_GRACE_SECONDS=${TR_HEARTBEAT_GRACE_SECONDS:-300}"
   "TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS="
-  # Admission and protection stay off until the runbook's step 8; nothing in this
-  # block issues a ticket. Do not inherit any of these values from an old revision.
+  # Runbook step 8: the staged pins below govern admission and protection.
+  # Keep these literals authoritative; never inherit them from an old revision.
   # Shadow paused: v1 polls fleet-v1 while its publisher is disabled, so it
   # cannot qualify evidence and generates cross-region read-deadline alerts.
   # Re-enable only after independent shadow health and cohort prerequisites
   # pass; start a new evidence window. Do not enable fast drain to seed health.
   # See docs/incidents/2026-10-13-shadow-missing-health-alerts.md.
-  # October 24: canary 3 hit its API-failure stop gate. Opt out of both shadow
-  # versions together; clearing only policy would re-enable v1 for the cohort.
-  # Retain the bucket and evidence. Re-enable only with a reviewed contention
-  # repair and another bounded canary. Money/protection/fast drain stay off.
-  # See docs/incidents/2026-10-24-shadow-canary-api-failures.md.
+  # October 24: canary 3 hit its API-failure stop gate (docs/incidents/
+  # 2026-10-24-shadow-canary-api-failures.md). The repairs it required landed
+  # afterwards: the publisher's microsecond-safe observation bound, renewal
+  # after failed cycles and spread takeover (#2054), the fleet-wide runtime stop
+  # marker, operator CLI and in-process API-failure breaker (#2053), and the
+  # permit-row allocation backoff (#2058). Shadow v2 canary 4: the v2 policy,
+  # the probe workspace and the primary health region, with the runtime
+  # expiry below as the canary's stop. Gates for the canary hour, measured from
+  # the moment the health region serves these pins: publications >= 80% after a
+  # 5-minute warm-up, unknown <= 5%, readers installed >= 80% per region,
+  # Spanner sessions bounded, no API-failure or session incident; otherwise opt
+  # out by emptying the policy, workspaces, health-region and expiry lines
+  # together (keep the bucket and regions; regions need not be emptied to
+  # disable shadow). Historical canary gates kept money and fast drain off;
+  # the staged protection/admission pins below now govern pilot enablement.
+  # October 28: scope shadow to us-central1, us-east4 and europe-west4 after
+  # client deadlines in southamerica-east1 falsely tripped the fleet stop
+  # while Spanner was healthy. Add the operator's pilot workspace to exercise
+  # real-traffic cached-input and reasoning-token billing shapes in shadow.
+  # October 29: canary 4 hit its API-failure stop gate twice (05:11Z, 06:28Z):
+  # every follower claims the one publish row at each takeover (spread 1,
+  # #2119), and lock waits past the 500 ms cycle became client cancellations.
+  # Opt out per the gate above; keep the bucket and regions. Re-enable only
+  # with a reviewed contention repair and another bounded canary. See
+  # docs/incidents/2026-10-29-shadow-canary-4-takeover-contention.md.
   "TR_ASYNC_SETTLE_SHADOW_ATTACHMENT_BUCKET=tr-async-settle-shadow-attachments-quill-cloud-proxy"
   "TR_ASYNC_SETTLE_SHADOW_POLICY="
   "TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION="
+  "TR_ASYNC_SETTLE_SHADOW_REGIONS=us-central1,us-east4,europe-west4"
   "TR_ASYNC_SETTLE_SHADOW_WORKSPACES="
-  # Runtime stop for any shadow canary: an ISO-8601 UTC instant at most 48 h
+  # Runtime stop for any shadow canary: an ISO-8601 UTC instant at most 14 days
   # ahead of start-up (e.g. 2026-10-24T15:00:00Z). Every request and owner tick
   # checks it, so the canary turns itself off without a deploy. Deployed
   # environments treat an empty or invalid value as expired: v2 pins without a
@@ -734,8 +786,36 @@ ENV_VARS=(
   # the workspaces are set and the policy is empty. The activation tool's
   # release shadow-opt-in requires --expires-at and opt-out clears it.
   "TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT="
-  "TR_ASYNC_SETTLE_ENABLED=false"
-  "TR_ASYNC_SETTLE_PROTECTION=false"
+  # R3: customer pilot only, after the probe drain measurement, single crash
+  # trial and rollback rehearsal. Apply on R1 protection, retain worker drain.
+  # Admission-on edge policy passes async-v1 authorizes to Python.
+  "TR_ASYNC_SETTLE_ENABLED=true"
+  "TR_ASYNC_SETTLE_PROTECTION=true"
+  # 2026-11-02: read ahead; preserve synchronous admission freshness limits.
+  "TR_ASYNC_SETTLE_ADMISSION_REFRESH_ENABLED=true"
+  # 2026-11-03: accept async handoffs in memory; a crash may lose queued settles (Joseph)
+  "TR_ASYNC_SETTLE_HANDOFF_MODE=memory"
+  # 2026-11-02: the probe workspace (R2 cohort, #2187) rejoins the R3 pilot
+  # so its provider-pinned first-party requests produce handoff timing samples.
+  # The pilot cap is per workspace; the probe does not draw on the customer cap.
+  "TR_ASYNC_SETTLE_PILOT_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d,162e441a-5d13-414f-92bd-7c6cd805faa3"
+  # Async settle takes no request the fast path takes (G15 section 4.5): a
+  # TR_FASTPATH_PILOT_WORKSPACES workspace is outside async admission, even
+  # with an empty pilot list above (every workspace), unless listed here. The
+  # operator workspace is in both pilots (R3) and keeps its async settles.
+  "TR_ASYNC_SETTLE_FASTPATH_OVERLAP_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d"
+  "TR_ASYNC_SETTLE_PILOT_CAP_MICRO=5000000"
+  # October 31: new async-v1 acceptance only where the 500 ms durable handoff
+  # was measured to fit (accepted handoffs: us-central1 at most 92 ms, us-east4
+  # at most 292 ms). From europe-west4 the enqueue's batch DML and commit are
+  # about five serial round trips to the US leader, so every attempt timed out
+  # (05:29Z-05:41Z, 0 of 19 accepted). The 50 ms rollback floor is shorter
+  # than one round trip, and the stranded row locks (7-10 s of lock wait on
+  # those authorizations' rows) turned the retries and the legacy fallback
+  # into 2 s 503s and 8 s settles. Other regions answer
+  # sync_required("unsupported_cohort") before opening a transaction. Add a
+  # region only with measured handoff percentiles.
+  "TR_ASYNC_SETTLE_ACCEPT_REGIONS=us-central1,us-east4"
   # Purpose signer, design runbook step 2 and the 2026-10-09 decisions: the key
   # file is the Secret Manager mount declared in SECRET_ENVS, pinned as a literal
   # so no revision inherits a path. kid/issuer/audience are the public identity
@@ -747,6 +827,15 @@ ENV_VARS=(
   "TR_ASYNC_SETTLE_TICKET_ISSUER=https://api.trustedrouter.com"
   "TR_ASYNC_SETTLE_TICKET_AUDIENCE=router-settlement"
   "TR_ASYNC_SETTLE_AUTHORITY_EPOCH=1"
+  "TR_ASYNC_SETTLE_NEGOTIATION_REGIONS=us-central1,us-west1,us-east4"
+  # Gate at authorize: 500 ms handoff budget; central p50/p99 64/103 ms,
+  # east p50/p90/p99 257/308/487 ms. Europe: 139 unknown, 93 rejected,
+  # 126 settle 503s tripping the deploy billing gate. West settles via central.
+  # 2026-11-04: those east and Europe numbers were Spanner commits made in
+  # their own regions' routers. Every enclave's settle now lands in
+  # us-central1 (terminal route, #2293), and the memory handoff (#2296)
+  # answers before any Spanner work (router p50/p99 7/11 ms). us-east4 joins
+  # first; Europe follows after an hour of measured us-east4 handoffs.
   # E2 routing snapshot publication: the literals of the key block above.
   "TR_ROUTING_SNAPSHOT_PUBLISH_ENABLED=${ROUTING_SNAPSHOT_PUBLISH_ENABLED}"
   "TR_ROUTING_SNAPSHOT_PRIVATE_KEY_FILE=${ROUTING_SNAPSHOT_KEY_FILE}"
@@ -754,6 +843,16 @@ ENV_VARS=(
   "TR_ROUTING_SNAPSHOT_PUBLIC_KEY=${ROUTING_SNAPSHOT_PUBLIC_KEY}"
   # E2 edge policy publication: the literal of the block above.
   "TR_EDGE_POLICY_PUBLISH_ENABLED=${EDGE_POLICY_PUBLISH_ENABLED}"
+  # The edge policy's async_settle.edge_decide: on since the I4 step of
+  # docs/design/fast-admission-e2-g15-async.md section 6.2. It decides
+  # nothing for a workspace whose decide row is off; false here is the
+  # off switch of step 5. A literal, so no revision inherits it.
+  "TR_FASTPATH_EDGE_DECIDE_ASYNC=true"
+  # trusted_router.serve exits a process whose event loop has gone this many
+  # seconds without a tick, after dumping every thread's stack. Safe only
+  # because the deploy below keeps CPU allocated between requests
+  # (--no-cpu-throttling); a throttled idle instance would see no ticks.
+  "TR_LOOP_STALL_EXIT_SECONDS=30"
 )
 SET_ENV_VARS="$(IFS='|'; echo "^|^${ENV_VARS[*]}")"
 
@@ -914,11 +1013,19 @@ deploy_one_region() {
   # for the instance lifetime; minimum instances alone do not provide idle CPU.
   # Append serving identity per target; never inherit it from the caller or
   # primary revision. TR_PRIMARY_REGION still names the shared journal region.
-  if gc run deploy "$SERVICE" \
+  # /health has no storage/threadpool dependency, including in SIGTERM drain.
+  # Its HTTP deadline still includes CPU scheduling and instrumentation: 9s
+  # tolerates the tested 8s recoverable loop delays. Six failures at 10s give
+  # a nominal 60s external backstop, beyond the 30s in-process watchdog.
+  # A silent freeze exhausts probes in ~59-69s (phase dependent); replacement
+  # startup is additional. Keep TCP startup unchanged. public_surface.sh,
+  # internal_surface.sh and set_new_signups.sh carry this same policy.
+  if gc_router_revision run deploy "$SERVICE" \
       --region "$target" \
       --image "$IMAGE" \
       --allow-unauthenticated \
       --port 8080 \
+      --liveness-probe 'httpGet.path=/health,httpGet.port=8080,initialDelaySeconds=0,periodSeconds=10,timeoutSeconds=9,failureThreshold=6' \
       --memory "${TR_CLOUD_RUN_MEMORY:-1Gi}" \
       --no-cpu-throttling \
       --concurrency "$TR_CLOUD_RUN_CONCURRENCY" \

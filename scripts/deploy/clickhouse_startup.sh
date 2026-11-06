@@ -33,10 +33,11 @@ PASSWORD=$(curl -fsSL -H "Authorization: Bearer ${ACCESS_TOKEN}" \
 unset ACCESS_TOKEN
 debconf-set-selections <<< "clickhouse-server clickhouse-server/default-password password ${PASSWORD}"
 # Pin the version: a replacement replica must join the running cluster at the
-# same version (measured 26.7.1.1315 on 2026-10-01). Upgrade deliberately, one
+# same reviewed version. Upgrade deliberately, one
 # replica at a time, by changing this value (G7 in
 # docs/design/clickhouse-high-availability.md).
-CLICKHOUSE_VERSION="${CLICKHOUSE_VERSION:-26.7.1.1315}"
+# CVE-2026-116366: patched LTS, kept in sync with standalone provisioners.
+CLICKHOUSE_VERSION="${CLICKHOUSE_VERSION:-26.8.36.3}"
 apt-get install -y "clickhouse-common-static=${CLICKHOUSE_VERSION}" \
   "clickhouse-server=${CLICKHOUSE_VERSION}" "clickhouse-client=${CLICKHOUSE_VERSION}"
 

@@ -1,0 +1,8 @@
+/* The accelerator uses the shared NYTE typography, palette and controls. */
+.accelerator-hero h1{margin:20px 0 28px}.accelerator-hero .body,.accelerator-hero .fine{max-width:52em;margin-top:24px}.accelerator-hero .lede{color:var(--t1)}.accelerator-hero .body{color:var(--t2)}.accelerator-hero .fine{margin-top:40px;padding-top:24px;border-top:1px solid var(--rule)}.accelerator-hero .fine,.accelerator-facilities .fine{font-size:15px;color:var(--t3)}
+.accelerator-roles h2,.accelerator-process h2{margin-bottom:40px}.accelerator-facilities h2{margin-bottom:16px}.accelerator-roles .split{align-items:stretch;gap:24px}.accelerator-roles .split>div{padding:32px;border:1px solid var(--rule);border-radius:8px;background:var(--panel)}.accelerator-roles h3{margin-bottom:16px}.accelerator-roles .body{margin-top:16px;color:var(--t2)}
+.accelerator-roles ul{list-style:none;margin:0;padding:0}.accelerator-roles li{padding:14px 0;border-top:1px solid var(--rule-soft)}
+.accelerator-process ol{padding-left:28px;margin:0;max-width:52em}.accelerator-process li{padding:24px 0 24px 12px;border-top:1px solid var(--rule)}.accelerator-process li::marker{color:var(--mint);font-family:var(--mono)}.accelerator-process .body{margin-top:10px}
+.accelerator-call .lede{margin:24px 0 32px}.accelerator-call .btn{white-space:normal;text-align:center}
+@media(max-width:600px){.accelerator-hero h1{font-size:10vw}.accelerator-roles .split>div{padding:24px 20px}.accelerator-call .btns{flex-direction:column}}
+

@@ -260,7 +260,8 @@ def test_exchange_site_brochure_keeps_its_campaign(
     [(name, touch)] = events
     assert name == "enterprise_brief_delivered"
     assert touch["utm_campaign"] == "ny-launch"
-    assert touch["landing_path"] == "nytokenexchange.com/"
+    assert touch["site_domain"] == "nytokenexchange.com"
+    assert touch["landing_path"] == "/"
 
 
 def test_exchange_site_email_lists_only_campaign_fields_the_page_sent(
@@ -276,14 +277,22 @@ def test_exchange_site_email_lists_only_campaign_fields_the_page_sent(
     assert [m.text_body.count("utm_") for m in sent_messages] == [0, 0]
 
 
-def test_exchange_site_touch_keeps_the_launch_link_defaults() -> None:
-    def touch(campaign: dict[str, str]) -> tuple[str, ...]:
-        result = acquisition.exchange_site_touch("https://nytokenexchange.com/", campaign)
-        return tuple(result[name] for name in ("utm_source", "utm_medium", "utm_campaign", "utm_content"))
+def test_exchange_site_touch_names_the_real_source_never_the_site_itself() -> None:
+    def touch(campaign: dict[str, str], **kwargs: str) -> tuple[str, ...]:
+        result = acquisition.exchange_site_touch("https://nytokenexchange.com/", campaign, **kwargs)
+        return tuple(result.get(name, "") for name in ("utm_source", "utm_medium", "utm_campaign", "referer_host"))
 
-    assert touch({}) == ("nytokenexchange.com", "referral", "token-exchange-launch", "brief")
-    assert touch({"utm_source": "linkedin"}) == ("linkedin", "referral", "token-exchange-launch", "brief")
-    assert touch({"utm_source": "linkedin", "utm_campaign": "ny"}) == ("linkedin", "referral", "ny", "brief")
+    assert touch({}) == ("direct", "none", "", "")
+    assert touch({}, referrer_host="www.linkedin.com") == ("www.linkedin.com", "referral", "", "www.linkedin.com")
+    assert touch({"utm_source": "linkedin", "utm_medium": "paid_social"}, referrer_host="l.facebook.com") == (
+        "linkedin", "paid_social", "", "l.facebook.com")
+    assert touch({"utm_source": "linkedin", "utm_campaign": "ny"}) == ("linkedin", "none", "ny", "")
+    # The page's own name is never its source, whether it arrives as a referrer or a tag.
+    assert touch({"utm_source": "nytokenexchange.com"}, referrer_host="nytokenexchange.com") == ("direct", "none", "", "")
+    assert touch({}, referrer_host="https://evil.example/path") == ("direct", "none", "", "")
+    result = acquisition.exchange_site_touch("https://chicagotokenexchange.com/", {}, page_path="/buy")
+    assert (result["site_domain"], result["exchange_market"], result["landing_path"]) == ("chicagotokenexchange.com", "chicago", "/buy")
+    assert acquisition.exchange_site_touch("https://nytokenexchange.com/", {}, page_path="/x/y?z")["landing_path"] == "/"
 
 
 def test_exchange_site_campaign_ignores_privacy_signals_and_bad_values() -> None:

@@ -99,11 +99,13 @@ TTL = real_dt.timedelta(seconds=7_200)
 # §5: the columns Go's two inserts name. Every other column of either table
 # is NULL on a row Go writes (a column a Spanner insert does not name).
 # `settled` is among them: G9 names settled=false explicitly rather than
-# relying on a column default.
+# relying on a column default. pricing_snapshot and heartbeat_seq hold a
+# value only on a stream's row (docs/design/fast-admission-streams.md
+# section 8.4), NULL on any other.
 GO_AUTHORIZATION_COLUMNS = (
     "authorization_id", "workspace_id", "key_hash", "reservation_id", "model_id", "provider", "usage_type",
     "estimated_microdollars", "settled", "created_at", "terminal_at", "payload",
-    "idempotency_fingerprint", "stage_d_boot_kid", "invocation_nonce",
+    "idempotency_fingerprint", "stage_d_boot_kid", "invocation_nonce", "pricing_snapshot", "heartbeat_seq",
 )
 AUTHORIZATION_COLUMNS = (
     "authorization_id", "workspace_id", "key_hash", "reservation_id", "model_id", "provider", "usage_type",
@@ -307,6 +309,10 @@ def _settings(case: dict[str, Any]) -> Settings:
         gateway_authorize_max_in_flight_per_key=policy["gateway_authorize_max_in_flight_per_key"],
         async_settle_shadow_policy=policy["async_settle_shadow_policy"],
         async_settle_shadow_workspaces=",".join(policy["async_settle_shadow_workspaces"]),
+        # A stream case's policy carries fastpath_edge_streams, which the
+        # publisher writes only with the pilot's streams switch on too.
+        fastpath_pilot_streams=policy.get("fastpath_edge_streams") is True,
+        fastpath_edge_streams=policy.get("fastpath_edge_streams") is True,
     )
 
 

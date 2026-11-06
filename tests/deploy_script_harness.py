@@ -99,10 +99,14 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from unittest.mock import patch
 
-from scripts.deploy.service_surface_url_map import rewrite_url_map
+from scripts.deploy import service_surface_url_map as URL_MAP
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+# Unrelated operator tests exercise the pre-terminal-override surface topology.
+# Routing tests opt into each state explicitly, never via the committed switch.
+BASELINE_TERMINAL_ROUTE_ENABLED = False
 
 #: Commands replaced by a recording stub: anything that reaches the network, a
 #: cloud API, another host, or this machine's state. ``sleep`` is here so a
@@ -144,7 +148,7 @@ STUBBED_COMMANDS: tuple[str, ...] = (
 #: Directories whose real contents the scripts read (SQL schemas, the package
 #: they tar up). Copied rather than symlinked so nothing a script does can
 #: reach the checkout the test suite is running from.
-MIRRORED = ("clickhouse", "src", "scripts")
+MIRRORED = ("clickhouse", "src", "scripts", "infra")
 
 #: ~10MB of web assets no deploy script reads; the drain installer excludes the
 #: same three by name when it builds its payload.
@@ -840,7 +844,7 @@ services = []
 def collect(value):
     if isinstance(value, dict):
         for key, item in value.items():
-            if key in {"defaultService", "service"} and isinstance(item, str):
+            if key in {"defaultService", "service", "backendService"} and isinstance(item, str):
                 services.append(item)
             collect(item)
     elif isinstance(value, list):
@@ -1394,17 +1398,20 @@ _BACKEND_BASE = (
     "https://www.googleapis.com/compute/v1/projects/quill-cloud-proxy/"
     "global/backendServices/"
 )
-_INTERNAL_EDGE_LIVE_MAP_JSON = json.dumps(
-    rewrite_url_map(
-        json.loads(_PUBLIC_EDGE_LIVE_MAP_JSON),
-        public_backend=_BACKEND_BASE + "trusted-router-public-backend",
-        actions_backend=_BACKEND_BASE + "trusted-router-control-backend",
-        control_backend=_BACKEND_BASE + "trusted-router-control-backend",
-        internal_backend=_BACKEND_BASE + "trusted-router-control-backend",
-        domains=("trustedrouter.com", "allyrouter.com", "uptimerouter.com"),
-    ),
-    separators=(",", ":"),
-)
+# This fixture is rendered during collection, before pytest fixtures can patch
+# the reader. Scope the baseline here and restore the production reader at once.
+with patch.object(URL_MAP, "terminal_route_enabled", return_value=BASELINE_TERMINAL_ROUTE_ENABLED):
+    _INTERNAL_EDGE_LIVE_MAP_JSON = json.dumps(
+        URL_MAP.rewrite_url_map(
+            json.loads(_PUBLIC_EDGE_LIVE_MAP_JSON),
+            public_backend=_BACKEND_BASE + "trusted-router-public-backend",
+            actions_backend=_BACKEND_BASE + "trusted-router-control-backend",
+            control_backend=_BACKEND_BASE + "trusted-router-control-backend",
+            internal_backend=_BACKEND_BASE + "trusted-router-control-backend",
+            domains=("trustedrouter.com", "allyrouter.com", "uptimerouter.com"),
+        ),
+        separators=(",", ":"),
+    )
 
 
 def live_schedule_targets(*inputs: str | None, target_id: str = "synthetic") -> str:
@@ -1947,12 +1954,16 @@ def harness_timeout_scale() -> float:
 class DeployScriptHarness:
     """A throwaway checkout, a stub PATH, and one recorded run per invocation."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, terminal_route_enabled: bool = BASELINE_TERMINAL_ROUTE_ENABLED) -> None:
         self.root = root
         self.mirror = root / "repo"
         self.bin = root / "bin"
         self._runs = 0
         self._build_mirror()
+        # The harness does not apply Terraform. Give its subprocess renderers
+        # their own local, even if the repository's committed value is invalid.
+        (self.mirror / "infra/control_terminal_backend.tf").write_text(
+            "locals {\n  terminal_c1_route_enabled = " + str(terminal_route_enabled).lower() + "\n}\n")
         self._build_bin()
 
     def _build_mirror(self) -> None:

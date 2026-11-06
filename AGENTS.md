@@ -7,6 +7,9 @@ For Token Exchange city or region additions, read
 before editing. Preserve its approved shared design, regional-copy process,
 evidence scope and social-image workflow.
 
+For NY Token Exchange navigation additions, follow the page registry instructions
+in [`sites/token-exchange/README.md`](sites/token-exchange/README.md#build-and-test).
+
 ## Read first
 
 **[`docs/storage-portability/HANDOFF.md`](docs/storage-portability/HANDOFF.md)** — current
@@ -84,7 +87,8 @@ request analytics. Never loosen the 45% CPU alarm to make operator scans pass.
 repo. Changes there need a differential or conformance test, never review-by-eye. Analytics is
 explicitly *not* worth destabilising money code for — that is why the benchmark analytics outbox
 enqueue is best-effort. It rides in the settle commit only on the one-commit happy path, whose
-every failure falls back to the durable two-commit settle with that enqueue after the commit.
+every failure falls back to the durable two-commit settle with that enqueue after the commit, or,
+when the attempt lost to the store and the fallback inserted the intent, to the drain.
 
 ## Storage backends
 

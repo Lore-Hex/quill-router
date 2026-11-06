@@ -67,12 +67,125 @@ GIT = shutil.which("git") or "/usr/bin/git"
 
 PROVEN = crc.scripts_proven_by_execution()
 UNPROVEN = crc.scripts_not_proven()
+ROUTER_REGIONS = ("europe-west4", "us-central1", "us-east4", "southamerica-east1")
+
+
+def _without_router_execution_environment(call: list[str]) -> list[str]:
+    flags = [arg for arg in call if arg.startswith("--execution-environment")]
+    assert flags == ["--execution-environment"], call
+    assert call[-2:] == ["--execution-environment", "gen2"], call
+    return call[:-2]
 
 
 @pytest.fixture(scope="module")
 def harness(tmp_path_factory: pytest.TempPathFactory) -> DeployScriptHarness:
     """One mirrored checkout and one stub PATH for the whole module."""
     return DeployScriptHarness(tmp_path_factory.mktemp("deploy-harness"))
+
+
+@pytest.mark.parametrize(
+    ("script", "args", "extra_env", "service"),
+    [
+        ("rollout.sh", (), {"TR_DEPLOY_NO_TRAFFIC": staged}, "trusted-router")
+        for staged in ("0", "1")
+    ] + [
+        (f"{surface}_surface.sh", (stage,), {}, f"trusted-router-{surface}")
+        for surface in ("public", "internal")
+        for stage in ("companion", "routed")
+    ],
+)
+def test_every_router_deploy_sets_http_liveness_and_gen2(
+    harness: DeployScriptHarness,
+    script: str,
+    args: tuple[str, ...],
+    extra_env: dict[str, str],
+    service: str,
+) -> None:
+    regions = set(ROUTER_REGIONS)
+    env = {
+        **extra_env,
+        "TR_DEPLOY_TARGET_REGIONS": ",".join(sorted(regions)),
+        "TR_PUBLIC_REGIONS": ",".join(sorted(regions)),
+        "TR_INTERNAL_REGIONS": ",".join(sorted(regions)),
+    }
+    run = harness.run(f"scripts/deploy/{script}", args=args, extra_env=env)
+    assert run.returncode == 0, summarise(run)
+    deploys = _gcloud_calls(run, "run", "deploy")
+    assert len(deploys) == len(regions)
+    assert {call[call.index("--region") + 1] for call in deploys} == regions
+    for deploy in deploys:
+        assert deploy[deploy.index("deploy") + 1] == service
+        assert deploy.count("--liveness-probe") == 1
+        assert deploy[deploy.index("--liveness-probe") + 1] == (
+            "httpGet.path=/health,httpGet.port=8080,initialDelaySeconds=0,"
+            "periodSeconds=10,timeoutSeconds=9,failureThreshold=6"
+        )
+        # Preserve Cloud Run's existing TCP startup probe and cold-start budget.
+        assert not any(arg.startswith("--startup-probe") for arg in deploy)
+
+    # With the execution-environment policy disabled, every other argument must be
+    # identical, including CPU, memory, VPC, probes, env, secrets and traffic.
+    lib = harness.mirror / "scripts/deploy/_lib.sh"
+    original = lib.read_text()
+    try:
+        lib.write_text(original + '\ngc_router_revision() { gc "$@"; }\n')
+        baseline = harness.run(f"scripts/deploy/{script}", args=args, extra_env=env)
+    finally:
+        lib.write_text(original)
+    assert baseline.returncode == 0, summarise(baseline)
+    assert sorted(
+        _without_router_execution_environment(call)
+        for call in deploys
+    ) == sorted(_gcloud_calls(baseline, "run", "deploy"))
+
+
+@pytest.mark.parametrize("inherited_probe", [None, {
+    "httpGet": {"path": "/ready", "port": 8080},
+    "periodSeconds": 10, "timeoutSeconds": 2, "failureThreshold": 4,
+}], ids=["absent", "different"])
+@pytest.mark.parametrize("action", ["enable", "disable"])
+def test_signup_redeploy_replaces_absent_or_different_liveness(
+    tmp_path: Path, inherited_probe: dict[str, object] | None, action: str,
+) -> None:
+    from .test_signup_operator_script import _run, _write_harness
+
+    script, env_file = _write_harness(
+        tmp_path, inherited_probe=inherited_probe, regions=",".join(ROUTER_REGIONS),
+    )
+    run = _run(script, env_file, action)
+    assert run.returncode == 0, run.stderr
+    calls = (tmp_path / "gcloud.log").read_text().splitlines()
+    updates = [call for call in calls if call.startswith("run services update ")]
+    assert len(updates) == len(ROUTER_REGIONS)
+    assert {arg for update in updates for arg in update.split() if arg.startswith("--region=")} == {
+        f"--region={region}" for region in ROUTER_REGIONS
+    }
+    for update in updates:
+        assert update.count("--liveness-probe ") == 1
+        assert (
+            "--liveness-probe httpGet.path=/health,httpGet.port=8080,initialDelaySeconds=0,"
+            "periodSeconds=10,timeoutSeconds=9,failureThreshold=6"
+        ) in update
+        assert "--startup-probe" not in update
+        assert "--no-traffic" in update
+        argv = update.split()
+        region = next(arg.removeprefix("--region=") for arg in argv if arg.startswith("--region="))
+        suffix = next(arg for arg in argv if arg.startswith("--revision-suffix="))
+        assert _without_router_execution_environment(argv) == [
+            "run", "services", "update", "trusted-router", f"--region={region}",
+            "--liveness-probe",
+            "httpGet.path=/health,httpGet.port=8080,initialDelaySeconds=0,"
+            "periodSeconds=10,timeoutSeconds=9,failureThreshold=6",
+            f"--update-env-vars=TR_NEW_SIGNUPS_ENABLED={'true' if action == 'enable' else 'false'}",
+            suffix, "--no-traffic", "--format=value(status.latestCreatedRevisionName)", "--quiet",
+        ]
+    for region in ROUTER_REGIONS:
+        state = tmp_path / "state" / region
+        assert json.loads((state / "probe").read_text()) == {
+            "httpGet": {"path": "/health", "port": 8080}, "initialDelaySeconds": 0,
+            "periodSeconds": 10, "timeoutSeconds": 9, "failureThreshold": 6,
+        }
+        assert (state / "serving").read_text().strip().startswith("trusted-router-signup-")
 
 
 @pytest.mark.parametrize("backend", ["clickhouse", "postgres"])
@@ -686,7 +799,32 @@ def test_rollout_supplies_full_source_revision_for_shadow_evidence(
 
 @pytest.mark.parametrize("region", ["us-central1", "us-east4", "europe-west4", "southamerica-east1"])
 @pytest.mark.parametrize("no_traffic", ["0", "1"])
-def test_rollout_opts_out_failed_shadow_canary_without_enabling_money_paths(
+def test_rollout_pins_admission_refresh_without_inheritance(
+    harness: DeployScriptHarness, region: str, no_traffic: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = harness.run(
+        "scripts/deploy/rollout.sh",
+        extra_env={"TR_DEPLOY_TARGET_REGIONS": region,
+                   "TR_DEPLOY_NO_TRAFFIC": no_traffic,
+                   "TR_ASYNC_SETTLE_ADMISSION_REFRESH_ENABLED": "false",
+                   "TR_ASYNC_SETTLE_HANDOFF_MODE": "outbox"},
+    )
+    assert run.returncode == 0, summarise(run)
+    deploy = next(call for call in run.calls if call[3:5] == ["run", "deploy"])
+    rendered = _cloud_run_job_env(deploy)
+    assert rendered["TR_ASYNC_SETTLE_HANDOFF_MODE"] == "memory"
+    monkeypatch.setenv("TR_ASYNC_SETTLE_HANDOFF_MODE", rendered["TR_ASYNC_SETTLE_HANDOFF_MODE"])
+    assert Settings(environment="test").async_settle_handoff_mode == "memory"
+    assert rendered["TR_ASYNC_SETTLE_ADMISSION_REFRESH_ENABLED"] == "true"
+    monkeypatch.setenv("TR_ASYNC_SETTLE_ADMISSION_REFRESH_ENABLED",
+                       rendered["TR_ASYNC_SETTLE_ADMISSION_REFRESH_ENABLED"])
+    assert Settings(environment="test").async_settle_admission_refresh_enabled is True
+
+
+@pytest.mark.parametrize("region", ["us-central1", "us-east4", "europe-west4", "southamerica-east1"])
+@pytest.mark.parametrize("no_traffic", ["0", "1"])
+def test_rollout_keeps_shadow_canary_4_opted_out_with_pilot_pins(
     harness: DeployScriptHarness, region: str, monkeypatch: pytest.MonkeyPatch,
     no_traffic: str,
 ) -> None:
@@ -700,34 +838,43 @@ def test_rollout_opts_out_failed_shadow_canary_without_enabling_money_paths(
         async_settle_shadow_cohort_runtime,
         async_settle_shadow_health,
     )
+    from trusted_router.services.edge_policy_publisher import admission_workspaces
 
+    # Stale inherited values must never leak into the rendered pins.
     run = harness.run(
         "scripts/deploy/rollout.sh",
         extra_env={"TR_DEPLOY_TARGET_REGIONS": region,
                    "TR_DEPLOY_NO_TRAFFIC": no_traffic,
                    "TR_ASYNC_SETTLE_SHADOW_WORKSPACES": "stale-opt-in",
                    "TR_ASYNC_SETTLE_SHADOW_POLICY": "shadow-v2",
+                   "TR_ASYNC_SETTLE_SHADOW_REGIONS": "southamerica-east1",
                    "TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION": "us-central1",
-                   "TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT": "2026-10-25T20:00:00Z"},
+                   "TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT": "2026-11-04T12:00:00Z"},
     )
     assert run.returncode == 0, summarise(run)
     deploy = next(call for call in run.calls if call[3:5] == ["run", "deploy"])
     rendered = _cloud_run_job_env(deploy)
     assert rendered["TR_SERVING_REGION"] == region
+    # Canary 4 stop gate: all four opt-in pins empty together; the regions stay.
     assert rendered["TR_ASYNC_SETTLE_SHADOW_WORKSPACES"] == ""
+    assert rendered["TR_ASYNC_SETTLE_SHADOW_REGIONS"] == "us-central1,us-east4,europe-west4"
     assert rendered["TR_ASYNC_SETTLE_SHADOW_POLICY"] == ""
     assert rendered["TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION"] == ""
     assert rendered["TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT"] == ""
     assert rendered["TR_ASYNC_SETTLE_SHADOW_ATTACHMENT_BUCKET"] == "tr-async-settle-shadow-attachments-quill-cloud-proxy"
-    assert rendered["TR_ASYNC_SETTLE_ENABLED"] == "false"
-    assert rendered["TR_ASYNC_SETTLE_PROTECTION"] == "false"
+    assert rendered["TR_ASYNC_SETTLE_ENABLED"] == "true"
+    assert rendered["TR_ASYNC_SETTLE_PROTECTION"] == "true"
     assert rendered["TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED"] == "false"
     config = Settings(
         environment="test",
+        serving_region=rendered["TR_SERVING_REGION"],
+        async_settle_shadow_regions=rendered["TR_ASYNC_SETTLE_SHADOW_REGIONS"],
         async_settle_shadow_policy=rendered["TR_ASYNC_SETTLE_SHADOW_POLICY"],
         async_settle_shadow_workspaces=rendered["TR_ASYNC_SETTLE_SHADOW_WORKSPACES"],
         async_settle_shadow_health_region=rendered["TR_ASYNC_SETTLE_SHADOW_HEALTH_REGION"],
         async_settle_shadow_attachment_bucket=rendered["TR_ASYNC_SETTLE_SHADOW_ATTACHMENT_BUCKET"],
+        async_settle_pilot_workspaces=rendered["TR_ASYNC_SETTLE_PILOT_WORKSPACES"],
+        async_settle_pilot_cap_micro=rendered["TR_ASYNC_SETTLE_PILOT_CAP_MICRO"],
         async_settle_enabled=rendered["TR_ASYNC_SETTLE_ENABLED"],
         async_settle_protection=rendered["TR_ASYNC_SETTLE_PROTECTION"],
         settle_outbox_fast_drain_enabled=rendered["TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED"],
@@ -755,14 +902,100 @@ def test_rollout_opts_out_failed_shadow_canary_without_enabling_money_paths(
     health_install.assert_not_called()
     cohort_install.assert_not_called()
     assert not hasattr(app.state, "async_settle_shadow")
-    assert not config.async_settle_enabled
-    assert not config.async_settle_protection
+    assert config.async_settle_enabled is True
+    assert config.async_settle_admission_enabled is True
+    assert config.async_settle_pilot_workspace_ids == {
+        "45819281-0ce9-4811-a0cd-c660ab3a116d", "162e441a-5d13-414f-92bd-7c6cd805faa3",
+    }
+    assert admission_workspaces(config) == {"admission_workspaces": [
+        "162e441a-5d13-414f-92bd-7c6cd805faa3", "45819281-0ce9-4811-a0cd-c660ab3a116d",
+    ]}
+    assert config.async_settle_pilot_cap_micro == 5000000
+    assert config.async_settle_protection is True
     assert not config.settle_outbox_fast_drain_enabled
     assert config.async_settle_shadow_workspace_ids == set()
-    assert not in_v2_cohort(config.async_settle_shadow_policy, "162e441a-5d13-414f-92bd-7c6cd805faa3",
-                        config.async_settle_enabled, config.async_settle_shadow_workspace_ids)
-    assert not in_v2_cohort(config.async_settle_shadow_policy, "stale-opt-in",
-                           config.async_settle_enabled, config.async_settle_shadow_workspace_ids)
+    for workspace in ("162e441a-5d13-414f-92bd-7c6cd805faa3", "45819281-0ce9-4811-a0cd-c660ab3a116d",
+                      "stale-opt-in"):
+        assert config.async_settle_pilot_allows(workspace) is (workspace != "stale-opt-in")
+        assert not in_v2_cohort(config.regional_async_settle_shadow_policy(), workspace,
+                               config.async_settle_enabled, config.async_settle_shadow_workspace_ids)
+
+
+@pytest.mark.parametrize("region", ["us-central1", "us-east4", "europe-west4", "southamerica-east1"])
+def test_rendered_shadow_pins_install_only_in_serving_regions(
+    harness: DeployScriptHarness, monkeypatch: pytest.MonkeyPatch, region: str,
+) -> None:
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from tests.test_async_settle_shadow_observation import fake_store
+    from tests.test_async_settle_ticket import runtime
+    from trusted_router import main, storage
+    from trusted_router.services import (
+        async_settle,
+        async_settle_shadow,
+        async_settle_shadow_cohort_runtime,
+        async_settle_shadow_health,
+    )
+
+    run = harness.run("scripts/deploy/rollout.sh", extra_env={"TR_DEPLOY_TARGET_REGIONS": region})
+    assert run.returncode == 0, summarise(run)
+    deploy = next(call for call in run.calls if call[3:5] == ["run", "deploy"])
+    # Parse the rendered shadow and serving pins through Settings' env loader.
+    # Other deployment secrets/backends are outside this installation test.
+    for name, value in _cloud_run_job_env(deploy).items():
+        if name.startswith("TR_ASYNC_SETTLE_SHADOW_") or name in {
+            "TR_SERVING_REGION", "TR_SOURCE_REVISION", "TR_ASYNC_SETTLE_ENABLED",
+            "TR_ASYNC_SETTLE_PROTECTION", "TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED",
+            "TR_ASYNC_SETTLE_PILOT_WORKSPACES", "TR_ASYNC_SETTLE_PILOT_CAP_MICRO",
+        }:
+            monkeypatch.setenv(name, value)
+    config = Settings(environment="test", service_surface="internal")
+    config = config.model_copy(update={"environment": "production"})
+    assert config.serving_region == region
+    # Canary 4 is opted out (2026-10-29 API-failure stop gate): no region installs.
+    active = False
+    assert config.effective_async_settle_shadow_policy() == ""
+    assert config.async_settle_shadow_workspace_ids == set()
+    assert config.async_settle_admission_enabled is True
+    assert config.async_settle_pilot_workspace_ids == {
+        "45819281-0ce9-4811-a0cd-c660ab3a116d", "162e441a-5d13-414f-92bd-7c6cd805faa3",
+    }
+    assert config.async_settle_pilot_cap_micro == 5000000
+    assert config.async_settle_protection is True
+    assert not config.settle_outbox_fast_drain_enabled
+
+    store, database = fake_store()
+    observation = Mock(return_value=store)
+    evidence = Mock(return_value=SimpleNamespace())
+    monkeypatch.setattr(async_settle_shadow_health, "ObservationStore", observation)
+    monkeypatch.setattr(async_settle_shadow_cohort_runtime, "EvidenceStore", evidence)
+    backend = SimpleNamespace(_database=database, request_record_write_mode="typed")
+    monkeypatch.setattr(storage, "typed_billing_store", lambda _: backend)
+    monkeypatch.setattr(async_settle, "load_runtime", Mock(return_value=runtime()))
+    v1 = Mock(side_effect=AssertionError("region exclusion must not fall back to v1"))
+    monkeypatch.setattr(async_settle_shadow, "install", v1)
+    app = main.create_app(config, configure_store_arg=False, init_observability=False)
+    worker = getattr(app.state, "async_settle_shadow_cohort", None)
+    service = getattr(app.state, "async_settle_shadow_observation", None)
+    try:
+        inventory = sorted(name for name in vars(app.state)["_state"] if name.startswith("async_settle_shadow"))
+        # With the policy empty the startup harness still installs its
+        # unprovisioned latch; only an excluded v2 region skips it.
+        assert inventory == (["async_settle_shadow_cohort", "async_settle_shadow_observation",
+                              "async_settle_shadow_startup", "async_settle_shadow_startup_begin"] if active
+                             else ["async_settle_shadow_startup", "async_settle_shadow_startup_begin"])
+        assert observation.call_count == evidence.call_count == int(active)
+        if active:
+            assert service.publisher_eligible() is (region == "us-central1")
+        v1.assert_not_called()
+    finally:
+        if worker is not None:
+            worker.close()
+            worker.worker.join(2)
+        if service is not None:
+            for executor in (service.session_executor, service.publisher_executor, service.evidence_executor):
+                executor.shutdown(wait=True, cancel_futures=True)
 
 
 @pytest.mark.parametrize("revision", ["abc12345", "not-a-commit", "f" * 40])
@@ -2908,7 +3141,7 @@ def test_combined_synthetic_refresh_preserves_security_boundaries(tmp_path: Path
 
 
 def test_combined_synthetic_refresh_is_a_visible_release_gate() -> None:
-    workflow = (ROOT / ".github/workflows/deploy.yml").read_text()
+    workflow = (ROOT / ".github/workflows/deploy-production.yml").read_text()
     rollout = workflow.split("\n  rollout-secondaries:\n", 1)[1].split(
         "\n  public-surface-companion:\n", 1
     )[0]
@@ -3892,9 +4125,21 @@ def test_rollout_pins_serving_region_per_target_without_inheritance(
         assert deploy[deploy.index("--set-env-vars") + 1].count("TR_SERVING_REGION=") == 1
 
 
+@pytest.mark.parametrize("pin", ["TR_ASYNC_SETTLE_ENABLED", "TR_ASYNC_SETTLE_PROTECTION"])
 def test_rollout_pins_async_admission_and_protection_without_inheritance(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pin: str,
 ) -> None:
+    expected = {
+        "TR_ASYNC_SETTLE_ENABLED": "true",
+        "TR_ASYNC_SETTLE_PROTECTION": "true",
+        "TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE": "/secrets/async-settle/ticket.pem",
+        "TR_ASYNC_SETTLE_TICKET_KID": "tr-async-settle-2026-10a",
+        "TR_ASYNC_SETTLE_TICKET_ISSUER": "https://api.trustedrouter.com",
+        "TR_ASYNC_SETTLE_TICKET_AUDIENCE": "router-settlement",
+        "TR_ASYNC_SETTLE_AUTHORITY_EPOCH": "1",
+        "TR_ASYNC_SETTLE_PILOT_WORKSPACES": "45819281-0ce9-4811-a0cd-c660ab3a116d,162e441a-5d13-414f-92bd-7c6cd805faa3",
+        "TR_ASYNC_SETTLE_PILOT_CAP_MICRO": "5000000",
+    }
     hostile = {
         "TR_ASYNC_SETTLE_ENABLED": "true",
         "TR_ASYNC_SETTLE_PROTECTION": "true",
@@ -3903,7 +4148,15 @@ def test_rollout_pins_async_admission_and_protection_without_inheritance(
         "TR_ASYNC_SETTLE_TICKET_ISSUER": "https://old.example",
         "TR_ASYNC_SETTLE_TICKET_AUDIENCE": "old-audience",
         "TR_ASYNC_SETTLE_AUTHORITY_EPOCH": "42",
+        "TR_ASYNC_SETTLE_PILOT_WORKSPACES": "unapproved",
+        "TR_ASYNC_SETTLE_PILOT_CAP_MICRO": "1",
     }
+    # Challenge each boolean independently in both caller and live-primary env.
+    hostile.update({name: expected[name] for name in (
+        "TR_ASYNC_SETTLE_ENABLED", "TR_ASYNC_SETTLE_PROTECTION",
+    )})
+    hostile[pin] = "false" if expected[pin] == "true" else "true"
+    assert hostile[pin] != expected[pin]
     isolated = _rollout_harness_with_live_primary(tmp_path, monkeypatch, {**_LIVE_PRIMARY_ENV, **hostile})
     run = isolated.run("scripts/deploy/rollout.sh", extra_env=hostile)
     assert run.returncode == 0, summarise(run)
@@ -3911,16 +4164,8 @@ def test_rollout_pins_async_admission_and_protection_without_inheritance(
     rendered = _cloud_run_job_env(deploy)
     # Runbook step 2: the purpose signer is provisioned as literals (Secret Manager
     # file mount plus public identity, positive epoch) while admission and
-    # protection stay off. None of it is inherited from the caller's environment.
-    assert {name: rendered[name] for name in hostile} == {
-        "TR_ASYNC_SETTLE_ENABLED": "false",
-        "TR_ASYNC_SETTLE_PROTECTION": "false",
-        "TR_ASYNC_SETTLE_TICKET_PRIVATE_KEY_FILE": "/secrets/async-settle/ticket.pem",
-        "TR_ASYNC_SETTLE_TICKET_KID": "tr-async-settle-2026-10a",
-        "TR_ASYNC_SETTLE_TICKET_ISSUER": "https://api.trustedrouter.com",
-        "TR_ASYNC_SETTLE_TICKET_AUDIENCE": "router-settlement",
-        "TR_ASYNC_SETTLE_AUTHORITY_EPOCH": "1",
-    }
+    # protection follow the reviewed stage. No value is inherited from the caller.
+    assert {name: rendered[name] for name in hostile} == expected
     secret_flag = next(flag for flag in ("--update-secrets", "--set-secrets") if flag in deploy)
     bindings = deploy[deploy.index(secret_flag) + 1].split(",")
     assert "/secrets/async-settle/ticket.pem=trustedrouter-async-settle-ticket-key:latest" in bindings
@@ -4146,3 +4391,14 @@ def test_rollout_pins_dormant_drain_knobs_without_inheritance(
     deploy = next(call for call in run.calls if call[3:5] == ['run', 'deploy'])
     rendered = _cloud_run_job_env(deploy)
     assert {name: rendered[name] for name in expected} == expected
+
+
+def test_rollout_negotiation_regions_are_literal_and_configured(tmp_path, monkeypatch):
+    hostile = {'TR_ASYNC_SETTLE_NEGOTIATION_REGIONS': 'europe-west4'}
+    isolated = _rollout_harness_with_live_primary(tmp_path, monkeypatch, {**_LIVE_PRIMARY_ENV, **hostile})
+    run = isolated.run('scripts/deploy/rollout.sh', extra_env=hostile)
+    assert run.returncode == 0, summarise(run)
+    deploy = next(call for call in run.calls if call[3:5] == ['run', 'deploy'])
+    rendered = _cloud_run_job_env(deploy)
+    assert rendered['TR_ASYNC_SETTLE_NEGOTIATION_REGIONS'] == 'us-central1,us-west1,us-east4'
+    assert set(rendered['TR_ASYNC_SETTLE_NEGOTIATION_REGIONS'].split(',')) <= set(rendered['TR_REGIONS'].split(','))

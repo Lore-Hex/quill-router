@@ -81,8 +81,9 @@ class _StatementRecorder:
         return getattr(self._conn, name)
 
 
+@pytest.mark.parametrize("balanced", [False, True])
 def test_route_benchmark_window_is_a_range_on_the_recent_index(
-    pg_store: Any, monkeypatch: pytest.MonkeyPatch
+    pg_store: Any, monkeypatch: pytest.MonkeyPatch, balanced: bool
 ) -> None:
     now = dt.datetime.now(dt.UTC)
     pg_store.record_provider_benchmark(
@@ -102,9 +103,14 @@ def test_route_benchmark_window_is_a_range_on_the_recent_index(
             lambda conn: operation(_StatementRecorder(conn, statements))
         ),
     )
-    rows = pg_store.provider_route_benchmark_samples(
-        cutoff=_iso(now - dt.timedelta(hours=48)), per_route_limit=48, limit=1_000
-    )
+    if balanced:
+        rows = pg_store.provider_balanced_benchmark_samples(
+            cutoff=_iso(now - dt.timedelta(hours=48)), per_provider_limit=48, limit=1_000
+        )
+    else:
+        rows = pg_store.provider_route_benchmark_samples(
+            cutoff=_iso(now - dt.timedelta(hours=48)), per_route_limit=48, limit=1_000
+        )
     monkeypatch.undo()
     assert [row.id for row in rows] == ["recent"]
     [(sql, params)] = statements
@@ -143,6 +149,36 @@ def test_route_benchmark_window_is_a_range_on_the_recent_index(
     assert columns[:2] == ["kind", "indexed_at"]
     index_conds = [node["Index Cond"] for node in _plan_nodes(plan) if "Index Cond" in node]
     assert any("kind" in cond and "indexed_at" in cond for cond in index_conds), plan
+
+
+def test_balanced_benchmarks_cap_each_provider_in_one_query(pg_store: Any) -> None:
+    now = dt.datetime.now(dt.UTC)
+    for label, provider, model, minutes, source in (
+        ("old", "acme", "m1", 3000, "synthetic"),
+        ("a1", "acme", "m1", 10, "synthetic"),
+        ("a2", "acme", "m2", 9, "organic"),
+        ("a3", "acme", "m3", 8, "synthetic"),
+        ("b1", "other", "m1", 10, "synthetic"),
+        ("b2", "other", "m2", 10, "synthetic"),
+    ):
+        pg_store.record_provider_benchmark(dataclasses.replace(
+            make_benchmark_sample(
+                sample_id=label, provider=provider, model=model,
+                created_at=_iso(now - dt.timedelta(minutes=minutes)),
+            ),
+            source=source,
+        ))
+    cutoff = _iso(now - dt.timedelta(hours=24))
+    rows = pg_store.provider_balanced_benchmark_samples(
+        cutoff=cutoff, per_provider_limit=2, limit=100,
+    )
+    assert [row.id for row in rows] == ["a3", "a2", "b2", "b1"]
+    assert [row.id for row in pg_store.provider_balanced_benchmark_samples(
+        cutoff=cutoff, per_provider_limit=2, limit=3,
+    )] == ["a3", "a2", "b2"]
+    assert pg_store.provider_balanced_benchmark_samples(
+        cutoff=cutoff, per_provider_limit=2, limit=0,
+    ) == []
 
 
 def test_route_benchmark_window_limit_and_order(pg_store: Any) -> None:

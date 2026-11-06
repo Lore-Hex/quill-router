@@ -5,7 +5,9 @@ fastpath/testdata/authorize_cases_v1.json maps authorize requests, each in
 its own world, to Go's answer (Python's exact bytes and rows), Python's 503,
 or a pass with its §3 reason and what Python answered;
 authorize_fingerprint_v1.json maps requests to the fingerprint and scope
-Python wrote, or to Python's refusal. The generator sends every request
+Python wrote, or to Python's refusal; authorize_async_cases_v1.json holds authorizes sent
+with X-TR-Settlement-Mode, each naming the shape of the async members
+Python answered (the G15 design's §2.2). The generator sends every request
 through the ASGI app in its own process (it installs the snapshot fixture
 catalog and pins clocks), so this test runs it in a subprocess and compares
 the files; the rest checks that each answer is consistent with itself, which
@@ -38,7 +40,8 @@ from trusted_router.stage_d import ESTIMATED_USAGE_SNAPSHOT_MODELS
 ROOT = Path(__file__).resolve().parents[1]
 CASES = ROOT / "fastpath" / "testdata" / "authorize_cases_v1.json"
 FINGERPRINTS = ROOT / "fastpath" / "testdata" / "authorize_fingerprint_v1.json"
-SNAPSHOT = ROOT / "fastpath" / "testdata" / "routing_snapshot_v1.body.json"
+ASYNC_CASES = ROOT / "fastpath" / "testdata" / "authorize_async_cases_v1.json"
+SNAPSHOT = ROOT / "fastpath" / "testdata" / "routing_snapshot_v3.body.json"
 GENERATOR = ROOT / "scripts" / "fastpath" / "authorize_vectors.py"
 CONTRACT = ROOT / "docs" / "design" / "fast-admission-e2-decide.md"
 
@@ -46,14 +49,19 @@ CONTRACT = ROOT / "docs" / "design" / "fast-admission-e2-decide.md"
 # recording what Python answers. The rest of §3 is the edge's own state
 # (cache.*, decide.off, inflight.key, budget.spent, clock.window,
 # policy.lookup_hash_mismatch, policy.regions_mismatch).
+STREAM_PASSES = {
+    "stream.stage_d:stage_d_disabled", "stream.stage_d:workspace_not_pilot", "stream.stage_d:heartbeats_disabled",
+    "stream.stage_d:heartbeat_undeclared", "stream.stage_d:route", "stream.stage_d:settlement_backend",
+    "stream.undeclared",
+}
 SECTION_3 = {
     "body.content_type", "body.unparseable", "body.duplicate_key", "body.float", "body.lax_type",
     "body.strip_ambiguous", "body.dict_key_strip", "body.refused", "body.api_key_hash", "body.stream",
-    "body.service_tier", "body.cache_affinity", "body.priced_extra", "body.canonical_model",
+    "body.service_tier", "body.priced_extra", "body.canonical_model",
     "body.custom_model", "body.internal_model", "body.tags", "body.referer", "body.evaluator_input",
     "header.idempotency_key", "header.settlement_async", "header.video_providers",
     "key.missing", "key.disabled", "key.expired", "key.scope", "key.federated", "key.app", "key.key_cap",
-    "key.key_window", "key.budget_strict",
+    "key.key_window", "key.key_window_alert", "key.budget_strict",
     "workspace.missing", "workspace.paused", "workspace.in_debt", "workspace.tier", "workspace.federated",
     "workspace.deleted", "workspace.broadcast", "tags.merged_invalid",
     "policy.pilot_off", "policy.not_pilot_workspace", "policy.pilot_region", "policy.records_not_durable",
@@ -64,14 +72,20 @@ SECTION_3 = {
     # An estimate past int64 (the fake store keeps it, where a real Spanner
     # INT64 column refuses the commit), and the boot E1 or decision 8 refuses.
     "evaluate.estimate_overflow", "boot.signature", "boot.unverified", "boot.missing",
+    # The stream gates, named only when the edge policy carries
+    # fastpath_edge_streams (docs/design/fast-admission-streams.md section
+    # 5.1): Python's own pilot reasons for a stream it does not lease.
+    *STREAM_PASSES,
 }
 # The reasons Python's own pilot shares (pilot_reason, the boot, the owner's
-# non-admit answers): Python never leases a request tripping one.
+# non-admit answers): Python never leases a request tripping one. A stream
+# the edge passes as body.stream (the policy carrying no
+# fastpath_edge_streams) Python's pilot may lease, its streams switch on.
 PYTHON_PASSES = {
     "policy.pilot_off", "policy.not_pilot_workspace", "policy.pilot_region", "policy.records_not_durable",
-    "policy.digest_not_accepted", "body.stream", "candidates.byok", "key.key_cap", "key.key_window",
-    "key.budget_strict", "owner.busy", "owner.off", "owner.invalid", "owner.failed", "owner.unreachable",
-    "insert.failed", "boot.signature", "boot.unverified", "boot.missing",
+    "policy.digest_not_accepted", "candidates.byok", "key.key_cap", "key.key_window",
+    "key.key_window_alert", "key.budget_strict", "owner.busy", "owner.off", "owner.invalid", "owner.failed", "owner.unreachable",
+    "insert.failed", "boot.signature", "boot.unverified", "boot.missing", *STREAM_PASSES,
 }
 # §10.2: Go passes a body carrying any of these.
 PASS_REQUIRED = {
@@ -112,6 +126,17 @@ def test_the_vectors_are_what_the_app_answers_now(tmp_path: Path) -> None:
         )
 
 
+def test_retired_creator_vectors_always_pass_to_python_for_rejection() -> None:
+    cases = [case for case in _cases() if ":retired:" in case["name"]
+             or case["expect"].get("reason") == "body.custom_model"]
+    assert len(cases) == 13
+    for case in cases:
+        expect = case["expect"]
+        assert expect["outcome"] == "pass", case["name"]
+        assert expect["python"]["status"] == 410, case["name"]
+        assert expect["python"]["type"] == "model_not_supported", case["name"]
+
+
 def test_the_header_carries_pythons_internal_and_estimated_usage_models() -> None:
     """Decisions 7 and 19: Go holds its hardcoded sets equal to these, so a
     catalog that gains an internal_only model, or a changed estimated-usage
@@ -136,8 +161,14 @@ def test_the_cases_name_their_snapshot_and_policy() -> None:
     assert policy["internal_models"] == vectors["internal_models"]
     names = [case["name"] for case in vectors["cases"]]
     assert names == sorted(names) and len(set(names)) == len(names)
+    # The optional members the header's body predates, which a case's
+    # policy adds as the publisher would: the edge's streams
+    # (docs/design/fast-admission-streams.md section 5.4) with the
+    # async-settle object whose typed_records is Stage D's settlement backend.
+    optional = {"fastpath_edge_streams", "async_settle"}
     for case in vectors["cases"]:
-        assert set(case["policy_patch"]) <= set(policy), case["name"]
+        assert set(case["policy_patch"]) <= set(policy) | optional, case["name"]
+        assert case["policy_patch"].get("fastpath_edge_streams", True) is True, case["name"]
         effective = {**policy, **case["policy_patch"]}
         assert effective["issued_at"] * 1_000_000 < case["at_us"] < effective["not_after"] * 1_000_000, case["name"]
         assert case["labels"] == sorted(case["labels"]), case["name"]
@@ -208,13 +239,14 @@ def test_every_answer_agrees_with_its_rows_and_inputs() -> None:
         assert payload["candidate_endpoint_ids"] == [c["endpoint_id"] for c in data["route_candidates"]], name
         assert payload["endpoint_id"] == data["endpoint_id"] == data["route_candidates"][0]["endpoint_id"], name
         assert expect["decide_region"] == data["region"] == payload["region"], name
-        assert payload["stage_d_reason"] == data["stage_d"]["reason"] and not data["stage_d"]["eligible"], name
+        assert payload["stage_d_reason"] == data["stage_d"]["reason"], name
+        _stage_d_members(name, json.loads(case["request"]["body"]), data, authorization, payload)
         assert f"stage_d.{data['stage_d']['reason']}" in case["labels"], name
         assert data["tags"] == payload.get("tags", {}), name
         if case["insert"] == "unknown_landed":
             # Answered from the authorization read back: tags in sorted order.
             assert list(data["tags"]) == sorted(data["tags"]), name
-        assert data["broadcast_destinations"] == [] and data["candidate_cost_reporting"] is False, name
+        assert data["broadcast_destinations"] == [], name
         assert data["response_model"] is None and data["idempotent_replay"] is False, name
         assert case["facts"]["key"]["eligible"] and not case["facts"]["workspace"]["pause_causes"], name
         # data.timing is the last key, its keys in a fixed order; EXPECT
@@ -222,6 +254,34 @@ def test_every_answer_agrees_with_its_rows_and_inputs() -> None:
         assert list(data)[-1] == "timing" and list(data["timing"]) == TIMING, name
         assert data["timing"] == expect["timing"], name
         assert token in case["request"]["headers"], name
+
+
+def _stage_d_members(name: str, body: dict[str, Any], data: dict[str, Any], authorization: dict[str, Any],
+                     payload: dict[str, Any]) -> None:
+    """An answer's Stage D members: a stream Stage D lets in (ok) carries its
+    frozen pricing (the row's pricing_snapshot, the 200's candidate_prices
+    read from it and the estimate as cap_micro, candidate_cost_reporting
+    true) and heartbeat_seq 0 in the row and the payload; any other answer
+    none of them (docs/design/fast-admission-streams.md section 8.4)."""
+    eligible = data["stage_d"]["reason"] == "ok"
+    assert data["stage_d"]["eligible"] is eligible and data["candidate_cost_reporting"] is eligible, name
+    assert eligible is (body.get("stream") is True), name
+    if not eligible:
+        assert "candidate_prices" not in data and "cap_micro" not in data, name
+        assert authorization["pricing_snapshot"] is None and authorization["heartbeat_seq"] is None, name
+        assert "pricing_snapshot" not in payload and "heartbeat_seq" not in payload, name
+        return
+    snapshot = authorization["pricing_snapshot"]
+    assert snapshot == payload["pricing_snapshot"], name
+    document = json.loads(snapshot)
+    assert snapshot == json.dumps(document, sort_keys=True, separators=(",", ":")), name
+    assert (document["v"], document["kind"]) == (1, "endpoint"), name
+    assert data["candidate_prices"] == document["candidates"], name
+    assert [c["endpoint_id"] for c in document["candidates"]] == payload["candidate_endpoint_ids"], name
+    assert data["cap_micro"] == data["estimated_cost_microdollars"] == authorization["estimated_microdollars"], name
+    assert authorization["heartbeat_seq"] == payload["heartbeat_seq"] == 0, name
+    keys = list(data)
+    assert keys[keys.index("stage_d"):keys.index("stage_d") + 3] == ["stage_d", "candidate_prices", "cap_micro"], name
 
 
 def test_the_answered_float_is_pydantics_spelling_not_python_repr() -> None:
@@ -246,7 +306,8 @@ def test_the_answers_cover_every_label_section_10_1_names() -> None:
                   "tags.key_only", "tags.request_only", "tags.merge_overwrite", "float.exponent",
                   "float.integral", "idempotency.presented_body", "idempotency.presented_header",
                   "idempotency.minted", "invocation_nonce", "region.requested", "region.default",
-                  "insert.inserted", "insert.unknown_landed", "read_back.sorted_tags", "end_of_life.offset"):
+                  "insert.inserted", "insert.unknown_landed", "read_back.sorted_tags", "end_of_life.offset",
+                  "affinity.cold", "affinity.warm"):
         assert labels[label] > 0, label
 
 
@@ -265,6 +326,11 @@ def test_every_section_3_reason_records_pythons_answer() -> None:
         if expect["reason"] == "insert.scope_taken":
             # A replay writes nothing: the stored authorization, or 409.
             assert python["status"] in {200, 409} and not python["leased"], case["name"]
+        if python["leased"] and expect["reason"] == "body.stream":
+            # Composed by the edge for the shadow alone: Python's leased
+            # answer recorded beside it (streams section 8.4).
+            assert expect["shadow"]["status"] == 200, case["name"]
+        assert ("shadow" in expect) <= (expect["reason"] == "body.stream"), case["name"]
     # Each cause of body.unparseable and each tags.merged_invalid has a case.
     names = {case["name"] for case in passes}
     for name in ("body.unparseable:bom", "body.unparseable:depth_129", "body.unparseable:int_4001_digits",
@@ -275,8 +341,93 @@ def test_every_section_3_reason_records_pythons_answer() -> None:
     # Positive control: some passes Python leases, so only the edge's own
     # predicate keeps them out of the cohort.
     leased = {case["expect"]["reason"] for case in passes if case["expect"]["python"]["leased"]}
-    assert {"body.float", "body.tags", "body.dict_key_strip", "candidates.estimated_usage", "body.cache_affinity",
+    assert {"body.float", "body.tags", "body.dict_key_strip", "candidates.estimated_usage",
             "workspace.broadcast", "header.settlement_async", "body.unparseable"} <= leased
+
+
+def test_affinity_cases_record_pythons_cold_and_warm_orders() -> None:
+    """§1 item 5: Python's order for a cache_affinity_key comes from a
+    per-process session table only settle seeds, so Go decides the cold
+    order. Each affinity case is an answer: Python's 200 with no session
+    (the cold order, which Go decides and the case expects), and beside it
+    Python's 200 with the case's sessions remembered: the same bytes
+    (affinity_cold, which the shadow compares agree_full: no session, an
+    expired one, one for another endpoint, a provider.order, the remembered
+    endpoint already first) or the remembered endpoint moved to the front of
+    its model's run, or kept as the one candidate with fallbacks off, and
+    nothing else changed (affinity_warm, a differ named
+    differ.affinity_warm)."""
+    cases = [case for case in _cases("answer") if "affinity" in case["expect"]]
+    assert len(cases) == 18 and all(case["name"].startswith("answer:cache_affinity") for case in cases)
+    classes = Counter(case["expect"]["affinity"]["class"] for case in cases)
+    assert classes["affinity_cold"] >= 6 and classes["affinity_warm"] >= 10, classes
+    # The 200's members written from the first candidate (gwauth/response.go, responseData).
+    first_candidate_members = {"model", "upstream_model", "endpoint_id", "provider", "provider_name",
+                               "inference_location", "wafer_zdr_required", "route_candidates"}
+    missing = object()
+    for case in cases:
+        name, a = case["name"], case["expect"]["affinity"]
+        body = json.loads(case["request"]["body"])
+        assert re.fullmatch(r"[0-9a-f]{64}", body["cache_affinity_key"]), name
+        # The case's answer is Python's with no session: Go's to decide.
+        assert (case["expect"]["response"], case["expect"]["timing"]) == (a["cold_response"], a["cold_timing"]), name
+        assert (case["expect"]["estimate_microdollars"], case["expect"]["reservation_microdollars"]) == (
+            a["cold_estimate_microdollars"], a["cold_reservation_microdollars"]), name
+        cold, warm = json.loads(a["cold_response"])["data"], json.loads(a["response"])["data"]
+        cold_ids = [c["endpoint_id"] for c in cold["route_candidates"]]
+        warm_ids = [c["endpoint_id"] for c in warm["route_candidates"]]
+        assert (cold_ids, warm_ids) == (a["cold_candidates"], a["candidates"]), name
+        assert (cold["estimated_cost_microdollars"], warm["estimated_cost_microdollars"]) == (
+            a["cold_estimate_microdollars"], a["estimate_microdollars"]), name
+        # wafer_zdr_required is written only under a Wafer first candidate.
+        members = [k for k in cold if k != "wafer_zdr_required"]
+        assert members == [k for k in warm if k != "wafer_zdr_required"] and list(warm)[-1] == "timing", name
+        # The key is in neither response nor the payload's material.
+        assert "cache_affinity" not in a["response"] and "cache_affinity" not in a["cold_response"], name
+        seeded = {endpoint for endpoint, _age in a["sessions"]}
+        if a["class"] == "affinity_cold":
+            assert a["response"] == a["cold_response"], name
+            continue
+        assert a["class"] == "affinity_warm" and warm_ids != cold_ids and seeded, name
+        changed = {k for k in set(cold) | set(warm) if cold.get(k, missing) != warm.get(k, missing)}
+        if len(cold_ids) == 1:
+            # Fallbacks off: the remembered endpoint alone, at its own price.
+            assert warm_ids[0] in seeded and warm_ids[0] != cold_ids[0], name
+            assert changed <= first_candidate_members | {"estimated_cost", "estimated_cost_microdollars"}, name
+            continue
+        assert sorted(warm_ids) == sorted(cold_ids) and cold["estimated_cost_microdollars"] == warm[
+            "estimated_cost_microdollars"], name
+        # routing_state.rank's order: a stable sort by the model's first-seen
+        # rank (unless provider.sort.partition is none), the remembered
+        # endpoint first; provider.order names no provider in a warm case.
+        provider = body.get("provider") or {}
+        assert not provider.get("order"), name
+        by_model = not (isinstance(provider.get("sort"), dict) and provider["sort"].get("partition") == "none")
+        model_of = {c["endpoint_id"]: c["model"] for c in cold["route_candidates"]}
+        ranks: dict[str, int] = {}
+        for endpoint_id in cold_ids:
+            ranks.setdefault(model_of[endpoint_id], len(ranks))
+        expected = [sorted(cold_ids, key=lambda e: (ranks[model_of[e]] if by_model else 0, e != sticky))
+                    for sticky in seeded]
+        assert warm_ids in expected, (name, warm_ids, expected)
+        assert changed <= first_candidate_members, name
+    # Positive controls: a promotion within the second model, and a session
+    # kept in place of the first with fallbacks off.
+    by_name = {case["name"]: case["expect"]["affinity"] for case in cases}
+    fallback = by_name["answer:cache_affinity:warm:fallback_models"]
+    assert fallback["candidates"][0] == fallback["cold_candidates"][0] and fallback["class"] == "affinity_warm"
+    assert by_name["answer:cache_affinity:warm:no_fallbacks"]["candidates"] != by_name[
+        "answer:cache_affinity:warm:no_fallbacks"]["cold_candidates"]
+    assert by_name["answer:cache_affinity:cold:expired"]["sessions"][0][1] > 600
+    # Partition none moves the remembered endpoint of the second model to
+    # the front of the list; the default partition keeps it in its run; an
+    # empty provider.order is no order.
+    none, model = (by_name[f"answer:cache_affinity:warm:partition_{p}:fallback_models"] for p in ("none", "model"))
+    assert none["candidates"][0] != none["cold_candidates"][0] and none["class"] == "affinity_warm"
+    assert model["candidates"][0] == model["cold_candidates"][0] and model["class"] == "affinity_warm"
+    for case in ("warm:empty_order", "warm:no_fallbacks:empty_order", "warm:top_level_no_fallbacks:empty_order"):
+        assert by_name[f"answer:cache_affinity:{case}"]["class"] == "affinity_warm", case
+    assert by_name["answer:cache_affinity:cold:order"]["class"] == "affinity_cold"
 
 
 def test_an_insert_whose_outcome_is_unknown_and_not_landed_is_pythons_exact_503() -> None:
@@ -352,6 +503,8 @@ def test_the_contract_names_every_reason_and_label_the_vectors_use() -> None:
             assert {"key.<reason>", name} <= named, reason
         elif reason == "evaluate.refused":  # `evaluate.<outcome>`
             assert "evaluate.<outcome>" in named, reason
+        elif reason.startswith("stream.stage_d:"):  # `stream.stage_d:<reason>`
+            assert "stream.stage_d" in named and "stream.stage_d:<reason>" in contract, reason
         else:
             assert reason in named, reason
     assert PASS_REQUIRED | DESCRIPTIVE <= named, sorted((PASS_REQUIRED | DESCRIPTIVE) - named)
@@ -409,3 +562,257 @@ def test_the_facts_are_the_stored_rows_in_section_10_3s_shapes() -> None:
     for name in names:
         tags = by_name[name]["facts"]["key"]["tags"]
         assert len(tags) == 2 and tags == sorted(tags), name
+
+
+def test_a_streams_reservation_is_its_estimate_for_now() -> None:
+    """Go passes a stream to Python (body.stream); Python's typed store
+    reserved the whole budget's price, where the same non-stream request
+    reserves at most HOLD_OUTPUT_TOKENS of it (§5, "The two figures")."""
+    by_name = {case["name"]: case["expect"] for case in [*_cases("answer"), *_cases("pass")]}
+    flash = "deepseek/deepseek-v4-flash:1000+131072"
+    answered = by_name[f"answer:estimate:hold_cap:{flash}"]
+    streamed = by_name[f"pass:body.stream:hold_cap:{flash}"]["python"]
+    assert streamed["status"] == 200 and not streamed["leased"]
+    assert streamed["reservation_microdollars"] == answered["estimate_microdollars"] > answered["reservation_microdollars"]
+    at_the_bound = by_name["pass:body.stream:hold_cap:deepseek/deepseek-v4-flash:1000+16384"]["python"]
+    assert at_the_bound["reservation_microdollars"] == answered["reservation_microdollars"]
+
+
+# ------------------------------------------------------------------ async --
+# fastpath/testdata/authorize_async_cases_v1.json (docs/design/
+# fast-admission-e2-g15-async.md §6.1, P6): authorizes carrying
+# X-TR-Settlement-Mode, with Python's async members.
+
+ASYNC_MEMBERS = ("async_eligible", "billing_snapshot", "billing_snapshot_hash", "settlement_ticket",
+                 "settlement_status_url")
+# §2.2's shapes by the members present, in order.
+ASYNC_SHAPES = {(): "none", ASYNC_MEMBERS[:1]: "A", ASYNC_MEMBERS[:3]: "B", ASYNC_MEMBERS: "C"}
+PRICE_FIELDS = ("endpoint_id", "price_history_version", "rates", "tiers", "request_fee_micro", "rounding")
+
+
+def _shape(response: str) -> str:
+    """The shape of a 200's async members, which sit, in order, between
+    stage_d and tags (§2.1), after a Stage D stream's candidate_prices and
+    cap_micro (streams section 8.4); async_eligible is false in shapes A
+    and B."""
+    data = json.loads(response)["data"]
+    keys = list(data)
+    present = tuple(k for k in keys if k in ASYNC_MEMBERS)
+    assert present in ASYNC_SHAPES, present
+    if present:
+        start = keys.index("stage_d") + 1
+        if keys[start:start + 2] == ["candidate_prices", "cap_micro"]:
+            start += 2
+        assert tuple(keys[start:start + len(present)]) == present and keys[start + len(present)] == "tags"
+    shape = ASYNC_SHAPES[present]
+    if shape in ("A", "B"):
+        assert data["async_eligible"] is False
+    return shape
+
+
+def _named_shape(name: str) -> str:
+    (shape,) = re.findall(r":async\.(none|A|B|C)(?::|$)", name)
+    return shape
+
+
+def _async_snapshot(vectors: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    snapshot = json.loads(vectors["snapshot_body"])
+    return {endpoint["id"]: endpoint for endpoint in snapshot["endpoints"]}
+
+
+def _epoch(endpoint: dict[str, Any], at_us: int) -> dict[str, Any]:
+    """The price epoch at an instant: the last starting at or before it."""
+    return [e for e in endpoint["epochs"] if e["starts_at"] * 1_000_000 <= at_us][-1]
+
+
+def test_the_async_vectors_are_what_the_app_answers_now() -> None:
+    result = subprocess.run(  # noqa: S603 - fixed repository generator, no shell or caller input
+        [sys.executable, str(GENERATOR), "--print", "async"],
+        env={**os.environ, "PYTHONPATH": str(ROOT / "src")}, cwd=ROOT,
+        capture_output=True, timeout=900, check=False,
+    )
+    assert result.returncode == 0, result.stderr[-4000:]
+    assert ASYNC_CASES.read_bytes() == result.stdout, (
+        f"{ASYNC_CASES.relative_to(ROOT)} is stale: run `uv run python scripts/fastpath/authorize_vectors.py`")
+
+
+def test_every_async_case_has_the_shape_its_name_claims() -> None:
+    cases = _load(ASYNC_CASES)["cases"]
+    seen = Counter()
+    for case in cases:
+        name, expect = case["name"], case["expect"]
+        if "affinity" in expect:
+            # §4.4: Python's warm answer in one shape, its cold one in another.
+            warm, cold = re.fullmatch(r".*:async\.warm_(A|B)\.cold_(A|B):.*", name).groups()
+            affinity = expect["affinity"]
+            assert (_shape(affinity["response"]), _shape(affinity["cold_response"])) == (warm, cold), name
+            assert (affinity["async_shape"], affinity["cold_async_shape"]) == (warm, cold), name
+            # The case's answer is Python's cold one, which Go decides.
+            assert expect["outcome"] == "answer" and expect["async_shape"] == cold, name
+            seen[f"affinity.warm_{warm}.cold_{cold}"] += 1
+            continue
+        claimed = _named_shape(name)
+        seen[claimed] += 1
+        if expect["outcome"] == "answer":
+            assert _shape(expect["response"]) == expect["async_shape"] == claimed, name
+            continue
+        assert expect["outcome"] == "pass", name
+        python = expect["python"]
+        assert python["status"] == 200 and python["async_shape"] == claimed, name
+        if claimed == "C":
+            # Admission on: only that Python ticketed it, never the ticket.
+            assert "response" not in python and expect["reason"] == "policy.async_admission", name
+        else:
+            assert _shape(python["response"]) == claimed, name
+    assert seen["B"] >= 10 and seen["A"] >= 12 and seen["none"] >= 8 and seen["C"] == 3, seen
+    assert seen["affinity.warm_A.cold_B"] == 1, seen
+
+
+def test_the_async_cases_send_exactly_async_v1_unless_they_add_nothing() -> None:
+    """§2.1: only the header list exactly ["async-v1"] (one value, that case,
+    no surrounding whitespace; the name case-insensitive) adds members. The
+    edge answers with no header and passes any other present header list
+    (header.settlement_async, which G15c keeps for these)."""
+    absent = 0
+    for case in _load(ASYNC_CASES)["cases"]:
+        modes = [v for k, v in case["request"]["headers"] if k.lower() == "x-tr-settlement-mode"]
+        if ":async.none:" not in case["name"]:
+            assert modes == ["async-v1"], case["name"]
+        elif not modes:
+            absent += 1
+            assert case["expect"]["outcome"] == "answer", case["name"]
+        else:
+            assert modes != ["async-v1"], case["name"]
+            assert (case["expect"]["outcome"], case["expect"]["reason"]) == (
+                "pass", "header.settlement_async"), case["name"]
+    assert absent == 1
+
+
+def test_the_async_header_carries_pythons_sets_snapshot_and_policy() -> None:
+    from trusted_router.services.async_settle import ORDINARY_PARAMETERS
+
+    vectors = _load(ASYNC_CASES)
+    assert vectors["ordinary_parameters"] == sorted(ORDINARY_PARAMETERS)
+    assert vectors["async_members"] == list(ASYNC_MEMBERS)
+    assert vectors["snapshot_sha256"] == hashlib.sha256(vectors["snapshot_body"].encode()).hexdigest()
+    # Admission off in every case but the admission-on ones.
+    assert vectors["policy"]["async_settle"] == {
+        "admission_enabled": False, "edge_decide": True, "ticket_authority": True, "typed_records": True}
+    names = [case["name"] for case in vectors["cases"]]
+    assert names == sorted(names) and len(set(names)) == len(names)
+    named = other = excluded = 0
+    for case in vectors["cases"]:
+        name = case["name"]
+        effective = {**vectors["policy"], **case["policy_patch"]}["async_settle"]
+        assert effective["admission_enabled"] is (
+            name.startswith("pass:policy.async_admission:") or ":admission_workspaces_" in name
+            or ":fastpath_excluded" in name), name
+        assert "settlement_ticket" not in json.dumps(case), name
+        assert "settlement_status_url" not in json.dumps(case), name
+        # Async settle takes no request the fast path takes (G15 §4.5): the
+        # cohort workspace is a fast-path one, so without the overlap list
+        # admission excludes it (the policy names it in
+        # admission_excluded_workspaces) and the edge answers Python's
+        # admission-off shape, with or without a pilot set naming it.
+        excluded_set = effective.get("admission_excluded_workspaces")
+        assert (excluded_set is not None) is (":fastpath_excluded" in name), name
+        if excluded_set is not None:
+            excluded += 1
+            workspace = case["facts"]["key"]["workspace_id"]
+            assert excluded_set == [workspace], name
+            assert workspace in {**vectors["policy"], **case["policy_patch"]}["fastpath_pilot_workspaces"], name
+            assert case["expect"]["outcome"] == "answer" and case["expect"]["async_shape"] in ("A", "B"), name
+            assert json.loads(case["expect"]["response"])["data"]["async_eligible"] is False, name
+            continue
+        # Admission on for a pilot set (§4.1, per workspace): one naming the
+        # key's workspace passes (Python tickets it); one leaving it out is
+        # answered, Python's admission-off shape for that workspace.
+        workspaces = effective.get("admission_workspaces")
+        assert (workspaces is not None) is (":admission_workspaces_" in name), name
+        if workspaces is None:
+            continue
+        assert workspaces == sorted(set(workspaces)), name
+        if name.endswith(":admission_workspaces_named"):
+            named += 1
+            assert case["facts"]["key"]["workspace_id"] in workspaces, name
+            assert case["expect"]["reason"] == "policy.async_admission", name
+            assert case["expect"]["python"]["async_shape"] == "C", name
+        else:
+            assert name.endswith(":admission_workspaces_other"), name
+            other += 1
+            assert case["facts"]["key"]["workspace_id"] not in workspaces, name
+            assert case["expect"]["outcome"] == "answer" and case["expect"]["async_shape"] in ("A", "B"), name
+            data = json.loads(case["expect"]["response"])["data"]
+            assert data["async_eligible"] is False, name
+    assert named == 1 and other == 3 and excluded == 4
+    # The edge's async switch off is a pass with Python's admission-off answer.
+    (off,) = [case for case in vectors["cases"] if case["expect"].get("reason") == "async.off"]
+    assert off["policy_patch"]["async_settle"]["edge_decide"] is False
+    # typed_records false: Python leases nothing without typed records, so
+    # the pilot is off too (the edge passes) and Python answers shape A.
+    (untyped,) = [case for case in vectors["cases"] if case["policy_patch"].get("async_settle", {}).get(
+        "typed_records") is False]
+    assert untyped["expect"]["reason"] == "policy.pilot_off" and untyped["expect"]["python"]["async_shape"] == "A"
+
+
+def test_a_shape_b_snapshot_is_the_composed_candidates_epoch_prices() -> None:
+    """What G15b rebuilds: the candidates kept, sorted by endpoint_id, each
+    the snapshot's epoch price at the case's instant with billing_valid
+    true, and the hash over the sorted-key encoding (§2.2, §3.2)."""
+    vectors = _load(ASYNC_CASES)
+    endpoints = _async_snapshot(vectors)
+    answers = [case for case in vectors["cases"] if case["expect"].get("async_shape") == "B"]
+    assert answers
+    for case in answers:
+        data = json.loads(case["expect"]["response"])["data"]
+        snapshot = data["billing_snapshot"]
+        canonical = json.dumps(snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False)
+        assert data["billing_snapshot_hash"] == hashlib.sha256(canonical.encode()).hexdigest(), case["name"]
+        ids = [candidate["endpoint_id"] for candidate in snapshot["candidates"]]
+        assert ids == sorted(ids) == sorted(c["endpoint_id"] for c in data["route_candidates"]), case["name"]
+        for candidate in snapshot["candidates"]:
+            endpoint = endpoints[candidate["endpoint_id"]]
+            epoch = _epoch(endpoint, case["at_us"])
+            assert epoch["billing_valid"] is True, case["name"]
+            assert {k: candidate[k] for k in PRICE_FIELDS} == epoch["price"], case["name"]
+            assert (candidate["provider"], candidate["model_id"], candidate["usage_type"]) == (
+                endpoint["provider"], endpoint["model_id"], endpoint["usage_type"]), case["name"]
+    mixed = [case for case in answers if ":mixed_provider:" in case["name"]]
+    assert mixed and {c["provider"] for c in json.loads(mixed[0]["expect"]["response"])["data"]["billing_snapshot"][
+        "candidates"]} == {"anthropic", "openai"}
+
+
+def test_a_billing_valid_false_case_names_a_candidate_the_snapshot_refuses() -> None:
+    vectors = _load(ASYNC_CASES)
+    endpoints = _async_snapshot(vectors)
+    cases = [case for case in vectors["cases"] if ":async.A:billing_valid_false:" in case["name"]]
+    assert cases
+    for case in cases:
+        ids = [c["endpoint_id"] for c in json.loads(case["expect"]["response"])["data"]["route_candidates"]]
+        assert [_epoch(endpoints[i], case["at_us"])["billing_valid"] for i in ids].count(False) == 1, case["name"]
+
+
+def test_an_async_stream_carries_the_same_members_as_without_stream() -> None:
+    """Streams section 8.5.1: outside admission, Python's async members to an
+    async-v1 stream are the same request's without stream (body.stream is
+    read only into a ticket's claims); the stream's 200 differs from it only
+    in its Stage D members, and its rows are a stream's."""
+    by_name = {case["name"]: case for case in _load(ASYNC_CASES)["cases"]}
+    plain = json.loads(by_name["answer:async.B:single:openai/gpt-4.1"]["expect"]["response"])["data"]
+    streamed_bodies = [case for case in by_name.values() if json.loads(case["request"]["body"]).get("stream") is True]
+    assert len(streamed_bodies) == 10
+    for name in ("answer:async.B:stream", "pass:body.stream:async.B:member_absent"):
+        expect = by_name[name]["expect"]
+        streamed = json.loads((expect.get("shadow") or expect)["response"])["data"]
+        assert streamed["stage_d"] == {"eligible": True, "reason": "ok"}, name
+        for member in ("async_eligible", "billing_snapshot", "billing_snapshot_hash"):
+            assert streamed[member] == plain[member], (name, member)
+        ignored = {"authorization_id", "generation_id", "credit_reservation_id", "stage_d", "candidate_cost_reporting",
+                   "candidate_prices", "cap_micro", "timing"}
+        assert {k: v for k, v in streamed.items() if k not in ignored} == {
+            k: v for k, v in plain.items() if k not in ignored}, name
+        assert list(streamed).index("cap_micro") + 1 == list(streamed).index("async_eligible"), name
+    member_absent = by_name["pass:body.stream:async.B:member_absent"]["expect"]
+    assert member_absent["python"]["leased"] and member_absent["shadow"]["status"] == 200
+    shadow_row = json.loads(member_absent["shadow"]["authorization_row"]["payload"])
+    assert shadow_row["heartbeat_seq"] == 0 and "billing_snapshot" not in shadow_row

@@ -1,3 +1,5 @@
+import logging
+
 from tests.test_gateway_fallback_billing import _client_and_key
 from trusted_router.routes.internal import gateway
 from trusted_router.routing_state import RoutingState
@@ -53,6 +55,70 @@ def test_gateway_settlement_affinity_performance_and_hard_filters(monkeypatch):
         authorize(cache_affinity_key=None, provider={"preferred_max_latency": 1})["endpoint_id"]
         == alternate["endpoint_id"]
     )
+
+
+def test_authorize_logs_affinity_outcome_and_no_identifiers(monkeypatch, caplog):
+    state = RoutingState()
+    monkeypatch.setattr(gateway, "ROUTING_STATE", state)
+    caplog.set_level(logging.INFO, logger=gateway.logger.name)
+    client, key = _client_and_key()
+    body = {
+        "api_key_hash": key["hash"],
+        "model": "google/gemma-4-31b-it",
+        "route_type": "chat.completions",
+        "region": "us-central1",
+        "estimated_input_tokens": 10,
+        "max_output_tokens": 10,
+        "cache_affinity_key": "a" * 64,
+        "cache_affinity_explicit": True,
+    }
+
+    def authorize(**overrides):
+        caplog.clear()
+        response = client.post("/v1/internal/gateway/authorize", json={**body, **overrides})
+        assert response.status_code == 200, response.text
+        lines = [
+            record.getMessage()
+            for record in caplog.records
+            if record.getMessage().startswith("gateway.authorize_affinity ")
+        ]
+        assert len(lines) == 1, lines
+        assert lines[0].endswith(" region=us-central1")
+        for record in caplog.records:
+            assert "a" * 64 not in record.getMessage()
+        assert key["hash"] not in lines[0]
+        return response.json()["data"], lines[0].split()[1]
+
+    def settle(authorization, endpoint_id):
+        response = client.post(
+            "/v1/internal/gateway/settle",
+            json={
+                "authorization_id": authorization["authorization_id"],
+                "selected_endpoint": endpoint_id,
+                "actual_input_tokens": 10,
+                "actual_output_tokens": 10,
+                "route_type": "chat.completions",
+                "cache_affinity_key": "a" * 64,
+                "cache_affinity_explicit": True,
+            },
+        )
+        assert response.status_code == 200, response.text
+
+    original, affinity = authorize()
+    assert affinity == "affinity=cold"
+    alternate = next(
+        route for route in original["route_candidates"] if route["provider"] != original["provider"]
+    )
+    settle(original, alternate["endpoint_id"])
+    promoted, affinity = authorize()
+    assert affinity == "affinity=warm_promoted"
+    assert promoted["endpoint_id"] == alternate["endpoint_id"]
+    settle(promoted, original["endpoint_id"])
+    same, affinity = authorize()
+    assert affinity == "affinity=warm_same"
+    assert same["endpoint_id"] == original["endpoint_id"]
+    assert authorize(cache_affinity_key=None)[1] == "affinity=none"
+    assert authorize(provider={"order": [original["provider"]]})[1] == "affinity=none"
 
 
 def test_routing_hints_are_excluded_from_durable_payloads():

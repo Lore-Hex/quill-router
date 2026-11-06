@@ -16,7 +16,7 @@ from trusted_router.storage_gcp_io import remaining_rpc_budget, spanner_rpc_dead
 READ_DEADLINE_SECONDS = 0.5
 ROW_LIMIT = 1000
 logger = logging.getLogger(__name__)
-_ReadOperation = Literal["admission", "drain_health"]
+_ReadOperation = Literal["admission", "drain_health", "drain_grace"]
 _read_failure_lock = threading.Lock()
 _read_failure_logs: dict[tuple[_ReadOperation, str], tuple[float, int]] = {}
 
@@ -37,7 +37,7 @@ def _report_read_failure(operation: _ReadOperation, error: Exception, started: f
             break
     now = time.monotonic()
     key = (operation, reason)
-    # Bounded to two operations times eight reasons, regardless of customers.
+    # Bounded to three operations times eight reasons, regardless of customers.
     # Count repeats without letting one cause suppress another kind of failure.
     with _read_failure_lock:
         next_log, failures = _read_failure_logs.get(key, (0., 0))
@@ -127,6 +127,103 @@ def unresolved_statement() -> tuple[str, dict[str, Any], dict[str, Any]]:
     )
 
 
+# Admission requires the published p95 age to be at most this (eligible() and
+# decode_health() in services/async_settle.py).
+HEALTH_P95_LIMIT_SECONDS = 5
+# The longest grace a settle intent's writer gives its own inline settle before
+# the drain may take the row: routes/internal/gateway.py enqueues its two-commit
+# and fast-path pilot intents due 60 s after it writes them. A row due sooner
+# is read as due; a row written due later still counts from 60 s.
+INLINE_GRACE_SECONDS = 60
+GRACE_ROW_LIMIT = 100
+
+
+def grace_statement(since: str, until: str) -> tuple[str, dict[str, Any], dict[str, Any]]:
+    """Unresolved rows that may still be in their inline grace, created in [since, until).
+
+    A non-async pending row the drain has neither attempted nor parked: a failed
+    apply counts an attempt, and both a failure and a park write last_error.
+    The range is on the unresolved index; the other columns come from the base
+    rows of that range only.
+    """
+    return (
+        "SELECT unresolved_at, next_attempt_at FROM tr_settle_outbox"
+        "@{FORCE_INDEX=tr_settle_outbox_unresolved} "
+        "WHERE unresolved_at IS NOT NULL AND unresolved_at >= @since AND unresolved_at < @until "
+        "AND status='pending' AND async_version IS NULL AND attempts=0 AND last_error IS NULL "
+        "ORDER BY unresolved_at LIMIT @limit",
+        {"since": since, "until": until, "limit": GRACE_ROW_LIMIT},
+        {"since": param_types.TIMESTAMP, "until": param_types.TIMESTAMP, "limit": param_types.INT64},
+    )
+
+
+def _timestamp(value: Any) -> float:
+    """Seconds since the epoch of a stored timestamp; a naive one is refused."""
+    import datetime as dt
+
+    stamp = value if isinstance(value, dt.datetime) else dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if stamp.tzinfo is None:
+        raise ValueError("naive timestamp")
+    return stamp.timestamp()
+
+
+def _ages_from_due(reader: Any, observed: float, ages: list[float]) -> list[float]:
+    """The unresolved ages, with a row in its inline grace counted from when it falls due.
+
+    A row is in its grace while it is not an async row, is pending, and the drain
+    has neither attempted nor parked it: its writer settles it inline and gave
+    the drain the row only from next_attempt_at, at most INLINE_GRACE_SECONDS
+    after writing it. Until then its age is not drain lag, so it counts from
+    that due time instead of from its creation. Every other row, dead, retried
+    and parked ones included, keeps its creation age.
+
+    Only a row whose creation age is over HEALTH_P95_LIMIT_SECONDS and at most
+    INLINE_GRACE_SECONDS + HEALTH_P95_LIMIT_SECONDS (plus a second's margin) can
+    be over the limit by creation age but not by due age; younger rows are under
+    it either way and older ones over it. So the base rows are read only for
+    that range, and only when it holds at least one and at most GRACE_ROW_LIMIT
+    rows (the same snapshot's backlog says how many); with more, every age
+    stays a creation age. A truncated backlog cannot say how many, and its
+    record is incomplete and never admits, so it is not read. If the read
+    fails, every age stays a creation age too: the evidence before this read
+    existed, and a record still goes out.
+    """
+    import datetime as dt
+    import time
+
+    if len(ages) > HEALTH_ROW_LIMIT:
+        return ages
+    span = INLINE_GRACE_SECONDS + HEALTH_P95_LIMIT_SECONDS + 1
+    in_range = sum(HEALTH_P95_LIMIT_SECONDS < age <= span for age in ages)
+    if not 0 < in_range <= GRACE_ROW_LIMIT:
+        return ages
+    def iso(seconds: float) -> str:
+        return dt.datetime.fromtimestamp(seconds, dt.UTC).isoformat().replace("+00:00", "Z")
+    started = time.monotonic()
+    try:
+        rows = _query(reader, grace_statement(iso(observed - span), iso(observed - HEALTH_P95_LIMIT_SECONDS)))
+    except Exception as error:  # any failure: publish the creation ages, never no record
+        _report_read_failure("drain_grace", error, started)
+        return ages
+    due: dict[float, list[float]] = {}
+    for row in rows:
+        try:
+            created, next_attempt = row
+            start = _timestamp(created)
+            # Never before creation: a row's due age is at most its creation age.
+            due_at = max(start, min(_timestamp(next_attempt), start + INLINE_GRACE_SECONDS))
+        except (TypeError, ValueError, AttributeError, OverflowError):
+            continue  # an unreadable row keeps its creation age
+        # Keyed by the creation age exactly as the caller computed it, so this
+        # replaces one of the equal ages, whichever row it was.
+        due.setdefault(observed - start, []).append(max(0.0, observed - due_at))
+    out = []
+    for age in ages:
+        replacements = due.get(age)
+        out.append(replacements.pop() if replacements else age)
+    return out
+
+
 def _query(reader: Any, statement: tuple[str, dict[str, Any], dict[str, Any]]) -> list[Any]:
     sql, params, types = statement
     return list(reader.execute_sql(sql, params=params, param_types=types,
@@ -184,40 +281,43 @@ def publish_health(database: Any) -> dict[str, Any]:
     pending/dead INSERT +1; lease-only/retry/park 0; pending->dead updates
     stored status; pending->done deletes 1. The due index already incurs
     comparable maintenance on these transitions.
+
+    The p50 and p95 ages count a row in its inline grace from when it falls
+    due (_ages_from_due); the oldest age is every row's creation age.
     """
-    import datetime as dt
     import json
     import math
     import time
 
     observed = time.time()  # read START, never refresh old evidence on receipt
-    with database.snapshot() as snapshot:
+    # One snapshot for both reads: the grace rows are read as of the backlog.
+    with database.snapshot(multi_use=True) as snapshot:
         rows = _query(snapshot, unresolved_statement())
-    complete = len(rows) <= HEALTH_ROW_LIMIT
-    ages = []
-    amount = dead = 0
-    for created, micro, status in rows:
-        age = observed  # Unknown age sorts as oldest, including NULL's epoch sentinel.
-        if type(micro) is not int or micro < 0:
-            complete, micro = False, 0
-        amount += micro
-        if type(status) is not str or status not in ("pending", "dead"):
-            complete = False
-        dead += status == "dead"
-        try:
-            stamp = created if isinstance(created, dt.datetime) else dt.datetime.fromisoformat(created.replace('Z', '+00:00'))
-            age = observed - stamp.timestamp()
-            if stamp.tzinfo is None or not math.isfinite(age) or age < 0:
-                raise ValueError("invalid unresolved observation")
-            # An epoch (or earlier) timestamp cannot establish a known age.
-            if stamp.timestamp() <= 0:
+        complete = len(rows) <= HEALTH_ROW_LIMIT
+        ages = []
+        amount = dead = 0
+        for created, micro, status in rows:
+            age = observed  # Unknown age sorts as oldest, including NULL's epoch sentinel.
+            if type(micro) is not int or micro < 0:
+                complete, micro = False, 0
+            amount += micro
+            if type(status) is not str or status not in ("pending", "dead"):
                 complete = False
-        except (TypeError, ValueError, AttributeError, OverflowError):
-            complete, age = False, observed
-        ages.append(age)
-    ages.sort()
+            dead += status == "dead"
+            try:
+                stamp = _timestamp(created)
+                age = observed - stamp
+                if not math.isfinite(age) or age < 0:
+                    raise ValueError("invalid unresolved observation")
+                # An epoch (or earlier) timestamp cannot establish a known age.
+                if stamp <= 0:
+                    complete = False
+            except (TypeError, ValueError, AttributeError, OverflowError):
+                complete, age = False, observed
+            ages.append(age)
+        due_ages = sorted(_ages_from_due(snapshot, observed, ages))
     def percentile(p: float) -> float:
-        return ages[max(0, math.ceil(len(ages) * p) - 1)] if ages else 0.0
+        return due_ages[max(0, math.ceil(len(due_ages) * p) - 1)] if due_ages else 0.0
     value = dict(v=1, authority="local", observed_at=observed,
                  worker_heartbeat=time.time(), complete=complete,
                  sample_count=len(ages), backlog_count=len(rows), frozen_micro=amount,
@@ -235,5 +335,5 @@ def publish_health(database: Any) -> dict[str, Any]:
         _write_control(transaction, HEALTH_ID, value)
 
     database.run_in_transaction(txn, timeout_secs=READ_DEADLINE_SECONDS)
-    logging.getLogger(__name__).info("async_drain.health %s", json.dumps(value))
+    logging.getLogger(__name__).debug("async_drain.health %s", json.dumps(value))
     return value

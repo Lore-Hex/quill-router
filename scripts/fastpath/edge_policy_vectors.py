@@ -6,8 +6,20 @@ environment cannot change the files) through the publisher's own
 ``settings_facts`` and ``build_policy``, and signs it with the routing
 snapshot's TEST key (scripts/fastpath/routing_snapshot_vectors.py, derived from
 a public seed) under the edge-policy ``typ``. It writes the exact canonical
-body (no trailing newline) and the signed manifest to fastpath/testdata/.
-Workspace ids, digests and the monitor key are synthetic.
+body (no trailing newline) and the signed manifest to fastpath/testdata/,
+and the optional fastpath_edge_streams member's vectors
+(docs/design/fast-admission-streams.md section 5.4) to
+fastpath/testdata/edge_policy_streams_v1.json: bodies the publisher writes
+from each combination of its three switches, and the member's other
+spellings, each with whether Python's EdgePolicyV1 and Go's ParseEdgePolicy
+accept it and what the member says, and the async admission members'
+vectors (docs/design/fast-admission-e2-g15-async.md sections 4.1 and 4.5)
+to fastpath/testdata/edge_policy_admission_v1.json: bodies the publisher
+writes from each combination of admission, the async pilot set, the
+fast-path overlap list and the fast-path set, each with Python's own
+admission answer per workspace, which Go's AsyncSettle.Admits must give, and
+the members' other spellings, refused by both readers. Workspace ids,
+digests and the monitor key are synthetic.
 tests/test_edge_policy_publish.py fails when the files are not what this
 script writes now.
 
@@ -39,12 +51,15 @@ from trusted_router.routing_snapshot_signing import (  # noqa: E402
 )
 from trusted_router.services.edge_policy_publisher import (  # noqa: E402
     build_policy,
+    edge_streams_on,
     settings_facts,
 )
 from trusted_router.services.routing_snapshot_publisher import plane_of  # noqa: E402
 
 OUTPUT_BODY = ROOT / "fastpath" / "testdata" / "edge_policy_v1.body.json"
 OUTPUT_MANIFEST = ROOT / "fastpath" / "testdata" / "edge_policy_v1.manifest.json"
+OUTPUT_STREAMS = ROOT / "fastpath" / "testdata" / "edge_policy_streams_v1.json"
+OUTPUT_ADMISSION = ROOT / "fastpath" / "testdata" / "edge_policy_admission_v1.json"
 GENERATOR = "scripts/fastpath/edge_policy_vectors.py"
 
 ISSUED_AT = calendar.timegm((2026, 10, 19, 0, 0, 0))  # 2026-10-19T00:00Z
@@ -78,11 +93,11 @@ MONITOR_KEY = "sk-tr-v1-synthetic-monitor-key-for-golden-files"  # noqa: S105 - 
 INTERNAL_MODELS = frozenset({"trustedrouter/monitor", "trustedrouter/fortanix-test"})
 
 
-def fixture_settings() -> Settings:
+def fixture_settings(**overrides: object) -> Settings:
     # No .env file and the storage backend pinned, so the developer's
     # environment can neither fail construction nor reach a value read here.
-    return Settings(
-        _env_file=None,  # type: ignore[call-arg]
+    # overrides replace fixture values, parsed as the deployed settings are.
+    values: dict[str, object] = dict(
         environment="test", sentry_dsn=None, storage_backend="memory",
         primary_region="us-central1", serving_region="us-central1",
         regions="us-central1,europe-west4,us-east4",
@@ -100,14 +115,26 @@ def fixture_settings() -> Settings:
         synthetic_monitor_api_key=MONITOR_KEY,
         async_settle_shadow_policy="shadow-v2",
         async_settle_shadow_workspaces="ws-synthetic-async-shadow",
+        # async_settle: admission and the edge's async switch off, as deployed.
+        async_settle_enabled=False,
+        async_settle_protection=False,
+        fastpath_edge_decide_async=False,
+        # Off, as deployed: the body carries no fastpath_pilot_key_windows,
+        # the member Go nodes accept only from e2-key-windows increment 2.
+        fastpath_pilot_key_windows="off",
     )
+    values.update(overrides)
+    return Settings(_env_file=None, **values)  # type: ignore[call-arg, arg-type]
 
 
-def policy() -> EdgePolicyV1:
-    settings = fixture_settings()
+def policy(settings: Settings | None = None) -> EdgePolicyV1:
+    settings = settings or fixture_settings()
+    # async_settle: admission and the edge's async switch off (pinned in
+    # fixture_settings, as rollout.sh deploys them), a ticket authority and
+    # typed records, so the body carries both values.
     facts = settings_facts(
         settings, accepted=RESOLVER_DIGESTS | settings.stage_d_accepted_gcp_digests, durable=True,
-        internal=INTERNAL_MODELS,
+        internal=INTERNAL_MODELS, ticket_authority=True, typed_records=True,
     )
     return build_policy(plane_of(settings), ISSUED_AT, facts)
 
@@ -120,6 +147,121 @@ def golden_signer() -> EdgePolicySigner:
 
 def render_body() -> bytes:
     return canonical_edge_policy_bytes(policy())
+
+
+# The three switches fastpath_edge_streams needs, by name.
+STREAMS_SWITCHES = ("fastpath_edge_streams", "fastpath_pilot_streams", "reap_snapshot_booking_enabled")
+# The member's spellings the publisher never writes, each refused by both
+# readers: present only as true.
+STREAMS_REFUSED = (("false", "false"), ("null", "null"), ("one", "1"), ("string", '"true"'))
+
+
+def streams_cases() -> list[dict[str, object]]:
+    """The member's vectors: the publisher's body for every combination of
+    the three switches (the member present only with all three on), then
+    the all-on body with the member spelled every other way."""
+    cases: list[dict[str, object]] = []
+    on_body = ""
+    for mask in range(1 << len(STREAMS_SWITCHES)):
+        switches = {name: bool(mask >> i & 1) for i, name in enumerate(STREAMS_SWITCHES)}
+        settings = fixture_settings().model_copy(update=switches)
+        body = canonical_edge_policy_bytes(policy(settings)).decode("ascii")
+        member = edge_streams_on(settings)
+        if member:
+            on_body = body
+        name = "+".join(n for n, v in switches.items() if v) or "all_off"
+        cases.append({"name": f"publisher:{name}", "switches": switches, "body": body, "accept": True,
+                      "edge_streams": member})
+    member_text = '"fastpath_edge_streams":true'
+    if on_body.count(member_text) != 1:
+        raise AssertionError("the all-on body does not carry the member once")
+    for name, spelling in STREAMS_REFUSED:
+        cases.append({"name": f"refused:{name}", "switches": None,
+                      "body": on_body.replace(member_text, f'"fastpath_edge_streams":{spelling}'),
+                      "accept": False, "edge_streams": False})
+    return cases
+
+
+def render_streams() -> str:
+    return json.dumps({"generator": GENERATOR, "cases": streams_cases()}, indent=1, sort_keys=True) + "\n"
+
+
+# Async admission per workspace (docs/design/fast-admission-e2-g15-async.md
+# sections 4.1 and 4.5): the settings Python's admission reads, the fast-path
+# set among them. Two fast-path workspaces, one async-only workspace, one in
+# neither.
+ADMISSION_FASTPATH = "ws-synthetic-pilot-1,ws-synthetic-pilot-2"
+ADMISSION_PROBES = ("ws-synthetic-async-a", "ws-synthetic-neither", "ws-synthetic-pilot-1", "ws-synthetic-pilot-2")
+ADMISSION_PILOTS = ("", "ws-synthetic-async-a", "ws-synthetic-async-a,ws-synthetic-pilot-1",
+                    "ws-synthetic-pilot-1,ws-synthetic-pilot-2")
+ADMISSION_OVERLAPS = ("", "ws-synthetic-pilot-1")
+# The members' spellings the publisher never writes, each refused by both
+# readers, spliced into the async_settle object of the all-workspaces body
+# (admission on, no pilot set, no fast-path set), and one into the
+# admission-off body.
+ADMISSION_REFUSED = (
+    ("excluded_null", '"admission_excluded_workspaces":null'),
+    ("excluded_empty", '"admission_excluded_workspaces":[]'),
+    ("excluded_unsorted", '"admission_excluded_workspaces":["ws-synthetic-pilot-2","ws-synthetic-pilot-1"]'),
+    ("excluded_duplicate", '"admission_excluded_workspaces":["ws-synthetic-pilot-1","ws-synthetic-pilot-1"]'),
+    ("excluded_outside_admission_workspaces",
+     '"admission_excluded_workspaces":["ws-synthetic-pilot-1"],"admission_workspaces":["ws-synthetic-async-a"]'),
+)
+ADMISSION_OFF_REFUSED = ("excluded_admission_off", '"admission_excluded_workspaces":["ws-synthetic-pilot-1"]')
+
+
+def admission_settings(admission: bool, pilots: str, overlap: str, fastpath: str) -> Settings:
+    return fixture_settings(
+        async_settle_enabled=admission, async_settle_protection=admission,
+        async_settle_pilot_workspaces=pilots, async_settle_fastpath_overlap_workspaces=overlap,
+        fastpath_pilot_workspaces=fastpath,
+    )
+
+
+def _spliced(settings: Settings, members: str) -> str:
+    body = canonical_edge_policy_bytes(policy(settings)).decode("ascii")
+    anchor = f'"async_settle":{{"admission_enabled":{str(settings.async_settle_admission_enabled).lower()},'
+    if body.count(anchor) != 1 or "admission_workspaces" in body or "admission_excluded" in body:
+        raise AssertionError("the splice's base body has a member already")
+    return body.replace(anchor, anchor + members + ",")
+
+
+def admission_cases() -> list[dict[str, object]]:
+    """The admission members' vectors: the publisher's body for every
+    combination of admission, the async pilot set, the overlap list and the
+    fast-path set, each with Python's own admission answer per probe
+    workspace (async_settle_admission_enabled and async_settle_pilot_allows,
+    which snapshot_projection and the settlement handler read); then the
+    members spelled every way the publisher never writes, refused."""
+    cases: list[dict[str, object]] = []
+    for admission in (False, True):
+        for pilots in ADMISSION_PILOTS:
+            for overlap in ADMISSION_OVERLAPS:
+                for fastpath in ("", ADMISSION_FASTPATH):
+                    settings = admission_settings(admission, pilots, overlap, fastpath)
+                    admits = {ws: settings.async_settle_admission_enabled and settings.async_settle_pilot_allows(ws)
+                              for ws in ADMISSION_PROBES}
+                    cases.append({
+                        "name": f"publisher:admission={str(admission).lower()}:pilots={pilots or '-'}"
+                                f":overlap={overlap or '-'}:fastpath={'set' if fastpath else '-'}",
+                        "settings": {"admission": admission, "pilots": pilots, "overlap": overlap,
+                                     "fastpath": fastpath},
+                        "body": canonical_edge_policy_bytes(policy(settings)).decode("ascii"),
+                        "accept": True, "admits": admits,
+                    })
+    on = admission_settings(True, "", "", "")
+    for name, members in ADMISSION_REFUSED:
+        cases.append({"name": f"refused:{name}", "settings": None, "body": _spliced(on, members),
+                      "accept": False, "admits": None})
+    name, members = ADMISSION_OFF_REFUSED
+    cases.append({"name": f"refused:{name}", "settings": None,
+                  "body": _spliced(admission_settings(False, "", "", ""), members), "accept": False, "admits": None})
+    return cases
+
+
+def render_admission() -> str:
+    return json.dumps({"generator": GENERATOR, "probes": list(ADMISSION_PROBES), "cases": admission_cases()},
+                      indent=1, sort_keys=True) + "\n"
 
 
 def render_manifest() -> str:
@@ -139,4 +281,7 @@ def render_manifest() -> str:
 if __name__ == "__main__":
     OUTPUT_BODY.write_bytes(render_body())
     OUTPUT_MANIFEST.write_text(render_manifest())
-    print(f"wrote {OUTPUT_BODY.relative_to(ROOT)} and {OUTPUT_MANIFEST.relative_to(ROOT)}")
+    OUTPUT_STREAMS.write_text(render_streams())
+    OUTPUT_ADMISSION.write_text(render_admission())
+    print(f"wrote {OUTPUT_BODY.relative_to(ROOT)}, {OUTPUT_MANIFEST.relative_to(ROOT)}, "
+          f"{OUTPUT_STREAMS.relative_to(ROOT)} and {OUTPUT_ADMISSION.relative_to(ROOT)}")

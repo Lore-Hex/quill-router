@@ -6,7 +6,9 @@ const assert = require('node:assert/strict');
 
 (async () => {
   const allMarkets = JSON.parse(fs.readFileSync(path.join(__dirname, 'markets.json')));
-  const markets = allMarkets.filter(market => market.slug !== 'new-york');
+  // New York and the cities in nyte-cities.json use the v2 design, covered by verify-nyte-v2.cjs.
+  const nyteCities = JSON.parse(fs.readFileSync(path.join(__dirname, 'nyte-cities.json')));
+  const markets = allMarkets.filter(market => market.slug !== 'new-york' && !(market.slug in nyteCities));
   const output = process.argv[2] || '/tmp/token-exchange-build';
   const browser = await chromium.launch({ headless: true });
   const tracking = new Map();
@@ -16,15 +18,32 @@ const assert = require('node:assert/strict');
     await page.route('https://trustedrouter.com/token-exchange/events', async route => {
       if (route.request().method() === 'POST') {
         const body = route.request().postDataJSON();
-        assert(['exchange.landing_viewed', 'exchange.landing_engaged'].includes(body.event));
+        // Visits plus the shared click tracker: clicks name a button or an outbound host, never a person.
+        assert(['exchange.landing_viewed', 'exchange.landing_engaged', 'nyte.cta_clicked', 'nyte.outbound_clicked'].includes(body.event));
+        if (body.event === 'nyte.cta_clicked') assert.match(body.cta, /^[a-z0-9][a-z0-9_-]{0,39}$/);
+        if (body.event === 'nyte.outbound_clicked') assert.match(body.destination_host, /^[a-z0-9.-]+$/);
         assert.equal(typeof body.visitor_id, 'string');
         assert(!JSON.stringify(body).includes('should-not-pass'));
+        assert(!/@|email/.test(JSON.stringify(body)));
         tracking.get(page).push(body);
       }
       return route.fulfill({status:204, headers:{'Access-Control-Allow-Origin':'http://127.0.0.1:8089'}});
     });
     return page;
   }
+  // The New York-only cowork page uses the shared v2 shell.
+  const cowork = await browser.newPage();
+  for (const width of [320,390,1440]) {
+    await cowork.setViewportSize({width,height:900});
+    await cowork.goto('http://127.0.0.1:8089/trusted-cowork.html');
+    await cowork.evaluate(()=>document.fonts.ready);
+    assert.equal(await cowork.locator('body').getAttribute('data-nyte-page'),'cowork');
+    assert(await cowork.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+    if(width<=800)await cowork.locator('#menuBtn').click();
+    if(width>800)await cowork.locator('[data-group=buy]').hover();
+    assert(await cowork.locator('#nav a[href="/trusted-cowork"]').isVisible());
+  }
+  await cowork.close();
   const page = await newPage({reducedMotion: 'reduce'});
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -130,7 +149,7 @@ const assert = require('node:assert/strict');
   });
   for (const [width, height] of [[390,700], [320,600]]) {
     await mobile.setViewportSize({width,height});
-    await mobile.goto('http://127.0.0.1:8089/london/');
+    await mobile.goto(`http://127.0.0.1:8089/${markets[0].slug}/`);
     await mobile.evaluate(() => document.fonts.ready);
     const initial = await heroGeometry();
     await mobile.evaluate(() => window.scrollTo({top:120,behavior:'instant'}));
@@ -146,7 +165,7 @@ const assert = require('node:assert/strict');
   assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   await mobile.close();
   const fallback = await newPage({javaScriptEnabled:false, viewport:{width:390,height:1000}});
-  await fallback.goto('http://127.0.0.1:8089/london/');
+  await fallback.goto('http://127.0.0.1:8089/hong-kong/');
   assert(await fallback.getByRole('navigation', {name:'Main navigation',exact:true}).isVisible());
   assert.equal(await fallback.getByRole('button', {name:'Menu',exact:true}).isVisible(), false);
   assert(await fallback.locator('.supplier-art').isVisible());
@@ -172,7 +191,7 @@ const assert = require('node:assert/strict');
     if (body.email === 'nope@invalid') return route.fulfill({status:422, headers:{...cors, 'Content-Type':'application/json'}, body:JSON.stringify({ok:false, error:'invalid_email'})});
     return route.fulfill({status:200, headers:{...cors, 'Content-Type':'application/pdf'}, body:Buffer.from('%PDF-1.4\n%stand-in\n')});
   });
-  await brochure.goto('http://127.0.0.1:8089/london/?utm_source=linkedin&utm_campaign=ny-launch&secret=dropped');
+  await brochure.goto('http://127.0.0.1:8089/hong-kong/?utm_source=linkedin&utm_campaign=ny-launch&secret=dropped');
   await brochure.getByRole('link', {name:'Get the buyer deck', exact:true}).first().click();
   await brochure.waitForFunction(() => location.hash === '#brochure');
   const form = brochure.locator('#brochure-form');

@@ -188,15 +188,24 @@ def test_streamlake_qwen3_235b_instruct_retirement_is_observation_dated_and_scop
 
 
 @pytest.mark.parametrize("usage", ["Credits", "BYOK"])
+@pytest.mark.parametrize("model,native,cutoff", [
+    ("qwen/qwen3-coder-next", "qwen3-coder-next", datetime(2026, 10, 12, 16, 4, tzinfo=UTC)),
+    ("qwen/qwen3-30b-a3b-thinking-2507", "Qwen3-30B-A3B-Thinking-2507",
+     datetime(2026, 10, 25, 17, 17, tzinfo=UTC)),
+])
 def test_stale_streamlake_qwen_catalog_cannot_reenable_retired_route(
-    monkeypatch: pytest.MonkeyPatch, usage: str,
+    monkeypatch: pytest.MonkeyPatch, usage: str, model: str, native: str, cutoff: datetime,
 ) -> None:
-    cutoff = provider_lifecycle.STREAMLAKE_QWEN3_CODER_NEXT_RETIREMENT_AT
+    assert not provider_lifecycle.provider_model_retired(
+        "streamlake", model, native, at=cutoff - timedelta(microseconds=1),
+    )
+    assert provider_lifecycle.provider_model_retired("streamlake", model, at=cutoff)
+    assert provider_lifecycle.provider_model_retired("streamlake", "other-alias", native, at=cutoff)
+    assert not provider_lifecycle.provider_model_retired("control-provider", model, native, at=cutoff)
     monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: cutoff)
     monkeypatch.setattr(catalog_ingest, "_provider_manifest_dark_model_ids", lambda: {})
     monkeypatch.setattr(catalog_ingest, "_PROVIDER_SERVED_MODEL_ALLOWLIST", {})
     monkeypatch.setattr(catalog_ingest, "_AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS", frozenset())
-    model = "qwen/qwen3-coder-next"
     result = ProviderPricingResult(
         slug="streamlake", source="stale_snapshot", fetched_url="https://www.streamlake.ai",
         prices={model: ModelPrice(200_000, 1_000_000)},
@@ -205,10 +214,10 @@ def test_stale_streamlake_qwen_catalog_cannot_reenable_retired_route(
     endpoints = {
         provider: ModelEndpoint(
             id=provider, provider=provider, model_id=model,
-            usage_type=usage, upstream_id="qwen3-coder-next",
+            usage_type=usage, upstream_id=native,
         )
-        for provider in ("streamlake", "novita")
+        for provider in ("streamlake", "control-provider")
     }
     assert catalog_ingest._filter_unserved_provider_endpoints(endpoints, at=cutoff) == {
-        "novita": endpoints["novita"],
+        "control-provider": endpoints["control-provider"],
     }

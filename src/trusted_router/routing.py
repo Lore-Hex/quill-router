@@ -24,6 +24,7 @@ from trusted_router.catalog import (
     PRIVACY_TIER_ALIASES,
     PRIVACY_TIER_TRUSTED,
     PRIVACY_TIER_ZERO_RETENTION,
+    PRIVATE_PROXY_MODEL_TARGETS,
     PROVIDER_JURISDICTION_US,
     PROVIDERS,
     ROUTING_MODEL_ALIAS_TARGETS,
@@ -44,6 +45,7 @@ from trusted_router.catalog import (
     meta_candidate_models,
 )
 from trusted_router.catalog_capabilities import union_supported_parameters
+from trusted_router.catalog_data import DECIDE_MODEL_ALIASES
 from trusted_router.catalog_energy import GREEN_MODEL_ID, renewable_provider_slugs
 from trusted_router.config import Settings, get_settings
 from trusted_router.errors import api_error
@@ -292,11 +294,37 @@ def chat_route_candidates(
     return candidates
 
 
+def _unsupported_model_error(model_id: str, model: Model | None, *, decide: bool) -> HTTPException:
+    if not decide:
+        return api_error(
+            400,
+            f"Model does not support chat completions: {model_id}",
+            ErrorType.MODEL_NOT_SUPPORTED,
+        )
+    # A decision runs on a hosted decision model or on any chat model; "chat
+    # completions" would send the caller looking for the wrong problem.
+    if model is not None and model.supports_decide:
+        # A hosted decision model reaches this arm only through a spelling
+        # its own path does not take: a variant suffix or a fallback list.
+        message = f"Decision model {model_id} takes no variant suffix or fallback models"
+    elif model is not None:
+        message = f"Model does not support decisions: {model_id}"
+    elif model_id in DECIDE_MODEL_ALIASES:
+        message = f"Unknown model: {model_id}. Send \"model\": \"{DECIDE_MODEL_ALIASES[model_id]}\""
+    else:
+        message = (
+            f"Unknown model: {model_id}. A decision takes a decision model or a chat model "
+            "from GET /v1/models"
+        )
+    return api_error(400, message, ErrorType.MODEL_NOT_SUPPORTED)
+
+
 def chat_route_endpoint_candidates(
     inputs: NormalizedRoutingInputs | dict[str, Any],
     settings: Settings | None = None,
     *,
     defer_no_fallback_selection: bool = False,
+    decide: bool = False,
 ) -> RoutingCandidates[tuple[Model, ModelEndpoint]]:
     inputs = _coerce_routing_inputs(inputs, settings)
     raw_ids, prefs = list(inputs.model_ids), inputs.preferences
@@ -305,11 +333,7 @@ def chat_route_endpoint_candidates(
     for model_id in raw_ids:
         model = MODELS.get(model_id)
         if model is None or not model.supports_chat:
-            raise api_error(
-                400,
-                f"Model does not support chat completions: {model_id}",
-                ErrorType.MODEL_NOT_SUPPORTED,
-            )
+            raise _unsupported_model_error(model_id, model, decide=decide)
         for endpoint in endpoints_for_model(model.id):
             if endpoint.id in seen:
                 continue
@@ -507,12 +531,12 @@ def fetch_route_endpoint_candidates(
 
 def routing_pool_context_length(model_id: str, settings: Settings | None = None) -> int:
     """The context window /v1/models may publish for a routing pool: the
-    largest window among the models the pool routes to, or 0 when it routes
-    to none. Routing sends a request only to models whose window holds it
+    largest effective window among the routes in the pool, or 0 when it routes
+    to none. Routing sends a request only to hosts whose window holds it
     (candidates_fitting_context), so a request up to this size has a model in
     the pool and a larger one has none."""
     return max(
-        (model.context_length for model, _endpoint in routing_pool_routes(
+        (endpoint.effective_context_length(model) for model, endpoint in routing_pool_routes(
             model_id, settings or _app_settings(),
         )),
         default=0,
@@ -525,24 +549,24 @@ def candidates_fitting_context(
     prompt_tokens: int,
     completion_tokens: int,
 ) -> list[tuple[Model, ModelEndpoint]]:
-    """The candidates whose model's context window holds the request.
+    """The candidates whose model and host context windows hold the request.
 
     `prompt_tokens` is the estimate the hold is reserved on (the gateway's
     chars/4 count of the messages, plus a custom model's hidden prompt), and
     `completion_tokens` is the max_tokens the caller set, or 0 when it set
     none: without one a provider answers in whatever room the window leaves.
-    A model whose window the catalog does not know (0) is kept. When no
+    A route with neither window known (0) is kept. When no
     candidate fits, the request is a 400 in OpenAI's context-length wording.
     """
     needed = prompt_tokens + completion_tokens
     fitting = [
         (model, endpoint)
         for model, endpoint in candidates
-        if model.context_length <= 0 or needed <= model.context_length
+        if not (window := endpoint.effective_context_length(model)) or needed <= window
     ]
     if candidates and not fitting:
         raise context_length_error(
-            max(model.context_length for model, _endpoint in candidates),
+            max(endpoint.effective_context_length(model) for model, endpoint in candidates),
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
         )
@@ -1045,6 +1069,14 @@ def normalize_routing_inputs(
 ) -> NormalizedRoutingInputs:
     """Build the one routing object selectors and Stage C are allowed to read."""
 
+    from trusted_router.retired_models import reject_retired_models
+
+    fallback_models = body.get("models")
+    reject_retired_models(
+        body.get("model"),
+        *(fallback_models if isinstance(fallback_models, list) else []),
+    )
+
     model_ids, preferences = _routing_for_body(body, settings)
     return NormalizedRoutingInputs(
         model_ids=tuple(model_ids),
@@ -1196,6 +1228,14 @@ def _expand_model_id(model_id: str, settings: Settings) -> list[str]:
     meta_candidates = meta_candidate_models(model_id)
     if meta_candidates:
         return [candidate.id for candidate in meta_candidates]
+    if model_id in PRIVATE_PROXY_MODEL_TARGETS:
+        # A missing backing model is a refusal, never a concrete alias model
+        # or permission to silently choose a different private-proxy target.
+        raise api_error(
+            400,
+            f"Model does not support chat completions: {model_id}",
+            ErrorType.MODEL_NOT_SUPPORTED,
+        )
     return [model_id]
 
 

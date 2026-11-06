@@ -50,6 +50,7 @@ from trusted_router.catalog import (
     LIBERTY_1_0_MODEL_ID,
     LIBERTY_2_0_MODEL_ID,
     LIBERTY_3_0_MODEL_ID,
+    LIBERTY_4_0_MODEL_ID,
     MAPREDUCE_MODEL_ID,
     META_MODEL_IDS,
     MISTRAL_LARGE_MODEL_ID,
@@ -348,9 +349,11 @@ def test_model_storage_flag_is_gateway_scoped_endpoint_flag_is_provider_scoped(
         endpoint for endpoint in meta["endpoints"] if endpoint["provider"] == "openai"
     ]
     by_usage = {endpoint["usage_type"]: endpoint for endpoint in openai_endpoints}
-    assert by_usage["Credits"]["stores_content"] is False
-    assert by_usage["Credits"]["provider_zero_data_retention"] is True
-    assert by_usage["Credits"]["zero_data_retention_scope"] == "trustedrouter_prepaid"
+    # An unreviewed model remains conservative even on a managed ZDR account.
+    assert by_usage["Credits"]["stores_content"] is True
+    assert by_usage["Credits"]["provider_zero_data_retention"] is False
+    assert by_usage["Credits"]["zero_data_retention_scope"] is None
+    assert by_usage["Credits"]["retention"]["mode"] == "unverified"
     assert by_usage["BYOK"]["stores_content"] is True
     assert by_usage["BYOK"]["provider_zero_data_retention"] is False
     assert by_usage["BYOK"]["zero_data_retention_scope"] is None
@@ -894,11 +897,16 @@ def test_closed_provider_zdr_claims_are_route_scoped(monkeypatch: pytest.MonkeyP
     ]
     assert vertex_endpoints
     assert all(endpoint.usage_type == "Credits" for endpoint in vertex_endpoints)
-    assert all(
-        endpoint_privacy_tier(endpoint) == PRIVACY_TIER_ZERO_RETENTION
-        for endpoint in vertex_endpoints
-    )
-    assert all(endpoint_zero_data_retention(endpoint) is True for endpoint in vertex_endpoints)
+    from trusted_router.managed_retention import managed_retention_policy
+
+    for endpoint in vertex_endpoints:
+        retention = managed_retention_policy(
+            endpoint.provider, endpoint.model_id, endpoint.upstream_id, endpoint.usage_type,
+        )
+        assert retention is not None
+        assert endpoint_zero_data_retention(endpoint) is retention.permits_strict_zdr
+    assert not any(endpoint_zero_data_retention(endpoint) for endpoint in vertex_endpoints
+                   if endpoint.model_id == "fixture/vertex-chat")
 
     # OpenAI's guarantee is deliberately narrower: it belongs to
     # TrustedRouter's managed prepaid account, starts on July 28, and was
@@ -911,13 +919,15 @@ def test_closed_provider_zdr_claims_are_route_scoped(monkeypatch: pytest.MonkeyP
     ]
     assert any(endpoint.usage_type == "Credits" for endpoint in openai_endpoints)
     assert any(endpoint.usage_type == "BYOK" for endpoint in openai_endpoints)
-    # Chat's account-level commitment is not evidence for video or transcription.
-    unverified_retention_models = {"openai/sora-2", "openai/sora-2-pro", "openai/whisper-1"}
-    assert all(
-        endpoint_zero_data_retention(endpoint)
-        is (endpoint.usage_type == "Credits" and endpoint.model_id not in unverified_retention_models)
-        for endpoint in openai_endpoints
-    )
+    # The account commitment is not evidence for unreviewed or future models.
+    for endpoint in openai_endpoints:
+        retention = managed_retention_policy(
+            endpoint.provider, endpoint.model_id, endpoint.upstream_id, endpoint.usage_type,
+        )
+        assert retention is not None
+        assert endpoint_zero_data_retention(endpoint) is retention.permits_strict_zdr
+    assert not any(endpoint_zero_data_retention(endpoint) for endpoint in openai_endpoints
+                   if endpoint.model_id == "fixture/openai-chat")
 
 
 def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
@@ -1531,6 +1541,15 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
                 "openai/gpt-oss-120b",
                 LIBERTY_1_0_1M_MODEL_ID,
                 "thinkingmachines/inkling",
+            ],
+        ),
+        LIBERTY_4_0_MODEL_ID: (
+            "fusion_panel",
+            1_048_576,
+            [
+                "nvidia/nemotron-3.5-super-vl",
+                "reflection/beam-1.0",
+                "meta-models/muse-spark-open",
             ],
         ),
     }
@@ -2818,44 +2837,67 @@ def test_parasail_glm_53_routes_publish_verified_prices() -> None:
         _assert_parasail_route_follows_its_row(model_id)
 
 
-def test_model_shape_publishes_cache_read_price_when_tiers_carry_one() -> None:
-    """/v1/models hid the cache-read discount even where billing applied it.
+@pytest.mark.parametrize("model_cached", [None, 60_000])
+@pytest.mark.parametrize("route_cached", [None, 0, 30_000])
+@pytest.mark.parametrize("headline_first", [False, True])
+def test_model_shape_cache_read_comes_from_headline_route(
+    monkeypatch, model_cached: int | None, route_cached: int | None, headline_first: bool,
+) -> None:
+    from trusted_router import catalog
+    from trusted_router.pricing import _flat_tier
 
-    More than a thousand endpoints billed cache reads at a discounted
-    per-model price while the public model payload showed only prompt and
-    completion — a customer comparing us against a provider's own pricing
-    page could not see the discount at all. Same OR-convention field the
-    per-endpoint payloads have always used.
-    """
-    from trusted_router.catalog import MODELS, model_to_openrouter_shape
-
-    model = MODELS["deepseek/deepseek-v4-flash"]
-    tiers = model.price_tiers or ()
-    assert tiers and tiers[0].prompt_cached_price_microdollars_per_million_tokens, (
-        "fixture drift: deepseek-v4-flash no longer carries a cached tier price; "
-        "pick another model with one for this test"
+    # The model aggregate and its cheapest serving route can have different
+    # cache rates. Publication must use the same route as the headline prompt.
+    model = Model(
+        "test/cache-headline", "Cache headline", "deepinfra", 4096,
+        price_tiers=_flat_tier(300_000, 600_000, prompt_cached=model_cached),
     )
-
-    shape = model_to_openrouter_shape(model)
-
-    # Dollars per token: the tier's microdollars per million tokens over 10**12.
-    assert Decimal(shape["pricing"]["input_cache_read"]) == (
-        Decimal(tiers[0].prompt_cached_price_microdollars_per_million_tokens) / Decimal(10**12)
+    headline = ModelEndpoint(
+        "test/cache-headline@deepinfra/prepaid", model.id, "deepinfra", "Credits",
+        prompt_price_microdollars_per_million_tokens=100_000,
+        completion_price_microdollars_per_million_tokens=200_000,
+        price_tiers=_flat_tier(100_000, 200_000, prompt_cached=route_cached),
     )
+    other = replace(
+        headline, id="test/cache-headline@novita/prepaid", provider="novita",
+        prompt_price_microdollars_per_million_tokens=300_000,
+        completion_price_microdollars_per_million_tokens=600_000,
+        price_tiers=_flat_tier(300_000, 600_000, prompt_cached=90_000),
+    )
+    routes = [headline, other] if headline_first else [other, headline]
+    monkeypatch.setattr(catalog, "endpoints_for_model", lambda _id, **_kw: routes)
+
+    pricing = model_to_openrouter_shape(model)["pricing"]
+
+    assert Decimal(pricing["prompt"]) == Decimal(100_000) / Decimal(10**12)
+    assert Decimal(pricing["completion"]) == Decimal(200_000) / Decimal(10**12)
+    if route_cached is None:
+        assert "input_cache_read" not in pricing
+    else:
+        assert Decimal(pricing["input_cache_read"]) == Decimal(route_cached) / Decimal(10**12)
 
 
-def test_model_shape_omits_cache_read_price_when_absent() -> None:
-    from trusted_router.catalog import MODELS, model_to_openrouter_shape
+@pytest.mark.parametrize("model_cached", [None, 0, 60_000])
+def test_model_shape_without_routes_uses_its_own_cache_rate(monkeypatch, model_cached: int | None) -> None:
+    from trusted_router import catalog
+    from trusted_router.pricing import _flat_tier
 
-    for model in MODELS.values():
-        tiers = model.price_tiers or ()
-        if tiers and all(
-            t.prompt_cached_price_microdollars_per_million_tokens is None for t in tiers
-        ):
-            shape = model_to_openrouter_shape(model)
-            assert "input_cache_read" not in shape["pricing"]
-            return
-    raise AssertionError("no model without a cached tier price found — test needs a new subject")
+    model = Model(
+        "test/cache-no-routes", "Cache without routes", "deepinfra", 4096,
+        prompt_price_microdollars_per_million_tokens=300_000,
+        completion_price_microdollars_per_million_tokens=600_000,
+        price_tiers=_flat_tier(300_000, 600_000, prompt_cached=model_cached),
+    )
+    monkeypatch.setattr(catalog, "endpoints_for_model", lambda _id, **_kw: [])
+
+    pricing = model_to_openrouter_shape(model)["pricing"]
+
+    assert Decimal(pricing["prompt"]) == Decimal(300_000) / Decimal(10**12)
+    assert Decimal(pricing["completion"]) == Decimal(600_000) / Decimal(10**12)
+    if model_cached is None:
+        assert "input_cache_read" not in pricing
+    else:
+        assert Decimal(pricing["input_cache_read"]) == Decimal(model_cached) / Decimal(10**12)
 
 
 # Live provider state. provider-catalog-health.yml reports these hourly; the

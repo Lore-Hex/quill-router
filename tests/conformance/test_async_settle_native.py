@@ -4,6 +4,8 @@ from uuid import uuid4
 
 import pytest
 
+from tests.conformance.spanner_sql_builders import NOW
+from tests.conformance.test_rpc_c1_native import c1_database  # noqa: F401 - isolated native database
 from trusted_router.services.async_settle import Admission
 from trusted_router.storage_gcp_async_admission import read_admission
 
@@ -264,3 +266,179 @@ def test_native_sibling_refund_first_claimant(native_emulator_resources, backend
         with database.batch() as batch:
             batch.delete('tr_reservation', KeySet(keys=[[rid]]))
             batch.delete('tr_settle_outbox', KeySet(keys=[[aid, 'settle'], [aid, 'refund']]))
+
+
+def test_native_drain_version_partition(c1_database, monkeypatch):  # noqa: F811 - shared fixture
+    """Execute the real bulk/shard queries and lease claims against two native rows."""
+    from google.cloud.spanner_v1 import param_types as pt
+
+    from trusted_router import storage_gcp_settle_outbox as outbox_module
+
+    database = c1_database
+    now = NOW.isoformat().replace('+00:00', 'Z')
+    monkeypatch.setattr(outbox_module, '_iso_now', lambda: now)
+    # Seventeen fixed keys guarantee a pair in one of the sixteen generated
+    # shards. Ask GoogleSQL for the hash; don't approximate FARM_FINGERPRINT.
+    with database.snapshot() as snapshot:
+        shards = list(snapshot.execute_sql(
+            "SELECT id, MOD(MOD(FARM_FINGERPRINT(CONCAT(id, '#settle')), 16) + 16, 16) "
+            "FROM UNNEST(@ids) AS id ORDER BY id",
+            params={'ids': [f'drain-partition-{i:02}' for i in range(17)]},
+            param_types={'ids': pt.Array(pt.STRING)},
+        ))
+    seen = {}
+    for aid, shard in shards:
+        if shard in seen:
+            legacy_id, async_id = seen[shard], aid
+            break
+        seen[shard] = aid
+    else:
+        pytest.fail('17 keys must collide across 16 shards')
+    with database.batch() as batch:
+        batch.insert('tr_settle_outbox',
+            columns=('authorization_id', 'intent_kind', 'settle_origin', 'actual_cost_micro',
+                     'async_version', 'created_at', 'next_attempt_at'),
+            values=[(legacy_id, 'settle', 'typed', 1, None, NOW - timedelta(seconds=3), NOW - timedelta(seconds=1)),
+                    (async_id, 'settle', 'typed', 1, 1, NOW - timedelta(seconds=3), NOW - timedelta(seconds=2))])
+    outbox = outbox_module.SpannerSettleOutbox(database, pt)
+    def ids(rows):
+        return [row.authorization_id for row in rows]
+
+    # Async is first in due order: a legacy LIMIT must apply after the SQL
+    # partition, not before a Python filter. Both default scans include both.
+    assert ids(outbox.due()) == [async_id, legacy_id]
+    assert ids(outbox.due(limit=1, legacy_only=True)) == [legacy_id]
+    assert ids(outbox.due_shard(shard=shard)) == [async_id, legacy_id]
+    assert ids(outbox.due_shard(shard=shard, async_only=True)) == [async_id]
+    assert ids(outbox.claim(limit=2, lease_seconds=300)) == [legacy_id]
+    legacy, accepted = outbox.get(legacy_id, 'settle'), outbox.get(async_id, 'settle')
+    assert legacy.lease_owner and legacy.leased_until == (NOW + timedelta(seconds=300)).isoformat().replace('+00:00', 'Z')
+    assert accepted.lease_owner is None and accepted.leased_until is None
+    # Recovery uses the same advisory candidates with the short lease.
+    candidates = outbox.due_shard(shard=shard, async_only=True)
+    assert ids(outbox.claim_candidates(candidates, lease_seconds=30)) == [async_id]
+    assert outbox.get(async_id, 'settle').leased_until == (NOW + timedelta(seconds=30)).isoformat().replace('+00:00', 'Z')
+
+
+def test_native_release_claim_frees_only_its_own_pending_claim(c1_database, monkeypatch):  # noqa: F811 - shared fixture
+    """Run release_claim on GoogleSQL: the fake checks its predicates only as substrings."""
+    from google.cloud.spanner_v1 import param_types as pt
+
+    from trusted_router import storage_gcp_settle_outbox as outbox_module
+
+    database = c1_database
+    clock = [NOW]
+    monkeypatch.setattr(outbox_module, '_iso_now', lambda: clock[0].isoformat().replace('+00:00', 'Z'))
+    keys = [('release-own', 'settle'), ('release-own', 'refund'), ('release-stale', 'settle'),
+            ('release-dead', 'settle'), ('release-idle', 'settle')]
+    with database.batch() as batch:
+        batch.insert('tr_settle_outbox',
+            columns=('authorization_id', 'intent_kind', 'settle_origin', 'actual_cost_micro',
+                     'created_at', 'next_attempt_at'),
+            values=[(aid, kind, 'typed', 1, NOW - timedelta(seconds=3), NOW - timedelta(seconds=1))
+                    for aid, kind in keys])
+    outbox = outbox_module.SpannerSettleOutbox(database, pt)
+
+    def claim(aid, kind):
+        [row] = outbox.claim_candidates([outbox.get(aid, kind)], lease_seconds=30)
+        return row
+
+    def state(aid, kind):
+        row = outbox.get(aid, kind)
+        return row.status, row.lease_owner, row.leased_until
+
+    # Its own live claim goes back at once and is due again. Both intents of the
+    # authorization carry one owner here, as a batch claim's rows do, so only
+    # the key keeps each release to its own intent.
+    settle = claim('release-own', 'settle')
+    database.run_in_transaction(lambda transaction: transaction.execute_update(
+        "UPDATE tr_settle_outbox SET lease_owner=@owner, leased_until=@lease "
+        "WHERE authorization_id=@aid AND intent_kind=@kind",
+        params={'owner': settle.lease_owner, 'lease': NOW + timedelta(seconds=30),
+                'aid': 'release-own', 'kind': 'refund'},
+        param_types={'owner': pt.STRING, 'lease': pt.TIMESTAMP, 'aid': pt.STRING, 'kind': pt.STRING}))
+    refund = outbox.get('release-own', 'refund')
+    assert (refund.lease_owner, refund.leased_until) == (settle.lease_owner, settle.leased_until)
+    assert outbox.release_claim(refund) is True
+    assert state('release-own', 'refund') == ('pending', None, None)
+    assert state('release-own', 'settle') == ('pending', settle.lease_owner, settle.leased_until)
+    assert outbox.release_claim(settle) is True
+    assert state('release-own', 'settle') == ('pending', None, None)
+    assert claim('release-own', 'refund').lease_owner != settle.lease_owner
+
+    # A claim another worker took after this one's lease lapsed stays with it.
+    stale = claim('release-stale', 'settle')
+    clock[0] += timedelta(seconds=31)
+    current = claim('release-stale', 'settle')
+    assert outbox.release_claim(stale) is False
+    assert state('release-stale', 'settle') == ('pending', current.lease_owner, current.leased_until)
+
+    # A row that is no longer pending is untouched, even with the owner still on it.
+    dead = claim('release-dead', 'settle')
+    database.run_in_transaction(lambda transaction: transaction.execute_update(
+        "UPDATE tr_settle_outbox SET status='dead' WHERE authorization_id=@aid AND intent_kind=@kind",
+        params={'aid': 'release-dead', 'kind': 'settle'},
+        param_types={'aid': pt.STRING, 'kind': pt.STRING}))
+    assert outbox.release_claim(dead) is False
+    assert state('release-dead', 'settle') == ('dead', dead.lease_owner, dead.leased_until)
+
+    # No other row was written: the never-claimed one was never updated at all.
+    assert state('release-idle', 'settle') == ('pending', None, None)
+    assert outbox.get('release-idle', 'settle').updated_at is None
+
+
+def test_native_inline_grace_counts_from_due_time(c1_database, monkeypatch):  # noqa: F811 - shared fixture
+    """Run the grace read and the publisher on GoogleSQL: the fake checks predicates only as substrings."""
+    from google.cloud.spanner_v1 import KeySet
+
+    from trusted_router import storage_gcp_async_admission as admission
+
+    database = c1_database
+    now = datetime.now(UTC).replace(microsecond=0)
+    columns = ('authorization_id', 'intent_kind', 'settle_origin', 'actual_cost_micro', 'status',
+               'attempts', 'async_version', 'last_error', 'created_at', 'next_attempt_at')
+
+    def row(aid, age, due, attempts=0, version=None, status='pending', note=None):
+        created = now - timedelta(seconds=age)
+        return (aid, 'settle', 'typed', 1, status, attempts, version, note, created,
+                None if due is None else created + timedelta(seconds=due))
+
+    def iso(value):
+        return value.isoformat().replace('+00:00', 'Z')
+
+    # Alone, a row in its inline grace keeps admission open; its creation age is still the oldest.
+    with database.batch() as batch:
+        batch.insert('tr_settle_outbox', columns=columns,
+                     values=[row('grace', 30, 60), row('young', 1, 0, version=1)])
+    value = admission.publish_health(database)
+    assert value['backlog_count'] == 2 and value['p95_age_seconds'] <= 5
+    assert value['oldest_unresolved_age_seconds'] >= 30
+
+    # Rows that are not in their grace keep their creation age, each enough to close it.
+    others = [row('no-due', 31, None), row('async', 32, 60, version=1), row('retried', 33, 60, attempts=1),
+              row('dead', 34, None, status='dead'), row('done', 35, None, status='done'), row('old', 90, 60),
+              row('parked', 36, 3600, note='typed store unavailable')]
+    for other in others:
+        with database.batch() as batch:
+            batch.insert('tr_settle_outbox', columns=columns, values=[other])
+        value = admission.publish_health(database)
+        assert value['p95_age_seconds'] > 5 or other[0] == 'done', other[0]
+        with database.batch() as batch:
+            batch.delete('tr_settle_outbox', KeySet(keys=[[other[0], 'settle']]))
+
+    # The read itself: non-async pending rows the drain has neither attempted nor parked,
+    # created in [since, until), oldest first, bounded. Rows sit on both bounds.
+    edges = [row('at-since', 66, 60), row('at-until', 5, 60), row('young-legacy', 1, 60)]
+    with database.batch() as batch:
+        batch.insert('tr_settle_outbox', columns=columns, values=others + edges)
+    sql, params, types = admission.grace_statement(iso(now - timedelta(seconds=66)), iso(now - timedelta(seconds=5)))
+    with database.snapshot() as snapshot:
+        found = list(snapshot.execute_sql(sql, params=params, param_types=types))
+    assert found == [[now - timedelta(seconds=66), now - timedelta(seconds=6)],
+                     [now - timedelta(seconds=31), None],
+                     [now - timedelta(seconds=30), now + timedelta(seconds=30)]]
+    monkeypatch.setattr(admission, 'GRACE_ROW_LIMIT', 1)
+    sql, params, types = admission.grace_statement(iso(now - timedelta(seconds=66)), iso(now - timedelta(seconds=5)))
+    with database.snapshot() as snapshot:
+        assert list(snapshot.execute_sql(sql, params=params, param_types=types)) == [
+            [now - timedelta(seconds=66), now - timedelta(seconds=6)]]

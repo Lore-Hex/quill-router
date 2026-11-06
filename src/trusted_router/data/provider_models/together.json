@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Together AI routes that are live ahead of the shared OpenRouter snapshot. Verified against https://api.together.xyz/v1/models on 2026-06-22.",
   "provider": "together",
   "source": "https://api.together.xyz/v1/endpoints?type=serverless",
-  "generated_at": "2026-10-20T12:05:14Z",
+  "generated_at": "2026-11-05T11:29:32Z",
   "model_count": 25,
   "models": [
     {
@@ -15,10 +15,18 @@
       "output_token_price_per_m": 600000,
       "cached_input_token_price_per_m": 15000,
       "model_type": "chat",
-      "input_modalities": ["text"],
-      "output_modalities": ["text"],
-      "endpoints": ["chat/completions"],
-      "features": ["serverless", "function-calling", "reasoning"],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "features": [
+        "serverless"
+      ],
       "status": 1
     },
     {
@@ -150,7 +158,10 @@
       ],
       "context_length": 131072,
       "input_token_price_per_m": 1040000,
-      "output_token_price_per_m": 1040000
+      "output_token_price_per_m": 1040000,
+      "missing_since": "2026-10-25",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "MiniMax M2.7 FP4",
@@ -434,7 +445,10 @@
       ],
       "context_length": 262144,
       "input_token_price_per_m": 170000,
-      "output_token_price_per_m": 250000
+      "output_token_price_per_m": 250000,
+      "missing_since": "2026-11-01",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Inkling FP4",
@@ -539,7 +553,10 @@
       "context_length": 1048576,
       "input_token_price_per_m": 140000,
       "output_token_price_per_m": 280000,
-      "cached_input_token_price_per_m": 30000
+      "cached_input_token_price_per_m": 30000,
+      "missing_since": "2026-10-25",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Muse Glimmer 30B",
@@ -563,7 +580,10 @@
       "context_length": 131072,
       "input_token_price_per_m": 350000,
       "output_token_price_per_m": 1500000,
-      "cached_input_token_price_per_m": 40000
+      "cached_input_token_price_per_m": 40000,
+      "missing_since": "2026-11-01",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Qwen3.8-2.4T-A95B",
@@ -581,13 +601,18 @@
       "status": 1,
       "id": "qwen/qwen3.8-2.4t-a95b",
       "upstream_id": "Qwen/Qwen3.8-2.4T-A95B",
+      "retirement_at": "2026-11-04T00:00:00Z",
+      "replacement_model_id": "qwen/qwen3.7-max",
       "features": [
         "serverless"
       ],
       "context_length": 1010000,
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 6000000,
-      "cached_input_token_price_per_m": 250000
+      "cached_input_token_price_per_m": 250000,
+      "missing_since": "2026-11-04",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "GLM 5.3 Flash",

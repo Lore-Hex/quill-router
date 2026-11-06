@@ -57,7 +57,7 @@ MAX_SUBJECT_CHARS = 120
 
 def register_notify_public_routes(router: APIRouter) -> None:
     @router.api_route("/notify/texml", methods=["GET", "POST"])
-    async def notify_texml(
+    def notify_texml(
         text: str = Query(default="", max_length=MAX_BODY_CHARS),
     ) -> Response:
         """Call instructions, fetched by the carrier when a call connects.
@@ -82,7 +82,7 @@ def register_notify_public_routes(router: APIRouter) -> None:
 
 def register_notify_routes(router: APIRouter) -> None:
     @router.post("/notify")
-    async def send_notification(
+    def send_notification(
         request: Request,
         payload: dict[str, Any],
         principal: InferencePrincipal,
@@ -138,7 +138,7 @@ def register_notify_routes(router: APIRouter) -> None:
         return JSONResponse(body_out, status_code=200)
 
     @router.post("/notify/phone/start")
-    async def start_phone_verification(
+    def start_phone_verification(
         payload: dict[str, Any],
         principal: AuthenticatedPrincipal,
         settings: SettingsDep,
@@ -211,7 +211,7 @@ def register_notify_routes(router: APIRouter) -> None:
         return JSONResponse({"sent": True, "channel": channel, "expires_in": CODE_TTL_SECONDS})
 
     @router.post("/notify/phone/confirm")
-    async def confirm_phone_verification(
+    def confirm_phone_verification(
         payload: dict[str, Any],
         principal: AuthenticatedPrincipal,
     ) -> JSONResponse:

@@ -487,7 +487,7 @@ async def run_synthetic_pass(settings: Settings, *, rotation_count: int = 0) -> 
 
 def register(router: APIRouter) -> None:
     @router.get("/internal/synthetic/health")
-    async def synthetic_health(request: Request, settings: SettingsDep) -> dict[str, Any]:
+    def synthetic_health(request: Request, settings: SettingsDep) -> dict[str, Any]:
         require_internal_gateway(request, settings)
         slot = _admit_operation("health")
         try:

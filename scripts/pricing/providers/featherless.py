@@ -20,7 +20,11 @@ from scripts.pricing.base import (
     fetch_json,
     read_stale_provider_manifest,
 )
-from scripts.pricing.openai_catalog import dollars_per_token_to_micro_per_m, openai_model_price
+from scripts.pricing.openai_catalog import (
+    dollars_per_token_to_micro_per_m,
+    openai_model_price,
+    positive_int,
+)
 from scripts.pricing.providers._direct_openai import (
     DirectOpenAIProvider,
     DirectOpenAIProviderSpec,
@@ -62,6 +66,11 @@ DISCOVERY_NATIVE_OWNERS = frozenset(
 )
 DISCOVERY_PAGE_SIZE = 1000
 _PRESERVED_NATIVE_IDS: set[str] = set()
+
+# Shared serving is 256K; the API currently reports the base model's 1M.
+# Full 1M is a separate dedicated offering. Do not raise a lower API limit.
+# https://featherless.ai/blog/minimax-m3-1-flash-is-live-on-featherless
+_SHARED_CONTEXT_CAPS = {"MiniMaxAI/MiniMax-M3.1-Flash": 262_144}
 
 
 def _is_discovery_candidate(row: dict[str, Any]) -> bool:
@@ -216,6 +225,9 @@ def _normalize_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
     for source in rows:
         row = dict(source)
+        cap = _SHARED_CONTEXT_CAPS.get(str(source.get("id")))
+        if cap is not None:
+            row["context_length"] = min(positive_int(source.get("context_length")) or cap, cap)
         features = source.get("features")
         row["supported_features"] = (
             ["tools"] if isinstance(features, dict) and features.get("tool_use") is True else []

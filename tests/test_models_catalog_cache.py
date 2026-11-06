@@ -213,11 +213,8 @@ def test_irrelevant_query_parameters_keep_the_prebuilt_full_payload(client: Test
     assert tracked.headers["etag"] == full.headers["etag"]
 
 
-def test_browser_pickers_use_projection_and_console_defers_fetch_until_open() -> None:
+def test_browser_pickers_use_projection_and_retired_picker_is_absent() -> None:
     static = Path(__file__).parents[1] / "src" / "trusted_router" / "static"
     shared = (static / "model_catalog.js").read_text()
-    custom = (static / "custom_models.js").read_text()
-
     assert 'fetch(base + "/models/picker")' in shared
-    assert custom.count("load();") == 1
-    assert "if (nameEl && !nameEl.textContent.trim())" in custom
+    assert not (static / "custom_models.js").exists()

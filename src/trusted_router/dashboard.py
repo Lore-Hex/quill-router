@@ -53,6 +53,8 @@ from trusted_router.catalog import (
     endpoint_e2ee,
     endpoint_meets_privacy_requirement,
     endpoint_provider_policy,
+    endpoint_provider_policy_url,
+    endpoint_retention_metadata,
     endpoint_zero_data_retention,
     endpoints_for_model,
     meta_candidate_models,
@@ -194,7 +196,6 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/latest-model-apis",
     "/eu-ai-act-llm-compliance",
     "/x402-llm-api",
-    "/confidential-cowork",
     # Jurisdiction directories, one path each. MODEL_REGION_SLUGS is the single
     # source, so adding a region adds its sitemap entry with it.
     *(f"/{slug}" for slug in MODEL_REGION_SLUGS),
@@ -259,6 +260,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/pricing",
     "/api/reference",
     "/apps",
+    "/encrypted-ai",
     "/resources",
     "/customers/robot-robot-human",
     "/careers",
@@ -440,15 +442,15 @@ class BlogIndexPost:
     image: str
 
 
-OPENROUTER_ALTERNATIVES_VERIFIED_ON = "2026-08-17"
+OPENROUTER_ALTERNATIVES_UPDATED_ON = "2026-10-26"
 OPENROUTER_ALTERNATIVE_ITEMS: tuple[tuple[str, str], ...] = (
     ("TrustedRouter", "/compare/openrouter"),
-    ("LiteLLM", "/compare/litellm"),
-    ("Portkey", "/compare/portkey"),
+    ("Requesty", "/compare/requesty"),
     ("Vercel AI Gateway", "/compare/vercel-ai-gateway"),
     ("Cloudflare AI Gateway", "/compare/cloudflare-ai-gateway"),
-    ("Helicone", "/compare/helicone"),
-    ("Requesty", "/compare/requesty"),
+    ("LiteLLM", "/compare/litellm"),
+    ("Portkey (Palo Alto Networks)", "/compare/portkey"),
+    ("Helicone (Mintlify)", "/compare/helicone"),
     ("Amazon Bedrock", "/compare/aws-bedrock"),
     ("Google Vertex AI", "/compare/google-vertex-ai"),
     ("Direct provider APIs", "/providers"),
@@ -1555,22 +1557,6 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             "fallbacks to return one OpenAI-compatible answer."
         ),
     ),
-    "docs/user-models": PublicPage(
-        template="public/user_models_docs.html",
-        title="User-Provided Models: Post Your Machine, Agent, Or Yourself",
-        description=(
-            "List your own HTTPS endpoint on TrustedRouter as a priced model — a machine, "
-            "an agent, or a person answering by hand — and keep 70% in credits."
-        ),
-    ),
-    "docs/custom-models": PublicPage(
-        template="public/custom_models_docs.html",
-        title="Custom Models: Hidden Prompts And Creator Markup",
-        description=(
-            "Publish a TrustedRouter catalog model with a hidden prompt, a stable "
-            "creator namespace, and an optional markup whose creator keeps 70%."
-        ),
-    ),
     "docs/x402": PublicPage(
         template="public/x402.html",
         title="x402 Stablecoin Funding For Agents",
@@ -1656,7 +1642,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             (
                 "What can we offer today?",
                 "Objective routing (price/throughput/latency with fallbacks), "
-                "privacy-tier routing (zdr/e2e/eu), composite and custom models, "
+                "privacy-tier routing (zdr/e2e/eu), composite models, "
                 "prepaid metering with per-key budgets, BYOK, and multi-region "
                 "attested gateways on two clouds. Self-hosted TrustedOS, marketplace "
                 "payouts, and per-model kernels (private beta) extend the platform "
@@ -1678,35 +1664,6 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
         ),
     ),
-    "confidential-cowork": PublicPage(
-        template="public/confidential_cowork.html",
-        title="Trusted Cowork",
-        description=(
-            "Download Trusted Cowork, an OpenCode-based desktop agent for macOS. "
-            "Sign in with TrustedRouter, use confidential models, and approve local tools."
-        ),
-        faq_items=(
-            (
-                "Can Confidential Cowork fall back to a normal model provider?",
-                "TrustedRouter requests deny data collection and require confidential "
-                "providers. If no eligible provider is available, they fail closed. "
-                "This app does not allow other inference backends.",
-            ),
-            (
-                "Is this the earlier QuillCode desktop app?",
-                "No. Trusted Cowork is an OpenCode-based desktop app with browser sign-in. "
-                "Install the signed app directly and select Sign in with TrustedRouter. "
-                "Updates are manual; earlier app credentials and sessions are not imported.",
-            ),
-            (
-                "Can an enterprise use its own models and token capacity?",
-                "Yes. The self-serve app starts on TrustedRouter. Enterprise deployments "
-                "can be designed around approved private capacity, internal model access, "
-                "identity controls, and organization policy.",
-            ),
-        ),
-        og_alt="Trusted Cowork desktop agent with confidential TrustedRouter models",
-    ),
     "security": PublicPage(
         template="public/security.html",
         title="Security",
@@ -1723,31 +1680,55 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     "openrouter-alternative": PublicPage(
         template="public/seo_openrouter_alternative.html",
         og_card="openrouter-alternative.png",
-        title="OpenRouter Alternatives: 10 AI Gateways Compared (2026)",
+        title="OpenRouter Alternatives 2026: 10 Gateways by Price & Privacy",
         description=(
-            "Compare ten OpenRouter alternatives by model access, self-hosting, privacy, "
-            "fallback, observability, and price. Keep your SDK and choose the right gateway."
+            "Compare 10 OpenRouter alternatives on price and privacy. TrustedRouter: "
+            "attested gateway, no prompt logs, EU gateway on every account, 5.5% fee."
         ),
         faq_items=(
             (
                 "What is the best OpenRouter alternative in 2026?",
-                "There is no single best choice. TrustedRouter fits teams that want hosted multi-provider access with a hardware-attested prompt path. LiteLLM fits teams that want to self-host. Portkey fits governance-heavy gateway deployments. Vercel AI Gateway fits Vercel and AI SDK applications. Bedrock and Vertex AI fit cloud-native procurement and IAM.",
+                "For most teams leaving OpenRouter, TrustedRouter. It keeps the same OpenAI-compatible, one-endpoint access to 600+ models from 100+ providers, and adds a hardware-attested gateway that never logs prompts, an EU gateway on every account, and a 5.5% fee that falls as low as 0.1% at enterprise scale.",
+            ),
+            (
+                "Which OpenRouter alternative works most like OpenRouter?",
+                "TrustedRouter. Like OpenRouter, it's a hosted marketplace: one wallet of prepaid credits, one API key and one OpenAI-compatible endpoint for 600+ models from 100+ providers, with automatic failover and OpenRouter-style routing fields. Most other alternatives are gateways that sit in front of provider accounts you open and pay for separately.",
+            ),
+            (
+                "Is TrustedRouter cheaper than OpenRouter?",
+                "TrustedRouter charges provider prices plus 5.5% on text and embedding models, with no subscription. OpenRouter charges 5.5% on credit purchases on its Standard plan and 8% on Business, the plan that includes EU in-region routing. TrustedRouter's fee falls with volume, to as low as 0.1% at enterprise scale.",
             ),
             (
                 "What is the easiest OpenRouter alternative to migrate to?",
-                "An OpenAI-compatible hosted gateway is usually the easiest migration because the SDK can stay in place. With TrustedRouter, change the base URL to https://api.trustedrouter.com/v1, replace the API key, and test the model IDs and provider controls used by your application.",
-            ),
-            (
-                "Which OpenRouter alternative can I self-host?",
-                "LiteLLM is designed for teams that want to operate their own OpenAI-compatible proxy. Portkey and Helicone also publish self-hosting options. TrustedRouter publishes its gateway and control-plane source for teams that want the same routing and attestation architecture under their own control.",
+                "TrustedRouter. Change the base URL to https://api.trustedrouter.com/v1 and swap the API key. The OpenAI SDK stays, and OpenRouter-style routing fields such as provider.order, provider.only and provider.ignore are accepted. Teams spending more than $100 a month can request migration credits, granted by approval.",
             ),
             (
                 "Which OpenRouter alternative is best for privacy?",
-                "Compare the entire request path, not only the gateway policy. TrustedRouter's attested gateway never stores prompt or output content. Every downstream route separately identifies zero-data-retention status and independently verified end-to-end confidential compute so sensitive workloads can fail closed on the required privacy tier.",
+                "TrustedRouter publishes a hardware attestation of the exact build handling your requests, which none of the other hosted gateways here offers, and that build never logs prompts or outputs. Each route is labeled for zero retention and confidential compute, and a privacy floor makes a request fail rather than fall back to a weaker route.",
+            ),
+            (
+                "Is there a European alternative to OpenRouter?",
+                "TrustedRouter runs an EU gateway that every account can use: authentication, policy checks, provider selection and streaming start in Europe. The trustedrouter/eu model routes to an EU-focused provider set led by Mistral, and you can restrict requests to providers you've approved so nothing routes outside your list. OpenRouter offers in-region routing only on its Business and Enterprise plans.",
+            ),
+            (
+                "Is there a free OpenRouter alternative?",
+                "TrustedRouter gives new accounts 1 million free tokens with no card required, and there's no subscription after that: you pay provider prices plus a 5.5% fee on text and embedding models. Teams spending more than $100 a month on LLMs can request migration credits, granted by approval.",
+            ),
+            (
+                "What is the best OpenRouter alternative for Cursor, Claude Code or Codex?",
+                "TrustedRouter. Its agent setup guide covers Codex, Claude Code, Cursor and eval runners, so your coding agent gets one key for 600+ models with automatic failover, including open models that cost far less than frontier list prices. Requests run through the same attested gateway, which never logs your code or prompts.",
+            ),
+            (
+                "Which OpenRouter alternative can I self-host?",
+                "TrustedRouter offers an Apache-2.0 on-prem gateway that runs inside your network, and publishes the source of its hosted gateway and control plane under BUSL-1.1 for review. LiteLLM's open-source proxy is self-hosted, so you operate and secure it yourself.",
             ),
             (
                 "Can I keep using the OpenAI SDK?",
-                "Yes. TrustedRouter, LiteLLM, Portkey, Vercel AI Gateway, Cloudflare AI Gateway, Helicone, and Requesty all offer OpenAI-compatible paths. Compatibility varies for advanced fields, Responses API features, tools, images, streaming events, and provider-specific controls, so test the exact surface your application uses.",
+                "Yes. Change the base URL and API key and your existing OpenAI SDK code runs through TrustedRouter. Test any advanced fields your app depends on, such as tool calls or streaming events.",
+            ),
+            (
+                "What is happening to OpenRouter?",
+                "Stripe agreed to acquire OpenRouter, announced August 19, 2026. OpenRouter said it would keep operating under the same name, product and roadmap.",
             ),
         ),
     ),
@@ -2098,6 +2079,16 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             "Apps routing through TrustedRouter can self-identify and appear "
             "here. Opt-in by construction and privacy-safe: names and counts "
             "only, never prompts or keys."
+        ),
+    ),
+    "encrypted-ai": PublicPage(
+        template="public/encrypted_ai.html",
+        og_card="apps.png",
+        title="Encrypted AI apps, ranked by tokens you can verify",
+        description=(
+            "The directory of encrypted AI apps: ranked weekly by tokens served on "
+            "confidential compute, with the attestation and receipts linked so anyone "
+            "can check. Self-attested apps and a watchlist of personal AI agents."
         ),
     ),
     "token-exchange": PublicPage(
@@ -2490,7 +2481,7 @@ def dashboard_html(
             canonical_site_url=canonical_site_url,
             brand_name=brand_name,
             alternate_brand=alternate_brand,
-            og_image=f"https://{domain}/static/homepage/social-card-v1.jpg",
+            og_image=f"https://{domain}/static/homepage/social-card-v2.jpg",
             tr_config=json.dumps(tr_config),
             google_enabled=settings.google_oauth_enabled,
             github_enabled=settings.github_oauth_enabled,
@@ -2520,6 +2511,28 @@ def public_apps_html(settings: Settings, *, apps: dict[str, object]) -> str:
             github_enabled=settings.github_oauth_enabled,
             static_version=_static_version(settings),
             apps=apps,
+        )
+    )
+
+
+def public_encrypted_ai_html(settings: Settings, *, view: dict[str, object]) -> str:
+    """Render /encrypted-ai: the verified ranking joined to the curated tiers
+    (see trusted_router.encrypted_ai.directory_view)."""
+    page = PUBLIC_PAGES["encrypted-ai"]
+    return (
+        _env()
+        .get_template(page.template)
+        .render(
+            api_base_url=settings.api_base_url,
+            site_url=f"https://{settings.trusted_domain}/encrypted-ai",
+            title=f"{page.title} | TrustedRouter",
+            heading=page.title,
+            description=page.description,
+            og_image=_og_image_url(settings, page.og_card),
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+            view=view,
         )
     )
 
@@ -3159,7 +3172,7 @@ def _render_public_page(
     verified_on_label: str | None = None
     page_specific_json_ld: tuple[dict[str, object], ...] = ()
     if page_key == "openrouter-alternative":
-        verified_on_label = datetime.fromisoformat(OPENROUTER_ALTERNATIVES_VERIFIED_ON).strftime(
+        verified_on_label = datetime.fromisoformat(OPENROUTER_ALTERNATIVES_UPDATED_ON).strftime(
             "%B %-d, %Y"
         )
         page_specific_json_ld = (
@@ -3168,7 +3181,7 @@ def _render_public_page(
                 "name": page.title,
                 "url": canonical_url,
                 "description": page.description,
-                "dateModified": OPENROUTER_ALTERNATIVES_VERIFIED_ON,
+                "dateModified": OPENROUTER_ALTERNATIVES_UPDATED_ON,
             },
             _item_list_node(
                 name="OpenRouter alternatives compared by TrustedRouter",
@@ -4059,12 +4072,7 @@ def public_rankings_html(settings: Settings) -> str:
     )
 
 
-def public_chat_html(
-    settings: Settings,
-    *,
-    locked_model_id: str = "",
-    locked_model_label: str = "Custom model",
-) -> str:
+def public_chat_html(settings: Settings) -> str:
     """Render the public chat playground at /chat.
 
     The page itself is auth-free — anyone can load it and explore the
@@ -4076,11 +4084,6 @@ def public_chat_html(
 
     See docs (plan file) for the full architecture.
     """
-    storage_key = "tr_chat_state_v1"
-    if locked_model_id:
-        storage_key = "tr_user_chat_state_" + "".join(
-            ch if ch.isalnum() else "_" for ch in locked_model_id.lower()
-        )
     return (
         _env()
         .get_template("public/chat.html")
@@ -4108,9 +4111,7 @@ def public_chat_html(
             google_enabled=settings.google_oauth_enabled,
             github_enabled=settings.github_oauth_enabled,
             static_version=_static_version(settings),
-            storage_key=storage_key,
-            locked_model_id=locked_model_id,
-            locked_model_label=locked_model_label,
+            storage_key="tr_chat_state_v1",
         )
     )
 
@@ -4645,7 +4646,7 @@ def _sitemap_urlset(domain: str, paths: Sequence[tuple[str, str, str]]) -> str:
     urls = "\n".join(
         "  <url>"
         f"<loc>{xml_escape(f'https://{domain}{path}')}</loc>"
-        f"<lastmod>{lastmod}</lastmod>"
+        f"<lastmod>{OPENROUTER_ALTERNATIVES_UPDATED_ON if path == '/openrouter-alternative' else lastmod}</lastmod>"
         f"<changefreq>{changefreq}</changefreq>"
         f"<priority>{priority}</priority>"
         "</url>"
@@ -5427,6 +5428,8 @@ def _endpoint_provider_views(
 
 
 def _provider_view(provider: Provider) -> dict[str, object]:
+    from trusted_router.managed_retention import provider_retention_notice
+
     routing_status = "active" if provider_is_routable(provider) else "blocked"
     confidential_verified = (
         provider.slug != "trustedrouter"
@@ -5445,6 +5448,7 @@ def _provider_view(provider: Provider) -> dict[str, object]:
         "gateway_stores_content": provider.stores_content,
         "zero_data_retention": provider.provider_zero_data_retention,
         "prepaid_zero_data_retention": provider.prepaid_zero_data_retention,
+        "retention_notice": provider_retention_notice(provider.slug),
         "prepaid_zero_data_retention_effective_on": (
             provider.prepaid_zero_data_retention_effective_on
         ),
@@ -5461,7 +5465,7 @@ def _provider_view(provider: Provider) -> dict[str, object]:
         "zero_data_retention_scope_label": (
             "All routes"
             if provider.provider_zero_data_retention is True
-            else "TR-funded routes"
+            else "Reviewed TR-funded routes only; check each model"
             if provider.prepaid_zero_data_retention
             else None
         ),
@@ -5518,9 +5522,10 @@ def _provider_faq_items(
         )
     elif provider.prepaid_zero_data_retention:
         zdr_answer = (
-            f"TrustedRouter records its managed {provider.name} routes as zero data "
-            "retention. That classification does not automatically cover every direct or "
-            "BYOK account. Use provider.min_privacy=zdr to require an eligible route."
+            f"Reviewed managed {provider.name} routes can qualify for zero data "
+            "retention. Check the exact model's endpoint policy: safety-retention, "
+            "durable-cache and unreviewed routes are excluded. BYOK does not inherit "
+            "this classification. Use provider.min_privacy=zdr to enforce eligibility."
         )
     elif provider.prepaid_zero_data_retention_effective_on:
         zdr_answer = (
@@ -5617,6 +5622,12 @@ def _model_detail_view(
             for candidate in meta_candidate_models(model.id)
         ]
     endpoint_views: list[dict[str, object]] = []
+    # Reuse the bounded, precomputed leaderboard snapshot; never probe a
+    # provider or scan request storage while rendering a model page.
+    measured_by_provider = {
+        str(row["provider"]): row
+        for row in measured_for_model(model.id, test_mode=test_mode)
+    }
     for endpoint in endpoints:
         ep_provider = PROVIDERS.get(endpoint.provider)
         endpoint_views.append(
@@ -5645,8 +5656,12 @@ def _model_detail_view(
                 ),
                 "provider_e2ee": endpoint_e2ee(endpoint) if ep_provider else None,
                 "provider_policy": endpoint_provider_policy(endpoint) if ep_provider else "",
+                "retention": endpoint_retention_metadata(endpoint) if ep_provider else None,
                 "endpoint_id": endpoint.id,
                 "precision": endpoint_precision_metadata(endpoint),
+                "geography": provider_geography(endpoint.provider),
+                "provider_policy_url": endpoint_provider_policy_url(endpoint),
+                "measured": measured_by_provider.get(endpoint.provider),
             }
         )
     # Sort cheapest-first by total prompt+completion price; ties broken by
@@ -6107,6 +6122,8 @@ def _model_route_evidence(
             else ""
         ),
         "uptime_range": uptime_range,
+        "has_throughput": fastest_throughput is not None,
+        "has_uptime": bool(uptime_values),
         "route_count": len(endpoints),
         "provider_count": (
             len(_endpoint_provider_views(endpoints, fallback_provider=model.provider))
@@ -6318,6 +6335,10 @@ def _comparison_view(
         "right_throughput_provider": right_evidence["fastest_throughput_provider"],
         "left_uptime": left_evidence["uptime_range"],
         "right_uptime": right_evidence["uptime_range"],
+        # Rows and FAQ answers with no measurement for either model are left out.
+        "has_ttft": left_measured is not None or right_measured is not None,
+        "has_throughput": bool(left_evidence["has_throughput"] or right_evidence["has_throughput"]),
+        "has_uptime": bool(left_evidence["has_uptime"] or right_evidence["has_uptime"]),
     }
 
 
@@ -6331,6 +6352,14 @@ def _model_comparison_faq_items(
     right_price = str(comparison["right_price"])
     left_ttft = str(comparison["left_ttft"])
     right_ttft = str(comparison["right_ttft"])
+    faster = (
+        (
+            f"Is {left.name} or {right.name} faster?",
+            f"Current measured p50 time to first token is {left_ttft} for {left.name} "
+            f"and {right_ttft} for {right.name}. These are routed probe measurements, "
+            "not vendor-advertised speeds, and update as new samples arrive.",
+        ),
+    ) if comparison["has_ttft"] else ()
     return (
         (
             f"Which should I use, {left.name} or {right.name}?",
@@ -6342,12 +6371,7 @@ def _model_comparison_faq_items(
             f"and {right_price} for {right.name}. The comparison uses current catalog "
             "prices and updates as provider pricing changes.",
         ),
-        (
-            f"Is {left.name} or {right.name} faster?",
-            f"Current measured p50 time to first token is {left_ttft} for {left.name} "
-            f"and {right_ttft} for {right.name}. These are routed probe measurements, "
-            "not vendor-advertised speeds, and update as new samples arrive.",
-        ),
+        *faster,
         (
             f"Can I test {left.name} and {right.name} with the same API?",
             _same_api_answer(left, right),
@@ -6504,6 +6528,10 @@ def _provider_model_rows(provider_slug: str, *, test_mode: bool = False) -> list
                 "speech": speech_metadata(model.id) if speech else None,
                 "transcription": transcription_metadata(model.id) if transcription else None,
                 "endpoint_count": len(endpoints),
+                "retention_policies": [
+                    retention for endpoint in endpoints
+                    if (retention := endpoint_retention_metadata(endpoint)) is not None
+                ],
                 "fetch": fetch_metadata() if model.id == FETCH_MODEL_ID else None,
                 "prompt_price": fetch_price_label() if model.id == FETCH_MODEL_ID else transcription.price_label if transcription else speech.non_token_price_label if speech and not speech.token_billed else _endpoint_price_range(
                     endpoints,

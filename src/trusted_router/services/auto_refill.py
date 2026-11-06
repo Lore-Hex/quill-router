@@ -97,6 +97,11 @@ def maybe_charge_after_settle(
     if not settings.stripe_secret_key:
         return AutoRefillOutcome(fired=False, reason="stripe_not_configured", retryable=True)
 
+    # Closure archives the workspace and disables refill in the same commit.
+    # Recheck here as an earlier account read may predate that commit.
+    if STORE.get_workspace(workspace_id) is None:
+        return AutoRefillOutcome(fired=False, reason="account_closed")
+
     try:
         import stripe
     except ImportError:  # pragma: no cover - stripe is in dependencies.

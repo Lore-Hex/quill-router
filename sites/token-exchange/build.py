@@ -15,7 +15,7 @@ from urllib.parse import urlencode
 
 from evidence import render_evidence, sector_art
 from member_badges import build_badges
-from nyte_v2 import build_nyte, render_nyte
+from nyte_v2 import PAGES, build_nyte, render_nyte, uses_nyte
 from press import build_press
 from token_index_page import build_token_index
 
@@ -96,8 +96,9 @@ def provider_ticker(copies: int = 2) -> str:
 def render(market: dict, markets: list[dict], version: str) -> str:
     if market["slug"] == "new-york":
         return render_nyte()
-    profile = {"dubai": "dubai", "europe": "europe"}.get(market["slug"], "shared-gcp")
-    catalogue, health = render_evidence(profile)
+    if uses_nyte(market):
+        return render_nyte(market=market)
+    catalogue, health = render_evidence()
     headline = html.escape(market["headline"])
     accent = html.escape(market.get("headline_accent", ""))
     if accent:
@@ -188,15 +189,12 @@ def build(output: Path) -> None:
         (folder / "robots.txt").write_text(
             f"User-agent: *\nAllow: /\nSitemap: https://{market['domain']}/sitemap.xml\n"
         )
-        provider_page = (
-            '<url><loc>https://nytokenexchange.com/confidential</loc></url>'
-            '<url><loc>https://nytokenexchange.com/suppliers</loc></url>'
-            '<url><loc>https://nytokenexchange.com/providers</loc></url>'
-            '<url><loc>https://nytokenexchange.com/badge</loc></url>'
-            '<url><loc>https://nytokenexchange.com/media-kit</loc></url>'
-            '<url><loc>https://nytokenexchange.com/index</loc></url>'
-            if market["slug"] == "new-york" else ""
-        )
+        provider_page = ""
+        if market["slug"] == "new-york":
+            provider_page = "".join(
+                f'<url><loc>https://nytokenexchange.com{entry["route"]}</loc></url>'
+                for key, entry in PAGES.items() if key != "home" and entry.get("builder") != "anchor"
+            ) + '<url><loc>https://nytokenexchange.com/badge</loc></url>'
         (folder / "sitemap.xml").write_text(
             f'<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://{market["domain"]}/</loc></url>{provider_page}</urlset>'
         )

@@ -48,6 +48,7 @@ from trusted_router.storage_models import (
     GatewayAuthorization,
     SettleOutboxRow,
     TypedFinalizeResult,
+    Workspace,
 )
 from trusted_router.types import UsageType
 
@@ -1142,6 +1143,8 @@ def test_inline_failure_after_stripe_then_cross_minute_drain_creates_one_payment
     store, db = fake_store
     ws = "ws-auto-refill-cross-surface"
     _seed_credit(store, ws, total=1_000_000)
+    # Auto refill requires an active workspace as well as credit metadata.
+    store._write_entity("workspace", ws, Workspace(ws, "Refill test", "owner-refill-test"))
     store.update_auto_refill_settings(
         ws,
         enabled=True,
@@ -2919,7 +2922,7 @@ def test_drain_clamps_limit_to_500(
 ) -> None:
     assert fake_store is not None
 
-    class SpyOutbox:
+    class SpyOutbox(SpannerSettleOutbox):
         seen_limit: int | None = None
 
         def claim(self, *, limit: int, lease_seconds: int = 60) -> list[SettleOutboxRow]:
@@ -2930,7 +2933,7 @@ def test_drain_clamps_limit_to_500(
         def purge_done(self) -> int:
             return 0
 
-    spy = SpyOutbox()
+    spy = SpyOutbox(fake_store[1], fake_store[0]._param_types)
     monkeypatch.setattr(drain_mod, "spanner_settle_outbox", lambda: spy)
 
     result = drain_mod.drain_settle_outbox(99_999)

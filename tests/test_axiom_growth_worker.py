@@ -1,6 +1,9 @@
 """Continuity, replay, failure and privacy contracts for the off-path worker."""
 import copy
 import datetime as dt
+import json
+import re
+from pathlib import Path
 
 import httpx
 import pytest
@@ -311,6 +314,42 @@ def test_logging_sink_uses_exact_event_allowlist_without_regex_escaping():
     assert 'resource.type="cloud_run_revision"' in value
 
 
+def test_control_plane_nyte_event_reaches_the_sanitized_worker_projection(monkeypatch):
+    from scripts.axiom_growth.provision import source_filter
+
+    sources = object.__new__(Sources)
+    sources.project = 'quill-cloud-proxy'
+    monkeypatch.setattr(Sources, 'query', lambda self, apl, start, end:
+                        [{'n': 0}] if '| summarize n=count()' in apl else [])
+    entry = {'timestamp': (NOW - dt.timedelta(minutes=1)).isoformat(), 'jsonPayload': {
+        'event': 'acquisition.nyte.buy_completed', 'anonymous_fingerprint': 'a' * 64,
+        'site_domain': 'nytokenexchange.com', 'page_path': '/buy',
+        'unit': 'blocks', 'underlying_kind': 'facility', 'grade': 'none',
+        'email': 'private@example.com', 'prompt': 'private', 'body': {'private': 'data'},
+    }}
+
+    def google(self, method, url, **kwargs):
+        body = kwargs['json']
+        services = set(re.findall(r'resource.labels.service_name="([^"]+)"', body['filter']))
+        assert services == {'trusted-router', 'trusted-router-public', 'trusted-router-control'}
+        assert services == set(re.findall(r'resource.labels.service_name="([^"]+)"', source_filter()))
+        assert set(re.findall(r'jsonPayload.event="([^"]+)"', body['filter'])) == m.BROWSER_EVENTS
+        assert body['resourceNames'] == [
+            'projects/quill-cloud-proxy/locations/global/buckets/tr-growth-source/views/_AllLogs',
+        ]
+        assert 'timestamp>=' in body['filter'] and 'timestamp<' in body['filter']
+        return httpx.Response(200, json={'entries': [entry]})
+
+    monkeypatch.setattr(Sources, 'google', google)
+    rows = sources.events(NOW - dt.timedelta(minutes=5), NOW)
+    assert len(rows) == 1
+    assert rows[0]['event'] == 'acquisition.nyte.buy_completed'
+    assert rows[0]['page_path'] == '/buy'
+    assert rows[0]['source'] == 'cloud_logging'
+    assert rows[0]['underlying_kind'] == 'facility'
+    assert not {'email', 'prompt', 'body'} & rows[0].keys()
+
+
 def onboarding(name='succeeded', **kwargs):
     return project({'_time': '2026-09-16T21:55:00Z',
         'event': 'acquisition.onboarding_call_' + name,
@@ -525,3 +564,68 @@ def test_console_observation_projection_replay_and_allowlist():
     assert not {'reward_action', 'device_category', 'reward_placement'} & invalid.keys()
     grant = event('social_reward_claimed', reward_action='github')
     assert grant['reward_action'] == 'github'
+
+
+def test_exchange_domains_and_markets_match_the_site_registry():
+    root = Path(__file__).resolve().parents[1]
+    data = json.loads((root / 'src' / 'trusted_router' / 'data' / 'token_exchange_markets.json').read_text())
+    markets = json.loads((root / 'sites' / 'token-exchange' / 'markets.json').read_text())
+    assert m.EXCHANGE_MARKETS_BY_DOMAIN == data == {x['domain']: x['slug'] for x in markets}
+
+
+@pytest.mark.parametrize('value', [
+    'nytokenexchange.com', 'www.londontoken.exchange', 'token-exchange-launch', 'token-exchange', 'nyte-launch',
+])
+def test_our_own_exchange_names_are_not_redacted(value):
+    assert m.safe_label(value) == value
+    assert m.canonical_source('nytokenexchange.com') == 'nytokenexchange.com'
+
+
+@pytest.mark.parametrize('value', ['token=abc', 'sk-live-1', 'my token exchange secret', 'Bearer x', 'tokenexchange token'])
+def test_secret_shaped_labels_still_redact(value):
+    assert m.safe_label(value) == '(redacted)'
+
+
+def test_exchange_pages_keep_their_slug_but_trustedrouter_paths_stay_classified():
+    assert m.safe_path('/a-page-joseph-adds', exchange=True) == '/a-page-joseph-adds'
+    assert m.safe_path('/a-page-joseph-adds') == '(unclassified)'
+    assert m.safe_path('/buy?lots=3#x', exchange=True) == '/buy'
+    assert m.safe_path('/', exchange=True) == '/'
+    for raw in ('/two/segments', '/Has Spaces', '/' + 'a' * 41, '/console/secret'):
+        assert m.safe_path(raw, exchange=True) in {'(unclassified)', '(account flow)'}
+
+
+def test_exchange_visitor_fields_survive_projection_and_reach_journeys():
+    visitor = 'c' * 64
+    landing = project({
+        '_time': '2026-11-02T17:00:00Z', 'event': 'acquisition.landing_viewed', 'anonymous_fingerprint': 'a' * 64,
+        'utm_source': 'nytokenexchange.com', 'utm_medium': 'referral', 'landing_path': '/console/api-keys',
+        'referer_host': 'nytokenexchange.com', 'exchange_market': 'new-york', 'exchange_visitor_fingerprint': visitor,
+    }, 'cloud_logging')
+    assert landing['utm_source'] == 'nytokenexchange.com'
+    assert landing['referrer_domain'] == 'nytokenexchange.com'
+    assert (landing['exchange_market'], landing['exchange_visitor_fingerprint']) == ('new-york', visitor)
+    [journey] = m.build_journeys([landing], [], NOW)
+    assert (journey['exchange_market'], journey['exchange_visitor_fingerprint']) == ('new-york', visitor)
+    assert journey['first_source'] == 'nytokenexchange.com'
+    bad = project({
+        '_time': '2026-11-02T17:00:00Z', 'event': 'acquisition.landing_viewed', 'anonymous_fingerprint': 'a' * 64,
+        'exchange_market': 'mars', 'exchange_visitor_fingerprint': 'not-a-hash',
+    }, 'cloud_logging')
+    assert not {'exchange_market', 'exchange_visitor_fingerprint'} & bad.keys()
+
+
+def test_exchange_rows_name_their_market_and_device_and_never_raw_values():
+    row = project({
+        '_time': '2026-11-02T17:00:00Z', 'event': 'acquisition.exchange.landing_viewed', 'anonymous_fingerprint': 'a' * 64,
+        'site_domain': 'chicagotokenexchange.com', 'page_path': '/a-new-page', 'market': 'chicago',
+        'device_category': 'tablet', 'exchange_visitor_fingerprint': 'a' * 64,
+    }, 'cloud_logging')
+    assert (row['market'], row['exchange_market'], row['device_category'], row['page_path']) == (
+        'chicago', 'chicago', 'tablet', '/a-new-page')
+    fallback = project({
+        '_time': '2026-11-02T17:00:00Z', 'event': 'acquisition.exchange.landing_viewed', 'anonymous_fingerprint': 'a' * 64,
+        'site_domain': 'tokyotokenexchange.com', 'page_path': '/', 'market': 'mars', 'device_category': 'raw UA',
+    }, 'cloud_logging')
+    assert fallback['market'] == 'tokyo'
+    assert 'device_category' not in fallback

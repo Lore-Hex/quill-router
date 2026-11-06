@@ -8,6 +8,8 @@ import pytest
 from scripts.pricing.base import ModelPrice
 from scripts.pricing.providers import telnyx
 from tests import catalog_vehicles
+from tests.lifecycle_clock import CATALOG_CLOCK
+from trusted_router import provider_lifecycle
 
 
 def test_complete_native_prices_do_not_depend_on_secondary_sources(monkeypatch) -> None:  # noqa: ANN001
@@ -387,9 +389,18 @@ def test_telnyx_regions_follow_default_tier_and_clear_removed_declarations(
 def test_telnyx_manifest_is_loaded_as_prepaid_and_byok_catalog_routes() -> None:
     manifest = json.loads(telnyx.MANIFEST_PATH.read_text(encoding="utf-8"))
     manifest_model_ids = {str(row["id"]) for row in manifest["models"]}
-    # A row the refresh tombstoned is simply not routed.
+    # A row the refresh tombstoned, or one past its scheduled retirement at
+    # the catalog's build clock, is simply not routed.
     routable_ids = {
-        str(row["id"]) for row in manifest["models"] if row.get("routable") is not False
+        str(row["id"])
+        for row in manifest["models"]
+        if row.get("routable") is not False
+        and not provider_lifecycle.provider_model_retired(
+            "telnyx",
+            str(row["id"]),
+            str(row.get("upstream_id") or row["id"]),
+            at=CATALOG_CLOCK,
+        )
     }
     built = catalog_vehicles.registry_endpoints()
     endpoints = [endpoint for endpoint in built.values() if endpoint.provider == "telnyx"]

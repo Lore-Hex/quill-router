@@ -15,7 +15,7 @@ const assert=require('node:assert/strict');
       label:col.querySelector('h3').textContent,
       price:[...col.querySelectorAll('.privacy-price')].map(el=>el.textContent).join(' / '),
     })));
-    for(const market of ['new-york','london']) {
+    for(const market of ['new-york','hong-kong']) {
       const page=await context.newPage();await page.goto('http://127.0.0.1:8089/'+(market==='new-york'?'confidential.html':market+'/'));
       await page.waitForFunction(()=>document.querySelector('[data-live-services]').textContent.includes('99.95%'));
       assert.equal(await page.locator('.service-history').count(),market==='new-york'?2:1);

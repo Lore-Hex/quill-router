@@ -316,6 +316,11 @@ class FakeSpannerDatabase:
         self.snapshot_execute_sql_calls = 0
         self.snapshot_sql: list[str] = []
         self.snapshot_sql_params: list[dict[str, Any]] = []
+        # Each snapshot's read timestamp, as the real client records it when
+        # the snapshot's first read begins its read-only transaction
+        # (Snapshot._transaction_read_timestamp): a distinct nanosecond
+        # instant per snapshot, in the order they began.
+        self.snapshot_read_timestamps: list[Any] = []
         self.transaction_execute_sql_calls = 0
         self.transaction_execute_update_calls = 0
         self.transaction_batch_update_calls = 0
@@ -2174,6 +2179,20 @@ class _FakeTransaction:
             new = dict(rec, lease_owner=p["owner"], leased_until=p["lease"], updated_at=p["now"])
             self.pending_writes.append(("update_settle_outbox", pk, new))
             return 1
+        if sql.startswith("UPDATE tr_settle_outbox SET lease_owner=NULL, leased_until=NULL, "
+                          "updated_at=@now WHERE"):  # release a deferred claim
+            _require_pred(sql, "authorization_id=@aid AND intent_kind=@kind", "release")
+            _require_pred(sql, "status='pending'", "release")
+            _require_pred(sql, "AND lease_owner=@owner", "release")
+            pk = (p["aid"], p["kind"])
+            rec = self._settle_outbox_current(pk)
+            # SQL equality with a NULL owner matches no row.
+            if (p.get("owner") is None or rec is None or rec["status"] != "pending"
+                    or rec.get("lease_owner") != p["owner"]):
+                return 0
+            new = dict(rec, lease_owner=None, leased_until=None, updated_at=p["now"])
+            self.pending_writes.append(("update_settle_outbox", pk, new))
+            return 1
         if sql.startswith("UPDATE tr_settle_outbox SET status='pending'"):  # park
             _require_pred(sql, "authorization_id=@aid AND intent_kind=@kind", "park")
             _require_pred(sql, "AND status='pending' AND attempts=@attempts", "park")
@@ -2344,6 +2363,21 @@ class _FakeTransaction:
                 self.pending_writes.append(("delete_typed", table, tuple(entry)))
 
 
+def _next_read_timestamp(db: FakeSpannerDatabase) -> Any:
+    """A snapshot's read timestamp as the client keeps it (proto-plus's
+    DatetimeWithNanoseconds), with digits below the microsecond so a caller
+    that rounds through a plain datetime is caught."""
+    from google.protobuf.timestamp_pb2 import Timestamp
+    from proto.datetime_helpers import DatetimeWithNanoseconds
+
+    n = len(db.snapshot_read_timestamps)
+    stamp = DatetimeWithNanoseconds.from_timestamp_pb(
+        Timestamp(seconds=1_792_000_000 + n, nanos=123_456_789 + n)
+    )
+    db.snapshot_read_timestamps.append(stamp)
+    return stamp
+
+
 class _FakeSnapshot:
     def __init__(self, db: FakeSpannerDatabase, *, multi_use: bool = False) -> None:
         self.db = db
@@ -2366,7 +2400,11 @@ class _FakeSnapshot:
         **rpc_options: Any,
     ) -> list[list[str]]:
         if rpc_options:
-            assert 0 < rpc_options["timeout"] <= 0.5
+            # Runtime stop is a distinct complete-key control read with the
+            # reviewed one-second budget. Money reads retain their 500 ms cap.
+            runtime_stop = (sql == "SELECT body FROM tr_entities WHERE kind=@kind AND id=@id"
+                            and params == {"kind": "async_settle_shadow_control_v2", "id": "stop-v2"})
+            assert 0 < rpc_options["timeout"] <= (1.0 if runtime_stop else 0.5)
             assert rpc_options["retry"] is None
             options = dict(rpc_options["request_options"])
             tag = options.pop("request_tag", None)
@@ -2387,6 +2425,8 @@ class _FakeSnapshot:
                 "database.snapshot(multi_use=True) for multiple reads "
                 "(models real Spanner — see prod fix fa9f5d4)"
             )
+        if self._reads == 1:
+            self._transaction_read_timestamp = _next_read_timestamp(self.db)
         self.db.snapshot_execute_sql_calls += 1
         self.db.snapshot_sql.append(sql)
         self.db.snapshot_sql_params.append(dict(params or {}))
@@ -2822,6 +2862,26 @@ def _execute_settle_outbox_sql(
         if sql.startswith("SELECT attempts, lease_owner, reservation_id FROM tr_settle_outbox"):
             values.append(rec.get("reservation_id"))
         return [values]
+    if sql.startswith("SELECT unresolved_at, next_attempt_at FROM tr_settle_outbox"
+                      "@{FORCE_INDEX=tr_settle_outbox_unresolved} "):  # rows in their inline grace
+        for needle in ("unresolved_at IS NOT NULL", "unresolved_at >= @since", "unresolved_at < @until",
+                       "status='pending'", "async_version IS NULL", "attempts=0", "last_error IS NULL",
+                       "ORDER BY unresolved_at LIMIT @limit"):  # ascending: the bound keeps the oldest
+            _require_pred(sql, needle, "fleet-health-grace")
+        since, until = _utc_datetime(p["since"]), _utc_datetime(p["until"])
+        with sqlite3.connect(":memory:") as connection:
+            rows = []
+            for record in db.settle_outbox.values():
+                [unresolved] = connection.execute(
+                    "SELECT " + _unresolved_expression() + " FROM (SELECT ? AS status, ? AS created_at)",  # noqa: S608 - repository DDL; bound row values
+                    (record.get("status"), record.get("created_at")),
+                ).fetchone()
+                if (unresolved is not None and since <= _utc_datetime(unresolved) < until
+                        and record.get("status") == "pending" and record.get("async_version") is None
+                        and int(record.get("attempts") or 0) == 0 and record.get("last_error") is None):
+                    rows.append([unresolved, record.get("next_attempt_at")])
+        rows.sort(key=lambda row: _utc_datetime(row[0]))
+        return rows[:p["limit"]]
     if "FORCE_INDEX=tr_settle_outbox_unresolved" in sql:
         _require_pred(sql, "SELECT unresolved_at, actual_cost_micro, status FROM tr_settle_outbox",
                       "fleet-health-generated-value")
@@ -2864,6 +2924,10 @@ def _execute_settle_outbox_sql(
             _require_pred(sql, "leased_until IS NULL OR leased_until < @now", "fast-due-lease")
             rows = [r for r in rows if r['queue_shard'] == p['shard']
                     and (r.get('leased_until') is None or r['leased_until'] < now)]
+        if "AND async_version IS NULL" in sql:
+            rows = [r for r in rows if r.get("async_version") is None]
+        if "AND async_version IS NOT NULL" in sql:
+            rows = [r for r in rows if r.get("async_version") is not None]
         rows.sort(key=lambda r: r.get("next_attempt_at") or "")
         return [[rec.get(c) for c in OUTBOX_COLUMNS] for rec in rows[:limit]]
     if "SELECT COUNT(*) FROM tr_settle_outbox" in sql and "intent_kind != @kind" in sql:
@@ -4365,6 +4429,9 @@ def _execute_sql(
         if "LIMIT @limit" in sql:
             rows = rows[: int(params["limit"])]
         return [[body] for _, body in rows]
+    if "SELECT id FROM tr_entities WHERE kind=@kind AND id>@cursor" in sql:
+        ids = sorted(eid for k, eid in db.rows if k == kind and eid > params["cursor"])
+        return [[eid] for eid in ids[:int(params["limit"])]]
     if "SELECT id, body FROM tr_entities WHERE kind=@kind" in sql:
         rows = [(eid, r.body) for (k, eid), r in list(db.rows.items()) if k == kind]
         if "id IN UNNEST(@ids)" in sql:

@@ -28,13 +28,14 @@ import time
 from collections import OrderedDict
 from collections.abc import Callable
 from typing import Any
-from urllib.parse import urlparse
 
 import httpx
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.x509 import load_pem_x509_certificate
+
+from trusted_router.url_validation import parse_url
 
 CertFetcher = Callable[[str], bytes]
 
@@ -87,7 +88,9 @@ def verify_sns_message(
     if not isinstance(signing_cert_url, str) or not isinstance(signature_b64, str):
         raise SnsVerificationError("missing SigningCertURL or Signature")
 
-    parsed = urlparse(signing_cert_url)
+    parsed = parse_url(signing_cert_url, check_port=False)
+    if parsed is None:
+        raise SnsVerificationError("untrusted SigningCertURL host: None")
     try:
         port = parsed.port
     except ValueError as exc:

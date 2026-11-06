@@ -8,22 +8,22 @@ from trusted_router.errors import error_response, not_supported
 
 def register_compat_stub_routes(router: APIRouter) -> None:
     @router.post("/audio/transcriptions")
-    async def audio_transcriptions() -> JSONResponse:
+    def audio_transcriptions() -> JSONResponse:
         return not_supported()
 
     @router.post("/rerank")
-    async def rerank() -> JSONResponse:
+    def rerank() -> JSONResponse:
         return not_supported()
 
     @router.get("/private/models/{author}/{slug}")
-    async def private_model(author: str, slug: str) -> JSONResponse:
+    def private_model(author: str, slug: str) -> JSONResponse:
         _ = (author, slug)
         return error_response(
             404, "Private models are not supported", "private_models_not_supported"
         )
 
     @router.get("/private/models/{author}/{slug}/endpoints")
-    async def private_model_endpoints(author: str, slug: str) -> JSONResponse:
+    def private_model_endpoints(author: str, slug: str) -> JSONResponse:
         _ = (author, slug)
         return error_response(
             404, "Private models are not supported", "private_models_not_supported"
@@ -55,7 +55,7 @@ def register_gateway_compat_stub_routes(router: APIRouter) -> None:
             }}}}},
         },
     )
-    async def tools_fetch() -> JSONResponse:
+    def tools_fetch() -> JSONResponse:
         return not_supported()
 
     @router.post(
@@ -104,36 +104,36 @@ def register_gateway_compat_stub_routes(router: APIRouter) -> None:
             },
         },
     )
-    async def audio_speech() -> JSONResponse:
+    def audio_speech() -> JSONResponse:
         return not_supported()
 
     @router.post("/videos")
-    async def videos() -> JSONResponse:
+    def videos() -> JSONResponse:
         return not_supported()
 
     @router.get("/videos/models")
-    async def video_models() -> JSONResponse:
+    def video_models() -> JSONResponse:
         return not_supported()
 
     @router.get("/videos/{jobId}")
-    async def video_status(jobId: str) -> JSONResponse:  # noqa: N803
+    def video_status(jobId: str) -> JSONResponse:  # noqa: N803
         _ = jobId
         return not_supported()
 
     @router.get("/videos/{jobId}/content")
-    async def video_content(jobId: str) -> JSONResponse:  # noqa: N803
+    def video_content(jobId: str) -> JSONResponse:  # noqa: N803
         _ = jobId
         return not_supported()
 
     @router.post("/images")
-    async def stub() -> JSONResponse:
+    def stub() -> JSONResponse:
         return not_supported()
 
 
 def register_versioned_compat_stub_routes(router: APIRouter) -> None:
     """Stubs whose unprefixed spelling is already a public HTML page."""
 
-    async def stub() -> JSONResponse:
+    def stub() -> JSONResponse:
         return not_supported()
 
     # GET /benchmarks is the public benchmark report hub. OpenRouter's API
@@ -143,7 +143,7 @@ def register_versioned_compat_stub_routes(router: APIRouter) -> None:
 
 
 def _add_guardrail_stubs(router: APIRouter) -> None:
-    async def stub() -> JSONResponse:
+    def stub() -> JSONResponse:
         return not_supported()
 
     router.add_api_route("/guardrails", stub, methods=["GET"])
@@ -162,7 +162,7 @@ def _add_guardrail_stubs(router: APIRouter) -> None:
 
 
 def _add_current_openrouter_stubs(router: APIRouter) -> None:
-    async def stub() -> JSONResponse:
+    def stub() -> JSONResponse:
         return not_supported()
 
     routes = (

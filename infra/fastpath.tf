@@ -27,7 +27,47 @@ locals {
   # commit timestamp (#2038) and G12's per-period counts (#2039); it takes
   # -edge-policy-url and -edge-decide-shadow, which the nodes' policy
   # attributes below pass (stage I1).
-  fastpath_release        = "2d90fa113678233b9edcdf9d0ea833ace37b6c94"
+  # 7f392e79d: main after #2061 (G13), with #2065's hold split: the decide
+  # shadow keeps requests carrying a cache affinity key, composes the cold
+  # order and measures Python's answer as affinity_cold or affinity_warm,
+  # so the soak compares the cohort instead of passing nearly all of it.
+  # 892bd7593: main after #2098, with G14's v3 routing snapshot (privacy
+  # tiers and parameter tables, so the evaluator answers min_privacy and
+  # requested_parameters), G15a's optional async_settle and billing_valid,
+  # and the auditor's call deadlines and stall watchdog.
+  # 620e0ca00: main after #2118, with G15b's async compose (the edge
+  # renders async-v1's additions), option A (the edge decides requests
+  # carrying a cache affinity key in the cold order; Python's warm re-rank
+  # counts as differ.affinity_warm) and G15c's async admission, dark while
+  # edge_decide is false, with the shadow's per-population async counts.
+  # fc1ed83bb: the merge of #2130, a deadline on each of the process's
+  # startup calls (its ring join and first membership scan among them) and
+  # a watchdog on its start and the session's warming that marks the node
+  # unhealthy and exits, so systemd restarts it.
+  # 0f0b1829a: the merge of #2133, the start before the service runs
+  # bounded too: a deadline on each secret read, and a watch that exits the
+  # process if it has not reached the service within 15 s per secret read
+  # plus a minute.
+  # cae6c5479: main after streams increments 5+6 (#2226) and the in-flight
+  # 429 shadow fix (#2229): the edge tells the owner whether a decided
+  # request streams, composes eligible streams, and decides them only with
+  # fastpath_edge_streams on; the shadow counts Python's in-flight 429 to
+  # an inflight.key pass as passed. The pilot leases streams. The edge
+  # switch, off when this release shipped, is on since gate E (2026-11-02,
+  # TR_FASTPATH_EDGE_STREAMS=true in scripts/deploy/rollout.sh, #2252):
+  # the edge decides eligible streams for the workspaces whose decide rows
+  # are on.
+  # 328a3651c: the auditor's pending sweep reads a pack's staged records
+  # in one call and works up to eight leases' packs at once, each lease's
+  # in order (#2298); at 1,000 a second the packs took about 25 minutes to
+  # clear one at a time.
+  # 04b39913b: that sweep raised the billing store's CPU from 33% to 47% at
+  # 1,000 a second, so the auditor remembers the leases it has found, sweeps
+  # retired staged records once a minute, and runs two lease workers (#2303).
+  # f1208a3d4: the stager groups the records that arrive while one staging
+  # transaction runs into the next one, up to 256 records or 8 MiB, instead
+  # of committing once a record (#2318).
+  fastpath_release        = "f1208a3d49f37e929aab323d34189b379c48917d"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
@@ -62,10 +102,21 @@ locals {
   # section 4): Python's signed live facts, polled on the same upstream and
   # verified with the same key, kid and plane. Only a script from I1 on
   # reads the policy's two attributes, which nodes 7 and 8 run.
-  # The decide shadow (G10) stays off until the policy has been held
-  # through a measured soak (the I1 runbook); it is turned on here, then
-  # each node in turn is drained, its unit stopped and its startup script
-  # run again (a reset alone keeps the unit's old arguments).
+  # The decide shadow (G10) is on, once the policy had been held through a
+  # measured soak (the I1 runbook); each node in turn took it drained, its
+  # unit stopped and its startup script run again (a reset alone keeps the
+  # unit's old arguments). Python still decides.
+  # The decide path (G11, stage I2): fastpath-edge-decide "true" has the
+  # edge answer the authorizes of the workspaces the decide table names
+  # (docs/runbooks/fastpath-edge-decide.md); "false", the default, answers
+  # nothing. It is a flag the unit takes, so a node takes a change to it as
+  # it took the shadow's: drained, its unit stopped and its startup script
+  # run again, one node at a time. Only a script that reads the attribute
+  # passes the flag: a node from before that script carries the attribute
+  # and passes nothing, so the script reaches the fleet first, as I1's did,
+  # through nodes added under new names: 9 and 10 beside 7 and 8, which
+  # then leave the backend and are removed. On since the I3 soak was green;
+  # with every decide row off it still answers nothing.
   fastpath_edge_snapshot = tomap({
     fastpath-edge-snapshot-url        = "${local.fastpath_edge_upstream}/internal/fastpath/routing-snapshot"
     fastpath-edge-snapshot-public-key = "oTQF4Efsi6G7_38Nca4HjiB7QUoNDkNSzaOw26Kt9IM"
@@ -73,7 +124,8 @@ locals {
     fastpath-edge-snapshot-plane      = "gcp/${local.fastpath_region}"
     fastpath-edge-shadow              = "true"
     fastpath-edge-policy-url          = "${local.fastpath_edge_upstream}/internal/fastpath/edge-policy"
-    fastpath-edge-decide-shadow       = "false"
+    fastpath-edge-decide-shadow       = "true"
+    fastpath-edge-decide              = "true"
   })
 }
 
@@ -307,16 +359,28 @@ resource "google_compute_instance" "fastpath_node" {
   # leaving and drained, left the edge backend (local.fastpath_edge_retiring)
   # one apply before its removal, then was removed. 7 and 8 took the places
   # of 5 and 6 the same way, with the edge policy's attributes (stage I1),
-  # which the script 5 and 6 ran, from before I1, read neither of.
+  # which the script 5 and 6 ran, from before I1, read neither of. 9 and 10
+  # took the places of 7 and 8 the same way, with the decide attribute
+  # (stage I2, "false" until the I2 switch), which the script 7 and 8 ran,
+  # from before I2, did not read; 7 and 8 were drained, left the edge
+  # backend one apply before their removal, then were removed.
+  #
+  # 11 and 12 took the places of 9 and 10 the same way, on four cores rather
+  # than two: at 1,000 generations a second (2026-11-04, P1's runs on
+  # tr-fastpath-loadgen) the two-core nodes reached 77% CPU with the
+  # authorize p99 at 64 ms; on four cores five minutes at that rate held,
+  # the p99 at 27 ms and every audit clean. The same script, release and
+  # metadata; 9 and 10 were drained, left the edge backend one apply before
+  # their removal, then were removed.
   for_each = {
-    "tr-fastpath-7" = "us-central1-a"
-    "tr-fastpath-8" = "us-central1-b"
+    "tr-fastpath-11" = { zone = "us-central1-a", machine_type = "e2-standard-4" }
+    "tr-fastpath-12" = { zone = "us-central1-b", machine_type = "e2-standard-4" }
   }
 
   project      = local.gcp_project_id
   name         = each.key
-  zone         = each.value
-  machine_type = "e2-standard-2"
+  zone         = each.value.zone
+  machine_type = each.value.machine_type
 
   boot_disk {
     initialize_params {
@@ -377,6 +441,75 @@ resource "google_compute_instance" "fastpath_node" {
   depends_on = [
     google_spanner_database_iam_member.fastpath_node_database,
     google_pubsub_subscription_iam_member.fastpath_node_subscriber,
+    google_storage_bucket_iam_member.fastpath_releases_reader,
+  ]
+}
+
+# --- The load generator ------------------------------------------------------
+
+# One machine of its own for the edge's 1,000 a second run, so the run does
+# not measure a generator beside the front door and owner it drives (P1's
+# results, "Next"). It runs no node unit and joins no membership: its script
+# only installs the pinned release's loadgen, fastpathwatch and load mix, and
+# the run is started by hand over OS Login (docs/runbooks/fastpath-p1.md).
+# It takes the nodes' service account for the release bucket and the
+# readiness read loadgen makes, and the default-allow-internal rule for the
+# front doors' port. Off is local.fastpath_loadgen = false, which removes it.
+locals {
+  fastpath_loadgen = true
+}
+
+resource "google_compute_instance" "fastpath_loadgen" {
+  count = local.fastpath_loadgen ? 1 : 0
+
+  project      = local.gcp_project_id
+  name         = "tr-fastpath-loadgen"
+  zone         = "us-central1-c"
+  machine_type = "e2-standard-8"
+
+  boot_disk {
+    initialize_params {
+      image = "debian-cloud/debian-12"
+      size  = 20
+    }
+  }
+
+  network_interface {
+    network    = "default"
+    subnetwork = "default"
+    # No access_config: no external address.
+  }
+
+  service_account {
+    email  = google_service_account.fastpath_node.email
+    scopes = ["cloud-platform"]
+  }
+
+  metadata = {
+    enable-oslogin   = "TRUE"
+    fastpath-release = local.fastpath_release
+  }
+
+  metadata_startup_script = <<-EOT
+    #!/bin/bash
+    set -euo pipefail
+    release="$(curl -sf -H 'Metadata-Flavor: Google' 'http://metadata.google.internal/computeMetadata/v1/instance/attributes/fastpath-release')"
+    install -d /opt/fastpath
+    for tool in loadgen fastpathwatch load-mix.json; do
+      gcloud storage cp "gs://${google_storage_bucket.fastpath_releases.name}/fastpath/$release/$tool" "/opt/fastpath/$tool"
+      chmod 0755 "/opt/fastpath/$tool"
+    done
+    echo "$release" > /opt/fastpath/release
+  EOT
+
+  labels = {
+    service = "fastpath"
+    stage   = "loadgen"
+  }
+
+  allow_stopping_for_update = true
+
+  depends_on = [
     google_storage_bucket_iam_member.fastpath_releases_reader,
   ]
 }

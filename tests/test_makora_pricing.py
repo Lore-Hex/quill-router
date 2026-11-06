@@ -3,10 +3,62 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from scripts.pricing import refresh
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.parsers import makora as makora_parser
 from scripts.pricing.providers import makora
+
+
+@pytest.mark.parametrize("existing_chat_row", [False, True])
+def test_makora_clef_remains_discovery_only_through_refresh(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, existing_chat_row: bool,
+) -> None:
+    from trusted_router import catalog_ingest
+
+    model_id = "cloudflare/clef-flash"
+    manifest = tmp_path / "makora.json"
+    old_row = {
+        "id": model_id, "upstream_id": "Cloudflare/clef-flash",
+        "model_type": "chat", "endpoints": ["chat/completions"],
+        "routable": True,
+        "input_token_price_per_m": 18_000, "output_token_price_per_m": 0,
+    }
+    chat_ids = {"moonshotai/kimi-k3", "qwen/qwen4-next"}
+    old_rows = [{**old_row, "id": model, "upstream_id": model} for model in sorted(chat_ids)]
+    if existing_chat_row:
+        old_rows.append(old_row)
+    manifest.write_text(json.dumps({"models": old_rows}))
+    monkeypatch.setattr(makora, "MANIFEST_PATH", manifest)
+    monkeypatch.setattr(makora, "EXPECTED_MODELS", ["moonshotai/kimi-k3"])
+    monkeypatch.setattr(makora, "_DISCOVERED_MANIFEST_ROWS", {})
+    monkeypatch.setenv("MAKORA_API_KEY", "test-key")
+    monkeypatch.setattr(makora, "fetch_json", lambda *_args, **_kwargs: {
+        "data": [
+            {"id": "Cloudflare/clef-flash", "input_modalities": ["text", "image"],
+             "pricing": {"prompt": "0.000000018", "completion": "0"}},
+            {"id": "moonshotai/Kimi-K3",
+             "pricing": {"prompt": "0.00000255", "completion": "0.00001275"}},
+            {"id": "qwen/qwen4-next",
+             "pricing": {"prompt": "0.0000005", "completion": "0.0000015"}},
+        ],
+    })
+
+    result = makora.fetch()
+    makora.write_provider_manifest(result)
+    rows = {row["id"]: row for row in json.loads(manifest.read_text())["models"]}
+    assert rows[model_id]["routable"] is False
+    assert rows[model_id]["routable_reason"] == "unsupported-chat-endpoint"
+    assert rows[model_id]["model_type"] == "discovery"
+    assert rows[model_id]["endpoints"] == []
+    assert rows[model_id]["input_token_price_per_m"] == 18_000
+    assert rows["moonshotai/kimi-k3"].get("routable", True) is True
+
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
+    models, endpoints = catalog_ingest._supplemental_provider_models_and_endpoints()
+    assert model_id not in models
+    assert {endpoint.model_id for endpoint in endpoints.values()} == chat_ids
 
 MAKORA_LINEUP_HTML = """
 The lineup

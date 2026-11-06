@@ -27,6 +27,7 @@ from trusted_router.catalog_ingest import (
 )
 from trusted_router.dashboard import _model_detail_view
 from trusted_router.pricing import _customer_price
+from trusted_router.provider_contracts import BEDROCK_RUNTIME_PROFILES
 from trusted_router.provider_lifecycle import provider_model_retired
 
 
@@ -180,9 +181,14 @@ def test_dark_authoritative_manifest_rows_cannot_return_through_shared_snapshot(
         for endpoint in catalog_vehicles.registry_endpoints().values()
     }
     for provider_slug in _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS:
-        raw = json.loads(
-            (_PROVIDER_MODELS_DIR / f"{provider_slug}.json").read_text(encoding="utf-8")
-        )
+        manifest = _PROVIDER_MODELS_DIR / f"{provider_slug}.json"
+        if not manifest.exists():
+            # Registered providers can remain unpublished before their first
+            # verified catalog. No shared snapshot may activate them instead.
+            assert not _authoritative_provider_model_ids(provider_slug)
+            assert not any(provider == provider_slug for provider, _ in endpoint_pairs)
+            continue
+        raw = json.loads(manifest.read_text(encoding="utf-8"))
         dark_models = {
             row["id"]
             for row in raw.get("models", [])
@@ -237,7 +243,8 @@ def test_gmi_only_credits_serves_allowlisted_models() -> None:
 
 @pytest.mark.parametrize("reseller", ["gmi", "lightning", "cloudflare-workers-ai"])
 def test_anthropic_models_credits_use_approved_hosts_only(reseller: str) -> None:
-    # Anthropic-direct and verified Vertex routes are approved for Credits;
+    # Anthropic-direct, verified Vertex and exact Bedrock Runtime profiles
+    # are approved for Credits;
     # unverified resellers remain blocked. BYOK survives unless the provider
     # has an all-usage hold, as Lightning and Cloudflare passthroughs do.
     built = catalog_vehicles.registry_endpoints()
@@ -246,7 +253,16 @@ def test_anthropic_models_credits_use_approved_hosts_only(reseller: str) -> None
         for e in built.values()
         if e.model_id.startswith("anthropic/") and e.usage_type == "Credits"
     }
-    assert credits_providers <= {"anthropic", "google-vertex"}
+    assert credits_providers <= {"anthropic", "google-vertex", "amazon-bedrock"}
+    bedrock = {
+        e.model_id: e.upstream_id for e in built.values()
+        if e.model_id.startswith("anthropic/")
+        and e.provider == "amazon-bedrock" and e.usage_type == "Credits"
+    }
+    assert bedrock == {
+        model_id: upstream_id for model_id, upstream_id in BEDROCK_RUNTIME_PROFILES.items()
+        if _listed_row("amazon-bedrock", model_id) is not None
+    }
     assert {
         e.model_id for e in built.values()
         if e.model_id.startswith("anthropic/")
@@ -582,8 +598,6 @@ def test_novita_supplemental_prices_apply_manifest_scale(
         "google/gemini-3.6-flash@google-ai-studio/byok",
         "google/gemini-3.8-flash@google-vertex/prepaid",
         "google/gemini-3.1-flash-image-preview@google-ai-studio/prepaid",
-        "google/gemini-2.5-flash@google-ai-studio/prepaid",
-        "google/gemini-2.5-flash@google-ai-studio/byok",
         "google/gemini-2.5-flash@google-vertex/prepaid",
         "z-ai/glm-5.3-flash@zai/prepaid",
         "z-ai/glm-5.3-flash@deepinfra/prepaid",

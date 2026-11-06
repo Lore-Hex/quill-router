@@ -142,6 +142,7 @@ from trusted_router.storage_gcp_counters import (
     credit_shard_count,
     distribute_credit_amount,
     key_usage_shard_count,
+    leased_key_usage_shard,
 )
 from trusted_router.storage_gcp_credit_debt import CreditRowsIncomplete
 from trusted_router.storage_gcp_credit_debt import cover_or_mark as cover_or_mark_credit
@@ -964,6 +965,8 @@ class SpannerStore(OperationalAnalyticsReads):
             )
         require_owner_trust_budget([*shard_counts, added_shards])
         owner = self._read_entity_tx(transaction, "user", owner_user_id, User)
+        if owner is not None and owner.disabled:
+            raise ValueError("account_closed")
         return workspace_ids, owner
 
     def _insert_owner_inventory_tx(
@@ -1002,7 +1005,9 @@ class SpannerStore(OperationalAnalyticsReads):
         return self.auth_session_store.set_workspace(raw_token, workspace_id)
 
     def get_auth_session_by_raw(self, raw_token: str) -> AuthSession | None:
-        return self.auth_session_store.get_by_raw(raw_token)
+        session = self.auth_session_store.get_by_raw(raw_token)
+        user = self.get_user(session.user_id) if session else None
+        return session if user and not user.disabled else None
 
     def delete_auth_session_by_raw(self, raw_token: str) -> bool:
         return self.auth_session_store.delete_by_raw(raw_token)
@@ -1132,98 +1137,105 @@ class SpannerStore(OperationalAnalyticsReads):
         billing_paused: bool | None = None,
         billing_pause_reason: str | None = None,
     ) -> Workspace | None:
-        def txn(transaction: Any) -> Workspace | None:
-            workspace = self._read_entity_tx(transaction, "workspace", workspace_id, Workspace)
-            if workspace is None:
-                return None
-            owner: User | None = None
-            account: CreditAccount | None = None
-            owned: list[str] = []
-            if deleted is not None and deleted != workspace.deleted:
-                account = self._read_entity_tx(
-                    transaction, "credit", workspace_id, CreditAccount
-                )
-                if account is None:
-                    raise RuntimeError("workspace is missing its credit account")
-                if deleted:
-                    owned = self._owner_workspace_ids_tx(
-                        transaction, workspace.owner_user_id
-                    )
-                    owner = self._read_entity_tx(
-                        transaction, "user", workspace.owner_user_id, User
-                    )
-                    transaction.delete(
-                        "tr_owner_workspace",
-                        self._spanner.KeySet(
-                            keys=[(workspace.owner_user_id, workspace_id)]
-                        ),
-                    )
-                    now = dt.datetime.now(dt.UTC)
-                    shard_rows = list(
-                        transaction.execute_sql(
-                            "SELECT shard, trust_latched_at FROM tr_credit_balance "
-                            "WHERE workspace_id=@pk AND shard>=0 AND shard<@shard_count "
-                            "ORDER BY shard",
-                            params={
-                                "pk": workspace_id,
-                                "shard_count": credit_shard_count(account),
-                            },
-                            param_types={
-                                "pk": self._param_types.STRING,
-                                "shard_count": self._param_types.INT64,
-                            },
-                        )
-                    )
-                    if len(shard_rows) != credit_shard_count(account):
-                        raise RuntimeError(
-                            "configured tr_credit_balance shard set is incomplete"
-                        )
-                    transaction.insert_or_update(
-                        table=CREDIT_BALANCE_TABLE,
-                        columns=(
-                            "workspace_id",
-                            "shard",
-                            "trust_tier",
-                            "trust_latched_at",
-                        ),
-                        values=[
-                            (workspace_id, int(shard), 0, latched_at or now)
-                            for shard, latched_at in shard_rows
-                        ],
-                    )
-                else:
-                    owned, owner = self._require_owner_growth_tx(
-                        transaction,
-                        workspace.owner_user_id,
-                        added_shards=credit_shard_count(account),
-                        enforce_count=True,
-                    )
-                    self._insert_owner_inventory_tx(
-                        transaction, workspace.owner_user_id, workspace_id
-                    )
-            if name is not None:
-                workspace.name = name
-            if deleted is not None:
-                workspace.deleted = deleted
-            if billing_paused is not None:
-                causes = set(workspace.billing_pause_causes)
-                if billing_paused:
-                    causes.add("migration")
-                else:
-                    causes.discard("migration")
-                workspace.billing_pause_causes = sorted(causes)
-                workspace.billing_paused = bool(causes)
-            if billing_pause_reason is not None:
-                workspace.billing_pause_reason = billing_pause_reason
-            if owner is not None and deleted is not None:
-                owner.owner_workspace_count = (
-                    max(0, len(owned) - 1) if deleted else len(owned) + 1
-                )
-                self._write_entity_tx(transaction, "user", owner.id, owner)
-            self._write_entity_tx(transaction, "workspace", workspace.id, workspace)
-            return None if workspace.deleted else workspace
+        return self._run_in_transaction(lambda transaction: self._update_workspace_tx(
+            transaction, workspace_id, name=name, deleted=deleted,
+            billing_paused=billing_paused, billing_pause_reason=billing_pause_reason,
+        ))
 
-        return self._run_in_transaction(txn)
+    def _update_workspace_tx(
+        self, transaction: Any, workspace_id: str, *, name: str | None = None,
+        deleted: bool | None = None, billing_paused: bool | None = None,
+        billing_pause_reason: str | None = None,
+    ) -> Workspace | None:
+        workspace = self._read_entity_tx(transaction, "workspace", workspace_id, Workspace)
+        if workspace is None:
+            return None
+        owner: User | None = None
+        account: CreditAccount | None = None
+        owned: list[str] = []
+        if deleted is not None and deleted != workspace.deleted:
+            account = self._read_entity_tx(
+                transaction, "credit", workspace_id, CreditAccount
+            )
+            if account is None:
+                raise RuntimeError("workspace is missing its credit account")
+            if deleted:
+                owned = self._owner_workspace_ids_tx(
+                    transaction, workspace.owner_user_id
+                )
+                owner = self._read_entity_tx(
+                    transaction, "user", workspace.owner_user_id, User
+                )
+                transaction.delete(
+                    "tr_owner_workspace",
+                    self._spanner.KeySet(
+                        keys=[(workspace.owner_user_id, workspace_id)]
+                    ),
+                )
+                now = dt.datetime.now(dt.UTC)
+                shard_rows = list(
+                    transaction.execute_sql(
+                        "SELECT shard, trust_latched_at FROM tr_credit_balance "
+                        "WHERE workspace_id=@pk AND shard>=0 AND shard<@shard_count "
+                        "ORDER BY shard",
+                        params={
+                            "pk": workspace_id,
+                            "shard_count": credit_shard_count(account),
+                        },
+                        param_types={
+                            "pk": self._param_types.STRING,
+                            "shard_count": self._param_types.INT64,
+                        },
+                    )
+                )
+                if len(shard_rows) != credit_shard_count(account):
+                    raise RuntimeError(
+                        "configured tr_credit_balance shard set is incomplete"
+                    )
+                transaction.insert_or_update(
+                    table=CREDIT_BALANCE_TABLE,
+                    columns=(
+                        "workspace_id",
+                        "shard",
+                        "trust_tier",
+                        "trust_latched_at",
+                    ),
+                    values=[
+                        (workspace_id, int(shard), 0, latched_at or now)
+                        for shard, latched_at in shard_rows
+                    ],
+                )
+            else:
+                owned, owner = self._require_owner_growth_tx(
+                    transaction,
+                    workspace.owner_user_id,
+                    added_shards=credit_shard_count(account),
+                    enforce_count=True,
+                )
+                self._insert_owner_inventory_tx(
+                    transaction, workspace.owner_user_id, workspace_id
+                )
+        if name is not None:
+            workspace.name = name
+        if deleted is not None:
+            workspace.deleted = deleted
+        if billing_paused is not None:
+            causes = set(workspace.billing_pause_causes)
+            if billing_paused:
+                causes.add("migration")
+            else:
+                causes.discard("migration")
+            workspace.billing_pause_causes = sorted(causes)
+            workspace.billing_paused = bool(causes)
+        if billing_pause_reason is not None:
+            workspace.billing_pause_reason = billing_pause_reason
+        if owner is not None and deleted is not None:
+            owner.owner_workspace_count = (
+                max(0, len(owned) - 1) if deleted else len(owned) + 1
+            )
+            self._write_entity_tx(transaction, "user", owner.id, owner)
+        self._write_entity_tx(transaction, "workspace", workspace.id, workspace)
+        return None if workspace.deleted else workspace
 
     def transfer_workspace_ownership(
         self, workspace_id: str, new_owner_user_id: str
@@ -1997,6 +2009,10 @@ class SpannerStore(OperationalAnalyticsReads):
 
     def get_user(self, user_id: str) -> User | None:
         return self._read_entity("user", user_id, User)
+
+    def close_user_account(self, user_id: str) -> User | None:
+        from trusted_router.storage_account_closure import close_spanner
+        return close_spanner(self, user_id)
 
     def find_user_by_email(self, email: str) -> User | None:
         record = self._read_entity("email_user", _normalize_email(email), dict)
@@ -5145,6 +5161,55 @@ class SpannerStore(OperationalAnalyticsReads):
             return AuthorizeVerdict(AuthorizeOutcome.ACCEPTED, rate_limit=window_decision), landed
         return AuthorizeVerdict(AuthorizeOutcome.ACCEPTED, rate_limit=window_decision), authorization
 
+    def extend_reservation_expiry(self, reservation_id: str, until: dt.datetime) -> bool:
+        """A leased stream's row whose disposition the lease has not given
+        yet expires again at `until` (docs/design/fast-admission-streams.md
+        section 6.4), never sooner than it would: the reaper's next pass asks
+        again, and its scan is not filled by rows it can only leave. The
+        renewal is the heartbeat's own statement. True when the open row was
+        found."""
+        pt = self._param_types
+
+        def extend(transaction: Any) -> int:
+            return int(transaction.execute_update(
+                "UPDATE tr_reservation SET expires_at=GREATEST(expires_at,@renewed_expires_at) "
+                "WHERE reservation_id=@rid AND settled=false",
+                params={"rid": reservation_id, "renewed_expires_at": until},
+                param_types={"rid": pt.STRING, "renewed_expires_at": pt.TIMESTAMP},
+            ))
+
+        return run_in_transaction_with_retry(self._database, extend, transaction_tag="tr_leased_reap_extend") == 1
+
+    def _leased_key_usage_shard_count(self, key_hash: str) -> int:
+        from trusted_router.storage_gcp_leased_key_usage import (
+            CACHE_INIT_LOCK,
+            LeasedKeyUsageShardCache,
+        )
+
+        # Lazy initialization also supports stores constructed without __init__.
+        with CACHE_INIT_LOCK:
+            cache = getattr(self, "_leased_key_usage_counts", None)
+            if cache is None:
+                cache = LeasedKeyUsageShardCache()
+                self._leased_key_usage_counts = cache
+        return int(cache.get(key_hash, lambda: self._read_leased_key_usage_shard_count(key_hash)))
+
+    def _read_leased_key_usage_shard_count(self, key_hash: str) -> int:
+        from trusted_router.storage_gcp_io import spanner_rpc_deadline
+        from trusted_router.storage_gcp_leased_key_usage import READ_DEADLINE_SECONDS
+
+        # The cache separately bounds the caller's wait, including SDK session
+        # checkout. The independent read gets a longer budget and no retries.
+        with spanner_rpc_deadline(time.monotonic() + READ_DEADLINE_SECONDS):
+            with self._database.snapshot(exact_staleness=dt.timedelta(seconds=5)) as snapshot:
+                key = self._read_entity_from(
+                    snapshot, "api_key", key_hash, ApiKey,
+                    timeout=READ_DEADLINE_SECONDS,
+                )
+        if key is None:
+            raise ValueError("leased key configuration missing")
+        return key_usage_shard_count(key)
+
     def typed_finalize_leased_result(
         self,
         authorization_id: str,
@@ -5156,6 +5221,7 @@ class SpannerStore(OperationalAnalyticsReads):
         authorization_snapshot: GatewayAuthorization | None = None,
         refund_benchmark: ProviderBenchmarkSample | None = None,
         mark_intent: str | None = None,
+        outcome: str | None = None,
     ) -> tuple[TypedFinalizeResult, GatewayAuthorization] | None:
         """The pilot's finalize: the records of a terminal whose money the
         fast path booked (docs/design/fast-admission-pilot.md). ONE commit
@@ -5170,7 +5236,13 @@ class SpannerStore(OperationalAnalyticsReads):
         counters, as today's settle does for a key that held nothing (the
         design's §4.6 has the auditor do this once the control plane leaves
         the hot path). None when the authorization is not a leased one or is
-        settled already (the caller answers the stored disposition)."""
+        settled already (the caller answers the stored disposition).
+
+        `outcome` reaped_snapshot records a lease's reap of a stream's last
+        snapshot (docs/design/fast-admission-streams.md sections 6.3, 6.4):
+        with no generation given, the snapshot's own, built from the row at
+        the lease's charge, as the reaper builds it; the key books the
+        charge, as the reaper's booking does."""
         from trusted_router.storage_gcp_authorize import (
             _log_missing_key_releases,
             _release_key_or_skip_deleted,
@@ -5198,14 +5270,23 @@ class SpannerStore(OperationalAnalyticsReads):
         ):
             activity_outbox = None
         actual_usage_type = UsageType.coerce(selected_usage_type)
+        if outcome == "reaped_snapshot" and success and generation is None:
+            from trusted_router.storage_gcp_authorize import snapshot_generation
+
+            generation = snapshot_generation(authorization, actual_micro=int(actual_microdollars))
         authorization.record_finalization(
             success=success,
             actual_microdollars=actual_microdollars,
             selected_usage_type=actual_usage_type,
             generation=generation,
+            outcome=outcome,
         )
         benchmark = (
-            self.generation_store.benchmark_sample(generation)
+            # A reaped snapshot is no measured request: no benchmark, as the
+            # reaper writes none.
+            None
+            if outcome == "reaped_snapshot"
+            else self.generation_store.benchmark_sample(generation)
             if success and generation is not None
             else refund_benchmark if not success else None
         )
@@ -5215,13 +5296,20 @@ class SpannerStore(OperationalAnalyticsReads):
         persist_generation = bool(getattr(self, "_generation_records_enabled", False))
         # The key's usage, by the settled usage type as today's settle books
         # it; a refund books nothing. The scope row holds nothing on the key
-        # and is unsharded, so this is today's zero-hold booking.
+        # and records shard zero. Pick the usage shard before the transaction;
+        # retries reuse it, and a removed shard uses the existing zero fallback.
         key_usage = int(actual_microdollars) if success else 0
+        key_shard = (
+            leased_key_usage_shard(
+                authorization_id, self._leased_key_usage_shard_count(authorization.key_hash),
+            )
+            if key_usage > 0 else UNSHARDED
+        )
         key_release = {
             "reservation_id": authorization.credit_reservation_id,
             "key_hash": authorization.key_hash,
             "key_reserved_micro": 0,
-            "key_shard": UNSHARDED,
+            "key_shard": key_shard,
         }
         missing_key_releases: list[dict[str, Any]] = []
 
@@ -5305,8 +5393,10 @@ class SpannerStore(OperationalAnalyticsReads):
         recorded, release row-count failure). Raises on any other failure,
         including an abort that outlived its retries, a deadline, or a commit
         whose outcome is unknown. For both None and an exception the caller runs
-        the durable two-commit settle; its durability is never weaker than
-        before this path existed:
+        the durable two-commit settle, except that a transient store error
+        followed by an enqueue that inserts the intent leaves the charge to the
+        drain (``settle_contention_defers_to_drain``); its durability is never
+        weaker than before this path existed:
 
         * Declined or definitely not committed: the fallback is exactly today's
           flow (durable pending enqueue, then finalize, drain on failure).
@@ -5455,6 +5545,7 @@ class SpannerStore(OperationalAnalyticsReads):
         key_hash: str,
         authorization_id: str | None = None,
         estimate: int,
+        reservation: int | None = None,
         has_credit_candidate: bool,
         reservation_usage_type: UsageType | str,
         model_id: str,
@@ -5520,6 +5611,11 @@ class SpannerStore(OperationalAnalyticsReads):
         )
 
         usage = UsageType.coerce(reservation_usage_type)
+        # The credit counters take the reservation (the credit hold); the key
+        # caps, windows and counters take the estimate (a key cap counts
+        # outstanding spend ceilings); the authorization row keeps the
+        # estimate (the spend ceiling).
+        hold = estimate if reservation is None else reservation
         key_counter_shards = key_usage_shard_count({"usage_shard_count": key_usage_shards})
         key_shard_candidates = randomized_credit_shards(key_counter_shards)
         scope = (
@@ -5677,7 +5773,7 @@ class SpannerStore(OperationalAnalyticsReads):
                 self._database,
                 self._param_types,
                 workspace_id=workspace_id,
-                estimate=estimate,
+                estimate=hold,
                 idempotency_scope=scope,
             )
             if credit_verdict == EXHAUSTED:
@@ -5702,6 +5798,7 @@ class SpannerStore(OperationalAnalyticsReads):
                     workspace_id=workspace_id,
                     key_hash=key_hash,
                     estimate=estimate,
+                    reservation=reservation,
                     trust_settings=self.trust_settings,
                     has_credit_candidate=has_credit_candidate,
                     reservation_usage_type=str(usage),
@@ -5816,7 +5913,8 @@ class SpannerStore(OperationalAnalyticsReads):
                     workspace_id=workspace_id,
                     shard_count=len(candidates),
                     target_shard=candidates[0],
-                    estimate=estimate,
+                    # The credit shards are consolidated for the credit hold.
+                    estimate=hold,
                 )
 
             # A concurrent request can consume the newly consolidated target
@@ -5835,7 +5933,8 @@ class SpannerStore(OperationalAnalyticsReads):
                     workspace_id=workspace_id,
                     shard_count=len(credit_shard_candidates),
                     shard_candidates=credit_shard_candidates,
-                    estimate=estimate,
+                    # Aggregate credit headroom is judged for the credit hold.
+                    estimate=hold,
                 )
                 verdict = precheck.outcome
                 if verdict == rebalance_mod.RebalanceOutcome.INSUFFICIENT:
@@ -5844,10 +5943,14 @@ class SpannerStore(OperationalAnalyticsReads):
                 if verdict == rebalance_mod.RebalanceOutcome.NOT_NEEDED:
                     if precheck.candidate_shard is None:  # pragma: no cover - invariant
                         raise RuntimeError("credit headroom precheck omitted its candidate")
-                    # The bounded random prefix missed a funded later shard.
-                    # Retry that exact row instead of either returning a false
-                    # 402 or expanding into an all-shard write transaction.
-                    result = run_tracked((precheck.candidate_shard,))
+                    # The bounded random prefix missed funded later shards.
+                    # Retry those rows (bounded like any authorize) instead of
+                    # either returning a false 402 or expanding into an
+                    # all-shard write transaction. One row alone lost to a
+                    # peer's hold three times in a row on 2026-11-04.
+                    result = run_tracked(
+                        precheck.funded_shards or (precheck.candidate_shard,)
+                    )
                     continue
                 if verdict == rebalance_mod.RebalanceOutcome.INCOMPLETE and not forced_reload_done:
                     # The observed shard set doesn't match the count we hold —
@@ -6676,6 +6779,59 @@ class SpannerStore(OperationalAnalyticsReads):
 
         return self._run_in_transaction(txn)
 
+    def reserved_resale_position_page(self, *, cursor: str | None = None, limit: int = 100) -> dict[str, Any]:
+        if not 1 <= limit <= 100:
+            raise ValueError("Invalid reservation page size")
+        # Bounded primary-key range, never a JSON/body predicate or table scan.
+        with self._database.snapshot() as snapshot:
+            rows = snapshot.execute_sql(
+                "SELECT id FROM tr_entities WHERE kind=@kind AND id>@cursor ORDER BY id LIMIT @limit",
+                params={"kind": "nyte_position", "cursor": cursor or "", "limit": limit + 1},
+                param_types={"kind": self._param_types.STRING, "cursor": self._param_types.STRING,
+                             "limit": self._param_types.INT64},
+            )
+            ids = [row[0] for row in rows]
+            return {"ids": ids[:limit], "cursor": ids[limit - 1] if len(ids) > limit else None}
+
+    def reserved_resale(self, command: dict[str, Any]) -> dict[str, Any]:
+        from trusted_router.storage_resale import execute
+
+        def txn(tx: Any) -> dict[str, Any]:
+            lock = self._read_entity_tx(tx, "nyte_mutex", "v1", dict) or {}
+            self._write_entity_tx(tx, "nyte_mutex", "v1", {"revision": lock.get("revision", 0) + 1})
+            return execute(
+                lambda kind, key: self._read_entity_tx(tx, kind, key, dict) or {},
+                lambda kind, key, row: self._write_entity_tx(tx, kind, key, row),
+                command,
+            )
+
+        return self._run_in_transaction(txn)
+
+    def claim_reserved_notification(self, session_id: str, owner: str, *, now: int) -> tuple[str, int]:
+        def txn(tx: Any) -> tuple[str, int]:
+            row = self._read_entity_tx(tx, "reserved_notification", session_id, dict) or {}
+            purchase_completed_at = int(row.get("purchase_completed_at", now))
+            if row.get("sent"):
+                return "sent", purchase_completed_at
+            if row.get("lease_until", 0) > now:
+                return "busy", purchase_completed_at
+            self._write_entity_tx(tx, "reserved_notification", session_id, {
+                "owner": owner, "lease_until": now + 120, "sent": False,
+                "purchase_completed_at": purchase_completed_at,
+            })
+            return "claimed", purchase_completed_at
+
+        return self._run_in_transaction(txn)
+
+    def finish_reserved_notification(self, session_id: str, owner: str, *, sent: bool) -> None:
+        def txn(tx: Any) -> None:
+            row = self._read_entity_tx(tx, "reserved_notification", session_id, dict) or {}
+            if row.get("owner") == owner:
+                row.update(sent=sent, lease_until=0)
+                self._write_entity_tx(tx, "reserved_notification", session_id, row)
+
+        self._run_in_transaction(txn)
+
     def record_webhook_event_once(self, source: str, event_id: str) -> bool:
         entity_id = f"{source}#{event_id}"
 
@@ -7033,7 +7189,14 @@ class SpannerStore(OperationalAnalyticsReads):
     ) -> T | None:
         return self._read_entity_from(transaction, kind, entity_id, cls)
 
-    def _read_entity_from(self, reader: Any, kind: str, entity_id: str, cls: type[T]) -> T | None:
+    def _read_entity_from(
+        self, reader: Any, kind: str, entity_id: str, cls: type[T],
+        *, timeout: float | None = None,
+    ) -> T | None:
+        rpc_options: dict[str, Any] = {} if timeout is None else {
+            "timeout": timeout, "retry": None,
+            "request_options": {"priority": "PRIORITY_LOW"},
+        }
         rows = list(
             reader.execute_sql(
                 "SELECT body FROM tr_entities WHERE kind=@kind AND id=@id",
@@ -7042,6 +7205,7 @@ class SpannerStore(OperationalAnalyticsReads):
                     "kind": self._param_types.STRING,
                     "id": self._param_types.STRING,
                 },
+                **rpc_options,
             )
         )
         if not rows:

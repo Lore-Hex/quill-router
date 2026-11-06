@@ -22,7 +22,7 @@ from trusted_router.stage_d import endpoint_cost_microdollars_from_candidate
 
 ROOT = Path(__file__).resolve().parents[1]
 CASES = ROOT / "fastpath" / "testdata" / "routing_cases_v1.json"
-SNAPSHOT = ROOT / "fastpath" / "testdata" / "routing_snapshot_v1.body.json"
+SNAPSHOT = ROOT / "fastpath" / "testdata" / "routing_snapshot_v3.body.json"
 
 
 def _cases() -> dict[str, Any]:

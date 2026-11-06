@@ -4,6 +4,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import RedirectResponse
+from starlette.concurrency import run_in_threadpool
 
 from trusted_router.auth import (
     SESSION_COOKIE_NAME,
@@ -40,7 +41,7 @@ def register_auth_routes(router: APIRouter) -> None:
             and principal.api_key is not None
             and principal.api_key.creator_user_id
         ):
-            user = STORE.get_user(principal.api_key.creator_user_id)
+            user = await run_in_threadpool(STORE.get_user, principal.api_key.creator_user_id)
         if user is None:
             # Legacy ownerless keys retain origin/main's null-subject response.
             # Scoped keys stay strict: a delegated profile grant must resolve
@@ -60,7 +61,7 @@ def register_auth_routes(router: APIRouter) -> None:
         return {"data": await enriched_identity_payload(user, principal.workspace.id)}
 
     @router.get("/auth/session")
-    async def auth_session(principal: ManagementPrincipal) -> dict[str, Any]:
+    def auth_session(principal: ManagementPrincipal) -> dict[str, Any]:
         assert principal.user is not None or principal.api_key is not None
         user = principal.user
         return {
@@ -74,7 +75,7 @@ def register_auth_routes(router: APIRouter) -> None:
         }
 
     @router.post("/auth/logout")
-    async def logout(request: Request, settings: SettingsDep) -> Response:
+    def logout(request: Request, settings: SettingsDep) -> Response:
         # Clear from BOTH transports — Bearer header (programmatic) and cookie
         # (browser console). Either may be present; the other is harmless.
         raw = get_authorization_bearer(request) or request.cookies.get(SESSION_COOKIE_NAME)

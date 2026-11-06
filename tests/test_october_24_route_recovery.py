@@ -1,11 +1,17 @@
-"""Unavailable routes stay held until a fresh successful provider canary."""
+"""Unavailable routes stay held until a fresh successful provider canary.
+
+Operator and canary holds survive every refresh. A machine-owned feed tombstone
+(``delisted-upstream``) is different: it recovers when the provider relists the
+model, and a confirmed delisting must be recorded as that tombstone, never as a
+credit hold.
+"""
 
 import json
 
 import pytest
 
 from scripts.pricing.manifest import apply_canary_results, models_requiring_canary
-from scripts.pricing.providers import nextbit, nvidia_nim, sambanova
+from scripts.pricing.providers import nextbit, nvidia_nim, pearl, sambanova
 from trusted_router.catalog import MODEL_ENDPOINTS
 
 
@@ -49,11 +55,28 @@ def test_atlas_retirement_does_not_remove_openai_direct(model):
     assert any(e.provider == "openai" and e.model_id == model for e in MODEL_ENDPOINTS.values())
 
 
-@pytest.mark.parametrize("model", [
-    "openai/gpt-oss-120b", "meta-llama/llama-3.3-70b-instruct", "minimax/minimax-m3",
-])
+@pytest.mark.parametrize("model", ["openai/gpt-oss-120b", "meta-llama/llama-3.3-70b-instruct"])
 def test_sambanova_account_hold_does_not_disable_working_models(model):
     assert any(e.provider == "sambanova" and e.model_id == model for e in MODEL_ENDPOINTS.values())
+
+
+def test_sambanova_minimax_m3_delisting_is_a_feed_tombstone_not_a_credit_hold():
+    # SambaNova's public /v1/models dropped MiniMax-M3 (MiniMax-M3.1-Flash took its
+    # place) and the 2026-10-25 refreshes missed it twice, so the row is a
+    # recoverable feed tombstone. The three 402 credit holds are untouched.
+    rows = {row["id"]: row for row in json.loads(sambanova.MANIFEST_PATH.read_text())["models"]}
+    retired = rows["minimax/minimax-m3"]
+    assert retired["upstream_id"] == "MiniMax-M3"
+    assert retired["routable"] is False
+    assert retired["routable_reason"] == "delisted-upstream"
+    assert retired["missing_since"] == "2026-10-25"
+    assert not any(
+        e.provider == "sambanova" and e.model_id == "minimax/minimax-m3" for e in MODEL_ENDPOINTS.values()
+    )
+    assert "minimax/minimax-m3" not in sambanova.CATALOG.spec.expected_models
+    # Other routes can recover independently on the next authenticated canary.
+    # Their live health is not part of MiniMax-M3's tombstone contract.
+    assert retired["routable_reason"] != "provider-canary-failed"
 
 
 def test_nvidia_unavailable_function_is_held_without_disabling_working_route():
@@ -71,7 +94,17 @@ def test_ended_union_preview_is_not_silently_replaced():
     assert not any(e.model_id == "stealth/union-alpha" for e in MODEL_ENDPOINTS.values())
 
 
-def test_pearl_gemma_retirement_preserves_other_providers():
+def test_pearl_gemma_relist_does_not_override_confirmed_inference_hold():
+    # Discovery relisted the exact ID, but October 28 authenticated inference
+    # still returned model_not_found. A listing alone cannot release the hold.
+    row = next(
+        row for row in json.loads(pearl.MANIFEST_PATH.read_text())["models"]
+        if row["id"] == "google/gemma-4-31b-it"
+    )
+    assert row["upstream_id"] == "google/gemma-4-31B-it"
+    assert row["routable"] is False
+    assert row["routable_reason"] == "provider-model-not-found"
+    assert (row["input_token_price_per_m"], row["output_token_price_per_m"]) == (90_000, 340_000)
     routes = [e for e in MODEL_ENDPOINTS.values() if e.model_id == "google/gemma-4-31b-it"]
-    assert routes
-    assert not any(e.provider == "pearl" for e in routes)
+    assert not [e for e in routes if e.provider == "pearl"]
+    assert {e.provider for e in routes} - {"pearl"}

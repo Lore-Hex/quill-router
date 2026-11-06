@@ -117,7 +117,8 @@
       "routable": true,
       "input_token_price_per_m": 571000,
       "output_token_price_per_m": 1714000,
-      "cached_input_token_price_per_m": 229000
+      "cached_input_token_price_per_m": 229000,
+      "missing_since": "2026-11-05"
     },
     {
       "display_name": "DeepSeek-V3.1-Terminus",
@@ -140,7 +141,8 @@
       "routable_reason": "provider-canary-failed",
       "input_token_price_per_m": 571000,
       "output_token_price_per_m": 1714000,
-      "cached_input_token_price_per_m": 229000
+      "cached_input_token_price_per_m": 229000,
+      "missing_since": "2026-11-05"
     },
     {
       "display_name": "DeepSeek-V3.2",
@@ -163,7 +165,8 @@
       "routable_reason": "provider-canary-failed",
       "input_token_price_per_m": 286000,
       "output_token_price_per_m": 429000,
-      "cached_input_token_price_per_m": 28600
+      "cached_input_token_price_per_m": 28600,
+      "missing_since": "2026-11-05"
     },
     {
       "display_name": "DeepSeek-V3.2-Exp",
@@ -186,7 +189,8 @@
       "routable_reason": "provider-canary-failed",
       "input_token_price_per_m": 286000,
       "output_token_price_per_m": 429000,
-      "cached_input_token_price_per_m": 28600
+      "cached_input_token_price_per_m": 28600,
+      "missing_since": "2026-11-05"
     },
     {
       "display_name": "DeepSeek-V4-Flash",
@@ -381,7 +385,8 @@
       "routable_reason": "provider-canary-failed",
       "input_token_price_per_m": 600000,
       "output_token_price_per_m": 3000000,
-      "cached_input_token_price_per_m": 100000
+      "cached_input_token_price_per_m": 100000,
+      "missing_since": "2026-11-05"
     },
     {
       "display_name": "Kimi-K2.6",
@@ -449,7 +454,8 @@
       "routable": true,
       "input_token_price_per_m": 350000,
       "output_token_price_per_m": 1400000,
-      "cached_input_token_price_per_m": 70000
+      "cached_input_token_price_per_m": 70000,
+      "missing_since": "2026-11-05"
     },
     {
       "display_name": "Qwen3-235B-A22B-Thinking-2507",
@@ -471,7 +477,8 @@
       "routable": false,
       "routable_reason": "retired-upstream",
       "input_token_price_per_m": 350000,
-      "output_token_price_per_m": 4200000
+      "output_token_price_per_m": 4200000,
+      "missing_since": "2026-11-05"
     },
     {
       "display_name": "Qwen3-30B-A3B-Instruct-2507",
@@ -494,7 +501,8 @@
       "routable_reason": "retired-upstream",
       "input_token_price_per_m": 107000,
       "output_token_price_per_m": 429000,
-      "cached_input_token_price_per_m": 22000
+      "cached_input_token_price_per_m": 22000,
+      "missing_since": "2026-11-05"
     },
     {
       "display_name": "Qwen3-30B-A3B-Thinking-2507",
@@ -513,10 +521,12 @@
       "id": "qwen/qwen3-30b-a3b-thinking-2507",
       "upstream_id": "Qwen3-30B-A3B-Thinking-2507",
       "context_length": 131072,
-      "routable": true,
+      "routable": false,
+      "routable_reason": "retired-upstream",
       "input_token_price_per_m": 200000,
       "output_token_price_per_m": 2400000,
-      "cached_input_token_price_per_m": 40000
+      "cached_input_token_price_per_m": 40000,
+      "missing_since": "2026-11-05"
     },
     {
       "display_name": "Qwen3-Coder-480B-A35B-Instruct-FP8",
@@ -539,7 +549,8 @@
       "routable_reason": "provider-canary-failed",
       "input_token_price_per_m": 900000,
       "output_token_price_per_m": 4500000,
-      "cached_input_token_price_per_m": 180000
+      "cached_input_token_price_per_m": 180000,
+      "missing_since": "2026-11-05"
     },
     {
       "display_name": "Qwen3-Coder-Next",
@@ -561,7 +572,8 @@
       "routable": true,
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 1500000,
-      "cached_input_token_price_per_m": 60000
+      "cached_input_token_price_per_m": 60000,
+      "missing_since": "2026-11-05"
     },
     {
       "display_name": "Qwen3-VL-235B-A22B-Instruct",
@@ -585,7 +597,8 @@
       "routable_reason": "retired-upstream",
       "input_token_price_per_m": 350000,
       "output_token_price_per_m": 1400000,
-      "cached_input_token_price_per_m": 57000
+      "cached_input_token_price_per_m": 57000,
+      "missing_since": "2026-11-05"
     },
     {
       "display_name": "Qwen3-VL-235B-A22B-Thinking",
@@ -607,7 +620,8 @@
       "context_length": 131072,
       "routable": true,
       "input_token_price_per_m": 400000,
-      "output_token_price_per_m": 4000000
+      "output_token_price_per_m": 4000000,
+      "missing_since": "2026-11-05"
     },
     {
       "display_name": "Qwen3.5-397B-A17B",
@@ -719,7 +733,8 @@
       "routable": true,
       "input_token_price_per_m": 140000,
       "output_token_price_per_m": 280000,
-      "cached_input_token_price_per_m": 2800
+      "cached_input_token_price_per_m": 2800,
+      "missing_since": "2026-11-05"
     },
     {
       "display_name": "MiMo-V2.5-Pro",
@@ -738,10 +753,12 @@
       "id": "xiaomi/mimo-v2.5-pro",
       "upstream_id": "MiMo-V2.5-Pro",
       "context_length": 1024000,
-      "routable": true,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
       "input_token_price_per_m": 435000,
       "output_token_price_per_m": 870000,
-      "cached_input_token_price_per_m": 3600
+      "cached_input_token_price_per_m": 3600,
+      "missing_since": "2026-11-05"
     },
     {
       "display_name": "GLM-4.7",
@@ -764,7 +781,8 @@
       "routable_reason": "provider-canary-failed",
       "input_token_price_per_m": 600000,
       "output_token_price_per_m": 2200000,
-      "cached_input_token_price_per_m": 110000
+      "cached_input_token_price_per_m": 110000,
+      "missing_since": "2026-11-05"
     },
     {
       "display_name": "GLM-5",
@@ -876,9 +894,32 @@
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 500000,
       "cached_input_token_price_per_m": 30000
+    },
+    {
+      "display_name": "Qwen3.8-27B",
+      "title": "Qwen3.8-27B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.8-27b",
+      "upstream_id": "Qwen3.8-27B",
+      "context_length": 1048576,
+      "routable": true,
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 3000000,
+      "cached_input_token_price_per_m": 100000
     }
   ],
-  "generated_at": "2026-10-20T12:05:14Z",
-  "model_count": 38,
+  "generated_at": "2026-11-05T11:29:32Z",
+  "model_count": 39,
   "pricing_source": "https://www.streamlake.ai/document/DOC/mgrnm4xm362hvp5wyce"
 }

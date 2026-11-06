@@ -150,11 +150,14 @@ def test_console_credits_page_renders_typed_money(fake_spanner_client: tuple[Any
     response = client.get("/console/credits")
 
     assert response.status_code == 200, response.text[:300]
-    # The live typed read wins over the stale JSON body: $2.00 available, and
-    # neither the stale $8.50 balance nor the stale $1.00 usage appears.
-    assert '<p class="credits-balance-amount">$2.00</p>' in response.text
+    # The live typed read wins over the stale JSON body: the headline is the
+    # typed balance ($10.00 credited, $7.00 used), the held line carries the
+    # typed $1.00 reservation and the $2.00 available, and the stale $8.50
+    # balance never appears.
+    assert '<p class="credits-balance-amount">$3.00</p>' in response.text
+    assert "$1.00 held by requests in flight" in response.text
+    assert "Available: $2.00." in response.text
     assert "$8.50" not in response.text
-    assert "$1.00" not in response.text
 
 
 def _seed_stale_json_live_typed(store: Any, db: Any, workspace_id: str) -> None:

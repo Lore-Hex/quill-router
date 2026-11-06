@@ -176,11 +176,11 @@
         "max_tokens"
       ],
       "routable": false,
-      "routable_reason": "delisted-upstream",
-      "missing_since": "2026-10-24",
       "input_token_price_per_m": 90000,
       "output_token_price_per_m": 340000,
-      "cached_input_token_price_per_m": 50000
+      "cached_input_token_price_per_m": 50000,
+      "missing_since": "2026-10-28",
+      "routable_reason": "provider-model-not-found"
     },
     {
       "display_name": "Z.AI: GLM-5.2",
@@ -349,9 +349,9 @@
         "max_tokens"
       ],
       "routable": true,
-      "input_token_price_per_m": 1100000,
-      "output_token_price_per_m": 3500000,
-      "cached_input_token_price_per_m": 230000
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 1500000,
+      "cached_input_token_price_per_m": 30000
     },
     {
       "display_name": "Qwen: Qwen3.8-27B",
@@ -432,10 +432,12 @@
         "seed",
         "max_tokens"
       ],
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 140000,
       "output_token_price_per_m": 450000,
-      "cached_input_token_price_per_m": 15000
+      "cached_input_token_price_per_m": 15000,
+      "missing_since": "2026-11-03",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "DeepSeek: DeepSeek V4.1 Flash",
@@ -524,6 +526,6 @@
       "cached_input_token_price_per_m": 3000
     }
   ],
-  "generated_at": "2026-10-20T12:05:14Z",
+  "generated_at": "2026-11-05T11:29:32Z",
   "model_count": 12
 }

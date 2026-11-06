@@ -963,9 +963,15 @@ func TestAHandOffInterruptsTheReleasePass(t *testing.T) {
 // TestAHandOffInterruptsAScan: the reaper's scans of a lease's holds, for
 // those due to be reaped and those due to be released, let the lease's lock
 // go between batches, so a hand-off whose time is up takes it and lets the
-// lease go at once, though 100,000 holds are due to be reaped, or 300,000
-// released (whose scan, lighter, takes about 100 ms unbatched under the
-// race detector); and the scan then stops.
+// lease go at once, though 100,000 holds are due to be reaped, or 600,000
+// released; and the scan then stops. The reap scan shows it by stopping
+// before it visits every hold. The release scan cannot, since its first
+// pass only gathers, so it is timed, against work on the same holds under
+// the same load rather than a fixed time a busy runner can pass: waiting
+// out a pass that kept the lock, or ordering the holds past the deadline,
+// each costs about one ordering of them; a hand-off that takes the lock
+// between batches costs about its deadline and a batch, well under a
+// third of an ordering.
 func TestAHandOffInterruptsAScan(t *testing.T) {
 	for _, c := range []struct {
 		name  string
@@ -978,7 +984,7 @@ func TestAHandOffInterruptsAScan(t *testing.T) {
 			f.clock.advance(5 * time.Minute) // past each heartbeat's deadline and the grace
 			return f
 		}, func(f *fixture) int { return len(f.lease.due(f.clock.Now(), time.Minute)) }},
-		{"the release scan", 300_000, func(holds int) *fixture {
+		{"the release scan", 600_000, func(holds int) *fixture {
 			f, _ := releaseFixture(t)
 			f.lease.mu.Lock()
 			f.lease.allocation = 1 << 40
@@ -1010,16 +1016,35 @@ func TestAHandOffInterruptsAScan(t *testing.T) {
 		err := f.owner.Handoff(ctx)
 		took := time.Since(began)
 		cancel()
-		if !errors.Is(err, context.DeadlineExceeded) || took > 50*time.Millisecond {
-			t.Fatalf("%s: the hand-off let its lease go %v after it began: %v", c.name, took, err)
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("%s: the hand-off returned %v, not its deadline", c.name, err)
 		}
 		switch left := <-scanned; {
 		case c.name == "the reap scan" && left >= c.holds:
 			t.Fatalf("%s: the scan found all %d due once the lease was let go", c.name, left)
 		case c.name == "the release scan" && left != c.holds:
 			t.Fatalf("%s: %d of %d holds left once the lease was let go", c.name, left, c.holds)
+		case c.name == "the release scan":
+			if order := orderingTime(f); took >= order/3 {
+				t.Fatalf("%s: the hand-off let its lease go %v after it began, not within a third of ordering its %d holds (%v)",
+					c.name, took, c.holds, order)
+			}
 		}
 	}
+}
+
+// orderingTime is the least of three times the lease's holds take to order
+// as a hand-off orders them, with no deadline to stop it.
+func orderingTime(f *fixture) time.Duration {
+	f.lease.mu.Lock()
+	defer f.lease.mu.Unlock()
+	least := time.Duration(math.MaxInt64)
+	for range 3 {
+		began := time.Now()
+		f.lease.sortedAuths(func() bool { return false })
+		least = min(least, time.Since(began))
+	}
+	return least
 }
 
 // TestAHandOffLeavesNoLeaseDeciding: a lease being let go while a decision

@@ -40,7 +40,8 @@ def render_token_index() -> str:
             f'<div class="ti-tile ti-{code.lower()}"><span class="ti-tile-name">'
             f'<span class="ti-code">{code}</span> {escape(grade["name"])}</span>'
             f'<span class="ti-tile-value">${quote["value"]:,}</span>'
-            f'<span class="ti-tile-change">{change(quote["change_7d"])} (7D)</span></div>'
+            f'<span class="ti-tile-change">{change(quote["change_7d"])} (7D)</span>'
+            f'<a class="btn btn-primary btn-sm" href="/buy?grade={code}&amp;unit=blocks">Reserve {code} tokens</a></div>'
         )
         examples = "".join(f"<li>{escape(model)}</li>" for model in grade["examples"])
         cards.append(

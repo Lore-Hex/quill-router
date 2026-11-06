@@ -15,7 +15,7 @@ from collections import Counter
 
 import pytest
 
-from trusted_router.catalog import MODELS, PROVIDERS
+from trusted_router.catalog import MODELS, PROVIDERS, model_to_openrouter_shape
 from trusted_router.catalog_data import (
     EU_FOCUSED_PROVIDER_ORDER,
     MODEL_ORIGIN_REQUIRED_MODEL_COUNT,
@@ -196,12 +196,51 @@ def test_model_origin_lookup_reads_the_vendor_prefix() -> None:
     assert model_origin_for_model_id("no-such-vendor/some-model") is None
 
 
+@pytest.mark.parametrize("native", ["beam", "beam-1.0", "beam-1.0-501b-a23b"])
+def test_reflection_beam_aliases_record_the_developer_not_the_host(native) -> None:
+    origin = model_origin_for_model_id(f"reflection/{native}")
+    assert origin is not None
+    assert origin.country == PROVIDER_JURISDICTION_US
+    assert origin.lab_name == "Reflection AI"
+    assert origin.source_url == "https://reflection.ai/legal/privacy-policy"
+    assert "https://reflection.ai/blog/introducing-beam" in origin.note
+    assert "not inference residency" in origin.note
+    assert model_origin_for_model_id(f"reflection-unknown/{native}") is None
+
+
+@pytest.mark.parametrize("native", [
+    "baseten-elephant-9b-latest", "baseten-mammoth-27b-latest", "baseten-joey-2b-latest",
+])
+def test_baseten_decision_namespace_does_not_infer_weights_origin(native) -> None:
+    origin = model_origin_for_model_id(f"decision-models/{native}")
+    assert origin is not None
+    assert origin.country is None
+    assert origin.lab_name == "Baseten / Base Labs decision-model namespace"
+    assert origin.source_url == (
+        "https://www.baseten.co/blog/decisions-for-a-penny-introducing-joey-1/"
+    )
+    assert "Qwen3.5" in origin.note
+    assert origin is not MODEL_ORIGINS["decisionmodelsio"]
+
+
 def test_meta_models_publisher_has_the_same_origin_as_meta() -> None:
     origin = model_origin_for_model_id("meta-models/muse-spark-open")
     assert origin is not None
     assert (origin.country, origin.lab_name) == (
         MODEL_ORIGINS["meta"].country, MODEL_ORIGINS["meta"].lab_name,
     )
+
+
+@pytest.mark.parametrize("native", ["dolly1-security", "dolly2-security", "abyss1"])
+def test_zro_namespace_does_not_infer_weights_origin_from_serving_region(native) -> None:
+    origin = model_origin_for_model_id(f"zro/{native}")
+    assert origin is not None
+    assert origin.country is None
+    assert origin.lab_name == "Zro / MoonMath (API model namespace)"
+    assert origin.source_url == "https://zro.moonmath.ai/docs/models"
+    assert "GLM" in origin.note and "DeepSeek" in origin.note
+    assert "not model-creator country" in origin.note
+    assert model_origin_for_model_id(f"zro-unknown/{native}") is None
 
 
 def test_chinese_origin_weights_can_be_served_by_a_non_chinese_operator() -> None:
@@ -233,3 +272,15 @@ def test_eu_focused_route_has_no_provider_with_an_unverified_jurisdiction_left_u
             provider.provider_headquarters_country is not None
             or slug in PROVIDER_JURISDICTION_UNVERIFIED
         )
+
+
+def test_liberty_4_is_pinned_to_us_providers() -> None:
+    # Liberty 4.0 is advertised as served only by US-headquartered providers;
+    # the pin is this request-time rule, mirrored by the gateway preset.
+    shape = model_to_openrouter_shape(MODELS["trustedrouter/liberty-4.0"])
+    assert cast_dict(shape["trustedrouter"])["required_provider_jurisdiction"] == PROVIDER_JURISDICTION_US
+
+
+def cast_dict(value: object) -> dict[str, object]:
+    assert isinstance(value, dict)
+    return value

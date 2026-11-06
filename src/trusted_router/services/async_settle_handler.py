@@ -11,6 +11,7 @@ from urllib.parse import quote
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 
+from trusted_router import async_settle_timing as timing
 from trusted_router import billing_snapshot as billing
 from trusted_router.async_settle_ticket import TicketClaims, verify_lookup_ticket, verify_ticket
 from trusted_router.config import Settings
@@ -35,22 +36,26 @@ def metric(event: str, *, reason: str = "", value: float = 1) -> None:
 
 
 def sync_required(reason: str) -> JSONResponse:
+    timing.outcome("sync_required")
     metric("sync_required", reason=reason)
     return JSONResponse({"data": {"acceptance": {"status": "sync_required", "payload_hash": None,
                                                "settlement_status": None}, "reason": reason}})
 
 
-def admission_reason(runtime: Runtime, workspace_id: str, pilot_cap: int) -> str:
+def admission_reason(runtime: Runtime, workspace_id: str, pilot_cap: int, *,
+                     queued_micro: int = 0) -> str:
     """Diagnostics only after eligible() denied; never confers admission."""
     cache = runtime.admission
     if cache is None or not cache.lock.acquire(blocking=False):
         return "admission_stale"
     try:
+        entry = cache.entries.get(workspace_id)
+        if entry == (float("-inf"), None):
+            return "admission_stale"
         health = cache.health
         if health is None or health.p95_age_seconds > 5:
             return "drain_unhealthy"
         now = cache.clock()
-        entry = cache.entries.get(workspace_id)
         if (not 0 <= now - health.observed_at < CACHE_SECONDS or entry is None
                 or not 0 <= now - entry[0] < CACHE_SECONDS or entry[1] is None):
             return "admission_stale"
@@ -59,7 +64,7 @@ def admission_reason(runtime: Runtime, workspace_id: str, pilot_cap: int) -> str
             return "not_eligible"
         if type(value.pending_micro) is not int or value.pending_micro < 0:
             return "admission_stale"
-        if value.pending_micro > (pilot_cap or TIER_CAPS[value.tier]):
+        if value.pending_micro + queued_micro > (pilot_cap or TIER_CAPS[value.tier]):
             return "cap_exceeded"
         return "admission_stale"
     finally:
@@ -176,8 +181,9 @@ def settlement(row: SettleOutboxRow, *, resolve: bool = True) -> dict[str, Any]:
     return view
 
 
-def response(row: SettleOutboxRow, *, duplicate: bool = False) -> JSONResponse:
-    view = settlement(row, resolve=duplicate)
+def response(row: SettleOutboxRow, *, duplicate: bool = False, resolve: bool = True) -> JSONResponse:
+    timing.outcome("duplicate" if duplicate else "accepted")
+    view = settlement(row, resolve=duplicate and resolve)
     return JSONResponse({"data": {"acceptance": {
         "status": "duplicate" if duplicate else "accepted", "payload_hash": row.payload_hash,
         "settlement_status": view["settlement_status"]}, "trusted_router_settlement": view}},
@@ -185,19 +191,53 @@ def response(row: SettleOutboxRow, *, duplicate: bool = False) -> JSONResponse:
 
 
 def duplicate(outbox: SpannerSettleOutbox, row: SettleOutboxRow) -> JSONResponse | None:
+    timing.stop_validation()
     existing = outbox.get(row.authorization_id, row.intent_kind)
+    return duplicate_response(existing, row)
+
+
+def duplicate_response(existing: SettleOutboxRow | None, row: SettleOutboxRow, *,
+                       resolve: bool = True) -> JSONResponse | None:
     if existing is None:
         return None
-    if existing.async_version != 1 or existing.payload_hash != row.payload_hash:
+    if conflicting(existing, row):
+        timing.outcome("rejected")
         raise api_error(409, "Settlement intent already exists with a different payload", "conflict")
     metric("duplicate")
-    return response(existing, duplicate=True)
+    return response(existing, duplicate=True, resolve=resolve)
 
 
-def finish(row: SettleOutboxRow, outbox: SpannerSettleOutbox) -> JSONResponse:
+def conflicting(existing: SettleOutboxRow, row: SettleOutboxRow) -> bool:
+    return existing.async_version != 1 or existing.payload_hash != row.payload_hash
+
+
+def enqueue_outcome(outbox: SpannerSettleOutbox, row: SettleOutboxRow,
+                    deadline: float) -> tuple[str, SettleOutboxRow | None]:
+    """Shared commit classification; uncertain failures remain retryable exceptions."""
+    try:
+        enqueue(outbox, row, deadline)
+    except Exception as exc:
+        return enqueue_failure(exc, outbox, row)
+    return "committed", None
+
+
+def enqueue_failure(exc: Exception, outbox: SpannerSettleOutbox,
+                    row: SettleOutboxRow) -> tuple[str, SettleOutboxRow | None]:
+    if isinstance(exc, ReservationNotOpen):
+        return "reservation_not_open", None
+    if not _is_already_exists(exc):
+        raise exc
+    existing = outbox.get(row.authorization_id, row.intent_kind)
+    if existing is None:
+        return "unknown", None
+    return ("conflict" if conflicting(existing, row) else "duplicate"), existing
+
+
+def finish(row: SettleOutboxRow, outbox: SpannerSettleOutbox | None) -> JSONResponse:
     from trusted_router.services.settle_outbox_apply import apply_frozen_settle
     from trusted_router.services.settle_outbox_drain import _resolve_row
 
+    assert outbox is not None
     existing = outbox.get(row.authorization_id, row.intent_kind)
     if existing is not None:
         if existing.async_version != 1 or existing.payload_hash != row.payload_hash:
@@ -233,18 +273,33 @@ def _handle(raw: bytes, *, kind: str, runtime: Runtime | None, settings: Setting
                 return sync_required("not_eligible")
             now = int(time.time())
             claims = verify(value, runtime, kind, now)
+            memory_mode = settings.async_settle_handoff_mode == "memory" and not synchronous
+            memory = runtime.memory if memory_mode else None
             if getattr(STORE, "_database", None) is None:
                 return sync_required("unsupported_cohort")
-            outbox = spanner_settle_outbox()
+            outbox = None if memory_mode else spanner_settle_outbox()
+
+            def lookup(authorization_id: str, intent_kind: str) -> SettleOutboxRow | None:
+                if memory_mode:
+                    return memory.get(authorization_id, intent_kind) if memory is not None else None
+                assert outbox is not None
+                return outbox.get(authorization_id, intent_kind)
+
+            def find_duplicate(row: SettleOutboxRow) -> JSONResponse | None:
+                timing.stop_validation()
+                return duplicate_response(lookup(row.authorization_id, row.intent_kind), row,
+                                          resolve=not memory_mode)
+
             excluded = billing.exclusion(value.observed)
             if synchronous or excluded:
-                existing = outbox.get(claims.authorization_id, kind)
+                timing.stop_validation()
+                existing = lookup(claims.authorization_id, kind)
                 if existing is not None:
                     if (existing.async_version != 1
                             or existing.payload_hash != billing.canonical_hash(value.terminal)):
                         raise api_error(409, "Settlement intent already exists with a different payload", "conflict")
                     metric("duplicate")
-                    return finish(existing, outbox) if synchronous else response(existing, duplicate=True)
+                    return finish(existing, outbox) if synchronous else response(existing, duplicate=True, resolve=not memory_mode)
             if excluded:
                 return sync_required("unsupported_cohort")
             try:
@@ -252,18 +307,20 @@ def _handle(raw: bytes, *, kind: str, runtime: Runtime | None, settings: Setting
             except HTTPException:
                 # MF5: an evaluator disagreement can reject NEW acceptance, but
                 # cannot reprice or invalidate a previously accepted payload.
-                existing = outbox.get(claims.authorization_id, kind)
+                timing.stop_validation()
+                existing = lookup(claims.authorization_id, kind)
                 if (existing is not None and existing.async_version == 1
                         and existing.payload_hash == billing.canonical_hash(value.terminal)):
                     metric("duplicate")
-                    return finish(existing, outbox) if synchronous else response(existing, duplicate=True)
+                    return finish(existing, outbox) if synchronous else response(existing, duplicate=True, resolve=not memory_mode)
                 raise
             row = intent(value, claims, amount)
             # Expired/disabled/admission-flipped retries still resolve accepted work.
             if synchronous or now >= claims.exp or not settings.async_settle_admission_enabled:
-                existing = outbox.get(row.authorization_id, kind)
+                timing.stop_validation()
+                existing = lookup(row.authorization_id, kind)
                 if existing is not None:
-                    result = duplicate(outbox, row)
+                    result = duplicate_response(existing, row, resolve=not memory_mode)
                     if synchronous and result is not None and result.status_code == 202:
                         return finish(existing, outbox)
                     assert result is not None
@@ -277,21 +334,41 @@ def _handle(raw: bytes, *, kind: str, runtime: Runtime | None, settings: Setting
                 expected.update(journal_region=runtime.effective_journal_region, epoch=runtime.epoch,
                                 iss=runtime.signer.trusted.iss, aud="router-settlement")
                 verify_ticket(value.ticket, [runtime.signer.trusted], expected, now)
+                if not settings.async_settle_accept_region_allowed():
+                    # The enqueue's batch DML and commit are serial round trips
+                    # to the leader; outside the measured regions they cannot
+                    # fit the handoff, and a timed-out attempt leaves its row
+                    # locks for every retry of the same identity. Accept
+                    # nothing new here; accepted work still resolves.
+                    metric("region_not_accepting")
+                    return find_duplicate(row) or sync_required("unsupported_cohort")
                 if not settings.async_settle_pilot_allows(claims.workspace_id):
-                    return duplicate(outbox, row) or sync_required("not_eligible")
+                    return find_duplicate(row) or sync_required("not_eligible")
                 if not claims.async_eligible:
-                    return duplicate(outbox, row) or sync_required("not_eligible")
-                if runtime.admission is None or not runtime.admission.eligible(
-                        claims.workspace_id, settings.async_settle_pilot_cap_micro):
-                    return duplicate(outbox, row) or sync_required(admission_reason(
-                        runtime, claims.workspace_id, settings.async_settle_pilot_cap_micro))
+                    return find_duplicate(row) or sync_required("not_eligible")
+                queued_micro = memory.pending(claims.workspace_id) if memory is not None else 0
+                if runtime.admission is None or not timing.eligible(
+                        runtime.admission, claims.workspace_id, settings.async_settle_pilot_cap_micro,
+                        queued_micro=queued_micro,
+                        cached_only=memory_mode):
+                    return find_duplicate(row) or sync_required(admission_reason(
+                        runtime, claims.workspace_id, settings.async_settle_pilot_cap_micro,
+                        queued_micro=queued_micro))
             # Sync fallback also freezes before applying: identical money primitive,
             # no catalog lookup. Expired tickets may create only synchronous work.
+            timing.stop_validation()
             deadline = started + (2 if synchronous else 0.5)
+            if memory_mode:
+                with timing.measure("enqueue_ms"):
+                    result = memory.accept(row) if memory is not None else sync_required("handoff_unhealthy")
+                timing.save_total(time.monotonic())
+                return result
+            assert outbox is not None
             try:
-                enqueue(outbox, row, deadline)
+                with timing.measure("enqueue_ms"):
+                    enqueue(outbox, row, deadline)
             except ReservationNotOpen:
-                result = duplicate(outbox, row)
+                result = find_duplicate(row)
                 if result is not None:
                     return result
                 typed = typed_billing_store()
@@ -313,28 +390,36 @@ def _handle(raw: bytes, *, kind: str, runtime: Runtime | None, settings: Setting
                 return sync_required("reservation_not_open")
             except Exception as exc:
                 if _is_already_exists(exc):
-                    result = duplicate(outbox, row)
+                    timing.stop_validation()
+                    _, existing = enqueue_failure(exc, outbox, row)
+                    result = duplicate_response(existing, row)
                     if result is not None:
                         if synchronous:
-                            existing = outbox.get(row.authorization_id, kind)
+                            existing = lookup(row.authorization_id, kind)
                             assert existing is not None
                             return finish(existing, outbox)
                         return result
                     raise unavailable() from exc
-                metric("unknown_outcome")
+                # The class only (e.g. DeadlineExceeded): never exception text,
+                # which can carry request or row identifiers.
+                timing.outcome("unknown")
+                metric("unknown_outcome", reason=type(exc).__name__)
                 # Retry exactly the same identity while handoff time remains.
                 # A miss after this is still unknown; never authorize repricing.
                 if time.monotonic() < deadline:
                     try:
-                        enqueue(outbox, row, deadline)
-                    except Exception:
-                        metric("unknown_outcome")
-                result = duplicate(outbox, row)
+                        with timing.measure("enqueue_ms"):
+                            enqueue(outbox, row, deadline)
+                    except Exception as retry_exc:
+                        metric("unknown_outcome", reason=type(retry_exc).__name__)
+                result = find_duplicate(row)
                 if result is not None and time.monotonic() < deadline:
                     return result
                 raise unavailable() from exc
             metric("accepted")
-            metric("handoff_ms", value=(time.monotonic()-started)*1000)
+            finished = time.monotonic()
+            timing.save_total(finished)
+            metric("handoff_ms", value=(finished-started)*1000)
             metric("remaining_budget_ms", value=max(0, deadline-time.monotonic())*1000)
             return finish(row, outbox) if synchronous else response(row)
     except HTTPException:
@@ -347,11 +432,13 @@ def _handle(raw: bytes, *, kind: str, runtime: Runtime | None, settings: Setting
 
 def handle(raw: bytes, *, kind: str, runtime: Runtime | None, settings: Settings,
            started: float, synchronous: bool = False) -> JSONResponse:
-    try:
-        result = _handle(raw, kind=kind, runtime=runtime, settings=settings,
-                         started=started, synchronous=synchronous)
-        if time.monotonic() >= started + 2:
-            raise unavailable()
-        return result
-    except transient_store_error_types() as exc:
-        raise unavailable() from exc
+    entered = timing.stamp()
+    with timing.handoff_scope(started, entered, enabled=not synchronous):
+        try:
+            result = _handle(raw, kind=kind, runtime=runtime, settings=settings,
+                             started=started, synchronous=synchronous)
+            if time.monotonic() >= started + 2:
+                raise unavailable()
+            return result
+        except transient_store_error_types() as exc:
+            raise unavailable() from exc

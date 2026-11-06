@@ -40,6 +40,11 @@ COUNTER = d.extend(p1.COUNTER, {"publisher": h.PUBLISHER_OPERATIONS},
     projection=d.counter_projection, invariant=_counter)
 CLOSURE = d.extend(p1.CLOSURE, {"authorization_obligations": literal("receipt_chain")})
 MANIFEST = d.extend(p1.MANIFEST, dict.fromkeys(d.DAY_ROOTS, digest))
+# Mutable operational latch, deliberately outside day retention/closure evidence.
+STOP = versioned({"actor": ascii_text(256, 1), "stopped_at_us": integer,
+    "reason": ascii_text(512, 1), "incident": ascii_text(256, 1),
+    "source": literal("operator", "breaker"), "failure_count": integer,
+    "window_seconds": integer}, 4096)
 PROOF_MANIFEST = d.extend(p1.PROOF_MANIFEST, dict.fromkeys(d.PROOF_ROOTS, digest))
 PREREQUISITE_LEDGER = d.extend(p1.PREREQUISITE_LEDGER, {})
 GATE_OUTPUT = d.extend(p1.GATE_OUTPUT, {})
@@ -160,13 +165,13 @@ def validate_row(kind: Any, key: Any, body: Any) -> dict[str, Any]:
     require(kind in schemas)
     schema = schemas[kind]
     if kind == p1.KINDS[5]:
-        schema = RETENTION if key == "retention-v2" else CAP if key.endswith("/cap-v2") else MANIFEST
+        schema = STOP if key == "stop-v2" else RETENTION if key == "retention-v2" else CAP if key.endswith("/cap-v2") else MANIFEST
     value = schema.parse(body)
     if schema in (COUNTER, CLOSURE, CLOSE_RESULT):
         expected = value["day"] + "/" + value["boot"]
     elif schema in (MANIFEST, CAP):
         expected = value["day"] + ("/cap-v2" if schema is CAP else "/manifest-v2")
     else:
-        expected = "retention-v2" if schema is RETENTION else "local/fleet" if schema is h.HEALTH else "local/publish"
+        expected = "stop-v2" if schema is STOP else "retention-v2" if schema is RETENTION else "local/fleet" if schema is h.HEALTH else "local/publish"
     require(key == expected, "evidence_identity_gap")
     return value

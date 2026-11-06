@@ -77,7 +77,11 @@ func providerMembers(c Candidate, location pyjson.Object) pyjson.Object {
 // responseData is _gateway_authorize_response's data for the cohort
 // (gateway.py, §6), every member in insertion order, but timing, which
 // the timing decorator appends last.
-func responseData(in ComposeInput, generationID string, tags []ComposeTag) (pyjson.Object, error) {
+//
+// The async-v1 additions (async.go) go between stage_d and tags, where
+// _gateway_authorize_response splices **async_additions (G15 §2.1).
+func responseData(in ComposeInput, generationID string, tags []ComposeTag, async Async,
+	stream *streamPricing) (pyjson.Object, error) {
 	locations := make([]pyjson.Object, len(in.Candidates))
 	for i, c := range in.Candidates {
 		loc, err := inferenceLocation(c.InferenceLocation)
@@ -135,14 +139,31 @@ func responseData(in ComposeInput, generationID string, tags []ComposeTag) (pyjs
 		pyjson.Member{Key: "additional_cost_reservation_microdollars", Value: int64(0)},
 		pyjson.Member{Key: "receipt_fee_basis_points", Value: int64(0)},
 		// billing_pricing_snapshot is None for a row with no pricing
-		// snapshot.
-		pyjson.Member{Key: "candidate_cost_reporting", Value: false},
+		// snapshot, and a document for a stream's, whose promise
+		// pricingSnapshot held.
+		pyjson.Member{Key: "candidate_cost_reporting", Value: stream != nil},
 		pyjson.Member{Key: "request_metadata_version", Value: int64(1)},
 		pyjson.Member{Key: "native_batch_eligible", Value: false},
-		pyjson.Member{Key: "stage_d", Value: pyjson.Object{
+	)
+	if stream != nil {
+		// _gateway_stage_d_payload for a row whose reason is ok: the
+		// snapshot's candidates and the estimate, the stream's cap.
+		d = append(d,
+			pyjson.Member{Key: "stage_d", Value: pyjson.Object{
+				{Key: "eligible", Value: true},
+				{Key: "reason", Value: StageDOK},
+			}},
+			pyjson.Member{Key: "candidate_prices", Value: stream.candidates},
+			pyjson.Member{Key: "cap_micro", Value: in.Estimate},
+		)
+	} else {
+		d = append(d, pyjson.Member{Key: "stage_d", Value: pyjson.Object{
 			{Key: "eligible", Value: false},
 			{Key: "reason", Value: in.StageDReason},
-		}},
+		}})
+	}
+	d = append(d, async.Members...)
+	d = append(d,
 		pyjson.Member{Key: "tags", Value: tagsObject(tags)},
 		pyjson.Member{Key: "custom_model", Value: nil},
 	)

@@ -823,3 +823,38 @@ func TestARecordMessageNeverReceivedComesBackSoon(t *testing.T) {
 		t.Fatalf("lost %v; delivered after %v", lost.lost.Load(), took)
 	}
 }
+
+// TestARecordHeldPastMaxExtensionComesBack: a record a member holds and
+// never acknowledges, as a member whose commits are wedged holds every
+// record of its leases, is let go once maxExtension has passed, and the
+// log delivers it again, not after the client library's default hour. The
+// test shortens maxExtension; the record comes back once the deadline the
+// library last asked for, ackExtension, has run out after it.
+func TestARecordHeldPastMaxExtensionComesBack(t *testing.T) {
+	if maxExtension > 5*time.Minute {
+		t.Fatalf("maxExtension is %v: a wedged member holds its leases' keys that long", maxExtension)
+	}
+	defer func(was time.Duration) { maxExtension = was }(maxExtension)
+	maxExtension = 2 * time.Second
+	f := newFakeLog(t, true)
+	l := f.log(t)
+	if err := wait(t, l.Publish("la", []byte("la#1"), nil)); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), maxExtension+3*ackExtension)
+	defer cancel()
+	var deliveries atomic.Int32
+	err := Subscribe(f.client, f.sub, -1).Receive(ctx, func(_ context.Context, d *Delivery) {
+		if deliveries.Add(1) == 1 {
+			return // held, as by a wedged commit loop
+		}
+		d.Ack()
+		cancel()
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := deliveries.Load(); n != 2 {
+		t.Fatalf("a record held past maxExtension was delivered %d times", n)
+	}
+}

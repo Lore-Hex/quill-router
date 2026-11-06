@@ -35,6 +35,7 @@ _FRESH_CLIENT = oracle._client
 def reuse_frozen_compilation(monkeypatch, path=None):
     """Compile the unchanged oracle once; rebuild its globals for every request."""
     path = path or Path(oracle.__file__).parent/'fakes/shadow_main_routes_internal_gateway.py.txt'
+    tree = ast.parse(path.read_text())
     if path not in _COMPILED:
         functions = [n for n in ast.parse(path.read_text()).body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
         _COMPILED[path] = (compile(ast.Module(body=functions, type_ignores=[]), str(path), 'exec'), {})
@@ -43,7 +44,7 @@ def reuse_frozen_compilation(monkeypatch, path=None):
         # Existing compiled endpoints retain this globals dictionary. Refresh
         # it for each oracle leg, including its frozen per-request caches.
         namespace.clear()
-        namespace.update(vars(oracle.gateway))
+        namespace.update(oracle.frozen_namespace(tree))
         exec(code, namespace)  # noqa: S102 - unchanged pinned oracle, separate globals
         return namespace
     monkeypatch.setattr(oracle, 'frozen_routes', frozen_routes)
@@ -430,6 +431,22 @@ def terminal_hook_fault_http(env, monkeypatch, kind, fault):
                 setattr(db, key, copy.deepcopy(value))
             store._credit_shard_counts.invalidate('ws-v1')
             client = oracle._client(cfg)
+            # A cold v2 app performs its control read before request recording.
+            # Verify that setup changed only the exact marker-read counters,
+            # then start both money/HTTP transcripts from the same baseline.
+            reads = {'snapshot_calls', 'snapshot_execute_sql_calls', 'snapshot_sql', 'snapshot_sql_params'}
+            extra = db.snapshot_execute_sql_calls-saved['snapshot_execute_sql_calls']
+            assert extra in ((0, 1) if pin else (0,))
+            assert db.snapshot_sql == saved['snapshot_sql'] + [
+                'SELECT body FROM tr_entities WHERE kind=@kind AND id=@id']*extra
+            assert db.snapshot_sql_params == saved['snapshot_sql_params'] + [
+                {'kind': 'async_settle_shadow_control_v2', 'id': 'stop-v2'}]*extra
+            assert db.snapshot_calls == saved['snapshot_calls'] + [{}]*extra
+            for key, value in saved.items():
+                if key in reads:
+                    setattr(db, key, copy.deepcopy(value))
+                else:
+                    assert getattr(db, key) == value, key
             client._transport.raise_server_exceptions = False
             client.app.state.async_settle_shadow = None
             def broken(*args, **kwargs):

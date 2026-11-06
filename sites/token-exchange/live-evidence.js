@@ -124,14 +124,8 @@
     const check = payload.attestation_check;
     const release = payload.release;
     if (!check || check.status !== 'up' || !fresh(check.last_checked_at) || !release) return;
-    if (root.dataset.evidenceProfile === 'dubai') {
-      const region = (Array.isArray(release.regions) ? release.regions : []).find(r => r && r.attestation_url === 'https://api-azure.trustedrouter.com/attestation' && typeof r.origin_hostname === 'string' && r.origin_hostname.endsWith('.uaenorth.azurecontainer.io'));
-      if (release.platform !== 'azure-confidential-containers-sev-snp' || !region || typeof region.hostdata !== 'string' || !/^[a-f0-9]{64}$/.test(region.hostdata) || !Array.isArray(release.accepted_hostdata) || !release.accepted_hostdata.includes(region.hostdata)) return;
-      attestation.append(node('p', 'Published policy measurement', 'digest-label'), node('code', region.hostdata, 'build-digest'));
-    } else {
-      if (release.platform !== 'gcp-confidential-space' || typeof release.image_digest !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(release.image_digest)) return;
-      attestation.append(node('p', 'Published build digest', 'digest-label'), node('code', release.image_digest, 'build-digest'));
-    }
+    if (release.platform !== 'gcp-confidential-space' || typeof release.image_digest !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(release.image_digest)) return;
+    attestation.append(node('p', 'Published build digest', 'digest-label'), node('code', release.image_digest, 'build-digest'));
     attestation.prepend(node('p', lastCheck(check.last_checked_at), 'last-check'));
     if (typeof release.source_commit === 'string') attestation.append(node('p', `Published source ${release.source_commit.slice(0, 8)}`));
     attestation.append(node('p', 'Location: Not proven by attestation'));

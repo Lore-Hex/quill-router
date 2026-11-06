@@ -68,7 +68,7 @@ from trusted_router.routes.compat import (
 )
 from trusted_router.routes.console import register_console_routes
 from trusted_router.routes.credit_transfers import register_credit_transfer_routes
-from trusted_router.routes.custom_models import register_custom_model_routes
+from trusted_router.routes.earnings import register_earnings_routes
 from trusted_router.routes.email_verify import register_email_verify_routes
 from trusted_router.routes.identity_verify import register_identity_verify_routes
 from trusted_router.routes.inference import register_inference_routes
@@ -96,8 +96,6 @@ from trusted_router.routes.public import register_public_action_routes, register
 from trusted_router.routes.ses_notifications import register_ses_notification_routes
 from trusted_router.routes.settlements import register_settlement_routes
 from trusted_router.routes.signup import register_signup_routes
-from trusted_router.routes.user_models import register_user_model_routes
-from trusted_router.routes.user_models_public import register_user_model_public_routes
 from trusted_router.routes.verification_status import register_verification_status_routes
 from trusted_router.routes.wallet_oauth import register_wallet_oauth_routes
 from trusted_router.routes.workspaces import register_workspace_routes
@@ -120,6 +118,11 @@ _storage_error_logger = logging.getLogger(__name__)
 
 _APP_CONSOLE_HANDLER_MARKER = "_trusted_router_app_console"
 _ACQUISITION_CLOUD_FIELDS = (
+    "stripe_session_id", "stripe_customer_id", "lots", "per_lot_cents",
+    "list_price_cents", "discount_bps", "index_as_of", "usable_from",
+    "usable_until", "refund_window_days", "purchase_completed_at", "refund_deadline_at", "terms_version",
+    "position_id", "transfer_policy", "resale_fee_bps", "resale_priority",
+    "resale_payout_method", "resale_payout_cap",
     "anonymous_fingerprint",
     "account_fingerprint",
     "workspace_fingerprint",
@@ -133,7 +136,7 @@ _ACQUISITION_CLOUD_FIELDS = (
     "page_path",
     "device_category",
     "reward_action",
-    "cta", "position", "form", "destination_host",
+    "cta", "position", "form", "destination_host", "unit", "underlying_kind", "grade",
     "reward_placement",
     "observation_id",
     "site_domain",
@@ -149,6 +152,13 @@ _ACQUISITION_CLOUD_FIELDS = (
     "elapsed_ms",
     "failure_reason",
     "finish_reason",
+    # Token Exchange funnel fields: the referring site, the market, and the hashed exchange visitor
+    # that joins exchange visits to trustedrouter.com sign-ups and purchases.
+    "referer_host",
+    "market",
+    "exchange_market",
+    "exchange_visitor_fingerprint",
+    "amount_microdollars",
 )
 
 
@@ -215,7 +225,7 @@ def _configure_application_logging() -> None:
 
 
 def _v2_install_hook(app: Any, settings: Settings, backend: Any, workspace: str) -> None:
-    if not in_v2_cohort(settings.async_settle_shadow_policy, workspace,
+    if not in_v2_cohort(settings.regional_async_settle_shadow_policy(), workspace,
                         settings.async_settle_enabled, settings.async_settle_shadow_workspace_ids):
         return None
     from trusted_router.services.async_settle_shadow_cohort_runtime import install
@@ -244,6 +254,14 @@ def create_app(
             "temporary TR_ALLOW_DEPLOYED_COMBINED_SURFACE=true migration bridge is "
             "explicitly enabled"
         )
+    if surface == "settle-drain":
+        # Deliberately before ALL normal app initialization/installers. The
+        # worker needs the billing store, not analytics readers or publishers.
+        from trusted_router.services.settle_outbox_worker import create_worker_app
+        if configure_store_arg and settings.settle_outbox_fast_drain_enabled:
+            configure_store(create_store(settings))
+        _configure_application_logging()
+        return create_worker_app(settings)
     validate_auto_model_order(settings.auto_model_order)
     if configure_store_arg:
         configure_store(create_store(settings))
@@ -321,7 +339,11 @@ def create_app(
         from trusted_router.services.async_settle import load_runtime
         from trusted_router.storage import typed_billing_store
         app.state.async_settle = load_runtime(settings, typed_billing_store(STORE))
-        # An expired v2 canary installs nothing: not v2, and not v1 either,
+        from trusted_router.services.async_settle_admission_refresh import (
+            install as install_admission_refresh,
+        )
+        install_admission_refresh(app, settings)
+        # An expired or region-excluded v2 canary installs neither v2 nor v1,
         # because v1 still requires the raw policy pin to be empty.
         if settings.effective_async_settle_shadow_policy() == "shadow-v2" and settings.async_settle_shadow_workspace_ids and not settings.async_settle_enabled:
             from trusted_router.services.async_settle_shadow_health import (
@@ -732,6 +754,9 @@ def create_app(
     if surface in {"combined", "actions"}:
         register_public_action_routes(app, settings)
     if surface in {"combined", "control"}:
+        from trusted_router.routes.resale import register as register_resale
+
+        register_resale(app, settings)
         register_bedrock_group_buy_control_routes(app, settings)
     api = _make_api_router(settings, surface)
     if surface in {"combined", "control"}:
@@ -813,6 +838,10 @@ def _make_api_router(settings: Settings, surface: str) -> APIRouter:
 
     @router.get("/health")
     async def health() -> dict[str, str]:
+        # Cloud Run liveness: keep this handler async and dependency-free;
+        # storage checks belong in /ready. HTTP latency still includes loop
+        # scheduling and server instrumentation, so allow bounded CPU stalls
+        # in the deployment policy. Never reject during SIGTERM listener drain.
         return {"status": "ok"}
 
     @router.get("/ready")
@@ -847,7 +876,7 @@ def _make_api_router(settings: Settings, surface: str) -> APIRouter:
     if surface in {"combined", "public", "observer"}:
 
         @router.get("/coverage/openrouter")
-        async def coverage() -> dict[str, Any]:
+        def coverage() -> dict[str, Any]:
             from trusted_router.openrouter_coverage import ROUTE_COVERAGE
 
             return {
@@ -868,22 +897,13 @@ def _make_api_router(settings: Settings, surface: str) -> APIRouter:
     if surface in {"combined", "public"}:
         register_notify_public_routes(router)
 
-    if surface in {"combined", "public"}:
-        # Regional observer deployments use Postgres, whose deliberately
-        # narrow observer projection does not implement the cross-tenant
-        # published-model listing. Keep these anonymous Store-backed reads on
-        # the dedicated public surface instead of turning observer traffic
-        # into 500s (or widening the observer database role).
-        register_user_model_public_routes(router)
-
     if surface in {"combined", "control"}:
         register_authenticated_catalog_routes(router)
         register_auth_routes(router)
         register_byok_routes(router)
         register_billing_routes(router)
+        register_earnings_routes(router)
         register_broadcast_routes(router)
-        register_custom_model_routes(router)
-        register_user_model_routes(router)
         register_key_routes(router)
         register_oauth_app_routes(router)
         register_oauth_authorized_app_routes(router)

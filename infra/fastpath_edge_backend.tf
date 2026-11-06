@@ -19,8 +19,8 @@
 locals {
   # Nodes on their way out: drained, out of the backend, removed next.
   # Each node of infra/fastpath.tf has a group here and is a backend; none
-  # is retiring (5 and 6 left once 7 and 8 served and reported HEALTHY,
-  # one apply before their removal, stage I1).
+  # is retiring (9 and 10 left once 11 and 12 served and reported HEALTHY,
+  # one apply before their removal).
   fastpath_edge_retiring = []
   # The share, in percent, of the enclave's authorize calls the control load
   # balancer sends through the edge (infra/control_lb_url_map.tf). 1 once
@@ -30,8 +30,18 @@ locals {
   # 0 is the way back. Held at 0 from 2026-10-22 05:33Z until the authorize
   # alerts (docs/incidents/2026-10-22-authorize-edge-deadline.md) were
   # explained: the route's own timeout, and the enclave's settle retry,
-  # which no longer overlaps the settle it retries.
-  fastpath_edge_route_weight = 1
+  # which no longer overlaps the settle it retries. 50 from 2026-10-26
+  # 17:25Z, back to 5 at 19:33Z (#2086) when the auditor's commit loop
+  # blocked on a call with no deadline and its subscription lagged; 50 again
+  # once every call of the auditor's running loop has a deadline and a
+  # watchdog fails a wedged loop (in 892bd7593 and since, on both nodes).
+  # 100 from 2026-10-28, after 50's gates held, once both nodes run
+  # 0f0b1829a: each call of a start has a deadline, the secret reads
+  # (#2133) and the ring join and first membership scan (#2130) among them,
+  # and watchdogs on the start exit a stalled node for systemd to restart.
+  # The control backend stays in the route at 0, so the way back is this
+  # line.
+  fastpath_edge_route_weight = 100
   # Google's health checkers and the global external proxies, the only
   # sources outside the network the edge's port admits (the enclave's calls
   # arrive through them); the network's own default-allow-internal stays.

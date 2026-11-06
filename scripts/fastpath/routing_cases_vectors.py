@@ -4,7 +4,7 @@ Each case is a request evaluated by ``trusted_router.authorize_candidates`` (the
 candidate pipeline authorize runs) over the routing-snapshot fixture catalog:
 the synthetic models, endpoints, rank evidence and rank preferences that
 scripts/fastpath/routing_snapshot_vectors.py compiles into
-fastpath/testdata/routing_snapshot_v1.body.json. It maps to the candidate
+fastpath/testdata/routing_snapshot_v3.body.json. It maps to the candidate
 endpoint ids in order, the model estimate in microdollars, the normalized
 service tier and the Stage D reason, or to the refusal's status, type and
 message. Nothing here reads the live catalog or the wall clock, so the hourly
@@ -58,7 +58,7 @@ from trusted_router.schemas import GatewayAuthorizeRequest  # noqa: E402
 
 OUTPUT = ROOT / "fastpath" / "testdata" / "routing_cases_v1.json"
 GENERATOR = "scripts/fastpath/routing_cases_vectors.py"
-SNAPSHOT = "fastpath/testdata/routing_snapshot_v1.body.json"
+SNAPSHOT = "fastpath/testdata/routing_snapshot_v3.body.json"
 REGIONS = ("us-central1", "us-east4", "europe-west4", "us-west1")
 PRIMARY_REGION = "us-central1"
 # What a request in the E2 cohort brings to the Stage D decision beyond the
@@ -232,6 +232,7 @@ def _error(exc: HTTPException) -> dict[str, Any]:
 FLASH, TENCENT_FLASH = "deepseek/deepseek-v4-flash", "deepseek/deepseek-v4.1-flash"
 GLM, GEMINI = "z-ai/glm-5.3", "google/gemini-3.1-pro-preview"
 FUGU, BEDROCK, INKLING = "sakana-ai/fugu-ultra-v1.1", "minimax/minimax-m2", "thinkingmachines/inkling"
+KIMI = "moonshotai/kimi-k2.7"
 MODEL_SPELLINGS = (
     FLASH, TENCENT_FLASH, GLM, GEMINI, FUGU, BEDROCK, INKLING,
     f"{FLASH}:nitro", f"{GEMINI}:floor", f"{GLM}-2025-04-14", "nope/unknown-model", "gpt-4.1",
@@ -346,8 +347,98 @@ def cases() -> list[dict[str, Any]]:
     add("context_window_of_the_filtered", {"model": GLM, "models": [FLASH], "provider": {"only": ["deepseek"]}, "estimated_input_tokens": 70_000})
     add("context_unknown_window_kept", {"model": GEMINI, "models": [FLASH], "estimated_input_tokens": 100_000})
     add("context_before_region", {"model": BEDROCK, "estimated_input_tokens": 200_000})
+    add("host_context_at_limit", {"model": GLM, "estimated_input_tokens": 99_999, "max_tokens": 1, "output_tokens": 1})
+    add("host_context_one_over", {"model": GLM, "estimated_input_tokens": 100_000, "max_tokens": 1, "output_tokens": 1})
+    add("host_context_pinned", {"model": GLM, "estimated_input_tokens": 100_001, "provider": {"only": ["wafer"]}})
+    add("host_context_no_fallback", {"model": GLM, "estimated_input_tokens": 100_001, "provider": {"order": ["wafer", "together"], "allow_fallbacks": False}})
     add("spaced_model_and_route", {"model": f"  {GLM} ", "models": [f" {FLASH}"], "route_type": " chat.completions ",
                                    "stream": True})
+    # provider.min_privacy: every accepted spelling (catalog_data.PRIVACY_TIER_ALIASES),
+    # one spaced and cased, an unknown one, a blank, a null and two
+    # non-strings, on GLM 5.3, whose hosts span the tiers: Fireworks stores
+    # content, Wafer and Together are ZDR, Chutes Confidential, Tinfoil
+    # Trusted. Confidential drops Wafer, the leader by rank and preference;
+    # Trusted keeps Tinfoil alone.
+    for spelling in ("standard", "any", "no_store", "no-store", "nostore", "zdr", "zero_retention",
+                     "zero-retention", "confidential", "trusted", "e2e", "e2ee", "max", "maximum",
+                     " Confidential ", "secret", ""):
+        add(f"min_privacy:{spelling or 'blank'}", {"model": GLM, "provider": {"min_privacy": spelling}})
+    add("min_privacy:null", {"model": GLM, "provider": {"min_privacy": None}})
+    add("min_privacy:number", {"model": GLM, "provider": {"min_privacy": 2}})
+    add("min_privacy:boolean", {"model": GLM, "provider": {"min_privacy": True}})
+    # Privacy over a model list drops the first model's whole run (DeepSeek
+    # V4 Flash has no ZDR host, so GLM 5.3's hosts lead), empties a model
+    # with no host of the tier, composes with provider.zdr and with
+    # provider.order (the survivors in the order's rank, not the catalog's),
+    # keeps one candidate without fallbacks, and makes the soft
+    # data_collection=deny hard, except at "any", which asks for nothing.
+    # Kimi K2.7's preference for Chutes applies only when Kimi is the one
+    # model left, so dropping V4 Flash reorders Kimi's hosts: Tinfoil leads
+    # behind V4 Flash, Chutes once privacy removes it.
+    add("min_privacy_leaves_the_second_model", {"model": FLASH, "models": [GLM], "provider": {"min_privacy": "zdr"}})
+    add("min_privacy_empties", {"model": FLASH, "provider": {"min_privacy": "zdr"}})
+    add("kimi_alone", {"model": KIMI})
+    add("kimi_behind_flash", {"model": FLASH, "models": [KIMI]})
+    add("min_privacy_reorders", {"model": FLASH, "models": [KIMI], "provider": {"min_privacy": "confidential"}})
+    add("min_privacy_leaves_one_model", {"model": GLM, "models": [FLASH], "provider": {"min_privacy": "no_store"}})
+    add("min_privacy_with_zdr_flag", {"model": GLM, "provider": {"min_privacy": "confidential", "zdr": True}})
+    add("min_privacy_then_order", {"model": GLM, "provider": {"min_privacy": "zdr", "order": ["chutes", "together"]}})
+    add("min_privacy_no_fallbacks", {"model": GLM, "provider": {"min_privacy": "confidential", "allow_fallbacks": False}})
+    add("min_privacy_any_keeps_deny_soft", {"model": FLASH, "provider": {"data_collection": "deny", "min_privacy": "any"}})
+    add("min_privacy_makes_deny_hard", {"model": FLASH, "provider": {"data_collection": "deny", "min_privacy": "no_store"}})
+    # The refusals' order: the router name, then allow_fallbacks, then
+    # min_privacy, then require_parameters.
+    add("router_name_then_bad_min_privacy", {"model": GLM, "provider": {"only": ["openrouter"], "min_privacy": "secret"}})
+    add("fallbacks_conflict_then_bad_min_privacy", {"model": GLM, "allow_fallbacks": True,
+                                                    "provider": {"allow_fallbacks": False, "min_privacy": "secret"}})
+    add("bad_min_privacy_then_bad_require_parameters", {"model": GLM, "provider": {"min_privacy": "secret", "require_parameters": "yes"}})
+    # requested_parameters on a route type the list describes
+    # (chat.completions, responses, none): a capability-required parameter
+    # drops a route that does not declare it while another route of the
+    # model does (tools: Together's GLM 5.3 and V4.1 Flash routes, the
+    # latter the leader); structured output is held to the model only, so
+    # Fireworks' route, declaring none, stays; a model none of whose routes
+    # declare tools (Fugu) keeps every route; other names filter nothing;
+    # names are stripped and blanks dropped. On messages the list describes
+    # nothing. Pinned to a route without the capability, the refusal names
+    # the parameter (and its param), or the parameters when more than one;
+    # when the provider filters alone empty the list it is the plain refusal.
+    add("parameters:tools", {"model": GLM, "requested_parameters": ["tools"]})
+    add("parameters:tool_choice", {"model": GLM, "requested_parameters": ["tool_choice"]})
+    add("parameters:response_format", {"model": GLM, "requested_parameters": ["response_format"]})
+    add("parameters:structured_outputs", {"model": GLM, "requested_parameters": ["structured_outputs"]})
+    add("parameters:tools_and_response_format", {"model": GLM, "requested_parameters": ["tools", "response_format"]})
+    add("parameters:undeclared_model", {"model": FUGU, "requested_parameters": ["tools"]})
+    add("parameters:drops_the_leader", {"model": TENCENT_FLASH, "requested_parameters": ["tools"]})
+    add("parameters:across_models", {"model": TENCENT_FLASH, "models": [GLM], "requested_parameters": ["tools"]})
+    add("parameters:pinned_to_a_route_without", {"model": GLM, "requested_parameters": ["tools"], "provider": {"only": ["together"]}})
+    add("parameters:two_unsupported", {"model": GLM, "requested_parameters": ["tools", "tool_choice"], "provider": {"only": ["together"]}})
+    add("parameters:filters_empty_first", {"model": GLM, "requested_parameters": ["tools"],
+                                           "provider": {"only": ["together"], "min_privacy": "confidential"}})
+    add("parameters:on_messages", {"model": GLM, "requested_parameters": ["tools"], "route_type": "messages"})
+    add("parameters:on_responses", {"model": GLM, "requested_parameters": ["tools"], "route_type": "responses"})
+    add("parameters:without_route_type", {"model": GLM, "requested_parameters": ["tools"], "route_type": None})
+    add("parameters:spaced_and_blank", {"model": GLM, "requested_parameters": [" tools ", "", "  "]})
+    add("parameters:non_capability", {"model": GLM, "requested_parameters": ["logprobs", "temperature"]})
+    add("parameters:duplicate", {"model": GLM, "requested_parameters": ["tools", "tools"]})
+    # provider.require_parameters: every requested name, or an alias of it
+    # (_PARAMETER_CAPABILITY_ALIASES), must be declared by the route, on any
+    # route type; false filters nothing; a null or a non-boolean is a 400.
+    add("require_parameters:supported", {"model": GLM, "requested_parameters": ["max_tokens"], "provider": {"require_parameters": True}})
+    add("require_parameters:alias", {"model": GLM, "requested_parameters": ["max_completion_tokens"], "provider": {"require_parameters": True}})
+    add("require_parameters:reasoning_alias", {"model": GLM, "requested_parameters": ["reasoning_effort"], "provider": {"require_parameters": True}})
+    add("require_parameters:structured_alias", {"model": GLM, "requested_parameters": ["response_format"], "provider": {"require_parameters": True}})
+    add("require_parameters:logprobs", {"model": GLM, "requested_parameters": ["logprobs"], "provider": {"require_parameters": True}})
+    add("require_parameters:tools_and_logprobs", {"model": GLM, "requested_parameters": ["tools", "logprobs"], "provider": {"require_parameters": True}})
+    add("require_parameters:false", {"model": GLM, "requested_parameters": ["logprobs"], "provider": {"require_parameters": False}})
+    add("require_parameters:on_messages", {"model": GLM, "requested_parameters": ["tools"], "route_type": "messages",
+                                           "provider": {"require_parameters": True}})
+    add("require_parameters:null", {"model": GLM, "provider": {"require_parameters": None}})
+    add("require_parameters:not_boolean", {"model": GLM, "provider": {"require_parameters": "true"}})
+    add("require_parameters:with_privacy", {"model": GLM, "requested_parameters": ["tools"],
+                                            "provider": {"require_parameters": True, "min_privacy": "zdr"}})
+    add("require_parameters:privacy_empties", {"model": FLASH, "requested_parameters": ["tools"],
+                                               "provider": {"require_parameters": True, "min_privacy": "zdr"}})
     return out
 
 

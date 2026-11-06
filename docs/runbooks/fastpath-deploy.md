@@ -166,7 +166,20 @@ it to the first before the second is pinned anywhere. Nodes replaced by one appl
 then never mix an owner that states the field with an auditor that does
 not read it. The first such field was the hold's boot binding on its
 first heartbeat record: one release read it and stated none, and the one
-after it states it.
+after it states it. The second is a stream's reap deadline
+(`record.Snapshot.ReapDeadline`, docs/design/fast-admission-streams.md
+section 4.6 item 4): the release that reads it leaves the owner's
+`RecordReapFloor` off, and the one after it, pinned as above, turns it on
+in the service's defaults. Until then each owner still waits for the floor
+before it reaps a stream's hold itself; only an auditor that drains a lease
+reaps at the heartbeat's deadline plus the grace.
+
+A field on a front door's or an owner's request (`EchoGranted` on a
+heartbeat) is refused by a node from before it, which decodes strictly. It
+is sent only when set, so nothing changes until a gateway sets it: owners
+take it before front doors, and the control plane sets it only once every
+owner and front door runs a release that takes it (check as "Taking a
+pinned release" below does).
 
 ## Turning the edge on
 
@@ -226,6 +239,56 @@ attributes: a reset leaves the unit systemd started from disk running
 with its old arguments, as "Taking a pinned release" explains for the
 binary.
 
+## Raising the edge route weight
+
+`fastpath_edge_route_weight` (`infra/fastpath_edge_backend.tf`) is the
+share of every enclave's authorize that the control balancer's url map
+sends through the edge; the rest keeps going to the control plane
+directly. It moves one step at a time, `1 -> 5 -> 50 -> 100`, each step
+a one-line change whose plan is `0 to add, 1 to change, 0 to destroy`
+(the url map only; the route's 24 s timeout in
+`infra/control_lb_url_map.tf` is untouched). The steps are wide because
+the edge only proxies until stage I2 and the decide shadow's sample grows
+with the share: at 5 it compares a few hundred requests a day, at 50 a
+few thousand. What the share changes is retry exposure: the enclave
+makes up to three attempts (two retries) at authorize within 28 s, and
+the weighted split picks a backend per attempt without failing over, so
+all three reaching the edge backend is the share cubed, 0.01% of
+requests at 5 and 12.5% at 50; such a request fails only if each attempt
+also lands on a node that is unhealthy in the seconds before the health
+check (every 5 s, two failures) takes it out of the backend. The gates
+below read that as 5xx on the edge backend. The split is global: the edge's nodes and their upstream
+are in us-central1 only, so that share of European and Asian enclaves'
+authorizes crosses to us-central1 while the weight holds.
+
+Gates, read after 1 h and again after 24 h at the new weight, against the
+same hours at the previous one, read from the balancer's metrics
+(`loadbalancing.googleapis.com/https/request_count` and
+`https/backend_latencies`, grouped by `backend_name`,
+`response_code_class` and `proxy_continent`):
+
+- Hard: no `500`-class rows on the edge backend beyond control's own
+  authorize 5xx rate in the same hours.
+- Latency, edge against control's authorize route in the same window
+  and the same proxy continent: edge p50 within 1.2x control's p50, edge
+  p99 within 1.5x control's p99.
+- Request counts on the edge backend rise about in proportion to the
+  weight; both nodes `HEALTHY`; no `TR Fast path` alert; the decide
+  shadow's `dropped` stays 0.
+
+At 100 control's authorize route has no direct requests of its own in the
+window, so the step to 100 reads control's side from before the step: its
+authorize 5xx rate and its p50 and p99 by proxy continent over the same
+hours of the day before, at 50 (the 1 h read against the same hour 24 h
+earlier, the 24 h read against the 24 h before the step). The edge's own
+read at 50 over those hours is beside it, so a change in the edge and a
+change in the day's traffic are told apart.
+
+A gate failing means the previous weight (or 0, which is R0), the same
+one-line change merged and applied; the balancer takes it at once. Keep
+the shadow's comparison counts from before the step apart from those
+after it.
+
 ## Turning the edge policy and the decide shadow on
 
 The edge polls Python's signed edge policy
@@ -239,6 +302,18 @@ the shadow). Only a script from stage I1 on reads them, so they reach the
 fleet as the snapshot's did: nodes 7 and 8 added beside 5 and 6, which are
 then drained, leave the backend one apply before their removal, and are
 removed.
+From stage I2's script on, `fastpath-edge-decide` is read the same way and
+passes `-edge-decide`, the decide path (`fastpath-edge-decide.md`); nodes
+7 and 8 run I1's script, which does not read it, so it reaches the fleet
+as I1's attributes did: nodes 9 and 10 added beside 7 and 8 with the
+attribute `false`, 7 and 8 then drained, out of the backend one apply
+before their removal, and removed. A node added under a new name has its
+edge instance group and its backend entry from the apply that adds it,
+and the balancer sends to it only once the health check reports it
+`HEALTHY`, which it does once the node's edge serves: check that, and start
+the pilot's watches and audit loop on the new node ("Turning the edge
+on"), before the old node is marked leaving. The switch to `true` is a
+later metadata change, taken as the shadow's is (below).
 Python publishes the policy first (`EDGE_POLICY_PUBLISH_ENABLED` in
 `rollout.sh`); until then the poll answers 404 and the edge keeps polling,
 admission unaffected. The shadow is turned on only once the policy has been
@@ -309,3 +384,24 @@ take stops it before either role starts, on both nodes, restarted into the
 same refusal. So a new flag lands with or after the pin of a release that
 takes it, never before: `tests/test_fastpath_p1.py` holds the unit's flags
 to the command of the release `infra/fastpath.tf` pins.
+
+## Streams on the lease: the release order
+
+`docs/design/fast-admission-streams.md` §10 ships streams in increments,
+and three of its steps wait on the fleet's release, checked as "Taking a
+pinned release" does:
+
+1. Increment 2b, which turns on the owner's `RecordReapFloor` (each stream
+   heartbeat's and hand-off's reap deadline in its record) and adds the
+   skew allowance to the floor, is pinned only once every member runs
+   increment 2, the release that reads the field (#2207). Until 2b an
+   auditor that drains a lease reaps a stream at the heartbeat's deadline
+   plus the grace, without the floor.
+2. Python's increment 4, which sets `EchoGranted` and lets
+   `fastpath_pilot_streams` admit streams, moves only once 2b is pinned on
+   every owner and front door: a node from before increment 2 refuses a
+   heartbeat carrying `EchoGranted`.
+3. While any leased stream is open, no node's release goes below 2b, and
+   the control plane's below Python's increment 3. To go further back, turn
+   the streams settings off and wait out a hold's life (2 h 20 min) plus
+   the grace plus the drain's overdue allowance first.

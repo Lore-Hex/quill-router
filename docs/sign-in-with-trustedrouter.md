@@ -149,7 +149,7 @@ Query params (`callback_url` and `code_challenge` are required):
 
 | param | meaning |
 |---|---|
-| `callback_url` | where TR redirects after approval. Use `https://`, a native custom scheme with PKCE S256, or `http://localhost:3000` / `127.0.0.1:3000` for a loopback client. Web ports are limited to 443 or 3000. Carry your CSRF `state` *inside* this URL's query. |
+| `callback_url` | where TR redirects after approval. Use `https://`, a native custom scheme with PKCE S256, or `http://localhost`, `http://127.0.0.1` or `http://[::1]` on any port for a loopback client (RFC 8252). Other web ports are limited to 443 or 3000. Carry your CSRF `state` *inside* this URL's query. |
 | `code_challenge` | required: base64url(SHA-256(`code_verifier`)), padding stripped |
 | `code_challenge_method` | `S256` only (the default when a challenge is supplied) |
 | `key_label` | label shown on the issued key (defaults to the callback host) |
@@ -288,10 +288,10 @@ GUI apps (e.g. Lore games on QuillUI) that can't use `ASWebAuthenticationSession
 
 ### Desktop / cross-platform (loopback redirect)
 GUI toolkits that aren't native AppKit/UIKit (QuillUI/GTK, Electron, CLIs) use a
-**loopback** flow: set `callback_url=http://localhost:3000/callback`, open the
-system browser to the authorize URL, run a tiny local HTTP server on port 3000
-to catch the `?code=…`, then exchange it. (Port 3000 is allowlisted by the
-backend for exactly this.)
+**loopback** flow: bind a tiny local HTTP server on `127.0.0.1` (port 0 picks a
+free one), set `callback_url=http://127.0.0.1:<port>/callback`, open the system
+browser to the authorize URL, catch the `?code=…`, then exchange it. Any port is
+accepted on a loopback host, per RFC 8252 section 7.3.
 
 ## Consumers
 - Third-party web, native, desktop, and CLI applications use the same flow to

@@ -18,6 +18,25 @@ from .deploy_script_harness import SCRIPT_FIXTURES, DeployScriptHarness, summari
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        "clickhouse_startup.sh",
+        "aws_eu_clickhouse.sh",
+        "aws_eu_north_clickhouse.sh",
+        "azure_clickhouse.sh",
+    ],
+)
+def test_clickhouse_provisioners_pin_security_patched_packages(name: str) -> None:
+    script = (ROOT / "scripts/deploy" / name).read_text()
+    version = "26.8.36.3"
+    assert version in script
+    resolved = script.replace("${CLICKHOUSE_VERSION}", version)
+    for package in ("clickhouse-common-static", "clickhouse-server", "clickhouse-client"):
+        assert f"{package}={version}" in resolved
+    assert "apt-get install -y clickhouse-server clickhouse-client" not in script
+
+
 def test_clickhouse_node_preserves_disk_and_blocks_accidental_vm_deletion() -> None:
     script = (ROOT / "scripts/deploy/clickhouse_node.sh").read_text()
 

@@ -16,9 +16,11 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -74,6 +76,12 @@ func run() error {
 	flag.DurationVar(&cfg.Owner.RenewEvery, "renew-every", cfg.Owner.RenewEvery, "how often an owner renews its leases")
 	flag.DurationVar(&cfg.Owner.FirstHeartbeat, "first-heartbeat", cfg.Owner.FirstHeartbeat,
 		"how long a declared stream's hold waits for its first heartbeat, before the grace; 0 releases none")
+	flag.DurationVar(&cfg.Owner.StreamReap.AfterAdmission, "stream-reap-after-admission",
+		cfg.Owner.StreamReap.AfterAdmission,
+		"a stream's hold is reaped no sooner than its admission plus this (the control plane's reservation life)")
+	flag.DurationVar(&cfg.Owner.StreamReap.AfterHeartbeat, "stream-reap-after-heartbeat",
+		cfg.Owner.StreamReap.AfterHeartbeat,
+		"a stream's hold is reaped no sooner than its last accepted heartbeat plus this (the control plane's renewal)")
 	flag.DurationVar(&cfg.HandOff, "hand-off", cfg.HandOff,
 		"how long a stopping node's owner has to hand its leases off; 0 hands none off")
 	flag.DurationVar(&cfg.ClockOffset, "clock-offset", cfg.ClockOffset,
@@ -110,6 +118,9 @@ func run() error {
 		"answer the authorizes the edge decides itself: admit through the node's front door, insert the rows and "+
 			"answer (docs/design/fast-admission-e2-decide.md section 1), for the workspaces the decide table names; "+
 			"needs -edge-snapshot-url and -edge-policy-url; every other request still passes to Python")
+	debugAddress := flag.String("debug-address", service.DebugAddress,
+		"where the goroutine dump is served, GET /debug/goroutines (docs/runbooks/fastpath-alerts.md): a loopback IP address "+
+			"and port only; empty serves none")
 	flag.Parse()
 
 	switch *roles {
@@ -133,6 +144,21 @@ func run() error {
 	cfg.RecordTopic = "projects/" + *project + "/topics/" + topicNames[1]
 	cfg.SettleSubscription = "projects/" + *project + "/subscriptions/" + subNames[0]
 	cfg.RecordSubscription = "projects/" + *project + "/subscriptions/" + subNames[1]
+	// From here to service.Run the process reads its secrets and makes its
+	// clients, before the service's own watchdogs run: one of those stalled
+	// would leave the node down with no exit for systemd to restart. The
+	// watch stays armed through a start that fails here, so writing its
+	// error to a blocked stderr cannot hold the process either. A flag
+	// refused above is not watched: it fails the same way on every start,
+	// so a restart would not bring the node back, and a stderr that blocks
+	// holds the running service's every log line as much as the start's.
+	reads := 0
+	for _, name := range append(strings.Split(*acceptSecrets, ","), *keySecret, *edgeTokenSecret) {
+		if name != "" {
+			reads++
+		}
+	}
+	unwatch := startWatch(startBudget(reads), os.Exit)
 	var err error
 	if cfg.Key, cfg.AcceptKeys, err = keysOf(context.Background(), *keyPath, *keySecret, *acceptSecrets); err != nil {
 		return err
@@ -152,6 +178,19 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if *debugAddress != "" {
+		// A dump that cannot listen, its port taken, leaves the node running
+		// without it; an address off the loopback interface is refused.
+		ln, err := service.ListenDebug(*debugAddress)
+		switch {
+		case errors.Is(err, service.ErrNotLoopback):
+			return err
+		case err != nil:
+			fmt.Fprintln(os.Stderr, "fastpath: the goroutine dump does not listen:", err)
+		default:
+			defer service.ServeDebug(ln)()
+		}
+	}
 	// SIGUSR1 marks the node leaving, as a deploy does before it stops it.
 	usr1 := make(chan os.Signal, 1)
 	signal.Notify(usr1, syscall.SIGUSR1)
@@ -165,6 +204,9 @@ func run() error {
 		}
 	}()
 	cfg.Leave = leave
+	// A failed process exits within service.FailStop, so that systemd
+	// starts it again, though a part of it is wedged.
+	cfg.Exit = os.Exit
 	sp, err := spanner.NewClient(ctx, *database)
 	if err != nil {
 		return err
@@ -175,8 +217,53 @@ func run() error {
 		return err
 	}
 	defer ps.Close()
+	if !unwatch() {
+		return errors.New("the start stalled before its parts began")
+	}
 	began := time.Now()
 	err = service.Run(ctx, cfg, service.Clients{Spanner: sp, PubSub: ps})
 	fmt.Fprintf(os.Stderr, "fastpath: stopped after %v\n", time.Since(began).Round(time.Second))
 	return err
+}
+
+// startBudget is how long the start before service.Run may take: each of
+// its secret reads up to its deadline, one after another, and then
+// service.StartStall for the clients' construction, so a start whose every
+// read nearly runs out still reaches the service.
+func startBudget(reads int) time.Duration {
+	return time.Duration(reads)*secretDeadline + service.StartStall
+}
+
+// watchLog is where the watch says why it exits; a test's writer that
+// never returns stands in for a stderr that blocks.
+var watchLog io.Writer = os.Stderr
+
+// startWatch exits the process with code 1 unless the stop it returns is
+// called within d. Its line is written at most a second before the exit,
+// so a blocked stderr cannot hold the exit back. stop reports whether it
+// disarmed the watch in time; once the watch has fired, stop waits for the
+// exit, which in the process never returns, so nothing after a late stop
+// runs. Every call of stop after the first answers as the first.
+func startWatch(d time.Duration, exit func(int)) (stop func() bool) {
+	fired, w := make(chan struct{}), watchLog
+	t := time.AfterFunc(d, func() {
+		defer close(fired)
+		logged := make(chan struct{})
+		go func() {
+			fmt.Fprintf(w, "fastpath: the start stalled before its parts began, after %v; exiting\n", d)
+			close(logged)
+		}()
+		select {
+		case <-logged:
+		case <-time.After(time.Second):
+		}
+		exit(1)
+	})
+	return sync.OnceValue(func() bool {
+		if t.Stop() {
+			return true
+		}
+		<-fired
+		return false
+	})
 }

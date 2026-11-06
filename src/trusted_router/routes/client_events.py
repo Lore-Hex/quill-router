@@ -135,7 +135,8 @@ def register_client_events_routes(router: APIRouter) -> None:
         # Per docs/design/oauth-scopes-and-app-economy.md ("Scopes: small,
         # real, enforced"), reliability beacons deliberately ride the same
         # inference credential as the requests they describe.
-        principal = require_inference_key(request, settings)
+        # Key lookup is a synchronous Store read; keep it off the event loop.
+        principal = await run_in_threadpool(require_inference_key, request, settings)
         api_key = principal.api_key
         if api_key is None:  # pragma: no cover - guaranteed by require_inference_key.
             raise api_error(401, "An inference API key is required", ErrorType.UNAUTHORIZED)

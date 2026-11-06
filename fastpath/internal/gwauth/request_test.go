@@ -97,7 +97,7 @@ func TestTheReasons(t *testing.T) {
 		{"stream", ReasonStream, bodyOf(`"stream":true`), jsonHeaders},
 		{"stream false", "", bodyOf(`"stream":false`), jsonHeaders},
 		{"tier", ReasonServiceTier, bodyOf(`"service_tier":"auto"`), jsonHeaders},
-		{"affinity", ReasonCacheAffinity, bodyOf(`"cache_affinity_key":"` + strings.Repeat("a", 64) + `"`), jsonHeaders},
+		{"affinity", "", bodyOf(`"cache_affinity_key":"` + strings.Repeat("a", 64) + `"`), jsonHeaders},
 		{"affinity explicit only", "", bodyOf(`"cache_affinity_explicit":true`), jsonHeaders},
 		{"receipt", ReasonPricedExtra, bodyOf(`"inference_receipt":true`), jsonHeaders},
 		{"zero cost", "", bodyOf(`"additional_cost_reservation_microdollars":0`), jsonHeaders},
@@ -106,6 +106,14 @@ func TestTheReasons(t *testing.T) {
 		{"alias", ReasonCanonicalModel, bodyOf(`"models":["minimax/minimax-m3-1-flash"]`), jsonHeaders},
 		{"nyte", ReasonCanonicalModel, bodyModel("nyte/auto"), jsonHeaders},
 		{"custom", ReasonCustomModel, bodyOf(`"models":["TR-Custom-Model/x"]`), jsonHeaders},
+		{"user model", ReasonCustomModel, bodyModel("tr-user-model/x"), jsonHeaders},
+		{"user alias", ReasonCustomModel, bodyOf(`"models":["trustedrouter/user-x"]`), jsonHeaders},
+		{"custom identity", ReasonCustomModel, bodyOf(`"custom_model_id":"tr-custom-model/x"`), jsonHeaders},
+		{"custom revision", ReasonCustomModel, bodyOf(`"custom_model_revision":0`), jsonHeaders},
+		{"user identity", ReasonCustomModel, bodyOf(`"user_provided_model_id":"tr-user-model/x"`), jsonHeaders},
+		{"user revision", ReasonCustomModel, bodyOf(`"user_provided_model_revision":0`), jsonHeaders},
+		{"empty creator identity", ReasonCustomModel, bodyOf(`"custom_model_id":""`), jsonHeaders},
+		{"null creator identities", "", bodyOf(`"custom_model_id":null,"custom_model_revision":null,"user_provided_model_id":null,"user_provided_model_revision":null`), jsonHeaders},
 		{"internal", ReasonInternalModel, bodyOf(`"models":[" trustedrouter/monitor "]`), jsonHeaders},
 		{"route type", ReasonEvaluatorInput, bodyOf(`"route_type":"videos"`), jsonHeaders},
 		{"route type spaced", "", bodyOf(`"route_type":" responses "`), jsonHeaders},
@@ -122,12 +130,93 @@ func TestTheReasons(t *testing.T) {
 		{"header partner", ReasonIdempotencyKey, bodyOf(`"idempotency_key":"k"`),
 			Headers{ContentType: []string{"application/json"}, IdempotencyKey: []string{"partner:x"}}},
 		{"settlement", ReasonSettlementAsync, bodyOf(),
+			Headers{ContentType: []string{"application/json"}, SettlementMode: []string{"sync"}}},
+		{"settlement repeated", ReasonSettlementAsync, bodyOf(),
+			Headers{ContentType: []string{"application/json"}, SettlementMode: []string{"async-v1", "async-v1"}}},
+		{"settlement spaced", ReasonSettlementAsync, bodyOf(),
+			Headers{ContentType: []string{"application/json"}, SettlementMode: []string{" async-v1"}}},
+		// Exactly ["async-v1"] is composed (G15c), not passed here.
+		{"settlement async-v1", "", bodyOf(),
 			Headers{ContentType: []string{"application/json"}, SettlementMode: []string{"async-v1"}}},
 		{"video header", ReasonVideoProviders, bodyOf(),
 			Headers{ContentType: []string{"application/json"}, VideoAllowedProviders: true}},
 	} {
 		if _, p := ParseRequest(c.body, c.headers); p.Reason != c.reason {
 			t.Errorf("%s: %q, want %q", c.name, p.Reason, c.reason)
+		}
+	}
+}
+
+// TestACacheAffinityKeyParsesAndIsFlagged (§1 item 5): a body naming a
+// cache_affinity_key is not the request half's to pass; it parses with
+// CacheAffinity set, the key excluded from the dump as the schema excludes
+// it, and Go decides it in the cold order.
+func TestACacheAffinityKeyParsesAndIsFlagged(t *testing.T) {
+	key := strings.Repeat("a", 64)
+	r, p := ParseRequest(bodyOf(`"cache_affinity_key":"`+key+`"`, `"cache_affinity_explicit":true`), jsonHeaders)
+	if p.Passed() || !r.CacheAffinity {
+		t.Fatalf("pass %q, affinity %v", p.Reason, r.CacheAffinity)
+	}
+	for _, m := range r.Dump {
+		if m.Key == "cache_affinity_key" || m.Key == "cache_affinity_explicit" {
+			t.Errorf("the dump carries %s", m.Key)
+		}
+	}
+	if r, p := ParseRequest(bodyOf(`"cache_affinity_explicit":true`), jsonHeaders); p.Passed() || r.CacheAffinity {
+		t.Errorf("without a key: pass %q, affinity %v", p.Reason, r.CacheAffinity)
+	}
+	if _, p := ParseRequest(bodyOf(`"cache_affinity_key":null`), jsonHeaders); p.Passed() {
+		t.Errorf("a null key: pass %q", p.Reason)
+	}
+}
+
+// TestACohortPassKeepsTheParse: a body that parsed whole and then passes a
+// cohort reason returns its parse, so the shadow can count an async-v1
+// request's population (G15 §4.4); a body the parse refuses returns none.
+func TestACohortPassKeepsTheParse(t *testing.T) {
+	key := `"cache_affinity_key":"` + strings.Repeat("a", 64) + `"`
+	async := Headers{ContentType: []string{"application/json"}, SettlementMode: []string{"async-v1"}}
+	r, p := ParseRequest(bodyOf(key, `"stream":true`), async)
+	if p.Reason != ReasonStream || !r.CacheAffinity || !r.Async.V1 {
+		t.Errorf("a stream: pass %q, affinity %v, async-v1 %v", p.Reason, r.CacheAffinity, r.Async.V1)
+	}
+	r, p = ParseRequest(bodyOf(key, `"max_tokens":"64"`), async)
+	if p.Reason != ReasonLaxType || r.CacheAffinity || r.Async.V1 {
+		t.Errorf("a lax type: pass %q, affinity %v, async-v1 %v", p.Reason, r.CacheAffinity, r.Async.V1)
+	}
+}
+
+// TestACacheAffinityKeyChangesNoPass: a body naming a cache_affinity_key
+// passes with the reason its tags, attribution, routing inputs, key
+// identifier, cohort fields, headers or schema give; the key adds none of
+// its own (one off its pattern is the schema's refusal).
+func TestACacheAffinityKeyChangesNoPass(t *testing.T) {
+	key := `"cache_affinity_key":"` + strings.Repeat("a", 64) + `"`
+	for _, c := range []struct {
+		name    string
+		body    []byte
+		headers Headers
+		reason  string
+	}{
+		{"tag non-ASCII", bodyOf(key, `"tags":{"x":"é"}`), jsonHeaders, ReasonTags},
+		{"tag value", bodyOf(key, `"tags":{"x":1}`), jsonHeaders, ReasonRefused},
+		{"tag reserved", bodyOf(key, `"tags":{"aws:x":"x"}`), jsonHeaders, ReasonRefused},
+		{"referer", bodyOf(key, `"http_referer":"https://user@example.com"`), jsonHeaders, ReasonReferer},
+		{"categories", bodyOf(key, `"app_categories":["BAD"]`), jsonHeaders, ReasonRefused},
+		{"huge tokens", bodyOf(key, `"estimated_input_tokens":9223372036854775808`), jsonHeaders, ReasonEvaluatorInput},
+		{"no key identifier", []byte(`{"model":"z-ai/glm-5.3",` + key + `}`), jsonHeaders, ReasonRefused},
+		{"stream", bodyOf(key, `"stream":true`), jsonHeaders, ReasonStream},
+		{"settlement header", bodyOf(key),
+			Headers{ContentType: []string{"application/json"}, SettlementMode: []string{"sync"}}, ReasonSettlementAsync},
+		{"before the key: lax type", bodyOf(key, `"max_tokens":"64"`), jsonHeaders, ReasonLaxType},
+		{"before the key: dict key", bodyOf(key, `"tags":{" k":"v"}`), jsonHeaders, ReasonDictKeyStrip},
+		{"before the key: refused field", bodyOf(key, `"region":5`), jsonHeaders, ReasonRefused},
+		{"before the key: bad key", bodyOf(`"cache_affinity_key":"not-hex"`, `"tags":{"x":"é"}`), jsonHeaders, ReasonRefused},
+		{"no key", bodyOf(`"tags":{"x":"é"}`), jsonHeaders, ReasonTags},
+	} {
+		_, p := ParseRequest(c.body, c.headers)
+		if p.Reason != c.reason {
+			t.Errorf("%s: pass %q, want %q", c.name, p.Reason, c.reason)
 		}
 	}
 }

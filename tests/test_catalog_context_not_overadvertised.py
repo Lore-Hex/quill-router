@@ -248,6 +248,48 @@ def test_only_the_makers_api_window_counts(
     ) == ("deepinfra", 524_288)
 
 
+def test_ingest_preserves_host_windows_and_native_api_precedence(tmp_path, monkeypatch):
+    _ingest_m3(
+        tmp_path, monkeypatch,
+        endpoints=[("minimax", 524_288), ("novita", 1_000_000), ("deepinfra", 1_048_576)],
+        api_windows={("minimax", M3): 1_048_576, ("deepinfra", M3): 1_000_000},
+    )
+    models, endpoints = _ingested_models_and_endpoints()
+    assert models[M3].context_length == 1_048_576
+    assert {endpoint.provider: endpoint.context_length for endpoint in endpoints.values()} == {
+        "minimax": 1_048_576, "novita": 1_000_000, "deepinfra": 1_000_000,
+    }
+    assert {endpoint.usage_type for endpoint in endpoints.values()} == {"Credits", "BYOK"}
+
+
+@pytest.mark.parametrize("unusable", [None, 0, -1, "1000000", 1_000_000.0, True, {}])
+def test_unknown_host_window_preserves_model_fallback(tmp_path, monkeypatch, unusable):
+    _ingest_m3(tmp_path, monkeypatch, endpoints=[("novita", unusable)], api_windows={})
+    models, endpoints = _ingested_models_and_endpoints()
+    assert endpoints
+    for endpoint in endpoints.values():
+        assert endpoint.context_length == 0
+        assert endpoint.effective_context_length(models[M3]) == 1_048_576
+
+
+def test_native_manifests_keep_per_endpoint_windows():
+    """Native imports must not replace host windows with a shared model value."""
+    _, endpoints = catalog_ingest._supplemental_provider_models_and_endpoints()
+    rows = {}
+    for path in catalog_ingest._PROVIDER_MODELS_DIR.glob("*.json"):
+        payload = json.loads(path.read_text())
+        for row in payload.get("models", []):
+            if type(row.get("context_length")) is int and row["context_length"] > 0:
+                rows[(payload["provider"], row["id"])] = row["context_length"]
+    checked = 0
+    for endpoint in endpoints.values():
+        window = rows.get((endpoint.provider, endpoint.model_id))
+        if window:
+            assert endpoint.context_length == window
+            checked += 1
+    assert checked > 0
+
+
 def test_api_windows_come_from_marked_routable_rows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -693,11 +693,17 @@ func (c *Cache) takeRefresh(ctx context.Context) bool {
 	}
 	select {
 	case c.reads <- struct{}{}:
-		return true
 	case <-ctx.Done():
 		<-c.refreshes
 		return false
 	}
+	// A select with a slot free and ctx ended picks either case at random,
+	// so a cancelled refresh could still begin a read; it must not.
+	if ctx.Err() != nil {
+		c.releaseRefresh()
+		return false
+	}
+	return true
 }
 
 func (c *Cache) releaseRefresh() {

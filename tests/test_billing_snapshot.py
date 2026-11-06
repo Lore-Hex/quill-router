@@ -272,6 +272,158 @@ def test_freeze_resolves_missing_vs_explicit_cache(case: dict[str, Any]) -> None
                             billing.Eligibility()).charge_micro == case["expected_charge_micro"]
 
 
+class _PastTheRawChecks(Exception):
+    pass
+
+
+def _build_accepts_raw_prices(endpoint: ModelEndpoint) -> bool:
+    """Whether build_snapshot gets past its raw price checks: its next step,
+    endpoint_pricing_candidate, is replaced by a sentinel, so a refusal for any
+    later reason (provider, request fee, tier order) cannot answer for them."""
+    def past(_endpoint: Any) -> Any:
+        raise _PastTheRawChecks
+
+    with patch.object(billing, "endpoint_pricing_candidate", past):
+        try:
+            billing.build_snapshot([endpoint], billing.Eligibility())
+        except _PastTheRawChecks:
+            return True
+        except ValidationError:
+            return False
+    raise AssertionError("build_snapshot returned without pricing the endpoint")
+
+
+def _raw_counterexamples() -> list[tuple[str, ModelEndpoint, bool]]:
+    base = endpoint_from_candidate(CASES[4]["snapshot"]["candidates"][0])
+    tier = base.price_tiers[0]
+    return [
+        ("the fixture endpoint", base, True),
+        # The design review's counterexample: endpoint_pricing_candidate
+        # publishes 0, build_snapshot refuses the float.
+        ("a request price of 0.5", replace(base, request_price_microdollars=0.5), False),
+        ("an integral float request price", replace(base, request_price_microdollars=1.0), False),
+        ("a boolean request price", replace(base, request_price_microdollars=True), False),
+        ("a string prompt price", replace(base, prompt_price_microdollars_per_million_tokens="1"), False),
+        ("a negative prompt price", replace(base, prompt_price_microdollars_per_million_tokens=-1), False),
+        ("a completion price past int64",
+         replace(base, completion_price_microdollars_per_million_tokens=billing.MAX_INT + 1), False),
+        ("a completion price at int64's maximum",
+         replace(base, completion_price_microdollars_per_million_tokens=billing.MAX_INT), True),
+        ("a float tier prompt rate", replace(base, price_tiers=(
+            replace(tier, prompt_price_microdollars_per_million_tokens=1.5),)), False),
+        ("a float tier completion rate", replace(base, price_tiers=(
+            replace(tier, completion_price_microdollars_per_million_tokens=2.5),)), False),
+        ("a float tier cached rate", replace(base, price_tiers=(
+            replace(tier, prompt_cached_price_microdollars_per_million_tokens=0.5),)), False),
+        ("a float tier bound", replace(base, price_tiers=(
+            replace(tier, max_prompt_tokens=100.5), replace(tier, max_prompt_tokens=None))), False),
+        ("a negative tier bound", replace(base, price_tiers=(
+            replace(tier, max_prompt_tokens=-1), replace(tier, max_prompt_tokens=None))), False),
+        ("an absent tier cached rate", replace(base, price_tiers=(
+            replace(tier, prompt_cached_price_microdollars_per_million_tokens=None),)), True),
+        ("no tiers", replace(base, price_tiers=()), True),
+    ]
+
+
+def test_raw_prices_valid_is_total() -> None:
+    """A shape the raw checks cannot walk is a refusal, not an exception:
+    build_snapshot keeps raising what it raised, raw_prices_valid answers
+    false (tests/test_async_settle_ticket.py's fixture with no tier tuple)."""
+    base = endpoint_from_candidate(CASES[4]["snapshot"]["candidates"][0])
+    for name, endpoint, error in (
+        ("no tier tuple", replace(base, price_tiers=None), TypeError),
+        ("a tier without rates", replace(base, price_tiers=(object(),)), AttributeError),
+    ):
+        assert billing.raw_prices_valid(endpoint) is False, name
+        with pytest.raises(error):
+            billing.build_snapshot([endpoint], billing.Eligibility())
+
+
+@pytest.mark.parametrize(("name", "endpoint", "valid"), _raw_counterexamples(),
+                         ids=[c[0] for c in _raw_counterexamples()])
+def test_raw_prices_valid_is_build_snapshots_raw_check(name: str, endpoint: ModelEndpoint, valid: bool) -> None:
+    assert billing.raw_prices_valid(endpoint) is valid, name
+    assert _build_accepts_raw_prices(endpoint) is valid, name
+    if not valid:
+        # Unpatched, build_snapshot still refuses exactly as before.
+        with pytest.raises(ValidationError):
+            billing.build_snapshot([endpoint], billing.Eligibility())
+
+
+def test_the_half_microdollar_request_price_publishes_as_zero() -> None:
+    """Why the routing snapshot needs billing_valid: its price coerces."""
+    from trusted_router.stage_d import endpoint_pricing_candidate
+
+    base = endpoint_from_candidate(CASES[4]["snapshot"]["candidates"][0])
+    half = replace(base, request_price_microdollars=0.5)
+    assert endpoint_pricing_candidate(half) == endpoint_pricing_candidate(replace(base, request_price_microdollars=0))
+    assert billing.raw_prices_valid(replace(base, request_price_microdollars=0)) is True
+    assert billing.raw_prices_valid(half) is False
+
+
+def test_the_shape_check_names_exactly_what_the_raw_checks_read() -> None:
+    """_raw_price_shape's lists are the attributes _require_raw_prices reads,
+    and real fields: a misspelling in either fails here, not as a silent
+    false on every endpoint."""
+    from dataclasses import fields
+
+    class Recording:
+        def __init__(self, target: Any, seen: list[str]) -> None:
+            self._target, self._seen = target, seen
+
+        def __getattr__(self, name: str) -> Any:
+            self._seen.append(name)
+            value = getattr(self._target, name)
+            if name == "price_tiers":
+                return tuple(Recording(tier, tier_seen) for tier in value)
+            return value
+
+    endpoint_seen: list[str] = []
+    tier_seen: list[str] = []
+    base = endpoint_from_candidate(CASES[4]["snapshot"]["candidates"][0])
+    assert base.price_tiers
+    billing._require_raw_prices(Recording(base, endpoint_seen))
+    assert set(endpoint_seen) == {*billing.RAW_ENDPOINT_PRICE_FIELDS, "price_tiers"}
+    assert set(tier_seen) == set(billing.RAW_TIER_PRICE_FIELDS)
+    assert set(billing.RAW_ENDPOINT_PRICE_FIELDS) <= {f.name for f in fields(ModelEndpoint)}
+    assert set(billing.RAW_TIER_PRICE_FIELDS) <= {f.name for f in fields(PriceTier)}
+
+
+def test_a_defect_in_the_raw_checks_propagates() -> None:
+    """Only the ValidationError the checks raise on purpose is a refusal: a
+    programming error inside them is not turned into a false."""
+    base = endpoint_from_candidate(CASES[4]["snapshot"]["candidates"][0])
+    assert billing.raw_prices_valid(base) is True  # positive control
+
+    class Broken:
+        def validate_python(self, value: Any) -> Any:
+            raise KeyError("a defect in the checker")
+
+    with patch.object(billing, "TypeAdapter", lambda _type: Broken()), pytest.raises(KeyError):
+        billing.raw_prices_valid(base)
+
+    def misspelled(endpoint: Any) -> None:
+        TypeAdapter(billing.UInt).validate_python(endpoint.request_price_microdollar)
+
+    with patch.object(billing, "_require_raw_prices", misspelled), pytest.raises(AttributeError):
+        billing.raw_prices_valid(base)
+
+
+def test_raw_prices_valid_matches_build_snapshot_on_every_live_endpoint() -> None:
+    from trusted_router.catalog import effective_endpoint
+    from trusted_router.catalog_registry import CATALOG_RESOLVED_AT, MODEL_ENDPOINTS
+
+    endpoints = list(MODEL_ENDPOINTS.values())
+    assert len(endpoints) > 1_000
+    accepted = 0
+    for endpoint in endpoints:
+        for candidate in (endpoint, effective_endpoint(endpoint, at=CATALOG_RESOLVED_AT)):
+            valid = billing.raw_prices_valid(candidate)
+            assert valid is _build_accepts_raw_prices(candidate), candidate.id
+            accepted += valid
+    assert accepted > 0
+
+
 def test_builder_copies_and_sorts_and_freezes() -> None:
     first = endpoint_from_candidate(CASES[4]["snapshot"]["candidates"][0])
     second = endpoint_from_candidate(CASES[5]["snapshot"]["candidates"][0])

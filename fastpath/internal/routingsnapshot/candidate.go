@@ -11,11 +11,15 @@ import "slices"
 // EndpointFacts are an endpoint's fields the 200 writes: its id, model,
 // upstream model, provider and the provider's name, its usage type,
 // its inference location (the snapshot's, which the response re-orders) and
-// whether a Wafer endpoint requires ZDR.
+// whether a Wafer endpoint requires ZDR; and its price epochs, from which
+// the async-v1 additions' billing snapshot prices it at the compose's
+// instant (docs/design/fast-admission-e2-g15-async.md section 3.2). Epochs
+// is the snapshot's own slice, never written.
 type EndpointFacts struct {
 	ID, ModelID, UpstreamModel, Provider, ProviderName, UsageType string
 	InferenceLocation                                             InferenceLocation
 	WaferZDRRequired                                              bool
+	Epochs                                                        []Epoch
 }
 
 // Endpoint is an endpoint's facts by id; ok is false for an id the snapshot
@@ -41,6 +45,7 @@ func (s *Snapshot) Endpoint(id string) (EndpointFacts, bool) {
 		UsageType:         e.UsageType,
 		InferenceLocation: e.Response.InferenceLocation,
 		WaferZDRRequired:  e.Response.WaferZDRRequired,
+		Epochs:            e.Epochs,
 	}, true
 }
 

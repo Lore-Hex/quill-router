@@ -339,7 +339,7 @@ def _handle(payload: dict[str, Any], settings: Settings) -> dict[str, Any] | Non
 
 def register_advisor_mcp_routes(app: FastAPI, settings: Settings) -> None:
     @app.get("/.well-known/openai-apps-challenge", include_in_schema=False)
-    async def openai_apps_challenge() -> Response:
+    def openai_apps_challenge() -> Response:
         # Public ownership proof issued to Lore Hex Corp's Model Advisor draft.
         # This is not a credential. Keep it stable while that plugin is listed.
         return PlainTextResponse(

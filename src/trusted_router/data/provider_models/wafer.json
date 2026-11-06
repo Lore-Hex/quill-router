@@ -2,10 +2,10 @@
   "_about": "Provider-native supplement for Wafer serverless API. Refreshed hourly from Wafer's OpenAI-compatible /v1/models feed.",
   "provider": "wafer",
   "source": "https://pass.wafer.ai/v1/models",
-  "generated_at": "2026-10-20T12:05:14Z",
+  "generated_at": "2026-11-03T19:48:25Z",
   "price_scale": "microdollars_per_million",
   "zdr_header": "Wafer-ZDR: required",
-  "model_count": 15,
+  "model_count": 17,
   "models": [
     {
       "id": "minimax/minimax-m3",
@@ -138,8 +138,8 @@
       ],
       "zdr_supported": true,
       "context_length": 1048576,
-      "input_token_price_per_m": 140000,
-      "output_token_price_per_m": 280000,
+      "input_token_price_per_m": 130000,
+      "output_token_price_per_m": 230000,
       "cached_input_token_price_per_m": 28000,
       "supported_features": [
         "tools",
@@ -164,9 +164,9 @@
       "output_modalities": [
         "text"
       ],
-      "input_token_price_per_m": 3000000,
+      "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 15000000,
-      "cached_input_token_price_per_m": 300000,
+      "cached_input_token_price_per_m": 250000,
       "supported_features": [
         "tools",
         "json-mode",
@@ -209,8 +209,8 @@
       ],
       "zdr_supported": true,
       "context_length": 1048576,
-      "input_token_price_per_m": 150000,
-      "output_token_price_per_m": 500000,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 200000,
       "cached_input_token_price_per_m": 30000,
       "input_modalities": [
         "text",
@@ -236,9 +236,9 @@
       "zdr_supported": true,
       "context_length": 1048576,
       "routable": true,
-      "input_token_price_per_m": 1400000,
-      "output_token_price_per_m": 4400000,
-      "cached_input_token_price_per_m": 260000,
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 3000000,
+      "cached_input_token_price_per_m": 180000,
       "supported_features": [
         "tools",
         "json-mode",
@@ -282,8 +282,8 @@
       "output_modalities": [
         "text"
       ],
-      "input_token_price_per_m": 300000,
-      "output_token_price_per_m": 1200000,
+      "input_token_price_per_m": 190000,
+      "output_token_price_per_m": 650000,
       "cached_input_token_price_per_m": 6000,
       "supported_features": [
         "tools",
@@ -301,7 +301,7 @@
       ],
       "zdr_supported": true,
       "context_length": 1048576,
-      "input_token_price_per_m": 1320000,
+      "input_token_price_per_m": 280000,
       "output_token_price_per_m": 3960000,
       "cached_input_token_price_per_m": 44000,
       "supported_features": [
@@ -327,15 +327,70 @@
       "output_modalities": [
         "text"
       ],
-      "input_token_price_per_m": 420000,
-      "output_token_price_per_m": 2550000,
-      "cached_input_token_price_per_m": 85000,
+      "input_token_price_per_m": 60000,
+      "output_token_price_per_m": 2300000,
+      "cached_input_token_price_per_m": 50000,
       "supported_features": [
         "tools",
         "json-mode",
         "structured-outputs",
         "reasoning"
       ]
+    },
+    {
+      "id": "deepseek/deepseek-v4.1-flash-1017",
+      "upstream_id": "DeepSeek-V4.1-Flash-1017",
+      "display_name": "DeepSeek-V4.1-Flash-1017",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "zdr_supported": true,
+      "supported_features": [
+        "tools",
+        "json-mode",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "context_length": 1048576,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "input_token_price_per_m": 130000,
+      "output_token_price_per_m": 500000,
+      "cached_input_token_price_per_m": 3000
+    },
+    {
+      "id": "minimax/minimax-m3.1-flash",
+      "upstream_id": "MiniMax-M3.1-Flash",
+      "display_name": "MiniMax-M3.1-Flash",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "zdr_supported": true,
+      "supported_features": [
+        "tools",
+        "json-mode",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "context_length": 1048576,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 600000,
+      "cached_input_token_price_per_m": 15000,
+      "missing_since": "2026-11-01",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     }
   ]
 }

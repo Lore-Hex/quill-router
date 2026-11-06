@@ -146,7 +146,8 @@ def test_serving_provider_badges_keep_byok_separate(monkeypatch: pytest.MonkeyPa
         PROVIDERS["openai"], provider_zero_data_retention=False, prepaid_zero_data_retention=True,
         provider_confidential_compute=False, provider_e2ee=False,
     ))
-    base = replace(next(iter(MODEL_ENDPOINTS.values())), provider="openai", model_id="openai/test")
+    base = replace(next(iter(MODEL_ENDPOINTS.values())), provider="openai",
+                   model_id="openai/gpt-4.1", upstream_id="gpt-4.1")
     for usage, expected in [("Credits", True), ("BYOK", False)]:
         views = _endpoint_provider_views([replace(base, usage_type=usage)], fallback_provider="openai")
         assert views[0]["zdr_available"] is expected

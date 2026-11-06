@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from datetime import timedelta
 
 import pytest
+from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
 
 from tests.fixture_routes import serve_on_fixture_route
@@ -29,9 +30,20 @@ def test_every_dedicated_seo_page_renders_current_catalog_evidence(
     for page_key in seo_pages:
         response = client.get(f"/{page_key}")
         assert response.status_code == 200, page_key
-        assert "Live catalog evidence" in response.text, page_key
-        assert "configured routes" in response.text, page_key
-        assert "/static/provider-logos/" in response.text, page_key
+        evidence = BeautifulSoup(response.text, "html.parser").select_one(
+            'section[aria-labelledby="seo-evidence-heading"]'
+        )
+        assert evidence is not None, page_key
+        heading = evidence.select_one("h2")
+        assert heading is not None, page_key
+        if page_key == "openrouter-alternative":
+            assert heading.get_text(strip=True) == "Current models, routes, prices, and privacy."
+            assert evidence.select_one(".eyebrow") is None
+        else:
+            assert "Live catalog evidence" in evidence.get_text(), page_key
+        assert "configured routes" in evidence.get_text(), page_key
+        assert evidence.select_one(".seo-evidence-table tbody tr") is not None, page_key
+        assert "/static/provider-logos/" in str(evidence), page_key
 
 
 def test_seo_evidence_counts_the_live_public_catalog(

@@ -49,7 +49,8 @@ type Node struct {
 	done     chan struct{}
 }
 
-// Start joins and starts the node's heartbeats.
+// Start joins and starts the node's heartbeats. ctx is the join's alone:
+// the heartbeats run until Stop.
 func Start(ctx context.Context, m Membership, address string, roles []string, interval time.Duration) (*Node, error) {
 	return start(ctx, m, address, roles, interval, nil)
 }

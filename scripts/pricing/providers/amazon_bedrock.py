@@ -25,6 +25,8 @@ from scripts.pricing.manifest import (
 )
 from scripts.pricing.model_ids import mapped_or_canonical_model_id
 from scripts.pricing.openai_catalog import probe_openai_chat
+from scripts.pricing.providers import amazon_bedrock_runtime as runtime
+from trusted_router.provider_contracts import BEDROCK_RUNTIME_GATEWAY_REGIONS
 
 SLUG = "amazon-bedrock"
 REGION = "us-east-1"
@@ -37,6 +39,7 @@ UPSTREAM_ID_MAP: dict[str, str] = {}
 _DISCOVERED_ROWS: dict[str, dict[str, Any]] = {}
 _SKU = re.compile(r"USE1-(.+)-mantle-(input|output|cache-read)-tokens-standard")
 _MODEL_MAP = {
+    **{profile.removeprefix("us."): model for model, profile in runtime.PROFILES.items()},
     "google.gemma-4-31b": "google/gemma-4-31b-it",
     "nvidia.nemotron-nano-3-30b": "nvidia/nemotron-3-nano-30b-a3b",
     "nvidia.nemotron-super-3-120b": "nvidia/nemotron-3-super-120b-a12b",
@@ -219,14 +222,21 @@ def fetch() -> ProviderPricingResult:
         limits = pool.map(lambda model: fetch_model_limits(rows[model]["upstream_id"]), prices)
         for model, metadata in zip(prices, limits, strict=True):
             rows[model].update(metadata)
-    checked = sorted(models_requiring_canary(MANIFEST_PATH, set(prices)))
+    # A reviewed Claude Runtime profile must never be priced, probed or dispatched
+    # as the similarly named Mantle model. Exact Runtime rows replace that alias.
+    prices.update(runtime.fetch_runtime_prices())
+    rows.update(runtime.fetch_runtime_rows(key))
+    checked = sorted(models_requiring_canary(MANIFEST_PATH, set(prices)) | set(runtime.PROFILES))
     with ThreadPoolExecutor(max_workers=4) as pool:
-        outcomes = list(pool.map(lambda model: probe_openai_chat(
+        outcomes = list(pool.map(lambda model: runtime.probe_runtime(key, model) if model in runtime.PROFILES else probe_openai_chat(
             base_url=BASE_URL, api_key=key, model=rows[model]["upstream_id"],
             max_tokens=512, require_message=True, require_usage=True, prompt="Reply exactly PONG.",
         ), checked))
     healthy = {model for model, ok in zip(checked, outcomes, strict=True) if ok}
     apply_canary_results(rows, checked_model_ids=checked, healthy_model_ids=healthy)
+    if not BEDROCK_RUNTIME_GATEWAY_REGIONS:
+        for model in runtime.PROFILES:
+            rows[model].update(routable=False, routable_reason="runtime-enclave-rollout-pending")
     UPSTREAM_ID_MAP.update({model: row["upstream_id"] for model, row in rows.items()})
     _DISCOVERED_ROWS = rows
     return ProviderPricingResult(slug=SLUG, prices=prices, source="api", fetched_url=PRICING_URL,

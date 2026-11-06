@@ -62,6 +62,7 @@ func (l *Lease) flush() {
 		if err == nil {
 			now := l.o.cfg.Clock()
 			s.acked, s.ackedAt, s.beforeCutoff = true, now, l.withinCutoff(now)
+			l.o.tally.ack(l.o.tally.clock().Sub(s.handedAt))
 			l.pending -= s.freed
 			l.inflight = l.inflight[1:]
 			l.live--
@@ -70,6 +71,13 @@ func (l *Lease) flush() {
 			l.mu.Unlock()
 			backoff = firstBackoff
 			continue
+		}
+		// A failure is counted once per publish: past the cutoff the flusher
+		// waits on the same failed publish again at each kick, and a record
+		// not sent yet was never published.
+		if !s.failCounted && !errors.Is(err, errNotSent) {
+			s.failCounted = true
+			l.o.tally.publishFailed()
 		}
 		// Every record not acknowledged awaits its republish now.
 		now := l.o.cfg.Clock()
@@ -131,7 +139,7 @@ func (l *Lease) republishSome() bool {
 			return false
 		}
 		x := l.inflight[l.live]
-		x.waiter = l.o.pub.Publish(l.id, x.data)
+		x.waiter, x.failCounted = l.o.pub.Publish(l.id, x.data), false
 		l.live++
 	}
 	return l.live < len(l.inflight)

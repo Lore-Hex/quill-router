@@ -3,9 +3,9 @@
   "provider": "makora",
   "source": "https://inference.makora.com/v1/models",
   "pricing_source": "https://inference.makora.com/v1/models",
-  "generated_at": "2026-10-20T12:05:14Z",
+  "generated_at": "2026-11-05T11:29:32Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 19,
+  "model_count": 22,
   "models": [
     {
       "id": "deepseek/deepseek-v4-flash",
@@ -102,8 +102,8 @@
       "endpoints": [
         "chat/completions"
       ],
-      "input_token_price_per_m": 70000,
-      "output_token_price_per_m": 240000,
+      "input_token_price_per_m": 80000,
+      "output_token_price_per_m": 100000,
       "input_modalities": [
         "text",
         "image",
@@ -483,9 +483,9 @@
         "seed",
         "max_tokens"
       ],
-      "input_token_price_per_m": 650000,
-      "output_token_price_per_m": 15000000,
-      "cached_input_token_price_per_m": 230000
+      "input_token_price_per_m": 360000,
+      "output_token_price_per_m": 12000000,
+      "cached_input_token_price_per_m": 160000
     },
     {
       "id": "z-ai/glm-5.3-flash",
@@ -524,8 +524,8 @@
         "presence_penalty"
       ],
       "input_token_price_per_m": 140000,
-      "output_token_price_per_m": 470000,
-      "cached_input_token_price_per_m": 24000,
+      "output_token_price_per_m": 240000,
+      "cached_input_token_price_per_m": 30000,
       "routable": true,
       "max_output_tokens": 131072
     },
@@ -565,9 +565,9 @@
         "max_tokens",
         "seed"
       ],
-      "input_token_price_per_m": 140000,
-      "output_token_price_per_m": 4400000,
-      "cached_input_token_price_per_m": 100000
+      "input_token_price_per_m": 180000,
+      "output_token_price_per_m": 3000000,
+      "cached_input_token_price_per_m": 125000
     },
     {
       "id": "qwen/qwen3.8-flash-next",
@@ -691,9 +691,9 @@
         "seed",
         "max_tokens"
       ],
-      "input_token_price_per_m": 130000,
+      "input_token_price_per_m": 140000,
       "output_token_price_per_m": 280000,
-      "cached_input_token_price_per_m": 2000
+      "cached_input_token_price_per_m": 3000
     },
     {
       "display_name": "tencent/Hy4-preview",
@@ -742,7 +742,8 @@
       "title": "meta-models/Muse-Spark-Open-816B-A42B-NVFP4",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -756,7 +757,106 @@
       "context_length": 1048576,
       "input_token_price_per_m": 1250000,
       "output_token_price_per_m": 4250000,
-      "cached_input_token_price_per_m": 150000
+      "cached_input_token_price_per_m": 150000,
+      "max_output_tokens": 131072,
+      "features": [
+        "tools",
+        "json_mode",
+        "structured_outputs",
+        "logprobs",
+        "reasoning"
+      ],
+      "supported_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "max_tokens"
+      ]
+    },
+    {
+      "display_name": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+      "title": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4.1-flash-1017",
+      "upstream_id": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+      "context_length": 1048576,
+      "max_output_tokens": 943718,
+      "features": [
+        "tools",
+        "logprobs",
+        "json_mode",
+        "reasoning",
+        "structured_outputs"
+      ],
+      "supported_parameters": [
+        "temperature",
+        "top_p",
+        "max_tokens",
+        "top_k",
+        "stop"
+      ],
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 1200000,
+      "cached_input_token_price_per_m": 6000,
+      "routable": true
+    },
+    {
+      "display_name": "Cloudflare/clef-flash",
+      "title": "Cloudflare/clef-flash",
+      "model_type": "discovery",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [],
+      "endpoints": [],
+      "status": 1,
+      "id": "cloudflare/clef-flash",
+      "upstream_id": "Cloudflare/clef-flash",
+      "routable": false,
+      "routable_reason": "unsupported-chat-endpoint",
+      "context_length": 16384,
+      "input_token_price_per_m": 18000,
+      "output_token_price_per_m": 0,
+      "cached_input_token_price_per_m": 0
+    },
+    {
+      "display_name": "perplexity-ai/pplx-decider-v1.2",
+      "title": "perplexity-ai/pplx-decider-v1.2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "perplexity-ai/pplx-decider-v1.2",
+      "upstream_id": "perplexity-ai/pplx-decider-v1.2",
+      "context_length": 262144,
+      "input_token_price_per_m": 20000,
+      "output_token_price_per_m": 0,
+      "cached_input_token_price_per_m": 0
     }
   ]
 }

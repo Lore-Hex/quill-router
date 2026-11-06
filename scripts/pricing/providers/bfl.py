@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,7 @@ from scripts.pricing.manifest import guard_fixed_output_prices, write_discovered
 SLUG = "bfl"
 OPENAPI_URL = "https://api.bfl.ai/openapi.json"
 PRICING_URL = "https://docs.bfl.ml/quick_start/pricing"
+CALCULATOR_URL = "https://bfl.ai/pricing"
 MANIFEST_PATH = (
     Path(__file__).resolve().parents[3] / "src/trusted_router/data/provider_models/bfl.json"
 )
@@ -51,6 +53,55 @@ def _parse_pricing(html: str) -> dict[str, int]:
     return prices
 
 
+def _parse_calculator_pricing(html: str) -> dict[str, int]:
+    """Read BFL's server-rendered calculator data without executing JavaScript.
+
+    firstMpPrice is in credits (one cent), not dollars or the subsequent-MP
+    rate. Only our existing text-to-image endpoints and 1K price are imported.
+    """
+    endpoints = {f"/v1/{upstream}": model for model, upstream in MODELS.values()}
+    prices: dict[str, int] = {}
+    decoder = json.JSONDecoder()
+    for script in BeautifulSoup(html, "html.parser").find_all("script"):
+        match = re.fullmatch(r"self\.__next_f\.push\((.*)\);?", script.get_text().strip(), re.DOTALL)
+        if match is None:
+            continue
+        try:
+            call = json.loads(match.group(1))
+            if not isinstance(call, list) or len(call) != 2 or not isinstance(call[1], str):
+                continue
+            value, _ = decoder.raw_decode(call[1].split(":", 1)[1].lstrip())
+        except (ValueError, IndexError):
+            continue
+        pending = [value]
+        while pending:
+            value = pending.pop()
+            if isinstance(value, list):
+                pending.extend(value)
+            elif isinstance(value, dict):
+                pending.extend(value.values())
+                cards = value.get("pricingCards")
+                if not isinstance(cards, list):
+                    continue
+                for card in cards:
+                    if not isinstance(card, dict):
+                        continue
+                    model = endpoints.get(str(card.get("apiEndpoint")))
+                    if model is None:
+                        continue
+                    try:
+                        amount = Decimal(str(card.get("firstMpPrice"))) * 10_000
+                    except InvalidOperation as exc:
+                        raise ValueError("BFL calculator has an invalid first-MP price") from exc
+                    if not amount.is_finite() or amount <= 0 or amount != amount.to_integral_value():
+                        raise ValueError("BFL calculator has an invalid first-MP price")
+                    price = int(amount)
+                    if model in prices and prices[model] != price:
+                        raise ValueError("BFL calculator has conflicting first-MP prices")
+                    prices[model] = price
+    return prices
+
+
 def fetch() -> ProviderPricingResult:
     global _DISCOVERED_ROWS  # noqa: PLW0603
     key = os.environ.get("BFL_API_KEY", "").strip()
@@ -58,6 +109,10 @@ def fetch() -> ProviderPricingResult:
         raise RuntimeError("bfl: BFL_API_KEY is required")
     html = fetch_html(PRICING_URL)
     fixed_prices = _parse_pricing(html)
+    pricing_source = PRICING_URL
+    if any(model_id not in fixed_prices for model_id, _ in MODELS.values()):
+        fixed_prices = _parse_calculator_pricing(fetch_html(CALCULATOR_URL))
+        pricing_source = CALCULATOR_URL
     with httpx.Client(timeout=20, follow_redirects=False) as client:
         catalog = client.get(OPENAPI_URL)
         catalog.raise_for_status()
@@ -92,7 +147,7 @@ def fetch() -> ProviderPricingResult:
         slug=SLUG,
         prices=prices,
         source="api",
-        fetched_url=PRICING_URL,
+        fetched_url=pricing_source,
         include_in_price_index=INCLUDE_IN_PRICE_INDEX,
     )
 
@@ -103,5 +158,5 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         manifest_path=MANIFEST_PATH,
         discovered_rows=_DISCOVERED_ROWS,
         source_url=OPENAPI_URL,
-        pricing_source_url=PRICING_URL,
+        pricing_source_url=result.fetched_url,
     )

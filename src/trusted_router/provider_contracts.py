@@ -1,5 +1,30 @@
 """Pinned provider contract identifiers shared by runtime and refresh code."""
 
+MAPLE_MODEL_ID = "dealignai/deepseek-v4.1-flash-1017-uncensored"
+MAPLE_NATIVE_ID = "deepseek-v4-1-flash-1017-uncensored"
+# The Transport V2 helper and cloud-local key must be verified in each fleet
+# before its region is admitted. Unknown regions remain unavailable.
+MAPLE_GATEWAY_REGIONS: frozenset[str] = frozenset({
+    "us-central1", "us-east4", "europe-west4", "us-west1",
+    "aws-eu-west-1", "aws-eu-west-3", "azure-uaenorth", "azure-australiaeast",
+})
+
+# AWS BootstrapData.Region and Azure QUILL_AZURE_REGION carry native names.
+# These are alternate wire names for reviewed fleets, not additional locations.
+_NATIVE_GATEWAY_ORIGINS = {
+    "aws-eu-west-1": "eu-west-1",
+    "aws-eu-west-3": "eu-west-3",
+    "azure-uaenorth": "uaenorth",
+    "azure-australiaeast": "australiaeast",
+}
+
+
+def qualified_gateway_origin_names(regions: frozenset[str]) -> frozenset[str]:
+    """Admit a native wire name only while its exact fleet remains qualified."""
+    return regions | frozenset(
+        native for fleet, native in _NATIVE_GATEWAY_ORIGINS.items() if fleet in regions
+    )
+
 SAKANA_FUGU_MODEL_ID = "sakana-ai/fugu-ultra-v1.1"
 SAKANA_NAMAZU_MODEL_ID = "sakana-ai/sakana-namazu-v1.0"
 SAKANA_NAMAZU_ROUTE_HOLD_REASON = "provider-geographic-restriction"
@@ -15,6 +40,8 @@ NEXTBIT_UNAVAILABLE_MODEL_IDS = frozenset({
 })
 STREAMLAKE_KIMI_K2_0905_MODEL_ID = "moonshotai/kimi-k2-instruct-0905"
 STREAMLAKE_KIMI_K2_0905_HOLD_REASON = "provider-model-not-found"
+PEARL_GEMMA_4_31B_MODEL_ID = "google/gemma-4-31b-it"
+PEARL_GEMMA_4_31B_HOLD_REASON = "provider-model-not-found"
 THIRD_PARTY_PASSTHROUGH_HOLD_REASON = "third-party-passthrough-disabled"
 # These providers also advertise third-party API wrappers. Only their native
 # hosted namespaces may route here; the original providers serve passthroughs.
@@ -46,6 +73,11 @@ PREPAID_PROVIDER_HOLD_REASONS: dict[str, str] = {
 PROVIDER_INCIDENT_HOLD_REASONS = {"lightning": "provider-security-incident"}
 OPERATOR_HELD_PROVIDER_MODELS = frozenset(
     {
+        # OpenAI publishes these weights but its hosted API does not serve
+        # them. A customer key cannot turn publisher identity into a route.
+        # Keep actual GPT-OSS hosts available for prepaid and BYOK requests.
+        ("openai", "openai/gpt-oss-20b"),
+        ("openai", "openai/gpt-oss-120b"),
         ("sakana", SAKANA_NAMAZU_MODEL_ID),
         # A listed alias is not proof of serving availability. Require a
         # reviewed recovery before refresh can re-enable this route.
@@ -55,6 +87,9 @@ OPERATOR_HELD_PROVIDER_MODELS = frozenset(
         # Public catalog/pricing still list this ID. Require a reviewed live
         # recovery before re-enabling; no official retirement date is known.
         ("streamlake", STREAMLAKE_KIMI_K2_0905_MODEL_ID),
+        # October 28: authenticated inference returns 404 model_not_found for
+        # the catalog's exact native ID. Discovery alone cannot restore it.
+        ("pearl", PEARL_GEMMA_4_31B_MODEL_ID),
         # September 20: discovery admits these standard RedPill IDs, but the
         # enclave's reviewed Phala dispatch map does not. Keep them out of
         # routing until a reviewed adapter release, not an attestation bypass.
@@ -100,6 +135,19 @@ UNSUPPORTED_GATEWAY_REGIONS_BY_PROVIDER_MODEL = {
 # QCP #535 must be verified on a gateway fleet before it can serve Bedrock.
 # An upgraded GCP control plane may also authorize older AWS/Azure gateways.
 BEDROCK_GATEWAY_REGIONS = frozenset({"us-central1", "us-east4", "europe-west4", "us-west1"})
+BEDROCK_RUNTIME_PROFILES = {
+    "anthropic/claude-haiku-5.5": "us.anthropic.claude-haiku-5-5",
+    "anthropic/claude-sonnet-5.5": "us.anthropic.claude-sonnet-5-5",
+    "anthropic/claude-opus-5.5": "us.anthropic.claude-opus-5-5",
+    "anthropic/claude-sonnet-5": "us.anthropic.claude-sonnet-5",
+    "anthropic/claude-opus-4.8": "us.anthropic.claude-opus-4-8",
+}
+# Runtime dispatch needs QCP #630, included in the measured QCP #624 release.
+# Keep this separate from the legacy Mantle adapter's GCP-only admission.
+BEDROCK_RUNTIME_GATEWAY_REGIONS: frozenset[str] = frozenset({
+    "us-central1", "us-east4", "europe-west4", "us-west1",
+    "aws-eu-west-1", "aws-eu-west-3", "azure-uaenorth", "azure-australiaeast",
+})
 # Clairic needs the native /ai/run adapter. Publish only after the GCP fleet
 # rolls; older AWS/Azure gateways must not send extraction tasks to chat.
 CLAIRIC_GATEWAY_REGIONS = frozenset({"us-central1", "us-east4", "europe-west4", "us-west1"})
@@ -155,8 +203,13 @@ def provider_model_available_from_gateway_region(
     model_id: str,
     gateway_region: str,
 ) -> bool:
+    if provider_slug == "maple":
+        return model_id == MAPLE_MODEL_ID and gateway_region in qualified_gateway_origin_names(MAPLE_GATEWAY_REGIONS)
     if provider_slug == "amazon-bedrock":
-        return gateway_region in BEDROCK_GATEWAY_REGIONS
+        return gateway_region in (
+            qualified_gateway_origin_names(BEDROCK_RUNTIME_GATEWAY_REGIONS) if model_id in BEDROCK_RUNTIME_PROFILES
+            else BEDROCK_GATEWAY_REGIONS
+        )
     required_regions = EXPLICIT_GATEWAY_REGIONS_BY_PROVIDER_MODEL.get((provider_slug, model_id))
     if required_regions is not None:
         return gateway_region in required_regions

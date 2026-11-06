@@ -14,13 +14,17 @@ hypothetical sensitivity input, not a measured explanation for released jobs.
 The injected ordering-fault scenario uses a synthetic 27ms claim-to-observation
 gap (10ms claim read + 17ms commit), not the production calibration distribution.
 It reverses 40% of sub-30ms observations by up to 40ms. No clock mechanism is
-inferred. A bound is honored with max(read stamp, bound); we conservatively
-charge the timestamp correction as extra RPC latency, not a Spanner prediction.
+inferred. By default a bound is honored with max(read stamp, bound); we
+conservatively charge the correction as extra RPC latency. Opt-in
+microsecond_reads floors read timestamps *after* applying the bound, reproducing
+the production probe. bound_wait_probability injects replica lag at a seeded
+fraction of observations; its RPC costs are synthetic, not measured traces.
 """
 from __future__ import annotations
 
 import heapq
 import importlib.util
+import inspect
 import json
 import os
 import random
@@ -51,15 +55,14 @@ from trusted_router.storage_gcp_shadow_io import _RECORDER
 ROOT = Path(__file__).resolve().parents[1]
 START = 896313600
 MODULE_SOURCES = (("observation", "storage_gcp_shadow_observation.py"),
-                  ("publisher", "services/async_settle_shadow_health.py"))
+                  ("publisher", "services/async_settle_shadow_health.py"),
+                  ("lifecycle", "async_settle_shadow_lifecycle.py"))
 
 
 def baseline_ref():
     """Use local baseline objects only; source archives need no Git metadata."""
-    candidates = ["origin/main"]
     base = os.environ.get("GITHUB_BASE_REF")
-    if base:
-        candidates.extend((base, f"origin/{base}"))
+    candidates = [base, f"origin/{base}", "origin/main"] if base else ["origin/main"]
     for ref in dict.fromkeys(candidates):
         try:
             for _, source in MODULE_SOURCES:
@@ -76,12 +79,27 @@ def modules(ref=None):
     """Import copies, never stash or change the working tree to run a baseline."""
     if ref == "baseline":
         ref = baseline_ref()
+    sources = []
+    for name, source in MODULE_SOURCES:
+        path = "src/trusted_router/" + source
+        try:
+            raw = (subprocess.check_output(["git", "show", f"{ref}:{path}"], cwd=ROOT,  # noqa: S603, S607 - local git revision, no shell
+                                          stderr=subprocess.PIPE)
+                   if ref else (ROOT/path).read_bytes())
+        except (OSError, subprocess.CalledProcessError):
+            if ref is None:
+                raise
+            pytest.skip(f"simulation revision {ref!r} unavailable: missing local source {path} "
+                        "(shallow checkout or absent Git metadata); worktree cases run independently")
+        sources.append((name, path, raw))
+    # Compare the actual blobs, including pinned historical controls, before
+    # importing either copy. Ref names do not tell us whether a fix is present.
+    if ref and all(raw == (ROOT/path).read_bytes() for _, path, raw in sources):
+        pytest.skip(f"simulation baseline {ref!r} source blobs are byte-identical to the worktree; "
+                    "positive control requires different sources; worktree cases run independently")
     result = []
     with tempfile.TemporaryDirectory() as directory:
-        for name, source in MODULE_SOURCES:
-            path = "src/trusted_router/" + source
-            raw = (subprocess.check_output(["git", "show", f"{ref}:{path}"], cwd=ROOT)  # noqa: S603, S607 - local git revision, no shell
-                   if ref else (ROOT/path).read_bytes())
+        for name, _, raw in sources:
             dest = Path(directory)/f"{name}.py"
             dest.write_bytes(raw)
             key = "shadow_sim_" + name
@@ -90,7 +108,8 @@ def modules(ref=None):
             sys.modules[key] = module
             spec.loader.exec_module(module)
             result.append(module)
-    storage, publisher = result
+    storage, publisher, lifecycle = result
+    publisher.lifecycle = lifecycle
     # The copied publisher must catch exceptions from the copied store too.
     for name in ("Budget", "ContentionLoss", "UnknownCommit", "ObservationStore"):
         setattr(publisher, name, getattr(storage, name))
@@ -98,9 +117,10 @@ def modules(ref=None):
 
 
 @pytest.mark.parametrize("available,expected", [
-    ({"origin/main", "release", "origin/release"}, "origin/main"),
+    ({"origin/main", "release", "origin/release"}, "release"),
     ({"release", "origin/release"}, "release"),
     ({"origin/release"}, "origin/release"),
+    ({"origin/main"}, "origin/main"),
     (set(), None),
 ])
 def test_baseline_resolution_order_and_missing_metadata(monkeypatch, available, expected):
@@ -123,7 +143,7 @@ def test_baseline_resolution_order_and_missing_metadata(monkeypatch, available, 
         assert publisher.ObservationStore is storage.ObservationStore
     else:
         assert baseline_ref() == expected
-    order = ["origin/main", "release", "origin/release"]
+    order = ["release", "origin/release", "origin/main"]
     assert list(dict.fromkeys(checked)) == (order if expected is None else order[:order.index(expected)+1])
 
 
@@ -131,11 +151,11 @@ def test_baseline_requires_both_source_blobs(monkeypatch):
     monkeypatch.setenv("GITHUB_BASE_REF", "release")
 
     def check(command, **kwargs):
-        if command[-1] == "origin/main:src/trusted_router/services/async_settle_shadow_health.py":
+        if command[-1] == "release:src/trusted_router/services/async_settle_shadow_health.py":
             raise subprocess.CalledProcessError(128, command)
 
     monkeypatch.setattr(subprocess, "run", check)
-    assert baseline_ref() == "release"
+    assert baseline_ref() == "origin/release"
 
 
 class Clock:
@@ -264,7 +284,7 @@ class Lock:
 
 class Database:
     def __init__(self, clock, storage, *, publish_commit_seconds=.033, distributed=False,
-                 injected_ordering_fault=False):
+                 injected_ordering_fault=False, microsecond_reads=False, bound_wait_probability=0.):
         self.clock, self.storage = clock, storage
         self.rows = {}
         self.locks = {}
@@ -283,6 +303,12 @@ class Database:
         self.injected_reversals = 0
         self.injected_gaps_ns = []
         self.bound_waits_ns = []
+        self.observation_order_gaps_ns = []
+        self.microsecond_reads = microsecond_reads
+        self.bound_wait_probability = bound_wait_probability
+        self.unknown_claim_slot = None
+        self.failed_claim_slots = set()
+        self.publication_history = []
 
     def duration(self, kind):
         median, tail = {"read": (.020, .060), "snapshot": (.020, .030),
@@ -360,6 +386,11 @@ class Database:
                     self.abort(tx)
                     tx.check()
                 self.rows.update(tx.mutations)
+                if (HEALTH_KIND, "local/fleet") in tx.mutations:
+                    self.publication_history.append((self.clock.now,
+                        json.loads(tx.mutations[HEALTH_KIND, "local/fleet"])))
+                if tx.claim and self.unknown_claim_slot is not None and tx.slot == self.unknown_claim_slot:
+                    raise TimeoutError("claim landed, reply lost")
                 return result
             except Aborted:
                 tx.ended = self.clock.now
@@ -426,6 +457,13 @@ class Reader:
                 ns = claim["claim_at_ns"]-fault.randint(1, 40_000_000)
                 db.injected_reversals += 1
                 db.injected_gaps_ns.append(gap)
+        if sql == db.storage.CLAIM_SQL and db.microsecond_reads:
+            ns = (ns // 1000) * 1000 + 777  # Statement stamp retains sub-us precision.
+        if sql == db.storage.UNRESOLVED_SQL and db.microsecond_reads:
+            claim = json.loads(db.rows[CLAIM_KIND, "local/publish"])
+            fault = random.Random(claim["slot"])  # noqa: S311 - repeatable replica lag
+            if fault.random() < db.bound_wait_probability:
+                ns = claim["claim_at_ns"] - 1000
         if self.min_read_timestamp is not None:
             bound = self.min_read_timestamp.timestamp_pb()
             bound_ns = bound.seconds*10**9+bound.nanos
@@ -434,10 +472,17 @@ class Reader:
             db.bound_waits_ns.append(wait_ns)
             if wait_ns:
                 db.clock.sleep(wait_ns/1e9)
+        if db.microsecond_reads and sql != db.storage.CLAIM_SQL:
+            ns = (ns // 1000) * 1000
+        if db.microsecond_reads and sql == db.storage.UNRESOLVED_SQL:
+            db.observation_order_gaps_ns.append(ns-claim["claim_at_ns"])
         stamp = DatetimeWithNanoseconds.from_timestamp_pb(
             Timestamp(seconds=ns//10**9, nanos=ns%10**9))
         body = db.rows.get(key)
         if sql == db.storage.CLAIM_SQL:
+            if self.slot in db.failed_claim_slots:
+                db.clock.sleep(db.duration("read"))
+                raise TimeoutError("injected claim-read failure")
             self.claim_at_ns = ns
             rows = [(body, stamp)]
         elif sql == db.storage.UNRESOLVED_SQL:
@@ -496,10 +541,7 @@ def simulate(n=8, *, warm=False, slots=130, ref=None, abort=False, kill_at=None,
                 assert killed is not None
             active = [boot for boot in boots if boot != killed]
             for index, boot in enumerate(active):
-                store = object.__new__(storage.ObservationStore)
-                store.database, store.clock, store.wall = db, lambda: clock.now, lambda: clock.now
-                store.last_claim = None
-                store.startup_retention = False
+                store = storage.ObservationStore(db, clock=lambda: clock.now, wall=lambda: clock.now)
                 admission = SimpleNamespace(admission_lock=threading.Lock(), generation=1,
                     revocation_epoch=0, admission_job=job, startup_retention=False)
                 health = db.rows.get((HEALTH_KIND, "local/fleet"))
@@ -563,7 +605,11 @@ def simulate(n=8, *, warm=False, slots=130, ref=None, abort=False, kill_at=None,
 def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=0.,
                        post_ack_seconds=2., seed=73, clock_offsets_ms=None,
                        injected_ordering_fault=False, n=8, reject_published=False,
-                       stall_from=None, patch=None, stale_holder=None):
+                       stall_from=None, patch=None, stale_holder=None,
+                       microsecond_reads=False, bound_wait_probability=0.,
+                       fail_observations=None, unknown_claim_at=None, fail_claim_reads=None,
+                       publication_fault=None, boots=None, fixed_rpc_costs=False,
+                       tick_offset_seconds=0., admission_overshoot_seconds=0., skip_holder_slots=()):
     """Execute actual owner/worker admission, not a synthesized busy outcome.
 
     Clock offsets are server minus each boot's local wall in milliseconds;
@@ -584,12 +630,25 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
     ``patch(storage, publisher)`` edits the loaded module copies (controls).
     ``stale_holder=(offset, slots)`` freezes the current publisher's observer
     cache for that many slot boundaries (a degraded observer on the holder).
+    ``microsecond_reads`` opts into the measured timestamp granularity, while
+    ``bound_wait_probability`` selects reads exactly at the floored bound.
+    ``fail_observations=(offset, slots)`` fails scans after the real claim.
+    ``unknown_claim_at`` lands the claim but drops its response for that offset.
+    ``publication_fault=(offset, count, kind)`` injects full-RPC failures:
+    order reverses the returned observation before the real publish fence;
+    refused presents a different boot to that fence; post_commit corrupts only
+    the returned value after a successful commit. The last is a worker-result
+    fault, NOT a claim that the real storage fence permits invalid ordering.
     """
     from trusted_router.config import Settings
 
+    # Admission overshoot is a calibrated MODEL of the measured ~1 ms/slot
+    # drift, not a replay of production timestamps. It runs after cadence sleep.
+    # Tick phase models Service.run's first poll after the boundary.
     storage, publisher = modules(ref)
     if patch is not None:
         patch(storage, publisher)
+    paired_tick = "mono" in inspect.signature(publisher.Service.tick).parameters
     clock = Clock()
     # Offset means server minus local wall time. A negative boot's local
     # boundary happens before the server boundary. The DB uses one common
@@ -598,8 +657,13 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
     assert len(offsets) == n
     clock.now = START*2. + min(offsets)
     publisher.sleep = clock.sleep
-    db = Database(clock, storage, distributed=True, injected_ordering_fault=injected_ordering_fault)
-    boots = [f"boot-{i}" for i in range(n)]
+    db = Database(clock, storage, distributed=not fixed_rpc_costs, injected_ordering_fault=injected_ordering_fault,
+                  microsecond_reads=microsecond_reads, bound_wait_probability=bound_wait_probability)
+    db.unknown_claim_slot = START + unknown_claim_at if unknown_claim_at is not None else None
+    if fail_claim_reads is not None:
+        db.failed_claim_slots = set(range(START+fail_claim_reads[0], START+sum(fail_claim_reads)))
+    boots = boots or [f"boot-{i}" for i in range(n)]
+    assert len(boots) == n
     traces, services, futures, replies, releases = [], [], [], [], []
     stalls = random.Random(seed)  # noqa: S311 - reproducible simulation, not secrets
     held = []
@@ -613,7 +677,32 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
                 stalled.add(json.loads(health)["publisher_boot_id"])
         if args[1] in stalled:
             args[0].session_ready = lambda: False
-        result = original(*args)
+        observe = args[0].observe
+        publish = args[0].publish
+        if publication_fault is not None and \
+                START+publication_fault[0] <= args[4].slot < START+sum(publication_fault[:2]):
+            def faulty_publish(value, budget):
+                kind = publication_fault[2]
+                if kind == "order":
+                    value["observed_at_ns"] = args[0].last_claim["claim_at_ns"]-1000
+                    value["publisher_heartbeat_ns"] = value["observed_at_ns"]
+                landed = publish(dict(value, publisher_boot_id="fence-conflict")
+                                 if kind == "refused" else value, budget)
+                if kind == "post_commit":
+                    assert landed
+                    value["observed_at_ns"] = args[0].last_claim["claim_at_ns"]-1000
+                    value["publisher_heartbeat_ns"] = value["observed_at_ns"]
+                return landed
+            args[0].publish = faulty_publish
+        if fail_observations is not None and START+fail_observations[0] <= args[4].slot < START+sum(fail_observations):
+            def fail(*args, **kwargs):
+                raise TimeoutError("injected observation failure")
+            args[0].observe = fail
+        try:
+            result = original(*args)
+        finally:
+            args[0].observe = observe
+            args[0].publish = publish
         if reject_published and result.trace["outcome"] == "published":
             # The owner's contract check fails exactly as in production.
             result.trace["claim_at_ns"] = result.trace["observed_at_ns"]+1000
@@ -661,6 +750,25 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
             settings.async_settle_shadow_health_region = settings.effective_serving_region
             svc = publisher.Service(settings, store)
             svc.journal.boot = boot
+            if admission_overshoot_seconds:
+                lock = svc.admission_lock
+                class AdmissionDelay:
+                    def __init__(self, lock):
+                        self.lock = lock
+                        self.delayed_slot = None
+                    def __enter__(self):
+                        return self.lock.__enter__()
+                    def __exit__(self, *args):
+                        return self.lock.__exit__(*args)
+                    def acquire(self, *, timeout):
+                        slot = getattr(clock.local, "slot", None)
+                        if slot != self.delayed_slot:
+                            self.delayed_slot = slot
+                            clock.sleep(admission_overshoot_seconds)
+                        return self.lock.acquire(timeout=timeout)
+                    def release(self):
+                        self.lock.release()
+                svc.admission_lock = AdmissionDelay(lock)
             accept = svc.accept
             def capture_release(event, *, accept=accept, boot=boot, **kwargs):
                 # Observe real failure events, including on origin/main where
@@ -705,15 +813,22 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
                     svc.observer.health = {"body": body} if body else None
             for index in indexes:
                 svc = services[index]
-                stamp = round(svc.store.wall()*1e6)
-                for effect in svc.tick(stamp):
+                if index == 0 and slot-START in skip_holder_slots:
+                    # Model a missed host wake without inventing a claim or
+                    # mutating durable timestamps; account it on the next tick.
+                    continue
+                # Mirror Service.run: monotonic immediately before wall, then
+                # the real tick prelude and lifecycle. Historical sources lack mono.
+                mono = svc.store.clock()
+                stamp = int(svc.store.wall()*1e6)
+                for effect in svc.tick(stamp, **({"mono": mono} if paired_tick else {})):
                     if isinstance(effect, publisher.lifecycle.StartPublisherCycle):
                         svc.submit_publisher(effect.slot, stamp)
         for offset in range(slots):
             slot = START+offset
             for clock_offset in sorted(set(offsets)):
                 indexes = tuple(i for i, value in enumerate(offsets) if value == clock_offset)
-                clock.schedule(slot*2.+clock_offset,
+                clock.schedule(slot*2.+clock_offset+tick_offset_seconds,
                     lambda slot=slot, indexes=indexes: tick(slot, True, indexes))
                 # Each owner's watchdog also uses that boot's local wall.
                 clock.schedule(slot*2.+clock_offset+.750001,
@@ -779,6 +894,9 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
             if after_published else None),
         commits_in_recovery_slot=(sum(commits[slot] for slot in recovery_slots)/len(recovery_slots)
             if recovery_slots else None),
+        published_rpc_us=[list(r.rpc_durations) for r in replies
+                          if r.trace["outcome"] == "published"] if microsecond_reads else [],
+        observation_order_gaps_ns=db.observation_order_gaps_ns,
         injected_reversals=db.injected_reversals,
         injected_observations=len(db.observation_gaps_ns),
         injected_gap_max_ms=max(db.injected_gaps_ns, default=0)/1e6,
@@ -817,6 +935,9 @@ def simulate_lifecycle(*, ref=None, warm=False, slots=130, post_ack_probability=
         # Storage-side facts, independent of whether an owner accepted a reply.
         claim_transactions_by_slot=[sum(tx.slot == slot for tx in claim_txs) for slot in sorted(commits)],
         durable_publication_slots=sorted(durable),
+        worker_traces=[r.trace for r in replies],
+        publication_history=db.publication_history,
+        claim_identities=[(tx.index, tx.slot) for tx in db.transactions if tx.claim],
         durable_publication_rate=len(durable & commits.keys())/(slots-10),
         stalled_boots=sorted(stalled),
         post_ack_stalls=len(held),
@@ -917,9 +1038,7 @@ def test_upgrade_deadlock_aborts_younger_and_real_wrapper_reentry_does_not_read(
 
     def contender(delay):
         clock.sleep(delay)
-        store = object.__new__(storage.ObservationStore)
-        store.database, store.clock, store.wall = db, lambda: clock.now, lambda: clock.now
-        store.startup_retention = False
+        store = storage.ObservationStore(db, clock=lambda: clock.now, wall=lambda: clock.now)
         try:
             outcomes.append(store.claim(f"boot-{round(delay*1000)}", slot, slot*2_000_000,
                                         storage.Budget(clock.now+.5, store.clock)))

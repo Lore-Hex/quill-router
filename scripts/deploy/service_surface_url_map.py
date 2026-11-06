@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -46,10 +47,13 @@ ACTIONS_PATH_PATTERNS = (
     "/support/inquiry",
     "/token-exchange/brief",
     "/token-exchange/events",
+    "/token-exchange/reserve/checkout",
+    "/token-exchange/reserve/quote",
     "/trustedos/inquiry",
 )
 
 CONTROL_PATH_PATTERNS = (
+    "/token-exchange/reservations",
     "/v1",
     "/v1/*",
     "/models/user",
@@ -98,6 +102,8 @@ CONTROL_PATH_PATTERNS = (
     "/custom-models/*",
     "/user-models",
     "/user-models/*",
+    "/earnings",
+    "/earnings/*",
     "/key",
     "/keys",
     "/keys/*",
@@ -186,6 +192,101 @@ _PATTERNS: dict[Surface, tuple[str, ...]] = {
     "control": CONTROL_PATH_PATTERNS,
     "internal": INTERNAL_PATH_PATTERNS,
 }
+# The enclave's terminal POSTs. The disposition GET stays on /internal/*: it is
+# a recovery read, and pathRules only support a trailing /*, which would also
+# capture the by-gateway-request-id lookup.
+TERMINAL_PATH_PATTERNS = (
+    "/internal/gateway/settle",
+    "/internal/gateway/heartbeat",
+    "/internal/gateway/refund",
+    "/v1/internal/gateway/settle",
+    "/v1/internal/gateway/heartbeat",
+    "/v1/internal/gateway/refund",
+)
+TERMINAL_BACKEND_NAME = "trusted-router-control-terminal-c1-backend"
+
+
+TERMINAL_CONFIG = Path(__file__).resolve().parents[2] / "infra/control_terminal_backend.tf"
+
+
+def terminal_route_enabled() -> bool:
+    """Accept one top-level locals block containing only our literal boolean.
+
+    This is deliberately not a general HCL parser. Comments are ignored, quoted
+    strings are kept intact, and heredocs/unterminated strings or comments are
+    refused. Any other use of the switch name (including in a string) fails.
+    """
+    source = TERMINAL_CONFIG.read_text()
+    error = "expected exactly one top-level locals block containing only terminal_c1_route_enabled = true or false"
+    tokens = []
+    # Match strings before comments so URLs and comment-like string contents
+    # cannot hide an occurrence of the switch. Comments separate adjacent tokens.
+    lexer = (
+        r'(?P<string>"(?:\\[^\n]|[^"\\\n])*")'
+        r'|(?P<comment>/\*.*?\*/|(?:\#|//)[^\n]*)'
+        r'|(?P<space>\s+)|(?P<word>[A-Za-z_][A-Za-z_0-9-]*)'
+        r'|(?P<invalid>/\*|<<|")|(?P<symbol>.)'
+    )
+    for match in re.finditer(lexer, source, re.DOTALL):
+        if match.lastgroup == "invalid":
+            raise ValueError(error)
+        if match.lastgroup not in {"comment", "space"}:
+            tokens.append(match[0])
+    name = "terminal_c1_route_enabled"
+    if sum(lexeme.count(name) for lexeme in tokens) != 1 or tokens.count("locals") != 1:
+        raise ValueError(error)
+    start = tokens.index("locals")
+    block = tokens[start:start + 6]
+    if block not in (["locals", "{", name, "=", "true", "}"], ["locals", "{", name, "=", "false", "}"]):
+        raise ValueError(error)
+    depth = 0
+    for index, lexeme in enumerate(tokens):
+        if index == start and depth != 0:
+            raise ValueError(error)
+        depth += (lexeme == "{") - (lexeme == "}")
+        if depth < 0:
+            raise ValueError(error)
+    if depth != 0:
+        raise ValueError(error)
+    return block[4] == "true"
+
+
+def terminal_backend_link(control_backend: str) -> str:
+    return control_backend.rsplit("/", 1)[0] + "/" + TERMINAL_BACKEND_NAME if "/" in control_backend else TERMINAL_BACKEND_NAME
+
+
+def billing_override_rules(existing: dict[str, Any]) -> list[dict[str, Any]]:
+    """Only discard our exact plain terminal rule; preserve authorize unchanged."""
+    found = []
+    seen: set[str] = set()
+    for matcher in existing.get("pathMatchers", []):
+        if matcher.get("name") != _MATCHER_NAME:
+            continue
+        rules = matcher.get("pathRules", [])
+        controls = [rule["service"] for rule in rules
+                    if set(rule.get("paths", [])) == set(CONTROL_PATH_PATTERNS) and rule.get("service")]
+        control = controls[0] if len(controls) == 1 else existing.get("defaultService", "")
+        expected_link = terminal_backend_link(control)
+        for rule in rules:
+            paths = set(rule.get("paths", []))
+            terminal_target = str(rule.get("service", "")).rsplit("/", 1)[-1] == TERMINAL_BACKEND_NAME
+            if paths == {"/internal/gateway/authorize"} and not terminal_target:
+                kind = "authorize"
+                valid = bool(rule.get("routeAction"))
+            elif paths & set(TERMINAL_PATH_PATTERNS) or terminal_target:
+                kind = "terminals"
+                valid = (set(rule) == {"paths", "service"}
+                         and paths == set(TERMINAL_PATH_PATTERNS)
+                         and rule.get("service") == expected_link)
+            else:
+                continue
+            if not valid or kind in seen:
+                raise ValueError("ambiguous billing override; refusing to discard live routing")
+            seen.add(kind)
+            found.append(rule)
+    return found
+
+
 _MATCHER_NAME = "trusted-router-service-surfaces"
 _OUTPUT_ONLY_KEYS = {
     "creationTimestamp",
@@ -230,12 +331,14 @@ def is_gateway_path(path: str) -> bool:
 
 def existing_gateway_backend(existing: dict[str, Any]) -> str | None:
     """Preserve an installed override; refuse partial/ambiguous gateway rules."""
+    overrides = billing_override_rules(existing)
     rules = [
         rule
         for matcher in existing.get("pathMatchers", [])
         if matcher.get("name") == _MATCHER_NAME
         for rule in matcher.get("pathRules", [])
-        if any(is_gateway_path(path.removesuffix("*")) for path in rule.get("paths", []))
+        if rule not in overrides
+        and any(is_gateway_path(path.removesuffix("*")) for path in rule.get("paths", []))
     ]
     if not rules:
         return None
@@ -291,9 +394,9 @@ def rewrite_url_map(
 ) -> dict[str, Any]:
     """Render four surfaces, optionally overriding gateway backend placement.
 
-    Omitting gateway_backend retains the original four-surface output. CLI
-    callers that rewrite a live map can explicitly preserve an installed
-    override with --preserve-gateway-backend.
+    When enabled, terminal routing uses the shared Terraform switch. An existing
+    authorize override is retained verbatim. CLI callers can also preserve an
+    installed gateway wildcard override with --preserve-gateway-backend.
     """
     if existing.get("defaultUrlRedirect") is not None:
         raise ValueError("cannot convert a redirect-only URL map into the HTTPS service map")
@@ -359,6 +462,18 @@ def rewrite_url_map(
         path_matchers[-1]["pathRules"].append(
             {"paths": list(GATEWAY_PATH_PATTERNS), "service": gateway_backend}
         )
+    # When enabled, exact paths beat internal/* and gateway/* cutovers.
+    # When disabled, emit nothing: their plain-service semantics stay intact.
+    enabled = terminal_route_enabled()
+    terminal_backend = terminal_backend_link(control_backend)
+    if enabled:
+        path_matchers[-1]["pathRules"].append({
+            "paths": list(TERMINAL_PATH_PATTERNS),
+            "service": terminal_backend,
+        })
+    for override in billing_override_rules(existing):
+        if override["paths"] == ["/internal/gateway/authorize"]:
+            path_matchers[-1]["pathRules"].append(copy.deepcopy(override))
     host_rules.append(
         {
             "hosts": first_party_hosts(tuple(domain_set)),
@@ -379,10 +494,18 @@ def rewrite_url_map(
         host = str(test.get("host") or "")
         if _is_first_party_host(host, managed_hosts):
             path = str(test.get("path") or "/")
-            test["service"] = (
-                gateway_backend if gateway_backend and is_gateway_path(path)
-                else backend_for[route_surface(path)]
-            )
+            if enabled and path in TERMINAL_PATH_PATTERNS:
+                test["service"] = terminal_backend
+            elif path == "/internal/gateway/authorize" and any(
+                rule["paths"] == [path] for rule in billing_override_rules(existing)
+            ):
+                # The authorize rule and its live test assertions stay unchanged.
+                continue
+            else:
+                test["service"] = (
+                    gateway_backend if gateway_backend and is_gateway_path(path)
+                    else backend_for[route_surface(path)]
+                )
     return result
 
 

@@ -149,8 +149,6 @@ def _console_path_for_active(active: str) -> str:
         "api-keys": "/console/api-keys",
         "authorized-apps": "/console/authorized-apps",
         "byok": "/console/byok",
-        "custom-models": "/console/custom-models",
-        "user-models": "/console/user-models",
         "earnings": "/console/earnings",
         "routing": "/console/routing",
         "activity": "/console/activity",

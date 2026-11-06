@@ -82,7 +82,7 @@ def test_reversed_observation_is_measured_failure_accepted_by_owner(monkeypatch,
         assert kwargs["claim_at_ns"] == svc.store.last_claim["claim_at_ns"]
         value = original(*args, **kwargs)
         bound = svc.store.database.snapshot_calls[-1]["min_read_timestamp"].timestamp_pb()
-        assert bound.seconds*10**9+bound.nanos == kwargs["claim_at_ns"]
+        assert bound.seconds*10**9+bound.nanos == ((kwargs["claim_at_ns"]+999)//1000)*1000
         # Deliberately violate the service guarantee to exercise the fallback.
         value["observed_at_ns"] = value["publisher_heartbeat_ns"] = kwargs["claim_at_ns"]-1
         assert not publish_allowed(svc.store.last_claim, None, value)
@@ -117,7 +117,8 @@ def test_reversed_observation_is_measured_failure_accepted_by_owner(monkeypatch,
     assert svc.state.job is None and entries(svc)[-1] == trace
     assert svc.publisher_faults == 0
     assert svc.incumbent_slot == job.slot-1
-    assert svc.is_incumbent(job.slot+1) and not svc.is_incumbent(job.slot+2)
+    assert svc.is_incumbent(job.slot+1) and svc.is_incumbent(job.slot+2)
+    assert not svc.is_incumbent(job.slot+3)
     assert svc.counters[trace["day"]]["publisher"]["failures"] == 1
     assert svc.counters[trace["day"]]["publisher"]["unknown_outcomes"] == 0
     accounting(svc)

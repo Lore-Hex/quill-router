@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
+from trusted_router.url_validation import parse_url
+
 MAX_USER_CHARS = 256
 MAX_SESSION_CHARS = 256
 MAX_APP_CHARS = 120
@@ -89,8 +91,8 @@ def _valid_referer(value: str | None) -> str | None:
     value = _bounded_string(value, "HTTP-Referer", MAX_REFERER_CHARS)
     if value is None:
         return None
-    parsed = urlparse(value)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+    parsed = parse_url(value)
+    if parsed is None or parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise InvalidAttribution("HTTP-Referer must be an http or https URL")
     return value
 

@@ -4,13 +4,14 @@ import json
 import time
 from decimal import Decimal
 from typing import Any, Protocol
-from urllib.parse import urlparse
 
 import httpx
+from starlette.concurrency import run_in_threadpool
 
 from trusted_router.byok_crypto import decrypt_control_secret
 from trusted_router.config import Settings
 from trusted_router.storage import BroadcastDestination, Generation
+from trusted_router.url_validation import parse_url
 
 POSTHOG_DEFAULT_ENDPOINT = "https://us.i.posthog.com"
 
@@ -53,7 +54,8 @@ class PostHogBroadcastAdapter:
         return None
 
     async def test(self, destination: BroadcastDestination, settings: Settings) -> tuple[bool, str]:
-        api_key = _decrypt_api_key(destination, settings)
+        # KMS decrypt is a synchronous network call; keep it off the event loop.
+        api_key = await run_in_threadpool(_decrypt_api_key, destination, settings)
         payload = {
             "api_key": api_key,
             "event": "$ai_generation",
@@ -111,7 +113,7 @@ class WebhookOTLPBroadcastAdapter:
         return _validate_http_endpoint(endpoint)
 
     async def test(self, destination: BroadcastDestination, settings: Settings) -> tuple[bool, str]:
-        headers = _decrypt_headers(destination, settings)
+        headers = await run_in_threadpool(_decrypt_headers, destination, settings)
         headers["X-Test-Connection"] = "true"
         headers.setdefault("content-type", "application/json")
         async with httpx.AsyncClient(timeout=5) as client:
@@ -331,8 +333,8 @@ def _posthog_capture_url(endpoint: str) -> str:
 
 
 def _validate_http_endpoint(endpoint: str) -> str | None:
-    parsed = urlparse(endpoint)
-    if parsed.scheme not in {"https", "http"} or not parsed.netloc:
+    parsed = parse_url(endpoint)
+    if parsed is None or parsed.scheme not in {"https", "http"} or not parsed.netloc:
         return "endpoint must be an HTTP URL"
     if parsed.scheme == "http" and not _is_localhost(parsed.hostname or ""):
         return "endpoint must use https"

@@ -1,4 +1,8 @@
-"""Lifespan-owned v2 observation. No request handler installs or starts this service."""
+"""Lifespan-owned v2 observation. No request handler installs or starts this service.
+
+A failed stop-marker read pauses new admission only. Already-admitted cohort and
+publisher work may finish while control reads retry.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -39,6 +43,7 @@ from trusted_router.async_settle_shadow_journal import (
     Reservation,
     Row,
 )
+from trusted_router.async_settle_shadow_stop import RuntimeStop
 from trusted_router.async_settle_shadow_v2_a1_evidence import validate_close_result
 from trusted_router.async_settle_shadow_v2_a1_health import (
     PUBLISHER_OPERATIONS,
@@ -84,6 +89,12 @@ PUBLISHER_RELEASE_REASONS = frozenset({
 })
 # One slot lets a delayed owner callback arrive without extending any RPC budget.
 PUBLISHER_WATCHDOG_GRACE = SLOT_US / 1_000_000
+OWNER_PROGRESS_SECONDS = 15.
+START_RETRY_MAX_SECONDS = 60.
+START_ATTEMPT_SECONDS = 12.
+# Per boot, at most two abandoned publisher workers/cleanup owners may survive.
+# Exhaustion pauses contention until cleanup releases a slot; readers keep running.
+PUBLISHER_ABANDONED_BUDGET = 2
 
 
 class _ObserverQuiesced(Exception):
@@ -98,6 +109,7 @@ class HealthObserver(Observer):
         self.outcome = type("Outcome", (), {"owner": None})()
         self.service: Service | None = None
         self.scheduled_owner: tuple[str, int] | None = None
+        self.scheduled_mono: float | None = None
         observer = self
         class Ticks(dict[str | None, float]):
             def __setitem__(self, key: str | None, value: float) -> None:
@@ -107,7 +119,7 @@ class HealthObserver(Observer):
                 if observer.service is not None:
                     svc = observer.service
                     if not svc.state.days:
-                        svc.tick(owner[1])
+                        svc.tick(owner[1], mono=observer.scheduled_mono)
                     effects = svc.accept(lifecycle.ObserverEnqueued(owner[1], f"{key}:{value}"))
                     if any(isinstance(e, lifecycle.Fault) for e in effects):
                         raise _ObserverQuiesced
@@ -120,6 +132,7 @@ class HealthObserver(Observer):
         owner = getattr(self.outcome, "owner", None)
         scheduled = field in ("health_reads", "workspace_reads")
         if scheduled:
+            self.scheduled_mono = self.service.store.clock() if self.service is not None else self.clock()
             stamp = int(self.evidence_wall()*1_000_000)
             owner = self.scheduled_owner = (day_at(stamp), stamp)
             if self.service is not None:
@@ -179,7 +192,12 @@ class HealthObserver(Observer):
         self._owned(None, started, self.health_read)
 
     def _workspace(self, key: str, started: float) -> None:
-        self._owned(key, started, partial(self.read, key))
+        def read() -> Any:
+            if self.service is not None and not self.service.store.session_ready(workspace=True):
+                raise SessionUnavailable("shadow_session_unavailable")
+            with rpc_scope(self.clock()+OBSERVER_READ_RPC_SECONDS, OBSERVER_READ_RPC_SECONDS, self.clock):
+                return self.read(key)
+        self._owned(key, started, read)
 
     async def run(self) -> None:
         enabled = self.enabled
@@ -258,7 +276,8 @@ class Port:
     complete queues verification, not a durable acknowledgement. Only maintenance
     grants permits, writes retained batches, reads references and advances HWM.
 
-    Lock inventory: every method tries service.lock; capture_prediction also
+    Explicit worker=True permits a service-lock wait of at most 250ms.
+    Lock inventory: by default every method tries service.lock; capture_prediction also
     tries observer.lock and bases.lock. Journal containers are plain bounded
     lists/dicts. No method touches the maintenance, trace-export, session or
     transport locks/queues. StickyLoss.set has no acquisition.
@@ -268,11 +287,17 @@ class Port:
         self.lost = StickyLoss()
         self.fold_cells: dict[str, tuple[Any, ...]] = {}
         self.fold_obligations: dict[Reservation, str] = {}
+        # One preallocated latch per obligation: a failed nonblocking call must
+        # still hand its failure to the owner without retaining an unbounded queue.
+        self.fold_failures: dict[Reservation, StickyLoss] = {}
         self.fold_owners: set[Reservation] = set()
 
-    def call(self, action: Callable[[], T]) -> T | None:
+    def call(self, action: Callable[[], T], *, worker: bool = False) -> T | None:
         svc = self.service
-        if not svc.lock.acquire(blocking=False):
+        # Only explicit off-request callers may wait. Keep the facade's
+        # default acquisition exactly nonblocking, including on an event loop.
+        acquired = svc.lock.acquire(timeout=.25) if worker else svc.lock.acquire(blocking=False)
+        if not acquired:
             self.lost.set()
             return None
         try:
@@ -283,19 +308,42 @@ class Port:
         finally:
             svc.lock.release()
 
-    def reserve(self, observed_us: int, *, terminal: bool = False) -> Reservation | None:
+    def record_startup_unprovisioned(self, observed_us: int) -> None:
+        """Retain unproven boot readiness without changing request eligibility."""
+        def action() -> None:
+            svc, day = self.service, day_at(observed_us)
+            require(day in svc.counters and not svc.journal.days[day].sealing, "closed_day")
+            target = svc.counters[day]["diagnostics"]
+            name = "startup_unprovisioned"
+            require(name in target or len(target) < 128, "evidence_size")
+            count = target.get(name, 0) + 1
+            require(count <= INT64, "counter_overflow")
+            growth = (len(str(count))-len(str(target[name])) if name in target else
+                      len(canonical(name))+1+bool(target)+len(str(count)))
+            require(svc.port.fold_cells[day][3]+growth <= 65536, "evidence_size")
+            svc._counter_cells(day, target, {name: count})
+        self.call(action)
+
+    def reserve(self, observed_us: int, *, terminal: bool = False, worker: bool = False) -> Reservation | None:
         def action() -> Reservation | None:
             svc, day = self.service, day_at(observed_us)
-            require(svc.policy_enabled() and not svc.journal.stopped, "quiesced")
+            require(svc.policy_enabled() and svc.runtime_stop.available and not svc.journal.stopped, "quiesced")
             require(day in svc.counters, "day_not_ready")
             require(not svc.journal.days[day].sealing, "closed_day")
+            # Signal demand only; the evidence worker owns all cap I/O. Keep
+            # the existing refusal/loss path when this request has no permits.
+            if svc.allocation_day != day:
+                svc.allocation_day = day
+                svc.allocation_failures = 0
+                svc.next_allocate = svc.store.clock()
+            svc.allocation_requested = True
             if terminal:
                 require(svc.journal.terminal_permits.get(day, 0) > 0, "terminal_permits")
                 svc.journal.terminal_permits[day] -= 1
             return svc.journal.reserve(observed_us)
-        return self.call(action)
+        return self.call(action, worker=worker)
 
-    def finalize(self, reservation: Reservation, event: dict[str, Any], *, fold_owed: bool = False) -> bytes | None:
+    def finalize(self, reservation: Reservation, event: dict[str, Any], *, fold_owed: bool = False, worker: bool = False) -> bytes | None:
         def action() -> bytes:
             require(not self.service.journal.days[reservation.day].sealing, "closed_day")
             slot = self.service.journal.slot(reservation)
@@ -307,23 +355,24 @@ class Port:
             body = self.service.journal.finalize(reservation, event)
             if register:
                 self.fold_obligations[reservation] = "pending"
+                self.fold_failures[reservation] = StickyLoss()
                 slot.fold_registered = True
             return body
-        return self.call(action)
+        return self.call(action, worker=worker)
 
-    def complete(self, reservation: Reservation, rows: tuple[Row, ...] = ()) -> bool:
+    def complete(self, reservation: Reservation, rows: tuple[Row, ...] = (), *, worker: bool = False) -> bool:
         def action() -> bool:
             require(not self.service.journal.days[reservation.day].sealing, "closed_day")
             return self.service.journal.complete(reservation, rows)
-        return bool(self.call(action))
+        return bool(self.call(action, worker=worker))
 
-    def complete_event(self, reservation: Reservation, original_page: Row, event: dict[str, Any]) -> bytes | None:
+    def complete_event(self, reservation: Reservation, original_page: Row, event: dict[str, Any], *, worker: bool = False) -> bytes | None:
         def action() -> bytes:
             require(not self.service.journal.days[reservation.day].sealing, "closed_day")
             return self.service.journal.complete_event(reservation, original_page, event)
-        return self.call(action)
+        return self.call(action, worker=worker)
 
-    def capture_prediction(self, workspace: str, observed_us: int) -> dict[str, Any] | None:
+    def capture_prediction(self, workspace: str, observed_us: int, *, worker: bool = False) -> dict[str, Any] | None:
         """P4 captures the prediction and its immutable basis at one cache instant."""
         def action() -> dict[str, Any]:
             svc = self.service
@@ -343,9 +392,9 @@ class Port:
                 svc.observer.lock.release()
             result["basis_sha256"] = svc.bases.append(day, value, blocking=False)
             return result
-        return self.call(action)
+        return self.call(action, worker=worker)
 
-    def fold_counts(self, day: str, bucket: dict[str, Any], *, obligation: Reservation | None = None) -> bool:
+    def fold_counts(self, day: str, bucket: dict[str, Any], *, obligation: Reservation | None = None, worker: bool = False) -> bool:
         """Fold one P1 BUCKET delta atomically, including eligible demand.
 
         Unknown demand remains unknown; no cumulative field can be decremented.
@@ -402,7 +451,7 @@ class Port:
             if obligation is not None:
                 self.fold_obligations[obligation] = "folded"
             return True
-        result = bool(self.call(action))
+        result = bool(self.call(action, worker=worker))
         if not result and obligation is not None:
             self.fail_fold(obligation)
         return result
@@ -410,6 +459,9 @@ class Port:
     def fail_fold(self, obligation: Reservation) -> bool:
         """Non-waiting sticky failure; the owner folds it into the model."""
         self.lost.set()
+        failure = self.fold_failures.get(obligation)
+        if failure is not None:
+            failure.set()
         def action() -> bool:
             require(self.fold_obligations.get(obligation) == "pending", "fold_obligation")
             self.fold_obligations[obligation] = "failed"
@@ -480,22 +532,26 @@ def follower_stagger(boot: str, slot: int, incumbent_present: bool = True) -> fl
 #   S4 liveness: when the holder stops publishing, some follower claims within a
 #      bounded number of slots.
 #   S5 an aborted or lost claim is never retried within its slot.
-# Only the holder may write the claim row every slot. Followers read it with a
-# lock-free snapshot and stand down; they open a read-write transaction only for
-# a takeover. Two rules keep that row from becoming hot (2026-10-23 incident:
-# 1,915 s/h of lock wait on it):
-#   * Durable incumbency (Service.is_incumbent): a boot whose publication is the
-#     installed fleet health for slot-1/slot-2 is the holder, even when its owner
-#     never accepted that reply. Before this, a rejected reply made the actual
-#     holder a follower; the claim then aged out every third slot and every
-#     contender raced read-write transactions on the row.
-#   * Spread takeover (takeover_due): once a follower has seen fleet health, a
-#     stale claim is taken over by at most a hash-selected quarter of followers
-#     per slot, widening by one quarter each slot, so a holder's death costs one
-#     small race instead of a fleet-wide one. Cold starts (no health seen, or no
-#     claim row) keep the original immediate behaviour.
-TAKEOVER_SPREAD = 4
-TAKEOVER_MIN_AGE = 3  # Fleet health protects its publisher for two slots.
+# Only the holder may write the claim row every slot. A recent acknowledged
+# publication is a fast path; otherwise storage must name this boot before it
+# renews. K=3 permits recovery after two failed cycles, but a boot with three
+# consecutive unpublished slots yields. A holder can recover even if failed
+# claim reads left its row three slots old. Followers start at claim age two,
+# the earliest age allowed by the storage fence. Renewal and takeover can
+# overlap; the transaction fence, not a local cache, chooses the single winner.
+# Every follower is eligible each slot after that age. With 1-20 contenders
+# this permits at most 20 claim attempts (19 losers) at a handoff, not per
+# healthy slot. The within-slot stagger reduces overlap but cannot bound it.
+# Keeping 64 buckets costs a lone survivor up to 67 slots of silence, far
+# outside the reader's five-second freshness envelope.
+# Under timely successful RPCs, a gone holder is replaced at publication+2;
+# a holder recovering after two failures publishes at publication+3. A holder
+# exhausting K attempts leaves its last claim at publication+K, so takeover
+# is eligible at publication+K+2. These are eligibility bounds, not promises
+# against arbitrarily many aborted/failed winners. S5 forbids in-slot retries.
+HOLDER_FAILURE_SLOTS = 3
+TAKEOVER_SPREAD = 1
+TAKEOVER_MIN_AGE = 2
 
 
 def takeover_rank(boot: str, claim_slot: int) -> int:
@@ -504,21 +560,17 @@ def takeover_rank(boot: str, claim_slot: int) -> int:
 
 
 def takeover_due(boot: str, slot: int, claim: dict[str, Any] | None) -> bool:
-    """Warm followers take over a stale claim in hash-ranked waves, one per slot.
-
-    Every follower reads the same stale claim, so ranks are fixed for the whole
-    takeover. Rank r becomes eligible at age TAKEOVER_MIN_AGE+r; from age
-    TAKEOVER_MIN_AGE+TAKEOVER_SPREAD-1 every follower is eligible (S4).
-    """
+    """Every stale-claim slot is a recovery turn, including after a lost turn."""
     if claim is None:
         return True
-    return slot - claim["slot"] >= TAKEOVER_MIN_AGE + takeover_rank(boot, claim["slot"])
+    age = slot - claim["slot"] - TAKEOVER_MIN_AGE
+    return age >= 0 and age % TAKEOVER_SPREAD == takeover_rank(boot, claim["slot"])
 
 
 def own_publication(body: dict[str, Any] | None, boot: str, slot: int) -> bool:
-    """The fleet health row is this boot's publication for slot-1 or slot-2."""
+    """This boot published within the K-slot recovery allowance."""
     return bool(body is not None and body.get("publisher_boot_id") == boot
-                and body.get("slot") in (slot-1, slot-2))
+                and body.get("slot") in range(slot-HOLDER_FAILURE_SLOTS, slot))
 
 
 def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str,
@@ -527,8 +579,9 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
                   warm: bool = False) -> PublisherReply:
     """Worker I/O only. All inputs are captured by the owner before submission.
 
-    ``warm`` means this boot has installed fleet health at least once, so a
-    stale claim is a takeover (spread across slots), not a cold start.
+    ``warm`` records whether this boot has installed fleet health. An existing
+    claim always requires spread takeover, even for a newly started follower;
+    only an absent claim row permits immediate cold election.
     """
     started = store.clock()
     slot = job.slot
@@ -552,13 +605,13 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
         if not store.session_ready():
             reason = "session_unavailable"
             return
-        # A timer can wake before the previous actual start plus two seconds.
-        # Wait within this slot instead of discarding an otherwise valid window.
-        delay = job.earliest_start_mono - store.clock()
-        if delay > 0 and job.earliest_start_mono <= job.latest_start_mono:
-            sleep(delay)
-        # Scope setup may sample time or be delayed. Admission happens AFTER it.
+        # Establish scopes before the cadence wait: setup time can fit inside
+        # the scheduled two-second cadence without delaying admission.
+        # Admission still follows both setup and waiting, with revocation checks.
         with rpc_scope(budget.deadline, CYCLE_SECONDS, store.clock), observe_spanner_rpcs(record):
+            delay = job.earliest_start_mono - store.clock()
+            if delay > 0 and job.earliest_start_mono <= job.latest_start_mono:
+                sleep(delay)
             if not admission.admission_lock.acquire(timeout=budget.remaining(CYCLE_SECONDS)):
                 raise TimeoutError("publisher_admission")
             try:
@@ -566,7 +619,7 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
                 actual_us = int(store.wall()*1_000_000)
                 started = store.clock()
                 reason = ("revoked" if generation != job.generation or admission.revocation_epoch
-                    or admission.admission_job != job else
+                    or admission.admission_job != job or not getattr(getattr(admission, "runtime_stop", None), "available", True) else
                     "outside_window" if not (job.earliest_start_mono <= started <= job.latest_start_mono
                         and actual_us // SLOT_US == slot and actual_us % SLOT_US <= JITTER_US) else None)
                 if reason is not None:
@@ -574,13 +627,19 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
                 budget = Budget(started + CYCLE_SECONDS, store.clock)
             finally:
                 admission.admission_lock.release()
-            # This process committed the claim for slot-1/slot-2 (worker-local
-            # fact, independent of reply acceptance and the observer cache):
-            # check storage for a same-owner renewal at once, without a stagger.
-            won = getattr(store, "won", None)
-            holder = not incumbent and won is not None and won[0] == boot and won[1] in (slot-1, slot-2)
-            if not incumbent and not holder:
-                stagger = follower_stagger(boot, slot, incumbent_present)
+            # Only a won claim or an unknown commit skips the follower delay.
+            # A definite loser remains a follower; neither hint proves ownership.
+            previous_attempt = store.claim_attempt if store.claim_unknown else store.won
+            # A known abort can retain the recent-publication fast path. Only
+            # an unknown commit needs storage reconciliation before that path.
+            fast_incumbent = incumbent and not store.claim_unknown
+            holder = (not fast_incumbent and previous_attempt is not None
+                      and previous_attempt[0] == boot and slot-HOLDER_FAILURE_SLOTS <= previous_attempt[1] < slot)
+            if not fast_incumbent and not holder:
+                # Keep a warm takeover's follower delay in the 60-120ms band;
+                # the cold 0-210ms spread can otherwise consume the observation
+                # window before claiming.
+                stagger = follower_stagger(boot, slot, incumbent_present or warm)
                 sleep(stagger)
                 # The admitted start and budget include the stagger. Recheck the
                 # owner before any I/O; a retired job remains a missed slot.
@@ -588,7 +647,8 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
                     raise TimeoutError("publisher_admission")
                 try:
                     if (admission.generation != job.generation or admission.revocation_epoch
-                            or admission.admission_job != job):
+                            or admission.admission_job != job
+                            or not getattr(getattr(admission, "runtime_stop", None), "available", True)):
                         reason = "revoked"
                         return
                     if (int(store.wall()*1_000_000) // SLOT_US != slot
@@ -601,24 +661,33 @@ def publish_cycle(store: ObservationStore, boot: str, region: str, revision: str
                 reason = "session_unavailable"
                 return
             attempted, outcome = True, "failures"
-            if not incumbent:
+            if not fast_incumbent:
                 current = store.read_shadow_claim(budget)
                 seen_claim_slot = current["slot"] if current is not None else None
-                # A visible publication from slot-1/slot-2 protects its owner.
-                # Even without that cache, a claim newer than slot-2 forbids
-                # takeover. Followers pay zero Commit RPCs in steady state.
-                # Recheck in claim() too, since this snapshot can race a winner.
-                # A warm takeover waits for this boot's rank (takeover_due).
-                # Same-owner renewal: storage, not a possibly stale observer
-                # cache, says this boot holds the claim and published within
-                # two slots. A holder that claims but never publishes still
-                # yields (S4), because its publication ages out.
-                renew = (current is not None and current["owner_boot_id"] == boot
-                         and slot-2 <= current["slot"] < slot
-                         and store.clock() <= job.latest_start_mono
-                         and own_publication(store.read_shadow_publication(budget), boot, slot))
-                if not renew and (incumbent_present or current is not None and current["slot"] > slot-2
-                        or warm and not takeover_due(boot, slot, current)
+                # Followers pay one lock-free read and no Commit RPC. A local
+                # attempt/won hint is never authority, especially after timeout.
+                owner = current is not None and current["owner_boot_id"] == boot
+                renew = False
+                if owner and current is not None and slot-HOLDER_FAILURE_SLOTS <= current["slot"] < slot:
+                    publication = store.read_shadow_publication(budget)
+                    published = store.last_publication
+                    if publication is not None and publication["publisher_boot_id"] == boot:
+                        if published is None or published[0] != boot or publication["slot"] > published[1]:
+                            published = store.last_publication = (boot, publication["slot"])
+                    # Publication evidence outranks any claim/tenure anchor:
+                    # missed slots consume the allowance too. Only a boot with
+                    # no publication uses the start of its initial claim tenure.
+                    since = (published[1] + 1 if published is not None and published[0] == boot
+                             else store.unpublished_since)
+                    if since is None:
+                        since = current["slot"]
+                    store.unpublished_since = since
+                    renew = slot < since + HOLDER_FAILURE_SLOTS and store.clock() <= job.latest_start_mono
+                # Cached health selects timing, not ownership. In particular,
+                # slot-2 health must not veto takeover of an age-two claim.
+                if not renew and (owner
+                        or current is not None and current["slot"] > slot-2
+                        or (warm or current is not None) and not takeover_due(boot, slot, current)
                         or store.clock() > job.latest_start_mono):
                     outcome = "lost_claims"
                     return
@@ -737,11 +806,26 @@ class Service:
         self.publisher_job: asyncio.Future[Any] | None = None
         self.publisher_worker: Future[None] | None = None
         self.publisher_worker_active = threading.Event()
+        self.publisher_store = store
+        self.publisher_lane_generation = 0
+        self.publisher_lane_open = False
+        self.abandoned_publishers: list[Future[threading.Thread]] = []
+        self.startup_job: Future[bool] | None = None
+        self.startup_waiter: asyncio.Future[bool] | None = None
+        self.publisher_session_job: Future[bool] | None = None
+        self.owner_task: asyncio.Task[None] | None = None
+        self.owner_progress = store.clock()
+        self.supervised = False
         self.flush_job: asyncio.Future[Any] | None = None
         self.counters: dict[str, dict[str, Any]] = {}
         self.unknown_batches: set[Reservation] = set()
         self.unknown: tuple[str, list[Row], Row, Row | None] | None = None
         self.next_allocate = float("-inf")
+        self.allocation_day: str | None = None
+        self.allocation_requested = False
+        self.allocation_failures = 0
+        # The first owner tick must provision permits before cohort traffic.
+        # Only contention retries are dephased; refills remain demand-gated.
         self.next_flush = float("-inf")
         self.previous_closure: str | None = None
         self.last_closure_ack: dict[str, Any] | None = None
@@ -757,6 +841,24 @@ class Service:
         self.close_finished = False
         self.close_done = asyncio.Event()
         self.ensure_day(int(store.wall()*1_000_000))
+        self.runtime_stop = RuntimeStop(store, self.journal.boot, self.latch_stop)
+        self.breaker_recorded = False
+
+    def latch_stop(self) -> None:
+        # Worker-safe terminal latches: block requests and publisher starts now.
+        # The owner publishes the generation change through the expiry path.
+        self.settings.stop_async_settle_shadow()
+        self.revocation_epoch = 1
+
+    def record_breaker(self) -> None:
+        row = self.runtime_stop.tripped
+        if row is not None and not self.breaker_recorded:
+            day = self.ensure_day(row.value()["stopped_at_us"])
+            if day in self.counters:
+                target = self.counters[day]["diagnostics"]
+                self._counter_cells(day, target, {"runtime_breaker_trips": 1,
+                    "runtime_breaker_api_failures": row.value()["failure_count"]})
+                self.breaker_recorded = True
 
     def pin(self) -> tuple[Any, ...]:
         # The effective policy includes the canary expiry: when it passes, the
@@ -780,9 +882,13 @@ class Service:
                 and self.settings.async_settle_shadow_workspace_ids == self.workspaces
                 and bool(self.workspaces) and not self.settings.async_settle_enabled)
 
-    def contender(self) -> bool:
+    def publisher_eligible(self) -> bool:
         return (self.enabled() and bool(self.settings.async_settle_shadow_health_region)
                 and self.settings.effective_serving_region == self.settings.async_settle_shadow_health_region)
+
+    def contender(self) -> bool:
+        return (self.publisher_eligible() and self.runtime_stop.available
+                and len(self.abandoned_publishers) < PUBLISHER_ABANDONED_BUDGET)
 
     def ensure_day(self, now_us: int) -> str:
         day = day_at(now_us)
@@ -821,29 +927,40 @@ class Service:
             target = self.counters[day]["publisher"]
             self._counter_cells(day, target, {name: target[name]+count})
 
-    def tick(self, stamp: int, *, publisher: bool | None = None) -> tuple[lifecycle.Effect, ...]:
+    def tick(self, stamp: int, *, mono: float | None = None, publisher: bool | None = None) -> tuple[lifecycle.Effect, ...]:
+        # Job-creating callers pair mono BEFORE the wall stamp. Sampling here
+        # after the prelude would let one pause shift every later reservation.
         self.assert_owner()
+        self.record_breaker()
         self.enabled()  # Publish any changed admission generation before dispatch.
         effects: tuple[lifecycle.Effect, ...] = ()
         job = self.state.job
         if job is not None and self.store.clock() > job.latest_start_mono+CYCLE_SECONDS+PUBLISHER_WATCHDOG_GRACE:
             effects = self.accept(lifecycle.PublisherFailed(stamp, job.slot, job.generation, "publisher_watchdog"))
         if not self.state.days:
-            enabled = self.contender() if publisher is None else publisher
+            enabled = self.publisher_eligible() if publisher is None else publisher
             days = []
             for day in self.counters:
                 start = stamp if day == day_at(stamp) else self.counters[day]["started_at_us"]
                 slot = start//SLOT_US
                 days.append(lifecycle.Day(day, slot, slot-1, (start//lifecycle.DAY_US+1)*lifecycle.DAY_US//SLOT_US-1))
             self._state = lifecycle.State(days=tuple(days), publisher_enabled=enabled, generation=self.generation)
-        return effects + self.accept(lifecycle.Tick(stamp, self.store.clock(), self.enabled() and not self.stopped.is_set()
+        return effects + self.accept(lifecycle.Tick(stamp, self.store.clock() if mono is None else mono, self.enabled() and not self.stopped.is_set()
                                                      and (publisher is True or self.contender())))
 
     def schedule_cycle(self, slot: int, claim_us: int) -> None:
         self.assert_owner()
-        self.tick(claim_us, publisher=True)
+        # Refresh the offline driver's caller stamp as a paired sample too.
+        mono = self.store.clock()
+        stamp = int(self.store.wall()*1_000_000)
+        self.tick(stamp, mono=mono, publisher=True)
+        job = self.state.job
+        if job is not None and job.slot != slot:
+            # The offline caller cannot dispatch this sampled slot. Resolve its
+            # reservation normally instead of leaving it to block the next tick.
+            self.accept(lifecycle.SlotOutcome(stamp, job.slot, "missed", generation=job.generation))
         if any(slot in d.publishers for d in self.state.days):
-            self.publishing.add(day_at(claim_us))
+            self.publishing.add(day_at(slot*SLOT_US))
 
     def publish_cycle(self, slot: int, claim_us: int) -> None:
         """Offline owner driver; executors call the module-level worker."""
@@ -862,7 +979,12 @@ class Service:
         # without follower discovery or re-election. S1 and RPC budgets remain
         # unchanged; the storage fence still permits only one winner per slot.
         self.assert_owner()
-        if self.incumbent_slot in (slot-1, slot-2):
+        # The recovery turn after two failures is still inside K. Demoting at
+        # age three adds two reconciliation reads precisely on that turn and
+        # can spend its observation window before the claim even starts.
+        # claim() still checks the durable owner/slot fence; unknown commits
+        # still force reconciliation in the worker.
+        if self.incumbent_slot in range(slot-HOLDER_FAILURE_SLOTS, slot):
             return True
         # Durable incumbency: the installed fleet health is this boot's own
         # publication, which publish() wrote only under this boot's won claim
@@ -964,7 +1086,7 @@ class Service:
         if any(isinstance(e, lifecycle.Fault) for e in effects):
             return effects
         # One failed cycle does not revoke a recently acknowledged incumbent.
-        # is_incumbent bounds this grace to two slots; stale callbacks never get
+        # is_incumbent bounds this grace to K slots; stale callbacks never get
         # here, and followers cannot promote themselves from a claim alone.
         if trace["outcome"] == "published":
             self.incumbent_slot = slot
@@ -1187,6 +1309,8 @@ class Service:
                     self.publisher_job.set_result(None)
                 if isinstance(event, lifecycle.PublisherFailed) and self.publisher_worker is not None:
                     self.publisher_worker.cancel()  # Only queued work can be cancelled.
+                    if self.supervised and self.publisher_worker_active.is_set():
+                        self.replace_publisher()
             with self.admission_lock:
                 self.generation = self.state.generation
                 self.admission_job = self.state.job
@@ -1247,6 +1371,7 @@ class Service:
                 value, error = operation(), None
             except Exception as caught:
                 value, error = None, caught
+            self.record_breaker()  # Include a trip from drain IO before resuming closure.
 
     async def drive_async(self, work: Generator[Callable[[], Any], Any, None]) -> None:
         self.assert_owner()
@@ -1267,6 +1392,7 @@ class Service:
                 loop.call_soon_threadsafe(deliver, result.value, result.error)
             self.evidence_executor.submit(execute)
             value, error = await reply
+            self.record_breaker()
 
     def flush(self, deadline: float) -> None:
         self.drive(self._flush(min(deadline, self.termination_deadline or deadline)))
@@ -1303,6 +1429,8 @@ class Service:
             if not self.state.days:
                 self.tick(stamp, publisher=False)
             for reservation, status in list(self.port.fold_obligations.items()):
+                if status == "pending" and self.port.fold_failures[reservation].is_set():
+                    status = self.port.fold_obligations[reservation] = "failed"
                 key = f"fold:{reservation.boot}:{reservation.event_seq}"
                 if reservation not in self.port.fold_owners:
                     effects = self.accept(lifecycle.ObserverEnqueued(stamp, key, reservation.day))
@@ -1316,6 +1444,7 @@ class Service:
                         self.port.lost.set()
                         continue
                     del self.port.fold_obligations[reservation]
+                    del self.port.fold_failures[reservation]
                     self.port.fold_owners.remove(reservation)
 
     def _flush(self, deadline: float, *, finals_only: bool = False) -> Generator[Callable[[], Any], Any, None]:
@@ -1330,8 +1459,9 @@ class Service:
                 self.tick(self.interval_end_us, publisher=False)
             self.accept(lifecycle.ShutdownRequested(self.interval_end_us or int(self.store.wall()*1_000_000)))
         if not self.state.shutdown:
+            mono = self.store.clock()
             stamp = int(self.store.wall()*1_000_000)
-            effects = self.tick(stamp)
+            effects = self.tick(stamp, mono=mono)
             for effect in effects:
                 if isinstance(effect, lifecycle.StartPublisherCycle):
                     self.submit_publisher(effect.slot, stamp)
@@ -1506,6 +1636,18 @@ class Service:
     def maintain(self) -> None:
         self.drive(self.maintenance())
 
+    def allocation_jitter(self, seconds: float) -> float:
+        # A distinct boot UUID spreads a simultaneous fleet restart. Include
+        # the day and attempt so retries and midnight do not repeat one phase.
+        # Eager first attempts still burst. In the simultaneous 26/40-process
+        # lock witness, a 60 s ceiling gave 170/255 s last-grant tails; 40 s
+        # gives 165/230 s with 89/183 aborts (baseline: 350/819). These tails
+        # remain longer than baseline lock-step retries (130/200 s). Jitter
+        # reduces contention; it neither bounds fleet writes/s nor avoids all
+        # retry collisions after five-second maintenance quantization.
+        seed = f"{self.journal.boot}/{self.allocation_day}/{self.allocation_failures}"
+        return seconds*int.from_bytes(hashlib.sha256(seed.encode()).digest()[:8], "big")/2**64
+
     def maintenance(self) -> Generator[Callable[[], Any], Any, None]:
         self.assert_owner()
         deadline = self.store.clock()+FLUSH_SECONDS
@@ -1517,21 +1659,34 @@ class Service:
         with self.lock:
             if self.journal.stopped:
                 return
+            if self.allocation_day != day:
+                # Startup and rollover supply demand for the day's first block.
+                # Preserve next_allocate's throttle; same-day refills need port demand.
+                self.allocation_day = day
+                self.allocation_requested = True
+                self.allocation_failures = 0
             terminal = self.journal.terminal_permits.get(day, 0) < RESERVATION_BLOCK
             event = self.journal.permits.get(day, 0) < RESERVATION_BLOCK
-            allocate = self.store.clock() >= self.next_allocate and (terminal or event)
+            allocate = (self.allocation_requested and self.allocation_day == day
+                        and self.store.clock() >= self.next_allocate and (terminal or event))
             if allocate:
                 self.next_allocate = self.store.clock()+5
         if allocate:
             try:
                 yield partial(self.store.allocate, day, terminal=terminal, event=event, budget=Budget(deadline, self.store.clock))
                 with self.lock:
+                    self.allocation_requested = False
+                    self.allocation_failures = 0
                     if event:
                         self.journal.grant(day, RESERVATION_BLOCK)
                     if terminal:
                         self.journal.terminal_permits[day] = self.journal.terminal_permits.get(day, 0)+RESERVATION_BLOCK
-            except Exception:
+            except Exception as error:
                 with self.lock:
+                    if isinstance(error, ContentionLoss):
+                        self.allocation_failures += 1
+                        self.next_allocate = self.store.clock()+5+self.allocation_jitter(
+                            min(40., 5.*2**min(4, self.allocation_failures)))
                     target = self.counters[day]["diagnostics"]
                     self._counter_cells(day, target, {"cap_unavailable": target.get("cap_unavailable", 0)+1})
         yield from self._flush(deadline)
@@ -1545,7 +1700,12 @@ class Service:
         job = self.state.job
         if job is None or job.slot != slot:
             return
-        args = (self.store, self.journal.boot, self.settings.effective_serving_region,
+        if self.supervised and not self.publisher_lane_open:
+            self.replace_publisher()
+        if self.supervised and (not self.publisher_lane_open or not self.contender()):
+            self.accept(lifecycle.PublisherFailed(stamp, job.slot, job.generation, "publisher_worker_busy"))
+            return
+        args = (self.publisher_store if self.supervised else self.store, self.journal.boot, self.settings.effective_serving_region,
                 self.settings.source_revision, job, stamp, self, self.is_incumbent(slot), self.has_incumbent(slot),
                 self.warm())
         if (self.publisher_worker is not None and not self.publisher_worker.cancelled()
@@ -1593,21 +1753,143 @@ class Service:
             deliver(failed_publisher_reply(self.journal.boot, job, "publisher_submit_failed"))
             raise
 
+    def publisher_inventory(self) -> None:
+        """Owner-only accounting; cleanup completion releases an abandonment slot."""
+        # Future completion precedes executor thread exit. Keep its slot until
+        # the thread has exited as well, including across rapid replacements.
+        self.abandoned_publishers[:] = [job for job in self.abandoned_publishers
+            if not job.done() or job.cancelled() or job.exception() is not None or job.result().is_alive()]
+        day = self.ensure_day(int(self.store.wall()*1_000_000))
+        self._counter_cells(day, self.counters[day]["diagnostics"], {
+            "publisher_abandoned_outstanding": len(self.abandoned_publishers),
+            "publisher_budget_exhausted": int(len(self.abandoned_publishers) >= PUBLISHER_ABANDONED_BUDGET),
+        })
+
+    def retire_publisher(self) -> None:
+        """Queue cleanup behind this lane's worker, never join it on the owner.
+
+        The retired executor owns cleanup even after service shutdown. Failed or
+        stuck deletion retains its budget slot; no replacement can evade the cap.
+        """
+        if not self.publisher_lane_open:
+            return
+        lane = self.publisher_store
+        def cleanup() -> threading.Thread:
+            while not lane.close_publisher_lane():
+                sleep(60.)
+            return threading.current_thread()
+        self.abandoned_publishers.append(self.publisher_executor.submit(cleanup))
+        self.publisher_executor.shutdown(wait=False)
+        self.publisher_lane_open = False
+        self.publisher_worker = None
+        self.publisher_session_job = None
+        self.publisher_worker_active = threading.Event()
+
+    def replace_publisher(self) -> None:
+        """Quarantine a hung lane within the fixed boot-local resource budget."""
+        self.publisher_inventory()
+        if len(self.abandoned_publishers) >= PUBLISHER_ABANDONED_BUDGET:
+            return
+        self.retire_publisher()
+        self.publisher_inventory()
+        if not self.contender() or self.stopped.is_set():
+            return
+        self.publisher_executor.shutdown(wait=False)
+        self.publisher_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="shadow-v2-health")
+        self.publisher_store = self.store.publisher_lane()
+        self.publisher_lane_open = True
+        if self.publisher_store.transport is not None:
+            self.publisher_store.transport.failure = self.runtime_stop.outcome
+        self.publisher_lane_generation += 1
+        session_boot = f"{self.journal.boot}-publisher-{self.publisher_lane_generation}"
+        self.publisher_session_job = self.publisher_executor.submit(self.publisher_store.prepare_session, session_boot)
+
+    async def retry_pause(self, delay: float) -> None:
+        try:
+            await asyncio.wait_for(self.stopped.wait(), timeout=delay)
+        except TimeoutError:
+            pass
+
+    def prepare_startup(self) -> bool:
+        return (self.store.prepare_session(self.journal.boot) and not self.stopped.is_set()
+                and self.runtime_stop.poll())
+
+    async def supervise(self) -> None:
+        """Retry startup and recover an exited/suspended owner without a process restart."""
+        delay = 1.
+        while not self.stopped.is_set() and self.policy_enabled():
+            try:
+                async with asyncio.timeout(START_ATTEMPT_SECONDS):
+                    # One owned worker, including across coroutine timeouts. A
+                    # hung native call cannot accumulate default-executor jobs.
+                    if self.startup_job is None or self.startup_job.done():
+                        self.startup_job = self.session_executor.submit(self.prepare_startup)
+                        self.startup_waiter = asyncio.wrap_future(self.startup_job)
+                    # Reuse the bridge too: repeated timeouts must not retain a
+                    # new asyncio Future/callback on the same hung native call.
+                    assert self.startup_waiter is not None
+                    checked = await asyncio.shield(self.startup_waiter)
+                if checked:
+                    break
+            except Exception:  # noqa: S110 - startup retries without retaining exception content
+                pass
+            await self.retry_pause(delay)
+            delay = min(START_RETRY_MAX_SECONDS, delay*2)
+        if self.stopped.is_set() or not self.policy_enabled():
+            return
+        self.runtime_stop.start(lambda: self.policy_enabled() and not self.stopped.is_set(),
+                                lambda: not self.close_finished)
+        while not self.stopped.is_set() and self.policy_enabled():
+            self.owner_progress = self.store.clock()
+            self.owner_task = asyncio.create_task(self.run())
+            while not self.stopped.is_set():
+                done, _ = await asyncio.wait((self.owner_task,), timeout=1.)
+                if done or self.store.clock()-self.owner_progress > OWNER_PROGRESS_SECONDS:
+                    break
+            if self.stopped.is_set() or not self.policy_enabled():
+                return
+            # No exception text or request data: one diagnostic per recovery.
+            logger.warning("shadow_v2_owner_recovery")
+            day = self.ensure_day(int(self.store.wall()*1_000_000))
+            target = self.counters[day]["diagnostics"]
+            self._counter_cells(day, target, {"owner_recoveries": target.get("owner_recoveries", 0)+1})
+            self.owner_task.cancel()
+            # Cancellation is cooperative. Never await the failed owner here;
+            # all production owner waits are cancellation points, with no IO.
+            self.owner_task.add_done_callback(lambda task: None if task.cancelled() else task.exception())
+            job = self.state.job
+            if job is not None:
+                self.accept(lifecycle.PublisherFailed(int(self.store.wall()*1_000_000),
+                    job.slot, job.generation, "publisher_watchdog"))
+            await self.retry_pause(1.)
+
     async def run(self) -> None:
         self.assert_owner()
         self.loop = asyncio.get_running_loop()
+        if not self.supervised:
+            self.runtime_stop.start(lambda: self.policy_enabled() and not self.stopped.is_set(),
+                                    lambda: not self.close_finished)
         while not self.stopped.is_set() and self.enabled():
+            self.owner_progress = self.store.clock()
             if self.store.session_recovery_due() and (self.session_job is None or self.session_job.done()):
                 self.session_job = self.session_executor.submit(self.store.prepare_session, self.journal.boot)
+            if self.supervised:
+                self.publisher_inventory()
+            if (self.supervised and self.publisher_lane_open and self.publisher_store.session_recovery_due()
+                    and (self.publisher_session_job is None or self.publisher_session_job.done())):
+                self.publisher_session_job = self.publisher_executor.submit(self.publisher_store.prepare_session)
             now = self.store.clock()
             now_us = int(self.store.wall()*1_000_000)
-            for effect in self.tick(now_us):
+            for effect in self.tick(now_us, mono=now):
                 if isinstance(effect, lifecycle.StartPublisherCycle):
                     self.submit_publisher(effect.slot, now_us)
+            if self.supervised and self.observer.task is None:
+                self.observer.start()
             if now >= self.next_flush and (self.flush_job is None or self.flush_job.done()):
                 self.next_flush = now+5
                 self.flush_job = self.loop.create_task(self.drive_async(self.maintenance()))
             await asyncio.sleep(.01)
+        self.record_breaker()
         if not self.stopped.is_set():
             await self.close("opt_out", from_loop=True)
 
@@ -1646,12 +1928,9 @@ class Service:
         if self.enabled() and self.task is None:
             self.loop = asyncio.get_running_loop()
             self.trap_sigterm()
-            stamp = int(self.store.wall()*1_000_000)
-            for effect in self.tick(stamp):
-                if isinstance(effect, lifecycle.StartPublisherCycle):
-                    self.submit_publisher(effect.slot, stamp)
-            self.observer.start()
-            self.task = asyncio.create_task(self.run())
+            self.runtime_stop.available = False
+            self.supervised = True
+            self.task = asyncio.create_task(self.supervise())
 
     async def close(self, reason: str = "shutdown", *, from_loop: bool = False,
                     deadline: float | None = None) -> None:
@@ -1681,7 +1960,25 @@ class Service:
             self.interval_end_us = stamp
         try:
             async with asyncio.timeout(max(0, deadline-self.store.clock())):
-                if self.task is not None and not from_loop:
+                if self.supervised:
+                    # Cancel the coroutine, not its native startup worker. Never
+                    # spend the nine-second evidence grace joining native I/O.
+                    tasks = [task for task in (self.task, self.owner_task)
+                             if task is not None and task is not asyncio.current_task()]
+                    for task in tasks:
+                        task.cancel()
+                    if self.startup_waiter is not None:
+                        self.startup_waiter.cancel()
+                    if tasks:
+                        done, _ = await asyncio.wait(tasks, timeout=.25)
+                        for task in done:
+                            if not task.cancelled():
+                                task.exception()
+                    day = self.ensure_day(stamp)
+                    self._counter_cells(day, self.counters[day]["diagnostics"], {
+                        "startup_worker_outstanding": int(self.startup_job is not None and not self.startup_job.done()),
+                    })
+                elif self.task is not None and not from_loop:
                     await asyncio.shield(self.task)
                 await self.observer.close()
                 for job in (self.publisher_job, self.flush_job):
@@ -1725,8 +2022,11 @@ class Service:
             if self.signal_handler is not None and signal.getsignal(signal.SIGTERM) is self.signal_handler:
                 signal.signal(signal.SIGTERM, self.previous_signal_handler)
             self.session_executor.shutdown(wait=False, cancel_futures=True)
-            self.publisher_executor.shutdown(wait=False, cancel_futures=True)
+            self.retire_publisher()
+            self.publisher_executor.shutdown(wait=False)
             self.evidence_executor.shutdown(wait=False, cancel_futures=True)
+            if reason != "opt_out" or self.runtime_stop.tripped is None or self.runtime_stop.persisted:
+                await self.runtime_stop.close()
 
 
 def install(app: Any, settings: Settings, backend: Any) -> None:
@@ -1735,7 +2035,7 @@ def install(app: Any, settings: Settings, backend: Any) -> None:
         return
     store = ObservationStore(backend._database)
     service = Service(settings, store)
-    store.prepare_session(service.journal.boot)
+    service.runtime_stop.available = False
     app.state.async_settle_shadow_observation = service
     @app.on_event("startup")
     async def start() -> None:
@@ -1743,3 +2043,4 @@ def install(app: Any, settings: Settings, backend: Any) -> None:
     @app.on_event("shutdown")
     async def stop() -> None:
         await service.close()
+        await service.runtime_stop.close()

@@ -104,12 +104,30 @@ type Record struct {
 // snapshot's hash, its measured usage, opaque here, the running charge
 // priced from it and capped at the hold, and the hold's deadline as the
 // heartbeat's answer granted it.
+//
+// ReapDeadline, when set, is a stream's reap floor
+// (docs/design/fast-admission-streams.md section 4.6 item 4): the deadline
+// a reap of the hold at this snapshot waits for, plus the grace, in place
+// of Deadline, which it is after. The heartbeat's answer still grants
+// Deadline. A reader from before the field refuses a record carrying it, so
+// an owner writes it only once every auditor reads it (owner
+// Config.RecordReapFloor).
 type Snapshot struct {
-	GatewaySeq int64     `json:"gseq"`
-	Hash       []byte    `json:"hash"`
-	Usage      []byte    `json:"usage"`
-	Running    int64     `json:"run"`
-	Deadline   time.Time `json:"deadline"`
+	GatewaySeq   int64     `json:"gseq"`
+	Hash         []byte    `json:"hash"`
+	Usage        []byte    `json:"usage"`
+	Running      int64     `json:"run"`
+	Deadline     time.Time `json:"deadline"`
+	ReapDeadline time.Time `json:"reap_deadline,omitzero"`
+}
+
+// ReapAfter is the deadline a reap of the hold at this snapshot waits for,
+// plus the grace: ReapDeadline when set, else Deadline.
+func (s *Snapshot) ReapAfter() time.Time {
+	if s.ReapDeadline.After(s.Deadline) {
+		return s.ReapDeadline
+	}
+	return s.Deadline
 }
 
 // CheckpointOf is a checkpoint's (§4.2): the owner's cumulative consumed,
@@ -299,6 +317,9 @@ func (s *Snapshot) validate(estimate int64) error {
 	if s.GatewaySeq < 1 || len(s.Hash) != DigestSize || len(s.Usage) == 0 || s.Running < 0 || s.Running > estimate ||
 		!utc(s.Deadline) {
 		return fmt.Errorf("snapshot %+v of a hold of %d", *s, estimate)
+	}
+	if !s.ReapDeadline.IsZero() && (!utc(s.ReapDeadline) || !s.ReapDeadline.After(s.Deadline)) {
+		return fmt.Errorf("snapshot %+v: a reap deadline is UTC and after the deadline", *s)
 	}
 	return nil
 }

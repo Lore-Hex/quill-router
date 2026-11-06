@@ -10,6 +10,7 @@ import (
 
 	"github.com/Lore-Hex/quill-router/fastpath/internal/gwauth"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/gwstate"
+	"github.com/Lore-Hex/quill-router/fastpath/internal/keywindow"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/routingsnapshot"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store"
 )
@@ -50,14 +51,20 @@ const (
 	PassCacheWorkspace = "cache.workspace"
 	PassCacheDecide    = "cache.decide"
 
-	PassKeyMissing      = "key.missing"
-	PassKeyDisabled     = "key.disabled"
-	PassKeyExpired      = "key.expired"
-	PassKeyScope        = "key.scope"
-	PassKeyFederated    = "key.federated"
-	PassKeyApp          = "key.app"
-	PassKeyCap          = "key.key_cap"
+	PassKeyMissing   = "key.missing"
+	PassKeyDisabled  = "key.disabled"
+	PassKeyExpired   = "key.expired"
+	PassKeyScope     = "key.scope"
+	PassKeyFederated = "key.federated"
+	PassKeyApp       = "key.app"
+	PassKeyCap       = "key.key_cap"
+	// PassKeyWindow and PassKeyWindowAlert are the edge policy's
+	// fastpath_pilot_key_windows as a decision gate
+	// (docs/design/fast-admission-e2-key-windows.md section 4.7): a key whose
+	// spend windows Python's authorize enforces, under mode off or alert; an
+	// alert-only one, under mode off.
 	PassKeyWindow       = "key.key_window"
+	PassKeyWindowAlert  = "key.key_window_alert"
 	PassKeyBudgetStrict = "key.budget_strict"
 	// PassKeyShape: the key's stored body is not one Go reads exactly
 	// (gwstate's key_shape:<field>), such as a usage_shard_count Python's
@@ -92,17 +99,52 @@ const (
 	PassRegionsMismatch    = "policy.regions_mismatch"
 	PassDecideOff          = "decide.off"
 
+	// The async-v1 gates (docs/design/fast-admission-e2-g15-async.md §4.1,
+	// §6.1), for a request whose X-TR-Settlement-Mode is exactly
+	// ["async-v1"]. PassAsyncUnpublished is a keyless policy gate: the
+	// policy carries no async_settle object or the snapshot no
+	// billing_valid, so Go cannot build Python's answer. PassAsyncAdmission
+	// is the first gate once the key's workspace is known: Python's
+	// admission covers that workspace (async_settle.Admits), so the ticket is
+	// Python's; a workspace its admission_workspaces leaves out, or its
+	// admission_excluded_workspaces names (§4.5), is composed as with
+	// admission off, Python's own answer to it. PassAsyncOff is a
+	// decision gate after the compose, beside the decide row's: the policy's
+	// edge_decide is false, so the request is composed (and compared by the
+	// shadow) but never answered.
+	PassAsyncUnpublished = "async.unpublished"
+	PassAsyncAdmission   = "policy.async_admission"
+	PassAsyncOff         = "async.off"
+	// PassSettlementHeader is gwauth's request reason for any other present
+	// X-TR-Settlement-Mode, named here for the watch's settlement-header
+	// pass share (only the edge uses gwauth's request side).
+	PassSettlementHeader = gwauth.ReasonSettlementAsync
+
 	// PassEvaluate is any evaluator pass not named below (the request's
 	// shape or a snapshot input Go does not reproduce); PassEvaluateRefused
 	// any refusal, which Python makes itself.
-	PassEvaluate              = "evaluate.pass"
-	PassEvaluateRefused       = "evaluate.refused"
-	PassEstimateOverflow      = "evaluate.estimate_overflow"
-	PassCandidatesBYOK        = "candidates.byok"
-	PassCandidatesEstimated   = "candidates.estimated_usage"
-	PassCandidatesPrivate     = "candidates.private_proxy"
-	PassClockWindow           = "clock.window"
-	PassCompose               = "compose.refused"
+	PassEvaluate            = "evaluate.pass"
+	PassEvaluateRefused     = "evaluate.refused"
+	PassEstimateOverflow    = "evaluate.estimate_overflow"
+	PassCandidatesBYOK      = "candidates.byok"
+	PassCandidatesEstimated = "candidates.estimated_usage"
+	PassCandidatesPrivate   = "candidates.private_proxy"
+	PassClockWindow         = "clock.window"
+	PassCompose             = "compose.refused"
+	// The stream gates (docs/design/fast-admission-streams.md section 5.1),
+	// named only when the edge policy carries fastpath_edge_streams (else a
+	// stream passes as body.stream whatever gate it reaches): Python's
+	// pilot reasons for a stream it does not lease
+	// (fastpath_frontdoor.pilot_stream_reason). A stream
+	// Stage D does not let in passes as PassStreamStageD and its reason; one
+	// whose boot did not declare heartbeats, whatever
+	// require_heartbeat_declaration says, as PassStreamUndeclared; and one
+	// whose reservation is not its estimate, the tripwire for a lowered
+	// stream reservation the lease would cut the stream at, as
+	// PassStreamHold.
+	PassStreamStageD          = "stream.stage_d:"
+	PassStreamUndeclared      = "stream.undeclared"
+	PassStreamHold            = "stream.hold"
 	evaluatorWindowReason     = "the instant is outside the snapshot's window"
 	evaluatorEstimateOverflow = "the estimate exceeds int64"
 )
@@ -197,16 +239,47 @@ type DecideInputs struct {
 // Input is what Staged was built from, kept so the shadow can stage the
 // same decision under Python's ids (Restage).
 type Decision struct {
-	Staged     gwauth.Staged
-	Input      gwauth.ComposeInput
-	Identity   gwauth.Identity
-	Estimate   int64
-	Workspace  string
-	KeyHash    string
-	LookupHash string
-	Kid        string
-	Region     string
-	Candidates []string
+	Staged   gwauth.Staged
+	Input    gwauth.ComposeInput
+	Identity gwauth.Identity
+	// Estimate is the spend ceiling (Result.ModelEstimate: the rows and the
+	// 200 carry it); Reservation is the credit hold the owner's lease takes
+	// (Result.Reservation, at most HoldOutputTokens of the output budget).
+	Estimate    int64
+	Reservation int64
+	Workspace   string
+	KeyHash     string
+	LookupHash  string
+	Kid         string
+	Region      string
+	Candidates  []string
+	// Affinity is whether the body names a cache_affinity_key: the
+	// candidates are Go's cold order, decided like any other (§1 item 5).
+	// Routing is the evaluator's request and Snapshot the snapshot it
+	// answered from, for the shadow to name a Python answer that is that
+	// order re-ranked for a remembered session (affinity.go).
+	Affinity bool
+	Routing  routingsnapshot.Request
+	Snapshot *routingsnapshot.Snapshot
+	// Stream is body.stream: the lease takes a stream's hold as a stream
+	// (Admission.Stream), as Python's pilot asks for it
+	// (fastpath_frontdoor.authorize), so the owner accepts its heartbeats
+	// and keeps the stream reap floor (docs/design/fast-admission-streams.md
+	// section 2.3 item 4).
+	Stream bool
+	// Windows is the window check a key whose spend windows Python's
+	// authorize enforces needs before the edge may admit (key-windows
+	// section 4.2): nil for any other key, an alert-only one included.
+	Windows *WindowCheck
+}
+
+// WindowCheck is what the edge checks an enforcing windowed key against: the
+// cached limits and the key's tr_key_limit shard count. The estimate checked
+// is the Decision's (Python checks the model estimate, never the
+// reservation).
+type WindowCheck struct {
+	Limits keywindow.Limits
+	Shards int
 }
 
 // Finish is the decision admitted: the front door's envelope and end of
@@ -231,13 +304,19 @@ func (d *Decision) Restage(authorizationID, reservationID, idempotencyKey string
 
 // Decided is Decide's answer. Pass is "" when the edge would answer the
 // request itself, else the first §3 reason it goes to Python. ForShadow is
-// the decision when every gate but the decide row passed, so the shadow
+// the decision when every gate but the decision gates passed, so the shadow
 // compares what the edge would answer for a workspace it does not yet
-// decide; DecideGate is then that row's reason ("" for on, PassDecideOff
-// or PassCacheDecide), and Pass is it. Only Admit hands out a decision to
-// admit, and only when Pass is "". LookupHash and Workspace are what the
-// request named and what the cache said of its key, "" when not known:
-// the shadow and the decide path evict them when Python refuses the key.
+// decide; DecideGate is then the decision gate's reason ("" for on; for a
+// windowed key the policy's mode does not cover, PassKeyWindow or
+// PassKeyWindowAlert; else the decide row's PassDecideOff or
+// PassCacheDecide; else, for an async-v1 request while the policy's
+// edge_decide is false, PassAsyncOff), and Pass is it. A windowed key the
+// mode does not cover passes with its window reason whatever gate after
+// the key's facts passes it, as it did when its windows kept it out of the
+// cohort. Only Admit hands out a decision to admit, and only when Pass is
+// "". LookupHash and Workspace are what the request named and what the
+// cache said of its key, "" when not known: the shadow and the decide path
+// evict them when Python refuses the key.
 type Decided struct {
 	Pass string
 	// shadowOnly is the decision for comparison: read through ForShadow,
@@ -250,7 +329,27 @@ type Decided struct {
 	// Read is what the cache held for the lookup hash (zero when not
 	// looked up).
 	Read gwstate.Read
+	// AsyncPop is the shadow's async-v1 population (§4.4) of a request
+	// whose X-TR-Settlement-Mode is exactly ["async-v1"], whatever it passes
+	// with: AsyncPlain or AsyncAffinity (whether the body names a
+	// cache_affinity_key) once the strict parse has read the body whole,
+	// else AsyncUnparsed; "" for any other request.
+	AsyncPop string
+	// StreamStageD is the shadow's split of a request passed as body.stream
+	// (docs/design/fast-admission-streams.md section 8.1): the Stage D
+	// reason the stream would get, as far as the edge reads it before the
+	// key's facts (streamStageD); "" for any other request. It changes no
+	// decision: without the policy's fastpath_edge_streams every stream
+	// still passes.
+	StreamStageD string
 }
+
+// The async-v1 populations (Decided.AsyncPop).
+const (
+	AsyncPlain    = "plain"
+	AsyncAffinity = "affinity"
+	AsyncUnparsed = "unparsed"
+)
 
 // Admit is the decision the edge may admit: one, and true, only when every
 // gate passed, the decide row's included.
@@ -266,30 +365,64 @@ func (d Decided) Admit() (*Decision, bool) {
 // alone, and never admitted (Admit is).
 func (d Decided) ForShadow() *Decision { return d.shadowOnly }
 
-func passDecided(reason string) Decided { return Decided{Pass: reason} }
-
 // Decide runs the pipeline: the boot, the request, the caches, the key's
 // and workspace's facts, the policy, the evaluator, the identity and the
 // compose, in §3's order (the boot first: the edge reads nothing else of a
-// request whose boot fails), and the decide row last.
+// request whose boot fails), and the decision gates last.
 func Decide(in DecideInputs) Decided {
-	if q := in.Request; q.Method != http.MethodPost || !authorizeRoutes[q.Path] || q.EscapedPath != q.Path {
-		return passDecided(PassRequestPath)
-	}
-	if reason := bootPass(in.Request.Boot); reason != "" {
-		return passDecided(reason)
-	}
-	h := headersOf(in.Request.Header)
-	r, p := gwauth.ParseRequest(in.Request.Body, h)
-	if p.Passed() {
-		return passDecided(p.Reason)
-	}
-	at := in.Request.At
-	out := Decided{LookupHash: r.APIKeyLookupHash}
+	var out Decided
+	// windowGate is the policy mode's reason for a windowed key it does not
+	// cover, once the key's facts are read: from there on it is the reason
+	// any gate passes with, as the windows' place in the key's fact order
+	// made it before they joined the cohort.
+	var windowGate string
+	// darkStream is a stream the policy does not let the edge decide (no
+	// fastpath_edge_streams, docs/design/fast-admission-streams.md section
+	// 8.4): it passes as body.stream, as it did at the request cohort before
+	// the member, whatever gate it reaches, and when it reaches none it is
+	// composed for the shadow alone (body.stream its decision gate).
+	var darkStream bool
 	pass := func(reason string) Decided {
+		if windowGate != "" {
+			reason = windowGate
+		}
+		if darkStream {
+			reason = gwauth.ReasonStream
+		}
 		out.Pass = reason
 		return out
 	}
+	h := headersOf(in.Request.Header)
+	if v := h.SettlementMode; len(v) == 1 && v[0] == gwauth.SettlementModeAsyncV1 {
+		out.AsyncPop = AsyncUnparsed
+	}
+	if q := in.Request; q.Method != http.MethodPost || !authorizeRoutes[q.Path] || q.EscapedPath != q.Path {
+		return pass(PassRequestPath)
+	}
+	if reason := bootPass(in.Request.Boot); reason != "" {
+		return pass(reason)
+	}
+	// A stream goes on past the request's cohort, for the shadow; without
+	// the policy's fastpath_edge_streams it passes as body.stream all the
+	// same (darkStream), but for body.api_key_hash, the one cohort reason
+	// before it.
+	r, p := gwauth.ParseRequestStreams(in.Request.Body, h, true)
+	if r.Streamed() && p.Reason != gwauth.ReasonAPIKeyHash && (in.Policy == nil || !in.Policy.EdgeStreams()) {
+		darkStream = true
+		out.StreamStageD = streamStageD(in.Policy, in.Request.Boot, r)
+	}
+	if r.Async.V1 {
+		// The body parsed whole (a cohort reason may still pass it).
+		out.AsyncPop = AsyncPlain
+		if r.CacheAffinity {
+			out.AsyncPop = AsyncAffinity
+		}
+	}
+	if p.Passed() {
+		return pass(p.Reason)
+	}
+	at := in.Request.At
+	out.LookupHash = r.APIKeyLookupHash
 	policy, snap := in.Policy, in.Snapshot
 	if policy == nil || at.Unix()+policySkew < policy.IssuedAt || at.Unix() >= policy.NotAfter {
 		return pass(PassCachePolicy)
@@ -309,6 +442,9 @@ func Decide(in DecideInputs) Decided {
 	case !slices.Contains(policy.FastpathPilotRegions, policy.Plane.Region):
 		return pass(PassPilotRegion)
 	}
+	if reason := asyncPolicyPass(r, policy, snap); reason != "" {
+		return pass(reason)
+	}
 	if in.Lookup == nil || r.APIKeyLookupHash == "" {
 		return pass(PassCacheKey)
 	}
@@ -322,7 +458,14 @@ func Decide(in DecideInputs) Decided {
 	}
 	key, ws := read.Facts.Key, read.Facts.Workspace
 	out.Workspace = key.WorkspaceID
-	if eligible, reason := key.At(at); !eligible {
+	if reason := asyncAdmissionPass(r, policy, key.WorkspaceID); reason != "" {
+		return pass(reason)
+	}
+	eligible, reason := key.At(at)
+	if w := key.Windows; w != nil && (eligible || reason == gwstate.ReasonKeyBudgetStrict) {
+		windowGate = keyWindowsGate(policy.KeyWindowsMode(), *w)
+	}
+	if !eligible {
 		return pass(keyPass(reason))
 	}
 	if !ws.Eligible {
@@ -410,6 +553,30 @@ func Decide(in DecideInputs) Decided {
 		return pass(p.Reason)
 	}
 	sd := policy.StageD
+	stageD := gwauth.StageDReasonOf(gwauth.StageDSettings{
+		// Python ANDs the switch with not budget_strict (gateway.py,
+		// _stage_d_eligibility_reason's caller); a budget-strict key
+		// passed above (key.budget_strict), so the switch is the whole
+		// of it.
+		EligibilityEnabled:          sd.EligibilityEnabled,
+		HeartbeatEnabled:            sd.HeartbeatEnabled,
+		RequireHeartbeatDeclaration: sd.RequireHeartbeatDeclaration, PilotWorkspaces: sd.PilotWorkspaces,
+	}, gwauth.StageDRequest{
+		// Every fact the gates above already hold: a verified boot
+		// (bootPass), credits-only candidates (CreditsOnly), standard
+		// pricing (no custom, user or partner model, no priced extra, not
+		// native batch: the request cohort) and no service tier.
+		WorkspaceID: key.WorkspaceID, BootAccepted: true,
+		BootDeclaresHeartbeat: in.Request.Boot.Boot.DeclaresUsageHeartbeat,
+		Stream:                r.Streamed(), RouteType: r.Routing.RouteType,
+		CreditsOnly: true, StandardPricing: true, ServiceTier: res.ServiceTier,
+		TypedSettlement: policy.AsyncSettle != nil && policy.AsyncSettle.TypedRecords,
+	})
+	if r.Streamed() {
+		if reason := streamGate(stageD, in.Request.Boot.Boot.DeclaresUsageHeartbeat, res); reason != "" {
+			return pass(reason)
+		}
+	}
 	compose := gwauth.ComposeInput{
 		At:                     at,
 		AuthorizationID:        in.Mint.authorization(),
@@ -429,29 +596,109 @@ func Decide(in DecideInputs) Decided {
 		Regions:                gwauth.RegionsOf(snap.Settings.RegionPayload),
 		Candidates:             candidates,
 		Estimate:               res.ModelEstimate,
-		StageDReason: gwauth.StageDReasonOf(gwauth.StageDSettings{
-			// Python ANDs the switch with not budget_strict (gateway.py,
-			// _stage_d_eligibility_reason's caller); a budget-strict key
-			// passed above (key.budget_strict), so the switch is the whole
-			// of it.
-			EligibilityEnabled:          sd.EligibilityEnabled,
-			HeartbeatEnabled:            sd.HeartbeatEnabled,
-			RequireHeartbeatDeclaration: sd.RequireHeartbeatDeclaration, PilotWorkspaces: sd.PilotWorkspaces,
-		}, key.WorkspaceID, in.Request.Boot.Boot.DeclaresUsageHeartbeat),
-		BootKid: in.Request.Boot.Kid,
+		StageDReason:           stageD,
+		BootKid:                in.Request.Boot.Kid,
+	}
+	if r.Async.V1 {
+		// The additions Python splices in (shape A or B); the policy's
+		// object is present (asyncPolicyPass) and its admission does not
+		// cover the workspace (asyncAdmissionPass), so Python answers it as
+		// with admission off (asyncComposeInput).
+		compose.Async = asyncComposeInput(r.Async, *policy.AsyncSettle, key.WorkspaceID)
 	}
 	staged, err := gwauth.Stage(compose)
 	if err != nil {
 		return pass(PassCompose)
 	}
-	out.shadowOnly = &Decision{
-		Staged: staged, Input: compose, Identity: identity, Estimate: res.ModelEstimate,
+	decision := &Decision{
+		Staged: staged, Input: compose, Identity: identity, Estimate: res.ModelEstimate, Reservation: res.Reservation,
 		Workspace: key.WorkspaceID, KeyHash: key.Hash, LookupHash: r.APIKeyLookupHash, Kid: in.Request.Boot.Kid,
 		Region: region, Candidates: slices.Clone(res.Candidates),
+		Affinity: r.CacheAffinity, Routing: req, Snapshot: snap, Stream: r.Streamed(),
 	}
-	out.DecideGate = in.Decide.gate(key.WorkspaceID, policy.Plane.Cloud, region, at)
+	if w := key.Windows; w != nil && !w.AlertOnly {
+		// An alert-only key is decided as an uncapped one: Python's
+		// authorize never checks its windows.
+		decision.Windows = &WindowCheck{Limits: w.Limits, Shards: w.Shards}
+	}
+	out.shadowOnly = decision
+	// The decision gates, in order: a stream without the policy's
+	// fastpath_edge_streams, the policy's mode for a windowed key, the
+	// decide row, and async-v1's edge_decide.
+	switch {
+	case darkStream:
+		// Composed for the shadow, answered by Python, even for a workspace
+		// whose decide row is on (docs/design/fast-admission-streams.md
+		// section 8.4).
+		out.DecideGate = gwauth.ReasonStream
+	case windowGate != "":
+		out.DecideGate = windowGate
+	default:
+		out.DecideGate = in.Decide.gate(key.WorkspaceID, policy.Plane.Cloud, region, at)
+	}
+	if out.DecideGate == "" && r.Async.V1 && !policy.AsyncSettle.EdgeDecide {
+		// Composed for the shadow, answered by Python, even for a workspace
+		// whose decide row is on (§6.2, the dark sequence).
+		out.DecideGate = PassAsyncOff
+	}
 	out.Pass = out.DecideGate
 	return out
+}
+
+// streamGate is a stream's gate past the request cohort, "" when the edge
+// may compose it as
+// Python's pilot leases it (fastpath_frontdoor.pilot_stream_reason, whose
+// switch and snapshot booking the member implies): Stage D lets it in, its
+// boot declared heartbeats, and its hold is its ceiling (the evaluator's
+// reservation is its estimate, as Python's hold_is_ceiling). An async-v1
+// stream reaches it only for a workspace Python's admission leaves out
+// (asyncAdmissionPass), and goes on as any other: Python's pilot reads no
+// settlement mode, and its additions are the non-stream request's
+// (authorize_additions reads body.stream only into a ticket's claims), so
+// the compose below splices them in after the stream's frozen pricing.
+func streamGate(stageD string, declared bool, res routingsnapshot.Result) string {
+	switch {
+	case stageD != gwauth.StageDOK:
+		return PassStreamStageD + stageD
+	case !declared:
+		return PassStreamUndeclared
+	case res.Reservation != res.ModelEstimate:
+		return PassStreamHold
+	}
+	return ""
+}
+
+// asyncPolicyPass is an async-v1 request's keyless policy gate: "" when the
+// policy and the snapshot carry what the edge reads to compose Python's
+// answer, else PassAsyncUnpublished.
+func asyncPolicyPass(r gwauth.Request, p *routingsnapshot.EdgePolicy, s *routingsnapshot.Snapshot) string {
+	if r.Async.V1 && (p.AsyncSettle == nil || !s.BillingValidPublished()) {
+		return PassAsyncUnpublished
+	}
+	return ""
+}
+
+// asyncAdmissionPass is an async-v1 request's admission gate, once the key's
+// workspace is known (asyncPolicyPass passed, so the policy's object is
+// present): PassAsyncAdmission when Python's admission covers the workspace
+// (a ticket is Python's), else "": admission off, admission_workspaces
+// leaves the workspace out, or admission_excluded_workspaces names it (a
+// fast-path workspace, section 4.5), and Python answers it as with
+// admission off (docs/design/fast-admission-e2-g15-async.md section 4.1).
+func asyncAdmissionPass(r gwauth.Request, p *routingsnapshot.EdgePolicy, workspace string) string {
+	if r.Async.V1 && p.AsyncSettle.Admits(workspace) {
+		return PassAsyncAdmission
+	}
+	return ""
+}
+
+// asyncComposeInput is the async input Stage composes for the workspace: the
+// policy's object as that workspace sees it, admission on only when it covers
+// the workspace (Admits), not a literal false, so that were the admission
+// gate skipped, Stage refuses a covered workspace (a ticket is Python's).
+func asyncComposeInput(r gwauth.AsyncRequest, p routingsnapshot.AsyncSettle, workspace string) *gwauth.AsyncInput {
+	p.AdmissionEnabled = p.Admits(workspace)
+	return &gwauth.AsyncInput{Request: r, Policy: p}
 }
 
 func composeTags(tags []gwauth.Tag) []gwauth.ComposeTag {
@@ -460,6 +707,53 @@ func composeTags(tags []gwauth.Tag) []gwauth.ComposeTag {
 		out[i] = gwauth.ComposeTag(t)
 	}
 	return out
+}
+
+// The shadow's Stage D reasons for a stream (Decided.StreamStageD), in
+// _stage_d_eligibility_reason's order (gateway.py), as far as the edge
+// reads them before the key's facts. A stream reaches them with a verified
+// boot (bootPass), so boot_not_accepted cannot occur. StreamPilotSet is a
+// stream whose policy names a Stage D pilot set, whose membership needs the
+// key's workspace; StreamUnread is one every reason read here lets
+// through, whose candidates' usage types and pricing the edge has not read.
+const (
+	StreamPolicyUnknown       = "policy_unknown"
+	StreamStageDDisabled      = "stage_d_disabled"
+	StreamPilotSet            = "pilot_set"
+	StreamHeartbeatsDisabled  = "heartbeats_disabled"
+	StreamHeartbeatUndeclared = "heartbeat_undeclared"
+	StreamRoute               = "route"
+	StreamServiceTier         = "service_tier"
+	StreamUnread              = "unread"
+)
+
+// streamStageD is a stream's Stage D reason for the shadow's split
+// (docs/design/fast-admission-streams.md section 8.1). A stream joins the
+// lease cohort only with a boot that declared heartbeats, whatever
+// require_heartbeat_declaration says (section 5.1), so an undeclared boot
+// is counted apart either way.
+func streamStageD(p *routingsnapshot.EdgePolicy, boot BootSeen, r gwauth.Request) string {
+	if p == nil {
+		return StreamPolicyUnknown
+	}
+	sd := p.StageD
+	switch {
+	case !sd.EligibilityEnabled:
+		return StreamStageDDisabled
+	case len(sd.PilotWorkspaces) > 0:
+		return StreamPilotSet
+	case !sd.HeartbeatEnabled:
+		return StreamHeartbeatsDisabled
+	case !boot.Boot.DeclaresUsageHeartbeat:
+		return StreamHeartbeatUndeclared
+	}
+	if rt := r.Routing.RouteType; rt == nil || (*rt != "chat.completions" && *rt != "responses") {
+		return StreamRoute
+	}
+	if t := r.Routing.ServiceTier; t != nil && (*t == "priority" || *t == "auto") {
+		return StreamServiceTier
+	}
+	return StreamUnread
 }
 
 // bootPass is the boot's reason (§3 "Boot"): E1's verdict, an Invalid one
@@ -529,11 +823,29 @@ func keyPass(reason string) string {
 	case gwstate.ReasonKeyLimit:
 		return PassKeyCap
 	case gwstate.ReasonKeyWindowLimit:
+		// Spend windows Python's authorize enforces (keyWindowsGate).
 		return PassKeyWindow
+	case gwstate.ReasonKeyWindowAlert:
+		// Alert-only windows, which it never checks; counted apart
+		// (fast-admission-e2-key-windows.md §8.1).
+		return PassKeyWindowAlert
 	case gwstate.ReasonKeyBudgetStrict:
 		return PassKeyBudgetStrict
 	}
 	return PassKeyShape
+}
+
+// keyWindowsGate is the edge policy's fastpath_pilot_key_windows as a
+// decision gate for a key with spend windows (key-windows section 5): "" when
+// the mode covers the key (alert covers an alert-only key, enforce every
+// one), else its window reason.
+func keyWindowsGate(mode string, w gwstate.KeyWindows) string {
+	switch {
+	case mode == routingsnapshot.KeyWindowsEnforce,
+		mode == routingsnapshot.KeyWindowsAlert && w.AlertOnly:
+		return ""
+	}
+	return keyPass(w.Reason())
 }
 
 // workspacePass is an ineligible workspace's §3 reason.

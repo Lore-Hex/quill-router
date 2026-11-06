@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/spanner"
+	"google.golang.org/grpc/codes"
 )
 
 // Who decides at the edge (tr_fastpath_edge_decide): a workspace's edge
@@ -110,4 +111,35 @@ func (s *Store) DecideOffAll(ctx context.Context) (int64, time.Time, error) {
 		return 0, time.Time{}, err
 	}
 	return off, resp.CommitTs.UTC(), nil
+}
+
+// DeleteDecide removes the workspace's row for the cloud and region, and
+// reports whether there was one and the commit's time. A workspace with no
+// row decides nowhere, so removing a row never makes a workspace decide:
+// it is how an operator clears a row written under a key no edge looks up.
+// It checks only what the table can hold, not the workspace's form, so a
+// row with a malformed workspace can still be removed.
+func (s *Store) DeleteDecide(ctx context.Context, workspace, cloud, region string) (bool, time.Time, error) {
+	if err := CheckDecideKey(workspace, cloud, region); err != nil {
+		return false, time.Time{}, err
+	}
+	var found bool
+	resp, err := s.client.ReadWriteTransactionWithOptions(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		_, err := txn.ReadRowWithOptions(ctx, "tr_fastpath_edge_decide", spanner.Key{workspace, cloud, region},
+			[]string{"decide"}, &spanner.ReadOptions{RequestTag: tag("decide")})
+		switch {
+		case spanner.ErrCode(err) == codes.NotFound:
+			found = false
+			return nil
+		case err != nil:
+			return err
+		}
+		found = true
+		return txn.BufferWrite([]*spanner.Mutation{spanner.Delete("tr_fastpath_edge_decide",
+			spanner.Key{workspace, cloud, region})})
+	}, spanner.TransactionOptions{TransactionTag: tag("decide")})
+	if err != nil {
+		return false, time.Time{}, err
+	}
+	return found, resp.CommitTs.UTC(), nil
 }
