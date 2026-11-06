@@ -533,7 +533,8 @@ func (c *orderedShadowCache) Lookup(hash string, at time.Time) gwstate.Read {
 // and the full shadow both on, an inflight.key pass refused by Python's
 // matching in-flight gate is passed.inflight.key, not a would-admit page;
 // an owner.busy or owner.off pass that Python's gate refuses (Go's slot given
-// back at the pass) is inflight_unchecked.<pass>, not a page either.
+// back at the pass: its count of the key is zero while Python answers) is
+// inflight_unchecked.<pass>, not a page either.
 // Other refusals still page when the shadow holds a warm key, after an
 // owner pass too. If Python's
 // enforcing eviction wins the race with the shadow lookup, the shadow must
@@ -611,10 +612,13 @@ func TestPythonsInFlightRefusalOfAnInFlightPassIsAPass(t *testing.T) {
 				}
 			}
 			answer := answerWith(tc.status, tc.body, "Retry-After", "1")
+			var during atomic.Int64 // Go's count of the key while Python answers
+			during.Store(-1)
 			respond := func(w http.ResponseWriter) {
 				if !tc.late {
 					<-read
 				}
+				during.Store(h.edge.decider.inflight.inFlight(lookupHashOf(c.body())))
 				answer(w)
 			}
 			h.python.respond.Store(&respond)
@@ -629,6 +633,12 @@ func TestPythonsInFlightRefusalOfAnInFlightPassIsAPass(t *testing.T) {
 			if rec.Code != tc.status || h.edge.DecideCounts().Passed[tc.pass] != 1 || got[tc.want] != 1 {
 				t.Fatalf("Python's %d to a pass: edge %d, passes %v, classes %v, want %s", tc.status, rec.Code,
 					h.edge.DecideCounts().Passed, got, tc.want)
+			}
+			// An owner pass gave its slot back before the request went on:
+			// while Python answered, Go's count of the key held nothing,
+			// which is what makes Python's in-flight 429 unchecked.
+			if !tc.atLimit && during.Load() != 0 {
+				t.Errorf("Go held %d slots of the key while Python answered a %s pass", during.Load(), tc.pass)
 			}
 			mu.Lock()
 			defer mu.Unlock()

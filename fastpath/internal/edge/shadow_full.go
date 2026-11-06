@@ -80,7 +80,8 @@ const (
 	// (429 rate_limited, "Too many concurrent requests for this API key",
 	// read through) a request Go would decide, which the decide path passed
 	// at any step but its own in-flight gate (after the gate let it in:
-	// owner.*, budget.spent, a window, insert.*; or before it, when its own
+	// owner.*, budget.spent, a window, compose.refused, insert.*; or before
+	// it, when its own
 	// decision passed what the shadow's admits) or did not decide: Go's
 	// count held no slot for it while Python's counted it, so Go's decision
 	// carries no in-flight verdict to compare (inFlightAgreed). Neither an
@@ -603,7 +604,7 @@ func (sh *fullShadow) safeCompare(d Decided, a pyAnswer, w *windowRead, decidePa
 // Any other request is inflight_unchecked.<the decide path's pass>
 // (inflight_unchecked.not_decided with no decide path): Go's gate holds a
 // slot only while the decide path decides a request. A pass after the gate
-// gives the slot back (decidePath's deferred leave) before Python's
+// gives the slot back ((*Edge).decide's deferred leave) before Python's
 // authorize takes Python's, and a pass before it never took one. The key's
 // requests that Go passed are in Python's count and never in Go's, so Go's
 // count says nothing of what Python's gate saw.

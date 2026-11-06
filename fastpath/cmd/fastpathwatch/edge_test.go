@@ -362,3 +362,35 @@ func TestTheEdgeReportPrintsTheWindowRaceFigures(t *testing.T) {
 		t.Errorf("the window race figures: %s", out.Bytes())
 	}
 }
+
+// TestTheEdgeReportCountsInFlightUncheckedInTheCohortAlone (docs/design/
+// fast-admission-e2-decide.md §11): Python's in-flight 429 to a request Go
+// passed without holding its slot (inflight_unchecked.<pass>) is counted in
+// cohort_by_class and followed, never in would_admit_python_refused or its
+// classes, beside a would-admit that is.
+func TestTheEdgeReportCountsInFlightUncheckedInTheCohortAlone(t *testing.T) {
+	entries := []logEntry{
+		{"1", "tr-fastpath-5", `2026/10/24 12:00:00 fastpath edge decide shadow: snapshot=s1 policy=p1 agree_full=5 ` +
+			`differ=0 would_admit_python_refused=1 read_back=0 classes={"agree_full":5,` +
+			`"inflight_unchecked.owner.off":2,"inflight_unchecked.not_decided":1,"passed.inflight.key":1,` +
+			`"would_admit_python_refused.402.payment_required":1} fields={} rows={} decide={"on":10} ` +
+			`cohort={"agree_full":5,"inflight_unchecked.owner.off":2,"inflight_unchecked.not_decided":1,` +
+			`"passed.inflight.key":1,"would_admit_python_refused.402.payment_required":1}`},
+	}
+	d, _ := edgeDeps(entries, nil)
+	var out bytes.Buffer
+	if code, err := run(context.Background(), []string{"edge", "-project", "p", "-since", "2026-10-24T11:00:00Z"},
+		&out, d); code != 0 || err != nil {
+		t.Fatalf("%d %v", code, err)
+	}
+	var r edgeReport
+	if err := json.Unmarshal(out.Bytes(), &r); err != nil {
+		t.Fatalf("%v: %s", err, out.Bytes())
+	}
+	g := r.I2
+	if g.WouldAdmitPythonRefused != 1 || len(g.WouldAdmitByClass) != 1 || g.WouldAdmitByClass["402.payment_required"] != 1 ||
+		g.CohortByClass["inflight_unchecked.owner.off"] != 2 || g.CohortByClass["inflight_unchecked.not_decided"] != 1 ||
+		g.Followed != 10 || g.CohortEligible != 10 {
+		t.Errorf("the in-flight unchecked figures: %s", out.Bytes())
+	}
+}

@@ -1097,7 +1097,8 @@ a decision `Decided.Admit` hands out: `Decided`'s decision is unexported,
 read through `ForShadow` by the shadow alone, and a parser test holds both
 rules. Before the admit, the request takes a slot of its lookup hash's
 in-flight count (`fastpath/internal/edge/inflight.go`, decision 14), held
-to its answer; past the policy's limit it passes (`inflight.key`). The
+to its answer or its pass; past the policy's limit it passes
+(`inflight.key`). The
 reason it passes with travels with the request to the full shadow
 (`decidePassed.reason`), which follows every pass (§11).
 
@@ -1705,7 +1706,8 @@ counts, per snapshot and policy digest:
 - `inflight_unchecked.<pass>`: Python's in-flight 429 (the same 429, read
   through) to a request the pipeline would admit, which the decide path
   passed at any step but its in-flight gate (after the gate let it in:
-  `owner.*`, `budget.spent`, a window, `insert.*`; or before it, when the
+  `owner.*`, `budget.spent`, a window, `compose.refused`, `insert.*`; or
+  before it, when the
   decide path's own decision passed what the shadow's admits), or
   `inflight_unchecked.not_decided` when no decide path ran (the shadow
   alone). Go's gate holds a slot only while the decide path decides a
