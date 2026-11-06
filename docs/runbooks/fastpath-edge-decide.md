@@ -445,9 +445,9 @@ and `audit`, below). Read, each against the line of §11 it answers to:
   owner's load explains is a thing to explain.
 - `decide.by_name.slow`: `at_edge` and `in_all` 0 (decision 12;
   `edge_decide_pass_slow`), but for a lone `at_edge.body` that raised no
-  alert and that the alert's runbook row places outside the edge (the
-  node's CPU low that minute, and the node answering its other calls of
-  those seconds at their usual latency, or the same caller stalling
+  alert and that the alert's runbook row places outside the edge (either
+  the node's CPU low that minute and the node answering its other calls
+  of those seconds at their usual latency, or the same caller stalling
   through the other node too); one it cannot place counts like any
   `at_edge`.
   Each `at_edge` pass is also counted under the
