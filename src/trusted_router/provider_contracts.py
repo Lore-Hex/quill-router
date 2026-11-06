@@ -4,6 +4,9 @@ MAPLE_MODEL_ID = "dealignai/deepseek-v4.1-flash-1017-uncensored"
 MAPLE_NATIVE_ID = "deepseek-v4-1-flash-1017-uncensored"
 BASETEN_SYSTEMONE_PREFIX = "decision-models/"
 BASETEN_SYSTEMONE_HOLD_REASON = "systemone-adapter-not-implemented"
+MAKORA_NON_CHAT_MODEL_IDS = frozenset({
+    "cloudflare/clef-flash", "perplexity-ai/pplx-decider-v1.2",
+})
 # The Transport V2 helper and cloud-local key must be verified in each fleet
 # before its region is admitted. Unknown regions remain unavailable.
 MAPLE_GATEWAY_REGIONS: frozenset[str] = frozenset({
@@ -180,6 +183,13 @@ def provider_model_operator_held(
         return True
     native_prefix = _NATIVE_HOSTED_MODEL_PREFIXES.get(provider_slug)
     native_id = upstream_id or model_id
+    # Makora's generic model feed advertises text output for these, but its
+    # chat API rejects them. Stale manifests must not restore either key path.
+    if provider_slug == "makora" and (
+        model_id.casefold() in MAKORA_NON_CHAT_MODEL_IDS
+        or native_id.casefold() in MAKORA_NON_CHAT_MODEL_IDS
+    ):
+        return True
     # System One decisions share /models with chat but use a different API.
     # Block prepaid and BYOK until that native adapter is qualified.
     if provider_slug == "baseten" and (
