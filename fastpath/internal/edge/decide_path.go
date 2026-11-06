@@ -89,6 +89,9 @@ const (
 	// before it was forwarded, or Python's answer to it came more than
 	// SlowInAll after its arrival (decision 12). The message's counts name
 	// each pass slow at the edge's phase too (at_edge.<phase>, slowPhase).
+	// A pass slow at the edge only by its body's read raises it only beside
+	// another such pass on the node within SlowBodyPeriods (decideTally's
+	// slowOwn says which passes are the edge's own).
 	AlertSlowPass = "edge_decide_pass_slow"
 	// AlertWindowUnread: more than WindowUnreadShare of the period's window
 	// reads (at least WindowUnreadMin of them) failed or ran past their
@@ -106,6 +109,14 @@ const (
 	// spend at the edge, and the enclave's 25 s an attempt.
 	SlowAtEdge = time.Second
 	SlowInAll  = 25 * time.Second
+	// SlowBodyPeriods is how many periods, the current one included, a pass
+	// slow at the edge only by its body's read looks back over for another
+	// on the node. The body comes from the caller through the load
+	// balancer, so its read waits on them: a lone slow read is their stall,
+	// with nothing on the node to act on, and is counted (at_edge.body) but
+	// raises no AlertSlowPass. Two within these periods are a pattern, a
+	// busy node or a path that keeps stalling, and raise it.
+	SlowBodyPeriods = 10
 	// WindowUnreadShare and WindowUnreadMin make AlertWindowUnread: ten
 	// times the rollout gate's 0.1% (key-windows section 8.3), and not for
 	// one or two slow reads in a quiet minute.
@@ -177,9 +188,12 @@ type decider struct {
 	mu sync.Mutex
 	// total is the counts since the edge started, period the period's;
 	// unavailableRun counts the periods with an unavailable answer since
-	// the last with a 200 and none.
+	// the last with a 200 and none; bodySlow holds the at_edge.body counts
+	// of the last SlowBodyPeriods periods, bodyAt the slot the next goes in.
 	total, period  decideTally
 	unavailableRun int
+	bodySlow       [SlowBodyPeriods]int64
+	bodyAt         int
 }
 
 // decideTally is the decide path's counts: the requests answered (of which
@@ -188,10 +202,13 @@ type decider struct {
 // passed by §3 reason, the forwarded passes slow at the edge (at_edge, and
 // at_edge.<phase> by the phase each spent the most time in) or in all
 // (in_all), and the window checks (windows: reads made, unread,
-// latency.<bucket>, verdict.<outcome>).
+// latency.<bucket>, verdict.<outcome>). slowOwn, not logged, counts the
+// at_edge passes the edge's own time made slow: each counted under the
+// boot, decide or admit phase, and each counted under the body's whose time
+// after the body's read alone was over SlowAtEdge.
 type decideTally struct {
-	answered, readBack, refunded, refundFailed int64
-	unavailable, passed, slow, windows         map[string]int64
+	answered, readBack, refunded, refundFailed, slowOwn int64
+	unavailable, passed, slow, windows                  map[string]int64
 }
 
 func newDecideTally() decideTally {
@@ -240,6 +257,14 @@ func slowPhase(m edgeMarks, routed, forwarded time.Time) string {
 	return phase
 }
 
+// ownSlow reports a pass slow at the edge, counted under phase, as the
+// edge's own (decideTally's slowOwn): its time is all but the body's read,
+// so any phase but the body's is, and the body's is when what followed the
+// read (marks.read to forwarded) was over threshold by itself.
+func ownSlow(phase string, m edgeMarks, forwarded time.Time, threshold time.Duration) bool {
+	return phase != SlowPhaseBody || forwarded.Sub(m.read) > threshold
+}
+
 // decidePassed is what the proxy carries of a request the decide path
 // passed: what it named, for the eviction Python's refusal makes, its
 // arrival, for the time Python's answer took in all, and the §3 reason it
@@ -284,8 +309,15 @@ func (e *Edge) decide(w http.ResponseWriter, r *http.Request, at time.Time, mark
 		// that a minute's slow pass with no owner, insert or budget reason
 		// beside it still says where its time went.
 		if forwarded := time.Now(); forwarded.Sub(arrived) > dp.slowAtEdge {
-			phase := "at_edge." + slowPhase(marks, routed, forwarded)
-			dp.count(func(t *decideTally) { t.slow["at_edge"]++; t.slow[phase]++ })
+			phase := slowPhase(marks, routed, forwarded)
+			own := ownSlow(phase, marks, forwarded, dp.slowAtEdge)
+			dp.count(func(t *decideTally) {
+				t.slow["at_edge"]++
+				t.slow["at_edge."+phase]++
+				if own {
+					t.slowOwn++
+				}
+			})
 		}
 		return false, passed
 	}
@@ -590,6 +622,13 @@ func (dp *decider) flush() {
 		dp.unavailableRun = 0
 	}
 	run := dp.unavailableRun
+	body := p.slow["at_edge."+SlowPhaseBody]
+	dp.bodySlow[dp.bodyAt] = body
+	dp.bodyAt = (dp.bodyAt + 1) % SlowBodyPeriods
+	bodyRecent := int64(0)
+	for _, n := range dp.bodySlow {
+		bodyRecent += n
+	}
 	dp.mu.Unlock()
 	dp.logf("fastpath edge decide: answered=%d read_back=%d unavailable=%d refunded=%d refund_failed=%d "+
 		"unavailable_by_code=%s passed=%s slow=%s windows=%s", p.answered, p.readBack, unavailable, p.refunded,
@@ -602,11 +641,14 @@ func (dp *decider) flush() {
 		dp.alert(AlertUnavailableSustained, fmt.Sprintf("the edge has answered authorizes unavailable in %d periods "+
 			"with no 200 between them; this period's by the insert's gRPC code: %s", run, jsonOf(p.unavailable)))
 	}
-	if len(p.slow) > 0 {
+	// A pass slow in all, or by the edge's own time, alerts at once; one
+	// slow only by its body's read alerts beside another within
+	// SlowBodyPeriods (whose comment says why).
+	if p.slow["in_all"] > 0 || p.slowOwn > 0 || (body > 0 && bodyRecent > 1) {
 		dp.alert(AlertSlowPass, fmt.Sprintf("forwarded passes over %v at the edge (at_edge) or over %v in all "+
 			"(in_all): %s; each at_edge pass is counted again under the phase it spent the most time in "+
-			"(at_edge.body, at_edge.boot, at_edge.decide or at_edge.admit)", dp.slowAtEdge, dp.slowInAll,
-			jsonOf(p.slow)))
+			"(at_edge.body, at_edge.boot, at_edge.decide or at_edge.admit); at_edge.body in the last %d "+
+			"periods: %d", dp.slowAtEdge, dp.slowInAll, jsonOf(p.slow), SlowBodyPeriods, bodyRecent))
 	}
 	if unread, reads := p.windows["unread"], p.windows["reads"]; unread >= WindowUnreadMin &&
 		float64(unread) > WindowUnreadShare*float64(max(reads, unread)) {
