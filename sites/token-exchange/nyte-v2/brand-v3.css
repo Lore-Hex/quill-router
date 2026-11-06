@@ -210,3 +210,20 @@ dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
 .film .play span{color:var(--cream)}
 .listing{color:var(--cream)}
 .site-footer{border-top:1.5px solid var(--dark-rule)}
+
+/* Logos from the kit (files, never redrawn). New York: horizontal lockup in the
+   nav, stacked type-only name in the footer. City exchanges keep their own name
+   and take the NYTE globe mark. The text stays in the markup for screen readers. */
+.hdr .brand>svg{display:none}
+.hdr .brand::before{content:"";flex:none;width:41px;height:20px;background:url(logos/mark-paper.svg) left center/contain no-repeat}
+[data-market="new-york"] .hdr .brand>span{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+[data-market="new-york"] .hdr .brand::before{width:145px;height:28px;background-image:url(logos/lockup-horizontal-paper.svg)}
+.site-footer .brand img{content:url(logos/mark-paper.svg);width:41px;height:20px}
+[data-market="new-york"] .site-footer .brand img{display:none}
+[data-market="new-york"] .site-footer .brand>span{font-size:0;line-height:0}
+[data-market="new-york"] .site-footer .brand>span::before{content:"";display:block;width:140px;height:84px;margin-bottom:16px;background:url(logos/name-stacked-paper.svg) left center/contain no-repeat}
+[data-market="new-york"] .site-footer .brand small{font-size:13px;line-height:1.6}
+@media(max-width:600px){
+  [data-market="new-york"] .hdr .brand::before{width:124px;height:24px}
+  [data-market="new-york"] .site-footer .brand>span::before{width:112px;height:67px}
+}
