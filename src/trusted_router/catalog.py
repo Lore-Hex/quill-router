@@ -545,6 +545,12 @@ _OPEN_WEIGHT_CONTAINS = (
 )
 
 
+# Served under an open-weights family prefix, but its weights are not
+# published: Hugging Face's thinkingmachines/Inkling-2-Small is not public and
+# Tinker's serverless feed lists no weights URL for it (2026-11-05).
+_UNPUBLISHED_WEIGHTS = frozenset({"thinkingmachines/inkling-2-small"})
+
+
 def model_open_weights(model: Model, *, _seen: frozenset[str] = frozenset()) -> bool:
     """Whether a model route is purely open weights.
 
@@ -555,7 +561,7 @@ def model_open_weights(model: Model, *, _seen: frozenset[str] = frozenset()) -> 
     model_id = model.id.lower()
     if model.hidden_public_metadata:
         return False
-    if model.id in _seen:
+    if model.id in _seen or model_id in _UNPUBLISHED_WEIGHTS:
         return False
     if model.id in META_MODEL_IDS:
         candidates = meta_candidate_models(model.id)

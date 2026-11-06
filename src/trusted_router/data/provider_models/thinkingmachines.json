@@ -4,7 +4,7 @@
   "provider": "thinkingmachines",
   "currency": "USD",
   "price_unit": "microdollars_per_million_tokens",
-  "model_count": 3,
+  "model_count": 4,
   "models": [
     {
       "id": "thinkingmachines/inkling",
@@ -43,6 +43,25 @@
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 1200000,
       "cached_input_token_price_per_m": 60000
+    },
+    {
+      "id": "thinkingmachines/inkling-2-small",
+      "upstream_id": "thinkingmachines/Inkling-2-Small:peft:262144:sampling-nvfp4",
+      "display_name": "Thinking Machines Inkling 2 Small 256K",
+      "context_length": 262144,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 1000000,
+      "cached_input_token_price_per_m": 30000
     },
     {
       "id": "z-ai/glm-5.3",

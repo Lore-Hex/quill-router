@@ -17,6 +17,7 @@ SERVERLESS_URL = "https://tinker-docs.thinkingmachines.ai/tinker/serverless.json
 SAMPLER_URL = "https://tinker-docs.thinkingmachines.ai/tinker/models.json"
 EXPECTED_MODELS = [
     "thinkingmachines/inkling",
+    "thinkingmachines/inkling-2-small",
     "thinkingmachines/inkling-small",
     "z-ai/glm-5.3",
 ]
