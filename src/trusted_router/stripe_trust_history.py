@@ -762,6 +762,26 @@ def scan_created_range(
 
     created = {"gte": int(start.timestamp()), "lt": int(end.timestamp())}
     payment_intents = _rows(stripe_client.PaymentIntent.list(created=created, limit=100))
+    # Checkout facts use Session.created, which can precede PaymentIntent.created
+    # across this window's upper boundary. List both clocks rather than dropping
+    # local-only facts from the exact comparison.
+    checkout = getattr(stripe_client, "checkout", None)
+    sessions = getattr(checkout, "Session", None) if checkout is not None else None
+    listed_ids = {str(_mapping(row).get("id") or "") for row in payment_intents}
+    if sessions is not None:
+        for raw in _rows(sessions.list(created=created, status="complete", limit=100)):
+            session = _mapping(raw)
+            if session.get("mode") != "payment" or session.get("payment_status") != "paid":
+                continue
+            payment_id = _object_id(session.get("payment_intent"))
+            if not payment_id:
+                raise ValueError("paid Checkout Session has no PaymentIntent")
+            if payment_id not in listed_ids:
+                payment = stripe_client.PaymentIntent.retrieve(payment_id)
+                if _mapping(payment).get("id") != payment_id:
+                    raise ValueError("Checkout PaymentIntent lookup returned a different ID")
+                payment_intents.append(payment)
+                listed_ids.add(payment_id)
     refunds = _rows(stripe_client.Refund.list(created=created, limit=100))
     disputes = _rows(stripe_client.Dispute.list(created=created, limit=100))
     if include_event_watermarks:
@@ -771,7 +791,6 @@ def scan_created_range(
         _object_id(_mapping(row).get("payment_intent"))
         for row in [*refunds, *disputes]
     }
-    listed_ids = {str(_mapping(row).get("id") or "") for row in payment_intents}
     known = [
         stripe_client.PaymentIntent.retrieve(payment_id)
         for payment_id in sorted(payment_ids - listed_ids)

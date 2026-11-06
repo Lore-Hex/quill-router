@@ -137,6 +137,7 @@ def _checkout_session(
         "id": session_id,
         "object": "checkout.session",
         "mode": "payment",
+        "status": "complete",
         "payment_status": "paid",
         "payment_intent": payment_intent_id,
         "amount_total": amount,
@@ -204,7 +205,9 @@ class _FakeStripe:
             @staticmethod
             def list(**kwargs: Any) -> list[dict[str, Any]]:
                 stripe.calls.append(("PaymentIntent.list", kwargs))
-                return stripe._payment_intents
+                created = kwargs.get("created")
+                return [row for row in stripe._payment_intents if created is None
+                        or created["gte"] <= row["created"] < created["lt"]]
 
             @staticmethod
             def retrieve(payment_intent_id: str) -> dict[str, Any]:
@@ -233,6 +236,11 @@ class _FakeStripe:
             @staticmethod
             def list(**kwargs: Any) -> list[dict[str, Any]]:
                 stripe.calls.append(("checkout.Session.list", kwargs))
+                if "created" in kwargs:
+                    created = kwargs["created"]
+                    return [row for row in stripe._sessions
+                            if created["gte"] <= row["created"] < created["lt"]
+                            and row["status"] == kwargs["status"]]
                 return [
                     row
                     for row in stripe._sessions
@@ -714,6 +722,88 @@ def test_live_checkout_and_refund_facts_reconcile_with_zero_semantic_mismatches(
     assert set(_facts(database, workspace_id)) == {"evt_checkout_1", "evt_refund_1:re_1"}
 
 
+@pytest.mark.parametrize("credited", [0, 4_000_000, 5_000_000])
+def test_checkout_and_intent_straddling_cutoff_preserve_exact_reconciliation(credited: int) -> None:
+    store, database, workspace_id = _spanner_workspace()
+    session_time = CLOSED_THROUGH - timedelta(seconds=12)
+    payment = _payment_intent(workspace_id, created=CLOSED_THROUGH + timedelta(seconds=7))
+    session = _checkout_session(workspace_id, created=session_time)
+    stripe = _FakeStripe(payment_intents=[payment], sessions=[session])
+    if credited:
+        assert store.credit_workspace_typed_direct(
+            workspace_id, credited, "evt_window",
+            provenance=CreditProvenance("checkout", "stripe", "pi_1", session_time),
+            payment_amount_microdollars=5_000_000, currency="usd",
+        )
+    repository = trust_reconciliation_repository(store)
+    before = _facts(database, workspace_id)
+    previous = CLOSED_THROUGH - timedelta(minutes=15)
+    repository.save_marker(_complete_marker(closed_through=previous))
+
+    result = run_recurring_reconciliation(
+        repository,
+        lambda start, end: scan_created_range(stripe, start=start, end=end, recorded_at=NOW),
+        lambda _row, _now: (_ for _ in ()).throw(AssertionError("no outstanding")),
+        provider="stripe", cadence_seconds=900, now=NOW,
+        alert_horizon=lambda _row: None, **MARKER_KWARGS,
+    )
+
+    assert result.payments_seen == 1
+    assert result.marker.unmatched_count == int(credited == 0)
+    assert result.marker.semantic_mismatch_count == int(credited == 4_000_000)
+    assert result.marker.is_complete is (credited == 5_000_000)
+    assert result.marker.closed_through == (CLOSED_THROUGH if credited == 5_000_000 else previous)
+    assert _balance(database, workspace_id) == credited
+    assert _facts(database, workspace_id) == before
+    assert ("PaymentIntent.retrieve", {"id": "pi_1"}) in stripe.calls
+
+
+@pytest.mark.parametrize("changes", [
+    {"payment_status": "unpaid"}, {"mode": "setup"}, {"mode": "subscription"},
+])
+def test_created_window_ignores_nonpayment_checkout_sessions(changes: dict[str, str]) -> None:
+    session = {**_checkout_session("ws", created=CLOSED_THROUGH - timedelta(seconds=12)), **changes}
+    stripe = _FakeStripe(
+        payment_intents=[_payment_intent("ws", created=CLOSED_THROUGH + timedelta(seconds=7))],
+        sessions=[session],
+    )
+    scan = scan_created_range(stripe, start=HISTORY_START, end=CLOSED_THROUGH, recorded_at=NOW)
+    assert not scan.payments
+    assert not any(name == "PaymentIntent.retrieve" for name, _kwargs in stripe.calls)
+
+
+def test_created_window_refuses_mismatched_payment_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+    stripe = _FakeStripe(
+        payment_intents=[],
+        sessions=[_checkout_session("ws", created=CLOSED_THROUGH - timedelta(seconds=12))],
+    )
+    monkeypatch.setattr(stripe.PaymentIntent, "retrieve", staticmethod(
+        lambda _ref: _payment_intent("ws", payment_intent_id="pi_wrong"),
+    ))
+    with pytest.raises(ValueError, match="different ID"):
+        scan_created_range(stripe, start=HISTORY_START, end=CLOSED_THROUGH, recorded_at=NOW)
+
+
+def test_checkout_window_read_error_cannot_advance_checkpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    stripe = _FakeStripe(payment_intents=[])
+    repository = _RecordingRepository(_complete_marker())
+
+    def unavailable(**_kwargs: Any) -> Any:
+        raise RuntimeError("Checkout list unavailable")
+
+    monkeypatch.setattr(stripe.checkout.Session, "list", staticmethod(unavailable))
+    with pytest.raises(RuntimeError, match="Checkout list unavailable"):
+        run_recurring_reconciliation(
+            repository,
+            lambda start, end: scan_created_range(stripe, start=start, end=end, recorded_at=NOW),
+            lambda _row, _now: (_ for _ in ()).throw(AssertionError("no outstanding")),
+            provider="stripe", cadence_seconds=900, now=NOW,
+            alert_horizon=lambda _row: None, **MARKER_KWARGS,
+        )
+    assert repository.saved == []
+    assert repository.payment_writes == []
+
+
 def test_converter_resolves_the_checkout_session_and_events_through_the_client() -> None:
     session = _checkout_session("ws_c")
     stripe = _FakeStripe(
@@ -726,6 +816,8 @@ def test_converter_resolves_the_checkout_session_and_events_through_the_client()
         credited_events={"pi_1": ("evt_attested",)},
     )
     payment = scan.payments[0]
+    assert len(scan.payments) == 1
+    assert not any(name == "PaymentIntent.retrieve" for name, _kwargs in stripe.calls)
     assert payment.occurred_at == SESSION_CREATED
     assert payment.provider_ordering_watermark is None
     assert scan.credit_evidence == {
