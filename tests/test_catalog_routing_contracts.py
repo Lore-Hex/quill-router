@@ -1550,6 +1550,7 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
                 "nvidia/nemotron-3.5-super-vl",
                 "reflection/beam-1.0",
                 "meta-models/muse-spark-open",
+                "thinkingmachines/inkling-2-small",
             ],
         ),
     }
@@ -1567,8 +1568,13 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
         assert [candidate.id for candidate in meta_candidate_models(model_id)] == (
             available_candidates
         )
-        # Open weights while it has a component; with none the badge fails closed.
-        assert metadata["open_weights"] is bool(available_candidates)
+        # Open weights while every component is; with none the badge fails
+        # closed. Inkling 2 Small's weights are unpublished, so Liberty 4.0
+        # does not carry the badge while it is a component.
+        assert metadata["open_weights"] is (
+            bool(available_candidates)
+            and "thinkingmachines/inkling-2-small" not in available_candidates
+        )
 
     if "thinkingmachines/inkling" in MODELS:
         inkling = MODELS["thinkingmachines/inkling"]
