@@ -162,8 +162,8 @@ class CandidateOutcome:
     (first) candidate, the normalized service tier, the model estimate (the
     spend ceiling: the priciest candidate at the whole output budget) and the
     model reservation (the credit hold: the same at ``hold_output_tokens``
-    for a non-stream catalog route; equal to the estimate for streams, for
-    now, and for user-provided, partner and video routes)."""
+    for a catalog route, streamed or not; equal to the estimate for
+    user-provided, partner and video routes)."""
 
     candidates: list[Candidate]
     service_tier: str | None
@@ -368,12 +368,8 @@ def finish_candidates(
     user_model_prices: tuple[int, int] | None = None,
     partner_mode: PartnerBillingMode | None = None,
     rerank: Rerank | None = None,
-    stream: bool = False,
 ) -> CandidateOutcome:
     """Admit, order and price the candidates.
-
-    ``stream`` is the request's stream flag: a stream's reservation is its
-    estimate for now (see ``hold_output_tokens``).
 
     ``byok_providers`` are the provider slugs whose BYOK credentials the
     workspace holds; a BYOK candidate of any other provider is dropped.
@@ -469,16 +465,14 @@ def finish_candidates(
 
         model_estimate = priciest(output_tokens)
         # A video's output tokens are video tokens and its settle is held to
-        # the ceiling: its reservation is the ceiling. A stream's reservation
-        # is the ceiling too, for now: the Stage D heartbeat reader deployed
-        # before this change bounds a stream's running charge by the
-        # reservation row's credit hold, so a mixed-version deploy or a
-        # rollback would cut a stream admitted with a lower reservation at
-        # usage_exceeds_cap. Follow-up: lower stream reservations once every
-        # plane runs the reader that caps at the estimate
-        # (docs/design/fast-admission-e2-decide.md, "The two figures").
+        # the ceiling: its reservation is the ceiling. A stream's is not: Stage
+        # D cuts a stream at the estimate (storage_gcp_stage_d._cap_micro),
+        # never at the credit hold, on every plane since #2065, so a stream
+        # takes the same bounded hold as any catalog request. A lease cuts its
+        # stream at the hold, so both front doors keep a stream whose hold is
+        # below its estimate out of the lease cohort (stream.hold).
         reserved_output_tokens = (
-            output_tokens if route_type == "videos" or stream else hold_output_tokens(output_tokens)
+            output_tokens if route_type == "videos" else hold_output_tokens(output_tokens)
         )
         model_reservation = (
             model_estimate if reserved_output_tokens == output_tokens else priciest(reserved_output_tokens)
@@ -513,8 +507,9 @@ def hold_output_tokens(output_tokens: int) -> int:
     row's ``credit_reserved_micro``, the lease hold on the fast path) is what
     workspace credit admission compares with the available balance and what
     the credit counters hold until settle: the same price at the output
-    tokens this function bounds. A stream's reservation is its estimate for
-    now (``finish_candidates``, ``stream``).
+    tokens this function bounds, for a stream as for any other catalog
+    request; a lease cuts a stream at its hold, so a stream whose hold is
+    below its estimate stays out of the lease cohort (``stream.hold``).
 
     The budget is a ceiling, not a forecast: a client sending the model's
     whole output window as ``max_tokens`` held the window's worst case per
