@@ -151,6 +151,15 @@ def test_model_incident_demotion_remains_available(
 
 
 def test_cloudflare_follows_glm_52_normal_provider_bonus(monkeypatch: pytest.MonkeyPatch) -> None:
+    from datetime import timedelta
+
+    from trusted_router import provider_lifecycle
+
+    # Cloudflare retires GLM-5.2 on 2026-11-20; the bonus is checked before it.
+    monkeypatch.setattr(
+        provider_lifecycle, "_utc_now",
+        lambda: provider_lifecycle.CLOUDFLARE_WORKERS_AI_NOV_20_RETIREMENT_AT - timedelta(seconds=1),
+    )
     model_id = "z-ai/glm-5.2"
     drop_routes(monkeypatch, model_id)
     for provider in ("parasail", CLOUDFLARE):

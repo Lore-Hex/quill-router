@@ -134,7 +134,7 @@ def _ingest_context(
             {
                 "models": [
                     {
-                        "id": "z-ai/glm-5.2",
+                        "id": "z-ai/glm-5.3",
                         "context_length": model_window,
                         "top_provider": top_provider,
                         "endpoints": [
@@ -155,7 +155,7 @@ def _ingest_context(
     monkeypatch.setattr(catalog_ingest, "_INGEST_PATH", snapshot)
     monkeypatch.setattr(catalog_ingest, "_api_reported_context_windows", lambda: {})
     models, _ = _ingested_models_and_endpoints()
-    return models["z-ai/glm-5.2"].context_length
+    return models["z-ai/glm-5.3"].context_length
 
 
 M3 = "minimax/minimax-m3"
