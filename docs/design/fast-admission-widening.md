@@ -41,11 +41,12 @@ The earlier memo's option 3, taken whole:
   (`store/workspace.go:67-90`); `decide-off-all` turns every decide row off,
   the wildcard included (`store/decide.go:97-115`, `WHERE decide`). Neither
   changes what it stops. A kill is never undone by the enabler, by
-  construction: every operator stop writes a hold (PR 4), rows disabled
-  before PR 4 are given one (`hold-backfill`), the enabler never writes a
-  hold, and every enabler write is a transaction that stops on a fleet
-  hold or a pause, every enable also on the workspace's own hold (§5.3,
-  §5.6).
+  construction: every stop but the enabler's writes a hold, because the
+  store writes it for every Go caller, a watch's trip included (PR 4);
+  rows disabled before PR 4 are given one (`hold-backfill`); the enabler
+  never writes a hold; and every enabler write is a transaction that
+  stops on a fleet hold or a pause, every enable also on the workspace's
+  own hold (§5.3, §5.6).
 - **Fast-path workspaces stay outside async admission** (§4.13; G15 §4.5),
   through the same `Settings.async_settle_pilot_allows` rule, with the
   overlap list an operator-only exception (§9).
@@ -62,8 +63,8 @@ except where marked new.
 | Layer | Who writes it | What it says | Read by |
 |---|---|---|---|
 | Edge policy `fastpath_pilot_enabled`, the pilot set or **all minus exclude (new)**, `fastpath_pilot_regions` | `rollout.sh`, a Python deploy | whom Python and the edge consider | Python's `pilot_reason`, the edge's policy gates |
-| `tr_fastpath_workspace` (W1) | **the enabler (new)**; `fastpathctl enable`, `disable`, `disable-all` | who may be granted | the owner, the front door, `Store.Grant`; **the edge and Python, as a copy (new)** |
-| `tr_fastpath_workspace_hold` **(new)** | operators only: `fastpathctl disable` (by default), `disable-all`, `enabler pause`, `enabler arm`, `hold-backfill`, and `enabler resume`'s backfill; `enable`, `release`, `release-stamped`, `release-all` and `enabler resume` remove rows. Never the enabler | whom the enabler must not enable, and whether it may write at all | the enabler, in each of its write transactions |
+| `tr_fastpath_workspace` (W1) | **the enabler (new)**; `fastpathctl enable`, `disable`, `disable-all`; `fastpathwatch` when a ceiling trips (`cmd/fastpathwatch/main.go:287`) | who may be granted | the owner, the front door, `Store.Grant`; **the edge and Python, as a copy (new)** |
+| `tr_fastpath_workspace_hold` **(new)** | every Go caller of `Store.SetWorkspace(false)`, which writes the hold itself: `fastpathctl disable` and `fastpathwatch`'s trip; and the operator's `disable-all`, `enabler pause`, `enabler arm`, `hold-backfill`, and `enabler resume`'s backfill; `enable`, `release`, `release-stamped`, `release-all` and `enabler resume` remove rows. Never the enabler | whom the enabler must not enable, and whether it may write at all | the enabler, in each of its write transactions |
 | `tr_fastpath_kill` **(new)** | `fastpathctl disable-all` inserts a row; `release-all` deletes them all | the commit timestamp of each kill made while the fleet hold stands | `enabler resume`, the enabler's report |
 | `tr_fastpath_edge_decide`, with **a wildcard row (new)** | `fastpathctl decide` | whether the edge answers itself or leaves the request to Python's front door call | the edge |
 | `Store.Grant` refusals | the credit rows | tier, latch, pause, debt, allowance, floor | every grant |
@@ -443,28 +444,44 @@ renewal, expires, drains and closes, and what it admitted still settles.
 The enabler's enable adds the hold and credit-row reads of §5.3 before
 that write. The statements move to one fixture,
 `fastpath/testdata/switch_statements_v1.json`, which Go embeds and Python
-reads, so the columns, values and revocation cannot drift. The enabler does
-not wait for a disabled workspace to drain: W2's `fastpathctl status` and
-the fleet audit (§7) see that.
+reads, so the columns, values and revocation cannot drift. The fixture has
+two disables. `disable` is the store's: the switch, the revocation and a
+hold with the caller's reason, in one transaction. `disable_unheld` is the
+same without the hold, and only the enabler's own disable reads it, through
+a function of its own in Python (`disable_unheld`), never a flag on the
+common one. Go has no unheld disable at all, so a new Go caller gets the
+hold whether or not it knows about holds. The enabler does not wait for a
+disabled workspace to drain: W2's `fastpathctl status` and the fleet audit
+(§7) see that.
 
 ### 5.6 Holds and pausing
 
-The kill path is robust by construction, not by inference: every
-operator stop writes a hold, and the enabler never writes one, so the
-hold table is the operator's alone and the enabler never has to guess
-whether a disabled row was its own change or a kill. It does not try to
+The kill path is robust by construction, not by inference: every stop
+but the enabler's writes a hold, and the enabler never writes one, so the
+enabler never has to guess whether a disabled row was its own change or
+someone else's stop. It does not try to
 detect a kill from the switch table, whose rows cannot say who wrote them
 (`DisableAll` stamps every row it turns off with one `changed_at`,
 `store/workspace.go:75-76`).
 
-- `fastpathctl disable WORKSPACE` writes a hold row in the switch's
-  transaction, unless given `-no-hold`. An operator who turns a workspace
-  off means it to stay off.
+- **The hold is in the store.** `Store.SetWorkspace(ctx, workspace,
+  false, reason)` writes a hold, with the reason its caller gives, in the
+  switch's transaction, for every caller. `fastpathctl disable` passes
+  `operator`; `fastpathwatch` passes `watch` and the ceiling that tripped,
+  so a watch's stop (`cmd/fastpathwatch/main.go:287`) is held and the
+  enabler does not undo it once the watch has exited. There is no
+  `-no-hold`, and Go has no unheld disable. Under a kill, a watch's later
+  trip rewrites W's `changed_at` away from the kill's stamp, which is
+  harmless now: W is held with the watch's reason and stays off after
+  `release-all`, as a stop should.
 - `fastpathctl enable WORKSPACE` removes the workspace's hold in the
   switch's transaction, so a hand enable after a holding disable is not
   reverted. The enabler then manages it like any workspace: if it is not
   eligible, the next run disables it, for that cause.
-- `fastpathctl release WORKSPACE` removes a hold without enabling.
+- `fastpathctl release WORKSPACE` removes a hold without enabling. It
+  refuses while `#pause` exists ("resume first"), reading `#pause` in its
+  transaction, as `release-all` does: released during a pause, the row
+  would be held again by resume's backfill.
   `release` and `enable` take only a workspace id (beginning with a letter
   or digit, as `fastpathctl` checks today), so they refuse `*`, `#pause`
   and `#armed`. Only `decide delete` takes any id (`main.go:56-58`), and
@@ -537,17 +554,27 @@ detect a kill from the switch table, whose rows cannot say who wrote them
   would wrongly hold. The resume path has its own backfill, bounded by
   the pause (below), and needs no flag.
 - **No `fastpathctl` older than PR 4 is used once the enabler applies.**
-  An older `disable` or `disable-all` writes no hold, and the enabler
-  would enable those workspaces again at its next run. WS2's entry checks
-  the release on every node, since `fastpathctl` reaches operators only
-  through the release bucket (`infra/fastpath_node_startup.sh.tftpl:180-184`).
+  An older `disable`, `disable-all` or `fastpathwatch` trip writes no
+  hold, and the enabler would enable those workspaces again at its next
+  run. WS2's entry checks the release on every node, since `fastpathctl`
+  and `fastpathwatch` reach operators only through the release bucket
+  (`infra/fastpath_node_startup.sh.tftpl:180-184`).
 - **Rolling back below PR 4.** Before any node or `fastpathctl` goes back
   to a release without PR 4, the enabler is paused with `fastpathctl
   enabler pause`, while PR 4's binary is still in hand, and stays paused
   until every node is on PR 4 again. Setting the job's mode to `off`
   instead is not enough here: it leaves no time to backfill from. The
   hold table is schema and stays; an older binary just does not read or
-  write it.
+  write it. The pause stops only the enabler: operators keep the older
+  binary's `enable` and `disable` meanwhile, and the way back from a kill
+  during the rollback is an older `enable` per workspace (§8.3).
+- **Resume refuses enabled and held rows.** An older `enable` leaves the
+  workspace enabled with its PR 4 hold still there, which the enabler
+  would read as held and disable, uncapped. So `fastpathctl enabler
+  resume` refuses while any row is enabled and held, and prints those
+  rows. The operator resolves each with PR 4's `enable`, which clears the
+  hold, or `disable`, which keeps it, and resumes. An enabled and held row
+  from a rollback therefore never reaches the enabler.
 - **Resuming backfills first, by construction.** A stop made during the
   rollback by an older `disable` or `disable-all` wrote no hold. So
   `fastpathctl enabler resume` removes `#pause` only in the same
@@ -728,11 +755,16 @@ on `owner.off`; with it the pass is named and cheaper.
 - **What it raises.** Each fault is a `fleet_audit_fault` line naming the
   workspace and the check, at error severity, with its alert policy in
   `infra/fastpath_alerts.tf` and a row in `docs/runbooks/fastpath-alerts.md`.
-- **What retires.** The hourly script, and the per-workspace
-  `fastpathwatch -workspace` watches. Their spend ceilings guarded a pilot
-  of named workspaces; at fleet scale a workspace's lease spend is bounded
-  by its allowance and its balance, and W3's fleet ceilings (Spanner CPU,
-  backlogs, pending work overdue) stay with W7's alerts.
+- **What retires, and when.** The hourly script retires with PR 2. The
+  per-workspace `fastpathwatch -workspace` watches stay, one per include
+  list workspace, until WS6's gate is met; WS6's activation PR (PR 8)
+  stops them and updates `fast-admission-pilot.md` and the watch runbook.
+  No watch is started for a workspace the enabler adds. Their spend
+  ceilings guarded a pilot of named workspaces; at fleet scale a
+  workspace's lease spend is bounded by its allowance and its balance,
+  and W3's fleet ceilings (Spanner CPU, backlogs, pending work overdue)
+  stay with W7's alerts. Until they stop, each watch's trip writes a hold
+  through the store (§5.6).
 
 ## 8. The widening sequence
 
@@ -835,7 +867,14 @@ Fastest first, each narrower than the next:
 6. `fastpathctl disable-all`: every workspace off, every lease revoked, the
    enabler held. Undone by `fastpathctl release-all`; if the enabler is
    also paused, `enabler resume` comes first, since `release-all` refuses
-   under a pause (§5.6).
+   under a pause (§5.6). During a rollback below PR 4 the enabler stays
+   paused until every node is on PR 4 again (§5.6), so `resume` and
+   `release-all` are not available yet: the way back from a kill then is
+   the older binary's `enable` for each workspace to bring back. After
+   the roll-forward, `enabler resume` lists those workspaces as enabled
+   and held; the operator resolves each with PR 4's `enable` or
+   `disable`, resumes, and then runs `release-all` to clear `*` and the
+   kill rows.
 7. `TR_FASTPATH_PILOT_ENABLED=false`: every new authorize takes today's
    path at once.
 
@@ -1005,10 +1044,14 @@ step.
    `distinct_keys` not counting a key twice and bounded;
    `edge_policy_all_v1.{body,manifest}.json` goldens.
 4. **Holds.** `tr_fastpath_workspace_hold` in `migrate_fastpath.sh` and the
-   Go schema, guarded by `INFORMATION_SCHEMA` (W4); `fastpathctl disable`
-   writes a hold unless `-no-hold`; `enable` removes the hold in its
-   transaction; `release`; `disable-all` writes the fleet hold in its
-   transaction; `release-all`; `enabler pause` (insert-only, `held_at`
+   Go schema, guarded by `INFORMATION_SCHEMA` (W4);
+   `Store.SetWorkspace(false, reason)` writing the hold for every caller,
+   `fastpathctl disable` and `fastpathwatch`'s trip passing their
+   reasons, and no unheld disable in Go; the fixture's `disable_unheld`
+   for the enabler alone; `enable` removes the hold in its transaction;
+   `release`, refused under `#pause`; `enabler resume` refused while any
+   row is enabled and held, printing them; `disable-all` writes the fleet
+   hold in its transaction; `release-all`; `enabler pause` (insert-only, `held_at`
    the commit timestamp); the `tr_fastpath_kill` table (schema, in
    `migrate_fastpath.sh`, the Go schema and the conformance DDL), a row
    per `disable-all` with its commit timestamp, all deleted by
@@ -1058,8 +1101,12 @@ step.
    row lacks a hold of its own, a `disable` committed during `arm` either
    seen or held, and
    `hold-backfill` refused once `#armed` exists; `release` and `enable`
-   refusing `*`, `#pause` and `#armed`; `SetWorkspace` executing the
-   fixture's statements.
+   refusing `*`, `#pause` and `#armed`; a `fastpathwatch` trip writing a
+   hold with reason `watch`, and the workspace staying off through an
+   enabler run after the watch has exited; `release` under `#pause`
+   refused, writing nothing; `resume` refused while a row is enabled and
+   held, listing it, and accepted once PR 4's `enable` or `disable` has
+   resolved it; `SetWorkspace` executing the fixture's statements.
 5. **Python's "all".** Settings `fastpath_pilot_all` (false) and
    `fastpath_pilot_exclude` (at most 64), read from
    `scripts/deploy/fastpath_lists.sh`; validators: all mode needs the typed
@@ -1106,7 +1153,8 @@ step.
    `disable-all` committed between the run's read and its enable leave the
    workspace off, and a `pause` committed between the run's read and a
    disable stops that disable; nothing written without `#armed`; no code
-   path of the enabler writing the hold table; `unheld_disabled` counting
+   path of the enabler writing the hold table, its disable going through
+   `disable_unheld` and leaving no hold row; `unheld_disabled` counting
    every unheld disabled row whatever its rank; a stale or absent watermark
    freezing that workspace's enable and no disable, an override still
    enabled; dry-run writing nothing; the credit recheck refusing an enable
