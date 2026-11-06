@@ -7,7 +7,7 @@
   --purple:#9B93F5; --yellow:#FFC800; --lime:#C9E265; --sky:#BFE3EC;
   --orange:#FF6B35; --deep-purple:#4B3FA8; --green:#2E3313;
   --lilac:#DCD8FB; --yellow-tint:#FCE79F; --lime-tint:#E9F0C2; --sky-tint:#E5F1F1;
-  --lead:var(--purple);
+  --lead:var(--purple); --accent-1:var(--lime); --accent-2:var(--sky);
   --font-sans:"ABC Pelikan","Helvetica Neue",Arial,sans-serif;
   --font-condensed:"ABC Pelikan Condensed","Arial Narrow",sans-serif;
   --font-mono:"ABC Pelikan Mono",Menlo,monospace;
@@ -26,12 +26,12 @@
   --sans:var(--font-sans); --mono:var(--font-mono);
 }
 /* Page families (COL-01). */
-[data-nyte-page="api"],[data-nyte-page="cowork"]{--lead:var(--lime)}
-[data-nyte-page="buy"],[data-nyte-page="index"],[data-nyte-page="reserved-terms"],[data-nyte-page="manage"]{--lead:var(--yellow)}
-[data-nyte-page="sup"],[data-nyte-page="providers"],[data-nyte-page="accelerator"]{--lead:var(--sky)}
+[data-nyte-page="api"],[data-nyte-page="cowork"]{--lead:var(--lime);--accent-1:var(--sky);--accent-2:var(--purple)}
+[data-nyte-page="buy"],[data-nyte-page="index"],[data-nyte-page="reserved-terms"],[data-nyte-page="manage"]{--lead:var(--yellow);--accent-1:var(--purple);--accent-2:var(--sky)}
+[data-nyte-page="sup"],[data-nyte-page="providers"],[data-nyte-page="accelerator"]{--lead:var(--sky);--accent-1:var(--purple);--accent-2:var(--yellow)}
 
 /* Dark grounds: header, photo bands, footer, code. */
-header,.hero,.hero-api,.cw-hero,.hero-pv,.accelerator-hero,.close-photo,.hs-art,.site-footer,.code{
+header,.close-photo,.site-footer,.code,.listing{
   --bg:var(--ink); --bg-alt:var(--dark-sunken); --panel:var(--ink); --inset:var(--dark-sunken); --hover:var(--dark-sunken);
   --t1:var(--cream); --t2:var(--ink-2-dark); --t3:var(--ink-2-dark); --t4:var(--ink-2-dark);
   --link:var(--cream); --link-ul:var(--ink-2-dark);
@@ -91,9 +91,9 @@ header{background:var(--ink);backdrop-filter:none}
 .listing{background:rgba(21,19,17,.92)}
 
 /* Sections: alternate sections take the page's lead colour (COL-01/02). */
-.alt{background:var(--lead);border-color:var(--ink);--t2:var(--ink);--t3:var(--ink);--link:var(--ink);--link-ul:var(--ink);--rule:var(--ink);--rule-soft:var(--ink);--mint:var(--ink)}
+.alt{background:var(--accent-1);border-color:var(--ink);--t2:var(--ink);--t3:var(--ink);--link:var(--ink);--link-ul:var(--ink);--rule:var(--ink);--rule-soft:var(--ink);--mint:var(--ink)}
 .alt .plist .ico{color:var(--ink)}
-.alt .btn-secondary:hover{color:var(--lead)}
+.alt .btn-secondary:hover{color:var(--accent-1)}
 .press{border-top:1.5px solid var(--ink)}
 .story{background:var(--lead);color:var(--ink)}
 .story cite{color:var(--ink)}
@@ -162,9 +162,8 @@ dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
 .story{background:var(--ink);color:var(--cream);--link:var(--cream)}
 .story cite,.story .more{color:var(--ink-2-dark);border-color:var(--ink-2-dark)}
 .story .big{font-weight:300;letter-spacing:-.02em}
-.alt~.alt{background:var(--sky)}
-[data-nyte-page="sup"] .alt~.alt,[data-nyte-page="providers"] .alt~.alt,[data-nyte-page="accelerator"] .alt~.alt{background:var(--purple)}
-.alt~.alt .btn-secondary:hover{color:var(--sky)}
+.alt~.alt{background:var(--accent-2)}
+.alt~.alt .btn-secondary:hover{color:var(--accent-2)}
 /* Text on colour fields stays Ink (COL-03); status bars need contrast on white. */
 .alt em,.alt .privacy-provider,.alt .service-heading strong,.alt .facility-badge,.alt .oss-checks li::before{color:var(--ink)}
 .health-bar{background:var(--green)}
@@ -176,3 +175,38 @@ dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
 .buy-steps [aria-current] span{color:var(--cream)}
 .buy-kicker,.pv-topics span{font-family:var(--font-condensed);letter-spacing:.1em}
 .cw-steps span{color:var(--t2)}
+
+/* No landscape photography (kit: "no moody landscapes"). Heroes become a
+   full field in the page's lead colour with Ink text; closing bands are Ink;
+   the supplier listing sits on a lead-colour panel. */
+.ph,.cw-banner{display:none}
+.hero,.hero-api,.cw-hero,.hero-pv,.accelerator-hero,.hs-art{background:var(--lead);color:var(--ink);
+  --t1:var(--ink); --t2:var(--ink); --t3:var(--ink); --on-photo:var(--ink); --link:var(--ink); --link-ul:var(--ink); --strong:var(--ink); --rule:var(--ink); --rule-soft:var(--ink)}
+.hero::before,.hero-api::before,.cw-hero::before,.hero-pv::before,.close-photo::before,.hs-art::before{content:none}
+.hero h1,.hero .lede,.hero-api h1,.hero-api .lede,.cw-hero h1,.cw-hero .lede,.hero-pv h1,.hero-pv .lede{text-shadow:none}
+.hero em,.hero-api em,.cw-hero em,.hero-pv em,.accelerator-hero em{color:var(--ink)}
+.hero .btn-primary,.hero-api .btn-primary,.cw-hero .btn-primary,.hero-pv .btn-primary,.accelerator-hero .btn-primary{border-color:var(--ink)}
+.hero .btn-primary:hover,.hero-api .btn-primary:hover,.cw-hero .btn-primary:hover,.hero-pv .btn-primary:hover,.accelerator-hero .btn-primary:hover{background:var(--ink);color:var(--cream);border-color:var(--ink)}
+.hero .btn-secondary:hover,.hero-api .btn-secondary:hover,.cw-hero .btn-secondary:hover,.hero-pv .btn-secondary:hover,.accelerator-hero .btn-secondary:hover{background:var(--ink);color:var(--lead)}
+.hero{padding-bottom:104px}
+.hero-api,.cw-hero,.hero-pv{min-height:0;padding:104px 0}
+.hero-api .inner{margin-left:0;width:min(720px,100%)}
+.film{border-color:var(--ink)}
+.close-photo{background:var(--ink)}
+.hs-art{aspect-ratio:auto;align-items:center;padding:48px 28px}
+@media(max-width:1000px){.hero-api{padding:72px 0}}
+@media(max-width:800px){
+  .hero-pv .inner,.cw-intro{min-height:0}
+  .hero-pv,.cw-hero{padding:56px 0}
+  .cw-hero .inner{padding:0}
+}
+@media(max-width:600px){
+  .hero-api{padding:48px 0}
+  .hero-api .inner{padding:0}
+  .hero-api .lede{color:var(--ink)}
+  .hero-api+.press.one figure{border-top:0}
+  .hs-art{min-height:0;padding:20px 16px}
+}
+.film .play span{color:var(--cream)}
+.listing{color:var(--cream)}
+.site-footer{border-top:1.5px solid var(--dark-rule)}
