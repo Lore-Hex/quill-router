@@ -245,3 +245,22 @@ dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
   .site-footer::before{right:-120px;top:auto;bottom:-40px;width:460px;height:225px}
   .site-footer .footer-markets{margin-top:32px}
 }
+
+/* Token Index page (own sheet): kit headings, square corners, one orange action per view. */
+[data-nyte-page="index"] .token-index h1,[data-nyte-page="index"] .token-index h2{font-weight:300;letter-spacing:-.02em}
+[data-nyte-page="index"] .token-index h1{font-size:clamp(48px,6vw,88px)}
+[data-nyte-page="index"] .token-index *{border-radius:0!important}
+[data-nyte-page="index"] .ti-tile .btn-primary{background:transparent;color:var(--ink);border-color:var(--ink)}
+[data-nyte-page="index"] .ti-tile .btn-primary:hover{background:var(--ink);color:var(--cream)}
+[data-nyte-page="index"] .ti-eyebrow{font-family:var(--font-condensed);letter-spacing:.1em}
+/* The Confidential hero ends with its buttons (verify-nyte-v2: at most 80px after them, 40px on phones). */
+.hero-api{padding-bottom:80px}
+@media(max-width:1000px){.hero-api{padding-bottom:72px}}
+@media(max-width:600px){.hero-api{padding-bottom:40px}}
+/* Trusted Cowork on phones: the hero fills the first screen so the app screenshot
+   peeks in at the bottom, as it did under the photo banner (verify-nyte-v2). */
+@media(max-width:800px){
+  .cw-hero{display:flex;align-items:flex-end;min-height:calc(var(--cw-viewport,100svh) - var(--header) - 110px);padding:24px 0 32px}
+  .cw-hero .wrap{width:100%}
+  .cw-intro{padding-bottom:0}
+}

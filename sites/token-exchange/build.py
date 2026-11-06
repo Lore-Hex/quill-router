@@ -15,7 +15,14 @@ from urllib.parse import urlencode
 
 from evidence import render_evidence, sector_art
 from member_badges import build_badges
-from nyte_v2 import PAGES, brand_v3_share_image_used, build_nyte, legacy_share_image_used, render_nyte, uses_nyte
+from nyte_v2 import (
+    PAGES,
+    brand_v3_share_image_used,
+    build_nyte,
+    legacy_share_image_used,
+    render_nyte,
+    uses_nyte,
+)
 from press import build_press
 from token_index_page import build_token_index
 
