@@ -67,7 +67,16 @@ locals {
   # f1208a3d4: the stager groups the records that arrive while one staging
   # transaction runs into the next one, up to 256 records or 8 MiB, instead
   # of committing once a record (#2318).
-  fastpath_release        = "f1208a3d49f37e929aab323d34189b379c48917d"
+  # 09c6a9398: a stream's hold is capped like any catalog request's, matching
+  # Python (#2337; streams above the cap leave the cohort by the stream.hold
+  # tripwire); every pass-through is timed, logging "fastpath edge pass" and
+  # "pass slow" lines (#2331, #2344); a lone slow body read raises no
+  # slow-pass alert (#2350); the money flags -required-tier, -allowance and
+  # -floor, unset so defaults hold (#2354); the owner keeps an admission
+  # ceiling nothing reads yet (#2347); records carry a stream's ceiling, with
+  # RecordCeiling off, which needs tr_lease_hold.ceiling, live since
+  # 2026-11-06 18:15Z (#2355); the fleet audit, off by default (#2356).
+  fastpath_release        = "09c6a93983fdb8168fc73513a55740978eccb154"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
