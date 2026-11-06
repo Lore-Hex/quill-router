@@ -1,0 +1,50 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="marketing-split" aria-label="Abliterated DeepSeek API">
+  <div class="marketing-copy">
+    <span class="eyebrow">A distinct checkpoint. A private API path.</span>
+    <h2>Explore more with abliterated DeepSeek.</h2>
+    <p>Bring cyberdefense analysis, creative writing, research questions and your own evaluation prompts to <strong>DeepSeek V4.1 Flash Uncensored by dealignai</strong>. Use it through TrustedRouter with one API key and Credits, alongside the rest of your model stack.</p>
+    <p>This is a dedicated modified checkpoint, not a prompt layered onto stock DeepSeek. The publisher describes a weight-level change to refusal behavior. It deserves its own evaluation: fewer refusals are not a guarantee of accuracy, quality or suitability for a task.</p>
+    <p><a class="btn primary" href="/models/dealignai/deepseek-v4.1-flash-1017-uncensored">See live pricing and try the model</a> <a class="btn" href="#maple-api">Copy the API request</a></p>
+    <p><code>dealignai/deepseek-v4.1-flash-1017-uncensored</code></p>
+  </div>
+  <div class="panel">
+    <div class="panel-head"><h2>Why this route stands out</h2></div>
+    <div class="panel-body">
+      <ul>
+        <li><strong>Separate model identity:</strong> choose the modified checkpoint explicitly rather than silently swapping stock DeepSeek.</li>
+        <li><strong>Familiar integration:</strong> text Chat Completions with streaming or a complete JSON response.</li>
+        <li><strong>Explicit privacy controls:</strong> require Maple's dedicated Confidential route and disable alternate-provider fallback.</li>
+        <li><strong>Observable costs:</strong> inspect current prices on the model page and token usage in API responses.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+<section class="panel" aria-label="Checkpoint provenance">
+  <div class="panel-head"><h2>Abliterated DeepSeek, with the provenance intact</h2></div>
+  <div class="panel-body">
+    <p>Based on <a href="https://huggingface.co/dealignai/DeepSeek-V4.1-Flash-1017-UNCENSORED-FP8" rel="noopener">dealignai/DeepSeek-V4.1-Flash-1017-UNCENSORED-FP8</a>. The publisher also lists an <a href="https://huggingface.co/dealignai/DeepSeek-V4.1-Flash-1017-ABLITERATED-FP8" rel="noopener">ABLITERATED alias</a>. Base-model credit belongs to DeepSeek-AI; the modified release is by dealignai, with compute credited to jordanschenck. This is not an official DeepSeek API release.</p>
+    <p>The checkpoint's model card and a hosted API's supported features are different things. Use the route contract below for your integration, and the <a href="/models/dealignai/deepseek-v4.1-flash-1017-uncensored">live model page</a> for availability, context, prices and provider measurements.</p>
+  </div>
+</section>
+{% include "public/_maple_api.html" %}
+<section class="panel" aria-label="Abliterated DeepSeek for cyberdefense">
+  <div class="panel-head"><h2>Put it to work on cyberdefense</h2></div>
+  <div class="panel-body">
+    <p>Security work needs room to discuss attacks in order to understand and defend against them. Evaluate this checkpoint as an analyst assistant for authorized defensive work, with human review before taking action.</p>
+    <ul>
+      <li><strong>Alert triage:</strong> summarize sanitized alerts, separate observed facts from hypotheses, and list evidence needed to confirm an incident.</li>
+      <li><strong>Defensive code review:</strong> explain risky patterns and propose mitigations for code you own or are authorized to assess.</li>
+      <li><strong>Incident communication:</strong> turn verified findings into a timeline, remediation checklist and stakeholder-ready report.</li>
+    </ul>
+    <p>Start with: <q>Review these sanitized authentication alerts. Separate observations from hypotheses, identify missing evidence, and suggest defensive checks. Do not invent events or take actions.</q></p>
+    <p>Keep credentials out of prompts, limit access to authorized data, and treat logs and retrieved documents as untrusted input. Require human approval for operational changes. Measure false positives and missed findings on your own evaluation set.</p>
+  </div>
+</section>
+<section class="marketing-grid three" aria-label="Evaluate and explore">
+  <div class="marketing-card"><span class="card-label">Evaluate</span><h3>Test the difference on your work</h3><p>Run the same lawful writing, coding and research tasks against this checkpoint and stock DeepSeek. Score useful answers, factual errors and refusals separately. <a href="/docs/evals">Build an evaluation</a>.</p></div>
+  <div class="marketing-card"><span class="card-label">Verify</span><h3>Keep privacy explicit</h3><p>Read the <a href="/providers/maple">Maple route evidence</a> and <a href="/deepseek-api-privacy">DeepSeek privacy guide</a>. A modified model is not itself a privacy guarantee. Confidential applies to the qualified managed route.</p></div>
+  <div class="marketing-card"><span class="card-label">Explore</span><h3>More than one flavor of open AI</h3><p>Browse <a href="/providers/abliteration">Abliteration's separate model family</a>, <a href="/providers/abliterate">Abliterate's routes</a>, or <a href="/us-ai-models">open weights from US labs</a>. Similar names do not mean the same publisher, base model or privacy policy.</p></div>
+</section>
+{% endblock %}
