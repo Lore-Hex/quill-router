@@ -54,6 +54,15 @@ type fakeAdmitter struct {
 	// refundLive is whether each refund's context was live, with a
 	// deadline at most RefundBudget away, when it was sent.
 	refundLive []bool
+	// off are the workspaces its switch copy does not enable (Enabled);
+	// every other is enabled.
+	off map[string]bool
+}
+
+func (f *fakeAdmitter) Enabled(workspace string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return !f.off[workspace]
 }
 
 func (f *fakeAdmitter) Authorize(ctx context.Context, a frontdoor.AuthorizeOf) frontdoor.Authorized {
@@ -809,7 +818,7 @@ func TestTheDecidePathIsDark(t *testing.T) {
 	if rec.Code != http.StatusTeapot || len(asked) != 0 || len(h.rows.inserted()) != 0 {
 		t.Fatalf("off: %d, %d admits", rec.Code, len(asked))
 	}
-	view := DecideView{On: map[DecideKey]bool{}, ReadAt: c.at(), MaxAge: decideStaleness * DecideEvery}
+	view := DecideView{Rows: map[DecideKey]bool{}, ReadAt: c.at(), MaxAge: decideStaleness * DecideEvery}
 	h.edge.decider.decides.current.Store(&view)
 	if rec := h.send(t, c); rec.Code != http.StatusTeapot || h.edge.DecideCounts().Passed[PassDecideOff] != 1 {
 		t.Fatalf("decide row off: %d %+v", rec.Code, h.edge.DecideCounts())

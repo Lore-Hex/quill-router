@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -13,7 +14,7 @@ from fastapi.testclient import TestClient
 from scripts.pricing.providers import gmi, novita, together, venice, wafer, zro
 from trusted_router import provider_lifecycle
 from trusted_router.catalog import MODELS, endpoints_for_model
-from trusted_router.catalog_data import _PROVIDER_UNSERVED_CREDITS_MODELS
+from trusted_router.catalog_data import _PROVIDER_UNSERVED_CREDITS_MODELS, ModelEndpoint
 from trusted_router.request_capabilities import endpoint_capabilities
 from trusted_router.routing import candidates_fitting_context, canonical_model_id
 
@@ -64,7 +65,8 @@ def test_flash_has_verified_prepaid_routes_and_preserves_native_ids() -> None:
         assert wafer_row["routable_reason"] == "delisted-upstream"
         assert wafer_row["missing_since"] == "2026-11-01"
         expected.pop("wafer")
-    assert {p: e.upstream_id for p, e in routes.items()} == expected
+    # Discovery can add verified hosts without changing these established IDs.
+    assert {p: routes[p].upstream_id for p in expected} == expected
     # ZRO rejected this exact route and removed it from discovery on Nov 1.
     # Preserve its native ID for a future successful recovery canary.
     zro_row = next(row for row in json.loads(zro.MANIFEST_PATH.read_text())["models"] if row["id"] == MODEL)
@@ -88,6 +90,25 @@ def test_flash_has_verified_prepaid_routes_and_preserves_native_ids() -> None:
     assert MODEL not in _PROVIDER_UNSERVED_CREDITS_MODELS["novita"]
     assert MODEL in gmi._VERIFIED_PREPAID_MODELS
     assert any(e.provider == "gmi" and e.usage_type == "BYOK" for e in endpoints_for_model(MODEL))
+
+
+def test_flash_route_contract_allows_discovered_hosts_but_rejects_native_id_drift(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current = endpoints_for_model(MODEL)
+    source = next(e for e in current if e.provider == "together" and e.usage_type == "Credits")
+    added = replace(source, id=f"{MODEL}@tencent/prepaid", provider="tencent", upstream_id="minimax-m3.1-flash")
+    expanded = [e for e in current if e.provider != "tencent"] + [added]
+
+    def endpoints(model_id: str) -> list[ModelEndpoint]:
+        assert model_id == MODEL
+        return expanded
+
+    monkeypatch.setitem(globals(), "endpoints_for_model", endpoints)
+    test_flash_has_verified_prepaid_routes_and_preserves_native_ids()
+    expanded[:] = [replace(e, upstream_id="wrong-model") if e is source else e for e in expanded]
+    with pytest.raises(AssertionError):
+        test_flash_has_verified_prepaid_routes_and_preserves_native_ids()
 
 
 def test_novita_flash_uses_account_price_units() -> None:

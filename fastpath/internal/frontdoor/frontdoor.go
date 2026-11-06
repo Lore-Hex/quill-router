@@ -239,6 +239,13 @@ func (f *FrontDoor) keys() [][]byte {
 	return append([][]byte{f.cfg.Key}, f.cfg.Accept...)
 }
 
+// Enabled says whether the workspace is enabled for the fast path by the
+// front door's own copy of the switch, the one Authorize asks: the edge
+// asks it too, before it would admit (edge.PassWorkspaceNotEnabled).
+func (f *FrontDoor) Enabled(workspace string) bool {
+	return f.cfg.Enabled(workspace)
+}
+
 // Authorize sends an authorize to its shard's owner, the shard its own hash
 // picks (§4.3). If that owner has no lease to take it, or cannot be reached,
 // a sharded workspace tries one other shard's owner, and then is Busy

@@ -1,6 +1,7 @@
 package edge
 
 import (
+	"bufio"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -14,7 +15,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -677,5 +680,189 @@ func TestAnAbsoluteFormTargetWithNoPathIsTheRoot(t *testing.T) {
 	raw, _ := io.ReadAll(conn)
 	if !strings.HasPrefix(string(raw), "HTTP/1.1 402") || h.last == nil || h.last.verdict != string(Verified) || h.last.path != "/" {
 		t.Fatalf("an absolute-form target:\n%s\nlast %+v", raw, h.last)
+	}
+}
+
+// lateEnd is a request body whose read past its declared length, the
+// transport's look for the end, waits until let: the scheduling that leaves
+// that read until after the answer's first bytes reached the caller. What
+// the read found goes to found.
+type lateEnd struct {
+	io.ReadCloser
+	left  int64
+	let   <-chan struct{}
+	found chan<- error
+}
+
+func (b *lateEnd) Read(p []byte) (int, error) {
+	if b.left > 0 {
+		n, err := b.ReadCloser.Read(p)
+		b.left -= int64(n)
+		return n, err
+	}
+	<-b.let
+	n, err := b.ReadCloser.Read(p)
+	select {
+	case b.found <- err:
+	default:
+	}
+	return n, err
+}
+
+// lateTransport sends each request with its body a lateEnd.
+type lateTransport struct {
+	base  http.RoundTripper
+	let   <-chan struct{}
+	found chan<- error
+}
+
+func (l lateTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.Body == nil {
+		return l.base.RoundTrip(r)
+	}
+	out := r.Clone(r.Context())
+	out.Body = &lateEnd{ReadCloser: r.Body, left: r.ContentLength, let: l.let, found: l.found}
+	return l.base.RoundTrip(out)
+}
+
+// TestTheBodyIsTheProxysWhileTheAnswerStreams: the transport, having sent
+// the declared length, reads the body once more to find its end, and that
+// read can come after Python's first bytes reached the caller. It finds the
+// end, and the answer streams on to its trailer, on each path that passes
+// the body as it came: the server's close of its body as the answer's
+// headers go out failed that read, and had the transport close the
+// connection the answer was streaming on.
+func TestTheBodyIsTheProxysWhileTheAnswerStreams(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		headers map[string]string
+		body    string
+	}{
+		{"with the token, unsigned", map[string]string{TokenHeader: token}, authorizeBody},
+		{"without the token", map[string]string{}, authorizeBody},
+		{"past the bound", map[string]string{TokenHeader: token, BootHeader: "kid=boot-1,sig=AA"},
+			strings.Repeat("x", maxBody+1)},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			let, release, found := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+			open := func(c chan struct{}) {
+				select {
+				case <-c:
+				default:
+					close(c)
+				}
+			}
+			var got atomic.Int64
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				n, _ := io.Copy(io.Discard, r.Body)
+				got.Store(n)
+				w.Header().Set("Trailer", "X-Python-Trailer")
+				w.WriteHeader(http.StatusOK)
+				_, _ = io.WriteString(w, `{"data":`)
+				w.(http.Flusher).Flush()
+				<-release
+				_, _ = io.WriteString(w, `{}}`)
+				w.Header().Set("X-Python-Trailer", "done")
+			}))
+			t.Cleanup(upstream.Close)
+			target, _ := url.Parse(upstream.URL)
+			e, err := New(Config{Token: token, Upstream: target, Boots: &boots{by: map[string]Boot{}},
+				Transport: lateTransport{base: &http.Transport{DisableCompression: true}, let: let, found: found}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			server := httptest.NewServer(e)
+			t.Cleanup(server.Close)
+			t.Cleanup(func() { open(let); open(release) })
+			req, err := http.NewRequest(http.MethodPost, server.URL+authorizePath, strings.NewReader(c.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for k, v := range c.headers {
+				req.Header.Set(k, v)
+			}
+			resp, err := plainClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			first := make([]byte, len(`{"data":`))
+			if _, err := io.ReadFull(resp.Body, first); err != nil || string(first) != `{"data":` {
+				t.Fatalf("the first bytes: %q %v", first, err)
+			}
+			if got.Load() != int64(len(c.body)) {
+				t.Fatalf("Python read %d bytes of %d", got.Load(), len(c.body))
+			}
+			open(let)
+			select {
+			case err := <-found:
+				if err != io.EOF {
+					t.Fatalf("the read for the body's end found %v, not the end", err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("the transport did not read for the body's end")
+			}
+			open(release)
+			rest, err := io.ReadAll(resp.Body)
+			if err != nil || string(rest) != `{}}` || resp.Trailer.Get("X-Python-Trailer") != "done" {
+				t.Fatalf("the rest %q %v, trailer %v", rest, err, resp.Trailer)
+			}
+		})
+	}
+}
+
+// TestABodyThatFailsToReadClosesTheConnection: a chunked body with a
+// malformed chunk is answered, and the connection closes after the answer;
+// the bytes after the bad chunk are never read as a request of their own,
+// so a request pipelined behind it reaches neither Python nor the caller.
+func TestABodyThatFailsToReadClosesTheConnection(t *testing.T) {
+	for name, headers := range map[string]string{
+		"with the token, unsigned": TokenHeader + ": " + token + "\r\n",
+		"without the token":        "",
+		"with the token, signed":   TokenHeader + ": " + token + "\r\n" + BootHeader + ": kid=boot-1,sig=AA\r\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			var mu sync.Mutex
+			var paths []string
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				paths = append(paths, r.URL.Path)
+				mu.Unlock()
+				_, _ = io.Copy(io.Discard, r.Body)
+				_, _ = io.WriteString(w, "ok "+r.URL.Path)
+			}))
+			t.Cleanup(upstream.Close)
+			target, _ := url.Parse(upstream.URL)
+			e, err := New(Config{Token: token, Upstream: target, Boots: &boots{by: map[string]Boot{}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			server := httptest.NewServer(e)
+			t.Cleanup(server.Close)
+			conn, err := net.Dial("tcp", server.Listener.Addr().String())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			_, _ = io.WriteString(conn, "POST "+authorizePath+" HTTP/1.1\r\nHost: edge.example\r\n"+headers+
+				"Transfer-Encoding: chunked\r\n\r\n5\r\nhello\r\nzz\r\n"+
+				"GET /pipelined HTTP/1.1\r\nHost: edge.example\r\n\r\n")
+			_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+			read := bufio.NewReader(conn)
+			var answers []string
+			for {
+				resp, err := http.ReadResponse(read, nil)
+				if err != nil {
+					break
+				}
+				body, _ := io.ReadAll(resp.Body)
+				answers = append(answers, fmt.Sprintf("%d %q", resp.StatusCode, body))
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if len(answers) != 1 || slices.Contains(paths, "/pipelined") {
+				t.Fatalf("answers %v, Python saw %v", answers, paths)
+			}
+		})
 	}
 }

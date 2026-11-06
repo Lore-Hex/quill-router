@@ -1455,8 +1455,8 @@ func TestTheDecideShadowLogsCountsAlone(t *testing.T) {
 	h.send(t, c)
 	h.edge.full.flush()
 	logs := h.logs.all()
-	if !strings.Contains(logs, "fastpath edge decide shadow: dropped=0 evictions=0 cache_unrefreshed=0 cache_dropped=0 "+
-		"cache_read_failures=0") {
+	if !strings.Contains(logs, fmt.Sprintf("fastpath edge decide shadow: dropped=0 evictions=0 distinct_keys=1 "+
+		"distinct_keys_since=%d cache_unrefreshed=0 cache_dropped=0 cache_read_failures=0", c.at().Unix())) {
 		t.Fatalf("the counts line: %s", logs)
 	}
 	if !strings.Contains(logs, "fastpath edge decide shadow: snapshot=golden-snapshot policy=golden-policy agree_full=1 "+

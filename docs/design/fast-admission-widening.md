@@ -798,7 +798,10 @@ counts from before it do not count.
    as I2 has them, and from at least 200 distinct API keys (the shadow's
    new `distinct_keys`, a count kept per node over a bounded set of lookup
    hashes and printed as a number only; the gate reads the largest node's
-   figure, so a key seen by two nodes is not counted twice). The 24 hours
+   figure, so a key seen by two nodes is not counted twice; a node's set
+   starts with its process and its line carries `distinct_keys_since`, so
+   only a node restarted after the step's start counts, and the bar is
+   unread until a node cycle or deploy follows that start). The 24 hours
    stood in for the variety of keys, request shapes and policy and catalog
    changes a day brings; the distinct keys and digests count that variety
    directly. Then `agree_full` at least 99.5% with every difference

@@ -32,10 +32,23 @@ deciding as that copy said, until the copy is 15 s old (three intervals,
 turned off is honoured within 10 s, or by the time the copy a node holds is
 15 s old, whichever a node's reads give.
 `decide status WORKSPACE` exits 0 while the workspace does not decide in
-that cloud and region and 3 while it does, with every row of the
+that cloud and region and 3 while it does, by its own row or the wildcard
+row, with `via` (`own`, `wildcard` or `none`) and every row of the
 workspace's beside: a row of another cloud or region stays as it was, so
 read the rows it prints, or run `decide-off-all`. A workspace with no row
-decides nowhere. Nothing of this touches the switch or the leases.
+of its own follows the wildcard row `*` of the cloud and region, and with
+none decides nowhere (`docs/design/fast-admission-widening.md` §6). `decide
+off` writes the workspace's own off row, which wins over an on wildcard, so
+it is the lever under the wildcard too; do not `decide delete` the
+workspace's row to turn it off: under an on wildcard deleting an off row is
+refused (exit 2), since the workspace would start deciding, and an on row
+deleted under it leaves the workspace deciding. To stop every workspace the
+wildcard decides, `fastpathctl -database D decide wildcard off`.
+`decide-off-all` turns every row off, the wildcard's too, and prints the
+commit timestamp `at` that each row it turned off keeps; `decide-restore -at
+AT` with that value turns back on exactly those rows, and no off override
+set before the kill (`fastpath-edge-decide.md`, step 1). Nothing of this
+touches the switch or the leases.
 
 Then the switch:
 

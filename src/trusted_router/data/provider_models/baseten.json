@@ -966,7 +966,7 @@
     {
       "display_name": "elephant-1",
       "title": "decision-models/baseten-elephant-9b-latest",
-      "model_type": "chat",
+      "model_type": "decision",
       "input_modalities": [
         "text",
         "image"
@@ -975,7 +975,7 @@
         "text"
       ],
       "endpoints": [
-        "chat/completions"
+        "decide"
       ],
       "status": 1,
       "id": "decision-models/baseten-elephant-9b-latest",
@@ -983,7 +983,8 @@
       "context_length": 16384,
       "supported_features": [],
       "supported_sampling_parameters": [],
-      "routable": true,
+      "routable": false,
+      "routable_reason": "systemone-adapter-not-implemented",
       "input_token_price_per_m": 35000,
       "output_token_price_per_m": 0,
       "cached_input_token_price_per_m": 0
@@ -991,7 +992,7 @@
     {
       "display_name": "mammoth-1",
       "title": "decision-models/baseten-mammoth-27b-latest",
-      "model_type": "chat",
+      "model_type": "decision",
       "input_modalities": [
         "text",
         "image"
@@ -1000,7 +1001,7 @@
         "text"
       ],
       "endpoints": [
-        "chat/completions"
+        "decide"
       ],
       "status": 1,
       "id": "decision-models/baseten-mammoth-27b-latest",
@@ -1008,7 +1009,8 @@
       "context_length": 16384,
       "supported_features": [],
       "supported_sampling_parameters": [],
-      "routable": true,
+      "routable": false,
+      "routable_reason": "systemone-adapter-not-implemented",
       "input_token_price_per_m": 100000,
       "output_token_price_per_m": 0,
       "cached_input_token_price_per_m": 0
@@ -1016,7 +1018,7 @@
     {
       "display_name": "joey-1",
       "title": "decision-models/baseten-joey-2b-latest",
-      "model_type": "chat",
+      "model_type": "decision",
       "input_modalities": [
         "text",
         "image"
@@ -1025,7 +1027,7 @@
         "text"
       ],
       "endpoints": [
-        "chat/completions"
+        "decide"
       ],
       "status": 1,
       "id": "decision-models/baseten-joey-2b-latest",
@@ -1033,6 +1035,8 @@
       "context_length": 16384,
       "supported_features": [],
       "supported_sampling_parameters": [],
+      "routable": false,
+      "routable_reason": "systemone-adapter-not-implemented",
       "input_token_price_per_m": 10000,
       "output_token_price_per_m": 0,
       "cached_input_token_price_per_m": 0

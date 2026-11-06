@@ -9,8 +9,10 @@
 //	fastpathctl -database projects/P/instances/I/databases/D node ADDRESS
 //	fastpathctl -database projects/P/instances/I/databases/D [-funded MICRO] audit WORKSPACE
 //	fastpathctl -database projects/P/instances/I/databases/D decide on|off|status WORKSPACE [-cloud gcp] [-region us-central1]
-//	fastpathctl -database D decide delete WORKSPACE [-cloud gcp] [-region us-central1]
+//	fastpathctl -database D decide delete WORKSPACE [-cloud gcp] [-region us-central1] [-follow-wildcard]
+//	fastpathctl -database D decide wildcard on|off|status [-cloud gcp] [-region us-central1]
 //	fastpathctl -database projects/P/instances/I/databases/D decide-off-all
+//	fastpathctl -database projects/P/instances/I/databases/D decide-restore -at TS
 //	fastpathctl -database projects/P/instances/I/databases/D ready WORKSPACE [-required-tier N] [-floor F]
 //
 // disable revokes the workspace's open leases with the switch, and
@@ -38,16 +40,33 @@
 //
 // decide sets or reads who decides the workspace's authorizations at the
 // edge (tr_fastpath_edge_decide): on, its edge nodes of the cloud answer
-// them for the region themselves, off they pass them on, and a workspace
-// with no row decides nowhere. The cloud is gcp and the region us-central1
-// unless -cloud or -region, before the command or after the workspace, say
-// otherwise. decide status exits 0 while the workspace does not decide in
-// that cloud and region and 3 while it does, with every row of the
-// workspace's beside. decide delete removes the workspace's row for the
-// cloud and region, exit 0 when there was one and 3 when there was none: a
-// workspace with no row decides nowhere, so it only ever stops one
-// deciding. decide-off-all turns every row off. None of them touches the
-// switch or the leases: disable is still what turns a workspace off.
+// them for the region themselves, off they pass them on. A workspace with
+// no row of its own follows the wildcard row of the cloud and region, and
+// with no wildcard row there decides nowhere; its own row, on or off, wins
+// over the wildcard (docs/design/fast-admission-widening.md section 6), so
+// decide off is an override that holds under the wildcard. The cloud is gcp
+// and the region us-central1 unless -cloud or -region, before the command
+// or after the workspace, say otherwise. decide status reports the
+// workspace's effective answer there, by its own row or the wildcard, with
+// via (own, wildcard or none) and every row of the workspace's beside: exit
+// 0 while it does not decide in that cloud and region and 3 while it does.
+// decide delete removes the workspace's row for the cloud and region, exit 0
+// when there was one and 3 when there was none, and only ever stops one
+// deciding: it refuses, exit 2 and nothing written, to remove an off row
+// while the wildcard there is on, since the workspace would then decide,
+// unless -follow-wildcard, which removes it and says so. decide delete '*'
+// removes the wildcard row itself, so every workspace without a row of its
+// own stops deciding there. decide wildcard on, off and status set and read
+// the wildcard row (status exits 3 while it is on); on and off write only
+// gcp/us-central1, the one cloud and region the widening covers, and refuse
+// any other, exit 2; decide wildcard off is the same stop as deleting it
+// and keeps the row for decide-restore.
+// decide-off-all turns every row off, the wildcard's too, and prints the
+// commit timestamp they all keep; decide-restore -at that timestamp turns
+// back on exactly the rows whose changed_at it is and that are off, exit 3
+// when there were none, so an override turned off before the kill stays
+// off. None of them touches the switch or the leases: disable is still what
+// turns a workspace off.
 //
 // ready asks the store whether a grant could reach the workspace with the
 // fleet's money settings (docs/design/fast-admission-widening.md, (b) and
@@ -67,7 +86,8 @@
 // node's host:port; anything else, a flag such as -h among them, is refused
 // with the usage, exit 2, before the store is opened. decide delete alone
 // takes any workspace the table can hold, so a row written under a malformed
-// one can be removed.
+// one can be removed, and '*', the wildcard row. -follow-wildcard is decide
+// delete's alone and -at decide-restore's, after the command.
 // With SPANNER_EMULATOR_HOST set, the client reaches the emulator instead.
 package main
 
@@ -126,6 +146,53 @@ var workspaceForm = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_./:@+\-]{0,63}$`)
 // bracket, so a flag after the command is not taken for an address.
 var addressForm = regexp.MustCompile(`^[A-Za-z0-9\[][A-Za-z0-9._:\[\]\-]{0,254}$`)
 
+// The one cloud and region decide wildcard on and off write
+// (docs/design/fast-admission-widening.md section 4(c): the AWS and Azure
+// planes and every region but us-central1 stay out). status reads any, and
+// decide delete '*' removes any, both the stop direction.
+const (
+	wildcardCloud  = "gcp"
+	wildcardRegion = "us-central1"
+)
+
+// decideStatus is decide status's answer from the whole table and whether
+// the workspace decides in the cloud and region by section 6.1's rule
+// (store.EffectiveDecide): its own row there, on or off, else the
+// wildcard's, else off, with via naming which. For the wildcard itself
+// (decide wildcard status) its own row is the wildcard's, via own.
+func decideStatus(all []store.DecideRow, read time.Time, workspace, cloud, region string) (map[string]any, bool) {
+	rows := []store.DecideRow{}
+	var own, wildcard *store.DecideRow
+	for i, r := range all {
+		if r.Workspace == workspace {
+			rows = append(rows, r)
+		}
+		if r.Cloud != cloud || r.Region != region {
+			continue
+		}
+		switch r.Workspace {
+		case workspace:
+			own = &all[i]
+		case store.DecideWildcard:
+			wildcard = &all[i]
+		}
+	}
+	answer := map[string]any{"workspace": workspace, "cloud": cloud, "region": region, "found": own != nil,
+		"rows": rows, "wildcard": nil, "read_at": read}
+	var ownOn, wildcardOn bool
+	if own != nil {
+		ownOn = own.Decide
+		answer["changed_at"] = own.ChangedAt
+	}
+	if wildcard != nil {
+		wildcardOn = wildcard.Decide
+		answer["wildcard"] = map[string]any{"decide": wildcard.Decide, "changed_at": wildcard.ChangedAt}
+	}
+	decide, via := store.EffectiveDecide(ownOn, own != nil, wildcardOn, wildcard != nil)
+	answer["decide"], answer["via"] = decide, via
+	return answer, decide
+}
+
 // run is the command, its exit code and what went wrong.
 func run(ctx context.Context, args []string, out io.Writer,
 	open func(context.Context, string, store.Config) (*store.Store, func(), error)) (int, error) {
@@ -135,6 +202,9 @@ func run(ctx context.Context, args []string, out io.Writer,
 	funded := fs.Int64("funded", -1, "audit: the micro-credits that funded the workspace, which its credit rows must sum to")
 	cloud := fs.String("cloud", "gcp", "decide: the edge plane's cloud")
 	region := fs.String("region", "us-central1", "decide: the region of the authorizations")
+	followWildcard := fs.Bool("follow-wildcard", false,
+		"decide delete: remove an off row though the wildcard is on, so the workspace follows it")
+	restoreAt := fs.String("at", "", "decide-restore: the commit timestamp decide-off-all printed (RFC 3339)")
 	cfg := service.Defaults()
 	fs.Var(service.Money{P: &cfg.Store.RequiredTier}, "required-tier",
 		"ready: the trust tier the fleet's leases need (the node's -required-tier)")
@@ -147,25 +217,54 @@ func run(ctx context.Context, args []string, out io.Writer,
 		return 2, err
 	}
 	usage := errors.New("usage: fastpathctl -database D enable|disable|status|audit WORKSPACE, node|leave|closed ADDRESS, " +
-		"decide on|off|status|delete WORKSPACE [-cloud C] [-region R], ready WORKSPACE [-required-tier N] [-floor F], " +
-		"disable-all or decide-off-all")
+		"decide on|off|status WORKSPACE [-cloud C] [-region R], decide delete WORKSPACE [-cloud C] [-region R] " +
+		"[-follow-wildcard], decide wildcard on|off|status [-cloud C] [-region R], " +
+		"ready WORKSPACE [-required-tier N] [-floor F], disable-all, decide-off-all or decide-restore -at TS")
 	if *database == "" || fs.NArg() < 1 {
 		return 2, usage
 	}
 	command, workspace := fs.Arg(0), fs.Arg(1)
-	verb := ""
+	verb, wildcardVerb := "", ""
 	if command == "decide" {
 		if fs.NArg() < 3 {
 			return 2, usage
 		}
 		verb, workspace = fs.Arg(1), fs.Arg(2)
-		// -cloud and -region may follow the workspace.
+		if verb == "wildcard" {
+			// decide wildcard on|off|status: the row of no workspace.
+			wildcardVerb, workspace = fs.Arg(2), store.DecideWildcard
+		}
+		// -cloud, -region and -follow-wildcard may follow the workspace.
 		if err := fs.Parse(fs.Args()[3:]); err != nil {
 			return 2, err
 		}
 		if fs.NArg() != 0 {
 			return 2, usage
 		}
+	}
+	if command == "decide-restore" {
+		// -at follows the command.
+		if err := fs.Parse(fs.Args()[1:]); err != nil {
+			return 2, err
+		}
+		if fs.NArg() != 0 {
+			return 2, usage
+		}
+	}
+	// -follow-wildcard is decide delete's and -at decide-restore's: on any
+	// other command each would be ignored, which an operator could misread.
+	if *followWildcard && (command != "decide" || verb != "delete") {
+		return 2, fmt.Errorf("-follow-wildcard is decide delete's alone: %w", usage)
+	}
+	var restore time.Time
+	if command == "decide-restore" {
+		at, err := time.Parse(time.RFC3339Nano, *restoreAt)
+		if err != nil || at.IsZero() {
+			return 2, fmt.Errorf("decide-restore -at %q is not decide-off-all's printed at: %w", *restoreAt, usage)
+		}
+		restore = at
+	} else if *restoreAt != "" {
+		return 2, fmt.Errorf("-at is decide-restore's alone: %w", usage)
 	}
 	if command == "ready" {
 		if fs.NArg() < 2 {
@@ -189,9 +288,21 @@ func run(ctx context.Context, args []string, out io.Writer,
 		if fs.NArg() != 1 {
 			return 2, usage
 		}
+	case command == "decide-restore":
+	case command == "decide" && verb == "wildcard":
+		if wildcardVerb != "on" && wildcardVerb != "off" && wildcardVerb != "status" {
+			return 2, fmt.Errorf("decide wildcard %q is not on, off or status: %w", wildcardVerb, usage)
+		}
+		if wildcardVerb != "status" && (*cloud != wildcardCloud || *region != wildcardRegion) {
+			return 2, fmt.Errorf("decide wildcard %s: the wildcard row names only %s/%s, not %s/%s", wildcardVerb,
+				wildcardCloud, wildcardRegion, *cloud, *region)
+		}
+		if err := store.CheckDecideKey(workspace, *cloud, *region); err != nil {
+			return 2, err
+		}
 	case command == "decide":
 		if verb != "on" && verb != "off" && verb != "status" && verb != "delete" {
-			return 2, fmt.Errorf("decide %q is not on, off, status or delete", verb)
+			return 2, fmt.Errorf("decide %q is not on, off, status, delete or wildcard", verb)
 		}
 		if verb != "delete" && !workspaceForm.MatchString(workspace) {
 			return 2, fmt.Errorf("%q is not a workspace's id: %w", workspace, usage)
@@ -205,8 +316,8 @@ func run(ctx context.Context, args []string, out io.Writer,
 		}
 	case command != "enable" && command != "disable" && command != "status" && command != "node" && command != "leave" &&
 		command != "closed" && command != "audit":
-		return 2, fmt.Errorf("%q is not enable, disable, status, audit, node, leave, closed, decide, ready, disable-all "+
-			"or decide-off-all", command)
+		return 2, fmt.Errorf("%q is not enable, disable, status, audit, node, leave, closed, decide, ready, disable-all, "+
+			"decide-off-all or decide-restore", command)
 	case fs.NArg() != 2 || workspace == "":
 		return 2, usage
 	case (command == "node" || command == "leave" || command == "closed") && !addressForm.MatchString(workspace):
@@ -236,47 +347,55 @@ func run(ctx context.Context, args []string, out io.Writer,
 			return 1, err
 		}
 		answer = map[string]any{"rows_turned_off": off, "at": at}
+	case "decide-restore":
+		on, at, err := s.DecideRestore(ctx, restore)
+		if err != nil {
+			return 1, err
+		}
+		answer = map[string]any{"rows_turned_on": on, "restored": restore, "at": at}
+		if on == 0 {
+			code = notDone
+		}
 	case "decide":
 		if verb == "delete" {
-			found, at, err := s.DeleteDecide(ctx, workspace, *cloud, *region)
+			got, err := s.DeleteDecide(ctx, workspace, *cloud, *region, *followWildcard)
 			if err != nil {
 				return 1, err
 			}
-			answer = map[string]any{"workspace": workspace, "cloud": *cloud, "region": *region, "deleted": found,
-				"at": at}
-			if !found {
+			answer = map[string]any{"workspace": workspace, "cloud": *cloud, "region": *region, "deleted": got.Deleted,
+				"wildcard": got.Wildcard, "follows_wildcard": got.FollowsWildcard, "refused": got.Refused, "at": got.At}
+			switch {
+			case got.Refused:
+				// Written before the refusal, so the caller sees what was
+				// left; nothing was removed.
+				if err := json.NewEncoder(out).Encode(answer); err != nil {
+					return 1, err
+				}
+				return 2, fmt.Errorf("the wildcard for %s/%s is on: removing %s's off row would make it decide; "+
+					"-follow-wildcard removes it anyway", *cloud, *region, workspace)
+			case !got.Found:
 				code = notDone
 			}
 			break
 		}
-		if verb != "status" {
-			at, err := s.SetDecide(ctx, workspace, *cloud, *region, verb == "on")
+		if verb == "wildcard" && wildcardVerb != "status" || verb == "on" || verb == "off" {
+			decide := verb == "on" || wildcardVerb == "on"
+			at, err := s.SetDecide(ctx, workspace, *cloud, *region, decide)
 			if err != nil {
 				return 1, err
 			}
-			answer = map[string]any{"workspace": workspace, "cloud": *cloud, "region": *region, "decide": verb == "on",
-				"at": at}
+			answer = map[string]any{"workspace": workspace, "wildcard": verb == "wildcard", "cloud": *cloud,
+				"region": *region, "decide": decide, "at": at}
 			break
 		}
 		all, read, err := s.ReadDecide(ctx)
 		if err != nil {
 			return 1, err
 		}
-		rows := []store.DecideRow{}
-		for _, r := range all {
-			if r.Workspace == workspace {
-				rows = append(rows, r)
-			}
-		}
-		answer = map[string]any{"workspace": workspace, "cloud": *cloud, "region": *region, "decide": false,
-			"found": false, "rows": rows, "read_at": read}
-		for _, r := range rows {
-			if r.Cloud == *cloud && r.Region == *region {
-				answer["decide"], answer["found"], answer["changed_at"] = r.Decide, true, r.ChangedAt
-				if r.Decide {
-					code = notDone
-				}
-			}
+		var decide bool
+		answer, decide = decideStatus(all, read, workspace, *cloud, *region)
+		if decide {
+			code = notDone
 		}
 	case "ready":
 		why, err := s.GrantReadiness(ctx, workspace)
