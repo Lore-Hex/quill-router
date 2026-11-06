@@ -4,6 +4,7 @@ body.console:has(.api-keys-page) { background: var(--tr-color-surface-bg-alt); }
 .api-keys-page .panel { border: 1px solid var(--tr-color-line-rule); border-radius: var(--tr-radius-panel); background: var(--tr-color-surface-panel); }
 .api-keys-page .panel-head { padding: 14px 16px; border-bottom: 1px solid var(--tr-color-line-rule); }
 .api-keys-page .panel-body { padding: 16px; }
+.api-keys-page .panel-head-actions { flex-wrap: wrap; max-width: 100%; }
 .api-keys-page .key-create-panel { background: transparent; }
 .api-keys-page .key-create-panel .form { max-width: none; }
 .api-keys-page .key-create-panel .form > .btn { align-self: stretch; width: 100%; }
@@ -16,9 +17,22 @@ body.console:has(.api-keys-page) { background: var(--tr-color-surface-bg-alt); }
 .api-keys-page .agent-message { display: grid; gap: 10px; width: 100%; max-width: 100%; min-width: 0; margin: 0; padding: 12px; overflow: hidden; overflow-wrap: anywhere; background: var(--tr-color-surface-panel-inset); color: var(--tr-color-text-primary); border: 1px solid var(--tr-color-line-rule); border-radius: var(--tr-radius-control); font-family: var(--tr-font-family-mono); font-size: 13px; line-height: 1.55; }
 .api-keys-page .keys-table { min-width: 860px; }
 .api-keys-page .key-row-disabled td { opacity: 0.75; }
+.api-keys-page .key-name { display: block; margin-bottom: 6px; overflow-wrap: anywhere; }
+.api-keys-page .management-keys-section { border-top: 1px solid var(--tr-color-line-rule); padding-top: 20px; min-width: 0; scroll-margin-top: 84px; }
+.api-keys-page .management-keys-section h2 { margin: 0; font-size: 18px; letter-spacing: 0; }
+.api-keys-page .management-keys-section p { max-width: 76ch; line-height: 1.6; overflow-wrap: anywhere; }
+.api-keys-page .management-key-create summary { min-height: 44px; padding: 12px 0; cursor: pointer; font-weight: 600; }
+.api-keys-page .management-key-create .form { max-width: 760px; }
+.api-keys-page .management-key-warning { border-left: 3px solid var(--tr-color-text-secondary); padding: 0 0 0 14px; margin-bottom: 16px; line-height: 1.6; overflow-wrap: anywhere; }
+.api-keys-page .management-key-warning p { margin: 8px 0; }
+.api-keys-page .management-key-warning ul { margin: 8px 0 0; padding-left: 18px; }
+.api-keys-page .management-key-warning li + li { margin-top: 8px; }
+.api-keys-page .management-key-create .budget-action-check { align-items: flex-start; line-height: 1.5; font-size: 14px; }
+.api-keys-page .management-key-create button { min-height: 44px; white-space: normal; }
 
 @media (max-width: 800px) {
   .api-keys-page .panel-head { flex-direction: column; align-items: flex-start; gap: 12px; }
+  .api-keys-page .panel-head-actions { margin-left: 0; }
   .api-keys-page .agent-message-row { grid-template-columns: 1fr; }
   .api-keys-page .keys-table { min-width: 0; }
   .api-keys-page .keys-table thead { display: none; }

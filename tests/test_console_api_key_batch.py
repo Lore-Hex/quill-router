@@ -351,6 +351,7 @@ def test_console_key_projection_keeps_the_existing_template_shape() -> None:
     assert _key_view(snapshot) == {
         "hash": "key-shape",
         "name": "shape",
+        "management": False,
         "label": "sk-tr...shape",
         "limit_display": "$2.00",
         "limit_input": microdollars_to_decimal(2_000_000),

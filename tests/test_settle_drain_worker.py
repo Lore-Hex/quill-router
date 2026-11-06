@@ -66,10 +66,17 @@ def inventory_settings(surface, enabled):
     ))
 
 
-def inventory(app, retired_route_delta=None, *, abliterated_page=False):
+def inventory(app, retired_route_delta=None, *, abliterated_page=False, management_key=False):
     routes = sorted([path, sorted(getattr(route, "methods", []) or []),
                      getattr(getattr(route, "endpoint", None), "__qualname__", "")]
                     for path, route in effective_routes(app))
+    # Account for exactly the new guarded console POST, only on console surfaces.
+    # All other routes, lifecycle hooks and state remain pinned to the baseline.
+    management_route = ["/console/api-keys/management", ["POST"],
+                        "register.<locals>.console_create_management_key"]
+    assert routes.count(management_route) == int(management_key)
+    if management_key:
+        routes.remove(management_route)
     if abliterated_page:
         # Account for exactly the reviewed landing page and its slash alias.
         # Keep the frozen inventory's other routes and lifecycle pins intact.
@@ -111,7 +118,8 @@ def test_existing_surfaces_match_main_inventory(surface, enabled):
     assert delta["base_revision"] == "43f8cf6e73c999bc2140147e854f2ff96b2f124b"
     app = create_app(inventory_settings(surface, enabled), configure_store_arg=False, init_observability=False)
     assert inventory(app, delta["surfaces"][surface],
-                     abliterated_page=surface in {"combined", "public", "observer"}) == frozen[f"{surface}/{enabled}"]
+                     abliterated_page=surface in {"combined", "public", "observer"},
+                     management_key=surface in {"combined", "control"}) == frozen[f"{surface}/{enabled}"]
 
 
 def test_worker_surface_excludes_every_other_starter(monkeypatch):
