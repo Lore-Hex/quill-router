@@ -1556,10 +1556,13 @@ func TestAnUnreadRefusalIsStillARefusal(t *testing.T) {
 
 // TestOnlyAnInFlightPassAgreesWithAnInFlightRefusal: inFlightAgreed makes
 // passed.inflight.key of Python's per-key in-flight 429, read through, to a
-// request the decide path passed at inflight.key, and of nothing else: not
-// that 429 unread (its type and message unknown), not with no decide path
-// (the shadow alone: Go's gate was never asked), not after another pass,
-// not another message or type, not a 200.
+// request the decide path passed at inflight.key, and
+// inflight_unchecked.<pass> of the same 429 to a request the decide path
+// passed after its gate let it in (owner.off, owner.busy, budget.spent,
+// insert.failed: Go's slot was given back at the pass) or did not decide
+// (not_decided: the shadow alone). Neither pages. It makes neither of
+// anything else, after any pass: not that 429 unread (its type and message
+// unknown), not another message or type, not a 503, not a 200.
 func TestOnlyAnInFlightPassAgreesWithAnInFlightRefusal(t *testing.T) {
 	f := authorizeGoldens(t)
 	c := authorizeCaseNamed(t, "answer:app_categories_empty")
@@ -1567,26 +1570,41 @@ func TestOnlyAnInFlightPassAgreesWithAnInFlightRefusal(t *testing.T) {
 	d := Decide(in)
 	inFlight := errorBody(429, inFlightRefusal, inFlightMessage)
 	agreed := ClassGoPassed + "." + PassInFlightKey
+	unchecked := ClassInFlightUnchecked + "."
 	for _, v := range []struct {
 		a          pyAnswer
 		decidePass string
 		want       string
 	}{
 		{pyAnswer{status: 429, body: inFlight}, PassInFlightKey, agreed},
-		{pyAnswer{status: 429, why: "budget"}, PassInFlightKey, ClassWouldAdmit + ".429.unread"},
-		{pyAnswer{status: 429, body: inFlight}, "", ClassWouldAdmit + ".429.rate_limited"},
-		{pyAnswer{status: 429, body: inFlight}, PassOwnerBusy, ClassWouldAdmit + ".429.rate_limited"},
-		{pyAnswer{status: 429, body: inFlight}, PassBudgetSpent, ClassWouldAdmit + ".429.rate_limited"},
-		{pyAnswer{status: 429, body: errorBody(429, inFlightRefusal, "Rate limit exceeded")}, PassInFlightKey,
-			ClassWouldAdmit + ".429.rate_limited"},
-		{pyAnswer{status: 429, body: errorBody(429, "other_limit", inFlightMessage)}, PassInFlightKey,
-			ClassWouldAdmit + ".429.other_limit"},
-		{pyAnswer{status: 503, body: errorBody(503, inFlightRefusal, inFlightMessage)}, PassInFlightKey,
-			ClassPythonError + ".503"},
+		{pyAnswer{status: 429, body: inFlight}, "", unchecked + "not_decided"},
+		{pyAnswer{status: 429, body: inFlight}, PassOwnerOff, unchecked + "owner.off"},
+		{pyAnswer{status: 429, body: inFlight}, PassOwnerBusy, unchecked + "owner.busy"},
+		{pyAnswer{status: 429, body: inFlight}, PassBudgetSpent, unchecked + "budget.spent"},
+		{pyAnswer{status: 429, body: inFlight}, PassInsertFailed, unchecked + "insert.failed"},
 	} {
 		got := inFlightAgreed(compareWindowed(d, v.a, nil), v.a, v.decidePass)
-		if got.class != v.want || !got.decided {
+		if got.class != v.want || !got.decided || got.fields != nil || got.race != nil {
 			t.Errorf("%d %q after %q: %+v, want %s", v.a.status, v.a.body, v.decidePass, got, v.want)
+		}
+	}
+	for _, pass := range []string{PassInFlightKey, PassOwnerOff, ""} {
+		for _, v := range []struct {
+			a    pyAnswer
+			want string
+		}{
+			{pyAnswer{status: 429, why: "budget"}, ClassWouldAdmit + ".429.unread"},
+			{pyAnswer{status: 429, body: errorBody(429, inFlightRefusal, "Rate limit exceeded")},
+				ClassWouldAdmit + ".429.rate_limited"},
+			{pyAnswer{status: 429, body: errorBody(429, "other_limit", inFlightMessage)}, ClassWouldAdmit + ".429.other_limit"},
+			{pyAnswer{status: 402, body: errorBody(402, "payment_required", "Insufficient credits")},
+				ClassWouldAdmit + ".402.payment_required"},
+			{pyAnswer{status: 503, body: errorBody(503, inFlightRefusal, inFlightMessage)}, ClassPythonError + ".503"},
+		} {
+			got := inFlightAgreed(compareWindowed(d, v.a, nil), v.a, pass)
+			if got.class != v.want || !got.decided {
+				t.Errorf("%d %q after %q: %+v, want %s", v.a.status, v.a.body, pass, got, v.want)
+			}
 		}
 	}
 	// A 200 is compared as any (the pipeline's decision against Python's).

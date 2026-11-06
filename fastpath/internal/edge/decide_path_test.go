@@ -531,8 +531,11 @@ func (c *orderedShadowCache) Lookup(hash string, at time.Time) gwstate.Read {
 
 // TestPythonsInFlightRefusalOfAnInFlightPassIsAPass: with the decide path
 // and the full shadow both on, an inflight.key pass refused by Python's
-// matching in-flight gate is passed.inflight.key, not a would-admit page.
-// Other refusals still page when the shadow holds a warm key. If Python's
+// matching in-flight gate is passed.inflight.key, not a would-admit page;
+// an owner.busy or owner.off pass that Python's gate refuses (Go's slot given
+// back at the pass) is inflight_unchecked.<pass>, not a page either.
+// Other refusals still page when the shadow holds a warm key, after an
+// owner pass too. If Python's
 // enforcing eviction wins the race with the shadow lookup, the shadow must
 // instead report stale.key: it cannot decide from an invalidated cache.
 // Both orderings are intentional; neither may depend on goroutine scheduling.
@@ -559,7 +562,12 @@ func TestPythonsInFlightRefusalOfAnInFlightPassIsAPass(t *testing.T) {
 			ClassWouldAdmit + ".429.rate_limited", true, false},
 		{"window", true, 429, errorBody(429, "key_window_limit_exceeded", "API key daily spend limit exceeded; x"),
 			PassInFlightKey, ClassWouldAdmit + ".429.key_window_limit_exceeded", true, false},
-		{"owner_busy", false, 429, inFlight, PassOwnerBusy, ClassWouldAdmit + ".429.rate_limited", true, false},
+		{"owner_busy", false, 429, inFlight, PassOwnerBusy, ClassInFlightUnchecked + "." + PassOwnerBusy, false, false},
+		{"owner_off", false, 429, inFlight, PassOwnerOff, ClassInFlightUnchecked + "." + PassOwnerOff, false, false},
+		{"owner_off_payment_required", false, 402, errorBody(402, "payment_required", "Insufficient credits"), PassOwnerOff,
+			ClassWouldAdmit + ".402.payment_required", true, false},
+		{"owner_off_ingress_limiter", false, 429, errorBody(429, "rate_limited", "Rate limit exceeded"), PassOwnerOff,
+			ClassWouldAdmit + ".429.rate_limited", true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var mu sync.Mutex
@@ -594,8 +602,12 @@ func TestPythonsInFlightRefusalOfAnInFlightPassIsAPass(t *testing.T) {
 				}()
 				waitFor(t, func() bool { return held.Load() == 1 })
 			} else {
+				owner := frontdoor.Busy
+				if tc.pass == PassOwnerOff {
+					owner = frontdoor.Off
+				}
 				h.admitter.authorize = func(context.Context, frontdoor.AuthorizeOf) frontdoor.Authorized {
-					return frontdoor.Authorized{Status: frontdoor.Busy}
+					return frontdoor.Authorized{Status: owner}
 				}
 			}
 			answer := answerWith(tc.status, tc.body, "Retry-After", "1")

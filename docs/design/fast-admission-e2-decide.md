@@ -216,7 +216,9 @@ The flow, per request, in this order:
     Go answers is held by the front door's reservation of the estimate
     (`Busy` passes, and Python answers 402), and key caps and windows are
     the pipeline's gates (§3) or pass. The full shadow compares Python's
-    429 of this gate with Go's own gate, not with the pipeline (§11).
+    429 of this gate with Go's own gate, not with the pipeline: an
+    agreement when Go's gate passed the request too, unchecked when Go held
+    no slot for it (§11).
 15. **One clock.** One edge clock reading per request is the price instant,
     the authorization's `created_at` and the base of `expires_at`. An
     instant outside the snapshot's window passes. The reservation's
@@ -1695,15 +1697,28 @@ counts, per snapshot and policy digest:
   window, the ingress limiter's 429 "Rate limit exceeded", a 429 not read
   through) stays `would_admit_python_refused` and pages, since the pipeline
   decides the key's next request the same with a slot free. Python's
-  in-flight 429 to a request whose in-flight gate Go never asked (the
-  shadow alone, a workspace not deciding) or asked and passed (a later
-  `owner.*`, `budget.spent` or `insert.*` pass) pages too: it is the
-  per-process count of decision 14 disagreeing across processes, not
-  known to happen, and a page that keeps firing for it is the cue to read
-  the reason before adding a class. The pipeline's comparison of an
+  in-flight 429 to any other request is `inflight_unchecked.<pass>`, below.
+  The pipeline's comparison of an
   `inflight.key` pass that Python answered 200 is unchanged (`agree_full`
   or `differ`): it compares the pipeline's decision, which Go would have
   answered with a slot free.
+- `inflight_unchecked.<pass>`: Python's in-flight 429 (the same 429, read
+  through) to a request the pipeline would admit, which the decide path
+  passed after its in-flight gate let it in (`owner.*`, `budget.spent`, a
+  window, `insert.*`), or `inflight_unchecked.not_decided` when no decide
+  path ran (the shadow alone). Go's gate holds a slot only while the
+  decide path decides a request (decision 14: from the admit to the
+  answer or the pass); a pass gives it back before Python's authorize
+  takes Python's. A key's requests that Go passes are in Python's count
+  and never in Go's, so Go's count says nothing of what Python's gate saw:
+  neither an agreement nor a would-admit, and Go answered nothing. Counted
+  by the pass, never paged. An earlier text paged this case as "the
+  per-process count of decision 14 disagreeing across processes, not
+  known to happen". It happened on 2026-11-06 at 03:55Z, after the fast
+  path was switched off for a workspace whose requests the pipeline would
+  admit: every one passed at `owner.off`, so Go's count of its key stayed
+  near zero while a Python instance's reached the limit, and one request
+  paged. With the owner off, every such 429 would page.
 - `stale.<cache>`: Go would pass for `cache.<cache>`.
 - `python_unavailable` (decision 1's 503: Python's own insert outcome) and
   `python_error.<status>` (any other 5xx): not refusals on the facts.

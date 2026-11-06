@@ -76,6 +76,15 @@ const (
 	// (Decision.Windows, not read): neither an agreement nor a would-admit
 	// (docs/design/fast-admission-e2-key-windows.md section 8.2).
 	ClassWindowUnchecked = "window_unchecked"
+	// ClassInFlightUnchecked: Python refused at its per-key in-flight gate
+	// (429 rate_limited, "Too many concurrent requests for this API key",
+	// read through) a request Go would decide, which the decide path passed
+	// after its own in-flight gate let it in (owner.*, budget.spent, a
+	// window, insert.*) or did not decide: Go's count held no slot for it
+	// while Python's counted it, so Go's decision carries no in-flight
+	// verdict to compare (inFlightAgreed). Neither an agreement nor a
+	// would-admit: counted by the decide path's pass, never paged.
+	ClassInFlightUnchecked = "inflight_unchecked"
 	// ClassWindowRace: Go read the key's windows and would have admitted,
 	// Python refused a window it read more spent (its 429 names a window
 	// whose limit Go holds, with RateLimit-Remaining below what Go's rows
@@ -111,6 +120,9 @@ const windowRefusal = "key_window_limit_exceeded"
 const (
 	inFlightRefusal = "rate_limited"
 	inFlightMessage = "Too many concurrent requests for this API key"
+	// inFlightNotDecided is ClassInFlightUnchecked's suffix for a request
+	// the decide path did not decide (it is off, or the shadow runs alone).
+	inFlightNotDecided = "not_decided"
 )
 
 const (
@@ -377,8 +389,9 @@ type fullJob struct {
 	arrived time.Time // the real clock's, for the latency
 	// decidePass is the §3 reason the decide path passed the request with,
 	// when it ran ("" when it did not): the pipeline's decision is
-	// compared, but Python's in-flight refusal of a request the decide path
-	// passed at its own in-flight limit is the same call (inFlightAgreed).
+	// compared, but Python's in-flight refusal is the same call of a request
+	// the decide path passed at its own in-flight limit, and unchecked of
+	// any other (inFlightAgreed).
 	decidePass string
 
 	mu        sync.Mutex
@@ -575,23 +588,41 @@ func (sh *fullShadow) safeCompare(d Decided, a pyAnswer, w *windowRead, decidePa
 	return inFlightAgreed(compareWindowed(d, a, w), a, decidePass)
 }
 
-// inFlightAgreed is r, unless the decide path passed the request at its
-// per-key in-flight limit (inflight.key, decision 14) and Python refused it
-// at its own (inFlightRefusal with inFlightMessage, read through): both
-// gates are the same count with the same limit, each in its own process,
-// and both declined to serve the key's request at that instant, so it is
-// passed.inflight.key and never a would-admit. Go answered nothing. Only
-// that refusal: any other refusal of a request passed at inflight.key (a
-// 401, a 402, a window, the ingress limiter's 429, a 429 not read through)
-// is a gate the pipeline holds or no gate at all, and stays what the
-// pipeline's comparison makes it, since the pipeline would decide the
-// key's next request the same way with a slot free.
+// inFlightAgreed is r, unless Python refused the request at its per-key
+// in-flight gate (inFlightRefusal with inFlightMessage, read through), which
+// the pipeline's comparison makes a would-admit. Go answered nothing either
+// way.
+//
+// A request the decide path passed at its own per-key in-flight limit
+// (inflight.key, decision 14) is passed.inflight.key: both gates are the
+// same count with the same limit, each in its own process, and both
+// declined to serve the key's request at that instant.
+//
+// Any other request is inflight_unchecked.<the decide path's pass>
+// (inflight_unchecked.not_decided with no decide path): Go's gate holds a
+// slot only while the decide path decides a request, and a pass gives the
+// slot back (decidePath's deferred leave) before Python's authorize takes
+// Python's. The key's requests that Go passed are in Python's count and
+// never in Go's, so Go's count says nothing of what Python's gate saw.
+//
+// Only that refusal: any other refusal (a 401, a 402, a window, the ingress
+// limiter's 429, a 429 not read through) is a gate the pipeline holds or no
+// gate at all, and stays what the pipeline's comparison makes it, since the
+// pipeline would decide the key's next request the same way with a slot
+// free.
 func inFlightAgreed(r fullResult, a pyAnswer, decidePass string) fullResult {
-	if decidePass != PassInFlightKey || r.class != ClassWouldAdmit+".429."+inFlightRefusal ||
-		errorOf(a).message != inFlightMessage {
+	if r.class != ClassWouldAdmit+".429."+inFlightRefusal || errorOf(a).message != inFlightMessage {
 		return r
 	}
-	r.class, r.fields, r.race = ClassGoPassed+"."+PassInFlightKey, nil, nil
+	switch decidePass {
+	case PassInFlightKey:
+		r.class = ClassGoPassed + "." + PassInFlightKey
+	case "":
+		r.class = ClassInFlightUnchecked + "." + inFlightNotDecided
+	default:
+		r.class = ClassInFlightUnchecked + "." + decidePass
+	}
+	r.fields, r.race = nil, nil
 	return r
 }
 
