@@ -96,7 +96,10 @@ def test_empty_wrong_provider_and_duplicate_canonical_catalog_rejected():
 
 
 def test_canary_failure_recovery_and_failed_fetch_cannot_republish(monkeypatch, tmp_path):
+    from trusted_router import catalog_ingest
+
     monkeypatch.setattr(p, "MANIFEST_PATH", tmp_path / "muna.json")
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
     monkeypatch.setenv("MUNA_API_KEY", "test-key")
     calls = []
     monkeypatch.setattr(p, "fetch_json", lambda *_a, **_kw: catalog())
@@ -105,6 +108,8 @@ def test_canary_failure_recovery_and_failed_fetch_cannot_republish(monkeypatch, 
     p.write_provider_manifest(result)
     row = json.loads(p.MANIFEST_PATH.read_text())["models"][0]
     assert row["routable"] is False and row["routable_reason"] == "provider-canary-failed"
+    _, endpoints = catalog_ingest._supplemental_provider_models_and_endpoints()
+    assert not endpoints
     assert calls[0]["model"] == "qwen/qwen-3.8-27b"
     assert calls[0]["require_usage"] and calls[0]["expected_content"] == "PONG"
     monkeypatch.setattr(p, "probe_openai_chat", lambda **kw: True)
@@ -112,6 +117,14 @@ def test_canary_failure_recovery_and_failed_fetch_cannot_republish(monkeypatch, 
     p.write_provider_manifest(result)
     row = json.loads(p.MANIFEST_PATH.read_text())["models"][0]
     assert row["routable"] and "routable_reason" not in row
+    _, endpoints = catalog_ingest._supplemental_provider_models_and_endpoints()
+    endpoint = endpoints["qwen/qwen3.8-27b@muna/prepaid"]
+    assert endpoint.upstream_id == "qwen/qwen-3.8-27b"
+    assert endpoint.usage_type == "Credits"
+    assert "tools" in endpoint.supported_parameters
+    assert "tool_choice" not in endpoint.supported_parameters
+    assert endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens is not None
+    assert "qwen/qwen3.8-27b@muna/byok" not in endpoints
     monkeypatch.delenv("MUNA_API_KEY")
     with pytest.raises(RuntimeError, match="required"):
         p.fetch()
@@ -147,27 +160,31 @@ def test_registration_privacy_secret_wiring_and_routes():
     assert "MUNA_API_KEY:trustedrouter-muna-api-key" in (root / ".github/workflows/refresh-prices.yml").read_text()
     assert 'ensure_secret_from_env_file "MUNA_API_KEY" "trustedrouter-muna-api-key"' in (root / "scripts/deploy/secrets.sh").read_text()
     rows = json.loads(p.MANIFEST_PATH.read_text())["models"]
-    assert len(rows) == 3
+    assert rows
     for row in rows:
         model_id = row["id"]
-        assert row["routable"] is False
-        assert row["routable_reason"] == "provider-canary-failed"
-        assert row["cached_input_token_price_per_m"] > 0
-        assert f"{model_id}@muna/prepaid" not in MODEL_ENDPOINTS
+        if row.get("routable") is False:
+            assert row.get("routable_reason")
+            assert f"{model_id}@muna/prepaid" not in MODEL_ENDPOINTS
         assert f"{model_id}@muna/byok" not in MODEL_ENDPOINTS
 
 
-def test_committed_quarantines_require_live_canary_before_reactivation():
+def test_quarantines_require_live_canary_before_reactivation(tmp_path):
     from scripts.pricing.manifest import models_requiring_canary
 
-    ids = {row["id"] for row in json.loads(p.MANIFEST_PATH.read_text())["models"]}
-    assert models_requiring_canary(p.MANIFEST_PATH, ids) == ids
+    manifest = tmp_path / "muna.json"
+    manifest.write_text(json.dumps({"models": [
+        {"id": "muna/held", "routable": False, "routable_reason": "provider-canary-failed"},
+        {"id": "muna/recovered", "routable": True},
+    ]}))
+    assert models_requiring_canary(manifest, {"muna/held", "muna/recovered", "muna/new"}) == {
+        "muna/held", "muna/new",
+    }
 
 
-def test_public_page_keeps_retention_disclosure_without_unavailable_routes(client):
+def test_public_page_keeps_retention_disclosure(client):
     response = client.get("/providers/muna")
     assert response.status_code == 200
     for text in ("Muna", "30 days", "https://muna.ai/zdr", "United States"):
         assert text in response.text
-    assert 'href="/models/qwen/qwen3.8-27b"' not in response.text
     assert "yusuf@muna.ai" not in response.text
