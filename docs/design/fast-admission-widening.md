@@ -387,9 +387,15 @@ needs no analytics read; the largest spenders carry most of the traffic
   the hold. A per-workspace freeze ((a)) skips the enable.
 - **Disables** each enabled workspace that is latched, paused, in debt or
   held, with no cap: these are the safe direction and already refused by
-  the grant. For any other cause that came from a change of facts (tier
-  below 3, balance under $40, a federated home, a deletion, a probe, a
-  bypass), the cap is a guard: when a run would disable more than 10% of
+  the grant. An uncapped cause takes precedence: a workspace with one is
+  disabled uncapped and counted under that cause alone, even when it also
+  has a capped one. A latch makes the effective tier 0
+  (`trust_tiers.py:277`), so a latched workspace is also below tier 3, but
+  it is disabled as latched; a mass latch never reaches the guard below and
+  never raises `fastpath_enabler_mass_disable`. The guard and the pace
+  count only workspaces whose every cause is capped. For any other cause
+  that came from a change of facts (tier below 3, balance under $40, a
+  federated home, a deletion, a probe, a bypass), the cap is a guard: when a run would disable more than 10% of
   the enabled set or 20 workspaces, whichever is larger, for those
   causes, it disables none of them that run and raises
   `fastpath_enabler_mass_disable`, since a sudden mass change of facts is
@@ -413,8 +419,12 @@ in apply mode the commit times. The lists of workspaces to enable and
 disable go in the job's own log, which only operators read.
 
 The report also counts `unheld_disabled`: every `enabled = false` row of
-`tr_fastpath_workspace` with no hold, fleet-wide, whatever its rank or
-eligibility (both tables are read whole). Such a row is either the
+`tr_fastpath_workspace` with no hold of its own, fleet-wide, whatever its
+rank or eligibility (both tables are read whole). Only a per-workspace
+hold counts as a hold here; a row under the fleet hold `*` is counted,
+split as `under_kill` when its `changed_at` is the kill's commit
+timestamp (§5.6) and `other` when it is not, so a stop that a kill only
+covers is still seen. Such a row is either the
 enabler's own earlier disable or a stop that wrote no hold. Before the
 enabler is armed it has written nothing, so every such row is the second
 kind; WS1 and WS2 gate on the count being zero (§8.2), and `enabler arm`
@@ -457,9 +467,14 @@ detect a kill from the switch table, whose rows cannot say who wrote them
   and `#armed`. Only `decide delete` takes any id (`main.go:56-58`), and
   that is the decide table, not this one.
 - `fastpathctl disable-all` writes the fleet hold, the row `*`, in the same
-  transaction as the switch and the revocations. While it exists the
-  enabler writes nothing and reports `held: fleet`. `fastpathctl
-  release-all` removes it.
+  transaction as the switch and the revocations, its `held_at` that
+  transaction's commit timestamp. `DisableAll` stamps every row it turns
+  off with the same timestamp (`PENDING_COMMIT_TIMESTAMP()`,
+  `store/workspace.go:76-77`), and touches only rows still enabled, so a
+  row stopped earlier keeps its own `changed_at`: the kill's rows are
+  exactly those stamped with `*`'s `held_at`. A second `disable-all` while
+  `*` exists keeps the first row. While it exists the enabler writes
+  nothing and reports `held: fleet`. `fastpathctl release-all` removes it.
 - `fastpathctl enabler pause` inserts the row `#pause`, its `held_at` the
   pause transaction's commit timestamp (`PENDING_COMMIT_TIMESTAMP()`), the
   same clock as the switch's `changed_at`. It is insert-only: pausing while
@@ -469,9 +484,15 @@ detect a kill from the switch table, whose rows cannot say who wrote them
   to stop the enabler without a kill or a deploy. `fastpathctl enabler
   resume` removes it, only together with the backfill described below.
 - `fastpathctl enabler arm` inserts the row `#armed`, and refuses unless
-  every `enabled = false` row already has a hold: the WS2 gate, enforced
-  by the command. The enabler in `apply` writes nothing until `#armed`
-  exists. Nothing removes `#armed`.
+  every `enabled = false` row already has a hold of its own: the WS2
+  gate, enforced by the command. The check and the insert are one
+  read-write transaction that reads the switch and hold tables whole, so
+  a stop committed during it is either seen by the check or ordered after
+  the arm and held by PR 4's `disable`. The enabler in `apply` writes
+  nothing until `#armed` exists. Nothing removes `#armed`.
+- After the arm, `fastpathctl release WORKSPACE` is how an operator hands
+  a stopped row back to the enabler: the hold goes, and the next run
+  enables the workspace if it is eligible, or leaves it off if not.
 - The enabler's own disables write no hold, so a workspace that refills or
   regains its tier joins again.
 - `*`, `#pause` and `#armed` can never be workspace ids (`fastpathctl`
@@ -509,13 +530,23 @@ detect a kill from the switch table, whose rows cannot say who wrote them
   after the pause row's `held_at`. While paused no enabler write could
   commit (§5.3), so every such row is an operator's stop. There is no
   resume without that backfill.
-- **A kill under a pause stays one step to undo.** When the fleet hold `*`
-  exists at resume time, resume's backfill skips the rows it covers, which
-  is every row: the fleet hold already holds them, and `release-all`
-  stays the one step back from the kill. A kill made during a rollback by
-  an older `disable-all` wrote no `*`, so the runbook runs `disable-all`
-  again from PR 4 before resuming; then the same rule applies. The first
-  report after a resume shows `unheld_disabled` (§5.4), and the runbook
+- **A kill under a pause stays one step to undo, and only the kill.**
+  When the fleet hold `*` exists at resume time, resume's backfill skips
+  the rows the kill itself stopped, those whose `changed_at` is `*`'s
+  `held_at`, and holds every other row disabled since the pause. A row an
+  operator stopped before the kill, inside the pause, keeps its own
+  timestamp, so it is held one by one and stays off after `release-all`;
+  `release-all` stays the one step back from the kill alone.
+- **A kill by an older `disable-all`** wrote no `*`, and its rows carry
+  its commit timestamp, which it printed (`fastpathctl/main.go:191`,
+  `"at"`). The runbook runs `disable-all` from PR 4, which writes `*` and
+  stops nothing more, then `fastpathctl enabler resume -kill-at TS` with
+  the older kill's timestamp: resume skips rows stamped TS as well as
+  rows stamped `*`'s `held_at`, and holds every other row disabled since
+  the pause. `-kill-at` is refused unless `*` exists, since without it the
+  skipped rows would be held by nothing.
+- The first report after a resume shows `unheld_disabled` split into
+  `under_kill` and `other` (§5.4); `other` must be zero, and the runbook
   reads it.
 
 ### 5.7 Settings and deploy
@@ -937,8 +968,10 @@ step.
    writes a hold unless `-no-hold`; `enable` removes the hold in its
    transaction; `release`; `disable-all` writes the fleet hold in its
    transaction; `release-all`; `enabler pause` (insert-only, `held_at`
-   the commit timestamp); `enabler resume` with its backfill since the
-   pause in the same transaction, skipping rows under `*`; `enabler arm`;
+   the commit timestamp); `*`'s `held_at` the `disable-all` commit
+   timestamp; `enabler resume [-kill-at TS]` with its backfill since the
+   pause in the same transaction, skipping only rows stamped with a kill's
+   commit timestamp; `enabler arm`, its check and insert one transaction;
    `hold-backfill`, refused once `#armed` exists (§5.6);
    `switch_statements_v1.json`, embedded by
    `SetWorkspace`; the rollback and resume rules of §5.6 in
@@ -954,9 +987,17 @@ step.
    it, and removing `#pause` in the same commit, with no way to remove
    `#pause` otherwise; `held_at` equal to the pause's commit timestamp,
    compared on the same clock as a `changed_at` committed just before and
-   just after it; a second `pause` leaving the first `held_at`; `resume`
-   with `*` present holding nothing it covers, and `release-all` then the
-   only step back; `arm` refused while any disabled row lacks a hold, and
+   just after it; a second `pause` leaving the first `held_at`; `*`'s
+   `held_at` equal to the `changed_at` of every row the `disable-all`
+   turned off, and a row stopped before it keeping its own; the sequence
+   the review described: paused, an older-style unheld `disable W` at T1,
+   then `disable-all`, `resume`, `release-all`, and W still held while the
+   kill's rows are enabled again by the next run; `resume -kill-at TS`
+   skipping the older kill's rows stamped TS, holding W, and refused
+   without `*`; `unheld_disabled` counting rows under `*` as `under_kill`
+   and W as `other` before the resume; `arm` refused while any disabled
+   row lacks a hold of its own, a `disable` committed during `arm` either
+   seen or held, and
    `hold-backfill` refused once `#armed` exists; `release` and `enable`
    refusing `*`, `#pause` and `#armed`; `SetWorkspace` executing the
    fixture's statements.
@@ -990,7 +1031,11 @@ step.
    alerts. Order: after PRs 4 and 5. Tests:
    an eligibility table with one fact flipped per row of (c); the rank and
    the include list; the rank's margin (a workspace at `max_rank + 1`
-   kept, one past the margin disabled, each counted in the cap); a
+   kept and counted toward nothing, one past the margin disabled and
+   counted in the rank pace, not the fact-change guard); cause precedence
+   (a mass latch disabled uncapped, counted as latched, the guard not
+   tripped and no alert; a workspace both latched and below the balance
+   counted once, as latched); a
    bypassed tier 3 refused off the include list and enabled on it, and
    counted; the bypass read from `tr_trust_override` both in the snapshot
    and in the enable's own transaction (an override row changed to a
