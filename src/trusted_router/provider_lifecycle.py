@@ -86,6 +86,8 @@ LYCEUM_KIMI_K27_CODE_RETIREMENT_AT = datetime(2026, 11, 4, 0, 0, tzinfo=UTC)
 FRIENDLI_GLM_51_RETIREMENT_AT = datetime(2026, 11, 20, 0, 0, tzinfo=UTC)
 # Tinfoil deprecates kimi-k3 on 12 Nov 2026 (date only) for kimi-k3-1-pro.
 TINFOIL_KIMI_K3_RETIREMENT_AT = datetime(2026, 11, 12, 0, 0, tzinfo=UTC)
+# Cloudflare Workers AI deprecates older catalog models on 20 Nov 2026 (date only).
+CLOUDFLARE_WORKERS_AI_NOV_20_RETIREMENT_AT = datetime(2026, 11, 20, 0, 0, tzinfo=UTC)
 # 2026-10-30 10:00 PDT: Crusoe redirects four serverless models to replacements.
 CRUSOE_OCTOBER_30_RETIREMENT_AT = datetime(2026, 10, 30, 17, 0, tzinfo=UTC)
 TELNYX_NOVEMBER_2_RETIREMENT_AT = datetime(2026, 11, 2, 0, 0, tzinfo=UTC)
@@ -1207,6 +1209,38 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"kimi-k3"}),
         effective_at=TINFOIL_KIMI_K3_RETIREMENT_AT,
         replacement_model_ids=("moonshotai/kimi-k3.1-pro",),
+    ),
+    # Cloudflare's November 6 notice deprecates these Workers AI LLMs on
+    # 20 November 2026 (date only, so 00:00 UTC). Replacements follow its
+    # guidance: GLM-5.3 / DeepSeek V4.1 Flash for frontier use, Qwen3.8-27B
+    # and Gemma 4 26B for smaller models.
+    _Retirement(
+        provider="cloudflare-workers-ai",
+        model_ids=frozenset({"nvidia/nemotron-3-120b-a12b", "moonshotai/kimi-k2.6", "moonshotai/kimi-k2.7-code", "z-ai/glm-5.2", "z-ai/glm-5.3-flash"}),
+        upstream_ids=frozenset({"@cf/nvidia/nemotron-3-120b-a12b", "@cf/moonshotai/kimi-k2.6", "@cf/moonshotai/kimi-k2.7-code", "@cf/zai-org/glm-5.2", "@cf/zai-org/glm-5.3-flash"}),
+        effective_at=CLOUDFLARE_WORKERS_AI_NOV_20_RETIREMENT_AT,
+        replacement_model_ids=("z-ai/glm-5.3",),
+    ),
+    _Retirement(
+        provider="cloudflare-workers-ai",
+        model_ids=frozenset({"deepseek/deepseek-v4-pro-0813", "deepseek/deepseek-v4-flash-0731"}),
+        upstream_ids=frozenset({"@cf/deepseek-ai/deepseek-v4-pro-0813", "@cf/deepseek-ai/deepseek-v4-flash-0731"}),
+        effective_at=CLOUDFLARE_WORKERS_AI_NOV_20_RETIREMENT_AT,
+        replacement_model_ids=("deepseek/deepseek-v4.1-flash-1017",),
+    ),
+    _Retirement(
+        provider="cloudflare-workers-ai",
+        model_ids=frozenset({"deepseek/deepseek-r1-distill-qwen-32b", "qwen/qwq-32b", "qwen/qwen3-30b-a3b-fp8"}),
+        upstream_ids=frozenset({"@cf/deepseek-ai/deepseek-r1-distill-qwen-32b", "@cf/qwen/qwq-32b", "@cf/qwen/qwen3-30b-a3b-fp8"}),
+        effective_at=CLOUDFLARE_WORKERS_AI_NOV_20_RETIREMENT_AT,
+        replacement_model_ids=("qwen/qwen3.8-27b",),
+    ),
+    _Retirement(
+        provider="cloudflare-workers-ai",
+        model_ids=frozenset({"meta-llama/llama-2-7b-chat-hf-lora", "google/gemma-2b-it-lora", "google/gemma-7b-it-lora", "meta-llama/llama-3.1-8b-instruct-fp8", "meta-llama/llama-3.2-1b-instruct", "meta-llama/llama-3.2-3b-instruct"}),
+        upstream_ids=frozenset({"@cf/meta-llama/llama-2-7b-chat-hf-lora", "@cf/google/gemma-2b-it-lora", "@cf/google/gemma-7b-it-lora", "@cf/meta/llama-3.1-8b-instruct-fp8", "@cf/meta/llama-3.2-1b-instruct", "@cf/meta/llama-3.2-3b-instruct"}),
+        effective_at=CLOUDFLARE_WORKERS_AI_NOV_20_RETIREMENT_AT,
+        replacement_model_ids=("google/gemma-4-26b-a4b-it",),
     ),
     # DigitalOcean's October 29 notices deprecate these Inference models on
     # 2026-11-09 (date only; 00:00 UTC conservatively); requests then 404.

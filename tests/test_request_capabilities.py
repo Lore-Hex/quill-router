@@ -159,7 +159,7 @@ def test_reviewed_tools_contracts_publish_and_keep_provider_routes(client):
         ("kimi", "moonshotai/kimi-k3", True),
         ("google-vertex", "google/gemini-3.5-flash-lite", True),
         ("siliconflow", "openai/gpt-oss-120b", False),
-        ("cloudflare-workers-ai", "qwen/qwq-32b", False),
+        ("cloudflare-workers-ai", "qwen/qwen2.5-coder-32b-instruct", False),
     ):
         endpoints = [
             endpoint for endpoint in rows[model_id]["trustedrouter"]["endpoints"]
