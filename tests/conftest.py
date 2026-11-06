@@ -343,11 +343,12 @@ def _pin_settle_handler_budgets(monkeypatch):
 def shadow_witness_dates(monkeypatch, shadow_deadline_clock):
     """The shadow witnesses' UTC date, inside the window of their fixed days.
 
-    The evidence store and the runtime keep a day for 30 days by the UTC date
-    they read. The witnesses write days from 2026-10-06 (NOW) and sign their
-    bindings then, so both read 2026-10-06 12:00 plus the injected monotonic
-    time, not the calendar, which left them on 2026-11-06. A witness that
-    patches time.time or dt.datetime keeps its own clock.
+    The evidence store and the runtime keep the UTC day they read and the 30
+    days before it. The witnesses write days from 2026-10-06 (NOW) and sign
+    their bindings then, so both read 2026-10-06 12:00 plus the injected
+    monotonic time, not the calendar, which retired those days from
+    2026-11-06. A witness that patches time.time or dt.datetime keeps its own
+    clock.
     """
     import datetime as dt
     import time
@@ -357,8 +358,10 @@ def shadow_witness_dates(monkeypatch, shadow_deadline_clock):
     wall = dt.datetime(2026, 10, 6, 12, tzinfo=dt.UTC).timestamp()
     real_time, real_datetime = time.time, dt.datetime
     clock = shadow_deadline_clock
-    monkeypatch.setattr(type(clock), 'time',
-                        lambda self: wall + self.now if time.time is real_time else time.time(), raising=False)
+    def wall_time(self):
+        return wall + self.now if time.time is real_time else time.time()
+
+    monkeypatch.setattr(type(clock), 'time', wall_time, raising=False)
 
     class StoreDateTime(dt.datetime):
         @classmethod
