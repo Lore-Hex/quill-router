@@ -226,7 +226,9 @@ The flow, per request, in this order:
     Go answers is held by the front door's reservation of the estimate
     (`Busy` passes, and Python answers 402), and key caps and windows are
     the pipeline's gates (§3) or pass. The full shadow compares Python's
-    429 of this gate with Go's own gate, not with the pipeline (§11).
+    429 of this gate with Go's own gate, not with the pipeline: an
+    agreement when Go's gate passed the request too, unchecked when Go held
+    no slot for it (§11).
 15. **One clock.** One edge clock reading per request is the price instant,
     the authorization's `created_at` and the base of `expires_at`. An
     instant outside the snapshot's window passes. The reservation's
@@ -1115,7 +1117,8 @@ a decision `Decided.Admit` hands out: `Decided`'s decision is unexported,
 read through `ForShadow` by the shadow alone, and a parser test holds both
 rules. Before the admit, the request takes a slot of its lookup hash's
 in-flight count (`fastpath/internal/edge/inflight.go`, decision 14), held
-to its answer; past the policy's limit it passes (`inflight.key`). The
+to its answer or its pass; past the policy's limit it passes
+(`inflight.key`). The
 reason it passes with travels with the request to the full shadow
 (`decidePassed.reason`), which follows every pass (§11).
 
@@ -1715,15 +1718,38 @@ counts, per snapshot and policy digest:
   window, the ingress limiter's 429 "Rate limit exceeded", a 429 not read
   through) stays `would_admit_python_refused` and pages, since the pipeline
   decides the key's next request the same with a slot free. Python's
-  in-flight 429 to a request whose in-flight gate Go never asked (the
-  shadow alone, a workspace not deciding) or asked and passed (a later
-  `owner.*`, `budget.spent` or `insert.*` pass) pages too: it is the
-  per-process count of decision 14 disagreeing across processes, not
-  known to happen, and a page that keeps firing for it is the cue to read
-  the reason before adding a class. The pipeline's comparison of an
+  in-flight 429 to any other request is `inflight_unchecked.<pass>`, below.
+  The pipeline's comparison of an
   `inflight.key` pass that Python answered 200 is unchanged (`agree_full`
   or `differ`): it compares the pipeline's decision, which Go would have
   answered with a slot free.
+- `inflight_unchecked.<pass>`: Python's in-flight 429 (the same 429, read
+  through) to a request the pipeline would admit, which the decide path
+  passed at any step but its in-flight gate (after the gate let it in:
+  `owner.*`, `budget.spent`, a window, `compose.refused`, `insert.*`; or
+  before it, when the
+  decide path's own decision passed what the shadow's admits, such as
+  `decide.off`, or `workspace.not_enabled` when the node's copy of the
+  switch turns the workspace off), or
+  `inflight_unchecked.not_decided` when no decide path ran (the shadow
+  alone). Go's gate holds a slot only while the decide path decides a
+  request (decision 14: from the admit to the answer or the pass); a pass
+  after the gate gives it back before Python's authorize takes Python's,
+  and a pass before it never took one. A key's requests that Go passes
+  are in Python's count and never in Go's, so Go's count says nothing of
+  what Python's gate saw: neither an agreement nor a would-admit, and Go
+  answered nothing. Counted by the pass, never paged. An earlier text paged this case as "the
+  per-process count of decision 14 disagreeing across processes, not
+  known to happen". It happened on 2026-11-06 at 03:55Z, after the fast
+  path was switched off for a workspace whose requests the pipeline would
+  admit: every one passed at `owner.off`, so Go's count of its key stayed
+  near zero while a Python instance's reached the limit, and one request
+  paged. With the owner off, every such 429 would page. Now that the
+  pipeline reads the node's switch copy as a decision gate beside the
+  decide row (`docs/design/fast-admission-widening.md` §6.1), such a
+  workspace's requests pass at `workspace.not_enabled`, before the
+  in-flight gate, and the same 429 is
+  `inflight_unchecked.workspace.not_enabled`.
 - `stale.<cache>`: Go would pass for `cache.<cache>`.
 - `python_unavailable` (decision 1's 503: Python's own insert outcome) and
   `python_error.<status>` (any other 5xx): not refusals on the facts.
@@ -1820,7 +1846,9 @@ by its name and still counts against the 99.5%, `differ_affinity_warm`
 saying how many of the differs it is); every other cohort-eligible request (Go would answer, each
 counted by its decide row's gate) accounted for by class
 (`cohort_by_class`: Python's errors, unavailable answers and unread
-answers, the scope taken, replays); zero `differ.estimate*` and zero
+answers, the scope taken, replays, and Python's per-key in-flight 429
+read through, `passed.inflight.key` or `inflight_unchecked.*`); zero
+`differ.estimate*` and zero
 `row.idempotency_fingerprint`, with no field counted `other` (a period's
 fields past the line's bound, which could hide either); zero
 `would_admit_python_refused` beyond key-revocation lag; the stale-pass rate
