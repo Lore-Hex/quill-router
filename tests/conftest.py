@@ -339,6 +339,41 @@ def _pin_settle_handler_budgets(monkeypatch):
         monkeypatch.setattr(module, 'time', clock)
 
 
+@pytest.fixture
+def shadow_witness_dates(monkeypatch, shadow_deadline_clock):
+    """The shadow witnesses' UTC date, inside the window of their fixed days.
+
+    The evidence store and the runtime keep a day for 30 days by the UTC date
+    they read. The witnesses write days from 2026-10-06 (NOW) and sign their
+    bindings then, so both read 2026-10-06 12:00 plus the injected monotonic
+    time, not the calendar, which left them on 2026-11-06. A witness that
+    patches time.time or dt.datetime keeps its own clock.
+    """
+    import datetime as dt
+    import time
+
+    from trusted_router import storage_gcp_async_settle_shadow
+
+    wall = dt.datetime(2026, 10, 6, 12, tzinfo=dt.UTC).timestamp()
+    real_time, real_datetime = time.time, dt.datetime
+    clock = shadow_deadline_clock
+    monkeypatch.setattr(type(clock), 'time',
+                        lambda self: wall + self.now if time.time is real_time else time.time(), raising=False)
+
+    class StoreDateTime(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls.fromtimestamp(clock.time(), dt.UTC).astimezone(tz)
+
+    class StoreDates:
+        def __getattr__(self, name):
+            if name == 'datetime' and dt.datetime is real_datetime:
+                return StoreDateTime
+            return getattr(dt, name)
+
+    monkeypatch.setattr(storage_gcp_async_settle_shadow, 'dt', StoreDates())
+
+
 @pytest.fixture(autouse=True)
 def deterministic_shadow_budgets(request, monkeypatch):
     """Fake shadow I/O and TestClient bodies consume only injected time.
@@ -356,7 +391,7 @@ def deterministic_shadow_budgets(request, monkeypatch):
     from trusted_router import request_body_limit
 
     if name.startswith('test_async_settle_shadow'):
-        request.getfixturevalue('shadow_deadline_clock')
+        request.getfixturevalue('shadow_witness_dates')
     if name in _SETTLE_HANDLER_BUDGET_FILES:
         _pin_settle_handler_budgets(monkeypatch)
     async def receive_without_elapsed_budget(awaitable, timeout):
