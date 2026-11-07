@@ -62,13 +62,13 @@ const (
 // reservation the lease takes: routingsnapshot.Result.Reservation, at most
 // HoldOutputTokens of the output budget, not the authorization row's spend
 // ceiling), whether it is a stream, which heartbeats, and the boot binding
-// of the enclave that asked. A heartbeat's running charge is bounded by e
-// (heartbeat below). Both front doors admit a stream only while its
-// reservation equals its estimate, its ceiling (Python
-// fastpath_frontdoor "stream.hold", the edge's PassStreamHold), so for a
-// leased stream the bound is Stage D's cap. A stream's reservation prices at
-// most HoldOutputTokens of its budget, so only a stream whose budget fits
-// that bound is leased.
+// of the enclave that asked. A heartbeat's running charge is bounded by e,
+// or with Config.RecordCeiling by a stream's Ceiling (heartbeat below). Both
+// front doors admit a stream only while its reservation equals its
+// estimate, its ceiling (Python fastpath_frontdoor "stream.hold", the edge's
+// PassStreamHold), and send no Ceiling yet, so for a leased stream the bound
+// is Stage D's cap. A stream's reservation prices at most HoldOutputTokens
+// of its budget, so only a stream whose budget fits that bound is leased.
 type Admission struct {
 	Estimate int64
 	Stream   bool
@@ -80,10 +80,10 @@ type Admission struct {
 	// Ceiling is a stream's spend ceiling when it is above the hold: the
 	// authorization row's estimate and Stage D's cap, where Estimate is the
 	// credit reservation (docs/design/fast-admission-streams.md section 12).
-	// Zero is a ceiling equal to the hold; only a stream has another. The
-	// owner keeps it and bounds nothing by it yet: a heartbeat's running
-	// charge stays bounded by Estimate until every auditor reads a record's
-	// ceiling (section 12.4, PR 3). Room is taken for Estimate alone.
+	// Zero is a ceiling equal to the hold; only a stream has another. With
+	// Config.RecordCeiling it bounds the hold's running charge, and so its
+	// owner's reap, and its records state it; without it the bound stays
+	// Estimate (section 12.4, PR 3). Room is taken for Estimate alone.
 	Ceiling int64
 }
 
@@ -294,11 +294,12 @@ func (l *Lease) Heartbeat(ctx context.Context, auth string, hb HeartbeatOf) (tim
 	// count reported after the prompt moves those tokens to the cheaper
 	// rate, and the control plane's rule checks each count, not the charge
 	// (docs/design/fast-admission-streams.md section 4.6 item 2). It never
-	// passes the hold. A stream's ceiling does not raise that bound yet: the
-	// record refuses a snapshot above its estimate (section 12.1).
+	// passes the hold, or a stream's ceiling when its records state one: a
+	// record refuses a snapshot above its estimate that carries no ceiling
+	// (section 12.4, PR 3).
 	if hb.GatewaySeq < 1 || len(hb.Hash) != record.DigestSize || (!h.heartbeat && len(hb.Basis) == 0) ||
 		(hb.EchoGranted && !hb.Echoed.IsZero()) || (h.heartbeat && echoed.IsZero()) || hb.Usage < h.usage ||
-		hb.Running < 0 || hb.Running > h.estimate {
+		hb.Running < 0 || hb.Running > l.runningBound(h) {
 		l.mu.Unlock()
 		return time.Time{}, ErrRejected
 	}
@@ -447,6 +448,16 @@ func (l *Lease) recordCeiling(h *hold) int64 {
 		return h.ceiling
 	}
 	return 0
+}
+
+// runningBound is the most a hold's heartbeat may report as its running
+// charge, and so the most its owner's reap charges: its ceiling when its
+// records carry one, else its hold.
+func (l *Lease) runningBound(h *hold) int64 {
+	if c := l.recordCeiling(h); c != 0 {
+		return c
+	}
+	return h.estimate
 }
 
 // decide decides an undecided auth's terminal, with l.mu held (§4.2,

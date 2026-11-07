@@ -348,11 +348,14 @@ func gather[T any](l *Lease, visit func(h *hold) (T, bool)) []T {
 
 // dueReap is a hold the reaper reaps, as its full record states it (§4.9):
 // at its last heartbeat's snapshot, the running charge, the basis the first
-// brought, and the boot binding.
+// brought, and the boot binding; and a stream's ceiling, which bounds the
+// charge, when its records carry one (Config.RecordCeiling), as the
+// auditor's reap record states it.
 type dueReap struct {
 	Lease      string    `json:"lease"`
 	Auth       string    `json:"a"`
 	Estimate   int64     `json:"est"`
+	Ceiling    int64     `json:"ceil,omitempty"`
 	Charge     int64     `json:"charge"`
 	Deadline   time.Time `json:"deadline"`
 	GatewaySeq int64     `json:"gseq"`
@@ -373,9 +376,9 @@ func (l *Lease) due(now time.Time, grace time.Duration) []dueReap {
 		if !h.heartbeat || now.Before(reapAfter(h).Add(grace)) {
 			return dueReap{}, false
 		}
-		return dueReap{Lease: l.id, Auth: h.auth, Estimate: h.estimate, Charge: h.running,
-			Deadline: h.deadline.UTC(), GatewaySeq: h.gatewaySeq, Hash: h.hash, Usage: h.usage, OwnerSeq: h.snapSeq,
-			Basis: h.basis, Boot: h.boot}, true
+		return dueReap{Lease: l.id, Auth: h.auth, Estimate: h.estimate, Ceiling: l.recordCeiling(h),
+			Charge: h.running, Deadline: h.deadline.UTC(), GatewaySeq: h.gatewaySeq, Hash: h.hash, Usage: h.usage,
+			OwnerSeq: h.snapSeq, Basis: h.basis, Boot: h.boot}, true
 	})
 	slices.SortFunc(out, func(a, b dueReap) int { return strings.Compare(a.Auth, b.Auth) })
 	return out
