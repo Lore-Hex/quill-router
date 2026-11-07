@@ -17,6 +17,8 @@ main section.sv3-ink{color:var(--cream)}
 /* Grid: 12 columns, 24px gutters */
 .sv3-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;row-gap:48px;align-items:start}
 .sv3-end{align-items:end}
+/* Suppliers hero: the listing sits level with the middle of the copy, not at its foot. */
+.hero-sell .sv3-end{align-items:center}
 .sv3-center{align-items:center}
 .sv3-col-l{grid-column:span 5;display:flex;flex-direction:column;align-items:flex-start;gap:32px}
 .sv3-col-r{grid-column:7/span 6;min-width:0}
