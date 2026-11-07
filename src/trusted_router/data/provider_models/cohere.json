@@ -1,5 +1,5 @@
 {
-  "_about": "Cohere-hosted embedding models. Embed 4 pricing refreshes hourly from Cohere's public pricing page. Cohere's current public page does not publish legacy Embed v3 token prices, so those rows remain explicitly pinned until Cohere publishes a current first-party rate.",
+  "_about": "Cohere-hosted embedding models. Cohere's public pricing page publishes rates for neither Embed 4 (since 2026-11, when it began listing only Embed 5) nor the Embed v3 models, all of which Cohere still serves. Those rows stay explicitly pinned at their last first-party rates until Cohere publishes a current one; the hourly refresh uses a published Embed 4 rate whenever one returns.",
   "provider": "cohere",
   "source": "https://docs.cohere.com/docs/cohere-embed",
   "pricing_source": "https://cohere.com/pricing",
@@ -18,7 +18,7 @@
       ],
       "input_token_price_per_m": 120000,
       "output_token_price_per_m": 0,
-      "pricing_source": "https://cohere.com/pricing"
+      "pricing_source": "legacy-pinned"
     },
     {
       "id": "cohere/embed-english-v3.0",
