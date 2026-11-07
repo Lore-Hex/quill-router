@@ -308,3 +308,81 @@ def test_the_bypass_is_checked_again_once_the_grant_is_in(monkeypatch: Any, caps
     assert code == 1 and "takes no identity bypass" in err and "other than the grant" in err, err
     workspace = next(w for w in store.list_workspaces_for_user(user.id) if w.name == "fastpath-synthetic")
     assert not any(pk[0] == workspace.id for pk in db.typed.get("tr_trust_override", {}))
+
+
+def _grant(store: Any, workspace_id: str, event_id: str, amount: int) -> None:
+    assert store.credit_workspace_typed_direct(
+        workspace_id, amount, event_id,
+        provenance=p1.CreditProvenance(source="grant", provider="operator", external_ref=None,
+                                       occurred_at=p1.datetime.now(p1.UTC)))
+
+
+def test_an_earlier_grant_of_the_script_named_with_also_granted_funds_the_bypass(monkeypatch: Any,
+                                                                                  capsys: Any) -> None:
+    """The workspace funded by this script twice, under the default event
+    and a later one: refused while the second is unnamed, then at tier 3 on
+    every shard once --also-granted names it."""
+    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-clickhouse")
+    store, db = make_fake_store()
+    _owner(store)
+    code, result, err = _run(store, capsys, "--apply")
+    assert code == 0, err
+    workspace_id = result["workspace_id"]
+    _grant(store, workspace_id, "fastpath_p1_funding_2026_10_b", 100_000_000)
+    before = copy.deepcopy(db.typed)
+    code, _, err = _run(store, capsys, "--tier", "3", "--identity-bypass", "--apply")
+    assert code == 1 and "trust events other than the grant" in err, err
+    assert db.typed == before
+    code, plan, err = _run(store, capsys, "--tier", "3", "--identity-bypass",
+                           "--also-granted", "fastpath_p1_funding_2026_10_b")
+    assert code == 0 and "override" not in plan, err
+    assert db.typed == before
+    code, result, err = _run(store, capsys, "--tier", "3", "--identity-bypass",
+                             "--also-granted", "fastpath_p1_funding_2026_10_b", "--apply")
+    assert code == 0, err
+    assert result["funded"] == "already applied" and result["override"]["identity_bypass"] is True
+    assert db.typed[CREDIT_BALANCE_TABLE][(workspace_id, 0)]["trust_tier"] == 3
+
+
+def test_also_granted_explains_only_a_grant_and_only_what_the_rows_hold(monkeypatch: Any, capsys: Any) -> None:
+    """Naming a payment's event, or naming a grant while a credit no trust
+    event explains sits beside it, still refuses the bypass, writing
+    nothing."""
+    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-clickhouse")
+
+    def payment(store: Any, workspace_id: str) -> None:
+        assert store.credit_workspace_typed_direct(
+            workspace_id, 95_000_000, "evt_synthetic_checkout",
+            provenance=p1.CreditProvenance(source="checkout", provider="stripe", external_ref="pi_synthetic",
+                                           occurred_at=p1.datetime.now(p1.UTC)),
+            payment_amount_microdollars=100_000_000, currency="usd")
+
+    def grant_and_trial(store: Any, workspace_id: str) -> None:
+        _grant(store, workspace_id, "evt_synthetic_checkout", 100_000_000)
+        store._database.typed[CREDIT_BALANCE_TABLE][(workspace_id, 0)]["total_credits"] += 5_000_000
+
+    for fund, why in ((payment, "trust events other than the grant"), (grant_and_trial, "credit rows hold")):
+        store, db = make_fake_store()
+        _owner(store)
+        code, result, err = _run(store, capsys, "--apply")
+        assert code == 0, err
+        fund(store, result["workspace_id"])
+        before = copy.deepcopy(db.typed)
+        for extra in ((), ("--apply",)):
+            code, _, err = _run(store, capsys, "--tier", "3", "--identity-bypass",
+                                "--also-granted", "evt_synthetic_checkout", *extra)
+            assert code == 1 and "takes no identity bypass" in err and why in err, (fund.__name__, extra, err)
+        assert db.typed == before, fund.__name__
+
+
+def test_also_granted_is_refused_without_the_bypass_or_for_the_funding_event(monkeypatch: Any,
+                                                                              capsys: Any) -> None:
+    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-clickhouse")
+    store, db = make_fake_store()
+    _owner(store)
+    before = copy.deepcopy(db.typed)
+    for extra in (("--also-granted", "x", "--apply"),
+                  ("--tier", "3", "--identity-bypass", "--also-granted", p1.DEFAULT_FUNDING_EVENT, "--apply")):
+        code, _, err = _run(store, capsys, *extra)
+        assert code == 1 and "--also-granted" in err, (extra, err)
+    assert db.typed == before
