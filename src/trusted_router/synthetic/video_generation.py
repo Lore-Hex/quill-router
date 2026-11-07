@@ -10,6 +10,7 @@ from datetime import UTC, date, datetime
 import httpx
 
 from trusted_router.config import get_settings
+from trusted_router.provider_contracts import PREPAID_PROVIDER_HOLD_REASONS
 from trusted_router.synthetic.internal_auth import synthetic_observer_token
 from trusted_router.synthetic.probes import (
     SyntheticTarget,
@@ -54,7 +55,11 @@ _VIDEO_ROTATION_EPOCH = date(2026, 8, 3)
 
 def daily_video_profile(day: date) -> DailyVideoProfile:
     offset = day.toordinal() - _VIDEO_ROTATION_EPOCH.toordinal()
-    return DAILY_VIDEO_PROFILES[offset % len(DAILY_VIDEO_PROFILES)]
+    for advance in range(len(DAILY_VIDEO_PROFILES)):
+        profile = DAILY_VIDEO_PROFILES[(offset + advance) % len(DAILY_VIDEO_PROFILES)]
+        if profile.provider not in PREPAID_PROVIDER_HOLD_REASONS:
+            return profile
+    raise RuntimeError("No unheld prepaid video provider is configured for the daily canary")
 
 
 async def run() -> int:

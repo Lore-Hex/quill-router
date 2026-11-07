@@ -7,6 +7,9 @@ BASETEN_SYSTEMONE_HOLD_REASON = "systemone-adapter-not-implemented"
 CONFIDENTIAL_AI_RETIRED_MODEL_IDS = frozenset({
     "deepseek/deepseek-v4-flash-0731", "deepseek/deepseek-v4.1-flash",
 })
+MAKORA_NON_CHAT_MODEL_IDS = frozenset({
+    "cloudflare/clef-flash", "perplexity-ai/pplx-decider-v1.2",
+})
 # The Transport V2 helper and cloud-local key must be verified in each fleet
 # before its region is admitted. Unknown regions remain unavailable.
 MAPLE_GATEWAY_REGIONS: frozenset[str] = frozenset({
@@ -65,6 +68,10 @@ _NATIVE_HOSTED_MODEL_EXCEPTIONS = frozenset({
 # own BYOK credentials. Crusoe (held October 3) was cleared on October 5 after
 # its replacement key passed paid-path canaries.
 PREPAID_PROVIDER_HOLD_REASONS: dict[str, str] = {
+    # November 6: direct API HTTP 429 / code 1102, "Account balance not
+    # enough". Joseph requested the managed route stay unavailable. Clear
+    # only after funding and a successful paid-path recovery canary.
+    "kling": "operator-credit-exhausted",
     # Sonar is now reformulated as Agent API calls. Its reported input/search
     # costs no longer reconcile with the old fixed-fee catalog contract.
     # Keep managed billing dark until a reviewed adapter accounts for them.
@@ -189,6 +196,13 @@ def provider_model_operator_held(
         model_id.casefold() in CONFIDENTIAL_AI_RETIRED_MODEL_IDS
         or native_id.casefold().replace("deepseek-ai/", "deepseek/", 1)
         in CONFIDENTIAL_AI_RETIRED_MODEL_IDS
+    ):
+        return True
+    # Makora's generic model feed advertises text output for these, but its
+    # chat API rejects them. Stale manifests must not restore either key path.
+    if provider_slug == "makora" and (
+        model_id.casefold() in MAKORA_NON_CHAT_MODEL_IDS
+        or native_id.casefold() in MAKORA_NON_CHAT_MODEL_IDS
     ):
         return True
     # System One decisions share /models with chat but use a different API.

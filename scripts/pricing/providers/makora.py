@@ -22,6 +22,7 @@ from scripts.pricing.base import (
 from scripts.pricing.manifest import write_discovered_chat_manifest
 from scripts.pricing.model_ids import canonicalize_native_model_id
 from scripts.pricing.openai_catalog import dollars_per_token_to_micro_per_m
+from trusted_router.provider_contracts import MAKORA_NON_CHAT_MODEL_IDS
 
 SLUG = "makora"
 URL = "https://www.makora.com/"
@@ -133,9 +134,9 @@ def _live_catalog() -> tuple[dict[str, dict[str, Any]], dict[str, ModelPrice]]:
             "endpoints": ["chat/completions"],
             "status": 1,
         }
-        # Clef uses a decision protocol, not chat completions. Its generic
-        # /models entry does not prove Makora supports our decision adapter.
-        if model_id == "cloudflare/clef-flash":
+        # A generic /models entry is not evidence of a chat-compatible API.
+        if (model_id.casefold() in MAKORA_NON_CHAT_MODEL_IDS
+                or native_id.casefold() in MAKORA_NON_CHAT_MODEL_IDS):
             row.update({
                 "model_type": "discovery",
                 "output_modalities": [],

@@ -1304,20 +1304,62 @@ func TestASubscriptionThatFailsFailsTheProcess(t *testing.T) {
 
 // TestANodeThatCannotListenTakesNoRow: a node that cannot listen at its
 // address, as when another node serves there, fails before it takes the
-// ring's row, so the node that serves keeps its row and runs on.
+// ring's row, so the node that serves keeps its row and runs on. An old
+// row at a reused address is not evidence that this process has joined.
 func TestANodeThatCannotListenTakesNoRow(t *testing.T) {
 	if emulator == nil {
 		t.Skip(skipped)
 	}
+	for _, previous := range []bool{false, true} {
+		name := "new-address"
+		if previous {
+			name = "reused-address"
+		}
+		t.Run(name, func(t *testing.T) { nodeThatCannotListenTakesNoRow(t, previous) })
+	}
+}
+
+func nodeThatCannotListenTakesNoRow(t *testing.T, previous bool) {
+	t.Helper()
 	ctx := context.Background()
+	db, err := emulator.Database(ctx, storetest.UniqueID("listen"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(db.Close)
 	ln := listen(t)
 	cfg := config(ln)
 	cfg.Auditor = false
+	wantEpoch := int64(1)
+	if previous {
+		wantEpoch = 42
+		old := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+		if _, err := db.Apply(ctx, []*spanner.Mutation{spanner.InsertMap("tr_fastpath_member", map[string]any{
+			"address": cfg.Address, "epoch": int64(41), "roles": []string{"owner", "frontdoor"},
+			"state": store.Leaving, "started_at": old, "heartbeat_at": old,
+		})}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ps := pubSub(t)
 	run, cancel := context.WithCancel(ctx)
-	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- Run(run, cfg, Clients{Spanner: shared, PubSub: pubSub(t)}) }()
-	s, err := store.New(shared, cfg.Store)
+	go func() {
+		done <- Run(run, cfg, Clients{Spanner: db, PubSub: ps})
+		close(done)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("the process ended with %v", err)
+			}
+		case <-time.After(30 * time.Second):
+			t.Error("the process did not stop")
+		}
+	})
+	s, err := store.New(db, cfg.Store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1334,13 +1376,25 @@ func TestANodeThatCannotListenTakesNoRow(t *testing.T) {
 		}
 		return 0
 	}
-	eventually(t, 10*time.Second, "the node's row", func() (bool, error) { return epoch() > 0, nil })
+	eventually(t, 10*time.Second, "the current node's row", func() (bool, error) {
+		got := epoch()
+		// Run starts asynchronously; its predecessor remains observable
+		// until this process's Join commits the next epoch atomically.
+		if got == 0 || previous && got == wantEpoch-1 {
+			return false, nil
+		}
+		if got != wantEpoch {
+			return false, fmt.Errorf("the node's epoch is %d, want %d", got, wantEpoch)
+		}
+		return true, nil
+	})
 	serving := epoch()
 
 	second := config(ln)
 	second.Auditor, second.Listener = false, nil
-	if err := Run(ctx, second, Clients{Spanner: shared, PubSub: pubSub(t)}); err == nil {
-		t.Fatal("a second node at the same address ran")
+	var listenErr *net.OpError
+	if err := Run(ctx, second, Clients{Spanner: db, PubSub: pubSub(t)}); !errors.As(err, &listenErr) || listenErr.Op != "listen" {
+		t.Fatalf("a second node at the same address did not fail to listen: %v", err)
 	}
 	if got := epoch(); got != serving {
 		t.Fatalf("the row's epoch went from %d to %d", serving, got)
