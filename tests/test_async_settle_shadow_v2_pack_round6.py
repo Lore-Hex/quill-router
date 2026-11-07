@@ -238,21 +238,11 @@ def test_each_generated_attachment_deletion_blocks(generated_transport, index):
 
 @pytest.fixture(scope='module')
 def support_completion_capture(tmp_path_factory):
-    from tests import test_async_settle_shadow_v2_export_native as native_test
     from tests.shadow_v2_pack_round3_captures import writer_capture
 
-    original_native = native_test.native
-
-    def deterministic_native(db, **kwargs):
-        port = original_native(db, **kwargs)
-        # Like the fake database reader, use its controllable clock for mocked
-        # object reads. Fixture serialization/scheduling is not source latency.
-        port.generation.clock = lambda: db.now
-        return port
-
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(native_test, 'native', deterministic_native)
-        return writer_capture(tmp_path_factory.mktemp('support-completion-writer'))
+    # The shared native() helper runs mocked object reads on the fake
+    # database's clock, so fixture scheduling is not source latency here.
+    return writer_capture(tmp_path_factory.mktemp('support-completion-writer'))
 
 
 @pytest.mark.parametrize('support', ['absent', 'incomplete', 'tail'])

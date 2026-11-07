@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
+import time
 from contextlib import contextmanager
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
@@ -86,7 +88,11 @@ class Database:
 
 def native(db, *, page_size=200, plan=None):
     port = NativePort(db, 'test-bucket', plan or {}, io=native_io(), page_size=page_size)
-    port.range.clock = lambda: db.now
+    # Both readers' deadlines run on the fake database's clock. Thread
+    # scheduling and fixture work on a loaded runner are not source latency:
+    # on the real clock, a 200 ms stall around a mocked object read became a
+    # TimeoutError gap (CI run 42344212893, round 4's writer capture).
+    port.range.clock = port.generation.clock = lambda: db.now
     port.generation.authenticated = False
     return port
 
@@ -370,6 +376,42 @@ def test_object_lifetime_checks_late_iteration_and_cleanup(monkeypatch, tmp_path
     result = export_day(port, DAY, completed_at_us=1, object_keys=keys, spool_dir=tmp_path/'sources')
     assert len(result.gaps) == 1
     assert [a['id'] for a in json.loads(result.transport_path.read_bytes())['attachments']] == [keys[1]]
+
+
+def test_object_deadline_is_the_reader_clock_not_worker_scheduling(monkeypatch):
+    # The worker takes longer than the 200 ms budget in real time while the
+    # reader's clock does not move: scheduling on a loaded host is not the
+    # source's latency. Waiting on the event alone once timed this out.
+    key = f'publisher-traces/{DAY}/boot/1'
+
+    def exchange(self, method, url, body, headers):
+        time.sleep(.3)
+        return reply()
+    monkeypatch.setattr(Lifetime, 'exchange', exchange)
+    reader = NativeGenerationRead('bucket', {key: '7'}, io=native_io(), clock=lambda: 1.,
+                                  authenticated=False)
+    assert [obj.body for obj in reader.objects(key)] == [RAW]
+    assert reader.pages[-1]['status'] == 'ok'
+
+
+def test_object_deadline_still_bounds_a_stalled_worker(monkeypatch):
+    key = f'publisher-traces/{DAY}/boot/1'
+    clock = [1.]
+    release = threading.Event()
+
+    def exchange(self, method, url, body, headers):
+        clock[0] += .3  # The source call outlives the deadline on the reader's clock.
+        release.wait(10)
+        return reply()
+    monkeypatch.setattr(Lifetime, 'exchange', exchange)
+    reader = NativeGenerationRead('bucket', {key: '7'}, io=native_io(), clock=lambda: clock[0],
+                                  authenticated=False)
+    try:
+        with pytest.raises(TimeoutError, match='object_deadline'):
+            list(reader.objects(key))
+    finally:
+        release.set()
+    assert reader.pages[-1]['status'] == 'TimeoutError'
 
 
 @pytest.mark.parametrize('fault', ['changed_snapshot', 'missing_snapshot', 'updated_at', 'late'])

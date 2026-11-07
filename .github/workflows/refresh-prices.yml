@@ -353,6 +353,17 @@ jobs:
           echo "### Routing evidence refresh failed" >> "$GITHUB_STEP_SUMMARY"
           echo "The previous snapshot is retained. Review the refresh step; no new ranking was published." >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Record refresh inputs
+        id: refresh_inputs
+        # The paths that determine this run's output: the import closure of
+        # every refresh entry point above plus the data, parsers, lock and
+        # workflow (scripts/pricing/refresh_inputs.py says why that is
+        # complete). Publication carries the snapshot onto a newer main only
+        # when main gained no change to these paths. Without the list it
+        # cannot prove that, and recomputes instead, as it always did.
+        continue-on-error: true
+        run: uv run python -m scripts.pricing.refresh_inputs > /tmp/refresh-inputs.txt
+
       # No local test pass here. GitHub suppresses push-triggered CI for
       # GITHUB_TOKEN commits, so the commit step below dispatches ci.yml on the
       # exact generated SHA and publishes only after that run succeeds. ci.yml
@@ -413,172 +424,254 @@ jobs:
           # unique temporary branch and attach exact-SHA checks there first.
           # The organization intentionally forbids Actions-created PRs.
           BRANCH="automation/price-refresh-${GITHUB_RUN_ID}"
-          SNAPSHOT_SHA=$(git rev-parse HEAD)
           cleanup_branch() {
             git push origin --delete "${BRANCH}" >/dev/null 2>&1 || true
           }
           trap cleanup_branch EXIT
-          git push origin "HEAD:refs/heads/${BRANCH}"
-          gh workflow run ci.yml \
-            --ref "${BRANCH}" \
-            --repo "${GITHUB_REPOSITORY}"
-          echo "  dispatched ci.yml for generated snapshot branch"
 
-          ci_passed=""
-          ci_run_id=""
-          # Keep exact-SHA completion mandatory, but allow the test matrix
-          # and runner queue to finish. The Oct 20 matrix passed after 54 minutes.
-          for _ in $(seq 1 480); do
-            if [ -n "${ci_run_id}" ]; then
-              # Once the listing has found the run, poll that run by id. A
-              # second dispatch on the same branch and SHA could otherwise be
-              # read, and on timeout cancelled, in its place.
-              run_json=$(gh run view "${ci_run_id}" \
-                --repo "${GITHUB_REPOSITORY}" \
-                --json databaseId,headSha,status,conclusion)
-              if [ "$(jq -r .headSha <<<"${run_json}")" != "${SNAPSHOT_SHA}" ]; then
-                echo "ci run ${ci_run_id} no longer reports ${SNAPSHOT_SHA}"
-                exit 1
-              fi
-            else
-              run_json=$(gh run list \
-                --repo "${GITHUB_REPOSITORY}" \
-                --workflow ci.yml \
-                --branch "${BRANCH}" \
-                --event workflow_dispatch \
-                --json databaseId,headSha,status,conclusion \
-                --jq "map(select(.headSha == \"${SNAPSHOT_SHA}\"))[0] // empty")
-            fi
-            if [ -n "${run_json}" ]; then
-              status=$(jq -r .status <<<"${run_json}")
-              conclusion=$(jq -r .conclusion <<<"${run_json}")
-              ci_run_id=$(jq -r .databaseId <<<"${run_json}")
-              echo "  ci run ${ci_run_id}: status=${status} conclusion=${conclusion:-<pending>}"
-              if [ "${status}" = "completed" ]; then
-                if [ "${conclusion}" = "success" ]; then
-                  ci_passed=1
-                  break
-                fi
-                echo "generated snapshot CI concluded '${conclusion}'"
-                exit 1
-              fi
-            fi
-            sleep 15
-          done
-          if [ -z "${ci_passed}" ]; then
-            echo "generated snapshot CI did not pass within 120 minutes"
-            # Deleting the branch (the EXIT trap) does not cancel its run. A
-            # run left queued or running here keeps its jobs in the
-            # organization's Actions queue after nothing can use its result.
-            # Cancel the run polled above by id, never a fresh listing.
-            if [ -n "${ci_run_id}" ]; then
-              gh run cancel "${ci_run_id}" --repo "${GITHUB_REPOSITORY}" || \
-                echo "::warning::could not cancel ci run ${ci_run_id}"
-            fi
-            exit 1
-          fi
-
-          # Never rebase generated output after checking it: that would create
-          # an untested SHA. If main moved during refresh/CI, queue a fresh run
-          # from the new head and discard this temporary branch.
-          git fetch -q origin main
-          if [ "$(git rev-parse origin/main)" != "${GITHUB_SHA}" ]; then
-            echo "::warning::main advanced during price refresh; queueing a fresh recomputation"
+          queue_recompute() {
+            echo "::warning::$1; queueing a fresh recomputation"
             gh workflow run refresh-prices.yml \
               --ref main \
               --repo "${GITHUB_REPOSITORY}"
-            exit 0
+          }
+
+          # Main moves during the refresh and its 20-60 minute exact-SHA CI
+          # run. Discarding every superseded snapshot published nothing for
+          # 6+ hours on busy days (Sentry QUILL-ROUTER-DM, 2026-11-07), so a
+          # snapshot whose inputs main did not touch is carried onto the new
+          # main instead of recomputed. Carrying is safe because:
+          #   * the snapshot is a function of the tree's refresh inputs
+          #     (/tmp/refresh-inputs.txt) and the upstream prices. When
+          #     REFRESH_BASE..main changes none of those paths, a refresh of
+          #     the new main computes this same snapshot. Any other change, a
+          #     rewind or force-push of main, or a missing input list
+          #     recomputes from the new main as before;
+          #   * the carried commit is a new, untested SHA, so it goes through
+          #     the whole gate again: its own ci.yml dispatch, polled by id
+          #     for that exact SHA, then the status bridge and the push. No
+          #     SHA reaches main without a successful CI run of that SHA.
+          # Rounds stop after MAX_ROUNDS exact-SHA CI runs or once the next
+          # round could not finish within the job's time limit.
+          REFRESH_BASE="${GITHUB_SHA}"
+          PUBLISH_BASE="${GITHUB_SHA}"
+          MAX_ROUNDS=3
+          ROUND_START_DEADLINE=$(( $(date +%s) + 150 * 60 ))
+          refresh_inputs=()
+          if [ -s /tmp/refresh-inputs.txt ]; then
+            mapfile -t refresh_inputs < /tmp/refresh-inputs.txt
           fi
 
-          # GitHub's protected-branch hook does not accept check runs from a
-          # workflow_dispatch branch for a direct GITHUB_TOKEN push, even
-          # though those check runs are successful on this exact commit. Post
-          # equivalent commit statuses only after the complete exact-SHA CI
-          # run succeeds. Both the checks and these statuses are emitted by
-          # the repository's pinned GitHub Actions app.
-          ci_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${ci_run_id}"
-          expected_status_url="${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${SNAPSHOT_SHA}"
-          for context in "lint" "test (1)" "test (2)" "test (3)"; do
-            status_json=$(gh api \
-              --method POST \
-              "repos/${GITHUB_REPOSITORY}/statuses/${SNAPSHOT_SHA}" \
-              -f state=success \
-              -f context="${context}" \
-              -f description="Exact snapshot CI passed" \
-              -f target_url="${ci_url}")
-            status_id=$(jq -r '.id // empty' <<<"${status_json}")
-            if ! [[ "${status_id}" =~ ^[0-9]+$ ]] || \
-               [ "$(jq -r .url <<<"${status_json}")" != "${expected_status_url}" ] || \
-               [ "$(jq -r .context <<<"${status_json}")" != "${context}" ] || \
-               [ "$(jq -r .state <<<"${status_json}")" != "success" ] || \
-               [ "$(jq -r .target_url <<<"${status_json}")" != "${ci_url}" ]; then
-              echo "failed to publish exact snapshot status '${context}'"
-              exit 1
+          # Move the snapshot commit (HEAD, whose parent is PUBLISH_BASE) onto
+          # $1 when that is safe; return non-zero, changing nothing, if not.
+          carry_snapshot() {
+            local target=$1 tree carried
+            if [ "${#refresh_inputs[@]}" -eq 0 ]; then
+              echo "refresh input list unavailable; cannot prove the snapshot is current"
+              return 1
             fi
+            if ! git merge-base --is-ancestor "${PUBLISH_BASE}" "${target}"; then
+              echo "main ${target} does not descend from ${PUBLISH_BASE}"
+              return 1
+            fi
+            if ! git diff --quiet "${REFRESH_BASE}" "${target}" -- "${refresh_inputs[@]}"; then
+              echo "main gained changes to refresh inputs:"
+              git diff --name-only "${REFRESH_BASE}" "${target}" -- "${refresh_inputs[@]}"
+              return 1
+            fi
+            # Every staged path is a refresh input, so this three-way merge
+            # cannot conflict; a conflict would still stop the carry.
+            if ! tree=$(git merge-tree --write-tree --merge-base "${PUBLISH_BASE}" "${target}" HEAD); then
+              echo "snapshot does not apply cleanly to ${target}"
+              return 1
+            fi
+            # errexit does not apply inside a function called from `if !`, so
+            # every step that the carry depends on is checked explicitly.
+            carried=$(git show -s --format=%B HEAD | git commit-tree "${tree}" -p "${target}") || return 1
+            git reset -q --soft "${carried}" || return 1
+            if [ "$(git rev-parse HEAD^)" != "${target}" ]; then
+              echo "carried snapshot is not a child of ${target}"
+              return 1
+            fi
+            PUBLISH_BASE="${target}"
+          }
 
-            # The create-status response currently omits `creator` and `sha`.
-            # Re-read this exact status from the SHA-scoped endpoint before
-            # trusting it for protected-main promotion. A new status can be
-            # absent from a readback; retry only that absence, never a POST,
-            # API error, or a present status with mismatched evidence.
-            verified_status=""
-            for status_read in $(seq 1 5); do
-              verified_status=$(gh api \
-                "repos/${GITHUB_REPOSITORY}/statuses/${SNAPSHOT_SHA}" \
-                --jq "map(select(.id == ${status_id}))[0] // empty")
-              if [ -n "${verified_status}" ]; then break; fi
-              if [ "${status_read}" -lt 5 ]; then sleep 2; fi
-            done
-            if [ -z "${verified_status}" ]; then
-              echo "exact snapshot status '${context}' id=${status_id} not visible after 5 reads"
-              exit 1
-            fi
-            if [ "$(jq -r .url <<<"${verified_status}")" != "${expected_status_url}" ]; then
-              echo "failed to verify exact snapshot status '${context}': SHA-scoped URL mismatch"
-              exit 1
-            fi
-            if [ "$(jq -r .context <<<"${verified_status}")" != "${context}" ]; then
-              echo "failed to verify exact snapshot status '${context}': context mismatch"
-              exit 1
-            fi
-            if [ "$(jq -r .state <<<"${verified_status}")" != "success" ]; then
-              echo "failed to verify exact snapshot status '${context}': state mismatch"
-              exit 1
-            fi
-            if [ "$(jq -r .target_url <<<"${verified_status}")" != "${ci_url}" ]; then
-              echo "failed to verify exact snapshot status '${context}': CI URL mismatch"
-              exit 1
-            fi
-            if [ "$(jq -r .creator.login <<<"${verified_status}")" != "github-actions[bot]" ]; then
-              echo "failed to verify exact snapshot status '${context}': creator mismatch"
-              exit 1
-            fi
-          done
-
-          push_log=$(mktemp)
-          if ! git push origin "HEAD:refs/heads/main" 2>"${push_log}"; then
-            cat "${push_log}" >&2
+          for round in $(seq 1 "${MAX_ROUNDS}"); do
             git fetch -q origin main
-            if [ "$(git rev-parse origin/main)" != "${GITHUB_SHA}" ]; then
-              echo "::warning::main raced the checked snapshot push; queueing a fresh recomputation"
-              gh workflow run refresh-prices.yml \
-                --ref main \
-                --repo "${GITHUB_REPOSITORY}"
-              exit 0
+            main_sha=$(git rev-parse origin/main)
+            if [ "${main_sha}" != "${PUBLISH_BASE}" ]; then
+              if [ "${round}" -gt 1 ] && [ "$(date +%s)" -ge "${ROUND_START_DEADLINE}" ]; then
+                queue_recompute "main advanced and no time remains for another exact-SHA CI run"
+                exit 0
+              fi
+              if ! carry_snapshot "${main_sha}"; then
+                queue_recompute "main advanced during price refresh"
+                exit 0
+              fi
+              echo "  main gained no refresh-input changes; carried the snapshot onto ${main_sha}"
             fi
-            echo "branch protection rejected an exact SHA with successful required checks"
-            exit 1
-          fi
 
-          # GITHUB_TOKEN pushes do not start push-triggered workflows. The
-          # exact SHA already has a successful ci.yml run, so dispatch the
-          # staged deploy; deploy.yml independently verifies that same SHA.
-          # Discovered live on 2026-05-13: hourly bot was committing
-          # but TR's deployed catalog was stuck on a 3-phala-endpoint
-          # snapshot for hours because deploy.yml never auto-fired.
-          gh workflow run deploy.yml --ref main --repo "${GITHUB_REPOSITORY}"
-          echo "  dispatched deploy.yml for new snapshot"
-          echo "validated=true" >> "$GITHUB_OUTPUT"
+            SNAPSHOT_SHA=$(git rev-parse HEAD)
+            # --force: a later round replaces the branch with the carried commit.
+            git push --force origin "HEAD:refs/heads/${BRANCH}"
+            gh workflow run ci.yml \
+              --ref "${BRANCH}" \
+              --repo "${GITHUB_REPOSITORY}"
+            echo "  dispatched ci.yml for generated snapshot ${SNAPSHOT_SHA} (round ${round})"
+
+            ci_passed=""
+            ci_run_id=""
+            # Keep exact-SHA completion mandatory, but allow the test matrix
+            # and runner queue to finish. The Oct 20 matrix passed after 54 minutes.
+            for _ in $(seq 1 480); do
+              if [ -n "${ci_run_id}" ]; then
+                # Once the listing has found the run, poll that run by id. A
+                # second dispatch on the same branch and SHA could otherwise be
+                # read, and on timeout cancelled, in its place.
+                run_json=$(gh run view "${ci_run_id}" \
+                  --repo "${GITHUB_REPOSITORY}" \
+                  --json databaseId,headSha,status,conclusion)
+                if [ "$(jq -r .headSha <<<"${run_json}")" != "${SNAPSHOT_SHA}" ]; then
+                  echo "ci run ${ci_run_id} no longer reports ${SNAPSHOT_SHA}"
+                  exit 1
+                fi
+              else
+                run_json=$(gh run list \
+                  --repo "${GITHUB_REPOSITORY}" \
+                  --workflow ci.yml \
+                  --branch "${BRANCH}" \
+                  --event workflow_dispatch \
+                  --json databaseId,headSha,status,conclusion \
+                  --jq "map(select(.headSha == \"${SNAPSHOT_SHA}\"))[0] // empty")
+              fi
+              if [ -n "${run_json}" ]; then
+                status=$(jq -r .status <<<"${run_json}")
+                conclusion=$(jq -r .conclusion <<<"${run_json}")
+                ci_run_id=$(jq -r .databaseId <<<"${run_json}")
+                echo "  ci run ${ci_run_id}: status=${status} conclusion=${conclusion:-<pending>}"
+                if [ "${status}" = "completed" ]; then
+                  if [ "${conclusion}" = "success" ]; then
+                    ci_passed=1
+                    break
+                  fi
+                  echo "generated snapshot CI concluded '${conclusion}'"
+                  exit 1
+                fi
+              fi
+              sleep 15
+            done
+            if [ -z "${ci_passed}" ]; then
+              echo "generated snapshot CI did not pass within 120 minutes"
+              # Deleting the branch (the EXIT trap) does not cancel its run. A
+              # run left queued or running here keeps its jobs in the
+              # organization's Actions queue after nothing can use its result.
+              # Cancel the run polled above by id, never a fresh listing.
+              if [ -n "${ci_run_id}" ]; then
+                gh run cancel "${ci_run_id}" --repo "${GITHUB_REPOSITORY}" || \
+                  echo "::warning::could not cancel ci run ${ci_run_id}"
+              fi
+              exit 1
+            fi
+
+            # Never push a checked SHA onto any parent but the one it was
+            # checked on: that would publish an untested tree. If main moved
+            # during CI, the next round carries the snapshot (and checks the
+            # carried SHA from scratch) or recomputes from the new head.
+            git fetch -q origin main
+            if [ "$(git rev-parse origin/main)" != "${PUBLISH_BASE}" ]; then
+              echo "  main advanced during snapshot CI"
+              continue
+            fi
+
+            # GitHub's protected-branch hook does not accept check runs from a
+            # workflow_dispatch branch for a direct GITHUB_TOKEN push, even
+            # though those check runs are successful on this exact commit. Post
+            # equivalent commit statuses only after the complete exact-SHA CI
+            # run succeeds. Both the checks and these statuses are emitted by
+            # the repository's pinned GitHub Actions app.
+            ci_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${ci_run_id}"
+            expected_status_url="${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${SNAPSHOT_SHA}"
+            for context in "lint" "test (1)" "test (2)" "test (3)"; do
+              status_json=$(gh api \
+                --method POST \
+                "repos/${GITHUB_REPOSITORY}/statuses/${SNAPSHOT_SHA}" \
+                -f state=success \
+                -f context="${context}" \
+                -f description="Exact snapshot CI passed" \
+                -f target_url="${ci_url}")
+              status_id=$(jq -r '.id // empty' <<<"${status_json}")
+              if ! [[ "${status_id}" =~ ^[0-9]+$ ]] || \
+                 [ "$(jq -r .url <<<"${status_json}")" != "${expected_status_url}" ] || \
+                 [ "$(jq -r .context <<<"${status_json}")" != "${context}" ] || \
+                 [ "$(jq -r .state <<<"${status_json}")" != "success" ] || \
+                 [ "$(jq -r .target_url <<<"${status_json}")" != "${ci_url}" ]; then
+                echo "failed to publish exact snapshot status '${context}'"
+                exit 1
+              fi
+
+              # The create-status response currently omits `creator` and `sha`.
+              # Re-read this exact status from the SHA-scoped endpoint before
+              # trusting it for protected-main promotion. A new status can be
+              # absent from a readback; retry only that absence, never a POST,
+              # API error, or a present status with mismatched evidence.
+              verified_status=""
+              for status_read in $(seq 1 5); do
+                verified_status=$(gh api \
+                  "repos/${GITHUB_REPOSITORY}/statuses/${SNAPSHOT_SHA}" \
+                  --jq "map(select(.id == ${status_id}))[0] // empty")
+                if [ -n "${verified_status}" ]; then break; fi
+                if [ "${status_read}" -lt 5 ]; then sleep 2; fi
+              done
+              if [ -z "${verified_status}" ]; then
+                echo "exact snapshot status '${context}' id=${status_id} not visible after 5 reads"
+                exit 1
+              fi
+              if [ "$(jq -r .url <<<"${verified_status}")" != "${expected_status_url}" ]; then
+                echo "failed to verify exact snapshot status '${context}': SHA-scoped URL mismatch"
+                exit 1
+              fi
+              if [ "$(jq -r .context <<<"${verified_status}")" != "${context}" ]; then
+                echo "failed to verify exact snapshot status '${context}': context mismatch"
+                exit 1
+              fi
+              if [ "$(jq -r .state <<<"${verified_status}")" != "success" ]; then
+                echo "failed to verify exact snapshot status '${context}': state mismatch"
+                exit 1
+              fi
+              if [ "$(jq -r .target_url <<<"${verified_status}")" != "${ci_url}" ]; then
+                echo "failed to verify exact snapshot status '${context}': CI URL mismatch"
+                exit 1
+              fi
+              if [ "$(jq -r .creator.login <<<"${verified_status}")" != "github-actions[bot]" ]; then
+                echo "failed to verify exact snapshot status '${context}': creator mismatch"
+                exit 1
+              fi
+            done
+
+            push_log=$(mktemp)
+            if ! git push origin "HEAD:refs/heads/main" 2>"${push_log}"; then
+              cat "${push_log}" >&2
+              git fetch -q origin main
+              if [ "$(git rev-parse origin/main)" != "${PUBLISH_BASE}" ]; then
+                echo "  main raced the checked snapshot push"
+                continue
+              fi
+              echo "branch protection rejected an exact SHA with successful required checks"
+              exit 1
+            fi
+
+            # GITHUB_TOKEN pushes do not start push-triggered workflows. The
+            # exact SHA already has a successful ci.yml run, so dispatch the
+            # staged deploy; deploy.yml independently verifies that same SHA.
+            # Discovered live on 2026-05-13: hourly bot was committing
+            # but TR's deployed catalog was stuck on a 3-phala-endpoint
+            # snapshot for hours because deploy.yml never auto-fired.
+            gh workflow run deploy.yml --ref main --repo "${GITHUB_REPOSITORY}"
+            echo "  dispatched deploy.yml for new snapshot"
+            echo "validated=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          done
+          queue_recompute "main advanced during each of ${MAX_ROUNDS} exact-SHA CI runs"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
