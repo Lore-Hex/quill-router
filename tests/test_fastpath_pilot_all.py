@@ -176,6 +176,33 @@ def test_a_failed_read_keeps_the_rows_and_lets_them_age(caplog: pytest.LogCaptur
     assert not copy.enables("ws-on")
 
 
+def test_the_refresh_thread_logs_once_by_class_when_it_exits(caplog: pytest.LogCaptureFixture) -> None:
+    """A refresh catches a failed read; anything that escapes it (here the
+    clock, after one read) ends the thread, and that is logged once, by the
+    exception's class alone, never its text. The copy then only ages."""
+    calls = [0]
+
+    class Broken(Exception):
+        pass
+
+    def clock() -> float:
+        calls[0] += 1
+        if calls[0] > 3:
+            raise Broken("text naming ws-on")
+        return 0.0
+
+    copy = fd.EnabledWorkspaceCopy(lambda: frozenset({"ws-on"}), clock=clock, interval_seconds=0.0)
+    with caplog.at_level(logging.ERROR, logger="trusted_router.fastpath"):
+        copy.start()
+        assert copy._thread is not None
+        copy._thread.join(timeout=5)
+    assert not copy._thread.is_alive()
+    exits = [r for r in caplog.records if "refresh thread exited" in r.getMessage()]
+    assert len(exits) == 1 and exits[0].levelno == logging.ERROR
+    assert "Broken" in exits[0].getMessage() and "ws-on" not in exits[0].getMessage()
+    assert copy.reads == 1
+
+
 def test_the_copys_age_runs_from_the_start_of_its_read() -> None:
     clock = _Clock()
 

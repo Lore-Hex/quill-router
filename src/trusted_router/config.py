@@ -1139,6 +1139,23 @@ class Settings(BaseSettings):
     # takes it from scripts/deploy/fastpath_lists.sh. Off by default.
     fastpath_pilot_all: bool = False
     fastpath_pilot_exclude: str = ""
+    # The enabler (docs/design/fast-admission-widening.md section 5): a
+    # Cloud Run job, trusted_router.fastpath_enabler, which turns the
+    # switch (tr_fastpath_workspace) on for eligible workspaces and off for
+    # those no longer eligible. `off` reads and writes nothing; `dry-run`
+    # reads one snapshot and logs its report; `apply` also writes, and then
+    # only once an operator has armed it (fastpathctl enabler arm). The job's
+    # own script renders these (scripts/deploy/fastpath_enabler_job.sh); the
+    # include list (at most 32, exempt from the rank and from the bypass
+    # exclusion) comes from scripts/deploy/fastpath_lists.sh. A workspace
+    # joins with unspent credit of at least the enable balance and leaves
+    # under the disable balance (section 4(b)).
+    fastpath_enabler_mode: Literal["off", "dry-run", "apply"] = "off"
+    fastpath_enabler_max_rank: int = Field(default=0, ge=0)
+    fastpath_enabler_include: str = ""
+    fastpath_enabler_enable_balance_micro: int = Field(default=100_000_000, gt=0)
+    fastpath_enabler_disable_balance_micro: int = Field(default=40_000_000, gt=0)
+    _fastpath_enabler_include_ids: frozenset[str] = PrivateAttr(default=frozenset())
     # Which keys with day, week or month spend windows the pilot covers
     # (docs/design/fast-admission-e2-key-windows.md section 5): `off` none,
     # `alert` the alert-only keys, `enforce` the alert-only and the enforcing
@@ -1735,6 +1752,25 @@ class Settings(BaseSettings):
             raise ValueError(f"TR_FASTPATH_PILOT_ALL: {len(unplaced)} TR_ASYNC_SETTLE_PILOT_WORKSPACES "
                              "on neither TR_FASTPATH_PILOT_EXCLUDE nor TR_ASYNC_SETTLE_FASTPATH_OVERLAP_WORKSPACES")
         return self
+
+    @model_validator(mode="after")
+    def parse_fastpath_enabler(self) -> Settings:
+        """The enabler's include list, as the pilot set is bounded (at most
+        32 workspace ids), and its two balances in order: the disable
+        balance below the enable balance, so a workspace near the line does
+        not join and leave on alternate runs."""
+        include = frozenset(part.strip() for part in self.fastpath_enabler_include.split(",") if part.strip())
+        if len(include) > 32 or any(re.fullmatch(r"[A-Za-z0-9_./:@+\-]{1,64}", value) is None for value in include):
+            raise ValueError("invalid fast path enabler include set")
+        if self.fastpath_enabler_disable_balance_micro >= self.fastpath_enabler_enable_balance_micro:
+            raise ValueError("TR_FASTPATH_ENABLER_DISABLE_BALANCE_MICRO must be below "
+                             "TR_FASTPATH_ENABLER_ENABLE_BALANCE_MICRO")
+        self._fastpath_enabler_include_ids = include
+        return self
+
+    @property
+    def fastpath_enabler_include_ids(self) -> frozenset[str]:
+        return self._fastpath_enabler_include_ids
 
     @property
     def async_settle_fastpath_excluded_workspace_ids(self) -> frozenset[str]:

@@ -271,10 +271,17 @@ class EnabledWorkspaceCopy:
             self._thread.start()
 
     def _run(self) -> None:
-        while True:
-            started = self._clock()
-            self.refresh()
-            time.sleep(max(0.0, self._interval - (self._clock() - started)))
+        try:
+            while True:
+                started = self._clock()
+                self.refresh()
+                time.sleep(max(0.0, self._interval - (self._clock() - started)))
+        except BaseException as exc:  # noqa: BLE001 - logged once; the thread ends either way
+            # The class name alone: an exception's text can carry anything.
+            # From here the copy only ages, and past its maximum age it
+            # enables nobody, so every request takes today's path.
+            logger.error("fastpath enabled copy: refresh thread exited (%s); the copy ages and enables nobody "
+                         "past %.0f s", type(exc).__name__, self._max_age)
 
 
 def spanner_enabled_workspaces(database: Any) -> Callable[[], frozenset[str]]:
@@ -710,6 +717,11 @@ def pilot_reason(
     pilot_workspace_ids: frozenset[str],
     region: str,
     pilot_region_ids: frozenset[str],
+    # Money gates (docs/design/fast-admission-widening.md section 4(c)):
+    # required, so no caller is let through by leaving one out.
+    federated: bool,
+    async_shadow: bool,
+    monitor_key: bool,
     stream: bool,
     standard_endpoint_pricing: bool,
     credit_funded: bool,
@@ -727,12 +739,6 @@ def pilot_reason(
     pilot_all: bool = False,
     pilot_exclude_ids: frozenset[str] = frozenset(),
     switch_enabled: bool = False,
-    # Defaults only for the frozen gateway copy of
-    # tests/test_authorize_candidates_differential.py, which predates them;
-    # the live route always passes all three.
-    federated: bool = False,
-    async_shadow: bool = False,
-    monitor_key: bool = False,
 ) -> str | None:
     """Why an authorize stays on today's path, or None when the pilot takes
     it. The cohort is the design's §4.11 at its narrowest: a credit-funded

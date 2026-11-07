@@ -31,7 +31,8 @@
     "storage_gcp_settle_outbox:speculative_done_statements": "e292de31c54e6ab2d1106ae773cd992b89f07f0e21a3e56b79316f55cd7aba26",
     "storage_gcp_settle_outbox:shard_due_statement": "9f7f8898c774ed20030ce17b132181a045ac5732d840be4886d24d33f66a5bdb",
     "storage_gcp_shadow_observation:entity_point_statement": "55bfe94f7e7b088e014e23ecd096fdca691ac7a092a084ea1fadc43de8d22c8d",
-    "storage_gcp_shadow_observation:read_shadow_health_statement": "128f680910723ba42df17187b92374b6bc5e76b43e719d962121553d25d80058"
+    "storage_gcp_shadow_observation:read_shadow_health_statement": "128f680910723ba42df17187b92374b6bc5e76b43e719d962121553d25d80058",
+    "fastpath_enabler:switch_statements": "a66b1a13fcd51965551dbb2201e7001e895a2e3f1f841cad2bbe1fc62fb7a932"
   },
   "expressions": {
     "byok_aad_backfill:scan:1": {
@@ -4742,6 +4743,120 @@
           }
         }
       ]
+    },
+    "fastpath_enabler:constants:1": {
+      "fingerprint": "c98793bb408b2d1db795edacfe64b71ba18693ee950e6f400fccea3d539ed0ea",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {}
+        }
+      ]
+    },
+    "fastpath_enabler:constants:2": {
+      "fingerprint": "a319bdd4065b8a9ff50f21cb137e26cef03dac1fc703758c76eadb5404b6a06a",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "ids": "ARRAY<STRING>"
+          }
+        }
+      ]
+    },
+    "fastpath_enabler:constants:3": {
+      "fingerprint": "67e053b43cc0952ce6a6c9deff8069b189d3db603f3a7b8b5112ad30c60dd6ea",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "kind": "STRING",
+            "ids": "ARRAY<STRING>"
+          }
+        }
+      ]
+    },
+    "fastpath_enabler:constants:4": {
+      "fingerprint": "1ed996f91c28dcaae856d11b80f0d319e75ba887efa22211882d8b6572b80c4a",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "ids": "ARRAY<STRING>"
+          }
+        }
+      ]
+    },
+    "fastpath_enabler:constants:5": {
+      "fingerprint": "967220372125bda5c438bd399ddcfb459614f963a6745e7e75166ede188a156e",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {}
+        }
+      ]
+    },
+    "fastpath_enabler:constants:6": {
+      "fingerprint": "f27606a5c863cf487a5c99623fe3c96b2939e75050f4541c04e1980285ed44e7",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {}
+        }
+      ]
+    },
+    "fastpath_enabler:constants:7": {
+      "fingerprint": "65ae6fea1b38a90d0c2533ccc28f136c72f1bbac455782949c34b2f39e1c9fa7",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {}
+        }
+      ]
+    },
+    "fastpath_enabler:constants:8": {
+      "fingerprint": "3053666296ad7dcd8be9c11f227fe6cf57f9293387e8fbba93e914ea73c75b3e",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "rows": "ARRAY<STRING>"
+          }
+        }
+      ]
+    },
+    "fastpath_enabler:constants:9": {
+      "fingerprint": "234ccdf738d46d499a2817c910dfa397bce43cabf651a521ab1191b6e6f83a3f",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "workspace": "STRING"
+          }
+        }
+      ]
+    },
+    "fastpath_enabler:constants:10": {
+      "fingerprint": "e94b2990f2cc010ee52e528801b9d6e8e5ec8f0481bbfe978a17ffb9bc9f3bc5",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "workspace": "STRING"
+          }
+        }
+      ]
+    },
+    "fastpath_enabler:constants:11": {
+      "fingerprint": "407048a1a9bbb9731637295017dc95f7bddcee044ee980a4b6bef9add35d8650",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "workspace": "STRING"
+          }
+        }
+      ]
     }
   },
   "sinks": {
@@ -4933,7 +5048,13 @@
     "storage_account_closure:close_spanner.txn.rows": "d17299f98937c19aed4e65bd1f5ff91cfab3d1ee93c558fe9df621d3bf5ddde1",
     "storage_gcp:SpannerStore._update_workspace_tx": "621d1f16006a6075cafc6dc8a6243ac906a43772044dec1223d34b33c01bb7fd",
     "storage_gcp:SpannerStore.reserved_resale_position_page": "c085bd2d7bd045dd724e37f03faba4443f382c7515b64b26d949bd333d9bdbfa",
-    "storage_gcp:SpannerStore.extend_reservation_expiry.extend": "ba639fdfc735e9b5ed8c55dbbe6764a318b50518c7aa5ba3167d16e93de0f714"
+    "storage_gcp:SpannerStore.extend_reservation_expiry.extend": "ba639fdfc735e9b5ed8c55dbbe6764a318b50518c7aa5ba3167d16e93de0f714",
+    "fastpath_enabler:_apply": "6a8a00147c9134c0d51066f76a698952ebd94f2846ebf1afc25f53cf998a53a6",
+    "fastpath_enabler:_guard": "236b40cb2a9b592568679ce7fcb3944f300662f856d6e4cd789dc1637ea2b214",
+    "fastpath_enabler:_switch_enabled": "0ef39fbca3f5a7f6e9f47053eba62610d7230f28fde2a8740848edcf94f71d5e",
+    "fastpath_enabler:read_snapshot": "044725b4c1f059c1ffd0d705b32dd2bfb4697a818341c153744be5e963df0d73",
+    "fastpath_enabler:_entities": "eabe79b5070d172ccb827d7dd175367cdf0674b4c8c20dd6d0e2fc6f9656f3f7",
+    "fastpath_enabler:write_enable.tx": "dfda1b596529a3777460234fe7f023e57c4be4149853f2f989fd950c7584dac0"
   },
   "non_google_sql": {
     "analytics_sink:_post_rows:1": {

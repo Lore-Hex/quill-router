@@ -969,6 +969,15 @@ jobs:
           TR_TRUST_STRIPE_ACCOUNT_ID: ${{ vars.TR_TRUST_STRIPE_ACCOUNT_ID || '' }}
         run: bash scripts/deploy/trust_jobs.sh
 
+      - name: Deploy the fast path enabler job
+        # docs/design/fast-admission-widening.md section 5.7: re-imaged and
+        # rescheduled on every control-plane release, not behind the trust
+        # jobs' opt-in, so its settings move with the control plane's. Its
+        # script pins TR_FASTPATH_ENABLER_MODE=off and max rank 0, so each
+        # run reads and writes nothing until an activation step moves them;
+        # even in apply mode it writes nothing before fastpathctl enabler arm.
+        run: bash scripts/deploy/fastpath_enabler_job.sh
+
       - name: Enforce Google Data Manager sharing disabled
         # This is deliberately unconditional. Every release reasserts both the
         # paused scheduler and the disabled worker so configuration drift cannot

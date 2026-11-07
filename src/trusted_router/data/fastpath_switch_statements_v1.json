@@ -1,0 +1,42 @@
+{
+ "about": "The writes of the fast path's switch (docs/design/fast-admission-widening.md, sections 5.5 and 5.6), which Go embeds (fastpath.SwitchStatementsV1, executed by internal/switchsql for Store.SetWorkspace) and the enabler reads, so the columns, the values and the revocation cannot drift. Each operation is one read-write transaction: its mutations buffered and its statements executed in order, each statement's row count reported under its counts name. A value \"@name\" is the parameter name, \"@commit_timestamp\" the transaction's commit timestamp. disable is the store's: the switch, the revocation and a hold with the caller's reason. disable_unheld is the same without the hold, and only the enabler's own disable reads it; Go has no unheld disable.",
+ "version": 1,
+ "operations": {
+  "enable": {
+   "mutations": [
+    {"op": "insert_or_update", "table": "tr_fastpath_workspace",
+     "columns": ["workspace_id", "enabled", "changed_at"],
+     "values": ["@workspace", true, "@commit_timestamp"]}
+   ],
+   "statements": [
+    {"sql": "DELETE FROM tr_fastpath_workspace_hold WHERE workspace_id = @workspace",
+     "counts": "holds_removed"}
+   ]
+  },
+  "disable": {
+   "mutations": [
+    {"op": "insert_or_update", "table": "tr_fastpath_workspace",
+     "columns": ["workspace_id", "enabled", "changed_at"],
+     "values": ["@workspace", false, "@commit_timestamp"]},
+    {"op": "insert_or_update", "table": "tr_fastpath_workspace_hold",
+     "columns": ["workspace_id", "reason", "detail", "held_at"],
+     "values": ["@workspace", "@reason", "@detail", "@commit_timestamp"]}
+   ],
+   "statements": [
+    {"sql": "UPDATE tr_lease SET revoked = TRUE, revoked_at = CURRENT_TIMESTAMP() WHERE workspace_id = @workspace AND state = 'open' AND NOT revoked",
+     "counts": "revoked_leases"}
+   ]
+  },
+  "disable_unheld": {
+   "mutations": [
+    {"op": "insert_or_update", "table": "tr_fastpath_workspace",
+     "columns": ["workspace_id", "enabled", "changed_at"],
+     "values": ["@workspace", false, "@commit_timestamp"]}
+   ],
+   "statements": [
+    {"sql": "UPDATE tr_lease SET revoked = TRUE, revoked_at = CURRENT_TIMESTAMP() WHERE workspace_id = @workspace AND state = 'open' AND NOT revoked",
+     "counts": "revoked_leases"}
+   ]
+  }
+ }
+}
