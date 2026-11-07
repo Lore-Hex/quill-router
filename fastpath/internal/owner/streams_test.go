@@ -575,19 +575,70 @@ func TestAStreamRunsToItsCeiling(t *testing.T) {
 	}
 }
 
+// TestASettlePastTheHoldOfACeilingedStream (section 12.4, PR 3): with
+// RecordCeiling on, a stream held at 500 with a ceiling of 800, heartbeated
+// past its hold, settles 650 and wins. Its settle record carries no ceiling,
+// which only a heartbeat or a reap may, and the settle frees nothing of the
+// hold, before its record is acknowledged or after: the 150 past the hold
+// comes from the lease's free room.
+func TestASettlePastTheHoldOfACeilingedStream(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, 1000, nil, func(c *Config) { c.RecordCeiling = true })
+	got, err := f.lease.Admit(Admission{Estimate: 500, Stream: true, Boot: boot, Ceiling: 800})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := got.Auth
+	if _, err := f.lease.Heartbeat(ctx, a, HeartbeatOf{GatewaySeq: 1, Hash: sum("h1"), Usage: 60, Running: 600,
+		Basis: []byte("terms")}); err != nil {
+		t.Fatal(err)
+	}
+	f.log.hold()
+	done := make(chan Outcome, 1)
+	go func() {
+		out, err := f.lease.Settle(ctx, a, 650, sum("d1"))
+		if err != nil {
+			t.Error(err)
+		}
+		done <- out
+	}()
+	waitFor(t, "the settle's record", func() bool { return len(f.log.records(t, "lease-1")) == 2 })
+	if b := f.lease.Books(); b.Held != 0 || b.Consumed != 650 || b.Pending != 0 || b.Free() != 350 ||
+		b.Shortfall != 0 {
+		f.log.letGo()
+		<-done
+		t.Fatalf("the books before the settle's acknowledgement %+v, want 650 consumed, nothing pending and "+
+			"350 free", b)
+	}
+	f.log.letGo()
+	if out := <-done; out != (Outcome{Kind: record.Settle, Charge: 650}) {
+		t.Fatalf("the settle: %+v", out)
+	}
+	if b := f.lease.Books(); b.Pending != 0 || b.Free() != 350 {
+		t.Fatalf("the books once acknowledged %+v", b)
+	}
+	r := lastTerminal(t, f)
+	if r.Kind != record.Settle || r.Auth != a || r.Charge != 650 || r.Estimate != 500 || r.Ceiling != 0 ||
+		r.Shortfall != 0 {
+		t.Fatalf("the settle record %+v, want a charge of 650 against a hold of 500 and no ceiling", r)
+	}
+}
+
 // TestAnOwnersReapPastTheHoldRaisesTheShortfallByTheLack (section 12.4, PR
 // 3): a stream held at 500 with a ceiling of 800, last heartbeated at 750, is
 // reaped by its owner at 750, its reap record and its full record stating
 // the ceiling. The 250 past the hold comes first from the lease's free room;
 // what that lacks, and only that, joins the shortfall total and the
 // allocation, which the shortfall writer stores: 150 with 100 free, nothing
-// with 500 free.
+// with 500 free. The reap frees nothing of the hold, before its record is
+// acknowledged or after: 0 free with 100 free before, 250 with 500.
 func TestAnOwnersReapPastTheHoldRaisesTheShortfallByTheLack(t *testing.T) {
 	ctx := context.Background()
 	for _, c := range []struct {
 		other     int64 // another hold on the lease, never heartbeated
 		shortfall int64
-	}{{400, 150}, {0, 0}} {
+		free      int64 // the lease's free room once reaped
+	}{{400, 150, 0}, {0, 0, 250}} {
 		f, sp, rec := adoptFixture(t, func(c *Config) { c.RecordCeiling = true })
 		got, err := f.lease.Admit(Admission{Estimate: 500, Stream: true, Boot: boot, Ceiling: 800})
 		if err != nil {
@@ -603,14 +654,29 @@ func TestAnOwnersReapPastTheHoldRaisesTheShortfallByTheLack(t *testing.T) {
 			t.Fatal(err)
 		}
 		f.clock.advance(granted.Add(time.Minute).Sub(start))
-		renewAndReap(t, f)
+		renew(t, f)
+		// The reap's record waits for its acknowledgement.
+		f.log.hold()
+		if err := f.owner.Reap(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if b := f.lease.Books(); b.Pending != 0 || b.Free() != c.free {
+			f.log.letGo()
+			t.Fatalf("another hold of %d: the books before the reap's acknowledgement %+v, want nothing pending "+
+				"and %d free", c.other, b, c.free)
+		}
+		f.log.letGo()
 		r := lastTerminal(t, f)
 		if r.Kind != record.Reap || r.Auth != a || r.Charge != 750 || r.Estimate != 500 || r.Ceiling != 800 ||
 			r.Shortfall != c.shortfall {
 			t.Fatalf("another hold of %d: the reap record %+v, want a charge of 750 at a ceiling of 800 and a "+
 				"shortfall of %d", c.other, r, c.shortfall)
 		}
-		b := f.lease.Books()
+		var b Books
+		waitFor(t, "the reap's acknowledgement", func() bool {
+			b = f.lease.Books()
+			return b.Pending == 0 && b.Free() == c.free
+		})
 		if b.Shortfall != c.shortfall || b.Allocation != 1000+c.shortfall || b.Consumed != 750 || b.Held != c.other {
 			t.Fatalf("another hold of %d: the books after the reap %+v", c.other, b)
 		}
