@@ -187,8 +187,12 @@ above, turns `RecordCeiling` on in the service's defaults: a stream
 admitted with a ceiling then has its heartbeats run past its hold to the
 ceiling, and its heartbeat, hand-off and reap records carry `ceil`. No
 gateway sends a ceiling until PR 4's setting `fastpath_stream_ceiling`
-moves, so until then that release writes the same records as the one
-before it. Once a record may carry `ceil`, no auditor goes below PR 2's
+(`TR_FASTPATH_STREAM_CEILING`, `false` in `rollout.sh`) moves, so until then
+that release writes the same records as the one before it. PR 4's release
+also reads the edge policy's `fastpath_stream_ceiling` member, which a node
+from before refuses with the whole policy: the setting moves only once that
+release runs on every node (`fastpath-streams.md`, "The ceiling beside the
+hold"). Once a record may carry `ceil`, no auditor goes below PR 2's
 release until every such record is applied (each lease's commit version is
 past it, or the lease is closed), and while a hold may have a ceiling an
 owner below PR 3's cuts its stream at the hold, refused rather than

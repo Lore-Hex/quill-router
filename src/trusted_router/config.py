@@ -1185,6 +1185,16 @@ class Settings(BaseSettings):
     # on, and turned on only after gate E. Both off by default.
     fastpath_pilot_streams: bool = False
     fastpath_edge_streams: bool = False
+    # A stream's ceiling beside its hold (docs/design/fast-admission-streams.md
+    # section 12.4, PR 4): a stream whose reservation is below its estimate is
+    # admitted under a lease with the estimate as its Ceiling, so its owner
+    # cuts it where Stage D does, instead of passing over as `stream.hold`.
+    # Read by this process's pilot and published in the edge policy as
+    # `fastpath_stream_ceiling` for the Go edge. Off by default; it moves only
+    # once every owner, front door and auditor runs PR 3's release and every
+    # node reads the policy member (docs/runbooks/fastpath-streams.md), since
+    # a node from before refuses the whole policy.
+    fastpath_stream_ceiling: bool = False
     # The front door answers an admitted authorize in a few milliseconds, and
     # any call within 1.2 s however slow its owner and peer are (its
     # AnswerWithin), which this budget, the connection's 0.25 s included,

@@ -297,7 +297,7 @@ func bodyStreams(t *testing.T, body []byte) bool {
 func TestEveryGoldenCaseThroughTheDecidePath(t *testing.T) {
 	f := authorizeGoldens(t)
 	py := newFakePython(t)
-	answered, unavailable, passed, refunded, affinity, streams := 0, 0, 0, 0, 0, 0
+	answered, unavailable, passed, refunded, affinity, streams, ceilings := 0, 0, 0, 0, 0, 0, 0
 	unavailableCodes := map[string]int{}
 	for _, c := range f.Cases {
 		h := newDecideEdge(t, f, c, py)
@@ -335,17 +335,27 @@ func TestEveryGoldenCaseThroughTheDecidePath(t *testing.T) {
 				t.Errorf("%s: %d inserts", c.Name, len(rows))
 			}
 			// The lease is asked for the reservation, not the rows' estimate,
-			// and for a stream's hold as a stream.
+			// for a stream's hold as a stream, and with the Ceiling Python's
+			// pilot sent (none but a stream's estimate above its hold, with
+			// the policy's fastpath_stream_ceiling).
 			want := frontdoor.AuthorizeOf{Workspace: c.Facts.Key.WorkspaceID, Request: c.IDs.AuthorizationID,
-				Estimate: c.Expect.Reservation, Stream: bodyStreams(t, c.body()), Boot: []byte(c.Boot.Kid)}
+				Estimate: c.Expect.Reservation, Stream: bodyStreams(t, c.body()), Boot: []byte(c.Boot.Kid),
+				Ceiling: c.Expect.Ceiling}
 			if len(asked) != 1 || asked[0].Workspace != want.Workspace || asked[0].Request != want.Request ||
 				asked[0].Estimate != want.Estimate || string(asked[0].Boot) != string(want.Boot) ||
-				asked[0].Stream != want.Stream ||
+				asked[0].Stream != want.Stream || asked[0].Ceiling != want.Ceiling ||
 				asked[0].OpenHeartbeat {
 				t.Errorf("%s: the admit %+v, want %+v", c.Name, asked, want)
 			}
 			if want.Stream {
 				streams++
+			}
+			if want.Ceiling != 0 {
+				if want.Ceiling != c.Expect.Estimate || want.Ceiling <= want.Estimate || !want.Stream {
+					t.Errorf("%s: a ceiling of %d for a hold of %d, estimate %d (stream %v)", c.Name, want.Ceiling,
+						want.Estimate, c.Expect.Estimate, want.Stream)
+				}
+				ceilings++
 			}
 			if len(refunds) != 0 || counts.Answered != 1 || (counts.ReadBack == 1) != (outcome == store.Landed) {
 				t.Errorf("%s: refunds %d, counts %+v", c.Name, len(refunds), counts)
@@ -405,10 +415,12 @@ func TestEveryGoldenCaseThroughTheDecidePath(t *testing.T) {
 		unavailable, passed, refunded)
 	// The streams' (the edge policy carrying fastpath_edge_streams): 28
 	// answered, one unavailable, one refunded; the two past the hold bound
-	// pass as stream.hold.
-	if answered != 192+28 || streams != 28 || affinity != 18 || unavailable != 3+1 || refunded != 7+1 {
-		t.Fatalf("answered %d (%d streams, %d with a cache affinity key), unavailable %d, refunded %d: not the goldens' counts",
-			answered, streams, affinity, unavailable, refunded)
+	// pass as stream.hold. With fastpath_stream_ceiling (streams section
+	// 12.4, PR 4) the same two are answered with their ceilings, and one at
+	// the bound and one request that does not stream with none.
+	if answered != 193+31 || streams != 31 || ceilings != 2 || affinity != 18 || unavailable != 3+1 || refunded != 7+1 {
+		t.Fatalf("answered %d (%d streams, %d with a ceiling, %d with a cache affinity key), unavailable %d, refunded %d: "+
+			"not the goldens' counts", answered, streams, ceilings, affinity, unavailable, refunded)
 	}
 	// The goldens' three unavailable answers, a code each: the clock ahead
 	// of Spanner's among them (§8.4).

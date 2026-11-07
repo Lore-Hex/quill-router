@@ -261,22 +261,106 @@ func TestAStreamThePilotWouldNotLeasePasses(t *testing.T) {
 
 // TestTheHoldTripwire: a stream whose reservation is not its estimate (a
 // lowered stream reservation, which the lease would cut the stream at)
-// passes as stream.hold; one whose hold is its ceiling goes on.
+// passes as stream.hold; one whose hold is its ceiling goes on. With the
+// policy's fastpath_stream_ceiling a reservation below the estimate goes on
+// too, and one above it still passes: no ceiling is sent below a hold.
 func TestTheHoldTripwire(t *testing.T) {
 	equal := routingsnapshot.Result{ModelEstimate: 10, Reservation: 10}
-	if got := streamGate(gwauth.StageDOK, true, equal); got != "" {
-		t.Fatalf("a hold at its ceiling: %q", got)
-	}
-	for _, res := range []routingsnapshot.Result{{ModelEstimate: 10, Reservation: 9}, {ModelEstimate: 10, Reservation: 11}} {
-		if got := streamGate(gwauth.StageDOK, true, res); got != PassStreamHold {
-			t.Errorf("reservation %d, estimate %d: %q", res.Reservation, res.ModelEstimate, got)
+	below := routingsnapshot.Result{ModelEstimate: 10, Reservation: 9}
+	above := routingsnapshot.Result{ModelEstimate: 10, Reservation: 11}
+	for _, ceiling := range []bool{false, true} {
+		if got := streamGate(gwauth.StageDOK, true, equal, ceiling); got != "" {
+			t.Fatalf("a hold at its ceiling (ceiling %v): %q", ceiling, got)
+		}
+		if got := streamGate(gwauth.StageDOK, true, above, ceiling); got != PassStreamHold {
+			t.Errorf("a reservation above the estimate (ceiling %v): %q", ceiling, got)
+		}
+		// The gates before it name their own reason first.
+		if got := streamGate("route", false, below, ceiling); got != PassStreamStageD+"route" {
+			t.Errorf("Stage D first (ceiling %v): %q", ceiling, got)
+		}
+		if got := streamGate(gwauth.StageDOK, false, below, ceiling); got != PassStreamUndeclared {
+			t.Errorf("the declaration before the hold (ceiling %v): %q", ceiling, got)
 		}
 	}
-	// The gates before it name their own reason first.
-	if got := streamGate("route", false, routingsnapshot.Result{ModelEstimate: 10, Reservation: 9}); got != PassStreamStageD+"route" {
-		t.Errorf("Stage D first: %q", got)
+	if got := streamGate(gwauth.StageDOK, true, below, false); got != PassStreamHold {
+		t.Errorf("a reservation below the estimate, no ceiling: %q", got)
 	}
-	if got := streamGate(gwauth.StageDOK, false, routingsnapshot.Result{ModelEstimate: 10, Reservation: 9}); got != PassStreamUndeclared {
-		t.Errorf("the declaration before the hold: %q", got)
+	if got := streamGate(gwauth.StageDOK, true, below, true); got != "" {
+		t.Errorf("a reservation below the estimate, the ceiling on: %q", got)
+	}
+}
+
+// TestTheCeilingIsTheEstimateOnlyForAStreamBelowIt: streamCeiling, Python's
+// stream_ceiling, is the estimate only for a stream whose reservation is
+// below it with the policy's member on, and zero, which sends nothing, for
+// every other combination.
+func TestTheCeilingIsTheEstimateOnlyForAStreamBelowIt(t *testing.T) {
+	below := routingsnapshot.Result{ModelEstimate: 10, Reservation: 9}
+	equal := routingsnapshot.Result{ModelEstimate: 10, Reservation: 10}
+	above := routingsnapshot.Result{ModelEstimate: 10, Reservation: 11}
+	for _, c := range []struct {
+		stream, on bool
+		res        routingsnapshot.Result
+		want       int64
+	}{
+		{true, true, below, 10},
+		{true, false, below, 0},
+		{false, true, below, 0},
+		{true, true, equal, 0},
+		{true, true, above, 0},
+		{false, false, equal, 0},
+	} {
+		if got := streamCeiling(c.stream, c.res, c.on); got != c.want {
+			t.Errorf("stream %v, on %v, reservation %d, estimate %d: %d, want %d", c.stream, c.on,
+				c.res.Reservation, c.res.ModelEstimate, got, c.want)
+		}
+	}
+}
+
+// TestTheMemberLetsAStreamPastItsHoldWithItsCeiling: a stream whose output
+// budget passes HoldOutputTokens, decided with fastpath_edge_streams,
+// passes as stream.hold without fastpath_stream_ceiling, and with it is
+// decided with the estimate as its Ceiling and the reservation as its hold
+// (the goldens hold its rows and 200 to Python's). A stream within the bound
+// is decided with no Ceiling either way.
+func TestTheMemberLetsAStreamPastItsHoldWithItsCeiling(t *testing.T) {
+	base, _ := baseInputs(t)
+	withCeiling := func(in DecideInputs, on bool) DecideInputs {
+		policy := *in.Policy
+		policy.FastpathStreamCeiling = nil
+		if on {
+			yes := true
+			policy.FastpathStreamCeiling = &yes
+		}
+		in.Policy = &policy
+		return in
+	}
+	long := withBody(t, streamsOn(t, base, true), map[string]any{"max_output_tokens": json.Number("131072")})
+	if d := Decide(withCeiling(long, false)); d.Pass != PassStreamHold || d.ForShadow() != nil {
+		t.Fatalf("without the ceiling: passed %q, decided %v", d.Pass, d.ForShadow() != nil)
+	}
+	got := Decide(withCeiling(long, true))
+	dec, admit := got.Admit()
+	if got.Pass != "" || !admit {
+		t.Fatalf("with the ceiling: passed %q, admitted %v", got.Pass, admit)
+	}
+	if dec.Reservation >= dec.Estimate || dec.Ceiling != dec.Estimate || !dec.Stream {
+		t.Fatalf("reservation %d, estimate %d, ceiling %d, stream %v", dec.Reservation, dec.Estimate, dec.Ceiling,
+			dec.Stream)
+	}
+	short := streamsOn(t, base, true)
+	for _, on := range []bool{false, true} {
+		d, admit := Decide(withCeiling(short, on)).Admit()
+		if !admit || d.Ceiling != 0 || d.Reservation != d.Estimate {
+			t.Errorf("within the bound (ceiling %v): admitted %v, ceiling %d, reservation %d, estimate %d", on, admit,
+				d.Ceiling, d.Reservation, d.Estimate)
+		}
+	}
+	// Without the edge's streams member the stream is dark whatever the
+	// ceiling says: body.stream, composed for the shadow alone.
+	dark := withBody(t, streamsOn(t, base, false), map[string]any{"max_output_tokens": json.Number("131072")})
+	if d := Decide(withCeiling(dark, true)); d.Pass != gwauth.ReasonStream {
+		t.Errorf("dark with the ceiling: passed %q", d.Pass)
 	}
 }

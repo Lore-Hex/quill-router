@@ -155,6 +155,10 @@ type authorizeExpect struct {
 	// classed by the generator's rule (affinity_cold, the same bytes, or
 	// affinity_warm, a re-rank).
 	Affinity *affinityExpect `json:"affinity"`
+	// Ceiling is the Ceiling Python's pilot sent beside the reservation, a
+	// stream's estimate above its hold (docs/design/fast-admission-streams.md
+	// section 12.4, PR 4): zero, the member absent, when it sent none.
+	Ceiling int64 `json:"ceiling_microdollars"`
 }
 
 type affinityExpect struct {

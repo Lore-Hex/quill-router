@@ -459,6 +459,9 @@ def settings_for(policy: dict[str, Any], key: dict[str, Any]) -> Settings:
         fastpath_pilot_streams=policy.get("fastpath_pilot_streams", False),
         fastpath_edge_streams=policy.get("fastpath_edge_streams", False),
         reap_snapshot_booking_enabled=policy.get("reap_snapshot_booking_enabled", False),
+        # A stream's ceiling beside its hold (docs/design/fast-admission-streams.md
+        # section 12.4, PR 4), off unless the case's policy names it.
+        fastpath_stream_ceiling=policy.get("fastpath_stream_ceiling", False),
     )
 
 
@@ -502,8 +505,9 @@ def edge_policy_body(policy: dict[str, Any], key: dict[str, Any], at: real_dt.da
         "primary_region": settings.primary_region,
         "multi_region_enabled": settings.multi_region_enabled,
         "internal_models": internal_models(),
-        # Optional: only when the publisher would carry it.
+        # Optional: only when the publisher would carry them.
         **({"fastpath_edge_streams": True} if edge_streams_on(settings) else {}),
+        **({"fastpath_stream_ceiling": True} if settings.fastpath_stream_ceiling else {}),
     }
 
 
@@ -944,6 +948,11 @@ def _run_case(case: dict[str, Any], sessions: tuple[tuple[str, float], ...], *,
             # stream; without a lease, the hold Python's typed store wrote.
             "reservation_microdollars": door.seen[0][1]["Estimate"] if leased
             else reservation["credit_reserved_micro"],
+            # A stream's ceiling above its hold, the front door's Ceiling,
+            # recorded only when the authorize carried one
+            # (docs/design/fast-admission-streams.md section 12.4, PR 4).
+            **({"ceiling_microdollars": door.seen[0][1]["Ceiling"]}
+               if leased and "Ceiling" in door.seen[0][1] else {}),
             "decide_region": data["region"],
             "fingerprint": fingerprint,
             "fingerprint_material": material,
@@ -1159,6 +1168,18 @@ def streams_cases(add: Any) -> None:
     for tokens_out in (HOLD_OUTPUT_TOKENS + 1, 131_072):
         add(f"pass:stream.hold:{FLASH}:1000+{tokens_out}", "stream.hold", policy=streams,
             body={"model": FLASH, "stream": True, "estimated_input_tokens": 1_000, "max_output_tokens": tokens_out})
+    # The same streams with the policy's fastpath_stream_ceiling
+    # (docs/design/fast-admission-streams.md section 12.4, PR 4): leased on
+    # both sides, the hold the reservation and the admission's Ceiling the
+    # estimate (expect.ceiling_microdollars). At the bound, where the hold is
+    # the estimate, and for a request that does not stream, no Ceiling is
+    # sent.
+    ceiling = {**streams, "fastpath_stream_ceiling": True}
+    for tokens_out in (HOLD_OUTPUT_TOKENS, HOLD_OUTPUT_TOKENS + 1, 131_072):
+        add(f"answer:stream:ceiling:{FLASH}:1000+{tokens_out}", policy=ceiling,
+            body={"model": FLASH, "stream": True, "estimated_input_tokens": 1_000, "max_output_tokens": tokens_out})
+    add(f"answer:estimate:hold_cap:ceiling:{FLASH}:1000+131072", policy=ceiling,
+        body={"model": FLASH, "estimated_input_tokens": 1_000, "max_output_tokens": 131_072})
     add("answer:stream:fallback_models", body={"model": FLASH, "models": [GLM, GEMINI], "stream": True},
         policy=streams)
     add("answer:stream:route_responses", body={"model": GEMINI, "stream": True, "route_type": "responses"},

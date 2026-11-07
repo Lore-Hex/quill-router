@@ -2092,6 +2092,39 @@ def test_every_streams_member_vector_is_what_python_reads() -> None:
             assert publisher_module.edge_streams_on(settings) is case["edge_streams"], case["name"]
 
 
+# ------------------------------------------ the fastpath_stream_ceiling member --
+
+
+def test_the_stream_ceiling_member_vectors_are_what_the_python_publisher_writes_now() -> None:
+    # fastpath/testdata/edge_policy_stream_ceiling_v1.json is the member's
+    # shared vector (docs/design/fast-admission-streams.md section 12.4, PR
+    # 4); the Go reader holds every case too (routingsnapshot's
+    # TestTheStreamCeilingMemberVectors).
+    assert VECTORS.OUTPUT_STREAM_CEILING.read_text() == VECTORS.render_stream_ceiling(), (
+        "fastpath/testdata/edge_policy_stream_ceiling_v1.json is stale: run "
+        "`uv run python scripts/fastpath/edge_policy_vectors.py` and check the Go reader"
+    )
+
+
+def test_every_stream_ceiling_member_vector_is_what_python_reads() -> None:
+    cases = json.loads(VECTORS.OUTPUT_STREAM_CEILING.read_text())["cases"]
+    published = [c for c in cases if c["setting"] is not None]
+    assert [c["setting"] for c in published] == [False, True]
+    assert [c["stream_ceiling"] for c in published] == [False, True]
+    assert len(cases) - len(published) == len(VECTORS.STREAM_CEILING_REFUSED)
+    # Off, the body is the golden body from before the member: byte for byte.
+    assert published[0]["body"].encode("ascii") == VECTORS.OUTPUT_BODY.read_bytes()
+    for case in cases:
+        if not case["accept"]:
+            with pytest.raises(ValidationError):
+                parse_edge_policy(case["body"])
+            continue
+        parsed = parse_edge_policy(case["body"])
+        assert (parsed.fastpath_stream_ceiling is True) is case["stream_ceiling"], case["name"]
+        assert ("fastpath_stream_ceiling" in case["body"]) is case["stream_ceiling"], case["name"]
+        assert canonical_edge_policy_bytes(parsed).decode("ascii") == case["body"], case["name"]
+
+
 # --------------------------------- fastpath_pilot_all and fastpath_pilot_exclude --
 
 

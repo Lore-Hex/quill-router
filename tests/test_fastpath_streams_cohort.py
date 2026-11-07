@@ -266,3 +266,144 @@ def test_the_runbook_names_every_sub_reason_and_the_2b_check() -> None:
                    "stream.hold"):
         assert f"`{reason}`" in runbook, reason
     assert "Increment 2b on every owner and front door" in runbook
+
+
+# -- the ceiling beside the hold (section 12.4, PR 4) --------------------------
+
+
+@pytest.mark.parametrize(
+    ("enabled", "stream", "reservation", "estimate", "ceiling"),
+    [
+        (True, True, 100, 300, 300),
+        (False, True, 100, 300, 0),
+        (True, False, 100, 300, 0),
+        (True, True, 300, 300, 0),
+        (True, True, 301, 300, 0),
+        (False, False, 300, 300, 0),
+    ],
+)
+def test_the_ceiling_is_the_estimate_only_for_a_stream_held_below_it(
+    enabled: bool, stream: bool, reservation: int, estimate: int, ceiling: int,
+) -> None:
+    # The Go edge's streamCeiling holds the same table
+    # (TestTheCeilingIsTheEstimateOnlyForAStreamBelowIt).
+    assert fd.stream_ceiling(enabled=enabled, stream=stream, reservation=reservation, estimate=estimate) == ceiling
+
+
+def test_the_ceiling_setting_is_off_by_default_and_reads_its_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("TR_FASTPATH_STREAM_CEILING", raising=False)
+    assert Settings(_env_file=None, environment="test", sentry_dsn=None).fastpath_stream_ceiling is False  # type: ignore[call-arg]
+    monkeypatch.setenv("TR_FASTPATH_STREAM_CEILING", "true")
+    assert Settings(_env_file=None, environment="test", sentry_dsn=None).fastpath_stream_ceiling is True  # type: ignore[call-arg]
+
+
+def test_rollout_renders_the_ceiling_setting_as_a_literal_off() -> None:
+    # Dark: the setting moves only once every node reads the policy member
+    # and PR 3 runs on every owner, front door and auditor
+    # (docs/runbooks/fastpath-streams.md, "The ceiling beside the hold").
+    rollout = (ROOT / "scripts" / "deploy" / "rollout.sh").read_text()
+    assert re.findall(r'"TR_FASTPATH_STREAM_CEILING=[^"]*"', rollout) == ['"TR_FASTPATH_STREAM_CEILING=false"']
+
+
+def test_the_admission_passes_a_ceiling_only_when_there_is_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = _pilot(fastpath_pilot_streams=True, reap_snapshot_booking_enabled=True)
+    with_ceiling = _admission(monkeypatch, settings, stage_d_reason="ok", heartbeat_declared=True,
+                              hold_is_ceiling=True, ceiling=900)
+    assert with_ceiling.asked == [{"workspace_id": WORKSPACE, "request": "gwa-s", "estimate": 300, "stream": True,
+                                   "boot": b"boot-pilot", "ceiling": 900}]
+    # Without one the call is the one from before the setting: no ceiling key.
+    without = _admission(monkeypatch, settings, stage_d_reason="ok", heartbeat_declared=True, hold_is_ceiling=True)
+    assert without.asked == [{"workspace_id": WORKSPACE, "request": "gwa-s", "estimate": 300, "stream": True,
+                              "boot": b"boot-pilot"}]
+
+
+def _lowered(monkeypatch: pytest.MonkeyPatch, by: int = 1) -> None:
+    """A stream's reservation below its estimate, as #2337's hold cap makes
+    any stream whose output budget passes HOLD_OUTPUT_TOKENS."""
+    import dataclasses
+
+    real = gateway.finish_candidates
+
+    def lowered(*args: Any, **kwargs: Any) -> Any:
+        outcome = real(*args, **kwargs)
+        return dataclasses.replace(outcome, model_reservation=outcome.model_reservation - by)
+
+    monkeypatch.setattr(gateway, "finish_candidates", lowered)
+
+
+def test_with_the_setting_a_stream_held_below_its_estimate_is_leased_with_its_ceiling(
+    door: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _lowered(monkeypatch, by=7)
+    store, _database, api_key = _seed()
+    _declared_boot(store, declares=True)
+    data = gateway._authorize_gateway_sync(
+        _request(), _body(api_key.hash, stream=True), _stream_settings(fastpath_stream_ceiling=True),
+    )["data"]
+    authorization = store.get_gateway_authorization(data["authorization_id"])
+    assert authorization is not None and authorization.fastpath_envelope == "sealed-pilot"
+    # Stage D cuts at the row's estimate, and so does the owner: the ceiling.
+    estimate = authorization.estimated_microdollars
+    assert data["cap_micro"] == estimate
+    ((path, sent),) = door.seen
+    assert path == "/v1/authorize" and sent["Stream"] is True
+    assert sent["Estimate"] == estimate - 7 and sent["Ceiling"] == estimate
+
+
+def test_without_the_setting_the_same_stream_passes_over_as_stream_hold(
+    door: Any, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    _lowered(monkeypatch, by=7)
+    caplog.set_level(logging.INFO)
+    store, _database, api_key = _seed()
+    _declared_boot(store, declares=True)
+    data = gateway._authorize_gateway_sync(
+        _request(), _body(api_key.hash, stream=True), _stream_settings(fastpath_stream_ceiling=False),
+    )["data"]
+    authorization = store.get_gateway_authorization(data["authorization_id"])
+    assert authorization is not None and authorization.fastpath_envelope is None
+    assert door.seen == []
+    assert any("reason=stream.hold " in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.parametrize(
+    ("stream", "lowered"),
+    [(True, False), (False, True), (False, False)],
+    ids=["stream_at_its_estimate", "request_held_below", "request_at_its_estimate"],
+)
+def test_the_setting_changes_nothing_but_a_stream_held_below_its_estimate(
+    door: Any, monkeypatch: pytest.MonkeyPatch, stream: bool, lowered: bool,
+) -> None:
+    """The differential: for every other request the front door is sent the
+    same body, and the route answers the same, with the setting on as off."""
+    if lowered:
+        _lowered(monkeypatch, by=7)
+    answers: list[dict[str, Any]] = []
+    for on in (False, True):
+        store, _database, api_key = _seed()
+        _declared_boot(store, declares=True)
+        door.seen.clear()
+        data = gateway._authorize_gateway_sync(
+            _request(), _body(api_key.hash, stream=stream), _stream_settings(fastpath_stream_ceiling=on),
+        )["data"]
+        ((path, sent),) = door.seen
+        assert path == "/v1/authorize" and "Ceiling" not in sent
+        answers.append({"sent": {k: v for k, v in sent.items() if k != "Request"},
+                        # Each run seeds its own key and mints its own ids.
+                        "data": {k: v for k, v in data.items() if k not in {
+                            "authorization_id", "generation_id", "timing", "credit_reservation_id", "api_key_hash"}}})
+    assert answers[0] == answers[1]
+
+
+def test_the_ceiling_member_is_published_only_with_the_setting(key: Any) -> None:  # noqa: F811
+    default = _publisher(_settings(key), Clock(T0)).current().body
+    assert b"fastpath_stream_ceiling" not in default
+    assert _publisher(_settings(key, fastpath_stream_ceiling=False), Clock(T0)).current().body == default
+    on = _publisher(_settings(key, fastpath_stream_ceiling=True), Clock(T0)).current().body
+    assert parse_edge_policy(on).fastpath_stream_ceiling is True
+    stripped = json.loads(on)
+    assert stripped.pop("fastpath_stream_ceiling") is True
+    assert json.dumps(stripped, sort_keys=True, separators=(",", ":")).encode("ascii") == default
+    for value in (b"false", b"null", b'"true"', b"1"):
+        with pytest.raises((ValidationError, ValueError)):
+            parse_edge_policy(on.replace(b'"fastpath_stream_ceiling":true', b'"fastpath_stream_ceiling":' + value))

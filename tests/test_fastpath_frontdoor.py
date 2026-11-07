@@ -67,6 +67,42 @@ def test_an_admitted_authorize_carries_the_envelope_and_the_end_of_life() -> Non
     assert body == {"Workspace": "ws", "Request": "req-1", "Estimate": 42, "Stream": False, "Boot": base64.b64encode(b"boot-1").decode()}
 
 
+def test_a_streams_ceiling_is_sent_only_when_set() -> None:
+    # docs/design/fast-admission-streams.md section 12.4, PR 4: a node
+    # decodes the authorize strictly, so a body without a ceiling must be
+    # the body from before the field.
+    door = _Door({"/v1/authorize": ADMIT})
+    client = _client({"10.0.0.1:8080": door})
+    assert client.authorize(workspace_id="ws", request="r", estimate=42, stream=True, boot=b"b", ceiling=99)
+    assert client.authorize(workspace_id="ws", request="r", estimate=42, stream=True, boot=b"b", ceiling=0)
+    assert client.authorize(workspace_id="ws", request="r", estimate=42, stream=True, boot=b"b")
+    boot = base64.b64encode(b"b").decode()
+    plain = {"Workspace": "ws", "Request": "r", "Estimate": 42, "Stream": True, "Boot": boot}
+    assert [body for _path, body in door.seen] == [{**plain, "Ceiling": 99}, plain, plain]
+
+
+def test_a_ceiling_the_owner_would_refuse_is_not_sent() -> None:
+    door = _Door({"/v1/authorize": ADMIT})
+    client = _client({"10.0.0.1:8080": door})
+    assert client.authorize(workspace_id="ws", request="r", estimate=42, stream=True, boot=b"b", ceiling=-1) is None
+    assert client.authorize(workspace_id="ws", request="r", estimate=42, stream=True, boot=b"b", ceiling=41) is None
+    assert client.authorize(workspace_id="ws", request="r", estimate=42, stream=False, boot=b"b", ceiling=99) is None
+    assert door.seen == []
+
+
+def test_every_authorize_member_python_sends_is_a_field_of_the_front_doors_authorize() -> None:
+    # The front door decodes AuthorizeOf strictly (frontdoor/http.go): a
+    # member it does not know refuses the whole authorize.
+    source = (ROOT / "fastpath" / "internal" / "frontdoor" / "frontdoor.go").read_text()
+    struct = re.search(r"type AuthorizeOf struct \{(.*?)\n\}", source, re.S)
+    assert struct is not None
+    fields = set(re.findall(r"^\t([A-Z]\w*)\s", struct.group(1), re.M))
+    door = _Door({"/v1/authorize": ADMIT})
+    _client({"10.0.0.1:8080": door}).authorize(
+        workspace_id="ws", request="r", estimate=1, stream=True, boot=b"b", ceiling=2)
+    assert set(door.seen[0][1]) <= fields and "Ceiling" in fields
+
+
 @pytest.mark.parametrize("status", ["off", "busy", "invalid", "failed"])
 def test_every_other_answer_is_todays_path(status: str) -> None:
     client = _client({"10.0.0.1:8080": _Door({"/v1/authorize": {"Status": status}})})

@@ -67,7 +67,7 @@ Fields, all required:
   first member is absent or names it, and the second does not name it.
   ``null`` and an empty array are refused for both.
 
-Four fields are optional:
+Five fields are optional:
 
 - ``fastpath_pilot_key_windows``: ``"alert"`` or ``"enforce"``, the setting of
   that name (docs/design/fast-admission-e2-key-windows.md section 5): which
@@ -93,6 +93,14 @@ Four fields are optional:
   ``fastpath_pilot_all``. Go reads them first (PR 3 of the widening); the
   publisher writes them from the settings ``fastpath_pilot_all`` and
   ``fastpath_pilot_exclude`` (PR 5), only while the first is on.
+- ``fastpath_stream_ceiling``: ``true`` when the setting of that name is on
+  (docs/design/fast-admission-streams.md section 12.4, PR 4): the edge
+  admits a stream whose reservation is below its estimate with the estimate
+  as the admission's Ceiling, where it otherwise passes as ``stream.hold``.
+  Absent otherwise, so the default body is byte-identical to one from before
+  the field existed, and Go reads absent as off; ``null`` and ``false`` are
+  refused. Go reads it in the same release; the setting moves only once
+  every node runs that release.
 """
 
 from __future__ import annotations
@@ -222,6 +230,10 @@ class EdgePolicyV1(Frozen):
     fastpath_pilot_exclude: tuple[WorkspaceId, ...] | None = Field(
         default=None, exclude_if=lambda value: value is None,
     )
+    # Optional: absent is off, and the canonical bytes omit it then.
+    fastpath_stream_ceiling: Flag | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
 
     @model_validator(mode="after")
     def consistent(self) -> Self:
@@ -229,6 +241,8 @@ class EdgePolicyV1(Frozen):
             raise ValueError("fastpath_pilot_key_windows is absent when off, never null")
         if self.fastpath_edge_streams is not True and "fastpath_edge_streams" in self.model_fields_set:
             raise ValueError("fastpath_edge_streams is absent when off, never null or false")
+        if self.fastpath_stream_ceiling is not True and "fastpath_stream_ceiling" in self.model_fields_set:
+            raise ValueError("fastpath_stream_ceiling is absent when off, never null or false")
         self._pilot_all_consistent()
         if (self.refresh_at != self.issued_at + REFRESH_SECONDS
                 or self.not_after != self.issued_at + LIFETIME_SECONDS):

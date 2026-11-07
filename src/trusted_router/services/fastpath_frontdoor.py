@@ -332,12 +332,24 @@ class FrontDoorClient:
 
     # -- authorize --------------------------------------------------------
 
-    def authorize(self, *, workspace_id: str, request: str, estimate: int, stream: bool, boot: bytes) -> Admitted | None:
+    def authorize(
+        self, *, workspace_id: str, request: str, estimate: int, stream: bool, boot: bytes, ceiling: int = 0,
+    ) -> Admitted | None:
         """An admission under a lease, or None: today's path. None covers
         `off`, `busy`, `invalid`, a front door that failed, and no front door
         at all; the reason is logged, never raised, since a request must not
-        fail for a fast path that is not there."""
+        fail for a fast path that is not there.
+
+        ``ceiling`` is a stream's spend ceiling above its hold
+        (``stream_ceiling``), sent as ``Ceiling`` only when set, so an
+        authorize without one is the body it was before the field
+        (docs/design/fast-admission-streams.md section 12.4). The owner
+        refuses a ceiling below the hold or on a hold that is not a stream,
+        so neither is sent."""
         if estimate < 0 or not boot or not workspace_id:
+            return None
+        if ceiling < 0 or (ceiling and (not stream or ceiling < estimate)):
+            logger.warning("fastpath authorize with an invalid ceiling workspace=%s", workspace_id)
             return None
         body = {
             "Workspace": workspace_id,
@@ -345,6 +357,7 @@ class FrontDoorClient:
             "Estimate": int(estimate),
             "Stream": bool(stream),
             "Boot": base64.b64encode(boot).decode("ascii"),
+            **({"Ceiling": int(ceiling)} if ceiling else {}),
         }
         answer = self._call("/v1/authorize", body)
         if answer is None:
@@ -663,6 +676,17 @@ def pilot_key_capped(mode: str, key: ApiKey) -> bool:
     return not key_windows_covered(mode, key)
 
 
+def stream_ceiling(*, enabled: bool, stream: bool, reservation: int, estimate: int) -> int:
+    """The Ceiling a stream's admission carries, the Go edge's streamCeiling
+    (docs/design/fast-admission-streams.md section 12.2 item 4): with
+    ``fastpath_stream_ceiling`` on, a stream whose reservation is below its
+    estimate is held at the reservation and cut by its owner at the estimate,
+    where Stage D cuts it; 0 for anything else, which sends no ceiling."""
+    if enabled and stream and estimate > reservation:
+        return int(estimate)
+    return 0
+
+
 def pilot_stream_reason(
     *,
     streams_enabled: bool,
@@ -684,6 +708,9 @@ def pilot_stream_reason(
       and the lease always charges an abandoned stream its snapshot;
     - ``stream.hold``: the reservation is not the estimate, the tripwire for
       a lowered stream reservation, which the lease would cut the stream at.
+      ``hold_is_ceiling`` is also true for a stream whose admission carries
+      its estimate as its ceiling (``stream_ceiling``), which its owner cuts
+      it at instead.
     """
     if not streams_enabled:
         return "stream.switch"
