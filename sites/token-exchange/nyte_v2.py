@@ -14,7 +14,7 @@ from functools import cache
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from facilities import FACILITY_RATE, facility_cards
+from facilities import FACILITY_RATE, facility_cards, facility_cards_v3
 
 HERE = Path(__file__).resolve().parent
 SOURCE = HERE / "nyte-v2"
@@ -207,6 +207,43 @@ def index_panel() -> str:
         result += f'<div class="idx-row"><span class="g">{code}</span><div class="d"><b>{name}</b><small>{description}</small></div><span class="p">${value:,}{movement(code)}</span></div>'
     return result + '</div>'
 
+
+def index_panel_v3() -> str:
+    """index_panel() for the brand v3 sell pages: grade chip, a Ladder filled 4/3/2/1, same snapshot."""
+    data = runpy.run_path(str(HERE.parents[1] / "src/trusted_router/content/token_index.py"))
+    quotes = data["QUOTES"]
+    as_of = date.fromisoformat(data["AS_OF_ISO"]).strftime("%m/%d/%y")
+
+    def movement(code: str) -> str:
+        value = quotes[code]["change_7d"]
+        direction = "up" if value > 0.05 else "down" if value < -0.05 else "flat"
+        label = f"{value:+.1f}%" if abs(value) > 0.05 else "0.0%"
+        return f'<span class="idx-change {direction}" aria-label="{label} over seven days">{label} 7d</span>'
+
+    grades = (
+        ("AAA", "aaa", 4, "Frontier", "Frontier research, the hardest reasoning"),
+        ("A", "a", 3, "Advanced", "Coding agents, complex analysis"),
+        ("B", "b", 2, "Professional", "Production assistants, structured work"),
+        ("C", "c", 1, "Efficient", "Extraction, summarization, routing"),
+    )
+    result = (
+        '<div class="idx sv3-idx" aria-label="NYTE Token Index"><div class="sv3-idx-hd"><div>'
+        '<b class="v3-label">NYTE Token Index</b><small>USD per billion tokens · As of '
+        f'<time datetime="{html.escape(data["AS_OF_ISO"])}">{as_of}</time>'
+        f'</small></div><span class="sv3-idx-value"><span class="sv3-idx-figure">${quotes["ALL"]["value"]:,}</span>{movement("ALL")}</span></div>'
+        '<div class="sv3-idx-rows">'
+    )
+    for code, key, steps, name, description in grades:
+        ladder = "".join('<i class="on"></i>' if n < steps else "<i></i>" for n in range(4))
+        result += (
+            f'<div class="sv3-idx-row g-{key}"><span class="v3-chip">{code}</span>'
+            f'<span class="sv3-ladder" aria-hidden="true">{ladder}</span>'
+            f'<div class="d"><b>{name}</b><small>{description}</small></div>'
+            f'<span class="p">${quotes[code]["value"]:,}{movement(code)}</span></div>'
+        )
+    return result + '</div></div>'
+
+
 def load_markets() -> list[dict]:
     return json.loads((HERE / "markets.json").read_text())
 
@@ -315,10 +352,12 @@ def render_nyte(
         title = f"{market['name']}: enterprise AI from competing providers"
     version = hashlib.sha256((SOURCE / "styles.css").read_bytes() + (SOURCE / "app.js").read_bytes() + (HERE / "analytics.js").read_bytes()).hexdigest()[:12]
     cowork_v3 = page == "cowork" and uses_brand_v3("cowork")
-    if page == "providers" or (page == "cowork" and not cowork_v3):
+    # Pages rebuilt for brand v3 keep their pre-v3 body and sheet for rollback.
+    v3_body = page in V3_BODIES and uses_brand_v3(page)
+    if (page == "providers" and not v3_body) or (page == "cowork" and not cowork_v3):
         version = hashlib.sha256((version + (SOURCE / f"{page}.css").read_text()).encode()).hexdigest()[:12]
         extra_head += '<link rel="stylesheet" href="/assets/nyte-v2/' + page + '.css?v=' + version + '">'
-    if page == "accelerator":
+    if page == "accelerator" and not v3_body:
         accelerator_version = hashlib.sha256((SOURCE / "accelerator.css").read_bytes()).hexdigest()[:12]
         extra_head += f'<link rel="stylesheet" href="/assets/nyte-v2/accelerator.css?v={accelerator_version}">'
     if page == "manage":
@@ -336,8 +375,6 @@ def render_nyte(
         + '>' + html.escape(other["region"]) + '</a>' for other in load_markets()
     )
     home_v3 = page == "home" and uses_brand_v3("home")
-    # Pages rebuilt for brand v3 keep their pre-v3 body for rollback.
-    v3_body = page in V3_BODIES and uses_brand_v3(page)
     home_head = ""
     if content is None:
         body = f"{V3_BODIES[page]}.html" if v3_body else f"{page}.html"
@@ -346,14 +383,17 @@ def render_nyte(
         content = (content.replace("{{band_purple}}", band_svg("band-purple.svg"))
                    .replace("{{band_ink}}", band_svg("band-ink.svg"))
                    .replace("{{fails_closed}}", illustration_svg("fails-closed.svg"))
-                   .replace("{{arrow}}", ARROW_UP_RIGHT))
-        sheet = V3_BODIES[page] + ".css"
+                   .replace("{{arrow}}", ARROW_UP_RIGHT)
+                   .replace("{{band_sky}}", band_svg("band-sky.svg"))
+                   .replace("{{index_panel_v3}}", index_panel_v3()))
+        content = re.sub(r"\{\{illustration:([a-z-]+)\}\}", lambda m: illustration_svg(m[1] + ".svg"), content)
+        sheet = V3_SHEETS.get(page, V3_BODIES[page]) + ".css"
         sheet_version = hashlib.sha256((SOURCE / sheet).read_bytes()).hexdigest()[:12]
         home_head = f'<link rel="stylesheet" href="/assets/nyte-v2/{sheet}?v={sheet_version}">'
     if city:
         content = city_home(content, market, v3=home_v3)
     if page == "accelerator":
-        content = content.replace("{{facilities}}", facility_cards()).replace("{{facility_rate}}", FACILITY_RATE)
+        content = content.replace("{{facilities}}", facility_cards()).replace("{{facilities_v3}}", facility_cards_v3()).replace("{{facility_rate}}", FACILITY_RATE)
     if uses_brand_v3(page):
         brand_version = hashlib.sha256((SOURCE / "brand-v3.css").read_bytes()).hexdigest()[:12]
         extra_head += f'<link rel="stylesheet" href="/assets/nyte-v2/brand-v3.css?v={brand_version}">'
@@ -380,7 +420,10 @@ def render_nyte(
     return re.sub(r'href="([^"]+)"', tracked, result)
 
 # Pages with a body rebuilt for brand v3: page key -> body and sheet name in nyte-v2/.
-V3_BODIES = {"home": "home-v3", "api": "api-v3", "cowork": "cowork-v3"}
+V3_BODIES = {"home": "home-v3", "api": "api-v3", "cowork": "cowork-v3",
+             "sup": "sup-v3", "providers": "providers-v3", "accelerator": "accelerator-v3"}
+# Rebuilt pages that share one sheet instead of <body>.css.
+V3_SHEETS = {"sup": "sell-v3", "providers": "sell-v3", "accelerator": "sell-v3"}
 # Kit icon arrow-up-right, drawn in the text colour.
 ARROW_UP_RIGHT = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 19 L15.5 8.5"/><path d="M8 5 L19 5 L19 16"/></svg>'
 
@@ -434,7 +477,7 @@ def build_nyte(output: Path) -> None:
     shutil.copytree(SOURCE / "assets", assets, dirs_exist_ok=True)
     # NYTE can publish its approved evidence renderer without changing other markets.
     shutil.copyfile(HERE / "live-evidence.js", assets / "live-evidence.js")
-    for name in ("styles.css", "app.js", "fonts.css", "providers.css", "cowork.css", "buy.css", "buy.js", "manage.js", "accelerator.css", "brand-v3.css", "home-v3.css", "api-v3.css", "cowork-v3.css"):
+    for name in ("styles.css", "app.js", "fonts.css", "providers.css", "cowork.css", "buy.css", "buy.js", "manage.js", "accelerator.css", "brand-v3.css", "home-v3.css", "api-v3.css", "cowork-v3.css", "sell-v3.css"):
         shutil.copyfile(SOURCE / name, assets / name)
     for page, entry in PAGES.items():
         if page == "home" or entry.get("builder"):

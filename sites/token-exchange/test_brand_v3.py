@@ -71,8 +71,37 @@ class BrandV3Tests(unittest.TestCase):
 
     def test_preview_loads_it_last(self):
         with mock.patch.dict(os.environ, {"NYTE_BRAND_V3_PREVIEW": "1"}):
-            page = render_nyte("providers")
-        self.assertGreater(page.index(SHEET), page.index('/assets/nyte-v2/providers.css'))
+            page = render_nyte("buy")
+        self.assertGreater(page.index(SHEET), page.index('/assets/nyte-v2/buy.css'))
+
+    def test_v3_sell_pages_share_one_sheet_and_keep_rollback_bodies(self):
+        bodies = {"sup": "hero-sell", "providers": "hero-prov", "accelerator": "hero-acc"}
+        for name, hero in bodies.items():
+            with mock.patch.dict(os.environ, {"NYTE_BRAND_V3_PREVIEW": "1"}):
+                page = render_nyte(name)
+            self.assertGreater(page.index('/assets/nyte-v2/sell-v3.css'), page.index(SHEET))
+            self.assertIn('class="v3-band" preserveAspectRatio="none"', page)
+            self.assertEqual(page.count('class="v3-band"'), 1)
+            self.assertNotIn('{{', page)
+            # analytics.js names CTA positions from a class starting "hero" and from .closing.
+            self.assertIn(f'<section class="{hero} sv3-hero', page)
+            for removed in ('class="ph ', 'close-photo', 'pv-lockup', 'var(--mint)', 'providers.css', 'accelerator.css'):
+                self.assertNotIn(removed, page)
+            with mock.patch.dict(os.environ, {"NYTE_BRAND_V3_PREVIEW": ""}), mock.patch.object(nyte_v2, "BRAND_V3_PAGES", set()):
+                legacy = render_nyte(name)
+            self.assertNotIn('sell-v3.css', legacy)
+            self.assertNotIn('sv3-', legacy)
+        with mock.patch.dict(os.environ, {"NYTE_BRAND_V3_PREVIEW": "1"}):
+            sup = render_nyte("sup")
+        self.assertIn('id="open-stack"', sup)
+        self.assertIn('<section class="v3-cta sv3-cta closing">', sup)
+        self.assertEqual(sup.count('<details'), 4)
+        self.assertEqual(sup.count('<details open>'), 1)
+        self.assertEqual(sup.count('The supplier listing above is illustrative.'), 1)
+        self.assertLess(sup.index('The supplier listing above is illustrative.'), sup.index('Three steps'))
+        self.assertEqual(sup.count('class="sv3-ladder"'), 4)
+        self.assertIn('<time datetime=', sup)
+        self.assertEqual(sup.count('class="idx-change '), 5)
 
 
 if __name__ == "__main__":
