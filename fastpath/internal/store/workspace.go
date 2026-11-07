@@ -8,6 +8,8 @@ import (
 
 	"cloud.google.com/go/spanner"
 	"google.golang.org/grpc/codes"
+
+	"github.com/Lore-Hex/quill-router/fastpath/internal/switchsql"
 )
 
 // The fast path's switch (docs/design/fast-admission-production-rollout.md,
@@ -35,27 +37,40 @@ func workspaceEnabled(ctx context.Context, txn rowReader, workspace string) (boo
 // the workspace in the same transaction: each takes no renewal, so it
 // expires, drains and closes, and what it admitted still settles; and a grant
 // is either before it, its lease then revoked, or after it, and refused.
-func (s *Store) SetWorkspace(ctx context.Context, workspace string, enabled bool) (int64, time.Time, error) {
-	if workspace == "" {
-		return 0, time.Time{}, errors.New("store: no workspace to switch")
+//
+// Turning it off also holds it, in the same transaction, with the reason its
+// caller gives (docs/design/fast-admission-widening.md, section 5.6): the
+// enabler never turns on a held workspace, so no stop but the enabler's own
+// is undone by it. There is no other way to turn a workspace off in Go: a
+// new caller holds whether or not it knows of holds. Turning it on removes
+// its hold in the same transaction, so a hand enable after a stop is not
+// undone either. The writes are the fixture's
+// (fastpath/testdata/switch_statements_v1.json), which the enabler reads.
+func (s *Store) SetWorkspace(ctx context.Context, workspace string, enabled bool, reason Reason) (int64, time.Time, error) {
+	if err := checkWorkspace(workspace); err != nil {
+		return 0, time.Time{}, err
+	}
+	name := switchsql.Enable
+	params := map[string]any{"workspace": workspace}
+	switch {
+	case enabled && reason != (Reason{}):
+		return 0, time.Time{}, errors.New("store: turning a workspace on removes its hold and takes no reason")
+	case !enabled && reason.Kind != HoldOperator && reason.Kind != HoldWatch:
+		return 0, time.Time{}, fmt.Errorf("store: a stop holds with the reason %q or %q, not %q", HoldOperator, HoldWatch,
+			reason.Kind)
+	case !enabled:
+		name = switchsql.Disable
+		params["reason"] = reason.Kind
+		params["detail"] = spanner.NullString{StringVal: reason.Detail, Valid: reason.Detail != ""}
+	}
+	op, err := switchOps.Get(name)
+	if err != nil {
+		return 0, time.Time{}, err
 	}
 	var revoked int64
 	resp, err := s.client.ReadWriteTransactionWithOptions(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
-		revoked = 0
-		if err := txn.BufferWrite([]*spanner.Mutation{spanner.InsertOrUpdate("tr_fastpath_workspace",
-			[]string{"workspace_id", "enabled", "changed_at"},
-			[]any{workspace, enabled, spanner.CommitTimestamp})}); err != nil {
-			return err
-		}
-		if enabled {
-			return nil
-		}
-		n, err := txn.UpdateWithOptions(ctx, spanner.Statement{
-			SQL: `UPDATE tr_lease SET revoked = TRUE, revoked_at = CURRENT_TIMESTAMP()
-			       WHERE workspace_id = @w AND state = 'open' AND NOT revoked`,
-			Params: map[string]any{"w": workspace},
-		}, spanner.QueryOptions{RequestTag: tag("switch")})
-		revoked = n
+		counts, err := op.Apply(ctx, txn, params, spanner.QueryOptions{RequestTag: tag("switch")})
+		revoked = counts["revoked_leases"]
 		return err
 	}, spanner.TransactionOptions{TransactionTag: tag("switch")})
 	if err != nil {
@@ -68,6 +83,15 @@ func (s *Store) SetWorkspace(ctx context.Context, workspace string, enabled bool
 // that empties the allow-list, and reports how many workspaces it turned off
 // and how many open leases it revoked: every open lease, in the same
 // transaction, so none takes a renewal and none is granted after it.
+//
+// In the same transaction it writes the fleet hold, the row '*' of
+// tr_fastpath_workspace_hold, inserted if absent, and a row of
+// tr_fastpath_kill whose key is the commit timestamp, which every switch row
+// it turns off keeps as its changed_at (docs/design/fast-admission-
+// widening.md, section 5.6). It touches only rows still enabled, so a row
+// stopped before keeps its own changed_at. The fleet hold is always written,
+// a row already there updated in place, so two kills conflict and never
+// share a commit timestamp.
 func (s *Store) DisableAll(ctx context.Context) (int64, int64, time.Time, error) {
 	var off, revoked int64
 	resp, err := s.client.ReadWriteTransactionWithOptions(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
@@ -76,12 +100,19 @@ func (s *Store) DisableAll(ctx context.Context) (int64, int64, time.Time, error)
 			        WHERE enabled`},
 			{SQL: `UPDATE tr_lease SET revoked = TRUE, revoked_at = CURRENT_TIMESTAMP()
 			        WHERE state = 'open' AND NOT revoked`},
+			{SQL: `UPDATE tr_fastpath_workspace_hold SET reason = 'kill' WHERE workspace_id = @fleet`,
+				Params: map[string]any{"fleet": FleetHold}},
 		}, spanner.QueryOptions{RequestTag: tag("switch")})
 		if err != nil {
 			return err
 		}
 		off, revoked = counts[0], counts[1]
-		return nil
+		ms := []*spanner.Mutation{spanner.Insert("tr_fastpath_kill", []string{"kill_at"},
+			[]any{spanner.CommitTimestamp})}
+		if counts[2] == 0 {
+			ms = append(ms, holdRow(FleetHold, holdKill, ""))
+		}
+		return txn.BufferWrite(ms)
 	}, spanner.TransactionOptions{TransactionTag: tag("switch")})
 	if err != nil {
 		return 0, 0, time.Time{}, err

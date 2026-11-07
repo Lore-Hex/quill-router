@@ -8,6 +8,10 @@
 //	    -workspace WS -max-cpu 0.35 -max-undelivered 1000 -max-oldest 2m \
 //	    -overdue 5m -max-spend 100000 -stop-pid 1234
 //
+// Turning the workspace off holds it, reason watch, with the ceilings that
+// tripped, so the enabler leaves it off once the watch has exited
+// (docs/design/fast-admission-widening.md, section 5.6).
+//
 // It exits 3 once it has stopped the stage, and prints why as JSON; 0 if it
 // is itself stopped first, having stopped nothing; 1 if it cannot watch, or
 // cannot turn the workspace off; 2 for its usage.
@@ -273,8 +277,11 @@ func run(ctx context.Context, args []string, out io.Writer, d deps) (int, error)
 		}
 	}
 	// The stage stops: the load first, so nothing more is sent, then the
-	// workspace, whose leases are revoked with it. The watch's own context
-	// may be ending, so the workspace has a deadline of its own.
+	// workspace, whose leases are revoked with it, held with the reason
+	// watch and the ceilings that tripped, so the enabler does not turn it
+	// on again once the watch has exited (docs/design/fast-admission-
+	// widening.md, section 5.6). The watch's own context may be ending, so
+	// the workspace has a deadline of its own.
 	answer := map[string]any{"why": why, "workspace": t.workspace}
 	switch {
 	case load != nil:
@@ -284,11 +291,13 @@ func run(ctx context.Context, args []string, out io.Writer, d deps) (int, error)
 	}
 	octx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	revoked, at, err := s.SetWorkspace(octx, t.workspace, false)
+	revoked, at, err := s.SetWorkspace(octx, t.workspace, false,
+		store.Reason{Kind: store.HoldWatch, Detail: strings.Join(why, "; ")})
 	if err != nil {
 		answer["turn_off_failed"] = err.Error()
+		answer["fallback"] = turnOffFallback
 		_ = json.NewEncoder(out).Encode(answer)
-		return 1, fmt.Errorf("turning %s off: %w", t.workspace, err)
+		return 1, fmt.Errorf("turning %s off: %w; %s", t.workspace, err, turnOffFallback)
 	}
 	answer["revoked_leases"], answer["turned_off_at"] = revoked, at
 	if err := json.NewEncoder(out).Encode(answer); err != nil {
@@ -296,6 +305,17 @@ func run(ctx context.Context, args []string, out io.Writer, d deps) (int, error)
 	}
 	return stopped, nil
 }
+
+// turnOffFallback is what a watch that could not turn its workspace off
+// tells the operator. The stop writes the switch, the revocation and the
+// hold in one transaction, so on a database without
+// tr_fastpath_workspace_hold (scripts/deploy/migrate_fastpath.sh not yet
+// run) it fails outright, as this release's fastpathctl disable does
+// (docs/runbooks/fastpath-deploy.md, "Taking a pinned release").
+const turnOffFallback = "turn the workspace off another way: the fastpathctl of a release without holds " +
+	"(its disable WS writes the switch and the revocation alone), or, for every workspace, " +
+	"TR_FASTPATH_PILOT_ENABLED=false in a control-plane deploy; fastpathctl decide off WS only stops the edge " +
+	"deciding for it (docs/runbooks/fastpath-turn-off.md)"
 
 // stopLoad tells the load generator to stop and waits for it to exit, for
 // at most grace, and says how it went.

@@ -464,6 +464,14 @@ detect a kill from the switch table, whose rows cannot say who wrote them
 (`DisableAll` stamps every row it turns off with one `changed_at`,
 `store/workspace.go:75-76`).
 
+- **The table.** `tr_fastpath_workspace_hold` is keyed by workspace id
+  alone, with `reason` (`operator`, `watch`, `backfill` or `paused` for a
+  workspace; `kill`, `pause` and `armed` for `*`, `#pause` and `#armed`,
+  which a constraint ties to those rows), `detail` (what the stop says of
+  itself: a watch's tripped ceilings) and `held_at`, the holding write's
+  commit timestamp. `fastpathctl holds` reads it, the kills and
+  `unheld_disabled` as §5.4 counts them, read only, exiting 3 while any
+  row is off with no hold of its own (PR 4).
 - **The hold is in the store.** `Store.SetWorkspace(ctx, workspace,
   false, reason)` writes a hold, with the reason its caller gives, in the
   switch's transaction, for every caller. `fastpathctl disable` passes
@@ -608,7 +616,8 @@ detect a kill from the switch table, whose rows cannot say who wrote them
   operator's own decision, made explicitly: `fastpathctl release-stamped
   TS` releases only rows that are held with reason `paused` and whose
   `changed_at` is exactly TS. It prints how many holds and workspaces it
-  would release before writing, and writes only with `-yes`. The enabler
+  would release before writing, and writes only with `-yes`, which, as
+  `release`, refuses while `#pause` exists. The enabler
   infers nothing from a timestamp; the operator names one, sees what it
   covers, and confirms.
 - **What resume proves, and where to read it.** The invariant is narrow:
@@ -1093,7 +1102,12 @@ step.
    `hold-backfill`, refused once `#armed` exists (§5.6);
    `switch_statements_v1.json`, embedded by
    `SetWorkspace`; the rollback and resume rules of §5.6 in
-   `docs/runbooks/fastpath-deploy.md`. Order: before PR 6;
+   `docs/runbooks/fastpath-deploy.md`. Order: before PR 6; its migration
+   seen in a successful control-plane deploy (`tr_fastpath_workspace_hold`
+   and `tr_fastpath_kill` each `created` or `already present`) before any
+   release carrying it is pinned or its `fastpathctl` or `fastpathwatch`
+   used, since every stop of that release writes the hold tables in the
+   switch's transaction and fails outright without them;
    `hold-backfill` run before WS1 and again at WS2's entry; every node's
    release carries it before WS2; the enabler paused, not merely set off,
    before any rollback below it. Tests: the migration test holding the

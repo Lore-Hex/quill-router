@@ -87,10 +87,17 @@ nothing, and a watch with none is refused. The watch exits:
 
 - 3 once it has stopped the stage, printing why as JSON with whether the
   load generator exited and how many of the workspace's leases were
-  revoked;
+  revoked; the workspace is held, reason `watch`, with the ceilings that
+  tripped, so the enabler leaves it off once the watch has exited
+  (`docs/design/fast-admission-widening.md` §5.6; `fastpathctl release
+  WS` or `enable WS` undoes the hold);
 - 0 if it was itself stopped first, having stopped nothing;
 - 1 if it cannot watch, or cannot turn the workspace off, which then needs
-  `fastpathctl disable WS` by hand;
+  `fastpathctl disable WS` by hand; if the stop failed because the
+  database lacks the hold tables, this release's `disable` fails the same
+  way, and the answer's `fallback` names what still works: the
+  `fastpathctl` of a release before holds, or `TR_FASTPATH_PILOT_ENABLED=false`
+  (`fastpath-turn-off.md`, "When disable fails");
 - 2 for its usage, checked before it opens anything: a ceiling below 0, a
   CPU ceiling past 1 or not a number, `-max-overdue` without `-overdue`, no
   ceiling at all, or an interval, timeout or miss count that is not

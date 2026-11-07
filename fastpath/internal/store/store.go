@@ -62,6 +62,9 @@ type Store struct {
 	leased leasedInserts
 	// found is the leases FindLease found, by ID (lease.go).
 	found foundLeases
+	// armChecked, nil but in a test, is called in Arm's transaction once
+	// its check has read the tables (hold.go).
+	armChecked func()
 }
 
 // New returns a store of the database client reads and writes.
