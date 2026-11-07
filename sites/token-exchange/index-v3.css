@@ -106,7 +106,7 @@ body[data-nyte-page="index"]{background:var(--ink)}
 .ti3 .ti3-note a{color:var(--ink);text-decoration:underline;text-decoration-thickness:1.5px;text-underline-offset:4px}
 
 /* Operators: sky field, copy left. The canvas's photo slot is left out until there is a real photo. */
-.ti3 .ti3-supply{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;padding:0 0 0 64px;border:0;background:var(--sky);color:var(--ink)}
+.ti3 .ti3-supply{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;padding:0 max(64px,calc((100% - 1312px)/2));border:0;background:var(--sky);color:var(--ink)}
 .ti3 .ti3-supply-copy{grid-column:span 8;padding:128px 0}
 .ti3 .ti3-supply .ti3-bar{background:var(--ink)}
 .ti3 .ti3-supply h2{margin-bottom:32px}
