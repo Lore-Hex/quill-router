@@ -8,6 +8,15 @@
   const services = root.querySelector('[data-live-services]');
   const attestation = root.querySelector('[data-live-attestation]');
   const caption = root.querySelector('[data-live-caption]');
+  // v3: one 'Last checked' line under both columns (the oldest check shown).
+  const checked = root.parentElement?.querySelector('[data-live-checked]');
+  const setChecked = value => {
+    if (!checked) return;
+    const shown = checked.dataset.at;
+    if (value && (!shown || Date.parse(value) < Date.parse(shown))) checked.dataset.at = value;
+    checked.hidden = !checked.dataset.at;
+    if (checked.dataset.at) checked.textContent = lastCheck(checked.dataset.at);
+  };
   // The brand v3 Confidential page asks for labelled rows and uptime figures; other pages keep the original output.
   const v3 = root.dataset.evidenceStyle === 'v3';
   const statusCaption = caption?.textContent;
@@ -46,6 +55,7 @@
     services.replaceChildren();
     if (caption) caption.textContent = statusCaption;
     if (priceUnit) priceUnit.hidden = true;
+    if (checked) { delete checked.dataset.at; checked.hidden = true; }
     attestation.replaceChildren();
   };
   const presentable = c => c && typeof c.id === 'string' && typeof c.name === 'string'
@@ -95,6 +105,7 @@
         : `USD / 1M tokens · input / output · ${lastCheck(payload.generated_at)}`;
     }
     if (!prices.childElementCount) prices.append(link('Browse Tinfoil model routes', 'https://trustedrouter.com/models?filter=e2e'));
+    if (checked) { delete checked.dataset.at; checked.hidden = true; }
     services.replaceChildren();
     const components = Array.isArray(payload.components) ? payload.components : [];
     // A landing page is not an incident dashboard. If any source is unhealthy
@@ -109,7 +120,7 @@
     if (v3 && showServices) {
       // One line for the set: the oldest check, so no row looks fresher than it is.
       const oldest = components.reduce((a, c) => (Date.parse(c.last_checked_at) < Date.parse(a) ? c.last_checked_at : a), components[0].last_checked_at);
-      services.append(node('p', lastCheck(oldest), 'last-check'));
+      if (checked) setChecked(oldest); else services.append(node('p', lastCheck(oldest), 'last-check'));
     }
     for (const c of !v3 && showServices ? components : []) {
       const row = node('div', undefined, 'service-history');
@@ -149,10 +160,10 @@
         item.append(node('dt', key), dd);
         rows.append(item);
       };
-      row('Published build digest', node('code', release.image_digest, 'build-digest'));
-      if (typeof release.source_commit === 'string') row('Published source', release.source_commit.slice(0, 8));
-      row('Location', 'Not proven by attestation', 'att-unproven');
-      row('Last checked', checkedAt(check.last_checked_at));
+      row('Matches published build', node('code', release.image_digest, 'build-digest'));
+      if (typeof release.source_commit === 'string') row('Source code version', release.source_commit.slice(0, 8));
+      row('Data centre', 'Not proven by attestation', 'att-unproven');
+      if (checked) setChecked(check.last_checked_at); else row('Last checked', checkedAt(check.last_checked_at));
       attestation.append(rows);
       return;
     }

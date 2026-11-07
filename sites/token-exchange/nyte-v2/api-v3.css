@@ -34,6 +34,8 @@
 
 /* Live evidence: Ink section, attestation rows left, uptime figures right. */
 .v3-evidence{background:var(--ink);color:var(--cream);padding:112px 0}
+.v3-evidence .ev-intro{margin:0 0 48px;max-width:640px;font-size:22px;line-height:1.45;font-weight:450;color:var(--cream)}
+.v3-evidence .last-check.ev-checked{margin-top:28px}
 .v3-evidence .ev{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;align-items:start;min-width:0;background:transparent;border:0}
 .v3-evidence .ev-sec{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"h link" "rows rows";align-items:baseline;column-gap:16px;padding:0;border:0}
 .v3-evidence .ev-sec:first-child{grid-column:span 6}
@@ -46,7 +48,7 @@
 .v3-evidence .ev [data-live-attestation]>*{margin:16px 0 0}
 .att-rows{border-top:2.5px solid var(--cream)}
 .att-row{display:grid;grid-template-columns:200px minmax(0,1fr);gap:16px;padding:16px 0;border-bottom:1.5px solid var(--dark-rule)}
-.att-row dt{font:500 15px/1.4 var(--font-condensed);letter-spacing:.1em;text-transform:uppercase;color:var(--ink-2-dark)}
+.att-row dt{font:450 17px/1.4 var(--font-sans);color:var(--cream)}
 .att-row dd{margin:0;font:400 15px/1.5 var(--font-mono);color:var(--cream);overflow-wrap:anywhere}
 .att-row .build-digest{font:inherit}
 .att-row.att-unproven dd{color:var(--yellow)}
