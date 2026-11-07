@@ -56,9 +56,11 @@ class System1Catalog:
         self.rows: dict[str, dict[str, Any]] = {}
 
     def canonical_model_id(self, native_id: str) -> str | None:
+        # Dotted versions are native IDs too (reax-1.2, reax-1.3 from 2026-11):
+        # rejecting one rejected the whole catalog and froze both manifests.
         return (
             f"{self.slug}/{native_id}"
-            if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", native_id)
+            if re.fullmatch(r"[a-z0-9]+(?:[.-][a-z0-9]+)*", native_id)
             else None
         )
 
