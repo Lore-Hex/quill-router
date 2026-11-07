@@ -167,6 +167,25 @@ locals {
   # the decide attribute's did, and the pin must take -fleet-audit
   # (docs/runbooks/fastpath-deploy.md, "A flag the unit passes").
   fastpath_fleet_audit = false
+  # The money settings (docs/design/fast-admission-widening.md (b), WS0 of
+  # section 8.2): a lease needs effective trust tier 3, a workspace's
+  # allowance is $1,000 and a lease leaves at least $20 of the balance, in
+  # microdollars. The startup script passes each as -required-tier,
+  # -allowance and -floor (8af87998a, the pin, takes all three). A reset
+  # alone keeps the unit's old arguments: each node takes them one at a
+  # time, the other serving, by runbook fastpath-deploy.md's money settings
+  # step 5 (leaving, its leases and the balancer drained, the unit stopped,
+  # the startup script run again, the process's arguments read back), and
+  # WS0's gate counts from the last node's restart. Every pilot workspace
+  # passed fastpathctl ready at these values before this change but the
+  # customer's, whose switch is off, so it takes today's path and cannot be
+  # refused at the tier. Step 4: over the leases kept (seven days), the
+  # largest lease under $4 and the lease spend far under a quarter of the
+  # allowance; a lease tops up at most $10. Rollback: remove the three
+  # and take each node the same way, which restores the release's defaults.
+  fastpath_required_tier = "3"
+  fastpath_allowance     = "1000000000"
+  fastpath_floor         = "20000000"
 }
 
 # --- The topics and the auditor's subscriptions ---------------------------
@@ -452,6 +471,9 @@ resource "google_compute_instance" "fastpath_node" {
     fastpath-edge-upstream     = local.fastpath_edge_upstream
     fastpath-edge-token-secret = local.fastpath_edge_token_secret
     fastpath-fleet-audit       = local.fastpath_fleet_audit ? "true" : "false"
+    fastpath-required-tier     = local.fastpath_required_tier
+    fastpath-allowance         = local.fastpath_allowance
+    fastpath-floor             = local.fastpath_floor
   }, local.fastpath_edge_snapshot)
 
   metadata_startup_script = templatefile("${path.module}/fastpath_node_startup.sh.tftpl", {
