@@ -304,9 +304,10 @@ jobs:
         # Repeat with --profile post-cutover; review both profiles before commit.
         # Nov 6: with coverage on sys.monitoring (#2368), twelve shards took
         # 7 to 12 minutes each over five green main runs, the steps before
-        # pytest about 50 seconds of that. Eight (about 10 to 17) stay under
-        # the proof oracle's longest shard (26 to 28 minutes), with four
-        # fewer jobs in the organization's queue.
+        # pytest about 50 seconds of that. Eight took 8 to 14 minutes each on
+        # #2377's pull request run, under the proof oracle's longest shard
+        # (26 to 28 minutes), with four fewer jobs in the organization's
+        # queue and 91 runner-minutes against 104 to 121.
         shard: [1, 2, 3, 4, 5, 6, 7, 8]
     runs-on: ubuntu-24.04
     env:

@@ -134,8 +134,9 @@ a pull request can merge with it red, and main's push runs no longer show it.
 main learns of it from the next price refresh that runs the full matrix,
 whose publication it then holds, or from the daily run, the one run on main
 sure to check it. With coverage cheaper, the default suite runs in eight
-shards instead of twelve, still inside that longest shard, with four fewer
-jobs in the queue.
+shards instead of twelve. On #2377's run they took 8 to 14 minutes each,
+still inside that longest shard, with four fewer jobs in the queue and 91
+runner-minutes against 104 to 121.
 
 ## Validation and measurement
 
