@@ -11,3 +11,9 @@ boto3>=1.35.0
 # requirement rather than a package dependency.
 azure-storage-blob>=12.31.0
 azure-identity>=1.26.0
+# Security floors for transitive dependencies (msal/google-auth pull these in).
+# Without them a fresh node resolve can land on versions with open advisories
+# (2026-10-31 OSV triage: pyjwt 2.9.0, certifi 2026.7.22). Keep in step with
+# the versions in uv.lock.
+PyJWT>=2.15.1
+certifi>=2026.10.23
