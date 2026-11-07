@@ -184,27 +184,45 @@ def test_error_envelopes_real_http(env, monkeypatch, case):
     assert error_envelope(env, monkeypatch, case) == expected['cases'][case]
 
 
+@pytest.mark.parametrize('spend', ['entry', 'handoff'])
 @pytest.mark.parametrize('mode', ['async-v1', 'sync'])
-def test_the_route_deadline_answers_the_storage_503(env, monkeypatch, mode):
-    """A request that outlives the route's anyio.fail_after(2) answers the
-    storage 503 before the handler runs, and writes nothing.
+def test_the_route_deadline_answers_the_storage_503(env, monkeypatch, mode, spend):
+    """A request whose route deadline passes before the handler's thread starts
+    answers the storage 503 without running the handler, and writes nothing.
 
-    conftest lifts that deadline so runner load cannot spend it; this test
-    spends it from the start. It ends after the gateway timing scope has
-    closed, so the envelope is the storage 503's error without the timing the
+    The route bounds async-v1 and sync requests with anyio.fail_after(2). The
+    handler's thread runs shielded, so a deadline that passes once it has
+    started cannot end the request. conftest lifts the deadline so runner load
+    cannot spend it; this test spends it at the route's entry and at the
+    handoff to the thread. It ends after the gateway timing scope has closed,
+    so the envelope is the storage 503's error without the timing the
     handler's errors carry.
     """
+    import contextlib
+
     import anyio
 
     from trusted_router.routes import settlements
 
-    delays = []
+    delays, scopes = [], []
 
-    def spent(delay, shield=False):
+    @contextlib.contextmanager
+    def deadline(delay, shield=False):
         delays.append(delay)
-        return anyio.fail_after(0, shield)
+        with anyio.fail_after(0 if spend == 'entry' else delay, shield) as scope:
+            scopes.append(scope)
+            yield scope
 
-    monkeypatch.setattr(settlements, 'anyio', SimpleNamespace(fail_after=spent))
+    monkeypatch.setattr(settlements, 'anyio', SimpleNamespace(fail_after=deadline))
+    if spend == 'handoff':
+        to_thread = settlements.run_in_threadpool
+
+        async def spent_at_handoff(*args, **kwargs):
+            # After the auth check and the body read, before the handler's thread.
+            scopes[0].deadline = anyio.current_time()
+            return await to_thread(*args, **kwargs)
+
+        monkeypatch.setattr(settlements, 'run_in_threadpool', spent_at_handoff)
     storage = json.loads((ROOT/'error_envelopes_v1.json').read_text())['cases']['storage_unavailable']
     error = json.loads(storage['body_exact'])['error']
     body, _, _ = prepare(env)
