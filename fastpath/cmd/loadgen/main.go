@@ -95,6 +95,9 @@ func run(args []string, out io.Writer, ready readiness) error {
 	echoGranted := fs.Bool("echo-granted", false,
 		"each heartbeat after a stream's first has the owner take the deadline it last granted as the echo, "+
 			"as the control plane relays them; needs owners and front doors that take the field")
+	ceilingPermill := fs.Int64("ceiling-permill", 0,
+		"each stream's spend ceiling, in thousandths of its hold, at least 1000: sent beside the hold when above it, "+
+			"and its running charge runs to it; needs owners that record a stream's ceiling. 0 sends none")
 	heartbeatWait := fs.Duration("heartbeat-wait", 5*time.Second, "how long a heartbeat's attempts may take, together")
 	boot := fs.String("boot", "spike-boot", "the boot binding every request carries")
 	enclaves := fs.Int("enclaves", 8, "how many enclaves the load spreads over, each with its retry queue's one worker")
@@ -124,7 +127,8 @@ func run(args []string, out io.Writer, ready readiness) error {
 	}
 	client := &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: 1024}}
 	cfg := loadgen.Config{Rate: *rate, Duration: *duration, MaxInFlight: *inFlight, Mix: mix,
-		HeartbeatEvery: *heartbeat, OpenHeartbeat: *openHeartbeat, EchoGranted: *echoGranted, HeartbeatWait: *heartbeatWait,
+		HeartbeatEvery: *heartbeat, OpenHeartbeat: *openHeartbeat, EchoGranted: *echoGranted,
+		CeilingPermill: *ceilingPermill, HeartbeatWait: *heartbeatWait,
 		Boot: []byte(*boot), Enclaves: *enclaves, RetryQueue: *retryQueue, CallWait: *callWait, Seed: *seed}
 	for _, d := range strings.Split(*retryDelays, ",") {
 		if d = strings.TrimSpace(d); d == "" {

@@ -8,8 +8,10 @@ package owner
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -431,7 +433,9 @@ func TestAStreamsCeilingIsKeptAndRaisesNothingYet(t *testing.T) {
 // ceiling above its hold has its ceiling on its heartbeat records, its hold
 // in a hand-off and its reap record, each of which an auditor reads as the
 // bound on the running charge; a stream without one, and every record with
-// RecordCeiling off, carries none. The heartbeat's bound stays the hold.
+// RecordCeiling off, carries none. A heartbeat past the bound its records
+// state, the ceiling with RecordCeiling on and the hold with it off, is
+// refused (PR 3).
 func TestRecordCeilingWritesAStreamsCeiling(t *testing.T) {
 	ctx := context.Background()
 	ceilings := func(rs []record.Record) map[string]int64 {
@@ -463,9 +467,13 @@ func TestRecordCeilingWritesAStreamsCeiling(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
+		past := int64(501)
+		if on {
+			past = 801
+		}
 		if _, err := f.lease.Heartbeat(ctx, ceiled, HeartbeatOf{GatewaySeq: 2, Hash: sum("h2"), Usage: 11,
-			Running: 501, Echoed: granted}); !errors.Is(err, ErrRejected) {
-			t.Fatalf("RecordCeiling %v: a running charge past the hold: %v, want %v", on, err, ErrRejected)
+			Running: past, Echoed: granted}); !errors.Is(err, ErrRejected) {
+			t.Fatalf("RecordCeiling %v: a running charge of %d: %v, want %v", on, past, err, ErrRejected)
 		}
 		f.clock.advance(granted.Add(time.Minute).Sub(start))
 		renewAndReap(t, f)
@@ -502,5 +510,272 @@ func TestRecordCeilingWritesAStreamsCeiling(t *testing.T) {
 		if got := ceilings(g.log.records(t, "lease-2")); fmt.Sprint(got) != fmt.Sprint(want) {
 			t.Fatalf("RecordCeiling %v: the hand-off's ceilings %v, want %v", on, got, want)
 		}
+	}
+}
+
+// TestAStreamRunsToItsCeiling (docs/design/fast-admission-streams.md section
+// 12.4, PR 3): with RecordCeiling on, a stream held at r = 500 with a
+// ceiling e = 800 has a running charge between r and e taken, and at e, each
+// recorded with the ceiling beside the hold, while the lease holds r alone;
+// one above e is refused, and records nothing.
+func TestAStreamRunsToItsCeiling(t *testing.T) {
+	ctx := context.Background()
+	f, _, _ := adoptFixture(t, func(c *Config) { c.RecordCeiling = true })
+	got, err := f.lease.Admit(Admission{Estimate: 500, Stream: true, Boot: boot, Ceiling: 800})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := got.Auth
+	granted, err := f.lease.Heartbeat(ctx, a, HeartbeatOf{GatewaySeq: 1, Hash: sum("h1"), Usage: 10, Running: 90,
+		Basis: []byte("terms")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, running := range []int64{650, 800} {
+		seq := int64(i + 2)
+		if granted, err = f.lease.Heartbeat(ctx, a, HeartbeatOf{GatewaySeq: seq, Hash: sum(fmt.Sprint("h", seq)),
+			Usage: 10 * seq, Running: running, Echoed: granted}); err != nil {
+			t.Fatalf("a running charge of %d against a hold of 500 and a ceiling of 800: %v", running, err)
+		}
+	}
+	if _, err := f.lease.Heartbeat(ctx, a, HeartbeatOf{GatewaySeq: 4, Hash: sum("h4"), Usage: 40, Running: 801,
+		Echoed: granted}); !errors.Is(err, ErrRejected) {
+		t.Fatalf("a running charge past the ceiling: %v, want %v", err, ErrRejected)
+	}
+	if b := f.lease.Books(); b.Held != 500 || b.Free() != 500 {
+		t.Fatalf("a stream run past its hold: %+v, want the hold's 500 held and 500 free", b)
+	}
+	var running []int64
+	for _, r := range f.log.records(t, "lease-1") {
+		if r.Kind != record.Heartbeat {
+			continue
+		}
+		if r.Auth != a || r.Estimate != 500 || r.Ceiling != 800 {
+			t.Fatalf("a heartbeat record %+v, want the hold of 500 and the ceiling of 800", r)
+		}
+		running = append(running, r.Snapshot.Running)
+	}
+	if fmt.Sprint(running) != "[90 650 800]" {
+		t.Fatalf("the running charges recorded %v, want [90 650 800]", running)
+	}
+	// A hand-off carries the hold at its last snapshot, past the hold, with
+	// the ceiling that bounds it.
+	if _, err := f.lease.handoff(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var held []record.HeldHold
+	for _, r := range f.log.records(t, "lease-1") {
+		if r.Kind == record.Handoff {
+			held = append(held, r.Holds...)
+		}
+	}
+	if len(held) != 1 || held[0].Auth != a || held[0].Estimate != 500 || held[0].Ceiling != 800 ||
+		held[0].Snapshot == nil || held[0].Snapshot.Running != 800 {
+		t.Fatalf("the hand-off's holds %+v, want the stream at 800 with its ceiling of 800", held)
+	}
+}
+
+// TestASettlePastTheHoldOfACeilingedStream (section 12.4, PR 3): with
+// RecordCeiling on, a stream held at 500 with a ceiling of 800, heartbeated
+// past its hold, settles 650 and wins. Its settle record carries no ceiling,
+// which only a heartbeat or a reap may, and the settle frees nothing of the
+// hold, before its record is acknowledged or after: the 150 past the hold
+// comes from the lease's free room.
+func TestASettlePastTheHoldOfACeilingedStream(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, 1000, nil, func(c *Config) { c.RecordCeiling = true })
+	got, err := f.lease.Admit(Admission{Estimate: 500, Stream: true, Boot: boot, Ceiling: 800})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := got.Auth
+	if _, err := f.lease.Heartbeat(ctx, a, HeartbeatOf{GatewaySeq: 1, Hash: sum("h1"), Usage: 60, Running: 600,
+		Basis: []byte("terms")}); err != nil {
+		t.Fatal(err)
+	}
+	f.log.hold()
+	done := make(chan Outcome, 1)
+	go func() {
+		out, err := f.lease.Settle(ctx, a, 650, sum("d1"))
+		if err != nil {
+			t.Error(err)
+		}
+		done <- out
+	}()
+	waitFor(t, "the settle's record", func() bool { return len(f.log.records(t, "lease-1")) == 2 })
+	if b := f.lease.Books(); b.Held != 0 || b.Consumed != 650 || b.Pending != 0 || b.Free() != 350 ||
+		b.Shortfall != 0 {
+		f.log.letGo()
+		<-done
+		t.Fatalf("the books before the settle's acknowledgement %+v, want 650 consumed, nothing pending and "+
+			"350 free", b)
+	}
+	f.log.letGo()
+	if out := <-done; out != (Outcome{Kind: record.Settle, Charge: 650}) {
+		t.Fatalf("the settle: %+v", out)
+	}
+	if b := f.lease.Books(); b.Pending != 0 || b.Free() != 350 {
+		t.Fatalf("the books once acknowledged %+v", b)
+	}
+	r := lastTerminal(t, f)
+	if r.Kind != record.Settle || r.Auth != a || r.Charge != 650 || r.Estimate != 500 || r.Ceiling != 0 ||
+		r.Shortfall != 0 {
+		t.Fatalf("the settle record %+v, want a charge of 650 against a hold of 500 and no ceiling", r)
+	}
+}
+
+// TestAnOwnersReapPastTheHoldRaisesTheShortfallByTheLack (section 12.4, PR
+// 3): a stream held at 500 with a ceiling of 800, last heartbeated at 750, is
+// reaped by its owner at 750, its reap record and its full record stating
+// the ceiling. The 250 past the hold comes first from the lease's free room;
+// what that lacks, and only that, joins the shortfall total and the
+// allocation, which the shortfall writer stores: 150 with 100 free, nothing
+// with 500 free. The reap frees nothing of the hold, before its record is
+// acknowledged or after: 0 free with 100 free before, 250 with 500.
+func TestAnOwnersReapPastTheHoldRaisesTheShortfallByTheLack(t *testing.T) {
+	ctx := context.Background()
+	for _, c := range []struct {
+		other     int64 // another hold on the lease, never heartbeated
+		shortfall int64
+		free      int64 // the lease's free room once reaped
+	}{{400, 150, 0}, {0, 0, 250}} {
+		f, sp, rec := adoptFixture(t, func(c *Config) { c.RecordCeiling = true })
+		got, err := f.lease.Admit(Admission{Estimate: 500, Stream: true, Boot: boot, Ceiling: 800})
+		if err != nil {
+			t.Fatal(err)
+		}
+		a := got.Auth
+		if c.other > 0 {
+			f.admit(t, c.other, false)
+		}
+		granted, err := f.lease.Heartbeat(ctx, a, HeartbeatOf{GatewaySeq: 1, Hash: sum("h1"), Usage: 75,
+			Running: 750, Basis: []byte("terms")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.clock.advance(granted.Add(time.Minute).Sub(start))
+		renew(t, f)
+		// The reap's record waits for its acknowledgement.
+		f.log.hold()
+		if err := f.owner.Reap(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if b := f.lease.Books(); b.Pending != 0 || b.Free() != c.free {
+			f.log.letGo()
+			t.Fatalf("another hold of %d: the books before the reap's acknowledgement %+v, want nothing pending "+
+				"and %d free", c.other, b, c.free)
+		}
+		f.log.letGo()
+		r := lastTerminal(t, f)
+		if r.Kind != record.Reap || r.Auth != a || r.Charge != 750 || r.Estimate != 500 || r.Ceiling != 800 ||
+			r.Shortfall != c.shortfall {
+			t.Fatalf("another hold of %d: the reap record %+v, want a charge of 750 at a ceiling of 800 and a "+
+				"shortfall of %d", c.other, r, c.shortfall)
+		}
+		var b Books
+		waitFor(t, "the reap's acknowledgement", func() bool {
+			b = f.lease.Books()
+			return b.Pending == 0 && b.Free() == c.free
+		})
+		if b.Shortfall != c.shortfall || b.Allocation != 1000+c.shortfall || b.Consumed != 750 || b.Held != c.other {
+			t.Fatalf("another hold of %d: the books after the reap %+v", c.other, b)
+		}
+		if c.shortfall > 0 {
+			waitFor(t, "the shortfall's write", func() bool {
+				_, _, landed, _ := sp.state()
+				return len(landed) > 0 && landed[len(landed)-1] == c.shortfall
+			})
+		}
+		_, data := rec.published()
+		var full dueReap
+		if len(data) != 1 || json.Unmarshal(data[0], &full) != nil || full.Charge != 750 || full.Estimate != 500 ||
+			full.Ceiling != 800 || !bytes.Equal(sum(string(data[0])), r.Digest) {
+			t.Fatalf("another hold of %d: the reap's full records %q", c.other, data)
+		}
+	}
+}
+
+// TestRecordCeilingOffWritesTheRecordsOfPR1 (section 12.4, PR 3): with
+// RecordCeiling off, a stream admitted with a ceiling writes byte for byte
+// the heartbeat, reap, full reap and hand-off records it writes admitted
+// without one, as PR 1's owner did, and a running charge past its hold is
+// refused. With RecordCeiling on, as the service's defaults now have it, a
+// stream with no ceiling writes those same bytes too, so no record changes
+// until a gateway sends a ceiling (PR 4).
+func TestRecordCeilingOffWritesTheRecordsOfPR1(t *testing.T) {
+	ctx := context.Background()
+	run := func(on bool, ceiling int64) []byte {
+		t.Helper()
+		f, _, rec := adoptFixture(t, func(c *Config) { c.RecordCeiling = on })
+		got, err := f.lease.Admit(Admission{Estimate: 500, Stream: true, Boot: boot, Ceiling: ceiling})
+		if err != nil {
+			t.Fatal(err)
+		}
+		a := got.Auth
+		granted, err := f.lease.Heartbeat(ctx, a, HeartbeatOf{GatewaySeq: 1, Hash: sum("h1"), Usage: 10,
+			Running: 90, Basis: []byte("terms")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if granted, err = f.lease.Heartbeat(ctx, a, HeartbeatOf{GatewaySeq: 2, Hash: sum("h2"), Usage: 50,
+			Running: 500, Echoed: granted}); err != nil {
+			t.Fatal(err)
+		}
+		_, err = f.lease.Heartbeat(ctx, a, HeartbeatOf{GatewaySeq: 3, Hash: sum("h3"), Usage: 51, Running: 501,
+			Echoed: granted})
+		if past := errors.Is(err, ErrRejected); past != (!on || ceiling == 0) {
+			t.Fatalf("RecordCeiling %v, a ceiling of %d: a running charge past the hold: %v", on, ceiling, err)
+		}
+		f.clock.advance(granted.Add(time.Minute).Sub(start))
+		renewAndReap(t, f)
+
+		g := newFixture(t, 1000, nil, func(c *Config) { c.Grace, c.RecordCeiling = time.Minute, on })
+		l, err := g.owner.Take("lease-2", "ws-1", 1000, start.Add(3*time.Hour))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err = l.Admit(Admission{Estimate: 500, Stream: true, Boot: boot, Ceiling: ceiling})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := l.Heartbeat(ctx, got.Auth, HeartbeatOf{GatewaySeq: 1, Hash: sum("s1"), Usage: 1, Running: 1,
+			Basis: []byte("t")}); err != nil {
+			t.Fatal(err)
+		}
+		admitOn(t, l, 100, true)
+		if _, err := l.handoff(ctx); err != nil {
+			t.Fatal(err)
+		}
+		_, full := rec.published()
+		handedOff := slices.ContainsFunc(g.log.records(t, "lease-2"), func(r record.Record) bool {
+			return r.Kind == record.Handoff && len(r.Holds) == 2
+		})
+		if r := lastTerminal(t, f); r.Kind != record.Reap || len(full) != 1 || !handedOff {
+			t.Fatalf("RecordCeiling %v, a ceiling of %d: the reap %+v, %d full records, a hand-off %v", on,
+				ceiling, r, len(full), handedOff)
+		}
+		f.log.mu.Lock()
+		g.log.mu.Lock()
+		defer f.log.mu.Unlock()
+		defer g.log.mu.Unlock()
+		var all [][]byte
+		for _, rs := range [][][]byte{f.log.stored["lease-1"], full, g.log.stored["lease-2"]} {
+			all = append(all, rs...)
+			all = append(all, []byte("--"))
+		}
+		return bytes.Join(all, []byte("\n"))
+	}
+	pr1 := run(false, 0)
+	for _, c := range []struct {
+		on      bool
+		ceiling int64
+	}{{false, 800}, {true, 0}} {
+		if got := run(c.on, c.ceiling); !bytes.Equal(got, pr1) {
+			t.Fatalf("RecordCeiling %v, a ceiling of %d: the records\n%s\nwant\n%s", c.on, c.ceiling, got, pr1)
+		}
+	}
+	// The comparison sees a ceiling where one is stated.
+	if bytes.Equal(run(true, 800), pr1) {
+		t.Fatal("RecordCeiling on with a ceiling of 800 wrote the records of a stream without one")
 	}
 }

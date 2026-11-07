@@ -175,15 +175,25 @@ before it reaps a stream's hold itself; only an auditor that drains a lease
 reaps at the heartbeat's deadline plus the grace.
 The third is a stream's ceiling (`record.Record.Ceiling`, written `ceil`,
 docs/design/fast-admission-streams.md section 12.4): the release that reads
-it leaves the owner's `RecordCeiling` off, and its auditors keep the
+it (PR 2, #2355) leaves the owner's `RecordCeiling` off, and its auditors keep the
 ceiling in `tr_lease_hold.ceiling`, so `scripts/deploy/migrate_fastpath.sh`
 gives the table that column before any auditor or owner of that release
 is deployed. Before pinning that release, find `tr_lease_hold.ceiling:
 added` or `tr_lease_hold.ceiling: already present` in the migration step
 of a successful control-plane deploy at or after its merge: an auditor of
 that release on a database without the column stops committing and
-reaping until the column is there. The release after it, pinned as above,
-turns `RecordCeiling` on.
+reaping until the column is there. The release after it (PR 3), pinned as
+above, turns `RecordCeiling` on in the service's defaults: a stream
+admitted with a ceiling then has its heartbeats run past its hold to the
+ceiling, and its heartbeat, hand-off and reap records carry `ceil`. No
+gateway sends a ceiling until PR 4's setting `fastpath_stream_ceiling`
+moves, so until then that release writes the same records as the one
+before it. Once a record may carry `ceil`, no auditor goes below PR 2's
+release until every such record is applied (each lease's commit version is
+past it, or the lease is closed), and while a hold may have a ceiling an
+owner below PR 3's cuts its stream at the hold, refused rather than
+overcharged (docs/design/fast-admission-streams.md section 12.4,
+"Rollback").
 
 The holds' tables are the same kind of gate, for the stops rather than
 the auditors: a release carrying holds is pinned, and its `fastpathctl`

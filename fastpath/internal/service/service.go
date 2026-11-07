@@ -176,7 +176,14 @@ func Defaults() Config {
 			// (docs/runbooks/fastpath-deploy.md, "A record field the
 			// auditors must read first"; this release is pinned only once
 			// every member runs increment 2's).
-			RecordReapFloor: true},
+			RecordReapFloor: true,
+			// The stream ceiling's PR 3: every member reads a record's
+			// ceiling since PR 2 (#2355), so a stream admitted with one
+			// runs to it and its records state it
+			// (docs/design/fast-admission-streams.md section 12.4; pinned
+			// as RecordReapFloor was). No gateway sends a ceiling until
+			// PR 4, so no hold has one until then.
+			RecordCeiling: true},
 		// The control plane gives a call to a front door 1.5 s
 		// (fastpath_front_door_timeout_seconds), the connection's 0.25 s
 		// included, so the front door answers within 1.2 s, in which a

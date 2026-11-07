@@ -309,6 +309,14 @@ type Config struct {
 	// instead of echoing the deadline itself. It needs owners and front
 	// doors that take the field.
 	EchoGranted bool
+	// CeilingPermill, when set, gives each stream a spend ceiling of that
+	// many thousandths of its hold, at least a thousand, sent beside the hold
+	// when above it (docs/design/fast-admission-streams.md section 12), and
+	// its heartbeats' running charge runs to that ceiling instead of the
+	// hold, as a stream whose budget passes its reservation does. It needs
+	// owners and front doors that take the field, and owners with
+	// RecordCeiling for a running charge past the hold.
+	CeilingPermill int64
 	// HeartbeatWait bounds a heartbeat's attempts together, as the enclave's
 	// 5 seconds do: three at most, the later two after a Retry or a call
 	// that failed (§4.5).
@@ -357,7 +365,28 @@ func (c Config) valid() error {
 			"in flight, workspaces, a heartbeat interval and wait, a boot binding, enclaves, retry delays not " +
 			"negative, room in the retry queue and a call wait")
 	}
-	return c.Mix.valid()
+	if err := c.Mix.valid(); err != nil {
+		return err
+	}
+	if c.CeilingPermill != 0 {
+		if _, ok := mulDiv(largest(c.Mix.Estimates), c.CeilingPermill, 1000); c.CeilingPermill < 1000 || !ok {
+			return errors.New("loadgen: a stream's ceiling is at least its hold, a thousand thousandths of it, " +
+				"and the mix's largest estimate's ceiling fits an int64")
+		}
+	}
+	return nil
+}
+
+// ceiling is a stream's spend ceiling for a hold of estimate
+// (Config.CeilingPermill): above the hold, or zero for none.
+func (c Config) ceiling(estimate int64) int64 {
+	if c.CeilingPermill == 0 {
+		return 0
+	}
+	if e, _ := mulDiv(estimate, c.CeilingPermill, 1000); e > estimate {
+		return e
+	}
+	return 0
 }
 
 // Generation is one generation's record.
@@ -374,8 +403,11 @@ type Generation struct {
 	Stream     bool   `json:"stream"`
 	// OpenHeartbeat is whether its authorize declared the stream-open
 	// heartbeat (Config.OpenHeartbeat), which only a stream does.
-	OpenHeartbeat bool   `json:"open_heartbeat,omitempty"`
-	Heartbeats    []Beat `json:"heartbeats,omitempty"`
+	OpenHeartbeat bool `json:"open_heartbeat,omitempty"`
+	// Ceiling is the spend ceiling its authorize sent beside the hold
+	// (Config.CeilingPermill), which only a stream has.
+	Ceiling    int64  `json:"ceiling,omitempty"`
+	Heartbeats []Beat `json:"heartbeats,omitempty"`
 	// Streamed is how a stream ended: "complete"; "stopped" at a heartbeat
 	// after the first that was not accepted, which settles what was
 	// delivered; "refused" at a first heartbeat not accepted, which sends
@@ -565,8 +597,11 @@ func (r *run) generation(ctx context.Context, n int64) {
 	actx, cancel := context.WithTimeout(ctx, cfg.CallWait)
 	began := time.Now()
 	g.OpenHeartbeat = g.Stream && cfg.OpenHeartbeat
+	if g.Stream {
+		g.Ceiling = cfg.ceiling(estimate)
+	}
 	got, err := p.gateway().Authorize(actx, frontdoor.AuthorizeOf{Workspace: g.Workspace, Request: g.Request,
-		Estimate: estimate, Stream: g.Stream, Boot: cfg.Boot, OpenHeartbeat: g.OpenHeartbeat})
+		Estimate: estimate, Stream: g.Stream, Boot: cfg.Boot, OpenHeartbeat: g.OpenHeartbeat, Ceiling: g.Ceiling})
 	cancel()
 	if err != nil {
 		g.Authorized = "error"
@@ -597,7 +632,8 @@ func (r *run) generation(ctx context.Context, n int64) {
 	}
 	if g.Stream {
 		var delivered int64
-		g.Streamed, delivered = p.stream(ctx, &g, got.Envelope, estimate, bill, r.streams.pick(rng))
+		g.Streamed, delivered = p.stream(ctx, &g, got.Envelope, estimate, max(g.Ceiling, estimate), bill,
+			r.streams.pick(rng))
 		r.count("stream " + g.Streamed)
 		switch g.Streamed {
 		case "refused", "cancelled":
@@ -618,14 +654,15 @@ func (r *run) generation(ctx context.Context, n int64) {
 // stream heartbeats beats times, the seq-th HeartbeatEvery × seq after the
 // stream began, or HeartbeatEvery × (seq-1) with the stream-open heartbeat
 // declared, each with its sequence, a hash of its snapshot, the usage and
-// running charge so far within the hold, and the deadline the last one
-// granted; the first carries the reap's basis. A declared stream's first
-// heartbeat, sent as it opens, before its provider answers, reports nothing
-// delivered, and its later ones deliver the bill. It reports how the stream
-// ended, and the charge it delivered: at a heartbeat not accepted, what that
-// heartbeat reports, past the hold if the bill is.
-func (p *played) stream(ctx context.Context, g *Generation, envelope string, estimate, bill, beats int64) (string,
-	int64) {
+// running charge so far within bound, the stream's ceiling or else its hold,
+// and the deadline the last one granted; the first carries the reap's
+// basis. A declared stream's first heartbeat, sent as it opens, before its
+// provider answers, reports nothing delivered, and its later ones deliver
+// the bill. It reports how the stream ended, and the charge it delivered: at
+// a heartbeat not accepted, what that heartbeat reports, past the bound if
+// the bill is.
+func (p *played) stream(ctx context.Context, g *Generation, envelope string, estimate, bound, bill,
+	beats int64) (string, int64) {
 	cfg := p.r.cfg
 	began := time.Now()
 	var echoed time.Time
@@ -655,7 +692,7 @@ func (p *played) stream(ctx context.Context, g *Generation, envelope string, est
 		}
 		snapshot := sha256.Sum256([]byte(g.Request + "/" + strconv.FormatInt(seq, 10)))
 		hb := frontdoor.HeartbeatOf{Envelope: envelope, GatewaySeq: seq, Hash: snapshot[:], Usage: 10 * paid,
-			Running: min(delivered, estimate), Echoed: echoed}
+			Running: min(delivered, bound), Echoed: echoed}
 		if cfg.EchoGranted && seq > 1 {
 			// The owner takes the deadline it last granted as the echo.
 			hb.Echoed, hb.EchoGranted = time.Time{}, true

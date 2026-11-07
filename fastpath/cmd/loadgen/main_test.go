@@ -149,6 +149,65 @@ func TestTheOpenHeartbeatFlagDeclaresStreams(t *testing.T) {
 	}
 }
 
+// TestTheCeilingFlagSendsAStreamsCeiling: with -ceiling-permill 1500, each
+// stream's authorize sends a ceiling of half again its hold of 100; without
+// it, none does; and one below the hold is refused before any authorize.
+func TestTheCeilingFlagSendsAStreamsCeiling(t *testing.T) {
+	mix := filepath.Join(t.TempDir(), "mix.json")
+	if err := os.WriteFile(mix, []byte(`{"stream_share":1,"heartbeats":[{"value":1,"weight":1}],`+
+		`"refund_share":0,"estimates":[{"value":100,"weight":1}],"bill_permill":[{"value":500,"weight":1}]}`),
+		0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		flag    []string
+		ceiling int64
+	}{{nil, 0}, {[]string{"-ceiling-permill", "1500"}, 150}} {
+		var mu sync.Mutex
+		var sent []int64
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/v1/authorize" {
+				var a frontdoor.AuthorizeOf
+				if err := json.NewDecoder(r.Body).Decode(&a); err != nil || !a.Stream || a.Estimate != 100 {
+					t.Errorf("an authorize: %+v %v", a, err)
+				}
+				mu.Lock()
+				sent = append(sent, a.Ceiling)
+				mu.Unlock()
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(frontdoor.Authorized{Status: frontdoor.Busy})
+		}))
+		args := append([]string{"-front", srv.URL, "-mix", mix, "-rate", "100", "-duration", "50ms",
+			"-workspaces", "1", "-seed", "1"}, c.flag...)
+		err := run(args, io.Discard, nil)
+		mu.Lock()
+		played := len(sent)
+		mu.Unlock()
+		below := run(append(args, "-ceiling-permill", "999"), io.Discard, nil)
+		srv.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if below == nil {
+			t.Fatal("-ceiling-permill 999 was taken")
+		}
+		mu.Lock()
+		if len(sent) != played {
+			t.Fatalf("-ceiling-permill 999 sent %d authorizes", len(sent)-played)
+		}
+		if len(sent) == 0 {
+			t.Fatalf("%q: no authorize", c.flag)
+		}
+		for _, s := range sent {
+			if s != c.ceiling {
+				t.Fatalf("%q: an authorize sent a ceiling of %d, want %d", c.flag, s, c.ceiling)
+			}
+		}
+		mu.Unlock()
+	}
+}
+
 // TestTheRunStartsOnlyOnceTheWorkspacesAreReady: with -database, the
 // workspaces named by -workspace are asked of the store before any
 // authorize, and a workspace not ready stops the run with its reason, with
