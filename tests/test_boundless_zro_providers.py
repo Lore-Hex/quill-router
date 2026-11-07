@@ -106,6 +106,104 @@ def test_boundless_conflicting_api_rate_and_missing_context_fail():
         boundless.discover(payload, boundless_html())
 
 
+BOUNDLESS_2026_11_07 = Path(__file__).parent / "fixtures/pricing/boundless_models_2026-11-07.html"
+# Short identifiers Boundless served before its 2026-11 rate cards renamed
+# every model to a qualified ID.
+BOUNDLESS_LEGACY_IDS = ("dsv4", "qwen3.6", "nemotron3-super", "glm-5.3", "minimax-m3", "minimax-m3-free",
+                        "convaiinnovations/laya")
+
+
+def boundless_live_cards():
+    html = BOUNDLESS_2026_11_07.read_text()
+    document = json.loads(html.split('<script type="application/ld+json">', 1)[1].split("</script>", 1)[0])
+    return html, [item["item"] for item in document["itemListElement"]]
+
+
+def boundless_catalog_for(cards, extra_ids=()):
+    rows = []
+    for card in cards:
+        served = {p["name"]: p["value"] for p in card["additionalProperty"]}.get("serving") is True
+        spec = {o["priceSpecification"]["unitText"]: o["priceSpecification"]["price"]
+                for o in card["offers"] if "priceSpecification" in o}
+        if served and spec:
+            rows.append({"id": card["sku"], "context_length": 1048576,
+                         "pricing": {"input": spec["per 1M input tokens"], "output": spec["per 1M output tokens"]}})
+    by_model = {boundless.canonical_model_id(row["id"]): row for row in rows}
+    for native in extra_ids:
+        twin = by_model.get(boundless.canonical_model_id(native))
+        rows.append({**twin, "id": native} if twin else {"id": native, "context_length": 1048576})
+    return {"data": rows}
+
+
+def test_boundless_2026_11_rate_cards_with_legacy_alias_ids_parse():
+    # Refresh run 42359425520 (2026-11-07) held Boundless on "duplicate
+    # canonical model ID": the API lists a legacy short ID (dsv4) beside the
+    # qualified ID the rate card now names (deepseek/deepseek-v4-flash-0731).
+    html, cards = boundless_live_cards()
+    prices, rows = boundless.discover(boundless_catalog_for(cards, BOUNDLESS_LEGACY_IDS), html)
+    assert len(prices) == 24
+    assert rows["deepseek/deepseek-v4-flash-0731"]["upstream_id"] == "deepseek/deepseek-v4-flash-0731"
+    assert rows["z-ai/glm-5.3"]["upstream_id"] == "z-ai/glm-5.3"
+    # Qualified IDs are not author-prefixed twice, and Nemotron uses the
+    # repository-wide ID the card names.
+    assert "qwen/qwen3.6-35b-a3b" in prices and "qwen/qwen/qwen3.6-35b-a3b" not in rows
+    assert "nvidia/nemotron-3-super-120b-a12b" in prices and "nvidia/nemotron-3-super" not in rows
+    assert prices["xiaomi/mimo-v2.6-pro"].tiers[0].prompt_cached_micro_per_m == 3600
+    free = rows["minimax/minimax-m3-free"]
+    assert (free["upstream_id"], free["routable"], free["routable_reason"]) == ("minimax-m3-free", False, "awaiting-price")
+    assert "convaiinnovations/laya" not in rows
+
+
+def test_boundless_cards_match_a_catalog_of_only_legacy_short_ids():
+    html, cards = boundless_live_cards()
+    payload = boundless_catalog_for([c for c in cards if c["sku"] == "deepseek/deepseek-v4-flash-0731"])
+    payload["data"][0]["id"] = "dsv4"
+    prices, rows = boundless.discover(payload, html)
+    assert set(prices) == {"deepseek/deepseek-v4-flash-0731"}
+    assert rows["deepseek/deepseek-v4-flash-0731"]["upstream_id"] == "dsv4"
+
+
+def test_boundless_two_served_priced_cards_for_one_model_fail_closed():
+    html, cards = boundless_live_cards()
+    twin = copy.deepcopy(next(c for c in cards if c["sku"] == "z-ai/glm-5.3"))
+    twin["sku"] = "glm-5.3"
+    with pytest.raises(RuntimeError, match="duplicate canonical model ID among served rate cards"):
+        boundless.discover(boundless_catalog_for(cards), boundless_html(*cards, twin))
+
+
+@pytest.mark.parametrize("ids", [("glm-5.3-legacy", "z-ai/glm-5.3-legacy"), ("dsv4", "deepseek-v4-flash-0731")])
+def test_boundless_alias_ids_without_a_card_naming_one_fail_closed(ids):
+    # Neither ID is the identifier of a served rate card: no basis to choose.
+    html, cards = boundless_live_cards()
+    payload = boundless_catalog_for(cards)
+    payload["data"] = [row for row in payload["data"] if row["id"] != "deepseek/deepseek-v4-flash-0731"]
+    payload["data"] += [{"id": native, "context_length": 1048576} for native in ids]
+    with pytest.raises(RuntimeError, match="duplicate canonical model ID"):
+        boundless.discover(payload, html)
+
+
+@pytest.mark.parametrize("previous_upstream,probed", [("mimo-v2.6-pro", True), ("xiaomi/mimo-v2.6-pro", False)])
+def test_boundless_changed_upstream_id_is_canaried_again(monkeypatch, tmp_path, previous_upstream, probed):
+    # Picking the rate card's identifier over a legacy alias can move an
+    # existing route to a new upstream ID; it must pass a fresh canary.
+    manifest = tmp_path / "boundless.json"
+    manifest.write_text(json.dumps({"provider": "boundless", "models": [{
+        "id": "xiaomi/mimo-v2.6-pro", "upstream_id": previous_upstream, "model_type": "chat", "routable": True,
+    }]}))
+    monkeypatch.setattr(boundless, "MANIFEST_PATH", manifest)
+    monkeypatch.setattr(boundless, "_DISCOVERED_ROWS", {})
+    monkeypatch.setattr(boundless, "UPSTREAM_ID_MAP", {})
+    monkeypatch.setenv("BOUNDLESS_API_KEY", "fake-key")
+    monkeypatch.setattr(boundless, "fetch_json", lambda *_a, **_kw: boundless_catalog("xiaomi/mimo-v2.6-pro"))
+    monkeypatch.setattr(boundless, "fetch_html", lambda *_a, **_kw: boundless_html(boundless_product("xiaomi/mimo-v2.6-pro")))
+    calls = []
+    monkeypatch.setattr(boundless, "probe_openai_chat", lambda **kw: calls.append(kw) or False)
+    boundless.fetch()
+    row = boundless._DISCOVERED_ROWS["xiaomi/mimo-v2.6-pro"]
+    assert [call["model"] for call in calls] == (["xiaomi/mimo-v2.6-pro"] if probed else [])
+    assert row.get("routable_reason") == ("provider-canary-failed" if probed else None)
+
+
 def test_zro_aliases_collapse_and_unpriced_private_retired_routes_stay_out():
     payload = zro_catalog("glm-5.3-flash", "zro/glm-5.3-flash", "auto", "zro/auto",
                           "deepseek-v4.1-private", "dolly1-security-private", "deepseek-v4-flash-0731", "future-model")
