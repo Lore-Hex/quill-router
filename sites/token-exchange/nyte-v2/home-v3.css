@@ -63,7 +63,7 @@ main .tags .tag.cap{background:var(--cream)}
 
 /* Stats */
 .v3-stats{padding:128px 0 112px}
-.v3-stats .stats{gap:24px}
+.v3-stats .stats{grid-template-columns:repeat(3,minmax(0,1fr));gap:24px}
 .v3-stats .stat,.v3-stats .stat+.stat{padding:0;border-left:0;margin:0}
 .v3-stats .stat .v{margin-top:28px;font-size:96px;line-height:1;font-weight:300;letter-spacing:-.02em;white-space:nowrap}
 .v3-stats .stat .l{margin-top:16px;max-width:260px;font-size:17px;line-height:1.55;color:var(--ink)}
@@ -100,7 +100,7 @@ main .tags .tag.cap{background:var(--cream)}
   .v3-case-figure,.v3-case-quote{grid-column:1}
   .v3-case-quote{padding-top:56px}
   .v3-layer-list{margin-top:48px}
-  .v3-stats .stats{grid-template-columns:1fr 1fr;row-gap:48px}
+  .v3-stats .stats{row-gap:48px}
   .v3-stats .stat .v{font-size:72px}
   .v3-team-list li{grid-template-columns:48px minmax(0,1fr);row-gap:10px}
   .v3-team-list .q,.v3-team-list .tags{grid-column:2}
@@ -124,9 +124,9 @@ main .tags .tag.cap{background:var(--cream)}
   .v3-layer-list li{grid-template-columns:40px 1fr;padding-top:16px}
   .v3-layer-list .n{font-size:32px}
   .v3-stats{padding:72px 0 64px}
-  .v3-stats .stats{gap:40px 16px}
+  .v3-stats .stats{grid-template-columns:1fr 1fr;gap:40px 16px}
+  .v3-stats .stat:nth-child(3){grid-column:1/-1}
   .v3-stats .stat .v{margin-top:18px;font-size:56px}
-  .v3-stats .stat .v span{font-size:32px}
   .v3-stats .stat .l{margin-top:10px}
   .v3-labs{margin-top:48px;padding:14px 0}
   .v3-teams h2{margin-top:24px}
@@ -138,7 +138,6 @@ main .tags .tag.cap{background:var(--cream)}
 /* Fixes after the first check. The poster has content in its centre, so the
    play button sits low as before; the fee word steps down so four stats fit. */
 .film .play{place-items:end center;padding:0 0 5%}
-.v3-stats .stat .v span{font-size:.5em}
 @media (max-width:900px){
   .v3-quotes{grid-template-columns:1fr;gap:32px}
   .v3-layer-list{grid-template-columns:1fr;gap:28px}

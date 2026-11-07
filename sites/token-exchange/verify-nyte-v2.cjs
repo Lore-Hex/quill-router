@@ -133,8 +133,6 @@ for (const width of [320,390,768,1440]) {
  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
  await page.goto(base+'/');await page.evaluate(()=>document.fonts.ready);
  assert(await page.locator('.stat .v').evaluateAll(elements=>elements.every(el=>el.scrollWidth<=el.clientWidth)),`stats must fit at ${width}px`);
- const fee=page.locator('.stat .v span');assert.equal(await fee.textContent(),'fee');
- assert.equal(await fee.evaluate(el=>el.getClientRects().length),1);
 }
 
 // Keep both downloads in the first screen, including short phones.
