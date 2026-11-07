@@ -8,8 +8,8 @@ from fastapi.testclient import TestClient
 from tests.fixture_routes import drop_routes, serve_on_fixture_route
 from tests.lifecycle_clock import catalog_predates
 from trusted_router.catalog import (
+    ARCHIMEDES_1_0_BACKING_MODEL_ID,
     FAST_MODEL_ORDER,
-    MISTRAL_LARGE_MODEL_ID,
     MODELS,
     PROVIDER_JURISDICTION_US,
     PROVIDERS,
@@ -916,7 +916,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "trustedrouter/liberty-4.0",
     }.issubset(model_ids)
     # Archimedes is offered exactly while the model behind it is.
-    assert ("trustedrouter/archimedes-1.0" in model_ids) == (MISTRAL_LARGE_MODEL_ID in MODELS)
+    assert ("trustedrouter/archimedes-1.0" in model_ids) == (ARCHIMEDES_1_0_BACKING_MODEL_ID in MODELS)
     assert ("thinkingmachines/inkling-1m" in model_ids) is inkling_1m_available
     models_by_id = {model["id"]: model for model in models}
     fast_meta = models_by_id["trustedrouter/fast"]["trustedrouter"]
