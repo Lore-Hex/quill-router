@@ -86,7 +86,18 @@ locals {
   # the shadow counts Python's in-flight 429 to any pass but inflight.key as
   # inflight_unchecked.<pass>, never paged (#2367: the 2026-11-06 03:55Z,
   # 18:27Z and 19:27Z edge_would_admit_python_refused pages).
-  fastpath_release        = "5c5f11fade1ce4d168c4223e3ff1801ca15c8853"
+  # 8af87998a: every stop writes the workspace's hold, and disable-all the
+  # fleet hold, in the transaction that turns it off, which needs
+  # tr_fastpath_workspace_hold and tr_fastpath_kill, live since 2026-11-07 06:35Z;
+  # fastpathctl gains release, release-all, release-stamped, hold-backfill,
+  # the enabler's pause, resume and arm, and the hold listing (holds);
+  # nothing reads a hold to turn a workspace on yet (#2385, widening PR 4,
+  # dark); RecordCeiling is on, so a stream admitted with a ceiling runs
+  # past its hold to it and its records carry
+  # ceil, and no gateway sends a ceiling until fastpath_stream_ceiling moves,
+  # so the records match the release before (#2383, stream ceiling PR 3;
+  # every node ran 5c5f11fad, which reads ceil, before this pin).
+  fastpath_release        = "8af87998ab58bc59d46eb837f7b90242443c762f"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
