@@ -4,6 +4,11 @@
 /* Kit chips: one outline chip (base .v3-chip lives in brand-v3.css) */
 main .tags .tag,main .v3-route-rules .tag{height:auto;padding:6px 9px;background:transparent;border:1.5px solid var(--ink);color:var(--ink);font:500 14px/1 var(--font-mono);letter-spacing:.04em}
 main .tags{gap:8px}
+/* Policy tags colour-coded (one colour per rule, same on every card); ink text and border keep them readable on sky. */
+main :is(.tags,.v3-route-rules) .tag.cc{background:var(--lime)}
+main :is(.tags,.v3-route-rules) .tag.zdr{background:var(--purple)}
+main :is(.tags,.v3-route-rules) .tag.us{background:var(--yellow)}
+main :is(.tags,.v3-route-rules) .tag.cap{background:var(--cream)}
 
 .film .play svg{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5}
 .v3-press figcaption{font:500 15px/1.2 var(--font-condensed);letter-spacing:.1em;text-transform:uppercase;font-style:normal}
