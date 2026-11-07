@@ -61,39 +61,48 @@ def _credits(store: Any, workspace_id: str) -> int:
     return sum(row[3] or 0 for row in _shard_tiers(store, workspace_id))
 
 
-def _trust_events(store: Any, workspace_id: str) -> list[tuple[str, str, int]]:
-    """This workspace's trust events: event ID, kind and credited amount."""
+def _trust_events(store: Any, workspace_id: str) -> list[tuple[str, str, int, str]]:
+    """This workspace's trust events: event ID, kind, credited amount and
+    provider. A grant this script makes has the provider "operator"; credits
+    the system books (a cross-plane transfer, an earnings transfer) are
+    grants by kind too, under the provider "system"."""
     with store._database.snapshot() as snap:
         rows = snap.execute_sql(
-            "SELECT event_id, kind, credited_micro FROM tr_trust_event WHERE workspace_id=@pk",
+            "SELECT event_id, kind, credited_micro, provider FROM tr_trust_event WHERE workspace_id=@pk",
             params={"pk": workspace_id},
             param_types={"pk": store._param_types.STRING},
         )
-        return [(str(row[0]), str(row[1]), int(row[2] or 0)) for row in rows]
+        return [(str(row[0]), str(row[1]), int(row[2] or 0), str(row[3] or "")) for row in rows]
 
 
 def _grant_credited(store: Any, workspace_id: str, event_id: str) -> list[int]:
     """What this workspace's grant events for the funding event credited:
     a grant's trust event (kind "grant"), by its credited amount; a
     payment's fact of the same ID proves nothing of the funding."""
-    return [credited for eid, kind, credited in _trust_events(store, workspace_id) if eid == event_id and kind == "grant"]
+    return [credited for eid, kind, credited, _ in _trust_events(store, workspace_id) if eid == event_id and kind == "grant"]
 
 
-def _other_funding(store: Any, workspace_id: str, event_id: str, funding_microdollars: int) -> str | None:
+def _other_funding(store: Any, workspace_id: str, event_id: str, funding_microdollars: int,
+                   also_granted: tuple[str, ...] = ()) -> str | None:
     """Why the workspace is funded by something other than this script's
-    own grant, or None when it is not: every trust event of the workspace
-    must be the funding event's grant, of the funding's amount, and the
-    credit rows must hold that grant and nothing else (a trial credit or a
-    credit with no trust event shows there alone). A workspace not yet
-    funded holds nothing."""
-    others = [(eid, kind) for eid, kind, credited in _trust_events(store, workspace_id)
-              if not (eid == event_id and kind == "grant" and credited == funding_microdollars)]
+    own grants, or None when it is not: every trust event of the workspace
+    must be the funding event's grant, of the funding's amount, or a grant
+    of an event the operator names with ``--also-granted`` (an earlier run
+    of this script under another event ID), each a grant of the operator's
+    own (provider "operator", not a credit the system booked), each counted
+    once, and the credit rows must hold those grants and nothing else (a trial credit or a credit with no trust
+    event shows there alone). A workspace not yet funded holds nothing."""
+    extras = tuple(eid for eid in dict.fromkeys(also_granted) if eid != event_id)
+    named = (event_id, *extras)
+    others = [(eid, kind) for eid, kind, credited, provider in _trust_events(store, workspace_id)
+              if not (kind == "grant" and provider == "operator"
+                      and (eid == event_id and credited == funding_microdollars or eid in extras))]
     if others:
-        return f"it has {len(others)} trust events other than the grant {event_id}"
-    granted = sum(_grant_credited(store, workspace_id, event_id))
+        return f"it has {len(others)} trust events other than the grant {', '.join(named)}"
+    granted = sum(sum(_grant_credited(store, workspace_id, eid)) for eid in named)
     credits = _credits(store, workspace_id)
     if credits != granted:
-        return f"its credit rows hold {credits} microdollars, and its own grant credited {granted}"
+        return f"its credit rows hold {credits} microdollars, and its own grants credited {granted}"
     return None
 
 
@@ -119,6 +128,7 @@ def provision(
     reason: str,
     apply: bool,
     identity_bypass: bool = False,
+    also_granted: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     user = store.find_user_by_email(email)
     if user is None:
@@ -155,7 +165,7 @@ def provision(
         if open_holds:
             raise ValueError(f"workspace {workspace.id} has {open_holds} unsettled reservations; wait for them to settle")
         if identity_bypass:
-            why = _other_funding(store, workspace.id, funding_event_id, funding_microdollars)
+            why = _other_funding(store, workspace.id, funding_event_id, funding_microdollars, also_granted)
             if why is not None:
                 raise ValueError(f"workspace {workspace.id} takes no identity bypass: {why}")
         result["shards_before"] = _shard_tiers(store, workspace.id)
@@ -191,7 +201,7 @@ def provision(
     if identity_bypass:
         # Again once the grant is in, so the bypass is set only on a
         # workspace this grant alone funds.
-        why = _other_funding(store, workspace.id, funding_event_id, funding_microdollars)
+        why = _other_funding(store, workspace.id, funding_event_id, funding_microdollars, also_granted)
         if why is not None:
             raise ValueError(f"workspace {workspace.id} takes no identity bypass: {why}")
     record = store.set_workspace_trust_override(
@@ -221,6 +231,14 @@ def main(argv: list[str] | None = None, *, store: Any | None = None) -> int:
         help="set the override's identity bypass, so it reaches tier 2 or 3 without an approved owner; refused "
         "for a workspace with an API key or funded by anything but this script's own grant",
     )
+    parser.add_argument(
+        "--also-granted",
+        action="append",
+        default=[],
+        metavar="EVENT_ID",
+        help="with --identity-bypass, an earlier grant of this script under another event ID that also funds the "
+        "workspace; repeatable",
+    )
     parser.add_argument("--operator", default=None, help="recorded with the override; the email by default")
     parser.add_argument("--reason", default="fastpath P1 synthetic workspace")
     parser.add_argument("--apply", action="store_true")
@@ -232,6 +250,12 @@ def main(argv: list[str] | None = None, *, store: Any | None = None) -> int:
         funding = dollars_to_microdollars(args.fund_usd)
         if funding <= 0 or not 0 <= args.tier <= 3:
             raise ValueError("funding must be positive and the tier 0 through 3")
+        if args.also_granted and not args.identity_bypass:
+            raise ValueError("--also-granted is read only with --identity-bypass")
+        if args.funding_event_id in args.also_granted:
+            raise ValueError("--also-granted names an event other than --funding-event-id")
+        if len(set(args.also_granted)) != len(args.also_granted):
+            raise ValueError("--also-granted names each event once")
         active_store = create_store(Settings()) if store is None else store
         result = provision(
             active_store,
@@ -244,6 +268,7 @@ def main(argv: list[str] | None = None, *, store: Any | None = None) -> int:
             reason=args.reason,
             apply=args.apply,
             identity_bypass=args.identity_bypass,
+            also_granted=tuple(args.also_granted),
         )
     except (ValueError, RuntimeError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
