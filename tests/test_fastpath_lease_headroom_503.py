@@ -21,7 +21,7 @@ from __future__ import annotations
 import dataclasses
 import itertools
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
@@ -167,6 +167,22 @@ class Answer:
     rows: tuple[tuple[int, int, int], ...]
     reservations: int
     remembered: bool
+    # Read-write transactions each request ran. Not compared: on two shards
+    # the bounded random shard prefix can take a retry on one run and not on
+    # another.
+    transactions: tuple[int, ...] = field(default=(), compare=False)
+
+
+def _count_transactions(database: Any) -> list[int]:
+    counter = [0]
+    original = database.run_in_transaction
+
+    def counting(*args: Any, **kwargs: Any) -> Any:
+        counter[0] += 1
+        return original(*args, **kwargs)
+
+    database.run_in_transaction = counting
+    return counter
 
 
 def _run(case: Case, *, on: bool, with_leases: bool = True, remembered: bool = False) -> Answer:
@@ -175,13 +191,16 @@ def _run(case: Case, *, on: bool, with_leases: bool = True, remembered: bool = F
     store, database, key = _seed(case, with_leases=with_leases)
     if remembered:
         store._insufficient_credit_workspaces.add(WS)
-    outcomes = []
+    counter = _count_transactions(database)
+    outcomes, transactions = [], []
     for _ in range(2):
+        before = counter[0]
         try:
             outcome, _authorization = _authorize(store, key, case.estimate, on=on)
             outcomes.append(str(outcome))
         except StoreUnavailable:
             outcomes.append("store_unavailable")
+        transactions.append(counter[0] - before)
     table = database.typed[CREDIT_BALANCE_TABLE]
     shards = [table[(WS, s)] for s in range(len(case.credits))]
     # Summed over the shards: which shard an admission holds on, and where a
@@ -196,6 +215,7 @@ def _run(case: Case, *, on: bool, with_leases: bool = True, remembered: bool = F
         rows=rows,
         reservations=len(database.reservations),
         remembered=WS in store._insufficient_credit_workspaces,
+        transactions=tuple(transactions),
     )
 
 
@@ -268,6 +288,73 @@ def test_the_matrix_reaches_every_kind_of_case() -> None:
     assert any(case.held > 0 and not case.lease_held() for case in refused)
 
 
+ACCEPTED = billing.AuthorizeOutcome.ACCEPTED
+REFUSED = billing.AuthorizeOutcome.INSUFFICIENT_CREDITS
+
+
+def _today(case: Case, remembered: bool) -> set[tuple[tuple[str, ...], bool]]:
+    """Today's authorize, written down independently of the code: the rules
+    the #1461 tests pin (tests/test_insufficient_credit_precheck.py,
+    tests/test_credit_row_sharding_increment3.py). A hold is admitted when
+    the rows are unmarked and one shard covers it, or, on more than one
+    shard, their sum does (the rebalance gathers idle credit onto a target);
+    otherwise it is the 402, and the workspace is remembered. An admission
+    forgets it. Leases count only through `reserved`. Which covering shard
+    an admission takes, and where a rebalance gathers, are chosen at random,
+    so the answer is the set of every choice's outcomes and memory."""
+    results = set()
+
+    def walk(rooms: tuple[int, ...], outcomes: tuple[str, ...]) -> None:
+        if len(outcomes) == 2:
+            memory = remembered
+            for outcome in outcomes:
+                memory = outcome == REFUSED
+            results.add((outcomes, memory))
+            return
+        e = case.estimate
+        covering = [i for i, room in enumerate(rooms) if room >= e]
+        if case.marked or not (covering or (len(rooms) > 1 and sum(rooms) >= e)):
+            walk(rooms, (*outcomes, REFUSED))
+            return
+        if covering:
+            for i in covering:
+                walk(tuple(room - e if j == i else room for j, room in enumerate(rooms)), (*outcomes, ACCEPTED))
+            return
+        for target in range(len(rooms)):
+            pooled = sum(room for room in rooms if room > 0) - e
+            walk(tuple(
+                pooled if j == target else (room if room < 0 else 0) for j, room in enumerate(rooms)
+            ), (*outcomes, ACCEPTED))
+
+    walk(tuple(case.headroom()), ())
+    return results
+
+
+@pytest.mark.parametrize("case", CASES, ids=lambda c: repr(c))
+def test_off_answers_are_pinned_to_todays_rules(case: Case) -> None:
+    """The off path against fixed expectations, not against itself: a change
+    to today's authorize fails here whatever the setting does."""
+    for remembered in (False, True):
+        off = _run(case, on=False, remembered=remembered)
+        assert (off.outcomes, off.remembered) in _today(case, remembered)
+        # A refusal after a refusal is the lock-free precheck's: no
+        # transaction (an admission in between forgets the workspace).
+        if off.outcomes == (REFUSED, REFUSED):
+            assert off.transactions[1] == 0
+        if remembered and off.outcomes[0] == REFUSED:
+            assert off.transactions[0] == 0
+
+
+def test_the_pinned_rules_are_not_vacuous() -> None:
+    # Positive control: the model is decisive for most of the matrix, and it
+    # refuses a case the code admits once the rule is bent.
+    decisive = [case for case in CASES if len(_today(case, False)) == 1]
+    assert len(decisive) > len(CASES) * 3 // 4
+    bent = Case((1_000,), (0,), (0,), (), 1_000)
+    assert _today(bent, False) == {((ACCEPTED, REFUSED), True)}
+    assert _today(dataclasses.replace(bent, estimate=1_001), False) == {((REFUSED, REFUSED), True)}
+
+
 @pytest.mark.parametrize("case", CASES, ids=lambda c: repr(c))
 def test_off_is_todays_authorize_and_reads_no_lease(case: Case, monkeypatch: pytest.MonkeyPatch) -> None:
     """Off, the lease rows change nothing: the answers, the rows and the
@@ -289,7 +376,7 @@ def _expected_on(case: Case, off: Answer, remembered: bool) -> tuple[tuple[str, 
     """Today's answers with each refusal the leases explain turned into the
     503: a 402 for an unmarked workspace whose live leases hold, with what is
     left outside them after the admissions before it, the hold. And the
-    memory those answers leave: a 402 remembers, a 503 or an admission
+    memory those answers leave: a 402 or a 503 remembers, an admission
     forgets."""
     room = sum(case.headroom())
     outcomes, admitted = [], 0
@@ -305,7 +392,9 @@ def _expected_on(case: Case, off: Answer, remembered: bool) -> tuple[tuple[str, 
         outcomes.append(outcome)
     memory = remembered
     for outcome in outcomes:
-        memory = outcome == billing.AuthorizeOutcome.INSUFFICIENT_CREDITS
+        memory = outcome in (
+            billing.AuthorizeOutcome.INSUFFICIENT_CREDITS, billing.AuthorizeOutcome.LEASE_HEADROOM,
+        )
     return tuple(outcomes), memory
 
 
@@ -323,14 +412,18 @@ def test_on_differs_only_where_leases_hold_the_shortfall(case: Case) -> None:
         if not case.lease_held() and billing.AuthorizeOutcome.LEASE_HEADROOM not in outcomes:
             assert on == off
     if case.lease_held():
-        # Today's answer is the 402, remembered; on, the 503 both times, the
-        # second through the transaction again: never remembered.
+        # Today's answer is the 402, remembered; on, the 503 both times,
+        # remembered too, so the second is the lock-free precheck's: no
+        # transaction, as today's second 402.
         off = _run(case, on=False)
         assert off.outcomes == (billing.AuthorizeOutcome.INSUFFICIENT_CREDITS,) * 2
         assert off.remembered
+        assert off.transactions[1] == 0
         on = _run(case, on=True)
         assert on.outcomes == (billing.AuthorizeOutcome.LEASE_HEADROOM,) * 2
-        assert not on.remembered
+        assert on.remembered
+        assert on.transactions[0] >= 1
+        assert on.transactions[1] == 0
 
 
 def test_on_never_turns_a_refusal_into_an_admission_or_back() -> None:
@@ -355,30 +448,72 @@ def test_leases_too_small_for_the_shortfall_keep_the_402() -> None:
     assert on.remembered
 
 
-def test_a_remembered_workspace_whose_leases_hold_the_rest_is_forgotten() -> None:
-    """The precheck path: a workspace the memory holds from an earlier
-    exhaustion, now funded but held in leases, is answered from the
-    lock-free snapshot with the 503, without a transaction, and forgotten."""
+def test_a_remembered_workspace_whose_leases_hold_the_rest_stays_remembered() -> None:
+    """The precheck path: a workspace the memory holds, funded but held in
+    leases, is answered from the lock-free snapshot with the 503, without a
+    transaction, and stays remembered: each later hit re-reads the rows and
+    the leases."""
     case = Case((1_000,), (0,), (0,), (("open", ((0, 900, 0),)),), 450)
     assert case.lease_held()
     store, database, key = _seed(case)
     store._insufficient_credit_workspaces.add(WS)
-    transactions = [0]
-    original = database.run_in_transaction
+    transactions = _count_transactions(database)
+    for _ in range(3):
+        outcome, authorization = _authorize(store, key, case.estimate, on=True)
+        assert outcome == billing.AuthorizeOutcome.LEASE_HEADROOM
+        assert authorization is None
+    assert transactions[0] == 0
+    assert WS in store._insufficient_credit_workspaces
 
-    def counting(*args: Any, **kwargs: Any) -> Any:
-        transactions[0] += 1
-        return original(*args, **kwargs)
 
-    database.run_in_transaction = counting
-    outcome, authorization = _authorize(store, key, case.estimate, on=True)
+def _close_lease(database: Any, *, consumed: int) -> None:
+    """The workspace's one lease closes having booked `consumed` of its 900:
+    its donor's booking moves reserved to usage, and the rest goes back to
+    headroom (store/close.go)."""
+    lease_id = f"l-{WS}-0"
+    donor = next(d for d in database.fastpath_lease_donors if d["lease_id"] == lease_id)
+    row = database.typed[CREDIT_BALANCE_TABLE][(WS, 0)]
+    row["total_usage"] += consumed
+    row["reserved"] -= donor["allocation"] - donor["consumed"]
+    donor["consumed"] = consumed
+    database.fastpath_leases[lease_id].update(state="closed", consumed=consumed)
+
+
+def test_when_the_lease_returns_its_allocation_the_request_is_admitted_and_forgotten() -> None:
+    case = Case((1_000,), (0,), (0,), (("open", ((0, 900, 0),)),), 450)
+    store, database, key = _seed(case)
+    outcome, _ = _authorize(store, key, case.estimate, on=True)
     assert outcome == billing.AuthorizeOutcome.LEASE_HEADROOM
+    assert WS in store._insufficient_credit_workspaces
+    _close_lease(database, consumed=0)
+    verdict = billing.credit_exhaustion_precheck(
+        database, store._param_types, workspace_id=WS, estimate=case.estimate, lease_aware=True,
+    )
+    assert verdict == billing.HEADROOM
+    transactions = _count_transactions(database)
+    outcome, authorization = _authorize(store, key, case.estimate, on=True)
+    assert outcome == billing.AuthorizeOutcome.ACCEPTED
+    assert authorization is not None
+    assert transactions[0] >= 1
+    assert WS not in store._insufficient_credit_workspaces
+    assert database.typed[CREDIT_BALANCE_TABLE][(WS, 0)]["reserved"] == case.estimate
+
+
+def test_when_the_lease_spends_the_balance_the_answer_is_todays_402() -> None:
+    case = Case((1_000,), (0,), (0,), (("open", ((0, 900, 0),)),), 450)
+    store, database, key = _seed(case)
+    outcome, _ = _authorize(store, key, case.estimate, on=True)
+    assert outcome == billing.AuthorizeOutcome.LEASE_HEADROOM
+    _close_lease(database, consumed=900)
+    transactions = _count_transactions(database)
+    outcome, authorization = _authorize(store, key, case.estimate, on=True)
+    assert outcome == billing.AuthorizeOutcome.INSUFFICIENT_CREDITS
     assert authorization is None
     assert transactions[0] == 0
-    assert WS not in store._insufficient_credit_workspaces
+    assert WS in store._insufficient_credit_workspaces
 
 
-def test_a_failed_lease_read_keeps_todays_402(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_failed_lease_verdict_keeps_todays_402(monkeypatch: pytest.MonkeyPatch) -> None:
     case = LEASE_HELD_CASES[0]
     store, database, key = _seed(case)
     original = billing.credit_exhaustion_precheck
@@ -392,6 +527,55 @@ def test_a_failed_lease_read_keeps_todays_402(monkeypatch: pytest.MonkeyPatch) -
     outcome, _ = _authorize(store, key, case.estimate, on=True)
     assert outcome == billing.AuthorizeOutcome.INSUFFICIENT_CREDITS
     assert WS in store._insufficient_credit_workspaces
+
+
+def _fail_lease_reads(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    import tests.fakes.spanner as fake
+
+    failed: list[str] = []
+    original = fake._execute_sql
+
+    def failing(db: Any, txn: Any, sql: str, params: dict[str, Any]) -> Any:
+        if LEASE_MARKER in sql:
+            failed.append(sql)
+            raise RuntimeError("lease read unavailable")
+        return original(db, txn, sql, params)
+
+    monkeypatch.setattr(fake, "_execute_sql", failing)
+    return failed
+
+
+def test_a_failed_lease_read_is_todays_402_lock_free(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A lease read that fails answers today's verdict for the rows,
+    EXHAUSTED, not DEFER: on the memory path, today's 402 from the snapshot,
+    with no transaction; after a refusal, today's 402."""
+    case = Case((1_000,), (0,), (0,), (("open", ((0, 900, 0),)),), 450)
+    store, database, key = _seed(case)
+    failed = _fail_lease_reads(monkeypatch)
+    assert billing.credit_exhaustion_precheck(
+        database, store._param_types, workspace_id=WS, estimate=450, lease_aware=True,
+    ) == billing.EXHAUSTED
+    outcome, _ = _authorize(store, key, case.estimate, on=True)
+    assert outcome == billing.AuthorizeOutcome.INSUFFICIENT_CREDITS
+    assert WS in store._insufficient_credit_workspaces
+    transactions = _count_transactions(database)
+    outcome, _ = _authorize(store, key, case.estimate, on=True)
+    assert outcome == billing.AuthorizeOutcome.INSUFFICIENT_CREDITS
+    assert transactions[0] == 0
+    assert len(failed) == 3
+
+
+def test_the_lease_read_after_a_refusal_keeps_the_strict_budget() -> None:
+    """A strict key's post-refusal read runs under the transaction's budget
+    deadline: past it, the read does not run and the answer is today's 402."""
+    import time
+
+    case = Case((1_000,), (0,), (0,), (("open", ((0, 900, 0),)),), 450)
+    store, _database, _key = _seed(case)
+    # Positive control: with no budget, and within one, it is lease-held.
+    assert store._lease_held_after_refusal(WS, 450, None)
+    assert store._lease_held_after_refusal(WS, 450, time.monotonic() + 30)
+    assert not store._lease_held_after_refusal(WS, 450, time.monotonic() - 1)
 
 
 def _track_lease_reads(monkeypatch: pytest.MonkeyPatch) -> list[str]:

@@ -335,8 +335,12 @@ def credit_exhaustion_precheck(
     live fast-path leases hold: when that is positive and,
     with the rows' signed headroom, covers the estimate, the verdict is
     LEASE_HELD, since the balance covers the estimate and only the headroom
-    outside leases does not (design section 4.4). A read failure is DEFER, as
-    any. Without it, no lease is read and every verdict is as before.
+    outside leases does not (design section 4.4). The caller keeps the
+    workspace remembered on LEASE_HELD, so each hit re-reads both. A failed
+    lease read is EXHAUSTED, today's verdict for these rows, so the memory
+    path stays lock-free and answers today's 402; a failed credit-row read
+    is DEFER, as before. Without it, no lease is read and every verdict is as
+    before.
     """
     pt = param_types
     try:
@@ -370,23 +374,33 @@ def credit_exhaustion_precheck(
                 # What the workspace's open and draining leases hold on its
                 # credit rows: each live lease's donors' remaining
                 # allocation, the term the counter reconciler adds to a
-                # shard's open holds (section 4.7's identity). Two seeks on
-                # tr_lease_by_state (state, workspace_id, lease_id), one per
-                # live state, bounded to the workspace's live leases, then
-                # their donors by key; the index covers the tr_lease columns
-                # named. Read only on a verdict that would refuse.
-                held = list(
-                    snapshot.execute_sql(
-                        "/* fastpath_lease_held_of */ "
-                        "SELECT COALESCE(SUM(d.allocation - d.consumed), 0) "
-                        "FROM tr_lease@{FORCE_INDEX=tr_lease_by_state} AS l "
-                        "JOIN tr_lease_donor AS d "
-                        "ON d.workspace_id = l.workspace_id AND d.lease_id = l.lease_id "
-                        "WHERE l.state IN ('open', 'draining') AND l.workspace_id=@ws",
-                        params={"ws": workspace_id},
-                        param_types={"ws": pt.STRING},
+                # shard's open holds (section 4.7's identity). The index is
+                # declared on (state); Spanner appends the table's primary
+                # key (workspace_id, lease_id) to its key, so the filter is
+                # two seeks, one per live state, bounded to the workspace's
+                # live leases, then their donors by key; the index covers
+                # the tr_lease columns named. Read only on a verdict that
+                # would refuse.
+                try:
+                    held = list(
+                        snapshot.execute_sql(
+                            "/* fastpath_lease_held_of */ "
+                            "SELECT COALESCE(SUM(d.allocation - d.consumed), 0) "
+                            "FROM tr_lease@{FORCE_INDEX=tr_lease_by_state} AS l "
+                            "JOIN tr_lease_donor AS d "
+                            "ON d.workspace_id = l.workspace_id AND d.lease_id = l.lease_id "
+                            "WHERE l.state IN ('open', 'draining') AND l.workspace_id=@ws",
+                            params={"ws": workspace_id},
+                            param_types={"ws": pt.STRING},
+                        )
                     )
-                )
+                except Exception:
+                    log.warning(
+                        "lease headroom read failed; answering today's exhaustion workspace=%s",
+                        workspace_id,
+                        exc_info=True,
+                    )
+                    return EXHAUSTED
                 lease_held = int(held[0][0]) if held and held[0][0] is not None else 0
                 if lease_held > 0 and sum(available) + lease_held >= estimate:
                     return LEASE_HELD

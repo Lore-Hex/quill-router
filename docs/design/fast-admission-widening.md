@@ -1306,16 +1306,24 @@ step.
    What the leases hold is section 4.7's term, each open or draining
    lease's donors' `allocation - consumed`, read by
    `credit_exhaustion_precheck` (`lease_aware`) in the snapshot that reads
-   the credit rows, through two seeks on `tr_lease_by_state` bounded to the
-   workspace's live leases and their donors by key; it is registered in the
-   Spanner SQL manifest. Where it reads:
-   - The precheck (#1461), for a workspace the process remembers: a
-     lease-held verdict answers the 503 from the lock-free snapshot, without
-     a transaction, and forgets the workspace.
+   the credit rows, through `tr_lease_by_state`, declared on `(state)`
+   with the primary key `(workspace_id, lease_id)` appended to its key, so
+   two seeks bounded to the workspace's live leases, and their donors by
+   key; it is registered in the Spanner SQL manifest. Where it reads:
    - The reserve: after the authorize transaction's final 402, one more
-     snapshot on that path alone. A lease-held verdict answers the 503 and
-     the workspace is not remembered; any other verdict, a failed read
-     included, keeps the 402 and the memory.
+     snapshot on that path alone, under a strict key's budget deadline
+     when the transaction ran under one. A lease-held verdict answers the
+     503; any other verdict, a failed read included, keeps the 402. The
+     workspace is remembered either way.
+   - The precheck (#1461), for a workspace the process remembers: every
+     hit re-reads the rows and the leases on the lock-free snapshot, with
+     no transaction, and answers the 503 while the leases hold the
+     shortfall, today's 402 once the balance is exhausted (a lease that
+     spent it), and passes the request on, forgetting the workspace, once
+     headroom is back (a lease that returned its allocation). So a
+     lease-held workspace costs a snapshot per request, as an exhausted one
+     does today, and never a locking transaction. A lease read that fails
+     answers today's verdict for the rows (the 402), still lock-free.
    The 503 is never the enclave's cached `insufficient_credits` 402
    (`billing_backoff.go` remembers only an authorize 402 of that type), and
    the enclave's authorize retry already retries a 503 with `Retry-After`
@@ -1327,9 +1335,12 @@ step.
    over a matrix of balances, synchronous holds and leases on one and two
    shards, debt-marked rows included: off, the answers, rows and memory are
    those of the same rows with no lease rows and the lease statement never
-   runs; on, they differ only where live leases hold the shortfall, 402 to
-   503, never the reverse and never to an admission; the precheck's memory;
-   the route's 503, `Retry-After` and type against today's 402) and
+   runs, and the off answers are pinned to today's rules written down
+   independently of the code; on, they differ only where live leases hold
+   the shortfall, 402 to 503, never the reverse and never to an admission;
+   the precheck's memory, lock-free on every hit, through a lease's return
+   and a lease's spending; the route's 503, `Retry-After` and type against
+   today's 402) and
    `tests/conformance/test_fastpath_lease_headroom_native.py` (the
    statement on the emulator: live states, closed leases, neighbouring
    workspaces, the debt mark).

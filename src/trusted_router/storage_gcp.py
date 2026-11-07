@@ -5603,9 +5603,13 @@ class SpannerStore(OperationalAnalyticsReads):
         lease_headroom instead of insufficient_credits when the credit rows
         cannot cover the hold but the fast path's live leases hold enough that
         the balance would (docs/design/fast-admission-and-batched-settlement.md
-        section 4.4): the route answers it 503 with Retry-After, and the
-        per-process exhausted-workspace memory does not remember the
-        workspace. Off, nothing is read for it and every answer is as before."""
+        section 4.4): the route answers it 503 with Retry-After. The
+        per-process insufficient-credit memory keeps the workspace, as for a
+        402, so its later requests are answered from the precheck's lock-free
+        snapshot, which re-reads the rows and the leases on every hit and
+        answers 503 while leases hold the shortfall, 402 once the balance is
+        exhausted, and lets the request through once the headroom is back.
+        Off, nothing is read for it and every answer is as before."""
         from trusted_router.storage_gcp_authorize import (
             EXHAUSTED,
             HEADROOM,
@@ -5798,8 +5802,9 @@ class SpannerStore(OperationalAnalyticsReads):
                 from trusted_router.storage_gcp_authorize import AuthorizeVerdict
 
                 # The balance is not exhausted, only held in leases: the
-                # memory forgets the workspace, and the answer is 503.
-                self._insufficient_credit_workspaces.discard(workspace_id)
+                # answer is 503, and the workspace stays remembered, so its
+                # next request is answered from this lock-free snapshot
+                # again, which re-reads the rows and the leases each time.
                 return (
                     AuthorizeVerdict(AuthorizeOutcome.LEASE_HEADROOM, rate_limit=window_decision),
                     None,
@@ -6053,9 +6058,15 @@ class SpannerStore(OperationalAnalyticsReads):
                 break
             return result
 
+        # The strict budget's deadline, kept for the lease read after a
+        # refusal below, which must not outlast the budget the transaction
+        # ran under.
+        strict_deadline: float | None = None
         if strict_budget:
             from trusted_router.storage_gcp_io import spanner_rpc_budget
             from trusted_router.strict_budget import STRICT_BUDGET_SECONDS, strict_budget_slot
+
+            strict_deadline = time.monotonic() + STRICT_BUDGET_SECONDS
 
             @spanner_rpc_budget(STRICT_BUDGET_SECONDS)
             def strict_authorize() -> dict[str, Any]:
@@ -6098,17 +6109,16 @@ class SpannerStore(OperationalAnalyticsReads):
         if outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS and has_credit_candidate:
             # Final here: a multi-shard miss without proven aggregate exhaustion
             # raised StoreUnavailable above instead of returning a 402.
-            if lease_headroom_503 and credit_exhaustion_precheck(
-                self._database,
-                self._param_types,
-                workspace_id=workspace_id,
-                estimate=hold,
-                lease_aware=True,
-            ) == LEASE_HELD:
+            # Remembered either way: a later request is answered from the
+            # precheck's lock-free snapshot, which tells an exhausted balance
+            # (402) from one held in leases (503) on every hit.
+            self._insufficient_credit_workspaces.add(workspace_id)
+            if lease_headroom_503 and self._lease_held_after_refusal(
+                workspace_id, hold, strict_deadline,
+            ):
                 # One snapshot, on the refusal path alone: the rows still
-                # cannot cover the hold and live leases hold the rest. Not
-                # remembered as exhausted; any other verdict, a read failure
-                # included, keeps today's 402.
+                # cannot cover the hold and live leases hold the rest. Any
+                # other verdict, a read failure included, keeps today's 402.
                 from trusted_router.storage_gcp_authorize import AuthorizeVerdict
 
                 return (
@@ -6118,7 +6128,6 @@ class SpannerStore(OperationalAnalyticsReads):
                     ),
                     None,
                 )
-            self._insufficient_credit_workspaces.add(workspace_id)
         authorization: GatewayAuthorization | None = None
         if outcome == AuthorizeOutcome.ACCEPTED:
             # authorize_atomic stamps one client timestamp onto both the object
@@ -6137,6 +6146,35 @@ class SpannerStore(OperationalAnalyticsReads):
             rate_limit=getattr(outcome, "rate_limit", None) or window_decision,
         )
         return verdict, authorization
+
+    def _lease_held_after_refusal(
+        self, workspace_id: str, hold: int, strict_deadline: float | None,
+    ) -> bool:
+        """Whether a refused hold's shortfall sits in the fast path's leases
+        (fastpath_lease_headroom_503): the lease-aware precheck's snapshot,
+        under a strict key's budget when the transaction ran under one (its
+        deadline, not a fresh one). False on any failure: today's 402."""
+        from contextlib import nullcontext
+
+        from trusted_router.storage_gcp_authorize import LEASE_HELD, credit_exhaustion_precheck
+        from trusted_router.storage_gcp_io import spanner_rpc_deadline
+
+        try:
+            with spanner_rpc_deadline(strict_deadline) if strict_deadline is not None else nullcontext():
+                return credit_exhaustion_precheck(
+                    self._database,
+                    self._param_types,
+                    workspace_id=workspace_id,
+                    estimate=hold,
+                    lease_aware=True,
+                ) == LEASE_HELD
+        except Exception:
+            log.warning(
+                "lease headroom read failed after a refusal; keeping the 402 workspace=%s",
+                workspace_id,
+                exc_info=True,
+            )
+            return False
 
     def reap_expired_reservations(self, *, now: Any, limit: int = 100) -> int:
         from trusted_router.storage_gcp_authorize import (
