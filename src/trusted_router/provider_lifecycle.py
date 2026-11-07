@@ -30,6 +30,9 @@ TOGETHER_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 14, 0, 0, tzinfo=UTC)
 TOGETHER_OCTOBER_22_RETIREMENT_AT = datetime(2026, 10, 22, 0, 0, tzinfo=UTC)
 OPENAI_SEPTEMBER_28_RETIREMENT_AT = datetime(2026, 9, 28, 0, 0, tzinfo=UTC)
 OPENAI_OCTOBER_23_RETIREMENT_AT = datetime(2026, 10, 23, 0, 0, tzinfo=UTC)
+# OpenAI's deprecations page also lists the undated gpt-3.5-turbo alias in its
+# October 23 shutdown. We missed the alias, so it retires as soon as this ships.
+OPENAI_GPT35_TURBO_ALIAS_RETIREMENT_AT = datetime(2026, 11, 7, 0, 0, tzinfo=UTC)
 GOOGLE_AI_STUDIO_VEO_PREVIEW_RETIREMENT_AT = datetime(2026, 10, 22, 0, 0, tzinfo=UTC)
 GOOGLE_AI_STUDIO_GEMINI_35_FLASH_RETIREMENT_AT = datetime(2026, 10, 10, 0, 0, tzinfo=UTC)
 GOOGLE_AI_STUDIO_GEMINI_37_FLASH_RETIREMENT_AT = datetime(2026, 10, 9, 0, 0, tzinfo=UTC)
@@ -523,6 +526,16 @@ _RETIREMENTS = (
             "gpt-4o-2024-05-13", "openai/gpt-4o-2024-05-13",
         }),
         effective_at=OPENAI_OCTOBER_23_RETIREMENT_AT,
+    ),
+    # https://developers.openai.com/api/docs/deprecations (2026-04-22 legacy
+    # GPT snapshots): gpt-3.5-turbo shut down with its 0125 snapshot; OpenAI
+    # names gpt-5.6-terra as the replacement. Probes now fail on the alias.
+    _Retirement(
+        provider="openai",
+        model_ids=frozenset({"openai/gpt-3.5-turbo"}),
+        upstream_ids=frozenset({"gpt-3.5-turbo"}),
+        effective_at=OPENAI_GPT35_TURBO_ALIAS_RETIREMENT_AT,
+        replacement_model_ids=("openai/gpt-5.6-terra",),
     ),
     # The same notice shuts down o1-2024-12-17, o1-pro-2025-03-19,
     # o3-mini-2025-01-31 and o4-mini-2025-04-16. Each is the only snapshot

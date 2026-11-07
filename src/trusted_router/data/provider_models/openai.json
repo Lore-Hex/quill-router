@@ -525,8 +525,10 @@
       "status": 1,
       "id": "openai/gpt-3.5-turbo",
       "upstream_id": "gpt-3.5-turbo",
+      "retirement_at": "2026-11-07T00:00:00Z",
+      "replacement_model_id": "openai/gpt-5.6-terra",
       "created": 1677610602,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 500000,
       "output_token_price_per_m": 1500000
     },

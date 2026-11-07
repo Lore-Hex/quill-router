@@ -78,3 +78,24 @@ def test_openai_manifest_records_the_announced_retirements() -> None:
     for model in ("openai/gpt-3.5-turbo-0125", "openai/gpt-4-0613", "openai/gpt-4.1-nano"):
         assert rows[model]["retirement_at"] == "2026-10-23T00:00:00Z"
     assert "retirement_at" not in rows["openai/gpt-4.1-mini"]
+
+
+def test_gpt35_turbo_alias_retires_with_named_replacement_and_is_not_probed() -> None:
+    # OpenAI shut the undated alias down with gpt-3.5-turbo-0125; configured
+    # probes then failed with probe_config_error until the alias was retired.
+    from trusted_router.synthetic.probes import rotation_candidates
+
+    cutover = provider_lifecycle.OPENAI_GPT35_TURBO_ALIAS_RETIREMENT_AT
+    retired = provider_lifecycle.provider_model_retired
+    assert not retired("openai", "openai/gpt-3.5-turbo", "gpt-3.5-turbo",
+                       at=cutover - timedelta(microseconds=1))
+    assert retired("openai", "openai/gpt-3.5-turbo", "gpt-3.5-turbo", at=cutover)
+    notice = next(
+        r for r in provider_lifecycle.provider_retirements()
+        if "openai/gpt-3.5-turbo" in r.model_ids
+    )
+    assert notice.replacement_model_ids == ("openai/gpt-5.6-terra",)
+    rows = {row["id"]: row for row in json.loads(openai.MANIFEST_PATH.read_text())["models"]}
+    assert rows["openai/gpt-3.5-turbo"]["retirement_at"] == "2026-11-07T00:00:00Z"
+    assert rows["openai/gpt-3.5-turbo"]["replacement_model_id"] == "openai/gpt-5.6-terra"
+    assert "openai/gpt-3.5-turbo" not in rotation_candidates().get("openai", [])

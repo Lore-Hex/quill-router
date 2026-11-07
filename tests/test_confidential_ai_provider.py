@@ -245,6 +245,21 @@ def test_live_manifest_builds_credits_route_with_cache_billing_and_zdr_not_e2e()
         assert not endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL)
 
 
+def test_rejected_operator_key_holds_prepaid_routes_out_of_probe_rotation() -> None:
+    # Every configured-route probe failed provider auth on November 6. Keep
+    # managed routes dark (and unprobed) until a canary on a working key.
+    from trusted_router.catalog import MODEL_ENDPOINTS
+    from trusted_router.provider_contracts import PREPAID_PROVIDER_HOLD_REASONS
+    from trusted_router.synthetic.probes import rotation_candidates
+
+    slug = confidential_ai.SLUG
+    assert PREPAID_PROVIDER_HOLD_REASONS[slug] == "operator-credential-rejected"
+    assert not any(
+        e.provider == slug and e.usage_type == "Credits" for e in MODEL_ENDPOINTS.values()
+    )
+    assert slug not in rotation_candidates()
+
+
 def test_hourly_refresh_has_narrow_secret_binding() -> None:
     root = Path(__file__).resolve().parents[1]
     resource_name = "trustedrouter-confidential-ai-api-key"

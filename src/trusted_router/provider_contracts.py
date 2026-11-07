@@ -67,6 +67,11 @@ PREPAID_PROVIDER_HOLD_REASONS: dict[str, str] = {
     # Keep managed billing dark until a reviewed adapter accounts for them.
     # https://docs.perplexity.ai/docs/agent-api/migrate-from-sonar/overview
     "perplexity": "billing-contract-unverified",
+    # November 6: every configured-route probe of both Confidential AI routes
+    # (deepseek-v4-flash-0731, deepseek-v4.1-flash) failed provider auth, while
+    # the refresher's catalog key still lists models. Clear only after the
+    # enclave's serving key passes a paid-path canary.
+    "confidential-ai": "operator-credential-rejected",
 }
 # Lightning revoked platform access during its October 16 security incident.
 # This applies to both managed and customer keys. Require reviewed recovery,
