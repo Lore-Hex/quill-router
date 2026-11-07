@@ -3,8 +3,8 @@
   "provider": "google-vertex",
   "source": "https://aiplatform.googleapis.com/v1beta1/publishers/google/models",
   "pricing_source": "https://cloud.google.com/vertex-ai/generative-ai/pricing",
-  "generated_at": "2026-10-26T06:59:20Z",
-  "model_count": 43,
+  "generated_at": "2026-11-07T10:00:09Z",
+  "model_count": 46,
   "models": [
     {
       "id": "google/gemini-3.6-flash",
@@ -913,7 +913,7 @@
       ],
       "canary_status_code": 404,
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "vertex-publisher-policy-review",
       "input_token_price_per_m": 5000000,
       "output_token_price_per_m": 25000000,
       "cached_input_token_price_per_m": 500000
@@ -944,7 +944,7 @@
       ],
       "canary_status_code": 404,
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "vertex-publisher-policy-review",
       "input_token_price_per_m": 5000000,
       "output_token_price_per_m": 25000000,
       "cached_input_token_price_per_m": 500000
@@ -1062,7 +1062,7 @@
       ],
       "canary_status_code": 404,
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "vertex-publisher-policy-review",
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
       "cached_input_token_price_per_m": 200000
@@ -1095,6 +1095,63 @@
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
       "cached_input_token_price_per_m": 100000
+    },
+    {
+      "display_name": "google/gemini-3.8-flash-lite-tts",
+      "title": "gemini-3.8-flash-lite-tts",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-3.8-flash-lite-tts",
+      "upstream_id": "gemini-3.8-flash-lite-tts",
+      "routable": false,
+      "routable_reason": "unsupported-vertex-api"
+    },
+    {
+      "display_name": "google/gemini-3.8-flash-tts",
+      "title": "gemini-3.8-flash-tts",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-3.8-flash-tts",
+      "upstream_id": "gemini-3.8-flash-tts",
+      "routable": false,
+      "routable_reason": "unsupported-vertex-api"
+    },
+    {
+      "display_name": "google/gemini-omni-1.2-flash",
+      "title": "gemini-omni-1.2-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-omni-1.2-flash",
+      "upstream_id": "gemini-omni-1.2-flash",
+      "routable": false,
+      "routable_reason": "unsupported-vertex-api"
     }
   ],
   "price_scale": "microdollars_per_million"

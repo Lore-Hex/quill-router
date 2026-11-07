@@ -1002,6 +1002,18 @@
       "supported_efforts": [],
       "default_effort": null
     },
+    "liquid/lfm-3-1.7b": {
+      "mandatory": true,
+      "default_enabled": false,
+      "supported_efforts": [],
+      "default_effort": null
+    },
+    "liquid/lfm-3-1.7b:free": {
+      "mandatory": true,
+      "default_enabled": false,
+      "supported_efforts": [],
+      "default_effort": null
+    },
     "meituan/longcat-2.0": {
       "mandatory": false,
       "default_enabled": true,

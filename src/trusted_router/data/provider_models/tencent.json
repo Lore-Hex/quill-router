@@ -798,7 +798,7 @@
   ],
   "source": "https://tokenhub-intl.tencentcloudmaas.com/v1/models",
   "pricing_source": "https://intl.cloud.tencent.com/document/product/1300/78937",
-  "generated_at": "2026-11-06T22:16:27Z",
+  "generated_at": "2026-11-07T10:00:09Z",
   "price_scale": "microdollars_per_million",
   "model_count": 26
 }

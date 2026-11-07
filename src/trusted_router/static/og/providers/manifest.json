@@ -235,10 +235,10 @@
   },
   "decisionmodelsio-eu": {
     "card_version": 2,
-    "model_count": 5,
+    "model_count": 7,
     "name": "Decision Models (EU)",
     "privacy": "Policy documented",
-    "route_count": 5,
+    "route_count": 7,
     "route_mode": "Prepaid",
     "slug": "decisionmodelsio-eu"
   },
@@ -262,10 +262,10 @@
   },
   "digitalocean": {
     "card_version": 2,
-    "model_count": 14,
+    "model_count": 11,
     "name": "DigitalOcean Gradient AI",
     "privacy": "Policy documented",
-    "route_count": 28,
+    "route_count": 22,
     "route_mode": "Prepaid + BYOK",
     "slug": "digitalocean"
   },
@@ -325,10 +325,10 @@
   },
   "gmi": {
     "card_version": 2,
-    "model_count": 81,
+    "model_count": 76,
     "name": "GMI Cloud",
     "privacy": "Policy documented",
-    "route_count": 88,
+    "route_count": 83,
     "route_mode": "Prepaid + BYOK",
     "slug": "gmi"
   },
@@ -487,10 +487,10 @@
   },
   "lyceum": {
     "card_version": 2,
-    "model_count": 12,
+    "model_count": 10,
     "name": "Lyceum",
     "privacy": "Policy documented",
-    "route_count": 12,
+    "route_count": 10,
     "route_mode": "Prepaid",
     "slug": "lyceum"
   },
@@ -649,10 +649,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 15,
+    "model_count": 13,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 15,
+    "route_count": 13,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },

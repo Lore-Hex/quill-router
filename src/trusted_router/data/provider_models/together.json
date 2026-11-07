@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Together AI routes that are live ahead of the shared OpenRouter snapshot. Verified against https://api.together.xyz/v1/models on 2026-06-22.",
   "provider": "together",
   "source": "https://api.together.xyz/v1/endpoints?type=serverless",
-  "generated_at": "2026-11-06T22:16:27Z",
+  "generated_at": "2026-11-07T10:00:09Z",
   "model_count": 25,
   "models": [
     {
@@ -215,7 +215,9 @@
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 1200000,
       "cached_input_token_price_per_m": 60000,
-      "missing_since": "2026-11-06"
+      "missing_since": "2026-11-06",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Kimi K2.6 Fp4",
@@ -476,7 +478,9 @@
       "input_token_price_per_m": 1000000,
       "output_token_price_per_m": 4050000,
       "cached_input_token_price_per_m": 170000,
-      "missing_since": "2026-11-06"
+      "missing_since": "2026-11-06",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Inkling FP4",
