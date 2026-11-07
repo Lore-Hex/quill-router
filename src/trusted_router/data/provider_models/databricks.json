@@ -270,7 +270,7 @@
         "reasoning",
         "prompt_caching"
       ],
-      "routable": true,
+      "routable": false,
       "account_rate_limit_request": {
         "tier": 2,
         "status": "submitted",
@@ -281,7 +281,8 @@
       "input_token_price_per_m": 1000000,
       "output_token_price_per_m": 4050000,
       "cached_input_token_price_per_m": 170000,
-      "missing_since": "2026-11-07"
+      "missing_since": "2026-11-07",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "GLM 5.2",
@@ -319,6 +320,6 @@
       "cached_input_token_price_per_m": 260000
     }
   ],
-  "generated_at": "2026-11-07T14:08:42Z",
+  "generated_at": "2026-11-07T15:07:20Z",
   "model_count": 11
 }

@@ -118,10 +118,10 @@
   },
   "boundless": {
     "card_version": 2,
-    "model_count": 21,
+    "model_count": 20,
     "name": "Boundless",
     "privacy": "Policy documented",
-    "route_count": 21,
+    "route_count": 20,
     "route_mode": "Prepaid",
     "slug": "boundless"
   },
@@ -235,10 +235,10 @@
   },
   "decisionmodelsio-eu": {
     "card_version": 2,
-    "model_count": 7,
+    "model_count": 6,
     "name": "Decision Models (EU)",
     "privacy": "Policy documented",
-    "route_count": 7,
+    "route_count": 6,
     "route_mode": "Prepaid",
     "slug": "decisionmodelsio-eu"
   },
