@@ -181,7 +181,13 @@ def test_the_post_cutover_suite_and_the_model_checks_may_skip_only_on_a_push() -
         for result in ("failure", "cancelled", "timed_out", None):
             assert summarize(needs(**{job: result}), "false", "push") == [f"{job}: {result}"]
     # The data-only rule still excuses proofs on a data-only commit, whatever the event.
-    assert summarize(needs(proofs="skipped"), "true", "pull_request") == []
+    for event in ("push", "pull_request", "workflow_dispatch", "schedule", "", "PUSH"):
+        assert summarize(needs(proofs="skipped"), "true", event) == []
+    # The post-cutover suite reads the data, so on a data-only commit too only
+    # a push excuses its skip.
+    assert summarize(needs(test_post_cutover="skipped"), "true", "push") == []
+    for event in ("pull_request", "workflow_dispatch", "schedule", "", "PUSH"):
+        assert summarize(needs(test_post_cutover="skipped"), "true", event) == ["test-post-cutover: skipped"]
     # A push excuses only those jobs, and only their skips.
     assert summarize(needs(test="skipped"), "false", "push") == ["test: skipped"]
     assert summarize(needs(proof_oracle="skipped"), "false", "push") == ["proof-oracle: skipped"]
