@@ -1548,7 +1548,7 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
             "fusion_panel",
             1_048_576,
             [
-                "nvidia/nemotron-3.5-super-vl",
+                "nvidia/nemotron-3-ultra-550b-a55b",
                 "reflection/beam-1.0",
                 "meta-models/muse-spark-open",
             ],
