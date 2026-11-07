@@ -57,6 +57,7 @@ from scripts.pricing.base import (
     log,
     parser_path,
     read_stale_provider_manifest,
+    safe_exception_message,
     safe_exception_summary,
 )
 
@@ -736,6 +737,18 @@ def _upstream_id_map_for(slug: str) -> dict[str, str]:
     return {str(k): str(v) for k, v in raw.items() if isinstance(k, str) and isinstance(v, str)}
 
 
+def discovery_failure_detail(exc: Exception) -> str:
+    """Type, status/scrubbed URL or category, plus the sanitized message.
+
+    The message names the exact failed check (for example "lyceum: invalid
+    token limits"), which the type and category alone could not; without it
+    a held provider could not be diagnosed without its API key.
+    """
+    summary = safe_exception_summary(exc)
+    message = safe_exception_message(exc)
+    return f"{summary} message={message!r}" if message else summary
+
+
 def _fetch_one(slug: str) -> tuple[str, ProviderPricingResult | None, str | None]:
     """Fetch one provider. Returns (slug, result, error_message)."""
     try:
@@ -743,7 +756,7 @@ def _fetch_one(slug: str) -> tuple[str, ProviderPricingResult | None, str | None
         result = module.fetch()
         return slug, result, None
     except Exception as exc:  # noqa: BLE001 — we genuinely want to catch everything
-        return slug, None, safe_exception_summary(exc)
+        return slug, None, discovery_failure_detail(exc)
 
 
 def _fetch_all_providers() -> tuple[

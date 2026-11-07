@@ -199,16 +199,69 @@ def _api_tariffs(source: dict[str, Any]) -> dict[str, int]:
     return prices
 
 
+# Per-row problems from the latest discovery, for the run's notes. A row Lyceum
+# publishes in a shape this adapter does not understand is held on its own;
+# it never freezes every other Lyceum route until the manifest deadline.
+ROW_ERRORS: list[str] = []
+ROW_INVALID = "provider-row-invalid"
+
+
+def _api_row(source: dict[str, Any], native: str) -> tuple[ModelPrice, dict[str, Any]]:
+    """Validate one published chat or embedding row; raise RuntimeError if not exact."""
+    kind = source.get("kind")
+    embedding = kind == "embedding"
+    limit = source.get("context_length")
+    max_output = 0 if embedding else source.get("max_output_tokens")
+    if type(limit) is not int or limit <= 0 or type(max_output) is not int or not 0 <= max_output <= limit or (not embedding and max_output == 0):
+        raise RuntimeError("lyceum: invalid token limits")
+    tariffs = _api_tariffs(source)
+    prompt = tariffs.get("prompt", 0)
+    completion = tariffs.get("completion", 0)
+    cached = tariffs.get("cached_prompt")
+    if prompt <= 0 or (embedding and completion != 0) or (not embedding and completion <= 0):
+        raise RuntimeError("lyceum: missing or nonpositive USD token tariff")
+    if cached is not None and (cached > prompt or (embedding and cached != 0)):
+        raise RuntimeError("lyceum: unsupported cache price")
+    if embedding:
+        cached = None
+    inputs = {m.get("type") for m in source["input_modalities"]}
+    outputs = {m.get("type") for m in source["output_modalities"]}
+    if "text" not in inputs or outputs != ({"embedding"} if embedding else {"text"}):
+        raise RuntimeError("lyceum: unsupported modalities")
+    return ModelPrice(prompt, completion, prompt_cached_micro_per_m=cached), dict(
+        display_name=source.get("display_name") or native,
+        model_type=kind, context_length=limit, max_output_tokens=max_output,
+        input_modalities=["text", "image"] if "image" in inputs and not embedding else ["text"],
+        output_modalities=["embeddings"] if embedding else ["text"],
+        endpoints=["embeddings"] if embedding else ["chat/completions"],
+        supported_features=[] if embedding else ["tools", "streaming"] + (["prompt_caching"] if cached is not None else []),
+    )
+
+
 def discover_api(payload: object) -> tuple[dict[str, ModelPrice], dict[str, dict[str, Any]]]:
     if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
         raise RuntimeError("lyceum: catalog has no data list")
+    ROW_ERRORS.clear()
     prices: dict[str, ModelPrice] = {}
     rows: dict[str, dict[str, Any]] = {}
+
+    def hold(model_id: str, reason: str) -> None:
+        rows[model_id].update(routable=False, routable_reason=ROW_INVALID)
+        prices.pop(model_id, None)
+        ROW_ERRORS.append(f"{model_id}: {reason}")
+
     for source in payload["data"]:
         native = source.get("id") if isinstance(source, dict) else None
         model_id = canonical_model_id(native) if isinstance(native, str) else None
-        if model_id is None or model_id in rows:
-            raise RuntimeError("lyceum: invalid or duplicate catalog ID")
+        if model_id is None:
+            # No canonical identity to publish or hold under; never guess one.
+            ROW_ERRORS.append(f"unmapped catalog ID {native!r}" if isinstance(native, str) and len(native) <= 128
+                              else "invalid catalog ID")
+            continue
+        if model_id in rows:
+            # Two native IDs claim one model: ambiguous upstream and price.
+            hold(model_id, "duplicate catalog ID")
+            continue
         row: dict[str, Any] = {"id": model_id, "upstream_id": native, "display_name": native}
         rows[model_id] = row
         # Old model IDs and router/instant aliases now redirect to different
@@ -219,40 +272,20 @@ def discover_api(payload: object) -> tuple[dict[str, ModelPrice], dict[str, dict
         if source.get("publication_status") != "published":
             row.update(routable=False, routable_reason="provider-unpublished")
             continue
-        kind = source.get("kind")
-        if kind not in {"chat", "embedding"}:
+        if source.get("kind") not in {"chat", "embedding"}:
             row.update(routable=False, routable_reason="unsupported-endpoint")
             continue
-        embedding = kind == "embedding"
-        limit = source.get("context_length")
-        max_output = 0 if embedding else source.get("max_output_tokens")
-        if type(limit) is not int or limit <= 0 or type(max_output) is not int or not 0 <= max_output <= limit or (not embedding and max_output == 0):
-            raise RuntimeError("lyceum: invalid token limits")
-        tariffs = _api_tariffs(source)
-        prompt = tariffs.get("prompt", 0)
-        completion = tariffs.get("completion", 0)
-        cached = tariffs.get("cached_prompt")
-        if prompt <= 0 or (embedding and completion != 0) or (not embedding and completion <= 0):
-            raise RuntimeError("lyceum: missing or nonpositive USD token tariff")
-        if cached is not None and (cached > prompt or (embedding and cached != 0)):
-            raise RuntimeError("lyceum: unsupported cache price")
-        if embedding:
-            cached = None
-        inputs = {m.get("type") for m in source["input_modalities"]}
-        outputs = {m.get("type") for m in source["output_modalities"]}
-        if "text" not in inputs or outputs != ({"embedding"} if embedding else {"text"}):
-            raise RuntimeError("lyceum: unsupported modalities")
-        prices[model_id] = ModelPrice(prompt, completion, prompt_cached_micro_per_m=cached)
-        row.update(
-            display_name=source.get("display_name") or native,
-            model_type=kind, context_length=limit, max_output_tokens=max_output,
-            input_modalities=["text", "image"] if "image" in inputs and not embedding else ["text"],
-            output_modalities=["embeddings"] if embedding else ["text"],
-            endpoints=["embeddings"] if embedding else ["chat/completions"],
-            supported_features=[] if embedding else ["tools", "streaming"] + (["prompt_caching"] if cached is not None else []),
-        )
+        try:
+            price, metadata = _api_row(source, native)
+        except (RuntimeError, AttributeError, KeyError, TypeError) as exc:
+            hold(model_id, str(exc) if isinstance(exc, RuntimeError) else f"malformed row ({type(exc).__name__})")
+            continue
+        prices[model_id] = price
+        row.update(metadata)
+    # A catalog where nothing validates is breakage, not one odd row.
     if not prices or (errors := validate(prices, [])):
-        raise RuntimeError("lyceum: no valid priced models" if not prices else "; ".join(errors))
+        detail = f" ({'; '.join(ROW_ERRORS[:5])})" if ROW_ERRORS else ""
+        raise RuntimeError(("lyceum: no valid priced models" + detail) if not prices else "; ".join(errors))
     return prices, rows
 
 
@@ -273,7 +306,8 @@ def fetch() -> ProviderPricingResult:
     _DISCOVERED_ROWS = rows
     return ProviderPricingResult(
         slug=SLUG, prices=prices, source="api", fetched_url=PRICING_URL,
-        notes=[f"{len(prices)} priced models; {len(healthy)}/{len(checked)} new/unhealthy canaries passed"],
+        notes=[f"{len(prices)} priced models; {len(healthy)}/{len(checked)} new/unhealthy canaries passed",
+               *(f"held {error}" for error in ROW_ERRORS)],
         price_index_model_ids=frozenset(model_id for model_id in prices if rows[model_id]["model_type"] == "chat"),
     )
 

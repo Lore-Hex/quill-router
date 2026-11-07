@@ -25,6 +25,9 @@ from scripts.pricing.vertex_prices import parse
 
 SLUG = "google-vertex"
 URL = "https://cloud.google.com/vertex-ai/generative-ai/pricing"
+# Claude and other partner-model tariffs moved off the Gemini pricing page to
+# their own page (by 2026-11); the Gemini page now only links to it.
+PARTNER_PRICING_URL = "https://cloud.google.com/model-garden/partner-models/pricing"
 MODELS_URL = "https://aiplatform.googleapis.com/v1beta1/publishers/google/models"
 MANIFEST_PATH = (
     Path(__file__).resolve().parents[3]
@@ -166,7 +169,7 @@ def fetch() -> ProviderPricingResult:
     claude_rows = _live_claude_rows(headers)
     html = fetch_html(URL)
     prices = parse(html)
-    claude_tariffs = vertex_claude.parse(html) if claude_rows else {}
+    claude_tariffs = vertex_claude.parse(fetch_html(PARTNER_PRICING_URL)) if claude_rows else {}
     prices.update({mid: tariff.price for mid, tariff in claude_tariffs.items()})
     chat_ids = {f"google/{mid}" for mid in native_ids if _CHAT_ID.fullmatch(mid)} | claude_rows.keys()
     metadata = _metadata()
