@@ -89,10 +89,11 @@ locals {
   # 8af87998a: every stop writes the workspace's hold, and disable-all the
   # fleet hold, in the transaction that turns it off, which needs
   # tr_fastpath_workspace_hold and tr_fastpath_kill, live since 2026-11-07 06:35Z;
-  # fastpathctl gains release, release-all, the enabler's pause, resume and
-  # arm, and the hold listing; nothing reads a hold to turn a workspace on
-  # yet (#2385, widening PR 4, dark); RecordCeiling is on, so a stream
-  # admitted with a ceiling runs past its hold to it and its records carry
+  # fastpathctl gains release, release-all, release-stamped, hold-backfill,
+  # the enabler's pause, resume and arm, and the hold listing (holds);
+  # nothing reads a hold to turn a workspace on yet (#2385, widening PR 4,
+  # dark); RecordCeiling is on, so a stream admitted with a ceiling runs
+  # past its hold to it and its records carry
   # ceil, and no gateway sends a ceiling until fastpath_stream_ceiling moves,
   # so the records match the release before (#2383, stream ceiling PR 3;
   # every node ran 5c5f11fad, which reads ceil, before this pin).
