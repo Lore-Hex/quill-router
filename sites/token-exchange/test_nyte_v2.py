@@ -187,6 +187,8 @@ class NavigationRegistryTests(unittest.TestCase):
             self.assertNotIn('data-nav=', nav)
             self.assertNotIn('href="/media-kit"', nav)
             self.assertIn('href="/media-kit">Media kit</a>', page)
+            footer = re.search(r'<footer\b[^>]*>.*?</footer>', page, re.S).group()
+            self.assertEqual(footer.count('href="https://letsencrypt.ai/">Let\'s Encrypt AI</a>'), 1)
             self.assertEqual(nav.count('aria-expanded="false"'), 3)
 
     def test_added_page_gets_automatic_date_without_changing_test_lists(self):

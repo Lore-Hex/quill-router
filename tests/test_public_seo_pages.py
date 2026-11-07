@@ -56,6 +56,14 @@ def test_public_footer_links_to_token_exchange(client: TestClient, path: str) ->
     assert 'href="https://thetokenexchange.com/"' in footer
 
 
+@pytest.mark.parametrize("path", ["/", "/models", "/providers", "/trust"])
+def test_public_footer_links_to_lets_encrypt_ai(client: TestClient, path: str) -> None:
+    response = client.get(path)
+    assert response.status_code == 200
+    footer = response.text.split('<footer class="site-footer"', maxsplit=1)[1].split("</footer>", maxsplit=1)[0]
+    assert footer.count('href="https://letsencrypt.ai/">Let\'s Encrypt AI</a>') == 1
+
+
 def test_robots_and_sitemap_are_public(client: TestClient) -> None:
     robots = client.get("/robots.txt")
     assert robots.status_code == 200
