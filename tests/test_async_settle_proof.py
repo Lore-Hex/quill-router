@@ -209,7 +209,7 @@ def test_the_route_deadline_answers_the_storage_503(env, monkeypatch, mode, spen
     @contextlib.contextmanager
     def deadline(delay, shield=False):
         delays.append(delay)
-        with anyio.fail_after(0 if spend == 'entry' else delay, shield) as scope:
+        with anyio.fail_after(0 if spend == 'entry' else None, shield) as scope:
             scopes.append(scope)
             yield scope
 
