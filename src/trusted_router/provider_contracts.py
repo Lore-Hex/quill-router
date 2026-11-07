@@ -4,6 +4,9 @@ MAPLE_MODEL_ID = "dealignai/deepseek-v4.1-flash-1017-uncensored"
 MAPLE_NATIVE_ID = "deepseek-v4-1-flash-1017-uncensored"
 BASETEN_SYSTEMONE_PREFIX = "decision-models/"
 BASETEN_SYSTEMONE_HOLD_REASON = "systemone-adapter-not-implemented"
+CONFIDENTIAL_AI_RETIRED_MODEL_IDS = frozenset({
+    "deepseek/deepseek-v4-flash-0731", "deepseek/deepseek-v4.1-flash",
+})
 MAKORA_NON_CHAT_MODEL_IDS = frozenset({
     "cloudflare/clef-flash", "perplexity-ai/pplx-decider-v1.2",
 })
@@ -187,6 +190,14 @@ def provider_model_operator_held(
         return True
     native_prefix = _NATIVE_HOSTED_MODEL_PREFIXES.get(provider_slug)
     native_id = upstream_id or model_id
+    # November 6: the provider removed these IDs and returns 401
+    # model_not_authorized. Do not silently substitute the new dated model.
+    if provider_slug == "confidential-ai" and (
+        model_id.casefold() in CONFIDENTIAL_AI_RETIRED_MODEL_IDS
+        or native_id.casefold().replace("deepseek-ai/", "deepseek/", 1)
+        in CONFIDENTIAL_AI_RETIRED_MODEL_IDS
+    ):
+        return True
     # Makora's generic model feed advertises text output for these, but its
     # chat API rejects them. Stale manifests must not restore either key path.
     if provider_slug == "makora" and (

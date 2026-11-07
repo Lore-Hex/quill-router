@@ -20,21 +20,75 @@ from trusted_router.catalog_data import PRIVACY_TIER_CONFIDENTIAL, PRIVACY_TIER_
 from trusted_router.catalog_ingest import _supplemental_provider_models_and_endpoints
 from trusted_router.catalog_privacy import endpoint_meets_privacy_requirement
 from trusted_router.pricing import _customer_price
+from trusted_router.provider_contracts import provider_model_operator_held
 from trusted_router.provider_manifest_policy import EXPIRING_PROVIDER_MANIFEST_SLUGS
 from trusted_router.services.inference_errors import default_provider_secret_ref
 
-FLASH = "deepseek/deepseek-v4-flash-0731"
+FLASH = "deepseek/deepseek-v4.1-flash-1017"
+LEGACY_FLASH = "deepseek/deepseek-v4-flash-0731"
 M3 = "minimax/minimax-m3"
-NATIVE_FLASH = "deepseek-ai/DeepSeek-V4-Flash-0731"
+NATIVE_FLASH = "deepseek-ai/DeepSeek-V4.1-Flash-1017"
 PRICES = """
 <table><tr><th>Model</th><th>Input (per 1M tokens)</th>
 <th>Input Cached (per 1M tokens)</th><th>Output (per 1M tokens)</th></tr>
-<tr><td>DeepSeek V4-Flash</td><td>$0.20</td><td>$0.018</td><td>$0.40</td></tr>
+<tr><td>DeepSeek V4.1 Flash</td><td>$0.20</td><td>$0.018</td><td>$0.40</td></tr>
 <tr><td>Kimi K3</td><td>$3.00</td><td>$0.30</td><td>$15.00</td></tr>
 </table><table><tr><th>GPU</th><th>Per GPU-Hour</th></tr>
 <tr><td>H100</td><td>$3.25</td></tr></table>
 """
 ROWS = [{"id": NATIVE_FLASH}, {"id": "MiniMaxAI/MiniMax-M3-MXFP8"}]
+
+
+def test_current_exact_release_joins_published_family_price(tmp_path, monkeypatch):
+    native = "deepseek-ai/DeepSeek-V4.1-Flash-1017"
+    model = "deepseek/deepseek-v4.1-flash-1017"
+    html = PRICES.replace("DeepSeek V4-Flash", "DeepSeek V4.1 Flash")
+    catalog = _catalog(tmp_path, monkeypatch, rows=[{"id": native}], html=html)
+    result = catalog.fetch()
+    assert set(result.prices) == {model}
+    assert catalog.upstream_id_map[model] == native
+    assert "deepseek/deepseek-v4.1-flash-9999" not in confidential_ai._published_prices(html)
+
+
+def test_reviewed_migration_quarantines_old_rows_without_remapping_them(tmp_path, monkeypatch):
+    catalog = _catalog(tmp_path, monkeypatch, rows=[{"id": NATIVE_FLASH}])
+    old_ids = [LEGACY_FLASH, "deepseek/deepseek-v4.1-flash"]
+    catalog.manifest_path.write_text(json.dumps({
+        "provider": "confidential-ai",
+        "models": [{"id": model, "routable": True} for model in old_ids],
+    }))
+    catalog.write_provider_manifest(catalog.fetch())
+    rows = {row["id"]: row for row in json.loads(catalog.manifest_path.read_text())["models"]}
+    for model in old_ids:
+        assert rows[model]["routable"] is False
+        assert rows[model]["routable_reason"] == "provider-model-retired"
+    assert rows[FLASH]["upstream_id"] == NATIVE_FLASH
+    assert rows[FLASH]["routable"] is True
+
+
+def test_reviewed_retirements_do_not_bypass_unrelated_mass_prune(tmp_path, monkeypatch):
+    catalog = _catalog(tmp_path, monkeypatch, rows=[{"id": NATIVE_FLASH}])
+    unrelated = "moonshotai/kimi-k3"
+    catalog.manifest_path.write_text(json.dumps({
+        "provider": "confidential-ai",
+        "models": [
+            {"id": unrelated, "routable": True, "missing_since": "2026-01-01"},
+        ],
+    }))
+    catalog.write_provider_manifest(catalog.fetch())
+    rows = json.loads(catalog.manifest_path.read_text())["models"]
+    assert rows == [{"id": unrelated, "routable": True, "missing_since": "2026-01-01"}]
+
+
+@pytest.mark.parametrize("model", [LEGACY_FLASH, "deepseek/deepseek-v4.1-flash"])
+def test_retired_confidential_ai_ids_do_not_return_via_stale_catalog(model):
+    assert provider_model_operator_held("confidential-ai", model)
+    assert not provider_model_operator_held("deepseek", model)
+    assert not provider_model_operator_held(
+        "confidential-ai", "deepseek/deepseek-v4.1-flash-1017"
+    )
+    native = model.replace("deepseek/", "deepseek-ai/").upper()
+    assert provider_model_operator_held("confidential-ai", "stale/alias", native)
 
 
 def test_exact_input_cached_output_units_and_dated_alias() -> None:
@@ -55,7 +109,7 @@ def test_reordered_columns_do_not_swap_cached_and_output_prices() -> None:
 
 def test_status_column_is_not_a_price_or_availability_signal() -> None:
     html = PRICES.replace("<th>Model</th>", "<th>Model</th><th>Status</th>")
-    html = html.replace("<td>DeepSeek V4-Flash</td>", "<td>DeepSeek V4-Flash</td><td>Live</td>")
+    html = html.replace("<td>DeepSeek V4.1 Flash</td>", "<td>DeepSeek V4.1 Flash</td><td>Live</td>")
     html = html.replace("<td>Kimi K3</td>", "<td>Kimi K3</td><td>Request access</td>")
     assert confidential_ai._published_prices(html) == confidential_ai._published_prices(PRICES)
 
