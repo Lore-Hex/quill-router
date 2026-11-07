@@ -75,10 +75,21 @@ main .tags{gap:8px}
 .v3-stats .stat,.v3-stats .stat+.stat{padding:0;border-left:0;margin:0}
 .v3-stats .stat .v{margin-top:28px;font-size:96px;line-height:1;font-weight:300;letter-spacing:-.02em;white-space:nowrap}
 .v3-stats .stat .l{margin-top:16px;max-width:260px;font-size:17px;line-height:1.55;color:var(--ink)}
-.v3-labs{margin-top:80px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:16px;padding:18px 0;border-top:1.5px solid var(--ink);border-bottom:1.5px solid var(--ink);font:500 15px var(--font-mono);letter-spacing:.02em}
-.v3-labs span{display:inline-flex;align-items:center;gap:8px}
-.v3-labs img{width:20px;height:20px;object-fit:contain}
-/* These two logo files have white squares; blend them into the cream. */
+.v3-labs{margin-top:80px;padding:18px 0;border-top:1.5px solid var(--ink);border-bottom:1.5px solid var(--ink);font:500 15px var(--font-mono);letter-spacing:.02em}
+/* Provider strip: scrolls inside a centred ~1024px masked window; equal slots make one set
+   (6 x 208px) wider than the window, so no logo shows twice at once. Still for reduced motion. */
+.v3-labs-window{max-width:1024px;margin:0 auto;overflow:hidden;-webkit-mask-image:linear-gradient(90deg,transparent,#000 10%,#000 90%,transparent);mask-image:linear-gradient(90deg,transparent,#000 10%,#000 90%,transparent)}
+.v3-labs .mq-track{animation-duration:40s;background:var(--cream)}
+.v3-labs .mq-set{gap:0;padding-right:0}
+.v3-labs .mq-item{width:208px;justify-content:center;gap:10px;color:var(--ink);font:500 16px var(--font-mono);letter-spacing:.02em}
+.v3-labs .mq-item img{width:24px;height:24px;padding:0;border-radius:0;background:none;object-fit:contain}
+@media (prefers-reduced-motion:reduce){
+  .v3-labs .mq-set[aria-hidden="true"]{display:none}
+  .v3-labs .mq-track{width:auto}
+  .v3-labs .mq-set{flex-wrap:wrap;justify-content:center;row-gap:8px}
+  .v3-labs-window{-webkit-mask-image:none;mask-image:none}
+}
+/* These two logo files have white squares; blend them into the cream (the moving track paints cream, since its transform isolates the blend). */
 .v3-labs img[src*="provider-openai"],.v3-labs img[src*="provider-grok"]{mix-blend-mode:multiply}
 
 /* Teams */
@@ -131,7 +142,7 @@ main .tags{gap:8px}
   .v3-stats .stat .v{margin-top:18px;font-size:56px}
   .v3-stats .stat .v span{font-size:32px}
   .v3-stats .stat .l{margin-top:10px}
-  .v3-labs{margin-top:48px;justify-content:flex-start;gap:10px 20px;padding:14px 0}
+  .v3-labs{margin-top:48px;padding:14px 0}
   .v3-teams h2{margin-top:24px}
   .v3-team-list{margin-top:40px}
   .v3-team-list li{grid-template-columns:40px minmax(0,1fr);padding:20px 0}
