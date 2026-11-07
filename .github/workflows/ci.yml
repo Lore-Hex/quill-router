@@ -300,10 +300,10 @@ jobs:
         #   uv run python scripts/ci/merge_shard_durations.py /tmp/ci-durations .test_durations /tmp/default.json --profile default
         # Repeat with --profile post-cutover; review both profiles before commit.
         # Nov 6: with coverage on sys.monitoring (#2368), twelve shards took
-        # 7 to 12 minutes each over five green main runs, about 50 seconds of
-        # it setup. Eight (about 10 to 17) stay under the proof oracle's
-        # longest shard (25 to 27 minutes), with four fewer jobs in the
-        # organization's queue.
+        # 7 to 12 minutes each over five green main runs, the steps before
+        # pytest about 50 seconds of that. Eight (about 10 to 17) stay under
+        # the proof oracle's longest shard (25 to 27 minutes), with four
+        # fewer jobs in the organization's queue.
         shard: [1, 2, 3, 4, 5, 6, 7, 8]
     runs-on: ubuntu-24.04
     env:
