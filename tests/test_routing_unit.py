@@ -1121,23 +1121,23 @@ def test_glm_52_provider_preference_does_not_override_primary_model_order(
     # and the primary model rides Novita, which ranks low by default: fixture
     # routes both, whoever lists these models today.
     for model_id, host, author in (
-        ("deepseek/deepseek-v4-flash", "novita", "deepseek"),
+        ("deepseek/deepseek-v4-flash-0731", "novita", "deepseek"),
         ("z-ai/glm-5.2", "parasail", "zai"),
     ):
         drop_routes(monkeypatch, model_id)
         serve_on_fixture_route(monkeypatch, model_id, host, author=author)
     candidates = chat_route_endpoint_candidates(
         {
-            "model": "deepseek/deepseek-v4-flash",
+            "model": "deepseek/deepseek-v4-flash-0731",
             "models": ["z-ai/glm-5.2"],
             "provider": {"usage": "credits"},
         },
         _settings(),
     )
 
-    assert candidates[0][0].id == "deepseek/deepseek-v4-flash"
+    assert candidates[0][0].id == "deepseek/deepseek-v4-flash-0731"
     assert [endpoint.id for _model, endpoint in candidates] == [
-        "deepseek/deepseek-v4-flash@novita/prepaid",
+        "deepseek/deepseek-v4-flash-0731@novita/prepaid",
         "z-ai/glm-5.2@parasail/prepaid",
     ]
 
@@ -1161,7 +1161,7 @@ def test_confidential_alias_uses_exact_e2e_endpoint_pool() -> None:
     ("model_id", "failing_provider"),
     [
         ("deepseek/deepseek-v4.1-flash", "nvidia-nim"),
-        ("qwen/qwen3-235b-a22b-thinking-2507", "chutes"),
+        ("qwen/qwen3.5-397b-a17b", "chutes"),
     ],
 )
 def test_provider_incident_preference_preserves_model_and_explicit_pins(

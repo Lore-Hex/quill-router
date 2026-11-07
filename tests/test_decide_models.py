@@ -251,6 +251,12 @@ def test_every_native_decision_model_has_a_prepaid_route_on_its_unretired_chain(
             if model_id in (named.id, named.backing_model_id)
         ), None)
         expected = _expected_active_chain(named_id) if named_id is not None else (provider,)
+        # A host whose reviewed retirement of the backing model has taken
+        # effect has announced its loss (e.g. Together's Llama 3.3 70B, 2026-10-22).
+        expected = tuple(
+            host for host in expected if not provider_model_retired(host, backing)
+        )
+        assert expected, f"{model_id} has no unretired host left on its chain"
         assert set(expected) <= providers, (
             f"{model_id} lost credits routes: {set(expected) - providers}"
         )

@@ -716,6 +716,8 @@
       ],
       "status": 1,
       "upstream_id": "deepseek/deepseek-v4-flash",
+      "retirement_at": "2026-11-06T19:00:00Z",
+      "replacement_model_id": "deepseek/deepseek-v4-flash-0731",
       "cached_input_token_price_per_m": 280,
       "missing_since": "2026-10-10",
       "routable": false,
@@ -1953,6 +1955,8 @@
       ],
       "status": 1,
       "upstream_id": "qwen/qwen3-235b-a22b-instruct-2507",
+      "retirement_at": "2026-11-06T19:00:00Z",
+      "replacement_model_id": "qwen/qwen3.5-397b-a17b",
       "missing_since": "2026-10-10",
       "routable": false,
       "routable_reason": "delisted-upstream"

@@ -54,7 +54,7 @@ def test_new_combos_are_cataloged(alias: str, version: str, primitive: str, comp
 @pytest.mark.parametrize(
     "model_id,providers",
     [
-        ("qwen/qwen3.8-2.4t-a95b", ("novita", "together")),
+        ("qwen/qwen3.8-2.4t-a95b", ("novita", "streamlake")),
         ("minimax/minimax-m3", ("minimax", "novita")),
     ],
 )

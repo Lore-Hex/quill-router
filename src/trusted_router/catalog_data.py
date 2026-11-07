@@ -2731,6 +2731,11 @@ DEEPSEEK_V4_PRO_0813_MODEL_ID = "deepseek/deepseek-v4-pro-0813"
 MISTRAL_LARGE_MODEL_ID = "mistralai/mistral-large"
 
 ARCHIMEDES_1_0_MODEL_ID = "trustedrouter/archimedes-1.0"
+# Archimedes 1.0 serves Mistral's flagship. Mistral stopped listing
+# mistral-large-latest on 2026-11-01; its docs name Mistral Large 4 as the
+# flagship and as the successor to Large 3 and Medium 3.5
+# (https://docs.mistral.ai/getting-started/models/models_overview/).
+ARCHIMEDES_1_0_BACKING_MODEL_ID = "mistralai/mistral-large-4"
 
 # TrustedRouter's named decision models for POST /v1/decide: one stable, short
 # name per tuned configuration, so a caller picks "the fast one" or "the cheap
@@ -2861,7 +2866,7 @@ NAMED_DECISION_MODELS: tuple[NamedDecisionModel, ...] = (
 # the backing model/provider in customer-visible responses or catalog metadata.
 # Billing and provider fallback still use the concrete target internally.
 PRIVATE_PROXY_MODEL_TARGETS: dict[str, str] = {
-    ARCHIMEDES_1_0_MODEL_ID: MISTRAL_LARGE_MODEL_ID,
+    ARCHIMEDES_1_0_MODEL_ID: ARCHIMEDES_1_0_BACKING_MODEL_ID,
     **{named.id: named.backing_model_id for named in NAMED_DECISION_MODELS},
 }
 
@@ -4391,7 +4396,6 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
     "minimaxai": _MODEL_ORIGIN_CN_MINIMAX,
     "MiniMaxAI": _MODEL_ORIGIN_CN_MINIMAX,
     "xiaomi": _MODEL_ORIGIN_CN_XIAOMI,
-    "xiaomimimo": _MODEL_ORIGIN_CN_XIAOMI,
     "stepfun": _MODEL_ORIGIN_CN_STEPFUN,
     # StepFun's native publisher: https://huggingface.co/stepfun-ai/Step-3.5-Flash
     "stepfun-ai": _MODEL_ORIGIN_CN_STEPFUN,

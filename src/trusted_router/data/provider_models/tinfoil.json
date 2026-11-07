@@ -166,6 +166,8 @@
       "status": 1,
       "id": "z-ai/glm-5.3-flash",
       "upstream_id": "glm-5-3-flash",
+      "retirement_at": "2026-11-06T19:00:00Z",
+      "replacement_model_id": "z-ai/glm-5.3",
       "features": [
         "reasoning",
         "function-calling",

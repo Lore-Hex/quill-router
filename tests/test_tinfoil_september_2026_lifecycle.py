@@ -106,11 +106,10 @@ def test_tinfoil_catalog_matches_glm52_cutover_state() -> None:
 
 
 @pytest.mark.provider_health
-def test_tinfoil_serves_the_glm_5_3_successors() -> None:
+def test_tinfoil_serves_the_glm_5_3_successor() -> None:
     # Live provider state: provider-catalog-health.yml reports it hourly, and
     # the price refresh does not wait on it.
     assert "z-ai/glm-5.3@tinfoil/prepaid" in MODEL_ENDPOINTS
-    assert "z-ai/glm-5.3-flash@tinfoil/prepaid" in MODEL_ENDPOINTS
 
 
 def test_tinfoil_preserves_early_feed_removal_until_cutoff(

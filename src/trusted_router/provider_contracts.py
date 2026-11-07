@@ -237,6 +237,18 @@ def provider_model_operator_held(
     return (provider_slug, model_id) in OPERATOR_HELD_PROVIDER_MODELS
 
 
+def provider_route_reviewed_hold(
+    provider_slug: str, model_id: str, upstream_id: str | None = None,
+) -> bool:
+    """A reviewed operator decision keeps this route dark: an operator hold,
+    a provider incident, or a prepaid billing hold. Such a route is held on
+    purpose, not drifted, so freshness reports read it from here."""
+    return (
+        provider_slug in PREPAID_PROVIDER_HOLD_REASONS
+        or provider_model_operator_held(provider_slug, model_id, upstream_id)
+    )
+
+
 def provider_model_requires_exact_global_settlement(
     provider_slug: str,
     model_id: str,

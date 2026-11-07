@@ -18,6 +18,7 @@ from scripts.pricing.refresh import PROVIDER_SLUGS
 from tests import catalog_vehicles
 from tests.lifecycle_clock import CATALOG_CLOCK
 from tests.pinned_manifests import NEAR_AI_GLM_53_FLASH, build_manifest_rows, serve_manifest_rows
+from tests.provider_holds import provider_fully_on_reviewed_hold
 from trusted_router import catalog_data, provider_contracts, provider_lifecycle
 from trusted_router.catalog import MODEL_ENDPOINTS, PROVIDERS
 from trusted_router.catalog_data import (
@@ -328,6 +329,8 @@ def test_near_ai_routes_are_attested_prepaid_only(
 def test_near_ai_serves_a_verified_model() -> None:
     # Live provider state: provider-catalog-health.yml reports it hourly, and
     # the price refresh does not wait on it.
+    if provider_fully_on_reviewed_hold("near-ai"):
+        pytest.skip("every NEAR AI route is on a reviewed hold (provider_contracts)")
     assert any(endpoint.provider == "near-ai" for endpoint in MODEL_ENDPOINTS.values())
 
 

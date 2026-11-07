@@ -26,6 +26,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     _UNSERVED_CREDITS_MODELS,
     ADVISOR_CATALOG_MODEL_ORDERS,
     ADVISOR_MODEL_ID,
+    ARCHIMEDES_1_0_BACKING_MODEL_ID,
     ARCHIMEDES_1_0_MODEL_ID,
     ARISTOTLE_1_0_MODEL_ID,
     ARISTOTLE_1_1_MODEL_ID,
@@ -1013,7 +1014,7 @@ for _model_id, _model in _SUPPLEMENTAL_MODELS.items():
 # model is gone: indexing MODELS here stopped the whole control plane from
 # starting when a provider delisted one model.
 def archimedes_model(backing: Model) -> Model:
-    """The catalog entry for Archimedes 1.0: Mistral Large under a private name."""
+    """The catalog entry for Archimedes 1.0: Mistral's flagship under a private name."""
     return replace(
         backing,
         id=ARCHIMEDES_1_0_MODEL_ID,
@@ -1026,7 +1027,7 @@ def archimedes_model(backing: Model) -> Model:
     )
 
 
-_archimedes_backing_model = MODELS.get(MISTRAL_LARGE_MODEL_ID)
+_archimedes_backing_model = MODELS.get(ARCHIMEDES_1_0_BACKING_MODEL_ID)
 if _archimedes_backing_model is not None:
     MODELS[ARCHIMEDES_1_0_MODEL_ID] = archimedes_model(_archimedes_backing_model)
 # A named decision model is a one-model private proxy like Archimedes, but a

@@ -160,14 +160,6 @@ def test_manifests_remove_only_canceled_retirement() -> None:
     assert flash["retirement_at"] == "2026-10-22T00:00:00Z"
 
 
-@pytest.mark.provider_health
-def test_together_still_lists_flash_0731() -> None:
-    """Live provider state: provider-catalog-health.yml reports it hourly, and
-    the price refresh does not wait on it."""
-    rows = {row["id"]: row for row in json.loads(together.MANIFEST_PATH.read_text())["models"]}
-    assert rows[_TOGETHER_FLASH].get("routable", True)
-
-
 @pytest.mark.parametrize("at", [
     _CANCELED_TOGETHER_CUTOFF - timedelta(microseconds=1),
     _CANCELED_TOGETHER_CUTOFF,

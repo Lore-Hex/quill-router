@@ -56,6 +56,12 @@ def test_tinfoil_fetch_ingests_glm_52_cached_input_price(monkeypatch) -> None:  
 
 
 def test_tinfoil_fetch_discovers_glm_53_variants(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
+    # Tinfoil stopped listing glm-5-3-flash; its route retires on 2026-11-06
+    # 19:00 UTC, so the feed is read just before the cutover.
+    monkeypatch.setattr(
+        provider_lifecycle, "_utc_now",
+        lambda: provider_lifecycle.NOVEMBER_6_DELISTED_RETIREMENT_AT - timedelta(seconds=1),
+    )
     manifest_path = tmp_path / "tinfoil.json"
     manifest_path.write_text(
         json.dumps({"provider": "tinfoil", "models": []}),
@@ -343,11 +349,17 @@ def test_tinfoil_kimi_k3_route_is_confidential_and_uses_live_capabilities(
 def test_tinfoil_glm53_routes_use_live_prices_and_capabilities(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
+    # Tinfoil stopped listing glm-5-3-flash; its route retires on 2026-11-06
+    # 19:00 UTC, so the reviewed route is checked just before the cutover.
+    monkeypatch.setattr(
+        provider_lifecycle, "_utc_now",
+        lambda: provider_lifecycle.NOVEMBER_6_DELISTED_RETIREMENT_AT - timedelta(seconds=1),
+    )
     serve_manifest_rows(
         monkeypatch, tmp_path, "tinfoil", [TINFOIL_GLM_5_3, TINFOIL_GLM_5_3_FLASH]
     )
     glm = MODEL_ENDPOINTS["z-ai/glm-5.3@tinfoil/prepaid"]
-    flash = MODEL_ENDPOINTS["z-ai/glm-5.3-flash@tinfoil/prepaid"]
+    flash = MODEL_ENDPOINTS[f"{TINFOIL_GLM_5_3_FLASH['id']}@tinfoil/prepaid"]
     provider = PROVIDERS["tinfoil"]
 
     assert glm.upstream_id == "glm-5-3"

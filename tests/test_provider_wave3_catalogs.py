@@ -35,6 +35,7 @@ from scripts.pricing.providers._direct_openai import (
 )
 from scripts.pricing.refresh import _PRICING_RESULT_PROVIDER_ALIASES, PROVIDER_SLUGS
 from tests import catalog_vehicles
+from tests.provider_holds import provider_fully_on_reviewed_hold
 from trusted_router import catalog_data, catalog_ingest
 from trusted_router.catalog import (
     GATEWAY_PREPAID_PROVIDER_SLUGS,
@@ -173,7 +174,9 @@ def test_every_ready_wave3_provider_serves_a_route() -> None:
     # Live provider state: provider-catalog-health.yml reports it hourly, and
     # the price refresh does not wait on it.
     endpoint_providers = {endpoint.provider for endpoint in MODEL_ENDPOINTS.values()}
-    assert ROUTABLE_READY <= endpoint_providers, ROUTABLE_READY - endpoint_providers
+    # A provider whose every listed route is on a reviewed hold is dark on purpose.
+    expected = {slug for slug in ROUTABLE_READY if not provider_fully_on_reviewed_hold(slug)}
+    assert expected <= endpoint_providers, expected - endpoint_providers
 
 
 @pytest.mark.parametrize("provider,model_id", [

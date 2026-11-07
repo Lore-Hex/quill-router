@@ -15,6 +15,7 @@ from collections import Counter
 
 import pytest
 
+from tests.provider_holds import vendor_prefixes_on_reviewed_hold
 from trusted_router.catalog import MODELS, PROVIDERS, model_to_openrouter_shape
 from trusted_router.catalog_data import (
     EU_FOCUSED_PROVIDER_ORDER,
@@ -181,8 +182,10 @@ def test_model_origins_only_describe_prefixes_the_catalog_uses() -> None:
 
 @pytest.mark.provider_health
 def test_model_origins_describe_vendors_the_catalog_serves_today() -> None:
-    counts = _vendor_prefix_counts()
-    unused = sorted(prefix for prefix in MODEL_ORIGINS if prefix not in counts)
+    # A vendor dark only because a reviewed hold keeps its routes dark is held,
+    # not gone: keep its origin row for when the hold is cleared.
+    served = set(_vendor_prefix_counts()) | vendor_prefixes_on_reviewed_hold()
+    unused = sorted(prefix for prefix in MODEL_ORIGINS if prefix not in served)
 
     assert unused == [], f"MODEL_ORIGINS rows for vendors with no model served today: {unused}"
 

@@ -25,6 +25,7 @@ from trusted_router import catalog_ingest, provider_lifecycle
 from trusted_router.catalog import (
     ADVISOR_CATALOG_MODEL_ORDERS,
     ADVISOR_MODEL_ID,
+    ARCHIMEDES_1_0_BACKING_MODEL_ID,
     ARCHIMEDES_1_0_MODEL_ID,
     ARISTOTLE_1_0_MODEL_ID,
     ARISTOTLE_1_1_MODEL_ID,
@@ -53,7 +54,6 @@ from trusted_router.catalog import (
     LIBERTY_4_0_MODEL_ID,
     MAPREDUCE_MODEL_ID,
     META_MODEL_IDS,
-    MISTRAL_LARGE_MODEL_ID,
     MODEL_ENDPOINTS,
     MODELS,
     OPEN_PATCHER_A1_MODEL_ID,
@@ -208,12 +208,12 @@ def _serve_on_fixture_routes(
 
 
 def test_archimedes_private_proxy_tracks_mistral_large_without_exposing_it() -> None:
-    if MISTRAL_LARGE_MODEL_ID not in MODELS:
+    if ARCHIMEDES_1_0_BACKING_MODEL_ID not in MODELS:
         # Without its backing model the proxy is not offered at all.
         assert ARCHIMEDES_1_0_MODEL_ID not in MODELS
         return
     archimedes = MODELS[ARCHIMEDES_1_0_MODEL_ID]
-    backing = MODELS[MISTRAL_LARGE_MODEL_ID]
+    backing = MODELS[ARCHIMEDES_1_0_BACKING_MODEL_ID]
     archimedes_shape = model_to_openrouter_shape(archimedes)
     backing_shape = model_to_openrouter_shape(backing)
 
@@ -238,8 +238,8 @@ def test_archimedes_private_proxy_tracks_mistral_large_without_exposing_it() -> 
     assert metadata["privacy_tier"] == PRIVACY_TIER_STANDARD
 
     encoded = json.dumps(archimedes_shape)
-    assert MISTRAL_LARGE_MODEL_ID not in encoded
-    assert "mistral-large-latest" not in encoded
+    assert ARCHIMEDES_1_0_BACKING_MODEL_ID not in encoded
+    assert "mistral-large-4" not in encoded
 
 
 def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
@@ -377,20 +377,21 @@ _NATIVE_PROVIDER_LINEUPS = [
     ),
     (
         "minimax",
-        6,
+        2,
         [
+            # MiniMax's /v1/models stopped listing the M2.x family on
+            # 2026-10-19; M3 and M3.1 Flash are its lineup today.
             "minimax/minimax-m3",
-            "minimax/minimax-m2.7",
-            "minimax/minimax-m2.7-highspeed",
-            "minimax/minimax-m2.5-highspeed",
+            "minimax/minimax-m3.1-flash",
         ],
     ),
     (
         "google-ai-studio",
         5,
         [
-            "google/gemini-3.5-flash",
+            # gemini-3.5-flash retired on AI Studio on 2026-10-10.
             "google/gemini-3.6-flash",
+            "google/gemini-3.8-flash",
             "google/gemini-3.1-flash-image-preview",
         ],
     ),
@@ -1882,16 +1883,25 @@ def test_prometheus_1m_drops_a_member_whose_window_falls_below_1m(
 
 @pytest.mark.provider_health
 @pytest.mark.catalog_as_built
-def test_prometheus_1m_keeps_all_four_members_today() -> None:
+def test_prometheus_1m_keeps_every_member_that_still_has_a_1m_window() -> None:
     """Live provider state: a member leaves Prometheus 1.0 1M when its window
     falls below 1M or the catalog no longer offers it. provider-catalog-health.yml
-    reports it hourly, and the price refresh does not wait on it."""
-    assert [candidate.id for candidate in meta_candidate_models(PROMETHEUS_1_0_1M_MODEL_ID)] == [
+    reports it hourly, and the price refresh does not wait on it. Since
+    2026-11-06 MiniMax M3 (524,288) and MiMo-V2.5-Pro (262,144) fall below."""
+    frozen = [
         "minimax/minimax-m3",
         "xiaomi/mimo-v2.5-pro",
         "z-ai/glm-5.2",
         DEEPSEEK_V4_PRO_0423_MODEL_ID,
     ]
+    expected = [
+        model_id for model_id in frozen
+        if model_id in MODELS and MODELS[model_id].context_length >= 1_000_000
+    ]
+    assert expected, "Prometheus 1.0 1M has no member with a 1M window"
+    assert [
+        candidate.id for candidate in meta_candidate_models(PROMETHEUS_1_0_1M_MODEL_ID)
+    ] == expected
 
 
 def test_prometheus_versions_are_frozen_and_rolling_alias_uses_4_0() -> None:
@@ -2140,12 +2150,12 @@ def test_phala_is_not_classified_as_verified_e2ee() -> None:
 
 
 _VENICE_PRIVATE_MODELS = frozenset({
+    # Venice's /api/v1/models stopped listing qwen3-5-9b (2026-10-25) and
+    # glm-4.7-flash (2026-10-20).
     "qwen/qwen3-235b-a22b-thinking-2507",
-    "qwen/qwen3.5-9b",
     "qwen/qwen3.6-27b",
     "z-ai/glm-4.6",
     "z-ai/glm-4.7",
-    "z-ai/glm-4.7-flash",
     "z-ai/glm-5",
     "z-ai/glm-5.1",
     "z-ai/glm-5.2",
@@ -2437,13 +2447,13 @@ def test_xiaomi_mimo_provider_models_present_and_routable() -> None:
 
 
 @pytest.mark.provider_health
-def test_xiaomi_mimo_v25_pro_advertises_a_1m_context() -> None:
+def test_xiaomi_mimo_v25_pro_advertises_its_first_hosts_window() -> None:
     # Live provider state: provider-catalog-health.yml reports it hourly, and
     # the price refresh does not wait on it.
-    # Xiaomi documents this as a 1M context window. Live catalogs use both
-    # the binary 1,048,576 value and a rounded 1,050,000 value, so guard
-    # the public capability rather than freezing one representation.
-    assert 1_000_000 <= MODELS["xiaomi/mimo-v2.5-pro"].context_length <= 1_050_000
+    # Xiaomi retired its own MiMo-V2.5-Pro route on 2026-10-14, so no maker
+    # window applies; the advertised window is the first serving host's.
+    # DigitalOcean, the default prepaid route, serves 262,144 tokens.
+    assert MODELS["xiaomi/mimo-v2.5-pro"].context_length == 262_144
 
 
 def test_crusoe_provider_models_follow_authoritative_manifest() -> None:
@@ -2930,8 +2940,8 @@ def test_model_shape_without_routes_uses_its_own_cache_rate(monkeypatch, model_c
                 ("anthropic/claude-sonnet-4.6", "anthropic"),
                 ("openai/gpt-4.1-mini", "openai"),
                 ("google/gemini-2.5-flash", "google-ai-studio"),
-                ("google/gemini-3.5-flash", "google-ai-studio"),
                 ("google/gemini-3.6-flash", "google-ai-studio"),
+                ("google/gemini-3.8-flash", "google-ai-studio"),
                 ("deepseek/deepseek-v4-flash", "deepseek"),
                 ("mistralai/mistral-small-2603", "mistral"),
                 ("meta-llama/llama-3.1-8b-instruct", "novita"),
@@ -3049,12 +3059,29 @@ def test_kimi_k3_is_still_served_across_its_hosts() -> None:
 
 
 @pytest.mark.provider_health
-def test_inkling_is_still_served_by_several_hosts() -> None:
-    endpoints = endpoints_for_model("thinkingmachines/inkling")
+def test_inkling_is_served_by_every_host_that_still_lists_it() -> None:
+    """Thinking Machines serves Inkling; every other host that still lists it
+    without a reviewed retirement or hold serves it too. Since 2026-11-06
+    (DeepInfra, Databricks and Together retired it) Thinking Machines is the
+    only host, so a fixed host count would assert something no longer true."""
+    from tests.provider_holds import manifest_rows, row_on_reviewed_hold
+    from trusted_router.provider_lifecycle import provider_model_retired
+
+    model_id = "thinkingmachines/inkling"
+    endpoints = endpoints_for_model(model_id)
     provider_ids = {endpoint.provider for endpoint in endpoints}
+    listing_hosts = {
+        path.stem
+        for path in _PROVIDER_MODELS_DIR.glob("*.json")
+        for row in manifest_rows(path.stem)
+        if row["id"] == model_id
+        and row.get("routable") is not False
+        and not row_on_reviewed_hold(path.stem, row)
+        and not provider_model_retired(path.stem, model_id, row.get("upstream_id"))
+    }
 
     assert "thinkingmachines" in provider_ids
-    assert len(provider_ids) >= 2
+    assert listing_hosts <= provider_ids, listing_hosts - provider_ids
     assert any(endpoint.usage_type == "Credits" for endpoint in endpoints)
     assert any(endpoint.usage_type == "BYOK" for endpoint in endpoints)
 

@@ -8,8 +8,8 @@ from fastapi.testclient import TestClient
 from tests.fakes.spanner import make_fake_store
 from tests.fixture_routes import drop_routes, serve_on_fixture_route
 from trusted_router.catalog import (
+    ARCHIMEDES_1_0_BACKING_MODEL_ID,
     ARCHIMEDES_1_0_MODEL_ID,
-    MISTRAL_LARGE_MODEL_ID,
     MODEL_ENDPOINTS,
     MODELS,
     default_endpoint_for_model,
@@ -46,20 +46,20 @@ def _client_and_key() -> tuple[TestClient, dict]:
 
 
 def _serve_archimedes(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Archimedes over Mistral Large on one fixture Credits route. Mistral
-    delisting Mistral Large takes Archimedes out of the catalog with it, and
+    """Archimedes over Mistral Large 4 on one fixture Credits route. Mistral
+    delisting Mistral Large 4 takes Archimedes out of the catalog with it, and
     the private-proxy rule holds whatever Mistral lists today."""
-    drop_routes(monkeypatch, MISTRAL_LARGE_MODEL_ID)
+    drop_routes(monkeypatch, ARCHIMEDES_1_0_BACKING_MODEL_ID)
     serve_on_fixture_route(
-        monkeypatch, MISTRAL_LARGE_MODEL_ID, "mistral", author="mistral",
+        monkeypatch, ARCHIMEDES_1_0_BACKING_MODEL_ID, "mistral", author="mistral",
         model=Model(
-            id=MISTRAL_LARGE_MODEL_ID, name="Mistral Large", provider="mistral",
+            id=ARCHIMEDES_1_0_BACKING_MODEL_ID, name="Mistral Large 4", provider="mistral",
             context_length=262_144, prepaid_available=True,
         ),
     )
     if ARCHIMEDES_1_0_MODEL_ID not in MODELS:
         monkeypatch.setitem(
-            MODELS, ARCHIMEDES_1_0_MODEL_ID, archimedes_model(MODELS[MISTRAL_LARGE_MODEL_ID])
+            MODELS, ARCHIMEDES_1_0_MODEL_ID, archimedes_model(MODELS[ARCHIMEDES_1_0_BACKING_MODEL_ID])
         )
 
 
@@ -85,10 +85,10 @@ def test_gateway_archimedes_authorizes_private_credits_route(
     assert data["requested_model"] == ARCHIMEDES_1_0_MODEL_ID
     assert data["response_model"] == ARCHIMEDES_1_0_MODEL_ID
     assert data["hide_public_metadata"] is True
-    assert data["model"] == MISTRAL_LARGE_MODEL_ID
+    assert data["model"] == ARCHIMEDES_1_0_BACKING_MODEL_ID
     assert data["usage_type"] == "Credits"
     assert {candidate["model"] for candidate in data["route_candidates"]} == {
-        MISTRAL_LARGE_MODEL_ID
+        ARCHIMEDES_1_0_BACKING_MODEL_ID
     }
     assert {candidate["usage_type"] for candidate in data["route_candidates"]} == {"Credits"}
 
@@ -96,7 +96,7 @@ def test_gateway_archimedes_authorizes_private_credits_route(
         "/v1/internal/gateway/authorize",
         json={
             "api_key_hash": key["hash"],
-            "model": MISTRAL_LARGE_MODEL_ID,
+            "model": ARCHIMEDES_1_0_BACKING_MODEL_ID,
             "estimated_input_tokens": 11,
             "max_output_tokens": 3,
             "idempotency_key": "mistral-large-direct-price-comparison",
