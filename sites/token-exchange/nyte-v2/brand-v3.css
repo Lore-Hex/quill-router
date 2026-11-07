@@ -1,0 +1,307 @@
+/* NYTE brand v3 repaint (designer kit files are titled "V1"). Loads after every other NYTE sheet and only
+   on pages listed in nyte-brand-v3.json. Colours, type and corners change;
+   layout and copy do not. Tokens copied from the kit's nyte-tokens.css. */
+:root{
+  --ink:#151311; --cream:#FAF8F4; --gray:#F1EEE7; --stone:#DEDAD0;
+  --ink-2:#57514A; --ink-2-dark:#B9B2A8; --dark-rule:#3A3631; --dark-sunken:#221F1C;
+  --purple:#9B93F5; --yellow:#FFC800; --lime:#C9E265; --sky:#BFE3EC;
+  --orange:#FF6B35; --deep-purple:#4B3FA8; --green:#2E3313;
+  --lilac:#DCD8FB; --yellow-tint:#FCE79F; --lime-tint:#E9F0C2; --sky-tint:#E5F1F1;
+  --lead:var(--purple); --accent-1:var(--lime); --accent-2:var(--sky);
+  --font-sans:"ABC Pelikan","Helvetica Neue",Arial,sans-serif;
+  --font-condensed:"ABC Pelikan Condensed","Arial Narrow",sans-serif;
+  --font-mono:"ABC Pelikan Mono",Menlo,monospace;
+
+  /* v2 names mapped onto the kit (light ground). */
+  --bg:var(--cream); --bg-alt:var(--gray); --bg-deep:var(--gray); --photo:var(--ink);
+  --panel:#fff; --inset:var(--gray); --raised:#fff; --hover:var(--gray); --selected:var(--lilac);
+  --t1:var(--ink); --t2:var(--ink-2); --t3:var(--ink-2); --t4:var(--ink-2); --on-photo:var(--cream);
+  --mint:var(--deep-purple); --mint-hi:var(--lilac);
+  --link:var(--deep-purple); --link-ul:var(--deep-purple);
+  --rule:var(--stone); --rule-soft:var(--stone); --control:var(--ink-2); --strong:var(--ink);
+  --up:var(--green); --degraded:var(--yellow);
+  --zdr-bg:var(--yellow-tint); --zdr-bd:var(--yellow-tint); --zdr-tx:var(--ink);
+  --ver-bg:var(--lime-tint); --ver-bd:var(--lime); --ver-tx:var(--green);
+  --us-bg:var(--sky-tint); --us-bd:var(--sky); --us-tx:var(--ink);
+  --sans:var(--font-sans); --mono:var(--font-mono);
+}
+/* Page families (COL-01). */
+[data-nyte-page="api"],[data-nyte-page="cowork"]{--lead:var(--lime);--accent-1:var(--sky);--accent-2:var(--purple)}
+[data-nyte-page="buy"],[data-nyte-page="index"],[data-nyte-page="reserved-terms"],[data-nyte-page="manage"]{--lead:var(--yellow);--accent-1:var(--purple);--accent-2:var(--sky)}
+[data-nyte-page="sup"],[data-nyte-page="providers"],[data-nyte-page="accelerator"]{--lead:var(--sky);--accent-1:var(--purple);--accent-2:var(--yellow)}
+
+/* Dark grounds: header, photo bands, footer, code. */
+header,.close-photo,.site-footer,.code,.listing{
+  --bg:var(--ink); --bg-alt:var(--dark-sunken); --panel:var(--ink); --inset:var(--dark-sunken); --hover:var(--dark-sunken);
+  --t1:var(--cream); --t2:var(--ink-2-dark); --t3:var(--ink-2-dark); --t4:var(--ink-2-dark);
+  --link:var(--cream); --link-ul:var(--ink-2-dark);
+  --rule:var(--dark-rule); --rule-soft:var(--dark-rule); --control:var(--ink-2-dark); --strong:var(--cream);
+  --mint:var(--lime); --ver-bg:var(--dark-sunken); --ver-bd:var(--dark-rule); --ver-tx:var(--lime);
+}
+
+/* Square corners, no shadows (GFX rules). */
+.btn,.menu-btn,.tag,.film,.story,.card,.route,.r-row,.ev,.code,.listing,.oss-panel,.idx,.idx-row .g,.steps-panel,
+.nav-panel,.mbox,.x,.fld input,.facility-card,.facility-badge,.hs-art,.doc-page input[type=email],
+.site-footer .footer-markets,.site-footer .market-links a,.site-footer .geo-prev,.site-footer .geo-next,.health-bar{border-radius:0}
+.film,.nav-panel,.mbox{box-shadow:none}
+
+/* Type */
+body{font-family:var(--font-sans)}
+em{font-style:normal;color:var(--deep-purple)}
+.hero em,.hero-api em,.cw-hero em,.hero-pv em,.accelerator-hero em,.close-photo em{color:var(--lime)}
+h1,h2,h3{font-weight:300;letter-spacing:-.02em}
+h1{font-size:clamp(48px,6.4vw,96px);line-height:.98}
+.hero h1{font-size:clamp(48px,6.6vw,104px)}
+.hero-api h1{font-size:clamp(44px,5vw,72px)}
+h2{font-size:clamp(34px,4vw,56px);line-height:1.04}
+h3{font-weight:500;letter-spacing:-.01em}
+.close-photo h2{font-size:clamp(38px,4.6vw,64px)}
+.lede{font-size:clamp(18px,1.6vw,22px);line-height:1.45}
+.doc-page .eyebrow,.nav-heading,.idx-hd b,.ls-row span,.model-head{font-family:var(--font-condensed);font-weight:500;letter-spacing:.1em;text-transform:uppercase}
+
+/* Buttons: orange for the one action, outline for the rest. */
+.btn{border-width:1.5px;font-weight:500}
+.btn-primary{background:var(--orange);border-color:var(--ink);color:var(--ink)}
+.btn-primary:hover{background:var(--ink);color:var(--cream);border-color:var(--ink)}
+.btn-secondary{background:transparent;color:var(--t1);border-color:var(--strong)}
+.btn-secondary:hover{background:var(--t1);color:var(--bg)}
+header .btn-primary,.hero .btn-primary,.hero-api .btn-primary,.cw-hero .btn-primary,.hero-pv .btn-primary,.accelerator-hero .btn-primary,.close-photo .btn-primary{border-color:var(--orange)}
+header .btn-primary:hover,.hero .btn-primary:hover,.hero-api .btn-primary:hover,.close-photo .btn-primary:hover{background:var(--cream);color:var(--ink);border-color:var(--cream)}
+.more{color:var(--link);border-bottom-width:1.5px}
+:focus-visible{outline-color:var(--t1)}
+
+/* Header */
+header{background:var(--ink);backdrop-filter:none}
+.brand-by{color:var(--ink-2-dark)}
+.nav-toggle.on,.nav-group.open>.nav-toggle,.nav-group:hover>.nav-toggle,.nav-group:focus-within>.nav-toggle{box-shadow:0 2px 0 var(--lead)}
+.nav-panel a.on .nav-label{box-shadow:0 2px 0 var(--lead)}
+.menu-btn{color:var(--cream)}
+
+/* Photo bands become Ink blocks instead of fading into the page. */
+.hero::before{background:linear-gradient(180deg,rgba(21,19,17,.66) 0%,rgba(21,19,17,.6) 34%,rgba(21,19,17,.3) 52%,rgba(21,19,17,.45) 74%,var(--ink) 100%)}
+.hero{background:var(--ink)}
+.film{border:1.5px solid var(--dark-rule);background:var(--ink)}
+.film .play span{border-radius:0;background:rgba(21,19,17,.86);border-color:var(--cream)}
+.film .play i{background:var(--orange)}
+.hero-api,.cw-hero,.hero-pv,.accelerator-hero{background:var(--ink)}
+.hero-api::before{background:linear-gradient(180deg,rgba(21,19,17,.5) 0%,rgba(21,19,17,0) 20%,rgba(21,19,17,0) 74%,var(--ink) 100%),linear-gradient(90deg,rgba(21,19,17,.1) 0%,rgba(21,19,17,.18) 38%,rgba(21,19,17,.74) 52%,rgba(21,19,17,.84) 100%)}
+.close-photo::before{background:linear-gradient(90deg,rgba(21,19,17,.78),rgba(21,19,17,.56) 50%,rgba(21,19,17,.7))}
+.close-photo.g::before{background:linear-gradient(180deg,var(--ink) 0%,rgba(21,19,17,.62) 30%,rgba(21,19,17,.62) 100%)}
+.hs-art::before{background:linear-gradient(180deg,rgba(21,19,17,.1) 0%,rgba(21,19,17,.15) 45%,rgba(21,19,17,.72) 100%)}
+.listing{background:rgba(21,19,17,.92)}
+
+/* Sections: alternate sections take the page's lead colour (COL-01/02). */
+.alt{background:var(--accent-1);border-color:var(--ink);--t2:var(--ink);--t3:var(--ink);--link:var(--ink);--link-ul:var(--ink);--rule:var(--ink);--rule-soft:var(--ink);--mint:var(--ink)}
+.alt .plist .ico{color:var(--ink)}
+.alt .btn-secondary:hover{color:var(--accent-1)}
+.press{border-top:1.5px solid var(--ink)}
+.story{background:var(--lead);color:var(--ink)}
+.story cite{color:var(--ink)}
+.story .more{color:var(--ink);border-color:var(--ink)}
+.stats .stat{border-top:10px solid var(--purple);padding-top:24px}
+.stats .stat:nth-child(2){border-top-color:var(--sky)}
+.stats .stat:nth-child(3){border-top-color:var(--yellow)}
+.stats .stat:nth-child(4){border-top-color:var(--lime)}
+.stat .v{font-weight:300;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.card{border:1.5px solid var(--ink);background:var(--panel)}
+
+/* Data panels */
+.route,.ev,.idx,.steps-panel,.oss-panel{border:1.5px solid var(--ink)}
+.r-row.win{background:var(--yellow-tint);border:1.5px solid var(--ink)}
+.r-row.win .ic{background:var(--lime);color:var(--ink)}
+.r-row.win .why{color:var(--ink)}
+.dot{background:var(--lime);box-shadow:0 0 0 1.5px var(--green)}
+.idx-value{color:var(--t1);font-weight:300}
+.idx-row .g{color:var(--ink);background:var(--lime);border-color:var(--lime)}
+.idx-change.up{color:var(--green)}
+.idx-change.down{color:var(--ink-2)}
+.privacy-provider,.service-heading strong,.facility-badge,.oss-checks li::before{color:var(--deep-purple)}
+.health-bar{background:var(--lime)}
+.facility-card{border:1.5px solid var(--ink);background:var(--panel)}
+.facility-card input{accent-color:var(--deep-purple)}
+.facility-card:has(input:checked){border-color:var(--ink);background:var(--lilac)}
+details[open] summary::after{color:var(--deep-purple)}
+
+/* Code (kit CodeBlock) */
+.code{background:var(--ink);border:0}
+.code pre{color:var(--cream)}
+.code .chg{background:var(--dark-sunken);box-shadow:inset 3px 0 0 var(--lime)}
+.code .s{color:var(--lime)}.code .k{color:var(--yellow)}
+
+/* Forms and dialog */
+.mbox{border:1.5px solid var(--ink)}
+.fld input,.doc-page input[type=email]{background:#fff;border:1.5px solid var(--ink);color-scheme:light}
+dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
+
+/* Footer (kit Footer: Ink) */
+.site-footer{max-width:none;background:var(--ink);color:var(--cream);font-family:var(--font-sans);padding-inline:max(60px,calc((100% - 1160px)/2))}
+.site-footer .brand{color:var(--cream)}
+.site-footer a{color:var(--ink-2-dark)}
+.site-footer a:hover,.site-footer .market-links a:hover,.site-footer .brand small a:hover{color:var(--cream)}
+.site-footer .brand small{font-family:var(--font-sans);color:var(--ink-2-dark)}
+.site-footer .brand small a{text-decoration-color:var(--ink-2-dark)}
+.site-footer .footer-markets,.site-footer .geo-prev:not([hidden]),.site-footer .geo-next:not([hidden]){background:var(--dark-sunken)}
+.site-footer .market-pin{stroke:var(--ink-2-dark)}
+.site-footer .market-links a[aria-current="page"]{background:var(--dark-rule);color:var(--cream)}
+.site-footer .geo-scroll.can-left::before{background:linear-gradient(90deg,var(--dark-sunken),transparent)}
+.site-footer .geo-scroll.can-right::after{background:linear-gradient(90deg,transparent,var(--dark-sunken))}
+.site-footer .legal{border-top:1.5px solid var(--dark-rule)}
+.site-footer .back-to-top{border-color:var(--dark-rule);color:var(--cream)}
+@media(max-width:600px){.site-footer{padding-inline:20px}}
+
+/* Mobile menu sits on Ink. */
+@media (max-width:800px){
+  .nav{background:var(--ink);border-bottom-color:var(--dark-rule)}
+  .nav-panel a.on .nav-label{color:var(--lime);box-shadow:none}
+}
+
+/* Press logos and provider icons were drawn for a dark ground. */
+.plogo{filter:brightness(0)}
+.mq-item img{background:var(--ink);padding:3px}
+/* Case study on Ink; a second alternate section takes another colour (COL-02). */
+.story{background:var(--ink);color:var(--cream);--link:var(--cream)}
+.story cite,.story .more{color:var(--ink-2-dark);border-color:var(--ink-2-dark)}
+.story .big{font-weight:300;letter-spacing:-.02em}
+.alt~.alt{background:var(--accent-2)}
+.alt~.alt .btn-secondary:hover{color:var(--accent-2)}
+/* Text on colour fields stays Ink (COL-03); status bars need contrast on white. */
+.alt em,.alt .privacy-provider,.alt .service-heading strong,.alt .facility-badge,.alt .oss-checks li::before{color:var(--ink)}
+.health-bar{background:var(--green)}
+/* Page sheets: square corners, no shadows, readable accent text. */
+.accelerator-roles .split>div,.cw-screenshot,.cw-screenshot img,.pv-deck{border-radius:0}
+.cw-screenshot img{box-shadow:none}
+.pv-topics span{font-family:var(--font-condensed);letter-spacing:.1em}
+.cw-steps span{color:var(--t2)}
+
+/* No landscape photography (kit: "no moody landscapes"). Heroes become a
+   full field in the page's lead colour with Ink text; closing bands are Ink;
+   the supplier listing sits on a lead-colour panel. */
+.ph,.cw-banner{display:none}
+.hero,.hero-api,.cw-hero,.hero-pv,.accelerator-hero,.hs-art{background:var(--lead);color:var(--ink);
+  --t1:var(--ink); --t2:var(--ink); --t3:var(--ink); --on-photo:var(--ink); --link:var(--ink); --link-ul:var(--ink); --strong:var(--ink); --rule:var(--ink); --rule-soft:var(--ink)}
+.hero::before,.hero-api::before,.cw-hero::before,.hero-pv::before,.close-photo::before,.hs-art::before{content:none}
+.hero h1,.hero .lede,.hero-api h1,.hero-api .lede,.cw-hero h1,.cw-hero .lede,.hero-pv h1,.hero-pv .lede{text-shadow:none}
+.hero em,.hero-api em,.cw-hero em,.hero-pv em,.accelerator-hero em{color:var(--ink)}
+.hero .btn-primary,.hero-api .btn-primary,.cw-hero .btn-primary,.hero-pv .btn-primary,.accelerator-hero .btn-primary{border-color:var(--ink)}
+.hero .btn-primary:hover,.hero-api .btn-primary:hover,.cw-hero .btn-primary:hover,.hero-pv .btn-primary:hover,.accelerator-hero .btn-primary:hover{background:var(--ink);color:var(--cream);border-color:var(--ink)}
+.hero .btn-secondary:hover,.hero-api .btn-secondary:hover,.cw-hero .btn-secondary:hover,.hero-pv .btn-secondary:hover,.accelerator-hero .btn-secondary:hover{background:var(--ink);color:var(--lead)}
+.hero{padding-bottom:104px}
+.cw-hero,.hero-pv{min-height:0;padding:104px 0}
+.film{border-color:var(--ink)}
+.close-photo{background:var(--ink)}
+.hs-art{aspect-ratio:auto;align-items:center;padding:48px 28px}
+@media(max-width:800px){
+  .hero-pv .inner,.cw-intro{min-height:0}
+  .hero-pv,.cw-hero{padding:56px 0}
+  .cw-hero .inner{padding:0}
+}
+@media(max-width:600px){
+  .hs-art{min-height:0;padding:20px 16px}
+}
+.film .play span{color:var(--cream)}
+.listing{color:var(--cream)}
+.site-footer{border-top:1.5px solid var(--dark-rule)}
+
+/* Logos from the kit (files, never redrawn). New York: horizontal lockup in the
+   nav, stacked type-only name in the footer. City exchanges keep their own name
+   and take the NYTE globe mark. The text stays in the markup for screen readers. */
+.hdr .brand>svg{display:none}
+.hdr .brand::before{content:"";flex:none;width:41px;height:20px;background:url(logos/mark-paper.svg) left center/contain no-repeat}
+[data-market="new-york"] .hdr .brand>span{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+[data-market="new-york"] .hdr .brand::before{width:145px;height:28px;background-image:url(logos/lockup-horizontal-paper.svg)}
+.site-footer .brand img{content:url(logos/mark-paper.svg);width:41px;height:20px}
+[data-market="new-york"] .site-footer .brand img{display:none}
+[data-market="new-york"] .site-footer .brand>span{font-size:0;line-height:0}
+[data-market="new-york"] .site-footer .brand>span::before{content:"";display:block;width:140px;height:84px;margin-bottom:16px;background:url(logos/name-stacked-paper.svg) left center/contain no-repeat}
+[data-market="new-york"] .site-footer .brand small{font-size:13px;line-height:1.6}
+@media(max-width:600px){
+  [data-market="new-york"] .hdr .brand::before{width:124px;height:24px}
+  [data-market="new-york"] .site-footer .brand>span::before{width:112px;height:67px}
+}
+
+/* Footer (kit Footer): the globe mark sits right of the name and contact in the top
+   row, in the layout and never behind text; on phones it follows the city rail. */
+.site-footer{overflow:hidden;--globe-bleed:60px}
+.site-footer .footer-top{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:1fr auto auto 1fr;align-items:center;column-gap:48px}
+.site-footer .footer-top .brand{grid-column:1;grid-row:2}
+.site-footer .footer-contact{grid-column:1;grid-row:3;margin-top:12px}
+.site-footer .footer-top::after{content:"";grid-column:2;grid-row:1/-1;width:min(560px,42vw);aspect-ratio:245.4/120;margin-right:calc(-1 * var(--globe-bleed));background:url(logos/mark-footer.svg) right center/contain no-repeat}
+.site-footer .footer-markets{margin-top:48px;padding:10px 0;background:transparent;border-top:1.5px solid var(--dark-rule);border-bottom:1.5px solid var(--dark-rule)}
+.site-footer .market-links a{padding:0 12px;font-size:15px}
+.site-footer .market-links a[aria-current="page"]{background:transparent;color:var(--cream);font-weight:500;box-shadow:inset 0 -3px 0 var(--purple)}
+.site-footer .geo-prev:not([hidden]),.site-footer .geo-next:not([hidden]){background:var(--ink);top:10px}
+.site-footer .geo-scroll.can-left::before{top:10px;bottom:10px;background:linear-gradient(90deg,var(--ink),transparent)}
+.site-footer .geo-scroll.can-right::after{top:10px;bottom:10px;background:linear-gradient(90deg,transparent,var(--ink))}
+.site-footer .legal{margin-top:28px;padding-top:0;border-top:0;font-size:15px}
+.site-footer .legal a{color:var(--cream)}
+.site-footer .footer-contact a{color:var(--cream);font-size:17px}
+@media(max-width:600px){
+  .site-footer{display:flex;flex-direction:column;padding-top:32px;padding-bottom:20px}
+  [data-market="new-york"] .site-footer .brand>span::before{margin-bottom:10px}
+  .site-footer .footer-top{grid-template-columns:minmax(0,1fr) auto;grid-template-rows:none;column-gap:12px;row-gap:10px}
+  /* No back-to-top on phones; the globe takes its place beside the name. */
+  .site-footer .back-to-top{display:none}
+  .site-footer .footer-top .brand{grid-row:1}
+  .site-footer .footer-contact{grid-column:1;grid-row:2;align-self:center;margin-top:0}
+  /* Phone globe: small, drawn in the secondary text colour so it reads on Ink. Beside the
+     stacked New York name; city names are one long line, so there it sits right of the contact line. */
+  [data-market="new-york"] .site-footer .footer-top::after{grid-column:2;grid-row:1;align-self:start}
+  .site-footer .footer-top::after{content:"";grid-column:1/-1;grid-row:2;align-self:center;justify-self:end;width:123px;height:60px;aspect-ratio:auto;margin:0;pointer-events:none;background:var(--ink-2-dark);-webkit-mask:url(logos/mark-footer.svg) right center/contain no-repeat;mask:url(logos/mark-footer.svg) right center/contain no-repeat}
+  .site-footer .footer-markets{margin-top:16px;order:1}
+  /* Spread across the full width so all four links share one line on 375px+ phones, even with wider fonts; wraps only when they truly don't fit. */
+  .site-footer .legal{order:3;flex-wrap:wrap;justify-content:space-between;gap:0 6px;margin-top:8px;padding-top:0;border-top:0}
+}
+
+/* Token Index page (own sheet): kit headings, square corners, one orange action per view. */
+[data-nyte-page="index"] .token-index h1,[data-nyte-page="index"] .token-index h2{font-weight:300;letter-spacing:-.02em}
+[data-nyte-page="index"] .token-index h1{font-size:clamp(48px,6vw,88px)}
+[data-nyte-page="index"] .token-index *{border-radius:0!important}
+[data-nyte-page="index"] .ti-tile .btn-primary{background:transparent;color:var(--ink);border-color:var(--ink)}
+[data-nyte-page="index"] .ti-tile .btn-primary:hover{background:var(--ink);color:var(--cream)}
+[data-nyte-page="index"] .ti-eyebrow{font-family:var(--font-condensed);letter-spacing:.1em}
+/* Trusted Cowork on phones: the hero fills the first screen so the app screenshot
+   peeks in at the bottom, as it did under the photo banner (verify-nyte-v2). */
+@media(max-width:800px){
+  .cw-hero{display:flex;align-items:flex-end;min-height:calc(var(--cw-viewport,100svh) - var(--header) - 110px);padding:24px 0 32px}
+  .cw-hero .wrap{width:100%}
+  .cw-intro{padding-bottom:0}
+}
+
+/* Pages rebuilt in brand v3 (home-v3, api-v3): kit grid, eyebrow bar, buttons,
+   chips, Band and closing field. Page sheets load after this and add their own. */
+:where([data-nyte-page="home"],[data-nyte-page="api"]) main .wrap{max-width:1440px;padding:0 64px}
+:where([data-nyte-page="home"],[data-nyte-page="api"]) main section{padding:128px 0}
+:where([data-nyte-page="home"],[data-nyte-page="api"]) main :is(h1,h2,h3,p,blockquote,figure){margin:0}
+:where([data-nyte-page="home"],[data-nyte-page="api"]) main h2{font-size:clamp(40px,5vw,72px);line-height:1;font-weight:300;letter-spacing:-.015em}
+:where([data-nyte-page="home"],[data-nyte-page="api"]) main .lede{font-size:22px;line-height:1.45;max-width:640px;color:inherit}
+.v3-bar{display:block;width:40px;height:4px;background:var(--ink)}
+.v3-label{font:500 15px/1.2 var(--font-condensed);letter-spacing:.1em;text-transform:uppercase;font-style:normal}
+:where([data-nyte-page="home"],[data-nyte-page="api"]) main .btn{min-height:48px;height:48px;padding:0 22px;gap:10px;border:1.5px solid var(--ink);background:transparent;color:var(--ink);font:500 16px/1 var(--font-sans)}
+:where([data-nyte-page="home"],[data-nyte-page="api"]) main .btn:hover{background:var(--ink);color:var(--cream);border-color:var(--ink)}
+:where([data-nyte-page="home"],[data-nyte-page="api"]) main .btn-primary{background:var(--orange);border-color:var(--ink)}
+:where([data-nyte-page="home"],[data-nyte-page="api"]) main .btn svg{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5}
+:where([data-nyte-page="home"],[data-nyte-page="api"]) main .btns{gap:12px}
+.v3-chip{display:inline-flex;align-items:center;gap:6px;padding:6px 9px;border:1.5px solid var(--ink);font:500 14px/1 var(--font-mono);letter-spacing:.04em;white-space:nowrap}
+.v3-band{display:block;width:100%;height:120px}
+.v3-cta .wrap{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;align-items:end}
+.v3-cta .wrap>div:first-child{grid-column:span 7}
+.v3-cta h2{margin-top:32px}
+.v3-cta .lede{margin-top:24px}
+.v3-cta .btns{grid-column:8/span 5;justify-content:flex-end}
+[data-nyte-page="home"] header .wrap,[data-nyte-page="api"] header .wrap{max-width:1440px;padding:0 64px}
+[data-nyte-page="home"] .site-footer,[data-nyte-page="api"] .site-footer{padding-inline:max(64px,calc((100% - 1312px)/2));--globe-bleed:64px}
+@media (max-width:1100px){
+  .v3-cta .wrap{grid-template-columns:1fr;row-gap:32px}
+  .v3-cta .wrap>div:first-child,.v3-cta .btns{grid-column:1;justify-content:flex-start}
+}
+@media (max-width:600px){
+  :where([data-nyte-page="home"],[data-nyte-page="api"]) main .wrap{padding:0 20px}
+  :where([data-nyte-page="home"],[data-nyte-page="api"]) main section{padding:72px 0}
+  :where([data-nyte-page="home"],[data-nyte-page="api"]) main .lede{font-size:20px}
+  :where([data-nyte-page="home"],[data-nyte-page="api"]) main .btns{flex-direction:column;align-items:stretch;width:100%}
+  :where([data-nyte-page="home"],[data-nyte-page="api"]) main .btns .btn{flex:none;width:100%;justify-content:center;font-size:16px;padding:0 16px}
+  .v3-cta h2{margin-top:24px}
+  .v3-cta .lede{margin-top:16px}
+  [data-nyte-page="home"] header .wrap,[data-nyte-page="api"] header .wrap{padding:0 20px}
+  [data-nyte-page="home"] .site-footer,[data-nyte-page="api"] .site-footer{padding-inline:20px}
+}

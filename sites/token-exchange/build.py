@@ -15,7 +15,14 @@ from urllib.parse import urlencode
 
 from evidence import render_evidence, sector_art
 from member_badges import build_badges
-from nyte_v2 import PAGES, build_nyte, render_nyte, uses_nyte
+from nyte_v2 import (
+    PAGES,
+    brand_v3_share_image_used,
+    build_nyte,
+    legacy_share_image_used,
+    render_nyte,
+    uses_nyte,
+)
 from press import build_press
 from token_index_page import build_token_index
 
@@ -182,7 +189,11 @@ def build(output: Path) -> None:
         shutil.copyfile(static / "provider-logos" / f"{slug}.png", assets / name)
     for market in markets:
         image_name = f"og-{market['slug']}.png"
-        shutil.copyfile(HERE / "social-images" / image_name, assets / image_name)
+        if legacy_share_image_used(market):
+            shutil.copyfile(HERE / "social-images" / image_name, assets / image_name)
+        # Brand v3 share image, published only once a page that uses it is switched on.
+        if brand_v3_share_image_used(market["slug"]) and (HERE / "social-images" / f"og-v3-{market['slug']}.png").exists():
+            shutil.copyfile(HERE / "social-images" / f"og-v3-{market['slug']}.png", assets / f"og-v3-{market['slug']}.png")
         folder = output / market["slug"]
         folder.mkdir(exist_ok=True)
         (folder / "index.html").write_text(render(market, markets, version))

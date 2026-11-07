@@ -1,0 +1,192 @@
+/* NYTE Confidential API, brand v3 design pass (HANDOFF-nyte-confidential-v3-2026-11-06).
+   Loads after brand-v3.css, only when api is switched on in nyte-brand-v3.json. */
+
+/* Hero: lime field, copy left, the fails-closed illustration right. */
+.hero-api{display:block;min-height:0;padding:96px 0 80px;text-align:left}
+.hero-api .wrap{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;align-items:center}
+.hero-api .inner{grid-column:span 7;width:auto;max-width:none;margin:0;padding:0;display:flex;flex-direction:column;align-items:flex-start}
+.hero-api h1{margin:32px 0 0;font-size:clamp(56px,7.2vw,104px);line-height:.96;font-weight:300;letter-spacing:-.02em;color:var(--ink);text-shadow:none}
+.hero-api .lede{margin:32px 0 0;max-width:600px;font-size:22px;line-height:1.45;color:var(--ink);text-shadow:none}
+.hero-api .btns{margin-top:36px;flex-wrap:wrap}
+.hero-api .btn{min-height:48px}
+.v3-api-art{grid-column:8/span 5;display:flex;justify-content:flex-end}
+.v3-illustration{display:block;width:100%;max-width:480px;height:auto;aspect-ratio:480/336}
+
+/* Press: one quote under a rule, no logo. */
+.v3-quote{padding:112px 0}
+.v3-quote .wrap{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;align-items:start}
+.v3-eyebrow{grid-column:span 3;display:flex;flex-direction:column;align-items:flex-start;gap:12px}
+.v3-eyebrow .v3-bar,.v3-prot .v3-bar,.v3-start .v3-bar,.v3-faq .v3-bar{background:var(--lime)}
+.v3-quote figure{grid-column:4/span 9;display:flex;flex-direction:column;gap:24px;padding-top:24px;border-top:2.5px solid var(--ink)}
+.v3-quote blockquote{font-size:44px;line-height:1.15;font-weight:300;letter-spacing:-.01em}
+
+/* Layers of protection: four ruled columns. */
+.v3-prot{padding:0 0 112px}
+.v3-prot h2{margin-top:32px}
+.v3-prot-list{list-style:none;margin:64px 0 0;padding:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px}
+.v3-prot-list li{padding-top:20px;border-top:10px solid var(--purple)}
+.v3-prot-list li:nth-child(2){border-top-color:var(--sky)}
+.v3-prot-list li:nth-child(3){border-top-color:var(--yellow)}
+.v3-prot-list li:nth-child(4){border-top-color:var(--lime)}
+.v3-prot-list .n{display:block;font:400 15px/1.2 var(--font-mono);color:var(--ink-2);font-variant-numeric:tabular-nums}
+.v3-prot-list h3{margin-top:8px;font-size:24px;line-height:1.2;font-weight:500;letter-spacing:0}
+.v3-prot-list p{margin-top:10px;font-size:17px;line-height:1.55;color:var(--ink)}
+
+/* Live evidence: Ink section, attestation rows left, uptime figures right. */
+.v3-evidence{background:var(--ink);color:var(--cream);padding:112px 0}
+.v3-evidence .ev{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;align-items:start;min-width:0;background:transparent;border:0}
+.v3-evidence .ev-sec{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"h link" "rows rows";align-items:baseline;column-gap:16px;padding:0;border:0}
+.v3-evidence .ev-sec:first-child{grid-column:span 6}
+.v3-evidence .ev-sec:last-child{grid-column:8/span 5}
+.v3-evidence .ev h3{grid-area:h;margin:0;font:500 15px/1.2 var(--font-condensed);letter-spacing:.1em;text-transform:uppercase;color:var(--cream)}
+.ev-link{grid-area:link;display:inline-flex;align-items:center;gap:6px;color:var(--cream);font-size:16px;font-weight:500;text-decoration:underline;text-decoration-thickness:1.5px;text-underline-offset:4px}
+.ev-link:hover{color:var(--cream);text-decoration-color:var(--lime)}
+.ev-link svg{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5}
+.v3-evidence [data-live-attestation],.v3-evidence [data-live-services]{grid-area:rows;min-width:0;font:inherit}
+.v3-evidence .ev [data-live-attestation]>*{margin:16px 0 0}
+.att-rows{border-top:2.5px solid var(--cream)}
+.att-row{display:grid;grid-template-columns:200px minmax(0,1fr);gap:16px;padding:16px 0;border-bottom:1.5px solid var(--dark-rule)}
+.att-row dt{font:500 15px/1.4 var(--font-condensed);letter-spacing:.1em;text-transform:uppercase;color:var(--ink-2-dark)}
+.att-row dd{margin:0;font:400 15px/1.5 var(--font-mono);color:var(--cream);overflow-wrap:anywhere}
+.att-row .build-digest{font:inherit}
+.att-row.att-unproven dd{color:var(--yellow)}
+.v3-evidence [data-live-services]{margin-top:16px}
+.v3-evidence .service-history{display:flex;justify-content:space-between;align-items:baseline;gap:16px;padding:16px 0 20px;border:0;border-top:2.5px solid var(--lime)}
+.v3-evidence .service-history:nth-child(3n+2){border-top-color:var(--sky)}
+.v3-evidence .service-history:nth-child(3n){border-top-color:var(--yellow)}
+.uptime-name{font-size:17px;line-height:1.4}
+.uptime-figure{font:300 48px/1 var(--font-sans);color:var(--lime);font-variant-numeric:tabular-nums;white-space:nowrap}
+.service-history:nth-child(3n+2) .uptime-figure{color:var(--sky)}
+.service-history:nth-child(3n) .uptime-figure{color:var(--yellow)}
+.v3-evidence .last-check{margin-top:8px;font:400 15px/1.5 var(--font-mono);color:var(--ink-2-dark)}
+
+/* Models on confidential routes: sky field, ruled table. */
+.v3-models{background:var(--sky);padding:112px 0}
+.v3-models h2{margin-top:32px}
+.v3-models .model-head{margin-top:56px;padding:14px 0;gap:12px;border-top:2.5px solid var(--ink);border-bottom:0;font:500 15px/1.2 var(--font-condensed);letter-spacing:.1em;text-transform:uppercase;color:var(--ink)}
+.v3-models .live-models{border-bottom:1.5px solid var(--ink)}
+.v3-models .live-models>a:not(.privacy-column){display:inline-block;padding:20px 0;color:var(--ink);font-size:17px;text-decoration:underline;text-underline-offset:4px}
+.v3-models .privacy-column{gap:12px;padding:20px 0;border-top:1.5px solid var(--ink);border-bottom:0;color:var(--ink)}
+.v3-models .privacy-column:hover h3{text-decoration:underline;text-underline-offset:4px}
+.v3-models .privacy-choice h3{margin:0;font-size:24px;line-height:1.2;font-weight:500;letter-spacing:0}
+.v3-models .privacy-choice p{margin-top:4px;font:400 15px/1.4 var(--font-mono);color:var(--ink)}
+.v3-models .privacy-provider{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font:400 17px/1 var(--font-sans);color:var(--ink)}
+.v3-models .privacy-price{font:400 17px/1.4 var(--font-mono);color:var(--ink);font-variant-numeric:tabular-nums}
+.v3-models .pricing-unit{margin-top:16px;font:400 15px/1.5 var(--font-mono);color:var(--ink)}
+
+/* Quick start: copy left, Ink code panel right. */
+.v3-start .wrap{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));grid-template-rows:auto auto;column-gap:24px;align-items:center}
+.v3-start-copy{grid-column:1/span 5;grid-row:1;align-self:end;display:flex;flex-direction:column;align-items:flex-start;gap:28px;padding-right:24px}
+.v3-start-copy p{max-width:460px;font-size:17px;line-height:1.55;color:var(--ink)}
+.v3-start .btns{grid-column:1/span 5;grid-row:2;align-self:start;margin-top:28px;flex-wrap:wrap}
+.v3-start .code-scroll{position:relative;grid-column:6/span 7;grid-row:1/span 2;min-width:0}
+.v3-start .code{min-width:0;overflow-x:auto}
+/* When the code runs past the edge: the right edge fades into Ink and an arrow slides it along (as the footer city row). */
+.code-scroll::before,.code-scroll::after{content:"";display:none;position:absolute;top:0;bottom:0;width:72px;pointer-events:none;z-index:1}
+.code-scroll.can-left::before{display:block;left:0;background:linear-gradient(90deg,var(--ink),transparent)}
+.code-scroll.can-right::after{display:block;right:0;background:linear-gradient(90deg,transparent,var(--ink) 70%)}
+.code-next:not([hidden]){display:flex;position:absolute;right:8px;top:50%;z-index:2;align-items:center;justify-content:center;width:40px;height:40px;padding:0;transform:translateY(-50%);border:1.5px solid var(--dark-rule);border-radius:0;background:var(--ink);color:var(--cream);cursor:pointer}
+.code-next svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.75}
+.code-next:focus-visible{outline:2px solid var(--lime);outline-offset:2px}
+.v3-start .code:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
+.v3-start .code pre{width:max-content;min-width:100%;padding:28px 0;font:400 14px/1.75 var(--font-mono);color:var(--cream)}
+.v3-start .code pre span.l{padding:0 28px}
+.v3-start .code .chg{background:var(--dark-sunken);box-shadow:none;color:var(--cream)}
+.v3-start .code .k{color:var(--ink-2-dark)}
+.v3-start .code .s.y{color:var(--yellow)}
+
+/* Common questions: gray ground, ruled list, kit chevron. */
+.v3-faq{background:var(--gray)}
+.v3-faq .faq{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:0 24px;align-items:start}
+.v3-faq .faq>div:first-child{grid-column:span 4}
+.v3-faq h2{position:static;margin-top:32px}
+.v3-faq-list{grid-column:6/span 7;border-top:2.5px solid var(--ink)}
+.v3-faq details,.v3-faq details:first-child{border-top:0;border-bottom:1.5px solid var(--ink)}
+.v3-faq summary{min-height:0;gap:16px;padding:20px 0;font-size:19px;font-weight:500;line-height:1.35;color:var(--ink)}
+.v3-faq summary::after{content:"";flex:none;width:20px;height:20px;background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23151311' stroke-width='1.5'%3E%3Cpath d='M5.5 8.5 L12 15 L18.5 8.5'/%3E%3C/svg%3E") center/contain no-repeat;transition:transform .15s}
+.v3-faq details[open] summary::after{transform:rotate(180deg)}
+.v3-faq details p{max-width:none;padding:0 40px 24px 0;font-size:17px;line-height:1.55;color:var(--ink)}
+
+/* Closing CTA: yellow field (layout shared in brand-v3.css). */
+.v3-cta{background:var(--yellow)}
+
+@media (max-width:1100px){
+  .att-row{grid-template-columns:150px minmax(0,1fr)}
+  .v3-prot-list{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:40px}
+  .v3-start .wrap{display:block}
+  .v3-start-copy{padding-right:0}
+  .v3-start .code-scroll{margin-top:40px}
+  .v3-start .btns{margin-top:32px}
+}
+@media (max-width:900px){
+  .hero-api{padding:0 0 40px}
+  .hero-api .wrap{display:flex;flex-direction:column;align-items:stretch}
+  .hero-api .inner{padding-top:40px}
+  .v3-api-art{order:-1;height:240px;margin:0 -64px;overflow:hidden}
+  .v3-api-art .v3-illustration{max-width:none;height:100%;aspect-ratio:auto}
+  .v3-quote .wrap{display:block}
+  .v3-quote figure{margin-top:24px}
+  .v3-quote blockquote{font-size:36px}
+  .v3-evidence .ev{display:block}
+  .v3-evidence .ev-sec+.ev-sec{margin-top:64px}
+  .v3-faq .faq{display:block}
+  .v3-faq-list{margin-top:40px}
+}
+@media (max-width:600px){
+  .hero-api .inner{padding-top:16px}
+  .v3-api-art{height:180px;margin:0 -20px}
+  .hero-api h1{margin-top:24px;font-size:48px;line-height:1}
+  .hero-api .lede{margin-top:20px;font-size:19px}
+  .hero-api .btns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:28px}
+  .hero-api .btns .btn{height:52px;min-height:52px;padding:0 12px}
+  .hero-api .btn svg{display:none}
+  .v3-quote{padding:56px 0}
+  .v3-quote figure{gap:16px;padding-top:16px}
+  .v3-quote blockquote{font-size:26px;line-height:1.2}
+  .v3-prot{padding:0 0 64px}
+  .v3-prot h2{margin-top:24px}
+  .v3-prot-list{grid-template-columns:1fr;gap:28px;margin-top:36px}
+  .v3-prot-list li{display:grid;grid-template-columns:40px minmax(0,1fr);padding-top:14px}
+  .v3-prot-list .n{padding-top:4px}
+  .v3-prot-list h3{margin-top:0;font-size:22px}
+  .v3-prot-list p{margin-top:6px}
+  .v3-evidence,.v3-models,.v3-faq,.v3-cta{padding:64px 0}
+  .v3-evidence .ev-sec{grid-template-columns:minmax(0,1fr);grid-template-areas:"h" "rows" "link"}
+  .v3-evidence .ev-sec+.ev-sec{margin-top:48px}
+  .ev-link{justify-self:start;margin-top:16px}
+  .v3-evidence .ev [data-live-attestation]>*{margin-top:14px}
+  .att-row{grid-template-columns:minmax(0,1fr);gap:6px;padding:14px 0}
+  .v3-evidence [data-live-services]{margin-top:14px}
+  .v3-evidence .service-history{padding:12px 0 16px}
+  .uptime-figure{font-size:32px}
+  .v3-evidence .last-check{margin-top:0}
+  .v3-models h2{margin-top:24px}
+  .v3-models .privacy-column{gap:12px 8px;padding:18px 0}
+  .v3-models .privacy-choice h3{font-size:22px}
+  .v3-models .privacy-price::before{margin-bottom:4px;font:500 15px/1.2 var(--font-condensed);letter-spacing:.1em;text-transform:uppercase;color:var(--ink)}
+  .v3-models .pricing-unit{margin-top:14px}
+  .v3-models .live-models{margin-top:32px;border-top:2.5px solid var(--ink)}
+  .v3-models .privacy-column:first-child{border-top:0}
+  .v3-start-copy{gap:24px}
+  .v3-start .code-scroll{margin:28px -20px 0}
+  .v3-start .code pre{font-size:15px}
+  .v3-start .code pre span.l{padding:0 20px}
+  .v3-start .btns{margin-top:28px}
+  .v3-faq h2{margin-top:24px}
+  .v3-faq-list{margin-top:32px}
+  .v3-faq details p{padding-right:8px}
+}
+/* Narrow phones: the hero buttons stack once their labels no longer fit side by side. */
+@media (max-width:374px){
+  .hero-api .btns{grid-template-columns:1fr}
+}
+/* Phones: the header's "Start building" (/confidential#start) lands with the
+   section top just under the sticky header, and the actions follow the copy so
+   "Get your API key" is on that first screen; the code panel comes after them. */
+@media (max-width:600px){
+  #start{scroll-margin-top:calc(var(--header) - 96px)}
+  .v3-start .wrap{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:none;align-items:start}
+  .v3-start-copy,.v3-start .btns,.v3-start .code-scroll{grid-column:1;grid-row:auto}
+  .v3-start .btns{order:1}
+  .v3-start .code-scroll{order:2;margin-top:32px}
+}

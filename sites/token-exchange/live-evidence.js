@@ -8,6 +8,8 @@
   const services = root.querySelector('[data-live-services]');
   const attestation = root.querySelector('[data-live-attestation]');
   const caption = root.querySelector('[data-live-caption]');
+  // The brand v3 Confidential page asks for labelled rows and uptime figures; other pages keep the original output.
+  const v3 = root.dataset.evidenceStyle === 'v3';
   const statusCaption = caption?.textContent;
   const refreshMs = 60000;
   const staleMs = 60 * 60 * 1000; // Maximum display age, not a current-health guarantee.
@@ -29,9 +31,10 @@
   };
   const dated = value => age(value) !== Infinity;
   const fresh = value => age(value) <= staleMs;
+  const checkedAt = value => new Date(value).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC');
   const lastCheck = (value, label = 'Last checked') => {
     if (!dated(value)) return '';
-    return `${label} ${new Date(value).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC')}`;
+    return `${label} ${checkedAt(value)}`;
   };
   const link = (label, url) => {
     const el = node('a', label);
@@ -69,7 +72,9 @@
       const choice = node('div', undefined, 'privacy-choice');
       choice.append(node('h3', row.label), node('p', 'Tinfoil'));
       if (prices.dataset.priceLayout === 'table') {
-        col.append(choice, node('div', 'Confidential + E2EE', 'privacy-provider'));
+        const provider = node('div', v3 ? undefined : 'Confidential + E2EE', 'privacy-provider');
+        if (v3) provider.append(node('span', 'Confidential', 'v3-chip'), ' + ', node('span', 'E2EE', 'v3-chip'));
+        col.append(choice, provider);
         for (const [label, value] of [['Input / 1M', row.input], ['Output / 1M', row.output]]) {
           const price = node('div', `$${value}`, 'privacy-price');
           price.dataset.label = label;
@@ -96,7 +101,17 @@
     // or incomplete, use the existing status link instead of a partial all-clear.
     const showServices = components.length > 0 && components.every(presentable);
     if (caption) caption.textContent = showServices ? caption.dataset.uptimeLabel : statusCaption;
-    for (const c of showServices ? components : []) {
+    for (const c of v3 && showServices ? components : []) {
+      const row = node('div', undefined, 'service-history');
+      row.append(node('span', c.name, 'uptime-name'), node('strong', `${c.uptime_24h_percent.toFixed(2)}%`, 'uptime-figure'));
+      services.append(row);
+    }
+    if (v3 && showServices) {
+      // One line for the set: the oldest check, so no row looks fresher than it is.
+      const oldest = components.reduce((a, c) => (Date.parse(c.last_checked_at) < Date.parse(a) ? c.last_checked_at : a), components[0].last_checked_at);
+      services.append(node('p', lastCheck(oldest), 'last-check'));
+    }
+    for (const c of !v3 && showServices ? components : []) {
       const row = node('div', undefined, 'service-history');
       const heading = node('div', undefined, 'service-heading');
       const value = node('strong', c.uptime_24h_percent.toFixed(2));
@@ -125,6 +140,22 @@
     const release = payload.release;
     if (!check || check.status !== 'up' || !fresh(check.last_checked_at) || !release) return;
     if (release.platform !== 'gcp-confidential-space' || typeof release.image_digest !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(release.image_digest)) return;
+    if (v3) {
+      const rows = node('dl', undefined, 'att-rows');
+      const row = (key, value, cls) => {
+        const item = node('div', undefined, cls ? `att-row ${cls}` : 'att-row');
+        const dd = node('dd');
+        dd.append(value);
+        item.append(node('dt', key), dd);
+        rows.append(item);
+      };
+      row('Published build digest', node('code', release.image_digest, 'build-digest'));
+      if (typeof release.source_commit === 'string') row('Published source', release.source_commit.slice(0, 8));
+      row('Location', 'Not proven by attestation', 'att-unproven');
+      row('Last checked', checkedAt(check.last_checked_at));
+      attestation.append(rows);
+      return;
+    }
     attestation.append(node('p', 'Published build digest', 'digest-label'), node('code', release.image_digest, 'build-digest'));
     attestation.prepend(node('p', lastCheck(check.last_checked_at), 'last-check'));
     if (typeof release.source_commit === 'string') attestation.append(node('p', `Published source ${release.source_commit.slice(0, 8)}`));

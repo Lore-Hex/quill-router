@@ -62,6 +62,23 @@ class TokenIndexPageTests(unittest.TestCase):
                 self.assertNotIn('id="open-stack"', other.read_text())
                 self.assertNotIn("https://nytokenexchange.com/index", (other.parent / "sitemap.xml").read_text())
 
+    def test_v3_grade_columns_keep_reserve_links(self):
+        import os
+        from unittest import mock
+
+        from token_index_page import render_token_index
+
+        with mock.patch.dict(os.environ, {"NYTE_BRAND_V3_PREVIEW": "1"}):
+            page = render_token_index()
+        self.assertGreater(page.index("/assets/index-v3.css?v="), page.index("/assets/nyte-v2/brand-v3.css?v="))
+        for code in ("AAA", "A", "B", "C"):
+            self.assertIn(f'href="/buy?grade={code}&amp;unit=blocks">Reserve {code} tokens</a>', page)
+        self.assertEqual(page.count('class="ti3-grade '), 4)
+        self.assertEqual(page.count('<i class="on"></i>'), 10)
+        self.assertEqual(page.count("data-ti-chart="), 2)
+        self.assertNotIn("[Operator team]", page)
+        self.assertNotIn("[Source and limits]", page)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -50,6 +50,28 @@ def facility_cards(*, selectable: bool = False) -> str:
     return '\n'.join(cards)
 
 
+def facility_cards_v3() -> str:
+    """Brand v3 facility table for the accelerator (kit DataTable): the facts of facility_cards().
+
+    The GPU and lot notes are shown once under the table by the page, not per row.
+    On phones the head row hides and each cell shows its own label."""
+    head = ('<thead><tr><th scope="col">Facility</th><th scope="col">Targeted launch</th>'
+            '<th scope="col">Grade</th><th scope="col" class="num">Power</th>'
+            '<th scope="col" class="num">First offering</th><td></td></tr></thead>')
+    ladder = '<span class="sv3-ladder g-b" aria-hidden="true"><i class="on"></i><i class="on"></i><i></i><i></i></span>'
+    rows = []
+    for facility in FACILITIES:
+        rows.append(f'''<tr>
+  <th scope="row"><b>{facility.name}</b><small>A planned {facility.description} data center.</small></th>
+  <td><span class="sv3-ml">Targeted launch</span>{facility.launch}</td>
+  <td><span class="sv3-ml">Grade</span><span class="sv3-grade"><span class="v3-chip">B</span>{ladder}<a href="/index">Professional (DeepSeek-class models)</a></span></td>
+  <td class="num"><span class="sv3-ml">Power</span>{facility.power}</td>
+  <td class="num"><span class="sv3-ml">First offering</span>{facility.lots:,} lots</td>
+  <td class="act"><a href="/buy?facility={facility.id}">Discuss a reservation →</a></td>
+</tr>''')
+    return '<table class="sv3-table sv3-fac-table">' + head + '<tbody>\n' + '\n'.join(rows) + '\n</tbody></table>'
+
+
 FACILITY_RATE = (
     '1B tokens over 12 months ≈ 32 tok/s sustained; '
     '1,000 lots ≈ 32,000 tok/s; 50,000 lots ≈ 1.6 million tok/s.'

@@ -53,7 +53,7 @@ async function indexMime(context) {
       const frontier = grades.getByRole('button', {name: 'Frontier', exact: true});
       await frontier.click();
       assert.equal(await frontier.getAttribute('aria-pressed'), 'false');
-      assert.ok(await page.locator('.index-actions .btn').evaluate(el => el.scrollWidth <= el.clientWidth), 'supplier CTA clipped');
+      assert.ok(await page.locator('.index-actions .btn').evaluateAll(els => els.every(el => el.scrollWidth <= el.clientWidth)), 'supplier CTA clipped');
       await page.evaluate(() => window.scrollTo(0, 0));
       await page.screenshot({path: `${output}/nyte-index-${width}.png`, fullPage: true});
       assert.deepEqual(errors, []);
