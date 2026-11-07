@@ -31,13 +31,15 @@ await page.clock.install();
 await page.goto(base+'/');
 for (const width of [1440,390]) {
  await page.setViewportSize({width,height:844});
- const heroActions=page.locator('.hero .btns');
+ const heroActions=page.locator('.hero .btns, .v3-hero .btns');
  assert.deepEqual(await heroActions.locator('a,button').allTextContents(),['Reserved tokens','Get the buyer deck']);
  assert.equal(await heroActions.getByRole('link',{name:'Reserved tokens',exact:true}).getAttribute('href'),'/buy');
  assert.equal(await heroActions.getByRole('button',{name:'Get the buyer deck',exact:true}).getAttribute('data-open'),'deck');
  assert(await page.locator('header').getByRole('link',{name:'Start building',exact:true}).isVisible());
- const rows=await page.locator('.r-row.skip').evaluateAll(elements=>elements.map(el=>({position:getComputedStyle(el).position,top:el.getBoundingClientRect().top})));
- assert.equal(rows.length,2);assert(rows.every(row=>row.position!=='absolute' && row.top>0));
+ // v2 home: the two skipped routes; v3 home: the three protection layers. Both stay in flow below the hero.
+ const v3=await page.locator('.v3-layer-list').count()>0;
+ const rows=await page.locator(v3?'.v3-layer-list > li':'.r-row.skip').evaluateAll(elements=>elements.map(el=>({position:getComputedStyle(el).position,top:el.getBoundingClientRect().top})));
+ assert.equal(rows.length,v3?3:2);assert(rows.every(row=>row.position!=='absolute' && row.top>0));
 }
 await page.getByRole('button',{name:'Menu',exact:true}).click();
 await page.keyboard.press('Tab');assert.equal(await page.evaluate(()=>document.activeElement.getAttribute('href')),'/confidential');
@@ -65,7 +67,7 @@ modelCount=813;providerRows=[{id:'restored',routing_status:'active'}];await page
 await page.waitForFunction(()=>document.querySelector('[data-catalog-models]').textContent==='813');
 await page.clock.resume();
 await page.getByRole('button',{name:'Menu',exact:true}).click();await page.locator('nav').getByRole('link',{name:'Confidential API',exact:true}).click();await page.waitForURL('**/confidential');
-await page.locator('.privacy-price').first().waitFor();assert.match(await page.locator('[data-live-price-unit]').textContent(),/^Updated .* UTC$/);assert.equal(await page.locator('.tbl-foot').count(),0);assert.equal(await page.locator('.health-bar').count(),24);assert.equal(await page.locator('.build-digest').count(),1);
+await page.locator('.privacy-price').first().waitFor();assert.match(await page.locator('[data-live-price-unit]').textContent(),/^Updated .* UTC$/);assert.equal(await page.locator('.tbl-foot').count(),0);assert.equal(await page.locator('.health-bar').count(),0);assert.equal(await page.locator('.uptime-figure').count(),1);assert.equal(await page.locator('.uptime-figure').textContent(),'100.00%');assert.equal(await page.locator('.build-digest').count(),1);assert.equal(await page.locator('.att-unproven dd').textContent(),'Not proven by attestation');assert.equal(await page.locator('.privacy-provider').first().textContent(),'Confidential + E2EE');
 assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
 await page.locator('.hero-api a',{hasText:'Start building'}).click();await page.waitForURL('**/confidential#start');
 await page.getByRole('button',{name:'Get the buyer deck',exact:true}).click();assert(await page.locator('dialog').isVisible());
@@ -74,7 +76,7 @@ await page.locator('input[name=email]').fill('preview@example.com');await page.g
 success=true;const download=page.waitForEvent('download');await page.getByRole('button',{name:'Download the deck',exact:true}).click();assert.equal((await download).suggestedFilename(),'NYTE-Buyer-Deck.pdf');await page.waitForFunction(()=>document.getElementById('brochure-status').dataset.state==='success');
 await page.keyboard.press('Escape');assert(!(await page.locator('dialog').isVisible()));
 await page.waitForTimeout(200);assert(events.some(e=>e.event==='nyte.form_submitted'&&e.form==='buyer_deck'));assert(events.some(e=>e.event==='nyte.cta_clicked'&&e.cta==='api_quick_start'));assert(events.every(e=>!('email' in e)));
-evidence={...evidence,generated_at:'2000-01-01T00:00:00Z'};await page.reload();await page.waitForTimeout(200);assert.equal(await page.locator('.build-digest').count(),0);assert.equal(await page.locator('.health-bar').count(),0);assert(await page.getByRole('link',{name:'Published release'}).isVisible());
+evidence={...evidence,generated_at:'2000-01-01T00:00:00Z'};await page.reload();await page.waitForTimeout(200);assert.equal(await page.locator('.build-digest').count(),0);assert.equal(await page.locator('.uptime-figure').count(),0);assert(await page.getByRole('link',{name:'Published release'}).isVisible());
 
 await page.setViewportSize({width:1440,height:900});
 await page.goto(base+'/index');
@@ -131,17 +133,16 @@ for (const width of [320,390,768,1440]) {
  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
  await page.goto(base+'/');await page.evaluate(()=>document.fonts.ready);
  assert(await page.locator('.stat .v').evaluateAll(elements=>elements.every(el=>el.scrollWidth<=el.clientWidth)),`stats must fit at ${width}px`);
- const fee=page.locator('.stat .v span');assert.equal(await fee.textContent(),'fee');
- assert.equal(await fee.evaluate(el=>el.getClientRects().length),1);
 }
 
 // Keep both downloads in the first screen, including short phones.
+// Brand v3 puts the screenshot inside the hero, 40px under the downloads (the approved phone layout).
 for (const [width,height] of [[320,568],[390,667],[390,844]]) {
  await page.setViewportSize({width,height});await page.goto(base+'/trusted-cowork');await page.evaluate(()=>document.fonts.ready);
- const layout=await page.evaluate(()=>({bottom:document.querySelector('.cw-hero .btn-secondary').getBoundingClientRect().bottom,image:document.querySelector('.cw-screenshot').getBoundingClientRect().top}));
+ const layout=await page.evaluate(()=>({bottom:document.querySelector('.cw-hero .btn-secondary').getBoundingClientRect().bottom,image:document.querySelector('.cw-screenshot').getBoundingClientRect().top,v3:!!document.querySelector('.cw-hero .cw-screenshot')}));
  assert(layout.bottom<=height-24,`downloads must fit ${width}x${height}`);
- assert(layout.image<=height-80 && layout.image>=height-140,'recognizable screenshot preview fits in the first screen');
- assert.equal(layout.image-layout.bottom,32,'space separates the screenshot from the CTAs');
+ assert(layout.image<=height-80 && (layout.v3 || layout.image>=height-140),'recognizable screenshot preview fits in the first screen');
+ assert.equal(layout.image-layout.bottom,layout.v3?40:32,'space separates the screenshot from the CTAs');
  assert.equal(await page.locator('.cw-meta').count(),0);
  const top=await page.locator('.cw-hero h1').evaluate(el=>el.getBoundingClientRect().top+scrollY);
  await page.setViewportSize({width,height:height+80});

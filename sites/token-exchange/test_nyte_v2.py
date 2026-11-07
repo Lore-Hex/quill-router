@@ -82,16 +82,21 @@ class NyteV2Tests(unittest.TestCase):
 
     def test_supplier_listing_steps(self):
         page = render_nyte('sup')
-        for title in ('Listing status', 'Show your service', 'Make it verifiable', 'Serve real workloads'):
+        for title in ('Show your service', 'Make it verifiable', 'Serve real workloads'):
             self.assertEqual(page.count(title), 1)
+        self.assertEqual(page.count('Credentials are shared only through the secure onboarding channel.'), 1)
         self.assertNotIn('supplier-art', page)
         self.assertNotIn('vsteps', page)
 
     def test_supplier_stack_panel(self):
         page = render_nyte('sup')
-        for label in ('TrustedRouter runs', 'The inference stack is open source.', 'You run',
-                      'Get the open-source stack', 'Operator guide'):
-            self.assertEqual(page.count('>' + label + '<'), 1)
+        stack = page.split('id="open-stack"', 1)[1].split('</section>', 1)[0]
+        for label in ('Get the open-source stack', 'Operator guide'):
+            self.assertEqual(stack.count('>' + label + '<'), 1)
+        # What the stack contains and who runs what are answered in the questions.
+        for answer in ('The inference stack is open source: Apache-2.0 software for building a confidential neocloud',
+                       'You run the hardware, model inference and your provider brand. TrustedRouter runs customer access, routing and billing.'):
+            self.assertEqual(page.count(answer), 1)
         for obsolete in ('oss-layers', 'oss-icon', 'duty'):
             self.assertNotIn(obsolete, page)
 

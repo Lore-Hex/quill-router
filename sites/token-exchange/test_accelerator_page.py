@@ -8,11 +8,40 @@ from typing import ClassVar
 from urllib.parse import urlparse
 
 from build import build, load_markets
+from facilities import facility_cards
 from nyte_v2 import render_nyte
 from test_buy_page import FACILITY_RATE_COPY, assert_facility_cards
 from test_provider_page import PageLinks
 
 HERE = Path(__file__).resolve().parent
+LOT_NOTE = 'Each lot is 1 billion tokens delivered over the facility’s first twelve months of operation, not per month.'
+
+
+def assert_facility_columns(test: unittest.TestCase, markup: str) -> None:
+    """The approved facts as a brand v3 DataTable: one row per facility, words unchanged."""
+    table = re.findall(r'<table class="sv3-table sv3-fac-table">(.*?)</table>', markup, flags=re.S)
+    test.assertEqual(len(table), 1)
+    for head in ('Facility', 'Targeted launch', 'Grade', 'Power', 'First offering'):
+        test.assertIn(f'>{head}</th>', table[0])
+    rows = re.findall(r'<tr>(.*?)</tr>', table[0].split('<tbody>', 1)[1], flags=re.S)
+    test.assertEqual(len(rows), 2)
+    for row, (facility, name, description, power, launch, lots) in zip(rows, [
+        ('solar', 'Solar Powered Datacenter', 'solar-powered, air-cooled', '20 kW', 'February 2027', '1,000'),
+        ('underwater', 'Underwater Datacenter', 'underwater', '1 MW', 'August 2027', '50,000'),
+    ], strict=True):
+        test.assertIn(f'<th scope="row"><b>{name}</b><small>A planned {description} data center.</small></th>', row)
+        test.assertNotIn('Planned</span>', row)
+        test.assertNotIn('operated by', row)
+        test.assertNotIn('B200', row)
+        test.assertIn(f'<span class="sv3-ml">Power</span>{power}</td>', row)
+        test.assertIn(f'<span class="sv3-ml">Targeted launch</span>{launch}</td>', row)
+        test.assertIn(f'<span class="sv3-ml">First offering</span>{lots} lots</td>', row)
+        test.assertIn('<span class="v3-chip">B</span>', row)
+        test.assertIn('<a href="/index">Professional (DeepSeek-class models)</a>', row)
+        test.assertIn(f'<a href="/buy?facility={facility}">Discuss a reservation →</a>', row)
+        test.assertNotIn('$', row)
+
+
 ROUTE = '/neocloud-accelerator'
 STACK = 'https://github.com/Lore-Hex/token-exchange-neocloud-in-a-box'
 
@@ -41,7 +70,9 @@ class AcceleratorPageTests(unittest.TestCase):
         self.assertIn(f'<link rel="canonical" href="https://nytokenexchange.com{ROUTE}">', self.page)
         self.assertIn(f'<meta property="og:url" content="https://nytokenexchange.com{ROUTE}">', self.page)
         self.assertIn('/assets/nyte-v2/styles.css?', self.page)
-        self.assertIn('/assets/nyte-v2/accelerator.css?', self.page)
+        self.assertIn('/assets/nyte-v2/sell-v3.css?', self.page)
+        self.assertTrue((self.root / 'assets/nyte-v2/sell-v3.css').is_file())
+        # The pre-v3 body and sheet stay for rollback.
         self.assertTrue((self.root / 'assets/nyte-v2/accelerator.css').is_file())
         for market in load_markets():
             sitemap = (self.root / market['slug'] / 'sitemap.xml').read_text()
@@ -61,12 +92,16 @@ class AcceleratorPageTests(unittest.TestCase):
         self.assertFalse(self.parser.forms)
         self.assertNotRegex(self.page, r'<(?:iframe|input|select|textarea|object|embed)\b')
         self.assertNotIn('widget.js', self.page)
+        # The same booking link in the hero and the closing section.
         links = [urlparse(link) for link in self.parser.links if 'calendly.com' in link]
-        self.assertEqual(len(links), 1)
-        self.assertEqual(links[0].geturl(), 'https://calendly.com/joseph-perla/15min')
+        self.assertEqual(len(links), 2)
+        for link in links:
+            self.assertEqual(link.geturl(), 'https://calendly.com/joseph-perla/15min')
         self.assertNotIn('calendly', ' '.join(self.parser.resources))
         self.assertNotIn('.pdf', ' '.join(self.parser.links + self.parser.resources))
-        self.assertNotIn('hidden', (HERE / 'nyte-v2/accelerator.html').read_text())
+        for body in ('accelerator.html', 'accelerator-v3.html'):
+            # Decorative bars and icons are aria-hidden; no copy is hidden.
+            self.assertNotIn('hidden', (HERE / 'nyte-v2' / body).read_text().replace('aria-hidden="true"', ''))
 
     def test_claims_and_rate_scope(self) -> None:
         visible = re.sub(r'<(?:style|script)\b[^>]*>.*?</(?:style|script)>', '', self.page, flags=re.S)
@@ -97,31 +132,30 @@ class AcceleratorPageTests(unittest.TestCase):
         self.assertNotIn('385', text)
 
     def test_first_facilities_and_reservation_links(self) -> None:
-        section = self.page.split('<section class="accelerator-facilities">', 1)[1].split('</section>', 1)[0]
+        section = self.page.split('<section class="sv3-facilities">', 1)[1].split('</section>', 1)[0]
         self.assertIn('<h2>First facilities</h2>', section)
-        self.assertIn('<p class="body">Operator names are shared on the call.</p>', section)
-        assert_facility_cards(self, section)
+        self.assertIn('Pricing is discussed on the call. Operator names are shared on the call.</p>', section)
+        self.assertEqual(section.count('Planned on NVIDIA B200/B300-class GPUs.'), 1)
+        assert_facility_columns(self, section)
+        self.assertEqual(section.count(LOT_NOTE), 1)
         for facility in ['solar', 'underwater']:
             self.assertIn(f'/buy?facility={facility}', self.parser.links)
         self.assertEqual(section.count(FACILITY_RATE_COPY), 1)
         self.assertIn('Pricing is discussed on the call.', section)
         self.assertNotRegex(section.lower(), r'raise|price=|data-price|usd|guarantee|loan|deposit|\bloi\b|fundrais')
-        buy = (self.root / 'buy').read_text()
-        # Shared card prose must remain byte-for-byte identical on both pages.
-        for card in re.findall(r'<article class="facility-card">(.*?)</article>', section, flags=re.S):
-            for paragraph in re.findall(r'<p>.*?</p>', card):
-                self.assertIn(paragraph, buy)
+        # The rollback body still renders the shared cards the buy page uses.
+        assert_facility_cards(self, facility_cards())
 
     def test_responsibilities_and_four_steps(self) -> None:
-        content = (HERE / 'nyte-v2/accelerator.html').read_text()
-        roles = content.split('<div class="split">', 1)[1].split('</section>', 1)[0]
-        for responsibility in ['Power', 'Permits', 'The shell: building and cooling', 'Physical security']:
-            self.assertIn(f'<li>{responsibility}</li>', roles)
+        content = (HERE / 'nyte-v2/accelerator-v3.html').read_text()
+        roles = content.split('<section class="sv3-roles', 1)[1].split('</section>', 1)[0]
+        for number, responsibility in enumerate(['Power', 'Permits', 'The shell: building and cooling', 'Physical security'], 1):
+            self.assertIn(f'<li><span class="n">{number:02d}</span>{responsibility}</li>', roles)
         for claim in ['Run it yourself', 'demand from buyers on the exchange',
                       'Hardware, deployment responsibilities and operating terms are scoped together.']:
             self.assertIn(claim, roles)
-        steps = content.split('<ol>', 1)[1].split('</ol>', 1)[0]
-        self.assertEqual(steps.count('<li>'), 4)
+        steps = content.split('<ol class="sv3-steps4">', 1)[1].split('</ol>', 1)[0]
+        self.assertEqual(steps.count('<li class="bar-'), 4)
         for step in ['Plan the facility.', 'List lots and pre-sell reserved tokens.',
                      'Build and go live.', 'Deliver and settle.']:
             self.assertIn(f'<h3>{step}</h3>', steps)

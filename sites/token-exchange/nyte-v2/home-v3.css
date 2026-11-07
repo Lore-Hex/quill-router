@@ -1,0 +1,168 @@
+/* NYTE home, brand v3 design pass (HANDOFF-nyte-home-v3-2026-11-06). Loads after
+   brand-v3.css, only when home is switched on in nyte-brand-v3.json. */
+
+/* Kit chips: one outline chip (base .v3-chip lives in brand-v3.css) */
+main .tags .tag{height:auto;padding:6px 9px;background:transparent;border:1.5px solid var(--ink);color:var(--ink);font:500 14px/1 var(--font-mono);letter-spacing:.04em}
+main .tags{gap:8px}
+/* Policy tags colour-coded (one colour per rule, same on every card); ink text and border keep them readable on sky. */
+main .tags .tag.cc{background:var(--lime)}
+main .tags .tag.zdr{background:var(--purple)}
+main .tags .tag.us{background:var(--yellow)}
+main .tags .tag.cap{background:var(--cream)}
+
+.film .play svg{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5}
+.v3-press figcaption{font:500 15px/1.2 var(--font-condensed);letter-spacing:.1em;text-transform:uppercase;font-style:normal}
+.v3-cta{background:var(--lime)}
+
+/* Hero */
+.v3-hero{padding:112px 0 96px;text-align:center}
+.v3-hero .wrap{display:flex;flex-direction:column;align-items:center}
+.v3-hero .v3-bar{background:var(--purple)}
+.v3-hero h1{margin-top:32px;max-width:1040px;font-size:clamp(48px,7.2vw,104px);line-height:.96;font-weight:300;letter-spacing:-.02em}
+.v3-hero h1 em{color:var(--deep-purple)}
+.v3-hero .lede{margin-top:40px}
+.v3-hero .btns{margin-top:40px;justify-content:center}
+
+/* Walkthrough */
+.v3-walk{background:var(--ink);padding:45px 0}
+.v3-walk .film{margin:0 auto;max-width:1120px;border:0;border-radius:0;box-shadow:none}
+.film .play{place-items:center;padding:0;background:transparent}
+.film .play span{gap:12px;height:64px;padding:0 28px;border:1.5px solid var(--cream);border-radius:0;background:var(--ink);color:var(--cream);font:500 18px/1 var(--font-sans);backdrop-filter:none}
+.film .play:hover span{background:var(--cream);color:var(--ink)}
+
+/* Press */
+.v3-quotes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px}
+.v3-quotes figure{border-top:2.5px solid var(--ink);padding-top:20px;display:flex;flex-direction:column;gap:20px}
+.v3-quotes blockquote{font-size:28px;line-height:1.25;font-weight:300}
+
+/* Case study */
+.v3-case{background:var(--ink);color:var(--cream)}
+.v3-case .wrap{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;align-items:start}
+.v3-case-figure{grid-column:span 6}
+.v3-case-figure .v3-bar{background:var(--lime);margin-bottom:12px}
+.v3-big{margin-top:40px;font-size:clamp(80px,11.6vw,168px);line-height:.9;font-weight:300;letter-spacing:-.03em;color:var(--lime);font-variant-numeric:tabular-nums}
+.v3-case-figure .lede{margin-top:24px}
+.v3-case-quote{grid-column:8/span 5;padding-top:72px;display:flex;flex-direction:column;gap:28px;align-items:flex-start}
+.v3-case-quote blockquote{font-size:40px;line-height:1.15;font-weight:300}
+.v3-case-quote cite{color:var(--ink-2-dark)}
+.v3-case .btn{border-color:var(--cream);color:var(--cream)}
+.v3-case .btn:hover{background:var(--cream);color:var(--ink);border-color:var(--cream)}
+
+/* Three layers */
+.v3-layers{background:var(--purple);color:var(--ink)}
+.v3-layers-head{max-width:760px;display:flex;flex-direction:column;gap:32px;align-items:flex-start}
+.v3-chip svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2}
+.v3-layer-list{list-style:none;margin:96px 0 0;padding:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px}
+.v3-layer-list li{display:grid;grid-template-columns:56px 1fr;column-gap:8px;border-top:2.5px solid var(--ink);padding-top:20px}
+.v3-layer-list .n{font-size:48px;line-height:1;font-weight:300}
+.v3-layer-list h3,.v3-team-list h3{font-size:24px;line-height:1.2;font-weight:500;letter-spacing:0}
+.v3-layer-list p{margin-top:10px;font-size:17px;line-height:1.55}
+.v3-ladder{display:flex;flex-direction:column;gap:6px;width:160px;margin-top:20px}
+.v3-ladder i{display:block;height:6px;background:var(--lilac)}
+.v3-ladder i.on{background:var(--ink)}
+
+/* Stats */
+.v3-stats{padding:128px 0 112px}
+.v3-stats .stats{grid-template-columns:repeat(3,minmax(0,1fr));gap:24px}
+.v3-stats .stat,.v3-stats .stat+.stat{padding:0;border-left:0;margin:0}
+.v3-stats .stat .v{margin-top:28px;font-size:96px;line-height:1;font-weight:300;letter-spacing:-.02em;white-space:nowrap}
+.v3-stats .stat .l{margin-top:16px;max-width:260px;font-size:17px;line-height:1.55;color:var(--ink)}
+.v3-labs{margin-top:80px;padding:18px 0;border-top:1.5px solid var(--ink);border-bottom:1.5px solid var(--ink);font:500 15px var(--font-mono);letter-spacing:.02em}
+/* Provider strip: scrolls across the full width between the rules (max 1312px); equal slots make one set
+   (6 x 240px) wider than the strip, so no logo shows twice at once. Still for reduced motion. */
+.v3-labs-window{overflow:hidden;-webkit-mask-image:linear-gradient(90deg,transparent,#000 6%,#000 94%,transparent);mask-image:linear-gradient(90deg,transparent,#000 6%,#000 94%,transparent)}
+.v3-labs .mq-track{animation-duration:46s;background:var(--cream)}
+.v3-labs .mq-set{gap:0;padding-right:0}
+.v3-labs .mq-item{width:240px;justify-content:center;gap:10px;color:var(--ink);font:500 16px var(--font-mono);letter-spacing:.02em}
+.v3-labs .mq-item img{width:24px;height:24px;padding:0;border-radius:0;background:none;object-fit:contain}
+@media (prefers-reduced-motion:reduce){
+  .v3-labs .mq-set[aria-hidden="true"]{display:none}
+  .v3-labs .mq-track{width:auto}
+  .v3-labs .mq-set{flex:1;flex-wrap:wrap;justify-content:space-between;gap:8px 32px}
+  .v3-labs .mq-item{width:auto}
+  .v3-labs-window{-webkit-mask-image:none;mask-image:none}
+}
+/* These two logo files have white squares; blend them into the cream (the moving track paints cream, since its transform isolates the blend). */
+.v3-labs img[src*="provider-openai"],.v3-labs img[src*="provider-grok"]{mix-blend-mode:multiply}
+
+/* Teams */
+.v3-teams{background:var(--sky)}
+.v3-teams h2{margin-top:32px;max-width:980px}
+.v3-team-list{list-style:none;margin:64px 0 0;padding:0;border-top:2.5px solid var(--ink)}
+.v3-team-list li{display:grid;grid-template-columns:64px 300px minmax(0,1fr) auto;align-items:baseline;column-gap:12px;padding:24px 0;border-bottom:1.5px solid var(--ink)}
+.v3-team-list .n{font:400 15px var(--font-mono)}
+.v3-team-list .q{font-size:19px;line-height:1.45}
+.v3-team-list .tags{justify-content:flex-end;flex-wrap:nowrap}
+
+
+@media (max-width:1100px){
+  .v3-case .wrap{grid-template-columns:1fr}
+  .v3-case-figure,.v3-case-quote{grid-column:1}
+  .v3-case-quote{padding-top:56px}
+  .v3-layer-list{margin-top:48px}
+  .v3-stats .stats{row-gap:48px}
+  .v3-stats .stat .v{font-size:72px}
+  .v3-team-list li{grid-template-columns:48px minmax(0,1fr);row-gap:10px}
+  .v3-team-list .q,.v3-team-list .tags{grid-column:2}
+  .v3-team-list .tags{justify-content:flex-start;flex-wrap:wrap}
+}
+@media (max-width:600px){
+  .v3-hero{padding:56px 0 48px;text-align:left}
+  .v3-hero .wrap{align-items:flex-start}
+  .v3-hero h1{margin-top:24px;font-size:48px}
+  .v3-hero .lede,.v3-hero .btns{margin-top:24px}
+  .v3-band{height:96px}
+  .v3-walk{padding:48px 0}
+  .film .play span{height:48px;padding:0 16px;font-size:16px}
+  .v3-quotes{grid-template-columns:1fr;gap:32px}
+  .v3-quotes figure{padding-top:16px;gap:14px}
+  .v3-quotes blockquote{font-size:24px}
+  .v3-big{margin-top:28px}
+  .v3-case-quote{padding-top:48px;gap:20px}
+  .v3-case-quote blockquote{font-size:28px;line-height:1.2}
+  .v3-layer-list{grid-template-columns:1fr;gap:28px;margin-top:48px}
+  .v3-layer-list li{grid-template-columns:40px 1fr;padding-top:16px}
+  .v3-layer-list .n{font-size:32px}
+  .v3-stats{padding:72px 0 64px}
+  .v3-stats .stats{grid-template-columns:1fr 1fr;gap:40px 16px}
+  /* Phone strip: slots fit each name so about three show at once; same speed as desktop (about 31px/s). */
+  .v3-labs .mq-track{animation-duration:30s}
+  .v3-labs .mq-set{gap:32px;padding-right:32px}
+  .v3-labs .mq-item{width:auto;font-size:15px}
+  .v3-labs .mq-item img{width:20px;height:20px}
+  .v3-stats .stat:nth-child(3){grid-column:1/-1}
+  .v3-stats .stat .v{margin-top:18px;font-size:56px}
+  .v3-stats .stat .l{margin-top:10px}
+  .v3-labs{margin-top:48px;padding:14px 0}
+  .v3-teams h2{margin-top:24px}
+  .v3-team-list{margin-top:40px}
+  .v3-team-list li{grid-template-columns:40px minmax(0,1fr);padding:20px 0}
+  .v3-team-list .q{font-size:18px}
+}
+
+/* Fixes after the first check. The poster has content in its centre, so the
+   play button sits low as before; the fee word steps down so four stats fit. */
+.film .play{place-items:end center;padding:0 0 5%}
+@media (max-width:900px){
+  .v3-quotes{grid-template-columns:1fr;gap:32px}
+  .v3-layer-list{grid-template-columns:1fr;gap:28px}
+}
+@media (max-width:600px){
+  .film .play{padding-bottom:4%}
+}
+@media (max-width:600px){.film .play span{height:40px;padding:0 14px;gap:8px;font-size:15px}}
+/* Phones: both hero actions sit on the first screen under Safari's toolbars
+   (about 635px tall at 375x812, 664px at 390x844). Same words, tighter rhythm. */
+@media (max-width:600px){
+  .v3-hero{padding:32px 0 40px}
+  .v3-hero h1{margin-top:20px;font-size:44px}
+  .v3-hero .lede{margin-top:20px;font-size:18px;line-height:1.45;font-weight:450}
+  .v3-hero .btns{margin-top:20px;gap:10px}
+  .v3-hero .btns .btn{min-height:44px;height:44px}
+}
+/* Desktop: the hero spacing follows the screen height, so the Band shows in the first screen on 900-1000px tall windows. */
+@media (min-width:1101px){
+  .v3-hero{padding:clamp(56px,calc(12vh - 48px),112px) 0 clamp(48px,calc(10vh - 40px),96px)}
+  .v3-hero h1{margin-top:24px}
+  .v3-hero .lede,.v3-hero .btns{margin-top:32px}
+}

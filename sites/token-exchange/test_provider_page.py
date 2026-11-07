@@ -72,11 +72,11 @@ class ProviderPageTests(unittest.TestCase):
 
     def test_shared_design_preserves_request_only_flow(self):
         self.assertIn('/assets/nyte-v2/styles.css?', self.page)
-        self.assertIn('/assets/nyte-v2/providers.css?', self.page)
+        self.assertIn('/assets/nyte-v2/sell-v3.css?', self.page)
         self.assertIn('class="site-footer"', self.page)
-        self.assertIn('class="ph ph-cableway"', self.page)
-        self.assertIn('class="pv-deck"', self.page)
-        self.assertTrue((self.root / 'assets/nyte-v2/photos/cableway-mist-2400.webp').is_file())
+        self.assertNotIn('ph-cableway', self.page)
+        self.assertIn('aria-label="The provider deck"', self.page)
+        self.assertIn('aria-label="A buyer and a provider meet at the exchange square', self.page)
         self.assertNotIn('id="m-deck"', self.page)
         self.assertIn('>Trust center</a>', self.page)
 

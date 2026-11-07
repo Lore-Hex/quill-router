@@ -71,7 +71,17 @@ async function localHtml(context) {
         assert.equal(await page.locator('#buy-term').inputValue(), '1');
         assert(await page.locator('[name="underlying"][value="index"]').isChecked());
         // The wizard stacks at 1000px; the shared navigation collapses at 1280px.
-        if (width <= 1000) {
+        if (await page.locator('.buy-stage').count()) {
+          // Brand v3 stacks at 1100px: headline above the form, then the Band, the lede and the notes.
+          if (width <= 1100) {
+            const box = selector => page.locator(selector).first().boundingBox();
+            const [headline, wizard, band, lede, about] = await Promise.all(
+              ['.buy-stage h1', '.buy-workspace', '.buy-stage>.v3-band', '.buy-stage .lede', '.buy-about'].map(box));
+            assert(headline.y + headline.height <= wizard.y, 'headline precedes the form on mobile');
+            assert(wizard.y + wizard.height <= band.y && band.y + band.height <= lede.y && lede.y < about.y,
+              'form, Band, lede, then the notes on mobile');
+          }
+        } else if (width <= 1000) {
           const wizard = await page.locator('.buy-workspace').boundingBox();
           const brand = await page.locator('.buy-brand').boundingBox();
           assert(wizard.y + wizard.height <= brand.y, 'wizard precedes brand on mobile');

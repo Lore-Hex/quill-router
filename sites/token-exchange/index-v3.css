@@ -1,0 +1,179 @@
+/* NYTE Token Index, brand v3 design (HANDOFF-nyte-cowork-index-v3-2026-11-06): an Ink page with
+   yellow as the lead colour. Loads after token-index.css and brand-v3.css, only when index is
+   switched on in nyte-brand-v3.json. Charts keep token-index.js; this sheet only restyles them. */
+body[data-nyte-page="index"]{background:var(--ink)}
+[data-nyte-page="index"] header .wrap{max-width:1440px;padding:0 64px}
+.token-index.ti3{
+  --font-display:var(--font-sans);
+  --text-display:var(--cream); --text-body:var(--cream); --text-muted:var(--ink-2-dark); --text-accent:var(--yellow);
+  --border-hairline:var(--dark-rule); --border-default:var(--dark-rule); --surface-card:var(--ink); --surface-raised:var(--ink);
+  --ti-ref:var(--cream);
+  background:var(--ink);color:var(--cream);font:400 17px/1.55 var(--font-sans)}
+.ti3 .ti3-wrap{max-width:1440px;margin:0 auto;padding:0 64px}
+:where(.ti3) :where(h1,h2,h3,p,figure,ul){margin:0}
+.ti3 p{max-width:none;font-size:17px;line-height:1.55;color:inherit}
+.ti3 .ti3-bar{display:block;width:40px;height:4px;margin-bottom:16px;background:var(--yellow)}
+.ti3 .ti-eyebrow,.ti3 .ti-unit,.ti3 .ti-label,.ti3 .ti3-grade-head h3{margin:0;font:500 13px/1.2 var(--font-condensed);letter-spacing:.1em;text-transform:uppercase;color:inherit}
+.ti3 .ti-eyebrow{margin-bottom:24px}
+.token-index.ti3 h1,.token-index.ti3 h2{font-weight:300;color:inherit;text-wrap:balance}
+.token-index.ti3 h1{margin-bottom:32px;font-size:104px;line-height:.96;letter-spacing:-.02em}
+.token-index.ti3 h2{font-size:72px;line-height:1;letter-spacing:-.015em}
+.ti3 .ti3-mono,.ti3 .ti-change,.ti3 .ti-asof,.ti3 .ti-tile-change,.ti3 .ti-code,.ti3 .ti3-grade-models ul{font-family:var(--font-mono);font-variant-numeric:tabular-nums;letter-spacing:0}
+
+/* Kit buttons: outline cream on Ink, ink on colour fields; orange only for the one main action. */
+.ti3 .btn{min-height:48px;height:48px;padding:0 22px;border:1.5px solid var(--cream);border-radius:0;background:transparent;color:var(--cream);font:500 16px/1 var(--font-sans);letter-spacing:0;white-space:nowrap}
+.ti3 .btn:hover{background:var(--cream);color:var(--ink);border-color:var(--cream)}
+.ti3 :is(a,button,.ti-svg):focus-visible{outline:2px solid var(--cream);outline-offset:2px}
+.ti3 .ti3-supply .btn{border-color:var(--ink);color:var(--ink)}
+.ti3 .ti3-supply .btn:hover{background:var(--ink);color:var(--cream);border-color:var(--ink)}
+.ti3 .ti3-supply .btn-primary{background:var(--orange)}
+.ti3 .ti3-supply :is(a,button):focus-visible,.ti3 .ti3-note a:focus-visible{outline-color:var(--ink)}
+
+/* Hero: title left, the index level right, then the index chart. */
+.ti3 .ti3-hero{padding:96px 0}
+.ti3 .ti3-hero-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;align-items:end}
+.ti3 .ti3-hero-head{grid-column:span 7}
+.ti3 .ti-lead{max-width:560px;margin:0;font-size:22px;line-height:1.45}
+.ti3 .ti-quote{grid-column:9/span 4;display:block;margin:0;text-align:right}
+.ti3 .ti-value{display:block;font:300 168px/.9 var(--font-sans);letter-spacing:-.03em;color:var(--yellow);font-variant-numeric:tabular-nums}
+.ti3 .ti-unit{display:block;margin-top:16px}
+.ti3 .ti3-meta{display:block;margin-top:12px;font-size:15px;color:var(--ink-2-dark)}
+.ti3 .ti-change,.ti3 .ti-asof{font-size:15px;color:inherit}
+.ti3 .ti-asof::before{content:" · "}
+
+/* Charts: text tabs over a rule, lines in the grade colours, no fill, square end marker. */
+.ti3 .ti-chart{margin-top:80px;padding:0;border:0}
+.ti3 .ti-toolbar{gap:0 48px;margin:0 0 24px;border-bottom:1.5px solid var(--dark-rule)}
+.ti3 .ti-buttons{display:flex;gap:28px;border:0;border-radius:0;overflow:visible}
+.ti3 .ti-button,.ti3 .ti-button+.ti-button{position:relative;min-height:44px;margin-bottom:-1.5px;padding:10px 0;border:0;border-bottom:3px solid transparent;background:none;color:var(--cream);font:500 15px/1.2 var(--font-sans);letter-spacing:0}
+.ti3 .ti-button::after{content:"";position:absolute;inset:0 -12px}
+.ti3 .ti-button[aria-pressed="true"]{border-bottom-color:var(--yellow);background:none;color:var(--cream)}
+.ti3 .ti-legend{gap:0 24px;margin-left:auto}
+.ti3 .ti-chip{min-height:44px;gap:8px;padding:0;border:0;border-radius:0;background:none;color:var(--cream);font:400 14px/1 var(--font-mono);letter-spacing:0}
+.ti3 .ti-chip::before{width:20px;border-top:2.5px solid var(--stripe)}
+.ti3 .ti-chip.ti-all::before{border-top:2px dashed var(--stripe)}
+.ti3 .ti-chip[aria-pressed="false"]{opacity:1;color:var(--ink-2-dark);text-decoration:line-through}
+.ti3 .ti-chip[aria-pressed="false"]::before{border-top-color:var(--dark-rule)}
+.ti3 .ti-aaa{--stripe:var(--purple)}
+.ti3 .ti-a{--stripe:var(--sky)}
+.ti3 .ti-b{--stripe:var(--lime)}
+.ti3 .ti-c{--stripe:var(--yellow)}
+.ti3 .ti-all{--stripe:var(--yellow)}
+.ti3 .ti-chart-grades .ti-all{--stripe:var(--cream)}
+.ti3 .ti-grid line{stroke:var(--dark-rule);stroke-width:1}
+.ti3 .ti-axis line{stroke:var(--cream);stroke-width:1.5}
+.ti3 .ti-ylabel,.ti3 .ti-xlabel{font:400 13px var(--font-mono);fill:var(--ink-2-dark)}
+.ti3 .ti-line{stroke-width:2.5;stroke-linecap:butt}
+.ti3 .ti-line.ti-ref{stroke-width:1.5;stroke-dasharray:4 4}
+.ti3 .ti-area,.ti3 .ti-end-dot{display:none}
+.ti3 [data-ti-chart="nyte"] .ti-line{marker-end:url(#ti3-end)}
+.ti3 .ti3-defs{position:absolute;width:0;height:0;overflow:hidden}
+.ti3 .ti3-defs rect{fill:var(--yellow)}
+.ti3 .ti-end{font:400 14px var(--font-mono)}
+.ti3 .ti-chart:not(.ti-chart-grades) .ti-end{font-size:14px;fill:var(--yellow)}
+.ti3 .ti-crosshair{stroke:var(--ink-2-dark)}
+.ti3 .ti-dot{fill:var(--ink)}
+.ti3 .ti-tip{border:1.5px solid var(--dark-rule);border-radius:0;background:var(--ink);box-shadow:none;color:var(--cream);font:400 13px/1.6 var(--font-mono)}
+
+/* Four grades: one column each, Ladder, price, use, examples and an outline Reserve button. */
+.ti3 .ti3-grades{padding:128px 0;border-top:1.5px solid var(--dark-rule)}
+.ti3 .ti3-grade-list{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));column-gap:24px;margin-top:64px}
+.ti3 .ti3-grade{display:flex;flex-direction:column;padding-top:24px;border-top:2.5px solid var(--cream)}
+.ti3 .ti3-ladder{display:grid;gap:6px;margin-bottom:20px}
+.ti3 .ti3-ladder i{display:block;height:6px;background:var(--dark-rule)}
+.ti3 .ti3-ladder i.on{background:var(--stripe)}
+.ti3 .ti3-grade-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.ti3 .ti-code{font-size:18px;font-weight:500;color:var(--stripe);letter-spacing:0}
+.ti3 .ti3-grade-price{display:flex;flex-direction:column;margin:20px 0 24px}
+.ti3 .ti-tile-value{font:300 64px/1 var(--font-sans);letter-spacing:-.02em;color:var(--cream);font-variant-numeric:tabular-nums}
+.ti3 .ti-tile-change{margin-top:8px;font-size:15px;color:var(--ink-2-dark)}
+.ti3 .ti3-grade-use{min-height:108px;margin-bottom:24px}
+.ti3 .ti3-grade-models{flex-grow:1;margin-bottom:32px;padding-top:16px;border-top:1.5px solid var(--dark-rule)}
+.ti3 .ti3-grade-models .ti-label{margin-bottom:10px}
+.ti3 .ti3-grade-models ul{display:block;padding:0;list-style:none;font-size:15px;line-height:1.7}
+.ti3 .ti3-grade-models li{display:inline;padding:0;border:0;font:inherit;color:inherit}
+.ti3 .ti3-grade-models li+li::before{content:" · "}
+.ti3 .ti3-grade .btn{align-self:flex-start}
+.ti3 .ti-chart-grades{margin-top:96px}
+.ti3 .ti-chart-grades .ti-toolbar{align-items:flex-end}
+
+/* Source and limits: yellow strip. */
+.ti3 .ti3-note{padding:64px 0;border:0;background:var(--yellow);color:var(--ink)}
+.ti3 .ti3-note .ti3-wrap{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px}
+.ti3 .ti3-note .ti3-bar{grid-column:span 3;background:var(--ink)}
+.ti3 .ti3-note p{grid-column:4/span 4;font-size:17px;color:var(--ink)}
+.ti3 .ti3-note p.ti3-limits{grid-column:9/span 4;font-weight:500}
+.ti3 .ti3-note a{color:var(--ink);text-decoration:underline;text-decoration-thickness:1.5px;text-underline-offset:4px}
+
+/* Operators: sky field, copy left. The canvas's photo slot is left out until there is a real photo. */
+.ti3 .ti3-supply{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;padding:0 max(64px,calc((100% - 1312px)/2));border:0;background:var(--sky);color:var(--ink)}
+.ti3 .ti3-supply-copy{grid-column:span 8;padding:128px 0}
+.ti3 .ti3-supply .ti3-bar{background:var(--ink)}
+.ti3 .ti3-supply h2{margin-bottom:32px}
+.ti3 .ti3-supply-copy>p{max-width:600px;color:var(--ink)}
+.ti3 .index-actions{gap:12px;margin:40px 0 32px;align-items:center}
+.ti3 .index-actions a{text-decoration:none}
+.ti3 .ti3-supply .index-small{max-width:560px;font-size:15px;color:var(--ink)}
+.ti3-band{background:var(--ink);line-height:0}
+.ti3-band .v3-band{display:block;width:100%;height:120px}
+
+@media (max-width:1100px){
+  .token-index.ti3 h1{font-size:80px}
+  .ti3 .ti3-hero-grid{grid-template-columns:1fr;row-gap:40px}
+  .ti3 .ti3-hero-head,.ti3 .ti-quote{grid-column:1}
+  .ti3 .ti-quote{text-align:left}
+  .ti3 .ti-value{font-size:128px}
+  .ti3 .ti3-grade-list{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:56px}
+  .ti3 .ti-legend{margin-left:0}
+  .ti3 .ti3-note .ti3-wrap{grid-template-columns:1fr;row-gap:20px}
+  .ti3 .ti3-note .ti3-bar,.ti3 .ti3-note p,.ti3 .ti3-note p.ti3-limits{grid-column:1}
+  .ti3 .ti3-note .ti3-bar{margin:0}
+  .ti3 .ti3-supply{grid-template-columns:1fr;padding:0}
+  .ti3 .ti3-supply-copy{grid-column:1;padding:96px 64px}
+}
+@media (max-width:600px){
+  [data-nyte-page="index"] header .wrap{padding:0 20px}
+  .ti3 .ti3-wrap{padding:0 20px}
+  .ti3 .ti-eyebrow{margin-bottom:20px}
+  .token-index.ti3 h1{margin-bottom:20px;font-size:48px;line-height:1;letter-spacing:-.02em}
+  .token-index.ti3 h2{font-size:40px;line-height:1.02}
+  .ti3 .ti3-hero{padding:48px 0 64px}
+  .ti3 .ti-lead{font-size:19px}
+  .ti3 .ti3-hero-grid{row-gap:32px}
+  .ti3 .ti-quote{padding-top:24px;border-top:1.5px solid var(--dark-rule)}
+  .ti3 .ti-value{font-size:104px}
+  .ti3 .ti-unit{margin-top:14px}
+  .ti3 .ti3-meta{margin-top:10px}
+  .ti3 .ti-change,.ti3 .ti-asof{display:block}
+  .ti3 .ti-asof::before{content:none}
+  .ti3 .ti-chart{margin-top:48px}
+  .ti3 .ti-toolbar{margin-bottom:20px}
+  .ti3 .ti3-grades{padding:96px 0}
+  .ti3 .ti3-grade-list{grid-template-columns:1fr;row-gap:56px;margin-top:40px}
+  .ti3 .ti3-grade{padding-top:20px}
+  .ti3 .ti3-ladder{margin-bottom:18px}
+  .ti3 .ti3-grade-price{flex-direction:row;justify-content:space-between;align-items:baseline;margin:16px 0}
+  .ti3 .ti-tile-value{font-size:56px}
+  .ti3 .ti-tile-change{margin:0}
+  .ti3 .ti3-grade-use{min-height:0;margin-bottom:20px}
+  .ti3 .ti3-grade-models{margin-bottom:24px;padding-top:14px}
+  .ti3 .ti3-grade-models .ti-label{margin-bottom:8px}
+  .ti3 .btn{width:100%;height:52px;min-height:52px;padding:0 20px}
+  .ti3 .ti3-grade .btn{align-self:stretch}
+  .ti3 .ti-chart-grades{margin-top:72px}
+  .ti3 .ti-chart-grades .ti-toolbar{border-bottom:0;margin-bottom:16px}
+  .ti3 .ti-chart-grades .ti-buttons{gap:22px;border-bottom:1.5px solid var(--dark-rule)}
+  .ti3 .ti-chart-grades .ti-buttons:first-child{flex:1}
+  .ti3 .ti-chart-grades .ti-toolbar{gap:0}
+  .ti3 .ti-legend{flex-basis:100%;gap:4px 20px;margin-top:16px}
+  .ti3 .ti3-note{padding:64px 0}
+  .ti3 .ti3-note .ti3-wrap{row-gap:0}
+  .ti3 .ti3-note .ti3-bar{margin-bottom:24px}
+  .ti3 .ti3-note p{margin-bottom:20px}
+  .ti3 .ti3-note p.ti3-limits{margin:0}
+  .ti3 .ti3-supply-copy{padding:72px 20px}
+  .ti3 .ti3-supply h2{margin-bottom:24px}
+  .ti3 .index-actions{display:grid;gap:12px;margin:32px 0 24px}
+  .ti3 .index-actions .btn{white-space:normal;text-align:center;line-height:1.2}
+  .ti3-band .v3-band{height:96px}
+}
