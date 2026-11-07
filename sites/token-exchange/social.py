@@ -19,6 +19,9 @@ def prepare(output):
     nyte_card = Template((HERE / 'nyte-v2/social-card.html').read_text())
     nyte_v3_card = Template((HERE / 'nyte-v2/social-card-v3.html').read_text())
     nyte_headline = re.search(r'<h1>(.*?)</h1>', (HERE / 'nyte-v2/home.html').read_text(), re.S).group(1)
+    # The v3 card matches the v3 home hero: its headline (accent in <em>) and the purple Band.
+    nyte_v3_headline = re.search(r'<h1>(.*?)</h1>', (HERE / 'nyte-v2/home-v3.html').read_text(), re.S).group(1)
+    band = (HERE / 'nyte-v2/band-purple.svg').read_text().strip()
     for market in load_markets():
         if uses_nyte(market):
             card, headline = nyte_card, nyte_headline
@@ -39,7 +42,7 @@ def prepare(output):
             v3 = output / f"social-v3-{market['slug']}"
             v3.mkdir(parents=True, exist_ok=True)
             (v3 / 'index.html').write_text(nyte_v3_card.substitute(
-                name=html.escape(market['name']), headline=headline, slug=market['slug'],
+                name=html.escape(market['name']), headline=nyte_v3_headline, slug=market['slug'], band=band,
                 domain=html.escape(market['domain']), logo=f'/assets/nyte-v2/logos/{logo}'))
 
 if __name__ == '__main__':

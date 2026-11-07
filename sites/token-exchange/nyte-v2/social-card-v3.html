@@ -1,11 +1,12 @@
 <!doctype html><html lang="en" data-market="$slug"><head><meta charset="utf-8"><meta name="viewport" content="width=1200"><meta name="robots" content="noindex"><title>$name social share image</title><style>
-html,body{width:1200px;height:630px;overflow:hidden;margin:0;background:#9B93F5;color:#151311;font-family:"ABC Pelikan","Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased}
-.card{position:relative;box-sizing:border-box;width:1200px;height:630px;padding:56px 64px;display:flex;flex-direction:column}
+html,body{width:1200px;height:630px;overflow:hidden;margin:0;background:#FAF8F4;color:#151311;font-family:"ABC Pelikan","Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased}
+.card{position:relative;box-sizing:border-box;width:1200px;height:630px;padding:56px 64px 0;display:flex;flex-direction:column}
 .brand{display:flex;align-items:center;gap:16px;height:44px;font-size:24px;font-weight:500;letter-spacing:-.01em}
 .brand img{height:30px;width:auto}
 [data-market="new-york"] .brand img{height:44px}
 [data-market="new-york"] .brand span{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
-h1{margin:auto 0;max-width:1040px;font-size:76px;line-height:1;font-weight:300;letter-spacing:-.02em}
-h1 em{font-style:normal}
-.foot{display:flex;justify-content:space-between;align-items:flex-end;font-size:18px;font-weight:500}
-</style></head><body><main class="card"><div class="brand"><img src="$logo" alt=""><span>$name</span></div><h1>$headline</h1><div class="foot"><span>Powered by TrustedRouter</span><span>$domain</span></div></main></body></html>
+h1{margin:auto 0;max-width:1040px;font-size:72px;line-height:1;font-weight:300;letter-spacing:-.02em}
+h1 em{font-style:normal;color:#4B3FA8}
+.foot{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:28px;font-size:18px;font-weight:500}
+.band{margin:0 -64px}.band svg{display:block;width:1200px;height:100px}
+</style></head><body><main class="card"><div class="brand"><img src="$logo" alt=""><span>$name</span></div><h1>$headline</h1><div class="foot"><span>Powered by TrustedRouter</span><span>$domain</span></div><div class="band" aria-hidden="true">$band</div></main></body></html>
