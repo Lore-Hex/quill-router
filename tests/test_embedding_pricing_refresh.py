@@ -28,27 +28,75 @@ def test_cohere_parser_reads_embed4_token_cost_not_image_or_instance_cost() -> N
     }
 
 
-def test_cohere_parser_reports_the_unpublished_embed4_rate_without_self_heal(monkeypatch) -> None:  # noqa: ANN001
+COHERE_2026_11_07 = (FIXTURE_DIR / "cohere_pricing_2026-11-07.html").read_text(encoding="utf-8")
+
+
+def _no_self_heal(**_kwargs):  # noqa: ANN003, ANN202
+    raise AssertionError("self-heal must not run for an unpublished rate")
+
+
+def test_cohere_parser_reports_the_unpublished_embed4_rate() -> None:
     # Refresh run 42359425520: "cohere: self-heal fixture regression:
     # removed=['cohere/embed-v4.0']". cohere.com/pricing now prices Embed 5
     # Fast/Pro only; Embed 4 keeps a card without a rate, while the docs still
-    # list embed-v4.0 as served. A rewrite cannot recover the missing rate, so
-    # the deterministic parser fails closed with the reason and the refresh
-    # never spends a self-heal call on it. The committed rate stays in force.
-    page = (FIXTURE_DIR / "cohere_pricing_2026-11-07.html").read_text(encoding="utf-8")
-    assert "web3Model.embed-4" in page
+    # list embed-v4.0 as served. The parser alone cannot price it.
+    assert "web3Model.embed-4" in COHERE_2026_11_07
     with pytest.raises(ValueError, match=r"no longer publishes an Embed 4 rate .*'Embed 5 Fast', 'Embed 5 Pro'"):
-        cohere_parser.parse(page)
+        cohere_parser.parse(COHERE_2026_11_07)
 
+
+def test_cohere_refresh_renews_embed4_at_its_pinned_rate(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    # Like the Embed v3 rows, embed-v4.0 stays at its last published rate
+    # while Cohere serves it without publishing one, and the refresh renews
+    # the manifest instead of failing or spending a self-heal call.
     import scripts.pricing.base as base
 
-    def no_self_heal(**_kwargs):  # noqa: ANN003, ANN202
-        raise AssertionError("self-heal must not run for an unpublished rate")
+    monkeypatch.setattr(cohere, "fetch_html", lambda *_a, **_kw: COHERE_2026_11_07)
+    monkeypatch.setattr(base, "self_heal_parser", _no_self_heal)
+    result = cohere.fetch()
+    assert result.source == "legacy_pinned"
+    assert result.prices == {"cohere/embed-v4.0": ModelPrice(120_000, 0)}
 
+    committed = json.loads(cohere.MANIFEST_PATH.read_text(encoding="utf-8"))
+    manifest_path = tmp_path / "cohere.json"
+    manifest_path.write_text(json.dumps(committed), encoding="utf-8")
+    monkeypatch.setattr(cohere, "MANIFEST_PATH", manifest_path)
+    cohere.write_provider_manifest(result)
+    raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    rows = {row["id"]: row for row in raw["models"]}
+    assert rows["cohere/embed-v4.0"]["input_token_price_per_m"] == 120_000
+    assert rows["cohere/embed-v4.0"]["pricing_source"] == "legacy-pinned"
+    assert rows["cohere/embed-english-v3.0"] == {
+        row["id"]: row for row in committed["models"]
+    }["cohere/embed-english-v3.0"]
+    assert raw["generated_at"] != committed["generated_at"]
+
+
+def test_cohere_pin_matches_the_committed_rate() -> None:
+    committed = json.loads(cohere.MANIFEST_PATH.read_text(encoding="utf-8"))
+    row = next(row for row in committed["models"] if row["id"] == "cohere/embed-v4.0")
+    assert row["input_token_price_per_m"] == cohere.EMBED_V4_PINNED_MICRO_PER_M
+
+
+def test_cohere_published_embed4_rate_wins_over_the_pin(monkeypatch) -> None:  # noqa: ANN001
+    page = (FIXTURE_DIR / "cohere.html").read_text(encoding="utf-8")
+    import scripts.pricing.base as base
+
+    monkeypatch.setattr(cohere, "fetch_html", lambda *_a, **_kw: page)
     monkeypatch.setattr(base, "fetch_html", lambda *_a, **_kw: page)
-    monkeypatch.setattr(base, "self_heal_parser", no_self_heal)
-    with pytest.raises(ValueError, match="Embed 4 rate"):
-        cohere.fetch()
+    monkeypatch.setattr(base, "self_heal_parser", _no_self_heal)
+    result = cohere.fetch()
+    assert result.source == "deterministic"
+    assert result.prices["cohere/embed-v4.0"].prompt_micro_per_m == 120_000
+
+
+def test_cohere_unrecognized_page_is_not_pinned() -> None:
+    # No pricing payload at all is a layout change for the parser and its
+    # self-heal path, never a reason to keep billing a pinned rate.
+    assert cohere.embed4_rate_unpublished("<html><body>Pricing</body></html>") is False
+    assert cohere.embed4_rate_unpublished(
+        COHERE_2026_11_07.replace("Embed 5 Fast", "Rerank X").replace("Embed 5 Pro", "Rerank Y")
+    ) is False
 
 
 def test_voyage_parser_reads_current_and_older_text_embedding_tables() -> None:
