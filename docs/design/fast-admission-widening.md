@@ -288,9 +288,10 @@ a letter or digit.
 "What it checks") is replaced by an audit role inside the fast-path
 service. Details in §7.
 
-**Why.** The script lives in `/var/tmp`, is lost with its node, runs one
-`fastpathctl` process per workspace and needs `-funded` typed by hand. None
-of that survives a few thousand workspaces.
+**Why.** The script runs from `/var/tmp` (kept in `scripts/fastpath/pilot/`
+since a node's replacement would lose it), names its workspaces in a list
+by hand, runs one `fastpathctl` process per workspace and one funding read
+each. None of that survives a few thousand workspaces.
 
 ### (g) The widening sequence
 
