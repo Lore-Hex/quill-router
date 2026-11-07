@@ -245,7 +245,8 @@ and its audit loop run from a node's disk (`fastpath-p1.md`,
 2. For each workspace the old node watches, check that its watch still
    runs (`ps -eo pid,etime,user,args | grep fastpathwatch` on the old
    node) and that the workspace is on (`fastpathctl -database $DB status
-   WS` says `"Enabled": true`). The script turns its workspace on, so a
+   WS` prints `"Enabled":true`, and exits 3, as it does for any workspace
+   that is on). The script turns its workspace on, so a
    workspace a watch tripped, or an operator turned off, is not watched
    again this way: `fastpath-turn-off.md` says what follows a stop.
 3. Start the watch on the new node as root, its log beside it (a `nohup`
