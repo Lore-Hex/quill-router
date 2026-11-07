@@ -1027,7 +1027,12 @@ def _model_discovery_audit(
             normalized = normalize(raw_id)
             if normalized:
                 discovered_ids.add(normalized)
-                if provider_alias:
+                # Boundless lists a legacy short identifier beside the
+                # qualified one its rate card names (dsv4 beside
+                # deepseek/deepseek-v4-flash-0731); discovery collapses both
+                # onto one route. A short ID whose model this manifest
+                # already routes is that alias, not an unpublished model.
+                if provider_alias and not (slug == "boundless" and normalized in published):
                     discovered_ids.add(provider_alias)
         missing = discovered_ids - published - unresolved - classified
         unresolved_live = discovered_ids & unresolved

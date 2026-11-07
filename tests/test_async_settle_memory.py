@@ -21,6 +21,7 @@ from tests.test_async_settle_handler import env as env  # noqa: F401
 from tests.test_async_settle_ticket import settings
 from tests.test_settle_outbox_drain import _typed_credit, _typed_key
 from trusted_router import billing_snapshot as billing
+from trusted_router import storage_gcp_io
 from trusted_router.async_settle_ticket import verify_lookup_ticket
 from trusted_router.config import Settings
 from trusted_router.services import async_settle_handler as handler
@@ -45,6 +46,25 @@ class Clock:
 
     def __call__(self):
         return self.value
+
+
+class SharedClockTime:
+    """``time`` for storage_gcp_io whose monotonic clock is the test's Clock.
+
+    MemoryHandoff computes RPC deadlines from its injected clock, and
+    spanner_rpc_deadline checks them against storage_gcp_io's monotonic
+    clock. With a frozen fake clock and the real monotonic clock, a runner
+    stalled for more than ATTEMPT_SECONDS after the clock was created saw
+    every writer attempt expire before enqueue, which write_once records as
+    a retry. Installed only around the writer's calls: the request path
+    computes its own deadlines from the real clock.
+    """
+
+    def __init__(self, clock):
+        self.monotonic = clock
+
+    def __getattr__(self, name):
+        return getattr(time, name)
 
 
 class ParkedThread:
@@ -655,18 +675,31 @@ def test_background_outcomes(env, ram, monkeypatch, caplog, outcome):
     assert row.authorization_id not in caplog.text
 
 
+# CI run 42372491661 failed this test with the fake clock starting at
+# 255.701148817. At the second attempt (start + 0.1),
+# (now + ATTEMPT_SECONDS) - now rounds to 5.000000000000028, so checking the
+# bound by subtraction failed the assertion inside the fake enqueue, which
+# write_once records as a retry, and the entry stayed queued. The bound is
+# now checked by addition, the same arithmetic the writer uses for the
+# deadline. A start far behind the real monotonic clock (1.0) also pins the
+# shared timebase (SharedClockTime).
+@pytest.mark.parametrize('start', [None, 255.701148817, 1.0])
 @pytest.mark.parametrize('recover', [True, False])
-def test_transient_retry_or_budget_loss(env, ram, monkeypatch, caplog, recover):
+def test_transient_retry_or_budget_loss(env, ram, monkeypatch, caplog, recover, start):
     body, writer, clock = ram
+    if start is not None:
+        clock.value = start
     calls = []
     writer.outbox = lambda: SimpleNamespace(get=lambda *args: None)
     def enqueue(outbox, row, deadline):
         calls.append((copy.deepcopy(row), deadline))
-        assert 0 < deadline - clock() <= memory.ATTEMPT_SECONDS
+        assert clock() < deadline <= clock() + memory.ATTEMPT_SECONDS
         if len(calls) == 1 or not recover:
             raise DeadlineExceeded('secret')
     monkeypatch.setattr(handler, 'enqueue', enqueue)
     assert call(env, body).status_code == 202
+    # The writer's RPC deadlines are on the fake clock from here on.
+    monkeypatch.setattr(storage_gcp_io, 'time', SharedClockTime(clock))
     with caplog.at_level(logging.INFO):
         assert writer.write_once()
         assert len(writer.index) == 1

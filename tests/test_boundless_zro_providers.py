@@ -298,7 +298,16 @@ def test_registration_and_published_pricing(client):
         assert any(item[0] == slug for item in _DISCOVERABLE_MANIFEST_PROVIDERS)
         assert f"{slug.upper()}_API_KEY:trustedrouter-{slug}-api-key" in (root / ".github/workflows/refresh-prices.yml").read_text()
         endpoint = MODEL_ENDPOINTS[f"z-ai/glm-5.3-flash@{slug}/prepaid"]
-        assert endpoint.upstream_id == "glm-5.3-flash" and endpoint.usage_type == "Credits"
+        # Zro serves the bare ID. Boundless serves the legacy short ID and the
+        # qualified one its rate card names (z-ai/glm-5.3-flash since
+        # 2026-11); discovery prefers the card's, which passed the live PONG
+        # canary in refresh run 42372150892. Either way it is this model.
+        if slug == "zro":
+            assert endpoint.upstream_id == "glm-5.3-flash"
+        else:
+            assert endpoint.upstream_id in {"glm-5.3-flash", "z-ai/glm-5.3-flash"}
+            assert module.canonical_model_id(endpoint.upstream_id) == "z-ai/glm-5.3-flash"
+        assert endpoint.usage_type == "Credits"
         assert endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens > 0
         page = client.get(f"/providers/{slug}")
         assert page.status_code == 200 and "glm-5.3-flash" in page.text and "Cached" in page.text
@@ -338,3 +347,41 @@ def test_zro_prefix_only_new_model_still_triggers_coverage(monkeypatch):
         published_model_ids=set(),
     )
     assert any("zro:" in warning and "glm-5.4" in warning for warning in warnings)
+
+
+def test_boundless_legacy_short_ids_do_not_read_as_unpublished_models(monkeypatch, tmp_path):
+    # Snapshot CI 42372491661: once the manifest routed z-ai/glm-5.3-flash
+    # through its rate-card ID, the API's legacy short ID glm-5.3-flash was
+    # reported as an unpublished model. A short ID for a routed model is the
+    # alias discovery collapses; a short ID for an unknown model still warns.
+    from scripts import check_price_coverage as coverage
+
+    manifest_dir = tmp_path / "provider_models"
+    manifest_dir.mkdir()
+    (manifest_dir / "boundless.json").write_text(json.dumps({"models": [
+        {"id": "z-ai/glm-5.3-flash", "upstream_id": "z-ai/glm-5.3-flash", "routable": True},
+    ]}))
+    monkeypatch.setattr(coverage, "MANIFEST_DIR", manifest_dir)
+    monkeypatch.setattr(coverage, "_DISCOVERABLE_MANIFEST_PROVIDERS", (
+        ("boundless", boundless.URL, ("BOUNDLESS_API_KEY",), boundless.canonical_model_id),
+    ))
+
+    def audit(*ids):
+        return coverage._model_discovery_audit(
+            fetch_text=lambda _url: "",
+            fetch_json=lambda url, _env: {"data": [{"id": i} for i in ids]} if url == boundless.URL else {"data": []},
+            published_model_ids=set(),
+        )
+
+    warnings, info = audit("glm-5.3-flash", "z-ai/glm-5.3-flash")
+    assert not [w for w in warnings if w.startswith("boundless:")]
+    assert any(line.startswith("boundless: model discovery matched catalog") for line in info)
+    warnings, _ = audit("glm-5.3-flash", "z-ai/glm-5.3-flash", "glm-9-preview")
+    assert any("boundless:" in w and "glm-9-preview" in w for w in warnings)
+
+
+def test_boundless_gemma_short_alias_collapses_onto_its_card():
+    html, cards = boundless_live_cards()
+    prices, rows = boundless.discover(boundless_catalog_for(cards, ("gemma4-31b",)), html)
+    assert rows["google/gemma-4-31b-it"]["upstream_id"] == "google/gemma-4-31b-it"
+    assert "boundless/gemma4-31b" not in rows

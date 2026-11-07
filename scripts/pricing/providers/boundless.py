@@ -38,6 +38,8 @@ _ALIASES = {
     "nemotron3-super": "nvidia/nemotron-3-super-120b-a12b",
     # The provider's machine-readable model description explicitly names 0731.
     "dsv4": "deepseek/deepseek-v4-flash-0731",
+    # Short alias of the card named google/gemma-4-31b-it (2026-11).
+    "gemma4-31b": "google/gemma-4-31b-it",
 }
 
 
