@@ -55,7 +55,7 @@ jobs:
   # preparing: each would ship a subset of this commit, one rollout before this
   # one ships it all. While such a deploy's CI run has not started a test
   # shard, this cancels the deploy and then the CI run, so the organization's
-  # runners (60 at once; a CI run is 46 jobs) go to this commit's run. A deploy
+  # runners (60 at once; a push's CI run takes 27) go to this commit's run. A deploy
   # in the production queue or rolling out, a CI run already testing, and a
   # non-deploying commit's run are left alone. After the last delivered
   # rollout, it cancels for four hours from its first cancellation and then

@@ -298,6 +298,20 @@ def test_the_post_cutover_clock_leaves_main_pushes_for_a_daily_run() -> None:
     assert jobs["proof-oracle"]["strategy"]["matrix"]["clock"] == ["post-cutover"]
 
 
+def test_the_model_checks_run_check_sh_as_it_is() -> None:
+    # The daily job is held to this one whole (above), so this pins both. A
+    # run line that could not fail (`./proofs/check.sh || true`) or a
+    # continue-on-error would pass every run whatever the specs say.
+    job = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]["proofs"]
+    steps = job["steps"]
+    # Action names without their versions, which Dependabot moves.
+    assert [str(step.get("uses", "")).split("@")[0] for step in steps] == [
+        "actions/checkout", "actions/setup-java", ""]
+    assert steps[-1]["run"] == "./proofs/check.sh"
+    assert "continue-on-error" not in job
+    assert all("continue-on-error" not in step for step in steps)
+
+
 def test_proof_oracle_ci_split(request, tmp_path):
     import shlex
 

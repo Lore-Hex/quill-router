@@ -267,9 +267,10 @@ jobs:
     # 2026-10-15 runs 38778257165, 38786461389 and 38809305127 cancelled
     # five shards at 96-99% with no failing test, and rerunning two of them
     # cancelled them again at the same point, so it was weight, not a wedge.
-    # A shard spends about five minutes before its first test (checkout, uv
-    # sync, collecting 36k tests under coverage, four workers) and its last
-    # few percent can take six minutes while one worker holds a long test.
+    # A shard spent about five minutes before its first test (checkout, uv
+    # sync, collecting 36k tests under coverage, four workers; about three
+    # since #2368's coverage change) and its last few percent can take six
+    # minutes while one worker holds a long test.
     # 35 keeps the wedge bound (the wedge sat at 2h16m) and leaves a
     # finishing shard alone; main's slowest shard on twelve shards took
     # 20.1 minutes (38808849971).
@@ -286,7 +287,8 @@ jobs:
         # Two instrumented runs (#1709) found runner speed varied by up to
         # about 1.7x. Refreshing .test_durations from one run's raw timings
         # did not improve the slowest job, so keep its relative balance and
-        # reduce the work: twelve default shards and eight post-cutover.
+        # reduce the work: twelve default shards and eight post-cutover
+        # (eight default since Nov 6, below).
         # On this tree the heaviest group's estimated single-worker work
         # falls from 849 to 707 seconds for defaults (about 17%), and from
         # 1,414 to 1,061 for post-cutover (25%).
@@ -303,7 +305,7 @@ jobs:
         # Nov 6: with coverage on sys.monitoring (#2368), twelve shards took
         # 7 to 12 minutes each over five green main runs, the steps before
         # pytest about 50 seconds of that. Eight (about 10 to 17) stay under
-        # the proof oracle's longest shard (25 to 27 minutes), with four
+        # the proof oracle's longest shard (26 to 28 minutes), with four
         # fewer jobs in the organization's queue.
         shard: [1, 2, 3, 4, 5, 6, 7, 8]
     runs-on: ubuntu-24.04
@@ -711,20 +713,6 @@ jobs:
       - name: BYOK written formats vs what every enclave accepts
         run: uv run python -m scripts.check_format_ordering
 
-  # Model checking. The property tests in `tests/` run inside the `test` job
-  # like any other pytest file; this job is for the TLA+ specs in `proofs/`,
-  # which need a JVM and TLC and have nothing to do with the Python suite.
-  #
-  # These specs cover designs whose failure modes are concurrent or temporal:
-  # things a test cannot reach because the composition being checked does not
-  # exist in code yet. proofs/README.md lists them and the rules they follow.
-  #
-  # check.sh model-checks every spec, then runs every mutant in
-  # proofs/manifest.toml. On this runner the script took seven and a half
-  # minutes with three specs (#1515, 2026-10-04). timeout-minutes is a
-  # runaway guard, not a target. If the job nears it, tighten a spec's
-  # constants rather than dropping the job: an unchecked spec is worse than
-  # no spec, because it reads as evidence.
   # The Go service of the fast-admission design (docs/design/fast-admission-
   # spike.md). Its shadows are held to their TLA+ specs here: each test runs
   # the pinned TLC from proofs/ on a small instance and compares every step,
@@ -867,11 +855,32 @@ jobs:
       - name: ${{ matrix.walk }} against the emulator
         run: go test -count=1 -p 1 -timeout 240m -run '^${{ matrix.walk }}$' ./internal/store/
 
-  # The TLA+ specs check designs, not the code a push deploys, and read only
-  # proofs/. Pull requests and dispatches run them, and so does
-  # post-cutover-daily.yml on main once a day. A push to main skips them
-  # (commit_scope.py's SKIPPED_ON_PUSH), which frees a runner for 15 to 25
-  # minutes a push in the organization's capped queue.
+  # Model checking. The property tests in `tests/` run inside the `test` job
+  # like any other pytest file; this job is for the TLA+ specs in `proofs/`,
+  # which need a JVM and TLC and have nothing to do with the Python suite.
+  #
+  # These specs cover designs whose failure modes are concurrent or temporal:
+  # things a test cannot reach because the composition being checked does not
+  # exist in code yet. proofs/README.md lists them and the rules they follow.
+  #
+  # check.sh model-checks every spec, then runs every mutant in
+  # proofs/manifest.toml. On this runner the script took seven and a half
+  # minutes with three specs (#1515, 2026-10-04), and 15 to 26 minutes over
+  # 20 green main runs to 2026-11-06. timeout-minutes is a runaway guard, not
+  # a target. If the job nears it, tighten a spec's constants rather than
+  # dropping the job: an unchecked spec is worse than no spec, because it
+  # reads as evidence.
+  #
+  # Outside proofs/, check.sh reads only whether the code and tests the
+  # manifest names for each spec exist (and that a planned spec's code does
+  # not). None of it is what a push deploys. Pull requests and dispatches run
+  # it, and so does post-cutover-daily.yml on main once a day. A push to main
+  # skips it (commit_scope.py's SKIPPED_ON_PUSH), which frees a runner for 15
+  # to 26 minutes a push in the organization's capped queue. The cost: proofs
+  # is not a required check, so a pull request can merge with it red (say,
+  # after renaming a file the manifest names). main's push runs then pass,
+  # and main learns of it from the next price refresh that runs the full
+  # matrix (whose publication it holds until the fix) or from the daily run.
   proofs:
     needs: scope
     if: github.event_name != 'push' && needs.scope.outputs.data_only != 'true'
@@ -891,9 +900,10 @@ jobs:
   # The run's conclusion, derived from every job's result. GitHub concludes a
   # run success when its jobs succeeded or were skipped; this job accepts a
   # skipped job only when it is one of the jobs above that carry the data-only
-  # condition AND `scope` classified the commit as data-only, or the
-  # post-cutover suite on a push to main, and fails on a failed `scope`, a
-  # failed job, or a skip for any other reason. The deploy
+  # condition AND `scope` classified the commit as data-only, or one of
+  # commit_scope.py's SKIPPED_ON_PUSH (the post-cutover suite and proofs) on
+  # a push to main, and fails on a failed `scope`, a failed job, or a skip
+  # for any other reason. The deploy
   # gate and the price-refresh gate read the run's conclusion, which this job
   # now determines; branch protection can also require the `CI` check.
   # !cancelled() rather than always(): a cancelled run releases its slot.
