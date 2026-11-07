@@ -168,6 +168,23 @@ textPayload:"ERROR trusted_router.fastpath fastpath.<event> "'`.
 | `settled_without_intent` | The reaper found a leased stream's row expired, and the lease answered that a settle won, but no settle intent remained for Python to write the settle's records: the charge is booked, its generation record is missing. The row is left, its expiry pushed out, so the line repeats each pass. | Find the settle in the lease's records (`tr_lease_record` for the authorization, or the record topic's export) and the settle route's lines for it. Write the records by hand only once the cause is known; money is not at risk, the record is. |
 | `leased_reap_overdue` | The reaper found a leased stream's row expired, and the lease still gave no disposition (pending, a failed or unserved read, no front door) though the hold's end of life plus 15 minutes has passed: the owner releases or reaps every hold by its end of life plus its grace, and the auditor drains a stopped owner's lease within its overdue allowance. The row is left, its expiry pushed out, so the line repeats each pass. | Read the lease's state and drain (`drain_overdue` and `pending_work_overdue` alerts on the same lease name the cause) and the `/v1/disposition` lines (`fastpath leased reap disposition unanswered`). Money is not at risk: Python books nothing for the row; its records wait for the lease's answer. |
 
+## The enabler's lines
+
+Two policies page on lines the enabler's job writes
+(`infra/fastpath_enabler_alerts.tf`; `docs/design/fast-admission-widening.md`
+§4(a) and §5.3), each also counted by a log-based metric
+(`logging.googleapis.com/user/fastpath_enabler_<kind>`). With the job's mode
+`off` (`scripts/deploy/fastpath_enabler_job.sh`) neither can fire. Find the
+run with `gcloud logging read 'resource.type="cloud_run_job" AND
+resource.labels.job_name="trusted-router-fastpath-enabler"'`: its
+`fastpath_enabler.report` line has the counts, and its `fastpath_enabler.list`
+lines the workspaces.
+
+| Kind | What happened | What to do |
+|---|---|---|
+| `mass_disable` | A run would have turned off more enabled workspaces for a change of facts (tier below 3, balance under the disable balance, incomplete credit rows, a federated home, a deletion, a probe, a bypass) than its cap, the larger of 20 and a tenth of the enabled set, so it turned none of them off. Latches, pauses, debt and holds were still turned off, and the grant refuses those at once anyway. | Read the report's `would_disable` and the `disable` list. A sudden mass change of facts is more likely a reading defect (the tier job, the snapshot, a setting) than a fact: find it before anything else. To keep the enabler from acting meanwhile, `fastpathctl enabler pause`. If the facts are real, lower the set in steps (exclude list, `disable`) rather than raising the cap. |
+| `trust_stale` | More than half of a run's eligible workspaces had a `trust_reconciled_through` older than `TR_TRUST_RECONCILE_MAX_AGE_SECONDS` or none. Their new enables are frozen; nothing already on is turned off for it. | Check the trust reconciler and the tier job (their runs, their `trust.*` lines). Leases are unaffected: the grant reads latches at once. The freeze lifts by itself at the first run after the reconciler catches up. |
+
 ## The edge's counts
 
 The edge logs its decide path's counts each minute, and its decide shadow's,

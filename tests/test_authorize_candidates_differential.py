@@ -20,6 +20,8 @@ quotes are compared too.
 
 The frozen leg also applies an independent search-processor privacy contract:
 Trusted, NYTE aliases, suffixes and fallback lists cannot authorize search.
+And it calls the fast path's pilot_reason through a stand-in that supplies the
+three edge reasons the frozen route predates, each false, as that route had them.
 """
 
 from __future__ import annotations
@@ -330,6 +332,19 @@ def _run(module: types.ModuleType, case: dict[str, Any], backend: str,
                 return old_available(provider, model, region)
 
             scope.setattr(module, "provider_model_available_from_gateway_region", reference_available)
+            # The frozen route predates the three edge reasons pilot_reason
+            # now requires (federated, async_shadow, monitor_key; widening
+            # PR 5): its leg passes them as the frozen route had them, none
+            # a reason, through a stand-in for the module it calls, without
+            # changing the frozen file.
+            live_fastpath = module._fastpath
+
+            def reference_pilot_reason(**kwargs: Any) -> str | None:
+                return live_fastpath.pilot_reason(federated=False, async_shadow=False, monitor_key=False, **kwargs)
+
+            reference_fastpath = types.SimpleNamespace(**vars(live_fastpath))
+            reference_fastpath.pilot_reason = reference_pilot_reason
+            scope.setattr(module, "_fastpath", reference_fastpath)
         try:
             data = module._authorize_gateway_sync(request, body, SETTINGS[case.get("settings", 0)])
         except HTTPException as exc:

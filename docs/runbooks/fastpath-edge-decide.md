@@ -99,7 +99,8 @@ ssh tr-fastpath-13 --zone=us-central1-a --project=quill-cloud-proxy
    its process ("Taking a pinned release"), before any step below.
 3. **Python's side**, on the serving revision: `TR_EDGE_POLICY_PUBLISH_ENABLED=true`
    (I1), `TR_FASTPATH_PILOT_ENABLED=true` and the workspace in
-   `TR_FASTPATH_PILOT_WORKSPACES` (`scripts/deploy/rollout.sh`); a
+   `TR_FASTPATH_PILOT_WORKSPACES` (`scripts/deploy/fastpath_lists.sh`, rendered by
+   `rollout.sh`); a
    workspace the policy's pilot set does not name passes
    `policy.not_pilot_workspace` before any key is read when the set is
    empty, and otherwise once its key and workspace facts are read and

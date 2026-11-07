@@ -1,7 +1,7 @@
 # Widening the fast path to every eligible workspace
 
-Status: decided; PRs 1 to 4 merged (#2354, #2356, #2359, #2385) and PR 5
-built, all dark (§11). This is the short note the production
+Status: decided; PRs 1 to 5 merged (#2354, #2356, #2359, #2385, #2394) and
+PR 6 built, all dark (§11). This is the short note the production
 rollout asks for before §8 step 9 of
 [`fast-admission-and-batched-settlement.md`](fast-admission-and-batched-settlement.md)
 (`fast-admission-production-rollout.md`, "P2 onward"): what widening
@@ -1231,6 +1231,57 @@ step.
    whose rows changed; the writes executing `switch_statements_v1.json`;
    the switch read's latency on the emulator at ten times the eligible
    count.
+   **Built** (dark): `src/trusted_router/fastpath_enabler.py` (`python -m
+   trusted_router.fastpath_enabler`), `scripts/deploy/fastpath_enabler_job.sh`
+   and its step in `.github/workflows/deploy-production.yml` (the workflow
+   that runs the control plane's release steps; `deploy.yml` builds and
+   calls it), after the trust jobs' step and behind no opt-in;
+   `infra/fastpath_enabler_alerts.tf` and the runbook rows in
+   `docs/runbooks/fastpath-alerts.md`. Literals: `TR_FASTPATH_ENABLER_MODE=off`,
+   `TR_FASTPATH_ENABLER_MAX_RANK=0`, the balances of (b), and
+   `TR_FASTPATH_ENABLER_INCLUDE="${TR_FASTPATH_PILOT_WORKSPACES}"` in
+   `fastpath_lists.sh`, where the explicit pilot set moved from `rollout.sh`
+   so the include list names it by reference. Tests:
+   `tests/test_fastpath_enabler.py` (the fake), `tests/test_fastpath_enabler_deploy.py`
+   (the job's script under the deploy harness, the workflow step, the alerts'
+   filters), `tests/conformance/test_fastpath_enabler_native.py` (the
+   emulator: the arm, the interleaved `disable`, `disable-all` and `pause`,
+   the in-transaction bypass, and the switch read: 16,000 enabled rows, ten
+   times the tier job's fleet of 1,596, read in about 40 ms on the emulator,
+   held under the copy's 2 s read timeout).
+   Where it reads the design narrowly, decided here:
+   - The fixture travels in the package as
+     `src/trusted_router/data/fastpath_switch_statements_v1.json`, since the
+     image holds `src` alone; a test holds it to the Go copy byte for byte.
+   - The enabler's enable is the fixture's `enable` less its hold removal
+     (`holds_removed`), which deletes nothing for a workspace the same
+     transaction found unheld, so no enabler code path names the hold table
+     in a write; loading refuses a fixture under which either of its writes
+     would.
+   - The synthetic monitor's and the Stage D probe's keys reach the job as
+     their control-plane secrets under names outside the `TR_` prefix
+     (`FASTPATH_ENABLER_*_KEY`), since the control surface's settings may
+     not hold them; the job keeps only their lookup hashes and resolves each
+     workspace by complete key. The async settle shadow's probe key stays
+     confined to its own job, as the repository's tripwire requires; its
+     workspace is left out through `async_settle_shadow_workspaces` and the
+     exclude list, where (c) already puts every probe's workspace.
+   - The switch read's latency was measured with Python's copy of it
+     (`spanner_enabled_workspaces`), the node's `EnabledWorkspaces` SQL less
+     its comment, since the dry-run's eligible count is not yet known: at
+     16,000 rows it bounds ten times every workspace the tier job judges.
+   - `async_shadow` is applied whole, as the exclude list is: both are
+     operator lists, not facts. The guard covers tier, balance, incomplete
+     credit rows (shards not `0..n-1`, which Go's grant refuses), bypass,
+     deletion (or no workspace entity), federated home and the probes.
+   - The rank counts include-list workspaces in its order, so `max_rank` N
+     is the N largest; the include list is then exempt from leaving.
+   - `fastpath_enabler_trust_stale` reads the run's eligible set, those on
+     and staying and those joining, so a stalled reconciler shows when
+     nothing new would join.
+   - An apply run stops writing at the first transaction that finds the
+     fleet hold, the pause or no arm; the report says which (`stopped`).
+   - "Unbounded" `max_rank` (WS6) is a number above the fleet's size.
 7. **The 503 for headroom in leases** (§4.4, §8 step 4): the reserve and the
    insufficient-credit precheck answer 503 when the shortfall sits in
    leases. Money code: a differential test against today's authorize and

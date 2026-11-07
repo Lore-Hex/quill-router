@@ -37,8 +37,8 @@ source "${SCRIPT_DIR}/_lib.sh"
 source "${SCRIPT_DIR}/deploy_mutex.sh"
 # shellcheck source=scripts/deploy/_cloud_run_revision_probe.sh
 source "${SCRIPT_DIR}/_cloud_run_revision_probe.sh"
-# The fast path's workspace lists (TR_FASTPATH_PILOT_EXCLUDE), shared with
-# the enabler job's script.
+# The fast path's workspace lists (TR_FASTPATH_PILOT_WORKSPACES and
+# TR_FASTPATH_PILOT_EXCLUDE), shared with the enabler job's script.
 # shellcheck source=scripts/deploy/fastpath_lists.sh
 source "${SCRIPT_DIR}/fastpath_lists.sh"
 
@@ -707,13 +707,11 @@ ENV_VARS=(
   # Rollback: restore the two pilot IDs below and redeploy:
   # 45819281-0ce9-4811-a0cd-c660ab3a116d,91d7810e-93b2-4c37-b1bd-ba9227585416
   "TR_STAGE_D_PILOT_WORKSPACE_IDS="
-  # The fast path's pilot (docs/design/fast-admission-pilot.md): Joseph's
-  # workspace and, on his word (2026-10-16), one customer's, admitted by the
-  # front doors from the us-central1 control plane; from 2026-11-03 also P1's
-  # synthetic workspace, his own and outside async settle admission, so the
-  # edge answers its load tests. Rollback: drop an ID, or
+  # The fast path's pilot (docs/design/fast-admission-pilot.md): its
+  # explicit set lives in fastpath_lists.sh, where the enabler job's include
+  # list refers to it. Rollback: drop an ID there, or
   # TR_FASTPATH_PILOT_ENABLED=false.
-  "TR_FASTPATH_PILOT_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d,84cbb802-e054-486a-9226-e3cda4a799fb,8b682b96-d8ef-4631-b0ee-bbf41816f1f8"
+  "TR_FASTPATH_PILOT_WORKSPACES=${TR_FASTPATH_PILOT_WORKSPACES}"
   "TR_FASTPATH_PILOT_ENABLED=true"
   # All mode (docs/design/fast-admission-widening.md sections 9 and 11, PR
   # 5): every workspace the switch enables but the exclude list, instead of

@@ -619,9 +619,15 @@ def test_the_deployed_pilot_sets_publish_no_excluded_member() -> None:
 
 
 def _rendered_rollout_env() -> dict[str, str]:
-    """The TR_ settings rollout.sh's ENV_VARS array pins, as written."""
+    """The TR_ settings rollout.sh's ENV_VARS array pins, as written, with
+    the lists it renders from scripts/deploy/fastpath_lists.sh resolved."""
+    from tests.test_fastpath_lists import resolved_lists
+
     text = (ROOT / "scripts" / "deploy" / "rollout.sh").read_text()
-    return dict(re.findall(r'^\s*"(TR_[A-Z0-9_]+)=([^"]*)"\s*$', text, flags=re.MULTILINE))
+    lists = resolved_lists()
+    pinned = dict(re.findall(r'^\s*"(TR_[A-Z0-9_]+)=([^"]*)"\s*$', text, flags=re.MULTILINE))
+    return {name: lists[value[2:-1]] if value.startswith("${") and value[2:-1] in lists else value
+            for name, value in pinned.items()}
 
 
 def test_parse_edge_policy_holds_admission_excluded_workspaces_strictly() -> None:

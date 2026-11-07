@@ -7,6 +7,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from tests.test_fastpath_lists import resolved_lists
+
 PILOT = Path(__file__).resolve().parents[1] / "scripts" / "fastpath" / "pilot"
 
 
@@ -30,9 +32,10 @@ def test_the_watch_keeps_its_approved_tolerances() -> None:
 
 
 def test_the_hourly_audit_covers_the_pilot_set() -> None:
+    # rollout.sh renders the set from scripts/deploy/fastpath_lists.sh.
     rollout = (PILOT.parents[1] / "deploy" / "rollout.sh").read_text(encoding="utf-8")
-    pilot = next(line for line in rollout.splitlines() if "TR_FASTPATH_PILOT_WORKSPACES=" in line)
-    workspaces = pilot.split("=", 1)[1].strip().strip('"').split(",")
+    assert '"TR_FASTPATH_PILOT_WORKSPACES=${TR_FASTPATH_PILOT_WORKSPACES}"' in rollout
+    workspaces = resolved_lists()["TR_FASTPATH_PILOT_WORKSPACES"].split(",")
     audit = (PILOT / "pilot-audit-hourly.sh").read_text(encoding="utf-8")
     listed = next(line for line in audit.splitlines() if line.startswith("WORKSPACES="))
     assert sorted(listed.split("=", 1)[1].strip('"').split()) == sorted(workspaces)

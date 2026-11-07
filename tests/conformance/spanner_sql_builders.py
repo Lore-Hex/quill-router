@@ -387,4 +387,14 @@ def builder_cases() -> list[SQLCase]:
         SQLCase("shadow_health_previous", [shadow_health_previous()]),
         SQLCase("read_shadow_health", [read_shadow_health_statement()]),
     ])
+    # The switch fixture's statements as the enabler executes them (its own
+    # two writes), and the fixture's whole enable and disable, which Go runs.
+    from trusted_router import fastpath_enabler
+
+    for label, operations in (("enabler", fastpath_enabler.enabler_operations()),
+                              ("fixture", fastpath_enabler.load_switch_operations())):
+        for name, op in sorted(operations.items()):
+            statements = fastpath_enabler.switch_statements(op, {"workspace": "ws-synthetic-a"}, pt)
+            if statements:
+                cases.append(SQLCase(f"fastpath-switch-{label}-{name}", statements))
     return cases
