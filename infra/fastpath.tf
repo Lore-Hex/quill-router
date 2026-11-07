@@ -97,7 +97,14 @@ locals {
   # ceil, and no gateway sends a ceiling until fastpath_stream_ceiling moves,
   # so the records match the release before (#2383, stream ceiling PR 3;
   # every node ran 5c5f11fad, which reads ceil, before this pin).
-  fastpath_release        = "8af87998ab58bc59d46eb837f7b90242443c762f"
+  # bd4398c21: the edge reads the policy's optional fastpath_stream_ceiling
+  # member, refusing "false"; with it, a stream whose hold is below its
+  # estimate is decided and admitted with that estimate as its ceiling
+  # instead of passing at stream.hold (#2406, stream ceiling PR 4). Python
+  # publishes the member only with TR_FASTPATH_STREAM_CEILING true, false
+  # in rollout.sh, so the policy matches the release before; 8af87998a
+  # refuses a policy carrying the member, so this pin comes first.
+  fastpath_release        = "bd4398c217d7a7355a04e0f9d46f50a9bbb52a91"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
