@@ -268,9 +268,9 @@ jobs:
     # five shards at 96-99% with no failing test, and rerunning two of them
     # cancelled them again at the same point, so it was weight, not a wedge.
     # A shard spent about five minutes before its first test (checkout, uv
-    # sync, collecting 36k tests under coverage, four workers; about three
-    # since #2368's coverage change) and its last few percent can take six
-    # minutes while one worker holds a long test.
+    # sync, collecting about 49k tests under coverage, four workers; about
+    # three since #2368's coverage change) and its last few percent can take
+    # six minutes while one worker holds a long test.
     # 35 keeps the wedge bound (the wedge sat at 2h16m) and leaves a
     # finishing shard alone; main's slowest shard on twelve shards took
     # 20.1 minutes (38808849971).
@@ -517,9 +517,9 @@ jobs:
     # five shards at 96-99% with no failing test, and rerunning two of them
     # cancelled them again at the same point, so it was weight, not a wedge.
     # A shard spends two to two and a half minutes before its first test
-    # (checkout, uv sync, collecting 36k tests, four workers; #2377's run),
-    # and its last few percent can take six minutes while one worker holds a
-    # long test.
+    # (checkout, uv sync, collecting about 49k tests, four workers; #2377's
+    # run), and its last few percent can take six minutes while one worker
+    # holds a long test.
     # 35 keeps the wedge bound (the wedge sat at 2h16m) and leaves a
     # finishing shard alone; main's slowest shard on twelve shards took
     # 20.1 minutes (38808849971).
@@ -879,11 +879,12 @@ jobs:
   # dispatches run it, and so does post-cutover-daily.yml on main once a day.
   # A push to main skips it (commit_scope.py's SKIPPED_ON_PUSH), which frees a
   # runner for 15 to 26 minutes a push in the organization's capped queue.
-  # The cost: proofs
-  # is not a required check, so a pull request can merge with it red (say,
-  # after renaming a file the manifest names). main's push runs then pass,
-  # and main learns of it from the next price refresh that runs the full
-  # matrix (whose publication it holds until the fix) or from the daily run.
+  # The cost: proofs is not a required check, so a pull request can merge
+  # with it red (say, after renaming a file the manifest names). main's push
+  # runs then pass, and main learns of it from the next price refresh that
+  # runs the full matrix (whose publication it holds until the fix) or from
+  # the daily run, which GitHub can start hours late, or not at all, under
+  # load.
   proofs:
     needs: scope
     if: github.event_name != 'push' && needs.scope.outputs.data_only != 'true'

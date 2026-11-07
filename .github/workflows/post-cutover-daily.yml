@@ -7,8 +7,11 @@ name: Post-cutover suites and model checks (daily)
 # means main will break on a scheduled date, a spec merged beside another no
 # longer holds, or code or tests a spec names were moved or deleted; none is
 # a reason to hold today's deploy. For the model checks this is the one run
-# on main sure to happen: a price refresh's dispatch runs them only when its
-# commit changes more than catalog data or its base has no green CI run.
+# on main scheduled to check them: a price refresh's dispatch runs them only
+# when its commit changes more than catalog data or its base has no green CI
+# run. A schedule is not a guarantee: under load GitHub can start a scheduled
+# run hours late, as with the first of these (due 04:47 UTC on 2026-11-07,
+# started at 11:21), or not start it at all.
 # deploy.yml's gate-on-ci and the fast path release read ci.yml's runs only,
 # so this workflow gates nothing. tests/test_ci_workflow.py keeps these jobs
 # identical to ci.yml's.

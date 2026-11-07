@@ -829,10 +829,13 @@ func (a afterTheEdge) RoundTrip(r *http.Request) (*http.Response, error) {
 // Python's delay starts once the edge has marked its write's end, as
 // TestAnAnswerSlowOnItsWayBackIsTheResponsePhase starts its delay once the
 // edge has the headers. The transport runs the WroteRequest hook on its write
-// goroutine after the flush, which can be after Python has read the request:
-// a delay from that read lost a millisecond to the write phase on CI
-// (write_ms:1 python_ms:149). With late, the edge's mark itself is held until
-// 20 ms after Python has read the request. For a test of one pass.
+// goroutine when Request.write returns. By then the request can already be on
+// the connection: the proxy's body wrapper makes the transport flush the
+// headers first and copy the body straight through, so Python can read the
+// request before the hook runs. A delay from that read lost a millisecond to
+// the write phase on CI (write_ms:1 python_ms:149). With late, the edge's mark
+// itself is held until 20 ms after Python has read the request. For a test of
+// one pass.
 func fromTheWritesEnd(t *testing.T, h *harness, late bool) (wait func()) {
 	t.Helper()
 	release, marked := make(chan struct{}), make(chan struct{})
