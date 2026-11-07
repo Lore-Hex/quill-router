@@ -38,7 +38,9 @@ class BrandV3Tests(unittest.TestCase):
         for hook in ('id="film"', 'id="filmVid"', 'id="filmPlay"', 'href="/buy"', 'href="/confidential#start"', 'data-catalog-models', 'data-catalog-providers'):
             self.assertIn(hook, page)
         self.assertEqual(page.count('data-open="deck"'), 2)
-        self.assertNotIn('/assets/nyte-v2/press/', page)
+        # Press quotes name the publication with its logo, as on the live page.
+        for logo in ('the-information', 'axios', 'semafor'):
+            self.assertIn(f'/assets/nyte-v2/press/{logo}-light.png', page)
         # analytics.js names CTA positions from these classes (hero: class starting "hero", close: .closing).
         self.assertIn('<section class="hero-home v3-hero">', page)
         self.assertIn('<section class="v3-cta closing">', page)
@@ -58,8 +60,9 @@ class BrandV3Tests(unittest.TestCase):
                      'data-live-price-unit', 'id="start"', 'id="place-faq"', 'data-place', 'data-us-only', 'data-open="deck"'):
             self.assertIn(hook, page)
         self.assertEqual(page.count('href="/confidential#start">Start building</a>'), 3)
-        # No photos, third-party logos or hand-drawn icons on the v3 page.
-        for removed in ('ph-gondola', 'close-photo', '/assets/nyte-v2/press/', 'class="ico"'):
+        self.assertIn('alt="Semafor" src="/assets/nyte-v2/press/semafor-light.png"', page)
+        # No photos or hand-drawn icons on the v3 page.
+        for removed in ('ph-gondola', 'close-photo', 'class="ico"'):
             self.assertNotIn(removed, page)
         with mock.patch.dict(os.environ, {"NYTE_BRAND_V3_PREVIEW": ""}), mock.patch.object(nyte_v2, "BRAND_V3_PAGES", set()):
             legacy = render_nyte("api")
