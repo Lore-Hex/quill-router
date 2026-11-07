@@ -23,6 +23,17 @@ def parse(html: str) -> dict[str, dict[str, int]]:
         re.DOTALL,
     )
     if record is None:
+        priced = re.findall(r'"modelName":"([^"]+)","per":"1M tokens"', text)
+        if priced and "Embed 4" not in priced:
+            # Since 2026-11 cohere.com/pricing prices only Embed 5 Fast and
+            # Embed 5 Pro; Embed 4 keeps a model card with no rate, while
+            # docs.cohere.com still lists embed-v4.0 as a served model. No
+            # rewrite of this parser can recover a rate the page does not
+            # publish, so say so instead of asking self-heal to drop it.
+            raise ValueError(
+                "cohere: cohere.com/pricing no longer publishes an Embed 4 rate "
+                f"(priced per 1M tokens: {sorted(set(priced))[:6]})"
+            )
         return {}
     price = re.search(
         r'"inputLabel":"Cost","inputPrice":([0-9]+(?:\.[0-9]+)?)',

@@ -351,3 +351,33 @@ def test_resolution_table_only_allowed_on_byteplus_token_video(monkeypatch, tmp_
     monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
     _, endpoints = catalog_ingest._supplemental_provider_models_and_endpoints()
     assert not endpoints
+
+
+BYTEPLUS_PRICING_2026_11_07 = (
+    Path(__file__).parent / "fixtures/pricing/byteplus_model_pricing_2026-11-07.md"
+).read_text(encoding="utf-8")
+
+
+def test_live_2026_11_07_pricing_document_still_parses():
+    # Refresh run 42359425520 held BytePlus on "no live priced models". The
+    # public tariff document was not the cause: it parses, at the committed
+    # manifest's rates. The authenticated catalog rejected every row.
+    prices = byteplus.parse_prices(BYTEPLUS_PRICING_2026_11_07)
+    glm = prices["glm-5-2-260617"].tiers[0]
+    assert (glm.prompt_micro_per_m, glm.completion_micro_per_m, glm.prompt_cached_micro_per_m) == (
+        1_400_000, 4_400_000, 260_000,
+    )
+    assert prices["dreamina-seedance-2-5-260628"].completion_micro_per_m == 10_700_000
+    assert prices["seed-2-0-lite-260428"].tiers[0].max_prompt_tokens == 128_000
+
+
+def test_catalog_with_no_priced_row_fails_closed_and_says_why():
+    payload = catalog()
+    for source in payload["data"]:
+        source["status"] = "Active"
+    with pytest.raises(RuntimeError, match=r"^byteplus: no live priced models \(rows=8 ") as raised:
+        byteplus.discover(payload, MD)
+    message = str(raised.value)
+    assert "'unknown-provider-status': 8" in message
+    assert "statuses=['Active']" in message
+    assert "domains=['ImageGeneration', 'LLM', 'VLM', 'VideoGeneration']" in message

@@ -193,6 +193,53 @@ def _table_rows(html: str) -> list[list[str]]:
     return parser.rows
 
 
+# Labels the pricing page has used for a MODEL_CONFIG row. Since 2026-10 one
+# row prices GLM-5.2 and GLM-5.3 together, and the GPT OSS and Qwen 3 Next
+# rows were renamed; every rate is unchanged.
+_LABEL_ALIASES = {
+    "GLM-5.2, 5.3": "GLM-5.2",
+    "GPT-OSS-120B": "GPT OSS 120B",
+    "GPT-OSS-20B": "GPT OSS 20B",
+    "Qwen 3 80B Instruct": "Qwen 3 Next 80B",
+}
+_STANDARD_TABLE_HEADING = "Pay Per Token (DBU Per 1M Tokens)"
+
+
+def _label(raw: str) -> str:
+    # Badges such as "Kimi K3 ⌖" mark a model, they are not part of its name.
+    label = " ".join(raw.replace("\u2316", " ").split())
+    return _LABEL_ALIASES.get(label, label)
+
+
+def _pay_per_token_rows(html: str) -> dict[str, list[str]]:
+    """Rows of the standard pay-per-token table, keyed by normalized label.
+
+    Since 2026-10 the page also lists the same models under Priority Pay Per
+    Token, Provisioned Throughput and Batch Inference tables; only the
+    standard pay-per-token rate is this route's price. A label repeated
+    within that table is ambiguous and fails closed.
+    """
+    rows = _table_rows(html)
+    start = next(
+        (index + 1 for index, row in enumerate(rows) if row[:2] == ["Model", _STANDARD_TABLE_HEADING]),
+        None,
+    )
+    if start is None:
+        if any(len(row) > 1 and "Per Token" in row[1] for row in rows):
+            raise RuntimeError("databricks: the pay-per-token table heading changed")
+        section = rows
+    else:
+        end = next((index for index in range(start, len(rows)) if rows[index][0] == "Model"), len(rows))
+        section = rows[start:end]
+    keyed: dict[str, list[str]] = {}
+    for row in section:
+        label = _label(row[0])
+        if label in keyed:
+            raise RuntimeError(f"databricks: the pay-per-token table lists {label!r} twice")
+        keyed[label] = row
+    return keyed
+
+
 def _dbu_usd() -> Decimal:
     raw = os.environ.get("DATABRICKS_DBU_USD", str(DEFAULT_DBU_USD))
     try:
@@ -227,7 +274,7 @@ def _parse_catalog(
     supported_models_html: str,
 ) -> tuple[dict[str, ModelPrice], dict[str, dict[str, Any]]]:
     dbu_usd = _dbu_usd()
-    price_rows = {row[0]: row for row in _table_rows(pricing_html) if row}
+    price_rows = _pay_per_token_rows(pricing_html)
     prices: dict[str, ModelPrice] = {}
     discovered: dict[str, dict[str, Any]] = {}
     for label, config in MODEL_CONFIG.items():
@@ -325,7 +372,7 @@ def fetch() -> ProviderPricingResult:
     _DISCOVERED_MANIFEST_ROWS = discovered
     errors = validate(prices, EXPECTED_MODELS)
     if errors:
-        raise RuntimeError("; ".join(errors))
+        raise RuntimeError(f"{SLUG}: " + "; ".join(errors))
 
     token = (os.environ.get("DATABRICKS_TOKEN") or "").strip()
     host = (os.environ.get("DATABRICKS_HOST") or "").strip()

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 from bs4 import BeautifulSoup
@@ -9,7 +11,7 @@ from bs4 import BeautifulSoup
 from scripts.pricing.base import ModelPrice, PriceTier
 from scripts.pricing.providers import sakana
 from tests.pinned_manifests import SAKANA_FUGU_ULTRA_V1_1, serve_manifest_rows
-from trusted_router import catalog_ingest
+from trusted_router import catalog_ingest, provider_lifecycle
 from trusted_router.catalog import (
     GATEWAY_PREPAID_PROVIDER_SLUGS,
     PROVIDERS,
@@ -100,6 +102,62 @@ def test_sakana_pricing_parser_fails_closed_on_layout_drift() -> None:
                 "Orchestration details unavailable.",
             )
         )
+
+
+SAKANA_PRICING_2026_11_07 = (
+    Path(__file__).parent / "fixtures/pricing/sakana_pricing_2026-11-07.html"
+).read_text()
+NAMAZU_BEFORE = ModelPrice(
+    prompt_micro_per_m=950_000, completion_micro_per_m=4_000_000, prompt_cached_micro_per_m=150_000,
+)
+NAMAZU_AFTER = ModelPrice(
+    prompt_micro_per_m=1_900_000, completion_micro_per_m=6_000_000, prompt_cached_micro_per_m=300_000,
+)
+
+
+def test_sakana_namazu_current_and_announced_columns_parse() -> None:
+    # Refresh run 42359425520 held Sakana on "Namazu pricing headers changed:
+    # ['Token type', 'Current', 'From Dec 1, 2026, 10:00 JST']".
+    cutover = provider_lifecycle.SAKANA_NAMAZU_DEC_2026_PRICING_EFFECTIVE_AT
+    assert cutover == datetime(2026, 12, 1, 1, 0, tzinfo=UTC)
+    before = sakana._parse_pricing(SAKANA_PRICING_2026_11_07, now=cutover - timedelta(seconds=1))
+    assert before[sakana.SAKANA_NAMAZU_MODEL_ID] == NAMAZU_BEFORE
+    assert before[sakana.SAKANA_FUGU_MODEL_ID].tiers[1].completion_micro_per_m == 45_000_000
+    after = sakana._parse_pricing(SAKANA_PRICING_2026_11_07, now=cutover)
+    assert after[sakana.SAKANA_NAMAZU_MODEL_ID] == NAMAZU_AFTER
+
+
+def test_sakana_namazu_announced_cutover_is_recorded_for_runtime_pricing() -> None:
+    cutover = provider_lifecycle.SAKANA_NAMAZU_DEC_2026_PRICING_EFFECTIVE_AT
+    model = sakana.SAKANA_NAMAZU_MODEL_ID
+    assert provider_lifecycle.provider_price_microdollars(
+        "sakana", model, at=cutover - timedelta(seconds=1)
+    ) == provider_lifecycle.ProviderPrice(950_000, 4_000_000, 150_000)
+    assert provider_lifecycle.provider_price_microdollars(
+        "sakana", model, at=cutover
+    ) == provider_lifecycle.ProviderPrice(1_900_000, 6_000_000, 300_000)
+    schedule = provider_lifecycle.provider_pricing_schedule("sakana", model, at=cutover)
+    assert schedule is not None
+    assert (schedule["kind"], schedule["effective_at"], schedule["current_period"]) == (
+        "fixed_cutover", "2026-12-01T01:00:00Z", "new",
+    )
+    assert provider_lifecycle.provider_price_microdollars("sakana", sakana.SAKANA_FUGU_MODEL_ID) is None
+
+
+@pytest.mark.parametrize(
+    "old,new,match",
+    [
+        ("<td>$1.90</td>", "<td>$2.10</td>", "not recorded"),
+        ("<td>$0.95</td>", "<td>$0.99</td>", "not recorded"),
+        ("From Dec 1, 2026, 10:00 JST", "From Jan 5, 2027, 10:00 JST", "not recorded"),
+        ("From Dec 1, 2026, 10:00 JST", "From December", "headers changed"),
+        ("<th>Current</th>", "<th>Now</th>", "headers changed"),
+    ],
+)
+def test_sakana_namazu_unrecorded_price_announcement_fails_closed(old: str, new: str, match: str) -> None:
+    assert SAKANA_PRICING_2026_11_07.count(old) >= 1
+    with pytest.raises(RuntimeError, match=match):
+        sakana._parse_pricing(SAKANA_PRICING_2026_11_07.replace(old, new, 1))
 
 
 def test_sakana_live_fugu_pricing_drift_fails_refresh_closed(

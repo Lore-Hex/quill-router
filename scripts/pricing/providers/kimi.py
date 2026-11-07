@@ -35,6 +35,9 @@ SLUG = "kimi"
 DOC_INDEX_URL = "https://platform.kimi.ai/docs/llms.txt"
 MODELS_URL = "https://api.moonshot.ai/v1/models"
 FALLBACK_SUBPAGES = (
+    # Since 2026-11 every family is priced on this one page; the per-family
+    # pages below redirect to it.
+    "https://platform.kimi.ai/docs/pricing/chat.md",
     "https://platform.kimi.ai/docs/pricing/chat-k3.md",
     "https://platform.kimi.ai/docs/pricing/chat-k27-code.md",
     "https://platform.kimi.ai/docs/pricing/chat-k26.md",
@@ -84,6 +87,16 @@ def _pricing_subpages(index_text: str) -> list[str]:
     return list(dict.fromkeys(ordered))
 
 
+def _rendered_page(markdown_url: str) -> str:
+    """The rendered twin of an allowlisted ``.md`` pricing page.
+
+    Since 2026-11 the ``.md`` export of docs/pricing/chat renders its price
+    tables empty (``<tbody />``); the rendered page carries them as compiled
+    MDX table props. Derived from an allowlisted URL, so still Moonshot docs.
+    """
+    return markdown_url.removesuffix(".md")
+
+
 def _combined_html() -> str:
     try:
         index_text = fetch_html(DOC_INDEX_URL)
@@ -92,7 +105,8 @@ def _combined_html() -> str:
         index_text = ""
 
     chunks: list[str] = []
-    for url in _pricing_subpages(index_text):
+    pages = _pricing_subpages(index_text)
+    for url in [*pages, *dict.fromkeys(_rendered_page(page) for page in pages)]:
         try:
             chunks.append(fetch_html(url))
         except Exception as exc:  # noqa: BLE001

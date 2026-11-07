@@ -299,3 +299,70 @@ def test_coverage_normalizes_kimi_native_ids() -> None:
         "moonshotai/kimi-k2.7-code"
     )
     assert check_price_coverage._kimi_model_id("unrelated-model") is None  # noqa: SLF001
+
+
+KIMI_RENDERED_2026_11 = (
+    Path(__file__).parent / "fixtures/pricing/kimi_chat_rendered_2026-11-07.html"
+).read_text(encoding="utf-8")
+# The .md export of the same page, 2026-11-07: both price tables render empty.
+KIMI_EMPTY_MARKDOWN = (
+    "## Model Pricing\n\n### K3 Series Models\n\n<table>\n  <thead>\n    <tr />\n  </thead>\n\n"
+    "  <tbody />\n</table>\n"
+)
+
+
+def test_parser_reads_the_rendered_doc_tables() -> None:
+    # Refresh run 42359425520 held Kimi on "validation failed: ['empty pricing
+    # dict']": every family moved to docs/pricing/chat, whose .md export
+    # renders the tables empty, and the per-family pages redirect to it.
+    assert kimi_parser.parse(KIMI_EMPTY_MARKDOWN) == {}
+    parsed = kimi_parser.parse(KIMI_RENDERED_2026_11)
+    assert parsed["moonshotai/kimi-k3"] == {
+        "prompt_micro_per_m": 3_000_000,
+        "completion_micro_per_m": 15_000_000,
+        "prompt_cached_micro_per_m": 300_000,  # not the $3.00 5m-write column
+    }
+    assert parsed["moonshotai/kimi-k2.6"]["prompt_cached_micro_per_m"] == 160_000
+    assert parsed["moonshotai/kimi-k3.1-pro-highspeed"]["completion_micro_per_m"] == 20_000_000
+    assert len(parsed) == 6
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("children:`Cached Input`", "children:`Cache hit`"),  # unknown column
+        ("{title:`Output`,width:`15%`},", ""),  # rows wider than the columns
+        ("`$15.00 / MTok`", "`$15.00 / 1K tokens`"),  # unit changed
+        ("`$15.00 / MTok`", "`contact us`"),
+        ("`$0.16 / MTok`]", "`$0.16 / MTok`,{}]"),  # a cell the row pattern cannot read
+    ],
+)
+def test_parser_rejects_rendered_table_drift(old: str, new: str) -> None:
+    assert old in KIMI_RENDERED_2026_11
+    with pytest.raises(ValueError, match="Kimi"):
+        kimi_parser.parse(KIMI_RENDERED_2026_11.replace(old, new, 1))
+
+
+def test_fetch_reads_prices_from_the_rendered_page(monkeypatch: Any, tmp_path: Path) -> None:
+    fetched: list[str] = []
+
+    def docs(url: str, *, extra_headers: dict[str, str] | None = None) -> str:
+        del extra_headers
+        fetched.append(url)
+        if url == kimi.DOC_INDEX_URL:
+            return "- [Model Inference Pricing](https://platform.kimi.ai/docs/pricing/chat.md)"
+        if url == "https://platform.kimi.ai/docs/pricing/chat":
+            return KIMI_RENDERED_2026_11
+        return KIMI_EMPTY_MARKDOWN
+
+    monkeypatch.setenv("KIMI_API_KEY", "test-kimi-key")
+    monkeypatch.setattr(kimi, "fetch_html", docs)
+    monkeypatch.setattr(kimi, "fetch_json", lambda *_a, **_kw: _live_payload(include_k3=True))
+    monkeypatch.setattr(kimi, "MANIFEST_PATH", tmp_path / "kimi.json")
+    result = kimi.fetch()
+    assert set(result.prices) == {
+        "moonshotai/kimi-k2.6", "moonshotai/kimi-k2.7-code",
+        "moonshotai/kimi-k2.7-code-highspeed", "moonshotai/kimi-k3",
+    }
+    assert "https://platform.kimi.ai/docs/pricing/chat" in fetched
+    assert all(url.startswith("https://platform.kimi.ai/docs/") for url in fetched)

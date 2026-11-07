@@ -216,6 +216,34 @@ def test_fal_h3_max_parser_rejects_ambiguous_standard_prices() -> None:
         raise AssertionError("ambiguous fal prices must fail closed")
 
 
+FAL_H3_MAX_2026_11_07 = (
+    Path(__file__).parent / "fixtures/pricing/fal_h3_max_2026-11-07.html"
+).read_text(encoding="utf-8")
+
+
+def test_fal_h3_max_parser_reads_dated_standard_rates_beside_promotions() -> None:
+    # Refresh run 42359425520 held fal on "exact post-promotion H3 Max prices
+    # are missing or ambiguous": the page now lists two dated promotional rate
+    # sets and then "standard rates are $0.05, $0.08, and $0.16 per second at
+    # 480p, 768p, and 1080p". Only the standard set is billed.
+    assert fal._h3_max_standard_rates(FAL_H3_MAX_2026_11_07) == {"480p": 50_000, "768p": 80_000}
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        # A second, different standard rate set: ambiguous.
+        ("30% off</strong> standard rates:", "30% off</strong> standard rates are $0.06, $0.09, and $0.18 per second at 480p, 768p, and 1080p. Then:"),
+        # Standard sentence gone while promotions remain: never bill a promotion.
+        ("standard rates are", "rates are"),
+    ],
+)
+def test_fal_h3_max_dated_standard_rates_fail_closed(old: str, new: str) -> None:
+    assert old in FAL_H3_MAX_2026_11_07
+    with pytest.raises(RuntimeError, match="post-promotion H3 Max"):
+        fal._h3_max_standard_rates(FAL_H3_MAX_2026_11_07.replace(old, new, 1))
+
+
 def _discovered_image_prices() -> dict[str, dict[str, int]]:
     discovered: dict[str, dict[str, int]] = {}
     for provider in ("recraft", "bfl", "decart", "nscale", "krea", "fal"):

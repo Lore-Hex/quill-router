@@ -157,7 +157,7 @@ def test_typesafe_refuses_a_header_wider_than_the_price_row() -> None:
         "| Model                       | Identifier", "| Model | Jev 1.13 | Jev 1.14 (jev-latest)"
     )
     assert "Jev 1.14 (jev-latest)" in page, "fixture: the header was not widened"
-    with pytest.raises(RuntimeError, match="not two columns"):
+    with pytest.raises(RuntimeError, match="columns on every line"):
         typesafe.parse(page)
 
 
@@ -256,6 +256,49 @@ Charged per input token. Output tokens are free.
     only_pro = TYPESAFE_PAGE.replace("jev-1.13.0", "jev-1.13.0-pro")
     with pytest.raises(RuntimeError):
         typesafe.parse(only_pro)
+
+
+TYPESAFE_PAGE_2026_11 = (
+    Path(__file__).parent / "fixtures/pricing/typesafe_models_2026-11-07.md"
+).read_text()
+
+
+def test_typesafe_reads_the_aliased_column_of_the_multi_model_table() -> None:
+    # Refresh run 42359425520 held TypeSafe on "the pricing table is not two
+    # columns on every line: '| | Jev 1.14 | Jev 1.13 |'": the page now prices
+    # Jev 1.14 and Jev 1.13 side by side, and jev-latest points at 1.14.
+    assert "| | Jev 1.14 | Jev 1.13 |" in TYPESAFE_PAGE_2026_11
+    assert _only_price(typesafe.parse(TYPESAFE_PAGE_2026_11)) == (42_000, 0)
+
+
+@pytest.mark.parametrize(("alias_target", "expected"), [("jev-1.14.0", 84_000), ("jev-1.13.0", 42_000)])
+def test_typesafe_multi_model_table_prices_the_column_the_alias_names(alias_target: str, expected: int) -> None:
+    page = TYPESAFE_PAGE_2026_11.replace(
+        r"| Price (per Btok / per Mtok) | \$42 / \$0.042 | \$42 / \$0.042 |",
+        r"| Price (per Btok / per Mtok) | \$84 / \$0.084 | \$42 / \$0.042 |",
+    ).replace("| `jev-latest` | `jev-1.14.0` |", f"| `jev-latest` | `{alias_target}` |")
+    assert r"\$84 / \$0.084" in page and f"| `jev-latest` | `{alias_target}` |" in page
+    assert _only_price(typesafe.parse(page)) == (expected, 0)
+
+
+@pytest.mark.parametrize(
+    ("label", "old", "new"),
+    [
+        ("the alias names an unpriced model", "| `jev-latest` | `jev-1.14.0` |", "| `jev-latest` | `jev-1.15.0` |"),
+        ("two columns name one model", "| Model ID | `jev-1.14.0` | `jev-1.13.0` |", "| Model ID | `jev-1.14.0` | `jev-1.14.0` |"),
+        ("a column names no model", "| Model ID | `jev-1.14.0` | `jev-1.13.0` |", "| Model ID | `jev-1.14.0` | Jev 1.13 |"),
+        ("a column has no price", r"| \$42 / \$0.042 | \$42 / \$0.042 |", r"| \$42 / \$0.042 | contact sales |"),
+        ("a column holds two rates", r"| \$42 / \$0.042 | \$42 / \$0.042 |", r"| \$42 / \$0.042 | \$42 / \$0.042 \$1 / \$0.001 |"),
+        ("a header wider than the rows", "| | Jev 1.14 | Jev 1.13 |", "| | Jev 1.15 | Jev 1.14 | Jev 1.13 |"),
+        ("the label column names a model", "| Model ID |", "| jev-1.12.0 |"),
+        ("an unpriced model named in prose", "Jev 1.14 is the newest", "jev-1.15.0 is the newest"),
+        ("a fee beside the table", "Long context costs the same", "Long context costs $0.01 extra and the same"),
+    ],
+)
+def test_typesafe_multi_model_table_refuses_ambiguity(label: str, old: str, new: str) -> None:
+    assert old in TYPESAFE_PAGE_2026_11, label
+    with pytest.raises(RuntimeError, match="typesafe:"):
+        typesafe.parse(TYPESAFE_PAGE_2026_11.replace(old, new))
 
 
 def test_the_scraper_checks_the_alias_the_catalog_actually_calls() -> None:

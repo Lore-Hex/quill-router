@@ -1,7 +1,7 @@
 """TypeSafe AI: the Jev decision model, input-only pricing, read from the vendor.
 
-TypeSafe publishes Jev's rate on its public models page: one two-column table
-with a row ``| Price (per Btok / per Mtok) | \\$42 / \\$0.042 |`` and one
+TypeSafe publishes Jev's rate on its public models page: a table with one
+column per current model (one until 2026-10, two since) and a row ``| Price (per Btok / per Mtok) | \\$42 / \\$0.042 |`` and one
 sentence that fixes the shape ("Charged per input token. Output tokens are
 free.").
 
@@ -13,14 +13,17 @@ cells. It now checks things that are true of the WHOLE page whatever syntax a
 change arrives in, and refuses the page if any stops being true:
 
   * the price label appears exactly once, anywhere;
-  * the page holds exactly two dollar amounts, and they are that one pair (so
-    no second model's price, no per-request fee, in any table, list or HTML);
-  * exactly one versioned model id (``jev-1.13.0``) is named anywhere;
+  * the page's only dollar amounts are the table's price pairs (so no
+    per-request fee or stray price, in any table, list or HTML);
+  * every versioned model id (``jev-1.14.0``) named anywhere is a priced column;
   * the page's alias table binds ``jev-latest`` -- the id this route actually
     calls -- to that same versioned model, and the pricing table names it too.
     Counting ids alone was not enough: a page could price a "legacy" table and
     describe the alias's new target in prose with no id and no dollar sign;
-  * the table around the price row is two columns wide on every line;
+  * the table around the price row is the same width on every line, each of
+    its value columns names exactly one versioned model, and the price read is
+    the one in the column of the model the alias points to (the page priced
+    one model until 2026-10 and prices two, one per column, since 2026-11);
   * the per-billion and per-million figures agree, and output is still free.
 
 A refusal fails the refresh loudly and leaves the last-known-good price in
@@ -60,7 +63,10 @@ _AMOUNT = r"\\?\$([0-9][0-9,]*(?:\.[0-9]+)?)"
 _PRICE_LABEL = "Price (per Btok / per Mtok)"
 _PRICE_PAIR = re.compile(_AMOUNT + r"\s*/\s*" + _AMOUNT)
 _ANY_DOLLAR_AMOUNT = re.compile(r"\$\s*[0-9]")
-_INPUT_ONLY = re.compile(r"charged per input token\.\s+output tokens are free\.", re.IGNORECASE)
+# "Charged per input token." until 2026-10, "You pay per input token." since.
+_INPUT_ONLY = re.compile(
+    r"(?:charged|you pay) per input token\.\s+output tokens are free\.", re.IGNORECASE
+)
 # A versioned model id as a COMPLETE token. Matching `jev-1.13.0` with word
 # boundaries also matched it inside `jev-1.13.0-pro`, so a page that priced
 # Standard and pointed the alias at a dearer Pro variant read as one model. A
@@ -110,10 +116,18 @@ def _aliased_version(page: str) -> str:
 
 
 def _price_block(page: str) -> tuple[str, str]:
-    """(value cell of the price row, text of the table block it sits in)."""
+    """(price cell of the column for the model UPSTREAM_ALIAS names, its block).
+
+    The table may describe one model (a label column and a value column, as
+    until 2026-10) or several, one per column ("| | Jev 1.14 | Jev 1.13 |"
+    from 2026-11). Either way every line of the block has the same width,
+    every value column names exactly one versioned model, no two columns name
+    the same one, and the label column names none. The price read is the one
+    in the column of the model the alias points to.
+    """
     if page.count(_PRICE_LABEL) != 1:
-        # Zero: the table moved. More: TypeSafe prices more than one model, in
-        # whatever syntax, and "the" price no longer exists.
+        # Zero: the table moved. More: a second price table, in whatever
+        # syntax, and which one applies is not certain.
         raise RuntimeError(
             f"{SLUG}: expected the price label exactly once, found {page.count(_PRICE_LABEL)}"
         )
@@ -124,18 +138,46 @@ def _price_block(page: str) -> tuple[str, str]:
         first -= 1
     while last + 1 < len(lines) and lines[last + 1].strip().startswith("|"):
         last += 1
+    price_cells = _cells(lines[at])
+    width = len(price_cells) if price_cells is not None else 0
+    table: list[list[str]] = []
     for line in lines[first : last + 1]:
         cells = _cells(line)
-        if cells is None or len(cells) != 2:
-            # A third column is a second model. A row narrower than its header
-            # is one too: markdown fills the missing cell in silently.
+        if cells is None or width < 2 or len(cells) != width:
+            # A row narrower than its header is a model with no price:
+            # markdown fills the missing cell in silently. A line without
+            # both boundary pipes cannot be counted at all.
             raise RuntimeError(
-                f"{SLUG}: the pricing table is not two columns on every line: {line.strip()[:60]!r}"
+                f"{SLUG}: the pricing table is not {width} columns on every line: {line.strip()[:60]!r}"
             )
-    label, value = _cells(lines[at]) or ("", "")
-    if label != _PRICE_LABEL:
+        table.append(cells)
+    assert price_cells is not None
+    if price_cells[0] != _PRICE_LABEL:
         raise RuntimeError(f"{SLUG}: the price label is not the first cell of its row")
-    return value, "\n".join(lines[first : last + 1])
+    if any(_model_versions(row[0]) for row in table):
+        raise RuntimeError(f"{SLUG}: the pricing table's label column names a model")
+    columns: dict[str, int] = {}
+    for column in range(1, width):
+        named = sorted({version for row in table for version in _model_versions(row[column])})
+        if len(named) != 1:
+            raise RuntimeError(
+                f"{SLUG}: pricing column {column} names {named or 'no versioned model'}; "
+                "its price belongs to exactly one"
+            )
+        if named[0] in columns:
+            raise RuntimeError(f"{SLUG}: two pricing columns name {named[0]}")
+        columns[named[0]] = column
+    aliased = _aliased_version(page)
+    if aliased not in columns:
+        raise RuntimeError(
+            f"{SLUG}: the pricing table does not name {aliased}, the model "
+            f"{UPSTREAM_ALIAS} points at"
+        )
+    for column in range(1, width):
+        cell = price_cells[column]
+        if len(_PRICE_PAIR.findall(cell)) != 1 or _PRICE_PAIR.sub("", cell).strip():
+            raise RuntimeError(f"{SLUG}: the price cell is not a single '$x / $y' pair")
+    return price_cells[columns[aliased]], "\n".join(lines[first : last + 1])
 
 
 def _dollars(text: str) -> Decimal:
@@ -150,25 +192,17 @@ def parse(page: object) -> dict[str, ModelPrice]:
         raise RuntimeError(f"{SLUG}: models page is not text")
     cell, block = _price_block(page)
     pairs = _PRICE_PAIR.findall(cell)
-    if len(pairs) != 1 or _PRICE_PAIR.sub("", cell).strip():
-        raise RuntimeError(f"{SLUG}: the price cell is not a single '$x / $y' pair")
-    if len(_ANY_DOLLAR_AMOUNT.findall(page)) != 2:
-        # The pair is two amounts. Any other dollar figure on the page is a
-        # price this parser does not understand: a fee, a tier, another model.
-        raise RuntimeError(f"{SLUG}: the page holds dollar amounts beyond the one price pair")
+    priced_columns = len(_PRICE_PAIR.findall(block))
+    if len(_ANY_DOLLAR_AMOUNT.findall(page)) != 2 * priced_columns:
+        # Each priced column holds one pair. Any other dollar figure on the
+        # page is a price this parser does not understand: a fee, a tier.
+        raise RuntimeError(f"{SLUG}: the page holds dollar amounts beyond the table's price pairs")
+    named = set(_model_versions(block))
     versions = sorted(set(_model_versions(page)))
-    if len(versions) != 1 or not _PLAIN_VERSION.fullmatch(versions[0]):
+    if not named or set(versions) != named or not all(_PLAIN_VERSION.fullmatch(v) for v in versions):
         raise RuntimeError(
-            f"{SLUG}: the page names {versions or 'no versioned model'}; which one "
-            "`jev-latest` costs is only certain when there is exactly one"
-        )
-    # The price belongs to the model the pricing table names; the route calls
-    # UPSTREAM_ALIAS. Those must be the same model, said so by the page itself.
-    aliased = _aliased_version(page)
-    if _model_versions(block) != [aliased]:
-        raise RuntimeError(
-            f"{SLUG}: the pricing table does not name {aliased}, the model "
-            f"{UPSTREAM_ALIAS} points at"
+            f"{SLUG}: the page names {versions or 'no versioned model'} but prices {sorted(named)}; "
+            "which one `jev-latest` costs is only certain when every named model is priced"
         )
     rows = pairs
     if not _INPUT_ONLY.search(page):
