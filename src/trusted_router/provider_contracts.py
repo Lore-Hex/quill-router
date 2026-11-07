@@ -107,13 +107,10 @@ OPERATOR_HELD_PROVIDER_MODELS = frozenset(
         # routing until a reviewed adapter release, not an attestation bypass.
         ("phala", "z-ai/glm-5.3"),
         ("phala", "z-ai/glm-5.3-flash"),
-        # October 15: every NEAR AI GLM 5.3 Flash request since 2026-10-12
-        # 18:06Z is refused by the gateway's attestation sidecar ("deployment
-        # history is outside the reviewed policy"): NEAR appended a deployment
-        # action on the reviewed host, so the pinned action-log hash in
-        # quill-cloud-proxy near_ai_policy.json no longer matches. Hold the
-        # route, not the verification, until a reviewed re-pin ships.
-        ("near-ai", "z-ai/glm-5.3-flash"),
+        # NEAR AI GLM 5.3 Flash was held October 15 to November 2026 while the
+        # gateway sidecar refused its drifted attestation. quill-cloud-proxy
+        # #720 re-pinned both pool members to their reviewed dstack 0.5.12
+        # identities; release this route only after that gateway rollout.
     }
 )
 EXACT_GLOBAL_SETTLEMENT_PROVIDER_MODELS = frozenset(
