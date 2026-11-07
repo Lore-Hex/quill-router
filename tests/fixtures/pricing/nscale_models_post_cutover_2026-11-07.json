@@ -1,0 +1,41 @@
+{
+  "_source": "Shape of https://inference.api.nscale.com/v1/models after Nscale's 2-4 November 2026 serverless retirements. Rows and prices match the public catalog at https://docs.nscale.com/docs/ai-services/models checked 2026-11-07: four chat models plus Qwen3-Embedding-8B, and no serverless image model.",
+  "object": "list",
+  "data": [
+    {
+      "id": "zai-org/GLM-5.3",
+      "object": "model",
+      "owned_by": "Z.ai",
+      "context_length": 1048576,
+      "pricing": {"input": 1.4, "output": 4.4}
+    },
+    {
+      "id": "mistralai/Mistral-Large-3-675B-Instruct-2512-NVFP4",
+      "object": "model",
+      "owned_by": "Mistral AI",
+      "context_length": 262144,
+      "pricing": {"input": 1.0, "output": 2.5}
+    },
+    {
+      "id": "Qwen/Qwen3.8-27B",
+      "object": "model",
+      "owned_by": "Qwen",
+      "context_length": 1048576,
+      "pricing": {"input": 0.2, "output": 2.5}
+    },
+    {
+      "id": "Qwen/Qwen3.8-Flash-Next-FP8",
+      "object": "model",
+      "owned_by": "Qwen",
+      "context_length": 1048576,
+      "pricing": {"input": 0.15, "output": 0.47}
+    },
+    {
+      "id": "Qwen/Qwen3-Embedding-8B",
+      "object": "model",
+      "owned_by": "Qwen",
+      "context_length": 32768,
+      "pricing": {"input": 0.04, "output": 0}
+    }
+  ]
+}

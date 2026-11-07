@@ -20,23 +20,120 @@ from trusted_router.provider_manifest_policy import (
     EXPIRING_PROVIDER_MANIFEST_SLUGS,
 )
 
+_SCALEWAY_CATALOG = Path(__file__).parent / "fixtures/pricing/scaleway_product_catalog_2026-11-07.json"
+
+
+def _scaleway_product(
+    product: str, token_type: str, nanos: int, *, mode: str = "realtime", region: str = "fr-par",
+) -> dict[str, Any]:
+    return {
+        "sku": f"/ai/generative_apis/consumption/{product}_{token_type}_{mode}/{region}",
+        "product_category": "Generative APIs",
+        "product": product,
+        "locality": {"region": region},
+        "price": {"retail_price": {"currency_code": "EUR", "units": 0, "nanos": nanos}},
+        "properties": {"generative_apis": {"consumption_mode": mode, "token_type": token_type}},
+        "unit_of_measure": {"unit": "token", "size": 1000},
+        "status": "general_availability",
+    }
+
 
 def test_scaleway_converts_first_party_eur_prices_with_fx_reserve() -> None:
-    html = """
-    <table><tbody><tr>
-      <td>glm-5.2</td><td>Chat and code</td>
-      <td>€1.80 / million tokens<br>€0.30 / million tokens cached</td>
-      <td>€5.50 / million tokens</td>
-    </tr></tbody></table>
-    """
+    products = [
+        _scaleway_product("glm-5.2", "input_token", 1_800_000),
+        _scaleway_product("glm-5.2", "input_cached_token", 300_000),
+        _scaleway_product("glm-5.2", "output_token", 5_500_000),
+        # Batch and other-region rows are different tariffs and are ignored.
+        _scaleway_product("glm-5.2", "input_token", 900_000, mode="batch"),
+        _scaleway_product("glm-5.2", "output_token", 1, region="nl-ams"),
+    ]
     assert scaleway._usd_per_eur("<Cube currency='USD' rate='1.20'/>") == Decimal("1.20")
-    assert scaleway._parse_prices(html, usd_per_eur=Decimal("1.20")) == {
+    assert scaleway._parse_catalog_prices(products, usd_per_eur=Decimal("1.20")) == {
         "z-ai/glm-5.2": ModelPrice(
             2_268_000,
             6_930_000,
             prompt_cached_micro_per_m=378_000,
         )
     }
+
+
+def test_scaleway_public_product_catalog_fixture_prices_every_mapped_model() -> None:
+    # 2026-11-07: www.scaleway.com/en/pricing/model-as-a-service/ returned 403
+    # to the refresh; the public Product Catalog API carries the same tariffs.
+    payload = json.loads(_SCALEWAY_CATALOG.read_text(encoding="utf-8"))
+    assert payload["total_count"] == len(payload["products"])
+
+    prices = scaleway._parse_catalog_prices(payload["products"], usd_per_eur=Decimal("1.20"))
+
+    assert set(prices) == set(scaleway.MODEL_MAP.values())
+    # EUR 0.40 / 0.08 / 0.80 per million x 1.20 USD/EUR x the 5% FX reserve.
+    assert prices["deepseek/deepseek-v4-flash-0731"] == ModelPrice(
+        504_000, 1_008_000, prompt_cached_micro_per_m=100_800,
+    )
+    assert prices["z-ai/glm-5.2"] == ModelPrice(2_268_000, 6_930_000)
+    assert prices["openai/gpt-oss-120b"] == ModelPrice(189_000, 756_000)
+
+
+def test_scaleway_catalog_pages_until_total_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    products = json.loads(_SCALEWAY_CATALOG.read_text(encoding="utf-8"))["products"]
+    urls: list[str] = []
+
+    def fetch(url: str, **_kwargs: object) -> dict[str, Any]:
+        urls.append(url)
+        page = int(url.rsplit("page=", 1)[1])
+        return {"products": products[(page - 1) * 100 : page * 100], "total_count": len(products)}
+
+    monkeypatch.setattr(scaleway, "fetch_json", fetch)
+
+    assert scaleway._fetch_catalog_products() == products
+    assert len(urls) == 2
+    assert all(url.startswith(scaleway.PRICING_URL + "?product_types=generative_apis") for url in urls)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"data": []},
+        {"products": [], "total_count": None},
+        {"products": [], "total_count": 5},
+    ],
+)
+def test_scaleway_catalog_fails_closed_on_reshaped_or_truncated_payload(
+    monkeypatch: pytest.MonkeyPatch, payload: dict[str, Any],
+) -> None:
+    monkeypatch.setattr(scaleway, "fetch_json", lambda _url, **_kwargs: payload)
+
+    with pytest.raises(RuntimeError, match="scaleway: product catalog"):
+        scaleway._fetch_catalog_products()
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"unit_of_measure": {"unit": "second", "size": 60}},
+        {"price": {"retail_price": {"currency_code": "USD", "units": 0, "nanos": 1}}},
+        {"price": {"retail_price": {"currency_code": "EUR", "units": 0, "nanos": "1"}}},
+    ],
+)
+def test_scaleway_catalog_rejects_unexpected_price_units(change: dict[str, Any]) -> None:
+    products = [
+        {**_scaleway_product("glm-5.2", "input_token", 1_800_000), **change},
+        _scaleway_product("glm-5.2", "output_token", 5_500_000),
+    ]
+
+    with pytest.raises(RuntimeError, match="scaleway: "):
+        scaleway._parse_catalog_prices(products, usd_per_eur=Decimal("1.20"))
+
+
+def test_scaleway_catalog_rejects_conflicting_duplicate_tariffs() -> None:
+    products = [
+        _scaleway_product("glm-5.2", "input_token", 1_800_000),
+        _scaleway_product("glm-5.2", "input_token", 1_900_000),
+        _scaleway_product("glm-5.2", "output_token", 5_500_000),
+    ]
+
+    with pytest.raises(RuntimeError, match="conflicting prompt prices"):
+        scaleway._parse_catalog_prices(products, usd_per_eur=Decimal("1.20"))
 
 
 def test_scaleway_rejects_missing_fx_rate() -> None:

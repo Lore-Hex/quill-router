@@ -78,6 +78,9 @@ DECISIONMODELS_PINNED_S1_PRO_RETIREMENT_AT = datetime(2026, 11, 30, 23, 0, tzinf
 # Anthropic retires claude-sonnet-4-5 on 30 Nov 2026 at 9AM PT (PST, UTC-8).
 ANTHROPIC_SONNET_45_RETIREMENT_AT = datetime(2026, 11, 30, 17, 0, tzinfo=UTC)
 MISTRAL_MEDIUM_35_RETIREMENT_AT = datetime(2027, 4, 30, 0, 0, tzinfo=UTC)
+# Mistral's models page (checked 2026-11-07) deprecates Voxtral TTS 26.03 on
+# 10/31/2026 and retires it on 4/30/2027 (date-only, so 00:00 UTC).
+MISTRAL_VOXTRAL_TTS_2603_RETIREMENT_AT = datetime(2027, 4, 30, 0, 0, tzinfo=UTC)
 # AI Studio redirects gemini-2.5-flash to 3.5 Flash-Lite on 1 Dec 2026 (date only).
 GOOGLE_AI_STUDIO_GEMINI_25_FLASH_RETIREMENT_AT = datetime(2026, 12, 1, 0, 0, tzinfo=UTC)
 # Lyceum redirects kimi-k2.7-code to kimi-k3 from 4 Nov 2026 (date only).
@@ -1192,6 +1195,17 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"mistral-medium-3.5", "mistral-medium-3-5"}),
         effective_at=MISTRAL_MEDIUM_35_RETIREMENT_AT,
         replacement_model_ids=("mistralai/mistral-large-4",),
+    ),
+    # Mistral's deprecated-models table (https://docs.mistral.ai/models, checked
+    # 2026-11-07) retires voxtral-mini-tts-2603 on 4/30/2027 and names Voxtral
+    # TTS 3 (voxtral-mini-tts-3-0) as its successor. TrustedRouter does not list
+    # that model, so no replacement is quoted; Tinfoil's open-weight Voxtral
+    # 4B TTS route is a different model and is unaffected.
+    _Retirement(
+        provider="mistral",
+        model_ids=frozenset({"mistralai/voxtral-mini-tts-2603"}),
+        upstream_ids=frozenset({"voxtral-mini-tts-2603"}),
+        effective_at=MISTRAL_VOXTRAL_TTS_2603_RETIREMENT_AT,
     ),
     # AI Studio's November 2 notice redirects gemini-2.5-flash to
     # gemini-3.5-flash-lite on 1 December 2026. Retire the old identity rather

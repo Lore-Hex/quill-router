@@ -1801,6 +1801,11 @@ def _filter_unserved_provider_endpoints(
             endpoint.provider, frozenset()
         ):
             return False
+        # A scheduled retirement ends every route, explicit media routes
+        # included: speech/transcription endpoints skip the chat allowlist
+        # below, not the provider's announced cutover.
+        if provider_model_retired(endpoint.provider, endpoint.model_id, endpoint.upstream_id, at=at):
+            return False
         # Async media routes are registered only after their provider-native
         # queue contracts are implemented and tested. Chat /models manifests
         # do not list video models, so applying the chat allowlist here would

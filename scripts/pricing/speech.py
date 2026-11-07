@@ -21,6 +21,7 @@ from bs4 import BeautifulSoup, Tag
 
 from scripts.pricing.base import safe_exception_summary
 from trusted_router.pricing_approvals import approved_dated_price_transition
+from trusted_router.provider_lifecycle import MISTRAL_VOXTRAL_TTS_2603_RETIREMENT_AT
 
 HELD_FOR_REVIEW_HEADING = "Held for price review (last published prices kept):"
 SOURCES = {
@@ -32,6 +33,11 @@ GEMINI_URL = "https://ai.google.dev/gemini-api/docs/pricing"
 ELEVENLABS_URL = "https://elevenlabs.io/pricing/api"
 MICROSOFT_URL = "https://microsoft.ai/news/our-first-streaming-transcription-model/"
 TINFOIL_URL = "https://inference.tinfoil.sh/v1/models"
+MISTRAL_MODELS_URL = "https://docs.mistral.ai/models"
+
+
+class MissingSpeechTariff(ValueError):
+    """The price page no longer lists the model at all (not a malformed row)."""
 
 
 def parse_tinfoil_request_prices(raw: str) -> dict[str, int]:
@@ -127,37 +133,85 @@ def parse_microsoft_prices(html: str) -> dict[str, int]:
     return prices
 
 
+_GEMINI_SPEECH_SECTIONS = (
+    ("Gemini 3.8 Flash TTS", "gemini-3.8-flash-tts"),
+    ("Gemini 3.8 Flash-Lite TTS", "gemini-3.8-flash-lite-tts"),
+)
+
+
+def _gemini_html_standard_rows(html: str, name: str, model: str) -> tuple[str, list[list[str]]]:
+    soup = BeautifulSoup(html, "html.parser")
+    heading = next(
+        (h for h in soup.find_all("h2") if h.get_text(" ", strip=True) == name), None
+    )
+    if heading is None:
+        raise ValueError(f"Missing Gemini speech section: {model}")
+    table = None
+    standard = False
+    for element in heading.find_all_next(["h2", "h3", "table"]):
+        if element.name == "h2":
+            break
+        if element.name == "h3":
+            standard = element.get_text(" ", strip=True) == "Standard"
+        if element.name == "table" and standard:
+            table = element
+            break
+    if table is None:
+        raise ValueError(f"Missing Standard per-token speech pricing: {model}")
+    rows = [
+        [c.get_text(" ", strip=True) for c in row.find_all(["td", "th"], recursive=False)]
+        for row in table.select("tr")
+    ]
+    return table.get_text(" ", strip=True), rows
+
+
+def _gemini_markdoc_standard_rows(source: str, name: str, model: str) -> tuple[str, list[list[str]]]:
+    # Since November 2026 ai.google.dev redirects to aistudio.google.com, which
+    # serves the page's Markdoc source (text/markdown), not rendered HTML.
+    sections = [
+        body
+        for heading, separator, body in (
+            section.partition("\n") for section in re.split(r"(?m)^## ", source)[1:]
+        )
+        if separator and re.sub(r"\{%.*?%\}", "", heading).strip() == name
+    ]
+    if len(sections) != 1:
+        raise ValueError(f"Missing Gemini speech section: {model}")
+    standard = re.findall(
+        r'\{%\s*tab\s+title="Standard"\s*%\}(.*?)\{%\s*/tab\s*%\}', sections[0], re.DOTALL
+    )
+    tables = (
+        re.findall(r"\{%\s*table\s*%\}(.*?)\{%\s*/table\s*%\}", standard[0], re.DOTALL)
+        if len(standard) == 1
+        else []
+    )
+    if len(tables) != 1:
+        raise ValueError(f"Missing Standard per-token speech pricing: {model}")
+    rows = []
+    for block in re.split(r"(?m)^[ \t]*---[ \t]*$", tables[0]):
+        cells = re.split(r"(?m)^[ \t]*\* ", block)[1:]
+        # Markdoc wraps one cell over several lines and marks footnotes inline.
+        rows.append([" ".join(re.sub(r"\{%.*?%\}", "", cell).split()) for cell in cells])
+    return " ".join(" ".join(row) for row in rows), rows
+
+
 def parse_gemini_token_prices(html: str, *, today: date | None = None) -> dict[str, dict[str, int]]:
     """Read only Standard TTS tables, respecting Google's dated price schedule."""
     today = today or datetime.now(UTC).date()
-    soup = BeautifulSoup(html, "html.parser")
+    markdoc = re.search(r"<h2\b", html, re.IGNORECASE) is None and re.search(
+        r"\{%\s*(?:tabs?|table)\b", html
+    ) is not None
     prices: dict[str, dict[str, int]] = {}
-    for name, model in (
-        ("Gemini 3.8 Flash TTS", "gemini-3.8-flash-tts"),
-        ("Gemini 3.8 Flash-Lite TTS", "gemini-3.8-flash-lite-tts"),
-    ):
-        heading = next(
-            (h for h in soup.find_all("h2") if h.get_text(" ", strip=True) == name), None
+    for name, model in _GEMINI_SPEECH_SECTIONS:
+        table_text, table_rows = (
+            _gemini_markdoc_standard_rows(html, name, model)
+            if markdoc
+            else _gemini_html_standard_rows(html, name, model)
         )
-        if heading is None:
-            raise ValueError(f"Missing Gemini speech section: {model}")
-        table = None
-        standard = False
-        for element in heading.find_all_next(["h2", "h3", "table"]):
-            if element.name == "h2":
-                break
-            if element.name == "h3":
-                standard = element.get_text(" ", strip=True) == "Standard"
-            if element.name == "table" and standard:
-                table = element
-                break
-        if table is None or "per 1M tokens in USD" not in table.get_text(" ", strip=True):
+        if "per 1M tokens in USD" not in table_text:
             raise ValueError(f"Missing Standard per-token speech pricing: {model}")
         rates: dict[str, int] = {}
-        for row in table.select("tr"):
-            cells = [
-                c.get_text(" ", strip=True) for c in row.find_all(["td", "th"], recursive=False)
-            ]
+        for cells in table_rows:
             if len(cells) != 3 or cells[0] not in {"Input price", "Output price"}:
                 continue
             kind = "input" if cells[0] == "Input price" else "output"
@@ -221,9 +275,60 @@ def parse_character_price(model: str, html: str) -> int:
         if micro <= 0 or micro != micro.to_integral_value():
             raise ValueError(f"Invalid speech tariff for {model}")
         found.add(int(micro))
+    if not found:
+        raise MissingSpeechTariff(f"Missing or conflicting speech tariffs for {model}")
     if len(found) != 1:
         raise ValueError(f"Missing or conflicting speech tariffs for {model}")
     return found.pop()
+
+
+def parse_mistral_lifecycle(html: str, upstream_id: str) -> tuple[date, date]:
+    """Return (deprecated_on, retires_on) from Mistral's deprecated-models table."""
+    soup = BeautifulSoup(html, "html.parser")
+    found: list[tuple[date, date]] = []
+    for row in soup.select("table tr"):
+        cells = row.find_all(["td", "th"], recursive=False)
+        if not any(cell.get_text(" ", strip=True) == upstream_id for cell in cells):
+            continue
+        heading = row.find_previous(["h2", "h3"])
+        if heading is None or "deprecated" not in heading.get_text(" ", strip=True).lower():
+            continue
+        dates = [
+            datetime.strptime(match, "%m/%d/%Y").date()
+            for cell in cells
+            for match in re.findall(r"\b\d{1,2}/\d{1,2}/\d{4}\b", cell.get_text(" ", strip=True))
+        ]
+        if len(dates) != 2 or dates[0] >= dates[1]:
+            raise ValueError(f"Unrecognized Mistral lifecycle dates for {upstream_id}")
+        found.append((dates[0], dates[1]))
+    if len(found) != 1:
+        raise ValueError(f"Missing or conflicting Mistral lifecycle row for {upstream_id}")
+    return found[0]
+
+
+def _mistral_source(today: date) -> Updates:
+    """Voxtral TTS 26.03: published tariff, or a committed price while deprecated.
+
+    Mistral deprecated voxtral-mini-tts-2603 on 2026-10-31 (retiring
+    2027-04-30, replaced by Voxtral TTS 3) and dropped its row from the price
+    page. Until retirement, keep the committed tariff only while the models
+    page still shows that exact schedule; anything else holds for review.
+    """
+    model = "mistralai/voxtral-mini-tts-2603"
+    try:
+        return {"prices": {model: parse_character_price(model, _fetch_text(SOURCES[model]))}}
+    except MissingSpeechTariff:
+        deprecated_on, retires_on = parse_mistral_lifecycle(
+            _fetch_text(MISTRAL_MODELS_URL), "voxtral-mini-tts-2603"
+        )
+        if retires_on != MISTRAL_VOXTRAL_TTS_2603_RETIREMENT_AT.date():
+            raise ValueError(
+                f"Mistral moved the {model} retirement to {retires_on.isoformat()}; "
+                "update provider_lifecycle"
+            ) from None
+        if not deprecated_on <= today < retires_on:
+            raise ValueError(f"No published Mistral tariff for {model}") from None
+        return {}
 
 
 # Section of the snapshot each source refreshes, keyed by model id.
@@ -244,7 +349,7 @@ def _character_source(model: str) -> Updates:
 
 def _sources(today: date) -> list[tuple[str, Callable[[], Updates]]]:
     return [
-        ("mistral", lambda: _character_source("mistralai/voxtral-mini-tts-2603")),
+        ("mistral", lambda: _mistral_source(today)),
         ("xai", lambda: _character_source("x-ai/grok-voice-tts-1.0")),
         ("elevenlabs", lambda: {"prices": parse_elevenlabs_prices(_fetch_text(ELEVENLABS_URL))}),
         ("microsoft", lambda: {"prices": parse_microsoft_prices(_fetch_text(MICROSOFT_URL))}),
@@ -325,7 +430,10 @@ def refresh() -> int:
     SNAPSHOT.write_text(json.dumps(snapshot, indent=2, sort_keys=True) + "\n")
     print(f"Speech price refresh — {len(sources)} sources, {len(held)} held")
     for slug, models in refreshed.items():
-        print(f"  {slug}: refreshed {', '.join(models)}")
+        if models:
+            print(f"  {slug}: refreshed {', '.join(models)}")
+        else:
+            print(f"  {slug}: kept committed prices (deprecated model, no published tariff)")
     if held:
         _print_held(held)
         print()

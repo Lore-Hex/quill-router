@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import re
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from typing import Any
+from urllib.parse import urlencode
 
-from bs4 import BeautifulSoup
-
-from scripts.pricing.base import ModelPrice, fetch_html
+from scripts.pricing.base import ModelPrice, fetch_html, fetch_json
 from scripts.pricing.currency import (
     ECB_FX_URL,
     FX_RESERVE,  # noqa: F401 - retained for callers auditing the conversion reserve
@@ -27,7 +26,13 @@ from scripts.pricing.providers._direct_openai import (
 SLUG = "scaleway"
 BASE_URL = "https://api.scaleway.ai/v1"
 URL = f"{BASE_URL}/models"
-PRICING_URL = "https://www.scaleway.com/en/pricing/model-as-a-service/"
+# Scaleway's public Product Catalog API (no credentials). It replaced the
+# marketing pricing page, which started answering automated fetches with 403
+# in November 2026. Same first-party EUR list prices, per 1,000 tokens.
+PRICING_URL = "https://api.scaleway.com/product-catalog/v2alpha1/public-catalog/products"
+PRICING_QUERY = {"product_types": "generative_apis", "page_size": 500}
+PRICING_REGION = "fr-par"
+MAX_PRICING_PAGES = 10
 MANIFEST_PATH = (
     Path(__file__).resolve().parents[3]
     / "src/trusted_router/data/provider_models/scaleway.json"
@@ -49,38 +54,97 @@ MODEL_MAP = {
     "deepseek-v4-flash-0731": "deepseek/deepseek-v4-flash-0731",
 }
 
-_EURO_RE = re.compile(r"€\s*([0-9]+(?:\.[0-9]+)?)")
+_TOKEN_KINDS = {
+    "input_token": "prompt",
+    "output_token": "completion",
+    "input_cached_token": "cached",
+}
 
 
-def _parse_prices(html: str, *, usd_per_eur: Decimal) -> dict[str, ModelPrice]:
+def _eur_per_million(product: dict[str, Any]) -> Decimal | None:
+    price = product.get("price")
+    retail = price.get("retail_price") if isinstance(price, dict) else None
+    unit = product.get("unit_of_measure")
+    if not isinstance(retail, dict) or not isinstance(unit, dict):
+        return None
+    if retail.get("currency_code") != "EUR" or unit.get("unit") != "token":
+        raise RuntimeError(f"scaleway: unexpected price unit for {product.get('sku')!r}")
+    size, units, nanos = unit.get("size"), retail.get("units", 0), retail.get("nanos", 0)
+    if not all(type(value) is int for value in (size, units, nanos)) or size <= 0:
+        raise RuntimeError(f"scaleway: malformed price for {product.get('sku')!r}")
+    try:
+        eur = (Decimal(units) + Decimal(nanos) / Decimal(1_000_000_000)) * Decimal(1_000_000)
+        return eur / Decimal(size)
+    except InvalidOperation as exc:
+        raise RuntimeError(f"scaleway: malformed price for {product.get('sku')!r}") from exc
+
+
+def _parse_catalog_prices(
+    products: list[Any], *, usd_per_eur: Decimal
+) -> dict[str, ModelPrice]:
+    """Realtime fr-par token list prices from the public Product Catalog."""
+
+    rates: dict[str, dict[str, Decimal]] = {}
+    for product in products:
+        if not isinstance(product, dict) or product.get("product_category") != "Generative APIs":
+            continue
+        model_id = MODEL_MAP.get(str(product.get("product")))
+        properties = product.get("properties")
+        generative = properties.get("generative_apis") if isinstance(properties, dict) else None
+        locality = product.get("locality")
+        if (
+            model_id is None
+            or not isinstance(generative, dict)
+            or generative.get("consumption_mode") != "realtime"
+            or not isinstance(locality, dict)
+            or locality.get("region") != PRICING_REGION
+        ):
+            continue
+        kind = _TOKEN_KINDS.get(str(generative.get("token_type")))
+        if kind is None:
+            continue
+        eur = _eur_per_million(product)
+        if eur is None:
+            continue
+        previous = rates.setdefault(model_id, {}).setdefault(kind, eur)
+        if previous != eur:
+            raise RuntimeError(f"scaleway: conflicting {kind} prices for {model_id}")
     prices: dict[str, ModelPrice] = {}
-    for row in BeautifulSoup(html, "html.parser").find_all("tr"):
-        cells = row.find_all("td")
-        if len(cells) < 4:
-            continue
-        native_id = cells[0].get_text(" ", strip=True)
-        model_id = MODEL_MAP.get(native_id)
-        if model_id is None:
-            continue
-        input_values = [Decimal(value) for value in _EURO_RE.findall(str(cells[2]))]
-        output_values = [Decimal(value) for value in _EURO_RE.findall(str(cells[3]))]
-        if not input_values or not output_values:
+    for model_id, kinds in rates.items():
+        if "prompt" not in kinds or "completion" not in kinds:
             continue
         prices[model_id] = ModelPrice(
-            _microdollars_per_million(input_values[0], usd_per_eur),
-            _microdollars_per_million(output_values[0], usd_per_eur),
+            _microdollars_per_million(kinds["prompt"], usd_per_eur),
+            _microdollars_per_million(kinds["completion"], usd_per_eur),
             prompt_cached_micro_per_m=(
-                _microdollars_per_million(input_values[1], usd_per_eur)
-                if len(input_values) > 1
+                _microdollars_per_million(kinds["cached"], usd_per_eur)
+                if "cached" in kinds
                 else None
             ),
         )
     return prices
 
 
+def _fetch_catalog_products() -> list[Any]:
+    products: list[Any] = []
+    for page in range(1, MAX_PRICING_PAGES + 1):
+        payload = fetch_json(f"{PRICING_URL}?{urlencode({**PRICING_QUERY, 'page': page})}")
+        if not isinstance(payload, dict) or not isinstance(payload.get("products"), list):
+            raise RuntimeError("scaleway: product catalog has no products list")
+        total = payload.get("total_count")
+        if type(total) is not int or total < 0:
+            raise RuntimeError("scaleway: product catalog has no total_count")
+        products.extend(payload["products"])
+        if len(products) >= total or not payload["products"]:
+            if len(products) != total:
+                raise RuntimeError("scaleway: product catalog page count mismatch")
+            return products
+    raise RuntimeError("scaleway: product catalog exceeds the page limit")
+
+
 def _load_prices() -> dict[str, ModelPrice]:
-    return _parse_prices(
-        fetch_html(PRICING_URL),
+    return _parse_catalog_prices(
+        _fetch_catalog_products(),
         usd_per_eur=_usd_per_eur(fetch_html(ECB_FX_URL)),
     )
 

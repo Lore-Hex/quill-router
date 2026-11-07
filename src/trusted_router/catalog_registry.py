@@ -1352,6 +1352,10 @@ _VIDEO_MODELS: dict[str, Model] = {
 MODELS.update(_VIDEO_MODELS)
 
 for _speech in SPEECH_MODELS.values():
+    # Speech routes honor scheduled retirements like video routes: a retired
+    # single-provider speech model is not listed with a dead route.
+    if provider_model_retired(_speech.provider, _speech.id, _speech.upstream_id, at=CATALOG_RESOLVED_AT):
+        continue
     if _speech.provider == "azure":
         # Foundry chat agreements must not silently extend to Speech preview.
         _MODEL_PROVIDER_PRIVACY_OVERRIDES[(_speech.id, "azure")] = ModelProviderPrivacyOverride(

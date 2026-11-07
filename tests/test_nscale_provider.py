@@ -77,6 +77,58 @@ def test_nscale_chat_discovery_survives_independent_media_retirement() -> None:
     assert nscale.IMAGE_MODEL_ID not in rows
 
 
+_POST_CUTOVER_FIXTURE = (
+    Path(__file__).parent / "fixtures/pricing/nscale_models_post_cutover_2026-11-07.json"
+)
+
+
+def _post_cutover_rows() -> list[dict[str, object]]:
+    return nscale._catalog_rows(json.loads(_POST_CUTOVER_FIXTURE.read_text(encoding="utf-8")))
+
+
+def test_nscale_post_cutover_catalog_publishes_its_four_chat_models() -> None:
+    # 2026-11-07 refresh failed "fewer than 15 priced chat models": the
+    # November retirements left four chat models, which is honest, not breakage.
+    nscale.UPSTREAM_ID_MAP.clear()
+    chat_prices, manifest_prices, rows = nscale._discover(_post_cutover_rows())
+
+    assert chat_prices == {
+        "z-ai/glm-5.3": ModelPrice(1_400_000, 4_400_000),
+        "mistralai/mistral-large-3-675b-instruct-2512-nvfp4": ModelPrice(1_000_000, 2_500_000),
+        "qwen/qwen3.8-27b": ModelPrice(200_000, 2_500_000),
+        "qwen/qwen3.8-flash-next-fp8": ModelPrice(150_000, 470_000),
+    }
+    assert manifest_prices[nscale.EMBEDDING_MODEL_ID] == ModelPrice(40_000, 0)
+    assert nscale.IMAGE_MODEL_ID not in rows
+    assert nscale.UPSTREAM_ID_MAP["z-ai/glm-5.3"] == "zai-org/GLM-5.3"
+    # None of the survivors is scheduled for retirement.
+    for model_id, row in rows.items():
+        assert not provider_lifecycle.provider_model_retired(
+            "nscale", model_id, row["upstream_id"],
+            at=provider_lifecycle.NSCALE_NOVEMBER_2026_RETIREMENT_AT,
+        )
+
+
+def test_nscale_catalog_below_the_floor_still_fails_closed() -> None:
+    rows = _post_cutover_rows()
+    chat = [row for row in rows if row["id"] != nscale.EMBEDDING_UPSTREAM_ID]
+    embedding = [row for row in rows if row["id"] == nscale.EMBEDDING_UPSTREAM_ID]
+    shrunk = chat[: nscale.MIN_PRICED_CHAT_MODELS - 1] + embedding
+
+    with pytest.raises(RuntimeError, match="fewer than 3 priced chat models"):
+        nscale._discover(shrunk)
+
+
+def test_nscale_reshaped_pricing_fails_closed() -> None:
+    rows = _post_cutover_rows()
+    for row in rows:
+        # A renamed price field must not publish zero or guessed prices.
+        row["pricing"] = {"prompt": "0.0000014", "completion": "0.0000044"}
+
+    with pytest.raises(RuntimeError, match="empty pricing dict"):
+        nscale._discover(rows)
+
+
 def test_nscale_invalid_media_prices_are_quarantined_without_hiding_chat() -> None:
     rows = _rows()
     rows[-2]["pricing"] = {"input": 0, "output": 1}
@@ -490,9 +542,12 @@ def test_nscale_lists_its_image_at_the_audited_price() -> None:
 def test_nscale_still_lists_its_catalog() -> None:
     # Live provider state: provider-catalog-health.yml reports it hourly, and
     # the price refresh does not wait on it.
+    # Nscale's November 2026 cutover retired its image model and all but four
+    # chat models; delisted rows may linger as unroutable history.
     raw = json.loads(nscale.MANIFEST_PATH.read_text(encoding="utf-8"))
-    assert raw["model_count"] >= 15
-    assert {row["model_type"] for row in raw["models"]} == {"chat", "embedding", "image"}
+    listed = [row for row in raw["models"] if row.get("routable_reason") != "delisted-upstream"]
+    assert {"chat", "embedding"} <= {row["model_type"] for row in listed}
+    assert sum(row["model_type"] == "chat" for row in listed) >= nscale.MIN_PRICED_CHAT_MODELS
     assert any(row.get("routable") is not False for row in raw["models"])
 
 
