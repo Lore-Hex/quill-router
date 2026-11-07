@@ -1,175 +1,151 @@
 {
   "source": "https://trustedrouter.com/leaderboard?window=7d",
   "window": "7d",
-  "generated_at": "2026-11-06T22:17:10.067Z",
+  "generated_at": "2026-11-07T23:04:03.828Z",
   "providers": [
     {
       "provider": "cerebras",
-      "completion_rate": 0.9565,
-      "p50_ttft_ms": 751,
-      "tokens_per_second": 468.3,
-      "samples": 115,
+      "completion_rate": 0.9744,
+      "p50_ttft_ms": 727,
+      "tokens_per_second": 557.26,
+      "samples": 117,
       "throughput_samples": 10
-    },
-    {
-      "provider": "privatemode",
-      "completion_rate": 0.9811,
-      "p50_ttft_ms": 865,
-      "tokens_per_second": 55.18,
-      "samples": 106,
-      "throughput_samples": 7
     },
     {
       "provider": "inceptron",
-      "completion_rate": 0.8889,
-      "p50_ttft_ms": 941,
-      "tokens_per_second": 76.78,
-      "samples": 80,
-      "throughput_samples": 23
-    },
-    {
-      "provider": "nvidia-nim",
-      "completion_rate": 0.807,
-      "p50_ttft_ms": 981,
-      "tokens_per_second": 59.64,
-      "samples": 114,
-      "throughput_samples": 5
-    },
-    {
-      "provider": "friendli",
-      "completion_rate": 0.9596,
-      "p50_ttft_ms": 998,
-      "tokens_per_second": 273.24,
-      "samples": 99,
+      "completion_rate": 0.9011,
+      "p50_ttft_ms": 916,
+      "tokens_per_second": 115.69,
+      "samples": 82,
       "throughput_samples": 28
     },
     {
-      "provider": "tinfoil",
-      "completion_rate": 1.0,
-      "p50_ttft_ms": 1001,
-      "tokens_per_second": 200.83,
-      "samples": 107,
-      "throughput_samples": 24
-    },
-    {
-      "provider": "wafer",
-      "completion_rate": 0.9907,
-      "p50_ttft_ms": 1014,
-      "tokens_per_second": 249.63,
-      "samples": 106,
-      "throughput_samples": 19
-    },
-    {
-      "provider": "coralbricks",
-      "completion_rate": 1.0,
-      "p50_ttft_ms": 1027,
-      "tokens_per_second": 147.84,
-      "samples": 84,
-      "throughput_samples": 10
+      "provider": "maple",
+      "completion_rate": 0.2,
+      "p50_ttft_ms": 936,
+      "tokens_per_second": 142.76,
+      "samples": 60,
+      "throughput_samples": 4
     },
     {
       "provider": "inception",
       "completion_rate": 1.0,
-      "p50_ttft_ms": 1040,
-      "tokens_per_second": 332.86,
+      "p50_ttft_ms": 950,
+      "tokens_per_second": 426.63,
       "samples": 90,
-      "throughput_samples": 6
-    },
-    {
-      "provider": "together",
-      "completion_rate": 0.9899,
-      "p50_ttft_ms": 1070,
-      "tokens_per_second": 148.25,
-      "samples": 98,
-      "throughput_samples": 22
-    },
-    {
-      "provider": "parasail",
-      "completion_rate": 0.9626,
-      "p50_ttft_ms": 1071,
-      "tokens_per_second": 96.05,
-      "samples": 107,
-      "throughput_samples": 20
-    },
-    {
-      "provider": "muna",
-      "completion_rate": 1.0,
-      "p50_ttft_ms": 1083,
-      "tokens_per_second": 151.99,
-      "samples": 100,
       "throughput_samples": 8
     },
     {
+      "provider": "coralbricks",
+      "completion_rate": 1.0,
+      "p50_ttft_ms": 963,
+      "tokens_per_second": 186.0,
+      "samples": 76,
+      "throughput_samples": 10
+    },
+    {
+      "provider": "nvidia-nim",
+      "completion_rate": 0.7647,
+      "p50_ttft_ms": 972,
+      "tokens_per_second": 40.03,
+      "samples": 119,
+      "throughput_samples": 4
+    },
+    {
+      "provider": "friendli",
+      "completion_rate": 0.9703,
+      "p50_ttft_ms": 1015,
+      "tokens_per_second": 248.54,
+      "samples": 100,
+      "throughput_samples": 29
+    },
+    {
+      "provider": "tinfoil",
+      "completion_rate": 1.0,
+      "p50_ttft_ms": 1025,
+      "tokens_per_second": 227.85,
+      "samples": 108,
+      "throughput_samples": 23
+    },
+    {
+      "provider": "together",
+      "completion_rate": 0.9905,
+      "p50_ttft_ms": 1070,
+      "tokens_per_second": 244.88,
+      "samples": 104,
+      "throughput_samples": 23
+    },
+    {
+      "provider": "telnyx",
+      "completion_rate": 1.0,
+      "p50_ttft_ms": 1086,
+      "tokens_per_second": 199.83,
+      "samples": 99,
+      "throughput_samples": 30
+    },
+    {
+      "provider": "parasail",
+      "completion_rate": 0.9818,
+      "p50_ttft_ms": 1100,
+      "tokens_per_second": 133.69,
+      "samples": 110,
+      "throughput_samples": 20
+    },
+    {
       "provider": "mistral",
-      "completion_rate": 0.9561,
+      "completion_rate": 0.9916,
       "p50_ttft_ms": 1112,
-      "tokens_per_second": 58.81,
-      "samples": 113,
-      "throughput_samples": 3
+      "tokens_per_second": 52.76,
+      "samples": 118,
+      "throughput_samples": 1
+    },
+    {
+      "provider": "baseten",
+      "completion_rate": 0.8649,
+      "p50_ttft_ms": 1119,
+      "tokens_per_second": 126.56,
+      "samples": 111,
+      "throughput_samples": 20
+    },
+    {
+      "provider": "nextbit-eu",
+      "completion_rate": 0.9667,
+      "p50_ttft_ms": 1122,
+      "tokens_per_second": 90.83,
+      "samples": 119,
+      "throughput_samples": 10
+    },
+    {
+      "provider": "makora",
+      "completion_rate": 1.0,
+      "p50_ttft_ms": 1137,
+      "tokens_per_second": 74.97,
+      "samples": 103,
+      "throughput_samples": 20
     },
     {
       "provider": "neurometric",
       "completion_rate": 0.9917,
-      "p50_ttft_ms": 1117,
-      "tokens_per_second": null,
-      "samples": 119,
-      "throughput_samples": 0
-    },
-    {
-      "provider": "baseten",
-      "completion_rate": 0.8257,
-      "p50_ttft_ms": 1121,
-      "tokens_per_second": 150.13,
-      "samples": 108,
-      "throughput_samples": 20
-    },
-    {
-      "provider": "scaledown",
-      "completion_rate": 1.0,
-      "p50_ttft_ms": 1128,
+      "p50_ttft_ms": 1138,
       "tokens_per_second": null,
       "samples": 120,
       "throughput_samples": 0
     },
     {
-      "provider": "telnyx",
-      "completion_rate": 1.0,
-      "p50_ttft_ms": 1136,
-      "tokens_per_second": 165.32,
-      "samples": 99,
-      "throughput_samples": 25
+      "provider": "fireworks",
+      "completion_rate": 0.9815,
+      "p50_ttft_ms": 1139,
+      "tokens_per_second": 192.26,
+      "samples": 108,
+      "throughput_samples": 21
     },
     {
-      "provider": "reka",
-      "completion_rate": 1.0,
-      "p50_ttft_ms": 1148,
-      "tokens_per_second": null,
-      "samples": 30,
-      "throughput_samples": 0
-    },
-    {
-      "provider": "amazon-bedrock",
-      "completion_rate": 0.9841,
-      "p50_ttft_ms": 1149,
-      "tokens_per_second": 79.8,
-      "samples": 125,
-      "throughput_samples": 4
-    },
-    {
-      "provider": "nextbit-eu",
-      "completion_rate": 0.9667,
-      "p50_ttft_ms": 1157,
-      "tokens_per_second": 93.43,
-      "samples": 119,
-      "throughput_samples": 10
-    },
-    {
-      "provider": "crusoe",
-      "completion_rate": 0.8857,
-      "p50_ttft_ms": 1175,
-      "tokens_per_second": 130.28,
-      "samples": 105,
-      "throughput_samples": 23
+      "provider": "wafer",
+      "completion_rate": 0.9907,
+      "p50_ttft_ms": 1158,
+      "tokens_per_second": 251.61,
+      "samples": 107,
+      "throughput_samples": 21
     },
     {
       "provider": "hixtube",
@@ -177,383 +153,407 @@
       "p50_ttft_ms": 1180,
       "tokens_per_second": 89.46,
       "samples": 60,
-      "throughput_samples": 3
+      "throughput_samples": 1
     },
     {
       "provider": "nebius",
-      "completion_rate": 0.9808,
-      "p50_ttft_ms": 1205,
-      "tokens_per_second": 176.15,
-      "samples": 104,
+      "completion_rate": 0.9908,
+      "p50_ttft_ms": 1188,
+      "tokens_per_second": 175.04,
+      "samples": 109,
       "throughput_samples": 21
     },
     {
       "provider": "nextbit",
-      "completion_rate": 0.9583,
-      "p50_ttft_ms": 1242,
-      "tokens_per_second": 107.6,
+      "completion_rate": 0.9587,
+      "p50_ttft_ms": 1190,
+      "tokens_per_second": 101.85,
+      "samples": 121,
+      "throughput_samples": 10
+    },
+    {
+      "provider": "akashml",
+      "completion_rate": 0.9911,
+      "p50_ttft_ms": 1193,
+      "tokens_per_second": 212.96,
+      "samples": 112,
+      "throughput_samples": 16
+    },
+    {
+      "provider": "crusoe",
+      "completion_rate": 0.9545,
+      "p50_ttft_ms": 1214,
+      "tokens_per_second": 176.1,
+      "samples": 110,
+      "throughput_samples": 21
+    },
+    {
+      "provider": "scaleway",
+      "completion_rate": 1.0,
+      "p50_ttft_ms": 1217,
+      "tokens_per_second": 161.0,
+      "samples": 121,
+      "throughput_samples": 10
+    },
+    {
+      "provider": "reka",
+      "completion_rate": 1.0,
+      "p50_ttft_ms": 1226,
+      "tokens_per_second": null,
+      "samples": 30,
+      "throughput_samples": 0
+    },
+    {
+      "provider": "scaledown",
+      "completion_rate": 1.0,
+      "p50_ttft_ms": 1230,
+      "tokens_per_second": null,
       "samples": 120,
-      "throughput_samples": 10
+      "throughput_samples": 0
     },
     {
-      "provider": "relace",
-      "completion_rate": 0.9508,
-      "p50_ttft_ms": 1244,
-      "tokens_per_second": 66.08,
-      "samples": 61,
-      "throughput_samples": 10
+      "provider": "privatemode",
+      "completion_rate": 0.9741,
+      "p50_ttft_ms": 1237,
+      "tokens_per_second": 58.66,
+      "samples": 116,
+      "throughput_samples": 8
     },
     {
-      "provider": "makora",
-      "completion_rate": 0.9898,
-      "p50_ttft_ms": 1262,
-      "tokens_per_second": 74.97,
-      "samples": 98,
+      "provider": "muna",
+      "completion_rate": 1.0,
+      "p50_ttft_ms": 1243,
+      "tokens_per_second": 249.85,
+      "samples": 102,
+      "throughput_samples": 7
+    },
+    {
+      "provider": "sail-research",
+      "completion_rate": 0.8317,
+      "p50_ttft_ms": 1247,
+      "tokens_per_second": 88.39,
+      "samples": 101,
       "throughput_samples": 20
     },
     {
-      "provider": "wandb",
-      "completion_rate": 0.9802,
-      "p50_ttft_ms": 1285,
-      "tokens_per_second": 145.52,
-      "samples": 99,
-      "throughput_samples": 28
-    },
-    {
-      "provider": "sambanova",
-      "completion_rate": 0.9604,
-      "p50_ttft_ms": 1287,
-      "tokens_per_second": 88.46,
-      "samples": 99,
-      "throughput_samples": 10
-    },
-    {
-      "provider": "engy",
+      "provider": "deepinfra",
       "completion_rate": 1.0,
-      "p50_ttft_ms": 1293,
-      "tokens_per_second": 100.93,
-      "samples": 106,
-      "throughput_samples": 24
+      "p50_ttft_ms": 1250,
+      "tokens_per_second": 81.77,
+      "samples": 114,
+      "throughput_samples": 13
     },
     {
-      "provider": "lyceum",
-      "completion_rate": 0.9318,
-      "p50_ttft_ms": 1298,
-      "tokens_per_second": 140.62,
-      "samples": 88,
-      "throughput_samples": 34
+      "provider": "greenference",
+      "completion_rate": 0.9496,
+      "p50_ttft_ms": 1257,
+      "tokens_per_second": 92.32,
+      "samples": 119,
+      "throughput_samples": 8
     },
     {
       "provider": "minimax",
       "completion_rate": 0.9836,
-      "p50_ttft_ms": 1299,
-      "tokens_per_second": 89.19,
+      "p50_ttft_ms": 1259,
+      "tokens_per_second": 83.08,
       "samples": 60,
       "throughput_samples": 10
     },
     {
-      "provider": "mancer",
+      "provider": "sambanova",
+      "completion_rate": 0.7723,
+      "p50_ttft_ms": 1287,
+      "tokens_per_second": 88.46,
+      "samples": 80,
+      "throughput_samples": 8
+    },
+    {
+      "provider": "openai",
+      "completion_rate": 1.0,
+      "p50_ttft_ms": 1297,
+      "tokens_per_second": 69.07,
+      "samples": 115,
+      "throughput_samples": 1
+    },
+    {
+      "provider": "regolo",
+      "completion_rate": 0.9643,
+      "p50_ttft_ms": 1307,
+      "tokens_per_second": 39.11,
+      "samples": 111,
+      "throughput_samples": 19
+    },
+    {
+      "provider": "relace",
+      "completion_rate": 0.9672,
+      "p50_ttft_ms": 1316,
+      "tokens_per_second": 101.19,
+      "samples": 61,
+      "throughput_samples": 10
+    },
+    {
+      "provider": "venice",
+      "completion_rate": 0.9752,
+      "p50_ttft_ms": 1317,
+      "tokens_per_second": 128.61,
+      "samples": 121,
+      "throughput_samples": 9
+    },
+    {
+      "provider": "grok",
       "completion_rate": 0.9917,
-      "p50_ttft_ms": 1308,
-      "tokens_per_second": 72.88,
+      "p50_ttft_ms": 1324,
+      "tokens_per_second": 79.75,
       "samples": 120,
       "throughput_samples": 10
     },
     {
-      "provider": "greenference",
-      "completion_rate": 1.0,
-      "p50_ttft_ms": 1320,
-      "tokens_per_second": 91.95,
-      "samples": 118,
-      "throughput_samples": 10
+      "provider": "amazon-bedrock",
+      "completion_rate": 0.9844,
+      "p50_ttft_ms": 1329,
+      "tokens_per_second": 81.85,
+      "samples": 127,
+      "throughput_samples": 3
     },
     {
-      "provider": "grok",
-      "completion_rate": 0.9369,
-      "p50_ttft_ms": 1324,
-      "tokens_per_second": 69.96,
-      "samples": 111,
+      "provider": "morph",
+      "completion_rate": 0.9917,
+      "p50_ttft_ms": 1332,
+      "tokens_per_second": 49.09,
+      "samples": 121,
       "throughput_samples": 10
     },
     {
       "provider": "nscale",
       "completion_rate": 1.0,
-      "p50_ttft_ms": 1326,
-      "tokens_per_second": 179.42,
-      "samples": 120,
+      "p50_ttft_ms": 1338,
+      "tokens_per_second": 183.37,
+      "samples": 105,
       "throughput_samples": 10
     },
     {
-      "provider": "morph",
-      "completion_rate": 0.9833,
-      "p50_ttft_ms": 1332,
-      "tokens_per_second": 49.09,
-      "samples": 120,
-      "throughput_samples": 10
-    },
-    {
-      "provider": "scaleway",
-      "completion_rate": 1.0,
-      "p50_ttft_ms": 1333,
-      "tokens_per_second": 138.36,
-      "samples": 120,
-      "throughput_samples": 10
-    },
-    {
-      "provider": "deepinfra",
-      "completion_rate": 0.9703,
-      "p50_ttft_ms": 1339,
-      "tokens_per_second": 83.23,
-      "samples": 101,
-      "throughput_samples": 13
-    },
-    {
-      "provider": "regolo",
-      "completion_rate": 0.9189,
-      "p50_ttft_ms": 1339,
-      "tokens_per_second": 39.11,
-      "samples": 109,
-      "throughput_samples": 19
-    },
-    {
-      "provider": "aion-labs",
-      "completion_rate": 1.0,
-      "p50_ttft_ms": 1343,
-      "tokens_per_second": 75.48,
-      "samples": 119,
-      "throughput_samples": 11
-    },
-    {
-      "provider": "venice",
-      "completion_rate": 0.9914,
-      "p50_ttft_ms": 1345,
-      "tokens_per_second": 66.31,
-      "samples": 116,
-      "throughput_samples": 9
-    },
-    {
-      "provider": "akashml",
-      "completion_rate": 0.9908,
+      "provider": "mancer",
+      "completion_rate": 0.9917,
       "p50_ttft_ms": 1346,
-      "tokens_per_second": 212.96,
-      "samples": 109,
-      "throughput_samples": 18
-    },
-    {
-      "provider": "openai",
-      "completion_rate": 0.991,
-      "p50_ttft_ms": 1363,
-      "tokens_per_second": null,
-      "samples": 111,
-      "throughput_samples": 0
-    },
-    {
-      "provider": "sail-research",
-      "completion_rate": 0.7941,
-      "p50_ttft_ms": 1368,
-      "tokens_per_second": 98.34,
-      "samples": 101,
-      "throughput_samples": 19
-    },
-    {
-      "provider": "google-vertex",
-      "completion_rate": 1.0,
-      "p50_ttft_ms": 1379,
-      "tokens_per_second": 65.74,
-      "samples": 111,
-      "throughput_samples": 19
-    },
-    {
-      "provider": "deepseek",
-      "completion_rate": 0.9904,
-      "p50_ttft_ms": 1397,
-      "tokens_per_second": 121.99,
-      "samples": 103,
+      "tokens_per_second": 78.12,
+      "samples": 121,
       "throughput_samples": 10
+    },
+    {
+      "provider": "wandb",
+      "completion_rate": 1.0,
+      "p50_ttft_ms": 1355,
+      "tokens_per_second": 145.25,
+      "samples": 102,
+      "throughput_samples": 28
+    },
+    {
+      "provider": "lyceum",
+      "completion_rate": 0.9239,
+      "p50_ttft_ms": 1368,
+      "tokens_per_second": 174.72,
+      "samples": 92,
+      "throughput_samples": 31
+    },
+    {
+      "provider": "confidential-ai",
+      "completion_rate": 0.918,
+      "p50_ttft_ms": 1406,
+      "tokens_per_second": 93.68,
+      "samples": 61,
+      "throughput_samples": 8
     },
     {
       "provider": "digitalocean",
-      "completion_rate": 0.9896,
-      "p50_ttft_ms": 1407,
+      "completion_rate": 0.99,
+      "p50_ttft_ms": 1410,
       "tokens_per_second": 52.64,
-      "samples": 96,
+      "samples": 100,
       "throughput_samples": 12
     },
     {
-      "provider": "fireworks",
+      "provider": "deepseek",
       "completion_rate": 0.9902,
-      "p50_ttft_ms": 1415,
-      "tokens_per_second": 186.72,
-      "samples": 102,
-      "throughput_samples": 23
+      "p50_ttft_ms": 1419,
+      "tokens_per_second": 121.85,
+      "samples": 101,
+      "throughput_samples": 10
+    },
+    {
+      "provider": "google-ai-studio",
+      "completion_rate": 1.0,
+      "p50_ttft_ms": 1426,
+      "tokens_per_second": 70.32,
+      "samples": 114,
+      "throughput_samples": 10
     },
     {
       "provider": "pearl",
       "completion_rate": 1.0,
-      "p50_ttft_ms": 1420,
-      "tokens_per_second": 170.72,
-      "samples": 109,
-      "throughput_samples": 21
-    },
-    {
-      "provider": "google-ai-studio",
-      "completion_rate": 0.9439,
       "p50_ttft_ms": 1426,
-      "tokens_per_second": 71.93,
-      "samples": 107,
-      "throughput_samples": 9
+      "tokens_per_second": 180.99,
+      "samples": 111,
+      "throughput_samples": 20
     },
     {
-      "provider": "upstage",
+      "provider": "engy",
       "completion_rate": 1.0,
-      "p50_ttft_ms": 1485,
-      "tokens_per_second": 39.63,
-      "samples": 30,
-      "throughput_samples": 9
+      "p50_ttft_ms": 1450,
+      "tokens_per_second": 137.96,
+      "samples": 107,
+      "throughput_samples": 24
     },
     {
-      "provider": "databricks",
-      "completion_rate": 0.9912,
-      "p50_ttft_ms": 1535,
-      "tokens_per_second": 182.9,
-      "samples": 113,
+      "provider": "aion-labs",
+      "completion_rate": 1.0,
+      "p50_ttft_ms": 1477,
+      "tokens_per_second": 80.04,
+      "samples": 121,
       "throughput_samples": 10
     },
     {
-      "provider": "confidential-ai",
-      "completion_rate": 0.8868,
-      "p50_ttft_ms": 1563,
-      "tokens_per_second": 93.68,
-      "samples": 53,
-      "throughput_samples": 9
+      "provider": "anthropic",
+      "completion_rate": 0.9741,
+      "p50_ttft_ms": 1480,
+      "tokens_per_second": 87.63,
+      "samples": 115,
+      "throughput_samples": 12
     },
     {
-      "provider": "io-net",
+      "provider": "zro",
+      "completion_rate": 0.9735,
+      "p50_ttft_ms": 1481,
+      "tokens_per_second": 141.3,
+      "samples": 113,
+      "throughput_samples": 17
+    },
+    {
+      "provider": "abliteration",
       "completion_rate": 1.0,
-      "p50_ttft_ms": 1576,
-      "tokens_per_second": 89.95,
-      "samples": 112,
-      "throughput_samples": 18
+      "p50_ttft_ms": 1538,
+      "tokens_per_second": 158.04,
+      "samples": 120,
+      "throughput_samples": 11
+    },
+    {
+      "provider": "databricks",
+      "completion_rate": 0.9914,
+      "p50_ttft_ms": 1542,
+      "tokens_per_second": 182.9,
+      "samples": 115,
+      "throughput_samples": 10
     },
     {
       "provider": "kimi",
       "completion_rate": 1.0,
-      "p50_ttft_ms": 1583,
-      "tokens_per_second": 40.63,
-      "samples": 100,
-      "throughput_samples": 26
+      "p50_ttft_ms": 1571,
+      "tokens_per_second": 39.32,
+      "samples": 102,
+      "throughput_samples": 27
     },
     {
-      "provider": "zro",
-      "completion_rate": 0.9727,
-      "p50_ttft_ms": 1595,
-      "tokens_per_second": 141.3,
-      "samples": 110,
-      "throughput_samples": 16
+      "provider": "io-net",
+      "completion_rate": 1.0,
+      "p50_ttft_ms": 1585,
+      "tokens_per_second": 115.85,
+      "samples": 112,
+      "throughput_samples": 18
     },
     {
       "provider": "alibaba",
       "completion_rate": 1.0,
-      "p50_ttft_ms": 1603,
-      "tokens_per_second": 70.43,
-      "samples": 109,
-      "throughput_samples": 8
-    },
-    {
-      "provider": "abliteration",
-      "completion_rate": 0.9915,
-      "p50_ttft_ms": 1652,
-      "tokens_per_second": 162.63,
-      "samples": 118,
-      "throughput_samples": 12
-    },
-    {
-      "provider": "novita",
-      "completion_rate": 0.8981,
-      "p50_ttft_ms": 1662,
-      "tokens_per_second": 63.54,
-      "samples": 107,
-      "throughput_samples": 14
+      "p50_ttft_ms": 1667,
+      "tokens_per_second": 72.36,
+      "samples": 111,
+      "throughput_samples": 7
     },
     {
       "provider": "thinkingmachines",
       "completion_rate": 1.0,
       "p50_ttft_ms": 1673,
-      "tokens_per_second": 129.63,
+      "tokens_per_second": 140.44,
       "samples": 90,
       "throughput_samples": 10
     },
     {
-      "provider": "maple",
-      "completion_rate": 0.5,
-      "p50_ttft_ms": 1680,
-      "tokens_per_second": 142.76,
-      "samples": 60,
-      "throughput_samples": 4
-    },
-    {
       "provider": "azure",
-      "completion_rate": 0.9908,
-      "p50_ttft_ms": 1719,
-      "tokens_per_second": 115.97,
-      "samples": 109,
-      "throughput_samples": 21
+      "completion_rate": 0.991,
+      "p50_ttft_ms": 1735,
+      "tokens_per_second": 129.61,
+      "samples": 111,
+      "throughput_samples": 20
     },
     {
-      "provider": "anthropic",
-      "completion_rate": 0.9545,
-      "p50_ttft_ms": 1748,
-      "tokens_per_second": 87.66,
-      "samples": 110,
-      "throughput_samples": 10
+      "provider": "novita",
+      "completion_rate": 0.9115,
+      "p50_ttft_ms": 1736,
+      "tokens_per_second": 62.26,
+      "samples": 112,
+      "throughput_samples": 14
     },
     {
       "provider": "zai",
-      "completion_rate": 0.9167,
-      "p50_ttft_ms": 1764,
-      "tokens_per_second": 81.63,
-      "samples": 108,
+      "completion_rate": 1.0,
+      "p50_ttft_ms": 1756,
+      "tokens_per_second": 87.52,
+      "samples": 110,
       "throughput_samples": 20
+    },
+    {
+      "provider": "google-vertex",
+      "completion_rate": 1.0,
+      "p50_ttft_ms": 1757,
+      "tokens_per_second": 70.14,
+      "samples": 112,
+      "throughput_samples": 18
     },
     {
       "provider": "atlas-cloud",
       "completion_rate": 0.9604,
-      "p50_ttft_ms": 1790,
-      "tokens_per_second": 66.79,
+      "p50_ttft_ms": 1794,
+      "tokens_per_second": 73.59,
       "samples": 101,
       "throughput_samples": 17
     },
     {
+      "provider": "byteplus",
+      "completion_rate": 1.0,
+      "p50_ttft_ms": 1827,
+      "tokens_per_second": 49.78,
+      "samples": 121,
+      "throughput_samples": 10
+    },
+    {
+      "provider": "siliconflow",
+      "completion_rate": 1.0,
+      "p50_ttft_ms": 1874,
+      "tokens_per_second": 91.94,
+      "samples": 98,
+      "throughput_samples": 31
+    },
+    {
+      "provider": "boundless",
+      "completion_rate": 0.9811,
+      "p50_ttft_ms": 1891,
+      "tokens_per_second": 114.29,
+      "samples": 105,
+      "throughput_samples": 21
+    },
+    {
       "provider": "meta",
       "completion_rate": 1.0,
-      "p50_ttft_ms": 1848,
-      "tokens_per_second": 104.07,
+      "p50_ttft_ms": 1906,
+      "tokens_per_second": 103.05,
       "samples": 120,
       "throughput_samples": 10
     },
     {
-      "provider": "boundless",
-      "completion_rate": 0.9904,
-      "p50_ttft_ms": 1848,
-      "tokens_per_second": 106.41,
-      "samples": 104,
-      "throughput_samples": 24
-    },
-    {
-      "provider": "siliconflow",
-      "completion_rate": 0.9894,
-      "p50_ttft_ms": 1848,
-      "tokens_per_second": 85.28,
-      "samples": 94,
-      "throughput_samples": 32
-    },
-    {
-      "provider": "byteplus",
-      "completion_rate": 0.9917,
-      "p50_ttft_ms": 1912,
-      "tokens_per_second": 49.06,
-      "samples": 119,
-      "throughput_samples": 10
+      "provider": "streamlake",
+      "completion_rate": 0.9767,
+      "p50_ttft_ms": 1931,
+      "tokens_per_second": 69.15,
+      "samples": 85,
+      "throughput_samples": 29
     },
     {
       "provider": "cloudflare-workers-ai",
@@ -564,99 +564,99 @@
       "throughput_samples": 20
     },
     {
-      "provider": "streamlake",
-      "completion_rate": 0.9651,
-      "p50_ttft_ms": 2190,
-      "tokens_per_second": 69.15,
-      "samples": 85,
-      "throughput_samples": 25
-    },
-    {
-      "provider": "arcee",
-      "completion_rate": 1.0,
-      "p50_ttft_ms": 2322,
-      "tokens_per_second": 127.9,
-      "samples": 99,
-      "throughput_samples": 31
-    },
-    {
-      "provider": "zero-g",
-      "completion_rate": 0.9167,
-      "p50_ttft_ms": 2361,
-      "tokens_per_second": 88.34,
-      "samples": 84,
-      "throughput_samples": 9
+      "provider": "featherless",
+      "completion_rate": 0.9009,
+      "p50_ttft_ms": 2203,
+      "tokens_per_second": 73.7,
+      "samples": 111,
+      "throughput_samples": 18
     },
     {
       "provider": "stepfun",
       "completion_rate": 1.0,
-      "p50_ttft_ms": 2406,
-      "tokens_per_second": 113.74,
+      "p50_ttft_ms": 2342,
+      "tokens_per_second": 128.87,
       "samples": 90,
       "throughput_samples": 10
     },
     {
-      "provider": "featherless",
-      "completion_rate": 0.9182,
-      "p50_ttft_ms": 2413,
-      "tokens_per_second": 99.95,
-      "samples": 110,
-      "throughput_samples": 18
+      "provider": "arcee",
+      "completion_rate": 0.9899,
+      "p50_ttft_ms": 2398,
+      "tokens_per_second": 142.9,
+      "samples": 98,
+      "throughput_samples": 32
     },
     {
       "provider": "gmi",
-      "completion_rate": 0.9808,
-      "p50_ttft_ms": 2461,
-      "tokens_per_second": 61.98,
-      "samples": 104,
-      "throughput_samples": 20
+      "completion_rate": 0.9817,
+      "p50_ttft_ms": 2434,
+      "tokens_per_second": 47.7,
+      "samples": 109,
+      "throughput_samples": 21
+    },
+    {
+      "provider": "zero-g",
+      "completion_rate": 0.9167,
+      "p50_ttft_ms": 2463,
+      "tokens_per_second": 84.04,
+      "samples": 84,
+      "throughput_samples": 9
     },
     {
       "provider": "tencent",
-      "completion_rate": 0.9901,
-      "p50_ttft_ms": 2490,
-      "tokens_per_second": 46.91,
-      "samples": 101,
-      "throughput_samples": 28
+      "completion_rate": 0.9904,
+      "p50_ttft_ms": 2565,
+      "tokens_per_second": 36.87,
+      "samples": 104,
+      "throughput_samples": 27
     },
     {
       "provider": "xiaomi",
       "completion_rate": 0.964,
-      "p50_ttft_ms": 2621,
-      "tokens_per_second": 89.2,
+      "p50_ttft_ms": 2595,
+      "tokens_per_second": 97.63,
       "samples": 108,
       "throughput_samples": 10
     },
     {
       "provider": "phala",
-      "completion_rate": 0.8,
-      "p50_ttft_ms": 2987,
-      "tokens_per_second": 24.36,
+      "completion_rate": 0.8111,
+      "p50_ttft_ms": 2740,
+      "tokens_per_second": 28.02,
       "samples": 90,
-      "throughput_samples": 19
+      "throughput_samples": 18
     },
     {
       "provider": "abliterate",
-      "completion_rate": 0.8367,
+      "completion_rate": 0.8542,
       "p50_ttft_ms": 3783,
-      "tokens_per_second": 26.92,
-      "samples": 98,
-      "throughput_samples": 3
+      "tokens_per_second": 37.99,
+      "samples": 96,
+      "throughput_samples": 4
     },
     {
       "provider": "chutes",
-      "completion_rate": 0.6275,
+      "completion_rate": 0.6415,
       "p50_ttft_ms": 10851,
-      "tokens_per_second": 17.72,
-      "samples": 102,
-      "throughput_samples": 16
+      "tokens_per_second": 18.73,
+      "samples": 106,
+      "throughput_samples": 18
+    },
+    {
+      "provider": "upstage",
+      "completion_rate": 0.9667,
+      "p50_ttft_ms": 1502,
+      "tokens_per_second": 38.83,
+      "samples": 29,
+      "throughput_samples": 9
     },
     {
       "provider": "sakana",
-      "completion_rate": 0.8,
-      "p50_ttft_ms": 6852,
+      "completion_rate": 0.7667,
+      "p50_ttft_ms": 7092,
       "tokens_per_second": null,
-      "samples": 24,
+      "samples": 23,
       "throughput_samples": 0
     },
     {
@@ -693,18 +693,10 @@
     },
     {
       "provider": "cohere",
-      "completion_rate": 0.875,
+      "completion_rate": 0.8636,
       "p50_ttft_ms": null,
       "tokens_per_second": null,
-      "samples": 48,
-      "throughput_samples": 0
-    },
-    {
-      "provider": "voyage",
-      "completion_rate": 0.625,
-      "p50_ttft_ms": null,
-      "tokens_per_second": null,
-      "samples": 8,
+      "samples": 22,
       "throughput_samples": 0
     },
     {
