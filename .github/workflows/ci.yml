@@ -300,9 +300,10 @@ jobs:
         #   uv run python scripts/ci/merge_shard_durations.py /tmp/ci-durations .test_durations /tmp/default.json --profile default
         # Repeat with --profile post-cutover; review both profiles before commit.
         # Nov 6: with coverage on sys.monitoring (#2368), twelve shards took
-        # 7 to 11 minutes each. Eight (about 10 to 17) stay under the proof
-        # oracle's critical path of about 21 minutes, with four fewer jobs
-        # in the organization's queue.
+        # 7 to 12 minutes each over five green main runs, about 50 seconds of
+        # it setup. Eight (about 10 to 17) stay under the proof oracle's
+        # longest shard (25 to 27 minutes), with four fewer jobs in the
+        # organization's queue.
         shard: [1, 2, 3, 4, 5, 6, 7, 8]
     runs-on: ubuntu-24.04
     env:
@@ -866,10 +867,10 @@ jobs:
         run: go test -count=1 -p 1 -timeout 240m -run '^${{ matrix.walk }}$' ./internal/store/
 
   # The TLA+ specs check designs, not the code a push deploys, and read only
-  # proofs/. A pull request that changes them runs them, and so does
-  # post-cutover-daily.yml on main once a day; a push to main skips them
-  # (commit_scope.py's SKIPPED_ON_PUSH), so their 25 minutes no longer hold
-  # the deploy.
+  # proofs/. Pull requests and dispatches run them, and so does
+  # post-cutover-daily.yml on main once a day. A push to main skips them
+  # (commit_scope.py's SKIPPED_ON_PUSH), which frees a runner for 15 to 25
+  # minutes a push in the organization's capped queue.
   proofs:
     needs: scope
     if: github.event_name != 'push' && needs.scope.outputs.data_only != 'true'

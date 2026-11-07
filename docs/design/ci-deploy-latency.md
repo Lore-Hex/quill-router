@@ -123,9 +123,12 @@ price refresh's publication gate. post-cutover-daily.yml runs both on main
 once a day, outside every gate. commit_scope.py's summary accepts
 test-post-cutover's skip on a push only.
 
-The TLA+ model checks (proofs, about 25 minutes, read only proofs/) follow
-the same rule: they check designs, not the code a push deploys. With
-coverage cheaper, the default suite runs in eight shards instead of twelve.
+The TLA+ model checks (proofs, 15 to 25 minutes, read only proofs/) follow
+the same rule: they check designs, not the code a push deploys. They ran
+beside the proof oracle's longest shard (25 to 27 minutes), so skipping
+them frees a runner rather than shortening the run. With coverage cheaper,
+the default suite runs in eight shards instead of twelve, still inside that
+longest shard, with four fewer jobs in the queue.
 
 ## Validation and measurement
 
