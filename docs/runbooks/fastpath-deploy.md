@@ -480,11 +480,12 @@ values are tier 3, an allowance of 1000000000 ($1,000) and a floor of
    uv run python scripts/provision_fastpath_p1_workspace.py --email joseph@jperla.com --tier 3 --identity-bypass --apply
    ```
 
-   The production workspace was funded by this script twice, under
-   `fastpath_p1_funding_2026_10` and `fastpath_p1_funding_2026_10_b`, so
-   both commands also take `--also-granted fastpath_p1_funding_2026_10_b`;
-   the bypass is still refused for any trust event or credit the named
-   grants do not explain.
+   The production workspace holds two operator grants of $100 (provider
+   `operator` in `tr_trust_event`), `fastpath_p1_funding_2026_10` and
+   `fastpath_p1_funding_2026_10_b`, so both commands also take
+   `--also-granted fastpath_p1_funding_2026_10_b`. A named event counts
+   once and only as an operator's grant; any other trust event, or credit
+   the named grants do not explain, still refuses the bypass.
 
 3. **Every pilot workspace ready at the design's values.** For each
    workspace of `TR_FASTPATH_PILOT_WORKSPACES` (`scripts/deploy/rollout.sh`),

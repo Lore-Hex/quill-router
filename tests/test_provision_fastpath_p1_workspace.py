@@ -386,3 +386,46 @@ def test_also_granted_is_refused_without_the_bypass_or_for_the_funding_event(mon
         code, _, err = _run(store, capsys, *extra)
         assert code == 1 and "--also-granted" in err, (extra, err)
     assert db.typed == before
+
+
+def test_the_bypass_counts_a_named_grant_once_and_only_an_operators(monkeypatch: Any, capsys: Any) -> None:
+    """A credit no trust event explains is not hidden by naming a grant
+    twice (refused by the flag, and counted once by the check itself); a
+    credit the system booked is a grant by kind but not the operator's; the
+    funding event itself, of another amount, is not this script's grant."""
+    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-clickhouse")
+
+    def setup() -> tuple[Any, Any, str]:
+        store, db = make_fake_store()
+        _owner(store)
+        code, result, err = _run(store, capsys, "--apply")
+        assert code == 0, err
+        return store, db, result["workspace_id"]
+
+    store, db, workspace_id = setup()
+    _grant(store, workspace_id, "earlier", 100_000_000)
+    db.typed[CREDIT_BALANCE_TABLE][(workspace_id, 0)]["total_credits"] += 100_000_000
+    before = copy.deepcopy(db.typed)
+    code, _, err = _run(store, capsys, "--tier", "3", "--identity-bypass", "--also-granted", "earlier",
+                        "--also-granted", "earlier", "--apply")
+    assert code == 1 and "each event once" in err, err
+    assert p1._other_funding(store, workspace_id, p1.DEFAULT_FUNDING_EVENT, 100_000_000,
+                             ("earlier", "earlier", p1.DEFAULT_FUNDING_EVENT)) is not None
+    assert db.typed == before
+
+    store, db, workspace_id = setup()
+    assert store.credit_workspace_typed_direct(
+        workspace_id, 50_000_000, "topup-2026-08",
+        provenance=p1.CreditProvenance(source="grant", provider="system", external_ref=None,
+                                       occurred_at=p1.datetime.now(p1.UTC)))
+    before = copy.deepcopy(db.typed)
+    code, _, err = _run(store, capsys, "--tier", "3", "--identity-bypass", "--also-granted", "topup-2026-08",
+                        "--apply")
+    assert code == 1 and "trust events other than the grant" in err, err
+    assert db.typed == before
+
+    store, db, workspace_id = setup()
+    assert p1._other_funding(store, workspace_id, p1.DEFAULT_FUNDING_EVENT, 100_000_000) is None
+    assert p1._other_funding(store, workspace_id, p1.DEFAULT_FUNDING_EVENT, 50_000_000) is not None
+    assert p1._other_funding(store, workspace_id, p1.DEFAULT_FUNDING_EVENT, 50_000_000,
+                             (p1.DEFAULT_FUNDING_EVENT,)) is not None

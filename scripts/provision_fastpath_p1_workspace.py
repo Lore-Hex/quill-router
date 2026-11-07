@@ -61,22 +61,25 @@ def _credits(store: Any, workspace_id: str) -> int:
     return sum(row[3] or 0 for row in _shard_tiers(store, workspace_id))
 
 
-def _trust_events(store: Any, workspace_id: str) -> list[tuple[str, str, int]]:
-    """This workspace's trust events: event ID, kind and credited amount."""
+def _trust_events(store: Any, workspace_id: str) -> list[tuple[str, str, int, str]]:
+    """This workspace's trust events: event ID, kind, credited amount and
+    provider. A grant this script makes has the provider "operator"; credits
+    the system books (a cross-plane transfer, an earnings transfer) are
+    grants by kind too, under the provider "system"."""
     with store._database.snapshot() as snap:
         rows = snap.execute_sql(
-            "SELECT event_id, kind, credited_micro FROM tr_trust_event WHERE workspace_id=@pk",
+            "SELECT event_id, kind, credited_micro, provider FROM tr_trust_event WHERE workspace_id=@pk",
             params={"pk": workspace_id},
             param_types={"pk": store._param_types.STRING},
         )
-        return [(str(row[0]), str(row[1]), int(row[2] or 0)) for row in rows]
+        return [(str(row[0]), str(row[1]), int(row[2] or 0), str(row[3] or "")) for row in rows]
 
 
 def _grant_credited(store: Any, workspace_id: str, event_id: str) -> list[int]:
     """What this workspace's grant events for the funding event credited:
     a grant's trust event (kind "grant"), by its credited amount; a
     payment's fact of the same ID proves nothing of the funding."""
-    return [credited for eid, kind, credited in _trust_events(store, workspace_id) if eid == event_id and kind == "grant"]
+    return [credited for eid, kind, credited, _ in _trust_events(store, workspace_id) if eid == event_id and kind == "grant"]
 
 
 def _other_funding(store: Any, workspace_id: str, event_id: str, funding_microdollars: int,
@@ -85,16 +88,18 @@ def _other_funding(store: Any, workspace_id: str, event_id: str, funding_microdo
     own grants, or None when it is not: every trust event of the workspace
     must be the funding event's grant, of the funding's amount, or a grant
     of an event the operator names with ``--also-granted`` (an earlier run
-    of this script under another event ID), and the credit rows must hold
-    those grants and nothing else (a trial credit or a credit with no trust
+    of this script under another event ID), each a grant of the operator's
+    own (provider "operator", not a credit the system booked), each counted
+    once, and the credit rows must hold those grants and nothing else (a trial credit or a credit with no trust
     event shows there alone). A workspace not yet funded holds nothing."""
-    others = [(eid, kind) for eid, kind, credited in _trust_events(store, workspace_id)
-              if not (kind == "grant" and (eid == event_id and credited == funding_microdollars
-                                           or eid in also_granted))]
+    extras = tuple(eid for eid in dict.fromkeys(also_granted) if eid != event_id)
+    named = (event_id, *extras)
+    others = [(eid, kind) for eid, kind, credited, provider in _trust_events(store, workspace_id)
+              if not (kind == "grant" and provider == "operator"
+                      and (eid == event_id and credited == funding_microdollars or eid in extras))]
     if others:
-        named = ", ".join((event_id, *also_granted))
-        return f"it has {len(others)} trust events other than the grant {named}"
-    granted = sum(sum(_grant_credited(store, workspace_id, eid)) for eid in (event_id, *also_granted))
+        return f"it has {len(others)} trust events other than the grant {', '.join(named)}"
+    granted = sum(sum(_grant_credited(store, workspace_id, eid)) for eid in named)
     credits = _credits(store, workspace_id)
     if credits != granted:
         return f"its credit rows hold {credits} microdollars, and its own grants credited {granted}"
@@ -249,6 +254,8 @@ def main(argv: list[str] | None = None, *, store: Any | None = None) -> int:
             raise ValueError("--also-granted is read only with --identity-bypass")
         if args.funding_event_id in args.also_granted:
             raise ValueError("--also-granted names an event other than --funding-event-id")
+        if len(set(args.also_granted)) != len(args.also_granted):
+            raise ValueError("--also-granted names each event once")
         active_store = create_store(Settings()) if store is None else store
         result = provision(
             active_store,
