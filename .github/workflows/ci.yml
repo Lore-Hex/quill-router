@@ -39,7 +39,7 @@ concurrency:
 # the catalog data run on every commit: lint's history check, the production
 # import, the default-clock suite and the browser smoke, with the post-cutover
 # suite on every event but a push to main (see test-post-cutover). The others
-# carry
+# carry (proofs with a push skip before it)
 #   if: needs.scope.outputs.data_only != 'true'
 # and skip only when EVERY changed path is catalog data AND the base commit
 # has a completed ci.yml run that concluded success. That second condition is
@@ -50,7 +50,8 @@ concurrency:
 # unvalidated base (a base whose run is still running or failed, or a force
 # push whose old tip differs from the new one only in data) would inherit
 # code no run checked. A base validated by a push run was validated on the
-# default clock alone, since a push runs neither post-cutover suite.
+# default clock alone and without the model checks, since a push runs
+# neither post-cutover suite nor proofs.
 # An empty comparison, a missing base commit or an unvalidated base runs the
 # complete matrix; a failed classification fails `scope`, which the summary
 # job turns into a failed run. tests/test_ci_workflow.py holds the two job
