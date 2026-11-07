@@ -172,3 +172,13 @@
 @media (max-width:374px){
   .hero-api .btns{grid-template-columns:1fr}
 }
+/* Phones: the header's "Start building" (/confidential#start) lands with the
+   section top just under the sticky header, and the actions follow the copy so
+   "Get your API key" is on that first screen; the code panel comes after them. */
+@media (max-width:600px){
+  #start{scroll-margin-top:calc(var(--header) - 96px)}
+  .v3-start .wrap{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:none;align-items:start}
+  .v3-start-copy,.v3-start .btns,.v3-start .code{grid-column:1;grid-row:auto}
+  .v3-start .btns{order:1}
+  .v3-start .code{order:2;margin-top:32px}
+}
