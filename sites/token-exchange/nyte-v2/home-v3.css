@@ -125,6 +125,11 @@ main .tags .tag.cap{background:var(--cream)}
   .v3-layer-list .n{font-size:32px}
   .v3-stats{padding:72px 0 64px}
   .v3-stats .stats{grid-template-columns:1fr 1fr;gap:40px 16px}
+  /* Phone strip: slots fit each name so about three show at once; same speed as desktop (about 31px/s). */
+  .v3-labs .mq-track{animation-duration:30s}
+  .v3-labs .mq-set{gap:32px;padding-right:32px}
+  .v3-labs .mq-item{width:auto;font-size:15px}
+  .v3-labs .mq-item img{width:20px;height:20px}
   .v3-stats .stat:nth-child(3){grid-column:1/-1}
   .v3-stats .stat .v{margin-top:18px;font-size:56px}
   .v3-stats .stat .l{margin-top:10px}
