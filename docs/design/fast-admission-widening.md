@@ -1264,8 +1264,12 @@ step.
      not hold them; the job keeps only their lookup hashes and resolves each
      workspace by complete key. The async settle shadow's probe key stays
      confined to its own job, as the repository's tripwire requires; its
-     workspace is left out through `async_settle_shadow_workspaces` and the
-     exclude list, where (c) already puts every probe's workspace.
+     workspace is left out only by the exclude list, which (c) has carry
+     every probe's workspace. Both that list and
+     `async_settle_shadow_workspaces` are empty at this PR, so activation
+     adds the probes' workspaces to `TR_FASTPATH_PILOT_EXCLUDE` before WS1's
+     dry-run, whose report must show them `excluded`; until then only the
+     tier requirement keeps an admin-funded probe out.
    - The switch read's latency was measured with Python's copy of it
      (`spanner_enabled_workspaces`), the node's `EnabledWorkspaces` SQL less
      its comment, since the dry-run's eligible count is not yet known: at

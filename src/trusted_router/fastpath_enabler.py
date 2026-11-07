@@ -150,9 +150,14 @@ def load_switch_operations(path: Path = FIXTURE) -> dict[str, dict[str, Any]]:
     return operations
 
 
+def _names_hold_table(text: str) -> bool:
+    # Spanner identifiers are case-insensitive.
+    return HOLD_TABLE in text.lower()
+
+
 def _writes_hold_table(op: Mapping[str, Any]) -> bool:
-    return any(m["table"] == HOLD_TABLE for m in op["mutations"]) or any(
-        HOLD_TABLE in s["sql"] for s in op["statements"])
+    return any(_names_hold_table(m["table"]) for m in op["mutations"]) or any(
+        _names_hold_table(s["sql"]) for s in op["statements"])
 
 
 def enabler_operations(path: Path = FIXTURE) -> dict[str, dict[str, Any]]:
@@ -164,11 +169,11 @@ def enabler_operations(path: Path = FIXTURE) -> dict[str, dict[str, Any]]:
     anything fails here, not in production."""
     operations = load_switch_operations(path)
     enable = operations["enable"]
-    if any(m["table"] == HOLD_TABLE for m in enable["mutations"]):
+    if any(_names_hold_table(m["table"]) for m in enable["mutations"]):
         raise ValueError("switch fixture: enable writes the hold table by a mutation")
     ours = {
         "enable": {"mutations": enable["mutations"],
-                   "statements": [s for s in enable["statements"] if HOLD_TABLE not in s["sql"]]},
+                   "statements": [s for s in enable["statements"] if not _names_hold_table(s["sql"])]},
         "disable_unheld": operations["disable_unheld"],
     }
     for name, op in ours.items():
@@ -758,31 +763,41 @@ def run(database: Any, param_types: Any, config: EnablerConfig, *, probe_hashes:
         commits: list[str] = []
         revoked = 0
         stopped = None
-        for workspace, _cause in decided.disables:
-            outcome = write_disable(database, param_types, workspace, operations=ops,
-                                    commit_timestamp=commit_timestamp)
-            written[outcome.result] += 1
-            revoked += outcome.revoked
-            if outcome.committed is not None:
-                commits.append(_stamp(outcome.committed))
-            if outcome.result in STOPS:
-                stopped = outcome.result
-                break
-        if stopped is None:
-            for workspace in decided.enables:
-                outcome = write_enable(database, param_types, workspace, included=workspace in config.include,
-                                       config=config, now=moment, operations=ops,
-                                       commit_timestamp=commit_timestamp)
+        try:
+            for workspace, _cause in decided.disables:
+                outcome = write_disable(database, param_types, workspace, operations=ops,
+                                        commit_timestamp=commit_timestamp)
                 written[outcome.result] += 1
+                revoked += outcome.revoked
                 if outcome.committed is not None:
                     commits.append(_stamp(outcome.committed))
                 if outcome.result in STOPS:
                     stopped = outcome.result
                     break
-        report["writes"] = dict(sorted(written.items()))
-        report["revoked_leases"] = revoked
-        report["stopped"] = stopped
-        report["commit_times"] = commits
+            if stopped is None:
+                for workspace in decided.enables:
+                    outcome = write_enable(database, param_types, workspace, included=workspace in config.include,
+                                           config=config, now=moment, operations=ops,
+                                           commit_timestamp=commit_timestamp)
+                    written[outcome.result] += 1
+                    if outcome.committed is not None:
+                        commits.append(_stamp(outcome.committed))
+                    if outcome.result in STOPS:
+                        stopped = outcome.result
+                        break
+        except Exception as exc:
+            # A write that raises past its retries ends the run; the writes
+            # before it are committed, so report them before failing the job.
+            report["failed"] = type(exc).__name__
+            raise
+        finally:
+            report["writes"] = dict(sorted(written.items()))
+            report["revoked_leases"] = revoked
+            report["stopped"] = stopped
+            report["commit_times"] = commits
+            if "failed" in report:
+                report["elapsed_seconds"] = round(time.monotonic() - started, 3)
+                logger.error("fastpath_enabler.write_failed %s", json.dumps(report, sort_keys=True))
     report["elapsed_seconds"] = round(time.monotonic() - started, 3)
     logger.info("fastpath_enabler.report %s", json.dumps(report, sort_keys=True))
     return RunResult(report=report, plan=decided)
