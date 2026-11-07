@@ -171,12 +171,18 @@ locals {
   # section 8.2): a lease needs effective trust tier 3, a workspace's
   # allowance is $1,000 and a lease leaves at least $20 of the balance, in
   # microdollars. The startup script passes each as -required-tier,
-  # -allowance and -floor (8af87998a, the pin, takes all three);
-  # a node takes them when its startup script runs again (a reset), as it
-  # takes a pin. Every pilot workspace passed fastpathctl ready at these
-  # values before this change but the customer's, whose switch is off, so it
-  # takes today's path and cannot be refused at the tier. Rollback: remove
-  # the three and reset each node, which restores the release's defaults.
+  # -allowance and -floor (8af87998a, the pin, takes all three). A reset
+  # alone keeps the unit's old arguments: each node takes them one at a
+  # time, the other serving, by runbook fastpath-deploy.md's money settings
+  # step 5 (leaving, its leases and the balancer drained, the unit stopped,
+  # the startup script run again, the process's arguments read back), and
+  # WS0's gate counts from the last node's restart. Every pilot workspace
+  # passed fastpathctl ready at these values before this change but the
+  # customer's, whose switch is off, so it takes today's path and cannot be
+  # refused at the tier. Step 4: each pilot workspace held one lease at a
+  # time over the leases kept (seven days), the largest allocation under
+  # $4, well under a quarter of the allowance. Rollback: remove the three
+  # and take each node the same way, which restores the release's defaults.
   fastpath_required_tier = "3"
   fastpath_allowance     = "1000000000"
   fastpath_floor         = "20000000"
