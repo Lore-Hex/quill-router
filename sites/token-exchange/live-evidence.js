@@ -28,6 +28,7 @@
   let refreshTimer;
   let refreshing = false;
   let renderedKey;
+  let settled = false;
   const node = (tag, text, cls) => {
     const el = document.createElement(tag);
     if (text !== undefined) el.textContent = text;
@@ -63,6 +64,8 @@
     && typeof c.uptime_24h_percent === 'number' && c.uptime_24h_percent >= 0
     && c.uptime_24h_percent <= 100 && c.sample_count_24h > 0;
   function render() {
+    // v3: hold the loading layout until the first fetch has settled.
+    if (v3 && !settled) return;
     // Recheck age each second without replacing focused links every second.
     const dates = (Array.isArray(payload?.components) ? payload.components : []).map(c => fresh(c?.last_checked_at));
     const key = JSON.stringify([receivedAt, Boolean(payload), Date.now() - receivedAt > staleMs,
@@ -185,11 +188,31 @@
       // Keep the last response in this tab only. Original timestamps still
       // expire in render(); a successful newer response always replaces it.
     }
+    settled = true;
     render();
     refreshing = false;
     // Start the next interval AFTER receipt. A timer started before the initial
     // response can hit the server cache just before its one-minute expiry.
     refreshTimer = setTimeout(refresh, refreshMs);
+  }
+  // v3 loading state: the final layout with dashes, so nothing jumps when figures arrive.
+  // Built here (not in the HTML) so pages without JavaScript never show placeholders.
+  if (v3) {
+    const dash = (tag, text, cls) => { const el = node(tag, text, cls); el.classList.add('is-pending'); return el; };
+    const rows = node('dl', undefined, 'att-rows');
+    for (const [key, value, cls] of [['Matches published build', 'sha256: ––––––––––––––––'], ['Source code version', '––––––––'], ['Data centre', 'Not proven by attestation', 'att-unproven']]) {
+      const item = node('div', undefined, cls ? `att-row ${cls}` : 'att-row');
+      item.append(node('dt', key), cls ? node('dd', value) : dash('dd', value));
+      rows.append(item);
+    }
+    attestation.replaceChildren(rows);
+    services.replaceChildren(...['Canonical API', 'US East Regional API', 'Model Inference'].map(name => {
+      const row = node('div', undefined, 'service-history');
+      row.append(node('span', name, 'uptime-name'), dash('strong', '––.––%', 'uptime-figure'));
+      return row;
+    }));
+    if (caption) caption.textContent = caption.dataset.uptimeLabel;
+    if (checked) { checked.textContent = 'Checking now…'; checked.hidden = false; }
   }
   refresh();
   setInterval(render, 1000);
