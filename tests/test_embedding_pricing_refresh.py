@@ -28,6 +28,29 @@ def test_cohere_parser_reads_embed4_token_cost_not_image_or_instance_cost() -> N
     }
 
 
+def test_cohere_parser_reports_the_unpublished_embed4_rate_without_self_heal(monkeypatch) -> None:  # noqa: ANN001
+    # Refresh run 42359425520: "cohere: self-heal fixture regression:
+    # removed=['cohere/embed-v4.0']". cohere.com/pricing now prices Embed 5
+    # Fast/Pro only; Embed 4 keeps a card without a rate, while the docs still
+    # list embed-v4.0 as served. A rewrite cannot recover the missing rate, so
+    # the deterministic parser fails closed with the reason and the refresh
+    # never spends a self-heal call on it. The committed rate stays in force.
+    page = (FIXTURE_DIR / "cohere_pricing_2026-11-07.html").read_text(encoding="utf-8")
+    assert "web3Model.embed-4" in page
+    with pytest.raises(ValueError, match=r"no longer publishes an Embed 4 rate .*'Embed 5 Fast', 'Embed 5 Pro'"):
+        cohere_parser.parse(page)
+
+    import scripts.pricing.base as base
+
+    def no_self_heal(**_kwargs):  # noqa: ANN003, ANN202
+        raise AssertionError("self-heal must not run for an unpublished rate")
+
+    monkeypatch.setattr(base, "fetch_html", lambda *_a, **_kw: page)
+    monkeypatch.setattr(base, "self_heal_parser", no_self_heal)
+    with pytest.raises(ValueError, match="Embed 4 rate"):
+        cohere.fetch()
+
+
 def test_voyage_parser_reads_current_and_older_text_embedding_tables() -> None:
     prices = voyage_parser.parse(
         (FIXTURE_DIR / "voyage.html").read_text(encoding="utf-8")

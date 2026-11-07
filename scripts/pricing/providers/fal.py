@@ -88,12 +88,25 @@ def _h3_max_standard_rates(page: str) -> dict[str, int]:
     """Parse the rates that remain after fal's temporary launch promotion."""
 
     normalized = re.sub(r"<[^>]+>", " ", html_lib.unescape(page))
-    normalized = re.sub(r"\s+", " ", normalized)
+    # The pricing note is markdown inside the page payload: drop emphasis.
+    normalized = re.sub(r"\s+", " ", normalized.replace("**", ""))
     post_promotion_matches = re.findall(
         r"after which\s+480p\s+is\s+\$(\d+(?:\.\d+)?)\s*/second\s*(?:,\s*(?:and\s+)?|and\s+)"
         r"768p\s+is\s+\$(\d+(?:\.\d+)?)\s*/second",
         normalized,
         flags=re.IGNORECASE,
+    )
+    # 2026-11 wording, beside two dated promotional rate sets: "From November
+    # 16, 2026, standard rates are $0.05, $0.08, and $0.16 per second at 480p,
+    # 768p, and 1080p, respectively."
+    post_promotion_matches.extend(
+        (rate_480, rate_768)
+        for rate_480, rate_768, _rate_1080 in re.findall(
+            r"standard rates are\s+\$(\d+(?:\.\d+)?)\s*,\s*\$(\d+(?:\.\d+)?)\s*,?\s*and\s+"
+            r"\$(\d+(?:\.\d+)?)\s+per second at\s+480p\s*,\s*768p\s*,?\s*and\s+1080p",
+            normalized,
+            flags=re.IGNORECASE,
+        )
     )
     if post_promotion_matches:
         matches = post_promotion_matches

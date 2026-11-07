@@ -314,8 +314,29 @@ def discover(payload: object, md: str) -> tuple[dict[str, ModelPrice], dict[str,
         if reason:
             row.update(routable=False, routable_reason=reason)
     if not prices:
-        raise RuntimeError("byteplus: no live priced models")
+        raise RuntimeError("byteplus: no live priced models " + _unpriced_summary(payload["data"], rows))
     return prices, rows
+
+
+def _unpriced_summary(sources: list[Any], rows: dict[str, dict[str, Any]]) -> str:
+    """Why nothing was priced, compact and free of secrets, for the refresh log.
+
+    The authenticated catalog cannot be read without the operator key, so a
+    held refresh must say which rule rejected every row: counts by hold
+    reason, plus the catalog's own status and domain vocabularies.
+    """
+    def vocabulary(field: str) -> list[str]:
+        values = {str(source.get(field)) for source in sources if isinstance(source, dict)}
+        return sorted(value[:24] for value in values if re.fullmatch(r"[A-Za-z0-9 _.-]*", value))[:6]
+
+    reasons: dict[str, int] = {}
+    for row in rows.values():
+        reason = str(row.get("routable_reason", "priced"))
+        reasons[reason] = reasons.get(reason, 0) + 1
+    return (
+        f"(rows={len(sources)} reasons={dict(sorted(reasons.items()))} "
+        f"statuses={vocabulary('status')} domains={vocabulary('domain')})"
+    )
 
 
 def fetch() -> ProviderPricingResult:

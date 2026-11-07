@@ -84,6 +84,70 @@ def test_databricks_parser_prunes_route_when_documented_endpoint_disappears() ->
     assert "z-ai/glm-5.2" not in discovered
 
 
+DATABRICKS_PRICING_2026_11_07 = (
+    Path(__file__).parent / "fixtures/pricing/databricks_fm_serving_2026-11-07.html"
+).read_text(encoding="utf-8")
+
+
+def test_databricks_reads_only_the_standard_pay_per_token_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Refresh run 42359425520 held Databricks on a bare "empty pricing dict":
+    # the page added Priority, Provisioned Throughput and Batch tables that
+    # repeat each label (the last one won, with no per-token rate) and renamed
+    # four rows. Rates match the manifest last published on 2026-09-06.
+    monkeypatch.delenv("DATABRICKS_DBU_USD", raising=False)
+    supported = _supported_models_html().replace("databricks-inkling", "")
+    prices, _ = databricks._parse_catalog(DATABRICKS_PRICING_2026_11_07, supported)
+    assert set(prices) == set(databricks.EXPECTED_MODELS) - {"thinkingmachines/inkling"}
+    kimi = prices["moonshotai/kimi-k3"].tiers[0]  # not the Priority row (75 DBU)
+    assert (kimi.prompt_micro_per_m, kimi.completion_micro_per_m, kimi.prompt_cached_micro_per_m) == (
+        3_000_000, 15_000_000, 300_000,
+    )
+    assert prices["z-ai/glm-5.2"].completion_micro_per_m == 4_400_000  # "GLM-5.2, 5.3"
+    assert prices["openai/gpt-oss-20b"].completion_micro_per_m == 300_000  # "GPT-OSS-20B"
+    assert prices["qwen/qwen3-next-80b-a3b-instruct"].completion_micro_per_m == 1_200_000
+    assert prices["meta-llama/llama-4-maverick"].completion_micro_per_m == 1_500_000
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "match"),
+    [
+        ("<td>GPT-OSS-20B</td>", "<td>Llama 3.1 8B</td>", "twice"),
+        ("Pay Per Token (DBU Per 1M Tokens)</th>", "Per Token Pricing</th>", "heading changed"),
+    ],
+)
+def test_databricks_ambiguous_pay_per_token_table_fails_closed(old: str, new: str, match: str) -> None:
+    assert old in DATABRICKS_PRICING_2026_11_07
+    with pytest.raises(RuntimeError, match=match):
+        databricks._parse_catalog(DATABRICKS_PRICING_2026_11_07.replace(old, new, 1), _supported_models_html())
+
+
+def test_databricks_validation_failure_names_the_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Response:
+        text = "<table></table>"
+
+        def raise_for_status(self) -> None:
+            return None
+
+    class _Client:
+        def __init__(self, *_a: Any, **_kw: Any) -> None:
+            pass
+
+        def __enter__(self) -> _Client:
+            return self
+
+        def __exit__(self, *_a: Any) -> None:
+            return None
+
+        def get(self, *_a: Any, **_kw: Any) -> _Response:
+            return _Response()
+
+    monkeypatch.setattr(databricks.httpx, "Client", _Client)
+    with pytest.raises(RuntimeError, match=r"^databricks: empty pricing dict"):
+        databricks.fetch()
+
+
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [

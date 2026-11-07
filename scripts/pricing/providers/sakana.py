@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ from trusted_router.provider_contracts import (
     SAKANA_NAMAZU_MODEL_ID,
     SAKANA_NAMAZU_ROUTE_HOLD_REASON,
 )
+from trusted_router.provider_lifecycle import provider_price_microdollars
 
 SLUG = "sakana"
 BASE_URL = "https://api.sakana.ai/v1"
@@ -70,19 +72,64 @@ def _token_price_rows(table: Tag, *, expected_columns: int) -> dict[str, list[in
     return rows
 
 
-def _parse_namazu_price(soup: BeautifulSoup) -> ModelPrice:
+_JST = timezone(timedelta(hours=9), "JST")
+_SCHEDULED_HEADER = re.compile(r"From ([A-Z][a-z]{2}) ([0-9]{1,2}), ([0-9]{4}), ([0-9]{1,2}):([0-9]{2}) JST")
+
+
+def _scheduled_at(header: str) -> datetime | None:
+    match = _SCHEDULED_HEADER.fullmatch(header)
+    if match is None:
+        return None
+    month, day, year, hour, minute = match.groups()
+    try:
+        local = datetime.strptime(f"{year} {month} {day} {hour} {minute}", "%Y %b %d %H %M")
+    except ValueError:
+        return None
+    return local.replace(tzinfo=_JST).astimezone(UTC)
+
+
+def _column_price(rows: dict[str, list[int]], column: int) -> ModelPrice:
+    return ModelPrice(
+        prompt_micro_per_m=rows["input"][column],
+        completion_micro_per_m=rows["output"][column],
+        prompt_cached_micro_per_m=rows["cached input"][column],
+    )
+
+
+def _matches_announced(price: ModelPrice, at: datetime) -> bool:
+    announced = provider_price_microdollars(SLUG, SAKANA_NAMAZU_MODEL_ID, at=at)
+    tier = price.tiers[0]
+    return announced is not None and (
+        announced.prompt_microdollars_per_million_tokens,
+        announced.completion_microdollars_per_million_tokens,
+        announced.prompt_cached_microdollars_per_million_tokens,
+    ) == (tier.prompt_micro_per_m, tier.completion_micro_per_m, tier.prompt_cached_micro_per_m)
+
+
+def _parse_namazu_price(soup: BeautifulSoup, *, now: datetime | None = None) -> ModelPrice:
     namazu_table = _pricing_table_after(soup, "sakana-namazu-v1.0")
     namazu_headers = [
         cell.get_text(" ", strip=True) for cell in namazu_table.select("thead th")
     ]
-    if namazu_headers != ["Token type", "Price"]:
+    if namazu_headers == ["Token type", "Price"]:
+        return _column_price(_token_price_rows(namazu_table, expected_columns=2), 0)
+    # 2026-11: the page shows the current price beside an announced one
+    # ("Current" | "From Dec 1, 2026, 10:00 JST"). Both columns must equal
+    # the cutover recorded in provider_lifecycle, which reprices routes at
+    # authorization time; an unrecorded announcement fails closed.
+    scheduled_at = _scheduled_at(namazu_headers[2]) if len(namazu_headers) == 3 else None
+    if namazu_headers[:2] != ["Token type", "Current"] or scheduled_at is None:
         raise RuntimeError(f"sakana: Namazu pricing headers changed: {namazu_headers!r}")
-    namazu = _token_price_rows(namazu_table, expected_columns=2)
-    return ModelPrice(
-        prompt_micro_per_m=namazu["input"][0],
-        completion_micro_per_m=namazu["output"][0],
-        prompt_cached_micro_per_m=namazu["cached input"][0],
-    )
+    rows = _token_price_rows(namazu_table, expected_columns=3)
+    current, scheduled = _column_price(rows, 0), _column_price(rows, 1)
+    if not (
+        _matches_announced(current, scheduled_at - timedelta(seconds=1))
+        and _matches_announced(scheduled, scheduled_at)
+    ):
+        raise RuntimeError(
+            f"sakana: Namazu price change from {scheduled_at.isoformat()} is not recorded in provider_lifecycle"
+        )
+    return scheduled if (now or datetime.now(UTC)) >= scheduled_at else current
 
 
 def _parse_fugu_price(soup: BeautifulSoup) -> ModelPrice | None:
@@ -133,11 +180,11 @@ def _parse_fugu_price(soup: BeautifulSoup) -> ModelPrice | None:
     )
 
 
-def _parse_pricing(html: str) -> dict[str, ModelPrice]:
+def _parse_pricing(html: str, *, now: datetime | None = None) -> dict[str, ModelPrice]:
     """Strictly parse every published Sakana chat price for regression tests."""
 
     soup = BeautifulSoup(html, "html.parser")
-    prices = {SAKANA_NAMAZU_MODEL_ID: _parse_namazu_price(soup)}
+    prices = {SAKANA_NAMAZU_MODEL_ID: _parse_namazu_price(soup, now=now)}
     fugu = _parse_fugu_price(soup)
     if fugu is not None:
         prices[SAKANA_FUGU_MODEL_ID] = fugu

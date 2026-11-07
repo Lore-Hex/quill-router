@@ -63,6 +63,62 @@ _ROW_RE = re.compile(
 )
 
 
+# Since 2026-11 the pricing lives on one page (docs/pricing/chat) whose .md
+# export renders the tables empty; the rendered page carries them as compiled
+# MDX DocTable props, one row per model, cells keyed by column title:
+#
+#   columns:[{title:`Model`,...},{title:`Input`,...},{title:`Output`,...},
+#            {title:_jsx(Tooltip,{tip:`...`,children:`Cached Input`}),...}, ...],
+#   rows:[[_jsx(_components.a,{href:`/guide/...`,children:`kimi-k3`}),
+#          `$3.00 / MTok`,`$15.00 / MTok`,`$0.30 / MTok`,`$3.00 / MTok`,`$6.00 / MTok`], ...]
+#
+# Cache-write columns (5m / 1h writes) are not billed by this route and are
+# ignored; every other column title must be one this parser knows.
+_DOC_TABLE_RE = re.compile(r"columns:\[(.*?)\],rows:\[(.*?)\]\]", re.S)
+_COLUMN_RE = re.compile(
+    r"\{title:(?:`([^`]*)`|_jsx\(Tooltip,\{tip:`[^`]*`,children:`([^`]*)`\}\))\s*,\s*width:`[^`]*`\}"
+)
+_DOC_ROW_RE = re.compile(
+    r"\[(?:_jsx\(_components\.a,\{href:`[^`]*`,children:`([^`]+)`\}\)|`([^`]+)`)((?:,`[^`]*`)*)\]"
+)
+_DOC_CELL_RE = re.compile(r",`([^`]*)`")
+_DOC_PRICE_RE = re.compile(r"\$([\d]+(?:\.[\d]+)?) / MTok")
+_DOC_COLUMNS = {
+    "Input": "prompt_micro_per_m",
+    "Output": "completion_micro_per_m",
+    "Cached Input": "prompt_cached_micro_per_m",
+}
+_DOC_IGNORED_COLUMNS = frozenset({"5m writes", "1h writes"})
+
+
+def _doc_table_rows(text: str):
+    for table in _DOC_TABLE_RE.finditer(text):
+        columns_src, rows_src = table.group(1), table.group(2) + "]"
+        titles = [plain or tooltip for plain, tooltip in _COLUMN_RE.findall(columns_src)]
+        if len(titles) != columns_src.count("{title:") or not titles or titles[0] != "Model":
+            raise ValueError(f"Unrecognized Kimi pricing table columns: {titles!r}")
+        unknown = set(titles[1:]) - set(_DOC_COLUMNS) - _DOC_IGNORED_COLUMNS
+        if unknown or not {"Input", "Output"} <= set(titles) or len(set(titles)) != len(titles):
+            raise ValueError(f"Unrecognized Kimi pricing table columns: {titles!r}")
+        rows = list(_DOC_ROW_RE.finditer(rows_src))
+        if not rows or sum(len(row.group(0)) for row in rows) + len(rows) - 1 != len(rows_src):
+            raise ValueError("Unrecognized Kimi pricing table rows")
+        for row in rows:
+            native_id = row.group(1) or row.group(2)
+            cells = _DOC_CELL_RE.findall(row.group(3))
+            if len(cells) != len(titles) - 1:
+                raise ValueError(f"Kimi pricing row for {native_id} does not match its columns")
+            prices: dict = {}
+            for title, cell in zip(titles[1:], cells, strict=True):
+                if title in _DOC_IGNORED_COLUMNS:
+                    continue
+                match = _DOC_PRICE_RE.fullmatch(cell.strip())
+                if match is None:
+                    raise ValueError(f"Unrecognized Kimi price {cell!r} for {native_id}")
+                prices[_DOC_COLUMNS[title]] = _to_micro_per_m(match.group(1))
+            yield native_id, prices
+
+
 def _to_micro_per_m(usd: str) -> int:
     return int((Decimal(usd) * Decimal(1_000_000)).quantize(Decimal("1"), ROUND_HALF_UP))
 
@@ -97,8 +153,16 @@ def parse(text: str) -> dict:
                 "prompt_micro_per_m": input_micro,
                 "completion_micro_per_m": output_micro,
             }
-        previous = out.get(or_id, {})
-        if any(previous[key] != row_out[key] for key in previous.keys() & row_out.keys()):
-            raise ValueError(f"Conflicting Kimi prices for {or_id}")
-        out[or_id] = {**previous, **row_out}
+        _merge(out, or_id, row_out)
+    for native_id, row_out in _doc_table_rows(text):
+        or_id = _or_id(native_id)
+        if or_id is not None:
+            _merge(out, or_id, row_out)
     return out
+
+
+def _merge(out: dict, or_id: str, row_out: dict) -> None:
+    previous = out.get(or_id, {})
+    if any(previous[key] != row_out[key] for key in previous.keys() & row_out.keys()):
+        raise ValueError(f"Conflicting Kimi prices for {or_id}")
+    out[or_id] = {**previous, **row_out}

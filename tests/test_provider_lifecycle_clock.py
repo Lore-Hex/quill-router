@@ -155,6 +155,7 @@ def test_latest_scheduled_cutover_covers_every_effective_date() -> None:
     assert provider_lifecycle.DEEPSEEK_V4_PRICING_EFFECTIVE_AT <= latest
     assert provider_lifecycle.FIREWORKS_DSV4_FLASH_0731_PRICING_EFFECTIVE_AT <= latest
     assert provider_lifecycle.PHALA_JULY_2026_EFFECTIVE_AT <= latest
+    assert provider_lifecycle.SAKANA_NAMAZU_DEC_2026_PRICING_EFFECTIVE_AT <= latest
     # Past the latest cutover, no retirement is still pending, which is what
     # makes the post-cutover CI job's clock the strictest one available.
     day_after = latest + timedelta(days=1)

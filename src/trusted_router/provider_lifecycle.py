@@ -148,6 +148,9 @@ FIREWORKS_DSV4_FLASH_0731_PRICING_EFFECTIVE_AT = datetime(
     2026, 8, 22, 12, 0, tzinfo=UTC
 )
 FIREWORKS_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 27, 0, 0, tzinfo=UTC)
+# console.sakana.ai/pricing (2026-11-07): sakana-namazu-v1.0 token prices
+# rise "From Dec 1, 2026, 10:00 JST" (01:00 UTC).
+SAKANA_NAMAZU_DEC_2026_PRICING_EFFECTIVE_AT = datetime(2026, 12, 1, 1, 0, tzinfo=UTC)
 FIREWORKS_QWEN37_RETIREMENT_AT = datetime(2026, 9, 4, 0, 0, tzinfo=UTC)
 XIAOMI_MIMO_V25_PRO_ULTRASPEED_RETIREMENT_AT = datetime(
     2026, 9, 8, 0, 0, tzinfo=timezone(timedelta(hours=8), "Asia/Shanghai")
@@ -221,6 +224,12 @@ _FIREWORKS_DSV4_FLASH_0731_MODEL_ID = "deepseek/deepseek-v4-flash-0731"
 _FIREWORKS_DSV4_FLASH_0731_PRICES = {
     "legacy": ProviderPrice(140_000, 280_000, 28_000),
     "new": ProviderPrice(220_000, 660_000, 7_000),
+}
+
+_SAKANA_NAMAZU_MODEL_ID = "sakana-ai/sakana-namazu-v1.0"
+_SAKANA_NAMAZU_PRICES = {
+    "legacy": ProviderPrice(950_000, 4_000_000, 150_000),
+    "new": ProviderPrice(1_900_000, 6_000_000, 300_000),
 }
 
 
@@ -1873,6 +1882,7 @@ def latest_scheduled_cutover() -> datetime:
         DEEPSEEK_V4_PRICING_EFFECTIVE_AT,
         FIREWORKS_DSV4_FLASH_0731_PRICING_EFFECTIVE_AT,
         PHALA_JULY_2026_EFFECTIVE_AT,
+        SAKANA_NAMAZU_DEC_2026_PRICING_EFFECTIVE_AT,
         *(retirement.effective_at for retirement in _RETIREMENTS),
     )
 
@@ -1885,6 +1895,7 @@ def provider_catalog_revision() -> tuple[int, str]:
         DEEPSEEK_WEEKEND_OFF_PEAK_EFFECTIVE_AT,
         FIREWORKS_DSV4_FLASH_0731_PRICING_EFFECTIVE_AT,
         PHALA_JULY_2026_EFFECTIVE_AT,
+        SAKANA_NAMAZU_DEC_2026_PRICING_EFFECTIVE_AT,
         *(retirement.effective_at for retirement in _RETIREMENTS),
     }
     return sum(now >= cutover for cutover in cutovers), _deepseek_v4_period(now)
@@ -1981,6 +1992,10 @@ def deepseek_off_peak_price(
     return prices["legacy" if _deepseek_v4_period(effective_at) == "legacy" else "off_peak"]
 
 
+def _sakana_namazu_period(effective_at: datetime) -> str:
+    return "legacy" if effective_at < SAKANA_NAMAZU_DEC_2026_PRICING_EFFECTIVE_AT else "new"
+
+
 def provider_pricing_schedule(
     provider_slug: str,
     model_id: str,
@@ -2027,6 +2042,15 @@ def provider_pricing_schedule(
                 if effective_at < FIREWORKS_DSV4_FLASH_0731_PRICING_EFFECTIVE_AT
                 else "new"
             ),
+            "rate_locked_at": "authorization",
+        }
+
+    if provider_slug == "sakana" and model_id == _SAKANA_NAMAZU_MODEL_ID:
+        return {
+            "kind": "fixed_cutover",
+            "timezone": "Asia/Tokyo",
+            "effective_at": SAKANA_NAMAZU_DEC_2026_PRICING_EFFECTIVE_AT.isoformat().replace("+00:00", "Z"),
+            "current_period": _sakana_namazu_period(effective_at),
             "rate_locked_at": "authorization",
         }
 
@@ -2111,6 +2135,9 @@ def provider_price_microdollars(
             else "new"
         )
         return _FIREWORKS_DSV4_FLASH_0731_PRICES[period]
+
+    if provider_slug == "sakana" and model_id == _SAKANA_NAMAZU_MODEL_ID:
+        return _SAKANA_NAMAZU_PRICES[_sakana_namazu_period(effective_at)]
 
     if provider_slug == "phala" and model_id == "qwen/qwen-2.5-7b-instruct":
         if effective_at < PHALA_JULY_2026_EFFECTIVE_AT:
