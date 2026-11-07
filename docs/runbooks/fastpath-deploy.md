@@ -237,9 +237,13 @@ first, then the old one marked leaving, drained and removed, as "For
 each node replaced" says, one at a time, the other serving throughout. A
 same-name replacement of both nodes in one apply would leave admitted
 requests no serving front door to settle through. The pilot's watches
-and its audit loop live on a node's disk (`fastpath-p1.md`,
-`fastpath-watch.md`); start them on the new node before the old one is
-drained.
+and its audit loop run from a node's disk (`fastpath-p1.md`,
+`fastpath-watch.md`); their scripts are kept in
+`scripts/fastpath/pilot/`. Copy them to the new node's `/var/tmp`, start
+each as root with `sudo setsid -f` (a `nohup` inside `gcloud compute ssh
+--command` dies with the session), check each watch log says `enable exit
+0`, and only then stop the old node's with SIGTERM (a watch stopped so
+exits without turning its workspace off), before the old node is drained.
 
 After a node with the edge serves: run the infrastructure apply once more
 so its edge instance group lists it, then check the balancer's view

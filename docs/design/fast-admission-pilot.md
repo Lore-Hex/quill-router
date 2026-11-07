@@ -157,7 +157,8 @@ deploy; the fast path's switch changes at once.
   `fastpathctl -database $DB -funded CREDITS audit WORKSPACE` for each
   workspace in the set every hour on the node that carries it, logging to
   `/var/tmp/pilot-audit.log` and writing an alert of kind `other` on any
-  problem; it does not survive the node's reset or replacement. Once that
+  problem; it does not survive the node's reset or replacement (the script
+itself is kept in `scripts/fastpath/pilot/`, with the watch's). Once that
   summary is seen, the script is stopped and started on no node again. The
   audit by hand, before and after a switch, stays:
   `fastpathctl -database $DB -funded CREDITS audit WORKSPACE` exits 0,
