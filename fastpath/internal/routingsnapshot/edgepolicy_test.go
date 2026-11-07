@@ -620,7 +620,10 @@ func TestTheAdmissionExcludedWorkspacesMemberIsOptional(t *testing.T) {
 // admission answer for each probe workspace (async_settle_pilot_allows with
 // admission on). Admits agrees with Python on every one, so the edge passes
 // exactly the async-v1 requests Python would ticket; the members' other
-// spellings are refused by both readers.
+// spellings are refused by both readers. The all-mode rows
+// (docs/design/fast-admission-widening.md section 9, PR 5) carry
+// fastpath_pilot_all and never admission_excluded_workspaces: with Python's
+// validators met, the async pilot set alone decides.
 func TestTheAsyncAdmissionVectors(t *testing.T) {
 	var file struct {
 		Generator string   `json:"generator"`
@@ -638,7 +641,7 @@ func TestTheAsyncAdmissionVectors(t *testing.T) {
 	if err := decoder.Decode(&file); err != nil {
 		t.Fatal(err)
 	}
-	accepted, refused, excluded, admitted, left := 0, 0, 0, 0, 0
+	accepted, refused, excluded, admitted, left, all := 0, 0, 0, 0, 0, 0
 	for _, c := range file.Cases {
 		p, err := ParseEdgePolicy([]byte(c.Body))
 		if (err == nil) != c.Accept {
@@ -656,6 +659,12 @@ func TestTheAsyncAdmissionVectors(t *testing.T) {
 		if p.AsyncSettle.AdmissionExcludedWorkspaces != nil {
 			excluded++
 		}
+		if p.PilotAll() {
+			all++
+			if p.AsyncSettle.AdmissionExcludedWorkspaces != nil {
+				t.Errorf("%s: all mode with admission_excluded_workspaces", c.Name)
+			}
+		}
 		for _, ws := range file.Probes {
 			want, ok := c.Admits[ws]
 			if !ok {
@@ -671,9 +680,9 @@ func TestTheAsyncAdmissionVectors(t *testing.T) {
 			}
 		}
 	}
-	if accepted != 32 || refused != 6 || excluded != 5 || admitted == 0 || left == 0 {
-		t.Fatalf("%d accepted (%d with the member), %d refused, %d admitted and %d left-out answers: "+
-			"not the vectors' 32 (5) and 6", accepted, excluded, refused, admitted, left)
+	if accepted != 46 || refused != 6 || excluded != 5 || all != 14 || admitted == 0 || left == 0 {
+		t.Fatalf("%d accepted (%d with the member, %d in all mode), %d refused, %d admitted and %d left-out "+
+			"answers: not the vectors' 46 (5, 14) and 6", accepted, excluded, all, refused, admitted, left)
 	}
 }
 

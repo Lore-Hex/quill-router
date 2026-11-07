@@ -189,7 +189,11 @@ def admission_workspaces(settings: Settings) -> dict[str, list[str]]:
       them with no pilot set, else those it names. So the member is present
       only when it changes an answer, and a body whose pilot set leaves every
       fast-path workspace out is byte-identical to one from before the member
-      existed. At most 32, as the fast-path set is.
+      existed. With a pilot set, the members ``async_settle_fastpath_excludes``
+      names, so at most its 32 in all mode too
+      (docs/design/fast-admission-widening.md section 9); without one, the
+      explicit fast-path set's, at most 32. All mode with admission on and no
+      pilot set is refused by the settings, and raises here.
 
     Python answers a workspace they leave out as with admission off
     (``async_settle.snapshot_projection``), which the edge composes itself
@@ -197,9 +201,14 @@ def admission_workspaces(settings: Settings) -> dict[str, list[str]]:
     if not settings.async_settle_admission_enabled:
         return {}
     pilots = settings.async_settle_pilot_workspace_ids
-    excluded = settings.async_settle_fastpath_excluded_workspace_ids
     if pilots:
-        excluded &= pilots
+        excluded = frozenset(ws for ws in pilots if settings.async_settle_fastpath_excludes(ws))
+    elif settings.fastpath_pilot_all:
+        # Settings.validate_fastpath_pilot_all refuses this: the exclusion
+        # would be every covered workspace. Fail the signing, never publish it.
+        raise ValueError("all mode with async admission on needs an async pilot set")
+    else:
+        excluded = settings.async_settle_fastpath_excluded_workspace_ids
     return {
         **({"admission_excluded_workspaces": sorted(excluded)} if excluded else {}),
         **({"admission_workspaces": sorted(pilots)} if pilots else {}),
@@ -224,6 +233,12 @@ def settings_facts(
         "fastpath_pilot_enabled": settings.fastpath_pilot_enabled,
         "fastpath_pilot_workspaces": sorted(settings.fastpath_pilot_workspace_ids),
         "fastpath_pilot_regions": sorted(settings.fastpath_pilot_region_ids),
+        # Optional, together, published only in all mode
+        # (docs/design/fast-admission-widening.md section 6.3): the explicit
+        # list above is then empty. Absent otherwise, so the default body
+        # stays byte-identical and a node before PR 3 is unaffected.
+        **({"fastpath_pilot_all": True, "fastpath_pilot_exclude": sorted(settings.fastpath_pilot_exclude_ids)}
+           if settings.fastpath_pilot_all else {}),
         "gateway_authorize_max_in_flight_per_key": settings.gateway_authorize_max_in_flight_per_key,
         "monitor_lookup_hash": monitor_lookup_hash(settings),
         "async_settle_shadow_policy": settings.async_settle_shadow_policy,

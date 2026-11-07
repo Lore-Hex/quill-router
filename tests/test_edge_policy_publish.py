@@ -692,7 +692,13 @@ def test_every_admission_vector_is_python_s_own_admission_answer() -> None:
     vectors = json.loads(VECTORS.OUTPUT_ADMISSION.read_text())
     cases, probes = vectors["cases"], vectors["probes"]
     published = [c for c in cases if c["settings"] is not None]
-    assert len(published) == 2 * len(VECTORS.ADMISSION_PILOTS) * len(VECTORS.ADMISSION_OVERLAPS) * 2
+    all_mode = [c for c in published if "exclude" in c["settings"]]
+    assert len(published) - len(all_mode) == 2 * len(VECTORS.ADMISSION_PILOTS) * len(VECTORS.ADMISSION_OVERLAPS) * 2
+    # All mode (widening section 9): every combination the settings accept,
+    # each body carrying the members and no admission_excluded_workspaces.
+    assert len(all_mode) == len(VECTORS.admission_all_mode_combinations()) == 14
+    assert all(parse_edge_policy(c["body"]).fastpath_pilot_all is True for c in all_mode)
+    assert all("admission_excluded_workspaces" not in c["body"] for c in all_mode)
     assert len(cases) - len(published) == len(VECTORS.ADMISSION_REFUSED) + 1
     answers = set()
     for case in cases:
@@ -703,7 +709,8 @@ def test_every_admission_vector_is_python_s_own_admission_answer() -> None:
         parsed = parse_edge_policy(case["body"]).async_settle
         assert canonical_edge_policy_bytes(parse_edge_policy(case["body"])).decode("ascii") == case["body"]
         s = case["settings"]
-        settings = VECTORS.admission_settings(s["admission"], s["pilots"], s["overlap"], s["fastpath"])
+        settings = VECTORS.admission_settings(s["admission"], s["pilots"], s["overlap"], s["fastpath"],
+                                              s.get("exclude"))
         for ws in probes:
             python = settings.async_settle_admission_enabled and settings.async_settle_pilot_allows(ws)
             members = (parsed.admission_enabled
@@ -2125,13 +2132,17 @@ def test_the_all_mode_golden_manifest_verifies_and_binds_the_body() -> None:
         _golden_verify(_golden_manifest()["jws"], body)
 
 
-def test_the_publisher_writes_no_all_mode_member() -> None:
-    # PR 5 publishes them; until then the default body is byte-identical to
-    # one from before the members existed.
+def test_the_publisher_writes_the_all_mode_members_only_in_all_mode() -> None:
+    # PR 5 publishes them from the settings, only with fastpath_pilot_all
+    # on; otherwise the default body is byte-identical to one from before
+    # the members existed (tests/test_fastpath_pilot_all.py holds that for
+    # any exclude list).
     for member in (b"fastpath_pilot_all", b"fastpath_pilot_exclude"):
         assert member not in VECTORS.render_body()
         assert member not in _golden_body()
+        assert member in VECTORS.render_all_body()
     assert parse_edge_policy(_golden_body()).fastpath_pilot_all is None
+    assert VECTORS.render_all_body() == canonical_edge_policy_bytes(VECTORS.policy(VECTORS.all_mode_settings()))
 
 
 _EXCLUDE_64 = [f"ws-synthetic-x{i:02d}" for i in range(64)]

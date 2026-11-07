@@ -4660,6 +4660,15 @@
         }
       ]
     },
+    "services.fastpath_frontdoor:constants:2": {
+      "fingerprint": "305b2f0f9b62eec797b4bc957c249364ab8a41bb219ccebbf0a64b626a91eb44",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {}
+        }
+      ]
+    },
     "storage_gcp:has_credit_grant:1": {
       "fingerprint": "936d17a630cfae5293b90e54ecc73bfaa5a17f5055b0602bbb35e1c7fb076f66",
       "scenarios": [
@@ -4739,6 +4748,7 @@
     "byok_aad_backfill:SpannerEntityStore.scan": "cbcb8994d09d078c7ad24a01c07dc5b581d0f7576876ead1765c794295c58edd",
     "byok_aad_backfill:SpannerEntityStore.census": "1a7ab3c8c71257ae9cc02e40a716ec4beef925476fbfea0c054dcda3024b2e49",
     "services.fastpath_frontdoor:SpannerFrontDoors.__call__": "ab6e1774269d5e5a41db17067e914e2521d06e823c52d7fa169f3e069fd3a66c",
+    "services.fastpath_frontdoor:spanner_enabled_workspaces.read": "56796e4097edc9000f984e03ed567a8ddf63427a07dc4c6d143bfc40495593b8",
     "storage_gcp:SpannerStore._workspace_trust_events_tx": "2667a0cbd3785bf54838fe1360410dd3e9b5d50f603fcbe6c8c2009db9df3111",
     "storage_gcp:SpannerStore._increment_lifetime_topup_tx": "b8e66263f19c8fcce2a80c366e63a4b052ec668fdadb89e96274e9c36e22e931",
     "storage_gcp:SpannerStore._insert_credit_movement_tx": "570833170f2179aefa3746b630cfe8b68c09f8ddb1d45f7c3b50a1253d3830dd",
