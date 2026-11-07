@@ -498,3 +498,160 @@ def test_gemini_tariff_manifest_spike_gate_and_publication(
             for model, pair in tariffs.items():
                 assert rows[model]["input_token_price_per_m"] == pair["input"]
                 assert rows[model]["output_token_price_per_m"] == pair["output"]
+
+
+GEMINI_MARKDOC = Path(__file__).parent / "fixtures/pricing/gemini_aistudio_markdoc_2026-11-07.md"
+MISTRAL_AUDIO_PRICING = Path(__file__).parent / "fixtures/pricing/mistral_audio_pricing_2026-11-07.html"
+MISTRAL_DEPRECATED_MODELS = Path(__file__).parent / "fixtures/pricing/mistral_deprecated_models_2026-11-07.html"
+
+
+@pytest.mark.parametrize("today, expected", [
+    (date(2026, 11, 7), OLD_TOKEN_PRICES),
+    (date(2027, 1, 1), NEW_TOKEN_PRICES),
+])
+def test_gemini_markdoc_pricing_page_parses_standard_tts_tariffs(
+    today: date, expected: dict[str, dict[str, int]],
+) -> None:
+    # 2026-11-07: ai.google.dev 301s to aistudio.google.com, which serves the
+    # Markdoc source as text/markdown; the HTML-only parser found no <h2>.
+    assert speech.parse_gemini_token_prices(GEMINI_MARKDOC.read_text(), today=today) == expected
+
+
+@pytest.mark.parametrize("old, new, message", [
+    ("## Gemini 3.8 Flash TTS  {%", "## Gemini 3.8 Flash Voice  {%", "Missing Gemini speech section"),
+    ('{% tab title="Standard" %}\n  {% table %}\n  * Feature\n  * Free Tier\n  * Paid Tier, per 1M tokens in USD',
+     '{% tab title="Standard" %}\n  {% table %}\n  * Feature\n  * Free Tier\n  * Paid Tier, per 1M characters in USD',
+     "Missing Standard per-token speech pricing"),
+    ("$0.50 (text) through December 31, 2026.", "$0.50 per 1M characters through December 31, 2026.",
+     "Conflicting or expired Gemini speech tariff"),
+])
+def test_gemini_markdoc_pricing_fails_closed(old: str, new: str, message: str) -> None:
+    source = GEMINI_MARKDOC.read_text()
+    # Edit only the Flash TTS section; other models share the same markup.
+    flash = source.index("## Gemini 3.8 Flash TTS")
+    head, tail = source[:flash], source[flash:]
+    assert old in tail
+    with pytest.raises(ValueError, match=message):
+        speech.parse_gemini_token_prices(head + tail.replace(old, new, 1), today=date(2026, 11, 7))
+
+
+def test_gemini_markdoc_standard_tab_is_selected_over_batch() -> None:
+    source = GEMINI_MARKDOC.read_text()
+    standard = '{% tab title="Standard" %}'
+    flash = source.index("## Gemini 3.8 Flash TTS")
+    # Dropping the Flash section's Standard tab must not fall back to Batch.
+    head, tail = source[:flash], source[flash:]
+    with pytest.raises(ValueError, match="Missing Standard per-token speech pricing"):
+        speech.parse_gemini_token_prices(head + tail.replace(standard, '{% tab title="Legacy" %}', 1))
+
+
+def test_refresh_publishes_gemini_from_markdoc_page(
+    refresh_sources: tuple[Path, dict[str, str]], monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    snapshot, pages = refresh_sources
+    pages[speech.GEMINI_URL] = GEMINI_MARKDOC.read_text()
+    _freeze_today(monkeypatch, date(2026, 11, 7))
+    assert speech.refresh() == 0
+    assert json.loads(snapshot.read_text())["token_prices"] == OLD_TOKEN_PRICES
+    assert speech.HELD_FOR_REVIEW_HEADING not in capsys.readouterr().out
+
+
+def test_mistral_deprecated_voxtral_table_dates() -> None:
+    assert speech.parse_mistral_lifecycle(
+        MISTRAL_DEPRECATED_MODELS.read_text(), "voxtral-mini-tts-2603",
+    ) == (date(2026, 10, 31), date(2027, 4, 30))
+    with pytest.raises(ValueError, match="Missing or conflicting Mistral lifecycle row"):
+        speech.parse_mistral_lifecycle(MISTRAL_DEPRECATED_MODELS.read_text(), "voxtral-mini-tts-9999")
+
+
+def test_mistral_price_page_without_voxtral_tts_row_is_a_missing_tariff() -> None:
+    # Only "Voxtral TTS 3" remains; never bind its $13 tariff to 26.03.
+    with pytest.raises(speech.MissingSpeechTariff):
+        speech.parse_character_price("mistralai/voxtral-mini-tts-2603", MISTRAL_AUDIO_PRICING.read_text())
+
+
+def _mistral_deprecated_pages(pages: dict[str, str]) -> None:
+    pages[speech.SOURCES["mistralai/voxtral-mini-tts-2603"]] = MISTRAL_AUDIO_PRICING.read_text()
+    pages[speech.MISTRAL_MODELS_URL] = MISTRAL_DEPRECATED_MODELS.read_text()
+
+
+def test_refresh_keeps_deprecated_voxtral_price_while_mistral_schedules_retirement(
+    refresh_sources: tuple[Path, dict[str, str]], monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    snapshot, pages = refresh_sources
+    _mistral_deprecated_pages(pages)
+    previous = json.loads(snapshot.read_text())
+    _freeze_today(monkeypatch, date(2026, 12, 30))
+    assert speech.refresh() == 0
+    after = json.loads(snapshot.read_text())
+    assert after["prices"]["mistralai/voxtral-mini-tts-2603"] == (
+        previous["prices"]["mistralai/voxtral-mini-tts-2603"]
+    )
+    out = capsys.readouterr().out
+    assert "  mistral: kept committed prices (deprecated model, no published tariff)" in out
+    assert speech.HELD_FOR_REVIEW_HEADING not in out
+
+
+@pytest.mark.parametrize("change", ["moved_retirement", "after_retirement", "not_deprecated"])
+def test_refresh_holds_voxtral_when_the_deprecation_does_not_cover_today(
+    refresh_sources: tuple[Path, dict[str, str]], monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str], change: str,
+) -> None:
+    snapshot, pages = refresh_sources
+    _mistral_deprecated_pages(pages)
+    today = date(2027, 4, 30) if change == "after_retirement" else date(2026, 12, 30)
+    if change == "moved_retirement":
+        pages[speech.MISTRAL_MODELS_URL] = pages[speech.MISTRAL_MODELS_URL].replace(
+            "4/30/2027", "1/31/2027",
+        )
+    elif change == "not_deprecated":
+        pages[speech.MISTRAL_MODELS_URL] = pages[speech.MISTRAL_MODELS_URL].replace(
+            "voxtral-mini-tts-2603", "voxtral-mini-tts-2604",
+        )
+    _freeze_today(monkeypatch, today)
+    previous = json.loads(snapshot.read_text())
+    assert speech.refresh() == 0
+    assert json.loads(snapshot.read_text())["prices"] == previous["prices"]
+    held = _held_section(capsys.readouterr().out)
+    assert held[0] == "  mistral:"
+    assert held[1].startswith("    refresh failed: ValueError: ")
+
+
+def test_voxtral_tts_retirement_is_scheduled_without_substitution(monkeypatch: pytest.MonkeyPatch) -> None:
+    from datetime import timedelta
+
+    from trusted_router import catalog, provider_lifecycle
+    from trusted_router.catalog_data import ModelEndpoint
+
+    cutoff = datetime(2027, 4, 30, tzinfo=UTC)
+    model, native = "mistralai/voxtral-mini-tts-2603", "voxtral-mini-tts-2603"
+    assert provider_lifecycle.MISTRAL_VOXTRAL_TTS_2603_RETIREMENT_AT == cutoff
+    entries = [
+        entry for entry in provider_lifecycle.provider_retirements()
+        if entry.provider == "mistral" and model in entry.model_ids
+    ]
+    assert len(entries) == 1
+    assert entries[0].effective_at == cutoff
+    assert entries[0].upstream_ids == frozenset({native})
+    # Mistral names Voxtral TTS 3, which TrustedRouter does not list.
+    assert entries[0].replacement_model_ids == ()
+    retired = provider_lifecycle.provider_model_retired
+    assert not retired("mistral", model, native, at=cutoff - timedelta(microseconds=1))
+    assert retired("mistral", model, native, at=cutoff)
+    assert retired("mistral", "unknown-canonical", native, at=cutoff)
+    # Tinfoil's open-weight Voxtral 4B TTS is a different model and provider.
+    assert not retired("tinfoil", "mistralai/voxtral-4b-tts-2603", "voxtral-tts", at=cutoff)
+    endpoints = {}
+    for slug in ("mistral", "unaffected-provider"):
+        endpoint = ModelEndpoint(
+            id=f"{model}@{slug}/Credits", model_id=model, provider=slug,
+            usage_type="Credits", upstream_id=native,
+        )
+        endpoints[endpoint.id] = endpoint
+    monkeypatch.setattr(catalog, "MODEL_ENDPOINTS", endpoints)
+    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: cutoff - timedelta(microseconds=1))
+    assert len(catalog.endpoints_for_model(model)) == 2
+    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: cutoff)
+    assert [row.provider for row in catalog.endpoints_for_model(model)] == ["unaffected-provider"]

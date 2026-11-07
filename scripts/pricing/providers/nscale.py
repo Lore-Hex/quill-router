@@ -51,6 +51,14 @@ IMAGE_DIMENSIONS = (1024, 1024)
 IMAGE_PIXELS = 1024 * 1024
 MAX_IMAGE_RESPONSE_BYTES = 16 * 1024 * 1024
 
+# Floor on priced chat models before a catalog may publish. Nscale's
+# November 2026 cutover (see provider_lifecycle) retired 21 chat models; its
+# public serverless page checked 2026-11-07 lists four (GLM 5.3, Mistral Large
+# 3, Qwen3.8-27B and Qwen3.8-Flash-Next-FP8). A broken or reshaped catalog
+# prices none, so the floor still fails closed without demanding models that
+# Nscale no longer sells.
+MIN_PRICED_CHAT_MODELS = 3
+
 UPSTREAM_ID_MAP: dict[str, str] = {}
 _DISCOVERED_ROWS: dict[str, dict[str, Any]] = {}
 
@@ -208,8 +216,10 @@ def _discover(
     errors = validate(chat_prices, [])
     if errors:
         raise RuntimeError("; ".join(errors))
-    if len(chat_prices) < 15:
-        raise RuntimeError("nscale: fewer than 15 priced chat models discovered")
+    if len(chat_prices) < MIN_PRICED_CHAT_MODELS:
+        raise RuntimeError(
+            f"nscale: fewer than {MIN_PRICED_CHAT_MODELS} priced chat models discovered"
+        )
     return chat_prices, manifest_prices, discovered
 
 
