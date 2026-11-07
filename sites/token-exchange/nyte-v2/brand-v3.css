@@ -168,12 +168,9 @@ dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
 .alt em,.alt .privacy-provider,.alt .service-heading strong,.alt .facility-badge,.alt .oss-checks li::before{color:var(--ink)}
 .health-bar{background:var(--green)}
 /* Page sheets: square corners, no shadows, readable accent text. */
-.accelerator-roles .split>div,.buy-workspace,.buy-choice,.buy-field input,.buy-field select,.buy-counter input,.buy-counter button,
-.buy-total,#buy-calendar iframe,.buy-reserve,.cw-screenshot,.cw-screenshot img,.pv-deck{border-radius:0}
+.accelerator-roles .split>div,.cw-screenshot,.cw-screenshot img,.pv-deck{border-radius:0}
 .cw-screenshot img{box-shadow:none}
-.buy-workspace{border:1.5px solid var(--ink)}
-.buy-steps [aria-current] span{color:var(--cream)}
-.buy-kicker,.pv-topics span{font-family:var(--font-condensed);letter-spacing:.1em}
+.pv-topics span{font-family:var(--font-condensed);letter-spacing:.1em}
 .cw-steps span{color:var(--t2)}
 
 /* No landscape photography (kit: "no moody landscapes"). Heroes become a

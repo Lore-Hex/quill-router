@@ -1,5 +1,6 @@
 """The brand v3 sheet loads only on pages switched on in nyte-brand-v3.json."""
 import os
+import re
 import unittest
 from unittest import mock
 
@@ -65,6 +66,41 @@ class BrandV3Tests(unittest.TestCase):
         self.assertNotIn('api-v3.css', legacy)
         self.assertIn('ph-gondola', legacy)
         self.assertNotIn('data-evidence-style', legacy)
+
+    def test_v3_buy_moves_only_the_side_notes(self):
+        with mock.patch.dict(os.environ, {"NYTE_BRAND_V3_PREVIEW": "1"}):
+            page = render_nyte("buy")
+        with mock.patch.dict(os.environ, {"NYTE_BRAND_V3_PREVIEW": ""}), mock.patch.object(nyte_v2, "BRAND_V3_PAGES", set()):
+            legacy = render_nyte("buy")
+
+        def main(html):
+            return html.split('<main id="main">', 1)[1].split('</main>', 1)[0]
+
+        def flow(html):
+            return html.split('<div class="buy-workspace" id="buy-flow">', 1)[1].split('</noscript>', 1)[0]
+
+        def words(html):
+            return sorted(re.sub(r'<svg.*?</svg>|<[^>]+>', ' ', main(html), flags=re.S).split())
+
+        # Rollback: off the list, the page keeps its aside, collapsed list and no v3 sheets.
+        self.assertIn('<aside class="buy-brand" aria-label="About reserved tokens">', legacy)
+        self.assertIn('<details class="buy-contract"><summary>What we’ll discuss</summary>', legacy)
+        for v3_only in ('buy-v3.css', 'brand-v3.css', 'buy-stage', 'buy-about', 'v3-band'):
+            self.assertNotIn(v3_only, legacy)
+        # Brand v3: its sheet loads after brand-v3.css; the request flow is byte for byte the same.
+        self.assertGreater(page.index('/assets/nyte-v2/buy-v3.css?v='), page.index(SHEET))
+        self.assertEqual(flow(page), flow(legacy))
+        # The side notes move below the yellow field word for word; the list is shown open.
+        about = main(page).split('<section class="buy-about" aria-label="About reserved tokens">', 1)[1]
+        for pattern in (r'<div class="buy-notes">.*?</p></div>', r'<dl>.*?</dl>', r'<p class="buy-fine">Card checkout.*?</p>'):
+            self.assertIn(re.search(pattern, legacy, re.S)[0], about)
+        self.assertIn('<div class="buy-contract"><h2 class="v3-label">What we’ll discuss</h2>', about)
+        self.assertNotIn('<details', main(page))
+        self.assertEqual(main(page).count('class="v3-band" preserveAspectRatio="none"'), 1)
+        self.assertEqual(words(page), words(legacy))
+        # analytics.js names positions from hero and closing classes; /buy has neither, so clicks stay "section".
+        for markup in (main(page), main(legacy)):
+            self.assertNotRegex(markup, r'class="hero|class="[^"]*\b(hero|closing|closing-copy|close-photo|cw-download)\b')
 
     def test_listed_pages_exist(self):
         self.assertLessEqual(nyte_v2.BRAND_V3_PAGES, set(PAGES))

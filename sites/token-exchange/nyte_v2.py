@@ -327,9 +327,15 @@ def render_nyte(
     if page == "buy":
         from buy_page import buy_content
 
-        content = buy_content()
+        buy_v3 = uses_brand_v3("buy")
+        content = buy_content(v3=buy_v3)
         buy_version = hashlib.sha256((SOURCE / "buy.css").read_bytes() + (SOURCE / "buy.js").read_bytes()).hexdigest()[:12]
         extra_head += f'<link rel="stylesheet" href="/assets/nyte-v2/buy.css?v={buy_version}"><script src="/assets/nyte-v2/buy.js?v={buy_version}" defer></script>'
+        if buy_v3:
+            # Its layout and sheet follow the switch, so removing buy restores the old page.
+            content = content.replace("{{band_ink}}", band_svg("band-ink.svg"))
+            buy_v3_version = hashlib.sha256((SOURCE / "buy-v3.css").read_bytes()).hexdigest()[:12]
+            late_head = f'<link rel="stylesheet" href="/assets/nyte-v2/buy-v3.css?v={buy_v3_version}">' + late_head
     market_links = "".join(
         '<a href="https://' + html.escape(other["domain"], quote=True) + '/"'
         + (' aria-current="page"' if other["slug"] == market["slug"] else '')
@@ -434,7 +440,7 @@ def build_nyte(output: Path) -> None:
     shutil.copytree(SOURCE / "assets", assets, dirs_exist_ok=True)
     # NYTE can publish its approved evidence renderer without changing other markets.
     shutil.copyfile(HERE / "live-evidence.js", assets / "live-evidence.js")
-    for name in ("styles.css", "app.js", "fonts.css", "providers.css", "cowork.css", "buy.css", "buy.js", "manage.js", "accelerator.css", "brand-v3.css", "home-v3.css", "api-v3.css", "cowork-v3.css"):
+    for name in ("styles.css", "app.js", "fonts.css", "providers.css", "cowork.css", "buy.css", "buy.js", "manage.js", "accelerator.css", "brand-v3.css", "home-v3.css", "api-v3.css", "cowork-v3.css", "buy-v3.css"):
         shutil.copyfile(SOURCE / name, assets / name)
     for page, entry in PAGES.items():
         if page == "home" or entry.get("builder"):

@@ -1,0 +1,204 @@
+/* Reserved tokens (/buy), brand v3 design (HANDOFF-nyte-buy-v3-2026-11-06). Loads after
+   brand-v3.css, only when buy is switched on in nyte-brand-v3.json. Price family: yellow lead.
+   Restyles the request flow's existing markup; buy_page.brand_v3_layout only moves the
+   notes, discussion list and fine print below the yellow field. */
+[data-nyte-page="buy"] header .wrap,[data-nyte-page="buy"] main .wrap{max-width:1440px;padding:0 64px}
+[data-nyte-page="buy"] main{--buy-g:64px;--buy-panel-g:64px}
+.buy-stage,.buy-about{--label:500 15px/1.2 var(--font-condensed)}
+.buy-stage :is(h1,h2,h3,p,ol,ul,dl,dd,fieldset),.buy-about :is(h2,p,dl,dd){margin:0}
+
+/* Hero: a full-bleed yellow field; headline left (5 of 12), request panel right (7 to 12). */
+.buy-stage{background:var(--yellow);color:var(--ink)}
+.buy-stage .buy-layout{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;row-gap:0;align-items:start}
+[data-nyte-page="buy"] .buy-stage .buy-layout{padding-top:96px;padding-bottom:96px}
+.buy-stage .buy-brand{grid-column:span 5;padding:24px 0 0}
+.buy-stage .buy-workspace{grid-column:7/span 6}
+.buy-stage .buy-kicker{font:var(--label);letter-spacing:.1em;text-transform:uppercase;color:var(--ink)}
+.buy-stage .buy-kicker::before{content:"";display:block;width:40px;height:4px;margin-bottom:12px;background:var(--ink)}
+.buy-stage h1{margin-top:32px;font-size:clamp(56px,5.6vw,80px);line-height:1;font-weight:300;letter-spacing:-.015em;color:var(--ink);overflow-wrap:break-word}
+.buy-stage h1 em{color:inherit;font-style:normal}
+/* One run of text, as drawn: the line break goes and a space takes its place. */
+.buy-stage h1 br{display:none}
+.buy-stage h1 em::before{content:" "}
+.buy-stage .lede{margin-top:32px;max-width:480px;font-size:22px;line-height:1.45;color:var(--ink)}
+.buy-stage>.v3-band{display:block;width:100%;height:120px}
+
+/* Request panel: cream, 1.5 px ink rule, square. */
+.buy-stage .buy-workspace{container-type:inline-size;min-width:0;padding:0 32px;border:1.5px solid var(--ink);border-radius:0;background:var(--cream);color:var(--ink);--t1:var(--ink);--t2:var(--ink);--t3:var(--ink-2)}
+.buy-workspace a{color:var(--ink);text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:4px;font-weight:500}
+.buy-workspace :focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+/* Step headings take focus from the script on each step change; the move is announced, not drawn. */
+.buy-workspace .buy-step h2:focus{outline:none}
+.buy-workspace #buy-reserved-success{margin-top:24px}
+.buy-workspace #buy-facility-unit-note{margin-top:20px;font-size:15px;color:var(--ink-2)}
+
+/* Step rail: mono number over the label; current step underlined; no circles. */
+.buy-workspace .buy-steps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;margin:0;padding:0;border-bottom:1.5px solid var(--stone);font-size:15px;line-height:1.3;color:var(--ink-2);text-align:left}
+.buy-workspace .buy-steps li{display:flex;flex-direction:column;gap:4px;min-width:0;padding:18px 8px 14px 0;margin-bottom:-1.5px;border-bottom:3px solid transparent}
+.buy-workspace .buy-steps span{display:block;width:auto;height:auto;margin:0;border:0;border-radius:0;background:none;color:inherit;font:inherit;font-family:var(--font-mono);line-height:inherit;text-align:left}
+.buy-workspace .buy-steps span::before{content:"0"}
+.buy-workspace .buy-steps li:has(~li[aria-current]){color:var(--ink)}
+.buy-workspace .buy-steps [aria-current]{color:var(--ink);font-weight:500;border-bottom-color:var(--ink)}
+.buy-workspace .buy-steps [aria-current] span{background:none;color:inherit}
+
+/* Steps */
+.buy-workspace .buy-step{padding:32px 0}
+.buy-workspace .buy-step h2{margin:0;font-size:24px;line-height:1.2;font-weight:500;letter-spacing:0;color:var(--ink)}
+.buy-workspace .buy-step>p{margin-top:10px;font-size:17px;line-height:1.55;color:var(--ink)}
+.buy-workspace .buy-step fieldset{margin:32px 0 0}
+.buy-workspace .buy-step legend{margin:0 0 12px;padding:0;font:var(--label);letter-spacing:.1em;text-transform:uppercase;color:var(--ink)}
+.buy-workspace .buy-fine{font-size:15px;line-height:1.55;color:var(--ink-2)}
+.buy-workspace .buy-step>.buy-fine{margin-top:20px;color:var(--ink-2)}
+
+/* Step 1: full-width option rows; the chosen one is white with a 2.5 px ink border. */
+.buy-workspace .buy-unit-list li+li{margin-top:-1.5px}
+.buy-workspace .buy-unit-list label{position:relative;display:flex;align-items:center;gap:14px;padding:16px;border:1.5px solid var(--stone);font-size:17px;line-height:1.4;cursor:pointer}
+.buy-workspace .buy-unit-list label:has(input:checked){z-index:1;padding:15px;border:2.5px solid var(--ink);background:#fff}
+.buy-workspace .buy-unit-list label:has(input:disabled){color:var(--ink-2);cursor:not-allowed}
+.buy-workspace :is(.buy-unit-list,.buy-choice,.facility-select,.buy-reserve-terms) input{width:20px;height:20px;margin:0;flex:none;accent-color:var(--ink)}
+.buy-workspace .buy-step>.buy-seller{margin-top:20px;font-size:17px}
+
+/* Buttons: kit sizes; orange for the one main action per step. */
+.buy-workspace .buy-actions{display:flex;flex-wrap:wrap;justify-content:space-between;gap:12px;margin-top:28px}
+.buy-workspace .btn{min-height:48px;padding:12px 22px;border:1.5px solid var(--ink);border-radius:0;background:transparent;color:var(--ink);font:500 16px/1.2 var(--font-sans);white-space:normal;text-align:center}
+.buy-workspace .btn-primary{background:var(--orange)}
+.buy-workspace .btn:hover{background:var(--ink);color:var(--cream);border-color:var(--ink)}
+/* Step 2: card checkout is the main action, so "Continue to contact" is an outline button. */
+.buy-workspace [data-step="2"] .buy-actions .btn-primary{background:transparent}
+.buy-workspace [data-step="2"] .buy-actions .btn-primary:hover{background:var(--ink)}
+.buy-workspace .btn:disabled,.buy-workspace .btn:disabled:hover{opacity:1;border-color:var(--stone);background:var(--stone);color:var(--ink-2);cursor:not-allowed}
+
+/* Step 2: underlying tokens as text tabs; the radio stays focusable. */
+.buy-workspace .buy-tabs{display:flex;flex-wrap:wrap;gap:0 24px;border-bottom:1.5px solid var(--stone);font-size:17px}
+.buy-workspace .buy-tabs label{position:relative;display:flex;align-items:center;padding:10px 0 12px;margin-bottom:-1.5px;border-bottom:3px solid transparent;cursor:pointer}
+.buy-workspace .buy-tabs input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer}
+.buy-workspace .buy-tabs label:has(input:checked){border-bottom-color:var(--ink);font-weight:500}
+.buy-workspace .buy-tabs label:has(input:focus-visible){outline:2px solid var(--ink);outline-offset:2px}
+.buy-workspace #buy-grades>.buy-fine{margin:0}
+
+/* Grade cards with the kit Ladder in fixed grade colours. */
+.buy-workspace #buy-grades .buy-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0;margin-top:16px;padding:.75px}
+.buy-workspace .buy-choice{position:relative;display:flex;align-items:flex-start;gap:14px;min-width:0;margin:-.75px;padding:18px;border:1.5px solid var(--stone);border-radius:0;background:transparent}
+.buy-workspace .buy-choice:has(input:checked){z-index:1;padding:17px;border:2.5px solid var(--ink);background:#fff}
+.buy-workspace .buy-choice:has(input:focus-visible){outline:2px solid var(--ink);outline-offset:2px}
+.buy-workspace .buy-choice input{margin-top:5px}
+.buy-workspace .buy-choice strong{display:flex;align-items:center;gap:12px;margin:0 0 10px;font-size:19px;line-height:1.3;font-weight:500}
+.buy-workspace .buy-choice strong::before{content:"";flex:none;width:36px;height:29px;--r1:var(--stone);--r2:var(--stone);--r3:var(--stone);--r4:var(--stone);
+  background:linear-gradient(var(--r1) 0 5px,transparent 5px 8px,var(--r2) 8px 13px,transparent 13px 16px,var(--r3) 16px 21px,transparent 21px 24px,var(--r4) 24px 29px)}
+.buy-workspace .buy-choice:has(input[value="AAA"]) strong::before{--r1:var(--purple);--r2:var(--purple);--r3:var(--purple);--r4:var(--purple)}
+.buy-workspace .buy-choice:has(input[value="A"]) strong::before{--r2:var(--sky);--r3:var(--sky);--r4:var(--sky)}
+.buy-workspace .buy-choice:has(input[value="B"]) strong::before{--r3:var(--lime);--r4:var(--lime)}
+.buy-workspace .buy-choice:has(input[value="C"]) strong::before{--r4:var(--yellow)}
+.buy-workspace .buy-price{display:block;margin:0 0 8px;font:500 17px/1.3 var(--font-mono);font-variant-numeric:tabular-nums;color:var(--ink)}
+.buy-workspace .buy-price small{display:block;margin-top:2px;font:400 15px/1.4 var(--font-sans);color:var(--ink-2)}
+.buy-workspace .buy-choice>span>small{display:block;font-size:15px;line-height:1.5;color:var(--ink-2)}
+@container (max-width:460px){.buy-workspace #buy-grades .buy-grid{grid-template-columns:1fr}}
+
+/* Planned facilities: the same card style as the grades. */
+.buy-workspace .facility-grid{grid-template-columns:1fr;gap:0;margin:16px 0 0;padding:.75px}
+.buy-workspace .facility-card{position:relative;margin:-.75px;padding:18px;border:1.5px solid var(--stone);border-radius:0;background:transparent}
+.buy-workspace .facility-card:has(input:checked){z-index:1;padding:17px;border:2.5px solid var(--ink);background:#fff}
+.buy-workspace .facility-card:has(input:focus-visible){outline:2px solid var(--ink);outline-offset:2px}
+.buy-workspace .facility-select{align-items:center;gap:14px;font-size:17px;line-height:1.4}
+.buy-workspace .facility-select strong{font-weight:500}
+.buy-workspace .facility-card p{margin:8px 0 0;font-size:15px;line-height:1.55;color:var(--ink-2)}
+.buy-workspace .facility-badge{margin-top:10px;padding:5px 8px;border:1.5px solid var(--ink);border-radius:0;font:500 14px/1 var(--font-mono);color:var(--ink)}
+.buy-workspace #buy-facility-fields>.buy-fine{margin-top:16px}
+
+/* Fields: a label above a 52 px box. In the size row each field spans three subgrid
+   rows (label, box, note) so a two-line label never pushes its box out of line. */
+.buy-workspace .buy-field,.buy-workspace #buy-block-fields{display:grid;grid-template-rows:subgrid;grid-row:span 3;row-gap:8px;align-items:end;min-width:0;margin:0}
+.buy-workspace .buy-field{font:var(--label);letter-spacing:.1em;text-transform:uppercase;color:var(--ink)}
+.buy-workspace fieldset>.buy-field,.buy-workspace #buy-block-fields>.buy-field{grid-template-rows:none;grid-row:auto}
+.buy-workspace fieldset>.buy-field~.buy-field{margin-top:20px}
+.buy-workspace :is(.buy-field input,.buy-field select,.buy-counter input){box-sizing:border-box;width:100%;min-width:0;height:52px;min-height:52px;margin:0;padding:0 14px;border:1.5px solid var(--ink);border-radius:0;background:#fff;color:var(--ink);font:400 17px/1.2 var(--font-sans);letter-spacing:0;text-transform:none;color-scheme:light}
+.buy-workspace .buy-field input::placeholder{color:var(--ink-2)}
+.buy-workspace .buy-field small,.buy-workspace #buy-lot-cap{align-self:start;margin:0;font:400 15px/1.4 var(--font-sans);letter-spacing:0;text-transform:none;color:var(--ink-2)}
+.buy-workspace .buy-grid:has(#buy-term-field){display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px 16px}
+.buy-workspace #buy-model-fields>.buy-fine{margin-top:12px}
+.buy-workspace .buy-counter{display:flex;gap:0}
+.buy-workspace .buy-counter button{flex:0 0 52px;width:52px;height:52px;padding:0;border:1.5px solid var(--ink);border-radius:0;background:#fff;color:var(--ink);font:400 22px/1 var(--font-sans);cursor:pointer}
+.buy-workspace .buy-counter button:disabled{opacity:1;background:var(--gray);color:var(--ink-2);cursor:not-allowed}
+.buy-workspace .buy-counter button:not([hidden])+input{border-left:0}
+.buy-workspace .buy-counter input:has(+button:not([hidden])){border-right:0;text-align:center}
+
+/* Indicative total and request summary: between a 2.5 px ink rule and a stone rule. */
+.buy-workspace .buy-total{margin:28px 0 0;padding:16px 0;border:0;border-top:2.5px solid var(--ink);border-bottom:1.5px solid var(--stone);border-radius:0;background:none;font-size:17px;line-height:1.55;color:var(--ink)}
+
+/* Card checkout */
+.buy-workspace .buy-reserve{display:flex;flex-direction:column;gap:16px;margin:32px 0 0;padding:28px;border:1.5px solid var(--ink);border-radius:0;background:#fff}
+.buy-workspace .buy-reserve>*{margin:0}
+.buy-workspace .buy-reserve h3{font:var(--label);letter-spacing:.1em;text-transform:uppercase;color:var(--ink)}
+.buy-workspace .buy-reserve p{font-size:17px;line-height:1.55;color:var(--ink)}
+.buy-workspace #buy-reserve-price{font-size:32px;line-height:1.15;font-weight:300;letter-spacing:-.01em;overflow-wrap:anywhere}
+.buy-workspace .buy-reserve p:has(a[href="/manage-reservation"]),.buy-workspace .buy-reserve .buy-fine{font-size:15px}
+.buy-workspace .buy-reserve .buy-fine{color:var(--ink)}
+.buy-workspace .buy-reserve-terms{display:block;margin:0;font-size:17px;line-height:1.4}
+.buy-workspace .buy-reserve-terms input{display:inline-block;vertical-align:-4px;margin-right:10px}
+.buy-workspace .buy-reserve .btn{align-self:flex-start}
+
+/* Step 4: the booking embed */
+.buy-workspace #buy-calendar iframe{box-sizing:border-box;border:1.5px solid var(--ink);border-radius:0}
+
+/* Panel foot: a stone rule inside the padding, no grey strip. */
+.buy-workspace .buy-fallback{display:flex;flex-wrap:wrap;gap:8px 32px;margin:0;padding:20px 0 24px;border-top:1.5px solid var(--stone);font-size:17px;line-height:1.5;color:var(--ink)}
+.buy-workspace .buy-fallback p+p{margin:0}
+.buy-workspace .buy-fallback a{display:inline;margin:0}
+.buy-workspace noscript .buy-fine{margin:0 0 24px}
+
+/* Below the field, on cream */
+.buy-about{padding:112px 0 96px;background:var(--cream);color:var(--ink)}
+.buy-about h2{font:var(--label);letter-spacing:.1em;text-transform:uppercase;color:var(--ink)}
+.buy-about a{color:var(--ink);text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:4px;font-weight:500}
+.buy-about .buy-notes{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));grid-template-rows:auto auto;grid-auto-flow:column;column-gap:24px;margin:0}
+.buy-about .buy-notes>h2{grid-row:1;padding-top:20px;border-top:2.5px solid var(--ink)}
+.buy-about .buy-notes>p{grid-row:2;margin-top:14px;font-size:17px;line-height:1.55;color:var(--ink)}
+.buy-about .buy-notes>:nth-child(-n+2){grid-column:1/span 5}
+.buy-about .buy-notes>:nth-child(n+3){grid-column:7/span 5}
+.buy-about .buy-contract{margin:96px 0 0;padding:0;border:0;font-size:17px;color:var(--ink);counter-reset:buy-topic}
+.buy-about .buy-contract>h2::before{content:"";display:block;width:40px;height:4px;margin-bottom:12px;background:var(--yellow)}
+.buy-about .buy-contract dl{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));grid-template-rows:auto auto;grid-auto-flow:column;column-gap:24px;margin-top:32px}
+.buy-about .buy-contract dt{counter-increment:buy-topic;margin:0;padding-top:16px;border-top:1.5px solid var(--ink);font-size:19px;line-height:1.3;font-weight:500;color:var(--ink)}
+.buy-about .buy-contract dt::before{content:counter(buy-topic,decimal-leading-zero);display:block;margin-bottom:10px;font:400 15px/1.2 var(--font-mono);color:var(--ink-2)}
+.buy-about .buy-contract dd{margin-top:8px;font-size:17px;line-height:1.55;color:var(--ink)}
+.buy-about .wrap>.buy-fine{margin-top:72px;max-width:880px;font-size:15px;line-height:1.55;color:var(--ink-2)}
+
+/* Stacked (tablet and phone): kicker and headline above the form on yellow, the panel,
+   the Band, then the lede on cream. The layout wrappers step aside so their children
+   can be ordered; no text is duplicated. */
+@media (max-width:1100px){
+  .buy-stage{display:flex;flex-direction:column}
+  .buy-stage .buy-layout,.buy-stage .buy-brand{display:contents}
+  .buy-stage .buy-kicker{order:1;padding:56px var(--buy-g) 0}
+  .buy-stage h1{order:2;margin:0;padding:24px var(--buy-g) 40px;font-size:clamp(40px,8vw,72px);line-height:1.02}
+  .buy-stage .buy-workspace{order:3;margin:0 var(--buy-panel-g)}
+  .buy-stage>.v3-band{order:4;margin-top:40px}
+  .buy-stage .lede{order:5;max-width:none;margin:0;padding:56px var(--buy-g) 0;background:var(--cream)}
+  .buy-about{padding:40px 0 72px}
+  .buy-about .buy-notes{display:block}
+  .buy-about .buy-notes>h2{padding-top:16px}
+  .buy-about .buy-notes>p{margin-top:10px}
+  .buy-about .buy-notes>p+h2{margin-top:32px}
+  .buy-about .buy-contract{margin-top:56px}
+  .buy-about .buy-contract dl{display:block;margin-top:20px}
+  .buy-about .buy-contract dt{position:relative;padding:12px 0 0 36px}
+  .buy-about .buy-contract dt:nth-of-type(n+2){margin-top:20px}
+  .buy-about .buy-contract dt::before{position:absolute;left:0;top:14px;margin:0}
+  .buy-about .buy-contract dd{padding-left:36px}
+  .buy-about .wrap>.buy-fine{margin-top:48px}
+}
+@media (max-width:600px){
+  [data-nyte-page="buy"] header .wrap,[data-nyte-page="buy"] main .wrap{padding:0 20px}
+  [data-nyte-page="buy"] main{--buy-g:20px;--buy-panel-g:12px}
+  .buy-stage .buy-kicker{padding-top:36px}
+  .buy-stage h1{padding:18px var(--buy-g) 28px;font-size:40px}
+  .buy-stage>.v3-band{margin-top:32px}
+  .buy-stage .lede{padding-top:48px;font-size:19px}
+  .buy-stage .buy-workspace{padding:0 16px}
+  .buy-workspace .buy-steps li{padding-right:4px}
+  .buy-workspace .buy-step{padding:24px 0}
+  .buy-workspace .buy-step h2{font-size:22px}
+  .buy-workspace .buy-reserve{padding:20px 16px}
+  .buy-workspace .buy-actions .btn{flex:1}
+  .buy-workspace .buy-fallback{flex-direction:column;padding:16px 0 20px}
+}
