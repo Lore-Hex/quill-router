@@ -8,9 +8,10 @@ name: Post-cutover suites and model checks (daily)
 # longer holds, or code or tests a spec names were moved or deleted; none is
 # a reason to hold today's deploy. For the model checks this is the one run
 # on main sure to happen: a price refresh's dispatch runs them only when its
-# commit changes more than catalog data. deploy.yml's gate-on-ci and the fast
-# path release read ci.yml's runs only, so this workflow gates nothing.
-# tests/test_ci_workflow.py keeps these jobs identical to ci.yml's.
+# commit changes more than catalog data or its base has no green CI run.
+# deploy.yml's gate-on-ci and the fast path release read ci.yml's runs only,
+# so this workflow gates nothing. tests/test_ci_workflow.py keeps these jobs
+# identical to ci.yml's.
 
 on:
   schedule:

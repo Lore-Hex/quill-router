@@ -127,8 +127,8 @@ skip on a push only.
 
 The TLA+ model checks (proofs, 15 to 26 minutes) follow the same rule.
 Outside proofs/ they read only whether the code and tests proofs/manifest.toml
-names exist, and none of it is what a push deploys. They ran beside the proof
-oracle's longest shard (26 to 28 minutes), so skipping them frees a runner
+names exist, and none of it says whether deployed code works. They ran beside
+the proof oracle's longest shard (26 to 28 minutes), so skipping them frees a runner
 rather than shortening the run. The cost: proofs is not a required check, so
 a pull request can merge with it red, and main's push runs no longer show it.
 main learns of it from the next price refresh that runs the full matrix,
@@ -136,7 +136,7 @@ whose publication it then holds, or from the daily run, the one run on main
 sure to check it. With coverage cheaper, the default suite runs in eight
 shards instead of twelve. On #2377's run they took 8 to 14 minutes each,
 still inside that longest shard, with four fewer jobs in the queue and 91
-runner-minutes against 104 to 121.
+runner-minutes against 110 to 126.
 
 ## Validation and measurement
 

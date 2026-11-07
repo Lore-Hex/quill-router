@@ -308,6 +308,10 @@ def test_the_model_checks_run_check_sh_as_it_is() -> None:
     assert [str(step.get("uses", "")).split("@")[0] for step in steps] == [
         "actions/checkout", "actions/setup-java", ""]
     assert steps[-1]["run"] == "./proofs/check.sh"
+    # Nothing beside its name and command: an `if` on the step would skip it
+    # and leave the job green, and a shell, env or working-directory could
+    # change what the command does.
+    assert set(steps[-1]) == {"name", "run"}
     assert "continue-on-error" not in job
     assert all("continue-on-error" not in step for step in steps)
 

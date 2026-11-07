@@ -37,8 +37,8 @@ on main once a day (post-cutover-daily.yml), but not on a push to main. A
 post-cutover red means main will break on a scheduled date, not that the
 commit is broken. A model-check red means a spec no longer holds, or that
 code or tests a spec names in proofs/manifest.toml were moved or deleted;
-neither is what a push deploys. And deploy.yml's gate waits for the push run
-of the commit it ships. Neither job is a required check, so a pull request
+neither says whether deployed code works. And deploy.yml's gate waits for the
+push run of the commit it ships. Neither job is a required check, so a pull request
 can merge with either red; main learns of it from a dispatch or the daily
 run, not from its push runs.
 """

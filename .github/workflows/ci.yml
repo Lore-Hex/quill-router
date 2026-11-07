@@ -307,7 +307,7 @@ jobs:
         # pytest about 50 seconds of that. Eight took 8 to 14 minutes each on
         # #2377's pull request run, under the proof oracle's longest shard
         # (26 to 28 minutes), with four fewer jobs in the organization's
-        # queue and 91 runner-minutes against 104 to 121.
+        # queue and 91 runner-minutes against 110 to 126.
         shard: [1, 2, 3, 4, 5, 6, 7, 8]
     runs-on: ubuntu-24.04
     env:
@@ -516,9 +516,10 @@ jobs:
     # 2026-10-15 runs 38778257165, 38786461389 and 38809305127 cancelled
     # five shards at 96-99% with no failing test, and rerunning two of them
     # cancelled them again at the same point, so it was weight, not a wedge.
-    # A shard spends about five minutes before its first test (checkout, uv
-    # sync, collecting 36k tests under coverage, four workers) and its last
-    # few percent can take six minutes while one worker holds a long test.
+    # A shard spends two to two and a half minutes before its first test
+    # (checkout, uv sync, collecting 36k tests, four workers; #2377's run),
+    # and its last few percent can take six minutes while one worker holds a
+    # long test.
     # 35 keeps the wedge bound (the wedge sat at 2h16m) and leaves a
     # finishing shard alone; main's slowest shard on twelve shards took
     # 20.1 minutes (38808849971).
@@ -874,10 +875,11 @@ jobs:
   #
   # Outside proofs/, check.sh reads only whether the code and tests the
   # manifest names for each spec exist (and that a planned spec's code does
-  # not). None of it is what a push deploys. Pull requests and dispatches run
-  # it, and so does post-cutover-daily.yml on main once a day. A push to main
-  # skips it (commit_scope.py's SKIPPED_ON_PUSH), which frees a runner for 15
-  # to 26 minutes a push in the organization's capped queue. The cost: proofs
+  # not). None of it says whether deployed code works. Pull requests and
+  # dispatches run it, and so does post-cutover-daily.yml on main once a day.
+  # A push to main skips it (commit_scope.py's SKIPPED_ON_PUSH), which frees a
+  # runner for 15 to 26 minutes a push in the organization's capped queue.
+  # The cost: proofs
   # is not a required check, so a pull request can merge with it red (say,
   # after renaming a file the manifest names). main's push runs then pass,
   # and main learns of it from the next price refresh that runs the full
