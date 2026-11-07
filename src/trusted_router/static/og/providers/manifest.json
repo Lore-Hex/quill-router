@@ -172,10 +172,10 @@
   },
   "confidential-ai": {
     "card_version": 2,
-    "model_count": 2,
+    "model_count": 1,
     "name": "Confidential AI",
     "privacy": "Zero retention",
-    "route_count": 2,
+    "route_count": 1,
     "route_mode": "Prepaid",
     "slug": "confidential-ai"
   },
@@ -442,11 +442,11 @@
   },
   "kling": {
     "card_version": 2,
-    "model_count": 2,
+    "model_count": 0,
     "name": "Kling AI",
     "privacy": "Policy documented",
-    "route_count": 2,
-    "route_mode": "Prepaid",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
     "slug": "kling"
   },
   "krea": {
@@ -496,10 +496,10 @@
   },
   "makora": {
     "card_version": 2,
-    "model_count": 8,
+    "model_count": 7,
     "name": "Makora",
     "privacy": "Policy documented",
-    "route_count": 16,
+    "route_count": 14,
     "route_mode": "Prepaid + BYOK",
     "slug": "makora"
   },
@@ -658,10 +658,10 @@
   },
   "openai": {
     "card_version": 2,
-    "model_count": 32,
+    "model_count": 31,
     "name": "OpenAI",
     "privacy": "TR-funded ZDR",
-    "route_count": 58,
+    "route_count": 56,
     "route_mode": "Prepaid + BYOK",
     "slug": "openai"
   },
