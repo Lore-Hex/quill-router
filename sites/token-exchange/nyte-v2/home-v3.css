@@ -2,13 +2,13 @@
    brand-v3.css, only when home is switched on in nyte-brand-v3.json. */
 
 /* Kit chips: one outline chip (base .v3-chip lives in brand-v3.css) */
-main .tags .tag,main .v3-route-rules .tag{height:auto;padding:6px 9px;background:transparent;border:1.5px solid var(--ink);color:var(--ink);font:500 14px/1 var(--font-mono);letter-spacing:.04em}
+main .tags .tag{height:auto;padding:6px 9px;background:transparent;border:1.5px solid var(--ink);color:var(--ink);font:500 14px/1 var(--font-mono);letter-spacing:.04em}
 main .tags{gap:8px}
 /* Policy tags colour-coded (one colour per rule, same on every card); ink text and border keep them readable on sky. */
-main :is(.tags,.v3-route-rules) .tag.cc{background:var(--lime)}
-main :is(.tags,.v3-route-rules) .tag.zdr{background:var(--purple)}
-main :is(.tags,.v3-route-rules) .tag.us{background:var(--yellow)}
-main :is(.tags,.v3-route-rules) .tag.cap{background:var(--cream)}
+main .tags .tag.cc{background:var(--lime)}
+main .tags .tag.zdr{background:var(--purple)}
+main .tags .tag.us{background:var(--yellow)}
+main .tags .tag.cap{background:var(--cream)}
 
 .film .play svg{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5}
 .v3-press figcaption{font:500 15px/1.2 var(--font-condensed);letter-spacing:.1em;text-transform:uppercase;font-style:normal}
@@ -50,22 +50,9 @@ main :is(.tags,.v3-route-rules) .tag.cap{background:var(--cream)}
 
 /* Three layers */
 .v3-layers{background:var(--purple);color:var(--ink)}
-.v3-layers .wrap{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;grid-template-areas:"head head head head head . route route route route route route" "cta cta cta cta cta . route route route route route route" "list list list list list list list list list list list list"}
-.v3-layers-head{grid-area:head;display:flex;flex-direction:column;gap:32px;align-items:flex-start}
-.v3-layers-cta{grid-area:cta;justify-self:start;align-self:start;margin-top:32px}
-.v3-route{grid-area:route;align-self:start;background:var(--cream);border:1.5px solid var(--ink)}
-.v3-route-req{display:flex;gap:14px;padding:18px 20px;border-bottom:2.5px solid var(--ink);font:400 15px/1.5 var(--font-mono)}
-.v3-route-req b{font-weight:500}
-.v3-route-rules{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding:14px 20px;border-bottom:1.5px solid var(--stone)}
-.v3-route-row{display:flex;align-items:center;gap:12px;padding:16px 20px;border-bottom:1.5px solid var(--stone)}
-.v3-route-row .m{flex:1;font-size:17px;font-weight:500}
-.v3-route-row small{margin-left:8px;font:400 15px var(--font-mono);color:var(--ink-2)}
-.v3-route-row.win{padding:18px 20px;background:var(--yellow-tint);border-bottom-color:var(--ink)}
+.v3-layers-head{max-width:760px;display:flex;flex-direction:column;gap:32px;align-items:flex-start}
 .v3-chip svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2}
-.v3-chip.no{background:var(--stone);border-color:var(--stone);color:var(--ink-2)}
-.v3-chip.ok{background:var(--lime);border-color:var(--lime)}
-.v3-route-proof{padding:14px 20px;font:400 15px/1.5 var(--font-mono);color:var(--ink-2);overflow-wrap:anywhere}
-.v3-layer-list{grid-area:list;list-style:none;margin:96px 0 0;padding:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px}
+.v3-layer-list{list-style:none;margin:96px 0 0;padding:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px}
 .v3-layer-list li{display:grid;grid-template-columns:56px 1fr;column-gap:8px;border-top:2.5px solid var(--ink);padding-top:20px}
 .v3-layer-list .n{font-size:48px;line-height:1;font-weight:300}
 .v3-layer-list h3,.v3-team-list h3{font-size:24px;line-height:1.2;font-weight:500;letter-spacing:0}
@@ -112,9 +99,7 @@ main :is(.tags,.v3-route-rules) .tag.cap{background:var(--cream)}
   .v3-case .wrap{grid-template-columns:1fr}
   .v3-case-figure,.v3-case-quote{grid-column:1}
   .v3-case-quote{padding-top:56px}
-  .v3-layers .wrap{grid-template-columns:1fr;grid-template-areas:"head" "list" "route" "cta"}
   .v3-layer-list{margin-top:48px}
-  .v3-route{margin-top:48px}
   .v3-stats .stats{grid-template-columns:1fr 1fr;row-gap:48px}
   .v3-stats .stat .v{font-size:72px}
   .v3-team-list li{grid-template-columns:48px minmax(0,1fr);row-gap:10px}
@@ -135,14 +120,9 @@ main :is(.tags,.v3-route-rules) .tag.cap{background:var(--cream)}
   .v3-big{margin-top:28px}
   .v3-case-quote{padding-top:48px;gap:20px}
   .v3-case-quote blockquote{font-size:28px;line-height:1.2}
-  .v3-layer-list{grid-template-columns:1fr;gap:28px;margin-top:40px}
+  .v3-layer-list{grid-template-columns:1fr;gap:28px;margin-top:48px}
   .v3-layer-list li{grid-template-columns:40px 1fr;padding-top:16px}
   .v3-layer-list .n{font-size:32px}
-  .v3-route-req{display:block;padding:14px 16px}
-  .v3-route-req b{display:block}
-  .v3-route-rules{padding:12px 16px}
-  .v3-route-row,.v3-route-row.win{flex-direction:column;align-items:flex-start;gap:8px;padding:14px 16px}
-  .v3-route-proof{padding:12px 16px}
   .v3-stats{padding:72px 0 64px}
   .v3-stats .stats{gap:40px 16px}
   .v3-stats .stat .v{margin-top:18px;font-size:56px}
