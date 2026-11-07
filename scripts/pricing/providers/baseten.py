@@ -10,6 +10,7 @@ provider-native id, not a guessed lowercase slug.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -20,14 +21,16 @@ from scripts.pricing.base import (
     PROVIDER_FETCH_TIMEOUT,
     PROVIDER_FETCH_TRANSPORT_RETRIES,
     PROVIDER_FETCH_UA,
+    ModelPrice,
     ProviderPricingResult,
     validate,
 )
-from scripts.pricing.manifest import write_discovered_chat_manifest
+from scripts.pricing.manifest import apply_canary_results, write_discovered_chat_manifest
 from scripts.pricing.openai_catalog import discover_openai_chat_catalog
 from trusted_router.provider_contracts import (
     BASETEN_SYSTEMONE_HOLD_REASON,
     BASETEN_SYSTEMONE_PREFIX,
+    baseten_systemone_model_reviewed,
 )
 from trusted_router.provider_lifecycle import provider_model_retired
 
@@ -70,6 +73,109 @@ _NATIVE_TO_OR_ID = {
 
 UPSTREAM_ID_MAP = {or_id: native_id for native_id, or_id in _NATIVE_TO_OR_ID.items()}
 _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
+SYSTEMONE_URL = "https://inference.baseten.co/v1/systemone"
+SYSTEMONE_DOCS_URL = "https://docs.baseten.co/reference/inference-api/system-one"
+DECISION_BILLING_HOLD_REASON = "decision-billing-contract-unsupported"
+_DECISION_EXAMPLE_STATE = "Mia owns a red bicycle."
+_DECISION_EXAMPLE_QUESTIONS = {
+    "color": {
+        "type": "choice",
+        "instructions": "Which color is the bicycle?",
+        "criteria": {"red": None, "blue": None},
+    }
+}
+
+
+def _is_systemone(row: dict[str, Any]) -> bool:
+    return str(row.get("upstream_id") or "").startswith(BASETEN_SYSTEMONE_PREFIX) or str(
+        row.get("id") or ""
+    ).startswith(BASETEN_SYSTEMONE_PREFIX)
+
+
+def _held_systemone_ids(rows: dict[str, dict[str, Any]]) -> dict[str, str]:
+    """Unreviewed System One IDs keep the operator hold across every refresh."""
+    return {
+        model_id: BASETEN_SYSTEMONE_HOLD_REASON
+        for model_id, row in rows.items()
+        if _is_systemone(row)
+        and not baseten_systemone_model_reviewed(model_id, str(row.get("upstream_id") or model_id))
+    }
+
+
+def probe_systemone(api_key: str, upstream_id: str) -> bool:
+    """One tiny System One decision; checks identity, the answer and usage."""
+    try:
+        response = httpx.post(
+            SYSTEMONE_URL,
+            timeout=30,
+            headers={"Authorization": f"Bearer {api_key}", "User-Agent": PROVIDER_FETCH_UA},
+            json={"model": upstream_id, "state": _DECISION_EXAMPLE_STATE, "questions": _DECISION_EXAMPLE_QUESTIONS},
+        )
+        response.raise_for_status()
+        body = response.json()
+        usage = body["usage"]
+        return bool(
+            body["model"] == upstream_id
+            and body["answers"]["color"]["choice"] == "red"
+            and type(usage["input_tokens"]) is int
+            and usage["input_tokens"] > 0
+            and type(usage["output_tokens"]) is int
+            and usage["output_tokens"] >= 0
+        )
+    except (httpx.HTTPError, ValueError, KeyError, TypeError):
+        return False
+
+
+def classify_systemone_rows(
+    prices: dict[str, ModelPrice],
+    discovered: dict[str, dict[str, Any]],
+    api_key: str | None,
+) -> tuple[set[str], set[str]]:
+    """Turn System One rows into decide routes; never chat.
+
+    Baseten lists these in the chat /models feed with a text modality, but
+    they are served only by POST /v1/systemone. Reviewed IDs with an
+    input-only tariff are canaried on that endpoint every refresh (a tiny
+    catalog), and become routable only when the canary passes.
+    """
+    checked: set[str] = set()
+    healthy: set[str] = set()
+    for model_id, row in discovered.items():
+        if not _is_systemone(row):
+            continue
+        row.update(
+            model_type="decision",
+            endpoints=["decide"],
+            # The gateway sends decision state as text. Baseten takes images
+            # only inside a conversation state, which this route does not offer.
+            input_modalities=["text"],
+            output_modalities=["decision"],
+            supported_features=[],
+            supported_sampling_parameters=[],
+        )
+        if not baseten_systemone_model_reviewed(model_id, str(row.get("upstream_id") or model_id)):
+            row.update(routable=False, routable_reason=BASETEN_SYSTEMONE_HOLD_REASON)
+            continue
+        price = prices.get(model_id)
+        if price is None or len(price.tiers) != 1 or price.completion_micro_per_m != 0 or not price.prompt_micro_per_m:
+            # The published decision contract is input-only. Anything else is
+            # a different tariff that the input-only settlement cannot bill.
+            row.update(routable=False, routable_reason=DECISION_BILLING_HOLD_REASON)
+            prices.pop(model_id, None)
+            continue
+        # Decision rows carry no cache tariff.
+        prices[model_id] = ModelPrice(price.prompt_micro_per_m, 0)
+        row["documentation"] = {
+            "description": f"Baseten-hosted System One decision model {row.get('display_name') or model_id}. Returns typed answers and probabilities, not chat text.",
+            "input_format": "POST /v1/decide: text state and boolean/noul, choice or score questions. Text-only on this route; no streaming.",
+            "output_format": "Verified answers and probabilities with inputTokens usage. Input-only billing; output tokens are free.",
+            "example_input": json.dumps({"model": model_id, "state": _DECISION_EXAMPLE_STATE, "questions": _DECISION_EXAMPLE_QUESTIONS}),
+        }
+        checked.add(model_id)
+        if api_key and probe_systemone(api_key, str(row["upstream_id"])):
+            healthy.add(model_id)
+    apply_canary_results(discovered, checked_model_ids=checked, healthy_model_ids=healthy)
+    return checked, healthy
 
 
 def fetch() -> ProviderPricingResult:
@@ -114,15 +220,14 @@ def fetch() -> ProviderPricingResult:
             str(row.get("upstream_id") or ""),
         )
     }
-    # https://www.baseten.co/resources/changelog/elephant-1-and-mammoth-1-available-on-baseten
+    # https://docs.baseten.co/inference/model-apis/decision-models
     # These use /v1/systemone despite the feed's text output modality.
-    for row in discovered.values():
-        if str(row["upstream_id"]).startswith(BASETEN_SYSTEMONE_PREFIX):
-            row.update(model_type="decision", endpoints=["decide"], routable=False,
-                       routable_reason=BASETEN_SYSTEMONE_HOLD_REASON)
+    checked, healthy = classify_systemone_rows(prices, discovered, api_key)
     _DISCOVERED_MANIFEST_ROWS = discovered
 
     notes: list[str] = []
+    if checked:
+        notes.append(f"canaried {len(checked)} System One decision models, {len(healthy)} passed")
     errors = validate(prices, EXPECTED_MODELS)
     if errors:
         notes.append(f"validation notes: {errors}")
@@ -143,9 +248,5 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         manifest_path=MANIFEST_PATH,
         discovered_rows=_DISCOVERED_MANIFEST_ROWS,
         source_url=URL,
-        operator_hold_reasons={
-            model_id: BASETEN_SYSTEMONE_HOLD_REASON
-            for model_id, row in _DISCOVERED_MANIFEST_ROWS.items()
-            if str(row["upstream_id"]).startswith(BASETEN_SYSTEMONE_PREFIX)
-        },
+        operator_hold_reasons=_held_systemone_ids(_DISCOVERED_MANIFEST_ROWS),
     )

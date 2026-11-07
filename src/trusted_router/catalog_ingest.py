@@ -61,8 +61,10 @@ from trusted_router.provider_contract import (
     PROVIDER_MODEL_DOCUMENTATION_MAX_LENGTHS,
 )
 from trusted_router.provider_contracts import (
+    BASETEN_SYSTEMONE_PREFIX,
     INPUT_ONLY_PROVIDER_MODELS,
     PREPAID_PROVIDER_HOLD_REASONS,
+    baseten_systemone_model_reviewed,
     provider_model_operator_held,
     provider_model_uses_passthrough_retail_price,
 )
@@ -1243,10 +1245,17 @@ def _supplemental_provider_models_and_endpoints(
             # listing must not inherit Regolo's adapter or regional admission.
             if model_id == "cloudflare/clef-flash" and not decision:
                 continue
+            # Likewise Baseten's System One models: a stale or regenerated
+            # chat row must never send them to chat completions.
+            if not decision and (
+                model_id.startswith(BASETEN_SYSTEMONE_PREFIX) or upstream_id.startswith(BASETEN_SYSTEMONE_PREFIX)
+            ):
+                continue
             if decision and (
                 not (
                     (provider_slug in {"decisionmodelsio", "decisionmodelsio-eu"} and model_id.startswith(provider_slug + "/s1-"))
                     or (provider_slug == "regolo" and model_id == "cloudflare/clef-flash" and upstream_id == "clef-flash")
+                    or (provider_slug == "baseten" and baseten_systemone_model_reviewed(model_id, upstream_id))
                 )
                 or not decision_manifest_price_is_valid(raw_model)
             ):
