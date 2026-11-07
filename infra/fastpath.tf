@@ -167,6 +167,19 @@ locals {
   # the decide attribute's did, and the pin must take -fleet-audit
   # (docs/runbooks/fastpath-deploy.md, "A flag the unit passes").
   fastpath_fleet_audit = false
+  # The money settings (docs/design/fast-admission-widening.md (b), WS0 of
+  # section 8.2): a lease needs effective trust tier 3, a workspace's
+  # allowance is $1,000 and a lease leaves at least $20 of the balance, in
+  # microdollars. The startup script passes each as -required-tier,
+  # -allowance and -floor (8af87998a, the pin, takes all three);
+  # a node takes them when its startup script runs again (a reset), as it
+  # takes a pin. Every pilot workspace passed fastpathctl ready at these
+  # values before this change but the customer's, whose switch is off, so it
+  # takes today's path and cannot be refused at the tier. Rollback: remove
+  # the three and reset each node, which restores the release's defaults.
+  fastpath_required_tier = "3"
+  fastpath_allowance     = "1000000000"
+  fastpath_floor         = "20000000"
 }
 
 # --- The topics and the auditor's subscriptions ---------------------------
@@ -452,6 +465,9 @@ resource "google_compute_instance" "fastpath_node" {
     fastpath-edge-upstream     = local.fastpath_edge_upstream
     fastpath-edge-token-secret = local.fastpath_edge_token_secret
     fastpath-fleet-audit       = local.fastpath_fleet_audit ? "true" : "false"
+    fastpath-required-tier     = local.fastpath_required_tier
+    fastpath-allowance         = local.fastpath_allowance
+    fastpath-floor             = local.fastpath_floor
   }, local.fastpath_edge_snapshot)
 
   metadata_startup_script = templatefile("${path.module}/fastpath_node_startup.sh.tftpl", {
