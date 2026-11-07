@@ -181,7 +181,7 @@ locals {
   # customer's, whose switch is off, so it takes today's path and cannot be
   # refused at the tier. Step 4: over the leases kept (seven days), the
   # largest lease under $4 and the lease spend far under a quarter of the
-  # allowance; a grant tops up at most $10. Rollback: remove the three
+  # allowance; a lease tops up at most $10. Rollback: remove the three
   # and take each node the same way, which restores the release's defaults.
   fastpath_required_tier = "3"
   fastpath_allowance     = "1000000000"
