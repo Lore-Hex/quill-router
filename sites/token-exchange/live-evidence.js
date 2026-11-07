@@ -73,7 +73,7 @@
       choice.append(node('h3', row.label), node('p', 'Tinfoil'));
       if (prices.dataset.priceLayout === 'table') {
         const provider = node('div', v3 ? undefined : 'Confidential + E2EE', 'privacy-provider');
-        if (v3) provider.append(node('span', 'Confidential', 'v3-chip'), ' + ', node('span', 'E2EE', 'v3-chip'));
+        if (v3) provider.append(node('span', 'Confidential', 'v3-chip cc'), node('span', ' + ', 'v3-plus'), node('span', 'E2EE', 'v3-chip e2ee'));
         col.append(choice, provider);
         for (const [label, value] of [['Input / 1M', row.input], ['Output / 1M', row.output]]) {
           const price = node('div', `$${value}`, 'privacy-price');

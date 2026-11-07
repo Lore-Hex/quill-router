@@ -70,7 +70,12 @@
 .v3-models .privacy-column:hover h3{text-decoration:underline;text-underline-offset:4px}
 .v3-models .privacy-choice h3{margin:0;font-size:24px;line-height:1.2;font-weight:500;letter-spacing:0}
 .v3-models .privacy-choice p{margin-top:4px;font:400 15px/1.4 var(--font-mono);color:var(--ink)}
-.v3-models .privacy-provider{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font:400 17px/1 var(--font-sans);color:var(--ink)}
+.v3-models .privacy-provider{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font:400 17px/1 var(--font-sans);color:var(--ink)}
+/* Policy tags coloured as on the home page: Confidential lime; E2EE lilac (no E2EE tag on home, lilac stands apart from the sky field). */
+.v3-models .v3-chip.cc{background:var(--lime)}
+.v3-models .v3-chip.e2ee{background:var(--lilac)}
+/* The " + " stays in the text for screen readers; the colours do the joining on screen. */
+.v3-models .v3-plus{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .v3-models .privacy-price{font:400 17px/1.4 var(--font-mono);color:var(--ink);font-variant-numeric:tabular-nums}
 .v3-models .pricing-unit{margin-top:16px;font:400 15px/1.5 var(--font-mono);color:var(--ink)}
 
