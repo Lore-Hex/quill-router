@@ -239,11 +239,34 @@ same-name replacement of both nodes in one apply would leave admitted
 requests no serving front door to settle through. The pilot's watches
 and its audit loop run from a node's disk (`fastpath-p1.md`,
 `fastpath-watch.md`); their scripts are kept in
-`scripts/fastpath/pilot/`. Copy them to the new node's `/var/tmp`, start
-each as root with `sudo setsid -f` (a `nohup` inside `gcloud compute ssh
---command` dies with the session), check each watch log says `enable exit
-0`, and only then stop the old node's with SIGTERM (a watch stopped so
-exits without turning its workspace off), before the old node is drained.
+`scripts/fastpath/pilot/`. Move them before the old node is drained:
+
+1. Copy both scripts to the new node's `/var/tmp`.
+2. For each workspace the old node watches, check that its watch still
+   runs (`ps -eo pid,etime,user,args | grep fastpathwatch` on the old
+   node) and that the workspace is on (`fastpathctl -database $DB status
+   WS` says `"Enabled": true`). The script turns its workspace on, so a
+   workspace a watch tripped, or an operator turned off, is not watched
+   again this way: `fastpath-turn-off.md` says what follows a stop.
+3. Start the watch on the new node as root, its log beside it (a `nohup`
+   inside `gcloud compute ssh --command` dies with the session), FUNDED the
+   workspace's current `SUM(total_credits)` (a stale value fails the
+   audit, and the script stops before turning anything on) and MAX_SPEND
+   counted from the watch's own start:
+
+   ```bash
+   sudo setsid -f bash -c "cd /var/tmp && ./pilot-watch-ws.sh WS FUNDED MAX_SPEND > pilot-watch-WS8.log 2>&1 < /dev/null"
+   ```
+
+   and check its log says `audit-before exit 0` and `enable exit 0`.
+4. Only then stop the old node's watch process itself, not its script (a
+   SIGTERM to the script's bash leaves its `fastpathwatch` running):
+   `sudo kill -TERM PID` with the `fastpathwatch` process's ID from step
+   2. A watch stopped so exits without turning its workspace off, and its
+   script runs its closing audit.
+5. Start `pilot-audit-hourly.sh` on the new node the same way (`sudo
+   setsid -f bash -c "cd /var/tmp && ./pilot-audit-hourly.sh < /dev/null
+   > /dev/null 2>&1"`), then stop the old node's loop.
 
 After a node with the edge serves: run the infrastructure apply once more
 so its edge instance group lists it, then check the balancer's view

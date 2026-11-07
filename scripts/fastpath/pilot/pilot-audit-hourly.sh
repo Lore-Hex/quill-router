@@ -3,8 +3,10 @@
 # checks"): each pilot workspace, funded as its credit rows say at the time
 # (a top-up changes the funding). A problem, or an audit that cannot run,
 # is written to the journal in the service's alert form, kind "other", which
-# the "TR Fast path: other" policy notifies on. Results go to
-# /var/tmp/pilot-audit.log, which survives a reboot.
+# the "TR Fast path: other" policy notifies on. A funding read that fails
+# is only logged, and that workspace waits for the next hour, so read the
+# log for "funding unreadable". Results go to /var/tmp/pilot-audit.log,
+# which survives a reboot.
 set -u
 DB=projects/quill-cloud-proxy/instances/trusted-router-nam6/databases/trusted-router
 LOG=/var/tmp/pilot-audit.log
