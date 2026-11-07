@@ -9,9 +9,9 @@ name: Post-cutover suites and model checks (daily)
 # a reason to hold today's deploy. For the model checks this is the one run
 # on main scheduled to check them: a price refresh's dispatch runs them only
 # when its commit changes more than catalog data or its base has no green CI
-# run. A schedule is not a guarantee: this repository's daily schedules have
-# started three to seven hours late (the first of these, due 04:47 UTC on
-# 2026-11-07, started at 11:21), and under load GitHub may skip one.
+# run. A schedule is not a guarantee: since October, this repository's daily
+# schedules have started three to seven hours late (this workflow's first, due
+# 04:47 UTC on 2026-11-07, started at 11:21); GitHub may skip one under load.
 # deploy.yml's gate-on-ci and the fast path release read ci.yml's runs only,
 # so this workflow gates nothing. tests/test_ci_workflow.py keeps these jobs
 # identical to ci.yml's.
