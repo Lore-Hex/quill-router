@@ -649,36 +649,5 @@
       }
     ],
     "notes": "NVFP4 quantized weight groups; exclusions retain higher precision."
-  },
-  {
-    "provider": "tinfoil",
-    "model_id": "z-ai/glm-5.3-flash",
-    "upstream_id": "glm-5-3-flash",
-    "quantization": "nvfp4",
-    "label": "NVFP4 + FP8",
-    "weight_formats": [
-      "nvfp4",
-      "fp8"
-    ],
-    "kv_cache_dtype": "fp8",
-    "model_repository": "RedHatAI/GLM-5.3-Flash-NVFP4",
-    "model_revision": "240131d6a447c8d89acd428c5ddfc85598651744",
-    "reviewed_on": "2026-09-27",
-    "sources": [
-      {
-        "title": "Published serving configuration",
-        "url": "https://github.com/tinfoilsh/confidential-glm5-3-flash/blob/9326fe5d3d33af08af4769e57fb941308a9771ce/tinfoil-config.yml",
-        "sha256": "a49b602685820573a9d9613de4b45b420d55b8b45ceda6479df3d7e683031574"
-      },
-      {
-        "title": "Published model router",
-        "url": "https://github.com/tinfoilsh/confidential-model-router/blob/d6439903d66531e96e81666798fd954f94ca7c36/config.yml"
-      },
-      {
-        "title": "Pinned weight configuration",
-        "url": "https://huggingface.co/RedHatAI/GLM-5.3-Flash-NVFP4/resolve/240131d6a447c8d89acd428c5ddfc85598651744/config.json"
-      }
-    ],
-    "notes": "NVFP4 expert groups in layers 3-44; FP8 expert group in layer 45. Excluded layers retain higher precision."
   }
 ]

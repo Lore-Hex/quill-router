@@ -2,16 +2,17 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
-from datetime import date, timedelta
+from datetime import date
 
 import pytest
 
 from tests.fixture_routes import bypass_catalog_caches
-from trusted_router import provider_lifecycle, provider_precision
+from trusted_router import provider_precision
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, model_to_openrouter_shape
 from trusted_router.catalog_data import Model, ModelEndpoint
 from trusted_router.config import Settings
 from trusted_router.dashboard import public_model_detail_html
+from trusted_router.provider_contracts import provider_route_reviewed_hold
 from trusted_router.provider_precision import (
     ProviderPrecision,
     endpoint_precision,
@@ -80,15 +81,17 @@ def test_reviewed_precision_exactly_matches_catalog_and_has_pinned_sources(recor
 def test_reviewed_route_is_still_served(record) -> None:
     # Live provider state: provider-catalog-health.yml reports it hourly, and
     # the price refresh does not wait on it.
+    if provider_route_reviewed_hold(record.provider, record.model_id, record.upstream_id):
+        pytest.skip(f"{record.provider}/{record.model_id} is on a reviewed hold")
     assert _endpoint(record.provider, record.model_id) is not None
 
 
 def test_provider_and_weight_precision_are_not_inferred_from_model_name_or_tee() -> None:
-    endpoint = _reviewed_endpoint("tinfoil", "z-ai/glm-5.3-flash")
+    endpoint = _reviewed_endpoint("tinfoil", "z-ai/glm-5.3")
     assert endpoint_precision(endpoint) is not None
     for changed in (replace(endpoint, provider="phala"),
                     replace(endpoint, model_id="z-ai/unreviewed"),
-                    replace(endpoint, upstream_id="glm-5-3-flash-new"),
+                    replace(endpoint, upstream_id="glm-5-3-new"),
                     replace(endpoint, upstream_id=None)):
         assert endpoint_precision(changed) is None
         assert endpoint_precision_metadata(changed) is None
@@ -96,11 +99,9 @@ def test_provider_and_weight_precision_are_not_inferred_from_model_name_or_tee()
 
 
 def test_same_model_can_have_different_weights_and_cache_formats() -> None:
-    tinfoil = endpoint_precision_metadata(_reviewed_endpoint("tinfoil", "z-ai/glm-5.3-flash"))
     private = endpoint_precision_metadata(_reviewed_endpoint("privatemode", "z-ai/glm-5.3-flash"))
     near = endpoint_precision_metadata(_reviewed_endpoint("near-ai", "z-ai/glm-5.3-flash"))
-    assert tinfoil["quantization"] == "nvfp4"
-    assert tinfoil["weight_formats"] == ["nvfp4", "fp8"]
+    assert private["weight_formats"] == ["fp8"]
     assert private["quantization"] == "fp8"
     assert near["quantization"] == "int4"
     assert near["weight_formats"] == ["int4", "fp8"]
@@ -112,7 +113,13 @@ def test_same_model_can_have_different_weights_and_cache_formats() -> None:
     assert near["sources"][0]["sha256"] == "5745db6b0d3e4a4f1ff6872acbf90da254ef83ca834c0bfd4cffb86f540ff781"
     assert near["kv_cache_dtype"] == "bfloat16"
     assert private["kv_cache_dtype"] == "fp8"
-    assert len({r["model_revision"] for r in (tinfoil, private, near)}) == 3
+    assert len({r["model_revision"] for r in (private, near)}) == 2
+    # Tinfoil's GLM 5.3 NVFP4 weights differ from Privatemode's NVFP4 + FP8.
+    tinfoil_glm = endpoint_precision_metadata(_reviewed_endpoint("tinfoil", "z-ai/glm-5.3"))
+    private_glm = endpoint_precision_metadata(_reviewed_endpoint("privatemode", "z-ai/glm-5.3"))
+    assert tinfoil_glm["label"] == "NVFP4"
+    assert private_glm["label"] == "NVFP4 + FP8"
+    assert tinfoil_glm["model_revision"] != private_glm["model_revision"]
 
 
 def test_mixed_experts_and_nested_text_quantization_are_preserved() -> None:
@@ -207,16 +214,10 @@ def test_missing_snapshot_fails_closed(tmp_path, monkeypatch) -> None:
         provider_precision._precision_index.cache_clear()
 
 
-@pytest.mark.parametrize(("provider", "quantization"), [("tinfoil", "nvfp4"), ("near-ai", "int4")])
+@pytest.mark.parametrize(("provider", "quantization"), [("privatemode", "fp8"), ("near-ai", "int4")])
 def test_catalog_and_endpoint_api_expose_same_reviewed_metadata(
     client, monkeypatch, provider, quantization,
 ) -> None:
-    # Tinfoil stopped listing glm-5-3-flash; its route retires on 2026-11-06
-    # 19:00 UTC, so the reviewed route is checked just before the cutover.
-    monkeypatch.setattr(
-        provider_lifecycle, "_utc_now",
-        lambda: provider_lifecycle.NOVEMBER_6_DELISTED_RETIREMENT_AT - timedelta(seconds=1),
-    )
     _serve_reviewed_routes(monkeypatch, "z-ai/glm-5.3-flash")
     endpoint = _reviewed_endpoint(provider, "z-ai/glm-5.3-flash")
     model = model_to_openrouter_shape(MODELS[endpoint.model_id])
@@ -235,20 +236,14 @@ def test_catalog_and_endpoint_api_expose_same_reviewed_metadata(
 def test_model_page_exposes_reviewed_sources_without_claiming_runtime_proof(
     test_settings: Settings, monkeypatch,
 ) -> None:
-    # Tinfoil stopped listing glm-5-3-flash; its route retires on 2026-11-06
-    # 19:00 UTC, so the reviewed route is checked just before the cutover.
-    monkeypatch.setattr(
-        provider_lifecycle, "_utc_now",
-        lambda: provider_lifecycle.NOVEMBER_6_DELISTED_RETIREMENT_AT - timedelta(seconds=1),
-    )
     _serve_reviewed_routes(monkeypatch, "z-ai/glm-5.3-flash")
     html = public_model_detail_html(test_settings, "z-ai/glm-5.3-flash")
     assert html is not None
-    for text in ("Weight format", "NVFP4 + FP8", "Unknown", "Pinned weight configuration",
-                 "Per-request precision is not verified", "KV cache: bfloat16", "2026-09-27",
+    for text in ("Weight format", "Unknown", "Pinned weight configuration",
+                 "Per-request precision is not verified", "KV cache: bfloat16", "2026-10-22",
                  "W4AFP8 (INT4 + FP8)", "2026-10-02"):
         assert text in html
-    assert "240131d6a447c8d89acd428c5ddfc85598651744" in html
+    assert "04c4e9e95c5da8862dced7e5056455116f83a7e0" in html
 
 
 def test_routing_documentation_distinguishes_metadata_from_filtering(client) -> None:

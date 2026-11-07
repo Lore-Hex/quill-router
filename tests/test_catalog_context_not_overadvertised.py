@@ -97,18 +97,18 @@ def test_glm_5_3_flash_advertises_the_publisher_window() -> None:
 
 
 @pytest.mark.provider_health
-def test_minimax_m3_advertises_minimax_api_window() -> None:
-    """Regression: OpenRouter lists MiniMax's own endpoint at 524288, and
-    DeepInfra, the first host, at 524288 too, while MiniMax's /v1/models
-    reports 1000000.
+def test_minimax_m3_advertises_its_first_hosts_window() -> None:
+    """MiniMax's /v1/models stopped reporting a window, and its chat API docs
+    (https://platform.minimax.io/docs/api-reference/text-chat-openai) give M3
+    none, so no maker-API window outranks the listing (#966). OpenRouter lists
+    MiniMax's own endpoint and DeepInfra, the first host, at 524288.
 
-    Live provider state: it needs MiniMax's API to report the window and the
-    snapshot to list MiniMax's route. The rule holds on fixtures in
+    Live provider state. The maker-API rule holds on fixtures in
     test_maker_api_window_outranks_the_listing_of_its_route."""
     models, _ = _ingested_models_and_endpoints()
     model = models.get("minimax/minimax-m3")
     assert model is not None, "minimax/minimax-m3 missing from the ingested catalog"
-    assert model.context_length == 1_000_000
+    assert model.context_length == 524_288
 
 
 def test_every_ingested_model_keeps_a_usable_context() -> None:
