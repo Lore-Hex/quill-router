@@ -96,6 +96,19 @@ def test_a_fixture_whose_enabler_writes_would_hold_is_refused(tmp_path: Path) ->
         fe.load_switch_operations(bad)
 
 
+
+def test_the_hold_table_is_found_whatever_its_case(tmp_path: Path) -> None:
+    """Spanner identifiers are case-insensitive, so a fixture statement
+    naming the hold table in capitals is still a write to it."""
+    fixture = json.loads(fe.FIXTURE.read_text())
+    unheld = fixture["operations"]["disable_unheld"]
+    unheld["statements"].append({"sql": "DELETE FROM TR_FASTPATH_WORKSPACE_HOLD WHERE workspace_id = @workspace_id",
+                                 "counts": "shouting"})
+    bad = tmp_path / "switch.json"
+    bad.write_text(json.dumps(fixture))
+    with pytest.raises(ValueError, match="writes the hold table"):
+        fe.enabler_operations(bad)
+
 def test_the_writes_execute_the_fixtures_mutations_and_statements() -> None:
     db = _armed()
     _seed(db, "ws-synthetic-on")
@@ -487,6 +500,31 @@ def test_a_failed_chunk_aborts_the_run_with_no_write() -> None:
         _run(db2, dataclasses.replace(BASE, max_rank=10_000))
     assert db2.writes == [] and calls[0] == 3
 
+
+
+def test_a_write_that_raises_reports_the_writes_before_it(caplog: pytest.LogCaptureFixture,
+                                                         monkeypatch: pytest.MonkeyPatch) -> None:
+    db = _armed()
+    _fleet(db, 3)
+    real = fe.write_enable
+    calls = [0]
+
+    def second_fails(*args: Any, **kwargs: Any) -> Any:
+        calls[0] += 1
+        if calls[0] == 2:
+            raise RuntimeError("retries exhausted")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(fe, "write_enable", second_fails)
+    with caplog.at_level(logging.ERROR, logger="trusted_router.fastpath_enabler"), \
+            pytest.raises(RuntimeError, match="retries exhausted"):
+        _run(db, dataclasses.replace(BASE, max_rank=10))
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("fastpath_enabler.write_failed ")]
+    assert len(lines) == 1
+    report = json.loads(lines[0].split(" ", 1)[1])
+    assert report["failed"] == "RuntimeError" and report["writes"] == {"enabled": 1}
+    assert len(report["commit_times"]) == 1 and report["stopped"] is None
+    assert "retries exhausted" not in lines[0]
 
 # -- the report -------------------------------------------------------------------------
 
