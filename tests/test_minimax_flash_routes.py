@@ -21,6 +21,7 @@ from trusted_router.routing import candidates_fitting_context, canonical_model_i
 MODEL = "minimax/minimax-m3.1-flash"
 ALIAS = "minimax/minimax-m3-1-flash"
 NATIVE = "MiniMaxAI/MiniMax-M3.1-Flash"
+NIM_MANIFEST = Path(__file__).resolve().parents[1] / "src/trusted_router/data/provider_models/nvidia-nim.json"
 
 
 def test_featherless_shared_context_is_enforced_without_capping_other_hosts() -> None:
@@ -65,6 +66,17 @@ def test_flash_has_verified_prepaid_routes_and_preserves_native_ids() -> None:
         assert wafer_row["routable_reason"] == "delisted-upstream"
         assert wafer_row["missing_since"] == "2026-11-01"
         expected.pop("wafer")
+    # NVIDIA still lists the model, but its route is admitted only while the
+    # hourly PONG canary passes (2026-11-07 07:43Z: it failed and the route
+    # was held, which broke every snapshot's CI while this test hard-coded
+    # the host). A held route keeps its native ID for recovery and is not
+    # routed; any other state must be routable.
+    nim_row = next(row for row in json.loads(NIM_MANIFEST.read_text())["models"] if row["id"] == MODEL)
+    assert nim_row["upstream_id"] == expected["nvidia-nim"]
+    if nim_row.get("routable") is False:
+        assert nim_row["routable_reason"] in {"provider-canary-failed", "delisted-upstream"}
+        expected.pop("nvidia-nim")
+        assert "nvidia-nim" not in routes
     # Discovery can add verified hosts without changing these established IDs.
     assert {p: routes[p].upstream_id for p in expected} == expected
     # ZRO rejected this exact route and removed it from discovery on Nov 1.
@@ -82,11 +94,12 @@ def test_flash_has_verified_prepaid_routes_and_preserves_native_ids() -> None:
     assert {p: endpoint_capabilities(MODELS[MODEL], e)["tools"] for p, e in routes.items()} == {
         p: p != "nvidia-nim" for p in routes
     }
-    nim_prompt = routes["nvidia-nim"].price_tiers[0].prompt_price_microdollars_per_million_tokens
-    assert all(
-        e.price_tiers[0].prompt_price_microdollars_per_million_tokens < nim_prompt
-        for p, e in routes.items() if p != "nvidia-nim"
-    )
+    if "nvidia-nim" in routes:
+        nim_prompt = routes["nvidia-nim"].price_tiers[0].prompt_price_microdollars_per_million_tokens
+        assert all(
+            e.price_tiers[0].prompt_price_microdollars_per_million_tokens < nim_prompt
+            for p, e in routes.items() if p != "nvidia-nim"
+        )
     assert MODEL not in _PROVIDER_UNSERVED_CREDITS_MODELS["novita"]
     assert MODEL in gmi._VERIFIED_PREPAID_MODELS
     assert any(e.provider == "gmi" and e.usage_type == "BYOK" for e in endpoints_for_model(MODEL))
