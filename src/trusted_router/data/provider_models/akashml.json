@@ -389,13 +389,13 @@
         "seed"
       ],
       "routable": true,
-      "input_token_price_per_m": 2000000,
+      "input_token_price_per_m": 1750000,
       "output_token_price_per_m": 10000000,
-      "cached_input_token_price_per_m": 200000
+      "cached_input_token_price_per_m": 180000
     }
   ],
   "source": "https://api.akashml.com/v1/models",
-  "generated_at": "2026-11-05T11:29:32Z",
+  "generated_at": "2026-11-06T22:16:27Z",
   "price_scale": "microdollars_per_million",
   "model_count": 10
 }

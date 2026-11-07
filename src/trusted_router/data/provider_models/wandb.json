@@ -68,8 +68,8 @@
       "context_length": 262144,
       "routable": true,
       "input_token_price_per_m": 130000,
-      "output_token_price_per_m": 280000,
-      "cached_input_token_price_per_m": 70000
+      "output_token_price_per_m": 270000,
+      "cached_input_token_price_per_m": 50000
     },
     {
       "display_name": "DeepSeek V4-Pro",
@@ -320,9 +320,9 @@
       "upstream_id": "moonshotai/Kimi-K2.7-Code",
       "context_length": 262144,
       "routable": true,
-      "input_token_price_per_m": 710000,
-      "output_token_price_per_m": 3500000,
-      "cached_input_token_price_per_m": 150000
+      "input_token_price_per_m": 600000,
+      "output_token_price_per_m": 3000000,
+      "cached_input_token_price_per_m": 120000
     },
     {
       "display_name": "NVIDIA Nemotron 3 Super 120B",
@@ -574,8 +574,9 @@
       "upstream_id": "Qwen/Qwen3.6-35B-A3B",
       "context_length": 262144,
       "routable": true,
-      "input_token_price_per_m": 250000,
-      "output_token_price_per_m": 1250000
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 890000,
+      "cached_input_token_price_per_m": 35000
     },
     {
       "display_name": "Qwen3.8 27B",
@@ -642,7 +643,7 @@
       "upstream_id": "zai-org/GLM-5.2",
       "context_length": 1048576,
       "routable": true,
-      "input_token_price_per_m": 760000,
+      "input_token_price_per_m": 620000,
       "output_token_price_per_m": 2420000,
       "cached_input_token_price_per_m": 140000
     },
@@ -664,9 +665,9 @@
       "upstream_id": "ibm-granite/granite-4.2-8b",
       "context_length": 131072,
       "routable": true,
-      "input_token_price_per_m": 100000,
+      "input_token_price_per_m": 60000,
       "output_token_price_per_m": 150000,
-      "cached_input_token_price_per_m": 50000
+      "cached_input_token_price_per_m": 15000
     },
     {
       "display_name": "DeepSeek V4-Pro-0813",
@@ -709,9 +710,9 @@
       "routable": true,
       "upstream_id": "zai-org/GLM-5.3-Flash",
       "context_length": 1048576,
-      "input_token_price_per_m": 150000,
-      "output_token_price_per_m": 500000,
-      "cached_input_token_price_per_m": 50000
+      "input_token_price_per_m": 120000,
+      "output_token_price_per_m": 380000,
+      "cached_input_token_price_per_m": 20000
     },
     {
       "display_name": "DeepSeek V4.1-Flash",
@@ -732,9 +733,9 @@
       "upstream_id": "deepseek-ai/DeepSeek-V4.1-Flash",
       "context_length": 1048576,
       "routable": true,
-      "input_token_price_per_m": 200000,
+      "input_token_price_per_m": 130000,
       "output_token_price_per_m": 650000,
-      "cached_input_token_price_per_m": 30000
+      "cached_input_token_price_per_m": 2000
     },
     {
       "display_name": "Google Gemma 4 26B A4B Instruct",
@@ -783,7 +784,7 @@
   ],
   "source": "https://api.inference.wandb.ai/v1/models",
   "pricing_source": "https://wandb.ai/site/pricing/inference/",
-  "generated_at": "2026-11-05T11:29:32Z",
+  "generated_at": "2026-11-06T22:16:27Z",
   "price_scale": "microdollars_per_million",
   "model_count": 34
 }

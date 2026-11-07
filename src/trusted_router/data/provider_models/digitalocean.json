@@ -2,7 +2,7 @@
   "_about": "Provider-native DigitalOcean Gradient AI serverless catalog. Availability comes from /v1/models and rates from DigitalOcean's official pricing documentation.",
   "provider": "digitalocean",
   "source": "https://inference.do-ai.run/v1/models",
-  "generated_at": "2026-11-05T11:29:32Z",
+  "generated_at": "2026-11-06T22:16:27Z",
   "price_scale": "microdollars_per_million",
   "model_count": 23,
   "models": [
@@ -280,7 +280,8 @@
       "max_output_tokens": 65536,
       "input_token_price_per_m": 500000,
       "output_token_price_per_m": 900000,
-      "cached_input_token_price_per_m": 100000
+      "cached_input_token_price_per_m": 100000,
+      "missing_since": "2026-11-06"
     },
     {
       "display_name": "Nemotron-3-Super-120B",
@@ -327,7 +328,8 @@
       "max_output_tokens": 131072,
       "input_token_price_per_m": 900000,
       "output_token_price_per_m": 1700000,
-      "cached_input_token_price_per_m": 180000
+      "cached_input_token_price_per_m": 180000,
+      "missing_since": "2026-11-06"
     },
     {
       "display_name": "Nemotron Nano 12B v2 VL",
@@ -349,7 +351,8 @@
       "max_output_tokens": 16384,
       "input_token_price_per_m": 200000,
       "output_token_price_per_m": 600000,
-      "cached_input_token_price_per_m": 40000
+      "cached_input_token_price_per_m": 40000,
+      "missing_since": "2026-11-06"
     },
     {
       "display_name": "Qwen3-32B",

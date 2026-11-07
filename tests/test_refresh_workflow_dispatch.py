@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -682,7 +683,9 @@ def test_price_refresh_publishes_only_after_exact_snapshot_ci() -> None:
 def test_refresh_still_requires_billing_proofs_in_exact_snapshot_ci() -> None:
     # Excluding the redundant local oracle pass is safe only while the
     # required exact-SHA CI includes every default/post-cutover proof shard
-    # for a commit that can change the oracle's result. The oracle builds its
+    # for a commit that can change the oracle's result. That CI is the
+    # refresh's dispatch run, which keeps both clocks; only a push to main
+    # runs the default clock alone (ci.yml's test-post-cutover says why). The oracle builds its
     # catalog from each case's fixture body, so a commit that touches only
     # published catalog data cannot; ci.yml skips the shards for exactly that
     # commit and runs them for a refresh that also rewrote a parser.
@@ -693,9 +696,14 @@ def test_refresh_still_requires_billing_proofs_in_exact_snapshot_ci() -> None:
     assert job["if"] == DATA_ONLY_CONDITION
     assert job["needs"] == "scope"
     assert "continue-on-error" not in job
-    assert job["strategy"]["matrix"] == {
-        "clock": ["default", "post-cutover"], "shard": [1, 2, 3, 4, 5, 6],
-    }
+    matrix = job["strategy"]["matrix"]
+    assert set(matrix) == {"clock", "shard"} and matrix["shard"] == [1, 2, 3, 4, 5, 6]
+    clocks = re.fullmatch(r"\$\{\{ fromJSON\(github\.event_name == 'push' && '(\[.*?\])' \|\| '(\[.*?\])'\) \}\}",
+                          matrix["clock"])
+    assert clocks, matrix["clock"]
+    # Every event but a push, the refresh's dispatch among them, runs both.
+    assert json.loads(clocks.group(2)) == ["default", "post-cutover"]
+    assert json.loads(clocks.group(1)) == ["default"]
     proof_steps = [step for step in job["steps"] if "-m proof_oracle" in step.get("run", "")]
     assert len(proof_steps) == 1
     assert "if" not in proof_steps[0]

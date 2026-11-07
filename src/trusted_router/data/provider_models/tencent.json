@@ -198,7 +198,8 @@
           "output_token_price_per_m": 2400000,
           "cached_input_token_price_per_m": 120000
         }
-      ]
+      ],
+      "max_output_tokens": 1000000
     },
     {
       "display_name": "Kimi K2.6",
@@ -763,11 +764,41 @@
       "input_token_price_per_m": 370000,
       "output_token_price_per_m": 1250000,
       "cached_input_token_price_per_m": 75000
+    },
+    {
+      "display_name": "MiniMax-M3.1-Flash",
+      "title": "minimax-m3.1-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "minimax/minimax-m3.1-flash",
+      "upstream_id": "minimax-m3.1-flash",
+      "context_length": 1048576,
+      "max_output_tokens": 524288,
+      "created": 1792368000,
+      "routable": true,
+      "supported_features": [
+        "function-calling",
+        "reasoning-effort",
+        "prompt-cache"
+      ],
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 600000,
+      "cached_input_token_price_per_m": 15000
     }
   ],
   "source": "https://tokenhub-intl.tencentcloudmaas.com/v1/models",
   "pricing_source": "https://intl.cloud.tencent.com/document/product/1300/78937",
-  "generated_at": "2026-10-26T06:59:20Z",
+  "generated_at": "2026-11-06T22:16:27Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 25
+  "model_count": 26
 }
