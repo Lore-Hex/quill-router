@@ -76,6 +76,10 @@ main .tags{gap:8px}
 .v3-stats .stat .v{margin-top:28px;font-size:96px;line-height:1;font-weight:300;letter-spacing:-.02em;white-space:nowrap}
 .v3-stats .stat .l{margin-top:16px;max-width:260px;font-size:17px;line-height:1.55;color:var(--ink)}
 .v3-labs{margin-top:80px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:16px;padding:18px 0;border-top:1.5px solid var(--ink);border-bottom:1.5px solid var(--ink);font:500 15px var(--font-mono);letter-spacing:.02em}
+.v3-labs span{display:inline-flex;align-items:center;gap:8px}
+.v3-labs img{width:20px;height:20px;object-fit:contain}
+/* These two logo files have white squares; blend them into the cream. */
+.v3-labs img[src*="provider-openai"],.v3-labs img[src*="provider-grok"]{mix-blend-mode:multiply}
 
 /* Teams */
 .v3-teams{background:var(--sky)}
