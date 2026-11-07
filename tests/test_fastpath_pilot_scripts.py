@@ -3,6 +3,7 @@ node's replacement does not lose them (docs/runbooks/fastpath-deploy.md)."""
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -13,7 +14,9 @@ def test_both_scripts_parse_and_are_executable() -> None:
     for name in ("pilot-watch-ws.sh", "pilot-audit-hourly.sh"):
         path = PILOT / name
         assert path.stat().st_mode & 0o111, name
-        subprocess.run(["bash", "-n", str(path)], check=True)
+        subprocess.run(  # noqa: S603 - fixed executable on a repository file
+            [shutil.which("bash") or "/bin/bash", "-n", str(path)], check=True
+        )
 
 
 def test_the_watch_keeps_its_approved_tolerances() -> None:
