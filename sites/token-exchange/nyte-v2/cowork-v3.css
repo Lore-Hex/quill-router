@@ -110,7 +110,8 @@
   .cw-hero.cw3-hero{padding:48px 0 40px}
   .cw3-hero-grid{row-gap:0}
   .cw3-hero-head .cw3-label{margin:16px 0 20px}
-  .cw3-hero h1{margin-bottom:24px;font-size:48px;line-height:1;letter-spacing:-.02em}
+  /* Scales with the screen so the headline stays on two lines with Helvetica Neue or Arial-metric fonts (CI's Linux fallback). */
+  .cw3-hero h1{margin-bottom:24px;font-size:min(48px,11vw);line-height:1;letter-spacing:-.02em}
   .cw3-hero-side{padding:0}
   .cw3-hero .lede{margin-bottom:28px;font-size:19px}
   [data-nyte-page="cowork"] main .btns{display:grid;gap:12px;justify-content:stretch}
