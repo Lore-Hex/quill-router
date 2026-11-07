@@ -68,6 +68,33 @@ def test_boundless_invalid_prices_fail_closed(change):
         boundless.discover(boundless_catalog(), boundless_html(p))
 
 
+def free_alias_card():
+    # Shape of Boundless's 2026-11 free-tier alias card: not served, and its
+    # offer has no priceSpecification at all.
+    return {"@type": "Product", "sku": "minimax-m3-free", "name": "MiniMax M3",
+            "additionalProperty": [{"name": "serving", "value": False},
+                                   {"name": "supports", "value": "text, reasoning, tool-use"}],
+            "offers": [{"@type": "Offer", "priceCurrency": "USD", "price": 0}]}
+
+
+def test_boundless_unserved_card_without_rate_card_does_not_hold_the_provider():
+    # It held every Boundless price from 2026-10-26 until the 14-day manifest
+    # deadline (Sentry QUILL-ROUTER-F8).
+    catalog = boundless_catalog()
+    catalog["data"].append({"id": "minimax-m3-free", "context_length": 1048576})
+    prices, rows = boundless.discover(catalog, boundless_html(boundless_product(), free_alias_card()))
+    assert set(prices) == {"xiaomi/mimo-v2.6-pro"}
+    free = rows[boundless.canonical_model_id("minimax-m3-free")]
+    assert (free["routable"], free["routable_reason"]) == (False, "awaiting-price")
+
+
+def test_boundless_served_card_without_rate_card_still_fails_closed():
+    card = free_alias_card()
+    card["additionalProperty"][0]["value"] = True
+    with pytest.raises(RuntimeError, match="invalid price units or currency"):
+        boundless.discover(boundless_catalog(), boundless_html(boundless_product(), card))
+
+
 def test_boundless_conflicting_api_rate_and_missing_context_fail():
     payload = boundless_catalog()
     payload["data"][0]["pricing"]["input"] = 1

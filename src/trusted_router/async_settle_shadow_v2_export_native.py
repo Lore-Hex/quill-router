@@ -274,8 +274,15 @@ class NativeGenerationRead:
             except BaseException:
                 self.active.release()
                 raise
-            if not done.wait(lifetime.remaining()):
-                raise TimeoutError('object_deadline')
+            # The deadline is the reader's clock, as for every other check in
+            # this read and in NativeV2RangeRead. Event.wait measures its own
+            # monotonic time, so it only bounds each wait; whether the
+            # deadline has passed is decided by self.clock alone.
+            try:
+                while not done.wait(lifetime.remaining()):
+                    pass
+            except TimeoutError:
+                raise TimeoutError('object_deadline') from None
             lifetime.remaining()
             if errors:
                 raise errors[0]

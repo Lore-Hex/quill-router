@@ -10,7 +10,10 @@ from pathlib import Path
 import pytest
 import yaml
 
+from scripts.pricing.refresh_inputs import refresh_inputs
+
 ROOT = Path(__file__).resolve().parents[1]
+REFRESH_INPUTS = refresh_inputs()
 # External commands in the extracted step. Shell builtins/functions (echo,
 # test/[ /[[, trap, cleanup_branch, etc.) need no executable. The allowlisted
 # PATH also makes a newly introduced, unlisted command fail rather than escape.
@@ -93,7 +96,7 @@ def remove_publication_guard(script: str, guard: str) -> str:
         before, after = r'map(select(.headSha == \"${SNAPSHOT_SHA}\"))', "."
     elif guard == "main_moved":
         # Only disable the pre-push guard; retain the push-race recovery guard.
-        before = 'if [ "$(git rev-parse origin/main)" != "${GITHUB_SHA}" ]; then'
+        before = 'if [ "$(git rev-parse origin/main)" != "${PUBLISH_BASE}" ]; then'
         after = "if false; then"
         assert script.count(before) == 2
         return script.replace(before, after, 1)
@@ -110,11 +113,15 @@ def remove_publication_guard(script: str, guard: str) -> str:
         after = 'git commit --allow-empty -m "Never ran CI"\n' + before
     elif guard == "poll_by_listing":
         # Keep re-reading the branch listing after the run was found.
-        before = 'if [ -n "${ci_run_id}" ]; then\n    # Once the listing has found the run'
-        after = 'if false; then\n    # Once the listing has found the run'
+        before = 'if [ -n "${ci_run_id}" ]; then\n      # Once the listing has found the run'
+        after = 'if false; then\n      # Once the listing has found the run'
     elif guard == "skip_branch_push":
-        before = 'git push origin "HEAD:refs/heads/${BRANCH}"'
+        before = 'git push --force origin "HEAD:refs/heads/${BRANCH}"'
         after = f"if false; then {before}; fi"
+    elif guard == "input_check":
+        # Carry a snapshot whatever main changed.
+        before = 'if ! git diff --quiet "${REFRESH_BASE}" "${target}" -- "${refresh_inputs[@]}"; then'
+        after = "if false; then"
     else:
         raise AssertionError(f"Unknown mutation: {guard}")
     assert script.count(before) == 1, f"Mutation target missing or ambiguous: {guard}"
@@ -148,10 +155,15 @@ class PublicationRepo:
 
     @property
     def dispatched_sha(self) -> str:
+        shas = self.dispatched_shas
+        assert len(shas) == 1, "Expected one resolved CI dispatch"
+        return shas[0]
+
+    @property
+    def dispatched_shas(self) -> list[str]:
         dispatches = [event for event in self.events if event[0] == "ci-dispatch"]
-        assert len(dispatches) == 1, "Expected one resolved CI dispatch"
-        assert dispatches[0][1] == "automation/price-refresh-42"
-        return dispatches[0][2]
+        assert all(event[1] == "automation/price-refresh-42" for event in dispatches)
+        return [event[2] for event in dispatches]
 
     @property
     def calls(self) -> list[list[str]]:
@@ -172,6 +184,8 @@ class PublicationRepo:
     def run(
         self, *, conclusion: str = "success", wrong_sha: bool = False,
         move_main: str | None = None, changed: bool = True, mutation: str | None = None,
+        advance_main: dict[str, object] | None = None, premove: str | None = None,
+        inputs: bool = True,
         run_states: list[tuple[str, str | None]] | None = None,
         status_fault: str | None = None,
         status_missing_reads: int = 0,
@@ -197,6 +211,17 @@ class PublicationRepo:
                 assert move_main == "backward"
                 self.moved = self.previous
             scenario["move_main"] = {"clone": str(peer), "sha": self.moved}
+        if advance_main is not None or premove is not None:
+            peer = self.root / "peer"
+            self.git("clone", "-q", str(self.root / "origin.git"), str(peer))
+            if premove is not None:
+                # Main moved while the refresh ran, before publication began.
+                self.peer_commit(peer, premove or None)
+                self.moved = self.git("rev-parse", "HEAD", cwd=peer)
+            if advance_main is not None:
+                scenario["advance_main"] = {"clone": str(peer), **advance_main}
+        inputs_path = self.root / "refresh-inputs.txt"
+        inputs_path.write_text("".join(f"{spec}\n" for spec in REFRESH_INPUTS) if inputs else "")
         if status_fault:
             scenario["status_fault"] = status_fault
         scenario["status_missing_reads"] = status_missing_reads
@@ -204,7 +229,7 @@ class PublicationRepo:
         script = remove_publication_guard(self.script, mutation) if mutation else self.script
         # Relocate only the workflow's fixed scratch paths. Gate logic and all
         # polling iterations run verbatim; fake sleep removes the delay.
-        for name in ("spike-summary.txt", "refresh-summary.txt", "commit-msg.txt"):
+        for name in ("spike-summary.txt", "refresh-summary.txt", "commit-msg.txt", "refresh-inputs.txt"):
             script = script.replace(
                 f"/tmp/{name}", shlex.quote(str(self.root / name)),  # noqa: S108 -- relocate workflow paths
             )
@@ -220,6 +245,17 @@ class PublicationRepo:
             "for-each-ref", "--format=%(refname)", "refs/heads", cwd=self.root / "origin.git",
         ) == "refs/heads/main", result.stdout + result.stderr
         return result
+
+    def peer_commit(self, peer: Path, path: str | None) -> None:
+        if path:
+            with (peer / path).open("a") as handle:
+                handle.write("concurrent change\n")
+            self.git("add", "--", path, cwd=peer)
+            self.git("commit", "-qm", "Concurrent main update", cwd=peer)
+        else:
+            self.git("commit", "-qm", "Concurrent main update", "--allow-empty", cwd=peer)
+        self.git("push", "-q", "origin", "HEAD:main", cwd=peer)
+        (self.root / "events.jsonl").write_text("")  # Not the step's own push.
 
 
 @pytest.fixture
@@ -288,6 +324,9 @@ def publication_repo(tmp_path: Path, publication_script: str) -> PublicationRepo
         "src/trusted_router/static/og/providers/fixture.png",
         "fastpath/testdata/model_alias_vectors_v1.json",
         "scripts/pricing/parsers/fixture.py",
+        "scripts/pricing/providers/fixture.py",
+        "src/trusted_router/money.py",
+        "docs/unrelated.md",
     ):
         path = repo.clone / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -307,20 +346,26 @@ def publication_repo(tmp_path: Path, publication_script: str) -> PublicationRepo
 
 def assert_snapshot_published(
     repo: PublicationRepo, result: subprocess.CompletedProcess[str], *, status_gets: int = 4,
+    rounds: int = 1,
 ) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     assert Path(repo.env["GITHUB_OUTPUT"]).read_text() == "validated=true\n"
-    dispatched_sha = repo.dispatched_sha
+    shas = repo.dispatched_shas
+    assert len(shas) == rounds, f"Expected {rounds} exact-SHA CI dispatches, got {len(shas)}"
+    dispatched_sha = shas[-1]
     assert dispatched_sha != repo.base
     answers = [json.loads(event[2]) for event in repo.events if event[0] == "poll" and event[2]]
     successful = [answer for answer in answers
                   if answer["status"] == "completed" and answer["conclusion"] == "success"]
     assert successful, "Expected completed successful CI before publication"
-    assert all(answer["headSha"] == dispatched_sha for answer in successful), (
+    # Each round's run answers for the SHA that round dispatched; the last
+    # successful run is the published SHA's own.
+    assert all(answer["headSha"] in shas for answer in successful), (
         "Successful CI must use the dispatched SHA"
     )
-    assert repo.dispatches == [
-        repo.dispatch("ci.yml", "automation/price-refresh-42"), repo.dispatch("deploy.yml", "main"),
+    assert successful[-1]["headSha"] == dispatched_sha, "Successful CI must use the dispatched SHA"
+    assert repo.dispatches == [repo.dispatch("ci.yml", "automation/price-refresh-42")] * rounds + [
+        repo.dispatch("deploy.yml", "main"),
     ]
     status_calls = [call for call in repo.calls if call[0] == "api"]
     posts = [call for call in status_calls if "POST" in call]
@@ -382,13 +427,20 @@ def assert_ci_completed_before_publication(
     assert all(event[3] == repo.base for _, event in polls), "Main changed before CI completed"
 
 
-def assert_snapshot_withheld(repo: PublicationRepo, result: subprocess.CompletedProcess[str]) -> None:
+def assert_snapshot_withheld(
+    repo: PublicationRepo, result: subprocess.CompletedProcess[str], *, rounds: int = 1,
+) -> None:
     output = Path(repo.env["GITHUB_OUTPUT"])
     assert not output.exists() or "validated=true" not in output.read_text()
-    assert repo.dispatched_sha != repo.base
+    assert len(repo.dispatched_shas) == rounds
+    assert repo.base not in repo.dispatched_shas
+    # A concurrent merge per CI run records main's latest head in main-moved.
+    moved_file = repo.root / "main-moved"
+    if moved_file.exists():
+        repo.moved = moved_file.read_text().strip()
     assert repo.main == (repo.moved or repo.base), result.stdout + result.stderr
     assert not any(call[0] == "api" for call in repo.calls)
-    expected = [repo.dispatch("ci.yml", "automation/price-refresh-42")]
+    expected = [repo.dispatch("ci.yml", "automation/price-refresh-42")] * rounds
     if repo.moved:
         assert result.returncode == 0, result.stdout + result.stderr
         expected.append(repo.dispatch("refresh-prices.yml", "main"))
@@ -497,12 +549,107 @@ def test_publication_cancels_the_dispatched_run_it_stops_waiting_for(
     assert calls[-1] == ["run", "cancel", "1234", "--repo", publication_repo.env["GITHUB_REPOSITORY"]]
 
 
-@pytest.mark.parametrize("direction", ["forward", "backward"])
-def test_publication_recomputes_when_main_moved(publication_repo: PublicationRepo, direction: str) -> None:
-    result = publication_repo.run(move_main=direction)
+def test_publication_recomputes_when_main_rewound(publication_repo: PublicationRepo) -> None:
+    result = publication_repo.run(move_main="backward")
     assert (publication_repo.root / "main-moved").read_text() == publication_repo.moved
     assert publication_repo.moved != publication_repo.base
-    assert_snapshot_withheld(publication_repo, result)
+    assert_snapshot_withheld(publication_repo, result, rounds=1)
+    assert "does not descend from" in result.stdout
+
+
+def assert_carried_onto(repo: PublicationRepo, parent: str) -> None:
+    """Main is the snapshot commit on `parent`: parent's tree plus the snapshot."""
+    assert repo.git("rev-parse", "refs/heads/main^", cwd=repo.root / "origin.git") == parent
+    changed = repo.git("diff", "--name-only", parent, repo.main, cwd=repo.root / "origin.git")
+    assert changed.splitlines() == ["src/trusted_router/data/openrouter_snapshot.json"]
+    snapshot = repo.git("show", f"{repo.main}:src/trusted_router/data/openrouter_snapshot.json",
+                        cwd=repo.root / "origin.git")
+    assert snapshot == '{"generated": true}'
+
+
+@pytest.mark.parametrize("path", [None, "docs/unrelated.md"])
+def test_snapshot_is_carried_over_main_changes_that_are_not_refresh_inputs(
+    publication_repo: PublicationRepo, path: str | None,
+) -> None:
+    # A merge lands while the first exact-SHA CI runs. It touches nothing the
+    # refresh reads, so the snapshot moves onto it and its new SHA gets its
+    # own complete CI run before statuses and the push (2026-11-07 starvation).
+    result = publication_repo.run(advance_main={"dispatches": 1, "path": path})
+    moved = (publication_repo.root / "main-moved").read_text().strip()
+    assert_snapshot_published(publication_repo, result, rounds=2)
+    first, second = publication_repo.dispatched_shas
+    assert publication_repo.git("rev-parse", f"{first}^") == publication_repo.base
+    assert publication_repo.main == second != first
+    assert_carried_onto(publication_repo, moved)
+    assert f"carried the snapshot onto {moved}" in result.stdout
+
+
+def test_snapshot_is_carried_before_the_first_ci_run(publication_repo: PublicationRepo) -> None:
+    # Main moved while the refresh itself ran: carry before dispatching CI,
+    # so the first exact-SHA run already checks the publishable SHA.
+    result = publication_repo.run(premove="docs/unrelated.md")
+    assert_snapshot_published(publication_repo, result, rounds=1)
+    assert_carried_onto(publication_repo, publication_repo.moved)
+
+
+@pytest.mark.parametrize("path", [
+    "src/trusted_router/data/provider_models/fixture.json",  # a refresh output
+    "scripts/pricing/providers/fixture.py",  # a dynamically imported adapter
+    "src/trusted_router/money.py",  # catalog code in the import closure
+])
+def test_snapshot_is_recomputed_when_main_changes_a_refresh_input(
+    publication_repo: PublicationRepo, path: str,
+) -> None:
+    assert covered_by_refresh_inputs(path)
+    result = publication_repo.run(advance_main={"dispatches": 1, "path": path})
+    assert_snapshot_withheld(publication_repo, result, rounds=1)
+    assert "main gained changes to refresh inputs:" in result.stdout
+    assert path in result.stdout
+
+
+def covered_by_refresh_inputs(path: str) -> bool:
+    return any(path == spec or (spec.endswith("/") and path.startswith(spec)) for spec in REFRESH_INPUTS)
+
+
+def test_snapshot_is_recomputed_without_the_refresh_input_list(publication_repo: PublicationRepo) -> None:
+    # No list, no proof that the snapshot is current: recompute as before.
+    result = publication_repo.run(premove="docs/unrelated.md", inputs=False)
+    assert_snapshot_withheld(publication_repo, result, rounds=0)
+    assert "refresh input list unavailable" in result.stdout
+
+
+def test_carrying_stops_after_bounded_ci_rounds(publication_repo: PublicationRepo) -> None:
+    # Main moves during every exact-SHA CI run: three rounds, then recompute.
+    result = publication_repo.run(advance_main={"dispatches": 3, "path": None})
+    assert_snapshot_withheld(publication_repo, result, rounds=3)
+    assert "main advanced during each of 3 exact-SHA CI runs" in result.stdout
+    assert len(set(publication_repo.dispatched_shas)) == 3
+
+
+def test_input_check_mutation_is_detected(publication_repo: PublicationRepo) -> None:
+    # Without the input comparison a snapshot computed from the old catalog
+    # code would be published over the change. The same safety assertion used
+    # above must reject it.
+    path = "src/trusted_router/money.py"
+    result = publication_repo.run(advance_main={"dispatches": 1, "path": path}, mutation="input_check")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert len(publication_repo.dispatched_shas) == 2
+    assert publication_repo.git("rev-parse", "refs/heads/main^", cwd=publication_repo.root / "origin.git") == (
+        publication_repo.root / "main-moved").read_text().strip()
+    with pytest.raises(AssertionError):
+        assert_snapshot_withheld(publication_repo, result, rounds=1)
+
+
+def test_refresh_inputs_step_feeds_publication() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/refresh-prices.yml").read_text())
+    steps = workflow["jobs"]["refresh"]["steps"]
+    record = next(step for step in steps if step.get("id") == "refresh_inputs")
+    publication = next(step for step in steps if step.get("id") == "publication")
+    assert steps.index(record) == steps.index(publication) - 1
+    assert record["run"].strip() == "uv run python -m scripts.pricing.refresh_inputs > /tmp/refresh-inputs.txt"
+    # A failed listing falls back to recomputation; it never blocks publication.
+    assert record["continue-on-error"] is True
+    assert "mapfile -t refresh_inputs < /tmp/refresh-inputs.txt" in publication["run"]
 
 
 def test_publication_does_nothing_without_staged_changes(publication_repo: PublicationRepo) -> None:
@@ -624,7 +771,7 @@ def test_price_refresh_checks_exact_branch_sha_before_advancing_main() -> None:
 
     assert 'BRANCH="automation/price-refresh-${GITHUB_RUN_ID}"' in workflow
     assert "SNAPSHOT_SHA=$(git rev-parse HEAD)" in workflow
-    assert 'git push origin "HEAD:refs/heads/${BRANCH}"' in workflow
+    assert 'git push --force origin "HEAD:refs/heads/${BRANCH}"' in workflow
     assert branch_ci_dispatch in workflow
     assert '--ref "${BRANCH}"' in workflow
     assert '--branch "${BRANCH}"' in workflow
@@ -632,7 +779,7 @@ def test_price_refresh_checks_exact_branch_sha_before_advancing_main() -> None:
     assert 'if [ "${conclusion}" = "success" ]' in workflow
     assert "statuses: write" in workflow
     assert 'ci_run_id=$(jq -r .databaseId <<<"${run_json}")' in workflow
-    assert 'if [ "$(git rev-parse origin/main)" != "${GITHUB_SHA}" ]' in workflow
+    assert 'if [ "$(git rev-parse origin/main)" != "${PUBLISH_BASE}" ]' in workflow
     assert "git rebase" not in workflow
     status_bridge = '"repos/${GITHUB_REPOSITORY}/statuses/${SNAPSHOT_SHA}"'
     assert status_bridge in workflow
@@ -654,7 +801,7 @@ def test_price_refresh_checks_exact_branch_sha_before_advancing_main() -> None:
         status_bridge
     )
     assert workflow.index(
-        'if [ "$(git rev-parse origin/main)" != "${GITHUB_SHA}" ]'
+        'if [ "$(git rev-parse origin/main)" != "${PUBLISH_BASE}" ]'
     ) < workflow.index(status_bridge)
     assert workflow.index(status_bridge) < workflow.index(main_push)
     assert workflow.index(main_push) < workflow.index(deploy_dispatch)

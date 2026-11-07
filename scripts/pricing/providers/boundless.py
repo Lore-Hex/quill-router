@@ -77,6 +77,12 @@ def parse_cards(html: str) -> dict[str, tuple[ModelPrice, dict[str, Any]]]:
             raise RuntimeError("boundless: missing or duplicate rate-card identity")
         if canonical_model_id(native) is None:
             continue
+        metadata = {item["name"]: item["value"] for item in card.get("additionalProperty", [])}
+        # A card Boundless does not serve publishes no rate card to validate:
+        # the free-tier alias minimax-m3-free (2026-11) carries an offer with
+        # no priceSpecification. Skipping it never admits an unpriced route.
+        if metadata.get("serving") is not True:
+            continue
         fields: dict[str, int] = {}
         for offer in card.get("offers", []):
             spec = offer.get("priceSpecification", {})
@@ -90,9 +96,6 @@ def parse_cards(html: str) -> dict[str, tuple[ModelPrice, dict[str, Any]]]:
         prompt, output, cached = (fields[unit] for unit in units)
         if prompt <= 0 or output <= 0 or cached > prompt:
             raise RuntimeError("boundless: invalid token prices")
-        metadata = {item["name"]: item["value"] for item in card.get("additionalProperty", [])}
-        if metadata.get("serving") is not True:
-            continue
         features = set(str(metadata.get("supports", "")).split(", "))
         cards[native] = (
             ModelPrice(prompt, output, prompt_cached_micro_per_m=cached),

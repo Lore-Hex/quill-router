@@ -41,9 +41,17 @@ if [ "${command}" = workflow ] && [ "${subcommand}" = run ]; then
         exit 1
       fi
       record_event ci-dispatch "${ref_arg}" "${dispatched_sha}"
+      # Every dispatch is a new run of the scenario's poll sequence for the
+      # SHA it resolved: keep the original answers as the template.
+      if [ ! -f "${scenario}.template" ]; then cat "${scenario}" > "${scenario}.template"; fi
+      dispatch=0
+      if [ -f "${TMPDIR}/dispatch-count" ]; then read -r dispatch < "${TMPDIR}/dispatch-count"; fi
+      dispatch=$((dispatch + 1))
+      printf '%s\n' "${dispatch}" > "${TMPDIR}/dispatch-count"
+      printf '0\n' > "${TMPDIR}/poll-count"
       jq --arg sha "${dispatched_sha}" \
         '(.polls[][] | select(.headSha == "$DISPATCHED_SHA") | .headSha) = $sha' \
-        "${scenario}" > "${scenario}.new"
+        "${scenario}.template" > "${scenario}.new"
       # Use cat rather than mv so the harness only needs the workflow's tools.
       cat "${scenario}.new" > "${scenario}"
       move_sha=$(jq -r '.move_main.sha // empty' "${scenario}")
@@ -51,6 +59,24 @@ if [ "${command}" = workflow ] && [ "${subcommand}" = run ]; then
         peer=$(jq -r .move_main.clone "${scenario}")
         git -C "${peer}" push --force origin "${move_sha}:refs/heads/main"
         printf '%s' "${move_sha}" > "${TMPDIR}/main-moved"
+      fi
+      # A concurrent merge lands on main while this CI run is in progress,
+      # for the first `dispatches` dispatches. Peer git runs unrecorded: it is
+      # not the step's own push.
+      advance=$(jq -c '.advance_main // empty' "${scenario}")
+      if [ -n "${advance}" ] && [ "${dispatch}" -le "$(jq -r .dispatches <<<"${advance}")" ]; then
+        peer=$(jq -r .clone <<<"${advance}")
+        touch_path=$(jq -r '.path // empty' <<<"${advance}")
+        "${REAL_GIT}" -C "${peer}" pull -q --ff-only origin main
+        if [ -n "${touch_path}" ]; then
+          printf 'concurrent %s\n' "${dispatch}" >> "${peer}/${touch_path}"
+          "${REAL_GIT}" -C "${peer}" add -- "${touch_path}"
+          "${REAL_GIT}" -C "${peer}" commit -qm "Concurrent main update ${dispatch}"
+        else
+          "${REAL_GIT}" -C "${peer}" commit -qm "Concurrent main update ${dispatch}" --allow-empty
+        fi
+        "${REAL_GIT}" -C "${peer}" push -q origin HEAD:main
+        "${REAL_GIT}" -C "${peer}" rev-parse HEAD > "${TMPDIR}/main-moved"
       fi
       ;;
     refresh-prices.yml|deploy.yml) ;;

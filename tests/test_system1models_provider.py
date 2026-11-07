@@ -155,6 +155,26 @@ def test_october_catalog_additions_do_not_freeze_supported_routes():
     assert rows["decisionmodelsio-eu/s1-vision-2"]["decision_image_input_price_per_m"] == 228_000
 
 
+@pytest.mark.parametrize("tier", ["eu", "global"])
+def test_dotted_version_ids_do_not_freeze_the_catalog(tier):
+    # reax-1.2 and reax-1.3 (November 2026) were rejected as invalid IDs, which
+    # rejected the whole catalog and froze both manifests from 2026-10-26
+    # until the 14-day route deadline (Sentry QUILL-ROUTER-F6/F7).
+    slug = "decisionmodelsio-eu" if tier == "eu" else "decisionmodelsio"
+    prices, rows = System1Catalog(tier).discover(catalog("s1-fast", "reax-1.2", "reax-1.2-20261022", "reax-1.3"))
+    assert rows[f"{slug}/s1-fast"]["decision_contract_hold"] is None
+    for native in ("reax-1.2", "reax-1.2-20261022", "reax-1.3"):
+        row = rows[f"{slug}/{native}"]
+        assert row["upstream_id"] == native
+        assert row["routable"] is False and row["routable_reason"] == "decision-model-namespace-unsupported"
+
+
+@pytest.mark.parametrize("native", ["reax..1", ".reax", "reax.", "Reax-1.2", "reax_1.2", "reax/1.2"])
+def test_malformed_dotted_ids_still_fail_closed(native):
+    with pytest.raises(RuntimeError, match="invalid or duplicate model ID"):
+        System1Catalog("eu").discover(catalog("s1-fast", native))
+
+
 @pytest.mark.parametrize("change", ["unit", "output_tokens", "applies_to", "USD"])
 def test_image_tariff_must_be_exact_and_understood(change):
     payload = catalog("s1-vision")
