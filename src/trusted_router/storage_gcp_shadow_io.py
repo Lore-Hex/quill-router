@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextvars
+import copy
 import threading
 import time
 import uuid
@@ -35,6 +36,107 @@ class Scope:
 
 _SCOPE: contextvars.ContextVar[Scope | None] = contextvars.ContextVar("v2_rpc_scope", default=None)
 _RECORDER: contextvars.ContextVar[Callable[[int], None] | None] = contextvars.ContextVar("v2_rpc_recorder", default=None)
+# A client can disappear with a claim-row lock until Spanner's ~10 s idle
+# transaction expiry. Do not turn that wait into a fleet of 500 ms RPC errors.
+# This is a completion allowance, not a longer publisher acceptance budget.
+PUBLISHER_TRANSACTION_RPC_SECONDS = 12.
+PUBLISHER_ROLLBACK_SECONDS = 2.
+PUBLISHER_PREPARE_SECONDS = 2.
+PUBLISHER_STOP_DRAIN_SECONDS = 4.
+PUBLISHER_STOP_CLEANUP_SECONDS = 2.
+_FINISH_TRANSACTION: contextvars.ContextVar[bool] = contextvars.ContextVar("v2_finish_transaction", default=False)
+_PUBLISHER: contextvars.ContextVar[PublisherTransactions | None] = contextvars.ContextVar("v2_publisher_transactions", default=None)
+
+
+class PublisherTransactions:
+    """One native transaction across this boot's current and retired lanes.
+
+    Admission never waits. SIGTERM only sets a terminal timestamp; the owner
+    cancels the one registered native call after the drain allowance. SDK
+    rollback and lane deletion then have separate reserved cleanup time.
+    """
+    def __init__(self) -> None:
+        self.gate = threading.Lock()
+        self.stopped_at: float | None = None
+        self.call: Any = None
+        self.lane: Any = None
+        self.transaction: Any = None
+
+    def check(self) -> None:
+        if self.stopped_at is not None:
+            raise TimeoutError("publisher_stopping")
+
+    def cancel(self) -> None:
+        call = self.call
+        if call is not None:
+            call.cancel()
+
+
+def track_native_rpc(raw: Any, *, streaming: bool) -> Callable[..., Any]:
+    """Expose the actual gRPC call before GAPIC's first-response prefetch.
+
+    Keep the SDK/GAPIC request building, metadata and error mapping. Only a
+    publisher transaction uses Future.result rather than a blocking unary call.
+    """
+    def invoke(*args: Any, **kwargs: Any) -> Any:
+        publisher = _PUBLISHER.get()
+        if publisher is None:
+            return raw(*args, **kwargs)
+        scope_now().remaining()
+        publisher.check()
+        call = raw(*args, **kwargs) if streaming else raw.future(*args, **kwargs)
+        publisher.call = call
+        if streaming:
+            return call
+        try:
+            return call.result()
+        except Exception as error:
+            import grpc
+            if isinstance(error, grpc.FutureCancelledError):
+                raise Cancelled("publisher_shutdown") from error
+            raise
+        finally:
+            publisher.call = None
+    return invoke
+
+
+def configure_native_cancellation(api: Any) -> None:
+    from google.api_core import grpc_helpers
+    from google.cloud.spanner_v1.services.spanner.transports.grpc import SpannerGrpcTransport
+    native = getattr(api, "transport", None)
+    if not isinstance(native, SpannerGrpcTransport):
+        return
+    for name in ("begin_transaction", "execute_streaming_sql", "commit"):
+        raw = getattr(native, name)
+        # Preserve GAPIC's retry/timeout/metadata configuration. Its target is
+        # the documented gRPC callable plus Google's normal error mapper.
+        wrapped: Any = copy.copy(native._wrapped_methods[raw])
+        streaming = name == "execute_streaming_sql"
+        mapper = grpc_helpers._wrap_stream_errors if streaming else grpc_helpers._wrap_unary_errors
+        wrapped._target = mapper(track_native_rpc(raw, streaming=streaming))
+        native._wrapped_methods[raw] = wrapped
+
+
+@contextmanager
+def finish_transaction_rpcs(publisher: PublisherTransactions | None = None) -> Iterator[None]:
+    """Drain admitted claim/publication RPCs; permit cleanup after cycle expiry."""
+    if publisher is not None:
+        publisher.check()
+        if not publisher.gate.acquire(blocking=False):
+            raise SessionUnavailable("publisher_transaction_draining")
+    owner = _PUBLISHER.set(publisher)
+    token = _FINISH_TRANSACTION.set(True)
+    try:
+        if publisher is not None:
+            publisher.check()
+        yield
+    finally:
+        if publisher is not None:
+            publisher.call = None
+            publisher.transaction = publisher.lane = None
+            publisher.gate.release()
+        _FINISH_TRANSACTION.reset(token)
+        _PUBLISHER.reset(owner)
 
 
 @contextmanager
@@ -115,21 +217,22 @@ class Sessions:
         if self.ready or not self.recovery_due(clock):
             return self.ready
         try:
-            with rpc_scope(clock()+5, 5, clock):
+            seconds = PUBLISHER_PREPARE_SECONDS if self.lane == "publisher" else 5.
+            with rpc_scope(clock()+seconds, seconds, clock):
                 session = self._checkout(create=True)
                 self.put_session(session)
         except Exception:
             return False
         return True
 
-    def close(self, clock: Callable[[], float]) -> bool:
+    def close(self, clock: Callable[[], float], seconds: float = 5.) -> bool:
         """Delete this retired lane only after all its worker calls have returned.
 
         Unknown creation uses the same bounded inventory reconciliation as
         recovery, but cleanup never allocates another session.
         """
         try:
-            with rpc_scope(clock()+5, 5, clock):
+            with rpc_scope(clock()+seconds, seconds, clock):
                 with self.lock:
                     self.retire()
                     if self.creation_unknown:
@@ -267,6 +370,7 @@ def configure(database: Any) -> Transport | None:
 
     transport = Transport(database)
     _TRANSPORTS[id(database)] = transport
+    configure_native_cancellation(api)
     for name, original in (
             ("begin_transaction", api.begin_transaction if hasattr(api, "begin_transaction") else None),
             ("commit", api.commit if hasattr(api, "commit") else None),
@@ -288,7 +392,16 @@ def configure(database: Any) -> Transport | None:
         original = getattr(original, "__wrapped__", original)
         def bounded(*args: Any, _call: Any = original, _name: str = name, **kwargs: Any) -> Any:
             scope = scope_now()
-            kwargs.update(timeout=scope.remaining(), retry=None)
+            finish = _FINISH_TRANSACTION.get() and _name in (
+                "begin_transaction", "execute_streaming_sql", "commit", "rollback")
+            # Rollback releases locks even when the application budget expired.
+            # Every other RPC must still be admitted within the original scope.
+            remaining = scope.remaining() if not (finish and _name == "rollback") else 0.
+            publisher = _PUBLISHER.get()
+            if publisher is not None and _name != "rollback":
+                publisher.check()
+            completion = PUBLISHER_ROLLBACK_SECONDS if _name == "rollback" else PUBLISHER_TRANSACTION_RPC_SECONDS
+            kwargs.update(timeout=completion if finish else remaining, retry=None)
             record = _RECORDER.get()
             started = scope.clock()
             streaming = False
@@ -309,7 +422,8 @@ def configure(database: Any) -> Transport | None:
                     def consume() -> Iterator[Any]:
                         try:
                             for response in result:
-                                scope.remaining()
+                                if not finish:
+                                    scope.remaining()
                                 yield response
                         except Exception as error:
                             failed(error)
@@ -323,7 +437,7 @@ def configure(database: Any) -> Transport | None:
                 # Let the SDK record a successful creation's server identity
                 # before checkout enforces the deadline. Otherwise a late
                 # reply becomes an orphan we can neither reuse nor delete.
-                if _name != "create_session":
+                if _name != "create_session" and not finish:
                     scope.remaining()
                 return result
             except Exception as error:

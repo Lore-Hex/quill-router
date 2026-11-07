@@ -718,8 +718,10 @@ def test_tick_prelude_pause_costs_only_its_slot(delay, late_sampling):
         assert all(start >= delay*1e6 for start in starts)
         if delay == .2:
             assert late
-            assert all(t["observed_at_ns"] > t["slot"]*2_000_000_000+250_000_000
-                       and t["rpc_count"] == 6 and not t["late_cycle"]
+            # The claim finishes after the observation window: keep the
+            # failed cycle, but do not start a scan that cannot be published.
+            assert all(t["observed_at_ns"] is None and t["claim_at_ns"] is not None
+                       and t["rpc_count"] == 2 and not t["late_cycle"]
                        and not t["unknown_outcome"] and "observation_failure" not in t for t in late)
         else:
             assert all(traces[s]["outcome"] == "published" for s in later)
@@ -727,21 +729,25 @@ def test_tick_prelude_pause_costs_only_its_slot(delay, late_sampling):
         assert 20_699 <= min(starts) <= max(starts) <= 20_702
         assert all(traces[s]["outcome"] == "published" for s in later)
         paused = traces[pause_slot]
-        # S3 may reject a late admitted observation; that costs only this slot.
+        # S3 forbids an observation after the window; that costs only this slot.
         assert paused["outcome"] == ("published" if delay == .12 else "failed")
         assert paused["claim_start_us"]-pause_slot*2_000_000 >= delay*1e6
         if paused["outcome"] == "failed":
-            assert paused["observed_at_ns"] > pause_slot*2_000_000_000+250_000_000
+            assert paused["observed_at_ns"] is None and paused["claim_at_ns"] is not None
+            assert paused["rpc_count"] == 2
         assert result["max_published_observation_ms"] <= 250
         assert result["max_published_cycle_ms"] <= 500
+    def observation_ms(trace):
+        stamp = trace["observed_at_ns"]
+        return None if stamp is None else (stamp-trace["slot"]*2_000_000_000)/1e6
     print("SAMPLING_PAUSE", "round2" if late_sampling else "pre-wall", delay,
           "pause", traces[pause_slot]["outcome"],
           "pause_start_us", (admissions[pause_slot]-pause_slot*2)*1e6,
-          "pause_observation_ms", (traces[pause_slot]["observed_at_ns"]-pause_slot*2_000_000_000)/1e6,
+          "pause_observation_ms", observation_ms(traces[pause_slot]),
           "later_start_us", min(starts), max(starts),
           "later_outcomes", {outcome: sum(traces[s]["outcome"] == outcome for s in later)
                              for outcome in ("published", "failed", "lost_claim", "missed")},
-          "late_observation_ms", [(t["observed_at_ns"]-t["slot"]*2_000_000_000)/1e6 for t in late])
+          "late_observation_ms", [observation_ms(t) for t in late])
 
 
 @pytest.mark.parametrize("site", ["run", "start", "_flush", "schedule_cycle", "publish_cycle", "observer_bootstrap"])
@@ -813,3 +819,206 @@ def test_job_creating_tick_samples_monotonic_before_wall(monkeypatch, site):
     finally:
         for executor in (svc.publisher_executor, svc.evidence_executor, svc.session_executor):
             executor.shutdown(wait=True, cancel_futures=True)
+
+
+def churn_fleet(*, stalled=True, followers=24, ref=None):
+    """Real publisher/store/transport, simulator locks and server RPC deadlines.
+
+    The holder pauses in client code after acquiring S. One follower's Commit
+    queues X; subsequent CLAIM_SQL reads queue behind it. RPC expiry is modeled
+    at the server boundary, independently of the publisher's returned trace.
+    Nine new boots join at +2 s. All boots run a full 300 s window; a busy
+    publisher skips slots, as the real executor does. No sockets or wall sleeps.
+    """
+    from collections import Counter
+    from concurrent.futures import ThreadPoolExecutor
+
+    from google.api_core.exceptions import DeadlineExceeded
+
+    from tests.shadow_health_cold_start_simulation import Reader
+    from trusted_router import storage_gcp_shadow_io as io
+
+    storage, publisher = modules(ref)
+    clock = Clock()
+    clock.now = START*2.
+    publisher.sleep = clock.sleep
+    statuses, replies, holder_errors = [], [], []
+
+    class ChurnReader(Reader):
+        expired = False
+
+        def check(self):
+            if self.expired:
+                raise DeadlineExceeded("server RPC deadline while waiting for claim lock")
+            super().check()
+
+        def execute_sql(self, sql, *, params, **options):
+            if not self.transaction:
+                return super().execute_sql(sql, params=params, **options)
+            return db.spanner_api.execute_streaming_sql(reader=self, sql=sql,
+                                                        params=params, **options)
+
+        def insert_or_update(self, **kwargs):
+            super().insert_or_update(**kwargs)
+            if clock.local.index == 0 and self.claim and self.slot == START:
+                assert self in db.lock((CLAIM_KIND, "local/publish")).shared
+                clock.sleep(10.)  # Paused after the read, with no RPC running.
+                if not stalled:
+                    # Server abandonment expiry: the client never commits.
+                    raise RuntimeError("holder vanished")
+
+    class ChurnDatabase(Database):
+        def __init__(self):
+            super().__init__(clock, storage)
+            self.spanner_api = SimpleNamespace(execute_streaming_sql=self.query,
+                commit=self.commit, rollback=self.rollback)
+
+        def rpc_call(self, tx, operation, timeout, callback):
+            active = True
+            def expire():
+                if active:
+                    tx.expired = True
+                    self.release(tx)
+                    # A lock grant can already have queued this worker at the
+                    # same instant as its deadline. Never wake it twice: the
+                    # second wake would incorrectly consume its next sleep.
+                    if tx.waiting and not any(event == tx.ident for _, _, event in clock.events):
+                        clock.wake(tx)
+            clock.schedule(clock.now+timeout, expire)
+            try:
+                result = callback()
+                tx.check()
+                statuses.append((clock.now, clock.local.index, operation, "OK"))
+                return result
+            except DeadlineExceeded:
+                # A gRPC deadline can surface server-side as either of these;
+                # count both under the same alert/breaker predicate.
+                status = "CANCELLED" if clock.local.index % 2 else "DEADLINE_EXCEEDED"
+                statuses.append((clock.now, clock.local.index, operation, status))
+                raise
+            finally:
+                active = False
+
+        def query(self, *, reader, sql, params, timeout, **kwargs):
+            return self.rpc_call(reader, "execute_streaming_sql", timeout,
+                lambda: reader._execute_sql(sql, params=params))
+
+        def commit(self, *, reader, timeout, **kwargs):
+            def finish():
+                for key in sorted(reader.mutations):
+                    self.lock(key).acquire(reader, "X")
+                clock.sleep(.033)
+                reader.check()
+                self.rows.update(reader.mutations)
+            return self.rpc_call(reader, "commit", timeout, finish)
+
+        def rollback(self, *, reader, timeout, **kwargs):
+            # Rollback is permitted even after the failed RPC's deadline.
+            reader.expired = False
+            self.release(reader)
+            clock.sleep(.01)
+            statuses.append((clock.now, clock.local.index, "rollback", "OK"))
+
+        def run_in_transaction(self, callback, **kwargs):
+            tx = ChurnReader(self, transaction=True)
+            self.transactions.append(tx)
+            try:
+                result = callback(tx)
+                self.spanner_api.commit(reader=tx)
+                return result
+            except Exception:
+                self.spanner_api.rollback(reader=tx)
+                raise
+            finally:
+                self.release(tx)
+                tx.ended = clock.now
+
+    db = ChurnDatabase()
+    stores = [storage.ObservationStore(db, clock=lambda: clock.now, wall=lambda: clock.now)
+              for _ in range(followers+1)]
+    assert stores[0].transport is not None  # Exercise the real bounded API wrapper.
+    db.rows[CLAIM_KIND, "local/publish"] = json.dumps(dict(v=2,
+        policy_version=publisher.POLICY, contract_revision="a1", authority="local",
+        slot=START-2, claim_at_ns=(START-2)*2_000_000_000, owner_boot_id="gone"))
+
+    def worker(index):
+        boot = f"churn-{index}"
+        if index == 0:
+            clock.local.slot = START
+            try:
+                stores[0].claim(boot, START, START*2_000_000,
+                                storage.Budget(clock.now+.5, lambda: clock.now))
+            except Exception as error:
+                holder_errors.append(error)
+            if not stalled:
+                return
+        for offset in range(150):
+            if index > followers-9 and offset == 0:
+                continue  # Autoscale burst: nine boots have no warm health hint.
+            boundary = (START+offset)*2.
+            if clock.now > boundary:
+                continue
+            clock.sleep(boundary-clock.now)
+            clock.local.slot = slot = START+offset
+            job = publisher.lifecycle.PublisherJob(slot, 1, boundary, boundary+.25)
+            admission = SimpleNamespace(admission_lock=threading.Lock(), generation=1,
+                revocation_epoch=0, admission_job=job, startup_retention=False)
+            reply = publisher.publish_cycle(stores[index], boot, "us-central1", "a"*40,
+                job, slot*2_000_000, admission, warm=index <= followers-9)
+            replies.append(reply)
+
+    with ThreadPoolExecutor(max_workers=followers+1) as pool:
+        futures = [pool.submit(clock.worker, lambda i=i: worker(i), i)
+                   for i in range(followers+1)]
+        with clock.condition:
+            clock.condition.wait_for(lambda: clock.ready == followers+1
+                                     and len(clock.events) == followers+1)
+        clock.run_queue()
+        for future in futures:
+            future.result()
+    errors = [s for s in statuses if s[3] != "OK"]
+    assert len(holder_errors) == 1
+    assert db.transactions[0].ended >= START*2+10
+    by_boot = Counter(s[1] for s in errors)
+    peak = max((sum(t <= s[0] < t+300 for s in errors) for t, *_ in errors), default=0)
+    published = [r.trace["slot"] for r in replies if r.trace["outcome"] == "published"]
+    assert published and min(published)-START <= 7  # Recovery after lock expiry.
+    assert len(published) == len(set(published))  # S1/S2 through real fences.
+    assert all(r.trace["cycle_us"] <= 500_000 for r in replies if r.trace["outcome"] == "published")
+    assert io._SCOPE.get() is None
+    result = dict(fleet_300s=peak, per_boot_300s=dict(sorted(by_boot.items())),
+                  operations=dict(Counter((s[2], s[3]) for s in errors)),
+                  rollbacks=sum(s[2] == "rollback" for s in statuses),
+                  first_publication_offset=min(published)-START)
+    print("CHURN", stalled, result)
+    return result
+
+
+@pytest.mark.parametrize("stalled", [True, False], ids=["paused-holder", "vanished-holder"])
+@pytest.mark.parametrize("followers", [1, 2, 24])
+def test_abandoned_claim_lock_does_not_trip_fleet_alert_or_boot_breaker(stalled, followers):
+    result = churn_fleet(stalled=stalled, followers=followers)
+    assert result["fleet_300s"] == 0, result
+    assert max(result["per_boot_300s"].values(), default=0) == 0, result
+    assert result["rollbacks"] > 0
+
+
+def test_abandoned_claim_lock_main_positive_control():
+    result = churn_fleet(ref="aac5f8896d6334fe45b41bb189ba175c352ae364")
+    assert result["fleet_300s"] == 100
+    assert max(result["per_boot_300s"].values()) == 5
+
+
+def test_replaced_lane_can_reenter_only_after_its_claim_is_abandoned():
+    control = PublisherControl(None)
+    publisher = control.publisher
+    assert control.cycle(START, incumbent=True).trace["outcome"] == "published"
+    # Retire the lane: neither its won hint nor publication history survives.
+    control.store = control.new_store()
+    assert control.store.won is control.store.last_publication is None
+    assert publisher.HOLDER_REENTRY_AGE == 6 > publisher.HOLDER_FAILURE_SLOTS
+    for offset in range(publisher.HOLDER_FAILURE_SLOTS+1, publisher.HOLDER_REENTRY_AGE):
+        assert not control.cycle(START+offset).claimed
+        assert publisher.takeover_due("other", START+offset, {"slot": START})
+    reply = control.cycle(START+publisher.HOLDER_REENTRY_AGE)
+    assert reply.claimed and reply.trace["outcome"] == "published"
