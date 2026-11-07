@@ -179,9 +179,9 @@ locals {
   # WS0's gate counts from the last node's restart. Every pilot workspace
   # passed fastpathctl ready at these values before this change but the
   # customer's, whose switch is off, so it takes today's path and cannot be
-  # refused at the tier. Step 4: each pilot workspace held one lease at a
-  # time over the leases kept (seven days), the largest allocation under
-  # $4, well under a quarter of the allowance. Rollback: remove the three
+  # refused at the tier. Step 4: over the leases kept (seven days), the
+  # largest lease under $4 and the lease spend far under a quarter of the
+  # allowance; a grant tops up at most $10. Rollback: remove the three
   # and take each node the same way, which restores the release's defaults.
   fastpath_required_tier = "3"
   fastpath_allowance     = "1000000000"
