@@ -133,12 +133,13 @@ runner rather than shortening the run. The cost: proofs is not a required
 check, so a pull request can merge with it red, and main's push runs no longer
 show it. main learns of it from the next price refresh that runs the full
 matrix, whose publication it then holds, or from the daily run, the one run on
-main scheduled to check it. A schedule is not a guarantee: GitHub can start a
-scheduled run hours late under load, or not at all, and the first daily run,
-due at 04:47 UTC on November 7, started at 11:21. With coverage cheaper, the
-default suite runs in eight shards instead of twelve. On #2377's run they took
-8 to 14 minutes each, still inside that longest shard, with four fewer jobs in
-the queue and 91 runner-minutes against 110 to 126.
+main scheduled to check it. A schedule is not a guarantee: this repository's
+daily schedules have started three to seven hours late (the first daily run,
+due at 04:47 UTC on November 7, started at 11:21), and under load GitHub may
+skip one. With coverage cheaper, the default suite runs in eight shards
+instead of twelve. On #2377's run they took 8 to 14 minutes each, still inside
+that longest shard, with four fewer jobs in the queue and 91 runner-minutes
+against 110 to 126.
 
 ## Validation and measurement
 
