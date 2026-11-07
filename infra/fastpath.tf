@@ -401,9 +401,17 @@ resource "google_compute_instance" "fastpath_node" {
   # the p99 at 27 ms and every audit clean. The same script, release and
   # metadata; 9 and 10 were drained, left the edge backend one apply before
   # their removal, then were removed.
+  #
+  # 13 and 14 take the places of 11 and 12 the same way, for the money
+  # settings (#2354): the script 11 and 12 run, from before it, passes none
+  # of -required-tier, -allowance or -floor from their attributes. The same
+  # release and metadata, none of those attributes set yet, so 13 and 14
+  # start at the release's defaults, as 11 and 12 run.
   for_each = {
     "tr-fastpath-11" = { zone = "us-central1-a", machine_type = "e2-standard-4" }
     "tr-fastpath-12" = { zone = "us-central1-b", machine_type = "e2-standard-4" }
+    "tr-fastpath-13" = { zone = "us-central1-a", machine_type = "e2-standard-4" }
+    "tr-fastpath-14" = { zone = "us-central1-b", machine_type = "e2-standard-4" }
   }
 
   project      = local.gcp_project_id
