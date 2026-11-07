@@ -3374,9 +3374,11 @@ LIBERTY_1_0_1M_MODEL_ORDER = (
 )
 
 # The panel; Muse Spark Open also fuses it, backed up by Beam then Nemotron.
-# Every member runs on a US-headquartered 1M route.
+# Every member runs on a US-headquartered route: Muse Spark and Beam serve 1M,
+# and Nemotron 3 Ultra (256K, replaced Nemotron 3.5 Super on 2026-11-07) sits
+# out requests too long for its window.
 LIBERTY_4_0_MODEL_ORDER = (
-    "nvidia/nemotron-3.5-super-vl",
+    "nvidia/nemotron-3-ultra-550b-a55b",
     "reflection/beam-1.0",
     "meta-models/muse-spark-open",
 )

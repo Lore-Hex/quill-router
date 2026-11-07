@@ -1146,7 +1146,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     assert liberty_4["context_length"] == 1_048_576
     assert liberty_4["trustedrouter"]["route_kind"] == "fusion_panel"
     assert liberty_4["trustedrouter"]["auto_candidates"] == _carried(
-        "nvidia/nemotron-3.5-super-vl",
+        "nvidia/nemotron-3-ultra-550b-a55b",
         "reflection/beam-1.0",
         "meta-models/muse-spark-open",
     )
