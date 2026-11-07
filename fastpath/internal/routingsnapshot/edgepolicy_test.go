@@ -814,6 +814,53 @@ func TestTheStreamsMemberVectors(t *testing.T) {
 	}
 }
 
+// TestTheStreamCeilingMemberVectors: fastpath_stream_ceiling as Python
+// publishes and reads it (scripts/fastpath/edge_policy_vectors.py writes
+// edge_policy_stream_ceiling_v1.json; tests/test_edge_policy_publish.py
+// holds Python to the same cases; docs/design/fast-admission-streams.md
+// section 12.4, PR 4): the publisher's body with the setting off, the golden
+// body with no member, and on, the member true, and the member's other
+// spellings, refused by both readers.
+func TestTheStreamCeilingMemberVectors(t *testing.T) {
+	var file struct {
+		Generator string `json:"generator"`
+		Cases     []struct {
+			Name          string `json:"name"`
+			Setting       *bool  `json:"setting"`
+			Body          string `json:"body"`
+			Accept        bool   `json:"accept"`
+			StreamCeiling bool   `json:"stream_ceiling"`
+		} `json:"cases"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(testdata(t, "edge_policy_stream_ceiling_v1.json")))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&file); err != nil {
+		t.Fatal(err)
+	}
+	accepted, refused, on := 0, 0, 0
+	for _, c := range file.Cases {
+		p, err := ParseEdgePolicy([]byte(c.Body))
+		if (err == nil) != c.Accept {
+			t.Errorf("%s: accepted %v, Python's %v (%v)", c.Name, err == nil, c.Accept, err)
+			continue
+		}
+		if err != nil {
+			refused++
+			continue
+		}
+		accepted++
+		if p.StreamCeiling() != c.StreamCeiling || (p.FastpathStreamCeiling != nil) != c.StreamCeiling {
+			t.Errorf("%s: StreamCeiling %v, Python's %v", c.Name, p.StreamCeiling(), c.StreamCeiling)
+		}
+		if p.StreamCeiling() {
+			on++
+		}
+	}
+	if accepted != 2 || refused != 4 || on != 1 {
+		t.Fatalf("%d accepted (%d with the member), %d refused: not the vectors' 2 (1) and 4", accepted, on, refused)
+	}
+}
+
 // allGolden is the all-mode golden pair (scripts/fastpath/edge_policy_vectors.py
 // writes edge_policy_all_v1.{body,manifest}.json;
 // tests/test_edge_policy_publish.py holds Python to the same files): the

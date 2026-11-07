@@ -1720,6 +1720,14 @@ def _authorize_gateway_sync_impl(
             else enforced_window_limits(api_key)  # {} in alert mode → never blocks
         )
         key_usage_shards = key_usage_shard_count(api_key)
+        # A stream's ceiling beside its hold (docs/design/fast-admission-streams.md
+        # section 12.4, PR 4): with fastpath_stream_ceiling, a stream whose
+        # reservation is below its estimate is admitted with the estimate as
+        # its ceiling, and its owner cuts it there; 0 sends none.
+        stream_ceiling = _fastpath.stream_ceiling(
+            enabled=settings.fastpath_stream_ceiling, stream=bool(body.stream),
+            reservation=reservation, estimate=estimate,
+        )
         # The fast path's pilot (docs/design/fast-admission-pilot.md): a
         # request in the cohort is admitted by the front door under a lease,
         # and the typed store then reserves nothing for it; any other answer,
@@ -1755,10 +1763,12 @@ def _authorize_gateway_sync_impl(
             # A stream joins only as docs/design/fast-admission-streams.md
             # section 5.1 says: the enclave heartbeats it (Stage D ok, the
             # boot declared it), the lease's snapshot reap matches Python's,
-            # and its hold is its ceiling.
+            # and its hold is its ceiling, or its admission carries its
+            # estimate as its ceiling.
             stage_d_reason=stage_d_reason,
             heartbeat_declared=bool(boot_context.get("heartbeat_declared", False)),
-            hold_is_ceiling=reservation == estimate,
+            hold_is_ceiling=reservation == estimate or stream_ceiling > 0,
+            ceiling=stream_ceiling,
         )
 
         def release_after_error() -> None:
@@ -5192,12 +5202,16 @@ def _fastpath_admission(
     stage_d_reason: str | None = None,
     heartbeat_declared: bool = False,
     hold_is_ceiling: bool = False,
+    ceiling: int = 0,
 ) -> _fastpath.Admitted | None:
     """The pilot's admission, or None for today's path. The region is this
     control plane's own: the front doors are reachable from the region the
     fast path's nodes are in, whatever region the request routes to. A
     stream passed over logs the condition of section 5.1 it failed
-    (docs/design/fast-admission-streams.md)."""
+    (docs/design/fast-admission-streams.md). ``ceiling`` is a stream's
+    ceiling above its hold (``fastpath_frontdoor.stream_ceiling``), passed to
+    the front door only when set, so with ``fastpath_stream_ceiling`` off the
+    call is the one from before the setting."""
     def stream_reason() -> str | None:
         return _fastpath.pilot_stream_reason(
             streams_enabled=settings.fastpath_pilot_streams,
@@ -5262,6 +5276,7 @@ def _fastpath_admission(
         estimate=int(estimate),
         stream=stream,
         boot=boot_kid.encode("utf-8"),
+        **({"ceiling": int(ceiling)} if ceiling else {}),
     )
     logger.info(
         "fastpath pilot authorize %s workspace_id=%s authorization_id=%s ms=%.1f",

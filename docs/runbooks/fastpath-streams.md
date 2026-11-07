@@ -44,6 +44,9 @@ A stream in the pilot's cohort joins only when (§5.1):
 - `reap_snapshot_booking_enabled` is on (`stream.snapshot_booking`);
 - its reservation is its estimate (`stream.hold`, the tripwire): since
   2026-11-05 only a stream whose output budget is at most 16,384 tokens.
+  With `TR_FASTPATH_STREAM_CEILING` on, a stream whose reservation is below
+  its estimate joins too, its estimate sent as its ceiling ("The ceiling
+  beside the hold", below).
 
 A stream passed over is logged as `fastpath pilot passed over reason=<one of
 those> workspace_id=...`.
@@ -95,6 +98,44 @@ one for a workspace inside admission passes (`policy.async_admission`, or
 answers streams, each one still gated on Stage D, the boot's declaration
 and the hold (`stream.stage_d:<reason>`, `stream.undeclared`,
 `stream.hold`).
+
+## The ceiling beside the hold
+
+Design §12.4, PR 4. `TR_FASTPATH_STREAM_CEILING`, a literal `false` in
+`rollout.sh`: with it on, Python's pilot and the edge admit a stream whose
+reservation is below its estimate (an output budget past 16,384 tokens)
+with the estimate as the admission's `Ceiling`, so its owner runs it to the
+estimate, where Stage D cuts it, instead of passing it over as
+`stream.hold`. The edge policy carries `fastpath_stream_ceiling: true`
+exactly when the setting is on. Moving it is the activation; it waits for
+Joseph's go. Before it moves:
+
+1. **#2337 deployed** in every control plane region: find a successful
+   control-plane deploy at or after d5dc1862c. Before it a stream's
+   reservation is its estimate on both paths, so the setting changes
+   nothing.
+2. **PR 3 (#2383) on every owner, front door and auditor**, as
+   `fastpath-deploy.md` checks under "Taking a pinned release": every member
+   reports 8af87998a or later. An owner below PR 3 cuts a ceilinged stream
+   at its hold, and below PR 1 refuses the authorize.
+3. **This release (PR 4) on every node.** A node from before it refuses an
+   edge policy carrying `fastpath_stream_ceiling` whole: it keeps the last
+   policy it took until that expires (60 s), then passes every authorize to
+   Python as `cache.policy`. Check every member's running release as in
+   step 2.
+
+Then set `TR_FASTPATH_STREAM_CEILING=true` and deploy. Watch, over the
+leased streams past 16,384 output tokens: `fastpath.heartbeat_divergence`
+zero, no `fastpath pilot winner's charge differs` line, every `fastpath
+leased reap recorded` cost equal to the running charge Python prices, and
+the auditor's reaps above a hold booked with their raise (design §12.3).
+`fastpath pilot passed over reason=stream.hold` lines stop.
+
+The way back: `TR_FASTPATH_STREAM_CEILING=false` and deploy first. Holds
+already admitted with a ceiling keep it until they end; while one may be
+open no owner or front door goes below PR 1's release, no owner below PR
+3's, and no auditor below PR 2's until every record carrying `ceil` is
+applied (design §12.4, "Rollback").
 
 ## The way back, fastest first
 

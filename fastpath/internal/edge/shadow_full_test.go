@@ -497,8 +497,10 @@ func TestEveryGoldenCaseThroughTheDecideShadow(t *testing.T) {
 	// its cold answer is agree_full with its rows read back, like any.
 	// The streams (streams section 8.4): 28 answered with the policy's
 	// fastpath_edge_streams, one composed for the shadow alone, and one
-	// unavailable; the two past the hold bound pass as stream.hold.
-	if classes[ClassAgreeFull] != 192+28+1+5+2+notLeasedRows || rowsAgree != 192+28+1 || notLeasedRows != 1 ||
+	// unavailable; the two past the hold bound pass as stream.hold. With the
+	// policy's fastpath_stream_ceiling (section 12.4, PR 4) three more
+	// streams and one request that does not stream are answered.
+	if classes[ClassAgreeFull] != 193+31+1+5+2+notLeasedRows || rowsAgree != 193+31+1 || notLeasedRows != 1 ||
 		affinityAgree != 18 || readBack != 1 ||
 		classes[ClassPythonUnavailable] != 2+1 || classes[ClassPythonAnsweredGoPassed+"."+PassEvaluate] != 1 ||
 		classes[ClassPythonAnsweredGoPassed+"."+PassStreamHold] != 2 {

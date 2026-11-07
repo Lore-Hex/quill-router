@@ -313,6 +313,10 @@ def _settings(case: dict[str, Any]) -> Settings:
         # publisher writes only with the pilot's streams switch on too.
         fastpath_pilot_streams=policy.get("fastpath_edge_streams") is True,
         fastpath_edge_streams=policy.get("fastpath_edge_streams") is True,
+        # A ceiling case's policy carries fastpath_stream_ceiling, which the
+        # publisher writes exactly when the setting is on
+        # (docs/design/fast-admission-streams.md section 12.4, PR 4).
+        fastpath_stream_ceiling=policy.get("fastpath_stream_ceiling") is True,
     )
 
 

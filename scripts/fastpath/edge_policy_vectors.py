@@ -25,7 +25,12 @@ workspace outside the overlap list on the exclude list, as the settings
 require, and the all-mode golden files (sections 6.3 and 11, PR 3) to
 fastpath/testdata/edge_policy_all_v1.{body,manifest}.json: the publisher's
 body from the golden settings in all mode (fastpath_pilot_all and
-fastpath_pilot_exclude, the explicit list emptied), signed alike. Workspace
+fastpath_pilot_exclude, the explicit list emptied), signed alike, and the
+optional fastpath_stream_ceiling member's vectors
+(docs/design/fast-admission-streams.md section 12.4, PR 4) to
+fastpath/testdata/edge_policy_stream_ceiling_v1.json: the publisher's body
+with the setting off and on, and the member's other spellings, each with
+whether both readers accept it and what the member says. Workspace
 ids, digests and the monitor key are synthetic.
 tests/test_edge_policy_publish.py fails when the files are not what this
 script writes now.
@@ -72,6 +77,7 @@ OUTPUT_STREAMS = ROOT / "fastpath" / "testdata" / "edge_policy_streams_v1.json"
 OUTPUT_ADMISSION = ROOT / "fastpath" / "testdata" / "edge_policy_admission_v1.json"
 OUTPUT_ALL_BODY = ROOT / "fastpath" / "testdata" / "edge_policy_all_v1.body.json"
 OUTPUT_ALL_MANIFEST = ROOT / "fastpath" / "testdata" / "edge_policy_all_v1.manifest.json"
+OUTPUT_STREAM_CEILING = ROOT / "fastpath" / "testdata" / "edge_policy_stream_ceiling_v1.json"
 GENERATOR = "scripts/fastpath/edge_policy_vectors.py"
 
 ISSUED_AT = calendar.timegm((2026, 10, 19, 0, 0, 0))  # 2026-10-19T00:00Z
@@ -196,6 +202,38 @@ def streams_cases() -> list[dict[str, object]]:
 
 def render_streams() -> str:
     return json.dumps({"generator": GENERATOR, "cases": streams_cases()}, indent=1, sort_keys=True) + "\n"
+
+
+# fastpath_stream_ceiling's spellings the publisher never writes, each refused
+# by both readers: present only as true, as fastpath_edge_streams.
+STREAM_CEILING_REFUSED = STREAMS_REFUSED
+
+
+def stream_ceiling_cases() -> list[dict[str, object]]:
+    """The member's vectors (docs/design/fast-admission-streams.md section
+    12.4, PR 4): the publisher's body with the setting off (no member) and
+    on, then the on body with the member spelled every other way."""
+    cases: list[dict[str, object]] = []
+    bodies: dict[bool, str] = {}
+    for on in (False, True):
+        settings = fixture_settings().model_copy(update={"fastpath_stream_ceiling": on})
+        bodies[on] = canonical_edge_policy_bytes(policy(settings)).decode("ascii")
+        cases.append({"name": f"publisher:{'on' if on else 'off'}", "setting": on, "body": bodies[on],
+                      "accept": True, "stream_ceiling": on})
+    member_text = '"fastpath_stream_ceiling":true'
+    if bodies[True].count(member_text) != 1 or "fastpath_stream_ceiling" in bodies[False]:
+        raise AssertionError("the member is not in the on body once, or is in the off body")
+    if bodies[False] != render_body().decode("ascii"):
+        raise AssertionError("the off body is not the golden body")
+    for name, spelling in STREAM_CEILING_REFUSED:
+        cases.append({"name": f"refused:{name}", "setting": None,
+                      "body": bodies[True].replace(member_text, f'"fastpath_stream_ceiling":{spelling}'),
+                      "accept": False, "stream_ceiling": False})
+    return cases
+
+
+def render_stream_ceiling() -> str:
+    return json.dumps({"generator": GENERATOR, "cases": stream_ceiling_cases()}, indent=1, sort_keys=True) + "\n"
 
 
 # Async admission per workspace (docs/design/fast-admission-e2-g15-async.md
@@ -362,6 +400,8 @@ if __name__ == "__main__":
     OUTPUT_ADMISSION.write_text(render_admission())
     OUTPUT_ALL_BODY.write_bytes(render_all_body())
     OUTPUT_ALL_MANIFEST.write_text(render_all_manifest())
+    OUTPUT_STREAM_CEILING.write_text(render_stream_ceiling())
     print(f"wrote {OUTPUT_BODY.relative_to(ROOT)}, {OUTPUT_MANIFEST.relative_to(ROOT)}, "
           f"{OUTPUT_STREAMS.relative_to(ROOT)}, {OUTPUT_ADMISSION.relative_to(ROOT)}, "
-          f"{OUTPUT_ALL_BODY.relative_to(ROOT)} and {OUTPUT_ALL_MANIFEST.relative_to(ROOT)}")
+          f"{OUTPUT_ALL_BODY.relative_to(ROOT)}, {OUTPUT_ALL_MANIFEST.relative_to(ROOT)} and "
+          f"{OUTPUT_STREAM_CEILING.relative_to(ROOT)}")

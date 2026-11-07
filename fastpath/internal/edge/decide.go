@@ -148,7 +148,10 @@ const (
 	// require_heartbeat_declaration says, as PassStreamUndeclared; and one
 	// whose reservation is not its estimate, the tripwire for a lowered
 	// stream reservation the lease would cut the stream at, as
-	// PassStreamHold.
+	// PassStreamHold, unless the policy carries fastpath_stream_ceiling and
+	// the reservation is below the estimate: the admission then carries the
+	// estimate as its Ceiling (docs/design/fast-admission-streams.md section
+	// 12.4, PR 4).
 	PassStreamStageD          = "stream.stage_d:"
 	PassStreamUndeclared      = "stream.undeclared"
 	PassStreamHold            = "stream.hold"
@@ -279,6 +282,11 @@ type Decision struct {
 	// and keeps the stream reap floor (docs/design/fast-admission-streams.md
 	// section 2.3 item 4).
 	Stream bool
+	// Ceiling is the admission's Ceiling (frontdoor.AuthorizeOf.Ceiling): a
+	// stream's Estimate when the policy carries fastpath_stream_ceiling and
+	// its Reservation is below it, so the owner cuts the stream where Python
+	// does; zero otherwise, and then never sent (streamCeiling).
+	Ceiling int64
 	// Windows is the window check a key whose spend windows Python's
 	// authorize enforces needs before the edge may admit (key-windows
 	// section 4.2): nil for any other key, an alert-only one included.
@@ -593,7 +601,8 @@ func Decide(in DecideInputs) Decided {
 		TypedSettlement: policy.AsyncSettle != nil && policy.AsyncSettle.TypedRecords,
 	})
 	if r.Streamed() {
-		if reason := streamGate(stageD, in.Request.Boot.Boot.DeclaresUsageHeartbeat, res); reason != "" {
+		if reason := streamGate(stageD, in.Request.Boot.Boot.DeclaresUsageHeartbeat, res,
+			policy.StreamCeiling()); reason != "" {
 			return pass(reason)
 		}
 	}
@@ -635,6 +644,7 @@ func Decide(in DecideInputs) Decided {
 		Workspace: key.WorkspaceID, KeyHash: key.Hash, LookupHash: r.APIKeyLookupHash, Kid: in.Request.Boot.Kid,
 		Region: region, Candidates: slices.Clone(res.Candidates),
 		Affinity: r.CacheAffinity, Routing: req, Snapshot: snap, Stream: r.Streamed(),
+		Ceiling: streamCeiling(r.Streamed(), res, policy.StreamCeiling()),
 	}
 	if w := key.Windows; w != nil && !w.AlertOnly {
 		// An alert-only key is decided as an uncapped one: Python's
@@ -675,22 +685,39 @@ func Decide(in DecideInputs) Decided {
 // Python's pilot leases it (fastpath_frontdoor.pilot_stream_reason, whose
 // switch and snapshot booking the member implies): Stage D lets it in, its
 // boot declared heartbeats, and its hold is its ceiling (the evaluator's
-// reservation is its estimate, as Python's hold_is_ceiling). An async-v1
+// reservation is its estimate, as Python's hold_is_ceiling), or, with the
+// policy's fastpath_stream_ceiling (ceiling), its reservation is below its
+// estimate and the admission carries the estimate (streamCeiling). A
+// reservation above the estimate passes either way: no ceiling can be sent
+// below the hold. An async-v1
 // stream reaches it only for a workspace Python's admission leaves out
 // (asyncAdmissionPass), and goes on as any other: Python's pilot reads no
 // settlement mode, and its additions are the non-stream request's
 // (authorize_additions reads body.stream only into a ticket's claims), so
 // the compose below splices them in after the stream's frozen pricing.
-func streamGate(stageD string, declared bool, res routingsnapshot.Result) string {
+func streamGate(stageD string, declared bool, res routingsnapshot.Result, ceiling bool) string {
 	switch {
 	case stageD != gwauth.StageDOK:
 		return PassStreamStageD + stageD
 	case !declared:
 		return PassStreamUndeclared
-	case res.Reservation != res.ModelEstimate:
+	case res.Reservation > res.ModelEstimate, res.Reservation < res.ModelEstimate && !ceiling:
 		return PassStreamHold
 	}
 	return ""
+}
+
+// streamCeiling is the Ceiling a decision's admission carries, Python's
+// fastpath_frontdoor.stream_ceiling: with the policy's
+// fastpath_stream_ceiling (on), a stream whose reservation is below its
+// estimate is cut by its owner at the estimate, its hold staying the
+// reservation (docs/design/fast-admission-streams.md section 12.2 item 4);
+// zero for anything else, which sends no Ceiling.
+func streamCeiling(stream bool, res routingsnapshot.Result, on bool) int64 {
+	if stream && on && res.ModelEstimate > res.Reservation {
+		return res.ModelEstimate
+	}
+	return 0
 }
 
 // asyncPolicyPass is an async-v1 request's keyless policy gate: "" when the

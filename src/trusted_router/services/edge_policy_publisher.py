@@ -264,6 +264,10 @@ def settings_facts(
         # the pilot's, and snapshot booking, which the lease always does, all
         # on. Absent otherwise, so the default body stays byte-identical.
         **({"fastpath_edge_streams": True} if edge_streams_on(settings) else {}),
+        # Optional, published only while a stream's ceiling is sent beside its
+        # hold (docs/design/fast-admission-streams.md section 12.4, PR 4).
+        # Absent otherwise, so the default body stays byte-identical.
+        **({"fastpath_stream_ceiling": True} if settings.fastpath_stream_ceiling else {}),
     }
 
 

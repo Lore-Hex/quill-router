@@ -746,6 +746,15 @@ ENV_VARS=(
   # (increments 5 and 6, #2242).
   "TR_FASTPATH_PILOT_STREAMS=true"
   "TR_FASTPATH_EDGE_STREAMS=true"
+  # A stream's ceiling beside its hold (docs/design/fast-admission-streams.md
+  # section 12.4, PR 4): a stream whose reservation is below its estimate is
+  # leased with the estimate as its ceiling, here and on the edge through the
+  # edge policy, instead of passing over as stream.hold. A literal, so no
+  # revision inherits it; false is the way back. It moves only once every
+  # node runs the release that reads the policy member (a node from before
+  # refuses the whole policy) and PR 3's release runs on every owner, front
+  # door and auditor (docs/runbooks/fastpath-streams.md).
+  "TR_FASTPATH_STREAM_CEILING=false"
   # Arms the authorize-time billing-pause gate (trust_eligibility
   # .billing_paused_tx) on both the typed and legacy paths. The name predates
   # the spend-lease pilot's removal (2026-09); Settings keeps it False so only

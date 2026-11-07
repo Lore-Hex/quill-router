@@ -37,8 +37,8 @@ var (
 // exported field is a wire field; ParseEdgePolicy refuses any other field, a
 // missing one (async_settle, its admission_workspaces and
 // admission_excluded_workspaces, fastpath_pilot_key_windows,
-// fastpath_edge_streams, fastpath_pilot_all and fastpath_pilot_exclude
-// alone may be absent), a float, a duplicate key,
+// fastpath_edge_streams, fastpath_pilot_all, fastpath_pilot_exclude and
+// fastpath_stream_ceiling alone may be absent), a float, a duplicate key,
 // null anywhere but monitor_lookup_hash, and a body that is not its own
 // canonical encoding.
 type EdgePolicy struct {
@@ -94,6 +94,16 @@ type EdgePolicy struct {
 	// sorted and unique, 0 to maxPilotExclude of them, present exactly
 	// when FastpathPilotAll is.
 	FastpathPilotExclude *[]string `json:"fastpath_pilot_exclude,omitempty"`
+	// FastpathStreamCeiling is optional: true when the control plane's
+	// fastpath_stream_ceiling is on (docs/design/fast-admission-streams.md
+	// section 12.4, PR 4). With it the edge admits a stream whose hold is
+	// below its estimate, sending the estimate as the admission's Ceiling,
+	// where without it the stream passes as stream.hold. Absent is off, the
+	// only form of off: the publisher leaves the member out rather than
+	// write false, and false is refused. Go ships first (StreamCeiling):
+	// the setting that publishes it moves only once every node reads it, as
+	// a node from before refuses the whole policy.
+	FastpathStreamCeiling *bool `json:"fastpath_stream_ceiling,omitempty"`
 }
 
 // maxPilotExclude bounds fastpath_pilot_exclude as Settings bounds
@@ -128,6 +138,12 @@ func (p *EdgePolicy) CoversAny() bool {
 // publisher does not carry it.
 func (p *EdgePolicy) EdgeStreams() bool {
 	return p.FastpathEdgeStreams != nil && *p.FastpathEdgeStreams
+}
+
+// StreamCeiling is the policy's fastpath_stream_ceiling, false when the
+// publisher does not carry it.
+func (p *EdgePolicy) StreamCeiling() bool {
+	return p.FastpathStreamCeiling != nil && *p.FastpathStreamCeiling
 }
 
 // The modes of fastpath_pilot_key_windows (KeyWindowsMode): off, the member
@@ -346,6 +362,9 @@ func (p *EdgePolicy) validate() error {
 	}
 	if s := p.FastpathEdgeStreams; s != nil && !*s {
 		return errors.New("fastpath_edge_streams is absent when off, never false")
+	}
+	if c := p.FastpathStreamCeiling; c != nil && !*c {
+		return errors.New("fastpath_stream_ceiling is absent when off, never false")
 	}
 	if err := p.validatePilotAll(); err != nil {
 		return err

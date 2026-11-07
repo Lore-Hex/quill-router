@@ -168,10 +168,12 @@ def test_the_cases_name_their_snapshot_and_policy() -> None:
     # policy adds as the publisher would: the edge's streams
     # (docs/design/fast-admission-streams.md section 5.4) with the
     # async-settle object whose typed_records is Stage D's settlement backend.
-    optional = {"fastpath_edge_streams", "async_settle"}
+    # A stream's ceiling beside its hold (section 12.4, PR 4) is the third.
+    optional = {"fastpath_edge_streams", "async_settle", "fastpath_stream_ceiling"}
     for case in vectors["cases"]:
         assert set(case["policy_patch"]) <= set(policy) | optional, case["name"]
         assert case["policy_patch"].get("fastpath_edge_streams", True) is True, case["name"]
+        assert case["policy_patch"].get("fastpath_stream_ceiling", True) is True, case["name"]
         effective = {**policy, **case["policy_patch"]}
         assert effective["issued_at"] * 1_000_000 < case["at_us"] < effective["not_after"] * 1_000_000, case["name"]
         assert case["labels"] == sorted(case["labels"]), case["name"]
@@ -586,6 +588,32 @@ def test_a_streams_reservation_is_bounded_like_any_other() -> None:
     for tokens_out in (16385, 131072):
         held = by_name[f"pass:stream.hold:deepseek/deepseek-v4-flash:1000+{tokens_out}"]
         assert held["reason"] == "stream.hold" and not held["python"]["leased"], held
+
+
+def test_with_the_ceiling_a_stream_past_the_bound_is_leased_with_its_estimate_as_its_ceiling() -> None:
+    """docs/design/fast-admission-streams.md section 12.4, PR 4: the two
+    stream.hold cases both ways. With the policy's fastpath_stream_ceiling
+    each is leased, its hold the reservation it passed over with and its
+    ceiling (the front door's Ceiling) its estimate, the row's spend
+    ceiling. At the bound, and for a request that does not stream, no
+    ceiling is sent; and no case without the member records one."""
+    cases = {case["name"]: case for case in _cases()}
+    flash = "deepseek/deepseek-v4-flash:1000+"
+    for tokens_out in (16385, 131072):
+        held = cases[f"pass:stream.hold:{flash}{tokens_out}"]
+        leased = cases[f"answer:stream:ceiling:{flash}{tokens_out}"]
+        assert "fastpath_stream_ceiling" not in held["policy_patch"]
+        assert leased["policy_patch"]["fastpath_stream_ceiling"] is True
+        expect = leased["expect"]
+        assert expect["reservation_microdollars"] == held["expect"]["python"]["reservation_microdollars"]
+        assert expect["ceiling_microdollars"] == expect["estimate_microdollars"] > expect["reservation_microdollars"]
+        assert expect["ceiling_microdollars"] == expect["authorization_row"]["estimated_microdollars"]
+        assert json.loads(expect["response"])["data"]["cap_micro"] == expect["ceiling_microdollars"]
+    for name in (f"answer:stream:ceiling:{flash}16384", f"answer:estimate:hold_cap:ceiling:{flash}131072"):
+        assert cases[name]["policy_patch"]["fastpath_stream_ceiling"] is True, name
+        assert "ceiling_microdollars" not in cases[name]["expect"], name
+    with_ceiling = sorted(name for name, case in cases.items() if "ceiling_microdollars" in case["expect"])
+    assert with_ceiling == [f"answer:stream:ceiling:{flash}131072", f"answer:stream:ceiling:{flash}16385"]
 
 
 # ------------------------------------------------------------------ async --
