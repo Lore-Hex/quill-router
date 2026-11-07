@@ -65,6 +65,8 @@ class DirectOpenAIProviderSpec:
     # the shared fetcher prevents a healthy PONG from making a deliberately
     # dark route live during a refactor or manifest rebuild.
     operator_hold_reasons: dict[str, str] = field(default_factory=dict)
+    # Exact reviewed retirements may quarantine retained rows, not erase them.
+    confirmed_disabled_model_ids: frozenset[str] = frozenset()
     # Reviewed missing-price cases stay classified without freezing unrelated
     # providers. A fresh price removes this hold, but still requires a canary.
     reviewed_unpriced_model_ids: frozenset[str] = frozenset()
@@ -292,4 +294,5 @@ class DirectOpenAIProvider:
             source_url=self.spec.catalog_url or f"{self.spec.base_url.rstrip('/')}/models",
             pricing_source_url=self.spec.pricing_source_url,
             operator_hold_reasons=self._operator_holds(result.prices),
+            confirmed_disabled_ids=self.spec.confirmed_disabled_model_ids,
         )

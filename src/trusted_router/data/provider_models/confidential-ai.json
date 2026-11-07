@@ -17,11 +17,12 @@
       "status": 1,
       "id": "deepseek/deepseek-v4-flash-0731",
       "upstream_id": "deepseek-ai/DeepSeek-V4-Flash-0731",
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 200000,
       "output_token_price_per_m": 400000,
       "cached_input_token_price_per_m": 18000,
-      "missing_since": "2026-11-01"
+      "missing_since": "2026-11-01",
+      "routable_reason": "provider-model-retired"
     },
     {
       "display_name": "MiniMaxAI/MiniMax-M3-MXFP8",
@@ -59,6 +60,29 @@
       "status": 1,
       "id": "deepseek/deepseek-v4.1-flash",
       "upstream_id": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "routable": false,
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 1200000,
+      "cached_input_token_price_per_m": 30000,
+      "missing_since": "2026-11-07",
+      "routable_reason": "provider-model-retired"
+    },
+    {
+      "display_name": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+      "title": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4.1-flash-1017",
+      "upstream_id": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
       "routable": true,
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 1200000,
@@ -67,7 +91,7 @@
   ],
   "source": "https://api.confidential.ai/v1/models",
   "pricing_source": "https://confidential.ai/pricing",
-  "generated_at": "2026-11-01T19:12:14Z",
+  "generated_at": "2026-11-07T01:05:45Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 3
+  "model_count": 4
 }

@@ -11,6 +11,7 @@ from bs4 import BeautifulSoup
 from scripts.pricing.base import ModelPrice, fetch_html
 from scripts.pricing.model_ids import canonicalize_unqualified_model_id
 from scripts.pricing.providers._direct_openai import DirectOpenAIProvider, DirectOpenAIProviderSpec
+from trusted_router.provider_contracts import CONFIDENTIAL_AI_RETIRED_MODEL_IDS
 
 SLUG = "confidential-ai"
 BASE_URL = "https://api.confidential.ai/v1"
@@ -79,6 +80,12 @@ def _published_prices(html: str) -> dict[str, ModelPrice]:
     target = "deepseek/deepseek-v4-flash-0731"
     if source is not None:
         prices.setdefault(target, source)
+    # The provider's SDK guide names this exact release for its V4.1 tariff.
+    # Keep the dated identity; never apply this price to arbitrary future IDs.
+    # https://confidential.ai/docs/inference-api/how-to/openai-sdk
+    source = prices.get("deepseek/deepseek-v4.1-flash")
+    if source is not None:
+        prices.setdefault("deepseek/deepseek-v4.1-flash-1017", source)
     return prices
 
 
@@ -95,6 +102,10 @@ CATALOG = DirectOpenAIProvider(
         price_loader=_load_prices,
         pricing_source_url=PRICING_URL,
         reviewed_unpriced_model_ids=frozenset({"minimax/minimax-m3"}),
+        operator_hold_reasons={
+            model: "provider-model-retired" for model in CONFIDENTIAL_AI_RETIRED_MODEL_IDS
+        },
+        confirmed_disabled_model_ids=CONFIDENTIAL_AI_RETIRED_MODEL_IDS,
         canary_max_tokens=512,
         canary_expected_content="PONG",
         canary_extra_body={"temperature": 0},
