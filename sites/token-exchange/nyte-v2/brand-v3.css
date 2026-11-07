@@ -248,8 +248,12 @@ dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
   [data-market="new-york"] .site-footer .footer-top::after{grid-column:2;grid-row:1;align-self:start}
   .site-footer .footer-top::after{content:"";grid-column:1/-1;grid-row:2;align-self:center;justify-self:end;width:123px;height:60px;aspect-ratio:auto;margin:0;pointer-events:none;background:var(--ink-2-dark);-webkit-mask:url(logos/mark-footer.svg) right center/contain no-repeat;mask:url(logos/mark-footer.svg) right center/contain no-repeat}
   .site-footer .footer-markets{margin-top:16px;order:1}
-  /* Spread across the full width so all four links share one line on 375px+ phones, even with wider fonts; wraps only when they truly don't fit. */
-  .site-footer .legal{order:3;flex-wrap:wrap;justify-content:space-between;gap:0 6px;margin-top:8px;padding-top:0;border-top:0}
+  /* Two rows: Media kit, Privacy, Terms; then Exchange overview and Let's Encrypt AI, each with an outward arrow.
+     The ::after line break keeps the second pair together instead of one link wrapping alone. */
+  .site-footer .legal{order:3;flex-wrap:wrap;justify-content:flex-start;gap:0 24px;margin-top:8px;padding-top:0;border-top:0}
+  .site-footer .legal::after{content:"";flex-basis:100%;order:1}
+  .site-footer .legal a:nth-child(n+4){order:2;gap:4px}
+  .site-footer .legal a:nth-child(n+4)::after{content:"";width:14px;height:14px;flex:none;background:currentColor;-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.5'%3E%3Cpath d='M5 19 L15.5 8.5'/%3E%3Cpath d='M8 5 L19 5 L19 16'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.5'%3E%3Cpath d='M5 19 L15.5 8.5'/%3E%3Cpath d='M8 5 L19 5 L19 16'/%3E%3C/svg%3E") center/contain no-repeat}
 }
 
 /* Token Index page (own sheet): kit headings, square corners, one orange action per view. */
