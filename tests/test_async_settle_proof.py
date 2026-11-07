@@ -184,6 +184,42 @@ def test_error_envelopes_real_http(env, monkeypatch, case):
     assert error_envelope(env, monkeypatch, case) == expected['cases'][case]
 
 
+@pytest.mark.parametrize('mode', ['async-v1', 'sync'])
+def test_the_route_deadline_answers_the_storage_503(env, monkeypatch, mode):
+    """A request that outlives the route's anyio.fail_after(2) answers the
+    storage 503 before the handler runs, and writes nothing.
+
+    conftest lifts that deadline so runner load cannot spend it; this test
+    spends it from the start. It ends after the gateway timing scope has
+    closed, so the envelope is the storage 503's error without the timing the
+    handler's errors carry.
+    """
+    import anyio
+
+    from trusted_router.routes import settlements
+
+    delays = []
+
+    def spent(delay, shield=False):
+        delays.append(delay)
+        return anyio.fail_after(0, shield)
+
+    monkeypatch.setattr(settlements, 'anyio', SimpleNamespace(fail_after=spent))
+    storage = json.loads((ROOT/'error_envelopes_v1.json').read_text())['cases']['storage_unavailable']
+    error = json.loads(storage['body_exact'])['error']
+    body, _, _ = prepare(env)
+    before = save(env[1])
+    client = _client(env[3])
+    client.app.state.async_settle = env[2]
+    response = client.post(storage['path'], json=body, headers={'X-TR-Settlement-Mode': mode})
+    client.close()
+    assert delays == [2]
+    assert (response.status_code, response.headers.get('content-type'), response.headers.get('retry-after')) == (
+        storage['status'], storage['content_type'], storage['retry_after'])
+    assert response.text == json.dumps({'error': error}, separators=(',', ':'))
+    assert save(env[1]) == before
+
+
 @pytest.mark.parametrize('case', SUPPORTED, ids=lambda c: c['name'])
 def test_four_path_billing_state(env, monkeypatch, case):
     run_four_paths(env, monkeypatch, case)
