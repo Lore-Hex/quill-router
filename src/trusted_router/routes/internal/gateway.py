@@ -1835,6 +1835,7 @@ def _authorize_gateway_sync_impl(
                         if admitted is not None
                         else None
                     ),
+                    lease_headroom_503=settings.fastpath_lease_headroom_503,
                 )
         except LeasedOutcomeUnknown as exc:
             # The leased insert's outcome is unknown and could not be read
@@ -1929,6 +1930,17 @@ def _authorize_gateway_sync_impl(
                 with speculation_shadow.isolate("reason"):
                     speculation_shadow.reason("billing_paused")
             raise api_error(403, "billing_paused", ErrorType.FORBIDDEN)
+        if outcome == AuthorizeOutcome.LEASE_HEADROOM:
+            # The balance covers the hold; the fast path's leases hold the
+            # headroom it needs (fastpath_lease_headroom_503, design section
+            # 4.4). Retryable, so a 503 with Retry-After: not the
+            # insufficient_credits 402 the enclave remembers for the
+            # credential, and no free-credit exhaustion is recorded.
+            release_after_error()
+            raise _lease_headroom_error(
+                workspace, reservation=reservation, estimate=estimate, key_id=api_key.hash,
+                request_id=getattr(request.state, "request_id", None),
+            )
         if outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS:
             record_free_credit_exhausted_safely(workspace.id)
             raise _insufficient_credits_error(
@@ -3197,6 +3209,38 @@ def _deferred_expires_at(settings: Settings) -> str:
     ttl = int(getattr(settings, "federation_deferred_authorization_ttl_seconds", 7200))
     expires = utcnow() + dt.timedelta(seconds=max(60, ttl))
     return expires.isoformat().replace("+00:00", "Z")
+
+
+#: The lease-headroom 503's message and wait (fastpath_lease_headroom_503).
+#: A lease's unused allocation goes back as its owner's holds settle, so the
+#: headroom comes back within the lease's horizon; the enclave's authorize
+#: retry reads Retry-After as the least wait between its attempts.
+LEASE_HEADROOM_MESSAGE = (
+    "This workspace's credits are held by requests in flight; retry shortly."
+)
+LEASE_HEADROOM_RETRY_AFTER = "1"
+
+
+def _lease_headroom_error(
+    workspace: Any, *, reservation: int, estimate: int, key_id: str, request_id: str | None,
+) -> Exception:
+    """503 with Retry-After for a hold the balance covers but the headroom
+    outside the fast path's leases does not
+    (docs/design/fast-admission-and-batched-settlement.md section 4.4). Its
+    type is service_unavailable, so the enclave's billing backoff, which
+    remembers only an authorize 402 of type insufficient_credits, never
+    caches it, and its authorize retry treats it as any 503."""
+    logger.info(
+        "billing.lease_headroom_unavailable workspace_id=%s key_id=%s request_id=%s "
+        "reserved_microdollars=%d estimated_microdollars=%d",
+        _log_value(workspace.id), _log_value(key_id), _log_value(request_id), reservation, estimate,
+    )
+    return api_error(
+        503,
+        LEASE_HEADROOM_MESSAGE,
+        ErrorType.SERVICE_UNAVAILABLE,
+        headers={"Retry-After": LEASE_HEADROOM_RETRY_AFTER},
+    )
 
 
 def _insufficient_credits_error(

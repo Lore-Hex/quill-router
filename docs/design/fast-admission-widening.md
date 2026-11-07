@@ -1,7 +1,7 @@
 # Widening the fast path to every eligible workspace
 
-Status: decided; PRs 1 to 5 merged (#2354, #2356, #2359, #2385, #2394) and
-PR 6 built, all dark (§11). This is the short note the production
+Status: decided; PRs 1 to 6 merged (#2354, #2356, #2359, #2385, #2394,
+#2396) and PR 7 built, all dark (§11). This is the short note the production
 rollout asks for before §8 step 9 of
 [`fast-admission-and-batched-settlement.md`](fast-admission-and-batched-settlement.md)
 (`fast-admission-production-rollout.md`, "P2 onward"): what widening
@@ -201,8 +201,9 @@ reconciler rather than at workspaces, the enabler raises
   as above, not from the routing snapshot fixture or the provider files,
   and fails when it passes a quarter of the floor, so a price rise is
   reviewed rather than absorbed. A hold larger than the floor that meets
-  a lease holding the rest gets 402 until PR 7's 503, and 503 after it;
-  WS6 waits for PR 7 for that reason.
+  a lease holding the rest gets 402 until PR 7's 503 is on
+  (`fastpath_lease_headroom_503`), and 503 after it; WS6 waits for PR 7 for
+  that reason.
 - **$100 and $40.** Below about $40 a grant leaves at most $20 for leases
   past the floor, so most leases are refused and each request pays a front
   door hop to be passed. The gap between enabling and disabling keeps a
@@ -991,9 +992,12 @@ is every covered workspace, unbounded.
   by default, and `cmd/fastpath/main.go` defines neither flag, though
   `fastpath-p1.md` speaks of "the fleet's `-required-tier` and `-floor`".
   Only `loadgen` has `-floor`, for its readiness check.
-- **No 503 for headroom in leases.** §8 step 4's 503 in place of 402 is not
-  in Python's authorize (no lease read there); `fast-admission-pilot.md`
-  lists it as not in the pilot. Widening to small balances needs it (WS6).
+- **No 503 for headroom in leases, until PR 7 is on.** §8 step 4's 503 in
+  place of 402 was not in Python's authorize (no lease read there);
+  `fast-admission-pilot.md` lists it as not in the pilot. PR 7 adds it to
+  the typed authorize behind `fastpath_lease_headroom_503`, off in
+  `rollout.sh`, so production still answers 402 until activation turns it
+  on. Widening to small balances needs it on (WS6).
 - **No fast-path fact in the speculation issuer.** §8 step 4's issuer fact
   (§4.13) is not in `storage_gcp_speculation_shadow.py`. Speculation
   dispatches nothing, so widening does not wait on it, but it must land
@@ -1290,6 +1294,56 @@ step.
    insufficient-credit precheck answer 503 when the shortfall sits in
    leases. Money code: a differential test against today's authorize and
    the conformance suite. Order: before WS6.
+   **Built** (dark): `fastpath_lease_headroom_503`, the literal
+   `TR_FASTPATH_LEASE_HEADROOM_503=false` in `rollout.sh`. The route passes
+   it to `SpannerStore.authorize_gateway_typed`; off, nothing new is read
+   and every answer is today's. On, the rule is the design's: a hold the
+   credit rows cannot cover (no shard, and not their sum, which a
+   rebalance would gather), for a workspace not marked in debt, whose live
+   leases hold a positive amount that with the rows' signed headroom
+   covers it, is outcome `lease_headroom`, answered 503 with `Retry-After:
+   1` and type `service_unavailable`; anything else keeps today's answer.
+   What the leases hold is section 4.7's term, each open or draining
+   lease's donors' `allocation - consumed`, read by
+   `credit_exhaustion_precheck` (`lease_aware`) in the snapshot that reads
+   the credit rows, through `tr_lease_by_state`, declared on `(state)`
+   with the primary key `(workspace_id, lease_id)` appended to its key, so
+   two seeks bounded to the workspace's live leases, and their donors by
+   key; it is registered in the Spanner SQL manifest. Where it reads:
+   - The reserve: after the authorize transaction's final 402, one more
+     snapshot on that path alone, under a strict key's budget deadline
+     when the transaction ran under one. A lease-held verdict answers the
+     503; any other verdict, a failed read included, keeps the 402. The
+     workspace is remembered either way.
+   - The precheck (#1461), for a workspace the process remembers: every
+     hit re-reads the rows and the leases on the lock-free snapshot, with
+     no transaction, and answers the 503 while the leases hold the
+     shortfall, today's 402 once the balance is exhausted (a lease that
+     spent it), and passes the request on, forgetting the workspace, once
+     headroom is back (a lease that returned its allocation). So a
+     lease-held workspace costs a snapshot per request, as an exhausted one
+     does today, and never a locking transaction. A lease read that fails
+     answers today's verdict for the rows (the 402), still lock-free.
+   The 503 is never the enclave's cached `insufficient_credits` 402
+   (`billing_backoff.go` remembers only an authorize 402 of that type), and
+   the enclave's authorize retry already retries a 503 with `Retry-After`
+   as its least wait, so neither the enclave nor the Go edge changes: the
+   edge proxies Python's bytes and headers, evicts its caches on a 402 but
+   not on this 503, and its decide shadow counts it `python_error.503`, not
+   a refusal. No free-credit exhaustion is recorded for it.
+   Tests: `tests/test_fastpath_lease_headroom_503.py` (the differential
+   over a matrix of balances, synchronous holds and leases on one and two
+   shards, debt-marked rows included: off, the answers, rows and memory are
+   those of the same rows with no lease rows and the lease statement never
+   runs, and the off answers are pinned to today's rules written down
+   independently of the code; on, they differ only where live leases hold
+   the shortfall, 402 to 503, never the reverse and never to an admission;
+   the precheck's memory, lock-free on every hit, through a lease's return
+   and a lease's spending; the route's 503, `Retry-After` and type against
+   today's 402) and
+   `tests/conformance/test_fastpath_lease_headroom_native.py` (the
+   statement on the emulator: live states, closed leases, neighbouring
+   workspaces, the debt mark).
 8. **Activation, WS0 to WS6.** One `rollout.sh`, `fastpath_lists.sh`, job
    setting or node-attribute change per step of §8.2, each opened with the
    previous step's gate read into its description.

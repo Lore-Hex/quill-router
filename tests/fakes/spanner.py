@@ -2552,6 +2552,12 @@ _FASTPATH_LEASE_STATEMENTS = {
         "SELECT COUNT(*) FROM tr_lease WHERE workspace_id=@ws AND state IN ('open', 'draining')"
     ),
     "/* fastpath_leases_of */": "SELECT COUNT(*) FROM tr_lease WHERE workspace_id=@ws",
+    "/* fastpath_lease_held_of */": (
+        "SELECT COALESCE(SUM(d.allocation - d.consumed), 0) "
+        "FROM tr_lease@{FORCE_INDEX=tr_lease_by_state} AS l "
+        "JOIN tr_lease_donor AS d ON d.workspace_id = l.workspace_id AND d.lease_id = l.lease_id "
+        "WHERE l.state IN ('open', 'draining') AND l.workspace_id=@ws"
+    ),
 }
 
 
@@ -3173,6 +3179,17 @@ def _execute_sql(
                 bookings.get(ws, 0) + int(lease.get("consumed", 0)) + int(lease.get("fault_usage", 0))
             )
         return [[ws, total] for ws, total in sorted(bookings.items())]
+    if "/* fastpath_lease_held_of */" in sql:
+        _require_lease_statement(sql, "/* fastpath_lease_held_of */")
+        live_of = {
+            (str(lease["workspace_id"]), lid) for lid, lease in db.fastpath_leases.items()
+            if lease["workspace_id"] == params["ws"] and lease.get("state") in ("open", "draining")
+        }
+        return [[sum(
+            int(donor.get("allocation", 0)) - int(donor.get("consumed", 0))
+            for donor in db.fastpath_lease_donors
+            if (str(donor["workspace_id"]), donor["lease_id"]) in live_of
+        )]]
     if "/* fastpath_live_leases_of */" in sql or "/* fastpath_leases_of */" in sql:
         live_only = "/* fastpath_live_leases_of */" in sql
         _require_lease_statement(sql, "/* fastpath_live_leases_of */" if live_only else "/* fastpath_leases_of */")
