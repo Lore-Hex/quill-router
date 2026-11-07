@@ -185,6 +185,12 @@ that release on a database without the column stops committing and
 reaping until the column is there. The release after it, pinned as above,
 turns `RecordCeiling` on.
 
+The holds' tables are the same kind of gate, for the stops rather than
+the auditors: a release carrying holds is pinned, and its `fastpathctl`
+and `fastpathwatch` used, only once `tr_fastpath_workspace_hold` and
+`tr_fastpath_kill` are found created or already present in a successful
+control-plane deploy's migration step ("Taking a pinned release").
+
 A field on a front door's or an owner's request (`EchoGranted` on a
 heartbeat) is refused by a node from before it, which decodes strictly. It
 is sent only when set, so nothing changes until a gateway sets it: owners
@@ -351,8 +357,26 @@ leaves a running unit alone. Until 2026-10-17 every reset left each node
 running the release before its pin while `/opt/fastpath/release` and
 the instance's metadata named the pin and the service reported active
 (`docs/design/fast-admission-p1-results.md`). So the release a node runs
-is read from its process, and a reset is followed by a restart. For each
-node, one at a time, the other serving:
+is read from its process, and a reset is followed by a restart.
+
+**A release with holds needs its tables first.** From the release that
+carries holds (`docs/design/fast-admission-widening.md` §11, PR 4), every
+stop writes `tr_fastpath_workspace_hold`, and `disable-all` also
+`tr_fastpath_kill`, in the same transaction as the switch: on a database
+without those tables, `fastpathctl disable`, `fastpathctl disable-all` and
+a `fastpathwatch` trip fail outright and turn nothing off. The tables come
+only from `scripts/deploy/migrate_fastpath.sh`, which runs in the
+control-plane deploy, while a release reaches the bucket on any green CI.
+So before pinning any release carrying holds, and before using its
+`fastpathctl` or `fastpathwatch` anywhere, find both
+`tr_fastpath_workspace_hold: created` or
+`tr_fastpath_workspace_hold: already present`, and
+`tr_fastpath_kill: created` or `tr_fastpath_kill: already present`, in
+the migration step of a successful control-plane deploy at or after the
+merge. Until then, turn a workspace off with the `fastpathctl` of the
+release before holds (`fastpath-turn-off.md`, "When disable fails").
+
+For each node, one at a time, the other serving:
 
 1. Mark it leaving and wait for its leases, as "For each node replaced"
    above: `sudo systemctl kill -s USR1 fastpath`, then `fastpathctl node
@@ -548,7 +572,10 @@ pinned release" does:
 must never turn on a workspace someone stopped, so every stop but its own
 holds what it stops, in `tr_fastpath_workspace_hold`, in the switch's
 transaction, and the enabler reads the holds before each write. Until PR 6
-is deployed nothing reads them, and every command below is safe to run.
+is deployed nothing reads them, and every command below is safe to run,
+once the tables exist: on a database without them every stop of this
+release fails outright ("Taking a pinned release" says how to check, and
+`fastpath-turn-off.md`, "When disable fails", what still works).
 
 What writes and removes them:
 
@@ -572,14 +599,27 @@ all, read only: the three rows, the kills, the holds by reason, the rows
 enabled with a hold of their own, and `unheld_disabled`, every row off
 with no hold of its own, `under_kill` when its `changed_at` is a kill's
 and `other` when not; it exits 0 when there is no such row and 3 while
-there is. Every refusal below (exit 2) prints its answer first and writes
+there is. That exit is a gate only before the arm: once the enabler
+applies, its own disables (balance, debt, latch, rank) hold nothing by
+design, so `other` stays above zero and `holds` exits 3 in the ordinary
+course (design §5.4); after a resume, read resume's printed window
+instead. Every refusal below (exit 2) prints its answer first and writes
 nothing.
 
 ### Before WS1, and at WS2's entry
 
 The migration job (`scripts/deploy/migrate_fastpath.sh`) creates the two
 tables, empty; the holds rows disabled before PR 4 need are data, which
-the job never writes. So, from a node, once the job has run:
+the job never writes.
+
+If a kill stands (`holds` shows `fleet_hold` and `kills`), decide first
+what it should leave off: `hold-backfill` holds the kill's rows like any
+other unheld row, reason `backfill`, and `release-all` afterwards would no
+longer bring them back. So `disable` what should stay off, run
+`release-all` (and turn back on, with `enable`, what the kill should not
+have stopped), and only then `hold-backfill`.
+
+So, from a node, once the job has run:
 
 1. Before WS1: `fastpathctl -database $DB hold-backfill`, then
    `fastpathctl -database $DB holds`, which must exit 0. A row disabled by

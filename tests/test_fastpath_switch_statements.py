@@ -61,6 +61,26 @@ def test_enable_removes_the_hold_and_every_disable_revokes() -> None:
         assert ops[name]["statements"][0]["sql"].startswith("UPDATE tr_lease SET revoked = TRUE")
 
 
+def test_the_runbook_names_the_lines_the_migration_prints_for_the_hold_tables() -> None:
+    """A release with holds is pinned only once its tables are seen created
+    in a control-plane deploy's migration step: the runbook, the design
+    note and the watch's fallback must name what the migration prints."""
+    migration = (ROOT / "scripts" / "deploy" / "migrate_fastpath.sh").read_text()
+    deploy = (ROOT / "docs" / "runbooks" / "fastpath-deploy.md").read_text()
+    design = (ROOT / "docs" / "design" / "fast-admission-widening.md").read_text()
+    pinned = deploy.split("## Taking a pinned release", 1)[1].split("\n## ", 1)[0]
+    for table in ("tr_fastpath_workspace_hold", "tr_fastpath_kill"):
+        for outcome in ("created", "already present"):
+            line = f"{table}: {outcome}"
+            assert f'log "{line}"' in migration, line
+            assert f"`{line}`" in pinned, line
+        assert f"`{table}`" in design.split("4. **Holds.**", 1)[1].split("5. **Python", 1)[0], table
+    turn_off = (ROOT / "docs" / "runbooks" / "fastpath-turn-off.md").read_text()
+    assert "### When disable fails" in turn_off
+    watch = (ROOT / "fastpath" / "cmd" / "fastpathwatch" / "main.go").read_text()
+    assert "fastpath-turn-off.md" in watch and "TR_FASTPATH_PILOT_ENABLED=false" in watch
+
+
 def test_the_hold_reasons_a_stop_writes_are_the_schemas() -> None:
     statement = next(s for s in spanner_ddl.DDL if s.startswith("CREATE TABLE tr_fastpath_workspace_hold ("))
     reasons = re.search(r"reason IN \(([^)]*)\)", statement)

@@ -754,12 +754,13 @@ func TestResumeRefusesEnabledAndHeldRows(t *testing.T) {
 // of reason paused on rows whose changed_at is exactly the stamp, writes
 // nothing without apply, and with it releases those alone: a backfill's or
 // an operator's hold on a row of the same stamp, and a paused hold on a row
-// of another, stay.
+// of another, earlier or later, stay. While the pause stands it writes
+// nothing, though it finds those holds.
 func TestReleaseStampedReleasesOnlyPausedHoldsOfThatStamp(t *testing.T) {
 	s, db := holdStore(t)
 	ctx := context.Background()
-	p1, p2, backfill, operator, other := storetest.UniqueID("ws"), storetest.UniqueID("ws"), storetest.UniqueID("ws"),
-		storetest.UniqueID("ws"), storetest.UniqueID("ws")
+	p1, p2, backfill, operator, other, later := storetest.UniqueID("ws"), storetest.UniqueID("ws"),
+		storetest.UniqueID("ws"), storetest.UniqueID("ws"), storetest.UniqueID("ws"), storetest.UniqueID("ws")
 	on(t, s, other)
 	unheldOff(t, db, other)
 	on(t, s, p1, p2, backfill, operator)
@@ -767,12 +768,18 @@ func TestReleaseStampedReleasesOnlyPausedHoldsOfThatStamp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	on(t, s, later)
+	laterStamp, err := storetest.OlderDisableAll(ctx, db)
+	if err != nil || !laterStamp.After(stamp) {
+		t.Fatalf("the later kill at %v, the first at %v: %v", laterStamp, stamp, err)
+	}
 	seed := func(w, reason string) *spanner.Mutation {
 		return spanner.InsertOrUpdate("tr_fastpath_workspace_hold", []string{"workspace_id", "reason", "held_at"},
 			[]any{w, reason, spanner.CommitTimestamp})
 	}
 	if _, err := db.Apply(ctx, []*spanner.Mutation{seed(p1, HoldPaused), seed(p2, HoldPaused),
-		seed(backfill, HoldBackfill), seed(operator, HoldOperator), seed(other, HoldPaused)}); err != nil {
+		seed(backfill, HoldBackfill), seed(operator, HoldOperator), seed(other, HoldPaused),
+		seed(later, HoldPaused)}); err != nil {
 		t.Fatal(err)
 	}
 	holds := holdsOf(t, db)
@@ -785,6 +792,20 @@ func TestReleaseStampedReleasesOnlyPausedHoldsOfThatStamp(t *testing.T) {
 	if after := holdsOf(t, db); len(after) != len(holds) {
 		t.Fatalf("release-stamped without apply wrote: %v, then %v", holds, after)
 	}
+	// Under the pause: found, refused, nothing removed.
+	if _, err := s.Pause(ctx); err != nil {
+		t.Fatal(err)
+	}
+	paused, err := s.ReleaseStamped(ctx, stamp, true)
+	if err != nil || paused.Applied || !paused.Paused || !slices.Equal(paused.Workspaces, want) {
+		t.Fatalf("release-stamped under the pause: %+v %v", paused, err)
+	}
+	if after := holdsOf(t, db); len(after) != len(holds)+1 || after[p1] != holds[p1] || after[p2] != holds[p2] {
+		t.Fatalf("release-stamped under the pause wrote: %v, then %v", holds, after)
+	}
+	if got, err := s.Resume(ctx); err != nil || !got.Paused || len(got.Held) != 0 {
+		t.Fatalf("resume: %+v %v", got, err)
+	}
 	got, err := s.ReleaseStamped(ctx, stamp, true)
 	if err != nil || !got.Applied || !slices.Equal(got.Workspaces, want) {
 		t.Fatalf("release-stamped: %+v %v", got, err)
@@ -795,7 +816,7 @@ func TestReleaseStampedReleasesOnlyPausedHoldsOfThatStamp(t *testing.T) {
 			t.Fatalf("%s is still held", w)
 		}
 	}
-	for _, w := range []string{backfill, operator, other} {
+	for _, w := range []string{backfill, operator, other, later} {
 		if after[w] != holds[w] {
 			t.Fatalf("release-stamped touched %s's hold: %+v, then %+v", w, holds[w], after[w])
 		}

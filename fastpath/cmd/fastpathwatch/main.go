@@ -295,8 +295,9 @@ func run(ctx context.Context, args []string, out io.Writer, d deps) (int, error)
 		store.Reason{Kind: store.HoldWatch, Detail: strings.Join(why, "; ")})
 	if err != nil {
 		answer["turn_off_failed"] = err.Error()
+		answer["fallback"] = turnOffFallback
 		_ = json.NewEncoder(out).Encode(answer)
-		return 1, fmt.Errorf("turning %s off: %w", t.workspace, err)
+		return 1, fmt.Errorf("turning %s off: %w; %s", t.workspace, err, turnOffFallback)
 	}
 	answer["revoked_leases"], answer["turned_off_at"] = revoked, at
 	if err := json.NewEncoder(out).Encode(answer); err != nil {
@@ -304,6 +305,17 @@ func run(ctx context.Context, args []string, out io.Writer, d deps) (int, error)
 	}
 	return stopped, nil
 }
+
+// turnOffFallback is what a watch that could not turn its workspace off
+// tells the operator. The stop writes the switch, the revocation and the
+// hold in one transaction, so on a database without
+// tr_fastpath_workspace_hold (scripts/deploy/migrate_fastpath.sh not yet
+// run) it fails outright, as this release's fastpathctl disable does
+// (docs/runbooks/fastpath-deploy.md, "Taking a pinned release").
+const turnOffFallback = "turn the workspace off another way: the fastpathctl of a release without holds " +
+	"(its disable WS writes the switch and the revocation alone), or, for every workspace, " +
+	"TR_FASTPATH_PILOT_ENABLED=false in a control-plane deploy; fastpathctl decide off WS only stops the edge " +
+	"deciding for it (docs/runbooks/fastpath-turn-off.md)"
 
 // stopLoad tells the load generator to stop and waits for it to exit, for
 // at most grace, and says how it went.

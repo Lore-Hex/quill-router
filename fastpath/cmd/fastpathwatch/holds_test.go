@@ -12,7 +12,62 @@ import (
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store/storetest"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/watch"
+	"github.com/Lore-Hex/quill-router/fastpath/schema"
 )
+
+// TestATripOnADatabaseWithoutHoldsFailsAndNamesTheFallbacks: on a database
+// the migration has not given the hold table, the stop writes nothing (the
+// switch, the revocation and the hold are one transaction), so the watch
+// exits 1 with the workspace still on, and its answer and error name the
+// ways to turn it off that still work.
+func TestATripOnADatabaseWithoutHoldsFailsAndNamesTheFallbacks(t *testing.T) {
+	if emulator == nil {
+		t.Skip(skipped)
+	}
+	ctx := context.Background()
+	all, err := schema.Statements()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var older []string
+	for _, s := range all {
+		if !strings.Contains(s, "tr_fastpath_workspace_hold") && !strings.Contains(s, "tr_fastpath_kill") {
+			older = append(older, s)
+		}
+	}
+	db, err := emulator.Database(ctx, storetest.UniqueID("noholds"), older)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(db.Close)
+	s, err := store.New(db, service.Defaults().Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := storetest.UniqueID("ws")
+	if _, err := db.Apply(ctx, []*spanner.Mutation{storetest.Enabled(ws)}); err != nil {
+		t.Fatal(err)
+	}
+	d := production
+	d.open = func(context.Context, target) (watch.Sources, *store.Store, func(), error) {
+		return sources{cpu: 0.5}, s, func() {}, nil
+	}
+	var out bytes.Buffer
+	code, err := run(ctx, append(flags, "-workspace", ws), &out, d)
+	if code != 1 || err == nil || !strings.Contains(err.Error(), "TR_FASTPATH_PILOT_ENABLED=false") {
+		t.Fatalf("exit %d, %v", code, err)
+	}
+	for _, want := range []string{"turn_off_failed", "a release without holds", "TR_FASTPATH_PILOT_ENABLED=false",
+		"decide off"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("the answer %q does not name %q", out.String(), want)
+		}
+	}
+	on, _, err := s.EnabledWorkspaces(ctx)
+	if err != nil || !on[ws] {
+		t.Fatalf("the workspace after a failed stop: %v %v", on, err)
+	}
+}
 
 // TestATripHoldsItsWorkspaceThroughTheEnablersNextRun: a watch's stop holds
 // its workspace, reason watch, with the ceiling that tripped

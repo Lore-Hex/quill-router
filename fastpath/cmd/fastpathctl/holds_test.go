@@ -166,6 +166,23 @@ func TestDisableHoldsAndEnableClearsTheHold(t *testing.T) {
 	}
 }
 
+// TestHoldsCountsAKillsRowsAsUnheld: rows a kill stopped have no hold of
+// their own, only the fleet hold, so holds exits 3 with them all under_kill
+// and none other; hold-backfill holds them and holds exits 0.
+func TestHoldsCountsAKillsRowsAsUnheld(t *testing.T) {
+	_, open := ownDB(t)
+	for _, w := range ids(t, 2) {
+		ctl(t, open, 0, "enable", w)
+	}
+	ctl(t, open, 0, "disable-all")
+	got := ctl(t, open, 3, "holds")
+	if u := got["unheld_disabled"].(map[string]any); u["under_kill"] != float64(2) || u["other"] != float64(0) {
+		t.Fatalf("holds after a kill: %v", got)
+	}
+	ctl(t, open, 0, "hold-backfill")
+	ctl(t, open, 0, "holds")
+}
+
 // TestReleaseUnderThePauseIsRefused: release and release-all while the
 // enabler is paused exit 2, saying resume first, and write nothing; resumed,
 // release removes the hold without enabling, and a second release finds

@@ -92,6 +92,36 @@ eligible and has no hold of its own; `disable` any that should stay off
 first. While the enabler is paused, `release-all` refuses: `enabler
 resume` comes first (`fastpath-deploy.md`, "Holds").
 
+### When disable fails
+
+From the release that carries holds, `disable`, `disable-all` and a
+`fastpathwatch` trip write the hold tables in the switch's transaction,
+so on a database the migration has not given `tr_fastpath_workspace_hold`
+and `tr_fastpath_kill` they fail outright and turn nothing off (exit 1;
+a watch prints `turn_off_failed` and `fallback`). `fastpath-deploy.md`,
+"Taking a pinned release", says how to check the tables exist. What still
+works:
+
+- **The `fastpathctl` of the release before holds.** Its `disable` and
+  `disable-all` write the switch and the revocations alone. Copy it from
+  the release bucket by that release's commit (the `fastpath_release`
+  pinned in `infra/fastpath.tf` before the one that brought holds):
+
+  ```bash
+  gcloud storage cp gs://tr-fastpath-releases-quill-cloud-proxy/fastpath/COMMIT/fastpathctl /var/tmp/fastpathctl-before-holds
+  chmod +x /var/tmp/fastpathctl-before-holds
+  /var/tmp/fastpathctl-before-holds -database $DB disable WORKSPACE
+  ```
+
+  Its stops hold nothing: once the tables exist, `fastpathctl
+  hold-backfill` holds them, before the enabler is armed.
+- **`TR_FASTPATH_PILOT_ENABLED=false`**, a control-plane deploy: every new
+  authorize of every workspace takes today's path. It revokes no lease;
+  the switch is still what ends them.
+- **`fastpathctl decide off WORKSPACE`** works on any database, but stops
+  only the edge deciding for the workspace (step 1): Python's front door
+  call still leases it.
+
 The decide rows are read by `fastpathctl` and by every node whose unit
 carries `-edge-decide` (the copy above; a node without the flag reads
 them for its shadow's counts alone and answers nothing). `disable` and

@@ -1102,7 +1102,12 @@ step.
    `hold-backfill`, refused once `#armed` exists (§5.6);
    `switch_statements_v1.json`, embedded by
    `SetWorkspace`; the rollback and resume rules of §5.6 in
-   `docs/runbooks/fastpath-deploy.md`. Order: before PR 6;
+   `docs/runbooks/fastpath-deploy.md`. Order: before PR 6; its migration
+   seen in a successful control-plane deploy (`tr_fastpath_workspace_hold`
+   and `tr_fastpath_kill` each `created` or `already present`) before any
+   release carrying it is pinned or its `fastpathctl` or `fastpathwatch`
+   used, since every stop of that release writes the hold tables in the
+   switch's transaction and fails outright without them;
    `hold-backfill` run before WS1 and again at WS2's entry; every node's
    release carries it before WS2; the enabler paused, not merely set off,
    before any rollback below it. Tests: the migration test holding the
