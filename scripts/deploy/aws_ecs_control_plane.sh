@@ -120,12 +120,12 @@ SERVICES=(tr-cp-euw1 tr-cp-euw3)
 # Both regions enqueue into the same DSQL outbox; the Paris drain delivers it.
 # Enabling eu-west-1 needs no ClickHouse URL or secret on the control plane.
 EXPECTED_OUTBOX=("$TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED" "$TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED")
-# Paris has a reader endpoint; Ireland remains on Postgres until one is provisioned.
-# Paris moves to clickhouse in its own change, once tr-cp-exec's grant on the
-# reader secret (infra/aws_ecs_control_reader.tf) has applied: a task whose
-# execution role cannot read its secret fails to start, and this release
-# would update Ireland before Paris failed.
-EXPECTED_RECORD_READ_BACKEND=("${TR_RECORD_READ_BACKEND_EU_WEST_1:-postgres}" "${TR_RECORD_READ_BACKEND_EU_WEST_3:-postgres}")
+# Paris has a reader endpoint and reads records from ClickHouse as
+# tr_control_read; tr-cp-exec may read the reader's secret
+# (infra/aws_ecs_control_reader.tf). Ireland remains on Postgres until a
+# reader is provisioned there. Setting Paris back to postgres here is the way
+# back: every release applies this default.
+EXPECTED_RECORD_READ_BACKEND=("${TR_RECORD_READ_BACKEND_EU_WEST_1:-postgres}" "${TR_RECORD_READ_BACKEND_EU_WEST_3:-clickhouse}")
 [[ ${#REGIONS[@]} -eq ${#SERVICES[@]} && ${#REGIONS[@]} -eq ${#EXPECTED_OUTBOX[@]} \
   && ${#REGIONS[@]} -eq ${#EXPECTED_RECORD_READ_BACKEND[@]} ]] \
   || die "REGIONS, SERVICES, EXPECTED_OUTBOX, and EXPECTED_RECORD_READ_BACKEND must have the same length"

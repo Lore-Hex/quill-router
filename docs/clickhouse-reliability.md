@@ -84,12 +84,11 @@ mode. Generations that never reached ClickHouse are re-enqueued with
 
 For AWS ECS, `EXPECTED_RECORD_READ_BACKEND` in `aws_ecs_control_plane.sh`
 is the switch, overridable with `TR_RECORD_READ_BACKEND_EU_WEST_3` and
-`TR_RECORD_READ_BACKEND_EU_WEST_1`. Both regions default to `postgres` today:
-Paris does not read from ClickHouse yet. Enabling Paris is its own change,
-setting its default to `clickhouse`, made only after infra-apply has created
-`tr-cp-clickhouse-control-reader` (`infra/aws_ecs_control_reader.tf`, the
-execution role's grant on the reader secret's exact ARN): a task referencing
-the secret before that fails to start. With `clickhouse`, the release sets
+`TR_RECORD_READ_BACKEND_EU_WEST_1`. Paris defaults to `clickhouse`, Ireland to
+`postgres`. The execution role reads the reader's secret through
+`tr-cp-clickhouse-control-reader` (`infra/aws_ecs_control_reader.tf`, a grant
+on the secret's exact ARN); a task referencing the secret without that grant
+fails to start. With `clickhouse`, the release sets
 `tr_control_read` and the reader secret ARN resolved by `describe-secret`, and
 refuses unless the cloned task reads database `default` (the reader is granted
 `default.*` only). Ireland stays on `postgres`. Every release applies the
