@@ -65,8 +65,8 @@ set_env_vars="$(IFS='|'; echo "^|^${env_vars[*]}")"
 # hashes, to leave their workspaces out (section 4(c)). Named outside the
 # TR_ prefix, since the control surface's settings may not hold them. The
 # async settle shadow's probe key stays confined to its own job; its
-# workspace is left out through TR_ASYNC_SETTLE_SHADOW_WORKSPACES and the
-# exclude list. The inventory lists names
+# workspace is left out only once activation puts it on
+# TR_FASTPATH_PILOT_EXCLUDE (empty today). The inventory lists names
 # only, never a value; a failure to list stops the deploy.
 if ! secret_names="$(gc secrets list --format='value(name)')"; then
   log "refusing fast path enabler deploy: cannot list the secret inventory"
