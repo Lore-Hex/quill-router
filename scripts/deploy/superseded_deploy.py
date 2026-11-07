@@ -45,7 +45,7 @@ and this is the last point before production changes.
 
 deploy.yml's cancel-superseded job runs this for its own commit. An older push's
 deploy that is still preparing would ship a subset of this commit, one rollout
-before this one ships all of it, and its CI run of 46 jobs holds the
+before this one ships all of it, and its CI run (27 jobs on a push) holds the
 organization's runners (60 at once) that this commit's run waits for. So it
 cancels that deploy, and then its CI run, only when all of these hold:
 - the deploy is a push run on main, other than this one, not completed;
