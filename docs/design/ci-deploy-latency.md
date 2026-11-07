@@ -108,7 +108,8 @@ The default suite's coverage pass ran on coverage.py's C tracer with branch
 coverage, at about three times the plain suite's cost (#2368). Before Python
 3.14, sys.monitoring cannot measure branches, so `[tool.coverage.run]` sets
 `core = "sysmon"` and `branch = false`. The twelve default shards fell from a
-median of 25.5 minutes to between 7 and 11. Two tests in
+median of 25.5 minutes to between 7 and 12 over the five green main runs that
+followed. Two tests in
 tests/test_ci_workflow.py keep a configuration change from bringing the
 tracer back.
 
@@ -116,12 +117,26 @@ tracer back.
 
 A push to main no longer runs test-post-cutover or proof-oracle's
 post-cutover clock. Together they were 14 of the run's 46 jobs, about 215
-runner-minutes over 20 green main runs. A red in them means main will break on a scheduled date. That
-is no reason to hold the deploy, which gate-on-ci holds until the push run
-concludes. They still run on pull requests and on dispatches, including the
-price refresh's publication gate. post-cutover-daily.yml runs both on main
-once a day, outside every gate. commit_scope.py's summary accepts
-test-post-cutover's skip on a push only.
+runner-minutes a commit, averaged over 20 green main runs. A red in them
+means main will break on a scheduled date. That is no reason to hold the
+deploy, which gate-on-ci holds until the push run concludes. They still run
+on pull requests and on dispatches, including the price refresh's
+publication gate. post-cutover-daily.yml runs both on main once a day,
+outside every gate. commit_scope.py's summary accepts test-post-cutover's
+skip on a push only.
+
+The TLA+ model checks (proofs, 15 to 26 minutes) follow the same rule.
+Outside proofs/ they read only whether the code and tests proofs/manifest.toml
+names exist, and none of it says whether deployed code works. They ran beside
+the proof oracle's longest shard (26 to 28 minutes), so skipping them frees a runner
+rather than shortening the run. The cost: proofs is not a required check, so
+a pull request can merge with it red, and main's push runs no longer show it.
+main learns of it from the next price refresh that runs the full matrix,
+whose publication it then holds, or from the daily run, the one run on main
+sure to check it. With coverage cheaper, the default suite runs in eight
+shards instead of twelve. On #2377's run they took 8 to 14 minutes each,
+still inside that longest shard, with four fewer jobs in the queue and 91
+runner-minutes against 110 to 126.
 
 ## Validation and measurement
 

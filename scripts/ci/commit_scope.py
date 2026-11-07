@@ -24,18 +24,23 @@ and gates publication on the ci.yml run of that commit. Every job in
 SKIPPED_FOR_DATA_ONLY reads none of those files (Go store tests, TLA+ model
 checks, the frozen-main settle oracle with its fixture catalog, the BYOK
 write-format diff, the frontend build, the Spanner conformance suites and
-the coverage floor over the Python suite). The jobs that do read them
-(lint's catalog history check, the production import, both Python suite
-clocks and the browser smoke) run on every commit, the post-cutover suite on
-every event but a push to main. tests/test_ci_workflow.py
-holds the workflow text to these two lists, and holds DATA_ONLY_PATHS to the
-files refresh-prices.yml stages.
+the coverage floor over the Python suite). The jobs that do read them run on
+every commit: lint's catalog history check, the production import, the
+default-clock suite and the browser smoke, with the post-cutover suite on
+every event but a push to main. tests/test_ci_workflow.py holds the workflow
+text to these two lists, and holds DATA_ONLY_PATHS to the files
+refresh-prices.yml stages.
 
-SKIPPED_ON_PUSH is the post-cutover suite. It runs on pull requests and on
-dispatches (the price refresh's publication gate), and on main once a day
-(post-cutover-daily.yml), but not on a push to main: its red means main will
-break on a scheduled date, not that the commit is broken, and deploy.yml's
-gate waits for the push run of the commit it ships.
+SKIPPED_ON_PUSH is the post-cutover suite and the TLA+ model checks. They run
+on pull requests and on dispatches (the price refresh's publication gate), and
+on main once a day (post-cutover-daily.yml), but not on a push to main. A
+post-cutover red means main will break on a scheduled date, not that the
+commit is broken. A model-check red means a spec no longer holds, or that
+code or tests a spec names in proofs/manifest.toml were moved or deleted;
+neither says whether deployed code works. And deploy.yml's gate waits for the
+push run of the commit it ships. Neither job is a required check, so a pull request
+can merge with either red; main learns of it from a dispatch or the daily
+run, not from its push runs.
 """
 
 from __future__ import annotations
@@ -83,9 +88,10 @@ SKIPPED_FOR_DATA_ONLY: frozenset[str] = frozenset({
 
 DATA_ONLY_CONDITION = "needs.scope.outputs.data_only != 'true'"
 
-# Jobs whose `if` in ci.yml is PUSH_SKIP_CONDITION: they skip on a push to
-# main and run on every other event.
-SKIPPED_ON_PUSH: frozenset[str] = frozenset({"test-post-cutover"})
+# Jobs whose `if` in ci.yml starts with PUSH_SKIP_CONDITION (proofs adds the
+# data-only condition after it): they skip on a push to main and run on every
+# other event.
+SKIPPED_ON_PUSH: frozenset[str] = frozenset({"test-post-cutover", "proofs"})
 
 PUSH_SKIP_CONDITION = "github.event_name != 'push'"
 
