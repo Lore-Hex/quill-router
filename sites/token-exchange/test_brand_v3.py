@@ -131,10 +131,16 @@ class BrandV3Tests(unittest.TestCase):
             sup = render_nyte("sup")
         self.assertIn('id="open-stack"', sup)
         self.assertIn('<section class="v3-cta sv3-cta closing">', sup)
-        self.assertEqual(sup.count('<details'), 4)
+        self.assertEqual(sup.count('<details'), 6)
         self.assertEqual(sup.count('<details open>'), 1)
-        self.assertEqual(sup.count('The supplier listing above is illustrative.'), 1)
-        self.assertLess(sup.index('The supplier listing above is illustrative.'), sup.index('Three steps'))
+        # Centred Cream heroes with no listing card or illustration on Suppliers and the accelerator.
+        with mock.patch.dict(os.environ, {"NYTE_BRAND_V3_PREVIEW": "1"}):
+            accelerator = render_nyte("accelerator")
+        for page in (sup, accelerator):
+            self.assertIn('sv3-hero sv3-hero-c">', page)
+            self.assertNotIn('v3-illustration', page)
+        self.assertNotIn('The supplier listing above is illustrative.', sup)
+        self.assertIn('<section class="v3-cta sv3-cta accelerator-call">', accelerator)
         self.assertEqual(sup.count('class="sv3-ladder"'), 4)
         self.assertIn('<time datetime=', sup)
         self.assertEqual(sup.count('class="idx-change '), 5)

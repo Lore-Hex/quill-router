@@ -18,23 +18,30 @@ LOT_NOTE = 'Each lot is 1 billion tokens delivered over the facility’s first t
 
 
 def assert_facility_columns(test: unittest.TestCase, markup: str) -> None:
-    """The approved facts as brand v3 Stats: a figure over its label, words unchanged."""
-    cards = re.findall(r'<article class="sv3-facility">(.*?)</article>', markup, flags=re.S)
-    test.assertEqual(len(cards), 2)
-    for card, (facility, name, description, power, launch, lots) in zip(cards, [
+    """The approved facts as a brand v3 DataTable: one row per facility, words unchanged."""
+    table = re.findall(r'<table class="sv3-table sv3-fac-table">(.*?)</table>', markup, flags=re.S)
+    test.assertEqual(len(table), 1)
+    for head in ('Facility', 'Targeted launch', 'Grade', 'Power', 'First offering'):
+        test.assertIn(f'>{head}</th>', table[0])
+    rows = re.findall(r'<tr>(.*?)</tr>', table[0].split('<tbody>', 1)[1], flags=re.S)
+    test.assertEqual(len(rows), 2)
+    for row, (facility, name, description, power, launch, lots) in zip(rows, [
         ('solar', 'Solar Powered Datacenter', 'solar-powered, air-cooled', '20 kW', 'February 2027', '1,000'),
         ('underwater', 'Underwater Datacenter', 'underwater', '1 MW', 'August 2027', '50,000'),
     ], strict=True):
-        test.assertIn(f'<h3>{name}</h3>', card)
-        test.assertIn('<span class="v3-chip">Planned</span>', card)
-        test.assertIn(f'<p>A planned {description} data center.</p>', card)
-        test.assertNotIn('operated by', card)
-        test.assertIn(f'<span class="sv3-fig">{power}</span><span class="sv3-note">Planned on NVIDIA B200/B300-class GPUs.</span>', card)
-        test.assertIn(f'<span class="sv3-fig">{launch}</span><span class="v3-label">Targeted launch</span>', card)
-        test.assertIn(f'<span class="sv3-fig">{lots} lots</span><span class="v3-label">First offering</span>', card)
-        test.assertIn('<a href="/index">Grade B · Professional (DeepSeek-class models)</a>', card)
-        test.assertIn(f'href="/buy?facility={facility}">Discuss a reservation', card)
-        test.assertNotIn('$', card)
+        test.assertIn(f'<th scope="row"><b>{name}</b><small>A planned {description} data center.</small></th>', row)
+        test.assertNotIn('Planned</span>', row)
+        test.assertNotIn('operated by', row)
+        test.assertNotIn('B200', row)
+        test.assertIn(f'<span class="sv3-ml">Power</span>{power}</td>', row)
+        test.assertIn(f'<span class="sv3-ml">Targeted launch</span>{launch}</td>', row)
+        test.assertIn(f'<span class="sv3-ml">First offering</span>{lots} lots</td>', row)
+        test.assertIn('<span class="v3-chip">B</span>', row)
+        test.assertIn('<a href="/index">Professional (DeepSeek-class models)</a>', row)
+        test.assertIn(f'<a href="/buy?facility={facility}">Discuss a reservation →</a>', row)
+        test.assertNotIn('$', row)
+
+
 ROUTE = '/neocloud-accelerator'
 STACK = 'https://github.com/Lore-Hex/token-exchange-neocloud-in-a-box'
 
@@ -127,7 +134,8 @@ class AcceleratorPageTests(unittest.TestCase):
     def test_first_facilities_and_reservation_links(self) -> None:
         section = self.page.split('<section class="sv3-facilities">', 1)[1].split('</section>', 1)[0]
         self.assertIn('<h2>First facilities</h2>', section)
-        self.assertIn('<p class="body">Operator names are shared on the call.</p>', section)
+        self.assertIn('Pricing is discussed on the call. Operator names are shared on the call.</p>', section)
+        self.assertEqual(section.count('Planned on NVIDIA B200/B300-class GPUs.'), 1)
         assert_facility_columns(self, section)
         self.assertEqual(section.count(LOT_NOTE), 1)
         for facility in ['solar', 'underwater']:
