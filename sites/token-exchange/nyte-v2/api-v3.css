@@ -63,7 +63,7 @@
 /* Models on confidential routes: sky field, ruled table. */
 .v3-models{background:var(--sky);padding:112px 0}
 .v3-models h2{margin-top:32px}
-.v3-models .model-head{margin-top:56px;padding:14px 0;gap:12px;border-top:2.5px solid var(--ink);border-bottom:0;font:500 15px/1.2 var(--font-condensed);letter-spacing:.1em;text-transform:uppercase;color:var(--ink)}
+.v3-models .model-head{margin-top:56px;padding:14px 0;gap:12px;border-top:0;border-bottom:0;font:500 15px/1.2 var(--font-condensed);letter-spacing:.1em;text-transform:uppercase;color:var(--ink)}
 .v3-models .live-models{border-bottom:1.5px solid var(--ink)}
 .v3-models .live-models>a:not(.privacy-column){display:inline-block;padding:20px 0;color:var(--ink);font-size:17px;text-decoration:underline;text-underline-offset:4px}
 .v3-models .privacy-column{gap:12px;padding:20px 0;border-top:1.5px solid var(--ink);border-bottom:0;color:var(--ink)}
