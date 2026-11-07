@@ -26,7 +26,8 @@
       },
       "routable": true,
       "input_token_price_per_m": 0,
-      "output_token_price_per_m": 0
+      "output_token_price_per_m": 0,
+      "missing_since": "2026-11-07"
     },
     {
       "display_name": "DeepSeek-R1-Distill-Llama-8B",
@@ -49,7 +50,8 @@
       "routable": false,
       "routable_reason": "provider-canary-failed",
       "input_token_price_per_m": 50000,
-      "output_token_price_per_m": 50000
+      "output_token_price_per_m": 50000,
+      "missing_since": "2026-11-07"
     },
     {
       "display_name": "DeepSeek-R1-Distill-Qwen-14B",
@@ -71,7 +73,8 @@
       "context_length": 131072,
       "routable": true,
       "input_token_price_per_m": 200000,
-      "output_token_price_per_m": 200000
+      "output_token_price_per_m": 200000,
+      "missing_since": "2026-11-07"
     },
     {
       "display_name": "DeepSeek-R1-Distill-Qwen-7B",
@@ -94,7 +97,8 @@
       "routable": false,
       "routable_reason": "provider-canary-failed",
       "input_token_price_per_m": 150000,
-      "output_token_price_per_m": 150000
+      "output_token_price_per_m": 150000,
+      "missing_since": "2026-11-07"
     },
     {
       "display_name": "Llama-3.1-8B-Instruct",
@@ -117,7 +121,8 @@
       "context_length": 131072,
       "routable": true,
       "input_token_price_per_m": 60000,
-      "output_token_price_per_m": 60000
+      "output_token_price_per_m": 60000,
+      "missing_since": "2026-11-07"
     },
     {
       "display_name": "Llama-4-Scout-17B-16E-Instruct",
@@ -141,7 +146,8 @@
       "routable": false,
       "routable_reason": "provider-canary-failed",
       "input_token_price_per_m": 90000,
-      "output_token_price_per_m": 290000
+      "output_token_price_per_m": 290000,
+      "missing_since": "2026-11-07"
     },
     {
       "display_name": "Devstral-Small-2505",
@@ -163,7 +169,8 @@
       "context_length": 128000,
       "routable": true,
       "input_token_price_per_m": 100000,
-      "output_token_price_per_m": 300000
+      "output_token_price_per_m": 300000,
+      "missing_since": "2026-11-07"
     },
     {
       "display_name": "mixtral-8x22b-instruct-v0.1",
@@ -186,7 +193,8 @@
       "routable": false,
       "routable_reason": "provider-canary-failed",
       "input_token_price_per_m": 1200000,
-      "output_token_price_per_m": 1200000
+      "output_token_price_per_m": 1200000,
+      "missing_since": "2026-11-07"
     },
     {
       "display_name": "Kimi-K2.5",
@@ -208,7 +216,8 @@
       "context_length": 262144,
       "routable": true,
       "input_token_price_per_m": 450000,
-      "output_token_price_per_m": 2200000
+      "output_token_price_per_m": 2200000,
+      "missing_since": "2026-11-07"
     },
     {
       "display_name": "NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
@@ -230,7 +239,8 @@
       "context_length": 256000,
       "routable": true,
       "input_token_price_per_m": 50000,
-      "output_token_price_per_m": 200000
+      "output_token_price_per_m": 200000,
+      "missing_since": "2026-11-07"
     },
     {
       "display_name": "gpt-oss-120b",
@@ -253,7 +263,8 @@
       "context_length": 131072,
       "routable": true,
       "input_token_price_per_m": 100000,
-      "output_token_price_per_m": 400000
+      "output_token_price_per_m": 400000,
+      "missing_since": "2026-11-07"
     },
     {
       "display_name": "gpt-oss-20b",
@@ -276,7 +287,8 @@
       "context_length": 131072,
       "routable": true,
       "input_token_price_per_m": 50000,
-      "output_token_price_per_m": 200000
+      "output_token_price_per_m": 200000,
+      "missing_since": "2026-11-07"
     },
     {
       "display_name": "Qwen2.5-Coder-32B-Instruct",
@@ -299,7 +311,8 @@
       "context_length": 131072,
       "routable": true,
       "input_token_price_per_m": 60000,
-      "output_token_price_per_m": 200000
+      "output_token_price_per_m": 200000,
+      "missing_since": "2026-11-07"
     },
     {
       "display_name": "Qwen2.5-Coder-3B-Instruct",
@@ -321,7 +334,8 @@
       "context_length": 32768,
       "routable": true,
       "input_token_price_per_m": 10000,
-      "output_token_price_per_m": 30000
+      "output_token_price_per_m": 30000,
+      "missing_since": "2026-11-07"
     },
     {
       "display_name": "Qwen2.5-Coder-7B-Instruct",
@@ -343,7 +357,8 @@
       "context_length": 131072,
       "routable": true,
       "input_token_price_per_m": 10000,
-      "output_token_price_per_m": 30000
+      "output_token_price_per_m": 30000,
+      "missing_since": "2026-11-07"
     },
     {
       "display_name": "Qwen3-14B",
@@ -366,7 +381,8 @@
       "context_length": 40960,
       "routable": true,
       "input_token_price_per_m": 70000,
-      "output_token_price_per_m": 200000
+      "output_token_price_per_m": 200000,
+      "missing_since": "2026-11-07"
     },
     {
       "display_name": "Qwen3-235B-A22B",
@@ -388,7 +404,8 @@
       "context_length": 32000,
       "routable": true,
       "input_token_price_per_m": 200000,
-      "output_token_price_per_m": 600000
+      "output_token_price_per_m": 600000,
+      "missing_since": "2026-11-07"
     },
     {
       "display_name": "Qwen3-235B-A22B-Instruct-2507",
@@ -411,7 +428,8 @@
       "context_length": 32768,
       "routable": true,
       "input_token_price_per_m": 200000,
-      "output_token_price_per_m": 600000
+      "output_token_price_per_m": 600000,
+      "missing_since": "2026-11-07"
     },
     {
       "display_name": "Qwen3-32B",
@@ -434,7 +452,8 @@
       "context_length": 40960,
       "routable": true,
       "input_token_price_per_m": 80000,
-      "output_token_price_per_m": 250000
+      "output_token_price_per_m": 250000,
+      "missing_since": "2026-11-07"
     },
     {
       "display_name": "Qwen3-4B-Instruct-2507",
@@ -457,7 +476,8 @@
       "context_length": 262144,
       "routable": true,
       "input_token_price_per_m": 10000,
-      "output_token_price_per_m": 30000
+      "output_token_price_per_m": 30000,
+      "missing_since": "2026-11-07"
     },
     {
       "display_name": "Qwen3-4B-Thinking-2507",
@@ -480,7 +500,8 @@
       "routable": false,
       "routable_reason": "provider-canary-failed",
       "input_token_price_per_m": 10000,
-      "output_token_price_per_m": 30000
+      "output_token_price_per_m": 30000,
+      "missing_since": "2026-11-07"
     },
     {
       "display_name": "Qwen3-8B",
@@ -504,7 +525,8 @@
       "routable": false,
       "routable_reason": "provider-canary-failed",
       "input_token_price_per_m": 70000,
-      "output_token_price_per_m": 180000
+      "output_token_price_per_m": 180000,
+      "missing_since": "2026-11-07"
     },
     {
       "display_name": "Qwen3 Embedding 8B",
@@ -615,7 +637,7 @@
   ],
   "source": "https://inference.api.nscale.com/v1/models",
   "pricing_source": "https://docs.nscale.com/docs/ai-services/models",
-  "generated_at": "2026-11-05T11:29:32Z",
+  "generated_at": "2026-11-07T19:38:02Z",
   "price_scale": "microdollars_per_million",
   "model_count": 27
 }
