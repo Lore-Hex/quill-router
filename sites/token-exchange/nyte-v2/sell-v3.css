@@ -92,6 +92,8 @@ main .sv3-hero-c .lede{max-width:720px}
 .sv3-head .btns{margin-top:8px}
 :is([data-nyte-page="sup"],[data-nyte-page="accelerator"]) main .sv3-small{max-width:880px;font-size:15px;line-height:1.5;color:var(--ink-2)}
 .sv3-ruled{margin-top:56px;padding-top:20px;border-top:1.5px solid var(--ink)}
+/* Onboarding note: a fine-print line for the whole process, its rule spanning all three steps. */
+[data-nyte-page="sup"] main .sv3-steps .sv3-small{max-width:none}
 
 /* Numbered columns (Suppliers onboarding) */
 .sv3-ncols{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:40px 24px;margin:56px 0 32px}

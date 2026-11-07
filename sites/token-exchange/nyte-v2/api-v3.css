@@ -158,9 +158,9 @@
   .v3-prot-list h3{margin-top:0;font-size:22px}
   .v3-prot-list p{margin-top:6px}
   .v3-evidence,.v3-models,.v3-faq,.v3-cta{padding:64px 0}
-  .v3-evidence .ev-sec{grid-template-columns:minmax(0,1fr);grid-template-areas:"h" "rows" "link"}
-  .v3-evidence .ev-sec+.ev-sec{margin-top:48px}
-  .ev-link{justify-self:start;margin-top:16px}
+  .v3-evidence .ev-sec{column-gap:12px}
+  .v3-evidence .ev-sec+.ev-sec{margin-top:56px}
+  .ev-link{white-space:nowrap}
   .v3-evidence .ev [data-live-attestation]>*{margin-top:14px}
   .att-row{grid-template-columns:minmax(0,1fr);gap:6px;padding:14px 0}
   .v3-evidence [data-live-services]{margin-top:14px}
@@ -186,6 +186,8 @@
 /* Narrow phones: the hero buttons stack once their labels no longer fit side by side. */
 @media (max-width:374px){
   .hero-api .btns{grid-template-columns:1fr}
+  .v3-evidence .ev h3{letter-spacing:.06em}
+  .ev-link{gap:4px;font-size:15px}
 }
 /* Phones: the header's "Start building" (/confidential#start) lands with the
    section top just under the sticky header, and the actions follow the copy so
@@ -196,4 +198,6 @@
   .v3-start-copy,.v3-start .btns,.v3-start .code-scroll{grid-column:1;grid-row:auto}
   .v3-start .btns{order:1}
   .v3-start .code-scroll{order:2;margin-top:32px}
+  /* The full-bleed code panel is the section's last block: it meets the FAQ band with no cream strip below. */
+  .v3-start{padding-bottom:0}
 }

@@ -203,7 +203,9 @@
   .buy-workspace .buy-step h2{font-size:22px}
   .buy-workspace .buy-reserve{padding:20px 16px}
   .buy-workspace .buy-actions .btn{flex:1}
-  .buy-workspace .buy-fallback{flex-direction:column;padding:16px 0 20px}
+  .buy-workspace .buy-fallback{flex-direction:column;gap:12px;padding:16px 0 20px}
+  /* Phones: each link on its own line under its question, so both pairs wrap the same way at any width. */
+  .buy-workspace .buy-fallback a{display:block;width:fit-content;margin-top:2px}
 }
 /* Desktop: the hero spacing follows the screen height, so the Band shows under the request form in the first screen. */
 @media (min-width:1101px){
