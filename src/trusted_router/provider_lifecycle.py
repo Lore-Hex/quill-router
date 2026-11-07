@@ -509,18 +509,28 @@ _RETIREMENTS = (
         }),
         effective_at=OPENAI_SEPTEMBER_28_RETIREMENT_AT,
     ),
-    # OpenAI's October 8 reminder shuts these exact snapshots down in the API
-    # on 2026-10-23 (date only, so 00:00 UTC). Undated o-series aliases and
-    # newer GPT-4o/4.1 snapshots are not named and stay routable.
+    # OpenAI's October 23 shutdown includes the aliases listed in its official
+    # deprecation table. Retiring only snapshots left gpt-3.5-turbo routable
+    # even while the provider explicitly returned "has been deprecated".
+    # https://developers.openai.com/api/docs/deprecations#2026-04-22-legacy-gpt-model-snapshots
     _Retirement(
         provider="openai",
         model_ids=frozenset({
             "openai/gpt-3.5-turbo-0125", "openai/gpt-4-0613", "openai/gpt-4-turbo",
             "openai/gpt-4.1-nano", "openai/gpt-4o-2024-05-13",
+            "openai/gpt-3.5-turbo", "openai/gpt-3.5-turbo-completions",
+            "openai/gpt-4", "openai/gpt-4-0613-completions", "openai/gpt-4-completions",
+            "openai/gpt-4-1106-preview", "openai/gpt-4-turbo-2024-04-09",
+            "openai/gpt-4-turbo-completions", "openai/gpt-4.1-nano-2025-04-14",
+            "openai/gpt-image-1", "openai/ft-o4-mini-2025-04-16",
         }),
         upstream_ids=frozenset({
             "gpt-3.5-turbo-0125", "gpt-4-0613", "gpt-4-turbo", "gpt-4.1-nano",
             "gpt-4o-2024-05-13", "openai/gpt-4o-2024-05-13",
+            "gpt-3.5-turbo", "gpt-3.5-turbo-completions",
+            "gpt-4", "gpt-4-0613-completions", "gpt-4-completions",
+            "gpt-4-1106-preview", "gpt-4-turbo-2024-04-09", "gpt-4-turbo-completions",
+            "gpt-4.1-nano-2025-04-14", "gpt-image-1", "ft-o4-mini-2025-04-16",
         }),
         effective_at=OPENAI_OCTOBER_23_RETIREMENT_AT,
     ),

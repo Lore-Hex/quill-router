@@ -13,6 +13,17 @@ from trusted_router.catalog_data import ModelEndpoint
 
 _CUTOFF = datetime(2026, 10, 23, tzinfo=UTC)
 _RETIRING = {
+    "openai/gpt-3.5-turbo": "gpt-3.5-turbo",
+    "openai/gpt-3.5-turbo-completions": "gpt-3.5-turbo-completions",
+    "openai/gpt-4": "gpt-4",
+    "openai/gpt-4-0613-completions": "gpt-4-0613-completions",
+    "openai/gpt-4-completions": "gpt-4-completions",
+    "openai/gpt-4-1106-preview": "gpt-4-1106-preview",
+    "openai/gpt-4-turbo-2024-04-09": "gpt-4-turbo-2024-04-09",
+    "openai/gpt-4-turbo-completions": "gpt-4-turbo-completions",
+    "openai/gpt-4.1-nano-2025-04-14": "gpt-4.1-nano-2025-04-14",
+    "openai/gpt-image-1": "gpt-image-1",
+    "openai/ft-o4-mini-2025-04-16": "ft-o4-mini-2025-04-16",
     "openai/gpt-3.5-turbo-0125": "gpt-3.5-turbo-0125",
     "openai/gpt-4-0613": "gpt-4-0613",
     "openai/gpt-4-turbo": "gpt-4-turbo",
