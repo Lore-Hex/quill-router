@@ -7,9 +7,18 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from tests import lifecycle_clock
 from trusted_router.catalog import MODELS, endpoints_for_model
+from trusted_router.provider_lifecycle import provider_model_retired
 from trusted_router.speech import SPEECH_MODELS
 from trusted_router.storage import STORE
+
+# Speech routes the catalog clock has not retired (Mistral's Voxtral TTS 26.03
+# retires 2027-04-30; the post-cutover CI clock runs past it).
+LIVE_SPEECH_MODELS = {
+    mid: spec for mid, spec in SPEECH_MODELS.items()
+    if not provider_model_retired(spec.provider, mid, spec.upstream_id, at=lifecycle_clock.CATALOG_CLOCK)
+}
 
 # Independent expectations: do not derive these from the catalog under test.
 ELEVENLABS_VOICES = {
@@ -49,6 +58,7 @@ def test_speech_catalog_voice_lists(client: TestClient, path: str) -> None:
         "microsoft/mai-voice-2.1": ["en-US-Harper", "en-US-Grant"],
         "microsoft/mai-voice-2.1-flash": ["en-US-Harper", "en-US-Grant"],
     }
+    expected = {mid: voices for mid, voices in expected.items() if mid in LIVE_SPEECH_MODELS}
     response = client.get(path)
     assert response.status_code == 200
     rows = {
@@ -129,8 +139,12 @@ def test_speech_catalog(client: TestClient) -> None:
     response = client.get("/v1/models?output_modalities=speech")
     assert response.status_code == 200
     rows = {row["id"]: row for row in response.json()["data"]}
-    assert set(rows) == set(SPEECH_MODELS)
-    for mid, spec in SPEECH_MODELS.items():
+    assert set(rows) == set(LIVE_SPEECH_MODELS)
+    for mid in SPEECH_MODELS.keys() - LIVE_SPEECH_MODELS.keys():
+        # A retired speech model is gone, not listed with a dead endpoint.
+        assert mid not in MODELS
+        assert endpoints_for_model(mid) == []
+    for mid, spec in LIVE_SPEECH_MODELS.items():
         assert not MODELS[mid].supports_chat
         assert rows[mid]["architecture"]["modality"] == "text->speech"
         assert rows[mid]["trustedrouter"]["speech"]["billing_unit"] == (
@@ -161,7 +175,7 @@ def test_tinfoil_speech_admits_confidential_only_route(
 
 
 @pytest.mark.parametrize(
-    "model", [mid for mid, spec in SPEECH_MODELS.items() if not spec.token_billed]
+    "model", [mid for mid, spec in LIVE_SPEECH_MODELS.items() if not spec.token_billed]
 )
 def test_speech_bills_exact_frozen_quote_once(
     client: TestClient, speech_key: str, model: str, monkeypatch: pytest.MonkeyPatch
@@ -403,7 +417,7 @@ def test_public_speech_guide_explains_billing_units_and_token_hold(client: TestC
 def test_speech_public_prices_use_the_correct_billing_unit(client: TestClient) -> None:
     from trusted_router.dashboard import _model_detail_view, _model_view
 
-    for mid in [mid for mid, spec in SPEECH_MODELS.items() if not spec.token_billed]:
+    for mid in [mid for mid, spec in LIVE_SPEECH_MODELS.items() if not spec.token_billed]:
         row = _model_view(MODELS[mid], test_mode=True)
         unit = "/request" if SPEECH_MODELS[mid].request_cost_microdollars else "/M characters"
         assert str(row["prompt_price"]).endswith(unit)
