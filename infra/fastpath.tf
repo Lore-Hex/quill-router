@@ -178,7 +178,7 @@ locals {
   # section 8.2): a lease needs effective trust tier 3, a workspace's
   # allowance is $1,000 and a lease leaves at least $20 of the balance, in
   # microdollars. The startup script passes each as -required-tier,
-  # -allowance and -floor (8af87998a, the pin, takes all three). A reset
+  # -allowance and -floor (8af87998a and later take all three). A reset
   # alone keeps the unit's old arguments: each node takes them one at a
   # time, the other serving, by runbook fastpath-deploy.md's money settings
   # step 5 (leaving, its leases and the balancer drained, the unit stopped,
