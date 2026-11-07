@@ -1139,6 +1139,16 @@ class Settings(BaseSettings):
     # takes it from scripts/deploy/fastpath_lists.sh. Off by default.
     fastpath_pilot_all: bool = False
     fastpath_pilot_exclude: str = ""
+    # The 503 for headroom in leases (docs/design/fast-admission-widening.md
+    # section 11 item 7; fast-admission-and-batched-settlement.md section
+    # 4.4): on the typed Spanner authorize, a hold the credit rows cannot
+    # cover, though the workspace's live fast-path leases hold enough that its
+    # balance would, is answered 503 with Retry-After instead of the
+    # insufficient_credits 402, in the reserve and in the insufficient-credit
+    # precheck, and the precheck's per-process memory does not remember the
+    # workspace as exhausted. Off, no lease is read and every authorize
+    # answer is today's. Activation (PR 8) turns it on before WS6.
+    fastpath_lease_headroom_503: bool = False
     # The enabler (docs/design/fast-admission-widening.md section 5): a
     # Cloud Run job, trusted_router.fastpath_enabler, which turns the
     # switch (tr_fastpath_workspace) on for eligible workspaces and off for

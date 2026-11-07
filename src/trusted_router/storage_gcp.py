@@ -5590,16 +5590,26 @@ class SpannerStore(OperationalAnalyticsReads):
         created_at: dt.datetime | None = None,
         fastpath_envelope: str | None = None,
         fastpath_end_of_life: str | None = None,
+        lease_headroom_503: bool = False,
     ) -> tuple[str, GatewayAuthorization | None]:
         """Route-facing typed authorize. Runs the atomic conditional-DML authorize
         (holds + reservation + gateway_authorization DML-insert) and returns
         (outcome, authorization). outcome in accepted/replay/insufficient_credits/
         key_limit_exceeded/key_missing/idempotency_mismatch, or
         "key_window_limit_exceeded:<daily|weekly|monthly>" when a per-window cap
-        blocked (see authorize_atomic's window_limits contract)."""
+        blocked (see authorize_atomic's window_limits contract).
+
+        `lease_headroom_503` (fastpath_lease_headroom_503) answers
+        lease_headroom instead of insufficient_credits when the credit rows
+        cannot cover the hold but the fast path's live leases hold enough that
+        the balance would (docs/design/fast-admission-and-batched-settlement.md
+        section 4.4): the route answers it 503 with Retry-After, and the
+        per-process exhausted-workspace memory does not remember the
+        workspace. Off, nothing is read for it and every answer is as before."""
         from trusted_router.storage_gcp_authorize import (
             EXHAUSTED,
             HEADROOM,
+            LEASE_HELD,
             AuthorizeOutcome,
             authorize_atomic,
             bounded_credit_shard_candidates,
@@ -5775,12 +5785,23 @@ class SpannerStore(OperationalAnalyticsReads):
                 workspace_id=workspace_id,
                 estimate=hold,
                 idempotency_scope=scope,
+                lease_aware=lease_headroom_503,
             )
             if credit_verdict == EXHAUSTED:
                 from trusted_router.storage_gcp_authorize import AuthorizeVerdict
 
                 return (
                     AuthorizeVerdict(AuthorizeOutcome.INSUFFICIENT_CREDITS, rate_limit=window_decision),
+                    None,
+                )
+            if credit_verdict == LEASE_HELD:
+                from trusted_router.storage_gcp_authorize import AuthorizeVerdict
+
+                # The balance is not exhausted, only held in leases: the
+                # memory forgets the workspace, and the answer is 503.
+                self._insufficient_credit_workspaces.discard(workspace_id)
+                return (
+                    AuthorizeVerdict(AuthorizeOutcome.LEASE_HEADROOM, rate_limit=window_decision),
                     None,
                 )
             if credit_verdict == HEADROOM:
@@ -6077,6 +6098,26 @@ class SpannerStore(OperationalAnalyticsReads):
         if outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS and has_credit_candidate:
             # Final here: a multi-shard miss without proven aggregate exhaustion
             # raised StoreUnavailable above instead of returning a 402.
+            if lease_headroom_503 and credit_exhaustion_precheck(
+                self._database,
+                self._param_types,
+                workspace_id=workspace_id,
+                estimate=hold,
+                lease_aware=True,
+            ) == LEASE_HELD:
+                # One snapshot, on the refusal path alone: the rows still
+                # cannot cover the hold and live leases hold the rest. Not
+                # remembered as exhausted; any other verdict, a read failure
+                # included, keeps today's 402.
+                from trusted_router.storage_gcp_authorize import AuthorizeVerdict
+
+                return (
+                    AuthorizeVerdict(
+                        AuthorizeOutcome.LEASE_HEADROOM,
+                        rate_limit=getattr(outcome, "rate_limit", None) or window_decision,
+                    ),
+                    None,
+                )
             self._insufficient_credit_workspaces.add(workspace_id)
         authorization: GatewayAuthorization | None = None
         if outcome == AuthorizeOutcome.ACCEPTED:

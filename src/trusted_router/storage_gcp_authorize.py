@@ -142,6 +142,11 @@ class AuthorizeOutcome:
     KEY_MISSING = "key_missing"  # typed key row absent -> fail closed
     IDEMPOTENCY_MISMATCH = "idempotency_mismatch"  # same key, different request body
     KEY_WINDOW_LIMIT_EXCEEDED = "key_window_limit_exceeded"  # a daily/weekly/monthly cap
+    # The balance covers the hold but the headroom outside the fast path's
+    # leases does not (docs/design/fast-admission-and-batched-settlement.md
+    # section 4.4): answered 503 with Retry-After, never the 402 the enclave
+    # caches. Returned only with lease_headroom_503 on.
+    LEASE_HEADROOM = "lease_headroom"
 
 
 class AuthorizeVerdict(str):
@@ -196,6 +201,9 @@ class _RetrySequentialFinalize(GoogleAPICallError):
 EXHAUSTED = "exhausted"
 HEADROOM = "headroom"
 DEFER = "defer"
+# The credit rows alone cannot cover the estimate, and the fast path's live
+# leases hold the rest (credit_exhaustion_precheck with lease_aware).
+LEASE_HELD = "lease_held"
 
 
 class ExhaustedKeyCache:
@@ -296,6 +304,7 @@ def credit_exhaustion_precheck(
     workspace_id: str,
     estimate: int,
     idempotency_scope: str | None = None,
+    lease_aware: bool = False,
 ) -> str:
     """Recheck a cached insufficient-credit verdict without locking any credit row.
 
@@ -320,6 +329,14 @@ def credit_exhaustion_precheck(
     EXHAUSTED whatever one shard holds: every marked row refuses. A mark the
     sum no longer bears out is HEADROOM, so the transaction refuses and
     recover_credit heals it.
+
+    With ``lease_aware`` (fastpath_lease_headroom_503), a verdict that would be
+    EXHAUSTED for an unmarked workspace reads, in the same snapshot, what its
+    live fast-path leases hold: when that is positive and,
+    with the rows' signed headroom, covers the estimate, the verdict is
+    LEASE_HELD, since the balance covers the estimate and only the headroom
+    outside leases does not (design section 4.4). A read failure is DEFER, as
+    any. Without it, no lease is read and every verdict is as before.
     """
     pt = param_types
     try:
@@ -349,6 +366,30 @@ def credit_exhaustion_precheck(
                 existing = read_reservation_by_idempotency(snapshot, pt, idempotency_scope)
                 if existing is not None:
                     return DEFER
+            if lease_aware and not any(bool(row[4]) for row in rows):
+                # What the workspace's open and draining leases hold on its
+                # credit rows: each live lease's donors' remaining
+                # allocation, the term the counter reconciler adds to a
+                # shard's open holds (section 4.7's identity). Two seeks on
+                # tr_lease_by_state (state, workspace_id, lease_id), one per
+                # live state, bounded to the workspace's live leases, then
+                # their donors by key; the index covers the tr_lease columns
+                # named. Read only on a verdict that would refuse.
+                held = list(
+                    snapshot.execute_sql(
+                        "/* fastpath_lease_held_of */ "
+                        "SELECT COALESCE(SUM(d.allocation - d.consumed), 0) "
+                        "FROM tr_lease@{FORCE_INDEX=tr_lease_by_state} AS l "
+                        "JOIN tr_lease_donor AS d "
+                        "ON d.workspace_id = l.workspace_id AND d.lease_id = l.lease_id "
+                        "WHERE l.state IN ('open', 'draining') AND l.workspace_id=@ws",
+                        params={"ws": workspace_id},
+                        param_types={"ws": pt.STRING},
+                    )
+                )
+                lease_held = int(held[0][0]) if held and held[0][0] is not None else 0
+                if lease_held > 0 and sum(available) + lease_held >= estimate:
+                    return LEASE_HELD
             return EXHAUSTED
     except Exception:
         log.warning(

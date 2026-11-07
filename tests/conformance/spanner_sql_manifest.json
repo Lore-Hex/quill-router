@@ -3802,12 +3802,23 @@
       ]
     },
     "storage_gcp_authorize:credit_exhaustion_precheck:1": {
-      "fingerprint": "bb08ce1cf8b8bf81a7db4487ec13fff5656d75ea7cb911c1325fc1770c5ef740",
+      "fingerprint": "2203857777583882a8342d225efb85c127c5e1bc6c77c263e06a125f80df0362",
       "scenarios": [
         {
           "bindings": {},
           "types": {
             "pk": "STRING"
+          }
+        }
+      ]
+    },
+    "storage_gcp_authorize:credit_exhaustion_precheck:2": {
+      "fingerprint": "2203857777583882a8342d225efb85c127c5e1bc6c77c263e06a125f80df0362",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "ws": "STRING"
           }
         }
       ]
@@ -4922,7 +4933,7 @@
     "storage_gcp_authorize:reap_expired_reservations_result": "87750ee12e0ec69a3f539896d20b7c52ed195b977802b23f50bfa5f9d9faa9dc",
     "storage_gcp_authorize:typed_finalize_atomic.txn": "cf8aa92c4f2b5cfbdc8ffb0c0f72d83b57b90f9785e629ff8d5a26ee8e4d9f97",
     "storage_gcp_authorize:key_lifetime_cap_precheck": "4e9ee17c7e9363a1fc3a9d614f15148ad6fb20ff04d272785809beef92ab0b4c",
-    "storage_gcp_authorize:credit_exhaustion_precheck": "bb08ce1cf8b8bf81a7db4487ec13fff5656d75ea7cb911c1325fc1770c5ef740",
+    "storage_gcp_authorize:credit_exhaustion_precheck": "2203857777583882a8342d225efb85c127c5e1bc6c77c263e06a125f80df0362",
     "storage_gcp_authorize:_finalize_reaped_reservation_atomic.txn": "8e4408fed66d1dad6861f8301c1240fe5e0041367e4f9638239ebb0d874f1840",
     "storage_gcp_authorize:settle_atomic.txn": "5415d0c16b4dd6fc436ca4e86128d9173d00879624bb16f236b578b00a7935d8",
     "storage_gcp_authorize:_outbox_table_available": "40f44f259524be5dc275f8a3400fc40fc5b8fe850c0482362de0382296e3f910",
