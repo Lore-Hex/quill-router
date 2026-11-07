@@ -24,12 +24,12 @@ and gates publication on the ci.yml run of that commit. Every job in
 SKIPPED_FOR_DATA_ONLY reads none of those files (Go store tests, TLA+ model
 checks, the frozen-main settle oracle with its fixture catalog, the BYOK
 write-format diff, the frontend build, the Spanner conformance suites and
-the coverage floor over the Python suite). The jobs that do read them
-(lint's catalog history check, the production import, both Python suite
-clocks and the browser smoke) run on every commit, the post-cutover suite on
-every event but a push to main. tests/test_ci_workflow.py
-holds the workflow text to these two lists, and holds DATA_ONLY_PATHS to the
-files refresh-prices.yml stages.
+the coverage floor over the Python suite). The jobs that do read them run on
+every commit: lint's catalog history check, the production import, the
+default-clock suite and the browser smoke, with the post-cutover suite on
+every event but a push to main. tests/test_ci_workflow.py holds the workflow
+text to these two lists, and holds DATA_ONLY_PATHS to the files
+refresh-prices.yml stages.
 
 SKIPPED_ON_PUSH is the post-cutover suite and the TLA+ model checks. They run
 on pull requests and on dispatches (the price refresh's publication gate), and

@@ -36,19 +36,21 @@ concurrency:
 # Actions queue starved for about two hours with hourly refresh runs among 19
 # queued runs, and merges and deploys stalled. The `scope` job classifies the
 # commit by its changed paths against the commit before it. Jobs that read
-# the catalog data (lint's history check, the production import, both Python
-# suite clocks, the browser smoke) run on every commit, the post-cutover clock
-# on every event but a push to main (see test-post-cutover); the others carry
+# the catalog data run on every commit: lint's history check, the production
+# import, the default-clock suite and the browser smoke, with the post-cutover
+# suite on every event but a push to main (see test-post-cutover). The others
+# carry
 #   if: needs.scope.outputs.data_only != 'true'
 # and skip only when EVERY changed path is catalog data AND the base commit
 # has a completed ci.yml run that concluded success. That second condition is
 # the induction that keeps a skip honest: the summary job makes a success
 # conclusion mean "every job that ran passed and every skip was legitimate",
 # so the skipped jobs' inputs (the code) were validated at the base and are
-# unchanged here. A base validated by a push run was validated on the default
-# clock alone, since a push runs neither post-cutover suite. Without it a data-only commit on top of an unvalidated base
-# (a base whose run is still running or failed, or a force push whose old tip
-# differs from the new one only in data) would inherit code no run checked.
+# unchanged here. Without that check a data-only commit on top of an
+# unvalidated base (a base whose run is still running or failed, or a force
+# push whose old tip differs from the new one only in data) would inherit
+# code no run checked. A base validated by a push run was validated on the
+# default clock alone, since a push runs neither post-cutover suite.
 # An empty comparison, a missing base commit or an unvalidated base runs the
 # complete matrix; a failed classification fails `scope`, which the summary
 # job turns into a failed run. tests/test_ci_workflow.py holds the two job

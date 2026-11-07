@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import tomllib
 from pathlib import Path
@@ -289,6 +290,8 @@ def test_the_post_cutover_clock_leaves_main_pushes_for_a_daily_run() -> None:
         assert comparable(jobs[name]) == comparable(ci[name]), name
         assert jobs[name]["if"] == "github.repository == 'Lore-Hex/quill-router'", name
         assert "needs" not in jobs[name], name
+        # No needs context exists in the daily run, so nothing may read one.
+        assert "needs." not in json.dumps(jobs[name]), name
         assert "continue-on-error" not in jobs[name], name
         assert all("continue-on-error" not in step for step in jobs[name]["steps"]), name
         assert "strategy" not in jobs[name] or jobs[name]["strategy"]["fail-fast"] is False, name

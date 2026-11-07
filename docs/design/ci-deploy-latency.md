@@ -116,7 +116,7 @@ tracer back.
 
 A push to main no longer runs test-post-cutover or proof-oracle's
 post-cutover clock. Together they were 14 of the run's 46 jobs, about 215
-runner-minutes over 20 green main runs. A red in them means main will break on a scheduled date. That
+runner-minutes a commit, averaged over 20 green main runs. A red in them means main will break on a scheduled date. That
 is no reason to hold the deploy, which gate-on-ci holds until the push run
 concludes. They still run on pull requests and on dispatches, including the
 price refresh's publication gate. post-cutover-daily.yml runs both on main
