@@ -236,15 +236,20 @@ dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
 .site-footer .legal a{color:var(--cream)}
 .site-footer .footer-contact a{color:var(--cream);font-size:17px}
 @media(max-width:600px){
-  .site-footer{display:flex;flex-direction:column}
-  .site-footer .footer-top{grid-template-columns:minmax(0,1fr) 44px;grid-template-rows:none;column-gap:12px;row-gap:16px}
+  .site-footer{display:flex;flex-direction:column;padding-top:32px;padding-bottom:20px}
+  [data-market="new-york"] .site-footer .brand>span::before{margin-bottom:10px}
+  .site-footer .footer-top{grid-template-columns:minmax(0,1fr) auto;grid-template-rows:none;column-gap:12px;row-gap:10px}
+  /* No back-to-top on phones; the globe takes its place beside the name. */
+  .site-footer .back-to-top{display:none}
   .site-footer .footer-top .brand{grid-row:1}
   .site-footer .footer-contact{grid-column:1;grid-row:2;align-self:center;margin-top:0}
-  /* Phone globe: small, in the empty space right of the contact line, drawn in the
-     secondary text colour so it reads on Ink. The name keeps the full width. */
+  /* Phone globe: small, drawn in the secondary text colour so it reads on Ink. Beside the
+     stacked New York name; city names are one long line, so there it sits right of the contact line. */
+  [data-market="new-york"] .site-footer .footer-top::after{grid-column:2;grid-row:1;align-self:start}
   .site-footer .footer-top::after{content:"";grid-column:1/-1;grid-row:2;align-self:center;justify-self:end;width:123px;height:60px;aspect-ratio:auto;margin:0;pointer-events:none;background:var(--ink-2-dark);-webkit-mask:url(logos/mark-footer.svg) right center/contain no-repeat;mask:url(logos/mark-footer.svg) right center/contain no-repeat}
-  .site-footer .footer-markets{margin-top:24px;order:1}
-  .site-footer .legal{order:3;gap:0 14px;margin-top:8px;padding-top:0;border-top:0}
+  .site-footer .footer-markets{margin-top:16px;order:1}
+  /* Spread across the full width so all four links share one line on 375px+ phones, even with wider fonts; wraps only when they truly don't fit. */
+  .site-footer .legal{order:3;flex-wrap:wrap;justify-content:space-between;gap:0 6px;margin-top:8px;padding-top:0;border-top:0}
 }
 
 /* Token Index page (own sheet): kit headings, square corners, one orange action per view. */
