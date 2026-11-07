@@ -381,3 +381,20 @@ def test_catalog_with_no_priced_row_fails_closed_and_says_why():
     assert "'unknown-provider-status': 8" in message
     assert "statuses=['Active']" in message
     assert "domains=['ImageGeneration', 'LLM', 'VLM', 'VideoGeneration']" in message
+
+
+def test_published_status_is_live_and_other_statuses_stay_held():
+    # Refresh run 42372150892: "byteplus: no live priced models (rows=47
+    # reasons={'provider-retired': 17, 'unknown-provider-status': 30}
+    # statuses=['Published', 'Retiring'] ...)". BytePlus now marks live rows
+    # "Published".
+    payload = catalog()
+    for source in payload["data"]:
+        source["status"] = "Published"
+    payload["data"][1]["status"] = "Retiring"
+    payload["data"][2]["status"] = "Paused"
+    prices, rows = byteplus.discover(payload, MODERN_MD)
+    assert "bytedance/dola-seed-2-1-turbo-260628" in prices
+    assert set(byteplus.VIDEO_MODELS.values()) <= set(prices)
+    assert rows["bytedance/seed-2-0-pro-260328"]["routable_reason"] == "provider-retired"
+    assert rows["deepseek/deepseek-v4.1-flash"]["routable_reason"] == "unknown-provider-status"

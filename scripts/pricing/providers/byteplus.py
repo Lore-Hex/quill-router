@@ -56,6 +56,11 @@ MODEL_IDS = {
     "deepseek-v4-1-flash-260910": "deepseek/deepseek-v4.1-flash",
 }
 PRICE_ALIASES = {"dola-seed-2-1-turbo-260628": "dola-seed-2-1-turbo"}
+# Live catalog rows carried no status until 2026-11, when BytePlus began
+# marking them "Published" (refresh run 42372150892: statuses
+# ['Published', 'Retiring'], every live row held as unknown-provider-status).
+# Shutdown/Retiring stay retired; any other value stays held.
+_LIVE_STATUSES = frozenset({None, "", "Published"})
 
 
 def canonical_model_id(native_id: str) -> str | None:
@@ -282,7 +287,7 @@ def discover(payload: object, md: str) -> tuple[dict[str, ModelPrice], dict[str,
         reason = None
         if source.get("status") in {"Shutdown", "Retiring"}:
             reason = "provider-retired"
-        elif source.get("status") not in {None, ""}:
+        elif source.get("status") not in _LIVE_STATUSES:
             reason = "unknown-provider-status"
         elif native in VIDEO_MODELS:
             row.update(model_type="video", billing_unit="output_tokens", endpoints=["videos"], input_modalities=["text", "image"], output_modalities=["video"], context_length=0)
