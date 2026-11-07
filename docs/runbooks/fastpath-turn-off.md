@@ -56,8 +56,12 @@ Then the switch:
 fastpathctl -database projects/P/instances/I/databases/D disable WORKSPACE
 ```
 
-In one transaction the switch turns off and every open lease of the
-workspace is revoked. From then:
+In one transaction the switch turns off, every open lease of the
+workspace is revoked, and the workspace is held, reason `operator`
+(`docs/design/fast-admission-widening.md` §5.6), so the enabler never
+turns it on again; `fastpathctl enable` removes the hold, and
+`fastpathctl release` removes it leaving the workspace off, for the
+enabler to manage again (`fastpath-deploy.md`, "Holds"). From then:
 
 - no lease is granted for it;
 - each node's copy of the switch drops it within three seconds, since a
@@ -78,7 +82,15 @@ fastpathctl -database projects/P/instances/I/databases/D disable-all
 ```
 
 It turns every enabled workspace off and revokes every open lease, in one
-transaction. The rest of this procedure then holds for each of them.
+transaction, and in the same one writes the fleet hold `*`, so the enabler
+writes nothing while it stands, and a kill row whose time is the `at` it
+prints, which every row it turned off keeps as its `changed_at`. The rest
+of this procedure then holds for each of them. It is undone by
+`fastpathctl release-all`, which removes `*` and every kill row, after
+which the enabler turns back on every row the kills stopped that is still
+eligible and has no hold of its own; `disable` any that should stay off
+first. While the enabler is paused, `release-all` refuses: `enabler
+resume` comes first (`fastpath-deploy.md`, "Holds").
 
 The decide rows are read by `fastpathctl` and by every node whose unit
 carries `-edge-decide` (the copy above; a node without the flag reads

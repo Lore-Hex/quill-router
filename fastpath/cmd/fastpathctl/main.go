@@ -14,10 +14,21 @@
 //	fastpathctl -database projects/P/instances/I/databases/D decide-off-all
 //	fastpathctl -database projects/P/instances/I/databases/D decide-restore -at TS
 //	fastpathctl -database projects/P/instances/I/databases/D ready WORKSPACE [-required-tier N] [-floor F]
+//	fastpathctl -database projects/P/instances/I/databases/D release WORKSPACE
+//	fastpathctl -database projects/P/instances/I/databases/D release-all
+//	fastpathctl -database projects/P/instances/I/databases/D enabler pause|resume|arm
+//	fastpathctl -database projects/P/instances/I/databases/D release-stamped TS [-yes]
+//	fastpathctl -database projects/P/instances/I/databases/D hold-backfill
+//	fastpathctl -database projects/P/instances/I/databases/D holds
 //
 // disable revokes the workspace's open leases with the switch, and
 // disable-all turns every workspace off and revokes every open lease, the one
-// switch that empties the allow-list. status reads
+// switch that empties the allow-list. Each holds what it stops, in the same
+// transaction (docs/design/fast-admission-widening.md, section 5.6), so the
+// enabler never turns it on again: disable holds the workspace, reason
+// operator, and disable-all writes the fleet hold '*' and a kill row whose
+// time, the at it prints, is the changed_at of every row it turned off.
+// enable removes the workspace's hold with the switch. status reads
 // the workspace's rows by its keys, read only, and exits 0 once it is off
 // with no lease open or draining, nothing its leases' donors hold, no pack's
 // work pending and no staged record, and 3 until then: turning a workspace
@@ -79,6 +90,32 @@
 // for a setting out of bounds, before the store is opened. Only a grant
 // weighs the allowance against a lease's amount, so ready takes none.
 //
+// Holds are what the enabler reads before each of its writes (section 5.6).
+// release removes a workspace's hold without enabling it, exit 0, or 3 when
+// it had none; it refuses, exit 2 and nothing written, while the enabler is
+// paused ("resume first"). release-all removes the fleet hold and every kill
+// row in one transaction, exit 0, or 3 when there was neither, and refuses
+// in the same way under a pause. enabler pause holds the enabler, so it
+// writes nothing until resumed; pausing while paused keeps the first pause's
+// time. enabler resume removes the pause only in the same transaction as a
+// backfill since it: every row turned off at or after the pause with no hold
+// of its own is held, reason paused, but those a kill stopped, which stay the
+// kill's; it prints its window [from, until), and how many rows it held, how
+// many it left to a kill and how many already had a hold. It exits 3 when
+// there is no pause, and refuses, exit 2 and nothing written, while any row
+// is enabled with a hold of its own, printing them: enable or disable each
+// first. enabler arm lets the enabler write, and refuses, exit 2, unless every
+// row turned off has a hold of its own, printing those that do not.
+// release-stamped TS prints the holds of reason paused on rows whose
+// changed_at is exactly TS, as an older release's disable-all stamped them,
+// and removes them only with -yes; exit 3 when there are none. It refuses to
+// write under a pause, as release does. hold-backfill holds, reason backfill,
+// every row turned off with no hold of its own, and refuses, exit 2, once
+// the enabler is armed. holds prints the hold table, the kills, the rows
+// enabled and held, and every row turned off with no hold of its own
+// (unheld_disabled, under_kill and other as the enabler's report has them),
+// read only: exit 0 when there is none of the last, 3 while there is.
+//
 // Flags go before the command, or for decide and ready after the workspace
 // too: Go's flags end at the command, so a word after it is the workspace or
 // address however it looks. A WORKSPACE is a workspace's id as the routing
@@ -87,7 +124,9 @@
 // with the usage, exit 2, before the store is opened. decide delete alone
 // takes any workspace the table can hold, so a row written under a malformed
 // one can be removed, and '*', the wildcard row. -follow-wildcard is decide
-// delete's alone and -at decide-restore's, after the command.
+// delete's alone, -at decide-restore's, after the command, and -yes
+// release-stamped's, after TS. enable and release take a workspace's id
+// alone, so never '*', '#pause' or '#armed', the hold table's own rows.
 // With SPANNER_EMULATOR_HOST set, the client reaches the emulator instead.
 package main
 
@@ -205,6 +244,7 @@ func run(ctx context.Context, args []string, out io.Writer,
 	followWildcard := fs.Bool("follow-wildcard", false,
 		"decide delete: remove an off row though the wildcard is on, so the workspace follows it")
 	restoreAt := fs.String("at", "", "decide-restore: the commit timestamp decide-off-all printed (RFC 3339)")
+	yes := fs.Bool("yes", false, "release-stamped: release the holds it finds, rather than only print them")
 	cfg := service.Defaults()
 	fs.Var(service.Money{P: &cfg.Store.RequiredTier}, "required-tier",
 		"ready: the trust tier the fleet's leases need (the node's -required-tier)")
@@ -219,7 +259,8 @@ func run(ctx context.Context, args []string, out io.Writer,
 	usage := errors.New("usage: fastpathctl -database D enable|disable|status|audit WORKSPACE, node|leave|closed ADDRESS, " +
 		"decide on|off|status WORKSPACE [-cloud C] [-region R], decide delete WORKSPACE [-cloud C] [-region R] " +
 		"[-follow-wildcard], decide wildcard on|off|status [-cloud C] [-region R], " +
-		"ready WORKSPACE [-required-tier N] [-floor F], disable-all, decide-off-all or decide-restore -at TS")
+		"ready WORKSPACE [-required-tier N] [-floor F], release WORKSPACE, enabler pause|resume|arm, " +
+		"release-stamped TS [-yes], disable-all, release-all, hold-backfill, holds, decide-off-all or decide-restore -at TS")
 	if *database == "" || fs.NArg() < 1 {
 		return 2, usage
 	}
@@ -266,6 +307,28 @@ func run(ctx context.Context, args []string, out io.Writer,
 	} else if *restoreAt != "" {
 		return 2, fmt.Errorf("-at is decide-restore's alone: %w", usage)
 	}
+	var stamp time.Time
+	if command == "release-stamped" {
+		if fs.NArg() < 2 {
+			return 2, usage
+		}
+		at, err := time.Parse(time.RFC3339Nano, fs.Arg(1))
+		if err != nil || at.IsZero() {
+			return 2, fmt.Errorf("release-stamped %q is not a disable-all's printed at: %w", fs.Arg(1), usage)
+		}
+		stamp = at
+		// -yes follows the stamp.
+		if err := fs.Parse(fs.Args()[2:]); err != nil {
+			return 2, err
+		}
+		if fs.NArg() != 0 {
+			return 2, usage
+		}
+	}
+	// -yes is release-stamped's: on any other command it would be ignored.
+	if *yes && command != "release-stamped" {
+		return 2, fmt.Errorf("-yes is release-stamped's alone: %w", usage)
+	}
 	if command == "ready" {
 		if fs.NArg() < 2 {
 			return 2, usage
@@ -284,11 +347,16 @@ func run(ctx context.Context, args []string, out io.Writer,
 		return 2, err
 	}
 	switch {
-	case command == "disable-all" || command == "decide-off-all":
+	case command == "disable-all" || command == "decide-off-all" || command == "release-all" ||
+		command == "hold-backfill" || command == "holds":
 		if fs.NArg() != 1 {
 			return 2, usage
 		}
-	case command == "decide-restore":
+	case command == "enabler":
+		if fs.NArg() != 2 || fs.Arg(1) != "pause" && fs.Arg(1) != "resume" && fs.Arg(1) != "arm" {
+			return 2, fmt.Errorf("enabler takes pause, resume or arm: %w", usage)
+		}
+	case command == "decide-restore" || command == "release-stamped":
 	case command == "decide" && verb == "wildcard":
 		if wildcardVerb != "on" && wildcardVerb != "off" && wildcardVerb != "status" {
 			return 2, fmt.Errorf("decide wildcard %q is not on, off or status: %w", wildcardVerb, usage)
@@ -315,9 +383,10 @@ func run(ctx context.Context, args []string, out io.Writer,
 			return 2, fmt.Errorf("%q is not a workspace's id: %w", workspace, usage)
 		}
 	case command != "enable" && command != "disable" && command != "status" && command != "node" && command != "leave" &&
-		command != "closed" && command != "audit":
-		return 2, fmt.Errorf("%q is not enable, disable, status, audit, node, leave, closed, decide, ready, disable-all, "+
-			"decide-off-all or decide-restore", command)
+		command != "closed" && command != "audit" && command != "release":
+		return 2, fmt.Errorf("%q is not enable, disable, release, status, audit, node, leave, closed, decide, ready, "+
+			"enabler, release-stamped, disable-all, release-all, hold-backfill, holds, decide-off-all or decide-restore",
+			command)
 	case fs.NArg() != 2 || workspace == "":
 		return 2, usage
 	case (command == "node" || command == "leave" || command == "closed") && !addressForm.MatchString(workspace):
@@ -340,7 +409,11 @@ func run(ctx context.Context, args []string, out io.Writer,
 		if err != nil {
 			return 1, err
 		}
-		answer = map[string]any{"workspaces_turned_off": off, "revoked_leases": revoked, "at": at}
+		// The kill's row is at, the changed_at of every row it turned off.
+		answer = map[string]any{"workspaces_turned_off": off, "revoked_leases": revoked, "fleet_hold": true,
+			"kill_at": at, "at": at}
+	case "release", "release-all", "enabler", "release-stamped", "hold-backfill", "holds":
+		return holdCommand(ctx, s, command, fs.Arg(1), stamp, *yes, out)
 	case "decide-off-all":
 		off, at, err := s.DecideOffAll(ctx)
 		if err != nil {
@@ -408,7 +481,13 @@ func run(ctx context.Context, args []string, out io.Writer,
 			code = notDone
 		}
 	case "enable", "disable":
-		revoked, at, err := s.SetWorkspace(ctx, workspace, command == "enable")
+		// disable holds the workspace, an operator's stop; enable removes
+		// its hold.
+		var reason store.Reason
+		if command == "disable" {
+			reason = store.Reason{Kind: store.HoldOperator}
+		}
+		revoked, at, err := s.SetWorkspace(ctx, workspace, command == "enable", reason)
 		if err != nil {
 			return 1, err
 		}

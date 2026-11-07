@@ -1674,7 +1674,7 @@ func TestTheSwitchTurnsANodeOffAndOn(t *testing.T) {
 	}
 	staysOff("never enabled")
 
-	if _, _, err := s.SetWorkspace(ctx, ws, true); err != nil {
+	if _, _, err := s.SetWorkspace(ctx, ws, true, store.Reason{}); err != nil {
 		t.Fatal(err)
 	}
 	var admitted frontdoor.Authorized
@@ -1696,7 +1696,7 @@ func TestTheSwitchTurnsANodeOffAndOn(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, _, err := s.SetWorkspace(ctx, ws, false); err != nil {
+	if _, _, err := s.SetWorkspace(ctx, ws, false, store.Reason{Kind: store.HoldOperator}); err != nil {
 		t.Fatal(err)
 	}
 	off := time.Now()

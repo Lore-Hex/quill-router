@@ -439,3 +439,36 @@ CREATE TABLE tr_fastpath_edge_decide (
   decide BOOL NOT NULL,
   changed_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true),
 ) PRIMARY KEY (workspace_id, cloud, region);
+
+-- Holds (docs/design/fast-admission-widening.md, section 5.6): whom the
+-- enabler must not turn on, and whether it may write at all. A workspace's
+-- row is written with the switch by every stop but the enabler's
+-- (Store.SetWorkspace off, with its caller's reason: operator or watch),
+-- by fastpathctl hold-backfill (backfill) and by enabler resume's backfill
+-- since the pause (paused); enable and release remove it. Three rows are
+-- no workspace's, since a workspace's id begins with a letter or digit:
+-- '*', the fleet hold disable-all writes (kill), which release-all
+-- removes; '#pause', enabler pause's (pause), which only enabler resume
+-- removes; and '#armed', enabler arm's (armed), which nothing removes.
+-- held_at is the commit timestamp of the write that held, the switch's
+-- clock. Nothing reads it yet but fastpathctl.
+CREATE TABLE tr_fastpath_workspace_hold (
+  workspace_id STRING(64) NOT NULL,
+  reason STRING(16) NOT NULL,
+  -- What the stop said of itself: a watch's tripped ceilings.
+  detail STRING(MAX),
+  held_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true),
+  CONSTRAINT tr_fastpath_workspace_hold_reason CHECK (reason IN ('operator', 'watch', 'backfill', 'paused',
+  'kill', 'pause', 'armed')),
+  CONSTRAINT tr_fastpath_workspace_hold_rows CHECK ((workspace_id = '*') = (reason = 'kill')
+  AND (workspace_id = '#pause') = (reason = 'pause') AND (workspace_id = '#armed') = (reason = 'armed')),
+) PRIMARY KEY (workspace_id);
+
+-- A row per fastpathctl disable-all made while the fleet hold stands, its
+-- key the kill's commit timestamp, which is also the changed_at of every
+-- switch row that kill turned off (section 5.6); release-all removes them
+-- all with the fleet hold. enabler resume reads them to leave exactly the
+-- rows a kill stopped to that kill.
+CREATE TABLE tr_fastpath_kill (
+  kill_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true),
+) PRIMARY KEY (kill_at);

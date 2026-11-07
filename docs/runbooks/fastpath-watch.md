@@ -87,7 +87,10 @@ nothing, and a watch with none is refused. The watch exits:
 
 - 3 once it has stopped the stage, printing why as JSON with whether the
   load generator exited and how many of the workspace's leases were
-  revoked;
+  revoked; the workspace is held, reason `watch`, with the ceilings that
+  tripped, so the enabler leaves it off once the watch has exited
+  (`docs/design/fast-admission-widening.md` §5.6; `fastpathctl release
+  WS` or `enable WS` undoes the hold);
 - 0 if it was itself stopped first, having stopped nothing;
 - 1 if it cannot watch, or cannot turn the workspace off, which then needs
   `fastpathctl disable WS` by hand;

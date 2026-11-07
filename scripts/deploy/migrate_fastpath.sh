@@ -15,7 +15,12 @@
 # tables are new and empty: nothing reads or writes them until a fast path
 # node runs, and none admits for a workspace the switch, tr_fastpath_workspace,
 # does not enable, which none is. tr_fastpath_edge_decide, empty, has no
-# workspace decide at the edge.
+# workspace decide at the edge. tr_fastpath_workspace_hold and
+# tr_fastpath_kill, empty, hold nobody: only the enabler reads them, which
+# writes nothing until an operator arms it
+# (docs/design/fast-admission-widening.md, section 5.6). The holds that
+# rows disabled before them need are data, not schema: fastpathctl
+# hold-backfill writes them, an operator's step, never this job's.
 #
 # A check that cannot read the schema fails the run, rather than being taken
 # for an object that is not there.
@@ -23,7 +28,7 @@
 # Each statement is its own schema update, as in the other migrations: the
 # conformance extractor (tests/conformance/spanner_schema_source.py) reads
 # one statement per dispatch. So on the first run each index is added to a
-# table made by an earlier update: eighteen updates, each waited on, and six
+# table made by an earlier update: twenty updates, each waited on, and six
 # of them index builds, which add schema versions Spanner keeps and throttles
 # on, and whose version changes can abort a transaction in flight, which its
 # client retries. The tables are empty and nothing reads or writes them yet.
@@ -369,5 +374,29 @@ else
     changed_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true),
     ) PRIMARY KEY (workspace_id, cloud, region)"
   log "tr_fastpath_edge_decide: created"
+fi
+if table_exists tr_fastpath_workspace_hold; then
+  log "tr_fastpath_workspace_hold: already present"
+else
+  apply_ddl "CREATE TABLE tr_fastpath_workspace_hold (
+    workspace_id STRING(64) NOT NULL,
+    reason STRING(16) NOT NULL,
+    detail STRING(MAX),
+    held_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true),
+    CONSTRAINT tr_fastpath_workspace_hold_reason CHECK (reason IN ('operator', 'watch', 'backfill', 'paused',
+    'kill', 'pause', 'armed')),
+    CONSTRAINT tr_fastpath_workspace_hold_rows CHECK ((workspace_id = '*') = (reason = 'kill')
+    AND (workspace_id = '#pause') = (reason = 'pause') AND (workspace_id = '#armed') = (reason = 'armed')),
+    ) PRIMARY KEY (workspace_id)"
+  log "tr_fastpath_workspace_hold: created"
+fi
+
+if table_exists tr_fastpath_kill; then
+  log "tr_fastpath_kill: already present"
+else
+  apply_ddl "CREATE TABLE tr_fastpath_kill (
+    kill_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true),
+    ) PRIMARY KEY (kill_at)"
+  log "tr_fastpath_kill: created"
 fi
 log "done"

@@ -108,7 +108,7 @@ func TestTheSwitchLeavesDecideRowsAlone(t *testing.T) {
 	s := spikeStore(t)
 	ctx := context.Background()
 	ws := unswitched(t, 100)
-	if _, _, err := s.SetWorkspace(ctx, ws, true); err != nil {
+	if _, _, err := s.SetWorkspace(ctx, ws, true, Reason{}); err != nil {
 		t.Fatal(err)
 	}
 	if got := decideRows(t, s, ws); len(got) != 0 {
@@ -117,7 +117,7 @@ func TestTheSwitchLeavesDecideRowsAlone(t *testing.T) {
 	if _, err := s.SetDecide(ctx, ws, "gcp", "us-central1", true); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.SetWorkspace(ctx, ws, false); err != nil {
+	if _, _, err := s.SetWorkspace(ctx, ws, false, Reason{Kind: HoldOperator}); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := strings.Join(decideRows(t, s, ws), " "), "gcp/us-central1=on"; got != want {

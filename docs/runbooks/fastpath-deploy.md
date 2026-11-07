@@ -541,3 +541,132 @@ pinned release" does:
    the control plane's below Python's increment 3. To go further back, turn
    the streams settings off and wait out a hold's life (2 h 20 min) plus
    the grace plus the drain's overdue allowance first.
+
+## Holds: the backfill, the arm, the pause and rolling back below them
+
+`docs/design/fast-admission-widening.md` §5.6 (PR 4). The enabler (PR 6)
+must never turn on a workspace someone stopped, so every stop but its own
+holds what it stops, in `tr_fastpath_workspace_hold`, in the switch's
+transaction, and the enabler reads the holds before each write. Until PR 6
+is deployed nothing reads them, and every command below is safe to run.
+
+What writes and removes them:
+
+| Command | Writes | Removes |
+|---|---|---|
+| `fastpathctl disable WS` | WS's hold, reason `operator` | |
+| a `fastpathwatch` trip | the stage workspace's hold, reason `watch`, with the ceilings that tripped as its `detail` | |
+| `fastpathctl disable-all` | the fleet hold `*` (kept if there) and a `tr_fastpath_kill` row whose time is its printed `at`, the `changed_at` of every row it turned off | |
+| `fastpathctl hold-backfill` | a hold, reason `backfill`, for every row off with none | |
+| `fastpathctl enabler pause` | `#pause`, at its commit (insert only: a second pause keeps the first's time) | |
+| `fastpathctl enabler arm` | `#armed` | |
+| `fastpathctl enabler resume` | a hold, reason `paused`, for every row off since the pause with none, but a kill's | `#pause` |
+| `fastpathctl enable WS` | | WS's hold |
+| `fastpathctl release WS` | | WS's hold, leaving it off |
+| `fastpathctl release-stamped TS -yes` | | the `paused` holds of rows whose `changed_at` is TS |
+| `fastpathctl release-all` | | `*` and every kill row |
+
+Nothing removes `#armed`. `enable` and `release` take a workspace's id
+alone, so never `*`, `#pause` or `#armed`. `fastpathctl holds` reads it
+all, read only: the three rows, the kills, the holds by reason, the rows
+enabled with a hold of their own, and `unheld_disabled`, every row off
+with no hold of its own, `under_kill` when its `changed_at` is a kill's
+and `other` when not; it exits 0 when there is no such row and 3 while
+there is. Every refusal below (exit 2) prints its answer first and writes
+nothing.
+
+### Before WS1, and at WS2's entry
+
+The migration job (`scripts/deploy/migrate_fastpath.sh`) creates the two
+tables, empty; the holds rows disabled before PR 4 need are data, which
+the job never writes. So, from a node, once the job has run:
+
+1. Before WS1: `fastpathctl -database $DB hold-backfill`, then
+   `fastpathctl -database $DB holds`, which must exit 0. A row disabled by
+   an older `disable` (the P1 runbook's "Way back" is one) is now held,
+   reason `backfill`, so the include list's exemption from the rank cannot
+   bring it back.
+2. WS2's entry, in this order:
+   1. Every node's release, and so every `fastpathctl` and `fastpathwatch`
+      in use, carries PR 4, checked as "Taking a pinned release" says
+      (they reach operators only through the release bucket). An older
+      `disable`, `disable-all` or watch trip writes no hold, and the
+      enabler would turn those workspaces on again.
+   2. `hold-backfill` again: it holds any stop an older node made since
+      WS1's run, and is idempotent.
+   3. A dry-run report of the enabler's (PR 6) taken after it with
+      `unheld_disabled` zero, and `fastpathctl holds` exiting 0, which
+      reads the same count.
+   4. `fastpathctl -database $DB enabler arm`, which checks the same
+      itself, in one transaction with its insert: exit 0 once armed (and
+      again, `already`), exit 2 listing every row off with no hold of its
+      own. Hold each (`hold-backfill`, or `disable`) and arm again.
+
+After the arm `hold-backfill` refuses (exit 2): rows off with no hold then
+include the enabler's own disables (balance, debt, latch, rank), which it
+would wrongly hold. To hand a stopped workspace back to the enabler, use
+`fastpathctl release WS`: the hold goes, and the next run turns it on if
+it is eligible.
+
+### Pausing
+
+`fastpathctl enabler pause` stops every enabler write and leaves the
+allow-list as it is: the way to stop the enabler without a kill or a
+deploy. Under the pause, `release`, `release-all` and `release-stamped
+-yes` refuse (exit 2, "resume first"): a row released in the pause would
+be held again by resume's backfill, and kill rows released before the
+resume would leave it nothing to tell a kill's rows by.
+
+`fastpathctl enabler resume` removes the pause only in the same
+transaction as its backfill. It exits:
+
+- 0, printing its window `[from, until)`, from the pause to its own commit,
+  `held` (with `held_workspaces`), `under_kill` and `already_held`. Every
+  row it held, reason `paused`, is a stop made during the pause that wrote
+  no hold. Read this output, not the report's fleet-wide `other`, which
+  also counts the enabler's own disables from before the pause.
+- 2 while any row is enabled with a hold of its own, which it lists in
+  `enabled_and_held`: an older `enable` leaves one, which the enabler
+  would read as held and turn off. Resolve each with PR 4's `enable`
+  (clears the hold) or `disable` (keeps it), then resume.
+- 3 when there is no pause.
+
+### Rolling back below PR 4
+
+1. Before any node or `fastpathctl` goes back to a release without PR 4,
+   while PR 4's binary is still in hand: `fastpathctl -database $DB
+   enabler pause`. Setting the enabler's mode to `off` is not enough: it
+   leaves no time to backfill from.
+2. The enabler stays paused until every node is on PR 4 again. Meanwhile
+   operators use the older binary's `enable` and `disable`, which neither
+   read nor write holds, and the way back from a kill during the rollback
+   is the older `enable` for each workspace to bring back.
+3. Once every node is on PR 4 again: `enabler resume`, resolving any row
+   it lists (above).
+4. If a kill was made in the pause:
+   - **By PR 4's `disable-all`** (`*` and a kill row exist; `holds` shows
+     them): resume left its rows to the kill (`under_kill`). Before
+     `release-all`, `disable` with PR 4, which holds, every kill-stopped
+     row that should stay off; then `release-all`, after which the
+     enabler's next run turns on every kill-stopped row still off that is
+     eligible and unheld. A row an operator stopped before the kill, in
+     the pause, keeps its own `changed_at` and was held by resume, so it
+     stays off.
+   - **By an older `disable-all`**: no `*` and no kill row, so resume held
+     its rows one by one, reason `paused`, and they stay off through
+     `release-all`. To bring them all back, with TS the older
+     `disable-all`'s printed `at`:
+
+     ```bash
+     /opt/fastpath/fastpathctl -database $DB release-stamped TS
+     /opt/fastpath/fastpathctl -database $DB release-stamped TS -yes
+     ```
+
+     The first prints `holds`, `workspaces` and `workspace_ids` and writes
+     nothing; the second releases exactly those (exit 3 when there are
+     none). A hold of any other reason, or on a row of another stamp,
+     stays. One at a time, `release WS` or `enable WS`.
+5. Under a pause the order is always `enabler resume`, then `release-all`.
+
+The hold tables are schema and stay through a rollback; an older binary
+does not read or write them.

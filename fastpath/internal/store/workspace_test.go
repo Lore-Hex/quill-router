@@ -46,7 +46,7 @@ func TestAGrantNeedsItsWorkspaceEnabled(t *testing.T) {
 	before := readRows(t, ws)
 	for _, step := range []string{"no row", "off"} {
 		if step == "off" {
-			if _, _, err := s.SetWorkspace(ctx, ws, false); err != nil {
+			if _, _, err := s.SetWorkspace(ctx, ws, false, Reason{Kind: HoldOperator}); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -58,7 +58,7 @@ func TestAGrantNeedsItsWorkspaceEnabled(t *testing.T) {
 			t.Fatalf("%s: a refused grant wrote: rows %+v, then %+v, %d leases", step, before, after, leasesOf(t, ws))
 		}
 	}
-	if _, _, err := s.SetWorkspace(ctx, ws, true); err != nil {
+	if _, _, err := s.SetWorkspace(ctx, ws, true, Reason{}); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := s.Grant(ctx, grantOf(ws, 10)); err != nil || got.Refused != "" {
@@ -105,7 +105,7 @@ func TestTurningAWorkspaceOffRevokesItsOpenLeases(t *testing.T) {
 	}
 	retried("with the workspace on")
 	other := grant()
-	revoked, _, err := s.SetWorkspace(ctx, ws, false)
+	revoked, _, err := s.SetWorkspace(ctx, ws, false, Reason{Kind: HoldOperator})
 	if err != nil || revoked != 2 {
 		t.Fatalf("turning the workspace off revoked %d leases, %v; want its 2 open ones", revoked, err)
 	}
@@ -133,7 +133,7 @@ func TestTurningAWorkspaceOffRevokesItsOpenLeases(t *testing.T) {
 	if got, err := s.Grant(ctx, grantOf(ws, 10)); err != nil || got.Refused != RefusedNotEnabled {
 		t.Fatalf("a grant for the workspace turned off: %+v %v", got, err)
 	}
-	if revoked, _, err := s.SetWorkspace(ctx, ws, true); err != nil || revoked != 0 {
+	if revoked, _, err := s.SetWorkspace(ctx, ws, true, Reason{}); err != nil || revoked != 0 {
 		t.Fatalf("turning the workspace on: revoked %d, %v", revoked, err)
 	}
 	if l := readLease(t, s, open); !l.Revoked {
@@ -208,7 +208,11 @@ func TestEnabledWorkspacesReadsTheSwitch(t *testing.T) {
 		ws      string
 		enabled bool
 	}{{on, true}, {off, true}, {off, false}} {
-		if _, _, err := s.SetWorkspace(ctx, w.ws, w.enabled); err != nil {
+		var reason Reason
+		if !w.enabled {
+			reason = Reason{Kind: HoldOperator}
+		}
+		if _, _, err := s.SetWorkspace(ctx, w.ws, w.enabled, reason); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -272,7 +276,7 @@ func TestAWorkspaceTurnedOffIsDoneOnlyOnceNothingIsLeft(t *testing.T) {
 	}
 	ref := LeaseRef{ws, req.LeaseID}
 	status("granted", WorkspaceStatus{Enabled: true, Open: 1, LeaseReserved: 10, CreditReserved: 10}, false)
-	if _, _, err := s.SetWorkspace(ctx, ws, false); err != nil {
+	if _, _, err := s.SetWorkspace(ctx, ws, false, Reason{Kind: HoldOperator}); err != nil {
 		t.Fatal(err)
 	}
 	status("off", WorkspaceStatus{Open: 1, Revoked: 1, LeaseReserved: 10, CreditReserved: 10}, false)
@@ -387,7 +391,7 @@ func TestFleetDueReadsTheSwitchNotTheLeases(t *testing.T) {
 	grant(offLong)
 	// closed is turned off now, so it is due by its change alone; offLong
 	// was turned off thirty hours ago, its open lease left as it was.
-	if _, _, err := s.SetWorkspace(ctx, closed, false); err != nil {
+	if _, _, err := s.SetWorkspace(ctx, closed, false, Reason{Kind: HoldOperator}); err != nil {
 		t.Fatal(err)
 	}
 	longAgo := time.Now().Add(-30 * time.Hour).UTC()
