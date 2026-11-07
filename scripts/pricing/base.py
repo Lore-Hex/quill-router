@@ -457,6 +457,53 @@ def safe_exception_summary(exc: Exception) -> str:
     return " ".join(details)
 
 
+_SECRET_ENV_NAME = re.compile(r"(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTH)", re.IGNORECASE)
+_URL_IN_TEXT = re.compile(r"[a-z][a-z0-9+.-]*://[^\s'\"<>]+", re.IGNORECASE)
+_SECRET_PATTERNS = (
+    re.compile(r"\b(bearer|basic)\s+\S+", re.IGNORECASE),
+    re.compile(
+        r"\b(api[_-]?key|access[_-]?token|token|secret|password|passwd|signature|sig|"
+        r"authorization|x-goog-api-key|credential)s?\b\s*[=:]\s*['\"]?[^\s'\",;&]+",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\b(?:sk|pk|rk|ak|key|tok|ghp|gho|xox[abp])[-_][A-Za-z0-9_\-]{12,}"),
+    re.compile(r"\b[A-Za-z0-9+/=_\-]{40,}"),
+)
+SAFE_MESSAGE_LIMIT = 300
+
+
+def safe_exception_message(exc: BaseException) -> str | None:
+    """The text of a self-authored discovery failure, with secrets removed.
+
+    Network exceptions return None: their text can echo request URLs or a
+    provider's response, and safe_exception_summary already gives their
+    status and scrubbed URL. Otherwise the message keeps its diagnosis (an
+    adapter's own "lyceum: invalid token limits") with URL queries and
+    userinfo dropped, the value of every secret-named environment variable,
+    bearer/basic credentials, key=value secrets and long opaque tokens
+    redacted, whitespace collapsed and the result bounded.
+    """
+    current: BaseException | None = exc
+    while current is not None:
+        if getattr(current, "request", None) is not None or getattr(current, "response", None) is not None:
+            return None
+        current = current.__cause__
+    try:
+        text = str(exc)
+    except Exception:  # noqa: BLE001 -- a broken __str__ must not hide the type
+        return None
+    for name, value in os.environ.items():
+        if len(value) >= 6 and _SECRET_ENV_NAME.search(name):
+            text = text.replace(value, "[redacted]")
+    text = _URL_IN_TEXT.sub(lambda match: _safe_log_url(match.group(0)), text)
+    for pattern in _SECRET_PATTERNS:
+        text = pattern.sub("[redacted]", text)
+    text = " ".join(text.split())
+    if len(text) > SAFE_MESSAGE_LIMIT:
+        text = text[: SAFE_MESSAGE_LIMIT - 3] + "..."
+    return text or None
+
+
 def _safe_provider_error_category(message: str) -> str | None:
     """Classify self-authored failures without copying their raw text."""
 

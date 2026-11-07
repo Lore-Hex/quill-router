@@ -70,6 +70,36 @@ def test_sonnet_enablement_recovers_access_and_preserves_billable_rates(
         assert _endpoint_cost_microdollars(route, prompt_tokens, 0) == expected
 
 
+def test_claude_tariffs_come_from_the_partner_models_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Google moved partner-model pricing to its own page; the Gemini page no
+    # longer has a Claude table, which held every Vertex refresh with
+    # "vertex Claude: no complete global token prices" from 2026-10-26.
+    model_id, native_id = "anthropic/claude-sonnet-4.6", "claude-sonnet-4-6"
+    manifest = tmp_path / "google-vertex.json"
+    manifest.write_text(json.dumps({"provider": "google-vertex", "models": []}))
+    monkeypatch.setattr(vertex, "MANIFEST_PATH", manifest)
+    monkeypatch.setattr(vertex, "_authorization", lambda: ({}, "project"))
+    monkeypatch.setattr(vertex, "_live_model_ids", lambda headers: set())
+    monkeypatch.setattr(vertex, "_live_claude_rows", lambda headers: {
+        model_id: {"id": model_id, "upstream_id": native_id},
+    })
+    monkeypatch.setattr(vertex, "_metadata", lambda: {
+        model_id: {"context_length": 1_000_000, "max_output_tokens": 128_000},
+    })
+    pages = {vertex.URL: "<p>See the Partner Models pricing section.</p>",
+             vertex.PARTNER_PRICING_URL: FIXTURE.read_text()}
+    monkeypatch.setattr(vertex, "fetch_html", lambda url: pages[url])
+    monkeypatch.setattr(vertex, "parse", lambda html: {})
+    monkeypatch.setattr(vertex_claude, "probe", lambda headers, project, model: (True, 200))
+    result = vertex.fetch()
+    price = result.prices[model_id]
+    assert (price.prompt_micro_per_m, price.completion_micro_per_m) == (3_000_000, 15_000_000)
+    with pytest.raises(ValueError, match="no complete global token prices"):
+        vertex_claude.parse(pages[vertex.URL])
+
+
 @pytest.mark.parametrize("reason,priced", [
     ("vertex-metadata-unavailable", True),
     ("vertex-price-context-incomplete", False),
