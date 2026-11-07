@@ -37,6 +37,10 @@ source "${SCRIPT_DIR}/_lib.sh"
 source "${SCRIPT_DIR}/deploy_mutex.sh"
 # shellcheck source=scripts/deploy/_cloud_run_revision_probe.sh
 source "${SCRIPT_DIR}/_cloud_run_revision_probe.sh"
+# The fast path's workspace lists (TR_FASTPATH_PILOT_EXCLUDE), shared with
+# the enabler job's script.
+# shellcheck source=scripts/deploy/fastpath_lists.sh
+source "${SCRIPT_DIR}/fastpath_lists.sh"
 
 WARM_PROBE_TAG="staged-probe"
 WARM_PROBE_REGIONS=()
@@ -711,6 +715,14 @@ ENV_VARS=(
   # TR_FASTPATH_PILOT_ENABLED=false.
   "TR_FASTPATH_PILOT_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d,84cbb802-e054-486a-9226-e3cda4a799fb,8b682b96-d8ef-4631-b0ee-bbf41816f1f8"
   "TR_FASTPATH_PILOT_ENABLED=true"
+  # All mode (docs/design/fast-admission-widening.md sections 9 and 11, PR
+  # 5): every workspace the switch enables but the exclude list, instead of
+  # the list above, which must then be empty. A literal, so no revision
+  # inherits it; false is the way back. It moves at WS2 only, once every
+  # node is pinned on PR 3 with no cache.policy rise. The exclude list lives
+  # in fastpath_lists.sh, shared with the enabler job.
+  "TR_FASTPATH_PILOT_ALL=false"
+  "TR_FASTPATH_PILOT_EXCLUDE=${TR_FASTPATH_PILOT_EXCLUDE}"
   # Which keys with spend windows the pilot covers, here and on the edge
   # through the edge policy (docs/design/fast-admission-e2-key-windows.md
   # section 5): off, alert, enforce. Off until Go reads the policy member and

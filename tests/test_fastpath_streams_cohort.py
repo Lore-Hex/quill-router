@@ -28,7 +28,8 @@ T0 = 1_792_368_000
 OK = {"streams_enabled": True, "stage_d_reason": "ok", "heartbeat_declared": True, "snapshot_booking": True,
       "hold_is_ceiling": True}
 COHORT = {"enabled": True, "workspace_id": WORKSPACE, "pilot_workspace_ids": frozenset({WORKSPACE}),
-          "region": "us-central1", "pilot_region_ids": frozenset({"us-central1"}), "standard_endpoint_pricing": True,
+          "region": "us-central1", "pilot_region_ids": frozenset({"us-central1"}), "federated": False,
+          "async_shadow": False, "monitor_key": False, "standard_endpoint_pricing": True,
           "credit_funded": True, "boot_verified": True, "service_tier": None, "key_capped": False,
           "budget_strict": False, "app_markup": False, "records_durable": True}
 
@@ -91,8 +92,8 @@ def _admission(monkeypatch: pytest.MonkeyPatch, settings: Settings, **stream: An
     gateway._fastpath_admission(
         settings, workspace_id=WORKSPACE, authorization_id="gwa-s", estimate=300, stream=True,
         standard_endpoint_pricing=True, credit_funded=True, boot_verified=True, boot_kid="boot-pilot",
-        service_tier=None, key_capped=False, budget_strict=False, app_markup=False, records_durable=True,
-        **stream,
+        service_tier=None, federated=False, monitor_key=False, key_capped=False, budget_strict=False,
+        app_markup=False, records_durable=True, **stream,
     )
     return client
 

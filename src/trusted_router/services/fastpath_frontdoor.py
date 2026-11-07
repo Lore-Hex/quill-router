@@ -194,6 +194,101 @@ class SpannerFrontDoors:
             return found
 
 
+# The switch's enabled rows, as each node's switch copy reads them
+# (store.EnabledWorkspaces), for all mode's per-process copy.
+FAST_PATH_ENABLED_WORKSPACES = (
+    "/* fastpath_enabled_workspaces */ SELECT workspace_id FROM tr_fastpath_workspace WHERE enabled"
+)
+ENABLED_COPY_INTERVAL_SECONDS = 5.0
+ENABLED_COPY_MAX_AGE_SECONDS = 15.0
+ENABLED_COPY_READ_TIMEOUT_SECONDS = 2.0
+
+
+class EnabledWorkspaceCopy:
+    """All mode's copy of the switch (docs/design/fast-admission-widening.md
+    section 11, PR 5): the enabled rows of tr_fastpath_workspace, read whole
+    every ENABLED_COPY_INTERVAL_SECONDS by a daemon thread, so a request only
+    looks a workspace up. Its age runs from the start of the read that
+    produced it; past ENABLED_COPY_MAX_AGE_SECONDS it enables nobody, and the
+    request takes today's path without a front door call. A read that fails
+    keeps the last rows, ageing, and is logged.
+
+    Built and started only in all mode, in a process whose serving region is
+    a pilot region (gateway._fastpath_switch_copy): anywhere else nothing
+    reads the table."""
+
+    def __init__(
+        self, read: Callable[[], frozenset[str]], *, clock: Callable[[], float] = time.monotonic,
+        interval_seconds: float = ENABLED_COPY_INTERVAL_SECONDS,
+        max_age_seconds: float = ENABLED_COPY_MAX_AGE_SECONDS,
+    ) -> None:
+        self._read = read
+        self._clock = clock
+        self._interval = interval_seconds
+        self._max_age = max_age_seconds
+        self._lock = threading.Lock()
+        self._enabled: frozenset[str] = frozenset()
+        self._read_at = float("-inf")
+        self._thread: threading.Thread | None = None
+        self.reads = 0
+        self.failures = 0
+
+    def refresh(self) -> bool:
+        """One read; True when it replaced the rows."""
+        started = self._clock()
+        self.reads += 1
+        try:
+            enabled = self._read()
+        except Exception as exc:  # noqa: BLE001 - a failed read ages the copy; the request goes on
+            self.failures += 1
+            logger.warning("fastpath enabled copy: read failed (%s); keeping %d rows", type(exc).__name__,
+                           len(self._enabled))
+            return False
+        with self._lock:
+            if started >= self._read_at:
+                self._enabled, self._read_at = enabled, started
+        return True
+
+    def enables(self, workspace_id: str) -> bool:
+        """Whether the switch enables the workspace, by a fresh copy."""
+        with self._lock:
+            enabled, read_at = self._enabled, self._read_at
+        return self._clock() - read_at <= self._max_age and workspace_id in enabled
+
+    def lists(self, workspace_id: str) -> bool:
+        """Whether the copy's last rows enable the workspace, however old:
+        the pass-over log's test, so a stale copy still names the enabled
+        workspaces it turns away."""
+        with self._lock:
+            return workspace_id in self._enabled
+
+    def start(self) -> None:
+        """Start the reading thread, once."""
+        with self._lock:
+            if self._thread is not None:
+                return
+            self._thread = threading.Thread(target=self._run, name="fastpath-enabled-copy", daemon=True)
+            self._thread.start()
+
+    def _run(self) -> None:
+        while True:
+            started = self._clock()
+            self.refresh()
+            time.sleep(max(0.0, self._interval - (self._clock() - started)))
+
+
+def spanner_enabled_workspaces(database: Any) -> Callable[[], frozenset[str]]:
+    """The copy's read over the store's Spanner database: one strong
+    single-use read of the enabled rows, within its own timeout."""
+
+    def read() -> frozenset[str]:
+        with database.snapshot() as snap:
+            rows = snap.execute_sql(FAST_PATH_ENABLED_WORKSPACES, timeout=ENABLED_COPY_READ_TIMEOUT_SECONDS)
+            return frozenset(str(row[0]) for row in rows)
+
+    return read
+
+
 class FrontDoorClient:
     """Calls the front doors in turn, with one breaker per address.
 
@@ -596,6 +691,18 @@ def pilot_stream_reason(
     return None
 
 
+def fastpath_covers(
+    *, pilot_all: bool, pilot_workspace_ids: frozenset[str], pilot_exclude_ids: frozenset[str], workspace_id: str,
+) -> bool:
+    """Whether the pilot's policy covers the workspace
+    (docs/design/fast-admission-widening.md section 9): in all mode, not on
+    the exclude list; otherwise in the explicit set. The edge's
+    EdgePolicy.Covers reads the same two members."""
+    if pilot_all:
+        return workspace_id not in pilot_exclude_ids
+    return workspace_id in pilot_workspace_ids
+
+
 def pilot_reason(
     *,
     enabled: bool,
@@ -617,6 +724,15 @@ def pilot_reason(
     heartbeat_declared: bool = False,
     snapshot_booking: bool = False,
     hold_is_ceiling: bool = False,
+    pilot_all: bool = False,
+    pilot_exclude_ids: frozenset[str] = frozenset(),
+    switch_enabled: bool = False,
+    # Defaults only for the frozen gateway copy of
+    # tests/test_authorize_candidates_differential.py, which predates them;
+    # the live route always passes all three.
+    federated: bool = False,
+    async_shadow: bool = False,
+    monitor_key: bool = False,
 ) -> str | None:
     """Why an authorize stays on today's path, or None when the pilot takes
     it. The cohort is the design's §4.11 at its narrowest: a credit-funded
@@ -627,13 +743,35 @@ def pilot_reason(
     reason is ``stream``. An idempotency key does not exclude a request (the enclave sends
     one on every authorize; docs/design/fast-admission-pilot.md), and neither
     does its idempotency_key_source. A speculation descriptor never reaches
-    an authorize body (it has a route of its own)."""
+    an authorize body (it has a route of its own).
+
+    A pilot workspace is one ``fastpath_covers`` names: the explicit set, or
+    in all mode (``pilot_all``) every workspace but ``pilot_exclude_ids``,
+    and then only one the switch enables (``switch_enabled``, this process's
+    fresh copy of the enabled rows; a stale copy enables nobody), so an
+    unenabled workspace costs no front door call. Both are ``workspace``.
+
+    Three reasons match the edge's (docs/design/fast-admission-widening.md
+    section 4(c)): ``federated``, a federated (deferred-settlement) key or
+    workspace (the edge's ``key.federated`` and ``workspace.federated``);
+    ``async_shadow``, a workspace in ``async_settle_shadow_workspaces``
+    (``policy.async_settle_shadow``); ``monitor_key``, the synthetic
+    monitor's key (``policy.monitor_key``)."""
     if not enabled:
         return "disabled"
-    if workspace_id not in pilot_workspace_ids:
+    if not fastpath_covers(pilot_all=pilot_all, pilot_workspace_ids=pilot_workspace_ids,
+                           pilot_exclude_ids=pilot_exclude_ids, workspace_id=workspace_id):
         return "workspace"
     if region not in pilot_region_ids:
         return "region"
+    if pilot_all and not switch_enabled:
+        return "workspace"
+    if federated:
+        return "federated"
+    if async_shadow:
+        return "async_shadow"
+    if monitor_key:
+        return "monitor_key"
     if stream and pilot_stream_reason(
         streams_enabled=streams_enabled,
         stage_d_reason=stage_d_reason,

@@ -1,6 +1,7 @@
 # Widening the fast path to every eligible workspace
 
-Status: decided, nothing built. This is the short note the production
+Status: decided; PRs 1 to 4 merged (#2354, #2356, #2359, #2385) and PR 5
+built, all dark (§11). This is the short note the production
 rollout asks for before §8 step 9 of
 [`fast-admission-and-batched-settlement.md`](fast-admission-and-batched-settlement.md)
 (`fast-admission-production-rollout.md`, "P2 onward"): what widening
@@ -241,9 +242,12 @@ the workspace is never in `tr_fastpath_workspace`; "grant" is a
 | Held workspaces | enabler, in each enable's transaction (§5.6) | |
 | Streams the enclave does not heartbeat, idempotency keys over the edge's bounds, speculation descriptors | request, unchanged | §4.11 |
 
-Until PR 5 lands, Python relies on the enabler and W1 alone for the
-federated, async-shadow and monitor-key rows. All mode waits for PR 5, so
-it never does so under all mode.
+Before PR 5, Python relied on the enabler and W1 alone for the
+federated, async-shadow and monitor-key rows. PR 5 adds `federated`,
+`async_shadow` and `monitor_key` to `pilot_reason`, read from the same
+facts the edge reads (the key's and the workspace's `federated_home`, the
+published `async_settle_shadow_workspaces`, the request's lookup hash
+against `monitor_lookup_hash`), so all mode never relies on them.
 
 ### (d) The enabler job
 
@@ -999,10 +1003,10 @@ is every covered workspace, unbounded.
   (`services/x402_billing.py`), not a key class; only federated keys defer
   settlement (`_deferred_settlement_applies` in `gateway.py`). (c) decides
   x402-funded credits are credits.
-- **Python's pilot has no federated, async-shadow or monitor-key gate.**
+- **Python's pilot had no federated, async-shadow or monitor-key gate.**
   The edge has `key.federated`, `workspace.federated`,
   `policy.async_settle_shadow` and `policy.monitor_key`; `pilot_reason`
-  has none of them, so under the explicit list only the list itself keeps
+  had none of them, so under the explicit list only the list itself kept
   those workspaces out. PR 5 adds them before all mode.
 - **The async exclusion's bound assumes a list.** G15 §4.5 bounds
   `admission_excluded_workspaces` by "the fast-path set's own cap of 32",
@@ -1177,6 +1181,23 @@ step.
    regenerated `edge_policy_admission_v1.json` with all-mode rows that PR
    3's `TestTheAsyncAdmissionVectors` passes; the test holding `rollout.sh`
    and the job's script to `fastpath_lists.sh`.
+   **Built** (dark): `Settings.fastpath_pilot_all`, `fastpath_pilot_exclude`
+   and `validate_fastpath_pilot_all`; `fastpath_covers`,
+   `async_settle_fastpath_excludes` and `EnabledWorkspaceCopy`
+   (`services/fastpath_frontdoor.py`, built and started by
+   `gateway._fastpath_switch_copy`); `scripts/deploy/fastpath_lists.sh`
+   with `TR_FASTPATH_PILOT_EXCLUDE` empty, held by
+   `tests/test_fastpath_lists.py`, which PR 6 extends to the job's script;
+   tests in `tests/test_fastpath_pilot_all.py`. Python's reasons are
+   `federated`, `async_shadow` and `monitor_key`. In all mode a workspace
+   the copy does not enable, or a stale copy, is `workspace`, the
+   explicit list's reason, so WS2's gate reads one reason; its pass-over
+   line is written only for a covered workspace the copy's last rows
+   enable, however old. The second validator of §9 applies whether
+   async admission is on or off, so turning admission on later moves no
+   workspace either. The authorize vectors record Python's answer
+   unleased for `key.federated`, `workspace.federated`,
+   `policy.async_settle_shadow` and `policy.monitor_key`.
 6. **The enabler.** `src/trusted_router/fastpath_enabler.py`, its CLI,
    `scripts/deploy/fastpath_enabler_job.sh` (job, schedule, its own
    environment, sourcing `fastpath_lists.sh`) and its step in `deploy.yml`;

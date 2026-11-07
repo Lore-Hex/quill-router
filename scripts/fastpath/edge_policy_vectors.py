@@ -18,13 +18,14 @@ to fastpath/testdata/edge_policy_admission_v1.json: bodies the publisher
 writes from each combination of admission, the async pilot set, the
 fast-path overlap list and the fast-path set, each with Python's own
 admission answer per workspace, which Go's AsyncSettle.Admits must give, and
-the members' other spellings, refused by both readers, and the all-mode
-golden files (docs/design/fast-admission-widening.md sections 6.3 and 11,
-PR 3) to fastpath/testdata/edge_policy_all_v1.{body,manifest}.json: the
-same body with fastpath_pilot_all and fastpath_pilot_exclude, the explicit
-list emptied, signed alike. The publisher writes neither member until PR 5,
-so this body is the golden one with the members set through Python's own
-EdgePolicyV1; PR 5 builds it from settings, to the same bytes. Workspace
+the members' other spellings, refused by both readers, with all-mode rows
+(docs/design/fast-admission-widening.md section 9, PR 5): the same
+combinations with the explicit fast-path set empty and every async pilot
+workspace outside the overlap list on the exclude list, as the settings
+require, and the all-mode golden files (sections 6.3 and 11, PR 3) to
+fastpath/testdata/edge_policy_all_v1.{body,manifest}.json: the publisher's
+body from the golden settings in all mode (fastpath_pilot_all and
+fastpath_pilot_exclude, the explicit list emptied), signed alike. Workspace
 ids, digests and the monitor key are synthetic.
 tests/test_edge_policy_publish.py fails when the files are not what this
 script writes now.
@@ -53,7 +54,6 @@ from trusted_router.config import Settings  # noqa: E402
 from trusted_router.edge_policy import (  # noqa: E402
     EdgePolicyV1,
     canonical_edge_policy_bytes,
-    parse_edge_policy,
 )
 from trusted_router.routing_snapshot_signing import (  # noqa: E402
     EdgePolicySigner,
@@ -222,12 +222,30 @@ ADMISSION_REFUSED = (
 ADMISSION_OFF_REFUSED = ("excluded_admission_off", '"admission_excluded_workspaces":["ws-synthetic-pilot-1"]')
 
 
-def admission_settings(admission: bool, pilots: str, overlap: str, fastpath: str) -> Settings:
+def admission_settings(admission: bool, pilots: str, overlap: str, fastpath: str,
+                       exclude: str | None = None) -> Settings:
+    """The admission settings; with ``exclude`` set, all mode (the explicit
+    fast-path set then empty, and the typed Spanner store it requires)."""
+    pilot_all = {} if exclude is None else dict(
+        fastpath_pilot_all=True, fastpath_pilot_exclude=exclude, storage_backend="spanner-clickhouse")
     return fixture_settings(
         async_settle_enabled=admission, async_settle_protection=admission,
         async_settle_pilot_workspaces=pilots, async_settle_fastpath_overlap_workspaces=overlap,
-        fastpath_pilot_workspaces=fastpath,
+        fastpath_pilot_workspaces=fastpath, **pilot_all,
     )
+
+
+def all_mode_exclude(pilots: str, overlap: str) -> str:
+    """The exclude list all mode's settings require for these lists: every
+    async pilot workspace the overlap list does not name."""
+    return ",".join(sorted({ws for ws in pilots.split(",") if ws} - {ws for ws in overlap.split(",") if ws}))
+
+
+def admission_all_mode_combinations() -> list[tuple[bool, str, str]]:
+    """(admission, pilots, overlap) for the all-mode rows: every combination
+    but admission on with no async pilot set, which the settings refuse."""
+    return [(admission, pilots, overlap) for admission in (False, True) for pilots in ADMISSION_PILOTS
+            for overlap in ADMISSION_OVERLAPS if not (admission and not pilots)]
 
 
 def _spliced(settings: Settings, members: str) -> str:
@@ -261,6 +279,21 @@ def admission_cases() -> list[dict[str, object]]:
                         "body": canonical_edge_policy_bytes(policy(settings)).decode("ascii"),
                         "accept": True, "admits": admits,
                     })
+    # All mode: ws-synthetic-neither stands for a workspace the enabler turns
+    # on (covered, on no list), which async admission must leave out.
+    for admission, pilots, overlap in admission_all_mode_combinations():
+        exclude = all_mode_exclude(pilots, overlap)
+        settings = admission_settings(admission, pilots, overlap, "", exclude)
+        admits = {ws: settings.async_settle_admission_enabled and settings.async_settle_pilot_allows(ws)
+                  for ws in ADMISSION_PROBES}
+        cases.append({
+            "name": f"publisher:all:admission={str(admission).lower()}:pilots={pilots or '-'}"
+                    f":overlap={overlap or '-'}:exclude={exclude or '-'}",
+            "settings": {"admission": admission, "pilots": pilots, "overlap": overlap, "fastpath": "",
+                         "exclude": exclude},
+            "body": canonical_edge_policy_bytes(policy(settings)).decode("ascii"),
+            "accept": True, "admits": admits,
+        })
     on = admission_settings(True, "", "", "")
     for name, members in ADMISSION_REFUSED:
         cases.append({"name": f"refused:{name}", "settings": None, "body": _spliced(on, members),
@@ -281,13 +314,19 @@ def render_admission() -> str:
 ALL_EXCLUDE = ("ws-synthetic-excluded-a", "ws-synthetic-excluded-b")
 
 
+def all_mode_settings() -> Settings:
+    """The golden settings in all mode: fastpath_pilot_all on, the exclude
+    list (given unsorted, as an operator may write it), the explicit list
+    emptied and the typed Spanner store, as the settings require."""
+    return fixture_settings(fastpath_pilot_workspaces="", fastpath_pilot_all=True,
+                            fastpath_pilot_exclude=",".join(reversed(ALL_EXCLUDE)),
+                            storage_backend="spanner-clickhouse")
+
+
 def all_policy() -> EdgePolicyV1:
-    """The golden policy in all mode: fastpath_pilot_all true, the exclude
-    list, and the explicit list emptied, as PR 5's validator requires;
-    every other field the golden body's."""
-    decoded = {**json.loads(render_body()), "fastpath_pilot_workspaces": [], "fastpath_pilot_all": True,
-               "fastpath_pilot_exclude": list(ALL_EXCLUDE)}
-    return parse_edge_policy(json.dumps(decoded, sort_keys=True, separators=(",", ":")))
+    """The publisher's policy from the all-mode settings; every other field
+    the golden body's."""
+    return policy(all_mode_settings())
 
 
 def render_all_body() -> bytes:

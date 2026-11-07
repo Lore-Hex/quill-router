@@ -82,7 +82,12 @@ no key cap or window (alert-only windows included), no strict budget, no
 app markup, every candidate priced in credits (a BYOK fallback books no
 credit usage, and a lease would charge it); a workspace in the pilot set;
 a control plane in a pilot region, with the settle outbox and the durable
-activity outbox on (the leased settle writes both in its own commit).
+activity outbox on (the leased settle writes both in its own commit); and,
+as the Go edge has it, no federated (deferred-settlement) key or workspace
+(`federated`), no workspace in `async_settle_shadow_workspaces`
+(`async_shadow`) and not the synthetic monitor's key (`monitor_key`),
+reasons added by the widening's PR 5
+(`docs/design/fast-admission-widening.md` §4(c)).
 An idempotency key does not exclude a request: the enclave sends one on
 every authorize, and a leased authorization replays by its scope exactly
 as today's does: the leased authorize writes a `tr_reservation` row that
@@ -119,6 +124,18 @@ default, in the order they are turned on:
    `fastpathctl -database $DB enable WORKSPACE` (W1). The front door
    answers `off` until it is on.
 3. `TR_FASTPATH_PILOT_ENABLED=true`: the client.
+
+`TR_FASTPATH_PILOT_ALL` (false, a literal in `rollout.sh`) replaces the
+set with every workspace but `TR_FASTPATH_PILOT_EXCLUDE`
+(`scripts/deploy/fastpath_lists.sh`, at most 64), the set then empty
+(`docs/design/fast-admission-widening.md` §§1, 9 and 11, PR 5). In that
+mode each control plane in a pilot region keeps a copy of the switch's
+enabled rows, read every 5 s, and asks the front door only for a
+workspace a copy younger than 15 s enables; any other request is
+`workspace` and takes today's path with no call. It needs the typed
+Spanner store, and every async pilot workspace on the exclude list or
+`TR_ASYNC_SETTLE_FASTPATH_OVERLAP_WORKSPACES`; the process refuses to
+start otherwise. It moves at the widening's WS2 only.
 
 `TR_FASTPATH_PILOT_REGIONS` is `us-central1` and stays so until the fast
 path has nodes elsewhere. `TR_FASTPATH_FRONT_DOOR_TIMEOUT_SECONDS` is the

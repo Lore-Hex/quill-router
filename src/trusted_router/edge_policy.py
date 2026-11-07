@@ -91,7 +91,8 @@ Four fields are optional:
   fields existed, and Go reads absent as the explicit list; ``null`` and
   ``false`` are refused, and the exclude list is present exactly with
   ``fastpath_pilot_all``. Go reads them first (PR 3 of the widening); the
-  publisher writes neither until PR 5.
+  publisher writes them from the settings ``fastpath_pilot_all`` and
+  ``fastpath_pilot_exclude`` (PR 5), only while the first is on.
 """
 
 from __future__ import annotations

@@ -1126,6 +1126,19 @@ class Settings(BaseSettings):
     fastpath_pilot_enabled: bool = False
     fastpath_pilot_workspaces: str = ""
     fastpath_pilot_regions: str = "us-central1"
+    # All mode (docs/design/fast-admission-widening.md sections 1, 9 and 11,
+    # PR 5): the pilot covers every workspace but those on the exclude list,
+    # instead of the explicit list above, which must then be empty. A request
+    # is still leased only for a workspace the switch enables: this process
+    # reads a copy of the enabled rows every 5 s (fastpath_frontdoor
+    # .EnabledWorkspaceCopy), only in all mode and only in a pilot region.
+    # Needs the typed Spanner store, and every async pilot workspace on the
+    # exclude list or the overlap list (validate_fastpath_pilot_all). The
+    # exclude list (comma-separated, at most 64) is read in either mode but
+    # published, and acted on by the pilot, only in all mode; rollout.sh
+    # takes it from scripts/deploy/fastpath_lists.sh. Off by default.
+    fastpath_pilot_all: bool = False
+    fastpath_pilot_exclude: str = ""
     # Which keys with day, week or month spend windows the pilot covers
     # (docs/design/fast-admission-e2-key-windows.md section 5): `off` none,
     # `alert` the alert-only keys, `enforce` the alert-only and the enforcing
@@ -1152,6 +1165,7 @@ class Settings(BaseSettings):
     fastpath_front_door_timeout_seconds: float = 1.5
     _fastpath_pilot_workspace_ids: frozenset[str] = PrivateAttr(default=frozenset())
     _fastpath_pilot_region_ids: frozenset[str] = PrivateAttr(default=frozenset({"us-central1"}))
+    _fastpath_pilot_exclude_ids: frozenset[str] = PrivateAttr(default=frozenset())
     stage_d_policy_refresh_seconds: int = 60
     stage_d_policy_cert_identity: str = (
         "https://github.com/Lore-Hex/quill-cloud-proxy/.github/workflows/"
@@ -1630,8 +1644,14 @@ class Settings(BaseSettings):
             raise ValueError("invalid fast path pilot region set")
         if not 0 < self.fastpath_front_door_timeout_seconds <= 5:
             raise ValueError("fast path front door timeout must be within (0, 5] seconds")
+        # The edge policy's fastpath_pilot_exclude bound (edge_policy
+        # .MAX_PILOT_EXCLUDE, Go's maxPilotExclude) and id rule.
+        exclude = frozenset(part.strip() for part in self.fastpath_pilot_exclude.split(",") if part.strip())
+        if len(exclude) > 64 or any(re.fullmatch(r"[A-Za-z0-9_./:@+\-]{1,64}", value) is None for value in exclude):
+            raise ValueError("invalid fast path pilot exclude set")
         self._fastpath_pilot_workspace_ids = ids
         self._fastpath_pilot_region_ids = regions
+        self._fastpath_pilot_exclude_ids = exclude
         return self
 
     @property
@@ -1641,6 +1661,22 @@ class Settings(BaseSettings):
     @property
     def fastpath_pilot_region_ids(self) -> frozenset[str]:
         return self._fastpath_pilot_region_ids
+
+    @property
+    def fastpath_pilot_exclude_ids(self) -> frozenset[str]:
+        return self._fastpath_pilot_exclude_ids
+
+    def fastpath_covers(self, workspace_id: str) -> bool:
+        """Whether the pilot's policy covers the workspace (fast-admission-
+        widening.md section 9): in all mode, not on the exclude list;
+        otherwise in the explicit set. The policy alone, never the switch:
+        the edge's EdgePolicy.Covers reads the same members."""
+        from trusted_router.services.fastpath_frontdoor import fastpath_covers
+
+        return fastpath_covers(
+            pilot_all=self.fastpath_pilot_all, pilot_workspace_ids=self._fastpath_pilot_workspace_ids,
+            pilot_exclude_ids=self._fastpath_pilot_exclude_ids, workspace_id=workspace_id,
+        )
 
     @model_validator(mode="after")
     def parse_pilot_workspaces(self) -> Settings:
@@ -1668,22 +1704,68 @@ class Settings(BaseSettings):
     def async_settle_fastpath_overlap_workspace_ids(self) -> frozenset[str]:
         return self._async_settle_fastpath_overlap_workspace_ids
 
+    @model_validator(mode="after")
+    def validate_fastpath_pilot_all(self) -> Settings:
+        """All mode's preconditions (fast-admission-widening.md sections 9
+        and 11, PR 5), each refusing to start the process:
+
+        - the typed Spanner store: the AWS and Azure planes' Postgres store
+          has neither the debt rules nor the covering pass (section 2);
+        - an empty explicit list, the policy's one encoding of all mode;
+        - not async admission on with an empty async pilot set: "every
+          workspace" cannot hold for both paths, and the policy's exclusion
+          would be unbounded;
+        - every async pilot workspace on the exclude list or the overlap
+          list, so the operator says which path each takes and turning all
+          mode on never moves one silently.
+        """
+        if not self.fastpath_pilot_all:
+            return self
+        if self.storage_backend != "spanner-clickhouse":
+            raise ValueError("TR_FASTPATH_PILOT_ALL requires TR_STORAGE_BACKEND=spanner-clickhouse")
+        if self._fastpath_pilot_workspace_ids:
+            raise ValueError("TR_FASTPATH_PILOT_ALL requires an empty TR_FASTPATH_PILOT_WORKSPACES")
+        if self.async_settle_enabled and not self._async_settle_pilot_workspace_ids:
+            raise ValueError("TR_FASTPATH_PILOT_ALL refuses async admission with an empty "
+                             "TR_ASYNC_SETTLE_PILOT_WORKSPACES")
+        unplaced = (self._async_settle_pilot_workspace_ids - self._fastpath_pilot_exclude_ids
+                    - self._async_settle_fastpath_overlap_workspace_ids)
+        if unplaced:
+            # Counted, not named: the ids are the operator's to look up.
+            raise ValueError(f"TR_FASTPATH_PILOT_ALL: {len(unplaced)} TR_ASYNC_SETTLE_PILOT_WORKSPACES "
+                             "on neither TR_FASTPATH_PILOT_EXCLUDE nor TR_ASYNC_SETTLE_FASTPATH_OVERLAP_WORKSPACES")
+        return self
+
     @property
     def async_settle_fastpath_excluded_workspace_ids(self) -> frozenset[str]:
         """The fast-path pilot set less the overlap list: the workspaces async
         admission leaves out whatever its own pilot set says (section 4.13 of
-        fast-admission-and-batched-settlement.md). The pilot's set, not its
-        switch, so turning the fast path off never changes async admission."""
+        fast-admission-and-batched-settlement.md), under the explicit list.
+        The pilot's set, not its switch, so turning the fast path off never
+        changes async admission. All mode has no such set (it is every
+        workspace but the exclude list's): read async_settle_fastpath_excludes
+        per workspace instead."""
+        if self.fastpath_pilot_all:
+            raise ValueError("all mode has no finite fast-path excluded set; use async_settle_fastpath_excludes")
         return self._fastpath_pilot_workspace_ids - self._async_settle_fastpath_overlap_workspace_ids
+
+    def async_settle_fastpath_excludes(self, workspace_id: str) -> bool:
+        """Whether async admission leaves the workspace out for the fast
+        path's sake (fast-admission-widening.md section 9): the pilot's
+        policy covers it (fastpath_covers) and the overlap list does not name
+        it. Coverage, not the switch, so the enabler turning a workspace on
+        or off never moves async admission."""
+        return self.fastpath_covers(workspace_id) and workspace_id not in self._async_settle_fastpath_overlap_workspace_ids
 
     def async_settle_pilot_allows(self, workspace_id: str) -> bool:
         """Whether async admission covers the workspace (with admission on):
-        not a fast-path workspace outside the overlap list, and the pilot set
-        empty (every workspace) or naming it. Every admission decision reads
-        this, and the edge policy publishes both halves
+        not a fast-path workspace outside the overlap list
+        (async_settle_fastpath_excludes), and the pilot set empty (every
+        workspace) or naming it. Every admission decision reads this, and the
+        edge policy publishes both halves
         (edge_policy_publisher.admission_workspaces), so the edge's
         AsyncSettle.Admits agrees per workspace."""
-        if workspace_id in self.async_settle_fastpath_excluded_workspace_ids:
+        if self.async_settle_fastpath_excludes(workspace_id):
             return False
         return not self._async_settle_pilot_workspace_ids or workspace_id in self._async_settle_pilot_workspace_ids
 

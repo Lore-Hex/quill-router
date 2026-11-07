@@ -1112,6 +1112,62 @@ def test_a_leased_authorization_in_both_pilots_settles_through_the_async_path(en
     assert shape_b['async_eligible'] is False
 
 
+def _fastpath_all_mode(cfg, *, pilots, overlap, exclude):
+    """The fast path's all mode (docs/design/fast-admission-widening.md
+    section 9) on the env's settings, checked by the settings' own
+    validator: the explicit list empty, the exclude list and the async
+    lists given."""
+    cfg.async_settle_pilot_workspaces = pilots
+    cfg.parse_pilot_workspaces()
+    cfg.async_settle_fastpath_overlap_workspaces = overlap
+    cfg.parse_fastpath_overlap_workspaces()
+    cfg.fastpath_pilot_workspaces = ''
+    cfg.fastpath_pilot_all = True
+    cfg.fastpath_pilot_exclude = exclude
+    cfg.parse_fastpath_pilot()
+    cfg.storage_backend = 'spanner-clickhouse'
+    cfg.validate_fastpath_pilot_all()
+
+
+@pytest.mark.parametrize('pilots,overlap,exclude,admitted', [
+    # The overlap workspace, in both pilots: still ticketed and settled async.
+    ('ws-v1', 'ws-v1', '', True),
+    # An async pilot workspace on the exclude list keeps async settle.
+    ('ws-v1', '', 'ws-v1', True),
+    # A workspace the enabler turns on (all mode covers it, it is on no
+    # list): outside async admission, so no ticket and its settle is refused.
+    ('ws-other', '', 'ws-other', False),
+], ids=['overlap', 'excluded', 'enabled'])
+def test_the_async_admission_table_in_all_mode(env, pilots, overlap, exclude, admitted):
+    """Async admission follows the fast path's coverage in all mode, not its
+    switch: the authorize's projection carries a ticket (shape C) exactly
+    when admitted, and a settle carrying a ticket issued before is accepted
+    (202) or answered not_eligible (200) the same way."""
+    store, db, rt, cfg = env
+    body, auth, _key = prepare(env)  # Ticket issued before all mode turned on.
+    _fastpath_all_mode(cfg, pilots=pilots, overlap=overlap, exclude=exclude)
+    snapshot = billing.parse_snapshot(json.dumps(WIRE['billing_snapshot']))
+    projection = snapshot_projection(authorization=auth, snapshot=snapshot, requested=billing.Eligibility(),
+                                     runtime=rt, settings=cfg, now=NOW)
+    assert projection['async_eligible'] is admitted
+    assert ('settlement_ticket' in projection) is admitted
+    result = call(env, body)
+    assert result.status_code == (202 if admitted else 200)
+    assert bool(db.settle_outbox) is admitted
+    if not admitted:
+        assert json.loads(result.body)['data']['reason'] == 'not_eligible'
+
+
+def test_a_leased_authorization_of_the_overlap_workspace_is_ticketed_in_all_mode(env):
+    """#2309's leased authorization in both pilots, in all mode: still
+    ticketed (shape C) through the overlap list."""
+    cfg = env[3]
+    _fastpath_all_mode(cfg, pilots='ws-v1', overlap='ws-v1', exclude='')
+    body, auth, _key = prepare(env, authorize=LEASED)
+    assert auth.fastpath_envelope == 'sealed-overlap'
+    assert body['settlement_ticket']
+
+
 @pytest.mark.parametrize('tier', [2, 3])
 @pytest.mark.parametrize('amount', [5000000, 5000001])
 def test_pilot_settle_cap_override(env, tier, amount):

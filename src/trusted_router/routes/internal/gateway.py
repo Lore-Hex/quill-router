@@ -1740,6 +1740,10 @@ def _authorize_gateway_sync_impl(
             boot_verified=bool(boot_context["boot_verified"]),
             boot_kid=boot_auth.kid if boot_auth is not None else None,
             service_tier=body.service_tier,
+            # The edge's key.federated and workspace.federated, and its
+            # policy.monitor_key (fast-admission-widening.md section 4(c)).
+            federated=bool(workspace.federated_home or api_key.federated_home),
+            monitor_key=is_monitor_request,
             # A lifetime cap, or spend windows fastpath_pilot_key_windows does
             # not cover (e2-key-windows section 5; the edge policy carries it).
             key_capped=_fastpath.pilot_key_capped(settings.fastpath_pilot_key_windows, api_key),
@@ -5095,6 +5099,34 @@ def _fastpath_front_door(settings: Settings) -> _fastpath.FrontDoorClient | None
     return _fastpath_client
 
 
+_fastpath_switch: _fastpath.EnabledWorkspaceCopy | None = None
+_fastpath_switch_lock = threading.Lock()
+
+
+def _fastpath_switch_copy(settings: Settings) -> _fastpath.EnabledWorkspaceCopy | None:
+    """All mode's per-process copy of the switch's enabled rows
+    (docs/design/fast-admission-widening.md section 11, PR 5), built and
+    started on first use, over the store's Spanner database. None, and
+    nothing read, unless the pilot is on in all mode and this process's
+    serving region is a pilot region; None without a database, which then
+    enables nobody."""
+    global _fastpath_switch  # noqa: PLW0603 - one copy per process, as the front door client
+    if not (settings.fastpath_pilot_enabled and settings.fastpath_pilot_all
+            and settings.effective_serving_region in settings.fastpath_pilot_region_ids):
+        return None
+    if _fastpath_switch is not None:
+        return _fastpath_switch
+    database = getattr(STORE, "_database", None)
+    if database is None:
+        return None
+    with _fastpath_switch_lock:
+        if _fastpath_switch is None:
+            copy = _fastpath.EnabledWorkspaceCopy(_fastpath.spanner_enabled_workspaces(database))
+            copy.start()
+            _fastpath_switch = copy
+    return _fastpath_switch
+
+
 def _fastpath_admission(
     settings: Settings,
     *,
@@ -5107,6 +5139,8 @@ def _fastpath_admission(
     boot_verified: bool,
     boot_kid: str | None,
     service_tier: str | None,
+    federated: bool,
+    monitor_key: bool,
     key_capped: bool,
     budget_strict: bool,
     app_markup: bool,
@@ -5129,12 +5163,19 @@ def _fastpath_admission(
             hold_is_ceiling=hold_is_ceiling,
         )
 
+    # Read only in all mode and a pilot region; elsewhere None, read nowhere.
+    switch = _fastpath_switch_copy(settings)
     reason = _fastpath.pilot_reason(
         enabled=settings.fastpath_pilot_enabled,
         workspace_id=workspace_id,
         pilot_workspace_ids=settings.fastpath_pilot_workspace_ids,
         region=settings.effective_serving_region,
         pilot_region_ids=settings.fastpath_pilot_region_ids,
+        federated=federated,
+        # The workspaces the edge policy publishes as
+        # async_settle_shadow_workspaces, whatever the shadow's own gates say.
+        async_shadow=workspace_id in settings.async_settle_shadow_workspace_ids,
+        monitor_key=monitor_key,
         stream=stream,
         standard_endpoint_pricing=standard_endpoint_pricing,
         credit_funded=credit_funded,
@@ -5149,9 +5190,19 @@ def _fastpath_admission(
         heartbeat_declared=heartbeat_declared,
         snapshot_booking=settings.reap_snapshot_booking_enabled,
         hold_is_ceiling=hold_is_ceiling,
+        pilot_all=settings.fastpath_pilot_all,
+        pilot_exclude_ids=settings.fastpath_pilot_exclude_ids,
+        switch_enabled=switch is not None and switch.enables(workspace_id),
     )
     if reason is not None:
-        if settings.fastpath_pilot_enabled and workspace_id in settings.fastpath_pilot_workspace_ids:
+        # The pass-over line names the pilot's own workspaces only: the
+        # explicit set's, or in all mode the covered ones the switch copy
+        # enables (however old the copy), never every workspace.
+        if settings.fastpath_pilot_enabled and (
+            switch is not None and settings.fastpath_covers(workspace_id) and switch.lists(workspace_id)
+            if settings.fastpath_pilot_all
+            else workspace_id in settings.fastpath_pilot_workspace_ids
+        ):
             if reason == "stream":
                 reason = stream_reason() or reason
             logger.info("fastpath pilot passed over reason=%s workspace_id=%s", reason, workspace_id)

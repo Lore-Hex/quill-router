@@ -86,6 +86,9 @@ PYTHON_PASSES = {
     "policy.digest_not_accepted", "candidates.byok", "key.key_cap", "key.key_window",
     "key.key_window_alert", "key.budget_strict", "owner.busy", "owner.off", "owner.invalid", "owner.failed", "owner.unreachable",
     "insert.failed", "boot.signature", "boot.unverified", "boot.missing", *STREAM_PASSES,
+    # The edge's reasons pilot_reason matches from widening PR 5
+    # (docs/design/fast-admission-widening.md section 4(c)).
+    "key.federated", "workspace.federated", "policy.async_settle_shadow", "policy.monitor_key",
 }
 # §10.2: Go passes a body carrying any of these.
 PASS_REQUIRED = {
