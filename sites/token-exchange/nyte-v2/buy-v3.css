@@ -203,3 +203,7 @@
   .buy-workspace .buy-actions .btn{flex:1}
   .buy-workspace .buy-fallback{flex-direction:column;padding:16px 0 20px}
 }
+/* Desktop: the hero spacing follows the screen height, so the Band shows under the request form in the first screen. */
+@media (min-width:1101px){
+  [data-nyte-page="buy"] .buy-stage .buy-layout{padding-top:clamp(48px,calc(12vh - 64px),96px);padding-bottom:clamp(48px,calc(12vh - 64px),96px)}
+}

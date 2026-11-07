@@ -159,3 +159,9 @@ main .tags{gap:8px}
   .v3-hero .btns{margin-top:20px;gap:10px}
   .v3-hero .btns .btn{min-height:44px;height:44px}
 }
+/* Desktop: the hero spacing follows the screen height, so the Band shows in the first screen on 900-1000px tall windows. */
+@media (min-width:1101px){
+  .v3-hero{padding:clamp(56px,calc(12vh - 48px),112px) 0 clamp(48px,calc(10vh - 40px),96px)}
+  .v3-hero h1{margin-top:24px}
+  .v3-hero .lede,.v3-hero .btns{margin-top:32px}
+}
