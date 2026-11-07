@@ -839,20 +839,18 @@
     {
       "display_name": "perplexity-ai/pplx-decider-v1.2",
       "title": "perplexity-ai/pplx-decider-v1.2",
-      "model_type": "chat",
+      "model_type": "discovery",
       "input_modalities": [
         "text",
         "image"
       ],
-      "output_modalities": [
-        "text"
-      ],
-      "endpoints": [
-        "chat/completions"
-      ],
+      "output_modalities": [],
+      "endpoints": [],
       "status": 1,
       "id": "perplexity-ai/pplx-decider-v1.2",
       "upstream_id": "perplexity-ai/pplx-decider-v1.2",
+      "routable": false,
+      "routable_reason": "unsupported-chat-endpoint",
       "context_length": 262144,
       "input_token_price_per_m": 20000,
       "output_token_price_per_m": 0,

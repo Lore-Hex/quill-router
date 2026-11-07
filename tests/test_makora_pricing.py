@@ -12,15 +12,19 @@ from scripts.pricing.providers import makora
 
 
 @pytest.mark.parametrize("existing_chat_row", [False, True])
-def test_makora_clef_remains_discovery_only_through_refresh(
+@pytest.mark.parametrize("model_id,native_id", [
+    ("cloudflare/clef-flash", "Cloudflare/clef-flash"),
+    ("perplexity-ai/pplx-decider-v1.2", "perplexity-ai/pplx-decider-v1.2"),
+])
+def test_makora_non_chat_models_remain_discovery_only_through_refresh(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, existing_chat_row: bool,
+    model_id: str, native_id: str,
 ) -> None:
     from trusted_router import catalog_ingest
 
-    model_id = "cloudflare/clef-flash"
     manifest = tmp_path / "makora.json"
     old_row = {
-        "id": model_id, "upstream_id": "Cloudflare/clef-flash",
+        "id": model_id, "upstream_id": native_id,
         "model_type": "chat", "endpoints": ["chat/completions"],
         "routable": True,
         "input_token_price_per_m": 18_000, "output_token_price_per_m": 0,
@@ -36,7 +40,7 @@ def test_makora_clef_remains_discovery_only_through_refresh(
     monkeypatch.setenv("MAKORA_API_KEY", "test-key")
     monkeypatch.setattr(makora, "fetch_json", lambda *_args, **_kwargs: {
         "data": [
-            {"id": "Cloudflare/clef-flash", "input_modalities": ["text", "image"],
+            {"id": native_id, "input_modalities": ["text", "image"],
              "pricing": {"prompt": "0.000000018", "completion": "0"}},
             {"id": "moonshotai/Kimi-K3",
              "pricing": {"prompt": "0.00000255", "completion": "0.00001275"}},
@@ -59,6 +63,31 @@ def test_makora_clef_remains_discovery_only_through_refresh(
     models, endpoints = catalog_ingest._supplemental_provider_models_and_endpoints()
     assert model_id not in models
     assert {endpoint.model_id for endpoint in endpoints.values()} == chat_ids
+
+
+@pytest.mark.parametrize("model_id", [
+    "cloudflare/clef-flash", "perplexity-ai/pplx-decider-v1.2",
+])
+def test_makora_non_chat_contract_blocks_stale_catalog_and_native_alias(model_id: str) -> None:
+    from trusted_router.provider_contracts import provider_model_operator_held
+
+    assert provider_model_operator_held("makora", model_id)
+    assert provider_model_operator_held("makora", "another/canonical-name", model_id)
+    assert not provider_model_operator_held("another-provider", model_id)
+    assert not provider_model_operator_held("makora", "moonshotai/kimi-k3")
+
+
+@pytest.mark.catalog_as_built
+def test_makora_decider_is_not_published_as_chat() -> None:
+    from trusted_router.catalog import MODEL_ENDPOINTS
+
+    model_id = "perplexity-ai/pplx-decider-v1.2"
+    rows = {row["id"]: row for row in json.loads(makora.MANIFEST_PATH.read_text())["models"]}
+    assert rows[model_id]["routable"] is False
+    assert rows[model_id]["model_type"] == "discovery"
+    assert rows[model_id]["endpoints"] == []
+    assert not [endpoint for endpoint in MODEL_ENDPOINTS.values()
+                if endpoint.provider == "makora" and endpoint.upstream_id == model_id]
 
 MAKORA_LINEUP_HTML = """
 The lineup
