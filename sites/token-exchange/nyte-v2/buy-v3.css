@@ -130,7 +130,8 @@
 .buy-workspace .buy-reserve>*{margin:0}
 .buy-workspace .buy-reserve h3{font:var(--label);letter-spacing:.1em;text-transform:uppercase;color:var(--ink)}
 .buy-workspace .buy-reserve p{font-size:17px;line-height:1.55;color:var(--ink)}
-.buy-workspace #buy-reserve-price{font-size:32px;line-height:1.15;font-weight:300;letter-spacing:-.01em;overflow-wrap:anywhere}
+.buy-workspace #buy-reserve-price{font-size:22px;line-height:1.4;font-weight:400;letter-spacing:0;overflow-wrap:anywhere}
+@media(max-width:600px){.buy-workspace #buy-reserve-price{font-size:19px}}
 .buy-workspace .buy-reserve p:has(a[href="/manage-reservation"]),.buy-workspace .buy-reserve .buy-fine{font-size:15px}
 .buy-workspace .buy-reserve .buy-fine{color:var(--ink)}
 .buy-workspace .buy-reserve-terms{display:block;margin:0;font-size:17px;line-height:1.4}
