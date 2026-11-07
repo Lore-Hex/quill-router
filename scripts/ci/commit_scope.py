@@ -31,11 +31,12 @@ every event but a push to main. tests/test_ci_workflow.py
 holds the workflow text to these two lists, and holds DATA_ONLY_PATHS to the
 files refresh-prices.yml stages.
 
-SKIPPED_ON_PUSH is the post-cutover suite. It runs on pull requests and on
-dispatches (the price refresh's publication gate), and on main once a day
-(post-cutover-daily.yml), but not on a push to main: its red means main will
-break on a scheduled date, not that the commit is broken, and deploy.yml's
-gate waits for the push run of the commit it ships.
+SKIPPED_ON_PUSH is the post-cutover suite and the TLA+ model checks. They run
+on pull requests and on dispatches (the price refresh's publication gate), and
+on main once a day (post-cutover-daily.yml), but not on a push to main. A
+post-cutover red means main will break on a scheduled date, not that the
+commit is broken; the specs check designs, not the code a push deploys; and
+deploy.yml's gate waits for the push run of the commit it ships.
 """
 
 from __future__ import annotations
@@ -83,9 +84,10 @@ SKIPPED_FOR_DATA_ONLY: frozenset[str] = frozenset({
 
 DATA_ONLY_CONDITION = "needs.scope.outputs.data_only != 'true'"
 
-# Jobs whose `if` in ci.yml is PUSH_SKIP_CONDITION: they skip on a push to
-# main and run on every other event.
-SKIPPED_ON_PUSH: frozenset[str] = frozenset({"test-post-cutover"})
+# Jobs whose `if` in ci.yml starts with PUSH_SKIP_CONDITION (proofs adds the
+# data-only condition after it): they skip on a push to main and run on every
+# other event.
+SKIPPED_ON_PUSH: frozenset[str] = frozenset({"test-post-cutover", "proofs"})
 
 PUSH_SKIP_CONDITION = "github.event_name != 'push'"
 

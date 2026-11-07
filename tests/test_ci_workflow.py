@@ -81,8 +81,9 @@ def test_coverage_measures_lines_through_sys_monitoring() -> None:
     version = tuple(int(part) for part in (ROOT / ".python-version").read_text().strip().split(".")[:2])
     if version < (3, 14):
         assert run["branch"] is False
-    addopts = " ".join(tomllib.loads((ROOT / "pyproject.toml").read_text())["tool"]["pytest"]
-                       ["ini_options"].get("addopts", []))
+    opts = tomllib.loads((ROOT / "pyproject.toml").read_text())["tool"]["pytest"]["ini_options"].get("addopts", [])
+    # TOML allows addopts as one string or a list.
+    addopts = opts if isinstance(opts, str) else " ".join(opts)
     for token in ("--cov-branch", "--cov-config"):
         assert token not in addopts, f"pytest addopts name {token}"
     workflows = sorted([*(ROOT / ".github/workflows").glob("*.yml"), *(ROOT / ".github/workflows").glob("*.yaml")])
@@ -105,8 +106,9 @@ def test_coverage_from_the_repository_root_resolves_to_sys_monitoring(monkeypatc
         monkeypatch.delenv(name, raising=False)
     monkeypatch.chdir(ROOT)
     cov = coverage.Coverage()
-    read = [os.path.realpath(name) for name in cov.config.config_files_read]
-    assert read == [os.path.realpath(ROOT / "pyproject.toml")]
+    # The file whose settings coverage used: a setup.cfg or tox.ini without a
+    # coverage section is read but not used, and is no displacement.
+    assert os.path.realpath(cov.config.config_file) == os.path.realpath(ROOT / "pyproject.toml")
     assert cov.get_option("run:core") == "sysmon"
     assert cov.get_option("run:timid") is False
     version = tuple(int(part) for part in (ROOT / ".python-version").read_text().strip().split(".")[:2])
@@ -253,7 +255,8 @@ def test_the_post_cutover_clock_leaves_main_pushes_for_a_daily_run() -> None:
     # push alone, so a condition that also skipped the refresh's dispatches
     # would fail every publication.
     assert PUSH_SKIP_CONDITION == "github.event_name != 'push'"
-    assert {name for name, job in ci.items() if job.get("if") == PUSH_SKIP_CONDITION} == SKIPPED_ON_PUSH
+    assert {name for name, job in ci.items()
+            if str(job.get("if", "")).startswith(PUSH_SKIP_CONDITION)} == SKIPPED_ON_PUSH
     assert ci["proof-oracle"]["strategy"]["matrix"]["clock"] == ORACLE_CLOCKS
     # The daily jobs inherit nothing from ci.yml's top level.
     assert "env" not in workflow and "defaults" not in workflow
@@ -270,13 +273,13 @@ def test_the_post_cutover_clock_leaves_main_pushes_for_a_daily_run() -> None:
     assert daily["name"] != "CI"
     assert daily["permissions"] == {"contents": "read"}
     jobs = daily["jobs"]
-    assert set(jobs) == {"test-post-cutover", "proof-oracle"}
+    assert set(jobs) == {"test-post-cutover", "proof-oracle", "proofs"}
     def comparable(job: dict) -> dict:
         # Everything but when the job runs and the oracle's clocks.
         job = copy.deepcopy(job)
         job.pop("if", None)
         job.pop("needs", None)
-        job["strategy"]["matrix"].pop("clock", None)
+        job.get("strategy", {}).get("matrix", {}).pop("clock", None)
         return job
 
     for name in jobs:
@@ -288,7 +291,7 @@ def test_the_post_cutover_clock_leaves_main_pushes_for_a_daily_run() -> None:
         assert "needs" not in jobs[name], name
         assert "continue-on-error" not in jobs[name], name
         assert all("continue-on-error" not in step for step in jobs[name]["steps"]), name
-        assert jobs[name]["strategy"]["fail-fast"] is False, name
+        assert "strategy" not in jobs[name] or jobs[name]["strategy"]["fail-fast"] is False, name
     assert jobs["proof-oracle"]["strategy"]["matrix"]["clock"] == ["post-cutover"]
 
 
@@ -405,7 +408,10 @@ def test_data_only_commits_skip_only_the_jobs_that_read_no_catalog_data():
         # `!cancelled()` would let a job run after a failed scope; coverage
         # keeps it (it reports beside a red shard) and guards with the
         # condition, every other job must skip when scope fails.
-        if name != "coverage":
+        if name in SKIPPED_ON_PUSH:
+            # proofs: skipped on a push to main too (commit_scope.SKIPPED_ON_PUSH).
+            assert jobs[name]["if"] == f"{PUSH_SKIP_CONDITION} && {DATA_ONLY_CONDITION}", name
+        elif name != "coverage":
             assert jobs[name]["if"] == DATA_ONLY_CONDITION, name
     for name in ALWAYS_RUN_JOBS:
         # The post-cutover suite reads the data too. It runs on every commit

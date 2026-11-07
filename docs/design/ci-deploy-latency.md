@@ -123,6 +123,10 @@ price refresh's publication gate. post-cutover-daily.yml runs both on main
 once a day, outside every gate. commit_scope.py's summary accepts
 test-post-cutover's skip on a push only.
 
+The TLA+ model checks (proofs, about 25 minutes, read only proofs/) follow
+the same rule: they check designs, not the code a push deploys. With
+coverage cheaper, the default suite runs in eight shards instead of twelve.
+
 ## Validation and measurement
 
 Tests cover process handoffs, late failures, serial fallback, malformed tokens,

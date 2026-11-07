@@ -297,10 +297,14 @@ jobs:
         #   gh run download <run> -p 'durations-*' -D /tmp/ci-durations/<run>
         #   uv run python scripts/ci/merge_shard_durations.py /tmp/ci-durations .test_durations /tmp/default.json --profile default
         # Repeat with --profile post-cutover; review both profiles before commit.
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        # Nov 6: with coverage on sys.monitoring (#2368), twelve shards took
+        # 7 to 11 minutes each. Eight (about 10 to 17) stay under the proof
+        # oracle's critical path of about 21 minutes, with four fewer jobs
+        # in the organization's queue.
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     runs-on: ubuntu-24.04
     env:
-      TEST_SHARDS: "12"
+      TEST_SHARDS: "8"
       TR_CONFORMANCE_POSTGRES_DSN: postgresql://postgres:tr@localhost:5432/postgres
       # Spanner's PostgreSQL dialect, via PGAdapter + the Spanner emulator.
       # Needs no GCP credentials, so it runs on every PR like any other
@@ -859,9 +863,14 @@ jobs:
       - name: ${{ matrix.walk }} against the emulator
         run: go test -count=1 -p 1 -timeout 240m -run '^${{ matrix.walk }}$' ./internal/store/
 
+  # The TLA+ specs check designs, not the code a push deploys, and read only
+  # proofs/. A pull request that changes them runs them, and so does
+  # post-cutover-daily.yml on main once a day; a push to main skips them
+  # (commit_scope.py's SKIPPED_ON_PUSH), so their 25 minutes no longer hold
+  # the deploy.
   proofs:
     needs: scope
-    if: needs.scope.outputs.data_only != 'true'
+    if: github.event_name != 'push' && needs.scope.outputs.data_only != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:

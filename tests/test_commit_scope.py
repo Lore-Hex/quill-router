@@ -7,6 +7,7 @@ import pytest
 
 from scripts.ci.commit_scope import (
     SKIPPED_FOR_DATA_ONLY,
+    SKIPPED_ON_PUSH,
     classify,
     is_data_change,
     is_data_path,
@@ -171,17 +172,19 @@ def test_a_skipped_job_outside_the_list_fails_even_on_a_data_only_commit() -> No
     assert summarize({**needs(), "new-job": {"result": "skipped"}}, "true") == ["new-job: skipped"]
 
 
-def test_the_post_cutover_suite_may_skip_only_on_a_push() -> None:
-    for data_only in ("true", "false"):
-        assert summarize(needs(test_post_cutover="skipped"), data_only, "push") == []
+def test_the_post_cutover_suite_and_the_model_checks_may_skip_only_on_a_push() -> None:
+    assert SKIPPED_ON_PUSH == {"test-post-cutover", "proofs"}
+    for job in SKIPPED_ON_PUSH:
+        assert summarize(needs(**{job: "skipped"}), "false", "push") == []
         for event in ("pull_request", "workflow_dispatch", "schedule", "", "PUSH"):
-            assert summarize(needs(test_post_cutover="skipped"), data_only, event) == [
-                "test-post-cutover: skipped"]
-    # A push excuses only that job, and only its skip.
+            assert summarize(needs(**{job: "skipped"}), "false", event) == [f"{job}: skipped"]
+        for result in ("failure", "cancelled", "timed_out", None):
+            assert summarize(needs(**{job: result}), "false", "push") == [f"{job}: {result}"]
+    # The data-only rule still excuses proofs on a data-only commit, whatever the event.
+    assert summarize(needs(proofs="skipped"), "true", "pull_request") == []
+    # A push excuses only those jobs, and only their skips.
     assert summarize(needs(test="skipped"), "false", "push") == ["test: skipped"]
-    assert summarize(needs(proofs="skipped"), "false", "push") == ["proofs: skipped"]
-    for result in ("failure", "cancelled", "timed_out", None):
-        assert summarize(needs(test_post_cutover=result), "false", "push") == [f"test-post-cutover: {result}"]
+    assert summarize(needs(proof_oracle="skipped"), "false", "push") == ["proof-oracle: skipped"]
 
 
 @pytest.mark.parametrize("separator", ["\u2028", "\u2029", "\u0085"])
