@@ -54,8 +54,9 @@ const (
 type timedOpts struct {
 	tls bool
 	// dialDelay holds each dial before it connects; firstReadDelay holds
-	// each of Python's new connections before its first read (a TLS
-	// handshake's, with tls); pythonDelay holds Python's answer.
+	// the first read of each of Python's new connections once its bytes
+	// arrive (a TLS ClientHello, with tls); pythonDelay holds Python's
+	// answer.
 	dialDelay, firstReadDelay, pythonDelay time.Duration
 	// closed leaves nothing listening where Python was.
 	closed bool
@@ -124,7 +125,8 @@ func newTimedHarness(t *testing.T, o timedOpts) (*harness, *logLines) {
 	return h, logs
 }
 
-// slowFirstRead holds each accepted connection's first read.
+// slowFirstRead holds each accepted connection's first read once its bytes
+// arrive.
 type slowFirstRead struct {
 	net.Listener
 	delay time.Duration
@@ -144,9 +146,14 @@ type heldConn struct {
 	once  sync.Once
 }
 
+// Read holds the first read after its bytes arrive. The transport runs the
+// TLSHandshakeStart hooks before it sends the ClientHello, so the hold starts
+// after the edge marks the handshake's start. Held from accept, it could
+// start before that mark, while the handshake's goroutine waited to run.
 func (c *heldConn) Read(b []byte) (int, error) {
+	n, err := c.Conn.Read(b)
 	c.once.Do(func() { time.Sleep(c.delay) })
-	return c.Conn.Read(b)
+	return n, err
 }
 
 // authorize sends one signed authorize and reads its answer whole.
@@ -268,62 +275,98 @@ func TestASlowDialIsTheConnPhase(t *testing.T) {
 }
 
 func TestASlowTLSHandshakeIsTheConnPhaseAndItsTLS(t *testing.T) {
-	h, logs := newTimedHarness(t, timedOpts{tls: true, firstReadDelay: 150 * time.Millisecond})
-	h.edge.passes.slow = 100 * time.Millisecond
-	h.authorize(t)
-	waitPasses(t, h, logs, 1, 1)
-	f := fields(t, logs.with(slowPrefix)[0])
-	if f["phase"] != PassPhaseConn || ms(t, f, "tls_ms") < 150 || f["tls_errors"] != "0" || f["status"] != "402" {
-		t.Fatalf("a slow handshake: %v", f)
+	for _, c := range []struct {
+		name string
+		// late holds the edge's TLSHandshakeStart mark that long. heldConn's
+		// Read says why the server's hold still starts after the mark.
+		late time.Duration
+	}{{"on time", 0}, {"the handshake started late", 20 * time.Millisecond}} {
+		t.Run(c.name, func(t *testing.T) {
+			h, logs := newTimedHarness(t, timedOpts{tls: true, firstReadDelay: 150 * time.Millisecond})
+			h.edge.passes.slow = 100 * time.Millisecond
+			if c.late > 0 {
+				transport := h.edge.proxy.Transport.(tracedTransport)
+				transport.base = delayedHeaderHandoff{RoundTripper: transport.base, tlsStartDelay: c.late}
+				h.edge.proxy.Transport = transport
+			}
+			h.authorize(t)
+			waitPasses(t, h, logs, 1, 1)
+			f := fields(t, logs.with(slowPrefix)[0])
+			if f["phase"] != PassPhaseConn || ms(t, f, "tls_ms") < 150 || f["tls_errors"] != "0" || f["status"] != "402" {
+				t.Fatalf("a slow handshake: %v", f)
+			}
+		})
 	}
 }
 
 func TestASlowPythonIsThePythonPhase(t *testing.T) {
-	h, logs := newTimedHarness(t, timedOpts{pythonDelay: 150 * time.Millisecond})
-	h.edge.passes.slow = 100 * time.Millisecond
-	h.authorize(t)
-	waitPasses(t, h, logs, 1, 1)
-	f := fields(t, logs.with(slowPrefix)[0])
-	if f["phase"] != PassPhasePython || ms(t, f, "python_ms") < 150 {
-		t.Fatalf("a slow Python: %v", f)
-	}
-	if c := h.edge.PassCounts(); c.SlowBy[PassPhasePython] != 1 {
-		t.Fatalf("counts: %+v", c)
+	for _, c := range []struct {
+		name string
+		late bool
+	}{{"on time", false}, {"the write marked late", true}} {
+		t.Run(c.name, func(t *testing.T) {
+			h, logs := newTimedHarness(t, timedOpts{})
+			h.edge.passes.slow = 100 * time.Millisecond
+			wait, respond := fromTheWritesEnd(t, h, c.late), h.respond
+			h.respond = func(w http.ResponseWriter) {
+				wait()
+				time.Sleep(150 * time.Millisecond)
+				respond(w)
+			}
+			h.authorize(t)
+			waitPasses(t, h, logs, 1, 1)
+			f := fields(t, logs.with(slowPrefix)[0])
+			if f["phase"] != PassPhasePython || ms(t, f, "python_ms") < 150 {
+				t.Fatalf("a slow Python: %v", f)
+			}
+			if counts := h.edge.PassCounts(); counts.SlowBy[PassPhasePython] != 1 {
+				t.Fatalf("counts: %+v", counts)
+			}
+		})
 	}
 }
 
 func TestA1xxReachesTheCallerAndDoesNotEndThePythonPhase(t *testing.T) {
-	h, logs := newTimedHarness(t, timedOpts{})
-	h.edge.passes.slow = 0
-	h.respond = func(w http.ResponseWriter) {
-		w.Header().Set("Link", "</x>; rel=preload")
-		w.WriteHeader(http.StatusEarlyHints)
-		time.Sleep(200 * time.Millisecond)
-		w.Header().Del("Link")
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusPaymentRequired)
-		_, _ = w.Write([]byte(`{"error":{"code":402}}`))
-	}
-	var hints atomic.Int32
-	trace := &httptrace.ClientTrace{Got1xxResponse: func(code int, _ textproto.MIMEHeader) error {
-		if code == http.StatusEarlyHints {
-			hints.Add(1)
-		}
-		return nil
-	}}
-	resp, err := plainClient.Do(h.signedRequest(t, httptrace.WithClientTrace(context.Background(), trace)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _ = io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	waitPasses(t, h, logs, 1, 1)
-	if hints.Load() != 1 || resp.StatusCode != http.StatusPaymentRequired {
-		t.Fatalf("the 103 or the 402 did not reach the caller: hints=%d status=%d", hints.Load(), resp.StatusCode)
-	}
-	f := fields(t, logs.with(slowPrefix)[0])
-	if f["phase"] != PassPhasePython || ms(t, f, "python_ms") < 200 {
-		t.Fatalf("Python's time after its 1xx: %v", f)
+	for _, c := range []struct {
+		name string
+		late bool
+	}{{"on time", false}, {"the write marked late", true}} {
+		t.Run(c.name, func(t *testing.T) {
+			h, logs := newTimedHarness(t, timedOpts{})
+			h.edge.passes.slow = 0
+			wait := fromTheWritesEnd(t, h, c.late)
+			h.respond = func(w http.ResponseWriter) {
+				wait()
+				w.Header().Set("Link", "</x>; rel=preload")
+				w.WriteHeader(http.StatusEarlyHints)
+				time.Sleep(200 * time.Millisecond)
+				w.Header().Del("Link")
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusPaymentRequired)
+				_, _ = w.Write([]byte(`{"error":{"code":402}}`))
+			}
+			var hints atomic.Int32
+			trace := &httptrace.ClientTrace{Got1xxResponse: func(code int, _ textproto.MIMEHeader) error {
+				if code == http.StatusEarlyHints {
+					hints.Add(1)
+				}
+				return nil
+			}}
+			resp, err := plainClient.Do(h.signedRequest(t, httptrace.WithClientTrace(context.Background(), trace)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _ = io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			waitPasses(t, h, logs, 1, 1)
+			if hints.Load() != 1 || resp.StatusCode != http.StatusPaymentRequired {
+				t.Fatalf("the 103 or the 402 did not reach the caller: hints=%d status=%d", hints.Load(), resp.StatusCode)
+			}
+			f := fields(t, logs.with(slowPrefix)[0])
+			if f["phase"] != PassPhasePython || ms(t, f, "python_ms") < 200 {
+				t.Fatalf("Python's time after its 1xx: %v", f)
+			}
+		})
 	}
 }
 
@@ -735,30 +778,83 @@ func TestFlushPassesDrainsABacklogThenWritesTheCounts(t *testing.T) {
 	}
 }
 
+// delayedHeaderHandoff is the edge's base transport, with its hooks running
+// before the edge's own.
 type delayedHeaderHandoff struct {
 	http.RoundTripper
 	delay time.Duration
 	// wroteAfter, when set, holds the transport's WroteRequest hook until it
 	// is closed, as a write goroutine scheduled late does.
 	wroteAfter <-chan struct{}
+	// tlsStartDelay holds the TLSHandshakeStart hook that long, as a
+	// handshake goroutine scheduled late does.
+	tlsStartDelay time.Duration
 }
 
 func (d delayedHeaderHandoff) RoundTrip(r *http.Request) (*http.Response, error) {
+	trace := &httptrace.ClientTrace{}
 	if d.wroteAfter != nil {
-		r = r.WithContext(httptrace.WithClientTrace(r.Context(), &httptrace.ClientTrace{
-			WroteRequest: func(httptrace.WroteRequestInfo) {
-				select {
-				case <-d.wroteAfter:
-				case <-time.After(5 * time.Second):
-				}
-			},
-		}))
+		trace.WroteRequest = func(httptrace.WroteRequestInfo) {
+			select {
+			case <-d.wroteAfter:
+			case <-time.After(5 * time.Second):
+			}
+		}
+	}
+	if d.tlsStartDelay > 0 {
+		trace.TLSHandshakeStart = func() { time.Sleep(d.tlsStartDelay) }
+	}
+	if trace.WroteRequest != nil || trace.TLSHandshakeStart != nil {
+		r = r.WithContext(httptrace.WithClientTrace(r.Context(), trace))
 	}
 	resp, err := d.RoundTripper.RoundTrip(r)
 	if err == nil {
 		time.Sleep(d.delay)
 	}
 	return resp, err
+}
+
+// afterTheEdge is the edge's tracedTransport with a fresh trace's hooks
+// running after the edge's own, so a test can see a mark the edge has made.
+type afterTheEdge struct {
+	http.RoundTripper
+	trace func() *httptrace.ClientTrace
+}
+
+func (a afterTheEdge) RoundTrip(r *http.Request) (*http.Response, error) {
+	return a.RoundTripper.RoundTrip(r.WithContext(httptrace.WithClientTrace(r.Context(), a.trace())))
+}
+
+// fromTheWritesEnd returns a wait for the start of h.respond, so that
+// Python's delay starts once the edge has marked its write's end, as
+// TestAnAnswerSlowOnItsWayBackIsTheResponsePhase starts its delay once the
+// edge has the headers. The transport runs the WroteRequest hook on its write
+// goroutine after the flush, which can be after Python has read the request:
+// a delay from that read lost a millisecond to the write phase on CI
+// (write_ms:1 python_ms:149). With late, the edge's mark itself is held until
+// 20 ms after Python has read the request. For a test of one pass.
+func fromTheWritesEnd(t *testing.T, h *harness, late bool) (wait func()) {
+	t.Helper()
+	release, marked := make(chan struct{}), make(chan struct{})
+	if late {
+		transport := h.edge.proxy.Transport.(tracedTransport)
+		transport.base = delayedHeaderHandoff{RoundTripper: transport.base, wroteAfter: release}
+		h.edge.proxy.Transport = transport
+	}
+	var markedOnce, releasedOnce sync.Once
+	h.edge.proxy.Transport = afterTheEdge{RoundTripper: h.edge.proxy.Transport, trace: func() *httptrace.ClientTrace {
+		return &httptrace.ClientTrace{WroteRequest: func(httptrace.WroteRequestInfo) {
+			markedOnce.Do(func() { close(marked) })
+		}}
+	}}
+	return func() {
+		time.AfterFunc(20*time.Millisecond, func() { releasedOnce.Do(func() { close(release) }) })
+		select {
+		case <-marked:
+		case <-time.After(5 * time.Second):
+			t.Error("the edge did not mark its write's end")
+		}
+	}
 }
 
 func TestAnAnswerSlowOnItsWayBackIsTheResponsePhase(t *testing.T) {
