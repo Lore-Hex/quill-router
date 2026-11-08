@@ -6,9 +6,9 @@
 # on every control-plane deploy, not behind TR_TRUST_JOBS_DEPLOY, so the
 # job's settings move with the control plane's.
 #
-# Dark by its literals: TR_FASTPATH_ENABLER_MODE=off reads and writes
-# nothing (each run logs one line and exits), and TR_FASTPATH_ENABLER_MAX_RANK=0
-# enables nobody off the include list. Even in apply mode the job writes
+# Read-only by its literals: TR_FASTPATH_ENABLER_MODE=dry-run (WS1) reads and
+# reports but writes nothing (off logs one line and exits), and
+# TR_FASTPATH_ENABLER_MAX_RANK=0 enables nobody off the include list. Even in apply mode the job writes
 # nothing until an operator runs `fastpathctl enabler arm`, and never writes
 # the hold table. The lists come from fastpath_lists.sh, shared with
 # rollout.sh; tests/test_fastpath_lists.py holds them there.
@@ -45,8 +45,10 @@ env_vars=(
   "TR_TRUST_RECONCILE_MAX_AGE_SECONDS=3600"
   # off, dry-run or apply. Literals, so no deploy inherits a mode; off is
   # the way back, and `fastpathctl enabler pause` the way to stop it
-  # without a deploy. WS1 sets dry-run and WS2 apply (section 8.2).
-  "TR_FASTPATH_ENABLER_MODE=off"
+  # without a deploy. WS1 sets dry-run and WS2 apply (section 8.2); dry-run
+  # since WS1, after hold-backfill held every row off with none (holds
+  # exit 0, unheld_disabled 0, 2026-11-08 16:49Z).
+  "TR_FASTPATH_ENABLER_MODE=dry-run"
   # 0: nobody joins off the include list. WS4 sets 10 and WS5 100.
   "TR_FASTPATH_ENABLER_MAX_RANK=0"
   # Section 4(b): unspent credit of at least $100 to join, under $40 to leave.

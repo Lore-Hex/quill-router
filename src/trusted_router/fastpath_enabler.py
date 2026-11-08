@@ -613,6 +613,9 @@ def plan(snapshot: Snapshot, config: EnablerConfig, *, now: datetime) -> Plan:
         "disable": [f"{w}:{c}" for w, c in disables],
         "frozen": sorted(frozen),
         "unheld_would_enable": unheld_would_enable,
+        # The probes' workspaces the keys resolved to, so an operator can put
+        # them on the exclude list (section 4(c)) from a dry-run's log.
+        "probes": [f"{w}:{r}" for w, r in sorted(snapshot.probes.items())],
     }
     return Plan(enables=enables, disables=disables, report=report, lists=lists,
                 mass_disable=mass_disable, trust_stale=trust_stale)
