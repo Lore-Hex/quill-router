@@ -101,7 +101,7 @@ and the hold (`stream.stage_d:<reason>`, `stream.undeclared`,
 
 ## The ceiling beside the hold
 
-Design §12.4, PR 4. `TR_FASTPATH_STREAM_CEILING`, a literal `false` in
+Design §12.4, PR 4. `TR_FASTPATH_STREAM_CEILING`, a literal in
 `rollout.sh`: with it on, Python's pilot and the edge admit a stream whose
 reservation is below its estimate (an output budget past 16,384 tokens)
 with the estimate as the admission's `Ceiling`, so its owner runs it to the
