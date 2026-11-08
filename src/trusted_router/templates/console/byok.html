@@ -4,6 +4,7 @@
 <section class="panel">
   <div class="panel-head"><h2>Connect your own provider account</h2></div>
   <div class="panel-body">
+    {% if wallet_email_attach_url %}<p class="console-flash" role="status" data-wallet-email-attach>This account signs in with a wallet only. <a href="{{ wallet_email_attach_url }}">Add and verify an email</a> to use provider keys and card payments.</p>{% endif %}
     <p style="color:var(--muted);font-size:14px;margin:0 0 14px">
       BYOK ("bring your own key") routes requests through TrustedRouter using
       <em>your</em> account at the upstream provider. You keep the billing

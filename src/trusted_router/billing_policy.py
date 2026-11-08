@@ -3,6 +3,8 @@ from __future__ import annotations
 from trusted_router.auth import Principal
 from trusted_router.storage import STORE, User
 
+# Where a wallet-only account adds and verifies an email (routes/wallet_oauth.py).
+WALLET_EMAIL_ATTACH_PATH = "/auth/wallet/email"
 STABLECOIN_CHECKOUT_METHODS = frozenset({"stablecoin", "crypto", "usdc"})
 WALLET_ONLY_STABLECOIN_MESSAGE = (
     "Wallet-only accounts can only fund with stablecoin. "

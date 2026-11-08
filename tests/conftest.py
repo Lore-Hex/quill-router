@@ -38,6 +38,7 @@ from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR
 from trusted_router.routes import catalog as catalog_routes
+from trusted_router.routes.wallet_oauth import reset_attach_send_limits
 from trusted_router.storage import STORE, InMemoryStore, configure_store
 
 
@@ -107,6 +108,8 @@ def reset_store() -> None:
     if not isinstance(STORE.target, InMemoryStore):
         configure_store(InMemoryStore())
     STORE.reset()
+    # Per-process send counters key on user ids, which repeat after a reset.
+    reset_attach_send_limits()
 
 
 @pytest.fixture(autouse=True)
