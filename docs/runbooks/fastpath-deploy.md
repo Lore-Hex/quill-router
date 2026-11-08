@@ -186,9 +186,9 @@ reaping until the column is there. The release after it (PR 3), pinned as
 above, turns `RecordCeiling` on in the service's defaults: a stream
 admitted with a ceiling then has its heartbeats run past its hold to the
 ceiling, and its heartbeat, hand-off and reap records carry `ceil`. No
-gateway sends a ceiling until PR 4's setting `fastpath_stream_ceiling`
-(`TR_FASTPATH_STREAM_CEILING`, `false` in `rollout.sh`) moves, so until then
-that release writes the same records as the one before it. PR 4's release
+gateway sends a ceiling while PR 4's setting `fastpath_stream_ceiling`
+(`TR_FASTPATH_STREAM_CEILING` in `rollout.sh`, turned on by #2417) is off,
+and while it is off that release writes the same records as the one before it. PR 4's release
 also reads the edge policy's `fastpath_stream_ceiling` member, which a node
 from before refuses with the whole policy: the setting moves only once that
 release runs on every node (`fastpath-streams.md`, "The ceiling beside the

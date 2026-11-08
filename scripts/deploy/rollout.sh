@@ -753,8 +753,10 @@ ENV_VARS=(
   # revision inherits it; false is the way back. It moves only once every
   # node runs the release that reads the policy member (a node from before
   # refuses the whole policy) and PR 3's release runs on every owner, front
-  # door and auditor (docs/runbooks/fastpath-streams.md).
-  "TR_FASTPATH_STREAM_CEILING=false"
+  # door and auditor (docs/runbooks/fastpath-streams.md). On (#2417): every
+  # node runs bd4398c21 (#2410), which reads the member and contains PR 3,
+  # and the serving control plane release contains #2337.
+  "TR_FASTPATH_STREAM_CEILING=true"
   # Arms the authorize-time billing-pause gate (trust_eligibility
   # .billing_paused_tx) on both the typed and legacy paths. The name predates
   # the spend-lease pilot's removal (2026-09); Settings keeps it False so only

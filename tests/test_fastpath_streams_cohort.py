@@ -297,12 +297,13 @@ def test_the_ceiling_setting_is_off_by_default_and_reads_its_environment(monkeyp
     assert Settings(_env_file=None, environment="test", sentry_dsn=None).fastpath_stream_ceiling is True  # type: ignore[call-arg]
 
 
-def test_rollout_renders_the_ceiling_setting_as_a_literal_off() -> None:
-    # Dark: the setting moves only once every node reads the policy member
-    # and PR 3 runs on every owner, front door and auditor
-    # (docs/runbooks/fastpath-streams.md, "The ceiling beside the hold").
+def test_rollout_renders_the_ceiling_setting_as_a_literal_on() -> None:
+    # On since every node runs bd4398c21, which reads the policy member, and
+    # PR 3 runs on every owner, front door and auditor
+    # (docs/runbooks/fastpath-streams.md, "The ceiling beside the hold"); a
+    # literal, so the way back is this line set to false and a deploy.
     rollout = (ROOT / "scripts" / "deploy" / "rollout.sh").read_text()
-    assert re.findall(r'"TR_FASTPATH_STREAM_CEILING=[^"]*"', rollout) == ['"TR_FASTPATH_STREAM_CEILING=false"']
+    assert re.findall(r'"TR_FASTPATH_STREAM_CEILING=[^"]*"', rollout) == ['"TR_FASTPATH_STREAM_CEILING=true"']
 
 
 def test_the_admission_passes_a_ceiling_only_when_there_is_one(monkeypatch: pytest.MonkeyPatch) -> None:

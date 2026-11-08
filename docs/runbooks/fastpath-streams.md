@@ -101,14 +101,15 @@ and the hold (`stream.stage_d:<reason>`, `stream.undeclared`,
 
 ## The ceiling beside the hold
 
-Design §12.4, PR 4. `TR_FASTPATH_STREAM_CEILING`, a literal `false` in
+Design §12.4, PR 4. `TR_FASTPATH_STREAM_CEILING`, a literal `true` (#2417) in
 `rollout.sh`: with it on, Python's pilot and the edge admit a stream whose
 reservation is below its estimate (an output budget past 16,384 tokens)
 with the estimate as the admission's `Ceiling`, so its owner runs it to the
 estimate, where Stage D cuts it, instead of passing it over as
 `stream.hold`. The edge policy carries `fastpath_stream_ceiling: true`
-exactly when the setting is on. Moving it is the activation; it waits for
-Joseph's go. Before it moves:
+exactly when the setting is on. Moving it was the activation (#2417, on
+Joseph's go); these held before it moved, and must hold again before it
+moves back on after a way back:
 
 1. **#2337 deployed** in every control plane region: find a successful
    control-plane deploy at or after d5dc1862c. Before it a stream's
