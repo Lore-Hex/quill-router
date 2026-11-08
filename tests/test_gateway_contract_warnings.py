@@ -182,9 +182,27 @@ def test_diagnostic_sink_rechecks_path_limit(warnings: list[dict[str, Any]]) -> 
     assert warnings[0]["contexts"]["gateway_rejection"] == {"request_id": REQUEST_ID}
 
 
+@pytest.mark.parametrize("parameter", ["output_config", "output_config.effort"])
+def test_output_config_has_named_warning_category(
+    warnings: list[dict[str, Any]], parameter: str,
+) -> None:
+    report_gateway_contract_rejection(
+        GatewayContractRejection(
+            status=400, parameter=parameter, request_id=REQUEST_ID,
+            parameter_path="output_config.effort", value_preview='"high"',
+        ),
+        route="/v1/chat/completions", workspace_id="ws_verified", credential_id="key_verified",
+    )
+    [event] = warnings
+    assert event["fingerprint"][-1] == parameter
+    assert event["contexts"]["gateway_rejection"]["value_preview"] == '"high"'
+
+
 @pytest.mark.parametrize(("path", "raw", "expected"), [
     ("prompt_cache_retention", '"24h"', '"24h"'),
     ("usage.include", '"false"', '"false"'),
+    ("output_config.effort", '"high"', '"high"'),
+    ("output_config.effort", '"private customer content"', '"[redacted:string]"'),
     ("temperature", "0.7", "0.7"),
     ("usage", '{"include":true}', '{"include":true}'),
     ("future", '"private customer content"', '"[redacted:string]"'),
