@@ -416,6 +416,9 @@ def test_gateway_regions_agree_with_the_provider_contract(live, settings) -> Non
             or (endpoint.provider, endpoint.model_id) in {
                 ("cloudflare-workers-ai", "cloudflare/clairic"),
                 ("regolo", "cloudflare/clef-flash"),
+                ("baseten", "decision-models/baseten-elephant-9b-latest"),
+                ("baseten", "decision-models/baseten-mammoth-27b-latest"),
+                ("baseten", "decision-models/baseten-joey-2b-latest"),
             }
         )
         for region in sorted(regions):
@@ -477,6 +480,9 @@ def test_the_request_region_is_checked_even_when_it_is_not_configured(live) -> N
             ) in {
                 ("cloudflare-workers-ai", "cloudflare/clairic"),
                 ("regolo", "cloudflare/clef-flash"),
+                ("baseten", "decision-models/baseten-elephant-9b-latest"),
+                ("baseten", "decision-models/baseten-mammoth-27b-latest"),
+                ("baseten", "decision-models/baseten-joey-2b-latest"),
             }
             python = body_region or ("" if explicit_origin else choose_region(us_only, body_region or None))
             assert checked == python

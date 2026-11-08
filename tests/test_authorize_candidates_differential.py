@@ -327,6 +327,11 @@ def _run(module: types.ModuleType, case: dict[str, Any], backend: str,
                 if (provider, model) in {
                     ("regolo", "cloudflare/clef-flash"),
                     ("cloudflare-workers-ai", "cloudflare/clairic"),
+                    # Baseten System One decisions (#2388): the adapter ships
+                    # with quill-cloud-proxy on the GCP fleet first.
+                    ("baseten", "decision-models/baseten-elephant-9b-latest"),
+                    ("baseten", "decision-models/baseten-mammoth-27b-latest"),
+                    ("baseten", "decision-models/baseten-joey-2b-latest"),
                 }:
                     return body.region in {"us-central1", "us-east4", "us-west1", "europe-west4"}
                 return old_available(provider, model, region)
