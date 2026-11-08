@@ -82,6 +82,8 @@ _CASES = [
          datetime(2026, 11, 20, tzinfo=UTC), "google/gemma-4-26b-a4b-it"),
     Case("cloudflare-workers-ai", "meta-llama/llama-3.2-3b-instruct", "@cf/meta/llama-3.2-3b-instruct",
          datetime(2026, 11, 20, tzinfo=UTC), "google/gemma-4-26b-a4b-it"),
+    Case("deepinfra", "inclusionai/ling-3.1-flash", "inclusionAI/Ling-3.1-flash",
+         datetime(2026, 11, 15, tzinfo=UTC), "deepseek/deepseek-v4.1-flash-1017"),
     Case("tinfoil", "moonshotai/kimi-k3", "kimi-k3",
          datetime(2026, 11, 12, tzinfo=UTC), "moonshotai/kimi-k3.1-pro"),
     Case("novita", "deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-flash",

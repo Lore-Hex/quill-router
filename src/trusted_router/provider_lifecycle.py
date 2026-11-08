@@ -91,6 +91,8 @@ FRIENDLI_GLM_51_RETIREMENT_AT = datetime(2026, 11, 20, 0, 0, tzinfo=UTC)
 TINFOIL_KIMI_K3_RETIREMENT_AT = datetime(2026, 11, 12, 0, 0, tzinfo=UTC)
 # Cloudflare Workers AI deprecates older catalog models on 20 Nov 2026 (date only).
 CLOUDFLARE_WORKERS_AI_NOV_20_RETIREMENT_AT = datetime(2026, 11, 20, 0, 0, tzinfo=UTC)
+# DeepInfra deprecates inclusionAI/Ling-3.1-flash on 15 Nov 2026 (date only) and redirects it.
+DEEPINFRA_LING_31_FLASH_RETIREMENT_AT = datetime(2026, 11, 15, 0, 0, tzinfo=UTC)
 # 2026-11-06 19:00 UTC: Novita, Tinfoil and Chutes no longer list these routes
 # in their public model APIs; the hourly refresh already marks them dark.
 NOVEMBER_6_DELISTED_RETIREMENT_AT = datetime(2026, 11, 6, 19, 0, tzinfo=UTC)
@@ -1324,6 +1326,16 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"Qwen/Qwen3-32B-TEE"}),
         effective_at=NOVEMBER_6_DELISTED_RETIREMENT_AT,
         replacement_model_ids=("qwen/qwen3.8-27b",),
+    ),
+    # DeepInfra's November 8 notice deprecates inclusionAI/Ling-3.1-flash on
+    # 15 November 2026 (date only, so 00:00 UTC) and redirects requests to
+    # DeepSeek-V4.1-Flash-1017. Retire the identity rather than substitute.
+    _Retirement(
+        provider="deepinfra",
+        model_ids=frozenset({"inclusionai/ling-3.1-flash"}),
+        upstream_ids=frozenset({"inclusionAI/Ling-3.1-flash"}),
+        effective_at=DEEPINFRA_LING_31_FLASH_RETIREMENT_AT,
+        replacement_model_ids=("deepseek/deepseek-v4.1-flash-1017",),
     ),
     # DigitalOcean's October 29 notices deprecate these Inference models on
     # 2026-11-09 (date only; 00:00 UTC conservatively); requests then 404.
