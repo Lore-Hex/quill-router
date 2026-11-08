@@ -61,7 +61,9 @@
       ],
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 1000000,
-      "cached_input_token_price_per_m": 30000
+      "cached_input_token_price_per_m": 30000,
+      "routable": false,
+      "routable_reason": "provider-access-unavailable"
     },
     {
       "id": "z-ai/glm-5.3",

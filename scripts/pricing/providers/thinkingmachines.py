@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
 from scripts.pricing.base import ModelPrice, ProviderPricingResult, fetch_json
+from scripts.pricing.manifest import set_manifest_model_canary_states
+from scripts.pricing.openai_catalog import probe_openai_chat
 from scripts.pricing.parsers.thinkingmachines import _SAMPLER_IDS, _SERVERLESS_IDS
 
 SLUG = "thinkingmachines"
@@ -21,6 +24,23 @@ EXPECTED_MODELS = [
     "thinkingmachines/inkling-small",
     "z-ai/glm-5.3",
 ]
+BASE_URL = "https://tinker.thinkingmachines.dev/services/tinker-prod/oai/api/v1"
+API_KEY_ENVS = ("THINKING_MACHINES_API_KEY", "TINKER_API_KEY")
+# Listed in serverless.json, but TR's Tinker key gets a model-level 4xx for it:
+# the configured-route probe classified six straight attempts as
+# unsupported_route (Sentry QUILL-ROUTER-FD, 2026-11-08). Serverless inference
+# is a per-model beta, so this is account access, not a TR adapter defect.
+# Inkling and Inkling-Small serve on the same key and stay routable.
+#
+# The hold lives in the committed manifest, so price refreshes keep it. It
+# lifts by itself the first time an authenticated canary to the exact upstream
+# ID returns 200: run the refresh with THINKING_MACHINES_API_KEY set (the
+# hourly workflow does not receive that key today). To lift it by hand once
+# access is confirmed, delete the row's "routable"/"routable_reason" fields.
+ACCESS_HOLD_REASON = "provider-access-unavailable"
+OPERATOR_HOLDS = {"thinkingmachines/inkling-2-small": ACCESS_HOLD_REASON}
+_ACCESS_CANARY_CHECKED: set[str] = set()
+_ACCESS_CANARY_HEALTHY: set[str] = set()
 MANIFEST_PATH = (
     Path(__file__).resolve().parents[3]
     / "src"
@@ -72,13 +92,63 @@ def fetch() -> ProviderPricingResult:
     prices.update(
         _json_prices(fetch_json(SAMPLER_URL), _SAMPLER_IDS, ("prefill", "cached_prefill", "sample"))
     )
+    notes = ["verified exact deployed IDs against official serverless.json and models.json"]
+    notes.extend(_run_access_canary())
     return ProviderPricingResult(
         slug=SLUG,
         prices=prices,
         source="api",
         fetched_url=URL,
-        notes=["verified exact deployed IDs against official serverless.json and models.json"],
+        notes=notes,
     )
+
+
+def _api_key() -> str | None:
+    for name in API_KEY_ENVS:
+        value = (os.environ.get(name) or "").strip()
+        if value:
+            return value
+    return None
+
+
+def _held_upstream_ids() -> dict[str, str]:
+    """Rows currently under the access hold, keyed to their exact upstream ID."""
+
+    if not MANIFEST_PATH.exists():
+        return {}
+    rows = json.loads(MANIFEST_PATH.read_text(encoding="utf-8")).get("models")
+    if not isinstance(rows, list):
+        return {}
+    return {
+        row["id"]: row["upstream_id"]
+        for row in rows
+        if isinstance(row, dict)
+        and isinstance(row.get("id"), str)
+        and isinstance(row.get("upstream_id"), str)
+        and row.get("routable") is False
+        and row.get("routable_reason") == ACCESS_HOLD_REASON
+    }
+
+
+def _run_access_canary() -> list[str]:
+    """Recheck held routes only; healthy siblings are never probed or touched."""
+
+    _ACCESS_CANARY_CHECKED.clear()
+    _ACCESS_CANARY_HEALTHY.clear()
+    key = _api_key()
+    held = _held_upstream_ids()
+    if key is None or not held:
+        return []
+    for model_id, upstream_id in sorted(held.items()):
+        _ACCESS_CANARY_CHECKED.add(model_id)
+        if probe_openai_chat(
+            base_url=BASE_URL, api_key=key, model=upstream_id, max_tokens=64
+        ):
+            _ACCESS_CANARY_HEALTHY.add(model_id)
+    return [
+        f"access canary passed {len(_ACCESS_CANARY_HEALTHY)}/"
+        f"{len(_ACCESS_CANARY_CHECKED)} held route(s)"
+    ]
 
 
 def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
@@ -119,6 +189,13 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         json.dumps(raw, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
+    if _ACCESS_CANARY_CHECKED:
+        set_manifest_model_canary_states(
+            MANIFEST_PATH,
+            checked_model_ids=_ACCESS_CANARY_CHECKED,
+            healthy_model_ids=_ACCESS_CANARY_HEALTHY,
+            failure_reason=ACCESS_HOLD_REASON,
+        )
     return [
         "thinkingmachines: refreshed provider_models/thinkingmachines.json "
         f"({len(updated)} priced rows)"
