@@ -35,7 +35,6 @@
 /* Live evidence: Ink section, attestation rows left, uptime figures right. */
 .v3-evidence{background:var(--ink);color:var(--cream);padding:112px 0}
 .v3-evidence .ev-intro{margin:0 0 48px;max-width:640px;font-size:22px;line-height:1.45;font-weight:450;color:var(--cream)}
-.v3-evidence .last-check.ev-checked{margin-top:28px}
 .v3-evidence .ev{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;align-items:start;min-width:0;background:transparent;border:0}
 .v3-evidence .ev-sec{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"h link" "rows rows";align-items:baseline;column-gap:16px;padding:0;border:0}
 .v3-evidence .ev-sec:first-child{grid-column:span 6}
@@ -52,8 +51,9 @@
 .att-row dd{margin:0;font:400 15px/1.5 var(--font-mono);color:var(--cream);overflow-wrap:anywhere}
 .att-row .build-digest{font:inherit}
 .att-row.att-unproven dd{color:var(--yellow)}
-/* Loading: placeholders in the rule colour until live figures arrive (no animation: only data moves). */
-.v3-evidence .is-pending,.v3-evidence .service-history .uptime-figure.is-pending{color:var(--dark-rule)}
+/* Loading placeholders until live figures arrive (no animation: only data moves).
+   Uptime dashes in the rule colour (this selector beats the per-row figure colours); attestation dashes in secondary ink. */
+.v3-evidence .service-history .uptime-figure.is-pending{color:var(--dark-rule)}
 .att-row dd.is-pending{color:var(--ink-2)}
 .v3-evidence [data-live-services]{margin-top:16px}
 .v3-evidence .service-history{display:flex;justify-content:space-between;align-items:baseline;gap:16px;padding:16px 0 20px;border:0;border-top:2.5px solid var(--lime)}
@@ -63,7 +63,7 @@
 .uptime-figure{font:300 48px/1 var(--font-sans);color:var(--lime);font-variant-numeric:tabular-nums;white-space:nowrap}
 .service-history:nth-child(3n+2) .uptime-figure{color:var(--sky)}
 .service-history:nth-child(3n) .uptime-figure{color:var(--yellow)}
-.v3-evidence .last-check{margin-top:8px;font:400 15px/1.5 var(--font-mono);color:var(--ink-2-dark)}
+.v3-evidence .last-check{margin-top:28px;font:400 15px/1.5 var(--font-mono);color:var(--ink-2-dark)}
 
 /* Models on confidential routes: sky field, ruled table. */
 .v3-models{background:var(--sky);padding:112px 0}
@@ -169,7 +169,6 @@
   .v3-evidence [data-live-services]{margin-top:14px}
   .v3-evidence .service-history{padding:12px 0 16px}
   .uptime-figure{font-size:32px}
-  .v3-evidence .last-check{margin-top:0}
   .v3-models h2{margin-top:24px}
   .v3-models .privacy-column{gap:12px 8px;padding:18px 0}
   .v3-models .privacy-choice h3{font-size:22px}

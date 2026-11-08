@@ -51,6 +51,11 @@ main .tags .tag.cap{background:var(--cream)}
 .v3-case-link{display:inline-flex;align-items:center;gap:6px;min-height:44px;margin-top:12px;color:var(--cream);font-size:17px;font-weight:500;text-decoration:underline;text-decoration-thickness:1.5px;text-underline-offset:4px}
 .v3-case-link:hover{color:var(--cream);text-decoration-color:var(--lime)}
 .v3-case-link svg{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5}
+/* Where supported, trim both texts to their cap height so their tops meet in any font (the values above are the fallback). */
+@supports (text-box:trim-both cap alphabetic){
+  .v3-big{line-height:1;text-box:trim-both cap alphabetic}
+  .v3-case-copy .lede{margin-top:0;text-box:trim-start cap alphabetic}
+}
 
 /* Three layers */
 .v3-layers{background:var(--purple);color:var(--ink)}

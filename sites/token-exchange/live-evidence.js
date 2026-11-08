@@ -8,6 +8,11 @@
   const services = root.querySelector('[data-live-services]');
   const attestation = root.querySelector('[data-live-attestation]');
   const caption = root.querySelector('[data-live-caption]');
+  // v3 row labels, shared by the loading state and the live render.
+  const LABELS = {build: 'Matches published build', source: 'Source code version', place: 'Data centre'};
+  const UNPROVEN = 'Not proven by attestation';
+  // Loading placeholders only: the evidence feed's component names (live rows use the feed's own names).
+  const SERVICE_NAMES = ['Canonical API', 'US East Regional API', 'Model Inference'];
   // v3: one 'Last checked' line under both columns (the oldest check shown).
   const checked = root.parentElement?.querySelector('[data-live-checked]');
   const setChecked = value => {
@@ -123,7 +128,7 @@
     if (v3 && showServices) {
       // One line for the set: the oldest check, so no row looks fresher than it is.
       const oldest = components.reduce((a, c) => (Date.parse(c.last_checked_at) < Date.parse(a) ? c.last_checked_at : a), components[0].last_checked_at);
-      if (checked) setChecked(oldest); else services.append(node('p', lastCheck(oldest), 'last-check'));
+      setChecked(oldest);
     }
     for (const c of !v3 && showServices ? components : []) {
       const row = node('div', undefined, 'service-history');
@@ -163,10 +168,10 @@
         item.append(node('dt', key), dd);
         rows.append(item);
       };
-      row('Matches published build', node('code', release.image_digest, 'build-digest'));
-      if (typeof release.source_commit === 'string') row('Source code version', release.source_commit.slice(0, 8));
-      row('Data centre', 'Not proven by attestation', 'att-unproven');
-      if (checked) setChecked(check.last_checked_at); else row('Last checked', checkedAt(check.last_checked_at));
+      row(LABELS.build, node('code', release.image_digest, 'build-digest'));
+      if (typeof release.source_commit === 'string') row(LABELS.source, release.source_commit.slice(0, 8));
+      row(LABELS.place, UNPROVEN, 'att-unproven');
+      setChecked(check.last_checked_at);
       attestation.append(rows);
       return;
     }
@@ -200,13 +205,13 @@
   if (v3) {
     const dash = (tag, text, cls) => { const el = node(tag, text, cls); el.classList.add('is-pending'); return el; };
     const rows = node('dl', undefined, 'att-rows');
-    for (const [key, value, cls] of [['Matches published build', 'sha256: ––––––––––––––––'], ['Source code version', '––––––––'], ['Data centre', 'Not proven by attestation', 'att-unproven']]) {
+    for (const [key, value, cls] of [[LABELS.build, 'sha256: ––––––––––––––––'], [LABELS.source, '––––––––'], [LABELS.place, UNPROVEN, 'att-unproven']]) {
       const item = node('div', undefined, cls ? `att-row ${cls}` : 'att-row');
       item.append(node('dt', key), cls ? node('dd', value) : dash('dd', value));
       rows.append(item);
     }
     attestation.replaceChildren(rows);
-    services.replaceChildren(...['Canonical API', 'US East Regional API', 'Model Inference'].map(name => {
+    services.replaceChildren(...SERVICE_NAMES.map(name => {
       const row = node('div', undefined, 'service-history');
       row.append(node('span', name, 'uptime-name'), dash('strong', '––.––%', 'uptime-figure'));
       return row;
