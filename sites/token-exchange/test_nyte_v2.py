@@ -31,12 +31,11 @@ class NyteV2Tests(unittest.TestCase):
             self.assertNotIn('/confidential-api', page)
             self.assertIn('href="/confidential#start">Start building</a>', page)
             self.assertNotIn('data-open="pdeck"', page)
-            if name in ('home', 'api'):
-                self.assertIn('name="website"', page)
-                self.assertIn('action="https://trustedrouter.com/token-exchange/brief"', page)
-                self.assertIn('id="m-deck"', page)
-            else:
-                self.assertNotIn('id="m-deck"', page)
+            # The buyer deck form is on every page so the menu link opens it in place.
+            self.assertIn('name="website"', page)
+            self.assertIn('action="https://trustedrouter.com/token-exchange/brief"', page)
+            self.assertEqual(page.count('id="m-deck"'), 1)
+            self.assertEqual(page.count('href="/#deck"'), 1)
             self.assertNotIn('Send the deck', page)
         self.assertEqual(render_nyte('sup').count('href="/providers">Get the provider deck</a>'), 2)
 
@@ -194,6 +193,18 @@ class NavigationRegistryTests(unittest.TestCase):
             self.assertIn('href="/media-kit">Media kit</a>', page)
             footer = re.search(r'<footer\b[^>]*>.*?</footer>', page, re.S).group()
             self.assertEqual(footer.count('href="https://letsencrypt.ai/">Let\'s Encrypt AI</a>'), 1)
+            # Bottom row: legal links only. TrustedRouter's related sites sit under "Powered by".
+            legal = re.search(r'<div class="legal">(.*?)</div>', footer, re.S).group(1)
+            labels = re.findall(r'>([^<>]+)</a>', legal)
+            self.assertEqual(labels, (['Trust center'] if key == 'providers' else []) + ['Media kit', 'Privacy', 'Terms'])
+            related = re.search(r'<nav class="footer-related" aria-label="More from TrustedRouter">(.*?)</nav>', footer, re.S).group(1)
+            # Outbound TrustedRouter links carry campaign parameters; compare without them.
+            self.assertEqual([(href.split('?', 1)[0], text) for href, text in
+                              re.findall(r'<a href="([^"]+)">([^<]+)</a>', related)], [
+                ('https://trustedrouter.com/token-exchange', 'Exchange overview'),
+                ('https://letsencrypt.ai/', "Let's Encrypt AI"),
+            ])
+            self.assertLess(footer.index('Powered by'), footer.index('class="footer-related"'))
             self.assertEqual(nav.count('aria-expanded="false"'), 3)
 
     def test_added_page_gets_automatic_date_without_changing_test_lists(self):

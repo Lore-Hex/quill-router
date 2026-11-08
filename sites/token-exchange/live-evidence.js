@@ -8,6 +8,20 @@
   const services = root.querySelector('[data-live-services]');
   const attestation = root.querySelector('[data-live-attestation]');
   const caption = root.querySelector('[data-live-caption]');
+  // v3 row labels, shared by the loading state and the live render.
+  const LABELS = {build: 'Matches published build', source: 'Source code version', place: 'Data centre'};
+  const UNPROVEN = 'Not proven by attestation';
+  // Loading placeholders only: the evidence feed's component names (live rows use the feed's own names).
+  const SERVICE_NAMES = ['Canonical API', 'US East Regional API', 'Model Inference'];
+  // v3: one 'Last checked' line under both columns (the oldest check shown).
+  const checked = root.parentElement?.querySelector('[data-live-checked]');
+  const setChecked = value => {
+    if (!checked) return;
+    const shown = checked.dataset.at;
+    if (value && (!shown || Date.parse(value) < Date.parse(shown))) checked.dataset.at = value;
+    checked.hidden = !checked.dataset.at;
+    if (checked.dataset.at) checked.textContent = lastCheck(checked.dataset.at);
+  };
   // The brand v3 Confidential page asks for labelled rows and uptime figures; other pages keep the original output.
   const v3 = root.dataset.evidenceStyle === 'v3';
   const statusCaption = caption?.textContent;
@@ -19,6 +33,7 @@
   let refreshTimer;
   let refreshing = false;
   let renderedKey;
+  let settled = false;
   const node = (tag, text, cls) => {
     const el = document.createElement(tag);
     if (text !== undefined) el.textContent = text;
@@ -46,6 +61,7 @@
     services.replaceChildren();
     if (caption) caption.textContent = statusCaption;
     if (priceUnit) priceUnit.hidden = true;
+    if (checked) { delete checked.dataset.at; checked.hidden = true; }
     attestation.replaceChildren();
   };
   const presentable = c => c && typeof c.id === 'string' && typeof c.name === 'string'
@@ -53,6 +69,8 @@
     && typeof c.uptime_24h_percent === 'number' && c.uptime_24h_percent >= 0
     && c.uptime_24h_percent <= 100 && c.sample_count_24h > 0;
   function render() {
+    // v3: hold the loading layout until the first fetch has settled.
+    if (v3 && !settled) return;
     // Recheck age each second without replacing focused links every second.
     const dates = (Array.isArray(payload?.components) ? payload.components : []).map(c => fresh(c?.last_checked_at));
     const key = JSON.stringify([receivedAt, Boolean(payload), Date.now() - receivedAt > staleMs,
@@ -73,7 +91,7 @@
       choice.append(node('h3', row.label), node('p', 'Tinfoil'));
       if (prices.dataset.priceLayout === 'table') {
         const provider = node('div', v3 ? undefined : 'Confidential + E2EE', 'privacy-provider');
-        if (v3) provider.append(node('span', 'Confidential', 'v3-chip'), ' + ', node('span', 'E2EE', 'v3-chip'));
+        if (v3) provider.append(node('span', 'Confidential', 'v3-chip cc'), node('span', ' + ', 'v3-plus'), node('span', 'E2EE', 'v3-chip e2ee'));
         col.append(choice, provider);
         for (const [label, value] of [['Input / 1M', row.input], ['Output / 1M', row.output]]) {
           const price = node('div', `$${value}`, 'privacy-price');
@@ -95,6 +113,7 @@
         : `USD / 1M tokens · input / output · ${lastCheck(payload.generated_at)}`;
     }
     if (!prices.childElementCount) prices.append(link('Browse Tinfoil model routes', 'https://trustedrouter.com/models?filter=e2e'));
+    if (checked) { delete checked.dataset.at; checked.hidden = true; }
     services.replaceChildren();
     const components = Array.isArray(payload.components) ? payload.components : [];
     // A landing page is not an incident dashboard. If any source is unhealthy
@@ -109,7 +128,7 @@
     if (v3 && showServices) {
       // One line for the set: the oldest check, so no row looks fresher than it is.
       const oldest = components.reduce((a, c) => (Date.parse(c.last_checked_at) < Date.parse(a) ? c.last_checked_at : a), components[0].last_checked_at);
-      services.append(node('p', lastCheck(oldest), 'last-check'));
+      setChecked(oldest);
     }
     for (const c of !v3 && showServices ? components : []) {
       const row = node('div', undefined, 'service-history');
@@ -149,10 +168,10 @@
         item.append(node('dt', key), dd);
         rows.append(item);
       };
-      row('Published build digest', node('code', release.image_digest, 'build-digest'));
-      if (typeof release.source_commit === 'string') row('Published source', release.source_commit.slice(0, 8));
-      row('Location', 'Not proven by attestation', 'att-unproven');
-      row('Last checked', checkedAt(check.last_checked_at));
+      row(LABELS.build, node('code', release.image_digest, 'build-digest'));
+      if (typeof release.source_commit === 'string') row(LABELS.source, release.source_commit.slice(0, 8));
+      row(LABELS.place, UNPROVEN, 'att-unproven');
+      setChecked(check.last_checked_at);
       attestation.append(rows);
       return;
     }
@@ -174,11 +193,31 @@
       // Keep the last response in this tab only. Original timestamps still
       // expire in render(); a successful newer response always replaces it.
     }
+    settled = true;
     render();
     refreshing = false;
     // Start the next interval AFTER receipt. A timer started before the initial
     // response can hit the server cache just before its one-minute expiry.
     refreshTimer = setTimeout(refresh, refreshMs);
+  }
+  // v3 loading state: the final layout with dashes, so nothing jumps when figures arrive.
+  // Built here (not in the HTML) so pages without JavaScript never show placeholders.
+  if (v3) {
+    const dash = (tag, text, cls) => { const el = node(tag, text, cls); el.classList.add('is-pending'); return el; };
+    const rows = node('dl', undefined, 'att-rows');
+    for (const [key, value, cls] of [[LABELS.build, 'sha256: ––––––––––––––––'], [LABELS.source, '––––––––'], [LABELS.place, UNPROVEN, 'att-unproven']]) {
+      const item = node('div', undefined, cls ? `att-row ${cls}` : 'att-row');
+      item.append(node('dt', key), cls ? node('dd', value) : dash('dd', value));
+      rows.append(item);
+    }
+    attestation.replaceChildren(rows);
+    services.replaceChildren(...SERVICE_NAMES.map(name => {
+      const row = node('div', undefined, 'service-history');
+      row.append(node('span', name, 'uptime-name'), dash('strong', '––.––%', 'uptime-figure'));
+      return row;
+    }));
+    if (caption) caption.textContent = caption.dataset.uptimeLabel;
+    if (checked) { checked.textContent = 'Checking now…'; checked.hidden = false; }
   }
   refresh();
   setInterval(render, 1000);

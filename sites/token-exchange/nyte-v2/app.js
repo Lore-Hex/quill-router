@@ -37,7 +37,8 @@ const updateNew=()=>{
 updateNew();setInterval(updateNew,60000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)updateNew();});
 const dialog=document.getElementById('m-deck');
-const openDeckHash=()=>{if(location.hash==='#deck' && document.body.dataset.nytePage==='home' && !dialog?.open)dialog?.showModal();};
+// The buyer deck form is on every page: /#deck (and #deck anywhere) opens it in place.
+const openDeckHash=()=>{if(location.hash==='#deck' && !dialog?.open)dialog?.showModal();};
 window.addEventListener('hashchange',openDeckHash);openDeckHash();
 // A link such as /confidential#start lands before the live evidence and prices above
 // the section have rendered, and iOS Safari keeps no scroll anchor, so the target
@@ -51,7 +52,8 @@ if(landing && landing!==document.body && landing.tagName!=='DIALOG' && navType==
  ['wheel','touchstart','keydown','pointerdown'].forEach(type=>addEventListener(type,release,{once:true,passive:true}));
  setTimeout(release,10000);
 }
-nav.querySelector('a[href="/#deck"]')?.addEventListener('click',()=>{if(document.body.dataset.nytePage==='home' && location.hash==='#deck')dialog?.showModal();});
+// Menu "Buyer deck": open the form over the current page instead of going to the home page.
+nav.querySelector('a[href="/#deck"]')?.addEventListener('click',e=>{if(!dialog)return;e.preventDefault();closeMenu();dialog.showModal();});
 document.querySelectorAll('[data-open="deck"]').forEach(b=>b.addEventListener('click',()=>dialog.showModal()));
 dialog?.querySelector('[data-close]')?.addEventListener('click',()=>dialog.close());
 dialog?.addEventListener('click',e=>{if(e.target===dialog)dialog.close();});

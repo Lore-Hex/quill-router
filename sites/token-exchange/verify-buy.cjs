@@ -56,7 +56,9 @@ async function localHtml(context) {
           assert.equal(await page.evaluate(() => document.activeElement.id), `buy-title-${step}`);
           assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth &&
             document.getElementById('buy-flow').scrollWidth <= document.getElementById('buy-flow').clientWidth), `overflow ${width} step ${step}`);
-          assert.equal(await page.locator('form').count(),0);
+          // The wizard never submits; the one form is the shared buyer deck dialog, closed.
+          assert.equal(await page.locator('form:not(#m-deck #brochure-form)').count(),0);
+          assert(!(await page.locator('#m-deck').isVisible()));
           if (index === 0 && [390,1440].includes(width)) {
             await page.evaluate(() => document.fonts.ready);
             await page.screenshot({path:`${shots}/step-${step}-${width}.png`,fullPage:true});
@@ -237,7 +239,10 @@ async function localHtml(context) {
       assert(await page.locator('#buy-model').isVisible());
       assert(await page.locator('#buy-provider').isVisible());
       assert(await page.locator('#buy-calendly-link').isVisible());
-      assert.equal(await page.locator('form,iframe').count(),0);
+      assert.deepEqual(await page.locator('.buy-fallback p').allTextContents(),['Prefer to book directly? Open Calendly','Already reserved? Manage it']);
+      assert.equal(await page.locator('iframe').count(),0);
+      assert.equal(await page.locator('form:not(#m-deck #brochure-form)').count(),0);
+      assert(!(await page.locator('#m-deck').isVisible()));
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
       await context.close();
     }

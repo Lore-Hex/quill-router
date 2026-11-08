@@ -6,7 +6,7 @@
 [data-nyte-page="cowork"] main h2{font-size:72px;line-height:1;font-weight:300;letter-spacing:-.015em;color:var(--ink)}
 .cw3-bar{display:block;width:40px;height:4px;background:var(--ink)}
 .cw3-label,.cw-rules dt{font:500 13px/1.2 var(--font-condensed);letter-spacing:.1em;text-transform:uppercase}
-.cw3-mono,.cw-rules dd,.cw3-n{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.cw3-mono,.cw-rules dd{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
 
 /* Kit buttons: 48 px, 1.5 px ink rule; orange only for the one main action. */
 [data-nyte-page="cowork"] main .btn{min-height:48px;height:48px;padding:0 22px;border:1.5px solid var(--ink);background:transparent;color:var(--ink);font:500 16px/1 var(--font-sans);white-space:nowrap}
@@ -34,9 +34,9 @@
 .cw3-how h2{margin-top:32px;max-width:1000px}
 .cw3-steps{list-style:none;padding:0;margin-top:64px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));column-gap:24px}
 .cw3-steps li{border-top:2.5px solid var(--ink);padding-top:24px}
-.cw3-step-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:32px}
-.cw3-n{font-size:14px}
-.cw3-step-top svg{width:32px;height:32px;fill:none;stroke:var(--ink);stroke-width:1.5}
+.cw3-step-top{display:flex;justify-content:flex-start;align-items:center;margin-bottom:32px}
+/* Step icons' viewBox starts at the drawing's left edge, so the stroke lines up with the heading. */
+.cw3-step-top svg{width:32px;height:32px;overflow:visible;fill:none;stroke:var(--ink);stroke-width:1.5}
 .cw3-steps h3{margin-bottom:12px;font-size:24px;line-height:1.2;font-weight:500;letter-spacing:0;color:var(--ink)}
 .cw3-steps p{max-width:400px;font-size:17px;line-height:1.55;color:var(--ink)}
 .cw3-mono{font-size:16px}

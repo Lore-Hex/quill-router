@@ -222,17 +222,24 @@ dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
 /* Footer (kit Footer): the globe mark sits right of the name and contact in the top
    row, in the layout and never behind text; on phones it follows the city rail. */
 .site-footer{overflow:hidden;--globe-bleed:60px}
-.site-footer .footer-top{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:1fr auto auto 1fr;align-items:center;column-gap:48px}
+.site-footer .footer-top{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:1fr auto auto auto 1fr;align-items:center;column-gap:48px}
 .site-footer .footer-top .brand{grid-column:1;grid-row:2}
-.site-footer .footer-contact{grid-column:1;grid-row:3;margin-top:12px}
-.site-footer .footer-top::after{content:"";grid-column:2;grid-row:1/-1;width:min(560px,42vw);aspect-ratio:245.4/120;margin-right:calc(-1 * var(--globe-bleed));background:url(logos/mark-footer.svg) right center/contain no-repeat}
-.site-footer .footer-markets{margin-top:48px;padding:10px 0;background:transparent;border-top:1.5px solid var(--dark-rule);border-bottom:1.5px solid var(--dark-rule)}
+/* Related sites sit under Powered by as real links; the row wraps if more are added. */
+.site-footer .footer-top{row-gap:0}
+.site-footer .footer-related{grid-column:1;grid-row:3;display:flex;flex-wrap:wrap;gap:0 24px;max-width:640px;margin-top:12px;font-size:15px}
+.site-footer .footer-related a{display:inline-flex;align-items:center;min-height:44px;color:var(--cream);text-decoration:none}
+.site-footer .footer-related a:hover{text-decoration:underline;text-underline-offset:4px}
+.site-footer .footer-contact{grid-column:1;grid-row:4;margin-top:24px}
+.site-footer .footer-top::after{content:"";grid-column:2;grid-row:1/-1;width:min(400px,30vw);aspect-ratio:245.4/120;margin-right:calc(-1 * var(--globe-bleed));background:url(logos/mark-footer.svg) right center/contain no-repeat}
+.site-footer .footer-markets{margin-top:40px;padding:10px 0;background:transparent;border-top:1.5px solid var(--dark-rule);border-bottom:1.5px solid var(--dark-rule)}
 .site-footer .market-links a{padding:0 12px;font-size:15px}
 .site-footer .market-links a[aria-current="page"]{background:transparent;color:var(--cream);font-weight:500;box-shadow:inset 0 -3px 0 var(--purple)}
 .site-footer .geo-prev:not([hidden]),.site-footer .geo-next:not([hidden]){background:var(--ink);top:10px}
 .site-footer .geo-scroll.can-left::before{top:10px;bottom:10px;background:linear-gradient(90deg,var(--ink),transparent)}
 .site-footer .geo-scroll.can-right::after{top:10px;bottom:10px;background:linear-gradient(90deg,transparent,var(--ink))}
-.site-footer .legal{margin-top:28px;padding-top:0;border-top:0;font-size:15px}
+.site-footer .legal{margin-top:16px;padding-top:0;border-top:0;font-size:15px}
+/* Desktop footer kept compact: less space above the name and below the legal links. */
+@media(min-width:601px){.site-footer{padding-top:64px;padding-bottom:24px}}
 .site-footer .legal a{color:var(--cream)}
 .site-footer .footer-contact a{color:var(--cream);font-size:17px}
 @media(max-width:600px){
@@ -242,14 +249,15 @@ dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
   /* No back-to-top on phones; the globe takes its place beside the name. */
   .site-footer .back-to-top{display:none}
   .site-footer .footer-top .brand{grid-row:1}
-  .site-footer .footer-contact{grid-column:1;grid-row:2;align-self:center;margin-top:0}
+  .site-footer .footer-related{grid-column:1/-1;grid-row:2;gap:0 20px;margin-top:0}
+  .site-footer .footer-contact{grid-column:1;grid-row:3;align-self:center;margin-top:0}
   /* Phone globe: small, drawn in the secondary text colour so it reads on Ink. Beside the
      stacked New York name; city names are one long line, so there it sits right of the contact line. */
   [data-market="new-york"] .site-footer .footer-top::after{grid-column:2;grid-row:1;align-self:start}
-  .site-footer .footer-top::after{content:"";grid-column:1/-1;grid-row:2;align-self:center;justify-self:end;width:123px;height:60px;aspect-ratio:auto;margin:0;pointer-events:none;background:var(--ink-2-dark);-webkit-mask:url(logos/mark-footer.svg) right center/contain no-repeat;mask:url(logos/mark-footer.svg) right center/contain no-repeat}
+  .site-footer .footer-top::after{content:"";grid-column:1/-1;grid-row:3;align-self:center;justify-self:end;width:123px;height:60px;aspect-ratio:auto;margin:0;pointer-events:none;background:var(--ink-2-dark);-webkit-mask:url(logos/mark-footer.svg) right center/contain no-repeat;mask:url(logos/mark-footer.svg) right center/contain no-repeat}
   .site-footer .footer-markets{margin-top:16px;order:1}
-  /* Spread across the full width so all four links share one line on 375px+ phones, even with wider fonts; wraps only when they truly don't fit. */
-  .site-footer .legal{order:3;flex-wrap:wrap;justify-content:space-between;gap:0 6px;margin-top:8px;padding-top:0;border-top:0}
+  /* Legal links only: one short line that fits the smallest phones. */
+  .site-footer .legal{order:3;flex-wrap:wrap;justify-content:flex-start;gap:0 24px;margin-top:8px;padding-top:0;border-top:0}
 }
 
 /* Token Index page (own sheet): kit headings, square corners, one orange action per view. */

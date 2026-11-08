@@ -37,16 +37,25 @@ main .tags .tag.cap{background:var(--cream)}
 
 /* Case study */
 .v3-case{background:var(--ink);color:var(--cream)}
-.v3-case .wrap{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;align-items:start}
-.v3-case-figure{grid-column:span 6}
-.v3-case-figure .v3-bar{background:var(--lime);margin-bottom:12px}
-.v3-big{margin-top:40px;font-size:clamp(80px,11.6vw,168px);line-height:.9;font-weight:300;letter-spacing:-.03em;color:var(--lime);font-variant-numeric:tabular-nums}
-.v3-case-figure .lede{margin-top:24px}
-.v3-case-quote{grid-column:8/span 5;padding-top:72px;display:flex;flex-direction:column;gap:28px;align-items:flex-start}
-.v3-case-quote blockquote{font-size:40px;line-height:1.15;font-weight:300}
-.v3-case-quote cite{color:var(--ink-2-dark)}
-.v3-case .btn{border-color:var(--cream);color:var(--cream)}
-.v3-case .btn:hover{background:var(--cream);color:var(--ink);border-color:var(--cream)}
+/* Case study: quote leads, the figure and its caption share one ruled row below. */
+.v3-case-head{margin:0;display:flex;flex-direction:column;align-items:flex-start}
+.v3-case-head .v3-bar{background:var(--lime);margin-bottom:16px}
+.v3-case-head cite{color:var(--ink-2-dark)}
+.v3-case-head blockquote{margin:28px 0 0;max-width:940px;font-size:52px;line-height:1.12;font-weight:300;letter-spacing:-.015em}
+.v3-case-proof{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;align-items:start;margin-top:72px;padding-top:32px;border-top:2.5px solid var(--cream)}
+/* line-height .74 makes the figure's box about the height of its digits, so its top lines up with the caption's first line. */
+.v3-big{grid-column:span 5;font-size:clamp(72px,8vw,112px);line-height:.74;font-weight:300;letter-spacing:-.03em;color:var(--lime);font-variant-numeric:tabular-nums}
+.v3-case-copy{grid-column:6/span 7;display:flex;flex-direction:column;align-items:flex-start}
+.v3-case-copy .lede{margin:-4px 0 0;font-size:19px;line-height:1.4;font-weight:450;color:var(--cream)}
+.v3-case-when{margin:4px 0 0;font-size:17px;line-height:1.4;color:var(--ink-2-dark)}
+.v3-case-link{display:inline-flex;align-items:center;gap:6px;min-height:44px;margin-top:12px;color:var(--cream);font-size:17px;font-weight:500;text-decoration:underline;text-decoration-thickness:1.5px;text-underline-offset:4px}
+.v3-case-link:hover{color:var(--cream);text-decoration-color:var(--lime)}
+.v3-case-link svg{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5}
+/* Where supported, trim both texts to their cap height so their tops meet in any font (the values above are the fallback). */
+@supports (text-box:trim-both cap alphabetic){
+  .v3-big{line-height:1;text-box:trim-both cap alphabetic}
+  .v3-case-copy .lede{margin-top:0;text-box:trim-start cap alphabetic}
+}
 
 /* Three layers */
 .v3-layers{background:var(--purple);color:var(--ink)}
@@ -96,9 +105,10 @@ main .tags .tag.cap{background:var(--cream)}
 
 
 @media (max-width:1100px){
-  .v3-case .wrap{grid-template-columns:1fr}
-  .v3-case-figure,.v3-case-quote{grid-column:1}
-  .v3-case-quote{padding-top:56px}
+  .v3-case-head blockquote{font-size:40px}
+  .v3-case-proof{grid-template-columns:1fr;row-gap:24px;margin-top:48px}
+  .v3-big,.v3-case-copy{grid-column:1}
+  .v3-case-copy .lede{margin-top:0}
   .v3-layer-list{margin-top:48px}
   .v3-stats .stats{row-gap:48px}
   .v3-stats .stat .v{font-size:72px}
@@ -117,9 +127,8 @@ main .tags .tag.cap{background:var(--cream)}
   .v3-quotes{grid-template-columns:1fr;gap:32px}
   .v3-quotes figure{padding-top:16px;gap:14px}
   .v3-quotes blockquote{font-size:24px}
-  .v3-big{margin-top:28px}
-  .v3-case-quote{padding-top:48px;gap:20px}
-  .v3-case-quote blockquote{font-size:28px;line-height:1.2}
+  .v3-case-head blockquote{margin-top:20px;font-size:28px;line-height:1.2}
+  .v3-case-proof{margin-top:40px;padding-top:24px}
   .v3-layer-list{grid-template-columns:1fr;gap:28px;margin-top:48px}
   .v3-layer-list li{grid-template-columns:40px 1fr;padding-top:16px}
   .v3-layer-list .n{font-size:32px}

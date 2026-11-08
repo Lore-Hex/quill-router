@@ -76,7 +76,7 @@ main .sv3-hero .sv3-hero-side>.fine{margin-top:16px}
 .sv3-band .v3-band{display:block;width:100%;height:120px}
 .sv3-art .v3-illustration{display:block;width:100%;height:auto;aspect-ratio:480/336}
 
-.sv3-topics .n,.sv3-steps4 .n{font:400 22px/1.2 var(--font-mono);font-variant-numeric:tabular-nums}
+.sv3-steps4 .n{font:400 22px/1.2 var(--font-mono);font-variant-numeric:tabular-nums}
 
 /* Centred hero (Suppliers, Accelerator): Cream, one column, the Band follows once. */
 main section.sv3-hero-c{text-align:center}
@@ -92,6 +92,8 @@ main .sv3-hero-c .lede{max-width:720px}
 .sv3-head .btns{margin-top:8px}
 :is([data-nyte-page="sup"],[data-nyte-page="accelerator"]) main .sv3-small{max-width:880px;font-size:15px;line-height:1.5;color:var(--ink-2)}
 .sv3-ruled{margin-top:56px;padding-top:20px;border-top:1.5px solid var(--ink)}
+/* Onboarding note: a fine-print line for the whole process, its rule spanning all three steps. */
+[data-nyte-page="sup"] main .sv3-steps .sv3-small{max-width:none}
 
 /* Numbered columns (Suppliers onboarding) */
 .sv3-ncols{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:40px 24px;margin:56px 0 32px}
@@ -159,11 +161,6 @@ main section.sv3-cta{background:var(--yellow)}
   :is([data-nyte-page="sup"],[data-nyte-page="accelerator"]) main .sv3-cta .btns{flex-wrap:nowrap}
 }
 
-/* Provider deck topics */
-.sv3-topics{display:flex;flex-direction:column;gap:32px}
-.sv3-topics li{display:grid;grid-template-columns:72px minmax(0,1fr);gap:16px;padding-top:22px;border-top:10px solid var(--ink)}
-.sv3-topics b{font-size:32px;line-height:1.15;font-weight:400;letter-spacing:-.01em}
-.sv3-more a{display:inline-flex;align-items:center;gap:8px;font-size:17px;font-weight:500}
 .sv3-more .sv3-ico{width:18px;height:18px}
 main section.sv3-legal{padding:64px 0 96px}
 .sv3-legal .sv3-note{gap:12px}
@@ -229,7 +226,7 @@ main section.sv3-legal{padding:64px 0 96px}
   :is([data-nyte-page="sup"],[data-nyte-page="providers"],[data-nyte-page="accelerator"]) main .btns{flex-direction:column;align-items:stretch;width:100%}
   :is([data-nyte-page="sup"],[data-nyte-page="providers"],[data-nyte-page="accelerator"]) main .btns .btn{flex:none;width:100%;justify-content:center;padding:0 16px}
   .sv3-band .v3-band{height:72px}
-  .sv3-roles h3,.sv3-topics b{font-size:26px}
+  .sv3-roles h3{font-size:26px}
   .sv3-idx-figure{font-size:48px}
   .sv3-idx-hd{gap:16px}
   .sv3-idx-row{grid-template-columns:44px minmax(0,1fr) auto;gap:14px}
@@ -238,10 +235,35 @@ main section.sv3-legal{padding:64px 0 96px}
   .sv3-faq summary{padding:20px 0;font-size:17px}
   .sv3-faq details p{padding-right:8px}
   .sv3-cta .wrap>div:first-child{gap:16px}
-  .sv3-topics{gap:24px}
-  .sv3-topics li{grid-template-columns:48px minmax(0,1fr);gap:12px}
   .sv3-roles h2,.sv3-process h2{margin-top:24px}
   .sv3-roles-grid,.sv3-steps4{margin-top:40px}
   .sv3-steps4{grid-template-columns:minmax(0,1fr);gap:32px}
   :is([data-nyte-page="sup"],[data-nyte-page="providers"],[data-nyte-page="accelerator"]) .site-footer{padding-inline:20px}
 }
+
+/* Provider deck: copy left, thin-ruled topics right, the email button
+   under the copy on desktop and last on phone. Markup order = phone order. */
+.sv3-deck .sv3-grid{grid-template-rows:auto 1fr;row-gap:32px}
+.sv3-deck .sv3-col-l{grid-column:1/span 5;grid-row:1}
+.sv3-deck .sv3-topics{grid-column:7/span 6;grid-row:1/span 2;display:flex;flex-direction:column;border-bottom:1.5px solid var(--ink)}
+.sv3-deck .sv3-more{grid-column:1/span 5;grid-row:2}
+main section.sv3-deck h2{font-size:48px;line-height:1.05}
+main section.sv3-deck .body{font-size:17px;font-weight:450;color:var(--ink)}
+.sv3-deck .sv3-topics li{display:grid;grid-template-columns:56px minmax(0,1fr);padding:22px 0;border-top:1.5px solid var(--ink)}
+.sv3-deck .sv3-topics .n{font:400 15px/1.6 var(--font-mono);font-variant-numeric:tabular-nums}
+.sv3-deck .sv3-topics b{font-size:24px;line-height:1.3;font-weight:500;letter-spacing:0}
+main section.sv3-deck .sv3-more a{display:inline-flex;align-items:center;box-sizing:border-box;height:48px;padding:0 22px;gap:10px;border:1.5px solid var(--ink);border-radius:0;background:var(--ink);color:var(--cream);font-size:16px;font-weight:500;line-height:1;text-decoration:none}
+main section.sv3-deck .sv3-more a:hover{background:var(--cream);color:var(--ink)}
+main section.sv3-deck .sv3-more a:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
+@media (max-width:1100px){
+  .sv3-deck .sv3-grid{grid-template-columns:minmax(0,1fr);grid-template-rows:none;row-gap:40px}
+  .sv3-deck .sv3-grid>*{grid-column:1/-1;grid-row:auto}
+}
+@media (max-width:600px){
+  main section.sv3-deck h2{font-size:36px}
+  .sv3-deck .sv3-topics li{grid-template-columns:48px minmax(0,1fr)}
+  .sv3-deck .sv3-topics b{font-size:20px}
+  .sv3-deck .sv3-more a{width:100%;justify-content:center}
+}
+/* Smallest phones: 30px keeps the heading to two lines instead of leaving "Exchange" on its own line. */
+@media (max-width:374px){main section.sv3-deck h2{font-size:30px}}

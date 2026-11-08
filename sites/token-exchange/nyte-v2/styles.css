@@ -496,3 +496,7 @@ html{scroll-padding-top:96px} body>.skip{position:absolute;top:-80px;z-index:100
 .doc-page input[type=email]{min-height:52px;width:100%;padding:0 14px;border:1px solid var(--control);border-radius:6px;background:var(--inset);color:var(--t1);font:inherit;color-scheme:dark}
 .doc-page .btn{width:100%;max-width:440px}
 .doc-page>p:last-child>a{display:inline-flex;align-items:center;min-height:44px}
+
+/* TrustedRouter's related sites, under Powered by in the footer. */
+.site-footer .footer-related{display:flex;flex-wrap:wrap;gap:0 22px;margin-top:8px;font-size:14px}
+.site-footer .footer-related a{display:inline-flex;align-items:center;min-height:40px;color:var(--t1);text-decoration:none}

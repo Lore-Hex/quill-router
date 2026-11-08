@@ -142,9 +142,10 @@
 .buy-workspace #buy-calendar iframe{box-sizing:border-box;border:1.5px solid var(--ink);border-radius:0}
 
 /* Panel foot: a stone rule inside the padding, no grey strip. */
-.buy-workspace .buy-fallback{display:flex;flex-wrap:wrap;gap:8px 32px;margin:0;padding:20px 0 24px;border-top:1.5px solid var(--stone);font-size:17px;line-height:1.5;color:var(--ink)}
+.buy-workspace .buy-fallback{display:flex;flex-direction:column;align-items:flex-start;gap:4px;margin:0;padding:16px 0 20px;border-top:1.5px solid var(--stone);font-size:15px;line-height:1.5;color:var(--ink-2)}
+/* Question in secondary ink, link in ink: two quiet, matching pairs. */
+.buy-workspace .buy-fallback a{display:inline;margin:0;color:var(--ink);font-weight:500;text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:3px}
 .buy-workspace .buy-fallback p+p{margin:0}
-.buy-workspace .buy-fallback a{display:inline;margin:0}
 .buy-workspace noscript .buy-fine{margin:0 0 24px}
 
 /* Below the field, on cream */
@@ -201,7 +202,9 @@
   .buy-workspace .buy-step h2{font-size:22px}
   .buy-workspace .buy-reserve{padding:20px 16px}
   .buy-workspace .buy-actions .btn{flex:1}
-  .buy-workspace .buy-fallback{flex-direction:column;padding:16px 0 20px}
+  .buy-workspace .buy-fallback{gap:12px}
+  /* Phones: each link on its own line under its question, so both pairs wrap the same way at any width. */
+  .buy-workspace .buy-fallback a{display:block;width:fit-content;margin-top:2px}
 }
 /* Desktop: the hero spacing follows the screen height, so the Band shows under the request form in the first screen. */
 @media (min-width:1101px){

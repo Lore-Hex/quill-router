@@ -255,11 +255,23 @@ await page.setViewportSize({width:1440,height:900});
 const exchange=page.locator('[data-group=exchange] button');
 await exchange.click();await page.locator('#nav a[href="/#deck"]').click();
 await page.locator('#m-deck').waitFor({state:'visible'});await page.keyboard.press('Escape');await page.locator('#m-deck').waitFor({state:'hidden'});
-// Closing the dialog leaves #deck in place; clicking again must still reopen it.
-assert.equal(new URL(page.url()).hash,'#deck');
+// The menu link opens the form in place: no navigation, no hash, and it reopens on a second click.
+assert.equal(new URL(page.url()).hash,'');
 await exchange.click();await page.locator('#nav a[href="/#deck"]').click();
 await page.locator('#m-deck').waitFor({state:'visible'});
 await page.keyboard.press('Escape');await page.locator('#m-deck').waitFor({state:'hidden'});
+// Every page carries the buyer deck form: the menu opens it over that page, and #deck opens it on load.
+for(const route of ['/suppliers','/confidential','/buy']){
+ await page.goto(base+route);
+ await exchange.click();await page.locator('#nav a[href="/#deck"]').click();
+ await page.locator('#m-deck').waitFor({state:'visible'});
+ assert.equal(new URL(page.url()).pathname,route,`menu Buyer deck stays on ${route}`);
+ assert.equal(await page.locator('#m-deck #brochure-form').count(),1);
+ await page.keyboard.press('Escape');await page.locator('#m-deck').waitFor({state:'hidden'});
+ await page.goto(base+route+'#deck');await page.locator('#m-deck').waitFor({state:'visible'});
+ await page.keyboard.press('Escape');await page.locator('#m-deck').waitFor({state:'hidden'});
+}
+await page.goto(base+'/');
 // Escape from a panel item returns focus without reopening the panel.
 await page.locator('[data-group=buy]').hover();await page.locator('#nav a[href="/confidential"]').focus();
 await page.keyboard.press('Escape');assert(!(await page.locator('#nav-buy').isVisible()));

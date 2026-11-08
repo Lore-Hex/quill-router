@@ -27,7 +27,7 @@ body[data-nyte-page="index"]{background:var(--ink)}
 .ti3 .ti3-supply .btn{border-color:var(--ink);color:var(--ink)}
 .ti3 .ti3-supply .btn:hover{background:var(--ink);color:var(--cream);border-color:var(--ink)}
 .ti3 .ti3-supply .btn-primary{background:var(--orange)}
-.ti3 .ti3-supply :is(a,button):focus-visible,.ti3 .ti3-note a:focus-visible{outline-color:var(--ink)}
+.ti3 .ti3-supply :is(a,button):focus-visible{outline-color:var(--ink)}
 
 /* Hero: title left, the index level right, then the index chart. */
 .ti3 .ti3-hero{padding:96px 0}
@@ -97,13 +97,12 @@ body[data-nyte-page="index"]{background:var(--ink)}
 .ti3 .ti-chart-grades{margin-top:96px}
 .ti3 .ti-chart-grades .ti-toolbar{align-items:flex-end}
 
-/* Source and limits: yellow strip. */
-.ti3 .ti3-note{padding:64px 0;border:0;background:var(--yellow);color:var(--ink)}
-.ti3 .ti3-note .ti3-wrap{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px}
-.ti3 .ti3-note .ti3-bar{grid-column:span 3;background:var(--ink)}
-.ti3 .ti3-note p{grid-column:4/span 4;font-size:17px;color:var(--ink)}
-.ti3 .ti3-note p.ti3-limits{grid-column:9/span 4;font-weight:500}
-.ti3 .ti3-note a{color:var(--ink);text-decoration:underline;text-decoration-thickness:1.5px;text-underline-offset:4px}
+/* Source and limits: a source line under the grades chart, as the kit asks of every chart. */
+.ti3 .ti3-note{max-width:760px;margin-top:20px}
+.ti3 .ti3-note p{margin:0 0 8px;font-size:15px;line-height:1.55;color:var(--ink-2-dark)}
+.ti3 .ti3-note p.ti3-limits{margin:0}
+.ti3 .ti3-note strong{font-weight:500;color:var(--cream)}
+.ti3 .ti3-note a{color:var(--cream);text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:3px}
 
 /* Operators: sky field, copy left. The canvas's photo slot is left out until there is a real photo. */
 .ti3 .ti3-supply{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;padding:0 max(64px,calc((100% - 1312px)/2));border:0;background:var(--sky);color:var(--ink)}
@@ -113,7 +112,8 @@ body[data-nyte-page="index"]{background:var(--ink)}
 .ti3 .ti3-supply-copy>p{max-width:600px;color:var(--ink)}
 .ti3 .index-actions{gap:12px;margin:40px 0 32px;align-items:center}
 .ti3 .index-actions a{text-decoration:none}
-.ti3 .ti3-supply .index-small{max-width:560px;font-size:15px;color:var(--ink)}
+/* Fine print set apart from the body copy: rule above, secondary ink. */
+.ti3 .ti3-supply .index-small{max-width:560px;margin-top:48px;padding-top:14px;border-top:1.5px solid var(--ink);font-size:15px;line-height:1.5;color:var(--ink-2)}
 .ti3-band{background:var(--ink);line-height:0}
 .ti3-band .v3-band{display:block;width:100%;height:120px}
 
@@ -125,9 +125,6 @@ body[data-nyte-page="index"]{background:var(--ink)}
   .ti3 .ti-value{font-size:128px}
   .ti3 .ti3-grade-list{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:56px}
   .ti3 .ti-legend{margin-left:0}
-  .ti3 .ti3-note .ti3-wrap{grid-template-columns:1fr;row-gap:20px}
-  .ti3 .ti3-note .ti3-bar,.ti3 .ti3-note p,.ti3 .ti3-note p.ti3-limits{grid-column:1}
-  .ti3 .ti3-note .ti3-bar{margin:0}
   .ti3 .ti3-supply{grid-template-columns:1fr;padding:0}
   .ti3 .ti3-supply-copy{grid-column:1;padding:96px 64px}
 }
@@ -166,11 +163,6 @@ body[data-nyte-page="index"]{background:var(--ink)}
   .ti3 .ti-chart-grades .ti-buttons:first-child{flex:1}
   .ti3 .ti-chart-grades .ti-toolbar{gap:0}
   .ti3 .ti-legend{flex-basis:100%;gap:4px 20px;margin-top:16px}
-  .ti3 .ti3-note{padding:64px 0}
-  .ti3 .ti3-note .ti3-wrap{row-gap:0}
-  .ti3 .ti3-note .ti3-bar{margin-bottom:24px}
-  .ti3 .ti3-note p{margin-bottom:20px}
-  .ti3 .ti3-note p.ti3-limits{margin:0}
   .ti3 .ti3-supply-copy{padding:72px 20px}
   .ti3 .ti3-supply h2{margin-bottom:24px}
   .ti3 .index-actions{display:grid;gap:12px;margin:32px 0 24px}

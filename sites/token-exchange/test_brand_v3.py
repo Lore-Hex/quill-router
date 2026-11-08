@@ -56,10 +56,13 @@ class BrandV3Tests(unittest.TestCase):
         self.assertIn('class="v3-band" preserveAspectRatio="none"', page)
         self.assertIn('aria-label="A request stops at a closed gate; the provider beyond stays empty"', page)
         for hook in ('data-evidence-profile="new-york"', 'data-evidence-style="v3"', 'data-live-attestation', 'data-live-services',
-                     'data-live-caption', 'data-uptime-label="GCP uptime · 24h"', 'data-live-prices', 'data-price-layout="table"',
+                     'data-live-caption', 'data-uptime-label="Uptime, last 24 hours"', 'data-live-checked', 'data-live-prices', 'data-price-layout="table"',
                      'data-live-price-unit', 'id="start"', 'id="place-faq"', 'data-place', 'data-us-only', 'data-open="deck"'):
             self.assertIn(hook, page)
         self.assertEqual(page.count('href="/confidential#start">Start building</a>'), 3)
+        self.assertIn('<p class="ev-intro">See for yourself what’s running, and whether it’s up.</p>', page)
+        self.assertIn('<h3>What’s running</h3>', page)
+        self.assertEqual(page.count('data-live-checked'), 1)
         self.assertIn('alt="Semafor" src="/assets/nyte-v2/press/semafor-light.png"', page)
         # No photos or hand-drawn icons on the v3 page.
         for removed in ('ph-gondola', 'close-photo', 'class="ico"'):

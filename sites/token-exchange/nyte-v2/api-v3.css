@@ -34,6 +34,7 @@
 
 /* Live evidence: Ink section, attestation rows left, uptime figures right. */
 .v3-evidence{background:var(--ink);color:var(--cream);padding:112px 0}
+.v3-evidence .ev-intro{margin:0 0 48px;max-width:640px;font-size:22px;line-height:1.45;font-weight:450;color:var(--cream)}
 .v3-evidence .ev{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;align-items:start;min-width:0;background:transparent;border:0}
 .v3-evidence .ev-sec{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"h link" "rows rows";align-items:baseline;column-gap:16px;padding:0;border:0}
 .v3-evidence .ev-sec:first-child{grid-column:span 6}
@@ -46,10 +47,14 @@
 .v3-evidence .ev [data-live-attestation]>*{margin:16px 0 0}
 .att-rows{border-top:2.5px solid var(--cream)}
 .att-row{display:grid;grid-template-columns:200px minmax(0,1fr);gap:16px;padding:16px 0;border-bottom:1.5px solid var(--dark-rule)}
-.att-row dt{font:500 15px/1.4 var(--font-condensed);letter-spacing:.1em;text-transform:uppercase;color:var(--ink-2-dark)}
+.att-row dt{font:450 17px/1.4 var(--font-sans);color:var(--cream)}
 .att-row dd{margin:0;font:400 15px/1.5 var(--font-mono);color:var(--cream);overflow-wrap:anywhere}
 .att-row .build-digest{font:inherit}
 .att-row.att-unproven dd{color:var(--yellow)}
+/* Loading placeholders until live figures arrive (no animation: only data moves).
+   Uptime dashes in the rule colour (this selector beats the per-row figure colours); attestation dashes in secondary ink. */
+.v3-evidence .service-history .uptime-figure.is-pending{color:var(--dark-rule)}
+.att-row dd.is-pending{color:var(--ink-2)}
 .v3-evidence [data-live-services]{margin-top:16px}
 .v3-evidence .service-history{display:flex;justify-content:space-between;align-items:baseline;gap:16px;padding:16px 0 20px;border:0;border-top:2.5px solid var(--lime)}
 .v3-evidence .service-history:nth-child(3n+2){border-top-color:var(--sky)}
@@ -58,19 +63,24 @@
 .uptime-figure{font:300 48px/1 var(--font-sans);color:var(--lime);font-variant-numeric:tabular-nums;white-space:nowrap}
 .service-history:nth-child(3n+2) .uptime-figure{color:var(--sky)}
 .service-history:nth-child(3n) .uptime-figure{color:var(--yellow)}
-.v3-evidence .last-check{margin-top:8px;font:400 15px/1.5 var(--font-mono);color:var(--ink-2-dark)}
+.v3-evidence .last-check{margin-top:28px;font:400 15px/1.5 var(--font-mono);color:var(--ink-2-dark)}
 
 /* Models on confidential routes: sky field, ruled table. */
 .v3-models{background:var(--sky);padding:112px 0}
 .v3-models h2{margin-top:32px}
-.v3-models .model-head{margin-top:56px;padding:14px 0;gap:12px;border-top:2.5px solid var(--ink);border-bottom:0;font:500 15px/1.2 var(--font-condensed);letter-spacing:.1em;text-transform:uppercase;color:var(--ink)}
+.v3-models .model-head{margin-top:56px;padding:14px 0;gap:12px;border-top:0;border-bottom:0;font:500 15px/1.2 var(--font-condensed);letter-spacing:.1em;text-transform:uppercase;color:var(--ink)}
 .v3-models .live-models{border-bottom:1.5px solid var(--ink)}
 .v3-models .live-models>a:not(.privacy-column){display:inline-block;padding:20px 0;color:var(--ink);font-size:17px;text-decoration:underline;text-underline-offset:4px}
 .v3-models .privacy-column{gap:12px;padding:20px 0;border-top:1.5px solid var(--ink);border-bottom:0;color:var(--ink)}
 .v3-models .privacy-column:hover h3{text-decoration:underline;text-underline-offset:4px}
 .v3-models .privacy-choice h3{margin:0;font-size:24px;line-height:1.2;font-weight:500;letter-spacing:0}
 .v3-models .privacy-choice p{margin-top:4px;font:400 15px/1.4 var(--font-mono);color:var(--ink)}
-.v3-models .privacy-provider{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font:400 17px/1 var(--font-sans);color:var(--ink)}
+.v3-models .privacy-provider{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font:400 17px/1 var(--font-sans);color:var(--ink)}
+/* Policy tags coloured as on the home page: Confidential lime; E2EE lilac (no E2EE tag on home, lilac stands apart from the sky field). */
+.v3-models .v3-chip.cc{background:var(--lime)}
+.v3-models .v3-chip.e2ee{background:var(--lilac)}
+/* The " + " stays in the text for screen readers; the colours do the joining on screen. */
+.v3-models .v3-plus{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .v3-models .privacy-price{font:400 17px/1.4 var(--font-mono);color:var(--ink);font-variant-numeric:tabular-nums}
 .v3-models .pricing-unit{margin-top:16px;font:400 15px/1.5 var(--font-mono);color:var(--ink)}
 
@@ -151,15 +161,14 @@
   .v3-prot-list h3{margin-top:0;font-size:22px}
   .v3-prot-list p{margin-top:6px}
   .v3-evidence,.v3-models,.v3-faq,.v3-cta{padding:64px 0}
-  .v3-evidence .ev-sec{grid-template-columns:minmax(0,1fr);grid-template-areas:"h" "rows" "link"}
-  .v3-evidence .ev-sec+.ev-sec{margin-top:48px}
-  .ev-link{justify-self:start;margin-top:16px}
+  .v3-evidence .ev-sec{column-gap:12px}
+  .v3-evidence .ev-sec+.ev-sec{margin-top:56px}
+  .ev-link{white-space:nowrap}
   .v3-evidence .ev [data-live-attestation]>*{margin-top:14px}
   .att-row{grid-template-columns:minmax(0,1fr);gap:6px;padding:14px 0}
   .v3-evidence [data-live-services]{margin-top:14px}
   .v3-evidence .service-history{padding:12px 0 16px}
   .uptime-figure{font-size:32px}
-  .v3-evidence .last-check{margin-top:0}
   .v3-models h2{margin-top:24px}
   .v3-models .privacy-column{gap:12px 8px;padding:18px 0}
   .v3-models .privacy-choice h3{font-size:22px}
@@ -179,6 +188,8 @@
 /* Narrow phones: the hero buttons stack once their labels no longer fit side by side. */
 @media (max-width:374px){
   .hero-api .btns{grid-template-columns:1fr}
+  .v3-evidence .ev h3{letter-spacing:.06em}
+  .ev-link{gap:4px;font-size:15px}
 }
 /* Phones: the header's "Start building" (/confidential#start) lands with the
    section top just under the sticky header, and the actions follow the copy so
@@ -189,4 +200,6 @@
   .v3-start-copy,.v3-start .btns,.v3-start .code-scroll{grid-column:1;grid-row:auto}
   .v3-start .btns{order:1}
   .v3-start .code-scroll{order:2;margin-top:32px}
+  /* The full-bleed code panel is the section's last block: it meets the FAQ band with no cream strip below. */
+  .v3-start{padding-bottom:0}
 }
