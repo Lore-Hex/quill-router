@@ -7,6 +7,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from trusted_router.auth import ManagementPrincipal, SettingsDep
+from trusted_router.billing_policy import WALLET_ONLY_BYOK_MESSAGE, is_wallet_only_principal
 from trusted_router.byok_crypto import encrypt_byok_secret
 from trusted_router.catalog import PROVIDERS
 from trusted_router.errors import api_error
@@ -56,6 +57,10 @@ def register_byok_routes(router: APIRouter) -> None:
         settings: SettingsDep,
     ) -> JSONResponse:
         slug = _require_byok_provider(provider)
+        # Wallet-only signups are free and scriptable; bursts of them were
+        # used to probe stolen provider keys through BYOK (2026-11-08).
+        if is_wallet_only_principal(principal):
+            raise api_error(403, WALLET_ONLY_BYOK_MESSAGE, ErrorType.FORBIDDEN)
         if not settings.byok_registration_enabled:
             # Read-only replicas are not the registration authority. Refuse
             # the write cleanly here before attempting a KMS encrypt that

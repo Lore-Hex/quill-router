@@ -8,6 +8,10 @@ WALLET_ONLY_STABLECOIN_MESSAGE = (
     "Wallet-only accounts can only fund with stablecoin. "
     "Add and verify an email to use other payment methods."
 )
+WALLET_ONLY_BYOK_MESSAGE = (
+    "Wallet-only accounts cannot register provider keys. "
+    "Add and verify an email to use BYOK."
+)
 
 
 def is_wallet_only_user(user: User | None) -> bool:

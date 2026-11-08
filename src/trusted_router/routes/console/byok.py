@@ -10,6 +10,7 @@ from fastapi import FastAPI, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from trusted_router.auth import SettingsDep
+from trusted_router.billing_policy import is_wallet_only_user
 from trusted_router.byok_crypto import encrypt_byok_secret
 from trusted_router.catalog import PROVIDERS
 from trusted_router.provider_compat import canonical_byok_provider
@@ -52,6 +53,10 @@ def register(app: FastAPI) -> None:
         # The new console UI sends `api_key` (raw); legacy callers + API tests
         # may send `secret_ref` + `key_hint`. Mirror PUT /v1/byok/providers/...
         # so both paths land on the same storage shape.
+        if is_wallet_only_user(ctx.user):
+            # Same rule as PUT /v1/byok/providers/...: wallet-only accounts
+            # cannot register provider keys.
+            return RedirectResponse(url="/console/byok?error=wallet_only", status_code=303)
         api_key = api_key.strip()
         # Validate against the catalog exactly as PUT /v1/byok/providers/... does
         # (_require_byok_provider). This route previously accepted any lowercased
