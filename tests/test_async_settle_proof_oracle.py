@@ -301,7 +301,7 @@ def test_frozen_main_complete_entry(env, monkeypatch, case, kind, mode, commit_p
 
 @pytest.mark.proof_oracle
 @pytest.mark.parametrize('kind', ['settle', 'refund'])
-def test_frozen_main_protected_header_rejection(env, monkeypatch, kind):
+def test_frozen_main_protected_header_rejection(env, monkeypatch, kind, pin_settle_handler_budgets):
     if guard_unavailable():
         return
     body, _, _ = prepare(env, kind=kind)
@@ -312,6 +312,9 @@ def test_frozen_main_protected_header_rejection(env, monkeypatch, kind):
     cfg.async_settle_enabled = False
     initial = save(env[1])
     results = []
+    # Runner load must not spend the request's 2 s budget in either leg: each
+    # leg's route, handler and RPC deadline read one fixed instant, and neither
+    # route arms its loop deadline (conftest's budget pin, on that leg's modules).
     for frozen in (True, False):
         with monkeypatch.context() as patch:
             if frozen:
@@ -319,11 +322,13 @@ def test_frozen_main_protected_header_rejection(env, monkeypatch, kind):
                 with execution_guard(settings_data, body) as setup_seen:
                     _, db, _, client = frozen_environment(patch, settings_data, body)
                     client.app.state.async_settle = frozen_runtime()
+                    pin_settle_handler_budgets(patch, ALIAS)
                 inventory(setup_seen)
                 restore(db, initial)
             else:
                 db = env[1]
                 client = _client(cfg)
+                pin_settle_handler_budgets(patch)
             if not frozen:
                 client.app.state.async_settle = env[2]
             with execution_guard(db, client, body) if frozen else nullcontext(set()) as seen:

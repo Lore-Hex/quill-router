@@ -307,7 +307,7 @@ _SETTLE_HANDLER_BUDGET_FILES = frozenset({
 })
 
 
-def _pin_settle_handler_budgets(monkeypatch):
+def _pin_settle_handler_budgets(monkeypatch, package='trusted_router'):
     """The settle handler's handoff budget (0.5 s async, 2 s sync) is spent
     only by time a test injects, never by runner load: CI run 39489912697 spent
     840 ms of a slow shard in one async handoff and answered 503.
@@ -322,14 +322,19 @@ def _pin_settle_handler_budgets(monkeypatch):
     the handler ran, and an invalid ticket answered 503 instead of 401. Here
     that deadline is lifted; test_the_route_deadline_answers_the_storage_503
     spends it on purpose.
+
+    package names the copy of the four modules to pin. The proof oracle's
+    protected-header differential pins both of its legs, the live modules and
+    their frozen-main copies, so both legs run on the same clocks.
     """
+    import importlib
     import time
 
     import anyio
 
-    from trusted_router import storage_gcp_async_settle, storage_gcp_io
-    from trusted_router.routes import settlements
-    from trusted_router.services import async_settle_handler
+    async_settle_handler, settlements, storage_gcp_async_settle, storage_gcp_io = (
+        importlib.import_module(f'{package}.{name}') for name in (
+            'services.async_settle_handler', 'routes.settlements', 'storage_gcp_async_settle', 'storage_gcp_io'))
 
     real_monotonic = time.monotonic
 
@@ -355,6 +360,12 @@ def _pin_settle_handler_budgets(monkeypatch):
             return getattr(anyio, name)
 
     monkeypatch.setattr(settlements, 'anyio', NoLoopDeadline())
+
+
+@pytest.fixture
+def pin_settle_handler_budgets():
+    """The budget pin above, for a test that runs a second copy of the settle path."""
+    return _pin_settle_handler_budgets
 
 
 @pytest.fixture
