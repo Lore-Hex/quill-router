@@ -56,7 +56,10 @@ class ProviderPageTests(unittest.TestCase):
         self.assertIn("not live products or guaranteed revenue", self.page)
         self.assertNotIn("13-page", self.page)
         self.assertNotIn('href="/badge"', self.page)
-        self.assertFalse(self.parser.forms)
+        # The provider deck is request-only; the one form is the shared buyer deck dialog.
+        self.assertEqual(self.parser.forms, [{
+            "id": "brochure-form", "action": "https://trustedrouter.com/token-exchange/brief", "method": "post",
+        }])
 
     def test_mailto_request_contains_correct_recipient_and_context(self):
         requests = [urlparse(href) for href in self.parser.links if "?subject=" in href]
@@ -77,7 +80,7 @@ class ProviderPageTests(unittest.TestCase):
         self.assertNotIn('ph-cableway', self.page)
         self.assertIn('aria-label="The provider deck"', self.page)
         self.assertIn('aria-label="A buyer and a provider meet at the exchange square', self.page)
-        self.assertNotIn('id="m-deck"', self.page)
+        self.assertEqual(self.page.count('id="m-deck"'), 1)
         self.assertIn('>Trust center</a>', self.page)
 
     def test_metadata_and_new_york_only_sitemap(self):

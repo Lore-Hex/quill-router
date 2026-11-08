@@ -28,6 +28,8 @@ const feed = http.createServer((req,res) => {
   res.writeHead(200, {'Content-Type':'application/json','Access-Control-Allow-Origin':'*','Cache-Control':'no-store'});
   res.end(JSON.stringify(evidence()));
 });
+// Brand v3 pages draw dashed placeholder rows before the first fetch; wait for real figures.
+const loaded = () => document.querySelector('.service-history') && !document.querySelector('.trust-evidence .is-pending');
 const site = http.createServer((req,res) => {
   let file = decodeURIComponent(new URL(req.url,'http://localhost').pathname);
   if (file === '/') file = req.headers.host.startsWith('nytokenexchange.com') ? '/confidential.html' : '/hong-kong/index.html';
@@ -51,8 +53,32 @@ const site = http.createServer((req,res) => {
     const pages=[];
     for (const domain of ['nytokenexchange.com','hktokenexchange.com']) {
       const page=await context.newPage();await page.clock.install();page.on('pageerror',e=>errors.push(e.message));
+      let releaseFeed;const held=new Promise(r=>{releaseFeed=r;});
+      if(domain==='nytokenexchange.com') await page.route('https://trustedrouter.com/token-exchange/evidence/*.json',async route=>{await held;await route.fulfill({response:await route.fetch({url:'http://127.0.0.1:8092/',timeout:3000})});},{times:1});
+      else releaseFeed();
       await page.goto(`http://${domain}:8091/`);
+      if(domain==='nytokenexchange.com'){
+        // Before the first response: the final layout with dashes, and one shared check line.
+        await page.waitForFunction(()=>document.querySelector('[data-live-services] .is-pending'));
+        assert.equal(await page.locator('[data-live-services] .uptime-figure.is-pending').count(),3);
+        assert.match(await page.locator('[data-live-services]').textContent(),/––\.––%/);
+        assert.equal(await page.locator('[data-live-attestation] dd.is-pending').count(),2);
+        assert.equal(await page.locator('[data-live-caption]').textContent(),'Uptime, last 24 hours');
+        assert.equal(await page.locator('[data-live-checked]').textContent(),'Checking now…');
+        releaseFeed();
+      }
       await page.waitForFunction(()=>document.querySelector('[data-live-services]').textContent.includes('99.95%'));
+      if(domain==='nytokenexchange.com'){
+        assert.equal(await page.locator('.trust-evidence .is-pending').count(),0);
+        assert.deepEqual(await page.locator('[data-live-attestation] dt').allTextContents(),['Matches published build','Source code version','Data centre']);
+        assert.equal(await page.locator('[data-live-attestation] .att-unproven dd').textContent(),'Not proven by attestation');
+        assert.equal(await page.locator('.trust-evidence .last-check').count(),0,'one shared Last checked line, not one per column');
+        assert(await page.locator('[data-live-checked]').isVisible());
+        assert.match(await page.locator('[data-live-checked]').textContent(),/^Last checked \d{4}-\d\d-\d\d \d\d:\d\d:\d\d UTC$/);
+        assert.equal(await page.locator('[data-live-prices] .v3-chip.cc').count(),3);
+        assert.equal(await page.locator('[data-live-prices] .v3-chip.e2ee').count(),3);
+        assert.equal(await page.locator('[data-live-prices] .privacy-provider').first().textContent(),'Confidential + E2EE');
+      }
       assert.match(await page.locator('[data-live-services]').textContent(),/99.69%/);
       assert.match(await page.locator('[data-live-prices]').textContent(),/\$0.07385(?: \/ )?\$0.2532/);
       assert.equal(await page.locator('[data-live-prices] h3').first().textContent(),'DeepSeek V4.1 Flash 1017');
@@ -122,9 +148,10 @@ const site = http.createServer((req,res) => {
       return route.fulfill({json:data});
     });
     await timed.goto('http://nytokenexchange.com:8091/');
-    await timed.waitForFunction(()=>document.querySelector('.service-history'));
+    await timed.waitForFunction(loaded);
     await timed.clock.runFor(61000);
-    await timed.waitForFunction(stamp=>document.querySelector('[data-live-services]').textContent.includes(stamp),new Date(base.getTime()+60000).toISOString().replace('T',' ').replace(/\.\d+Z$/,' UTC'));
+    // v3 shows the oldest check once, under both columns.
+    await timed.waitForFunction(stamp=>document.querySelector('[data-live-checked]').textContent.includes(stamp),new Date(base.getTime()+60000).toISOString().replace('T',' ').replace(/\.\d+Z$/,' UTC'));
     assert.equal(timedRequests,2);
     assert.equal(await timed.locator('.service-history').count(),2);
     await timedContext.close();
@@ -146,7 +173,7 @@ const site = http.createServer((req,res) => {
       return route.fulfill({json:data});
     });
     await retained.goto('http://nytokenexchange.com:8091/');
-    await retained.waitForFunction(()=>document.querySelector('.service-history'));
+    await retained.waitForFunction(loaded);
     assert.equal(await retained.locator('.build-digest').count(),1);
     assert.equal(await retained.locator('[data-live-price-unit]').textContent(),
       `Updated ${retainedBase.toISOString().replace('T',' ').replace(/\.\d+Z$/,' UTC')}`);

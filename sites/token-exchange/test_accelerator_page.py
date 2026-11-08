@@ -89,8 +89,11 @@ class AcceleratorPageTests(unittest.TestCase):
         self.assertIn('/providers', self.parser.links)
 
     def test_plain_booking_and_no_submission_or_embeds(self) -> None:
-        self.assertFalse(self.parser.forms)
-        self.assertNotRegex(self.page, r'<(?:iframe|input|select|textarea|object|embed)\b')
+        # The only form is the shared buyer deck dialog; the accelerator itself collects nothing.
+        self.assertEqual([form['id'] for form in self.parser.forms], ['brochure-form'])
+        head, deck = self.page.split('<dialog id="m-deck"', 1)
+        body = head + deck.split('</dialog>', 1)[1]
+        self.assertNotRegex(body, r'<(?:iframe|input|select|textarea|object|embed|form)\b')
         self.assertNotIn('widget.js', self.page)
         # The same booking link in the hero and the closing section.
         links = [urlparse(link) for link in self.parser.links if 'calendly.com' in link]

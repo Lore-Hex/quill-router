@@ -153,7 +153,8 @@ for (unit of ['blocks', 'throughput']) {
         self.assertIn('not a securities or cryptocurrency exchange', self.page)
 
     def test_no_submission_no_widget_and_direct_booking(self) -> None:
-        self.assertFalse(self.parser.forms)
+        # The reservation fields are never submitted; the one form is the shared buyer deck dialog.
+        self.assertEqual([form['id'] for form in self.parser.forms], ['brochure-form'])
         self.assertNotIn('widget.js', self.page)
         self.assertNotIn('<iframe', self.page)  # Loaded only after contact validation.
         links = [urlparse(link) for link in self.parser.links if 'calendly.com' in link]
@@ -163,6 +164,11 @@ for (unit of ['blocks', 'throughput']) {
             'embed_domain': ['nytokenexchange.com'], 'embed_type': ['Inline'], 'hide_gdpr_banner': ['1'],
         })
         self.assertIn('<noscript>', self.page)
+        fallback = self.page.split('<div class="buy-fallback">', 1)[1].split('</div>', 1)[0]
+        self.assertIn('Prefer to book directly? <a id="buy-calendly-link"', fallback)
+        self.assertIn('aria-label="Open Calendly (opens in a new tab)">Open Calendly</a>', fallback)
+        self.assertIn('Already reserved? <a href="/manage-reservation">Manage it</a>', fallback)
+        self.assertNotIn('→', fallback)
         script = (HERE / 'nyte-v2/buy.js').read_text()
         self.assertNotIn('Storage', script)
         self.assertIn('terms_accepted:true', script)
