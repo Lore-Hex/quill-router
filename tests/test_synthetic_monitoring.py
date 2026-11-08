@@ -4440,7 +4440,7 @@ def test_excluded_configured_route_failures_still_alert_and_recover(error_type: 
         _route_health_sample(
             f"config-{i}", provider="lightning", model="m", status="unsupported",
             age_hours=i, error_type=error_type, error_status=401,
-            error_message="PRIVATE upstream payload",
+            error_message="upstream rejection",
         ) for i in range(6)
     ]
     flags = evaluate_route_health(  # type: ignore[arg-type]
@@ -4449,7 +4449,7 @@ def test_excluded_configured_route_failures_still_alert_and_recover(error_type: 
     assert len(flags) == 1
     assert flags[0].kind == "configuration"
     assert flags[0].newest_error_type == error_type
-    assert flags[0].newest_error_message is None
+    assert flags[0].newest_error_message == "upstream rejection"
     samples.append(_route_health_sample(
         "recovered", provider="lightning", model="m", status="success",
     ))
@@ -4471,7 +4471,50 @@ def test_configuration_alert_requires_fresh_sustained_evidence(ages: list[int]) 
     ) == []
 
 
-def test_configuration_alert_is_fingerprinted_and_excludes_upstream_payload(
+def test_configuration_flag_carries_newest_sanitized_error_message() -> None:
+    # Sentry QUILL-ROUTER-FF (alibaba qwen-plus, probe_config_error) carried
+    # only the error class, so the provider's reason was unrecoverable.
+    secret = "sk-" + "a1B2c3D4e5F6g7H8"
+    samples = [
+        _route_health_sample(
+            f"config-{i}", provider="alibaba", model="qwen/qwen-plus-2025-09-11",
+            status="unsupported", age_hours=i, error_type="probe_config_error",
+            error_status=400,
+            error_message=(
+                f"newest: max_tokens exceeds limit for key {secret} "
+                f"Authorization: Bearer {secret} " + "x" * 400
+            ) if i == 0 else "older sample message",
+        ) for i in range(6)
+    ]
+    flags = evaluate_route_health(  # type: ignore[arg-type]
+        _RouteHealthStore(samples), routes=[("alibaba", "qwen/qwen-plus-2025-09-11")],
+    )
+    assert len(flags) == 1
+    assert flags[0].kind == "configuration"
+    newest = flags[0].newest_error_message
+    assert newest is not None
+    assert newest.startswith("newest: max_tokens exceeds limit for key sk-***")
+    assert "Bearer ***" in newest
+    assert secret not in newest
+    assert "older sample message" not in newest
+    assert len(newest) == 300
+
+
+def test_configuration_flag_without_error_message_has_none() -> None:
+    samples = [
+        _route_health_sample(
+            f"config-{i}", provider="lightning", model="m", status="unsupported",
+            age_hours=i, error_type="provider_auth_config", error_status=401,
+        ) for i in range(6)
+    ]
+    flags = evaluate_route_health(  # type: ignore[arg-type]
+        _RouteHealthStore(samples), routes=[("lightning", "m")],
+    )
+    assert len(flags) == 1
+    assert flags[0].newest_error_message is None
+
+
+def test_configuration_alert_is_fingerprinted_and_carries_sanitized_message(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from trusted_router.synthetic import alerts
@@ -4480,16 +4523,25 @@ def test_configuration_alert_is_fingerprinted_and_excludes_upstream_payload(
     monkeypatch.setattr(
         alerts, "ops_alert", lambda message, **kwargs: captured.append((message, kwargs)),
     )
-    report_route_health([RouteHealthFlag(
-        "lightning", "m", 6, 6, 1.0, "provider_auth_config", "PRIVATE upstream payload",
-        kind="configuration",
-    )])
-    assert len(captured) == 1
+    secret = "sk-" + "Zz9Yy8Xx7Ww6"
+    report_route_health([
+        RouteHealthFlag(
+            "lightning", "m", 6, 6, 1.0, "provider_auth_config",
+            f"invalid api key {secret}", kind="configuration",
+        ),
+        RouteHealthFlag(
+            "lightning", "n", 6, 6, 1.0, "provider_auth_config", None,
+            kind="configuration",
+        ),
+    ])
+    assert len(captured) == 2
     message, kwargs = captured[0]
     assert "provider_auth_config" in message
-    assert "PRIVATE" not in message
+    assert message.endswith("; latest: invalid api key sk-***")
+    assert secret not in message
     assert kwargs["fingerprint"] == ["route-configuration", "lightning", "m"]
     assert kwargs["tags"] == {"route_provider": "lightning", "route_model": "m"}
+    assert captured[1][0].endswith("excluded from provider uptime, not operations")
 
 
 def test_evaluate_route_health_ignores_transient_failures() -> None:
