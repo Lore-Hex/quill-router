@@ -33,6 +33,8 @@ PARAMETER_CATEGORIES = frozenset(
         "top_p",
         "reasoning",
         "reasoning_effort",
+        "output_config",
+        "output_config.effort",
         "include_reasoning",
         "thinking",
         "enable_thinking",
