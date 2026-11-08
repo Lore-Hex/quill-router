@@ -711,6 +711,7 @@ def test_public_structured_data_covers_lists_datasets_and_faqs(client: TestClien
     assert {"BreadcrumbList", "BlogPosting"}.issubset(blog_types)
     assert "DRACO" in blog.text
     assert "TrustedRouter Synth Draco on GitHub" in blog.text
+    assert 'data-signin-mode="signup">Create my API key</button>' in blog.text
 
     wrong_zeus_blog = client.get("/blog/zeus-terminal-bench-hard-72", follow_redirects=False)
     assert wrong_zeus_blog.status_code == 301
