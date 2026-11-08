@@ -190,6 +190,10 @@ from trusted_router.storage_gcp_verification_tokens import SpannerVerificationTo
 from trusted_router.storage_gcp_video_jobs import SpannerVideoJobs
 from trusted_router.storage_gcp_wallet_challenges import SpannerWalletChallenges
 from trusted_router.storage_models import (
+    EMAIL_ATTACH_ALREADY_VERIFIED,
+    EMAIL_ATTACH_ATTACHED,
+    EMAIL_ATTACH_MISSING_USER,
+    EMAIL_ATTACH_TAKEN,
     ApiKeyAuthContext,
     AppMarkupPayout,
     BedrockGroupBuyAggregate,
@@ -2142,6 +2146,40 @@ class SpannerStore(OperationalAnalyticsReads):
             self._write_entity_tx(transaction, "user", user.id, user)
             self._write_entity_tx(transaction, "email_user", normalized_email, {"user_id": user.id})
             return user
+
+        return self._run_in_transaction(txn)
+
+    def attach_verified_email(self, user_id: str, email: str) -> str:
+        normalized_email = _normalize_email(email)
+
+        def txn(transaction: Any) -> str:
+            owner = self._read_entity_tx(transaction, "email_user", normalized_email, dict)
+            if owner is not None and owner["user_id"] != user_id:
+                return EMAIL_ATTACH_TAKEN
+            user = self._read_entity_tx(transaction, "user", user_id, User)
+            if user is None:
+                return EMAIL_ATTACH_MISSING_USER
+            previous_email = _normalize_email(user.email) if user.email else None
+            if user.email_verified and previous_email:
+                if previous_email != normalized_email:
+                    return EMAIL_ATTACH_ALREADY_VERIFIED
+                return EMAIL_ATTACH_ATTACHED
+            if previous_email and previous_email != normalized_email:
+                previous_owner = self._read_entity_tx(
+                    transaction, "email_user", previous_email, dict
+                )
+                if previous_owner is not None and previous_owner["user_id"] == user_id:
+                    transaction.delete(
+                        self.entity_table,
+                        self._spanner.KeySet(keys=[("email_user", previous_email)]),
+                    )
+            user.email = normalized_email
+            user.email_verified = True
+            self._write_entity_tx(transaction, "user", user.id, user)
+            self._write_entity_tx(
+                transaction, "email_user", normalized_email, {"user_id": user.id}
+            )
+            return EMAIL_ATTACH_ATTACHED
 
         return self._run_in_transaction(txn)
 

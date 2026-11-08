@@ -222,6 +222,44 @@ def test_verification_sends_are_capped_per_user(
     assert "/auth/wallet/email/verify" not in capped.text
 
 
+def test_second_link_cannot_replace_an_already_verified_email(
+    wallet_client: tuple[TestClient, User],
+) -> None:
+    client, user = wallet_client
+    first = _request_link(client, "first@example.com")
+    second = _request_link(client, "second@example.com")
+
+    assert client.get(first, follow_redirects=False).status_code == 302
+    replaced = client.get(second, follow_redirects=False)
+
+    assert replaced.status_code == 409
+    assert "already has a verified email" in replaced.text
+    refreshed = STORE.get_user(user.id)
+    assert refreshed is not None
+    assert refreshed.email == "first@example.com" and refreshed.email_verified
+    assert STORE.find_user_by_email("second@example.com") is None
+
+
+def test_undelivered_email_never_shows_the_link_outside_local(
+    wallet_client: tuple[TestClient, User], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from trusted_router.routes import wallet_oauth
+
+    client, user = wallet_client
+    monkeypatch.setattr(wallet_oauth, "_inline_link_allowed", lambda _settings: False)
+
+    response = client.post(
+        "/auth/wallet/email",
+        data={"email": "nodelivery@example.com", "csrf_token": _csrf(client)},
+    )
+
+    assert response.status_code == 503
+    assert "/auth/wallet/email/verify" not in response.text
+    assert "token=" not in response.text
+    refreshed = STORE.get_user(user.id)
+    assert refreshed is not None and refreshed.email is None
+
+
 def test_non_wallet_session_cannot_use_the_attach_flow() -> None:
     app = create_app(Settings(environment="local"), init_observability=False)
     with TestClient(app) as client:

@@ -41,11 +41,17 @@ from trusted_router.auth import (
     set_session_cookie,
 )
 from trusted_router.billing_policy import WALLET_EMAIL_ATTACH_PATH
+from trusted_router.config import Settings
 from trusted_router.domains import request_control_domain
 from trusted_router.errors import api_error
 from trusted_router.services.email import build_verification_email, get_email_service
 from trusted_router.signup_gate import require_new_account_creation
 from trusted_router.storage import STORE, AuthSession, User
+from trusted_router.storage_models import (
+    EMAIL_ATTACH_ALREADY_VERIFIED,
+    EMAIL_ATTACH_ATTACHED,
+    EMAIL_ATTACH_TAKEN,
+)
 from trusted_router.types import ErrorType
 from trusted_router.views import render_template
 from trusted_router.wallet_auth import (
@@ -257,6 +263,16 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
             acquisition_campaign=touch.get("utm_campaign"),
         )
         sent = get_email_service(settings).send(message)
+        if not sent and not _inline_link_allowed(settings):
+            # Showing the link inline would verify an address without access
+            # to its mailbox. Only local/test environments may do that.
+            return HTMLResponse(
+                _form_page(
+                    session=session,
+                    error="We could not send a verification email. Try again later.",
+                ),
+                status_code=503,
+            )
         return HTMLResponse(render_template(
             "auth/wallet_email_sent.html",
             page_title="Check your email",
@@ -282,24 +298,22 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
         user = STORE.get_user(consumed.user_id)
         if user is None or user.disabled:
             return HTMLResponse(_invalid_page(), status_code=400)
-        if _has_verified_email(user):
-            if (user.email or "").strip().lower() != email_normalized:
-                return HTMLResponse(
-                    _conflict_page("This account already has a verified email."),
-                    status_code=409,
-                )
-        else:
-            # set_user_email refuses (None) an address another user owns, so
-            # a verified click still cannot take over someone else's email.
-            if STORE.set_user_email(user.id, email_normalized) is None:
-                return HTMLResponse(
-                    _conflict_page(
-                        "That email already has an account — sign in with that provider."
-                    ),
-                    status_code=409,
-                )
-            if STORE.mark_user_email_verified(user.id) is None:
-                return HTMLResponse(_invalid_page(), status_code=400)
+        # One conditional transaction: refuses an address another user owns
+        # and never replaces an email this account has already verified
+        # (for example via a concurrently redeemed link for another address).
+        outcome = STORE.attach_verified_email(user.id, email_normalized)
+        if outcome == EMAIL_ATTACH_TAKEN:
+            return HTMLResponse(
+                _conflict_page("That email already has an account — sign in with that provider."),
+                status_code=409,
+            )
+        if outcome == EMAIL_ATTACH_ALREADY_VERIFIED:
+            return HTMLResponse(
+                _conflict_page("This account already has a verified email."),
+                status_code=409,
+            )
+        if outcome != EMAIL_ATTACH_ATTACHED:
+            return HTMLResponse(_invalid_page(), status_code=400)
 
         done = HTMLResponse(
             render_template("auth/verify_email_done.html", page_title="Email verified"),
@@ -335,6 +349,10 @@ def _require_wallet_session(request: Request) -> tuple[AuthSession, User]:
     if user is None or user.disabled or not user.wallet_address:
         raise api_error(401, "Wallet sign-in required", ErrorType.UNAUTHORIZED)
     return session, user
+
+
+def _inline_link_allowed(settings: Settings) -> bool:
+    return str(settings.environment).lower() in {"local", "test"}
 
 
 def _has_verified_email(user: User) -> bool:
