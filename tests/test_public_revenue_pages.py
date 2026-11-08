@@ -303,6 +303,7 @@ def test_public_pricing_matches_five_point_five_percent_billing_policy(
 ) -> None:
     pricing = client.get("/pricing")
     assert pricing.status_code == 200
+    assert 'data-signin-mode="signup">Get an API key</button>' in pricing.text
     assert "provider cost + 5.5%" in pricing.text
     assert "direct provider quote + 20%" in pricing.text
     assert "Cheaper. Smarter. More reliable. More secure." in pricing.text

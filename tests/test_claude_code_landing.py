@@ -13,6 +13,7 @@ def test_claude_code_landing_is_a_single_action_funnel(client: TestClient) -> No
     assert response.status_code == 200
     assert "Cut your AI bill in 10 seconds." in response.text
     assert response.text.count("Get my one-paste message") == 3
+    assert response.text.count('data-signin-mode="signup">Get my one-paste message') == 3
     assert "The 10-second flow" in response.text
     assert "Create your key" in response.text
     assert "Copy one short message" in response.text
