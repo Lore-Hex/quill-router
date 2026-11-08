@@ -938,39 +938,6 @@
       ],
       "default_effort": "high"
     },
-    "inception/mercury-2": {
-      "mandatory": false,
-      "default_enabled": true,
-      "supported_efforts": [
-        "high",
-        "medium",
-        "low",
-        "none"
-      ],
-      "default_effort": "medium"
-    },
-    "inception/mercury-2.5": {
-      "mandatory": false,
-      "default_enabled": true,
-      "supported_efforts": [
-        "high",
-        "medium",
-        "low",
-        "none"
-      ],
-      "default_effort": "medium"
-    },
-    "inception/mercury-3": {
-      "mandatory": false,
-      "default_enabled": true,
-      "supported_efforts": [
-        "high",
-        "medium",
-        "low",
-        "none"
-      ],
-      "default_effort": "medium"
-    },
     "inclusionai/ling-3.0-flash": {
       "mandatory": false,
       "default_enabled": true,
