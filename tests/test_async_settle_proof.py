@@ -184,6 +184,60 @@ def test_error_envelopes_real_http(env, monkeypatch, case):
     assert error_envelope(env, monkeypatch, case) == expected['cases'][case]
 
 
+@pytest.mark.parametrize('spend', ['entry', 'handoff'])
+@pytest.mark.parametrize('mode', ['async-v1', 'sync'])
+def test_the_route_deadline_answers_the_storage_503(env, monkeypatch, mode, spend):
+    """A request whose route deadline passes before the handler's thread starts
+    answers the storage 503 without running the handler, and writes nothing.
+
+    The route bounds async-v1 and sync requests with anyio.fail_after(2). The
+    handler's thread runs shielded, so a deadline that passes once it has
+    started cannot end the request. conftest lifts the deadline so runner load
+    cannot spend it; this test spends it at the route's entry and at the
+    handoff to the thread. It ends after the gateway timing scope has closed,
+    so the envelope is the storage 503's error without the timing the
+    handler's errors carry.
+    """
+    import contextlib
+
+    import anyio
+
+    from trusted_router.routes import settlements
+
+    delays, scopes = [], []
+
+    @contextlib.contextmanager
+    def deadline(delay, shield=False):
+        delays.append(delay)
+        with anyio.fail_after(0 if spend == 'entry' else None, shield) as scope:
+            scopes.append(scope)
+            yield scope
+
+    monkeypatch.setattr(settlements, 'anyio', SimpleNamespace(fail_after=deadline))
+    if spend == 'handoff':
+        to_thread = settlements.run_in_threadpool
+
+        async def spent_at_handoff(*args, **kwargs):
+            # After the auth check and the body read, before the handler's thread.
+            scopes[0].deadline = anyio.current_time()
+            return await to_thread(*args, **kwargs)
+
+        monkeypatch.setattr(settlements, 'run_in_threadpool', spent_at_handoff)
+    storage = json.loads((ROOT/'error_envelopes_v1.json').read_text())['cases']['storage_unavailable']
+    error = json.loads(storage['body_exact'])['error']
+    body, _, _ = prepare(env)
+    before = save(env[1])
+    client = _client(env[3])
+    client.app.state.async_settle = env[2]
+    response = client.post(storage['path'], json=body, headers={'X-TR-Settlement-Mode': mode})
+    client.close()
+    assert delays == [2]
+    assert (response.status_code, response.headers.get('content-type'), response.headers.get('retry-after')) == (
+        storage['status'], storage['content_type'], storage['retry_after'])
+    assert response.text == json.dumps({'error': error}, separators=(',', ':'))
+    assert save(env[1]) == before
+
+
 @pytest.mark.parametrize('case', SUPPORTED, ids=lambda c: c['name'])
 def test_four_path_billing_state(env, monkeypatch, case):
     run_four_paths(env, monkeypatch, case)

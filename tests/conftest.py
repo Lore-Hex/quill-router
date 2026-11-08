@@ -315,8 +315,17 @@ def _pin_settle_handler_budgets(monkeypatch):
     The handler, the route and the outbox enqueue read one fixed instant. A
     test that sets time.monotonic itself still drives all three, because the
     patched function wins over the fixed instant.
+
+    The route also bounds each request with anyio.fail_after(2), which reads
+    the event loop's clock rather than that instant, so runner load can spend
+    it: on main's run 42388410550 a stalled worker spent the two seconds before
+    the handler ran, and an invalid ticket answered 503 instead of 401. Here
+    that deadline is lifted; test_the_route_deadline_answers_the_storage_503
+    spends it on purpose.
     """
     import time
+
+    import anyio
 
     from trusted_router import storage_gcp_async_settle, storage_gcp_io
     from trusted_router.routes import settlements
@@ -337,6 +346,15 @@ def _pin_settle_handler_budgets(monkeypatch):
     clock = Clock()
     for module in (async_settle_handler, settlements, storage_gcp_async_settle, storage_gcp_io):
         monkeypatch.setattr(module, 'time', clock)
+
+    class NoLoopDeadline:
+        def fail_after(self, delay, shield=False):
+            return anyio.fail_after(None, shield)
+
+        def __getattr__(self, name):
+            return getattr(anyio, name)
+
+    monkeypatch.setattr(settlements, 'anyio', NoLoopDeadline())
 
 
 @pytest.fixture
