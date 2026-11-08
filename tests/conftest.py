@@ -325,16 +325,18 @@ def _pin_settle_handler_budgets(monkeypatch, package='trusted_router'):
 
     package names the copy of the four modules to pin. The proof oracle's
     protected-header differential pins both of its legs, the live modules and
-    their frozen-main copies, so both legs run on the same clocks.
+    their frozen-main copies: both legs' budgets read the fixed instant, and
+    neither route arms its loop deadline. Timing stamps stay on real clocks.
     """
     import importlib
     import time
 
     import anyio
 
+    names = ('services.async_settle_handler', 'routes.settlements',
+             'storage_gcp_async_settle', 'storage_gcp_io')
     async_settle_handler, settlements, storage_gcp_async_settle, storage_gcp_io = (
-        importlib.import_module(f'{package}.{name}') for name in (
-            'services.async_settle_handler', 'routes.settlements', 'storage_gcp_async_settle', 'storage_gcp_io'))
+        importlib.import_module(f'{package}.{name}') for name in names)
 
     real_monotonic = time.monotonic
 

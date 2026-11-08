@@ -312,9 +312,10 @@ def test_frozen_main_protected_header_rejection(env, monkeypatch, kind, pin_sett
     cfg.async_settle_enabled = False
     initial = save(env[1])
     results = []
-    # Runner load must not spend the request's 2 s budget in either leg: each
-    # leg's route, handler and RPC deadline read one fixed instant, and neither
-    # route arms its loop deadline (conftest's budget pin, on that leg's modules).
+    # Runner load must not spend the request's 2 s budget in either leg. Each
+    # leg's budget (the route's start, the RPC deadline, the handler's check)
+    # reads one fixed instant, and neither route arms its loop deadline:
+    # conftest's budget pin, on that leg's modules.
     for frozen in (True, False):
         with monkeypatch.context() as patch:
             if frozen:
