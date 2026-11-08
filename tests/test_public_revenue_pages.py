@@ -565,6 +565,7 @@ def test_public_models_page_is_a_ranked_searchable_price_explorer(
     assert "Cached input" in body
     assert "/static/models.js" in body
     assert 'href="/for-developers"' in body
+    assert 'data-signin-mode="signup">Create my API key</button>' in body
     assert 'href="/docs/quickstart"' not in body
     assert 'data-endpoints-url="/v1/models/z-ai/glm-5.3-flash/endpoints"' in body
     public_provider_count = sum(
