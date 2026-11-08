@@ -172,8 +172,11 @@ locals {
   # the startup script that reads the attribute passes nothing, so the
   # script reaches the fleet first through nodes added under new names, as
   # the decide attribute's did, and the pin must take -fleet-audit
-  # (docs/runbooks/fastpath-deploy.md, "A flag the unit passes").
-  fastpath_fleet_audit = false
+  # (docs/runbooks/fastpath-deploy.md, "A flag the unit passes"). On for
+  # WS0's gate (widening section 11 item 2, "before WS0's gate is read"):
+  # nodes 13 and 14 run the reading script, bd4398c21 takes -fleet-audit, and
+  # each node takes the flag by the runbook's unit rewrite, not a reset.
+  fastpath_fleet_audit = true
   # The money settings (docs/design/fast-admission-widening.md (b), WS0 of
   # section 8.2): a lease needs effective trust tier 3, a workspace's
   # allowance is $1,000 and a lease leaves at least $20 of the balance, in
