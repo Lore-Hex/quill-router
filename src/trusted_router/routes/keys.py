@@ -176,7 +176,13 @@ def register_key_routes(router: APIRouter) -> None:
         raw, k = STORE.create_api_key(
             workspace_id=workspace_id,
             name=body.name,
-            creator_user_id=principal.user.id if principal.user else None,
+            # A key minted by another key inherits that key's creator, so the
+            # child acts as the same identity (wallet-only and billing rules).
+            creator_user_id=(
+                principal.user.id
+                if principal.user
+                else (principal.api_key.creator_user_id if principal.api_key else None)
+            ),
             management=body.management,
             limit_microdollars=limit_microdollars,
             limit_reset=body.limit_reset,

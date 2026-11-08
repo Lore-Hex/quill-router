@@ -25,9 +25,9 @@ def is_wallet_only_user(user: User | None) -> bool:
 
 def principal_user(principal: Principal) -> User | None:
     """The identity a request acts as: the session user, else the key's
-    creator, else the workspace owner. Keys minted with another API key have
-    no creator, so without the owner fallback a wallet-only account could shed
-    its restrictions by minting a second management key."""
+    creator, else the workspace owner. Derived keys inherit their parent's
+    creator (routes/keys.py); the owner fallback covers older creator-less
+    keys, which would otherwise shed wallet-only restrictions."""
     if principal.user is not None:
         return principal.user
     if principal.api_key is not None and principal.api_key.creator_user_id:
