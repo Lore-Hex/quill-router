@@ -15,7 +15,9 @@ from tests.test_decide_models import _authorize
 from trusted_router import catalog_ingest
 from trusted_router.provider_contracts import (
     BASETEN_SYSTEMONE_GATEWAY_REGIONS,
+    BASETEN_SYSTEMONE_HOLD_REASON,
     BASETEN_SYSTEMONE_MODEL_IDS,
+    BASETEN_SYSTEMONE_PREFIX,
     provider_model_available_from_gateway_region,
     provider_model_operator_held,
 )
@@ -112,6 +114,36 @@ def test_missing_key_fails_decision_canary_closed(monkeypatch, isolated_baseten,
     baseten.write_provider_manifest(baseten.fetch())
     saved = {row["id"]: row for row in json.loads(isolated_baseten.read_text())["models"]}
     assert all(saved[model]["routable"] is False for model in DECISIONS)
+
+
+@pytest.mark.parametrize("healthy", [False, True])
+def test_canary_lifts_the_committed_pre_review_hold_from_reviewed_ids(
+    monkeypatch, isolated_baseten, httpx_mock, healthy,
+):
+    # #2345 committed every System One row with the adapter hold. Reviewing
+    # an ID must let its canary decide, not leave the old hold sticky.
+    monkeypatch.setenv("BASETEN_API_KEY", "test-token")
+    monkeypatch.setattr(baseten, "probe_systemone", lambda *_: healthy)
+    httpx_mock.add_response(url=baseten.URL, json=_feed(), is_reusable=True)
+    baseten.write_provider_manifest(baseten.fetch())
+    committed = json.loads(isolated_baseten.read_text())
+    for row in committed["models"]:
+        if row["id"].startswith(BASETEN_SYSTEMONE_PREFIX):
+            row.update(routable=False, routable_reason=BASETEN_SYSTEMONE_HOLD_REASON)
+    isolated_baseten.write_text(json.dumps(committed))
+
+    baseten.write_provider_manifest(baseten.fetch())
+
+    saved = {row["id"]: row for row in json.loads(isolated_baseten.read_text())["models"]}
+    for model in DECISIONS:
+        assert saved[model]["routable"] is healthy
+        if healthy:
+            assert "routable_reason" not in saved[model]
+        else:
+            assert saved[model]["routable_reason"] == "provider-canary-failed"
+    future = saved["decision-models/future-model"]
+    assert future["routable"] is False
+    assert future["routable_reason"] == BASETEN_SYSTEMONE_HOLD_REASON
 
 
 @pytest.mark.parametrize("pricing", [
