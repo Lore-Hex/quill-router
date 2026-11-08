@@ -3317,6 +3317,8 @@
       "status": 1,
       "id": "inclusionai/ling-3.1-flash",
       "upstream_id": "inclusionAI/Ling-3.1-flash",
+      "retirement_at": "2026-11-15T00:00:00Z",
+      "replacement_model_id": "deepseek/deepseek-v4.1-flash-1017",
       "supported_features": [
         "tools",
         "structured-outputs",
