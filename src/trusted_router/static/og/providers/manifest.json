@@ -46,10 +46,10 @@
   },
   "amazon-bedrock": {
     "card_version": 2,
-    "model_count": 39,
+    "model_count": 38,
     "name": "Amazon Bedrock",
     "privacy": "Policy documented",
-    "route_count": 39,
+    "route_count": 38,
     "route_mode": "Prepaid",
     "slug": "amazon-bedrock"
   },
@@ -100,10 +100,10 @@
   },
   "baseten": {
     "card_version": 2,
-    "model_count": 18,
+    "model_count": 20,
     "name": "Baseten",
     "privacy": "Zero retention",
-    "route_count": 35,
+    "route_count": 39,
     "route_mode": "Prepaid + BYOK",
     "slug": "baseten"
   },
@@ -244,10 +244,10 @@
   },
   "deepinfra": {
     "card_version": 2,
-    "model_count": 90,
+    "model_count": 89,
     "name": "DeepInfra",
     "privacy": "Policy documented",
-    "route_count": 172,
+    "route_count": 170,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepinfra"
   },
@@ -649,10 +649,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 13,
+    "model_count": 12,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 13,
+    "route_count": 12,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },

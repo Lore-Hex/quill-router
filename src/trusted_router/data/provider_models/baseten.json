@@ -2,7 +2,7 @@
   "_about": "Provider-native Baseten Model API routes, capabilities, context windows, and account-billable prices refreshed hourly from Baseten's authenticated /v1/models feed.",
   "provider": "baseten",
   "source": "https://inference.baseten.co/v1/models",
-  "generated_at": "2026-11-08T10:46:23Z",
+  "generated_at": "2026-11-08T17:31:25Z",
   "price_scale": "microdollars_per_million",
   "model_count": 33,
   "models": [
@@ -982,7 +982,7 @@
       "context_length": 16384,
       "supported_features": [],
       "supported_sampling_parameters": [],
-      "routable": false,
+      "routable": true,
       "input_token_price_per_m": 35000,
       "output_token_price_per_m": 0,
       "documentation": {
@@ -990,8 +990,7 @@
         "input_format": "POST /v1/decide: text state and boolean/noul, choice or score questions. Text-only on this route; no streaming.",
         "output_format": "Verified answers and probabilities with inputTokens usage. Input-only billing; output tokens are free.",
         "example_input": "{\"model\": \"decision-models/baseten-elephant-9b-latest\", \"state\": \"Mia owns a red bicycle.\", \"questions\": {\"color\": {\"type\": \"choice\", \"instructions\": \"Which color is the bicycle?\", \"criteria\": {\"red\": null, \"blue\": null}}}}"
-      },
-      "routable_reason": "systemone-adapter-not-implemented"
+      }
     },
     {
       "display_name": "mammoth-1",
@@ -1012,7 +1011,7 @@
       "context_length": 16384,
       "supported_features": [],
       "supported_sampling_parameters": [],
-      "routable": false,
+      "routable": true,
       "input_token_price_per_m": 100000,
       "output_token_price_per_m": 0,
       "documentation": {
@@ -1020,8 +1019,7 @@
         "input_format": "POST /v1/decide: text state and boolean/noul, choice or score questions. Text-only on this route; no streaming.",
         "output_format": "Verified answers and probabilities with inputTokens usage. Input-only billing; output tokens are free.",
         "example_input": "{\"model\": \"decision-models/baseten-mammoth-27b-latest\", \"state\": \"Mia owns a red bicycle.\", \"questions\": {\"color\": {\"type\": \"choice\", \"instructions\": \"Which color is the bicycle?\", \"criteria\": {\"red\": null, \"blue\": null}}}}"
-      },
-      "routable_reason": "systemone-adapter-not-implemented"
+      }
     },
     {
       "display_name": "joey-1",
@@ -1043,7 +1041,7 @@
       "supported_features": [],
       "supported_sampling_parameters": [],
       "routable": false,
-      "routable_reason": "systemone-adapter-not-implemented",
+      "routable_reason": "provider-canary-failed",
       "input_token_price_per_m": 10000,
       "output_token_price_per_m": 0,
       "documentation": {
