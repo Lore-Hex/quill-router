@@ -40,6 +40,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from trusted_router.pricing import provider_manifest_price_profile_is_valid
+from trusted_router.provider_contracts import BASETEN_SYSTEMONE_HOLD_REASON
 
 log = logging.getLogger("pricing")
 
@@ -854,6 +855,12 @@ def reconcile_manifest_tombstones(
         # Vertex rechecks adapter support, complete pricing/limits and a live
         # canary before recovering this machine-created classification.
         "unsupported-vertex-api",
+        # Code-owned, not an operator decision: provider_contracts decides
+        # which Baseten System One IDs are reviewed, and the Baseten writer
+        # reapplies this hold to every unreviewed ID at the final manifest
+        # boundary. Treating it as sticky kept reviewed IDs dark after their
+        # System One canary passed.
+        BASETEN_SYSTEMONE_HOLD_REASON,
     }
     today = missing_date or datetime.now(UTC).date().isoformat()
     existing_ids = {
