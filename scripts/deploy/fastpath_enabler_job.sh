@@ -8,8 +8,7 @@
 #
 # Read-only by its literals: TR_FASTPATH_ENABLER_MODE=dry-run (WS1) reads and
 # reports but writes nothing (off logs one line and exits), and
-# TR_FASTPATH_ENABLER_MAX_RANK=0
-# enables nobody off the include list. Even in apply mode the job writes
+# TR_FASTPATH_ENABLER_MAX_RANK=0 enables nobody off the include list. Even in apply mode the job writes
 # nothing until an operator runs `fastpathctl enabler arm`, and never writes
 # the hold table. The lists come from fastpath_lists.sh, shared with
 # rollout.sh; tests/test_fastpath_lists.py holds them there.

@@ -206,7 +206,7 @@ def test_an_enabled_workspace_stays_down_to_the_disable_balance() -> None:
     assert report["would_disable"] == {"balance": 1}
 
 
-def test_the_probes_keys_workspaces_are_left_out_by_their_reason() -> None:
+def test_the_probes_keys_workspaces_are_left_out_by_their_reason(caplog: pytest.LogCaptureFixture) -> None:
     db = FakeDatabase()
     for workspace in ("ws-synthetic-monitor", "ws-synthetic-probe", "ws-synthetic-plain"):
         _seed(db, workspace)
@@ -218,8 +218,13 @@ def test_the_probes_keys_workspaces_are_left_out_by_their_reason() -> None:
     hashes = fe.probe_hashes_from_environment({"FASTPATH_ENABLER_MONITOR_KEY": "monitor-raw-key",
                                                "FASTPATH_ENABLER_STAGE_D_PROBE_KEY": "probe-raw-key"})
     assert hashes == {monitor: "monitor_key", probe: "probe"}
-    report = _run(db, dataclasses.replace(BASE, mode="dry-run"), probe_hashes=hashes).report
+    with caplog.at_level(logging.INFO, logger="trusted_router.fastpath_enabler"):
+        report = _run(db, dataclasses.replace(BASE, mode="dry-run"), probe_hashes=hashes).report
     assert report["excluded"] == {"monitor_key": 1, "probe": 1} and report["would_enable"] == {"rank": 1}
+    # Their IDs go apart, for the exclude list; never the keys.
+    lists = [r.getMessage() for r in caplog.records if r.getMessage().startswith("fastpath_enabler.list ")]
+    assert "fastpath_enabler.list probes=ws-synthetic-monitor:monitor_key,ws-synthetic-probe:probe" in lists
+    assert not any("raw-key" in line or monitor in line or probe in line for line in lists)
 
 
 # -- the rank, the include list and the margin -------------------------------------
