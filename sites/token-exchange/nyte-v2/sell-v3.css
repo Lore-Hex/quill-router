@@ -272,3 +272,5 @@ main section.sv3-deck .sv3-more a:focus-visible{outline:2px solid var(--ink);out
   .sv3-deck .sv3-topics b{font-size:20px}
   .sv3-deck .sv3-more a{width:100%;justify-content:center}
 }
+/* Smallest phones: 30px keeps the heading to two lines instead of leaving "Exchange" on its own line. */
+@media (max-width:374px){main section.sv3-deck h2{font-size:30px}}
