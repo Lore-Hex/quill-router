@@ -66,10 +66,18 @@ def inventory_settings(surface, enabled):
     ))
 
 
-def inventory(app, retired_route_delta=None, *, abliterated_page=False, management_key=False):
+def inventory(app, retired_route_delta=None, *, abliterated_page=False, management_key=False,
+              wallet_email_verify=False):
     routes = sorted([path, sorted(getattr(route, "methods", []) or []),
                      getattr(getattr(route, "endpoint", None), "__qualname__", "")]
                     for path, route in effective_routes(app))
+    # Account for exactly the wallet email-attach link target (and its /v1
+    # alias), only on surfaces that serve the wallet auth routes.
+    for path in ("/auth/wallet/email/verify", "/v1/auth/wallet/email/verify"):
+        verify_route = [path, ["GET"], "register_wallet_oauth_routes.<locals>.wallet_email_verify"]
+        assert routes.count(verify_route) == int(wallet_email_verify)
+        if wallet_email_verify:
+            routes.remove(verify_route)
     # Account for exactly the new guarded console POST, only on console surfaces.
     # All other routes, lifecycle hooks and state remain pinned to the baseline.
     management_route = ["/console/api-keys/management", ["POST"],
@@ -119,7 +127,8 @@ def test_existing_surfaces_match_main_inventory(surface, enabled):
     app = create_app(inventory_settings(surface, enabled), configure_store_arg=False, init_observability=False)
     assert inventory(app, delta["surfaces"][surface],
                      abliterated_page=surface in {"combined", "public", "observer"},
-                     management_key=surface in {"combined", "control"}) == frozen[f"{surface}/{enabled}"]
+                     management_key=surface in {"combined", "control"},
+                     wallet_email_verify=surface in {"combined", "control"}) == frozen[f"{surface}/{enabled}"]
 
 
 def test_worker_surface_excludes_every_other_starter(monkeypatch):
