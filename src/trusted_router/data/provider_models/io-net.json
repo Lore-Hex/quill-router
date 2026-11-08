@@ -134,9 +134,9 @@
         "prompt_cache"
       ],
       "routable": true,
-      "input_token_price_per_m": 1472000,
-      "output_token_price_per_m": 2886200,
-      "cached_input_token_price_per_m": 736000
+      "input_token_price_per_m": 1240696,
+      "output_token_price_per_m": 2423392,
+      "cached_input_token_price_per_m": 620348
     },
     {
       "display_name": "Google: Gemma 4 26B A4B",
@@ -162,9 +162,9 @@
         "prompt_cache"
       ],
       "routable": true,
-      "input_token_price_per_m": 102000,
-      "output_token_price_per_m": 288000,
-      "cached_input_token_price_per_m": 51000
+      "input_token_price_per_m": 106000,
+      "output_token_price_per_m": 328000,
+      "cached_input_token_price_per_m": 53000
     },
     {
       "display_name": "Intel: Qwen3 Coder 480B A35B Instruct INT4 Mixed AR",
@@ -454,9 +454,9 @@
         "prompt_cache"
       ],
       "routable": true,
-      "input_token_price_per_m": 960000,
-      "output_token_price_per_m": 4400000,
-      "cached_input_token_price_per_m": 480000
+      "input_token_price_per_m": 1030000,
+      "output_token_price_per_m": 4600000,
+      "cached_input_token_price_per_m": 515000
     },
     {
       "display_name": "MoonshotAI: Kimi K3",
@@ -482,9 +482,9 @@
         "prompt_cache"
       ],
       "routable": true,
-      "input_token_price_per_m": 2402800,
-      "output_token_price_per_m": 19572200,
-      "cached_input_token_price_per_m": 1201400,
+      "input_token_price_per_m": 2215200,
+      "output_token_price_per_m": 15870000,
+      "cached_input_token_price_per_m": 1107600,
       "max_output_tokens": 131072
     },
     {
@@ -536,9 +536,9 @@
         "reasoning"
       ],
       "routable": true,
-      "input_token_price_per_m": 41800,
-      "output_token_price_per_m": 147400,
-      "cached_input_token_price_per_m": 20900
+      "input_token_price_per_m": 53000,
+      "output_token_price_per_m": 166000,
+      "cached_input_token_price_per_m": 26500
     },
     {
       "display_name": "Qwen: Qwen3 Next 80B A3B Instruct",
@@ -561,9 +561,9 @@
         "tools"
       ],
       "routable": true,
-      "input_token_price_per_m": 99250,
-      "output_token_price_per_m": 1182500,
-      "cached_input_token_price_per_m": 49625
+      "input_token_price_per_m": 108333,
+      "output_token_price_per_m": 1283333,
+      "cached_input_token_price_per_m": 54167
     },
     {
       "display_name": "Qwen: Qwen3.6 27B",
@@ -590,9 +590,9 @@
         "prompt_cache"
       ],
       "routable": true,
-      "input_token_price_per_m": 293000,
-      "output_token_price_per_m": 3180000,
-      "cached_input_token_price_per_m": 146500
+      "input_token_price_per_m": 319000,
+      "output_token_price_per_m": 3070000,
+      "cached_input_token_price_per_m": 159500
     },
     {
       "display_name": "Qwen: Qwen3.6 35B A3B",
@@ -649,9 +649,9 @@
         "prompt_cache"
       ],
       "routable": true,
-      "input_token_price_per_m": 388000,
-      "output_token_price_per_m": 2338000,
-      "cached_input_token_price_per_m": 194000
+      "input_token_price_per_m": 453000,
+      "output_token_price_per_m": 2434000,
+      "cached_input_token_price_per_m": 226500
     },
     {
       "display_name": "Xiaomi: MiMo-V2.5",
@@ -757,9 +757,9 @@
         "prompt_cache"
       ],
       "routable": true,
-      "input_token_price_per_m": 528080,
-      "output_token_price_per_m": 2071840,
-      "cached_input_token_price_per_m": 264040
+      "input_token_price_per_m": 484080,
+      "output_token_price_per_m": 1955840,
+      "cached_input_token_price_per_m": 242040
     },
     {
       "display_name": "Z.ai: GLM 4.7 Flash",
@@ -811,9 +811,9 @@
         "prompt_cache"
       ],
       "routable": true,
-      "input_token_price_per_m": 860000,
-      "output_token_price_per_m": 2752000,
-      "cached_input_token_price_per_m": 430000
+      "input_token_price_per_m": 920000,
+      "output_token_price_per_m": 2944000,
+      "cached_input_token_price_per_m": 460000
     },
     {
       "display_name": "Z.ai: GLM 5.1",
@@ -839,9 +839,9 @@
         "prompt_cache"
       ],
       "routable": true,
-      "input_token_price_per_m": 1285760,
-      "output_token_price_per_m": 4040960,
-      "cached_input_token_price_per_m": 642880
+      "input_token_price_per_m": 1286040,
+      "output_token_price_per_m": 4041840,
+      "cached_input_token_price_per_m": 643020
     },
     {
       "display_name": "Z.ai: GLM 5.2",
@@ -867,9 +867,9 @@
         "prompt_cache"
       ],
       "routable": true,
-      "input_token_price_per_m": 1524000,
-      "output_token_price_per_m": 4884000,
-      "cached_input_token_price_per_m": 762000
+      "input_token_price_per_m": 1401200,
+      "output_token_price_per_m": 5760000,
+      "cached_input_token_price_per_m": 700600
     },
     {
       "display_name": "Z.ai: GLM 5.3",
@@ -895,9 +895,9 @@
         "prompt_cache"
       ],
       "routable": true,
-      "input_token_price_per_m": 2100000,
-      "output_token_price_per_m": 6600000,
-      "cached_input_token_price_per_m": 1050000
+      "input_token_price_per_m": 2156000,
+      "output_token_price_per_m": 6776000,
+      "cached_input_token_price_per_m": 1078000
     },
     {
       "display_name": "Z.ai: GLM 5.3 Flash",
@@ -953,9 +953,9 @@
         "prompt_cache"
       ],
       "routable": true,
-      "input_token_price_per_m": 226200,
-      "output_token_price_per_m": 963400,
-      "cached_input_token_price_per_m": 113100
+      "input_token_price_per_m": 258200,
+      "output_token_price_per_m": 1023400,
+      "cached_input_token_price_per_m": 129100
     },
     {
       "display_name": "Google: Gemma 4 31B Instruct",
@@ -982,9 +982,9 @@
         "prompt_cache"
       ],
       "routable": true,
-      "input_token_price_per_m": 431000,
-      "output_token_price_per_m": 812000,
-      "cached_input_token_price_per_m": 215500
+      "input_token_price_per_m": 402000,
+      "output_token_price_per_m": 664000,
+      "cached_input_token_price_per_m": 201000
     },
     {
       "display_name": "NVIDIA: Nemotron 3.5 Lightning",
@@ -1010,9 +1010,9 @@
         "prompt_cache"
       ],
       "routable": true,
-      "input_token_price_per_m": 51667,
-      "output_token_price_per_m": 160000,
-      "cached_input_token_price_per_m": 25834
+      "input_token_price_per_m": 51250,
+      "output_token_price_per_m": 170000,
+      "cached_input_token_price_per_m": 25625
     },
     {
       "display_name": "DeepSeek: DeepSeek V4 Pro 0813",
@@ -1038,9 +1038,9 @@
         "prompt_cache"
       ],
       "routable": true,
-      "input_token_price_per_m": 870300,
-      "output_token_price_per_m": 4168000,
-      "cached_input_token_price_per_m": 435150
+      "input_token_price_per_m": 1015200,
+      "output_token_price_per_m": 3896000,
+      "cached_input_token_price_per_m": 507600
     },
     {
       "display_name": "Xiaomi: MiMo-V2.6-Flash",
@@ -1067,9 +1067,9 @@
         "prompt_cache"
       ],
       "routable": true,
-      "input_token_price_per_m": 147000,
-      "output_token_price_per_m": 294000,
-      "cached_input_token_price_per_m": 73500
+      "input_token_price_per_m": 159000,
+      "output_token_price_per_m": 318000,
+      "cached_input_token_price_per_m": 79500
     },
     {
       "display_name": "NVIDIA: Nemotron 3.5 Super VL",
@@ -1097,9 +1097,9 @@
         "prompt_cache"
       ],
       "routable": true,
-      "input_token_price_per_m": 200000,
-      "output_token_price_per_m": 580000,
-      "cached_input_token_price_per_m": 100000
+      "input_token_price_per_m": 170000,
+      "output_token_price_per_m": 500000,
+      "cached_input_token_price_per_m": 85000
     },
     {
       "display_name": "Reflection: Beam 1.0",
@@ -1159,7 +1159,7 @@
     }
   ],
   "source": "https://api.intelligence.io.solutions/api/v1/models",
-  "generated_at": "2026-11-07T23:01:52Z",
+  "generated_at": "2026-11-08T02:43:20Z",
   "price_scale": "microdollars_per_million",
   "model_count": 42
 }

@@ -549,6 +549,17 @@
       ],
       "default_effort": "high"
     },
+    "deepseek/deepseek-v4.1-flash-1017:batch": {
+      "mandatory": false,
+      "default_enabled": true,
+      "supported_efforts": [
+        "max",
+        "high",
+        "low",
+        "none"
+      ],
+      "default_effort": "high"
+    },
     "deepseek/deepseek-v4.1-flash:batch": {
       "mandatory": false,
       "default_enabled": true,
@@ -2900,6 +2911,16 @@
       "default_effort": null
     },
     "z-ai/glm-5.2": {
+      "mandatory": false,
+      "default_enabled": true,
+      "supported_efforts": [
+        "xhigh",
+        "high",
+        "none"
+      ],
+      "default_effort": "high"
+    },
+    "z-ai/glm-5.2:batch": {
       "mandatory": false,
       "default_enabled": true,
       "supported_efforts": [

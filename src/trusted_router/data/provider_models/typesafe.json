@@ -3,7 +3,7 @@
   "provider": "typesafe",
   "source": "https://docs.typesafe.ai/models",
   "pricing_source": "https://docs.typesafe.ai/models.md",
-  "generated_at": "2026-11-07T23:01:52Z",
+  "generated_at": "2026-11-08T02:43:20Z",
   "price_scale": "microdollars_per_million",
   "model_count": 1,
   "models": [
