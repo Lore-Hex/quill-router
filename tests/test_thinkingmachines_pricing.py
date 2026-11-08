@@ -263,9 +263,28 @@ def test_tinker_glm_5_3_sampler_route_is_published_with_verified_contract(
     assert endpoint.completion_price_microdollars_per_million_tokens == 12_818_250
 
 
-def test_inkling_2_small_is_cataloged_without_an_open_weights_badge() -> None:
+INKLING_2_SMALL_ROW = {
+    "id": "thinkingmachines/inkling-2-small",
+    "upstream_id": "thinkingmachines/Inkling-2-Small:peft:262144:sampling-nvfp4",
+    "display_name": "Thinking Machines Inkling 2 Small 256K",
+    "context_length": 262144,
+    "input_modalities": ["text", "image"],
+    "output_modalities": ["text"],
+    "endpoints": ["chat/completions"],
+    "input_token_price_per_m": 300000,
+    "output_token_price_per_m": 1000000,
+    "cached_input_token_price_per_m": 30000,
+}
+
+
+def test_inkling_2_small_would_publish_without_an_open_weights_badge(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    # Once the access hold lifts, the route publishes as text+image and still
+    # carries no open-weights badge: its weights are unpublished.
     from trusted_router.catalog import endpoints_for_model, model_open_weights
 
+    serve_manifest_rows(monkeypatch, tmp_path, "thinkingmachines", [INKLING_2_SMALL_ROW])
     model = MODELS["thinkingmachines/inkling-2-small"]
     assert model.context_length == 262_144
     assert model.input_modalities == ("text", "image")
@@ -275,3 +294,98 @@ def test_inkling_2_small_is_cataloged_without_an_open_weights_badge() -> None:
         (endpoint.provider, endpoint.upstream_id)
         for endpoint in endpoints_for_model(model.id)
     } == {("thinkingmachines", "thinkingmachines/Inkling-2-Small:peft:262144:sampling-nvfp4")}
+
+
+def test_inkling_2_small_is_held_out_of_routing_and_probes() -> None:
+    # QUILL-ROUTER-FD: Tinker rejects TR's key for this model, so customer
+    # requests failed. The route is held; its siblings keep serving.
+    from trusted_router.catalog import endpoints_for_model
+    from trusted_router.synthetic.probes import rotation_candidates
+
+    rows = {
+        row["id"]: row
+        for row in json.loads(thinkingmachines.MANIFEST_PATH.read_text(encoding="utf-8"))["models"]
+    }
+    for model_id, reason in thinkingmachines.OPERATOR_HOLDS.items():
+        assert rows[model_id]["routable"] is False
+        assert rows[model_id]["routable_reason"] == reason == "provider-access-unavailable"
+        assert endpoints_for_model(model_id) == []
+    assert thinkingmachines.OPERATOR_HOLDS.keys() == {"thinkingmachines/inkling-2-small"}
+
+    probed = rotation_candidates().get("thinkingmachines", [])
+    assert "thinkingmachines/inkling-2-small" not in probed
+    for sibling in ("thinkingmachines/inkling", "thinkingmachines/inkling-small"):
+        assert "routable" not in rows[sibling]
+        assert sibling in probed
+        assert any(e.provider == "thinkingmachines" for e in endpoints_for_model(sibling))
+
+
+def _held_manifest(tmp_path, monkeypatch: pytest.MonkeyPatch):  # noqa: ANN202
+    manifest = tmp_path / "thinkingmachines.json"
+    held = {**INKLING_2_SMALL_ROW, "routable": False, "routable_reason": "provider-access-unavailable"}
+    sibling = {
+        "id": "thinkingmachines/inkling-small",
+        "upstream_id": "thinkingmachines/Inkling-Small:peft:262144:sampling-nvfp4",
+        "input_token_price_per_m": 1,
+        "output_token_price_per_m": 1,
+    }
+    others = [
+        {"id": model_id, "upstream_id": model_id, "input_token_price_per_m": 1, "output_token_price_per_m": 1}
+        for model_id in ("thinkingmachines/inkling", "z-ai/glm-5.3")
+    ]
+    manifest.write_text(json.dumps({"models": [held, sibling, *others]}), encoding="utf-8")
+    monkeypatch.setattr(thinkingmachines, "MANIFEST_PATH", manifest)
+    feeds = {thinkingmachines.SERVERLESS_URL: SERVERLESS, thinkingmachines.SAMPLER_URL: SAMPLER}
+    monkeypatch.setattr(thinkingmachines, "fetch_json", feeds.__getitem__)
+    for name in thinkingmachines.API_KEY_ENVS:
+        monkeypatch.delenv(name, raising=False)
+    return manifest
+
+
+def _refresh_rows(manifest) -> dict[str, dict]:  # noqa: ANN001
+    thinkingmachines.write_provider_manifest(thinkingmachines.fetch())
+    return {row["id"]: row for row in json.loads(manifest.read_text(encoding="utf-8"))["models"]}
+
+
+def test_access_hold_survives_refreshes_without_a_tinker_key(
+    tmp_path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = _held_manifest(tmp_path, monkeypatch)
+    calls: list[str] = []
+    monkeypatch.setattr(thinkingmachines, "probe_openai_chat", lambda **kw: calls.append(kw["model"]) or True)
+
+    rows = _refresh_rows(manifest)
+
+    assert calls == []
+    held = rows["thinkingmachines/inkling-2-small"]
+    assert (held["routable"], held["routable_reason"]) == (False, "provider-access-unavailable")
+    assert held["output_token_price_per_m"] == 1_000_000
+    assert "routable" not in rows["thinkingmachines/inkling-small"]
+
+
+@pytest.mark.parametrize("healthy", [False, True])
+def test_access_canary_rechecks_only_held_routes_and_lifts_on_success(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, healthy: bool,
+) -> None:
+    manifest = _held_manifest(tmp_path, monkeypatch)
+    monkeypatch.setenv("THINKING_MACHINES_API_KEY", "test-key")
+    calls: list[dict] = []
+    monkeypatch.setattr(thinkingmachines, "probe_openai_chat", lambda **kw: calls.append(kw) or healthy)
+
+    rows = _refresh_rows(manifest)
+
+    assert [(c["base_url"], c["model"]) for c in calls] == [
+        (thinkingmachines.BASE_URL, "thinkingmachines/Inkling-2-Small:peft:262144:sampling-nvfp4")
+    ]
+    held = rows["thinkingmachines/inkling-2-small"]
+    if healthy:
+        assert "routable" not in held and "routable_reason" not in held
+    else:
+        assert (held["routable"], held["routable_reason"]) == (False, "provider-access-unavailable")
+    assert "routable" not in rows["thinkingmachines/inkling-small"]
+
+    # Once lifted, later refreshes neither probe nor re-hold the route.
+    calls.clear()
+    rows = _refresh_rows(manifest)
+    assert bool(calls) is not healthy
+    assert ("routable" not in rows["thinkingmachines/inkling-2-small"]) is healthy
