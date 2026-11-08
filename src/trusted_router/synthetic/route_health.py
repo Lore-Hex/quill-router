@@ -5,7 +5,11 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from trusted_router.catalog_data import ModelEndpoint
-from trusted_router.storage_models import ProviderBenchmarkSample, SyntheticProbeSample
+from trusted_router.storage_models import (
+    ProviderBenchmarkSample,
+    SyntheticProbeSample,
+    scrub_provider_error_message,
+)
 from trusted_router.store_protocol import Store
 from trusted_router.synthetic.probes import rotation_candidates
 
@@ -15,6 +19,10 @@ _DEGRADATION_WINDOW_HOURS = 24
 _CONFIGURATION_ERROR_TYPES = frozenset({
     "provider_auth_config", "unsupported_route", "probe_config_error",
 })
+# Same bound the sample write paths apply (probes._rotation_error_sample and
+# the internal benchmark ingest), re-applied here so an alert never carries
+# more than a stored sample could.
+_ALERT_ERROR_MESSAGE_MAX_CHARS = 300
 
 # A route-health alert means "this route is structurally broken — quarantine
 # it". Transient/capacity failures (rate limits, gateway/no-upstream, timeouts,
@@ -188,8 +196,20 @@ def _configuration_flag(
     return RouteHealthFlag(
         provider=provider, model=model, samples=len(streak), failures=len(streak),
         failure_rate=1.0, newest_error_type=streak[0][1].error_type,
-        newest_error_message=None, kind="configuration",
+        newest_error_message=_alert_error_message(streak[0][1].error_message),
+        kind="configuration",
     )
+
+
+def _alert_error_message(message: str | None) -> str | None:
+    # Configuration failures are probe/auth/route rejections, and the reason is
+    # only in the provider's message (Sentry QUILL-ROUTER-FF carried just
+    # probe_config_error). Stored messages are already scrubbed and bounded at
+    # write time; scrub and bound again with the same helper so the alert can
+    # never carry key-shaped material regardless of which writer stored it.
+    if not message:
+        return None
+    return scrub_provider_error_message(message)[:_ALERT_ERROR_MESSAGE_MAX_CHARS] or None
 
 
 def _availability_flag(
@@ -249,10 +269,12 @@ def report_route_health(flags: list[RouteHealthFlag]) -> None:
         if flag.kind == "configuration":
             from trusted_router.synthetic.alerts import ops_alert
 
+            latest = _alert_error_message(flag.newest_error_message)
             ops_alert(
                 f"route-configuration: {flag.provider}/{flag.model} failed "
                 f"{flag.failures} consecutive configured-route probes over at least 30 minutes "
-                f"({flag.newest_error_type}); excluded from provider uptime, not operations",
+                f"({flag.newest_error_type}); excluded from provider uptime, not operations"
+                + (f"; latest: {latest}" if latest else ""),
                 fingerprint=["route-configuration", flag.provider, flag.model],
                 tags={"route_provider": flag.provider, "route_model": flag.model},
             )
