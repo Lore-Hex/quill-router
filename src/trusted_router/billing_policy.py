@@ -24,11 +24,17 @@ def is_wallet_only_user(user: User | None) -> bool:
 
 
 def principal_user(principal: Principal) -> User | None:
+    """The identity a request acts as: the session user, else the key's
+    creator, else the workspace owner. Keys minted with another API key have
+    no creator, so without the owner fallback a wallet-only account could shed
+    its restrictions by minting a second management key."""
     if principal.user is not None:
         return principal.user
-    if principal.api_key is None or not principal.api_key.creator_user_id:
-        return None
-    return STORE.get_user(principal.api_key.creator_user_id)
+    if principal.api_key is not None and principal.api_key.creator_user_id:
+        creator = STORE.get_user(principal.api_key.creator_user_id)
+        if creator is not None:
+            return creator
+    return STORE.get_user(principal.workspace.owner_user_id)
 
 
 def is_wallet_only_principal(principal: Principal) -> bool:

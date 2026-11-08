@@ -1,5 +1,6 @@
 {% extends "console/_layout.html" %}
 {% block body %}
+{% if wallet_only_message %}<div class="console-flash error" role="alert">{{ wallet_only_message }}</div>{% endif %}
 <section class="panel">
   <div class="panel-head"><h2>Connect your own provider account</h2></div>
   <div class="panel-body">
