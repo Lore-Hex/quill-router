@@ -557,6 +557,7 @@ func build(object pyjson.Object, values map[string]any) (Request, Pass) {
 	// The rest of authorize_additions' request facts, as the schema holds
 	// them (stripped).
 	r.Async.Model, r.Async.RouteType, r.Async.ServiceTier = r.Model, str("route_type"), str("service_tier")
+	r.Async.Models = r.Models
 	if params, ok := dumped["requested_parameters"].([]any); ok {
 		r.Async.RequestedParameters = make([]string, len(params))
 		for i, p := range params {

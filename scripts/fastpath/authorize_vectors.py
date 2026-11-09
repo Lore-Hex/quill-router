@@ -104,7 +104,15 @@ from trusted_router.config import Settings  # noqa: E402
 from trusted_router.gateway_boot import BOOT_AUTH_DOMAIN, GATEWAY_BOOT_KIND, boot_auth_digest  # noqa: E402
 from trusted_router.main import create_app  # noqa: E402
 from trusted_router.model_aliases import canonical_router_model_id  # noqa: E402
+from trusted_router.polyphemus import MODEL_ID as POLYPHEMUS_MODEL_ID  # noqa: E402
 from trusted_router.pricing import PriceTier  # noqa: E402
+from trusted_router.provider_contracts import (  # noqa: E402
+    CACHE_EXCLUSIVE_INPUT_PROVIDERS,
+    CACHE_EXCLUSIVE_INPUT_PUBLISHER_PREFIX,
+    CACHE_EXCLUSIVE_INPUT_RESELLERS,
+    PRIVATE_PRICE_TIER_BASIS_PROVIDER_MODELS,
+    provider_input_excludes_cache,
+)
 from trusted_router.receipt_keys import b64url_encode, normalize_receipt_jwk, receipt_kid  # noqa: E402
 from trusted_router.regions import configured_regions  # noqa: E402
 from trusted_router.routes.internal import gateway  # noqa: E402
@@ -118,7 +126,11 @@ from trusted_router.schemas import GatewayAuthorizeRequest  # noqa: E402
 from trusted_router.scopes import SCOPE_INFERENCE  # noqa: E402
 from trusted_router.services import async_settle as async_settle_service  # noqa: E402
 from trusted_router.services import fastpath_frontdoor as fd  # noqa: E402
-from trusted_router.services.async_settle import ORDINARY_PARAMETERS  # noqa: E402
+from trusted_router.services.async_settle import (  # noqa: E402
+    ORDINARY_PARAMETERS,
+    PROGRAM_MODEL_PREFIXES,
+    names_program_model,
+)
 from trusted_router.services.edge_policy_publisher import (  # noqa: E402
     admission_workspaces,
     edge_streams_on,
@@ -1626,14 +1638,19 @@ def cases() -> list[dict[str, Any]]:
 # ------------------------------------------------------------------ async --
 
 # The async file's routes (G15 design §6.1, P6): billing_snapshot.Candidate
-# accepts only openai and anthropic, and the snapshot fixture has neither, so
-# the file's snapshot is the fixture's catalog plus these. Synthetic prices.
+# takes every provider's Credits endpoint, and the snapshot fixture has no
+# openai or anthropic route, so the file's snapshot is the fixture's catalog
+# plus these: both publishers' direct routes, and resold ones. Synthetic prices.
 GPT41, GPT41_MINI, GPT41_NANO = "openai/gpt-4.1", "openai/gpt-4.1-mini", "openai/gpt-4.1-nano"
 GPT5_MINI, SONNET = "openai/gpt-5-mini", "anthropic/claude-sonnet-4.5"
+# Fixture-only model ids, so no lifecycle rule for a real one moves them.
+OPEN_WEIGHTS, OPUS = "openai/open-weights-fixture", "anthropic/claude-opus-fixture"
 ASYNC_MODELS: tuple[Model, ...] = (
     SNAPSHOT_VECTORS._model(GPT41, "openai"), SNAPSHOT_VECTORS._model(GPT41_MINI, "openai"),
     SNAPSHOT_VECTORS._model(GPT41_NANO, "openai"), SNAPSHOT_VECTORS._model(GPT5_MINI, "openai"),
     SNAPSHOT_VECTORS._model(SONNET, "anthropic", context_length=1_000_000),
+    SNAPSHOT_VECTORS._model(OPEN_WEIGHTS, "openai"),
+    SNAPSHOT_VECTORS._model(OPUS, "anthropic", context_length=1_000_000),
 )
 ASYNC_ENDPOINTS: tuple[ModelEndpoint, ...] = (
     SNAPSHOT_VECTORS._endpoint(GPT41, "openai", "Credits", 2_000_000, 8_000_000),
@@ -1642,13 +1659,55 @@ ASYNC_ENDPOINTS: tuple[ModelEndpoint, ...] = (
     # and billing_valid false (§3.2, "The lost fact").
     SNAPSHOT_VECTORS._endpoint(GPT41_NANO, "openai", "Credits", 100_000, 400_000, request_price_microdollars=0.5),
     SNAPSHOT_VECTORS._endpoint(GPT5_MINI, "openai", "Credits", 250_000, 2_000_000),
-    # The same model through azure, a provider Candidate refuses (§4.4).
-    SNAPSHOT_VECTORS._endpoint(GPT5_MINI, "azure", "Credits", 250_000, 2_000_000),
+    # The same model through azure with a request fee, which Candidate
+    # refuses (§4.4): an integer, so billing_valid stays true.
+    SNAPSHOT_VECTORS._endpoint(GPT5_MINI, "azure", "Credits", 250_000, 2_000_000, request_price_microdollars=1),
     # Two tiers, split at 200,000 prompt tokens.
     SNAPSHOT_VECTORS._endpoint(SONNET, "anthropic", "Credits", 3_000_000, 15_000_000, price_tiers=(
         PriceTier(200_000, 3_000_000, 15_000_000, 300_000), PriceTier(None, 6_000_000, 22_500_000, 600_000))),
+    # An openai/ model only resellers serve: neither route is its publisher's.
+    # amazon-bedrock among them relays an inclusive count for it.
+    SNAPSHOT_VECTORS._endpoint(OPEN_WEIGHTS, "together", "Credits", 150_000, 600_000),
+    SNAPSHOT_VECTORS._endpoint(OPEN_WEIGHTS, "fireworks", "Credits", 160_000, 620_000),
+    SNAPSHOT_VECTORS._endpoint(OPEN_WEIGHTS, "amazon-bedrock", "Credits", 170_000, 640_000),
+    # An anthropic/ model direct and resold: anthropic's input count excludes
+    # cached tokens, and so do google-vertex's and amazon-bedrock's for an
+    # anthropic/ model, which the enclave relays Anthropic-native usage for
+    # (the convention follows the provider slug and the model id). The
+    # google-vertex reseller has two tiers with explicit cached rates.
+    SNAPSHOT_VECTORS._endpoint(OPUS, "anthropic", "Credits", 5_000_000, 25_000_000),
+    SNAPSHOT_VECTORS._endpoint(OPUS, "google-vertex", "Credits", 5_000_000, 25_000_000, price_tiers=(
+        PriceTier(200_000, 5_000_000, 25_000_000, 500_000), PriceTier(None, 10_000_000, 37_500_000, 1_000_000))),
+    SNAPSHOT_VECTORS._endpoint(OPUS, "amazon-bedrock", "Credits", 5_000_000, 25_000_000),
+)
+# (provider, model) pairs for which the async file's header records
+# provider_contracts.provider_input_excludes_cache: the rule's two keys, in
+# every combination the catalog and the fixture reach.
+CONVENTION_PAIRS: tuple[tuple[str, str], ...] = (
+    ("anthropic", SONNET), ("anthropic", OPUS), ("anthropic", GPT41), ("anthropic", "x"),
+    ("amazon-bedrock", OPUS), ("amazon-bedrock", "anthropic/claude-sonnet-5"), ("amazon-bedrock", OPEN_WEIGHTS),
+    ("amazon-bedrock", GLM), ("amazon-bedrock", "anthropic"), ("amazon-bedrock", "Anthropic/claude-x"),
+    ("google-vertex", OPUS), ("google-vertex", "anthropic/claude-sonnet-4.6"), ("google-vertex", GEMINI),
+    ("google-vertex", "anthropic/"), ("openai", GPT41), ("openai", OPUS), ("azure", GPT5_MINI), ("together", OPUS),
+    ("together", OPEN_WEIGHTS), ("fireworks", OPEN_WEIGHTS), ("deepinfra", "anthropic/claude-opus-5"),
+    ("google-ai-studio", GEMINI), ("sakana", FUGU), ("", OPUS), ("anthropic ", OPUS), ("amazon-bedrock ", OPUS),
 )
 ASYNC_SNAPSHOT_REVISION = "golden-fixture-async"
+# Spellings of requested models, programs and not, for which the async file's
+# header records async_settle.names_program_model: printable ASCII, as every
+# model string the edge reads is.
+PROGRAM_NAME_SPELLINGS: tuple[str, ...] = (
+    "trustedrouter/auto", "trustedrouter/auto:nitro", "trustedrouter/auto-routing", "trustedrouter/zdr",
+    "trustedrouter/dev-1.0", "trustedrouter/monitor", "trustedrouter/polyphemus-1.0", "trustedrouter/not-listed",
+    "trustedrouter/", "trustedrouter", "nyte/auto", "nyte/auto-routing:floor", "nyte/not-listed", "nyte/", "nyte",
+    "TrustedRouter/auto", "TRUSTEDROUTER/AUTO", "NYTE/auto", "Nyte/Auto-Routing", " trustedrouter/auto ",
+    "parasail/liberty-2.0", "parasail/liberty-2.0:nitro", "parasail/liberty-2.0-2026-01-01",
+    "Parasail/Liberty-2.0", "parasail/liberty-2", "parasail/liberty", "parasail/another-model",
+    "trustedrouterx/auto", "xtrustedrouter/auto", "trusted/router", "openai/trustedrouter/auto",
+    "system1models/a-model", "system1models-eu/a-model", "minimax/minimax-m3-1-flash", "",
+    GPT41, GPT41 + ":nitro", GPT41 + "-2026-01-01", "gpt-4.1", GPT5_MINI, SONNET, OPEN_WEIGHTS, OPUS,
+    FLASH, TENCENT_FLASH, GLM, GLM + ":floor", GEMINI, FUGU, BEDROCK, INKLING, "Qwen/a-model",
+)
 # The members an async-v1 answer can add, in the order they can appear (§2.2).
 ASYNC_MEMBERS = ("async_eligible", "billing_snapshot", "billing_snapshot_hash", "settlement_ticket",
                  "settlement_status_url")
@@ -1665,7 +1724,8 @@ def async_snapshot_inputs() -> Any:
     inputs = SNAPSHOT_VECTORS.fixture_inputs()
     return dataclasses.replace(
         inputs,
-        providers={**inputs.providers, **{slug: PROVIDERS[slug] for slug in ("anthropic", "azure", "openai")}},
+        providers={**inputs.providers, **{slug: PROVIDERS[slug] for slug in (
+            "anthropic", "azure", "google-vertex", "openai")}},
         models=(*inputs.models, *ASYNC_MODELS), endpoints=(*inputs.endpoints, *ASYNC_ENDPOINTS),
     )
 
@@ -1745,7 +1805,33 @@ def async_cases() -> list[dict[str, Any]]:
     add("answer:async.A:requested_parameter:tools", body={"requested_parameters": ["tools"]})
     add("answer:async.A:requested_parameter:tools_among_ordinary",
         body={"requested_parameters": ["temperature", "tools"]})
-    add(f"answer:async.A:partner:{GLM}", body={"model": GLM})
+    # Every provider's Credits endpoint is a candidate the snapshot takes,
+    # whatever the model's publisher: a model only resellers serve (one of
+    # them amazon-bedrock, from a qualified gateway region), a publisher that
+    # is neither openai nor anthropic serving its own, another provider's
+    # tiers, an anthropic/ model direct and resold by the two resellers
+    # relaying Anthropic-native usage (every candidate cache-exclusive), and
+    # a fallback that adds five resellers to an openai route.
+    add(f"answer:async.B:resold:{GLM}", body={"model": GLM})
+    add(f"answer:async.B:resold:{OPEN_WEIGHTS}", body={"model": OPEN_WEIGHTS, "region": "us-central1"})
+    add(f"answer:async.B:own_publisher:{FLASH}", body={"model": FLASH})
+    add(f"answer:async.B:tiered:{GEMINI}", body={"model": GEMINI})
+    add(f"answer:async.B:resold_claude:{OPUS}", body={"model": OPUS, "region": "us-central1"})
+    add(f"answer:async.B:several_providers:{GPT41}+{GLM}", body={"models": [GLM]})
+    # Eligibility's partner: a TrustedRouter program or alias named as the
+    # model or as a fallback (async_settle.names_program_model). The edge's
+    # evaluator passes a request naming one before the compose
+    # (evaluate.pass), so each records Python's shape A beside that pass.
+    add("pass:evaluate.pass:async.A:partner:trustedrouter/auto", "evaluate.pass",
+        body={"model": "trustedrouter/auto"})
+    add("pass:evaluate.pass:async.A:partner:trustedrouter/zdr", "evaluate.pass",
+        body={"model": "trustedrouter/zdr"})
+    add(f"pass:evaluate.pass:async.A:partner:fallback:{GPT41}+trustedrouter/auto", "evaluate.pass",
+        body={"models": ["trustedrouter/auto"]})
+    # Eligibility's private_tier_basis: a candidate whose provider reports its
+    # own price tier basis, alone or among others.
+    add(f"answer:async.A:private_tier_basis:{FUGU}", body={"model": FUGU})
+    add(f"answer:async.A:private_tier_basis:{GPT41}+{FUGU}", body={"models": [FUGU]})
     add(f"answer:async.A:candidate_refused:{GPT5_MINI}@azure", body={"model": GPT5_MINI})
     add(f"answer:async.A:candidate_refused:{GPT41}+{GPT5_MINI}@azure", body={"models": [GPT5_MINI]})
     add(f"answer:async.A:billing_valid_false:{GPT41_NANO}", body={"model": GPT41_NANO})
@@ -1765,7 +1851,8 @@ def async_cases() -> list[dict[str, Any]]:
     add("pass:key.federated:async.A", "key.federated",
         world={"key": {"federated_home": "https://home.example.invalid"}})
     # §4.4's affinity case: fallbacks off, the cold choice openai (shape B),
-    # the remembered azure endpoint (refused by Candidate, shape A).
+    # the remembered azure endpoint (its request fee refused by Candidate,
+    # shape A).
     add(f"answer:cache_affinity:async.warm_A.cold_B:{GPT5_MINI}",
         body={"model": GPT5_MINI, "cache_affinity_key": "c" * 64, "provider": {"allow_fallbacks": False}},
         affinity=((f"{GPT5_MINI}@azure/prepaid", 1.0),))
@@ -1851,7 +1938,9 @@ def async_streams_cases(add: Any) -> None:
         policy=streams)
     add(f"answer:async.B:stream:mixed_provider:{GPT41}+{SONNET}", body={"stream": True, "models": [SONNET]},
         policy=streams)
-    add(f"answer:async.A:partner:{GLM}:stream", body={"stream": True, "model": GLM}, policy=streams)
+    add(f"answer:async.B:stream:resold:{GLM}", body={"stream": True, "model": GLM}, policy=streams)
+    add("pass:evaluate.pass:async.A:partner:trustedrouter/auto:stream", "evaluate.pass",
+        body={"stream": True, "model": "trustedrouter/auto"}, policy=streams)
     add("answer:async.A:requested_parameter:tools:stream", body={"stream": True, "requested_parameters": ["tools"]},
         policy=streams)
     add("answer:async.B:stream:admission_workspaces_other",
@@ -1925,6 +2014,21 @@ def render_async() -> str:
         # async_settle.authorize_additions: a requested parameter outside
         # these makes the answer shape A. Go holds its set equal to this.
         "ordinary_parameters": sorted(ORDINARY_PARAMETERS),
+        # The provider and model rules Go holds its own copies equal to: the
+        # requested-model prefixes of Eligibility's partner, and Python's
+        # own answer (async_settle.names_program_model) for each of these
+        # spellings; the selector's model; the providers whose input count
+        # excludes cached tokens (a candidate's prompt convention); and the
+        # endpoints with a provider-private tier basis.
+        "program_model_prefixes": list(PROGRAM_MODEL_PREFIXES),
+        "program_model_names": {name: names_program_model(name) for name in PROGRAM_NAME_SPELLINGS},
+        "polyphemus_model": POLYPHEMUS_MODEL_ID,
+        "cache_exclusive_input_providers": sorted(CACHE_EXCLUSIVE_INPUT_PROVIDERS),
+        "cache_exclusive_input_resellers": sorted(CACHE_EXCLUSIVE_INPUT_RESELLERS),
+        "cache_exclusive_input_publisher_prefix": CACHE_EXCLUSIVE_INPUT_PUBLISHER_PREFIX,
+        "input_excludes_cache": [[provider, model, provider_input_excludes_cache(provider, model)]
+                                 for provider, model in CONVENTION_PAIRS],
+        "private_tier_basis_models": sorted(list(pair) for pair in PRIVATE_PRICE_TIER_BASIS_PROVIDER_MODELS),
         "async_members": list(ASYNC_MEMBERS),
         # Python's runtime in these cases (the policy's ticket_authority):
         # a TEST key, epoch 1, the primary region as the journal region.

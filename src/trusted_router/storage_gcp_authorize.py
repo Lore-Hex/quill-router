@@ -1507,7 +1507,9 @@ def snapshot_generation(authorization: Any, *, actual_micro: int) -> Generation 
     selected_endpoint = endpoint_for_id(authorization.selected_endpoint_id)
     selected_provider = selected_endpoint.provider if selected_endpoint is not None else authorization.provider
     selected_model_id = selected_endpoint.model_id if selected_endpoint is not None else authorization.model_id
-    _uncached_input, total_input = normalized_delivered_prompt(selected_provider, usage)
+    _uncached_input, total_input = normalized_delivered_prompt(
+        selected_provider, usage, model_id=selected_model_id
+    )
     provider = PROVIDERS.get(selected_provider)
     app_markup_micro = (
         app_markup_microdollars_from_charge(actual_micro, authorization.app_markup_basis_points)
@@ -1688,6 +1690,7 @@ def _finalize_reaped_reservation_atomic(
             _uncached_input, total_input = normalized_delivered_prompt(
                 selected_provider,
                 usage,
+                model_id=selected_model_id,
             )
             provider = PROVIDERS.get(selected_provider)
             app_markup_micro = 0

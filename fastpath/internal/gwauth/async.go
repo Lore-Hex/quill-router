@@ -51,6 +51,9 @@ type AsyncRequest struct {
 	// RequestedParameters are the stripped entries; nil when absent or null.
 	RequestedParameters []string
 	Model               string // body.model, stripped
+	// Models are body.models' stripped entries, the fallbacks; nil when
+	// absent or null.
+	Models []string
 	// InferenceReceipt is body.inference_receipt; AdditionalCost is
 	// additional_cost_reservation_microdollars nonzero (the receipt_fee and
 	// tool_cost exclusions; the cohort passes both before the compose).
@@ -84,6 +87,8 @@ const (
 	AsyncReasonReceiptFee         = "receipt_fee"
 	AsyncReasonToolCost           = "tool_cost"
 	AsyncReasonPartner            = "partner"
+	AsyncReasonPolyphemus         = "polyphemus"
+	AsyncReasonPrivateTierBasis   = "private_tier_basis"
 	AsyncReasonBillingInvalid     = "billing_invalid"   // billing_valid false at the instant
 	AsyncReasonCandidateRefused   = "candidate_refused" // Candidate's validation
 	AsyncReasonCandidateSet       = "candidate_set"     // none, more than 64, or twice
@@ -110,6 +115,85 @@ var ordinaryParameters = map[string]bool{
 // identity is billing_snapshot.Identity: 1 to 512 characters of this set.
 var identity = regexp.MustCompile(`^[A-Za-z0-9_./:@+\-]{1,512}$`)
 
+// programModelPrefixes is async_settle.PROGRAM_MODEL_PREFIXES, the
+// requested-model rule (names_program_model): a model or fallback in the
+// router's own namespace is a program, meta-router or private alias, and
+// the other prefix is the partner-billed model's id; each keeps the
+// synchronous settle (Eligibility's partner). An ordinary model of any
+// publisher is eligible.
+var programModelPrefixes = []string{"trustedrouter/", "parasail/liberty-2.0"}
+
+// polyphemusModel is polyphemus.MODEL_ID: a candidate that is the
+// selector's endpoint, which the settle path prices by its own rules
+// (Eligibility's polyphemus).
+const polyphemusModel = "trustedrouter/polyphemus-1.0"
+
+// cacheExclusiveInputProviders is provider_contracts.CACHE_EXCLUSIVE_INPUT_PROVIDERS:
+// the providers whose reported input count excludes cached tokens;
+// cacheExclusiveInputResellers and cacheExclusiveInputPublisherPrefix are
+// CACHE_EXCLUSIVE_INPUT_RESELLERS and CACHE_EXCLUSIVE_INPUT_PUBLISHER_PREFIX:
+// the resellers whose input count excludes cached tokens for a model under
+// that prefix (they relay Anthropic-native usage for it). A candidate's
+// prompt convention follows its provider slug and model id by this one
+// rule, as the synchronous settle's normalization does.
+var (
+	cacheExclusiveInputProviders = []string{"anthropic"}
+	cacheExclusiveInputResellers = []string{"amazon-bedrock", "google-vertex"}
+)
+
+const cacheExclusiveInputPublisherPrefix = "anthropic/"
+
+// privateTierBasisModels is provider_contracts.PRIVATE_PRICE_TIER_BASIS_PROVIDER_MODELS,
+// as provider and model pairs: the endpoints whose provider reports its own
+// context size to choose a price tier, which the snapshot's total-prompt
+// tier basis cannot represent (Eligibility's private_tier_basis).
+var privateTierBasisModels = [][2]string{{"sakana", "sakana-ai/fugu-ultra-v1.1"}}
+
+// namesProgramModel is async_settle.names_program_model: the name, its
+// letter case folded, as the router canonicalizes it, under one of the
+// prefixes. A variant or dated suffix leaves a prefix in place. The edge
+// reads model strings of printable ASCII only (the evaluator passes any
+// other), over which Go's case folding is Python's.
+func namesProgramModel(name string) bool {
+	canonical := canonicalRouterModelID(strings.ToLower(strings.TrimSpace(name)))
+	for _, prefix := range programModelPrefixes {
+		if strings.HasPrefix(canonical, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// requestsProgramModel is the rule over the model and its fallbacks.
+func requestsProgramModel(r AsyncRequest) bool {
+	return namesProgramModel(r.Model) || slices.ContainsFunc(r.Models, namesProgramModel)
+}
+
+// polyphemus is whether any candidate is the selector's endpoint.
+func polyphemus(candidates []Candidate) bool {
+	return slices.ContainsFunc(candidates, func(c Candidate) bool { return c.Model == polyphemusModel })
+}
+
+// privateTierBasis is whether any candidate is one of privateTierBasisModels.
+func privateTierBasis(candidates []Candidate) bool {
+	for _, c := range candidates {
+		for _, pm := range privateTierBasisModels {
+			if c.Provider == pm[0] && c.Model == pm[1] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// inputExcludesCache is provider_contracts.provider_input_excludes_cache
+// over its two keys: the provider slug, and the model id for a reseller.
+func inputExcludesCache(provider, model string) bool {
+	return slices.Contains(cacheExclusiveInputProviders, provider) ||
+		(slices.Contains(cacheExclusiveInputResellers, provider) &&
+			strings.HasPrefix(model, cacheExclusiveInputPublisherPrefix))
+}
+
 // The DTO's literals and bounds (billing_snapshot.py, Candidate and
 // BillingSnapshot).
 const (
@@ -127,7 +211,8 @@ func falseOnly(reason string) Async {
 // asyncAdditions is authorize_additions for a non-replay authorization the
 // edge composed: settlement "local", unsettled, with a reservation (§2.3's
 // authorization guards always hold), Credits, no markup, fee, custom or
-// user model or native batch, priced at at (unix seconds). An error is an
+// user model or native batch, priced at at (unix seconds). Every provider's
+// Credits endpoint is a candidate the snapshot takes. An error is an
 // input Go cannot answer as Python would (an unpublished billing_valid,
 // admission on, an instant before every epoch): Stage refuses and the
 // caller passes.
@@ -152,9 +237,18 @@ func asyncAdditions(in *AsyncInput, candidates []Candidate, at int64) (Async, er
 			return falseOnly(AsyncReasonRequestedParameter), nil
 		}
 	}
-	// require_eligible(Eligibility(...)): exclusion's order. usage_type,
+	// require_eligible(requested_facts(...)): exclusion's order. usage_type,
 	// authority, markups, custom and user models and native batch are the
-	// cohort's constants; the route type was checked above.
+	// cohort's constants; the route type was checked above. So are three
+	// more of requested_facts' readings: a video pricing snapshot (the
+	// videos route alone has one), a tool or media model (none is a chat
+	// model, so the evaluator composes none; Python's
+	// tests/test_async_settle_settle_branches.py holds that), and the
+	// partner classifier (it answers only for the partner model, whose
+	// name the cohort passes and the rule below names, a partner route,
+	// which is not an async one, or a partner idempotency key, which the
+	// cohort passes). partner is then the requested-model rule; polyphemus
+	// and private_tier_basis are the candidates'.
 	switch {
 	case !in.Policy.TypedRecords:
 		return falseOnly(AsyncReasonUntyped), nil
@@ -164,8 +258,12 @@ func asyncAdditions(in *AsyncInput, candidates []Candidate, at int64) (Async, er
 		return falseOnly(AsyncReasonReceiptFee), nil
 	case r.AdditionalCost:
 		return falseOnly(AsyncReasonToolCost), nil
-	case !strings.HasPrefix(r.Model, "openai/") && !strings.HasPrefix(r.Model, "anthropic/"):
+	case requestsProgramModel(r):
 		return falseOnly(AsyncReasonPartner), nil
+	case polyphemus(candidates):
+		return falseOnly(AsyncReasonPolyphemus), nil
+	case privateTierBasis(candidates):
+		return falseOnly(AsyncReasonPrivateTierBasis), nil
 	}
 	snapshot, reason, err := billingSnapshot(candidates, at)
 	if err != nil {
@@ -259,9 +357,11 @@ func billingSnapshot(candidates []Candidate, at int64) (pyjson.Object, string, e
 
 // billingCandidateValid is Candidate's validation (billing_snapshot.py):
 // the field types, literals and bounds, then supported(). Integers are
-// int64 already; each must also be non-negative (UInt).
+// int64 already; each must also be non-negative (UInt). The provider is any
+// slug of the Identity pattern, and the model any id of it: a provider may
+// serve another publisher's model.
 func billingCandidateValid(c Candidate, p routingsnapshot.Price) bool {
-	if !identity.MatchString(p.EndpointID) || (c.Provider != "openai" && c.Provider != "anthropic") ||
+	if !identity.MatchString(p.EndpointID) || !identity.MatchString(c.Provider) ||
 		!identity.MatchString(c.Model) || c.UsageType != usageCredits || p.PriceHistoryVersion != 1 ||
 		!ratesValid(p.Rates) || len(p.Tiers) > maxBillingTiers || p.RequestFeeMicro < 0 ||
 		p.Rounding != billingRounding {
@@ -272,10 +372,10 @@ func billingCandidateValid(c Candidate, p routingsnapshot.Price) bool {
 			return false
 		}
 	}
-	// supported(): no request fee, a model under its provider, tiers
-	// increasing with an unbounded tier only last. The prompt convention
-	// follows from the provider, so it always agrees.
-	if p.RequestFeeMicro != 0 || !strings.HasPrefix(c.Model, c.Provider+"/") {
+	// supported(): no request fee, tiers increasing with an unbounded tier
+	// only last. The prompt convention follows from the provider
+	// (billingCandidate), so it always agrees.
+	if p.RequestFeeMicro != 0 {
 		return false
 	}
 	previous := int64(-1)
@@ -310,7 +410,7 @@ func billingCandidate(c Candidate, p routingsnapshot.Price) pyjson.Object {
 		tiers[i] = pyjson.Object{{Key: "max_prompt_tokens", Value: bound}, {Key: "rates", Value: ratesObject(t.Rates)}}
 	}
 	convention := "includes_cache"
-	if c.Provider == "anthropic" {
+	if inputExcludesCache(c.Provider, c.Model) {
 		convention = "excludes_cache"
 	}
 	return pyjson.Object{

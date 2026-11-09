@@ -1,7 +1,6 @@
 """Required negative controls: mutate only module memory, restore in finally."""
 from __future__ import annotations
 
-import json
 from collections import UserDict
 from functools import partial
 from itertools import product
@@ -13,6 +12,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from tests.test_billing_snapshot import (
     ALL_CASES,
+    RULES,
     check_case,
 )
 from tests.test_billing_snapshot import (
@@ -107,9 +107,6 @@ def test_mutation_is_killed(name: str, names: list[str], old: str, new: str) -> 
     for case in selected:
         check_case(case)
     print(f"{name}: red {len(selected)}/{len(selected)} -> green {len(selected)}/{len(selected)}")
-
-
-RULES = json.loads((Path(__file__).parent / "fixtures/async_settlement/billing_v1.rules.json").read_bytes())
 
 
 @pytest.mark.parametrize("name,old,new", [

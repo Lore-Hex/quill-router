@@ -25,6 +25,14 @@ worker JSON files from both CPython 3.12.3 full runs, default and post-cutover:
 directories `/tmp/pr-g-inv-default` and `/tmp/pr-g-inv-post` each contain four
 JSON files; both clocks independently contain the same 1,665 entries.
 
+Since 2026-11-09 the oracle leaves out six supplement vectors by name
+(`FROZEN_REFERENCE_EXCLUDED_CASES` in `tests/test_async_settle_proof_oracle.py`):
+this reference has no amazon-bedrock provider and prices Vertex Claude by the
+slug-only convention rule, so it cannot compare them; a companion test fails
+with "the reference has been re-pinned: remove these exclusions" once a
+re-pinned reference can. Each of them settles on the real path in
+`tests/test_resold_claude_cache_accounting.py`.
+
 Pilot sequencing: install the public enclave keyring in the reviewed
 admission-off step 2, verify it on every serving revision at pre-flip step 7,
 and enable negotiation only in step 8 after the earlier gates pass. The

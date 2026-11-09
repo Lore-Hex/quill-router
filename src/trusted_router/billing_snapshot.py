@@ -35,6 +35,7 @@ from pydantic import (
 from pydantic.config import ExtraValues
 
 from trusted_router.catalog_data import ModelEndpoint
+from trusted_router.provider_contracts import provider_input_excludes_cache
 from trusted_router.stage_d import endpoint_pricing_candidate
 
 MAX_INT = (1 << 63) - 1
@@ -220,7 +221,7 @@ class Tier(Frozen):
 
 class Candidate(Frozen):
     endpoint_id: Identity
-    provider: Literal["openai", "anthropic"]
+    provider: Identity
     model_id: Identity
     usage_type: Literal["Credits"]
     price_history_version: Literal[1]
@@ -235,12 +236,15 @@ class Candidate(Frozen):
     def supported(self) -> Candidate:
         if self.request_fee_micro != 0:
             raise ValueError("request_fee")
+        # The convention follows the provider slug and the model id by the
+        # settle path's own rule (anthropic, and a reseller relaying
+        # Anthropic-native usage for an anthropic/ model, exclude cached
+        # tokens from the input count).
         if self.prompt_convention != (
-            "excludes_cache" if self.provider == "anthropic" else "includes_cache"
+            "excludes_cache" if provider_input_excludes_cache(self.provider, self.model_id)
+            else "includes_cache"
         ):
             raise ValueError("unsupported prompt convention for adapter")
-        if not self.model_id.startswith(self.provider + "/"):
-            raise ValueError("custom or unsupported model")
         previous = -1
         for index, tier in enumerate(self.tiers):
             maximum = tier.max_prompt_tokens
@@ -383,6 +387,10 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 def _validate_strings(value: Any) -> None:
     """Reject surrogates in raw inputs and every constructed model field."""
     if isinstance(value, str):
+        if value.isascii():
+            # No code point of an ASCII string is a surrogate; the flag is
+            # kept by the interpreter, so this costs no scan.
+            return
         if any(0xD800 <= ord(char) <= 0xDFFF for char in value):
             raise ValueError("invalid_string")
     elif isinstance(value, BaseModel):
@@ -434,13 +442,19 @@ def parse_eligibility(raw: bytes | str) -> Eligibility:
     return Eligibility.model_validate_json(raw)
 
 
+# The strict UInt validator the builder applies to every raw price value,
+# built once: a TypeAdapter is stateless, and building one per candidate was
+# a quarter of build_snapshot's cost.
+_RAW_PRICE = TypeAdapter(UInt)
+
+
 def _require_raw_prices(endpoint: ModelEndpoint) -> None:
     """Every raw price value as a strict non-negative int64, before
     ``endpoint_pricing_candidate`` coerces them with ``int(...)``: the prompt,
     completion and request prices, and each tier's bound, prompt, completion
     and cached prompt prices (a tier's ``None`` is skipped). Raises
     ValidationError on the first that is not."""
-    integer = TypeAdapter(UInt)
+    integer = _RAW_PRICE
     for rate in (endpoint.prompt_price_microdollars_per_million_tokens,
                  endpoint.completion_price_microdollars_per_million_tokens,
                  endpoint.request_price_microdollars):
@@ -508,9 +522,13 @@ def _raw_price_shape(endpoint: Any) -> bool:
 def build_snapshot(endpoints: Iterable[ModelEndpoint], requested: Eligibility) -> BillingSnapshot:
     """Freeze effective endpoints, resolving missing cache rates NOW, once.
 
-    Catalog markup already embedded in customer rates is retained. The initial
-    normalization allowlist is OpenAI and Anthropic; adding an adapter requires
-    final-usage differential coverage. No mutable catalog is consulted here.
+    Catalog markup already embedded in customer rates is retained. Every
+    provider's Credits endpoint is accepted: its prompt convention follows the
+    provider slug and the model id by the settle path's own rule
+    (provider_contracts.provider_input_excludes_cache), and
+    tests/test_billing_snapshot_catalog.py holds the frozen evaluation equal
+    to the settle cost for every Credits endpoint in the catalog. An endpoint
+    with a request fee is refused. No mutable catalog is consulted here.
     """
     require_eligible(requested)
     candidates = []
@@ -523,7 +541,8 @@ def build_snapshot(endpoints: Iterable[ModelEndpoint], requested: Eligibility) -
             "model_id": endpoint.model_id,
             "usage_type": endpoint.usage_type,
             "prompt_convention": (
-                "excludes_cache" if endpoint.provider == "anthropic" else "includes_cache"
+                "excludes_cache" if provider_input_excludes_cache(endpoint.provider, endpoint.model_id)
+                else "includes_cache"
             ),
             "output_convention": "includes_reasoning",
         }))

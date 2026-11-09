@@ -16,6 +16,7 @@ from trusted_router import billing_snapshot as billing
 from trusted_router.async_settle_ticket import TicketClaims, verify_lookup_ticket, verify_ticket
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
+from trusted_router.provider_contracts import provider_input_excludes_cache
 from trusted_router.services.async_settle import CACHE_SECONDS, TIER_CAPS, Runtime
 from trusted_router.services.settle_outbox_drain import spanner_settle_outbox
 from trusted_router.storage import STORE, typed_billing_store
@@ -144,10 +145,13 @@ def intent(value: Input, claims: TicketClaims, amount: int) -> SettleOutboxRow:
     if len(candidate.endpoint_id) > 128 or len(candidate.model_id) > 128:
         raise api_error(400, "Invalid async settlement snapshot", "bad_request")
     usage = terminal.usage
-    # The existing repair primitive interprets Anthropic inputs as uncached,
-    # other adapters as total prompt. Map conventions once at this boundary.
+    # The existing repair primitive interprets a cache-exclusive candidate's
+    # input as uncached (Anthropic-native usage), every other's as the total
+    # prompt, by the provider slug and model id of the row it reads. Map
+    # conventions once at this boundary, by its rule.
     repair = dict(authorization_id=claims.authorization_id, selected_endpoint=candidate.endpoint_id,
-                  actual_input_tokens=(usage.uncached_input_tokens if candidate.provider == "anthropic"
+                  actual_input_tokens=(usage.uncached_input_tokens
+                                       if provider_input_excludes_cache(candidate.provider, candidate.model_id)
                                        else usage.total_prompt_tokens),
                   actual_output_tokens=usage.output_tokens, cache_read_input_tokens=usage.cache_read_tokens,
                   cache_creation_input_tokens=usage.cache_creation_tokens,

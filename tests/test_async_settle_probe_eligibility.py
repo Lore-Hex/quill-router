@@ -199,8 +199,13 @@ def test_real_authorize_and_settle_compares_every_shape(shape: Shape, fault: str
 
 
 @pytest.mark.catalog_as_built
-@pytest.mark.parametrize("negative", ["monitor", "third_party"])
-def test_real_authorize_negative_controls(negative: str) -> None:
+@pytest.mark.parametrize("control", ["monitor", "program", "third_party"])
+def test_real_authorize_negative_controls(control: str) -> None:
+    """The monitor key and a requested program name get no binding (no
+    snapshot: the first is the synthetic monitor's, the second is partner
+    at authorize); a third-party provider's Credits endpoint, which the
+    snapshot once refused, now gets one as any provider's does (the
+    positive control of the two negatives)."""
     store, _, _ = _seed_typed_gateway_store()
     raw, key = store.api_keys.create(workspace_id="ws-rpc", name="probe", creator_user_id="user-rpc",
                                   tags={"purpose": "synthetic_monitoring", "analytics": "excluded",
@@ -213,10 +218,13 @@ def test_real_authorize_negative_controls(negative: str) -> None:
     req.app.state.async_settle_shadow = shadow
     shape = SHAPES[0]
     payload = shape.body()
-    if negative == "monitor":
+    if control == "monitor":
         payload["model"] = "trustedrouter/monitor"
         del payload["provider"]
         cfg.synthetic_monitor_api_key = raw
+    elif control == "program":
+        payload["model"] = "trustedrouter/auto"
+        del payload["provider"]
     else:
         candidate = next(e for e in MODEL_ENDPOINTS.values() if e.model_id.startswith("openai/")
                          and MODELS[e.model_id].supports_chat
@@ -224,8 +232,13 @@ def test_real_authorize_negative_controls(negative: str) -> None:
         payload.update(model=candidate.model_id, provider={"only": [candidate.provider], "allow_fallbacks": False})
     try:
         data = gateway._authorize_gateway_sync(req, authorize_body(shape, key.hash, payload), cfg)["data"]
-        assert "billing_shadow_binding" not in data
-        assert "billing_snapshot" not in data
+        if control == "third_party":
+            assert data["async_eligible"] is False
+            assert {c["provider"] for c in data["billing_snapshot"]["candidates"]} == {candidate.provider}
+            assert "billing_shadow_binding" in data
+        else:
+            assert "billing_shadow_binding" not in data
+            assert "billing_snapshot" not in data
         counter = shadow.counters.snapshot()[0][1]
         assert counter["samples_inserted"] == 0
     finally:

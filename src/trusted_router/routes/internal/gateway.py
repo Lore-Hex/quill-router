@@ -120,6 +120,7 @@ from trusted_router.gateway_timing import (
     timed_gateway_sync,
     worker_continuation,
 )
+from trusted_router.model_aliases import names_router_model
 from trusted_router.money import format_money_precise, money_pair
 from trusted_router.oauth_app_policy import oauth_app_is_effectively_suspended
 from trusted_router.partner_billing import (
@@ -139,7 +140,7 @@ from trusted_router.pricing import (
 )
 from trusted_router.provider_compat import byok_storage_provider_candidates
 from trusted_router.provider_contracts import (
-    SAKANA_FUGU_MODEL_ID,
+    provider_model_has_private_price_tier_basis,
 )
 from trusted_router.provider_locations import inference_location_metadata
 from trusted_router.receipt_keys import (
@@ -3976,7 +3977,7 @@ def _settle_gateway_authorization(
     # who reports cached_tokens == prompt_tokens double their revenue. Owner
     # prices have no cache tier, so the whole prompt bills at the prompt price.
     uncached_input, total_input, cache_read, cache_creation = normalized_prompt_accounting(
-        selected_endpoint.provider, body
+        selected_endpoint.provider, body, model_id=selected_endpoint.model_id
     )
     if user_model_pair is not None:
         uncached_input = total_input
@@ -5960,7 +5961,7 @@ def _native_batch_eligibility(
         and model_usage_type == UsageType.CREDITS
         and custom_model is None
         and not broadcast_destinations
-        and not requested_model_id.strip().lower().startswith("trustedrouter/")
+        and not names_router_model(requested_model_id)
         and endpoint.provider.strip().lower() in _NATIVE_BATCH_BILLED_FRACTION_BPS
     )
 
@@ -6086,9 +6087,13 @@ def _provider_price_tier_input_tokens(
     endpoint: ModelEndpoint,
     reported_input_tokens: int | None,
 ) -> int | None:
-    """Admit a provider-private tier basis only for its pinned model contract."""
+    """Admit a provider-private tier basis only for its pinned model contract.
 
-    if endpoint.provider == "sakana" and endpoint.model_id == SAKANA_FUGU_MODEL_ID:
+    The predicate is shared with authorize's async-v1 eligibility
+    (services/async_settle.py), which leaves such an endpoint to this path.
+    """
+
+    if provider_model_has_private_price_tier_basis(endpoint.provider, endpoint.model_id):
         return reported_input_tokens
     return None
 
