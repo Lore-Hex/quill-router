@@ -10,7 +10,11 @@ from google.api_core import exceptions as api_errors
 from google.cloud.spanner_v1 import param_types
 
 from trusted_router.services.async_settle import Admission, parse_health_record, valid_health_record
-from trusted_router.storage_gcp_io import remaining_rpc_budget, spanner_rpc_deadline
+from trusted_router.storage_gcp_io import (
+    _rollback_on_api_error,
+    remaining_rpc_budget,
+    spanner_rpc_deadline,
+)
 
 # São Paulo to nam6 measured ~150 ms per round trip; allow reads and read+commit.
 READ_DEADLINE_SECONDS = 0.5
@@ -237,6 +241,21 @@ def read_health(database: Any) -> dict[str, Any] | None:
     return parse_health_record(rows[0][0])
 
 
+def _begin_before_lock(transaction: Any) -> None:
+    """Begin explicitly so a read that times out can still be rolled back.
+
+    With the SDK's inline begin, the transaction ID arrives with the first
+    read's response; a read that times out first leaves the client no ID, and
+    Transaction.rollback() then sends nothing. The server-side transaction and
+    its lock on the control row stay until Spanner reaps them, and every later
+    claim queues behind the orphan (2026-11-09 02:07Z alert). Beginning first
+    costs one round trip and takes no locks. The store's database wrapper
+    (configure_spanner_rpc_deadlines) holds the begin to the transaction's
+    timeout_secs with the read and commit; the rollback keeps its own floor.
+    """
+    transaction.begin()
+
+
 def _write_control(transaction: Any, identity: str, value: dict[str, Any]) -> None:
     import datetime as dt
     import json
@@ -265,13 +284,17 @@ def _claim_cadence(database: Any, identity: str, interval_seconds: float) -> boo
     now = time.time()
 
     def txn(transaction: Any) -> bool:
+        _begin_before_lock(transaction)
         rows = _query(transaction, control_statement(identity))
         if rows and now - float(json.loads(rows[0][0])["observed_at"]) < interval_seconds:
             return False
         _write_control(transaction, identity, {"observed_at": now})
         return True
 
-    return bool(database.run_in_transaction(txn, timeout_secs=READ_DEADLINE_SECONDS))
+    # The SDK skips rollback on API errors; with the explicit begin, this
+    # wrapper's rollback releases the claim row's lock after a timed-out read.
+    return bool(database.run_in_transaction(_rollback_on_api_error(txn),
+        timeout_secs=READ_DEADLINE_SECONDS, transaction_tag="tr_drain_control_claim"))
 
 
 def publish_health(database: Any) -> dict[str, Any]:
@@ -328,12 +351,14 @@ def publish_health(database: Any) -> dict[str, Any]:
         raise ValueError("invalid health publication")
 
     def txn(transaction: Any) -> None:
+        _begin_before_lock(transaction)
         previous = _query(transaction, control_statement(HEALTH_ID))
         prior = parse_health_record(previous[0][0]) if len(previous) == 1 else None
         if prior is not None and prior["observed_at"] > observed:
             return  # A slower old pass cannot overwrite a newer observation.
         _write_control(transaction, HEALTH_ID, value)
 
-    database.run_in_transaction(txn, timeout_secs=READ_DEADLINE_SECONDS)
+    database.run_in_transaction(_rollback_on_api_error(txn), timeout_secs=READ_DEADLINE_SECONDS,
+                                transaction_tag="tr_drain_health_publish")
     logging.getLogger(__name__).debug("async_drain.health %s", json.dumps(value))
     return value

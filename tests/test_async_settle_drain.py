@@ -175,6 +175,90 @@ def test_control_claim_transaction_deadline(fake_store, claim):
     assert db.last_timeout_secs == .5
 
 
+class _SdkDatabase:
+    """Runs callbacks on a real google-cloud-spanner Transaction over a mocked
+    API, the way Session.run_in_transaction does: a GoogleAPICallError from
+    the callback is re-raised WITHOUT rollback. The test fake rolls back on
+    every error and needs no transaction ID, which hid both halves of this:
+    the SDK skips rollback, and Transaction.rollback() sends nothing until
+    the first response carries an ID. Every statement times out; snapshots
+    delegate to the fake store so publish_health reaches its transaction."""
+
+    def __init__(self, db):
+        from unittest import mock
+
+        from google.api_core.exceptions import DeadlineExceeded
+        from google.cloud.spanner_v1 import DefaultTransactionOptions, ExecuteSqlRequest
+        from google.cloud.spanner_v1 import Transaction as TransactionPB
+        from google.cloud.spanner_v1.session import Session
+
+        self._db = db
+        self.tags = []
+        self.api = mock.MagicMock()
+        self.api.execute_streaming_sql.side_effect = DeadlineExceeded('read deadline')
+        self.api.begin_transaction.return_value = TransactionPB(id=b'txn-1')
+        database = mock.MagicMock()
+        database.name = 'projects/p/instances/i/databases/d'
+        database.spanner_api = self.api
+        database._route_to_leader_enabled = False
+        database.observability_options = None
+        database.log_commit_stats = False
+        database.metadata_and_request_id.return_value = ([], 'request')
+        database.with_error_augmentation.return_value = ([], mock.MagicMock())
+        database._instance._client._query_options = ExecuteSqlRequest.QueryOptions()
+        database._instance._client._client_context = None
+        database._directed_read_options = None
+        database.default_transaction_options = DefaultTransactionOptions()
+        self._session = Session(database)
+        self._session._session_id = 'session-1'
+        self._session._is_multiplexed = True
+
+        # Production wraps the store's database (storage_gcp.py); route through
+        # the same wrapper so the test sees each RPC's real timeout.
+        from trusted_router.storage_gcp_io import configure_spanner_rpc_deadlines
+        self.rpc = {name: getattr(self.api, name)
+                    for name in ('begin_transaction', 'execute_streaming_sql', 'rollback')}
+        self.spanner_api = self.api
+        configure_spanner_rpc_deadlines(self)
+
+    def snapshot(self, **kwargs):
+        return self._db.snapshot(**kwargs)
+
+    def run_in_transaction(self, func, *, timeout_secs=None, transaction_tag=None):
+        from google.api_core.exceptions import GoogleAPICallError
+        from google.cloud.spanner_v1.transaction import Transaction
+
+        self.tags.append(transaction_tag)
+        try:
+            return func(Transaction(self._session))
+        except GoogleAPICallError:
+            raise
+
+
+@pytest.mark.parametrize('operation, tag', [
+    (claim_housekeeping, 'tr_drain_control_claim'),
+    (lambda db: claim_health_publish(db, 2), 'tr_drain_control_claim'),
+    (publish_health, 'tr_drain_health_publish'),
+])
+def test_timed_out_control_read_rolls_back_its_transaction(fake_store, operation, tag):
+    # A timed-out read must release the transaction's lock on the control row,
+    # or every later claim queues behind the orphan until Spanner reaps it.
+    from google.api_core.exceptions import DeadlineExceeded
+    db = _SdkDatabase(fake_store[1])
+    with pytest.raises(DeadlineExceeded):
+        operation(db)
+    assert db.rpc['begin_transaction'].call_count == 1
+    assert db.rpc['execute_streaming_sql'].call_count >= 1
+    [call] = db.rpc['rollback'].call_args_list
+    assert call.kwargs['transaction_id'] == b'txn-1'
+    # begin shares the transaction's 0.5 s deadline (a slow Spanner cannot
+    # hold the drain thread on it); the rollback gets its own floor.
+    [begin] = db.rpc['begin_transaction'].call_args_list
+    assert 0 < begin.kwargs['timeout'] <= .5
+    assert call.kwargs['timeout'] > 1
+    assert db.tags == [tag]
+
+
 def test_housekeeping_only_on_legacy_watchdog(fake_store, monkeypatch):
     counts = []
     clock = [1000.]
