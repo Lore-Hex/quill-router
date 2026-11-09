@@ -53,7 +53,7 @@
 {# Copy buttons render in place so nothing shifts when scripts load; the
    stylesheet hides them on pages without script (html.js-off). #}
 {% macro copy_icon_button(target, label, text="") -%}
-<button class="compare-copy" type="button" data-copy-prompt-target="{{ target }}" data-copy-prompt-status="{{ target }}-status" aria-controls="{{ target }}" aria-label="{{ label }}" title="{{ label }}"><span class="md-copy-icon" aria-hidden="true"></span>{% if text %}<span class="compare-sr">{{ text }}</span>{% endif %}</button>
+<button class="compare-copy" type="button" data-copy-prompt-target="{{ target }}" data-copy-prompt-status="{{ target }}-status" data-copy-prompt-done="Copied." aria-controls="{{ target }}" aria-label="{{ label }}" title="{{ label }}"><span class="md-copy-icon" aria-hidden="true"></span>{% if text %}<span class="compare-sr">{{ text }}</span>{% endif %}</button>
 {%- endmacro %}
 
 {% macro copy_status(target) -%}

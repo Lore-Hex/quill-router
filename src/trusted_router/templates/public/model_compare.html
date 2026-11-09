@@ -3,6 +3,9 @@
 {% from "public/_decide_example.html" import decide_curl %}
 {% import "public/_compare_kit.html" as kit %}
 {% set signup_note = "No card required. Start with 1 million free tokens." if free_to_start else hero_pitch %}
+{# Without a verdict the hero's lead already is hero_pitch, so the note under
+   the hero button only carries the free-tokens line. #}
+{% set hero_note = "No card required. Start with 1 million free tokens." if free_to_start else ("" if not board.verdict else hero_pitch) %}
 {% block head_extra %}<link rel="stylesheet" href="/static/compare.css?v={{ static_version|default('local') }}">{% endblock %}
 
 {% block hero %}
@@ -14,7 +17,7 @@
     <h1>{{ heading }}</h1>
   </div>
   <p class="compare-lead">{% if board.verdict %}<strong>Practical read:</strong> {{ board.verdict }}{% else %}{{ hero_pitch }}{% endif %}</p>
-  {{ kit.signup(signup_note, hero=true) }}
+  {{ kit.signup(hero_note, hero=true) }}
 </section>
 {% endblock %}
 

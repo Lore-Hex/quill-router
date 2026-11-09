@@ -6393,6 +6393,8 @@ def _comparison_view(
         "has_ttft": left_measured is not None or right_measured is not None,
         "has_throughput": bool(left_evidence["has_throughput"] or right_evidence["has_throughput"]),
         "has_uptime": bool(left_evidence["has_uptime"] or right_evidence["has_uptime"]),
+        # Route evidence for both models, reused by _comparison_board.
+        "evidence": (left_evidence, right_evidence),
     }
 
 
@@ -6410,7 +6412,7 @@ _SHARE_WORDS = {
 }
 
 
-def _short_dollars(microdollars: int) -> str:
+def _compare_dollars(microdollars: int) -> str:
     value = Decimal(microdollars) / Decimal(MICRODOLLARS_PER_DOLLAR)
     if value >= Decimal("0.1"):
         return f"${value:.2f}"
@@ -6419,7 +6421,7 @@ def _short_dollars(microdollars: int) -> str:
     return f"${value.normalize():f}"
 
 
-def _short_tokens(count: int) -> str:
+def _compare_tokens(count: int) -> str:
     if count >= 1_000:
         thousands = round(count / 1_000)
         if thousands < 1_000:
@@ -6428,7 +6430,7 @@ def _short_tokens(count: int) -> str:
     return str(count)
 
 
-def _short_seconds(milliseconds: int) -> str:
+def _compare_seconds(milliseconds: int) -> str:
     if milliseconds < 1_000:
         return f"{milliseconds / 1_000:.2f} s"
     return f"{milliseconds / 1_000:.1f} s"
@@ -6457,6 +6459,22 @@ def _cheapest_priced_route(model: Model) -> ModelEndpoint | None:
     )
 
 
+def _price_phrase(ratio: float) -> str | None:
+    """How much less the cheaper model costs, given expensive / cheap.
+
+    Differences under 25% are left out of the verdict; shares round half up,
+    so 1.5x reads "costs less", not "about half as much".
+    """
+    if ratio < 1.25:
+        return None
+    share = int(ratio + 0.5)
+    if share > 10:
+        return "costs under a tenth as much"
+    if share >= 2 and ratio >= 1.8:
+        return f"costs {_SHARE_WORDS[share]}"
+    return "costs less"
+
+
 def _join_phrases(phrases: Sequence[str]) -> str:
     if len(phrases) == 1:
         return phrases[0]
@@ -6480,7 +6498,7 @@ def _comparison_board(
     """
     models = (left, right)
     views = (left_view, right_view)
-    evidence = tuple(_model_route_evidence(model, test_mode=test_mode) for model in models)
+    evidence = cast(tuple[Mapping[str, object], Mapping[str, object]], comparison["evidence"])
     routes = tuple(_cheapest_priced_route(model) for model in models)
     rows: list[dict[str, object]] = []
     wins: tuple[list[str], list[str]] = ([], [])
@@ -6502,34 +6520,33 @@ def _comparison_board(
             wins[winner].append(key)
         rows.append({"key": key, "label": label, "left": cells[0], "right": cells[1]})
 
-    totals = tuple(
-        route.prompt_price_microdollars_per_million_tokens
-        + route.completion_price_microdollars_per_million_tokens
-        if route is not None
-        else None
-        for route in routes
-    )
-    if all(route is not None for route in routes):
+    # Same total as the FAQ answer and the summary (_cheapest_total_microdollars,
+    # which falls back to bring-your-own-key and list prices); a winner only
+    # when both models have Credits routes, as in _comparison_summary.
+    totals = tuple(_cheapest_total_microdollars(model) for model in models)
+    both_routed = all(route is not None for route in routes)
+    if all(total > 0 for total in totals):
         add(
             "price",
             "Price, 1M in + out",
             tuple(
                 cell(
-                    _short_dollars(cast(int, total)),
-                    f"{_provider_display_name(cast(ModelEndpoint, route).provider)}, cheapest route",
+                    _compare_dollars(total),
+                    f"{_provider_display_name(route.provider)}, cheapest route" if route is not None else "Your provider key",
                 )
                 for total, route in zip(totals, routes, strict=True)
             ),
-            totals,
+            totals if both_routed else (None, None),
             "low",
         )
+    if both_routed:
         add(
             "rates",
             "Input / output, 1M",
             tuple(
                 cell(
-                    f"{_short_dollars(cast(ModelEndpoint, route).prompt_price_microdollars_per_million_tokens)}"
-                    f" / {_short_dollars(cast(ModelEndpoint, route).completion_price_microdollars_per_million_tokens)}"
+                    f"{_compare_dollars(cast(ModelEndpoint, route).prompt_price_microdollars_per_million_tokens)}"
+                    f" / {_compare_dollars(cast(ModelEndpoint, route).completion_price_microdollars_per_million_tokens)}"
                 )
                 for route in routes
             ),
@@ -6542,7 +6559,7 @@ def _comparison_board(
         "context",
         "Context window",
         tuple(
-            cell(_short_tokens(length), f"{length:,} tokens") if length else cell("Unlisted", muted=True)
+            cell(_compare_tokens(length), f"{length:,} tokens") if length else cell("Unlisted", muted=True)
             for length in contexts
         ),
         contexts,
@@ -6554,7 +6571,7 @@ def _comparison_board(
             "ttft",
             "First token, p50",
             tuple(
-                cell(_short_seconds(ms), f"via {_provider_display_name(str(item['fastest_ttft_provider']))}")
+                cell(_compare_seconds(ms), f"via {_provider_display_name(str(item['fastest_ttft_provider']))}")
                 if ms is not None
                 else cell("Measuring", muted=True)
                 for ms, item in zip(ttfts, evidence, strict=True)
@@ -6625,15 +6642,10 @@ def _comparison_board(
     for side in (0, 1):
         other = 1 - side
         if "price" in wins[side]:
-            ratio = cast(int, totals[other]) / max(cast(int, totals[side]), 1)
-            share = round(ratio)
-            if share > 10:
-                phrases[side].append("costs under a tenth as much")
-            elif share in _SHARE_WORDS:
-                phrases[side].append(f"costs {_SHARE_WORDS[share]}")
-            elif ratio >= 1.1:
-                phrases[side].append("costs less")
-            best_for[side].append("low cost")
+            phrase = _price_phrase(totals[other] / max(totals[side], 1))
+            if phrase:
+                phrases[side].append(phrase)
+                best_for[side].append("low cost")
         if "context" in wins[side]:
             ratio = cast(int, contexts[side]) / max(cast(int, contexts[other]), 1)
             # Round down, and leave small differences out of the verdict.
