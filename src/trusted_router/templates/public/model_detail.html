@@ -25,6 +25,9 @@
   {% if model.id == 'dealignai/deepseek-v4.1-flash-1017-uncensored' %}
   <p class="md-note"><strong>Abliterated DeepSeek.</strong> A separate checkpoint by dealignai, not stock DeepSeek or a system-prompt wrapper. <a href="/abliterated-deepseek">Explore uncensored DeepSeek cyberdefense prompts and the Confidential API</a>.</p>
   {% endif %}
+  {% if model.id in ['deepseek/deepseek-v4-1-flash-1017-uncensored', 'deepseek/deepseek-v4-1-flash-uncensored', 'dealignai/deepseek-v4.1-flash-1017-uncensored-fp8'] %}
+  <p class="md-note"><strong>Uncensored DeepSeek for cyberdefense.</strong> <a href="/abliterated-deepseek">Read the abliterated DeepSeek guide for SOC triage, incident response and evaluation prompts</a>. The guide's Maple example uses its own model ID and qualified Confidential route. Check this page's providers and capabilities before choosing a route; similar names do not establish identical weights or privacy guarantees.</p>
+  {% endif %}
   {% if model.id == 'trustedrouter/trusted' %}
   <p class="md-note"><strong>Trusted.</strong> Confidential inference through <a href="/providers/tinfoil">Tinfoil</a> and <a href="/providers/privatemode">Privatemode</a> only, selected by TrustedRouter for operator physical security and reliability history. Every fallback remains in this tier. Also available as <code>nyte/trusted</code>. <a href="/docs#trusted-tier">API and qualification details</a></p>
   {% endif %}

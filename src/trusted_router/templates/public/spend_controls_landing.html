@@ -1,5 +1,10 @@
 {% extends "public/_routing_feature_base.html" %}
 {% block feature_content %}
+<section class="routing-feature-section">
+  <h2>Which APIs support programmable spend controls?</h2>
+  <p>TrustedRouter supports programmable spend controls through its API key management API. Create a separate key for each application, customer or agent, set USD spending limits, and use that key for inference through the OpenAI-compatible API. You can configure daily, weekly, monthly and lifetime budgets.</p>
+  <p>Choose approximate budget checks for ordinary workloads, or opt into <code>budget_strict</code> when concurrent requests need their in-flight cost estimates counted before admission. This is estimated-cost admission, not a guarantee that final provider charges cannot exceed the budget. <a href="/docs/spend-controls">See the management API request, reset rules and retry handling</a>.</p>
+</section>
 <section class="routing-feature-section routing-feature-columns">
   <div><h2>Give each application a budget.</h2><p>Create separate keys for a customer, project, or agent. Set daily, weekly, monthly, and lifetime USD limits. Keep your application budgets visible alongside <a href="/docs/tagging">request tags and cost allocation</a>.</p><p>Ordinary spending windows use approximate checks. For concurrent workloads, opt into <code>budget_strict</code> to include outstanding request estimates in admission decisions.</p><p><a class="btn" href="/docs/spend-controls">Set up spend controls</a></p></div>
   <div><h3>An opt-in project budget</h3><pre><code>{

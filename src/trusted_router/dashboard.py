@@ -779,8 +779,8 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     ),
     "spend-controls": PublicPage(
         template="public/spend_controls_landing.html",
-        title="LLM API Spend Controls",
-        description="Set daily, weekly, and monthly API key budgets. Opt into strict estimated-cost admission to count in-flight requests, with clear speed tradeoffs.",
+        title="Programmable LLM API Spend Controls & Budgets",
+        description="Set programmable daily, weekly, monthly and lifetime API key budgets. Include in-flight cost estimates with opt-in strict admission; final charges can exceed estimates.",
     ),
     "prompt-caching": PublicPage(
         template="public/prompt_caching_landing.html",

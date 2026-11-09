@@ -35,6 +35,20 @@
  </div>
 </section>
 
+<section class="panel comparison-article" aria-labelledby="choose-alternative-heading">
+ <div class="panel-head"><h2 id="choose-alternative-heading">How to choose an OpenRouter alternative for your workload</h2></div>
+ <div class="panel-body">
+ <p>Start with the model IDs, request features and operating requirements you already use. Compare the cost of the same workload, including input, output, cached tokens and gateway fees. A lower headline fee does not necessarily mean a lower total bill.</p>
+ <ul>
+ <li><strong>One account for multiple models:</strong> check the <a href="/models">live model catalog</a> and <a href="/pricing">current route prices</a>, then verify streaming, tools and structured output on your exact route.</li>
+ <li><strong>Privacy requirements:</strong> distinguish gateway attestation from downstream provider retention. Inspect <a href="/security">the security evidence</a> and set a <a href="/docs/provider-routing">minimum privacy tier and fallback policy</a> that fit your data.</li>
+ <li><strong>Agent and application budgets:</strong> use <a href="/spend-controls">programmable API key spend controls</a>. Strict admission includes in-flight estimates, with latency tradeoffs; it is not an absolute final-charge ceiling.</li>
+ <li><strong>Migration risk:</strong> follow the <a href="/docs/migrate-from-openrouter">OpenRouter migration guide</a>, change the base URL and key, and test representative requests before moving production traffic. Check model availability, response fields, errors and fallback behavior rather than assuming every extension is interchangeable.</li>
+ </ul>
+ <p>Use the comparison below to shortlist a gateway, then <a href="/docs/evals">evaluate answer quality</a> and <a href="/benchmarks">inspect measured performance</a> for the routes your application will actually call.</p>
+ </div>
+</section>
+
 <!-- ==== OA-05: Comparison table ==== -->
 <section class="panel" aria-labelledby="alternatives-table-heading">
  <div class="panel-head"><h2 id="alternatives-table-heading">TrustedRouter vs 9 OpenRouter alternatives</h2></div>
