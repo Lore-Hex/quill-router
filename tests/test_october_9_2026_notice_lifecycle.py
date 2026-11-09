@@ -26,6 +26,7 @@ from scripts.pricing.providers import (
     system1models,
     system1models_eu,
     telnyx,
+    tencent,
     tinfoil,
     together,
     xiaomi,
@@ -82,6 +83,8 @@ _CASES = [
          datetime(2026, 11, 20, tzinfo=UTC), "google/gemma-4-26b-a4b-it"),
     Case("cloudflare-workers-ai", "meta-llama/llama-3.2-3b-instruct", "@cf/meta/llama-3.2-3b-instruct",
          datetime(2026, 11, 20, tzinfo=UTC), "google/gemma-4-26b-a4b-it"),
+    Case("tencent", "tencent/hy4-preview", "hy4-preview",
+         datetime(2026, 12, 6, 16, tzinfo=UTC), "tencent/hy4"),
     Case("deepinfra", "inclusionai/ling-3.1-flash", "inclusionAI/Ling-3.1-flash",
          datetime(2026, 11, 15, tzinfo=UTC), "deepseek/deepseek-v4.1-flash-1017"),
     Case("tinfoil", "moonshotai/kimi-k3", "kimi-k3",
@@ -230,6 +233,7 @@ _MANIFESTS = {
     "deepinfra": deepinfra.MANIFEST_PATH,
     "scaleway": scaleway.MANIFEST_PATH,
     "xiaomi": xiaomi.MANIFEST_PATH,
+    "tencent": tencent.MANIFEST_PATH,
 }
 
 

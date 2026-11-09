@@ -535,6 +535,8 @@
       "status": 1,
       "id": "tencent/hy4-preview",
       "upstream_id": "hy4-preview",
+      "retirement_at": "2026-12-06T16:00:00Z",
+      "replacement_model_id": "tencent/hy4",
       "context_length": 1048576,
       "created": 1787875200,
       "routable": true,

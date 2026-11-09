@@ -200,12 +200,13 @@ def test_hy4_future_serving_page_discloses_discount_expiry(
     from trusted_router import catalog
 
     # Pin a synthetic route to test both pricing periods independently of
-    # live account state. Monkeypatch restores the registry.
-    preview = catalog.MODELS["tencent/hy4-preview"]
+    # live account state. Monkeypatch restores the registry. HY3 is the
+    # template because HY4 Preview retires on 2026-12-06.
+    base = catalog.MODELS["tencent/hy3"]
     template = next(e for e in catalog_vehicles.registry_endpoints().values()
-                    if e.model_id == preview.id and e.provider == "tencent" and e.usage_type == "Credits")
+                    if e.model_id == base.id and e.provider == "tencent" and e.usage_type == "Credits")
     endpoint = replace(template, id=f"{MODEL}@tencent/prepaid", model_id=MODEL, upstream_id="hy4")
-    monkeypatch.setitem(catalog.MODELS, MODEL, replace(preview, id=MODEL, name="Hy4"))
+    monkeypatch.setitem(catalog.MODELS, MODEL, replace(base, id=MODEL, name="Hy4"))
     monkeypatch.setitem(catalog.MODEL_ENDPOINTS, endpoint.id, endpoint)
     monkeypatch.setattr("trusted_router.provider_lifecycle._utc_now", lambda: at)
     response = client.get(f"/models/{MODEL}/pricing")
