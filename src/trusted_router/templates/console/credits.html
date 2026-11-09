@@ -59,6 +59,7 @@
       {% if wallet_only_billing %}
       <input type="hidden" name="payment_method" value="stablecoin">
       <span class="credits-chip">{{ icons.svg('coin') }}<span>USDC</span></span>
+      <p class="credits-quiet" data-wallet-email-attach>Wallet-only accounts fund with USDC. <a href="{{ wallet_email_attach_url }}">Add and verify an email</a> to use cards and bank payments.</p>
       {% else %}
       {% if has_payment_method %}
       <div class="credits-saved" data-checkout-saved>

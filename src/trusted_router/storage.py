@@ -56,6 +56,10 @@ from trusted_router.storage_group_buy import InMemoryBedrockGroupBuy
 from trusted_router.storage_keys import InMemoryApiKeys
 from trusted_router.storage_legacy_trust import trust_program_armed
 from trusted_router.storage_models import (
+    EMAIL_ATTACH_ALREADY_VERIFIED,
+    EMAIL_ATTACH_ATTACHED,
+    EMAIL_ATTACH_MISSING_USER,
+    EMAIL_ATTACH_TAKEN,
     AcquisitionAttribution,
     ActivationReminderTask,
     AdverseTrustEvent,
@@ -1280,6 +1284,28 @@ class InMemoryStore:
                 user.email_verified = False
             self.user_ids_by_email[normalized_email] = user_id
             return user
+
+    def attach_verified_email(self, user_id: str, email: str) -> str:
+        with self._lock:
+            normalized_email = _normalize_email(email)
+            owner = self.user_ids_by_email.get(normalized_email)
+            if owner is not None and owner != user_id:
+                return EMAIL_ATTACH_TAKEN
+            user = self.users.get(user_id)
+            if user is None:
+                return EMAIL_ATTACH_MISSING_USER
+            previous_email = _normalize_email(user.email) if user.email else None
+            if user.email_verified and previous_email:
+                if previous_email != normalized_email:
+                    return EMAIL_ATTACH_ALREADY_VERIFIED
+                return EMAIL_ATTACH_ATTACHED
+            if previous_email and previous_email != normalized_email:
+                if self.user_ids_by_email.get(previous_email) == user_id:
+                    self.user_ids_by_email.pop(previous_email, None)
+            user.email = normalized_email
+            user.email_verified = True
+            self.user_ids_by_email[normalized_email] = user_id
+            return EMAIL_ATTACH_ATTACHED
 
     def mark_user_email_verified(self, user_id: str) -> User | None:
         with self._lock:

@@ -10,7 +10,11 @@ from fastapi import FastAPI, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from trusted_router.auth import SettingsDep
-from trusted_router.billing_policy import WALLET_ONLY_BYOK_MESSAGE, is_wallet_only_user
+from trusted_router.billing_policy import (
+    WALLET_EMAIL_ATTACH_PATH,
+    WALLET_ONLY_BYOK_MESSAGE,
+    is_wallet_only_user,
+)
 from trusted_router.byok_crypto import encrypt_byok_secret
 from trusted_router.catalog import PROVIDERS
 from trusted_router.provider_compat import canonical_byok_provider
@@ -41,6 +45,11 @@ def register(app: FastAPI) -> None:
             providers=providers,
             wallet_only_message=(
                 WALLET_ONLY_BYOK_MESSAGE if is_wallet_only_user(ctx.user) else None
+            ),
+            # Wallet-only accounts need a verified email for BYOK and
+            # non-stablecoin billing; point them at the attach flow.
+            wallet_email_attach_url=(
+                WALLET_EMAIL_ATTACH_PATH if is_wallet_only_user(ctx.user) else None
             ),
         ))
 

@@ -152,6 +152,13 @@ class ReceiptKey:
     verified: bool = False
 
 
+# attach_verified_email outcomes.
+EMAIL_ATTACH_ATTACHED = "attached"
+EMAIL_ATTACH_TAKEN = "email_taken"
+EMAIL_ATTACH_ALREADY_VERIFIED = "already_verified"
+EMAIL_ATTACH_MISSING_USER = "missing_user"
+
+
 @dataclass
 class User:
     id: str

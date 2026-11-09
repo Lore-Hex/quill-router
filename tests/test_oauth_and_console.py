@@ -9,6 +9,7 @@ share fixtures.
 from __future__ import annotations
 
 import datetime as dt
+import html
 import logging
 import re
 from collections.abc import Iterator
@@ -803,6 +804,14 @@ def test_wallet_email_page_requires_pending_metamask_session(
     assert response.json()["error"]["type"] == "unauthorized"
 
 
+def _wallet_email_csrf(client: TestClient) -> str:
+    form = client.get("/auth/wallet/email")
+    assert form.status_code == 200, form.text
+    match = re.search(r'name="csrf_token" value="([^"]+)"', form.text)
+    assert match is not None
+    return match.group(1)
+
+
 def test_wallet_email_submit_rejects_duplicate_account_email(client: TestClient) -> None:
     STORE.ensure_user("taken@example.com")
     user = STORE.create_wallet_user("0x" + "7" * 40)
@@ -815,7 +824,10 @@ def test_wallet_email_submit_rejects_duplicate_account_email(client: TestClient)
     )
     client.cookies.set("tr_session", raw_token)
 
-    response = client.post("/auth/wallet/email", data={"email": "Taken@Example.com"})
+    response = client.post(
+        "/auth/wallet/email",
+        data={"email": "Taken@Example.com", "csrf_token": _wallet_email_csrf(client)},
+    )
 
     assert response.status_code == 409
     assert "already has an account" in response.text
@@ -835,21 +847,29 @@ def test_wallet_email_submit_returns_dev_verify_link_and_does_not_preverify(
     )
     client.cookies.set("tr_session", raw_token)
 
-    response = client.post("/auth/wallet/email", data={"email": "Wallet.User@Example.com"})
+    response = client.post(
+        "/auth/wallet/email",
+        data={"email": "Wallet.User@Example.com", "csrf_token": _wallet_email_csrf(client)},
+    )
 
     assert response.status_code == 200
     assert "Email delivery is not configured" in response.text
+    # Nothing is written to the account until the emailed link is clicked.
     updated = STORE.get_user(user.id)
     assert updated is not None
-    assert updated.email == "wallet.user@example.com"
+    assert updated.email is None
     assert updated.email_verified is False
-    token_match = re.search(r"/auth/verify-email\?token=([^\"<]+)", response.text)
-    assert token_match is not None
+    link_match = re.search(r'href="([^"]*/auth/wallet/email/verify\?[^"]+)"', response.text)
+    assert link_match is not None
+    verify_url = html.unescape(link_match.group(1))
 
-    verify = client.get(f"/auth/verify-email?token={token_match.group(1)}", follow_redirects=False)
+    verify = client.get(verify_url, follow_redirects=False)
 
     assert verify.status_code == 302
-    assert STORE.get_user(user.id).email_verified is True
+    assert verify.headers["location"] == "/console/welcome?first=1"
+    refreshed = STORE.get_user(user.id)
+    assert refreshed.email == "wallet.user@example.com"
+    assert refreshed.email_verified is True
     assert STORE.get_auth_session_by_raw(raw_token).state == "active"
     assert session.hash
 

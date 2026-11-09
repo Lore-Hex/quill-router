@@ -114,6 +114,10 @@ from trusted_router.storage_key_patch import TYPED_LIMIT_PATCH_FIELDS, apply_key
 from trusted_router.storage_key_usage import api_key_from_json, api_key_usage_snapshot
 from trusted_router.storage_legacy_trust import trust_program_armed
 from trusted_router.storage_models import (
+    EMAIL_ATTACH_ALREADY_VERIFIED,
+    EMAIL_ATTACH_ATTACHED,
+    EMAIL_ATTACH_MISSING_USER,
+    EMAIL_ATTACH_TAKEN,
     FUTURE_SAMPLE_SKEW_SECONDS,
     AcquisitionAttribution,
     ActivationReminderTask,
@@ -2274,6 +2278,44 @@ class PostgresStore(OperationalAnalyticsReads):
 
     def mark_user_email_verified(self, user_id: str) -> User | None:
         self._not_implemented("mark_user_email_verified")
+
+    def attach_verified_email(self, user_id: str, email: str) -> str:
+        normalized_email = normalize_email(email)
+
+        def txn(conn: Any) -> str:
+            # Lock the user row first: concurrent attaches for one user
+            # serialize here, so neither can replace an address the other
+            # has just verified.
+            user = self._read_entity_tx(conn, "user", user_id, User, for_update=True)
+            if user is None:
+                return EMAIL_ATTACH_MISSING_USER
+            owner = self._read_entity_tx(
+                conn, "email_user", normalized_email, dict, for_update=True
+            )
+            if owner is not None and str(owner["user_id"]) != user_id:
+                return EMAIL_ATTACH_TAKEN
+            previous_email = normalize_email(user.email) if user.email else None
+            if user.email_verified and previous_email:
+                if previous_email != normalized_email:
+                    return EMAIL_ATTACH_ALREADY_VERIFIED
+                return EMAIL_ATTACH_ATTACHED
+            if owner is None and not self._insert_entity_once_tx(
+                conn, "email_user", normalized_email, {"user_id": user_id}
+            ):
+                # Another account inserted the address since the read above.
+                return EMAIL_ATTACH_TAKEN
+            if previous_email and previous_email != normalized_email:
+                previous_owner = self._read_entity_tx(
+                    conn, "email_user", previous_email, dict, for_update=True
+                )
+                if previous_owner is not None and str(previous_owner["user_id"]) == user_id:
+                    self._delete_entity_tx(conn, "email_user", previous_email)
+            user.email = normalized_email
+            user.email_verified = True
+            self._write_entity_tx(conn, "user", user.id, user)
+            return EMAIL_ATTACH_ATTACHED
+
+        return self._run_transaction(txn)
 
     def _demote_owner_trust_tx(
         self, conn: Any, owner_user_id: str, *, now: dt.datetime

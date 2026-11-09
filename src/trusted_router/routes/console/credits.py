@@ -18,6 +18,7 @@ from starlette.concurrency import run_in_threadpool
 
 from trusted_router.auth import SettingsDep
 from trusted_router.billing_policy import (
+    WALLET_EMAIL_ATTACH_PATH,
     is_stablecoin_checkout_method,
     is_wallet_only_user,
 )
@@ -256,6 +257,7 @@ def register(app: FastAPI) -> None:
                 ),
                 adyen_enabled=settings.adyen_checkout_ready,
                 wallet_only_billing=wallet_only_billing,
+                wallet_email_attach_url=WALLET_EMAIL_ATTACH_PATH,
                 saved_payment_method=saved_payment_method,
                 api_base_url=ctx.api_base_url,
                 identity_verification_checkout=purpose == "identity_verification",
