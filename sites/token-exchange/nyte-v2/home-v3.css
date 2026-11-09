@@ -165,3 +165,10 @@ main .tags .tag.cap{background:var(--cream)}
   .v3-hero h1{margin-top:24px}
   .v3-hero .lede,.v3-hero .btns{margin-top:32px}
 }
+/* Desktop and landscape tablets: the hero and the Band together fill the first screen,
+   so the walkthrough starts just below it instead of peeking in as a strip.
+   Portrait tablets and phones keep their own hero sizing above. */
+@media (min-width:901px) and (orientation:landscape){
+  .v3-hero{display:flex;align-items:center;box-sizing:border-box;min-height:calc(100vh - var(--header) - 120px);min-height:calc(100svh - var(--header) - 120px)}
+  .v3-hero .wrap{width:100%}
+}
