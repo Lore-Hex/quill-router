@@ -12,6 +12,7 @@ from tests import catalog_vehicles
 from trusted_router.provider_lifecycle import (
     TENCENT_OFF_PEAK_PRICES,
     ProviderPrice,
+    provider_model_retired,
     provider_price_microdollars,
     provider_pricing_schedule,
 )
@@ -83,7 +84,12 @@ def test_tencent_manifest_credits_route_only_priced_canary_successes() -> None:
     from trusted_router.catalog import PROVIDERS
 
     rows = json.loads(tencent.MANIFEST_PATH.read_text())["models"]
-    eligible = {row["id"]: row for row in rows if row.get("routable") is True}
+    # Scheduled retirements drop a route from the registry once they take effect.
+    eligible = {
+        row["id"]: row for row in rows
+        if row.get("routable") is True
+        and not provider_model_retired("tencent", row["id"], row.get("upstream_id"))
+    }
     # Account canaries gate our Credits key, not a customer's BYOK entitlement.
     endpoints = [
         e for e in catalog_vehicles.registry_endpoints().values()

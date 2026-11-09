@@ -93,6 +93,9 @@ TINFOIL_KIMI_K3_RETIREMENT_AT = datetime(2026, 11, 12, 0, 0, tzinfo=UTC)
 CLOUDFLARE_WORKERS_AI_NOV_20_RETIREMENT_AT = datetime(2026, 11, 20, 0, 0, tzinfo=UTC)
 # DeepInfra deprecates inclusionAI/Ling-3.1-flash on 15 Nov 2026 (date only) and redirects it.
 DEEPINFRA_LING_31_FLASH_RETIREMENT_AT = datetime(2026, 11, 15, 0, 0, tzinfo=UTC)
+# Tencent TokenHub decommissions hy4-preview from 00:00:00 Beijing Time (UTC+8) on
+# 7 Dec 2026, i.e. 2026-12-06 16:00 UTC; the notice recommends migrating to hy4.
+TENCENT_HY4_PREVIEW_RETIREMENT_AT = datetime(2026, 12, 6, 16, 0, tzinfo=UTC)
 # 2026-11-06 19:00 UTC: Novita, Tinfoil and Chutes no longer list these routes
 # in their public model APIs; the hourly refresh already marks them dark.
 NOVEMBER_6_DELISTED_RETIREMENT_AT = datetime(2026, 11, 6, 19, 0, tzinfo=UTC)
@@ -1336,6 +1339,17 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"inclusionAI/Ling-3.1-flash"}),
         effective_at=DEEPINFRA_LING_31_FLASH_RETIREMENT_AT,
         replacement_model_ids=("deepseek/deepseek-v4.1-flash-1017",),
+    ),
+    # Tencent Cloud's November 9 TokenHub notice decommissions hy4-preview
+    # "Starting at 00:00:00 (Beijing Time) on December 7, 2026" (UTC+8, so
+    # 2026-12-06 16:00 UTC) and recommends hy4. Retire only Tencent's route;
+    # other providers' hy4-preview routes stay.
+    _Retirement(
+        provider="tencent",
+        model_ids=frozenset({"tencent/hy4-preview"}),
+        upstream_ids=frozenset({"hy4-preview"}),
+        effective_at=TENCENT_HY4_PREVIEW_RETIREMENT_AT,
+        replacement_model_ids=("tencent/hy4",),
     ),
     # DigitalOcean's October 29 notices deprecate these Inference models on
     # 2026-11-09 (date only; 00:00 UTC conservatively); requests then 404.
