@@ -2,6 +2,7 @@
    on pages listed in nyte-brand-v3.json. Colours, type and corners change;
    layout and copy do not. Tokens copied from the kit's nyte-tokens.css. */
 :root{
+  color-scheme:only light;
   --ink:#151311; --cream:#FAF8F4; --gray:#F1EEE7; --stone:#DEDAD0;
   --ink-2:#57514A; --ink-2-dark:#B9B2A8; --dark-rule:#3A3631; --dark-sunken:#221F1C;
   --purple:#9B93F5; --yellow:#FFC800; --lime:#C9E265; --sky:#BFE3EC;
