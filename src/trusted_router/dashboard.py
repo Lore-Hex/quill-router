@@ -2368,11 +2368,11 @@ def _model_hero(model: Model, view: dict[str, object]) -> tuple[str, str]:
     return HERO_FREE_TO_START, f"Try {name} on us. {_HERO_STARTER}{reach}"
 
 
-_NUMBER_WORDS = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten")
+_COUNT_WORDS = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten")
 
 
 def _count_word(value: int) -> str:
-    return _NUMBER_WORDS[value] if 0 <= value < len(_NUMBER_WORDS) else str(value)
+    return _COUNT_WORDS[value] if 0 <= value < len(_COUNT_WORDS) else str(value)
 
 
 def _short_dollars(microdollars: int, *, digits: int) -> str:
