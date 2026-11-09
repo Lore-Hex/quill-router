@@ -5129,7 +5129,7 @@
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
     },
     "operational_analytics:public_snapshot:1": {
-      "fingerprint": "e0aaf61977c812d957cc64c2417cde1b33812fd0662dc894655be1fbf934a0e1",
+      "fingerprint": "25b4c557c6731316346dd48970396ca8bd72a7dd0d264ed2c52a3a69ee3fd658",
       "reason": "ClickHouse analytics SQL, sent to the HTTP analytics client"
     },
     "operational_analytics_direct:flush:1": {
