@@ -55,8 +55,10 @@ validation failure preserves the prior file. Runtime performs in-memory lookups.
 
 The signed fast-path snapshot contains the same compiled workload tables and
 expiry times, with Python/Go differential vectors. Old readers reject the new
-field and fall back to Python; rollout must verify the new reader before relying
-on fast-path coverage. Roll back through the ordinary release workflow, keeping
+field but may retain their last signed snapshot until its six-hour expiry,
+then fall back to Python. Rollout must verify both nodes run the new reader and
+install the new signed snapshot before relying on fast-path coverage.
+Roll back through the ordinary release workflow, keeping
 health, attestation and privacy gates intact.
 
 ## Provider-wide availability evidence
