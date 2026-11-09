@@ -250,7 +250,7 @@ def test_user_model_owner_shape_reuses_known_owner(
     assert shape["operator"]["display"] == "Ada Owner"
 
 
-def test_console_earnings_bulk_hydrates_model_names(
+def test_console_earnings_does_not_query_retired_model_breakdown(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -284,33 +284,24 @@ def test_console_earnings_bulk_hydrates_model_names(
             payer_workspace_id=workspace.id,
         )
 
-    original_batch = getattr(InMemoryStore, "get_user_models_by_ids", None)
-    batch_calls: list[list[str]] = []
+    def reject_retired_model_read(*_args, **_kwargs):
+        raise AssertionError("earnings rendered with a retired model query")
 
-    def count_batch(
-        store: InMemoryStore,
-        model_ids: list[str],
-    ) -> dict[str, UserProvidedModel]:
-        batch_calls.append(list(model_ids))
-        assert original_batch is not None
-        return original_batch(store, model_ids)
-
-    def reject_point_read(_store: InMemoryStore, model_id: str):
-        raise AssertionError(f"earnings rendered with point read for {model_id}")
-
-    monkeypatch.setattr(
-        InMemoryStore,
+    for method in (
+        "custom_model_earnings_by_model",
         "get_user_models_by_ids",
-        count_batch,
-        raising=False,
-    )
-    monkeypatch.setattr(InMemoryStore, "get_user_model", reject_point_read)
+        "get_user_model",
+    ):
+        monkeypatch.setattr(InMemoryStore, method, reject_retired_model_read)
 
     response = client.get("/console/earnings")
 
     assert response.status_code == 200
-    assert batch_calls == [[model.id for model in models]]
-    assert all(model.name in response.text for model in models)
+    assert "Earnings by model" not in response.text
+    assert all(model.name not in response.text for model in models)
+    assert "Recent movements" in response.text
+    assert all(model.id in response.text for model in models)
+    assert STORE.earnings_summary(user.id)["available"] == 3_000_000
 
 
 

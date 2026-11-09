@@ -33,7 +33,7 @@ for (const count of [1,2]) test(`navigation retains workspace and account contro
   const configuration = page.locator('.console-configuration');
   await expect(configuration).not.toHaveAttribute('open', '');
   await expect(page.getByRole('link', {name:'Routing', exact:true})).toBeHidden();
-  await expect(page.getByRole('link', {name:'Earnings', exact:true})).toBeVisible();
+  await expect(page.getByRole('link', {name:'Earnings', exact:true})).toHaveCount(0);
   await expect(page.getByRole('link', {name:'Broadcast', exact:true})).toBeVisible();
   await configuration.locator('summary').click();
   await expect(page.getByRole('link', {name:'Routing', exact:true})).toBeVisible();
@@ -50,6 +50,7 @@ for (const count of [1,2]) test(`navigation retains workspace and account contro
   await expect(page.locator('.console-main')).toBeVisible();
   await page.setViewportSize({width:1280,height:900});
   await expect(page.locator('.console-sidebar')).toBeVisible();
+  await expect(page.getByRole('link', {name:'Earnings', exact:true})).toHaveCount(0);
   await expect(page.locator('.console-topbar .console-utilities')).toBeVisible();
   await expect(page.getByRole('link', {name:'Routing', exact:true})).toBeVisible();
   if(count===1) await expect(page.locator('.console-workspace-name')).toHaveText('Workspace 0');

@@ -6,7 +6,7 @@
 <section class="panel">
   <div class="panel-head"><h2>Your earnings</h2><span class="pill">70% creator share</span></div>
   <div class="panel-body">
-    <p class="earnings-copy">You receive 70% of registered app markup. Previously earned model revenue remains available. Transfer earnings into a TrustedRouter workspace, or cash out at least $100 in USD.</p>
+    <p class="earnings-copy">You receive 70% of registered app markup. Transfer earnings into a TrustedRouter workspace, or cash out at least $100 in USD.</p>
     <div class="metrics">
       <div class="metric"><div class="label">Earned</div><div class="value earnings-money">{{ summary.total_earned_display }}</div><div class="sub">lifetime</div></div>
       <div class="metric"><div class="label">Transferred</div><div class="value earnings-money">{{ summary.total_transferred_display }}</div><div class="sub">lifetime</div></div>
@@ -81,22 +81,6 @@
       <button class="btn primary earnings-transfer-submit" type="submit">Transfer credits</button>
     </form>
     {% else %}<p class="empty">No local workspace is available for transfers.</p>{% endif %}
-  </div>
-</section>
-
-<section class="panel">
-  <div class="panel-head"><h2>Earnings by model</h2><span class="pill">last 30 days</span></div>
-  <div class="panel-body">
-    {% if by_model_30d %}
-    <div class="earnings-table-wrap"><table class="data-table" style="width:100%;border-collapse:collapse">
-      <thead><tr><th>Model</th><th>Earned</th></tr></thead>
-      <tbody>
-        {% for row in by_model_30d %}
-        <tr><td>{% if row.model_name %}<strong>{{ row.model_name }}</strong><br>{% endif %}<code>{{ row.model_id }}</code></td><td class="earnings-money">{{ row.earned_display }}</td></tr>
-        {% endfor %}
-      </tbody>
-    </table></div>
-    {% else %}<p class="empty">No model earnings in the last 30 days.</p>{% endif %}
   </div>
 </section>
 
