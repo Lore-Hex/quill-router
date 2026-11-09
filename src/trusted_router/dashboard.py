@@ -6511,7 +6511,10 @@ def _comparison_board(
             "price",
             "Price, 1M in + out",
             tuple(
-                cell(_short_dollars(cast(int, total)), _provider_display_name(cast(ModelEndpoint, route).provider))
+                cell(
+                    _short_dollars(cast(int, total)),
+                    f"{_provider_display_name(cast(ModelEndpoint, route).provider)}, cheapest route",
+                )
                 for total, route in zip(totals, routes, strict=True)
             ),
             totals,
@@ -6635,8 +6638,6 @@ def _comparison_board(
         for model, found in zip(models, phrases, strict=True)
         if found
     ]
-    priced = totals[0] is not None and totals[1] is not None
-    cheaper = (0 if cast(int, totals[0]) <= cast(int, totals[1]) else 1) if priced else None
     return {
         "rows": rows,
         "best_for": [
@@ -6644,16 +6645,6 @@ def _comparison_board(
             for found in best_for
         ],
         "verdict": (" ".join(sentences) + " One API key runs both.") if sentences else "",
-        "scoreboard": [
-            {
-                "name": _hero_model_name(model),
-                "price": _short_dollars(cast(int, total)),
-                "cheaper": side == cheaper and totals[0] != totals[1],
-            }
-            for side, (model, total) in enumerate(zip(models, totals, strict=True))
-        ]
-        if priced
-        else [],
     }
 
 

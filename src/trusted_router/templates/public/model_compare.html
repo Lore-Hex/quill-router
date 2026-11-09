@@ -7,28 +7,19 @@
 
 {% block hero %}
 <section class="compare-hero">
-  <div class="compare-logos" aria-hidden="true">
-    {% for model in (left, right) %}{% if model.publisher_slug %}<img src="{{ provider_logo_url(model.publisher_slug) }}" alt="{{ model.provider }} logo" width="52" height="52">{% endif %}{% endfor %}
-  </div>
-  <h1>{{ heading }}</h1>
-  <p class="compare-lead">{{ board.verdict or hero_pitch }}</p>
-  {% if board.scoreboard %}
-  <div class="compare-score">
-    {% for side in board.scoreboard %}
-    <div class="compare-score-item{% if side.cheaper %} is-cheaper{% endif %}">
-      <span class="compare-score-name">{{ side.name }}</span>
-      <strong class="compare-score-price">{{ side.price }}</strong>
+  <div class="compare-title">
+    <div class="compare-logos" aria-hidden="true">
+      {% for model in (left, right) %}{% if model.publisher_slug %}<img src="{{ provider_logo_url(model.publisher_slug) }}" alt="{{ model.provider }} logo" width="48" height="48">{% endif %}{% endfor %}
     </div>
-    {% endfor %}
-    <p class="compare-score-note">per 1M input + 1M output tokens, cheapest route</p>
+    <h1>{{ heading }}</h1>
   </div>
-  {% endif %}
+  <p class="compare-lead">{{ board.verdict or hero_pitch }}</p>
   {{ kit.signup(signup_note, hero=true) }}
 </section>
 {% endblock %}
 
 {% block body %}
-<section class="compare-section" aria-labelledby="compare-table-heading">
+<section class="compare-section compare-table-section" aria-labelledby="compare-table-heading">
   <h2 id="compare-table-heading" class="compare-table-heading">Side by side:</h2>
 
   <div class="compare-table-wrap">
@@ -39,14 +30,14 @@
         {% for model in (left, right) %}
         <th scope="col" class="compare-table-item">
           <a class="compare-item" href="/models/{{ model.id }}">{% if model.publisher_slug %}<img src="{{ provider_logo_url(model.publisher_slug) }}" alt="{{ model.provider }} logo" aria-hidden="true" width="30" height="30">{% endif %}<span>{{ (left_short, right_short)[loop.index0] }}</span></a>
-          {% if board.best_for[loop.index0] %}<span class="compare-best">{{ board.best_for[loop.index0] }}</span>{% endif %}
-          <span class="compare-id"><code id="compare-id-{{ loop.index }}">{% for part in model.id.split("/") %}{{ part }}{% if not loop.last %}/<wbr>{% endif %}{% endfor %}</code>{{ kit.copy_icon_button("compare-id-" ~ loop.index, "Copy model id " ~ model.id) }}{{ kit.copy_status("compare-id-" ~ loop.index) }}</span>
+          <span class="compare-meta">{% if board.best_for[loop.index0] %}<span class="compare-best">{{ board.best_for[loop.index0] }}</span>{% endif %}
+          <span class="compare-id"><code id="compare-id-{{ loop.index }}">{% for part in model.id.split("/") %}{{ part }}{% if not loop.last %}/<wbr>{% endif %}{% endfor %}</code>{{ kit.copy_icon_button("compare-id-" ~ loop.index, "Copy model id " ~ model.id) }}{{ kit.copy_status("compare-id-" ~ loop.index) }}</span></span>
         </th>
         {% endfor %}
       </tr></thead>
       <tbody>
       {% for row in board.rows %}
-      <tr>
+      <tr class="compare-row-{{ row.key }}">
         <th scope="row">{{ row.label }}</th>
         {% for cell in (row.left, row.right) %}
         <td{% if cell.win %} class="is-win"{% endif %}>

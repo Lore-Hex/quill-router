@@ -5,10 +5,12 @@
 
 {% block hero %}
 <section class="compare-hero">
-  <div class="compare-logos" aria-hidden="true">
-    <img src="{{ provider_logo_url('trustedrouter') }}" alt="TrustedRouter logo" width="52" height="52"><img src="{{ provider_logo_url('openrouter') }}" alt="OpenRouter logo" width="52" height="52">
+  <div class="compare-title">
+    <div class="compare-logos" aria-hidden="true">
+      <img src="{{ provider_logo_url('trustedrouter') }}" alt="TrustedRouter logo" width="48" height="48"><img src="{{ provider_logo_url('openrouter') }}" alt="OpenRouter logo" width="48" height="48">
+    </div>
+    <h1>{{ heading }}</h1>
   </div>
-  <h1>{{ heading }}</h1>
   <p class="compare-lead">The same OpenAI-compatible API. Change <span class="mono">base_url</span> and you get a gateway you can verify, with no durable prompt or output logs on realtime inference.</p>
   {{ kit.signup(signup_note, hero=true) }}
 </section>
@@ -49,7 +51,7 @@ resp = client.chat.completions.create(
   {{ kit.code_box(agent_panel, python_panel, curl_panel, diff) }}
 </section>
 
-<section class="compare-section" aria-labelledby="compare-table-heading">
+<section class="compare-section compare-table-section" aria-labelledby="compare-table-heading">
   <h2 id="compare-table-heading" class="compare-table-heading">Side by side:</h2>
   {% set rows = [
     ("API shape", "OpenAI compatible", "OpenAI compatible", false),
