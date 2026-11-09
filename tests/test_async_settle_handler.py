@@ -26,6 +26,7 @@ from trusted_router import billing_snapshot as billing
 from trusted_router.async_settle_ticket import verify_lookup_ticket, verify_ticket
 from trusted_router.routes.settlements import status
 from trusted_router.services import async_settle_handler as handler
+from trusted_router.services import async_settle_memory as memory
 from trusted_router.services.async_settle import snapshot_projection
 from trusted_router.services.settle_outbox_worker import drain_pass
 from trusted_router.storage import InMemoryStore, configure_store
@@ -916,6 +917,55 @@ def test_commit_handoff_boundary(env, monkeypatch, elapsed):
             call(env, body)
         assert exc.value.status_code == 503
     assert list(env[1].settle_outbox) == [(auth.id, 'settle')]
+
+
+@pytest.mark.parametrize('mode', ['outbox', 'memory'])
+@pytest.mark.parametrize('elapsed', [1.999, 2.0])
+def test_handle_post_check_boundary(env, monkeypatch, mode, elapsed):
+    # handle() answers 503 once the request's 2 s budget, counted from the
+    # route's `started`, is spent, even after _handle has its answer and the
+    # intent is accepted. The handler enters 0.3 s after `started`. The clock
+    # moves again in response(), which builds the accept answer in both
+    # handoff modes, after every other budget check. So no other budget check
+    # reads the moved clock (memory mode's timing.save_total also reads it,
+    # for timing only).
+    body, auth, _ = prepare(env)
+    if mode == 'memory':
+        env[3].async_settle_handoff_mode = 'memory'
+        writer = memory.MemoryHandoff(clock=lambda: 10.0)
+        writer.thread = SimpleNamespace(ident=None, is_alive=lambda: True)
+        env[2].memory = writer
+    clock = [10.3]
+    monkeypatch.setattr(time, 'monotonic', lambda: clock[0])
+    answer = handler.response
+    calls = []
+
+    def late(row, **kwargs):
+        calls.append((row.authorization_id, kwargs))
+        clock[0] = 10 + elapsed
+        return answer(row, **kwargs)
+
+    monkeypatch.setattr(handler, 'response', late)
+    raw = json.dumps(body).encode()
+
+    def run():
+        return handler.handle(raw, kind='settle', runtime=env[2], settings=env[3], started=10.0)
+
+    if elapsed < 2:
+        assert run().status_code == 202
+    else:
+        with pytest.raises(HTTPException) as exc:
+            run()
+        assert exc.value.status_code == 503
+        assert exc.value.headers == {'Retry-After': '1'}
+        # Raised by the post-check itself, not translated from a store error.
+        assert exc.value.__cause__ is None and exc.value.__context__ is None
+    assert calls == [(auth.id, {})]
+    if mode == 'memory':
+        assert list(writer.index) == [(auth.id, 'settle')]
+        assert not env[1].settle_outbox
+    else:
+        assert list(env[1].settle_outbox) == [(auth.id, 'settle')]
 
 
 def test_lookup_ticket_rejects_other_audience(env):
