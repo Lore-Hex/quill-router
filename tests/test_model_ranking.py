@@ -104,6 +104,15 @@ def test_other_models_never_supply_speed_prior(monkeypatch):
     assert ranking.workload_ranks("unit/workload", 100, 512, now=NOW) == {}
 
 
+@pytest.mark.parametrize("sort", ["latency", "throughput"])
+def test_explicit_speed_sort_preserves_availability_gate(monkeypatch, sort):
+    items = candidates(monkeypatch, health={"tinfoil": 1000})
+    install(monkeypatch, row("akashml", ttft=1000, tps=100000),
+            row("tinfoil", ttft=100, tps=1000000))
+    assert first(items, estimated_input_tokens=100, sort=sort) == "akashml"
+    assert first(items, estimated_input_tokens=100, sort=sort, order=("tinfoil",)) == "tinfoil"
+
+
 def test_unknown_sizes_and_stale_evidence_are_neutral(monkeypatch):
     install(monkeypatch, row("akashml"))
     assert ranking.workload_ranks("unit/workload", None, 512, now=NOW) == {}

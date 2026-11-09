@@ -1128,6 +1128,9 @@ func (s *Snapshot) sortCandidates(candidates []int, p prefs, at, nowUS, prompt, 
 			}
 			k.sort = h.Prompt + h.Completion
 		case "latency", "throughput":
+			if s.rank(e.Provider, p.sort, nowUS) >= 1000 {
+				k.health = 1
+			}
 			k.sort = 1000
 			if rank, exists := workload[p.sort][e.Provider]; exists {
 				k.sort = rank

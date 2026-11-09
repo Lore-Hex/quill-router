@@ -278,9 +278,10 @@ in `docs/provider-routing-evidence.md`; Go does not query analytics.
 Default speed bands treat small differences as ties, followed by ZDR
 (`privacy.meets` contains 2), measured before unmeasured, then catalog order.
 Missing/expired model evidence is neutral, never borrowed across models.
-Explicit price, latency and throughput sorts have zero health, privacy and
-uncertainty key fields; latency/throughput use exact workload ranks with
-1000 for missing evidence. Explicit provider order remains ahead of all ranks.
+Explicit sorts have zero privacy and uncertainty key fields. Price also has
+zero health; latency/throughput retain the existing measured-availability
+gate (healthy measured hosts first) and use exact workload ranks with 1000
+for missing speed evidence. Explicit provider order remains ahead of all ranks.
 Readers from before this field reject it and pass to Python; a rollout must
 update the Go reader to regain accelerated coverage.
 

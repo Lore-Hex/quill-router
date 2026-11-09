@@ -42,7 +42,8 @@ by **both more than 20% and more than 250ms**; throughput changes must exceed 20
 Small cumulative changes eventually cross the original anchor. New/expired cells
 start fresh. Evidence expires after seven days and never triggers request-path IO.
 Explicit `latency` and `throughput` sorts use the matching model/workload evidence
-without the default ZDR tie-break; explicit provider pins and price sorts win.
+without the default ZDR tie-break, retaining their existing availability gate;
+explicit provider pins and price sorts win.
 
 The existing public snapshot worker builds bounded aggregates every six hours
 (30 seconds, 1 GiB, overflow throws, at most 20,000 groups). Its failure cannot

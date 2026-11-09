@@ -1536,6 +1536,8 @@ def _sort_endpoint_candidates(
                 + endpoint.completion_price_microdollars_per_million_tokens
             )
         elif prefs.sort in {"latency", "throughput"}:
+            if model.supports_chat:
+                health = int(measured_provider_rank(endpoint.provider, prefs.sort) >= 1_000)
             sort_rank = (
                 model_evidence[model.id].get(prefs.sort, {}).get(endpoint.provider, 1_000)
                 if model.supports_chat else measured_provider_rank(endpoint.provider, prefs.sort)
