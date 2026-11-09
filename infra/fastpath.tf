@@ -104,7 +104,10 @@ locals {
   # publishes the member only with TR_FASTPATH_STREAM_CEILING true, false
   # in rollout.sh, so the policy matches the release before; 8af87998a
   # refuses a policy carrying the member, so this pin comes first.
-  fastpath_release        = "bd4398c217d7a7355a04e0f9d46f50a9bbb52a91"
+  # 51e8fabc1: model/provider/workload ranking with stable speed bands and
+  # a ZDR preference (#2436). The reader requires ranking.model_workload;
+  # upgrade both nodes before relying on the new routing order in the edge.
+  fastpath_release        = "51e8fabc1c8003f56062947389a1ab807aa9bac2"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
