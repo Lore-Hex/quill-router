@@ -209,7 +209,7 @@ print(response.choices[0].message.content)
   {% if model.speech or model.transcription %}
   <p class="md-intro">Audio requests use the listed model and provider. These routes do not silently switch models or providers. Open a row for retention, location and weight format.</p>
   {% elif model.endpoint_count >= 2 %}
-  <p class="md-intro">Sorted by price. Your key goes to the cheapest healthy provider and fails over on its own. Open a row for retention, location and weight format.</p>
+  <p class="md-intro">Your key goes to the cheapest healthy provider and fails over on its own. Open a row for retention, location and weight format.</p>
   {% elif model.endpoint_count == 1 %}
   <p class="md-intro">Open the row for retention, location and weight format.</p>
   {% endif %}
@@ -352,6 +352,7 @@ print(response.choices[0].message.content)
   </p>
   <dl class="md-facts">
     <div><dt>Model ID</dt><dd><code class="md-model-id">{{ model.id }}</code></dd></div>
+    <div><dt>Publisher</dt><dd>{{ publisher_identity(model) }}</dd></div>
     {% if model.transcription %}
     <div><dt>Input limit</dt><dd>7 MiB, up to 10 minutes</dd></div>
     <div><dt>Input formats</dt><dd>{{ model.transcription.input_formats|join(', ') }}</dd></div>

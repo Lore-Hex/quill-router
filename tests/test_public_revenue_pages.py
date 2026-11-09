@@ -638,7 +638,7 @@ def test_byok_only_model_page_reports_no_credits_route(
 
     assert response.status_code == 200
     assert "No Credits provider route is currently published" in response.text
-    assert "no Credits provider route for Tencent: Hy3 preview" in response.text
+    assert "no Credits provider route for Hy3 preview" in response.text
     assert "<th>Billing</th>" not in response.text
     assert ">BYOK<" not in response.text
     assert "BYOK only" not in response.text

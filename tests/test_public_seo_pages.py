@@ -1312,10 +1312,10 @@ def test_model_overview_answers_high_intent_questions(client: TestClient) -> Non
     response = client.get("/models/minimax/minimax-m3")
 
     assert response.status_code == 200
-    assert "What model ID should I use for MiniMax: MiniMax M3?" in response.text
-    assert "Which providers serve MiniMax: MiniMax M3?" in response.text
-    assert "How much does MiniMax: MiniMax M3 cost through TrustedRouter?" in response.text
-    assert "How do I require zero data retention for MiniMax: MiniMax M3?" in response.text
+    assert "What model ID should I use for MiniMax M3?" in response.text
+    assert "Which providers serve MiniMax M3?" in response.text
+    assert "How much does MiniMax M3 cost through TrustedRouter?" in response.text
+    assert "How do I require zero data retention for MiniMax M3?" in response.text
     assert "provider.min_privacy" in response.text
     assert "FAQPage" in json.dumps(_json_ld(response.text))
 
