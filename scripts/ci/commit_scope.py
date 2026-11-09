@@ -38,9 +38,10 @@ post-cutover red means main will break on a scheduled date, not that the
 commit is broken. A model-check red means a spec no longer holds, or that
 code or tests a spec names in proofs/manifest.toml were moved or deleted;
 neither says whether deployed code works. And deploy.yml's gate waits for the
-push run of the commit it ships. Neither job is a required check, so a pull request
-can merge with either red; main learns of it from a dispatch or the daily
-run, not from its push runs.
+push run of the commit it ships. Branch protection requires the CI summary,
+which needs both jobs, so a pull request cannot merge with either red. Two
+green pull requests can still combine into a main that breaks one of them;
+main learns of that from a dispatch or the daily run, not from its push runs.
 """
 
 from __future__ import annotations

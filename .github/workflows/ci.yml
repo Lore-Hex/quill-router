@@ -879,16 +879,15 @@ jobs:
   # dispatches run it, and so does post-cutover-daily.yml on main once a day.
   # A push to main skips it (commit_scope.py's SKIPPED_ON_PUSH), which frees a
   # runner for 15 to 26 minutes a push in the organization's capped queue.
-  # The cost: proofs is not a required check, so a pull request can merge with
-  # it red (say, after renaming a file the manifest names). main's push runs
-  # then pass, and main learns of it from the next price refresh that runs the
-  # full matrix (whose publication it holds until the fix) or from the daily
-  # run, which starts hours late and which GitHub may skip under load.
+  # Branch protection requires the CI summary below, which needs this job, so
+  # a pull request cannot merge with it red (say, after a file the manifest
+  # names moves). A run that reaches the limit fails the summary and holds the
+  # merge until a rerun, so the limit is about twice the slowest green run.
   proofs:
     needs: scope
     if: github.event_name != 'push' && needs.scope.outputs.data_only != 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v4
@@ -908,7 +907,7 @@ jobs:
   # a push to main, and fails on a failed `scope`, a failed job, or a skip
   # for any other reason. The deploy
   # gate and the price-refresh gate read the run's conclusion, which this job
-  # now determines; branch protection can also require the `CI` check.
+  # now determines, and branch protection requires the `CI` check.
   # !cancelled() rather than always(): a cancelled run releases its slot.
   ci:
     name: CI

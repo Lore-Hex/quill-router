@@ -346,7 +346,7 @@ def publication_repo(tmp_path: Path, publication_script: str) -> PublicationRepo
 
 
 def assert_snapshot_published(
-    repo: PublicationRepo, result: subprocess.CompletedProcess[str], *, status_gets: int = 4,
+    repo: PublicationRepo, result: subprocess.CompletedProcess[str], *, status_gets: int = 5,
     rounds: int = 1,
 ) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
@@ -372,12 +372,12 @@ def assert_snapshot_published(
     posts = [call for call in status_calls if "POST" in call]
     gets = [call for call in status_calls if "--method" not in call]
     endpoint = f'repos/{repo.env["GITHUB_REPOSITORY"]}/statuses/{dispatched_sha}'
-    assert len(posts) == 4
+    assert len(posts) == 5
     assert len(gets) == status_gets
     assert all(endpoint in call for call in status_calls), "Status endpoints must use the dispatched SHA"
     assert repo.main == dispatched_sha, "Remote main must equal the dispatched SHA"
     assert [next(arg for arg in call if arg.startswith("context=")) for call in posts] == [
-        "context=lint", "context=test (1)", "context=test (2)", "context=test (3)",
+        "context=lint", "context=test (1)", "context=test (2)", "context=test (3)", "context=CI",
     ]
     assert all("state=success" in call for call in posts)
     assert all(
@@ -398,7 +398,7 @@ def assert_status_bridge_precedes_main_push(repo: PublicationRepo) -> None:
     assert len(pushes) == 1, "Expected exactly one generated main push"
     posts = [i for i, event in enumerate(events) if event[:2] == ["gh", "api"] and "POST" in event]
     gets = [i for i, event in enumerate(events) if event[:2] == ["gh", "api"] and "--method" not in event]
-    assert len(posts) == 4, "Every required status needs exactly one POST"
+    assert len(posts) == 5, "Every required status needs exactly one POST"
     assert all(index < pushes[0] for index in posts + gets), (
         "All status POSTs and verifications must precede the main push"
     )
@@ -784,7 +784,7 @@ def test_price_refresh_checks_exact_branch_sha_before_advancing_main() -> None:
     assert "git rebase" not in workflow
     status_bridge = '"repos/${GITHUB_REPOSITORY}/statuses/${SNAPSHOT_SHA}"'
     assert status_bridge in workflow
-    assert 'for context in "lint" "test (1)" "test (2)" "test (3)"' in workflow
+    assert 'for context in "lint" "test (1)" "test (2)" "test (3)" "CI"; do' in workflow
     assert '-f target_url="${ci_url}"' in workflow
     assert 'expected_status_url="${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${SNAPSHOT_SHA}"' in workflow
     assert "status_id=$(jq -r '.id // empty'" in workflow
@@ -930,7 +930,13 @@ def test_publication_waits_only_for_the_exact_missing_status(
     publication_repo: PublicationRepo, missing_reads: int,
 ) -> None:
     result = publication_repo.run(status_missing_reads=missing_reads)
-    assert_snapshot_published(publication_repo, result, status_gets=4 + missing_reads)
+    assert_snapshot_published(publication_repo, result, status_gets=5 + missing_reads)
+    # Only the last status is read again: the first four readbacks name ids 1
+    # to 4, and every later one names the fifth.
+    gets = [call for call in publication_repo.calls if call[0] == "api" and "--method" not in call]
+    ids = [next(int(part.split(".id == ")[1].split(")")[0]) for part in call if ".id == " in part)
+           for call in gets]
+    assert ids == [1, 2, 3, 4] + [5] * (missing_reads + 1)
 
 
 def test_publication_stops_when_exact_status_stays_missing(publication_repo: PublicationRepo) -> None:
@@ -942,8 +948,8 @@ def test_publication_stops_when_exact_status_stays_missing(publication_repo: Pub
     assert not output.exists() or "validated=true" not in output.read_text()
     assert "not visible after 5 reads" in result.stdout
     status_calls = [call for call in publication_repo.calls if call[0] == "api"]
-    assert len([call for call in status_calls if "POST" in call]) == 4
-    assert len([call for call in status_calls if "--method" not in call]) == 8
+    assert len([call for call in status_calls if "POST" in call]) == 5
+    assert len([call for call in status_calls if "--method" not in call]) == 9
 
 
 @pytest.mark.parametrize("mutation", ["poll_workflow", "poll_event"])

@@ -598,10 +598,14 @@ jobs:
             # though those check runs are successful on this exact commit. Post
             # equivalent commit statuses only after the complete exact-SHA CI
             # run succeeds. Both the checks and these statuses are emitted by
-            # the repository's pinned GitHub Actions app.
+            # the repository's pinned GitHub Actions app. The contexts are
+            # main's required checks: lint, the first three test shards and
+            # the CI summary. The summary's status is true of this commit: the
+            # poll above accepted only a run that concluded success, and a run
+            # cannot conclude success unless its summary job succeeded.
             ci_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${ci_run_id}"
             expected_status_url="${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${SNAPSHOT_SHA}"
-            for context in "lint" "test (1)" "test (2)" "test (3)"; do
+            for context in "lint" "test (1)" "test (2)" "test (3)" "CI"; do
               status_json=$(gh api \
                 --method POST \
                 "repos/${GITHUB_REPOSITORY}/statuses/${SNAPSHOT_SHA}" \

@@ -308,6 +308,9 @@ def test_the_model_checks_run_check_sh_as_it_is() -> None:
     assert [str(step.get("uses", "")).split("@")[0] for step in steps] == [
         "actions/checkout", "actions/setup-java", ""]
     assert steps[-1]["run"] == "./proofs/check.sh"
+    # Green runs took up to 26 minutes (ci.yml's comment). The required CI
+    # summary needs this job, so reaching the limit holds a merge.
+    assert job["timeout-minutes"] == 55
     # Nothing beside its name and command: an `if` on the step would skip it
     # and leave the job green, and a shell, env or working-directory could
     # change what the command does.
@@ -545,3 +548,41 @@ def test_data_only_paths_are_exactly_what_the_refresh_stages_minus_code_and_go_i
     # a staged file the classifier forgot both fail here.
     assert set(DATA_ONLY_PATHS) == expected
     assert len(DATA_ONLY_PATHS) == len(expected)
+
+
+def test_required_checks_are_named_alike_everywhere() -> None:
+    # main's required checks are written down in three places: the price
+    # refresh posts one status per check before it pushes to main, the security
+    # audit holds them as a minimum, and ci.yml produces them. A name missing
+    # from the refresh's list stops every hourly push at the protected branch.
+    import importlib.util
+    import itertools
+    import re
+
+    refresh = (ROOT / ".github/workflows/refresh-prices.yml").read_text()
+    loops = re.findall(r'^ *for context in ((?:"[^"\n]+" ?)+); do$', refresh, flags=re.MULTILINE)
+    assert len(loops) == 1
+    posted = re.findall(r'"([^"]+)"', loops[0])
+    assert len(posted) == len(set(posted))
+
+    spec = importlib.util.spec_from_file_location(
+        "repo_security_coverage", ROOT / "scripts/security/check_repo_security_coverage.py")
+    assert spec is not None and spec.loader is not None
+    audit = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(audit)
+    assert set(posted) == audit.PROTECTED_REPOS["quill-router"]
+
+    # The check names ci.yml's jobs report: a job's name, plus its matrix
+    # values in parentheses.
+    produced = set()
+    for key, job in yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"].items():
+        name = job.get("name", key)
+        matrix = {axis: values for axis, values in job.get("strategy", {}).get("matrix", {}).items()
+                  if axis not in ("include", "exclude")}
+        if not matrix:
+            produced.add(name)
+            continue
+        for combination in itertools.product(*matrix.values()):
+            produced.add(f"{name} ({', '.join(str(value) for value in combination)})")
+    assert set(posted) <= produced
+    assert "CI" in posted
