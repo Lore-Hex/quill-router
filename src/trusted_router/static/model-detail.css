@@ -823,8 +823,10 @@
 
   /* More air on phones so the hero button lands nearer the thumb. */
   .md-hero {
-    gap: 26px;
-    padding: 52px 0 36px;
+    /* Scales with screen height so short phones (320x568) still show the
+     * button on the first screen. */
+    gap: clamp(14px, 3.2svh, 26px);
+    padding: clamp(24px, 6.4svh, 52px) 0 clamp(24px, 4.4svh, 36px);
   }
 
   .md-title-row {

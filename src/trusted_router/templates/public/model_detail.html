@@ -45,7 +45,7 @@
     <div class="md-stat md-stat-providers">
       <span class="md-label">Providers</span>
       <span class="md-logo-stack">
-        <span class="md-logo-stack-logos" aria-hidden="true">{% for provider in page.provider_logos[:8] %}<img src="{{ provider.logo_url }}" alt="" width="30" height="30" loading="lazy" decoding="async">{% endfor %}</span>
+        <span class="md-logo-stack-logos" aria-hidden="true">{% for provider in page.provider_logos[:8] %}<img src="{{ provider.logo_url }}" alt="{{ provider.name }}" width="30" height="30" loading="lazy" decoding="async">{% endfor %}</span>
         <span class="md-logo-stack-caption">{{ model.endpoint_count }} provider{{ '' if model.endpoint_count == 1 else 's' }}, one key</span>
       </span>
     </div>
@@ -303,7 +303,7 @@ print(response.choices[0].message.content)
     <tr class="md-provider{% if row.cheapest %} md-provider-cheapest{% endif %}" id="provider-{{ endpoint.provider_slug }}" data-sort-price="{{ row.sort_price }}"{% if row.sort_throughput is not none %} data-sort-throughput="{{ row.sort_throughput }}"{% endif %}{% if row.sort_latency is not none %} data-sort-latency="{{ row.sort_latency }}"{% endif %}>
       <th scope="row" class="md-provider-cell">
         <span class="md-provider-name">
-          <img src="{{ endpoint.provider_logo_url }}" alt="" width="32" height="32" loading="lazy" decoding="async">
+          <img src="{{ endpoint.provider_logo_url }}" alt="{{ endpoint.provider }} logo" width="32" height="32" loading="lazy" decoding="async">
           <span>{{ endpoint.provider }}</span>
           {% if row.cheapest %}<span class="md-cheapest-tag">Cheapest</span>{% endif %}
         </span>
