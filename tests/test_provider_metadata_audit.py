@@ -98,9 +98,10 @@ def test_model_table_exposes_sources_location_and_real_timing_only(monkeypatch, 
     assert "Operator country: US" in novita.get_text()
     assert "processing countries unconfirmed, no fixed-region commitment" in novita.get_text()
     assert novita.select_one('a[href="https://novita.ai/legal/privacy-policy"]')
-    assert novita.select_one('[data-label="Measured speed"]')
-    assert novita.select_one('[data-label="Company / inference location"]')
-    assert soup.select_one('[aria-label="Provider comparison"]')["tabindex"] == "0"
+    assert novita.select_one("summary.md-provider-row")
+    assert "Price and speed" in novita.get_text()
+    assert "Location" in novita.get_text()
+    assert soup.select_one('[aria-label="Provider comparison"]')
     sail = soup.select_one("#provider-sail-research")
     assert "Operator country: Not verified" in sail.get_text()
     assert "TTFT: insufficient data" in sail.get_text()

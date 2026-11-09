@@ -1297,11 +1297,9 @@ def test_model_overview_surfaces_cached_route_evidence(
     response = client.get("/models/minimax/minimax-m3")
 
     assert response.status_code == 200
-    assert "Current route evidence" in response.text
-    assert "Lowest Credits input price" in response.text
-    assert "140 ms" in response.text
-    assert "91 tok/s" in response.text
-    assert "99.00% to 100.00%" in response.text
+    # The route evidence panel left the overview; measured speed lives in each
+    # provider row and on the performance page.
+    assert "Current route evidence" not in response.text
     assert 'href="/providers/novita"' in response.text
     assert 'href="/providers/minimax"' in response.text
     assert 'href="/models/minimax/minimax-m3/performance"' in response.text
@@ -1343,7 +1341,7 @@ def test_model_overview_links_canonical_related_comparisons(client: TestClient) 
     response = client.get("/models/minimax/minimax-m3")
 
     assert response.status_code == 200
-    assert "Compare MiniMax: MiniMax M3" in response.text
+    assert "MiniMax M3 vs other models" in response.text
     related_paths = re.findall(
         r'href="(/compare/models/[^\"]+/vs/[^\"]+)"',
         response.text,

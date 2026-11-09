@@ -276,7 +276,7 @@ def test_model_pages_render_publisher_and_route_logos(client: TestClient) -> Non
 
     assert response.status_code == 200
     assert "/static/provider-logos/minimax.png" in response.text
-    assert "provider-chip" in response.text
+    assert "md-logo-stack" in response.text
 
 
 def test_leaderboard_rows_render_provider_logo(client: TestClient) -> None:

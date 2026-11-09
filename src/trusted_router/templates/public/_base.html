@@ -79,6 +79,7 @@
     {% endblock %}
     {% block body %}{% endblock %}
     {% if catalog_evidence %}{% include "public/_catalog_evidence.html" %}{% endif %}
+    {% block faq %}
     {% if faq_items %}
     <section class="panel faq-panel" aria-label="Frequently asked questions">
       <div class="panel-head"><h2>Questions</h2></div>
@@ -92,6 +93,7 @@
       </div>
     </section>
     {% endif %}
+    {% endblock %}
   </main>
   {% block footer %}{% include "public/_footer.html" %}{% endblock %}
   {% include "public/_signin.html" %}

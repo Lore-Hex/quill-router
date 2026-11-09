@@ -133,7 +133,7 @@ def test_public_pages_explain_active_openai_prepaid_scope(client: TestClient) ->
     # Policy disclosures mention BYOK to explain the exclusion, but the table
     # must still publish only TR-funded Credits routes with the scoped badge.
     soup = BeautifulSoup(model.text, "html.parser")
-    rows = soup.select(".model-route-table tbody tr")
+    rows = soup.select("details.md-provider")
     view = _model_detail_view(MODELS["openai/gpt-4.1"], test_mode=True)
     assert rows and len(rows) == len(view["endpoints"])
     assert all(MODEL_ENDPOINTS[row["endpoint_id"]].usage_type == "Credits" for row in view["endpoints"])
@@ -141,5 +141,5 @@ def test_public_pages_explain_active_openai_prepaid_scope(client: TestClient) ->
     assert openai.select_one('[data-privacy="zdr"]')
     assert "customer BYOK credentials" in openai.get_text()
     assert "customer's own OpenAI organization or project" in openai.get_text()
-    assert ">ZDR<" in model.text
+    assert ">Zero retention<" in model.text
     assert "no verified privacy claim" not in model.text
