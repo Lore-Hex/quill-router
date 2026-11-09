@@ -1,0 +1,59 @@
+{# Shared pieces of the /compare pages: the sign-up button with its note, the
+   question list, the sideways chip row and the closing band. #}
+
+{# Only the hero button carries data-catalog-cta: it marks the page's one
+   above-the-fold sign-up action. #}
+{% macro signup(note, hero=false) -%}
+<div class="compare-cta">
+  <button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup"{% if hero %} data-catalog-cta{% endif %}>Create my API key</button>
+  {% if note %}<p class="compare-cta-note">{{ note }}</p>{% endif %}
+</div>
+{%- endmacro %}
+
+{% macro questions(items, open_first=true) -%}
+<section class="compare-section" aria-labelledby="compare-questions-heading">
+  <h2 id="compare-questions-heading">Questions</h2>
+  <div class="compare-faq">
+    {% for question, answer in items %}
+    <details{% if open_first and loop.first %} open{% endif %}>
+      <summary>{{ question }}</summary>
+      <p>{{ answer }}</p>
+    </details>
+    {% endfor %}
+    {{ caller() if caller else "" }}
+  </div>
+</section>
+{%- endmacro %}
+
+{% macro chip_row(title, items, all_href, all_label) -%}
+<section class="compare-section" aria-labelledby="compare-more-heading">
+  <div class="compare-section-head">
+    <h2 id="compare-more-heading">{{ title }}</h2>
+    <a href="{{ all_href }}">{{ all_label }}</a>
+  </div>
+  <div class="compare-chips">
+    <ul class="compare-chip-track">
+      {% for item in items %}
+      <li><a class="compare-chip" href="{{ item.href }}">{{ item.label }}</a></li>
+      {% endfor %}
+    </ul>
+    <button class="compare-chip-nudge" type="button" aria-label="Show more comparisons"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 7h8M8 3.5 11.5 7 8 10.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+  </div>
+</section>
+{%- endmacro %}
+
+{% macro closing_band(title, note) -%}
+<section class="compare-band">
+  <h2>{{ title }}</h2>
+  {{ signup(note) }}
+</section>
+{%- endmacro %}
+
+{# copy-prompt.js reveals the button and reports into the status line. #}
+{% macro copy_icon_button(target, label, text="") -%}
+<button class="compare-copy" type="button" data-copy-prompt-target="{{ target }}" data-copy-prompt-status="{{ target }}-status" aria-controls="{{ target }}" aria-label="{{ label }}" title="{{ label }}" hidden><img src="/static/copy-icon.svg" width="16" height="16" alt="Copy" aria-hidden="true">{% if text %}<span>{{ text }}</span>{% endif %}</button>
+{%- endmacro %}
+
+{% macro copy_status(target) -%}
+<span class="compare-copy-status" id="{{ target }}-status" role="status" aria-live="polite" aria-atomic="true"></span>
+{%- endmacro %}

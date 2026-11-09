@@ -1,28 +1,38 @@
 {% extends "public/_base.html" %}
-{% block body %}
+{% import "public/_compare_kit.html" as kit %}
+{% set signup_note = "No card required. Start with 1 million free tokens." %}
+{% block head_extra %}<link rel="stylesheet" href="/static/compare.css?v={{ static_version|default('local') }}">{% endblock %}
 
-<section class="marketing-split" aria-label="One-line migration">
-  <div class="marketing-copy">
-    <span class="eyebrow">Switch in 1 line</span>
-    <h2>OpenRouter, but you can verify the prompt path.</h2>
-    <p>Change <span class="mono">base_url</span>. Keep your OpenAI SDK, your messages shape, and your streaming loop. Canonical vendor-prefixed model ids mostly resolve unchanged.</p>
-    <p>What you add: a hardware-attested gateway, a public source-to-binary trail, no durable prompt or output logs on realtime inference, and a public status page with live burn rates.</p>
-    <p>
-      <a class="btn primary" href="/chat">Try the playground</a>
-      <a class="btn" href="https://trust.trustedrouter.com">Verify gateway</a>
-    </p>
+{% block hero %}
+<section class="compare-hero">
+  <div class="compare-logos" aria-hidden="true">
+    <img src="{{ provider_logo_url('trustedrouter') }}" alt="TrustedRouter logo" width="52" height="52"><img src="{{ provider_logo_url('openrouter') }}" alt="OpenRouter logo" width="52" height="52">
   </div>
-  <div class="copy-terminal">
-    <div class="code-head"><span>Before / after — Python</span><span>OpenAI SDK</span></div>
-    <pre><code>from openai import OpenAI
+  <h1>{{ heading }}</h1>
+  <p class="compare-lead">The same OpenAI-compatible API. Change <span class="mono">base_url</span> and you get a gateway you can verify, with no durable prompt or output logs on realtime inference.</p>
+  {{ kit.signup(signup_note, hero=true) }}
+</section>
+{% endblock %}
 
-# Before
-client = OpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key="sk-or-..."
-)
+{% block body %}
+<section class="compare-section" aria-labelledby="compare-switch-heading">
+  <h2 id="compare-switch-heading">Switch in one line</h2>
+  <p>Keep your OpenAI SDK, messages and streaming loop. Paste this into Claude Code, Cursor or any coding agent.</p>
+  <div class="compare-code">
+    <div class="compare-code-head"><span>Agent prompt</span>{{ kit.copy_icon_button("compare-agent-prompt", "Copy agent prompt", "Copy") }}</div>
+    <pre><code id="compare-agent-prompt">Move this project from OpenRouter to TrustedRouter.
 
-# After
+1. Read https://trustedrouter.com/docs/migrate-from-openrouter
+2. Change base_url to {{ api_base_url }} and read the key
+   from TRUSTEDROUTER_API_KEY.
+3. Check every model id against https://trustedrouter.com/models.
+4. Run the tests, then show me the diff before committing.</code></pre>
+    {{ kit.copy_status("compare-agent-prompt") }}
+    <p class="compare-diff" aria-label="The code change"><del>- base_url="https://openrouter.ai/api/v1"</del><ins>+ base_url="{{ api_base_url }}"</ins></p>
+    <details class="compare-code-more">
+      <summary>Python</summary>
+      <pre><code>from openai import OpenAI
+
 client = OpenAI(
     base_url="{{ api_base_url }}",
     api_key="sk-tr-v1-..."
@@ -33,106 +43,84 @@ resp = client.chat.completions.create(
     model="anthropic/claude-sonnet-4.6",
     messages=[{"role": "user", "content": "hi"}],
 )</code></pre>
+    </details>
+    <div class="compare-code-foot"><span>Your agent will need an API key.</span><button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Create my API key</button></div>
   </div>
 </section>
 
-<section class="marketing-grid three">
-  <div class="marketing-card">
-    <span class="card-label">Same API</span>
-    <h3>OpenAI-compatible.</h3>
-    <p>Streaming, tool calls, vision, structured output — supported. Every OpenRouter API path carries an explicit compatibility classification (real, compatible-real, or stub), enforced in CI against their published OpenAPI spec.</p>
+<section class="compare-section" aria-labelledby="compare-table-heading">
+  <h2 id="compare-table-heading">Side by side</h2>
+  <p class="compare-note">Green marks where TrustedRouter is different.</p>
+  {% set rows = [
+    ("API shape", "OpenAI compatible", "OpenAI compatible", false),
+    ("Prompt logging", "Off by default; opt-in for a 1% discount", "None on realtime — verifiable in source", true),
+    ("Trust model", "Policy + SOC 2 Type 2", "Hardware attestation + public source", true),
+    ("Source", "Closed (SDKs Apache-2.0)", "Public — every line that touches your prompt", true),
+    ("Catalog breadth", "400+ model ids across 100+ providers", "600+ model ids across 80+ providers", false),
+    ("Provider fallback", "Yes", "Yes — across more than 80 providers", false),
+    ("Platform charge", none, "5.5% on prepaid model cost ($0.01/M floor)", false),
+    ("Status SLOs", "Public status page", "99.99% availability target + live 5m-24h burn rates", true),
+    ("Best fit", "Broad model marketplace", "Privacy-sensitive workloads that need a verifiable prompt path", false),
+  ] %}
+  <div class="compare-table-wrap">
+    <table class="compare-table">
+      <caption class="compare-sr">OpenRouter compared with TrustedRouter</caption>
+      <thead><tr>
+        <th scope="col" class="compare-table-label"><span class="compare-sr">Attribute</span></th>
+        <th scope="col" class="compare-table-item"><span class="compare-item"><img src="{{ provider_logo_url('openrouter') }}" alt="OpenRouter logo" aria-hidden="true" width="30" height="30"><span>OpenRouter</span></span></th>
+        <th scope="col" class="compare-table-item"><span class="compare-item"><img src="{{ provider_logo_url('trustedrouter') }}" alt="TrustedRouter logo" aria-hidden="true" width="30" height="30"><span>TrustedRouter</span></span></th>
+      </tr></thead>
+      <tbody>
+      {% for label, theirs, ours, different in rows %}
+      <tr>
+        <th scope="row">{{ label }}</th>
+        <td>{% if theirs %}<span class="compare-val">{{ theirs }}</span>{% else %}<a class="compare-val" href="https://openrouter.ai/pricing">5.5% ($0.80 min) buying credits; inference at list price</a>{% endif %}</td>
+        <td{% if different %} class="is-win"{% endif %}><span class="compare-val">{{ ours }}</span></td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
   </div>
-  <div class="marketing-card">
-    <span class="card-label">Verifiable</span>
-    <h3>Attested gateway.</h3>
-    <p>Cross-cloud confidential VMs sign their boot measurement. You check the image hash against the published artifact.</p>
-  </div>
-  <div class="marketing-card">
-    <span class="card-label">No logging</span>
-    <h3>Zero by construction.</h3>
-    <p>Ordinary synchronous and streaming prompt paths do not touch persistent storage. Batch is a separate opt-in encrypted-retention mode. The binary you can verify is the binary that handles your traffic.</p>
-  </div>
+  <details class="compare-sources">
+    <summary>Sources checked {{ verified_on_label }}</summary>
+    <ul>
+      {% for source in comparison.sources %}
+      <li><a href="{{ source.url }}" rel="noopener">{{ source.label }}</a></li>
+      {% endfor %}
+      <li><a href="/benchmarks/reports">TrustedRouter monthly benchmark reports</a></li>
+      <li><a href="https://trust.trustedrouter.com" rel="noopener">TrustedRouter live trust record</a></li>
+      <li><a href="/support">Report a change</a></li>
+    </ul>
+  </details>
 </section>
 
-<section class="compare-matrix" aria-label="OpenRouter vs TrustedRouter">
-  <div class="matrix-row matrix-head">
-    <span></span><strong>OpenRouter</strong><strong>TrustedRouter</strong>
+<section class="compare-section" aria-labelledby="compare-verify-heading">
+  <h2 id="compare-verify-heading">Don't trust. Check.</h2>
+  <p>The gateway returns an attestation signed by the CPU's hardware root key. Match its image digest to the published build, and you know what code handles your prompts.</p>
+  <div class="compare-code">
+    <div class="compare-code-head"><span>curl + jq</span>{{ kit.copy_icon_button("compare-verify-code", "Copy attestation command", "Copy") }}</div>
+    <pre><code id="compare-verify-code">NONCE=$(openssl rand -hex 16)
+curl -s "{{ api_base_url|replace('/v1', '') }}/attestation?nonce=$NONCE" | jq .image_digest</code></pre>
+    {{ kit.copy_status("compare-verify-code") }}
   </div>
-  <div class="matrix-row">
-    <span>API shape</span><span>OpenAI compatible</span><span>OpenAI compatible</span>
-  </div>
-  <div class="matrix-row">
-    <span>Prompt logging</span><span>Off by default; opt-in for a 1% discount</span><span>None on realtime — verifiable in source</span>
-  </div>
-  <div class="matrix-row">
-    <span>Trust model</span><span>Policy + SOC 2 Type 2</span><span>Hardware attestation + public source</span>
-  </div>
-  <div class="matrix-row">
-    <span>Source</span><span>Closed (SDKs Apache-2.0)</span><span>Public — every line that touches your prompt</span>
-  </div>
-  <div class="matrix-row">
-    <span>Catalog breadth</span><span>400+ model ids across 100+ providers</span><span>600+ model ids across 80+ providers</span>
-  </div>
-  <div class="matrix-row">
-    <span>Provider fallback</span><span>Yes</span><span>Yes — across more than 80 providers</span>
-  </div>
-  <div class="matrix-row">
-    <span>Platform charge</span><span><a href="https://openrouter.ai/pricing">5.5% ($0.80 min) buying credits; inference at list price</a></span><span>5.5% on prepaid model cost ($0.01/M floor)</span>
-  </div>
-  <div class="matrix-row">
-    <span>Status SLOs</span><span>Public status page</span><span>99.99% availability target + live 5m-24h burn rates</span>
-  </div>
-  <div class="matrix-row">
-    <span>Best fit</span><span>Broad model marketplace</span><span>Privacy-sensitive workloads that need a verifiable prompt path</span>
-  </div>
+  <p class="compare-inline-links"><a href="/security">How attestation works</a><a href="/docs/migrate-from-openrouter">Migration guide</a></p>
 </section>
 
-<section class="marketing-split" aria-label="Verify in 60 seconds">
-  <div class="copy-terminal">
-    <div class="code-head"><span>Verify the gateway</span><span>curl + jq</span></div>
-    <pre><code># 1. Get a nonce-bound attestation
-NONCE=$(openssl rand -hex 16)
-curl -s "{{ api_base_url|replace('/v1', '') }}/attestation?nonce=$NONCE" \
-  | jq .
+{% call kit.questions(faq_items) %}
+<details><summary>Do my existing keys work?</summary><p>TR keys use a different prefix (<span class="mono">sk-tr-v1-…</span>), so create one here. Issuance is self-serve after sign-up.</p></details>
+<details><summary>Same model catalog?</summary><p>No two router catalogs are identical. As of August 26, 2026, TrustedRouter's public API lists 600+ model ids, compared with 400+ on OpenRouter's public feed. TrustedRouter spans more than 80 providers; OpenRouter lists more than 100. An unknown id returns <span class="mono">MODEL_NOT_SUPPORTED</span> instead of a guess, so check your ids on <a href="/models">/models</a> first.</p></details>
+<details><summary>How is pricing calculated?</summary><p>Provider cost + 5.5% markup, with a $0.01/M floor. Same percentage as OpenRouter's published <a href="https://openrouter.ai/pricing">5.5% fee on credit purchases</a> — but on a different base: ours applies to model cost, theirs at credit top-up with inference passed through at list price. Exact customer prices are published on every model page.</p></details>
+<details><summary>Can I bring my own provider keys?</summary><p>Yes — bring your own provider keys for billing isolation. Routing code stays attested.</p></details>
+<details><summary>Can I self-host it?</summary><p>The full control plane and gateway are source-available (BUSL-1.1) — read, build, and verify every line; the attestation story works because the image hash you build is the hash the enclave reports. Production self-hosting runs under a commercial license.</p></details>
+<details><summary>Why build this?</summary><p>The full argument is in the essay <a href="https://jperla.com/blog/attestation-is-all-you-need">&ldquo;Attestation is All You Need&rdquo;</a>.</p></details>
+{% endcall %}
 
-# Response includes:
-#   eat_nonce     — your nonce, replay-protected
-#   image_digest  — SHA-256 of the running container
-#   pcrs          — platform measurements at boot
+{% set chips = [] %}
+{% for related in related_comparisons %}{% set _ = chips.append({"href": related.href, "label": "vs " ~ related.name}) %}{% endfor %}
+{% if chips %}{{ kit.chip_row("Other comparisons", chips, "/compare", "All gateways") }}{% endif %}
 
-# 2. Compare image_digest against the published artifact:
-#    https://trustedrouter.com/security
-#
-# If they match, the code processing your prompts is
-# the code on GitHub.</code></pre>
-  </div>
-  <div class="marketing-copy">
-    <span class="eyebrow">60-second proof</span>
-    <h2>Don't trust. Check.</h2>
-    <p>The gateway exposes a live attestation endpoint that returns a JWT signed by the CPU's hardware root key. You match the image digest to the source-built binary, and you know — not assume — what code is running.</p>
-    <p>A privacy policy is a promise. A hash is something you can check.</p>
-    <p>
-      <a class="btn" href="/security">How attestation works</a>
-      <a class="btn" href="/docs/migrate-from-openrouter">Migration guide</a>
-    </p>
-  </div>
-</section>
-
-<section class="quote-feature">
-  <div>
-    <span class="eyebrow">Common questions</span>
-    <h2>The boring details that make this real.</h2>
-  </div>
-  <div>
-    <p><strong>Do my existing keys work?</strong> No — TR keys are a different prefix (<span class="mono">sk-tr-v1-…</span>). Issuance is self-serve after sign-up.</p>
-    <p><strong>Same model catalog?</strong> No two router catalogs are identical. As of August 26, 2026, TrustedRouter's public API lists 600+ model ids, compared with 400+ on OpenRouter's public feed. TrustedRouter spans more than 80 providers; OpenRouter lists more than 100. An unknown id returns <span class="mono">MODEL_NOT_SUPPORTED</span> instead of a guess, so check your ids on <a href="/models">/models</a> first.</p>
-    <p><strong>Pricing?</strong> Provider cost + 5.5% markup, with a $0.01/M floor. Same percentage as OpenRouter's published <a href="https://openrouter.ai/pricing">5.5% fee on credit purchases</a> — but on a different base: ours applies to model cost, theirs at credit top-up with inference passed through at list price. Exact customer prices are published on every model page.</p>
-    <p><strong>BYOK?</strong> Yes — bring your own provider keys for billing isolation. Routing code stays attested.</p>
-    <p><strong>Self-host?</strong> The full control plane and gateway are source-available (BUSL-1.1) — read, build, and verify every line; the attestation story works because the image hash you build is the hash the enclave reports. Production self-hosting runs under a commercial license.</p>
-    <p><strong>Why build this?</strong> The full argument is in the essay <a href="https://jperla.com/blog/attestation-is-all-you-need">&ldquo;Attestation is All You Need&rdquo;</a>.</p>
-  </div>
-</section>
-
-{% include "public/_competitor_evidence.html" %}
-
+{{ kit.closing_band("Move from OpenRouter in one line.", signup_note) }}
 {% endblock %}
+
+{% block faq %}{% endblock %}
+{% block body_scripts %}<script src="/static/copy-prompt.js" defer></script><script src="/static/compare.js?v={{ static_version|default('local') }}" defer></script>{% endblock %}

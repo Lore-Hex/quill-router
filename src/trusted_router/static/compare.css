@@ -1,0 +1,359 @@
+/* /compare pages. font-stretch on headings takes effect once the self-hosted
+   Archivo file carries the width axis; the current file is weight-only.
+   /compare pages: one reading column, one sign-up action per screen.
+   Mint (#9ee6b8 on #1c3e2e) only ever marks the better number or the cheaper price. */
+.compare-hero,
+.compare-section,
+.compare-band {
+  --compare-win: #9ee6b8;
+  --compare-win-bg: #1c3e2e;
+  width: 100%;
+  max-width: 880px;
+  margin-inline: auto;
+  box-sizing: border-box;
+}
+
+.compare-hero h1,
+.compare-section h2,
+.compare-band h2 {
+  font-stretch: 118%;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+.compare-section h2,
+.compare-band h2 { font-stretch: 110%; }
+
+/* Hero */
+.compare-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  padding: 72px 0 64px;
+}
+.compare-logos { display: flex; }
+.compare-logos img {
+  width: 52px;
+  height: 52px;
+  box-sizing: border-box;
+  border: 3px solid var(--tr-color-surface-bg);
+  border-radius: 13px;
+  background: var(--tr-color-text-primary);
+}
+.compare-logos img + img { margin-left: -12px; }
+.compare-hero h1 {
+  max-width: none;
+  margin: 0;
+  font-size: clamp(38px, 6vw, 64px);
+  line-height: 1.04;
+  color: var(--tr-color-text-primary);
+}
+.public-wrap .compare-hero .compare-lead {
+  max-width: 34em;
+  margin: 0;
+  color: var(--tr-color-text-primary);
+  font-size: clamp(18px, 2vw, 21px);
+  font-weight: 450;
+  line-height: 1.5;
+}
+
+.compare-score {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  border-top: 1px solid var(--tr-color-line-rule);
+  border-bottom: 1px solid var(--tr-color-line-rule);
+}
+.compare-score-item { padding: 18px 44px 18px 0; }
+.compare-score-item + .compare-score-item { padding-left: 44px; border-left: 1px solid var(--tr-color-line-rule-soft); }
+.compare-score-name { display: block; color: var(--tr-color-text-primary); font-size: 16px; }
+.compare-score-price {
+  display: block;
+  margin-top: 4px;
+  color: var(--tr-color-text-primary);
+  font-size: clamp(40px, 5vw, 56px);
+  font-stretch: 118%;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+}
+.compare-score-item.is-cheaper .compare-score-price { color: var(--compare-win); }
+.compare-score-note {
+  max-width: 13em;
+  margin: 0;
+  padding: 18px 0 22px;
+  color: var(--tr-color-text-secondary);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.compare-cta { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
+.compare-cta .btn.primary { min-height: 52px; padding-inline: 26px; font-size: 17px; font-weight: 650; }
+.compare-cta-note { margin: 0; color: var(--tr-color-text-secondary); font-size: 15px; line-height: 1.5; }
+
+/* Sections */
+.compare-section { padding: 0 0 72px; }
+.compare-section h2 { margin: 0 0 10px; color: var(--tr-color-text-primary); font-size: clamp(26px, 3vw, 32px); line-height: 1.15; }
+.public-wrap .compare-section > p { margin: 0 0 20px; color: var(--tr-color-text-primary); font-size: 18px; font-weight: 450; line-height: 1.6; }
+.compare-section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+.compare-section-head h2 { margin: 0; }
+.compare-note { margin: 16px 0 0; color: var(--tr-color-text-secondary); font-size: 15px; line-height: 1.55; }
+
+
+/* Two-item comparison table. Same shape as pattern A in the shared table
+   proposal: labels in small mono capitals, both items side by side; on a
+   phone each row becomes its label over the two values. */
+.compare-table-wrap { container-type: inline-size; min-width: 0; }
+.compare-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  color: var(--tr-color-text-secondary);
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+}
+.compare-table :is(th, td) {
+  padding: 14px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--tr-color-line-rule-soft);
+  background: transparent;
+  color: inherit;
+  font-size: 16px;
+  font-weight: 450;
+  letter-spacing: normal;
+  text-align: left;
+  text-transform: none;
+  vertical-align: top;
+}
+.compare-table :is(th, td):first-child { padding-left: 0; }
+.compare-table thead th {
+  position: sticky;
+  top: var(--sticky-header-height, 0px);
+  z-index: 1;
+  padding-top: 8px;
+  padding-bottom: 16px;
+  border-bottom-color: var(--tr-color-line-rule);
+  background: var(--tr-color-surface-bg);
+}
+.compare-table .compare-table-label { width: 24%; }
+.compare-table tbody th {
+  padding-top: 17px;
+  color: var(--tr-color-text-tertiary);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  line-height: 1.3;
+  text-transform: uppercase;
+}
+.compare-table td.is-win { background: var(--compare-win-bg); }
+.compare-table a { color: var(--tr-color-link-base); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 4px; }
+.compare-table code { font-size: 15px; overflow-wrap: anywhere; }
+.compare-sub { display: block; margin-top: 2px; color: var(--tr-color-text-secondary); font-size: 15px; }
+.compare-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.compare-note-lead { margin: 0 0 20px; }
+
+@container (max-width: 640px) {
+  .compare-table, .compare-table thead, .compare-table tbody { display: block; }
+  .compare-table thead { position: sticky; top: var(--sticky-header-height, 0px); z-index: 1; background: var(--tr-color-surface-bg); }
+  .compare-table tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 16px; }
+  .compare-table thead tr { border-bottom: 1px solid var(--tr-color-line-rule); }
+  .compare-table thead th { position: static; padding: 8px 0 12px; border: 0; }
+  .compare-table thead th.compare-table-label { display: none; }
+  .compare-table tbody tr { padding: 14px 0; border-bottom: 1px solid var(--tr-color-line-rule-soft); }
+  .compare-table tbody th { grid-column: 1 / -1; padding: 0 0 6px; border: 0; }
+  .compare-table tbody td { padding: 6px 0; border: 0; }
+  .compare-table tbody td.is-win { margin-inline: -8px; padding: 6px 8px; border-radius: 6px; }
+}
+
+/* Table header cells: logo, name, best-for line, copyable id */
+.compare-table .compare-table-item { vertical-align: top; }
+.compare-table .compare-item { display: inline-flex; align-items: center; gap: 10px; color: var(--tr-color-text-primary); text-decoration: none; }
+.compare-item img { width: 30px; height: 30px; border-radius: 8px; background: var(--tr-color-text-primary); flex: none; }
+.compare-item:hover span { text-decoration: underline; text-underline-offset: 4px; }
+.compare-best { display: block; margin-top: 6px; color: var(--tr-color-text-primary); font-size: 15px; font-weight: 450; }
+.compare-id { display: flex; align-items: center; gap: 4px; margin-top: 4px; }
+.compare-id code { color: var(--tr-color-privacy-zdr-text, #e2c98a); font-size: 14px; overflow-wrap: anywhere; }
+.compare-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--tr-color-accent-base);
+  font: inherit;
+  font-size: 15px;
+  cursor: pointer;
+}
+.compare-copy:hover { background: var(--tr-color-surface-hover); }
+.compare-copy[hidden] { display: none; }
+.compare-copy img { width: 16px; height: 16px; }
+.compare-copy-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+.compare-table .compare-val { display: block; color: var(--tr-color-text-primary); font-size: 17px; font-weight: 550; }
+.compare-table a.compare-val { color: var(--tr-color-text-primary); text-decoration: none; }
+.compare-table a.compare-val:hover { text-decoration: underline; }
+.compare-table .compare-val.is-muted { color: var(--tr-color-text-tertiary); font-weight: 450; }
+.compare-table .is-win .compare-val { color: var(--compare-win); }
+.compare-badge {
+  display: inline-block;
+  margin-bottom: 4px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--tr-color-accent-base);
+  color: var(--tr-color-accent-ink);
+  font-size: 13px;
+  font-weight: 550;
+}
+.compare-links { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.compare-table .compare-item { text-decoration: none; }
+
+/* Agent prompt and code */
+.compare-code { overflow: hidden; border: 1px solid var(--tr-color-line-rule-soft); border-radius: 12px; background: var(--tr-color-surface-panel); }
+.compare-code-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px 8px 20px; border-bottom: 1px solid var(--tr-color-line-rule-soft); color: var(--tr-color-text-primary); font-size: 15px; }
+.compare-code pre { margin: 0; padding: 20px; overflow-x: auto; background: none; border: 0; }
+.compare-code pre code { color: var(--tr-color-text-primary); font-size: 15px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+.compare-code-more { border-top: 1px solid var(--tr-color-line-rule-soft); }
+.compare-code-more summary { min-height: 44px; padding: 0 20px; display: flex; align-items: center; color: var(--tr-color-accent-base); font-size: 15px; cursor: pointer; }
+.compare-code-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 16px; padding: 14px 20px; border-top: 1px solid var(--tr-color-line-rule-soft); background: var(--tr-color-surface-panel-inset); color: var(--tr-color-text-primary); font-size: 16px; }
+.compare-code-foot .btn.primary { min-height: 44px; font-weight: 650; }
+
+/* Questions */
+.compare-faq { border-top: 1px solid var(--tr-color-line-rule); }
+.compare-faq details { border-bottom: 1px solid var(--tr-color-line-rule-soft); }
+.compare-faq summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 24px;
+  padding: 18px 0;
+  color: var(--tr-color-text-primary);
+  font-size: 18px;
+  font-weight: 550;
+  cursor: pointer;
+  list-style: none;
+}
+.compare-faq summary::-webkit-details-marker { display: none; }
+.compare-faq summary::after { content: "+"; flex: none; color: var(--tr-color-text-tertiary); }
+.compare-faq details[open] summary::after { content: "\2212"; }
+.compare-faq details p { max-width: 40em; margin: -6px 0 18px; color: var(--tr-color-text-primary); font-size: 17px; font-weight: 450; line-height: 1.6; }
+.compare-faq code { color: var(--tr-color-privacy-zdr-text, #e2c98a); }
+
+/* Sideways chip row: fade plus a nudging arrow */
+.compare-chips { position: relative; }
+.compare-chip-track {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  padding: 0 48px 8px 0;
+  overflow-x: auto;
+  list-style: none;
+  scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 64px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 64px), transparent);
+}
+.compare-chip-track::-webkit-scrollbar { display: none; }
+/* Chip from the brand kit (docs/brand/trustedrouter-brand-tokens.json,
+   component "chip"): mono 14px/500, 8px 10px, panel-raised fill, rule border,
+   panel radius, accent border and text on hover. Height rises from the kit's
+   28px minimum to 44px because each chip is a tap target. */
+.compare-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--tr-color-line-rule);
+  border-radius: var(--tr-radius-panel);
+  background: var(--tr-color-surface-panel-raised);
+  color: var(--tr-color-text-primary);
+  font-family: var(--tr-font-family-mono);
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.compare-chip:hover,
+.compare-chip:focus-visible { border-color: var(--tr-color-accent-base); color: var(--tr-color-accent-base); }
+.compare-chip-nudge {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--tr-color-line-control);
+  padding: 0;
+  border-radius: 50%;
+  background: var(--tr-color-surface-bg);
+  color: var(--tr-color-text-primary);
+  cursor: pointer;
+  animation: compare-nudge 1.6s ease-in-out infinite;
+}
+/* Once compare.js has measured the row, the fade and arrow show only while
+   more chips sit off to the right. */
+.compare-chips[data-ready]:not([data-more]) .compare-chip-nudge { display: none; }
+.compare-chips[data-ready]:not([data-more]) .compare-chip-track { -webkit-mask-image: none; mask-image: none; padding-right: 0; }
+@keyframes compare-nudge { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(4px); } }
+@media (prefers-reduced-motion: reduce) { .compare-chip-nudge { animation: none; } }
+
+/* Closing band */
+.compare-band {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 96px;
+  padding: 44px 48px;
+  border-radius: 16px;
+  background: var(--compare-win-bg);
+}
+.compare-band h2 { margin: 0; color: var(--tr-color-text-primary); font-size: clamp(26px, 3.4vw, 36px); line-height: 1.15; }
+.compare-band .compare-cta-note { color: #dcebe2; }
+
+/* OpenRouter page: one-line diff under the agent prompt */
+.compare-diff { margin: 0; padding: 14px 20px; border-top: 1px solid var(--tr-color-line-rule-soft); font-family: var(--font-mono, ui-monospace, monospace); font-size: 15px; line-height: 1.8; overflow-x: auto; white-space: nowrap; }
+.compare-diff del { display: block; color: var(--tr-color-text-tertiary); text-decoration: none; }
+.compare-diff ins { display: block; color: var(--compare-win, #9ee6b8); text-decoration: none; }
+.compare-section .compare-inline-links { display: flex; flex-wrap: wrap; gap: 6px 20px; margin: 16px 0 0; font-size: 16px; }
+
+@media (max-width: 640px) {
+  .compare-hero { gap: 16px; padding: 36px 0 36px; }
+  .compare-logos img { width: 40px; height: 40px; border-radius: 10px; }
+  .compare-logos img + img { margin-left: -10px; }
+  .compare-hero h1 { font-stretch: 112%; }
+  /* The sign-up button stays inside the first phone screen; the prices follow it. */
+  .compare-score { order: 1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .compare-score-item { padding: 14px 0; }
+  .compare-score-item + .compare-score-item { padding-left: 16px; }
+  .compare-score-note { grid-column: 1 / -1; max-width: none; padding: 0 0 14px; }
+  .compare-cta { align-items: stretch; }
+  .compare-cta .btn.primary { width: 100%; justify-content: center; }
+  .compare-cta-note { text-align: center; }
+  .compare-section { padding-bottom: 44px; }
+  .public-wrap .compare-section > p { font-size: 16px; }
+  .compare-code pre { padding: 14px; }
+  .compare-code pre code { font-size: 13px; }
+  .compare-code-head { padding-left: 14px; }
+  .compare-code-foot { flex-direction: column; align-items: stretch; padding: 14px; font-size: 15px; }
+  .compare-code-foot .btn.primary { width: 100%; justify-content: center; }
+  .compare-faq summary { font-size: 16px; padding: 14px 0; }
+  .compare-faq details p { font-size: 15px; }
+  .compare-chip-track { margin-right: calc(-1 * var(--compare-gutter, 0px)); }
+  .compare-band { padding: 28px 22px; margin-bottom: 48px; }
+  .compare-diff { padding: 12px 14px; font-size: 12.5px; }
+}
+
+/* Sources: one line, opens to the list */
+.compare-sources { margin-top: 16px; }
+.compare-sources summary { display: inline-flex; align-items: center; min-height: 44px; color: var(--tr-color-link-base); font-size: 15px; cursor: pointer; }
+.compare-sources ul { margin: 4px 0 0; padding-left: 20px; color: var(--tr-color-text-primary); font-size: 15px; line-height: 1.9; }

@@ -6,23 +6,24 @@ const { expect, test } = require("@playwright/test");
 const PAGES = [
   { family: "model", path: "/models/moonshotai/kimi-k3", label: "Free to start", pitch: /^Try Kimi K3 on us\. Starter credit/ },
   { family: "model section", path: "/models/moonshotai/kimi-k3/pricing", label: "Free to start", pitch: /^Try Kimi K3 on us\. Starter credit/ },
-  { family: "comparison", path: "/compare/models/moonshotai/kimi-k3/vs/z-ai/glm-5.3", label: "Free to start", pitch: /^Try both on us\. Starter credit/ },
+  { family: "comparison", path: "/compare/models/moonshotai/kimi-k3/vs/z-ai/glm-5.3", hero: ".compare-hero", lead: ".compare-lead", label: null, pitch: /One API key runs both\.$/, ctaText: "Create my API key" },
   { family: "provider", path: "/providers/tinfoil", label: "Free to start", pitch: /^Try Tinfoil on us\. Starter credit/ },
 ];
 
-for (const { family, path, label, pitch } of PAGES) {
+for (const { family, path, label, pitch, hero: heroSelector = ".catalog-hero", lead = ".lead", ctaText = "Create key" } of PAGES) {
   for (const viewport of [{ width: 320, height: 568 }, { width: 390, height: 844 }, { width: 1440, height: 900 }]) {
     test(`${family} page CTA is above the fold and opens sign-up at ${viewport.width}px`, async ({ page }) => {
       await page.setViewportSize(viewport);
       await page.route("**/v1/models/picker", route => route.fulfill({ json: { data: [] } }));
       await page.goto(path);
 
-      const hero = page.locator(".catalog-hero");
-      await expect(hero.locator(".kicker")).toHaveText(label);
-      await expect(hero.locator(".lead")).toHaveText(pitch);
+      const hero = page.locator(heroSelector);
+      // The comparison hero leads with its verdict instead of a label.
+      if (label) await expect(hero.locator(".kicker")).toHaveText(label);
+      await expect(hero.locator(lead)).toHaveText(pitch);
       const cta = hero.locator("[data-catalog-cta]");
       await expect(cta).toHaveCount(1);
-      await expect(cta).toHaveText("Create key");
+      await expect(cta).toHaveText(ctaText);
       // Above the fold: the button is fully inside the first screen with no scrolling.
       const box = await cta.boundingBox();
       expect(box.y).toBeGreaterThan(0);

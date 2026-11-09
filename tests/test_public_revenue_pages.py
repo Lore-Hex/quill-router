@@ -21,7 +21,7 @@ from trusted_router.provider_lifecycle import (
 
 def test_revenue_pages_are_public(client: TestClient) -> None:
     markers = {
-        "/compare/openrouter": "OpenRouter, but you can verify the prompt path.",
+        "/compare/openrouter": "Move from OpenRouter in one line.",
         "/compare/vercel-ai-gateway": "Use Vercel where it fits.",
         "/compare/litellm": "LiteLLM and TrustedRouter fit in the same stack.",
         "/docs/migrate-from-openrouter": "Change base_url",
@@ -100,6 +100,9 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
                 "OpenRouter Alternatives: TrustedRouter vs 9 AI Gateways (2026)"
             )
             assert "OpenAI compatible API" not in response.text
+        elif path == "/compare/openrouter":
+            # The comparison page has its own hero: the two logos and a verdict.
+            assert 'class="compare-hero"' in response.text
         elif not path.startswith("/blog"):
             assert "OpenAI compatible API" in response.text
         assert "Invalid API key" not in response.text

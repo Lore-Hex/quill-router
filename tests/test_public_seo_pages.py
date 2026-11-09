@@ -1413,14 +1413,14 @@ def test_model_comparison_pages_are_public(
     response = client.get("/compare/models/moonshotai/kimi-k2.6/vs/z-ai/glm-5.1")
 
     assert response.status_code == 200
-    assert "MoonshotAI: Kimi K2.6 vs Z.ai: GLM 5.1" in response.text
-    assert "Practical read" in response.text
-    assert "Cheapest route adds the rate for one million input" in response.text
+    assert "<h1>Kimi K2.6 vs GLM 5.1</h1>" in response.text
+    assert "Side by side" in response.text
+    assert "Price adds one million input and one million output tokens" in response.text
     assert "Compare routes" not in response.text
     # Without probe measurements the speed row and its FAQ answer are left out
     # rather than saying "not enough data".
     assert "not enough data" not in response.text
-    assert "Fastest measured p50 TTFT" not in response.text
+    assert "First token, p50" not in response.text
     assert "MoonshotAI: Kimi K2.6 or Z.ai: GLM 5.1 faster?" not in response.text
     assert 'href="https://aiiq.org/models/kimi-k2.6/"' in response.text
     assert "IQ 116" in response.text
@@ -1550,17 +1550,16 @@ def test_model_comparison_surfaces_distinct_measured_route_metrics(
     response = client.get("/compare/models/moonshotai/kimi-k2.6/vs/z-ai/glm-5.1")
 
     assert response.status_code == 200
-    assert "Highest measured throughput" in response.text
+    assert "Throughput" in response.text
     assert "75 tok/s" in response.text
     assert "48 tok/s" in response.text
     assert "Recent route uptime range" in response.text
     assert "99.50%" in response.text
     assert "100.00%" in response.text
-    assert "Related comparisons" in response.text
-    assert "Browse every comparison" in response.text
-    assert "Keep comparing" in response.text
-    assert "Previous comparison" in response.text
-    assert "Next comparison" in response.text
+    assert "More comparisons" in response.text
+    assert 'href="/compare/models">All comparisons' in response.text
+    # Both directory neighbours are linked, so every pair stays reachable.
+    assert 'href="/compare/models/moonshotai/kimi-k2.6/vs/z-ai/glm-5.3"' in response.text
 
 
 def test_reversed_model_comparison_redirects_to_stable_canonical(
@@ -1645,8 +1644,8 @@ def test_model_comparison_graph_gives_every_page_two_inbound_neighbors() -> None
     assert set(neighbor_index) == expected_paths
     for source, neighbors in neighbor_index.items():
         assert len(neighbors) == 2
-        assert {relation for _href, _label, relation in neighbors} == {"Previous", "Next"}
-        for href, _label, _relation in neighbors:
+        assert {relation for _href, _label, _short, relation in neighbors} == {"Previous", "Next"}
+        for href, _label, _short, _relation in neighbors:
             assert href != source
             assert href in inbound_counts
             inbound_counts[href] += 1
