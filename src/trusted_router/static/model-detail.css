@@ -661,10 +661,16 @@ html:not(.js-off) .md-code-panel[data-md-inactive] {
 
 /* Related pages: the kit's action link (link blue, soft underline, arrow
  * that nudges right on hover), one per line on phones. */
+/* One privacy link under the provider table; the model's other pages sit in
+ * one row after the About facts. */
+.md-privacy-link {
+  margin: 12px 0 0;
+}
+
 .md-more-links {
-  display: grid;
-  grid-template-columns: repeat(2, max-content);
-  gap: 0 40px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 36px;
   margin: 20px 0 0;
   padding: 0;
   list-style: none;
@@ -702,19 +708,7 @@ html:not(.js-off) .md-code-panel[data-md-inactive] {
 
 @media (max-width: 639px) {
   .md-more-links {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 0;
-    border-top: 1px solid var(--md-line);
-  }
-
-  .md-more-links li {
-    border-bottom: 1px solid var(--md-line);
-  }
-
-  .md-more-links a {
-    display: flex;
-    justify-content: space-between;
-    min-height: 52px;
+    gap: 0 24px;
   }
 }
 
@@ -975,10 +969,14 @@ html:not(.js-off) .md-code-panel[data-md-inactive] {
     padding: 0 20px;
   }
 
-  /* More air on phones so the hero button lands nearer the thumb. */
+  /* On phones the hero fills the first screen, and the button sits at its
+   * foot, near the thumb. The quickstart starts below the fold. */
   .md-hero {
-    gap: 26px;
-    padding: 52px 0 36px;
+    box-sizing: border-box;
+    min-height: calc(100svh - var(--sticky-header-height, 78px));
+    justify-content: space-evenly;
+    gap: 28px;
+    padding: 24px 0 32px;
   }
 
   .md-title-row {
@@ -1055,7 +1053,7 @@ html:not(.js-off) .md-code-panel[data-md-inactive] {
 
   .md-actions {
     align-items: stretch;
-    margin-top: 10px;
+    margin-top: 0;
   }
 
   .model-detail-page .md-hero .md-no-card,
