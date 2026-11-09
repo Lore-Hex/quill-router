@@ -74,8 +74,9 @@ def test_sourcing_the_file_in_bash_sets_the_same_values() -> None:
 def test_all_mode_empties_the_pilot_set_and_the_include_list_keeps_its_own() -> None:
     """WS2 (section 8.2): the explicit set is empty, as the settings require
     in all mode; the include list is its own literal, so emptying the set
-    did not empty it; and no workspace is on both it and the exclude list,
-    which the enabler's settings refuse."""
+    did not empty it; the exclude list names each probe's workspace (section
+    4(c)); and no workspace is on both lists, an overlap the settings accept
+    and the enabler acts on, disabling the workspace's row as excluded."""
     values = _assignments()
     assert values["TR_FASTPATH_PILOT_WORKSPACES"] == ""
     assert 'TR_FASTPATH_PILOT_WORKSPACES=""' in LISTS.read_text().splitlines()
@@ -83,6 +84,12 @@ def test_all_mode_empties_the_pilot_set_and_the_include_list_keeps_its_own() -> 
     exclude = values["TR_FASTPATH_PILOT_EXCLUDE"].split(",")
     assert len(include) == len(set(include)) == 3 and all(include)
     assert len(exclude) == len(set(exclude)) and all(exclude)
+    # Each probe's workspace by name: one dropped is one all mode covers.
+    assert set(exclude) == {
+        "91d7810e-93b2-4c37-b1bd-ba9227585416",  # the Stage D probe's
+        "d385c399-b245-4147-a528-0a4f6f170c71",  # the synthetic monitor's
+        "162e441a-5d13-414f-92bd-7c6cd805faa3",  # the async settle pilot probe's
+    }
     assert not set(include) & set(exclude)
     # A literal of its own: no reference left to a list WS2 emptied.
     assert not any(REFERENCE.fullmatch(line) for line in LISTS.read_text().splitlines())
