@@ -28,7 +28,7 @@ class MemberBadgeTests(unittest.TestCase):
         # Only the explicitly public brand guide/logo exports may be published.
         self.assertEqual(
             {p.relative_to(self.root).as_posix() for p in self.root.rglob("*.pdf")},
-            {"assets/press/nyte-brand-guidelines-v1.pdf"}
+            {"assets/press/nyte-brand-guidelines-v1.pdf", "assets/press/nyte-full-name-logo.pdf"}
             | {f"assets/press/guide/{name}.pdf" for name in (
                 "horizontal", "stacked-lockup", "one-line-name", "stacked-name", "wordmark", "globe",
             )},

@@ -42,7 +42,7 @@ class ProviderPageTests(unittest.TestCase):
         # Public identity PDFs do not make the commercial provider deck public.
         self.assertEqual(
             {p.relative_to(self.root).as_posix() for p in self.root.rglob("*.pdf")},
-            {"assets/press/nyte-brand-guidelines-v1.pdf"}
+            {"assets/press/nyte-brand-guidelines-v1.pdf", "assets/press/nyte-full-name-logo.pdf"}
             | {f"assets/press/guide/{name}.pdf" for name in (
                 "horizontal", "stacked-lockup", "one-line-name", "stacked-name", "wordmark", "globe",
             )},
