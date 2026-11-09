@@ -456,3 +456,7 @@ html:not(.js-off) .md-code-panel[data-md-inactive] { display: none; }
   .compare-section-head { flex-direction: column; align-items: flex-start; gap: 6px; }
 }
 
+
+/* The closing band ends the page: trim the page's own bottom padding so the
+   band sits 48px above the footer instead of 108px. */
+main.public-wrap:has(> .compare-band:last-child) { padding-bottom: 12px; }
