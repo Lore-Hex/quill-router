@@ -174,6 +174,29 @@ def test_worker_uses_six_hour_cadence(monkeypatch):
     assert len(calls) == 1
 
 
+def test_empty_worker_result_keeps_previous_snapshot(monkeypatch):
+    monkeypatch.setattr(worker, "_query", lambda *args, **kwargs: "")
+    published = []
+    monkeypatch.setattr(worker, "_insert_snapshots", lambda *args, **kwargs: published.append(args))
+    worker._publish_model_routing("unused", now=NOW, generated_at=NOW.isoformat())
+    assert published == []
+
+
+def test_empty_refresh_keeps_previous_file(monkeypatch, tmp_path):
+    from scripts import update_model_routing_evidence as refresh
+
+    now = datetime.now(UTC)
+    destination, source = tmp_path / "evidence.json", tmp_path / "source.json"
+    destination.write_text(json.dumps(payload(row("akashml"), at=now - timedelta(days=2))))
+    source.write_text(json.dumps(payload(at=now)))
+    before = destination.read_bytes()
+    monkeypatch.setattr(refresh, "EVIDENCE_PATH", destination)
+    monkeypatch.setattr("sys.argv", ["refresh", "--json", str(source), "--write"])
+    with pytest.raises(ValueError, match="empty model routing evidence"):
+        refresh.main()
+    assert destination.read_bytes() == before
+
+
 def test_snapshot_failure_and_atomic_write_preserve_old_file(monkeypatch, tmp_path):
     from scripts import update_model_routing_evidence as refresh
 

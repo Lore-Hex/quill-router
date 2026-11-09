@@ -36,7 +36,9 @@ def main() -> None:
         response = httpx.get(SOURCE, timeout=30.0, follow_redirects=False)
         response.raise_for_status()
         payload = response.json()
-    generated, _ = validate_evidence(payload)
+    generated, rows = validate_evidence(payload)
+    if not rows:
+        raise ValueError("empty model routing evidence")
     if not timedelta(0) <= now - generated <= timedelta(hours=12):
         raise ValueError("model routing evidence is stale or future-dated")
     if previous is not None and generated <= validate_evidence(previous)[0]:

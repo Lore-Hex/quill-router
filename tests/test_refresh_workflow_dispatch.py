@@ -318,6 +318,7 @@ def publication_repo(tmp_path: Path, publication_script: str) -> PublicationRepo
         "src/trusted_router/data/speech_pricing.json",
         "src/trusted_router/data/transcription_pricing.json",
         "src/trusted_router/data/provider_routing_evidence.json",
+        "src/trusted_router/data/model_routing_evidence.json",
         "src/trusted_router/data/provider_models/fixture.json",
         "src/trusted_router/data/model_changes.jsonl",
         "src/trusted_router/data/model_changes_state.json",

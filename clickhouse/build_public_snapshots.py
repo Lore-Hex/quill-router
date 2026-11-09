@@ -243,6 +243,8 @@ FORMAT JSONEachRow
             "end_at": now.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
         })
         rows = [json.loads(line) for line in output.splitlines() if line.strip()]
+        if not rows:
+            raise ValueError("empty model routing evidence")
         for row in rows:
             for field in ("input_bucket", "ttft_samples", "ttft_ms", "throughput_samples", "tps_milli"):
                 if row[field] is not None:
