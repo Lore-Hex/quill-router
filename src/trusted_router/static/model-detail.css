@@ -386,15 +386,32 @@ html:not(.js-off) .md-code-panel[data-md-inactive] {
 }
 
 .md-expand {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 100%;
-  min-height: 44px;
+  min-height: 48px;
+  margin-top: -8px;
   border: 0;
-  border-top: 1px solid var(--md-line);
   background: transparent;
   color: var(--md-accent);
-  font: 550 15px var(--tr-font-family-sans, Archivo, Arial, sans-serif);
   cursor: pointer;
+}
+
+.md-expand-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--tr-color-line-control, #526859);
+  border-radius: 50%;
+  background: var(--md-code-bg, #0F1411);
+  transition: transform 160ms ease;
+}
+
+.md-expand[aria-expanded="true"] .md-expand-icon {
+  transform: rotate(180deg);
 }
 
 .md-code-foot {
@@ -640,6 +657,65 @@ html:not(.js-off) .md-code-panel[data-md-inactive] {
   color: var(--md-secondary);
   font-size: 15px;
   line-height: 1.6;
+}
+
+/* Related pages: the kit's action link (link blue, soft underline, arrow
+ * that nudges right on hover), one per line on phones. */
+.md-more-links {
+  display: grid;
+  grid-template-columns: repeat(2, max-content);
+  gap: 0 40px;
+  margin: 20px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.md-more-links a {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  color: var(--tr-color-link-base, #C0E1FF);
+  font-size: 16px;
+  font-weight: 550;
+  text-decoration: none;
+}
+
+.md-more-links .md-link-text {
+  text-decoration: underline;
+  text-decoration-color: var(--tr-color-link-underline, #6F8FA8);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 5px;
+}
+
+.md-more-links a:hover .md-link-text {
+  text-decoration-color: currentColor;
+}
+
+.md-more-links a span[aria-hidden] {
+  transition: transform 160ms ease;
+}
+
+.md-more-links a:hover span[aria-hidden] {
+  transform: translateX(3px);
+}
+
+@media (max-width: 639px) {
+  .md-more-links {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+    border-top: 1px solid var(--md-line);
+  }
+
+  .md-more-links li {
+    border-bottom: 1px solid var(--md-line);
+  }
+
+  .md-more-links a {
+    display: flex;
+    justify-content: space-between;
+    min-height: 52px;
+  }
 }
 
 .md-foot-note code,
@@ -899,9 +975,10 @@ html:not(.js-off) .md-code-panel[data-md-inactive] {
     padding: 0 20px;
   }
 
+  /* More air on phones so the hero button lands nearer the thumb. */
   .md-hero {
-    gap: 16px;
-    padding: 36px 0 32px;
+    gap: 26px;
+    padding: 52px 0 36px;
   }
 
   .md-title-row {
@@ -978,7 +1055,7 @@ html:not(.js-off) .md-code-panel[data-md-inactive] {
 
   .md-actions {
     align-items: stretch;
-    margin-top: 0;
+    margin-top: 10px;
   }
 
   .model-detail-page .md-hero .md-no-card,

@@ -6348,6 +6348,7 @@ def _model_faq_items(
     *,
     route_evidence: Mapping[str, object],
 ) -> tuple[tuple[str, str], ...]:
+    name = _hero_model_name(model)
     credits_endpoints = _credits_endpoints(endpoints_for_model(model.id))
     provider_names = [
         provider["name"]
@@ -6386,12 +6387,12 @@ def _model_faq_items(
         )
     else:
         price_answer = (
-            f"TrustedRouter currently publishes no Credits provider route for {model.name}, "
+            f"TrustedRouter currently publishes no Credits provider route for {name}, "
             "so no public Credits price is available."
         )
     return (
         (
-            f"What model ID should I use for {model.name}?",
+            f"What model ID should I use for {name}?",
             f"Use {model.id} as the model field with the TrustedRouter OpenAI-compatible "
             "API. Credits routing and provider fallback happen behind that model ID.",
         ),
@@ -6402,16 +6403,16 @@ def _model_faq_items(
             "configuration.",
         ),
         (
-            f"Which providers serve {model.name}?",
-            f"TrustedRouter currently lists {provider_answer} for {model.name}. Provider "
+            f"Which providers serve {name}?",
+            f"TrustedRouter currently lists {provider_answer} for {name}. Provider "
             "availability and routing eligibility can change as catalog and health data update.",
         ),
         (
-            f"How much does {model.name} cost through TrustedRouter?",
+            f"How much does {name} cost through TrustedRouter?",
             price_answer,
         ),
         (
-            f"How do I require zero data retention for {model.name}?",
+            f"How do I require zero data retention for {name}?",
             "Set provider.min_privacy to zdr on the request. TrustedRouter considers only "
             "routes with a recorded zero-data-retention posture and fails closed if no "
             "eligible route remains.",

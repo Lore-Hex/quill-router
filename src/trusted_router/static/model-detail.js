@@ -59,7 +59,7 @@
       expand.addEventListener("click", () => {
         const open = expand.getAttribute("aria-expanded") !== "true";
         expand.setAttribute("aria-expanded", open ? "true" : "false");
-        expand.textContent = open ? "Show less" : "Show full prompt";
+        expand.setAttribute("aria-label", open ? "Show less" : "Show full prompt");
         code.classList.toggle("md-expanded", open);
         syncFold();
       });

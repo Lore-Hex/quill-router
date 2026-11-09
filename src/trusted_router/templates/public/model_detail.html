@@ -185,7 +185,7 @@ print(response.choices[0].message.content)
 {%- endif %}</code></pre>
       </div>
     </div>
-    <button class="md-expand" type="button" data-md-expand aria-expanded="false" hidden>Show full prompt</button>
+    <button class="md-expand" type="button" data-md-expand aria-expanded="false" aria-label="Show full prompt" hidden><span class="md-expand-icon" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span></button>
     <div class="md-code-foot">
       <span>Your agent will need an API key.</span>
       {{ signup_button("md-cta-small") }}
@@ -329,7 +329,7 @@ print(response.choices[0].message.content)
   {% else %}
   <p class="md-intro">No Credits provider route is currently published for this model.</p>
   {% endif %}
-  <p class="md-foot-note md-more-links"><a href="/trust">How we check privacy claims</a>{% for link in model.section_links if not link.active %} · <a href="{{ link.href }}">{{ name }} {{ link.label|lower }}</a>{% endfor %}</p>
+  <ul class="md-more-links"><li><a href="/trust"><span class="md-link-text">How we check privacy claims</span><span aria-hidden="true">→</span></a></li>{% for link in model.section_links if not link.active %}<li><a href="{{ link.href }}"><span class="md-link-text">{{ name }} {{ link.label|lower }}</span><span aria-hidden="true">→</span></a></li>{% endfor %}</ul>
   {% endif %}
 </section>
 
