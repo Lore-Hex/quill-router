@@ -137,6 +137,9 @@ main .tags .tag.cap{background:var(--cream)}
 .film .play .pb{display:grid;place-items:center;width:96px;height:96px;border-radius:50%;background:var(--ink);color:var(--cream);box-shadow:0 6px 24px rgba(21,19,17,.35);transition:transform .15s,background .15s}
 .film .play .pb svg{width:44px;height:44px;margin-left:5px;fill:currentColor}
 .film .play:hover .pb,.film .play:focus-visible .pb{transform:scale(1.06);background:#000}
+/* The button fills the film, which clips the global focus ring, so the round button shows focus itself. */
+.film .play:focus-visible{outline:none}
+.film .play:focus-visible .pb{outline:3px solid var(--cream);outline-offset:4px}
 .film .play .dur{position:absolute;right:16px;bottom:16px;padding:4px 8px;border-radius:4px;background:rgba(21,19,17,.85);color:var(--cream);font:500 14px/1.2 var(--font-sans);font-variant-numeric:tabular-nums}
 @media (max-width:900px){
   .v3-quotes{grid-template-columns:1fr;gap:32px}
