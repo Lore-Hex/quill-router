@@ -5,6 +5,7 @@ import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
+import httpx
 import pytest
 
 from clickhouse import build_public_snapshots as worker
@@ -243,3 +244,27 @@ def test_unknown_endpoint_never_inherits_other_models_latency_rank(monkeypatch):
     assert _sort_endpoint_candidates(list(reversed(items)), RoutePreferences(
         estimated_input_tokens=100, sort="latency",
     ))[0][1].provider == "tinfoil"
+
+
+def test_public_endpoint_uses_real_bounded_snapshot_reader(client, monkeypatch):
+    from trusted_router.operational_analytics import OperationalAnalyticsClient
+    from trusted_router.storage import InMemoryStore
+
+    data = payload(row("akashml"), at=datetime.now(UTC))
+    calls = []
+    def read(request):
+        calls.append(request)
+        assert request.url.params["param_name"] == "model_routing_evidence"
+        sql = request.content.decode()
+        assert "FROM public_analytics_snapshots FINAL" in sql
+        assert "WHERE name = {name:String}" in sql and "LIMIT 1" in sql
+        assert "activity_generations" not in sql
+        return httpx.Response(200, json={"data": [{"payload": json.dumps(data)}]})
+    reader = OperationalAnalyticsClient(
+        base_url="http://clickhouse.test", user="test", password="", transport=httpx.MockTransport(read),
+    )
+    monkeypatch.setattr(InMemoryStore, "public_analytics_snapshot",
+                        lambda self, name: reader.public_snapshot(name), raising=False)
+    response = client.get("/routing-evidence.json")
+    assert response.status_code == 200 and response.json() == data
+    assert len(calls) == 1

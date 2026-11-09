@@ -506,6 +506,7 @@ FORMAT JSON
             "status_inputs",
             "client_reliability",
             "encrypted_ai",
+            "model_routing_evidence",
         }:
             raise ValueError("unsupported public analytics snapshot")
         rows = self._query(
