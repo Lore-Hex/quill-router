@@ -55,10 +55,10 @@
   },
   "anthropic": {
     "card_version": 2,
-    "model_count": 14,
+    "model_count": 15,
     "name": "Anthropic",
     "privacy": "Policy documented",
-    "route_count": 28,
+    "route_count": 30,
     "route_mode": "Prepaid + BYOK",
     "slug": "anthropic"
   },
@@ -145,10 +145,10 @@
   },
   "chutes": {
     "card_version": 2,
-    "model_count": 10,
+    "model_count": 11,
     "name": "Chutes",
     "privacy": "Confidential + ZDR",
-    "route_count": 20,
+    "route_count": 22,
     "route_mode": "Prepaid + BYOK",
     "slug": "chutes"
   },
@@ -181,10 +181,10 @@
   },
   "coralbricks": {
     "card_version": 2,
-    "model_count": 2,
+    "model_count": 3,
     "name": "CoralBricks",
     "privacy": "TR-funded ZDR",
-    "route_count": 2,
+    "route_count": 3,
     "route_mode": "Prepaid",
     "slug": "coralbricks"
   },
@@ -325,10 +325,10 @@
   },
   "gmi": {
     "card_version": 2,
-    "model_count": 76,
+    "model_count": 75,
     "name": "GMI Cloud",
     "privacy": "Policy documented",
-    "route_count": 83,
+    "route_count": 82,
     "route_mode": "Prepaid + BYOK",
     "slug": "gmi"
   },
@@ -865,10 +865,10 @@
   },
   "streamlake": {
     "card_version": 2,
-    "model_count": 17,
+    "model_count": 20,
     "name": "StreamLake",
     "privacy": "Policy documented",
-    "route_count": 17,
+    "route_count": 20,
     "route_mode": "Prepaid",
     "slug": "streamlake"
   },

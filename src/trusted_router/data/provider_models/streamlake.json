@@ -922,9 +922,78 @@
       "input_token_price_per_m": 500000,
       "output_token_price_per_m": 3000000,
       "cached_input_token_price_per_m": 100000
+    },
+    {
+      "display_name": "DeepSeek-V4.1-Flash-1017",
+      "title": "DeepSeek-V4.1-Flash-1017",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4.1-flash-1017",
+      "upstream_id": "DeepSeek-V4.1-Flash-1017",
+      "context_length": 1048576,
+      "routable": true,
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 1200000,
+      "cached_input_token_price_per_m": 6000
+    },
+    {
+      "display_name": "MiMo-V2.6-Flash",
+      "title": "MiMo-V2.6-Flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "xiaomi/mimo-v2.6-flash",
+      "upstream_id": "MiMo-V2.6-Flash",
+      "context_length": 1024000,
+      "routable": true,
+      "input_token_price_per_m": 140000,
+      "output_token_price_per_m": 280000,
+      "cached_input_token_price_per_m": 2800
+    },
+    {
+      "display_name": "MiMo-V2.6-Pro",
+      "title": "MiMo-V2.6-Pro",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "xiaomi/mimo-v2.6-pro",
+      "upstream_id": "MiMo-V2.6-Pro",
+      "context_length": 1024000,
+      "routable": true,
+      "input_token_price_per_m": 435000,
+      "output_token_price_per_m": 870000,
+      "cached_input_token_price_per_m": 3600
     }
   ],
-  "generated_at": "2026-11-09T01:13:26Z",
-  "model_count": 39,
+  "generated_at": "2026-11-09T20:34:59Z",
+  "model_count": 42,
   "pricing_source": "https://www.streamlake.ai/document/DOC/mgrnm4xm362hvp5wyce"
 }

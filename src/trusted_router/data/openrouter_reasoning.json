@@ -82,6 +82,30 @@
       ],
       "default_effort": "high"
     },
+    "anthropic/claude-fable-5.2": {
+      "mandatory": true,
+      "default_enabled": false,
+      "supported_efforts": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "default_effort": "high"
+    },
+    "anthropic/claude-fable-5.2:batch": {
+      "mandatory": true,
+      "default_enabled": false,
+      "supported_efforts": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low"
+      ],
+      "default_effort": "high"
+    },
     "anthropic/claude-fable-5:batch": {
       "mandatory": true,
       "default_enabled": false,
@@ -998,6 +1022,19 @@
       "supported_efforts": [],
       "default_effort": null
     },
+    "meta/muse-ember": {
+      "mandatory": true,
+      "default_enabled": false,
+      "supported_efforts": [
+        "max",
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "minimal"
+      ],
+      "default_effort": "max"
+    },
     "meta/muse-glimmer-30b": {
       "mandatory": true,
       "default_enabled": false,
@@ -1105,12 +1142,6 @@
         "minimal"
       ],
       "default_effort": "medium"
-    },
-    "minimax/minimax-m1": {
-      "mandatory": false,
-      "default_enabled": false,
-      "supported_efforts": [],
-      "default_effort": null
     },
     "minimax/minimax-m2.5": {
       "mandatory": true,
@@ -2426,6 +2457,18 @@
       "default_effort": null
     },
     "qwen/qwen3.8-max-0902": {
+      "mandatory": true,
+      "default_enabled": true,
+      "supported_efforts": [
+        "xhigh",
+        "high",
+        "medium",
+        "low",
+        "minimal"
+      ],
+      "default_effort": "xhigh"
+    },
+    "qwen/qwen3.8-max-0902:batch": {
       "mandatory": true,
       "default_enabled": true,
       "supported_efforts": [

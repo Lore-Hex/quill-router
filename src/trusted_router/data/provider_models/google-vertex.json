@@ -3,8 +3,8 @@
   "provider": "google-vertex",
   "source": "https://aiplatform.googleapis.com/v1beta1/publishers/google/models",
   "pricing_source": "https://cloud.google.com/vertex-ai/generative-ai/pricing",
-  "generated_at": "2026-11-09T01:13:26Z",
-  "model_count": 46,
+  "generated_at": "2026-11-09T20:34:59Z",
+  "model_count": 47,
   "models": [
     {
       "id": "google/gemini-3.6-flash",
@@ -1152,6 +1152,28 @@
       "upstream_id": "gemini-omni-1.2-flash",
       "routable": false,
       "routable_reason": "unsupported-vertex-api"
+    },
+    {
+      "display_name": "anthropic/claude-fable-5.2",
+      "title": "claude-fable-5-2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-fable-5.2",
+      "upstream_id": "claude-fable-5-2",
+      "routable": false,
+      "routable_reason": "vertex-metadata-unavailable",
+      "input_token_price_per_m": 8000000,
+      "output_token_price_per_m": 40000000,
+      "cached_input_token_price_per_m": 200000
     }
   ],
   "price_scale": "microdollars_per_million"

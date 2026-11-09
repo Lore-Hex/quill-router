@@ -339,7 +339,7 @@
       "id": "moonshotai/kimi-k3",
       "upstream_id": "kimi-k3",
       "context_length": 1048576,
-      "created": 1784131200,
+      "created": 1784160000,
       "routable": true,
       "supported_features": [
         "function-calling",
@@ -549,7 +549,8 @@
       "max_output_tokens": 65536,
       "input_token_price_per_m": 834000,
       "output_token_price_per_m": 2501000,
-      "cached_input_token_price_per_m": 42000
+      "cached_input_token_price_per_m": 42000,
+      "missing_since": "2026-11-09"
     },
     {
       "display_name": "MiMo-V2.5-Pro",
@@ -800,7 +801,7 @@
   ],
   "source": "https://tokenhub-intl.tencentcloudmaas.com/v1/models",
   "pricing_source": "https://intl.cloud.tencent.com/document/product/1300/78937",
-  "generated_at": "2026-11-09T01:13:26Z",
+  "generated_at": "2026-11-09T20:34:59Z",
   "price_scale": "microdollars_per_million",
   "model_count": 26
 }

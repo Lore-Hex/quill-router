@@ -806,11 +806,42 @@
       "input_token_price_per_m": 95000,
       "output_token_price_per_m": 475000,
       "cached_input_token_price_per_m": 95000
+    },
+    {
+      "display_name": "Claude Fable 5.2",
+      "title": "anthropic/claude-fable-5.2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-fable-5.2",
+      "upstream_id": "anthropic/claude-fable-5.2",
+      "supported_features": [
+        "chat",
+        "completion",
+        "streaming",
+        "prompt_caching",
+        "reasoning",
+        "tools"
+      ],
+      "context_length": 1000000,
+      "routable": true,
+      "input_token_price_per_m": 8000000,
+      "output_token_price_per_m": 40000000,
+      "cached_input_token_price_per_m": 200000
     }
   ],
   "source": "https://api.inference.boundless.network/v1/models",
   "pricing_source": "https://inference.boundless.network/models",
-  "generated_at": "2026-11-09T01:13:26Z",
+  "generated_at": "2026-11-09T20:34:59Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 26
+  "model_count": 27
 }

@@ -18,8 +18,7 @@
       "id": "bytedance/deepseek-r1-250120",
       "upstream_id": "deepseek-r1-250120",
       "routable": false,
-      "routable_reason": "provider-retired",
-      "missing_since": "2026-11-07"
+      "routable_reason": "provider-retired"
     },
     {
       "display_name": "deepseek-r1",
@@ -38,8 +37,7 @@
       "id": "bytedance/deepseek-r1-250528",
       "upstream_id": "deepseek-r1-250528",
       "routable": false,
-      "routable_reason": "provider-retired",
-      "missing_since": "2026-11-07"
+      "routable_reason": "provider-retired"
     },
     {
       "display_name": "deepseek-r1-distill-qwen-32b",
@@ -58,8 +56,7 @@
       "id": "bytedance/deepseek-r1-distill-qwen-32b-250120",
       "upstream_id": "deepseek-r1-distill-qwen-32b-250120",
       "routable": false,
-      "routable_reason": "provider-retired",
-      "missing_since": "2026-11-07"
+      "routable_reason": "provider-retired"
     },
     {
       "display_name": "deepseek-v3",
@@ -78,8 +75,7 @@
       "id": "bytedance/deepseek-v3",
       "upstream_id": "deepseek-v3",
       "routable": false,
-      "routable_reason": "provider-retired",
-      "missing_since": "2026-11-07"
+      "routable_reason": "provider-retired"
     },
     {
       "display_name": "deepseek-v3-1",
@@ -136,8 +132,7 @@
       "id": "bytedance/deepseek-v3-241226",
       "upstream_id": "deepseek-v3-241226",
       "routable": false,
-      "routable_reason": "provider-retired",
-      "missing_since": "2026-11-07"
+      "routable_reason": "provider-retired"
     },
     {
       "display_name": "dola-seed-2-1-turbo",
@@ -159,8 +154,7 @@
       "max_output_tokens": 262144,
       "supported_features": [
         "streaming",
-        "tools",
-        "prompt_caching"
+        "tools"
       ],
       "input_token_price_per_m": 500000,
       "output_token_price_per_m": 2500000,
@@ -317,8 +311,7 @@
       "id": "bytedance/kimi-k2-250711",
       "upstream_id": "kimi-k2-250711",
       "routable": false,
-      "routable_reason": "provider-retired",
-      "missing_since": "2026-11-07"
+      "routable_reason": "provider-retired"
     },
     {
       "display_name": "kimi-k2",
@@ -337,8 +330,7 @@
       "id": "bytedance/kimi-k2-250905",
       "upstream_id": "kimi-k2-250905",
       "routable": false,
-      "routable_reason": "provider-retired",
-      "missing_since": "2026-11-07"
+      "routable_reason": "provider-retired"
     },
     {
       "display_name": "kimi-k2",
@@ -357,8 +349,7 @@
       "id": "bytedance/kimi-k2-thinking-251104",
       "upstream_id": "kimi-k2-thinking-251104",
       "routable": false,
-      "routable_reason": "provider-retired",
-      "missing_since": "2026-11-07"
+      "routable_reason": "provider-retired"
     },
     {
       "display_name": "seed-1-6",
@@ -475,8 +466,7 @@
       "max_output_tokens": 131072,
       "supported_features": [
         "streaming",
-        "tools",
-        "prompt_caching"
+        "tools"
       ],
       "input_token_price_per_m": 500000,
       "output_token_price_per_m": 3000000,
@@ -536,8 +526,7 @@
       "max_output_tokens": 131072,
       "supported_features": [
         "streaming",
-        "tools",
-        "prompt_caching"
+        "tools"
       ],
       "input_token_price_per_m": 250000,
       "output_token_price_per_m": 2000000,
@@ -597,8 +586,7 @@
       "max_output_tokens": 131072,
       "supported_features": [
         "streaming",
-        "tools",
-        "prompt_caching"
+        "tools"
       ],
       "input_token_price_per_m": 100000,
       "output_token_price_per_m": 400000,
@@ -639,8 +627,7 @@
       "max_output_tokens": 131072,
       "supported_features": [
         "streaming",
-        "tools",
-        "prompt_caching"
+        "tools"
       ],
       "input_token_price_per_m": 500000,
       "output_token_price_per_m": 3000000,
@@ -875,8 +862,7 @@
       "id": "bytedance/seededit-3-0-i2i-250628",
       "upstream_id": "seededit-3-0-i2i-250628",
       "routable": false,
-      "routable_reason": "provider-retired",
-      "missing_since": "2026-11-07"
+      "routable_reason": "provider-retired"
     },
     {
       "display_name": "seedream-3-0-t2i",
@@ -1047,8 +1033,7 @@
       "id": "bytedance/skylark-lite-250215",
       "upstream_id": "skylark-lite-250215",
       "routable": false,
-      "routable_reason": "provider-retired",
-      "missing_since": "2026-11-07"
+      "routable_reason": "provider-retired"
     },
     {
       "display_name": "skylark-pro",
@@ -1067,8 +1052,7 @@
       "id": "bytedance/skylark-pro",
       "upstream_id": "skylark-pro",
       "routable": false,
-      "routable_reason": "provider-retired",
-      "missing_since": "2026-11-07"
+      "routable_reason": "provider-retired"
     },
     {
       "display_name": "skylark-pro",
@@ -1087,8 +1071,7 @@
       "id": "bytedance/skylark-pro-250215",
       "upstream_id": "skylark-pro-250215",
       "routable": false,
-      "routable_reason": "provider-retired",
-      "missing_since": "2026-11-07"
+      "routable_reason": "provider-retired"
     },
     {
       "display_name": "skylark-vision",
@@ -1107,8 +1090,7 @@
       "id": "bytedance/skylark-vision-250515",
       "upstream_id": "skylark-vision-250515",
       "routable": false,
-      "routable_reason": "provider-retired",
-      "missing_since": "2026-11-07"
+      "routable_reason": "provider-retired"
     },
     {
       "display_name": "deepseek-v4-flash",
@@ -1130,8 +1112,7 @@
       "max_output_tokens": 393216,
       "supported_features": [
         "streaming",
-        "tools",
-        "prompt_caching"
+        "tools"
       ],
       "routable": false,
       "input_token_price_per_m": 440000,
@@ -1159,8 +1140,7 @@
       "max_output_tokens": 393216,
       "supported_features": [
         "streaming",
-        "tools",
-        "prompt_caching"
+        "tools"
       ],
       "input_token_price_per_m": 440000,
       "output_token_price_per_m": 1320000,
@@ -1187,8 +1167,7 @@
       "max_output_tokens": 393216,
       "supported_features": [
         "streaming",
-        "tools",
-        "prompt_caching"
+        "tools"
       ],
       "input_token_price_per_m": 1320000,
       "output_token_price_per_m": 3960000,
@@ -1215,8 +1194,7 @@
       "max_output_tokens": 393216,
       "supported_features": [
         "streaming",
-        "tools",
-        "prompt_caching"
+        "tools"
       ],
       "input_token_price_per_m": 1320000,
       "output_token_price_per_m": 3960000,
@@ -1341,7 +1319,7 @@
   ],
   "source": "https://ark.ap-southeast.bytepluses.com/api/v3/models",
   "pricing_source": "https://docs.byteplus.com/en/docs/modelark/model-pricing",
-  "generated_at": "2026-11-09T01:13:26Z",
+  "generated_at": "2026-11-09T20:34:59Z",
   "price_scale": "microdollars_per_million",
   "model_count": 60
 }

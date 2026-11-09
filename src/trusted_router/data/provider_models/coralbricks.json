@@ -91,10 +91,40 @@
       "input_token_price_per_m": 190000,
       "output_token_price_per_m": 600000,
       "cached_input_token_price_per_m": 8000
+    },
+    {
+      "display_name": "deepseek-v4.1-flash-value",
+      "title": "deepseek-v4.1-flash-value",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "coralbricks/deepseek-v4.1-flash-value",
+      "upstream_id": "deepseek-v4.1-flash-value",
+      "context_length": 1048576,
+      "supported_features": [
+        "streaming",
+        "prompt_caching",
+        "tools",
+        "reasoning",
+        "reasoning-effort"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 5000,
+      "output_token_price_per_m": 570000,
+      "cached_input_token_price_per_m": 3000
     }
   ],
   "source": "https://inference.coralbricks.ai/v1/models",
-  "generated_at": "2026-11-09T01:13:26Z",
+  "generated_at": "2026-11-09T20:34:59Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 3
+  "model_count": 4
 }
