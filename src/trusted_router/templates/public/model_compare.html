@@ -85,45 +85,46 @@
 </section>
 
 {% if left.supports_chat and right.supports_chat %}
-<section class="compare-section" aria-labelledby="compare-agent-heading">
-  <h2 id="compare-agent-heading">Test both with your agent</h2>
-  <p>Paste this into Claude Code, Cursor or any coding agent.</p>
-  <div class="compare-code">
-    <div class="compare-code-head"><span>Agent prompt</span>{{ kit.copy_icon_button("compare-agent-prompt", "Copy agent prompt", "Copy") }}</div>
-    <pre><code id="compare-agent-prompt">Compare {{ left_short }} and {{ right_short }} in this project through TrustedRouter.
+{% set agent_panel %}Compare {{ left_short }} and {{ right_short }} in this project through TrustedRouter.
 
 1. Read https://trustedrouter.com/docs/llms.txt
-2. Point the OpenAI-compatible client at {{ api_base_url }}
-   and read the key from TRUSTEDROUTER_API_KEY.
-3. Run our eval prompts on {{ left.id }}, then on {{ right.id }}.
-4. Show me cost, latency and quality side by side before changing the default.</code></pre>
-    {{ kit.copy_status("compare-agent-prompt") }}
-    <details class="compare-code-more">
-      <summary>Python</summary>
-      <pre><code>client = OpenAI(
-    base_url="{{ api_base_url }}",
-    api_key="sk-tr-v1-..."
-)
+2. Point the OpenAI-compatible client at
+   {{ api_base_url }} and read the key from
+   TRUSTEDROUTER_API_KEY.
+3. Run our eval prompts on <span class="md-model-id">{{ left.id }}</span>, then on <span class="md-model-id">{{ right.id }}</span>.
+4. Show me cost, latency and quality side by side before changing the default.{% endset %}
+{% set python_panel %}import os
+from openai import OpenAI
 
+client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key=os.environ["TRUSTEDROUTER_API_KEY"],
+)
 for model in ("{{ left.id }}", "{{ right.id }}"):
     response = client.chat.completions.create(
         model=model,
-        messages=messages,
-    )</code></pre>
-    </details>
-    <div class="compare-code-foot"><span>Your agent will need an API key.</span><button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Create my API key</button></div>
-  </div>
+        messages=[{"role": "user", "content": "What is the capital of France?"}],
+    )
+    print(model, response.choices[0].message.content){% endset %}
+{% set curl_panel %}for model in {{ left.id }} {{ right.id }}; do
+  curl {{ api_base_url }}/chat/completions \
+    -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
+    -H "Content-Type: application/json" \
+    -d "{\"model\": \"$model\", \"messages\": [{\"role\": \"user\", \"content\": \"What is the capital of France?\"}]}"
+done{% endset %}
+<section class="compare-section" aria-labelledby="compare-agent-heading">
+  <h2 id="compare-agent-heading">Test both with your agent</h2>
+  <p>Paste this into Claude Code, Cursor or any coding agent.</p>
+  {{ kit.code_box(agent_panel, python_panel, curl_panel) }}
 </section>
 {% elif left.supports_decide %}
 {# A decision model answers the decide route and refuses chat; an embedding,
    image or video model has its own route and gets no example here. #}
+{% set curl_panel %}{{ decide_curl(left.id, api_base_url) }}{% endset %}
 <section class="compare-section" aria-labelledby="compare-agent-heading">
   <h2 id="compare-agent-heading">Try it</h2>
-  <div class="compare-code">
-    <div class="compare-code-head"><span>POST {{ decide_path }}</span><span>curl</span></div>
-    <pre><code>{{ decide_curl(left.id, api_base_url) }}</code></pre>
-    <div class="compare-code-foot"><a href="/docs/decide">Decision models: the API, the models, the numbers</a><button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Create my API key</button></div>
-  </div>
+  <p><a href="/docs/decide">Decision models: the API, the models, the numbers</a></p>
+  {{ kit.code_box("", "", curl_panel) }}
 </section>
 {% endif %}
 

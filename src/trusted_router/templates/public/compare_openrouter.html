@@ -18,34 +18,35 @@
 <section class="compare-section" aria-labelledby="compare-switch-heading">
   <h2 id="compare-switch-heading">Switch in one line</h2>
   <p>Keep your OpenAI SDK, messages and streaming loop. Paste this into Claude Code, Cursor or any coding agent.</p>
-  <div class="compare-code">
-    <div class="compare-code-head"><span>Agent prompt</span>{{ kit.copy_icon_button("compare-agent-prompt", "Copy agent prompt", "Copy") }}</div>
-    <pre><code id="compare-agent-prompt">Move this project from OpenRouter to TrustedRouter.
+{% set agent_panel %}Move this project from OpenRouter to TrustedRouter.
 
 1. Read https://trustedrouter.com/docs/migrate-from-openrouter
-2. Change base_url to {{ api_base_url }} and read the key
+2. Change base_url to <span class="md-model-id">{{ api_base_url }}</span> and read the key
    from TRUSTEDROUTER_API_KEY.
 3. Check every model id against https://trustedrouter.com/models.
-4. Run the tests, then show me the diff before committing.</code></pre>
-    {{ kit.copy_status("compare-agent-prompt") }}
-    <p class="compare-diff" aria-label="The code change"><del>- base_url="https://openrouter.ai/api/v1"</del><ins>+ base_url="{{ api_base_url }}"</ins></p>
-    <details class="compare-code-more">
-      <summary>Python</summary>
-      <pre><code>from openai import OpenAI
+4. Run the tests, then show me the diff before committing.{% endset %}
+{% set python_panel %}import os
+from openai import OpenAI
 
 client = OpenAI(
-    base_url="{{ api_base_url }}",
-    api_key="sk-tr-v1-..."
+    base_url="{{ api_base_url }}",  # was https://openrouter.ai/api/v1
+    api_key=os.environ["TRUSTEDROUTER_API_KEY"],
 )
 
 # Everything else stays the same:
 resp = client.chat.completions.create(
     model="anthropic/claude-sonnet-4.6",
     messages=[{"role": "user", "content": "hi"}],
-)</code></pre>
-    </details>
-    <div class="compare-code-foot"><span>Your agent will need an API key.</span><button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Create my API key</button></div>
-  </div>
+){% endset %}
+{% set curl_panel %}curl {{ api_base_url }}/chat/completions \
+  -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "anthropic/claude-sonnet-4.6",
+    "messages": [{"role": "user", "content": "hi"}]
+  }'{% endset %}
+{% set diff %}<p class="compare-diff" aria-label="The code change"><del>- base_url="https://openrouter.ai/api/v1"</del><ins>+ base_url="{{ api_base_url }}"</ins></p>{% endset %}
+  {{ kit.code_box(agent_panel, python_panel, curl_panel, diff) }}
 </section>
 
 <section class="compare-section" aria-labelledby="compare-table-heading">
