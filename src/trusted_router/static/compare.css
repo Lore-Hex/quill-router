@@ -260,6 +260,7 @@
 }
 .md-copy:hover { border-color: var(--md-accent); }
 .md-copy[hidden], .md-expand[hidden] { display: none; }
+.js-off .md-copy, .js-off .compare-copy { display: none; }
 .md-copy-icon {
   display: block;
   width: 17px;
