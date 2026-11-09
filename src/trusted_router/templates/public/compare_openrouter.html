@@ -49,8 +49,7 @@ resp = client.chat.completions.create(
 </section>
 
 <section class="compare-section" aria-labelledby="compare-table-heading">
-  <h2 id="compare-table-heading">Side by side</h2>
-  <p class="compare-note">Green marks where TrustedRouter is different.</p>
+  <h2 id="compare-table-heading" class="compare-table-heading">Side by side:</h2>
   {% set rows = [
     ("API shape", "OpenAI compatible", "OpenAI compatible", false),
     ("Prompt logging", "Off by default; opt-in for a 1% discount", "None on realtime — verifiable in source", true),
