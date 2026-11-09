@@ -238,8 +238,14 @@ dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
 .site-footer .geo-scroll.can-left::before{top:10px;bottom:10px;background:linear-gradient(90deg,var(--ink),transparent)}
 .site-footer .geo-scroll.can-right::after{top:10px;bottom:10px;background:linear-gradient(90deg,transparent,var(--ink))}
 .site-footer .legal{margin-top:16px;padding-top:0;border-top:0;font-size:15px}
-/* Without a market rail (New York), a rule keeps the legal links apart from the name. */
-.site-footer .footer-top+.legal{margin-top:40px;padding-top:10px;border-top:1.5px solid var(--dark-rule)}
+/* Without a market rail (New York), a rule keeps the legal links apart from the name,
+   and the footer closes up the room the rail used to take. */
+.site-footer .footer-top+.legal{margin-top:24px;padding-top:4px;border-top:1.5px solid var(--dark-rule)}
+@media(min-width:601px){
+  .site-footer:has(.footer-top+.legal){padding-top:48px;padding-bottom:16px}
+  .site-footer .footer-top:has(+.legal) .footer-related{margin-top:8px}
+  .site-footer .footer-top:has(+.legal) .footer-contact{margin-top:4px}
+}
 /* Desktop footer kept compact: less space above the name and below the legal links. */
 @media(min-width:601px){.site-footer{padding-top:64px;padding-bottom:24px}}
 .site-footer .legal a{color:var(--cream)}
@@ -260,7 +266,9 @@ dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
   .site-footer .footer-markets{margin-top:16px;order:1}
   /* Legal links only: one short line that fits the smallest phones. */
   .site-footer .legal{order:3;flex-wrap:wrap;justify-content:flex-start;gap:0 24px;margin-top:8px;padding-top:0;border-top:0}
-  .site-footer .footer-top+.legal{margin-top:16px;padding-top:8px}
+  .site-footer:has(.footer-top+.legal){padding-top:28px;padding-bottom:12px}
+  .site-footer .footer-top:has(+.legal){row-gap:4px}
+  .site-footer .footer-top+.legal{margin-top:12px;padding-top:4px}
 }
 
 /* Token Index page (own sheet): kit headings, square corners, one orange action per view. */
