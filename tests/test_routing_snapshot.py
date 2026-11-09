@@ -115,6 +115,25 @@ def _epoch_at(entry: Any, t: int) -> Any:
     return [epoch for epoch in entry.epochs if epoch.starts_at <= t][-1]
 
 
+def _price_probe_times(start: int, end: int, step: int) -> list[int]:
+    # A relative sampling grid can miss a short tail after a UTC price boundary.
+    hours = range((start // 3_600 + 1) * 3_600, end, 3_600)
+    edges = {hour + delta for hour in hours for delta in (-1, 0, 1)}
+    return sorted(t for t in {*range(start, end, step), end - 1, *edges} if start <= t < end)
+
+
+@pytest.mark.parametrize("offset", [1, 350, 899, 3_599])
+@pytest.mark.parametrize("step", [900, 1_800])
+def test_price_probes_cover_partial_final_hour(offset: int, step: int) -> None:
+    start = int(datetime(2026, 11, 9, 19, tzinfo=UTC).timestamp()) + offset
+    end = start + 6 * 3_600
+    peak = int(datetime(2026, 11, 10, 1, tzinfo=UTC).timestamp())
+    probes = _price_probe_times(start, end, step)
+    assert probes[0] == start and probes[-1] == end - 1
+    assert peak - 1 in probes and peak in probes
+    assert all(start <= t < end for t in probes)
+
+
 def test_the_snapshot_lists_the_catalog_in_catalog_order(live) -> None:
     snapshot, inputs = live
     assert [e.id for e in snapshot.endpoints] == [e.id for e in inputs.endpoints]
@@ -126,9 +145,8 @@ def test_the_snapshot_lists_the_catalog_in_catalog_order(live) -> None:
 def test_every_epoch_price_is_the_effective_endpoint_price_at_that_instant(live) -> None:
     snapshot, inputs = live
     raw = {e.id: e for e in inputs.endpoints}
-    hours = range(snapshot.compiled_at, snapshot.not_after, EPOCH_SECONDS)
-    coarse = sorted({*hours, *(h + 1_800 for h in hours), snapshot.not_after - 1})
-    fine = range(snapshot.compiled_at, snapshot.not_after, 900)
+    coarse = _price_probe_times(snapshot.compiled_at, snapshot.not_after, 1_800)
+    fine = _price_probe_times(snapshot.compiled_at, snapshot.not_after, 900)
     scheduled = changing = 0
     for entry in snapshot.endpoints:
         endpoint = raw[entry.id]
