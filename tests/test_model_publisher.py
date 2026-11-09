@@ -189,18 +189,20 @@ def test_the_model_page_names_the_maker(client: TestClient) -> None:
     for model_id, shown in SHOWN_PUBLISHER.items():
         soup = _soup(client, f"/models/{model_id}")
 
-        header = soup.find("th", string="Publisher")
+        header = soup.find("dt", string="Publisher")
         assert header is not None, model_id
-        row = header.find_next_sibling("td")
+        row = header.find_next_sibling("dd")
         assert isinstance(row, Tag), model_id
         assert _shown(row) == shown, model_id
 
-        chip = soup.select_one(".panel-head .provider-chip")
-        if model_id == HOST_NAMESPACE:
-            assert chip is None, model_id
+        # The hero logo links to the maker's own provider page, and only a
+        # maker with its own provider entry gets one.
+        logo = soup.select_one(".md-publisher-logo")
+        if shown[1] is None:
+            assert logo is None, model_id
         else:
-            assert chip is not None, model_id
-            assert _shown(chip) == shown, model_id
+            assert logo is not None, model_id
+            assert logo.get("href") == shown[1], model_id
 
         for page in (soup, _soup(client, f"/models/{model_id}/pricing")):
             assert _json_ld(page)["Service"].get("brand") == BRAND[model_id], model_id

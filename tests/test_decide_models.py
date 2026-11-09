@@ -1433,8 +1433,8 @@ def test_a_named_model_reads_as_a_decision_model_everywhere_it_is_shown(
     assert shape["architecture"]["modality"] == "text->decision"
     page = client.get(f"/models/{model_id}")
     assert page.status_code == 200, page.text[:200]
-    assert '<span class="pill">chat</span>' not in page.text
-    assert '<span class="pill">decide</span>' in page.text
+    assert "<dt>Modes</dt><dd>decide</dd>" in page.text
+    assert "chat.completions.create" not in page.text
 
 
 @pytest.mark.parametrize("model_id", [*PRESENT_NAMED_IDS, "typesafe-ai/jev"])

@@ -2368,6 +2368,189 @@ def _model_hero(model: Model, view: dict[str, object]) -> tuple[str, str]:
     return HERO_FREE_TO_START, f"Try {name} on us. {_HERO_STARTER}{reach}"
 
 
+_NUMBER_WORDS = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten")
+
+
+def _count_word(value: int) -> str:
+    return _NUMBER_WORDS[value] if 0 <= value < len(_NUMBER_WORDS) else str(value)
+
+
+def _short_dollars(microdollars: int, *, digits: int) -> str:
+    """A per-1M price for the model page: "$0.27" in the hero (digits=2) and
+    "$0.274" in the provider table (digits=3). Prices under a dime keep
+    `digits` significant figures so a cheap route never reads as $0.00."""
+    if microdollars <= 0:
+        return "$0"
+    value = Decimal(microdollars) / Decimal(MICRODOLLARS_PER_DOLLAR)
+    if value >= 1:
+        return f"${value:.2f}"
+    if value >= Decimal("0.1"):
+        return f"${value:.{digits}f}"
+    text = f"{value:.{digits}g}"
+    return f"${Decimal(text):f}"
+
+
+def _model_kind_phrase(model: Model, view: Mapping[str, object]) -> str:
+    if view["is_meta"]:
+        return "orchestration preset"
+    if view["speech"]:
+        return "text-to-speech model"
+    if view["transcription"]:
+        return "speech-to-text model"
+    if view["fetch"]:
+        return "web fetch tool"
+    if view["supports_embeddings"] and not view["supports_chat"]:
+        return "embedding model"
+    if view["supports_decide"] and not view["supports_chat"]:
+        return "decision model"
+    return "chat model"
+
+
+def _model_page(
+    settings: Settings,
+    model: Model,
+    view: Mapping[str, object],
+    route_evidence: Mapping[str, object],
+) -> dict[str, object]:
+    """Presentation data for the public model page: short name, hero stats,
+    provider rows with positive privacy badges and cost bars, the agent
+    prompt, and the facts the About paragraph is built from."""
+    short_name = _hero_model_name(model)
+    # An orchestration's endpoint is its internal selector; the page lists
+    # its component models instead of provider rows.
+    endpoints = [] if view["is_meta"] else cast(list[dict[str, object]], view["endpoints"])
+    token_priced = not (
+        view["transcription"]
+        or view["fetch"]
+        or (view["speech"] and not SPEECH_MODELS[model.id].token_billed)
+    )
+    totals = [
+        cast(int, row["prompt_microdollars_per_million_tokens"])
+        + cast(int, row["completion_microdollars_per_million_tokens"])
+        for row in endpoints
+    ]
+    max_total = max(totals, default=0)
+    min_total = min(totals, default=0)
+    rows: list[dict[str, object]] = []
+    for row, total in zip(endpoints, totals, strict=True):
+        zdr = row["provider_zero_data_retention"] is True
+        confidential = (
+            zdr
+            and row["provider_confidential_compute"] is True
+            and row["provider_e2ee"] is True
+        )
+        cached = cast(list[int], row["cached_prompt_microdollars_per_million_tokens"])
+        measured = cast(Mapping[str, object] | None, row["measured"]) or {}
+        ttft = measured.get("p50_ttft_ms")
+        throughput = measured.get("p50_tokens_per_second")
+        prompt = cast(int, row["prompt_microdollars_per_million_tokens"])
+        completion = cast(int, row["completion_microdollars_per_million_tokens"])
+        rows.append(
+            {
+                "endpoint": row,
+                # Every row at the lowest total, unless all rows cost the same.
+                "cheapest": total == min_total and min_total != max_total,
+                "zdr": zdr,
+                "confidential": confidential,
+                "input": _short_dollars(prompt, digits=3) if token_priced else row["prompt_price"],
+                "output": _short_dollars(completion, digits=3) if token_priced else row["completion_price"],
+                "cached": (
+                    _short_dollars(min(cached), digits=3) if cached and token_priced else "—"
+                ),
+                "cached_range": len(set(cached)) > 1,
+                "total": _short_dollars(total, digits=2),
+                "bar_pct": max(6, round(total * 100 / max_total)) if max_total > 0 else 0,
+                "sort_price": total,
+                # Measured p50s with at least two samples, as the row shows.
+                "sort_latency": (
+                    round(cast(float, ttft))
+                    if ttft is not None and cast(int, measured.get("ttft_sample_count") or 0) >= 2
+                    else None
+                ),
+                "sort_throughput": (
+                    round(cast(float, throughput), 1)
+                    if throughput is not None and cast(int, measured.get("throughput_sample_count") or 0) >= 2
+                    else None
+                ),
+            }
+        )
+    zdr_count = sum(1 for row in rows if row["zdr"])
+    confidential_names = [
+        str(cast(dict[str, object], row["endpoint"])["provider"]) for row in rows if row["confidential"]
+    ]
+    regions = [
+        label
+        for label, present in (("US", view["us_provider_available"]), ("EU", view["eu_focused_provider_available"]))
+        if present
+    ]
+    kind = _model_kind_phrase(model, view)
+    lead_kind = f"open-weights {kind}" if view["open_weights"] else kind
+    publisher = cast(str | None, view["provider"])
+    first = f"{lead_kind[0].upper()}{lead_kind[1:]}" + (f" from {publisher}." if publisher else ".")
+    route_count = len(rows)
+    if view["is_meta"]:
+        candidates = cast(list[object], view["candidate_models"])
+        if view["configuration_hidden"] or not candidates:
+            reach = "One API key routes through the attested preset, with automatic failover."
+        else:
+            reach = f"One API key routes across {len(candidates)} models, with automatic failover."
+    elif route_count >= 2:
+        reach = f"One API key reaches all {route_count} providers, with automatic failover."
+    elif route_count == 1:
+        reach = "One API key reaches this provider and every other model in the catalog."
+    else:
+        reach = "Bring your own provider key and route it with every other model in the catalog."
+    funded = route_count > 0 or bool(view["is_meta"] and view["prepaid"])
+    llms_url = f"https://{settings.trusted_domain}/llms.txt"
+    agent_prompt_lines = (
+        f"Use {short_name} through TrustedRouter in this project.",
+        "",
+        f"1. Read {llms_url}",
+        "2. Point the OpenAI-compatible client at",
+        f"   {settings.api_base_url} and read the key from",
+        "   TRUSTEDROUTER_API_KEY.",
+    )
+    return {
+        "short_name": short_name,
+        "sentence": f"{first} {reach}",
+        "lowest_input": (
+            _short_dollars(min(cast(int, r["prompt_microdollars_per_million_tokens"]) for r in endpoints), digits=2)
+            if endpoints and token_priced
+            else None
+        ),
+        "lowest_output": (
+            _short_dollars(min(cast(int, r["completion_microdollars_per_million_tokens"]) for r in endpoints), digits=2)
+            if endpoints and token_priced
+            else None
+        ),
+        "price_label": None if token_priced or not endpoints else route_evidence["lowest_prompt_price"],
+        "context": (
+            _compact_token_count(cast(int, view["context_length_int"]))
+            if cast(int, view["context_length_int"]) > 0 and not (view["speech"] or view["transcription"] or view["fetch"])
+            else None
+        ),
+        "token_priced": token_priced,
+        "funded": funded,
+        "rows": rows,
+        "sort_speed": any(row["sort_throughput"] is not None for row in rows),
+        "sort_latency": any(row["sort_latency"] is not None for row in rows),
+        "provider_logos": list(
+            {
+                str(row["provider_slug"]): {"name": row["provider"], "logo_url": row["provider_logo_url"]}
+                for row in endpoints
+            }.values()
+        ),
+        "zdr_count": zdr_count,
+        "zdr_count_word": _count_word(zdr_count),
+        "confidential_names": confidential_names,
+        "regions": regions,
+        "kind": kind,
+        "lead_kind": lead_kind,
+        "agent_prompt_head": "\n".join(agent_prompt_lines),
+        "agent_prompt_tail": "4. Run the tests, then show me the diff before committing.",
+    }
+
+
 def _comparison_hero(
     left: Model,
     right: Model,
@@ -4336,10 +4519,21 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
     test_mode = settings.environment == "test"
     seo_name = _seo_model_name(model)
     site_url = f"https://{settings.trusted_domain}/models/{model_id}"
-    model_view = _model_detail_view(model, test_mode=test_mode)
+    credits_endpoints = _credits_endpoints(endpoints_for_model(model.id))
+    model_view = _model_detail_view(model, test_mode=test_mode, credits_endpoints=credits_endpoints)
     hero_label, hero_pitch = _model_hero(model, model_view)
     route_evidence = _model_route_evidence(model, test_mode=test_mode)
-    faq_items = _model_faq_items(model, route_evidence=route_evidence)
+    faq_items = _model_faq_items(
+        model, route_evidence=route_evidence, credits_endpoints=credits_endpoints
+    )
+    related_comparisons = _related_model_comparison_rows(model.id, limit=6)
+    compare_chips = []
+    for related in related_comparisons:
+        other_id = str(related["right_id"] if str(related["left_id"]).casefold() == model.id.casefold() else related["left_id"])
+        other = MODELS.get(other_id)
+        compare_chips.append(
+            {"href": related["href"], "name": _hero_model_name(other) if other else other_id}
+        )
     return (
         _env()
         .get_template("public/model_detail.html")
@@ -4355,8 +4549,10 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
                 "limits, privacy policy, regional availability, measured uptime, and API support."
             ),
             model=model_view,
+            page=_model_page(settings, model, model_view, route_evidence),
             route_evidence=route_evidence,
-            related_comparisons=_related_model_comparison_rows(model.id, limit=6),
+            related_comparisons=related_comparisons,
+            compare_chips=compare_chips,
             # Service/Offer JSON-LD. The page sells API access to a hosted
             # routing service, not a retail product with customer ratings.
             # Avoid Product schema so Search Console doesn't expect review
@@ -5649,7 +5845,10 @@ def _model_detail_view(
     active_section: str | None = None,
     test_mode: bool = False,
     include_section_links: bool = True,
+    credits_endpoints: Sequence[ModelEndpoint] | None = None,
 ) -> dict[str, object]:
+    """`credits_endpoints` lets a caller that already holds the model's
+    Credits endpoints pass them in instead of deriving them again."""
     publisher = _model_publisher(model)
     speech = SPEECH_MODELS.get(model.id)
     transcription = TRANSCRIPTION_MODELS.get(model.id)
@@ -5659,7 +5858,11 @@ def _model_detail_view(
         model.prompt_price_microdollars_per_million_tokens > 0
         or model.completion_price_microdollars_per_million_tokens > 0
     )
-    endpoints = _credits_endpoints(endpoints_for_model(model.id))
+    endpoints = (
+        list(credits_endpoints)
+        if credits_endpoints is not None
+        else _credits_endpoints(endpoints_for_model(model.id))
+    )
     ai_iq = None if is_meta else ai_iq_for_model(model.id, test_mode=test_mode)
     candidate_models = []
     if not model.hidden_public_metadata:
@@ -5689,6 +5892,7 @@ def _model_detail_view(
                 ),
                 "prompt_microdollars_per_million_tokens": endpoint.prompt_price_microdollars_per_million_tokens,
                 "completion_microdollars_per_million_tokens": endpoint.completion_price_microdollars_per_million_tokens,
+                "cached_prompt_microdollars_per_million_tokens": _cached_prompt_prices((endpoint,)),
                 "pricing_schedule": provider_pricing_schedule(
                     endpoint.provider,
                     endpoint.model_id,
@@ -5711,8 +5915,9 @@ def _model_detail_view(
             }
         )
     # Sort cheapest-first by total prompt+completion price; ties broken by
-    # provider name. Click-to-sort JS in the template lets visitors flip
-    # to throughput / latency / context views.
+    # provider name. This server order is the model page's default; its
+    # sort control (model-detail.js) can reorder the rows by measured
+    # throughput or latency.
     endpoint_views.sort(
         key=lambda view: (
             cast(int, view["prompt_microdollars_per_million_tokens"])
@@ -6184,8 +6389,11 @@ def _model_faq_items(
     model: Model,
     *,
     route_evidence: Mapping[str, object],
+    credits_endpoints: Sequence[ModelEndpoint] | None = None,
 ) -> tuple[tuple[str, str], ...]:
-    credits_endpoints = _credits_endpoints(endpoints_for_model(model.id))
+    name = _hero_model_name(model)
+    if credits_endpoints is None:
+        credits_endpoints = _credits_endpoints(endpoints_for_model(model.id))
     provider_names = [
         provider["name"]
         for provider in _endpoint_provider_views(
@@ -6223,26 +6431,32 @@ def _model_faq_items(
         )
     else:
         price_answer = (
-            f"TrustedRouter currently publishes no Credits provider route for {model.name}, "
+            f"TrustedRouter currently publishes no Credits provider route for {name}, "
             "so no public Credits price is available."
         )
     return (
         (
-            f"What model ID should I use for {model.name}?",
+            f"What model ID should I use for {name}?",
             f"Use {model.id} as the model field with the TrustedRouter OpenAI-compatible "
             "API. Credits routing and provider fallback happen behind that model ID.",
         ),
         (
-            f"Which providers serve {model.name}?",
-            f"TrustedRouter currently lists {provider_answer} for {model.name}. Provider "
+            "Do you log my prompts or outputs?",
+            "No. Prompt and output content are intentionally excluded from the control plane "
+            "and metadata systems. Optional content export requires explicit destination-level "
+            "configuration.",
+        ),
+        (
+            f"Which providers serve {name}?",
+            f"TrustedRouter currently lists {provider_answer} for {name}. Provider "
             "availability and routing eligibility can change as catalog and health data update.",
         ),
         (
-            f"How much does {model.name} cost through TrustedRouter?",
+            f"How much does {name} cost through TrustedRouter?",
             price_answer,
         ),
         (
-            f"How do I require zero data retention for {model.name}?",
+            f"How do I require zero data retention for {name}?",
             "Set provider.min_privacy to zdr on the request. TrustedRouter considers only "
             "routes with a recorded zero-data-retention posture and fails closed if no "
             "eligible route remains.",

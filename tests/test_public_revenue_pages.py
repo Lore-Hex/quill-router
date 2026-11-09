@@ -303,6 +303,7 @@ def test_public_pricing_matches_five_point_five_percent_billing_policy(
 ) -> None:
     pricing = client.get("/pricing")
     assert pricing.status_code == 200
+    assert 'data-signin-mode="signup">Get an API key</button>' in pricing.text
     assert "provider cost + 5.5%" in pricing.text
     assert "direct provider quote + 20%" in pricing.text
     assert "Cheaper. Smarter. More reliable. More secure." in pricing.text
@@ -564,6 +565,7 @@ def test_public_models_page_is_a_ranked_searchable_price_explorer(
     assert "Cached input" in body
     assert "/static/models.js" in body
     assert 'href="/for-developers"' in body
+    assert 'data-signin-mode="signup">Create my API key</button>' in body
     assert 'href="/docs/quickstart"' not in body
     assert 'data-endpoints-url="/v1/models/z-ai/glm-5.3-flash/endpoints"' in body
     public_provider_count = sum(
@@ -603,13 +605,13 @@ def test_public_model_detail_lists_distinct_serving_providers(
     response = client.get(f"/models/{model_id}")
 
     assert response.status_code == 200
-    assert "Providers serving this model" in response.text
-    assert "Credits routes</th>" in response.text
-    assert "Cached input</th>" in response.text
+    assert '<h2 id="md-providers-heading">Providers</h2>' in response.text
+    assert 'class="md-provider' in response.text
+    assert "Cached input " in response.text
     assert "Usage</th>" not in response.text
     assert ">BYOK<" not in response.text
     assert 'href="https://aiiq.org/models/kimi-k2.6/"' in response.text
-    assert "IQ 116" in response.text
+    assert "It scores 116 on" in response.text
     expected_providers = {
         endpoint.provider
         for endpoint in endpoints_for_model(model_id)
@@ -617,7 +619,7 @@ def test_public_model_detail_lists_distinct_serving_providers(
     }
     assert "kimi" in expected_providers
     for provider in expected_providers:
-        assert BeautifulSoup(response.text, "html.parser").select_one(f'a.provider-chip[href="/providers/{provider}"]') is not None
+        assert BeautifulSoup(response.text, "html.parser").select_one(f'tr#provider-{provider}-details a[href="/providers/{provider}"]') is not None
 
 
 def test_byok_only_model_page_reports_no_credits_route(
@@ -636,7 +638,7 @@ def test_byok_only_model_page_reports_no_credits_route(
 
     assert response.status_code == 200
     assert "No Credits provider route is currently published" in response.text
-    assert "no Credits provider route for Tencent: Hy3 preview" in response.text
+    assert "no Credits provider route for Hy3 preview" in response.text
     assert "<th>Billing</th>" not in response.text
     assert ">BYOK<" not in response.text
     assert "BYOK only" not in response.text
@@ -679,11 +681,11 @@ def test_public_kimi_k3_page_separates_router_attestation_from_provider_e2ee(
     assert detail.status_code == 200
     assert "TR router attested" not in catalog.text
     assert "verified provider compute + E2EE + explicit ZDR" in catalog.text
-    assert "TR router attestation verifies the\n      TrustedRouter gateway only" in detail.text
+    assert '<a class="md-inline-link" href="/trust">how we check privacy claims</a>' in detail.text
     assert "<th>TR router attested</th>" not in detail.text
     assert "<th>Attested</th>" not in detail.text
     assert "Provider policy" in detail.text
-    moonshot_row = BeautifulSoup(detail.text, "html.parser").select_one("tr#provider-kimi")
+    moonshot_row = BeautifulSoup(detail.text, "html.parser").select_one("tr#provider-kimi-details")
     assert moonshot_row is not None
     assert moonshot_row.select_one('a[href="/providers/kimi"]') is not None
     assert "privacy unknown" in moonshot_row.get_text()

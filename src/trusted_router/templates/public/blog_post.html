@@ -36,6 +36,8 @@
   .blog-body .data-table th { color: var(--muted); font-weight: 650; }
   .blog-body .data-table td:last-child, .blog-body .data-table th:last-child { text-align: right; }
   .blog-end { border: none; border-top: 1px solid var(--line); margin: 44px 0 18px; }
+  .blog-cta { font-family: var(--font-ui); line-height: 1.4; margin: 0 0 18px; }
+  .blog-cta .cta-note { width: 100%; margin-top: 0; }
   .blog-foot-links { display: flex; gap: 8px; flex-wrap: wrap; }
   @media (max-width: 700px) {
     .blog-article h1 { font-size: 32px; }
@@ -52,6 +54,16 @@
   <div class="blog-body">
     {{ post.body_html|safe }}
     <hr class="blog-end">
+    <section class="cta-band blog-cta" aria-label="Create an API key">
+      <div>
+        <h2>Try every model with one key.</h2>
+        <span>Create a key and call any model in the catalog through one API.</span>
+      </div>
+      <div class="cta-band-actions">
+        <button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Create my API key</button>
+      </div>
+      <span class="cta-note cta-note-readable">No card required. Start with 1 million free tokens.</span>
+    </section>
     <div class="blog-foot-links">
       <a class="pill" href="/blog">More posts</a>
       <a class="pill" href="/models">Models</a>

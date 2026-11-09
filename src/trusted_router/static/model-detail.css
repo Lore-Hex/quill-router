@@ -1,0 +1,1082 @@
+/* Public model page (/models/{author}/{slug}): one left-aligned reading
+ * column. Loaded only by templates/public/model_detail.html. */
+.model-detail-page {
+  --md-bg: #050706;
+  --md-text: #EDF8F5;
+  --md-secondary: #C3C9C3;
+  --md-label: #ADBBB2;
+  --md-line: #1E2621;
+  --md-line-strong: #33403A;
+  --md-control-line: #526859;
+  --md-accent: #CCE8D7;
+  --md-accent-ink: #10241A;
+  --md-link: #C0E1FF;
+  --md-highlight: #1C3E2E;
+  --md-bar: #6B9480;
+  --md-bar-top: #9EE6B8;
+  --md-amber: #F2C879;
+  --md-code-bg: #0F1411;
+  --md-code-foot: #121915;
+  --md-mono: var(--tr-font-family-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+
+  background: var(--md-bg);
+  color: var(--md-text);
+}
+
+.model-detail-page .public-wrap {
+  display: block;
+  width: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 0 40px;
+  font-family: var(--tr-font-family-sans, Archivo, Arial, sans-serif);
+  font-weight: 450;
+}
+
+.model-detail-page .public-wrap a {
+  color: var(--md-link);
+}
+
+.model-detail-page .public-wrap a:hover {
+  color: #E5FFF2;
+}
+
+:where(.model-detail-page .public-wrap) :is(p, li) {
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.md-hero,
+.md-section,
+.md-closing {
+  max-width: 880px;
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.md-section {
+  padding: 0 0 72px;
+}
+
+.md-section h2,
+.md-closing h2 {
+  margin: 0 0 10px;
+  color: var(--md-text);
+  font-size: 32px;
+  font-weight: 650;
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+}
+
+.md-eyebrow,
+.md-label,
+.md-facts dt {
+  color: var(--md-label);
+  font-family: var(--md-mono);
+  font-size: 13px;
+  font-weight: 450;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.md-eyebrow {
+  margin-bottom: 10px;
+}
+
+.model-detail-page .md-intro {
+  max-width: 44em;
+  margin: 0 0 22px;
+  font-size: 18px;
+  line-height: 1.6;
+}
+
+.md-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Hero */
+.md-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  padding: 80px 0 72px;
+}
+
+.md-title-row {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.md-publisher-logo {
+  flex: none;
+  line-height: 0;
+}
+
+.md-publisher-logo img {
+  width: 60px;
+  height: 60px;
+  border-radius: 14px;
+  background: var(--md-text);
+  object-fit: contain;
+}
+
+.md-hero h1 {
+  margin: 0;
+  color: var(--md-text);
+  font-size: 68px;
+  font-weight: 650;
+  line-height: 1.02;
+  letter-spacing: -0.03em;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+}
+
+.model-detail-page .md-lead {
+  max-width: 32em;
+  margin: 0;
+  font-size: 21px;
+  line-height: 1.5;
+}
+
+.model-detail-page .md-note {
+  max-width: 44em;
+  margin: 0;
+  color: var(--md-secondary);
+  font-size: 17px;
+  line-height: 1.6;
+}
+
+.md-stats {
+  display: flex;
+  flex-wrap: wrap;
+  margin-top: 6px;
+  border-top: 1px solid var(--md-line-strong);
+  border-bottom: 1px solid var(--md-line-strong);
+}
+
+.md-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 20px 40px;
+  border-left: 1px solid var(--md-line);
+}
+
+.md-stat:first-child {
+  padding-left: 0;
+  border-left: 0;
+}
+
+.md-stat-value {
+  color: var(--md-text);
+  font-size: 36px;
+  font-weight: 650;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+
+.md-stat-wide .md-stat-value {
+  font-size: 28px;
+}
+
+.md-mint {
+  color: var(--md-accent);
+}
+
+.md-logo-stack {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.md-logo-stack-logos {
+  display: flex;
+  padding-left: 8px;
+}
+
+.md-logo-stack-logos img {
+  width: 30px;
+  height: 30px;
+  margin-left: -8px;
+  border: 2px solid var(--md-bg);
+  border-radius: 50%;
+  background: var(--md-text);
+  object-fit: contain;
+}
+
+.md-logo-stack-caption {
+  display: none;
+  color: var(--md-secondary);
+  font-size: 15px;
+}
+
+.md-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.model-detail-page .btn.md-cta {
+  min-height: 52px;
+  padding: 15px 26px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--md-accent);
+  color: var(--md-accent-ink);
+  font: 650 17px/1.2 var(--tr-font-family-sans, Archivo, Arial, sans-serif);
+}
+
+.model-detail-page .btn.md-cta:hover {
+  background: #E5FFF2;
+  color: var(--md-accent-ink);
+}
+
+.model-detail-page .md-no-card {
+  margin: 0;
+  color: var(--md-secondary);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+/* The quickstart box and chip row live in quickstart.css. */
+.md-toggle:focus-visible,
+.md-faq summary:focus-visible {
+  outline: 2px solid var(--md-link);
+  outline-offset: 2px;
+}
+
+.md-example {
+  margin: 0;
+  padding: 22px 20px;
+  overflow-x: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--md-text);
+  font-family: var(--md-mono);
+  font-size: 15px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.md-example code {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.model-detail-page .btn.md-cta-small {
+  min-height: 44px;
+  padding: 0 20px;
+  font-size: 16px;
+  white-space: nowrap;
+}
+
+/* Providers */
+/* Sort control: quiet text buttons, the chosen one underlined like the
+ * quickstart tabs. model-detail.js reveals it. */
+.md-sort {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 18px;
+  margin: -6px 0 6px;
+}
+
+.md-sort[hidden] {
+  display: none;
+}
+
+.md-sort-label {
+  color: var(--md-label);
+  font-size: 15px;
+}
+
+.md-sort button {
+  min-height: 44px;
+  padding: 10px 0 8px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--md-secondary);
+  font: 450 15px var(--tr-font-family-sans, Archivo, Arial, sans-serif);
+  cursor: pointer;
+}
+
+.md-sort button:hover {
+  color: var(--md-text);
+}
+
+.md-sort button[aria-checked="true"] {
+  border-bottom-color: var(--md-accent);
+  color: var(--md-text);
+}
+
+.md-sort button:focus-visible {
+  outline: 2px solid var(--md-link);
+  outline-offset: 2px;
+}
+
+/* The provider table: a real <table> so search engines and answer engines
+ * read it as one, drawn as the same rows as before. Each provider is a main
+ * row plus a detail row; model-detail.js adds .md-js and folds the details. */
+.md-provider-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+/* Reset the site-wide table look (dashboard.css, charter.css). */
+.md-provider-table th,
+.md-provider-table td {
+  background: transparent;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.md-provider-table tbody tr:hover {
+  background: transparent;
+}
+
+.md-provider-table thead th {
+  padding: 0 9px 12px;
+  color: var(--md-label);
+  font-family: var(--md-mono);
+  font-size: 13px;
+  font-weight: 450;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--md-line-strong);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.md-provider-table thead th.md-num {
+  text-align: right;
+}
+
+.md-provider-table th:first-child,
+.md-provider-table td:first-child {
+  padding-left: 14px;
+}
+
+.md-provider-table tr > :last-child {
+  padding-right: 14px;
+}
+
+.md-col-provider { width: 36%; }
+.md-col-cost { width: 22%; }
+.md-col-toggle { width: 44px; }
+.md-providers-flat .md-col-provider { width: 49%; }
+
+/* Long tables keep their column names in view, just under the site header. */
+@media (min-width: 761px) {
+  .md-provider-table--sticky thead th {
+    position: sticky;
+    top: var(--sticky-header-height, 0);
+    z-index: 2;
+    padding-top: 12px;
+    border-bottom: 0;
+    background: var(--md-bg);
+    box-shadow: inset 0 -1px 0 var(--md-line-strong);
+  }
+}
+
+.md-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.md-provider > th,
+.md-provider > td {
+  padding: 15px 9px;
+  border-bottom: 1px solid var(--md-line);
+  color: var(--md-text);
+  font-size: 17px;
+  font-weight: 450;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.md-provider > td.md-num {
+  text-align: right;
+}
+
+.md-provider > td.md-dim {
+  color: var(--md-label);
+}
+
+.md-provider-cheapest > th,
+.md-provider-cheapest > td,
+.md-provider-detail-cheapest > td {
+  background: var(--md-highlight);
+}
+
+/* Without script, and once opened, the detail row carries the line. */
+.md-provider-table:not(.md-js) .md-provider > *,
+.md-provider.is-open > * {
+  border-bottom-color: transparent;
+}
+
+.md-provider-detail > td {
+  padding: 4px 14px 22px 58px;
+  border-bottom: 1px solid var(--md-line);
+}
+
+.md-js .md-provider:not(.is-open) + .md-provider-detail {
+  display: none;
+}
+
+.md-js .md-provider {
+  cursor: pointer;
+}
+
+.md-provider-name {
+  display: flex;
+  grid-area: name;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  min-width: 0;
+  color: var(--md-text);
+  font-weight: 550;
+}
+
+.md-provider-name img {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--md-text);
+  object-fit: contain;
+}
+
+.md-provider-name > span:not(.md-cheapest-tag) {
+  min-width: 0;
+}
+
+.md-cheapest-tag {
+  color: var(--md-bar-top);
+  font-family: var(--md-mono);
+  font-size: 13px;
+  font-weight: 450;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.md-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  padding-left: 44px;
+}
+
+.md-badge {
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 1.5;
+}
+
+.md-badge-confidential {
+  padding: 2px 9px;
+  background: var(--md-accent);
+  color: var(--md-accent-ink);
+}
+
+.md-badge-zdr {
+  padding: 1px 9px;
+  border: 1px solid #4A6A85;
+  color: var(--md-link);
+}
+
+.md-col-input,
+.md-col-output {
+  color: var(--md-text);
+}
+
+.md-dim {
+  color: var(--md-label);
+}
+
+.md-cost {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.md-bar {
+  flex: 1;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--md-line);
+}
+
+.md-bar > span {
+  display: block;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--md-bar);
+}
+
+.md-provider-cheapest .md-bar > span {
+  background: var(--md-bar-top);
+}
+
+.md-provider-cheapest .md-bar {
+  background: #13281E;
+}
+
+.md-total {
+  width: 52px;
+  color: var(--md-secondary);
+  font-size: 15px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.md-inout {
+  display: none;
+}
+
+.md-toggle {
+  display: block;
+  width: 100%;
+  min-height: 32px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--md-label);
+  font: inherit;
+  text-align: right;
+  cursor: pointer;
+}
+
+.md-provider-table:not(.md-js) .md-toggle {
+  display: none;
+}
+
+.md-chev::before {
+  content: "+";
+}
+
+.md-toggle[aria-expanded="true"] .md-chev::before {
+  content: "\2212";
+}
+
+.md-provider-details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px 32px;
+  color: var(--md-secondary);
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+.model-detail-page .md-provider-details .md-detail-label,
+.md-subhead {
+  margin: 0 0 4px;
+  color: var(--md-label);
+  font-family: var(--md-mono);
+  font-size: 13px;
+  font-weight: 450;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* Labels, not headings: eight providers would add 32 headings to the
+ * outline. The line height matches the h3 these replaced. */
+.model-detail-page .md-provider-details .md-detail-label {
+  line-height: 1.3;
+  text-wrap: balance;
+}
+
+.model-detail-page .md-provider-details p {
+  margin: 0 0 6px;
+  font-size: 16px;
+  overflow-wrap: anywhere;
+}
+
+.model-detail-page .md-foot-note {
+  margin: 16px 0 0;
+  color: var(--md-secondary);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+/* Related pages read as ordinary links in running text: the intro sentence
+ * above the provider table and the "More data" fact. */
+.model-detail-page .public-wrap a.md-inline-link {
+  color: var(--tr-color-link-base, #C0E1FF);
+  text-decoration: underline;
+  text-decoration-color: var(--tr-color-link-underline, #6F8FA8);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+}
+
+.model-detail-page .public-wrap a.md-inline-link:hover {
+  text-decoration-color: currentColor;
+}
+
+.md-dot {
+  color: var(--md-label);
+}
+
+.md-foot-note code,
+.md-facts code {
+  color: var(--md-amber);
+  font-family: var(--md-mono);
+  font-size: 0.92em;
+}
+
+.md-table-wrap {
+  overflow-x: auto;
+}
+
+.md-simple-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 16px;
+}
+
+.md-simple-table th {
+  padding: 0 12px 12px 0;
+  border-bottom: 1px solid var(--md-line-strong);
+  color: var(--md-label);
+  font-family: var(--md-mono);
+  font-size: 13px;
+  font-weight: 450;
+  letter-spacing: 0.08em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.md-simple-table td {
+  padding: 14px 12px 14px 0;
+  border-bottom: 1px solid var(--md-line);
+  vertical-align: top;
+  font-variant-numeric: tabular-nums;
+}
+
+.md-muted {
+  color: var(--md-secondary);
+}
+
+.md-tag {
+  color: var(--md-bar-top);
+  font-family: var(--md-mono);
+  font-size: 13px;
+  text-transform: uppercase;
+}
+
+.md-subhead {
+  margin-top: 24px;
+}
+
+.md-example {
+  margin-bottom: 18px;
+  border: 1px solid var(--md-line);
+  border-radius: 12px;
+  background: var(--md-code-bg);
+}
+
+/* About */
+.model-detail-page .md-about {
+  max-width: 44em;
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.7;
+}
+
+.md-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px 32px;
+  margin: 28px 0 0;
+  padding: 20px 0 0;
+  border-top: 1px solid var(--md-line);
+}
+
+.md-facts dt {
+  margin-bottom: 4px;
+}
+
+.md-facts dd {
+  margin: 0;
+  color: var(--md-text);
+  font-size: 16px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.md-pills {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+/* FAQ */
+.md-faq h2 {
+  margin-bottom: 14px;
+}
+
+.md-faq-list {
+  border-top: 1px solid var(--md-line-strong);
+}
+
+.md-faq details {
+  padding: 0;
+  border-bottom: 1px solid var(--md-line);
+}
+
+.md-faq summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 0;
+  color: var(--md-text);
+  font-size: 18px;
+  font-weight: 550;
+  line-height: 1.4;
+  list-style: none;
+  cursor: pointer;
+}
+
+.md-faq summary::-webkit-details-marker {
+  display: none;
+}
+
+.md-faq-sign {
+  flex: none;
+  color: var(--md-label);
+}
+
+.md-faq-sign::before {
+  content: "+";
+}
+
+.md-faq details[open] .md-faq-sign::before {
+  content: "\2212";
+}
+
+.model-detail-page .md-faq details p {
+  max-width: 44em;
+  margin: -8px 0 0;
+  padding-bottom: 18px;
+  color: var(--md-secondary);
+  font-size: 17px;
+  line-height: 1.6;
+}
+
+/* Compare chips: one sideways-scrolling row */
+.md-compare h2 {
+  margin-bottom: 16px;
+}
+
+/* Closing band */
+.md-closing {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 96px;
+  padding: 44px 48px;
+  border-radius: 16px;
+  background: var(--md-highlight);
+}
+
+.model-detail-page .md-closing h2 {
+  margin: 0;
+  font-size: 36px;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+.md-closing .md-actions {
+  margin-top: 0;
+}
+
+.model-detail-page .md-closing .md-no-card {
+  color: #DCEBE2;
+}
+
+/* Phones */
+@media (max-width: 760px) {
+  .model-detail-page .public-wrap {
+    padding: 0 20px;
+  }
+
+  /* More air on phones so the hero button lands nearer the thumb. */
+  .md-hero {
+    /* Scales with screen height so short phones (320x568) still show the
+     * button on the first screen. */
+    gap: clamp(14px, 3.2svh, 26px);
+    padding: clamp(24px, 6.4svh, 52px) 0 clamp(24px, 4.4svh, 36px);
+  }
+
+  .md-title-row {
+    gap: 12px;
+  }
+
+  .md-publisher-logo img {
+    width: 36px;
+    height: 36px;
+    border-radius: 9px;
+  }
+
+  .md-hero h1 {
+    font-size: clamp(30px, 9.6vw, 40px);
+    letter-spacing: -0.03em;
+  }
+
+  .model-detail-page .md-lead {
+    font-size: 18px;
+  }
+
+  .md-stats {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin-top: 0;
+  }
+
+  .md-stat {
+    gap: 4px;
+    padding: 14px 0 14px 14px;
+  }
+
+  .md-stat:first-child {
+    padding-left: 0;
+  }
+
+  .md-stat-wide {
+    grid-column: span 2;
+  }
+
+  .md-label {
+    font-size: 13px;
+    letter-spacing: 0.06em;
+  }
+
+  .md-stat-value {
+    font-size: 26px;
+  }
+
+  .md-stat-wide .md-stat-value {
+    font-size: 22px;
+  }
+
+  .md-stat-providers {
+    grid-column: 1 / -1;
+    order: 9;
+    margin: 0 0 0 0;
+    padding: 0 0 14px;
+    border-left: 0;
+  }
+
+  .md-stat-providers .md-label {
+    display: none;
+  }
+
+  .md-logo-stack-logos img {
+    width: 26px;
+    height: 26px;
+  }
+
+  .md-logo-stack-caption {
+    display: inline;
+  }
+
+  .md-actions {
+    align-items: stretch;
+    margin-top: 10px;
+  }
+
+  .model-detail-page .md-hero .md-no-card,
+  .model-detail-page .md-closing .md-no-card {
+    margin-top: -4px;
+    text-align: center;
+  }
+
+  .md-section {
+    padding-bottom: 40px;
+  }
+
+  .md-section h2,
+  .model-detail-page .md-closing h2 {
+    font-size: 26px;
+  }
+
+  .model-detail-page .md-intro {
+    margin-bottom: 16px;
+    font-size: 16px;
+  }
+
+  .md-eyebrow {
+    font-size: 13px;
+  }
+
+  .model-detail-page .btn.md-cta-small {
+    min-height: 48px;
+  }
+
+  /* The table becomes one card per provider. */
+  .md-provider-table,
+  .md-provider-table tbody {
+    display: block;
+  }
+
+  .md-provider-table thead {
+    display: none;
+  }
+
+  .md-provider {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "name name chev"
+      "cost inout inout"
+      "badges badges badges";
+    align-items: center;
+    gap: 12px 18px;
+    margin-bottom: 8px;
+    padding: 14px;
+    border: 1px solid var(--md-line);
+    border-radius: 10px;
+  }
+
+  .md-provider-cheapest {
+    border-color: var(--md-highlight);
+    background: var(--md-highlight);
+  }
+
+  .md-provider > th,
+  .md-provider > td,
+  .md-provider-cell,
+  .md-cost-cell {
+    display: contents;
+  }
+
+  .md-provider-table .md-provider > td.md-toggle-cell {
+    display: block;
+    grid-area: chev;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+
+  .md-toggle {
+    min-width: 24px;
+    min-height: 28px;
+  }
+
+  .md-provider-name {
+    grid-area: name;
+    flex-wrap: nowrap;
+    gap: 10px;
+  }
+
+  .md-provider-name > span:not(.md-cheapest-tag) {
+    flex: 1;
+  }
+
+  .md-provider-name img {
+    width: 28px;
+    height: 28px;
+    border-radius: 7px;
+  }
+
+  .md-provider-table .md-provider > .md-col-input,
+  .md-provider-table .md-provider > .md-col-cached,
+  .md-provider-table .md-provider > .md-col-output,
+  .md-total {
+    display: none;
+  }
+
+  .md-cost {
+    grid-area: cost;
+  }
+
+  .md-inout {
+    display: block;
+    grid-area: inout;
+    color: var(--md-text);
+    font-size: 15px;
+    font-weight: 450;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .md-providers-flat .md-inout {
+    grid-column: 1 / -1;
+    white-space: normal;
+  }
+
+  .md-badges {
+    grid-area: badges;
+    margin-top: -2px;
+    padding-left: 0;
+  }
+
+  /* An open card: the main row and its detail row read as one card. */
+  .md-provider-table:not(.md-js) .md-provider,
+  .md-provider.is-open {
+    margin-bottom: 0;
+    border-bottom: 0;
+    border-radius: 10px 10px 0 0;
+  }
+
+  .md-provider-detail {
+    display: block;
+    margin-bottom: 8px;
+    border: 1px solid var(--md-line);
+    border-top: 0;
+    border-radius: 0 0 10px 10px;
+  }
+
+  .md-provider-detail-cheapest {
+    border-color: var(--md-highlight);
+    background: var(--md-highlight);
+  }
+
+  .md-provider-detail > td {
+    display: block;
+    padding: 0 14px 16px;
+    border: 0;
+  }
+
+  .md-provider-details {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .md-faq summary {
+    padding: 14px 0;
+    font-size: 16px;
+  }
+
+  .model-detail-page .md-faq details p {
+    font-size: 15px;
+  }
+
+  .md-closing {
+    align-items: stretch;
+    gap: 14px;
+    margin-bottom: 48px;
+    padding: 28px 22px;
+    border-radius: 14px;
+  }
+}

@@ -135,7 +135,11 @@ def test_prices_link_to_the_exact_rendered_tinfoil_row():
         assert page is not None
         row = BeautifulSoup(page, 'html.parser').select_one('#provider-tinfoil')
         assert row is not None
-        text = row.get_text(' ', strip=True)
+        # The row shows rounded prices; its detail row, which the same link
+        # opens, carries the exact per-1M prices the exchange quotes.
+        detail = row.find_next_sibling('tr')
+        assert detail is not None and 'md-provider-detail' in (detail.get('class') or [])
+        text = row.get_text(' ', strip=True) + ' ' + detail.get_text(' ', strip=True)
         assert '$' + quote['input'] + '/1M' in text
         assert '$' + quote['output'] + '/1M' in text
         assert quote['source'].endswith('#provider-tinfoil')

@@ -56,7 +56,7 @@ test("Claude Code landing turns the ten-second promise into the real signup flow
 
   await page.locator(".cc-primary-cta").first().click();
   await expect(page.locator("#signinModal")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Get your API key" })).toBeVisible();
 });
 
 test("Claude Code landing remains readable on phone and narrow tablet", async ({ page }) => {

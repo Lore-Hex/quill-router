@@ -76,9 +76,9 @@ def test_elevenlabs_public_voice_list(client: TestClient, model: str) -> None:
 
     response = client.get(f"/models/{model}")
     assert response.status_code == 200
-    label = BeautifulSoup(response.text, "html.parser").find("th", string="Voices")
+    label = BeautifulSoup(response.text, "html.parser").find("dt", string="Voices")
     assert label is not None
-    cell = label.find_next_sibling("td")
+    cell = label.find_next_sibling("dd")
     assert cell is not None
     assert cell.get_text(strip=True).split(", ") == list(ELEVENLABS_VOICES)
 

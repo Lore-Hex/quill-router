@@ -1677,6 +1677,14 @@ body.auth.auth-shell {
   line-height: 1.5;
 }
 
+.models-page-hero-cta {
+  margin-top: 18px;
+}
+
+.models-page-hero-cta .cta-note {
+  margin-top: 8px;
+}
+
 .models-page-hero-links {
   display: flex;
   flex-wrap: wrap;

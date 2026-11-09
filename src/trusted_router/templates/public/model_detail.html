@@ -1,206 +1,258 @@
 {% extends "public/_base.html" %}
-{% from "public/_provider_privacy_badges.html" import provider_privacy_badges %}
-{% from "public/_provider_identity.html" import provider_identity, publisher_identity %}
-{% from "public/_catalog_privacy.html" import serving_provider_chip %}
+{% from "public/_provider_identity.html" import publisher_identity %}
+{% from "public/_decide_example.html" import decide_curl %}
+{% from "public/_quickstart_box.html" import quickstart_box, chip_row %}
+{% set name = page.short_name %}
+{% set no_card_line %}No card required. Start with 1&nbsp;million free&nbsp;tokens.{% endset %}
+{% block head_extra %}<link rel="stylesheet" href="/static/model-detail.css?v={{ static_version|default('local') }}"><link rel="stylesheet" href="/static/quickstart.css?v={{ static_version|default('local') }}">{% endblock %}
+{% block body_attributes %}class="model-detail-page"{% endblock %}
+
+{% macro signup_button(extra_class="", catalog_cta=false) -%}
+<button class="btn primary md-cta{% if extra_class %} {{ extra_class }}{% endif %}" type="button" data-action="open-signin" data-signin-mode="signup"{% if catalog_cta %} data-catalog-cta{% endif %}>Create my API key</button>
+{%- endmacro %}
+
+{% macro positive_badges(row) -%}
+{% if row.confidential or row.zdr %}<span class="md-badges">{% if row.confidential %}<span class="md-badge md-badge-confidential" data-privacy="confidential" title="Verified provider confidential compute, end-to-end encryption (E2EE), and explicit zero data retention (ZDR).">Confidential</span>{% endif %}{% if row.zdr %}<span class="md-badge md-badge-zdr" data-privacy="zdr" title="Zero data retention is a provider retention commitment, separate from confidential compute.">Zero retention</span>{% endif %}</span>{% endif %}
+{%- endmacro %}
+
+{% block hero %}
+<section class="md-hero" aria-labelledby="md-title">
+  <div class="md-title-row">
+    {% if model.publisher_slug %}<a class="md-publisher-logo" href="/providers/{{ model.publisher_slug }}" title="{{ model.provider }}"><img src="{{ provider_logo_url(model.publisher_slug) }}" alt="{{ model.provider }}" width="60" height="60"></a>{% endif %}
+    <h1 id="md-title">{{ name }}</h1>
+  </div>
+  <p class="md-lead">{{ page.sentence }}</p>
+  {% if model.id == 'dealignai/deepseek-v4.1-flash-1017-uncensored' %}
+  <p class="md-note"><strong>Abliterated DeepSeek.</strong> A separate checkpoint by dealignai, not stock DeepSeek or a system-prompt wrapper. <a href="/abliterated-deepseek">Explore uncensored DeepSeek cyberdefense prompts and the Confidential API</a>.</p>
+  {% endif %}
+  {% if model.id == 'trustedrouter/trusted' %}
+  <p class="md-note"><strong>Trusted.</strong> Confidential inference through <a href="/providers/tinfoil">Tinfoil</a> and <a href="/providers/privatemode">Privatemode</a> only, selected by TrustedRouter for operator physical security and reliability history. Every fallback remains in this tier. Also available as <code>nyte/trusted</code>. <a href="/docs#trusted-tier">API and qualification details</a></p>
+  {% endif %}
+  <div class="md-stats">
+    {% if page.lowest_input %}
+    <div class="md-stat"><span class="md-label">Input / 1M</span><strong class="md-stat-value md-mint">{{ page.lowest_input }}</strong></div>
+    <div class="md-stat"><span class="md-label">Output / 1M</span><strong class="md-stat-value md-mint">{{ page.lowest_output }}</strong></div>
+    {% elif page.price_label %}
+    <div class="md-stat md-stat-wide"><span class="md-label">Price</span><strong class="md-stat-value md-mint">{{ page.price_label }}</strong></div>
+    {% elif model.fixed_price %}
+    <div class="md-stat"><span class="md-label">Input / 1M</span><strong class="md-stat-value md-mint">{{ model.prompt_price|replace('/1M', '') }}</strong></div>
+    <div class="md-stat"><span class="md-label">Output / 1M</span><strong class="md-stat-value md-mint">{{ model.completion_price|replace('/1M', '') }}</strong></div>
+    {% endif %}
+    {% if page.context %}
+    <div class="md-stat"><span class="md-label">Context</span><strong class="md-stat-value">{{ page.context }}</strong></div>
+    {% endif %}
+    {% if page.provider_logos %}
+    <div class="md-stat md-stat-providers">
+      <span class="md-label">Providers</span>
+      <span class="md-logo-stack">
+        <span class="md-logo-stack-logos" aria-hidden="true">{% for provider in page.provider_logos[:8] %}<img src="{{ provider.logo_url }}" alt="{{ provider.name }}" width="30" height="30" loading="lazy" decoding="async">{% endfor %}</span>
+        <span class="md-logo-stack-caption">{{ model.endpoint_count }} provider{{ '' if model.endpoint_count == 1 else 's' }}, one key</span>
+      </span>
+    </div>
+    {% endif %}
+  </div>
+  <div class="md-actions">
+    {{ signup_button(catalog_cta=true) }}
+    {% if page.funded %}<p class="md-no-card">{{ no_card_line }}</p>{% endif %}
+  </div>
+</section>
+{% endblock %}
+
 {% block body %}
-<section class="panel">
-  <div class="panel-head">
-    <h2><code>{{ model.id }}</code></h2>
-    <div class="provider-chip-list">
-      {% if model.open_weights %}<span class="pill good">open weights</span>{% endif %}
-      {% if model.us_provider_available %}<span class="pill">US providers</span>{% endif %}
-      {% if model.eu_focused_provider_available %}<span class="pill">EU-focused</span>{% endif %}
-      {% if model.publisher_slug %}<a class="pill provider-chip" href="/providers/{{ model.publisher_slug }}"><img class="provider-logo" src="{{ provider_logo_url(model.publisher_slug) }}" alt="{{ model.provider }} logo" aria-hidden="true" width="22" height="22"><span>{{ model.provider }}</span></a>
-      {%- elif model.provider %}<span class="pill provider-chip"><span>{{ model.provider }}</span></span>{% endif %}
-    </div>
-  </div>
-  <div class="panel-body">
-    <p><a href="/models">All models</a></p>
-    {% if model.id == 'dealignai/deepseek-v4.1-flash-1017-uncensored' %}
-    <p><strong>Abliterated DeepSeek.</strong> A separate checkpoint by dealignai, not stock DeepSeek or a system-prompt wrapper. <a href="/abliterated-deepseek">Explore uncensored DeepSeek cyberdefense prompts and the Confidential API</a>.</p>
+{% set python_snippet %}{% if model.fetch %}import os
+import requests
+
+response = requests.post(
+    "{{ api_base_url }}/tools/fetch",
+    headers={"Authorization": f"Bearer {os.environ['TRUSTEDROUTER_API_KEY']}"},
+    json={"url": "https://example.com"},
+)
+print(response.json())
+{%- elif model.transcription %}import os
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key=os.environ["TRUSTEDROUTER_API_KEY"],
+)
+with open("recording.wav", "rb") as audio:
+    response = client.audio.transcriptions.create(
+        model="{{ model.id }}",
+        file=audio,
+        response_format="json",
+    )
+print(response.text)
+{%- elif model.speech %}import os
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key=os.environ["TRUSTEDROUTER_API_KEY"],
+)
+with client.audio.speech.with_streaming_response.create(
+    model="{{ model.id }}",
+    input="Hello from TrustedRouter.",
+    voice="{{ model.speech.supported_voices[0] }}",
+    response_format="{{ model.speech.default_response_format }}",
+) as response:
+    response.stream_to_file("speech.{{ model.speech.default_response_format }}")
+{%- elif model.supports_embeddings and not model.supports_chat %}import os
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key=os.environ["TRUSTEDROUTER_API_KEY"],
+)
+response = client.embeddings.create(
+    model="{{ model.id }}",
+    input="What is the capital of France?",
+)
+print(len(response.data[0].embedding))
+{%- elif not model.supports_chat and model.supports_decide %}import os
+import requests
+
+response = requests.post(
+    "{{ decide_url(api_base_url) }}",
+    headers={"Authorization": f"Bearer {os.environ['TRUSTEDROUTER_API_KEY']}"},
+    json={
+        "model": "{{ model.id }}",
+        "state": "Customer: I was charged twice for order A-1.",
+        "questions": {
+            "refund": {"type": "boolean", "instructions": "Is a refund requested?"}
+        },
+    },
+)
+print(response.json())
+{%- else %}import os
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key=os.environ["TRUSTEDROUTER_API_KEY"],
+)
+response = client.chat.completions.create(
+    model="{{ model.id }}",
+    messages=[{"role": "user", "content": "What is the capital of France?"}],
+)
+print(response.choices[0].message.content)
+{%- endif %}{% endset %}
+{% set curl_snippet %}{% if model.fetch %}curl {{ api_base_url }}/tools/fetch \
+  -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://example.com"}'
+{%- elif model.transcription %}curl {{ api_base_url }}/audio/transcriptions \
+  -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
+  -F model="{{ model.id }}" \
+  -F file="@recording.wav"
+{%- elif model.speech %}curl {{ api_base_url }}/audio/speech \
+  -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "{{ model.id }}", "input": "Hello from TrustedRouter.", "voice": "{{ model.speech.supported_voices[0] }}"}' \
+  --output speech.{{ model.speech.default_response_format }}
+{%- elif model.supports_embeddings and not model.supports_chat %}curl {{ api_base_url }}/embeddings \
+  -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "{{ model.id }}", "input": "What is the capital of France?"}'
+{%- elif not model.supports_chat and model.supports_decide %}{{ decide_curl(model.id, api_base_url) }}
+{%- else %}curl {{ api_base_url }}/chat/completions \
+  -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "{{ model.id }}",
+    "messages": [{"role": "user", "content": "What is the capital of France?"}]
+  }'
+{%- endif %}{% endset %}
+<section class="md-section" id="about" aria-labelledby="md-about-heading">
+  <div class="md-eyebrow">Overview</div>
+  <h2 id="md-about-heading">About {{ name }}</h2>
+  <p class="md-about">
+    {{ name }} is {{ 'an' if page.lead_kind[0] in 'aeiou' else 'a' }} {{ page.lead_kind }}{% if model.provider %} published by {% if model.publisher_slug %}<a href="/providers/{{ model.publisher_slug }}">{{ model.provider }}</a>{% else %}{{ model.provider }}{% endif %}{% endif %}{% if page.context %}, with a {{ model.context_length }}-token context window{% endif %}.
+    {% if model.ai_iq and model.ai_iq.url %}{% if model.ai_iq.iq is defined and model.ai_iq.iq is not none %}It scores {{ model.ai_iq.iq }} on <a class="md-ai-iq-link" href="{{ model.ai_iq.url }}" rel="nofollow noopener">AI IQ</a>{% if model.ai_iq.rank is defined and model.ai_iq.rank is not none %}, ranked #{{ model.ai_iq.rank }}{% endif %}.{% else %}See its <a class="md-ai-iq-link" href="{{ model.ai_iq.url }}" rel="nofollow noopener">AI IQ profile</a>.{% endif %}{% endif %}
+    {% if model.is_meta and model.candidate_models and not model.configuration_hidden %}It routes across {{ model.candidate_models|length }} model{{ '' if model.candidate_models|length == 1 else 's' }} inside the attested prompt path.{% endif %}
+    {% if page.rows %}Through TrustedRouter it runs on {{ model.endpoint_count }} provider{{ '' if model.endpoint_count == 1 else 's' }}{% if page.regions %}, with options in the {{ page.regions|join(' and ') }}{% endif %}{% if page.lowest_input %}, from {{ page.lowest_input }} per million input tokens{% elif page.price_label %}, from {{ page.price_label }}{% endif %}.{% endif %}
+    {% if page.zdr_count %}{{ page.zdr_count_word|capitalize }} provider{{ '' if page.zdr_count == 1 else 's' }} offer{{ 's' if page.zdr_count == 1 else '' }} zero data retention{% if page.confidential_names %}, and {{ page.confidential_names|join(' and ') }} also run{{ 's' if page.confidential_names|length == 1 else '' }} it in a confidential enclave{% endif %}.{% endif %}
+  </p>
+  <dl class="md-facts">
+    <div><dt>Model ID</dt><dd><code class="md-model-id">{{ model.id }}</code></dd></div>
+    <div><dt>Publisher</dt><dd>{{ publisher_identity(model) }}</dd></div>
+    {% if model.transcription %}
+    <div><dt>Input limit</dt><dd>7 MiB, up to 10 minutes</dd></div>
+    <div><dt>Input formats</dt><dd>{{ model.transcription.input_formats|join(', ') }}</dd></div>
+    <div><dt>Billing</dt><dd>{{ model.transcription.billing_unit|replace('_', ' ') }}</dd></div>
+    <div><dt>Price</dt><dd>{{ model.prompt_price }}</dd></div>
+    <div><dt>API</dt><dd><a href="/docs#transcription">Audio transcription</a></dd></div>
+    {% elif model.speech %}
+    <div><dt>Input limit</dt><dd>{{ model.speech.max_input_characters }} characters</dd></div>
+    {% if model.speech.billing_unit == 'request' %}
+    <div><dt>Price</dt><dd>${{ model.speech.request_price }}/request</dd></div>
+    {% elif model.speech.billing_unit == 'input_characters' %}
+    <div><dt>Input price</dt><dd>${{ model.speech.input_character_price_per_million }}/M characters</dd></div>
+    {% else %}
+    <div><dt>Input price</dt><dd>${{ model.speech.input_token_price_per_million }}/M text tokens</dd></div>
+    <div><dt>Output price</dt><dd>${{ model.speech.output_audio_token_price_per_million }}/M audio tokens</dd></div>
     {% endif %}
-    {% if model.id == 'trustedrouter/trusted' %}
-    <p><strong>Trusted.</strong> Confidential inference through <a href="/providers/tinfoil">Tinfoil</a> and <a href="/providers/privatemode">Privatemode</a> only, selected by TrustedRouter for operator physical security and reliability history. Every fallback remains in this tier. Also available as <code>nyte/trusted</code>. <a href="/docs#trusted-tier">API and qualification details</a></p>
+    <div><dt>Formats</dt><dd>{{ model.speech.response_formats|join(', ') }}</dd></div>
+    <div><dt>Voices</dt><dd>{{ model.speech.supported_voices|join(', ') }}</dd></div>
     {% endif %}
-    <nav class="section-tabs" aria-label="{{ model.name }} sections">
-      {% for link in model.section_links %}
-      <a href="{{ link.href }}" class="{% if link.active %}active{% endif %}">{{ link.label }}</a>
-      {% endfor %}
-    </nav>
-    <table>
-      <tbody>
-        <tr><th>Publisher</th><td>{{ publisher_identity(model, subtitle=model.publisher_slug) }}</td></tr>
-        <tr><th>AI IQ</th><td>
-          {% if model.ai_iq %}
-          <a class="ai-iq-link" href="{{ model.ai_iq.url }}" rel="nofollow noopener">
-            <strong>IQ {{ model.ai_iq.iq }}</strong>
-            <span>#{{ model.ai_iq.rank }} on AI IQ</span>
-          </a>
-          {% else %}
-          <span class="muted-copy">No AI IQ profile matched yet.</span>
-          {% endif %}
-        </td></tr>
-        {% if model.transcription %}
-        <tr><th>Input limit</th><td>7 MiB, up to 10 minutes</td></tr>
-        <tr><th>Input formats</th><td>{{ model.transcription.input_formats|join(', ') }}</td></tr>
-        <tr><th>Billing</th><td>{{ model.transcription.billing_unit|replace('_', ' ') }}</td></tr>
-        <tr><th>Price</th><td>{{ model.prompt_price }}</td></tr>
-        <tr><th>API</th><td><a href="/docs#transcription">Audio transcription</a></td></tr>
-        {% elif model.speech %}
-        <tr><th>Input limit</th><td>{{ model.speech.max_input_characters }} characters</td></tr>
-        {% if model.speech.billing_unit == 'request' %}
-        <tr><th>Price</th><td>${{ model.speech.request_price }}/request</td></tr>
-        {% elif model.speech.billing_unit == 'input_characters' %}
-        <tr><th>Input price</th><td>${{ model.speech.input_character_price_per_million }}/M characters</td></tr>
-        {% else %}
-        <tr><th>Input price</th><td>${{ model.speech.input_token_price_per_million }}/M text tokens</td></tr>
-        <tr><th>Output price</th><td>${{ model.speech.output_audio_token_price_per_million }}/M audio tokens</td></tr>
-        {% endif %}
-        <tr><th>Formats</th><td>{{ model.speech.response_formats|join(', ') }}</td></tr>
-        <tr><th>Voices</th><td>{{ model.speech.supported_voices|join(', ') }}</td></tr>
-        {% else %}
-        <tr><th>Context</th><td>{{ model.context_length }} tokens</td></tr>
-        {% endif %}
-        {% if model.is_meta %}
-        <tr><th>Orchestration</th><td>
-          {% if model.orchestration_primitive %}<span class="pill">{{ model.orchestration_primitive }}</span>{% endif %}
-          {% if model.orchestration_role %}<span class="pill">{{ model.orchestration_role|replace('_', ' ') }}</span>{% endif %}
-          {% if model.canonical_model_id and model.canonical_model_id != model.id %}
-          <span class="muted-copy">Canonical: <a href="/models/{{ model.canonical_model_id }}"><code>{{ model.canonical_model_id }}</code></a></span>
-          {% endif %}
-        </td></tr>
-        {% endif %}
-        <tr><th>{% if model.is_meta %}Components{% else %}Providers{% endif %}</th><td>
-          {% if model.is_meta %}
-          {% if model.configuration_hidden %}
-          <span class="muted-copy">Configuration not published.</span>
-          {% else %}
-          <div class="provider-chip-list">
-            {% for candidate in model.candidate_models %}
-            <a class="pill" href="{{ candidate.detail_href }}" title="{{ candidate.id }}">{{ candidate.name }}</a>
-            {% endfor %}
-          </div>
-          {% endif %}
-          {% else %}
-          <div class="provider-chip-list">
-            {% for provider in model.providers %}
-            {{ serving_provider_chip(provider) }}
-            {% else %}
-            <span class="muted-copy">No Credits provider route is currently published.</span>
-            {% endfor %}
-          </div>
-          {% endif %}
-        </td></tr>
-        <tr><th>Credits routes</th><td>{{ model.endpoint_count }} provider route{{ '' if model.endpoint_count == 1 else 's' }}</td></tr>
-        {% if model.fixed_price %}
-        <tr><th>Input price</th><td>{{ model.prompt_price }} tokens</td></tr>
-        <tr><th>Cached input</th><td>{{ model.cached_prompt_price }}</td></tr>
-        <tr><th>Output price</th><td>{{ model.completion_price }} tokens</td></tr>
-        {% if model.minimum_charge %}
-        <tr><th>Minimum charge</th><td>{{ model.minimum_charge }} per successful request</td></tr>
-        {% endif %}
-        {% endif %}
-        <tr><th>Modes</th><td>
-          {% if model.supports_chat %}<span class="pill">chat</span>{% endif %}
-          {% if model.supports_messages %}<span class="pill">messages</span>{% endif %}
-          {% if model.supports_embeddings %}<span class="pill">embeddings</span>{% endif %}
-          {% if model.supports_decide %}<span class="pill">decide</span>{% endif %}
-          {% if model.speech %}<span class="pill">speech</span>{% endif %}
-          {% if model.transcription %}<span class="pill">transcription</span>{% endif %}
-          {% if model.open_weights %}<span class="pill good">open weights</span>{% endif %}
-          {% if model.us_provider_available %}<span class="pill">US providers</span>{% endif %}
-          {% if model.eu_focused_provider_available %}<span class="pill">EU-focused</span>{% endif %}
-        </td></tr>
-        {% if model.prepaid %}<tr><th>Billing</th><td><span class="pill good">Credits</span></td></tr>{% endif %}
-        {% if model.usage_estimation %}<tr><th>Estimated usage</th><td>{{ model.usage_estimation.description }}</td></tr>{% endif %}
-      </tbody>
-    </table>
-  </div>
+    {% if model.is_meta %}
+    <div><dt>Orchestration</dt><dd class="md-pills">
+      {% if model.orchestration_primitive %}<span class="pill">{{ model.orchestration_primitive }}</span>{% endif %}
+      {% if model.orchestration_role %}<span class="pill">{{ model.orchestration_role|replace('_', ' ') }}</span>{% endif %}
+      {% if model.canonical_model_id and model.canonical_model_id != model.id %}<span class="md-muted">Canonical: <a href="/models/{{ model.canonical_model_id }}"><code>{{ model.canonical_model_id }}</code></a></span>{% endif %}
+    </dd></div>
+    {% if model.fixed_price %}
+    <div><dt>Input price</dt><dd>{{ model.prompt_price }} tokens</dd></div>
+    <div><dt>Cached input</dt><dd>{{ model.cached_prompt_price }}</dd></div>
+    <div><dt>Output price</dt><dd>{{ model.completion_price }} tokens</dd></div>
+    {% endif %}
+    {% if model.minimum_charge %}<div><dt>Minimum charge</dt><dd>{{ model.minimum_charge }} per successful request</dd></div>{% endif %}
+    {% endif %}
+    {% set modes = [] %}
+    {% if model.supports_chat %}{% set _ = modes.append('chat') %}{% endif %}
+    {% if model.supports_messages %}{% set _ = modes.append('messages') %}{% endif %}
+    {% if model.supports_embeddings %}{% set _ = modes.append('embeddings') %}{% endif %}
+    {% if model.supports_decide %}{% set _ = modes.append('decide') %}{% endif %}
+    {% if model.speech %}{% set _ = modes.append('speech') %}{% endif %}
+    {% if model.transcription %}{% set _ = modes.append('transcription') %}{% endif %}
+    {% if modes %}<div><dt>Modes</dt><dd>{{ modes|join(', ') }}</dd></div>{% endif %}
+    {% if model.prepaid %}<div><dt>Billing</dt><dd>Credits{% if model.byok %} or your own provider key{% endif %}</dd></div>{% endif %}
+    {% if model.usage_estimation %}<div><dt>Estimated usage</dt><dd>{{ model.usage_estimation.description }}</dd></div>{% endif %}
+    {% set more_links = model.section_links|rejectattr('active')|list %}
+    {% if more_links %}<div class="md-fact-more"><dt>More data</dt><dd class="md-more-data">{% for link in more_links %}<a class="md-inline-link" href="{{ link.href }}"><span class="md-sr">{{ name }} </span>{{ link.label }}</a>{% if not loop.last %}<span class="md-dot" aria-hidden="true"> · </span>{% endif %}{% endfor %}</dd></div>{% endif %}
+  </dl>
 </section>
 
-{% if model.id == 'dealignai/deepseek-v4.1-flash-1017-uncensored' and model.providers|selectattr('slug', 'equalto', 'maple')|selectattr('confidential_available')|list %}
-{% include "public/_maple_api.html" %}
-{% endif %}
-
-{% if model.documentation %}
-<section class="panel" aria-labelledby="model-usage-heading">
-  <div class="panel-head"><h2 id="model-usage-heading">How to use {{ model.name }}</h2></div>
-  <div class="panel-body">
-    <p>{{ model.documentation.description }}</p>
-    <table>
-      <tbody>
-        <tr><th>Input</th><td>{{ model.documentation.input_format }}</td></tr>
-        <tr><th>Output</th><td>{{ model.documentation.output_format }}</td></tr>
-      </tbody>
-    </table>
-    <div class="task-documentation-examples">
-      <div>
-        <h3>Example input</h3>
-        <pre class="code-block"><code>{{ model.documentation.example_input }}</code></pre>
-      </div>
-      <div>
-        <h3>Example output</h3>
-        <pre class="code-block"><code>{{ model.documentation.example_output }}</code></pre>
-      </div>
-    </div>
-  </div>
+<section class="md-section" id="quickstart" aria-labelledby="md-quickstart-heading">
+  <div class="md-eyebrow">Quickstart</div>
+  <h2 id="md-quickstart-heading">Set it up with your agent</h2>
+  <p class="md-intro">Paste this into Claude Code, Cursor or any coding agent.</p>
+  {% call quickstart_box(python=python_snippet, curl=curl_snippet, prompt_head=page.agent_prompt_head, prompt_tail=page.agent_prompt_tail, model_id=model.id) %}{{ signup_button("md-cta-small") }}{% endcall %}
 </section>
-{% endif %}
 
-{% if not model.is_meta %}
-<section class="panel" aria-label="Current {{ model.name }} route evidence">
-  <div class="panel-head"><h2>Current route evidence</h2><a href="/leaderboard">Live leaderboard</a></div>
-  <div class="panel-body">
-    <div class="public-proof-strip">
-      {% if route_evidence.route_count %}
-      <div><strong>{{ route_evidence.lowest_prompt_price }}</strong><span>Lowest Credits input price</span></div>
-      <div><strong>{{ route_evidence.lowest_completion_price }}</strong><span>Lowest Credits output price</span></div>
-      {% else %}
-      <div><strong>Unavailable</strong><span>No Credits provider route</span></div>
-      {% endif %}
-      <div><strong>{{ route_evidence.fastest_ttft }}</strong><span>Fastest measured p50 TTFT{% if route_evidence.fastest_ttft_provider %} via <a href="/providers/{{ route_evidence.fastest_ttft_provider }}">{{ route_evidence.fastest_ttft_provider }}</a>{% endif %}</span></div>
-      <div><strong>{{ route_evidence.fastest_throughput }}</strong><span>Highest measured throughput{% if route_evidence.fastest_throughput_provider %} via <a href="/providers/{{ route_evidence.fastest_throughput_provider }}">{{ route_evidence.fastest_throughput_provider }}</a>{% endif %}</span></div>
-    </div>
-    <p class="muted-copy">Recent provider-route uptime spans {{ route_evidence.uptime_range }} across {{ route_evidence.route_count }} route{{ '' if route_evidence.route_count == 1 else 's' }} and {{ route_evidence.provider_count }} provider{{ '' if route_evidence.provider_count == 1 else 's' }}. Price comes from the current Credits catalog. Speed and uptime come from routed probes rather than vendor claims.</p>
-    <div class="mini-links">
-      {% if model.pricing_href %}<a href="{{ model.pricing_href }}">All route prices</a>{% endif %}
-      {% if model.providers_href %}<a href="{{ model.providers_href }}">All providers</a>{% endif %}
-      {% if model.performance_href %}<a href="{{ model.performance_href }}">Performance details</a>{% endif %}
-      {% if model.uptime_href %}<a href="{{ model.uptime_href }}">Uptime details</a>{% endif %}
-    </div>
-  </div>
-</section>
-{% endif %}
-
-<section class="panel">
-  <div class="panel-head"><h2>{% if model.is_meta and model.configuration_hidden %}Configuration{% elif model.is_meta %}Models used by this orchestration{% else %}Providers serving this model{% endif %}</h2></div>
-  <div class="panel-body">
-    {% if model.is_meta and model.configuration_hidden %}
-    <p style="color:var(--muted);font-size:14px">
-      This TrustedRouter model uses an attested orchestration preset. The internal
-      model graph and prompts are intentionally not published.
-    </p>
-    {% elif model.is_meta %}
-    <p style="color:var(--muted);font-size:14px">
-      This TrustedRouter model is an orchestration preset. The gateway routes
-      through the component models below inside the attested prompt path, using
-      the preset's worker, advisor, judge, or synthesizer roles.
-    </p>
-    <div class="model-table-wrap">
-    <table data-sortable="true">
+<section class="md-section" id="providers" aria-labelledby="md-providers-heading">
+  {% if model.is_meta %}
+  <div class="md-eyebrow">{% if model.configuration_hidden %}Configuration{% else %}{{ model.candidate_models|length }} model{{ '' if model.candidate_models|length == 1 else 's' }}{% endif %}</div>
+  <h2 id="md-providers-heading">{% if model.configuration_hidden %}Configuration{% else %}Models used by this orchestration{% endif %}</h2>
+  {% if model.configuration_hidden %}
+  <p class="md-intro">
+    This TrustedRouter model uses an attested orchestration preset. The internal
+    model graph and prompts are intentionally not published.
+  </p>
+  {% else %}
+  <p class="md-intro">
+    This TrustedRouter model is an orchestration preset. The gateway routes
+    through the component models below inside the attested prompt path, using
+    the preset's worker, advisor, judge, or synthesizer roles.
+  </p>
+  <div class="md-table-wrap" role="region" aria-label="Component models" tabindex="0">
+    <table class="md-simple-table" data-sortable="true">
       <thead>
-        <tr>
-          <th>Component</th>
-          <th>Publisher</th>
-          <th>Prompt</th>
-          <th>Cached input</th>
-          <th>Completion</th>
-        </tr>
+        <tr><th>Component</th><th>Publisher</th><th>Prompt</th><th>Cached input</th><th>Completion</th></tr>
       </thead>
       <tbody>
         {% for candidate in model.candidate_models %}
         <tr>
-          <td><a href="{{ candidate.detail_href }}">{{ candidate.id }}</a>{% if candidate.open_weights %} <span class="pill good">open weights</span>{% endif %}<br><span class="muted-copy">{{ candidate.name }}</span></td>
+          <td><a href="{{ candidate.detail_href }}">{{ candidate.id }}</a>{% if candidate.open_weights %} <span class="md-tag">open weights</span>{% endif %}<br><span class="md-muted">{{ candidate.name }}</span></td>
           <td>{{ publisher_identity(candidate) }}</td>
           <td>{{ candidate.prompt_price }}</td>
           <td>{{ candidate.cached_prompt_price }}</td>
@@ -209,118 +261,191 @@
         {% endfor %}
       </tbody>
     </table>
-    </div>
-    {% else %}
-    {% if model.speech or model.transcription %}
-    <p style="color:var(--muted);font-size:14px">Audio requests use the listed model and provider. These routes do not silently switch models or providers.</p>
-    {% else %}
-    <p style="color:var(--muted);font-size:14px">
-      Sorted by lowest combined prompt and completion price. Use
-      <code>"provider": {"sort": "throughput"}</code> in the request body
-      (or append <code>:nitro</code> to the model id) to route to the
-      fastest provider instead.
-    </p>
-    {% endif %}
-    <p style="color:var(--muted);font-size:14px">
-      <strong>Trust boundary:</strong> TR router attestation verifies the
-      TrustedRouter gateway only. Provider policy separately describes the
-      upstream model host's retention, confidential compute, and E2EE posture.
-      Company country is separate from inference location. Weight formats are
-      source-backed declarations, not per-request proofs.
-    </p>
-    {% if model.endpoints %}
-    <div class="model-table-wrap" role="region" aria-label="Provider comparison" tabindex="0">
-    <table data-sortable="true" class="model-route-table">
-      <thead>
-        <tr>
-          <th>Provider</th>
-          <th>Input</th>
-          <th>Cached input</th>
-          <th>Output</th>
-          <th>Weight format</th>
-          <th>Provider policy</th>
-          <th>Company / inference location</th>
-          <th>Measured speed</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for endpoint in model.endpoints %}
-        <tr id="provider-{{ endpoint.provider_slug }}">
-          <td>{{ provider_identity(endpoint.provider_slug, endpoint.provider, endpoint.provider_href, subtitle=endpoint.provider_slug) }}</td>
-          <td data-label="Input">{{ endpoint.prompt_price }}</td>
-          <td data-label="Cached input">{{ endpoint.cached_prompt_price }}</td>
-          <td data-label="Output">{{ endpoint.completion_price }}</td>
-          <td class="model-precision" data-label="Weight format">
+  </div>
+  {% endif %}
+  {% else %}
+  {% set provider_links %}see <a class="md-inline-link" href="/trust">how we check privacy claims</a> and the <a class="md-inline-link" href="/leaderboard">live speed leaderboard</a>{% endset %}
+  <div class="md-eyebrow">{{ model.endpoint_count }} provider{{ '' if model.endpoint_count == 1 else 's' }}</div>
+  <h2 id="md-providers-heading">Providers</h2>
+  {% if model.speech or model.transcription %}
+  <p class="md-intro">Audio requests use the listed model and provider. These routes do not silently switch models or providers. Open a row for retention, location and weight format, or {{ provider_links }}.</p>
+  {% elif model.endpoint_count >= 2 %}
+  <p class="md-intro">Your key goes to the cheapest healthy provider and fails over on its own. Open a row for retention, location and weight format, or {{ provider_links }}.</p>
+  {% elif model.endpoint_count == 1 %}
+  <p class="md-intro">Open the row for retention, location and weight format, or {{ provider_links }}.</p>
+  {% endif %}
+  {% if page.rows %}
+  {% if page.rows|length > 1 %}
+  {# model-detail.js reveals this and reorders the rows; Price is the server order. #}
+  <div class="md-sort" role="radiogroup" aria-label="Sort providers" data-md-sort hidden>
+    <span class="md-sort-label" aria-hidden="true">Sort by</span>
+    <button type="button" role="radio" aria-checked="true" data-md-sort-key="price">Price</button>
+    {% if page.sort_speed %}<button type="button" role="radio" aria-checked="false" tabindex="-1" data-md-sort-key="throughput">Speed</button>{% endif %}
+    {% if page.sort_latency %}<button type="button" role="radio" aria-checked="false" tabindex="-1" data-md-sort-key="latency">Latency</button>{% endif %}
+  </div>
+  {% endif %}
+  {% set columns = 6 if page.token_priced else 4 %}
+  <table class="md-provider-table{% if not page.token_priced %} md-providers-flat{% endif %}{% if page.rows|length > 10 %} md-provider-table--sticky{% endif %}" aria-label="Provider comparison" data-md-providers>
+    <caption class="md-sr">{{ name }} providers and prices per 1M tokens</caption>
+    <thead>
+      <tr>
+        <th scope="col" class="md-col-provider">Provider</th>
+        <th scope="col" class="md-num">{% if page.token_priced %}Input{% else %}Price{% endif %}</th>
+        {% if page.token_priced %}<th scope="col" class="md-num">Cached</th>{% endif %}
+        <th scope="col" class="md-num">Output</th>
+        {% if page.token_priced %}<th scope="col" class="md-col-cost">Cost per 1M in + out</th>{% endif %}
+        <th scope="col" class="md-col-toggle"><span class="md-sr">Details</span></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for row in page.rows %}
+    {% set endpoint = row.endpoint %}
+    <tr class="md-provider{% if row.cheapest %} md-provider-cheapest{% endif %}" id="provider-{{ endpoint.provider_slug }}" data-sort-price="{{ row.sort_price }}"{% if row.sort_throughput is not none %} data-sort-throughput="{{ row.sort_throughput }}"{% endif %}{% if row.sort_latency is not none %} data-sort-latency="{{ row.sort_latency }}"{% endif %}>
+      <th scope="row" class="md-provider-cell">
+        <span class="md-provider-name">
+          <img src="{{ endpoint.provider_logo_url }}" alt="{{ endpoint.provider }} logo" width="32" height="32" loading="lazy" decoding="async">
+          <span>{{ endpoint.provider }}</span>
+          {% if row.cheapest %}<span class="md-cheapest-tag">Cheapest</span>{% endif %}
+        </span>
+        {{ positive_badges(row) }}
+        {% if page.token_priced %}<span class="md-inout" aria-hidden="true">{{ row.input }} in · {{ row.output }} out</span>{% else %}<span class="md-inout" aria-hidden="true">{{ row.input }}</span>{% endif %}
+      </th>
+      <td class="md-num md-col-input">{{ row.input }}</td>
+      {% if page.token_priced %}<td class="md-num md-col-cached md-dim">{{ row.cached }}</td>{% endif %}
+      <td class="md-num md-col-output">{{ row.output }}</td>
+      {% if page.token_priced %}
+      <td class="md-cost-cell"><span class="md-cost"><span class="md-bar" aria-hidden="true"><span style="width: {{ row.bar_pct }}%"></span></span><span class="md-total">{{ row.total }}</span></span></td>
+      {% endif %}
+      <td class="md-toggle-cell"><button type="button" class="md-toggle" aria-expanded="false" aria-controls="provider-{{ endpoint.provider_slug }}-details"><span class="md-sr">{{ endpoint.provider }} details</span><span class="md-chev" aria-hidden="true"></span></button></td>
+    </tr>
+    <tr class="md-provider-detail{% if row.cheapest %} md-provider-detail-cheapest{% endif %}" id="provider-{{ endpoint.provider_slug }}-details">
+      <td colspan="{{ columns }}">
+        <div class="md-provider-details">
+          <div>
+            <p class="md-detail-label">Retention</p>
+            {% if row.confidential %}<p>Confidential compute with end-to-end encryption and zero data retention.</p>{% elif row.zdr %}<p>Zero data retention.</p>{% endif %}
+            {% if endpoint.retention and not endpoint.retention.strict_zdr_eligible %}<p data-retention="{{ endpoint.retention.mode }}">{{ endpoint.retention.label }}{% if endpoint.retention.detail %}: {{ endpoint.retention.detail }}{% endif %}</p>
+            {% else %}
+            {# The verification caveats the old route table showed as pills. #}
+            {% set caveats = [] %}
+            {% if endpoint.provider_confidential_compute is sameas true and endpoint.provider_e2ee is sameas true and endpoint.provider_zero_data_retention is not sameas true %}{% set _ = caveats.append('ZDR not confirmed') %}{% endif %}
+            {% if endpoint.provider_confidential_compute is sameas true and endpoint.provider_e2ee is none %}{% set _ = caveats.append('provider E2EE not verified') %}{% endif %}
+            {% if endpoint.provider_e2ee is sameas true and endpoint.provider_confidential_compute is not sameas true %}{% set _ = caveats.append('provider compute not verified') %}{% endif %}
+            {% if endpoint.provider_e2ee is sameas false and (endpoint.provider_confidential_compute is sameas true or endpoint.provider_zero_data_retention is sameas true) %}{% set _ = caveats.append('provider E2EE not verified') %}{% endif %}
+            {% if endpoint.provider_e2ee is none and endpoint.provider_confidential_compute is none and endpoint.provider_zero_data_retention is none %}{% set _ = caveats.append('privacy unknown') %}
+            {% elif endpoint.provider_e2ee is not sameas true and endpoint.provider_confidential_compute is not sameas true and endpoint.provider_zero_data_retention is not sameas true %}{% set _ = caveats.append('no verified privacy claim') %}{% endif %}
+            {% if caveats %}<p>Verification: {{ caveats|unique|join(', ') }}.</p>{% endif %}
+            {% endif %}
+            <p>{{ endpoint.provider_policy or 'No reviewed retention declaration.' }}</p>
+            {% if endpoint.provider_policy_url %}<p><a href="{{ endpoint.provider_policy_url }}" target="_blank" rel="noopener noreferrer">Provider policy source</a></p>{% endif %}
+          </div>
+          <div>
+            <p class="md-detail-label">Location</p>
+            <p>Operator country: {{ endpoint.geography.operator_country or 'Not verified' }}</p>
+            <p>Headquarters / registered office: {{ endpoint.geography.headquarters.location or 'Not verified' }}.</p>
+            {% if endpoint.geography.headquarters.source_url %}<p><a href="{{ endpoint.geography.headquarters.source_url }}" target="_blank" rel="noopener noreferrer">Company location source</a> (reviewed {{ endpoint.geography.headquarters.reviewed_on }}).</p>{% endif %}
+            <p>Inference: {{ endpoint.geography.inference.declaration }}</p>
+            <p>{{ endpoint.geography.inference.scope }}</p>
+            <p>Region pinning through TR: {{ endpoint.geography.inference.trustedrouter_pinning }}</p>
+            {% if endpoint.geography.inference.reviewed_on %}<p>Reviewed {{ endpoint.geography.inference.reviewed_on }}.</p>{% endif %}
+            {% for title, url in endpoint.geography.inference.sources %}<p><a href="{{ url }}" target="_blank" rel="noopener noreferrer">{{ title }}</a></p>{% endfor %}
+            <p><a href="{{ endpoint.provider_href }}#inference-locations">Full location evidence</a></p>
+          </div>
+          <div>
+            <p class="md-detail-label">Weight format</p>
             {% if endpoint.precision %}
-            <details>
-              <summary>{{ endpoint.precision.label }}</summary>
-              <p>{{ 'Provider declaration' if endpoint.precision.evidence_type == 'provider_declaration' else 'Published serving configuration' }}, reviewed {{ endpoint.precision.reviewed_on }}. Per-request precision is not verified.</p>
-              <p>{{ endpoint.precision.notes }}</p>
-              <p>KV cache: {{ endpoint.precision.kv_cache_dtype or 'unspecified' }}.</p>
-              {% for source in endpoint.precision.sources %}
-              <p><a href="{{ source.url }}" target="_blank" rel="noopener noreferrer">{{ source.title }}</a></p>
-              {% endfor %}
-            </details>
-            {% else %}Unknown{% endif %}
-          </td>
-          <td class="model-route-evidence" data-label="Provider policy">
-            {{ provider_privacy_badges(endpoint) }}
-            <details>
-              <summary>Retention details</summary>
-              <p>{{ endpoint.provider_policy or 'No reviewed retention declaration.' }}</p>
-              {% if endpoint.provider_policy_url %}<p><a href="{{ endpoint.provider_policy_url }}" target="_blank" rel="noopener noreferrer">Provider policy source</a></p>{% endif %}
-            </details>
-          </td>
-          <td class="model-route-evidence" data-label="Company / inference location">
-            <span>Operator country: {{ endpoint.geography.operator_country or 'Not verified' }}</span>
-            <details>
-              <summary>Location details</summary>
-              <p><strong>Headquarters / registered office:</strong> {{ endpoint.geography.headquarters.location or 'Not verified' }}.</p>
-              {% if endpoint.geography.headquarters.source_url %}<p><a href="{{ endpoint.geography.headquarters.source_url }}" target="_blank" rel="noopener noreferrer">Company location source</a> (reviewed {{ endpoint.geography.headquarters.reviewed_on }}).</p>{% endif %}
-              <p><strong>Inference:</strong> {{ endpoint.geography.inference.declaration }}</p>
-              <p>{{ endpoint.geography.inference.scope }}</p>
-              <p><strong>Region pinning through TR:</strong> {{ endpoint.geography.inference.trustedrouter_pinning }}</p>
-              {% if endpoint.geography.inference.reviewed_on %}<p>Reviewed {{ endpoint.geography.inference.reviewed_on }}.</p>{% endif %}
-              {% for title, url in endpoint.geography.inference.sources %}<p><a href="{{ url }}" target="_blank" rel="noopener noreferrer">{{ title }}</a></p>{% endfor %}
-              <p><a href="{{ endpoint.provider_href }}#inference-locations">Full location evidence</a></p>
-            </details>
-          </td>
-          <td class="model-route-speed" data-label="Measured speed">
+            <p>{{ endpoint.precision.label }}. {{ 'Provider declaration' if endpoint.precision.evidence_type == 'provider_declaration' else 'Published serving configuration' }}, reviewed {{ endpoint.precision.reviewed_on }}. Per-request precision is not verified.</p>
+            <p>{{ endpoint.precision.notes }}</p>
+            <p>KV cache: {{ endpoint.precision.kv_cache_dtype or 'unspecified' }}.</p>
+            {% for source in endpoint.precision.sources %}
+            <p><a href="{{ source.url }}" target="_blank" rel="noopener noreferrer">{{ source.title }}</a></p>
+            {% endfor %}
+            {% else %}<p>Unknown</p>{% endif %}
+          </div>
+          <div>
+            <p class="md-detail-label">Price and speed</p>
+            <p>Input {{ endpoint.prompt_price }} · Cached input {{ endpoint.cached_prompt_price }} · Output {{ endpoint.completion_price }}</p>
             {% set measured = endpoint.measured %}
             {% if measured and measured.p50_ttft_ms is not none and measured.ttft_sample_count|default(0) >= 2 %}
-            <div>TTFT: {{ '%.2f'|format(measured.p50_ttft_ms / 1000) }} s</div>
-            {% else %}<div>TTFT: insufficient data</div>{% endif %}
+            <p>TTFT: {{ '%.2f'|format(measured.p50_ttft_ms / 1000) }} s</p>
+            {% else %}<p>TTFT: insufficient data</p>{% endif %}
             {% if measured and measured.p50_tokens_per_second is not none and measured.throughput_sample_count|default(0) >= 2 %}
-            <div>{{ '%.1f'|format(measured.p50_tokens_per_second) }} tokens/s</div>
-            {% else %}<div>Speed: insufficient data</div>{% endif %}
-            {% if measured and measured.last_seen %}<div class="muted-copy">Last sample: <time datetime="{{ measured.last_seen }}">{{ measured.last_seen }}</time></div>{% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    </div>
-    <p class="muted-copy">Speed is the median (p50) from TR's recent measured requests for this exact model and provider, refreshed from the cached leaderboard. At least two timing samples are required; workload and network conditions affect results. <a href="{{ model.performance_href or '/leaderboard' }}">Performance details</a></p>
-    {% else %}
-    <p class="muted-copy">No Credits provider route is currently published for this model.</p>
-    {% endif %}
-    <p class="signup-foot">
-      Endpoint JSON: <span class="mono">{{ api_base_url }}/models/{{ model.id }}/endpoints</span>
-    </p>
-    {% endif %}
-  </div>
+            <p>{{ '%.1f'|format(measured.p50_tokens_per_second) }} tokens/s</p>
+            {% else %}<p>Speed: insufficient data</p>{% endif %}
+            {% if measured and measured.last_seen %}<p>Last sample: <time datetime="{{ measured.last_seen }}">{{ measured.last_seen }}</time></p>{% endif %}
+            <p><a href="{{ endpoint.provider_href }}">{{ endpoint.provider }} provider page</a></p>
+          </div>
+        </div>
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if not (model.speech or model.transcription) and page.rows|length > 1 %}
+  <p class="md-foot-note">Append <code>:nitro</code> to the model ID, or send <code>"provider": {"sort": "throughput"}</code>, to route to the fastest provider instead.</p>
+  {% endif %}
+  {% else %}
+  <p class="md-intro">No Credits provider route is currently published for this model. You can still {{ provider_links }}.</p>
+  {% endif %}
+  {% endif %}
 </section>
 
-{% if related_comparisons %}
-<section class="panel" aria-label="Compare {{ model.name }} with other models">
-  <div class="panel-head"><h2>Compare {{ model.name }}</h2><a href="/compare/models">All comparisons</a></div>
-  <div class="panel-body">
-    <ul class="link-list">
-      {% for related in related_comparisons %}
-      <li><a href="{{ related.href }}">{{ related.label }}</a><span>{{ related.route_count }} combined provider routes</span></li>
-      {% endfor %}
-    </ul>
+{% if model.id == 'dealignai/deepseek-v4.1-flash-1017-uncensored' and model.providers|selectattr('slug', 'equalto', 'maple')|selectattr('confidential_available')|list %}
+<div class="md-section md-legacy">{% include "public/_maple_api.html" %}</div>
+{% endif %}
+
+{% if model.documentation %}
+<section class="md-section" aria-labelledby="model-usage-heading">
+  <div class="md-eyebrow">Usage</div>
+  <h2 id="model-usage-heading">How to use {{ model.name }}</h2>
+  <p class="md-intro">{{ model.documentation.description }}</p>
+  <dl class="md-facts">
+    <div><dt>Input</dt><dd>{{ model.documentation.input_format }}</dd></div>
+    <div><dt>Output</dt><dd>{{ model.documentation.output_format }}</dd></div>
+  </dl>
+  <h3 class="md-subhead">Example input</h3>
+  <pre class="md-example"><code>{{ model.documentation.example_input }}</code></pre>
+  <h3 class="md-subhead">Example output</h3>
+  <pre class="md-example"><code>{{ model.documentation.example_output }}</code></pre>
+</section>
+{% endif %}
+
+{% endblock %}
+
+{% block faq %}
+{% if faq_items %}
+<section class="md-section md-faq" id="faq" aria-labelledby="md-faq-heading">
+  <div class="md-eyebrow">FAQ</div>
+  <h2 id="md-faq-heading">Questions</h2>
+  <div class="md-faq-list">
+    {% for question, answer in faq_items %}
+    <details{% if loop.first %} open{% endif %}>
+      <summary><span>{{ question }}</span><span class="md-faq-sign" aria-hidden="true"></span></summary>
+      <p>{{ answer }}</p>
+    </details>
+    {% endfor %}
   </div>
 </section>
 {% endif %}
+
+{% if compare_chips %}
+<section class="md-section md-compare" aria-labelledby="md-compare-heading">
+  <div class="md-eyebrow">Compare</div>
+  <h2 id="md-compare-heading">{{ name }} vs other models</h2>
+  {% set chip_items = [] %}
+  {% for chip in compare_chips %}{% set _ = chip_items.append({"href": chip.href, "label": "vs " ~ chip.name}) %}{% endfor %}
+  {% set _ = chip_items.append({"href": "/compare/models", "label": "All comparisons"}) %}
+  {{ chip_row(chip_items) }}
+</section>
+{% endif %}
+
+<section class="md-closing" aria-labelledby="md-closing-heading">
+  <h2 id="md-closing-heading">Start building with {{ name }}.</h2>
+  <div class="md-actions">
+    {{ signup_button() }}
+    {% if page.funded %}<p class="md-no-card">{{ no_card_line }}</p>{% endif %}
+  </div>
+</section>
 {% endblock %}
+
+{% block body_scripts %}<script defer src="/static/quickstart.js?v={{ static_version|default('local') }}"></script><script defer src="/static/model-detail.js?v={{ static_version|default('local') }}"></script>{% endblock %}

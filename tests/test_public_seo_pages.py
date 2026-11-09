@@ -711,6 +711,7 @@ def test_public_structured_data_covers_lists_datasets_and_faqs(client: TestClien
     assert {"BreadcrumbList", "BlogPosting"}.issubset(blog_types)
     assert "DRACO" in blog.text
     assert "TrustedRouter Synth Draco on GitHub" in blog.text
+    assert 'data-signin-mode="signup">Create my API key</button>' in blog.text
 
     wrong_zeus_blog = client.get("/blog/zeus-terminal-bench-hard-72", follow_redirects=False)
     assert wrong_zeus_blog.status_code == 301
@@ -1296,11 +1297,9 @@ def test_model_overview_surfaces_cached_route_evidence(
     response = client.get("/models/minimax/minimax-m3")
 
     assert response.status_code == 200
-    assert "Current route evidence" in response.text
-    assert "Lowest Credits input price" in response.text
-    assert "140 ms" in response.text
-    assert "91 tok/s" in response.text
-    assert "99.00% to 100.00%" in response.text
+    # The route evidence panel left the overview; measured speed lives in each
+    # provider row and on the performance page.
+    assert "Current route evidence" not in response.text
     assert 'href="/providers/novita"' in response.text
     assert 'href="/providers/minimax"' in response.text
     assert 'href="/models/minimax/minimax-m3/performance"' in response.text
@@ -1313,10 +1312,10 @@ def test_model_overview_answers_high_intent_questions(client: TestClient) -> Non
     response = client.get("/models/minimax/minimax-m3")
 
     assert response.status_code == 200
-    assert "What model ID should I use for MiniMax: MiniMax M3?" in response.text
-    assert "Which providers serve MiniMax: MiniMax M3?" in response.text
-    assert "How much does MiniMax: MiniMax M3 cost through TrustedRouter?" in response.text
-    assert "How do I require zero data retention for MiniMax: MiniMax M3?" in response.text
+    assert "What model ID should I use for MiniMax M3?" in response.text
+    assert "Which providers serve MiniMax M3?" in response.text
+    assert "How much does MiniMax M3 cost through TrustedRouter?" in response.text
+    assert "How do I require zero data retention for MiniMax M3?" in response.text
     assert "provider.min_privacy" in response.text
     assert "FAQPage" in json.dumps(_json_ld(response.text))
 
@@ -1342,7 +1341,7 @@ def test_model_overview_links_canonical_related_comparisons(client: TestClient) 
     response = client.get("/models/minimax/minimax-m3")
 
     assert response.status_code == 200
-    assert "Compare MiniMax: MiniMax M3" in response.text
+    assert "MiniMax M3 vs other models" in response.text
     related_paths = re.findall(
         r'href="(/compare/models/[^\"]+/vs/[^\"]+)"',
         response.text,
