@@ -1101,13 +1101,18 @@ func (s *Snapshot) sortCandidates(candidates []int, p prefs, at, nowUS, prompt, 
 		}
 	}
 	modelRank := map[string]int{}
+	directLabModels := map[string]bool{}
 	for _, i := range candidates {
+		e := &s.Endpoints[i]
+		if (e.Provider == "anthropic" || e.Provider == "openai") && strings.HasPrefix(e.ModelID, e.Provider+"/") {
+			directLabModels[e.ModelID] = true
+		}
 		if _, ok := modelRank[s.Endpoints[i].ModelID]; !ok {
 			modelRank[s.Endpoints[i].ModelID] = len(modelRank)
 		}
 	}
 	type key struct {
-		model, order, health, sort, privacy, uncertain, index int64
+		model, order, health, sort, privacy, independentHost, uncertain, index int64
 	}
 	keys := make(map[int]key, len(candidates))
 	for index, i := range candidates {
@@ -1155,6 +1160,9 @@ func (s *Snapshot) sortCandidates(candidates []int, p prefs, at, nowUS, prompt, 
 			if !slices.Contains(e.Privacy.Meets, int64(2)) {
 				k.privacy = 1
 			}
+			if directLabModels[e.ModelID] && !(k.privacy == 0 && (e.Provider == "amazon-bedrock" || e.Provider == "google-vertex")) {
+				k.independentHost = 1
+			}
 			if !measured {
 				k.uncertain = 1
 			}
@@ -1164,7 +1172,7 @@ func (s *Snapshot) sortCandidates(candidates []int, p prefs, at, nowUS, prompt, 
 	out := slices.Clone(candidates)
 	slices.SortStableFunc(out, func(a, b int) int {
 		ka, kb := keys[a], keys[b]
-		for _, d := range [][2]int64{{ka.model, kb.model}, {ka.order, kb.order}, {ka.health, kb.health}, {ka.sort, kb.sort}, {ka.privacy, kb.privacy}, {ka.uncertain, kb.uncertain}} {
+		for _, d := range [][2]int64{{ka.model, kb.model}, {ka.order, kb.order}, {ka.health, kb.health}, {ka.sort, kb.sort}, {ka.privacy, kb.privacy}, {ka.independentHost, kb.independentHost}, {ka.uncertain, kb.uncertain}} {
 			if d[0] != d[1] {
 				if d[0] < d[1] {
 					return -1

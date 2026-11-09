@@ -1516,20 +1516,28 @@ def _sort_endpoint_candidates(
     for model, _endpoint in candidates:
         model_order.setdefault(model.id, len(model_order))
 
+    # Only compare a lab's own route with independent hosts of the same model.
+    # Open-weight models served solely by third parties keep their existing order.
+    direct_lab_models = {
+        model.id for model, endpoint in candidates
+        if endpoint.provider in {"anthropic", "openai"}
+        and model.id.startswith(endpoint.provider + "/")
+    }
+
     model_evidence = {
         model_id: workload_ranks(
             model_id, prefs.estimated_input_tokens, prefs.estimated_output_tokens,
         ) for model_id in {model.id for model, _endpoint in candidates if model.supports_chat}
     }
 
-    def key(item: tuple[int, tuple[Model, ModelEndpoint]]) -> tuple[int, int, int, int, int, int, int]:
+    def key(item: tuple[int, tuple[Model, ModelEndpoint]]) -> tuple[int, ...]:
         original_index, (model, endpoint) = item
         order_rank = provider_order.get(endpoint.provider, len(provider_order))
         # Provider preference ranks endpoints within each requested model. It
         # must not reorder the caller's model fallback chain. The only explicit
         # opt-out is OpenRouter's global sort partition.
         model_rank = model_order[model.id] if prefs.sort_partition == "model" else 0
-        health = privacy = uncertain = 0
+        health = privacy = independent_host = uncertain = 0
         if prefs.sort == "price":
             sort_rank = (
                 endpoint.prompt_price_microdollars_per_million_tokens
@@ -1565,8 +1573,14 @@ def _sort_endpoint_candidates(
                 privacy = int(not endpoint_meets_privacy_requirement(
                     endpoint, PRIVACY_TIER_ZERO_RETENTION,
                 ))
+                if model.id in direct_lab_models:
+                    independent_host = int(not (
+                        endpoint.provider in {"amazon-bedrock", "google-vertex"}
+                        and privacy == 0
+                    ))
                 uncertain = int(endpoint.provider not in bands)
-        return model_rank, order_rank, health, sort_rank, privacy, uncertain, original_index
+        return (model_rank, order_rank, health, sort_rank, privacy,
+                independent_host, uncertain, original_index)
 
     return [candidate for _, candidate in sorted(with_index, key=key)]
 
