@@ -20,6 +20,9 @@ picker and footer share one ordered directory and highlight the current market.
   unrelated matchers through `scripts/deploy/service_surface_url_map.py`.
 - One canonical root per market; alternate names and `www` redirect permanently,
   retaining query parameters. Canonical URLs, sitemaps and OG images are generated.
+- A market with `forward_to` (every market but New York and Global) keeps its
+  certificates and host rules, but its domain, aliases and `www` names 301 to that
+  domain, keeping path and query.
 - Buyers request the brochure on the page. The form posts to TrustedRouter's existing
   email-gated `/token-exchange/brief` action, which accepts the canonical exchange
   origins; submitted email addresses are never stored in browser analytics.

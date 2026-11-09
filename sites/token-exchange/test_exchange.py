@@ -192,6 +192,24 @@ class ExchangeTests(unittest.TestCase):
         self.assertEqual(len(listed), len(set(listed)))
         self.assertEqual(sorted(set(domains()) - set(listed)), [])
 
+    def test_regional_markets_forward_to_new_york(self) -> None:
+        # Rule: every market but New York and Global 301s to nytokenexchange.com
+        # (infra/control_lb_url_map.tf), and keeps its certificate so https works.
+        markets = {m["slug"]: m for m in load_markets()}
+        self.assertNotIn("forward_to", markets["new-york"])
+        self.assertNotIn("forward_to", markets["global"])
+        forwarded = [m for slug, m in markets.items() if slug not in {"new-york", "global"}]
+        self.assertEqual(len(forwarded), 11)
+        listed = set(json.loads(
+            (Path(__file__).parents[2] / "infra" / "token_exchange_certificate_domains.json").read_text()
+        ))
+        for market in forwarded:
+            self.assertEqual(market["forward_to"], "nytokenexchange.com")
+            self.assertEqual([d for d in [market["domain"], *market["aliases"]] if d not in listed], [])
+        source = (Path(__file__).parents[2] / "infra" / "control_lb_url_map.tf").read_text()
+        self.assertIn("redirect = try(market.forward_to, null)", source)
+        self.assertIn("redirect = try(market.forward_to, market.domain)", source)
+
     def test_every_market_domain_may_request_the_brochure(self) -> None:
         # Rule: the app allowlists exactly the canonical market domains for the brochure form.
         listed = json.loads(

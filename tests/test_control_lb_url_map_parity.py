@@ -232,6 +232,13 @@ def test_disabled_terraform_matcher_is_base_except_empty_dynamic_block() -> None
     # routing, including disabled terminal behavior, must stay identical.
     assert without.count('"/earnings", "/earnings/*", ') == 1
     without = without.replace('"/earnings", "/earnings/*", ', "")
+    # Markets with forward_to redirect both matchers; without it, as before.
+    for forwarded, base in (
+        ("redirect = try(market.forward_to, null)", "redirect = null"),
+        ("redirect = try(market.forward_to, market.domain)", "redirect = market.domain"),
+    ):
+        assert without.count(forwarded) == 1
+        without = without.replace(forwarded, base)
     def uncomment(text: str) -> str:
         return re.sub(r"\s+", " ", re.sub(r"^\s*#.*$", "", text, flags=re.MULTILINE)).strip()
     assert uncomment(without) == uncomment(_base_source("infra/control_lb_url_map.tf"))

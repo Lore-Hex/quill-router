@@ -44,6 +44,12 @@ def load_markets() -> list[dict]:
             assert domain not in domains
             domains.add(domain)
         assert len(market["sectors"]) == 3
+    # A forwarded market 301s to another market's canonical domain, never to
+    # one that is itself forwarded.
+    serving = {market["domain"] for market in markets if "forward_to" not in market}
+    for market in markets:
+        if "forward_to" in market:
+            assert market["forward_to"] in serving
     return markets
 
 
