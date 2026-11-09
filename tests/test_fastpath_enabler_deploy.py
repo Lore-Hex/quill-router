@@ -56,14 +56,14 @@ def _job(run: HarnessRun) -> tuple[dict[str, str], dict[str, str], list[str]]:
     return env, bindings, job
 
 
-def test_the_job_deploys_in_dry_run_with_the_lists_and_its_schedule(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_job_deploys_in_apply_with_the_lists_and_its_schedule(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from tests.test_fastpath_lists import resolved_lists
 
     run = _run(tmp_path, monkeypatch)
     assert run.returncode == 0, summarise(run)
     env, bindings, job = _job(run)
-    # WS1: dry-run reads and reports, writes nothing; nobody joins off the list.
-    assert env["TR_FASTPATH_ENABLER_MODE"] == "dry-run" and env["TR_FASTPATH_ENABLER_MAX_RANK"] == "0"
+    # WS2: apply writes the allow-list once armed; nobody joins off the list.
+    assert env["TR_FASTPATH_ENABLER_MODE"] == "apply" and env["TR_FASTPATH_ENABLER_MAX_RANK"] == "0"
     lists = resolved_lists()
     assert env["TR_FASTPATH_ENABLER_INCLUDE"] == lists["TR_FASTPATH_PILOT_WORKSPACES"] != ""
     assert env["TR_FASTPATH_PILOT_EXCLUDE"] == lists["TR_FASTPATH_PILOT_EXCLUDE"]
@@ -90,7 +90,7 @@ def test_the_job_deploys_in_dry_run_with_the_lists_and_its_schedule(tmp_path: Pa
         isolated.setenv("TR_SENTRY_DSN", "https://key@example.invalid/1")
         settings = Settings(_env_file=None)  # type: ignore[call-arg]
         config = fe.EnablerConfig.from_settings(settings)
-    assert config.mode == "dry-run" and config.max_rank == 0
+    assert config.mode == "apply" and config.max_rank == 0
     assert config.include == frozenset(lists["TR_FASTPATH_PILOT_WORKSPACES"].split(","))
 
 
