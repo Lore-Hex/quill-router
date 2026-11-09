@@ -384,6 +384,8 @@ def render_nyte(
         '<a href="https://' + html.escape(other["domain"], quote=True) + '/"'
         + (' aria-current="page"' if other["slug"] == market["slug"] else '')
         + '>' + html.escape(other["region"]) + '</a>' for other in load_markets()
+        # Forwarded markets 301 to New York, so the rail skips them (a city keeps its own entry).
+        if "forward_to" not in other or other["slug"] == market["slug"]
     )) if city else ""
     home_v3 = page == "home" and uses_brand_v3("home")
     home_head = ""

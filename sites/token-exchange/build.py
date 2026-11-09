@@ -75,6 +75,8 @@ def market_links(markets: list[dict], current: dict) -> str:
         + (' aria-current="page"' if m["slug"] == current["slug"] else "")
         + f">{html.escape(m['region'])}</a>"
         for m in markets
+        # Forwarded markets 301 to another domain, so the list skips them (the current page keeps its own entry).
+        if "forward_to" not in m or m["slug"] == current["slug"]
     )
 
 
