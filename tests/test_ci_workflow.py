@@ -573,7 +573,9 @@ def test_required_checks_are_named_alike_everywhere() -> None:
     assert set(posted) == audit.PROTECTED_REPOS["quill-router"]
 
     # The check names ci.yml's jobs report: a job's name, plus its matrix
-    # values in parentheses.
+    # values in parentheses. An axis written as an expression (the proof
+    # oracle's clock list) is not a list here, so that job's names are not
+    # derived; a required check from such a job would need its own expansion.
     produced = set()
     for key, job in yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"].items():
         name = job.get("name", key)
@@ -581,6 +583,8 @@ def test_required_checks_are_named_alike_everywhere() -> None:
                   if axis not in ("include", "exclude")}
         if not matrix:
             produced.add(name)
+            continue
+        if not all(isinstance(values, list) for values in matrix.values()):
             continue
         for combination in itertools.product(*matrix.values()):
             produced.add(f"{name} ({', '.join(str(value) for value in combination)})")

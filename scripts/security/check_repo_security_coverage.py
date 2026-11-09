@@ -168,8 +168,11 @@ def check_branch_protection(org: str, token: str) -> tuple[list[str], list[str]]
     output read `covered: 39/39`. That is a false alarm on a weekly timer, which
     is the fastest way to train someone to ignore a security check.
 
-    Unreadable is reported, never silently passed, and never counted as a real
-    problem unless a token that can actually read the setting is supplied.
+    Unreadable is reported, never silently passed. Force-push, deletion and
+    admin enforcement count as problems only when a token that can read the
+    setting is supplied. The required checks and the protected flag are also
+    visible on the public branch view, so ``_public_required_checks`` asserts
+    those with any token when the protection endpoint cannot be read.
     """
     problems: list[str] = []
     unreadable: list[str] = []
@@ -179,9 +182,15 @@ def check_branch_protection(org: str, token: str) -> tuple[list[str], list[str]]
             problems.append(f"{repo}: main is NOT PROTECTED")
             continue
         if status != 200 or not isinstance(body, dict):
-            # Same rule as everywhere else here: could-not-read is its own state.
+            # The branch view is public on a public repository and names the
+            # required checks, so those are asserted even without admin rights.
+            # Force-push, deletion and admin enforcement stay unreadable: that
+            # is reported as before, never collapsed into either answer.
+            public_problems, note = _public_required_checks(org, repo, required, token)
+            problems.extend(public_problems)
             unreadable.append(
-                f"{repo}: could not read protection (HTTP {status}) — NOT treating as unprotected"
+                f"{repo}: could not read protection (HTTP {status}) — force-push, deletion "
+                f"and admin enforcement NOT asserted; {note}"
             )
             continue
 
@@ -205,6 +214,35 @@ def check_branch_protection(org: str, token: str) -> tuple[list[str], list[str]]
         )
         print(f"  {repo}: contexts={sorted(contexts)} enforce_admins={admins} required_reviews={reviews}")
     return problems, unreadable
+
+
+def _public_required_checks(
+    org: str, repo: str, required: set[str], token: str
+) -> tuple[list[str], str]:
+    """Assert the required checks from the branch view, which needs no admin rights.
+
+    Returns (problems, note); the note says whether the checks were asserted,
+    so the report never implies a read that did not happen. GitHub returns the
+    view's ``protection`` block for protected and unprotected branches alike
+    (an unprotected branch reads ``protected`` false with an empty block), so
+    ``protected`` decides first. A view that cannot be read, or one without
+    the block, asserts nothing and says so.
+    """
+    status, branch = _get(f"/repos/{org}/{repo}/branches/main", token)
+    if status != 200 or not isinstance(branch, dict):
+        return [], f"branch view unreadable (HTTP {status}): required checks NOT asserted"
+    if branch.get("protected") is False:
+        return [f"{repo}: main is NOT PROTECTED"], "branch view read: main is not protected"
+    protection = branch.get("protection")
+    if not isinstance(protection, dict):
+        return [], "branch view has no protection block: required checks NOT asserted"
+    contexts = set((protection.get("required_status_checks") or {}).get("contexts") or [])
+    missing = required - contexts
+    print(f"  {repo}: contexts={sorted(contexts)} (branch view; enforce_admins and reviews unreadable)")
+    note = "required checks read from the branch view"
+    if missing:
+        return [f"{repo}: required status checks missing {sorted(missing)} (have {sorted(contexts)})"], note
+    return [], note
 
 
 def main() -> int:
