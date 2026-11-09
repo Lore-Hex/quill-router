@@ -83,18 +83,12 @@ await page.goto(base+'/index');
 await page.getByRole('link',{name:'Start building',exact:true}).click();await page.waitForURL('**/confidential#start');assert.equal(await page.locator('#start').count(),1);
 await page.goto(base+'/index');
 await page.getByRole('link',{name:'Explore the open-source inference stack',exact:true}).click();await page.waitForURL('**/suppliers#open-stack');assert.equal(await page.locator('#open-stack').count(),1);
-// Keyboard focus reveals even the partly clipped final market link.
-for (const width of [1440,390]) {
- await page.setViewportSize({width,height:900});await page.goto(base+'/');
- await page.evaluate(()=>document.fonts.ready);
- await page.locator('.market-links a').first().focus();
- const links=await page.locator('.market-links a').count();
- for (let index=1;index<links;index++) await page.keyboard.press('Tab');
- const focused=await page.locator('.market-links').evaluate(nav=>{
-  const link=document.activeElement, box=link.getBoundingClientRect(), rail=nav.getBoundingClientRect();
-  return {last:link===nav.lastElementChild,visible:box.left>=rail.left-1 && box.right<=rail.right+1};
- });
- assert(focused.last && focused.visible,`footer market focus must be visible at ${width}px`);
+// New York's pages list no other markets.
+for (const path of ['/', '/confidential', '/suppliers', '/providers', '/trusted-cowork', '/buy', '/neocloud-accelerator', '/index', '/media-kit']) {
+ await page.goto(base+path);
+ assert.equal(await page.locator('.market-links, nav[aria-label="Exchange markets"], .footer-markets').count(),0,`${path} lists no other markets`);
+ const others=await page.locator('a[href]').evaluateAll(links=>links.map(a=>new URL(a.href).hostname).filter(h=>/tokenexchange\.com$|token\.exchange$/.test(h)&&h!=='nytokenexchange.com'&&!h.endsWith('.nytokenexchange.com')));
+ assert.deepEqual(others,[],`${path} links no other exchange`);
 }
 // Narrow-phone buttons keep their approved labels inside their touch targets.
 for (const path of ['/', '/confidential', '/suppliers', '/providers', '/trusted-cowork', '/buy', '/neocloud-accelerator']) {
@@ -305,6 +299,16 @@ if(process.argv[2]){
    assert.equal(await cityPage.locator('.hdr .brand-place').innerText(),market.logo_place||market.region);
    assert.equal(await cityPage.locator('.brand-by').count(),0,'the city home never names NYTE');
    assert.equal(await cityPage.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,`${slug} home fits at ${width}px`);
+   // Keyboard focus reveals even the partly clipped final market link.
+   await cityPage.evaluate(()=>document.fonts.ready);
+   await cityPage.locator('.market-links a').first().focus();
+   const links=await cityPage.locator('.market-links a').count();
+   for (let index=1;index<links;index++) await cityPage.keyboard.press('Tab');
+   const focused=await cityPage.locator('.market-links').evaluate(nav=>{
+    const link=document.activeElement, box=link.getBoundingClientRect(), rail=nav.getBoundingClientRect();
+    return {last:link===nav.lastElementChild,visible:box.left>=rail.left-1 && box.right<=rail.right+1};
+   });
+   assert(focused.last && focused.visible,`${slug} footer market focus must be visible at ${width}px`);
    await cityPage.goto(`https://${market.domain}/suppliers`);
    assert.equal(await cityPage.locator('.hdr .brand-place').innerText(),market.logo_place||market.region);
    assert.equal(await cityPage.locator('.brand-by').count(),0,'pages outside checkout keep the city name alone');
@@ -322,7 +326,7 @@ if(process.argv[2]){
    assert.equal(await cityPage.locator('.buy-intro a, a[href*="manage-reservation"]').first().getAttribute('href'),'https://nytokenexchange.com/manage-reservation');
    assert.equal(await cityPage.evaluate(()=>document.documentElement.dataset.billedBy),'New York Token Exchange (NYTE)','city checkout names who bills the card');
    assert.equal(await cityPage.locator('[data-exchange-name]').textContent(),`${market.name} · by NYTE`);
-   assert.equal(await cityPage.locator('.market-links [aria-current=page]').innerText(),market.region);
+   assert.equal(await cityPage.locator('.market-links').count(),0,'shared pages list no other markets');
    assert.equal(await cityPage.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,`${slug} /buy fits at ${width}px`);
   }
   await city.close();

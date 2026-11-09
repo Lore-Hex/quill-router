@@ -331,9 +331,7 @@ def host_brand_script(page: str) -> str:
         "document.querySelectorAll('a[href]').forEach(a=>{const u=new URL(a.href);"
         "if(u.pathname==='/manage-reservation'&&u.hostname===location.hostname){a.href='https://nytokenexchange.com/manage-reservation';return}"
         "if(u.hostname==='trustedrouter.com'&&u.searchParams.get('exchange_market')==='new-york'){"
-        "u.searchParams.set('utm_source',location.hostname);u.searchParams.set('exchange_market',c.slug);a.href=u.href}});"
-        "document.querySelectorAll('.market-links a').forEach(a=>{if(new URL(a.href).hostname===location.hostname)"
-        "a.setAttribute('aria-current','page');else a.removeAttribute('aria-current')})})})()</script>"
+        "u.searchParams.set('utm_source',location.hostname);u.searchParams.set('exchange_market',c.slug);a.href=u.href}})})})()</script>"
     )
 
 
@@ -381,11 +379,12 @@ def render_nyte(
             content = content.replace("{{band_ink}}", band_svg("band-ink.svg"))
             buy_v3_version = hashlib.sha256((SOURCE / "buy-v3.css").read_bytes()).hexdigest()[:12]
             late_head = f'<link rel="stylesheet" href="/assets/nyte-v2/buy-v3.css?v={buy_v3_version}">' + late_head
-    market_links = "".join(
+    # New York's pages list no other markets; city home pages keep their footer rail.
+    market_links = MARKET_RAIL.replace("{{links}}", "".join(
         '<a href="https://' + html.escape(other["domain"], quote=True) + '/"'
         + (' aria-current="page"' if other["slug"] == market["slug"] else '')
         + '>' + html.escape(other["region"]) + '</a>' for other in load_markets()
-    )
+    )) if city else ""
     home_v3 = page == "home" and uses_brand_v3("home")
     home_head = ""
     if content is None:
@@ -430,6 +429,9 @@ def render_nyte(
         query.setdefault("exchange_market", market["slug"])
         return 'href="' + html.escape(urlunsplit(url._replace(query=urlencode(query))), quote=True) + '"'
     return re.sub(r'href="([^"]+)"', tracked, result)
+
+# Footer rail linking every market, shown on city home pages only.
+MARKET_RAIL = '<div class="geo-scroll footer-markets"><svg class="market-pin" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20 10c0 6-8 11-8 11S4 16 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg><nav class="market-links" aria-label="Exchange markets">{{links}}</nav><button class="geo-prev" type="button" aria-label="Scroll footer markets left" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m15 5-7 7 7 7"/></svg></button><button class="geo-next" type="button" aria-label="Scroll footer markets right" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 5 7 7-7 7"/></svg></button></div>'
 
 # Pages with a body rebuilt for brand v3: page key -> body and sheet name in nyte-v2/.
 V3_BODIES = {"home": "home-v3", "api": "api-v3", "cowork": "cowork-v3",

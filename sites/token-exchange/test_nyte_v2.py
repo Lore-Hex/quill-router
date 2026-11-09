@@ -140,7 +140,7 @@ class NyteV2Tests(unittest.TestCase):
         self.assertNotIn('footer-product-links', page)
         for label in ('Media kit', 'Privacy', 'Terms', 'Exchange overview'):
             self.assertIn('>' + label + '</a>', page)
-        self.assertIn('aria-label="Exchange markets"', page)
+        self.assertNotIn('aria-label="Exchange markets"', page)
         self.assertIn('Email us', page)
         self.assertNotIn('autoplay', page)
 
@@ -323,6 +323,23 @@ class NavigationRegistryTests(unittest.TestCase):
             self.assertNotIn('by NYTE', page)
             for card in market["workloads"]:
                 self.assertIn(f'<h3>{card["title"]}</h3>', page)
+
+    def test_new_york_pages_link_no_other_market(self):
+        from nyte_v2 import PAGES, load_markets, nyte_markets
+
+        others = [m["domain"] for m in load_markets() if m["slug"] != "new-york"]
+        for page, entry in PAGES.items():
+            if "title" not in entry or "builder" in entry:
+                continue  # Rendered outside this shell; the build check covers it.
+            with self.subTest(page=page):
+                rendered = render_nyte(page)
+                self.assertNotIn('class="market-links"', rendered)
+                self.assertNotIn('footer-markets', rendered)
+                for domain in others:
+                    self.assertNotIn(f'href="https://{domain}', rendered)
+        # City home pages keep their own footer rail until their domains move.
+        for market in nyte_markets():
+            self.assertIn('aria-label="Exchange markets"', render_nyte(market=market))
 
     def test_shared_pages_keep_the_visiting_city_name(self):
         from nyte_v2 import nyte_markets
