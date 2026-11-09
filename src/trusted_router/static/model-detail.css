@@ -871,10 +871,10 @@ html:not(.js-off) .md-code-panel[data-md-inactive] {
   flex-wrap: nowrap;
   gap: 10px;
   overflow-x: auto;
-  padding-bottom: 8px;
+  padding: 0 40px 8px 0;
   scrollbar-width: none;
-  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 56px), transparent);
-  mask-image: linear-gradient(to right, #000 calc(100% - 56px), transparent);
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 112px), transparent calc(100% - 40px));
+  mask-image: linear-gradient(to right, #000 calc(100% - 112px), transparent calc(100% - 40px));
 }
 
 .md-chips::-webkit-scrollbar {
@@ -882,6 +882,7 @@ html:not(.js-off) .md-code-panel[data-md-inactive] {
 }
 
 .md-chips-wrap[data-at-end] .md-chips {
+  padding-right: 0;
   -webkit-mask-image: none;
   mask-image: none;
 }
@@ -902,38 +903,32 @@ html:not(.js-off) .md-code-panel[data-md-inactive] {
   color: var(--md-text);
 }
 
+/* A still, quiet arrow, the same as the compare pages: it shows while more
+ * chips sit off to the right and scrolls the row for mouse users. */
 .md-chips-arrow {
   position: absolute;
-  top: 50%;
+  top: 4px;
   right: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
-  margin-top: -20px;
+  width: 36px;
+  height: 36px;
   padding: 0;
-  border: 1px solid var(--md-control-line);
+  border: 0;
   border-radius: 50%;
-  background: var(--md-bg);
-  color: var(--md-text);
+  background: transparent;
+  color: var(--md-secondary);
   cursor: pointer;
-  animation: md-chip-nudge 1.6s ease-in-out infinite;
+}
+
+.md-chips-arrow:hover {
+  color: var(--md-text);
+  background: var(--tr-color-surface-hover, #14251C);
 }
 
 .md-chips-arrow[hidden] {
   display: none;
-}
-
-@keyframes md-chip-nudge {
-  0%, 100% { transform: translateX(0); }
-  50% { transform: translateX(4px); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .md-chips-arrow {
-    animation: none;
-  }
 }
 
 /* Closing band */
@@ -969,14 +964,10 @@ html:not(.js-off) .md-code-panel[data-md-inactive] {
     padding: 0 20px;
   }
 
-  /* On phones the hero fills the first screen, and the button sits at its
-   * foot, near the thumb. The quickstart starts below the fold. */
+  /* More air on phones so the hero button lands nearer the thumb. */
   .md-hero {
-    box-sizing: border-box;
-    min-height: calc(100svh - var(--sticky-header-height, 78px));
-    justify-content: space-evenly;
-    gap: 28px;
-    padding: 24px 0 32px;
+    gap: 26px;
+    padding: 52px 0 36px;
   }
 
   .md-title-row {
@@ -1053,7 +1044,7 @@ html:not(.js-off) .md-code-panel[data-md-inactive] {
 
   .md-actions {
     align-items: stretch;
-    margin-top: 0;
+    margin-top: 10px;
   }
 
   .model-detail-page .md-hero .md-no-card,
@@ -1195,9 +1186,9 @@ html:not(.js-off) .md-code-panel[data-md-inactive] {
   .md-chips {
     gap: 8px;
     margin: 0 -20px;
-    padding: 0 20px 8px;
-    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent);
-    mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent);
+    padding: 0 60px 8px 20px;
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 112px), transparent calc(100% - 40px));
+    mask-image: linear-gradient(to right, #000 calc(100% - 112px), transparent calc(100% - 40px));
   }
 
   .model-detail-page .md-chips a {
