@@ -14,6 +14,7 @@ from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 HERE = Path(__file__).resolve().parent
 ASSET_URL = "/assets/press"
 ASSETS = (
+    ("nyte-full-name-logo", "NY Token Exchange logo", "light", "svg", "png", "pdf"),
     ("guide/horizontal", "Horizontal NYTE logo", "light", "svg", "png", "pdf"),
     ("guide/stacked-lockup", "Stacked NYTE logo", "light", "svg", "png", "pdf"),
     ("guide/one-line-name", "NY Token Exchange name", "light", "svg", "png", "pdf"),
@@ -72,8 +73,9 @@ def build_press(output: Path) -> None:
         f"NY TOKEN EXCHANGE - PUBLIC PRESS KIT\nUpdated: {data['updated']}\n\n"
         "Source: https://nytokenexchange.com/media-kit\nContact: help@trustedrouter.com\n\n"
         "November 5, 2026 logo exports from NYTE Brand Guidelines V1, page 14.\n"
-        "Six configurations: outlined SVG/PDF and transparent PNG, 2400 pixels wide.\n"
+        "Seven configurations: outlined SVG/PDF and transparent PNG, 2400 pixels wide.\n"
         "Original exported artwork is preserved without tracing or font substitution.\n"
+        "The full-name logo combines the supplied globe and NY Token Exchange outlines.\n"
         "The cream stacked-name export requires a dark background.\n"
         "Includes Brand Guidelines V1 and four campaign artwork PNGs.\n"
         "Homepage: 1920 x 1080 PNG, historical capture from 2026-10-15.\n"
