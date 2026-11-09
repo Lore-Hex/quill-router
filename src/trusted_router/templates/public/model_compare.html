@@ -1,174 +1,167 @@
 {% extends "public/_base.html" %}
 {% from "public/_provider_identity.html" import publisher_identity %}
 {% from "public/_decide_example.html" import decide_curl %}
-{% block body %}
-<section class="panel">
-  <div class="panel-head"><h2>Practical read</h2><a href="/benchmarks/reports">Monthly evidence</a></div>
-  <div class="panel-body">
-    <p class="lead">{{ comparison.summary }}</p>
-    <p class="muted">Cheapest route adds the rate for one million input and one million output tokens. Prices and measurements change; check the <a href="/benchmarks/reports">monthly reports</a> and run a small <a href="/docs/evals">eval</a> before choosing a default.</p>
-  </div>
-</section>
+{% import "public/_compare_kit.html" as kit %}
+{% set signup_note = "No card required. Start with 1 million free tokens." if free_to_start else hero_pitch %}
+{# Without a verdict the hero's lead already is hero_pitch, so the note under
+   the hero button only carries the free-tokens line. #}
+{% set hero_note = "No card required. Start with 1 million free tokens." if free_to_start else ("" if not board.verdict else hero_pitch) %}
+{% block head_extra %}<link rel="stylesheet" href="/static/compare.css?v={{ static_version|default('local') }}">{% endblock %}
 
-<section class="compare-matrix compare-matrix-pair" aria-label="{{ left.name }} and {{ right.name }} comparison">
-  <div class="matrix-row matrix-head">
-    <span></span><strong>{{ left.name }}</strong><strong>{{ right.name }}</strong>
-  </div>
-  <div class="matrix-row">
-    <span>Model id</span><span><code>{{ left.id }}</code></span><span><code>{{ right.id }}</code></span>
-  </div>
-  <div class="matrix-row">
-    <span>Publisher</span><span>{{ publisher_identity(left) }}</span><span>{{ publisher_identity(right) }}</span>
-  </div>
-  {% if left.ai_iq or right.ai_iq %}
-  <div class="matrix-row">
-    <span>AI IQ</span>
-    <span>
-      {% if left.ai_iq %}
-      <a class="ai-iq-link" href="{{ left.ai_iq.url }}" rel="nofollow noopener"><strong>IQ {{ left.ai_iq.iq }}</strong><span>#{{ left.ai_iq.rank }}</span></a>
-      {% else %}—{% endif %}
-    </span>
-    <span>
-      {% if right.ai_iq %}
-      <a class="ai-iq-link" href="{{ right.ai_iq.url }}" rel="nofollow noopener"><strong>IQ {{ right.ai_iq.iq }}</strong><span>#{{ right.ai_iq.rank }}</span></a>
-      {% else %}—{% endif %}
-    </span>
-  </div>
-  {% endif %}
-  <div class="matrix-row">
-    <span>Context</span><span>{{ left.context_length }} tokens</span><span>{{ right.context_length }} tokens</span>
-  </div>
-  <div class="matrix-row">
-    <span>Credits provider routes</span><span>{{ left.endpoint_count }}</span><span>{{ right.endpoint_count }}</span>
-  </div>
-  <div class="matrix-row">
-    <span>Cheapest route</span><span>{{ comparison.left_price }}</span><span>{{ comparison.right_price }}</span>
-  </div>
-  <div class="matrix-row">
-    <span>Cached input</span><span>{{ left.cached_prompt_price }}</span><span>{{ right.cached_prompt_price }}</span>
-  </div>
-  <div class="matrix-row">
-    <span>Privacy posture</span><span>{{ comparison.left_privacy }}</span><span>{{ comparison.right_privacy }}</span>
-  </div>
-  {% if comparison.has_ttft %}
-  <div class="matrix-row">
-    <span>Fastest measured p50 TTFT</span><span>{{ comparison.left_ttft }}{% if comparison.left_ttft_provider %} via <a href="/providers/{{ comparison.left_ttft_provider }}">{{ comparison.left_ttft_provider }}</a>{% endif %}</span><span>{{ comparison.right_ttft }}{% if comparison.right_ttft_provider %} via <a href="/providers/{{ comparison.right_ttft_provider }}">{{ comparison.right_ttft_provider }}</a>{% endif %}</span>
-  </div>
-  {% endif %}
-  {% if comparison.has_throughput %}
-  <div class="matrix-row">
-    <span>Highest measured throughput</span><span>{{ comparison.left_throughput }}{% if comparison.left_throughput_provider %} via <a href="/providers/{{ comparison.left_throughput_provider }}">{{ comparison.left_throughput_provider }}</a>{% endif %}</span><span>{{ comparison.right_throughput }}{% if comparison.right_throughput_provider %} via <a href="/providers/{{ comparison.right_throughput_provider }}">{{ comparison.right_throughput_provider }}</a>{% endif %}</span>
-  </div>
-  {% endif %}
-  {% if comparison.has_uptime %}
-  <div class="matrix-row">
-    <span>Recent route uptime range</span><span>{{ comparison.left_uptime }}</span><span>{{ comparison.right_uptime }}</span>
-  </div>
-  {% endif %}
-  <div class="matrix-row">
-    <span>Modes</span>
-    <span>
-      {% if left.supports_chat %}<span class="pill">chat</span>{% endif %}
-      {% if left.supports_decide %}<span class="pill">decide</span>{% endif %}
-      {% if left.supports_messages %}<span class="pill">messages</span>{% endif %}
-      {% if left.supports_embeddings %}<span class="pill">embeddings</span>{% endif %}
-    </span>
-    <span>
-      {% if right.supports_chat %}<span class="pill">chat</span>{% endif %}
-      {% if right.supports_decide %}<span class="pill">decide</span>{% endif %}
-      {% if right.supports_messages %}<span class="pill">messages</span>{% endif %}
-      {% if right.supports_embeddings %}<span class="pill">embeddings</span>{% endif %}
-    </span>
-  </div>
-</section>
-
-{# Sign-up right where the visitor has just compared the two models. #}
-<div class="hero-actions">
-  <button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Try both models</button>
-</div>
-
-<section class="seo-two-col">
-  <div class="panel">
-    <div class="panel-head"><h2>{{ left.name }} routes</h2></div>
-    <div class="panel-body">
-      <ul class="link-list">
-        <li><a href="/models/{{ left.id }}">Overview</a><span>{{ left.endpoint_count }} Credits routes</span></li>
-        {% if left.pricing_href %}<li><a href="{{ left.pricing_href }}">Pricing</a><span>Input, cached input, and output rates</span></li>{% endif %}
-        {% if left.benchmarks_href %}<li><a href="{{ left.benchmarks_href }}">Benchmarks</a><span>TrustedRouter and external sources</span></li>{% endif %}
-        {% if left.providers_href %}<li><a href="{{ left.providers_href }}">Providers</a><span>All serving providers</span></li>{% endif %}
-      </ul>
+{% block hero %}
+<section class="compare-hero">
+  <div class="compare-title">
+    <div class="compare-logos" aria-hidden="true">
+      {% for model in (left, right) %}{% if model.publisher_slug %}<img src="{{ provider_logo_url(model.publisher_slug) }}" alt="{{ model.provider }} logo" width="48" height="48">{% endif %}{% endfor %}
     </div>
+    <h1>{{ heading }}</h1>
   </div>
-  <div class="panel">
-    <div class="panel-head"><h2>{{ right.name }} routes</h2></div>
-    <div class="panel-body">
-      <ul class="link-list">
-        <li><a href="/models/{{ right.id }}">Overview</a><span>{{ right.endpoint_count }} Credits routes</span></li>
-        {% if right.pricing_href %}<li><a href="{{ right.pricing_href }}">Pricing</a><span>Input, cached input, and output rates</span></li>{% endif %}
-        {% if right.benchmarks_href %}<li><a href="{{ right.benchmarks_href }}">Benchmarks</a><span>TrustedRouter and external sources</span></li>{% endif %}
-        {% if right.providers_href %}<li><a href="{{ right.providers_href }}">Providers</a><span>All serving providers</span></li>{% endif %}
-      </ul>
-    </div>
-  </div>
-</section>
-
-{% if related_comparisons %}
-<section class="panel" aria-label="Related model comparisons">
-  <div class="panel-head"><h2>Related comparisons</h2><a href="/compare/models">Browse every comparison</a></div>
-  <div class="panel-body">
-    <ul class="link-list">
-      {% for related in related_comparisons %}
-      <li><a href="{{ related.href }}">{{ related.label }}</a><span>{{ related.route_count }} combined provider routes</span></li>
-      {% endfor %}
-    </ul>
-  </div>
-</section>
-{% endif %}
-
-{% if comparison_neighbors %}
-<nav class="panel" aria-label="Browse adjacent model comparisons">
-  <div class="panel-head"><h2>Keep comparing</h2><a href="/compare/models">Comparison directory</a></div>
-  <div class="panel-body">
-    <ul class="link-list">
-      {% for neighbor in comparison_neighbors %}
-      <li><a href="{{ neighbor.href }}">{{ neighbor.label }}</a><span>{{ neighbor.relation }} comparison</span></li>
-      {% endfor %}
-    </ul>
-  </div>
-</nav>
-{% endif %}
-
-<section class="marketing-split">
-  <div class="marketing-copy">
-    <span class="eyebrow">Production choice</span>
-    <h2>Pick a default model. Keep fallback enabled.</h2>
-    <p>TrustedRouter is useful when you know the model you want, but still need provider rollover, budget limits, usage records, and a prompt path you can verify.</p>
-    <div class="hero-actions">
-      <button class="btn primary" type="button" data-action="open-signin" data-signin-mode="signup">Get your API key</button>
-    </div>
-  </div>
-  {# The example has to be a call the model accepts: a decision model answers
-     the decide route and refuses chat; an embedding, image or video model has
-     its own route and gets no example here rather than a wrong one. #}
-  {% if left.supports_chat %}
-  <div class="copy-terminal">
-    <div class="code-head"><span>OpenAI client</span><span>Python</span></div>
-    <pre><code>client = OpenAI(
-    base_url="{{ api_base_url }}",
-    api_key="sk-tr-v1-..."
-)
-
-response = client.chat.completions.create(
-    model="{{ left.id }}",
-    messages=messages,
-)</code></pre>
-  </div>
-  {% elif left.supports_decide %}
-  <div class="copy-terminal">
-    <div class="code-head"><span>POST {{ decide_path }}</span><span>curl</span></div>
-    <pre><code>{{ decide_curl(left.id, api_base_url) }}</code></pre>
-    <p><a href="/docs/decide">Decision models: the API, the models, the numbers</a></p>
-  </div>
-  {% endif %}
+  <p class="compare-lead">{% if board.verdict %}<strong>Practical read:</strong> {{ board.verdict }}{% else %}{{ hero_pitch }}{% endif %}</p>
+  {{ kit.signup(hero_note, hero=true) }}
 </section>
 {% endblock %}
+
+{% block body %}
+<section class="compare-section compare-table-section" aria-labelledby="compare-table-heading">
+  <h2 id="compare-table-heading" class="compare-table-heading">Side by side:</h2>
+
+  <div class="compare-table-wrap">
+    <table class="compare-table">
+      <caption class="compare-sr">{{ left.name }} compared with {{ right.name }}</caption>
+      <thead><tr>
+        <th scope="col" class="compare-table-label"><span class="compare-sr">Attribute</span></th>
+        {% for model in (left, right) %}
+        <th scope="col" class="compare-table-item">
+          <a class="compare-item" href="/models/{{ model.id }}">{% if model.publisher_slug %}<img src="{{ provider_logo_url(model.publisher_slug) }}" alt="{{ model.provider }} logo" aria-hidden="true" width="30" height="30">{% endif %}<span>{{ (left_short, right_short)[loop.index0] }}</span></a>
+          <span class="compare-meta">
+          <span class="compare-id"><code id="compare-id-{{ loop.index }}">{% for part in model.id.split("/") %}{{ part }}{% if not loop.last %}/<wbr>{% endif %}{% endfor %}</code>{{ kit.copy_icon_button("compare-id-" ~ loop.index, "Copy model id " ~ model.id) }}{{ kit.copy_status("compare-id-" ~ loop.index) }}</span></span>
+        </th>
+        {% endfor %}
+      </tr></thead>
+      <tbody>
+      {% for row in board.rows %}
+      <tr class="compare-row-{{ row.key }}">
+        <th scope="row">{{ row.label }}</th>
+        {% for cell in (row.left, row.right) %}
+        <td{% if cell.win %} class="is-win"{% endif %}>
+          {% if cell.badge %}<span class="compare-badge">{{ cell.badge }}</span>{% endif %}
+          {% if cell.value %}{% if cell.href %}<a class="compare-val" href="{{ cell.href }}" rel="nofollow noopener">{{ cell.value }}</a>{% else %}<span class="compare-val{% if cell.muted %} is-muted{% endif %}">{{ cell.value }}</span>{% endif %}{% endif %}
+          {% if cell.sub %}<span class="compare-sub">{{ cell.sub }}</span>{% endif %}
+        </td>
+        {% endfor %}
+      </tr>
+      {% endfor %}
+      <tr><th scope="row">Publisher</th><td>{{ publisher_identity(left) }}</td><td>{{ publisher_identity(right) }}</td></tr>
+      <tr><th scope="row">Modes</th>
+        {% for model in (left, right) %}
+        <td>
+          {% if model.supports_chat %}<span class="pill">chat</span>{% endif %}
+          {% if model.supports_decide %}<span class="pill">decide</span>{% endif %}
+          {% if model.supports_messages %}<span class="pill">messages</span>{% endif %}
+          {% if model.supports_embeddings %}<span class="pill">embeddings</span>{% endif %}
+        </td>
+        {% endfor %}
+      </tr>
+      <tr><th scope="row">More detail</th>
+        {% for model in (left, right) %}
+        <td><div class="compare-links">
+          <a href="/models/{{ model.id }}">Overview</a>
+          {% if model.pricing_href %}<a href="{{ model.pricing_href }}">Pricing</a>{% endif %}
+          {% if model.providers_href %}<a href="{{ model.providers_href }}">Providers</a>{% endif %}
+          {% if model.benchmarks_href %}<a href="{{ model.benchmarks_href }}">Benchmarks</a>{% endif %}
+        </div></td>
+        {% endfor %}
+      </tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="compare-note">Price adds one million input and one million output tokens on the cheapest route. Prices and speed change: see the <a href="/benchmarks/reports">monthly reports</a> and run a small <a href="/docs/evals">eval</a> before you choose a default.</p>
+</section>
+
+{% if left.supports_chat and right.supports_chat %}
+{% set agent_panel %}Compare {{ left_short }} and {{ right_short }} in this project through TrustedRouter.
+
+1. Read https://trustedrouter.com/docs/llms.txt
+2. Point the OpenAI-compatible client at
+   {{ api_base_url }} and read the key from
+   TRUSTEDROUTER_API_KEY.
+3. Run our eval prompts on <span class="md-model-id">{{ left.id }}</span>, then on <span class="md-model-id">{{ right.id }}</span>.
+4. Show me cost, latency and quality side by side before changing the default.{% endset %}
+{% set python_panel %}import os
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key=os.environ["TRUSTEDROUTER_API_KEY"],
+)
+for model in ("{{ left.id }}", "{{ right.id }}"):
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": "What is the capital of France?"}],
+    )
+    print(model, response.choices[0].message.content){% endset %}
+{% set curl_panel %}for model in {{ left.id }} {{ right.id }}; do
+  curl {{ api_base_url }}/chat/completions \
+    -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
+    -H "Content-Type: application/json" \
+    -d "{\"model\": \"$model\", \"messages\": [{\"role\": \"user\", \"content\": \"What is the capital of France?\"}]}"
+done{% endset %}
+<section class="compare-section" aria-labelledby="compare-agent-heading">
+  <h2 id="compare-agent-heading">Test both with your agent</h2>
+  <p>Paste this into Claude Code, Cursor or any coding agent.</p>
+  {{ kit.code_box(agent_panel, python_panel, curl_panel) }}
+</section>
+{% elif left.supports_chat %}
+{# Only the left model takes chat requests, so the example runs it alone. #}
+{% set agent_panel %}Use {{ left_short }} through TrustedRouter in this project.
+
+1. Read https://trustedrouter.com/docs/llms.txt
+2. Point the OpenAI-compatible client at
+   {{ api_base_url }} and read the key from
+   TRUSTEDROUTER_API_KEY.
+3. Set the model to <span class="md-model-id">{{ left.id }}</span>.
+4. Run the tests, then show me the diff before committing.{% endset %}
+{% set python_panel %}import os
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key=os.environ["TRUSTEDROUTER_API_KEY"],
+)
+response = client.chat.completions.create(
+    model="{{ left.id }}",
+    messages=[{"role": "user", "content": "What is the capital of France?"}],
+)
+print(response.choices[0].message.content){% endset %}
+{% set curl_panel %}curl {{ api_base_url }}/chat/completions \
+  -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "{{ left.id }}", "messages": [{"role": "user", "content": "What is the capital of France?"}]}'{% endset %}
+<section class="compare-section" aria-labelledby="compare-agent-heading">
+  <h2 id="compare-agent-heading">Try {{ left_short }} with your agent</h2>
+  <p>Paste this into Claude Code, Cursor or any coding agent.</p>
+  {{ kit.code_box(agent_panel, python_panel, curl_panel) }}
+</section>
+{% elif left.supports_decide %}
+{# A decision model answers the decide route and refuses chat; an embedding,
+   image or video model has its own route and gets no example here. #}
+{% set curl_panel %}{{ decide_curl(left.id, api_base_url) }}{% endset %}
+<section class="compare-section" aria-labelledby="compare-agent-heading">
+  <h2 id="compare-agent-heading">Try it</h2>
+  <p><a href="/docs/decide">Decision models: the API, the models, the numbers</a></p>
+  {{ kit.code_box("", "", curl_panel) }}
+</section>
+{% endif %}
+
+{{ kit.questions(faq_items) }}
+
+{% set chips = [] %}
+{% set chip_hrefs = [] %}
+{% for item in related_comparisons|list + comparison_neighbors|list %}{% if item.href not in chip_hrefs %}{% set _ = chip_hrefs.append(item.href) %}{% set _ = chips.append({"href": item.href, "label": item.short_label}) %}{% endif %}{% endfor %}
+{% if chips %}{{ kit.chip_row("More comparisons", chips, "/compare/models", "All comparisons") }}{% endif %}
+
+{{ kit.closing_band("Try " ~ left_short ~ " and " ~ right_short ~ " with one key.", signup_note, "TrustedRouter is useful when you know the model you want, but still need provider rollover, budget limits, usage records, and a prompt path you can verify.") }}
+{% endblock %}
+
+{% block faq %}{% endblock %}
+{% block body_scripts %}<script src="/static/copy-prompt.js" defer></script><script src="/static/compare.js?v={{ static_version|default('local') }}" defer></script>{% endblock %}

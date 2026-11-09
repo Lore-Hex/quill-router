@@ -11,7 +11,8 @@ document.querySelectorAll("[data-copy-prompt-target]").forEach((button) => {
     status.textContent = "";
     try {
       await navigator.clipboard.writeText(prompt.textContent.trim());
-      status.textContent = "Copied. Ready for your agent chat.";
+      // A button may name its own confirmation; prompts keep the agent wording.
+      status.textContent = button.dataset.copyPromptDone || "Copied. Ready for your agent chat.";
     } catch {
       const selection = window.getSelection();
       if (selection) {

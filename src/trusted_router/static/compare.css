@@ -1,0 +1,461 @@
+/* /compare pages. font-stretch on headings takes effect once the self-hosted
+   Archivo file carries the width axis; the current file is weight-only.
+   /compare pages: one reading column, one sign-up action per screen.
+   Mint (#9ee6b8 on #1c3e2e) only ever marks the better number or the cheaper price. */
+.compare-hero,
+.compare-section,
+.compare-band {
+  --compare-win: #9ee6b8;
+  --compare-win-bg: #1c3e2e;
+
+  width: 100%;
+  max-width: 880px;
+  margin-inline: auto;
+  box-sizing: border-box;
+}
+
+.compare-hero h1,
+.compare-section h2,
+.compare-band h2 {
+  font-stretch: 118%;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+.compare-section h2,
+.compare-band h2 { font-stretch: 110%; }
+
+/* Hero */
+.compare-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 48px 0 48px;
+}
+.compare-title { display: flex; align-items: center; gap: 18px; }
+.compare-logos { display: flex; flex: none; }
+.compare-logos img {
+  width: 48px;
+  height: 48px;
+  box-sizing: border-box;
+  border: 3px solid var(--tr-color-surface-bg);
+  border-radius: 12px;
+  background: var(--tr-color-text-primary);
+}
+.compare-logos img + img { margin-left: -12px; }
+.compare-hero h1 {
+  max-width: none;
+  margin: 0;
+  font-size: clamp(38px, 5.4vw, 60px);
+  line-height: 1.04;
+  color: var(--tr-color-text-primary);
+}
+.public-wrap .compare-hero .compare-lead strong { font-weight: 650; }
+.public-wrap .compare-hero .compare-lead {
+  max-width: 34em;
+  margin: 0;
+  color: var(--tr-color-text-primary);
+  font-size: clamp(18px, 2vw, 21px);
+  font-weight: 450;
+  line-height: 1.5;
+}
+
+
+.compare-cta { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; }
+.compare-band .compare-cta { flex-direction: column; align-items: flex-start; }
+.compare-cta .btn.primary { min-height: 52px; padding-inline: 26px; font-size: 17px; font-weight: 650; }
+.compare-cta-note { margin: 0; color: var(--tr-color-text-secondary); font-size: 15px; line-height: 1.5; }
+
+/* Sections */
+.compare-section { padding: 0 0 72px; }
+.compare-section h2 { margin: 0 0 10px; color: var(--tr-color-text-primary); font-size: clamp(26px, 3vw, 32px); line-height: 1.15; }
+.public-wrap .compare-section > p { margin: 0 0 20px; color: var(--tr-color-text-primary); font-size: 18px; font-weight: 450; line-height: 1.6; }
+.compare-section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+.compare-section-head h2 { margin: 0; }
+.compare-note { margin: 16px 0 0; color: var(--tr-color-text-secondary); font-size: 15px; line-height: 1.55; }
+
+
+/* Two-item comparison table. Same shape as pattern A in the shared table
+   proposal: labels in small mono capitals, both items side by side; on a
+   phone each row becomes its label over the two values. */
+.compare-table-wrap { container-type: inline-size; min-width: 0; }
+.compare-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  color: var(--tr-color-text-secondary);
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+}
+.compare-table :is(th, td) {
+  padding: 14px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--tr-color-line-rule-soft);
+  background: transparent;
+  color: inherit;
+  font-size: 16px;
+  font-weight: 450;
+  letter-spacing: normal;
+  text-align: left;
+  text-transform: none;
+  vertical-align: top;
+}
+.compare-table :is(th, td):first-child { padding-left: 0; }
+.compare-table thead th {
+  padding-top: 8px;
+  padding-bottom: 16px;
+  border-bottom-color: var(--tr-color-line-rule);
+  background: var(--tr-color-surface-bg);
+}
+.compare-table .compare-table-label { width: 24%; }
+.compare-table tbody th {
+  padding-top: 17px;
+  color: var(--tr-color-text-tertiary);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  line-height: 1.3;
+  text-transform: uppercase;
+}
+.compare-table td.is-win { background: var(--compare-win-bg); }
+.compare-table a { color: var(--tr-color-link-base); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 4px; }
+.compare-table code { font-size: 15px; overflow-wrap: anywhere; }
+/* The price row leads the table, so its numbers read as the headline. */
+.compare-table .compare-row-price .compare-val { font-size: 44px; line-height: 1.1; font-weight: 650; letter-spacing: -0.02em; }
+.compare-table .compare-row-price th { padding-top: 24px; }
+.compare-sub { display: block; margin-top: 2px; color: var(--tr-color-text-secondary); font-size: 15px; }
+.compare-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.compare-section h2.compare-table-heading { margin-bottom: 20px; }
+.compare-table-section { position: relative; }
+/* From tablet width up, the heading sits in the table's empty top-left
+   corner, above the row labels and level with the two model names. */
+@media (min-width: 700px) {
+  .compare-section h2.compare-table-heading {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 24%;
+    box-sizing: border-box;
+    margin: 0;
+    padding: 4px 12px 0 0;
+    font-size: 28px;
+    line-height: 1.15;
+  }
+}
+
+@container (max-width: 640px) {
+  .compare-table, .compare-table thead, .compare-table tbody { display: block; }
+  .compare-table tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 16px; }
+  .compare-table thead tr { border-bottom: 1px solid var(--tr-color-line-rule); }
+  .compare-table thead th { padding: 8px 0 12px; border: 0; }
+  .compare-table thead th.compare-table-label { display: none; }
+  .compare-table tbody tr { padding: 14px 0; border-bottom: 1px solid var(--tr-color-line-rule-soft); }
+  .compare-table tbody th { grid-column: 1 / -1; padding: 0 0 6px; border: 0; }
+  .compare-table tbody td { padding: 6px 0; border: 0; }
+  .compare-table tbody td.is-win { margin-inline: -8px; padding: 6px 8px; border-radius: 6px; }
+}
+
+/* Table header cells: logo, name, best-for line, copyable id */
+.compare-table .compare-table-item { vertical-align: top; }
+.compare-table .compare-item { display: inline-flex; align-items: center; gap: 10px; color: var(--tr-color-text-primary); text-decoration: none; }
+.compare-item img { width: 30px; height: 30px; border-radius: 8px; background: var(--tr-color-text-primary); flex: none; }
+.compare-item:hover span { text-decoration: underline; text-underline-offset: 4px; }
+.compare-meta { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; margin-top: 6px; }
+.compare-best { color: var(--tr-color-text-primary); font-size: 15px; font-weight: 450; }
+.compare-id { display: inline-flex; align-items: center; gap: 2px; }
+.compare-id code { color: #f2c879; font-size: 14px; overflow-wrap: anywhere; }
+.compare-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--tr-color-accent-base);
+  font: inherit;
+  font-size: 15px;
+  cursor: pointer;
+}
+.compare-copy:hover { background: var(--tr-color-surface-hover); }
+.compare-copy[hidden] { display: none; }
+.compare-copy .md-copy-icon {
+  display: block;
+  width: 16px;
+  height: 16px;
+  background: #9ee6b8;
+  mask: url("/static/copy-icon.svg") center / contain no-repeat;
+}
+/* In a code box head the copy button matches the quickstart box's. */
+.compare-copy-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+.compare-table .compare-val { display: block; color: var(--tr-color-text-primary); font-size: 17px; font-weight: 550; }
+.compare-table a.compare-val { color: var(--tr-color-text-primary); text-decoration: none; }
+.compare-table a.compare-val:hover { text-decoration: underline; }
+.compare-table .compare-val.is-muted { color: var(--tr-color-text-tertiary); font-weight: 450; }
+.compare-table .is-win .compare-val { color: var(--compare-win); }
+.compare-badge {
+  display: inline-block;
+  margin-bottom: 4px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--tr-color-accent-base);
+  color: var(--tr-color-accent-ink);
+  font-size: 13px;
+  font-weight: 550;
+}
+.compare-links { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.compare-table .compare-item { text-decoration: none; }
+
+
+/* Quickstart box: the model page's tabbed code box (model-detail.css on the
+   model page branch), with the same colours and sizes. */
+.md-code {
+  --md-text: var(--tr-color-text-primary);
+  --md-secondary: var(--tr-color-text-secondary);
+  --md-line: var(--tr-color-line-rule-soft);
+  --md-accent: var(--tr-color-accent-base);
+  --md-link: var(--tr-color-link-base);
+  --md-bar-top: #9ee6b8;
+  --md-amber: #f2c879;
+  --md-code-bg: var(--tr-color-surface-panel);
+  --md-code-foot: var(--tr-color-surface-panel-inset);
+
+  overflow: hidden;
+  border: 1px solid var(--md-line);
+  border-radius: 12px;
+  background: var(--md-code-bg);
+}
+.md-code-head { display: flex; align-items: center; gap: 16px; padding: 0 20px; border-bottom: 1px solid var(--md-line); }
+.md-tabs { display: flex; gap: 22px; }
+.md-tabs button {
+  min-height: 48px;
+  padding: 14px 0 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--md-secondary);
+  font: 450 15px var(--tr-font-family-sans, Archivo, Arial, sans-serif);
+  cursor: pointer;
+}
+.md-tabs button[aria-selected="true"] { border-bottom-color: var(--md-accent); color: var(--md-text); }
+.md-tabs button:focus-visible, .md-copy:focus-visible, .md-expand:focus-visible, .compare-chip-nudge:focus-visible { outline: 2px solid var(--tr-color-link-base); outline-offset: 2px; }
+.md-copy {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  margin-left: auto;
+  padding: 0;
+  border: 1px solid var(--tr-color-line-control);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--md-accent);
+  cursor: pointer;
+}
+.md-copy:hover { border-color: var(--md-accent); }
+.md-copy[hidden], .md-expand[hidden] { display: none; }
+.js-off .md-copy, .js-off .compare-copy { display: none; }
+.md-copy-icon {
+  display: block;
+  width: 17px;
+  height: 17px;
+  background: var(--md-bar-top);
+  mask: url("/static/copy-icon.svg") center / contain no-repeat;
+}
+.md-code-panel pre {
+  margin: 0;
+  padding: 22px 20px;
+  overflow-x: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--md-text);
+  font-family: var(--tr-font-family-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 15px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.md-code-panel pre code { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; }
+.md-model-id { color: var(--md-amber); }
+/* Tabs need script; without it every panel shows, labelled by its tab. */
+html:not(.js-off) .md-code-panel[data-md-inactive] { display: none; }
+.js-off .md-tabs button[aria-selected="false"] { display: none; }
+.js-off .md-code-panel + .md-code-panel { border-top: 1px solid var(--md-line); }
+.md-expand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 48px;
+  margin-top: -8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--md-accent);
+  cursor: pointer;
+}
+.md-expand-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--tr-color-line-control);
+  border-radius: 50%;
+  background: var(--md-code-bg);
+  transition: transform 160ms ease;
+}
+.md-expand[aria-expanded="true"] .md-expand-icon { transform: rotate(180deg); }
+.md-code-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px;
+  border-top: 1px solid var(--md-line);
+  background: var(--md-code-foot);
+  color: var(--md-text);
+  font-size: 16px;
+}
+.md-code-foot .btn.md-cta-small { min-height: 44px; padding: 0 20px; font-size: 16px; font-weight: 650; white-space: nowrap; }
+.md-copy-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+
+@media (max-width: 639px) {
+  .md-code-head { gap: 12px; padding: 0 14px; }
+  .md-tabs { gap: 16px; }
+  .md-tabs button { font-size: 14px; }
+  .md-code-panel pre { padding: 14px; font-size: 13px; }
+  .md-code-foot { flex-direction: column; align-items: stretch; gap: 12px; padding: 14px; font-size: 15px; }
+  .md-code-foot .btn.md-cta-small { min-height: 48px; width: 100%; justify-content: center; }
+  /* Phones show the start of the prompt with a fade until it is expanded. */
+  .md-code.md-collapsible:not(.md-expanded) .md-code-body {
+    max-height: 132px;
+    overflow: hidden;
+    mask-image: linear-gradient(#000 55%, transparent);
+  }
+}
+
+/* Questions */
+.compare-faq { border-top: 1px solid var(--tr-color-line-rule); }
+.compare-faq details { border-bottom: 1px solid var(--tr-color-line-rule-soft); }
+.compare-faq summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 24px;
+  padding: 18px 0;
+  color: var(--tr-color-text-primary);
+  font-size: 18px;
+  font-weight: 550;
+  cursor: pointer;
+  list-style: none;
+}
+.compare-faq summary::-webkit-details-marker { display: none; }
+.compare-faq summary::after { content: "+"; flex: none; color: var(--tr-color-text-tertiary); }
+.compare-faq details[open] summary::after { content: "\2212"; }
+.compare-faq details p { max-width: 40em; margin: -6px 0 18px; color: var(--tr-color-text-primary); font-size: 17px; font-weight: 450; line-height: 1.6; }
+.compare-faq code { color: var(--tr-color-privacy-zdr-text, #e2c98a); }
+
+/* Sideways chip row: fade plus a nudging arrow */
+.compare-chips { position: relative; }
+.compare-chip-track {
+  display: flex;
+  gap: 10px;
+  margin: 0;
+  padding: 0 40px 8px 0;
+  overflow-x: auto;
+  list-style: none;
+  scrollbar-width: none;
+  mask-image: linear-gradient(to right, #000 calc(100% - 112px), transparent calc(100% - 40px));
+}
+.compare-chip-track::-webkit-scrollbar { display: none; }
+/* Link chip: a rounded pill in the body font. The brand kit's square mono
+   "chip" is for copyable code values (trustedrouter/auto, zdr); these are
+   links to other pages, so they read as text, with the kit's colours. */
+.compare-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 0 16px;
+  border: 1px solid var(--tr-color-line-rule);
+  border-radius: var(--tr-radius-round);
+  background: transparent;
+  color: var(--tr-color-text-primary);
+  font-size: 15px;
+  font-weight: 450;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+.compare-chip:hover,
+.compare-chip:focus-visible { border-color: var(--tr-color-line-strong); background: var(--tr-color-surface-hover); }
+.compare-chip-nudge {
+  position: absolute;
+  top: 4px;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--tr-color-text-secondary);
+  cursor: pointer;
+}
+.compare-chip-nudge:hover { color: var(--tr-color-text-primary); background: var(--tr-color-surface-hover); }
+/* Once compare.js has measured the row, the fade and arrow show only while
+   more chips sit off to the right. */
+.compare-chips[data-ready]:not([data-more]) .compare-chip-nudge { display: none; }
+.compare-chips[data-ready]:not([data-more]) .compare-chip-track { mask-image: none; padding-right: 0; }
+
+/* Closing band */
+.compare-band {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 44px 48px;
+  border-radius: 16px;
+  background: var(--compare-win-bg);
+}
+.compare-band h2 { margin: 0; color: var(--tr-color-text-primary); font-size: clamp(26px, 3.4vw, 36px); line-height: 1.15; }
+.compare-band .compare-cta-note { color: #dcebe2; }
+.public-wrap .compare-band .compare-band-lead { max-width: 36em; margin: 0; color: var(--tr-color-text-primary); font-size: 17px; line-height: 1.55; }
+
+
+@media (max-width: 640px) {
+  .compare-hero { gap: 16px; padding: 36px 0 36px; }
+  .compare-title { flex-direction: column; align-items: flex-start; gap: 16px; }
+  .compare-table .compare-row-price .compare-val { font-size: 30px; }
+  .compare-logos img { width: 40px; height: 40px; border-radius: 10px; }
+  .compare-logos img + img { margin-left: -10px; }
+  .compare-hero h1 { font-stretch: 112%; }
+  .compare-cta { align-items: stretch; }
+  .compare-cta .btn.primary { width: 100%; justify-content: center; }
+  .compare-cta-note { width: 100%; text-align: center; }
+  .compare-section { padding-bottom: 44px; }
+  .public-wrap .compare-section > p { font-size: 16px; }
+  .compare-faq summary { font-size: 16px; padding: 14px 0; }
+  .compare-faq details p { font-size: 15px; }
+  .compare-chip-track { margin-right: calc(-1 * var(--compare-gutter, 0px)); }
+  .compare-band { padding: 28px 22px; }
+  .compare-section-head { flex-direction: column; align-items: flex-start; gap: 6px; }
+}
+
+
+/* The closing band ends the page: trim the page's own bottom padding so the
+   band sits 48px above the footer instead of 108px. */
+main.public-wrap:has(> .compare-band:last-child) { padding-bottom: 12px; }

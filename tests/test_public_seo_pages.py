@@ -1413,14 +1413,14 @@ def test_model_comparison_pages_are_public(
     response = client.get("/compare/models/moonshotai/kimi-k2.6/vs/z-ai/glm-5.1")
 
     assert response.status_code == 200
-    assert "MoonshotAI: Kimi K2.6 vs Z.ai: GLM 5.1" in response.text
-    assert "Practical read" in response.text
-    assert "Cheapest route adds the rate for one million input" in response.text
+    assert "<h1>Kimi K2.6 vs GLM 5.1</h1>" in response.text
+    assert "Side by side" in response.text
+    assert "Price adds one million input and one million output tokens" in response.text
     assert "Compare routes" not in response.text
     # Without probe measurements the speed row and its FAQ answer are left out
     # rather than saying "not enough data".
     assert "not enough data" not in response.text
-    assert "Fastest measured p50 TTFT" not in response.text
+    assert "First token, p50" not in response.text
     assert "MoonshotAI: Kimi K2.6 or Z.ai: GLM 5.1 faster?" not in response.text
     assert 'href="https://aiiq.org/models/kimi-k2.6/"' in response.text
     assert "IQ 116" in response.text
@@ -1550,17 +1550,74 @@ def test_model_comparison_surfaces_distinct_measured_route_metrics(
     response = client.get("/compare/models/moonshotai/kimi-k2.6/vs/z-ai/glm-5.1")
 
     assert response.status_code == 200
-    assert "Highest measured throughput" in response.text
+    assert "Throughput" in response.text
     assert "75 tok/s" in response.text
     assert "48 tok/s" in response.text
     assert "Recent route uptime range" in response.text
     assert "99.50%" in response.text
     assert "100.00%" in response.text
-    assert "Related comparisons" in response.text
-    assert "Browse every comparison" in response.text
-    assert "Keep comparing" in response.text
-    assert "Previous comparison" in response.text
-    assert "Next comparison" in response.text
+    assert "More comparisons" in response.text
+    assert 'href="/compare/models">All comparisons' in response.text
+    # Both directory neighbours are linked, so every pair stays reachable.
+    assert 'href="/compare/models/moonshotai/kimi-k2.6/vs/z-ai/glm-5.3"' in response.text
+
+
+def test_comparison_verdict_wording_matches_the_numbers() -> None:
+    from trusted_router.dashboard import _compare_dollars, _compare_tokens, _price_phrase
+
+    assert _price_phrase(1.1) is None  # under 25% stays out of the verdict
+    assert _price_phrase(1.5) == "costs less"  # not "about half as much"
+    assert _price_phrase(2.0) == "costs about half as much"
+    assert _price_phrase(3.13) == "costs about a third as much"
+    assert _price_phrase(12.0) == "costs under a tenth as much"
+    assert _compare_tokens(163_840) == "164K"
+    assert _compare_tokens(999_600) == "1M"
+    assert _compare_tokens(1_048_576) == "1.05M"
+    assert _compare_dollars(675_200) == "$0.68"
+    assert _compare_dollars(10) == "$0.00001"
+
+
+def test_comparison_table_tints_each_rows_better_value(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from bs4 import BeautifulSoup
+
+    from trusted_router import dashboard
+
+    def measured(model_id: str, **_kwargs: object) -> list[dict[str, object]]:
+        # Kimi has the higher throughput, GLM 5.1 the faster first token.
+        fastest = model_id == "moonshotai/kimi-k2.6"
+        return [
+            {
+                "provider": "together" if fastest else "zai",
+                "sample_count": 9,
+                "p50_ttft_ms": 180 if fastest else 120,
+                "p50_tokens_per_second": 75.0 if fastest else 48.0,
+                "throughput_sample_count": 6,
+                "uptime": 1.0,
+            }
+        ]
+
+    monkeypatch.setattr(dashboard, "measured_for_model", measured)
+    _serve_glm_51(monkeypatch)
+    response = client.get("/compare/models/moonshotai/kimi-k2.6/vs/z-ai/glm-5.1")
+    assert response.status_code == 200
+    soup = BeautifulSoup(response.text, "html.parser")
+
+    def winners(key: str) -> list[bool]:
+        row = soup.select_one(f".compare-table tr.compare-row-{key}")
+        assert row is not None, key
+        return ["is-win" in (cell.get("class") or []) for cell in row.find_all("td")]
+
+    assert winners("ttft") == [False, True]  # lower first-token time wins
+    assert winners("throughput") == [True, False]  # higher throughput wins
+    lead = soup.select_one(".compare-lead").get_text(" ", strip=True)
+    assert re.search(r"Kimi K2\.6 [^.]*generates faster\.", lead), lead
+    assert re.search(r"GLM 5\.1 [^.]*starts answering sooner\.", lead), lead
+    # Each wins one speed row, so neither is "Best for speed".
+    best = soup.select_one(".compare-table tr.compare-row-best")
+    assert best is None or "Speed" not in best.get_text()
 
 
 def test_reversed_model_comparison_redirects_to_stable_canonical(
@@ -1645,8 +1702,8 @@ def test_model_comparison_graph_gives_every_page_two_inbound_neighbors() -> None
     assert set(neighbor_index) == expected_paths
     for source, neighbors in neighbor_index.items():
         assert len(neighbors) == 2
-        assert {relation for _href, _label, relation in neighbors} == {"Previous", "Next"}
-        for href, _label, _relation in neighbors:
+        assert {relation for _href, _label, _short, relation in neighbors} == {"Previous", "Next"}
+        for href, _label, _short, _relation in neighbors:
             assert href != source
             assert href in inbound_counts
             inbound_counts[href] += 1

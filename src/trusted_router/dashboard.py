@@ -4388,6 +4388,14 @@ def public_model_compare_html(settings: Settings, left_id: str, right_id: str) -
     right_view = _model_detail_view(right, test_mode=test_mode, include_section_links=False)
     hero_label, hero_pitch = _comparison_hero(left, right, left_view, right_view)
     faq_items = _model_comparison_faq_items(left, right, comparison=comparison)
+    board = _comparison_board(
+        left,
+        right,
+        left_view=left_view,
+        right_view=right_view,
+        comparison=comparison,
+        test_mode=test_mode,
+    )
     return (
         _env()
         .get_template("public/model_compare.html")
@@ -4396,9 +4404,13 @@ def public_model_compare_html(settings: Settings, left_id: str, right_id: str) -
             site_url=f"https://{settings.trusted_domain}{site_path}",
             title=_seo_comparison_title(left, right),
             preserve_title=True,
-            heading=f"{left.name} vs {right.name}",
+            heading=f"{_hero_model_name(left)} vs {_hero_model_name(right)}",
             hero_label=hero_label,
             hero_pitch=hero_pitch,
+            free_to_start=hero_label == HERO_FREE_TO_START,
+            board=board,
+            left_short=_hero_model_name(left),
+            right_short=_hero_model_name(right),
             description=(
                 f"{comparison['summary']} Compare price, speed, context, and privacy."
             ),
@@ -6150,6 +6162,7 @@ def _model_route_evidence(
             if fastest_throughput is not None
             else "not enough data"
         ),
+        "fastest_throughput_value": fastest_throughput,
         "fastest_throughput_provider": (
             str(fastest_throughput_row.get("provider") or "")
             if fastest_throughput_row is not None
@@ -6279,9 +6292,15 @@ def _related_model_comparison_rows(
         shared = len(target_ids & pair_ids)
         if path == exclude_path:
             continue
+        left_model, right_model = MODELS.get(left_id), MODELS.get(right_id)
         result_row: dict[str, object] = {
             "href": path,
             "label": label,
+            "short_label": (
+                f"{_hero_model_name(left_model)} vs {_hero_model_name(right_model)}"
+                if left_model is not None and right_model is not None
+                else label
+            ),
             "left_id": left_id,
             "right_id": right_id,
             "route_count": route_count,
@@ -6294,7 +6313,7 @@ def _related_model_comparison_rows(
 @lru_cache(maxsize=1)
 def _model_comparison_neighbor_index() -> dict[
     str,
-    tuple[tuple[str, str, str], ...],
+    tuple[tuple[str, str, str, str], ...],
 ]:
     pairs = _model_comparison_pairs()
     if len(pairs) < 2:
@@ -6303,15 +6322,16 @@ def _model_comparison_neighbor_index() -> dict[
         (
             f"/compare/models/{left.id}/vs/{right.id}",
             f"{left.name} vs {right.name}",
+            f"{_hero_model_name(left)} vs {_hero_model_name(right)}",
         )
         for left, right in pairs
     ]
     return {
         path: (
-            (rows[(index - 1) % len(rows)][0], rows[(index - 1) % len(rows)][1], "Previous"),
-            (rows[(index + 1) % len(rows)][0], rows[(index + 1) % len(rows)][1], "Next"),
+            (*rows[(index - 1) % len(rows)], "Previous"),
+            (*rows[(index + 1) % len(rows)], "Next"),
         )
-        for index, (path, _label) in enumerate(rows)
+        for index, (path, _label, _short) in enumerate(rows)
     }
 
 
@@ -6323,8 +6343,8 @@ def _model_comparison_neighbor_rows(
     if path is None:
         return []
     return [
-        {"href": href, "label": label, "relation": relation}
-        for href, label, relation in _model_comparison_neighbor_index().get(path, ())
+        {"href": href, "label": label, "short_label": short_label, "relation": relation}
+        for href, label, short_label, relation in _model_comparison_neighbor_index().get(path, ())
     ]
 
 
@@ -6373,6 +6393,295 @@ def _comparison_view(
         "has_ttft": left_measured is not None or right_measured is not None,
         "has_throughput": bool(left_evidence["has_throughput"] or right_evidence["has_throughput"]),
         "has_uptime": bool(left_evidence["has_uptime"] or right_evidence["has_uptime"]),
+        # Route evidence for both models, reused by _comparison_board.
+        "evidence": (left_evidence, right_evidence),
+    }
+
+
+_NUMBER_WORDS = {2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven", 8: "eight", 9: "nine", 10: "ten"}
+_SHARE_WORDS = {
+    2: "about half as much",
+    3: "about a third as much",
+    4: "about a quarter as much",
+    5: "about a fifth as much",
+    6: "about a sixth as much",
+    7: "about a seventh as much",
+    8: "about an eighth as much",
+    9: "about a ninth as much",
+    10: "about a tenth as much",
+}
+
+
+def _compare_dollars(microdollars: int) -> str:
+    value = Decimal(microdollars) / Decimal(MICRODOLLARS_PER_DOLLAR)
+    if value >= Decimal("0.1"):
+        return f"${value:.2f}"
+    if value >= Decimal("0.001"):
+        return f"${float(value):.2g}"
+    return f"${value.normalize():f}"
+
+
+def _compare_tokens(count: int) -> str:
+    if count >= 1_000:
+        thousands = round(count / 1_000)
+        if thousands < 1_000:
+            return f"{thousands}K"
+        return f"{count / 1_000_000:.2f}".rstrip("0").rstrip(".") + "M"
+    return str(count)
+
+
+def _compare_seconds(milliseconds: int) -> str:
+    if milliseconds < 1_000:
+        return f"{milliseconds / 1_000:.2f} s"
+    return f"{milliseconds / 1_000:.1f} s"
+
+
+def _provider_display_name(slug: str) -> str:
+    provider = PROVIDERS.get(slug)
+    return provider.name if provider else slug
+
+
+def _cheapest_priced_route(model: Model) -> ModelEndpoint | None:
+    priced = [
+        endpoint
+        for endpoint in _credits_endpoints(endpoints_for_model(model.id))
+        if endpoint.prompt_price_microdollars_per_million_tokens
+        or endpoint.completion_price_microdollars_per_million_tokens
+    ]
+    return min(
+        priced,
+        key=lambda endpoint: (
+            endpoint.prompt_price_microdollars_per_million_tokens
+            + endpoint.completion_price_microdollars_per_million_tokens,
+            endpoint.provider,
+        ),
+        default=None,
+    )
+
+
+def _price_phrase(ratio: float) -> str | None:
+    """How much less the cheaper model costs, given expensive / cheap.
+
+    Differences under 25% are left out of the verdict; shares round half up,
+    so 1.5x reads "costs less", not "about half as much".
+    """
+    if ratio < 1.25:
+        return None
+    share = int(ratio + 0.5)
+    if share > 10:
+        return "costs under a tenth as much"
+    if share >= 2 and ratio >= 1.8:
+        return f"costs {_SHARE_WORDS[share]}"
+    return "costs less"
+
+
+def _join_phrases(phrases: Sequence[str]) -> str:
+    if len(phrases) == 1:
+        return phrases[0]
+    return ", ".join(phrases[:-1]) + " and " + phrases[-1]
+
+
+def _comparison_board(
+    left: Model,
+    right: Model,
+    *,
+    left_view: Mapping[str, object],
+    right_view: Mapping[str, object],
+    comparison: Mapping[str, object],
+    test_mode: bool = False,
+) -> dict[str, object]:
+    """The head-to-head table, its winners and the hero verdict.
+
+    A row names a winner only when both sides have a number and the numbers
+    differ; ties, gaps and descriptive rows stay neutral, so the tally and the
+    green cells never claim more than the data shows.
+    """
+    models = (left, right)
+    views = (left_view, right_view)
+    evidence = cast(tuple[Mapping[str, object], Mapping[str, object]], comparison["evidence"])
+    routes = tuple(_cheapest_priced_route(model) for model in models)
+    rows: list[dict[str, object]] = []
+    wins: tuple[list[str], list[str]] = ([], [])
+
+    def cell(value: str, sub: str = "", *, href: str = "", muted: bool = False, badge: str = "") -> dict[str, object]:
+        return {"value": value, "sub": sub, "href": href, "muted": muted, "badge": badge, "win": False}
+
+    def add(
+        key: str,
+        label: str,
+        cells: Sequence[dict[str, object]],
+        numbers: Sequence[float | int | None] = (None, None),
+        better: str = "",
+    ) -> None:
+        a, b = numbers
+        if better and a is not None and b is not None and a != b:
+            winner = 0 if (a < b) == (better == "low") else 1
+            cells[winner]["win"] = True
+            wins[winner].append(key)
+        rows.append({"key": key, "label": label, "left": cells[0], "right": cells[1]})
+
+    # Same total as the FAQ answer and the summary (_cheapest_total_microdollars,
+    # which falls back to bring-your-own-key and list prices); a winner only
+    # when both models have Credits routes, as in _comparison_summary.
+    totals = tuple(_cheapest_total_microdollars(model) for model in models)
+    both_routed = all(route is not None for route in routes)
+    if all(total > 0 for total in totals):
+        add(
+            "price",
+            "Price, 1M in + out",
+            tuple(
+                cell(
+                    _compare_dollars(total),
+                    f"{_provider_display_name(route.provider)}, cheapest route" if route is not None else "Your provider key",
+                )
+                for total, route in zip(totals, routes, strict=True)
+            ),
+            totals if both_routed else (None, None),
+            "low",
+        )
+    if both_routed:
+        add(
+            "rates",
+            "Input / output, 1M",
+            tuple(
+                cell(
+                    f"{_compare_dollars(cast(ModelEndpoint, route).prompt_price_microdollars_per_million_tokens)}"
+                    f" / {_compare_dollars(cast(ModelEndpoint, route).completion_price_microdollars_per_million_tokens)}"
+                )
+                for route in routes
+            ),
+        )
+    cached = tuple(str(view.get("cached_prompt_price") or "") for view in views)
+    if any(cached):
+        add("cached", "Cached input", tuple(cell(value) if value else cell("Unlisted", muted=True) for value in cached))
+    contexts = tuple(model.context_length or None for model in models)
+    add(
+        "context",
+        "Context window",
+        tuple(
+            cell(_compare_tokens(length), f"{length:,} tokens") if length else cell("Unlisted", muted=True)
+            for length in contexts
+        ),
+        contexts,
+        "high",
+    )
+    if comparison["has_ttft"]:
+        ttfts = tuple(cast(int | None, item["fastest_ttft_ms"]) for item in evidence)
+        add(
+            "ttft",
+            "First token, p50",
+            tuple(
+                cell(_compare_seconds(ms), f"via {_provider_display_name(str(item['fastest_ttft_provider']))}")
+                if ms is not None
+                else cell("Measuring", muted=True)
+                for ms, item in zip(ttfts, evidence, strict=True)
+            ),
+            ttfts,
+            "low",
+        )
+    if comparison["has_throughput"]:
+        speeds = tuple(cast(float | None, item["fastest_throughput_value"]) for item in evidence)
+        add(
+            "throughput",
+            "Throughput",
+            tuple(
+                cell(f"{speed:.0f} tok/s", f"via {_provider_display_name(str(item['fastest_throughput_provider']))}")
+                if speed is not None
+                else cell("Measuring", muted=True)
+                for speed, item in zip(speeds, evidence, strict=True)
+            ),
+            speeds,
+            "high",
+        )
+    # The AI IQ feed can list a model before it has a score: only a scored
+    # entry counts as rated.
+    iqs = tuple(
+        iq if iq and iq.get("iq") is not None else None
+        for iq in (cast(Any, view.get("ai_iq")) for view in views)
+    )
+    if any(iqs):
+        add(
+            "ai_iq",
+            "AI IQ",
+            tuple(
+                cell(f"IQ {iq['iq']}", f"#{iq['rank']} on AI IQ" if iq.get("rank") else "", href=str(iq.get("url") or "")) if iq else cell("Unrated", muted=True)
+                for iq in iqs
+            ),
+            tuple(float(iq["iq"]) if iq else None for iq in iqs),
+            "high",
+        )
+    route_counts = (cast(int, comparison["left_routes"]), cast(int, comparison["right_routes"]))
+    add(
+        "routes",
+        "Provider routes",
+        tuple(cell(str(count), "with failover" if count > 1 else "") for count in route_counts),
+        route_counts,
+        "high",
+    )
+    privacy_cells = []
+    for summary in (comparison["left_privacy"], comparison["right_privacy"]):
+        if str(summary).startswith("has Confidential"):
+            privacy_cells.append(cell("", "E2EE and zero retention route", badge="Confidential"))
+        elif summary == "has provider TEE claim":
+            privacy_cells.append(cell("Provider TEE claim"))
+        elif summary == "has ZDR route":
+            privacy_cells.append(cell("Zero retention route"))
+        else:
+            privacy_cells.append(cell("Varies by provider", muted=True))
+    add("privacy", "Privacy", tuple(privacy_cells))
+    if comparison["has_uptime"]:
+        add(
+            "uptime",
+            "Recent route uptime range",
+            (cell(str(comparison["left_uptime"])), cell(str(comparison["right_uptime"]))),
+        )
+
+    # Hero verdict: what each model is better at, in plain words.
+    phrases: tuple[list[str], list[str]] = ([], [])
+    best_for: tuple[list[str], list[str]] = ([], [])
+    for side in (0, 1):
+        other = 1 - side
+        if "price" in wins[side]:
+            phrase = _price_phrase(totals[other] / max(totals[side], 1))
+            if phrase:
+                phrases[side].append(phrase)
+                best_for[side].append("low cost")
+        if "context" in wins[side]:
+            ratio = cast(int, contexts[side]) / max(cast(int, contexts[other]), 1)
+            # Round down, and leave small differences out of the verdict.
+            times = int(ratio)
+            if ratio >= 1.25:
+                phrases[side].append(
+                    f"reads {_NUMBER_WORDS[times]} times more context" if times in _NUMBER_WORDS else "reads more context"
+                )
+                best_for[side].append("long documents")
+        if "ttft" in wins[side]:
+            phrases[side].append("starts answering sooner")
+        if "throughput" in wins[side]:
+            phrases[side].append("generates faster")
+        # "Speed" only when the other model wins neither speed row.
+        speed_rows = {"ttft", "throughput"}
+        if speed_rows & set(wins[side]) and not speed_rows & set(wins[other]):
+            best_for[side].append("speed")
+    sentences = [
+        f"{_hero_model_name(model)} {_join_phrases(found)}."
+        for model, found in zip(models, phrases, strict=True)
+        if found
+    ]
+    if any(best_for):
+        # A summary row under the prices: what each model is the better pick for.
+        rows.insert(
+            1 if rows and rows[0]["key"] == "price" else 0,
+            {
+                "key": "best",
+                "label": "Best for",
+                "left": cell(_join_phrases(best_for[0]).capitalize()) if best_for[0] else cell(""),
+                "right": cell(_join_phrases(best_for[1]).capitalize()) if best_for[1] else cell(""),
+            },
+        )
+    return {
+        "rows": rows,
+        "verdict": (" ".join(sentences) + " One API key runs both.") if sentences else "",
     }
 
 

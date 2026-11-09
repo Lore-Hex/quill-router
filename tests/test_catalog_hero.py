@@ -102,6 +102,12 @@ def test_meta_model_page_is_free_to_start(client: TestClient) -> None:
     assert "Starter credit covers your first requests" in hero
 
 
+def _compare_hero(html: str) -> str:
+    match = re.search(r'<section class="compare-hero">.*?</section>', html, re.S)
+    assert match, "comparison hero missing"
+    return match.group(0)
+
+
 def test_comparison_page_label_follows_both_models(client: TestClient) -> None:
     funded = _first_model(funded=True)
     byok = _first_model(funded=False)
@@ -114,15 +120,16 @@ def test_comparison_page_label_follows_both_models(client: TestClient) -> None:
     )
     both = client.get(f"/compare/models/{funded}/vs/{second}", follow_redirects=True)
     assert both.status_code == 200
-    hero = _hero(both.text)
-    assert '<div class="kicker">Free to start</div>' in hero
-    assert "Try both on us." in hero
+    hero = _compare_hero(both.text)
+    assert "Start with 1 million free tokens." in hero
     assert CTA in hero
+    assert hero.count("data-catalog-cta") == 1
 
+    # A pair with a bring-your-own-key model makes no credit claim.
     mixed = client.get(f"/compare/models/{funded}/vs/{byok}", follow_redirects=True)
     assert mixed.status_code == 200
-    hero = _hero(mixed.text)
-    assert '<div class="kicker">Bring your own key</div>' in hero
+    hero = _compare_hero(mixed.text)
+    assert "free tokens" not in hero
     assert "Try both on us." not in hero
     assert "runs on your own provider key" in hero
 
