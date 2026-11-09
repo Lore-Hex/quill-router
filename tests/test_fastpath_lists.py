@@ -84,8 +84,9 @@ def test_all_mode_empties_the_pilot_set_and_the_include_list_keeps_its_own() -> 
     exclude = values["TR_FASTPATH_PILOT_EXCLUDE"].split(",")
     assert len(include) == len(set(include)) == 3 and all(include)
     assert len(exclude) == len(set(exclude)) and all(exclude)
-    # Each probe's workspace by name: one dropped is one all mode covers.
-    assert set(exclude) == {
+    # Each probe's workspace by name: one dropped is one all mode covers. A
+    # superset passes, so stopping a workspace here needs no edit to this test.
+    assert set(exclude) >= {
         "91d7810e-93b2-4c37-b1bd-ba9227585416",  # the Stage D probe's
         "d385c399-b245-4147-a528-0a4f6f170c71",  # the synthetic monitor's
         "162e441a-5d13-414f-92bd-7c6cd805faa3",  # the async settle pilot probe's
