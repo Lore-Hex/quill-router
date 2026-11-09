@@ -213,6 +213,14 @@ class _SdkDatabase:
         self._session._session_id = 'session-1'
         self._session._is_multiplexed = True
 
+        # Production wraps the store's database (storage_gcp.py); route through
+        # the same wrapper so the test sees each RPC's real timeout.
+        from trusted_router.storage_gcp_io import configure_spanner_rpc_deadlines
+        self.rpc = {name: getattr(self.api, name)
+                    for name in ('begin_transaction', 'execute_streaming_sql', 'rollback')}
+        self.spanner_api = self.api
+        configure_spanner_rpc_deadlines(self)
+
     def snapshot(self, **kwargs):
         return self._db.snapshot(**kwargs)
 
@@ -239,10 +247,15 @@ def test_timed_out_control_read_rolls_back_its_transaction(fake_store, operation
     db = _SdkDatabase(fake_store[1])
     with pytest.raises(DeadlineExceeded):
         operation(db)
-    assert db.api.begin_transaction.call_count == 1
-    assert db.api.execute_streaming_sql.call_count >= 1
-    [call] = db.api.rollback.call_args_list
+    assert db.rpc['begin_transaction'].call_count == 1
+    assert db.rpc['execute_streaming_sql'].call_count >= 1
+    [call] = db.rpc['rollback'].call_args_list
     assert call.kwargs['transaction_id'] == b'txn-1'
+    # begin shares the transaction's 0.5 s deadline (a slow Spanner cannot
+    # hold the drain thread on it); the rollback gets its own floor.
+    [begin] = db.rpc['begin_transaction'].call_args_list
+    assert 0 < begin.kwargs['timeout'] <= .5
+    assert call.kwargs['timeout'] > 1
     assert db.tags == [tag]
 
 

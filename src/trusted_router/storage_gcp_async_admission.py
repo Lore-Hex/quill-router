@@ -249,7 +249,9 @@ def _begin_before_lock(transaction: Any) -> None:
     Transaction.rollback() then sends nothing. The server-side transaction and
     its lock on the control row stay until Spanner reaps them, and every later
     claim queues behind the orphan (2026-11-09 02:07Z alert). Beginning first
-    costs one round trip and takes no locks.
+    costs one round trip and takes no locks. The store's database wrapper
+    (configure_spanner_rpc_deadlines) holds the begin to the transaction's
+    timeout_secs with the read and commit; the rollback keeps its own floor.
     """
     transaction.begin()
 

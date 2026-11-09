@@ -800,6 +800,9 @@ class _FakeTransaction:
         # inline begin on the first statement. Like the SDK, only once.
         if getattr(self, "_begun", False):
             raise ValueError("Transaction already begun")
+        if self.read_versions or self.row_snapshots or self.entity_prefix_reads:
+            # The SDK refuses once a statement has begun it inline.
+            raise ValueError("Transaction already begun by a read")
         self._begun = True
         self.db.begin_calls += 1
         return b"fake-transaction"
