@@ -44,6 +44,12 @@ def load_markets() -> list[dict]:
             assert domain not in domains
             domains.add(domain)
         assert len(market["sectors"]) == 3
+    # A forwarded market 301s to another market's canonical domain, never to
+    # one that is itself forwarded.
+    serving = {market["domain"] for market in markets if "forward_to" not in market}
+    for market in markets:
+        if "forward_to" in market:
+            assert market["forward_to"] in serving
     return markets
 
 
@@ -69,6 +75,8 @@ def market_links(markets: list[dict], current: dict) -> str:
         + (' aria-current="page"' if m["slug"] == current["slug"] else "")
         + f">{html.escape(m['region'])}</a>"
         for m in markets
+        # Forwarded markets 301 to another domain, so the list skips them (the current page keeps its own entry).
+        if "forward_to" not in m or m["slug"] == current["slug"]
     )
 
 

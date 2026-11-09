@@ -192,6 +192,37 @@ class ExchangeTests(unittest.TestCase):
         self.assertEqual(len(listed), len(set(listed)))
         self.assertEqual(sorted(set(domains()) - set(listed)), [])
 
+    def test_market_lists_skip_forwarded_markets(self) -> None:
+        from build import load_markets, market_links
+
+        markets = load_markets()
+        by_slug = {market["slug"]: market for market in markets}
+        links = market_links(markets, by_slug["global"])
+        self.assertIn("https://thetokenexchange.com/", links)
+        self.assertIn("https://nytokenexchange.com/", links)
+        for market in markets:
+            if "forward_to" in market:
+                self.assertNotIn(f'https://{market["domain"]}/', links)
+        self.assertIn("https://londontoken.exchange/", market_links(markets, by_slug["london"]))
+
+    def test_regional_markets_forward_to_new_york(self) -> None:
+        # Rule: every market but New York and Global 301s to nytokenexchange.com
+        # (infra/control_lb_url_map.tf), and keeps its certificate so https works.
+        markets = {m["slug"]: m for m in load_markets()}
+        self.assertNotIn("forward_to", markets["new-york"])
+        self.assertNotIn("forward_to", markets["global"])
+        forwarded = [m for slug, m in markets.items() if slug not in {"new-york", "global"}]
+        self.assertEqual(len(forwarded), 11)
+        listed = set(json.loads(
+            (Path(__file__).parents[2] / "infra" / "token_exchange_certificate_domains.json").read_text()
+        ))
+        for market in forwarded:
+            self.assertEqual(market["forward_to"], "nytokenexchange.com")
+            self.assertEqual([d for d in [market["domain"], *market["aliases"]] if d not in listed], [])
+        source = (Path(__file__).parents[2] / "infra" / "control_lb_url_map.tf").read_text()
+        self.assertIn("redirect = try(market.forward_to, null)", source)
+        self.assertIn("redirect = try(market.forward_to, market.domain)", source)
+
     def test_every_market_domain_may_request_the_brochure(self) -> None:
         # Rule: the app allowlists exactly the canonical market domains for the brochure form.
         listed = json.loads(
@@ -329,22 +360,22 @@ class ExchangeTests(unittest.TestCase):
         market["name"] = '<script>alert("x")</script>'
         self.assertNotIn("<script>alert", render(market, [market], "test"))
 
-    def test_global_page_links_all_regional_exchanges(self) -> None:
+    def test_global_page_links_served_exchanges(self) -> None:
         markets = load_markets()
         global_market = next(m for m in markets if m["domain"] == "thetokenexchange.com")
         parser = MarketLinkParser()
         parser.feed(render(global_market, markets, "test"))
-        expected = [f'https://{market["domain"]}/' for market in markets]
+        expected = [f'https://{market["domain"]}/' for market in markets if "forward_to" not in market]
         self.assertCountEqual(parser.links, expected)
-        self.assertEqual(len(set(parser.links)), len(markets))
-        self.assertEqual(len(markets) - 1, 12)
+        self.assertEqual(expected, ["https://thetokenexchange.com/", "https://nytokenexchange.com/"])
 
     def test_unified_market_navigation_precedes_hero_and_matches_footer(self) -> None:
         markets = load_markets()
-        expected = [f'https://{m["domain"]}/' for m in markets]
         for market in markets:
             if uses_nyte(market):
                 continue  # New York v2 has dedicated page and browser coverage.
+            # Forwarded markets are left out of the lists, except the page's own market.
+            expected = [f'https://{m["domain"]}/' for m in markets if "forward_to" not in m or m is market]
             with self.subTest(market=market["slug"]):
                 page = render(market, markets, "test")
                 self.assertLess(page.index('aria-label="Market directory"'), page.index('<main'))

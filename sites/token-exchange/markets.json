@@ -49,7 +49,7 @@
     "slug": "chicago",
     "name": "Chicago Token Exchange",
     "region": "Chicago",
-    "domain": "chicagotokenexchange.com",
+    "domain": "chicagotokenexchange.com", "forward_to": "nytokenexchange.com",
     "aliases": [
       "chicagotoken.exchange"
     ],
@@ -82,7 +82,7 @@
     "slug": "san-francisco",
     "name": "San Francisco Token Exchange",
     "region": "San Francisco",
-    "domain": "sftokenexchange.com",
+    "domain": "sftokenexchange.com", "forward_to": "nytokenexchange.com",
     "aliases": [
       "sftoken.exchange"
     ],
@@ -115,7 +115,7 @@
     "slug": "texas",
     "name": "Texas Token Exchange",
     "region": "Texas",
-    "domain": "texastokenexchange.com",
+    "domain": "texastokenexchange.com", "forward_to": "nytokenexchange.com",
     "aliases": [
       "texastoken.exchange",
       "txtokenexchange.com",
@@ -150,7 +150,7 @@
     "slug": "united-states",
     "name": "US Token Exchange",
     "region": "United States",
-    "domain": "usatokenexchange.com",
+    "domain": "usatokenexchange.com", "forward_to": "nytokenexchange.com",
     "aliases": [
       "usatoken.exchange",
       "ustoken.exchange"
@@ -184,7 +184,7 @@
     "slug": "europe",
     "name": "European Token Exchange",
     "region": "Europe",
-    "domain": "eutokenexchange.com",
+    "domain": "eutokenexchange.com", "forward_to": "nytokenexchange.com",
     "aliases": [
       "eurotokenexchange.com",
       "eutoken.exchange"
@@ -215,7 +215,7 @@
     "evidence_snapshot": "evidence-europe.json"
   },
   {
-    "slug": "london", "name": "London Token Exchange", "region": "London", "domain": "londontoken.exchange", "aliases": ["ltokenexchange.com"],
+    "slug": "london", "name": "London Token Exchange", "region": "London", "domain": "londontoken.exchange", "forward_to": "nytokenexchange.com", "aliases": ["ltokenexchange.com"],
     "scope": "city",
     "headline": "Get secure, scalable frontier AI.",
     "lead": "Compare models, pricing and privacy for financial, insurance and professional services teams.",
@@ -232,7 +232,7 @@
     "slug": "dubai",
     "evidence_snapshot": "evidence-dubai.json", "headline_accent": "frontier AI",
     "buyer_heading": "Buy capacity. Choose how it is served.",
-    "buyer_copy": "Compare models and provider policies through one API. Confirm processing locations and route requirements before you buy.", "name": "Dubai Token Exchange", "region": "Dubai", "domain": "dubaitokenexchange.com", "aliases": ["dubaitoken.exchange"],
+    "buyer_copy": "Compare models and provider policies through one API. Confirm processing locations and route requirements before you buy.", "name": "Dubai Token Exchange", "region": "Dubai", "domain": "dubaitokenexchange.com", "forward_to": "nytokenexchange.com", "aliases": ["dubaitoken.exchange"],
     "scope": "city",
     "headline": "Get secure, scalable frontier AI.",
     "lead": "Compare models, pricing and privacy for financial, professional services and enterprise teams.",
@@ -245,7 +245,7 @@
     "slug": "riyadh",
     "name": "Riyadh Token Exchange",
     "region": "Riyadh",
-    "domain": "riyadhtokenexchange.com",
+    "domain": "riyadhtokenexchange.com", "forward_to": "nytokenexchange.com",
     "aliases": [],
     "scope": "city",
     "headline": "Get secure, scalable frontier AI.",
@@ -276,7 +276,7 @@
     "slug": "hong-kong",
     "name": "Hong Kong Token Exchange",
     "region": "Hong Kong",
-    "domain": "hktokenexchange.com",
+    "domain": "hktokenexchange.com", "forward_to": "nytokenexchange.com",
     "aliases": [
       "hktoken.exchange",
       "hongkongtoken.exchange"
@@ -310,7 +310,7 @@
     "slug": "shanghai",
     "name": "Shanghai Token Exchange",
     "region": "Shanghai",
-    "domain": "shanghaitokenexchange.com",
+    "domain": "shanghaitokenexchange.com", "forward_to": "nytokenexchange.com",
     "aliases": [
       "shanghaitoken.exchange"
     ],
@@ -340,7 +340,7 @@
     "evidence_snapshot": "evidence-shared-gcp.json"
   },
   {
-    "slug": "tokyo", "name": "Tokyo Token Exchange", "region": "Tokyo", "domain": "tokyotokenexchange.com", "aliases": [],
+    "slug": "tokyo", "name": "Tokyo Token Exchange", "region": "Tokyo", "domain": "tokyotokenexchange.com", "forward_to": "nytokenexchange.com", "aliases": [],
     "scope": "city",
     "headline": "Get secure, scalable frontier AI.",
     "lead": "Compare models, pricing and privacy for enterprise, manufacturing and software teams.",
