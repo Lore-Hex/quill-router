@@ -18,6 +18,7 @@
   --md-code-bg: #0F1411;
   --md-code-foot: #121915;
   --md-mono: var(--tr-font-family-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+
   background: var(--md-bg);
   color: var(--md-text);
 }
@@ -94,7 +95,7 @@
   width: 1px;
   height: 1px;
   overflow: hidden;
-  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
   white-space: nowrap;
 }
 
@@ -384,7 +385,7 @@
 @media (min-width: 761px) {
   .md-provider-table--sticky thead th {
     position: sticky;
-    top: var(--sticky-header-height, 0px);
+    top: var(--sticky-header-height, 0);
     z-index: 2;
     padding-top: 12px;
     border-bottom: 0;
