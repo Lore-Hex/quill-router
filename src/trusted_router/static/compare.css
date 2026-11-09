@@ -191,8 +191,6 @@
   mask: url("/static/copy-icon.svg") center / contain no-repeat;
 }
 /* In a code box head the copy button matches the quickstart box's. */
-.compare-code-head .compare-copy { width: 36px; height: 36px; min-width: 0; padding: 0; border: 1px solid var(--tr-color-line-control); }
-.compare-code-head .compare-copy:hover { border-color: var(--tr-color-accent-base); background: transparent; }
 .compare-copy-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 .compare-table .compare-val { display: block; color: var(--tr-color-text-primary); font-size: 17px; font-weight: 550; }
@@ -213,15 +211,6 @@
 .compare-links { display: flex; flex-wrap: wrap; gap: 4px 16px; }
 .compare-table .compare-item { text-decoration: none; }
 
-/* Agent prompt and code */
-.compare-code { overflow: hidden; border: 1px solid var(--tr-color-line-rule-soft); border-radius: 12px; background: var(--tr-color-surface-panel); }
-.compare-code-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px 8px 20px; border-bottom: 1px solid var(--tr-color-line-rule-soft); color: var(--tr-color-text-primary); font-size: 15px; }
-.compare-code pre { margin: 0; padding: 20px; overflow-x: auto; background: none; border: 0; }
-.compare-code pre code { color: var(--tr-color-text-primary); font-size: 15px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
-.compare-code-more { border-top: 1px solid var(--tr-color-line-rule-soft); }
-.compare-code-more summary { min-height: 44px; padding: 0 20px; display: flex; align-items: center; color: var(--tr-color-accent-base); font-size: 15px; cursor: pointer; }
-.compare-code-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 16px; padding: 14px 20px; border-top: 1px solid var(--tr-color-line-rule-soft); background: var(--tr-color-surface-panel-inset); color: var(--tr-color-text-primary); font-size: 16px; }
-.compare-code-foot .btn.primary { min-height: 44px; font-weight: 650; }
 
 /* Quickstart box: the model page's tabbed code box (model-detail.css on the
    model page branch), with the same colours and sizes. */
@@ -445,11 +434,6 @@ html:not(.js-off) .md-code-panel[data-md-inactive] { display: none; }
 .compare-band .compare-cta-note { color: #dcebe2; }
 .public-wrap .compare-band .compare-band-lead { max-width: 36em; margin: 0; color: var(--tr-color-text-primary); font-size: 17px; line-height: 1.55; }
 
-/* OpenRouter page: one-line diff under the agent prompt */
-.compare-diff { margin: 0; padding: 14px 20px; border-top: 1px solid var(--tr-color-line-rule-soft); font-family: var(--font-mono, ui-monospace, monospace); font-size: 15px; line-height: 1.8; overflow-x: auto; white-space: nowrap; }
-.compare-diff del { display: block; color: var(--tr-color-text-tertiary); text-decoration: none; }
-.compare-diff ins { display: block; color: var(--compare-win, #9ee6b8); text-decoration: none; }
-.compare-section .compare-inline-links { display: flex; flex-wrap: wrap; gap: 6px 20px; margin: 16px 0 0; font-size: 16px; }
 
 @media (max-width: 640px) {
   .compare-hero { gap: 16px; padding: 36px 0 36px; }
@@ -463,20 +447,10 @@ html:not(.js-off) .md-code-panel[data-md-inactive] { display: none; }
   .compare-cta-note { width: 100%; text-align: center; }
   .compare-section { padding-bottom: 44px; }
   .public-wrap .compare-section > p { font-size: 16px; }
-  .compare-code pre { padding: 14px; }
-  .compare-code pre code { font-size: 13px; }
-  .compare-code-head { padding-left: 14px; }
-  .compare-code-foot { flex-direction: column; align-items: stretch; padding: 14px; font-size: 15px; }
-  .compare-code-foot .btn.primary { width: 100%; justify-content: center; }
   .compare-faq summary { font-size: 16px; padding: 14px 0; }
   .compare-faq details p { font-size: 15px; }
   .compare-chip-track { margin-right: calc(-1 * var(--compare-gutter, 0px)); }
   .compare-band { padding: 28px 22px; }
   .compare-section-head { flex-direction: column; align-items: flex-start; gap: 6px; }
-  .compare-diff { padding: 12px 14px; font-size: 12.5px; }
 }
 
-/* Sources: one line, opens to the list */
-.compare-sources { margin-top: 16px; }
-.compare-sources summary { display: inline-flex; align-items: center; min-height: 44px; color: var(--tr-color-link-base); font-size: 15px; cursor: pointer; }
-.compare-sources ul { margin: 4px 0 0; padding-left: 20px; color: var(--tr-color-text-primary); font-size: 15px; line-height: 1.9; }
