@@ -13,7 +13,10 @@
     </div>
     <h1>{{ heading }}</h1>
   </div>
-  <p class="compare-lead">{{ board.verdict or hero_pitch }}</p>
+  <div class="compare-verdict">
+    <span class="compare-verdict-label">Practical read</span>
+    <p class="compare-lead">{{ board.verdict or hero_pitch }}</p>
+  </div>
   {{ kit.signup(signup_note, hero=true) }}
 </section>
 {% endblock %}

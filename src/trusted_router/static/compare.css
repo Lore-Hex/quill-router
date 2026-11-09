@@ -49,6 +49,17 @@
   line-height: 1.04;
   color: var(--tr-color-text-primary);
 }
+/* Label over the verdict, in the same mono capitals as the table's row labels. */
+.compare-verdict { display: flex; flex-direction: column; gap: 6px; }
+.compare-verdict-label {
+  color: var(--tr-color-text-tertiary);
+  font-family: var(--tr-font-family-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  line-height: 1.3;
+  text-transform: uppercase;
+}
 .public-wrap .compare-hero .compare-lead {
   max-width: 34em;
   margin: 0;
