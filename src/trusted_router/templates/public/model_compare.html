@@ -108,6 +108,37 @@ done{% endset %}
   <p>Paste this into Claude Code, Cursor or any coding agent.</p>
   {{ kit.code_box(agent_panel, python_panel, curl_panel) }}
 </section>
+{% elif left.supports_chat %}
+{# Only the left model takes chat requests, so the example runs it alone. #}
+{% set agent_panel %}Use {{ left_short }} through TrustedRouter in this project.
+
+1. Read https://trustedrouter.com/docs/llms.txt
+2. Point the OpenAI-compatible client at
+   {{ api_base_url }} and read the key from
+   TRUSTEDROUTER_API_KEY.
+3. Set the model to <span class="md-model-id">{{ left.id }}</span>.
+4. Run the tests, then show me the diff before committing.{% endset %}
+{% set python_panel %}import os
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key=os.environ["TRUSTEDROUTER_API_KEY"],
+)
+response = client.chat.completions.create(
+    model="{{ left.id }}",
+    messages=[{"role": "user", "content": "What is the capital of France?"}],
+)
+print(response.choices[0].message.content){% endset %}
+{% set curl_panel %}curl {{ api_base_url }}/chat/completions \
+  -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "{{ left.id }}", "messages": [{"role": "user", "content": "What is the capital of France?"}]}'{% endset %}
+<section class="compare-section" aria-labelledby="compare-agent-heading">
+  <h2 id="compare-agent-heading">Try {{ left_short }} with your agent</h2>
+  <p>Paste this into Claude Code, Cursor or any coding agent.</p>
+  {{ kit.code_box(agent_panel, python_panel, curl_panel) }}
+</section>
 {% elif left.supports_decide %}
 {# A decision model answers the decide route and refuses chat; an embedding,
    image or video model has its own route and gets no example here. #}
@@ -122,8 +153,8 @@ done{% endset %}
 {{ kit.questions(faq_items) }}
 
 {% set chips = [] %}
-{% for related in related_comparisons %}{% set _ = chips.append({"href": related.href, "label": related.short_label}) %}{% endfor %}
-{% for neighbor in comparison_neighbors %}{% set _ = chips.append({"href": neighbor.href, "label": neighbor.short_label}) %}{% endfor %}
+{% set chip_hrefs = [] %}
+{% for item in related_comparisons|list + comparison_neighbors|list %}{% if item.href not in chip_hrefs %}{% set _ = chip_hrefs.append(item.href) %}{% set _ = chips.append({"href": item.href, "label": item.short_label}) %}{% endif %}{% endfor %}
 {% if chips %}{{ kit.chip_row("More comparisons", chips, "/compare/models", "All comparisons") }}{% endif %}
 
 {{ kit.closing_band("Try " ~ left_short ~ " and " ~ right_short ~ " with one key.", signup_note, "TrustedRouter is useful when you know the model you want, but still need provider rollover, budget limits, usage records, and a prompt path you can verify.") }}

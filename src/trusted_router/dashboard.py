@@ -6414,14 +6414,17 @@ def _short_dollars(microdollars: int) -> str:
     value = Decimal(microdollars) / Decimal(MICRODOLLARS_PER_DOLLAR)
     if value >= Decimal("0.1"):
         return f"${value:.2f}"
-    return f"${float(value):.2g}"
+    if value >= Decimal("0.001"):
+        return f"${float(value):.2g}"
+    return f"${value.normalize():f}"
 
 
 def _short_tokens(count: int) -> str:
-    if count >= 1_000_000:
-        return f"{count / 1_000_000:.2f}".rstrip("0").rstrip(".") + "M"
     if count >= 1_000:
-        return f"{round(count / 1_000)}K"
+        thousands = round(count / 1_000)
+        if thousands < 1_000:
+            return f"{thousands}K"
+        return f"{count / 1_000_000:.2f}".rstrip("0").rstrip(".") + "M"
     return str(count)
 
 
@@ -6573,13 +6576,18 @@ def _comparison_board(
             speeds,
             "high",
         )
-    iqs = tuple(cast(Any, view.get("ai_iq")) for view in views)
+    # The AI IQ feed can list a model before it has a score: only a scored
+    # entry counts as rated.
+    iqs = tuple(
+        iq if iq and iq.get("iq") is not None else None
+        for iq in (cast(Any, view.get("ai_iq")) for view in views)
+    )
     if any(iqs):
         add(
             "ai_iq",
             "AI IQ",
             tuple(
-                cell(f"IQ {iq['iq']}", f"#{iq['rank']} on AI IQ", href=str(iq["url"])) if iq else cell("Unrated", muted=True)
+                cell(f"IQ {iq['iq']}", f"#{iq['rank']} on AI IQ" if iq.get("rank") else "", href=str(iq.get("url") or "")) if iq else cell("Unrated", muted=True)
                 for iq in iqs
             ),
             tuple(float(iq["iq"]) if iq else None for iq in iqs),
@@ -6628,13 +6636,20 @@ def _comparison_board(
             best_for[side].append("low cost")
         if "context" in wins[side]:
             ratio = cast(int, contexts[side]) / max(cast(int, contexts[other]), 1)
-            times = round(ratio)
-            phrases[side].append(
-                f"reads {_NUMBER_WORDS[times]} times more context" if times in _NUMBER_WORDS else "reads more context"
-            )
-            best_for[side].append("long documents")
-        if "ttft" in wins[side] or "throughput" in wins[side]:
-            phrases[side].append("answers faster")
+            # Round down, and leave small differences out of the verdict.
+            times = int(ratio)
+            if ratio >= 1.25:
+                phrases[side].append(
+                    f"reads {_NUMBER_WORDS[times]} times more context" if times in _NUMBER_WORDS else "reads more context"
+                )
+                best_for[side].append("long documents")
+        if "ttft" in wins[side]:
+            phrases[side].append("starts answering sooner")
+        if "throughput" in wins[side]:
+            phrases[side].append("generates faster")
+        # "Speed" only when the other model wins neither speed row.
+        speed_rows = {"ttft", "throughput"}
+        if speed_rows & set(wins[side]) and not speed_rows & set(wins[other]):
             best_for[side].append("speed")
     sentences = [
         f"{_hero_model_name(model)} {_join_phrases(found)}."
