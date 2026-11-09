@@ -157,7 +157,9 @@
 
 @container (max-width: 640px) {
   .compare-table, .compare-table thead, .compare-table tbody { display: block; }
-  .compare-table thead { position: sticky; top: var(--sticky-header-height, 0px); z-index: 1; background: var(--tr-color-surface-bg); }
+  /* The pinned header reaches 8px past the column edges so it covers the
+     tinted winner cells, which do too. */
+  .compare-table thead { position: sticky; top: var(--sticky-header-height, 0px); z-index: 1; margin-inline: -8px; padding-inline: 8px; background: var(--tr-color-surface-bg); }
   .compare-table tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 16px; }
   .compare-table thead tr { border-bottom: 1px solid var(--tr-color-line-rule); }
   .compare-table thead th { position: static; padding: 8px 0 12px; border: 0; }
@@ -175,7 +177,7 @@
 .compare-item:hover span { text-decoration: underline; text-underline-offset: 4px; }
 .compare-best { display: block; margin-top: 6px; color: var(--tr-color-text-primary); font-size: 15px; font-weight: 450; }
 .compare-id { display: flex; align-items: center; gap: 4px; margin-top: 4px; }
-.compare-id code { color: var(--tr-color-privacy-zdr-text, #e2c98a); font-size: 14px; overflow-wrap: anywhere; }
+.compare-id code { color: #f2c879; font-size: 14px; overflow-wrap: anywhere; }
 .compare-copy {
   display: inline-flex;
   align-items: center;
@@ -194,7 +196,17 @@
 }
 .compare-copy:hover { background: var(--tr-color-surface-hover); }
 .compare-copy[hidden] { display: none; }
-.compare-copy img { width: 16px; height: 16px; }
+.compare-copy .md-copy-icon {
+  display: block;
+  width: 16px;
+  height: 16px;
+  background: #9ee6b8;
+  -webkit-mask: url("/static/copy-icon.svg") center / contain no-repeat;
+  mask: url("/static/copy-icon.svg") center / contain no-repeat;
+}
+/* In a code box head the copy button matches the quickstart box's. */
+.compare-code-head .compare-copy { width: 36px; height: 36px; min-width: 0; padding: 0; border: 1px solid var(--tr-color-line-control); }
+.compare-code-head .compare-copy:hover { border-color: var(--tr-color-accent-base); background: transparent; }
 .compare-copy-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 .compare-table .compare-val { display: block; color: var(--tr-color-text-primary); font-size: 17px; font-weight: 550; }
@@ -439,7 +451,6 @@ html:not(.js-off) .md-code-panel[data-md-inactive] { display: none; }
   flex-direction: column;
   align-items: flex-start;
   gap: 16px;
-  margin-bottom: 96px;
   padding: 44px 48px;
   border-radius: 16px;
   background: var(--compare-win-bg);
@@ -476,7 +487,8 @@ html:not(.js-off) .md-code-panel[data-md-inactive] { display: none; }
   .compare-faq summary { font-size: 16px; padding: 14px 0; }
   .compare-faq details p { font-size: 15px; }
   .compare-chip-track { margin-right: calc(-1 * var(--compare-gutter, 0px)); }
-  .compare-band { padding: 28px 22px; margin-bottom: 48px; }
+  .compare-band { padding: 28px 22px; }
+  .compare-section-head { flex-direction: column; align-items: flex-start; gap: 6px; }
   .compare-diff { padding: 12px 14px; font-size: 12.5px; }
 }
 

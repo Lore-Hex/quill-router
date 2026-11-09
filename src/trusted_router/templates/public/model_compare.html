@@ -40,7 +40,7 @@
         <th scope="col" class="compare-table-item">
           <a class="compare-item" href="/models/{{ model.id }}">{% if model.publisher_slug %}<img src="{{ provider_logo_url(model.publisher_slug) }}" alt="{{ model.provider }} logo" aria-hidden="true" width="30" height="30">{% endif %}<span>{{ (left_short, right_short)[loop.index0] }}</span></a>
           {% if board.best_for[loop.index0] %}<span class="compare-best">{{ board.best_for[loop.index0] }}</span>{% endif %}
-          <span class="compare-id"><code id="compare-id-{{ loop.index }}">{{ model.id }}</code>{{ kit.copy_icon_button("compare-id-" ~ loop.index, "Copy model id " ~ model.id) }}{{ kit.copy_status("compare-id-" ~ loop.index) }}</span>
+          <span class="compare-id"><code id="compare-id-{{ loop.index }}">{% for part in model.id.split("/") %}{{ part }}{% if not loop.last %}/<wbr>{% endif %}{% endfor %}</code>{{ kit.copy_icon_button("compare-id-" ~ loop.index, "Copy model id " ~ model.id) }}{{ kit.copy_status("compare-id-" ~ loop.index) }}</span>
         </th>
         {% endfor %}
       </tr></thead>

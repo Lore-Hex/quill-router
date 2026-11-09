@@ -51,7 +51,7 @@
 
 {# copy-prompt.js reveals the button and reports into the status line. #}
 {% macro copy_icon_button(target, label, text="") -%}
-<button class="compare-copy" type="button" data-copy-prompt-target="{{ target }}" data-copy-prompt-status="{{ target }}-status" aria-controls="{{ target }}" aria-label="{{ label }}" title="{{ label }}" hidden><img src="/static/copy-icon.svg" width="16" height="16" alt="Copy" aria-hidden="true">{% if text %}<span>{{ text }}</span>{% endif %}</button>
+<button class="compare-copy" type="button" data-copy-prompt-target="{{ target }}" data-copy-prompt-status="{{ target }}-status" aria-controls="{{ target }}" aria-label="{{ label }}" title="{{ label }}" hidden><span class="md-copy-icon" aria-hidden="true"></span>{% if text %}<span class="compare-sr">{{ text }}</span>{% endif %}</button>
 {%- endmacro %}
 
 {% macro copy_status(target) -%}
