@@ -522,7 +522,7 @@ html:not(.js-off) .md-code-panel[data-md-inactive] {
 .md-cheapest-tag {
   color: var(--md-bar-top);
   font-family: var(--md-mono);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 450;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -755,7 +755,7 @@ html:not(.js-off) .md-code-panel[data-md-inactive] {
 .md-tag {
   color: var(--md-bar-top);
   font-family: var(--md-mono);
-  font-size: 12px;
+  font-size: 13px;
   text-transform: uppercase;
 }
 
@@ -816,7 +816,7 @@ html:not(.js-off) .md-code-panel[data-md-inactive] {
 }
 
 .md-faq details {
-  padding: 18px 0;
+  padding: 0;
   border-bottom: 1px solid var(--md-line);
 }
 
@@ -824,6 +824,7 @@ html:not(.js-off) .md-code-panel[data-md-inactive] {
   display: flex;
   justify-content: space-between;
   gap: 16px;
+  padding: 18px 0;
   color: var(--md-text);
   font-size: 18px;
   font-weight: 550;
@@ -851,7 +852,8 @@ html:not(.js-off) .md-code-panel[data-md-inactive] {
 
 .model-detail-page .md-faq details p {
   max-width: 44em;
-  margin: 10px 0 0;
+  margin: -8px 0 0;
+  padding-bottom: 18px;
   color: var(--md-secondary);
   font-size: 17px;
   line-height: 1.6;
@@ -1009,7 +1011,7 @@ html:not(.js-off) .md-code-panel[data-md-inactive] {
   }
 
   .md-label {
-    font-size: 12px;
+    font-size: 13px;
     letter-spacing: 0.06em;
   }
 
@@ -1068,7 +1070,7 @@ html:not(.js-off) .md-code-panel[data-md-inactive] {
   }
 
   .md-eyebrow {
-    font-size: 12px;
+    font-size: 13px;
   }
 
   .md-code-head {
@@ -1171,11 +1173,8 @@ html:not(.js-off) .md-code-panel[data-md-inactive] {
     padding: 0 14px 16px;
   }
 
-  .md-faq details {
-    padding: 14px 0;
-  }
-
   .md-faq summary {
+    padding: 14px 0;
     font-size: 16px;
   }
 
