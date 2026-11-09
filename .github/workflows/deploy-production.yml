@@ -973,10 +973,10 @@ jobs:
         # docs/design/fast-admission-widening.md section 5.7: re-imaged and
         # rescheduled on every control-plane release, not behind the trust
         # jobs' opt-in, so its settings move with the control plane's. Its
-        # script pins the mode (dry-run since WS1: each run reads and
-        # reports, writing nothing) and max rank 0, until an activation step
-        # moves them;
-        # even in apply mode it writes nothing before fastpathctl enabler arm.
+        # script pins the mode (apply since WS2, armed 2026-11-09: each run
+        # writes the allow-list) and max rank 0, so nobody joins off the
+        # include list, until an activation step moves them;
+        # fastpathctl enabler pause stops its writes without a deploy.
         run: bash scripts/deploy/fastpath_enabler_job.sh
 
       - name: Enforce Google Data Manager sharing disabled

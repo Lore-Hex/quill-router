@@ -1,6 +1,6 @@
 """The enabler's deploy (docs/design/fast-admission-widening.md sections 4(d)
 and 5.7): scripts/deploy/fastpath_enabler_job.sh run to completion under the
-deploy-script harness's stubs, its emitted job held to the dark literals and
+deploy-script harness's stubs, its emitted job held to the pinned literals and
 to the startup validator; its step in the production workflow; and its two
 alerts' filters matched against the lines the enabler writes."""
 
