@@ -37,7 +37,7 @@ import secrets
 import sys
 import types
 import uuid
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -53,7 +53,11 @@ from trusted_router.catalog_data import PRIVATE_PROXY_MODEL_TARGETS
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
 from trusted_router.routes.internal import gateway
-from trusted_router.routing import RoutingCandidates
+from trusted_router.routing import (
+    NormalizedRoutingInputs,
+    RoutingCandidates,
+    normalize_routing_inputs,
+)
 from trusted_router.routing_state import RoutingState
 from trusted_router.schemas import GatewayAuthorizeRequest
 from trusted_router.storage import InMemoryStore, configure_store
@@ -308,7 +312,16 @@ def _run(module: types.ModuleType, case: dict[str, Any], backend: str,
 
             def reference_chat(*args: Any, **kwargs: Any) -> Any:
                 try:
-                    candidates = old_chat(*args, **kwargs)
+                    # The approved workload contract supplies the gateway's
+                    # own estimates, independently of resolve_candidates.
+                    normalized = args[0] if isinstance(args[0], NormalizedRoutingInputs) else normalize_routing_inputs(
+                        args[0], args[1] if len(args) > 1 else None,
+                    )
+                    normalized = replace(normalized, preferences=replace(
+                        normalized.preferences, estimated_input_tokens=body.estimated_input_tokens,
+                        estimated_output_tokens=body.output_estimate,
+                    ))
+                    candidates = old_chat(normalized, *args[1:], **kwargs)
                 except HTTPException as exc:
                     raise _reference_decide_refusal(exc, body) from None
                 return _reference_context_candidates(candidates, body)

@@ -58,7 +58,8 @@ def test_every_published_path_is_a_refresh_input() -> None:
     staged = re.search(r"git add \\\n(.*?)\n\n", publication["run"], re.S)
     assert staged
     paths = [line.strip().rstrip("\\").strip() for line in staged.group(1).splitlines()]
-    assert len(paths) == 11
+    assert len(paths) == 12
+    assert "src/trusted_router/data/model_routing_evidence.json" in paths
     specs = module.refresh_inputs()
     for path in paths:
         assert covered(path.rstrip("/") + ("/x" if path.endswith("/") else ""), specs), path

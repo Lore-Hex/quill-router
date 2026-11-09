@@ -677,6 +677,7 @@ def test_postgres_benchmark_backfill_page_parses_like_the_writer() -> None:
         "video_leaderboard",
         "status_inputs",
         "client_reliability",
+        "model_routing_evidence",
     ],
 )
 def test_public_snapshot_reads_newest_revision_across_month_partitions(

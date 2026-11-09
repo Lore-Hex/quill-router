@@ -353,7 +353,11 @@ def test_native_batch_eligibility_does_not_override_primary_provider_order(
     # The primary host has no verified discount; the discounted host is a fallback.
     monkeypatch.setattr(
         "trusted_router.routing.measured_provider_rank",
-        lambda provider, sort: 0 if provider == "deepseek" else 1,
+        lambda provider, sort: 0,
+    )
+    monkeypatch.setattr(
+        "trusted_router.routing.workload_ranks",
+        lambda *args, **kwargs: {"default": {"deepseek": 0, "parasail": 1}},
     )
     drop_routes(monkeypatch, "deepseek/deepseek-v4-flash")
     for host in ("deepseek", "parasail"):

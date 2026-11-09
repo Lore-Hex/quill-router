@@ -516,11 +516,11 @@ def test_data_only_paths_are_exactly_what_the_refresh_stages_minus_code_and_go_i
     script = step["run"]
     staged = script[script.index("git add \\"):script.index("if git diff --cached --quiet")]
     paths = staged.replace("\\", " ").split()[2:]
-    assert len(paths) == 11
-    # The two staged paths that are not data: self-healed parser code, and
-    # the alias vectors the fastpath job's Go tests read. A refresh commit
-    # that touches either runs the complete matrix.
-    excluded = {"scripts/pricing/parsers/", "fastpath/testdata/model_alias_vectors_v1.json"}
+    assert len(paths) == 12
+    # Parser code, Go alias vectors, and model/workload routing evidence
+    # all require the complete matrix, even in a generated refresh commit.
+    excluded = {"scripts/pricing/parsers/", "fastpath/testdata/model_alias_vectors_v1.json",
+                "src/trusted_router/data/model_routing_evidence.json"}
     assert excluded <= set(paths)
     # The two staged directories admit only what the refresh writes in them:
     # one manifest per provider, and what scripts/generate_provider_og.py

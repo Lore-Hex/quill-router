@@ -328,7 +328,7 @@ func (s *Snapshot) Evaluate(req Request) Result {
 	if len(filtered) == 0 {
 		return s.noRouteError(all, p, at)
 	}
-	candidates, ok := s.sortCandidates(filtered, p, at, req.At.UnixMicro())
+	candidates, ok := s.sortCandidates(filtered, p, at, req.At.UnixMicro(), prompt, outputTokens)
 	if !ok {
 		return pass("headline prices whose sum exceeds int64")
 	}
@@ -1093,7 +1093,7 @@ func (s *Snapshot) rank(provider, sort string, nowUS int64) int64 {
 
 // sortCandidates is routing._sort_endpoint_candidates: by (model rank unless
 // the sort partition is none, provider order rank, sort rank, catalog index).
-func (s *Snapshot) sortCandidates(candidates []int, p prefs, at, nowUS int64) ([]int, bool) {
+func (s *Snapshot) sortCandidates(candidates []int, p prefs, at, nowUS, prompt, output int64) ([]int, bool) {
 	orderRank := map[string]int{}
 	for i, provider := range p.order {
 		if _, ok := orderRank[provider]; !ok {
@@ -1106,10 +1106,13 @@ func (s *Snapshot) sortCandidates(candidates []int, p prefs, at, nowUS int64) ([
 			modelRank[s.Endpoints[i].ModelID] = len(modelRank)
 		}
 	}
-	type key struct{ model, order, sort, index int64 }
+	type key struct {
+		model, order, health, sort, privacy, uncertain, index int64
+	}
 	keys := make(map[int]key, len(candidates))
 	for index, i := range candidates {
 		e := &s.Endpoints[i]
+		workload := s.workloadRanks(e.ModelID, prompt, output, nowUS)
 		k := key{order: int64(len(p.order)), index: int64(index)}
 		if !p.partitionNone {
 			k.model = int64(modelRank[e.ModelID])
@@ -1125,7 +1128,13 @@ func (s *Snapshot) sortCandidates(candidates []int, p prefs, at, nowUS int64) ([
 			}
 			k.sort = h.Prompt + h.Completion
 		case "latency", "throughput":
-			k.sort = s.rank(e.Provider, p.sort, nowUS)
+			if s.rank(e.Provider, p.sort, nowUS) >= 1000 {
+				k.health = 1
+			}
+			k.sort = 1000
+			if rank, exists := workload[p.sort][e.Provider]; exists {
+				k.sort = rank
+			}
 		default:
 			k.sort = s.rank(e.Provider, "", nowUS)
 			if e.UsageType == usageCredits {
@@ -1138,13 +1147,24 @@ func (s *Snapshot) sortCandidates(candidates []int, p prefs, at, nowUS int64) ([
 					k.sort = v
 				}
 			}
+			if k.sort < 0 || k.sort >= 1000 {
+				k.health = k.sort
+			}
+			band, measured := workload["default"][e.Provider]
+			k.sort = band
+			if !slices.Contains(e.Privacy.Meets, int64(2)) {
+				k.privacy = 1
+			}
+			if !measured {
+				k.uncertain = 1
+			}
 		}
 		keys[i] = k
 	}
 	out := slices.Clone(candidates)
 	slices.SortStableFunc(out, func(a, b int) int {
 		ka, kb := keys[a], keys[b]
-		for _, d := range [][2]int64{{ka.model, kb.model}, {ka.order, kb.order}, {ka.sort, kb.sort}, {ka.index, kb.index}} {
+		for _, d := range [][2]int64{{ka.model, kb.model}, {ka.order, kb.order}, {ka.health, kb.health}, {ka.sort, kb.sort}, {ka.privacy, kb.privacy}, {ka.uncertain, kb.uncertain}} {
 			if d[0] != d[1] {
 				if d[0] < d[1] {
 					return -1
@@ -1152,9 +1172,33 @@ func (s *Snapshot) sortCandidates(candidates []int, p prefs, at, nowUS int64) ([
 				return 1
 			}
 		}
+		if ka.index < kb.index {
+			return -1
+		}
+		if ka.index > kb.index {
+			return 1
+		}
 		return 0
 	})
 	return out, true
+}
+
+func workloadBucket(tokens int64, limits []int64) int {
+	for i, limit := range limits {
+		if tokens <= limit {
+			return i
+		}
+	}
+	return len(limits)
+}
+
+func (s *Snapshot) workloadRanks(model string, input, output, nowUS int64) map[string]map[string]int64 {
+	r := s.Ranking.ModelWorkload
+	if r.Version != 1 || nowUS < r.MeasuredFromUS || nowUS > r.MeasuredThroughUS {
+		return nil
+	}
+	key := fmt.Sprintf("%s|%d|%d", model, workloadBucket(input, []int64{4096, 32768, 131072}), workloadBucket(output, []int64{256, 2048, 8192}))
+	return r.Workloads[key]
 }
 
 // StageDInputs are what a request brings to the Stage D decision beyond its

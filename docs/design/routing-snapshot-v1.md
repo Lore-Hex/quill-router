@@ -254,17 +254,36 @@ spellings, and for model lists.
 **ranking**: `measured_from_us` and `measured_through_us` (the evidence's
 `generated_at` and `generated_at + 14 days`), `unknown_rank` (1000),
 `default`, `latency`, `throughput` (the evidence's ranks by provider),
-`prepaid_min_rank` and `model_provider_preference` (routing's constants). The
+`prepaid_min_rank` and `model_provider_preference` (routing's constants), plus
+`model_workload`. The
 measured rank of provider `p` for sort `s` at request time `now` (in
 microseconds) is the `s` table's value (`default` for no sort; no table for
 any other sort), or `unknown_rank` if absent or if `now` is outside
 `[measured_from_us, measured_through_us]`. Go reproduces
 `_sort_endpoint_candidates` with these: key `(model rank unless sort
-partition none, provider order rank, sort rank, catalog index)`. With no
-sort, the sort rank is the measured default rank, raised for a Credits
+partition none, provider order rank, health, workload rank, privacy,
+uncertainty, catalog index)`. With no sort, health starts with the measured
+default rank, raised for a Credits
 endpoint to its provider's `prepaid_min_rank`; when every candidate is of one
 model, that model's `model_provider_preference` entry for the provider
-replaces it.
+replaces it. Healthy ranks 0..999 collapse to the same health group; unknown,
+degraded and explicit host exceptions retain their ranks.
+
+`model_workload` contains `version: 1`, `measured_from_us`,
+`measured_through_us` (seven-day validity), and `workloads`. Keys are
+`<exact model>|<input bucket>|<output bucket>` with bucket indices 0..3.
+Each holds `default`, `latency`, and `throughput` provider-to-rank maps.
+The publisher compiles these from the bounded aggregate evidence described
+in `docs/provider-routing-evidence.md`; Go does not query analytics.
+Default speed bands treat small differences as ties, followed by ZDR
+(`privacy.meets` contains 2), measured before unmeasured, then catalog order.
+Missing/expired model evidence is neutral, never borrowed across models.
+Explicit sorts have zero privacy and uncertainty key fields. Price also has
+zero health; latency/throughput retain the existing measured-availability
+gate (healthy measured hosts first) and use exact workload ranks with 1000
+for missing speed evidence. Explicit provider order remains ahead of all ranks.
+Readers from before this field reject it and pass to Python; a rollout must
+update the Go reader to regain accelerated coverage.
 
 **fees**: `standard_markup_bps` (550), `signed_receipt_total_fee_bps` (1200),
 `receipt_rounding` (`ceil_ratio`: `ceil(price * (10000 + total) / (10000 +
@@ -829,7 +848,7 @@ It passes to Python, with the reason, and never guesses:
   to the extent that a 1,000-token priority request is refused as unavailable.
 - An estimate, or a `sort=price` headline sum, outside int64.
 
-Against `routing_cases_v1.json` (265 cases), Go answers 175 and refuses 71
+Against `routing_cases_v1.json` (270 cases), Go answers 180 and refuses 71
 exactly as Python (candidates and order, estimate, service tier and Stage D
 reason; or status, type, message and param), and passes 19 to Python. The test
 lists each passed case with its reason and fails if Go answers one of them or

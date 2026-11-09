@@ -52,10 +52,9 @@ import os
 import re
 import sys
 
-# Every file the refresh commits except the two that are code or Go test
-# input: scripts/pricing/parsers/ (self-healed parser modules) and
-# fastpath/testdata/model_alias_vectors_v1.json (read by the fastpath job's Go
-# tests). A refresh commit that touches either runs the complete matrix. The
+# Every file the refresh commits except parser code, Go alias vectors, and
+# model_routing_evidence.json. Model/workload ordering refreshes deliberately
+# require the complete matrix, including Python/Go equivalence tests. The
 # social-card directory admits only what scripts/generate_provider_og.py
 # writes: one PNG per provider and its manifest.
 DATA_ONLY_PATHS: tuple[str, ...] = (

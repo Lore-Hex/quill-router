@@ -1191,6 +1191,7 @@ def test_provider_incident_preference_preserves_model_and_explicit_pins(
 
 def test_same_preference_tier_keeps_catalog_order(monkeypatch) -> None:
     monkeypatch.setattr("trusted_router.routing.measured_provider_rank", lambda provider, sort: 0)
+    monkeypatch.setattr("trusted_router.routing.endpoint_meets_privacy_requirement", lambda *args: True)
     a = _credits_endpoint("deepinfra")
     b = _credits_endpoint("cerebras")
     ordered = _sort_endpoint_candidates([a, b], provider_route_preferences({}))

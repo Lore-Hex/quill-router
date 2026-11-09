@@ -28,6 +28,16 @@ def routes(monkeypatch: pytest.MonkeyPatch) -> list[ModelEndpoint]:
         "trusted_router.routing.measured_provider_rank",
         lambda provider, sort: {"deepinfra": 0, CLOUDFLARE: 1, "parasail": 4}.get(provider, 1000),
     )
+    # The approved chat contract takes speed from the exact model/workload,
+    # not the provider-wide availability prior. Keep this policy fixture's
+    # measured speed order explicit so its commercial-floor tests stay isolated.
+    monkeypatch.setattr(
+        "trusted_router.routing.workload_ranks",
+        lambda model, input_tokens, output_tokens: {
+            sort: {"deepinfra": 0, CLOUDFLARE: 1, "parasail": 4}
+            for sort in ("default", "latency", "throughput")
+        } if model == MODEL else {},
+    )
     return [
         serve_on_fixture_route(
             monkeypatch, MODEL, provider, author="openai",
@@ -82,7 +92,7 @@ def test_caller_provider_controls_preserved(
     assert _providers({"provider": preferences}) == expected
 
 
-def test_byok_cloudflare_uses_measured_rank(routes: list[ModelEndpoint]) -> None:
+def test_byok_cloudflare_uses_model_workload_rank(routes: list[ModelEndpoint]) -> None:
     model = MODELS[MODEL]
     candidates = [(model, replace(route, usage_type="BYOK")) for route in routes]
     ordered = _sort_endpoint_candidates(candidates, provider_route_preferences({}))

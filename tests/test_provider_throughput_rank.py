@@ -168,7 +168,11 @@ def test_cloudflare_fallback_preference_preserves_measurements_and_explicit_choi
     assert _sort_endpoint_candidates(candidates, RoutePreferences(order=("deepinfra",)))[0][1] == direct
     assert _sort_endpoint_candidates(candidates, RoutePreferences(order=("cloudflare-workers-ai",)))[0][1] == cloudflare
     byok = [(model, direct), (model, replace(cloudflare, usage_type="BYOK"))]
-    assert _sort_endpoint_candidates(byok, RoutePreferences())[0][1].provider == "cloudflare-workers-ai"
+    # Provider-wide speed is no longer a model speed prior. With equal privacy
+    # and no model evidence, catalog order wins; BYOK never gets the floor.
+    monkeypatch.setattr("trusted_router.routing.endpoint_meets_privacy_requirement", lambda *args: True)
+    assert _sort_endpoint_candidates(byok, RoutePreferences())[0][1].provider == "deepinfra"
+    assert _sort_endpoint_candidates(list(reversed(byok)), RoutePreferences())[0][1].provider == "cloudflare-workers-ai"
     assert ranking._RANKS == measured
 
 

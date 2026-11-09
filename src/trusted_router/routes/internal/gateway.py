@@ -1490,6 +1490,7 @@ def _authorize_gateway_sync_impl(
         route_plan, candidate_request, region=region, at=pricing_effective_at,
         prompt_tokens=input_tokens,
         completion_tokens=body.max_tokens or body.max_completion_tokens or 0,
+        output_tokens=body.output_estimate,
     )
     effective_route_preferences = resolved_candidates.effective_preferences
     endpoint_candidates = resolved_candidates.candidates

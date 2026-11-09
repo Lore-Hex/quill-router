@@ -43,7 +43,13 @@ os.environ["TR_STORAGE_BACKEND"] = "memory"
 
 from fastapi import HTTPException  # noqa: E402
 
-from trusted_router import catalog_data, provider_lifecycle, provider_ranking, routing  # noqa: E402
+from trusted_router import (  # noqa: E402
+    catalog_data,
+    model_ranking,
+    provider_lifecycle,
+    provider_ranking,
+    routing,
+)
 from trusted_router.authorize_candidates import (  # noqa: E402
     CandidateRequest,
     NamedChainRefusal,
@@ -108,6 +114,10 @@ def fixture_catalog(at: dt.datetime) -> Iterator[None]:
         (provider_lifecycle, "_utc_now", lambda: at),
         (catalog_data, "_utc_now", lambda: at),
         (provider_ranking, "datetime", _Clock),
+        (model_ranking, "datetime", _Clock),
+        (model_ranking, "_RANKS", model_ranking.compile_ranks(dict(inputs.model_ranking_evidence or {
+            "version": 1, "window": "7d", "generated_at": inputs.ranking_evidence["generated_at"], "routes": [],
+        }))),
         (provider_ranking, "_RANKS", provider_ranking.validate_snapshot(inputs.ranking_evidence)[1]),
         (provider_ranking, "_GENERATED_AT", provider_ranking.validate_snapshot(inputs.ranking_evidence)[0]),
         (routing, "_MODEL_PROVIDER_PREFERENCE", {m: dict(p) for m, p in inputs.model_provider_preference.items()}),
@@ -181,6 +191,7 @@ def evaluate(case: dict[str, Any]) -> dict[str, Any]:
                 plan, candidate_request, region=region, at=at,
                 prompt_tokens=body.estimated_input_tokens,
                 completion_tokens=body.max_tokens or body.max_completion_tokens or 0,
+                output_tokens=body.output_estimate,
             )
             outcome = finish_candidates(
                 plan, resolved,
@@ -439,6 +450,9 @@ def cases() -> list[dict[str, Any]]:
                                             "provider": {"require_parameters": True, "min_privacy": "zdr"}})
     add("require_parameters:privacy_empties", {"model": FLASH, "requested_parameters": ["tools"],
                                                "provider": {"require_parameters": True, "min_privacy": "zdr"}})
+    for prompt, output in ((100, 128), (100, 16000), (5000, 128), (32768, 128), (32769, 128)):
+        add(f"workload:{prompt}:{output}", {"model": FLASH, "estimated_input_tokens": prompt,
+            "max_tokens": output, "output_tokens": output, "provider": {"usage": "credits"}})
     return out
 
 

@@ -361,6 +361,12 @@ def test_snapshot_worker_main_wires_both_rollup_scopes_into_one_insert(monkeypat
         if sql.startswith("INSERT INTO public_analytics_snapshots"):
             assert input_bytes is not None
             inserted.append(input_bytes)
+        if sql == snapshot_builder.MODEL_ROUTING_SQL:
+            return json.dumps({
+                "model": "test/model", "provider": "test-provider", "input_bucket": 0,
+                "ttft_samples": 30, "ttft_ms": 1000, "throughput_samples": 30,
+                "tps_milli": 100000,
+            })
         return ""
 
     monkeypatch.setattr(snapshot_builder, "_query", fake_query)
@@ -377,7 +383,7 @@ def test_snapshot_worker_main_wires_both_rollup_scopes_into_one_insert(monkeypat
     # its own, so a failure there can never hold the core ones back.
     body, *rest = inserted
     assert [{json.loads(line)["name"] for line in extra.decode().splitlines()} for extra in rest] == [
-        {"encrypted_ai"}
+        {"encrypted_ai"}, {"model_routing_evidence"}
     ]
     payloads = {
         json.loads(line)["name"]: json.loads(json.loads(line)["payload"])

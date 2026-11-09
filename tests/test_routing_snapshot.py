@@ -963,6 +963,9 @@ ALLOWED_FIELDS = frozenset({
     "ranking", "ranking.measured_from_us", "ranking.measured_through_us",
     "ranking.unknown_rank", "ranking.default", "ranking.latency", "ranking.throughput",
     "ranking.prepaid_min_rank", "ranking.model_provider_preference",
+    "ranking.model_workload", "ranking.model_workload.version",
+    "ranking.model_workload.measured_from_us", "ranking.model_workload.measured_through_us",
+    "ranking.model_workload.workloads",
     "fees", "fees.standard_markup_bps", "fees.signed_receipt_total_fee_bps",
     "fees.receipt_rounding", "fees.token_rounding",
 })
@@ -973,6 +976,7 @@ DATA_KEYED = frozenset({
     "ranking.latency", "ranking.throughput", "ranking.prepaid_min_rank",
     "ranking.model_provider_preference", "aliases.privacy_tiers",
     "parameters.capability_required", "parameters.aliases",
+    "ranking.model_workload.workloads",
 })
 SECRET_SHAPED = re.compile(
     r"secret|encrypt|password|credential|hidden|destination|webhook|api_key|key_hint|"
@@ -1008,7 +1012,10 @@ def _walk(value: Any, path: str, out: list[tuple[str, Any]]) -> None:
     if isinstance(value, dict):
         for key, item in value.items():
             if path in DATA_KEYED:
-                assert re.fullmatch(r"[A-Za-z0-9_./:@+\-]+", key), (path, key)
+                pattern = (r"[A-Za-z0-9_./:@+\-]+(?:\|[0-3]\|[0-3])?"
+                           if path == "ranking.model_workload.workloads"
+                           else r"[A-Za-z0-9_./:@+\-]+")
+                assert re.fullmatch(pattern, key), (path, key)
                 _walk(item, path, out)
             else:
                 child = f"{path}.{key}" if path else key

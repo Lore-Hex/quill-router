@@ -30,7 +30,7 @@ through routing is a separate change.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any
 
@@ -266,14 +266,19 @@ def resolve_candidates(
     user_model_candidate: Candidate | None = None,
     prompt_tokens: int = 0,
     completion_tokens: int = 0,
+    output_tokens: int = 512,
 ) -> ResolvedCandidates:
     """The route type's candidates, reachable from the request's gateway region.
 
     A user-provided model's owner-dispatch candidate is built by the gateway
     (after its own checks) and passed in; it skips the catalog resolvers.
     """
-    normalized = plan.normalized
-    effective_preferences = plan.preferences
+    normalized = replace(plan.normalized, preferences=replace(
+        plan.preferences,
+        estimated_input_tokens=prompt_tokens,
+        estimated_output_tokens=output_tokens,
+    ))
+    effective_preferences = normalized.preferences
     endpoint_candidates: Sequence[Candidate]
     if user_model_candidate is not None:
         endpoint_candidates = [user_model_candidate]
