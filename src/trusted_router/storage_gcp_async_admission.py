@@ -10,7 +10,11 @@ from google.api_core import exceptions as api_errors
 from google.cloud.spanner_v1 import param_types
 
 from trusted_router.services.async_settle import Admission, parse_health_record, valid_health_record
-from trusted_router.storage_gcp_io import remaining_rpc_budget, spanner_rpc_deadline
+from trusted_router.storage_gcp_io import (
+    _rollback_on_api_error,
+    remaining_rpc_budget,
+    spanner_rpc_deadline,
+)
 
 # São Paulo to nam6 measured ~150 ms per round trip; allow reads and read+commit.
 READ_DEADLINE_SECONDS = 0.5
@@ -271,7 +275,12 @@ def _claim_cadence(database: Any, identity: str, interval_seconds: float) -> boo
         _write_control(transaction, identity, {"observed_at": now})
         return True
 
-    return bool(database.run_in_transaction(txn, timeout_secs=READ_DEADLINE_SECONDS))
+    # A read that times out would otherwise orphan this transaction with its
+    # lock on the claim row (the SDK skips rollback on API errors), and every
+    # later claim queues behind it until Spanner reaps it: one slow read
+    # became minutes of DeadlineExceeded (2026-11-09 02:07Z alert).
+    return bool(database.run_in_transaction(_rollback_on_api_error(txn),
+        timeout_secs=READ_DEADLINE_SECONDS, transaction_tag="tr_drain_control_claim"))
 
 
 def publish_health(database: Any) -> dict[str, Any]:
@@ -334,6 +343,7 @@ def publish_health(database: Any) -> dict[str, Any]:
             return  # A slower old pass cannot overwrite a newer observation.
         _write_control(transaction, HEALTH_ID, value)
 
-    database.run_in_transaction(txn, timeout_secs=READ_DEADLINE_SECONDS)
+    database.run_in_transaction(_rollback_on_api_error(txn), timeout_secs=READ_DEADLINE_SECONDS,
+                                transaction_tag="tr_drain_health_publish")
     logging.getLogger(__name__).debug("async_drain.health %s", json.dumps(value))
     return value

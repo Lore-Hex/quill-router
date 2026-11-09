@@ -175,6 +175,59 @@ def test_control_claim_transaction_deadline(fake_store, claim):
     assert db.last_timeout_secs == .5
 
 
+class _TimedOutTransaction:
+    def __init__(self):
+        self.rollbacks = 0
+
+    def execute_sql(self, *args, **kwargs):
+        from google.api_core.exceptions import DeadlineExceeded
+        raise DeadlineExceeded('read deadline')
+
+    def rollback(self):
+        self.rollbacks += 1
+
+
+class _SdkDatabase:
+    """Session.run_in_transaction as google-cloud-spanner 3.65 runs it: a
+    GoogleAPICallError from the callback is re-raised WITHOUT rollback (the
+    test fake rolls back on every error, which hid this). Snapshots delegate
+    to the fake store so publish_health reaches its transaction."""
+
+    def __init__(self, db):
+        self._db = db
+        self.transactions = []
+        self.tags = []
+
+    def snapshot(self, **kwargs):
+        return self._db.snapshot(**kwargs)
+
+    def run_in_transaction(self, func, *, timeout_secs=None, transaction_tag=None):
+        from google.api_core.exceptions import GoogleAPICallError
+        self.tags.append(transaction_tag)
+        txn = _TimedOutTransaction()
+        self.transactions.append(txn)
+        try:
+            return func(txn)
+        except GoogleAPICallError:
+            raise
+
+
+@pytest.mark.parametrize('operation, tag', [
+    (claim_housekeeping, 'tr_drain_control_claim'),
+    (lambda db: claim_health_publish(db, 2), 'tr_drain_control_claim'),
+    (publish_health, 'tr_drain_health_publish'),
+])
+def test_timed_out_control_read_rolls_back_its_transaction(fake_store, operation, tag):
+    # A timed-out read must release the transaction's lock on the control row,
+    # or every later claim queues behind the orphan until Spanner reaps it.
+    from google.api_core.exceptions import DeadlineExceeded
+    db = _SdkDatabase(fake_store[1])
+    with pytest.raises(DeadlineExceeded):
+        operation(db)
+    assert [txn.rollbacks for txn in db.transactions] == [1]
+    assert db.tags == [tag]
+
+
 def test_housekeeping_only_on_legacy_watchdog(fake_store, monkeypatch):
     counts = []
     clock = [1000.]
