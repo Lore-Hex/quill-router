@@ -193,7 +193,7 @@ class NavigationRegistryTests(unittest.TestCase):
             self.assertIn('href="/media-kit">Media kit</a>', page)
             footer = re.search(r'<footer\b[^>]*>.*?</footer>', page, re.S).group()
             self.assertEqual(footer.count('href="https://letsencrypt.ai/">Let\'s Encrypt AI</a>'), 1)
-            # Bottom row: legal links only. TrustedRouter's related sites sit under "Powered by".
+            # Bottom row: legal links only. TrustedRouter's related sites share the "Powered by" line.
             legal = re.search(r'<div class="legal">(.*?)</div>', footer, re.S).group(1)
             labels = re.findall(r'>([^<>]+)</a>', legal)
             self.assertEqual(labels, (['Trust center'] if key == 'providers' else []) + ['Media kit', 'Privacy', 'Terms'])
@@ -312,7 +312,7 @@ class NavigationRegistryTests(unittest.TestCase):
             page = render_nyte(market=market)
             self.assertIn(f'<link rel="canonical" href="https://{market["domain"]}/">', page)
             self.assertIn(f'<span class="brand-place">{market.get("logo_place", market["region"])}</span>', page)
-            self.assertIn(f'<span>{market["name"]}<small>', page)
+            self.assertIn(f'<span>{market["name"]}</span></div><div class="footer-credit"><small>', page)
             self.assertIn(f'href="https://{market["domain"]}/" aria-current="page"', page)
             self.assertIn(f'utm_source={market["domain"]}', page)
             self.assertIn(f'exchange_market={market["slug"]}', page)
