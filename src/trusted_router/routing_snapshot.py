@@ -385,6 +385,13 @@ class RequestedModel(Frozen):
         return self
 
 
+class ModelWorkloadRanking(Frozen):
+    version: Literal[1]
+    measured_from_us: Int64
+    measured_through_us: Int64
+    workloads: dict[str, dict[str, dict[Identity, UInt]]]
+
+
 class Ranking(Frozen):
     measured_from_us: Int64
     measured_through_us: Int64
@@ -394,6 +401,7 @@ class Ranking(Frozen):
     throughput: dict[Identity, UInt]
     prepaid_min_rank: dict[Identity, UInt]
     model_provider_preference: dict[Identity, dict[Identity, Int64]]
+    model_workload: ModelWorkloadRanking
 
 
 class Fees(Frozen):
@@ -481,10 +489,11 @@ class CatalogInputs:
     ranking_evidence: Mapping[str, Any]
     prepaid_min_rank: Mapping[str, int]
     model_provider_preference: Mapping[str, Mapping[str, int]]
+    model_ranking_evidence: Mapping[str, Any] | None = None
 
     @classmethod
     def live(cls, settings: Settings) -> CatalogInputs:
-        from trusted_router import catalog_data, provider_ranking, routing
+        from trusted_router import catalog_data, model_ranking, provider_ranking, routing
         from trusted_router.catalog_registry import CATALOG_RESOLVED_AT, MODEL_ENDPOINTS, MODELS
 
         before = _floor_seconds(catalog_data._utc_now())
@@ -504,6 +513,7 @@ class CatalogInputs:
             parameter_rules=live_parameter_rules(),
             decision_chains=dict(catalog_data.NAMED_DECISION_MODEL_PROVIDERS),
             ranking_evidence=json.loads(evidence_path.read_text()),
+            model_ranking_evidence=json.loads(model_ranking.EVIDENCE_PATH.read_text()),
             prepaid_min_rank=dict(routing._PREPAID_PROVIDER_MIN_RANK),
             model_provider_preference={
                 model: dict(preference)
@@ -817,6 +827,8 @@ def _endpoint_entry(endpoint: ModelEndpoint, starts: list[int]) -> EndpointEntry
 
 
 def _ranking(inputs: CatalogInputs) -> Ranking:
+    from trusted_router.model_ranking import compile_ranks
+
     generated_at, ranks = validate_snapshot(inputs.ranking_evidence)
     return Ranking(
         measured_from_us=_micros(generated_at),
@@ -829,6 +841,11 @@ def _ranking(inputs: CatalogInputs) -> Ranking:
         model_provider_preference={
             model: dict(preference) for model, preference in inputs.model_provider_preference.items()
         },
+        model_workload=ModelWorkloadRanking.model_validate(compile_ranks(dict(
+            inputs.model_ranking_evidence or {
+                "version": 1, "window": "7d", "generated_at": generated_at.isoformat(), "routes": [],
+            }
+        ))),
     )
 
 

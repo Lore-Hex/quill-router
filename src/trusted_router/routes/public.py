@@ -2034,6 +2034,23 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     def rankings() -> str:
         return public_rankings_html(settings)
 
+    @app.get("/routing-evidence.json", include_in_schema=False)
+    def model_routing_evidence() -> JSONResponse:
+        from trusted_router.model_ranking import validate_evidence
+
+        reader = getattr(STORE, "public_analytics_snapshot", None)
+        try:
+            payload = current_public_analytics_snapshot(
+                "model_routing_evidence", reader=reader, max_age_seconds=12 * 3600,
+            ) if callable(reader) else None
+            if payload is not None:
+                validate_evidence(payload)
+        except Exception:
+            payload = None
+        if payload is None:
+            return JSONResponse({"error": "model routing evidence unavailable"}, status_code=503)
+        return JSONResponse(payload, headers={"cache-control": "public, max-age=300"})
+
     @app.api_route("/robots.txt", methods=["GET", "HEAD"], response_class=PlainTextResponse)
     def robots() -> PlainTextResponse:
         return PlainTextResponse(

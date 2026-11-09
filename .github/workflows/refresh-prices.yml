@@ -353,6 +353,15 @@ jobs:
           echo "### Routing evidence refresh failed" >> "$GITHUB_STEP_SUMMARY"
           echo "The previous snapshot is retained. Review the refresh step; no new ranking was published." >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Refresh model and workload routing evidence
+        id: model_routing_evidence
+        continue-on-error: true
+        run: uv run python scripts/update_model_routing_evidence.py --write --min-age-hours 24
+
+      - name: Report retained model routing evidence
+        if: steps.model_routing_evidence.outcome == 'failure'
+        run: echo "::warning title=Model routing evidence refresh failed::Previous model/workload evidence retained; runtime expiry remains enforced."
+
       - name: Record refresh inputs
         id: refresh_inputs
         # The paths that determine this run's output: the import closure of
@@ -391,6 +400,7 @@ jobs:
             src/trusted_router/data/speech_pricing.json \
             src/trusted_router/data/transcription_pricing.json \
             src/trusted_router/data/provider_routing_evidence.json \
+            src/trusted_router/data/model_routing_evidence.json \
             src/trusted_router/data/provider_models/ \
             src/trusted_router/data/model_changes.jsonl \
             src/trusted_router/data/model_changes_state.json \

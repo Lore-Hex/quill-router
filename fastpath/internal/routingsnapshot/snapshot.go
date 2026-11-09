@@ -273,6 +273,14 @@ type Ranking struct {
 	Throughput              map[string]int64            `json:"throughput"`
 	PrepaidMinRank          map[string]int64            `json:"prepaid_min_rank"`
 	ModelProviderPreference map[string]map[string]int64 `json:"model_provider_preference"`
+	ModelWorkload           ModelWorkloadRanking        `json:"model_workload"`
+}
+
+type ModelWorkloadRanking struct {
+	Version           int64                                  `json:"version"`
+	MeasuredFromUS    int64                                  `json:"measured_from_us"`
+	MeasuredThroughUS int64                                  `json:"measured_through_us"`
+	Workloads         map[string]map[string]map[string]int64 `json:"workloads"`
 }
 
 type Fees struct {
@@ -571,6 +579,25 @@ func nonNegativeRates(r Rates) bool {
 func (s *Snapshot) validate() error {
 	if s.V != snapshotVersion || s.Kind != snapshotKind || s.EpochSeconds != epochSeconds {
 		return errors.New("unsupported version, kind or epoch")
+	}
+	workload := s.Ranking.ModelWorkload
+	if workload.Version != 1 || workload.MeasuredThroughUS < workload.MeasuredFromUS || len(workload.Workloads) > 80000 {
+		return errors.New("invalid model/workload ranking")
+	}
+	for _, sorts := range workload.Workloads {
+		if len(sorts) != 3 {
+			return errors.New("invalid workload sorts")
+		}
+		for name, ranks := range sorts {
+			if !slices.Contains([]string{"default", "latency", "throughput"}, name) {
+				return errors.New("invalid workload sort")
+			}
+			for _, rank := range ranks {
+				if rank < 0 || rank > 20000 {
+					return errors.New("invalid workload rank")
+				}
+			}
+		}
 	}
 	if s.CompiledAt < 0 || !(s.CompiledAt < s.NotAfter && s.NotAfter <= s.CompiledAt+maxHorizon) {
 		return errors.New("not_after must follow compiled_at within the horizon")

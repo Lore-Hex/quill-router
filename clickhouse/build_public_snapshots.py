@@ -44,6 +44,36 @@ CLIENT_ROLLUP_SCOPES = ("fleet", "fleet_all")
 ENCRYPTED_AI_REBUILD_SECONDS = 14 * 60
 ENCRYPTED_AI_ROW_LIMIT = 20_000
 ENCRYPTED_AI_MAX_EXECUTION_SECONDS = 60
+MODEL_ROUTING_REBUILD_SECONDS = 6 * 3600
+
+# Successful streamed Credits calls only: these are timings, not an error-rate
+# estimate. Independent provider availability and live health remain in force.
+MODEL_ROUTING_SQL = """
+SELECT model, provider,
+  multiIf(tokens_prompt <= 4096, 0, tokens_prompt <= 32768, 1,
+          tokens_prompt <= 131072, 2, 3) AS input_bucket,
+  count() AS ttft_samples,
+  toUInt64(round(quantileExact(0.5)(first_token_milliseconds))) AS ttft_ms,
+  countIf(tokens_completion >= 64 AND speed_tokens_per_second > 0
+          AND speed_tokens_per_second <= 1000000) AS throughput_samples,
+  if(throughput_samples >= 25,
+     toNullable(toUInt64(round(1000 * quantileExactIf(0.5)(speed_tokens_per_second,
+       tokens_completion >= 64 AND speed_tokens_per_second > 0
+       AND speed_tokens_per_second <= 1000000)))), NULL) AS tps_milli
+FROM activity_generations FINAL
+WHERE created_at >= {start_at:DateTime64(3)} AND created_at < {end_at:DateTime64(3)}
+  AND synthetic = 0 AND status = 'success' AND streamed = 1 AND usage_type = 'Credits'
+  AND tokens_prompt > 0 AND first_token_milliseconds > 0
+  AND first_token_milliseconds <= 3600000
+GROUP BY model, provider, input_bucket
+HAVING ttft_samples >= 25
+ORDER BY model, provider, input_bucket
+LIMIT 20001
+SETTINGS max_execution_time=30, max_memory_usage=1073741824,
+  read_overflow_mode='throw', group_by_overflow_mode='throw',
+  timeout_overflow_mode='throw', result_overflow_mode='throw'
+FORMAT JSONEachRow
+"""
 
 
 def _query(
@@ -193,6 +223,39 @@ def _publish_encrypted_ai(password: str, *, now: dt.datetime, generated_at: str)
         _insert_snapshots(password, {"encrypted_ai": payload}, now=now, generated_at=generated_at)
     except Exception as exc:  # noqa: BLE001 - isolation is the point; see docstring.
         print(json.dumps({"event": "encrypted_ai_build_failed", "error": type(exc).__name__}), file=sys.stderr)
+
+
+def _publish_model_routing(password: str, *, now: dt.datetime, generated_at: str) -> None:
+    from trusted_router.model_ranking import validate_evidence
+
+    try:
+        output = _query(password, """
+SELECT toUnixTimestamp64Milli(max(generated_at)) AS ms
+FROM public_analytics_snapshots WHERE name = 'model_routing_evidence'
+FORMAT JSONEachRow
+""")
+        stamps = [json.loads(line) for line in output.splitlines() if line.strip()]
+        stamp = int(stamps[0].get("ms") or 0) if stamps else 0
+        if stamp and 0 <= now.timestamp() - stamp / 1000 < MODEL_ROUTING_REBUILD_SECONDS:
+            return
+        output = _query(password, MODEL_ROUTING_SQL, params={
+            "start_at": (now - dt.timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
+            "end_at": now.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
+        })
+        rows = [json.loads(line) for line in output.splitlines() if line.strip()]
+        for row in rows:
+            for field in ("input_bucket", "ttft_samples", "ttft_ms", "throughput_samples", "tps_milli"):
+                if row[field] is not None:
+                    row[field] = int(row[field])
+        payload = {
+            "version": 1, "window": "7d", "generated_at": generated_at,
+            "source": "ClickHouse successful streamed prepaid generations; GCP",
+            "routes": rows,
+        }
+        validate_evidence(payload)
+        _insert_snapshots(password, {"model_routing_evidence": payload}, now=now, generated_at=generated_at)
+    except Exception as exc:  # noqa: BLE001 - optional research must not interrupt health publication.
+        print(json.dumps({"event": "model_routing_evidence_build_failed", "error": type(exc).__name__}), file=sys.stderr)
 
 
 def _evidence_samples(password: str) -> list[ProviderBenchmarkSample]:
@@ -509,6 +572,7 @@ def main() -> int:
     _insert_snapshots(password, snapshots, now=now, generated_at=generated_at)
     print(json.dumps({"snapshots": len(snapshots), "generated_at": generated_at}))
     _publish_encrypted_ai(password, now=now, generated_at=generated_at)
+    _publish_model_routing(password, now=now, generated_at=generated_at)
     return 0
 
 

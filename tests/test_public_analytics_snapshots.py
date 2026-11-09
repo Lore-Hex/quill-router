@@ -377,7 +377,7 @@ def test_snapshot_worker_main_wires_both_rollup_scopes_into_one_insert(monkeypat
     # its own, so a failure there can never hold the core ones back.
     body, *rest = inserted
     assert [{json.loads(line)["name"] for line in extra.decode().splitlines()} for extra in rest] == [
-        {"encrypted_ai"}
+        {"encrypted_ai"}, {"model_routing_evidence"}
     ]
     payloads = {
         json.loads(line)["name"]: json.loads(json.loads(line)["payload"])

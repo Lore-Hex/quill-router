@@ -51,6 +51,7 @@ from trusted_router.config import Settings, get_settings
 from trusted_router.errors import api_error
 from trusted_router.image_generation import IMAGE_MODEL_ID_SET
 from trusted_router.model_aliases import canonical_router_model_id
+from trusted_router.model_ranking import workload_ranks
 from trusted_router.provider_ranking import measured_provider_rank
 from trusted_router.routing_state import Thresholds, parse_thresholds
 from trusted_router.speech import SPEECH_MODELS
@@ -90,6 +91,9 @@ class RoutePreferences:
     max_completion_price_microdollars_per_million_tokens: int | None = None
     preferred_max_latency: Thresholds = ()
     preferred_min_throughput: Thresholds = ()
+    # Gateway estimates, never accepted as provider options from a caller.
+    estimated_input_tokens: int | None = None
+    estimated_output_tokens: int = 512
 
 
 @dataclass(frozen=True, slots=True)
@@ -1512,20 +1516,30 @@ def _sort_endpoint_candidates(
     for model, _endpoint in candidates:
         model_order.setdefault(model.id, len(model_order))
 
-    def key(item: tuple[int, tuple[Model, ModelEndpoint]]) -> tuple[int, int, int, int]:
+    model_evidence = {
+        model_id: workload_ranks(
+            model_id, prefs.estimated_input_tokens, prefs.estimated_output_tokens,
+        ) for model_id in {model.id for model, _endpoint in candidates if model.supports_chat}
+    }
+
+    def key(item: tuple[int, tuple[Model, ModelEndpoint]]) -> tuple[int, int, int, int, int, int, int]:
         original_index, (model, endpoint) = item
         order_rank = provider_order.get(endpoint.provider, len(provider_order))
         # Provider preference ranks endpoints within each requested model. It
         # must not reorder the caller's model fallback chain. The only explicit
         # opt-out is OpenRouter's global sort partition.
         model_rank = model_order[model.id] if prefs.sort_partition == "model" else 0
+        health = privacy = uncertain = 0
         if prefs.sort == "price":
             sort_rank = (
                 endpoint.prompt_price_microdollars_per_million_tokens
                 + endpoint.completion_price_microdollars_per_million_tokens
             )
         elif prefs.sort in {"latency", "throughput"}:
-            sort_rank = measured_provider_rank(endpoint.provider, prefs.sort)
+            sort_rank = (
+                model_evidence[model.id].get(prefs.sort, {}).get(endpoint.provider, 1_000)
+                if model.supports_chat else measured_provider_rank(endpoint.provider, prefs.sort)
+            )
         else:
             # Default: reliability-informed preference (Phase 4), catalog order
             # preserved within a tier via the original_index tiebreaker below.
@@ -1540,7 +1554,17 @@ def _sort_endpoint_candidates(
                     default_rank, _PREPAID_PROVIDER_MIN_RANK.get(endpoint.provider, default_rank)
                 )
             sort_rank = model_preference.get(endpoint.provider, default_rank)
-        return model_rank, order_rank, sort_rank, original_index
+            if model.supports_chat:
+                # Availability and explicit host exceptions remain independent
+                # of speed. A fast result on another model is never a speed prior.
+                health = sort_rank if sort_rank < 0 or sort_rank >= 1_000 else 0
+                bands = model_evidence[model.id].get("default", {})
+                sort_rank = bands.get(endpoint.provider, 0)
+                privacy = int(not endpoint_meets_privacy_requirement(
+                    endpoint, PRIVACY_TIER_ZERO_RETENTION,
+                ))
+                uncertain = int(endpoint.provider not in bands)
+        return model_rank, order_rank, health, sort_rank, privacy, uncertain, original_index
 
     return [candidate for _, candidate in sorted(with_index, key=key)]
 

@@ -238,6 +238,18 @@ def fixture_inputs() -> CatalogInputs:
         parameter_rules=live_parameter_rules(),
         decision_chains={"trustedrouter/dev-1.0": ("wafer", "deepinfra")},
         ranking_evidence=evidence,
+        model_ranking_evidence={
+            "version": 1, "window": "7d", "generated_at": evidence["generated_at"],
+            "routes": [
+                {"model": flash, "provider": provider, "input_bucket": size,
+                 "ttft_samples": 30, "ttft_ms": ttft, "throughput_samples": 30,
+                 "tps_milli": tps}
+                for provider, size, ttft, tps in (
+                    ("deepseek", 0, 500, 50000), ("wafer", 0, 4000, 500000),
+                    ("deepseek", 1, 20000, 50000), ("wafer", 1, 1000, 500000),
+                )
+            ],
+        },
         prepaid_min_rank={"tencent": 1_500},
         model_provider_preference={tencent_flash: {"tencent": 3_000}, glm: {"wafer": -1},
                                    kimi: {"chutes": -1}},

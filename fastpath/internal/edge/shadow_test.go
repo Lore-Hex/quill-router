@@ -173,7 +173,7 @@ func withFields(t *testing.T, request json.RawMessage, fields map[string]any) []
 // estimate, the Stage D reason, or the refusal's status, type, message and
 // param) or is passed to Python for a reason with no request value in it;
 // none differs. The counts are the evaluator's (routing-snapshot-v1.md,
-// "What Go evaluates"): 175 answered and 71 refused alike, 19 passed.
+// "What Go evaluates"): 180 answered and 71 refused alike, 19 passed.
 func TestEveryRoutingCaseAgreesOrPasses(t *testing.T) {
 	h := goldenHeld(t)
 	classes := map[string]int{}
@@ -192,8 +192,8 @@ func TestEveryRoutingCaseAgreesOrPasses(t *testing.T) {
 			t.Errorf("%s: %+v", c.Name, r)
 		}
 	}
-	if classes[ClassAgree] != 246 || classes[ClassPassed] != 19 {
-		t.Fatalf("classes %v, want 246 agree and 19 passed", classes)
+	if classes[ClassAgree] != 251 || classes[ClassPassed] != 19 {
+		t.Fatalf("classes %v, want 251 agree and 19 passed", classes)
 	}
 	// BYOK presence decides some cases (Gemini's BYOK endpoint) and not others.
 	if byok["determined"] == 0 || byok["consistent"] == 0 {
