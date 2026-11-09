@@ -619,7 +619,7 @@ def test_public_model_detail_lists_distinct_serving_providers(
     }
     assert "kimi" in expected_providers
     for provider in expected_providers:
-        assert BeautifulSoup(response.text, "html.parser").select_one(f'details#provider-{provider} a[href="/providers/{provider}"]') is not None
+        assert BeautifulSoup(response.text, "html.parser").select_one(f'tr#provider-{provider}-details a[href="/providers/{provider}"]') is not None
 
 
 def test_byok_only_model_page_reports_no_credits_route(
@@ -681,11 +681,11 @@ def test_public_kimi_k3_page_separates_router_attestation_from_provider_e2ee(
     assert detail.status_code == 200
     assert "TR router attested" not in catalog.text
     assert "verified provider compute + E2EE + explicit ZDR" in catalog.text
-    assert '<a href="/trust"><span class="md-link-text">How we check privacy claims</span>' in detail.text
+    assert '<a class="md-inline-link" href="/trust">how we check privacy claims</a>' in detail.text
     assert "<th>TR router attested</th>" not in detail.text
     assert "<th>Attested</th>" not in detail.text
     assert "Provider policy" in detail.text
-    moonshot_row = BeautifulSoup(detail.text, "html.parser").select_one("details#provider-kimi")
+    moonshot_row = BeautifulSoup(detail.text, "html.parser").select_one("tr#provider-kimi-details")
     assert moonshot_row is not None
     assert moonshot_row.select_one('a[href="/providers/kimi"]') is not None
     assert "privacy unknown" in moonshot_row.get_text()

@@ -69,7 +69,6 @@
 
 .md-eyebrow,
 .md-label,
-.md-providers-head,
 .md-facts dt {
   color: var(--md-label);
   font-family: var(--md-mono);
@@ -248,14 +247,10 @@
 }
 
 /* The quickstart box and chip row live in quickstart.css. */
-.md-provider-row:focus-visible,
+.md-toggle:focus-visible,
 .md-faq summary:focus-visible {
   outline: 2px solid var(--md-link);
   outline-offset: 2px;
-}
-
-.md-providers-head > span {
-  white-space: nowrap;
 }
 
 .md-example {
@@ -333,23 +328,69 @@
   outline-offset: 2px;
 }
 
-.md-providers-head,
-.md-provider-row {
-  display: grid;
-  grid-template-columns: minmax(0, 2.3fr) repeat(3, minmax(0, 0.9fr)) minmax(0, 1.4fr) 24px;
-  column-gap: 18px;
-  padding-right: 14px;
+/* The provider table: a real <table> so search engines and answer engines
+ * read it as one, drawn as the same rows as before. Each provider is a main
+ * row plus a detail row; model-detail.js adds .md-js and folds the details. */
+.md-provider-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+/* Reset the site-wide table look (dashboard.css, charter.css). */
+.md-provider-table th,
+.md-provider-table td {
+  background: transparent;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.md-provider-table tbody tr:hover {
+  background: transparent;
+}
+
+.md-provider-table thead th {
+  padding: 0 9px 12px;
+  color: var(--md-label);
+  font-family: var(--md-mono);
+  font-size: 13px;
+  font-weight: 450;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--md-line-strong);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.md-provider-table thead th.md-num {
+  text-align: right;
+}
+
+.md-provider-table th:first-child,
+.md-provider-table td:first-child {
   padding-left: 14px;
 }
 
-.md-providers-flat .md-providers-head,
-.md-providers-flat .md-provider-row {
-  grid-template-columns: minmax(0, 2.3fr) repeat(2, minmax(0, 1.2fr)) 24px;
+.md-provider-table tr > :last-child {
+  padding-right: 14px;
 }
 
-.md-providers-head {
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--md-line-strong);
+.md-col-provider { width: 36%; }
+.md-col-cost { width: 22%; }
+.md-col-toggle { width: 44px; }
+.md-providers-flat .md-col-provider { width: 49%; }
+
+/* Long tables keep their column names in view, just under the site header. */
+@media (min-width: 761px) {
+  .md-provider-table--sticky thead th {
+    position: sticky;
+    top: var(--sticky-header-height, 0px);
+    z-index: 2;
+    padding-top: 12px;
+    border-bottom: 0;
+    background: var(--md-bg);
+    box-shadow: inset 0 -1px 0 var(--md-line-strong);
+  }
 }
 
 .md-num {
@@ -357,34 +398,48 @@
   font-variant-numeric: tabular-nums;
 }
 
-.md-provider {
+.md-provider > th,
+.md-provider > td {
+  padding: 15px 9px;
   border-bottom: 1px solid var(--md-line);
+  color: var(--md-text);
+  font-size: 17px;
+  font-weight: 450;
+  text-align: left;
+  vertical-align: middle;
 }
 
-.md-provider-cheapest {
+.md-provider > td.md-num {
+  text-align: right;
+}
+
+.md-provider > td.md-dim {
+  color: var(--md-label);
+}
+
+.md-provider-cheapest > th,
+.md-provider-cheapest > td,
+.md-provider-detail-cheapest > td {
   background: var(--md-highlight);
 }
 
-.md-provider-row {
-  grid-template-areas:
-    "name input cached output cost chev"
-    "badges input cached output cost chev";
-  align-items: center;
-  padding-top: 15px;
-  padding-bottom: 15px;
-  font-size: 17px;
-  list-style: none;
-  cursor: pointer;
+/* Without script, and once opened, the detail row carries the line. */
+.md-provider-table:not(.md-js) .md-provider > *,
+.md-provider.is-open > * {
+  border-bottom-color: transparent;
 }
 
-.md-providers-flat .md-provider-row {
-  grid-template-areas:
-    "name input output chev"
-    "badges input output chev";
+.md-provider-detail > td {
+  padding: 4px 14px 22px 58px;
+  border-bottom: 1px solid var(--md-line);
 }
 
-.md-provider-row::-webkit-details-marker {
+.md-js .md-provider:not(.is-open) + .md-provider-detail {
   display: none;
+}
+
+.md-js .md-provider {
+  cursor: pointer;
 }
 
 .md-provider-name {
@@ -422,7 +477,6 @@
 
 .md-badges {
   display: flex;
-  grid-area: badges;
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 6px;
@@ -448,10 +502,6 @@
   color: var(--md-link);
 }
 
-.md-col-input { grid-area: input; }
-.md-col-cached { grid-area: cached; }
-.md-col-output { grid-area: output; }
-
 .md-col-input,
 .md-col-output {
   color: var(--md-text);
@@ -463,7 +513,6 @@
 
 .md-cost {
   display: flex;
-  grid-area: cost;
   align-items: center;
   gap: 10px;
 }
@@ -503,17 +552,28 @@
   display: none;
 }
 
-.md-chev {
-  grid-area: chev;
+.md-toggle {
+  display: block;
+  width: 100%;
+  min-height: 32px;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--md-label);
+  font: inherit;
   text-align: right;
+  cursor: pointer;
+}
+
+.md-provider-table:not(.md-js) .md-toggle {
+  display: none;
 }
 
 .md-chev::before {
   content: "+";
 }
 
-.md-provider[open] .md-chev::before {
+.md-toggle[aria-expanded="true"] .md-chev::before {
   content: "\2212";
 }
 
@@ -521,7 +581,6 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 18px 32px;
-  padding: 4px 14px 22px 58px;
   color: var(--md-secondary);
   font-size: 16px;
   line-height: 1.6;
@@ -558,57 +617,22 @@
   line-height: 1.6;
 }
 
-/* Related pages: the kit's action link (link blue, soft underline, arrow
- * that nudges right on hover), one per line on phones. */
-/* One privacy link under the provider table; the model's other pages sit in
- * one row after the About facts. */
-.md-privacy-link {
-  margin: 12px 0 0;
-}
-
-.md-more-links {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0 36px;
-  margin: 20px 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.md-more-links a {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 44px;
+/* Related pages read as ordinary links in running text: the intro sentence
+ * above the provider table and the "More data" fact. */
+.model-detail-page .public-wrap a.md-inline-link {
   color: var(--tr-color-link-base, #C0E1FF);
-  font-size: 16px;
-  font-weight: 550;
-  text-decoration: none;
-}
-
-.md-more-links .md-link-text {
   text-decoration: underline;
   text-decoration-color: var(--tr-color-link-underline, #6F8FA8);
   text-decoration-thickness: 1px;
-  text-underline-offset: 5px;
+  text-underline-offset: 4px;
 }
 
-.md-more-links a:hover .md-link-text {
+.model-detail-page .public-wrap a.md-inline-link:hover {
   text-decoration-color: currentColor;
 }
 
-.md-more-links a span[aria-hidden] {
-  transition: transform 160ms ease;
-}
-
-.md-more-links a:hover span[aria-hidden] {
-  transform: translateX(3px);
-}
-
-@media (max-width: 639px) {
-  .md-more-links {
-    gap: 0 24px;
-  }
+.md-dot {
+  color: var(--md-label);
 }
 
 .md-foot-note code,
@@ -907,32 +931,58 @@
     min-height: 48px;
   }
 
-  .md-providers-head {
+  /* The table becomes one card per provider. */
+  .md-provider-table,
+  .md-provider-table tbody {
+    display: block;
+  }
+
+  .md-provider-table thead {
     display: none;
   }
 
   .md-provider {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "name name chev"
+      "cost inout inout"
+      "badges badges badges";
+    align-items: center;
+    gap: 12px 18px;
     margin-bottom: 8px;
+    padding: 14px;
     border: 1px solid var(--md-line);
     border-radius: 10px;
   }
 
   .md-provider-cheapest {
     border-color: var(--md-highlight);
+    background: var(--md-highlight);
   }
 
-  .md-provider-row,
-  .md-providers-flat .md-provider-row {
-    grid-template-columns: minmax(0, 1fr) auto auto;
-    grid-template-areas:
-      "name name chev"
-      "cost inout inout"
-      "badges badges badges";
-    row-gap: 12px;
-    padding: 14px;
+  .md-provider > th,
+  .md-provider > td,
+  .md-provider-cell,
+  .md-cost-cell {
+    display: contents;
+  }
+
+  .md-provider-table .md-provider > td.md-toggle-cell {
+    display: block;
+    grid-area: chev;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+
+  .md-toggle {
+    min-width: 24px;
+    min-height: 28px;
   }
 
   .md-provider-name {
+    grid-area: name;
     flex-wrap: nowrap;
     gap: 10px;
   }
@@ -947,17 +997,23 @@
     border-radius: 7px;
   }
 
-  .md-col-input,
-  .md-col-cached,
-  .md-col-output,
+  .md-provider-table .md-provider > .md-col-input,
+  .md-provider-table .md-provider > .md-col-cached,
+  .md-provider-table .md-provider > .md-col-output,
   .md-total {
     display: none;
+  }
+
+  .md-cost {
+    grid-area: cost;
   }
 
   .md-inout {
     display: block;
     grid-area: inout;
+    color: var(--md-text);
     font-size: 15px;
+    font-weight: 450;
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
   }
@@ -968,13 +1024,40 @@
   }
 
   .md-badges {
+    grid-area: badges;
     margin-top: -2px;
     padding-left: 0;
   }
 
+  /* An open card: the main row and its detail row read as one card. */
+  .md-provider-table:not(.md-js) .md-provider,
+  .md-provider.is-open {
+    margin-bottom: 0;
+    border-bottom: 0;
+    border-radius: 10px 10px 0 0;
+  }
+
+  .md-provider-detail {
+    display: block;
+    margin-bottom: 8px;
+    border: 1px solid var(--md-line);
+    border-top: 0;
+    border-radius: 0 0 10px 10px;
+  }
+
+  .md-provider-detail-cheapest {
+    border-color: var(--md-highlight);
+    background: var(--md-highlight);
+  }
+
+  .md-provider-detail > td {
+    display: block;
+    padding: 0 14px 16px;
+    border: 0;
+  }
+
   .md-provider-details {
     grid-template-columns: minmax(0, 1fr);
-    padding: 0 14px 16px;
   }
 
   .md-faq summary {

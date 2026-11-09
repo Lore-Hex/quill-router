@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 
 import pytest
+from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
 
 from trusted_router import dashboard
@@ -166,7 +167,8 @@ def test_provider_page_is_free_to_start_when_it_has_credits_routes(client: TestC
 
 
 def _provider_rows(html: str) -> list[str]:
-    return re.findall(r'<details class="md-provider[^"]*"[^>]*>', html)
+    # Main provider rows only, not their detail rows.
+    return re.findall(r'<tr class="md-provider(?: [^"]*)?"[^>]*>', html)
 
 
 def test_model_page_tags_every_row_tied_for_cheapest(
@@ -235,11 +237,70 @@ def test_model_page_sort_control_offers_only_measured_orders(
 
 def test_model_page_links_the_live_leaderboard(client: TestClient) -> None:
     html = client.get(f"/models/{_first_model(funded=True)}").text
-    links = re.search(r'<ul class="md-more-links md-privacy-link">.*?</ul>', html, re.S)
-    assert links, "provider links row missing"
-    assert 'href="/trust"' in links.group(0)
-    assert 'href="/leaderboard"' in links.group(0)
-    assert "Live speed leaderboard" in links.group(0)
+    providers = re.search(r'<section class="md-section" id="providers".*?</section>', html, re.S)
+    assert providers
+    intro = re.search(r'<p class="md-intro">.*?</p>', providers.group(0), re.S)
+    assert intro, "provider intro missing"
+    assert '<a class="md-inline-link" href="/trust">how we check privacy claims</a>' in intro.group(0)
+    assert '<a class="md-inline-link" href="/leaderboard">live speed leaderboard</a>' in intro.group(0)
+    assert "md-more-links" not in html
+    assert "→" not in providers.group(0)
+
+
+def test_model_page_lists_other_model_pages_as_a_fact(client: TestClient) -> None:
+    html = client.get("/models/deepseek/deepseek-v3.2").text
+    about = re.search(r'<section class="md-section" id="about".*?</section>', html, re.S)
+    assert about
+    fact = re.search(r'<dt>More data</dt><dd class="md-more-data">(.*?)</dd>', about.group(0), re.S)
+    assert fact, "More data fact missing"
+    assert '<a class="md-inline-link" href="/models/deepseek/deepseek-v3.2/benchmarks"><span class="md-sr">DeepSeek V3.2 </span>Benchmarks</a>' in fact.group(1)
+    assert '<span class="md-dot" aria-hidden="true"> · </span>' in fact.group(1)
+    assert "→" not in about.group(0)
+
+
+def test_model_page_puts_about_before_quickstart_and_providers(client: TestClient) -> None:
+    html = client.get("/models/deepseek/deepseek-v3.2").text
+    order = [html.index(f'id="{section}"') for section in ("about", "quickstart", "providers", "faq")]
+    assert order == sorted(order)
+
+
+def test_model_page_provider_list_is_a_table(client: TestClient) -> None:
+    html = client.get("/models/deepseek/deepseek-v3.2").text
+    soup = BeautifulSoup(html, "html.parser")
+    table = soup.select_one("table.md-provider-table")
+    assert table is not None
+    assert table.caption.get_text() == "DeepSeek V3.2 providers and prices per 1M tokens"
+    headers = [th.get_text(strip=True) for th in table.select('thead th[scope="col"]')]
+    assert headers == ["Provider", "Input", "Cached", "Output", "Cost per 1M in + out", "Details"]
+    rows = table.select("tbody > tr.md-provider")
+    assert rows and "md-provider-table--sticky" not in table["class"]
+    for row in rows:
+        assert row.select_one('th[scope="row"]')
+        button = row.select_one("button.md-toggle")
+        assert button["aria-expanded"] == "false"
+        detail = row.find_next_sibling("tr")
+        assert "md-provider-detail" in detail["class"]
+        assert button["aria-controls"] == detail["id"] == f'{row["id"]}-details'
+        assert detail.td["colspan"] == "6"
+        assert "Weight format" in detail.get_text()
+
+
+def test_model_page_sticks_the_table_header_past_ten_providers(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = dashboard._model_detail_view
+
+    def many_rows(model, **kwargs):  # type: ignore[no-untyped-def]
+        view = real(model, **kwargs)
+        endpoint = view["endpoints"][0]
+        view["endpoints"] = [
+            {**endpoint, "provider_slug": f"{endpoint['provider_slug']}-{index}"} for index in range(11)
+        ]
+        return view
+
+    monkeypatch.setattr(dashboard, "_model_detail_view", many_rows)
+    html = client.get("/models/deepseek/deepseek-v3.2").text
+    assert "md-provider-table--sticky" in html
 
 
 def test_model_page_shows_the_ai_iq_score(client: TestClient) -> None:
@@ -252,7 +313,7 @@ def test_model_page_shows_the_ai_iq_score(client: TestClient) -> None:
 
 def test_model_page_provider_details_use_labels_not_headings(client: TestClient) -> None:
     html = client.get("/models/deepseek/deepseek-v3.2").text
-    details = re.findall(r'<div class="md-provider-details">.*?</details>', html, re.S)
+    details = re.findall(r'<div class="md-provider-details">.*?</tr>', html, re.S)
     assert details
     assert all("<h3" not in block for block in details)
     assert '<p class="md-detail-label">Weight format</p>' in details[0]
