@@ -10,7 +10,6 @@ main .tags .tag.zdr{background:var(--purple)}
 main .tags .tag.us{background:var(--yellow)}
 main .tags .tag.cap{background:var(--cream)}
 
-.film .play svg{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5}
 .v3-press figcaption{font:500 15px/1.2 var(--font-condensed);letter-spacing:.1em;text-transform:uppercase;font-style:normal}
 .v3-cta{background:var(--lime)}
 
@@ -27,8 +26,6 @@ main .tags .tag.cap{background:var(--cream)}
 .v3-walk{background:var(--ink);padding:45px 0}
 .v3-walk .film{margin:0 auto;max-width:1120px;border:0;border-radius:0;box-shadow:none}
 .film .play{place-items:center;padding:0;background:transparent}
-.film .play span{gap:12px;height:64px;padding:0 28px;border:1.5px solid var(--cream);border-radius:0;background:var(--ink);color:var(--cream);font:500 18px/1 var(--font-sans);backdrop-filter:none}
-.film .play:hover span{background:var(--cream);color:var(--ink)}
 
 /* Press */
 .v3-quotes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px}
@@ -57,18 +54,8 @@ main .tags .tag.cap{background:var(--cream)}
   .v3-case-copy .lede{margin-top:0;text-box:trim-start cap alphabetic}
 }
 
-/* Three layers */
-.v3-layers{background:var(--purple);color:var(--ink)}
-.v3-layers-head{max-width:760px;display:flex;flex-direction:column;gap:32px;align-items:flex-start}
 .v3-chip svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2}
-.v3-layer-list{list-style:none;margin:96px 0 0;padding:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px}
-.v3-layer-list li{display:grid;grid-template-columns:56px 1fr;column-gap:8px;border-top:2.5px solid var(--ink);padding-top:20px}
-.v3-layer-list .n{font-size:48px;line-height:1;font-weight:300}
-.v3-layer-list h3,.v3-team-list h3{font-size:24px;line-height:1.2;font-weight:500;letter-spacing:0}
-.v3-layer-list p{margin-top:10px;font-size:17px;line-height:1.55}
-.v3-ladder{display:flex;flex-direction:column;gap:6px;width:160px;margin-top:20px}
-.v3-ladder i{display:block;height:6px;background:var(--lilac)}
-.v3-ladder i.on{background:var(--ink)}
+.v3-team-list h3{font-size:24px;line-height:1.2;font-weight:500;letter-spacing:0}
 
 /* Stats */
 .v3-stats{padding:128px 0 112px}
@@ -109,7 +96,6 @@ main .tags .tag.cap{background:var(--cream)}
   .v3-case-proof{grid-template-columns:1fr;row-gap:24px;margin-top:48px}
   .v3-big,.v3-case-copy{grid-column:1}
   .v3-case-copy .lede{margin-top:0}
-  .v3-layer-list{margin-top:48px}
   .v3-stats .stats{row-gap:48px}
   .v3-stats .stat .v{font-size:72px}
   .v3-team-list li{grid-template-columns:48px minmax(0,1fr);row-gap:10px}
@@ -123,15 +109,11 @@ main .tags .tag.cap{background:var(--cream)}
   .v3-hero .lede,.v3-hero .btns{margin-top:24px}
   .v3-band{height:96px}
   .v3-walk{padding:48px 0}
-  .film .play span{height:48px;padding:0 16px;font-size:16px}
   .v3-quotes{grid-template-columns:1fr;gap:32px}
   .v3-quotes figure{padding-top:16px;gap:14px}
   .v3-quotes blockquote{font-size:24px}
   .v3-case-head blockquote{margin-top:20px;font-size:28px;line-height:1.2}
   .v3-case-proof{margin-top:40px;padding-top:24px}
-  .v3-layer-list{grid-template-columns:1fr;gap:28px;margin-top:48px}
-  .v3-layer-list li{grid-template-columns:40px 1fr;padding-top:16px}
-  .v3-layer-list .n{font-size:32px}
   .v3-stats{padding:72px 0 64px}
   .v3-stats .stats{grid-template-columns:1fr 1fr;gap:40px 16px}
   /* Phone strip: slots fit each name so about three show at once; same speed as desktop (about 31px/s). */
@@ -149,17 +131,22 @@ main .tags .tag.cap{background:var(--cream)}
   .v3-team-list .q{font-size:18px}
 }
 
-/* Fixes after the first check. The poster has content in its centre, so the
-   play button sits low as before; the fee word steps down so four stats fit. */
-.film .play{place-items:end center;padding:0 0 5%}
+/* Play button reads like every video player: a round button with a play
+   triangle, centred under the poster headline, and a duration chip. */
+.film .play{place-items:end center;padding:0 0 9%}
+.film .play .pb{display:grid;place-items:center;width:96px;height:96px;border-radius:50%;background:var(--ink);color:var(--cream);box-shadow:0 6px 24px rgba(21,19,17,.35);transition:transform .15s,background .15s}
+.film .play .pb svg{width:44px;height:44px;margin-left:5px;fill:currentColor}
+.film .play:hover .pb,.film .play:focus-visible .pb{transform:scale(1.06);background:#000}
+.film .play .dur{position:absolute;right:16px;bottom:16px;padding:4px 8px;border-radius:4px;background:rgba(21,19,17,.85);color:var(--cream);font:500 14px/1.2 var(--font-sans);font-variant-numeric:tabular-nums}
 @media (max-width:900px){
   .v3-quotes{grid-template-columns:1fr;gap:32px}
-  .v3-layer-list{grid-template-columns:1fr;gap:28px}
 }
 @media (max-width:600px){
-  .film .play{padding-bottom:4%}
+  .film .play{padding-bottom:7%}
+  .film .play .pb{width:56px;height:56px}
+  .film .play .pb svg{width:28px;height:28px;margin-left:3px}
+  .film .play .dur{right:8px;bottom:8px;font-size:12px;padding:2px 6px}
 }
-@media (max-width:600px){.film .play span{height:40px;padding:0 14px;gap:8px;font-size:15px}}
 /* Phones: both hero actions sit on the first screen under Safari's toolbars
    (about 635px tall at 375x812, 664px at 390x844). Same words, tighter rhythm. */
 @media (max-width:600px){
