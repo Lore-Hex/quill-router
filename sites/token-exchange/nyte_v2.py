@@ -408,6 +408,9 @@ def render_nyte(
         content = content.replace("{{facilities}}", facility_cards()).replace("{{facilities_v3}}", facility_cards_v3()).replace("{{facility_rate}}", FACILITY_RATE)
     if uses_brand_v3(page):
         brand_version = hashlib.sha256((SOURCE / "brand-v3.css").read_bytes()).hexdigest()[:12]
+        # Light-only design: tells browsers with automatic dark mode (Safari 27.3, dark-mode extensions)
+        # not to repaint the page; otherwise cream sections turn dark while the black press logos stay black.
+        extra_head += '<meta name="color-scheme" content="only light">'
         extra_head += f'<link rel="stylesheet" href="/assets/nyte-v2/brand-v3.css?v={brand_version}">'
         extra_head += '<link rel="icon" href="/assets/nyte-v2/logos/favicon.svg" type="image/svg+xml">'
     # A rebuilt page's own sheet loads after brand-v3.css.
