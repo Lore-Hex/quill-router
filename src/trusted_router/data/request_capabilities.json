@@ -135,8 +135,7 @@
         "openai"
       ],
       "models": [
-        "openai/gpt-6-astra",
-        "openai/gpt-6.1-sol"
+        "openai/gpt-6-astra"
       ],
       "reasoning_effort": [
         "low",
@@ -146,6 +145,24 @@
         "max"
       ],
       "source": "https://developers.openai.com/api/docs/models/gpt-6-astra",
+      "tools": true,
+      "seed": false,
+      "vision": true
+    },
+    {
+      "providers": [
+        "openai"
+      ],
+      "models": [
+        "openai/gpt-6.1-sol"
+      ],
+      "reasoning_effort": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "source": "OpenAI /v1/responses rejected reasoning effort max for gpt-6.1-sol on 2026-11-09 (400: supported values are low, medium, high and xhigh; gateway request gwa-fa82e05cba054e4f9efbe2b089f1f229) although https://developers.openai.com/api/docs/models/gpt-6.1-sol lists max",
       "tools": true,
       "seed": false,
       "vision": true

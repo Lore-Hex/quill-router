@@ -47,6 +47,8 @@ def _route(monkeypatch, model, provider, **kwargs):
     ("openai/gpt-5.2", "openai", ["none", "low", "medium", "high", "xhigh"], True),
     ("openai/gpt-5.5", "openai", ["none", "low", "medium", "high", "xhigh"], True),
     ("openai/gpt-6-astra", "openai", ["low", "medium", "high", "xhigh", "max"], True),
+    # OpenAI rejects max for gpt-6.1-sol although its docs page lists it.
+    ("openai/gpt-6.1-sol", "openai", ["low", "medium", "high", "xhigh"], True),
     ("anthropic/claude-sonnet-4.6", "anthropic", ["none", "low", "medium", "high", "max"], True),
     ("anthropic/claude-haiku-4.5", "anthropic", ["none", "minimal", "low", "medium", "high", "xhigh"], True),
     ("mistralai/mistral-large", "mistral", [], False),
