@@ -129,9 +129,6 @@
 }
 .compare-table :is(th, td):first-child { padding-left: 0; }
 .compare-table thead th {
-  position: sticky;
-  top: var(--sticky-header-height, 0px);
-  z-index: 1;
   padding-top: 8px;
   padding-bottom: 16px;
   border-bottom-color: var(--tr-color-line-rule);
@@ -157,12 +154,9 @@
 
 @container (max-width: 640px) {
   .compare-table, .compare-table thead, .compare-table tbody { display: block; }
-  /* The pinned header reaches 8px past the column edges so it covers the
-     tinted winner cells, which do too. */
-  .compare-table thead { position: sticky; top: var(--sticky-header-height, 0px); z-index: 1; margin-inline: -8px; padding-inline: 8px; background: var(--tr-color-surface-bg); }
   .compare-table tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 16px; }
   .compare-table thead tr { border-bottom: 1px solid var(--tr-color-line-rule); }
-  .compare-table thead th { position: static; padding: 8px 0 12px; border: 0; }
+  .compare-table thead th { padding: 8px 0 12px; border: 0; }
   .compare-table thead th.compare-table-label { display: none; }
   .compare-table tbody tr { padding: 14px 0; border-bottom: 1px solid var(--tr-color-line-rule-soft); }
   .compare-table tbody th { grid-column: 1 / -1; padding: 0 0 6px; border: 0; }
