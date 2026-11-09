@@ -46,10 +46,10 @@
   },
   "amazon-bedrock": {
     "card_version": 2,
-    "model_count": 38,
+    "model_count": 39,
     "name": "Amazon Bedrock",
     "privacy": "Policy documented",
-    "route_count": 38,
+    "route_count": 39,
     "route_mode": "Prepaid",
     "slug": "amazon-bedrock"
   },
@@ -235,10 +235,10 @@
   },
   "decisionmodelsio-eu": {
     "card_version": 2,
-    "model_count": 6,
+    "model_count": 7,
     "name": "Decision Models (EU)",
     "privacy": "Policy documented",
-    "route_count": 6,
+    "route_count": 7,
     "route_mode": "Prepaid",
     "slug": "decisionmodelsio-eu"
   },
@@ -262,10 +262,10 @@
   },
   "digitalocean": {
     "card_version": 2,
-    "model_count": 11,
+    "model_count": 7,
     "name": "DigitalOcean Gradient AI",
     "privacy": "Policy documented",
-    "route_count": 22,
+    "route_count": 14,
     "route_mode": "Prepaid + BYOK",
     "slug": "digitalocean"
   },
@@ -586,10 +586,10 @@
   },
   "nebius": {
     "card_version": 2,
-    "model_count": 38,
+    "model_count": 22,
     "name": "Nebius Token Factory",
     "privacy": "Zero retention",
-    "route_count": 74,
+    "route_count": 42,
     "route_mode": "Prepaid + BYOK",
     "slug": "nebius"
   },
