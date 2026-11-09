@@ -146,7 +146,7 @@ elif [ "${command}" = api ] && [ -n "${endpoint}" ]; then
     # Simulate only the final newly-created status missing from the readback.
     # Never create another status or dispatch another CI run to make it visible.
     missing_reads=$(jq -r '.status_missing_reads // 0' "${scenario}")
-    if [ "$(jq length "${statuses}")" -eq 4 ]; then
+    if [ "$(jq length "${statuses}")" -eq 5 ]; then
       reads=0
       if [ -f "${TMPDIR}/status-read-count" ]; then read -r reads < "${TMPDIR}/status-read-count"; fi
       reads=$((reads + 1))

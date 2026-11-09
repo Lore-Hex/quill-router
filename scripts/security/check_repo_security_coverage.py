@@ -152,7 +152,7 @@ def security_md_state(org: str, repo: str, token: str) -> str:
 
 # main is protected by these, and by nothing else, on these repositories.
 PROTECTED_REPOS = {
-    "quill-router": {"lint", "test (1)", "test (2)", "test (3)"},
+    "quill-router": {"lint", "test (1)", "test (2)", "test (3)", "CI"},
     "quill-cloud-proxy": {"parent", "trust-page-validation"},
 }
 
