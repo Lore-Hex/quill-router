@@ -4391,7 +4391,6 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
     "qwen": _MODEL_ORIGIN_CN_ALIBABA,
     "Qwen": _MODEL_ORIGIN_CN_ALIBABA,
     "deepseek": _MODEL_ORIGIN_CN_DEEPSEEK,
-    "deepseek-ai": _MODEL_ORIGIN_CN_DEEPSEEK,
     "z-ai": _MODEL_ORIGIN_CN_ZHIPU,
     "zai-org": _MODEL_ORIGIN_CN_ZHIPU,
     "minimax": _MODEL_ORIGIN_CN_MINIMAX,

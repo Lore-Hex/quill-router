@@ -368,9 +368,11 @@ _NATIVE_PROVIDER_LINEUPS = [
             # announced 11 more Token Factory model retirements for
             # 2026-06-22 and 12 more for 2026-08-31. Those are intentionally
             # absent after their cutovers; this contract keeps representative
-            # non-deprecated Nebius routes alive.
-            "Qwen/Qwen3.5-397B-A17B",
-            "deepseek-ai/DeepSeek-V4-Pro",
+            # non-deprecated Nebius routes alive. Qwen3.5-397B-A17B and
+            # DeepSeek-V4-Pro retired on 2026-11-09 (October 30 notice); these
+            # canaries follow the successors that notice names.
+            "qwen/qwen3.8-27b",
+            "deepseek/deepseek-v4.1-flash-1017",
             "MiniMaxAI/MiniMax-M3",
             "moonshotai/kimi-k3",
         ],
