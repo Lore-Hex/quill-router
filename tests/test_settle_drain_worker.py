@@ -67,10 +67,15 @@ def inventory_settings(surface, enabled):
 
 
 def inventory(app, retired_route_delta=None, *, abliterated_page=False, management_key=False,
-              wallet_email_verify=False):
+              wallet_email_verify=False, routing_evidence=False):
     routes = sorted([path, sorted(getattr(route, "methods", []) or []),
                      getattr(getattr(route, "endpoint", None), "__qualname__", "")]
                     for path, route in effective_routes(app))
+    evidence_route = ["/routing-evidence.json", ["GET"],
+                      "register_public_routes.<locals>.model_routing_evidence"]
+    assert routes.count(evidence_route) == int(routing_evidence)
+    if routing_evidence:
+        routes.remove(evidence_route)
     # Account for exactly the wallet email-attach link target (and its /v1
     # alias), only on surfaces that serve the wallet auth routes.
     for path in ("/auth/wallet/email/verify", "/v1/auth/wallet/email/verify"):
@@ -127,6 +132,7 @@ def test_existing_surfaces_match_main_inventory(surface, enabled):
     app = create_app(inventory_settings(surface, enabled), configure_store_arg=False, init_observability=False)
     assert inventory(app, delta["surfaces"][surface],
                      abliterated_page=surface in {"combined", "public", "observer"},
+                     routing_evidence=surface in {"combined", "public", "observer"},
                      management_key=surface in {"combined", "control"},
                      wallet_email_verify=surface in {"combined", "control"}) == frozen[f"{surface}/{enabled}"]
 
