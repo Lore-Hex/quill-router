@@ -1681,9 +1681,8 @@ body.auth.auth-shell {
   margin-top: 18px;
 }
 
-.models-page-hero-cta .microcopy {
+.models-page-hero-cta .cta-note {
   margin-top: 8px;
-  font-size: 15px !important; /* .microcopy pins 12px with !important */
 }
 
 .models-page-hero-links {

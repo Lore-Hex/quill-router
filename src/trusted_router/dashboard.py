@@ -2424,29 +2424,32 @@ def _model_page(
         or view["fetch"]
         or (view["speech"] and not SPEECH_MODELS[model.id].token_billed)
     )
-    by_id = {endpoint.id: endpoint for endpoint in _credits_endpoints(endpoints_for_model(model.id))}
     totals = [
         cast(int, row["prompt_microdollars_per_million_tokens"])
         + cast(int, row["completion_microdollars_per_million_tokens"])
         for row in endpoints
     ]
     max_total = max(totals, default=0)
+    min_total = min(totals, default=0)
     rows: list[dict[str, object]] = []
-    for index, (row, total) in enumerate(zip(endpoints, totals, strict=True)):
+    for row, total in zip(endpoints, totals, strict=True):
         zdr = row["provider_zero_data_retention"] is True
         confidential = (
             zdr
             and row["provider_confidential_compute"] is True
             and row["provider_e2ee"] is True
         )
-        endpoint = by_id.get(str(row["endpoint_id"]))
-        cached = _cached_prompt_prices((endpoint,)) if endpoint is not None else []
+        cached = cast(list[int], row["cached_prompt_microdollars_per_million_tokens"])
+        measured = cast(Mapping[str, object] | None, row["measured"]) or {}
+        ttft = measured.get("p50_ttft_ms")
+        throughput = measured.get("p50_tokens_per_second")
         prompt = cast(int, row["prompt_microdollars_per_million_tokens"])
         completion = cast(int, row["completion_microdollars_per_million_tokens"])
         rows.append(
             {
                 "endpoint": row,
-                "cheapest": index == 0,
+                # Every row at the lowest total, unless all rows cost the same.
+                "cheapest": total == min_total and min_total != max_total,
                 "zdr": zdr,
                 "confidential": confidential,
                 "input": _short_dollars(prompt, digits=3) if token_priced else row["prompt_price"],
@@ -2457,6 +2460,18 @@ def _model_page(
                 "cached_range": len(set(cached)) > 1,
                 "total": _short_dollars(total, digits=2),
                 "bar_pct": max(6, round(total * 100 / max_total)) if max_total > 0 else 0,
+                "sort_price": total,
+                # Measured p50s with at least two samples, as the row shows.
+                "sort_latency": (
+                    round(cast(float, ttft))
+                    if ttft is not None and cast(int, measured.get("ttft_sample_count") or 0) >= 2
+                    else None
+                ),
+                "sort_throughput": (
+                    round(cast(float, throughput), 1)
+                    if throughput is not None and cast(int, measured.get("throughput_sample_count") or 0) >= 2
+                    else None
+                ),
             }
         )
     zdr_count = sum(1 for row in rows if row["zdr"])
@@ -2517,6 +2532,8 @@ def _model_page(
         "token_priced": token_priced,
         "funded": funded,
         "rows": rows,
+        "sort_speed": any(row["sort_throughput"] is not None for row in rows),
+        "sort_latency": any(row["sort_latency"] is not None for row in rows),
         "provider_logos": list(
             {
                 str(row["provider_slug"]): {"name": row["provider"], "logo_url": row["provider_logo_url"]}
@@ -4502,10 +4519,13 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
     test_mode = settings.environment == "test"
     seo_name = _seo_model_name(model)
     site_url = f"https://{settings.trusted_domain}/models/{model_id}"
-    model_view = _model_detail_view(model, test_mode=test_mode)
+    credits_endpoints = _credits_endpoints(endpoints_for_model(model.id))
+    model_view = _model_detail_view(model, test_mode=test_mode, credits_endpoints=credits_endpoints)
     hero_label, hero_pitch = _model_hero(model, model_view)
     route_evidence = _model_route_evidence(model, test_mode=test_mode)
-    faq_items = _model_faq_items(model, route_evidence=route_evidence)
+    faq_items = _model_faq_items(
+        model, route_evidence=route_evidence, credits_endpoints=credits_endpoints
+    )
     related_comparisons = _related_model_comparison_rows(model.id, limit=6)
     compare_chips = []
     for related in related_comparisons:
@@ -5813,7 +5833,10 @@ def _model_detail_view(
     active_section: str | None = None,
     test_mode: bool = False,
     include_section_links: bool = True,
+    credits_endpoints: Sequence[ModelEndpoint] | None = None,
 ) -> dict[str, object]:
+    """`credits_endpoints` lets a caller that already holds the model's
+    Credits endpoints pass them in instead of deriving them again."""
     publisher = _model_publisher(model)
     speech = SPEECH_MODELS.get(model.id)
     transcription = TRANSCRIPTION_MODELS.get(model.id)
@@ -5823,7 +5846,11 @@ def _model_detail_view(
         model.prompt_price_microdollars_per_million_tokens > 0
         or model.completion_price_microdollars_per_million_tokens > 0
     )
-    endpoints = _credits_endpoints(endpoints_for_model(model.id))
+    endpoints = (
+        list(credits_endpoints)
+        if credits_endpoints is not None
+        else _credits_endpoints(endpoints_for_model(model.id))
+    )
     ai_iq = None if is_meta else ai_iq_for_model(model.id, test_mode=test_mode)
     candidate_models = []
     if not model.hidden_public_metadata:
@@ -5853,6 +5880,7 @@ def _model_detail_view(
                 ),
                 "prompt_microdollars_per_million_tokens": endpoint.prompt_price_microdollars_per_million_tokens,
                 "completion_microdollars_per_million_tokens": endpoint.completion_price_microdollars_per_million_tokens,
+                "cached_prompt_microdollars_per_million_tokens": _cached_prompt_prices((endpoint,)),
                 "pricing_schedule": provider_pricing_schedule(
                     endpoint.provider,
                     endpoint.model_id,
@@ -5875,8 +5903,9 @@ def _model_detail_view(
             }
         )
     # Sort cheapest-first by total prompt+completion price; ties broken by
-    # provider name. Click-to-sort JS in the template lets visitors flip
-    # to throughput / latency / context views.
+    # provider name. This server order is the model page's default; its
+    # sort control (model-detail.js) can reorder the rows by measured
+    # throughput or latency.
     endpoint_views.sort(
         key=lambda view: (
             cast(int, view["prompt_microdollars_per_million_tokens"])
@@ -6347,9 +6376,11 @@ def _model_faq_items(
     model: Model,
     *,
     route_evidence: Mapping[str, object],
+    credits_endpoints: Sequence[ModelEndpoint] | None = None,
 ) -> tuple[tuple[str, str], ...]:
     name = _hero_model_name(model)
-    credits_endpoints = _credits_endpoints(endpoints_for_model(model.id))
+    if credits_endpoints is None:
+        credits_endpoints = _credits_endpoints(endpoints_for_model(model.id))
     provider_names = [
         provider["name"]
         for provider in _endpoint_provider_views(

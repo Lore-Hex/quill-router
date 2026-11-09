@@ -1,0 +1,51 @@
+{# Shared quickstart pieces: the tabbed code box (Agent prompt, Python, curl)
+   and the sideways chip row. Pages load /static/quickstart.css and
+   /static/quickstart.js, which drive every box and chip row on the page.
+   Without script every panel and the full prompt show, and the chips stay a
+   plain scrollable row.
+
+   quickstart_box: the agent prompt is prompt_head, a "3. Set the model to
+   <model_id>." line, then prompt_tail. Pass agent= instead for a prompt of
+   your own; pass "" for any panel to leave it out. The caller block is the
+   footer CTA, beside foot_text. Use a distinct id_prefix for a second box on
+   the same page. #}
+{% macro quickstart_box(python="", curl="", prompt_head="", prompt_tail="", model_id="", agent="", foot_text="Your agent will need an API key.", id_prefix="md") -%}
+{% set panels = [] %}
+{% if agent or prompt_head %}{% set _ = panels.append(("agent", "Agent prompt")) %}{% endif %}
+{% if python %}{% set _ = panels.append(("python", "Python")) %}{% endif %}
+{% if curl %}{% set _ = panels.append(("curl", "curl")) %}{% endif %}
+<div class="md-code" data-md-code data-md-first="{{ panels[0][0] }}">
+    <div class="md-code-head">
+      <div class="md-tabs" role="tablist" aria-label="Quickstart format">
+        {% for key, label in panels %}<button type="button" role="tab" id="{{ id_prefix }}-tab-{{ key }}" aria-controls="{{ id_prefix }}-panel-{{ key }}" aria-selected="{{ 'true' if loop.first else 'false' }}"{% if not loop.first %} tabindex="-1"{% endif %} data-md-tab="{{ key }}">{{ label }}</button>
+        {% endfor %}
+      </div>
+      <button class="md-copy" type="button" aria-label="Copy" title="Copy" data-md-copy hidden><span class="md-copy-icon" aria-hidden="true"></span></button>
+    </div>
+    <div class="md-code-body">
+      {% for key, label in panels %}
+      <div class="md-code-panel" role="tabpanel" id="{{ id_prefix }}-panel-{{ key }}" aria-labelledby="{{ id_prefix }}-tab-{{ key }}" data-md-panel="{{ key }}"{% if not loop.first %} data-md-inactive{% endif %}>
+        {% if key == "agent" %}<pre><code id="{{ id_prefix }}-agent-prompt">{% if agent %}{{ agent }}{% else %}{{ prompt_head }}
+3. Set the model to <span class="md-model-id">{{ model_id }}</span>.
+{{ prompt_tail }}{% endif %}</code></pre>{% elif key == "python" %}<pre><code>{{ python }}</code></pre>{% else %}<pre><code>{{ curl }}</code></pre>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% if panels[0][0] == "agent" %}<button class="md-expand" type="button" data-md-expand aria-expanded="false" aria-label="Show full prompt" hidden><span class="md-expand-icon" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span></button>{% endif %}
+    <div class="md-code-foot">
+      <span>{{ foot_text }}</span>
+      {{ caller() if caller else "" }}
+    </div>
+    <span class="md-copy-status" data-md-copy-status role="status" aria-live="polite" aria-atomic="true"></span>
+  </div>
+{%- endmacro %}
+
+{# items: [{"href": ..., "label": ...}], shown in order. #}
+{% macro chip_row(items, arrow_label="Scroll comparisons") -%}
+<div class="md-chips-wrap" data-md-chips>
+    <div class="md-chips" data-md-chips-track>
+      {% for item in items %}<a href="{{ item.href }}">{{ item.label }}</a>{% endfor %}
+    </div>
+    <button class="md-chips-arrow" type="button" aria-label="{{ arrow_label }}" data-md-chips-next hidden><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 7h8M8 3.5 11.5 7 8 10.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+  </div>
+{%- endmacro %}

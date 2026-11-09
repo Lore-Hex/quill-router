@@ -1,9 +1,10 @@
 {% extends "public/_base.html" %}
 {% from "public/_provider_identity.html" import publisher_identity %}
 {% from "public/_decide_example.html" import decide_curl %}
+{% from "public/_quickstart_box.html" import quickstart_box, chip_row %}
 {% set name = page.short_name %}
 {% set no_card_line %}No card required. Start with 1&nbsp;million free&nbsp;tokens.{% endset %}
-{% block head_extra %}<link rel="stylesheet" href="/static/model-detail.css?v={{ static_version|default('local') }}">{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/model-detail.css?v={{ static_version|default('local') }}"><link rel="stylesheet" href="/static/quickstart.css?v={{ static_version|default('local') }}">{% endblock %}
 {% block body_attributes %}class="model-detail-page"{% endblock %}
 
 {% macro signup_button(extra_class="", catalog_cta=false) -%}
@@ -58,27 +59,7 @@
 {% endblock %}
 
 {% block body %}
-<section class="md-section" id="quickstart" aria-labelledby="md-quickstart-heading">
-  <div class="md-eyebrow">Quickstart</div>
-  <h2 id="md-quickstart-heading">Set it up with your agent</h2>
-  <p class="md-intro">Paste this into Claude Code, Cursor or any coding agent.</p>
-  <div class="md-code" data-md-code>
-    <div class="md-code-head">
-      <div class="md-tabs" role="tablist" aria-label="Quickstart format">
-        <button type="button" role="tab" id="md-tab-agent" aria-controls="md-panel-agent" aria-selected="true" data-md-tab="agent">Agent prompt</button>
-        <button type="button" role="tab" id="md-tab-python" aria-controls="md-panel-python" aria-selected="false" tabindex="-1" data-md-tab="python">Python</button>
-        <button type="button" role="tab" id="md-tab-curl" aria-controls="md-panel-curl" aria-selected="false" tabindex="-1" data-md-tab="curl">curl</button>
-      </div>
-      <button class="md-copy" type="button" aria-label="Copy" title="Copy" data-md-copy hidden><span class="md-copy-icon" aria-hidden="true"></span></button>
-    </div>
-    <div class="md-code-body">
-      <div class="md-code-panel" role="tabpanel" id="md-panel-agent" aria-labelledby="md-tab-agent" data-md-panel="agent">
-        <pre><code id="md-agent-prompt">{{ page.agent_prompt_head }}
-3. Set the model to <span class="md-model-id">{{ model.id }}</span>.
-{{ page.agent_prompt_tail }}</code></pre>
-      </div>
-      <div class="md-code-panel" role="tabpanel" id="md-panel-python" aria-labelledby="md-tab-python" data-md-panel="python" data-md-inactive>
-        <pre><code>{% if model.fetch %}import os
+{% set python_snippet %}{% if model.fetch %}import os
 import requests
 
 response = requests.post(
@@ -154,10 +135,8 @@ response = client.chat.completions.create(
     messages=[{"role": "user", "content": "What is the capital of France?"}],
 )
 print(response.choices[0].message.content)
-{%- endif %}</code></pre>
-      </div>
-      <div class="md-code-panel" role="tabpanel" id="md-panel-curl" aria-labelledby="md-tab-curl" data-md-panel="curl" data-md-inactive>
-        <pre><code>{% if model.fetch %}curl {{ api_base_url }}/tools/fetch \
+{%- endif %}{% endset %}
+{% set curl_snippet %}{% if model.fetch %}curl {{ api_base_url }}/tools/fetch \
   -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"url":"https://example.com"}'
@@ -182,16 +161,12 @@ print(response.choices[0].message.content)
     "model": "{{ model.id }}",
     "messages": [{"role": "user", "content": "What is the capital of France?"}]
   }'
-{%- endif %}</code></pre>
-      </div>
-    </div>
-    <button class="md-expand" type="button" data-md-expand aria-expanded="false" aria-label="Show full prompt" hidden><span class="md-expand-icon" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span></button>
-    <div class="md-code-foot">
-      <span>Your agent will need an API key.</span>
-      {{ signup_button("md-cta-small") }}
-    </div>
-    <span class="md-copy-status" data-md-copy-status role="status" aria-live="polite" aria-atomic="true"></span>
-  </div>
+{%- endif %}{% endset %}
+<section class="md-section" id="quickstart" aria-labelledby="md-quickstart-heading">
+  <div class="md-eyebrow">Quickstart</div>
+  <h2 id="md-quickstart-heading">Set it up with your agent</h2>
+  <p class="md-intro">Paste this into Claude Code, Cursor or any coding agent.</p>
+  {% call quickstart_box(python=python_snippet, curl=curl_snippet, prompt_head=page.agent_prompt_head, prompt_tail=page.agent_prompt_tail, model_id=model.id) %}{{ signup_button("md-cta-small") }}{% endcall %}
 </section>
 
 <section class="md-section" id="providers" aria-labelledby="md-providers-heading">
@@ -239,18 +214,27 @@ print(response.choices[0].message.content)
   <p class="md-intro">Open the row for retention, location and weight format.</p>
   {% endif %}
   {% if page.rows %}
+  {% if page.rows|length > 1 %}
+  {# model-detail.js reveals this and reorders the rows; Price is the server order. #}
+  <div class="md-sort" role="radiogroup" aria-label="Sort providers" data-md-sort hidden>
+    <span class="md-sort-label" aria-hidden="true">Sort by</span>
+    <button type="button" role="radio" aria-checked="true" data-md-sort-key="price">Price</button>
+    {% if page.sort_speed %}<button type="button" role="radio" aria-checked="false" tabindex="-1" data-md-sort-key="throughput">Speed</button>{% endif %}
+    {% if page.sort_latency %}<button type="button" role="radio" aria-checked="false" tabindex="-1" data-md-sort-key="latency">Latency</button>{% endif %}
+  </div>
+  {% endif %}
   <div class="md-providers{% if not page.token_priced %} md-providers-flat{% endif %}" aria-label="Provider comparison">
     <div class="md-providers-head" aria-hidden="true">
       <span>Provider</span><span class="md-num">{% if page.token_priced %}Input{% else %}Price{% endif %}</span>{% if page.token_priced %}<span class="md-num">Cached</span>{% endif %}<span class="md-num">Output</span>{% if page.token_priced %}<span>Cost per 1M in + out</span>{% endif %}<span></span>
     </div>
     {% for row in page.rows %}
     {% set endpoint = row.endpoint %}
-    <details class="md-provider{% if row.cheapest and page.rows|length > 1 %} md-provider-cheapest{% endif %}" id="provider-{{ endpoint.provider_slug }}">
+    <details class="md-provider{% if row.cheapest %} md-provider-cheapest{% endif %}" id="provider-{{ endpoint.provider_slug }}" data-sort-price="{{ row.sort_price }}"{% if row.sort_throughput is not none %} data-sort-throughput="{{ row.sort_throughput }}"{% endif %}{% if row.sort_latency is not none %} data-sort-latency="{{ row.sort_latency }}"{% endif %}>
       <summary class="md-provider-row">
         <span class="md-provider-name">
           <img src="{{ endpoint.provider_logo_url }}" alt="" width="32" height="32" loading="lazy" decoding="async">
           <span>{{ endpoint.provider }}</span>
-          {% if row.cheapest and page.rows|length > 1 %}<span class="md-cheapest-tag">Cheapest</span>{% endif %}
+          {% if row.cheapest %}<span class="md-cheapest-tag">Cheapest</span>{% endif %}
         </span>
         {{ positive_badges(row) }}
         <span class="md-num md-col-input"><span class="md-sr">{% if page.token_priced %}Input{% else %}Price{% endif %} </span>{{ row.input }}</span>
@@ -266,7 +250,7 @@ print(response.choices[0].message.content)
       </summary>
       <div class="md-provider-details">
         <div>
-          <h3>Retention</h3>
+          <p class="md-detail-label">Retention</p>
           {% if row.confidential %}<p>Confidential compute with end-to-end encryption and zero data retention.</p>{% elif row.zdr %}<p>Zero data retention.</p>{% endif %}
           {% if endpoint.retention and not endpoint.retention.strict_zdr_eligible %}<p data-retention="{{ endpoint.retention.mode }}">{{ endpoint.retention.label }}{% if endpoint.retention.detail %}: {{ endpoint.retention.detail }}{% endif %}</p>
           {% else %}
@@ -284,7 +268,7 @@ print(response.choices[0].message.content)
           {% if endpoint.provider_policy_url %}<p><a href="{{ endpoint.provider_policy_url }}" target="_blank" rel="noopener noreferrer">Provider policy source</a></p>{% endif %}
         </div>
         <div>
-          <h3>Location</h3>
+          <p class="md-detail-label">Location</p>
           <p>Operator country: {{ endpoint.geography.operator_country or 'Not verified' }}</p>
           <p>Headquarters / registered office: {{ endpoint.geography.headquarters.location or 'Not verified' }}.</p>
           {% if endpoint.geography.headquarters.source_url %}<p><a href="{{ endpoint.geography.headquarters.source_url }}" target="_blank" rel="noopener noreferrer">Company location source</a> (reviewed {{ endpoint.geography.headquarters.reviewed_on }}).</p>{% endif %}
@@ -296,7 +280,7 @@ print(response.choices[0].message.content)
           <p><a href="{{ endpoint.provider_href }}#inference-locations">Full location evidence</a></p>
         </div>
         <div>
-          <h3>Weight format</h3>
+          <p class="md-detail-label">Weight format</p>
           {% if endpoint.precision %}
           <p>{{ endpoint.precision.label }}. {{ 'Provider declaration' if endpoint.precision.evidence_type == 'provider_declaration' else 'Published serving configuration' }}, reviewed {{ endpoint.precision.reviewed_on }}. Per-request precision is not verified.</p>
           <p>{{ endpoint.precision.notes }}</p>
@@ -307,7 +291,7 @@ print(response.choices[0].message.content)
           {% else %}<p>Unknown</p>{% endif %}
         </div>
         <div>
-          <h3>Price and speed</h3>
+          <p class="md-detail-label">Price and speed</p>
           <p>Input {{ endpoint.prompt_price }} · Cached input {{ endpoint.cached_prompt_price }} · Output {{ endpoint.completion_price }}</p>
           {% set measured = endpoint.measured %}
           {% if measured and measured.p50_ttft_ms is not none and measured.ttft_sample_count|default(0) >= 2 %}
@@ -329,7 +313,10 @@ print(response.choices[0].message.content)
   {% else %}
   <p class="md-intro">No Credits provider route is currently published for this model.</p>
   {% endif %}
-  <p class="md-more-links md-privacy-link"><a href="/trust"><span class="md-link-text">How we check privacy claims</span><span aria-hidden="true">→</span></a></p>
+  <ul class="md-more-links md-privacy-link">
+    <li><a href="/trust"><span class="md-link-text">How we check privacy claims</span><span aria-hidden="true">→</span></a></li>
+    <li><a href="/leaderboard"><span class="md-link-text">Live speed leaderboard</span><span aria-hidden="true">→</span></a></li>
+  </ul>
   {% endif %}
 </section>
 
@@ -358,7 +345,7 @@ print(response.choices[0].message.content)
   <h2 id="md-about-heading">About {{ name }}</h2>
   <p class="md-about">
     {{ name }} is {{ 'an' if page.lead_kind[0] in 'aeiou' else 'a' }} {{ page.lead_kind }}{% if model.provider %} published by {% if model.publisher_slug %}<a href="/providers/{{ model.publisher_slug }}">{{ model.provider }}</a>{% else %}{{ model.provider }}{% endif %}{% endif %}{% if page.context %}, with a {{ model.context_length }}-token context window{% endif %}.
-    {% if model.ai_iq %}It scores {{ model.ai_iq.iq }} on <a href="{{ model.ai_iq.url }}" rel="nofollow noopener">AI IQ</a>, ranked #{{ model.ai_iq.rank }}.{% endif %}
+    {% if model.ai_iq and model.ai_iq.url %}{% if model.ai_iq.iq is defined and model.ai_iq.iq is not none %}It scores {{ model.ai_iq.iq }} on <a class="md-ai-iq-link" href="{{ model.ai_iq.url }}" rel="nofollow noopener">AI IQ</a>{% if model.ai_iq.rank is defined and model.ai_iq.rank is not none %}, ranked #{{ model.ai_iq.rank }}{% endif %}.{% else %}See its <a class="md-ai-iq-link" href="{{ model.ai_iq.url }}" rel="nofollow noopener">AI IQ profile</a>.{% endif %}{% endif %}
     {% if model.is_meta and model.candidate_models and not model.configuration_hidden %}It routes across {{ model.candidate_models|length }} model{{ '' if model.candidate_models|length == 1 else 's' }} inside the attested prompt path.{% endif %}
     {% if page.rows %}Through TrustedRouter it runs on {{ model.endpoint_count }} provider{{ '' if model.endpoint_count == 1 else 's' }}{% if page.regions %}, with options in the {{ page.regions|join(' and ') }}{% endif %}{% if page.lowest_input %}, from {{ page.lowest_input }} per million input tokens{% elif page.price_label %}, from {{ page.price_label }}{% endif %}.{% endif %}
     {% if page.zdr_count %}{{ page.zdr_count_word|capitalize }} provider{{ '' if page.zdr_count == 1 else 's' }} offer{{ 's' if page.zdr_count == 1 else '' }} zero data retention{% if page.confidential_names %}, and {{ page.confidential_names|join(' and ') }} also run{{ 's' if page.confidential_names|length == 1 else '' }} it in a confidential enclave{% endif %}.{% endif %}
@@ -435,13 +422,10 @@ print(response.choices[0].message.content)
 <section class="md-section md-compare" aria-labelledby="md-compare-heading">
   <div class="md-eyebrow">Compare</div>
   <h2 id="md-compare-heading">{{ name }} vs other models</h2>
-  <div class="md-chips-wrap" data-md-chips>
-    <div class="md-chips" data-md-chips-track>
-      {% for chip in compare_chips %}<a href="{{ chip.href }}">vs {{ chip.name }}</a>{% endfor %}
-      <a href="/compare/models">All comparisons</a>
-    </div>
-    <button class="md-chips-arrow" type="button" aria-label="Scroll comparisons" data-md-chips-next hidden><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 7h8M8 3.5 11.5 7 8 10.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-  </div>
+  {% set chip_items = [] %}
+  {% for chip in compare_chips %}{% set _ = chip_items.append({"href": chip.href, "label": "vs " ~ chip.name}) %}{% endfor %}
+  {% set _ = chip_items.append({"href": "/compare/models", "label": "All comparisons"}) %}
+  {{ chip_row(chip_items) }}
 </section>
 {% endif %}
 
@@ -454,4 +438,4 @@ print(response.choices[0].message.content)
 </section>
 {% endblock %}
 
-{% block body_scripts %}<script defer src="/static/model-detail.js?v={{ static_version|default('local') }}"></script>{% endblock %}
+{% block body_scripts %}<script defer src="/static/quickstart.js?v={{ static_version|default('local') }}"></script><script defer src="/static/model-detail.js?v={{ static_version|default('local') }}"></script>{% endblock %}
