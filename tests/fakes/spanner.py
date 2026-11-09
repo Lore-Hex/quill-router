@@ -325,6 +325,7 @@ class FakeSpannerDatabase:
         self.transaction_execute_update_calls = 0
         self.transaction_batch_update_calls = 0
         self.rollback_calls = 0
+        self.begin_calls = 0
         self.now = now
 
     def current_timestamp(self) -> dt.datetime:
@@ -793,6 +794,15 @@ class _FakeTransaction:
             else {"kind": kind, "id": entity_id, "body": row.body},
         )
         return pinned
+
+    def begin(self) -> bytes:
+        # Transaction.begin(): an explicit BeginTransaction instead of the
+        # inline begin on the first statement. Like the SDK, only once.
+        if getattr(self, "_begun", False):
+            raise ValueError("Transaction already begun")
+        self._begun = True
+        self.db.begin_calls += 1
+        return b"fake-transaction"
 
     def rollback(self) -> None:
         self.pending_writes.clear()

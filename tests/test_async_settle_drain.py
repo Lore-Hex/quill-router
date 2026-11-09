@@ -175,39 +175,54 @@ def test_control_claim_transaction_deadline(fake_store, claim):
     assert db.last_timeout_secs == .5
 
 
-class _TimedOutTransaction:
-    def __init__(self):
-        self.rollbacks = 0
-
-    def execute_sql(self, *args, **kwargs):
-        from google.api_core.exceptions import DeadlineExceeded
-        raise DeadlineExceeded('read deadline')
-
-    def rollback(self):
-        self.rollbacks += 1
-
-
 class _SdkDatabase:
-    """Session.run_in_transaction as google-cloud-spanner 3.65 runs it: a
-    GoogleAPICallError from the callback is re-raised WITHOUT rollback (the
-    test fake rolls back on every error, which hid this). Snapshots delegate
-    to the fake store so publish_health reaches its transaction."""
+    """Runs callbacks on a real google-cloud-spanner Transaction over a mocked
+    API, the way Session.run_in_transaction does: a GoogleAPICallError from
+    the callback is re-raised WITHOUT rollback. The test fake rolls back on
+    every error and needs no transaction ID, which hid both halves of this:
+    the SDK skips rollback, and Transaction.rollback() sends nothing until
+    the first response carries an ID. Every statement times out; snapshots
+    delegate to the fake store so publish_health reaches its transaction."""
 
     def __init__(self, db):
+        from unittest import mock
+
+        from google.api_core.exceptions import DeadlineExceeded
+        from google.cloud.spanner_v1 import DefaultTransactionOptions, ExecuteSqlRequest
+        from google.cloud.spanner_v1 import Transaction as TransactionPB
+        from google.cloud.spanner_v1.session import Session
+
         self._db = db
-        self.transactions = []
         self.tags = []
+        self.api = mock.MagicMock()
+        self.api.execute_streaming_sql.side_effect = DeadlineExceeded('read deadline')
+        self.api.begin_transaction.return_value = TransactionPB(id=b'txn-1')
+        database = mock.MagicMock()
+        database.name = 'projects/p/instances/i/databases/d'
+        database.spanner_api = self.api
+        database._route_to_leader_enabled = False
+        database.observability_options = None
+        database.log_commit_stats = False
+        database.metadata_and_request_id.return_value = ([], 'request')
+        database.with_error_augmentation.return_value = ([], mock.MagicMock())
+        database._instance._client._query_options = ExecuteSqlRequest.QueryOptions()
+        database._instance._client._client_context = None
+        database._directed_read_options = None
+        database.default_transaction_options = DefaultTransactionOptions()
+        self._session = Session(database)
+        self._session._session_id = 'session-1'
+        self._session._is_multiplexed = True
 
     def snapshot(self, **kwargs):
         return self._db.snapshot(**kwargs)
 
     def run_in_transaction(self, func, *, timeout_secs=None, transaction_tag=None):
         from google.api_core.exceptions import GoogleAPICallError
+        from google.cloud.spanner_v1.transaction import Transaction
+
         self.tags.append(transaction_tag)
-        txn = _TimedOutTransaction()
-        self.transactions.append(txn)
         try:
-            return func(txn)
+            return func(Transaction(self._session))
         except GoogleAPICallError:
             raise
 
@@ -224,7 +239,10 @@ def test_timed_out_control_read_rolls_back_its_transaction(fake_store, operation
     db = _SdkDatabase(fake_store[1])
     with pytest.raises(DeadlineExceeded):
         operation(db)
-    assert [txn.rollbacks for txn in db.transactions] == [1]
+    assert db.api.begin_transaction.call_count == 1
+    assert db.api.execute_streaming_sql.call_count >= 1
+    [call] = db.api.rollback.call_args_list
+    assert call.kwargs['transaction_id'] == b'txn-1'
     assert db.tags == [tag]
 
 
