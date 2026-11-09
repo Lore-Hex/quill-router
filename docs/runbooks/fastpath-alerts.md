@@ -174,7 +174,8 @@ Two policies page on lines the enabler's job writes
 (`infra/fastpath_enabler_alerts.tf`; `docs/design/fast-admission-widening.md`
 §4(a) and §5.3), each also counted by a log-based metric
 (`logging.googleapis.com/user/fastpath_enabler_<kind>`). With the job's mode
-`off` (`scripts/deploy/fastpath_enabler_job.sh`) neither can fire. Find the
+`off` neither can fire; `scripts/deploy/fastpath_enabler_job.sh` pins it to
+`apply` since WS2, so both are live. Find the
 run with `gcloud logging read 'resource.type="cloud_run_job" AND
 resource.labels.job_name="trusted-router-fastpath-enabler"'`: its
 `fastpath_enabler.report` line has the counts, and its `fastpath_enabler.list`

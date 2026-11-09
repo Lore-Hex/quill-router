@@ -17,8 +17,8 @@
 #     workspaces had a trust watermark older than the reconciler's maximum
 #     age, which points at the reconciler; their new enables are frozen.
 #
-# With the job's mode off it writes neither line, so these are dormant until
-# an activation step moves the mode. What each means and what to do:
+# With the job's mode off it writes neither line. The deploy script pins the
+# mode (apply since WS2), so both are live. What each means and what to do:
 # docs/runbooks/fastpath-alerts.md.
 
 locals {
