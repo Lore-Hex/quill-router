@@ -125,7 +125,8 @@ default, in the order they are turned on:
    answers `off` until it is on.
 3. `TR_FASTPATH_PILOT_ENABLED=true`: the client.
 
-`TR_FASTPATH_PILOT_ALL` (false, a literal in `rollout.sh`) replaces the
+`TR_FASTPATH_PILOT_ALL` (a literal in `rollout.sh`; true since the
+widening's WS2, 2026-11-09) replaces the
 set with every workspace but `TR_FASTPATH_PILOT_EXCLUDE`
 (`scripts/deploy/fastpath_lists.sh`, at most 64), the set then empty
 (`docs/design/fast-admission-widening.md` §§1, 9 and 11, PR 5). In that
@@ -135,7 +136,10 @@ workspace a copy younger than 15 s enables; any other request is
 `workspace` and takes today's path with no call. It needs the typed
 Spanner store, and every async pilot workspace on the exclude list or
 `TR_ASYNC_SETTLE_FASTPATH_OVERLAP_WORKSPACES`; the process refuses to
-start otherwise. It moves at the widening's WS2 only.
+start otherwise. It moved at the widening's WS2: the set of item 1 is
+empty since, its three workspaces stay on the switch and on the enabler's
+include list (`TR_FASTPATH_ENABLER_INCLUDE`), and the exclude list names
+the probes' workspaces.
 
 `TR_FASTPATH_PILOT_REGIONS` is `us-central1` and stays so until the fast
 path has nodes elsewhere. `TR_FASTPATH_FRONT_DOOR_TIMEOUT_SECONDS` is the

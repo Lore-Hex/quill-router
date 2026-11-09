@@ -98,15 +98,20 @@ ssh tr-fastpath-13 --zone=us-central1-a --project=quill-cloud-proxy
    other serving. That is done, and the release each node runs read from
    its process ("Taking a pinned release"), before any step below.
 3. **Python's side**, on the serving revision: `TR_EDGE_POLICY_PUBLISH_ENABLED=true`
-   (I1), `TR_FASTPATH_PILOT_ENABLED=true` and the workspace in
-   `TR_FASTPATH_PILOT_WORKSPACES` (`scripts/deploy/fastpath_lists.sh`, rendered by
-   `rollout.sh`); a
-   workspace the policy's pilot set does not name passes
-   `policy.not_pilot_workspace` before any key is read when the set is
-   empty, and otherwise once its key and workspace facts are read and
-   eligible (§3; `decide.go`: the empty set is checked before the key's
-   cache, the workspace's own membership in `policyPass` after the key's
-   and the workspace's gates). The workspace is enabled on the
+   (I1), `TR_FASTPATH_PILOT_ENABLED=true` and the workspace one the pilot
+   covers: since the widening's WS2 (2026-11-09) `TR_FASTPATH_PILOT_ALL=true`
+   in `rollout.sh`, so every workspace but those on
+   `TR_FASTPATH_PILOT_EXCLUDE` (`scripts/deploy/fastpath_lists.sh`), with
+   `TR_FASTPATH_PILOT_WORKSPACES` empty; out of all mode, the workspace in
+   that explicit set. A workspace the policy does not cover passes
+   `policy.not_pilot_workspace`: before any key is read when the policy
+   covers nobody (the explicit set empty out of all mode), and otherwise
+   once its key and workspace facts are read and eligible (§3;
+   `decide.go`: `CoversAny` is checked before the key's cache, the
+   workspace's own coverage in `policyPass` after the key's and the
+   workspace's gates). In all mode a covered workspace with no decide row
+   on, its own or the wildcard, passes with the row's reason (§2), as a
+   pilot workspace did before. The workspace is enabled on the
    switch (`fastpathctl -database $DB enable WORKSPACE`, idempotent;
    `fastpath-p1.md`): for one the node's copy of the switch does not
    enable, a request whose decide row says on passes

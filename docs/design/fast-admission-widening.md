@@ -1,7 +1,8 @@
 # Widening the fast path to every eligible workspace
 
 Status: decided; PRs 1 to 6 merged (#2354, #2356, #2359, #2385, #2394,
-#2396) and PR 7 built (§11); the rollout is at WS2 (§8.2). This is the short note the production
+#2396) and PR 7 built (§11); the rollout is at WS2 (§8.2), with the
+enabler in `apply` and all mode on since 2026-11-09. This is the short note the production
 rollout asks for before §8 step 9 of
 [`fast-admission-and-batched-settlement.md`](fast-admission-and-batched-settlement.md)
 (`fast-admission-production-rollout.md`, "P2 onward"): what widening
@@ -1270,10 +1271,10 @@ step.
      confined to its own job, as the repository's tripwire requires; its
      workspace is left out only by the exclude list, which (c) has carry
      every probe's workspace. Both that list and
-     `async_settle_shadow_workspaces` are empty at this PR, so activation
-     adds the probes' workspaces to `TR_FASTPATH_PILOT_EXCLUDE` before WS1's
-     dry-run, whose report must show them `excluded`; until then only the
-     tier requirement keeps an admin-funded probe out.
+     `async_settle_shadow_workspaces` were empty at this PR, so activation
+     adds the probes' workspaces to `TR_FASTPATH_PILOT_EXCLUDE` (done at
+     WS2, with all mode); until then only the tier requirement and the
+     enabler's own resolution of the two probe keys kept a probe out.
    - The switch read's latency was measured with Python's copy of it
      (`spanner_enabled_workspaces`), the node's `EnabledWorkspaces` SQL less
      its comment, since the dry-run's eligible count is not yet known: at

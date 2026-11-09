@@ -554,8 +554,9 @@ values are tier 3, an allowance of 1000000000 ($1,000) and a floor of
    the named grants do not explain, still refuses the bypass.
 
 3. **Every pilot workspace ready at the design's values.** For each
-   workspace of `TR_FASTPATH_PILOT_WORKSPACES` (`scripts/deploy/fastpath_lists.sh`,
-   rendered by `rollout.sh`),
+   workspace of `TR_FASTPATH_ENABLER_INCLUDE` (`scripts/deploy/fastpath_lists.sh`;
+   the pilot's explicit set until the widening's WS2 emptied it for all
+   mode),
    from a node:
 
    ```bash
