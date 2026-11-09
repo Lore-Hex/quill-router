@@ -6531,6 +6531,9 @@ def _comparison_board(
                 for route in routes
             ),
         )
+    cached = tuple(str(view.get("cached_prompt_price") or "") for view in views)
+    if any(cached):
+        add("cached", "Cached input", tuple(cell(value) if value else cell("Unlisted", muted=True) for value in cached))
     contexts = tuple(model.context_length or None for model in models)
     add(
         "context",
@@ -6638,12 +6641,19 @@ def _comparison_board(
         for model, found in zip(models, phrases, strict=True)
         if found
     ]
+    if any(best_for):
+        # A summary row under the prices: what each model is the better pick for.
+        rows.insert(
+            1 if rows and rows[0]["key"] == "price" else 0,
+            {
+                "key": "best",
+                "label": "Best for",
+                "left": cell(_join_phrases(best_for[0]).capitalize()) if best_for[0] else cell(""),
+                "right": cell(_join_phrases(best_for[1]).capitalize()) if best_for[1] else cell(""),
+            },
+        )
     return {
         "rows": rows,
-        "best_for": [
-            ("Best for " + _join_phrases(found)) if found else ""
-            for found in best_for
-        ],
         "verdict": (" ".join(sentences) + " One API key runs both.") if sentences else "",
     }
 

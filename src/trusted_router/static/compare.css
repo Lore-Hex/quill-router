@@ -443,6 +443,7 @@ html:not(.js-off) .md-code-panel[data-md-inactive] { display: none; }
 }
 .compare-band h2 { margin: 0; color: var(--tr-color-text-primary); font-size: clamp(26px, 3.4vw, 36px); line-height: 1.15; }
 .compare-band .compare-cta-note { color: #dcebe2; }
+.public-wrap .compare-band .compare-band-lead { max-width: 36em; margin: 0; color: var(--tr-color-text-primary); font-size: 17px; line-height: 1.55; }
 
 /* OpenRouter page: one-line diff under the agent prompt */
 .compare-diff { margin: 0; padding: 14px 20px; border-top: 1px solid var(--tr-color-line-rule-soft); font-family: var(--font-mono, ui-monospace, monospace); font-size: 15px; line-height: 1.8; overflow-x: auto; white-space: nowrap; }

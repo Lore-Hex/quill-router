@@ -98,17 +98,32 @@ resp = client.chat.completions.create(
 
 <section class="compare-section" aria-labelledby="compare-verify-heading">
   <h2 id="compare-verify-heading">Don't trust. Check.</h2>
-  <p>The gateway returns an attestation signed by the CPU's hardware root key. Match its image digest to the published build, and you know what code handles your prompts.</p>
+  <p>The gateway exposes a live attestation endpoint that returns a JWT signed by the CPU's hardware root key. Cross-cloud confidential VMs sign their boot measurement. You match the image digest to the source-built binary, and you know what code is running. A privacy policy is a promise. A hash is something you can check.</p>
   <div class="compare-code">
     <div class="compare-code-head"><span>curl + jq</span>{{ kit.copy_icon_button("compare-verify-code", "Copy attestation command", "Copy") }}</div>
-    <pre><code id="compare-verify-code">NONCE=$(openssl rand -hex 16)
-curl -s "{{ api_base_url|replace('/v1', '') }}/attestation?nonce=$NONCE" | jq .image_digest</code></pre>
+    <pre><code id="compare-verify-code"># 1. Get a nonce-bound attestation
+NONCE=$(openssl rand -hex 16)
+curl -s "{{ api_base_url|replace('/v1', '') }}/attestation?nonce=$NONCE" \
+  | jq .
+
+# Response includes:
+#   eat_nonce     — your nonce, replay-protected
+#   image_digest  — SHA-256 of the running container
+#   pcrs          — platform measurements at boot
+
+# 2. Compare image_digest against the published artifact:
+#    https://trustedrouter.com/security
+#
+# If they match, the code processing your prompts is
+# the code on GitHub.</code></pre>
     {{ kit.copy_status("compare-verify-code") }}
   </div>
   <p class="compare-inline-links"><a href="/security">How attestation works</a><a href="/docs/migrate-from-openrouter">Migration guide</a></p>
 </section>
 
 {% call kit.questions(faq_items) %}
+<details><summary>Which API features work?</summary><p>Streaming, tool calls, vision, structured output — supported. Every OpenRouter API path carries an explicit compatibility classification (real, compatible-real, or stub), enforced in CI against their published OpenAPI spec.</p></details>
+<details><summary>What does TrustedRouter add?</summary><p>A hardware-attested gateway, a public source-to-binary trail, no durable prompt or output logs on realtime inference, and a public status page with live burn rates. Ordinary synchronous and streaming prompt paths do not touch persistent storage. Batch is a separate opt-in encrypted-retention mode. The binary you can verify is the binary that handles your traffic.</p></details>
 <details><summary>Do my existing keys work?</summary><p>TR keys use a different prefix (<span class="mono">sk-tr-v1-…</span>), so create one here. Issuance is self-serve after sign-up.</p></details>
 <details><summary>Same model catalog?</summary><p>No two router catalogs are identical. As of August 26, 2026, TrustedRouter's public API lists 600+ model ids, compared with 400+ on OpenRouter's public feed. TrustedRouter spans more than 80 providers; OpenRouter lists more than 100. An unknown id returns <span class="mono">MODEL_NOT_SUPPORTED</span> instead of a guess, so check your ids on <a href="/models">/models</a> first.</p></details>
 <details><summary>How is pricing calculated?</summary><p>Provider cost + 5.5% markup, with a $0.01/M floor. Same percentage as OpenRouter's published <a href="https://openrouter.ai/pricing">5.5% fee on credit purchases</a> — but on a different base: ours applies to model cost, theirs at credit top-up with inference passed through at list price. Exact customer prices are published on every model page.</p></details>

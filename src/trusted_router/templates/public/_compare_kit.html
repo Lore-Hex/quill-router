@@ -42,9 +42,10 @@
 </section>
 {%- endmacro %}
 
-{% macro closing_band(title, note) -%}
+{% macro closing_band(title, note, lead="") -%}
 <section class="compare-band">
   <h2>{{ title }}</h2>
+  {% if lead %}<p class="compare-band-lead">{{ lead }}</p>{% endif %}
   {{ signup(note) }}
 </section>
 {%- endmacro %}

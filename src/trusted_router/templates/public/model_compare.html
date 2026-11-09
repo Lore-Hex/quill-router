@@ -30,7 +30,7 @@
         {% for model in (left, right) %}
         <th scope="col" class="compare-table-item">
           <a class="compare-item" href="/models/{{ model.id }}">{% if model.publisher_slug %}<img src="{{ provider_logo_url(model.publisher_slug) }}" alt="{{ model.provider }} logo" aria-hidden="true" width="30" height="30">{% endif %}<span>{{ (left_short, right_short)[loop.index0] }}</span></a>
-          <span class="compare-meta">{% if board.best_for[loop.index0] %}<span class="compare-best">{{ board.best_for[loop.index0] }}</span>{% endif %}
+          <span class="compare-meta">
           <span class="compare-id"><code id="compare-id-{{ loop.index }}">{% for part in model.id.split("/") %}{{ part }}{% if not loop.last %}/<wbr>{% endif %}{% endfor %}</code>{{ kit.copy_icon_button("compare-id-" ~ loop.index, "Copy model id " ~ model.id) }}{{ kit.copy_status("compare-id-" ~ loop.index) }}</span></span>
         </th>
         {% endfor %}
@@ -126,7 +126,7 @@ done{% endset %}
 {% for neighbor in comparison_neighbors %}{% set _ = chips.append({"href": neighbor.href, "label": neighbor.short_label}) %}{% endfor %}
 {% if chips %}{{ kit.chip_row("More comparisons", chips, "/compare/models", "All comparisons") }}{% endif %}
 
-{{ kit.closing_band("Try " ~ left_short ~ " and " ~ right_short ~ " with one key.", signup_note) }}
+{{ kit.closing_band("Try " ~ left_short ~ " and " ~ right_short ~ " with one key.", signup_note, "TrustedRouter is useful when you know the model you want, but still need provider rollover, budget limits, usage records, and a prompt path you can verify.") }}
 {% endblock %}
 
 {% block faq %}{% endblock %}
