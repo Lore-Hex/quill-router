@@ -21,6 +21,7 @@
 # gate (same rationale as skipping the synthetic watchdog).
 
 name: Deploy TR control plane
+run-name: ${{ inputs.track_main == true && format('Deploy latest main {0}', github.sha) || format('Deploy revision {0}', github.sha) }}
 
 on:
   push:
@@ -38,6 +39,10 @@ on:
       - ".github/workflows/deploy-production.yml"
   workflow_dispatch:
     inputs:
+      track_main:
+        description: "Follow main: allow a newer prepared green release to supersede this snapshot"
+        type: boolean
+        default: false
       hotfix:
         description: "Skip synthetic-watchdog + CI-green gating (ship aggressively when prod is sick)"
         type: boolean
@@ -110,6 +115,10 @@ jobs:
         # for $GITHUB_SHA; refuses to deploy unless it concluded success.
         run: |
           set -euo pipefail
+          if [ "${{ inputs.track_main }}" = "true" ] && [ "${{ inputs.hotfix }}" = "true" ]; then
+            echo "::error::track_main releases require all normal CI and rollout gates; hotfix is incompatible."
+            exit 1
+          fi
           if [ "${{ inputs.hotfix }}" = "true" ]; then
             echo "::warning::HOTFIX MODE — skipping the CI-green gate."
             exit 0
@@ -274,4 +283,5 @@ jobs:
       sha: ${{ needs.build-image.outputs.sha }}
       image: ${{ needs.build-image.outputs.image }}
       hotfix: ${{ inputs.hotfix == true }}
+      track_main: ${{ inputs.track_main == true }}
     secrets: inherit

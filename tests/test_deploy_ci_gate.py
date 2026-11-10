@@ -35,6 +35,7 @@ def _gate_script(hotfix: str = "false") -> str:
     steps = [s for s in _gate_job()["steps"] if s.get("name") == "Gate on CI green (same commit)"]
     assert len(steps) == 1
     script = steps[0]["run"].replace("${{ inputs.hotfix }}", hotfix)
+    script = script.replace("${{ inputs.track_main }}", "false")
     assert "${{" not in script
     return script
 

@@ -580,6 +580,114 @@ def test_build_and_ci_prepare_outside_the_serialized_rollout():
     assert before == admitted
 
 
+@pytest.mark.parametrize("job,output", [("confirm-current-main", "proceed"), ("confirm-still-on-main", "on_main")])
+@pytest.mark.parametrize("event,track_main,guarded", [
+    ("push", "", True),
+    ("workflow_dispatch", "true", True),
+    ("workflow_dispatch", "false", False),
+    ("workflow_dispatch", "", False),
+])
+def test_follow_main_dispatch_executes_both_workflow_guards(tmp_path, monkeypatch, job, output, event, track_main, guarded):
+    script = _workflow()["jobs"][job]["steps"][1]["run"]
+    script = script.replace("${{ github.event_name }}", event).replace("${{ inputs.track_main }}", track_main)
+    assert "${{" not in script
+    responses = {**READY, "git/ref/heads/main": ("ccc", 0)}
+    if output == "on_main":
+        responses["compare/aaa...ccc"] = (json.dumps({"status": "diverged"}), 0)
+    log = _fake_gh(tmp_path, monkeypatch, responses=responses)
+    result = subprocess.run(  # noqa: S603 - actual workflow shell, only gh is faked
+        ["bash", "-c", script], cwd=ROOT, capture_output=True, text=True,  # noqa: S607
+        env={**os.environ, "GITHUB_REPOSITORY": "o/r", "GITHUB_SHA": "aaa", "GITHUB_OUTPUT": str(tmp_path / "output")},
+        timeout=20,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (tmp_path / "output").read_text().strip() == f"{output}={'false' if guarded else 'true'}"
+    assert log.exists() is guarded
+
+
+@pytest.mark.parametrize("filename", ["deploy.yml", "deploy-production.yml"])
+@pytest.mark.parametrize("track_main,hotfix,ci,result", [
+    ("true", "true", "success", 1),
+    ("true", "false", "failure", 1),
+    ("true", "false", "success", 0),
+    ("false", "true", "failure", 0),
+])
+def test_follow_main_dispatch_cannot_bypass_ci(tmp_path, monkeypatch, filename, track_main, hotfix, ci, result):
+    workflow = yaml.safe_load((ROOT / ".github/workflows" / filename).read_text())
+    script = workflow["jobs"]["gate-on-ci"]["steps"][0]["run"]
+    script = script.replace("${{ inputs.hotfix }}", hotfix).replace("${{ inputs.track_main }}", track_main)
+    assert "${{" not in script
+    log = _fake_gh(tmp_path, monkeypatch, stdout=json.dumps({"databaseId": 3, "status": "completed", "conclusion": ci}))
+    ran = subprocess.run(  # noqa: S603 - actual workflow shell, only gh is faked
+        ["bash", "-c", script], capture_output=True, text=True,  # noqa: S607
+        env={**os.environ, "GITHUB_REPOSITORY": "o/r", "GITHUB_SHA": "aaa"}, timeout=20,
+    )
+    assert ran.returncode == result, ran.stdout + ran.stderr
+    assert log.exists() is (hotfix != "true")
+
+
+def test_follow_main_dispatch_is_explicit_and_defaults_to_pinned_manual():
+    entry = yaml.safe_load(WORKFLOW.read_text())
+    production = yaml.safe_load((ROOT / ".github/workflows/deploy-production.yml").read_text())
+    for workflow, trigger in ((entry, "workflow_dispatch"), (production, "workflow_call")):
+        setting = workflow.get("on", workflow.get(True))[trigger]["inputs"]["track_main"]
+        assert setting["type"] == "boolean" and setting["default"] is False
+    assert entry["jobs"]["rollout"]["with"]["track_main"] == "${{ inputs.track_main == true }}"
+    assert entry["run-name"] == (
+        "${{ inputs.track_main == true && format('Deploy latest main {0}', github.sha) "
+        "|| format('Deploy revision {0}', github.sha) }}"
+    )
+
+
+@pytest.mark.parametrize("event,branch,title,eligible", [
+    ("workflow_dispatch", "main", "Deploy latest main bbb", True),
+    ("workflow_dispatch", "main", "Deploy revision bbb", False),
+    ("workflow_dispatch", "main", "", False),
+    ("workflow_dispatch", "main", "Deploy latest main ccc", False),
+    ("workflow_dispatch", "main", "Deploy latest main bbb suffix", False),
+    ("workflow_dispatch", "feature", "Deploy latest main bbb", False),
+    ("schedule", "main", "Deploy latest main bbb", False),
+])
+def test_follow_main_dispatch_successor_requires_exact_mode_marker(tmp_path, monkeypatch, event, branch, title, eligible):
+    run = {**json.loads(WAITING_RUN)[0], "event": event, "headBranch": branch, "displayTitle": title}
+    log = _fake_gh(tmp_path, monkeypatch, responses={**READY, "--workflow deploy.yml": (json.dumps([run]), 0)})
+    assert superseded.main(ARGS) == (1 if eligible else 0)
+    assert superseded.pending_successor([run], base="aaa") == ("bbb" if eligible else None)
+    assert "displayTitle" in log.read_text()
+
+
+@pytest.mark.parametrize("lookup,response", [
+    ("compare/aaa...bbb", {"status": "diverged"}),
+    ("compare/bbb...ccc", {"status": "diverged"}),
+    ("--workflow ci.yml --commit bbb", [{"status": "completed", "conclusion": "failure"}]),
+    ("--workflow ci.yml --commit bbb", [{"status": "in_progress", "conclusion": ""}]),
+    ("run view 2", {"jobs": [{"name": "gate-on-ci", "conclusion": "success"}]}),
+    ("run view 2", {"jobs": [{"name": "build-image", "conclusion": "success"}]}),
+])
+def test_follow_main_dispatch_still_requires_preparation_and_lineage(tmp_path, monkeypatch, lookup, response):
+    run = {**json.loads(WAITING_RUN)[0], "event": "workflow_dispatch", "displayTitle": "Deploy latest main bbb"}
+    _fake_gh(tmp_path, monkeypatch, responses={**READY, "--workflow deploy.yml": (json.dumps([run]), 0),
+                                             lookup: (json.dumps(response), 0)})
+    assert superseded.main(ARGS) == 0
+
+
+@pytest.mark.parametrize("state,result,skip", [
+    ("in_progress", "success", True),
+    ("completed", "success", True),
+    ("completed", "skipped", False),
+    ("completed", "failure", False),
+])
+def test_follow_main_dispatch_does_not_confuse_partial_and_delivered_releases(tmp_path, monkeypatch, state, result, skip):
+    run = {**json.loads(WAITING_RUN)[0], "event": "workflow_dispatch", "displayTitle": "Deploy latest main bbb",
+           "status": state, "conclusion": "success" if state == "completed" else ""}
+    names = ["rollout / " + name for name in superseded._DELIVERY_JOBS] if state == "completed" else [
+        "gate-on-ci", "build-image"]
+    jobs = [{"name": name, "conclusion": result} for name in names]
+    _fake_gh(tmp_path, monkeypatch, responses={**READY, "--workflow deploy.yml": (json.dumps([run]), 0),
+                                             "run view 2": (json.dumps({"jobs": jobs}), 0)})
+    assert superseded.main(ARGS) == (1 if skip else 0)
+
+
 # --mode cancel-older: a deploying push cancels the preparing deploys of older
 # pushes it supersedes, and their CI runs that have not started a test shard.
 
