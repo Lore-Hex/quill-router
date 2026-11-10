@@ -1,13 +1,27 @@
 """The shared user quota cannot be reset by sessions or bypassed on store failure."""
 from __future__ import annotations
 
+import datetime as dt
+
 import pytest
 from fastapi import HTTPException
 
+from trusted_router import storage_rate_limits
 from trusted_router.config import Settings
 from trusted_router.social_rewards_limits import enforce_social_reward_rate_limit
 from trusted_router.storage import InMemoryStore
 from trusted_router.storage_models import RateLimitHit
+
+
+@pytest.fixture(autouse=True)
+def fixed_rate_limit_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The window tumbles on the wall-clock minute: a loop that crossed one
+    # would start a fresh count and never reach its limit.
+    monkeypatch.setattr(
+        storage_rate_limits,
+        "utcnow",
+        lambda: dt.datetime(2026, 11, 10, 12, 0, 30, tzinfo=dt.UTC),
+    )
 
 
 def test_default_allows_five_actions_and_retries_then_throttles():
