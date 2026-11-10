@@ -50,6 +50,50 @@ FEATURED_SLUGS: tuple[str, ...] = (
 
 BLOG_POSTS: tuple[BlogPost, ...] = (
     BlogPost(
+        slug='private-deepseek-api-evaluation-checklist',
+        title='How to evaluate a private DeepSeek API',
+        description='Evaluate DeepSeek API privacy with a checklist for provider location, retention, fallback behavior and model quality before sending sensitive data.',
+        published_date="2026-11-09",
+        source_label="TrustedRouter",
+        source_url=None,
+        body_html="""
+<p>A private DeepSeek API needs two kinds of evidence: where each request can go, and what happens to its data there. Start with your data requirements, then choose a model and provider route. Model origin, hosting location, retention policy and confidential compute answer different questions.</p>
+<h2>Write down what your application needs</h2>
+<p>List the data classes you will send, the regions your policy permits, and whether the serving provider must offer zero retention or confidential compute. Separate a contractual retention commitment from hardware-backed execution evidence. The <a href="/deepseek-api-privacy">DeepSeek API privacy guide</a> explains route selection; the <a href="/us-ai-models">US model directory</a> separates model origin from provider jurisdiction.</p>
+<h2>Select a route before testing sensitive data</h2>
+<p>Use synthetic or redacted examples for the first trial. Find the exact model ID in the <a href="/models">live catalog</a>, inspect its providers and supported parameters, then follow the <a href="/docs/provider-routing">provider routing reference</a> to set your minimum privacy tier and fallback rules. A model name alone does not establish the route's privacy posture.</p>
+<p>For a policy that requires a specific serving provider, pin the provider and disable fallback. For a policy allowing multiple providers, ensure every eligible fallback meets the same requirement. Test what happens when no qualifying route is available: failure should be handled explicitly by the application, not by silently sending sensitive data somewhere else.</p>
+<h2>Evaluate useful answers as well as refusals</h2>
+<p>Build a small set of representative tasks with expected facts and unacceptable outcomes. Score evidence references, unsupported assertions, missed details and analyst review time. For security teams, include redacted alert triage and incident summaries. The <a href="/abliterated-deepseek">abliterated and uncensored DeepSeek guide</a> includes cyberdefense prompts and a separate Maple route example. Fewer refusals do not prove better accuracy.</p>
+<h2>Test the operational boundaries</h2>
+<p>Measure response time, errors and cost using your own input and output lengths. Confirm streaming, context limits and any tools your application requires on the chosen route. Use the <a href="/docs/evals">evaluation guide</a> to repeat the same cases after a model or provider change.</p>
+<p>Before launch, record the model ID, permitted providers, privacy settings, test date and the evidence reviewed. Assign an owner to repeat the checks. If you are integrating an agent, continue with the <a href="/blog/choosing-an-llm-api-for-agents">agent API selection checklist</a> and <a href="/docs/agent-setup">agent setup instructions</a>.</p>
+""",
+    ),
+    BlogPost(
+        slug='choosing-an-llm-api-for-agents',
+        title='How to choose an LLM API for agents',
+        description='Choose an LLM API for agents by testing tool support, privacy, fallback behavior, task costs and programmable budgets before a production migration.',
+        published_date="2026-11-09",
+        source_label="TrustedRouter",
+        source_url=None,
+        body_html="""
+<p>An agent makes multiple model calls to finish a task. Choosing its API means checking the entire sequence: tool calls, retries, context growth, provider failures and the final bill. Start with the <a href="/best-llm-router">LLM router decision guide</a> and compare candidates on the same representative tasks.</p>
+<h2>Map the features your agent actually uses</h2>
+<p>List streaming, tool calling, structured outputs, images and context requirements. Look up each exact model in the <a href="/models">live catalog</a>. OpenAI-compatible request syntax helps integration, but it does not mean every model or provider supports every feature. Follow the <a href="/docs/agent-setup">agent setup guide</a> for the endpoint and integration instructions.</p>
+<h2>Keep fallback behavior inside your policy</h2>
+<p>Decide which providers are eligible and whether an unavailable route should fail or fall back. Check privacy requirements on every eligible route, including retries. A provider's country and a model developer's country are separate facts; use the <a href="/us-ai-models">model and serving-provider directory</a> when jurisdiction matters.</p>
+<p>For DeepSeek workloads, use the <a href="/blog/private-deepseek-api-evaluation-checklist">private DeepSeek API evaluation checklist</a>. For authorized security analysis, the <a href="/abliterated-deepseek">uncensored DeepSeek cyberdefense guide</a> covers a distinct modified checkpoint and practical evaluation prompts.</p>
+<h2>Set an application budget before expanding the loop</h2>
+<p>Create separate API keys for projects or agents and configure <a href="/spend-controls">programmable spend controls</a>. Daily, weekly, monthly and lifetime limits support different operating budgets. Strict admission can count in-flight cost estimates, but final provider usage can exceed an estimate. Also bound tool iterations and retries in your application so a broken loop does not keep producing work.</p>
+<h2>Compare cost per completed task</h2>
+<p>Record total input and output tokens across the whole run, retries, completion time, tool errors and whether the result passes your review. A cheap request that needs several repairs may cost more than a reliable response. Keep evaluation cases fixed while changing one routing decision at a time.</p>
+<h2>Migrate with a representative test set</h2>
+<p>If you are switching gateways, use the <a href="/openrouter-alternative">OpenRouter alternatives comparison</a> to shortlist options and the <a href="/docs/migrate-from-openrouter">migration guide</a> to test endpoint, authentication and routing differences. Verify failures as well as successes: a timeout, exhausted budget and unavailable provider should leave the agent in a recoverable state.</p>
+""",
+    ),
+
+    BlogPost(
         slug="combo-models-beat-the-best-model",
         title="Many models beat one model",
         description=(

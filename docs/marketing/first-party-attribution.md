@@ -202,3 +202,29 @@ Optimize bidding toward activated users and credited purchases after each
 action is verified as recording and has enough weekly volume to avoid unstable
 conclusions. First-party attribution remains the source of truth for funnel and
 revenue reporting.
+
+## AI referral reporting
+
+Run `uv run python scripts/marketing_funnel_report.py --ai-only --days 28`
+(or add `--format json`) for first-touch AI acquisition cohorts by source and
+landing page, with signups, API activation, purchases and retention. The default
+seven-day conversion lag excludes the newest acquisition days. Use
+`--cohort-lag-days 0` for recent traffic, with incomplete conversion outcomes.
+The AI-only view disables Google Ads spend queries.
+
+Exact known source tags/referrer hosts identify ChatGPT, Claude, Perplexity,
+Gemini and Copilot; JSON rows and new attribution events include
+`ai_referral_platform`. Historical rows with those source signals are classified
+at report time. An explicit campaign tag takes precedence over the referrer.
+Returning AI referrals update last touch without changing original acquisition.
+First-touch cohort reports therefore do not count AI-assisted return visits as
+new AI acquisitions. Known AI fetch agents are excluded from visitor attribution,
+and GPC/DNT behavior is unchanged.
+
+These are observed referral and conversion metrics, **not citation counts**.
+Missing referrers remain unattributed; source tags are signals, not verified
+platform identities. Google AI impressions remain a separate Search Console
+metric. Neither this report nor crawler requests reveal the full set of private
+ChatGPT or Claude answers. Measuring answer citations requires a separately
+labelled, repeatable prompt sample with dated answers, source URLs and model/search
+settings; API samples must not be presented as consumer-chat coverage.
