@@ -5,7 +5,6 @@ import pytest
 from bs4 import BeautifulSoup
 from fastapi import HTTPException
 
-from trusted_router import dashboard
 from trusted_router.catalog import (
     MODEL_ENDPOINTS,
     MODELS,
@@ -19,6 +18,7 @@ from trusted_router.fortanix_launch import (
     MODEL_ID,
     NATIVE_ID,
     RETAIL_MICRO_PER_M,
+    fortanix_launch_offer,
     launch_tariff_matches,
 )
 from trusted_router.internal_model_access import require_internal_model_key
@@ -140,10 +140,7 @@ def test_customer_authorization_locks_introductory_rate_and_bills_once(
     assert STORE.credit_money[workspace_id].total_usage_microdollars - before == 20
 
 
-@pytest.mark.parametrize(
-    "path",
-    ["/", "/models", "/providers/fortanix", f"/models/{MODEL_ID}", f"/models/{MODEL_ID}/pricing"],
-)
+@pytest.mark.parametrize("path", ["/", "/models"])
 def test_public_pages_show_honest_offer_and_keep_legacy_id_private(client, path):
     response = client.get(path)
     assert response.status_code == 200
@@ -157,6 +154,16 @@ def test_public_pages_show_honest_offer_and_keep_legacy_id_private(client, path)
     assert "$0.000001 request minimum" in banner.get_text()
     assert "Managed-route ZDR" in banner.get_text()
     assert "Santa Clara inference" in banner.get_text()
+    assert "trustedrouter/fortanix-test" not in response.text
+
+
+@pytest.mark.parametrize(
+    "path", ["/status", "/trust", "/vibe-coders", "/providers/fortanix", f"/models/{MODEL_ID}"]
+)
+def test_promotion_preserves_focused_page_layouts(client, path):
+    response = client.get(path)
+    assert response.status_code == 200
+    assert "data-fortanix-promo" not in response.text
     assert "trustedrouter/fortanix-test" not in response.text
 
 
@@ -205,7 +212,7 @@ def test_banner_disappears_when_offer_no_longer_matches(monkeypatch, change):
             route.id,
             replace(route, catalog_valid_until=datetime.min.replace(tzinfo=UTC)),
         )
-    assert not dashboard.fortanix_launch_offer()
+    assert not fortanix_launch_offer()
 
 
 @pytest.mark.parametrize("mutation", ["model", "endpoint", "fee", "tier", "extra"])

@@ -12,6 +12,36 @@ RETAIL_MICRO_PER_M = _customer_price(SUPPLIER_COST_MICRO_PER_M)
 TIERS = _flat_tier(RETAIL_MICRO_PER_M, RETAIL_MICRO_PER_M)
 
 
+def fortanix_launch_offer() -> bool:
+    # The registry imports this module's tariff while constructing the catalog.
+    from trusted_router.catalog import (
+        MODELS,
+        PROVIDERS,
+        endpoint_zero_data_retention,
+        endpoints_for_model,
+    )
+    from trusted_router.provider_contracts import provider_route_reviewed_hold
+    from trusted_router.provider_locations import provider_inference_locations
+
+    model = MODELS.get(MODEL_ID)
+    provider = PROVIDERS.get("fortanix")
+    if (
+        model is None
+        or provider is None
+        or provider.internal_only
+        or provider_route_reviewed_hold("fortanix", model.id, model.upstream_id)
+    ):
+        return False
+    routes = endpoints_for_model(model.id)
+    return (
+        len(routes) == 1
+        and launch_tariff_matches(model, routes[0])
+        and endpoint_zero_data_retention(routes[0]) is True
+        and provider_inference_locations("fortanix").locations
+        == ("Santa Clara, California, United States",)
+    )
+
+
 def launch_tariff_matches(model: Model, endpoint: ModelEndpoint) -> bool:
     """Neither the coverage exception nor the banner may cover a changed tariff."""
     return (

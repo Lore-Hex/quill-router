@@ -100,8 +100,7 @@ from trusted_router.content.legal import (
 from trusted_router.content.token_index import token_index_context
 from trusted_router.content_handling import CONTENT_HANDLING_CLAIM, VENDOR_EXCLUSION_CLAIM
 from trusted_router.domains import canonical_public_url
-from trusted_router.fortanix_launch import MODEL_ID as FORTANIX_MODEL_ID
-from trusted_router.fortanix_launch import launch_tariff_matches
+from trusted_router.fortanix_launch import fortanix_launch_offer
 from trusted_router.marketing_experiments import GoogleSearchExperimentCell
 from trusted_router.measured import measured_for_model, measured_for_provider
 from trusted_router.middleware import current_csp_nonce
@@ -120,7 +119,6 @@ from trusted_router.provider_contract import (
 )
 from trusted_router.provider_contracts import (
     INPUT_ONLY_PROVIDER_MODELS,
-    provider_route_reviewed_hold,
 )
 from trusted_router.provider_lifecycle import provider_pricing_schedule
 from trusted_router.provider_locations import (
@@ -2613,22 +2611,6 @@ def _seo_comparison_title(left: Model, right: Model) -> str:
     # Model versions and sizes distinguish the query intent. Drop boilerplate
     # before names; the search engine can choose its own display truncation.
     return base
-
-
-def fortanix_launch_offer() -> bool:
-    model = MODELS.get(FORTANIX_MODEL_ID)
-    provider = PROVIDERS.get("fortanix")
-    if (model is None or provider is None or provider.internal_only
-            or provider_route_reviewed_hold("fortanix", model.id, model.upstream_id)):
-        return False
-    routes = endpoints_for_model(model.id)
-    return (
-        len(routes) == 1
-        and launch_tariff_matches(model, routes[0])
-        and endpoint_zero_data_retention(routes[0]) is True
-        and provider_inference_locations("fortanix").locations
-        == ("Santa Clara, California, United States",)
-    )
 
 
 @lru_cache(maxsize=1)
