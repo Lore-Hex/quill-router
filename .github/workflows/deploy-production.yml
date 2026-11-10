@@ -13,6 +13,9 @@ on:
       hotfix:
         type: boolean
         default: false
+      track_main:
+        type: boolean
+        default: false
 
 # Active production work is never interrupted. Retain prepared runs even when
 # preparation finishes out of commit order; admission selects a green successor.
@@ -47,6 +50,10 @@ jobs:
         # for $GITHUB_SHA; refuses to deploy unless it concluded success.
         run: |
           set -euo pipefail
+          if [ "${{ inputs.track_main }}" = "true" ] && [ "${{ inputs.hotfix }}" = "true" ]; then
+            echo "::error::track_main releases require all normal CI and rollout gates; hotfix is incompatible."
+            exit 1
+          fi
           if [ "${{ inputs.hotfix }}" = "true" ]; then
             echo "::warning::HOTFIX MODE — skipping the CI-green gate."
             exit 0
@@ -143,11 +150,11 @@ jobs:
         with:
           sparse-checkout: scripts/deploy/superseded_deploy.py
           sparse-checkout-cone-mode: false
-      - name: Confirm this push is still current main
+      - name: Confirm this release is still eligible on main
         id: current
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" != "push" ]; then
+          if [ "${{ github.event_name }}" != "push" ] && [ "${{ inputs.track_main }}" != "true" ]; then
             echo "proceed=true" >> "$GITHUB_OUTPUT"
             echo "manual dispatch: deploying requested revision ${GITHUB_SHA}"
             exit 0
@@ -391,7 +398,7 @@ jobs:
         id: ancestry
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" != "push" ]; then
+          if [ "${{ github.event_name }}" != "push" ] && [ "${{ inputs.track_main }}" != "true" ]; then
             echo "on_main=true" >> "$GITHUB_OUTPUT"
             echo "manual dispatch: deploying requested revision ${GITHUB_SHA}"
             exit 0
