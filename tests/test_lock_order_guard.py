@@ -41,7 +41,10 @@ def _spanner_db():
 
 
 def _spanner_credit(tx):
+    # Hinted as the real reserves are: a statement hint must not hide the
+    # write target from the guard (the inverted control below would pass).
     assert tx.execute_update(
+        "@{LOCK_SCANNED_RANGES=EXCLUSIVE} "
         "UPDATE tr_credit_balance SET reserved = reserved + @est "
         "WHERE workspace_id=@ws AND shard=@shard",
         params={"ws": "w", "shard": 0, "est": 1},
@@ -112,6 +115,8 @@ def test_hooks_execute_seeded_statements(backend, inverted):
 @pytest.mark.parametrize("read_locks", [False, True], ids=["postgres", "spanner"])
 @pytest.mark.parametrize(("sql", "expected_pg", "expected_spanner"), [
     (CREDIT + " /* tr_key_limit */", {"credit"}, {"credit"}),
+    ("@{LOCK_SCANNED_RANGES=EXCLUSIVE} " + CREDIT, {"credit"}, {"credit"}),
+    ("@{LOCK_SCANNED_RANGES=EXCLUSIVE} " + KEY, {"key"}, {"key"}),
     (KEY + " /* tr_credit_balance */", {"key"}, {"key"}),
     (CREDIT + " -- tr_key_limit\n", {"credit"}, {"credit"}),
     (KEY + " -- tr_credit_balance\n", {"key"}, {"key"}),

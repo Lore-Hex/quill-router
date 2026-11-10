@@ -418,7 +418,9 @@ def spanner_operations(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, 
             if getattr(self, "_in_batch", False) or getattr(self, "_in_returning", False):
                 return original(self, sql, **kwargs)
             count_rpc()
-            operations.append(("T1 DML" if sql.startswith("UPDATE") else label,
+            # A returning reserve arrives through execute_sql, hinted or not.
+            statement = sql.removeprefix("@{LOCK_SCANNED_RANGES=EXCLUSIVE} ")
+            operations.append(("T1 DML" if statement.startswith("UPDATE") else label,
                                " ".join(sql.split()), copy.deepcopy(kwargs.get("params", {}))))
             return original(self, sql, **kwargs)
 
@@ -520,7 +522,9 @@ def test_warm_lookup_authorize_exact_sequence_and_contents(
     reservation = operations[-3][2]
     assert operations[1][2] == {"scope": reservation["idempotency_scope"]}
     assert operations[2] == ("T1 DML",
-        "UPDATE tr_credit_balance SET reserved = reserved + @est "  # noqa: S608 - fixed clauses
+        # Both reserves lock exclusively from the scan (no shared-lock upgrade).
+        "@{LOCK_SCANNED_RANGES=EXCLUSIVE} "  # noqa: S608 - fixed clauses
+        "UPDATE tr_credit_balance SET reserved = reserved + @est "
         "WHERE workspace_id=@ws AND shard=@shard "
         "AND (total_credits - total_usage - reserved) >= @est "
         # A row marked in debt refuses (fast-admission design section 4.7).
@@ -528,6 +532,7 @@ def test_warm_lookup_authorize_exact_sequence_and_contents(
         + (" AND COALESCE(ARRAY_LENGTH(billing_pause_causes), 0) = 0" if armed else ""),
         {"est": reservation["credit_reserved_micro"], "ws": key.workspace_id, "shard": 0})
     assert operations[-4] == ("T1 DML",
+        "@{LOCK_SCANNED_RANGES=EXCLUSIVE} "
         "UPDATE tr_key_limit SET reserved = reserved + @est "
         "WHERE key_hash=@kh AND shard=@shard AND limit_micro IS NOT NULL "
         "AND (@is_byok = FALSE OR include_byok = TRUE) "
@@ -588,7 +593,7 @@ def test_warm_skip_key_authorize_hold_time_sequence(
     assert spanner_operations[1][1].startswith("SELECT reservation_id")
     batch = spanner_operations[2][2]["statements"]
     assert len(batch) == 3
-    assert batch[0][0].startswith("UPDATE tr_credit_balance")
+    assert batch[0][0].startswith("@{LOCK_SCANNED_RANGES=EXCLUSIVE} UPDATE tr_credit_balance")
     assert ("COALESCE(ARRAY_LENGTH(billing_pause_causes), 0) = 0" in batch[0][0]) is armed
     assert batch[1][0].startswith("INSERT INTO tr_reservation")
     assert batch[2][0] == _INSERT_GATEWAY_AUTHORIZATION_SQL

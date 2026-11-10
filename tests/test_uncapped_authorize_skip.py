@@ -23,6 +23,8 @@ from trusted_router.storage_gcp_authorize import SettleOutcome, settle_atomic
 from trusted_router.storage_gcp_counters import KEY_LIMIT_TABLE
 
 RESERVE_SQL = (
+    # Exclusive from the scan: reservers of one key row queue, never upgrade.
+    "@{LOCK_SCANNED_RANGES=EXCLUSIVE} "
     "UPDATE tr_key_limit SET reserved = reserved + @est "
     "WHERE key_hash=@kh AND shard=@shard AND limit_micro IS NOT NULL "
     "AND (@is_byok = FALSE OR include_byok = TRUE) "
@@ -126,7 +128,13 @@ def test_capped_and_window_paths_keep_exact_reserve_sql_and_parameters(
         return
     # Metadata preselects the sequential classifier for BYOK-excluded caps.
     # It still checks the authoritative row, with exactly one reserve UPDATE.
-    expected_update = ("execute_update", RESERVE_SQL, {
+    # The sequential BYOK reserve does not lock its scan exclusively: on a key
+    # that excludes BYOK it matches no row, and would hold the row until the
+    # commit. A key that includes BYOK reserves in the batch, hinted.
+    excluded = byok and not include_byok
+    reserve_sql = RESERVE_SQL.removeprefix("@{LOCK_SCANNED_RANGES=EXCLUSIVE} ") if excluded else RESERVE_SQL
+    assert RESERVE_SQL.startswith("@{LOCK_SCANNED_RANGES=EXCLUSIVE} UPDATE tr_key_limit")
+    expected_update = ("execute_update", reserve_sql, {
         "params": {"est": estimate,
                    "kh": key.hash, "shard": 3, "is_byok": byok},
         "param_types": {"est": store._param_types.INT64, "kh": store._param_types.STRING,

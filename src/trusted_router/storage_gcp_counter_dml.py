@@ -2,18 +2,24 @@
 
 See docs/design/billing-typed-counters.md.
 
-This is the deadlock fix. Instead of read-modify-write (a shared read lock that
-upgrades to exclusive -> wound-wait deadlock under per-tenant concurrency), each
-reserve is a SINGLE conditional UPDATE that takes the row write lock directly and
-atomically checks-and-decrements:
+Instead of a separate read followed by a write, each reserve is a SINGLE
+conditional UPDATE that atomically checks-and-decrements:
 
+    @{LOCK_SCANNED_RANGES=EXCLUSIVE}
     UPDATE tr_credit_balance SET reserved = reserved + @est
      WHERE workspace_id=@ws AND shard=@shard
        AND (total_credits - total_usage - reserved) >= @est
 
 ``execute_update()`` returns the modified-row count: 1 = accepted, 0 = rejected
-(insufficient). Concurrent reservers serialize on the row write lock instead of
-deadlocking; the predicate re-evaluates against committed state.
+(insufficient). The predicate re-evaluates against committed state.
+
+A conditional UPDATE does NOT take the row write lock directly. Its scan takes
+a shared lock and the write upgrades it, so N transactions on one row each hold
+the shared lock, block each other's upgrade, and wound-wait aborts all but the
+oldest: a burst of N costs on the order of N*N aborts (the 2026-11-10 incident,
+docs/incidents/2026-11-10-reserve-lock-upgrade-aborts.md). The statement hint
+makes the scan take the exclusive lock at once, so concurrent reservers of one
+row queue instead. See EXCLUSIVE_SCAN_HINT for which statements carry it.
 
 Standard DML only (NOT partitioned DML); these run inside ``run_in_transaction``
 so ABORTED is retried. They must NOT be mixed with Spanner mutations in the same
@@ -58,6 +64,27 @@ _COMPLETE_RESERVATION_RETENTION_GUARDED_SQL = (
     f"AND o.status IN ({_OUTBOX_GUARD_STATUS_SQL}))"
 )
 
+# Statement hint for the authorize-side reserves: the scan takes the row's
+# exclusive lock at once instead of a shared lock it must upgrade, so writers of
+# one hot row queue rather than abort each other. It is a hint, not a mutex:
+# wound-wait still aborts a younger holder an older transaction waits on.
+#
+# A hinted statement that matches no row still holds the exclusive lock until
+# its transaction ends. So a reserve carries the hint only where it is expected
+# to write and is the only counter row of its table the transaction touches:
+# the batch reserves (a miss rolls back at once), a sequential reserve with one
+# shard candidate, and a key reserve that is not BYOK. A sequential probe of
+# several shards stays unhinted (two probers that miss different shards would
+# otherwise wait on each other), and so does a BYOK key reserve (a key that
+# excludes BYOK matches no row on every request).
+#
+# The hint covers EVERY range its statement scans, subqueries included, and
+# cannot be scoped to one table. Only single-row statements with no subquery
+# may carry it. release_credit_no_debt_statement must not: its tr_trust_event
+# subquery scans the workspace's whole event range, and an exclusive lock there
+# would serialize every settle of the workspace across its credit shards.
+EXCLUSIVE_SCAN_HINT = "@{LOCK_SCANNED_RANGES=EXCLUSIVE} "
+
 # reserve_key outcomes (the per-key spend-cap counterpart of reserve_credit).
 KEY_ACCEPTED = "accepted"  # hold taken (row-count 1)
 KEY_NO_HOLD = "no_hold"  # uncapped key, or BYOK excluded from the cap: proceed
@@ -66,16 +93,20 @@ KEY_MISSING = "missing"  # typed row absent -> fail closed (drift / not backfill
 
 
 def reserve_credit(
-    transaction: Any, param_types: Any, workspace_id: str, amount: int, *, shard: int = UNSHARDED
+    transaction: Any, param_types: Any, workspace_id: str, amount: int, *, shard: int = UNSHARDED,
+    exclusive: bool = True,
 ) -> bool:
     """Atomically reserve `amount` against the workspace credit balance.
 
     True = accepted (row-count 1); False = insufficient credits (row-count 0).
+    Pass exclusive=False when this is one probe among several shards
+    (EXCLUSIVE_SCAN_HINT says why).
     """
     # Static table name (literal, not interpolated) + bound params only.
     # A row marked in debt (section 4.7) refuses, as an exhausted one does.
     sql = (
-        "UPDATE tr_credit_balance SET reserved = reserved + @est "
+        ("@{LOCK_SCANNED_RANGES=EXCLUSIVE} " if exclusive else "")  # noqa: S608 - fixed clauses
+        + "UPDATE tr_credit_balance SET reserved = reserved + @est "
         "WHERE workspace_id=@ws AND shard=@shard "
         "AND (total_credits - total_usage - reserved) >= @est "
         "AND NOT COALESCE(in_debt, FALSE)"
@@ -107,7 +138,8 @@ def reserve_credit_statement(
         " AND COALESCE(ARRAY_LENGTH(billing_pause_causes), 0) = 0" if check_pause else ""
     )
     return (
-        "UPDATE tr_credit_balance SET reserved = reserved + @est "  # noqa: S608 - fixed clauses
+        "@{LOCK_SCANNED_RANGES=EXCLUSIVE} "  # noqa: S608 - fixed clauses
+        "UPDATE tr_credit_balance SET reserved = reserved + @est "
         "WHERE workspace_id=@ws AND shard=@shard "
         "AND (total_credits - total_usage - reserved) >= @est "
         "AND NOT COALESCE(in_debt, FALSE)" + pause_predicate,
@@ -117,17 +149,20 @@ def reserve_credit_statement(
 
 
 def reserve_credit_with_pause(
-    transaction: Any, param_types: Any, workspace_id: str, amount: int, *, shard: int = UNSHARDED
+    transaction: Any, param_types: Any, workspace_id: str, amount: int, *, shard: int = UNSHARDED,
+    exclusive: bool = True,
 ) -> tuple[bool, bool]:
     """Return (reserved, paused) from the affected credit row in one RPC.
 
     An empty result is insufficient credit, not pause evidence. The caller must
     finish its bounded shard search before applying the funded shard's verdict.
+    exclusive is reserve_credit's.
     """
     from trusted_router.trust_eligibility import billing_paused_row
 
     rows = list(transaction.execute_sql(
-        "UPDATE tr_credit_balance SET reserved = reserved + @est "
+        ("@{LOCK_SCANNED_RANGES=EXCLUSIVE} " if exclusive else "")  # noqa: S608 - fixed clauses
+        + "UPDATE tr_credit_balance SET reserved = reserved + @est "
         "WHERE workspace_id=@ws AND shard=@shard "
         "AND (total_credits - total_usage - reserved) >= @est "
         "AND NOT COALESCE(in_debt, FALSE) "
@@ -415,6 +450,10 @@ def release_credit_no_debt_statement(
     Match absorb_unrecovered_recovery_tx's workspace/payment debt predicate. A row
     marked in debt (section 4.7) matches nothing either: release_credit releases
     it, repaying the workspace's negative rows first.
+
+    No EXCLUSIVE_SCAN_HINT here: it would also lock the subquery's
+    tr_trust_event range exclusively (see the constant). Simultaneous settles
+    of one credit row therefore still take the shared lock and upgrade.
     """
     return (
         "UPDATE tr_credit_balance "
@@ -448,11 +487,16 @@ def _credit_shard_count_from_rows(
 
 def reserve_key_statement(
     param_types: Any, key_hash: str, amount: int, *, is_byok: bool,
-    shard: int = UNSHARDED,
+    shard: int = UNSHARDED, exclusive: bool = True,
 ) -> DmlStatement:
-    """The capped-key hold statement, shared by sequential and speculative DML."""
+    """The capped-key hold statement, shared by sequential and speculative DML.
+
+    Pass exclusive=False where the statement may match no row and the
+    transaction goes on (EXCLUSIVE_SCAN_HINT says why).
+    """
     sql = (
-        "UPDATE tr_key_limit SET reserved = reserved + @est "
+        ("@{LOCK_SCANNED_RANGES=EXCLUSIVE} " if exclusive else "")  # noqa: S608 - fixed clauses
+        + "UPDATE tr_key_limit SET reserved = reserved + @est "
         "WHERE key_hash=@kh AND shard=@shard AND limit_micro IS NOT NULL "
         "AND (@is_byok = FALSE OR include_byok = TRUE) "
         "AND (limit_micro - usage - IF(include_byok, byok_usage, 0) - reserved) >= @est"
@@ -477,6 +521,7 @@ def reserve_key(
     *,
     is_byok: bool,
     shard: int = UNSHARDED,
+    exclusive: bool = True,
 ) -> str:
     """Atomically reserve `amount` against the per-key spend cap.
 
@@ -489,7 +534,7 @@ def reserve_key(
     Returns one of KEY_ACCEPTED / KEY_NO_HOLD / KEY_INSUFFICIENT / KEY_MISSING.
     """
     sql, params, types = reserve_key_statement(
-        param_types, key_hash, amount, is_byok=is_byok, shard=shard,
+        param_types, key_hash, amount, is_byok=is_byok, shard=shard, exclusive=exclusive,
     )
     count = transaction.execute_update(sql, params=params, param_types=types)
     if count == 1:

@@ -31,6 +31,7 @@ counters out of the JSON blob into native `INT64` columns on dedicated tables,
 and replace each read-modify-write with a **single conditional DML**:
 
 ```sql
+@{LOCK_SCANNED_RANGES=EXCLUSIVE}
 UPDATE tr_credit_balance
    SET reserved = reserved + @est
  WHERE workspace_id=@ws AND shard=0
@@ -40,10 +41,34 @@ UPDATE tr_credit_balance
 `transaction.execute_update()` returns the exact modified-row count
 (verified on `google-cloud-spanner==3.65.0`): **1 = accepted, 0 = rejected**
 (insufficient) — disambiguated from "no such row / uncapped" by a cheap
-point-read only on the `0` path. The conditional UPDATE takes the row write
-lock **directly**, so the shared-read→exclusive-upgrade cycle that deadlocks
-today *cannot form*. Concurrent reservers serialize in microseconds; the loser
-re-evaluates the predicate against committed state.
+point-read only on the `0` path.
+
+**Correction, 2026-11-10.** This section used to say the conditional UPDATE
+takes the row write lock directly, so the shared-read→exclusive-upgrade cycle
+cannot form. That is false. A DML statement scans its `WHERE` clause under a
+shared lock (`ReaderShared`) and upgrades to `Exclusive` when it writes.
+Simultaneous transactions on one row each hold the shared lock and block each
+other's upgrade, and wound-wait aborts all but the oldest: the same cycle as
+the JSON read-modify-write, in one statement instead of two. It stayed hidden
+while holds were short and one row rarely saw many writers at once
+(`docs/incidents/2026-11-10-reserve-lock-upgrade-aborts.md`).
+
+The authorize-side reserves therefore carry the statement hint
+`@{LOCK_SCANNED_RANGES=EXCLUSIVE}`
+(`storage_gcp_counter_dml.EXCLUSIVE_SCAN_HINT`): the scan takes the exclusive
+lock at once, so reservers of one row queue for it and the loser re-evaluates
+the predicate against committed state. Two limits apply:
+
+- The hint covers every range its statement scans, subqueries included, so
+  only single-row statements with no subquery may carry it. The settle and
+  refund releases do not carry it yet (the one-commit credit release has a
+  `tr_trust_event` subquery) and still upgrade from a shared lock.
+- A hinted statement that matches no row still holds the exclusive lock until
+  its transaction ends. So a reserve carries the hint only where it is
+  expected to write and is the only counter row of its table the transaction
+  touches: the batch reserves, a sequential reserve with one shard candidate,
+  and a key reserve that is not BYOK. A sequential probe of several shards and
+  a BYOK key reserve scan under the shared lock as before.
 
 ### Why this over leases / ledger
 
@@ -169,13 +194,18 @@ the whole authorize decision in one transaction:
      authorization," not "execute again." (The route already returns
      `idempotent_replay`; the contract is that the caller resumes, not
      re-executes.)
+   Steps 2 and 3 show the hint. It is conditional: a reserve carries it only
+   where it is expected to write and is the only counter row of its table the
+   transaction touches (see the 2026-11-10 correction in section 2).
 2. **Credit balance** (CREDITS usage only):
-   `UPDATE tr_credit_balance SET reserved = reserved + @est
+   `@{LOCK_SCANNED_RANGES=EXCLUSIVE}
+    UPDATE tr_credit_balance SET reserved = reserved + @est
       WHERE workspace_id=@ws AND shard=@ws_shard
         AND (total_credits - total_usage - reserved) >= @est`.
    row-count 0 → insufficient credits → 402.
 3. **Key cap** (only if the key is capped and the hold applies — see BYOK):
-   `UPDATE tr_key_limit SET reserved = reserved + @est
+   `@{LOCK_SCANNED_RANGES=EXCLUSIVE}
+    UPDATE tr_key_limit SET reserved = reserved + @est
       WHERE key_hash=@kh AND shard=@ks AND limit_micro IS NOT NULL
         AND (limit_micro - usage - IF(include_byok, byok_usage, 0) - reserved) >= @est`.
    On **row-count 0**, classify with a point-read **inside the same
@@ -240,7 +270,8 @@ aborts of 3.1–4.5%/hour at about 40k transactions of each kind per hour. Lock
 wait totaled 6.7–9.4 thousand seconds/hour: 68–80% on one workspace's credit
 balances (64 evenly loaded shards), 20–31% on its key-limit windows. Conditional
 read/write UPDATEs acquire Exclusive locks on `reserved`/`total_usage` and key
-window cells. C1 already reduced lock wait from 8,974 to 6,817 seconds/hour and
+window cells (by upgrading a shared lock; since 2026-11-10 most reserves take
+the exclusive lock at the scan, see section 2). C1 already reduced lock wait from 8,974 to 6,817 seconds/hour and
 settle aborts to 3.08% by putting hot releases last in its batch; settle is
 unchanged here.
 
@@ -438,7 +469,8 @@ path.
 
 ## 7. Single-row write ceiling — measure, don't assume
 
-Typed DML removes the *deadlock*, not physics: one row tops out at
+Typed DML with an exclusive scan (section 2) removes the *upgrade aborts*
+on the reserve side, not physics: one row tops out at
 ~hundreds–low-thousands of conditional-UPDATE commits/sec (single-writer-per-
 commit + cross-region Paxos). One request ≈ two writes to the key row and (for
 credit routes) two to the credit row (reserve + settle/refund). **Before/after
@@ -474,6 +506,9 @@ Concurrency + correctness (extend `tests/test_storage_gcp_concurrency.py`,
   converted to a successful replay (never a 500); fingerprint mismatch → 4xx.
 - N concurrent same-key+same-workspace reserves on the uncapped 0-row path raise
   **no ABORTED** (the disambiguation read must not introduce a lock-upgrade).
+  The Spanner emulator runs one read-write transaction at a time, so it cannot
+  show an abort between simultaneous writers; production `SPANNER_SYS`
+  transaction and lock statistics are the evidence for that.
 
 InMemory store mirrors the same contracts so the suite runs without Spanner.
 

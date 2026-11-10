@@ -714,13 +714,19 @@ def authorize_atomic(
             selected_credit_shard = shard_candidates[0]
             credit_hold = hold
         elif has_credit_candidate:
+            # A miss holds an exclusive scan lock until the transaction ends,
+            # so only a lone candidate is locked that way: probers of several
+            # shards in different orders would wait on each other.
+            lone_shard = len(shard_candidates) == 1
             for candidate in shard_candidates:
                 if armed:
                     reserved, paused = reserve_credit_with_pause(
-                        transaction, pt, workspace_id, hold, shard=candidate,
+                        transaction, pt, workspace_id, hold, shard=candidate, exclusive=lone_shard,
                     )
                 else:
-                    reserved = reserve_credit(transaction, pt, workspace_id, hold, shard=candidate)
+                    reserved = reserve_credit(
+                        transaction, pt, workspace_id, hold, shard=candidate, exclusive=lone_shard,
+                    )
                 if reserved:
                     selected_credit_shard = candidate
                     break
@@ -780,6 +786,10 @@ def authorize_atomic(
                     estimate,
                     is_byok=is_byok,
                     shard=candidate,
+                    # A BYOK reserve on a key that excludes BYOK matches no
+                    # row on every request; it must not lock the row
+                    # exclusively until the commit. Nor may a multi-shard probe.
+                    exclusive=not is_byok and len(key_candidates) == 1,
                 )
                 if candidate_result == KEY_MISSING:
                     continue

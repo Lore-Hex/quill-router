@@ -15,6 +15,11 @@ from tests.fakes.spanner import _FakeTransaction
 
 StatementCalls = list[tuple[Any, str]]
 
+# The authorize-side reserves start with the exclusive-scan statement hint, as
+# recorded here: whitespace-normalized and lower-cased. The releases do not.
+RESERVE_CREDIT = "@{lock_scanned_ranges=exclusive} update tr_credit_balance set reserved = reserved + @est "
+RESERVE_KEY = "@{lock_scanned_ranges=exclusive} update tr_key_limit set reserved = reserved + @est "
+
 
 def record_statements(monkeypatch: pytest.MonkeyPatch) -> StatementCalls:
     calls: StatementCalls = []
