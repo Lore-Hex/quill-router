@@ -447,5 +447,18 @@
     }
   }
   button.addEventListener('click', run);
+  // The sentence to hand to an agent is selectable text; the button is a convenience.
+  document.querySelectorAll('[data-copy]').forEach(copy => {
+    if (!navigator.clipboard) return;
+    copy.hidden = false;
+    copy.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(document.getElementById(copy.dataset.copy).textContent);
+        copy.textContent = 'Copied';
+      } catch {
+        copy.textContent = 'Select the text to copy';
+      }
+    });
+  });
   run();
 })();

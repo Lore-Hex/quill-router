@@ -1,5 +1,12 @@
 /* Provider evidence pages. Loaded after badge.css, which supplies the shared tokens and shell. */
 :root{--ok:#8fd6a8;--wait:#d6bd7d;--bad:#e79a8b;--panel:#112219}
+.agent{display:grid;grid-template-columns:auto 1fr auto;gap:8px 24px;align-items:center;padding-block:18px;border-block:1px solid var(--line)}
+.agent .eyebrow{margin:0}
+.agent-prompt{min-width:0;font:13px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--ink);overflow-wrap:anywhere;user-select:all}
+.agent-copy{font:inherit;font-size:13px;padding:6px 14px;border-radius:6px;border:1px solid var(--line);background:transparent;color:var(--ink);cursor:pointer}
+.agent-copy:hover{background:var(--panel)}
+.agent-copy:focus-visible{outline:2px solid var(--ok);outline-offset:2px}
+@media(max-width:900px){.agent{grid-template-columns:1fr;justify-items:start}}
 .evidence-hero{align-items:start;padding-block:72px}
 .evidence-hero h1{font-size:clamp(46px,5.4vw,74px)}
 .evidence-hero .lead{max-width:520px}
