@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for SiliconFlow models whose live /v1/models feed is ahead of the shared snapshot. Verified against https://api.siliconflow.com/v1/models on 2026-06-22.",
   "provider": "siliconflow",
   "source": "https://api.siliconflow.com/v1/models",
-  "generated_at": "2026-11-10T11:25:01Z",
+  "generated_at": "2026-11-10T12:35:19Z",
   "model_count": 84,
   "models": [
     {
@@ -466,7 +466,9 @@
       "upstream_id": "google/gemma-4-12B-it",
       "input_token_price_per_m": 100000,
       "output_token_price_per_m": 300000,
-      "missing_since": "2026-11-10"
+      "missing_since": "2026-11-10",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "google/gemma-4-26B-A4B-it",
@@ -1385,7 +1387,7 @@
       "id": "wan-ai/wan2.2-i2v-a14b",
       "upstream_id": "Wan-AI/Wan2.2-I2V-A14B",
       "routable": false,
-      "routable_reason": "awaiting-price",
+      "routable_reason": "delisted-upstream",
       "unresolved_since": "2026-08-13",
       "missing_since": "2026-11-10"
     },
@@ -1406,7 +1408,7 @@
       "id": "wan-ai/wan2.2-t2v-a14b",
       "upstream_id": "Wan-AI/Wan2.2-T2V-A14B",
       "routable": false,
-      "routable_reason": "awaiting-price",
+      "routable_reason": "delisted-upstream",
       "unresolved_since": "2026-08-13",
       "missing_since": "2026-11-10"
     },
