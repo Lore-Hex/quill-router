@@ -107,7 +107,7 @@ locals {
   # 51e8fabc1: model/provider/workload ranking with stable speed bands and
   # a ZDR preference (#2436). The reader requires ranking.model_workload;
   # upgrade both nodes before relying on the new routing order in the edge.
-  fastpath_release        = "51e8fabc1c8003f56062947389a1ab807aa9bac2"
+  fastpath_release        = "2be22f1520f5921f33d1afb49d8e4d4354f71532"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
