@@ -16,7 +16,7 @@ from bs4 import BeautifulSoup, Tag
 from scripts.pricing.base import ModelPrice, PriceTier
 
 _MODEL = re.compile(
-    r"^Gemini (\d+(?:\.\d+)?) (Pro|Flash(?:[ -]Lite)?|Argon)( Preview| Cyber)?$", re.I
+    r"^Gemini (\d+(?:\.\d+)?) (Pro|Flash(?:[ -]Lite)?|Argon|Carbon)( Preview| Cyber)?$", re.I
 )
 _DATE = re.compile(r"\b(through|starting) ([A-Za-z]+ \d{1,2}, \d{4})\b", re.I)
 

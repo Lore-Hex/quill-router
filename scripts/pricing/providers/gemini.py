@@ -36,6 +36,7 @@ from scripts.pricing.base import (
     reconcile_manifest_tombstones,
     validate,
 )
+from scripts.pricing.gemini_prices import current_price_source
 from scripts.pricing.manifest import apply_canary_results, models_requiring_canary
 from trusted_router.speech import SPEECH_MODELS
 
@@ -60,7 +61,9 @@ EXPECTED_MODELS = [
     "google/gemini-3.7-flash",
 ]
 _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
-_STANDARD_TEXT_MODEL_RE = re.compile(r"^google/gemini-\d+(?:\.\d+)?-(?:pro|flash|flash-lite)$")
+_STANDARD_TEXT_MODEL_RE = re.compile(
+    r"^google/gemini-\d+(?:\.\d+)?-(?:pro|flash|flash-lite|argon|carbon)$"
+)
 
 
 def _positive_int(value: object) -> int | None:
@@ -280,6 +283,7 @@ def fetch() -> ProviderPricingResult:
         url=URL,
         expected_models=EXPECTED_MODELS,
         required_models=required_price_ids,
+        source_transform=current_price_source,
     )
     result.prices = {
         model_id: price for model_id, price in result.prices.items()

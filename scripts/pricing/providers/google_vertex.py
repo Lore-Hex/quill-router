@@ -33,7 +33,7 @@ MANIFEST_PATH = (
     Path(__file__).resolve().parents[3]
     / "src/trusted_router/data/provider_models/google-vertex.json"
 )
-_CHAT_ID = re.compile(r"^gemini-\d+(?:\.\d+)?-(?:pro|flash(?:-lite)?|argon)(?:-preview)?$")
+_CHAT_ID = re.compile(r"^gemini-\d+(?:\.\d+)?-(?:pro|flash(?:-lite)?|argon|carbon)(?:-preview)?$")
 _RECOVERABLE_HOLDS = frozenset(
     {
         "provider-canary-failed",
