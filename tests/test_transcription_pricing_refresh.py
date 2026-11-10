@@ -1,5 +1,5 @@
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
@@ -57,14 +57,44 @@ def url(model):
     return transcription.TRANSCRIPTION_MODELS[model].pricing_source
 
 
-def test_missing_deprecated_tariff_holds_only_mistral(sources, capsys):
-    path, pages, _ = sources
-    previous = json.loads(path.read_text())
-    # Reduced from Mistral's official 26.02 model page on 2026-11-01:
-    # the deprecated model's price is absent, not its successor's tariff.
-    pages[url("mistralai/voxtral-mini-2602")] = """<h1>Voxtral Mini Transcribe 2</h1>
+MISTRAL_DEPRECATED_MODELS = Path(__file__).parent / "fixtures/pricing/mistral_deprecated_models_2026-11-07.html"
+# Reduced from Mistral's official 26.02 model page on 2026-11-01: the
+# deprecated model's price is absent, not its successor's tariff.
+MISTRAL_DEPRECATED_PAGE = """<h1>Voxtral Mini Transcribe 2</h1>
     <p>voxtral-mini-2602</p><p>Deprecated</p><p>Deprecation date 10/31/2026</p>
     <a href="/models/voxtral-mini-transcribe-3-0">Voxtral Mini Transcribe 3</a>"""
+
+
+def test_deprecated_tariff_is_kept_while_mistral_schedules_retirement(sources, capsys, monkeypatch):
+    # Refresh run 42864346256 (2026-11-10) held all of Mistral for this page.
+    # Mistral's models page deprecates voxtral-mini-2602 on 10/31/2026 and
+    # retires it on 4/30/2027, the same treatment as Voxtral TTS 26.03.
+    path, pages, _ = sources
+    previous = json.loads(path.read_text())
+    pages[url("mistralai/voxtral-mini-2602")] = MISTRAL_DEPRECATED_PAGE
+    pages[transcription.MISTRAL_MODELS_URL] = MISTRAL_DEPRECATED_MODELS.read_text()
+    monkeypatch.setattr(transcription, "_today", lambda: date(2026, 11, 10))
+    assert transcription.refresh() == 0
+    after = json.loads(path.read_text())
+    assert after["minute_prices"]["mistralai/voxtral-mini-2602"] == previous["minute_prices"]["mistralai/voxtral-mini-2602"]
+    assert after["minute_prices"]["openai/whisper-1"] == 6500
+    output = capsys.readouterr().out
+    assert "Held for price review" not in output
+
+
+@pytest.mark.parametrize("change", ["no_lifecycle_row", "moved_retirement", "after_retirement", "before_deprecation"])
+def test_missing_deprecated_tariff_holds_only_mistral(sources, capsys, monkeypatch, change):
+    path, pages, _ = sources
+    previous = json.loads(path.read_text())
+    pages[url("mistralai/voxtral-mini-2602")] = MISTRAL_DEPRECATED_PAGE
+    lifecycle = MISTRAL_DEPRECATED_MODELS.read_text()
+    if change == "no_lifecycle_row":
+        lifecycle = lifecycle.replace("voxtral-mini-2602", "voxtral-mini-2699")
+    elif change == "moved_retirement":
+        lifecycle = lifecycle.replace("4/30/2027", "1/31/2027")
+    pages[transcription.MISTRAL_MODELS_URL] = lifecycle
+    today = {"after_retirement": date(2027, 4, 30), "before_deprecation": date(2026, 10, 30)}.get(change, date(2026, 11, 10))
+    monkeypatch.setattr(transcription, "_today", lambda: today)
     assert transcription.refresh() == 0
     after = json.loads(path.read_text())
     assert after["minute_prices"]["mistralai/voxtral-mini-2602"] == previous["minute_prices"]["mistralai/voxtral-mini-2602"]
@@ -73,8 +103,15 @@ def test_missing_deprecated_tariff_holds_only_mistral(sources, capsys):
     assert after["checked_on"] == previous["checked_on"]
     output = capsys.readouterr().out
     assert "Held for price review (last published prices kept):" in output
-    assert "mistral" in output
-    assert "Missing or conflicting transcription tariff" in output
+    assert "  mistral: refresh failed: ValueError: " in output
+
+
+def test_other_missing_tariffs_still_hold(sources, capsys):
+    # Only the scheduled Mistral deprecation may keep a committed price.
+    path, pages, _ = sources
+    pages[url("openai/whisper-1")] = "Whisper pricing moved"
+    assert transcription.refresh() == 0
+    assert "  openai: refresh failed: ValueError: Missing or conflicting transcription tariff" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("price", ["0.012", "0.003"])

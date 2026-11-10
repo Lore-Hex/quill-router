@@ -62,6 +62,10 @@ _NATIVE_TO_OR_ID = {
     # native ID explicit prevents a future generic-id normalization change
     # from silently dropping this confidential route.
     "kimi-k3": "moonshotai/kimi-k3",
+    # Tinfoil's November 5 notice names kimi-k3-1-pro as kimi-k3's
+    # replacement (kimi-k3 retires 2026-11-12). Tinfoil spells the version
+    # with dashes, so the generic normalization cannot map it.
+    "kimi-k3-1-pro": "moonshotai/kimi-k3.1-pro",
     "glm-5-1": "z-ai/glm-5.1",
     "glm-5-2": "z-ai/glm-5.2",
     "glm-5-3": "z-ai/glm-5.3",

@@ -43,6 +43,15 @@ EXPECTED_MODELS = [
 
 _DISCOVERED_ROWS: dict[str, dict[str, Any]] = {}
 
+
+def _active_expected_models() -> list[str]:
+    """Expected models Nebius has not retired; fetch() skips retired ones.
+
+    Without this, the 2026-11-09 retirements (#2202) failed every refresh
+    from that date: DeepSeek-V4-Pro and GLM-5.1 can never be discovered again.
+    """
+    return [model for model in EXPECTED_MODELS if not provider_model_retired(SLUG, model, model)]
+
 _NATIVE_TO_CANONICAL = {
     # Nebius added this spelling after the same model was already published
     # under TrustedRouter's canonical cross-provider ID. Keep the native ID
@@ -193,7 +202,7 @@ def fetch() -> ProviderPricingResult:
         )
 
     _DISCOVERED_ROWS = discovered
-    missing = sorted(set(EXPECTED_MODELS) - set(prices))
+    missing = sorted(set(_active_expected_models()) - set(prices))
     if missing:
         raise RuntimeError(f"nebius missing expected model(s): {missing}")
     return ProviderPricingResult(slug=SLUG, prices=prices, source="api", fetched_url=URL)
@@ -240,7 +249,7 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         row["output_token_price_per_m"] = price.completion_micro_per_m
         updated.append(model_id)
 
-    missing = sorted(set(EXPECTED_MODELS) - set(updated))
+    missing = sorted(set(_active_expected_models()) - set(updated))
     if missing:
         raise RuntimeError(f"nebius manifest did not update expected model(s): {missing}")
 

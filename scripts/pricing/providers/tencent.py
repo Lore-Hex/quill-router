@@ -35,6 +35,7 @@ _PRICE_HEADERS = [
     "Input Tokens (USD / million tokens)", "Output Tokens (USD / million tokens)",
     "Cache (USD / million tokens)",
 ]
+_API_PARAMETER_HEADER = "Model (API Parameter)"
 _CACHE_WRITE_HEADERS = [
     "Cache Write - 5min (USD / million tokens)", "Cache Write - 1h (USD / million tokens)",
 ]
@@ -152,6 +153,11 @@ def _singapore_table(html: str) -> Tag:
 
 def parse_prices(html: str) -> dict[str, ModelPrice]:
     rows = _rows(_singapore_table(html))
+    # Tencent added the API model parameter as the second column on
+    # 2026-11-10. Rows stay keyed by display name, which the capability
+    # table maps to native IDs; drop only that exact column.
+    if rows and rows[0][:2] == ["Model Name", _API_PARAMETER_HEADER]:
+        rows = [row[:1] + row[2:] for row in rows]
     if not rows or rows[0] not in (_PRICE_HEADERS, _PRICE_HEADERS + _CACHE_WRITE_HEADERS):
         raise ValueError("tencent: unexpected pricing columns, currency or units")
     grouped: dict[str, list[tuple[str, str, PriceTier]]] = {}

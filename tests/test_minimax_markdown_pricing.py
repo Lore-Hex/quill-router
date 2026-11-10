@@ -45,6 +45,22 @@ def test_blockquoted_standard_tiers_never_use_priority_prices(
     assert prices["minimax/minimax-m3.1-flash"].prompt_micro_per_m == 170_000
 
 
+IMAGE_STANDARD = (
+    "## Image\n\n### Example cost per generated image\n\n> [tab] Standard\n>\n"
+    "> | Resolution | Price |\n> | :- | :-: |\n> | 1024x1024 | \\$0.0035 |\n\n"
+    "> [tab] Highspeed\n>\n> | Resolution | Price |\n> | 1024x1024 | \\$0.007 |\n"
+)
+
+
+def test_image_standard_tab_does_not_hide_llm_tiers() -> None:
+    # Refresh run 42864346256 (2026-11-10) held MiniMax: the Image section's
+    # new "[tab] Standard" made the Standard tab ambiguous, so M3 went unpriced.
+    page = FLASH + "\n\n## LLM\n\n" + _standard(LOW, HIGH) + "\n\n" + PRIORITY + "\n\n## Video\n\n" + IMAGE_STANDARD
+    prices, errors = _coerce_to_model_prices(parser.parse(normalize_parser_input(page)))
+    assert not errors and prices is not None
+    assert [t.prompt_micro_per_m for t in prices["minimax/minimax-m3"].tiers] == [320_000, 640_000]
+
+
 @pytest.mark.parametrize("page", [
     PRIORITY,
     _standard(LOW) + "\n" + PRIORITY,
