@@ -302,14 +302,19 @@ nothing. Read the instance's own log lines from
 `trusted_router.storage_gcp_transport_watch` for the window:
 
 - `spanner channel state=… previous=… previous_ms=…` on every connectivity
-  transition of the main store's channel.
-- `spanner credential refresh ok|failed … elapsed_ms=… inline=…` for every
-  access-token refresh. `inline=True` means an RPC waited on it.
+  transition of the main store's channel that gRPC reports.
+- `spanner credential refresh ok|failed … elapsed_ms=… inline=…` for
+  access-token refreshes: every slow or failed one, quick ones at most once
+  every five seconds. `inline=True` means an RPC waited on it.
 
 No channel line during the stall and a reconnect as it ends means the
-connection stopped answering until keepalive replaced it. The channel `READY`
-throughout with a failed or slow refresh means the metadata server did not
-answer. Neither means the stall is somewhere these lines do not see. The
+connection stopped answering until gRPC replaced it. No channel transition
+logged, with a failed or slow refresh, means the metadata server did not
+answer. Neither means the stall is somewhere these lines do not see.
+
+google-auth and gRPC write to their own loggers, which reach neither Cloud
+Run logs nor the log shipper. Their WARNING records do reach Sentry Logs:
+search the window there by logger name (`google.auth*`, `grpc*`). The
 [November 10 report](incidents/2026-11-10-one-instance-spanner-stall.md) has
 the full table and what the watch does not cover.
 

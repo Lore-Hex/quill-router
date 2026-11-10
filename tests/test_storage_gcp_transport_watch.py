@@ -223,16 +223,80 @@ def test_refresh_failures_are_reported_every_few_seconds_with_a_count(
         fail()
         clock.now -= 30.0
         fail()
-        clock.now += watch.FAILURE_LOG_INTERVAL_SECONDS
+        clock.now += 5.0
+        fail()
+        clock.now += 5.0  # the count starts again with each line
         fail()
 
+    assert watch.LOG_INTERVAL_SECONDS == 5.0
     assert _messages(caplog) == [
         "spanner credential refresh failed error_class=TimeoutError elapsed_ms=30000 "
         "inline=True suppressed=0 client=primary",
         "spanner credential refresh failed error_class=TimeoutError elapsed_ms=30000 "
         "inline=True suppressed=2 client=primary",
+        "spanner credential refresh failed error_class=TimeoutError elapsed_ms=30000 "
+        "inline=True suppressed=0 client=primary",
     ]
     assert all(record.levelno == logging.WARNING for record in caplog.records)
+    assert "private" not in caplog.text
+
+
+def test_quick_refreshes_are_throttled_and_a_slow_one_never_is(caplog: Any, clock: _Clock) -> None:
+    """A token that comes back inside its refresh window refreshes on every RPC."""
+    took = [0.01, 0.01, 0.01, 2.0, 0.01]
+
+    def refresh(_request: Any) -> None:
+        clock.now += took.pop(0)
+
+    timed = watch._TimedRefresh(SimpleNamespace(expiry=None), refresh, "primary")
+    with caplog.at_level(logging.INFO, logger=LOGGER):
+        timed(object())
+        timed(object())
+        timed(object())
+        timed(object())  # slow, inside the interval
+        clock.now += 5.0
+        timed(object())
+
+    assert [(record.levelno, record.getMessage()) for record in caplog.records] == [
+        (
+            logging.INFO,
+            "spanner credential refresh ok elapsed_ms=10 inline=True ttl_s=-1 "
+            "suppressed=0 client=primary",
+        ),
+        (
+            logging.WARNING,
+            "spanner credential refresh ok elapsed_ms=2000 inline=True ttl_s=-1 "
+            "suppressed=0 client=primary",
+        ),
+        (
+            logging.INFO,
+            "spanner credential refresh ok elapsed_ms=10 inline=True ttl_s=-1 "
+            "suppressed=2 client=primary",
+        ),
+    ]
+
+
+def test_broken_telemetry_changes_nothing_about_the_refresh(caplog: Any, monkeypatch: Any) -> None:
+    """Only the refresh's own outcome reaches the RPC that asked for it."""
+
+    def broken() -> bool:
+        raise RuntimeError(PRIVATE_TEXT)
+
+    monkeypatch.setattr(watch, "_inline", broken)
+    control = _RefreshControl()
+    credentials = _Credentials(control)
+    with caplog.at_level(logging.INFO, logger=LOGGER):
+        watch.watch_spanner_transport(_database(credentials))
+        assert _authorization(credentials) == "Bearer token-1"
+
+        control.error = TimeoutError("the refresh's own error")
+        credentials.expiry = _helpers.utcnow() - datetime.timedelta(seconds=1)
+        with pytest.raises(TimeoutError, match="the refresh's own error"):
+            _authorization(credentials)
+
+    assert control.count == 1
+    assert not [m for m in _messages(caplog) if m.startswith("spanner credential refresh ok")]
+    assert not [m for m in _messages(caplog) if "failed" in m]
     assert "private" not in caplog.text
 
 
@@ -250,11 +314,13 @@ def test_slow_refresh_is_a_warning_and_a_quick_one_is_not(caplog: Any, clock: _C
     assert [(record.levelno, record.getMessage()) for record in caplog.records] == [
         (
             logging.INFO,
-            "spanner credential refresh ok elapsed_ms=250 inline=True ttl_s=-1 client=primary",
+            "spanner credential refresh ok elapsed_ms=250 inline=True ttl_s=-1 "
+            "suppressed=0 client=primary",
         ),
         (
             logging.WARNING,
-            "spanner credential refresh ok elapsed_ms=1000 inline=True ttl_s=-1 client=primary",
+            "spanner credential refresh ok elapsed_ms=1000 inline=True ttl_s=-1 "
+            "suppressed=0 client=primary",
         ),
     ]
 
