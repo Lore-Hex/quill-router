@@ -596,6 +596,7 @@ class _FakeTransaction:
             assert rpc_options["request_options"] == {"priority": "PRIORITY_LOW"}
         self.db.transaction_execute_sql_calls += 1
         self._refuse_after_commit_timestamp(sql)
+        sql = _without_scan_hint(sql)
         if sql.startswith("UPDATE tr_credit_balance SET reserved = reserved + @est"):
             if not sql.endswith(" THEN RETURN billing_pause_causes, pause_epoch"):
                 raise ValueError("DML rows require the registered THEN RETURN columns")
@@ -866,6 +867,7 @@ class _FakeTransaction:
             )
         self._did_dml = True
         self._refuse_after_commit_timestamp(sql)
+        sql = _without_scan_hint(sql)
         p = params or {}
         if sql.startswith("UPDATE tr_credit_balance SET total_credits = total_credits + @delta"):
             # storage_gcp_credit_debt's move: conditional on the headroom the
@@ -2579,6 +2581,23 @@ def _require_lease_statement(sql: str, marker: str) -> None:
     assert " ".join(sql.split()) == expected, (
         f"fake spanner executes only the registered {marker} statement, whole; got {sql!r}"
     )
+
+
+_EXCLUSIVE_SCAN_HINT = "@{LOCK_SCANNED_RANGES=EXCLUSIVE} "
+
+
+def _without_scan_hint(sql: str) -> str:
+    """The statement without its leading exclusive-scan hint.
+
+    Spanner applies the hint to every range the statement scans, subqueries
+    included. Refuse it on a statement with a subquery so a hint that would
+    lock a second table's range FAILS a test instead of passing unnoticed."""
+    if not sql.startswith(_EXCLUSIVE_SCAN_HINT):
+        return sql
+    body = sql[len(_EXCLUSIVE_SCAN_HINT):]
+    if "SELECT" in body.upper():
+        raise AssertionError("exclusive-scan hint on a statement with a subquery")
+    return body
 
 
 def _require_pred(sql: str, needle: str, what: str) -> None:

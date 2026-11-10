@@ -12,6 +12,7 @@ from trusted_router.spend_windows import (
     window_floors,
 )
 from trusted_router.storage_gcp_counter_dml import (
+    EXCLUSIVE_SCAN_HINT,
     KEY_ACCEPTED,
     KEY_INSUFFICIENT,
     KEY_MISSING,
@@ -28,6 +29,7 @@ def reserve_strict_key(
     # the new window. Settlement releases the hold and books actual usage in
     # its current UTC windows using the existing exactly-once reservation.
     sql = (
+        f"{EXCLUSIVE_SCAN_HINT}"  # noqa: S608 - fixed clauses
         "UPDATE tr_key_limit SET reserved = reserved + @est "
         "WHERE key_hash=@kh AND shard=0 "
         "AND (@is_byok=FALSE OR include_byok=TRUE) "

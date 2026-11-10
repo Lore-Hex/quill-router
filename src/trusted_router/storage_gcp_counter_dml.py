@@ -2,18 +2,24 @@
 
 See docs/design/billing-typed-counters.md.
 
-This is the deadlock fix. Instead of read-modify-write (a shared read lock that
-upgrades to exclusive -> wound-wait deadlock under per-tenant concurrency), each
-reserve is a SINGLE conditional UPDATE that takes the row write lock directly and
-atomically checks-and-decrements:
+Instead of a separate read followed by a write, each reserve is a SINGLE
+conditional UPDATE that atomically checks-and-decrements:
 
+    @{LOCK_SCANNED_RANGES=EXCLUSIVE}
     UPDATE tr_credit_balance SET reserved = reserved + @est
      WHERE workspace_id=@ws AND shard=@shard
        AND (total_credits - total_usage - reserved) >= @est
 
 ``execute_update()`` returns the modified-row count: 1 = accepted, 0 = rejected
-(insufficient). Concurrent reservers serialize on the row write lock instead of
-deadlocking; the predicate re-evaluates against committed state.
+(insufficient). The predicate re-evaluates against committed state.
+
+A conditional UPDATE does NOT take the row write lock directly. Its scan takes
+a shared lock and the write upgrades it, so N transactions on one row each hold
+the shared lock, block each other's upgrade, and wound-wait aborts all but the
+oldest: a burst of N costs on the order of N*N aborts (the 2026-11-10 incident,
+docs/incidents/2026-11-10-reserve-lock-upgrade-aborts.md). The statement hint
+makes the scan take the exclusive lock at once, so concurrent reservers of one
+row queue instead. See EXCLUSIVE_SCAN_HINT for which statements carry it.
 
 Standard DML only (NOT partitioned DML); these run inside ``run_in_transaction``
 so ABORTED is retried. They must NOT be mixed with Spanner mutations in the same
@@ -58,6 +64,18 @@ _COMPLETE_RESERVATION_RETENTION_GUARDED_SQL = (
     f"AND o.status IN ({_OUTBOX_GUARD_STATUS_SQL}))"
 )
 
+# Statement hint for the authorize-side reserves: the scan takes the row's
+# exclusive lock at once instead of a shared lock it must upgrade, so writers of
+# one hot row queue rather than abort each other. It is a hint, not a mutex:
+# wound-wait still aborts a younger holder an older transaction waits on.
+#
+# The hint covers EVERY range its statement scans, subqueries included, and
+# cannot be scoped to one table. Only single-row statements with no subquery
+# may carry it. release_credit_no_debt_statement must not: its tr_trust_event
+# subquery scans the workspace's whole event range, and an exclusive lock there
+# would serialize every settle of the workspace across its credit shards.
+EXCLUSIVE_SCAN_HINT = "@{LOCK_SCANNED_RANGES=EXCLUSIVE} "
+
 # reserve_key outcomes (the per-key spend-cap counterpart of reserve_credit).
 KEY_ACCEPTED = "accepted"  # hold taken (row-count 1)
 KEY_NO_HOLD = "no_hold"  # uncapped key, or BYOK excluded from the cap: proceed
@@ -75,6 +93,7 @@ def reserve_credit(
     # Static table name (literal, not interpolated) + bound params only.
     # A row marked in debt (section 4.7) refuses, as an exhausted one does.
     sql = (
+        f"{EXCLUSIVE_SCAN_HINT}"  # noqa: S608 - fixed clauses
         "UPDATE tr_credit_balance SET reserved = reserved + @est "
         "WHERE workspace_id=@ws AND shard=@shard "
         "AND (total_credits - total_usage - reserved) >= @est "
@@ -107,7 +126,8 @@ def reserve_credit_statement(
         " AND COALESCE(ARRAY_LENGTH(billing_pause_causes), 0) = 0" if check_pause else ""
     )
     return (
-        "UPDATE tr_credit_balance SET reserved = reserved + @est "  # noqa: S608 - fixed clauses
+        f"{EXCLUSIVE_SCAN_HINT}"  # noqa: S608 - fixed clauses
+        "UPDATE tr_credit_balance SET reserved = reserved + @est "
         "WHERE workspace_id=@ws AND shard=@shard "
         "AND (total_credits - total_usage - reserved) >= @est "
         "AND NOT COALESCE(in_debt, FALSE)" + pause_predicate,
@@ -127,6 +147,7 @@ def reserve_credit_with_pause(
     from trusted_router.trust_eligibility import billing_paused_row
 
     rows = list(transaction.execute_sql(
+        f"{EXCLUSIVE_SCAN_HINT}"  # noqa: S608 - fixed clauses
         "UPDATE tr_credit_balance SET reserved = reserved + @est "
         "WHERE workspace_id=@ws AND shard=@shard "
         "AND (total_credits - total_usage - reserved) >= @est "
@@ -415,6 +436,10 @@ def release_credit_no_debt_statement(
     Match absorb_unrecovered_recovery_tx's workspace/payment debt predicate. A row
     marked in debt (section 4.7) matches nothing either: release_credit releases
     it, repaying the workspace's negative rows first.
+
+    No EXCLUSIVE_SCAN_HINT here: it would also lock the subquery's
+    tr_trust_event range exclusively (see the constant). Simultaneous settles
+    of one credit row therefore still take the shared lock and upgrade.
     """
     return (
         "UPDATE tr_credit_balance "
@@ -452,6 +477,7 @@ def reserve_key_statement(
 ) -> DmlStatement:
     """The capped-key hold statement, shared by sequential and speculative DML."""
     sql = (
+        f"{EXCLUSIVE_SCAN_HINT}"  # noqa: S608 - fixed clauses
         "UPDATE tr_key_limit SET reserved = reserved + @est "
         "WHERE key_hash=@kh AND shard=@shard AND limit_micro IS NOT NULL "
         "AND (@is_byok = FALSE OR include_byok = TRUE) "

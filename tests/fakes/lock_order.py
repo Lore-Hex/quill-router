@@ -193,7 +193,12 @@ def locked_relations(sql: str, *, read_locks: bool = False) -> set[str]:
                 end += 1
         return locked, sources
 
-    return scope(_tokens(str(sql)), {})[0]
+    tokens = _tokens(str(sql))
+    # A GoogleSQL statement hint (@{...}) precedes the statement keyword. Left
+    # in place it hides the write target, and the guard records nothing.
+    if tokens[:2] == ["@", "{"] and "}" in tokens:
+        tokens = tokens[tokens.index("}") + 1:]
+    return scope(tokens, {})[0]
 
 
 class LockOrderError(AssertionError):

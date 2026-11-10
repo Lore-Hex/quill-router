@@ -23,6 +23,8 @@ from trusted_router.storage_gcp_authorize import SettleOutcome, settle_atomic
 from trusted_router.storage_gcp_counters import KEY_LIMIT_TABLE
 
 RESERVE_SQL = (
+    # Exclusive from the scan: reservers of one key row queue, never upgrade.
+    "@{LOCK_SCANNED_RANGES=EXCLUSIVE} "
     "UPDATE tr_key_limit SET reserved = reserved + @est "
     "WHERE key_hash=@kh AND shard=@shard AND limit_micro IS NOT NULL "
     "AND (@is_byok = FALSE OR include_byok = TRUE) "

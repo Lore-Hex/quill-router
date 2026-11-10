@@ -20,6 +20,7 @@ from tests.test_authorize_speculative_batch import _options
 from tests.test_spanner_batch_dml import NOW, _database, _state
 from trusted_router import storage_gcp_authorize as current
 from trusted_router import storage_gcp_strict_budget
+from trusted_router.storage_gcp_counter_dml import EXCLUSIVE_SCAN_HINT
 
 # Digests from git show 6e793645, independent of the working oracle source.
 PARENT_AST_SHA256 = {'authorize_atomic': 'feacd422efb011b89ac8320046b9ce232130c83b3e37980c2035d7ac5fc29740', 'reserve_credit': '1bc9be9a2b5bdcfe000985ad94aa2ae5eb869e9ad1294b8256223703f2ee303f', 'reserve_credit_with_pause': 'd893f82d26f936e20a0aee14a93aaf41af068739ba3807003d9d1b030bf0cf39', 'reserve_key_statement': '77cf28c602a6e9719bdcdff05ee6813f25e243c86e58e17ab7b6e56de96a2f04', 'reserve_key': '6bc7eb1871ca31710d621e270758b2f14535e1ffd6a68cf7f49ba20157a41b62'}
@@ -171,6 +172,7 @@ def run_case(module, case, abort_at=None, sequential=False):
 
 
 _CREDIT_RESERVE = 'UPDATE tr_credit_balance SET reserved = reserved + @est '
+_KEY_RESERVE = 'UPDATE tr_key_limit SET reserved = reserved + @est '
 _NOT_MARKED = ' AND NOT COALESCE(in_debt, FALSE)'
 
 
@@ -182,6 +184,10 @@ def _with_debt_mark(statement):
     if sql.startswith(_CREDIT_RESERVE) and _NOT_MARKED not in sql:
         head, at, tail = sql.partition('>= @est')
         sql = head + at + _NOT_MARKED + tail
+    # Main's reserves predate the exclusive-scan hint; every reserve of a
+    # credit or key row now carries it, and nothing else does.
+    if sql.startswith((_CREDIT_RESERVE, _KEY_RESERVE)):
+        sql = EXCLUSIVE_SCAN_HINT + sql
     return sql if isinstance(statement, str) else (sql, *rest)
 
 
@@ -232,7 +238,7 @@ def test_frozen_main_matrix(hold_trace, case):
         # Rollback before any classification RPC, even when INSERTs ran.
         assert [e[0] for e in db.hold_traces[0]] == ['sql', 'batch', 'rollback']
         batch = db.hold_traces[0][1][1]
-        assert batch[0][0].startswith('UPDATE tr_credit_balance')
+        assert batch[0][0].startswith(EXCLUSIVE_SCAN_HINT + 'UPDATE tr_credit_balance')
         assert len(batch) == (4 if case[2] == 'speculative' else 3)
         assert db.hold_traces[1:] == expected[1:]
     else:
@@ -264,7 +270,8 @@ def test_only_commit_after_first_credit_write(hold_trace, armed, shape):
         assert len(db.hold_traces) == 1
         trace = db.hold_traces[0]
         first_write = next(i for i, (_, statements) in enumerate(trace)
-                           if any(sql.startswith('UPDATE tr_credit_balance') for sql, _, _ in statements))
+                           if any(sql.removeprefix(EXCLUSIVE_SCAN_HINT).startswith('UPDATE tr_credit_balance')
+                                  for sql, _, _ in statements))
         assert len(trace) - first_write - 1 == after
         assert trace[-1] == ('commit', [])
         assert trace[0][1][0][0].startswith('SELECT reservation_id')
