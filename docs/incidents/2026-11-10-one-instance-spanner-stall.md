@@ -76,8 +76,9 @@ google-auth and gRPC report through their own loggers. Those reach neither
 Cloud Run logs (the control plane attaches its console handler to the
 `trusted_router` logger only) nor the log shipper (it drops the `google` and
 `grpc` namespaces). Their WARNING records are forwarded to Sentry Logs, with
-a limiter in each process of three records per distinct message and 50 per
-hour.
+a limiter in each process of 50 records per hour. A cap of three per distinct
+message is also configured, but it does not bind for log records: each one
+carries its own timestamp, so no two count as the same message.
 
 google-auth logs a warning for each metadata-server attempt that fails, three
 seconds after the attempt starts. So a hung refresh would have produced one
@@ -159,7 +160,7 @@ deadlines:
 
 | Seen in the instance's logs | Reading |
 |---|---|
-| No `spanner channel state` line during the stall, then a transition away from `READY` and back as it ends | The connection stopped answering and gRPC replaced it. `previous_ms` on the line that leaves `READY`, against the time of the last good request, says how long gRPC took. |
+| No `spanner channel state` line during the stall, then a transition away from `READY` and back as it ends | The connection stopped answering and was replaced. `previous_ms` on the line that leaves `READY`, against the time of the last good request, says how long that took. |
 | No channel transition logged, with `spanner credential refresh failed` or a slow `ok` line, `elapsed_ms` in the tens of thousands | The refresh hung. |
 | No channel transition logged and no refresh line | Neither candidate. The stall is above the transport or below the connection in a way these lines do not see. |
 

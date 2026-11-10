@@ -308,7 +308,7 @@ nothing. Read the instance's own log lines from
   every five seconds. `inline=True` means an RPC waited on it.
 
 No channel line during the stall and a reconnect as it ends means the
-connection stopped answering until gRPC replaced it. No channel transition
+connection stopped answering until it was replaced. No channel transition
 logged, with a failed or slow refresh, means the metadata server did not
 answer. Neither means the stall is somewhere these lines do not see.
 
