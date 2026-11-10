@@ -191,6 +191,10 @@ type AsyncSettle struct {
 	// (docs/design/fast-admission-e2-g15-async.md section 4.5): Python
 	// answers a workspace it names as with admission off, so the edge
 	// composes that answer. Absent excludes none. Admits reads it.
+	// With fastpath_pilot_all and no AdmissionWorkspaces it is Python's
+	// reserved list (docs/design/fast-admission-widening.md section 9.1):
+	// the only workspaces whose async-v1 authorizes the edge answers, every
+	// other workspace's being Python's to ticket.
 	AdmissionExcludedWorkspaces *[]string `json:"admission_excluded_workspaces,omitempty"`
 	// TicketAuthority is whether the publisher holds a ticket signer, an
 	// authority epoch of at least 1 and a non-empty journal region.

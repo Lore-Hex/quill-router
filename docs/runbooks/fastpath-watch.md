@@ -208,7 +208,11 @@ lines, summed, are its counts. It prints JSON:
   `async_settle.admission_workspaces` absent or naming it, and
   `async_settle.admission_excluded_workspaces`, the fast-path workspaces
   outside `TR_ASYNC_SETTLE_FASTPATH_OVERLAP_WORKSPACES`, not naming it;
-  G15 section 4.5). A workspace the members leave out is composed and
+  G15 section 4.5). In all mode with an empty
+  `TR_ASYNC_SETTLE_PILOT_WORKSPACES` the excluded member is
+  `TR_ASYNC_SETTLE_FASTPATH_RESERVED_WORKSPACES` and every other
+  workspace's async-v1 authorize passes (the widening's section 9.1).
+  A workspace the members leave out is composed and
   compared as with admission off, since Python answers it without a
   ticket. Because the admission gate
   needs the key, an async-v1 request whose key the cache cannot answer

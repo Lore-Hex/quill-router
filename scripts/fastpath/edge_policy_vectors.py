@@ -22,7 +22,9 @@ the members' other spellings, refused by both readers, with all-mode rows
 (docs/design/fast-admission-widening.md section 9, PR 5): the same
 combinations with the explicit fast-path set empty and every async pilot
 workspace outside the overlap list on the exclude list, as the settings
-require, and the all-mode golden files (sections 6.3 and 11, PR 3) to
+require, each with and without a reserved list (section 9.1: with the async
+pilot set empty, every workspace is admitted but the reserved list's), and
+the all-mode golden files (sections 6.3 and 11, PR 3) to
 fastpath/testdata/edge_policy_all_v1.{body,manifest}.json: the publisher's
 body from the golden settings in all mode (fastpath_pilot_all and
 fastpath_pilot_exclude, the explicit list emptied), signed alike, and the
@@ -245,6 +247,11 @@ ADMISSION_PROBES = ("ws-synthetic-async-a", "ws-synthetic-neither", "ws-syntheti
 ADMISSION_PILOTS = ("", "ws-synthetic-async-a", "ws-synthetic-async-a,ws-synthetic-pilot-1",
                     "ws-synthetic-pilot-1,ws-synthetic-pilot-2")
 ADMISSION_OVERLAPS = ("", "ws-synthetic-pilot-1")
+# All mode's reserved lists (docs/design/fast-admission-widening.md section
+# 9.1): with a named async pilot set, none or one workspace outside it; with
+# the pilot set empty, also a list of two, given unsorted.
+ADMISSION_RESERVED = ("", "ws-synthetic-neither")
+ADMISSION_RESERVED_NO_PILOTS = (*ADMISSION_RESERVED, "ws-synthetic-pilot-2,ws-synthetic-neither")
 # The members' spellings the publisher never writes, each refused by both
 # readers, spliced into the async_settle object of the all-workspaces body
 # (admission on, no pilot set, no fast-path set), and one into the
@@ -261,11 +268,13 @@ ADMISSION_OFF_REFUSED = ("excluded_admission_off", '"admission_excluded_workspac
 
 
 def admission_settings(admission: bool, pilots: str, overlap: str, fastpath: str,
-                       exclude: str | None = None) -> Settings:
+                       exclude: str | None = None, reserved: str = "") -> Settings:
     """The admission settings; with ``exclude`` set, all mode (the explicit
-    fast-path set then empty, and the typed Spanner store it requires)."""
+    fast-path set then empty, and the typed Spanner store it requires), and
+    ``reserved`` its reserved list."""
     pilot_all = {} if exclude is None else dict(
-        fastpath_pilot_all=True, fastpath_pilot_exclude=exclude, storage_backend="spanner-clickhouse")
+        fastpath_pilot_all=True, fastpath_pilot_exclude=exclude, storage_backend="spanner-clickhouse",
+        async_settle_fastpath_reserved_workspaces=reserved)
     return fixture_settings(
         async_settle_enabled=admission, async_settle_protection=admission,
         async_settle_pilot_workspaces=pilots, async_settle_fastpath_overlap_workspaces=overlap,
@@ -279,11 +288,13 @@ def all_mode_exclude(pilots: str, overlap: str) -> str:
     return ",".join(sorted({ws for ws in pilots.split(",") if ws} - {ws for ws in overlap.split(",") if ws}))
 
 
-def admission_all_mode_combinations() -> list[tuple[bool, str, str]]:
-    """(admission, pilots, overlap) for the all-mode rows: every combination
-    but admission on with no async pilot set, which the settings refuse."""
-    return [(admission, pilots, overlap) for admission in (False, True) for pilots in ADMISSION_PILOTS
-            for overlap in ADMISSION_OVERLAPS if not (admission and not pilots)]
+def admission_all_mode_combinations() -> list[tuple[bool, str, str, str]]:
+    """(admission, pilots, overlap, reserved) for the all-mode rows: every
+    combination, the empty async pilot set with admission on among them
+    (section 9.1: every workspace admitted but the reserved list)."""
+    return [(admission, pilots, overlap, reserved) for admission in (False, True) for pilots in ADMISSION_PILOTS
+            for overlap in ADMISSION_OVERLAPS
+            for reserved in (ADMISSION_RESERVED if pilots else ADMISSION_RESERVED_NO_PILOTS)]
 
 
 def _spliced(settings: Settings, members: str) -> str:
@@ -318,17 +329,18 @@ def admission_cases() -> list[dict[str, object]]:
                         "accept": True, "admits": admits,
                     })
     # All mode: ws-synthetic-neither stands for a workspace the enabler turns
-    # on (covered, on no list), which async admission must leave out.
-    for admission, pilots, overlap in admission_all_mode_combinations():
+    # on (covered, on no list). A named async pilot set leaves it out; an
+    # empty one admits it unless the reserved list names it.
+    for admission, pilots, overlap, reserved in admission_all_mode_combinations():
         exclude = all_mode_exclude(pilots, overlap)
-        settings = admission_settings(admission, pilots, overlap, "", exclude)
+        settings = admission_settings(admission, pilots, overlap, "", exclude, reserved)
         admits = {ws: settings.async_settle_admission_enabled and settings.async_settle_pilot_allows(ws)
                   for ws in ADMISSION_PROBES}
         cases.append({
             "name": f"publisher:all:admission={str(admission).lower()}:pilots={pilots or '-'}"
-                    f":overlap={overlap or '-'}:exclude={exclude or '-'}",
+                    f":overlap={overlap or '-'}:exclude={exclude or '-'}:reserved={reserved or '-'}",
             "settings": {"admission": admission, "pilots": pilots, "overlap": overlap, "fastpath": "",
-                         "exclude": exclude},
+                         "exclude": exclude, "reserved": reserved},
             "body": canonical_edge_policy_bytes(policy(settings)).decode("ascii"),
             "accept": True, "admits": admits,
         })

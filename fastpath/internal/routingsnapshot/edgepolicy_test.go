@@ -621,9 +621,12 @@ func TestTheAdmissionExcludedWorkspacesMemberIsOptional(t *testing.T) {
 // admission on). Admits agrees with Python on every one, so the edge passes
 // exactly the async-v1 requests Python would ticket; the members' other
 // spellings are refused by both readers. The all-mode rows
-// (docs/design/fast-admission-widening.md section 9, PR 5) carry
-// fastpath_pilot_all and never admission_excluded_workspaces: with Python's
-// validators met, the async pilot set alone decides.
+// (docs/design/fast-admission-widening.md sections 9 and 9.1) carry
+// fastpath_pilot_all. With a named async pilot set they never carry
+// admission_excluded_workspaces: with Python's validators met, the pilot set
+// alone decides. With the pilot set empty every workspace is admitted but
+// the reserved list, which is admission_excluded_workspaces with no
+// admission_workspaces beside it.
 func TestTheAsyncAdmissionVectors(t *testing.T) {
 	var file struct {
 		Generator string   `json:"generator"`
@@ -641,7 +644,7 @@ func TestTheAsyncAdmissionVectors(t *testing.T) {
 	if err := decoder.Decode(&file); err != nil {
 		t.Fatal(err)
 	}
-	accepted, refused, excluded, admitted, left, all := 0, 0, 0, 0, 0, 0
+	accepted, refused, excluded, admitted, left, all, reserved, everyone := 0, 0, 0, 0, 0, 0, 0, 0
 	for _, c := range file.Cases {
 		p, err := ParseEdgePolicy([]byte(c.Body))
 		if (err == nil) != c.Accept {
@@ -662,7 +665,13 @@ func TestTheAsyncAdmissionVectors(t *testing.T) {
 		if p.PilotAll() {
 			all++
 			if p.AsyncSettle.AdmissionExcludedWorkspaces != nil {
-				t.Errorf("%s: all mode with admission_excluded_workspaces", c.Name)
+				reserved++
+				if p.AsyncSettle.AdmissionWorkspaces != nil {
+					t.Errorf("%s: all mode with admission_excluded_workspaces beside a pilot set", c.Name)
+				}
+			}
+			if p.AsyncSettle.AdmissionEnabled && p.AsyncSettle.AdmissionWorkspaces == nil {
+				everyone++
 			}
 		}
 		for _, ws := range file.Probes {
@@ -680,9 +689,11 @@ func TestTheAsyncAdmissionVectors(t *testing.T) {
 			}
 		}
 	}
-	if accepted != 46 || refused != 6 || excluded != 5 || all != 14 || admitted == 0 || left == 0 {
-		t.Fatalf("%d accepted (%d with the member, %d in all mode), %d refused, %d admitted and %d left-out "+
-			"answers: not the vectors' 46 (5, 14) and 6", accepted, excluded, all, refused, admitted, left)
+	if accepted != 68 || refused != 6 || excluded != 9 || all != 36 || reserved != 4 || everyone != 6 ||
+		admitted == 0 || left == 0 {
+		t.Fatalf("%d accepted (%d with the member, %d in all mode, %d of them with a reserved list and %d "+
+			"admitting every other workspace), %d refused, %d admitted and %d left-out answers: not the "+
+			"vectors' 68 (9, 36, 4, 6) and 6", accepted, excluded, all, reserved, everyone, refused, admitted, left)
 	}
 }
 

@@ -312,6 +312,54 @@ def test_a_fastpath_workspace_gets_the_admission_off_answer(allowlist, overlap, 
         assert {k: on[k] for k in list(off)[1:]} == {k: off[k] for k in list(off)[1:]}
 
 
+EVERYONE = [(leased, overlap, reserved, exclude)
+            for leased in (False, True) for overlap in ('', 'other', 'ws-v1')
+            for reserved in ('', 'other', 'ws-v1') for exclude in ('', 'ws-v1')
+            # The combinations the settings accept: a reserved workspace is
+            # on neither the overlap list nor the exclude list.
+            if not (reserved and reserved == overlap) and not (reserved == 'ws-v1' and exclude == 'ws-v1')]
+
+
+@pytest.mark.parametrize('leased,overlap,reserved,exclude', EVERYONE)
+def test_every_workspace_is_ticketed_in_all_mode_but_the_reserved_list_and_leased_requests(
+        leased, overlap, reserved, exclude):
+    """All mode with an empty async pilot set
+    (docs/design/fast-admission-widening.md section 9.1): every workspace is
+    admitted, so an authorization the pilot did not lease is ticketed (shape
+    C) whether the fast path covers its workspace or its exclude list names
+    it. A workspace on the reserved list, and an authorization the pilot
+    leased (fastpath_envelope set) outside the overlap list, get Python's
+    admission-off answer byte for byte (shape B: no ticket, no status URL)
+    with no admission read; its settle goes through the lease."""
+    import dataclasses
+    import json
+
+    auth = dataclasses.replace(authorization(), fastpath_envelope='sealed-v1' if leased else None)
+
+    def answer(*, admission: bool, rt=None):
+        config = settings(async_settle_pilot_cap_micro=5000000, fastpath_pilot_all=True,
+                          storage_backend='spanner-clickhouse', fastpath_pilot_exclude=exclude,
+                          async_settle_fastpath_overlap_workspaces=overlap,
+                          async_settle_fastpath_reserved_workspaces=reserved)
+        config.async_settle_enabled = admission
+        return projection(authorization=auth, endpoints=[endpoint()], requested=Eligibility(),
+                          runtime=rt or runtime(), settings=config, now=1_800_000_000)
+
+    ticketed = reserved != 'ws-v1' and not (leased and overlap != 'ws-v1')
+    rt = runtime()
+    on, off = answer(admission=True, rt=rt), answer(admission=False)
+    assert list(off) == ['async_eligible', 'billing_snapshot', 'billing_snapshot_hash']
+    if ticketed:
+        assert list(on) == ['async_eligible', 'billing_snapshot', 'billing_snapshot_hash', 'settlement_ticket',
+                            'settlement_status_url']
+        assert on['async_eligible'] is True
+        assert {k: on[k] for k in list(off)[1:]} == {k: off[k] for k in list(off)[1:]}
+    else:
+        assert json.dumps(on) == json.dumps(off)
+        assert on['async_eligible'] is False
+        assert not rt.admission.entries
+
+
 @pytest.mark.parametrize('tier', [1, 2, 3])
 @pytest.mark.parametrize('amount', [5000000, 5000001])
 def test_pilot_authorize_cap_override(tier, amount):
