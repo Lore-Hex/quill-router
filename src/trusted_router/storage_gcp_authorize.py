@@ -37,7 +37,7 @@ from trusted_router.app_markup_billing import (
     app_markup_owner_share_microdollars,
     app_markup_payout_event_id,
 )
-from trusted_router.catalog import PROVIDERS, endpoint_for_id
+from trusted_router.catalog import PROVIDERS
 from trusted_router.custom_model_billing import user_model_payout_event_id
 from trusted_router.custom_model_markup_billing import (
     custom_model_markup_payout_event_id,
@@ -99,6 +99,7 @@ from trusted_router.storage_gcp_stage_d import (
     delivered_usage_charge_microdollars,
     delivered_usage_counts,
     normalized_delivered_prompt,
+    selected_endpoint_identity,
 )
 from trusted_router.storage_models import (
     AppMarkupPayout,
@@ -1504,9 +1505,9 @@ def snapshot_generation(authorization: Any, *, actual_micro: int) -> Generation 
     if authorization.selected_endpoint_id is None or authorization.delivered_usage is None:
         return None
     usage = delivered_usage_counts(authorization.delivered_usage)
-    selected_endpoint = endpoint_for_id(authorization.selected_endpoint_id)
-    selected_provider = selected_endpoint.provider if selected_endpoint is not None else authorization.provider
-    selected_model_id = selected_endpoint.model_id if selected_endpoint is not None else authorization.model_id
+    selected_provider, selected_model_id = selected_endpoint_identity(
+        authorization, authorization.selected_endpoint_id
+    )
     _uncached_input, total_input = normalized_delivered_prompt(
         selected_provider, usage, model_id=selected_model_id
     )
@@ -1669,16 +1670,8 @@ def _finalize_reaped_reservation_atomic(
                 raise _SettleError("started snapshot is missing endpoint or delivered usage")
             usage = delivered_usage_counts(authorization.delivered_usage)
             document = parse_pricing_snapshot(authorization.pricing_snapshot or "")
-            selected_endpoint = endpoint_for_id(authorization.selected_endpoint_id)
-            selected_provider = (
-                selected_endpoint.provider
-                if selected_endpoint is not None
-                else authorization.provider
-            )
-            selected_model_id = (
-                selected_endpoint.model_id
-                if selected_endpoint is not None
-                else authorization.model_id
+            selected_provider, selected_model_id = selected_endpoint_identity(
+                authorization, authorization.selected_endpoint_id
             )
             actual_micro = delivered_usage_charge_microdollars(
                 authorization,
