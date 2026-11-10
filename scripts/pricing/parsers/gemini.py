@@ -16,6 +16,7 @@ from bs4 import BeautifulSoup, Tag
 # video, live-audio) models are intentionally skipped by returning None from
 # the fallback regex below.
 _NAME_TO_OR_ID = {
+    "Gemini 4 Carbon": "google/gemini-4-carbon",
     "Gemini 4 Argon": "google/gemini-4-argon",
     "Gemini 3.8 Flash": "google/gemini-3.8-flash",
     "Gemini 3.6 Flash": "google/gemini-3.6-flash",
@@ -38,7 +39,7 @@ _NAME_TO_OR_ID = {
 _STANDARD_MODEL_HEADING_RE = re.compile(
     r"^Gemini\s+(?:(?P<family>Omni|Argon|Nova)\s+)?"
     r"(?P<version>\d+(?:\.\d+)?)\s+"
-    r"(?P<variant>Pro|Flash(?:[ -]Lite)?|Argon)$",
+    r"(?P<variant>Pro|Flash(?:[ -]Lite)?|Argon|Carbon)$",
     re.IGNORECASE,
 )
 
@@ -118,6 +119,12 @@ def _parse_price_cell(text: str) -> tuple[list[tuple[int | None, int]], bool]:
     """Parse a Gemini "Paid Tier" cell. Returns (tier_list, was_tiered)."""
     # Markdoc can retain HTML entities in comparisons even after normalization.
     text = BeautifulSoup(text, "html.parser").get_text(" ", strip=True)
+    # Cache storage rent is not a cache-read token rate (and has its own dates).
+    text = re.sub(
+        r"\$[\d.]+\s*/\s*1,000,000\s+tokens\s+per\s+hour\b.*", "", text, flags=re.IGNORECASE
+    )
+    if re.search(r"\b(?:through|starting)\b", text, re.IGNORECASE):
+        raise ValueError("gemini: dated prices require provider-owned date selection")
     tiered_match = _TIERED_PRICE_RE.search(text)
     if tiered_match:
         low_usd, threshold_value, threshold_unit, high_usd = tiered_match.groups()

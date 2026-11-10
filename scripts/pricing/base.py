@@ -28,7 +28,7 @@ import sys
 import tempfile
 import textwrap
 import time
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -1615,6 +1615,7 @@ def fetch_provider(
     require_runtime_models: bool = True,
     extra_headers: dict[str, str] | None = None,
     accepted_status_codes: frozenset[int] = frozenset(),
+    source_transform: Callable[[str], str] | None = None,
 ) -> ProviderPricingResult:
     """Fetch one provider's prices via the deterministic parser, with
     LLM self-heal as fallback.
@@ -1658,7 +1659,8 @@ def fetch_provider(
         )
     else:
         raw_html = fetch_html(url, extra_headers=extra_headers)
-    html = normalize_parser_input(raw_html)
+    # Provider-owned date selection stays outside the rewriteable parser sandbox.
+    html = normalize_parser_input(source_transform(raw_html) if source_transform else raw_html)
 
     # Exec the parser source in a fresh namespace each call — sidesteps
     # importlib.reload edge cases (the parser file may have been
