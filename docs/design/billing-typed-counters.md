@@ -67,8 +67,9 @@ the predicate against committed state. Two limits apply:
   its transaction ends. So a reserve carries the hint only where it is
   expected to write and is the only counter row of its table the transaction
   touches: the batch reserves, a sequential reserve with one shard candidate,
-  and a key reserve that is not BYOK. A sequential probe of several shards and
-  a BYOK key reserve scan under the shared lock as before.
+  and a sequential or strict-budget key reserve that is not BYOK. A sequential
+  probe of several shards and a sequential or strict-budget BYOK key reserve
+  scan under the shared lock as before.
 
 ### Why this over leases / ledger
 

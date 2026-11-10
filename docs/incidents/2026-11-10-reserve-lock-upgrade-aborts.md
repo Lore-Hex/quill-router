@@ -86,9 +86,11 @@ Two shapes stay as they were, scanning under the shared lock:
 - A sequential probe of several shards. Two probers that miss different
   shards and then try each other's would each hold one exclusively and wait
   for the other; wound-wait would abort one of them.
-- A BYOK key reserve. On a key that excludes BYOK it matches no row on every
-  request and the transaction commits, so hinted, those requests would queue
-  on the key row for the length of a commit each.
+- A sequential or strict-budget BYOK key reserve. On a key that excludes
+  BYOK it matches no row on every request and the transaction commits, so
+  hinted, those requests would queue on the key row for the length of a
+  commit each. The batch key reserve keeps the hint for a BYOK request too:
+  there a miss rolls the transaction back at once.
 
 The incident's workspace had one credit shard and a credit request on a
 capped key, so every statement it issued is in the hinted set: the batch
@@ -109,13 +111,15 @@ What changes besides the aborts:
   exclusively until then. It lasts until the gateway's key metadata catches
   up.
 - The BYOK pause read of a workspace's shard zero takes a shared lock on
-  that credit row. It now waits for a hinted credit reserve on the same row,
-  and the reserve waits for it. Both are short.
+  that credit row. It now conflicts with a hinted credit reserve on the same
+  row: the younger of the two waits, or wound-wait aborts it when the older
+  one is the waiter. Both holds are short.
 - Lock order is unchanged: credit, then key.
-- The Go fast path increments `reserved` on the same tables for the
+- The Go fast path increments `reserved` on the credit table for the
   workspaces it owns (`fastpath/internal/store/credit.go`,
-  `fastpath/internal/store/commit.go`) without the hint. Hinted and unhinted
-  statements mix safely; an unhinted one still upgrades.
+  `fastpath/internal/store/commit.go`) without the hint. It does not write
+  `tr_key_limit.reserved`. Hinted and unhinted statements mix safely; an
+  unhinted one still upgrades.
 
 There is no flag. The way back is to revert the change.
 
@@ -136,9 +140,11 @@ There is no flag. The way back is to revert the change.
 
 `tests/test_reserve_exclusive_scan_hint.py` pins it: each reserve's text
 with and without the hint, that no hinted statement has a subquery, which
-reserves `authorize_atomic` hints in each transaction shape, and the full
-list of statements in `src` that add to `reserved` with how each is hinted,
-so a new or rewritten reserve fails until it is decided there.
+reserves `authorize_atomic` hints in each transaction shape, and the list
+of string literals in `src` that add to `reserved` with how each is hinted,
+so a new or rewritten reserve fails until it is decided there. The list
+reads literals: a statement assembled from pieces so that no one literal
+holds the assignment is caught by the SQL inventory guard, not by this pin.
 
 ## Verifying it
 
