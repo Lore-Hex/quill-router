@@ -167,10 +167,13 @@
     const chain = [...doc.get('cabundle'), doc.get('certificate')].map(certificate);
     const rootDigest = hex(new Uint8Array(await crypto.subtle.digest('SHA-256', chain[0].der)));
     if (rootDigest !== AWS_NITRO_ROOT_SHA256) throw rejected('chain does not start at the AWS Nitro root certificate');
+    // Dates are judged last, so a forged or replayed document is reported as
+    // rejected and only a genuine one can be blamed on the clock.
+    let expired = false;
     for (let i = 0; i < chain.length; i += 1) {
       const cert = chain[i];
       const issuer = chain[Math.max(i - 1, 0)]; // the root signs itself
-      if (now < cert.notBefore || now > cert.notAfter) throw outOfDate('a certificate in the chain is outside its validity period');
+      if (now < cert.notBefore || now > cert.notAfter) expired = true;
       if (!sameBytes(cert.issuer, issuer.subject)) throw rejected('certificate chain is out of order');
       if (!await crypto.subtle.verify(ES384, await publicKey(issuer), cert.signature, cert.signed)) {
         throw rejected('a certificate signature in the chain is invalid');
@@ -190,6 +193,7 @@
     // 3. Freshness: the document must carry the nonce this browser chose.
     const nonce = doc.get('nonce');
     if (!nonce || new TextDecoder().decode(nonce) !== expectedNonce) throw rejected('the attestation is not fresh (nonce mismatch)');
+    if (expired) throw outOfDate('a certificate in the chain is outside its validity period');
 
     if (![0, 1, 2].every(i => doc.get('pcrs').get(i) instanceof Uint8Array)) throw new Error('unexpected attestation document layout');
     return {
@@ -227,6 +231,7 @@
     const claims = decode(parts[1]);
     if (claims.iss !== GOOGLE_ISSUER) throw rejected('the token was not issued by Google Confidential Space');
     if (![].concat(claims.aud).includes(audience)) throw rejected('the token was issued for a different service');
+    if (!Number.isFinite(claims.nbf) || !Number.isFinite(claims.exp)) throw new Error('the token does not state its validity period');
     if (!(now >= (claims.nbf - 60) * 1000 && now <= (claims.exp + 60) * 1000)) throw outOfDate('the token is outside its validity period');
     // A debug image would let its operator log in to the machine.
     if (claims.swname !== 'CONFIDENTIAL_SPACE' || claims.dbgstat !== 'disabled-since-boot') {
@@ -236,7 +241,7 @@
     if (typeof container.image_digest !== 'string' || typeof container.image_reference !== 'string') {
       throw new Error('the token does not name a container image');
     }
-    return {imageDigest: container.image_digest, imageReference: container.image_reference, hardware: String(claims.hwmodel), issuedAt: Number.isFinite(claims.iat) ? claims.iat * 1000 : null};
+    return {imageDigest: container.image_digest, imageReference: container.image_reference, hardware: typeof claims.hwmodel === 'string' ? claims.hwmodel : 'hardware not named', issuedAt: Number.isFinite(claims.iat) ? claims.iat * 1000 : null};
   }
 
   // What the gateway panel may conclude. `pin` is the fingerprint the running
@@ -307,41 +312,46 @@
           this.conclude('mismatch', `The check was rejected: ${error.message}.`);
         } else {
           mark(stage, 'bad', unreachable ? `Could not reach it (${why})` : `Could not check (${why})`);
-          this.conclude('failed', unreachable ? undefined : `This browser could not finish the check: ${why}. Use the manual check below.`);
+          this.conclude('failed', unreachable ? undefined : `The check could not finish: ${why}. Use the manual check below.`);
         }
       },
     };
   }
   const provider = panel(root, {
     verified: ['Verified just now', `The ${name} enclave answering right now runs the exact build NYTE reproduced from ${name}’s public source code.`],
-    pending: ['Newer release, review in progress', `${name} has shipped a newer release. It matches the fingerprint ${name} published for production, and NYTE has not finished reproducing it yet. The gateway check below shows which release NYTE’s gateway accepts.`],
+    pending: [`Approved by ${name}, not yet in NYTE’s record`, `The enclave answering right now matches the fingerprint ${name} published for production, and differs from the build in NYTE’s current record. That usually means ${name} has shipped a newer release NYTE has not finished reproducing. The gateway check below shows which fingerprint NYTE’s running gateway is built to accept.`],
     mismatch: ['Not verified', `The enclave answering right now matches neither ${name}’s published approval nor the build NYTE reproduced.`],
     incomplete: ['Check incomplete', 'The enclave’s attestation is genuine, but one of the public records could not be loaded, so the comparison is unfinished. Try again, or use the manual check below.'],
-    failed: ['Check could not finish', 'This browser could not complete the check. Use the manual check below.'],
+    failed: ['Check could not finish', 'The check could not be completed from here. Use the manual check below.'],
   });
   const gateway = gate && panel(gate, {
-    verified: ['Gateway attested, and it accepts this enclave', `NYTE’s gateway is running a published release inside sealed hardware. The ${name} fingerprint recorded for that release is the one ${name}’s enclave reports right now.`],
-    pending: ['Gateway attested, and holding back', `NYTE’s gateway is running a published release inside sealed hardware. The ${name} fingerprint recorded for that release is not the one ${name}’s enclave reports right now, so this release refuses it.`],
-    unapproved: ['Gateway attested, enclave not verified', `NYTE’s gateway is running a published release inside sealed hardware, and that release accepts the ${name} enclave answering now. That enclave did not pass the check above.`, 'mismatch'],
-    unchecked: ['Gateway attested, enclave check incomplete', `NYTE’s gateway is running a published release inside sealed hardware, and that release accepts the ${name} enclave answering now. The check above could not finish comparing that enclave with the public records.`, 'incomplete'],
+    verified: ['Gateway attested, and built to accept this enclave', `NYTE’s gateway is running a published release inside sealed hardware. The ${name} fingerprint recorded for that release is the one ${name}’s enclave reports right now.`],
+    pending: ['Gateway attested, and not built for this enclave', `NYTE’s gateway is running a published release inside sealed hardware. The ${name} fingerprint recorded for that release is not the one ${name}’s enclave reports right now, so this release is built to refuse it.`],
+    unapproved: ['Gateway attested, enclave not verified', `NYTE’s gateway is running a published release inside sealed hardware, and that release is built to accept the ${name} enclave answering now. That enclave did not pass the check above.`, 'mismatch'],
+    unchecked: ['Gateway attested, enclave check incomplete', `NYTE’s gateway is running a published release inside sealed hardware, and that release is built to accept the ${name} enclave answering now. The check above could not finish comparing that enclave with the public records.`, 'incomplete'],
     mismatch: ['Gateway not verified', 'NYTE’s gateway did not pass the check.'],
     incomplete: ['Gateway attested', `NYTE’s gateway is running a published release inside sealed hardware. The ${name} check above produced no result, so the two could not be compared.`],
-    failed: ['Gateway check could not finish', 'This browser could not complete the gateway check. Use the manual check below.'],
+    failed: ['Gateway check could not finish', 'The gateway check could not be completed from here. Use the manual check below.'],
   });
-  const request = async url => {
-    // No reply is this browser's problem, never a failed proof. A stalled reply
-    // must not leave the page checking forever.
+  // Fetches a public record as text or JSON. No reply is never a failed proof,
+  // and a reply that stalls, before or after its headers, must not leave the
+  // page checking forever.
+  const request = async (url, read) => {
     const unreachable = message => Object.assign(new Error(message), {unreachable: true});
-    let response;
+    const patience = new AbortController();
+    const timer = setTimeout(() => patience.abort(), 15000);
     try {
-      response = await fetch(url, {cache: 'no-store', signal: AbortSignal.timeout ? AbortSignal.timeout(15000) : undefined});
+      const response = await fetch(url, {cache: 'no-store', signal: patience.signal});
+      if (!response.ok) throw unreachable(`HTTP ${response.status}`);
+      return await response[read]();
     } catch (error) {
-      throw unreachable(error.name === 'TimeoutError' ? 'no reply within 15 seconds' : error.message);
+      if (error.unreachable || error instanceof SyntaxError) throw error; // an unreadable reply is not an absent one
+      throw unreachable(patience.signal.aborted ? 'no reply within 15 seconds' : error.message);
+    } finally {
+      clearTimeout(timer);
     }
-    if (!response.ok) throw unreachable(`HTTP ${response.status}`);
-    return response;
   };
-  const json = async url => (await request(url)).json();
+  const json = url => request(url, 'json');
   const fingerprint = (record, key) => (record && typeof record[key] === 'string' ? record[key].toLowerCase() : null);
 
   // Returns the measurement the enclave proved and what the records say of it,
@@ -350,7 +360,14 @@
     const sources = root.dataset;
     provider.reset(`Asking the ${name} enclave to prove what it is running.`);
     const nonce = crypto.randomUUID();
-    const records = Promise.allSettled([json(sources.providerRecord), json(sources.nyteRecord)]);
+    const records = Promise.allSettled([json(sources.providerRecord), json(sources.nyteRecord)])
+      .then(results => results.map(result => (result.status === 'fulfilled' ? result.value : null)));
+    // NYTE's record fills the table below whether or not the enclave answers.
+    records.then(([, reproduced]) => document.querySelectorAll('[data-record]').forEach(el => {
+      const value = reproduced && reproduced[el.dataset.record];
+      if (el.tagName !== 'A') el.textContent = typeof value === 'string' ? value : 'Could not load NYTE’s record';
+      else if (typeof value === 'string' && value.startsWith('https://github.com/')) { el.href = value; el.textContent = value.replace('https://github.com/', ''); }
+    }));
     let live;
     let stage = 'fetch';
     try {
@@ -364,7 +381,7 @@
       provider.stop(stage, error);
       return null;
     }
-    const [published, reproduced] = (await records).map(result => (result.status === 'fulfilled' ? result.value : null));
+    const [published, reproduced] = await records;
     const providerPcr0 = fingerprint(published, 'PCR0');
     const nytePcr0 = fingerprint(reproduced, 'pcr0');
     const result = verdict(live.pcr0, providerPcr0, nytePcr0);
@@ -376,14 +393,6 @@
     };
     compare('provider', providerPcr0, `${name}’s published approval`);
     compare('nyte', nytePcr0, 'the build NYTE reproduced');
-    if (reproduced) {
-      document.querySelectorAll('[data-record]').forEach(el => {
-        const value = reproduced[el.dataset.record];
-        if (typeof value !== 'string') return;
-        if (el.tagName !== 'A') el.textContent = value;
-        else if (value.startsWith('https://github.com/')) { el.href = value; el.textContent = value.replace('https://github.com/', ''); }
-      });
-    }
     provider.conclude(result);
     return {pcr0: live.pcr0, result};
   }
@@ -394,7 +403,7 @@
     gateway.reset('Asking NYTE’s gateway to prove what it is running.');
     let stage = 'fetch';
     try {
-      const [token, keys] = await Promise.all([request(sources.attestation).then(response => response.text()), json(GOOGLE_KEYS)]);
+      const [token, keys] = await Promise.all([request(sources.attestation, 'text'), json(GOOGLE_KEYS)]);
       gateway.mark('fetch', 'ok', 'Received the gateway’s attestation token');
       stage = 'signature';
       const claims = await verifyGatewayToken(token, keys && keys.keys, sources.audience, Date.now());
@@ -409,10 +418,10 @@
       const result = gatewayVerdict(pin, live && live.pcr0, live && live.result);
       const [state, text] = {
         incomplete: ['ok', `Read the ${name} fingerprint this release accepts`],
-        pending: ['wait', `Refuses the ${name} enclave running now`],
-        verified: ['ok', `Accepts the ${name} enclave running now`],
-        unapproved: ['bad', `Accepts the ${name} enclave running now, which did not pass the check above`],
-        unchecked: ['wait', `Accepts the ${name} enclave running now`],
+        pending: ['wait', `Not built to accept the ${name} enclave running now`],
+        verified: ['ok', `Built to accept the ${name} enclave running now`],
+        unapproved: ['bad', `Built to accept the ${name} enclave running now, which did not pass the check above`],
+        unchecked: ['wait', `Built to accept the ${name} enclave running now`],
       }[result];
       gateway.mark('pin', state, text, `PCR0 ${pin}`);
       gateway.conclude(result);

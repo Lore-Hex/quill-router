@@ -81,6 +81,8 @@ async function verifierControls() {
   assert.equal(good.certificates, 5);
   await refuses('replayed document', attest(bytes, REPLAYED), 'not fresh', 'rejected');
   await refuses('expired certificate', attest(bytes, fixture.nonce, fixture.now + 30 * 86400e3), 'validity period', 'clock');
+  // An old recording replayed later is a failed proof, not a clock problem.
+  await refuses('replayed after expiry', attest(bytes, REPLAYED, fixture.now + 30 * 86400e3), 'not fresh', 'rejected');
   const at = Buffer.from(bytes).indexOf(Buffer.from(fixture.pcr0, 'hex'));
   assert.ok(at > 0);
   const measurement = Uint8Array.from(bytes); measurement[at + 5] ^= 1;
@@ -128,6 +130,8 @@ async function gatewayControls() {
   await refuses('not a token', check('<html>'), 'not an attestation token', 'unreadable');
   await refuses('key without an id', check(gatewayToken({}, google.privateKey, {alg: 'RS256'}), [{...KEYS.keys[0], kid: undefined}]), 'published Confidential Space keys', 'rejected');
   assert.equal((await check(gatewayToken({iat: undefined}))).issuedAt, null);
+  assert.equal((await check(gatewayToken({hwmodel: undefined}))).hardware, 'hardware not named');
+  await refuses('no validity period', check(gatewayToken({exp: undefined})), 'does not state its validity period', 'unreadable');
 
   // The source commit comes only from an image name NYTE published, never from the tag alone.
   const release = {accepted_image_digests: [DIGEST], accepted_image_references: [REFERENCE]};
@@ -152,19 +156,19 @@ async function gatewayControls() {
 // `pin` is the Maple fingerprint built into the gateway release (default: the live one).
 const OK = ['ok', 'ok', 'ok', 'ok'];
 const STOPPED = ['bad', 'waiting', 'waiting', 'waiting'];
-const ATTESTED = 'Gateway attested, and it accepts this enclave';
+const ATTESTED = 'Gateway attested, and built to accept this enclave';
 const UNCHECKED = {gateway: 'incomplete', gatewayTitle: 'Gateway attested, enclave check incomplete', gatewayStates: ['ok', 'ok', 'ok', 'wait']};
-const HOLDING = {gateway: 'pending', gatewayTitle: 'Gateway attested, and holding back', gatewayStates: ['ok', 'ok', 'ok', 'wait']};
+const HOLDING = {gateway: 'pending', gatewayTitle: 'Gateway attested, and not built for this enclave', gatewayStates: ['ok', 'ok', 'ok', 'wait']};
 const CASES = [
   {name: 'verified', title: 'Verified just now', states: OK, gateway: 'verified', gatewayTitle: ATTESTED, gatewayStates: OK},
-  {name: 'pending', nyte: OTHER, pin: OTHER, title: 'Newer release, review in progress', states: ['ok', 'ok', 'ok', 'wait'], gateway: 'pending', gatewayTitle: 'Gateway attested, and holding back', gatewayStates: ['ok', 'ok', 'ok', 'wait']},
-  {name: 'mismatch', provider: OTHER, nyte: OTHER, pin: OTHER, title: 'Not verified', states: ['ok', 'ok', 'bad', 'bad'], gateway: 'pending', gatewayTitle: 'Gateway attested, and holding back', gatewayStates: ['ok', 'ok', 'ok', 'wait']},
+  {name: 'pending', nyte: OTHER, pin: OTHER, title: 'Approved by Maple, not yet in NYTE’s record', states: ['ok', 'ok', 'ok', 'wait'], gateway: 'pending', gatewayTitle: 'Gateway attested, and not built for this enclave', gatewayStates: ['ok', 'ok', 'ok', 'wait']},
+  {name: 'mismatch', provider: OTHER, nyte: OTHER, pin: OTHER, title: 'Not verified', states: ['ok', 'ok', 'bad', 'bad'], gateway: 'pending', gatewayTitle: 'Gateway attested, and not built for this enclave', gatewayStates: ['ok', 'ok', 'ok', 'wait']},
   {name: 'incomplete', nyte: null, title: 'Check incomplete', states: ['ok', 'ok', 'ok', 'bad'], ...UNCHECKED},
   {name: 'incomplete', label: 'unreadable provider record', provider: 5, title: 'Check incomplete', states: ['ok', 'ok', 'bad', 'ok'], ...UNCHECKED},
   {name: 'incomplete', label: 'empty NYTE record', nyte: 'null', title: 'Check incomplete', states: ['ok', 'ok', 'ok', 'bad'], ...UNCHECKED},
   // The record on main is ahead of the deployed gateway: the page must not say NYTE has yet to review it.
-  {name: 'verified', label: 'gateway release behind the record', pin: OTHER, title: 'Verified just now', states: OK, ...HOLDING, gatewayText: 'so this release refuses it'},
-  {name: 'pending', label: 'gateway already accepts the newer release', nyte: OTHER, title: 'Newer release, review in progress', states: ['ok', 'ok', 'ok', 'wait'], gateway: 'verified', gatewayTitle: ATTESTED, gatewayStates: OK},
+  {name: 'verified', label: 'gateway release behind the record', pin: OTHER, title: 'Verified just now', states: OK, ...HOLDING, gatewayText: 'so this release is built to refuse it'},
+  {name: 'pending', label: 'gateway already accepts the newer release', nyte: OTHER, title: 'Approved by Maple, not yet in NYTE’s record', states: ['ok', 'ok', 'ok', 'wait'], gateway: 'verified', gatewayTitle: ATTESTED, gatewayStates: OK},
   // A gateway that accepts an enclave neither record approves is never green.
   {name: 'mismatch', label: 'gateway accepts an unapproved enclave', provider: OTHER, nyte: OTHER, title: 'Not verified', states: ['ok', 'ok', 'bad', 'bad'], gateway: 'mismatch', gatewayTitle: 'Gateway attested, enclave not verified', gatewayStates: ['ok', 'ok', 'ok', 'bad']},
   {name: 'verified', label: 'published image under an unpublished tag', token: gatewayToken({submods: {container: {image_digest: DIGEST, image_reference: REFERENCE.replace(COMMIT, ELSEWHERE)}}}), elsewhere: fixture.pcr0, title: 'Verified just now', states: OK, gateway: 'mismatch', gatewayTitle: 'Gateway not verified', gatewayStates: ['ok', 'ok', 'bad', 'waiting'], gatewayText: 'release name NYTE has published'},
