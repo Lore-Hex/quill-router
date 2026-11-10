@@ -66,11 +66,14 @@ const assert = require('node:assert/strict');
         assert.equal(await menu.getAttribute('aria-expanded'), 'true');
       }
       assert(await mainNav.isVisible());
+      // Forwarded markets 301 to New York, so the lists skip them (the page's own market stays).
+      const listed = allMarkets.filter(m => !m.forward_to || m.slug === market.slug).length;
       await page.locator('.market-picker > summary').click();
       const marketNav = page.getByRole('navigation', {name:'Market directory', exact:true});
-      assert.equal(await marketNav.getByRole('link').count(), allMarkets.length);
+      assert.equal(await marketNav.getByRole('link').count(), listed);
       assert.equal(await marketNav.locator('[aria-current="page"]').textContent(), market.region);
-      assert.equal(await marketNav.getByRole('link', {name:'Riyadh', exact:true}).count(), 1);
+      assert.equal(await marketNav.getByRole('link', {name:'New York', exact:true}).count(), 1);
+      assert.equal(await marketNav.getByRole('link', {name:'Riyadh', exact:true}).count(), 0);
       await page.keyboard.press('Escape');
       assert.equal(await page.locator('.market-picker').evaluate(el => el.open), false);
       if (mobileMenu) {
@@ -92,7 +95,7 @@ const assert = require('node:assert/strict');
         ['OpenAI', 'Databricks', 'Anthropic', 'Mistral', 'Google Vertex AI', 'DeepSeek', 'xAI']);
       assert.equal(await page.locator('.hero-provider-group[aria-hidden="true"] a:not([tabindex="-1"])').count(), 0);
       const footerNav = page.getByRole('navigation', {name:'Exchange markets', exact:true});
-      assert.equal(await footerNav.getByRole('link').count(), allMarkets.length);
+      assert.equal(await footerNav.getByRole('link').count(), listed);
       assert.equal(await footerNav.locator('[aria-current="page"]').textContent(), market.region);
       await footerNav.scrollIntoViewIfNeeded();
       if (await footerNav.evaluate(el => el.scrollWidth > el.clientWidth + 2)) {

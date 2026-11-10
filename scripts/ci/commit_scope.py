@@ -40,8 +40,9 @@ code or tests a spec names in proofs/manifest.toml were moved or deleted;
 neither says whether deployed code works. And deploy.yml's gate waits for the
 push run of the commit it ships. Branch protection requires the CI summary,
 which needs both jobs, so a pull request cannot merge with either red. Two
-green pull requests can still combine into a main that breaks one of them;
-main learns of that from a dispatch or the daily run, not from its push runs.
+green pull requests can still combine into a main where one of the two jobs
+fails; main learns of that from a dispatch or the daily run, not from its
+push runs.
 """
 
 from __future__ import annotations

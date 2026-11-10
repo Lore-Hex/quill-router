@@ -55,6 +55,7 @@ reviewed market and adapt these fields:
 | `slug` | Unique lowercase, hyphenated identifier; also the preview directory and social-image suffix. |
 | `name`, `region`, `scope` | Brand, short directory label, and `city`, `region` or `global`. |
 | `domain`, `aliases` | Approved canonical domain and aliases; no duplicates across markets. Domain ownership and launch readiness must be established separately. |
+| `forward_to` | Optional. Another market's canonical domain; the URL map 301s this market's domain, aliases and `www` names there (path and query kept) instead of serving its page. |
 | `headline`, `headline_accent` | Explicit market headline and an exact substring for emphasis. Check long names on mobile and social cards. |
 | `lead`, `focus` | Specific audience description and workload heading. The lead also supplies metadata. |
 | `sectors` | Exactly three title/body pairs for the existing workload cards. |

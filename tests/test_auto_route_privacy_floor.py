@@ -87,8 +87,9 @@ def test_auto_ladder_spans_more_than_one_provider() -> None:
     assert len(providers) > 1, f"the leading auto candidates share one provider: {providers}"
 
 
-def test_glm53_recommendations_preserve_independent_fallbacks() -> None:
-    assert DEFAULT_AUTO_MODEL_ORDER[:6] == [
+def test_1017_recommendation_preserves_independent_fallbacks() -> None:
+    assert DEFAULT_AUTO_MODEL_ORDER[:7] == [
+        "deepseek/deepseek-v4.1-flash-1017",
         "z-ai/glm-5.3-flash",
         "z-ai/glm-5.3",
         "deepseek/deepseek-v4-pro-0813",

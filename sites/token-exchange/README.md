@@ -20,6 +20,9 @@ picker and footer share one ordered directory and highlight the current market.
   unrelated matchers through `scripts/deploy/service_surface_url_map.py`.
 - One canonical root per market; alternate names and `www` redirect permanently,
   retaining query parameters. Canonical URLs, sitemaps and OG images are generated.
+- A market with `forward_to` (every market but New York and Global) keeps its
+  certificates and host rules, but its domain, aliases and `www` names 301 to that
+  domain, keeping path and query.
 - Buyers request the brochure on the page. The form posts to TrustedRouter's existing
   email-gated `/token-exchange/brief` action, which accepts the canonical exchange
   origins; submitted email addresses are never stored in browser analytics.
@@ -474,7 +477,7 @@ preconditions above. These local changes do not authorize publishing.
 `https://nytokenexchange.com/media-kit` (also `/media-kit.html`) is the public
 press resource. `press.json` is the shared source for page copy and the TXT/JSON
 fact sheets. `press.py` builds a deterministic ZIP from an explicit public-asset
-allowlist. The only PDFs are the public Brand Guidelines V1 and six logo exports;
+allowlist. The only PDFs are the public Brand Guidelines V1 and seven logo exports;
 private commercial decks, internal prompts, the draft review manual and the large demo MP4 are excluded.
 The video remains available separately at its existing public URL.
 
@@ -486,6 +489,10 @@ lockup pairs the globe with NYTE. The cream stacked-name export is shown on ink;
 the other ink exports are shown on light backgrounds. Do not regenerate these
 outlines with the historical Arial exporter or recolor them. The old October
 assets remain in source for compatibility but are absent from the new kit.
+The first card pairs the globe with the full NY Token Exchange name. Its separate
+`nyte-full-name-logo` SVG/PNG/PDF exports compose the supplied globe and one-line
+name paths unchanged; `export_full_name_logo.py` regenerates only these combined
+exports using librsvg, without fonts or edits to the six original designs.
 Four supplied campaign PNGs and the public brand guide are in `press-assets/`.
 The marketplace campaign artwork is the new social card. The homepage capture
 and video still retain their dated illustrative labels. Other sites' shared

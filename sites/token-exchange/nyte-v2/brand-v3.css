@@ -2,6 +2,7 @@
    on pages listed in nyte-brand-v3.json. Colours, type and corners change;
    layout and copy do not. Tokens copied from the kit's nyte-tokens.css. */
 :root{
+  color-scheme:only light;
   --ink:#151311; --cream:#FAF8F4; --gray:#F1EEE7; --stone:#DEDAD0;
   --ink-2:#57514A; --ink-2-dark:#B9B2A8; --dark-rule:#3A3631; --dark-sunken:#221F1C;
   --purple:#9B93F5; --yellow:#FFC800; --lime:#C9E265; --sky:#BFE3EC;
@@ -137,9 +138,9 @@ dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
 .site-footer{max-width:none;background:var(--ink);color:var(--cream);font-family:var(--font-sans);padding-inline:max(60px,calc((100% - 1160px)/2))}
 .site-footer .brand{color:var(--cream)}
 .site-footer a{color:var(--ink-2-dark)}
-.site-footer a:hover,.site-footer .market-links a:hover,.site-footer .brand small a:hover{color:var(--cream)}
-.site-footer .brand small{font-family:var(--font-sans);color:var(--ink-2-dark)}
-.site-footer .brand small a{text-decoration-color:var(--ink-2-dark)}
+.site-footer a:hover,.site-footer .market-links a:hover,.site-footer .footer-credit small a:hover{color:var(--cream)}
+.site-footer .footer-credit small{font-family:var(--font-sans);color:var(--ink-2-dark)}
+.site-footer .footer-credit small a{text-decoration-color:var(--ink-2-dark)}
 .site-footer .footer-markets,.site-footer .geo-prev:not([hidden]),.site-footer .geo-next:not([hidden]){background:var(--dark-sunken)}
 .site-footer .market-pin{stroke:var(--ink-2-dark)}
 .site-footer .market-links a[aria-current="page"]{background:var(--dark-rule);color:var(--cream)}
@@ -212,8 +213,7 @@ dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
 .site-footer .brand img{content:url(logos/mark-paper.svg);width:41px;height:20px}
 [data-market="new-york"] .site-footer .brand img{display:none}
 [data-market="new-york"] .site-footer .brand>span{font-size:0;line-height:0}
-[data-market="new-york"] .site-footer .brand>span::before{content:"";display:block;width:140px;height:84px;margin-bottom:16px;background:url(logos/name-stacked-paper.svg) left center/contain no-repeat}
-[data-market="new-york"] .site-footer .brand small{font-size:13px;line-height:1.6}
+[data-market="new-york"] .site-footer .brand>span::before{content:"";display:block;width:140px;height:84px;margin-bottom:8px;background:url(logos/name-stacked-paper.svg) left center/contain no-repeat}
 @media(max-width:600px){
   [data-market="new-york"] .hdr .brand::before{width:124px;height:24px}
   [data-market="new-york"] .site-footer .brand>span::before{width:112px;height:67px}
@@ -224,9 +224,13 @@ dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
 .site-footer{overflow:hidden;--globe-bleed:60px}
 .site-footer .footer-top{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:1fr auto auto auto 1fr;align-items:center;column-gap:48px}
 .site-footer .footer-top .brand{grid-column:1;grid-row:2}
-/* Related sites sit under Powered by as real links; the row wraps if more are added. */
+/* Credit line: Powered by TrustedRouter, then TrustedRouter's related sites as brighter links,
+   so they read above the grey legal links. The line wraps if more are added. */
 .site-footer .footer-top{row-gap:0}
-.site-footer .footer-related{grid-column:1;grid-row:3;display:flex;flex-wrap:wrap;gap:0 24px;max-width:640px;margin-top:12px;font-size:15px}
+.site-footer .footer-credit{grid-column:1;grid-row:3;display:flex;flex-wrap:wrap;align-items:center;column-gap:10px;max-width:720px;color:var(--ink-2-dark)}
+.site-footer .footer-credit small{display:inline;margin:0;font-size:14px;line-height:1.6}
+.site-footer .footer-related{display:contents;font-size:16px}
+.site-footer .footer-related a::before{content:"·";content:"·"/"";display:inline-block;margin-right:10px;color:var(--ink-2-dark)}
 .site-footer .footer-related a{display:inline-flex;align-items:center;min-height:44px;color:var(--cream);text-decoration:none}
 .site-footer .footer-related a:hover{text-decoration:underline;text-underline-offset:4px}
 .site-footer .footer-contact{grid-column:1;grid-row:4;margin-top:24px}
@@ -238,9 +242,18 @@ dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
 .site-footer .geo-scroll.can-left::before{top:10px;bottom:10px;background:linear-gradient(90deg,var(--ink),transparent)}
 .site-footer .geo-scroll.can-right::after{top:10px;bottom:10px;background:linear-gradient(90deg,transparent,var(--ink))}
 .site-footer .legal{margin-top:16px;padding-top:0;border-top:0;font-size:15px}
+/* Without a market rail (New York), a rule keeps the legal links apart from the name,
+   and the footer closes up the room the rail used to take. */
+.site-footer .footer-top+.legal{margin-top:24px;padding-top:4px;border-top:1.5px solid var(--dark-rule)}
+@media(min-width:601px){
+  .site-footer:has(.footer-top+.legal){padding-top:48px;padding-bottom:16px}
+  .site-footer .footer-top:has(+.legal) .footer-credit{margin-top:0}
+  .site-footer .footer-top:has(+.legal) .footer-contact{margin-top:4px}
+}
 /* Desktop footer kept compact: less space above the name and below the legal links. */
 @media(min-width:601px){.site-footer{padding-top:64px;padding-bottom:24px}}
-.site-footer .legal a{color:var(--cream)}
+.site-footer .legal a{color:var(--ink-2-dark)}
+.site-footer .legal a:hover{color:var(--cream)}
 .site-footer .footer-contact a{color:var(--cream);font-size:17px}
 @media(max-width:600px){
   .site-footer{display:flex;flex-direction:column;padding-top:32px;padding-bottom:20px}
@@ -249,7 +262,10 @@ dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
   /* No back-to-top on phones; the globe takes its place beside the name. */
   .site-footer .back-to-top{display:none}
   .site-footer .footer-top .brand{grid-row:1}
-  .site-footer .footer-related{grid-column:1/-1;grid-row:2;gap:0 20px;margin-top:0}
+  .site-footer .footer-credit{grid-column:1/-1;grid-row:2;column-gap:8px}
+  /* Phones: Powered by on its own line, the two links together on the next. */
+  .site-footer .footer-credit small{flex-basis:100%}
+  .site-footer .footer-related a:first-child::before{content:none}
   .site-footer .footer-contact{grid-column:1;grid-row:3;align-self:center;margin-top:0}
   /* Phone globe: small, drawn in the secondary text colour so it reads on Ink. Beside the
      stacked New York name; city names are one long line, so there it sits right of the contact line. */
@@ -258,6 +274,9 @@ dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
   .site-footer .footer-markets{margin-top:16px;order:1}
   /* Legal links only: one short line that fits the smallest phones. */
   .site-footer .legal{order:3;flex-wrap:wrap;justify-content:flex-start;gap:0 24px;margin-top:8px;padding-top:0;border-top:0}
+  .site-footer:has(.footer-top+.legal){padding-top:28px;padding-bottom:12px}
+  .site-footer .footer-top:has(+.legal){row-gap:4px}
+  .site-footer .footer-top+.legal{margin-top:12px;padding-top:4px}
 }
 
 /* Token Index page (own sheet): kit headings, square corners, one orange action per view. */

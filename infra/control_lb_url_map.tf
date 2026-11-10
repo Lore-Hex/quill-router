@@ -14,6 +14,10 @@
 #
 # Path matchers are a list, so their order is the live map's: the control
 # plane's first, then each market's two. Host rules and paths are sets.
+#
+# A market with "forward_to" keeps both matchers and its hosts, but both
+# 301 to that domain (path and query kept) instead of serving the bucket,
+# so forwarding a market changes those two matchers and nothing else.
 
 locals {
   exchange_markets = jsondecode(file("${path.module}/../sites/token-exchange/markets.json"))
@@ -30,13 +34,13 @@ locals {
         name     = "exchange-${market.slug}"
         hosts    = [market.domain]
         slug     = market.slug
-        redirect = null
+        redirect = try(market.forward_to, null)
       },
       {
         name     = "exchange-${market.slug}-aliases"
         hosts    = concat(["www.${market.domain}"], market.aliases, [for alias in market.aliases : "www.${alias}"])
         slug     = market.slug
-        redirect = market.domain
+        redirect = try(market.forward_to, market.domain)
       },
     ]
   ])

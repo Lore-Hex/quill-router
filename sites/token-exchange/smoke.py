@@ -32,7 +32,8 @@ def get(host: str, path: str, staged: bool) -> tuple[int, dict, bytes]:
 def smoke(staged: bool) -> None:
     for market in load_markets():
         host = market["domain"]
-        for path, expected in (
+        forward = market.get("forward_to")
+        for path, expected in () if forward else (
             ("/", market["name"].encode()),
             ("/robots.txt", f"https://{host}/sitemap.xml".encode()),
             ("/sitemap.xml", f"https://{host}/".encode()),
@@ -42,6 +43,7 @@ def smoke(staged: bool) -> None:
             if status != 200 or expected not in body:
                 raise AssertionError(f"{host}{path}: unexpected status/content {status}")
         for alias in [
+            *([host] if forward else []),
             "www." + host,
             *market["aliases"],
             *["www." + name for name in market["aliases"]],
@@ -52,13 +54,13 @@ def smoke(staged: bool) -> None:
             if (
                 status != 301
                 or target.scheme != "https"
-                or target.hostname != host
+                or target.hostname != (forward or host)
                 or target.port not in (None, 443)
                 or target.path != "/"
                 or parse_qs(target.query) != {"utm_source": ["smoke"]}
             ):
                 raise AssertionError(f"{alias}: unexpected redirect {status} {location}")
-        print(f"PASS {host}: content, robots, sitemap, OG, aliases", flush=True)
+        print(f"PASS {host}: " + (f"forwards to {forward}" if forward else "content, robots, sitemap, OG, aliases"), flush=True)
     for host in ("trustedrouter.com", "trust.trustedrouter.com", "status.trustedrouter.com"):
         status, _, _ = get(host, "/", False)
         if status != 200:

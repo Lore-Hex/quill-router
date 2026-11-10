@@ -20,6 +20,11 @@ const output = process.env.NYTE_PREVIEW_DIR || require('node:os').tmpdir();
       await page.locator('#contact').scrollIntoViewIfNeeded();
       await page.waitForFunction(() => [...document.images].every(image => image.complete && image.naturalWidth > 0));
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `overflow at ${width}`);
+      const fullNameCard = page.locator('.asset').first();
+      assert.equal(await fullNameCard.locator('h3').textContent(), 'NY Token Exchange logo');
+      assert.equal(await fullNameCard.locator('img').getAttribute('src'), '/assets/press/nyte-full-name-logo.svg');
+      assert.equal(await fullNameCard.locator('a[download]').count(), 3);
+      await fullNameCard.screenshot({path: `${output}/nyte-full-name-logo-${width}.png`});
       for (const image of await page.locator('.image-grid img').all()) {
         const box = await image.boundingBox();
         assert.ok(Math.abs(box.width / box.height - 16 / 9) < 0.02, `image framing at ${width}`);

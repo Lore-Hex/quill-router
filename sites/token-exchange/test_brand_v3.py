@@ -18,6 +18,13 @@ class BrandV3Tests(unittest.TestCase):
             self.assertIn(SHEET, render_nyte("reserved-terms"))
             self.assertNotIn(SHEET, render_nyte("home"))
 
+    def test_v3_pages_opt_out_of_automatic_dark_mode(self):
+        meta = '<meta name="color-scheme" content="only light">'
+        with mock.patch.dict(os.environ, {"NYTE_BRAND_V3_PREVIEW": ""}), mock.patch.object(nyte_v2, "BRAND_V3_PAGES", set()):
+            self.assertNotIn(meta, render_nyte("home"))
+        with mock.patch.dict(os.environ, {"NYTE_BRAND_V3_PREVIEW": "1"}):
+            self.assertIn(meta, render_nyte("home"))
+
     def test_favicon_and_share_image_follow_the_switch(self):
         with mock.patch.dict(os.environ, {"NYTE_BRAND_V3_PREVIEW": ""}), mock.patch.object(nyte_v2, "BRAND_V3_PAGES", set()):
             page = render_nyte("home")

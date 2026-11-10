@@ -96,6 +96,7 @@ class PressTests(unittest.TestCase):
             self.assertFalse(svg.findall(".//{http://www.w3.org/2000/svg}script"))
             self.assertFalse(svg.findall(".//{http://www.w3.org/2000/svg}text"))
         expected = {
+            "nyte-full-name-logo.png": (2400, 1000),
             "guide/horizontal.png": (2400, 498), "guide/stacked-lockup.png": (2400, 1924),
             "guide/one-line-name.png": (2400, 240), "guide/stacked-name.png": (2400, 1499),
             "guide/wordmark.png": (2400, 807), "guide/globe.png": (2400, 1225),
@@ -129,8 +130,8 @@ class PressTests(unittest.TestCase):
 
     def test_combined_logos_include_globe_and_outlined_name_and_appear_first(self):
         assets = self.root / "assets/press"
-        self.assertEqual(ASSETS[0][0], "guide/horizontal")
-        self.assertEqual(len(ASSETS), 6)
+        self.assertEqual(ASSETS[0][0], "nyte-full-name-logo")
+        self.assertEqual(len(ASSETS), 7)
         for name, _, background, *formats in ASSETS:
             self.assertEqual(formats, ["svg", "png", "pdf"])
             root = ET.parse(assets / f"{name}.svg").getroot()  # noqa: S314
@@ -139,6 +140,19 @@ class PressTests(unittest.TestCase):
             self.assertEqual(background, "dark" if name == "guide/stacked-name" else "light")
             self.assertEqual(fills, {"#faf8f4" if background == "dark" else "#151311"})
             self.assertTrue((assets / f"{name}.pdf").read_bytes().startswith(b"%PDF-"))
+
+    def test_full_name_logo_preserves_both_supplied_outlines(self):
+        root = ET.parse(HERE / "press-assets/nyte-full-name-logo.svg").getroot()  # noqa: S314
+        self.assertIn("NY Token Exchange", root.attrib["aria-label"])
+        self.assertEqual(root.attrib["viewBox"], "0 0 1200 500")
+        for name in ("globe", "one-line-name"):
+            source = ET.parse(HERE / f"press-assets/guide/{name}.svg").getroot()  # noqa: S314
+            group = root.find(f"{{http://www.w3.org/2000/svg}}g[@id='{name}']")
+            self.assertIsNotNone(group)
+            self.assertEqual([path.attrib for path in group], [path.attrib for path in source])
+        self.assertIn('<h3>NY Token Exchange logo</h3>', self.page)
+        self.assertLess(self.page.index('src="/assets/press/nyte-full-name-logo.svg"'),
+                        self.page.index('src="/assets/press/guide/one-line-name.svg"'))
 
     def test_new_design_artwork_and_public_brand_guide(self):
         css = (HERE / "press.css").read_text()

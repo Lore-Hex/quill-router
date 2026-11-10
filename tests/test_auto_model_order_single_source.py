@@ -40,10 +40,10 @@ def test_documented_ladder_survives_catalog_filtering() -> None:
 
 
 @pytest.mark.catalog_as_built
-def test_auto_leads_with_glm53_flash_then_glm53() -> None:
-    expected = ["z-ai/glm-5.3-flash", "z-ai/glm-5.3"]
-    assert DEFAULT_AUTO_MODEL_ORDER[:2] == expected
-    assert [model.id for model in auto_candidate_models(None)[:2]] == expected
+def test_auto_leads_with_deepseek_1017_then_glm53() -> None:
+    expected = ["deepseek/deepseek-v4.1-flash-1017", "z-ai/glm-5.3-flash", "z-ai/glm-5.3"]
+    assert DEFAULT_AUTO_MODEL_ORDER[:3] == expected
+    assert [model.id for model in auto_candidate_models(None)[:3]] == expected
 
 
 def test_explicit_override_still_wins(monkeypatch: pytest.MonkeyPatch) -> None:
