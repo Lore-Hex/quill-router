@@ -334,19 +334,19 @@
   },
   "google-ai-studio": {
     "card_version": 2,
-    "model_count": 14,
+    "model_count": 15,
     "name": "Google AI Studio",
     "privacy": "Policy documented",
-    "route_count": 26,
+    "route_count": 28,
     "route_mode": "Prepaid + BYOK",
     "slug": "google-ai-studio"
   },
   "google-vertex": {
     "card_version": 2,
-    "model_count": 14,
+    "model_count": 15,
     "name": "Google Vertex AI",
     "privacy": "TR-funded ZDR",
-    "route_count": 14,
+    "route_count": 15,
     "route_mode": "Prepaid",
     "slug": "google-vertex"
   },
