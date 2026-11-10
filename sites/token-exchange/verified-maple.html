@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <script src="/assets/analytics.js?v=20261014" defer></script>
   <title>Maple attestation evidence | NYTE Privacy Secured</title>
-  <meta name="description" content="Check Maple’s confidential AI for yourself. This page asks Maple’s enclave what it is running, verifies the AWS signature in your browser, and compares it with the build NYTE reproduced from public source.">
+  <meta name="description" content="Check Maple’s confidential AI for yourself. This page asks Maple’s enclave and NYTE’s gateway what they are running, verifies the hardware signatures in your browser, and compares them with builds from public source.">
   <meta name="theme-color" content="#0b1711">
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <link rel="canonical" href="https://nytokenexchange.com/verified/maple">
@@ -17,8 +17,8 @@
   <meta name="twitter:card" content="summary_large_image">
   <link rel="icon" href="/assets/mark.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/assets/badge.css?v=20261011">
-  <link rel="stylesheet" href="/assets/verified.css?v=20261110">
-  <script src="/assets/verified.js?v=20261110" defer></script>
+  <link rel="stylesheet" href="/assets/verified.css?v=20261111">
+  <script src="/assets/verified.js?v=20261111" defer></script>
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
@@ -42,10 +42,10 @@
         <ol class="steps">
           <li data-step="fetch" data-state="waiting"><h3>Ask the enclave for a fresh attestation</h3><p>Your browser picks a random number and sends it to <code class="inline">enclave.trymaple.ai</code>. The reply has to contain that number, so it cannot be a recording.</p><p class="step-result">Waiting</p><code hidden></code></li>
           <li data-step="signature" data-state="waiting"><h3>Verify the hardware signature</h3><p>The reply is signed by the AWS Nitro hypervisor. Your browser checks the signature and every certificate back to Amazon’s published root.</p><p class="step-result">Waiting</p><code hidden></code></li>
-          <li data-step="provider" data-state="waiting"><h3>Compare with Maple’s signed approval</h3><p>Maple publishes the fingerprint (PCR0) of each release it approves in its open-source repository.</p><p class="step-result">Waiting</p><code hidden></code></li>
+          <li data-step="provider" data-state="waiting"><h3>Compare with Maple’s published approval</h3><p>Maple publishes the fingerprint (PCR0) of each release it approves in its open-source repository.</p><p class="step-result">Waiting</p><code hidden></code></li>
           <li data-step="nyte" data-state="waiting"><h3>Compare with the build NYTE reproduced</h3><p>NYTE rebuilds Maple’s enclave from the public source and records the fingerprint it gets. A match means the running code is the published code.</p><p class="step-result">Waiting</p><code hidden></code></li>
         </ol>
-        <div class="check-foot"><button class="rerun" type="button">Run the check again</button><a href="/assets/verified.js">Read the script that does this</a></div>
+        <div class="check-foot"><button class="rerun" type="button">Run both checks again</button><a href="/assets/verified.js">Read the script that does this</a></div>
       </div>
     </section>
 
@@ -63,22 +63,53 @@
       </div>
     </section>
 
+    <section class="shell manual" id="gateway">
+      <div class="section-heading"><p class="eyebrow">Going through NYTE</p><h2>The gateway proves itself too.</h2><p>When a request reaches Maple through NYTE, it first enters NYTE’s own sealed gateway. That gateway is checked here the same way: by asking its hardware what it is running.</p></div>
+      <div class="check" id="gateway-check" data-verdict="idle"
+           data-attestation="https://api.trustedrouter.com/attestation" data-audience="quill-cloud"
+           data-release="https://trust.trustedrouter.com/trust/gcp-release.json"
+           data-pin="https://raw.githubusercontent.com/Lore-Hex/quill-cloud-proxy/{commit}/enclave-go/maple-transport/verified-release.json">
+        <div class="verdict" role="status" aria-live="polite">
+          <span class="verdict-mark" aria-hidden="true"></span>
+          <div><h2 class="verdict-title">Gateway check</h2><p class="verdict-text">This check runs in your browser and needs JavaScript. Without it, use the manual check below.</p><p class="verdict-time"></p></div>
+        </div>
+        <ol class="steps">
+          <li data-step="fetch" data-state="waiting"><h3>Ask NYTE’s gateway for its attestation</h3><p>Your browser asks <code class="inline">api.trustedrouter.com</code>, the address NYTE requests go to, for the signed report from its hardware.</p><p class="step-result">Waiting</p><code hidden></code></li>
+          <li data-step="signature" data-state="waiting"><h3>Verify Google’s signature</h3><p>The gateway runs in Google Confidential Space on Intel TDX. Google signs a report naming the exact container image running, and your browser checks that signature against Google’s published keys.</p><p class="step-result">Waiting</p><code hidden></code></li>
+          <li data-step="release" data-state="waiting"><h3>Match it to a published release</h3><p>NYTE publishes the image of every gateway release it runs, each built from public source. The running image has to be on that list.</p><p class="step-result">Waiting</p><code hidden></code></li>
+          <li data-step="pin" data-state="waiting"><h3>Read the Maple fingerprint built into it</h3><p>Each gateway release carries the one Maple fingerprint it will talk to. The gateway checks Maple’s attestation itself on every connection and refuses anything else. This step reads that fingerprint from the release’s source.</p><p class="step-result">Waiting</p><code hidden></code></li>
+        </ol>
+        <div class="check-foot"><span>Runs after the Maple check above.</span><a href="https://trust.trustedrouter.com/">NYTE’s gateway trust page</a></div>
+      </div>
+    </section>
+
     <section class="shell manual" id="manual">
-      <div class="section-heading"><p class="eyebrow">Check it without this page</p><h2>Every input is public.</h2><p>You can repeat the check with your own tools. Nothing below depends on NYTE’s website.</p></div>
+      <div class="section-heading"><p class="eyebrow">Check it without this page</p><h2>Every input is public.</h2><p>You can repeat both checks with your own tools. Nothing below depends on this website.</p></div>
       <div class="manual-body">
-        <pre tabindex="0" aria-label="Commands to fetch the three public records"><code># 1. A fresh attestation document from Maple’s enclave (base64 COSE_Sign1)
+        <pre tabindex="0" aria-label="Commands to fetch the public records"><code># 1. A fresh attestation document from Maple’s enclave (base64 COSE_Sign1)
 curl -s https://enclave.trymaple.ai/attestation/$(uuidgen | tr A-Z a-z)
 
 # 2. The fingerprint Maple approved for production
 curl -s https://raw.githubusercontent.com/MaplePrivacyLabs/Maple/master/services/opensecret/pcrProd.json
 
 # 3. The fingerprint NYTE reproduced from source, with its evidence
-curl -s https://raw.githubusercontent.com/Lore-Hex/quill-cloud-proxy/main/enclave-go/maple-transport/verified-release.json</code></pre>
+curl -s https://raw.githubusercontent.com/Lore-Hex/quill-cloud-proxy/main/enclave-go/maple-transport/verified-release.json
+
+# 4. NYTE’s gateway attestation: a token signed by Google (decode it with any JWT tool)
+curl -s https://api.trustedrouter.com/attestation
+
+# 5. The gateway images NYTE has published, to compare with the token’s image_digest
+curl -s https://trust.trustedrouter.com/trust/gcp-release.json
+
+# 6. The Maple fingerprint built into that gateway release. Replace {commit} with the
+#    characters after "gcp-release-" in the token’s image_reference
+curl -s https://raw.githubusercontent.com/Lore-Hex/quill-cloud-proxy/{commit}/enclave-go/maple-transport/verified-release.json</code></pre>
         <ul class="sources">
           <li><a href="https://github.com/MaplePrivacyLabs/Maple/blob/master/services/opensecret/docs/PCR_VERIFICATION.md">Maple’s guide to verifying its enclave</a><span>How to decode the document and rebuild the image yourself.</span></li>
           <li><a href="https://maple.ai/proof">Maple’s own proof page</a><span>Maple’s explanation of what the enclave protects.</span></li>
           <li><a href="https://github.com/MaplePrivacyLabs/Maple/blob/master/services/opensecret/pcrProdHistory.json">Maple’s signed release history</a><span>Every production fingerprint Maple has approved.</span></li>
           <li><a href="https://docs.aws.amazon.com/enclaves/latest/user/verify-root.html">AWS Nitro attestation and root certificate</a><span>Amazon’s published root and document format.</span></li>
+          <li><a href="https://cloud.google.com/confidential-computing/confidential-space/docs/reference/token-claims">Google Confidential Space attestation tokens</a><span>What each signed field in the gateway’s token means.</span></li>
           <li><a href="https://github.com/Lore-Hex/quill-cloud-proxy/actions/workflows/verify-maple-release.yml">NYTE’s independent rebuild runs</a><span>The public logs of each reproduction.</span></li>
           <li><a href="https://github.com/Lore-Hex/quill-cloud-proxy/blob/main/docs/providers/maple.md">NYTE’s Maple review notes</a><span>What was tested, and what failed along the way.</span></li>
         </ul>
@@ -88,8 +119,8 @@ curl -s https://raw.githubusercontent.com/Lore-Hex/quill-cloud-proxy/main/enclav
     <section class="shell usage" id="limits">
       <h2>What this does and does not show.</h2>
       <div class="usage-grid">
-        <p><strong>It shows what is running.</strong> A verified result means the enclave answering at <code class="inline">enclave.trymaple.ai</code> is running the image built from Maple’s published source. Reading that source is how you learn what the image does with your data.</p>
-        <p><strong>It covers the enclave, not everything.</strong> The check covers Maple’s front enclave. NYTE’s own routing to Maple is narrower: one model, through NYTE’s attested gateway. It is not an audit of Maple’s company, apps, or other systems.</p>
+        <p><strong>It shows what is running.</strong> A verified result means a genuine enclave answered your browser’s question just now, and it runs the image built from Maple’s published source. The signature proves the hardware and the software, not the network address it answered from. Reading the source is how you learn what the image does with your data.</p>
+        <p><strong>It covers the enclave, not everything.</strong> The checks cover Maple’s front enclave and NYTE’s gateway on Google Cloud, one gateway machine per visit. NYTE routes one Maple model. That NYTE’s published image comes from its public source is NYTE’s record, which you can rebuild to confirm. This is not an audit of Maple’s company, apps, or other systems.</p>
         <p><strong>The seal is a link, not a result.</strong> The seal image on Maple’s site is static. The result is whatever this page shows when you open it. Maple ships often, so you may see a release that NYTE is still reviewing.</p>
       </div>
     </section>

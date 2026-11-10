@@ -582,16 +582,28 @@ The page does the check in the visitor's browser (`verified.js`, served unminifi
 it can be read): it requests a fresh attestation document from the provider's AWS
 Nitro enclave with a random nonce, verifies the COSE signature and the certificate
 chain to the pinned AWS Nitro root, then compares PCR0 with two public records: the
-provider's own signed approval and the build NYTE reproduced
+provider's own published approval and the build NYTE reproduced
 (`enclave-go/maple-transport/verified-release.json` in quill-cloud-proxy). It reports
 one of: verified; newer release under NYTE review (matches the provider's approval,
 not yet reproduced); not verified; or incomplete. Maple ships often, so the review
-state is expected and must stay truthful. Nothing is sent to NYTE.
+state is expected and must stay truthful.
+
+A second panel checks the path through NYTE. It fetches the gateway's Google
+Confidential Space token from `api.trustedrouter.com/attestation`, verifies the RS256
+signature against Google's published keys, requires a production image with debugging
+off, requires the image digest to be in `trust/gcp-release.json`, then reads the Maple
+fingerprint from that release's own commit of `verified-release.json` and compares it
+with the enclave's live PCR0. It says either that the gateway accepts the running
+enclave or that it is holding traffic back. It covers the GCP plane only, and one
+gateway instance per visit. Every request is a GET that carries nothing about the
+visitor; the page itself loads the site's usual analytics script.
 
 `verify-verified.cjs` replays a recorded real document (`verified-fixture.json`,
 never published) with the browser clock set to when it was recorded, so signature
 checks run for real offline. It covers every verdict and rejects a replay, an
-expired chain, an altered measurement, an altered signature and a forged root.
+expired chain, an altered measurement, an altered signature, a forged root and a
+leaf certificate re-keyed by an attacker. Gateway tokens are signed in the test with
+a throwaway RSA key served as the mocked Google key set.
 
 To publish, upload only `verified/<provider>` (content type `text/html`),
 `verified/<provider>.html`, `assets/verified.css`, `assets/verified.js`, the

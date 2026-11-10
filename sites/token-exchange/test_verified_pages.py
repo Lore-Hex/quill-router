@@ -40,12 +40,30 @@ class VerifiedPageTests(unittest.TestCase):
             self.assertIn(f'{attribute}="{source}"', self.page)
             self.assertIn(source, self.page.split('id="manual"')[1], "the manual check must use the same source")
 
+    def test_gateway_check_reads_the_gateway_and_its_published_release(self):
+        # The path through NYTE: the gateway's own attestation, then NYTE's public records.
+        for attribute, source in {
+            "data-attestation": "https://api.trustedrouter.com/attestation",
+            "data-release": "https://trust.trustedrouter.com/trust/gcp-release.json",
+            "data-pin": "https://raw.githubusercontent.com/Lore-Hex/quill-cloud-proxy/{commit}/enclave-go/maple-transport/verified-release.json",
+        }.items():
+            self.assertIn(f'{attribute}="{source}"', self.page.split('id="gateway-check"')[1])
+            self.assertIn(source, self.page.split('id="manual"')[1], "the manual check must use the same source")
+        self.assertIn('data-audience="quill-cloud"', self.page)
+        # Google's keys are the trust anchor, so they are pinned in the script, not the page.
+        self.assertIn(
+            "https://www.googleapis.com/service_accounts/v1/metadata/jwk/signer@confidentialspace-sign.iam.gserviceaccount.com",
+            self.script,
+        )
+        self.assertIn("https://confidentialcomputing.googleapis.com", self.script)
+        self.assertIn("disabled-since-boot", self.script)
+
     def test_script_pins_the_aws_root_and_checks_freshness(self):
         # https://docs.aws.amazon.com/enclaves/latest/user/verify-root.html
         self.assertIn("641a0321a3e244efe456463195d606317ed7cdcc3c1756e09893f3c68f79bb5b", self.script)
         self.assertIn("crypto.randomUUID()", self.script)
         self.assertIn("nonce mismatch", self.script)
-        # Readable by a visitor: served as written, with nothing sent to NYTE.
+        # Readable by a visitor: served as written, with no NYTE address of its own.
         self.assertEqual(self.script, (HERE / "verified.js").read_text())
         self.assertNotIn("nytokenexchange.com", self.script)
         self.assertNotIn("trustedrouter.com", self.script)
@@ -55,6 +73,8 @@ class VerifiedPageTests(unittest.TestCase):
             "needs JavaScript",
             "Check it without this page",
             "It covers the enclave, not everything",
+            "not the network address it answered from",
+            "one gateway machine per visit",
             "The seal is a link, not a result",
             "NYTE sends it nothing rather than fall back",
         ):
