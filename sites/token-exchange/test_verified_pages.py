@@ -57,6 +57,8 @@ class VerifiedPageTests(unittest.TestCase):
         )
         self.assertIn("https://confidentialcomputing.googleapis.com", self.script)
         self.assertIn("disabled-since-boot", self.script)
+        # The source commit is taken only from an image name NYTE published.
+        self.assertIn("accepted_image_references.includes(claims.imageReference)", self.script)
 
     def test_script_pins_the_aws_root_and_checks_freshness(self):
         # https://docs.aws.amazon.com/enclaves/latest/user/verify-root.html
@@ -75,6 +77,9 @@ class VerifiedPageTests(unittest.TestCase):
             "It covers the enclave, not everything",
             "not the network address it answered from",
             "one gateway machine per visit",
+            "The gateway check proves less",
+            "can be up to an hour old",
+            "are NYTE’s statements",
             "The seal is a link, not a result",
             "NYTE sends it nothing rather than fall back",
         ):

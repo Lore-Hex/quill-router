@@ -219,7 +219,7 @@
     if (parts.length !== 3) throw new Error('the reply is not an attestation token');
     const decode = part => JSON.parse(new TextDecoder().decode(fromBase64Url(part)));
     const header = decode(parts[0]);
-    const jwk = header.alg === 'RS256' && Array.isArray(keys) && keys.find(k => k.kty === 'RSA' && k.kid === header.kid);
+    const jwk = header.alg === 'RS256' && Array.isArray(keys) && typeof header.kid === 'string' && keys.find(k => k.kty === 'RSA' && k.kid === header.kid);
     if (!jwk) throw rejected('the token is not signed with one of Google’s published Confidential Space keys');
     const key = await crypto.subtle.importKey('jwk', {kty: 'RSA', n: jwk.n, e: jwk.e}, RS256, false, ['verify']);
     const signed = new TextEncoder().encode(`${parts[0]}.${parts[1]}`);
@@ -236,10 +236,33 @@
     if (typeof container.image_digest !== 'string' || typeof container.image_reference !== 'string') {
       throw new Error('the token does not name a container image');
     }
-    return {imageDigest: container.image_digest, imageReference: container.image_reference, hardware: String(claims.hwmodel), issuedAt: claims.iat * 1000};
+    return {imageDigest: container.image_digest, imageReference: container.image_reference, hardware: String(claims.hwmodel), issuedAt: Number.isFinite(claims.iat) ? claims.iat * 1000 : null};
   }
 
-  const api = {cbor, verifyAttestation, verifyGatewayToken, verdict, fromBase64, AWS_NITRO_ROOT_SHA256, GOOGLE_KEYS};
+  // What the gateway panel may conclude. `pin` is the fingerprint the running
+  // release accepts; `providerResult` is what the enclave check above concluded.
+  // Green only when the enclave the gateway accepts is one a public record approves.
+  function gatewayVerdict(pin, livePcr0, providerResult) {
+    if (!livePcr0) return 'incomplete';
+    if (pin !== livePcr0) return 'pending';
+    if (providerResult === 'verified' || providerResult === 'pending') return 'verified';
+    return providerResult === 'mismatch' ? 'unapproved' : 'unchecked';
+  }
+
+  // The source commit of a running gateway image. The image tag alone is not
+  // signed evidence of anything, so the full reference has to be one NYTE published.
+  function releaseCommit(release, claims) {
+    if (!release || !Array.isArray(release.accepted_image_digests) || !Array.isArray(release.accepted_image_references)) {
+      throw new Error('NYTE’s release record could not be read');
+    }
+    if (!release.accepted_image_digests.includes(claims.imageDigest)) throw rejected('the running image is not one NYTE has published');
+    if (!release.accepted_image_references.includes(claims.imageReference)) throw rejected('the running image is not under a release name NYTE has published');
+    const commit = (/:gcp-release-([0-9a-f]{7,40})$/.exec(claims.imageReference) || [])[1];
+    if (!commit) throw new Error('the image does not name its source release');
+    return commit;
+  }
+
+  const api = {cbor, verifyAttestation, verifyGatewayToken, verdict, gatewayVerdict, releaseCommit, fromBase64, AWS_NITRO_ROOT_SHA256, GOOGLE_KEYS};
   if (typeof module !== 'undefined') module.exports = api;
   if (typeof document === 'undefined') return;
 
@@ -271,11 +294,13 @@
         element.querySelectorAll('[data-step]').forEach(row => mark(row.dataset.step, 'waiting', 'Waiting'));
       },
       conclude(state, detail) {
-        show(state, headlines[state][0], detail || headlines[state][1], `Checked in your browser at ${new Date().toLocaleTimeString()}.`);
+        // A headline may name the colour it is shown in; otherwise its own name is the colour.
+        show(headlines[state][2] || state, headlines[state][0], detail || headlines[state][1], `Checked in your browser at ${new Date().toLocaleTimeString()}.`);
       },
       // A check that stopped at `stage`. Only a failed cryptographic check is
       // reported as "not verified"; anything else is this browser's problem.
-      stop(stage, error, unreachable) {
+      stop(stage, error) {
+        const unreachable = Boolean(error.unreachable);
         const why = error.clock ? `${error.message}; check that this device’s clock is right` : error.message;
         if (error.rejected) {
           mark(stage, 'bad', `Rejected: ${error.message}`);
@@ -289,27 +314,38 @@
   }
   const provider = panel(root, {
     verified: ['Verified just now', `The ${name} enclave answering right now runs the exact build NYTE reproduced from ${name}’s public source code.`],
-    pending: ['Newer release, review in progress', `${name} has shipped a newer release. It matches the fingerprint ${name} published for production, and NYTE has not finished reproducing it yet. NYTE’s gateway stays pinned to the build it reproduced and sends nothing to this one until the review is done.`],
+    pending: ['Newer release, review in progress', `${name} has shipped a newer release. It matches the fingerprint ${name} published for production, and NYTE has not finished reproducing it yet. The gateway check below shows which release NYTE’s gateway accepts.`],
     mismatch: ['Not verified', `The enclave answering right now matches neither ${name}’s published approval nor the build NYTE reproduced.`],
     incomplete: ['Check incomplete', 'The enclave’s attestation is genuine, but one of the public records could not be loaded, so the comparison is unfinished. Try again, or use the manual check below.'],
     failed: ['Check could not finish', 'This browser could not complete the check. Use the manual check below.'],
   });
   const gateway = gate && panel(gate, {
-    verified: ['Gateway attested, and it accepts this enclave', `NYTE’s gateway is running a published release inside sealed hardware. The one ${name} fingerprint built into that release is the one ${name}’s enclave reports right now.`],
-    pending: ['Gateway attested, and holding back', `NYTE’s gateway is running a published release inside sealed hardware. The one ${name} fingerprint built into that release is not what ${name} is running now, so the gateway sends ${name} nothing until NYTE has reviewed the newer release.`],
+    verified: ['Gateway attested, and it accepts this enclave', `NYTE’s gateway is running a published release inside sealed hardware. The ${name} fingerprint recorded for that release is the one ${name}’s enclave reports right now.`],
+    pending: ['Gateway attested, and holding back', `NYTE’s gateway is running a published release inside sealed hardware. The ${name} fingerprint recorded for that release is not the one ${name}’s enclave reports right now, so this release refuses it.`],
+    unapproved: ['Gateway attested, enclave not verified', `NYTE’s gateway is running a published release inside sealed hardware, and that release accepts the ${name} enclave answering now. That enclave did not pass the check above.`, 'mismatch'],
+    unchecked: ['Gateway attested, enclave check incomplete', `NYTE’s gateway is running a published release inside sealed hardware, and that release accepts the ${name} enclave answering now. The check above could not finish comparing that enclave with the public records.`, 'incomplete'],
     mismatch: ['Gateway not verified', 'NYTE’s gateway did not pass the check.'],
-    incomplete: ['Gateway attested', `NYTE’s gateway is running a published release inside sealed hardware. The ${name} check above did not finish, so the two could not be compared.`],
+    incomplete: ['Gateway attested', `NYTE’s gateway is running a published release inside sealed hardware. The ${name} check above produced no result, so the two could not be compared.`],
     failed: ['Gateway check could not finish', 'This browser could not complete the gateway check. Use the manual check below.'],
   });
   const request = async url => {
-    const response = await fetch(url, {cache: 'no-store'});
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    // No reply is this browser's problem, never a failed proof. A stalled reply
+    // must not leave the page checking forever.
+    const unreachable = message => Object.assign(new Error(message), {unreachable: true});
+    let response;
+    try {
+      response = await fetch(url, {cache: 'no-store', signal: AbortSignal.timeout ? AbortSignal.timeout(15000) : undefined});
+    } catch (error) {
+      throw unreachable(error.name === 'TimeoutError' ? 'no reply within 15 seconds' : error.message);
+    }
+    if (!response.ok) throw unreachable(`HTTP ${response.status}`);
     return response;
   };
   const json = async url => (await request(url)).json();
   const fingerprint = (record, key) => (record && typeof record[key] === 'string' ? record[key].toLowerCase() : null);
 
-  // Returns the measurement the enclave proved, or null if it proved nothing.
+  // Returns the measurement the enclave proved and what the records say of it,
+  // or null if it proved nothing.
   async function checkProvider() {
     const sources = root.dataset;
     provider.reset(`Asking the ${name} enclave to prove what it is running.`);
@@ -325,7 +361,7 @@
       live = await verifyAttestation(fromBase64(body.attestation_document), nonce, Date.now());
       provider.mark('signature', 'ok', `Signed by AWS Nitro hardware (${live.certificates} certificates, back to the AWS root)`, `PCR0 ${live.pcr0}`);
     } catch (error) {
-      provider.stop(stage, error, stage === 'fetch');
+      provider.stop(stage, error);
       return null;
     }
     const [published, reproduced] = (await records).map(result => (result.status === 'fulfilled' ? result.value : null));
@@ -349,11 +385,11 @@
       });
     }
     provider.conclude(result);
-    return live.pcr0;
+    return {pcr0: live.pcr0, result};
   }
 
   // What NYTE's gateway is running, and which enclave it is built to accept.
-  async function checkGateway(livePcr0) {
+  async function checkGateway(live) {
     const sources = gate.dataset;
     gateway.reset('Asking NYTE’s gateway to prove what it is running.');
     let stage = 'fetch';
@@ -362,30 +398,26 @@
       gateway.mark('fetch', 'ok', 'Received the gateway’s attestation token');
       stage = 'signature';
       const claims = await verifyGatewayToken(token, keys && keys.keys, sources.audience, Date.now());
-      const age = Math.max(0, Math.round((Date.now() - claims.issuedAt) / 60000));
-      gateway.mark('signature', 'ok', `Signed by Google Confidential Space (${claims.hardware}, debugging off, issued ${age} min ago)`, `image ${claims.imageDigest}`);
+      const age = claims.issuedAt === null ? '' : `, issued ${Math.max(0, Math.round((Date.now() - claims.issuedAt) / 60000))} min ago`;
+      gateway.mark('signature', 'ok', `Signed by Google Confidential Space (${claims.hardware}, debugging off${age})`, `image ${claims.imageDigest}`);
       stage = 'release';
-      const release = await json(sources.release);
-      if (!release || !Array.isArray(release.accepted_image_digests)) throw new Error('NYTE’s release record could not be read');
-      if (!release.accepted_image_digests.includes(claims.imageDigest)) throw rejected('the running image is not one NYTE has published');
-      const commit = (/:gcp-release-([0-9a-f]{7,40})$/.exec(claims.imageReference) || [])[1];
-      if (!commit) throw new Error('the image does not name its source release');
+      const commit = releaseCommit(await json(sources.release), claims);
       gateway.mark('release', 'ok', 'One of the gateway images NYTE has published', `source ${commit}`);
       stage = 'pin';
       const pin = fingerprint(await json(sources.pin.replace('{commit}', commit)), 'pcr0');
       if (!pin) throw new Error('the release has no fingerprint record');
-      if (!livePcr0) {
-        gateway.mark('pin', 'ok', `Read the ${name} fingerprint this release accepts`, `PCR0 ${pin}`);
-        gateway.conclude('incomplete');
-      } else if (pin === livePcr0) {
-        gateway.mark('pin', 'ok', `Accepts the ${name} enclave running now`, `PCR0 ${pin}`);
-        gateway.conclude('verified');
-      } else {
-        gateway.mark('pin', 'wait', `Refuses the ${name} enclave running now`, `PCR0 ${pin}`);
-        gateway.conclude('pending');
-      }
+      const result = gatewayVerdict(pin, live && live.pcr0, live && live.result);
+      const [state, text] = {
+        incomplete: ['ok', `Read the ${name} fingerprint this release accepts`],
+        pending: ['wait', `Refuses the ${name} enclave running now`],
+        verified: ['ok', `Accepts the ${name} enclave running now`],
+        unapproved: ['bad', `Accepts the ${name} enclave running now, which did not pass the check above`],
+        unchecked: ['wait', `Accepts the ${name} enclave running now`],
+      }[result];
+      gateway.mark('pin', state, text, `PCR0 ${pin}`);
+      gateway.conclude(result);
     } catch (error) {
-      gateway.stop(stage, error, stage === 'fetch');
+      gateway.stop(stage, error);
     }
   }
 

@@ -52,6 +52,7 @@ code.inline{font:.92em ui-monospace,SFMono-Regular,Consolas,monospace;color:var(
 .sources a{color:var(--ink)}
 .sources span{color:var(--muted);font-size:12px}
 
+@media(min-width:901px){.usage-grid.pairs{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:900px){.manual{grid-template-columns:1fr;gap:32px}.evidence-hero{grid-template-columns:1fr}}
 @media(max-width:650px){.evidence-hero{padding-block:44px}.evidence-hero h1{font-size:44px}.check{padding:18px}.verdict-title{font-size:24px}.record>div,.sources li{grid-template-columns:1fr;gap:4px}.manual{padding-block:44px}}
 @media(prefers-reduced-motion:reduce){.check[data-verdict="running"] .verdict-mark{animation:none}}

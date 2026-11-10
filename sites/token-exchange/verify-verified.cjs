@@ -19,6 +19,9 @@ const stranger = crypto.generateKeyPairSync('rsa', {modulusLength: 2048});
 const KEYS = {keys: [{...google.publicKey.export({format: 'jwk'}), kid: 'test-key', alg: 'RS256', use: 'sig'}]};
 const DIGEST = `sha256:${'5e'.repeat(32)}`;
 const COMMIT = '45ff2be8';
+const REFERENCE = `us-docker.pkg.dev/example/quill/enclave-multi:gcp-release-${COMMIT}`;
+// A real commit of another release, whose record an operator might prefer the page to read.
+const ELSEWHERE = 'bf6a84e9';
 const encode = value => Buffer.from(JSON.stringify(value)).toString('base64url');
 
 function gatewayToken(change = {}, signer = google.privateKey, header = {alg: 'RS256', kid: 'test-key', typ: 'JWT'}) {
@@ -26,7 +29,7 @@ function gatewayToken(change = {}, signer = google.privateKey, header = {alg: 'R
   const claims = {
     iss: 'https://confidentialcomputing.googleapis.com', aud: 'quill-cloud', iat: issued, nbf: issued, exp: issued + 3600,
     hwmodel: 'GCP_INTEL_TDX', swname: 'CONFIDENTIAL_SPACE', dbgstat: 'disabled-since-boot',
-    submods: {container: {image_digest: DIGEST, image_reference: `us-docker.pkg.dev/example/quill/enclave-multi:gcp-release-${COMMIT}`}},
+    submods: {container: {image_digest: DIGEST, image_reference: REFERENCE}},
     ...change,
   };
   const signed = `${encode(header)}.${encode(claims)}`;
@@ -123,6 +126,25 @@ async function gatewayControls() {
   await refuses('token from the future', check(gatewayToken(), KEYS.keys, fixture.now - 3600e3), 'validity period', 'clock');
   await refuses('no image named', check(gatewayToken({submods: {}})), 'does not name a container image', 'unreadable');
   await refuses('not a token', check('<html>'), 'not an attestation token', 'unreadable');
+  await refuses('key without an id', check(gatewayToken({}, google.privateKey, {alg: 'RS256'}), [{...KEYS.keys[0], kid: undefined}]), 'published Confidential Space keys', 'rejected');
+  assert.equal((await check(gatewayToken({iat: undefined}))).issuedAt, null);
+
+  // The source commit comes only from an image name NYTE published, never from the tag alone.
+  const release = {accepted_image_digests: [DIGEST], accepted_image_references: [REFERENCE]};
+  const claims = {imageDigest: DIGEST, imageReference: REFERENCE};
+  const commit = (record, running) => Promise.resolve().then(() => verifier.releaseCommit(record, running));
+  assert.equal(await commit(release, claims), COMMIT);
+  await refuses('published image under another tag', commit(release, {...claims, imageReference: REFERENCE.replace(COMMIT, ELSEWHERE)}), 'release name NYTE has published', 'rejected');
+  await refuses('unpublished image', commit(release, {...claims, imageDigest: `sha256:${'00'.repeat(32)}`}), 'not one NYTE has published', 'rejected');
+  await refuses('record without names', commit({accepted_image_digests: [DIGEST]}, claims), 'could not be read', 'unreadable');
+  await refuses('published name without a commit', commit({...release, accepted_image_references: ['x/y:latest']}, {...claims, imageReference: 'x/y:latest'}), 'does not name its source release', 'unreadable');
+
+  // Green needs both: the gateway accepts the live enclave, and a public record approves it.
+  assert.deepEqual(['incomplete', 'pending', 'pending', 'verified', 'verified', 'unapproved', 'unchecked'], [
+    verifier.gatewayVerdict('aa', null, undefined), verifier.gatewayVerdict('aa', 'bb', 'verified'), verifier.gatewayVerdict('aa', 'bb', 'mismatch'),
+    verifier.gatewayVerdict('aa', 'aa', 'verified'), verifier.gatewayVerdict('aa', 'aa', 'pending'),
+    verifier.gatewayVerdict('aa', 'aa', 'mismatch'), verifier.gatewayVerdict('aa', 'aa', 'incomplete'),
+  ]);
   console.log('PASS gateway verifier: genuine accepted; forged, edited, unknown key, unsigned, wrong issuer, wrong audience, debug, expired rejected');
 }
 
@@ -131,13 +153,23 @@ async function gatewayControls() {
 const OK = ['ok', 'ok', 'ok', 'ok'];
 const STOPPED = ['bad', 'waiting', 'waiting', 'waiting'];
 const ATTESTED = 'Gateway attested, and it accepts this enclave';
+const UNCHECKED = {gateway: 'incomplete', gatewayTitle: 'Gateway attested, enclave check incomplete', gatewayStates: ['ok', 'ok', 'ok', 'wait']};
+const HOLDING = {gateway: 'pending', gatewayTitle: 'Gateway attested, and holding back', gatewayStates: ['ok', 'ok', 'ok', 'wait']};
 const CASES = [
   {name: 'verified', title: 'Verified just now', states: OK, gateway: 'verified', gatewayTitle: ATTESTED, gatewayStates: OK},
   {name: 'pending', nyte: OTHER, pin: OTHER, title: 'Newer release, review in progress', states: ['ok', 'ok', 'ok', 'wait'], gateway: 'pending', gatewayTitle: 'Gateway attested, and holding back', gatewayStates: ['ok', 'ok', 'ok', 'wait']},
   {name: 'mismatch', provider: OTHER, nyte: OTHER, pin: OTHER, title: 'Not verified', states: ['ok', 'ok', 'bad', 'bad'], gateway: 'pending', gatewayTitle: 'Gateway attested, and holding back', gatewayStates: ['ok', 'ok', 'ok', 'wait']},
-  {name: 'incomplete', nyte: null, title: 'Check incomplete', states: ['ok', 'ok', 'ok', 'bad'], gateway: 'verified', gatewayTitle: ATTESTED, gatewayStates: OK},
-  {name: 'incomplete', label: 'unreadable provider record', provider: 5, title: 'Check incomplete', states: ['ok', 'ok', 'bad', 'ok'], gateway: 'verified', gatewayTitle: ATTESTED, gatewayStates: OK},
-  {name: 'incomplete', label: 'empty NYTE record', nyte: 'null', title: 'Check incomplete', states: ['ok', 'ok', 'ok', 'bad'], gateway: 'verified', gatewayTitle: ATTESTED, gatewayStates: OK},
+  {name: 'incomplete', nyte: null, title: 'Check incomplete', states: ['ok', 'ok', 'ok', 'bad'], ...UNCHECKED},
+  {name: 'incomplete', label: 'unreadable provider record', provider: 5, title: 'Check incomplete', states: ['ok', 'ok', 'bad', 'ok'], ...UNCHECKED},
+  {name: 'incomplete', label: 'empty NYTE record', nyte: 'null', title: 'Check incomplete', states: ['ok', 'ok', 'ok', 'bad'], ...UNCHECKED},
+  // The record on main is ahead of the deployed gateway: the page must not say NYTE has yet to review it.
+  {name: 'verified', label: 'gateway release behind the record', pin: OTHER, title: 'Verified just now', states: OK, ...HOLDING, gatewayText: 'so this release refuses it'},
+  {name: 'pending', label: 'gateway already accepts the newer release', nyte: OTHER, title: 'Newer release, review in progress', states: ['ok', 'ok', 'ok', 'wait'], gateway: 'verified', gatewayTitle: ATTESTED, gatewayStates: OK},
+  // A gateway that accepts an enclave neither record approves is never green.
+  {name: 'mismatch', label: 'gateway accepts an unapproved enclave', provider: OTHER, nyte: OTHER, title: 'Not verified', states: ['ok', 'ok', 'bad', 'bad'], gateway: 'mismatch', gatewayTitle: 'Gateway attested, enclave not verified', gatewayStates: ['ok', 'ok', 'ok', 'bad']},
+  {name: 'verified', label: 'published image under an unpublished tag', token: gatewayToken({submods: {container: {image_digest: DIGEST, image_reference: REFERENCE.replace(COMMIT, ELSEWHERE)}}}), elsewhere: fixture.pcr0, title: 'Verified just now', states: OK, gateway: 'mismatch', gatewayTitle: 'Gateway not verified', gatewayStates: ['ok', 'ok', 'bad', 'waiting'], gatewayText: 'release name NYTE has published'},
+  {name: 'verified', label: 'gateway stalls', token: 'stall', title: 'Verified just now', states: OK, gateway: 'failed', gatewayTitle: 'Gateway check could not finish', gatewayStates: STOPPED, gatewayStep: 'no reply within 15 seconds'},
+  {name: 'failed', label: 'enclave reply malformed is not called unreachable', enclave: 'malformed', title: 'Check could not finish', states: STOPPED, gateway: 'incomplete', gatewayTitle: 'Gateway attested', gatewayStates: OK, step: 'Could not check'},
   {name: 'failed', label: 'enclave unreachable', enclave: 'down', title: 'Check could not finish', states: STOPPED, gateway: 'incomplete', gatewayTitle: 'Gateway attested', gatewayStates: OK},
   {name: 'failed', label: 'enclave reply malformed', enclave: 'malformed', title: 'Check could not finish', states: STOPPED, gateway: 'incomplete', gatewayTitle: 'Gateway attested', gatewayStates: OK},
   {name: 'mismatch', label: 'replayed document', replay: true, title: 'Not verified', states: ['ok', 'bad', 'waiting', 'waiting'], gateway: 'incomplete', gatewayTitle: 'Gateway attested', gatewayStates: OK},
@@ -175,18 +207,20 @@ async function open(browser, width, scenario) {
     const url = route.request().url();
     // The page's record of NYTE's reproduction lives on main; the gateway's pin lives at its release commit.
     if (url.includes(`/quill-cloud-proxy/${COMMIT}/`)) return record(route, {pcr0: scenarioValue(scenario, 'pin', fixture.pcr0)});
+    if (url.includes(`/quill-cloud-proxy/${ELSEWHERE}/`)) return record(route, {pcr0: scenario.elsewhere});
     assert.ok(url.includes('/quill-cloud-proxy/main/'), url);
     const nyte = scenarioValue(scenario, 'nyte', fixture.pcr0);
     return record(route, nyte && nyte !== 'null' ? {pcr0: nyte, source_commit: 'c0ffee', eif_sha256: 'beef', review: 'https://github.com/Lore-Hex/quill-cloud-proxy/issues/1'} : nyte);
   });
   await page.route('https://api.trustedrouter.com/**', route => {
     const token = scenarioValue(scenario, 'token', gatewayToken());
+    if (token === 'stall') return undefined; // never answered: the page has to give up on its own
     return token === null ? route.fulfill({status: 503, headers: cors, body: 'unavailable'}) : route.fulfill({body: token, contentType: 'application/cbor', headers: cors});
   });
   await page.route('https://www.googleapis.com/**', route => route.fulfill({json: KEYS, headers: cors}));
   await page.route('https://trust.trustedrouter.com/**', route => {
     const accepted = scenarioValue(scenario, 'accepted', [`sha256:${'11'.repeat(32)}`, DIGEST]);
-    return record(route, accepted && {accepted_image_digests: accepted});
+    return record(route, accepted && {accepted_image_digests: accepted, accepted_image_references: [REFERENCE]});
   });
   await page.goto(`${base}/verified/maple.html`, {waitUntil: 'networkidle'});
   await page.waitForFunction(finished);
@@ -208,7 +242,9 @@ const panel = (page, id) => Promise.all([
       const {context, page, errors, requests} = await open(browser, 1440, scenario);
       assert.deepEqual(await panel(page, 'live-check'), [scenario.name, scenario.title, scenario.states], scenario.label);
       assert.deepEqual(await panel(page, 'gateway-check'), [scenario.gateway, scenario.gatewayTitle, scenario.gatewayStates], scenario.label);
-      if (scenario.gatewayText) assert.ok((await page.locator('#gateway-check .verdict-text').textContent()).includes(scenario.gatewayText));
+      if (scenario.gatewayText) assert.ok((await page.locator('#gateway-check .verdict-text').textContent()).includes(scenario.gatewayText), scenario.label);
+      if (scenario.gatewayStep) assert.ok((await page.locator('#gateway-check [data-step="fetch"] .step-result').textContent()).includes(scenario.gatewayStep), scenario.label);
+      if (scenario.step) assert.ok((await page.locator('#live-check [data-step="fetch"] .step-result').textContent()).includes(scenario.step), scenario.label);
       if (scenario.name === 'verified') {
         assert.equal(await page.locator('dd[data-record="source_commit"]').textContent(), 'c0ffee');
         assert.equal(await page.locator('a[data-record="review"]').getAttribute('href'), 'https://github.com/Lore-Hex/quill-cloud-proxy/issues/1');

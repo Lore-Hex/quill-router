@@ -591,7 +591,8 @@ state is expected and must stay truthful.
 A second panel checks the path through NYTE. It fetches the gateway's Google
 Confidential Space token from `api.trustedrouter.com/attestation`, verifies the RS256
 signature against Google's published keys, requires a production image with debugging
-off, requires the image digest to be in `trust/gcp-release.json`, then reads the Maple
+off, requires the image digest and the full image name to be in
+`trust/gcp-release.json` (a tag alone is not evidence of a source commit), then reads the Maple
 fingerprint from that release's own commit of `verified-release.json` and compares it
 with the enclave's live PCR0. It says either that the gateway accepts the running
 enclave or that it is holding traffic back. It covers the GCP plane only, and one
