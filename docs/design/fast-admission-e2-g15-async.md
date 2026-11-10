@@ -135,7 +135,7 @@ order:
 | shape A | `Eligibility` invalid, or an exclusion (`billing_snapshot.py:181-205`): untyped records, usage other than `Credits`, authority other than `local` (a federated workspace or key is `federated`), an unsupported route, a `service_tier` other than absent or `default`, or any nonzero or true markup, fee, custom or user model, tool, search, image or video cost, `partner` (since 2026-11-09 the settle path's own partner classifier over the requested model, route and idempotency key, or a requested TrustedRouter program, meta-router or alias name or the partner model's, as the model or a fallback: `async_settle.py`, `requested_facts` and `names_program_model`), liberty, native batch, fusion, polyphemus (a candidate is the selector's endpoint) or private-tier fact (a candidate with the provider-private tier basis, `_provider_price_tier_input_tokens`'s own condition). `streamed` itself is not an exclusion |
 | shape A | the snapshot fails to build or validate: a raw price value that is not a strict non-negative int64 (`billing_snapshot.py:446-457`); a candidate's provider or model id outside `Identity` (every provider's Credits endpoint is a candidate since 2026-11-09, the model any publisher's), a usage, version or convention the DTO refuses (the prompt convention follows the provider slug and the model id: anthropic, and amazon-bedrock or google-vertex serving an `anthropic/` model, exclude cached tokens), a request fee; tiers out of order, an unbounded tier not last, more than 64 tiers; no candidate, more than 64, duplicates (`billing_snapshot.py:220-271`, `436-474`; raised inside `projection` and caught, `async_settle.py:235-240`) |
 | shape A | no runtime or no signer, `epoch < 1`, an empty effective journal region, no `credit_reservation_id`, an authorization `settlement` other than `local`, or an authorization already settled (`async_settle.py:251-254`); and any exception in construction, hashing or projection (`async_settle.py:239-240`, `281-282`, `330-331`) |
-| shape B | everything above passes and admission is off, or the workspace is outside a non-empty pilot set (`async_settle.py:262-265`), with or without an `invocation_nonce` |
+| shape B | everything above passes and admission is off, or the workspace is outside a non-empty pilot set, or the pilot leased the authorization and its workspace is off the overlap list (`async_settle_admits_request`, `fast-admission-widening.md` §9.1) (`async_settle.py:262-265`), with or without an `invocation_nonce` |
 | shape C | admission on, the pilot set allows the workspace, and signing succeeds; invalid claims, a missing nonce among them, give shape A instead (`async_settle.py:266-288`) |
 
 In the cohort the authorization guards always hold: Go's authorization
@@ -300,7 +300,7 @@ optional set:
 | `typed_records` | the `typed` expression of `gateway.py:3182-3185` |
 | `edge_decide` | a new setting, `fastpath_edge_decide_async`, default false, rendered by `rollout.sh` as a literal `false` until I4 (§6.2) |
 | `admission_workspaces` (optional) | the sorted `async_settle_pilot_workspace_ids`, present only while admission is on and the set is non-empty (`edge_policy_publisher.admission_workspaces`); absent with admission on is every workspace, as an empty pilot set admits every one (§4.1, per workspace) |
-| `admission_excluded_workspaces` (optional) | the sorted fast-path pilot workspaces outside `async_settle_fastpath_overlap_workspaces` that `admission_workspaces` (or its absence) would cover, present only while admission is on and there is one; within `admission_workspaces` when that is present (§4.5) |
+| `admission_excluded_workspaces` (optional) | the sorted fast-path pilot workspaces outside `async_settle_fastpath_overlap_workspaces` that `admission_workspaces` (or its absence) would cover, present only while admission is on and there is one; within `admission_workspaces` when that is present (§4.5). In all mode with no pilot set it is the reserved list instead (`fast-admission-widening.md` §9.1) |
 
 The publisher is installed before the runtime (`main.py:313-323`), so P5
 reads `app.state.async_settle` when it signs, not when it installs, and
@@ -648,6 +648,12 @@ fast-path set's own cap of 32. Publishing the excluded set rather than
 the overlap list keeps Go's answer a function of the policy alone, and
 its absence means "exclude nothing", which is exactly what a publisher
 from before the rule meant.
+
+All mode (`fast-admission-widening.md` §9) has no bounded fast-path set,
+so with no async pilot set the rule is held per request instead: a leased
+authorization takes no ticket, the excluded member carries a bounded
+reserved list, and the edge passes every other workspace's async-v1
+authorizes (§9.1 there). The limit of §4.1 then applies in full until G16.
 
 **The overlap list** exists for the async-settle lane's own test
 workspace, which is in both pilots (R3): `rollout.sh` sets it to that one

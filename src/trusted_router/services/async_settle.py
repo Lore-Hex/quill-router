@@ -327,8 +327,12 @@ def snapshot_projection(*, authorization: GatewayAuthorization, snapshot: Billin
         # from admission_excluded_workspaces; pilots pass to Python, which
         # checks their stored enclave region here
         # (docs/design/fast-admission-e2-g15-async.md sections 4.1 and 4.5).
+        # A request the pilot leased gets the same answer unless its
+        # workspace is on the overlap list: its settle goes through the
+        # lease (docs/design/fast-admission-widening.md section 9.1).
         if (not settings.async_settle_admission_enabled
-                or not settings.async_settle_pilot_allows(authorization.workspace_id)
+                or not settings.async_settle_admits_request(
+                    authorization.workspace_id, leased=authorization.fastpath_envelope is not None)
                 or not settings.async_settle_negotiation_region_allowed(authorization.region)):
             result.update(billing_snapshot=snapshot.model_dump(mode="json"), billing_snapshot_hash=digest)
             return result

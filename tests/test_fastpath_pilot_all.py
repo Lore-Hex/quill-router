@@ -80,12 +80,69 @@ def test_all_mode_needs_an_empty_explicit_list() -> None:
         _all(fastpath_pilot_workspaces="ws-pilot")
 
 
-def test_all_mode_refuses_async_admission_for_every_workspace() -> None:
-    """Section 9's first validator: async admission on with an empty async
-    pilot set; with admission off an empty set is allowed."""
-    with pytest.raises(ValidationError, match="empty TR_ASYNC_SETTLE_PILOT_WORKSPACES"):
-        _all(async_settle_enabled=True, async_settle_protection=True)
+def test_all_mode_with_an_empty_async_pilot_set_admits_every_workspace_but_the_reserved_list() -> None:
+    """Section 9.1, which replaces section 9's first validator (it refused
+    async admission on with an empty async pilot set): the configuration
+    starts, and admission covers every workspace but the reserved list's,
+    covered by the fast path or on its exclude list alike. The pilot's
+    switch changes nothing. The finite excluded set is the reserved list."""
+    settings = _all(async_settle_enabled=True, async_settle_protection=True, fastpath_pilot_exclude="ws-probe",
+                    async_settle_fastpath_overlap_workspaces="ws-ops",
+                    async_settle_fastpath_reserved_workspaces=" ws-held-b, ws-held-a ,ws-held-b")
+    assert settings.async_settle_admission_enabled
+    assert settings.async_settle_fastpath_reserved_workspace_ids == frozenset({"ws-held-a", "ws-held-b"})
+    assert settings.async_settle_fastpath_excluded_workspace_ids == frozenset({"ws-held-a", "ws-held-b"})
+    for ws, admitted in (("ws-ops", True), ("ws-probe", True), ("ws-anyone", True), ("ws-enabled", True),
+                         ("ws-held-a", False), ("ws-held-b", False)):
+        assert settings.async_settle_pilot_allows(ws) is admitted, ws
+        assert settings.async_settle_fastpath_excludes(ws) is (not admitted), ws
+    off = settings.model_copy(update={"fastpath_pilot_enabled": False})
+    assert all(off.async_settle_pilot_allows(ws) is settings.async_settle_pilot_allows(ws)
+               for ws in ("ws-ops", "ws-probe", "ws-anyone", "ws-held-a"))
+    # No reserved list: every workspace, and nothing excluded.
+    everyone = _all(async_settle_enabled=True, async_settle_protection=True)
+    assert everyone.async_settle_fastpath_excluded_workspace_ids == frozenset()
+    assert all(everyone.async_settle_pilot_allows(ws) for ws in ("ws-ops", "ws-anyone", "ws-held-a"))
+    # With admission off an empty set was always allowed.
     assert _all(async_settle_protection=True).fastpath_pilot_all
+
+
+def test_the_reserved_list_is_all_mode_s_and_names_only_workspaces_the_pilot_covers() -> None:
+    """The reserved list's validators: all mode only, never an overlap
+    workspace (admitted by definition), never an exclude-list workspace (the
+    fast path never takes it); the messages count, never name."""
+    with pytest.raises(ValidationError, match="RESERVED_WORKSPACES requires TR_FASTPATH_PILOT_ALL"):
+        Settings(_env_file=None, environment="test",  # type: ignore[call-arg]
+                 async_settle_fastpath_reserved_workspaces="ws-held")
+    with pytest.raises(ValidationError, match="1 TR_ASYNC_SETTLE_FASTPATH_RESERVED_WORKSPACES also on") as caught:
+        _all(async_settle_fastpath_reserved_workspaces="ws-held,ws-ops",
+             async_settle_fastpath_overlap_workspaces="ws-ops")
+    assert "ws-ops" not in str(caught.value)
+    with pytest.raises(ValidationError,
+                       match="1 TR_ASYNC_SETTLE_FASTPATH_RESERVED_WORKSPACES on TR_FASTPATH_PILOT_EXCLUDE") as caught:
+        _all(async_settle_fastpath_reserved_workspaces="ws-held,ws-probe", fastpath_pilot_exclude="ws-probe")
+    assert "ws-probe" not in str(caught.value)
+    assert _all(async_settle_fastpath_reserved_workspaces="ws-held", fastpath_pilot_exclude="ws-probe",
+                async_settle_fastpath_overlap_workspaces="ws-ops").fastpath_pilot_all
+
+
+@pytest.mark.parametrize("value", ["a b", "*", "w" * 65, ",".join(f"ws-{i}" for i in range(33))])
+def test_the_reserved_list_is_bounded_and_formed(value: str) -> None:
+    with pytest.raises(ValidationError, match="invalid async settle fast path reserved workspace set"):
+        _all(async_settle_fastpath_reserved_workspaces=value)
+    thirty_two = ",".join(f"ws-{i}" for i in range(32))
+    assert len(_all(async_settle_fastpath_reserved_workspaces=thirty_two)
+               .async_settle_fastpath_reserved_workspace_ids) == 32
+
+
+def test_the_reserved_list_reads_its_environment_variable(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert Settings(_env_file=None, environment="test").async_settle_fastpath_reserved_workspace_ids == frozenset()  # type: ignore[call-arg]
+    monkeypatch.setenv("TR_FASTPATH_PILOT_ALL", "true")
+    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-clickhouse")
+    monkeypatch.setenv("TR_FASTPATH_PILOT_WORKSPACES", "")
+    monkeypatch.setenv("TR_ASYNC_SETTLE_FASTPATH_RESERVED_WORKSPACES", "ws-b,ws-a")
+    settings = Settings(_env_file=None, environment="test")  # type: ignore[call-arg]
+    assert settings.async_settle_fastpath_reserved_workspace_ids == frozenset({"ws-a", "ws-b"})
 
 
 def test_all_mode_refuses_an_async_pilot_workspace_on_neither_list() -> None:
@@ -121,10 +178,13 @@ def test_the_exclude_list_changes_nothing_with_all_mode_off() -> None:
 
 
 def test_fastpath_covers_is_the_exclude_list_in_all_mode_and_the_set_otherwise() -> None:
-    settings = _all(fastpath_pilot_exclude="ws-out")
+    settings = _all(fastpath_pilot_exclude="ws-out", async_settle_pilot_workspaces="ws-out")
     assert settings.fastpath_covers("ws-in") and not settings.fastpath_covers("ws-out")
+    # With an async pilot set, all mode's excluded set is not finite.
     with pytest.raises(ValueError, match="no finite fast-path excluded set"):
         _ = settings.async_settle_fastpath_excluded_workspace_ids
+    # Without one it is the reserved list (section 9.1), here empty.
+    assert _all(fastpath_pilot_exclude="ws-out").async_settle_fastpath_excluded_workspace_ids == frozenset()
 
 
 # -- the copy of the switch -------------------------------------------------------
@@ -482,6 +542,68 @@ def test_async_admission_in_all_mode_follows_coverage(pilots: str) -> None:
                for ws in ("ws-ops", "ws-probe", "ws-enabled"))
 
 
+def test_a_named_async_pilot_set_in_all_mode_ignores_the_reserved_list() -> None:
+    """Restoring the pilot set (the way back from section 9.1) restores
+    section 9's rule whatever the reserved list says: coverage decides, and
+    all mode then has no finite excluded set."""
+    settings = _all(async_settle_enabled=True, async_settle_protection=True,
+                    async_settle_pilot_workspaces="ws-ops,ws-probe", fastpath_pilot_exclude="ws-probe",
+                    async_settle_fastpath_overlap_workspaces="ws-ops",
+                    async_settle_fastpath_reserved_workspaces="ws-held")
+    for ws, admitted in (("ws-ops", True), ("ws-probe", True), ("ws-enabled", False), ("ws-held", False)):
+        assert settings.async_settle_pilot_allows(ws) is admitted, ws
+    assert settings.async_settle_fastpath_excludes("ws-enabled")
+    with pytest.raises(ValueError, match="no finite fast-path excluded set"):
+        _ = settings.async_settle_fastpath_excluded_workspace_ids
+
+
+def test_a_leased_request_takes_no_ticket_unless_its_workspace_is_on_the_overlap_list() -> None:
+    """async_settle_admits_request, the rule said of the request (section
+    9.1): with every workspace admitted, a request the pilot leased is left
+    out unless the overlap list names its workspace; one it did not lease
+    follows its workspace; a reserved workspace is out either way."""
+    settings = _all(async_settle_enabled=True, async_settle_protection=True, fastpath_pilot_exclude="ws-probe",
+                    async_settle_fastpath_overlap_workspaces="ws-ops",
+                    async_settle_fastpath_reserved_workspaces="ws-held")
+    table = {("ws-ops", False): True, ("ws-ops", True): True,
+             ("ws-enabled", False): True, ("ws-enabled", True): False,
+             ("ws-probe", False): True, ("ws-probe", True): False,
+             ("ws-held", False): False, ("ws-held", True): False}
+    for (ws, leased), admitted in table.items():
+        assert settings.async_settle_admits_request(ws, leased=leased) is admitted, (ws, leased)
+
+
+def test_the_request_rule_changes_no_answer_of_the_workspace_rule_it_replaces() -> None:
+    """Over every settings combination of the admission vectors: a request
+    the pilot did not lease gets its workspace's answer
+    (async_settle_pilot_allows), and so does a leased one of any workspace
+    the pilot can lease (one it covers) under every configuration but
+    section 9.1's, where a covered workspace was never admitted outside the
+    overlap list. Section 9.1's rows are the only ones the leased clause
+    decides."""
+    decided = unchanged = 0
+    for case in json.loads(VECTORS.OUTPUT_ADMISSION.read_text())["cases"]:
+        s = case["settings"]
+        if s is None:
+            continue
+        settings = VECTORS.admission_settings(s["admission"], s["pilots"], s["overlap"], s["fastpath"],
+                                              s.get("exclude"), s.get("reserved", ""))
+        everyone = settings.fastpath_pilot_all and not settings.async_settle_pilot_workspace_ids
+        for ws in VECTORS.ADMISSION_PROBES:
+            workspace = settings.async_settle_pilot_allows(ws)
+            assert settings.async_settle_admits_request(ws, leased=False) is workspace, (case["name"], ws)
+            if not settings.fastpath_covers(ws):
+                continue
+            leased = settings.async_settle_admits_request(ws, leased=True)
+            if everyone and workspace and ws not in settings.async_settle_fastpath_overlap_workspace_ids:
+                assert leased is False, (case["name"], ws)
+                decided += 1
+            else:
+                assert leased is workspace, (case["name"], ws)
+                unchanged += 1
+    assert decided and unchanged
+
+
 def test_a_configuration_the_validator_refuses_still_fails_closed() -> None:
     """Bypassing the second validator (a settings object mutated after
     validation) still keeps the uncovered async pilot workspace out."""
@@ -525,17 +647,27 @@ def test_all_mode_publishes_both_members_and_an_empty_explicit_list() -> None:
 def test_the_published_exclusion_stays_within_the_async_pilot_set_in_all_mode() -> None:
     """admission_excluded_workspaces is the async pilot set's members that
     async_settle_fastpath_excludes names: absent when the validators are
-    met; and all mode with admission on and no pilot set fails the signing
-    rather than publish every workspace."""
+    met. All mode with admission on and no pilot set (section 9.1, which
+    replaces the refusal to sign it) publishes no pilot set and the reserved
+    list as the one bounded exclusion, or neither member without one."""
     settings = VECTORS.admission_settings(True, "ws-synthetic-async-a,ws-synthetic-pilot-1",
                                           "ws-synthetic-pilot-1", "", "ws-synthetic-async-a")
     assert publisher_module.admission_workspaces(settings) == {
         "admission_workspaces": ["ws-synthetic-async-a", "ws-synthetic-pilot-1"]}
-    mutated = settings.model_copy()
-    mutated.async_settle_pilot_workspaces = ""
-    mutated.parse_pilot_workspaces()
-    with pytest.raises(ValueError, match="needs an async pilot set"):
-        publisher_module.admission_workspaces(mutated)
+    everyone = VECTORS.admission_settings(True, "", "ws-synthetic-pilot-1", "", "ws-synthetic-async-a")
+    assert publisher_module.admission_workspaces(everyone) == {}
+    reserved = VECTORS.admission_settings(True, "", "ws-synthetic-pilot-1", "", "ws-synthetic-async-a",
+                                          "ws-synthetic-pilot-2,ws-synthetic-neither")
+    assert publisher_module.admission_workspaces(reserved) == {
+        "admission_excluded_workspaces": ["ws-synthetic-neither", "ws-synthetic-pilot-2"]}
+    body = canonical_edge_policy_bytes(VECTORS.policy(reserved))
+    parsed = parse_edge_policy(body)
+    assert parsed.fastpath_pilot_all is True and parsed.async_settle.admission_workspaces is None
+    assert parsed.async_settle.admission_excluded_workspaces == ("ws-synthetic-neither", "ws-synthetic-pilot-2")
+    assert canonical_edge_policy_bytes(parsed) == body
+    # With admission off the reserved list publishes nothing.
+    assert publisher_module.admission_workspaces(VECTORS.admission_settings(
+        False, "", "", "", "", "ws-synthetic-neither")) == {}
     # A validator-refused overlap removal publishes the workspace as excluded.
     mutated = settings.model_copy()
     mutated.async_settle_fastpath_overlap_workspaces = ""

@@ -65,7 +65,11 @@ Fields, all required:
   when that is present: async settle takes no request the fast path takes
   (section 4.5). Go reads a workspace as covered when admission is on, the
   first member is absent or names it, and the second does not name it.
-  ``null`` and an empty array are refused for both.
+  ``null`` and an empty array are refused for both. In all mode with an
+  empty async pilot set the second member is the reserved list
+  (``async_settle_fastpath_reserved_workspaces``,
+  docs/design/fast-admission-widening.md section 9.1) and the first is
+  absent: every other workspace is admitted.
 
 Five fields are optional:
 

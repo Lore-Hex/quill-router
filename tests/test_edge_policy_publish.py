@@ -597,9 +597,10 @@ def test_the_deployed_pilot_sets_publish_no_excluded_member() -> None:
     """With rollout.sh's own pilot sets, in all mode since WS2 (every async
     pilot workspace is on the overlap list or on the fast-path exclude
     list), the body carries no admission_excluded_workspaces, so a Go node
-    that predates the member reads it unchanged; the settings refuse all
-    mode with async admission on and the async pilot set emptied, which
-    would name every workspace."""
+    that predates the member reads it unchanged. With the async pilot set
+    emptied (docs/design/fast-admission-widening.md section 9.1, which
+    replaces the settings' refusal of it) the same pins start, admit every
+    workspace and publish neither member."""
     rendered = _rendered_rollout_env()
     assert rendered["TR_FASTPATH_PILOT_ALL"] == "true" and rendered["TR_FASTPATH_PILOT_WORKSPACES"] == ""
     common = dict(
@@ -617,9 +618,10 @@ def test_the_deployed_pilot_sets_publish_no_excluded_member() -> None:
     published = publisher_module.admission_workspaces(deployed)
     assert "admission_excluded_workspaces" not in published
     assert published["admission_workspaces"] == sorted(pilots)
-    with pytest.raises(ValidationError, match="empty TR_ASYNC_SETTLE_PILOT_WORKSPACES"):
-        VECTORS.fixture_settings(async_settle_enabled=True, async_settle_protection=True,
-                                 async_settle_pilot_workspaces="", **common)
+    everyone = VECTORS.fixture_settings(async_settle_enabled=True, async_settle_protection=True,
+                                        async_settle_pilot_workspaces="", **common)
+    assert publisher_module.admission_workspaces(everyone) == {}
+    assert all(everyone.async_settle_pilot_allows(ws) for ws in (*pilots, "ws-synthetic-anyone"))
     # The operator workspace is in both pilots and keeps its admission; the
     # rest of the async pilot set is on the fast-path exclude list.
     overlap = deployed.async_settle_fastpath_overlap_workspace_ids
@@ -714,9 +716,16 @@ def test_every_admission_vector_is_python_s_own_admission_answer() -> None:
     assert len(published) - len(all_mode) == 2 * len(VECTORS.ADMISSION_PILOTS) * len(VECTORS.ADMISSION_OVERLAPS) * 2
     # All mode (widening section 9): every combination the settings accept,
     # each body carrying the members and no admission_excluded_workspaces.
-    assert len(all_mode) == len(VECTORS.admission_all_mode_combinations()) == 14
+    assert len(all_mode) == len(VECTORS.admission_all_mode_combinations()) == 36
     assert all(parse_edge_policy(c["body"]).fastpath_pilot_all is True for c in all_mode)
-    assert all("admission_excluded_workspaces" not in c["body"] for c in all_mode)
+    # The member appears in all mode only as the reserved list of section
+    # 9.1: admission on, no async pilot set, a reserved list.
+    with_member = [c for c in all_mode if "admission_excluded_workspaces" in c["body"]]
+    assert len(with_member) == 4 and all(
+        c["settings"]["admission"] and not c["settings"]["pilots"] and c["settings"]["reserved"]
+        and "admission_workspaces" not in c["body"] for c in with_member)
+    assert with_member == [c for c in all_mode if c["settings"]["admission"] and not c["settings"]["pilots"]
+                           and c["settings"]["reserved"]]
     assert len(cases) - len(published) == len(VECTORS.ADMISSION_REFUSED) + 1
     answers = set()
     for case in cases:
@@ -728,7 +737,7 @@ def test_every_admission_vector_is_python_s_own_admission_answer() -> None:
         assert canonical_edge_policy_bytes(parse_edge_policy(case["body"])).decode("ascii") == case["body"]
         s = case["settings"]
         settings = VECTORS.admission_settings(s["admission"], s["pilots"], s["overlap"], s["fastpath"],
-                                              s.get("exclude"))
+                                              s.get("exclude"), s.get("reserved", ""))
         for ws in probes:
             python = settings.async_settle_admission_enabled and settings.async_settle_pilot_allows(ws)
             members = (parsed.admission_enabled
