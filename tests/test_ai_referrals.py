@@ -56,7 +56,7 @@ def test_guides_have_reciprocal_discovery_links_and_qualified_offer(client: Test
     assert 'href="/blog/private-deepseek-api-evaluation-checklist"' in response.text
     assert 'href="/blog/choosing-an-llm-api-for-agents"' in response.text
     assert 'up to 1 million free tokens' in response.text
-    assert '$0.30 in starter credit' in response.text
+    assert 'token volume depends on model pricing and input/output usage' in response.text
     assert 'data-signin-mode="signup"' in response.text
 
 
