@@ -14,11 +14,21 @@ missing cache rates using today's provider defaults; explicit zero stays zero.
 checks observed exclusions again. Both phases must populate the feature facts;
 these pure types do not discover request features or authenticate callers.
 
-The first adapter allowlist is **OpenAI and Anthropic**. Both have final-usage
-normalization and real-settlement differential cases. Chat Completions and
-Responses, streaming and non-streaming, are supported. Cache read/write,
-reasoning subsets and ordinary context tiers are included. Other adapters must
-add normalization differential evidence before joining the allowlist.
+Every provider's Credits endpoint is a candidate (since 2026-11-09; the first
+two rounds admitted OpenAI and Anthropic alone, see "Every provider" below).
+A candidate's provider is any `Identity` slug and its model any publisher's:
+a reseller (azure, amazon-bedrock, google-vertex, together) serving another
+publisher's model is accepted. The prompt convention follows the provider slug
+and the model id by the synchronous settle's own rule
+(`provider_contracts.provider_input_excludes_cache`): anthropic, and
+amazon-bedrock or google-vertex serving an `anthropic/` model (the enclave
+relays Anthropic-native usage for those), exclude cached tokens from the input
+count; every other candidate includes them (see "Claude resold by
+amazon-bedrock and google-vertex" below). Chat Completions and Responses, streaming and
+non-streaming, are supported. Cache read/write, reasoning subsets and ordinary
+context tiers are included. The evidence that the frozen price is the real
+settle price for every provider is `tests/test_billing_snapshot_catalog.py`,
+a permanent differential over every Credits endpoint of the catalog.
 
 Eligibility requires typed, local, ordinary Credits. Requested or observed app
 or custom markup, receipt/request fees, custom/user models, tool/search/image/
@@ -47,7 +57,11 @@ Sum uncached input, cached read, cache creation and output. The request-fee
 field is retained but v1 requires zero. Apply the one-micro minimum only when
 positive usage has a positive effective rate (or a positive fee in a future
 version). A reasoning subset is informational and never added to output.
-OpenAI prompt totals include cache subsets; Anthropic input excludes them.
+Anthropic-native usage (the anthropic slug, and amazon-bedrock or
+google-vertex serving an `anthropic/` model) reports an input count that
+excludes cache subsets; every other provider's includes them (the settle
+path's rule, shared through `provider_contracts.provider_input_excludes_cache`
+over the provider slug and the model id).
 Cache subsets greater than an inclusive prompt or reasoning greater than
 output are malformed, rather than silently clamped.
 
@@ -193,6 +207,10 @@ validates it and pins its schema;
 the production models validate positive wire payloads. The fixture byte SHA-256
 is pinned in `tests/test_billing_snapshot.py` (759 cases):
 `4aedf13e4ba30b4d1f0767f829e790c37ce3f957a39c15d1eb6aff8c8734fd81`.
+The supplement `billing_v1_providers.json` (24 cases, 18 rules; see "Every
+provider" below) is pinned beside it:
+`b74f40c3c079569e63bc8d296ca2a9953e9b09b5b2a5b6eb24b1cf85a2df45f4`; the
+effective fixture is 779 cases and 388 rules.
 All amounts and normalized usage
 are literal test data; the evaluator never generates expectations. Envelope
 hash literals were produced from those literal payloads with standard JSON and
@@ -239,6 +257,121 @@ delegating to Pydantic's JSON validator. Pydantic can independently reject malfo
 input, so these controls detect the wrong error code when the explicit guard is
 removed. Python mapping/sequence traversal and strict JSON round trips have separate
 regressions and mutation controls; they do not add Go wire rules or fixture vectors.
+
+## Every provider (2026-11-09): the supplement fixture
+
+The snapshot takes every provider's Credits endpoint. Two source rules left
+`Candidate`: `provider: Literal["openai", "anthropic"]` became
+`provider: Identity`, and the model-prefix rule (`model_id` must begin with
+`provider + "/"`) was removed. The convention rule stays, over the provider
+slug and the model id (the next section). `build_snapshot` derives the
+convention the same way. The fast path
+edge (`fastpath/internal/gwauth/async.go`) mirrors both, held to Python by the
+authorize goldens (`fastpath/testdata/authorize_async_cases_v1.json`, whose
+header now carries Python's rule constants, `names_program_model` answers and
+`provider_input_excludes_cache` answers).
+
+**The base fixture files are byte-identical.** `billing_v1.json`,
+`billing_v1.rules.json` and `billing_v1.schema.json` are pinned by the shadow v2
+release chain in both repositories, so the change ships as a supplement,
+`tests/fixtures/async_settlement/billing_v1_providers.json` (schema
+`billing_v1_providers.schema.json`, `SupplementSchema` in
+`tests/test_billing_snapshot.py`). The merge rule, which both repositories
+apply:
+
+1. Drop from the base, by name, the four superseded cases `unknown_adapter`,
+   `custom_model_identity`, `candidate_provider_literal` and
+   `model_provider_prefix` (each asserted only that the snapshot refuses a
+   candidate for its provider or its model's publisher; each exact input is
+   now accepted, which `test_supplement_schema_pin_and_supersession` checks),
+   and the four superseded rules `candidate_provider_literal`,
+   `model_provider_prefix`, `candidate_provider_required` and
+   `candidate_provider_nonnull` (their `old` text quotes the removed source
+   lines; the last two return below over the new declaration).
+2. Append the supplement's cases and rules, in file order.
+3. The effective lists are 759 − 4 + 24 = **779 cases** and 374 − 4 + 18 =
+   **388 rules**. The supplement names the base files' SHA-256 it supplements.
+
+What the model-prefix rule protected, and where each class is held now:
+
+| Class the prefix rule once refused | Now | Evidence |
+|---|---|---|
+| Custom (creator-registered) models, `custom/...` ids | Retired: authorize answers 410 for creator fields, retired name prefixes and legacy creator rows; the `custom_model` fact excludes any that reached the snapshot | `tests/test_async_settle_all_providers.py` (410s, no state change), `user_model_identity_fact` rule |
+| User-provided models, `tr-user-model/...` ids | Retired as above; the `user_model` fact excludes them in both phases | `user_model_identity_requested`, `user_model_identity_observed` |
+| A reseller serving another publisher's model (azure, amazon-bedrock, google-vertex, together, fireworks, ...) | Eligible; the convention follows the provider slug and the model id | `reseller_cache`, `bedrock_anthropic_cache`, `vertex_anthropic_cache`, `bedrock_other_publisher_cache`, `vertex_cache_rate_missing`, `bedrock_cache_rate_missing`, `mixed_providers_tiered_reseller`, `mixed_providers_direct`, `builder_reseller_convention`, `builder_reseller_other_publisher`; the catalog differential |
+| A provider's own model under its own publisher | Eligible, as before for the first two | the catalog differential (98 providers, 1,177 endpoints at the 2026-11-09 catalog) |
+| Requested TrustedRouter programs, meta-routers, private aliases and the partner model | Excluded by the `partner` fact at authorize (`services/async_settle.py`, `requested_facts`), shared with the settle path's `partner_billing_mode` and the router namespace rule native Batch reads | `tests/test_async_settle_settle_branches.py`, `tests/test_async_settle_all_providers.py` |
+| Polyphemus and the private tier basis endpoint (sakana Fugu) | Excluded by their own facts, read through the settle path's predicates | `tests/test_async_settle_settle_branches.py` |
+
+The cache-read multipliers a consumer needs for the supplement's
+`freeze_cache_rate: null` cases are google-vertex 0.25 (divisor 4,
+`vertex_cache_rate_missing`) and amazon-bedrock 1 (divisor 1,
+`bedrock_cache_rate_missing`); every other supplement case carries explicit
+cached rates. The provider type is exactly `Identity` (1 to 512 characters of
+`[A-Za-z0-9_./:@+\-]`), neither stricter nor looser.
+
+### Claude resold by amazon-bedrock and google-vertex (2026-11-09)
+
+The enclave relays Anthropic-native streams, whose input count EXCLUDES the
+cached tokens, for exactly two resold paths
+(`enclave-go/internal/llm/multi.go`): amazon-bedrock when the upstream model
+id is under `us.anthropic.` (the Bedrock runtime), and google-vertex when the
+direct model id is under `claude-`. The settle body carries no convention
+field, and the router's rule once read the provider slug alone, so for those
+endpoints the real path computed `uncached = max(input - cached, 0)` and
+recorded `total = input`: an under-bill of the uncached input and an
+understated prompt total whenever caching was used (input 4 beside 8 cache
+reads billed 0 uncached tokens and recorded a 4-token prompt; it bills 4 and
+records 12 now). In the catalog these are the five `anthropic/claude-*`
+endpoints of amazon-bedrock and the one of google-vertex; deepinfra's Claude
+routes are BYOK and relay OpenAI-style counts, so they are not affected.
+
+The rule, keyed on the two fields every site has (the provider slug and the
+router model id):
+
+    input_excludes_cache(provider, model_id) =
+        provider == "anthropic"
+        or (provider in {"amazon-bedrock", "google-vertex"} and model_id starts with "anthropic/")
+
+It is read by `normalized_prompt_accounting` (now taking `model_id=`, passed
+by the settle handler from the selected endpoint and by the outbox repair
+path from the row; a caller passing the slug alone gets the slug's answer),
+by the async settle boundary's repair body, by `Candidate` and
+`build_snapshot`, by the edge (`inputExcludesCache(provider, model)`), and by
+Stage D's delivered-usage billing (`storage_gcp_stage_d.normalized_delivered_prompt`,
+taking `model_id=` from the selected endpoint at every caller: the
+heartbeat's running charge and authorized-token cap check, the reaper's
+snapshot booking and the generation it records, and `snapshot_generation`).
+`tests/test_resold_claude_cache_accounting.py` holds the rule to the
+enclave's dispatch conditions over every endpoint of the catalog (and to
+`BEDROCK_RUNTIME_PROFILES`), and settles the four real-path cases through
+the app: Bedrock Claude and Vertex Claude (4 uncached billed, a 12-token
+prompt), a non-Claude Bedrock model and the anthropic slug (unchanged).
+The enclave has three more Anthropic-native relays the rule does not cover:
+Azure Foundry's Anthropic client for a `claude-*` model id, the legacy
+`vertex` slug, and zero-g for a `claude-*` upstream id or an `anthropic/`
+model id; the catalog has no such endpoint today, the test's enclave side
+includes all three conditions, and the day such an endpoint appears the
+test fails and the rule must grow on both sides (router and enclave) first.
+Stage D's delivered-usage billing (the heartbeat's running charge and cap
+check, the reaper's snapshot booking) reads the same rule; the test file
+settles the reviewer's scenario (input 2,000 beside 100,000 cache reads and
+500 output tokens on Claude via amazon-bedrock) through the heartbeat and
+the reaper: 33,655 microdollars and a 102,000-token prompt, where the
+slug-only reading booked 29,013 and a 2,000-token prompt.
+Supplement vectors: `bedrock_anthropic_cache`, `vertex_anthropic_cache`,
+`bedrock_other_publisher_cache`, the four `*_prompt_agreement` refusals, the
+two `builder_*` cases, and the `convention_*` and `builder_convention_*`
+rules, which hold the rule to neither key alone.
+
+`tests/test_billing_snapshot_catalog.py` is the permanent differential: for
+every Credits endpoint (plus pinned synthetic shapes), at the catalog instant
+and at each distinct hourly price shape of the following day, `evaluate` of a
+one-candidate snapshot is compared with the settle handler's own
+`normalized_prompt_accounting` and `_endpoint_cost_microdollars` over a grid
+of prompts (each side of each tier bound included), cache splits and outputs.
+The only refusal is the one request-fee endpoint. It runs on both lifecycle
+clocks in CI.
 
 ## Fixture operations and coverage boundaries
 
@@ -299,7 +432,7 @@ mutation. The audit explicitly records these cases:
 | Candidate prompt-convention Literal is implied by provider agreement | Field `candidate_prompt_convention_unknown`; both provider disagreement model inputs | `candidate_prompt_convention_literal` independently tests the declared enum; `provider_prompt_agreement` tests the relationship. |
 | Acceptance pending Literal is implied by durable/rejection validators | `acceptanceoutcome_settlement_status_unknown` field input; complete durable/rejection inputs | `acceptanceoutcome_settlement_status_literal`, `acceptance_durable`, `acceptance_rejection`. |
 | Rejected outcome with both hash and pending is rejected by **both** conditions | Three `acceptance_*_both` cases | `acceptance_rejection_both` removes only this rejected combination from both overlapping guards; partial acknowledgement and durable checks remain active. |
-| Candidate request-fee bounds are implied by its zero-fee rule; model-ID minimum length and string type overlap the provider-prefix validator | Field-schema boundary vectors plus `candidate_model_id_string_type`; `nonzero_endpoint_fee`, `model_provider_prefix` | Field lower/upper/nonempty/string-type controls isolate declarations without weakening the complete-object rules. |
+| Candidate request-fee bounds are implied by its zero-fee rule; model-ID minimum length and string type once overlapped the provider-prefix validator (removed 2026-11-09, `model_provider_prefix` superseded) | Field-schema boundary vectors plus `candidate_model_id_string_type`; `nonzero_endpoint_fee` | Field lower/upper/nonempty/string-type controls isolate declarations without weakening the complete-object rules. |
 | `NormalizedUsage` total bounds / sum-overflow guard can be implied by nonnegative component bounds and equality | Every field lower/upper vector; `normalized_sum_overflow`; direct checked bounds | Field-schema controls isolate each declaration; `checked_overflow` isolates the helper domain; `normalized_total` isolates equality. `normalized_native_overflow` uses `normalized_sum_wraparound`: MAX + MAX + 2 wraps to zero in int64, matching the otherwise-valid declared total. It is rejected before wrapping. A plain Python check deletion remains redundant with mathematical equality. |
 | Checked product overflow is also caught by the immediately following checked rounding numerator | `multiply_overflow`, `multiply_wraparound`, `rounding_add_overflow`, checked bounds | `multiplication_native_overflow` simulates omission with native signed-int64 wrapping; deleting only `checked()` in arbitrary-precision Python is equivalent because the next guard still catches it. `overflow_rounding` independently kills removal of the rounding-offset guard. |
 | Checked cost-sum overflow cannot occur with four already-checked int64 products rounded per million | Shared checked bounds; component rounding literals | `checked_overflow` / `checked_negative` prove helper domain; `aggregate_rounding` proves independent rounding. No unreachable sum-overflow wire witness is claimed. |
@@ -396,7 +529,12 @@ cases remain green while only the selected numeric-rejection vector fails.
 | Rates.output_micro_per_million: binds strict UInt | `rates_output_micro_per_million_float`, `rates_output_micro_per_million_string`, `rates_output_micro_per_million_bool` | `rates_output_micro_per_million_strict` | 3/3 → 3/3 |
 | Tier.max_prompt_tokens: binds strict UInt | `tier_max_prompt_tokens_float`, `tier_max_prompt_tokens_string`, `tier_max_prompt_tokens_bool` | `tier_max_prompt_tokens_strict` | 3/3 → 3/3 |
 | Candidate.endpoint_id: binds Identity | `candidate_endpoint_id_ascii`, `candidate_endpoint_id_identity_punctuation` | `candidate_endpoint_id_identity` | 2/2 → 2/2 |
-| Candidate.provider: Literal["openai", "anthropic"] | `candidate_provider_literal` | `candidate_provider_literal` | 1/1 → 1/1 |
+| Candidate.provider: Literal["openai", "anthropic"] (superseded 2026-11-09 by the supplement; the declaration is now Identity) | `candidate_provider_literal` (superseded) | `candidate_provider_literal` (superseded) | — |
+| Candidate.provider: binds Identity | `candidate_provider_ascii`, `candidate_provider_identity_punctuation` | `candidate_provider_identity` | 2/2 → 2/2 |
+| Candidate.provider: Identity min length | `candidate_provider_min` | `candidate_provider_min` | 1/1 → 1/1 |
+| Candidate.provider: Identity max length | `candidate_provider_max` | `candidate_provider_max` | 1/1 → 1/1 |
+| Candidate.provider: string input type | `candidate_provider_string_type` | `candidate_provider_string_type` | 1/1 → 1/1 |
+| Any provider slug is accepted, with no adapter list | `candidate_provider_any_slug`, `reseller_cache` | `candidate_provider_any_slug` | 2/2 → 2/2 |
 | Candidate.model_id: binds Identity | `candidate_model_id_ascii`, `candidate_model_id_identity_punctuation` | `candidate_model_id_identity` | 2/2 → 2/2 |
 | Candidate.usage_type: Literal["Credits"] | `candidate_usage_type_literal` | `candidate_usage_type_literal` | 1/1 → 1/1 |
 | Candidate.price_history_version: Literal[1] | `candidate_price_history_version_literal` | `candidate_price_history_version_literal` | 1/1 → 1/1 |
@@ -451,7 +589,18 @@ cases remain green while only the selected numeric-rejection vector fails.
 | Candidates: at least one | `candidates_empty` | `candidates_min` | 1/1 → 1/1 |
 | Candidate endpoint IDs unique and sorted | `candidates_duplicate`, `candidates_unsorted` | `candidate_order` | 2/2 → 2/2 |
 | Provider determines prompt convention | `provider_prompt_agreement`, `anthropic_prompt_agreement` | `provider_prompt_agreement` | 2/2 → 2/2 |
-| Model identifier begins with provider/ prefix | `model_provider_prefix` | `model_provider_prefix` | 1/1 → 1/1 |
+| Model identifier begins with provider/ prefix (superseded 2026-11-09 by the supplement; no prefix rule) | `model_provider_prefix` (superseded) | `model_provider_prefix` (superseded) | — |
+| A provider may serve another publisher's model, with no provider/ prefix rule | `candidate_model_any_publisher`, `reseller_cache`, `bedrock_anthropic_cache` | `candidate_model_any_publisher` | 3/3 → 3/3 |
+| Prompt convention is not the model publisher's alone: only anthropic, amazon-bedrock and google-vertex exclude cached tokens for an anthropic/ model | `other_provider_anthropic_model_prompt_agreement` | `convention_not_by_publisher_alone` | 1/1 → 1/1 |
+| Another provider serving an anthropic/ model keeps the cache-inclusive convention | `candidate_model_any_publisher` | `convention_not_by_publisher_alone_positive` | 1/1 → 1/1 |
+| Prompt convention is not the provider slug's alone: amazon-bedrock and google-vertex exclude cached tokens for an anthropic/ model | `bedrock_anthropic_prompt_agreement`, `vertex_anthropic_prompt_agreement` | `convention_not_by_slug_alone` | 2/2 → 2/2 |
+| A reseller relaying Anthropic-native usage for an anthropic/ model is cache-exclusive | `bedrock_anthropic_cache`, `vertex_anthropic_cache`, `mixed_providers_tiered_reseller` | `convention_not_by_slug_alone_positive` | 3/3 → 3/3 |
+| Prompt convention is not the reseller's alone: amazon-bedrock serving another publisher's model is cache-inclusive | `bedrock_other_publisher_prompt_agreement` | `convention_not_by_reseller_alone` | 1/1 → 1/1 |
+| A reseller serving another publisher's model keeps the cache-inclusive convention | `bedrock_other_publisher_cache` | `convention_not_by_reseller_alone_positive` | 1/1 → 1/1 |
+| A provider outside the rule claiming the cache-exclusive convention is refused | `reseller_prompt_agreement` | `convention_not_always_exclusive` | 1/1 → 1/1 |
+| build_snapshot derives the convention from the provider slug and the model id | `builder_reseller_convention` | `builder_convention_follows_provider_and_model` | 1/1 → 1/1 |
+| build_snapshot does not derive the convention from the model publisher alone | `builder_reseller_other_publisher` | `builder_convention_not_by_publisher` | 1/1 → 1/1 |
+| A user-model identity is excluded by the user_model fact, in both phases | `user_model_identity_requested`, `user_model_identity_observed` | `user_model_identity_fact` | 2/2 → 2/2 |
 | Unbounded tier must be last | `tier_nonfinal_unbounded` | `tier_unbounded_last` | 1/1 → 1/1 |
 | Finite tier boundaries strictly increase | `tier_duplicate_boundary`, `tier_descending_boundaries` | `tier_increasing` | 2/2 → 2/2 |
 | envelope wrong hash | `envelope_wrong_hash` | `envelope_wrong_hash` | 1/1 → 1/1 |
@@ -672,7 +821,7 @@ cases remain green while only the selected numeric-rejection vector fails.
 | Eligibility.polyphemus: nonnull Annotated[bool, Field(strict=True)] | `eligibility_polyphemus_nonnull_null` | `eligibility_polyphemus_nonnull` | 1/1 → 1/1 |
 | Eligibility.private_tier_basis: nonnull Annotated[bool, Field(strict=True)] | `eligibility_private_tier_basis_nonnull_null` | `eligibility_private_tier_basis_nonnull` | 1/1 → 1/1 |
 | Candidate.endpoint_id: nonnull Identity | `candidate_endpoint_id_nonnull_null` | `candidate_endpoint_id_nonnull` | 1/1 → 1/1 |
-| Candidate.provider: nonnull Literal["openai", "anthropic"] | `candidate_provider_nonnull_null` | `candidate_provider_nonnull` | 1/1 → 1/1 |
+| Candidate.provider: nonnull Identity | `candidate_provider_nonnull_null` | `candidate_provider_nonnull` | 1/1 → 1/1 |
 | Candidate.model_id: nonnull Identity | `candidate_model_id_nonnull_null` | `candidate_model_id_nonnull` | 1/1 → 1/1 |
 | Candidate.usage_type: nonnull Literal["Credits"] | `candidate_usage_type_nonnull_null` | `candidate_usage_type_nonnull` | 1/1 → 1/1 |
 | Candidate.price_history_version: nonnull Literal[1] | `candidate_price_history_version_nonnull_null` | `candidate_price_history_version_nonnull` | 1/1 → 1/1 |
@@ -823,9 +972,9 @@ cases remain green while only the selected numeric-rejection vector fails.
 | `unknown_minimum` | invalid_snapshot |
 | `clamp_program` | invalid_snapshot |
 | `unknown_tier_basis` | invalid_snapshot |
-| `unknown_adapter` | invalid_snapshot |
+| `unknown_adapter` | invalid_snapshot (superseded 2026-11-09: the input is accepted) |
 | `unknown_output_convention` | invalid_snapshot |
-| `custom_model_identity` | invalid_snapshot |
+| `custom_model_identity` | invalid_snapshot (superseded 2026-11-09: the input is accepted; `user_model_identity_*` hold the fact) |
 | `tier_nonfinal_unbounded` | invalid_snapshot |
 | `tier_duplicate_boundary` | invalid_snapshot |
 | `tier_descending_boundaries` | invalid_snapshot |

@@ -51,6 +51,7 @@ type asyncGoldens struct {
 	file    goldenFile
 	snap    snapshotFacts
 	ordered []string
+	rules   asyncExtras // the header's rule vectors alone are read
 	cases   []asyncCase
 }
 
@@ -60,7 +61,16 @@ type asyncExtras struct {
 	SnapshotSHA256     string   `json:"snapshot_sha256"`
 	OrdinaryParameters []string `json:"ordinary_parameters"`
 	AsyncMembers       []string `json:"async_members"`
-	Policy             struct {
+	// The rules Go holds its own copies equal to (TestTheModelAndProviderRulesArePythons).
+	ProgramModelPrefixes               []string        `json:"program_model_prefixes"`
+	ProgramModelNames                  map[string]bool `json:"program_model_names"`
+	PolyphemusModel                    string          `json:"polyphemus_model"`
+	CacheExclusiveInputProviders       []string        `json:"cache_exclusive_input_providers"`
+	CacheExclusiveInputResellers       []string        `json:"cache_exclusive_input_resellers"`
+	CacheExclusiveInputPublisherPrefix string          `json:"cache_exclusive_input_publisher_prefix"`
+	InputExcludesCache                 [][3]any        `json:"input_excludes_cache"`
+	PrivateTierBasisModels             [][2]string     `json:"private_tier_basis_models"`
+	Policy                             struct {
 		AsyncSettle routingsnapshot.AsyncSettle `json:"async_settle"`
 	} `json:"policy"`
 	Cases []struct {
@@ -111,6 +121,11 @@ func loadAsyncGoldens(t testing.TB) asyncGoldens {
 	}
 	g.snap = snapshotFactsOf(t, []byte(x.SnapshotBody))
 	g.ordered = x.OrdinaryParameters
+	g.rules = asyncExtras{ProgramModelPrefixes: x.ProgramModelPrefixes, ProgramModelNames: x.ProgramModelNames,
+		PolyphemusModel: x.PolyphemusModel, CacheExclusiveInputProviders: x.CacheExclusiveInputProviders,
+		CacheExclusiveInputResellers:       x.CacheExclusiveInputResellers,
+		CacheExclusiveInputPublisherPrefix: x.CacheExclusiveInputPublisherPrefix,
+		InputExcludesCache:                 x.InputExcludesCache, PrivateTierBasisModels: x.PrivateTierBasisModels}
 	if !slices.Equal(x.AsyncMembers, []string{"async_eligible", "billing_snapshot", "billing_snapshot_hash",
 		"settlement_ticket", "settlement_status_url"}) {
 		t.Fatalf("async_members %q", x.AsyncMembers)
@@ -239,6 +254,7 @@ var p6Reasons = map[string]string{
 	"typed_records_false":    AsyncReasonUntyped,
 	"receipt_fee":            AsyncReasonReceiptFee,
 	"partner":                AsyncReasonPartner,
+	"private_tier_basis":     AsyncReasonPrivateTierBasis,
 	"billing_valid_false":    AsyncReasonBillingInvalid,
 	"candidate_refused":      AsyncReasonCandidateRefused,
 	"ticket_authority_false": AsyncReasonTicketAuthority,
@@ -427,6 +443,96 @@ func TestTheOrdinaryParametersArePythons(t *testing.T) {
 	}
 }
 
+// TestTheModelAndProviderRulesArePythons: Go's copies of the model and
+// provider rules are the ones P6's header carries from Python
+// (async_settle.PROGRAM_MODEL_PREFIXES, polyphemus.MODEL_ID,
+// provider_contracts.CACHE_EXCLUSIVE_INPUT_PROVIDERS and
+// PRIVATE_PRICE_TIER_BASIS_PROVIDER_MODELS), and namesProgramModel answers
+// each spelling the header records as names_program_model did, programs
+// and ordinary names both.
+func TestTheModelAndProviderRulesArePythons(t *testing.T) {
+	g := loadAsyncGoldens(t)
+	rules := g.rules
+	if !slices.Equal(rules.ProgramModelPrefixes, programModelPrefixes) || len(programModelPrefixes) != 2 {
+		t.Errorf("program prefixes %q, Python's %q", programModelPrefixes, rules.ProgramModelPrefixes)
+	}
+	if rules.PolyphemusModel != polyphemusModel || !namesProgramModel(polyphemusModel) {
+		t.Errorf("polyphemus model %q, Python's %q", polyphemusModel, rules.PolyphemusModel)
+	}
+	if !slices.Equal(rules.CacheExclusiveInputProviders, cacheExclusiveInputProviders) || len(cacheExclusiveInputProviders) != 1 {
+		t.Errorf("cache-exclusive providers %q, Python's %q", cacheExclusiveInputProviders, rules.CacheExclusiveInputProviders)
+	}
+	if !slices.Equal(rules.CacheExclusiveInputResellers, cacheExclusiveInputResellers) || len(cacheExclusiveInputResellers) != 2 {
+		t.Errorf("cache-exclusive resellers %q, Python's %q", cacheExclusiveInputResellers, rules.CacheExclusiveInputResellers)
+	}
+	if rules.CacheExclusiveInputPublisherPrefix != cacheExclusiveInputPublisherPrefix {
+		t.Errorf("cache-exclusive publisher prefix %q, Python's %q", cacheExclusiveInputPublisherPrefix,
+			rules.CacheExclusiveInputPublisherPrefix)
+	}
+	// The convention rule's answers over (provider, model) pairs: Python's,
+	// both answers reached, each reseller reached with both answers.
+	exclusive, inclusive := 0, 0
+	resellerAnswers := map[string]map[bool]int{}
+	for _, triple := range rules.InputExcludesCache {
+		provider, model, want := triple[0].(string), triple[1].(string), triple[2].(bool)
+		if got := inputExcludesCache(provider, model); got != want {
+			t.Errorf("inputExcludesCache(%q, %q) %v, Python's %v", provider, model, got, want)
+		}
+		if want {
+			exclusive++
+		} else {
+			inclusive++
+		}
+		if slices.Contains(cacheExclusiveInputResellers, provider) {
+			if resellerAnswers[provider] == nil {
+				resellerAnswers[provider] = map[bool]int{}
+			}
+			resellerAnswers[provider][want]++
+		}
+	}
+	if exclusive < 5 || inclusive < 10 || len(resellerAnswers) != 2 {
+		t.Fatalf("%d exclusive, %d inclusive, resellers %v", exclusive, inclusive, resellerAnswers)
+	}
+	for provider, answers := range resellerAnswers {
+		if answers[true] == 0 || answers[false] == 0 {
+			t.Errorf("%s: answers %v", provider, answers)
+		}
+	}
+	if !reflect.DeepEqual(rules.PrivateTierBasisModels, privateTierBasisModels) || len(privateTierBasisModels) != 1 {
+		t.Errorf("private tier basis models %q, Python's %q", privateTierBasisModels, rules.PrivateTierBasisModels)
+	}
+	programs, others := 0, 0
+	for name, want := range rules.ProgramModelNames {
+		if !printableASCII(name) {
+			t.Fatalf("%q: the edge reads printable ASCII names only", name)
+		}
+		if got := namesProgramModel(name); got != want {
+			t.Errorf("namesProgramModel(%q) %v, Python's %v", name, got, want)
+		}
+		if want {
+			programs++
+		} else {
+			others++
+		}
+	}
+	// Both answers reached, over spellings of the namespace, its nyte/
+	// alias, variants, letter case and surrounding spaces.
+	if programs < 15 || others < 20 {
+		t.Fatalf("%d programs, %d others", programs, others)
+	}
+	for _, name := range []string{"TrustedRouter/auto", " trustedrouter/auto ", "nyte/auto", "trustedrouter/auto:nitro",
+		"parasail/liberty-2.0:nitro", "trustedrouter/"} {
+		if !rules.ProgramModelNames[name] {
+			t.Errorf("%q is not recorded as a program name", name)
+		}
+	}
+	for _, name := range []string{"trustedrouterx/auto", "openai/trustedrouter/auto", "parasail/liberty-2", "trustedrouter", ""} {
+		if v, ok := rules.ProgramModelNames[name]; v || !ok {
+			t.Errorf("%q is not recorded as an ordinary name", name)
+		}
+	}
+}
+
 // TestTheHeaderIsExactlyAsyncV1: the request records Python's test, one
 // value, that case, nothing around it; every P6 header case agrees with
 // Python's shape, and only an exact list composes members.
@@ -471,7 +577,7 @@ func TestTheRequestRecordsItsAsyncFacts(t *testing.T) {
 	base := parse(bodyOf(`"route_type":"chat.completions"`))
 	if !base.V1 || base.Undeclared || base.InputModalities || base.RouteType == nil ||
 		*base.RouteType != "chat.completions" || base.RequestedParameters != nil || base.ServiceTier != nil ||
-		base.Model == "" || base.InferenceReceipt || base.AdditionalCost {
+		base.Model == "" || base.Models != nil || base.InferenceReceipt || base.AdditionalCost {
 		t.Fatalf("the base body's facts: %+v", base)
 	}
 	for _, v := range []struct {
@@ -488,6 +594,10 @@ func TestTheRequestRecordsItsAsyncFacts(t *testing.T) {
 		{`"service_tier":" flex "`, func(a AsyncRequest) bool { return a.ServiceTier != nil && *a.ServiceTier == "flex" }},
 		{`"inference_receipt":true`, func(a AsyncRequest) bool { return a.InferenceReceipt }},
 		{`"additional_cost_reservation_microdollars":5`, func(a AsyncRequest) bool { return a.AdditionalCost }},
+		{`"models":[" trustedrouter/auto ","openai/gpt-5-mini"]`, func(a AsyncRequest) bool {
+			return slices.Equal(a.Models, []string{"trustedrouter/auto", "openai/gpt-5-mini"})
+		}},
+		{`"models":null`, func(a AsyncRequest) bool { return a.Models == nil }},
 	} {
 		if got := parse(bodyOf(`"route_type":"chat.completions"`, v.field)); !v.check(got) {
 			t.Errorf("%s: %+v", v.field, got)
@@ -612,14 +722,40 @@ func TestEachAsyncRefusalHasItsReason(t *testing.T) {
 		{"a service tier", req(func(r *AsyncRequest) { r.ServiceTier = ptr("flex") }), AsyncFalseOnly, AsyncReasonServiceTier},
 		{"an inference receipt", req(func(r *AsyncRequest) { r.InferenceReceipt = true }), AsyncFalseOnly, AsyncReasonReceiptFee},
 		{"a tool cost", req(func(r *AsyncRequest) { r.AdditionalCost = true }), AsyncFalseOnly, AsyncReasonToolCost},
-		{"a partner model", req(func(r *AsyncRequest) { r.Model = "z-ai/glm-5.3" }), AsyncFalseOnly, AsyncReasonPartner},
-		{"a prefix that is not a path", req(func(r *AsyncRequest) { r.Model = "openai-gpt" }), AsyncFalseOnly, AsyncReasonPartner},
+		// A requested program, meta-router or alias name, or the partner
+		// model's, as the model or a fallback, however spelled.
+		{"a program name", req(func(r *AsyncRequest) { r.Model = "trustedrouter/auto" }), AsyncFalseOnly, AsyncReasonPartner},
+		{"a program name with a variant", req(func(r *AsyncRequest) { r.Model = "trustedrouter/auto:nitro" }), AsyncFalseOnly, AsyncReasonPartner},
+		{"a program name spelled nyte/", req(func(r *AsyncRequest) { r.Model = "nyte/auto-routing:floor" }), AsyncFalseOnly, AsyncReasonPartner},
+		{"a program name in capitals", req(func(r *AsyncRequest) { r.Model = "TrustedRouter/ZDR" }), AsyncFalseOnly, AsyncReasonPartner},
+		{"the partner model", req(func(r *AsyncRequest) { r.Model = "parasail/liberty-2.0" }), AsyncFalseOnly, AsyncReasonPartner},
+		{"the partner model with a variant", req(func(r *AsyncRequest) { r.Model = "parasail/liberty-2.0:nitro" }), AsyncFalseOnly, AsyncReasonPartner},
+		{"a program name as a fallback", req(func(r *AsyncRequest) { r.Models = []string{"openai/gpt-5-mini", "trustedrouter/zdr"} }),
+			AsyncFalseOnly, AsyncReasonPartner},
+		// A candidate the settle path prices by its own rules: the
+		// selector's endpoint, or one with a provider-private tier basis.
+		{"the selector's endpoint as a candidate", cand(func(c *Candidate) { c.Model = "trustedrouter/polyphemus-1.0" }),
+			AsyncFalseOnly, AsyncReasonPolyphemus},
+		{"a private tier basis", cand(func(c *Candidate) { c.Provider, c.Model = "sakana", "sakana-ai/fugu-ultra-v1.1" }),
+			AsyncFalseOnly, AsyncReasonPrivateTierBasis},
 		{"billing_valid false", cand(func(c *Candidate) { c.Epochs[0].BillingValid = ptr(false) }), AsyncFalseOnly, AsyncReasonBillingInvalid},
-		{"provider azure", cand(func(c *Candidate) { c.Provider = "azure" }), AsyncFalseOnly, AsyncReasonCandidateRefused},
-		// The provider literal alone: the model is under its provider.
-		{"provider azure, model under it", cand(func(c *Candidate) { c.Provider, c.Model = "azure", "azure/gpt-4.1" }),
-			AsyncFalseOnly, AsyncReasonCandidateRefused},
-		{"model not under provider", cand(func(c *Candidate) { c.Model = "anthropic/gpt-4.1" }), AsyncFalseOnly, AsyncReasonCandidateRefused},
+		// The provider is any identity: a reseller, or one serving another
+		// publisher's model, is a candidate; a slug outside Identity's
+		// alphabet or bounds is refused.
+		{"provider not an identity", cand(func(c *Candidate) { c.Provider = "not a slug" }), AsyncFalseOnly, AsyncReasonCandidateRefused},
+		{"provider empty", cand(func(c *Candidate) { c.Provider = "" }), AsyncFalseOnly, AsyncReasonCandidateRefused},
+		{"provider of 513 characters", cand(func(c *Candidate) { c.Provider = strings.Repeat("x", 513) }), AsyncFalseOnly,
+			AsyncReasonCandidateRefused},
+		{"provider of 512 characters", cand(func(c *Candidate) { c.Provider = strings.Repeat("x", 512) }), AsyncSnapshot, ""},
+		{"provider azure", cand(func(c *Candidate) { c.Provider = "azure" }), AsyncSnapshot, ""},
+		{"provider azure, model under it", cand(func(c *Candidate) { c.Provider, c.Model = "azure", "azure/gpt-4.1" }), AsyncSnapshot, ""},
+		{"model not under provider", cand(func(c *Candidate) { c.Model = "anthropic/gpt-4.1" }), AsyncSnapshot, ""},
+		{"provider anthropic serving another publisher", cand(func(c *Candidate) { c.Provider = "anthropic" }), AsyncSnapshot, ""},
+		{"the private tier basis model from another provider", cand(func(c *Candidate) {
+			c.Provider, c.Model = "together", "sakana-ai/fugu-ultra-v1.1"
+		}), AsyncSnapshot, ""},
+		{"the private tier basis provider serving another model", cand(func(c *Candidate) { c.Provider = "sakana" }),
+			AsyncSnapshot, ""},
 		{"model id not an identity", cand(func(c *Candidate) { c.Model = "openai/gpt 4.1" }), AsyncFalseOnly, AsyncReasonCandidateRefused},
 		{"usage BYOK", cand(func(c *Candidate) { c.UsageType = "BYOK" }), AsyncFalseOnly, AsyncReasonCandidateRefused},
 		{"a request fee", price(func(p *routingsnapshot.Price) { p.RequestFeeMicro = 1 }), AsyncFalseOnly, AsyncReasonCandidateRefused},
@@ -644,9 +780,32 @@ func TestEachAsyncRefusalHasItsReason(t *testing.T) {
 		{"an ordinary parameter", req(func(r *AsyncRequest) { r.RequestedParameters = []string{"temperature", "stream"} }), AsyncSnapshot, ""},
 		{"service tier default", req(func(r *AsyncRequest) { r.ServiceTier = ptr("default") }), AsyncSnapshot, ""},
 		{"an anthropic model name", req(func(r *AsyncRequest) { r.Model = "anthropic/claude-sonnet-4.5" }), AsyncSnapshot, ""},
+		{"another publisher's model name", req(func(r *AsyncRequest) { r.Model = "z-ai/glm-5.3" }), AsyncSnapshot, ""},
+		{"a name that is not a path", req(func(r *AsyncRequest) { r.Model = "openai-gpt" }), AsyncSnapshot, ""},
+		{"a name a program's prefix does not cover", req(func(r *AsyncRequest) { r.Model = "trustedrouterx/auto" }), AsyncSnapshot, ""},
+		{"a name under the namespace of another publisher", req(func(r *AsyncRequest) { r.Model = "openai/trustedrouter/auto" }),
+			AsyncSnapshot, ""},
+		{"ordinary fallbacks", req(func(r *AsyncRequest) { r.Models = []string{"openai/gpt-5-mini", "z-ai/glm-5.3"} }), AsyncSnapshot, ""},
 		// First failing check wins, in Python's order.
-		{"undeclared before partner", req(func(r *AsyncRequest) { r.Undeclared, r.Model = true, "z-ai/glm-5.3" }),
+		{"undeclared before partner", req(func(r *AsyncRequest) { r.Undeclared, r.Model = true, "trustedrouter/auto" }),
 			AsyncFalseOnly, AsyncReasonUndeclared},
+		{"partner before polyphemus", func(in *ComposeInput) {
+			req(func(r *AsyncRequest) { r.Model = "trustedrouter/auto" })(in)
+			cand(func(c *Candidate) { c.Model = "trustedrouter/polyphemus-1.0" })(in)
+		}, AsyncFalseOnly, AsyncReasonPartner},
+		{"polyphemus before private tier basis", func(in *ComposeInput) {
+			cand(func(c *Candidate) { c.Model = "trustedrouter/polyphemus-1.0" })(in)
+			in.Candidates = append(in.Candidates, func() Candidate {
+				c := cloneCandidate(base.Candidates[0])
+				c.EndpointID, c.Provider, c.Model = c.EndpointID+"-b", "sakana", "sakana-ai/fugu-ultra-v1.1"
+				c.Epochs[0].Price.EndpointID = c.EndpointID
+				return c
+			}())
+		}, AsyncFalseOnly, AsyncReasonPolyphemus},
+		{"private tier basis before billing", func(in *ComposeInput) {
+			cand(func(c *Candidate) { c.Provider, c.Model = "sakana", "sakana-ai/fugu-ultra-v1.1" })(in)
+			cand(func(c *Candidate) { c.Epochs[0].BillingValid = ptr(false) })(in)
+		}, AsyncFalseOnly, AsyncReasonPrivateTierBasis},
 		{"untyped before billing", func(in *ComposeInput) {
 			pol(func(p *routingsnapshot.AsyncSettle) { p.TypedRecords = false })(in)
 			cand(func(c *Candidate) { c.Epochs[0].BillingValid = ptr(false) })(in)
@@ -949,7 +1108,8 @@ func perturbCandidate(c *Candidate, op byte, arg int64) {
 	case 0:
 		e.BillingValid = ptr(arg%2 == 0)
 	case 1:
-		c.Provider = []string{"openai", "anthropic", "azure", ""}[uint64(arg)%4]
+		c.Provider = []string{"openai", "anthropic", "azure", "", "sakana", "google-vertex", "not a slug",
+			"amazon-bedrock"}[uint64(arg)%8]
 	case 2:
 		p.RequestFeeMicro = arg
 	case 3:
@@ -965,7 +1125,8 @@ func perturbCandidate(c *Candidate, op byte, arg int64) {
 	case 7:
 		p.PriceHistoryVersion = arg
 	case 8:
-		c.Model = c.Provider + "/m" + string(rune('a'+uint64(arg)%26))
+		c.Model = []string{c.Provider + "/m" + string(rune('a'+uint64(arg)%26)), "sakana-ai/fugu-ultra-v1.1",
+			"trustedrouter/polyphemus-1.0", "anthropic/claude-sonnet-4.5"}[uint64(arg)%4]
 	case 9:
 		c.UsageType = []string{"Credits", "BYOK"}[uint64(arg)%2]
 	case 10:
@@ -1006,7 +1167,18 @@ func reasonHolds(reason string, in *AsyncInput, candidates []Candidate, at int64
 	case AsyncReasonToolCost:
 		return r.AdditionalCost
 	case AsyncReasonPartner:
-		return !strings.HasPrefix(r.Model, "openai/") && !strings.HasPrefix(r.Model, "anthropic/")
+		// A requested name (the model or a fallback) under a program
+		// prefix once folded and canonicalized.
+		return slices.ContainsFunc(append([]string{r.Model}, r.Models...), func(name string) bool {
+			canonical := canonicalRouterModelID(strings.ToLower(strings.TrimSpace(name)))
+			return strings.HasPrefix(canonical, "trustedrouter/") || strings.HasPrefix(canonical, "parasail/liberty-2.0")
+		})
+	case AsyncReasonPolyphemus:
+		return slices.ContainsFunc(candidates, func(c Candidate) bool { return c.Model == "trustedrouter/polyphemus-1.0" })
+	case AsyncReasonPrivateTierBasis:
+		return slices.ContainsFunc(candidates, func(c Candidate) bool {
+			return c.Provider == "sakana" && c.Model == "sakana-ai/fugu-ultra-v1.1"
+		})
 	case AsyncReasonBillingInvalid:
 		return anyCandidate(func(_ Candidate, e routingsnapshot.Epoch) bool { return e.BillingValid != nil && !*e.BillingValid })
 	case AsyncReasonCandidateRefused:
@@ -1062,9 +1234,14 @@ func checkSnapshot(t *testing.T, got Async, in *AsyncInput, candidates []Candida
 	for _, item := range list {
 		o := item.(pyjson.Object)
 		id, provider, model := o[0].Value.(string), o[1].Value.(string), o[2].Value.(string)
-		if id <= previous || !identity.MatchString(id) || !identity.MatchString(model) ||
-			(provider != "openai" && provider != "anthropic") || !strings.HasPrefix(model, provider+"/") ||
-			o[3].Value != usageCredits || o[7].Value != int64(0) {
+		convention := "includes_cache"
+		if provider == "anthropic" || ((provider == "amazon-bedrock" || provider == "google-vertex") &&
+			strings.HasPrefix(model, "anthropic/")) {
+			convention = "excludes_cache"
+		}
+		if id <= previous || !identity.MatchString(id) || !identity.MatchString(model) || !identity.MatchString(provider) ||
+			o[3].Value != usageCredits || o[7].Value != int64(0) || o[9].Value != convention ||
+			model == "trustedrouter/polyphemus-1.0" || (provider == "sakana" && model == "sakana-ai/fugu-ultra-v1.1") {
 			t.Fatalf("candidate %v", o)
 		}
 		previous = id

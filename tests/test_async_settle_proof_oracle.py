@@ -176,8 +176,57 @@ def test_guard_rejects_cached_live_alias(monkeypatch):
                 module('storage_errors').transient_store_error_types()
 
 
+# Supplement cases the frozen reference (BASE plus its recorded diff) cannot
+# price, left out of the differential by name until it is re-pinned; the
+# real path prices each of them in tests/test_resold_claude_cache_accounting.py
+# (test_a_resold_claude_fixture_case_settles_on_the_real_path), and
+# test_frozen_reference_still_lacks_what_the_excluded_cases_need makes this
+# list expire on the re-pin.
+NO_BEDROCK_IN_REFERENCE = ('the frozen reference has no amazon-bedrock provider: it raises KeyError for the '
+                           'slug before any comparison, at route registration or when the Bedrock '
+                           'candidate is selected')
+VERTEX_CLAUDE_BY_SLUG_IN_REFERENCE = ('the frozen reference prices Vertex Claude by the slug-only convention rule; '
+                                      'the live leg differs by the intended resold-Claude cache accounting fix')
+FROZEN_REFERENCE_EXCLUDED_CASES = {
+    'bedrock_anthropic_cache': NO_BEDROCK_IN_REFERENCE,
+    'bedrock_cache_rate_missing': NO_BEDROCK_IN_REFERENCE,
+    'bedrock_other_publisher_cache': NO_BEDROCK_IN_REFERENCE,
+    'mixed_providers_tiered_reseller': NO_BEDROCK_IN_REFERENCE,
+    'vertex_anthropic_cache': VERTEX_CLAUDE_BY_SLUG_IN_REFERENCE,
+    'vertex_cache_rate_missing': VERTEX_CLAUDE_BY_SLUG_IN_REFERENCE,
+}
+ORACLE_CASES = [case for case in SUPPORTED if case['name'] not in FROZEN_REFERENCE_EXCLUDED_CASES]
+RE_PINNED = 'the reference has been re-pinned: remove these exclusions (FROZEN_REFERENCE_EXCLUDED_CASES)'
+
+
+def test_frozen_reference_still_lacks_what_the_excluded_cases_need():
+    """The exclusions expire by themselves: once the frozen reference knows
+    the amazon-bedrock provider and carries the shared convention rule over
+    the model id, every excluded case can be compared again."""
+    if guard_unavailable():
+        return
+    assert set(FROZEN_REFERENCE_EXCLUDED_CASES) <= {case['name'] for case in SUPPORTED}
+    assert len(ORACLE_CASES) == len(SUPPORTED) - len(FROZEN_REFERENCE_EXCLUDED_CASES)
+    assert 'amazon-bedrock' not in module('catalog').PROVIDERS, RE_PINNED
+    assert 'amazon-bedrock' not in module('catalog_registry').PROVIDERS, RE_PINNED
+    assert not hasattr(module('provider_contracts'), 'CACHE_EXCLUSIVE_INPUT_RESELLERS'), RE_PINNED
+    assert not hasattr(module('provider_contracts'), 'provider_input_excludes_cache'), RE_PINNED
+
+
+def test_each_excluded_case_is_settled_on_the_real_path_by_name():
+    """Every excluded case is priced on the real path elsewhere, named
+    literally there, so a renamed or dropped vector fails here."""
+    from tests import test_resold_claude_cache_accounting as real_path
+
+    assert set(FROZEN_REFERENCE_EXCLUDED_CASES) == set(real_path.RESOLD_CLAUDE_FIXTURE_CASES)
+    source = Path(real_path.__file__).read_text()
+    for name in FROZEN_REFERENCE_EXCLUDED_CASES:
+        assert f'"{name}"' in source, name
+    assert 'def test_a_resold_claude_fixture_case_settles_on_the_real_path(' in source
+
+
 @pytest.mark.proof_oracle
-@pytest.mark.parametrize('case', SUPPORTED, ids=lambda c: c['name'])
+@pytest.mark.parametrize('case', ORACLE_CASES, ids=lambda c: c['name'])
 @pytest.mark.parametrize('kind', ['settle', 'refund'])
 @pytest.mark.parametrize('mode', ['no_header_off', 'header_off', 'no_header_protected'])
 @pytest.mark.parametrize('commit_path', ['inline', 'repair'])

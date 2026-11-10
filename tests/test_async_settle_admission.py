@@ -107,13 +107,39 @@ def test_each_contract_exclusion(field, value):
                       settings=settings()) == {'async_eligible': False}
 
 
-@pytest.mark.parametrize('change', [dict(provider='google'), dict(usage_type='Payouts'),
-                                    dict(model_id='custom/model'), dict(request_price_microdollars=1),
+@pytest.mark.parametrize('change', [dict(usage_type='Payouts'), dict(request_price_microdollars=1),
                                     dict(prompt_price_microdollars_per_million_tokens=-1),
-                                    dict(prompt_price_microdollars_per_million_tokens=1 << 63)])
+                                    dict(prompt_price_microdollars_per_million_tokens=1 << 63),
+                                    dict(provider='not a slug'), dict(provider=''), dict(model_id='not a model')])
 def test_candidate_exclusions(change):
     assert projection(authorization=authorization(), endpoints=[endpoint(**change)],
                       requested=Eligibility(), runtime=runtime(), settings=settings()) == {'async_eligible': False}
+
+
+@pytest.mark.parametrize('change,convention', [
+    (dict(provider='google'), 'includes_cache'), (dict(model_id='custom/model'), 'includes_cache'),
+    # The two resellers relaying Anthropic-native usage for an anthropic/
+    # model are cache-exclusive, as the anthropic slug is; the same resellers
+    # serving another publisher's model are not.
+    (dict(provider='amazon-bedrock', model_id='anthropic/billing-v1'), 'excludes_cache'),
+    (dict(provider='google-vertex', model_id='anthropic/billing-v1'), 'excludes_cache'),
+    (dict(provider='amazon-bedrock', model_id='openai/billing-v1'), 'includes_cache'),
+    (dict(provider='together', model_id='anthropic/billing-v1'), 'includes_cache'),
+    (dict(provider='anthropic', model_id='anthropic/billing-v1'), 'excludes_cache'),
+    (dict(provider='anthropic'), 'excludes_cache')])
+def test_any_provider_and_any_publisher_is_a_candidate(change, convention):
+    """The snapshot takes every provider's Credits endpoint, whatever the
+    model's publisher; the prompt convention follows the provider slug and
+    the model id (provider_contracts.provider_input_excludes_cache).
+    (A custom or user-provided model is excluded by the authorization's own
+    facts, never by the candidate's model id: tests/test_async_settle_all_providers.py.)"""
+    result = projection(authorization=authorization(), endpoints=[endpoint(**change)],
+                        requested=Eligibility(), runtime=runtime(), settings=settings())
+    assert result['async_eligible'] is True
+    candidate, = result['billing_snapshot']['candidates']
+    expected = endpoint(**change)
+    assert (candidate['provider'], candidate['model_id']) == (expected.provider, expected.model_id)
+    assert candidate['prompt_convention'] == convention
 
 
 @pytest.mark.parametrize('authority', ['spend_lease', 'regional_lease', 'federated', 'deferred_home'])

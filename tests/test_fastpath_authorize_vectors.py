@@ -732,6 +732,7 @@ def test_the_async_header_carries_pythons_sets_snapshot_and_policy() -> None:
     vectors = _load(ASYNC_CASES)
     assert vectors["ordinary_parameters"] == sorted(ORDINARY_PARAMETERS)
     assert vectors["async_members"] == list(ASYNC_MEMBERS)
+    _check_rule_vectors(vectors)
     assert vectors["snapshot_sha256"] == hashlib.sha256(vectors["snapshot_body"].encode()).hexdigest()
     # Admission off in every case but the admission-on ones.
     assert vectors["policy"]["async_settle"] == {
@@ -793,6 +794,99 @@ def test_the_async_header_carries_pythons_sets_snapshot_and_policy() -> None:
     assert untyped["expect"]["reason"] == "policy.pilot_off" and untyped["expect"]["python"]["async_shape"] == "A"
 
 
+def _check_rule_vectors(vectors: dict[str, Any]) -> None:
+    """The model and provider rules the edge holds its own copies to
+    (fastpath/internal/gwauth/async.go): each is Python's, and the program
+    name answers are names_program_model's over spellings that reach both
+    answers (the namespace, its nyte/ alias, variants, letter case,
+    surrounding spaces; ordinary names of any publisher)."""
+    from trusted_router.polyphemus import MODEL_ID as POLYPHEMUS_MODEL_ID
+    from trusted_router.provider_contracts import (
+        CACHE_EXCLUSIVE_INPUT_PROVIDERS,
+        CACHE_EXCLUSIVE_INPUT_PUBLISHER_PREFIX,
+        CACHE_EXCLUSIVE_INPUT_RESELLERS,
+        PRIVATE_PRICE_TIER_BASIS_PROVIDER_MODELS,
+        provider_input_excludes_cache,
+    )
+    from trusted_router.services.async_settle import PROGRAM_MODEL_PREFIXES, names_program_model
+
+    assert vectors["program_model_prefixes"] == list(PROGRAM_MODEL_PREFIXES) == ["trustedrouter/", "parasail/liberty-2.0"]
+    assert vectors["polyphemus_model"] == POLYPHEMUS_MODEL_ID
+    assert vectors["cache_exclusive_input_providers"] == sorted(CACHE_EXCLUSIVE_INPUT_PROVIDERS) == ["anthropic"]
+    assert vectors["cache_exclusive_input_resellers"] == sorted(CACHE_EXCLUSIVE_INPUT_RESELLERS) == [
+        "amazon-bedrock", "google-vertex"]
+    assert vectors["cache_exclusive_input_publisher_prefix"] == CACHE_EXCLUSIVE_INPUT_PUBLISHER_PREFIX == "anthropic/"
+    answers = vectors["input_excludes_cache"]
+    assert answers == [[provider, model, provider_input_excludes_cache(provider, model)] for provider, model, _ in answers]
+    assert {(p, m) for p, m, a in answers if a} >= {
+        ("anthropic", "openai/gpt-4.1"), ("amazon-bedrock", "anthropic/claude-sonnet-5"),
+        ("google-vertex", "anthropic/claude-sonnet-4.6")}
+    assert {(p, m) for p, m, a in answers if not a} >= {
+        ("amazon-bedrock", "z-ai/glm-5.3"), ("google-vertex", "google/gemini-3.1-pro-preview"),
+        ("together", "anthropic/claude-opus-fixture"), ("deepinfra", "anthropic/claude-opus-5"),
+        ("amazon-bedrock", "Anthropic/claude-x"), ("anthropic ", "anthropic/claude-opus-fixture")}
+    assert vectors["private_tier_basis_models"] == sorted(
+        list(pair) for pair in PRIVATE_PRICE_TIER_BASIS_PROVIDER_MODELS) == [["sakana", "sakana-ai/fugu-ultra-v1.1"]]
+    names = vectors["program_model_names"]
+    assert names == {name: names_program_model(name) for name in names}
+    assert all(name.isascii() and name.isprintable() for name in names)
+    programs = {name for name, is_program in names.items() if is_program}
+    assert {"trustedrouter/auto", "TrustedRouter/auto", " trustedrouter/auto ", "nyte/auto", "trustedrouter/auto:nitro",
+            "parasail/liberty-2.0", "parasail/liberty-2.0:nitro", POLYPHEMUS_MODEL_ID} <= programs
+    assert {"openai/gpt-4.1", "z-ai/glm-5.3", "trustedrouterx/auto", "openai/trustedrouter/auto", "parasail/liberty-2",
+            "trustedrouter", ""} <= set(names) - programs
+    assert len(programs) >= 15 and len(names) - len(programs) >= 20
+
+
+def test_the_async_cases_cover_every_providers_candidates() -> None:
+    """Every provider's Credits endpoint is a candidate the snapshot takes
+    (shape B): a model resold by other providers, a provider's own model, a
+    tiered endpoint, an anthropic/ model direct and resold by the two
+    resellers relaying Anthropic-native usage (every candidate exclusive),
+    several providers in one answer, and a stream of a resold model; a requested
+    program or alias name, as the model or a fallback, is shape A (partner)
+    in Python while the edge's evaluator passes it before the compose; a
+    private tier basis candidate is shape A."""
+    vectors = _load(ASYNC_CASES)
+    by_name = {case["name"]: case for case in vectors["cases"]}
+    snapshot_of = lambda name: json.loads(by_name[name]["expect"]["response"])["data"]["billing_snapshot"]  # noqa: E731
+    providers_of = lambda name: Counter(c["provider"] for c in snapshot_of(name)["candidates"])  # noqa: E731
+    conventions_of = lambda name: {(c["provider"], c["prompt_convention"]) for c in snapshot_of(name)["candidates"]}  # noqa: E731
+    assert not any(":partner:z-ai/" in name for name in by_name)
+    resold = providers_of("answer:async.B:resold:z-ai/glm-5.3")
+    assert len(resold) >= 2 and "openai" not in resold and "anthropic" not in resold
+    assert all(c["model_id"] == "z-ai/glm-5.3" for c in snapshot_of("answer:async.B:resold:z-ai/glm-5.3")["candidates"])
+    open_weights = providers_of("answer:async.B:resold:openai/open-weights-fixture")
+    assert set(open_weights) == {"together", "fireworks", "amazon-bedrock"}
+    assert conventions_of("answer:async.B:resold:openai/open-weights-fixture") == {
+        ("together", "includes_cache"), ("fireworks", "includes_cache"), ("amazon-bedrock", "includes_cache")}
+    assert set(providers_of("answer:async.B:own_publisher:deepseek/deepseek-v4-flash")) == {"deepseek"}
+    tiered = snapshot_of("answer:async.B:tiered:google/gemini-3.1-pro-preview")["candidates"]
+    assert any(len(c["tiers"]) >= 2 for c in tiered) and {c["provider"] for c in tiered} == {"google-ai-studio"}
+    assert conventions_of("answer:async.B:resold_claude:anthropic/claude-opus-fixture") == {
+        ("anthropic", "excludes_cache"), ("google-vertex", "excludes_cache"), ("amazon-bedrock", "excludes_cache")}
+    # Both conventions in one answer: the mixed-provider case (openai and anthropic).
+    assert {convention for _p, convention in conventions_of("answer:async.B:mixed_provider:openai/gpt-4.1+anthropic/claude-sonnet-4.5")} == {
+        "includes_cache", "excludes_cache"}
+    several = providers_of("answer:async.B:several_providers:openai/gpt-4.1+z-ai/glm-5.3")
+    assert "openai" in several and len(several) >= 3
+    assert snapshot_of("answer:async.B:stream:resold:z-ai/glm-5.3") == snapshot_of("answer:async.B:resold:z-ai/glm-5.3")
+    for name in ("pass:evaluate.pass:async.A:partner:trustedrouter/auto", "pass:evaluate.pass:async.A:partner:trustedrouter/zdr",
+                 "pass:evaluate.pass:async.A:partner:fallback:openai/gpt-4.1+trustedrouter/auto",
+                 "pass:evaluate.pass:async.A:partner:trustedrouter/auto:stream"):
+        expect = by_name[name]["expect"]
+        assert expect["outcome"] == "pass" and expect["reason"] == "evaluate.pass"
+        assert expect["python"]["async_shape"] == "A"
+        assert json.loads(expect["python"]["response"])["data"]["async_eligible"] is False
+        body = json.loads(by_name[name]["request"]["body"])
+        assert "trustedrouter/" in body["model"] or any("trustedrouter/" in m for m in body.get("models") or ())
+    for name in ("answer:async.A:private_tier_basis:sakana-ai/fugu-ultra-v1.1",
+                 "answer:async.A:private_tier_basis:openai/gpt-4.1+sakana-ai/fugu-ultra-v1.1"):
+        data = json.loads(by_name[name]["expect"]["response"])["data"]
+        assert data["async_eligible"] is False and "billing_snapshot" not in data
+        assert any(c["endpoint_id"].startswith("sakana-ai/fugu-ultra-v1.1@sakana/") for c in data["route_candidates"])
+
+
 def test_a_shape_b_snapshot_is_the_composed_candidates_epoch_prices() -> None:
     """What G15b rebuilds: the candidates kept, sorted by endpoint_id, each
     the snapshot's epoch price at the case's instant with billing_valid
@@ -838,7 +932,7 @@ def test_an_async_stream_carries_the_same_members_as_without_stream() -> None:
     by_name = {case["name"]: case for case in _load(ASYNC_CASES)["cases"]}
     plain = json.loads(by_name["answer:async.B:single:openai/gpt-4.1"]["expect"]["response"])["data"]
     streamed_bodies = [case for case in by_name.values() if json.loads(case["request"]["body"]).get("stream") is True]
-    assert len(streamed_bodies) == 10
+    assert len(streamed_bodies) == 11
     for name in ("answer:async.B:stream", "pass:body.stream:async.B:member_absent"):
         expect = by_name[name]["expect"]
         streamed = json.loads((expect.get("shadow") or expect)["response"])["data"]

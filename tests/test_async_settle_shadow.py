@@ -383,17 +383,62 @@ def test_hash_only_literals_and_named_projection_lengths():
 from tests.test_billing_snapshot import CASES  # noqa: E402
 
 
-@pytest.mark.parametrize('case',[case for case in CASES if case['expected_exclusion'] is None],ids=lambda case:case['name'])
-def test_independent_legacy_arithmetic_matrix(case):
-    snapshot = snapshot_from_object(case['snapshot'])
-    candidate = next(c for c in snapshot.candidates if c.endpoint_id == case['selected_endpoint'])
+def _legacy_oracle_body(case):
     raw = case['raw_usage']
-    body = GatewaySettleRequest(authorization_id='auth-v1',actual_input_tokens=raw['input_tokens'],
+    return GatewaySettleRequest(authorization_id='auth-v1',actual_input_tokens=raw['input_tokens'],
         actual_output_tokens=raw['output_tokens'],cache_read_input_tokens=raw.get('cache_read_tokens',0),
         cache_creation_input_tokens=raw.get('cache_creation_tokens',0),reasoning_tokens=raw.get('reasoning_tokens',0))
+
+
+def _selected_candidate(case):
+    snapshot = snapshot_from_object(case['snapshot'])
+    return next(c for c in snapshot.candidates if c.endpoint_id == case['selected_endpoint'])
+
+
+def _legacy_oracle_reads_by_slug(candidate):
+    # The shadow's legacy oracle keeps its own slug-only convention rule (the
+    # anthropic slug alone is cache-exclusive); it answers only a candidate
+    # whose frozen convention agrees with that rule.
+    return candidate.prompt_convention == ('excludes_cache' if candidate.provider == 'anthropic' else 'includes_cache')
+
+
+SUPPORTED_CASES = [case for case in CASES if case['expected_exclusion'] is None]
+
+
+@pytest.mark.parametrize('case',[case for case in SUPPORTED_CASES if _legacy_oracle_reads_by_slug(_selected_candidate(case))],
+                         ids=lambda case:case['name'])
+def test_independent_legacy_arithmetic_matrix(case):
+    candidate = _selected_candidate(case)
+    body = _legacy_oracle_body(case)
     amount,usage = legacy_oracle(candidate,body,'settle')
     assert amount == case['expected_charge_micro'] and usage == case['expected_normalized_usage']
     assert legacy_oracle(candidate,body,'refund') == (0,usage)
+
+
+RESOLD_CLAUDE_CASES = [case for case in SUPPORTED_CASES if not _legacy_oracle_reads_by_slug(_selected_candidate(case))]
+
+
+@pytest.mark.parametrize('case', RESOLD_CLAUDE_CASES, ids=lambda case:case['name'])
+def test_legacy_oracle_is_unavailable_for_a_resold_claude_candidate(case):
+    """Claude resold by amazon-bedrock or google-vertex is cache-exclusive
+    under the shared rule (provider_contracts.provider_input_excludes_cache,
+    keyed on the provider slug and the model id); the shadow's legacy oracle
+    still reads the slug alone, so it declines such a candidate rather than
+    price it by the other convention. The shadow then compares nothing for
+    it (fail closed). The selected candidates here are exactly the
+    supplement's resold-Claude vectors."""
+    candidate = _selected_candidate(case)
+    assert candidate.provider in ('amazon-bedrock', 'google-vertex') and candidate.model_id.startswith('anthropic/')
+    assert candidate.prompt_convention == 'excludes_cache'
+    with pytest.raises(ValueError, match='^legacy_oracle_unavailable$'):
+        legacy_oracle(candidate, _legacy_oracle_body(case), 'settle')
+
+
+def test_the_legacy_oracle_matrix_covers_every_other_supported_case():
+    assert len(RESOLD_CLAUDE_CASES) == 5
+    assert {case['name'] for case in RESOLD_CLAUDE_CASES} == {
+        'bedrock_anthropic_cache', 'vertex_anthropic_cache', 'vertex_cache_rate_missing',
+        'bedrock_cache_rate_missing', 'mixed_providers_tiered_reseller'}
 
 
 def test_oracle_dependency_separation():

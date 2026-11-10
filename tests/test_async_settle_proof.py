@@ -28,6 +28,7 @@ from tests.test_settle_outbox_drain import _client, _typed_credit, _typed_key
 from trusted_router import billing_snapshot as billing
 from trusted_router.catalog_data import Model
 from trusted_router.detached_jws import canonical
+from trusted_router.provider_contracts import provider_input_excludes_cache
 from trusted_router.routes.internal import gateway
 from trusted_router.services import settle_outbox_apply
 from trusted_router.storage_models import SettleOutboxRow
@@ -286,9 +287,12 @@ def run_four_paths(env, monkeypatch, case, scenario='ordinary'):
     usage = case['expected_normalized_usage']
     selected = next(c for c in body['billing_snapshot']['candidates']
                     if c['endpoint_id'] == body['terminal']['selected_endpoint'])
+    # The repair body carries the input count in the selected candidate's
+    # own convention: the shared rule over its provider slug and model id.
+    exclusive = provider_input_excludes_cache(selected['provider'], selected['model_id'])
+    assert exclusive == (selected['prompt_convention'] == 'excludes_cache')
     repair_usage = dict(
-        actual_input_tokens=usage['uncached_input_tokens'] if selected['provider'] == 'anthropic'
-        else usage['total_prompt_tokens'],
+        actual_input_tokens=usage['uncached_input_tokens'] if exclusive else usage['total_prompt_tokens'],
         cache_read_input_tokens=usage['cache_read_tokens'],
         cache_creation_input_tokens=usage['cache_creation_tokens'],
         actual_output_tokens=usage['output_tokens'], reasoning_tokens=usage['reasoning_tokens'])
@@ -334,7 +338,7 @@ def run_four_paths(env, monkeypatch, case, scenario='ordinary'):
             assert {field: payload[field] for field in repair_usage} == repair_usage, path
             prompt = payload['actual_input_tokens']
             cached, created = payload['cache_read_input_tokens'], payload['cache_creation_input_tokens']
-            total = prompt + cached + created if selected['provider'] == 'anthropic' else prompt
+            total = prompt + cached + created if exclusive else prompt
             assert dict(uncached_input_tokens=total-cached-created, total_prompt_tokens=total,
                         cache_read_tokens=cached, cache_creation_tokens=created,
                         output_tokens=payload['actual_output_tokens'],

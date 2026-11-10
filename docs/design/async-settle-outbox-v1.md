@@ -75,7 +75,9 @@ transaction. Authorize **does gain response metadata and an eligibility read**;
 
 The exactly-priceable cohort is the intersection of #1390's `Eligibility`,
 `Candidate`, `build_snapshot`, `evaluate` and async operational eligibility:
-**typed, local, ordinary Credits; OpenAI/Anthropic adapters; chat.completions
+**typed, local, ordinary Credits; every provider's Credits endpoint (since
+2026-11-09; OpenAI/Anthropic alone before, see
+`docs/async-settlement-billing-v1.md`, "Every provider"); chat.completions
 and responses, streamed or non-streamed; exact final usage**. Ordinary catalog
 markup already embedded in effective rates, cache read/write, reasoning as a
 subset of output, and ordinary context tiers are supported.
@@ -84,9 +86,10 @@ Exclude payouts, partner/Liberty billing, BYOK/non-Credits, video/image/tool/
 search costs, native batch, custom/user models, app/custom markups, receipts
 (including receipt requests even when their fee is zero), request fees,
 nondefault service-tier pricing, private tier bases, fusion/Polyphemus, unusual
-or unknown pricing programs, untyped reservations, spend/regional leases and
+or unknown pricing programs, requested TrustedRouter programs, meta-routers and
+aliases, untyped reservations, spend/regional leases and
 federated/deferred-home settlement. Also exclude estimated/missing usage,
-malformed counts, overflow, unsupported adapters/routes and unknown features.
+malformed counts, overflow, unsupported routes and unknown features.
 `/decide` is **not** in #1390's route enum; it remains synchronous pending §10.
 Claims that this is “the bulk of traffic” require a shadow denominator.
 
@@ -1413,6 +1416,27 @@ both frozen and live route registration, dispatch, settlement and drain using
 actual Spanner fake transactions. Round 4 replaces the selected-function copies
 and their exemption list with **one package snapshot** in
 `tests/fakes/frozen_main/package.tar.gz`.
+
+Scope since 2026-11-09: the differential runs over every supported fixture
+case except six supplement vectors named in
+`FROZEN_REFERENCE_EXCLUDED_CASES` (`bedrock_anthropic_cache`,
+`bedrock_cache_rate_missing`, `bedrock_other_publisher_cache`,
+`mixed_providers_tiered_reseller`: the frozen reference has no amazon-bedrock
+provider, so it raises for the slug before any comparison, at route
+registration or, for the mixed case, when the Bedrock candidate is selected;
+`vertex_anthropic_cache`, `vertex_cache_rate_missing`: the frozen reference
+prices Vertex Claude by the slug-only convention rule, and the live leg
+differs by the intended resold-Claude cache accounting fix). The reference
+cannot be re-pinned today (its README: main's newer startup-records module
+breaks the frozen harness, and the reference is stale against main
+independently of that change). The exclusion expires by itself:
+`test_frozen_reference_still_lacks_what_the_excluded_cases_need` fails with
+"the reference has been re-pinned: remove these exclusions" once the frozen
+package knows amazon-bedrock or carries the shared convention rule, and
+`test_each_excluded_case_is_settled_on_the_real_path_by_name` holds each
+excluded vector to its real-path settle in
+`tests/test_resold_claude_cache_accounting.py`
+(`test_a_resold_claude_fixture_case_settles_on_the_real_path`), by name.
 
 The archive contains every Python module and text resource from the
 `src/trusted_router` subtree at **BASE plus the recorded source diff** (Python, JSON/JSONL, HTML, TXT,

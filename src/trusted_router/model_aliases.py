@@ -67,6 +67,17 @@ def merge_openrouter_model_rows(raw_models: Iterable[object]) -> list[dict[str, 
     return models
 
 
+# The router's own model namespace: its programs, meta-routers, tiers and
+# private aliases, never a provider's model. Authorize's native Batch
+# eligibility and async settlement's requested-model rule both read it here.
+ROUTER_MODEL_NAMESPACE = "trustedrouter/"
+
+
+def names_router_model(model_id: str) -> bool:
+    """Whether a requested model id is in the router's own namespace."""
+    return model_id.strip().lower().startswith(ROUTER_MODEL_NAMESPACE)
+
+
 def canonical_router_model_id(model_id: str) -> str:
     model_id = _ROUTER_MODEL_ID_ALIASES.get(model_id, model_id)
     publisher, separator, native_id = model_id.partition("/")

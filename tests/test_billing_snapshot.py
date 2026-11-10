@@ -20,8 +20,31 @@ from trusted_router.pricing import PriceTier
 FIXTURE = Path(__file__).parent / "fixtures/async_settlement/billing_v1.json"
 FIXTURE_SHA256 = "4aedf13e4ba30b4d1f0767f829e790c37ce3f957a39c15d1eb6aff8c8734fd81"
 DATA = json.loads(FIXTURE.read_bytes())
-ALL_CASES = DATA["cases"]
-# The original evaluation vectors also drive real settlement differentials.
+BASE_CASES = DATA["cases"]
+BASE_RULES = json.loads(FIXTURE.with_suffix(".rules.json").read_bytes())
+# billing_v1.json and billing_v1.rules.json stay byte-identical: other release
+# pins hold their bytes. The all-providers supplement names the base vectors
+# and mutation rules that asserted the retired adapter list, which the
+# contract no longer holds, and adds the vectors and rules for every provider.
+# The contract's vectors are the base's without those names, then its own.
+SUPPLEMENT = FIXTURE.with_name("billing_v1_providers.json")
+SUPPLEMENT_SHA256 = "b74f40c3c079569e63bc8d296ca2a9953e9b09b5b2a5b6eb24b1cf85a2df45f4"
+SUPPLEMENT_DATA = json.loads(SUPPLEMENT.read_bytes())
+# Repeated here, never read back from the file alone.
+SUPERSEDED_CASES = (
+    "unknown_adapter", "custom_model_identity", "candidate_provider_literal", "model_provider_prefix",
+)
+SUPERSEDED_RULES = (
+    "candidate_provider_literal", "model_provider_prefix", "candidate_provider_required",
+    "candidate_provider_nonnull",
+)
+ALL_CASES = [
+    case for case in BASE_CASES if case["name"] not in SUPPLEMENT_DATA["superseded_cases"]
+] + SUPPLEMENT_DATA["cases"]
+RULES = [
+    rule for rule in BASE_RULES if rule["name"] not in SUPPLEMENT_DATA["superseded_rules"]
+] + SUPPLEMENT_DATA["rules"]
+# The evaluation vectors also drive real settlement differentials.
 CASES = [case for case in ALL_CASES if "operation" not in case]
 
 
@@ -106,6 +129,33 @@ class FixtureSchema(BaseModel):
     fixture_version: Literal[1]
     envelope_identity: dict[str, Any]
     cases: list[FixtureCase | ValidationCase]
+
+
+class SupplementRule(BaseModel):
+    """One mutation control, as billing_v1.rules.json's entries are."""
+
+    model_config = ConfigDict(extra="forbid")
+    name: str
+    rule: str
+    cases: list[str] = Field(min_length=1)
+    old: str
+    new: str
+    scope: str | None = None
+    failure: Literal["rejected_positive", "value", "error_code"] | None = None
+    positive_cases: list[str] | None = None
+
+
+class SupplementSchema(BaseModel):
+    """billing_v1_providers.json. Its cases use the base's envelope identity."""
+
+    model_config = ConfigDict(extra="forbid")
+    fixture_version: Literal[1]
+    base_fixture_sha256: billing.Digest
+    base_rules_sha256: billing.Digest
+    superseded_cases: list[str]
+    superseded_rules: list[str]
+    cases: list[FixtureCase | ValidationCase]
+    rules: list[SupplementRule]
 
 
 def check_validation_case(case: dict[str, Any]) -> None:
@@ -226,17 +276,18 @@ def test_fixture_schema_and_pin() -> None:
         json.dumps(DATA, indent=2, ensure_ascii=True, allow_nan=False) + "\n"
     ).encode("ascii")
     # Reconstruct the exact Round 2 file, including object order and whitespace.
-    original = dict(DATA, cases=ALL_CASES[:102])
+    original = dict(DATA, cases=BASE_CASES[:102])
     original_bytes = (json.dumps(original, indent=2, ensure_ascii=True) + "\n").encode("ascii")
     assert hashlib.sha256(original_bytes).hexdigest() == "aeb630a2d33eb60ff1a349a382f074a1a1e031c40bff2e79ccc5c6b11b338d4b"
     # Round 4 only appends: preserve all 717 Round 3 cases byte-for-byte.
-    round3 = dict(DATA, cases=ALL_CASES[:717])
+    round3 = dict(DATA, cases=BASE_CASES[:717])
     round3_bytes = (json.dumps(round3, indent=2, ensure_ascii=True) + "\n").encode("ascii")
     assert hashlib.sha256(round3_bytes).hexdigest() == "949e7eab8be042cb3d8044c0ba087ff0c9e98c96c7894e2f0c3ebd27b2db185b"
     # Round 5 only appends: preserve all 727 Round 4 cases byte-for-byte.
-    round4 = dict(DATA, cases=ALL_CASES[:727])
+    round4 = dict(DATA, cases=BASE_CASES[:727])
     round4_bytes = (json.dumps(round4, indent=2, ensure_ascii=True) + "\n").encode("ascii")
     assert hashlib.sha256(round4_bytes).hexdigest() == "a748ef09cfbd6bdfb2f84fb0b4a05af7030e6a1a6c69e2a54cf20a096bfcef4b"
+    assert len({c["name"] for c in BASE_CASES}) == len(BASE_CASES) == 759
     assert len({c["name"] for c in ALL_CASES}) == len(ALL_CASES)
     assert json.loads(FIXTURE.with_suffix(".schema.json").read_bytes()) == FixtureSchema.model_json_schema()
     for case in CASES:
@@ -244,6 +295,51 @@ def test_fixture_schema_and_pin() -> None:
         assert accepted == (case["expected_charge_micro"] is not None)
         assert accepted == (case["expected_normalized_usage"] is not None)
         assert accepted == (case["expected_terminal_envelope_hash"] is not None)
+
+
+def test_supplement_schema_pin_and_supersession() -> None:
+    raw = SUPPLEMENT.read_bytes()
+    SupplementSchema.model_validate(SUPPLEMENT_DATA)
+    assert hashlib.sha256(raw).hexdigest() == SUPPLEMENT_SHA256
+    assert raw == (
+        json.dumps(SUPPLEMENT_DATA, indent=2, ensure_ascii=True, allow_nan=False) + "\n"
+    ).encode("ascii")
+    assert json.loads(SUPPLEMENT.with_suffix(".schema.json").read_bytes()) == SupplementSchema.model_json_schema()
+    # It names the exact base files it supplements; neither has changed.
+    assert SUPPLEMENT_DATA["base_fixture_sha256"] == FIXTURE_SHA256
+    assert SUPPLEMENT_DATA["base_rules_sha256"] == hashlib.sha256(
+        FIXTURE.with_suffix(".rules.json").read_bytes()).hexdigest()
+    assert tuple(SUPPLEMENT_DATA["superseded_cases"]) == SUPERSEDED_CASES
+    assert tuple(SUPPLEMENT_DATA["superseded_rules"]) == SUPERSEDED_RULES
+    base = {case["name"]: case for case in BASE_CASES}
+    added = [case["name"] for case in SUPPLEMENT_DATA["cases"]]
+    assert set(SUPERSEDED_CASES) <= set(base) and not set(added) & set(base)
+    assert len(ALL_CASES) == 759 - len(SUPERSEDED_CASES) + len(added) == 779
+    # A superseded vector is one whose only assertion was that the snapshot
+    # refuses a candidate for its provider or its model's publisher, and whose
+    # exact input the contract now accepts. Nothing else leaves the base.
+    for name in SUPERSEDED_CASES:
+        case = base[name]
+        if "operation" in case:
+            assert (case["operation"], case["model"], case["expected_error"]) == (
+                "model", "Candidate", "invalid_snapshot")
+            billing.Candidate.model_validate(case["input"])
+        else:
+            assert case["expected_exclusion"] == "invalid_snapshot"
+            billing.parse_snapshot(json.dumps(case["snapshot"]))
+    # A superseded rule is one whose source edit no longer has its text.
+    assert billing.__file__ is not None
+    source = Path(billing.__file__).read_text()
+    rules = {rule["name"]: rule for rule in BASE_RULES}
+    assert len(rules) == len(BASE_RULES) == 374 and set(SUPERSEDED_RULES) <= set(rules)
+    for name in SUPERSEDED_RULES:
+        assert rules[name]["old"] not in source, name
+    assert len({rule["name"] for rule in RULES}) == len(RULES) == 374 - len(SUPERSEDED_RULES) + len(
+        SUPPLEMENT_DATA["rules"]) == 388
+    # Every base rule that stays still names vectors that stay.
+    kept = {case["name"] for case in ALL_CASES}
+    for rule in RULES:
+        assert set(rule["cases"] + (rule.get("positive_cases") or [])) <= kept, rule["name"]
 
 
 def endpoint_from_candidate(candidate: dict[str, Any], *, cached: Any = "frozen") -> ModelEndpoint:
@@ -279,7 +375,7 @@ class _PastTheRawChecks(Exception):
 def _build_accepts_raw_prices(endpoint: ModelEndpoint) -> bool:
     """Whether build_snapshot gets past its raw price checks: its next step,
     endpoint_pricing_candidate, is replaced by a sentinel, so a refusal for any
-    later reason (provider, request fee, tier order) cannot answer for them."""
+    later reason (request fee, tier order) cannot answer for them."""
     def past(_endpoint: Any) -> Any:
         raise _PastTheRawChecks
 
@@ -399,7 +495,8 @@ def test_a_defect_in_the_raw_checks_propagates() -> None:
         def validate_python(self, value: Any) -> Any:
             raise KeyError("a defect in the checker")
 
-    with patch.object(billing, "TypeAdapter", lambda _type: Broken()), pytest.raises(KeyError):
+    # The checker is the module's one strict UInt adapter (_RAW_PRICE).
+    with patch.object(billing, "_RAW_PRICE", Broken()), pytest.raises(KeyError):
         billing.raw_prices_valid(base)
 
     def misspelled(endpoint: Any) -> None:
