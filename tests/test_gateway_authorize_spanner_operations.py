@@ -418,7 +418,9 @@ def spanner_operations(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, 
             if getattr(self, "_in_batch", False) or getattr(self, "_in_returning", False):
                 return original(self, sql, **kwargs)
             count_rpc()
-            operations.append(("T1 DML" if sql.startswith("UPDATE") else label,
+            # A returning reserve arrives through execute_sql, hinted or not.
+            statement = sql.removeprefix("@{LOCK_SCANNED_RANGES=EXCLUSIVE} ")
+            operations.append(("T1 DML" if statement.startswith("UPDATE") else label,
                                " ".join(sql.split()), copy.deepcopy(kwargs.get("params", {}))))
             return original(self, sql, **kwargs)
 

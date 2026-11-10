@@ -176,7 +176,7 @@ _KEY_RESERVE = 'UPDATE tr_key_limit SET reserved = reserved + @est '
 _NOT_MARKED = ' AND NOT COALESCE(in_debt, FALSE)'
 
 
-def _with_debt_mark(statement):
+def _with_debt_mark(statement, label, credit):
     """Main's credit reservation as it is now: a row marked in debt refuses
     (fast-admission design section 4.7), the one condition added right after
     the headroom test. Every other statement is main's, unchanged."""
@@ -184,17 +184,19 @@ def _with_debt_mark(statement):
     if sql.startswith(_CREDIT_RESERVE) and _NOT_MARKED not in sql:
         head, at, tail = sql.partition('>= @est')
         sql = head + at + _NOT_MARKED + tail
-    # Main's reserves predate the exclusive-scan hint; every reserve of a
-    # credit or key row now carries it, and nothing else does.
-    if sql.startswith((_CREDIT_RESERVE, _KEY_RESERVE)):
+    # Main's reserves predate the exclusive-scan hint. A batch reserve carries
+    # it. Outside a batch the credit reserve here probes two shards and does
+    # not, and the key reserve (one shard) does unless the request is BYOK.
+    if sql.startswith(_CREDIT_RESERVE if label == 'batch' else ()) or (
+            sql.startswith(_KEY_RESERVE) and (label == 'batch' or credit)):
         sql = EXCLUSIVE_SCAN_HINT + sql
     return sql if isinstance(statement, str) else (sql, *rest)
 
 
-def _with_debt_marks(traces):
+def _with_debt_marks(traces, credit):
     return [
         trace if trace is None else [
-            (label, [_with_debt_mark(statement) for statement in statements])
+            (label, [_with_debt_mark(statement, label, credit) for statement in statements])
             for label, statements in trace
         ]
         for trace in traces
@@ -202,7 +204,7 @@ def _with_debt_marks(traces):
 
 
 def expected_traces(case, parent):
-    return _with_debt_marks(_main_traces(case, parent))
+    return _with_debt_marks(_main_traces(case, parent), credit=case[1])
 
 
 def _main_traces(case, parent):

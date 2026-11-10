@@ -12,7 +12,6 @@ from trusted_router.spend_windows import (
     window_floors,
 )
 from trusted_router.storage_gcp_counter_dml import (
-    EXCLUSIVE_SCAN_HINT,
     KEY_ACCEPTED,
     KEY_INSUFFICIENT,
     KEY_MISSING,
@@ -28,9 +27,13 @@ def reserve_strict_key(
     # All outstanding holds count even across midnight: they could settle in
     # the new window. Settlement releases the hold and books actual usage in
     # its current UTC windows using the existing exactly-once reservation.
+    # A key that excludes BYOK matches no row on every BYOK request, and a
+    # hinted statement that matches no row still holds the row exclusively
+    # until the commit (storage_gcp_counter_dml.EXCLUSIVE_SCAN_HINT). So a
+    # BYOK reserve scans under the shared lock.
     sql = (
-        f"{EXCLUSIVE_SCAN_HINT}"  # noqa: S608 - fixed clauses
-        "UPDATE tr_key_limit SET reserved = reserved + @est "
+        ("" if is_byok else "@{LOCK_SCANNED_RANGES=EXCLUSIVE} ")  # noqa: S608 - fixed clauses
+        + "UPDATE tr_key_limit SET reserved = reserved + @est "
         "WHERE key_hash=@kh AND shard=0 "
         "AND (@is_byok=FALSE OR include_byok=TRUE) "
         "AND (limit_micro IS NULL OR limit_micro - usage "

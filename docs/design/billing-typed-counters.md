@@ -57,11 +57,18 @@ The authorize-side reserves therefore carry the statement hint
 `@{LOCK_SCANNED_RANGES=EXCLUSIVE}`
 (`storage_gcp_counter_dml.EXCLUSIVE_SCAN_HINT`): the scan takes the exclusive
 lock at once, so reservers of one row queue for it and the loser re-evaluates
-the predicate against committed state. The hint covers every range its
-statement scans, subqueries included, so only single-row statements with no
-subquery may carry it. The settle and refund releases do not carry it yet
-(the one-commit credit release has a `tr_trust_event` subquery) and still
-upgrade from a shared lock.
+the predicate against committed state. Two limits apply:
+
+- The hint covers every range its statement scans, subqueries included, so
+  only single-row statements with no subquery may carry it. The settle and
+  refund releases do not carry it yet (the one-commit credit release has a
+  `tr_trust_event` subquery) and still upgrade from a shared lock.
+- A hinted statement that matches no row still holds the exclusive lock until
+  its transaction ends. So a reserve carries the hint only where it is
+  expected to write and is the only counter row of its table the transaction
+  touches: the batch reserves, a sequential reserve with one shard candidate,
+  and a key reserve that is not BYOK. A sequential probe of several shards and
+  a BYOK key reserve scan under the shared lock as before.
 
 ### Why this over leases / ledger
 
@@ -187,6 +194,9 @@ the whole authorize decision in one transaction:
      authorization," not "execute again." (The route already returns
      `idempotent_replay`; the contract is that the caller resumes, not
      re-executes.)
+   Steps 2 and 3 show the hint. It is conditional: a reserve carries it only
+   where it is expected to write and is the only counter row of its table the
+   transaction touches (see the 2026-11-10 correction in section 2).
 2. **Credit balance** (CREDITS usage only):
    `@{LOCK_SCANNED_RANGES=EXCLUSIVE}
     UPDATE tr_credit_balance SET reserved = reserved + @est
@@ -260,7 +270,7 @@ aborts of 3.1–4.5%/hour at about 40k transactions of each kind per hour. Lock
 wait totaled 6.7–9.4 thousand seconds/hour: 68–80% on one workspace's credit
 balances (64 evenly loaded shards), 20–31% on its key-limit windows. Conditional
 read/write UPDATEs acquire Exclusive locks on `reserved`/`total_usage` and key
-window cells (by upgrading a shared lock; since 2026-11-10 the reserves take
+window cells (by upgrading a shared lock; since 2026-11-10 most reserves take
 the exclusive lock at the scan, see section 2). C1 already reduced lock wait from 8,974 to 6,817 seconds/hour and
 settle aborts to 3.08% by putting hot releases last in its batch; settle is
 unchanged here.

@@ -78,6 +78,8 @@ def all_cases():
 def query_kind(sql):
     # Leading comments are production SQL, too.
     sql = re.sub(r"/\*.*?\*/|--[^\n]*", "", sql, flags=re.S).lstrip(" \n\t(")
+    # So is a leading statement hint; the kind is the statement after it.
+    sql = re.sub(r"^(?:@\{[^}]*\}\s*)+", "", sql)
     return sql.split()[0].upper()
 
 

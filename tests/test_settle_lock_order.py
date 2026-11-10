@@ -14,6 +14,7 @@ import pytest
 
 from tests.fakes.spanner import _FakeSnapshot, _KeySet, _ParamTypes
 from tests.fakes.spanner_order import (
+    RESERVE_CREDIT,
     authorize_credit_before_key,
     credit_before_key,
     record_statements,
@@ -47,7 +48,7 @@ def test_authorize_credit_before_key(calls: list[tuple[Any, str]], skip_key_limi
         statements = transaction_statements(calls)
         if skip:
             assert not any("tr_key_limit" in sql for sql in statements)
-            assert any(sql.startswith("update tr_credit_balance") for sql in statements)
+            assert any(sql.startswith(RESERVE_CREDIT) for sql in statements)
         else:
             authorize_credit_before_key(statements)
         res = db.reservations[result["reservation_id"]]
@@ -105,7 +106,7 @@ def test_authorize_rejection_order_and_rollback(
     for transaction in transactions:
         statements = transaction_statements([(tx, sql) for tx, sql in calls if tx is transaction])
         if failure == "credit" and transaction is transactions[-1]:
-            assert statements and all(sql.startswith("update tr_credit_balance") for sql in statements)
+            assert statements and all(sql.startswith(RESERVE_CREDIT) for sql in statements)
         else:
             authorize_credit_before_key(statements)
         assert transaction.rolled_back
@@ -819,7 +820,7 @@ def test_lifetime_cap_exact_headroom_is_accepted(calls: list[tuple[Any, str]]) -
     verdict, authorization = _fragmented_authorize(store, key)
     assert verdict == billing.AuthorizeOutcome.ACCEPTED
     assert authorization is not None
-    assert any(sql.startswith("update tr_credit_balance") for _, sql in calls)
+    assert any(sql.startswith(RESERVE_CREDIT) for _, sql in calls)
     assert sum(row["reserved"] for row in db.typed[KEY_LIMIT_TABLE].values()) == 10_000
     assert sum(row["limit_micro"] for row in db.typed[KEY_LIMIT_TABLE].values()) == 10_000
     assert len(_lifetime_snapshot_reads(db)) == 1  # Cold escrow repair precheck.
@@ -1065,7 +1066,7 @@ def test_lifetime_cap_snapshot_failure_defers_to_transaction(
     expected = billing.AuthorizeOutcome.ACCEPTED if key_limit == 20_000 else billing.AuthorizeOutcome.KEY_LIMIT_EXCEEDED
     assert verdict == expected
     assert (authorization is not None) == (key_limit == 20_000)
-    assert any(sql.startswith("update tr_credit_balance") for _, sql in calls)
+    assert any(sql.startswith(RESERVE_CREDIT) for _, sql in calls)
     warnings = [record for record in caplog.records if record.levelname == "WARNING"]
     assert len(warnings) == 2
     assert "key lifetime-cap snapshot failed" in warnings[0].message
@@ -1096,11 +1097,11 @@ def test_lifetime_cap_precheck_rejection_keeps_window_decision(
         assert key.hash in store._lifetime_cap_exhausted_keys
         assert db.typed == before and not db.reservations
         if cached:
-            assert not any(sql.startswith("update tr_credit_balance") for _, sql in calls)
+            assert not any(sql.startswith(RESERVE_CREDIT) for _, sql in calls)
             assert not calls  # No RW statements, including key-escrow repair.
             assert len(_lifetime_snapshot_reads(db)) == 1
         else:
-            assert any(sql.startswith("update tr_credit_balance") for _, sql in calls)
+            assert any(sql.startswith(RESERVE_CREDIT) for _, sql in calls)
             assert len(_lifetime_snapshot_reads(db)) == 1  # Cold repair rejects read-only.
 
 

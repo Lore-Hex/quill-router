@@ -15,7 +15,7 @@ from google.rpc.status_pb2 import Status
 
 from tests.fakes import authorize_sequential as frozen
 from tests.fakes.spanner import _FakeTransaction
-from tests.fakes.spanner_order import record_statements
+from tests.fakes.spanner_order import RESERVE_CREDIT, RESERVE_KEY, record_statements
 from tests.test_spanner_batch_dml import NOW, _authorization, _database, _state
 from trusted_router import storage_gcp_authorize as current
 from trusted_router.storage_gcp_codec import json_body
@@ -164,8 +164,8 @@ def test_speculative_inserts_follow_credit_and_key(monkeypatch: pytest.MonkeyPat
     calls = record_statements(monkeypatch)
     current.authorize_atomic(_database(), param_types, **_options())
     sql = [statement for _, statement in calls]
-    credit = next(i for i, s in enumerate(sql) if s.startswith('update tr_credit_balance'))
-    key = next(i for i, s in enumerate(sql) if s.startswith('update tr_key_limit'))
+    credit = next(i for i, s in enumerate(sql) if s.startswith(RESERVE_CREDIT))
+    key = next(i for i, s in enumerate(sql) if s.startswith(RESERVE_KEY))
     inserts = [i for i, s in enumerate(sql) if s.startswith('insert into')]
     assert inserts and credit < key < min(inserts)
 

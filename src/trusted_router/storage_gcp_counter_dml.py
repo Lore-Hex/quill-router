@@ -69,6 +69,15 @@ _COMPLETE_RESERVATION_RETENTION_GUARDED_SQL = (
 # one hot row queue rather than abort each other. It is a hint, not a mutex:
 # wound-wait still aborts a younger holder an older transaction waits on.
 #
+# A hinted statement that matches no row still holds the exclusive lock until
+# its transaction ends. So a reserve carries the hint only where it is expected
+# to write and is the only counter row of its table the transaction touches:
+# the batch reserves (a miss rolls back at once), a sequential reserve with one
+# shard candidate, and a key reserve that is not BYOK. A sequential probe of
+# several shards stays unhinted (two probers that miss different shards would
+# otherwise wait on each other), and so does a BYOK key reserve (a key that
+# excludes BYOK matches no row on every request).
+#
 # The hint covers EVERY range its statement scans, subqueries included, and
 # cannot be scoped to one table. Only single-row statements with no subquery
 # may carry it. release_credit_no_debt_statement must not: its tr_trust_event
@@ -84,17 +93,20 @@ KEY_MISSING = "missing"  # typed row absent -> fail closed (drift / not backfill
 
 
 def reserve_credit(
-    transaction: Any, param_types: Any, workspace_id: str, amount: int, *, shard: int = UNSHARDED
+    transaction: Any, param_types: Any, workspace_id: str, amount: int, *, shard: int = UNSHARDED,
+    exclusive: bool = True,
 ) -> bool:
     """Atomically reserve `amount` against the workspace credit balance.
 
     True = accepted (row-count 1); False = insufficient credits (row-count 0).
+    Pass exclusive=False when this is one probe among several shards
+    (EXCLUSIVE_SCAN_HINT says why).
     """
     # Static table name (literal, not interpolated) + bound params only.
     # A row marked in debt (section 4.7) refuses, as an exhausted one does.
     sql = (
-        f"{EXCLUSIVE_SCAN_HINT}"  # noqa: S608 - fixed clauses
-        "UPDATE tr_credit_balance SET reserved = reserved + @est "
+        ("@{LOCK_SCANNED_RANGES=EXCLUSIVE} " if exclusive else "")  # noqa: S608 - fixed clauses
+        + "UPDATE tr_credit_balance SET reserved = reserved + @est "
         "WHERE workspace_id=@ws AND shard=@shard "
         "AND (total_credits - total_usage - reserved) >= @est "
         "AND NOT COALESCE(in_debt, FALSE)"
@@ -126,7 +138,7 @@ def reserve_credit_statement(
         " AND COALESCE(ARRAY_LENGTH(billing_pause_causes), 0) = 0" if check_pause else ""
     )
     return (
-        f"{EXCLUSIVE_SCAN_HINT}"  # noqa: S608 - fixed clauses
+        "@{LOCK_SCANNED_RANGES=EXCLUSIVE} "  # noqa: S608 - fixed clauses
         "UPDATE tr_credit_balance SET reserved = reserved + @est "
         "WHERE workspace_id=@ws AND shard=@shard "
         "AND (total_credits - total_usage - reserved) >= @est "
@@ -137,18 +149,20 @@ def reserve_credit_statement(
 
 
 def reserve_credit_with_pause(
-    transaction: Any, param_types: Any, workspace_id: str, amount: int, *, shard: int = UNSHARDED
+    transaction: Any, param_types: Any, workspace_id: str, amount: int, *, shard: int = UNSHARDED,
+    exclusive: bool = True,
 ) -> tuple[bool, bool]:
     """Return (reserved, paused) from the affected credit row in one RPC.
 
     An empty result is insufficient credit, not pause evidence. The caller must
     finish its bounded shard search before applying the funded shard's verdict.
+    exclusive is reserve_credit's.
     """
     from trusted_router.trust_eligibility import billing_paused_row
 
     rows = list(transaction.execute_sql(
-        f"{EXCLUSIVE_SCAN_HINT}"  # noqa: S608 - fixed clauses
-        "UPDATE tr_credit_balance SET reserved = reserved + @est "
+        ("@{LOCK_SCANNED_RANGES=EXCLUSIVE} " if exclusive else "")  # noqa: S608 - fixed clauses
+        + "UPDATE tr_credit_balance SET reserved = reserved + @est "
         "WHERE workspace_id=@ws AND shard=@shard "
         "AND (total_credits - total_usage - reserved) >= @est "
         "AND NOT COALESCE(in_debt, FALSE) "
@@ -473,12 +487,16 @@ def _credit_shard_count_from_rows(
 
 def reserve_key_statement(
     param_types: Any, key_hash: str, amount: int, *, is_byok: bool,
-    shard: int = UNSHARDED,
+    shard: int = UNSHARDED, exclusive: bool = True,
 ) -> DmlStatement:
-    """The capped-key hold statement, shared by sequential and speculative DML."""
+    """The capped-key hold statement, shared by sequential and speculative DML.
+
+    Pass exclusive=False where the statement may match no row and the
+    transaction goes on (EXCLUSIVE_SCAN_HINT says why).
+    """
     sql = (
-        f"{EXCLUSIVE_SCAN_HINT}"  # noqa: S608 - fixed clauses
-        "UPDATE tr_key_limit SET reserved = reserved + @est "
+        ("@{LOCK_SCANNED_RANGES=EXCLUSIVE} " if exclusive else "")  # noqa: S608 - fixed clauses
+        + "UPDATE tr_key_limit SET reserved = reserved + @est "
         "WHERE key_hash=@kh AND shard=@shard AND limit_micro IS NOT NULL "
         "AND (@is_byok = FALSE OR include_byok = TRUE) "
         "AND (limit_micro - usage - IF(include_byok, byok_usage, 0) - reserved) >= @est"
@@ -503,6 +521,7 @@ def reserve_key(
     *,
     is_byok: bool,
     shard: int = UNSHARDED,
+    exclusive: bool = True,
 ) -> str:
     """Atomically reserve `amount` against the per-key spend cap.
 
@@ -515,7 +534,7 @@ def reserve_key(
     Returns one of KEY_ACCEPTED / KEY_NO_HOLD / KEY_INSUFFICIENT / KEY_MISSING.
     """
     sql, params, types = reserve_key_statement(
-        param_types, key_hash, amount, is_byok=is_byok, shard=shard,
+        param_types, key_hash, amount, is_byok=is_byok, shard=shard, exclusive=exclusive,
     )
     count = transaction.execute_update(sql, params=params, param_types=types)
     if count == 1:

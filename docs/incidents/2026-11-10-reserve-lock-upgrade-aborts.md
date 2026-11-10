@@ -63,47 +63,82 @@ on these row writes.
 
 ## Repair
 
-The five authorize-side reserve statements now start with the statement
-hint `@{LOCK_SCANNED_RANGES=EXCLUSIVE}`
-(`storage_gcp_counter_dml.EXCLUSIVE_SCAN_HINT`): the batch and sequential
-credit reserves, the returning credit reserve, the key reserve, and the
-strict-budget key reserve. The scan takes the exclusive lock at once, so
-simultaneous reserves of one row queue for it instead of aborting each
-other. It is a hint, not a mutex: wound-wait still aborts a younger holder
-that an older transaction waits on.
+The authorize-side reserve statements can now start with the statement hint
+`@{LOCK_SCANNED_RANGES=EXCLUSIVE}`
+(`storage_gcp_counter_dml.EXCLUSIVE_SCAN_HINT`). A hinted scan takes the
+exclusive lock at once, so simultaneous reserves of one row queue for it
+instead of aborting each other. It is a hint, not a mutex: wound-wait still
+aborts a younger holder that an older transaction waits on.
+
+A hinted statement that matches no row still holds the exclusive lock until
+its transaction ends. So a reserve carries the hint only where it is expected
+to write and is the only counter row of its table the transaction touches:
+
+| Reserve | Hinted |
+|---|---|
+| Batch credit reserve and batch key reserve (the ordinary request) | Always. A miss rolls the transaction back at once. |
+| Sequential credit reserve | Only with one shard candidate. |
+| Sequential key reserve | Only when the request is not BYOK and there is one key shard candidate. |
+| Strict-budget key reserve | Only when the request is not BYOK. |
+
+Two shapes stay as they were, scanning under the shared lock:
+
+- A sequential probe of several shards. Two probers that miss different
+  shards and then try each other's would each hold one exclusively and wait
+  for the other; wound-wait would abort one of them.
+- A BYOK key reserve. On a key that excludes BYOK it matches no row on every
+  request and the transaction commits, so hinted, those requests would queue
+  on the key row for the length of a commit each.
+
+The incident's workspace had one credit shard and a credit request on a
+capped key, so every statement it issued is in the hinted set: the batch
+reserve, then one sequential retry after a miss, then the refusal.
 
 What changes besides the aborts:
 
-- The row is locked exclusively from the reserve statement to the commit.
-  That is the window in which two reserves already conflicted, so no reserve
-  that used to succeed without waiting now waits.
-- A reserve that matches no row (insufficient credit, the 402 path) used to
-  take only the shared lock. It now takes the exclusive lock until its
-  transaction ends.
+- A hinted reserve holds its row exclusively from the statement to the
+  commit or rollback. Reserves of one row already conflicted in that window.
+  What is new is the next two items.
+- A hinted reserve that matches no row (insufficient credit, the 402 path;
+  key cap reached) used to take only the shared lock and could overlap other
+  refusals. It now holds the exclusive lock until its rollback, so refusals
+  of one row queue with each other and with the reserves that succeed. The
+  hold is one statement and a rollback.
+- A credit request on a key whose cap was removed after the gateway read it
+  matches no key row and carries on to the commit, holding that key row
+  exclusively until then. It lasts until the gateway's key metadata catches
+  up.
 - The BYOK pause read of a workspace's shard zero takes a shared lock on
-  that credit row. It now waits for a credit reserve on the same row, and a
-  reserve waits for it. Both are short.
+  that credit row. It now waits for a hinted credit reserve on the same row,
+  and the reserve waits for it. Both are short.
 - Lock order is unchanged: credit, then key.
-- The Go fast path writes the same rows for the workspaces it owns and does
-  not carry the hint. It is the only writer of those rows while it owns
-  them, and hinted and unhinted statements mix safely.
+- The Go fast path increments `reserved` on the same tables for the
+  workspaces it owns (`fastpath/internal/store/credit.go`,
+  `fastpath/internal/store/commit.go`) without the hint. Hinted and unhinted
+  statements mix safely; an unhinted one still upgrades.
 
 There is no flag. The way back is to revert the change.
 
 ## Not repaired here
 
-The settle and refund releases still scan under a shared lock and upgrade.
-The hint applies to every range its statement scans, subqueries included,
-and cannot be scoped to one table. The one-commit credit release has a
-`tr_trust_event` subquery over the workspace's whole event range; an
-exclusive lock there would serialize every settle of a workspace across all
-of its credit shards. Until that statement is restructured, a burst of
-settles or refunds on one row can still abort each other. In this incident
-that side was about a quarter of the aborts.
+- The settle and refund releases still scan under a shared lock and upgrade.
+  The hint applies to every range its statement scans, subqueries included,
+  and cannot be scoped to one table. The one-commit credit release has a
+  `tr_trust_event` subquery over the workspace's whole event range; an
+  exclusive lock there would serialize every settle of a workspace across
+  all of its credit shards. Until that statement is restructured, a burst of
+  settles or refunds on one row can still abort each other. In this incident
+  that side was about a quarter of the aborts.
+- A sequential probe of several credit shards (a sharded workspace after a
+  batch miss, or under a strict-budget key) and of several key shards.
+- A BYOK request that does write the key row (the key includes BYOK) on the
+  sequential or strict-budget path.
 
-`tests/test_reserve_exclusive_scan_hint.py` pins which statements carry the
-hint, that none of them has a subquery, and that a reserve statement added
-to `src` without the hint fails.
+`tests/test_reserve_exclusive_scan_hint.py` pins it: each reserve's text
+with and without the hint, that no hinted statement has a subquery, which
+reserves `authorize_atomic` hints in each transaction shape, and the full
+list of statements in `src` that add to `reserved` with how each is hinted,
+so a new or rewritten reserve fails until it is decided there.
 
 ## Verifying it
 
@@ -114,4 +149,5 @@ can show the effect. After the deploy, read the same statistics:
   attempts was 4.5 to 6 percent an hour on ordinary traffic.
 - `LOCK_STATS_TOP_MINUTE` sampled lock requests from `tr_authorize` on
   `tr_credit_balance.reserved` and `tr_key_limit.reserved`: `Exclusive`
-  requests, with no `ReaderShared` from the same statements.
+  requests. `ReaderShared` requests remain from the unhinted shapes above
+  and from the BYOK pause read.

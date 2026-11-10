@@ -18,8 +18,8 @@ THEN RETURN billing_pause_causes, pause_epoch
 ```
 
 Since 2026-11-10 the statement also starts with
-`@{LOCK_SCANNED_RANGES=EXCLUSIVE}`
-(`docs/incidents/2026-11-10-reserve-lock-upgrade-aborts.md`), and its predicate
+`@{LOCK_SCANNED_RANGES=EXCLUSIVE}` when it reserves the workspace's only shard
+candidate (`docs/incidents/2026-11-10-reserve-lock-upgrade-aborts.md`), and its predicate
 has the `in_debt` clause added after this note was written.
 
 The armed path uses `transaction.execute_sql` and consumes the result fully,
