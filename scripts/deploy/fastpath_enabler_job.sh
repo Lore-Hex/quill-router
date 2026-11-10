@@ -8,11 +8,11 @@
 #
 # Its literals: TR_FASTPATH_ENABLER_MODE=apply (WS2) writes the allow-list
 # (dry-run reads and reports but writes nothing; off logs one line and
-# exits), and TR_FASTPATH_ENABLER_MAX_RANK=0 enables nobody off the include
-# list. In apply mode the job writes nothing until an operator runs
-# `fastpathctl enabler arm`, and never writes the hold table. The lists come
-# from fastpath_lists.sh, shared with rollout.sh;
-# tests/test_fastpath_lists.py holds them there.
+# exits), and TR_FASTPATH_ENABLER_MAX_RANK=10 (WS4) lets the ten largest
+# tier-3 workspaces join beside the include list. In apply mode the job
+# writes nothing until an operator runs `fastpathctl enabler arm`, and never
+# writes the hold table. The lists come from fastpath_lists.sh, shared with
+# rollout.sh; tests/test_fastpath_lists.py holds them there.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -51,8 +51,10 @@ env_vars=(
   # exit 0), a dry-run report after it read unheld_disabled 0 with nothing
   # to enable or disable, and `fastpathctl enabler arm` (2026-11-09).
   "TR_FASTPATH_ENABLER_MODE=apply"
-  # 0: nobody joins off the include list. WS4 sets 10 and WS5 100.
-  "TR_FASTPATH_ENABLER_MAX_RANK=0"
+  # 10 since WS4 (section 8.2): the ten largest tier-3 workspaces join, and
+  # one leaves for its rank only past 15. WS2 and WS3 ran at 0 (nobody off
+  # the include list); WS5 sets 100. Lowering it is a way back (section 8.3).
+  "TR_FASTPATH_ENABLER_MAX_RANK=10"
   # Section 4(b): unspent credit of at least $100 to join, under $40 to leave.
   "TR_FASTPATH_ENABLER_ENABLE_BALANCE_MICRO=100000000"
   "TR_FASTPATH_ENABLER_DISABLE_BALANCE_MICRO=40000000"
