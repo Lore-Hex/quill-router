@@ -100,6 +100,7 @@ from trusted_router.content.legal import (
 from trusted_router.content.token_index import token_index_context
 from trusted_router.content_handling import CONTENT_HANDLING_CLAIM, VENDOR_EXCLUSION_CLAIM
 from trusted_router.domains import canonical_public_url
+from trusted_router.fortanix_launch import fortanix_launch_offer
 from trusted_router.marketing_experiments import GoogleSearchExperimentCell
 from trusted_router.measured import measured_for_model, measured_for_provider
 from trusted_router.middleware import current_csp_nonce
@@ -116,7 +117,9 @@ from trusted_router.provider_contract import (
     PROVIDER_CATALOG_V2_EXAMPLE,
     PROVIDER_MODEL_DOCUMENTATION_EXAMPLE,
 )
-from trusted_router.provider_contracts import INPUT_ONLY_PROVIDER_MODELS
+from trusted_router.provider_contracts import (
+    INPUT_ONLY_PROVIDER_MODELS,
+)
 from trusted_router.provider_lifecycle import provider_pricing_schedule
 from trusted_router.provider_locations import (
     provider_geography,
@@ -2621,6 +2624,7 @@ def _env() -> Environment:
     env.filters["seo_title"] = seo_title
     env.filters["seo_meta_description"] = seo_meta_description
     env.globals["provider_logo_url"] = provider_logo_url
+    env.globals["fortanix_launch_offer"] = fortanix_launch_offer
     env.globals["decide_url"] = decide_url
     env.globals["decide_path"] = DECIDE_PATH
     env.globals["decide_path_aliases"] = DECIDE_PATH_ALIASES

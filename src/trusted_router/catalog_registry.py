@@ -15,7 +15,7 @@ import json
 from dataclasses import replace
 from datetime import datetime
 
-from trusted_router import provider_lifecycle
+from trusted_router import fortanix_launch, provider_lifecycle
 from trusted_router.catalog_aliases import consolidate_model_routes
 from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-compat
     _EMBEDDING_SPECS,
@@ -1919,3 +1919,45 @@ _fortanix_endpoint = ModelEndpoint(
     published_price_tiers=_fortanix_tiers,
 )
 MODEL_ENDPOINTS[_fortanix_endpoint.id] = _fortanix_endpoint
+
+# A separate public ID keeps historical operator-only requests and benchmarks private.
+_fortanix_public_model = replace(
+    _fortanix_model,
+    id=fortanix_launch.MODEL_ID,
+    name="GLM 5.3 Flash (Fortanix)",
+    internal_only=False,
+    supported_parameters=("max_tokens",),
+    prompt_price_microdollars_per_million_tokens=fortanix_launch.RETAIL_MICRO_PER_M,
+    completion_price_microdollars_per_million_tokens=fortanix_launch.RETAIL_MICRO_PER_M,
+    published_prompt_price_microdollars_per_million_tokens=fortanix_launch.RETAIL_MICRO_PER_M,
+    published_completion_price_microdollars_per_million_tokens=fortanix_launch.RETAIL_MICRO_PER_M,
+    price_tiers=fortanix_launch.TIERS,
+    published_price_tiers=fortanix_launch.TIERS,
+    documentation=ModelDocumentation(
+        description=(
+            "GLM 5.3 Flash hosted by Fortanix in Santa Clara, California "
+            "(operator-declared location). Managed-route ZDR. Introductory pricing: "
+            "$0.01 per million input tokens and $0.01 per million output tokens. "
+            "The standard $0.000001 minimum per billed request and rounding apply. "
+            "Limited-time offer; no end date announced. Pricing may change."
+        ),
+        input_format="OpenAI-compatible chat completions with text messages; JSON or streaming.",
+        output_format="Chat completion or server-sent events with token usage.",
+        example_input='{"model":"fortanix/glm-5.3-flash","messages":[{"role":"user","content":"Hello"}],"max_tokens":256,"provider":{"only":["fortanix"],"allow_fallbacks":false}}',
+        example_output='{"model":"fortanix/glm-5.3-flash","choices":[{"message":{"role":"assistant","content":"Hello!"}}]}',
+    ),
+)
+MODELS[_fortanix_public_model.id] = _fortanix_public_model
+_fortanix_public_endpoint = replace(
+    _fortanix_endpoint,
+    id=f"{fortanix_launch.MODEL_ID}@fortanix/prepaid",
+    model_id=fortanix_launch.MODEL_ID,
+    supported_parameters=("max_tokens",),
+    prompt_price_microdollars_per_million_tokens=fortanix_launch.RETAIL_MICRO_PER_M,
+    completion_price_microdollars_per_million_tokens=fortanix_launch.RETAIL_MICRO_PER_M,
+    published_prompt_price_microdollars_per_million_tokens=fortanix_launch.RETAIL_MICRO_PER_M,
+    published_completion_price_microdollars_per_million_tokens=fortanix_launch.RETAIL_MICRO_PER_M,
+    price_tiers=fortanix_launch.TIERS,
+    published_price_tiers=fortanix_launch.TIERS,
+)
+MODEL_ENDPOINTS[_fortanix_public_endpoint.id] = _fortanix_public_endpoint

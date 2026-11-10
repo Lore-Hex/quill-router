@@ -157,7 +157,8 @@ PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
     ),
     "fortanix": (
         "Checked the operator-supplied POC catalog and conformance report. "
-        "Neither declares inference location or the contracting entity; no country filter claim."
+        "The contracting entity is not established; the November 10 Santa Clara "
+        "inference declaration does not establish headquarters. No corporate country filter claim."
     ),
     "zro": (
         "Checked zro.moonmath.ai/docs/privacy and its API documentation. These "
@@ -2486,12 +2487,21 @@ PROVIDERS: dict[str, Provider] = {
     "fortanix": Provider(
         slug="fortanix",
         name="Fortanix",
-        internal_only=True,
         supports_prepaid=True,
         supports_byok=False,
+        stores_content=False,
         provider_zero_data_retention=False,
+        prepaid_zero_data_retention=True,
+        prepaid_zero_data_retention_effective_on="2026-11-10",
         provider_confidential_compute=False,
         provider_e2ee=False,
+        provider_policy=(
+            "Zero data retention for TrustedRouter's managed GLM-5.3-Flash route, "
+            "confirmed by the operator on November 10, 2026. This account-scoped "
+            "declaration does not establish provider-wide retention terms, "
+            "confidential compute, or provider-side end-to-end encryption."
+        ),
+        provider_policy_url="https://github.com/Lore-Hex/quill-router/blob/main/docs/providers/fortanix-launch-2026-11-10.md",
     ),
     "maple": Provider(
         slug="maple",

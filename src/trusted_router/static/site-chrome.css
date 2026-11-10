@@ -3,6 +3,46 @@
  * The signed-in console header is styled by console.css instead. Colours,
  * type and spacing come from tokens.css. */
 
+.model-promo {
+  background: #e5f6ec;
+  color: #153d29;
+  border-bottom: 1px solid #bfdfca;
+  font-family: var(--tr-font-family-sans);
+}
+
+.model-promo-inner {
+  max-width: 1280px;
+  margin-inline: auto;
+  padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px 32px;
+}
+
+.model-promo-copy { display: grid; gap: 5px; min-width: 0; }
+.model-promo-copy strong { font-size: 16px; line-height: 1.4; }
+.model-promo-copy span { font-size: 14px; line-height: 1.5; font-variant-numeric: tabular-nums; }
+.model-promo-copy small { font-size: 12px; line-height: 1.5; max-width: 76ch; }
+.model-promo-link {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  color: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.model-promo-link:focus-visible { outline: 2px solid currentColor; outline-offset: 4px; }
+
+@media (max-width: 700px) {
+  .model-promo-inner { flex-direction: column; align-items: flex-start; gap: 4px; padding: 14px 20px; }
+  .model-promo-copy { overflow-wrap: anywhere; }
+}
+
 .skip-link {
   position: absolute;
   top: -90px;

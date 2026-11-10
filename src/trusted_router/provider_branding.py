@@ -21,6 +21,10 @@ class ProviderBrand:
 
 
 PROVIDER_BRANDS: dict[str, ProviderBrand] = {
+    "fortanix": ProviderBrand(
+        "https://www.fortanix.com/",
+        description="GLM 5.3 Flash with managed-route ZDR and operator-declared Santa Clara inference.",
+    ),
     "abliteration": ProviderBrand(
         "https://abliteration.ai/",
         description="Chat, vision and reasoning models with cached-input pricing. Separate from Abliterate.ai.",
