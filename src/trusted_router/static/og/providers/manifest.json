@@ -325,10 +325,10 @@
   },
   "gmi": {
     "card_version": 2,
-    "model_count": 75,
+    "model_count": 68,
     "name": "GMI Cloud",
     "privacy": "Policy documented",
-    "route_count": 82,
+    "route_count": 75,
     "route_mode": "Prepaid + BYOK",
     "slug": "gmi"
   },
@@ -892,10 +892,10 @@
   },
   "tencent": {
     "card_version": 2,
-    "model_count": 18,
+    "model_count": 15,
     "name": "Tencent Cloud TokenHub",
     "privacy": "Policy documented",
-    "route_count": 33,
+    "route_count": 30,
     "route_mode": "Prepaid + BYOK",
     "slug": "tencent"
   },
