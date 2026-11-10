@@ -875,6 +875,14 @@ def test_rollout_keeps_shadow_canary_4_opted_out_with_pilot_pins(
         async_settle_shadow_attachment_bucket=rendered["TR_ASYNC_SETTLE_SHADOW_ATTACHMENT_BUCKET"],
         async_settle_pilot_workspaces=rendered["TR_ASYNC_SETTLE_PILOT_WORKSPACES"],
         async_settle_pilot_cap_micro=rendered["TR_ASYNC_SETTLE_PILOT_CAP_MICRO"],
+        # All mode and its lists, which give the empty pilot set its meaning
+        # (docs/design/fast-admission-widening.md section 9.1).
+        storage_backend=rendered["TR_STORAGE_BACKEND"],
+        fastpath_pilot_all=rendered["TR_FASTPATH_PILOT_ALL"],
+        fastpath_pilot_workspaces=rendered["TR_FASTPATH_PILOT_WORKSPACES"],
+        fastpath_pilot_exclude=rendered["TR_FASTPATH_PILOT_EXCLUDE"],
+        async_settle_fastpath_overlap_workspaces=rendered["TR_ASYNC_SETTLE_FASTPATH_OVERLAP_WORKSPACES"],
+        async_settle_fastpath_reserved_workspaces=rendered["TR_ASYNC_SETTLE_FASTPATH_RESERVED_WORKSPACES"],
         async_settle_enabled=rendered["TR_ASYNC_SETTLE_ENABLED"],
         async_settle_protection=rendered["TR_ASYNC_SETTLE_PROTECTION"],
         settle_outbox_fast_drain_enabled=rendered["TR_SETTLE_OUTBOX_FAST_DRAIN_ENABLED"],
@@ -904,19 +912,22 @@ def test_rollout_keeps_shadow_canary_4_opted_out_with_pilot_pins(
     assert not hasattr(app.state, "async_settle_shadow")
     assert config.async_settle_enabled is True
     assert config.async_settle_admission_enabled is True
-    assert config.async_settle_pilot_workspace_ids == {
-        "45819281-0ce9-4811-a0cd-c660ab3a116d", "162e441a-5d13-414f-92bd-7c6cd805faa3",
-    }
-    assert admission_workspaces(config) == {"admission_workspaces": [
-        "162e441a-5d13-414f-92bd-7c6cd805faa3", "45819281-0ce9-4811-a0cd-c660ab3a116d",
-    ]}
+    # Every workspace since 2026-11-10: an empty pilot set in all mode, and
+    # the policy names only the reserved list, as the excluded member.
+    assert rendered["TR_FASTPATH_PILOT_ALL"] == "true"
+    assert rendered["TR_ASYNC_SETTLE_PILOT_WORKSPACES"] == ""
+    assert config.async_settle_pilot_workspace_ids == frozenset()
+    reserved = config.async_settle_fastpath_reserved_workspace_ids
+    assert reserved == frozenset(rendered["TR_ASYNC_SETTLE_FASTPATH_RESERVED_WORKSPACES"].split(","))
+    assert len(reserved) == 2
+    assert admission_workspaces(config) == {"admission_excluded_workspaces": sorted(reserved)}
     assert config.async_settle_pilot_cap_micro == 5000000
     assert config.async_settle_protection is True
     assert not config.settle_outbox_fast_drain_enabled
     assert config.async_settle_shadow_workspace_ids == set()
     for workspace in ("162e441a-5d13-414f-92bd-7c6cd805faa3", "45819281-0ce9-4811-a0cd-c660ab3a116d",
-                      "stale-opt-in"):
-        assert config.async_settle_pilot_allows(workspace) is (workspace != "stale-opt-in")
+                      "stale-opt-in", *sorted(reserved)):
+        assert config.async_settle_pilot_allows(workspace) is (workspace not in reserved)
         assert not in_v2_cohort(config.regional_async_settle_shadow_policy(), workspace,
                                config.async_settle_enabled, config.async_settle_shadow_workspace_ids)
 
@@ -958,9 +969,9 @@ def test_rendered_shadow_pins_install_only_in_serving_regions(
     assert config.effective_async_settle_shadow_policy() == ""
     assert config.async_settle_shadow_workspace_ids == set()
     assert config.async_settle_admission_enabled is True
-    assert config.async_settle_pilot_workspace_ids == {
-        "45819281-0ce9-4811-a0cd-c660ab3a116d", "162e441a-5d13-414f-92bd-7c6cd805faa3",
-    }
+    # Every workspace since 2026-11-10: the rendered pilot set is empty.
+    assert config.async_settle_pilot_workspace_ids == frozenset()
+    assert config.async_settle_pilot_allows("ws-synthetic-anyone")
     assert config.async_settle_pilot_cap_micro == 5000000
     assert config.async_settle_protection is True
     assert not config.settle_outbox_fast_drain_enabled
@@ -4125,6 +4136,18 @@ def test_rollout_pins_serving_region_per_target_without_inheritance(
         assert deploy[deploy.index("--set-env-vars") + 1].count("TR_SERVING_REGION=") == 1
 
 
+def _reserved_workspaces() -> str:
+    """The enabler's include list less the overlap workspace, in the list's
+    order: what rollout.sh pins as the reserved list."""
+    from tests.test_fastpath_lists import resolved_lists
+
+    include = resolved_lists()["TR_FASTPATH_ENABLER_INCLUDE"].split(",")
+    return ",".join(workspace for workspace in include if workspace != "45819281-0ce9-4811-a0cd-c660ab3a116d")
+
+
+_RESERVED_WORKSPACES = _reserved_workspaces()
+
+
 @pytest.mark.parametrize("pin", ["TR_ASYNC_SETTLE_ENABLED", "TR_ASYNC_SETTLE_PROTECTION"])
 def test_rollout_pins_async_admission_and_protection_without_inheritance(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pin: str,
@@ -4137,7 +4160,9 @@ def test_rollout_pins_async_admission_and_protection_without_inheritance(
         "TR_ASYNC_SETTLE_TICKET_ISSUER": "https://api.trustedrouter.com",
         "TR_ASYNC_SETTLE_TICKET_AUDIENCE": "router-settlement",
         "TR_ASYNC_SETTLE_AUTHORITY_EPOCH": "1",
-        "TR_ASYNC_SETTLE_PILOT_WORKSPACES": "45819281-0ce9-4811-a0cd-c660ab3a116d,162e441a-5d13-414f-92bd-7c6cd805faa3",
+        "TR_ASYNC_SETTLE_PILOT_WORKSPACES": "",
+        "TR_ASYNC_SETTLE_FASTPATH_OVERLAP_WORKSPACES": "45819281-0ce9-4811-a0cd-c660ab3a116d",
+        "TR_ASYNC_SETTLE_FASTPATH_RESERVED_WORKSPACES": _RESERVED_WORKSPACES,
         "TR_ASYNC_SETTLE_PILOT_CAP_MICRO": "5000000",
     }
     hostile = {
@@ -4149,6 +4174,8 @@ def test_rollout_pins_async_admission_and_protection_without_inheritance(
         "TR_ASYNC_SETTLE_TICKET_AUDIENCE": "old-audience",
         "TR_ASYNC_SETTLE_AUTHORITY_EPOCH": "42",
         "TR_ASYNC_SETTLE_PILOT_WORKSPACES": "unapproved",
+        "TR_ASYNC_SETTLE_FASTPATH_OVERLAP_WORKSPACES": "unapproved",
+        "TR_ASYNC_SETTLE_FASTPATH_RESERVED_WORKSPACES": "",
         "TR_ASYNC_SETTLE_PILOT_CAP_MICRO": "1",
     }
     # Challenge each boolean independently in both caller and live-primary env.

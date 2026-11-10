@@ -32,5 +32,9 @@ TR_FASTPATH_PILOT_EXCLUDE="91d7810e-93b2-4c37-b1bd-ba9227585416,d385c399-b245-41
 # explicit set as it stood when WS2 emptied it, now this list's own literal:
 # Joseph's workspace and, on his word (2026-10-16), one customer's; from
 # 2026-11-03 also P1's synthetic workspace, his own and outside async settle
-# admission, so the edge answers its load tests.
+# admission, so the edge answers its load tests. Since 2026-11-10 async
+# admission covers every workspace but rollout.sh's reserved list, which is
+# this list less the operator workspace; tests/test_edge_policy_publish.py
+# holds the two in step, so a workspace added here goes there too (or on the
+# overlap list, to take async settle instead).
 TR_FASTPATH_ENABLER_INCLUDE="45819281-0ce9-4811-a0cd-c660ab3a116d,84cbb802-e054-486a-9226-e3cda4a799fb,8b682b96-d8ef-4631-b0ee-bbf41816f1f8"

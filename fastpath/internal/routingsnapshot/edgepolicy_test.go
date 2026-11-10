@@ -689,11 +689,11 @@ func TestTheAsyncAdmissionVectors(t *testing.T) {
 			}
 		}
 	}
-	if accepted != 68 || refused != 6 || excluded != 9 || all != 36 || reserved != 4 || everyone != 6 ||
+	if accepted != 72 || refused != 6 || excluded != 11 || all != 40 || reserved != 6 || everyone != 8 ||
 		admitted == 0 || left == 0 {
 		t.Fatalf("%d accepted (%d with the member, %d in all mode, %d of them with a reserved list and %d "+
 			"admitting every other workspace), %d refused, %d admitted and %d left-out answers: not the "+
-			"vectors' 68 (9, 36, 4, 6) and 6", accepted, excluded, all, reserved, everyone, refused, admitted, left)
+			"vectors' 72 (11, 40, 6, 8) and 6", accepted, excluded, all, reserved, everyone, refused, admitted, left)
 	}
 }
 

@@ -252,6 +252,10 @@ ADMISSION_OVERLAPS = ("", "ws-synthetic-pilot-1")
 # the pilot set empty, also a list of two, given unsorted.
 ADMISSION_RESERVED = ("", "ws-synthetic-neither")
 ADMISSION_RESERVED_NO_PILOTS = (*ADMISSION_RESERVED, "ws-synthetic-pilot-2,ws-synthetic-neither")
+# The deployed shape (section 9.1, "The deployed pins"): the pilot set empty,
+# a reserved list, and a workspace on the fast path's exclude list, which
+# async admission then covers like any other.
+ADMISSION_EXCLUDE_NO_PILOTS = "ws-synthetic-async-a"
 # The members' spellings the publisher never writes, each refused by both
 # readers, spliced into the async_settle object of the all-workspaces body
 # (admission on, no pilot set, no fast-path set), and one into the
@@ -288,13 +292,19 @@ def all_mode_exclude(pilots: str, overlap: str) -> str:
     return ",".join(sorted({ws for ws in pilots.split(",") if ws} - {ws for ws in overlap.split(",") if ws}))
 
 
-def admission_all_mode_combinations() -> list[tuple[bool, str, str, str]]:
-    """(admission, pilots, overlap, reserved) for the all-mode rows: every
-    combination, the empty async pilot set with admission on among them
-    (section 9.1: every workspace admitted but the reserved list)."""
-    return [(admission, pilots, overlap, reserved) for admission in (False, True) for pilots in ADMISSION_PILOTS
-            for overlap in ADMISSION_OVERLAPS
-            for reserved in (ADMISSION_RESERVED if pilots else ADMISSION_RESERVED_NO_PILOTS)]
+def admission_all_mode_combinations() -> list[tuple[bool, str, str, str, str]]:
+    """(admission, pilots, overlap, exclude, reserved) for the all-mode rows:
+    every combination with the exclude list the settings require, the empty
+    async pilot set with admission on among them (section 9.1: every
+    workspace admitted but the reserved list); then the empty pilot set
+    beside a reserved list and an exclude list the settings do not require,
+    which is the deployed shape."""
+    required = [(admission, pilots, overlap, all_mode_exclude(pilots, overlap), reserved)
+                for admission in (False, True) for pilots in ADMISSION_PILOTS for overlap in ADMISSION_OVERLAPS
+                for reserved in (ADMISSION_RESERVED if pilots else ADMISSION_RESERVED_NO_PILOTS)]
+    deployed = [(admission, "", overlap, ADMISSION_EXCLUDE_NO_PILOTS, ADMISSION_RESERVED[1])
+                for admission in (False, True) for overlap in ADMISSION_OVERLAPS]
+    return required + deployed
 
 
 def _spliced(settings: Settings, members: str) -> str:
@@ -330,9 +340,9 @@ def admission_cases() -> list[dict[str, object]]:
                     })
     # All mode: ws-synthetic-neither stands for a workspace the enabler turns
     # on (covered, on no list). A named async pilot set leaves it out; an
-    # empty one admits it unless the reserved list names it.
-    for admission, pilots, overlap, reserved in admission_all_mode_combinations():
-        exclude = all_mode_exclude(pilots, overlap)
+    # empty one admits it unless the reserved list names it, and admits a
+    # workspace on the exclude list too.
+    for admission, pilots, overlap, exclude, reserved in admission_all_mode_combinations():
         settings = admission_settings(admission, pilots, overlap, "", exclude, reserved)
         admits = {ws: settings.async_settle_admission_enabled and settings.async_settle_pilot_allows(ws)
                   for ws in ADMISSION_PROBES}

@@ -9,12 +9,15 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from pydantic import ValidationError
+from starlette.requests import Request
 
 from tests.fakes import spanner as spanner_fake
+from tests.test_async_settle_ticket import runtime as async_runtime
 from tests.test_edge_policy_publish import VECTORS
 from tests.test_fastpath_frontdoor import _Door, _transport
 from tests.test_fastpath_pilot_route import (
@@ -408,6 +411,45 @@ def test_all_mode_asks_no_front_door_for_a_workspace_the_copy_does_not_enable(
     assert door.seen == [], name
     expected = [f"fastpath pilot passed over reason=workspace workspace_id={WORKSPACE}"] if logged else []
     assert _passed_over(caplog) == expected, name
+
+
+def _async_request() -> Request:
+    """An authorize asking for async-v1, on an app whose async settle runtime
+    signs tickets and finds every workspace within its cap."""
+    return Request({"type": "http", "method": "POST", "path": "/",
+                    "headers": [(b"x-tr-boot-auth", b"kid=boot-pilot,sig=x"), (b"x-tr-settlement-mode", b"async-v1")],
+                    "app": SimpleNamespace(state=SimpleNamespace(async_settle=async_runtime()))})
+
+
+@pytest.mark.parametrize(("name", "leased", "lists", "ticket"), [
+    ("leased", True, {}, False),
+    ("not leased", False, {}, True),
+    ("leased, on the overlap list", True, {"async_settle_fastpath_overlap_workspaces": WORKSPACE}, True),
+    ("not leased, on the reserved list", False, {"async_settle_fastpath_reserved_workspaces": WORKSPACE}, False),
+])
+def test_the_authorize_route_signs_no_ticket_for_a_request_the_pilot_leased(
+    door: _Door, monkeypatch: pytest.MonkeyPatch, name: str, leased: bool, lists: dict[str, str], ticket: bool,
+) -> None:
+    """Section 9.1 through the route, with the async pilot set empty: the
+    authorization the route hands the async projection is the one it stored,
+    lease and all. A leased request's answer carries no ticket unless its
+    workspace is on the overlap list; a request the pilot did not lease
+    carries one unless its workspace is reserved. Each answer without a
+    ticket is the admission-off shape: the snapshot and its hash, nothing
+    else of async settle's."""
+    store, _database, key = _seed()
+    _copy(monkeypatch, frozenset({WORKSPACE}) if leased else frozenset())
+    settings = _all_pilot(async_settle_enabled=True, async_settle_protection=True, **lists)
+    assert settings.async_settle_pilot_workspace_ids == frozenset()
+    data = gateway._authorize_gateway_sync(
+        _async_request(), _body(key.hash, invocation_nonce="nonce-route-1"), settings)["data"]
+    stored = store.get_gateway_authorization(data["authorization_id"])
+    assert (stored.fastpath_envelope is not None) is leased, name
+    assert ("settlement_ticket" in data) is ticket, name
+    assert data["async_eligible"] is ticket, name
+    assert {"billing_snapshot", "billing_snapshot_hash"} <= set(data), name
+    if not ticket:
+        assert not {"settlement_ticket", "settlement_status_url"} & set(data), name
 
 
 def _federate_workspace(store: Any) -> None:
