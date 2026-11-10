@@ -90,3 +90,18 @@ def test_ai_report_filters_sources_without_ad_queries(monkeypatch: pytest.Monkey
     assert data['traffic_scope'] == 'ai_referral_cohorts'
     assert len(data['funnel']) == 1
     assert data['funnel'][0]['ai_referral_platform'] == 'claude'
+
+
+def test_report_accepts_axiom_empty_interval(monkeypatch: pytest.MonkeyPatch) -> None:
+    import datetime as dt
+    import subprocess
+
+    from scripts import marketing_funnel_report as report
+
+    monkeypatch.setattr(report.subprocess, 'run', lambda *a, **k: subprocess.CompletedProcess(
+        args=[], returncode=0, stdout='[]\n', stderr='',
+    ))
+    now = dt.datetime.now(dt.UTC)
+    assert report.fetch_axiom_cohort_records(
+        '/test/axiom', 'trusted-router-logs', start_at=now - dt.timedelta(days=1), end_at=now,
+    ) == []

@@ -198,7 +198,8 @@ def fetch_axiom_cohort_records(
         )
         if completed.returncode != 0:
             raise SystemExit(completed.stderr.strip() or "Axiom query failed")
-        batch = parse_axiom_json_lines(completed.stdout)
+        # The CLI emits [] for an empty interval, but JSONL for populated ones.
+        batch = [] if completed.stdout.strip() == "[]" else parse_axiom_json_lines(completed.stdout)
         if len(batch) >= 1000:
             if end - start <= dt.timedelta(seconds=1):
                 raise SystemExit("Axiom query remains truncated at a one-second window")
