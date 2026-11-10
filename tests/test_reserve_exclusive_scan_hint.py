@@ -154,7 +154,23 @@ def test_the_one_commit_release_still_has_the_subquery_that_forbids_the_hint() -
     assert "SELECT 1 FROM tr_trust_event" in sql
 
 
-_ADDS_TO_RESERVED = re.compile(r"\breserved\s*=\s*reserved\s*\+")
+# Either operand order: `reserved = reserved + @est` and `reserved = @est + reserved`.
+_ADDS_TO_RESERVED = re.compile(r"\breserved\s*=\s*(?:reserved\s*\+|[^,=]*\+\s*reserved\b)")
+
+
+@pytest.mark.parametrize(
+    ("text", "adds"),
+    [
+        ("SET reserved = reserved + @est", True),
+        ("SET reserved=reserved+@est", True),
+        ("SET reserved = @est + reserved", True),
+        ("SET reserved = reserved - @est", False),
+        ("SET total_usage = total_usage + @a, reserved = reserved - @est", False),
+        ("SET usage = usage + reserved", False),
+    ],
+)
+def test_the_pin_recognises_an_addition_to_reserved(text: str, adds: bool) -> None:
+    assert bool(_ADDS_TO_RESERVED.search(text)) is adds
 
 
 def _is_the_hint_or_nothing(node: ast.AST) -> bool:
@@ -257,6 +273,20 @@ def test_the_batch_reserves_are_hinted(monkeypatch: pytest.MonkeyPatch, trust: A
     assert _authorize_reserves(monkeypatch, _database(), trust_settings=trust) == [
         (True, "credit", 0), (True, "key", 0),
     ]
+
+
+@pytest.mark.parametrize("include_byok", [False, True])
+def test_the_batch_key_reserve_is_hinted_for_byok_too(
+    monkeypatch: pytest.MonkeyPatch, include_byok: bool,
+) -> None:
+    # A batch miss rolls back at once, so the hinted statement never holds the
+    # key row through a commit. On a key that excludes BYOK the batch misses
+    # and the retry is the unhinted sequential reserve.
+    db = _database()
+    db.typed["tr_key_limit"][("key", 0)]["include_byok"] = include_byok
+    reserves = _authorize_reserves(monkeypatch, db, **_BYOK)
+    assert reserves == [(True, "key", 0)] + ([] if include_byok else [(False, "key", 0)])
+    assert db.typed["tr_key_limit"][("key", 0)]["reserved"] == (100 if include_byok else 0)
 
 
 @pytest.mark.parametrize("trust", [None, _ARMED], ids=["unarmed", "armed"])

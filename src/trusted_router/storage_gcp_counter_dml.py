@@ -72,11 +72,12 @@ _COMPLETE_RESERVATION_RETENTION_GUARDED_SQL = (
 # A hinted statement that matches no row still holds the exclusive lock until
 # its transaction ends. So a reserve carries the hint only where it is expected
 # to write and is the only counter row of its table the transaction touches:
-# the batch reserves (a miss rolls back at once), a sequential reserve with one
-# shard candidate, and a key reserve that is not BYOK. A sequential probe of
-# several shards stays unhinted (two probers that miss different shards would
-# otherwise wait on each other), and so does a BYOK key reserve (a key that
-# excludes BYOK matches no row on every request).
+# the batch reserves (a miss rolls back at once, BYOK included), a sequential
+# reserve with one shard candidate, and a sequential or strict-budget key
+# reserve that is not BYOK. A sequential probe of several shards stays unhinted
+# (two probers that miss different shards would otherwise wait on each other),
+# and so does a sequential or strict-budget BYOK key reserve (a key that
+# excludes BYOK matches no row on every request, and the transaction commits).
 #
 # The hint covers EVERY range its statement scans, subqueries included, and
 # cannot be scoped to one table. Only single-row statements with no subquery
