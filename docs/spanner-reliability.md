@@ -292,6 +292,30 @@ so the incident is attributable. Schedule proactive legacy-account splits
 serially in low-traffic windows; GitHub concurrency keeps at most one pending
 run and cancels older pending runs even when `cancel-in-progress` is false.
 
+### One instance loses Spanner
+
+When one control-plane instance returns `503` on every Spanner-backed route
+for a minute or so, its siblings are healthy, and Spanner's request metric
+shows almost none of the failed calls, the fault is between that instance and
+the Google front end. The transaction and lock statistics above will show
+nothing. Read the instance's own log lines from
+`trusted_router.storage_gcp_transport_watch` for the window:
+
+- `spanner channel state=… previous=… previous_ms=…` on every connectivity
+  transition of the main store's channel.
+- `spanner credential refresh ok|failed … elapsed_ms=… inline=…` for every
+  access-token refresh. `inline=True` means an RPC waited on it.
+
+No channel line during the stall and a reconnect as it ends means the
+connection stopped answering until keepalive replaced it. The channel `READY`
+throughout with a failed or slow refresh means the metadata server did not
+answer. Neither means the stall is somewhere these lines do not see. The
+[November 10 report](incidents/2026-11-10-one-instance-spanner-stall.md) has
+the full table and what the watch does not cover.
+
+Do not restart the instance on a database-dependent check, and do not reset
+the channel across the fleet.
+
 ### Backup workflow
 
 Check the latest workflow execution:

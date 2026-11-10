@@ -174,6 +174,7 @@ from trusted_router.storage_gcp_request_records import (
     read_gateway_authorization_by_gateway_request_id,
 )
 from trusted_router.storage_gcp_settle_outbox import SpannerSettleOutbox
+from trusted_router.storage_gcp_transport_watch import watch_spanner_transport
 from trusted_router.storage_gcp_trust import (
     TRUST_EVENT_COLUMNS,
     _read_payment_tx,
@@ -477,6 +478,7 @@ class SpannerStore(OperationalAnalyticsReads):
             )
         )
         configure_spanner_rpc_deadlines(self._database)
+        watch_spanner_transport(self._database)
         # Composed feature stores. Each owns its own logic and is importable
         # on its own — keeps the core SpannerStore body focused on
         # identity + credit ledger. Mirrors the InMemoryStore pattern.
