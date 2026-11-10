@@ -1,11 +1,13 @@
 """Authorization, cohort boundaries and uncertain-commit recovery for rewards."""
 from __future__ import annotations
 
+import datetime as dt
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from fastapi.testclient import TestClient
 
+from trusted_router import storage_rate_limits
 from trusted_router.acquisition import record_successful_api_call
 from trusted_router.config import Settings
 from trusted_router.main import create_app
@@ -236,10 +238,25 @@ def test_wrong_account_has_no_access_to_enrollment():
     assert live_credit_summary(result.workspace.id)["total_credits"] == 150_000
 
 
-def test_existing_authenticated_rate_limit_applies_to_claims():
+def test_existing_authenticated_rate_limit_applies_to_claims(monkeypatch):
+    # The window tumbles on the wall-clock minute, so the limiter's clock is
+    # pinned: two claims that straddle a minute are in two windows, and the
+    # second is then allowed.
+    clock = {"now": dt.datetime(2026, 11, 10, 12, 0, 30, tzinfo=dt.UTC)}
+    monkeypatch.setattr(storage_rate_limits, "utcnow", lambda: clock["now"])
     client, _, _ = _account(_settings(rate_limit_enabled=True, rate_limit_key_per_window=1))
-    assert _post(client, action="github").status_code == 200
-    assert _post(client, action="github").status_code == 429
+    # A claim's own body: a redirect to sign in also ends in a 200.
+    first = _post(client, action="github")
+    assert first.status_code == 200 and first.json()["actions"][0]["claimed"] is True
+    clock["now"] = dt.datetime(2026, 11, 10, 12, 0, 59, tzinfo=dt.UTC)
+    limited = _post(client, action="github")
+    assert limited.status_code == 429
+    # The credential's limit of one, not the claim endpoint's own.
+    assert limited.headers["x-ratelimit-limit"] == "1"
+    # The next window admits a claim again: the pinned clock is the limiter's.
+    clock["now"] = dt.datetime(2026, 11, 10, 12, 1, 0, tzinfo=dt.UTC)
+    again = _post(client, action="github")
+    assert again.status_code == 200 and again.json()["actions"][0]["claimed"] is True
 
 
 def test_optional_analytics_failure_cannot_fail_a_claim(monkeypatch):
