@@ -15,6 +15,7 @@ from trusted_router.catalog_data import (
     ADVISOR_CATALOG_MODEL_ORDERS,
     AUTO_MODEL_ID,
     CHEAP_MODEL_ID,
+    DEEPSEEK_V4_1_FLASH_1017_MODEL_ID,
     DEEPSEEK_V4_PRO_0813_MODEL_ID,
     DEFAULT_AUTO_MODEL_ORDER,
     E2E_MODEL_ID,
@@ -276,6 +277,7 @@ def _privacy_candidate_models(
     *,
     requirement: int,
     preferred_providers: tuple[str, ...] = (),
+    preferred_models: tuple[str, ...] = (),
     allowed_providers: frozenset[str] | None = None,
     limit: int = 12,
 ) -> list[Model]:
@@ -286,6 +288,8 @@ def _privacy_candidate_models(
     endpoints. Retention and confidential-compute guarantees are orthogonal;
     the integer values are API vocabulary, not an implication ladder.
     """
+    if limit <= 0:
+        return []
     provider_rank = {provider: index for index, provider in enumerate(preferred_providers)}
     eligible: list[tuple[int, int, int, str, Model]] = []
     per_provider: dict[str, list[tuple[int, int, Model]]] = {}
@@ -315,6 +319,13 @@ def _privacy_candidate_models(
 
     result: list[Model] = []
     seen: set[str] = set()
+    eligible_models = {model.id: model for *_route, model in eligible}
+    for model_id in preferred_models:
+        if model_id in eligible_models and model_id not in seen:
+            result.append(eligible_models[model_id])
+            seen.add(model_id)
+        if len(result) >= limit:
+            return result
     for provider_slug in preferred_providers:
         options = sorted(
             per_provider.get(provider_slug, []),
@@ -362,10 +373,12 @@ def green_candidate_models(limit: int = 12) -> list[Model]:
 def zdr_candidate_models(limit: int = 12) -> list[Model]:
     return _privacy_candidate_models(
         requirement=PRIVACY_TIER_ZERO_RETENTION,
+        preferred_models=(DEEPSEEK_V4_1_FLASH_1017_MODEL_ID,),
         preferred_providers=(
+            "amazon-bedrock",
+            "google-vertex",
             "anthropic",
             "openai",
-            "google-vertex",
             "google-ai-studio",
             "tinfoil",
             "venice",
@@ -379,6 +392,7 @@ def zdr_candidate_models(limit: int = 12) -> list[Model]:
 def e2e_candidate_models(limit: int = 12) -> list[Model]:
     return _privacy_candidate_models(
         requirement=PRIVACY_TIER_CONFIDENTIAL,
+        preferred_models=(DEEPSEEK_V4_1_FLASH_1017_MODEL_ID,),
         preferred_providers=("tinfoil", "phala"),
         limit=limit,
     )
@@ -387,6 +401,7 @@ def e2e_candidate_models(limit: int = 12) -> list[Model]:
 def trusted_candidate_models(limit: int = 12) -> list[Model]:
     return _privacy_candidate_models(
         requirement=PRIVACY_TIER_TRUSTED,
+        preferred_models=(DEEPSEEK_V4_1_FLASH_1017_MODEL_ID,),
         preferred_providers=TRUSTED_PROVIDER_ORDER,
         limit=limit,
     )

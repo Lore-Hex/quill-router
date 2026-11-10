@@ -18,14 +18,15 @@ GLM53_MODELS = ("z-ai/glm-5.3-flash", "z-ai/glm-5.3")
 
 
 @pytest.mark.catalog_as_built
-def test_auto_routes_start_with_glm53_recommendations() -> None:
+def test_auto_routes_keep_glm53_recommendations_after_1017() -> None:
     candidates = chat_route_endpoint_candidates(
         {"model": "trustedrouter/auto", "provider": {"usage": "credits"}}, Settings()
     )
     model_ids = list(dict.fromkeys(model.id for model, _endpoint in candidates))
-    assert model_ids[:2] == list(GLM53_MODELS)
+    expected = ["deepseek/deepseek-v4.1-flash-1017", *GLM53_MODELS]
+    assert model_ids[:3] == expected
     advertised = model_to_openrouter_shape(MODELS["trustedrouter/auto"])
-    assert advertised["trustedrouter"]["auto_candidates"][:2] == list(GLM53_MODELS)
+    assert advertised["trustedrouter"]["auto_candidates"][:3] == expected
 
 
 @pytest.mark.catalog_as_built

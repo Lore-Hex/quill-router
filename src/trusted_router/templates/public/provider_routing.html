@@ -40,7 +40,8 @@
 <section class="content-section" id="recommended-models">
   <div class="content-prose"><div>
     <h2 data-toc-label="Automatic routes">Recommended automatic routes</h2>
-    <p><code>trustedrouter/auto</code> starts with <a href="/models/z-ai/glm-5.3-flash">GLM 5.3 Flash</a>, then <a href="/models/z-ai/glm-5.3">GLM 5.3</a>, followed by DeepSeek, Kimi, and the rest of the fallback pool. Your provider, privacy, and capability requirements still determine which routes qualify.</p>
+    <p><code>trustedrouter/auto</code> starts with <a href="/models/deepseek/deepseek-v4.1-flash-1017">DeepSeek V4.1 Flash 1017</a>, then <a href="/models/z-ai/glm-5.3-flash">GLM 5.3 Flash</a> and <a href="/models/z-ai/glm-5.3">GLM 5.3</a>, followed by independent fallbacks. Your provider, privacy, and capability requirements still determine which routes qualify.</p>
+    <p>For the same Claude or OpenAI model, eligible ZDR routes on Amazon Bedrock and Google Vertex receive preference over direct lab routes at comparable performance and health. Explicit provider order and price or speed sorting take precedence. ZDR eligibility is checked per route; it is separate from confidential-compute verification.</p>
     <p><code>trustedrouter/cheap</code> includes both GLM models alongside lower-cost alternatives. It orders the pool by published input plus output token prices, so GLM 5.3 remains a higher-cost fallback. Set <code>provider.max_price</code> to enforce your per-token price ceiling.</p>
   </div></div>
 </section>

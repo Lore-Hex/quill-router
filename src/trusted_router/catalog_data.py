@@ -2674,6 +2674,8 @@ PROFESSIONAL_MODEL_ID = "trustedrouter/professional"
 
 EFFICIENT_MODEL_ID = "trustedrouter/efficient"
 
+DEEPSEEK_V4_1_FLASH_1017_MODEL_ID = "deepseek/deepseek-v4.1-flash-1017"
+
 # Fixed routing pools: the first member is preferred, the rest are fallbacks.
 # These aliases do not synthesize responses or imply an upstream privacy floor.
 TIER_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
@@ -2689,8 +2691,8 @@ TIER_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
         "anthropic/claude-fable-5",
     ),
     PROFESSIONAL_MODEL_ID: (
+        DEEPSEEK_V4_1_FLASH_1017_MODEL_ID,
         "z-ai/glm-5.3-flash",
-        "deepseek/deepseek-v4.1-flash-1017",
         "z-ai/glm-5.2",
         "google/gemini-3.8-flash",
     ),
@@ -3243,7 +3245,7 @@ US_FOCUSED_PROVIDER_ORDER: tuple[str, ...] = (
 #   2. The ladder spans MORE THAN ONE provider. The GLM leaders have multiple
 #      serving providers and are followed by independent model families.
 #
-# Order: GLM 5.3 Flash, GLM 5.3, then the existing independent fallbacks.
+# Order: DeepSeek V4.1 Flash 1017, GLM 5.3 Flash, GLM 5.3, then independent fallbacks.
 # Privacy and jurisdiction requirements still apply before authorization.
 #
 # Anthropic sits at the BOTTOM deliberately. Its endpoints are currently
@@ -3254,6 +3256,7 @@ US_FOCUSED_PROVIDER_ORDER: tuple[str, ...] = (
 GLM_5_3_RECOMMENDED_MODEL_IDS = ("z-ai/glm-5.3-flash", "z-ai/glm-5.3")
 
 DEFAULT_AUTO_MODEL_ORDER = [
+    DEEPSEEK_V4_1_FLASH_1017_MODEL_ID,
     *GLM_5_3_RECOMMENDED_MODEL_IDS,
     DEEPSEEK_V4_PRO_0813_MODEL_ID,
     "deepseek/deepseek-v4-flash-0731",
@@ -3982,7 +3985,7 @@ _PROVIDER_UNSERVED_CREDITS_MODELS: dict[str, frozenset[str]] = {
     ),
 }
 
-_PROVIDER_DISPLAY_ORDER = ("tinfoil", "near-ai")
+_PROVIDER_DISPLAY_ORDER = ("tinfoil", "near-ai", "amazon-bedrock", "google-vertex")
 
 
 # Legacy compatibility aliases (advisor/synth primitives) — completes
