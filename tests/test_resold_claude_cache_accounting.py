@@ -122,6 +122,78 @@ def _enclave_relays_anthropic_native_usage(provider: str, upstream_id: str | Non
     )
 
 
+_BEDROCK_MANIFEST = Path(__file__).resolve().parents[1] / "src/trusted_router/data/provider_models/amazon-bedrock.json"
+
+
+def _bedrock_manifest_rows() -> list[dict[str, Any]]:
+    rows = json.loads(_BEDROCK_MANIFEST.read_text(encoding="utf-8"))["models"]
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def _bedrock_runtime_table_disagreements(
+    endpoints: Any, manifest_rows: list[dict[str, Any]],
+) -> list[str]:
+    """BEDROCK_RUNTIME_PROFILES against the Bedrock manifest and the catalog.
+
+    The manifest keeps every reviewed Runtime row, routable or withheld, so
+    its anthropic/ rows under us.anthropic. equal the table exactly. The
+    hourly refresh probes each profile once and withholds a route whose
+    canary fails (provider-canary-failed) until a later refresh passes it, so
+    the catalog's amazon-bedrock Claude endpoints equal exactly the profiles
+    whose manifest row is routable: never a profile the table lacks, never a
+    different upstream id, never a withheld route."""
+    problems: list[str] = []
+    reviewed = {row["id"]: row for row in manifest_rows
+                if str(row.get("id", "")).startswith("anthropic/")
+                and str(row.get("upstream_id", "")).startswith("us.anthropic.")}
+    manifest_table = {model: row["upstream_id"] for model, row in reviewed.items()}
+    if manifest_table != BEDROCK_RUNTIME_PROFILES:
+        problems.append(f"manifest Runtime rows {manifest_table} != table {BEDROCK_RUNTIME_PROFILES}")
+    available = {model: profile for model, profile in BEDROCK_RUNTIME_PROFILES.items()
+                 if reviewed.get(model, {}).get("routable") is not False}
+    published = {e.model_id: e.upstream_id for e in endpoints
+                 if e.provider == "amazon-bedrock" and provider_input_excludes_cache(e.provider, e.model_id)}
+    if published != available:
+        problems.append(f"catalog Bedrock Claude {published} != canary-available profiles {available}")
+    for model, profile in BEDROCK_RUNTIME_PROFILES.items():
+        if not (provider_input_excludes_cache("amazon-bedrock", model)
+                and _enclave_relays_anthropic_native_usage("amazon-bedrock", profile, model)):
+            problems.append(f"rule and dispatch disagree on table entry {model} -> {profile}")
+    return problems
+
+
+def test_bedrock_runtime_table_check_follows_the_hourly_canary() -> None:
+    """A failed canary withholds one profile's route: the table still holds,
+    and still fails on a real mismatch (wrong profile, route the table lacks,
+    a withheld route that is published, a reviewed row dropped)."""
+    endpoint = SimpleNamespace
+    rows = [{"id": model, "upstream_id": profile, "routable": True}
+            for model, profile in BEDROCK_RUNTIME_PROFILES.items()]
+    every = [endpoint(provider="amazon-bedrock", model_id=model, upstream_id=profile)
+             for model, profile in BEDROCK_RUNTIME_PROFILES.items()]
+    assert not _bedrock_runtime_table_disagreements(every, rows)
+
+    withheld_model = next(iter(BEDROCK_RUNTIME_PROFILES))
+    withheld_rows = [dict(row, routable=False, routable_reason="provider-canary-failed")
+                     if row["id"] == withheld_model else row for row in rows]
+    rest = [e for e in every if e.model_id != withheld_model]
+    assert not _bedrock_runtime_table_disagreements(rest, withheld_rows)
+    # The withheld route must not be published.
+    assert _bedrock_runtime_table_disagreements(every, withheld_rows)
+    # A routable row missing from the catalog is a real disagreement.
+    assert _bedrock_runtime_table_disagreements(rest, rows)
+    # A published profile that differs from the table.
+    wrong = [endpoint(provider=e.provider, model_id=e.model_id, upstream_id=e.upstream_id + "-v2")
+             if e.model_id == withheld_model else e for e in every]
+    assert _bedrock_runtime_table_disagreements(wrong, rows)
+    # A Bedrock Claude route the table lacks.
+    extra = [*every, endpoint(provider="amazon-bedrock", model_id="anthropic/claude-new",
+                              upstream_id="us.anthropic.claude-new")]
+    assert _bedrock_runtime_table_disagreements(extra, rows)
+    # A reviewed row the manifest dropped, even with the route withheld.
+    assert _bedrock_runtime_table_disagreements(rest, [r for r in rows if r["id"] != withheld_model])
+
+
 def test_the_rule_is_the_enclaves_dispatch_over_the_whole_catalog() -> None:
     """For every endpoint of the catalog, every usage type included, the
     rule over (provider, model_id) answers exactly as the enclave's dispatch
@@ -142,11 +214,10 @@ def test_the_rule_is_the_enclaves_dispatch_over_the_whole_catalog() -> None:
             by_kind["other_anthropic_publisher"] += 1
     assert not disagreements, disagreements
     # The router's own table of Bedrock runtime profiles (the us.anthropic.
-    # ids the Bedrock runtime serves) is exactly the catalog's amazon-bedrock
-    # anthropic/ endpoints, so the rule and that table agree too.
-    bedrock_claude = {e.model_id: e.upstream_id for e in MODEL_ENDPOINTS.values()
-                      if e.provider == "amazon-bedrock" and provider_input_excludes_cache(e.provider, e.model_id)}
-    assert bedrock_claude == BEDROCK_RUNTIME_PROFILES
+    # ids the Bedrock runtime serves) is exactly the provider's reviewed
+    # Claude rows, and the catalog publishes exactly the ones whose hourly
+    # canary passed, so the rule and that table agree too.
+    assert not _bedrock_runtime_table_disagreements(MODEL_ENDPOINTS.values(), _bedrock_manifest_rows())
     # The equivalence is over a catalog that reaches every branch of it.
     assert by_kind["anthropic"] >= 1 and by_kind["amazon-bedrock"] >= 1 and by_kind["google-vertex"] >= 1, by_kind
     # Other providers serving an anthropic/ model (deepinfra's BYOK routes
