@@ -1,8 +1,9 @@
 # Widening the fast path to every eligible workspace
 
 Status: decided; PRs 1 to 6 merged (#2354, #2356, #2359, #2385, #2394,
-#2396) and PR 7 built (§11); the rollout is at WS2 (§8.2), with the
-enabler in `apply` and all mode on since 2026-11-09. This is the short note the production
+#2396) and PR 7 built (§11); the rollout is at WS4 (§8.2), with the
+enabler in `apply` and all mode on since 2026-11-09, the wildcard row on
+and `max_rank` 10 since 2026-11-10. This is the short note the production
 rollout asks for before §8 step 9 of
 [`fast-admission-and-batched-settlement.md`](fast-admission-and-batched-settlement.md)
 (`fast-admission-production-rollout.md`, "P2 onward"): what widening
