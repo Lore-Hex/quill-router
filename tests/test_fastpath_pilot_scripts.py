@@ -31,11 +31,12 @@ def test_the_watch_keeps_its_approved_tolerances() -> None:
     assert "audit $WS; rc=$?" in watch and "PILOT_WATCH_ABORTED" in watch
 
 
-def test_the_hourly_audit_covers_the_pilot_set() -> None:
-    # rollout.sh renders the set from scripts/deploy/fastpath_lists.sh.
-    rollout = (PILOT.parents[1] / "deploy" / "rollout.sh").read_text(encoding="utf-8")
-    assert '"TR_FASTPATH_PILOT_WORKSPACES=${TR_FASTPATH_PILOT_WORKSPACES}"' in rollout
-    workspaces = resolved_lists()["TR_FASTPATH_PILOT_WORKSPACES"].split(",")
+def test_the_hourly_audit_covers_the_include_list() -> None:
+    # The explicit pilot set is empty since WS2 (all mode); the workspaces
+    # the audit names are the enabler's include list, the set as it stood.
+    lists = resolved_lists()
+    assert lists["TR_FASTPATH_PILOT_WORKSPACES"] == ""
+    workspaces = lists["TR_FASTPATH_ENABLER_INCLUDE"].split(",")
     audit = (PILOT / "pilot-audit-hourly.sh").read_text(encoding="utf-8")
     listed = next(line for line in audit.splitlines() if line.startswith("WORKSPACES="))
     assert sorted(listed.split("=", 1)[1].strip('"').split()) == sorted(workspaces)

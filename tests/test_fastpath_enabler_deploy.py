@@ -65,7 +65,9 @@ def test_the_job_deploys_in_apply_with_the_lists_and_its_schedule(tmp_path: Path
     # WS2: apply writes the allow-list once armed; nobody joins off the list.
     assert env["TR_FASTPATH_ENABLER_MODE"] == "apply" and env["TR_FASTPATH_ENABLER_MAX_RANK"] == "0"
     lists = resolved_lists()
-    assert env["TR_FASTPATH_ENABLER_INCLUDE"] == lists["TR_FASTPATH_PILOT_WORKSPACES"] != ""
+    # The include list is its own literal since WS2 emptied the pilot set.
+    assert env["TR_FASTPATH_ENABLER_INCLUDE"] == lists["TR_FASTPATH_ENABLER_INCLUDE"] != ""
+    assert lists["TR_FASTPATH_PILOT_WORKSPACES"] == "" and "TR_FASTPATH_PILOT_ALL" not in env
     assert env["TR_FASTPATH_PILOT_EXCLUDE"] == lists["TR_FASTPATH_PILOT_EXCLUDE"]
     assert env["TR_FASTPATH_ENABLER_ENABLE_BALANCE_MICRO"] == "100000000"
     assert env["TR_FASTPATH_ENABLER_DISABLE_BALANCE_MICRO"] == "40000000"
@@ -91,7 +93,7 @@ def test_the_job_deploys_in_apply_with_the_lists_and_its_schedule(tmp_path: Path
         settings = Settings(_env_file=None)  # type: ignore[call-arg]
         config = fe.EnablerConfig.from_settings(settings)
     assert config.mode == "apply" and config.max_rank == 0
-    assert config.include == frozenset(lists["TR_FASTPATH_PILOT_WORKSPACES"].split(","))
+    assert config.include == frozenset(lists["TR_FASTPATH_ENABLER_INCLUDE"].split(","))
 
 
 def test_the_job_reads_the_async_shadow_list_the_control_plane_does() -> None:

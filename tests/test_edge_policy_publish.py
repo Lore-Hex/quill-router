@@ -594,28 +594,40 @@ def test_admission_excluded_workspaces_is_the_fastpath_set_less_the_overlap(key)
 
 
 def test_the_deployed_pilot_sets_publish_no_excluded_member() -> None:
-    """With rollout.sh's own pilot sets (the async pilot set names no
-    fast-path workspace outside the overlap list) the body carries no
-    admission_excluded_workspaces, so a Go node that predates the member
-    reads it unchanged; emptying the async pilot set would publish the
-    member (the reason nodes must ship first, G15 section 4.5)."""
+    """With rollout.sh's own pilot sets, in all mode since WS2 (every async
+    pilot workspace is on the overlap list or on the fast-path exclude
+    list), the body carries no admission_excluded_workspaces, so a Go node
+    that predates the member reads it unchanged; the settings refuse all
+    mode with async admission on and the async pilot set emptied, which
+    would name every workspace."""
     rendered = _rendered_rollout_env()
+    assert rendered["TR_FASTPATH_PILOT_ALL"] == "true" and rendered["TR_FASTPATH_PILOT_WORKSPACES"] == ""
     common = dict(
+        # The one backend rollout.sh deploys (it refuses any other).
+        storage_backend="spanner-clickhouse",
+        fastpath_pilot_all=rendered["TR_FASTPATH_PILOT_ALL"],
         fastpath_pilot_workspaces=rendered["TR_FASTPATH_PILOT_WORKSPACES"],
+        fastpath_pilot_exclude=rendered["TR_FASTPATH_PILOT_EXCLUDE"],
         async_settle_fastpath_overlap_workspaces=rendered["TR_ASYNC_SETTLE_FASTPATH_OVERLAP_WORKSPACES"],
     )
     deployed = VECTORS.fixture_settings(async_settle_enabled=True, async_settle_protection=True,
                                         async_settle_pilot_workspaces=rendered["TR_ASYNC_SETTLE_PILOT_WORKSPACES"],
                                         **common)
-    assert "admission_excluded_workspaces" not in publisher_module.admission_workspaces(deployed)
-    every = VECTORS.fixture_settings(async_settle_enabled=True, async_settle_protection=True,
-                                     async_settle_pilot_workspaces="", **common)
-    assert publisher_module.admission_workspaces(every)["admission_excluded_workspaces"] == sorted(
-        every.async_settle_fastpath_excluded_workspace_ids)
-    # The operator workspace is in both pilots and keeps its admission.
+    pilots = deployed.async_settle_pilot_workspace_ids
+    published = publisher_module.admission_workspaces(deployed)
+    assert "admission_excluded_workspaces" not in published
+    assert published["admission_workspaces"] == sorted(pilots)
+    with pytest.raises(ValidationError, match="empty TR_ASYNC_SETTLE_PILOT_WORKSPACES"):
+        VECTORS.fixture_settings(async_settle_enabled=True, async_settle_protection=True,
+                                 async_settle_pilot_workspaces="", **common)
+    # The operator workspace is in both pilots and keeps its admission; the
+    # rest of the async pilot set is on the fast-path exclude list.
     overlap = deployed.async_settle_fastpath_overlap_workspace_ids
-    assert overlap and overlap <= deployed.fastpath_pilot_workspace_ids & deployed.async_settle_pilot_workspace_ids
-    assert all(deployed.async_settle_pilot_allows(ws) for ws in overlap)
+    assert overlap and overlap <= pilots
+    assert pilots - overlap and pilots - overlap <= deployed.fastpath_pilot_exclude_ids
+    assert all(deployed.fastpath_covers(ws) for ws in overlap)
+    assert not any(deployed.fastpath_covers(ws) for ws in pilots - overlap)
+    assert all(deployed.async_settle_pilot_allows(ws) for ws in pilots)
 
 
 def _rendered_rollout_env() -> dict[str, str]:

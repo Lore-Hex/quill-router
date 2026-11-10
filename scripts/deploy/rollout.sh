@@ -37,8 +37,9 @@ source "${SCRIPT_DIR}/_lib.sh"
 source "${SCRIPT_DIR}/deploy_mutex.sh"
 # shellcheck source=scripts/deploy/_cloud_run_revision_probe.sh
 source "${SCRIPT_DIR}/_cloud_run_revision_probe.sh"
-# The fast path's workspace lists (TR_FASTPATH_PILOT_WORKSPACES and
-# TR_FASTPATH_PILOT_EXCLUDE), shared with the enabler job's script.
+# The fast path's workspace lists (TR_FASTPATH_PILOT_WORKSPACES, empty in
+# all mode, and TR_FASTPATH_PILOT_EXCLUDE), shared with the enabler job's
+# script.
 # shellcheck source=scripts/deploy/fastpath_lists.sh
 source "${SCRIPT_DIR}/fastpath_lists.sh"
 
@@ -708,18 +709,19 @@ ENV_VARS=(
   # 45819281-0ce9-4811-a0cd-c660ab3a116d,91d7810e-93b2-4c37-b1bd-ba9227585416
   "TR_STAGE_D_PILOT_WORKSPACE_IDS="
   # The fast path's pilot (docs/design/fast-admission-pilot.md): its
-  # explicit set lives in fastpath_lists.sh, where the enabler job's include
-  # list refers to it. Rollback: drop an ID there, or
-  # TR_FASTPATH_PILOT_ENABLED=false.
+  # explicit set lives in fastpath_lists.sh and is empty since WS2, when all
+  # mode below took its place. Rollback: TR_FASTPATH_PILOT_ENABLED=false.
   "TR_FASTPATH_PILOT_WORKSPACES=${TR_FASTPATH_PILOT_WORKSPACES}"
   "TR_FASTPATH_PILOT_ENABLED=true"
   # All mode (docs/design/fast-admission-widening.md sections 9 and 11, PR
   # 5): every workspace the switch enables but the exclude list, instead of
   # the list above, which must then be empty. A literal, so no revision
-  # inherits it; false is the way back. It moves at WS2 only, once every
-  # node is pinned on PR 3 with no cache.policy rise. The exclude list lives
-  # in fastpath_lists.sh, shared with the enabler job.
-  "TR_FASTPATH_PILOT_ALL=false"
+  # inherits it. On since WS2 (2026-11-09), with every node pinned on PR 3
+  # and its edge policy installing. The way back for one workspace is
+  # `fastpathctl disable`, or the exclude list; for all of them false here,
+  # which with the list above empty leaves the pilot nobody. The exclude
+  # list lives in fastpath_lists.sh, shared with the enabler job.
+  "TR_FASTPATH_PILOT_ALL=true"
   "TR_FASTPATH_PILOT_EXCLUDE=${TR_FASTPATH_PILOT_EXCLUDE}"
   # The 503 for headroom in leases (docs/design/fast-admission-widening.md
   # section 11, PR 7): a hold the balance covers but the headroom outside
@@ -827,9 +829,12 @@ ENV_VARS=(
   # The pilot cap is per workspace; the probe does not draw on the customer cap.
   "TR_ASYNC_SETTLE_PILOT_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d,162e441a-5d13-414f-92bd-7c6cd805faa3"
   # Async settle takes no request the fast path takes (G15 section 4.5): a
-  # TR_FASTPATH_PILOT_WORKSPACES workspace is outside async admission, even
-  # with an empty pilot list above (every workspace), unless listed here. The
-  # operator workspace is in both pilots (R3) and keeps its async settles.
+  # workspace the fast path's pilot covers (in all mode, every one off
+  # TR_FASTPATH_PILOT_EXCLUDE) is outside async admission unless listed
+  # here. The operator workspace is in both pilots (R3) and keeps its async
+  # settles; all mode refuses to start with an async pilot workspace on
+  # neither this list nor the exclude list, or with the pilot list above
+  # empty (every workspace).
   "TR_ASYNC_SETTLE_FASTPATH_OVERLAP_WORKSPACES=45819281-0ce9-4811-a0cd-c660ab3a116d"
   "TR_ASYNC_SETTLE_PILOT_CAP_MICRO=5000000"
   # October 31: new async-v1 acceptance only where the 500 ms durable handoff
