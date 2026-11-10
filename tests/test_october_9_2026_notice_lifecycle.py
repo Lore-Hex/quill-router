@@ -13,6 +13,7 @@ from scripts.pricing.providers import (
     chutes,
     cloudflare_workers_ai,
     crusoe,
+    databricks,
     deepinfra,
     digitalocean,
     friendli,
@@ -85,6 +86,8 @@ _CASES = [
          datetime(2026, 11, 20, tzinfo=UTC), "google/gemma-4-26b-a4b-it"),
     Case("tencent", "tencent/hy4-preview", "hy4-preview",
          datetime(2026, 12, 6, 16, tzinfo=UTC), "tencent/hy4"),
+    Case("databricks", "z-ai/glm-5.2", "databricks-glm-5-2",
+         datetime(2027, 2, 4, tzinfo=UTC), "z-ai/glm-5.3"),
     Case("deepinfra", "inclusionai/ling-3.1-flash", "inclusionAI/Ling-3.1-flash",
          datetime(2026, 11, 15, tzinfo=UTC), "deepseek/deepseek-v4.1-flash-1017"),
     Case("tinfoil", "moonshotai/kimi-k3", "kimi-k3",
@@ -234,6 +237,7 @@ _MANIFESTS = {
     "scaleway": scaleway.MANIFEST_PATH,
     "xiaomi": xiaomi.MANIFEST_PATH,
     "tencent": tencent.MANIFEST_PATH,
+    "databricks": databricks.MANIFEST_PATH,
 }
 
 

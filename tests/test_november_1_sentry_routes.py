@@ -16,7 +16,7 @@ def test_databricks_inkling_retirement_is_exact_and_effective_dated():
     assert provider_model_retired("databricks", "unknown-alias", native, at="2026-10-31T00:00:00Z")
     assert not provider_model_retired("nvidia-nim", model, native, at=datetime(2026, 11, 1, tzinfo=UTC))
     assert not provider_model_retired("databricks", "moonshotai/kimi-k3", "databricks-kimi-k3")
-    assert not provider_model_retired("databricks", "z-ai/glm-5.2", "databricks-glm-5-2")
+    assert not provider_model_retired("databricks", "openai/gpt-oss-120b", "databricks-gpt-oss-120b")
 
 
 def test_retired_databricks_inkling_is_not_offered_or_probed():
