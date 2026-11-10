@@ -52,7 +52,7 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
     BlogPost(
         slug='private-deepseek-api-evaluation-checklist',
         title='How to evaluate a private DeepSeek API',
-        description='A practical checklist for DeepSeek privacy, route selection, fallback behavior and quality testing.',
+        description='Evaluate DeepSeek API privacy with a checklist for provider location, retention, fallback behavior and model quality before sending sensitive data.',
         published_date="2026-11-09",
         source_label="TrustedRouter",
         source_url=None,
@@ -73,7 +73,7 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
     BlogPost(
         slug='choosing-an-llm-api-for-agents',
         title='How to choose an LLM API for agents',
-        description='Evaluate tool support, privacy, fallback behavior, budgets and response quality before moving an agent to production.',
+        description='Choose an LLM API for agents by testing tool support, privacy, fallback behavior, task costs and programmable budgets before a production migration.',
         published_date="2026-11-09",
         source_label="TrustedRouter",
         source_url=None,
