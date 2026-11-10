@@ -1,11 +1,14 @@
 """Carbon's native discovery, dated tariffs, admission and privacy contracts."""
 
+import json
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from scripts.pricing import base, vertex_prices
+from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.gemini_prices import current_price_source
 from scripts.pricing.parsers import gemini as parser
 from scripts.pricing.providers import gemini, google_vertex
@@ -13,6 +16,11 @@ from tests.test_gemini_markdoc_pricing import _tab, _table
 from trusted_router.pricing_approvals import approved_dated_price_transition
 
 MODEL = "google/gemini-4-carbon"
+# Google documents that Gemini 4 ignores custom sampling values (Vertex model
+# card: "Temperature: 1.0 (fixed; custom values ignored)"; Gemini API text
+# generation guide: "Gemini 4 and Gemini 3.6+ models ignore custom values for
+# temperature, top_p, and top_k"). Never advertise controls that do nothing.
+IGNORED_SAMPLING = {"temperature", "top_p", "top_k"}
 
 
 def test_carbon_has_both_direct_routes_and_correct_capabilities() -> None:
@@ -141,3 +149,80 @@ def test_only_reviewed_complete_price_transition_is_approved(
     assert not approved_dated_price_transition(
         route + "-unreviewed", before, after, today=date(2026, 12, 1),
     )
+
+
+def _refreshed_snapshot_entry() -> dict[str, Any]:
+    # Shape of OpenRouter's Carbon row as ingested by refresh run 42913910810.
+    # Its Google endpoints list sampling controls Google says Carbon ignores.
+    sampling = ["reasoning", "include_reasoning", "max_tokens", "temperature", "top_p",
+                "seed", "response_format", "tools", "tool_choice", "structured_outputs",
+                "reasoning_effort"]
+    price = {"prompt": "0.000002", "completion": "0.00001", "input_cache_read": "0.0000001"}
+    return {
+        "id": MODEL, "name": "Google: Gemini 4 Carbon", "context_length": 1_048_576,
+        "architecture": {"input_modalities": ["text", "image"], "output_modalities": ["text"]},
+        "pricing": price, "top_provider": {"context_length": 1_048_576},
+        "endpoints": [
+            {"tr_provider_slug": "google-ai-studio", "context_length": 1_048_576,
+             "max_completion_tokens": 32_768, "pricing": price,
+             "pricing_source": "provider_direct", "supported_parameters": sampling},
+            {"tr_provider_slug": "google-vertex", "context_length": 1_048_576,
+             "max_completion_tokens": 32_768, "pricing": price,
+             "pricing_source": "provider_direct",
+             "supported_parameters": [*sampling, "stop"]},
+        ],
+    }
+
+
+def test_refreshed_snapshot_sampling_controls_do_not_leak_into_carbon(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router import catalog_ingest
+
+    snapshot = tmp_path / "openrouter_snapshot.json"
+    snapshot.write_text(json.dumps({"models": [_refreshed_snapshot_entry()]}))
+    monkeypatch.setattr(catalog_ingest, "_INGEST_PATH", snapshot)
+    monkeypatch.setattr(catalog_ingest, "_api_reported_context_windows", lambda: {})
+    models, endpoints = catalog_ingest._ingested_models_and_endpoints()
+    routes = [ep for ep in endpoints.values() if ep.model_id == MODEL]
+    assert {ep.provider for ep in routes} == {"google-ai-studio", "google-vertex"}
+    for params in [models[MODEL].supported_parameters, *(ep.supported_parameters for ep in routes)]:
+        assert not IGNORED_SAMPLING & set(params)
+        assert {"tools", "tool_choice", "reasoning_effort", "response_format"} <= set(params)
+
+
+def _committed_carbon_row(path: Path) -> dict[str, Any]:
+    rows = json.loads(path.read_text())["models"]
+    return next(row for row in rows if row["id"] == MODEL)
+
+
+def _assert_parameter_contract(row: dict[str, Any]) -> None:
+    params = row.get("supported_parameters")
+    assert isinstance(params, list) and params, "exhaustive array lets the snapshot widen it"
+    assert not IGNORED_SAMPLING & set(params)
+    assert {"tools", "tool_choice", "reasoning_effort", "response_format"} <= set(params)
+
+
+@pytest.mark.parametrize("module,slug,provider", [
+    (gemini, "gemini", "google-ai-studio"),
+    (google_vertex, "google_vertex", "google-vertex"),
+])
+def test_refresh_writers_preserve_carbon_parameter_contract(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, module: Any, slug: str, provider: str,
+) -> None:
+    committed = _committed_carbon_row(module.MANIFEST_PATH)
+    _assert_parameter_contract(committed)
+    manifest = tmp_path / module.MANIFEST_PATH.name
+    manifest.write_text(json.dumps({"provider": provider, "models": [committed]}))
+    monkeypatch.setattr(module, "MANIFEST_PATH", manifest)
+    # Live discovery reports only identity and limits, never parameters.
+    discovered = {
+        "id": MODEL, "upstream_id": "gemini-4-carbon",
+        "context_length": 1_048_576, "max_output_tokens": 32_768,
+    }
+    monkeypatch.setattr(module, "_DISCOVERED_MANIFEST_ROWS", {MODEL: discovered})
+    result = ProviderPricingResult(slug=slug, prices={
+        MODEL: ModelPrice(2_000_000, 10_000_000, prompt_cached_micro_per_m=100_000),
+    }, source="api")
+    module.write_provider_manifest(result)
+    _assert_parameter_contract(_committed_carbon_row(manifest))
