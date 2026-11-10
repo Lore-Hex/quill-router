@@ -314,6 +314,15 @@
     "route_mode": "Prepaid + BYOK",
     "slug": "fireworks"
   },
+  "fortanix": {
+    "card_version": 2,
+    "model_count": 1,
+    "name": "Fortanix",
+    "privacy": "TR-funded ZDR",
+    "route_count": 1,
+    "route_mode": "Prepaid",
+    "slug": "fortanix"
+  },
   "friendli": {
     "card_version": 2,
     "model_count": 5,
