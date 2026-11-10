@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 from trusted_router.app_markup_billing import app_markup_microdollars
-from trusted_router.catalog import endpoint_for_id
+from trusted_router.catalog import endpoint_provider_and_model
 from trusted_router.pricing import signed_receipt_price_microdollars
 from trusted_router.provider_contracts import provider_input_excludes_cache
 from trusted_router.stage_d import (
@@ -324,16 +324,27 @@ def _cap_micro(authorization: Any) -> int:
     return int(authorization.estimated_microdollars)
 
 
+def selected_endpoint_identity(authorization: Any, endpoint_id: str | None) -> tuple[str, str]:
+    """The (provider slug, router model id) a stream's delivered usage is
+    billed in: the selected endpoint's, read from the catalog or, once the
+    endpoint has left it, from the id's own shape
+    (catalog.endpoint_provider_and_model);
+    the authorization's own fields only for an id of neither kind. The
+    selected endpoint may be a fallback candidate on another provider than
+    the authorization names, so the authorization's fields are the last
+    resort, not the first."""
+    identity = endpoint_provider_and_model(endpoint_id)
+    if identity is not None:
+        return identity
+    return str(authorization.provider), str(authorization.model_id)
+
+
 def _selected_provider(authorization: Any, endpoint_id: str) -> str:
-    endpoint = endpoint_for_id(endpoint_id)
-    return endpoint.provider if endpoint is not None else str(authorization.provider)
+    return selected_endpoint_identity(authorization, endpoint_id)[0]
 
 
 def _selected_model_id(authorization: Any, endpoint_id: str) -> str:
-    """The selected endpoint's model id, or the authorization's when the
-    endpoint has left the catalog (as _selected_provider falls back)."""
-    endpoint = endpoint_for_id(endpoint_id)
-    return endpoint.model_id if endpoint is not None else str(authorization.model_id)
+    return selected_endpoint_identity(authorization, endpoint_id)[1]
 
 
 def _utc(value: datetime) -> datetime:
