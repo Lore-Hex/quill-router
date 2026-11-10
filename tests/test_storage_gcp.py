@@ -136,6 +136,42 @@ def test_gcp_store_disables_spanner_builtin_metrics(monkeypatch: Any) -> None:
     assert pool_sizes == [8]
 
 
+def test_gcp_store_watches_the_transport_of_its_own_database(monkeypatch: Any) -> None:
+    from google.cloud import spanner, spanner_v1
+
+    database = object()
+    prepared: list[tuple[str, object]] = []
+    monkeypatch.setattr(
+        "trusted_router.storage_gcp.configure_spanner_rpc_deadlines",
+        lambda target: prepared.append(("deadlines", target)),
+    )
+    monkeypatch.setattr(
+        "trusted_router.storage_gcp.watch_spanner_transport",
+        lambda target: prepared.append(("watch", target)),
+    )
+
+    class FakeSpannerClient:
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+        def instance(self, _instance_id: str) -> FakeSpannerClient:
+            return self
+
+        def database(self, _database_id: str, **_kwargs: Any) -> object:
+            return database
+
+    monkeypatch.setattr(spanner, "Client", FakeSpannerClient)
+    monkeypatch.setattr(spanner_v1, "FixedSizePool", lambda *, size: None)
+
+    SpannerStore(
+        project_id="project",
+        spanner_instance_id="spanner",
+        spanner_database_id="database",
+    )
+
+    assert prepared == [("deadlines", database), ("watch", database)]
+
+
 def test_gcp_api_key_lookup_uses_index_and_never_stores_raw_key() -> None:
     store, db = make_fake_store()
     store._write_entity(
