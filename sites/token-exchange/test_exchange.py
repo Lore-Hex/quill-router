@@ -626,7 +626,7 @@ class ExchangeTests(unittest.TestCase):
                 if market["slug"] == "new-york":
                     from nyte_v2 import PAGES
                     paths += [entry["route"] for key, entry in PAGES.items()
-                              if key != "home" and entry.get("builder") != "anchor"] + ["/badge"]
+                              if key != "home" and entry.get("builder") != "anchor"] + ["/badge"] + ["/verified/maple"]
                 self.assertEqual(
                     [node.text for node in sitemap.findall("s:url/s:loc", namespace)],
                     [f'https://{market["domain"]}{path}' for path in paths],
@@ -639,7 +639,7 @@ class ExchangeTests(unittest.TestCase):
             # referenced is missing.
             assets = output / "assets"
             referenced = set()
-            for path in [*output.glob("*/index.html"), *output.glob("*.html"), output / "index", *assets.glob("*.css"), *assets.glob("*.js")]:
+            for path in [*output.glob("*/index.html"), *output.glob("*.html"), *output.glob("verified/*.html"), output / "index", *assets.glob("*.css"), *assets.glob("*.js")]:
                 referenced.update(re.findall(r"/assets/([A-Za-z0-9._-]+)", path.read_text()))
             self.assertLessEqual({"exchange.css", "archivo.woff2", "river-close.webp", "river-hero.webp", "mark.svg"}, referenced)
             self.assertEqual({path.name for path in assets.iterdir()}, referenced)

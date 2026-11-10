@@ -1,0 +1,58 @@
+/* Provider evidence pages. Loaded after badge.css, which supplies the shared tokens and shell. */
+:root{--ok:#8fd6a8;--wait:#d6bd7d;--bad:#e79a8b;--panel:#112219}
+.evidence-hero{align-items:start;padding-block:72px}
+.evidence-hero h1{font-size:clamp(46px,5.4vw,74px)}
+.evidence-hero .lead{max-width:520px}
+.seal{display:block;width:240px;height:auto;border-radius:6px;box-shadow:0 14px 30px #0005}
+code.inline{font:.92em ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--ink)}
+
+.check{min-width:0;padding:24px;border-radius:8px;background:var(--panel);box-shadow:0 0 0 1px #ffffff16}
+.verdict{display:flex;gap:16px;align-items:flex-start;padding-bottom:20px;border-bottom:1px solid var(--line)}
+.verdict-mark{flex:none;width:14px;height:14px;margin-top:9px;border-radius:50%;background:var(--muted)}
+.verdict-title{font:400 28px/1.15 Georgia,serif;letter-spacing:-.015em}
+.verdict-text{margin-top:8px;font-size:14px;color:var(--muted)}
+.verdict-time{margin-top:8px;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;min-height:18px}
+.check[data-verdict="verified"] .verdict-mark{background:var(--ok)}
+.check[data-verdict="verified"] .verdict-title{color:var(--ok)}
+.check[data-verdict="pending"] .verdict-mark,.check[data-verdict="incomplete"] .verdict-mark{background:var(--wait)}
+.check[data-verdict="pending"] .verdict-title,.check[data-verdict="incomplete"] .verdict-title{color:var(--wait)}
+.check[data-verdict="mismatch"] .verdict-mark,.check[data-verdict="failed"] .verdict-mark{background:var(--bad)}
+.check[data-verdict="mismatch"] .verdict-title,.check[data-verdict="failed"] .verdict-title{color:var(--bad)}
+.check[data-verdict="running"] .verdict-mark{animation:pulse 1s ease-in-out infinite alternate}
+@keyframes pulse{to{opacity:.25}}
+
+.steps{list-style:none;margin:0;padding:0}
+.steps li{position:relative;padding:18px 0 18px 30px;border-bottom:1px solid var(--line)}
+.steps li::before{content:"";position:absolute;left:2px;top:25px;width:10px;height:10px;border-radius:50%;box-shadow:inset 0 0 0 1.5px var(--muted)}
+.steps li[data-state="ok"]::before{background:var(--ok);box-shadow:none}
+.steps li[data-state="wait"]::before{background:var(--wait);box-shadow:none}
+.steps li[data-state="bad"]::before{background:var(--bad);box-shadow:none}
+.steps h3{font:600 14px/1.4 Archivo,Arial,sans-serif}
+.steps p{margin-top:4px;font-size:13px;color:var(--muted)}
+.steps .step-result{margin-top:8px;color:var(--ink);font-weight:500}
+.steps li[data-state="waiting"] .step-result{color:var(--muted);font-weight:400}
+.steps li[data-state="ok"] .step-result{color:var(--ok)}
+.steps li[data-state="wait"] .step-result{color:var(--wait)}
+.steps li[data-state="bad"] .step-result{color:var(--bad)}
+.steps li>code{display:block;margin-top:6px;font:11px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--muted);overflow-wrap:anywhere}
+.steps li>code[hidden]{display:none}
+.check-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px 20px;padding-top:18px;font-size:12px}
+.check-foot a{display:inline-flex;align-items:center;min-height:40px}
+
+.record{margin:24px 0;display:grid;gap:0;border-top:1px solid var(--line)}
+.record>div{display:grid;grid-template-columns:200px 1fr;gap:16px;padding:12px 0;border-bottom:1px solid var(--line)}
+.record dt{font-size:12px;color:var(--muted)}
+.record dd{margin:0;min-width:0;font:12px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--ink);overflow-wrap:anywhere}
+
+.manual{display:grid;grid-template-columns:.8fr 1.2fr;gap:80px;padding-block:72px;border-bottom:1px solid var(--line)}
+.manual-body{min-width:0}
+.manual pre{margin:0;white-space:pre;overflow-x:auto}
+.sources{list-style:none;margin:20px 0 0;padding:0}
+.sources li{display:grid;grid-template-columns:1fr 1fr;gap:6px 24px;align-items:baseline;padding:10px 0;border-bottom:1px solid var(--line);font-size:13px}
+.sources a{color:var(--ink)}
+.sources span{color:var(--muted);font-size:12px}
+
+@media(min-width:901px){.usage-grid.pairs{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:900px){.manual{grid-template-columns:1fr;gap:32px}.evidence-hero{grid-template-columns:1fr}}
+@media(max-width:650px){.evidence-hero{padding-block:44px}.evidence-hero h1{font-size:44px}.check{padding:18px}.verdict-title{font-size:24px}.record>div,.sources li{grid-template-columns:1fr;gap:4px}.manual{padding-block:44px}}
+@media(prefers-reduced-motion:reduce){.check[data-verdict="running"] .verdict-mark{animation:none}}

@@ -38,7 +38,8 @@ class MemberBadgeTests(unittest.TestCase):
         self.assertEqual(len(list((self.root / "assets" / "badges").glob("*.svg"))), 2)
         self.assertNotIn('name="role"', self.page)
         self.assertNotIn('nyte-provider-', self.page)
-        self.assertIn('exclusively for enterprise buyers', self.page)
+        self.assertIn('for enterprise buyers to display to their customers', self.page)
+        self.assertIn('Downloading the artwork does not verify your product', self.page)
         for role in ("enterprise",):
             for theme in ("dark", "light"):
                 name = f"nyte-{role}-{theme}.svg"

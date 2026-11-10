@@ -162,6 +162,10 @@ def render(market: dict, markets: list[dict], version: str) -> str:
     return Template((HERE / "template.html").read_text()).substitute(values)
 
 
+# Suppliers with a published evidence page at /verified/<name>.
+VERIFIED_PROVIDERS = ("maple",)
+
+
 def build(output: Path) -> None:
     markets = load_markets()
     assets = output / "assets"
@@ -176,8 +180,13 @@ def build(output: Path) -> None:
     for page in ("badge",):
         for name in (page, f"{page}.html"):
             shutil.copyfile(HERE / f"{page}.html", output / name)
-    for name in ("badge.css", "badge.js"):
+    for name in ("badge.css", "badge.js", "verified.css", "verified.js"):
         shutil.copyfile(HERE / name, assets / name)
+    # Provider evidence pages: where a supplier's Privacy Secured seal links.
+    (output / "verified").mkdir(exist_ok=True)
+    for provider in VERIFIED_PROVIDERS:
+        for name in (provider, f"{provider}.html"):
+            shutil.copyfile(HERE / f"verified-{provider}.html", output / "verified" / name)
     build_badges(assets / "badges")
     build_press(output)
     build_token_index(output)
@@ -213,7 +222,9 @@ def build(output: Path) -> None:
             provider_page = "".join(
                 f'<url><loc>https://nytokenexchange.com{entry["route"]}</loc></url>'
                 for key, entry in PAGES.items() if key != "home" and entry.get("builder") != "anchor"
-            ) + '<url><loc>https://nytokenexchange.com/badge</loc></url>'
+            ) + '<url><loc>https://nytokenexchange.com/badge</loc></url>' + "".join(
+                f'<url><loc>https://nytokenexchange.com/verified/{provider}</loc></url>' for provider in VERIFIED_PROVIDERS
+            )
         (folder / "sitemap.xml").write_text(
             f'<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://{market["domain"]}/</loc></url>{provider_page}</urlset>'
         )
