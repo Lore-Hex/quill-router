@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 
 
 @dataclass(frozen=True)
@@ -101,7 +102,8 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
             "routing each task to the right one. Today we launch three: Prometheus 4.0, "
             "Liberty 4.0 and Polyphemus 1.0."
         ),
-        published_date="2026-11-04",
+        # Embargoed: published_posts() hides it until this date.
+        published_date="2026-11-12",
         source_label="Joseph Perla",
         source_url=None,
         body_html="""
@@ -117,7 +119,7 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
 
 <p><strong>Polyphemus 1.0</strong> (<span class="mono">trustedrouter/polyphemus-1.0</span>) is a routing combo. It reads your task, picks the right model for it, and runs that model, so you get the strengths of many models under one id. It remembers your session so follow-up turns stay cache-friendly.</p>
 
-<p>Combos also cost less. At list prices, a Liberty 4.0 or Prometheus 4.0 request costs roughly 60% less than the same request to Claude Fable 5.1, even though every request runs five to eight models. Each open model costs a small fraction of Fable per token. Polyphemus costs 60 to 80% less, depending on which model it picks for the task.</p>
+<p>Combos also cost less. At list prices, Liberty 4.0 and Prometheus 4.0 cost roughly 60% less than Claude Fable 5.1, and Polyphemus 1.0 costs 60 to 80% less, depending on the model it picks.</p>
 
 <p>All three are live on TrustedRouter now. Same key, same base URL, one model id. Stop picking a model. Pick a combo.</p>
 """,
@@ -2445,3 +2447,31 @@ The model already knows the truth. Whether you hear it depends on whose server y
 )
 
 BLOG_POSTS_BY_SLUG: dict[str, BlogPost] = {post.slug: post for post in BLOG_POSTS}
+
+#: The blog's day turns over at midnight US Eastern standard time. A fixed
+#: offset, because the serving image is not guaranteed to carry a tz database
+#: and a missing one would take the whole blog down.
+_BLOG_DAY = timezone(timedelta(hours=-5))
+
+
+def blog_today() -> str:
+    return datetime.now(_BLOG_DAY).date().isoformat()
+
+
+def published_posts(today: str | None = None) -> tuple[BlogPost, ...]:
+    """The posts a reader may see: everything dated today or earlier.
+
+    A post with a later `published_date` is embargoed. It is left out of the
+    index, the sitemap and the structured data, and its own URL is a 404, so
+    dating a post ahead is all it takes to hold it and nothing has to be
+    deployed on the day.
+    """
+    day = today or blog_today()
+    return tuple(post for post in BLOG_POSTS if post.published_date <= day)
+
+
+def published_post(slug: str, today: str | None = None) -> BlogPost | None:
+    post = BLOG_POSTS_BY_SLUG.get(slug)
+    if post is None or post.published_date > (today or blog_today()):
+        return None
+    return post

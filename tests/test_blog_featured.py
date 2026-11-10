@@ -11,10 +11,16 @@ a typo in a slug would be invisible in review and in production.
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from trusted_router.config import Settings
-from trusted_router.content.blog import BLOG_POSTS_BY_SLUG, FEATURED_SLUGS
+from trusted_router.content.blog import (
+    BLOG_POSTS_BY_SLUG,
+    FEATURED_SLUGS,
+    published_post,
+    published_posts,
+)
 from trusted_router.dashboard import _blog_index_posts, _featured_blog_posts
 
 
@@ -62,7 +68,7 @@ def test_the_archive_is_always_newest_first() -> None:
     dates = [item.post.published_date for item in posts]
 
     assert dates == sorted(dates, reverse=True)
-    assert len(posts) == len(BLOG_POSTS_BY_SLUG)
+    assert len(posts) == len(published_posts())
 
 
 def test_the_blog_index_shows_featured_above_the_archive(client: TestClient) -> None:
@@ -90,8 +96,8 @@ def test_every_post_is_still_listed(client: TestClient) -> None:
     quietly filtered it."""
     html = client.get("/blog", headers={"accept": "text/html"}).text
 
-    for slug in BLOG_POSTS_BY_SLUG:
-        assert f'href="/blog/{slug}"' in html, slug
+    for post in published_posts():
+        assert f'href="{post.href}"' in html, post.slug
 
 
 def test_receipt_post_distinguishes_commitment_checks_from_chain_verification() -> None:
@@ -102,3 +108,44 @@ def test_receipt_post_distinguishes_commitment_checks_from_chain_verification() 
         in body
     )
     assert "verified before it is recorded" not in body
+
+
+COMBO = "combo-models-beat-the-best-model"
+
+
+def test_a_post_dated_ahead_is_held_until_its_date() -> None:
+    """Dating a post ahead embargoes it; the day arriving releases it."""
+    assert BLOG_POSTS_BY_SLUG[COMBO].published_date == "2026-11-12"
+
+    assert published_post(COMBO, today="2026-11-11") is None
+    assert COMBO not in {post.slug for post in published_posts(today="2026-11-11")}
+
+    assert published_post(COMBO, today="2026-11-12") is BLOG_POSTS_BY_SLUG[COMBO]
+    assert COMBO in {post.slug for post in published_posts(today="2026-11-12")}
+    assert len(published_posts(today="9999-12-31")) == len(BLOG_POSTS_BY_SLUG)
+
+
+def test_an_embargoed_post_is_reachable_nowhere(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The index, the sitemap and the post's own URL all have to agree, or the
+    post leaks through whichever one was forgotten."""
+    from trusted_router.content import blog
+
+    def surfaces() -> tuple[int, str]:
+        page = client.get(f"/blog/{COMBO}", headers={"accept": "text/html"})
+        listed = "".join(
+            client.get(path, headers={"accept": "text/html"}).text
+            for path in ("/blog", "/sitemap-core.xml")
+        )
+        return page.status_code, listed
+
+    monkeypatch.setattr(blog, "blog_today", lambda: "2026-11-11")
+    status, listed = surfaces()
+    assert status == 404
+    assert COMBO not in listed
+
+    monkeypatch.setattr(blog, "blog_today", lambda: "2026-11-12")
+    status, listed = surfaces()
+    assert status == 200
+    assert listed.count(COMBO) >= 2
