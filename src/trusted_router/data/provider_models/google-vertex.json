@@ -3,7 +3,7 @@
   "provider": "google-vertex",
   "source": "https://aiplatform.googleapis.com/v1beta1/publishers/google/models",
   "pricing_source": "https://cloud.google.com/vertex-ai/generative-ai/pricing",
-  "generated_at": "2026-11-09T20:34:59Z",
+  "generated_at": "2026-11-10T07:20:42Z",
   "model_count": 47,
   "models": [
     {
@@ -1154,11 +1154,12 @@
       "routable_reason": "unsupported-vertex-api"
     },
     {
-      "display_name": "anthropic/claude-fable-5.2",
+      "display_name": "Claude Fable 5.2",
       "title": "claude-fable-5-2",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -1170,10 +1171,15 @@
       "id": "anthropic/claude-fable-5.2",
       "upstream_id": "claude-fable-5-2",
       "routable": false,
-      "routable_reason": "vertex-metadata-unavailable",
+      "routable_reason": "vertex-publisher-policy-review",
       "input_token_price_per_m": 8000000,
       "output_token_price_per_m": 40000000,
-      "cached_input_token_price_per_m": 200000
+      "cached_input_token_price_per_m": 200000,
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "features": [
+        "function-calling"
+      ]
     }
   ],
   "price_scale": "microdollars_per_million"

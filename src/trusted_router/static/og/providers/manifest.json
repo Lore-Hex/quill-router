@@ -235,10 +235,10 @@
   },
   "decisionmodelsio-eu": {
     "card_version": 2,
-    "model_count": 7,
+    "model_count": 6,
     "name": "Decision Models (EU)",
     "privacy": "Policy documented",
-    "route_count": 7,
+    "route_count": 6,
     "route_mode": "Prepaid",
     "slug": "decisionmodelsio-eu"
   },
@@ -658,10 +658,10 @@
   },
   "openai": {
     "card_version": 2,
-    "model_count": 31,
+    "model_count": 30,
     "name": "OpenAI",
     "privacy": "TR-funded ZDR",
-    "route_count": 56,
+    "route_count": 55,
     "route_mode": "Prepaid + BYOK",
     "slug": "openai"
   },
@@ -892,10 +892,10 @@
   },
   "tencent": {
     "card_version": 2,
-    "model_count": 19,
+    "model_count": 18,
     "name": "Tencent Cloud TokenHub",
     "privacy": "Policy documented",
-    "route_count": 35,
+    "route_count": 33,
     "route_mode": "Prepaid + BYOK",
     "slug": "tencent"
   },

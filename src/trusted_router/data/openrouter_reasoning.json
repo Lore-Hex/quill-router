@@ -1304,6 +1304,15 @@
       ],
       "default_effort": "high"
     },
+    "nex-agi/nex-n2.6": {
+      "mandatory": true,
+      "default_enabled": false,
+      "supported_efforts": [
+        "high",
+        "medium"
+      ],
+      "default_effort": "high"
+    },
     "nousresearch/hermes-4-405b": {
       "mandatory": false,
       "default_enabled": false,
@@ -2573,19 +2582,6 @@
       ],
       "default_effort": "high"
     },
-    "stealth/crouton-alpha": {
-      "mandatory": true,
-      "default_enabled": false,
-      "supported_efforts": [
-        "max",
-        "xhigh",
-        "high",
-        "medium",
-        "low",
-        "minimal"
-      ],
-      "default_effort": "max"
-    },
     "stepfun/step-3.5-flash": {
       "mandatory": true,
       "default_enabled": false,
@@ -2668,6 +2664,18 @@
         "low",
         "minimal",
         "none"
+      ],
+      "default_effort": "high"
+    },
+    "thinkingmachines/inkling-2-small:free": {
+      "mandatory": true,
+      "default_enabled": true,
+      "supported_efforts": [
+        "max",
+        "high",
+        "medium",
+        "low",
+        "minimal"
       ],
       "default_effort": "high"
     },

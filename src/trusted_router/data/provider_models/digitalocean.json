@@ -2,7 +2,7 @@
   "_about": "Provider-native DigitalOcean Gradient AI serverless catalog. Availability comes from /v1/models and rates from DigitalOcean's official pricing documentation.",
   "provider": "digitalocean",
   "source": "https://inference.do-ai.run/v1/models",
-  "generated_at": "2026-11-09T20:34:59Z",
+  "generated_at": "2026-11-10T07:20:42Z",
   "price_scale": "microdollars_per_million",
   "model_count": 23,
   "models": [
@@ -74,7 +74,8 @@
       "max_output_tokens": 384000,
       "input_token_price_per_m": 140000,
       "output_token_price_per_m": 280000,
-      "cached_input_token_price_per_m": 28000
+      "cached_input_token_price_per_m": 28000,
+      "missing_since": "2026-11-10"
     },
     {
       "display_name": "DeepSeek V4 Pro",
@@ -168,7 +169,8 @@
       "max_output_tokens": 16384,
       "input_token_price_per_m": 250000,
       "output_token_price_per_m": 870000,
-      "cached_input_token_price_per_m": 50000
+      "cached_input_token_price_per_m": 50000,
+      "missing_since": "2026-11-10"
     },
     {
       "display_name": "MiniMax M2.5",
@@ -431,7 +433,8 @@
       "max_output_tokens": 131072,
       "input_token_price_per_m": 550000,
       "output_token_price_per_m": 3500000,
-      "cached_input_token_price_per_m": 111000
+      "cached_input_token_price_per_m": 111000,
+      "missing_since": "2026-11-10"
     },
     {
       "display_name": "MiMo-V2.5",
