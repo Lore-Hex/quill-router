@@ -51,6 +51,23 @@ def test_tencent_step5_october_price_matches_published_singapore_tariff() -> Non
     assert step.tiers[0].prompt_cached_micro_per_m == 50_000
 
 
+def test_tencent_accepts_the_api_parameter_column() -> None:
+    # Refresh run 42864346256 (2026-11-10) held Tencent: the Singapore table
+    # gained a "Model (API Parameter)" second column.
+    html = (FIXTURES / "tencent_singapore_prices_2026-11-10.html").read_text()
+    prices = tencent.parse_prices(html)
+    assert prices["glm-5.3"].prompt_micro_per_m == 1_400_000
+    assert prices["hy4"].prompt_micro_per_m == 834_000
+    assert [t.completion_micro_per_m for t in prices["minimax-m3"].tiers] == [1_200_000, 2_400_000]
+    assert prices["deepseek-v4.1-flash"].prompt_micro_per_m == 150_000
+    # Explicit cache-write tariffs still exclude the model; vendor-direct rows stay out.
+    assert "kimi k3.1 pro" not in prices
+    assert all("vendor direct" not in key for key in prices)
+    # Only that exact column is dropped; any other new column still fails closed.
+    with pytest.raises(ValueError, match="unexpected pricing columns"):
+        tencent.parse_prices(html.replace("Model (API Parameter)", "Model (Region)"))
+
+
 @pytest.mark.parametrize("old,new", [
     ("Singapore", "Somewhere"), ("USD / million tokens", "CNY / million tokens"),
     ("Input length 512k+", "Input length 256k+"),

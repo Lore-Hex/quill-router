@@ -27,6 +27,13 @@ def parse(html: str) -> dict[str, dict[str, object]]:
             html,
             flags=re.I | re.S | re.M,
         ))
+        # The Image section gained its own "[tab] Standard" on 2026-11-10;
+        # only a Standard tab with MiniMax-M3 rows prices the LLM.
+        standard_sections = [
+            section for section in standard_sections
+            if re.search(r"^[ \t]*>?[ \t]*\|\s*\*{0,2}MiniMax-M3\*{0,2}(?=\s|<br)",
+                         section.group(1), flags=re.I | re.M)
+        ]
         if len(standard_sections) == 1:
             standard_match = standard_sections[0]
     if standard_match:

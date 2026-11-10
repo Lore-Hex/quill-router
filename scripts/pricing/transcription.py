@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import re
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -17,6 +17,15 @@ from scripts.pricing.currency import ECB_FX_URL, eur_microdollars_per_million, u
 from trusted_router.transcription import TRANSCRIPTION_MODELS
 
 SNAPSHOT = Path(__file__).resolve().parents[2] / "src/trusted_router/data/transcription_pricing.json"
+MISTRAL_MODELS_URL = "https://docs.mistral.ai/models"
+_MISTRAL_DEPRECATED = "mistralai/voxtral-mini-2602"
+# Mistral's models page (checked 2026-11-10) deprecates voxtral-mini-2602 on
+# 10/31/2026 and retires it on 4/30/2027 (date only).
+MISTRAL_VOXTRAL_MINI_2602_RETIRES_ON = date(2027, 4, 30)
+
+
+class MissingTranscriptionTariff(ValueError):
+    """The source lists no tariff for the model, rather than a changed one."""
 
 
 def parse_token_prices(raw: str) -> dict[str, int]:
@@ -87,6 +96,8 @@ def parse_price(model: str, raw: str, *, usd_eur_rate: Decimal | None = None) ->
         else:
             raise ValueError("Unknown transcription tariff")
         values = {Decimal(value) for value in matches}
+        if not values:
+            raise MissingTranscriptionTariff("Missing or conflicting transcription tariff")
     if len(values) != 1:
         raise ValueError("Missing or conflicting transcription tariff")
     micro = values.pop() * 1_000_000
@@ -99,6 +110,32 @@ def _fetch_text(url: str) -> str:
     response = requests.get(url, timeout=30)
     response.raise_for_status()
     return response.text
+
+
+def _require_scheduled_mistral_retirement(today: date) -> None:
+    """Keep Voxtral Mini Transcribe 2's committed tariff only while retiring.
+
+    Mistral deprecated voxtral-mini-2602 on 2026-10-31 (retiring 2027-04-30,
+    replaced by Voxtral Mini Transcribe 3) and dropped its price from the
+    model page. The committed tariff stays only while the models page still
+    shows that exact schedule; anything else holds the source for review.
+    """
+    from scripts.pricing.speech import parse_mistral_lifecycle
+
+    deprecated_on, retires_on = parse_mistral_lifecycle(
+        _fetch_text(MISTRAL_MODELS_URL), "voxtral-mini-2602"
+    )
+    if retires_on != MISTRAL_VOXTRAL_MINI_2602_RETIRES_ON:
+        raise ValueError(
+            f"Mistral moved the {_MISTRAL_DEPRECATED} retirement to {retires_on.isoformat()}; "
+            "update MISTRAL_VOXTRAL_MINI_2602_RETIRES_ON"
+        )
+    if not deprecated_on <= today < retires_on:
+        raise ValueError("Missing or conflicting transcription tariff")
+
+
+def _today() -> date:
+    return datetime.now(UTC).date()
 
 
 def _source_prices(provider: str, before: dict[str, Any]) -> dict[str, Any]:
@@ -119,7 +156,13 @@ def _source_prices(provider: str, before: dict[str, Any]) -> dict[str, Any]:
                     raise ValueError(f"Transcription token price change requires review: {model} {kind}")
             updates["token_prices"][model] = token_prices
             continue
-        price = parse_price(model, raw, usd_eur_rate=rate)
+        try:
+            price = parse_price(model, raw, usd_eur_rate=rate)
+        except MissingTranscriptionTariff:
+            if model != _MISTRAL_DEPRECATED:
+                raise
+            _require_scheduled_mistral_retirement(_today())
+            continue
         kind = "request_prices" if spec.request_cost_microdollars else "minute_prices"
         previous = before[kind][model]
         if price >= previous * 2 or price * 2 <= previous:
