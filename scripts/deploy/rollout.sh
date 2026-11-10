@@ -815,8 +815,9 @@ ENV_VARS=(
   # the workspaces are set and the policy is empty. The activation tool's
   # release shadow-opt-in requires --expires-at and opt-out clears it.
   "TR_ASYNC_SETTLE_SHADOW_EXPIRES_AT="
-  # R3: customer pilot only, after the probe drain measurement, single crash
-  # trial and rollback rehearsal. Apply on R1 protection, retain worker drain.
+  # R3: turned on for the customer pilot, after the probe drain measurement,
+  # single crash trial and rollback rehearsal; every workspace since
+  # 2026-11-10 (below). Apply on R1 protection, retain worker drain.
   # Admission-on edge policy passes async-v1 authorizes to Python.
   "TR_ASYNC_SETTLE_ENABLED=true"
   "TR_ASYNC_SETTLE_PROTECTION=true"

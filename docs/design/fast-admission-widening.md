@@ -923,6 +923,13 @@ Fastest first, each narrower than the next:
 7. `TR_FASTPATH_PILOT_ENABLED=false`: every new authorize takes today's
    path at once.
 
+**With a reserved list pinned (§9.1).** Two of these steps move the
+reserved pin in the same deploy, or the settings refuse to start and the
+previous revision keeps serving: step 4 for a workspace on
+`TR_ASYNC_SETTLE_FASTPATH_RESERVED_WORKSPACES` (take it off that list as it
+goes on the exclude list), and `TR_FASTPATH_PILOT_ALL=false` (empty the
+reserved list). The other steps leave the reserved pin as it is.
+
 ## 9. Async admission
 
 Today `async_settle_pilot_allows(w)` is false for `w` in
