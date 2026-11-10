@@ -74,6 +74,24 @@ def test_public_route_supports_explicit_fortanix_and_zdr_filters():
     ]
 
 
+def test_token_limit_capability_matches_parameter_aware_routing():
+    routes = chat_route_endpoint_candidates(
+        {
+            "model": MODEL_ID,
+            "max_tokens": 256,
+            "requested_parameters": ["max_tokens"],
+            "provider": {
+                "only": ["fortanix"], "allow_fallbacks": False, "require_parameters": True,
+            },
+        },
+        Settings(environment="test"),
+    )
+    assert len(routes) == 1
+    model, endpoint = routes[0]
+    assert model.id == MODEL_ID
+    assert model.supported_parameters == endpoint.supported_parameters == ("max_tokens",)
+
+
 @pytest.mark.parametrize("provider", [{"usage": "byok"}, {"min_privacy": "confidential"}])
 def test_unsupported_public_modes_remain_closed(provider):
     with pytest.raises(HTTPException):
