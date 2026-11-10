@@ -25,9 +25,9 @@ to the newer push's run, but only when that run is ready to take over:
 Exit 0 to deploy BASE, 1 to skip. A diverged history (BASE no longer on
 main), a truncated file list or a failed compare exits 1: BASE may not be a
 state main ever had, so the newer run deploys instead. A waiting run counts
-as the successor only when it is a push run on main whose commit descends
-from BASE and is still on main (equal to or an ancestor of MAIN_SHA); a
-manual dispatch, a side-branch run or a rerun of a commit that a force-push
+as the successor only when it is a push or explicit track_main dispatch on
+main whose commit descends from BASE and is still on main (equal to or an
+ancestor of MAIN_SHA); a pinned manual dispatch, a side-branch run or a rerun of a commit that a force-push
 removed cannot advance main and must not make this run skip. A failed,
 timed-out or empty lookup of the waiting run, its lineage or its CI exits 0:
 the only safe reading of
@@ -169,11 +169,28 @@ def may_deploy(compare: dict) -> bool:
     return files is not None and not touches_deploy_paths(files)
 
 
+def tracks_main(run: dict) -> bool:
+    """A main push or explicitly unpinned dispatch, never a legacy/manual pin.
+
+    deploy.yml derives this exact title from its boolean track_main input and
+    immutable SHA. The run-list API does not expose workflow-dispatch inputs.
+    Actor identity alone cannot distinguish automation from an intentional pin.
+    """
+
+    if run.get("headBranch") != MAIN_BRANCH:
+        return False
+    return run.get("event") == "push" or (
+        run.get("event") == "workflow_dispatch"
+        and bool(run.get("headSha"))
+        and run.get("displayTitle") == f"Deploy latest main {run['headSha']}"
+    )
+
+
 def pending_successor(runs: object, *, base: str) -> str | None:
-    """The head commit of the newest push run on main still waiting to start, from `gh run list` JSON.
+    """The head commit of the newest main-tracking run still waiting to start, from `gh run list` JSON.
 
     The listing includes the calling run itself; whatever status GitHub reports
-    for it, a run for BASE is never its own successor. A manual dispatch or a run
+    for it, a run for BASE is never its own successor. A pinned dispatch or a run
     on another branch cannot advance main, so it is not a successor either.
     """
 
@@ -182,7 +199,7 @@ def pending_successor(runs: object, *, base: str) -> str | None:
     for run in runs:  # newest first
         if not isinstance(run, dict) or run.get("status") not in _WAITING_RUN_STATUSES:
             continue
-        if run.get("event") != "push" or run.get("headBranch") != MAIN_BRANCH:
+        if not tracks_main(run):
             continue
         sha = run.get("headSha")
         if sha and sha != base:
@@ -245,7 +262,7 @@ def _gh_json(args: list[str], deadline: float | None = None) -> object | None:
 
 
 def successor_ready(repo: str, base: str, head: str) -> tuple[bool, str]:
-    """Whether a waiting push run on main can deploy at once, and why.
+    """Whether a main-tracking run can deploy at once, and why.
 
     Its commit must descend from BASE and still be on main (equal to or an
     ancestor of HEAD, main's head as observed by the caller), and its CI run
@@ -253,11 +270,11 @@ def successor_ready(repo: str, base: str, head: str) -> tuple[bool, str]:
     """
 
     runs = _gh_json(["run", "list", "--repo", repo, "--workflow", DEPLOY_WORKFLOW, "--limit", "100",
-                     "--json", "databaseId,status,conclusion,headSha,headBranch,event"])
+                     "--json", "databaseId,status,conclusion,headSha,headBranch,event,displayTitle"])
     if not isinstance(runs, list):
         return False, "deploy queue is unknown"
     for run in runs:
-        if not isinstance(run, dict) or run.get("event") != "push" or run.get("headBranch") != MAIN_BRANCH:
+        if not isinstance(run, dict) or not tracks_main(run):
             continue
         successor = run.get("headSha")
         if not successor or successor == base or not run.get("databaseId"):

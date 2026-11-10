@@ -102,6 +102,27 @@ regional/public checks and durable lease finalization remain production-gated.
 Cloud release reconciliation recognizes reusable-job names (rollout / JOB)
 and still requires all GCP production gates before AWS/Azure promotion.
 
+### Automatic price dispatches follow main
+
+The price publisher explicitly dispatches deploy.yml because its GITHUB_TOKEN
+push does not trigger another workflow. Previously this took the pinned-manual
+path, bypassing both supersession and the post-admission ancestry check. On
+2026-11-10 an obsolete price snapshot started another full rollout even though
+a newer green release already had a prepared image.
+
+Price dispatches now set `track_main=true`. Both checks apply as on a push;
+only a prepared, green, still-on-main successor can displace the snapshot.
+The wrapper encodes this boolean and its exact SHA in its run name so successor
+discovery can recognize such dispatches without guessing from the actor.
+Pinned manual dispatches retain the default `track_main=false` behavior and
+are not successors. `track_main=true` cannot be combined with `hotfix=true`.
+
+No active rollout is interrupted and no lease is cleared. Cancellation remains
+push-only with its existing preparation/test-start/window guards. Workflows
+already queued from older source retain their old behavior; this change does
+not retroactively rewrite them. CI, image identity, holdback, attestation,
+billing, regional/public/worker checks and finalization remain unchanged.
+
 ### Coverage through sys.monitoring
 
 The default suite's coverage pass ran on coverage.py's C tracer with branch

@@ -161,6 +161,7 @@ def test_worker_uses_same_release_hotfix_decision_as_parent(hotfix: bool) -> Non
     # releases fall through to CI. The script harness covers pending CI in both.
     prefix = parent[:parent.index('echo "waiting for CI')]
     script = prefix.replace("${{ inputs.hotfix }}", str(hotfix).lower()) + "echo CI_REQUIRED\n"
+    script = script.replace("${{ inputs.track_main }}", "false")
     result = subprocess.run(  # noqa: S603 - local workflow decision, no cloud commands
         [shutil.which("bash") or "/bin/bash", "-c", script], capture_output=True, text=True, check=True,
     )

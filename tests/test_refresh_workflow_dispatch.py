@@ -366,7 +366,7 @@ def assert_snapshot_published(
     )
     assert successful[-1]["headSha"] == dispatched_sha, "Successful CI must use the dispatched SHA"
     assert repo.dispatches == [repo.dispatch("ci.yml", "automation/price-refresh-42")] * rounds + [
-        repo.dispatch("deploy.yml", "main"),
+        repo.dispatch("deploy.yml", "main") + ["-f", "track_main=true"],
     ]
     status_calls = [call for call in repo.calls if call[0] == "api"]
     posts = [call for call in status_calls if "POST" in call]
@@ -767,7 +767,7 @@ def test_price_refresh_checks_exact_branch_sha_before_advancing_main() -> None:
     )
     branch_ci_dispatch = "gh workflow run ci.yml \\\n"
     deploy_dispatch = (
-        'gh workflow run deploy.yml --ref main --repo "${GITHUB_REPOSITORY}"'
+        'gh workflow run deploy.yml --ref main --repo "${GITHUB_REPOSITORY}" -f track_main=true'
     )
 
     assert 'BRANCH="automation/price-refresh-${GITHUB_RUN_ID}"' in workflow
