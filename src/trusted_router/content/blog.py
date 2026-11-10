@@ -117,6 +117,8 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
 
 <p><strong>Polyphemus 1.0</strong> (<span class="mono">trustedrouter/polyphemus-1.0</span>) is a routing combo. It reads your task, picks the right model for it, and runs that model, so you get the strengths of many models under one id. It remembers your session so follow-up turns stay cache-friendly.</p>
 
+<p>Combos also cost less. At list prices, a Liberty 4.0 or Prometheus 4.0 request costs roughly 60% less than the same request to Claude Fable 5.1, even though every request runs five to eight models. Each open model costs a small fraction of Fable per token. Polyphemus costs 60 to 80% less, depending on which model it picks for the task.</p>
+
 <p>All three are live on TrustedRouter now. Same key, same base URL, one model id. Stop picking a model. Pick a combo.</p>
 """,
     ),
