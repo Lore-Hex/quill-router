@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
+from trusted_router.ai_referrals import ai_referral_platform
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR
 
 if TYPE_CHECKING:
@@ -115,6 +116,7 @@ class FunnelRow:
         )
         return {
             "source": self.source,
+            "ai_referral_platform": ai_referral_platform(self.source),
             "medium": self.medium,
             "campaign": self.campaign,
             "creative": self.creative,

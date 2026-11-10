@@ -27,6 +27,7 @@ from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import Request, Response
 
+from trusted_router.ai_referrals import ai_referral_platform
 from trusted_router.config import Settings
 from trusted_router.exchange_analytics import EXCHANGE_MARKET_SLUGS, HOST_RE, PAGE_RE, market_for
 from trusted_router.google_ads_conversions import encrypt_google_ads_click_id
@@ -56,6 +57,9 @@ _AUTOMATED_USER_AGENT_TOKENS = (
     "crawler",
     "spider",
     "facebookexternalhit",
+    "chatgpt-user",
+    "claude-user",
+    "perplexity-user",
     "preview",
     "slack-imgproxy",
 )
@@ -136,7 +140,7 @@ def prepare_request_attribution(
             google_click_id=google_click_id,
         )
         changed = True
-    elif _has_explicit_campaign_touch(request):
+    elif _has_explicit_campaign_touch(request) or ai_referral_platform(_external_referer_host(request)):
         first_touch = dict(context.first_touch)
         # The experiment redirect happens after the first landing. Freeze its
         # first actual assignment while retaining the original acquisition touch.
@@ -797,6 +801,7 @@ def _log_conversion(
 def _safe_touch_log_fields(touch: dict[str, str]) -> dict[str, object]:
     return {
         "utm_source": touch.get("utm_source"),
+        "ai_referral_platform": ai_referral_platform(touch.get("utm_source")),
         "utm_medium": touch.get("utm_medium"),
         "utm_campaign": touch.get("utm_campaign"),
         "utm_term": touch.get("utm_term"),
