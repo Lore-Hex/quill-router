@@ -17,6 +17,7 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 import httpx  # noqa: E402
 
+from trusted_router.ai_referrals import ai_referral_platform  # noqa: E402
 from trusted_router.google_ads_reporting import (  # noqa: E402
     GoogleAdsAccessTokenProvider,
     GoogleAdsReportingClient,
@@ -48,6 +49,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--days", type=int, default=30)
     parser.add_argument("--dataset", default="trusted-router-logs")
     parser.add_argument("--source")
+    parser.add_argument("--ai-only", action="store_true", help="Report AI-referred acquisition cohorts, not citation counts; disables ad-spend queries.")
     parser.add_argument("--campaign")
     parser.add_argument("--creative")
     parser.add_argument("--experiment-id")
@@ -90,6 +92,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    if getattr(args, "ai_only", False):
+        args.google_ads_spend = "off"
     if not 1 <= args.days <= 365:
         raise SystemExit("--days must be between 1 and 365")
     if not 0 <= args.cohort_lag_days <= 90:
@@ -124,6 +128,8 @@ def main() -> int:
         experiment_id=args.experiment_id,
         experiment_cell_id=args.experiment_cell_id,
     )
+    if getattr(args, "ai_only", False):
+        rows = [row for row in rows if ai_referral_platform(row.source)]
     summary = summarize_measurement(
         rows,
         source=args.source,
@@ -135,6 +141,8 @@ def main() -> int:
             json.dumps(
                 {
                     "measurement": summary.as_dict(),
+                    "traffic_scope": "ai_referral_cohorts" if getattr(args, "ai_only", False) else "all_matching_cohorts",
+                    "citation_counts_available": False,
                     "cohort": {
                         "start_at": cohort_start.isoformat(),
                         "end_at": cohort_end.isoformat(),
@@ -159,6 +167,8 @@ def main() -> int:
             )
         )
     else:
+        if getattr(args, "ai_only", False):
+            print("AI referral cohorts by landing page. Observed referrals and conversions, not citation counts.\n")
         print(
             f"Creative attribution: recovered {recovery['recovered_records']} records; "
             f"{recovery['unresolved_records']} remain unattributed."
@@ -188,7 +198,8 @@ def fetch_axiom_cohort_records(
         )
         if completed.returncode != 0:
             raise SystemExit(completed.stderr.strip() or "Axiom query failed")
-        batch = parse_axiom_json_lines(completed.stdout)
+        # The CLI emits [] for an empty interval, but JSONL for populated ones.
+        batch = [] if completed.stdout.strip() == "[]" else parse_axiom_json_lines(completed.stdout)
         if len(batch) >= 1000:
             if end - start <= dt.timedelta(seconds=1):
                 raise SystemExit("Axiom query remains truncated at a one-second window")

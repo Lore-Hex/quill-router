@@ -132,8 +132,8 @@ order:
 |---|---|
 | `{}` | the header list is anything but exactly `["async-v1"]` (`async_settle.py:290`; `gateway.py:3180`) |
 | shape A | a replay; any undeclared top-level body member (`body.model_extra`); `route_type` absent or other than `chat.completions` and `responses`; `input_modalities` present at all, `null` included (`model_fields_set`); a `requested_parameters` entry outside the 15 ordinary parameters (`async_settle.py:297-310`) |
-| shape A | `Eligibility` invalid, or an exclusion (`billing_snapshot.py:181-205`): untyped records, usage other than `Credits`, authority other than `local` (a federated workspace or key is `federated`), an unsupported route, a `service_tier` other than absent or `default`, or any nonzero or true markup, fee, custom or user model, tool, search, image or video cost, `partner` (a `model` not starting `openai/` or `anthropic/`, `async_settle.py:324`), liberty, native batch, fusion, polyphemus or private-tier fact. `streamed` itself is not an exclusion |
-| shape A | the snapshot fails to build or validate: a raw price value that is not a strict non-negative int64 (`billing_snapshot.py:446-457`); a candidate's provider other than `openai` or `anthropic`, a model id not under its provider, a usage, version or convention the DTO refuses, a request fee; tiers out of order, an unbounded tier not last, more than 64 tiers; no candidate, more than 64, duplicates (`billing_snapshot.py:220-271`, `436-474`; raised inside `projection` and caught, `async_settle.py:235-240`) |
+| shape A | `Eligibility` invalid, or an exclusion (`billing_snapshot.py:181-205`): untyped records, usage other than `Credits`, authority other than `local` (a federated workspace or key is `federated`), an unsupported route, a `service_tier` other than absent or `default`, or any nonzero or true markup, fee, custom or user model, tool, search, image or video cost, `partner` (since 2026-11-09 the settle path's own partner classifier over the requested model, route and idempotency key, or a requested TrustedRouter program, meta-router or alias name or the partner model's, as the model or a fallback: `async_settle.py`, `requested_facts` and `names_program_model`), liberty, native batch, fusion, polyphemus (a candidate is the selector's endpoint) or private-tier fact (a candidate with the provider-private tier basis, `_provider_price_tier_input_tokens`'s own condition). `streamed` itself is not an exclusion |
+| shape A | the snapshot fails to build or validate: a raw price value that is not a strict non-negative int64 (`billing_snapshot.py:446-457`); a candidate's provider or model id outside `Identity` (every provider's Credits endpoint is a candidate since 2026-11-09, the model any publisher's), a usage, version or convention the DTO refuses (the prompt convention follows the provider slug and the model id: anthropic, and amazon-bedrock or google-vertex serving an `anthropic/` model, exclude cached tokens), a request fee; tiers out of order, an unbounded tier not last, more than 64 tiers; no candidate, more than 64, duplicates (`billing_snapshot.py:220-271`, `436-474`; raised inside `projection` and caught, `async_settle.py:235-240`) |
 | shape A | no runtime or no signer, `epoch < 1`, an empty effective journal region, no `credit_reservation_id`, an authorization `settlement` other than `local`, or an authorization already settled (`async_settle.py:251-254`); and any exception in construction, hashing or projection (`async_settle.py:239-240`, `281-282`, `330-331`) |
 | shape B | everything above passes and admission is off, or the workspace is outside a non-empty pilot set (`async_settle.py:262-265`), with or without an `invocation_nonce` |
 | shape C | admission on, the pilot set allows the workspace, and signing succeeds; invalid claims, a missing nonce among them, give shape A instead (`async_settle.py:266-288`) |
@@ -233,9 +233,11 @@ P5, Go half in G15b):
 With that fact every monetary input is present: base and tier input,
 output, cache-read and cache-creation rates, tier bounds, request fee,
 version and rounding; provider, model and usage; the conventions follow
-from the provider. What Go must still check itself (G15b), each failure
-being shape A: the provider set, `model_id` under `provider + "/"`, a zero
-request fee, the prompt convention by provider, tier order with an
+from the provider and the model id. What Go must still check itself (G15b), each failure
+being shape A (since 2026-11-09 there is no provider set and no
+`provider + "/"` rule: the provider and model are any `Identity`, the
+prompt convention is `provider_input_excludes_cache(provider, model_id)`'s):
+a zero request fee, tier order with an
 unbounded tier only last, at most 64 tiers and 64 candidates,
 `endpoint_id` matching the `Identity` pattern, every integer in 0 to
 2^63-1, candidates unique, sorted by `endpoint_id`
@@ -257,10 +259,13 @@ pattern, so Go's byte-order sort equals Python's.
 | `app_markup`, `custom_markup` | the authorization's basis points | 0 |
 | `receipt_fee` | `max(inference_receipt, receipt_fee_basis_points)` | 0 (`body.priced_extra` passes) |
 | `custom_model`, `user_model` | authorization ids | false (`body.custom_model` passes) |
-| `tool_cost` | `additional_cost_reservation_microdollars` nonzero | false |
+| `tool_cost` | `additional_cost_reservation_microdollars` nonzero, or the Fetch, transcription or speech model ids | false (none of those models is a chat model the evaluator composes) |
+| `video_cost` | the authorization's video pricing snapshot | false (the videos route alone has one) |
 | `native_batch` | the authorization's | false |
-| `partner` | `model` not under `openai/` or `anthropic/` | from the body |
-| `request_fee`, `search_cost`, `image_cost`, `video_cost`, `liberty`, `fusion`, `polyphemus`, `private_tier_basis` | defaults | false or 0 |
+| `partner` | `partner_billing_mode` (the settle path's classifier over the requested model, route and idempotency key), or a requested program, meta-router or alias name or the partner model's, as `model` or in `models` (`names_program_model`: folded, canonicalized, under `trustedrouter/` or `parasail/liberty-2.0`) | from the body: `model` and `models`, by Go's `namesProgramModel`, held to Python's answers in the goldens' header (the evaluator passes a request naming a meta model, pool or alias before the compose, so this is a second check); the classifier's other inputs the cohort passes (a partner route, a `partner:` key) |
+| `polyphemus` | a candidate is `polyphemus.MODEL_ID` | from the candidates |
+| `private_tier_basis` | a candidate's provider and model have the provider-private tier basis (`provider_contracts.PRIVATE_PRICE_TIER_BASIS_PROVIDER_MODELS`) | from the candidates |
+| `request_fee`, `search_cost`, `image_cost`, `liberty`, `fusion` | defaults | false or 0 |
 
 Every fact but `typed` comes from the body or the authorization row Go
 already composes.
@@ -556,9 +561,10 @@ decision gate like the decide row's, and the shadow compares it:
   members can differ from the cold ones in kind, not only in bytes: with
   `model` `openai/gpt-5-mini`, fallbacks off, the cold choice
   `openai/gpt-5-mini@openai/prepaid` (a valid billing candidate) and the
-  remembered `openai/gpt-5-mini@azure/prepaid` (provider `azure`, refused
-  by `Candidate`), Python's warm 200 carries shape A where the cold one
-  carries B. So the shadow compares an affinity answer's async members
+  remembered `openai/gpt-5-mini@azure/prepaid` (refused by `Candidate` for
+  the request fee the goldens' snapshot gives it; the provider itself is a
+  candidate since 2026-11-09), Python's warm 200 carries shape A where the
+  cold one carries B. So the shadow compares an affinity answer's async members
   against Go's async additions rebuilt from the candidates the comparison
   used: the cold candidates for `agree_full`, `warmOf`'s candidates for
   `differ.affinity_warm` (the same restaging that comparison already does

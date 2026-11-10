@@ -107,13 +107,11 @@ OPERATOR_HELD_PROVIDER_MODELS = frozenset(
         # routing until a reviewed adapter release, not an attestation bypass.
         ("phala", "z-ai/glm-5.3"),
         ("phala", "z-ai/glm-5.3-flash"),
-        # October 15: every NEAR AI GLM 5.3 Flash request since 2026-10-12
-        # 18:06Z is refused by the gateway's attestation sidecar ("deployment
-        # history is outside the reviewed policy"): NEAR appended a deployment
-        # action on the reviewed host, so the pinned action-log hash in
-        # quill-cloud-proxy near_ai_policy.json no longer matches. Hold the
-        # route, not the verification, until a reviewed re-pin ships.
-        ("near-ai", "z-ai/glm-5.3-flash"),
+        # NEAR AI GLM 5.3 Flash was held October 15 to November 2026 while the
+        # gateway sidecar refused its drifted attestation. quill-cloud-proxy
+        # #720 re-pinned both pool members to their reviewed dstack 0.5.12
+        # identities. Only the GCP fleet runs that release, so the route is
+        # gated to it in EXPLICIT_GATEWAY_REGIONS_BY_PROVIDER_MODEL below.
     }
 )
 EXACT_GLOBAL_SETTLEMENT_PROVIDER_MODELS = frozenset(
@@ -176,12 +174,21 @@ BASETEN_SYSTEMONE_MODEL_IDS: frozenset[str] = frozenset({
 # to a fleet before it can serve these. Older gateways send hosted decisions to
 # /evaluate, which Baseten does not serve.
 BASETEN_SYSTEMONE_GATEWAY_REGIONS = frozenset({"us-central1", "us-east4", "europe-west4", "us-west1"})
+# NEAR AI's attestation re-pin (quill-cloud-proxy #720) is live only on the
+# GCP fleet. AWS and Azure gateways still embed the pre-re-pin
+# near_ai_policy.json, refuse NEAR's current attestation and return 502.
+# Remove when AWS/Azure gateways run quill-cloud-proxy >= 366ffd91 (NEAR
+# policy re-pin, QCP #720).
+NEAR_AI_GATEWAY_REGIONS = frozenset({"us-central1", "us-east4", "europe-west4", "us-west1"})
 # Regolo's decision adapter also requires a cloud-local credential. The Azure
 # bundle has no Regolo entry; only the GCP fleet is verified for this route.
 EXPLICIT_GATEWAY_REGIONS_BY_PROVIDER_MODEL = {
     ("cloudflare-workers-ai", "cloudflare/clairic"): CLAIRIC_GATEWAY_REGIONS,
     ("regolo", "cloudflare/clef-flash"): frozenset({"us-central1", "us-east4", "europe-west4", "us-west1"}),
     **{("baseten", model_id): BASETEN_SYSTEMONE_GATEWAY_REGIONS for model_id in BASETEN_SYSTEMONE_MODEL_IDS},
+    # Remove when AWS/Azure gateways run quill-cloud-proxy >= 366ffd91 (NEAR
+    # policy re-pin, QCP #720).
+    ("near-ai", "z-ai/glm-5.3-flash"): NEAR_AI_GATEWAY_REGIONS,
 }
 
 # Fugu reports additive provider-side orchestration tokens only after a call.
@@ -261,6 +268,64 @@ def provider_model_uses_passthrough_retail_price(
     model_id: str,
 ) -> bool:
     return (provider_slug, model_id) in PASSTHROUGH_RETAIL_PROVIDER_MODELS
+
+
+# Prompt accounting on the settle wire. A request's input count EXCLUDES its
+# cached tokens (cache reads and writes are counted beside it) when the enclave
+# relays Anthropic-native usage: the anthropic slug itself, and the two
+# resellers that dispatch an anthropic/ model to Anthropic's own runtime
+# (enclave-go/internal/llm/multi.go: amazon-bedrock for an upstream id under
+# us.anthropic., google-vertex for a direct model id under claude-). Every
+# other provider's input count includes its cached subset. The synchronous
+# settle (settle_outbox_apply.normalized_prompt_accounting), the outbox repair
+# path, the async settle boundary, the frozen async billing snapshot
+# (billing_snapshot's prompt convention) and Stage D's delivered-usage billing
+# (storage_gcp_stage_d.normalized_delivered_prompt: the heartbeat's running
+# charge and cap check, the reaper's snapshot booking and its generation) all
+# read this one rule, keyed on the provider slug and the router model id, the
+# two fields every one of them has.
+# tests/test_resold_claude_cache_accounting.py holds it to the enclave's
+# dispatch conditions over the whole catalog.
+CACHE_EXCLUSIVE_INPUT_PROVIDERS = frozenset({"anthropic"})
+CACHE_EXCLUSIVE_INPUT_RESELLERS = frozenset({"amazon-bedrock", "google-vertex"})
+CACHE_EXCLUSIVE_INPUT_PUBLISHER_PREFIX = "anthropic/"
+
+
+def provider_input_excludes_cache(provider_slug: str, model_id: str | None = None) -> bool:
+    """Whether the reported input count of a request served by this provider,
+    for this router model id, excludes its cached tokens.
+
+    Without a model id (a caller that knows the slug alone) the answer is the
+    slug's: true for anthropic, false for every other provider.
+    """
+    # Equality, not set membership: any value (a slug of another type included)
+    # answers as `provider_slug == "anthropic"` did, without raising.
+    if any(provider_slug == name for name in CACHE_EXCLUSIVE_INPUT_PROVIDERS):
+        return True
+    return (
+        model_id is not None
+        and any(provider_slug == name for name in CACHE_EXCLUSIVE_INPUT_RESELLERS)
+        and model_id.startswith(CACHE_EXCLUSIVE_INPUT_PUBLISHER_PREFIX)
+    )
+
+
+# Endpoints whose provider reports its own context size to choose a price tier
+# (the settle body's price_tier_input_tokens). Only Fugu defines one.
+PRIVATE_PRICE_TIER_BASIS_PROVIDER_MODELS = frozenset({("sakana", SAKANA_FUGU_MODEL_ID)})
+
+
+def provider_model_has_private_price_tier_basis(provider_slug: str, model_id: str) -> bool:
+    """Whether the provider reports its own context size to choose a price tier.
+
+    The synchronous settle reads the reported basis for these pinned models
+    alone. A frozen async billing snapshot selects tiers by the total prompt
+    and cannot represent it, so authorize answers such a request
+    async_eligible false.
+    """
+    return any(
+        provider_slug == provider and model_id == model
+        for provider, model in PRIVATE_PRICE_TIER_BASIS_PROVIDER_MODELS
+    )
 
 
 def provider_model_available_from_gateway_region(

@@ -29,14 +29,25 @@ from trusted_router.billing_snapshot import (
     canonical_hash,
     require_eligible,
 )
-from trusted_router.catalog_data import ModelEndpoint
+from trusted_router.catalog_data import PARASAIL_LIBERTY_2_0_MODEL_ID, ModelEndpoint
 from trusted_router.config import Settings, in_v2_cohort
 from trusted_router.detached_jws import TrustedKey, b64encode
+from trusted_router.model_aliases import (
+    ROUTER_MODEL_NAMESPACE,
+    canonical_router_model_id,
+    names_router_model,
+)
+from trusted_router.partner_billing import partner_billing_mode
+from trusted_router.polyphemus import MODEL_ID as POLYPHEMUS_MODEL_ID
+from trusted_router.provider_contracts import provider_model_has_private_price_tier_basis
+from trusted_router.speech import SPEECH_MODELS
 from trusted_router.storage_models import (
     GatewayAuthorization,
     SettleOutboxRow,
     generation_id_for_authorization,
 )
+from trusted_router.transcription import TRANSCRIPTION_MODELS
+from trusted_router.web_fetch import FETCH_MODEL_ID
 
 CACHE_SECONDS = 5.0
 TIER_CAPS = {2: 25_000_000, 3: 100_000_000}
@@ -358,6 +369,94 @@ ORDINARY_PARAMETERS: frozenset[str] = frozenset({
 })
 
 
+# The two prefixes names_program_model reads, for the edge's copy.
+PROGRAM_MODEL_PREFIXES: tuple[str, ...] = (ROUTER_MODEL_NAMESPACE, PARASAIL_LIBERTY_2_0_MODEL_ID)
+
+
+def names_program_model(model: str) -> bool:
+    """Whether a requested model string names a TrustedRouter program,
+    meta-router or private alias, or the partner model.
+
+    The synchronous settle prices such a request, routed on a chat route, by
+    the plain endpoint formula; async-v1 leaves it out all the same, as it
+    always has. Every catalog id of those is in the router's own namespace
+    (model_aliases.names_router_model, which authorize's native Batch rule
+    reads too, and which routing also accepts spelled nyte/); the partner
+    model's id is the one outside it. Each is a prefix, so a variant or dated
+    suffix that routing strips stays covered. An ordinary model of any
+    publisher, served by any provider, is not one. The edge mirrors this
+    (fastpath/internal/gwauth/async.go, namesProgramModel), held to it by the
+    authorize goldens' program_model_names.
+    """
+    canonical = canonical_router_model_id(model.strip().lower())
+    return names_router_model(canonical) or canonical.startswith(PARASAIL_LIBERTY_2_0_MODEL_ID)
+
+
+def requested_facts(*, body: Any, authorization: GatewayAuthorization, endpoints: Iterable[ModelEndpoint],
+                    typed: bool, federated: bool) -> Eligibility:
+    """The requested facts of one authorization.
+
+    Each is read from what the synchronous settle itself reads to price a
+    request by anything but the plain endpoint formula
+    (routes/internal/gateway.py, _settle_gateway_authorization), so the two
+    cannot disagree about which authorization is ordinary:
+
+    usage_type, authority: the authorization's (a BYOK route, or a federated
+        or deferred settlement, is not ordinary local Credits).
+    app_markup, custom_markup, receipt_fee: the authorization's basis points;
+        a requested receipt counts even when its fee is zero.
+    custom_model, user_model: the authorization's creator ids, which
+        _authorized_user_model_pair and billing_pricing_snapshot read.
+    tool_cost: the authorization's additional cost reservation, or its model
+        being one the settle path meters as a tool or media request (Fetch,
+        transcription, speech).
+    video_cost: the authorization's video pricing snapshot.
+    native_batch: the authorization's native Batch eligibility.
+    partner: partner_billing_mode, the settle path's own classifier, over the
+        authorization's requested model and idempotency key and this
+        request's route; or a requested program or alias name
+        (names_program_model), which the contract has no fact of its own for.
+    polyphemus: a candidate that is the Polyphemus selector's endpoint.
+    private_tier_basis: a candidate whose provider reports its own price tier
+        basis, by the predicate _provider_price_tier_input_tokens reads.
+
+    tests/test_async_settle_settle_branches.py enumerates the settle path's
+    cost branches and holds each to its fact here.
+    """
+    candidates = list(endpoints)
+    return Eligibility(
+        typed=typed, usage_type=authorization.usage_type.value,
+        authority="federated" if federated else authorization.settlement,
+        route_type=body.route_type, streamed=body.stream is True,
+        service_tier=body.service_tier,
+        app_markup=authorization.app_markup_basis_points,
+        custom_markup=authorization.custom_model_markup_basis_points,
+        receipt_fee=max(int(body.inference_receipt), authorization.receipt_fee_basis_points),
+        custom_model=bool(authorization.custom_model_id),
+        user_model=bool(authorization.user_provided_model_id),
+        tool_cost=(
+            bool(authorization.additional_cost_reservation_microdollars)
+            or authorization.model_id == FETCH_MODEL_ID
+            or authorization.model_id in TRANSCRIPTION_MODELS
+            or authorization.model_id in SPEECH_MODELS
+        ),
+        video_cost=authorization.video_pricing_snapshot is not None,
+        native_batch=authorization.native_batch_eligible,
+        partner=(
+            partner_billing_mode(
+                requested_model_id=authorization.requested_model_id, route_type=body.route_type,
+                idempotency_key=authorization.idempotency_key,
+            ) is not None
+            or any(names_program_model(name) for name in (body.model, *(body.models or ())))
+        ),
+        polyphemus=any(candidate.model_id == POLYPHEMUS_MODEL_ID for candidate in candidates),
+        private_tier_basis=any(
+            provider_model_has_private_price_tier_basis(candidate.provider, candidate.model_id)
+            for candidate in candidates
+        ),
+    )
+
+
 def has_authorize_feature_extras(body: Any, *, shadow_v2: bool = False) -> bool:
     """Separate the enclave's advisory lease echo from inference features.
 
@@ -396,21 +495,8 @@ def authorize_additions(*, request: Any, body: Any, authorization: GatewayAuthor
         # Unknown adapter features must not silently acquire an exact total.
         if set(body.requested_parameters or ()) - ORDINARY_PARAMETERS:
             return {"async_eligible": False}
-        requested = Eligibility(
-            typed=typed, usage_type=authorization.usage_type.value,
-            authority="federated" if federated else authorization.settlement,
-            route_type=body.route_type, streamed=body.stream is True,
-            service_tier=body.service_tier,
-            app_markup=authorization.app_markup_basis_points,
-            custom_markup=authorization.custom_model_markup_basis_points,
-            receipt_fee=max(int(body.inference_receipt), authorization.receipt_fee_basis_points),
-            custom_model=bool(authorization.custom_model_id),
-            user_model=bool(authorization.user_provided_model_id),
-            tool_cost=bool(authorization.additional_cost_reservation_microdollars),
-            native_batch=authorization.native_batch_eligible,
-            # Only direct ordinary model names; aliases/programs require proof.
-            partner=not body.model.startswith(("openai/", "anthropic/")),
-        )
+        requested = requested_facts(body=body, authorization=authorization, endpoints=endpoints,
+                                    typed=typed, federated=federated)
         return projection(authorization=authorization,
                           endpoints=[effective_endpoint(e, at=effective_at) for e in endpoints],
                           requested=requested, settings=settings,

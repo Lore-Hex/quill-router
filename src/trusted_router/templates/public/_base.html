@@ -78,6 +78,10 @@
     {% endif %}
     {% endblock %}
     {% block body %}{% endblock %}
+    {% set guide_url = canonical_url|default(site_url, true) %}
+    {% if guide_url.split('/', 3)[-1] in ['deepseek-api-privacy', 'openrouter-alternative', 'best-llm-router', 'docs/agent-setup', 'us-ai-models', 'abliterated-deepseek', 'blog/private-deepseek-api-evaluation-checklist', 'blog/choosing-an-llm-api-for-agents', 'blog/the-ai-models-that-go-silent-on-china'] %}
+    {% include "public/_ai_guide_links.html" %}
+    {% endif %}
     {% if catalog_evidence %}{% include "public/_catalog_evidence.html" %}{% endif %}
     {% block faq %}
     {% if faq_items %}

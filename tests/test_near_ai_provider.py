@@ -286,22 +286,46 @@ def test_near_ai_is_attested_prepaid_only_and_its_catalog_follows_the_manifest()
     }
 
 
-@pytest.fixture
-def near_ai_route_unheld(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Lift only the October 15 operator hold on NEAR AI GLM 5.3 Flash.
+def test_near_ai_glm_53_flash_route_is_released_after_attestation_repin() -> None:
+    # Held October 15 while the gateway sidecar refused NEAR's drifted
+    # attestation; quill-cloud-proxy #720 re-pinned both reviewed pool members.
+    assert ("near-ai", "z-ai/glm-5.3-flash") not in provider_contracts.OPERATOR_HELD_PROVIDER_MODELS
+    assert not provider_model_operator_held("near-ai", "z-ai/glm-5.3-flash")
+    endpoint = catalog_vehicles.registry_endpoints().get("z-ai/glm-5.3-flash@near-ai/prepaid")
+    assert endpoint is not None
+    assert endpoint.usage_type == "Credits" and not endpoint.is_byok
+    assert endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL)
 
-    The live catalog keeps that route dark until a reviewed attestation re-pin
-    ships; these tests exercise how a routable NEAR AI row behaves.
-    """
-    monkeypatch.setattr(
-        provider_contracts,
-        "OPERATOR_HELD_PROVIDER_MODELS",
-        provider_contracts.OPERATOR_HELD_PROVIDER_MODELS - {("near-ai", "z-ai/glm-5.3-flash")},
-    )
+
+@pytest.mark.parametrize(
+    ("gateway_region", "available"),
+    [
+        ("us-central1", True),
+        ("us-east4", True),
+        ("europe-west4", True),
+        ("us-west1", True),
+        ("aws-eu-west-1", False),
+        ("aws-eu-west-3", False),
+        ("eu-west-1", False),
+        ("eu-west-3", False),
+        ("azure-uaenorth", False),
+        ("azure-australiaeast", False),
+        ("uaenorth", False),
+        ("australiaeast", False),
+    ],
+)
+def test_near_ai_glm_53_flash_routes_only_from_gcp_gateways(
+    gateway_region: str, available: bool,
+) -> None:
+    # Only the GCP fleet runs the re-pinned NEAR policy (QCP #720); AWS and
+    # Azure gateways would refuse NEAR's attestation and return 502.
+    assert provider_contracts.provider_model_available_from_gateway_region(
+        "near-ai", "z-ai/glm-5.3-flash", gateway_region,
+    ) is available
 
 
 def test_near_ai_routes_are_attested_prepaid_only(
-    near_ai_route_unheld: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     # Routes the catalog's own ingestion builds from a pinned NEAR AI row.
     _models, built = build_manifest_rows(monkeypatch, tmp_path, "near-ai", [NEAR_AI_GLM_53_FLASH])
@@ -336,7 +360,7 @@ def test_near_ai_serves_a_verified_model() -> None:
 
 @pytest.mark.parametrize("expired", [False, True])
 def test_near_ai_satisfies_scoped_zdr_and_e2e_only_with_fresh_catalog_evidence(
-    near_ai_route_unheld: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, expired: bool,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, expired: bool,
 ) -> None:
     model_id = "z-ai/glm-5.3-flash"
     # NEAR AI's route built from a pinned row, whatever NEAR AI lists today.
@@ -386,7 +410,7 @@ def test_near_ai_satisfies_scoped_zdr_and_e2e_only_with_fresh_catalog_evidence(
 
 @pytest.mark.parametrize("zdr", [None, False])
 def test_near_ai_attestation_alone_does_not_imply_zdr(
-    near_ai_route_unheld: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, zdr: bool | None,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, zdr: bool | None,
 ) -> None:
     serve_manifest_rows(monkeypatch, tmp_path, "near-ai", [NEAR_AI_GLM_53_FLASH])
     monkeypatch.setitem(PROVIDERS, "near-ai", replace(
@@ -406,7 +430,7 @@ def test_near_ai_attestation_alone_does_not_imply_zdr(
 
 
 def test_near_ai_public_metadata_has_zdr_and_links_to_scoped_evidence(
-    near_ai_route_unheld: None, client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     serve_manifest_rows(monkeypatch, tmp_path, "near-ai", [NEAR_AI_GLM_53_FLASH])
     providers = {row["id"]: row for row in client.get("/v1/providers").json()["data"]}

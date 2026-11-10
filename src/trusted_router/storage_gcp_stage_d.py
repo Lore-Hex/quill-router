@@ -8,8 +8,9 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 from trusted_router.app_markup_billing import app_markup_microdollars
-from trusted_router.catalog import endpoint_for_id
+from trusted_router.catalog import endpoint_provider_and_model
 from trusted_router.pricing import signed_receipt_price_microdollars
+from trusted_router.provider_contracts import provider_input_excludes_cache
 from trusted_router.stage_d import (
     billing_pricing_snapshot,
     endpoint_cost_microdollars_from_document,
@@ -124,7 +125,7 @@ def heartbeat_gateway_atomic(
         stored_usage = delivered_usage_counts(authorization.delivered_usage)
         if any(int(usage[name]) < int(stored_usage[name]) for name in usage):
             return reject("usage_regression")
-        if _usage_exceeds_authorized_tokens(authorization, usage):
+        if _usage_exceeds_authorized_tokens(authorization, usage, selected_endpoint_id):
             return reject("usage_exceeds_cap")
 
         document = parse_pricing_snapshot(authorization.pricing_snapshot)
@@ -220,13 +221,17 @@ def delivered_usage_counts(value: str | None) -> dict[str, int]:
 
 
 def normalized_delivered_prompt(
-    provider: str, usage: dict[str, int]
+    provider: str, usage: dict[str, int], *, model_id: str | None = None
 ) -> tuple[int, int]:
+    """(uncached input, total prompt) of a stream's delivered usage, by the
+    settle path's own convention rule over the provider slug and the model id
+    (provider_contracts.provider_input_excludes_cache; a caller passing the
+    slug alone gets the slug's answer)."""
     reported = int(usage["input_tokens"])
     cached = int(usage["cache_read_input_tokens"])
     created = int(usage["cache_creation_input_tokens"])
     if cached or created:
-        if provider == "anthropic":
+        if provider_input_excludes_cache(provider, model_id):
             return reported, reported + cached + created
         return max(reported - cached - created, 0), reported
     return reported, reported
@@ -237,8 +242,10 @@ def delivered_usage_cost_microdollars(
     provider: str,
     endpoint_id: str,
     usage: dict[str, int],
+    *,
+    model_id: str | None = None,
 ) -> int:
-    uncached, _total_prompt = normalized_delivered_prompt(provider, usage)
+    uncached, _total_prompt = normalized_delivered_prompt(provider, usage, model_id=model_id)
     return endpoint_cost_microdollars_from_document(
         document,
         endpoint_id,
@@ -259,12 +266,11 @@ def delivered_usage_charge_microdollars(
 ) -> int:
     """Price a heartbeat through the same frozen downstream fee layers as settle."""
 
+    model_id = _selected_model_id(authorization, endpoint_id)
     billing_snapshot = billing_pricing_snapshot(authorization)
     if billing_snapshot is not None:
         # Only Fugu's pinned contract admits a private prompt-tier basis, just
         # as inline settlement and the gateway do. Preserve legacy cohorts.
-        endpoint = endpoint_for_id(endpoint_id)
-        model_id = endpoint.model_id if endpoint is not None else authorization.model_id
         if provider != "sakana" or model_id != "sakana-ai/fugu-ultra-v1.1":
             usage = {**usage, "price_tier_input_tokens": 0}
         document = billing_snapshot
@@ -273,6 +279,7 @@ def delivered_usage_charge_microdollars(
         provider,
         endpoint_id,
         usage,
+        model_id=model_id,
     )
     receipt_fee_basis_points = int(authorization.receipt_fee_basis_points or 0)
     if receipt_fee_basis_points > 0:
@@ -286,12 +293,20 @@ def delivered_usage_charge_microdollars(
     return charge
 
 
-def _usage_exceeds_authorized_tokens(authorization: Any, usage: dict[str, int]) -> bool:
+def _usage_exceeds_authorized_tokens(
+    authorization: Any, usage: dict[str, int], selected_endpoint_id: str
+) -> bool:
     prompt_limit = authorization.stage_d_prompt_tokens
     output_limit = authorization.stage_d_max_output_tokens
     if prompt_limit is None or output_limit is None:
         return True
-    _uncached, total_prompt = normalized_delivered_prompt(authorization.provider, usage)
+    # The delivered prompt is read in the selected endpoint's convention, as
+    # the running charge below reads it.
+    _uncached, total_prompt = normalized_delivered_prompt(
+        _selected_provider(authorization, selected_endpoint_id),
+        usage,
+        model_id=_selected_model_id(authorization, selected_endpoint_id),
+    )
     return total_prompt + int(usage["output_tokens"]) > int(prompt_limit) + int(output_limit)
 
 
@@ -309,9 +324,27 @@ def _cap_micro(authorization: Any) -> int:
     return int(authorization.estimated_microdollars)
 
 
+def selected_endpoint_identity(authorization: Any, endpoint_id: str | None) -> tuple[str, str]:
+    """The (provider slug, router model id) a stream's delivered usage is
+    billed in: the selected endpoint's, read from the catalog or, once the
+    endpoint has left it, from the id's own shape
+    (catalog.endpoint_provider_and_model);
+    the authorization's own fields only for an id of neither kind. The
+    selected endpoint may be a fallback candidate on another provider than
+    the authorization names, so the authorization's fields are the last
+    resort, not the first."""
+    identity = endpoint_provider_and_model(endpoint_id)
+    if identity is not None:
+        return identity
+    return str(authorization.provider), str(authorization.model_id)
+
+
 def _selected_provider(authorization: Any, endpoint_id: str) -> str:
-    endpoint = endpoint_for_id(endpoint_id)
-    return endpoint.provider if endpoint is not None else str(authorization.provider)
+    return selected_endpoint_identity(authorization, endpoint_id)[0]
+
+
+def _selected_model_id(authorization: Any, endpoint_id: str) -> str:
+    return selected_endpoint_identity(authorization, endpoint_id)[1]
 
 
 def _utc(value: datetime) -> datetime:

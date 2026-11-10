@@ -34,6 +34,7 @@ from trusted_router.custom_model_markup_billing import (
     custom_model_markup_payout_event_id,
 )
 from trusted_router.partner_billing import PARTNER_OPERATOR_COST_SETTLE_FIELD
+from trusted_router.provider_contracts import provider_input_excludes_cache
 from trusted_router.schemas import GatewaySettleRequest
 from trusted_router.storage import STORE, Generation, typed_billing_store
 from trusted_router.storage_errors import transient_store_error_types
@@ -110,18 +111,23 @@ _LEASED_UNDECIDED_MAX_AGE_SECONDS = 3 * 3600
 
 
 def normalized_prompt_accounting(
-    provider_slug: str, body: GatewaySettleRequest
+    provider_slug: str, body: GatewaySettleRequest, *, model_id: str | None = None
 ) -> tuple[int, int, int, int]:
     input_tokens = body.input_count
     cache_read = body.cache_read_count
     cache_creation = body.cache_creation_count
-    # Provider-dependent prompt accounting: Anthropic reports input_tokens
-    # EXCLUSIVE of cached tokens (input 14 + cache_read 6081 = 6095-token
-    # prompt), while OpenAI-compatible and Gemini prompt counts INCLUDE the
-    # cached subset. Normalize to (uncached, read, creation) for pricing
-    # and store the TOTAL prompt on the generation for honest dashboards.
+    # Provider-dependent prompt accounting: Anthropic-native usage reports
+    # input_tokens EXCLUSIVE of cached tokens (input 14 + cache_read 6081 =
+    # 6095-token prompt), while OpenAI-compatible and Gemini prompt counts
+    # INCLUDE the cached subset. Normalize to (uncached, read, creation) for
+    # pricing and store the TOTAL prompt on the generation for honest
+    # dashboards. The rule is provider_contracts.provider_input_excludes_cache,
+    # over the slug and the router model id (a reseller relaying Anthropic's
+    # own usage for an anthropic/ model is exclusive too); a caller passing
+    # the slug alone gets the slug's answer. The async billing snapshot's
+    # prompt convention reads the same rule.
     if cache_read or cache_creation:
-        if provider_slug == "anthropic":
+        if provider_input_excludes_cache(provider_slug, model_id):
             uncached_input = input_tokens
             total_input = input_tokens + cache_read + cache_creation
         else:
@@ -319,7 +325,7 @@ def _frozen_generation(
     )
     provider_name = PROVIDERS[provider_slug].name if provider_slug in PROVIDERS else provider_slug
     _uncached_input, total_input, _cache_read, _cache_creation = normalized_prompt_accounting(
-        provider_slug, body
+        provider_slug, body, model_id=row.model_id
     )
     return Generation.from_settle_body(
         authorization=auth,

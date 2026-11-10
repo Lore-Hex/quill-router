@@ -1,0 +1,1197 @@
+{
+  "fixture_version": 1,
+  "base_fixture_sha256": "4aedf13e4ba30b4d1f0767f829e790c37ce3f957a39c15d1eb6aff8c8734fd81",
+  "base_rules_sha256": "ab9bac52a666efb4e268dbec210c1a598e490815bf25501ccc0759fe722ce5c4",
+  "superseded_cases": [
+    "unknown_adapter",
+    "custom_model_identity",
+    "candidate_provider_literal",
+    "model_provider_prefix"
+  ],
+  "superseded_rules": [
+    "candidate_provider_literal",
+    "model_provider_prefix",
+    "candidate_provider_required",
+    "candidate_provider_nonnull"
+  ],
+  "cases": [
+    {
+      "name": "reseller_cache",
+      "snapshot": {
+        "v": 1,
+        "kind": "credits_endpoint",
+        "candidates": [
+          {
+            "endpoint_id": "openai/billing-v1@azure/prepaid",
+            "model_id": "openai/billing-v1",
+            "provider": "azure",
+            "usage_type": "Credits",
+            "price_history_version": 1,
+            "rates": {
+              "input_micro_per_million": 1000000,
+              "output_micro_per_million": 2000000,
+              "cached_input_micro_per_million": 250000,
+              "cache_creation_micro_per_million": 1250000
+            },
+            "tiers": [],
+            "request_fee_micro": 0,
+            "rounding": "half_up_per_million",
+            "prompt_convention": "includes_cache",
+            "output_convention": "includes_reasoning"
+          }
+        ],
+        "minimum_charge": "one_micro_if_positive",
+        "charge_cap": null,
+        "tier_basis": "total_prompt",
+        "tier_boundary": "inclusive",
+        "tier_fallback": "last_tier"
+      },
+      "raw_usage": {
+        "input_tokens": 10,
+        "output_tokens": 3,
+        "cache_read_tokens": 4,
+        "cache_creation_tokens": 0,
+        "reasoning_tokens": 0
+      },
+      "expected_normalized_usage": {
+        "uncached_input_tokens": 6,
+        "total_prompt_tokens": 10,
+        "output_tokens": 3,
+        "cache_read_tokens": 4,
+        "cache_creation_tokens": 0,
+        "reasoning_tokens": 0
+      },
+      "selected_endpoint": "openai/billing-v1@azure/prepaid",
+      "expected_charge_micro": 13,
+      "expected_exclusion": null,
+      "expected_terminal_envelope_hash": "8379d9f974a9ecfd4b85951d20b378419f885b522425ba03d50d78b1d35fcb40",
+      "context": {},
+      "phase": "observed"
+    },
+    {
+      "name": "bedrock_anthropic_cache",
+      "snapshot": {
+        "v": 1,
+        "kind": "credits_endpoint",
+        "candidates": [
+          {
+            "endpoint_id": "anthropic/billing-v1@amazon-bedrock/prepaid",
+            "model_id": "anthropic/billing-v1",
+            "provider": "amazon-bedrock",
+            "usage_type": "Credits",
+            "price_history_version": 1,
+            "rates": {
+              "input_micro_per_million": 1000000,
+              "output_micro_per_million": 2000000,
+              "cached_input_micro_per_million": 250000,
+              "cache_creation_micro_per_million": 1250000
+            },
+            "tiers": [],
+            "request_fee_micro": 0,
+            "rounding": "half_up_per_million",
+            "prompt_convention": "excludes_cache",
+            "output_convention": "includes_reasoning"
+          }
+        ],
+        "minimum_charge": "one_micro_if_positive",
+        "charge_cap": null,
+        "tier_basis": "total_prompt",
+        "tier_boundary": "inclusive",
+        "tier_fallback": "last_tier"
+      },
+      "raw_usage": {
+        "input_tokens": 6,
+        "output_tokens": 3,
+        "cache_read_tokens": 4,
+        "cache_creation_tokens": 0,
+        "reasoning_tokens": 0
+      },
+      "expected_normalized_usage": {
+        "uncached_input_tokens": 6,
+        "total_prompt_tokens": 10,
+        "output_tokens": 3,
+        "cache_read_tokens": 4,
+        "cache_creation_tokens": 0,
+        "reasoning_tokens": 0
+      },
+      "selected_endpoint": "anthropic/billing-v1@amazon-bedrock/prepaid",
+      "expected_charge_micro": 13,
+      "expected_exclusion": null,
+      "expected_terminal_envelope_hash": "47cd5493aa396bdcc9a598a1ff2e970de95ed217344b9e075e9d035947cfba6a",
+      "context": {},
+      "phase": "observed"
+    },
+    {
+      "name": "vertex_anthropic_cache",
+      "snapshot": {
+        "v": 1,
+        "kind": "credits_endpoint",
+        "candidates": [
+          {
+            "endpoint_id": "anthropic/billing-v1@google-vertex/prepaid",
+            "model_id": "anthropic/billing-v1",
+            "provider": "google-vertex",
+            "usage_type": "Credits",
+            "price_history_version": 1,
+            "rates": {
+              "input_micro_per_million": 1000000,
+              "output_micro_per_million": 2000000,
+              "cached_input_micro_per_million": 250000,
+              "cache_creation_micro_per_million": 1250000
+            },
+            "tiers": [
+              {
+                "max_prompt_tokens": null,
+                "rates": {
+                  "input_micro_per_million": 1000000,
+                  "output_micro_per_million": 2000000,
+                  "cached_input_micro_per_million": 250000,
+                  "cache_creation_micro_per_million": 1250000
+                }
+              }
+            ],
+            "request_fee_micro": 0,
+            "rounding": "half_up_per_million",
+            "prompt_convention": "excludes_cache",
+            "output_convention": "includes_reasoning"
+          }
+        ],
+        "minimum_charge": "one_micro_if_positive",
+        "charge_cap": null,
+        "tier_basis": "total_prompt",
+        "tier_boundary": "inclusive",
+        "tier_fallback": "last_tier"
+      },
+      "raw_usage": {
+        "input_tokens": 6,
+        "output_tokens": 3,
+        "cache_read_tokens": 4,
+        "cache_creation_tokens": 2,
+        "reasoning_tokens": 0
+      },
+      "expected_normalized_usage": {
+        "uncached_input_tokens": 6,
+        "total_prompt_tokens": 12,
+        "output_tokens": 3,
+        "cache_read_tokens": 4,
+        "cache_creation_tokens": 2,
+        "reasoning_tokens": 0
+      },
+      "selected_endpoint": "anthropic/billing-v1@google-vertex/prepaid",
+      "expected_charge_micro": 16,
+      "expected_exclusion": null,
+      "expected_terminal_envelope_hash": "4adf5d0a88159d16642d0468aae1665c106c83c56e0ec9e49dfccc66e9cd500c",
+      "context": {},
+      "phase": "observed"
+    },
+    {
+      "name": "bedrock_other_publisher_cache",
+      "snapshot": {
+        "v": 1,
+        "kind": "credits_endpoint",
+        "candidates": [
+          {
+            "endpoint_id": "openai/billing-v1@amazon-bedrock/prepaid",
+            "model_id": "openai/billing-v1",
+            "provider": "amazon-bedrock",
+            "usage_type": "Credits",
+            "price_history_version": 1,
+            "rates": {
+              "input_micro_per_million": 1000000,
+              "output_micro_per_million": 2000000,
+              "cached_input_micro_per_million": 250000,
+              "cache_creation_micro_per_million": 1250000
+            },
+            "tiers": [],
+            "request_fee_micro": 0,
+            "rounding": "half_up_per_million",
+            "prompt_convention": "includes_cache",
+            "output_convention": "includes_reasoning"
+          }
+        ],
+        "minimum_charge": "one_micro_if_positive",
+        "charge_cap": null,
+        "tier_basis": "total_prompt",
+        "tier_boundary": "inclusive",
+        "tier_fallback": "last_tier"
+      },
+      "raw_usage": {
+        "input_tokens": 6,
+        "output_tokens": 3,
+        "cache_read_tokens": 4,
+        "cache_creation_tokens": 0,
+        "reasoning_tokens": 0
+      },
+      "expected_normalized_usage": {
+        "uncached_input_tokens": 2,
+        "total_prompt_tokens": 6,
+        "output_tokens": 3,
+        "cache_read_tokens": 4,
+        "cache_creation_tokens": 0,
+        "reasoning_tokens": 0
+      },
+      "selected_endpoint": "openai/billing-v1@amazon-bedrock/prepaid",
+      "expected_charge_micro": 9,
+      "expected_exclusion": null,
+      "expected_terminal_envelope_hash": "5a5857721284e238387cff9ff4a720c30312e3643238795c45828da8ecd0fa9a",
+      "context": {},
+      "phase": "observed"
+    },
+    {
+      "name": "vertex_cache_rate_missing",
+      "snapshot": {
+        "v": 1,
+        "kind": "credits_endpoint",
+        "candidates": [
+          {
+            "endpoint_id": "anthropic/billing-v1@google-vertex/prepaid",
+            "model_id": "anthropic/billing-v1",
+            "provider": "google-vertex",
+            "usage_type": "Credits",
+            "price_history_version": 1,
+            "rates": {
+              "input_micro_per_million": 1000000,
+              "output_micro_per_million": 2000000,
+              "cached_input_micro_per_million": 250000,
+              "cache_creation_micro_per_million": 1250000
+            },
+            "tiers": [
+              {
+                "max_prompt_tokens": null,
+                "rates": {
+                  "input_micro_per_million": 1000000,
+                  "output_micro_per_million": 2000000,
+                  "cached_input_micro_per_million": 250000,
+                  "cache_creation_micro_per_million": 1250000
+                }
+              }
+            ],
+            "request_fee_micro": 0,
+            "rounding": "half_up_per_million",
+            "prompt_convention": "excludes_cache",
+            "output_convention": "includes_reasoning"
+          }
+        ],
+        "minimum_charge": "one_micro_if_positive",
+        "charge_cap": null,
+        "tier_basis": "total_prompt",
+        "tier_boundary": "inclusive",
+        "tier_fallback": "last_tier"
+      },
+      "raw_usage": {
+        "input_tokens": 16,
+        "output_tokens": 3,
+        "cache_read_tokens": 10,
+        "cache_creation_tokens": 0,
+        "reasoning_tokens": 0
+      },
+      "expected_normalized_usage": {
+        "uncached_input_tokens": 16,
+        "total_prompt_tokens": 26,
+        "output_tokens": 3,
+        "cache_read_tokens": 10,
+        "cache_creation_tokens": 0,
+        "reasoning_tokens": 0
+      },
+      "selected_endpoint": "anthropic/billing-v1@google-vertex/prepaid",
+      "expected_charge_micro": 25,
+      "expected_exclusion": null,
+      "expected_terminal_envelope_hash": "64c202dfb78f1e7a12c912652641798c65beddb94410460cbb27f72a7157ec31",
+      "context": {},
+      "phase": "observed",
+      "freeze_cache_rate": null
+    },
+    {
+      "name": "bedrock_cache_rate_missing",
+      "snapshot": {
+        "v": 1,
+        "kind": "credits_endpoint",
+        "candidates": [
+          {
+            "endpoint_id": "anthropic/billing-v1@amazon-bedrock/prepaid",
+            "model_id": "anthropic/billing-v1",
+            "provider": "amazon-bedrock",
+            "usage_type": "Credits",
+            "price_history_version": 1,
+            "rates": {
+              "input_micro_per_million": 1000000,
+              "output_micro_per_million": 2000000,
+              "cached_input_micro_per_million": 1000000,
+              "cache_creation_micro_per_million": 1250000
+            },
+            "tiers": [
+              {
+                "max_prompt_tokens": null,
+                "rates": {
+                  "input_micro_per_million": 1000000,
+                  "output_micro_per_million": 2000000,
+                  "cached_input_micro_per_million": 1000000,
+                  "cache_creation_micro_per_million": 1250000
+                }
+              }
+            ],
+            "request_fee_micro": 0,
+            "rounding": "half_up_per_million",
+            "prompt_convention": "excludes_cache",
+            "output_convention": "includes_reasoning"
+          }
+        ],
+        "minimum_charge": "one_micro_if_positive",
+        "charge_cap": null,
+        "tier_basis": "total_prompt",
+        "tier_boundary": "inclusive",
+        "tier_fallback": "last_tier"
+      },
+      "raw_usage": {
+        "input_tokens": 16,
+        "output_tokens": 3,
+        "cache_read_tokens": 10,
+        "cache_creation_tokens": 0,
+        "reasoning_tokens": 0
+      },
+      "expected_normalized_usage": {
+        "uncached_input_tokens": 16,
+        "total_prompt_tokens": 26,
+        "output_tokens": 3,
+        "cache_read_tokens": 10,
+        "cache_creation_tokens": 0,
+        "reasoning_tokens": 0
+      },
+      "selected_endpoint": "anthropic/billing-v1@amazon-bedrock/prepaid",
+      "expected_charge_micro": 32,
+      "expected_exclusion": null,
+      "expected_terminal_envelope_hash": "4f887351ac02c0f7a004afd53e97170674df401d9e639a0921ee1eff9aaa660c",
+      "context": {},
+      "phase": "observed",
+      "freeze_cache_rate": null
+    },
+    {
+      "name": "mixed_providers_tiered_reseller",
+      "snapshot": {
+        "v": 1,
+        "kind": "credits_endpoint",
+        "candidates": [
+          {
+            "endpoint_id": "anthropic/billing-v1@amazon-bedrock/prepaid",
+            "model_id": "anthropic/billing-v1",
+            "provider": "amazon-bedrock",
+            "usage_type": "Credits",
+            "price_history_version": 1,
+            "rates": {
+              "input_micro_per_million": 3000000,
+              "output_micro_per_million": 15000000,
+              "cached_input_micro_per_million": 300000,
+              "cache_creation_micro_per_million": 3750000
+            },
+            "tiers": [
+              {
+                "max_prompt_tokens": 20,
+                "rates": {
+                  "input_micro_per_million": 3000000,
+                  "output_micro_per_million": 15000000,
+                  "cached_input_micro_per_million": 300000,
+                  "cache_creation_micro_per_million": 3750000
+                }
+              },
+              {
+                "max_prompt_tokens": null,
+                "rates": {
+                  "input_micro_per_million": 6000000,
+                  "output_micro_per_million": 22500000,
+                  "cached_input_micro_per_million": 600000,
+                  "cache_creation_micro_per_million": 7500000
+                }
+              }
+            ],
+            "request_fee_micro": 0,
+            "rounding": "half_up_per_million",
+            "prompt_convention": "excludes_cache",
+            "output_convention": "includes_reasoning"
+          },
+          {
+            "endpoint_id": "anthropic/billing-v1@anthropic/prepaid",
+            "model_id": "anthropic/billing-v1",
+            "provider": "anthropic",
+            "usage_type": "Credits",
+            "price_history_version": 1,
+            "rates": {
+              "input_micro_per_million": 1000000,
+              "output_micro_per_million": 2000000,
+              "cached_input_micro_per_million": 250000,
+              "cache_creation_micro_per_million": 1250000
+            },
+            "tiers": [],
+            "request_fee_micro": 0,
+            "rounding": "half_up_per_million",
+            "prompt_convention": "excludes_cache",
+            "output_convention": "includes_reasoning"
+          },
+          {
+            "endpoint_id": "openai/billing-v1@azure/prepaid",
+            "model_id": "openai/billing-v1",
+            "provider": "azure",
+            "usage_type": "Credits",
+            "price_history_version": 1,
+            "rates": {
+              "input_micro_per_million": 1000000,
+              "output_micro_per_million": 2000000,
+              "cached_input_micro_per_million": 250000,
+              "cache_creation_micro_per_million": 1250000
+            },
+            "tiers": [],
+            "request_fee_micro": 0,
+            "rounding": "half_up_per_million",
+            "prompt_convention": "includes_cache",
+            "output_convention": "includes_reasoning"
+          }
+        ],
+        "minimum_charge": "one_micro_if_positive",
+        "charge_cap": null,
+        "tier_basis": "total_prompt",
+        "tier_boundary": "inclusive",
+        "tier_fallback": "last_tier"
+      },
+      "raw_usage": {
+        "input_tokens": 30,
+        "output_tokens": 2,
+        "cache_read_tokens": 8,
+        "cache_creation_tokens": 4,
+        "reasoning_tokens": 0
+      },
+      "expected_normalized_usage": {
+        "uncached_input_tokens": 30,
+        "total_prompt_tokens": 42,
+        "output_tokens": 2,
+        "cache_read_tokens": 8,
+        "cache_creation_tokens": 4,
+        "reasoning_tokens": 0
+      },
+      "selected_endpoint": "anthropic/billing-v1@amazon-bedrock/prepaid",
+      "expected_charge_micro": 260,
+      "expected_exclusion": null,
+      "expected_terminal_envelope_hash": "a334dccaed455a6cd7f0f614510904f4a5d1d5acc3521e6938995b36f59c8aba",
+      "context": {},
+      "phase": "observed"
+    },
+    {
+      "name": "mixed_providers_direct",
+      "snapshot": {
+        "v": 1,
+        "kind": "credits_endpoint",
+        "candidates": [
+          {
+            "endpoint_id": "anthropic/billing-v1@amazon-bedrock/prepaid",
+            "model_id": "anthropic/billing-v1",
+            "provider": "amazon-bedrock",
+            "usage_type": "Credits",
+            "price_history_version": 1,
+            "rates": {
+              "input_micro_per_million": 3000000,
+              "output_micro_per_million": 15000000,
+              "cached_input_micro_per_million": 300000,
+              "cache_creation_micro_per_million": 3750000
+            },
+            "tiers": [
+              {
+                "max_prompt_tokens": 20,
+                "rates": {
+                  "input_micro_per_million": 3000000,
+                  "output_micro_per_million": 15000000,
+                  "cached_input_micro_per_million": 300000,
+                  "cache_creation_micro_per_million": 3750000
+                }
+              },
+              {
+                "max_prompt_tokens": null,
+                "rates": {
+                  "input_micro_per_million": 6000000,
+                  "output_micro_per_million": 22500000,
+                  "cached_input_micro_per_million": 600000,
+                  "cache_creation_micro_per_million": 7500000
+                }
+              }
+            ],
+            "request_fee_micro": 0,
+            "rounding": "half_up_per_million",
+            "prompt_convention": "excludes_cache",
+            "output_convention": "includes_reasoning"
+          },
+          {
+            "endpoint_id": "anthropic/billing-v1@anthropic/prepaid",
+            "model_id": "anthropic/billing-v1",
+            "provider": "anthropic",
+            "usage_type": "Credits",
+            "price_history_version": 1,
+            "rates": {
+              "input_micro_per_million": 1000000,
+              "output_micro_per_million": 2000000,
+              "cached_input_micro_per_million": 250000,
+              "cache_creation_micro_per_million": 1250000
+            },
+            "tiers": [],
+            "request_fee_micro": 0,
+            "rounding": "half_up_per_million",
+            "prompt_convention": "excludes_cache",
+            "output_convention": "includes_reasoning"
+          },
+          {
+            "endpoint_id": "openai/billing-v1@azure/prepaid",
+            "model_id": "openai/billing-v1",
+            "provider": "azure",
+            "usage_type": "Credits",
+            "price_history_version": 1,
+            "rates": {
+              "input_micro_per_million": 1000000,
+              "output_micro_per_million": 2000000,
+              "cached_input_micro_per_million": 250000,
+              "cache_creation_micro_per_million": 1250000
+            },
+            "tiers": [],
+            "request_fee_micro": 0,
+            "rounding": "half_up_per_million",
+            "prompt_convention": "includes_cache",
+            "output_convention": "includes_reasoning"
+          }
+        ],
+        "minimum_charge": "one_micro_if_positive",
+        "charge_cap": null,
+        "tier_basis": "total_prompt",
+        "tier_boundary": "inclusive",
+        "tier_fallback": "last_tier"
+      },
+      "raw_usage": {
+        "input_tokens": 6,
+        "output_tokens": 3,
+        "cache_read_tokens": 4,
+        "cache_creation_tokens": 2,
+        "reasoning_tokens": 0
+      },
+      "expected_normalized_usage": {
+        "uncached_input_tokens": 6,
+        "total_prompt_tokens": 12,
+        "output_tokens": 3,
+        "cache_read_tokens": 4,
+        "cache_creation_tokens": 2,
+        "reasoning_tokens": 0
+      },
+      "selected_endpoint": "anthropic/billing-v1@anthropic/prepaid",
+      "expected_charge_micro": 16,
+      "expected_exclusion": null,
+      "expected_terminal_envelope_hash": "1dbf34a62c888ac1272341bd27d41e9ce05f5347ee6387e7d0ea9896886f370f",
+      "context": {},
+      "phase": "observed"
+    },
+    {
+      "name": "user_model_identity_requested",
+      "snapshot": {
+        "v": 1,
+        "kind": "credits_endpoint",
+        "candidates": [
+          {
+            "endpoint_id": "openai/billing-v1@openai/prepaid",
+            "model_id": "tr-user-model/x",
+            "provider": "openai",
+            "usage_type": "Credits",
+            "price_history_version": 1,
+            "rates": {
+              "input_micro_per_million": 1000000,
+              "output_micro_per_million": 2000000,
+              "cached_input_micro_per_million": 250000,
+              "cache_creation_micro_per_million": 1250000
+            },
+            "tiers": [],
+            "request_fee_micro": 0,
+            "rounding": "half_up_per_million",
+            "prompt_convention": "includes_cache",
+            "output_convention": "includes_reasoning"
+          }
+        ],
+        "minimum_charge": "one_micro_if_positive",
+        "charge_cap": null,
+        "tier_basis": "total_prompt",
+        "tier_boundary": "inclusive",
+        "tier_fallback": "last_tier"
+      },
+      "raw_usage": {
+        "input_tokens": 10,
+        "output_tokens": 3,
+        "cache_read_tokens": 4,
+        "cache_creation_tokens": 0,
+        "reasoning_tokens": 0
+      },
+      "expected_normalized_usage": null,
+      "selected_endpoint": "openai/billing-v1@openai/prepaid",
+      "expected_charge_micro": null,
+      "expected_exclusion": "user_model",
+      "expected_terminal_envelope_hash": null,
+      "context": {
+        "user_model": true
+      },
+      "phase": "requested"
+    },
+    {
+      "name": "user_model_identity_observed",
+      "snapshot": {
+        "v": 1,
+        "kind": "credits_endpoint",
+        "candidates": [
+          {
+            "endpoint_id": "openai/billing-v1@openai/prepaid",
+            "model_id": "tr-user-model/x",
+            "provider": "openai",
+            "usage_type": "Credits",
+            "price_history_version": 1,
+            "rates": {
+              "input_micro_per_million": 1000000,
+              "output_micro_per_million": 2000000,
+              "cached_input_micro_per_million": 250000,
+              "cache_creation_micro_per_million": 1250000
+            },
+            "tiers": [],
+            "request_fee_micro": 0,
+            "rounding": "half_up_per_million",
+            "prompt_convention": "includes_cache",
+            "output_convention": "includes_reasoning"
+          }
+        ],
+        "minimum_charge": "one_micro_if_positive",
+        "charge_cap": null,
+        "tier_basis": "total_prompt",
+        "tier_boundary": "inclusive",
+        "tier_fallback": "last_tier"
+      },
+      "raw_usage": {
+        "input_tokens": 10,
+        "output_tokens": 3,
+        "cache_read_tokens": 4,
+        "cache_creation_tokens": 0,
+        "reasoning_tokens": 0
+      },
+      "expected_normalized_usage": null,
+      "selected_endpoint": "openai/billing-v1@openai/prepaid",
+      "expected_charge_micro": null,
+      "expected_exclusion": "user_model",
+      "expected_terminal_envelope_hash": null,
+      "context": {
+        "user_model": true
+      },
+      "phase": "observed"
+    },
+    {
+      "name": "candidate_provider_any_slug",
+      "operation": "model",
+      "input": {
+        "endpoint_id": "openai/billing-v1@openai/prepaid",
+        "model_id": "other/model",
+        "provider": "other",
+        "usage_type": "Credits",
+        "price_history_version": 1,
+        "rates": {
+          "input_micro_per_million": 1000000,
+          "output_micro_per_million": 2000000,
+          "cached_input_micro_per_million": 250000,
+          "cache_creation_micro_per_million": 1250000
+        },
+        "tiers": [],
+        "request_fee_micro": 0,
+        "rounding": "half_up_per_million",
+        "prompt_convention": "includes_cache",
+        "output_convention": "includes_reasoning"
+      },
+      "expected_error": null,
+      "model": "Candidate"
+    },
+    {
+      "name": "candidate_model_any_publisher",
+      "operation": "model",
+      "input": {
+        "endpoint_id": "openai/billing-v1@openai/prepaid",
+        "model_id": "anthropic/model",
+        "provider": "openai",
+        "usage_type": "Credits",
+        "price_history_version": 1,
+        "rates": {
+          "input_micro_per_million": 1000000,
+          "output_micro_per_million": 2000000,
+          "cached_input_micro_per_million": 250000,
+          "cache_creation_micro_per_million": 1250000
+        },
+        "tiers": [],
+        "request_fee_micro": 0,
+        "rounding": "half_up_per_million",
+        "prompt_convention": "includes_cache",
+        "output_convention": "includes_reasoning"
+      },
+      "expected_error": null,
+      "model": "Candidate"
+    },
+    {
+      "name": "candidate_provider_ascii",
+      "operation": "model",
+      "input": {
+        "endpoint_id": "openai/billing-v1@openai/prepaid",
+        "model_id": "openai/billing-v1",
+        "provider": "\u00e9",
+        "usage_type": "Credits",
+        "price_history_version": 1,
+        "rates": {
+          "input_micro_per_million": 1000000,
+          "output_micro_per_million": 2000000,
+          "cached_input_micro_per_million": 250000,
+          "cache_creation_micro_per_million": 1250000
+        },
+        "tiers": [],
+        "request_fee_micro": 0,
+        "rounding": "half_up_per_million",
+        "prompt_convention": "includes_cache",
+        "output_convention": "includes_reasoning"
+      },
+      "expected_error": "invalid_snapshot",
+      "model": "Candidate"
+    },
+    {
+      "name": "candidate_provider_identity_punctuation",
+      "operation": "model",
+      "input": {
+        "endpoint_id": "openai/billing-v1@openai/prepaid",
+        "model_id": "openai/billing-v1",
+        "provider": "a!b",
+        "usage_type": "Credits",
+        "price_history_version": 1,
+        "rates": {
+          "input_micro_per_million": 1000000,
+          "output_micro_per_million": 2000000,
+          "cached_input_micro_per_million": 250000,
+          "cache_creation_micro_per_million": 1250000
+        },
+        "tiers": [],
+        "request_fee_micro": 0,
+        "rounding": "half_up_per_million",
+        "prompt_convention": "includes_cache",
+        "output_convention": "includes_reasoning"
+      },
+      "expected_error": "invalid_snapshot",
+      "model": "Candidate"
+    },
+    {
+      "name": "reseller_prompt_agreement",
+      "operation": "model",
+      "input": {
+        "endpoint_id": "openai/billing-v1@azure/prepaid",
+        "model_id": "openai/billing-v1",
+        "provider": "azure",
+        "usage_type": "Credits",
+        "price_history_version": 1,
+        "rates": {
+          "input_micro_per_million": 1000000,
+          "output_micro_per_million": 2000000,
+          "cached_input_micro_per_million": 250000,
+          "cache_creation_micro_per_million": 1250000
+        },
+        "tiers": [],
+        "request_fee_micro": 0,
+        "rounding": "half_up_per_million",
+        "prompt_convention": "excludes_cache",
+        "output_convention": "includes_reasoning"
+      },
+      "expected_error": "invalid_snapshot",
+      "model": "Candidate"
+    },
+    {
+      "name": "bedrock_anthropic_prompt_agreement",
+      "operation": "model",
+      "input": {
+        "endpoint_id": "anthropic/billing-v1@amazon-bedrock/prepaid",
+        "model_id": "anthropic/billing-v1",
+        "provider": "amazon-bedrock",
+        "usage_type": "Credits",
+        "price_history_version": 1,
+        "rates": {
+          "input_micro_per_million": 1000000,
+          "output_micro_per_million": 2000000,
+          "cached_input_micro_per_million": 250000,
+          "cache_creation_micro_per_million": 1250000
+        },
+        "tiers": [],
+        "request_fee_micro": 0,
+        "rounding": "half_up_per_million",
+        "prompt_convention": "includes_cache",
+        "output_convention": "includes_reasoning"
+      },
+      "expected_error": "invalid_snapshot",
+      "model": "Candidate"
+    },
+    {
+      "name": "vertex_anthropic_prompt_agreement",
+      "operation": "model",
+      "input": {
+        "endpoint_id": "anthropic/billing-v1@google-vertex/prepaid",
+        "model_id": "anthropic/billing-v1",
+        "provider": "google-vertex",
+        "usage_type": "Credits",
+        "price_history_version": 1,
+        "rates": {
+          "input_micro_per_million": 1000000,
+          "output_micro_per_million": 2000000,
+          "cached_input_micro_per_million": 250000,
+          "cache_creation_micro_per_million": 1250000
+        },
+        "tiers": [
+          {
+            "max_prompt_tokens": null,
+            "rates": {
+              "input_micro_per_million": 1000000,
+              "output_micro_per_million": 2000000,
+              "cached_input_micro_per_million": 250000,
+              "cache_creation_micro_per_million": 1250000
+            }
+          }
+        ],
+        "request_fee_micro": 0,
+        "rounding": "half_up_per_million",
+        "prompt_convention": "includes_cache",
+        "output_convention": "includes_reasoning"
+      },
+      "expected_error": "invalid_snapshot",
+      "model": "Candidate"
+    },
+    {
+      "name": "bedrock_other_publisher_prompt_agreement",
+      "operation": "model",
+      "input": {
+        "endpoint_id": "openai/billing-v1@amazon-bedrock/prepaid",
+        "model_id": "openai/billing-v1",
+        "provider": "amazon-bedrock",
+        "usage_type": "Credits",
+        "price_history_version": 1,
+        "rates": {
+          "input_micro_per_million": 1000000,
+          "output_micro_per_million": 2000000,
+          "cached_input_micro_per_million": 250000,
+          "cache_creation_micro_per_million": 1250000
+        },
+        "tiers": [],
+        "request_fee_micro": 0,
+        "rounding": "half_up_per_million",
+        "prompt_convention": "excludes_cache",
+        "output_convention": "includes_reasoning"
+      },
+      "expected_error": "invalid_snapshot",
+      "model": "Candidate"
+    },
+    {
+      "name": "other_provider_anthropic_model_prompt_agreement",
+      "operation": "model",
+      "input": {
+        "endpoint_id": "openai/billing-v1@openai/prepaid",
+        "model_id": "anthropic/billing-v1",
+        "provider": "openai",
+        "usage_type": "Credits",
+        "price_history_version": 1,
+        "rates": {
+          "input_micro_per_million": 1000000,
+          "output_micro_per_million": 2000000,
+          "cached_input_micro_per_million": 250000,
+          "cache_creation_micro_per_million": 1250000
+        },
+        "tiers": [],
+        "request_fee_micro": 0,
+        "rounding": "half_up_per_million",
+        "prompt_convention": "excludes_cache",
+        "output_convention": "includes_reasoning"
+      },
+      "expected_error": "invalid_snapshot",
+      "model": "Candidate"
+    },
+    {
+      "name": "candidate_provider_min",
+      "operation": "field",
+      "model": "Candidate",
+      "field": "provider",
+      "input": "",
+      "expected_error": "invalid_type"
+    },
+    {
+      "name": "candidate_provider_max",
+      "operation": "field",
+      "model": "Candidate",
+      "field": "provider",
+      "input": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "expected_error": "invalid_type"
+    },
+    {
+      "name": "candidate_provider_string_type",
+      "operation": "field",
+      "model": "Candidate",
+      "field": "provider",
+      "input": 123,
+      "expected_error": "string_type"
+    },
+    {
+      "name": "builder_reseller_convention",
+      "operation": "builder",
+      "input": {
+        "candidate": {
+          "endpoint_id": "anthropic/billing-v1@google-vertex/prepaid",
+          "model_id": "anthropic/billing-v1",
+          "provider": "google-vertex",
+          "usage_type": "Credits",
+          "price_history_version": 1,
+          "rates": {
+            "input_micro_per_million": 1000000,
+            "output_micro_per_million": 2000000,
+            "cached_input_micro_per_million": 250000,
+            "cache_creation_micro_per_million": 1250000
+          },
+          "tiers": [
+            {
+              "max_prompt_tokens": null,
+              "rates": {
+                "input_micro_per_million": 1000000,
+                "output_micro_per_million": 2000000,
+                "cached_input_micro_per_million": 250000,
+                "cache_creation_micro_per_million": 1250000
+              }
+            }
+          ],
+          "request_fee_micro": 0,
+          "rounding": "half_up_per_million",
+          "prompt_convention": "excludes_cache",
+          "output_convention": "includes_reasoning"
+        }
+      },
+      "expected_error": null,
+      "expected_hash": "fe425e5d4a0be45db8340bb092b45f21dbf35f9ee1a08444a68167edea7f820a"
+    },
+    {
+      "name": "builder_reseller_other_publisher",
+      "operation": "builder",
+      "input": {
+        "candidate": {
+          "endpoint_id": "openai/billing-v1@amazon-bedrock/prepaid",
+          "model_id": "openai/billing-v1",
+          "provider": "amazon-bedrock",
+          "usage_type": "Credits",
+          "price_history_version": 1,
+          "rates": {
+            "input_micro_per_million": 1000000,
+            "output_micro_per_million": 2000000,
+            "cached_input_micro_per_million": 1000000,
+            "cache_creation_micro_per_million": 1250000
+          },
+          "tiers": [
+            {
+              "max_prompt_tokens": null,
+              "rates": {
+                "input_micro_per_million": 1000000,
+                "output_micro_per_million": 2000000,
+                "cached_input_micro_per_million": 250000,
+                "cache_creation_micro_per_million": 1250000
+              }
+            }
+          ],
+          "request_fee_micro": 0,
+          "rounding": "half_up_per_million",
+          "prompt_convention": "includes_cache",
+          "output_convention": "includes_reasoning"
+        }
+      },
+      "expected_error": null,
+      "expected_hash": "b100c3d9555e55cce35ea4a6b67cc832fa281f419f8c1d97bc06a0e9960b5990"
+    }
+  ],
+  "rules": [
+    {
+      "name": "candidate_provider_identity",
+      "rule": "Candidate.provider: binds Identity",
+      "cases": [
+        "candidate_provider_ascii",
+        "candidate_provider_identity_punctuation"
+      ],
+      "old": "    provider: Identity",
+      "new": "    provider: Annotated[str, Field(min_length=1, max_length=512)]",
+      "scope": "Candidate"
+    },
+    {
+      "name": "candidate_provider_min",
+      "rule": "Candidate.provider: Identity min length",
+      "cases": [
+        "candidate_provider_min"
+      ],
+      "old": "    provider: Identity",
+      "new": "    provider: Annotated[str, Field(max_length=512, pattern=r\"^[A-Za-z0-9_./:@+\\-]*$\")]",
+      "scope": "Candidate"
+    },
+    {
+      "name": "candidate_provider_max",
+      "rule": "Candidate.provider: Identity max length",
+      "cases": [
+        "candidate_provider_max"
+      ],
+      "old": "    provider: Identity",
+      "new": "    provider: Annotated[str, Field(min_length=1, pattern=r\"^[A-Za-z0-9_./:@+\\-]+$\")]",
+      "scope": "Candidate"
+    },
+    {
+      "name": "candidate_provider_required",
+      "rule": "Candidate.provider: required",
+      "cases": [
+        "candidate_provider_required"
+      ],
+      "old": "    provider: Identity",
+      "new": "    provider: Identity = 'openai'",
+      "scope": "Candidate"
+    },
+    {
+      "name": "candidate_provider_nonnull",
+      "rule": "Candidate.provider: nonnull Identity",
+      "cases": [
+        "candidate_provider_nonnull_null"
+      ],
+      "old": "    provider: Identity",
+      "new": "    provider: (Identity) | None",
+      "scope": "Candidate"
+    },
+    {
+      "name": "candidate_provider_string_type",
+      "rule": "Candidate.provider: string input type",
+      "cases": [
+        "candidate_provider_string_type"
+      ],
+      "old": "    provider: Identity",
+      "new": "    provider: Identity | int",
+      "scope": "Candidate"
+    },
+    {
+      "name": "candidate_provider_any_slug",
+      "rule": "Any provider slug is accepted, with no adapter list",
+      "cases": [
+        "candidate_provider_any_slug",
+        "reseller_cache"
+      ],
+      "old": "    provider: Identity",
+      "new": "    provider: Literal[\"openai\", \"anthropic\"]",
+      "scope": "Candidate",
+      "failure": "rejected_positive"
+    },
+    {
+      "name": "candidate_model_any_publisher",
+      "rule": "A provider may serve another publisher's model, with no provider/ prefix rule",
+      "cases": [
+        "candidate_model_any_publisher",
+        "reseller_cache",
+        "bedrock_anthropic_cache"
+      ],
+      "old": "            raise ValueError(\"unsupported prompt convention for adapter\")\n",
+      "new": "            raise ValueError(\"unsupported prompt convention for adapter\")\n        if not self.model_id.startswith(self.provider + \"/\"):\n            raise ValueError(\"custom or unsupported model\")\n",
+      "scope": "Candidate",
+      "failure": "rejected_positive"
+    },
+    {
+      "name": "convention_not_by_publisher_alone",
+      "rule": "Prompt convention is not the model publisher's alone: only anthropic, amazon-bedrock and google-vertex exclude cached tokens for an anthropic/ model",
+      "cases": [
+        "other_provider_anthropic_model_prompt_agreement"
+      ],
+      "old": "provider_input_excludes_cache(self.provider, self.model_id)",
+      "new": "self.model_id.startswith(\"anthropic/\")",
+      "scope": "Candidate"
+    },
+    {
+      "name": "convention_not_by_publisher_alone_positive",
+      "rule": "Another provider serving an anthropic/ model keeps the cache-inclusive convention",
+      "cases": [
+        "candidate_model_any_publisher"
+      ],
+      "old": "provider_input_excludes_cache(self.provider, self.model_id)",
+      "new": "self.model_id.startswith(\"anthropic/\")",
+      "scope": "Candidate",
+      "failure": "rejected_positive"
+    },
+    {
+      "name": "convention_not_by_slug_alone",
+      "rule": "Prompt convention is not the provider slug's alone: amazon-bedrock and google-vertex exclude cached tokens for an anthropic/ model",
+      "cases": [
+        "bedrock_anthropic_prompt_agreement",
+        "vertex_anthropic_prompt_agreement"
+      ],
+      "old": "provider_input_excludes_cache(self.provider, self.model_id)",
+      "new": "provider_input_excludes_cache(self.provider)",
+      "scope": "Candidate"
+    },
+    {
+      "name": "convention_not_by_slug_alone_positive",
+      "rule": "A reseller relaying Anthropic-native usage for an anthropic/ model is cache-exclusive",
+      "cases": [
+        "bedrock_anthropic_cache",
+        "vertex_anthropic_cache",
+        "mixed_providers_tiered_reseller"
+      ],
+      "old": "provider_input_excludes_cache(self.provider, self.model_id)",
+      "new": "provider_input_excludes_cache(self.provider)",
+      "scope": "Candidate",
+      "failure": "rejected_positive"
+    },
+    {
+      "name": "convention_not_by_reseller_alone",
+      "rule": "Prompt convention is not the reseller's alone: amazon-bedrock serving another publisher's model is cache-inclusive",
+      "cases": [
+        "bedrock_other_publisher_prompt_agreement"
+      ],
+      "old": "provider_input_excludes_cache(self.provider, self.model_id)",
+      "new": "self.provider in (\"anthropic\", \"amazon-bedrock\", \"google-vertex\")",
+      "scope": "Candidate"
+    },
+    {
+      "name": "convention_not_by_reseller_alone_positive",
+      "rule": "A reseller serving another publisher's model keeps the cache-inclusive convention",
+      "cases": [
+        "bedrock_other_publisher_cache"
+      ],
+      "old": "provider_input_excludes_cache(self.provider, self.model_id)",
+      "new": "self.provider in (\"anthropic\", \"amazon-bedrock\", \"google-vertex\")",
+      "scope": "Candidate",
+      "failure": "rejected_positive"
+    },
+    {
+      "name": "convention_not_always_exclusive",
+      "rule": "A provider outside the rule claiming the cache-exclusive convention is refused",
+      "cases": [
+        "reseller_prompt_agreement"
+      ],
+      "old": "provider_input_excludes_cache(self.provider, self.model_id)",
+      "new": "True",
+      "scope": "Candidate"
+    },
+    {
+      "name": "builder_convention_follows_provider_and_model",
+      "rule": "build_snapshot derives the convention from the provider slug and the model id",
+      "cases": [
+        "builder_reseller_convention"
+      ],
+      "old": "\"excludes_cache\" if provider_input_excludes_cache(endpoint.provider, endpoint.model_id)",
+      "new": "\"excludes_cache\" if provider_input_excludes_cache(endpoint.provider)",
+      "failure": "rejected_positive"
+    },
+    {
+      "name": "builder_convention_not_by_publisher",
+      "rule": "build_snapshot does not derive the convention from the model publisher alone",
+      "cases": [
+        "builder_reseller_other_publisher"
+      ],
+      "old": "\"excludes_cache\" if provider_input_excludes_cache(endpoint.provider, endpoint.model_id)",
+      "new": "\"excludes_cache\" if endpoint.provider in (\"anthropic\", \"amazon-bedrock\", \"google-vertex\")",
+      "failure": "rejected_positive"
+    },
+    {
+      "name": "user_model_identity_fact",
+      "rule": "A user-model identity is excluded by the user_model fact, in both phases",
+      "cases": [
+        "user_model_identity_requested",
+        "user_model_identity_observed"
+      ],
+      "old": "if getattr(context, name):",
+      "new": "if name != \"user_model\" and getattr(context, name):"
+    }
+  ]
+}

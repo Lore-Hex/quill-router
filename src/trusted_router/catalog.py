@@ -431,6 +431,24 @@ def endpoint_for_id(endpoint_id: str | None) -> ModelEndpoint | None:
     return MODEL_ENDPOINTS.get(endpoint_id)
 
 
+def endpoint_provider_and_model(endpoint_id: str | None) -> tuple[str, str] | None:
+    """The (provider slug, router model id) an endpoint id names: the
+    catalog's while it lists the endpoint, else read from the id's own shape,
+    ``<model id>@<provider slug>/<tier>`` (every composer of an endpoint id,
+    in catalog_ingest, catalog_registry, catalog_aliases and
+    user_model_rules, builds it so, and a test holds every endpoint id to
+    it), for a stream whose endpoint left the catalog between its authorize
+    and its settle. None for an id of neither kind."""
+    endpoint = endpoint_for_id(endpoint_id)
+    if endpoint is not None:
+        return endpoint.provider, endpoint.model_id
+    model_id, separator, tail = (endpoint_id or "").rpartition("@")
+    provider, _slash, tier = tail.partition("/")
+    if not separator or not model_id or not provider or not tier:
+        return None
+    return provider, model_id
+
+
 def default_endpoint_for_model(model: Model) -> ModelEndpoint | None:
     endpoints = endpoints_for_model(model.id)
     if not endpoints:
