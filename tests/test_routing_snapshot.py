@@ -437,7 +437,6 @@ def test_gateway_regions_agree_with_the_provider_contract(live, settings) -> Non
                 ("baseten", "decision-models/baseten-elephant-9b-latest"),
                 ("baseten", "decision-models/baseten-mammoth-27b-latest"),
                 ("baseten", "decision-models/baseten-joey-2b-latest"),
-                ("near-ai", "z-ai/glm-5.3-flash"),
             }
         )
         for region in sorted(regions):
@@ -502,7 +501,6 @@ def test_the_request_region_is_checked_even_when_it_is_not_configured(live) -> N
                 ("baseten", "decision-models/baseten-elephant-9b-latest"),
                 ("baseten", "decision-models/baseten-mammoth-27b-latest"),
                 ("baseten", "decision-models/baseten-joey-2b-latest"),
-                ("near-ai", "z-ai/glm-5.3-flash"),
             }
             python = body_region or ("" if explicit_origin else choose_region(us_only, body_region or None))
             assert checked == python
