@@ -83,10 +83,10 @@ from trusted_router.competitor_comparisons import (
 )
 from trusted_router.config import Settings
 from trusted_router.content.blog import (
-    BLOG_POSTS,
-    BLOG_POSTS_BY_SLUG,
     FEATURED_SLUGS,
     BlogPost,
+    published_post,
+    published_posts,
 )
 from trusted_router.content.company_signin import COMPANY_SIGNIN_PAGES, company_signin_context
 from trusted_router.content.legal import (
@@ -2807,7 +2807,7 @@ def _newest_first(posts: Iterable[BlogPost]) -> list[BlogPost]:
 def _blog_index_posts(settings: Settings) -> tuple[BlogIndexPost, ...]:
     return tuple(
         BlogIndexPost(post=post, image=_blog_og_image(settings, post))
-        for post in _newest_first(BLOG_POSTS)
+        for post in _newest_first(published_posts())
     )
 
 
@@ -2822,7 +2822,7 @@ def _featured_blog_posts(settings: Settings) -> tuple[BlogIndexPost, ...]:
     blog index should not 500 because somebody renamed a post, but it also
     should not silently show one card where two were intended.
     """
-    featured = [BLOG_POSTS_BY_SLUG[slug] for slug in FEATURED_SLUGS if slug in BLOG_POSTS_BY_SLUG]
+    featured = [post for slug in FEATURED_SLUGS if (post := published_post(slug)) is not None]
     return tuple(
         BlogIndexPost(post=post, image=_blog_og_image(settings, post))
         for post in _newest_first(featured)
@@ -2894,7 +2894,7 @@ def _blog_index_json_ld(settings: Settings) -> str:
                     "datePublished": post.published_date,
                     "description": post.description,
                 }
-                for post in BLOG_POSTS
+                for post in published_posts()
             ],
         },
     )
@@ -3526,7 +3526,7 @@ def public_blog_index_html(settings: Settings) -> str:
 
 
 def public_blog_post_html(settings: Settings, slug: str) -> str | None:
-    post = BLOG_POSTS_BY_SLUG.get(slug)
+    post = published_post(slug)
     if post is None:
         return None
     site_url = f"https://{settings.trusted_domain}{post.href}"
@@ -4829,7 +4829,7 @@ def sitemap_core_xml(settings: Settings) -> str:
     doc_paths = (f"/{slug}" for slug in PUBLIC_PAGES if slug == "docs" or slug.startswith("docs/"))
     for path in dict.fromkeys((*SEO_CORE_PATHS, *doc_paths)):
         paths.append((path, "daily" if path in {"/models", "/providers"} else "weekly", "0.9"))
-    for post in BLOG_POSTS:
+    for post in published_posts():
         paths.append((post.href, "monthly", "0.7"))
     return _sitemap_urlset(domain, paths)
 
