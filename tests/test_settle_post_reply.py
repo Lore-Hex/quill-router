@@ -351,8 +351,8 @@ def test_unexpected_background_error_does_not_abort_later_tasks(
 # Each limit in the saturation test detects a hang; none measures latency.
 # The optional work stays stalled until the test releases it, so a reply or an
 # authorize thread that waited for it would never come, and any finite limit
-# proves the property. A loaded CI runner has held one reply for more than
-# five seconds, so the limit sits far above anything a slow runner does.
+# proves the property. A five-second limit here is the likely cause of one CI
+# failure, so the limit sits far above anything a slow runner does.
 HANG_SECONDS = 60.0
 
 
@@ -372,8 +372,8 @@ def test_saturation_is_bounded_and_does_not_borrow_authorize_tokens(
             with write_lock:
                 started.append(threading.current_thread().name)
                 first_workers = len(started) <= post_commit.WORKERS
-            # No limit of their own: the test body's bounded wait breaks the
-            # barrier for every party, and its finally always sets release.
+            # No limit of their own: the test body breaks the barrier on
+            # every failing exit, and its finally always sets release.
             if first_workers:
                 entered.wait()
             release.wait()
@@ -463,12 +463,14 @@ def test_saturation_is_bounded_and_does_not_borrow_authorize_tokens(
     with ThreadPoolExecutor(max_workers=1) as driver:
         future = driver.submit(asyncio.run, drive())
         try:
-            # Twice the driver's limit, so its error comes first.
+            # Twice the driver's limit, so a hung step there reports first.
             entered.wait(timeout=2 * HANG_SECONDS)
             future.result(timeout=2 * HANG_SECONDS)
-        except (threading.BrokenBarrierError, TimeoutError):
+        except BaseException as exc:
+            # An interrupt leaves the barrier intact; free the workers.
+            entered.abort()
             # The driver's own failure is the cause of either; report that.
-            if failed:
+            if failed and isinstance(exc, (threading.BrokenBarrierError, TimeoutError)):
                 raise failed[0] from None
             raise
         finally:
