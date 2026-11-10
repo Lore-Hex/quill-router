@@ -29,6 +29,10 @@ else:
     import shadow_report
     from drain_capacity import timestamp
 
+# The R3 pilot's pins, which this tool's checks hold a serving roster to.
+# rollout.sh has pinned an empty pilot set since 2026-11-10 (every workspace,
+# docs/design/fast-admission-widening.md section 9.1); these describe the
+# pilot and the way back to it, not the deployed pins.
 PILOT = '45819281-0ce9-4811-a0cd-c660ab3a116d'
 PILOT_WORKSPACES = PILOT + ',162e441a-5d13-414f-92bd-7c6cd805faa3'
 # The operator workspace is in the fast-path pilot too (R3); without this pin

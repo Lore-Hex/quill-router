@@ -593,16 +593,22 @@ def test_admission_excluded_workspaces_is_the_fastpath_set_less_the_overlap(key)
     assert "admission_excluded_workspaces" not in json.loads(_publisher(settings, Clock(T0)).current().body)["async_settle"]
 
 
-def test_the_deployed_pilot_sets_publish_no_excluded_member() -> None:
-    """With rollout.sh's own pilot sets, in all mode since WS2 (every async
-    pilot workspace is on the overlap list or on the fast-path exclude
-    list), the body carries no admission_excluded_workspaces, so a Go node
-    that predates the member reads it unchanged. With the async pilot set
-    emptied (docs/design/fast-admission-widening.md section 9.1, which
-    replaces the settings' refusal of it) the same pins start, admit every
-    workspace and publish neither member."""
+def test_the_deployed_pins_admit_every_workspace_but_the_reserved_list() -> None:
+    """rollout.sh's own pins since 2026-11-10
+    (docs/design/fast-admission-widening.md section 9.1): all mode, admission
+    on and an empty async pilot set. Admission covers every workspace but
+    the reserved list, which is the enabler's include list less the overlap
+    list; the body carries the reserved list as admission_excluded_workspaces
+    and no admission_workspaces, so the edge answers async-v1 for the
+    reserved workspaces alone. A leased request takes no ticket outside the
+    overlap list. The way back, the async pilot set named again, starts on
+    the same pins and reads no reserved list."""
+    from tests.test_fastpath_lists import resolved_lists
+
     rendered = _rendered_rollout_env()
     assert rendered["TR_FASTPATH_PILOT_ALL"] == "true" and rendered["TR_FASTPATH_PILOT_WORKSPACES"] == ""
+    assert rendered["TR_ASYNC_SETTLE_ENABLED"] == rendered["TR_ASYNC_SETTLE_PROTECTION"] == "true"
+    assert rendered["TR_ASYNC_SETTLE_PILOT_WORKSPACES"] == ""
     common = dict(
         # The one backend rollout.sh deploys (it refuses any other).
         storage_backend="spanner-clickhouse",
@@ -610,26 +616,42 @@ def test_the_deployed_pilot_sets_publish_no_excluded_member() -> None:
         fastpath_pilot_workspaces=rendered["TR_FASTPATH_PILOT_WORKSPACES"],
         fastpath_pilot_exclude=rendered["TR_FASTPATH_PILOT_EXCLUDE"],
         async_settle_fastpath_overlap_workspaces=rendered["TR_ASYNC_SETTLE_FASTPATH_OVERLAP_WORKSPACES"],
+        async_settle_fastpath_reserved_workspaces=rendered["TR_ASYNC_SETTLE_FASTPATH_RESERVED_WORKSPACES"],
     )
     deployed = VECTORS.fixture_settings(async_settle_enabled=True, async_settle_protection=True,
                                         async_settle_pilot_workspaces=rendered["TR_ASYNC_SETTLE_PILOT_WORKSPACES"],
                                         **common)
-    pilots = deployed.async_settle_pilot_workspace_ids
-    published = publisher_module.admission_workspaces(deployed)
-    assert "admission_excluded_workspaces" not in published
-    assert published["admission_workspaces"] == sorted(pilots)
-    everyone = VECTORS.fixture_settings(async_settle_enabled=True, async_settle_protection=True,
-                                        async_settle_pilot_workspaces="", **common)
-    assert publisher_module.admission_workspaces(everyone) == {}
-    assert all(everyone.async_settle_pilot_allows(ws) for ws in (*pilots, "ws-synthetic-anyone"))
-    # The operator workspace is in both pilots and keeps its admission; the
-    # rest of the async pilot set is on the fast-path exclude list.
+    assert deployed.async_settle_admission_enabled and not deployed.async_settle_pilot_workspace_ids
     overlap = deployed.async_settle_fastpath_overlap_workspace_ids
-    assert overlap and overlap <= pilots
-    assert pilots - overlap and pilots - overlap <= deployed.fastpath_pilot_exclude_ids
-    assert all(deployed.fastpath_covers(ws) for ws in overlap)
-    assert not any(deployed.fastpath_covers(ws) for ws in pilots - overlap)
-    assert all(deployed.async_settle_pilot_allows(ws) for ws in pilots)
+    reserved = deployed.async_settle_fastpath_reserved_workspace_ids
+    exclude = deployed.fastpath_pilot_exclude_ids
+    include = frozenset(resolved_lists()["TR_FASTPATH_ENABLER_INCLUDE"].split(","))
+    assert overlap and reserved and exclude
+    assert reserved == include - overlap, (
+        "rollout.sh's reserved list is fastpath_lists.sh's enabler include list less the overlap list")
+    assert rendered["TR_ASYNC_SETTLE_FASTPATH_RESERVED_WORKSPACES"].count(",") == len(reserved) - 1
+    assert publisher_module.admission_workspaces(deployed) == {"admission_excluded_workspaces": sorted(reserved)}
+    # Every workspace but the reserved list: the operator's, the probes the
+    # fast path leaves out, and one no list names.
+    admitted = (*sorted(overlap), *sorted(exclude), "ws-synthetic-anyone")
+    assert all(deployed.async_settle_pilot_allows(ws) for ws in admitted)
+    assert all(deployed.async_settle_admits_request(ws, leased=False) for ws in admitted)
+    assert not any(deployed.async_settle_pilot_allows(ws) for ws in reserved)
+    assert not any(deployed.async_settle_admits_request(ws, leased=leased)
+                   for ws in reserved for leased in (False, True))
+    # Per request: a leased authorization keeps its lease's settle, but for
+    # the overlap list's.
+    assert all(deployed.async_settle_admits_request(ws, leased=True) for ws in overlap)
+    assert not any(deployed.async_settle_admits_request(ws, leased=True)
+                   for ws in (*sorted(exclude), "ws-synthetic-anyone"))
+    # The way back is the one pin: with the pilot set named again the same
+    # pins start, the reserved list is not read and only the named are covered.
+    named = VECTORS.fixture_settings(async_settle_enabled=True, async_settle_protection=True,
+                                     async_settle_pilot_workspaces=",".join(sorted(overlap)), **common)
+    assert publisher_module.admission_workspaces(named) == {"admission_workspaces": sorted(overlap)}
+    assert all(named.async_settle_pilot_allows(ws) for ws in overlap)
+    assert not any(named.async_settle_pilot_allows(ws) for ws in (*sorted(reserved), *sorted(exclude),
+                                                                  "ws-synthetic-anyone"))
 
 
 def _rendered_rollout_env() -> dict[str, str]:
@@ -716,16 +738,27 @@ def test_every_admission_vector_is_python_s_own_admission_answer() -> None:
     assert len(published) - len(all_mode) == 2 * len(VECTORS.ADMISSION_PILOTS) * len(VECTORS.ADMISSION_OVERLAPS) * 2
     # All mode (widening section 9): every combination the settings accept,
     # each body carrying the members and no admission_excluded_workspaces.
-    assert len(all_mode) == len(VECTORS.admission_all_mode_combinations()) == 36
+    assert len(all_mode) == len(VECTORS.admission_all_mode_combinations()) == 40
     assert all(parse_edge_policy(c["body"]).fastpath_pilot_all is True for c in all_mode)
     # The member appears in all mode only as the reserved list of section
     # 9.1: admission on, no async pilot set, a reserved list.
     with_member = [c for c in all_mode if "admission_excluded_workspaces" in c["body"]]
-    assert len(with_member) == 4 and all(
+    assert len(with_member) == 6 and all(
         c["settings"]["admission"] and not c["settings"]["pilots"] and c["settings"]["reserved"]
         and "admission_workspaces" not in c["body"] for c in with_member)
     assert with_member == [c for c in all_mode if c["settings"]["admission"] and not c["settings"]["pilots"]
                            and c["settings"]["reserved"]]
+    # The deployed shape: no pilot set, a reserved list and a workspace on
+    # the fast path's exclude list, which the body names under
+    # fastpath_pilot_exclude and admission covers all the same.
+    deployed = [c for c in with_member if c["settings"]["exclude"]]
+    assert len(deployed) == len(VECTORS.ADMISSION_OVERLAPS)
+    for case in deployed:
+        policy = parse_edge_policy(case["body"])
+        assert policy.fastpath_pilot_exclude == (VECTORS.ADMISSION_EXCLUDE_NO_PILOTS,), case["name"]
+        assert policy.async_settle.admission_excluded_workspaces == (case["settings"]["reserved"],), case["name"]
+        assert case["admits"][VECTORS.ADMISSION_EXCLUDE_NO_PILOTS] is True, case["name"]
+        assert case["admits"][case["settings"]["reserved"]] is False, case["name"]
     assert len(cases) - len(published) == len(VECTORS.ADMISSION_REFUSED) + 1
     answers = set()
     for case in cases:

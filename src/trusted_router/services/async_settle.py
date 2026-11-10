@@ -322,9 +322,11 @@ def snapshot_projection(*, authorization: GatewayAuthorization, snapshot: Billin
         # byte for byte (shape B): no ticket, no status URL. The enclave
         # binds async settlement only from async_eligible true. The edge
         # composes this answer for non-pilots from admission_workspaces, and
-        # for fast-path workspaces outside the overlap list (which
-        # async_settle_pilot_allows leaves out even with an empty pilot set)
-        # from admission_excluded_workspaces; pilots pass to Python, which
+        # from admission_excluded_workspaces for the workspaces
+        # async_settle_pilot_allows leaves out whatever the pilot set says:
+        # under the explicit list, the fast-path workspaces outside the
+        # overlap list; in all mode with no pilot set, the reserved list
+        # (fast-admission-widening.md section 9.1). Pilots pass to Python, which
         # checks their stored enclave region here
         # (docs/design/fast-admission-e2-g15-async.md sections 4.1 and 4.5).
         # A request the pilot leased gets the same answer unless its

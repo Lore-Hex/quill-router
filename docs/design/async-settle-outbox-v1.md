@@ -1961,6 +1961,12 @@ unrestricted admission semantics; the pilot flip MUST pin the single workspace.
 Removal closes fresh admission, while duplicate accepted work and recovery
 continue. Authorize and async-v1 acceptance both check the list.
 
+Since 2026-11-10 the deployed pin is empty and admission covers every
+workspace but the fast path's reserved list
+(`docs/design/fast-admission-widening.md` section 9.1). The pilot procedure
+below stays as the record of the pilot and as the way back: naming the
+pilot set in step 8's pin again returns admission to it.
+
 Pin `TR_ASYNC_SETTLE_PILOT_CAP_MICRO=5000000` at activation. The override applies
 to either eligible tier: new work requires a fresh pending frozen sum **≤ $5**.
 Without an override the tier 2/3 guards remain $25/$100. This is §6's cached

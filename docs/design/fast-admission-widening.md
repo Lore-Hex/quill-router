@@ -923,6 +923,13 @@ Fastest first, each narrower than the next:
 7. `TR_FASTPATH_PILOT_ENABLED=false`: every new authorize takes today's
    path at once.
 
+**With a reserved list pinned (§9.1).** Two of these steps move the
+reserved pin in the same deploy, or the settings refuse to start and the
+previous revision keeps serving: step 4 for a workspace on
+`TR_ASYNC_SETTLE_FASTPATH_RESERVED_WORKSPACES` (take it off that list as it
+goes on the exclude list), and `TR_FASTPATH_PILOT_ALL=false` (empty the
+reserved list). The other steps leave the reserved pin as it is.
+
 ## 9. Async admission
 
 Today `async_settle_pilot_allows(w)` is false for `w` in
@@ -1044,6 +1051,21 @@ Between pins, instances disagree only one way that matters: a ticket from
 an instance with the new pins reaching a settle instance with the old
 answers `sync_required` `not_eligible`, and the enclave settles
 synchronously.
+
+**The deployed pins (2026-11-10).** `scripts/deploy/rollout.sh` pins an
+empty `TR_ASYNC_SETTLE_PILOT_WORKSPACES`, the overlap list unchanged (the
+operator workspace) and `TR_ASYNC_SETTLE_FASTPATH_RESERVED_WORKSPACES` as
+the enabler's include list less the overlap list, so the workspaces the
+enabler was told to keep on the fast path stay there and every other
+workspace is admitted. The probes' workspaces on `TR_FASTPATH_PILOT_EXCLUDE`
+are admitted with everyone else: the fast path never takes them, so they
+have nothing to reserve. The reserved list cannot name them either, so with
+the pilot set empty no pin keeps an excluded workspace off async settle;
+the way to do that is to name the pilot set again, which brings back §9's
+rule for every workspace. The shared vectors carry this shape (an empty
+pilot set, a reserved list and an exclude list). `test_the_deployed_pins_admit_every_workspace_but_the_reserved_list`
+holds the pins to this paragraph, and a workspace added to the include
+list fails it until the reserved pin says which path the workspace takes.
 
 ## 10. What the code says that the documents do not
 

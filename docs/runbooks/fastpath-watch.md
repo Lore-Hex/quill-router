@@ -211,7 +211,9 @@ lines, summed, are its counts. It prints JSON:
   G15 section 4.5). In all mode with an empty
   `TR_ASYNC_SETTLE_PILOT_WORKSPACES` the excluded member is
   `TR_ASYNC_SETTLE_FASTPATH_RESERVED_WORKSPACES` and every other
-  workspace's async-v1 authorize passes (the widening's section 9.1).
+  workspace's async-v1 authorize passes (the widening's section 9.1);
+  these are the deployed pins since 2026-11-10, so `policy.async_admission`
+  now counts every such workspace's async-v1 authorizes.
   A workspace the members leave out is composed and
   compared as with admission off, since Python answers it without a
   ticket. Because the admission gate

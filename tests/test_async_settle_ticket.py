@@ -199,13 +199,23 @@ def test_rollout_never_inherits_key_file():
     assert Settings().async_settle_protection is False
     assert [line.strip() for line in source.splitlines() if 'TR_ASYNC_SETTLE_PROTECTION' in line] == [
         '"TR_ASYNC_SETTLE_PROTECTION=true"']
-    config = Settings(environment='test', **{
+    # The reserved list is an all-mode setting (widening section 9.1), so the
+    # pins parse beside the mode and the exclude list rollout.sh renders.
+    from tests.test_fastpath_lists import resolved_lists
+    assert '"TR_FASTPATH_PILOT_ALL=true"' in [line.strip() for line in source.splitlines()]
+    config = Settings(environment='test', storage_backend='spanner-clickhouse', fastpath_pilot_all=True,
+                      fastpath_pilot_exclude=resolved_lists()['TR_FASTPATH_PILOT_EXCLUDE'], **{
         key.removeprefix('TR_').lower(): value for key, value in pins.items()
     })
     assert config.async_settle_admission_enabled is True
-    assert config.async_settle_pilot_workspace_ids == {
-        '45819281-0ce9-4811-a0cd-c660ab3a116d', '162e441a-5d13-414f-92bd-7c6cd805faa3',
-    }
+    # Every workspace since 2026-11-10: the pilot set is empty and the
+    # reserved list is the only one admission leaves out.
+    assert pins['TR_ASYNC_SETTLE_PILOT_WORKSPACES'] == ''
+    assert config.async_settle_pilot_workspace_ids == frozenset()
+    reserved = config.async_settle_fastpath_reserved_workspace_ids
+    assert reserved == frozenset(pins['TR_ASYNC_SETTLE_FASTPATH_RESERVED_WORKSPACES'].split(',')) and reserved
+    assert config.async_settle_pilot_allows('ws-synthetic-anyone')
+    assert not any(config.async_settle_pilot_allows(workspace) for workspace in reserved)
     assert config.async_settle_pilot_cap_micro == 5000000
 
 
