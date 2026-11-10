@@ -96,6 +96,9 @@ DEEPINFRA_LING_31_FLASH_RETIREMENT_AT = datetime(2026, 11, 15, 0, 0, tzinfo=UTC)
 # Tencent TokenHub decommissions hy4-preview from 00:00:00 Beijing Time (UTC+8) on
 # 7 Dec 2026, i.e. 2026-12-06 16:00 UTC; the notice recommends migrating to hy4.
 TENCENT_HY4_PREVIEW_RETIREMENT_AT = datetime(2026, 12, 6, 16, 0, tzinfo=UTC)
+# Databricks' November 10 notice retires GLM 5.2 on 4 Feb 2027 (date only, so
+# 00:00 UTC conservatively); GLM 5.3 is the recommended replacement.
+DATABRICKS_GLM_52_RETIREMENT_AT = datetime(2027, 2, 4, 0, 0, tzinfo=UTC)
 # 2026-11-06 19:00 UTC: Novita, Tinfoil and Chutes no longer list these routes
 # in their public model APIs; the hourly refresh already marks them dark.
 NOVEMBER_6_DELISTED_RETIREMENT_AT = datetime(2026, 11, 6, 19, 0, tzinfo=UTC)
@@ -1350,6 +1353,18 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"hy4-preview"}),
         effective_at=TENCENT_HY4_PREVIEW_RETIREMENT_AT,
         replacement_model_ids=("tencent/hy4",),
+    ),
+    # Databricks' November 10 Foundation Model retirement notice: "The GLM 5.2
+    # model will be retired on February 4th, 2027" (Foundation Model APIs and
+    # Batch Inference; date only, so 00:00 UTC) and "GLM 5.3 is the recommended
+    # replacement model". Retire only Databricks' route; other providers'
+    # glm-5.2 routes stay.
+    _Retirement(
+        provider="databricks",
+        model_ids=frozenset({"z-ai/glm-5.2"}),
+        upstream_ids=frozenset({"databricks-glm-5-2"}),
+        effective_at=DATABRICKS_GLM_52_RETIREMENT_AT,
+        replacement_model_ids=("z-ai/glm-5.3",),
     ),
     # DigitalOcean's October 29 notices deprecate these Inference models on
     # 2026-11-09 (date only; 00:00 UTC conservatively); requests then 404.

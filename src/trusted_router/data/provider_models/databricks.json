@@ -300,6 +300,8 @@
       "status": 1,
       "id": "z-ai/glm-5.2",
       "upstream_id": "databricks-glm-5-2",
+      "retirement_at": "2027-02-04T00:00:00Z",
+      "replacement_model_id": "z-ai/glm-5.3",
       "context_length": 1048576,
       "supported_features": [
         "chat",
