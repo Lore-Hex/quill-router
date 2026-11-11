@@ -321,6 +321,78 @@ nothing may rely on `default`, which includes `clusterAllReplicas` and
 `remote()` between nodes. Ask each node itself, the way
 `clickhouse_replicated_migrate.sh` does.
 
+### Rotating the passwords
+
+Every password is a Secret Manager secret, and each script below installs
+whatever the latest version of its secret is. None of them writes a secret.
+Add the new version first, with a value from `A-Z a-z 0-9 _ -` (the `tr`
+password is also read from a shell and a systemd environment file, and the
+scripts refuse anything else or anything under 24 characters):
+
+```bash
+openssl rand -hex 32 | tr -d '\n' | gcloud secrets versions add \
+  trustedrouter-clickhouse-password --data-file=- --project quill-cloud-proxy
+```
+
+| User | Secret | Installed by | Server restart |
+|---|---|---|---|
+| `tr` (workers, migrations, operators) | `trustedrouter-clickhouse-password` | `clickhouse_rotate_password.sh` | No |
+| `tr_ops_ingest` | `trustedrouter-clickhouse-ops-ingest-password` | `clickhouse_operational_writer.sh` | No |
+| `tr_control_read` | `trustedrouter-clickhouse-control-read-password` | `clickhouse_control_reader.sh`, once per node with `NAME` and `ZONE` | Yes, when the file changes |
+| `tr_provider_read` | `trustedrouter-clickhouse-provider-read-password` | `clickhouse_provider_reader.sh`, once per node with `NAME` and `ZONE` | Yes, when the file changes |
+| `tr_growth_read` | `trustedrouter-growth-clickhouse-password` | By hand: `ALTER USER tr_growth_read ON CLUSTER trustedrouter IDENTIFIED WITH sha256_hash BY '<hash>'`, signed in as `tr` | No |
+
+`tr` first, because the others are installed or checked with it:
+
+```bash
+scripts/deploy/clickhouse_rotate_password.sh
+scripts/deploy/clickhouse_rotate_password.sh --apply
+```
+
+The first run reports what each node would change. The second goes to
+tr-clickhouse-3, -2 and then -1. On each node it installs
+`users.d/tr-user.xml` holding only the SHA-256 of the new password, waits
+until the server accepts it (the file is reread in place, the server is not
+restarted), requires that the server now refuses the old password, writes
+the new value to `/etc/tr-clickhouse-ingest.env` and restarts the running
+services that read that file. If the server does not accept the new password,
+the previous user file goes back and the node is as it was. The password is
+never a command argument or instance metadata; it reaches the node on
+standard input.
+
+What to expect and what to check:
+
+- A node provisioned before the user file was hashed holds its password in
+  plain text. Running the script with the password unchanged replaces that
+  file with the hashed one and touches nothing else, so one `--apply` is
+  worth doing even when the value stays.
+- Between the first node and the last, the nodes hold different `tr`
+  passwords. A timer-driven job that starts in that window and signs in to
+  another node is turned away once; its timer runs it again.
+- The first failure stops the rollout. Run it again to continue: a node that
+  already holds the new password is checked and left alone.
+- If the script stops with `is not running after its restart`, the node
+  already has the new password everywhere; only that service is down. Look at
+  `systemctl status` and `journalctl -u` for the unit on that node. A second
+  run of the script does not look at a stopped service.
+- The script proves the sign-in, not the pipeline. Afterwards check
+  `/tr_health` on each node and the drain freshness signal below.
+
+Then the other users. The two reader scripts restart `clickhouse-server` on
+the node they change and do not check the cluster first, so take one node at
+a time and wait for `/tr_health` to answer 200 before the next:
+
+```bash
+scripts/deploy/clickhouse_operational_writer.sh
+NAME=tr-clickhouse-3 ZONE=us-central1-c scripts/deploy/clickhouse_control_reader.sh
+NAME=tr-clickhouse-3 ZONE=us-central1-c scripts/deploy/clickhouse_provider_reader.sh
+```
+
+The control plane reads the reader and writer secrets as `latest` when a
+revision is created, not while it runs. Until the next deploy the running
+revisions still present the old passwords and are refused, so redeploy the
+control plane as soon as the nodes are done.
+
 ## Health checks
 
 Check load-balancer backends:
