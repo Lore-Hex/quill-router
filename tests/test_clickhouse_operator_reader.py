@@ -38,6 +38,8 @@ def test_operator_reader_never_puts_the_password_on_a_command_line() -> None:
     # The self-check reads the password from stdin and also proves writes fail.
     assert 'IFS= read -r P; export CLICKHOUSE_PASSWORD=' in script
     assert "tr_operator_read can write" in script
+    # The documented query command separates the password from the SQL.
+    assert "printf '%s\\n' \"$(gcloud secrets versions access latest" in script
 
 
 def test_operator_reader_does_not_restart_clickhouse() -> None:
@@ -49,9 +51,11 @@ def test_control_reader_still_lacks_workspace_directory() -> None:
     assert "workspace_directory" not in CONTROL.read_text()
 
 
-def test_operator_secret_is_not_granted_to_runtime_service_accounts() -> None:
-    secret = "trustedrouter-clickhouse-operator-read-password"
+def test_operator_secret_has_no_explicit_runtime_binding() -> None:
+    # Project-wide secretAccessor still applies; loopback-only logins are the
+    # boundary (see test_operator_reader_is_read_only_and_loopback_only).
+    resource_name = "trustedrouter-clickhouse-operator-read-password"
     for path in (ROOT / "scripts/deploy").glob("*.sh"):
         if path == SCRIPT:
             continue
-        assert secret not in path.read_text(), path
+        assert resource_name not in path.read_text(), path

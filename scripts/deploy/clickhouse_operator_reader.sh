@@ -8,12 +8,15 @@
 # the app queries (tests/test_clickhouse_operational_deploy.py). Operator
 # reports also need tr.workspace_directory, which no runtime path reads.
 #
-# The password is generated once into Secret Manager. No runtime service
-# account is granted access to it.
+# The password is generated once into Secret Manager. This script binds it to
+# no service account, but accounts with project-wide secretAccessor can still
+# read it. The boundary is the network rule: logins are accepted only from the
+# node itself, so the password is useless without shell access to the node.
 #
-# Query with the password on stdin, never on a command line:
-#   { gcloud secrets versions access latest \
-#       --secret=trustedrouter-clickhouse-operator-read-password; cat q.sql; } |
+# Query with the password on stdin, never on a command line. The secret has no
+# trailing newline, so print one before the SQL:
+#   { printf '%s\n' "$(gcloud secrets versions access latest \
+#       --secret=trustedrouter-clickhouse-operator-read-password)"; cat q.sql; } |
 #     gcloud compute ssh tr-clickhouse-1 --tunnel-through-iap --command \
 #       'IFS= read -r P; CLICKHOUSE_PASSWORD="$P" clickhouse-client --user tr_operator_read --multiquery'
 set -euo pipefail
