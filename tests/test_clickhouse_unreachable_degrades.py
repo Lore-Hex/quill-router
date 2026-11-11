@@ -14,6 +14,7 @@ the ``STORE`` proxy (issue #333).
 from __future__ import annotations
 
 import logging
+from collections import OrderedDict
 from typing import Any
 
 import httpx
@@ -440,6 +441,7 @@ class _Cluster:
     def __init__(self) -> None:
         self.now = 1000.0
         self.attempts = 0
+        # One answer for every endpoint, or one per host.
         self.answer: Any = httpx.ConnectTimeout
         self.client = OperationalAnalyticsClient(
             base_url="http://clickhouse-a.internal:8123,http://clickhouse-b.internal:8123",
@@ -451,18 +453,25 @@ class _Cluster:
 
     def _handle(self, request: httpx.Request) -> httpx.Response:
         self.attempts += 1
-        if isinstance(self.answer, int):
-            return httpx.Response(self.answer, json={"data": [{"ok": 1}]}, request=request)
-        raise self.answer("simulated", request=request)
+        answer = self.answer
+        if isinstance(answer, dict):
+            answer = answer[request.url.host]
+        if isinstance(answer, int):
+            return httpx.Response(answer, json={"data": [{"ok": 1}]}, request=request)
+        raise answer("simulated", request=request)
 
     def read(self, *_args: Any, **_kwargs: Any) -> Any:
         return self.client._query("SELECT 1 FORMAT JSON")
 
 
-def test_an_unreachable_cluster_is_tried_once_then_left_alone() -> None:
+@pytest.mark.parametrize("failure", [httpx.ConnectTimeout, httpx.ConnectError])
+def test_an_unreachable_cluster_is_tried_once_then_left_alone(failure: Any) -> None:
+    """Black-holed packets time out and a closed port refuses. Both mean no
+    endpoint was reached."""
     cluster = _Cluster()
+    cluster.answer = failure
 
-    with pytest.raises(httpx.ConnectTimeout):
+    with pytest.raises(failure):
         cluster.read()
     assert cluster.attempts == 2  # both endpoints
 
@@ -527,6 +536,22 @@ def test_only_a_failure_to_connect_holds_later_reads(answer: Any) -> None:
     assert cluster.attempts == 2 * first
 
 
+@pytest.mark.parametrize("failure", [httpx.ConnectTimeout, httpx.ConnectError])
+def test_an_endpoint_that_answered_keeps_the_next_read_going(failure: Any) -> None:
+    """The first endpoint answers 503 and the read moves on to the last one,
+    which cannot be reached. The read fails as a failure to connect, yet one
+    endpoint is there, so the next read is sent."""
+    cluster = _Cluster()
+    cluster.answer = {"clickhouse-a.internal": 503, "clickhouse-b.internal": failure}
+
+    with pytest.raises(failure):
+        cluster.read()
+    assert cluster.attempts == 2
+    with pytest.raises(failure):
+        cluster.read()
+    assert cluster.attempts == 4
+
+
 def test_one_reachable_endpoint_is_enough() -> None:
     cluster = _Cluster()
     seen: list[str] = []
@@ -549,12 +574,47 @@ def test_a_cold_status_page_waits_for_an_unreachable_cluster_only_once(
     monkeypatch: pytest.MonkeyPatch, path: str
 ) -> None:
     """Every analytics read behind the page goes through the one client the
-    store holds. Only the first may reach for the network."""
-    cluster = _Cluster()
-    for method in ("synthetic_probe_samples", "synthetic_rollups", "provider_benchmark_samples"):
-        monkeypatch.setattr(InMemoryStore, method, cluster.read)
+    store holds. Only the first may reach for the network.
 
-    response = _app_client().get(path, headers={"accept": "text/html"})
+    Outside the test environment a cold page asks for the stored snapshot
+    several times as well as the raw samples, so this runs a local app."""
+    from trusted_router.routes import public as public_routes
+
+    cluster = _Cluster()
+    reads: list[str] = []
+
+    def reader(name: str) -> Any:
+        def read(*_args: Any, **_kwargs: Any) -> Any:
+            reads.append(name)
+            return cluster.read()
+
+        return read
+
+    for method in (
+        "public_analytics_snapshot",
+        "synthetic_probe_samples",
+        "synthetic_rollups",
+        "provider_benchmark_samples",
+    ):
+        monkeypatch.setattr(InMemoryStore, method, reader(method), raising=False)
+    for cache in (
+        "_STATUS_CACHE",
+        "_STATUS_ANALYTICS_CACHE",
+        "_FLEET_CACHE",
+        "_LEADERBOARD_CACHE",
+        "_VIDEO_LEADERBOARD_CACHE",
+        "_APPS_CACHE",
+        "_ENCRYPTED_AI_CACHE",
+        "_LEADERBOARD_EVIDENCE_CACHE",
+    ):
+        monkeypatch.setattr(public_routes, cache, None)
+    monkeypatch.setattr(public_routes, "_STATUS_RESPONSE_CACHE", OrderedDict())
+    client = TestClient(create_app(Settings(environment="local"), init_observability=False))
+
+    response = client.get(path, headers={"accept": "text/html"})
 
     assert response.status_code == 200, response.text
+    # Without the hold each of these would wait out both endpoints.
+    assert len(reads) >= 3, reads
+    assert "public_analytics_snapshot" in reads
     assert cluster.attempts == 2

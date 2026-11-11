@@ -35,7 +35,7 @@ from trusted_router.types import UsageType
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 T = TypeVar("T")
 PUBLIC_SNAPSHOT_QUERY_TIMEOUT_SECONDS = 2.0
-# How long one client stops trying after no endpoint accepted a connection.
+# How long one client stops trying after a read that no endpoint answered.
 # An unreachable cluster costs every read the connect timeout of every
 # endpoint, and a status page makes several reads in a row, so without this
 # an outage turns a page that should say "unavailable" into one that times
@@ -44,7 +44,7 @@ UNREACHABLE_HOLD_SECONDS = 10.0
 
 
 class AnalyticsUnreachable(httpx.ConnectError):
-    """No attempt was made: this client just failed to connect to any endpoint.
+    """No attempt was made: moments ago no endpoint of this client answered.
 
     A ``ConnectError`` because that is what the read would have raised had it
     been tried, so callers and ``is_analytics_unavailable`` treat both alike.
@@ -144,10 +144,17 @@ class OperationalAnalyticsClient:
         query_params: dict[str, str] = {"database": self._database}
         for key, value in (params or {}).items():
             query_params[f"param_{key}"] = str(value)
+        answered = False
+
+        def note_answer(_response: httpx.Response) -> None:
+            nonlocal answered
+            answered = True
+
         with httpx.Client(
             auth=(self._user, self._password),
             timeout=request_timeout(self._endpoints, timeout_seconds),
             transport=self._transport,
+            event_hooks={"response": [note_answer]},
         ) as client:
             try:
                 response = send_with_failover(
@@ -163,11 +170,14 @@ class OperationalAnalyticsClient:
                     retry_read_disconnect=retry_read_disconnect,
                 )
             except CONNECT_FAILURES:
-                # Raised only once the last endpoint also refused a connection.
-                # Nothing was sent, so this says nothing about the query and
-                # everything about the cluster: the next read would wait the
-                # same seconds for the same answer.
-                self._unreachable_until = self._clock() + UNREACHABLE_HOLD_SECONDS
+                # The last endpoint refused a connection. If none before it
+                # answered either, nothing was sent anywhere: this says
+                # nothing about the query and everything about the cluster,
+                # and the next read would wait the same seconds for the same
+                # answer. An endpoint that answered, even with a 503, is
+                # reachable, and the next read may find it well.
+                if not answered:
+                    self._unreachable_until = self._clock() + UNREACHABLE_HOLD_SECONDS
                 raise
             response.raise_for_status()
             payload = response.json()
