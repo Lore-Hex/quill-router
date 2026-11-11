@@ -1,0 +1,73 @@
+  <section class="hero-badge bv3-hero">
+    <div class="wrap">
+      <div class="bv3-eyebrow"><i class="v3-bar" aria-hidden="true"></i><p class="v3-label">For enterprise buyers. For your customers.</p></div>
+      <h1>Verified Secure.<br>Trust made visible.</h1>
+      <img class="bv3-hero-badge" src="/assets/badges/nyte-verified-secure-black.svg" width="221" height="96" alt="NYTE Verified Secure">
+      <p class="lede">NYTE requires confidential AI routes. Show your customers that privacy is built into your NYTE-powered AI, with a badge they recognize and evidence they can inspect.</p>
+      <div class="btns"><a class="btn btn-primary" href="#get-badge">Get the badge <span aria-hidden="true">↓</span></a></div>
+    </div>
+    {{band_lime}}
+  </section>
+
+  <section class="bv3-studio" id="get-badge" aria-labelledby="studio-title">
+    <div class="wrap">
+      <div class="bv3-copy">
+        <div class="bv3-eyebrow"><i class="v3-bar" aria-hidden="true"></i><p class="v3-label">Make it yours</p></div>
+        <h2 id="studio-title">Your customers.<br>Your Verified Secure badge.</h2>
+        <p class="lede">Choose a light or dark background for your NYTE-powered AI. <a href="#meaning">See the confidential routing standard</a> the badge represents.</p>
+      </div>
+      <div class="bv3-builder">
+        <div class="bv3-tabs" role="tablist" aria-label="Background">
+          <button type="button" role="tab" id="tab-light" data-theme="light" aria-selected="true" aria-controls="preview">Light background</button>
+          <button type="button" role="tab" id="tab-dark" data-theme="dark" aria-selected="false" aria-controls="preview" tabindex="-1">Dark background</button>
+        </div>
+        <div class="bv3-preview light" id="preview" role="tabpanel" aria-labelledby="tab-light"><img id="badge-preview" src="/assets/badges/nyte-verified-secure-black.svg" width="240" height="104" alt="NYTE Verified Secure"></div>
+        <div class="btns bv3-actions">
+          <a class="btn btn-primary" id="download" href="/assets/badges/nyte-verified-secure-black.svg" download>Download the SVG <span aria-hidden="true">↓</span></a>
+          <button class="btn btn-secondary" id="copy" type="button"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 9 L20 9 L20 20 L9 20 L9 9"/><path d="M15 7.25 L15 4 L4 4 L4 15 L7.25 15"/></svg>Copy HTML</button>
+        </div>
+        <p class="bv3-status" id="copy-status" role="status" aria-live="polite"></p>
+        <div class="code"><pre tabindex="0" aria-label="Badge embed code"><code id="embed-code">&lt;a href=<span class="s">"https://nytokenexchange.com/badge"</span>
+   aria-label=<span class="s">"NYTE Verified Secure: requirements and evidence"</span>&gt;
+  &lt;img src=<span class="s">"https://nytokenexchange.com/assets/badges/nyte-verified-secure-black.svg"</span>
+       alt=<span class="s">"NYTE Verified Secure"</span> height=<span class="s">"64"</span>&gt;
+&lt;/a&gt;</code></pre></div>
+        <noscript><p class="bv3-status">The default embed works without JavaScript. <a href="/assets/badges/nyte-verified-secure-white.svg" download>Download the white SVG</a> for dark backgrounds.</p></noscript>
+      </div>
+    </div>
+  </section>
+
+  <section class="bv3-meaning" id="meaning">
+    <div class="wrap">
+      <div class="bv3-copy">
+        <div class="bv3-eyebrow"><i class="v3-bar" aria-hidden="true"></i><p class="v3-label">What the badge means</p></div>
+        <h2>The NYTE standard.<br><em>Confidential, by requirement.</em></h2>
+      </div>
+      <div class="bv3-meaning-text">
+        <p>NYTE requires every AI route to meet its confidential routing standard. This badge is for enterprise buyers to display to their customers on NYTE-powered AI features. A supplier may display it only where NYTE publishes an evidence page for that supplier’s verified route, as it does for <a href="/verified/maple">Maple</a>, and only linked to that page. Downloading the artwork does not verify your product.</p>
+        <p>The required data path uses TrustedRouter’s hardware-attested gateway and enforces <code>model="trustedrouter/confidential"</code>, <code>model="trustedrouter/e2e"</code>, or <code>provider.min_privacy="confidential"</code>. The same route must have verified confidential compute, provider-side E2EE, and explicit zero data retention; requests must fail closed rather than fall back to an ineligible endpoint.</p>
+        <p>The encryption claim is route-specific: client TLS terminates inside the attested gateway, and provider-side end-to-end encryption is a separate verified property. The badge does not claim that the gateway cannot process plaintext, or that unrelated features on your website are end-to-end encrypted. Customer-side logging, processing location, and other systems require their own review.</p>
+        <p>This static image is not a live verification result, an independent security audit, or a product-wide certification. Review the <a href="https://trustedrouter.com/badge">confidential AI routing standard</a> and the <a href="https://trustedrouter.com/trust">route-specific evidence</a>; <a href="https://trust.trustedrouter.com">verify the live gateway</a> to inspect the privacy claim.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="bv3-usage">
+    <div class="wrap">
+      <div class="bv3-eyebrow"><i class="v3-bar" aria-hidden="true"></i><p class="v3-label">Using the badge</p></div>
+      <h2>Wear it well.</h2>
+      <div class="bv3-pairs">
+        <div><h3>Keep it linked.</h3><p>Link to this page so customers can inspect the privacy claim and evidence. Place it beside the eligible AI feature, or clearly identify that feature in your trust center.</p></div>
+        <div><h3>Keep it legible.</h3><p>Use the supplied files and proportions, at least 64 pixels tall, with clear space around it. Do not crop, recolour or alter the words.</p></div>
+        <div><h3>Keep it accurate.</h3><p>Display it only while the feature enforces every route requirement. Remove it if that changes. Do not present it as whole-company or whole-product certification.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="bv3-join closing">
+    <div class="wrap">
+      <div class="bv3-eyebrow"><i class="v3-bar" aria-hidden="true"></i><p class="v3-label">Buy through the exchange</p></div>
+      <h2>Your AI supply.<br>Your customers’ trust.</h2>
+      <div class="bv3-join-actions"><a class="btn btn-primary" href="https://trustedrouter.com/token-exchange#enterprise-brief">Become an enterprise buyer</a><a href="mailto:enterprise@trustedrouter.com?subject=NYTE%20enterprise%20buyer%20badge%20question">Questions about eligibility?</a></div>
+    </div>
+  </section>

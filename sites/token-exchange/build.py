@@ -21,6 +21,7 @@ from nyte_v2 import (
     build_nyte,
     legacy_share_image_used,
     render_nyte,
+    uses_brand_v3,
     uses_nyte,
 )
 from press import build_press
@@ -176,13 +177,11 @@ def build(output: Path) -> None:
     ).hexdigest()[:12]
     for name in ("exchange.css", "exchange.js", "live-evidence.js", "analytics.js"):
         shutil.copyfile(HERE / name, assets / name)
-    # Shared public pages. The provider deck itself remains private.
-    for page in ("badge",):
-        for name in (page, f"{page}.html"):
-            shutil.copyfile(HERE / f"{page}.html", output / name)
-    for name in ("badge.css", "badge.js", "verified.css", "verified.js"):
+    # /badge is a NYTE shell page (nyte_v2.PAGES). The Maple evidence page still uses
+    # badge.css; badge.js serves only the pre-v3 badge page.
+    for name in ("badge.css", "verified.css", "verified.js") + (() if uses_brand_v3("badge") else ("badge.js",)):
         shutil.copyfile(HERE / name, assets / name)
-    # Provider evidence pages: where a supplier's Privacy Secured seal links.
+    # Provider evidence pages: where a supplier's Verified Secure badge links.
     (output / "verified").mkdir(exist_ok=True)
     for provider in VERIFIED_PROVIDERS:
         for name in (provider, f"{provider}.html"):
@@ -222,7 +221,7 @@ def build(output: Path) -> None:
             provider_page = "".join(
                 f'<url><loc>https://nytokenexchange.com{entry["route"]}</loc></url>'
                 for key, entry in PAGES.items() if key != "home" and entry.get("builder") != "anchor"
-            ) + '<url><loc>https://nytokenexchange.com/badge</loc></url>' + "".join(
+            ) + "".join(
                 f'<url><loc>https://nytokenexchange.com/verified/{provider}</loc></url>' for provider in VERIFIED_PROVIDERS
             )
         (folder / "sitemap.xml").write_text(

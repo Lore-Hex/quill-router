@@ -19,18 +19,30 @@ const output = process.env.NYTE_PREVIEW_DIR || require('node:os').tmpdir();
       await page.screenshot({path: `${output}/nyte-badge-${width}.png`, fullPage: true});
       assert.equal(await page.locator('input[name="role"]').count(), 0);
       assert.equal(await page.locator('[src*="nyte-provider"], a[href*="nyte-provider"]').count(), 0);
-      for (const role of ['enterprise']) {
-        for (const theme of ['dark', 'light']) {
-          await page.locator(`input[value="${theme}"]`).check();
-          const name = `nyte-${role}-${theme}.svg`;
-          assert.ok((await page.locator('#badge-preview').getAttribute('src')).endsWith(name));
-          await page.waitForFunction(() => document.getElementById('badge-preview').complete && document.getElementById('badge-preview').naturalWidth > 0);
-          assert.ok((await page.locator('#download').getAttribute('href')).endsWith(name));
-          assert.ok((await page.locator('#embed-code').textContent()).includes(name));
-          await page.getByRole('button', {name: 'Copy HTML'}).click();
-          await page.waitForFunction(() => document.getElementById('copy-status').textContent.startsWith('HTML copied'));
-          assert.equal(await page.evaluate(() => navigator.clipboard.readText()), await page.locator('#embed-code').textContent());
-        }
+      assert.ok(!(await page.textContent('body')).includes('Privacy Secured'));
+      // Desktop hero fills the first screen above the fold, Band on its bottom edge.
+      const hero = await page.locator('.bv3-hero').boundingBox();
+      const band = await page.locator('.bv3-hero .v3-band').boundingBox();
+      assert.ok(Math.abs(band.y + band.height - (hero.y + hero.height)) < 1, `band at hero bottom at ${width}`);
+      assert.ok(band.height >= 96 && band.height <= 144, `band height ${band.height} at ${width}`);
+      if (width >= 1440) assert.ok(Math.abs(hero.y + hero.height - 1000) < 1, `hero fills the first screen at ${width}`);
+      const tabs = page.getByRole('tab');
+      assert.deepEqual(await tabs.allTextContents(), ['Light background', 'Dark background']);
+      for (const [theme, name, keyed] of [['dark', 'nyte-verified-secure-white.svg', false], ['light', 'nyte-verified-secure-black.svg', true], ['dark', 'nyte-verified-secure-white.svg', true]]) {
+        const tab = page.getByRole('tab', {name: theme === 'light' ? 'Light background' : 'Dark background'});
+        if (keyed) { await page.getByRole('tab', {selected: true}).focus(); await page.keyboard.press('ArrowRight'); }
+        else await tab.click();
+        assert.equal(await tab.getAttribute('aria-selected'), 'true');
+        if (keyed) assert.equal(await page.evaluate(() => document.activeElement.getAttribute('aria-selected')), 'true');
+        assert.equal(await page.locator('[role="tab"][aria-selected="true"]').count(), 1);
+        assert.ok((await page.locator('#badge-preview').getAttribute('src')).endsWith(name));
+        await page.waitForFunction(() => document.getElementById('badge-preview').complete && document.getElementById('badge-preview').naturalWidth > 0);
+        assert.ok((await page.locator('#download').getAttribute('href')).endsWith(name));
+        assert.ok((await page.locator('#embed-code').textContent()).includes(name));
+        assert.equal(await page.locator('#embed-code .s').count(), 5);
+        await page.getByRole('button', {name: 'Copy HTML'}).click();
+        await page.waitForFunction(() => document.getElementById('copy-status').textContent.startsWith('HTML copied'));
+        assert.equal(await page.evaluate(() => navigator.clipboard.readText()), await page.locator('#embed-code').textContent());
       }
       await page.evaluate(() => { navigator.clipboard.writeText = async () => { throw new Error('denied'); }; });
       await page.getByRole('button', {name: 'Copy HTML'}).click();
@@ -43,14 +55,14 @@ const output = process.env.NYTE_PREVIEW_DIR || require('node:os').tmpdir();
       await page.screenshot({path: `${output}/nyte-providers-${width}.png`, fullPage: true});
       assert.deepEqual(errors, []);
       await context.close();
-      console.log(`PASS ${width}px: layout, enterprise-only styles, copy, fallback, private deck`);
+      console.log(`PASS ${width}px: layout, background tabs, copy, fallback, private deck`);
     }
     const context = await browser.newContext({javaScriptEnabled: false});
     const page = await context.newPage();
     await page.goto(`${base}/badge.html`);
-    assert.ok((await page.locator('#embed-code').textContent()).includes('nyte-enterprise-dark.svg'));
-    await page.getByText('All badge downloads', {exact: true}).click();
-    assert.equal(await page.locator('.all-assets a[download]').count(), 2);
+    assert.ok((await page.locator('#embed-code').textContent()).includes('nyte-verified-secure-black.svg'));
+    assert.ok((await page.locator('#download').getAttribute('href')).endsWith('nyte-verified-secure-black.svg'));
+    assert.equal(await page.locator('main a[download][href$="nyte-verified-secure-white.svg"]').count(), 1);
     await context.close();
   } finally {
     await browser.close();

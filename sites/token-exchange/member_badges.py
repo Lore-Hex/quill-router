@@ -1,6 +1,14 @@
-"""Static NYTE privacy seals for eligible enterprise confidential AI features."""
+"""NYTE badges for eligible enterprise confidential AI features.
 
+/badge offers the brand kit's Verified Secure files. The earlier Privacy Secured
+seals stay published because third-party sites may already embed them."""
+
+import shutil
 from pathlib import Path
+
+# Brand kit files, copied unchanged (06_Verified_Secure_Badge).
+KIT_BADGES = Path(__file__).resolve().parent / "badges"
+VERIFIED_SECURE = ("nyte-verified-secure-black.svg", "nyte-verified-secure-white.svg")
 
 
 def badge_svg(theme: str) -> str:
@@ -36,3 +44,5 @@ def build_badges(output: Path) -> None:
         (output / f"nyte-provider-{theme}.svg").unlink(missing_ok=True)
     for theme in ("light", "dark"):
         (output / f"nyte-enterprise-{theme}.svg").write_text(badge_svg(theme))
+    for name in VERIFIED_SECURE:
+        shutil.copyfile(KIT_BADGES / name, output / name)
