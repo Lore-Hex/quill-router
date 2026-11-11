@@ -90,7 +90,11 @@ class VerifiedPageTests(unittest.TestCase):
         self.assertIn('href="/assets/verified.js"', self.page)
 
     def test_page_opens_with_a_sentence_for_the_visitors_own_agent(self):
-        prompt = re.search(r'<pre class="agent-prompt" id="agent-prompt">(.*?)</pre>', self.page).group(1)
+        shown = re.search(r'<pre class="agent-prompt" id="agent-prompt">(.*?)</pre>', self.page).group(1)
+        # The address may break only after "/" or before "#"; the copied text has no markup.
+        self.assertIn("https://<wbr>nytokenexchange.com/<wbr>verified/<wbr>maple<wbr>#manual", shown)
+        self.assertEqual(re.sub(r"<[^>]+>", "", shown).count("<"), 0)
+        prompt = shown.replace("<wbr>", "")
         # One sentence, pointing at the manual steps and away from the page's own verdict.
         self.assertEqual(prompt.count(". "), 0)
         self.assertTrue(prompt.endswith("."))
@@ -111,6 +115,17 @@ class VerifiedPageTests(unittest.TestCase):
         self.assertIn('<div class="mv3-tabs" role="tablist" aria-label="Ways to check" hidden>', self.page)
         for panel in ("agent", "commands", "sources"):
             self.assertRegex(self.page, rf'<div class="mv3-panel[^"]*" id="way-{panel}" role="tabpanel" aria-labelledby="tab-{panel}">')
+
+    def test_page_shows_the_running_state_and_keeps_room_for_results(self):
+        # Scripted visitors see the running state from the first paint; others the manual-check text.
+        self.assertIn('document.documentElement.classList.add("mv3-js")', self.page.split("</head>")[0])
+        self.assertIn('data-checking="Checking now"', self.page)
+        self.assertIn('data-checking="Checking the gateway"', self.page)
+        self.assertIn("element.dataset.checking", self.script)
+        # Each record value has a placeholder its final length, so rows keep their height.
+        for key, length in (("source_commit", 40), ("pcr0", 96), ("eif_sha256", 64)):
+            placeholder = re.search(rf'data-record="{key}">.*?<span aria-hidden="true">(·+)</span>', self.page).group(1)
+            self.assertEqual(len(placeholder), length, key)
 
     def test_recorded_attestation_is_a_public_document_only(self):
         fixture = json.loads((HERE / "verified-fixture.json").read_text())

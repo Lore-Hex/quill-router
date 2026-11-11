@@ -9,15 +9,15 @@
   </section>
 
   <section class="mv3-live" aria-labelledby="live-title">
-    <div class="wrap check" id="live-check" data-verdict="idle" data-provider="Maple"
+    <div class="wrap check" id="live-check" data-verdict="idle" data-provider="Maple" data-checking="Checking now"
          data-attestation="https://enclave.trymaple.ai/attestation"
          data-provider-record="https://raw.githubusercontent.com/MaplePrivacyLabs/Maple/master/services/opensecret/pcrProd.json"
          data-nyte-record="https://raw.githubusercontent.com/Lore-Hex/quill-cloud-proxy/main/enclave-go/maple-transport/verified-release.json">
       <div class="mv3-eyebrow"><i class="v3-bar" aria-hidden="true"></i><p class="v3-label">Live check</p></div>
       <div class="mv3-copy">
         <div class="verdict" role="status" aria-live="polite">
-          <h2 class="verdict-title" id="live-title">Live check</h2>
-          <p class="lede"><span class="verdict-text">This check runs in your browser and needs JavaScript. Without it, use the manual check below.</span> <span class="verdict-time"></span></p>
+          <h2 class="verdict-title" id="live-title"><span class="mv3-js-only">Checking now</span><span class="mv3-no-js">Live check</span></h2>
+          <p class="lede"><span class="verdict-text"><span class="mv3-js-only">Asking the Maple enclave to prove what it is running.</span><span class="mv3-no-js">This check runs in your browser and needs JavaScript. Without it, use the manual check below.</span></span> <span class="verdict-time"></span></p>
         </div>
         <a class="mv3-badge" href="/badge"><img src="/assets/badges/nyte-verified-secure-black.svg" width="221" height="96" alt="NYTE Verified Secure"></a>
       </div>
@@ -42,9 +42,9 @@
       </div>
       <div class="mv3-record-body">
         <dl class="record">
-          <div><dt>Maple source commit</dt><dd data-record="source_commit">Loads with the live check</dd></div>
-          <div><dt>Reproduced fingerprint (PCR0)</dt><dd class="pcr0" data-record="pcr0">Loads with the live check</dd></div>
-          <div><dt>Enclave image SHA-256</dt><dd data-record="eif_sha256">Loads with the live check</dd></div>
+          <div><dt>Maple source commit</dt><dd data-record="source_commit"><span class="mv3-js-only mv3-pending"><span class="v3-sr">Fetching NYTE’s record</span><span aria-hidden="true">········································</span></span><span class="mv3-no-js">Loads with the live check</span></dd></div>
+          <div><dt>Reproduced fingerprint (PCR0)</dt><dd class="pcr0" data-record="pcr0"><span class="mv3-js-only mv3-pending"><span class="v3-sr">Fetching NYTE’s record</span><span aria-hidden="true">································································································</span></span><span class="mv3-no-js">Loads with the live check</span></dd></div>
+          <div><dt>Enclave image SHA-256</dt><dd data-record="eif_sha256"><span class="mv3-js-only mv3-pending"><span class="v3-sr">Fetching NYTE’s record</span><span aria-hidden="true">································································</span></span><span class="mv3-no-js">Loads with the live check</span></dd></div>
           <div><dt>NYTE review</dt><dd><a data-record="review" href="https://github.com/Lore-Hex/quill-cloud-proxy/issues?q=is%3Aissue+Maple+security+review">Maple security reviews</a> <span aria-hidden="true">↗</span></dd></div>
         </dl>
         <p>Each NYTE gateway release is pinned to the one fingerprint NYTE had reproduced when that release was built; the gateway check below shows which is running. If Maple’s enclave reports anything else, including a newer release NYTE has not finished reviewing, NYTE sends it nothing rather than fall back.</p>
@@ -53,7 +53,7 @@
   </section>
 
   <section class="mv3-gateway" id="gateway">
-    <div class="wrap check" id="gateway-check" data-verdict="idle"
+    <div class="wrap check" id="gateway-check" data-verdict="idle" data-checking="Checking the gateway"
          data-attestation="https://api.trustedrouter.com/attestation" data-audience="quill-cloud"
          data-release="https://trust.trustedrouter.com/trust/gcp-release.json"
          data-pin="https://raw.githubusercontent.com/Lore-Hex/quill-cloud-proxy/{commit}/enclave-go/maple-transport/verified-release.json">
@@ -62,8 +62,8 @@
         <h2>The gateway proves itself too.</h2>
         <p class="lede">When a request reaches Maple through NYTE, it first enters NYTE’s own sealed gateway. That gateway is checked here too, by asking its hardware what it is running.</p>
         <div class="verdict mv3-status" role="status" aria-live="polite">
-          <p class="mv3-status-line"><i class="verdict-icon" aria-hidden="true"></i><span class="verdict-title">Gateway check</span></p>
-          <p><span class="verdict-text">This check runs in your browser and needs JavaScript. Without it, use the manual check below.</span> <span class="verdict-time"></span></p>
+          <p class="mv3-status-line"><i class="verdict-icon" aria-hidden="true"></i><span class="verdict-title"><span class="mv3-js-only">Checking the gateway</span><span class="mv3-no-js">Gateway check</span></span></p>
+          <p><span class="verdict-text"><span class="mv3-js-only">Waiting for the check above.</span><span class="mv3-no-js">This check runs in your browser and needs JavaScript. Without it, use the manual check below.</span></span> <span class="verdict-time"></span></p>
         </div>
       </div>
       <div class="mv3-checks">
@@ -93,7 +93,7 @@
         </div>
         <div class="mv3-panel mv3-code-panel" id="way-agent" role="tabpanel" aria-labelledby="tab-agent">
           <div class="v3-code"><div class="v3-code-head"><span class="v3-label">Prompt</span><button class="v3-code-copy" type="button" aria-label="Copy prompt"><svg class="v3-code-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 9 L20 9 L20 20 L9 20 L9 9"/><path d="M15 7.25 L15 4 L4 4 L4 15 L7.25 15"/></svg><svg class="v3-code-done" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4.5 12.5 L9.5 17.5 L19.5 7"/></svg></button></div>
-          <div class="v3-code-body"><pre class="agent-prompt" id="agent-prompt">Follow the manual steps at https://nytokenexchange.com/verified/maple#manual with your own tools, verify every signature yourself against Amazon’s Nitro root and Google’s published keys, trust nothing the page itself claims, and tell me whether Maple’s enclave and NYTE’s gateway are running the published code and what you could not check.</pre></div><p class="v3-sr" role="status" aria-live="polite"></p></div>
+          <div class="v3-code-body"><pre class="agent-prompt" id="agent-prompt">Follow the manual steps at https://<wbr>nytokenexchange.com/<wbr>verified/<wbr>maple<wbr>#manual with your own tools, verify every signature yourself against Amazon’s Nitro root and Google’s published keys, trust nothing the page itself claims, and tell me whether Maple’s enclave and NYTE’s gateway are running the published code and what you could not check.</pre></div><p class="v3-sr" role="status" aria-live="polite"></p></div>
         </div>
         <div class="mv3-panel mv3-code-panel" id="way-commands" role="tabpanel" aria-labelledby="tab-commands">
           <div class="code-scroll v3-code"><div class="v3-code-head"><span class="v3-label">Shell</span><button class="v3-code-copy" type="button" aria-label="Copy commands"><svg class="v3-code-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 9 L20 9 L20 20 L9 20 L9 9"/><path d="M15 7.25 L15 4 L4 4 L4 15 L7.25 15"/></svg><svg class="v3-code-done" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4.5 12.5 L9.5 17.5 L19.5 7"/></svg></button></div>

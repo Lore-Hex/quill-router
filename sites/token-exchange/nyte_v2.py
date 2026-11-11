@@ -400,7 +400,9 @@ def render_nyte(
         # verified.js runs the live checks and is published as written at /assets/verified.js.
         verified_version = hashlib.sha256((HERE / "verified.js").read_bytes()).hexdigest()[:12]
         maple_version = hashlib.sha256((SOURCE / "maple-v3.js").read_bytes()).hexdigest()[:12]
-        extra_head += ('<meta name="referrer" content="strict-origin-when-cross-origin">'
+        # Marks the page as scripted before first paint, so the checks show their running state at once.
+        extra_head += ('<script>document.documentElement.classList.add("mv3-js")</script>'
+                       '<meta name="referrer" content="strict-origin-when-cross-origin">'
                        f'<script src="/assets/verified.js?v={verified_version}" defer></script>'
                        f'<script src="/assets/nyte-v2/maple-v3.js?v={maple_version}" defer></script>')
     if page == "buy":

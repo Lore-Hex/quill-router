@@ -34,6 +34,14 @@
 .mv3-hero .btns{margin-top:clamp(12px,4svh,40px);justify-content:center}
 .mv3-hero .v3-band{position:absolute;left:0;bottom:0;height:var(--band)}
 
+/* Loading: with JavaScript the checks show their running state from the first paint and
+   the record keeps each row at its final height; without it the manual-check text shows. */
+html.mv3-js .mv3-no-js,html:not(.mv3-js) .mv3-js-only{display:none}
+.mv3-pending [aria-hidden]{color:var(--ink-2-dark)}
+/* Room for the verdict sentence, so the badge and list do not jump when it arrives. */
+.mv3-live .verdict .lede{min-height:calc(3 * 1.45em)}
+.mv3-status p+p{min-height:calc(4 * 1.55em)}
+
 /* Live check: Cream. The verdict is the heading; the time is folded into its paragraph. */
 .mv3-live{background:var(--cream)}
 .mv3-live .verdict .lede{margin-top:24px}
@@ -109,7 +117,7 @@
 /* AI agent and Commands use the shared code block (.v3-code in brand-v3.css); the prompt
    is prose, so it wraps in the body face inside the same panel. */
 .mv3-panel.mv3-code-panel{padding:0}
-[data-nyte-page="maple"] main .v3-code pre.agent-prompt{width:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:400 17px/1.55 var(--font-sans)}
+[data-nyte-page="maple"] main .v3-code pre.agent-prompt{width:auto;white-space:pre-wrap;overflow-wrap:normal;font:400 17px/1.55 var(--font-sans)}
 .sources{list-style:none;margin:0;padding:0}
 .sources li{padding:14px 0;border-top:1px solid var(--dark-rule)}
 .sources li:first-child{padding-top:0;border-top:0}
@@ -153,6 +161,9 @@
   [data-nyte-page="maple"] main .lede,.mv3-live .verdict .lede{font-size:17px;line-height:1.55}
   .mv3-copy>p,.mv3-copy>.lede,.mv3-live .verdict .lede,.mv3-record .mv3-copy>p{margin-top:16px}
   .mv3-status{margin-top:32px}
+  .mv3-live .verdict .lede{min-height:calc(4 * 1.55em)}
+  .mv3-status p+p{min-height:calc(5 * 1.55em)}
+  [data-nyte-page="maple"] main .mv3-status .mv3-status-line{min-height:calc(2 * 1.55em)}
   .mv3-badge img{height:64px}
   .steps li{gap:16px;padding:20px 0}
   .check-foot{flex-direction:column;align-items:stretch;gap:16px;margin-top:28px}

@@ -22,6 +22,9 @@ const COMMIT = '45ff2be8';
 const REFERENCE = `us-docker.pkg.dev/example/quill/enclave-multi:gcp-release-${COMMIT}`;
 // A real commit of another release, whose record an operator might prefer the page to read.
 const ELSEWHERE = 'bf6a84e9';
+// Record values at their real lengths, so the loading placeholders can be measured against them.
+const SOURCE_COMMIT = 'c0ffee'.padEnd(40, '0');
+const EIF_SHA256 = 'beef'.padEnd(64, '0');
 const encode = value => Buffer.from(JSON.stringify(value)).toString('base64url');
 
 function gatewayToken(change = {}, signer = google.privateKey, header = {alg: 'RS256', kid: 'test-key', typ: 'JWT'}) {
@@ -197,6 +200,10 @@ async function open(browser, width, scenario, height = 1000, options = {}) {
   await page.clock.install({time: fixture.now});
   // The page asks for a nonce it chose; the recording can only answer its own.
   await page.addInitScript(nonce => { crypto.randomUUID = () => nonce; }, scenario.replay ? REPLAYED : fixture.nonce);
+  // Record row heights once fonts are ready, before NYTE's record arrives (see recordDelay).
+  await page.addInitScript(() => document.addEventListener('DOMContentLoaded', () => document.fonts.ready.then(() => {
+    window.recordRowsWhileLoading = [...document.querySelectorAll('.record > div')].map(row => row.getBoundingClientRect().height);
+  })));
   const cors = {'access-control-allow-origin': '*'};
   const missing = route => route.fulfill({status: 404, headers: cors, body: 'missing'});
   const record = (route, value) => (value === null ? missing(route) : value === 'null' ? route.fulfill({body: 'null', contentType: 'application/json', headers: cors}) : route.fulfill({json: value, headers: cors}));
@@ -207,14 +214,15 @@ async function open(browser, width, scenario, height = 1000, options = {}) {
     return route.fulfill({json: scenario.enclave === 'malformed' ? {error: 'busy'} : {attestation_document: fixture.attestation_document}, headers: cors});
   });
   await page.route('https://raw.githubusercontent.com/MaplePrivacyLabs/**', route => route.fulfill({json: {PCR0: scenarioValue(scenario, 'provider', fixture.pcr0)}, headers: cors}));
-  await page.route('https://raw.githubusercontent.com/Lore-Hex/**', route => {
+  await page.route('https://raw.githubusercontent.com/Lore-Hex/**', async route => {
+    if (scenario.recordDelay) await new Promise(resolve => setTimeout(resolve, scenario.recordDelay));
     const url = route.request().url();
     // The page's record of NYTE's reproduction lives on main; the gateway's pin lives at its release commit.
     if (url.includes(`/quill-cloud-proxy/${COMMIT}/`)) return record(route, {pcr0: scenarioValue(scenario, 'pin', fixture.pcr0)});
     if (url.includes(`/quill-cloud-proxy/${ELSEWHERE}/`)) return record(route, {pcr0: scenario.elsewhere});
     assert.ok(url.includes('/quill-cloud-proxy/main/'), url);
     const nyte = scenarioValue(scenario, 'nyte', fixture.pcr0);
-    return record(route, nyte && nyte !== 'null' ? {pcr0: nyte, source_commit: 'c0ffee', eif_sha256: 'beef', review: 'https://github.com/Lore-Hex/quill-cloud-proxy/issues/1'} : nyte);
+    return record(route, nyte && nyte !== 'null' ? {pcr0: nyte, source_commit: SOURCE_COMMIT, eif_sha256: EIF_SHA256, review: 'https://github.com/Lore-Hex/quill-cloud-proxy/issues/1'} : nyte);
   });
   await page.route('https://api.trustedrouter.com/**', route => {
     const token = scenarioValue(scenario, 'token', gatewayToken());
@@ -250,7 +258,7 @@ const panel = (page, id) => Promise.all([
       if (scenario.gatewayStep) assert.ok((await page.locator('#gateway-check [data-step="fetch"] .step-result').textContent()).includes(scenario.gatewayStep), scenario.label);
       if (scenario.step) assert.ok((await page.locator('#live-check [data-step="fetch"] .step-result').textContent()).includes(scenario.step), scenario.label);
       if (scenario.name === 'verified') {
-        assert.equal(await page.locator('dd[data-record="source_commit"]').textContent(), 'c0ffee');
+        assert.equal(await page.locator('dd[data-record="source_commit"]').textContent(), SOURCE_COMMIT);
         assert.equal(await page.locator('a[data-record="review"]').getAttribute('href'), 'https://github.com/Lore-Hex/quill-cloud-proxy/issues/1');
       }
       // The check only reads: every request is a GET with nothing attached.
@@ -324,6 +332,19 @@ const panel = (page, id) => Promise.all([
       assert.deepEqual(tops, [0, 0], 'check lists start level with their headings');
       await context.close();
       console.log('PASS step icons: passed steps show the check alone, failed steps say why');
+    }
+
+    // While NYTE's record loads, each row already has the height of its final value.
+    for (const width of [1440, 390]) {
+      const {context, page, errors} = await open(browser, width, {...CASES[0], recordDelay: 1500});
+      const before = await page.evaluate(() => window.recordRowsWhileLoading);
+      const after = await page.evaluate(() => [...document.querySelectorAll('.record > div')].map(row => row.getBoundingClientRect().height));
+      assert.equal(await page.locator('dd[data-record="pcr0"]').textContent(), fixture.pcr0);
+      assert.ok(before && before.length === 4, `rows measured while loading at ${width}`);
+      assert.deepEqual(before.map(Math.round), after.map(Math.round), `record rows keep their height at ${width}`);
+      assert.deepEqual(errors, []);
+      await context.close();
+      console.log(`PASS ${width}px: record rows keep their height when the values arrive`);
     }
 
     // Ways to check: kit Tabs with arrow keys, one Ink panel, copy keeps its icon.
