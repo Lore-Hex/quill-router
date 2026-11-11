@@ -375,8 +375,14 @@ the running services that read that file, and then requires that the server
 refuses the old password. If the server does not accept the new password, or
 the run is interrupted (Ctrl-C, a dropped SSH session) before it does, the
 previous user file goes back and the node is as it was. Once the server has
-accepted it, the env file and the restarts go ahead uninterrupted, so the
-services are never left on a value the server no longer takes. The password is
+accepted it, the script records that a rotation is unfinished
+(`/var/lib/tr-clickhouse-rotate/unfinished`, root only, holding the previous
+value), then writes the env file and restarts the services without stopping
+for signals or failed writes; a dropped SSH session is not a signal on the
+node, only a write that fails. The record is removed once the previous value
+is seen refused. A run that stopped before that, for any reason, is finished
+by the next one: it restarts the services and checks the previous value
+again, even though the env file already holds the new one. The password is
 never a command argument or instance metadata; it reaches the node on
 standard input.
 

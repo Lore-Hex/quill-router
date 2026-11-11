@@ -210,6 +210,24 @@ class Node:
             check=False,
         )
 
+    def run_with_output_gone(self, password: str, *args: str) -> int:
+        """Run as if the SSH session had dropped: every write fails."""
+        self.log.write_text("")
+        read_end, write_end = os.pipe()
+        os.close(read_end)
+        try:
+            return subprocess.run(  # noqa: S603 - fixed script under test
+                [BASH, str(NODE_SCRIPT), *args], env=self._env("3"),
+                input=(password + "\n").encode(), stdout=write_end, stderr=write_end,
+                timeout=60, check=False,
+            ).returncode
+        finally:
+            os.close(write_end)
+
+    @property
+    def unfinished(self) -> Path:
+        return self.root / "var/lib/tr-clickhouse-rotate/unfinished"
+
     def start(self, password: str, *args: str, tries: str) -> subprocess.Popen[str]:
         self.log.write_text("")
         process = subprocess.Popen(  # noqa: S603 - fixed script under test
@@ -396,6 +414,69 @@ def test_services_get_the_new_value_even_if_the_server_blips_after_accepting_it(
     assert result.returncode == 1
     assert node.env_file.read_text() == f"CH_PASSWORD={NEW}\n"
     assert node.user_file.read_text() == _hashed_user_file(NEW)
+
+
+def test_a_dropped_session_after_acceptance_still_writes_and_restarts(node: Node) -> None:
+    # The server already takes the new value (an earlier run installed it);
+    # the services still hold the old one. Over SSH a dropped session is no
+    # signal: the script learns of it when a write fails.
+    node.user_file.write_text(_hashed_user_file(NEW))
+    node.run_with_output_gone(NEW, "--apply")
+    assert node.env_file.read_text() == f"CH_PASSWORD={NEW}\n"
+    assert sorted(node.restarted()) == ["optional-file.service", "tr-clickhouse-ingest.service"]
+    assert not node.unfinished.exists()
+
+
+def test_a_run_that_stopped_after_the_env_file_is_finished_by_the_next(node: Node) -> None:
+    # Where a dropped session used to leave a node: env file already new, the
+    # services never restarted. The env file alone would make it look done.
+    node.user_file.write_text(_hashed_user_file(NEW))
+    node.env_file.write_text(f"CH_PASSWORD={NEW}\n")
+    node.unfinished.parent.mkdir(parents=True)
+    node.unfinished.write_text(OLD)
+    report = node.run(NEW)
+    assert "did not finish" in report.stdout
+    result = node.run(NEW, "--apply")
+    assert result.returncode == 0, result.stderr
+    assert sorted(node.restarted()) == ["optional-file.service", "tr-clickhouse-ingest.service"]
+    assert OLD in {c["password"] for c in node.calls("clickhouse-client")}
+    assert not node.unfinished.exists()
+
+
+def test_a_rerun_checks_again_that_the_old_password_is_refused(node: Node) -> None:
+    node.mark("also-accepts", OLD)
+    first = node.run(NEW, "--apply")
+    assert first.returncode == 1
+    assert node.env_file.read_text() == f"CH_PASSWORD={NEW}\n"
+    assert _mode(node.unfinished) == 0o600
+    second = node.run(NEW, "--apply")
+    assert second.returncode == 1
+    assert "was not seen to refuse the previous password" in second.stderr
+    node.mark("also-accepts")
+    third = node.run(NEW, "--apply")
+    assert third.returncode == 0, third.stderr
+    assert not node.unfinished.exists()
+    assert all(OLD not in text for text in node.files().values())
+
+
+def test_the_wait_for_the_old_password_to_be_refused_can_be_stopped(node: Node) -> None:
+    node.mark("also-accepts", OLD)
+    node.mark("real-sleep")
+    process = node.start(NEW, "--apply", tries="200")
+    restarted = node.state / "env-at-restart-tr-clickhouse-ingest.service"
+    deadline = time.monotonic() + 20
+    while not (restarted.exists() and (node.state / "env-at-restart-optional-file.service").exists()):
+        assert time.monotonic() < deadline, "the services were never restarted"
+        time.sleep(0.05)
+    time.sleep(0.3)
+    process.send_signal(signal.SIGTERM)
+    process.wait(timeout=10)
+    assert process.returncode != 0
+    # The services keep the new value and the user file stays; the next run
+    # finishes the check.
+    assert node.env_file.read_text() == f"CH_PASSWORD={NEW}\n"
+    assert node.user_file.read_text() == _hashed_user_file(NEW)
+    assert node.unfinished.exists()
 
 
 @pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGINT, signal.SIGHUP])

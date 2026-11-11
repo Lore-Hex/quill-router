@@ -31,6 +31,12 @@ USERS_D="${ROOT}/etc/clickhouse-server/users.d"
 USER_FILE="${USERS_D}/tr-user.xml"
 ENV_FILE="${ROOT}/etc/tr-clickhouse-ingest.env"
 UNIT_D="${ROOT}/etc/systemd/system"
+# Present from the moment the env file is about to change until the services
+# are restarted and the previous password is seen refused. It holds that
+# previous password (root only), so a run that stopped partway, for instance
+# because the SSH session dropped, is finished by the next one instead of
+# looking complete because the env file already holds the new value.
+UNFINISHED="${ROOT}/var/lib/tr-clickhouse-rotate/unfinished"
 WAIT_TRIES="${TR_WAIT_TRIES:-30}"
 WAIT_SECONDS="${TR_WAIT_SECONDS:-2}"
 
@@ -147,7 +153,9 @@ current=1
 render_user_file | cmp -s - "$USER_FILE" || current=0
 
 if [ "$APPLY" -eq 0 ]; then
-  if [ "$accepted" -eq 0 ]; then
+  if [ -e "$UNFINISHED" ]; then
+    echo "${node}: an earlier rotation did not finish; --apply would restart the services and check that the previous password is refused"
+  elif [ "$accepted" -eq 0 ]; then
     echo "${node}: --apply would change the tr password"
   elif [ "$current" -eq 0 ]; then
     echo "${node}: the server accepts this password; --apply would rewrite ${USER_FILE} to hold only its hash"
@@ -160,14 +168,13 @@ if [ "$APPLY" -eq 0 ]; then
 fi
 
 installed=0
-confirmed=0
 previous=""
 # Until the server is seen to accept the new password, an interrupted run (a
 # dropped SSH session, Ctrl-C during the wait) puts the previous user file back
 # instead of leaving the node on a file nobody has confirmed.
 on_signal() {
   trap '' HUP INT TERM PIPE
-  if [ "$installed" -eq 1 ] && [ "$confirmed" -eq 0 ] && [ -n "$previous" ]; then
+  if [ "$installed" -eq 1 ] && [ -n "$previous" ]; then
     replace_file "$USER_FILE" \
       "${TR_FILE_OWNER:-clickhouse}" "${TR_FILE_GROUP:-clickhouse}" 0640 <"$previous"
     echo "interrupted on ${node}: the previous user file is back" >&2 || true
@@ -179,9 +186,11 @@ trap on_signal HUP INT TERM PIPE
 if [ "$current" -eq 0 ]; then
   previous="$(mktemp "${USERS_D}/tr-user.previous.XXXXXX")"
   cat "$USER_FILE" >"$previous"
+  # Set first: a signal handled right after the rename must still restore.
+  # Restoring a file identical to the one in place is harmless.
+  installed=1
   render_user_file | replace_file "$USER_FILE" \
     "${TR_FILE_OWNER:-clickhouse}" "${TR_FILE_GROUP:-clickhouse}" 0640
-  installed=1
   echo "${node}: installed ${USER_FILE}"
 fi
 if [ "$installed" -eq 1 ] || [ "$accepted" -eq 0 ]; then
@@ -202,19 +211,33 @@ if [ "$installed" -eq 1 ] || [ "$accepted" -eq 0 ]; then
     exit 1
   fi
 fi
-confirmed=1
+# The server accepts the new value, so the services may as well have it: once
+# it reloads they cannot sign in with anything else. Nothing interrupts the
+# record, the env file and the restarts; a node left with the server on the
+# new value and its services on the old one is the outcome to avoid. A run
+# whose SSH session dropped gets no signal; it finds out at its next write,
+# which then fails. From here on no message may stop the run.
+trap '' HUP INT TERM PIPE
+say() { printf '%s\n' "$*" 2>/dev/null || true; }
+complain() { printf '%s\n' "$*" >&2 2>/dev/null || true; }
 
-if [ "$OLD_PASSWORD" != "$NEW_PASSWORD" ]; then
-  # The server accepts the new value, so the services may as well have it:
-  # once it reloads they cannot sign in with anything else. Nothing interrupts
-  # the write and the restarts; a node left with the server on the new value
-  # and its services on the old one is the outcome to avoid.
-  trap '' HUP INT TERM PIPE
-  {
-    grep -v '^CH_PASSWORD=' "$ENV_FILE" || true
-    printf 'CH_PASSWORD=%s\n' "$NEW_PASSWORD"
-  } | replace_file "$ENV_FILE" "$(id -un)" "$(id -gn)" 0600
-  echo "${node}: wrote ${ENV_FILE}"
+retired=""
+if [ -e "$UNFINISHED" ]; then
+  retired="$(cat "$UNFINISHED")"
+elif [ "$OLD_PASSWORD" != "$NEW_PASSWORD" ]; then
+  retired="$OLD_PASSWORD"
+  install -d -m 0700 "$(dirname "$UNFINISHED")"
+  printf '%s' "$retired" | replace_file "$UNFINISHED" "$(id -un)" "$(id -gn)" 0600
+fi
+
+if [ -e "$UNFINISHED" ]; then
+  if [ "$OLD_PASSWORD" != "$NEW_PASSWORD" ]; then
+    {
+      grep -v '^CH_PASSWORD=' "$ENV_FILE" || true
+      printf 'CH_PASSWORD=%s\n' "$NEW_PASSWORD"
+    } | replace_file "$ENV_FILE" "$(id -un)" "$(id -gn)" 0600
+    say "${node}: wrote ${ENV_FILE}"
+  fi
   # Timer-driven units read the file at their next start. Only a unit that is
   # running now still holds the old value.
   for unit_file in "${UNIT_D}"/*.service; do
@@ -228,16 +251,24 @@ if [ "$OLD_PASSWORD" != "$NEW_PASSWORD" ]; then
       sleep "$WAIT_SECONDS"
     fi
     if ! systemctl is-active --quiet "$unit"; then
-      echo "refusing to report success: ${unit} on ${node} is not running after its restart" >&2
+      complain "refusing to report success: ${unit} on ${node} is not running after its restart"
       exit 1
     fi
-    echo "${node}: restarted ${unit}"
+    say "${node}: restarted ${unit}"
   done
-  # The point of a rotation: the old value no longer opens anything.
-  if [ -n "$OLD_PASSWORD" ] && ! wait_for refused "$OLD_PASSWORD"; then
-    echo "refusing to report success: ClickHouse on ${node} was not seen to refuse the previous password" >&2
-    exit 1
-  fi
+  # The services have the new value; the wait below may be stopped again.
+  trap - HUP INT TERM PIPE
+  # The point of a rotation: the old value no longer opens anything. That is
+  # the value recorded when this rotation began and, if a new rotation starts
+  # before an unfinished one completed, the value the env file held as well.
+  for old in "$retired" "$OLD_PASSWORD"; do
+    if [ -n "$old" ] && [ "$old" != "$NEW_PASSWORD" ] && ! wait_for refused "$old"; then
+      complain "refusing to report success: ClickHouse on ${node} was not seen to refuse the previous password; the next run checks again"
+      exit 1
+    fi
+  done
+  rm -f "$UNFINISHED"
 fi
+trap - HUP INT TERM PIPE
 
 echo "${node}: tr signs in with this password; ${USER_FILE} holds only its hash"
