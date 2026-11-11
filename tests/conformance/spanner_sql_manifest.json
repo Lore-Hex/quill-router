@@ -5029,6 +5029,17 @@
           }
         }
       ]
+    },
+    "storage_gcp_counter_dml:key_limit_any_shard_exists:1": {
+      "fingerprint": "ababcecd96f7c70c001098060fffbe290f8ea89ded6b5968121f027e310d133c",
+      "scenarios": [
+        {
+          "bindings": {},
+          "types": {
+            "kh": "STRING"
+          }
+        }
+      ]
     }
   },
   "sinks": {
@@ -5226,7 +5237,8 @@
     "fastpath_enabler:_switch_enabled": "0ef39fbca3f5a7f6e9f47053eba62610d7230f28fde2a8740848edcf94f71d5e",
     "fastpath_enabler:read_snapshot": "044725b4c1f059c1ffd0d705b32dd2bfb4697a818341c153744be5e963df0d73",
     "fastpath_enabler:_entities": "eabe79b5070d172ccb827d7dd175367cdf0674b4c8c20dd6d0e2fc6f9656f3f7",
-    "fastpath_enabler:write_enable.tx": "dfda1b596529a3777460234fe7f023e57c4be4149853f2f989fd950c7584dac0"
+    "fastpath_enabler:write_enable.tx": "dfda1b596529a3777460234fe7f023e57c4be4149853f2f989fd950c7584dac0",
+    "storage_gcp_counter_dml:key_limit_any_shard_exists": "ababcecd96f7c70c001098060fffbe290f8ea89ded6b5968121f027e310d133c"
   },
   "non_google_sql": {
     "analytics_sink:_post_rows:1": {

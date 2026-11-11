@@ -301,12 +301,12 @@ def test_shrink_after_entity_read_books_shard_zero(
 
 
 @pytest.mark.parametrize("selected_shard", [0, 3])
-def test_zero_rows_authorizes_then_fails_loudly_and_can_retry(
+def test_other_shard_only_fails_loudly_and_can_retry(
     monkeypatch: pytest.MonkeyPatch, operations: list[Any], selected_shard: int,
 ) -> None:
     store, db, key = seed(monkeypatch)
     backup = copy.deepcopy(db.typed[KEY_LIMIT_TABLE][(key.hash, 0)])
-    db.typed[KEY_LIMIT_TABLE].clear()
+    db.typed[KEY_LIMIT_TABLE] = {(key.hash, 1): dict(backup, shard=1)}
     monkeypatch.setattr(storage_gcp, "randomized_credit_shards",
                         lambda count: (selected_shard,) if count == 4 else (0,))
     operations.clear()
@@ -316,8 +316,10 @@ def test_zero_rows_authorizes_then_fails_loudly_and_can_retry(
     before = copy.deepcopy(db.reservations[rid])
     with pytest.raises(RuntimeError, match="actual_micro=700") as raised:
         settle(store, rid)
-    assert key.hash in str(raised.value)
-    assert rid in str(raised.value)
+    assert str(raised.value) == (
+        f"key usage booking failed reservation_id={rid} key_hash={key.hash} "
+        f"shard={selected_shard} fallback_shard=0 actual_micro=700 book_to_byok=False"
+    )
     assert db.reservations[rid] == before  # failed claim rolls back, still retryable
     db.typed[KEY_LIMIT_TABLE][(key.hash, 0)] = backup
     assert settle(store, rid)["outcome"] == SettleOutcome.SETTLED
@@ -483,3 +485,72 @@ def test_daily_window_uncapped_skip_and_preserved_contracts(
         alert = authorize(key, idem="alert-window")
         assert key_ops(operations) == []
         assert db.reservations[alert["credit_reservation_id"]]["key_reserved_micro"] == 0
+
+
+@pytest.mark.parametrize("selected_shard", [0, 3])
+@pytest.mark.parametrize("byok", [False, True])
+def test_zero_rows_settles_with_healthy_credit_ledger(
+    monkeypatch: pytest.MonkeyPatch, operations: list[Any],
+    caplog: pytest.LogCaptureFixture, selected_shard: int, byok: bool,
+) -> None:
+    from tests.keyrow_assertions import assert_unbooked
+    from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
+
+    ledgers = []
+    for missing in (False, True):
+        store, db, key = seed(monkeypatch)
+        monkeypatch.setattr(storage_gcp, "randomized_credit_shards",
+                            lambda count: (selected_shard,) if count == 4 else (0,))
+        if byok:
+            store.upsert_byok_provider(
+                workspace_id=key.workspace_id, provider="anthropic",
+                secret_ref="env://ANTHROPIC_API_KEY", key_hint="test",  # noqa: S106
+            )
+        if missing:
+            db.typed[KEY_LIMIT_TABLE].clear()
+        operations.clear()
+        data = authorize(key, byok=byok)
+        assert key_ops(operations) == []
+        rid = data["credit_reservation_id"]
+        assert db.reservations[rid]["key_shard"] == selected_shard
+        caplog.clear()
+        result = settle_atomic(db, store._param_types, reservation_id=rid, actual_micro=700,
+                               settled_usage_type="BYOK" if byok else "Credits", success=True)
+        assert result["outcome"] == SettleOutcome.SETTLED
+        assert db.reservations[rid]["settled"]
+        ledgers.append([{k: row[k] for k in ("total_credits", "total_usage", "reserved")}
+                        for row in db.typed[CREDIT_BALANCE_TABLE].values()])
+        if missing:
+            assert db.typed[KEY_LIMIT_TABLE] == {}
+            assert_unbooked(caplog, key.hash, selected_shard, 700, byok)
+            assert settle(store, rid)["outcome"] == SettleOutcome.ALREADY_SETTLED
+            assert_unbooked(caplog, key.hash, selected_shard, 700, byok)
+    assert ledgers[0] == ledgers[1]
+
+
+@pytest.mark.parametrize("scenario", ["uncapped", "capped", "fallback"])
+def test_successful_settle_statement_list_unchanged(monkeypatch, operations, scenario):
+    from tests.fakes import settle_c1_main
+    from tests.test_settle_speculative_batch import clone
+    from trusted_router import storage_gcp_authorize as current
+
+    store, db, key = seed(monkeypatch, cap=50_000_000 if scenario == "capped" else None)
+    rid = authorize(key)["credit_reservation_id"]
+    if scenario == "fallback":
+        db.typed[KEY_LIMIT_TABLE].pop((key.hash, 3))
+    now = utcnow()
+    monkeypatch.setattr(current, "utcnow", lambda: now)
+    monkeypatch.setattr(settle_c1_main, "utcnow", lambda: now)
+    recorded = []
+    helper = current._release_key_or_skip_deleted
+    for implementation in (settle_c1_main._release_key_or_skip_deleted, helper):
+        trial = clone(db)
+        monkeypatch.setattr(current, "_release_key_or_skip_deleted", implementation)
+        operations.clear()
+        result = settle_atomic(trial, store._param_types, reservation_id=rid, actual_micro=700,
+                               settled_usage_type="Credits", success=True, outbox_available=False)
+        assert result["outcome"] == SettleOutcome.SETTLED
+        recorded.append(copy.deepcopy(operations))
+    assert recorded[0]
+    assert recorded[1] == recorded[0]
+    assert not any("SELECT 1 FROM tr_key_limit" in op[1] for op in recorded[1])
