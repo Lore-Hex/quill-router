@@ -11,6 +11,12 @@ from trusted_router.main import create_app
 from trusted_router.routes.console import credits as credits_module
 from trusted_router.storage import STORE, Workspace
 
+# Ordering in these tests is proven with events; the timeouts only bound a
+# hang. A 3 s bound on a request timed out on a loaded CI runner while the
+# event loop was healthy (PR #2488, test (5)): under CPU contention the same
+# request's tail grows from ~0.07 s to over 1 s locally.
+HANG_SECONDS = 30
+
 
 def _signed_in_client(
     *,
@@ -178,7 +184,7 @@ def test_stripe_fragment_loads_card_and_history_concurrently(monkeypatch) -> Non
 
     def list_payments(**_: Any) -> list[dict[str, Any]]:
         history_started.set()
-        assert card_started.wait(timeout=3)
+        assert card_started.wait(timeout=HANG_SECONDS)
         return [
             {
                 "amount_cents": 100,
@@ -192,7 +198,7 @@ def test_stripe_fragment_loads_card_and_history_concurrently(monkeypatch) -> Non
 
     def describe_method(**_: Any) -> dict[str, Any]:
         card_started.set()
-        assert history_started.wait(timeout=3)
+        assert history_started.wait(timeout=HANG_SECONDS)
         return {
             "id_tail": "rallel",
             "brand": "parallel-card",
@@ -313,7 +319,7 @@ def test_blocked_stripe_fragment_does_not_stall_event_loop(monkeypatch) -> None:
 
     def blocking_list(**_: Any) -> list[dict[str, Any]]:
         stripe_started.set()
-        assert release_stripe.wait(timeout=5)
+        assert release_stripe.wait(timeout=HANG_SECONDS)
         return []
 
     monkeypatch.setattr(credits_module, "list_workspace_payments", blocking_list)
@@ -330,16 +336,20 @@ def test_blocked_stripe_fragment_does_not_stall_event_loop(monkeypatch) -> None:
                 concurrent_client.get,
                 "/console/credits/stripe-details",
             )
-            assert stripe_started.wait(timeout=3)
+            assert stripe_started.wait(timeout=HANG_SECONDS)
             health_request = pool.submit(concurrent_client.get, "/health")
             try:
                 # Prove the event loop can serve another request while the
-                # synchronous Stripe call remains blocked. A wall-clock
-                # latency threshold is needlessly sensitive to CI load.
-                health = health_request.result(timeout=3)
+                # synchronous Stripe call remains blocked: only this test
+                # releases it, and only after health has answered. A stalled
+                # loop never answers health, which fails on the hang bound.
+                health = health_request.result(timeout=HANG_SECONDS)
+                fragment_still_blocked = not fragment.done()
             finally:
                 release_stripe.set()
-            fragment_response = fragment.result(timeout=3)
+            fragment_response = fragment.result(timeout=HANG_SECONDS)
+
+    assert fragment_still_blocked
 
     assert health.status_code == 200
     assert fragment_response.status_code == 200
