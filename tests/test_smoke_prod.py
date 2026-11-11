@@ -469,7 +469,7 @@ def test_plain_email_signup_is_closed(client: httpx.Client) -> None:
     """Plain-email /v1/signup is closed in prod (TR_EMAIL_SIGNUP_ENABLED
     is false) to stop credit-farming via disposable addresses — it was
     an open endpoint minting a management key + $0.30 trial credit for
-    any email. Real signups go through Google, GitHub, or a wallet.
+    any email. Real signups go through Google or GitHub.
     Smoke-verify the abuse endpoint stays closed; a deploy that reopens
     it (flips the flag on) trips this. The request is rejected before any
     row is written, so it leaves no state in prod."""

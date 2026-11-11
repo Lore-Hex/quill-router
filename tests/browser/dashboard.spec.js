@@ -147,6 +147,28 @@ test("wallet sign-in completes without email gate", async ({ page }) => {
   expect(emailRequests).toBe(0);
 });
 
+test("a first-time wallet is told why it cannot create an account", async ({ page }) => {
+  // No route is stubbed: the local server runs with wallet sign-up closed
+  // (the default) and answers the challenge itself.
+  const address = "0x2222222222222222222222222222222222222222";
+
+  await page.addInitScript((walletAddress) => {
+    window.ethereum = {
+      request: async ({ method }) => {
+        if (method === "eth_requestAccounts") return [walletAddress];
+        throw new Error(`unexpected ethereum method ${method}`);
+      },
+    };
+  }, address);
+
+  await page.goto("/?reason=signin");
+  await page.getByRole("button", { name: /MetaMask/ }).click();
+
+  await expect(page.locator("#signinError")).toContainText(
+    "New accounts cannot be created with a wallet. Sign in with Google or GitHub.",
+  );
+});
+
 test("console redirects unauthenticated users and auto-opens sign-in", async ({ page }) => {
   await page.goto("/console/api-keys");
 

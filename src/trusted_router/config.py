@@ -614,6 +614,12 @@ class Settings(BaseSettings):
     # across email, Google/GitHub, wallet, and delegated signup.
     email_signup_enabled: bool = False
 
+    # Creating an account with a wallet signature costs nothing and needs no
+    # mailbox, so it is the cheapest account to make in bulk. Closed by
+    # default. Wallets that already have an account still sign in; this
+    # switch and ``new_signups_enabled`` must both be on to create one.
+    wallet_signup_enabled: bool = False
+
     sentry_dsn: str | None = None
     sentry_traces_sample_rate: float = 0.05
     sentry_local_enabled: bool = False

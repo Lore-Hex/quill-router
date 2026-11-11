@@ -27,7 +27,10 @@ PRIVATE_KEY = "0x" + "4" * 64
 
 @pytest.fixture
 def wallet_client() -> Iterator[tuple[TestClient, User]]:
-    app = create_app(Settings(environment="local"), init_observability=False)
+    app = create_app(
+        Settings(environment="local", wallet_signup_enabled=True),
+        init_observability=False,
+    )
     with TestClient(app) as client:
         address = Account.from_key(PRIVATE_KEY).address
         challenge = client.post("/v1/auth/wallet/challenge", json={"address": address})
@@ -261,7 +264,10 @@ def test_undelivered_email_never_shows_the_link_outside_local(
 
 
 def test_non_wallet_session_cannot_use_the_attach_flow() -> None:
-    app = create_app(Settings(environment="local"), init_observability=False)
+    app = create_app(
+        Settings(environment="local", wallet_signup_enabled=True),
+        init_observability=False,
+    )
     with TestClient(app) as client:
         user = STORE.ensure_user("alice@example.com", email="alice@example.com", email_verified=True)
         workspace = STORE.list_workspaces_for_user(user.id)[0]

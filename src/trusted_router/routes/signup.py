@@ -22,10 +22,10 @@ def register_signup_routes(router: APIRouter) -> None:
         require_new_account_creation(settings)
         if not settings.email_signup_enabled:
             # Closed to stop credit-farming via disposable emails. Real users
-            # sign up with Google, GitHub, or a wallet.
+            # sign up with Google or GitHub.
             raise api_error(
                 403,
-                "Email signup is closed. Create an account with Google, GitHub, or a wallet.",
+                "Email signup is closed. Create an account with Google or GitHub.",
                 ErrorType.FORBIDDEN,
             )
         result = STORE.signup(

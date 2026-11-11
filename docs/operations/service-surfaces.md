@@ -88,7 +88,17 @@ delegated signup), first-time wallet accounts, and workspace invites that would
 create an unknown user. Returning OAuth, wallet, session, and API-key users
 continue to sign in and operate normally.
 
-Use the checked operator command; do not edit a Cloud Run service by hand:
+First-time wallet accounts have a second switch, `TR_WALLET_SIGNUP_ENABLED`,
+which is off unless set. A wallet signature costs nothing and needs no mailbox,
+so it is the cheapest account to create in bulk. With the switch off, an
+unknown wallet is refused before a challenge is stored and again at verify;
+wallets that already have an account still sign in. Both switches must be on
+for a wallet to create an account. No deploy script sets the wallet switch and
+the rollout replaces the whole environment, so a value set by hand is dropped
+at the next rollout; reopening wallet sign-up means adding it to the rollout.
+
+For `TR_NEW_SIGNUPS_ENABLED`, use the checked operator command; do not edit a
+Cloud Run service by hand:
 
 ```bash
 bash scripts/deploy/set_new_signups.sh disable
