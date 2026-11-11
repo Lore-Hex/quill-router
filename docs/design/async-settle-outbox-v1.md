@@ -1884,7 +1884,10 @@ $0.10. Admission is **inclusive** at the threshold
 
 The authorize-side log line `metric=async_settle_projection_admission` carries
 `eligible=yes|no`, the admission answer for that authorize, so the share of
-authorizes offered an async settle can be counted without reading a workspace.
+admission checks answered yes can be counted without reading a workspace. The
+line is written only for an authorize that reaches the admission check, and
+before its ticket is signed, so it is not a count of offers among all
+authorizes.
 
 The query counts workspace-owned pending and dead rows, including active
 leases, legacy rows with workspace ownership and NULL-created rows. It does

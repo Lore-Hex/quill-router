@@ -150,3 +150,18 @@ def test_authorize_offers_async_to_tier_one_and_says_so_in_the_metric(env, caplo
             and record.getMessage().startswith('metric=async_settle_projection_admission ')]
     assert len(rows) == 1
     assert rows[0].split()[1] == ('eligible=yes' if offered else 'eligible=no')
+
+
+def test_an_admission_check_that_raises_is_logged_as_not_eligible(caplog):
+    class Failing:
+        def eligible(self, *args, **kwargs):
+            raise RuntimeError('private-reader-error')
+
+    with caplog.at_level(logging.INFO, logger=timing.logger.name), pytest.raises(RuntimeError):
+        timing.eligible(Failing(), 'ws', PRODUCTION_OVERRIDE, projection=True)
+    rows = [record.getMessage() for record in caplog.records
+            if record.name == timing.logger.name
+            and record.getMessage().startswith('metric=async_settle_projection_admission ')]
+    assert len(rows) == 1
+    assert rows[0].split()[1] == 'eligible=no'
+    assert 'private-reader-error' not in caplog.text
