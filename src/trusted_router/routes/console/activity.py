@@ -17,7 +17,11 @@ from trusted_router.auth import SettingsDep
 from trusted_router.client_reliability import availability
 from trusted_router.config import Settings
 from trusted_router.money import format_money_precise
-from trusted_router.operational_analytics import OperationalAnalyticsClient
+from trusted_router.operational_analytics import (
+    OperationalAnalyticsClient,
+    is_analytics_unavailable,
+    log_analytics_unavailable,
+)
 from trusted_router.routes.console._shared import ConsoleDep, render
 from trusted_router.storage import STORE
 from trusted_router.storage_operational_analytics import analytics_surrogate
@@ -201,7 +205,17 @@ def _client_reliability_data(
 def register(app: FastAPI) -> None:
     @app.get("/console/activity")
     def console_activity(ctx: ConsoleDep, settings: SettingsDep) -> Response:
-        events = STORE.activity_events(ctx.workspace.id, limit=50)
+        activity_unavailable = False
+        try:
+            events = STORE.activity_events(ctx.workspace.id, limit=50)
+        except Exception as exc:
+            if not is_analytics_unavailable(exc):
+                raise
+            # The page shell, nav and usage panel still render; the table
+            # says the data is unavailable rather than "no activity yet".
+            log_analytics_unavailable(log, "console_activity", exc)
+            events = []
+            activity_unavailable = True
         for event in events:
             event["cost_display"] = format_money_precise(int(event.get("cost_microdollars") or 0))
         return HTMLResponse(render(
@@ -212,6 +226,7 @@ def register(app: FastAPI) -> None:
             page_title="Observability",
             page_subtitle="Per-request metadata, no prompt content.",
             activity=events,
+            activity_unavailable=activity_unavailable,
         ))
 
     @app.get("/console/activity/usage.json")
@@ -234,20 +249,32 @@ def register(app: FastAPI) -> None:
         cached = _USAGE_CACHE.get(cache_key, now=now)
         if cached is not None:
             return cached
-        result = STORE.usage_series(
-            ctx.workspace.id,
-            window_minutes=window_minutes,
-            granularity=granularity,
-            api_key_hash=api_key_hash,
-            by_model=by_model,
-        )
+        try:
+            result = STORE.usage_series(
+                ctx.workspace.id,
+                window_minutes=window_minutes,
+                granularity=granularity,
+                api_key_hash=api_key_hash,
+                by_model=by_model,
+            )
+            latest = STORE.activity_events(
+                ctx.workspace.id,
+                api_key_hash=api_key_hash,
+                limit=1,
+            )
+        except Exception as exc:
+            if not is_analytics_unavailable(exc):
+                raise
+            # The panel already renders "Couldn't load usage right now." on
+            # any non-2xx; a retryable 503 is the honest answer. Not cached.
+            log_analytics_unavailable(log, "console_activity_usage", exc)
+            raise HTTPException(
+                status_code=503,
+                detail="Usage data is temporarily unavailable; retry shortly.",
+                headers={"Retry-After": "30"},
+            ) from exc
         result = dict(result)
         result["range"] = range_
-        latest = STORE.activity_events(
-            ctx.workspace.id,
-            api_key_hash=api_key_hash,
-            limit=1,
-        )
         result["latest_activity_at"] = latest[0].get("created_at") if latest else None
         # A shared cache (Redis) is deferred; this per-worker TTL covers
         # occasional console reads and protects ClickHouse from refresh bursts.

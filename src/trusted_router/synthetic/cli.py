@@ -518,6 +518,10 @@ async def _post_route_health(
         flagged = payload.get("data", {}).get("flagged") if isinstance(payload, dict) else None
         if not isinstance(flagged, list):
             raise ValueError("route-health response did not contain a flagged list")
+        if payload["data"].get("evaluated") is False:
+            reason = payload["data"].get("reason") or "unknown"
+            print(f"route-health not evaluated: {reason}", file=sys.stderr)
+            return
         print(f"route-health flagged: {len(flagged)}")
     except Exception as exc:
         print(f"route-health check failed: {exc}", file=sys.stderr)
