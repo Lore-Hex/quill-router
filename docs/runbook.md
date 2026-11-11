@@ -1178,15 +1178,6 @@ does NOT prove Bigtable was failing throughout — typed-outage time ages the
 stamp too, so some of that window may be time Bigtable was never attempted.
 Check Bigtable health directly rather than inferring it from the alert.
 
-A dead settle row with `key usage booking failed` on a build before the
-missing-counter fix may mean a zero key hold with positive usage and no key
-counter rows at any shard. On a build with this fix, that condition completes
-settlement and emits `key_usage_unbooked_total` once; workspace credit accounting
-is unchanged and no key counter row is written. The error still means manual
-review when another shard has counters but neither the recorded shard nor
-shard zero can book. Existing dead rows remain subject to the reviewed re-arm
-procedure; the fix does not automatically re-arm them.
-
 **The row goes `dead`, not `done` — and that is the point.** `mark(done=True)`
 NULLs `settle_body`, and for a gateway/typed request that payload is normally
 the only repair evidence there is: typed finalize skips the generic
@@ -1233,6 +1224,76 @@ Repairing `ALERT settle outbox activity repair expired` (the alert carries
    charge, and only retries the index — it will not double-charge.
 3. Confirm the row reached `done` and the request appears in the workspace's
    activity view.
+
+### <a id="key-usage-unbooked"></a>Key usage unbooked
+
+A settle books its amount twice: to the workspace's credit ledger and to the
+key's own usage counters (`tr_key_limit`, one row per shard). The app writes a
+key's counter row in the same transaction as the key, so a key with no counter
+row at any shard is a key record that reached storage some other way: legacy
+data, a cleanup script, or a direct write.
+
+**Alert `TR Settle: key usage unbooked`** (`infra/key_usage_alerts.tf`). A
+settle found a zero key hold with usage to book and no counter row for the key
+at any shard. It completed: the workspace was charged the usual amount, nothing
+was written to `tr_key_limit`, and one WARNING
+`metric=key_usage_unbooked_total value=1 key_hash=... shard=... actual_micro=... book_to_byok=...`
+was written after the commit. Money is correct. What is missing is the key's
+own usage count, and the amount exists only in that line. Read the lines:
+
+```bash
+gcloud logging read 'resource.type="cloud_run_revision" AND textPayload:"WARNING trusted_router.storage_gcp_authorize metric=key_usage_unbooked_total "' \
+  --project=quill-cloud-proxy --freshness=2h --limit=50 \
+  --format='value(timestamp,resource.labels.service_name,textPayload)'
+```
+
+Then find out where the key came from before anything else. Every line is a
+key that serves traffic without the app having written it, so treat it as a
+possible unauthorized record until its origin is known. A key with only window
+limits and no counter rows also runs with those limits unenforced, and a
+configuration update of such a key fails (`configured tr_key_limit usage shard
+set is incomplete`), so the key is disabled or replaced, not edited.
+
+**Dead settle rows whose `last_error` starts `RuntimeError: key usage booking
+failed`.** The settle could book the key's usage at neither the recorded shard
+nor shard zero. Read the key's counters by primary-key prefix, with the
+`key_hash` the error names:
+
+```bash
+gcloud spanner databases execute-sql trusted-router \
+  --instance=trusted-router-nam6 --project=quill-cloud-proxy --priority=low \
+  --sql="SELECT shard FROM tr_key_limit WHERE key_hash='<key_hash>'"
+```
+
+- **Rows at another shard.** The error is still raised on every build and the
+  row stays dead. This is manual review of the key's shard set; no re-arm
+  applies until its counters are repaired.
+- **No rows.** A build before the missing-counter fix raised here too, and its
+  rows went dead. A build with the fix completes such a settle and writes the
+  line above. Rows already dead stay dead; nothing re-arms them on its own.
+
+To re-arm a row of the second kind, after the fixed build serves every region
+and the settle drain worker, and after the key's origin is known:
+
+```bash
+gcloud spanner databases execute-sql trusted-router \
+  --instance=trusted-router-nam6 --project=quill-cloud-proxy \
+  --sql="UPDATE tr_settle_outbox SET status='pending', next_attempt_at=CURRENT_TIMESTAMP(),
+         lease_owner=NULL, leased_until=NULL, last_error=NULL
+         WHERE authorization_id='<authorization_id>' AND intent_kind='settle'
+         AND status='dead'
+         AND STARTS_WITH(last_error, 'RuntimeError: key usage booking failed reservation_id=')"
+```
+
+The `last_error` predicate scopes the re-arm to this cause, as the activity
+repair's does to its own. If the statement reports 0 rows updated, you have the
+wrong row or the wrong cause; do not widen the predicate to make it match. The
+replay charges the workspace the row's frozen amount once (the reservation
+claim gate refuses a second charge) and writes the unbooked line. Confirm the
+row reached `done`. A row re-armed while another shard has counters, or on a
+build without the fix, fails again and goes dead again after its attempts;
+until then it counts as an unresolved row and keeps async settle admission
+closed.
 
 Monitoring signals:
 
