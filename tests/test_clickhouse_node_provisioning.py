@@ -57,6 +57,145 @@ def test_clickhouse_password_never_enters_instance_metadata() -> None:
     assert "instance/attributes/ch-password" not in startup
 
 
+# What a new node must have on disk before its server first starts, as
+# attribute -> (file in clickhouse-node-config, where it goes, mode). The same
+# four files apply_node_config.sh keeps current on a running node.
+#
+# Checked on the real 26.8.36.3 packages (2026-11-11, a fresh Debian 12
+# container running clickhouse_startup.sh itself, with stand-ins only for the
+# metadata server, Secret Manager and systemd). Before this change the script
+# finished "ready" with `default` open: a query naming no user answered 200,
+# and the server's own user could fetch from the metadata address. After it:
+# 401, url() refused, and curl exit 7 for the server's user, while root still
+# reaches the metadata server. With one attribute missing, a helper that does
+# nothing, or a `default` left open, the script stops without marking the node
+# provisioned.
+LOCKDOWN = {
+    "tr-default-user-xml": (
+        "tr-default-user.xml",
+        "/etc/clickhouse-server/users.d/tr-default-user.xml",
+        "0644",
+    ),
+    "tr-egress-xml": (
+        "tr-egress.xml",
+        "/etc/clickhouse-server/config.d/tr-egress.xml",
+        "0644",
+    ),
+    "tr-metadata-block-sh": (
+        "tr-clickhouse-metadata-block.sh",
+        "/usr/local/sbin/tr-clickhouse-metadata-block",
+        "0755",
+    ),
+    "tr-metadata-block-conf": (
+        "tr-metadata-block.conf",
+        "/etc/systemd/system/clickhouse-server.service.d/tr-metadata-block.conf",
+        "0644",
+    ),
+}
+SERVER_INSTALL = 'apt-get install -y "clickhouse-common-static=${CLICKHOUSE_VERSION}"'
+
+
+def _startup_code() -> str:
+    """The startup script without its comments, so a pin cannot be met by one."""
+    text = (ROOT / "scripts/deploy/clickhouse_startup.sh").read_text()
+    return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+
+
+def test_startup_puts_the_lockdown_on_disk_before_it_installs_the_server() -> None:
+    code = _startup_code()
+
+    assert code.count(SERVER_INSTALL) == 1
+    install = code.index(SERVER_INSTALL)
+    fetched = dict(
+        (attribute, (path, mode))
+        for attribute, path, mode in re.findall(r'^  "([a-z-]+)\|(/[^|"]+)\|(\d{4})"$', code, re.M)
+    )
+    assert fetched == {name: (path, mode) for name, (_, path, mode) in LOCKDOWN.items()}
+    loop = code.index('for entry in "${LOCKDOWN[@]}"; do')
+    assert code.index("LOCKDOWN=(") < loop < install
+    body = code[loop:install]
+    assert '"$METADATA/instance/attributes/${attribute}" -o "$path"' in body
+    assert "curl -fsSL -H 'Metadata-Flavor: Google'" in body
+    assert 'chmod "$mode" "$path"' in body
+    # An empty attribute is a missing file, not a lockdown.
+    assert 'if [ ! -s "$path" ]; then' in body and "exit 1" in body
+    # The helper needs iptables, and systemd must have read the drop-in.
+    assert re.search(r"^apt-get install -y [a-z0-9 -]*\biptables\b", code, re.M)
+    assert install < code.index("systemctl daemon-reload") < code.index("systemctl restart clickhouse-server")
+    # The preseed the packages ignore is gone, so nothing reads as a password
+    # on `default` that is not one.
+    assert "debconf" not in code
+
+
+def test_startup_does_not_call_an_open_node_provisioned() -> None:
+    code = _startup_code()
+    marker = code.index("touch /var/lib/tr-clickhouse-provisioned")
+
+    anonymous = code.index("'http://127.0.0.1:8123/?query=SELECT%201'")
+    refused = code.index('if [ "$anonymous" != 401 ]; then')
+    metadata = code.index("runuser -u clickhouse -- curl -s -o /dev/null --max-time 3")
+    blocked = code.index('if [ "$reached" != 7 ]; then')
+    assert anonymous < refused < metadata < blocked < marker
+    assert "http://169.254.169.254/" in code[metadata:blocked]
+    for check in (refused, blocked):
+        assert "exit 1" in code[check : check + 200]
+    assert code.count("touch /var/lib/tr-clickhouse-provisioned") == 1
+
+
+def test_startup_keeps_only_the_hash_of_the_writer_password() -> None:
+    code = _startup_code()
+
+    assert "PASSWORD_SHA256=$(printf '%s' \"$PASSWORD\" | sha256sum | cut -d' ' -f1)" in code
+    assert "<password_sha256_hex>${PASSWORD_SHA256}</password_sha256_hex>" in code
+    assert "<password>" not in code
+
+
+def test_node_ships_every_lockdown_file_the_startup_script_fetches(tmp_path: Path) -> None:
+    """Run clickhouse_node.sh against a recording gcloud and read what it would
+    attach to the instance: each attribute the startup script fetches must
+    carry the checked-in file, byte for byte."""
+    stub = tmp_path / "bin"
+    stub.mkdir()
+    calls = tmp_path / "gcloud.log"
+    (stub / "gcloud").write_text(
+        "#!/bin/bash\n"
+        f"python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' \"$@\" >> {calls}\n"
+        'case "$*" in\n'
+        '  *"instances describe"*|*"resource-policies describe"*) exit 1 ;;\n'
+        "esac\n"
+        "exit 0\n"
+    )
+    (stub / "gcloud").chmod(0o755)
+
+    result = subprocess.run(  # noqa: S603
+        ["bash", str(ROOT / "scripts/deploy/clickhouse_node.sh")],  # noqa: S607
+        env={**os.environ, "PATH": f"{stub}:{os.environ['PATH']}", "NAME": "tr-clickhouse-test"},
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode == 0, result.stderr
+    creates = [
+        argv
+        for argv in map(json.loads, calls.read_text().splitlines())
+        if argv[:3] == ["compute", "instances", "create"]
+    ]
+    assert len(creates) == 1
+    create = creates[0]
+    attached = dict(
+        pair.split("=", 1) for pair in create[create.index("--metadata-from-file") + 1].split(",")
+    )
+    assert set(attached) == {"startup-script", *LOCKDOWN}
+    assert Path(attached["startup-script"]).samefile(ROOT / "scripts/deploy/clickhouse_startup.sh")
+    for attribute, (source, _, _) in LOCKDOWN.items():
+        checked_in = ROOT / "scripts/deploy/clickhouse-node-config" / source
+        assert Path(attached[attribute]).read_bytes() == checked_in.read_bytes(), attribute
+        assert checked_in.stat().st_size > 0
+    # The password still travels as the name of a secret, never as a value.
+    assert create[create.index("--metadata") + 1] == "clickhouse-password-secret=trustedrouter-clickhouse-password"
+
+
 def test_live_deploy_installs_archive_and_rollup_timers() -> None:
     script = (ROOT / "scripts/deploy/clickhouse_live_ingestion.sh").read_text()
 
