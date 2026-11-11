@@ -50,7 +50,7 @@ operator_password="$(gcloud secrets versions access latest \
 operator_hash="$(printf '%s' "$operator_password" | shasum -a 256 | awk '{print $1}')"
 unset operator_password
 
-config="$(mktemp "${TMPDIR:-/tmp}/tr-clickhouse-operator-reader.XXXXXX.xml")"
+config="$(mktemp "${TMPDIR:-/tmp}/tr-clickhouse-operator-reader.XXXXXX")"
 trap 'rm -f "$config"' EXIT
 sed "s/__PASSWORD_SHA256__/${operator_hash}/g" >"$config" <<'XML'
 <clickhouse>
