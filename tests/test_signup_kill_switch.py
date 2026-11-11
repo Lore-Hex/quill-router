@@ -198,8 +198,35 @@ def test_global_gate_keeps_returning_wallet_login_working() -> None:
     assert "tr_session=" in response.headers.get("set-cookie", "")
 
 
+def test_global_gate_blocks_wallet_account_creation_at_verify() -> None:
+    # A challenge issued while sign-up was open must not create an account
+    # once the global switch is closed, even with the wallet switch on.
+    account = Account.create()
+    payload = _signed_wallet_payload(_client(new_signups_enabled=True), account)
+    closed = _client(new_signups_enabled=False, wallet_signup_enabled=True)
+
+    response = closed.post("/v1/auth/wallet/verify", json=payload)
+
+    assert response.status_code == 403
+    assert "temporarily disabled" in response.json()["error"]["message"]
+    assert "tr_session=" not in response.headers.get("set-cookie", "")
+    assert STORE.find_user_by_wallet(account.address) is None
+
+
 def test_wallet_signup_is_closed_unless_configured() -> None:
-    assert Settings(environment="test").wallet_signup_enabled is False
+    # The code default, whatever the process environment says.
+    assert Settings.model_fields["wallet_signup_enabled"].default is False
+
+
+def test_closed_email_signup_does_not_point_at_wallets() -> None:
+    client = _client(new_signups_enabled=True, email_signup_enabled=False)
+
+    response = client.post("/v1/signup", json={"email": "new@example.com"})
+
+    assert response.status_code == 403
+    message = response.json()["error"]["message"]
+    assert "Google or GitHub" in message
+    assert "wallet" not in message
 
 
 def test_wallet_switch_blocks_first_time_wallet_before_challenge_write(

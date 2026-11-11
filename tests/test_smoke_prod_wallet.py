@@ -31,5 +31,7 @@ def test_prod_refuses_a_first_time_wallet_before_issuing_a_challenge() -> None:
     with httpx.Client(base_url=PROD_BASE_URL, timeout=20.0, follow_redirects=False) as client:
         challenge = client.post("/v1/auth/wallet/challenge", json={"address": account.address})
         assert challenge.status_code == 403, challenge.text
+        # The application's own refusal, not an edge or firewall 403.
+        assert "cannot be created with a wallet" in challenge.json()["error"]["message"]
         assert "nonce" not in challenge.text
         assert not client.cookies.get("tr_session")
