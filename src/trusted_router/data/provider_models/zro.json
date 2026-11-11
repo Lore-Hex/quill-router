@@ -289,7 +289,7 @@
   ],
   "source": "https://zro.moonmath.ai/v1/models",
   "pricing_source": "https://zro.moonmath.ai/docs/models",
-  "generated_at": "2026-11-11T17:40:20Z",
+  "generated_at": "2026-11-11T23:49:35Z",
   "price_scale": "microdollars_per_million",
   "model_count": 10
 }

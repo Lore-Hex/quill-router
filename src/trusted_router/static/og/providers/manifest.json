@@ -577,10 +577,10 @@
   },
   "muna": {
     "card_version": 2,
-    "model_count": 1,
+    "model_count": 2,
     "name": "Muna",
     "privacy": "Policy documented",
-    "route_count": 1,
+    "route_count": 2,
     "route_mode": "Prepaid",
     "slug": "muna"
   },
@@ -658,10 +658,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 12,
+    "model_count": 13,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 12,
+    "route_count": 13,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },

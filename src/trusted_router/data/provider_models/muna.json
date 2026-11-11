@@ -31,8 +31,7 @@
       "deprecation_at": null,
       "retirement_at": null,
       "replacement_model_id": null,
-      "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable": true,
       "reliability": {
         "first_token_timeout_seconds": 60.0,
         "completion_timeout_seconds": 600.0,
@@ -162,7 +161,7 @@
     }
   ],
   "source": "https://inference.muna.ai/integrations/trustedrouter/catalog",
-  "generated_at": "2026-11-11T17:40:19Z",
+  "generated_at": "2026-11-11T23:49:35Z",
   "price_scale": "microdollars_per_million",
   "model_count": 3
 }

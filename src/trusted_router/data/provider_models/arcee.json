@@ -95,7 +95,8 @@
       "routable": true,
       "input_token_price_per_m": 1320000,
       "output_token_price_per_m": 3960000,
-      "cached_input_token_price_per_m": 44000
+      "cached_input_token_price_per_m": 44000,
+      "missing_since": "2026-11-11"
     },
     {
       "display_name": "Kimi K3",
@@ -163,7 +164,8 @@
       "routable": true,
       "input_token_price_per_m": 1400000,
       "output_token_price_per_m": 4400000,
-      "cached_input_token_price_per_m": 260000
+      "cached_input_token_price_per_m": 260000,
+      "missing_since": "2026-11-11"
     },
     {
       "display_name": "DeepSeek V4 Flash Latest",
@@ -302,7 +304,7 @@
   ],
   "source": "https://api.arcee.ai/api/v1/models",
   "pricing_source": "https://api.arcee.ai/api/v1/models",
-  "generated_at": "2026-11-11T17:40:19Z",
+  "generated_at": "2026-11-11T23:49:35Z",
   "price_scale": "microdollars_per_million",
   "model_count": 13
 }
