@@ -48,6 +48,10 @@ class BrandV3Tests(unittest.TestCase):
         # Press quotes name the publication with its logo, as on the live page.
         for logo in ('the-information', 'axios', 'semafor'):
             self.assertIn(f'/assets/nyte-v2/press/{logo}-light.png', page)
+        # The newest story leads the press row, and every story links to its article.
+        self.assertIn('/assets/nyte-v2/press/venturebeat.svg', page)
+        for url in ('https://venturebeat.com/', 'https://www.theinformation.com/', 'https://www.axios.com/', 'https://semafor.com/'):
+            self.assertIn(f'href="{url}', page)
         # analytics.js names CTA positions from these classes (hero: class starting "hero", close: .closing).
         self.assertIn('<section class="hero-home v3-hero">', page)
         self.assertIn('<section class="v3-cta closing">', page)

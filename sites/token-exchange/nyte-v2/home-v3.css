@@ -31,6 +31,18 @@ main .tags .tag.cap{background:var(--cream)}
 .v3-quotes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px}
 .v3-quotes figure{border-top:2.5px solid var(--ink);padding-top:20px;display:flex;flex-direction:column;gap:20px}
 .v3-quotes blockquote{font-size:28px;line-height:1.25;font-weight:300}
+/* Press: the newest story leads across the full width; each story links out. */
+.v3-press-h{margin:0 0 56px}
+.v3-press a{color:inherit;text-decoration:none}
+.v3-press-lead{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;border-top:2.5px solid var(--ink);padding-top:28px;margin-bottom:56px}
+.v3-press-src{grid-column:span 3}
+.v3-press-src img{display:block;height:52px;width:auto}
+.v3-press-body{grid-column:span 9;display:flex;flex-direction:column;align-items:flex-start;gap:22px}
+.v3-press-lead blockquote{margin:0;font-size:48px;line-height:1.12;font-weight:300;letter-spacing:-.015em}
+.v3-press-more{font-weight:500;text-decoration:underline;text-underline-offset:4px}
+.v3-quotes>a{display:flex}
+.v3-quotes>a figure{flex:1;margin:0}
+.v3-press a:hover blockquote,.v3-press a:focus-visible blockquote{text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:6px}
 
 /* Case study */
 .v3-case{background:var(--ink);color:var(--cream)}
@@ -112,6 +124,10 @@ main .tags .tag.cap{background:var(--cream)}
   .v3-quotes{grid-template-columns:1fr;gap:32px}
   .v3-quotes figure{padding-top:16px;gap:14px}
   .v3-quotes blockquote{font-size:24px}
+  .v3-press-h{margin-bottom:36px}
+  .v3-press-lead{display:flex;flex-direction:column;gap:18px;padding-top:22px;margin-bottom:32px}
+  .v3-press-src img{height:40px}
+  .v3-press-lead blockquote{font-size:32px;line-height:1.15}
   .v3-case-head blockquote{margin-top:20px;font-size:28px;line-height:1.2}
   .v3-case-proof{margin-top:40px;padding-top:24px}
   .v3-stats{padding:72px 0 64px}
