@@ -166,3 +166,16 @@ def test_the_routing_snapshot_honours_a_row_deadline(monkeypatch, tmp_path):
     for route in _routes(endpoints, adapter.slug, "s1-fast"):
         entry = _endpoint_entry(route, starts)
         assert entry.catalog_valid_until == int(PROVIDER_DEADLINE.timestamp())
+
+
+def test_the_committed_decision_models_manifests_carry_no_provider_wide_deadline() -> None:
+    # The s1-pro promotion ends per model. A top-level pricing_valid_until
+    # (for instance restored by a rebase over an older price-bot commit) would
+    # expire every Decision Models route with it.
+    import json
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "src/trusted_router/data/provider_models"
+    for slug in ("decisionmodelsio", "decisionmodelsio-eu"):
+        raw = json.loads((root / f"{slug}.json").read_text())
+        assert "pricing_valid_until" not in raw, slug
