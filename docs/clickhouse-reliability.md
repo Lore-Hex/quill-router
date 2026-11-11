@@ -358,6 +358,93 @@ delete the rule. The helper and the drop-in are root's files, so the server
 cannot rewrite them, and the rule is put back at every start. Dropping the
 capability from the unit is a follow-up.
 
+### Rotating the passwords
+
+Every password is a Secret Manager secret, and each script below installs
+whatever the latest version of its secret is. None of them writes a secret.
+Add the new version first, with a value from `A-Z a-z 0-9 _ -` that does not
+start with `-` and has no trailing newline (the `tr` password is also read from
+a shell, a systemd environment file and `clickhouse-client --password`, and a
+new node hashes the secret's exact bytes; the scripts refuse anything else or
+anything under 24 characters):
+
+```bash
+openssl rand -hex 32 | tr -d '\n' | gcloud secrets versions add \
+  trustedrouter-clickhouse-password --data-file=- --project quill-cloud-proxy
+```
+
+| User | Secret | Installed by | Server restart |
+|---|---|---|---|
+| `tr` (workers, migrations, operators) | `trustedrouter-clickhouse-password` | `clickhouse_rotate_password.sh` | No |
+| `tr_ops_ingest` | `trustedrouter-clickhouse-ops-ingest-password` | `clickhouse_operational_writer.sh` | No |
+| `tr_control_read` | `trustedrouter-clickhouse-control-read-password` | `clickhouse_control_reader.sh`, once per node with `NAME` and `ZONE` | Yes, when the file changes |
+| `tr_provider_read` | `trustedrouter-clickhouse-provider-read-password` | `clickhouse_provider_reader.sh`, once per node with `NAME` and `ZONE` | Yes, when the file changes |
+| `tr_growth_read` | `trustedrouter-growth-clickhouse-password` | By hand: `ALTER USER tr_growth_read ON CLUSTER trustedrouter IDENTIFIED WITH sha256_hash BY '<hash>'`, signed in as `tr` | No |
+
+`tr` first, because the others are installed or checked with it:
+
+```bash
+scripts/deploy/clickhouse_rotate_password.sh
+scripts/deploy/clickhouse_rotate_password.sh --apply
+```
+
+The first run reports what each node would change. The second goes to
+tr-clickhouse-3, -2 and then -1. On each node it installs
+`users.d/tr-user.xml` holding only the SHA-256 of the new password, waits
+until the server accepts it (the file is reread in place, the server is not
+restarted), writes the new value to `/etc/tr-clickhouse-ingest.env`, restarts
+the running services that read that file, and then requires that the server
+refuses the old password. If the server does not accept the new password, or
+the run is interrupted (Ctrl-C, a dropped SSH session) before it does, the
+previous user file goes back and the node is as it was. Once the server has
+accepted it, the script records that a rotation is unfinished
+(`/var/lib/tr-clickhouse-rotate/unfinished`, root only, holding the previous
+value), then writes the env file and restarts the services without stopping
+for signals or failed writes; a dropped SSH session is not a signal on the
+node, only a write that fails. The record is removed once the previous value
+is seen refused. A run that stopped before that, for any reason, is finished
+by the next one: it restarts the services and checks the previous value
+again, even though the env file already holds the new one. The password is
+never a command argument or instance metadata; it reaches the node on
+standard input.
+
+What to expect and what to check:
+
+- A node provisioned before the user file was hashed holds its password in
+  plain text. Running the script with the password unchanged replaces that
+  file with the hashed one and touches nothing else, so one `--apply` is
+  worth doing even when the value stays.
+- Between the first node and the last, the nodes hold different `tr`
+  passwords. A timer-driven job that starts in that window and signs in to
+  another node is turned away once; its timer runs it again.
+- The first failure stops the rollout. Run it again to continue: a node that
+  already holds the new password is checked and left alone.
+- Do not run `clickhouse_live_ingestion.sh` or `clickhouse_cluster.sh` during
+  a rotation. They rewrite the env file from the latest secret, so on a node
+  not yet rotated the services would hold the new value while the server still
+  takes the old one, and the rotation would then refuse that node.
+- If the script stops with `is not running after its restart`, the node
+  already has the new password everywhere; only that service is down. Look at
+  `systemctl status` and `journalctl -u` for the unit on that node. A second
+  run of the script does not look at a stopped service.
+- The script proves the sign-in, not the pipeline. Afterwards check
+  `/tr_health` on each node and the drain freshness signal below.
+
+Then the other users. The two reader scripts restart `clickhouse-server` on
+the node they change and do not check the cluster first, so take one node at
+a time and wait for `/tr_health` to answer 200 before the next:
+
+```bash
+scripts/deploy/clickhouse_operational_writer.sh
+NAME=tr-clickhouse-3 ZONE=us-central1-c scripts/deploy/clickhouse_control_reader.sh
+NAME=tr-clickhouse-3 ZONE=us-central1-c scripts/deploy/clickhouse_provider_reader.sh
+```
+
+The control plane reads the reader and writer secrets as `latest` when a
+revision is created, not while it runs. Until the next deploy the running
+revisions still present the old passwords and are refused, so redeploy the
+control plane as soon as the nodes are done.
+
 ## Health checks
 
 Check load-balancer backends:
