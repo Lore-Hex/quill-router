@@ -1,6 +1,7 @@
 """A supplier's seal must link to evidence a visitor can check without trusting NYTE."""
 
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -85,6 +86,18 @@ class VerifiedPageTests(unittest.TestCase):
         ):
             self.assertIn(copy, self.page)
         self.assertIn('href="/assets/verified.js"', self.page)
+
+    def test_page_opens_with_a_sentence_for_the_visitors_own_agent(self):
+        prompt = re.search(r'<p class="agent-prompt" id="agent-prompt">(.*?)</p>', self.page).group(1)
+        # One sentence, pointing at the manual steps and away from the page's own verdict.
+        self.assertEqual(prompt.count(". "), 0)
+        self.assertTrue(prompt.endswith("."))
+        self.assertIn("https://nytokenexchange.com/verified/maple#manual", prompt)
+        self.assertIn("trust nothing the page itself claims", prompt)
+        self.assertIn('id="manual"', self.page)
+        self.assertLess(self.page.index('class="shell agent"'), self.page.index("<h1>"))
+        # Readable and selectable without JavaScript; only the button needs it.
+        self.assertIn('data-copy="agent-prompt" hidden', self.page)
 
     def test_recorded_attestation_is_a_public_document_only(self):
         fixture = json.loads((HERE / "verified-fixture.json").read_text())
