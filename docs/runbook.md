@@ -1087,9 +1087,9 @@ state; pending rows are in-flight or crash-orphaned and freeze their holds by
 design. Replayed settles (`already_settled`) never enqueue, so an empty table
 under replay-only traffic is normal.
 
-Verify there are no alert lines — in AXIOM, not Cloud Logging (app logs at
-or above `TR_AXIOM_LOG_LEVEL` ship to Axiom only; see Monitoring signals
-below): search the `trusted-router-logs` dataset for `"ALERT settle outbox"`.
+Verify there are no alert lines. Search Axiom's `trusted-router-logs` dataset
+for `"ALERT settle outbox"` (app logs at or above `TR_AXIOM_LOG_LEVEL` ship
+there; see Monitoring signals below for what Cloud Logging carries).
 Equivalent state-based check that needs no log access at all — dead rows are
 the alert-worthy terminal state:
 
@@ -1178,15 +1178,6 @@ does NOT prove Bigtable was failing throughout — typed-outage time ages the
 stamp too, so some of that window may be time Bigtable was never attempted.
 Check Bigtable health directly rather than inferring it from the alert.
 
-A dead settle row with `key usage booking failed` on a build before the
-missing-counter fix may mean a zero key hold with positive usage and no key
-counter rows at any shard. On a build with this fix, that condition completes
-settlement and emits `key_usage_unbooked_total` once; workspace credit accounting
-is unchanged and no key counter row is written. The error still means manual
-review when another shard has counters but neither the recorded shard nor
-shard zero can book. Existing dead rows remain subject to the reviewed re-arm
-procedure; the fix does not automatically re-arm them.
-
 **The row goes `dead`, not `done` — and that is the point.** `mark(done=True)`
 NULLs `settle_body`, and for a gateway/typed request that payload is normally
 the only repair evidence there is: typed finalize skips the generic
@@ -1234,6 +1225,93 @@ Repairing `ALERT settle outbox activity repair expired` (the alert carries
 3. Confirm the row reached `done` and the request appears in the workspace's
    activity view.
 
+### <a id="key-usage-unbooked"></a>Key usage unbooked
+
+A settle books its amount twice: to the workspace's credit ledger and to the
+key's own usage counters (`tr_key_limit`, one row per shard). The app writes a
+key's counter row in the same transaction as the key, so a key with no counter
+row at any shard is a key record that reached storage some other way: legacy
+data, a cleanup script, or a direct write.
+
+**Alert `TR Settle: key usage unbooked`** (`infra/key_usage_alerts.tf`). A
+settle found a zero key hold with usage to book and no counter row for the key
+at any shard. It completed: the workspace was charged the usual amount, nothing
+was written to `tr_key_limit`, and one WARNING
+`metric=key_usage_unbooked_total value=1 key_hash=... shard=... actual_micro=... book_to_byok=...`
+was written after the commit. Money is correct. What is missing is the key's
+own usage count.
+
+The line has two forms, and the alert matches both. An API service writes it in
+full, with the key hash and the amount. The settle drain worker, which applies
+settles taken from the outbox, writes content-free lines only
+(`services/settle_drain_observability.py`), so there the same event reads
+`WARNING trusted_router.storage_gcp_authorize metric=key_usage_unbooked_total logger=trusted_router.storage_gcp_authorize level=WARNING exception_class=none`:
+no key hash and no amount. Read the lines; `service_name` tells the two apart:
+
+```bash
+gcloud logging read 'resource.type="cloud_run_revision" AND textPayload:"WARNING trusted_router.storage_gcp_authorize metric=key_usage_unbooked_total "' \
+  --project=quill-cloud-proxy --freshness=2h --limit=50 \
+  --format='value(timestamp,resource.labels.service_name,textPayload)'
+```
+
+A worker line names no key by design. Its settle usually belongs to a request
+that finished in the seconds before the line; a retried, parked or re-armed
+row can be much older, and the worker's `async_drain.completed
+latency_seconds=... ref=...` line written next to it gives the row's age. List
+the keys whose requests finished at that time from request analytics, and read
+each one's counter rows with the `tr_key_limit` statement below. The key with
+no rows is the one.
+
+Then find out where the key came from before anything else. Every line is a
+key that serves traffic without the app having written it, so treat it as a
+possible unauthorized record until its origin is known. A key with only window
+limits and no counter rows also runs with those limits unenforced, and a
+configuration update of such a key fails (`configured tr_key_limit usage shard
+set is incomplete`), so the key is disabled or replaced, not edited.
+
+**Dead settle rows whose `last_error` starts `RuntimeError: key usage booking
+failed`.** The settle could book the key's usage at neither the recorded shard
+nor shard zero. Read the key's counters by primary-key prefix, with the
+`key_hash` the error names:
+
+```bash
+gcloud spanner databases execute-sql trusted-router \
+  --instance=trusted-router-nam6 --project=quill-cloud-proxy --priority=low \
+  --sql="SELECT shard FROM tr_key_limit WHERE key_hash='<key_hash>'"
+```
+
+- **Rows at another shard.** The error is still raised on every build and the
+  row stays dead. This is manual review of the key's shard set; no re-arm
+  applies until its counters are repaired.
+- **No rows.** A build before the missing-counter fix raised here too, and its
+  rows went dead. A build with the fix completes such a settle and writes the
+  line above. Rows already dead stay dead; nothing re-arms them on its own.
+
+To re-arm a row of the second kind, after the fixed build serves every region
+and the settle drain worker, and after the key's origin is known:
+
+```bash
+gcloud spanner databases execute-sql trusted-router \
+  --instance=trusted-router-nam6 --project=quill-cloud-proxy \
+  --sql="UPDATE tr_settle_outbox SET status='pending', next_attempt_at=CURRENT_TIMESTAMP(),
+         lease_owner=NULL, leased_until=NULL, last_error=NULL
+         WHERE authorization_id='<authorization_id>' AND intent_kind='settle'
+         AND status='dead'
+         AND STARTS_WITH(last_error, 'RuntimeError: key usage booking failed reservation_id=')"
+```
+
+The `last_error` predicate scopes the re-arm to this cause, as the activity
+repair's does to its own. If the statement reports 0 rows updated, you have the
+wrong row or the wrong cause; do not widen the predicate to make it match. The
+replay charges the workspace the row's frozen amount once (the reservation
+claim gate refuses a second charge), and the worker writes its form of the
+unbooked line. Confirm the row reached `done`, and keep watching until it
+does. The statement leaves `attempts` where it was, at the maximum, so a row
+re-armed while another shard has counters, or on a build without the fix,
+fails once and is dead again. A dead row is unresolved exactly as a pending one
+is: async settle admission stays closed for every workspace until the row is
+resolved.
+
 Monitoring signals:
 
 App log routing is a trap here, so know it exactly. INFO settle-outbox lines
@@ -1242,12 +1320,16 @@ to Axiom via the scoped `trusted_router.*` package logger
 (`TR_AXIOM_LOG_LEVEL`, default INFO), so on-call can search for them there.
 `init_axiom()` lowers only the package logger and leaves root at uvicorn's
 WARNING. Third-party INFO still does not ship because it gates on root's
-WARNING. App records still never appear in Cloud Logging: once `init_axiom()`
-attaches the root Axiom handler, `logging.lastResort` stops mirroring app
-records to stderr. Search alerts and app INFO in Axiom
-(`TR_AXIOM_DATASET=trusted-router-logs`), not `gcloud logging`. Cloud Logging
-carries only platform request logs and uvicorn/unhandled-exception stderr
-tracebacks. Judge reap/drain health by state, never by log lines:
+WARNING. The same package records also reach Cloud Logging: the package
+logger owns a stderr console handler (`_configure_application_logging` in
+`main.py`), and Cloud Run keeps each line as `textPayload`, rendered
+`LEVEL logger message`. Search either place (`TR_AXIOM_DATASET=trusted-router-logs`
+in Axiom). The settle drain worker is the exception on both counts: it sets up
+no Axiom handler, and in Cloud Logging every record from a logger other than
+its own is rewritten to `logger=... level=... exception_class=...` before it is
+written, with a counted metric's name kept in front
+(`services/settle_drain_observability.py`). Judge reap/drain health by state,
+never by log lines:
 
 ```bash
 gcloud spanner databases execute-sql trusted-router \

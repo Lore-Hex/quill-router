@@ -10,6 +10,12 @@ from trusted_router.config import Settings
 WORKER_LOGGER = "trusted_router.services.settle_outbox_worker"
 _ALERT_CLASSES = frozenset({"activity-repair-expired", "lost-charge", "reservation-missing",
                             "exhausted-retries"})
+# Counter events the storage layer writes while the worker applies a settle
+# (storage_gcp_authorize._log_missing_key_releases). The worker's line keeps
+# the counter's name, a fixed word from this set, in the place the full line
+# has it, so one log filter counts both; nothing else of the record is kept.
+# Only an exact str is read: a subclass may render, hash or compare as it likes.
+_COUNTED_METRICS = frozenset({"key_usage_unbooked_total", "key_usage_shard_fallback_total"})
 
 
 class WorkerLogFilter(logging.Filter):
@@ -24,6 +30,11 @@ class WorkerLogFilter(logging.Filter):
         error_class = record.exc_info[0].__name__ if record.exc_info and record.exc_info[0] else "none"
         # Python 3.12 handler filters may replace records. Construct directly,
         # bypassing factories and discarding ALL extras added after a factory.
+        metric = getattr(record, "metric", None)
+        if type(metric) is str and metric in _COUNTED_METRICS:
+            return logging.LogRecord(record.name, record.levelno, "", 0,
+                "metric=%s logger=%s level=%s exception_class=%s",
+                (metric, record.name, record.levelname, error_class), None)
         return logging.LogRecord(record.name, record.levelno, "", 0,
             "logger=%s level=%s exception_class=%s", (record.name, record.levelname, error_class), None)
 
