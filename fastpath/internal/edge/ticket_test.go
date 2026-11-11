@@ -3,6 +3,7 @@ package edge
 import (
 	"context"
 	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -457,6 +458,35 @@ func TestEdgeTicketClientBoundsAndOrigin(t *testing.T) {
 	d.Input = stagedInput
 	if _, ok := ticketRequestOf(d); ok {
 		t.Fatal("unsafe authorization id accepted")
+	}
+}
+
+func TestParseTicketLengthBound(t *testing.T) {
+	// Three well-formed segments throughout, so only the length differs:
+	// "A" repeated decodes strictly at these lengths.
+	const statusURL = "/v1/settlements/id.settle"
+	for _, c := range []struct {
+		total    int
+		accepted bool
+	}{{4092, true}, {4096, true}, {4097, false}, {4100, false}} {
+		value := "AAAA.AAAA." + strings.Repeat("A", c.total-10)
+		if len(value) != c.total {
+			t.Fatalf("built %d bytes, want %d", len(value), c.total)
+		}
+		for _, segment := range strings.Split(value, ".") {
+			if _, err := base64.RawURLEncoding.Strict().DecodeString(segment); err != nil {
+				t.Fatalf("length %d: segment does not decode: %v", c.total, err)
+			}
+		}
+		b, _ := json.Marshal(map[string]any{"async_eligible": true, "settlement_ticket": value, "settlement_status_url": statusURL})
+		ticket, stage := parseTicket(b, statusURL)
+		if c.accepted {
+			if stage != "" || ticket == nil || ticket.SettlementTicket != value || !ticket.Eligible || ticket.StatusURL != statusURL {
+				t.Errorf("length %d: refused at stage %q", c.total, stage)
+			}
+		} else if stage != "parse" || ticket != nil {
+			t.Errorf("length %d: accepted (stage %q)", c.total, stage)
+		}
 	}
 }
 

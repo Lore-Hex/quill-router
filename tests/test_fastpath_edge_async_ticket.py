@@ -154,6 +154,31 @@ def test_signing_exception_is_error(facts, caplog):
     metric(caplog, facts, "refused", "error", "na")
 
 
+@pytest.mark.parametrize("regions,region,issued", [
+    # The runtime's own region is us-central1 throughout: the rule reads the
+    # region the edge names for the authorization, and nothing else.
+    ("europe-west4", "europe-west4", True),
+    ("us-central1,europe-west4", "europe-west4", True),
+    ("us-central1,europe-west4", "us-central1", True),
+    ("us-central1", "europe-west4", False),
+    ("us-central1,europe-west4", "southamerica-east1", False),
+])
+def test_region_rule_reads_the_authorization_region(facts, caplog, regions, region, issued):
+    caplog.set_level(logging.INFO, logger="trusted_router.async_settle_timing")
+    assert facts.runtime.effective_journal_region == "us-central1"
+    body = facts.body.model_copy(update={"region": region})
+    result = call(facts, body=body, settings=settings(async_settle_negotiation_regions=regions))
+    if issued:
+        assert set(result) == {"async_eligible", "settlement_ticket", "settlement_status_url"}
+        assert result["async_eligible"] is True
+        facts.runtime.signer.sign.assert_called_once()
+        metric(caplog, facts, "issued", "none", "yes")
+    else:
+        assert result == {"async_eligible": False}
+        facts.runtime.signer.sign.assert_not_called()
+        metric(caplog, facts, "refused", "region", "na")
+
+
 @pytest.mark.parametrize("delta", [-301, -300, 300, 301])
 def test_price_instant_boundary(facts, delta):
     result = call(facts, now=NOW + delta)
@@ -170,7 +195,11 @@ def test_workspace_setting(facts, switch, allows):
         facts.runtime.signer.sign.assert_not_called()
 
 
-@pytest.mark.parametrize("switch", [",".join(f"ws_test_{i}" for i in range(33)), "ws test", "*,ws_test_1", "w" * 65])
+@pytest.mark.parametrize("switch", [
+    ",".join(f"ws_test_{i}" for i in range(33)), "ws test", "*,ws_test_1", "w" * 65,
+    # Set, and naming no workspace: refused, never read as "off".
+    ",", " ", " , ,",
+])
 def test_invalid_workspace_setting(switch):
     with pytest.raises(ValidationError):
         settings(fastpath_edge_async_ticket_workspaces=switch)
@@ -239,6 +268,27 @@ def test_route_rejects_malformed_body(facts, client, change):
         body[field] = value
     assert post(client, body).status_code == 422
     facts.runtime.signer.sign.assert_not_called()
+
+
+@pytest.mark.parametrize("surface,registered", [
+    ("combined", True), ("internal", True),
+    ("public", False), ("actions", False), ("control", False), ("observer", False), ("settle-drain", False),
+])
+def test_route_is_registered_on_the_gateway_surfaces_only(facts, monkeypatch, surface, registered):
+    monkeypatch.setattr(route, "typed_billing_store", lambda _: SimpleNamespace(request_record_write_mode="typed"))
+    monkeypatch.setattr(service, "time", SimpleNamespace(time=lambda: NOW, monotonic=service.time.monotonic))
+    cfg = settings(service_surface=surface)
+    assert cfg.fastpath_edge_async_tickets_enabled
+    app = create_app(cfg, init_observability=False)
+    app.state.async_settle = facts.runtime
+    with TestClient(app) as surface_client:
+        response = post(surface_client, facts.body.model_dump())
+    if registered:
+        assert response.status_code == 200
+        assert "settlement_ticket" in response.json()
+    else:
+        assert response.status_code == 404
+        facts.runtime.signer.sign.assert_not_called()
 
 
 def test_switch_off_does_not_import_route():

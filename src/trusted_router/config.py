@@ -1924,9 +1924,13 @@ class Settings(BaseSettings):
         nothing, since a leased workspace outside the overlap list is already
         left out; with every workspace admitted (section 9.1 of
         fast-admission-widening.md) it is what keeps the two paths apart.
-        The ticket's issue reads it (async_settle.snapshot_projection); the
-        settle's acceptance has only the ticket's claims and checks the
-        workspace, and a ticketed leased authorization (the overlap list's)
+        Python's own authorize answer reads it at the ticket's issue
+        (async_settle.snapshot_projection). The edge ticket route
+        (async_settle.edge_ticket) does not: every authorization it signs for
+        is the edge's own, leased by construction, and its rule is
+        fastpath_edge_async_ticket_allows. The settle's acceptance has only
+        the ticket's claims and checks the workspace, and a ticketed leased
+        authorization (the overlap list's, or one the edge got a ticket for)
         finishes through its lease in the drain."""
         if leased and workspace_id not in self._async_settle_fastpath_overlap_workspace_ids:
             return False
