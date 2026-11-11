@@ -276,11 +276,33 @@
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 1200000,
       "cached_input_token_price_per_m": 6000
+    },
+    {
+      "display_name": "Kimi K3.1 Pro",
+      "title": "moonshotai/kimi-k3.1-pro",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k3.1-pro",
+      "upstream_id": "moonshotai/kimi-k3.1-pro",
+      "context_length": 1048576,
+      "routable": true,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000,
+      "cached_input_token_price_per_m": 200000
     }
   ],
   "source": "https://api.arcee.ai/api/v1/models",
   "pricing_source": "https://api.arcee.ai/api/v1/models",
-  "generated_at": "2026-11-10T15:26:45Z",
+  "generated_at": "2026-11-11T01:14:27Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 12
+  "model_count": 13
 }

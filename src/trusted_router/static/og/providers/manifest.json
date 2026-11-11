@@ -64,10 +64,10 @@
   },
   "arcee": {
     "card_version": 2,
-    "model_count": 6,
+    "model_count": 7,
     "name": "Arcee AI",
     "privacy": "Policy documented",
-    "route_count": 6,
+    "route_count": 7,
     "route_mode": "Prepaid",
     "slug": "arcee"
   },
@@ -226,10 +226,10 @@
   },
   "decisionmodelsio": {
     "card_version": 2,
-    "model_count": 5,
+    "model_count": 4,
     "name": "Decision Models (Global)",
     "privacy": "Policy documented",
-    "route_count": 5,
+    "route_count": 4,
     "route_mode": "Prepaid",
     "slug": "decisionmodelsio"
   },
@@ -658,10 +658,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 12,
+    "model_count": 13,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 12,
+    "route_count": 13,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
@@ -901,10 +901,10 @@
   },
   "tencent": {
     "card_version": 2,
-    "model_count": 15,
+    "model_count": 18,
     "name": "Tencent Cloud TokenHub",
     "privacy": "Policy documented",
-    "route_count": 30,
+    "route_count": 33,
     "route_mode": "Prepaid + BYOK",
     "slug": "tencent"
   },
@@ -919,10 +919,10 @@
   },
   "tinfoil": {
     "card_version": 2,
-    "model_count": 13,
+    "model_count": 14,
     "name": "Tinfoil",
     "privacy": "Confidential + ZDR",
-    "route_count": 22,
+    "route_count": 24,
     "route_mode": "Prepaid + BYOK",
     "slug": "tinfoil"
   },
