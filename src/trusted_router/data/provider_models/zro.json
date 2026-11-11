@@ -134,11 +134,12 @@
         "reasoning",
         "prompt_caching"
       ],
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 500000,
       "cached_input_token_price_per_m": 40000,
-      "missing_since": "2026-11-11"
+      "missing_since": "2026-11-11",
+      "routable_reason": "provider-retired"
     },
     {
       "display_name": "Dolly 1 Security",
@@ -165,11 +166,12 @@
         "reasoning",
         "prompt_caching"
       ],
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 450000,
       "output_token_price_per_m": 1500000,
       "cached_input_token_price_per_m": 120000,
-      "missing_since": "2026-11-11"
+      "missing_since": "2026-11-11",
+      "routable_reason": "provider-retired"
     },
     {
       "display_name": "zro/gemini-4-argon",
