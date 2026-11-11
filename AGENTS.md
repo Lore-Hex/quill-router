@@ -70,11 +70,18 @@ is a no-op — the next rollout overwrites it.
 
 **Never** run large unbatched DML against production Spanner during a rolling deploy.
 
-**Read-only is not load-safe.** Never search production `tr_entities.body` with
-`LIKE`, regular expressions, or JSON predicates without a complete indexed key.
+**Read-only is not load-safe.** Never run a statement against production Spanner
+unless you can name the primary key or index it seeks on. This holds for every
+table, not only `tr_entities`: `LIKE`, `REGEXP_CONTAINS`, a `JSON_VALUE`
+predicate, an unfiltered `COUNT(*)` and a whole-table `GROUP BY` each read every
+row, at HIGH priority unless you set another.
 `LIMIT 5` limits results, not the rows scanned. Do not discover entity kinds with
 wildcard `COUNT(*)` queries. Three ad hoc Stripe-ID body searches caused the
-September 6 CPU incident. Use `python -m scripts.inspect_payment_owner` for
+September 6 CPU incident; on November 11 pattern searches and a JSON count
+over seven tables failed application reads for ten minutes
+([note](docs/incidents/2026-11-11-spanner-stolen-token-table-scans.md)). A
+whole-table question that ClickHouse cannot answer has no approved path on the
+serving instance: ask the operator. Use `python -m scripts.inspect_payment_owner` for
 payment ownership; it retrieves the Stripe object and performs at most two
 complete-primary-key Spanner reads, at LOW priority, with short deadlines and
 no retries. Missing metadata is a stop condition, not permission to full-scan.
