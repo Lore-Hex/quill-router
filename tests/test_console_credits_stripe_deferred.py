@@ -69,7 +69,10 @@ def test_credits_html_finishes_before_stripe_starts_and_keeps_live_money_read(
     with ThreadPoolExecutor(max_workers=1) as pool:
         request = pool.submit(client.get, "/console/credits")
         try:
-            response = request.result(timeout=2)
+            # stripe_started, not a wall-clock bound, proves the page never
+            # waited on Stripe: a 2 s render bound timed out on a loaded CI
+            # runner (refresh CI 42932329977). This only bounds a hang.
+            response = request.result(timeout=30)
         finally:
             release_stripe.set()
 

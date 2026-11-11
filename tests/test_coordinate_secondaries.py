@@ -214,26 +214,77 @@ def test_together_a_timeout_lets_siblings_roll_back_before_the_kill(worker: Path
     assert ["europe-west4", "rolled_back"] not in log
 
 
+def interrupt_once(condition, deadline_seconds: float = 20) -> threading.Thread:
+    """SIGINT this process once condition() holds: no wall-clock race."""
+
+    def send() -> None:
+        deadline = time.monotonic() + deadline_seconds
+        while not condition():
+            if time.monotonic() > deadline:
+                return
+            time.sleep(.005)
+        os.kill(os.getpid(), signal.SIGINT)
+
+    thread = threading.Thread(target=send, daemon=True)
+    thread.start()
+    return thread
+
+
 def test_together_a_cancellation_during_the_grace_still_kills(worker: Path, tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("HANG", "1")
     children = record_children(monkeypatch)
 
     def interrupted(signum: int, _frame: object) -> None:
-        raise InterruptedError(f"signal {signum}")
+        raise coordinator.RolloutInterrupted(f"signal {signum}")
 
     previous = signal.signal(signal.SIGINT, interrupted)
-    # The timeout comes at 1 s and the grace would last 30: cancel inside it.
-    timer = threading.Timer(2, os.kill, (os.getpid(), signal.SIGINT))
-    timer.start()
+    # The timeout comes at 1 s and the grace would last 30. The abort file
+    # appears only once the timeout reaches cleanup (no worker fails here), so
+    # the cancellation lands inside the grace however slow the runner is.
+    in_grace = interrupt_once(lambda: (tmp_path / "abort").exists() and time.sleep(.2) is None)
     started = time.monotonic()
     try:
-        with pytest.raises(InterruptedError):
+        with pytest.raises(coordinator.RolloutInterrupted):
             coordinate(worker, tmp_path, poll_seconds=.005, timeout=1, serial=False, abort_grace=30)
     finally:
-        timer.cancel()
+        in_grace.join(timeout=25)
         signal.signal(signal.SIGINT, previous)
     assert time.monotonic() - started < 15
     assert len(children) == 3 and all(child.poll() is not None for child in children)
+
+
+def test_a_cancellation_inside_poll_is_not_swallowed(worker: Path, tmp_path: Path, monkeypatch) -> None:
+    # Popen.poll() catches OSError around its waitpid call, so a signal handler
+    # raising InterruptedError (an OSError) there was silently dropped: the
+    # rollout then waited out the whole grace instead of killing (the CI
+    # flake). Deliver the signal's exception from inside waitpid itself.
+    monkeypatch.setenv("HANG", "1")
+    poll = coordinator.subprocess.Popen._internal_poll
+    children = record_children(monkeypatch)
+    names = poll.__code__.co_varnames[1:poll.__code__.co_argcount]
+    defaults = dict(zip(names[-len(poll.__defaults__):], poll.__defaults__, strict=True))
+    real_waitpid = defaults["_waitpid"]
+    armed = threading.Event()
+
+    def waitpid(pid: int, options: int):
+        if armed.is_set():
+            armed.clear()
+            raise coordinator.RolloutInterrupted("signal inside waitpid")
+        return real_waitpid(pid, options)
+
+    defaults["_waitpid"] = waitpid
+    monkeypatch.setattr(poll, "__defaults__", tuple(defaults.values()))
+    timer = threading.Timer(.5, armed.set)
+    timer.start()
+    started = time.monotonic()
+    try:
+        with pytest.raises(coordinator.RolloutInterrupted):
+            coordinate(worker, tmp_path, poll_seconds=.005, timeout=30, serial=False, abort_grace=30)
+    finally:
+        timer.cancel()
+    assert time.monotonic() - started < 15
+    assert len(children) == 3 and all(child.poll() is not None for child in children)
+    assert not issubclass(coordinator.RolloutInterrupted, OSError)
 
 
 def test_together_held_regions_finish_without_a_handoff(worker: Path, tmp_path: Path, monkeypatch) -> None:

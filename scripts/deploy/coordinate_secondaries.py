@@ -31,6 +31,17 @@ WORKER_TIMEOUT = 35 * 60
 ABORT_GRACE = 180
 
 
+class RolloutInterrupted(BaseException):
+    """A cancellation signal (SIGINT/SIGTERM) raised from the signal handler.
+
+    Deliberately not InterruptedError: that is an OSError, and
+    ``Popen.poll()`` swallows any OSError raised inside its ``waitpid`` call.
+    A signal landing there was silently dropped, so a cancelled rollout kept
+    waiting out its grace and never killed the workers. Like
+    KeyboardInterrupt, it also escapes ``except Exception`` handlers.
+    """
+
+
 def serial_from_env() -> bool:
     return os.environ.get("TR_DEPLOY_SECONDARIES_SERIAL", "").strip() == "1"
 
@@ -108,28 +119,29 @@ def coordinate(script: Path, directory: Path, *, poll_seconds: float = 1,
         for region, _, _ in workers:
             handed_off_now(region)
         return 1 if failed else 0
-    except InterruptedError:
+    except RolloutInterrupted:
         interrupted = True
         raise
     finally:
         # On cancellation/timeout retain drain tags and the cloud reservation.
         # Kill the process groups, including their watchdog and CLI children,
         # rather than orphaning a traffic-changing child after this job exits.
-        abort.touch()
-        active = [worker for _, worker, _ in workers if worker.poll() is None]
-        if not serial and not interrupted:
-            # A timeout is no cancellation: siblings ramping together may be
-            # part way, and a killed ramp is left split. Let each refuse its
-            # next shift and roll back first (staged_traffic.sh shift_traffic).
-            # A cancellation during the wait ends it, never the kill below.
-            deadline = time.monotonic() + abort_grace
-            try:
+        try:
+            abort.touch()
+            active = [worker for _, worker, _ in workers if worker.poll() is None]
+            if not serial and not interrupted:
+                # A timeout is no cancellation: siblings ramping together may be
+                # part way, and a killed ramp is left split. Let each refuse its
+                # next shift and roll back first (staged_traffic.sh shift_traffic).
+                deadline = time.monotonic() + abort_grace
                 while active and time.monotonic() < deadline:
                     time.sleep(poll_seconds)
                     active = [worker for worker in active if worker.poll() is None]
-            except InterruptedError:
-                stop([worker for _, worker, _ in workers if worker.poll() is None])
-                raise
+        except RolloutInterrupted:
+            # A cancellation anywhere in this cleanup ends the grace early but
+            # never skips the kill.
+            stop([worker for _, worker, _ in workers if worker.poll() is None])
+            raise
         stop(active)
 
 
@@ -149,7 +161,7 @@ def stop(active: list[subprocess.Popen]) -> None:
 
 def main() -> int:
     def interrupted(signum: int, _frame: object) -> None:
-        raise InterruptedError(f"secondary rollout interrupted by signal {signum}")
+        raise RolloutInterrupted(f"secondary rollout interrupted by signal {signum}")
 
     signal.signal(signal.SIGTERM, interrupted)
     signal.signal(signal.SIGINT, interrupted)
