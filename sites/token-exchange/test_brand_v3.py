@@ -116,7 +116,14 @@ class BrandV3Tests(unittest.TestCase):
             self.assertNotRegex(markup, r'class="hero|class="[^"]*\b(hero|closing|closing-copy|close-photo|cw-download)\b')
 
     def test_listed_pages_exist(self):
-        self.assertLessEqual(nyte_v2.BRAND_V3_PAGES, set(PAGES))
+        self.assertLessEqual(nyte_v2.OLD_BRAND_PAGES, set(PAGES))
+
+    def test_new_pages_get_v3_by_default(self):
+        self.assertEqual(nyte_v2.BRAND_V3_PAGES, set(PAGES) - nyte_v2.OLD_BRAND_PAGES)
+        for page in ("home", "api", "cowork", "buy", "sup", "providers", "accelerator", "index", "reserved-terms", "manage"):
+            self.assertIn(page, nyte_v2.BRAND_V3_PAGES)
+        self.assertNotIn("media-kit", nyte_v2.BRAND_V3_PAGES)
+        self.assertNotIn("deck", nyte_v2.BRAND_V3_PAGES)
 
     def test_preview_loads_it_last(self):
         with mock.patch.dict(os.environ, {"NYTE_BRAND_V3_PREVIEW": "1"}):
