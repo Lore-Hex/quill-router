@@ -13,13 +13,15 @@
 [data-nyte-page="maple"] main code.inline{font:400 .9em var(--font-mono)}
 .mv3-eyebrow{display:flex;flex-direction:column;align-items:flex-start;gap:16px}
 .mv3-eyebrow .v3-bar{background:var(--lime)}
-.mv3-eyebrow+h2,.mv3-eyebrow+.verdict h2{margin-top:24px}
-.mv3-copy>p,.mv3-copy .lede{margin-top:24px}
+.mv3-eyebrow+h2{margin-top:24px}
+.mv3-copy>p,.mv3-copy>.lede,.mv3-copy .verdict .lede{margin-top:24px}
 
-/* Two columns on the kit grid: copy on 1–5, the list or table on 7–12. */
-.mv3-live .wrap,.mv3-record .wrap,.mv3-gateway .wrap,.mv3-manual .wrap{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;align-items:start}
-.mv3-copy{grid-column:1/span 5;min-width:0}
-.mv3-checks,.mv3-record-body,.mv3-ways{grid-column:7/span 6;min-width:0}
+/* Two columns on the kit grid: the eyebrow on its own row, then copy on 1–5 and the list
+   or table on 7–12, so the right column's top rule lines up with the top of the h2. */
+.mv3-live .wrap,.mv3-record .wrap,.mv3-gateway .wrap,.mv3-manual .wrap{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;row-gap:24px;align-items:start}
+.wrap>.mv3-eyebrow{grid-column:1/span 5;grid-row:1}
+.mv3-copy{grid-column:1/span 5;grid-row:2;min-width:0}
+.mv3-checks,.mv3-record-body,.mv3-ways{grid-column:7/span 6;grid-row:2;min-width:0}
 
 /* Hero: Lime field, centred, the window height below the header with the Ink Band pinned
    to its bottom. Sizes and gaps follow the window height so the Band stays in view. */
@@ -74,12 +76,19 @@
 [data-nyte-page="maple"] main .mv3-record a{color:var(--cream);text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:3px}
 .mv3-record-body>p{margin-top:28px}
 
-/* Gateway: Sky field, the same ruled list with Ink rules. */
+/* Gateway: Sky field. The verdict is one status line under the intro, with a kit state
+   icon; the same ruled list follows on the right with Ink rules. */
 .mv3-gateway{background:var(--sky)}
 .mv3-gateway .mv3-eyebrow .v3-bar,.mv3-manual .mv3-eyebrow .v3-bar{background:var(--ink)}
-[data-nyte-page="maple"] main .mv3-gateway .verdict-title{font-size:24px;line-height:1.2}
-.mv3-gateway .verdict p{margin-top:12px}
-.mv3-gateway .verdict{margin-bottom:24px}
+.mv3-status{margin-top:40px}
+.mv3-status-line{display:flex;gap:12px;align-items:flex-start;font-weight:500}
+.mv3-status p+p{margin-top:8px}
+.verdict-icon{flex:none;display:block;width:24px;height:24px;margin-top:-1px;background:var(--ink);
+  -webkit-mask:var(--icon) center/24px 24px no-repeat;mask:var(--icon) center/24px 24px no-repeat;
+  --icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.5'%3E%3Cpath d='M8 12 L16 12'/%3E%3C/svg%3E");opacity:.35}
+[data-verdict="verified"] .verdict-icon{opacity:1;--icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.5'%3E%3Cpath d='M4.5 12.5 L9.5 17.5 L19.5 7'/%3E%3C/svg%3E")}
+:is([data-verdict="pending"],[data-verdict="incomplete"]) .verdict-icon{opacity:1;--icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.5'%3E%3Cpath d='M5.53 16.7 A8 8 0 0 1 16.7 5.53 M18.47 7.3 A8 8 0 0 1 7.3 18.47'/%3E%3Cpath d='M3.5 20.5 L20.5 3.5'/%3E%3C/svg%3E")}
+:is([data-verdict="mismatch"],[data-verdict="failed"]) .verdict-icon{opacity:1;--icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.5'%3E%3Cpath d='M5.5 5.5 L18.5 18.5'/%3E%3Cpath d='M18.5 5.5 L5.5 18.5'/%3E%3C/svg%3E")}
 .mv3-gateway .steps li{border-top-color:var(--ink)}
 
 /* Every input is public: Purple field, kit Tabs over one Ink panel. */
@@ -134,7 +143,9 @@
 }
 @media (max-width:900px){
   .mv3-live .wrap,.mv3-record .wrap,.mv3-gateway .wrap,.mv3-manual .wrap{grid-template-columns:minmax(0,1fr)}
-  .mv3-copy,.mv3-checks,.mv3-record-body,.mv3-ways{grid-column:1}
+  .wrap>.mv3-eyebrow,.mv3-copy,.mv3-checks,.mv3-record-body,.mv3-ways{grid-column:1;grid-row:auto}
+  .mv3-live .wrap,.mv3-record .wrap,.mv3-gateway .wrap,.mv3-manual .wrap{row-gap:0}
+  .wrap>.mv3-eyebrow+.mv3-copy{margin-top:24px}
   .mv3-checks,.mv3-record-body,.mv3-ways{margin-top:40px}
   .mv3-live .mv3-checks{margin-top:0}
   .mv3-badge{margin:32px 0 40px}
@@ -150,14 +161,13 @@
   .mv3-hero .btns{margin-top:clamp(12px,2.8svh,28px);width:auto}
   [data-nyte-page="maple"] main .mv3-hero .btns .btn{width:auto}
   [data-nyte-page="maple"] main h2{font-size:32px;line-height:1.05}
-  .mv3-eyebrow+h2,.mv3-eyebrow+.verdict h2{margin-top:20px}
+  .mv3-eyebrow+h2,.wrap>.mv3-eyebrow+.mv3-copy{margin-top:20px}
   [data-nyte-page="maple"] main .lede,.mv3-live .verdict .lede{font-size:17px;line-height:1.55}
-  .mv3-copy>p,.mv3-copy .lede,.mv3-live .verdict .lede,.mv3-record .mv3-copy>p{margin-top:16px}
+  .mv3-copy>p,.mv3-copy>.lede,.mv3-live .verdict .lede,.mv3-record .mv3-copy>p{margin-top:16px}
+  .mv3-status{margin-top:32px}
   .mv3-badge img{height:64px}
   .steps li{gap:16px;padding:20px 0}
   .check-foot{flex-direction:column;align-items:flex-start;gap:16px;margin-top:28px}
-  .mv3-gateway .verdict{margin-bottom:16px}
-  [data-nyte-page="maple"] main .mv3-gateway .verdict-title{font-size:22px;line-height:1.25}
   .mv3-tabs [role="tab"]{margin-right:24px}
   .mv3-panel{padding:20px}
   .mv3-checks,.mv3-record-body,.mv3-ways{margin-top:32px}

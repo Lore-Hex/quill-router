@@ -317,6 +317,11 @@ const panel = (page, id) => Promise.all([
         getComputedStyle(row.querySelector('.step-result')).position]));
       assert.deepEqual(rows, [['ok', '1', 'absolute'], ['ok', '1', 'absolute'], ['bad', '1', 'static'], ['bad', '1', 'static']]);
       assert.equal(await page.locator('#live-check .verdict-mark, .verdict-mark').count(), 0, 'no animated status mark');
+      // The gateway verdict is a status line under the intro; each list's top rule meets its h2.
+      assert.equal(await page.locator('.mv3-gateway .mv3-copy .mv3-status .verdict-title').count(), 1);
+      const tops = await page.evaluate(() => ['.mv3-live', '.mv3-gateway'].map(section =>
+        Math.round(document.querySelector(`${section} .steps`).getBoundingClientRect().top - document.querySelector(`${section} .mv3-copy h2`).getBoundingClientRect().top)));
+      assert.deepEqual(tops, [0, 0], 'check lists start level with their headings');
       await context.close();
       console.log('PASS step icons: passed steps show the check alone, failed steps say why');
     }

@@ -13,8 +13,8 @@
          data-attestation="https://enclave.trymaple.ai/attestation"
          data-provider-record="https://raw.githubusercontent.com/MaplePrivacyLabs/Maple/master/services/opensecret/pcrProd.json"
          data-nyte-record="https://raw.githubusercontent.com/Lore-Hex/quill-cloud-proxy/main/enclave-go/maple-transport/verified-release.json">
+      <div class="mv3-eyebrow"><i class="v3-bar" aria-hidden="true"></i><p class="v3-label">Live check</p></div>
       <div class="mv3-copy">
-        <div class="mv3-eyebrow"><i class="v3-bar" aria-hidden="true"></i><p class="v3-label">Live check</p></div>
         <div class="verdict" role="status" aria-live="polite">
           <h2 class="verdict-title" id="live-title">Live check</h2>
           <p class="lede"><span class="verdict-text">This check runs in your browser and needs JavaScript. Without it, use the manual check below.</span> <span class="verdict-time"></span></p>
@@ -35,8 +35,8 @@
 
   <section class="mv3-record" id="record">
     <div class="wrap">
+      <div class="mv3-eyebrow"><i class="v3-bar" aria-hidden="true"></i><p class="v3-label">What NYTE verified</p></div>
       <div class="mv3-copy">
-        <div class="mv3-eyebrow"><i class="v3-bar" aria-hidden="true"></i><p class="v3-label">What NYTE verified</p></div>
         <h2>Rebuilt from source.<br><em>Not taken on trust.</em></h2>
         <p>Before NYTE routes anything to Maple, it rebuilds Maple’s enclave image from the public source code and confirms the result has the same fingerprint Maple approved. It also checks that the source commit is on Maple’s public history and that Maple’s signed approval log is intact. Each new Maple release goes through the same review, and the checks rerun every 30 minutes.</p>
       </div>
@@ -53,20 +53,20 @@
   </section>
 
   <section class="mv3-gateway" id="gateway">
-    <div class="wrap">
+    <div class="wrap check" id="gateway-check" data-verdict="idle"
+         data-attestation="https://api.trustedrouter.com/attestation" data-audience="quill-cloud"
+         data-release="https://trust.trustedrouter.com/trust/gcp-release.json"
+         data-pin="https://raw.githubusercontent.com/Lore-Hex/quill-cloud-proxy/{commit}/enclave-go/maple-transport/verified-release.json">
+      <div class="mv3-eyebrow"><i class="v3-bar" aria-hidden="true"></i><p class="v3-label">Going through NYTE</p></div>
       <div class="mv3-copy">
-        <div class="mv3-eyebrow"><i class="v3-bar" aria-hidden="true"></i><p class="v3-label">Going through NYTE</p></div>
         <h2>The gateway proves itself too.</h2>
         <p class="lede">When a request reaches Maple through NYTE, it first enters NYTE’s own sealed gateway. That gateway is checked here too, by asking its hardware what it is running.</p>
-      </div>
-      <div class="check mv3-checks" id="gateway-check" data-verdict="idle"
-           data-attestation="https://api.trustedrouter.com/attestation" data-audience="quill-cloud"
-           data-release="https://trust.trustedrouter.com/trust/gcp-release.json"
-           data-pin="https://raw.githubusercontent.com/Lore-Hex/quill-cloud-proxy/{commit}/enclave-go/maple-transport/verified-release.json">
-        <div class="verdict" role="status" aria-live="polite">
-          <h3 class="verdict-title">Gateway check</h3>
+        <div class="verdict mv3-status" role="status" aria-live="polite">
+          <p class="mv3-status-line"><i class="verdict-icon" aria-hidden="true"></i><span class="verdict-title">Gateway check</span></p>
           <p><span class="verdict-text">This check runs in your browser and needs JavaScript. Without it, use the manual check below.</span> <span class="verdict-time"></span></p>
         </div>
+      </div>
+      <div class="mv3-checks">
         <ol class="steps">
           <li data-step="fetch" data-state="waiting"><i class="step-icon" aria-hidden="true"></i><div><h3>Ask NYTE’s gateway for its attestation</h3><p>Your browser asks <code class="inline">api.trustedrouter.com</code>, the address NYTE requests go to, for the signed report from its hardware.</p><p class="step-result">Waiting</p></div><code hidden></code></li>
           <li data-step="signature" data-state="waiting"><i class="step-icon" aria-hidden="true"></i><div><h3>Verify Google’s signature</h3><p>The gateway runs in Google Confidential Space, on hardware that encrypts its memory. Google signs a report naming the exact container image running, and your browser checks that signature against Google’s published keys.</p><p class="step-result">Waiting</p></div><code hidden></code></li>
@@ -80,8 +80,8 @@
 
   <section class="mv3-manual" id="manual">
     <div class="wrap">
+      <div class="mv3-eyebrow"><i class="v3-bar" aria-hidden="true"></i><p class="v3-label">Check it without this page</p></div>
       <div class="mv3-copy">
-        <div class="mv3-eyebrow"><i class="v3-bar" aria-hidden="true"></i><p class="v3-label">Check it without this page</p></div>
         <h2>Every input is public.</h2>
         <p class="lede">You can repeat both checks with your own tools. Nothing below depends on this website.</p>
       </div>
