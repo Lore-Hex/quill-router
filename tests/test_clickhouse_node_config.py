@@ -41,6 +41,7 @@ CONFIG_DIR = ROOT / "scripts/deploy/clickhouse-node-config"
 WRAPPER = ROOT / "scripts/deploy/clickhouse_node_config.sh"
 DESIGN = ROOT / "docs/design/clickhouse-high-availability.md"
 BASH = shutil.which("bash") or "/bin/bash"
+REAL_INSTALL = shutil.which("install") or "/usr/bin/install"
 
 # The system-log sections ClickHouse 26.7.1.1315's default config.xml enables
 # with no TTL and no custom <engine> (derived by parsing that file from the
@@ -253,6 +254,8 @@ case "$name" in
     esac
     ;;
   hostname) printf 'tr-clickhouse-test\n' ;;
+  # Recorded, then done for real: the tests read the files it leaves.
+  install) exec "$STUB_REAL_INSTALL" "$@" ;;
   keeper-probe)
     host="$1"
     if [ -e "$state/keeper-$host" ]; then
@@ -301,13 +304,14 @@ class Node:
         self.bin.mkdir()
         for name in (
             "systemctl", "curl", "clickhouse-client", "hostname", "sleep", "keeper-probe",
-            "runuser", "iptables",
+            "runuser", "iptables", "install",
         ):
             stub = self.bin / name
             stub.write_text(STUB)
             stub.chmod(0o755)
         self.log = tmp_path / "calls.jsonl"
         self.log.write_text("")
+        self.env: dict[str, str] = {}
 
     def run(self, *args: str) -> subprocess.CompletedProcess[str]:
         self.log.write_text("")
@@ -316,12 +320,14 @@ class Node:
             "HOME": str(self.root),
             "STUB_LOG": str(self.log),
             "STUB_STATE": str(self.state),
+            "STUB_REAL_INSTALL": REAL_INSTALL,
             "TR_NODE_ROOT": str(self.root),
             "TR_FILE_OWNER": subprocess.check_output(["id", "-un"], text=True).strip(),  # noqa: S607
             "TR_FILE_GROUP": subprocess.check_output(["id", "-gn"], text=True).strip(),  # noqa: S607
             "TR_KEEPER_PROBE": str(self.bin / "keeper-probe"),
             "TR_WAIT_TRIES": "4",
             "TR_WAIT_SECONDS": "0",
+            **self.env,
         }
         return subprocess.run(  # noqa: S603 - fixed script under test
             [BASH, str(self.bundle / "apply_node_config.sh"), *args],
@@ -423,6 +429,14 @@ def test_the_metadata_block_is_root_owned_runs_before_the_restart_and_is_not_sta
     # clickhouse-owned XML beside it.
     assert helper.stat().st_mode & 0o777 == 0o755
     assert drop_in.stat().st_mode & 0o777 == 0o644
+    # Mode alone would pass with the server's user as owner, who could then
+    # rewrite both. The script runs as root, so naming no owner is what makes
+    # them root's; the XML is handed to the server's user by name.
+    owned = {call[-1]: call for call in node.calls("install")}
+    assert set(owned) == {str(node.root / relative) for relative in INSTALLED}
+    for destination, call in owned.items():
+        handed_over = "-o" in call or "-g" in call
+        assert handed_over == destination.endswith(".xml"), call
     # Asked for, absent, so inserted: all before the server restarts.
     assert node.calls("iptables") == [["-w", "-C", "OUTPUT", *RULE], ["-w", "-I", "OUTPUT", *RULE]]
     names = [row[:2] for row in node.sequence()]
@@ -436,6 +450,45 @@ def test_the_metadata_block_is_root_owned_runs_before_the_restart_and_is_not_sta
     assert again.returncode == 0, again.stderr
     assert node.calls("systemctl") == []
     assert node.calls("iptables") == [["-w", "-C", "OUTPUT", *RULE]]
+
+
+def test_a_node_without_iptables_is_refused_before_anything_changes(node: Node) -> None:
+    # The helper refuses without iptables, and the drop-in makes the helper a
+    # step of every server start. Installing either first would leave a server
+    # that keeps running and then cannot start again.
+    node.env["TR_IPTABLES_COMMAND"] = "iptables-that-is-not-installed"
+
+    report = node.run()
+
+    assert report.returncode == 0, report.stderr
+    assert "iptables is not installed; --apply would refuse" in report.stdout
+
+    result = node.run("--apply")
+
+    assert result.returncode == 1
+    assert "refusing to change tr-clickhouse-test: iptables is not installed" in result.stderr
+    assert "apt-get install -y iptables" in result.stderr
+    assert node.installed() == {}
+    assert node.calls("install") == [] and node.calls("systemctl") == []
+    assert node.calls("iptables") == [] and node.calls("keeper-probe") == []
+    assert LOCKED_DOWN not in result.stdout
+
+
+def test_a_current_node_without_iptables_is_still_refused(node: Node) -> None:
+    # Nothing to install is not the same as nothing to check: the rule is
+    # applied on every run, and this node could not apply it.
+    node.install_current()
+    node.env["TR_IPTABLES_COMMAND"] = "iptables-that-is-not-installed"
+
+    result = node.run("--apply")
+
+    assert result.returncode == 1
+    assert "iptables is not installed" in result.stderr
+    assert node.calls("systemctl") == [] and node.calls("iptables") == []
+
+
+def test_report_says_nothing_about_iptables_when_it_is_installed(node: Node) -> None:
+    assert "iptables" not in node.run().stdout
 
 
 # What the node still does with one protection undone, and what the script says.
