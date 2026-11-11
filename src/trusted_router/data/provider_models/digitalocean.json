@@ -2,7 +2,7 @@
   "_about": "Provider-native DigitalOcean Gradient AI serverless catalog. Availability comes from /v1/models and rates from DigitalOcean's official pricing documentation.",
   "provider": "digitalocean",
   "source": "https://inference.do-ai.run/v1/models",
-  "generated_at": "2026-11-11T01:14:27Z",
+  "generated_at": "2026-11-11T01:59:57Z",
   "price_scale": "microdollars_per_million",
   "model_count": 23,
   "models": [
@@ -124,7 +124,9 @@
       "input_token_price_per_m": 180000,
       "output_token_price_per_m": 500000,
       "cached_input_token_price_per_m": 36000,
-      "missing_since": "2026-11-11"
+      "missing_since": "2026-11-11",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Llama 3.3 Instruct-70B",

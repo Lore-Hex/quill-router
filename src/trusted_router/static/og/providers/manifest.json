@@ -226,10 +226,10 @@
   },
   "decisionmodelsio": {
     "card_version": 2,
-    "model_count": 4,
+    "model_count": 5,
     "name": "Decision Models (Global)",
     "privacy": "Policy documented",
-    "route_count": 4,
+    "route_count": 5,
     "route_mode": "Prepaid",
     "slug": "decisionmodelsio"
   },
@@ -901,10 +901,10 @@
   },
   "tencent": {
     "card_version": 2,
-    "model_count": 18,
+    "model_count": 17,
     "name": "Tencent Cloud TokenHub",
     "privacy": "Policy documented",
-    "route_count": 33,
+    "route_count": 31,
     "route_mode": "Prepaid + BYOK",
     "slug": "tencent"
   },

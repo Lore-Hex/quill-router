@@ -242,10 +242,9 @@
       "decision_contract_hold": null,
       "decision_image_input_price_per_m": null,
       "pricing_valid_until": "2026-11-12T00:00:00Z",
-      "routable": false,
+      "routable": true,
       "input_token_price_per_m": 38000,
       "output_token_price_per_m": 0,
-      "routable_reason": "provider-canary-failed",
       "settlement_prices": {
         "input_token_price_per_m": 38000,
         "output_token_price_per_m": 0
@@ -450,7 +449,7 @@
   ],
   "source": "https://api.decisionmodels.io/v1/models",
   "pricing_source": "https://api.decisionmodels.io/v1/models",
-  "generated_at": "2026-11-11T01:14:27Z",
+  "generated_at": "2026-11-11T01:59:58Z",
   "price_scale": "microdollars_per_million",
   "model_count": 13,
   "pricing_valid_until": "2026-11-12T00:00:00Z"
