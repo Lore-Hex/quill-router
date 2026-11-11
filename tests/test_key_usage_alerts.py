@@ -6,6 +6,7 @@ the settle drain worker's output boundary."""
 
 from __future__ import annotations
 
+import enum
 import logging
 import re
 from pathlib import Path
@@ -115,8 +116,41 @@ def test_the_worker_keeps_only_a_listed_counter_name() -> None:
         "key_usage_unbooked_total", "key_usage_shard_fallback_total"}
     assert line("key_usage_unbooked_total") == f"metric=key_usage_unbooked_total {plain}"
     for other in ("private-metric", "key_usage_unbooked_total private-suffix",
-                  "async_settle_accepted", None, 7, ("key_usage_unbooked_total",)):
+                  "async_settle_accepted", None, 7, ("key_usage_unbooked_total",),
+                  ["key_usage_unbooked_total"], {"key_usage_unbooked_total": 1},
+                  b"key_usage_unbooked_total"):
         assert line(other) == plain, other
+
+    # Only an exact str is read. A subclass may render, hash or compare as it
+    # likes, so it takes the plain line, and the boundary never raises.
+    class Rendered(str):
+        def __str__(self) -> str:
+            return "private-rendered"
+
+    class AnyName(str):
+        def __eq__(self, other: object) -> bool:
+            return True
+
+        def __hash__(self) -> int:
+            return hash("key_usage_unbooked_total")
+
+    class Unhashable(str):
+        __hash__ = None  # type: ignore[assignment]
+
+    class Raising(str):
+        def __hash__(self) -> int:
+            raise RuntimeError("private-hash")
+
+        def __str__(self) -> str:
+            raise RuntimeError("private-str")
+
+    class Named(str, enum.Enum):  # noqa: UP042 - the mixin form renders its class name
+        UNBOOKED = "key_usage_unbooked_total"
+
+    for subclass in (Rendered("key_usage_unbooked_total"), AnyName("private-name"),
+                     Unhashable("key_usage_unbooked_total"), Raising("key_usage_unbooked_total"),
+                     Named.UNBOOKED):
+        assert line(subclass) == plain, type(subclass).__name__
 
 
 def test_the_metric_and_the_policy_read_one_filter_and_page_as_the_fast_path_does() -> None:

@@ -1243,7 +1243,7 @@ own usage count.
 
 The line has two forms, and the alert matches both. An API service writes it in
 full, with the key hash and the amount. The settle drain worker, which applies
-every settle taken from the outbox, writes content-free lines only
+settles taken from the outbox, writes content-free lines only
 (`services/settle_drain_observability.py`), so there the same event reads
 `WARNING trusted_router.storage_gcp_authorize metric=key_usage_unbooked_total logger=trusted_router.storage_gcp_authorize level=WARNING exception_class=none`:
 no key hash and no amount. Read the lines; `service_name` tells the two apart:
@@ -1254,10 +1254,13 @@ gcloud logging read 'resource.type="cloud_run_revision" AND textPayload:"WARNING
   --format='value(timestamp,resource.labels.service_name,textPayload)'
 ```
 
-A worker line names no key by design. Its settle belongs to a request that
-finished in the seconds before the line: list the keys that settled then from
-request analytics, and read each one's counter rows with the `tr_key_limit`
-statement below. The key with no rows is the one.
+A worker line names no key by design. Its settle usually belongs to a request
+that finished in the seconds before the line; a retried, parked or re-armed
+row can be much older, and the worker's `async_drain.completed
+latency_seconds=... ref=...` line written next to it gives the row's age. List
+the keys whose requests finished at that time from request analytics, and read
+each one's counter rows with the `tr_key_limit` statement below. The key with
+no rows is the one.
 
 Then find out where the key came from before anything else. Every line is a
 key that serves traffic without the app having written it, so treat it as a

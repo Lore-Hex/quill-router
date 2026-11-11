@@ -13,7 +13,7 @@
 # metric name, matches. The API services and the settle drain worker are all
 # Cloud Run revisions.
 #
-# The settle drain worker applies every settle taken from the outbox, and it
+# The settle drain worker applies settles taken from the outbox, and it
 # writes content-free lines only: a record from any logger but its own is
 # rewritten before it is written (services/settle_drain_observability.py).
 # For this counter the rewritten line keeps the metric's name in the same
@@ -68,7 +68,7 @@ resource "google_monitoring_alert_policy" "key_usage_unbooked" {
   }
 
   documentation {
-    content   = "A settle completed without booking a key's usage: the key has no `tr_key_limit` row at any shard. The line names the key hash, the shard and the amount. The workspace was charged correctly; the key record did not come from the app. What it means and what to do: docs/runbook.md (Key usage unbooked) in Lore-Hex/quill-router."
+    content   = "A settle completed without booking a key's usage: the key has no `tr_key_limit` row at any shard. An API service's line names the key hash, the shard and the amount; the settle drain worker's line names neither. The workspace was charged correctly; the key record did not come from the app. What it means and what to do: docs/runbook.md (Key usage unbooked) in Lore-Hex/quill-router."
     mime_type = "text/markdown"
   }
 
