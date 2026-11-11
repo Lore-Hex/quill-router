@@ -16,6 +16,7 @@ import threading
 from collections.abc import Callable, Iterator
 from typing import Any
 
+import httpcore
 import httpx
 import pytest
 from fastapi.testclient import TestClient
@@ -29,6 +30,7 @@ from trusted_router.services.broadcast_adapters import (
     allows_local_destinations,
 )
 from trusted_router.services.safe_egress import (
+    _dial_addresses,
     _PublicOnlyAsyncBackend,
     _PublicOnlyBackend,
     is_public_ip_literal_or_name,
@@ -192,8 +194,73 @@ def test_any_internal_answer_refuses_the_name(
     answers: list[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _resolve_names_to(monkeypatch, lambda name: answers if name.endswith(".example") else None)
-    with public_egress_client(timeout=2) as client, pytest.raises(httpx.ConnectError):
+    # The message is matched so the test cannot pass because the address
+    # happened to be unreachable from where the test runs.
+    with (
+        public_egress_client(timeout=2) as client,
+        pytest.raises(httpx.ConnectError, match="not public"),
+    ):
         client.get("https://mixed.example/")
+
+
+def _info(address: str) -> tuple[Any, ...]:
+    return (socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, 443))
+
+
+@pytest.mark.parametrize(
+    "answers",
+    (
+        ["8.8.8.8", "127.0.0.1"],
+        ["127.0.0.1", "8.8.8.8"],
+        ["8.8.8.8", "10.0.0.5", "1.1.1.1"],
+    ),
+)
+def test_every_answer_is_checked(answers: list[str]) -> None:
+    # Control: the same call returns public answers in the resolver's order.
+    public = [_info("8.8.8.8"), _info("1.1.1.1")]
+    assert _dial_addresses(public, allow_loopback=False) == ["8.8.8.8", "1.1.1.1"]
+    with pytest.raises(httpcore.ConnectError, match="not public"):
+        _dial_addresses([_info(address) for address in answers], allow_loopback=False)
+
+
+def test_mixed_answers_never_reach_the_listener(
+    listener: _Listener, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Loopback is allowed here, so the first answer alone would connect. The
+    # second answer is internal and must stop the request before any dial.
+    _resolve_names_to(
+        monkeypatch,
+        lambda name: ["127.0.0.1", "10.0.0.5"] if name.endswith(".example") else None,
+    )
+    with (
+        public_egress_client(timeout=1, allow_loopback=True) as client,
+        pytest.raises(httpx.ConnectError, match="not public"),
+    ):
+        client.get(f"http://mixed.example:{listener.port}/")
+    assert listener.seen == []
+
+
+def test_sync_client_dials_the_checked_address_not_the_name(
+    listener: _Listener, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asked = _resolve_names_to(monkeypatch, _internal)
+    with public_egress_client(timeout=5, allow_loopback=True) as client:
+        assert client.get(f"http://once.example:{listener.port}/").status_code == 200
+    # One lookup: a second one, at connect, is where a changed answer gets in.
+    assert asked == ["once.example"]
+    assert listener.seen == ["GET /"]
+
+
+@pytest.mark.asyncio
+async def test_async_client_dials_the_checked_address_not_the_name(
+    listener: _Listener, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asked = _resolve_names_to(monkeypatch, _internal)
+    async with public_egress_async_client(timeout=5, allow_loopback=True) as client:
+        response = await client.get(f"http://once.example:{listener.port}/")
+    assert response.status_code == 200
+    assert asked == ["once.example"]
+    assert listener.seen == ["GET /"]
 
 
 def test_address_written_in_the_url_is_refused(listener: _Listener) -> None:
@@ -293,6 +360,14 @@ def test_local_destinations_are_a_development_allowance() -> None:
     assert allows_local_destinations(Settings(environment="local")) is True
     production = Settings(environment="test").model_copy(update={"environment": "production"})
     assert allows_local_destinations(production) is False
+
+
+@pytest.mark.parametrize(
+    "environment", ("production", "canary", "worker", "staging", "Production", "")
+)
+def test_deployed_environments_do_not_allow_local(environment: str) -> None:
+    settings = Settings(environment="test").model_copy(update={"environment": environment})
+    assert allows_local_destinations(settings) is False
 
 
 def _webhook_destination(endpoint: str) -> BroadcastDestination:
