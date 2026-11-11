@@ -90,8 +90,9 @@ def test_every_site_applies_the_same_threshold(tier, override, delta):
     reason = admission_reason(SimpleNamespace(admission=cache), 'ws', override)
     expected = ('ineligible_tier' if threshold is None else
                 'eligible' if admitted else 'cap_exceeded')
-    if not admitted:
-        assert reason == {'ineligible_tier': 'not_eligible', 'cap_exceeded': 'cap_exceeded'}[expected]
+    # The reason is diagnostic; at the threshold itself it must not name the cap.
+    assert reason == {'ineligible_tier': 'not_eligible', 'cap_exceeded': 'cap_exceeded',
+                      'eligible': 'admission_stale'}[expected]
 
     for observer in (v1_observer(value, override), v2_observer(value, override)):
         answer = observer.peek('ws')
@@ -112,7 +113,7 @@ def test_tier_one_counts_queued_cost_against_ten_cents(pending, queued, admitted
     assert cache.eligible('ws', PRODUCTION_OVERRIDE, queued_micro=queued, cached_only=True) is admitted
     reason = admission_reason(SimpleNamespace(admission=cache), 'ws', PRODUCTION_OVERRIDE,
                               queued_micro=queued)
-    assert admitted or reason == 'cap_exceeded'
+    assert reason == ('admission_stale' if admitted else 'cap_exceeded')
 
 
 @pytest.mark.parametrize('amount', [TIER_ONE, TIER_ONE + 1])
