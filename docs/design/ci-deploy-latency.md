@@ -117,6 +117,14 @@ discovery can recognize such dispatches without guessing from the actor.
 Pinned manual dispatches retain the default `track_main=false` behavior and
 are not successors. `track_main=true` cannot be combined with `hotfix=true`.
 
+A snapshot push no longer dispatches a rollout of its own. The snapshot lives
+under `src/`, so it rides the next control-plane rollout. The refresh job's
+last step runs `scripts/deploy/price_snapshot_deploy.py` on every hourly run
+and dispatches deploy.yml, still with `track_main=true`, only once the oldest
+undelivered snapshot has waited four hours while no deploy run carries it or
+exists for main's head. Prices reach production later; code no longer queues
+behind a rollout that ships nothing but prices.
+
 No active rollout is interrupted and no lease is cleared. Cancellation remains
 push-only with its existing preparation/test-start/window guards. Workflows
 already queued from older source retain their old behavior; this change does

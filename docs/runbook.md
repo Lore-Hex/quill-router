@@ -327,15 +327,36 @@ absorbed by the `wait-until --stable` step in the workflow.
 
 ## <a id="bot-doesnt-deploy"></a>Hourly price bot commits but TR catalog stays stale
 
-Should not happen after `65ceb7c` (2026-05-13). The bot now explicitly
-`gh workflow run deploy.yml` after pushing a snapshot diff.
+A bot commit on `main` with no `deploy.yml` run of its own is normal for a
+few hours. A snapshot push starts no deploy: the snapshot lives under `src/`,
+so the next rollout of `main` ships it. The refresh job's last step, "Deploy a
+price snapshot no rollout has carried", runs
+`scripts/deploy/price_snapshot_deploy.py` on every hourly run and dispatches
+`deploy.yml` with `track_main=true` once the oldest undelivered snapshot has
+waited four hours (counted from its commit's committer date) and no deploy run
+carries it. The dispatch therefore comes at the first refresh run that reaches
+its last step after those four hours. (From `65ceb7c`, 2026-05-13,
+until this rule, every snapshot push dispatched a rollout of its own.)
 
-If you see a bot commit on `main` but no corresponding `deploy.yml` run:
-1. Check the bot run's last step "Commit and push if changed" for the
-   `dispatched deploy.yml for new snapshot` log line.
-2. If missing, the workflow likely lost its `actions: write` permission
-   or the `gh` invocation failed silently. Inspect the workflow's
-   `permissions:` block.
+If the deployed catalog stays stale for longer than that:
+1. Read that step's log in the latest `refresh-prices.yml` run. It prints the
+   decision and the reason. `wait` names what the snapshot waits for: it is
+   younger than the limit, or a deploy run that has not completed carries it.
+   `dispatch` is followed by the `dispatched deploy.yml for a waiting
+   snapshot` log line.
+2. A failed step whose log says `stuck` means the snapshot is past the limit,
+   no unfinished deploy run carries it, and every deploy run of main's head
+   completed without becoming the delivered release (usually it failed or
+   someone cancelled it). The check dispatches once per main head, so it
+   starts no second rollout and fails every hour instead, which the
+   `deploy_dispatch` alert reports. Read that deploy run, then use the
+   fallback below. It also clears when a new commit lands on main: the new
+   head has no deploy run, so the check waits for its push run or dispatches.
+3. A failed step whose log says `unknown` means the check could not read an
+   answer from GitHub and decided nothing; the next hourly run asks again.
+4. A failed step after a `dispatch` decision means the `gh workflow run`
+   call itself failed. If that repeats, inspect the workflow's
+   `permissions:` block (`actions: write`).
 
 Fallback: manually dispatch with `gh workflow run deploy.yml -R Lore-Hex/quill-router`.
 
