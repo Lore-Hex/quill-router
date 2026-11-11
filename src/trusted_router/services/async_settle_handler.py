@@ -17,7 +17,7 @@ from trusted_router.async_settle_ticket import TicketClaims, verify_lookup_ticke
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
 from trusted_router.provider_contracts import provider_input_excludes_cache
-from trusted_router.services.async_settle import CACHE_SECONDS, TIER_CAPS, Runtime
+from trusted_router.services.async_settle import CACHE_SECONDS, Runtime, admission_cap
 from trusted_router.services.settle_outbox_drain import spanner_settle_outbox
 from trusted_router.storage import STORE, typed_billing_store
 from trusted_router.storage_errors import transient_store_error_types
@@ -61,11 +61,12 @@ def admission_reason(runtime: Runtime, workspace_id: str, pilot_cap: int, *,
                 or not 0 <= now - entry[0] < CACHE_SECONDS or entry[1] is None):
             return "admission_stale"
         value = entry[1]
-        if type(value.tier) is not int or value.tier not in TIER_CAPS:
+        cap = admission_cap(value.tier, pilot_cap)
+        if cap is None:
             return "not_eligible"
         if type(value.pending_micro) is not int or value.pending_micro < 0:
             return "admission_stale"
-        if value.pending_micro + queued_micro > (pilot_cap or TIER_CAPS[value.tier]):
+        if value.pending_micro + queued_micro > cap:
             return "cap_exceeded"
         return "admission_stale"
     finally:

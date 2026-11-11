@@ -72,6 +72,8 @@ def lines(caplog, metric):
         fields = HANDOFF if name == 'async_settle_handoff_phases' else ADMISSION
         if fields == HANDOFF:
             assert values.pop('outcome') in LABELS
+        else:
+            assert values.pop('eligible') in {'yes', 'no'}
         assert values.keys() == fields
         assert all(math.isfinite(float(v)) and float(v) >= 0
                    for k, v in values.items() if k not in {'health', 'workspace'})
@@ -87,7 +89,8 @@ def lines(caplog, metric):
 def one(caplog, metric='async_settle_handoff_phases'):
     found = lines(caplog, metric)
     assert len(found) == 1
-    return {k: v if k in {'metric', 'outcome', 'health', 'workspace'} else float(v) for k, v in found[0].items()}
+    return {k: v if k in {'metric', 'outcome', 'eligible', 'health', 'workspace'} else float(v)
+            for k, v in found[0].items()}
 
 
 def measured_runtime(env, monkeypatch, clock):
@@ -225,6 +228,7 @@ def test_projection_cold_and_warm(env, monkeypatch, clock, caplog, warm):
                             runtime=rt, settings=env[3], now=NOW)
     assert result['async_eligible']
     row = one(caplog, 'async_settle_projection_admission')
+    assert row['eligible'] == 'yes'
     assert row['health'] == row['workspace'] == ('none' if warm else 'read')
     assert row['health_ms'] == (0 if warm else 11)
     assert row['workspace_ms'] == (0 if warm else 13)
@@ -508,6 +512,7 @@ def test_projection_read_error_labels(env, monkeypatch, clock, caplog, site):
                             runtime=rt, settings=env[3], now=NOW)
     assert not result['async_eligible']
     row = one(caplog, 'async_settle_projection_admission')
+    assert row['eligible'] == 'no'
     assert row[site] == 'error'
     assert row['workspace' if site == 'health' else 'health'] == 'read'
     assert row['health_ms'] == 11

@@ -10,7 +10,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from trusted_router.services.async_settle import TIER_CAPS, Admission, valid_health_record
+from trusted_router.services.async_settle import Admission, admission_cap, valid_health_record
 
 
 def unknown(reason: str = "cache_missing") -> dict[str, Any]:
@@ -210,10 +210,11 @@ class Observer:
             if type(data.pending_micro) is not int or data.pending_micro < 0 or type(data.tier) is not int:
                 result["reason"] = "invalid_data"
                 return result
-            cap = self.cap or TIER_CAPS.get(data.tier)
-            result["cap_micro"] = cap
-            reason = ("ineligible_tier" if data.tier not in TIER_CAPS else
-                      "cap_exceeded" if cap is not None and data.pending_micro > cap else
+            cap = admission_cap(data.tier, self.cap)
+            # A tier that is not admitted keeps reporting the configured override.
+            result["cap_micro"] = cap if cap is not None else self.cap or None
+            reason = ("ineligible_tier" if cap is None else
+                      "cap_exceeded" if data.pending_micro > cap else
                       "drain_unhealthy" if health["p95_age_seconds"] > 5 else "eligible")
             result.update(prediction="yes" if reason == "eligible" else "no", reason=reason)
             return result

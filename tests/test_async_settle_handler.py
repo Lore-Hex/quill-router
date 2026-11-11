@@ -685,6 +685,7 @@ def test_literal_status_and_timestamps(env, monkeypatch, kind):
 
 
 @pytest.mark.parametrize('denial,reason', [('cap', 'cap_exceeded'), ('tier', 'not_eligible'),
+                                         ('tier1_cap', 'cap_exceeded'),
                                          ('read', 'admission_stale'), ('stale', 'admission_stale')])
 def test_admission_reason_matrix(env, denial, reason):
     from trusted_router.services.async_settle import Admission, DrainHealth
@@ -693,7 +694,9 @@ def test_admission_reason_matrix(env, denial, reason):
     if denial == 'cap':
         cache.entries['ws-v1'] = (10, Admission(100_000_001, 2))
     elif denial == 'tier':
-        cache.entries['ws-v1'] = (10, Admission(0, 1))
+        cache.entries['ws-v1'] = (10, Admission(0, 0))
+    elif denial == 'tier1_cap':
+        cache.entries['ws-v1'] = (10, Admission(100_001, 1))
     elif denial == 'read':
         cache.entries['ws-v1'] = (10, None)
     else:

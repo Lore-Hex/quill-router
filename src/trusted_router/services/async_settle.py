@@ -50,10 +50,29 @@ from trusted_router.transcription import TRANSCRIPTION_MODELS
 from trusted_router.web_fetch import FETCH_MODEL_ID
 
 CACHE_SECONDS = 5.0
-TIER_CAPS = {2: 25_000_000, 3: 100_000_000}
+# Admission thresholds on a workspace's unsettled async cost, in microdollars,
+# by trust tier. A tier with no entry is never admitted.
+TIER_CAPS = {1: 100_000, 2: 25_000_000, 3: 100_000_000}
+# Tiers whose threshold the pilot override may lower and never raise.
+PILOT_CAP_LOWERS_ONLY = frozenset({1})
 # Enclaves reject future-issued tickets without clock tolerance. Backdate the
 # whole window, preserving the 300s contract bound (240s remain at default TTL).
 TICKET_CLOCK_SKEW_ALLOWANCE_SECONDS = 60
+
+
+def admission_cap(tier: object, pilot_cap: int) -> int | None:
+    """The unsettled-cost threshold for a trust tier, or None when not admitted.
+
+    Every admission decision and every prediction of one takes its threshold
+    here. A nonzero pilot override replaces the threshold of tiers 2 and 3,
+    including with a larger value. For tier 1 it only ever lowers it.
+    """
+    if type(tier) is not int or tier not in TIER_CAPS:
+        return None
+    cap = TIER_CAPS[tier]
+    if not pilot_cap:
+        return cap
+    return min(cap, pilot_cap) if tier in PILOT_CAP_LOWERS_ONLY else pilot_cap
 
 
 @dataclass(frozen=True)
@@ -136,11 +155,12 @@ class AdmissionCache:
             self.evaluated_at[workspace_id] = now
             now = self.clock()
             value, health = cached[1], self.health
+            cap = admission_cap(value.tier, pilot_cap) if value is not None else None
             return bool(
                 0 <= now - cached[0] < CACHE_SECONDS
-                and value is not None and type(value.tier) is int and value.tier in TIER_CAPS
+                and value is not None and cap is not None
                 and type(value.pending_micro) is int and value.pending_micro >= 0
-                and value.pending_micro + queued_micro <= (pilot_cap or TIER_CAPS[value.tier])
+                and value.pending_micro + queued_micro <= cap
                 and health is not None and 0 <= now - health.observed_at < CACHE_SECONDS
                 and 0 <= health.p95_age_seconds <= 5
             )

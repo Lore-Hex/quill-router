@@ -817,6 +817,9 @@ $25/$100 when approved. Tier 1 stays ineligible. The sketch's mapping of all
 three numbers to “trust-tier caps” is therefore not an existing repo contract;
 Joseph must confirm the intended $5 policy (§10).
 
+Since 2026-11-10 tier 1 is admitted at a $0.10 threshold (Joseph's decision;
+“Cap semantics and pins” below has the rule). Tier 0 stays ineligible.
+
 **The sketch's claimed strict invariant and worst case are false.** Even an
 uncached strong SUM at authorize does not serialize concurrent admissions, and
 invocations may run before inserting an intent. With cache staleness, multiple
@@ -1859,14 +1862,29 @@ ordinary synchronous inference. The audit must not conflate these decisions.
 #### Cap semantics and pins
 
 `services/async_settle.py::TIER_CAPS` is exactly
-`{2: 25_000_000, 3: 100_000_000}`. Tier 1 is ineligible. The effective threshold
-is **`pilot_cap or TIER_CAPS[tier]`**, not `min(pilot_cap, tier_cap)`: zero selects
-the tier threshold; any nonzero configured pilot threshold overrides it,
-including an override above the tier value. Admission is **inclusive** at the
-threshold (`pending_micro <= threshold`); the next microdollar is rejected.
-`admission_reason` reports `not_eligible` for tier 1 and `cap_exceeded` above
-that same threshold. F1 `test_cap_semantics` pins 3 tiers × 3 overrides × 3
-boundary values = 27 cases, including a $200 override.
+`{1: 100_000, 2: 25_000_000, 3: 100_000_000}`. Tier 0, and any value that is
+not one of those three integers, is ineligible. One function,
+`services/async_settle.py::admission_cap(tier, pilot_cap)`, gives the
+effective threshold to every site that decides or predicts admission: the
+admission cache at authorize and at settle, `admission_reason`, and both
+shadow predictions.
+
+For tiers 2 and 3 the threshold is **`pilot_cap or TIER_CAPS[tier]`**, not
+`min(pilot_cap, tier_cap)`: zero selects the tier threshold; any nonzero
+configured pilot threshold overrides it, including an override above the tier
+value. For tier 1 (admitted since 2026-11-10 at $0.10) the override can only
+lower the threshold: it is `min(pilot_cap, 100_000)` when the override is
+nonzero and `100_000` otherwise, so the deployed $5 override leaves tier 1 at
+$0.10. Admission is **inclusive** at the threshold
+(`pending_micro <= threshold`); the next microdollar is rejected.
+`admission_reason` reports `not_eligible` for a tier with no threshold and
+`cap_exceeded` above that same threshold. F1 `test_cap_semantics` pins 4 tiers
+× 4 overrides × 3 boundary values = 48 cases, including a $200 override, and
+`tests/test_async_settle_tier_caps.py` holds the four sites to one answer.
+
+The authorize-side log line `metric=async_settle_projection_admission` carries
+`eligible=yes|no`, the admission answer for that authorize, so the share of
+authorizes offered an async settle can be counted without reading a workspace.
 
 The query counts workspace-owned pending and dead rows, including active
 leases, legacy rows with workspace ownership and NULL-created rows. It does
@@ -1954,8 +1972,9 @@ The binding October 9 decisions select workspace
 Record observed peak concurrency (existing per-instance limits: 4 authorizes,
 16 settles). The pilot excludes auto-refill-dependent traffic and expectations
 of metadata broadcast/budget notifications. `/decide` stays synchronous;
-only the existing chat.completions/Responses cohort can negotiate. Tier 1 is
-ineligible. `TR_ASYNC_SETTLE_PILOT_WORKSPACES` is a comma list with the shadow
+only the existing chat.completions/Responses cohort can negotiate. Tier 1 was
+ineligible for the pilot (admitted at $0.10 since 2026-11-10).
+`TR_ASYNC_SETTLE_PILOT_WORKSPACES` is a comma list with the shadow
 list's whitespace, duplicate, identifier and 32-workspace rules. Empty preserves
 unrestricted admission semantics; the pilot flip MUST pin the single workspace.
 Removal closes fresh admission, while duplicate accepted work and recovery
@@ -1968,8 +1987,9 @@ below stays as the record of the pilot and as the way back: naming the
 pilot set in step 8's pin again returns admission to it.
 
 Pin `TR_ASYNC_SETTLE_PILOT_CAP_MICRO=5000000` at activation. The override applies
-to either eligible tier: new work requires a fresh pending frozen sum **≤ $5**.
-Without an override the tier 2/3 guards remain $25/$100. This is §6's cached
+to tiers 2 and 3: new work requires a fresh pending frozen sum **≤ $5**.
+Without an override the tier 2/3 guards remain $25/$100. Tier 1's guard is
+$0.10 with or without this override. This is §6's cached
 admission/lag guard, **not a strict exposure ceiling**: outstanding admissions
 can increase exposure by `sum(actual_i for i in I)` beyond the threshold.
 Reservation-based balance remains the money-safety invariant. No cap SQL or
