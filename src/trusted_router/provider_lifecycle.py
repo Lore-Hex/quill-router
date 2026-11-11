@@ -102,6 +102,10 @@ DATABRICKS_GLM_52_RETIREMENT_AT = datetime(2027, 2, 4, 0, 0, tzinfo=UTC)
 # OpenAI's November 11 reminder shuts down GPT-5, GPT-5 mini, GPT-5 nano, GPT-5
 # pro, o3 and o3-pro on 11 Dec 2026 (date only, so 00:00 UTC conservatively).
 OPENAI_GPT5_O3_RETIREMENT_AT = datetime(2026, 12, 11, 0, 0, tzinfo=UTC)
+# OpenAI's deprecations page section "2026-10-01: GPT-5.3-Codex, GPT-5.1,
+# GPT-5.4-Nano" shuts these down on 1 Apr 2027 (date only, so 00:00 UTC
+# conservatively). No email notice was found.
+OPENAI_GPT51_GPT53_CODEX_GPT54_NANO_RETIREMENT_AT = datetime(2027, 4, 1, 0, 0, tzinfo=UTC)
 # 2026-11-06 19:00 UTC: Novita, Tinfoil and Chutes no longer list these routes
 # in their public model APIs; the hourly refresh already marks them dark.
 NOVEMBER_6_DELISTED_RETIREMENT_AT = datetime(2026, 11, 6, 19, 0, tzinfo=UTC)
@@ -1401,6 +1405,27 @@ _RETIREMENTS = (
         upstream_ids=frozenset({"gpt-5-nano", "gpt-5-nano-2025-08-07"}),
         effective_at=OPENAI_GPT5_O3_RETIREMENT_AT,
         replacement_model_ids=("openai/gpt-5.6-luna",),
+    ),
+    # OpenAI's deprecations page section "2026-10-01: GPT-5.3-Codex, GPT-5.1,
+    # GPT-5.4-Nano": shutdown "Apr 1, 2027" (date only, so 00:00 UTC) for
+    # gpt-5.3-codex -> gpt-6-sol, gpt-5.4-nano and gpt-5.4-nano-2026-03-17 ->
+    # gpt-6-luna, and gpt-5.1 and gpt-5.1-2025-11-13 -> gpt-6-sol. No email
+    # notice was found; the page is the source. Retire only OpenAI's direct
+    # routes; Azure and other providers' routes stay.
+    # https://developers.openai.com/api/docs/deprecations
+    _Retirement(
+        provider="openai",
+        model_ids=frozenset({"openai/gpt-5.3-codex", "openai/gpt-5.1"}),
+        upstream_ids=frozenset({"gpt-5.3-codex", "gpt-5.1", "gpt-5.1-2025-11-13"}),
+        effective_at=OPENAI_GPT51_GPT53_CODEX_GPT54_NANO_RETIREMENT_AT,
+        replacement_model_ids=("openai/gpt-6-sol",),
+    ),
+    _Retirement(
+        provider="openai",
+        model_ids=frozenset({"openai/gpt-5.4-nano"}),
+        upstream_ids=frozenset({"gpt-5.4-nano", "gpt-5.4-nano-2026-03-17"}),
+        effective_at=OPENAI_GPT51_GPT53_CODEX_GPT54_NANO_RETIREMENT_AT,
+        replacement_model_ids=("openai/gpt-6-luna",),
     ),
     # DigitalOcean's October 29 notices deprecate these Inference models on
     # 2026-11-09 (date only; 00:00 UTC conservatively); requests then 404.
