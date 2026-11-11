@@ -29,6 +29,7 @@ from trusted_router.operational_analytics_freshness import (
     BACKEND_SPANNER,
     OUTBOX_HEARTBEAT_ID,
     OUTBOX_HEARTBEAT_KIND,
+    OUTBOX_HEARTBEAT_TABLE,
     REASON_NOT_CONFIGURED,
     REASON_POLLER_STALE,
     REASON_UNREACHABLE,
@@ -268,6 +269,56 @@ OUTBOX_FRESHNESS_TIMEOUT_SECONDS = 3.0
 OUTBOX_HEARTBEAT_MAX_AGE_SECONDS = float(
     os.environ.get("TR_OUTBOX_HEARTBEAT_MAX_AGE_SECONDS", "180")
 )
+
+
+def _is_heartbeat_table_missing(exc: BaseException) -> bool:
+    """True only for Spanner's "Table not found: tr_operational_outbox_heartbeat".
+
+    The dedicated heartbeat table is added by a rollout migration
+    (scripts/deploy/migrate_operational_outbox_heartbeat.sh); until it exists the
+    heartbeat read falls back to the legacy tr_entities row. Anchored the same
+    way as `storage_gcp_authorize._is_table_missing`: the table name must come
+    AFTER the phrase, so an unrelated "not found" (a session, another table)
+    stays an error. Matched on text, not exception class, because Spanner
+    reports a missing table in a query as INVALID_ARGUMENT and other paths
+    report NOT_FOUND.
+    """
+    lowered = str(exc).lower()
+    return (
+        "table not found" in lowered
+        and OUTBOX_HEARTBEAT_TABLE in lowered.split("table not found", 1)[1]
+    )
+
+
+def _newest_heartbeat_row(rows: list[Any]) -> tuple[str, Any] | None:
+    """Pick the heartbeat to judge from ``(body, updated_at, dedicated)`` rows.
+
+    The newer commit timestamp wins, and the dedicated table wins a tie. Both
+    rows are written by the one poller from the same body in the same pass, so
+    the newest commit is its latest proof of life whichever table holds it:
+    the dedicated row once the poller runs under a database role (the legacy
+    row then ages), the legacy row from a poller that predates the dedicated
+    table or has been rolled back to one. Preferring the dedicated row
+    unconditionally would report a live, rolled-back poller as stale.
+
+    A row whose ``updated_at`` is not a timestamp (impossible for these NOT
+    NULL TIMESTAMP columns, but a hand-written row is still a row) ranks below
+    every valid one; if it is all there is, it is returned so the caller logs
+    it as invalid and reports `poller_stale`.
+    """
+    if not rows:
+        return None
+    epoch = dt.datetime.min.replace(tzinfo=dt.UTC)
+
+    def rank(row: Any) -> tuple[bool, dt.datetime, bool]:
+        try:
+            committed = _heartbeat_commit_time(row[1])
+        except ValueError:
+            return (False, epoch, bool(row[2]))
+        return (True, committed, bool(row[2]))
+
+    newest = max(rows, key=rank)
+    return str(newest[0]), newest[1]
 
 
 def _heartbeat_commit_time(value: object) -> dt.datetime:
@@ -6591,9 +6642,11 @@ class SpannerStore(OperationalAnalyticsReads):
         per execution in production (2026-09-05), once per Cloud Run instance
         per minute; a test pins that no production request path calls it any
         more. The poller already knows the outbox head, floored by its own
-        committed deletes, and publishes it into `tr_entities` after each pass
-        (`clickhouse.ingest_operational_outbox.OutboxHeartbeatPublisher`).
-        This is one point read on the primary key.
+        committed deletes, and publishes it after each pass
+        (`clickhouse.ingest_operational_outbox.OutboxHeartbeatPublisher`) into
+        `tr_operational_outbox_heartbeat` and, during the transition, the
+        legacy `tr_entities` row. This is one statement of two primary-key
+        point reads; see `_read_outbox_heartbeat_row`.
 
         Fail-closed: a heartbeat that is absent, unreadable, or older than
         `OUTBOX_HEARTBEAT_MAX_AGE_SECONDS` publishes `poller_stale`, and
@@ -6605,8 +6658,9 @@ class SpannerStore(OperationalAnalyticsReads):
 
         Rollout order is a runtime dependency: the VM poller
         (`scripts/deploy/clickhouse_live_ingestion.sh`) must be deployed
-        FIRST and have written a row -- `SELECT body FROM tr_entities WHERE
-        kind='operational_outbox_heartbeat'` returns one -- before the control
+        FIRST and have written a row -- `SELECT body FROM
+        tr_operational_outbox_heartbeat WHERE id='spanner-poller'` (or the
+        legacy `tr_entities` row) returns one -- before the control
         plane that runs this code. Reversed, this reads `poller_stale` until
         the first heartbeat lands and the fleet freshness checker fails, by
         design. See docs/clickhouse-reliability.md.
@@ -6708,27 +6762,64 @@ class SpannerStore(OperationalAnalyticsReads):
     def _read_outbox_heartbeat_row(self) -> tuple[str, Any] | None:
         """The poller's heartbeat ``(body, updated_at)``, or ``None`` if never written.
 
-        One point read on the `tr_entities` primary key, under the same budget
-        as the rest of the /status.json path. Not `_read_entity`: that helper
-        has no timeout, and this is the one caller that must not wait.
-        ``updated_at`` is returned raw; the caller validates it, because a
-        malformed row is `poller_stale`, not `unreachable`.
+        One statement, one snapshot: a primary-key point read of the dedicated
+        `tr_operational_outbox_heartbeat` row UNION ALL the legacy
+        `tr_entities` row, so reading both costs no extra round trip and the two
+        are compared at one timestamp. `_newest_heartbeat_row` picks between
+        them. If the dedicated table does not exist yet (a control plane that
+        reached production before its migration), the statement fails with
+        "Table not found" and the legacy row is read alone, in a second
+        snapshot, inside what is left of the SAME budget: the whole call stays
+        within `OUTBOX_FRESHNESS_TIMEOUT_SECONDS`, and a budget already spent
+        raises `StoreUnavailable`, i.e. `unreachable`. Any other failure
+        propagates unchanged. Not `_read_entity`: that helper has no timeout,
+        and this is the one caller that must not wait. ``updated_at`` is
+        returned raw; the caller validates it, because a malformed row is
+        `poller_stale`, not `unreachable`.
         """
-        with self._database.snapshot() as snapshot:
-            rows = list(
-                snapshot.execute_sql(
-                    "SELECT body, updated_at FROM tr_entities WHERE kind=@kind AND id=@id",
-                    params={"kind": OUTBOX_HEARTBEAT_KIND, "id": OUTBOX_HEARTBEAT_ID},
-                    param_types={
-                        "kind": self._param_types.STRING,
-                        "id": self._param_types.STRING,
-                    },
-                    timeout=OUTBOX_FRESHNESS_TIMEOUT_SECONDS,
+        deadline = time.monotonic() + OUTBOX_FRESHNESS_TIMEOUT_SECONDS
+        params = {"kind": OUTBOX_HEARTBEAT_KIND, "id": OUTBOX_HEARTBEAT_ID}
+        param_types = {
+            "kind": self._param_types.STRING,
+            "id": self._param_types.STRING,
+        }
+        try:
+            with self._database.snapshot() as snapshot:
+                rows = list(
+                    snapshot.execute_sql(
+                        "SELECT body, updated_at, TRUE AS dedicated "
+                        "FROM tr_operational_outbox_heartbeat WHERE id=@id "
+                        "UNION ALL "
+                        "SELECT body, updated_at, FALSE AS dedicated "
+                        "FROM tr_entities WHERE kind=@kind AND id=@id",
+                        params=params,
+                        param_types=param_types,
+                        timeout=OUTBOX_FRESHNESS_TIMEOUT_SECONDS,
+                    )
                 )
+        except Exception as exc:
+            if not _is_heartbeat_table_missing(exc):
+                raise
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise StoreUnavailable(
+                    "operational outbox heartbeat read budget exhausted"
+                ) from exc
+            log.warning(
+                "spanner.operational_analytics_outbox_heartbeat_table_missing",
+                extra={"table": OUTBOX_HEARTBEAT_TABLE},
             )
-        if not rows:
-            return None
-        return str(rows[0][0]), rows[0][1]
+            with self._database.snapshot() as snapshot:
+                rows = list(
+                    snapshot.execute_sql(
+                        "SELECT body, updated_at, FALSE AS dedicated "
+                        "FROM tr_entities WHERE kind=@kind AND id=@id",
+                        params=params,
+                        param_types=param_types,
+                        timeout=remaining,
+                    )
+                )
+        return _newest_heartbeat_row(rows)
 
     def record_synthetic_probe_sample(self, sample: SyntheticProbeSample) -> None:
         # The durable outbox is the only path a sample takes to ClickHouse.

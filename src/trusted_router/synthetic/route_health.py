@@ -469,21 +469,35 @@ def report_catalog_freshness(
     from trusted_router.synthetic.alerts import ops_alert
 
     now = now or dt.datetime.now(dt.UTC)
-    deadlines: dict[str, dt.datetime] = {}
+    soon = now + dt.timedelta(hours=48)
+    by_provider: dict[str, list[tuple[dt.datetime, ModelEndpoint]]] = {}
     for endpoint in MODEL_ENDPOINTS.values() if endpoints is None else endpoints:
-        deadline = endpoint.catalog_valid_until
-        if deadline is not None:
-            deadlines[endpoint.provider] = min(deadlines.get(endpoint.provider, deadline), deadline)
+        if endpoint.catalog_valid_until is not None:
+            by_provider.setdefault(endpoint.provider, []).append((endpoint.catalog_valid_until, endpoint))
     flagged = []
-    for provider, deadline in sorted(deadlines.items()):
-        if deadline > now + dt.timedelta(hours=48):
+    for provider, routes in sorted(by_provider.items()):
+        expiring = [route for deadline, route in routes if deadline <= soon]
+        if not expiring:
             continue
-        state = "expired" if deadline <= now else "expires within 48 hours"
-        ops_alert(
-            f"catalog-freshness: {provider} {state}; deadline={deadline.isoformat()}. "
-            "Repair discovery before fail-closed routing removes its models.",
-            fingerprint=["catalog-freshness", provider], tags={"route_provider": provider},
-        )
+        deadline = min(deadline for deadline, _route in routes)
+        expired = deadline <= now
+        if len(expiring) == len(routes):
+            state = "expired" if expired else "expires within 48 hours"
+            message = (
+                f"catalog-freshness: {provider} {state}; deadline={deadline.isoformat()}. "
+                "Repair discovery before fail-closed routing removes its models."
+            )
+        else:
+            # A row-level price deadline (one model's promotion) ends only
+            # that model's routes; the provider's other routes keep serving.
+            models = ", ".join(sorted({route.model_id for route in expiring}))
+            message = (
+                f"catalog-freshness: {provider} models {models} "
+                f"{'expired' if expired else 'expire within 48 hours'}; "
+                f"deadline={deadline.isoformat()}. Only these models' routes are affected; "
+                "the next price refresh after the deadline restores them at the current price."
+            )
+        ops_alert(message, fingerprint=["catalog-freshness", provider], tags={"route_provider": provider})
         flagged.append(provider)
     return flagged
 

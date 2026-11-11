@@ -14,6 +14,7 @@ SOURCE_DIGESTS = {'scripts/deploy/infra.sh': '259931cd73d94d0f3fc535b5f8a6ef523a
  'scripts/deploy/migrate_generation_records.sh': 'de31377ce0ddc13926509564bf93426edb3f5fe897072ef9886db160864c0951',
  'scripts/deploy/migrate_money_primitives.sh': 'a35e4012706fa88f48be8f8d6b5abc7a3f828d36bceea59191784b58007d7e41',
  'scripts/deploy/migrate_operational_analytics_outbox.sh': 'ff4a7d8cdcfcf616065bec75a2da5927534ebde9d57e63c47c636227d78e4970',
+ 'scripts/deploy/migrate_operational_outbox_heartbeat.sh': '86e3386063e494e0fd1ddfeeceec5d9ada4de38af675b8715906203959f30406',
  'scripts/deploy/migrate_receipt_key_versions.sh': '37c46050906d7f5fe50bc45e732ec1ba99059b916efc659aef1bb6882d437ef6',
  'scripts/deploy/migrate_request_retention.sh': '6817965c0ae1c836553aa4e94124d13e6d3cd98bf891fa11948ed5a0d156f510',
  'scripts/deploy/migrate_speculation_shadow.sh': 'defd388fd3d507e1c8c7b1faf3059dd09df819a114ccccbb18fb6b978c1ba7e6',
@@ -129,6 +130,9 @@ DDL = ('CREATE TABLE tr_entities (kind STRING(64) NOT NULL, id STRING(512) NOT N
  'NULL OPTIONS (allow_commit_timestamp=true), event_kind STRING(32) NOT NULL, event_id '
  'STRING(128) NOT NULL, payload STRING(MAX) NOT NULL, ) PRIMARY KEY (shard, commit_ts, '
  'event_kind, event_id), ROW DELETION POLICY (OLDER_THAN(commit_ts, INTERVAL 30 DAY))',
+ 'CREATE TABLE tr_operational_outbox_heartbeat ( id STRING(64) NOT NULL, body STRING(MAX) NOT '
+ 'NULL, updated_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true), ) PRIMARY KEY '
+ '(id)',
  'CREATE TABLE tr_gateway_authorization ( authorization_id STRING(64) NOT NULL, workspace_id '
  'STRING(64) NOT NULL, key_hash STRING(64) NOT NULL, reservation_id STRING(64), model_id '
  'STRING(256) NOT NULL, provider STRING(64) NOT NULL, usage_type STRING(16) NOT NULL, '

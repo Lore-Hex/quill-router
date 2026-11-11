@@ -3,9 +3,11 @@
 The per-shard head read (``oldest_enqueued_at``) walks seven days of
 deleted-row versions and cost 823-957 ms of Spanner CPU per execution in
 production (2026-09-05), once per Cloud Run instance per minute. These tests pin
-the replacement end to end: the VM poller writes one ``tr_entities`` row after
-a pass (rate-limited, never fatal), the store turns that row into a reading with
-one point read and fails closed to ``poller_stale`` when it is absent or old,
+the replacement end to end: the VM poller writes its heartbeat row after a pass
+(rate-limited, never fatal) to ``tr_operational_outbox_heartbeat`` and, while no
+database role is configured, also to the legacy ``tr_entities`` row; the store
+turns the newer of the two into a reading with one statement and fails closed
+to ``poller_stale`` when it is absent or old,
 the public projection and the fleet checker treat ``poller_stale`` as not
 fresh, and no production request path calls the scan any more.
 """
@@ -24,6 +26,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from google.api_core.exceptions import InvalidArgument, NotFound
 
 from clickhouse import ingest_operational_outbox as worker
 from clickhouse.check_fleet_analytics_freshness import _UNAVAILABLE_EXPLANATION, evaluate
@@ -41,6 +44,7 @@ from trusted_router.operational_analytics_freshness import (
     OUTBOX_HEARTBEAT_ID,
     OUTBOX_HEARTBEAT_KIND,
     OUTBOX_HEARTBEAT_SCHEMA_VERSION,
+    OUTBOX_HEARTBEAT_TABLE,
     PUBLISHABLE_REASONS,
     REASON_POLLER_STALE,
     REASON_UNREACHABLE,
@@ -87,13 +91,24 @@ class _PollerSnapshot:
         return [] if self._database.oldest is None else [(self._database.oldest,)]
 
 
+_DEDICATED_INSERT = (
+    "INSERT OR UPDATE INTO tr_operational_outbox_heartbeat (id, body, updated_at)"
+)
+_LEGACY_INSERT = "INSERT OR UPDATE INTO tr_entities (kind, id, body, updated_at)"
+
+
 class _PollerTransaction:
-    def __init__(self, database: _PollerDatabase) -> None:
+    def __init__(self, database: _PollerDatabase, statements: list[str]) -> None:
         self._database = database
+        self._statements = statements
 
     def execute_update(self, sql: str, *, params: Any, param_types: Any) -> int:
+        self._statements.append(sql)
         if self._database.write_error is not None:
             raise self._database.write_error
+        for table, error in self._database.table_errors.items():
+            if sql.startswith(f"INSERT OR UPDATE INTO {table} "):
+                raise error
         self._database.writes.append((sql, params, param_types))
         return 1
 
@@ -107,26 +122,40 @@ class _PollerDatabase:
         oldest: dt.datetime | None = OLDEST,
         write_error: Exception | None = None,
         head_read_error: Exception | None = None,
+        table_errors: dict[str, Exception] | None = None,
     ) -> None:
         self.oldest = oldest
         self.write_error = write_error
         self.head_read_error = head_read_error
+        # Per-table write failures, keyed by the table the INSERT names.
+        self.table_errors = dict(table_errors or {})
         self.head_reads: list[str] = []
         self.writes: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+        # Every statement attempted, grouped by the transaction it ran in.
+        self.transactions: list[list[str]] = []
 
     def snapshot(self, **_kwargs: object) -> _PollerSnapshot:
         return _PollerSnapshot(self)
 
     def run_in_transaction(self, func: Any) -> Any:
-        return func(_PollerTransaction(self))
+        statements: list[str] = []
+        self.transactions.append(statements)
+        return func(_PollerTransaction(self, statements))
+
+    def written(self, prefix: str) -> list[tuple[str, dict[str, Any], dict[str, Any]]]:
+        return [write for write in self.writes if write[0].startswith(prefix)]
 
 
-def _poller_source(database: _PollerDatabase) -> worker.SpannerOperationalOutboxSource:
+def _poller_source(
+    database: _PollerDatabase, *, database_role: str | None = None,
+) -> worker.SpannerOperationalOutboxSource:
     source = object.__new__(worker.SpannerOperationalOutboxSource)
     source._database = database
     source._pt = _ParamTypes()
     source._shard_count = 32
     source._after = None
+    if database_role is not None:
+        source._database_role = database_role
     return source
 
 
@@ -139,13 +168,18 @@ def _published(database: _PollerDatabase) -> OutboxHeartbeat:
 
     This is the wire contract between two modules that cannot import each
     other on the VM: the poller's literal body must be what the store reads.
+    Both rows of the pass carry the same body.
     """
-    sql, params, param_types = database.writes[-1]
-    assert sql.startswith("INSERT OR UPDATE INTO tr_entities (kind, id, body, updated_at)")
+    sql, params, param_types = database.written(_DEDICATED_INSERT)[-1]
     assert "PENDING_COMMIT_TIMESTAMP()" in sql
-    assert params["kind"] == OUTBOX_HEARTBEAT_KIND
     assert params["id"] == OUTBOX_HEARTBEAT_ID
-    assert param_types == {"kind": "STRING", "id": "STRING", "body": "STRING"}
+    assert param_types == {"id": "STRING", "body": "STRING"}
+    legacy_sql, legacy_params, legacy_types = database.written(_LEGACY_INSERT)[-1]
+    assert "PENDING_COMMIT_TIMESTAMP()" in legacy_sql
+    assert legacy_params["kind"] == OUTBOX_HEARTBEAT_KIND
+    assert legacy_params["id"] == OUTBOX_HEARTBEAT_ID
+    assert legacy_types == {"kind": "STRING", "id": "STRING", "body": "STRING"}
+    assert legacy_params["body"] == params["body"]
     return OutboxHeartbeat.parse(params["body"])
 
 
@@ -157,7 +191,9 @@ def test_poller_publishes_the_pass_oldest_commit_ts_and_observed_at() -> None:
 
     assert publisher.after_pass(_result(3)) is True
 
-    assert len(database.writes) == 1
+    # One dedicated row and one legacy row, each in a transaction of its own.
+    assert len(database.writes) == 2
+    assert [len(statements) for statements in database.transactions] == [1, 1]
     heartbeat = _published(database)
     assert heartbeat.oldest_live_commit_ts == OLDEST
     assert heartbeat.observed_at == NOW
@@ -204,11 +240,12 @@ def test_heartbeat_writes_are_rate_limited_to_one_per_interval() -> None:
         outcomes.append(publisher.after_pass(_result(fetched)))
 
     assert outcomes == [True, False, False, True, False, True]
-    assert len(database.writes) == 3
+    assert len(database.written(_DEDICATED_INSERT)) == 3
+    assert len(database.written(_LEGACY_INSERT)) == 3
     # A delivery that happened during a skipped pass still reaches the next
     # heartbeat: the write at 15.0 fetched nothing itself, but the pass at
     # 2.0 delivered two rows.
-    second = OutboxHeartbeat.parse(database.writes[1][1]["body"])
+    second = OutboxHeartbeat.parse(database.written(_DEDICATED_INSERT)[1][1]["body"])
     assert second.observed_at == NOW + dt.timedelta(seconds=15)
     assert second.fetched == 0
     assert second.oldest_live_commit_ts is None
@@ -310,6 +347,83 @@ def test_the_drain_loop_publishes_after_every_pass_and_survives_a_failing_publis
     assert database.writes == []
 
 
+def _heartbeat_publisher(
+    database: _PollerDatabase, *, database_role: str | None = None,
+) -> worker.OutboxHeartbeatPublisher:
+    return worker.OutboxHeartbeatPublisher(
+        _poller_source(database, database_role=database_role),
+        monotonic=lambda: 0.0,
+        now=lambda: NOW,
+        poller="vm:7",
+    )
+
+
+def test_a_missing_dedicated_table_still_writes_the_legacy_row(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A node deployed before the migration keeps the control plane's legacy
+    heartbeat alive, and says loudly that the dedicated write failed."""
+    database = _PollerDatabase(
+        table_errors={
+            "tr_operational_outbox_heartbeat": NotFound(
+                "Table not found: tr_operational_outbox_heartbeat"
+            ),
+        },
+    )
+
+    with caplog.at_level(logging.ERROR, logger=worker.log.name):
+        assert _heartbeat_publisher(database).after_pass(_result(1)) is False
+
+    assert database.written(_DEDICATED_INSERT) == []
+    [(_sql, params, _types)] = database.written(_LEGACY_INSERT)
+    assert OutboxHeartbeat.parse(params["body"]).poller == "vm:7"
+    assert [len(statements) for statements in database.transactions] == [1, 1]
+    messages = [r.message for r in caplog.records]
+    assert messages.count("operational_analytics_outbox.heartbeat_failed") == 1
+    assert "operational_analytics_outbox.legacy_heartbeat_failed" not in messages
+
+
+def test_a_failing_legacy_write_neither_stops_the_dedicated_one_nor_raises(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    database = _PollerDatabase(
+        table_errors={"tr_entities": RuntimeError("PERMISSION_DENIED: tr_entities")},
+    )
+
+    with caplog.at_level(logging.ERROR, logger=worker.log.name):
+        assert _heartbeat_publisher(database).after_pass(_result(1)) is True
+
+    [(_sql, params, _types)] = database.written(_DEDICATED_INSERT)
+    assert OutboxHeartbeat.parse(params["body"]).fetched == 1
+    assert database.written(_LEGACY_INSERT) == []
+    # The dedicated row committed in its own transaction before the legacy
+    # attempt began: the legacy failure cannot have rolled it back.
+    assert [len(statements) for statements in database.transactions] == [1, 1]
+    assert database.transactions[0][0].startswith(_DEDICATED_INSERT)
+    [record] = [
+        r for r in caplog.records
+        if r.message == "operational_analytics_outbox.legacy_heartbeat_failed"
+    ]
+    assert record.exc_info is not None
+    assert not any(
+        r.message == "operational_analytics_outbox.heartbeat_failed" for r in caplog.records
+    )
+
+
+def test_under_a_database_role_only_the_dedicated_row_is_written() -> None:
+    """A table-scoped role has no tr_entities access: never attempt it."""
+    database = _PollerDatabase()
+
+    assert _heartbeat_publisher(database, database_role="tr_clickhouse").after_pass(
+        _result(2)
+    ) is True
+
+    [(_sql, params, _types)] = database.written(_DEDICATED_INSERT)
+    assert OutboxHeartbeat.parse(params["body"]).fetched == 2
+    assert database.written(_LEGACY_INSERT) == []
+    assert database.transactions == [[database.written(_DEDICATED_INSERT)[0][0]]]
+
+
 # ---------------------------------------------------------------------------
 # (b) the store reads
 # ---------------------------------------------------------------------------
@@ -342,19 +456,35 @@ class _StoreSnapshot:
         self, sql: str, *, params: Any = None, param_types: Any = None, timeout: float | None = None,
     ) -> list[list[Any]]:
         self._database.reads.append((sql, params or {}, timeout))
+        if self._database.clock is not None:
+            self._database.clock[0] += self._database.read_seconds
         if self._database.error is not None:
             raise self._database.error
-        if self._database.body is None:
-            return []
-        return [[self._database.body, self._database.updated_at]]
+        rows: list[list[Any]] = []
+        if "tr_operational_outbox_heartbeat" in sql:
+            # Spanner rejects the whole statement when a table it names is
+            # missing; it reports that as INVALID_ARGUMENT.
+            if self._database.dedicated_table_missing:
+                raise InvalidArgument(
+                    "Table not found: tr_operational_outbox_heartbeat [at 1:49]"
+                )
+            if self._database.body is not None:
+                rows.append([self._database.body, self._database.updated_at, True])
+        if self._database.legacy_body is not None:
+            rows.append([self._database.legacy_body, self._database.legacy_updated_at, False])
+        return rows
 
 
 class _StoreDatabase:
-    """The heartbeat row as Spanner returns it: ``body`` plus its commit time.
+    """The heartbeat rows as Spanner returns them: body, commit time, source.
 
-    ``updated_at`` defaults to "just now", which is what a live poller's
-    PENDING_COMMIT_TIMESTAMP() row looks like; ``_UNSET`` lets a test hand the
-    store a NULL or garbage commit time.
+    ``body``/``updated_at`` is the dedicated ``tr_operational_outbox_heartbeat``
+    row and ``legacy_body``/``legacy_updated_at`` the legacy ``tr_entities``
+    one; either may be absent. ``updated_at`` defaults to "just now", which is
+    what a live poller's PENDING_COMMIT_TIMESTAMP() row looks like; a test can
+    hand the store a NULL or garbage commit time instead.
+    ``dedicated_table_missing`` models a database the migration has not reached.
+    ``clock``/``read_seconds`` advance a fake monotonic clock per read.
     """
 
     def __init__(
@@ -363,10 +493,22 @@ class _StoreDatabase:
         *,
         updated_at: Any = "now",
         error: Exception | None = None,
+        legacy_body: str | None = None,
+        legacy_updated_at: Any = "now",
+        dedicated_table_missing: bool = False,
+        clock: list[float] | None = None,
+        read_seconds: float = 0.0,
     ) -> None:
         self.body = body
         self.updated_at = dt.datetime.now(dt.UTC) if updated_at == "now" else updated_at
         self.error = error
+        self.legacy_body = legacy_body
+        self.legacy_updated_at = (
+            dt.datetime.now(dt.UTC) if legacy_updated_at == "now" else legacy_updated_at
+        )
+        self.dedicated_table_missing = dedicated_table_missing
+        self.clock = clock
+        self.read_seconds = read_seconds
         self.reads: list[tuple[str, dict[str, Any], float | None]] = []
 
     def snapshot(self, **_kwargs: object) -> _StoreSnapshot:
@@ -409,10 +551,196 @@ def test_a_fresh_heartbeat_is_the_reading_and_the_scan_never_runs() -> None:
     assert reading.seconds_since_last_delivery is not None
     assert 8.5 <= reading.seconds_since_last_delivery <= 10.5
     assert spy.calls == []
+    # One statement reads both rows by their complete primary keys.
     [(sql, params, timeout)] = database.reads
-    assert sql == "SELECT body, updated_at FROM tr_entities WHERE kind=@kind AND id=@id"
+    assert sql == _BOTH_ROWS_SQL
     assert params == {"kind": OUTBOX_HEARTBEAT_KIND, "id": OUTBOX_HEARTBEAT_ID}
     assert timeout == storage_gcp.OUTBOX_FRESHNESS_TIMEOUT_SECONDS
+
+
+_BOTH_ROWS_SQL = (
+    "SELECT body, updated_at, TRUE AS dedicated "
+    "FROM tr_operational_outbox_heartbeat WHERE id=@id "
+    "UNION ALL "
+    "SELECT body, updated_at, FALSE AS dedicated "
+    "FROM tr_entities WHERE kind=@kind AND id=@id"
+)
+_LEGACY_ROW_SQL = (
+    "SELECT body, updated_at, FALSE AS dedicated "
+    "FROM tr_entities WHERE kind=@kind AND id=@id"
+)
+
+
+def test_a_legacy_row_alone_is_the_reading() -> None:
+    """A poller that predates the dedicated table writes only tr_entities."""
+    oldest = dt.datetime.now(dt.UTC) - dt.timedelta(seconds=17)
+    database = _StoreDatabase(None, legacy_body=_body(oldest_live_commit_ts=oldest))
+    store, spy = _store(database)
+
+    reading = store.operational_analytics_outbox_freshness()
+
+    assert reading.available is True
+    assert reading.oldest_enqueued_at == oldest
+    assert spy.calls == []
+    assert [sql for sql, _params, _timeout in database.reads] == [_BOTH_ROWS_SQL]
+
+
+def test_a_dedicated_row_alone_is_the_reading() -> None:
+    """A poller under a database role writes only the dedicated table."""
+    oldest = dt.datetime.now(dt.UTC) - dt.timedelta(seconds=23)
+    store, _ = _store(_StoreDatabase(_body(oldest_live_commit_ts=oldest)))
+
+    reading = store.operational_analytics_outbox_freshness()
+
+    assert reading.available is True
+    assert reading.oldest_enqueued_at == oldest
+
+
+@pytest.mark.parametrize("newer", ["dedicated", "legacy"])
+def test_when_both_rows_exist_the_newer_commit_is_the_reading(
+    monkeypatch: pytest.MonkeyPatch, newer: str,
+) -> None:
+    """The newest commit is the poller's latest proof of life, whichever table.
+
+    ``dedicated``: the poller now runs under a role, so the legacy row has
+    stopped moving and must not make a live poller read as stale.
+    ``legacy``: the poller was rolled back to a build that writes only
+    tr_entities, so the dedicated row has stopped moving instead.
+    """
+    monkeypatch.setattr(storage_gcp, "OUTBOX_HEARTBEAT_MAX_AGE_SECONDS", 180.0)
+    now = dt.datetime.now(dt.UTC)
+    fresh, stale = now - dt.timedelta(seconds=2), now - dt.timedelta(seconds=3600)
+    fresh_body = _body(poller="fresh", oldest_live_commit_ts=now - dt.timedelta(seconds=7))
+    stale_body = _body(poller="stale", oldest_live_commit_ts=now - dt.timedelta(seconds=3700))
+    if newer == "dedicated":
+        database = _StoreDatabase(
+            fresh_body, updated_at=fresh, legacy_body=stale_body, legacy_updated_at=stale,
+        )
+    else:
+        database = _StoreDatabase(
+            stale_body, updated_at=stale, legacy_body=fresh_body, legacy_updated_at=fresh,
+        )
+    store, spy = _store(database)
+
+    reading = store.operational_analytics_outbox_freshness()
+
+    assert reading.available is True
+    assert reading.oldest_enqueued_at == OutboxHeartbeat.parse(fresh_body).oldest_live_commit_ts
+    assert spy.calls == []
+    assert len(database.reads) == 1
+
+
+def test_a_commit_time_tie_goes_to_the_dedicated_row() -> None:
+    committed = dt.datetime.now(dt.UTC) - dt.timedelta(seconds=1)
+    dedicated_oldest = committed - dt.timedelta(seconds=11)
+    database = _StoreDatabase(
+        _body(oldest_live_commit_ts=dedicated_oldest),
+        updated_at=committed,
+        legacy_body=_body(oldest_live_commit_ts=committed - dt.timedelta(seconds=99)),
+        legacy_updated_at=committed,
+    )
+    store, _ = _store(database)
+
+    assert store.operational_analytics_outbox_freshness().oldest_enqueued_at == dedicated_oldest
+
+
+def test_a_valid_row_outranks_one_without_a_commit_time() -> None:
+    oldest = dt.datetime.now(dt.UTC) - dt.timedelta(seconds=5)
+    database = _StoreDatabase(
+        _body(), updated_at=None, legacy_body=_body(oldest_live_commit_ts=oldest),
+    )
+    store, _ = _store(database)
+
+    reading = store.operational_analytics_outbox_freshness()
+
+    assert reading.available is True
+    assert reading.oldest_enqueued_at == oldest
+
+
+def test_a_missing_dedicated_table_falls_back_to_the_legacy_row_within_the_budget(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A control plane that reached production before its migration."""
+    clock = [1000.0]
+    monkeypatch.setattr(storage_gcp, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    oldest = dt.datetime.now(dt.UTC) - dt.timedelta(seconds=31)
+    database = _StoreDatabase(
+        None,
+        legacy_body=_body(oldest_live_commit_ts=oldest),
+        dedicated_table_missing=True,
+        clock=clock,
+        read_seconds=0.5,
+    )
+    store, spy = _store(database)
+
+    with caplog.at_level(logging.WARNING, logger="trusted_router.storage_gcp"):
+        reading = store.operational_analytics_outbox_freshness()
+
+    assert reading.available is True
+    assert reading.oldest_enqueued_at == oldest
+    assert spy.calls == []
+    [(first_sql, _, first_timeout), (second_sql, params, second_timeout)] = database.reads
+    assert first_sql == _BOTH_ROWS_SQL
+    assert first_timeout == storage_gcp.OUTBOX_FRESHNESS_TIMEOUT_SECONDS
+    assert second_sql == _LEGACY_ROW_SQL
+    assert params == {"kind": OUTBOX_HEARTBEAT_KIND, "id": OUTBOX_HEARTBEAT_ID}
+    # The fallback gets what the first statement left of ONE budget.
+    assert second_timeout == pytest.approx(storage_gcp.OUTBOX_FRESHNESS_TIMEOUT_SECONDS - 0.5)
+    assert any(
+        r.message == "spanner.operational_analytics_outbox_heartbeat_table_missing"
+        for r in caplog.records
+    )
+
+
+def test_a_missing_dedicated_table_and_no_legacy_row_is_poller_stale() -> None:
+    database = _StoreDatabase(None, dedicated_table_missing=True)
+    store, _ = _store(database)
+
+    reading = store.operational_analytics_outbox_freshness()
+
+    assert reading == OutboxFreshness.unavailable(BACKEND_SPANNER, REASON_POLLER_STALE)
+    assert [sql for sql, _params, _timeout in database.reads] == [
+        _BOTH_ROWS_SQL, _LEGACY_ROW_SQL,
+    ]
+
+
+def test_a_missing_table_that_spent_the_budget_is_unreachable_without_a_second_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = [1000.0]
+    monkeypatch.setattr(storage_gcp, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    database = _StoreDatabase(
+        None,
+        legacy_body=_body(),
+        dedicated_table_missing=True,
+        clock=clock,
+        read_seconds=storage_gcp.OUTBOX_FRESHNESS_TIMEOUT_SECONDS,
+    )
+    store, _ = _store(database)
+
+    reading = store.operational_analytics_outbox_freshness()
+
+    assert reading == OutboxFreshness.unavailable(BACKEND_SPANNER, REASON_UNREACHABLE)
+    assert [sql for sql, _params, _timeout in database.reads] == [_BOTH_ROWS_SQL]
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        NotFound("Table not found: tr_entities"),
+        NotFound("Session not found while reading tr_operational_outbox_heartbeat"),
+        InvalidArgument("Column not found: dedicated in tr_operational_outbox_heartbeat"),
+    ],
+)
+def test_only_the_dedicated_table_missing_falls_back(error: Exception) -> None:
+    """Any other failure is the read's failure: `unreachable`, no second read."""
+    database = _StoreDatabase(None, legacy_body=_body(), error=error)
+    store, _ = _store(database)
+
+    reading = store.operational_analytics_outbox_freshness()
+
+    assert reading == OutboxFreshness.unavailable(BACKEND_SPANNER, REASON_UNREACHABLE)
+    assert len(database.reads) == 1
 
 
 def test_a_drained_heartbeat_publishes_zero_lag() -> None:
@@ -656,6 +984,8 @@ def test_no_production_request_path_calls_the_shard_head_scan() -> None:
 
 def test_the_poller_and_the_store_agree_on_the_heartbeat_row() -> None:
     """Two literal copies, because the poller cannot import the store's."""
+    assert worker.HEARTBEAT_DEDICATED_TABLE == OUTBOX_HEARTBEAT_TABLE
+    assert OUTBOX_HEARTBEAT_TABLE == "tr_operational_outbox_heartbeat"
     assert worker.HEARTBEAT_TABLE == SpannerStore.entity_table == "tr_entities"
     assert worker.HEARTBEAT_KIND == OUTBOX_HEARTBEAT_KIND
     assert worker.HEARTBEAT_ID == OUTBOX_HEARTBEAT_ID
@@ -675,8 +1005,30 @@ def test_the_spanner_poller_still_imports_nothing_from_trusted_router() -> None:
     assert not re.search(r"^\s*(from|import)\s+trusted_router", source, re.MULTILINE)
 
 
-def test_the_heartbeat_needs_no_ddl() -> None:
-    """The row lives in the entity table every deployment already has."""
+def test_the_dedicated_heartbeat_table_takes_commit_timestamps() -> None:
+    """The fresh-install schema the migration produces, as the emulator runs it.
+
+    The poller writes ``updated_at`` as PENDING_COMMIT_TIMESTAMP(), and the
+    store reads the row by ``id`` alone; ``body`` is the same JSON as the
+    legacy row's.
+    """
+    from tests.conformance.spanner_ddl import DDL
+
+    [ddl] = [
+        statement for statement in DDL
+        if statement.startswith("CREATE TABLE tr_operational_outbox_heartbeat ")
+    ]
+    assert ddl == (
+        "CREATE TABLE tr_operational_outbox_heartbeat ( id STRING(64) NOT NULL, "
+        "body STRING(MAX) NOT NULL, "
+        "updated_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true), "
+        ") PRIMARY KEY (id)"
+    )
+    assert len(OUTBOX_HEARTBEAT_ID) <= 64
+
+
+def test_the_legacy_heartbeat_row_needs_no_new_table() -> None:
+    """The legacy row lives in the entity table every deployment already has."""
     infra = (ROOT / "scripts/deploy/infra.sh").read_text()
     ddl = re.search(r"CREATE TABLE tr_entities \((.*?)\) PRIMARY KEY \(kind, id\)", infra)
     assert ddl is not None

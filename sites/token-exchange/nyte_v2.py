@@ -258,9 +258,11 @@ def load_markets() -> list[dict]:
 # from markets.json, which also drives the load balancer's Terraform.
 CITIES = json.loads((HERE / "nyte-cities.json").read_text())
 
-# Pages repainted with the NYTE brand v3 (nyte-v2/brand-v3.css). Empty means
-# production is unchanged. NYTE_BRAND_V3_PREVIEW=1 repaints every page in a local build.
-BRAND_V3_PAGES = set(json.loads((HERE / "nyte-brand-v3.json").read_text())["pages"])
+# Registered pages use the NYTE brand v3 (nyte-v2/brand-v3.css) by default, so a
+# new page gets it without any extra step. nyte-brand-v3.json lists the few pages
+# that keep the old look. NYTE_BRAND_V3_PREVIEW=1 repaints every page in a local build.
+OLD_BRAND_PAGES = set(json.loads((HERE / "nyte-brand-v3.json").read_text())["old_brand_pages"])
+BRAND_V3_PAGES = set(PAGES) - OLD_BRAND_PAGES
 
 
 def uses_brand_v3(page: str) -> bool:
