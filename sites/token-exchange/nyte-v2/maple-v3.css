@@ -106,25 +106,10 @@
 .mv3-panel[hidden]{display:none}
 .mv3-panel+.mv3-panel{border-top:1px solid var(--dark-rule)}
 .mv3-panel:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
-.agent-prompt{font-size:17px;line-height:1.55;overflow-wrap:anywhere}
-[data-nyte-page="maple"] main .mv3-copy-btn{margin-top:24px;border-color:var(--cream);color:var(--cream);font-size:15px;cursor:pointer}
-[data-nyte-page="maple"] main .mv3-copy-btn:hover{background:var(--cream);color:var(--ink)}
-.mv3-copy-btn:focus-visible{outline:2px solid var(--cream);outline-offset:2px}
-#way-agent .mv3-copy-btn{margin-top:28px}
-.mv3-ways .code-scroll{position:relative}
-.mv3-ways .code{min-width:0;overflow-x:auto}
-.mv3-ways .code:focus-visible{outline:2px solid var(--cream);outline-offset:2px}
-.mv3-ways pre{width:max-content;min-width:100%;margin:0;font:400 14px/1.6 var(--font-mono);white-space:pre;color:var(--cream)}
-.mv3-ways pre code{font:inherit}
-.mv3-ways pre .c{color:var(--ink-2-dark)}
-.mv3-ways pre .u{color:var(--lime)}
-/* Commands that run past the edge: as /confidential's quick start. */
-.mv3-ways .code-scroll::before,.mv3-ways .code-scroll::after{content:"";display:none;position:absolute;top:0;bottom:0;width:72px;pointer-events:none;z-index:1}
-.mv3-ways .code-scroll.can-left::before{display:block;left:0;background:linear-gradient(90deg,var(--ink),transparent)}
-.mv3-ways .code-scroll.can-right::after{display:block;right:0;background:linear-gradient(90deg,transparent,var(--ink) 70%)}
-.mv3-ways .code-next:not([hidden]){display:flex;position:absolute;right:0;top:50%;z-index:2;align-items:center;justify-content:center;width:40px;height:40px;padding:0;transform:translateY(-50%);border:1.5px solid var(--dark-rule);border-radius:0;background:var(--ink);color:var(--cream);cursor:pointer}
-.mv3-ways .code-next svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.75}
-.mv3-ways .code-next:focus-visible{outline:2px solid var(--lime);outline-offset:2px}
+/* AI agent and Commands use the shared code block (.v3-code in brand-v3.css); the prompt
+   is prose, so it wraps in the body face inside the same panel. */
+.mv3-panel.mv3-code-panel{padding:0}
+[data-nyte-page="maple"] main .v3-code pre.agent-prompt{width:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:400 17px/1.55 var(--font-sans)}
 .sources{list-style:none;margin:0;padding:0}
 .sources li{padding:14px 0;border-top:1px solid var(--dark-rule)}
 .sources li:first-child{padding-top:0;border-top:0}

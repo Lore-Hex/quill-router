@@ -90,7 +90,7 @@ class VerifiedPageTests(unittest.TestCase):
         self.assertIn('href="/assets/verified.js"', self.page)
 
     def test_page_opens_with_a_sentence_for_the_visitors_own_agent(self):
-        prompt = re.search(r'<p class="agent-prompt" id="agent-prompt">(.*?)</p>', self.page).group(1)
+        prompt = re.search(r'<pre class="agent-prompt" id="agent-prompt">(.*?)</pre>', self.page).group(1)
         # One sentence, pointing at the manual steps and away from the page's own verdict.
         self.assertEqual(prompt.count(". "), 0)
         self.assertTrue(prompt.endswith("."))
@@ -103,12 +103,14 @@ class VerifiedPageTests(unittest.TestCase):
                          [("btn btn-secondary", "#manual", "Have your AI agent check")])
         manual = self.page.split('id="manual"')[1]
         self.assertLess(manual.index('id="agent-prompt"'), manual.index('id="manual-commands"'))
-        # Readable and selectable without JavaScript; only the buttons and tab row need it.
-        self.assertIn('data-copy="agent-prompt" hidden', self.page)
-        self.assertIn('data-copy="manual-commands" hidden', self.page)
+        # Both panels use the shared code block: a labelled header strip with an icon-only copy.
+        self.assertIn('<span class="v3-label">Prompt</span><button class="v3-code-copy" type="button" aria-label="Copy prompt">', self.page)
+        self.assertIn('<span class="v3-label">Shell</span><button class="v3-code-copy" type="button" aria-label="Copy commands">', self.page)
+        self.assertNotIn("data-copy=", self.page)
+        # Readable and selectable without JavaScript; only the copy buttons and tab row need it.
         self.assertIn('<div class="mv3-tabs" role="tablist" aria-label="Ways to check" hidden>', self.page)
         for panel in ("agent", "commands", "sources"):
-            self.assertRegex(self.page, rf'<div class="mv3-panel" id="way-{panel}" role="tabpanel" aria-labelledby="tab-{panel}">')
+            self.assertRegex(self.page, rf'<div class="mv3-panel[^"]*" id="way-{panel}" role="tabpanel" aria-labelledby="tab-{panel}">')
 
     def test_recorded_attestation_is_a_public_document_only(self):
         fixture = json.loads((HERE / "verified-fixture.json").read_text())

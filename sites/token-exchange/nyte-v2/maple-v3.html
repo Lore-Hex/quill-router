@@ -91,25 +91,25 @@
           <button type="button" role="tab" id="tab-commands" aria-selected="false" aria-controls="way-commands" tabindex="-1">Commands</button>
           <button type="button" role="tab" id="tab-sources" aria-selected="false" aria-controls="way-sources" tabindex="-1">Sources</button>
         </div>
-        <div class="mv3-panel" id="way-agent" role="tabpanel" aria-labelledby="tab-agent">
-          <p class="agent-prompt" id="agent-prompt">Follow the manual steps at https://nytokenexchange.com/verified/maple#manual with your own tools, verify every signature yourself against Amazon’s Nitro root and Google’s published keys, trust nothing the page itself claims, and tell me whether Maple’s enclave and NYTE’s gateway are running the published code and what you could not check.</p>
-          <button class="btn mv3-copy-btn" type="button" data-copy="agent-prompt" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 9 L20 9 L20 20 L9 20 L9 9"/><path d="M15 7.25 L15 4 L4 4 L4 15 L7.25 15"/></svg><span data-copy-label>Copy</span></button>
+        <div class="mv3-panel mv3-code-panel" id="way-agent" role="tabpanel" aria-labelledby="tab-agent">
+          <div class="v3-code"><div class="v3-code-head"><span class="v3-label">Prompt</span><button class="v3-code-copy" type="button" aria-label="Copy prompt"><svg class="v3-code-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 9 L20 9 L20 20 L9 20 L9 9"/><path d="M15 7.25 L15 4 L4 4 L4 15 L7.25 15"/></svg><svg class="v3-code-done" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4.5 12.5 L9.5 17.5 L19.5 7"/></svg></button></div>
+          <div class="v3-code-body"><pre class="agent-prompt" id="agent-prompt">Follow the manual steps at https://nytokenexchange.com/verified/maple#manual with your own tools, verify every signature yourself against Amazon’s Nitro root and Google’s published keys, trust nothing the page itself claims, and tell me whether Maple’s enclave and NYTE’s gateway are running the published code and what you could not check.</pre></div><p class="v3-sr" role="status" aria-live="polite"></p></div>
         </div>
-        <div class="mv3-panel" id="way-commands" role="tabpanel" aria-labelledby="tab-commands">
-          <div class="code-scroll"><div class="code" tabindex="0" role="region" aria-label="Commands to fetch the public records"><pre><code id="manual-commands"><span class="c"># 1. A fresh attestation document from Maple’s enclave (base64 COSE_Sign1)</span>
-curl -s <span class="u">https://enclave.trymaple.ai/attestation/$(uuidgen | tr A-Z a-z)</span>
+        <div class="mv3-panel mv3-code-panel" id="way-commands" role="tabpanel" aria-labelledby="tab-commands">
+          <div class="code-scroll v3-code"><div class="v3-code-head"><span class="v3-label">Shell</span><button class="v3-code-copy" type="button" aria-label="Copy commands"><svg class="v3-code-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 9 L20 9 L20 20 L9 20 L9 9"/><path d="M15 7.25 L15 4 L4 4 L4 15 L7.25 15"/></svg><svg class="v3-code-done" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4.5 12.5 L9.5 17.5 L19.5 7"/></svg></button></div>
+          <div class="v3-code-body"><div class="code" tabindex="0" role="region" aria-label="Commands to fetch the public records"><pre><code id="manual-commands"><span class="c"># 1. A fresh attestation document from Maple’s enclave (base64 COSE_Sign1)</span>
+curl -s <span class="s">https://enclave.trymaple.ai/attestation/$(uuidgen | tr A-Z a-z)</span>
 <span class="c"># 2. The fingerprint Maple approved for production</span>
-curl -s <span class="u">https://raw.githubusercontent.com/MaplePrivacyLabs/Maple/master/services/opensecret/pcrProd.json</span>
+curl -s <span class="s">https://raw.githubusercontent.com/MaplePrivacyLabs/Maple/master/services/opensecret/pcrProd.json</span>
 <span class="c"># 3. The fingerprint NYTE reproduced from source, with its evidence</span>
-curl -s <span class="u">https://raw.githubusercontent.com/Lore-Hex/quill-cloud-proxy/main/enclave-go/maple-transport/verified-release.json</span>
+curl -s <span class="s">https://raw.githubusercontent.com/Lore-Hex/quill-cloud-proxy/main/enclave-go/maple-transport/verified-release.json</span>
 <span class="c"># 4. NYTE’s gateway attestation: a token signed by Google (decode it with any JWT tool)</span>
-curl -s <span class="u">https://api.trustedrouter.com/attestation</span>
+curl -s <span class="s">https://api.trustedrouter.com/attestation</span>
 <span class="c"># 5. The gateway images NYTE has published, to compare with the token’s image_digest</span>
-curl -s <span class="u">https://trust.trustedrouter.com/trust/gcp-release.json</span>
+curl -s <span class="s">https://trust.trustedrouter.com/trust/gcp-release.json</span>
 <span class="c"># 6. The Maple fingerprint built into that gateway release. Replace {commit} with the</span>
 <span class="c">#    characters after "gcp-release-" in the token’s image_reference</span>
-curl -s <span class="u">https://raw.githubusercontent.com/Lore-Hex/quill-cloud-proxy/{commit}/enclave-go/maple-transport/verified-release.json</span></code></pre></div><button class="code-next" type="button" aria-label="Scroll code right" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 5 7 7-7 7"/></svg></button></div>
-          <button class="btn mv3-copy-btn" type="button" data-copy="manual-commands" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 9 L20 9 L20 20 L9 20 L9 9"/><path d="M15 7.25 L15 4 L4 4 L4 15 L7.25 15"/></svg><span data-copy-label>Copy</span></button>
+curl -s <span class="s">https://raw.githubusercontent.com/Lore-Hex/quill-cloud-proxy/{commit}/enclave-go/maple-transport/verified-release.json</span></code></pre></div><button class="code-next" type="button" aria-label="Scroll code right" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 5 7 7-7 7"/></svg></button></div><p class="v3-sr" role="status" aria-live="polite"></p></div>
         </div>
         <div class="mv3-panel" id="way-sources" role="tabpanel" aria-labelledby="tab-sources">
           <ul class="sources">

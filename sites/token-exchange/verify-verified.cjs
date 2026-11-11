@@ -347,13 +347,21 @@ const panel = (page, id) => Promise.all([
         await next.click();
         await page.waitForFunction(() => document.querySelector('#way-commands .code').scrollLeft > 0);
       }
-      const copy = page.locator('#way-commands [data-copy]');
+      // Shared code block: a "Shell" header strip whose icon-only copy says "Copied" and announces it.
+      assert.equal(await page.locator('#way-commands .v3-code-head .v3-label').textContent(), 'Shell');
+      const copy = page.getByRole('button', {name: 'Copy commands'});
       await copy.click();
-      await page.waitForFunction(() => document.querySelector('#way-commands [data-copy]').textContent.trim() !== 'Copy');
-      assert.equal((await copy.textContent()).trim(), 'Copied');
-      assert.equal(await copy.locator('svg').count(), 1, 'copy keeps its icon');
+      await page.waitForFunction(() => document.querySelector('#way-commands .v3-code-copy').classList.contains('done'));
+      assert.equal(await page.locator('#way-commands .v3-code-copy').getAttribute('aria-label'), 'Copied');
+      assert.equal(await page.locator('#way-commands [role="status"]').textContent(), 'Copied.');
       const copied = await page.evaluate(() => navigator.clipboard.readText());
       assert.ok(copied.includes('curl -s https://enclave.trymaple.ai/attestation/') && !copied.includes('\n\n'), 'commands copied, no blank lines');
+      assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#way-commands .code-scroll'), '::after').backgroundImage), 'none', 'no gradient fade');
+      await page.getByRole('tab', {name: 'AI agent'}).click();
+      assert.equal(await page.locator('#way-agent .v3-code-head .v3-label').textContent(), 'Prompt');
+      await page.getByRole('button', {name: 'Copy prompt'}).click();
+      await page.waitForFunction(() => document.querySelector('#way-agent .v3-code-copy').classList.contains('done'));
+      assert.equal(await page.evaluate(() => navigator.clipboard.readText()), await page.locator('#agent-prompt').textContent());
       await page.getByRole('tab', {name: 'Commands'}).focus();
       await page.keyboard.press('ArrowRight');
       assert.deepEqual(await selected(), ['false', 'false', 'true']);
@@ -375,7 +383,7 @@ const panel = (page, id) => Promise.all([
     const page = await context.newPage();
     await page.goto(`${base}/verified/maple.html`);
     for (const id of ['live-check', 'gateway-check']) assert.ok((await page.locator(`#${id} .verdict-text`).textContent()).includes('manual check below'));
-    const manual = await page.locator('#manual pre').textContent();
+    const manual = await page.locator('#way-commands pre').textContent();
     assert.ok(manual.includes('enclave.trymaple.ai/attestation/') && manual.includes('api.trustedrouter.com/attestation'));
     // Without JavaScript the tab row stays hidden and all three ways show, stacked.
     assert.equal(await page.locator('.mv3-tabs').isVisible(), false);
