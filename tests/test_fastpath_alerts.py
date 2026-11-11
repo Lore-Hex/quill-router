@@ -144,20 +144,18 @@ def test_the_lag_policy_watches_every_subscription_of_the_fast_path() -> None:
 
 
 def test_the_channels_are_read_not_managed() -> None:
-    """The channels are the reliability scripts'; a second manager would
+    """The channel is the reliability scripts'; a second manager would
     mint duplicates (gcp_security_baseline_check.sh flags them)."""
     tf = POLICIES.read_text(encoding="utf-8")
     assert 'resource "google_monitoring_notification_channel"' not in tf
-    assert tf.count('data "google_monitoring_notification_channel"') == 2
+    assert tf.count('data "google_monitoring_notification_channel"') == 1
     for script in ("gateway_reliability.sh", "clickhouse_reliability.sh"):
         assert 'ALERT_CHANNEL_DISPLAY_NAME:-TrustedRouter Spanner on-call}' in _read("scripts", "deploy", script)
     assert 'display_name = "TrustedRouter Spanner on-call"' in tf
-    assert 'display_name = "TrustedRouter ops chat gcp"' in tf
-    # Both channels in the list every policy notifies.
+    # The on-call channel alone is the list every policy notifies.
     assert (
         "fastpath_alert_channels = [\n"
         "    data.google_monitoring_notification_channel.fastpath_oncall.name,\n"
-        "    data.google_monitoring_notification_channel.fastpath_ops_chat.name,\n"
         "  ]"
     ) in tf
     assert tf.count("notification_channels = local.fastpath_alert_channels") == 5
