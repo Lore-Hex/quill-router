@@ -108,6 +108,17 @@ Control-plane operational reads use `tr_control_read`. On GCP,
 table-scoped SELECT grants in `tr`; its password lives in Secret Manager as
 `trustedrouter-clickhouse-control-read-password`.
 
+Operator reporting (daily users, sign-ups, tokens and spend) uses a separate
+account, `tr_operator_read`, so the runtime reader's grants stay pinned to what
+the app queries. `scripts/deploy/clickhouse_operator_reader.sh` installs it on
+`tr-clickhouse-1` with SELECT on `tr.activity_generations`,
+`tr.provider_benchmark_samples` and `tr.workspace_directory`, a read-only
+profile, and loopback-only logins, so it works only through IAP SSH to the
+node. Its password is generated into Secret Manager as
+`trustedrouter-clickhouse-operator-read-password`, which no runtime service
+account can read. Pass the password on stdin, not on a command line; the
+script's header shows the query command.
+
 The standalone Paris and Azure nodes store their analytics in `default`.
 Their provisioners install the same read-only profile with only
 `GRANT SELECT ON default.*`, restricted to the local VPC/VNet and loopback:
