@@ -20,7 +20,11 @@ from trusted_router.services.broadcast import (
     broadcast_secret_context,
     public_destination_shape,
 )
-from trusted_router.services.broadcast_adapters import POSTHOG_DEFAULT_ENDPOINT, adapter_for
+from trusted_router.services.broadcast_adapters import (
+    POSTHOG_DEFAULT_ENDPOINT,
+    adapter_for,
+    allows_local_destinations,
+)
 from trusted_router.storage import STORE, BroadcastDestination
 
 
@@ -60,7 +64,9 @@ def register(app: FastAPI) -> None:
         if adapter is None:
             return RedirectResponse(url="/console/broadcast?error=type", status_code=303)
         clean_endpoint = adapter.normalize_endpoint(endpoint)
-        if adapter.validate_endpoint(clean_endpoint) is not None:
+        if adapter.validate_endpoint(
+            clean_endpoint, allow_local=allows_local_destinations(settings)
+        ) is not None:
             return RedirectResponse(url="/console/broadcast?error=endpoint", status_code=303)
         clean_method = method.strip().upper() or "POST"
         if clean_method not in {"POST", "PUT"}:

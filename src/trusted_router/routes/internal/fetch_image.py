@@ -35,7 +35,8 @@ from trusted_router.errors import api_error
 from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.schemas import GatewayFetchImageRequest
 from trusted_router.services.safe_egress import (
-    resolve_public_or_reject,
+    aresolve_public_or_reject,
+    public_egress_async_client,
     validate_url_scheme,
 )
 from trusted_router.types import ErrorType
@@ -51,13 +52,15 @@ _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 
 
 async def _fetch_with_redirect_chain(client: httpx.AsyncClient, url: str) -> tuple[str, bytes]:
-    """Walk the redirect chain manually so each hop's hostname runs
-    through _resolve_or_reject. httpx's built-in follow_redirects
-    re-resolves DNS too but doesn't let us inject SSRF checks per hop."""
+    """Walk the redirect chain manually so each hop's hostname is checked
+    before it is fetched. That check gives the caller a clear answer; the
+    client itself (`public_egress_async_client`) looks the name up again as
+    it connects and refuses an internal address there, so a name that
+    answers differently the second time gets nowhere."""
     current = url
     for _ in range(_MAX_REDIRECTS + 1):
         _, host = validate_url_scheme(current)
-        resolve_public_or_reject(host)
+        await aresolve_public_or_reject(host)
         async with client.stream("GET", current, headers={"accept": _ACCEPT_HEADER}) as resp:
             if resp.status_code in _REDIRECT_STATUSES:
                 next_url = resp.headers.get("location")
@@ -106,9 +109,7 @@ def register(router: APIRouter) -> None:
         # actual per-hop SSRF check happens inside the redirect loop.
         validate_url_scheme(url)
         timeout = httpx.Timeout(_FETCH_TIMEOUT_SECONDS, connect=_FETCH_TIMEOUT_SECONDS)
-        async with httpx.AsyncClient(
-            follow_redirects=False, timeout=timeout
-        ) as client:
+        async with public_egress_async_client(timeout=timeout) as client:
             try:
                 media_type, data = await _fetch_with_redirect_chain(client, url)
             except httpx.TimeoutException as exc:
