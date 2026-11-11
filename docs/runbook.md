@@ -1178,6 +1178,15 @@ does NOT prove Bigtable was failing throughout — typed-outage time ages the
 stamp too, so some of that window may be time Bigtable was never attempted.
 Check Bigtable health directly rather than inferring it from the alert.
 
+A dead settle row with `key usage booking failed` on a build before the
+missing-counter fix may mean a zero key hold with positive usage and no key
+counter rows at any shard. On a build with this fix, that condition completes
+settlement and emits `key_usage_unbooked_total` once; workspace credit accounting
+is unchanged and no key counter row is written. The error still means manual
+review when another shard has counters but neither the recorded shard nor
+shard zero can book. Existing dead rows remain subject to the reviewed re-arm
+procedure; the fix does not automatically re-arm them.
+
 **The row goes `dead`, not `done` — and that is the point.** `mark(done=True)`
 NULLs `settle_body`, and for a gateway/typed request that payload is normally
 the only repair evidence there is: typed finalize skips the generic
