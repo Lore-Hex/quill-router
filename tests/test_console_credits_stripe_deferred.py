@@ -316,10 +316,18 @@ def test_blocked_stripe_fragment_does_not_stall_event_loop(monkeypatch) -> None:
     client, _workspace = _signed_in_client()
     stripe_started = Event()
     release_stripe = Event()
+    stripe_returned = Event()
 
     def blocking_list(**_: Any) -> list[dict[str, Any]]:
         stripe_started.set()
-        assert release_stripe.wait(timeout=HANG_SECONDS)
+        try:
+            # Longer than the health bound, so a stalled loop fails on health
+            # before this stub could give up and let the loop go. The route
+            # swallows this AssertionError, so the stub's timeout must never be
+            # what ends the block.
+            assert release_stripe.wait(timeout=2 * HANG_SECONDS)
+        finally:
+            stripe_returned.set()
         return []
 
     monkeypatch.setattr(credits_module, "list_workspace_payments", blocking_list)
@@ -329,6 +337,8 @@ def test_blocked_stripe_fragment_does_not_stall_event_loop(monkeypatch) -> None:
         lambda **_: None,
     )
 
+    # One portal for both requests: without the `with`, each request gets its
+    # own event loop and a blocked loop could never delay health.
     with TestClient(client.app) as concurrent_client:
         concurrent_client.cookies.update(client.cookies)
         with ThreadPoolExecutor(max_workers=2) as pool:
@@ -344,12 +354,12 @@ def test_blocked_stripe_fragment_does_not_stall_event_loop(monkeypatch) -> None:
                 # releases it, and only after health has answered. A stalled
                 # loop never answers health, which fails on the hang bound.
                 health = health_request.result(timeout=HANG_SECONDS)
-                fragment_still_blocked = not fragment.done()
+                stripe_still_blocked = not stripe_returned.is_set()
             finally:
                 release_stripe.set()
             fragment_response = fragment.result(timeout=HANG_SECONDS)
 
-    assert fragment_still_blocked
+    assert stripe_still_blocked
 
     assert health.status_code == 200
     assert fragment_response.status_code == 200
