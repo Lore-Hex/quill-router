@@ -1087,9 +1087,9 @@ state; pending rows are in-flight or crash-orphaned and freeze their holds by
 design. Replayed settles (`already_settled`) never enqueue, so an empty table
 under replay-only traffic is normal.
 
-Verify there are no alert lines — in AXIOM, not Cloud Logging (app logs at
-or above `TR_AXIOM_LOG_LEVEL` ship to Axiom only; see Monitoring signals
-below): search the `trusted-router-logs` dataset for `"ALERT settle outbox"`.
+Verify there are no alert lines. Search Axiom's `trusted-router-logs` dataset
+for `"ALERT settle outbox"` (app logs at or above `TR_AXIOM_LOG_LEVEL` ship
+there; see Monitoring signals below for what Cloud Logging carries).
 Equivalent state-based check that needs no log access at all — dead rows are
 the alert-worthy terminal state:
 
@@ -1239,13 +1239,25 @@ at any shard. It completed: the workspace was charged the usual amount, nothing
 was written to `tr_key_limit`, and one WARNING
 `metric=key_usage_unbooked_total value=1 key_hash=... shard=... actual_micro=... book_to_byok=...`
 was written after the commit. Money is correct. What is missing is the key's
-own usage count, and the amount exists only in that line. Read the lines:
+own usage count.
+
+The line has two forms, and the alert matches both. An API service writes it in
+full, with the key hash and the amount. The settle drain worker, which applies
+every settle taken from the outbox, writes content-free lines only
+(`services/settle_drain_observability.py`), so there the same event reads
+`WARNING trusted_router.storage_gcp_authorize metric=key_usage_unbooked_total logger=trusted_router.storage_gcp_authorize level=WARNING exception_class=none`:
+no key hash and no amount. Read the lines; `service_name` tells the two apart:
 
 ```bash
 gcloud logging read 'resource.type="cloud_run_revision" AND textPayload:"WARNING trusted_router.storage_gcp_authorize metric=key_usage_unbooked_total "' \
   --project=quill-cloud-proxy --freshness=2h --limit=50 \
   --format='value(timestamp,resource.labels.service_name,textPayload)'
 ```
+
+A worker line names no key by design. Its settle belongs to a request that
+finished in the seconds before the line: list the keys that settled then from
+request analytics, and read each one's counter rows with the `tr_key_limit`
+statement below. The key with no rows is the one.
 
 Then find out where the key came from before anything else. Every line is a
 key that serves traffic without the app having written it, so treat it as a
@@ -1289,11 +1301,13 @@ The `last_error` predicate scopes the re-arm to this cause, as the activity
 repair's does to its own. If the statement reports 0 rows updated, you have the
 wrong row or the wrong cause; do not widen the predicate to make it match. The
 replay charges the workspace the row's frozen amount once (the reservation
-claim gate refuses a second charge) and writes the unbooked line. Confirm the
-row reached `done`. A row re-armed while another shard has counters, or on a
-build without the fix, fails again and goes dead again after its attempts;
-until then it counts as an unresolved row and keeps async settle admission
-closed.
+claim gate refuses a second charge), and the worker writes its form of the
+unbooked line. Confirm the row reached `done`, and keep watching until it
+does. The statement leaves `attempts` where it was, at the maximum, so a row
+re-armed while another shard has counters, or on a build without the fix,
+fails once and is dead again. A dead row is unresolved exactly as a pending one
+is: async settle admission stays closed for every workspace until the row is
+resolved.
 
 Monitoring signals:
 
@@ -1303,12 +1317,16 @@ to Axiom via the scoped `trusted_router.*` package logger
 (`TR_AXIOM_LOG_LEVEL`, default INFO), so on-call can search for them there.
 `init_axiom()` lowers only the package logger and leaves root at uvicorn's
 WARNING. Third-party INFO still does not ship because it gates on root's
-WARNING. App records still never appear in Cloud Logging: once `init_axiom()`
-attaches the root Axiom handler, `logging.lastResort` stops mirroring app
-records to stderr. Search alerts and app INFO in Axiom
-(`TR_AXIOM_DATASET=trusted-router-logs`), not `gcloud logging`. Cloud Logging
-carries only platform request logs and uvicorn/unhandled-exception stderr
-tracebacks. Judge reap/drain health by state, never by log lines:
+WARNING. The same package records also reach Cloud Logging: the package
+logger owns a stderr console handler (`_configure_application_logging` in
+`main.py`), and Cloud Run keeps each line as `textPayload`, rendered
+`LEVEL logger message`. Search either place (`TR_AXIOM_DATASET=trusted-router-logs`
+in Axiom). The settle drain worker is the exception on both counts: it sets up
+no Axiom handler, and in Cloud Logging every record from a logger other than
+its own is rewritten to `logger=... level=... exception_class=...` before it is
+written, with a counted metric's name kept in front
+(`services/settle_drain_observability.py`). Judge reap/drain health by state,
+never by log lines:
 
 ```bash
 gcloud spanner databases execute-sql trusted-router \

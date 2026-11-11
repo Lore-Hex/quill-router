@@ -13,6 +13,13 @@
 # metric name, matches. The API services and the settle drain worker are all
 # Cloud Run revisions.
 #
+# The settle drain worker applies every settle taken from the outbox, and it
+# writes content-free lines only: a record from any logger but its own is
+# rewritten before it is written (services/settle_drain_observability.py).
+# For this counter the rewritten line keeps the metric's name in the same
+# place, followed by a space, so the one filter matches both forms. The
+# worker's form names no key and no amount.
+#
 # The app writes a key's counter row in the same transaction as the key, so
 # each line means a key record that reached storage some other way. What it
 # means and what to do: docs/runbook.md, "Key usage unbooked".
