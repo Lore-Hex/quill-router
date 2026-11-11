@@ -147,6 +147,35 @@ def test_without_a_sibling_success_nothing_is_evidence() -> None:
     assert _evaluate(_streak("phala", "z-ai/glm-5.1") + [old_sibling]) == []
 
 
+def test_a_sibling_success_from_before_the_break_proves_nothing() -> None:
+    # Key revoked: every route starts failing; the last sibling success predates it.
+    before_break = _sample("phala", "other/model", minutes_ago=240, status="success")
+    samples = _streak("phala", "z-ai/glm-5.1", every=35, newest=10) + [before_break]
+    assert _evaluate(samples) == []
+
+
+def test_passed_through_capacity_status_is_not_evidence() -> None:
+    # A 503/429 whose body says model_not_available is still capacity.
+    for status in (429, 503):
+        samples = _streak("phala", "z-ai/glm-5.1", error_status=status) + [_sibling_success()]
+        assert _evaluate(samples) == []
+
+
+def test_a_customer_success_breaks_the_streak() -> None:
+    samples = _streak("phala", "z-ai/glm-5.1", newest=30) + [
+        _sample("phala", "z-ai/glm-5.1", minutes_ago=5, status="success", source="live"),
+        _sibling_success(),
+    ]
+    assert _evaluate(samples) == []
+
+
+def test_failures_from_before_a_hold_do_not_rearm_a_lifted_route() -> None:
+    # Six old failures, a 26h gap while the route was held, then one new failure.
+    old = _streak("phala", "z-ai/glm-5.1", newest=27 * 60)
+    samples = [*old, _sample("phala", "z-ai/glm-5.1", minutes_ago=10), _sibling_success()]
+    assert _evaluate(samples) == []
+
+
 def test_per_model_403_counts_when_the_same_key_serves_a_sibling() -> None:
     samples = _streak("lyceum", "moonshotai/kimi-k3.1-pro", error_type="provider_auth_config",
                       error_status=403) + [_sibling_success("lyceum", "z-ai/glm-5.3")]
@@ -294,7 +323,7 @@ def test_analytics_unavailable_changes_nothing(tmp_path: Path, monkeypatch, caps
     makora = _manifest(tmp_path, "makora", [_row("meta-models/muse"), _row("z-ai/glm-5.2")])
     before = {path: path.read_bytes() for path in (phala, makora)}
 
-    def unavailable(source: str, *, now: dt.datetime) -> set[tuple[str, str]]:
+    def unavailable(source: str) -> set[tuple[str, str]]:
         raise RuntimeError("503 route health unavailable")
 
     monkeypatch.setattr(holds, "fetch_evidence", unavailable)
@@ -305,7 +334,7 @@ def test_analytics_unavailable_changes_nothing(tmp_path: Path, monkeypatch, caps
 
 @pytest.mark.parametrize("payload", [
     _payload([("phala", "z-ai/glm-5.1")], generated=NOW - dt.timedelta(hours=3)),
-    _payload([("phala", "z-ai/glm-5.1")], generated=NOW + dt.timedelta(minutes=5)),
+    _payload([("phala", "z-ai/glm-5.1")], generated=NOW + dt.timedelta(minutes=10)),
     {"version": 2, "generated_at": "2026-11-11T18:00:00Z", "routes": []},
     {"version": 1, "generated_at": "2026-11-11T18:00:00Z", "routes": [{"provider": "phala"}]},
     {"version": 1, "generated_at": "2026-11-11T18:00:00Z"},
@@ -326,6 +355,35 @@ def test_a_provider_is_never_held_wholesale(tmp_path: Path) -> None:
     )
     assert {path: path.read_bytes() for path in before} == before
     assert sum("provider-wide problem" in note for note in notes) == 2
+
+
+def test_the_provider_cap_cannot_ratchet_across_runs(tmp_path: Path) -> None:
+    held = [_row(f"m/{i}", routable=False, routable_reason=UNSERVED_ROUTE_HOLD_REASON,
+                 **{holds.HELD_AT_FIELD: "2026-11-11T12:00:00Z"}) for i in range(5)]
+    path = _manifest(tmp_path, "wide", held + [_row(f"m/{i}") for i in range(5, 10)])
+    before = path.read_bytes()
+    # Five held of ten already; one more would make a majority.
+    notes = holds.apply_unserved_route_holds({("wide", "m/5")}, manifest_dir=tmp_path, now=NOW)
+    assert path.read_bytes() == before
+    assert any("6 of 10 rows unserved" in note for note in notes)
+
+
+def test_lift_never_publishes_an_unpriced_or_delisted_row(tmp_path: Path) -> None:
+    expired = {"routable": False, "routable_reason": UNSERVED_ROUTE_HOLD_REASON,
+               holds.HELD_AT_FIELD: "2026-11-10T12:00:00Z"}
+    unpriced = {"id": "z-ai/unpriced", "model_type": "chat", "endpoints": ["chat/completions"], **expired}
+    delisted = _row("z-ai/gone", missing_since="2026-11-11", **expired)
+    path = _manifest(tmp_path, "phala", [unpriced, delisted, _row("z-ai/glm-5.2"), _row("qwen/qwen3")])
+    holds.apply_unserved_route_holds(None, manifest_dir=tmp_path, now=NOW)
+    rows = _rows(path)
+    assert (rows["z-ai/unpriced"]["routable"], rows["z-ai/unpriced"]["routable_reason"]) == (False, "price-unavailable")
+    assert (rows["z-ai/gone"]["routable"], rows["z-ai/gone"]["routable_reason"]) == (False, "delisted-upstream")
+    assert holds.HELD_AT_FIELD not in rows["z-ai/unpriced"] and holds.HELD_AT_FIELD not in rows["z-ai/gone"]
+
+
+def test_evidence_built_just_after_the_runner_clock_is_accepted() -> None:
+    payload = _payload([("phala", "z-ai/glm-5.1")], generated=NOW + dt.timedelta(seconds=40))
+    assert holds.parse_evidence(payload, now=NOW) == {("phala", "z-ai/glm-5.1")}
 
 
 def test_more_than_the_route_cap_holds_nothing(tmp_path: Path) -> None:

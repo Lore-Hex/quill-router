@@ -22,9 +22,12 @@ manifests:
   stays lifted. Expiry runs even when evidence is unavailable, because lifting
   only restores what discovery published;
 * when the evidence cannot be read, is malformed or stale, nothing is held;
-* a provider is never held wholesale: a run that would hold more than half of
-  a provider's routable rows, or its last one, holds none of that provider's
-  rows, and a run listing more than ``MAX_ROUTES`` routes holds nothing.
+* a provider is never held wholesale: a run that would leave more than half
+  of a provider's rows held by this step (counting earlier holds), or would
+  hold its last routable row, holds none of that provider's rows, and a run
+  listing more than ``MAX_ROUTES`` routes holds nothing;
+* an expired hold on a row discovery has since delisted or left unpriced
+  becomes ``delisted-upstream`` or ``price-unavailable``, never routable.
 
 Holds use a reason the shared writers treat as an operator hold, so discovery
 carries them forward until this step lifts them.
@@ -42,13 +45,18 @@ from typing import Any
 
 import httpx
 
-from trusted_router.provider_manifest_policy import UNSERVED_ROUTE_HOLD_REASON
+from trusted_router.provider_manifest_policy import (
+    UNSERVED_ROUTE_HOLD_REASON,
+    provider_manifest_row_price_is_valid,
+)
 
 SOURCE = "https://trustedrouter.com/route-health/unserved.json"
 MANIFEST_DIR = Path(__file__).resolve().parents[2] / "src/trusted_router/data/provider_models"
 HELD_AT_FIELD = "unserved_held_at"
 HOLD_HOURS = 24
 MAX_EVIDENCE_AGE = timedelta(hours=2)
+# The server stamps generated_at when it builds; tolerate runner/server skew.
+MAX_CLOCK_SKEW = timedelta(minutes=5)
 MAX_ROUTES = 25
 MAX_PROVIDER_FRACTION = 0.5
 
@@ -74,7 +82,7 @@ def parse_evidence(payload: Any, *, now: datetime) -> set[Route]:
     if not isinstance(payload, dict) or payload.get("version") != 1:
         raise ValueError("unsupported unserved-route evidence")
     generated = _parse_time(payload.get("generated_at"))
-    if generated is None or not timedelta(0) <= now - generated <= MAX_EVIDENCE_AGE:
+    if generated is None or not -MAX_CLOCK_SKEW <= now - generated <= MAX_EVIDENCE_AGE:
         raise ValueError("unserved-route evidence is stale or future-dated")
     rows = payload.get("routes")
     if not isinstance(rows, list):
@@ -89,10 +97,12 @@ def parse_evidence(payload: Any, *, now: datetime) -> set[Route]:
     return routes
 
 
-def fetch_evidence(source: str, *, now: datetime) -> set[Route]:
+def fetch_evidence(source: str) -> set[Route]:
     response = httpx.get(source, timeout=30.0, follow_redirects=False)
     response.raise_for_status()
-    return parse_evidence(response.json(), now=now)
+    # Judge freshness after the response: a cache miss builds the evidence
+    # while the request is in flight.
+    return parse_evidence(response.json(), now=datetime.now(UTC))
 
 
 def _routable(row: dict[str, Any]) -> bool:
@@ -107,9 +117,17 @@ def _lift_expired(rows: Iterable[Any], *, now: datetime) -> list[str]:
         held_at = _parse_time(row.get(HELD_AT_FIELD))
         if held_at is not None and now - held_at < timedelta(hours=HOLD_HOURS):
             continue
-        row.pop("routable", None)
-        row.pop("routable_reason", None)
         row.pop(HELD_AT_FIELD, None)
+        # While held, discovery could not record its own state (the hold
+        # outranks it). Never lift into a delisted or unpriced routable row:
+        # one such row expires the provider's whole manifest.
+        if row.get("missing_since"):
+            row["routable_reason"] = "delisted-upstream"
+        elif not provider_manifest_row_price_is_valid(row):
+            row["routable_reason"] = "price-unavailable"
+        else:
+            row.pop("routable", None)
+            row.pop("routable_reason", None)
         lifted.append(str(row.get("id")))
     return lifted
 
@@ -165,12 +183,16 @@ def apply_unserved_route_holds(
             }
             for model in sorted(wanted - set(routable_rows) - already_held):
                 notes.append(f"{path.stem}: {model} is not a routable manifest row; not held")
+            # Rows this step already holds count on both sides, so the cap
+            # cannot ratchet a provider down one partial run at a time.
+            unserved = len(targets) + len(already_held)
+            candidates = len(routable_rows) + len(already_held)
             if targets and (
-                len(targets) > MAX_PROVIDER_FRACTION * len(routable_rows)
+                unserved > MAX_PROVIDER_FRACTION * candidates
                 or len(targets) >= len(routable_rows)
             ):
                 notes.append(
-                    f"{path.stem}: {len(targets)} of {len(routable_rows)} routable rows unserved; "
+                    f"{path.stem}: {unserved} of {candidates} rows unserved; "
                     "provider-wide problem, holding none"
                 )
                 targets = []
@@ -198,7 +220,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.json:
             evidence = parse_evidence(json.loads(Path(args.json).read_text(encoding="utf-8")), now=now)
         else:
-            evidence = fetch_evidence(args.source, now=now)
+            evidence = fetch_evidence(args.source)
     except Exception as exc:  # noqa: BLE001 - any failure means no evidence, never "all healthy"
         print(f"unserved-route evidence unavailable ({type(exc).__name__})", file=sys.stderr)
         evidence = None

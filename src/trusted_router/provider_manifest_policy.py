@@ -184,6 +184,11 @@ def _provider_manifest_row_price_is_valid(row: dict[str, Any]) -> bool:
     return False
 
 
+def provider_manifest_row_price_is_valid(row: dict[str, Any]) -> bool:
+    """Whether a manifest row carries a complete price for its model type."""
+    return _provider_manifest_row_price_is_valid(row)
+
+
 def _provider_manifest_generated_deadline(raw: dict[str, Any], max_age_days: int) -> datetime:
     generated_at = raw.get("generated_at")
     if not isinstance(generated_at, str):

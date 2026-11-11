@@ -173,10 +173,12 @@ UNSERVED_MAX_AGE = dt.timedelta(hours=2)
 # on one model while the same key serves another model is per-model access,
 # not a broken credential.
 _UNSERVED_ERROR_TYPES = frozenset({"unsupported_route", "provider_auth_config"})
-# The provider must have served a different model recently. Without that proof
+# The provider must have served a different model since this route began
+# failing, within the last six hours. Without that proof
 # the failure may be ours (a broken adapter, a revoked key, a blocked egress)
 # and holding routes one by one would hide a provider-wide problem.
 UNSERVED_SIBLING_SUCCESS_WINDOW = dt.timedelta(hours=6)
+UNSERVED_MAX_PROBE_GAP = dt.timedelta(hours=6)
 
 
 @dataclass(frozen=True)
@@ -219,16 +221,19 @@ def evaluate_unserved_routes(
         limit=min(_BATCH_SAMPLE_LIMIT, len(route_set) * _SAMPLES_PER_ROUTE_LIMIT),
     )
     by_route: dict[tuple[str, str], list[tuple[dt.datetime, ProviderBenchmarkSample]]] = {}
-    served_since: dict[str, set[str]] = {}
+    successes: dict[str, list[tuple[dt.datetime, str]]] = {}
     sibling_cutoff = now - UNSERVED_SIBLING_SUCCESS_WINDOW
     for sample in samples:
-        if sample.source != "synthetic":
-            continue
         created = _parse_created_at(sample.created_at)
         if created is None or created < cutoff or created > now:
             continue
-        if sample.status == "success" and created >= sibling_cutoff:
-            served_since.setdefault(sample.provider, set()).add(sample.model)
+        if sample.status == "success":
+            # Any served request, probe or customer, proves the route (or, for
+            # a sibling, the provider account) works at that moment.
+            if created >= sibling_cutoff:
+                successes.setdefault(sample.provider, []).append((created, sample.model))
+        elif sample.source != "synthetic":
+            continue
         route = (sample.provider, sample.model)
         if route in route_set:
             by_route.setdefault(route, []).append((created, sample))
@@ -236,16 +241,31 @@ def evaluate_unserved_routes(
     unserved: list[UnservedRoute] = []
     for provider, model in sorted(route_set):
         recent = sorted(by_route.get((provider, model), []), key=lambda pair: pair[0], reverse=True)
-        streak = []
+        streak: list[tuple[dt.datetime, ProviderBenchmarkSample]] = []
         for created, sample in recent:
-            if sample.status not in {"unsupported", "error"} or sample.error_type not in _UNSERVED_ERROR_TYPES:
+            if (
+                sample.status not in {"unsupported", "error"}
+                or sample.error_type not in _UNSERVED_ERROR_TYPES
+                # A passed-through 429/5xx keeps its model-ish error type;
+                # it is still capacity, not a refusal to serve.
+                or _is_transient_failure(sample)
+                # Probes stop while a route is held. Failures from before a
+                # gap belong to an earlier episode and must not re-arm a
+                # freshly lifted route on its first new probe.
+                or (streak and streak[-1][0] - created > UNSERVED_MAX_PROBE_GAP)
+            ):
                 break
             streak.append((created, sample))
         if (
             len(streak) < UNSERVED_MIN_SAMPLES
             or now - streak[0][0] > UNSERVED_MAX_AGE
             or streak[0][0] - streak[-1][0] < UNSERVED_MIN_SPAN
-            or not (served_since.get(provider, set()) - {model})
+            # The sibling success must come after this route began failing:
+            # a success from before a provider-wide break proves nothing.
+            or not any(
+                sibling != model and created >= streak[-1][0]
+                for created, sibling in successes.get(provider, [])
+            )
         ):
             continue
         unserved.append(
