@@ -238,10 +238,24 @@ def test_is_stuck_when_every_deploy_run_of_main_s_head_completed(decide, conclus
     # A deploy of this head was tried and delivered nothing. No second
     # dispatch (one per main head), and no quiet wait either: the step fails.
     outcome = decide(world(head_runs=[head_run("completed", conclusion)]))
-    assert_stuck(outcome, [*TO_COMPARE, of_head(MAIN)])
-    assert f"snapshot {SNAPSHOT[:9]} has waited 5.0 h" in outcome.stderr
-    assert (f"every deploy run of main's head {MAIN[:9]} completed without delivering it "
-            f"(88 completed {conclusion or '-'})") in outcome.stderr
+    assert_stuck(outcome, TO_ACTIVE)
+    assert f"snapshot {SNAPSHOT[:9]} has waited 5.0 h (limit 4 h), no active deploy run carries it" in outcome.stderr
+    assert (f"every deploy run of main's head {MAIN[:9]} completed (88 completed {conclusion or '-'}) "
+            "without becoming the delivered release") in outcome.stderr
+
+
+@pytest.mark.parametrize("conclusion", ["failure", "cancelled"])
+def test_an_older_run_that_carries_the_snapshot_comes_before_stuck(decide, conclusion: str) -> None:
+    # Main's head had its run and it delivered nothing, but the rollout of an
+    # earlier commit that has the snapshot is still going: that one ships it.
+    done = [head_run("completed", conclusion)]
+    for status in ("ahead", "identical"):
+        outcome = decide(world(head_runs=done, active=[active_run()], lineage={RUN_HEAD: status}))
+        assert_waits(outcome, [*TO_ACTIVE, compare(SNAPSHOT, RUN_HEAD)])
+        assert f"an active deploy run of {RUN_HEAD[:9]} carries it" in outcome.stderr
+    for status in ("behind", "diverged"):
+        outcome = decide(world(head_runs=done, active=[active_run()], lineage={RUN_HEAD: status}))
+        assert_stuck(outcome, [*TO_ACTIVE, compare(SNAPSHOT, RUN_HEAD)])
 
 
 def test_one_run_in_flight_among_completed_ones_is_the_carrier(decide) -> None:
@@ -249,7 +263,7 @@ def test_one_run_in_flight_among_completed_ones_is_the_carrier(decide) -> None:
                  [head_run("in_progress"), head_run("completed", "cancelled", 87)]):
         assert_waits(decide(world(head_runs=runs)), [*TO_COMPARE, of_head(MAIN)])
     outcome = decide(world(head_runs=[head_run("completed", "failure", 87), head_run("completed", "cancelled")]))
-    assert_stuck(outcome, [*TO_COMPARE, of_head(MAIN)])
+    assert_stuck(outcome, TO_ACTIVE)
     assert "(87 completed failure, 88 completed cancelled)" in outcome.stderr
 
 

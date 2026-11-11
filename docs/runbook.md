@@ -344,12 +344,14 @@ If the deployed catalog stays stale for longer than that:
    younger than the limit, or a deploy run that has not completed carries it.
    `dispatch` is followed by the `dispatched deploy.yml for a waiting
    snapshot` log line.
-2. A failed step whose log says `stuck` means the snapshot is past the limit
-   and every deploy run of main's head completed without delivering it (it
-   failed, or someone cancelled it). The check dispatches once per main head,
-   so it starts no second rollout and fails every hour instead, which the
+2. A failed step whose log says `stuck` means the snapshot is past the limit,
+   no unfinished deploy run carries it, and every deploy run of main's head
+   completed without becoming the delivered release (usually it failed or
+   someone cancelled it). The check dispatches once per main head, so it
+   starts no second rollout and fails every hour instead, which the
    `deploy_dispatch` alert reports. Read that deploy run, then use the
-   fallback below. It also clears when a new commit lands on main.
+   fallback below. It also clears when a new commit lands on main: the new
+   head has no deploy run, so the check waits for its push run or dispatches.
 3. A failed step whose log says `unknown` means the check could not read an
    answer from GitHub and decided nothing; the next hourly run asks again.
 4. A failed step after a `dispatch` decision means the `gh workflow run`
