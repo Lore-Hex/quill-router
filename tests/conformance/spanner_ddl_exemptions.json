@@ -12,12 +12,6 @@
         "reason": "Schema rollout/retention explanation only; this line dispatches no DDL."
       }
     },
-    "clickhouse/ingest_operational_outbox.py": {
-      "# OutboxHeartbeatPublisher). One generic tr_entities row -- no DDL -- read back": {
-        "count": 1,
-        "reason": "ClickHouse analytics operation or explanation, not Spanner schema."
-      }
-    },
     "fastpath/internal/store/storetest/storetest.go": {
       "op, err := e.databases.CreateDatabase(ctx, &databasepb.CreateDatabaseRequest{": {
         "count": 1,
@@ -342,12 +336,6 @@
       "operator.gc(\"sql\", \"databases\", \"create\", \"funding\", \"--instance=\" + INSTANCE)": {
         "count": 1,
         "reason": "Creates the standalone Lightning PostgreSQL database via gcloud sql, not a Spanner database."
-      }
-    },
-    "src/trusted_router/operational_analytics_freshness.py": {
-      "#: needs no DDL: ``(kind, id)`` is the primary key and ``body`` the JSON below.": {
-        "count": 1,
-        "reason": "Schema rollout/retention explanation only; this line dispatches no DDL."
       }
     },
     "src/trusted_router/storage_gcp_authorize.py": {

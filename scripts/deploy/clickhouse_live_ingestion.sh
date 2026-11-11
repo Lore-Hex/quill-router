@@ -42,6 +42,14 @@ if [ -n "$external_ip" ]; then
 fi
 require_clickhouse_publisher "$NAME"
 
+# The operational drain restarted below writes its heartbeat to this table;
+# create it first, so a node deploy that runs before the production schema
+# migration does not leave the drain failing that write every pass.
+GCP_PROJECT_ID="$PROJECT" \
+SPANNER_INSTANCE_ID="${SPANNER_INSTANCE_ID:-trusted-router-nam6}" \
+SPANNER_DATABASE_ID="${SPANNER_DATABASE_ID:-trusted-router}" \
+  "${SCRIPT_DIR}/migrate_operational_outbox_heartbeat.sh"
+
 archive=$(mktemp "${TMPDIR:-/tmp}/tr-clickhouse-live.XXXXXX.tar.gz")
 trap 'clickhouse_role_lock_release; rm -f "$archive"' EXIT
 build_clickhouse_bundle "$ROOT" "$archive"
