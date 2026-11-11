@@ -3047,6 +3047,22 @@ def _status_history_page_html(
 _LEADERBOARD_EVIDENCE_CACHE: tuple[float, dict[str, Any]] | None = None
 
 
+def _analytics_unavailable_http_error(surface: str, exc: Exception) -> HTTPException:
+    """A live analytics read found ClickHouse unreachable with nothing cached.
+
+    That is a temporary outage: answer a retryable 503, never an empty table
+    that crawlers would index as the real ranking. Callers check
+    ``is_analytics_unavailable`` first so defects still raise. The
+    cached-response builder does not cache a raised build.
+    """
+    log_analytics_unavailable(log, surface, exc)
+    return HTTPException(
+        status_code=503,
+        detail="This page's data is temporarily unavailable; retry shortly.",
+        headers={"Retry-After": "60"},
+    )
+
+
 def _leaderboard_snapshot(settings: Settings, *, window: str = "24h") -> dict[str, Any]:
     if window == "7d":
         return _leaderboard_evidence_snapshot(settings)
@@ -3092,11 +3108,13 @@ def _leaderboard_snapshot(settings: Settings, *, window: str = "24h") -> dict[st
         payload["window_label"] = (
             f"rolling benchmark set of up to {LEADERBOARD_SAMPLE_LIMIT:,} samples"
         )
-    except Exception:
+    except Exception as exc:
         if settings.environment != "test" and _LEADERBOARD_CACHE is not None:
             log.exception("leaderboard_live_fallback_failed_serving_stale")
             return _LEADERBOARD_CACHE[1]
-        raise
+        if not is_analytics_unavailable(exc):
+            raise
+        raise _analytics_unavailable_http_error("leaderboard", exc) from exc
     if settings.environment != "test":
         _LEADERBOARD_CACHE = (now, payload)
     return payload
@@ -3174,11 +3192,13 @@ def _video_leaderboard_snapshot(settings: Settings) -> dict[str, Any]:
         payload["window_label"] = (
             f"rolling video benchmark set of up to {VIDEO_LEADERBOARD_SAMPLE_LIMIT:,} jobs"
         )
-    except Exception:
+    except Exception as exc:
         if settings.environment != "test" and _VIDEO_LEADERBOARD_CACHE is not None:
             log.exception("video_leaderboard_live_fallback_failed_serving_stale")
             return _VIDEO_LEADERBOARD_CACHE[1]
-        raise
+        if not is_analytics_unavailable(exc):
+            raise
+        raise _analytics_unavailable_http_error("video_leaderboard", exc) from exc
     if settings.environment != "test":
         _VIDEO_LEADERBOARD_CACHE = (now, payload)
     return payload
@@ -3204,10 +3224,15 @@ def _apps_snapshot(settings: Settings) -> dict[str, Any]:
             if precomputed is not None:
                 _APPS_CACHE = (now, precomputed)
                 return precomputed
-    samples = public_benchmark_samples(
-        limit=LEADERBOARD_SAMPLE_LIMIT,
-        recent_minutes=LEADERBOARD_RECENT_WINDOW_MINUTES,
-    )
+    try:
+        samples = public_benchmark_samples(
+            limit=LEADERBOARD_SAMPLE_LIMIT,
+            recent_minutes=LEADERBOARD_RECENT_WINDOW_MINUTES,
+        )
+    except Exception as exc:
+        if not is_analytics_unavailable(exc):
+            raise
+        raise _analytics_unavailable_http_error("apps", exc) from exc
     payload = aggregate_apps(samples)
     payload["generated_at"] = utcnow().isoformat().replace("+00:00", "Z")
     if settings.environment != "test":
@@ -3806,7 +3831,14 @@ def _status_page_html(settings: Settings, *, host: str) -> str:
     # benchmark samples. Informational provider watch — intentionally NOT part
     # of the router-core paging SLO above (a flaky upstream model must not page
     # router health), but surfaced here so provider errors are visible.
-    leaderboard = _leaderboard_snapshot(settings)
+    try:
+        leaderboard = _leaderboard_snapshot(settings)
+    except HTTPException as exc:
+        if exc.status_code != 503:
+            raise
+        # Analytics is unreachable (already logged). The informational
+        # provider watch is omitted; the status page itself must still render.
+        leaderboard = {}
     provider_health = sorted(
         (
             provider

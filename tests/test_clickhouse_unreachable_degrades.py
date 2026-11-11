@@ -145,12 +145,16 @@ def test_status_page_renders_when_clickhouse_is_unreachable(
         InMemoryStore, "synthetic_probe_samples", _read_through_unreachable_clickhouse
     )
     monkeypatch.setattr(InMemoryStore, "synthetic_rollups", _read_through_unreachable_clickhouse)
+    # The status page also embeds the leaderboard's provider watch, which
+    # reads the same unreachable ClickHouse.
+    _unreachable_benchmark_reads(monkeypatch)
 
     response = _app_client().get("/status", headers={"accept": "text/html"})
 
     assert response.status_code == 200, response.text
     assert "Status Data Temporarily Unavailable" in response.text
     assert "All Systems Operational" not in response.text
+    assert "Upstream provider health" not in response.text
 
 
 def test_status_history_is_a_retryable_503_when_clickhouse_is_unreachable(
@@ -244,3 +248,64 @@ def test_api_activity_is_a_retryable_503_when_clickhouse_is_unreachable(
     assert response.status_code == 503, response.text
     assert response.headers.get("retry-after") == "30"
     assert response.json()["error"]["type"] == "service_unavailable"
+
+
+# ------------------------------------------- /leaderboard, /leaderboard/video, /apps
+
+
+def _unreachable_benchmark_reads(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        InMemoryStore, "provider_benchmark_samples", _read_through_unreachable_clickhouse
+    )
+    if hasattr(InMemoryStore, "provider_balanced_benchmark_samples"):
+        monkeypatch.setattr(
+            InMemoryStore,
+            "provider_balanced_benchmark_samples",
+            _read_through_unreachable_clickhouse,
+        )
+
+
+@pytest.mark.parametrize(
+    ("path", "surface"),
+    [
+        ("/leaderboard", "leaderboard"),
+        ("/leaderboard/video", "video_leaderboard"),
+        ("/leaderboard/video.json", "video_leaderboard"),
+        ("/apps", "apps"),
+    ],
+)
+def test_benchmark_pages_are_a_retryable_503_when_clickhouse_is_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    path: str,
+    surface: str,
+) -> None:
+    """QUILL-ROUTER-G2 also grouped these public pages' cold-cache 500s."""
+    _unreachable_benchmark_reads(monkeypatch)
+
+    with caplog.at_level(logging.WARNING):
+        response = _app_client().get(path)
+
+    # Retryable outage, never an empty ranking a crawler would index.
+    assert response.status_code == 503, response.text[:500]
+    assert response.headers.get("retry-after") == "60"
+    records = [r for r in caplog.records if ANALYTICS_LOGGER_EVENT in r.getMessage()]
+    assert [getattr(r, "surface", None) for r in records] == [surface]
+    assert records[0].levelno == logging.WARNING
+
+
+def test_benchmark_pages_still_raise_on_a_non_availability_defect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("ClickHouse response did not contain data rows")
+
+    monkeypatch.setattr(InMemoryStore, "provider_benchmark_samples", broken)
+    if hasattr(InMemoryStore, "provider_balanced_benchmark_samples"):
+        monkeypatch.setattr(InMemoryStore, "provider_balanced_benchmark_samples", broken)
+    client = TestClient(
+        create_app(Settings(environment="test"), init_observability=False),
+        raise_server_exceptions=False,
+    )
+    assert client.get("/leaderboard").status_code == 500
+    assert client.get("/apps").status_code == 500
