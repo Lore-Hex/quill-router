@@ -28,7 +28,7 @@ MATRIX = list(itertools.product([False, True], [1, 2, 3], [False, True], [False,
 def test_eligibility_matrix(enabled, tier, cohort, under, health):
     calls = []
     rt = runtime()
-    cap = {1: 0, 2: 25000000, 3: 100000000}[tier]
+    cap = {1: 100000, 2: 25000000, 3: 100000000}[tier]
     rt.admission = AdmissionCache(lambda ws: calls.append(ws) or Admission(cap + int(not under), tier),
                                   clock=lambda: 10.0)
     rt.admission.health = {'fresh': DrainHealth(10, 5), 'stale': DrainHealth(5, 0),
@@ -37,7 +37,7 @@ def test_eligibility_matrix(enabled, tier, cohort, under, health):
     config.async_settle_enabled = enabled
     result = projection(authorization=authorization(), endpoints=[endpoint()],
                         requested=Eligibility(typed=cohort), runtime=rt, settings=config)
-    assert result['async_eligible'] is (enabled and tier in {2, 3} and cohort and under and health == 'fresh')
+    assert result['async_eligible'] is (enabled and cohort and under and health == 'fresh')
     assert len(calls) == int(enabled and cohort)
     if not cohort:
         assert result == {'async_eligible': False}
@@ -361,11 +361,12 @@ def test_every_workspace_is_ticketed_in_all_mode_but_the_reserved_list_and_lease
 
 
 @pytest.mark.parametrize('tier', [1, 2, 3])
-@pytest.mark.parametrize('amount', [5000000, 5000001])
+@pytest.mark.parametrize('amount', [100000, 100001, 5000000, 5000001])
 def test_pilot_authorize_cap_override(tier, amount):
     rt = runtime()
     rt.admission.read = lambda _: Admission(amount, tier)
     result = projection(authorization=authorization(), endpoints=[endpoint()],
                         requested=Eligibility(), runtime=rt,
                         settings=settings(async_settle_pilot_workspaces='ws-v1', async_settle_pilot_cap_micro=5000000))
-    assert result['async_eligible'] is (tier in {2, 3} and amount <= 5000000)
+    # The $5 override replaces the tier 2 and 3 thresholds; tier 1 keeps $0.10.
+    assert result['async_eligible'] is (amount <= {1: 100000, 2: 5000000, 3: 5000000}[tier])

@@ -194,7 +194,7 @@ def test_full_path_capacity_prunes_placeholder(admission_rig):
     rig.read.assert_called_once_with('new')
 
 
-@pytest.mark.parametrize('value', [Admission(0, 1), Admission(11, 2), Admission(-1, 2)])
+@pytest.mark.parametrize('value', [Admission(0, 0), Admission(11, 1), Admission(11, 2), Admission(-1, 2)])
 def test_placeholder_refresh_preserves_tier_and_amount_checks(admission_rig, value):
     rig = admission_rig
     rig.read.return_value = value

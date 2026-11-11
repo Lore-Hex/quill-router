@@ -318,7 +318,8 @@ answers true only if, within the last 5 s (`CACHE_SECONDS`, `35`):
   exposure (a `SUM` over at most 1,000 rows) and its shard-0 credit row's
   `trust_tier`, unlatched and unpaused
   (`storage_gcp_async_admission.py:71-104`), with the exposure at most the
-  pilot cap or the tier's cap (`TIER_CAPS`, `async_settle.py:36`); and
+  threshold `admission_cap` gives for the tier (the pilot cap or the tier's
+  cap for tiers 2 and 3, at most $0.10 for tier 1; `async_settle.py`); and
 - the fleet drain health record (`tr_entities` kind
   `settle_drain_control`, id `fleet-v1`,
   `storage_gcp_async_admission.py:107`, `136`), read at most once a second,

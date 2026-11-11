@@ -54,6 +54,7 @@ class Timing:
         self.owner = threading.get_ident()
         self.active = True
         self.admitting = False
+        self.admitted = False
         self.values = dict.fromkeys((name for name in FIELDS if name not in {"health", "workspace"}), Fraction(0))
         self.reads = {"health": "none", "workspace": "none"}
         self.outcome = "rejected"
@@ -94,7 +95,10 @@ class Timing:
             self.values["unclassified_ms"] = self.values["total_ms"] - sum(
                 (self.values[name] for name in TOP_LEVEL), Fraction(0))
         fields = ADMISSION_FIELDS if projection else FIELDS
-        prefix = "metric=async_settle_projection_admission" if projection else (
+        # The projection line says whether admission answered yes, so the share
+        # of authorizes offered an async settle can be counted from logs.
+        prefix = ("metric=async_settle_projection_admission eligible="
+                  + ("yes" if self.admitted is True else "no")) if projection else (
             "metric=async_settle_handoff_phases outcome=" + (self.outcome if self.outcome in OUTCOMES else "rejected"))
         # Only locally defined keys and numeric values reach the logger.
         parts = [prefix]
@@ -256,16 +260,20 @@ def eligible(cache: Any, workspace: str, cap: int, *, projection: bool = False,
     if timing is not None:
         timing.stop_validation()
         timing.admitting = True
+    answer = False
     try:
         with measure("admission_ms"):
             if cached_only:
-                return bool(cache.eligible(workspace, cap, queued_micro=queued_micro, cached_only=True))
-            return bool(cache.eligible(workspace, cap))
+                answer = bool(cache.eligible(workspace, cap, queued_micro=queued_micro, cached_only=True))
+            else:
+                answer = bool(cache.eligible(workspace, cap))
+            return answer
     finally:
         if timing is not None:
             timing.admitting = False
             if projection:
                 timing.active = False
+                timing.admitted = answer
                 timing.emit(projection=True)
         if token is not None:
             _CURRENT.reset(token)

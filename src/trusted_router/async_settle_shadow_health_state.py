@@ -93,7 +93,7 @@ def summarize(rows: list[Any], *, boot: str, region: str, revision: str, slot: i
 
 def prediction(observer: Any, workspace: str, *, at: float | None = None) -> dict[str, Any]:
     """Called by the real Observer under its lock, only for the exact v2 pin."""
-    from trusted_router.services.async_settle import TIER_CAPS
+    from trusted_router.services.async_settle import admission_cap
     from trusted_router.services.async_settle_shadow_admission import unknown
 
     now = observer.clock() if at is None else at
@@ -122,10 +122,11 @@ def prediction(observer: Any, workspace: str, *, at: float | None = None) -> dic
     if type(data.pending_micro) is not int or data.pending_micro < 0 or type(data.tier) is not int:
         result["reason"] = "invalid_data"
         return result
-    cap = observer.cap or TIER_CAPS.get(data.tier)
-    result["cap_micro"] = cap
-    reason = ("ineligible_tier" if data.tier not in TIER_CAPS else
-              "cap_exceeded" if cap is not None and data.pending_micro > cap else
+    cap = admission_cap(data.tier, observer.cap)
+    # A tier that is not admitted keeps reporting the configured override.
+    result["cap_micro"] = cap if cap is not None else observer.cap or None
+    reason = ("ineligible_tier" if cap is None else
+              "cap_exceeded" if data.pending_micro > cap else
               "drain_unhealthy" if body["p95_age_us"] > 5_000_000 else "eligible")
     result.update(prediction="yes" if reason == "eligible" else "no", reason=reason)
     return result
