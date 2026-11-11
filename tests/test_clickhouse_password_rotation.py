@@ -22,9 +22,11 @@ import json
 import os
 import re
 import shutil
+import signal
 import stat
 import subprocess
 import tarfile
+import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -74,10 +76,15 @@ with open(os.environ["STUB_LOG"], "a") as log:
 if name == "hostname":
     print("tr-clickhouse-test")
 elif name == "sleep":
-    pass
+    if (state / "real-sleep").exists():
+        import time
+        time.sleep(0.2)
 elif name == "clickhouse-client":
     outage = "Code: 210. DB::NetException: Connection refused (localhost:9000). (NETWORK_ERROR)"
     if (state / "server-down").exists():
+        sys.exit(outage)
+    blip = state / "down-after-accepting"
+    if blip.exists() and (state / "accepted-once").exists():
         sys.exit(outage)
     frozen = state / "frozen-user.xml"
     live = root / "etc/clickhouse-server/users.d/tr-user.xml"
@@ -97,6 +104,8 @@ elif name == "clickhouse-client":
         print("Code: 516. DB::Exception: tr: Authentication failed: password is incorrect, "
               "or there is no user with such name. (AUTHENTICATION_FAILED)", file=sys.stderr)
         sys.exit(4)
+    if blip.exists() and listed("down-after-accepting", password) and argv[-1] == "SELECT 1":
+        (state / "accepted-once").touch()
     if argv[-1] == "SELECT 1":
         print(1)
 elif name == "systemctl":
@@ -179,9 +188,8 @@ class Node:
     def mark(self, file: str, *items: str) -> None:
         (self.state / file).write_text("\n".join(items))
 
-    def run(self, password: str, *args: str) -> subprocess.CompletedProcess[str]:
-        self.log.write_text("")
-        env = {
+    def _env(self, tries: str) -> dict[str, str]:
+        return {
             "PATH": f"{self.bin}:{os.environ['PATH']}",
             "HOME": str(self.root),
             "STUB_LOG": str(self.log),
@@ -189,14 +197,29 @@ class Node:
             "TR_NODE_ROOT": str(self.root),
             "TR_FILE_OWNER": subprocess.check_output(["id", "-un"], text=True).strip(),  # noqa: S607
             "TR_FILE_GROUP": subprocess.check_output(["id", "-gn"], text=True).strip(),  # noqa: S607
-            "TR_WAIT_TRIES": "3",
+            "TR_WAIT_TRIES": tries,
             "TR_WAIT_SECONDS": "0",
         }
+
+    def run(self, password: str, *args: str) -> subprocess.CompletedProcess[str]:
+        self.log.write_text("")
+        env = self._env("3")
         return subprocess.run(  # noqa: S603 - fixed script under test
             [BASH, str(NODE_SCRIPT), *args],
             input=password + "\n", env=env, capture_output=True, text=True, timeout=60,
             check=False,
         )
+
+    def start(self, password: str, *args: str, tries: str) -> subprocess.Popen[str]:
+        self.log.write_text("")
+        process = subprocess.Popen(  # noqa: S603 - fixed script under test
+            [BASH, str(NODE_SCRIPT), *args], env=self._env(tries), text=True,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        assert process.stdin is not None
+        process.stdin.write(password + "\n")
+        process.stdin.close()
+        return process
 
     def calls(self, name: str | None = None) -> list[dict]:
         entries = [json.loads(line) for line in self.log.read_text().splitlines()]
@@ -349,9 +372,10 @@ def test_success_is_not_reported_while_the_old_password_still_works(node: Node) 
     result = node.run(NEW, "--apply")
     assert result.returncode == 1
     assert "was not seen to refuse the previous password" in result.stderr
-    # The services keep the value that still works until the old one is dead.
-    assert node.env_file.read_text() == f"CH_PASSWORD={OLD}\n"
-    assert node.restarted() == []
+    # The server accepts the new value, so the services already have it: they
+    # are never left holding a value the server may stop accepting.
+    assert node.env_file.read_text() == f"CH_PASSWORD={NEW}\n"
+    assert sorted(node.restarted()) == ["optional-file.service", "tr-clickhouse-ingest.service"]
 
 
 def test_an_outage_is_not_mistaken_for_the_old_password_being_refused(node: Node) -> None:
@@ -359,7 +383,39 @@ def test_an_outage_is_not_mistaken_for_the_old_password_being_refused(node: Node
     result = node.run(NEW, "--apply")
     assert result.returncode == 1
     assert "was not seen to refuse the previous password" in result.stderr
-    assert node.env_file.read_text() == f"CH_PASSWORD={OLD}\n"
+    assert node.env_file.read_text() == f"CH_PASSWORD={NEW}\n"
+
+
+def test_services_get_the_new_value_even_if_the_server_blips_after_accepting_it(
+    node: Node,
+) -> None:
+    # Accepted, then down for the refused-check: the old order left the env
+    # file on the old value, and the services broke once the server came back.
+    node.mark("down-after-accepting", NEW)
+    result = node.run(NEW, "--apply")
+    assert result.returncode == 1
+    assert node.env_file.read_text() == f"CH_PASSWORD={NEW}\n"
+    assert node.user_file.read_text() == _hashed_user_file(NEW)
+
+
+@pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGINT, signal.SIGHUP])
+def test_an_interrupted_wait_puts_the_previous_user_file_back(node: Node, sig: int) -> None:
+    shutil.copy(node.user_file, node.state / "frozen-user.xml")
+    node.mark("real-sleep")
+    before = node.files()
+    process = node.start(NEW, "--apply", tries="200")
+    deadline = time.monotonic() + 20
+    while node.user_file.read_text() == before["etc/clickhouse-server/users.d/tr-user.xml"]:
+        assert time.monotonic() < deadline, "the new user file was never installed"
+        time.sleep(0.05)
+    time.sleep(0.3)
+    process.send_signal(sig)
+    process.wait(timeout=20)
+    assert process.stderr is not None
+    stderr = process.stderr.read()
+    assert process.returncode != 0
+    assert "the previous user file is back" in stderr
+    assert node.files() == before
     assert node.restarted() == []
 
 
@@ -405,6 +461,7 @@ def test_a_service_that_does_not_come_back_fails_the_node(node: Node, how: str) 
         "dollar-$(id)-0123456789abcdefgh",
         "quote-'-0123456789abcdefghijkl",
         "hash-#-0123456789abcdefghijklmn",
+        "-leading-dash-0123456789abcdefgh",
     ],
 )
 def test_a_password_the_env_file_cannot_carry_is_refused(node: Node, password: str) -> None:
@@ -642,13 +699,26 @@ def test_wrapper_stops_at_the_first_failing_node(tmp_path: Path, step: int) -> N
         ),
         (
             ["--apply"],
+            {"FAKE_SECRET": NEW + "\n"},
+            "must not end in a newline",
+            ["compute instances describe", "secrets versions access"],
+        ),
+        (
+            ["--apply"],
+            {"FAKE_SECRET": "-" + NEW},
+            "must not start with -",
+            ["compute instances describe", "secrets versions access"],
+        ),
+        (
+            ["--apply"],
             {"FAKE_SECRET_UNREADABLE": "1"},
             "",
             ["compute instances describe", "secrets versions access"],
         ),
     ],
     ids=["unknown-flag", "extra-argument", "name-alone", "zone-alone", "external-ip",
-         "weak-secret", "two-line-secret", "unreadable-secret"],
+         "weak-secret", "two-line-secret", "trailing-newline-secret", "leading-dash-secret",
+         "unreadable-secret"],
 )
 def test_wrapper_refuses_before_touching_any_node(
     tmp_path: Path, args: list[str], env: dict[str, str], message: str, allowed: list[str]
@@ -682,7 +752,7 @@ def test_wrapper_targets_one_node_with_name_and_zone(tmp_path: Path) -> None:
 
 
 def test_both_scripts_are_executable_and_the_wrapper_and_node_agree_on_the_rule() -> None:
-    rule = r'=~ ^[A-Za-z0-9_-]{24,}$ ]]'
+    rule = r'=~ ^[A-Za-z0-9_][A-Za-z0-9_-]{23,}$ ]]'
     for script in (WRAPPER, NODE_SCRIPT):
         assert _mode(script) & 0o111, script
         assert rule in script.read_text(), script

@@ -79,13 +79,17 @@ done
 
 # One read for every node: a version added halfway through must not leave the
 # cluster on two passwords.
+# The trailing x keeps the command substitution from dropping trailing
+# newlines: a new node's startup script hashes the secret's exact bytes, so a
+# value that only works once its newline is stripped must be refused here.
 password="$(gcloud secrets versions access latest \
   --secret="$SECRET" \
-  --project="$PROJECT")"
+  --project="$PROJECT" && printf x)"
+password="${password%x}"
 # The node script enforces the same rule. Checked here so that a value it would
 # refuse stops the rollout before any node is contacted.
-if ! [[ "$password" =~ ^[A-Za-z0-9_-]{24,}$ ]]; then
-  echo "refusing: the latest version of ${SECRET} must be 24 or more characters from A-Z a-z 0-9 _ -" >&2
+if ! [[ "$password" =~ ^[A-Za-z0-9_][A-Za-z0-9_-]{23,}$ ]]; then
+  echo "refusing: the latest version of ${SECRET} must be 24 or more characters from A-Z a-z 0-9 _ -, must not start with - and must not end in a newline" >&2
   exit 1
 fi
 

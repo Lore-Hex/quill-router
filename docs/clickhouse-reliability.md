@@ -340,9 +340,11 @@ capability from the unit is a follow-up.
 
 Every password is a Secret Manager secret, and each script below installs
 whatever the latest version of its secret is. None of them writes a secret.
-Add the new version first, with a value from `A-Z a-z 0-9 _ -` (the `tr`
-password is also read from a shell and a systemd environment file, and the
-scripts refuse anything else or anything under 24 characters):
+Add the new version first, with a value from `A-Z a-z 0-9 _ -` that does not
+start with `-` and has no trailing newline (the `tr` password is also read from
+a shell, a systemd environment file and `clickhouse-client --password`, and a
+new node hashes the secret's exact bytes; the scripts refuse anything else or
+anything under 24 characters):
 
 ```bash
 openssl rand -hex 32 | tr -d '\n' | gcloud secrets versions add \
@@ -368,10 +370,13 @@ The first run reports what each node would change. The second goes to
 tr-clickhouse-3, -2 and then -1. On each node it installs
 `users.d/tr-user.xml` holding only the SHA-256 of the new password, waits
 until the server accepts it (the file is reread in place, the server is not
-restarted), requires that the server now refuses the old password, writes
-the new value to `/etc/tr-clickhouse-ingest.env` and restarts the running
-services that read that file. If the server does not accept the new password,
-the previous user file goes back and the node is as it was. The password is
+restarted), writes the new value to `/etc/tr-clickhouse-ingest.env`, restarts
+the running services that read that file, and then requires that the server
+refuses the old password. If the server does not accept the new password, or
+the run is interrupted (Ctrl-C, a dropped SSH session) before it does, the
+previous user file goes back and the node is as it was. Once the server has
+accepted it, the env file and the restarts go ahead uninterrupted, so the
+services are never left on a value the server no longer takes. The password is
 never a command argument or instance metadata; it reaches the node on
 standard input.
 
@@ -386,6 +391,10 @@ What to expect and what to check:
   another node is turned away once; its timer runs it again.
 - The first failure stops the rollout. Run it again to continue: a node that
   already holds the new password is checked and left alone.
+- Do not run `clickhouse_live_ingestion.sh` or `clickhouse_cluster.sh` during
+  a rotation. They rewrite the env file from the latest secret, so on a node
+  not yet rotated the services would hold the new value while the server still
+  takes the old one, and the rotation would then refuse that node.
 - If the script stops with `is not running after its restart`, the node
   already has the new password everywhere; only that service is down. Look at
   `systemctl status` and `journalctl -u` for the unit on that node. A second

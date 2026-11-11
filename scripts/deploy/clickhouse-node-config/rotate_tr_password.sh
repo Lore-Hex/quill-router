@@ -13,10 +13,11 @@
 #
 #   --apply   install users.d/tr-user.xml holding only the SHA-256 of the new
 #             password, wait until the server accepts it (users.d is reread
-#             without a restart), require that the previous password is now
-#             refused, write the new value to /etc/tr-clickhouse-ingest.env,
-#             and restart the running services that read that file. If the
-#             server does not accept the new password, the previous user file
+#             without a restart), write the new value to
+#             /etc/tr-clickhouse-ingest.env, restart the running services that
+#             read that file, and only then require that the previous password
+#             is refused. If the server does not accept the new password, or
+#             the run is interrupted before it does, the previous user file
 #             goes back and nothing else changes.
 #
 # It can be run again after a failure: whatever is already in place is checked
@@ -45,9 +46,11 @@ node="$(hostname)"
 
 IFS= read -r NEW_PASSWORD || true
 # The env file is read both by systemd and by `.` in a shell, so the value must
-# mean the same thing to both. That and a length floor are the whole rule.
-if ! [[ "$NEW_PASSWORD" =~ ^[A-Za-z0-9_-]{24,}$ ]]; then
-  echo "refusing: the new password must be 24 or more characters from A-Z a-z 0-9 _ -" >&2
+# mean the same thing to both. Other tooling passes it to clickhouse-client as
+# `--password "$CH_PASSWORD"`, where a leading dash would read as an option.
+# That and a length floor are the whole rule.
+if ! [[ "$NEW_PASSWORD" =~ ^[A-Za-z0-9_][A-Za-z0-9_-]{23,}$ ]]; then
+  echo "refusing: the new password must be 24 or more characters from A-Z a-z 0-9 _ - and must not start with -" >&2
   exit 1
 fi
 
@@ -157,9 +160,24 @@ if [ "$APPLY" -eq 0 ]; then
 fi
 
 installed=0
+confirmed=0
+previous=""
+# Until the server is seen to accept the new password, an interrupted run (a
+# dropped SSH session, Ctrl-C during the wait) puts the previous user file back
+# instead of leaving the node on a file nobody has confirmed.
+on_signal() {
+  trap '' HUP INT TERM PIPE
+  if [ "$installed" -eq 1 ] && [ "$confirmed" -eq 0 ] && [ -n "$previous" ]; then
+    replace_file "$USER_FILE" \
+      "${TR_FILE_OWNER:-clickhouse}" "${TR_FILE_GROUP:-clickhouse}" 0640 <"$previous"
+    echo "interrupted on ${node}: the previous user file is back" >&2 || true
+  fi
+  exit 130
+}
+trap 'rm -f "$previous"' EXIT
+trap on_signal HUP INT TERM PIPE
 if [ "$current" -eq 0 ]; then
   previous="$(mktemp "${USERS_D}/tr-user.previous.XXXXXX")"
-  trap 'rm -f "$previous"' EXIT
   cat "$USER_FILE" >"$previous"
   render_user_file | replace_file "$USER_FILE" \
     "${TR_FILE_OWNER:-clickhouse}" "${TR_FILE_GROUP:-clickhouse}" 0640
@@ -184,13 +202,14 @@ if [ "$installed" -eq 1 ] || [ "$accepted" -eq 0 ]; then
     exit 1
   fi
 fi
+confirmed=1
 
 if [ "$OLD_PASSWORD" != "$NEW_PASSWORD" ]; then
-  # The point of a rotation: the old value no longer opens anything.
-  if [ -n "$OLD_PASSWORD" ] && ! wait_for refused "$OLD_PASSWORD"; then
-    echo "refusing to report success: ClickHouse on ${node} was not seen to refuse the previous password" >&2
-    exit 1
-  fi
+  # The server accepts the new value, so the services may as well have it:
+  # once it reloads they cannot sign in with anything else. Nothing interrupts
+  # the write and the restarts; a node left with the server on the new value
+  # and its services on the old one is the outcome to avoid.
+  trap '' HUP INT TERM PIPE
   {
     grep -v '^CH_PASSWORD=' "$ENV_FILE" || true
     printf 'CH_PASSWORD=%s\n' "$NEW_PASSWORD"
@@ -214,6 +233,11 @@ if [ "$OLD_PASSWORD" != "$NEW_PASSWORD" ]; then
     fi
     echo "${node}: restarted ${unit}"
   done
+  # The point of a rotation: the old value no longer opens anything.
+  if [ -n "$OLD_PASSWORD" ] && ! wait_for refused "$OLD_PASSWORD"; then
+    echo "refusing to report success: ClickHouse on ${node} was not seen to refuse the previous password" >&2
+    exit 1
+  fi
 fi
 
 echo "${node}: tr signs in with this password; ${USER_FILE} holds only its hash"
