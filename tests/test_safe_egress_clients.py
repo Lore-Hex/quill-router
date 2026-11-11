@@ -10,8 +10,10 @@ because the listener was simply unreachable.
 
 from __future__ import annotations
 
+import base64
 import http.server
 import socket
+import ssl
 import threading
 from collections.abc import Callable, Iterator
 from typing import Any
@@ -21,12 +23,13 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from trusted_router.byok_crypto import encrypt_control_secret
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.services import broadcast as broadcast_service
 from trusted_router.services.broadcast_adapters import (
-    WebhookOTLPBroadcastAdapter,
     _validate_http_endpoint,
+    adapter_for,
     allows_local_destinations,
 )
 from trusted_router.services.safe_egress import (
@@ -134,6 +137,17 @@ def test_clients_carry_the_checking_backend() -> None:
     assert isinstance(async_transport._pool._network_backend, _PublicOnlyAsyncBackend)
     assert async_client.follow_redirects is False
     assert async_client._mounts == {}
+
+
+@pytest.mark.parametrize("build", (public_egress_client, public_egress_async_client))
+def test_clients_verify_the_server_certificate(build: Callable[..., Any]) -> None:
+    # The builders hand the pool its TLS context themselves, so nothing in
+    # httpx stands behind it: a context that skips verification here would
+    # let any host answer for the name that was checked.
+    context = build(timeout=1)._transport._pool._ssl_context
+    assert isinstance(context, ssl.SSLContext)
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.check_hostname is True
 
 
 def test_proxy_environment_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -381,28 +395,65 @@ def _webhook_destination(endpoint: str) -> BroadcastDestination:
     )
 
 
+def _posthog_destination(endpoint: str, settings: Settings) -> BroadcastDestination:
+    return BroadcastDestination(
+        id="bdst_test",
+        workspace_id="ws_test",
+        type="posthog",
+        name="analytics",
+        endpoint=endpoint,
+        encrypted_api_key=encrypt_control_secret(
+            "phc_test_project_token",
+            settings,
+            workspace_id="ws_test",
+            purpose=broadcast_service.broadcast_secret_context("bdst_test", "api_key"),
+        ),
+    )
+
+
+# The PostHog adapter opens its stored key before it connects, and outside
+# local and test that needs a configured wrapping key. Both environments below
+# share this one, so a refusal in production is the connection being refused
+# and not the key failing to open.
+_ENVELOPE_KEY = base64.b64encode(bytes(range(32))).decode()
+
+
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kind", "seen"),
+    (("webhook", "POST /otlp"), ("posthog", "POST /i/v0/e/")),
+    ids=("webhook", "posthog"),
+)
 async def test_connection_test_cannot_reach_an_internal_listener_in_production(
-    listener: _Listener, monkeypatch: pytest.MonkeyPatch
+    kind: str, seen: str, listener: _Listener, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _resolve_names_to(monkeypatch, _internal)
-    destination = _webhook_destination(f"http://collector.example:{listener.port}/otlp")
-    adapter = WebhookOTLPBroadcastAdapter()
+    local = Settings(environment="test", byok_envelope_key_b64=_ENVELOPE_KEY)
+    production = local.model_copy(update={"environment": "production"})
+    base = f"http://collector.example:{listener.port}"
+    destination = (
+        _webhook_destination(f"{base}/otlp")
+        if kind == "webhook"
+        else _posthog_destination(base, local)
+    )
+    adapter = adapter_for(kind)
+    assert adapter is not None
 
     # Control: in the test environment the loopback collector answers.
-    ok, message = await broadcast_service.test_destination(destination, Settings(environment="test"))
+    ok, message = await broadcast_service.test_destination(destination, local)
     assert (ok, message) == (True, "ok")
-    assert listener.seen == ["POST /otlp"]
+    assert listener.seen == [seen]
 
-    production = Settings(environment="test").model_copy(update={"environment": "production"})
     ok, message = await broadcast_service.test_destination(destination, production)
     assert (ok, message) == (False, "connection failed")
-    assert listener.seen == ["POST /otlp"]
+    assert listener.seen == [seen]
 
-    # Delivery goes through the same door.
+    # Delivery goes through the same door. Control first, as above.
+    adapter.deliver_metadata(destination, _generation(), settle_body={}, settings=local)
+    assert listener.seen == [seen, seen]
     with pytest.raises(httpx.ConnectError):
         adapter.deliver_metadata(destination, _generation(), settle_body={}, settings=production)
-    assert listener.seen == ["POST /otlp"]
+    assert listener.seen == [seen, seen]
 
 
 def _generation() -> Generation:

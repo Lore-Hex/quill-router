@@ -116,7 +116,9 @@ def register(router: APIRouter) -> None:
                 raise api_error(
                     400, "image fetch: timeout", ErrorType.BAD_REQUEST
                 ) from exc
-            except httpx.HTTPError as exc:
+            except (httpx.HTTPError, httpx.InvalidURL) as exc:
+                # `InvalidURL` is not an `HTTPError`. httpx raises it for a
+                # URL it will not send: a control character in the host, say.
                 raise api_error(
                     400, "image fetch: fetch failed", ErrorType.BAD_REQUEST
                 ) from exc
