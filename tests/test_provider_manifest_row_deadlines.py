@@ -56,7 +56,9 @@ def _edit_manifest(adapter: System1Catalog, edit) -> None:
 def _endpoints(monkeypatch, tmp_path) -> dict[str, ModelEndpoint]:
     """Every endpoint kind for the manifests in tmp_path, after the final expiry pass."""
     monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
-    _, endpoints = catalog_ingest._supplemental_provider_models_and_endpoints()
+    # Pinned to the scenario's day: the post-cutover CI clock is past the
+    # scheduled retirement of s1-pro-2 and s1-pro-3, which would drop them.
+    _, endpoints = catalog_ingest._supplemental_provider_models_and_endpoints(at=GENERATED)
     assert endpoints and all(e.usage_type == "Credits" for e in endpoints.values())
     # Decision Models has no BYOK route today; a BYOK route of the same model
     # (or one installed statically later) must expire with its Credits route.
