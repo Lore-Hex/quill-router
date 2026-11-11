@@ -38,6 +38,9 @@ def test_operator_reader_never_puts_the_password_on_a_command_line() -> None:
     # The self-check reads the password from stdin and also proves writes fail.
     assert 'IFS= read -r P; export CLICKHOUSE_PASSWORD=' in script
     assert "tr_operator_read can write" in script
+    # The access probe stays bounded: one-row reads, no FINAL or count().
+    probe = script.split("for attempt in", 1)[1]
+    assert "FINAL" not in probe and "count()" not in probe
     # The documented query command separates the password from the SQL.
     assert "printf '%s\\n' \"$(gcloud secrets versions access latest" in script
 

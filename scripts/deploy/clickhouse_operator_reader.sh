@@ -92,7 +92,8 @@ gcloud compute ssh "$NAME" \
   --command="sudo sh -c 'set -eu; umask 077; temporary=\$(mktemp); cat > \"\$temporary\"; install -o clickhouse -g clickhouse -m 0640 \"\$temporary\" /etc/clickhouse-server/users.d/tr-operator-reader.xml; rm -f \"\$temporary\"'" \
   <"$config"
 
-# Prove the account works and is read-only: every granted table answers, and
+# Prove the account works and is read-only: every granted table answers a
+# one-row read (no FINAL, no aggregate, so it stays cheap as tables grow), and
 # a write is refused. Retry while the server picks up the new file.
 operator_password="$(gcloud secrets versions access latest \
   --secret="$OPERATOR_SECRET" \
@@ -103,7 +104,7 @@ printf '%s\n' "$operator_password" |
     --zone="$ZONE" \
     --tunnel-through-iap \
     --quiet \
-    --command="IFS= read -r P; export CLICKHOUSE_PASSWORD=\"\$P\"; for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do if clickhouse-client --user tr_operator_read --multiquery --query \"SELECT count() FROM tr.activity_generations FINAL LIMIT 1; SELECT count() FROM tr.provider_benchmark_samples LIMIT 1; SELECT count() FROM tr.workspace_directory FINAL LIMIT 1\" >/dev/null 2>&1; then if clickhouse-client --user tr_operator_read --query \"CREATE TABLE tr.tr_operator_read_probe (x UInt8) ENGINE = Memory\" >/dev/null 2>&1; then echo 'tr_operator_read can write' >&2; exit 1; fi; exit 0; fi; sleep 5; done; echo 'tr_operator_read cannot read its granted tables' >&2; exit 1"
+    --command="IFS= read -r P; export CLICKHOUSE_PASSWORD=\"\$P\"; for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do if clickhouse-client --user tr_operator_read --multiquery --query \"SELECT 1 FROM tr.activity_generations LIMIT 1; SELECT 1 FROM tr.provider_benchmark_samples LIMIT 1; SELECT 1 FROM tr.workspace_directory LIMIT 1\" >/dev/null 2>&1; then if clickhouse-client --user tr_operator_read --query \"CREATE TABLE tr.tr_operator_read_probe (x UInt8) ENGINE = Memory\" >/dev/null 2>&1; then echo 'tr_operator_read can write' >&2; exit 1; fi; exit 0; fi; sleep 5; done; echo 'tr_operator_read cannot read its granted tables' >&2; exit 1"
 unset operator_password
 
 echo "configured loopback-only read-only ClickHouse operator account"
