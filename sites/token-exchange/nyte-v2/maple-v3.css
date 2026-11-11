@@ -81,8 +81,12 @@
 .mv3-gateway{background:var(--sky)}
 .mv3-gateway .mv3-eyebrow .v3-bar,.mv3-manual .mv3-eyebrow .v3-bar{background:var(--ink)}
 .mv3-status{margin-top:40px}
-.mv3-status-line{display:flex;gap:12px;align-items:flex-start;font-weight:500}
+/* One body style in the status block: the line at 17/500, the sentence at 17/400. */
+[data-nyte-page="maple"] main .mv3-status p{font-size:17px;line-height:1.55;font-weight:400}
+[data-nyte-page="maple"] main .mv3-status .mv3-status-line{display:flex;gap:12px;align-items:flex-start;font-weight:500}
 .mv3-status p+p{margin-top:8px}
+/* The check time is part of the verdict sentence, never a smaller line of its own. */
+.verdict .verdict-text,.verdict .verdict-time{font:inherit;color:inherit}
 .verdict-icon{flex:none;display:block;width:24px;height:24px;margin-top:-1px;background:var(--ink);
   -webkit-mask:var(--icon) center/24px 24px no-repeat;mask:var(--icon) center/24px 24px no-repeat;
   --icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.5'%3E%3Cpath d='M8 12 L16 12'/%3E%3C/svg%3E");opacity:.35}
@@ -158,8 +162,7 @@
   .mv3-hero .wrap,.mv3-hero .mv3-eyebrow{align-items:flex-start}
   .mv3-hero h1{margin-top:clamp(12px,2.6svh,24px);font-size:min(48px,(100vw - 40px) * .132,6.6svh);line-height:.98}
   [data-nyte-page="maple"] main .mv3-hero .lede{margin-top:clamp(12px,2.6svh,24px);font-size:17px;line-height:1.55}
-  .mv3-hero .btns{margin-top:clamp(12px,2.8svh,28px);width:auto}
-  [data-nyte-page="maple"] main .mv3-hero .btns .btn{width:auto}
+  .mv3-hero .btns{margin-top:clamp(12px,2.8svh,28px)}
   [data-nyte-page="maple"] main h2{font-size:32px;line-height:1.05}
   .mv3-eyebrow+h2,.wrap>.mv3-eyebrow+.mv3-copy{margin-top:20px}
   [data-nyte-page="maple"] main .lede,.mv3-live .verdict .lede{font-size:17px;line-height:1.55}
@@ -167,7 +170,9 @@
   .mv3-status{margin-top:32px}
   .mv3-badge img{height:64px}
   .steps li{gap:16px;padding:20px 0}
-  .check-foot{flex-direction:column;align-items:flex-start;gap:16px;margin-top:28px}
+  .check-foot{flex-direction:column;align-items:stretch;gap:16px;margin-top:28px}
+  [data-nyte-page="maple"] main .check-foot .btn{width:100%;justify-content:center}
+  .check-foot a{align-self:flex-start}
   .mv3-tabs [role="tab"]{margin-right:24px}
   .mv3-panel{padding:20px}
   .mv3-checks,.mv3-record-body,.mv3-ways{margin-top:32px}
