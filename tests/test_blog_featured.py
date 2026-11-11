@@ -115,13 +115,13 @@ COMBO = "combo-models-beat-the-best-model"
 
 def test_a_post_dated_ahead_is_held_until_its_date() -> None:
     """Dating a post ahead embargoes it; the day arriving releases it."""
-    assert BLOG_POSTS_BY_SLUG[COMBO].published_date == "2026-11-12"
+    assert BLOG_POSTS_BY_SLUG[COMBO].published_date == "2026-11-11"
 
-    assert published_post(COMBO, today="2026-11-11") is None
-    assert COMBO not in {post.slug for post in published_posts(today="2026-11-11")}
+    assert published_post(COMBO, today="2026-11-10") is None
+    assert COMBO not in {post.slug for post in published_posts(today="2026-11-10")}
 
-    assert published_post(COMBO, today="2026-11-12") is BLOG_POSTS_BY_SLUG[COMBO]
-    assert COMBO in {post.slug for post in published_posts(today="2026-11-12")}
+    assert published_post(COMBO, today="2026-11-11") is BLOG_POSTS_BY_SLUG[COMBO]
+    assert COMBO in {post.slug for post in published_posts(today="2026-11-11")}
     assert len(published_posts(today="9999-12-31")) == len(BLOG_POSTS_BY_SLUG)
 
 
@@ -140,12 +140,35 @@ def test_an_embargoed_post_is_reachable_nowhere(
         )
         return page.status_code, listed
 
-    monkeypatch.setattr(blog, "blog_today", lambda: "2026-11-11")
+    monkeypatch.setattr(blog, "blog_today", lambda: "2026-11-10")
     status, listed = surfaces()
     assert status == 404
     assert COMBO not in listed
 
-    monkeypatch.setattr(blog, "blog_today", lambda: "2026-11-12")
+    monkeypatch.setattr(blog, "blog_today", lambda: "2026-11-11")
     status, listed = surfaces()
     assert status == 200
     assert listed.count(COMBO) >= 2
+
+
+def test_combo_launch_opens_with_venturebeat_coverage(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from trusted_router.content import blog
+
+    monkeypatch.setattr(blog, "blog_today", lambda: "2026-11-11")
+    coverage_url = (
+        "https://venturebeat.com/technology/"
+        "trustedrouter-launches-three-new-encrypted-fusion-models-that-combine-"
+        "multiple-llms-including-one-exclusively-with-u-s-model-providers"
+    )
+    opening = BLOG_POSTS_BY_SLUG[COMBO].body_html.strip().split("</p>", 1)[0]
+    assert opening.startswith("<p><strong>In the news:</strong>")
+    assert f'href="{coverage_url}"' in opening
+
+    response = client.get(f"/blog/{COMBO}", headers={"accept": "text/html"})
+    assert response.status_code == 200
+    assert f'href="{coverage_url}"' in response.text
+    assert response.text.index(coverage_url) < response.text.index(
+        "<p>Many models beat one model."
+    )
