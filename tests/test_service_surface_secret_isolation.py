@@ -158,7 +158,6 @@ _ACTION_FORBIDDEN_CONFIG: tuple[tuple[str, object, str], ...] = (
 )
 
 _SENSITIVE_TEST_VALUES: dict[str, object] = {
-    "ops_chat_webhook_secret": "o" * 40,
     "postgres_dsn": "postgresql://surface:secret@db.example/surface",
     "postgres_iam_auth": "aws-dsql",
     "clickhouse_url": "https://clickhouse.example",
@@ -223,7 +222,6 @@ _SENSITIVE_TEST_VALUES: dict[str, object] = {
 }
 
 _EXPECTED_OWNER_GROUPS: tuple[tuple[frozenset[str], tuple[str, ...]], ...] = (
-    (frozenset({"actions"}), ("ops_chat_webhook_secret",)),
     (frozenset({"actions", "control"}), ("stripe_secret_key",)),
     (
         frozenset({"public", "control", "internal", "observer"}),
@@ -351,7 +349,6 @@ def _full_combined_bridge_production() -> dict[str, object]:
         "allow_deployed_combined_surface": True,
         "rate_limit_enabled": False,
         "ses_from_email": "noreply@example.com",
-        "ops_chat_webhook_urls": "https://ops.example/hook",
         "google_data_manager_account_id": "account",
         "google_data_manager_signup_action_id": "signup",
         "google_data_manager_activated_action_id": "activated",
@@ -495,8 +492,6 @@ def test_every_sensitive_setting_rejects_an_unauthorized_deployed_surface(
             overrides.setdefault("operator_identities", "ops@example.com")
     if field_name == "operator_token":
         overrides["operator_identities"] = "ops@example.com"
-    if field_name == "ops_chat_webhook_secret":
-        overrides["ops_chat_webhook_urls"] = "https://ops.example/hook"
     if field_name == "postgres_iam_auth":
         overrides["postgres_dsn"] = "postgresql://surface:secret@db.example/surface"
     if field_name == "adyen_enabled":

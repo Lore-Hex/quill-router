@@ -14,7 +14,6 @@ from trusted_router.main import create_app
 from trusted_router.middleware import _rate_limit_request
 from trusted_router.routes import public as public_routes
 from trusted_router.services.email import EmailMessage
-from trusted_router.services.ops_chat import OpsChatFanoutResult
 from trusted_router.storage import STORE, InMemoryStore
 from trusted_router.storage_rate_limits import InMemoryRateLimits
 
@@ -705,9 +704,6 @@ def test_public_inquiry_limiters_and_display_use_canonical_production_source(
             sent_messages.append(message)
             return True
 
-    async def fake_fanout(*_args: object, **_kwargs: object) -> OpsChatFanoutResult:
-        return OpsChatFanoutResult(configured=0, accepted=0)
-
     monkeypatch.setattr(
         public_routes,
         "_inquiry_rate_ok",
@@ -718,7 +714,6 @@ def test_public_inquiry_limiters_and_display_use_canonical_production_source(
         "get_email_service",
         lambda _settings: FakeEmailService(),
     )
-    monkeypatch.setattr(public_routes, "fanout_support_message", fake_fanout)
     app = create_app(
         Settings(
             environment="production",
@@ -812,9 +807,6 @@ def test_combined_bridge_forms_keep_legacy_client_identity_without_weakening_spl
         def send(self, _message: EmailMessage) -> bool:
             return True
 
-    async def fake_fanout(*_args: object, **_kwargs: object) -> OpsChatFanoutResult:
-        return OpsChatFanoutResult(configured=0, accepted=0)
-
     monkeypatch.setattr(
         public_routes,
         "_inquiry_rate_ok",
@@ -825,7 +817,6 @@ def test_combined_bridge_forms_keep_legacy_client_identity_without_weakening_spl
         "get_email_service",
         lambda _settings: FakeEmailService(),
     )
-    monkeypatch.setattr(public_routes, "fanout_support_message", fake_fanout)
 
     bridged = Settings.model_construct(
         environment="production",

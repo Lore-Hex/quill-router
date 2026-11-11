@@ -578,12 +578,12 @@ PY
 )
   aws events put-targets --region "$REGION" --rule "$RULE_NAME" --targets "$TARGETS" >/dev/null
 
-  # tr-ops-chat-cloudwatch-alarms exists only in us-east-1. CloudWatch alarm
-  # state-change events and SNS alarm actions are regional, and this repo has
-  # no established cross-region forwarding stack to mirror safely. Use the
-  # existing SNS alarm-action pattern in Paris, but do not invent a subscriber:
-  # an operator MUST subscribe tr-eu-synthetic-alarms to the approved paging
-  # destination before treating these alarms as chat-paged.
+  # CloudWatch alarm state-change events and SNS alarm actions are regional,
+  # and this repo has no established cross-region forwarding stack to mirror
+  # safely. Use the existing SNS alarm-action pattern in Paris, but do not
+  # invent a subscriber: the topic is the only delivery path these alarms
+  # have, so an operator MUST subscribe tr-eu-synthetic-alarms to the approved
+  # paging destination before treating these alarms as paging anyone.
   if aws sns get-topic-attributes --region "$REGION" \
       --topic-arn "$ALARM_TOPIC_ARN" >/dev/null 2>&1; then
     log "reusing regional alarm topic ${ALARM_TOPIC_NAME}"

@@ -1106,7 +1106,11 @@ jobs:
             retired_secret_count=$(jq -r '
               [
                 .spec.containers[0].env[]?
-                | select(.name == "TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD")
+                | select(
+                    .name == "TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD"
+                    or .name == "TR_OPS_CHAT_WEBHOOK_SECRET"
+                    or .name == "TR_OPS_CHAT_WEBHOOK_URLS"
+                  )
               ]
               | length
             ' <<<"${revision_json}")

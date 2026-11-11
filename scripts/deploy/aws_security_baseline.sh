@@ -169,15 +169,13 @@ if aws sns get-topic-attributes --topic-arn "$TOPIC_ARN" --region "$HOME_REGION"
   SUBS="$(aws sns list-subscriptions-by-topic --topic-arn "$TOPIC_ARN" --region "$HOME_REGION" \
     --query 'length(Subscriptions)' --output text 2>/dev/null || echo 0)"
   if [ "$SUBS" = "0" ]; then
-    # Reported, not auto-fixed, and not counted as failure. Delivery genuinely
-    # works through a different path: EventBridge rule
-    # tr-ops-chat-cloudwatch-alarms forwards CloudWatch Alarm State Change to
-    # the ops-chat API destinations, which is what actually paged during the
-    # real root-usage alarm on 2026-08-15 (9 invocations, 0 failures).
-    # The SNS action on both alarms is therefore decorative. Subscribing an
-    # address is a judgement call about who should be woken up, not something
-    # a script should decide.
-    note "topic has ZERO subscriptions — alarm SNS actions deliver nowhere; real delivery is the EventBridge -> ops-chat path"
+    # Reported, not auto-fixed. The SNS action on both alarms is the only
+    # delivery path there is: nothing else forwards CloudWatch alarm state
+    # changes anywhere. With no subscription the alarms change state and
+    # reach nobody until a subscriber is added. Subscribing an address is a
+    # judgement call about who should be woken up, not something a script
+    # should decide.
+    note "topic has ZERO subscriptions: alarm SNS actions deliver nowhere and there is no other delivery path; these alarms reach nobody until a subscriber is added"
   else
     ok "$SUBS subscription(s)"
   fi
