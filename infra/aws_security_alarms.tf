@@ -54,13 +54,15 @@ resource "aws_cloudwatch_log_metric_filter" "unauthorized_api_calls" {
   provider       = aws.us_east_1
   name           = "UnauthorizedAPICalls"
   log_group_name = "/aws/cloudtrail/quill"
-  # AWS's own service-linked roles (AWSServiceRoleForConfig, ...ForResourceExplorer)
+  # This account's service-linked roles (AWSServiceRoleForConfig, ...ForResourceExplorer)
   # probe every service on a schedule and are denied by services this account does
-  # not use, which paged security@ several times a day with nothing to act on. Only
-  # AWS can hold a role named AWSServiceRole*, so those denials are dropped. A denial
-  # with no userIdentity.arn (a failed AssumeRoleWithWebIdentity) still counts: a
-  # bare != on a missing field never matches, hence the NOT EXISTS branch.
-  pattern = "{ (($.errorCode = \"*UnauthorizedOperation\") || ($.errorCode = \"AccessDenied*\")) && (($.userIdentity.arn NOT EXISTS) || ($.userIdentity.arn != \"arn:aws:sts::*:assumed-role/AWSServiceRole*\")) }"
+  # not use, which paged security@ several times a day with nothing to act on. Those
+  # denials are dropped: only this account's own roles named AWSServiceRoleFor*, the
+  # prefix AWS reserves for service-linked roles, and nothing from other accounts.
+  # A denial with no userIdentity.arn (a failed AssumeRoleWithWebIdentity) or a null
+  # one still counts: a bare != on a missing field never matches, hence the NOT
+  # EXISTS and IS NULL branches. Keep in step with scripts/deploy/aws_security_baseline.sh.
+  pattern = "{ (($.errorCode = \"*UnauthorizedOperation\") || ($.errorCode = \"AccessDenied*\")) && (($.userIdentity.arn NOT EXISTS) || ($.userIdentity.arn IS NULL) || ($.userIdentity.arn != \"arn:aws:sts::${data.aws_caller_identity.config.account_id}:assumed-role/AWSServiceRoleFor*\")) }"
 
   metric_transformation {
     name      = "UnauthorizedAPICallsCount"
