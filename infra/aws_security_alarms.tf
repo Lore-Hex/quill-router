@@ -54,7 +54,13 @@ resource "aws_cloudwatch_log_metric_filter" "unauthorized_api_calls" {
   provider       = aws.us_east_1
   name           = "UnauthorizedAPICalls"
   log_group_name = "/aws/cloudtrail/quill"
-  pattern        = "{ ($.errorCode = \"*UnauthorizedOperation\") || ($.errorCode = \"AccessDenied*\") }"
+  # AWS's own service-linked roles (AWSServiceRoleForConfig, ...ForResourceExplorer)
+  # probe every service on a schedule and are denied by services this account does
+  # not use, which paged security@ several times a day with nothing to act on. Only
+  # AWS can hold a role named AWSServiceRole*, so those denials are dropped. A denial
+  # with no userIdentity.arn (a failed AssumeRoleWithWebIdentity) still counts: a
+  # bare != on a missing field never matches, hence the NOT EXISTS branch.
+  pattern = "{ (($.errorCode = \"*UnauthorizedOperation\") || ($.errorCode = \"AccessDenied*\")) && (($.userIdentity.arn NOT EXISTS) || ($.userIdentity.arn != \"arn:aws:sts::*:assumed-role/AWSServiceRole*\")) }"
 
   metric_transformation {
     name      = "UnauthorizedAPICallsCount"
