@@ -228,9 +228,13 @@ def evaluate_unserved_routes(
         if created is None or created < cutoff or created > now:
             continue
         if sample.status == "success":
-            # Any served request, probe or customer, proves the route (or, for
-            # a sibling, the provider account) works at that moment.
-            if created >= sibling_cutoff:
+            # A served probe proves the route (or, for a sibling, the provider
+            # account) works at that moment. Every Store implementation of
+            # provider_route_benchmark_samples returns synthetic probes only;
+            # a non-probe success, should one ever arrive, is kept as the
+            # conservative reading: it breaks this route's streak but is
+            # never sibling proof, which only our own probe credential gives.
+            if created >= sibling_cutoff and sample.source == "synthetic":
                 successes.setdefault(sample.provider, []).append((created, sample.model))
         elif sample.source != "synthetic":
             continue

@@ -24,8 +24,9 @@ manifests:
 * when the evidence cannot be read, is malformed or stale, nothing is held;
 * a provider is never held wholesale: a run that would leave more than half
   of a provider's rows held by this step (counting earlier holds), or would
-  hold its last routable row, holds none of that provider's rows, and a run
-  listing more than ``MAX_ROUTES`` routes holds nothing;
+  hold its last routable row, holds none of that provider's rows; a run
+  listing more than ``MAX_ROUTES`` routes holds nothing, and no new hold is
+  placed while it would leave more than ``MAX_ROUTES`` rows held in total;
 * an expired hold on a row discovery has since delisted or left unpriced
   becomes ``delisted-upstream`` or ``price-unavailable``, never routable.
 
@@ -115,15 +116,22 @@ def _lift_expired(rows: Iterable[Any], *, now: datetime) -> list[str]:
         if not isinstance(row, dict) or row.get("routable_reason") != UNSERVED_ROUTE_HOLD_REASON:
             continue
         held_at = _parse_time(row.get(HELD_AT_FIELD))
-        if held_at is not None and now - held_at < timedelta(hours=HOLD_HOURS):
+        # A missing, malformed or future-dated stamp cannot prove the hold is
+        # young; lift it rather than risk a hold that never expires.
+        if held_at is not None and -MAX_CLOCK_SKEW <= now - held_at < timedelta(hours=HOLD_HOURS):
             continue
         row.pop(HELD_AT_FIELD, None)
         # While held, discovery could not record its own state (the hold
         # outranks it). Never lift into a delisted or unpriced routable row:
         # one such row expires the provider's whole manifest.
+        # Judge the price as the row would be published once lifted: some
+        # validators accept fields only on a row that is not routable.
+        as_lifted = {key: value for key, value in row.items() if key not in {"routable", "routable_reason"}}
         if row.get("missing_since"):
+            row["routable"] = False
             row["routable_reason"] = "delisted-upstream"
-        elif not provider_manifest_row_price_is_valid(row):
+        elif not provider_manifest_row_price_is_valid(as_lifted):
+            row["routable"] = False
             row["routable_reason"] = "price-unavailable"
         else:
             row.pop("routable", None)
@@ -160,51 +168,75 @@ def apply_unserved_route_holds(
         for provider in sorted(set(by_provider) - {path.stem for path in manifest_dir.glob("*.json")}):
             notes.append(f"{provider}: no provider manifest; not held")
 
+    manifests: list[tuple[Path, dict[str, Any], bool]] = []
     for path in sorted(manifest_dir.glob("*.json")):
         raw = _load(path)
         if raw is None:
             continue
-        rows = raw["models"]
-        changed = False
-        lifted = _lift_expired(rows, now=now)
+        lifted = _lift_expired(raw["models"], now=now)
         if lifted:
-            changed = True
             notes.append(f"{path.stem}: lifted expired unserved-route hold on {', '.join(sorted(lifted))}")
+        manifests.append((path, raw, bool(lifted)))
+
+    planned: list[tuple[int, dict[str, Any]]] = []
+    for index, (path, raw, _) in enumerate(manifests):
         wanted = by_provider.get(path.stem, set())
-        if wanted:
-            routable_rows = {
-                row["id"]: row for row in rows
-                if isinstance(row, dict) and isinstance(row.get("id"), str) and _routable(row)
-            }
-            targets = sorted(wanted & set(routable_rows))
-            already_held = {
-                row.get("id") for row in rows
-                if isinstance(row, dict) and row.get("routable_reason") == UNSERVED_ROUTE_HOLD_REASON
-            }
-            for model in sorted(wanted - set(routable_rows) - already_held):
-                notes.append(f"{path.stem}: {model} is not a routable manifest row; not held")
-            # Rows this step already holds count on both sides, so the cap
-            # cannot ratchet a provider down one partial run at a time.
-            unserved = len(targets) + len(already_held)
-            candidates = len(routable_rows) + len(already_held)
-            if targets and (
-                unserved > MAX_PROVIDER_FRACTION * candidates
-                or len(targets) >= len(routable_rows)
-            ):
-                notes.append(
-                    f"{path.stem}: {unserved} of {candidates} rows unserved; "
-                    "provider-wide problem, holding none"
-                )
-                targets = []
-            for model in targets:
-                row = routable_rows[model]
-                row["routable"] = False
-                row["routable_reason"] = UNSERVED_ROUTE_HOLD_REASON
-                row[HELD_AT_FIELD] = _iso(now)
-                changed = True
-                notes.append(f"{path.stem}: held {model} ({UNSERVED_ROUTE_HOLD_REASON}) for {HOLD_HOURS}h")
-        if changed:
-            path.write_text(json.dumps(raw, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        if not wanted:
+            continue
+        rows = raw["models"]
+        routable_rows = {
+            row["id"]: row for row in rows
+            if isinstance(row, dict) and isinstance(row.get("id"), str) and _routable(row)
+        }
+        targets = sorted(wanted & set(routable_rows))
+        already_held = {
+            row.get("id") for row in rows
+            if isinstance(row, dict) and isinstance(row.get("id"), str)
+            and row.get("routable_reason") == UNSERVED_ROUTE_HOLD_REASON
+        }
+        for model in sorted(wanted - set(routable_rows) - already_held):
+            notes.append(f"{path.stem}: {model} is not a routable manifest row; not held")
+        # Rows this step already holds count on both sides, so the cap
+        # cannot ratchet a provider down one partial run at a time.
+        unserved = len(targets) + len(already_held)
+        candidates = len(routable_rows) + len(already_held)
+        if targets and (
+            unserved > MAX_PROVIDER_FRACTION * candidates
+            or len(targets) >= len(routable_rows)
+        ):
+            notes.append(
+                f"{path.stem}: {unserved} of {candidates} rows unserved; "
+                "provider-wide problem, holding none"
+            )
+            targets = []
+        planned.extend((index, routable_rows[model]) for model in targets)
+
+    # Held routes stop being probed and drop out of the evidence, so the
+    # route cap must count the holds already in place: otherwise it bounds
+    # only each hourly run and a rolling problem accumulates without limit.
+    held_total = sum(
+        1
+        for _, raw, _ in manifests
+        for row in raw["models"]
+        if isinstance(row, dict) and row.get("routable_reason") == UNSERVED_ROUTE_HOLD_REASON
+    )
+    if planned and held_total + len(planned) > MAX_ROUTES:
+        notes.append(
+            f"{held_total} held + {len(planned)} new unserved routes exceed the "
+            f"{MAX_ROUTES}-route cap; holding nothing new"
+        )
+        planned = []
+
+    changed = {index for index, (_, _, lifted) in enumerate(manifests) if lifted}
+    for index, row in planned:
+        row["routable"] = False
+        row["routable_reason"] = UNSERVED_ROUTE_HOLD_REASON
+        row[HELD_AT_FIELD] = _iso(now)
+        changed.add(index)
+        notes.append(f"{manifests[index][0].stem}: held {row['id']} ({UNSERVED_ROUTE_HOLD_REASON}) for {HOLD_HOURS}h")
+    for index in sorted(changed):
+        path, raw, _ = manifests[index]
+        path.write_text(json.dumps(raw, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return notes
 
 

@@ -161,7 +161,10 @@ def test_passed_through_capacity_status_is_not_evidence() -> None:
         assert _evaluate(samples) == []
 
 
-def test_a_customer_success_breaks_the_streak() -> None:
+def test_a_non_probe_success_would_still_break_the_streak() -> None:
+    # The stores return synthetic probes only, so production never passes a
+    # live sample here. Pinned defensively: if one ever arrives, a success
+    # must break the streak rather than be ignored.
     samples = _streak("phala", "z-ai/glm-5.1", newest=30) + [
         _sample("phala", "z-ai/glm-5.1", minutes_ago=5, status="success", source="live"),
         _sibling_success(),
@@ -434,3 +437,68 @@ def test_shared_writer_carries_the_hold_through_discovery(tmp_path: Path) -> Non
     row = _rows(path)["z-ai/glm-5.1"]
     assert (row["routable"], row["routable_reason"]) == (False, UNSERVED_ROUTE_HOLD_REASON)
     assert row[holds.HELD_AT_FIELD] == "2026-11-11T12:00:00Z"
+
+
+def test_a_non_probe_sibling_success_is_not_sibling_proof() -> None:
+    samples = _streak("phala", "z-ai/glm-5.1") + [
+        _sample("phala", "other/model", minutes_ago=20, status="success", source="live"),
+    ]
+    assert _evaluate(samples) == []
+
+
+def test_lift_judges_the_price_as_the_row_would_be_published(tmp_path: Path) -> None:
+    # A decision row with an image price is valid only while not routable;
+    # lifting it must not publish it routable on the strength of the hold.
+    decision = {
+        "id": "decisionmodelsio/jev", "model_type": "decision", "endpoints": ["decide"],
+        "input_token_price_per_m": 1_000_000, "output_token_price_per_m": 0,
+        "decision_image_input_price_per_m": 2_000_000,
+        "routable": False, "routable_reason": UNSERVED_ROUTE_HOLD_REASON,
+        holds.HELD_AT_FIELD: "2026-11-10T12:00:00Z",
+    }
+    from trusted_router.provider_manifest_policy import provider_manifest_row_price_is_valid
+    assert provider_manifest_row_price_is_valid(decision)  # passes only because it is held
+    path = _manifest(tmp_path, "decisionmodelsio", [decision, _row("a/one"), _row("b/two")])
+    holds.apply_unserved_route_holds(None, manifest_dir=tmp_path, now=NOW)
+    row = _rows(path)["decisionmodelsio/jev"]
+    assert (row["routable"], row["routable_reason"]) == (False, "price-unavailable")
+
+
+def test_lift_sets_unroutable_explicitly_on_delisted_or_unpriced_rows(tmp_path: Path) -> None:
+    # A hand-edited hold missing routable=false must still lift fail-closed.
+    base = {"routable_reason": UNSERVED_ROUTE_HOLD_REASON, holds.HELD_AT_FIELD: "2026-11-10T12:00:00Z"}
+    unpriced = {"id": "z-ai/unpriced", "model_type": "chat", "endpoints": ["chat/completions"], **base}
+    delisted = _row("z-ai/gone", missing_since="2026-11-11", **base)
+    path = _manifest(tmp_path, "phala", [unpriced, delisted, _row("z-ai/glm-5.2"), _row("qwen/qwen3")])
+    holds.apply_unserved_route_holds(None, manifest_dir=tmp_path, now=NOW)
+    rows = _rows(path)
+    assert (rows["z-ai/unpriced"]["routable"], rows["z-ai/unpriced"]["routable_reason"]) == (False, "price-unavailable")
+    assert (rows["z-ai/gone"]["routable"], rows["z-ai/gone"]["routable_reason"]) == (False, "delisted-upstream")
+
+
+def test_a_future_dated_hold_stamp_is_lifted_not_kept_forever(tmp_path: Path) -> None:
+    held = _row("z-ai/glm-5.1", routable=False, routable_reason=UNSERVED_ROUTE_HOLD_REASON,
+                **{holds.HELD_AT_FIELD: "2099-01-01T00:00:00Z"})
+    path = _manifest(tmp_path, "phala", [held, _row("z-ai/glm-5.2"), _row("qwen/qwen3")])
+    holds.apply_unserved_route_holds(set(), manifest_dir=tmp_path, now=NOW)
+    assert {"routable", "routable_reason", holds.HELD_AT_FIELD}.isdisjoint(_rows(path)["z-ai/glm-5.1"])
+
+
+def test_the_route_cap_counts_holds_already_in_place(tmp_path: Path) -> None:
+    # Held routes leave the probe rotation and the evidence, so a per-run cap
+    # alone would let a rolling problem accumulate holds hour after hour.
+    stamp = {holds.HELD_AT_FIELD: "2026-11-11T12:00:00Z"}
+    for index in range(holds.MAX_ROUTES):
+        _manifest(tmp_path, f"p{index}", [
+            _row("m/held", routable=False, routable_reason=UNSERVED_ROUTE_HOLD_REASON, **stamp),
+            _row("m/a"), _row("m/b"), _row("m/c"),
+        ])
+    fresh = _manifest(tmp_path, "fresh", [_row("m/a"), _row("m/b"), _row("m/c")])
+    before = fresh.read_bytes()
+    notes = holds.apply_unserved_route_holds({("fresh", "m/a")}, manifest_dir=tmp_path, now=NOW)
+    assert fresh.read_bytes() == before
+    assert any("holding nothing new" in note for note in notes)
+    # Below the total cap the same evidence holds.
+    (tmp_path / "p0.json").unlink()
+    holds.apply_unserved_route_holds({("fresh", "m/a")}, manifest_dir=tmp_path, now=NOW)
+    assert _rows(fresh)["m/a"]["routable_reason"] == UNSERVED_ROUTE_HOLD_REASON
