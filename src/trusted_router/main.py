@@ -74,6 +74,7 @@ from trusted_router.routes.identity_verify import register_identity_verify_route
 from trusted_router.routes.inference import register_inference_routes
 from trusted_router.routes.internal import (
     register_control_internal_routes,
+    register_edge_async_ticket_routes,
     register_edge_policy_routes,
     register_external_webhook_routes,
     register_gateway_internal_routes,
@@ -947,6 +948,8 @@ def _make_api_router(settings: Settings, surface: str) -> APIRouter:
         register_routing_snapshot_routes(router)
     if surface in {"combined", "internal"} and settings.edge_policy_publish_enabled:
         register_edge_policy_routes(router)
+    if surface in {"combined", "internal"} and settings.fastpath_edge_async_tickets_enabled:
+        register_edge_async_ticket_routes(router)
     return router
 
 

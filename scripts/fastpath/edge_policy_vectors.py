@@ -33,7 +33,9 @@ optional fastpath_stream_ceiling member's vectors
 fastpath/testdata/edge_policy_stream_ceiling_v1.json: the publisher's body
 with the setting off and on, and the member's other spellings, each with
 whether both readers accept it and what the member says. Workspace
-ids, digests and the monitor key are synthetic.
+ids, digests and the monitor key are synthetic. Edge-ticket member cases
+are written to fastpath/testdata/edge_policy_tickets_v1.json, with expected
+Tickets coverage and refused spellings for both readers.
 tests/test_edge_policy_publish.py fails when the files are not what this
 script writes now.
 
@@ -76,6 +78,7 @@ from trusted_router.services.routing_snapshot_publisher import plane_of  # noqa:
 OUTPUT_BODY = ROOT / "fastpath" / "testdata" / "edge_policy_v1.body.json"
 OUTPUT_MANIFEST = ROOT / "fastpath" / "testdata" / "edge_policy_v1.manifest.json"
 OUTPUT_STREAMS = ROOT / "fastpath" / "testdata" / "edge_policy_streams_v1.json"
+OUTPUT_TICKETS = ROOT / "fastpath" / "testdata" / "edge_policy_tickets_v1.json"
 OUTPUT_ADMISSION = ROOT / "fastpath" / "testdata" / "edge_policy_admission_v1.json"
 OUTPUT_ALL_BODY = ROOT / "fastpath" / "testdata" / "edge_policy_all_v1.body.json"
 OUTPUT_ALL_MANIFEST = ROOT / "fastpath" / "testdata" / "edge_policy_all_v1.manifest.json"
@@ -139,6 +142,7 @@ def fixture_settings(**overrides: object) -> Settings:
         async_settle_enabled=False,
         async_settle_protection=False,
         fastpath_edge_decide_async=False,
+        fastpath_edge_async_ticket_workspaces="",
         # Off, as deployed: the body carries no fastpath_pilot_key_windows,
         # the member Go nodes accept only from e2-key-windows increment 2.
         fastpath_pilot_key_windows="off",
@@ -364,6 +368,51 @@ def admission_cases() -> list[dict[str, object]]:
     return cases
 
 
+def ticket_cases() -> list[dict[str, object]]:
+    """Optional ticket members, with the settings' own answer per workspace."""
+    cases: list[dict[str, object]] = []
+    probes = ["ws_test_1", "ws_test_2", "ws_test_3"]
+    for admission in (False, True):
+        for switch in ("", "*", "ws_test_2,ws_test_1", ",".join(f"ws_test_{i:02}" for i in range(32))):
+            for pilots, excluded in (("", ""), ("ws_test_1", ""), ("", "ws_test_1")):
+                cfg = fixture_settings(
+                    async_settle_enabled=admission, async_settle_protection=admission,
+                    fastpath_pilot_workspaces=excluded, async_settle_pilot_workspaces=pilots,
+                    fastpath_edge_async_ticket_workspaces=switch,
+                )
+                cases.append({
+                    "name": f"publisher:{admission}:{switch}:{pilots}:{excluded}",
+                    "body": canonical_edge_policy_bytes(policy(cfg)).decode(), "accept": True,
+                    "tickets": {ws: cfg.fastpath_edge_async_ticket_allows(ws) for ws in probes},
+                })
+    base = json.loads(canonical_edge_policy_bytes(policy(fixture_settings(
+        async_settle_enabled=True, async_settle_protection=True, fastpath_pilot_workspaces="",
+    ))))
+    refused: dict[str, dict[str, object]] = {
+        "false": {"edge_tickets": False}, "null": {"edge_tickets": None},
+        "integer": {"edge_tickets": 1}, "string": {"edge_tickets": "true"},
+        "admission_off": {"edge_tickets": True, "admission_enabled": False},
+        "without_tickets": {"edge_ticket_workspaces": ["ws_test_1"]},
+    }
+    for name, value in {
+        "null": None, "empty": [], "unsorted": ["ws_test_2", "ws_test_1"],
+        "duplicate": ["ws_test_1", "ws_test_1"],
+        "thirty_three": [f"ws_test_{i:02}" for i in range(33)],
+        "bad_id": ["ws test"], "long_id": ["w" * 65], "empty_id": [""],
+        "wrong_type": [1], "string": "ws_test_1",
+    }.items():
+        refused[f"workspaces_{name}"] = {"edge_tickets": True, "edge_ticket_workspaces": value}
+    for name, members in refused.items():
+        body = {**base, "async_settle": {**base["async_settle"], **members}}
+        cases.append({"name": f"refused:{name}", "body": json.dumps(body, sort_keys=True, separators=(",", ":")),
+                      "accept": False, "tickets": None})
+    return cases
+
+
+def render_tickets() -> str:
+    return json.dumps({"generator": GENERATOR, "cases": ticket_cases()}, indent=1, sort_keys=True) + "\n"
+
+
 def render_admission() -> str:
     return json.dumps({"generator": GENERATOR, "probes": list(ADMISSION_PROBES), "cases": admission_cases()},
                       indent=1, sort_keys=True) + "\n"
@@ -420,10 +469,11 @@ if __name__ == "__main__":
     OUTPUT_MANIFEST.write_text(render_manifest())
     OUTPUT_STREAMS.write_text(render_streams())
     OUTPUT_ADMISSION.write_text(render_admission())
+    OUTPUT_TICKETS.write_text(render_tickets())
     OUTPUT_ALL_BODY.write_bytes(render_all_body())
     OUTPUT_ALL_MANIFEST.write_text(render_all_manifest())
     OUTPUT_STREAM_CEILING.write_text(render_stream_ceiling())
     print(f"wrote {OUTPUT_BODY.relative_to(ROOT)}, {OUTPUT_MANIFEST.relative_to(ROOT)}, "
           f"{OUTPUT_STREAMS.relative_to(ROOT)}, {OUTPUT_ADMISSION.relative_to(ROOT)}, "
           f"{OUTPUT_ALL_BODY.relative_to(ROOT)}, {OUTPUT_ALL_MANIFEST.relative_to(ROOT)} and "
-          f"{OUTPUT_STREAM_CEILING.relative_to(ROOT)}")
+          f"{OUTPUT_STREAM_CEILING.relative_to(ROOT)}, {OUTPUT_TICKETS.relative_to(ROOT)}")

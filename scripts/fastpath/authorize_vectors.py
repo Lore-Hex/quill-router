@@ -24,7 +24,8 @@ routes (the header carries the snapshot compiled over both), with a TEST
 async-settle runtime (a ticket key from a fixed seed, epoch 1, the primary
 region as the journal region) and admission off, every async-settle setting
 pinned. Each records Python's 200 with its async members (§2.2's shape A, B,
-or none) and which shape that is; the one admission-on case records only
+or none) and which shape that is. Edge-ticket cases pin the signing clock
+and record shape C from Python's leased answer. The original admission-on cases record only
 that it passes and that Python's answer carried a ticket (shape C), never the
 ticket, whose iat, exp and signature are not reproducible. No Go code reads
 it before G15b.
@@ -493,6 +494,8 @@ def edge_policy_body(policy: dict[str, Any], key: dict[str, Any], at: real_dt.da
         # The pilot set and the excluded fast-path workspaces as the
         # publisher writes them: only with admission on.
         **admission_workspaces(settings),
+        **{name: policy["async_settle"][name] for name in ("edge_tickets", "edge_ticket_workspaces")
+           if name in policy["async_settle"]},
     }} if "async_settle" in policy else {}
     return {
         **async_settle,
@@ -873,6 +876,10 @@ def _run_case(case: dict[str, Any], sessions: tuple[tuple[str, float], ...], *,
     at = ROUTING._instant(case["_at"])
     world, policy = case["_world"], case["_policy"]
     with pinned(at, case["name"]), contextlib.ExitStack() as stack:
+        if policy.get("async_settle", {}).get("edge_tickets"):
+            # Pin only these new cases' signing clock; existing vectors keep their bytes.
+            stack.enter_context(patched(async_settle_service, "time",
+                                        types.SimpleNamespace(**{**vars(time), "time": lambda: at.timestamp()})))
         for model, endpoint in (_catalog_addition(model_id) for model_id in case["_catalog"]):
             MODELS[model.id] = model
             MODEL_ENDPOINTS[endpoint.id] = endpoint
@@ -1898,6 +1905,18 @@ def async_cases() -> list[dict[str, Any]]:
         body={"route_type": "embeddings", "invocation_nonce": "nonce-e2-async-admission"},
         policy={"async_settle": {"admission_enabled": True, "admission_workspaces": [OTHER_WS]}})
     add("pass:async.off:async.B", "async.off", policy={"async_settle": {"edge_decide": False}})
+    # Python itself leases and signs these answers. Publication facts are
+    # explicit here; they do not depend on the new Python setting.
+    add("answer:async.C:edge_tickets", body={"invocation_nonce": "nonce-e2-async-admission"},
+        policy={"async_settle": {**OVERLAP_ADMISSION, "edge_tickets": True}})
+    add("answer:async.C:edge_tickets:listed:read_back",
+        body={"invocation_nonce": "nonce-e2-async-admission", "route_type": "responses"},
+        insert="unknown_landed",
+        policy={"async_settle": {**OVERLAP_ADMISSION, "edge_tickets": True,
+                                 "edge_ticket_workspaces": [COHORT_WS]}})
+    add("answer:async.C:edge_tickets:stream", body={"stream": True, "invocation_nonce": "nonce-e2-async-admission"},
+        policy={"fastpath_edge_streams": True, "fastpath_pilot_streams": True, "reap_snapshot_booking_enabled": True,
+                "async_settle": {**OVERLAP_ADMISSION, "edge_tickets": True}})
     async_streams_cases(add)
     # Any header list but exactly ["async-v1"] adds nothing (§2.1). With no
     # header the edge answers; any present header but exactly async-v1 it

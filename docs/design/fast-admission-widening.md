@@ -1024,8 +1024,8 @@ to start. It now means:
   (`scripts/fastpath/edge_policy_vectors.py`, `:reserved=`), and
   `TestTheAsyncAdmissionVectors` holds Go's answer to Python's on each.
 
-**What it costs at the edge.** Only Python signs a ticket (edge-signed
-tickets are G16), so the edge passes every async-v1 authorize of an
+**What it costs at the edge with edge tickets off.** Only Python signs
+a ticket, so the edge passes every async-v1 authorize of an
 admitted workspace to Python (`policy.async_admission`), leasable or not,
 and answers async-v1 itself only for the reserved list. A workspace whose
 async-v1 authorizes the edge should keep answering goes on the reserved
@@ -1033,7 +1033,8 @@ list and keeps §9's behaviour; it then gets no async settle. A sync
 authorize is untouched: the edge decides it as before. Letting the edge
 answer the leasable async-v1 authorizes of an admitted workspace needs the
 edge to tell them apart before it passes, a Go change this section does
-not make.
+not make. The sign-only extension in [Edge tickets](fast-admission-e2-g15-async.md#edge-tickets)
+lets the edge answer admitted workspaces while Python keeps the signing key.
 
 **Named pilot set in all mode.** §9 exactly, and the reserved list is
 ignored: the pilot set already says who is admitted. That is the way back,

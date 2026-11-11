@@ -189,6 +189,7 @@ func (s Staged) Finish(envelope string, endOfLife time.Time) (Composed, error) {
 			IdempotencyFingerprint: in.IdempotencyFingerprint,
 			ExpiresAt:              in.At.Add(reservationTTL),
 		},
+		async:    s.async,
 		inserted: s.inserted,
 		readBack: s.readBack,
 	}, nil
