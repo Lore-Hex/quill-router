@@ -79,7 +79,7 @@ row, at HIGH priority unless you set another.
 wildcard `COUNT(*)` queries. Three ad hoc Stripe-ID body searches caused the
 September 6 CPU incident; on November 11 pattern searches over seven tables
 failed application reads for ten minutes
-([note](docs/incidents/2026-11-11-spanner-operator-table-scans.md)). A
+([note](docs/incidents/2026-11-11-spanner-stolen-token-table-scans.md)). A
 whole-table question that ClickHouse cannot answer has no approved path on the
 serving instance: ask the operator. Use `python -m scripts.inspect_payment_owner` for
 payment ownership; it retrieves the Stripe object and performs at most two
