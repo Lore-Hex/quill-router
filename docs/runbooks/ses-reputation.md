@@ -42,9 +42,10 @@ addresses and message content must never be added to logs or metric tags.
    enabled.
 3. Do not delete a suppression entry unless the recipient has independently
    confirmed control of the address and requested another send.
-   Permanent bounces and complaints are written to both Spanner and the SES
-   account-wide suppression list before the SNS notification is acknowledged.
-   A failed SES mirror write returns 503 so SNS retries it.
+   SES adds permanently bouncing and complaining recipients to the
+   account-wide suppression list itself (item 1). The SNS webhook writes only
+   the local Spanner block, before the notification is acknowledged; it never
+   writes the SES list, and the sending identity has no permission to.
 4. Group `email_send.accepted` and `ses_feedback.received` by mail class and
    acquisition source in Axiom. Correlate on `ses_message_id` and count unique
    message IDs or feedback IDs, not raw webhook deliveries: SNS retries are

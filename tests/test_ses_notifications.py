@@ -119,29 +119,6 @@ def test_complaint_blocks_email(verified_client: TestClient) -> None:
     assert block is not None and block.reason == "complaint"
 
 
-@pytest.mark.parametrize(
-    ("message_id", "message", "email"),
-    [
-        ("msg-local-bounce", _bounce_message(["hard@example.com"]), "hard@example.com"),
-        ("msg-local-complaint", _complaint_message(["spam@example.com"]), "spam@example.com"),
-    ],
-)
-def test_feedback_blocks_locally_and_acknowledges(
-    verified_client: TestClient, message_id: str, message: str, email: str
-) -> None:
-    """The webhook records the local block and acknowledges the notification.
-    SES itself keeps the account suppression list, so nothing here writes to
-    it; tests/test_cloud_sdk_boundary.py keeps AWS SDK imports out of this
-    path."""
-    envelope = _envelope(MessageId=message_id, Message=message)
-    with patch("trusted_router.routes.ses_notifications.verify_sns_message"):
-        response = verified_client.post("/internal/ses/notifications", json=envelope)
-
-    assert response.status_code == 200
-    assert response.json()["data"]["blocked_count"] == 1
-    assert STORE.is_email_blocked(email)
-
-
 def test_product_email_checks_local_blocks_without_ses_lookup() -> None:
     with patch("boto3.client") as client_factory:
         service = EmailService(Settings(
