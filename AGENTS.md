@@ -77,8 +77,8 @@ predicate, an unfiltered `COUNT(*)` and a whole-table `GROUP BY` each read every
 row, at HIGH priority unless you set another.
 `LIMIT 5` limits results, not the rows scanned. Do not discover entity kinds with
 wildcard `COUNT(*)` queries. Three ad hoc Stripe-ID body searches caused the
-September 6 CPU incident; on November 11 pattern searches over seven tables
-failed application reads for ten minutes
+September 6 CPU incident; on November 11 pattern searches and a JSON count
+over seven tables failed application reads for ten minutes
 ([note](docs/incidents/2026-11-11-spanner-stolen-token-table-scans.md)). A
 whole-table question that ClickHouse cannot answer has no approved path on the
 serving instance: ask the operator. Use `python -m scripts.inspect_payment_owner` for

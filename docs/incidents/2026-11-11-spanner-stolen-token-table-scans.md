@@ -67,7 +67,8 @@ scheduled reader.
 
 The statements came from outside. An unknown party had obtained an access
 token for the service account the ClickHouse analytics nodes run as, and used
-it against the production database from 2026-11-09 07:12 onward. That account
+it against the production database from 2026-11-09 07:12 until the account
+was disabled at about 05:10 on 11-11. That account
 held a database-wide read and write role, granted by a provisioning script and
 not declared in Terraform. No penetration test was commissioned.
 
@@ -87,15 +88,17 @@ The chain, proven from disk images of the affected machines:
 
 With that token the party searched whole tables for credentials and wrote
 credit to an account it had created. The scans in the tables above are those
-searches: the 11-09 09:00 hour and the 03:22 to 03:38 window on 11-11 fall
-inside the period the token was in use.
+searches: the three earlier hours (11-09 09:00, 11-10 07:00 and 10:00) and the
+03:22 to 03:38 window on 11-11 all fall inside the period the token was in
+use.
 
 ## Remediation
 
 All on 2026-11-11:
 
 - The service account was disabled, its database role removed and the
-  ClickHouse nodes stopped (about 05:10). Disk snapshots of every affected
+  ClickHouse nodes stopped (about 05:10). The role was restored when the
+  account was re-enabled (below); narrowing it is listed under Not done. Disk snapshots of every affected
   machine were taken before any other change.
 - The chat servers were destroyed on every cloud and the chat integration
   removed, with its network entry points.
@@ -121,13 +124,8 @@ No alert threshold, suppression or instance capacity was changed.
 
 ## Not done
 
-- The analytics service account still holds a database-wide role. It needs
-  only a handful of tables; a table-scoped database role, declared in
-  Terraform, is in progress.
-- The ClickHouse `tr` password is being rotated (#2487).
-- Spanner data reads are not audit-logged, so the token's reads can be
-  reconstructed only from query statistics. Turning on `DATA_READ` audit
-  records, with no exemption for the analytics or default compute accounts,
-  is a separate change.
+- Narrowing the analytics account to a table-scoped database role declared
+  in Terraform, and enabling `DATA_READ` audit records, are in progress.
+- A ClickHouse credential rotation is in progress (#2487).
 - Direct SQL access is still not IAM-enforced. The September 6 note called a
   reviewed query broker a separate access-design change; it still is.
