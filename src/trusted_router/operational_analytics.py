@@ -171,11 +171,12 @@ class OperationalAnalyticsClient:
                 )
             except CONNECT_FAILURES:
                 # The last endpoint refused a connection. If none before it
-                # answered either, nothing was sent anywhere: this says
-                # nothing about the query and everything about the cluster,
-                # and the next read would wait the same seconds for the same
-                # answer. An endpoint that answered, even with a 503, is
-                # reachable, and the next read may find it well.
+                # answered either, this says nothing about the query and
+                # everything about the cluster, and the next read would wait
+                # the same seconds for the same answer. An endpoint that
+                # answered, even with a 503, is reachable, and the next read
+                # may find it well. One that took the query and hung up
+                # without a response has not answered.
                 if not answered:
                     self._unreachable_until = self._clock() + UNREACHABLE_HOLD_SECONDS
                 raise

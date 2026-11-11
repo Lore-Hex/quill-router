@@ -536,13 +536,14 @@ def test_only_a_failure_to_connect_holds_later_reads(answer: Any) -> None:
     assert cluster.attempts == 2 * first
 
 
+@pytest.mark.parametrize("status", [502, 503, 504])
 @pytest.mark.parametrize("failure", [httpx.ConnectTimeout, httpx.ConnectError])
-def test_an_endpoint_that_answered_keeps_the_next_read_going(failure: Any) -> None:
-    """The first endpoint answers 503 and the read moves on to the last one,
-    which cannot be reached. The read fails as a failure to connect, yet one
-    endpoint is there, so the next read is sent."""
+def test_an_endpoint_that_answered_keeps_the_next_read_going(failure: Any, status: int) -> None:
+    """The first endpoint answers with a status the read moves on from, and
+    the last one cannot be reached. The read fails as a failure to connect,
+    yet one endpoint is there, so the next read is sent."""
     cluster = _Cluster()
-    cluster.answer = {"clickhouse-a.internal": 503, "clickhouse-b.internal": failure}
+    cluster.answer = {"clickhouse-a.internal": status, "clickhouse-b.internal": failure}
 
     with pytest.raises(failure):
         cluster.read()
@@ -550,6 +551,46 @@ def test_an_endpoint_that_answered_keeps_the_next_read_going(failure: Any) -> No
     with pytest.raises(failure):
         cluster.read()
     assert cluster.attempts == 4
+
+
+def test_an_answer_counts_only_for_the_read_that_got_it() -> None:
+    """An endpoint that answered one read says nothing about the next. Once
+    no endpoint answers, later reads are held, however well earlier ones went."""
+    cluster = _Cluster()
+    cluster.answer = {
+        "clickhouse-a.internal": 503,
+        "clickhouse-b.internal": httpx.ConnectError,
+    }
+    with pytest.raises(httpx.ConnectError):
+        cluster.read()
+    assert cluster.attempts == 2
+
+    cluster.answer = httpx.ConnectError
+    with pytest.raises(httpx.ConnectError) as raised:
+        cluster.read()
+    assert not isinstance(raised.value, AnalyticsUnreachable)
+    assert cluster.attempts == 4
+    with pytest.raises(AnalyticsUnreachable):
+        cluster.read()
+    assert cluster.attempts == 4
+
+
+def test_an_endpoint_that_hung_up_without_a_response_has_not_answered() -> None:
+    """A read that may be replayed moves on from an endpoint that took the
+    query and closed the connection. If the last endpoint then cannot be
+    reached, nothing answered, and later reads are held."""
+    cluster = _Cluster()
+    cluster.answer = {
+        "clickhouse-a.internal": httpx.RemoteProtocolError,
+        "clickhouse-b.internal": httpx.ConnectError,
+    }
+
+    with pytest.raises(httpx.ConnectError):
+        cluster.client._query("SELECT 1 FORMAT JSON", retry_read_disconnect=True)
+    assert cluster.attempts == 2
+    with pytest.raises(AnalyticsUnreachable):
+        cluster.read()
+    assert cluster.attempts == 2
 
 
 def test_one_reachable_endpoint_is_enough() -> None:
