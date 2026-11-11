@@ -248,16 +248,15 @@ if ! cluster_healthy; then
 fi
 
 install_changed() {
-  # $1 is "unit" for the systemd drop-in alone, "rest" for everything else.
-  local which="$1" entry source destination needs mode
+  # Installs the changed files whose class ("reload", "restart", "run" or
+  # "unit") is one of the arguments.
+  local entry source destination needs mode
   for entry in "${changed[@]+"${changed[@]}"}"; do
     IFS='|' read -r source destination needs <<<"$entry"
-    if [ "$needs" = unit ] && [ "$which" != unit ]; then
-      continue
-    fi
-    if [ "$needs" != unit ] && [ "$which" = unit ]; then
-      continue
-    fi
+    case " $* " in
+      *" ${needs} "*) ;;
+      *) continue ;;
+    esac
     case "$needs" in
       # Root's own files: this script runs as root, so with no owner named
       # they are root's and the server's user cannot rewrite them. That
@@ -281,21 +280,30 @@ install_changed() {
   done
 }
 
-install_changed rest
+# First the files that take effect with the server running: the user files
+# (ClickHouse rereads them, which closes the default user at once) and the
+# block helper.
+install_changed reload run
 # The server on this node may never restart in this run, so the rule goes in
 # now. It is a no-op when the rule is already there.
 if ! "$METADATA_BLOCK"; then
-  if [ "$units" -eq 1 ]; then
-    echo "refusing to continue: could not block the metadata server for the ClickHouse server on ${node}; the start step that requires the block was not installed, so the server can still start" >&2
-  else
+  # What this means for the server depends on what is on the node, not on
+  # what this run would have installed: an older drop-in already makes the
+  # block a step of every start.
+  if [ -e "${DROP_IN_D}/tr-metadata-block.conf" ]; then
     echo "refusing to continue: could not block the metadata server for the ClickHouse server on ${node}; the block is already a step of every server start, so the server will not start again until this is fixed" >&2
+  else
+    echo "refusing to continue: could not block the metadata server for the ClickHouse server on ${node}; the start step that requires the block was not installed, so the server can still start" >&2
   fi
   exit 1
 fi
-# The drop-in makes the block a step of every server start, so it goes in only
-# once the block has worked here. Installed first, a node where the rule
-# cannot be added would keep running and then fail its next start.
-install_changed unit
+# Only now the files that need the block to have worked. The drop-in makes
+# the block a step of every server start: installed first, a node where the
+# rule cannot be added would keep running and then fail its next start. The
+# server configuration needs a restart, and a failed run never reaches it: left
+# for this point, those files still differ on the next run, which then
+# restarts for them.
+install_changed restart unit
 if [ "$units" -eq 1 ]; then
   systemctl daemon-reload
 fi

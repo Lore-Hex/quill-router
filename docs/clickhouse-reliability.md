@@ -327,9 +327,15 @@ installs it on a new node; on an older node the roll checks first, and
 `--apply` refuses before it changes anything if `iptables` is missing
 (`apt-get install -y iptables`, then run it again). The report-only run says
 so too. `iptables` being there does not mean the rule can be added, so the
-roll adds the rule first and installs the start step (the systemd drop-in)
-only after that worked. A node where the rule cannot be added is left without
-the drop-in and its server can still start; the roll fails there and says so.
+roll installs the user files and the helper, adds the rule, and only after
+that worked installs the start step (the systemd drop-in) and the server
+configuration that needs a restart. Where the rule cannot be added the roll
+fails and says so. By then the `default` user is already closed on that node;
+the drop-in and the server configuration are not installed and the server is
+not restarted. A node that had no drop-in can still start its server. A node
+that already had one (from an earlier roll) cannot until the rule can be
+added, and the message says which of the two it is. The next run, once the
+cause is fixed, installs the rest and restarts.
 
 What the block covers: requests the server makes on a caller's behalf, which
 is how the metadata token was read. It does not hold against code running
