@@ -183,8 +183,17 @@ from trusted_router.partner_billing import (
     PARASAIL_LIBERTY_2_0_MINIMUM_CHARGE_MICRODOLLARS,
     PARASAIL_LIBERTY_2_0_OUTPUT_MICRODOLLARS_PER_MILLION,
 )
+from trusted_router.polyphemus import (
+    CONFIDENTIAL_CHEAP_MODEL_ID as POLYPHEMUS_CONFIDENTIAL_CHEAP_MODEL_ID,
+)
+from trusted_router.polyphemus import (
+    CONFIDENTIAL_STRONG_MODEL_ID as POLYPHEMUS_CONFIDENTIAL_STRONG_MODEL_ID,
+)
+from trusted_router.polyphemus import DEFAULT_CHEAP_MODEL_ID as POLYPHEMUS_DEFAULT_CHEAP_MODEL_ID
+from trusted_router.polyphemus import DEFAULT_STRONG_MODEL_ID as POLYPHEMUS_DEFAULT_STRONG_MODEL_ID
 from trusted_router.polyphemus import MODEL_ID as POLYPHEMUS_MODEL_ID
 from trusted_router.polyphemus import SELECTOR_PROMPT_MICRODOLLARS_PER_MILLION
+from trusted_router.polyphemus import SELECTOR_PROVIDER as POLYPHEMUS_SELECTOR_PROVIDER
 from trusted_router.pricing import (  # noqa: F401 - re-exported for back-compat
     _CACHE_READ_PRICE_MULTIPLIER,
     _CACHE_WRITE_PRICE_MULTIPLIER,
@@ -1436,7 +1445,8 @@ MODEL_ENDPOINTS: dict[str, ModelEndpoint] = _build_endpoints(MODELS)
 MODELS[POLYPHEMUS_MODEL_ID] = Model(
     id=POLYPHEMUS_MODEL_ID,
     name="Polyphemus 1.0",
-    provider="telluvian",
+    # Selection runs inside TrustedRouter's attested gateway; no third party.
+    provider=POLYPHEMUS_SELECTOR_PROVIDER,
     context_length=65_536,
     # Internal selector admission uses the shared text routing machinery.
     # Public chat capability is disabled by offers_chat; only Responses enters.
@@ -1448,22 +1458,30 @@ MODELS[POLYPHEMUS_MODEL_ID] = Model(
     documentation=ModelDocumentation(
         description=(
             "TrustedRouter selects a model for your task, then runs it. "
-            "Responses API only. Standard privacy, not ZDR or confidential. "
+            "Responses API only. "
+            "The model is picked inside TrustedRouter's attested gateway by a local, "
+            "open classifier (NVIDIA's prompt task and complexity classifier). "
+            "No third party sees your prompt to choose. "
+            "Requests with tools, code generation tasks, or high domain knowledge "
+            "go to the strong model; everything else goes to the cheap model. "
+            f"By default the strong model is {POLYPHEMUS_DEFAULT_STRONG_MODEL_ID} "
+            f"and the cheap model is {POLYPHEMUS_DEFAULT_CHEAP_MODEL_ID}. "
+            "Confidential requests use "
+            f"{POLYPHEMUS_CONFIDENTIAL_STRONG_MODEL_ID} and "
+            f"{POLYPHEMUS_CONFIDENTIAL_CHEAP_MODEL_ID} on confidential routes. "
+            "Confidential, ZDR and no-store requests are supported. "
             "$0.05 per million selector prompt tokens plus the selected model's "
             "normal token charges; generation is not free. Selector tokens are "
-            "estimated from the serialized conversation and tools (UTF-8 bytes / 4, "
+            "estimated from the classified latest user message only (UTF-8 bytes / 4, "
             "rounded down, minimum one token), not measured selector usage. "
             "Selector charges use normal microdollar rounding, minimum $0.000001. "
             "If selection fails, trustedrouter/auto handles the request without a selector fee."
         ),
         input_format=(
             "POST /v1/responses with text input and optional function tools. "
-            "Generate a fresh UUID per conversation, then reuse the same session_id "
-            "and API key across conversation turns for "
-            "cache-aware model selection; send the conversation history on each turn. "
-            "Omit session_id for independent one-shot requests. Routing sessions "
-            "expire after one hour of inactivity. This does not pin a provider "
-            "or guarantee a cache hit."
+            "Only the latest user message is classified, up to 16 KiB. "
+            "The polyphemus.x_perf and polyphemus.model_zoo options are accepted "
+            "but ignored. session_id does not affect selection."
         ),
         output_format="A standard Responses response or event stream with cost breakdown.",
         example_input='{"model":"trustedrouter/polyphemus-1.0","input":"What is the capital of France?"}',

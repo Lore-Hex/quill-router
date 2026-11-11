@@ -73,6 +73,14 @@ PRIVACY_TIER_TRUSTED = 4  # Confidential plus TrustedRouter's curated operator a
 # and operating-history review; technical Confidential eligibility still applies.
 TRUSTED_PROVIDER_ORDER = ("tinfoil", "privatemode")
 TRUSTED_PROVIDER_SLUGS = frozenset(TRUSTED_PROVIDER_ORDER)
+# Model routes TrustedRouter computes entirely inside its own attested gateway,
+# with no upstream operator. TrustedRouter is then the only operator, and every
+# Trusted request already trusts that gateway, so these exact routes satisfy
+# the Trusted operator review without adding TrustedRouter to the allowlist
+# above (which also orders the Trusted routing pool). Explicit and per model:
+# TrustedRouter's routing aliases fan out to upstream providers and never
+# qualify this way.
+GATEWAY_LOCAL_MODEL_IDS = frozenset({POLYPHEMUS_MODEL_ID})
 
 PRIVACY_TIER_ALIASES: dict[str, int] = {
     "standard": PRIVACY_TIER_STANDARD,
@@ -179,10 +187,6 @@ PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
         "Checked abliterate.ai/docs and abliterate.ai/terms. Neither identifies "
         "a legal operating entity or headquarters country, and the terms refer "
         "to an unnamed upstream inference provider. Excluded from jurisdiction filters."
-    ),
-    "telluvian": (
-        "Checked Telluvian's product and privacy pages for selector integration; "
-        "the contracting operator's jurisdiction has not been verified. Excluded from US/EU filters."
     ),
     **{
         slug: (
@@ -334,6 +338,20 @@ _PHALA_STANDARD_PASSTHROUGH_PRIVACY_OVERRIDE = ModelProviderPrivacyOverride(
 
 
 _MODEL_PROVIDER_PRIVACY_OVERRIDES: dict[tuple[str, str], ModelProviderPrivacyOverride] = {
+    # The selection step itself, not the selected model's generation route.
+    (POLYPHEMUS_MODEL_ID, "trustedrouter"): ModelProviderPrivacyOverride(
+        privacy_tier=PRIVACY_TIER_TRUSTED,
+        stores_content=False,
+        provider_zero_data_retention=True,
+        provider_confidential_compute=True,
+        provider_e2ee=True,
+        provider_policy=(
+            "Polyphemus picks the model inside TrustedRouter's attested gateway "
+            "with a local open classifier. No third party sees the prompt, and "
+            "nothing is stored. The selected model's route has its own privacy posture."
+        ),
+        provider_policy_url="https://trust.trustedrouter.com",
+    ),
     **{
         (model_id, "openai"): ModelProviderPrivacyOverride(
             privacy_tier=PRIVACY_TIER_STANDARD,
@@ -501,24 +519,6 @@ class ModelEndpoint:
 
 
 PROVIDERS: dict[str, Provider] = {
-    "telluvian": Provider(
-        slug="telluvian",
-        name="Telluvian",
-        # The TR routing code executes inside our attested gateway; this is
-        # distinct from upstream confidential compute, explicitly false below.
-        attested_gateway=True,
-        supports_chat=False,
-        supports_prepaid=True,
-        supports_byok=False,
-        provider_zero_data_retention=False,
-        provider_confidential_compute=False,
-        provider_e2ee=False,
-        provider_policy=(
-            "Polyphemus sends the conversation and tool definitions to Telluvian "
-            "for model selection. No ZDR or confidential-compute claim is made."
-        ),
-        provider_policy_url="https://telluvian.ai/privacy",
-    ),
     "trustedrouter": Provider(
         slug="trustedrouter",
         name="TrustedRouter",
@@ -2545,7 +2545,6 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "boundless",
         "zro",
         "privatemode",
-        "telluvian",
         "typesafe",
         "regolo",
         "anthropic",

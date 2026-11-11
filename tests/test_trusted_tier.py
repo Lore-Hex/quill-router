@@ -129,11 +129,20 @@ def test_catalog_and_snapshot_publish_the_same_trusted_contract() -> None:
 
 
 def test_all_catalog_trusted_endpoints_are_also_confidential() -> None:
+    from trusted_router.catalog_data import GATEWAY_LOCAL_MODEL_IDS
+
+    gateway_local_trusted = set()
     for endpoint in MODEL_ENDPOINTS.values():
-        expected = endpoint.provider in TRUSTED_PROVIDER_SLUGS and endpoint_meets_privacy_requirement(
-            endpoint, PRIVACY_TIER_CONFIDENTIAL,
-        )
+        # A reviewed upstream operator, or a route TrustedRouter computes
+        # entirely inside its own attested gateway (the Polyphemus selector).
+        gateway_local = endpoint.provider == "trustedrouter" and endpoint.model_id in GATEWAY_LOCAL_MODEL_IDS
+        expected = (
+            endpoint.provider in TRUSTED_PROVIDER_SLUGS or gateway_local
+        ) and endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL)
         assert endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_TRUSTED) is expected
+        if gateway_local and expected:
+            gateway_local_trusted.add(endpoint.model_id)
+    assert gateway_local_trusted == GATEWAY_LOCAL_MODEL_IDS
 
 
 def test_a_declared_tier_cannot_replace_missing_technical_evidence(monkeypatch) -> None:

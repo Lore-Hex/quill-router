@@ -371,7 +371,7 @@ class Witness(NamedTuple):
 def _witnesses() -> dict[str, list[Witness]]:
     model = ORDINARY.model_id
     plain_body, plain = _body(model), _authorization(model)
-    selector = _route(POLYPHEMUS_MODEL_ID, "telluvian")
+    selector = _route(POLYPHEMUS_MODEL_ID, "trustedrouter")
     fugu = _fugu()
     user = _authorization(model, user_provided_model_id="um-1", user_provided_model_revision=1,
                           user_model_prompt_price_microdollars_per_m=1, user_model_owner_user_id="owner",

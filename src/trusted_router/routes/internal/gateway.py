@@ -130,9 +130,13 @@ from trusted_router.partner_billing import (
     partner_billing_mode,
     partner_cost_microdollars,
 )
+from trusted_router.polyphemus import (
+    LEGACY_SELECTOR_ENDPOINT_ID as POLYPHEMUS_LEGACY_SELECTOR_ENDPOINT_ID,
+)
 from trusted_router.polyphemus import LEGACY_SELECTOR_FEE_MICRODOLLARS
 from trusted_router.polyphemus import MODEL_ID as POLYPHEMUS_MODEL_ID
 from trusted_router.polyphemus import SELECT_ROUTE_TYPE as POLYPHEMUS_SELECT_ROUTE_TYPE
+from trusted_router.polyphemus import SELECTOR_ENDPOINT_ID as POLYPHEMUS_SELECTOR_ENDPOINT_ID
 from trusted_router.post_commit import defer_post_commit
 from trusted_router.pricing import (
     SIGNED_RECEIPT_TOTAL_FEE_BASIS_POINTS,
@@ -1235,9 +1239,9 @@ def _authorize_gateway_sync_impl(
                 raise api_error(
                     400, "Polyphemus requires POST /v1/responses", ErrorType.MODEL_NOT_SUPPORTED
                 )
-            provider_options = body_dict.get("provider") or {}
-            if isinstance(provider_options, dict) and provider_options.get("data_collection") == "deny":
-                raise api_error(400, "Polyphemus does not support no-retention requests", ErrorType.BAD_REQUEST)
+            # Selection runs inside the attested gateway and stores nothing, so
+            # no-retention requests are admitted; the caller's privacy filters
+            # apply to the selector route like any other.
         elif body.route_type == POLYPHEMUS_SELECT_ROUTE_TYPE:
             raise api_error(400, "Invalid Polyphemus selection route", ErrorType.BAD_REQUEST)
         if body.additional_cost_reservation_microdollars and (
@@ -5897,6 +5901,11 @@ def _endpoint_for_id_compat(endpoint_id: str) -> ModelEndpoint | None:
     held_endpoint = HELD_PREPAID_SETTLEMENT_ENDPOINTS.get(endpoint_id)
     if held_endpoint is not None:
         return held_endpoint
+
+    if endpoint_id == POLYPHEMUS_LEGACY_SELECTOR_ENDPOINT_ID:
+        # Selector holds admitted while Telluvian was the selector's provider
+        # settle at the same, unchanged selector tariff on its current route.
+        return endpoint_for_id(POLYPHEMUS_SELECTOR_ENDPOINT_ID)
 
     model_id, separator, usage_suffix = endpoint_id.partition("@gemini/")
     if not separator or usage_suffix not in {"prepaid", "byok"}:

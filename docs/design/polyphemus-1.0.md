@@ -1,13 +1,50 @@
 # Polyphemus 1.0
 
-Status: September 23 selector tariff verified for JSON in all four GCP regions;
-streaming verified in the three US regions, with the existing EU receipt gap.
-Standalone-cloud rollout gates remain in force. September 21 evidence below
-describes the historical launch tariff, not the current token-based fee.
+Status (2026-11): selection runs locally inside TrustedRouter's attested
+gateway. Everything below "Historical: Telluvian selector" describes the
+superseded design and its release evidence.
 
-`trustedrouter/polyphemus-1.0` is a Responses-only named model. Telluvian
-recommends a concrete model, and TrustedRouter authorizes and executes that
-model using its ordinary credits, provider routing, and settlement paths.
+`trustedrouter/polyphemus-1.0` is a Responses-only named model. The gateway
+picks a concrete model, and TrustedRouter authorizes and executes that model
+using its ordinary credits, provider routing, and settlement paths.
+
+## Local in-gateway selection (2026-11)
+
+- The gateway classifies the latest user message's text, truncated to 16 KiB,
+  with NVIDIA's open prompt task-and-complexity classifier, run locally.
+  Nothing leaves the gateway to choose. No third party sees the prompt.
+- Rule: the strong model if the request has tools, the task type is Code
+  Generation, or domain knowledge is at least 0.8; otherwise the cheap model.
+- Default pair: strong `anthropic/claude-opus-5.5`, cheap
+  `deepseek/deepseek-v4.1-flash-1017`.
+- Confidential requests (`provider.min_privacy` confidential, trusted, e2e,
+  e2ee, max or maximum, or the confidential-only hostname): strong
+  `moonshotai/kimi-k3.1-pro`, cheap `deepseek/deepseek-v4.1-flash-1017`.
+- The pairs live in `src/trusted_router/polyphemus.py`. The published price
+  envelope spans only those models, plus the selector rate.
+- Selector fee: $0.05 per million tokens of the classified text only,
+  `max(1, floor(UTF-8 bytes / 4))`, minimum charge $0.000001. Catalog field
+  `selector_token_basis` is `latest_user_message_utf8_bytes_div_4`.
+- The selector authorization's provider is `trustedrouter`. The gateway also
+  accepts the old `telluvian` value during the transition.
+- No-store, ZDR and confidential requests are admitted. The caller's privacy
+  constraints still apply to both the selector admission and the generation
+  admission. The selector route (`trustedrouter/polyphemus-1.0` on provider
+  `trustedrouter`) is Trusted tier: compute is attested, the gateway stores
+  nothing, and TrustedRouter is the only operator. It is listed in
+  `GATEWAY_LOCAL_MODEL_IDS`, which satisfies the Trusted operator review
+  without adding TrustedRouter to `TRUSTED_PROVIDER_ORDER`.
+- `polyphemus.x_perf` and `polyphemus.model_zoo` are accepted but ignored.
+  `session_id` does not affect selection; there are no selector sessions.
+- If the classifier fails, the request falls back to `trustedrouter/auto`,
+  and the selector hold is refunded.
+
+# Historical: Telluvian selector (2026-09 to 2026-11, superseded)
+
+Status at the time: September 23 selector tariff verified for JSON in all four
+GCP regions; streaming verified in the three US regions, with the existing EU
+receipt gap. September 21 evidence below describes the historical launch
+tariff, not the token-based fee.
 
 ## Selector pricing (2026-09-23)
 

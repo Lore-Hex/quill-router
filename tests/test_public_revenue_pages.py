@@ -823,10 +823,10 @@ def test_polyphemus_page_uses_routing_neutral_publisher(client: TestClient) -> N
     assert 'href="/providers/trustedrouter"' in response.text
     assert "TrustedRouter selects a model for your task" in response.text
     assert "$0.05 per million selector prompt tokens" in response.text
-    assert "estimated from the serialized conversation and tools" in response.text
-    assert "Standard privacy, not ZDR or confidential" in response.text
-    assert "same session_id" in response.text
-    assert "one hour of inactivity" in response.text
+    assert "classified latest user message only" in response.text
+    assert "No third party sees your prompt" in response.text
+    assert "Confidential, ZDR and no-store requests are supported" in response.text
+    assert "accepted but ignored" in response.text
     assert "without a selector fee" in response.text
     soup = BeautifulSoup(response.text, "html.parser")
     structured_data = json.loads(soup.select_one('script[type="application/ld+json"]').string)
@@ -836,10 +836,10 @@ def test_polyphemus_page_uses_routing_neutral_publisher(client: TestClient) -> N
     assert service["brand"]["logo"].endswith(logo_path)
     assert client.get(logo_path).status_code == 200
     assert client.get("/providers/trustedrouter").status_code == 200
-    # Presentation must not change admission, provider credentials, or billing.
-    assert MODELS[MODEL_ID].provider == "telluvian"
+    # Selection runs in TrustedRouter's own gateway; the tariff is unchanged.
+    assert MODELS[MODEL_ID].provider == "trustedrouter"
     endpoint = endpoints_for_model(MODEL_ID)[0]
-    assert endpoint.provider == "telluvian"
+    assert endpoint.provider == "trustedrouter"
     assert endpoint.prompt_price_microdollars_per_million_tokens == 50_000
 
 
@@ -850,8 +850,12 @@ def test_model_publisher_keeps_host_privacy_and_partner_branding() -> None:
 
     polyphemus = _model_view(MODELS[MODEL_ID], test_mode=True)
     assert polyphemus["publisher_slug"] == "trustedrouter"
-    assert polyphemus["provider_zero_data_retention"] is False
-    assert polyphemus["provider_e2ee"] is False
+    # Selection runs in TrustedRouter's own gateway, so Polyphemus is shown
+    # with the same TrustedRouter host posture as every other trustedrouter/*
+    # routing model, not a third party's.
+    auto = _model_view(MODELS["trustedrouter/auto"], test_mode=True)
+    for field in ("provider_zero_data_retention", "provider_confidential_compute", "provider_e2ee"):
+        assert polyphemus[field] == auto[field]
     partner = _model_view(MODELS["parasail/liberty-2.0"], test_mode=True)
     assert partner["publisher_slug"] == "parasail"
 

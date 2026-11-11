@@ -6,8 +6,9 @@ where plaintext is processed, while ZDR describes retention. The Confidential
 product tier requires verified compute, E2EE and explicit ZDR together, from a
 host that is not the model's own vendor. The TR gateway hop is always attested;
 these values describe the upstream provider. Trusted additionally requires
-membership in TrustedRouter's reviewed operator allowlist; it never replaces
-any of the Confidential prerequisites.
+membership in TrustedRouter's reviewed operator allowlist (or a route computed
+entirely inside TrustedRouter's attested gateway); it never replaces any of
+the Confidential prerequisites.
 Split out of the catalog.py god-module (#38); this module
 depends only on the catalog_data leaf and therefore cannot create a cycle.
 """
@@ -17,6 +18,7 @@ from __future__ import annotations
 from trusted_router.catalog_data import (
     _MODEL_PROVIDER_PRIVACY_OVERRIDES,
     _PHALA_STANDARD_PASSTHROUGH_PRIVACY_OVERRIDE,
+    GATEWAY_LOCAL_MODEL_IDS,
     PRIVACY_TIER_CONFIDENTIAL,
     PRIVACY_TIER_NO_STORE,
     PRIVACY_TIER_STANDARD,
@@ -55,6 +57,18 @@ def provider_confidential_inference(provider: Provider, *, prepaid: bool = False
             provider.provider_zero_data_retention is True
             or (prepaid and provider.prepaid_zero_data_retention is True)
         )
+    )
+
+
+def trusted_operator(model_id: str, provider_slug: str) -> bool:
+    """Whether this exact route's operator passed the Trusted review.
+
+    A reviewed upstream operator qualifies. So does a route TrustedRouter
+    computes entirely inside its own attested gateway (GATEWAY_LOCAL_MODEL_IDS):
+    there is no other operator to review.
+    """
+    return provider_slug in TRUSTED_PROVIDER_SLUGS or (
+        provider_slug == "trustedrouter" and model_id in GATEWAY_LOCAL_MODEL_IDS
     )
 
 
@@ -182,7 +196,7 @@ def _model_provider_privacy_tier(model_id: str, provider_slug: str) -> int:
         and model_provider_e2ee(model_id, provider_slug) is True
         and model_provider_zero_data_retention(model_id, provider_slug) is True
     ):
-        if provider_slug in TRUSTED_PROVIDER_SLUGS:
+        if trusted_operator(model_id, provider_slug):
             return PRIVACY_TIER_TRUSTED
         return PRIVACY_TIER_CONFIDENTIAL
     if override is not None:
@@ -307,7 +321,7 @@ def endpoint_meets_privacy_requirement(endpoint: ModelEndpoint, requirement: int
         return endpoint_zero_data_retention(endpoint) is True
     if requirement in {PRIVACY_TIER_CONFIDENTIAL, PRIVACY_TIER_TRUSTED}:
         return (
-            (requirement != PRIVACY_TIER_TRUSTED or endpoint.provider in TRUSTED_PROVIDER_SLUGS)
+            (requirement != PRIVACY_TIER_TRUSTED or trusted_operator(endpoint.model_id, endpoint.provider))
             and endpoint_confidential_compute(endpoint) is True
             and endpoint_e2ee(endpoint) is True
             and endpoint_zero_data_retention(endpoint) is True

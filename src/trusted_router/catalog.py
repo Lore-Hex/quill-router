@@ -222,6 +222,7 @@ from trusted_router.money import (
     microdollars_to_decimal,
 )
 from trusted_router.polyphemus import MODEL_ID as POLYPHEMUS_MODEL_ID
+from trusted_router.polyphemus import SELECTABLE_MODEL_IDS as POLYPHEMUS_SELECTABLE_MODEL_IDS
 from trusted_router.polyphemus import SELECTOR_PROMPT_MICRODOLLARS_PER_MILLION
 from trusted_router.pricing import (  # noqa: F401 - re-exported for back-compat
     _CACHE_READ_PRICE_MULTIPLIER,
@@ -479,12 +480,12 @@ def _meta_price_range(
         return (min(values), max(values)) if values else (0, 0)
     if model_id == POLYPHEMUS_MODEL_ID:
         # Generation is separate from the selector's prompt-token charge.
-        # Publish its price envelope, with the selector rate exposed below.
+        # Publish the envelope of the models it can select, with the selector
+        # rate exposed below.
         values = [
             getattr(endpoint, attr)
-            for candidate in MODELS.values()
-            if candidate.id not in META_MODEL_IDS and offers_chat(candidate)
-            for endpoint in endpoints_for_model(candidate.id)
+            for selectable_id in POLYPHEMUS_SELECTABLE_MODEL_IDS
+            for endpoint in endpoints_for_model(selectable_id)
             if endpoint.usage_type == "Credits" and getattr(endpoint, attr, 0) > 0
         ]
         return (min(values), max(values)) if values else (0, 0)
@@ -918,7 +919,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
             "selector_prompt_price_per_million": microdollars_to_decimal(SELECTOR_PROMPT_MICRODOLLARS_PER_MILLION),
             "selector_prompt_price_microdollars_per_million": SELECTOR_PROMPT_MICRODOLLARS_PER_MILLION,
             "selector_usage_estimated": True,
-            "selector_token_basis": "serialized_context_utf8_bytes_div_4",
+            "selector_token_basis": "latest_user_message_utf8_bytes_div_4",
             "selector_minimum_charge_microdollars": 1,
         }
            if model.id == POLYPHEMUS_MODEL_ID else {}),

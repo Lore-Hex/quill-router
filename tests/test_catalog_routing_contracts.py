@@ -322,10 +322,21 @@ def test_parasail_liberty_catalog_publishes_fixed_credits_only_price() -> None:
 
 
 def test_every_prepaid_endpoint_is_backed_by_attested_gateway_dispatch() -> None:
+    from trusted_router.catalog_data import GATEWAY_LOCAL_MODEL_IDS
+
+    credits = [
+        endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.usage_type == "Credits"
+    ]
+    # A gateway-local route (the Polyphemus selector) is computed inside the
+    # attested gateway itself, with no upstream dispatch, and is TrustedRouter's.
+    gateway_local = [endpoint for endpoint in credits if endpoint.model_id in GATEWAY_LOCAL_MODEL_IDS]
+    assert {endpoint.model_id for endpoint in gateway_local} == GATEWAY_LOCAL_MODEL_IDS
+    assert {endpoint.provider for endpoint in gateway_local} == {"trustedrouter"}
+    # TrustedRouter is not an upstream dispatch target, so its slug must not
+    # mint prepaid routes for its own catalog entries.
+    assert "trustedrouter" not in GATEWAY_PREPAID_PROVIDER_SLUGS
     credits_providers = {
-        endpoint.provider
-        for endpoint in MODEL_ENDPOINTS.values()
-        if endpoint.usage_type == "Credits"
+        endpoint.provider for endpoint in credits if endpoint.model_id not in GATEWAY_LOCAL_MODEL_IDS
     }
     assert credits_providers <= GATEWAY_PREPAID_PROVIDER_SLUGS
 

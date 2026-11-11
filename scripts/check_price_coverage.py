@@ -1255,19 +1255,6 @@ def _run_audit(
                 # Any public model/route removes this exemption and fails closed.
                 info.append(f"{slug}: internal-only test tariff; excluded from public price publication")
                 continue
-        if slug == "telluvian":
-            from trusted_router.polyphemus import MODEL_ID, SELECTOR_PROMPT_MICRODOLLARS_PER_MILLION
-
-            selector_models = [model for model in MODELS.values() if model.provider == slug]
-            if (
-                len(selector_models) == 1
-                and selector_models[0].id == MODEL_ID
-                and selector_models[0].prompt_price_microdollars_per_million_tokens == SELECTOR_PROMPT_MICRODOLLARS_PER_MILLION
-                and selector_models[0].completion_price_microdollars_per_million_tokens == 0
-                and selector_models[0].request_price_microdollars == 0
-            ):
-                info.append("telluvian: approved selector prompt tariff $0.05/M; https://telluvian.ai/docs/pricing; token usage estimated, not provider-reported")
-                continue
         if slug == "fortanix":
             from trusted_router.fortanix_launch import MODEL_ID, launch_tariff_matches
 
