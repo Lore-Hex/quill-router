@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import datetime as dt
+import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
@@ -9,10 +12,16 @@ from starlette.concurrency import run_in_threadpool
 
 from trusted_router.auth import ManagementPrincipal, Principal, require_scope
 from trusted_router.errors import api_error, error_response
+from trusted_router.operational_analytics import (
+    is_analytics_unavailable,
+    log_analytics_unavailable,
+)
 from trusted_router.request_tags import InvalidTags, validate_tags
 from trusted_router.scopes import SCOPE_INFERENCE
 from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
+
+log = logging.getLogger(__name__)
 
 
 def register_activity_routes(router: APIRouter) -> None:
@@ -50,28 +59,30 @@ def register_activity_routes(router: APIRouter) -> None:
             raise api_error(400, str(exc), ErrorType.INVALID_TAGS) from exc
         if group_by in {"none", "request", "generation"}:
             normalized_limit = max(1, min(limit, 1000))
-            result = await run_in_threadpool(
-                STORE.activity_events_result,
-                principal.workspace.id,
-                api_key_hash=api_key_hash,
-                date=date,
-                limit=normalized_limit,
-                tag_key=tag_key,
-                tag_value=tag_value,
-            )
+            with _analytics_unavailable_as_503():
+                result = await run_in_threadpool(
+                    STORE.activity_events_result,
+                    principal.workspace.id,
+                    api_key_hash=api_key_hash,
+                    date=date,
+                    limit=normalized_limit,
+                    tag_key=tag_key,
+                    tag_value=tag_value,
+                )
             return {
                 "data": result.data,
                 "meta": _activity_meta(result, tag_filter=tag_key is not None),
             }
-        result = await run_in_threadpool(
-            STORE.activity_result,
-            principal.workspace.id,
-            api_key_hash=api_key_hash,
-            date=date,
-            tag_key=tag_key,
-            tag_value=tag_value,
-            group_by_tag=group_by_tag,
-        )
+        with _analytics_unavailable_as_503():
+            result = await run_in_threadpool(
+                STORE.activity_result,
+                principal.workspace.id,
+                api_key_hash=api_key_hash,
+                date=date,
+                tag_key=tag_key,
+                tag_value=tag_value,
+                group_by_tag=group_by_tag,
+            )
         return {
             "data": result.data,
             "meta": _activity_meta(result, tag_filter=tag_key is not None),
@@ -109,6 +120,23 @@ def register_activity_routes(router: APIRouter) -> None:
             "TrustedRouter does not store prompt or output content",
             ErrorType.CONTENT_NOT_STORED,
         )
+
+
+@contextmanager
+def _analytics_unavailable_as_503() -> Iterator[None]:
+    """An analytics (ClickHouse) outage is a retryable 503, not a 500."""
+    try:
+        yield
+    except Exception as exc:
+        if not is_analytics_unavailable(exc):
+            raise
+        log_analytics_unavailable(log, "api_activity", exc)
+        raise api_error(
+            503,
+            "Activity analytics is temporarily unavailable; retry shortly.",
+            ErrorType.SERVICE_UNAVAILABLE,
+            headers={"Retry-After": "30"},
+        ) from exc
 
 
 def _activity_meta(result: Any, *, tag_filter: bool) -> dict[str, Any]:

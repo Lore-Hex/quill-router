@@ -143,6 +143,10 @@ from trusted_router.mcp_metadata import (
     MCP_SERVER_TITLE,
 )
 from trusted_router.og import OG_PNG_PATH
+from trusted_router.operational_analytics import (
+    is_analytics_unavailable,
+    log_analytics_unavailable,
+)
 from trusted_router.operational_analytics_freshness import (
     ANALYTICS_STATUS_KEY,
     REASON_UNREACHABLE,
@@ -2983,7 +2987,19 @@ def _json_body(payload: dict[str, Any]) -> bytes:
 
 
 def _status_history_payload(window: str) -> dict[str, Any]:
-    return history_payload(_status_samples(hours=1), window, rollups=_status_rollups(window))
+    try:
+        return history_payload(_status_samples(hours=1), window, rollups=_status_rollups(window))
+    except Exception as exc:
+        if not is_analytics_unavailable(exc):
+            raise
+        # History has no honest partial form, so answer a retryable 503. The
+        # cached-response builder does not cache a raised build.
+        log_analytics_unavailable(log, "status_history", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="Status history is temporarily unavailable; retry shortly.",
+            headers={"Retry-After": "30"},
+        ) from exc
 
 
 def _wants_history_html(request: Request, *, explicit_format: str | None) -> bool:
@@ -3482,19 +3498,59 @@ def _status_snapshot(settings: Settings) -> dict[str, Any]:
             rollups=_status_rollups("snapshot"),
             settings=settings,
         )
-    except Exception:
+    except Exception as exc:
+        unavailable = is_analytics_unavailable(exc)
         if settings.environment != "test" and _STATUS_CACHE is not None:
-            log.exception("status_live_fallback_failed_serving_stale")
+            if unavailable:
+                log_analytics_unavailable(log, "status_snapshot_serving_stale", exc)
+            else:
+                log.exception("status_live_fallback_failed_serving_stale")
             # Refresh analytics on its own cadence, as on the precomputed
             # fallback above.
             return _apply_public_client_observed_policy(
                 _merge_analytics_status(_STATUS_CACHE[1]), settings=settings
             )
-        raise
+        if not unavailable:
+            raise
+        # ClickHouse is unreachable and this instance has nothing to serve
+        # (a cold start, or every instance restarted during the outage).
+        # Answer 200 with status explicitly UNKNOWN rather than 500: the page
+        # and the machine feed stay up, and nothing claims health it cannot
+        # see. Deliberately not cached, so the next rebuild retries.
+        log_analytics_unavailable(log, "status_snapshot", exc)
+        payload = _status_data_unavailable_snapshot(settings)
+        payload = _merge_client_observed_status(payload, settings=settings)
+        return _merge_analytics_status(payload)
     payload = _merge_client_observed_status(payload, settings=settings)
     payload = _merge_analytics_status(payload)
     if settings.environment != "test":
         _STATUS_CACHE = (now, payload)
+    return payload
+
+
+STATUS_DATA_UNAVAILABLE_SUMMARY = {
+    "headline": "Status Data Temporarily Unavailable",
+    "detail": (
+        "Synthetic check results could not be read from the analytics store. "
+        "Current status is unknown; this is not a report that systems are healthy."
+    ),
+}
+
+
+def _status_data_unavailable_snapshot(settings: Settings) -> dict[str, Any]:
+    """The status schema with no evidence in it, and saying so.
+
+    Built from zero samples so every section keeps its usual shape (components
+    and windows report no data, monitor freshness reports missing samples), then
+    the banner is pinned to "unknown". With no samples the builder would
+    otherwise lead with "Monitoring coverage incomplete", which blames the
+    probe fleet for what is really an analytics read outage.
+    """
+    payload = status_snapshot([], rollups=[], settings=settings)
+    payload["overall_status"] = "unknown"
+    payload["overall_status_label"] = "Unknown"
+    payload["overall_status_class"] = "unknown"
+    payload["summary"] = dict(STATUS_DATA_UNAVAILABLE_SUMMARY)
     return payload
 
 
