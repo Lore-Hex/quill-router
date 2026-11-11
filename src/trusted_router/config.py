@@ -1039,9 +1039,12 @@ class Settings(BaseSettings):
     # (docs/design/fast-admission-widening.md section 9.1). A request the
     # pilot leased takes no ticket (async_settle_admits_request), and the
     # workspaces listed here stay outside admission altogether, so the edge
-    # may answer their async-v1 authorizes: the edge passes every other
-    # workspace's to Python, the one ticket signer. Comma-separated, at most
-    # 32, all mode only, none of them on the overlap list; empty by default.
+    # may answer their async-v1 authorizes. The edge passes every other
+    # workspace's to Python, the one ticket signer, unless the edge ticket
+    # switch covers the workspace (fastpath_edge_async_ticket_workspaces):
+    # then the edge answers and asks Python for the signature. Comma-separated,
+    # at most 32, all mode only, none of them on the overlap list; empty by
+    # default.
     async_settle_fastpath_reserved_workspaces: str = ""
     _async_settle_fastpath_reserved_workspace_ids: frozenset[str] = PrivateAttr(default=frozenset())
     # Optional comma-separated serving-region allowlist for NEW async-v1
@@ -1926,8 +1929,9 @@ class Settings(BaseSettings):
         fast-admission-widening.md) it is what keeps the two paths apart.
         Python's own authorize answer reads it at the ticket's issue
         (async_settle.snapshot_projection). The edge ticket route
-        (async_settle.edge_ticket) does not: every authorization it signs for
-        is the edge's own, leased by construction, and its rule is
+        (async_settle.edge_ticket) does not: every id it signs for is one the
+        edge minted for its own leased commit, the edge releases the ticket
+        only once that leased row is durable, and the route's rule is
         fastpath_edge_async_ticket_allows. The settle's acceptance has only
         the ticket's claims and checks the workspace, and a ticketed leased
         authorization (the overlap list's, or one the edge got a ticket for)

@@ -9,6 +9,7 @@ import sys
 from dataclasses import replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import get_args
 from unittest.mock import Mock
 from urllib.parse import quote
 
@@ -155,8 +156,9 @@ def test_signing_exception_is_error(facts, caplog):
 
 
 @pytest.mark.parametrize("regions,region,issued", [
-    # The runtime's own region is us-central1 throughout: the rule reads the
-    # region the edge names for the authorization, and nothing else.
+    # The process serves us-central1 and its journal is there throughout: the
+    # rule reads the region the edge names for the authorization, and nothing
+    # else.
     ("europe-west4", "europe-west4", True),
     ("us-central1,europe-west4", "europe-west4", True),
     ("us-central1,europe-west4", "us-central1", True),
@@ -166,8 +168,10 @@ def test_signing_exception_is_error(facts, caplog):
 def test_region_rule_reads_the_authorization_region(facts, caplog, regions, region, issued):
     caplog.set_level(logging.INFO, logger="trusted_router.async_settle_timing")
     assert facts.runtime.effective_journal_region == "us-central1"
+    cfg = settings(async_settle_negotiation_regions=regions, serving_region="us-central1")
+    assert cfg.serving_region == cfg.effective_serving_region == "us-central1"
     body = facts.body.model_copy(update={"region": region})
-    result = call(facts, body=body, settings=settings(async_settle_negotiation_regions=regions))
+    result = call(facts, body=body, settings=cfg)
     if issued:
         assert set(result) == {"async_eligible", "settlement_ticket", "settlement_status_url"}
         assert result["async_eligible"] is True
@@ -270,11 +274,19 @@ def test_route_rejects_malformed_body(facts, client, change):
     facts.runtime.signer.sign.assert_not_called()
 
 
-@pytest.mark.parametrize("surface,registered", [
-    ("combined", True), ("internal", True),
-    ("public", False), ("actions", False), ("control", False), ("observer", False), ("settle-drain", False),
-])
-def test_route_is_registered_on_the_gateway_surfaces_only(facts, monkeypatch, surface, registered):
+# Every surface the setting can name, so a surface added later is covered.
+SURFACES = get_args(Settings.model_fields["service_surface"].annotation)
+GATEWAY_SURFACES = {"combined", "internal"}
+
+
+def test_surface_list_is_the_settings_own():
+    assert GATEWAY_SURFACES < set(SURFACES)
+    assert len(SURFACES) == len(set(SURFACES)) >= 7
+
+
+@pytest.mark.parametrize("surface", SURFACES)
+def test_route_is_registered_on_the_gateway_surfaces_only(facts, monkeypatch, surface):
+    registered = surface in GATEWAY_SURFACES
     monkeypatch.setattr(route, "typed_billing_store", lambda _: SimpleNamespace(request_record_write_mode="typed"))
     monkeypatch.setattr(service, "time", SimpleNamespace(time=lambda: NOW, monotonic=service.time.monotonic))
     cfg = settings(service_surface=surface)
