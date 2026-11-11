@@ -333,21 +333,28 @@ so the next rollout of `main` ships it. The refresh job's last step, "Deploy a
 price snapshot no rollout has carried", runs
 `scripts/deploy/price_snapshot_deploy.py` on every hourly run and dispatches
 `deploy.yml` with `track_main=true` once the oldest undelivered snapshot has
-waited four hours and no deploy run carries it. (From `65ceb7c`, 2026-05-13,
+waited four hours (counted from its commit's committer date) and no deploy run
+carries it. The dispatch therefore comes at the first refresh run that reaches
+its last step after those four hours. (From `65ceb7c`, 2026-05-13,
 until this rule, every snapshot push dispatched a rollout of its own.)
 
 If the deployed catalog stays stale for longer than that:
 1. Read that step's log in the latest `refresh-prices.yml` run. It prints the
    decision and the reason. `wait` names what the snapshot waits for: it is
-   younger than the limit, an active rollout carries it, or main's head
-   already has a deploy run. `dispatch` is followed by the
-   `dispatched deploy.yml for a waiting snapshot` log line.
-2. `wait` because main's head has a completed deploy run means a deploy of
-   that commit was tried and did not deliver. The check leaves the next one
-   to a person: read that run, then use the fallback below.
-3. A failed step means the check could not read an answer from GitHub and
-   decided nothing; the next hourly run asks again. If it fails every hour,
-   inspect the workflow's `permissions:` block (`actions: write`).
+   younger than the limit, or a deploy run that has not completed carries it.
+   `dispatch` is followed by the `dispatched deploy.yml for a waiting
+   snapshot` log line.
+2. A failed step whose log says `stuck` means the snapshot is past the limit
+   and every deploy run of main's head completed without delivering it (it
+   failed, or someone cancelled it). The check dispatches once per main head,
+   so it starts no second rollout and fails every hour instead, which the
+   `deploy_dispatch` alert reports. Read that deploy run, then use the
+   fallback below. It also clears when a new commit lands on main.
+3. A failed step whose log says `unknown` means the check could not read an
+   answer from GitHub and decided nothing; the next hourly run asks again.
+4. A failed step after a `dispatch` decision means the `gh workflow run`
+   call itself failed. If that repeats, inspect the workflow's
+   `permissions:` block (`actions: write`).
 
 Fallback: manually dispatch with `gh workflow run deploy.yml -R Lore-Hex/quill-router`.
 

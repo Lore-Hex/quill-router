@@ -161,6 +161,15 @@ def assert_unknown(outcome: Outcome) -> None:
     assert outcome.code == 1, outcome.stderr
     assert outcome.stdout == "", "an unknown answer must put nothing on stdout"
     assert "price_snapshot_deploy: unknown: " in outcome.stderr
+    assert "price_snapshot_deploy: stuck: " not in outcome.stderr
+
+
+def assert_stuck(outcome: Outcome, calls: list[list[str]]) -> None:
+    assert outcome.code == 1, outcome.stderr
+    assert outcome.stdout == "", "a stuck snapshot must put nothing on stdout"
+    assert outcome.calls == calls
+    assert "price_snapshot_deploy: stuck: " in outcome.stderr
+    assert "price_snapshot_deploy: unknown: " not in outcome.stderr
 
 
 def test_the_limit_is_four_hours_and_the_helpers_are_the_superseded_check_s() -> None:
@@ -213,17 +222,40 @@ def test_dispatches_for_an_old_snapshot_no_run_carries(decide) -> None:
     assert f"snapshot {SNAPSHOT[:9]} has waited 5.0 h" in outcome.stderr
 
 
-@pytest.mark.parametrize("status, conclusion", [
-    ("queued", None), ("in_progress", None), ("completed", "failure"), ("completed", "cancelled"),
-    ("completed", "success"),
-])
-def test_waits_when_main_s_head_already_has_a_deploy_run(decide, status: str, conclusion: str | None) -> None:
-    # In flight it is the carrier; completed, a deploy of this head was tried
-    # and a person decides. Either way: one automatic dispatch per main head.
-    head_runs = [{"databaseId": 88, "status": status, "conclusion": conclusion}]
-    outcome = decide(world(head_runs=head_runs))
+def head_run(status: str, conclusion: str | None = None, run_id: int = 88) -> dict:
+    return {"databaseId": run_id, "status": status, "conclusion": conclusion}
+
+
+@pytest.mark.parametrize("status", ["queued", "in_progress", "waiting", "requested", "pending"])
+def test_waits_while_a_deploy_run_of_main_s_head_is_in_flight(decide, status: str) -> None:
+    outcome = decide(world(head_runs=[head_run(status)]))
     assert_waits(outcome, [*TO_COMPARE, of_head(MAIN)])
-    assert f"main's head {MAIN[:9]} already has a deploy run (88 {status} {conclusion or '-'})" in outcome.stderr
+    assert f"a deploy run of main's head {MAIN[:9]} is in flight (88 {status} -)" in outcome.stderr
+
+
+@pytest.mark.parametrize("conclusion", ["failure", "cancelled", "success", "skipped", "timed_out", None])
+def test_is_stuck_when_every_deploy_run_of_main_s_head_completed(decide, conclusion: str | None) -> None:
+    # A deploy of this head was tried and delivered nothing. No second
+    # dispatch (one per main head), and no quiet wait either: the step fails.
+    outcome = decide(world(head_runs=[head_run("completed", conclusion)]))
+    assert_stuck(outcome, [*TO_COMPARE, of_head(MAIN)])
+    assert f"snapshot {SNAPSHOT[:9]} has waited 5.0 h" in outcome.stderr
+    assert (f"every deploy run of main's head {MAIN[:9]} completed without delivering it "
+            f"(88 completed {conclusion or '-'})") in outcome.stderr
+
+
+def test_one_run_in_flight_among_completed_ones_is_the_carrier(decide) -> None:
+    for runs in ([head_run("completed", "failure", 87), head_run("queued")],
+                 [head_run("in_progress"), head_run("completed", "cancelled", 87)]):
+        assert_waits(decide(world(head_runs=runs)), [*TO_COMPARE, of_head(MAIN)])
+    outcome = decide(world(head_runs=[head_run("completed", "failure", 87), head_run("completed", "cancelled")]))
+    assert_stuck(outcome, [*TO_COMPARE, of_head(MAIN)])
+    assert "(87 completed failure, 88 completed cancelled)" in outcome.stderr
+
+
+def test_a_young_snapshot_waits_whatever_became_of_main_s_head(decide) -> None:
+    # Stuck is only for a snapshot past the limit: before it, the runs of main's head are not read.
+    assert_waits(decide(world([CODE, snapshot(LIMIT - 1)], head_runs=[head_run("completed", "failure")])), TO_COMPARE)
 
 
 @pytest.mark.parametrize("status", ["ahead", "identical"])
@@ -366,6 +398,10 @@ UNKNOWNS: dict[str, dict[str, object]] = {
     "the snapshot's sha is missing": with_snapshot({"commit": snapshot(5 * 3600)["commit"]}),
     "runs of main's head are not a list": changed(of_head(MAIN), {"message": "Not Found"}),
     "a run of main's head is not an object": changed(of_head(MAIN), [88]),
+    "a run of main's head has no status": changed(of_head(MAIN), [{"databaseId": 88, "conclusion": None}]),
+    "a run of main's head has an empty status": changed(of_head(MAIN), [{"databaseId": 88, "status": ""}]),
+    "a run of main's head has a null status": changed(
+        of_head(MAIN), [{"databaseId": 87, "status": "queued"}, {"databaseId": 88, "status": None}]),
     "active runs are not a list": changed(ACTIVE, {}),
     "an active run is not an object": changed(ACTIVE, [77]),
     "an active run has no status": changed(ACTIVE, [{"databaseId": 77, "headSha": RUN_HEAD, "headBranch": "main"}]),

@@ -31,11 +31,14 @@ track_main=true. The rule, in order:
    wait: a code commit that deploys has its own push run.
 4. The oldest waiting snapshot is younger than the limit: wait. A rollout
    may still carry it.
-5. A deploy.yml run exists for main's head: wait. In flight, that run is the
-   carrier. Completed, a deploy of exactly this head was already tried (it
+5. A deploy.yml run exists for main's head. While one of them has not
+   completed: wait, that run is the carrier. When all of them completed, a
+   deploy of exactly this head was already tried and did not deliver (it
    failed, a person cancelled it, or a deliberate redeploy of an older
-   release followed), and a person decides what happens next. This bounds
-   the automatic dispatches to one per main head.
+   release followed). The check dispatches no second one, which bounds the
+   automatic dispatches to one per main head, and it does not answer `wait`
+   either: the snapshot is "stuck" (below) until a person redeploys or main
+   moves on.
 6. A deploy.yml run on main has not completed and its commit contains the
    oldest waiting snapshot: wait, that run carries it. A run of a commit
    from before the snapshot does not.
@@ -49,6 +52,12 @@ unexpected shape. Then the reason goes to stderr, nothing goes to stdout and
 the exit code is 1. The workflow step fails where a person sees it, and the
 next refresh run asks again. The check never guesses: a guessed `dispatch`
 spends a rollout, and a guessed `wait` hides a snapshot that is stuck.
+
+"Stuck" (rule 5) ends the same way, with its own word in the reason: nothing
+on stdout, exit code 1, a failed step every hour. A quiet `wait` there would
+leave the snapshot waiting without a bound and without anyone being told. It
+clears by itself when main's head changes: the new head has no deploy run, so
+the next check waits for its push run or dispatches.
 """
 
 from __future__ import annotations
@@ -89,6 +98,10 @@ _COMMIT_SHA = re.compile(r"[0-9a-f]{40}")
 
 class Unknown(Exception):
     """An answer the rule needs is unknown; the message says which."""
+
+
+class Stuck(Exception):
+    """A snapshot is past the limit and the check may not dispatch for it; the message says why."""
 
 
 def _gh(args: list[str]) -> object:
@@ -205,7 +218,11 @@ def delivered_release(repo: str) -> str:
 
 
 def decide(repo: str, now: float) -> tuple[str, str]:
-    """DISPATCH or WAIT, and why (see the module docstring); Unknown when an answer is missing."""
+    """DISPATCH or WAIT, and why (see the module docstring).
+
+    Unknown when an answer is missing; Stuck when the snapshot is past the limit
+    and main's head already had its one deploy.
+    """
 
     shipped = delivered_release(repo)
     head = _gh(["api", f"repos/{repo}/commits/{MAIN_BRANCH}"])
@@ -225,11 +242,16 @@ def decide(repo: str, now: float) -> tuple[str, str]:
                    "--limit", "20", "--json", "databaseId,status,conclusion"])
     if not isinstance(of_head, list) or not all(isinstance(run, dict) for run in of_head):
         raise Unknown(f"the deploy runs of main's head {main_sha[:9]} are not a list of runs")
+    if not all(isinstance(run.get("status"), str) and run["status"] for run in of_head):
+        raise Unknown(f"a deploy run of main's head {main_sha[:9]} has no status")
     if of_head:
-        states = ", ".join(f"{run.get('databaseId')} {run.get('status')} {run.get('conclusion') or '-'}"
+        states = ", ".join(f"{run.get('databaseId')} {run['status']} {run.get('conclusion') or '-'}"
                            for run in of_head)
-        return WAIT, (f"{waited}, and main's head {main_sha[:9]} already has a deploy run ({states}): in flight it "
-                      "carries the snapshot, completed it leaves the next deploy to a person")
+        if any(run["status"] != "completed" for run in of_head):
+            return WAIT, (f"{waited}, and a deploy run of main's head {main_sha[:9]} is in flight ({states}): "
+                          "it carries the snapshot")
+        raise Stuck(f"{waited}, and every deploy run of main's head {main_sha[:9]} completed without delivering "
+                    f"it ({states}): one automatic dispatch per head, so a person redeploys")
     active = _gh(["run", "list", "--repo", repo, "--workflow", DEPLOY_WORKFLOW, "--branch", MAIN_BRANCH,
                   "--limit", "100", "--json", "databaseId,status,headSha,headBranch"])
     for run_head in active_main_heads(active):
@@ -246,6 +268,9 @@ def main(argv: list[str] | None = None) -> int:
         decision, why = decide(args.repo, _now())
     except Unknown as exc:
         print(f"price_snapshot_deploy: unknown: {exc}; deciding nothing", file=sys.stderr)
+        return 1
+    except Stuck as exc:
+        print(f"price_snapshot_deploy: stuck: {exc}", file=sys.stderr)
         return 1
     print(f"price_snapshot_deploy: {decision}: {why}", file=sys.stderr)
     print(decision)
