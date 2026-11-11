@@ -476,6 +476,40 @@ func TestEdgeTicketWaitRespectsDecideBudget(t *testing.T) {
 	}
 }
 
+// A result that is already waiting when the commit returns is still refused
+// when the call finished after the wait's deadline: the grace after the
+// commit, or the decide budget when that comes first.
+func TestEdgeTicketFinishedAfterTheDeadlineIsLate(t *testing.T) {
+	ticket := &gwauth.Ticket{Eligible: true, SettlementTicket: "a.b.c", StatusURL: "/v1/settlements/gwa.settle"}
+	committed := time.Now().Add(-time.Second)
+	for _, c := range []struct {
+		name            string
+		finished, limit time.Duration // after the commit
+		late            bool
+	}{
+		{"inside the grace", 9 * time.Millisecond, time.Minute, false},
+		{"at the grace", 10 * time.Millisecond, time.Minute, false},
+		{"after the grace", 11 * time.Millisecond, time.Minute, true},
+		{"inside the grace, after the budget", 6 * time.Millisecond, 5 * time.Millisecond, true},
+	} {
+		dp := newDecider(DecideConfig{}, func(string, ...any) {}, time.Now, time.Minute)
+		dp.ticketGrace = 10 * time.Millisecond
+		call := &ticketCall{result: make(chan ticketResult, 1)}
+		call.result <- ticketResult{ticket: ticket, finished: committed.Add(c.finished)}
+		got := dp.awaitTicket(call, committed, committed.Add(c.limit))
+		if c.late != (got == nil) || (!c.late && got != ticket) {
+			t.Fatalf("%s: ticket %v", c.name, got)
+		}
+		want := int64(0)
+		if c.late {
+			want = 1
+		}
+		if n := dp.total.tickets; n["late"] != want || n["failed"] != 0 || n["declined"] != 0 {
+			t.Fatalf("%s: counts %v", c.name, n)
+		}
+	}
+}
+
 func TestEdgeTicketDetachedTimeout(t *testing.T) {
 	f := asyncAuthorizeGoldens(t)
 	base := asyncCaseNamed(t, "answer:async.B:invocation_nonce")

@@ -66,3 +66,47 @@ func TestTicketRenderEqualsResponseDataForBothHeads(t *testing.T) {
 		}
 	}
 }
+
+// A ticket is spliced only onto the billing snapshot. Shape A's lone
+// async_eligible member is unique in the head too, so without the shape
+// check the splice would succeed and turn a refusal into a ticketed answer.
+func TestTicketRefusesAnAnswerWithoutABillingSnapshot(t *testing.T) {
+	g := loadAsyncGoldens(t)
+	refused := map[string]int{}
+	for _, c := range g.cases {
+		if c.target == nil || c.target.response == "" {
+			continue
+		}
+		in, _ := asyncInputOf(t, g, c)
+		if in.Async.Policy.AdmissionEnabled && !in.Async.WantTicket {
+			continue
+		}
+		staged, err := Stage(in)
+		if err != nil {
+			continue
+		}
+		shape := staged.Async().Shape
+		if shape == AsyncSnapshot {
+			continue
+		}
+		composed, err := staged.Finish(c.Admitted.Envelope, endOfLife(t, c.goldenCase))
+		if err != nil {
+			t.Fatalf("%s: %v", c.Name, err)
+		}
+		ticket := Ticket{Eligible: true, SettlementTicket: "a.b.c", StatusURL: "/v1/settlements/" + in.AuthorizationID + ".settle"}
+		got, err := composed.WithTicket(ticket)
+		if err == nil {
+			t.Fatalf("%s: a ticket was spliced onto shape %s", c.Name, shape)
+		}
+		for _, readBack := range []bool{false, true} {
+			want := composed.Render(Timing{}, readBack)
+			if !bytes.Equal(got.Render(Timing{}, readBack), want) || bytes.Contains(want, []byte("settlement_ticket")) {
+				t.Fatalf("%s: a refused ticket changed the answer", c.Name)
+			}
+		}
+		refused[shape]++
+	}
+	if refused[AsyncFalseOnly] == 0 {
+		t.Fatalf("no shape A answer was held to the refusal: %v", refused)
+	}
+}
