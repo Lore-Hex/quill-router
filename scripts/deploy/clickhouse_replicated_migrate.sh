@@ -74,14 +74,28 @@ node_query() {
     --command="sudo sh -c 'set -eu; set -a; . /etc/tr-clickhouse-ingest.env; set +a; exec /usr/bin/clickhouse-client --user tr --password \"\$CH_PASSWORD\" --database tr --multiquery'"
 }
 
-# Replica host names for a cluster: every replica answers clusterAllReplicas.
-cluster_replicas() {
-  node_query 0 "SELECT hostName() FROM clusterAllReplicas('$1', system.one) ORDER BY 1 FORMAT TSV" | tr -d '\r'
+# Every node is asked itself, over its own ssh session. clusterAllReplicas
+# would have the first node sign in to the others as `default`, the user
+# clickhouse-node-config/tr-default-user.xml removes.
+each_node() {
+  local query="$1"
+  local index answer lines=""
+  for index in "${!NAMES[@]}"; do
+    answer="$(node_query "$index" "$query")" || return "$?"
+    lines+="${answer}"$'\n'
+  done
+  printf '%s' "$lines" | tr -d '\r' | grep . | sort || true
 }
 
-# Replicas of a cluster on which tr.<table> exists.
+# "<host name> <replicas in the cluster>" for each node that is a replica of
+# the cluster in its own configuration.
+cluster_members() {
+  each_node "SELECT hostName(), count() FROM system.clusters WHERE cluster = '$1' HAVING countIf(is_local) = 1 FORMAT TSV"
+}
+
+# Nodes on which tr.<table> exists.
 table_replicas() {
-  node_query 0 "SELECT hostName() FROM clusterAllReplicas('$1', system.tables) WHERE database = 'tr' AND name = '$2' ORDER BY 1 FORMAT TSV" | tr -d '\r'
+  each_node "SELECT hostName() FROM system.tables WHERE database = 'tr' AND name = '$1' FORMAT TSV"
 }
 
 status=0
@@ -101,8 +115,16 @@ for file in "${FILES[@]}"; do
   fi
   while read -r table cluster; do
     [ -n "$table" ] || continue
-    replicas="$(cluster_replicas "$cluster")"
-    present="$(table_replicas "$cluster" "$table")"
+    members="$(cluster_members "$cluster")"
+    replicas="$(cut -f1 <<<"$members")"
+    # Every replica the cluster names must be one of the nodes asked, or a
+    # replica nobody looked at could be the one without the table.
+    if [ -z "$replicas" ] || [ "$(cut -f2 <<<"$members" | sort -u)" != "$(grep -c . <<<"$replicas")" ]; then
+      echo "refusing ${file}: cluster ${cluster} does not consist of exactly the nodes that answered ($(printf '%s' "$replicas" | tr '\n' ' '))" >&2
+      status=1
+      continue
+    fi
+    present="$(table_replicas "$table")"
     missing="$(comm -23 <(printf '%s\n' "$replicas" | sort) <(printf '%s\n' "$present" | sort))"
     if [ -n "$missing" ]; then
       echo "refusing ${file}: tr.${table} is missing on $(printf '%s' "$missing" | tr '\n' ' ')of cluster ${cluster}; an ON CLUSTER ALTER would succeed on the other replicas and leave mixed schemas. Create it first with CREATE TABLE IF NOT EXISTS tr.${table} ON CLUSTER ${cluster} using SHOW CREATE TABLE from a replica that has it." >&2
