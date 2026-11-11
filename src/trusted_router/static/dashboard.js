@@ -217,9 +217,15 @@ async function startMetaMaskSignin() {
         setSigninError("Wallet connection was rejected.");
         return;
     }
-    const challenge = await postJSON("/v1/auth/wallet/challenge", { address });
+    // A 403 carries the reason (for example, new accounts cannot be created
+    // with a wallet). Show it instead of asking the visitor to retry.
+    let refusal = "";
+    const noteRefusal = (message) => {
+        refusal = message;
+    };
+    const challenge = await postJSON("/v1/auth/wallet/challenge", { address }, noteRefusal);
     if (!challenge?.data?.message) {
-        setSigninError("Unable to start sign-in. Please try again.");
+        setSigninError(refusal || "Unable to start sign-in. Please try again.");
         return;
     }
     let signature;
@@ -233,18 +239,14 @@ async function startMetaMaskSignin() {
         setSigninError("Sign-in was cancelled.");
         return;
     }
-    const verify = await postJSON("/v1/auth/wallet/verify", {
-        address,
-        signature,
-        nonce: challenge.data.nonce,
-    });
+    const verify = await postJSON("/v1/auth/wallet/verify", { address, signature, nonce: challenge.data.nonce }, noteRefusal);
     if (!verify?.data?.redirect) {
-        setSigninError("Verification failed. The nonce may have expired.");
+        setSigninError(refusal || "Verification failed. The nonce may have expired.");
         return;
     }
     location.href = requestedSigninTarget() ?? verify.data.redirect;
 }
-async function postJSON(path, body) {
+async function postJSON(path, body, onForbidden) {
     try {
         const res = await fetch(path, {
             method: "POST",
@@ -252,8 +254,14 @@ async function postJSON(path, body) {
             body: JSON.stringify(body),
             credentials: "same-origin",
         });
-        if (!res.ok)
+        if (!res.ok) {
+            if (res.status === 403 && onForbidden) {
+                const refused = (await res.json());
+                if (refused?.error?.message)
+                    onForbidden(refused.error.message);
+            }
             return null;
+        }
         return (await res.json());
     }
     catch {
