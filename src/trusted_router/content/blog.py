@@ -102,11 +102,12 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
             "routing each task to the right one. Today we launch three: Prometheus 4.0, "
             "Liberty 4.0 and Polyphemus 1.0."
         ),
-        # Embargoed: published_posts() hides it until this date.
-        published_date="2026-11-12",
+        published_date="2026-11-11",
         source_label="Joseph Perla",
         source_url=None,
         body_html="""
+<p><strong>In the news:</strong> <a href="https://venturebeat.com/technology/trustedrouter-launches-three-new-encrypted-fusion-models-that-combine-multiple-llms-including-one-exclusively-with-u-s-model-providers">Read VentureBeat's coverage of our three new combo models</a>.</p>
+
 <p>Many models beat one model. We call these combo models: you send one request to one model id, and underneath it there are many models doing the work. Some combos fuse, where a panel of models each answers and a synthesizer writes the final answer from all of them. Some combos route, where we look at the task and send it to the model best suited to it. Either way you write the same code you would for a single model.</p>
 
 <p>Why does a panel beat its best member? Because models fail in different places. One hallucinates a date, another misses a primary source, a third gets the math wrong. A good synthesizer keeps what survives cross-examination and drops the rest. On hard research tasks, we typically see a fused panel score about 20% higher than the best single model sitting on it. It even works when every member is the same model: run one model several times, fuse its own answers, and it gets better too.</p>
