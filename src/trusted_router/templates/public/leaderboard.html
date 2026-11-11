@@ -10,6 +10,7 @@
   <h1>{{ heading }}</h1>
   <p>{{ description }}</p>
   <p class="lb-muted">Last updated {{ snapshot.generated_at }}</p>
+  {% if snapshot.data_unavailable %}<p class="lb-warning" role="status">Benchmark data is temporarily unavailable, so no measurements are shown. This is not a report on any provider; the tables fill in again once the measurements can be read.</p>{% endif %}
 </section>
 {% endblock %}
 
@@ -92,7 +93,7 @@
       {% endfor %}
       </tbody>
     </table>
-    {% if not snapshot[kind] %}<p class="lb-empty">No measurements published for this window yet.</p>{% endif %}
+    {% if not snapshot[kind] %}<p class="lb-empty">{% if snapshot.data_unavailable %}Benchmark data is temporarily unavailable.{% else %}No measurements published for this window yet.{% endif %}</p>{% endif %}
     <p class="lb-empty" data-lb-empty hidden>No measurements match these filters.</p>
   </section>
   {% endfor %}
