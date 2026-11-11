@@ -232,6 +232,7 @@ def test_settings() -> Settings:
         github_client_secret=None,
         github_oauth_redirect_url=None,
         email_signup_enabled=True,
+        wallet_signup_enabled=True,
     )
 
 

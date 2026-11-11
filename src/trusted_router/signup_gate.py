@@ -21,6 +21,27 @@ def require_new_account_creation(settings: Settings) -> None:
         )
 
 
+WALLET_SIGNUPS_DISABLED_MESSAGE = (
+    "New accounts cannot be created with a wallet. Sign in with Google or GitHub. "
+    "Wallets that already have an account can still sign in."
+)
+
+
+def wallet_account_creation_allowed(settings: Settings) -> bool:
+    return settings.new_signups_enabled and settings.wallet_signup_enabled
+
+
+def require_wallet_account_creation(settings: Settings) -> None:
+    """Reject a code path that is about to create an account for a wallet."""
+    require_new_account_creation(settings)
+    if not settings.wallet_signup_enabled:
+        raise api_error(
+            403,
+            WALLET_SIGNUPS_DISABLED_MESSAGE,
+            ErrorType.FORBIDDEN,
+        )
+
+
 def starter_credit_for_email(email: str, starter_credit_microdollars: int) -> int:
     """Starter credit a new account with this address receives.
 

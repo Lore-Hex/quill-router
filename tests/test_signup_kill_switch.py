@@ -16,17 +16,19 @@ from trusted_router.storage import STORE, InMemoryStore
 
 
 def _settings(**overrides: object) -> Settings:
-    return Settings(
-        environment="test",
-        service_surface="control",
-        new_signups_enabled=False,
-        email_signup_enabled=True,
-        google_client_id="google-test-client",
-        google_client_secret="google-test-secret",  # noqa: S106
-        github_client_id="github-test-client",
-        github_client_secret="github-test-secret",  # noqa: S106
-        **overrides,
-    )
+    values: dict[str, object] = {
+        "environment": "test",
+        "service_surface": "control",
+        "new_signups_enabled": False,
+        "email_signup_enabled": True,
+        "wallet_signup_enabled": True,
+        "google_client_id": "google-test-client",
+        "google_client_secret": "google-test-secret",
+        "github_client_id": "github-test-client",
+        "github_client_secret": "github-test-secret",
+    }
+    values.update(overrides)
+    return Settings(**values)  # type: ignore[arg-type]
 
 
 def _client(**overrides: object) -> TestClient:
@@ -194,6 +196,73 @@ def test_global_gate_keeps_returning_wallet_login_working() -> None:
     assert response.status_code == 200, response.text
     assert STORE.find_user_by_wallet(account.address).id == existing.id
     assert "tr_session=" in response.headers.get("set-cookie", "")
+
+
+def test_wallet_signup_is_closed_unless_configured() -> None:
+    assert Settings(environment="test").wallet_signup_enabled is False
+
+
+def test_wallet_switch_blocks_first_time_wallet_before_challenge_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _client(new_signups_enabled=True, wallet_signup_enabled=False)
+    account = Account.create()
+    challenge_writes = 0
+
+    def unexpected_create(*_args: object, **_kwargs: object) -> None:
+        nonlocal challenge_writes
+        challenge_writes += 1
+        raise AssertionError("closed wallet signup wrote a wallet challenge")
+
+    monkeypatch.setattr(InMemoryStore, "create_wallet_challenge", unexpected_create)
+    response = client.post(
+        "/v1/auth/wallet/challenge",
+        json={"address": account.address},
+    )
+
+    assert response.status_code == 403
+    assert "cannot be created with a wallet" in response.json()["error"]["message"]
+    assert challenge_writes == 0
+    assert STORE.find_user_by_wallet(account.address) is None
+
+
+def test_wallet_switch_blocks_account_creation_at_verify() -> None:
+    # A challenge issued while wallet signup was open must not create an
+    # account once the switch is closed.
+    account = Account.create()
+    payload = _signed_wallet_payload(_client(new_signups_enabled=True), account)
+    closed = _client(new_signups_enabled=True, wallet_signup_enabled=False)
+
+    response = closed.post("/v1/auth/wallet/verify", json=payload)
+
+    assert response.status_code == 403
+    assert "cannot be created with a wallet" in response.json()["error"]["message"]
+    assert "tr_session=" not in response.headers.get("set-cookie", "")
+    assert STORE.find_user_by_wallet(account.address) is None
+
+
+def test_wallet_switch_keeps_returning_wallet_login_working() -> None:
+    account = Account.create()
+    existing = STORE.create_wallet_user(account.address)
+    client = _client(new_signups_enabled=True, wallet_signup_enabled=False)
+
+    response = client.post(
+        "/v1/auth/wallet/verify",
+        json=_signed_wallet_payload(client, account),
+    )
+
+    assert response.status_code == 200, response.text
+    assert STORE.find_user_by_wallet(account.address).id == existing.id
+    assert "tr_session=" in response.headers.get("set-cookie", "")
+
+
+def test_wallet_switch_leaves_first_time_oauth_open() -> None:
+    client = _client(new_signups_enabled=True, wallet_signup_enabled=False)
+
+    response = _oauth_callback(client, "google", "first-google@example.com")
+
+    assert response.status_code == 302
+    assert STORE.find_user_by_email("first-google@example.com") is not None
 
 
 def test_closed_gate_reissued_wallet_challenge_preserves_displayed_prompt() -> None:
