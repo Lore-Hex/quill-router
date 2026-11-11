@@ -39,23 +39,9 @@ main p a:hover{color:var(--ink);text-decoration-thickness:2px}
 .bv3-actions{margin-top:24px;gap:16px}
 .bv3-status{margin-top:12px}
 .bv3-status:empty{display:none}
-/* Kit CodeBlock: copy button top-right inside the Ink panel. Scroll fades and the
-   arrow follow /confidential's code-scroll (behaviour in app.js). */
-.bv3-code{position:relative;margin-top:24px;min-width:0}
-.bv3-code .code{overflow-x:auto}
-.bv3-code .code:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
-.bv3-code pre{width:max-content;min-width:100%;margin:0;padding:24px 64px 24px 28px;font:400 14px/1.7 var(--font-mono);white-space:pre}
-.bv3-code code{font:inherit}
-.bv3-copy-btn{position:absolute;top:0;right:0;z-index:3;display:flex;align-items:center;justify-content:center;width:44px;height:44px;padding:0;border:0;border-radius:0;background:var(--ink);color:var(--cream);cursor:pointer}
-.bv3-copy-btn svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.5}
-.bv3-copy-btn:hover{background:var(--dark-sunken)}
-.bv3-copy-btn:focus-visible{outline:2px solid var(--cream);outline-offset:-4px}
-[data-nyte-page="badge"] .code-scroll::before,[data-nyte-page="badge"] .code-scroll::after{content:"";display:none;position:absolute;top:0;bottom:0;width:72px;pointer-events:none;z-index:1}
-[data-nyte-page="badge"] .code-scroll.can-left::before{display:block;left:0;background:linear-gradient(90deg,var(--ink),transparent)}
-[data-nyte-page="badge"] .code-scroll.can-right::after{display:block;right:0;background:linear-gradient(90deg,transparent,var(--ink) 70%)}
-[data-nyte-page="badge"] .code-next:not([hidden]){display:flex;position:absolute;right:8px;top:50%;z-index:2;align-items:center;justify-content:center;width:40px;height:40px;padding:0;transform:translateY(-50%);border:1.5px solid var(--dark-rule);border-radius:0;background:var(--ink);color:var(--cream);cursor:pointer}
-[data-nyte-page="badge"] .code-next svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.75}
-[data-nyte-page="badge"] .code-next:focus-visible{outline:2px solid var(--lime);outline-offset:2px}
+/* The embed code is the shared v3 code block (brand-v3.css .v3-code). */
+.bv3-code{margin-top:24px}
+.bv3-actions .btn svg{width:20px;height:20px}
 
 /* What the badge means: Ink. */
 .bv3-meaning{background:var(--ink);color:var(--cream);--t1:var(--cream);--link:var(--cream)}
@@ -65,10 +51,11 @@ main p a:hover{color:var(--ink);text-decoration-thickness:2px}
 .bv3-rule+.bv3-rule{margin-top:24px}
 .bv3-rule h3{font-size:19px;line-height:1.3;font-weight:500;color:var(--cream)}
 .bv3-rule p{margin-top:10px}
-.bv3-settings{display:flex;flex-direction:column;align-items:flex-start;gap:8px;margin:12px 0 0;padding:0;list-style:none}
-.bv3-settings code{display:inline-block;padding:6px 9px;border:1.5px solid var(--dark-rule);white-space:nowrap}
+/* The three settings: a plain stacked mono list, one per line, never broken mid-word. */
+.bv3-settings{margin:12px 0 0;padding:0;list-style:none}
+.bv3-settings li+li{margin-top:4px}
+.bv3-settings code{font:400 min(16px,4.1vw)/1.6 var(--font-mono);color:var(--cream);white-space:nowrap}
 .bv3-meaning-text a,.bv3-meaning-text a:hover{color:var(--cream)}
-.bv3-meaning-text code{font:400 14px/1.5 var(--font-mono)}
 .bv3-meaning .v3-bar{background:var(--lime)}
 
 /* Wear it well: three ruled pairs. */
@@ -84,8 +71,6 @@ main p a:hover{color:var(--ink);text-decoration-thickness:2px}
 .bv3-join-actions>a:not(.btn){color:var(--ink);text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:3px}
 .bv3-join-actions>a:not(.btn):hover{text-decoration-thickness:2px}
 
-@media (max-width:1100px){
-}
 @media (max-width:900px){
   .bv3-studio .wrap,.bv3-meaning .wrap,.bv3-usage .wrap,.bv3-join .wrap{grid-template-columns:minmax(0,1fr)}
   .bv3-studio .bv3-copy,.bv3-builder,.bv3-meaning .wrap>*,.bv3-usage .wrap>*,.bv3-join .wrap>*{grid-column:1}
@@ -93,27 +78,29 @@ main p a:hover{color:var(--ink);text-decoration-thickness:2px}
   .bv3-pairs{grid-template-columns:1fr;gap:32px;margin-top:40px}
 }
 @media (max-width:600px){
-  /* Phone hero: left-aligned, the badge after the headline, the Band kept at 96 px. */
-  [data-nyte-page="badge"] main .bv3-hero{--band:96px;--gap:clamp(12px,2.4svh,56px);text-align:left}
+  /* Phone hero: badge, bar, headline, lede, button, centred between header and Band. */
+  [data-nyte-page="badge"] main .bv3-hero{--band:96px;--gap:16px;text-align:left}
   .bv3-hero .wrap,.bv3-hero .bv3-eyebrow{align-items:flex-start}
-  .bv3-hero h1{margin-top:clamp(8px,1.8svh,24px);font-size:min(48px,(100vw - 40px) * .137,6svh);line-height:.98}
-  .bv3-hero-badge{height:clamp(64px,9svh,80px);margin-bottom:clamp(12px,2.4svh,32px)}
-  /* Hero lede at /confidential's phone hero size. */
-  [data-nyte-page="badge"] main .bv3-hero .lede{margin-top:clamp(10px,2svh,28px);font-size:19px}
-  .bv3-hero .btns{margin-top:clamp(10px,2svh,28px)}
+  .bv3-hero-badge{height:64px;margin-bottom:32px}
+  .bv3-hero .bv3-eyebrow .v3-label{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+  .bv3-hero h1{margin-top:16px;font-size:min(48px,(100vw - 40px) * .137);line-height:.98}
+  [data-nyte-page="badge"] main .bv3-hero .lede{margin-top:20px;font-size:17px;line-height:1.55}
+  .bv3-hero .btns{margin-top:28px}
+  /* Make it yours */
+  /* Shared h2 size; on the narrowest phones it steps down just enough that no
+     headline line leaves a single word on its own. */
+  [data-nyte-page="badge"] main h2{font-size:min(40px,(100vw - 40px) * .1145)}
   [data-nyte-page="badge"] main .bv3-eyebrow+h2{margin-top:20px}
-  [data-nyte-page="badge"] main .bv3-copy .lede{margin-top:16px}
-  .bv3-builder,.bv3-meaning-text{margin-top:32px}
-  .bv3-preview{height:200px}
+  [data-nyte-page="badge"] main .bv3-copy .lede{margin-top:20px}
+  .bv3-builder{margin-top:40px}
+  .bv3-meaning-text{margin-top:32px}
+  .bv3-tabs{gap:0}
+  .bv3-tabs [role="tab"]{flex:1 1 50%;justify-content:center;text-align:center}
+  .bv3-preview{height:180px}
   .bv3-preview img{height:64px}
-  .bv3-code pre{padding:18px 60px 18px 18px}
   .bv3-pairs>div{padding-top:16px}
   .bv3-pairs p{margin-top:8px}
   .bv3-pairs{margin-top:32px}
   .bv3-join-actions{flex-direction:column;align-items:stretch;gap:20px;margin-top:28px}
   .bv3-join-actions .btn{width:100%;justify-content:center}
-}
-@media (max-width:359px){
-  /* The settings stay on one line on the narrowest phones. */
-  .bv3-settings code{font-size:12px;padding:6px 7px}
 }

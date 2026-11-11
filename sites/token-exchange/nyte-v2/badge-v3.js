@@ -1,4 +1,5 @@
-// Verified Secure badge builder: two background tabs, download, embed code and copy.
+// Verified Secure badge builder: two background tabs, download and embed code.
+// The copy button is the shared code block's (app.js).
 (() => {
   'use strict';
   const FILES = {light: 'nyte-verified-secure-black.svg', dark: 'nyte-verified-secure-white.svg'};
@@ -42,18 +43,5 @@
       event.preventDefault();
       select(next, true);
     });
-  });
-  document.getElementById('copy').addEventListener('click', async () => {
-    try {
-      await navigator.clipboard.writeText(code.textContent);
-      status.textContent = 'HTML copied. Paste it into your website.';
-    } catch {
-      const range = document.createRange();
-      range.selectNodeContents(code);
-      const selection = window.getSelection();
-      selection.removeAllRanges();
-      selection.addRange(range);
-      status.textContent = 'Copy unavailable here. The HTML is selected for you to copy manually.';
-    }
   });
 })();

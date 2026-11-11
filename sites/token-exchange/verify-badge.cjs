@@ -52,11 +52,18 @@ const output = process.env.NYTE_PREVIEW_DIR || require('node:os').tmpdir();
       assert.ok(Math.abs(band.y + band.height - (hero.y + hero.height)) < 1, `band at hero bottom at ${width}`);
       assert.ok(band.height >= 96 && band.height <= 144, `band height ${band.height} at ${width}`);
       if (width >= 1440) assert.ok(Math.abs(hero.y + hero.height - 1000) < 1, `hero fills the first screen at ${width}`);
-      // Kit CodeBlock: icon-only copy button in the panel's top-right corner, scroll arrow from app.js.
+      // Code block standard: header strip with the label and an icon-only copy button that never
+      // covers code; Mono 14 at every width; the scroll arrow from app.js; no gradient fade.
       const panel = await page.locator('.bv3-code').boundingBox();
+      const head = await page.locator('.bv3-code .v3-code-head').boundingBox();
       const copy = await page.locator('.bv3-code #copy').boundingBox();
+      const code = await page.locator('.bv3-code .code').boundingBox();
+      assert.equal(await page.locator('.bv3-code .v3-code-head .v3-label').textContent(), 'HTML');
       assert.ok(copy.width >= 44 && copy.height >= 44, `copy touch target at ${width}`);
-      assert.ok(Math.abs(copy.x + copy.width - (panel.x + panel.width)) < 1 && Math.abs(copy.y - panel.y) < 1, `copy top-right at ${width}`);
+      assert.ok(copy.y >= head.y && copy.y + copy.height <= head.y + head.height && copy.y + copy.height <= code.y, `copy inside the header strip at ${width}`);
+      assert.ok(Math.abs(copy.x + copy.width - (panel.x + panel.width)) < 4, `copy at the right at ${width}`);
+      assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.bv3-code pre')).fontSize), '14px');
+      assert.ok(await page.evaluate(() => [...document.querySelectorAll('.bv3-code, .bv3-code *')].every(e => !/gradient/.test(getComputedStyle(e).backgroundImage + getComputedStyle(e, '::before').backgroundImage + getComputedStyle(e, '::after').backgroundImage))), `no gradient at ${width}`);
       assert.equal(await page.locator('.bv3-actions .btn').count(), 1);
       const overflows = await page.evaluate(() => { const c = document.querySelector('.bv3-code .code'); return c.scrollWidth > c.clientWidth + 2; });
       assert.equal(await page.locator('.bv3-code .code-next').isVisible(), overflows, `scroll arrow follows overflow at ${width}`);
@@ -89,12 +96,12 @@ const output = process.env.NYTE_PREVIEW_DIR || require('node:os').tmpdir();
         assert.ok((await page.locator('#download').getAttribute('href')).endsWith(name));
         assert.ok((await page.locator('#embed-code').textContent()).includes(name));
         assert.equal(await page.locator('#embed-code .s').count(), 5);
-        await page.getByRole('button', {name: 'Copy HTML'}).click();
+        await page.locator('#copy').click();
         await page.waitForFunction(() => document.getElementById('copy-status').textContent.startsWith('HTML copied'));
         assert.equal(await page.evaluate(() => navigator.clipboard.readText()), await page.locator('#embed-code').textContent());
       }
       await page.evaluate(() => { navigator.clipboard.writeText = async () => { throw new Error('denied'); }; });
-      await page.getByRole('button', {name: 'Copy HTML'}).click();
+      await page.locator('#copy').click();
       await page.waitForFunction(() => document.getElementById('copy-status').textContent.includes('copy manually'));
       await page.goto(`${base}/providers.html`, {waitUntil: 'networkidle'});
       assert.equal(await page.locator('#nav [aria-current="page"]').getAttribute('href'), '/providers');

@@ -332,3 +332,39 @@ dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
   [data-nyte-page="home"] header .wrap,[data-nyte-page="api"] header .wrap,[data-nyte-page="badge"] header .wrap{padding:0 20px}
   [data-nyte-page="home"] .site-footer,[data-nyte-page="api"] .site-footer,[data-nyte-page="badge"] .site-footer{padding-inline:20px}
 }
+
+/* Visually hidden, still read by screen readers. */
+.v3-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+
+/* Code block (NYTE code block standard; kit CodeBlock). Ink panel; a header strip with the
+   language label and an icon-only copy button; Mono 14/1.7 at every width; lines never wrap,
+   and the shared .code-next arrow (app.js) scrolls wide code. No gradient fade. */
+.v3-code{position:relative;min-width:0;background:var(--ink);color:var(--cream)}
+.v3-code-head{display:flex;align-items:center;justify-content:space-between;gap:16px;height:48px;padding:0 2px 0 28px;border-bottom:1.5px solid var(--dark-rule)}
+.v3-code-head .v3-label{color:var(--ink-2-dark)}
+.v3-code-copy{display:flex;flex:none;align-items:center;justify-content:center;width:44px;height:44px;padding:0;border:0;border-radius:0;background:transparent;color:var(--cream);cursor:pointer}
+.v3-code-copy svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.5}
+.v3-code-copy .v3-code-done,.v3-code-copy.done .v3-code-icon{display:none}
+.v3-code-copy.done .v3-code-done{display:block}
+.v3-code-copy:hover{background:var(--dark-sunken)}
+.v3-code-copy:focus-visible{outline:2px solid var(--cream);outline-offset:-4px}
+.v3-code-body{position:relative}
+.v3-code .code{min-width:0;overflow-x:auto;background:var(--ink)}
+.v3-code .code:focus-visible{outline:2px solid var(--cream);outline-offset:-2px}
+.v3-code pre{width:max-content;min-width:100%;margin:0;padding:24px 28px;font:400 14px/1.7 var(--font-mono);color:var(--cream);white-space:pre}
+.v3-code pre:has(> .l){padding:24px 0}
+.v3-code pre span.l{display:block;padding:0 28px}
+.v3-code pre code{font:inherit;color:inherit}
+.v3-code .s{color:var(--lime)}
+.v3-code .s.y{color:var(--yellow)}
+.v3-code .k,.v3-code .c{color:var(--ink-2-dark)}
+.v3-code .chg{background:var(--dark-sunken);box-shadow:none;color:var(--cream)}
+.v3-code .code-next:not([hidden]){display:flex;position:absolute;right:8px;top:50%;z-index:2;align-items:center;justify-content:center;width:40px;height:40px;padding:0;transform:translateY(-50%);border:1.5px solid var(--dark-rule);border-radius:0;background:var(--ink);color:var(--cream);cursor:pointer}
+.v3-code .code-next svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.75}
+.v3-code .code-next:focus-visible{outline:2px solid var(--lime);outline-offset:2px}
+@media (max-width:600px){
+  .v3-code-head{padding-left:20px}
+  .v3-code pre{padding:20px}
+  .v3-code pre:has(> .l){padding:20px 0}
+  .v3-code pre span.l{padding:0 20px}
+}

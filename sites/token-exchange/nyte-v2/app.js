@@ -156,6 +156,36 @@ document.querySelectorAll('.code-scroll').forEach(box => {
   document.fonts.ready.then(update); update();
 });
 
+/* Code block copy button: copies the code, says "Copied" and announces it in the block's status line. */
+document.querySelectorAll('.v3-code-copy').forEach(button => {
+  const box = button.closest('.v3-code'), pre = box.querySelector('pre');
+  const status = document.getElementById(button.dataset.status || '') || box.querySelector('[role="status"]');
+  const label = button.getAttribute('aria-label');
+  let timer;
+  const text = () => {
+    const lines = pre.querySelectorAll('.l');
+    // Blank lines hold a no-break space for layout; they copy as empty lines.
+    return lines.length ? [...lines].map(line => line.textContent.replace(/\u00a0/g, ' ').trimEnd()).join('\n') : pre.textContent;
+  };
+  button.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(text());
+      if (status) status.textContent = button.dataset.copied || 'Copied.';
+      button.setAttribute('aria-label', 'Copied');
+      button.classList.add('done');
+      clearTimeout(timer);
+      timer = setTimeout(() => { button.setAttribute('aria-label', label); button.classList.remove('done'); }, 2000);
+    } catch {
+      const range = document.createRange();
+      range.selectNodeContents(pre);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      if (status) status.textContent = button.dataset.copyFailed || 'Copy unavailable here. The code is selected for you to copy manually.';
+    }
+  });
+});
+
 /* Show directional controls only when more market links are out of view. */
 document.querySelectorAll('.geo-scroll').forEach(container => {
   const nav = container.querySelector('nav, [data-geo-links]');

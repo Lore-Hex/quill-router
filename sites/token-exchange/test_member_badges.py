@@ -54,7 +54,7 @@ class MemberBadgeTests(unittest.TestCase):
         self.assertEqual(self.page.count('alt="NYTE Verified Secure"'), 2)
         self.assertEqual(self.page.count('role="tab"'), 2)
         # Kit CodeBlock: icon-only copy inside the panel; the settings sit in their own list.
-        self.assertIn('<button class="bv3-copy-btn" id="copy" type="button" aria-label="Copy HTML">', self.page)
+        self.assertIn('<div class="v3-code-head"><span class="v3-label">HTML</span><button class="v3-code-copy" id="copy" type="button" aria-label="Copy HTML" data-status="copy-status"', self.page)
         self.assertIn('aria-label="Scroll code right" hidden', self.page)
         self.assertIn('enforces one of:</p><ul class="bv3-settings">', self.page)
         self.assertEqual(self.page.count('<div class="bv3-rule"><h3>'), 4)
@@ -93,9 +93,9 @@ class MemberBadgeTests(unittest.TestCase):
         self.assertIn("NYTE Verified Secure: requirements and evidence", embed)
         self.assertIn('src="/assets/badges/nyte-verified-secure-black.svg"', self.page)
         self.assertIn('aria-live="polite"', self.page)
-        js = (self.root / "assets" / "nyte-v2" / "badge-v3.js").read_text()
+        js = (self.root / "assets" / "nyte-v2" / "app.js").read_text()
         self.assertIn("navigator.clipboard.writeText", js)
-        self.assertIn("copy manually", js)
+        self.assertIn('data-copy-failed="Copy unavailable here. The HTML is selected for you to copy manually."', self.page)
         self.assertIn("/assets/nyte-v2/badge-v3.js?v=", self.page)
         self.assertIn("/assets/nyte-v2/badge-v3.css?v=", self.page)
 
