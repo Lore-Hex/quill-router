@@ -257,7 +257,6 @@ def _comma_set(raw: str, *, primary: str | None = None) -> tuple[str, ...]:
 # table is intentionally importable by the mutation-sensitive contract test:
 # adding a credential requires naming every process allowed to receive it.
 SERVICE_SURFACE_SECRET_OWNERS: dict[str, frozenset[str]] = {
-    "ops_chat_webhook_secret": frozenset({"actions"}),
     "postgres_dsn": frozenset({"public", "control", "internal", "observer"}),
     "postgres_iam_auth": frozenset({"public", "control", "internal", "observer"}),
     "clickhouse_url": frozenset({"control", "internal"}),
@@ -507,12 +506,6 @@ class Settings(BaseSettings):
     legal_signatory_title: str = "CEO"
     security_contact_email: str = "security@trustedrouter.com"
     support_email: str = "help@trustedrouter.com"
-    # Optional three-cloud Matrix support fanout. Values are comma-separated
-    # pinned node URLs; every destination receives the same signed payload and
-    # Matrix room state deduplicates it across federation.
-    ops_chat_webhook_urls: str = ""
-    ops_chat_webhook_secret: str | None = None
-    ops_chat_webhook_timeout_seconds: float = 3.0
 
     enable_live_providers: bool = False
     local_keys_file: Path = Path("~/.quill_cloud_keys.private").expanduser()
@@ -2215,24 +2208,6 @@ class Settings(BaseSettings):
                             "secret — reuse would let a directory or gateway "
                             "credential debit workspaces"
                         )
-        if not 0.1 <= self.ops_chat_webhook_timeout_seconds <= 10.0:
-            raise ValueError("TR_OPS_CHAT_WEBHOOK_TIMEOUT_SECONDS must be between 0.1 and 10")
-        ops_chat_urls = tuple(
-            dict.fromkeys(
-                value.strip().rstrip("/")
-                for value in self.ops_chat_webhook_urls.split(",")
-                if value.strip()
-            )
-        )
-        if bool(ops_chat_urls) != bool(self.ops_chat_webhook_secret):
-            raise ValueError(
-                "TR_OPS_CHAT_WEBHOOK_URLS and TR_OPS_CHAT_WEBHOOK_SECRET "
-                "must both be set or both unset"
-            )
-        if environment not in {"local", "test"} and any(
-            not url.startswith("https://") for url in ops_chat_urls
-        ):
-            raise ValueError("TR_OPS_CHAT_WEBHOOK_URLS must contain only HTTPS URLs when deployed")
         if not 1 <= self.google_data_manager_batch_size <= 2_000:
             raise ValueError("TR_GOOGLE_DATA_MANAGER_BATCH_SIZE must be between 1 and 2000")
         if self.google_data_manager_lease_seconds < 30:
