@@ -23,6 +23,8 @@ from fastapi.testclient import TestClient
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.operational_analytics import (
+    UNREACHABLE_HOLD_SECONDS,
+    AnalyticsUnreachable,
     OperationalAnalyticsClient,
     is_analytics_unavailable,
 )
@@ -253,7 +255,11 @@ def test_api_activity_is_a_retryable_503_when_clickhouse_is_unreachable(
 # fall back on, so the read failure reached the route and the page was a 500.
 
 UNAVAILABLE_SURFACES = {
-    "/leaderboard": ("leaderboard", "Benchmark data is temporarily unavailable"),
+    # The notice at the top of the page, not the shorter line in each table.
+    "/leaderboard": (
+        "leaderboard",
+        "Benchmark data is temporarily unavailable, so no measurements are shown",
+    ),
     "/leaderboard/video": (
         "video_leaderboard",
         "Video benchmark data is temporarily unavailable",
@@ -417,3 +423,138 @@ def test_a_warm_instance_serves_its_last_snapshot_when_clickhouse_is_unreachable
     } <= _surfaces(caplog)
     # An outage is a warning, not an error event per page view.
     assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+
+# ------------------------------------------------- one outage, one wait
+#
+# Every read of an unreachable cluster waits out the connect timeout of every
+# endpoint. A cold status page makes several reads in a row, so the page that
+# should say "unavailable" took longer than the deploy smoke test allows. A
+# client that has just failed to connect anywhere does not try again for a
+# few seconds.
+
+
+class _Cluster:
+    """A two-endpoint ClickHouse whose behaviour and clock the test controls."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+        self.attempts = 0
+        self.answer: Any = httpx.ConnectTimeout
+        self.client = OperationalAnalyticsClient(
+            base_url="http://clickhouse-a.internal:8123,http://clickhouse-b.internal:8123",
+            user="reader",
+            password="inert",  # noqa: S106 - inert test credential.
+            transport=httpx.MockTransport(self._handle),
+            clock=lambda: self.now,
+        )
+
+    def _handle(self, request: httpx.Request) -> httpx.Response:
+        self.attempts += 1
+        if isinstance(self.answer, int):
+            return httpx.Response(self.answer, json={"data": [{"ok": 1}]}, request=request)
+        raise self.answer("simulated", request=request)
+
+    def read(self, *_args: Any, **_kwargs: Any) -> Any:
+        return self.client._query("SELECT 1 FORMAT JSON")
+
+
+def test_an_unreachable_cluster_is_tried_once_then_left_alone() -> None:
+    cluster = _Cluster()
+
+    with pytest.raises(httpx.ConnectTimeout):
+        cluster.read()
+    assert cluster.attempts == 2  # both endpoints
+
+    for _ in range(5):
+        with pytest.raises(AnalyticsUnreachable) as raised:
+            cluster.read()
+        # The routes degrade on this exactly as they do on the real failure.
+        assert is_analytics_unavailable(raised.value)
+    assert cluster.attempts == 2
+
+
+def test_reads_resume_once_the_hold_is_over() -> None:
+    cluster = _Cluster()
+    with pytest.raises(httpx.ConnectTimeout):
+        cluster.read()
+
+    cluster.now += UNREACHABLE_HOLD_SECONDS - 0.01
+    with pytest.raises(AnalyticsUnreachable):
+        cluster.read()
+    assert cluster.attempts == 2
+
+    cluster.now += 0.01
+    cluster.answer = 200
+    assert cluster.read() == [{"ok": 1}]
+    assert cluster.read() == [{"ok": 1}]
+    assert cluster.attempts == 4
+
+
+def test_a_cluster_still_down_after_the_hold_is_held_again() -> None:
+    cluster = _Cluster()
+    with pytest.raises(httpx.ConnectTimeout):
+        cluster.read()
+    cluster.now += UNREACHABLE_HOLD_SECONDS
+
+    with pytest.raises(httpx.ConnectTimeout):
+        cluster.read()
+    assert cluster.attempts == 4
+    with pytest.raises(AnalyticsUnreachable):
+        cluster.read()
+    assert cluster.attempts == 4
+
+
+def test_the_hold_is_short() -> None:
+    # Reads must come back within seconds of the cluster coming back.
+    assert 0 < UNREACHABLE_HOLD_SECONDS <= 15
+
+
+@pytest.mark.parametrize("answer", [500, 401, 503, httpx.ReadTimeout, httpx.RemoteProtocolError])
+def test_only_a_failure_to_connect_holds_later_reads(answer: Any) -> None:
+    """A server that answered, or accepted the query and then stalled, is
+    there. Whatever went wrong belongs to that query, and the next one is sent."""
+    cluster = _Cluster()
+    cluster.answer = answer
+    expected = httpx.HTTPStatusError if isinstance(answer, int) else answer
+
+    with pytest.raises(expected):
+        cluster.read()
+    first = cluster.attempts
+    assert first >= 1
+    with pytest.raises(expected):
+        cluster.read()
+    assert cluster.attempts == 2 * first
+
+
+def test_one_reachable_endpoint_is_enough() -> None:
+    cluster = _Cluster()
+    seen: list[str] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.host)
+        if request.url.host == "clickhouse-a.internal":
+            raise httpx.ConnectTimeout("simulated", request=request)
+        return httpx.Response(200, json={"data": [{"ok": 1}]}, request=request)
+
+    cluster.client._transport = httpx.MockTransport(handle)
+
+    assert cluster.read() == [{"ok": 1}]
+    assert cluster.read() == [{"ok": 1}]
+    assert seen == ["clickhouse-a.internal", "clickhouse-b.internal"] * 2
+
+
+@pytest.mark.parametrize("path", ["/status", "/status.json"])
+def test_a_cold_status_page_waits_for_an_unreachable_cluster_only_once(
+    monkeypatch: pytest.MonkeyPatch, path: str
+) -> None:
+    """Every analytics read behind the page goes through the one client the
+    store holds. Only the first may reach for the network."""
+    cluster = _Cluster()
+    for method in ("synthetic_probe_samples", "synthetic_rollups", "provider_benchmark_samples"):
+        monkeypatch.setattr(InMemoryStore, method, cluster.read)
+
+    response = _app_client().get(path, headers={"accept": "text/html"})
+
+    assert response.status_code == 200, response.text
+    assert cluster.attempts == 2

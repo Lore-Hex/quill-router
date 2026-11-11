@@ -3089,7 +3089,9 @@ def _leaderboard_snapshot(settings: Settings, *, window: str = "24h") -> dict[st
         # ClickHouse is unreachable and this instance has nothing to serve.
         # The page (and the status page, which reads this snapshot for its
         # provider table) renders with no measurements and says why, rather
-        # than 500. Deliberately not cached, so the next rebuild retries.
+        # than 500. The snapshot is deliberately not cached, so the next
+        # rebuild retries; the rendered page still lives in the response
+        # cache for its usual lifetime.
         log_analytics_unavailable(log, "leaderboard", exc)
         # ``data_unavailable`` is what the templates key their notice on: an
         # empty table alone would read as "no provider has been measured".
@@ -3192,7 +3194,9 @@ def _video_leaderboard_snapshot(settings: Settings) -> dict[str, Any]:
             raise
         # ClickHouse is unreachable and this instance has nothing to serve:
         # list the configured routes with no measurements and say why, rather
-        # than 500. Deliberately not cached, so the next rebuild retries.
+        # than 500. The snapshot is deliberately not cached, so the next
+        # rebuild retries; the rendered page still lives in the response
+        # cache for its usual lifetime.
         log_analytics_unavailable(log, "video_leaderboard", exc)
         payload = _video_leaderboard_payload([])
         payload["data_unavailable"] = True

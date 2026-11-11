@@ -10,11 +10,14 @@ import datetime as dt
 import json
 import logging
 import re
+import time
+from collections.abc import Callable
 from typing import Any, TypeVar
 
 import httpx
 
 from trusted_router.clickhouse_endpoints import (
+    CONNECT_FAILURES,
     FAILOVER_STATUS_CODES,
     parse_endpoints,
     request_timeout,
@@ -32,6 +35,20 @@ from trusted_router.types import UsageType
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 T = TypeVar("T")
 PUBLIC_SNAPSHOT_QUERY_TIMEOUT_SECONDS = 2.0
+# How long one client stops trying after no endpoint accepted a connection.
+# An unreachable cluster costs every read the connect timeout of every
+# endpoint, and a status page makes several reads in a row, so without this
+# an outage turns a page that should say "unavailable" into one that times
+# out. Short, so reads resume within seconds of the cluster coming back.
+UNREACHABLE_HOLD_SECONDS = 10.0
+
+
+class AnalyticsUnreachable(httpx.ConnectError):
+    """No attempt was made: this client just failed to connect to any endpoint.
+
+    A ``ConnectError`` because that is what the read would have raised had it
+    been tried, so callers and ``is_analytics_unavailable`` treat both alike.
+    """
 
 
 def is_analytics_unavailable(exc: BaseException) -> bool:
@@ -99,6 +116,7 @@ class OperationalAnalyticsClient:
         password: str,
         database: str = "tr",
         transport: httpx.BaseTransport | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         # One URL, or an ordered comma-separated list: see clickhouse_endpoints.
         self._endpoints = parse_endpoints(base_url)
@@ -108,6 +126,8 @@ class OperationalAnalyticsClient:
         self._password = password
         self._database = _identifier(database, label="database")
         self._transport = transport
+        self._clock = clock
+        self._unreachable_until = 0.0
 
     def _query(
         self,
@@ -117,6 +137,10 @@ class OperationalAnalyticsClient:
         timeout_seconds: float = 20.0,
         retry_read_disconnect: bool = False,
     ) -> list[dict[str, Any]]:
+        if self._clock() < self._unreachable_until:
+            raise AnalyticsUnreachable(
+                "ClickHouse was unreachable moments ago; not trying again yet"
+            )
         query_params: dict[str, str] = {"database": self._database}
         for key, value in (params or {}).items():
             query_params[f"param_{key}"] = str(value)
@@ -125,18 +149,26 @@ class OperationalAnalyticsClient:
             timeout=request_timeout(self._endpoints, timeout_seconds),
             transport=self._transport,
         ) as client:
-            response = send_with_failover(
-                client,
-                self._endpoints,
-                lambda endpoint: client.build_request(
-                    "POST",
-                    endpoint,
-                    params=query_params,
-                    content=sql,
-                    headers={"content-type": "text/plain; charset=utf-8"},
-                ),
-                retry_read_disconnect=retry_read_disconnect,
-            )
+            try:
+                response = send_with_failover(
+                    client,
+                    self._endpoints,
+                    lambda endpoint: client.build_request(
+                        "POST",
+                        endpoint,
+                        params=query_params,
+                        content=sql,
+                        headers={"content-type": "text/plain; charset=utf-8"},
+                    ),
+                    retry_read_disconnect=retry_read_disconnect,
+                )
+            except CONNECT_FAILURES:
+                # Raised only once the last endpoint also refused a connection.
+                # Nothing was sent, so this says nothing about the query and
+                # everything about the cluster: the next read would wait the
+                # same seconds for the same answer.
+                self._unreachable_until = self._clock() + UNREACHABLE_HOLD_SECONDS
+                raise
             response.raise_for_status()
             payload = response.json()
         rows = payload.get("data") if isinstance(payload, dict) else None
