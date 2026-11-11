@@ -316,10 +316,25 @@ way they say:
 `clickhouse_node.sh` ships the same four files to a new node as instance
 attributes, and `clickhouse_startup.sh` installs them before it installs the
 server. It does not mark the node provisioned unless the first and third
-checks pass. Every sign-in is a named user with a password and source ranges;
-nothing may rely on `default`, which includes `clusterAllReplicas` and
-`remote()` between nodes. Ask each node itself, the way
-`clickhouse_replicated_migrate.sh` does.
+checks pass. Every sign-in is a named user with source ranges, and every one
+has a password except `tr_health`, which is read-only and can only answer the
+health probe; nothing may rely on `default`, which includes
+`clusterAllReplicas` and `remote()` between nodes. Ask each node itself, the
+way `clickhouse_replicated_migrate.sh` does.
+
+The metadata block needs `iptables` on the node. `clickhouse_startup.sh`
+installs it on a new node; on an older node the roll checks first, and
+`--apply` refuses before it changes anything if `iptables` is missing
+(`apt-get install -y iptables`, then run it again). The report-only run says
+so too.
+
+What the block covers: requests the server makes on a caller's behalf, which
+is how the metadata token was read. It does not hold against code running
+inside the server process, because the stock `clickhouse-server.service`
+grants the server `CAP_NET_ADMIN` and a process with that capability can
+delete the rule. The helper and the drop-in are root's files, so the server
+cannot rewrite them, and the rule is put back at every start. Dropping the
+capability from the unit is a follow-up.
 
 ### Rotating the passwords
 

@@ -137,7 +137,8 @@
       "routable": true,
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 500000,
-      "cached_input_token_price_per_m": 40000
+      "cached_input_token_price_per_m": 40000,
+      "missing_since": "2026-11-11"
     },
     {
       "display_name": "Dolly 1 Security",
@@ -167,7 +168,8 @@
       "routable": true,
       "input_token_price_per_m": 450000,
       "output_token_price_per_m": 1500000,
-      "cached_input_token_price_per_m": 120000
+      "cached_input_token_price_per_m": 120000,
+      "missing_since": "2026-11-11"
     },
     {
       "display_name": "zro/gemini-4-argon",
@@ -285,7 +287,7 @@
   ],
   "source": "https://zro.moonmath.ai/v1/models",
   "pricing_source": "https://zro.moonmath.ai/docs/models",
-  "generated_at": "2026-11-11T06:27:08Z",
+  "generated_at": "2026-11-11T09:42:34Z",
   "price_scale": "microdollars_per_million",
   "model_count": 10
 }

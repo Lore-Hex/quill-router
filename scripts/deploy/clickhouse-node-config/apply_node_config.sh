@@ -27,7 +27,9 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Tests point these at a scratch tree and stub commands.
+# Tests point these at a scratch tree and stub commands. TR_IPTABLES_COMMAND
+# names the program whose presence is checked, so a test can say "not
+# installed" on a machine that has it.
 ROOT="${TR_NODE_ROOT:-}"
 CONFIG_D="${ROOT}/etc/clickhouse-server/config.d"
 USERS_D="${ROOT}/etc/clickhouse-server/users.d"
@@ -207,11 +209,27 @@ if [ "${#changed[@]}" -eq 0 ]; then
   echo "${node}: configuration already current"
 fi
 
+# The metadata block needs iptables, and the drop-in makes it a step of every
+# server start. Installed on a node without iptables, the server would keep
+# running and then fail its next start. So this is settled before any file
+# changes, not found out by the block's own refusal afterwards.
+iptables_installed() {
+  PATH="${PATH}:/usr/sbin:/sbin" command -v "${TR_IPTABLES_COMMAND:-iptables}" >/dev/null 2>&1
+}
+
 if [ "$APPLY" -eq 0 ]; then
   if [ "$restart" -eq 1 ]; then
     echo "${node}: --apply would restart clickhouse-server"
   fi
+  if ! iptables_installed; then
+    echo "${node}: iptables is not installed; --apply would refuse until it is (apt-get install -y iptables)"
+  fi
   exit 0
+fi
+
+if ! iptables_installed; then
+  echo "refusing to change ${node}: iptables is not installed, so the ClickHouse server could not be kept from the metadata server and would not start again; install it (apt-get install -y iptables) and run this again" >&2
+  exit 1
 fi
 
 if [ ! -r "$ENV_FILE" ]; then
@@ -232,8 +250,10 @@ fi
 for entry in "${changed[@]+"${changed[@]}"}"; do
   IFS='|' read -r source destination needs <<<"$entry"
   case "$needs" in
-    # Root's own files: this script runs as root, and the server must not be
-    # able to rewrite the program that fences it in.
+    # Root's own files: this script runs as root, so with no owner named they
+    # are root's and the server's user cannot rewrite them. That protects the
+    # files, not the rule: the stock unit gives the server CAP_NET_ADMIN, so
+    # code running inside the server could still delete the rule itself.
     run|unit)
       mode=0644
       if [ "$needs" = run ]; then

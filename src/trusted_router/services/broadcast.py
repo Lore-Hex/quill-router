@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import httpx
+
 from trusted_router.byok_crypto import encrypted_secret_payload
 from trusted_router.config import Settings
 from trusted_router.services.broadcast_adapters import adapter_for
@@ -55,8 +57,18 @@ async def test_destination(destination: BroadcastDestination, settings: Settings
         if adapter is None:
             return False, "unknown destination type"
         return await adapter.test(destination, settings)
-    except Exception as exc:  # noqa: BLE001 - connection test returns message.
-        return False, str(exc)
+    except httpx.TimeoutException:
+        return False, "connection timed out"
+    except httpx.HTTPError:
+        return False, "connection failed"
+    except Exception:  # noqa: BLE001 - a connection test answers, it does not raise.
+        # The caller chose the URL, so the text of whatever went wrong while
+        # reaching it is not ours to hand back: it describes our side of the
+        # network. The detail goes to the log instead.
+        log.warning(
+            "broadcast_destination_test_failed destination=%s", destination.id, exc_info=True
+        )
+        return False, "connection test failed"
 
 
 def enqueue_metadata_broadcast(
