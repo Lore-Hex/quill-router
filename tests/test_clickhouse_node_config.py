@@ -206,15 +206,25 @@ case "$name" in
         printf '%s' "$(cat "$state/anonymous-code" 2>/dev/null || echo 401)"
         ;;
       *)
-        # /tr_health: the next queued status code; 200 once the queue is empty.
+        # /tr_health: 404 until the server has restarted, where a test says
+        # so; otherwise the next queued status code, 200 once the queue is
+        # empty.
         code=200
-        if [ -s "$state/curl-codes" ]; then
+        if [ -e "$state/health-needs-restart" ]; then
+          code=404
+        elif [ -s "$state/curl-codes" ]; then
           code="$(head -1 "$state/curl-codes")"
           tail -n +2 "$state/curl-codes" > "$state/curl-codes.next"
           mv "$state/curl-codes.next" "$state/curl-codes"
         fi
         printf '%s' "$code"
         ;;
+    esac
+    ;;
+  systemctl)
+    # A restart is what loads the server configuration (config.d).
+    case " $* " in
+      *" restart "*) rm -f "$state/health-needs-restart" ;;
     esac
     ;;
   runuser)
@@ -489,6 +499,134 @@ def test_a_current_node_without_iptables_is_still_refused(node: Node) -> None:
 
 def test_report_says_nothing_about_iptables_when_it_is_installed(node: Node) -> None:
     assert "iptables" not in node.run().stdout
+
+
+def test_the_iptables_check_looks_for_the_real_program_where_root_keeps_it() -> None:
+    # Every refusal test above names a program that does not exist, so none of
+    # them would notice the default being some other program, or the check
+    # missing /usr/sbin, where iptables lives and a non-login PATH may not look.
+    script = " ".join(_code("apply_node_config.sh").split())
+    assert (
+        'iptables_installed() { PATH="${PATH}:/usr/sbin:/sbin" '
+        'command -v "${TR_IPTABLES_COMMAND:-iptables}" >/dev/null 2>&1 }'
+    ) in script
+    # The helper looks in the same places for the same program.
+    helper = " ".join(_code("tr-clickhouse-metadata-block.sh").split())
+    assert 'PATH="${PATH}:/usr/sbin:/sbin" if ! command -v iptables >/dev/null 2>&1; then' in helper
+
+
+DROP_IN = "etc/systemd/system/clickhouse-server.service.d/tr-metadata-block.conf"
+
+
+def test_the_start_step_is_installed_only_after_the_block_has_worked(node: Node) -> None:
+    result = node.run("--apply")
+
+    assert result.returncode == 0, result.stderr
+    steps = [
+        "rule" if row[:3] == ["iptables", "-w", "-I"]
+        else "drop-in" if row[0] == "install" and row[-1].endswith("tr-metadata-block.conf")
+        else "daemon-reload" if row[:2] == ["systemctl", "daemon-reload"]
+        else "restart" if row[:2] == ["systemctl", "restart"]
+        else ""
+        for row in node.sequence()
+    ]
+    assert [step for step in steps if step] == ["rule", "drop-in", "daemon-reload", "restart"]
+
+
+def test_every_file_is_installed_once(node: Node) -> None:
+    # The install runs in two passes, around the block. Neither may repeat
+    # or skip the other's files.
+    result = node.run("--apply")
+
+    assert result.returncode == 0, result.stderr
+    destinations = [call[-1] for call in node.calls("install")]
+    assert sorted(destinations) == sorted(str(node.root / relative) for relative in INSTALLED)
+
+
+def test_a_node_that_cannot_add_the_rule_does_not_get_the_start_step(node: Node) -> None:
+    # iptables is there and refuses (a missing kernel module, say). With the
+    # drop-in installed the server would keep running and fail its next start.
+    (node.state / "fail-iptables").write_text("")
+
+    result = node.run("--apply")
+
+    assert result.returncode == 1
+    assert "the start step that requires the block was not installed, so the server can still start" in result.stderr
+    assert DROP_IN not in node.installed()
+    assert not any(call[-1].endswith("tr-metadata-block.conf") for call in node.calls("install"))
+    # systemd was told nothing and the server was not touched.
+    assert node.calls("systemctl") == []
+    # The helper is in place, so the next run only has to succeed.
+    assert "usr/local/sbin/tr-clickhouse-metadata-block" in node.installed()
+
+    (node.state / "fail-iptables").unlink()
+    again = node.run("--apply")
+
+    assert again.returncode == 0, again.stderr
+    assert node.installed()[DROP_IN] == (CONFIG_DIR / "tr-metadata-block.conf").read_text()
+    assert ["daemon-reload"] in node.calls("systemctl")
+    assert LOCKED_DOWN in again.stdout
+
+
+def test_a_failed_block_leaves_the_restart_for_the_next_run(node: Node) -> None:
+    # A node that has never had this configuration: /tr_health answers only
+    # once a restart has loaded config.d. The run that fails at the block
+    # stops before its restart, so the next run must still know one is owed.
+    (node.state / "health-needs-restart").write_text("")
+    (node.state / "fail-iptables").write_text("")
+
+    result = node.run("--apply")
+
+    assert result.returncode == 1
+    installed = node.installed()
+    # The files that work with the server running are in: the default user is
+    # closed at once.
+    assert "etc/clickhouse-server/users.d/tr-default-user.xml" in installed
+    assert "etc/clickhouse-server/users.d/tr-health.xml" in installed
+    # The files that need a restart are not, so they still differ next time.
+    assert not [relative for relative in installed if "/config.d/" in relative]
+    assert node.calls("systemctl") == []
+
+    (node.state / "fail-iptables").unlink()
+    again = node.run("--apply")
+
+    assert again.returncode == 0, again.stderr
+    assert ["restart", "clickhouse-server"] in node.calls("systemctl")
+    assert node.installed() == {
+        relative: (CONFIG_DIR / source).read_text() for relative, source in INSTALLED.items()
+    }
+    assert LOCKED_DOWN in again.stdout
+
+
+def test_a_failing_block_on_a_node_that_already_has_the_start_step_says_so(node: Node) -> None:
+    node.install_current()
+    (node.state / "fail-iptables").write_text("")
+
+    result = node.run("--apply")
+
+    assert result.returncode == 1
+    assert "the block is already a step of every server start" in result.stderr
+    assert "the server will not start again until this is fixed" in result.stderr
+    assert "was not installed" not in result.stderr
+    assert node.calls("systemctl") == []
+
+
+def test_a_failing_block_with_an_older_start_step_on_the_node_says_the_same(node: Node) -> None:
+    # The drop-in on the node differs from the shipped one, so this run would
+    # have replaced it. The server still cannot start: the old one is there.
+    node.install_current()
+    older = "[Service]\n# an earlier version\nExecStartPre=+/usr/local/sbin/tr-clickhouse-metadata-block\n"
+    (node.root / DROP_IN).write_text(older)
+    (node.state / "fail-iptables").write_text("")
+
+    result = node.run("--apply")
+
+    assert result.returncode == 1
+    assert "the block is already a step of every server start" in result.stderr
+    assert "was not installed" not in result.stderr
+    # The older drop-in is left as it was.
+    assert (node.root / DROP_IN).read_text() == older
+    assert node.calls("systemctl") == []
 
 
 # What the node still does with one protection undone, and what the script says.

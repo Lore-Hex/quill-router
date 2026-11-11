@@ -317,8 +317,8 @@ way they say:
 attributes, and `clickhouse_startup.sh` installs them before it installs the
 server. It does not mark the node provisioned unless the first and third
 checks pass. Every sign-in is a named user with source ranges, and every one
-has a password except `tr_health`, which is read-only and can only answer the
-health probe; nothing may rely on `default`, which includes
+has a password except `tr_health`, which is read-only and granted only what
+the health probe reads; nothing may rely on `default`, which includes
 `clusterAllReplicas` and `remote()` between nodes. Ask each node itself, the
 way `clickhouse_replicated_migrate.sh` does.
 
@@ -326,7 +326,16 @@ The metadata block needs `iptables` on the node. `clickhouse_startup.sh`
 installs it on a new node; on an older node the roll checks first, and
 `--apply` refuses before it changes anything if `iptables` is missing
 (`apt-get install -y iptables`, then run it again). The report-only run says
-so too.
+so too. `iptables` being there does not mean the rule can be added, so the
+roll installs the user files and the helper, adds the rule, and only after
+that worked installs the start step (the systemd drop-in) and the server
+configuration that needs a restart. Where the rule cannot be added the roll
+fails and says so. By then the `default` user is already closed on that node;
+the drop-in and the server configuration are not installed and the server is
+not restarted. A node that had no drop-in can still start its server. A node
+that already had one (from an earlier roll) cannot until the rule can be
+added, and the message says which of the two it is. The next run, once the
+cause is fixed, installs the rest and restarts.
 
 What the block covers: requests the server makes on a caller's behalf, which
 is how the metadata token was read. It does not hold against code running
