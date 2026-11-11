@@ -463,12 +463,20 @@ def test_the_wait_for_the_old_password_to_be_refused_can_be_stopped(node: Node) 
     node.mark("also-accepts", OLD)
     node.mark("real-sleep")
     process = node.start(NEW, "--apply", tries="200")
-    restarted = node.state / "env-at-restart-tr-clickhouse-ingest.service"
-    deadline = time.monotonic() + 20
-    while not (restarted.exists() and (node.state / "env-at-restart-optional-file.service").exists()):
-        assert time.monotonic() < deadline, "the services were never restarted"
+
+    def checking_old_password() -> bool:
+        # Signals are ignored until the services are restarted; only signal
+        # once the script is past that and asking with the old password.
+        calls = node.calls()
+        restarts = [i for i, c in enumerate(calls) if c["name"] == "systemctl" and c["argv"][0] == "restart"]
+        return len(restarts) == 2 and any(
+            c["name"] == "clickhouse-client" and c["password"] == OLD for c in calls[restarts[-1]:]
+        )
+
+    deadline = time.monotonic() + 30
+    while not checking_old_password():
+        assert time.monotonic() < deadline, "the script never reached the old-password check"
         time.sleep(0.05)
-    time.sleep(0.3)
     process.send_signal(signal.SIGTERM)
     process.wait(timeout=10)
     assert process.returncode != 0
