@@ -1,0 +1,14 @@
+<!--
+  ClickHouse may not open a connection to an address named in a query. An
+  empty remote_url_allow_hosts refuses every host for url(), s3(), remote()
+  and the other table functions and engines that take one; leaving the element
+  out allows them all, which let a query read the node's metadata server.
+
+  Replication, Keeper and the `trustedrouter` cluster use configured
+  addresses, not ones named in a query, and are not affected. Exports go
+  through the client (clickhouse/archive_daily.py), never through the server.
+-->
+<clickhouse>
+  <remote_url_allow_hosts>
+  </remote_url_allow_hosts>
+</clickhouse>
