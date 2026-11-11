@@ -63,7 +63,9 @@ esac
 # failure this whole script exists to catch, because the alarm sits in OK
 # forever and nothing anywhere reports a problem.
 ROOT_PATTERN='{ $.userIdentity.type = "Root" && $.userIdentity.invokedBy NOT EXISTS && $.eventType != "AwsServiceEvent" }'
-UNAUTH_PATTERN='{ ($.errorCode = "*UnauthorizedOperation") || ($.errorCode = "AccessDenied*") }'
+# Denials by this account's AWS service-linked roles (AWSServiceRoleFor*) are not
+# counted; see infra/aws_security_alarms.tf, which holds the same pattern.
+UNAUTH_PATTERN='{ (($.errorCode = "*UnauthorizedOperation") || ($.errorCode = "AccessDenied*")) && (($.userIdentity.arn NOT EXISTS) || ($.userIdentity.arn IS NULL) || ($.userIdentity.arn != "arn:aws:sts::'"$ACCOUNT"':assumed-role/AWSServiceRoleFor*")) }'
 
 # ---------------------------------------------------------------------------
 # 1. CloudTrail: the trail itself (terraform's), and its log delivery (ours).
