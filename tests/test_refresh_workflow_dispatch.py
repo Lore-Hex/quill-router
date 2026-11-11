@@ -10,10 +10,12 @@ from pathlib import Path
 import pytest
 import yaml
 
+from scripts.deploy.price_snapshot_deploy import SNAPSHOT_SUBJECT_PREFIX
 from scripts.pricing.refresh_inputs import refresh_inputs
 
 ROOT = Path(__file__).resolve().parents[1]
 REFRESH_INPUTS = refresh_inputs()
+DEPLOY_DISPATCH = 'gh workflow run deploy.yml --ref main --repo "${GITHUB_REPOSITORY}" -f track_main=true'
 # External commands in the extracted step. Shell builtins/functions (echo,
 # test/[ /[[, trap, cleanup_branch, etc.) need no executable. The allowlisted
 # PATH also makes a newly introduced, unlisted command fail rather than escape.
@@ -118,6 +120,10 @@ def remove_publication_guard(script: str, guard: str) -> str:
     elif guard == "skip_branch_push":
         before = 'git push --force origin "HEAD:refs/heads/${BRANCH}"'
         after = f"if false; then {before}; fi"
+    elif guard == "deploy_dispatch":
+        # Put back the deploy dispatch publication made after its main push.
+        before = "# GITHUB_TOKEN pushes do not start"
+        after = f"{DEPLOY_DISPATCH}\n{before}"
     elif guard == "input_check":
         # Carry a snapshot whatever main changed.
         before = 'if ! git diff --quiet "${REFRESH_BASE}" "${target}" -- "${refresh_inputs[@]}"; then'
@@ -365,9 +371,13 @@ def assert_snapshot_published(
         "Successful CI must use the dispatched SHA"
     )
     assert successful[-1]["headSha"] == dispatched_sha, "Successful CI must use the dispatched SHA"
-    assert repo.dispatches == [repo.dispatch("ci.yml", "automation/price-refresh-42")] * rounds + [
-        repo.dispatch("deploy.yml", "main") + ["-f", "track_main=true"],
-    ]
+    # A published snapshot rides the next rollout: publication dispatches its
+    # exact-SHA CI runs and nothing else. The job's last step decides about a
+    # deploy (tests/test_price_snapshot_deploy.py).
+    assert not any(call[:3] == ["workflow", "run", "deploy.yml"] for call in repo.calls), (
+        "Publication must not dispatch deploy.yml"
+    )
+    assert repo.dispatches == [repo.dispatch("ci.yml", "automation/price-refresh-42")] * rounds
     status_calls = [call for call in repo.calls if call[0] == "api"]
     posts = [call for call in status_calls if "POST" in call]
     gets = [call for call in status_calls if "--method" not in call]
@@ -385,10 +395,6 @@ def assert_snapshot_published(
         in call for call in posts
     )
     assert_status_bridge_precedes_main_push(repo)
-    events = repo.events
-    push = next(i for i, e in enumerate(events) if e[0] == "git" and "HEAD:refs/heads/main" in e)
-    deploy = next(i for i, e in enumerate(events) if e[:4] == ["gh", "workflow", "run", "deploy.yml"])
-    assert push < deploy, "deploy.yml must be dispatched only after main is pushed"
 
 
 def assert_status_bridge_precedes_main_push(repo: PublicationRepo) -> None:
@@ -459,6 +465,40 @@ def test_snapshot_waits_for_ci_beyond_45_minutes(publication_repo: PublicationRe
 
 def test_publication_promotes_only_the_successful_generated_sha(publication_repo: PublicationRepo) -> None:
     assert_snapshot_published(publication_repo, publication_repo.run())
+
+
+def test_publication_step_has_no_deploy_dispatch(publication_script: str) -> None:
+    commands = [line for line in publication_script.splitlines() if not line.lstrip().startswith("#")]
+    assert not any("deploy.yml" in line for line in commands), "Only a comment may name deploy.yml here"
+    assert "gh workflow run deploy.yml" not in publication_script
+    # Other workflows are still dispatched from here, so the check above is not vacuous.
+    assert any("gh workflow run ci.yml" in line for line in commands)
+
+
+def test_deploy_dispatch_from_publication_is_detected(publication_repo: PublicationRepo) -> None:
+    result = publication_repo.run(mutation="deploy_dispatch")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert publication_repo.main == publication_repo.dispatched_sha != publication_repo.base
+    assert publication_repo.dispatches[-1] == publication_repo.dispatch("deploy.yml", "main") + [
+        "-f", "track_main=true",
+    ]
+    with pytest.raises(AssertionError, match="Publication must not dispatch deploy.yml"):
+        assert_snapshot_published(publication_repo, result)
+
+
+@pytest.mark.parametrize("carried", [False, True])
+def test_published_snapshot_subject_is_the_one_the_deploy_check_looks_for(
+    publication_repo: PublicationRepo, carried: bool,
+) -> None:
+    # scripts/deploy/price_snapshot_deploy.py finds waiting snapshots on main
+    # by this subject, also after the snapshot was carried onto a newer main.
+    result = publication_repo.run(premove="docs/unrelated.md" if carried else None)
+    assert_snapshot_published(publication_repo, result)
+    origin = publication_repo.root / "origin.git"
+    subject = publication_repo.git("log", "-1", "--format=%s", "refs/heads/main", cwd=origin)
+    assert re.fullmatch(re.escape(SNAPSHOT_SUBJECT_PREFIX) + r": \d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z", subject), subject
+    if carried:
+        assert_carried_onto(publication_repo, publication_repo.moved)
 
 
 @pytest.mark.parametrize("mutation, message", [
@@ -893,7 +933,13 @@ def test_model_discovery_gap_alerts_without_freezing_safe_provider_updates() -> 
     assert "for summary in /tmp/refresh-summary.txt /tmp/speech-summary.txt /tmp/transcription-summary.txt; do" in held_issue
     assert 'for summary in ${summaries}; do' in held_issue
     assert "sed -n '/^Held for price review/,/^$/p' \"${summary}\"" in held_issue
-    alert = workflow[workflow.index(final_alert) :]
+    # The slice ends where the job's last step begins. That step is no issue
+    # alert: it decides about a deploy and fails on purpose when it cannot
+    # (tests/test_price_snapshot_deploy.py).
+    deploy_check = "- name: Deploy a price snapshot no rollout has carried"
+    held_price = workflow.index("- name: Reconcile held-price issue")
+    assert workflow.index(final_alert) < held_price < workflow.index(deploy_check)
+    alert = workflow[workflow.index(final_alert) : workflow.index(deploy_check)]
     assert "COVERAGE_OUTCOME: ${{ steps.coverage_audit.outcome }}" in alert
     assert 'title="[bot] Model discovery coverage gaps"' in alert
     assert "gh issue create" in alert

@@ -38,6 +38,7 @@ STAGES = {
     "Commit, verify, and push if changed": "publication",
     "Reconcile model-discovery coverage issue": "issue_reporting",
     "Reconcile held-price issue": "issue_reporting",
+    "Deploy a price snapshot no rollout has carried": "deploy_dispatch",
 }
 
 

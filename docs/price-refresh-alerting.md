@@ -9,7 +9,9 @@ unchanged.
 ## Signals
 
 * **Refresh failed:** installation, authentication, parser, coverage, publication,
-  timeout, and active cancellation failures send an error. Superseded queued
+  deploy-check, timeout, and active cancellation failures send an error. The
+  deploy check is the job's last step (stage `deploy_dispatch`): it fails when
+  it cannot tell whether a waiting snapshot needs a rollout. Superseded queued
   cancellations are not incidents. The observer scans recent completions too,
   so coalesced completion notifications do not silently hide a recent failure.
 * **Catalog stale:** no validated refresh in six hours sends a separate error.
