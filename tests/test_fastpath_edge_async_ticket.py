@@ -9,6 +9,7 @@ import sys
 from dataclasses import replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import get_args
 from unittest.mock import Mock
 from urllib.parse import quote
 
@@ -154,6 +155,34 @@ def test_signing_exception_is_error(facts, caplog):
     metric(caplog, facts, "refused", "error", "na")
 
 
+@pytest.mark.parametrize("regions,region,issued", [
+    # The process serves us-central1 and its journal is there throughout: the
+    # rule reads the region the edge names for the authorization, and nothing
+    # else.
+    ("europe-west4", "europe-west4", True),
+    ("us-central1,europe-west4", "europe-west4", True),
+    ("us-central1,europe-west4", "us-central1", True),
+    ("us-central1", "europe-west4", False),
+    ("us-central1,europe-west4", "southamerica-east1", False),
+])
+def test_region_rule_reads_the_authorization_region(facts, caplog, regions, region, issued):
+    caplog.set_level(logging.INFO, logger="trusted_router.async_settle_timing")
+    assert facts.runtime.effective_journal_region == "us-central1"
+    cfg = settings(async_settle_negotiation_regions=regions, serving_region="us-central1")
+    assert cfg.serving_region == cfg.effective_serving_region == "us-central1"
+    body = facts.body.model_copy(update={"region": region})
+    result = call(facts, body=body, settings=cfg)
+    if issued:
+        assert set(result) == {"async_eligible", "settlement_ticket", "settlement_status_url"}
+        assert result["async_eligible"] is True
+        facts.runtime.signer.sign.assert_called_once()
+        metric(caplog, facts, "issued", "none", "yes")
+    else:
+        assert result == {"async_eligible": False}
+        facts.runtime.signer.sign.assert_not_called()
+        metric(caplog, facts, "refused", "region", "na")
+
+
 @pytest.mark.parametrize("delta", [-301, -300, 300, 301])
 def test_price_instant_boundary(facts, delta):
     result = call(facts, now=NOW + delta)
@@ -170,7 +199,11 @@ def test_workspace_setting(facts, switch, allows):
         facts.runtime.signer.sign.assert_not_called()
 
 
-@pytest.mark.parametrize("switch", [",".join(f"ws_test_{i}" for i in range(33)), "ws test", "*,ws_test_1", "w" * 65])
+@pytest.mark.parametrize("switch", [
+    ",".join(f"ws_test_{i}" for i in range(33)), "ws test", "*,ws_test_1", "w" * 65,
+    # Set, and naming no workspace: refused, never read as "off".
+    ",", " ", " , ,",
+])
 def test_invalid_workspace_setting(switch):
     with pytest.raises(ValidationError):
         settings(fastpath_edge_async_ticket_workspaces=switch)
@@ -239,6 +272,35 @@ def test_route_rejects_malformed_body(facts, client, change):
         body[field] = value
     assert post(client, body).status_code == 422
     facts.runtime.signer.sign.assert_not_called()
+
+
+# Every surface the setting can name, so a surface added later is covered.
+SURFACES = get_args(Settings.model_fields["service_surface"].annotation)
+GATEWAY_SURFACES = {"combined", "internal"}
+
+
+def test_surface_list_is_the_settings_own():
+    assert GATEWAY_SURFACES < set(SURFACES)
+    assert len(SURFACES) == len(set(SURFACES)) >= 7
+
+
+@pytest.mark.parametrize("surface", SURFACES)
+def test_route_is_registered_on_the_gateway_surfaces_only(facts, monkeypatch, surface):
+    registered = surface in GATEWAY_SURFACES
+    monkeypatch.setattr(route, "typed_billing_store", lambda _: SimpleNamespace(request_record_write_mode="typed"))
+    monkeypatch.setattr(service, "time", SimpleNamespace(time=lambda: NOW, monotonic=service.time.monotonic))
+    cfg = settings(service_surface=surface)
+    assert cfg.fastpath_edge_async_tickets_enabled
+    app = create_app(cfg, init_observability=False)
+    app.state.async_settle = facts.runtime
+    with TestClient(app) as surface_client:
+        response = post(surface_client, facts.body.model_dump())
+    if registered:
+        assert response.status_code == 200
+        assert "settlement_ticket" in response.json()
+    else:
+        assert response.status_code == 404
+        facts.runtime.signer.sign.assert_not_called()
 
 
 def test_switch_off_does_not_import_route():
