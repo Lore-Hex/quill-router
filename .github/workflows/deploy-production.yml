@@ -279,6 +279,12 @@ jobs:
           SPANNER_INSTANCE_ID: trusted-router-nam6
           SPANNER_DATABASE_ID: trusted-router
         run: scripts/deploy/migrate_analytics_outbox.sh
+      - name: Apply operational outbox heartbeat schema
+        env:
+          GCP_PROJECT_ID: quill-cloud-proxy
+          SPANNER_INSTANCE_ID: trusted-router-nam6
+          SPANNER_DATABASE_ID: trusted-router
+        run: scripts/deploy/migrate_operational_outbox_heartbeat.sh
       - name: Apply operational analytics outbox schema
         env:
           GCP_PROJECT_ID: quill-cloud-proxy

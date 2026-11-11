@@ -168,9 +168,11 @@ ClickHouse degraded:
    tr-clickhouse-operational-ingest` before blaming the poller's Spanner
    access. It is also what a control plane deployed BEFORE the VM poller
    reports: deploy `scripts/deploy/clickhouse_live_ingestion.sh` first,
-   confirm `SELECT body FROM tr_entities WHERE
-   kind='operational_outbox_heartbeat'` returns a row, then the control
-   plane.
+   confirm `SELECT body FROM tr_operational_outbox_heartbeat WHERE
+   id='spanner-poller'` (or, from an older poller, the legacy `tr_entities`
+   row with `kind='operational_outbox_heartbeat'`) returns a row, then the
+   control plane. The control plane judges whichever of the two rows was
+   committed more recently.
 3. Check all three ClickHouse replicas, disk capacity, and Keeper delay.
 4. Start `tr-clickhouse-operational-ingest.service`, then run
    `clickhouse.verify_spanner_delivery` and confirm no missing or mismatched

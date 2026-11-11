@@ -33,6 +33,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from clickhouse._spanner_role import database_role, open_database
 from clickhouse.benchmark_rows import normalise
 
 PROJECT = "quill-cloud-proxy"
@@ -100,14 +101,15 @@ class SpannerOutboxSource:
         instance: str,
         database: str,
         shard_count: int = OUTBOX_SHARDS,
+        database_role: str | None = None,
     ) -> None:
         from google.cloud import spanner
         from google.cloud.spanner_v1 import param_types
 
-        self._database = (
-            spanner.Client(project=project, disable_builtin_metrics=True)
-            .instance(instance)
-            .database(database)
+        self._database = open_database(
+            spanner.Client(project=project, disable_builtin_metrics=True).instance(instance),
+            database,
+            database_role,
         )
         self._pt = param_types
         self._shard_count = shard_count
@@ -343,6 +345,7 @@ def main() -> int:
         instance=args.spanner_instance,
         database=args.spanner_database,
         shard_count=args.shards,
+        database_role=database_role(),
     )
     writer = ClickHouseWriter(password=os.environ["CH_PASSWORD"])
     metrics = DrainMetrics()

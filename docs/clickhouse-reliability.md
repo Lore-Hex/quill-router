@@ -224,9 +224,11 @@ scripts/deploy/rollout.sh
 not a convention. Since 2026-09-05 the control plane's `/status.json` analytics
 section on Spanner is built from the heartbeat row the VM poller writes (see
 "Public drain-lag signal" below) and publishes `reason: poller_stale` until one
-exists. Deploy the VM first, confirm the row landed —
-`SELECT body FROM tr_entities WHERE kind='operational_outbox_heartbeat'` returns
-one row — and only then roll the control plane. Reversed, gcp's analytics
+exists. Deploy the VM first and confirm the row landed:
+`SELECT body FROM tr_operational_outbox_heartbeat WHERE id='spanner-poller'`
+returns one row (from a poller that predates that table, the legacy
+`SELECT body FROM tr_entities WHERE kind='operational_outbox_heartbeat' AND id='spanner-poller'`
+does). Only then roll the control plane. Reversed, gcp's analytics
 section flips to `poller_stale` until the first heartbeat lands and
 `check_fleet_analytics_freshness` fails, by design: an unobserved lag is not 0.
 
@@ -821,14 +823,15 @@ Cost: one seek per status-cache miss. Postgres/DSQL uses
 `tr_operational_analytics_outbox_enqueued_at_idx`. Spanner does not read the
 outbox at all: its per-shard head read walks the deleted-row versions the drain
 leaves behind (823-957 ms CPU per call, measured 2026-09-05), so the VM poller
-publishes a heartbeat row into `tr_entities` after each pass — the oldest live
-`commit_ts` it saw, floored by its committed deletes — and the control plane
-point-reads that row, publishing `reason: poller_stale` when it is absent or
+publishes a heartbeat row after each pass (the oldest live `commit_ts` it saw,
+floored by its committed deletes) and the control plane point-reads it
+(see "Spanner access of the node programs" below for where the row lives),
+publishing `reason: poller_stale` when it is absent or
 when its Spanner commit time (`updated_at`, not the poller's own `observed_at`)
 is older than 180 s, rather than scanning. A dead poller therefore shows on
 `/status.json` within 180 s plus the page's 60 s per-process analytics cache.
-The heartbeat needs no DDL, but it does fix the rollout order (VM poller first;
-see Deployment above). `outbox_depth` is deliberately
+The heartbeat fixes the rollout order (VM poller first; see Deployment
+above). `outbox_depth` is deliberately
 optional — `count(*)` over a large backlog is the expensive question and the
 lag already answers the important one.
 
@@ -879,6 +882,58 @@ To ask about one cloud during an incident:
 ```bash
 PYTHONPATH=src python3 -m clickhouse.check_fleet_analytics_freshness --cloud aws
 ```
+
+## Spanner access of the node programs
+
+The node programs that touch Spanner (`ingest_outbox`,
+`ingest_operational_outbox`, `refresh_workspace_directory`,
+`verify_spanner_delivery` and the REST-based `rollup_reservation_overruns`)
+connect to database `trusted-router` with the node service account's
+database-wide access. The plan is to move them to a Spanner fine-grained-access
+database role with table-level privileges. Fine-grained access is granted per
+table, so nothing they run may need `tr_entities`. This is step 1 of that
+change.
+
+**Heartbeat table.** The drain's heartbeat has a table of its own,
+`tr_operational_outbox_heartbeat (id STRING(64), body STRING(MAX),
+updated_at TIMESTAMP allow_commit_timestamp) PRIMARY KEY (id)`, added by
+`scripts/deploy/migrate_operational_outbox_heartbeat.sh` (idempotent; run by
+the production deploy's `migrate-schema` job, by `scripts/deploy-gcp.sh` and by
+`scripts/deploy/clickhouse_operational_analytics.sh` before it ships the node
+code). The row is `id='spanner-poller'` with the same JSON body as before.
+
+- The drain writes the dedicated row first, then the legacy `tr_entities` row
+  (`kind='operational_outbox_heartbeat'`), each in its own transaction, unless
+  `TR_SPANNER_DATABASE_ROLE` is set. Either write may fail without stopping the
+  other or the drain. A failed dedicated write logs
+  `operational_analytics_outbox.heartbeat_failed`; a failed legacy write logs
+  `operational_analytics_outbox.legacy_heartbeat_failed`.
+- The control plane reads both rows in one statement (two primary-key point
+  reads, `UNION ALL`, one snapshot, the same 3 s budget) and judges the one with
+  the newer commit timestamp; a tie goes to the dedicated row. Both rows come
+  from the same poller, so the newest commit is its latest proof of life: the
+  dedicated row once the role is on, the legacy row from a poller that predates
+  the table or was rolled back to one. If the dedicated table does not exist
+  yet (Spanner answers "Table not found"), it logs
+  `spanner.operational_analytics_outbox_heartbeat_table_missing` and reads the
+  legacy row alone with what is left of the same budget.
+
+Rollout order: the migration and the control-plane reader first (the normal
+production deploy does both, migration before any revision serves), then the
+node writer (`clickhouse_operational_analytics.sh`), which dual-writes until
+the role is turned on.
+
+**Role variable.** Every program above reads optional `TR_SPANNER_DATABASE_ROLE`
+(`clickhouse/_spanner_role.py`). Unset or blank, the database is opened exactly
+as before. Set, the client programs open it with `database_role=<role>` and the
+REST rollup creates its session with `{"session": {"creatorRole": "<role>"}}`.
+Nothing sets it yet.
+
+Not in this step, and coming in a follow-up: the database role itself, its
+table grants, a definer-rights view replacing `refresh_workspace_directory`'s
+`tr_entities` workspace read, the IAM bindings that let the node service
+account use the role, setting the variable on the nodes, and retiring the
+legacy heartbeat write and read.
 
 ## Alerts and capacity
 
