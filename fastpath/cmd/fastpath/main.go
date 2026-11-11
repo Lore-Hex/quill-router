@@ -27,6 +27,7 @@ import (
 	"cloud.google.com/go/pubsub/v2"
 	"cloud.google.com/go/spanner"
 
+	"github.com/Lore-Hex/quill-router/fastpath/internal/edge"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/service"
 	"github.com/Lore-Hex/quill-router/fastpath/internal/store"
 )
@@ -125,6 +126,10 @@ func run() error {
 	debugAddress := flag.String("debug-address", service.DebugAddress,
 		"where the goroutine dump is served, GET /debug/goroutines (docs/runbooks/fastpath-alerts.md): a loopback IP address "+
 			"and port only; empty serves none")
+	flag.DurationVar(&edge.DefaultAsyncTicketTimeout, "async-ticket-timeout", 250*time.Millisecond,
+		"the deadline for Python's sign-only ticket call")
+	flag.DurationVar(&edge.DefaultAsyncTicketGrace, "async-ticket-grace", 40*time.Millisecond,
+		"the maximum wait for a ticket after a durable commit, within the decide budget")
 	flag.Parse()
 
 	if err := parsed(flag.Args(), cfg); err != nil {

@@ -2279,3 +2279,38 @@ def test_the_all_mode_members_are_strict(name: str, edit: Any) -> None:
     parse_edge_policy(json.dumps(decoded, sort_keys=True, separators=(",", ":")))
     with pytest.raises((ValueError, ValidationError)):
         parse_edge_policy(json.dumps(edit(decoded), sort_keys=True, separators=(",", ":")))
+
+
+@pytest.mark.parametrize("case", json.loads(VECTORS.OUTPUT_TICKETS.read_text())["cases"], ids=lambda case: case["name"])
+def test_edge_ticket_policy_vectors(case):
+    if not case["accept"]:
+        with pytest.raises(ValidationError):
+            parse_edge_policy(case["body"])
+        return
+    policy = parse_edge_policy(case["body"])
+    assert canonical_edge_policy_bytes(policy).decode() == case["body"]
+    async_policy = policy.async_settle
+    for workspace, expected in case["tickets"].items():
+        admits = (async_policy.admission_enabled
+                  and (async_policy.admission_workspaces is None or workspace in async_policy.admission_workspaces)
+                  and workspace not in (async_policy.admission_excluded_workspaces or ()))
+        tickets = (async_policy.edge_tickets is True and admits
+                   and (async_policy.edge_ticket_workspaces is None or workspace in async_policy.edge_ticket_workspaces))
+        assert tickets is expected
+
+
+def test_edge_ticket_vector_file_current():
+    assert VECTORS.OUTPUT_TICKETS.read_text() == VECTORS.render_tickets()
+
+
+def test_edge_ticket_off_preserves_published_bytes():
+    # The pre-change committed golden is unchanged, including its signature.
+    cfg = VECTORS.fixture_settings(fastpath_edge_async_ticket_workspaces="")
+    assert canonical_edge_policy_bytes(VECTORS.policy(cfg)) == VECTORS.OUTPUT_BODY.read_bytes()
+    assert "edge_tickets" not in VECTORS.OUTPUT_BODY.read_text()
+    for admission in (False, True):
+        cfg = VECTORS.fixture_settings(async_settle_enabled=admission, async_settle_protection=admission)
+        before = canonical_edge_policy_bytes(VECTORS.policy(cfg))
+        cfg.fastpath_edge_async_ticket_workspaces = ""
+        cfg.parse_fastpath_edge_async_ticket_workspaces()
+        assert canonical_edge_policy_bytes(VECTORS.policy(cfg)) == before

@@ -144,13 +144,15 @@ type Boots interface {
 // changes; a miss is kept a tenth as long), and how long a boot read may
 // take before the verdict is Unread and the request goes on.
 type Config struct {
-	Token     string
-	Upstream  *url.URL
-	Boots     Boots
-	BootTTL   time.Duration
-	BootWait  time.Duration
-	Clock     func() time.Time
-	Transport http.RoundTripper
+	Token              string
+	Upstream           *url.URL
+	Boots              Boots
+	BootTTL            time.Duration
+	BootWait           time.Duration
+	Clock              func() time.Time
+	Transport          http.RoundTripper
+	AsyncTicketTimeout time.Duration
+	AsyncTicketGrace   time.Duration
 	// Serving is the node's state for the balancer's health check; nil
 	// means serving.
 	Serving func() bool
@@ -198,6 +200,7 @@ type Edge struct {
 	// decide path is.
 	full    *fullShadow
 	decider *decider
+	tickets *ticketClient
 	// passes times the authorizes passed to Python (pass_timing.go).
 	passes *passTimer
 }
@@ -224,6 +227,15 @@ func New(cfg Config) (*Edge, error) {
 	}
 	if cfg.BootWait <= 0 {
 		cfg.BootWait = 2 * time.Second
+	}
+	if cfg.AsyncTicketTimeout == 0 {
+		cfg.AsyncTicketTimeout = DefaultAsyncTicketTimeout
+	}
+	if cfg.AsyncTicketGrace == 0 {
+		cfg.AsyncTicketGrace = DefaultAsyncTicketGrace
+	}
+	if cfg.AsyncTicketTimeout <= 0 || cfg.AsyncTicketGrace < 0 {
+		return nil, errors.New("edge: invalid async ticket budgets")
 	}
 	if cfg.Clock == nil {
 		cfg.Clock = time.Now
@@ -282,6 +294,14 @@ func New(cfg Config) (*Edge, error) {
 			return nil, errors.New("edge: the decide path needs its cache, the decide table and the rows")
 		}
 		e.decider = newDecider(*d, cfg.Logf, cfg.Clock, cfg.ShadowEvery)
+		e.decider.ticketGrace = cfg.AsyncTicketGrace
+		u := *cfg.Upstream
+		u.Path, u.RawPath, u.RawQuery, u.Fragment = ticketPath, "", "", ""
+		tickets, err := newTicketClient(&u, cfg.Upstream, cfg.Token, cfg.Transport)
+		if err != nil {
+			return nil, err
+		}
+		e.tickets = tickets
 	}
 	upstream := *cfg.Upstream
 	upstream.Path, upstream.RawPath = "", ""

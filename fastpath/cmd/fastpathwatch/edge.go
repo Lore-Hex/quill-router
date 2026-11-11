@@ -47,7 +47,11 @@ func newEdgeSums() *edgeSums {
 
 func (s *edgeSums) add(l edge.CountsLine) {
 	for k, v := range l.Counts {
-		s.Counts[k] += v
+		if strings.HasSuffix(k, "_ms_max") {
+			s.Counts[k] = max(s.Counts[k], v)
+		} else {
+			s.Counts[k] += v
+		}
 	}
 	for name, m := range l.ByName {
 		if s.ByName[name] == nil {

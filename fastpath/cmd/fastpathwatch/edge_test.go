@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Lore-Hex/quill-router/fastpath/internal/edge"
 	"google.golang.org/api/option"
 )
 
@@ -448,5 +449,25 @@ func TestTheEdgeReportCountsInFlightUncheckedInTheCohortAlone(t *testing.T) {
 		g.CohortByClass["inflight_unchecked.owner.off"] != 2 || g.CohortByClass["inflight_unchecked.not_decided"] != 1 ||
 		g.Followed != 10 || g.CohortEligible != 10 {
 		t.Errorf("the in-flight unchecked figures: %s", out.Bytes())
+	}
+}
+
+func TestTicketTimerMaximumAcrossPeriods(t *testing.T) {
+	sums := newEdgeSums()
+	for _, message := range []string{
+		`fastpath edge decide: tickets={"asked":2,"failed":1} ticket_call_ms_sum=12 ticket_call_ms_max=9 ticket_wait_ms_sum=8 ticket_wait_ms_max=5 insert_call_ms_sum=18 insert_call_ms_max=11`,
+		`fastpath edge decide: tickets={"asked":1,"spliced":1} ticket_call_ms_sum=4 ticket_call_ms_max=4 ticket_wait_ms_sum=3 ticket_wait_ms_max=3 insert_call_ms_sum=7 insert_call_ms_max=7`,
+	} {
+		line, ok, err := edge.ParseCountsLine(message)
+		if err != nil || !ok {
+			t.Fatal(err)
+		}
+		sums.add(line)
+	}
+	if sums.Counts["ticket_call_ms_sum"] != 16 || sums.Counts["ticket_call_ms_max"] != 9 ||
+		sums.Counts["ticket_wait_ms_sum"] != 11 || sums.Counts["ticket_wait_ms_max"] != 5 ||
+		sums.Counts["insert_call_ms_sum"] != 25 || sums.Counts["insert_call_ms_max"] != 11 ||
+		sums.ByName["tickets"]["asked"] != 3 || sums.ByName["tickets"]["spliced"] != 1 {
+		t.Fatal(sums)
 	}
 }

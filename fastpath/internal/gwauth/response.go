@@ -282,3 +282,38 @@ func appendTiming(dst []byte, t Timing) []byte {
 	}
 	return append(dst, '}')
 }
+
+// Ticket is Python's sign-only answer. The edge validates its syntax and
+// status URL; the enclave verifies the signature.
+type Ticket struct {
+	Eligible         bool
+	SettlementTicket string
+	StatusURL        string
+}
+
+// WithTicket changes only the response heads. The stored rows are unchanged.
+// Callers use it only after Inserted or Landed proves durability.
+func (c Composed) WithTicket(ticket Ticket) (Composed, error) {
+	if c.async.Shape != AsyncSnapshot {
+		return c, composeErr("a ticket needs a billing snapshot")
+	}
+	before, err := pyjson.DumpsPydantic(c.async.Members)
+	if err != nil {
+		return c, err
+	}
+	members := append(pyjson.Object(nil), c.async.Members...)
+	members[0].Value = ticket.Eligible
+	members = append(members, pyjson.Member{Key: "settlement_ticket", Value: ticket.SettlementTicket},
+		pyjson.Member{Key: "settlement_status_url", Value: ticket.StatusURL})
+	after, err := pyjson.DumpsPydantic(members)
+	if err != nil {
+		return c, err
+	}
+	before, after = before[1:len(before)-1], after[1:len(after)-1]
+	if bytes.Count(c.inserted, before) != 1 || bytes.Count(c.readBack, before) != 1 {
+		return c, composeErr("the response has no unique async snapshot")
+	}
+	c.inserted = bytes.Replace(c.inserted, before, after, 1)
+	c.readBack = bytes.Replace(c.readBack, before, after, 1)
+	return c, nil
+}

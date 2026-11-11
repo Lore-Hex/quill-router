@@ -100,6 +100,7 @@ type Composed struct {
 	// inserted, tags in merge order (inserted) and in sorted order (after
 	// a read-back, §6).
 	inserted, readBack []byte
+	async              Async
 }
 
 // Timing is §6 item 15, in that key order.

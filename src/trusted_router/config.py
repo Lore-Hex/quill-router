@@ -1089,6 +1089,8 @@ class Settings(BaseSettings):
     # edge may answer an async-v1 authorize itself. Off by default; rollout.sh
     # renders it as a literal false until the I4 step.
     fastpath_edge_decide_async: bool = False
+    fastpath_edge_async_ticket_workspaces: str = ""
+    _fastpath_edge_async_ticket_workspace_ids: frozenset[str] = PrivateAttr(default=frozenset())
 
     # Audited break-glass addition to the signed Stage D runtime policy. This
     # is deliberately empty and rollout.sh never inherits it from a revision.
@@ -1737,6 +1739,37 @@ class Settings(BaseSettings):
     @property
     def async_settle_pilot_workspace_ids(self) -> frozenset[str]:
         return self._async_settle_pilot_workspace_ids
+
+    @model_validator(mode="after")
+    def parse_fastpath_edge_async_ticket_workspaces(self) -> Settings:
+        ids = frozenset(
+            part.strip() for part in self.fastpath_edge_async_ticket_workspaces.split(",") if part.strip()
+        )
+        if ids != {"*"} and (len(ids) > 32 or any(
+            re.fullmatch(r"[A-Za-z0-9_./:@+\-]{1,64}", value) is None for value in ids
+        )):
+            raise ValueError("invalid fast path edge async ticket workspace set")
+        if self.fastpath_edge_async_ticket_workspaces and not ids:
+            raise ValueError("empty fast path edge async ticket workspace set")
+        self._fastpath_edge_async_ticket_workspace_ids = ids
+        return self
+
+    @property
+    def fastpath_edge_async_ticket_workspace_ids(self) -> frozenset[str]:
+        return self._fastpath_edge_async_ticket_workspace_ids
+
+    @property
+    def fastpath_edge_async_tickets_enabled(self) -> bool:
+        return bool(self.fastpath_edge_async_ticket_workspaces)
+
+    def fastpath_edge_async_ticket_allows(self, workspace_id: str) -> bool:
+        return (
+            self.fastpath_edge_async_tickets_enabled
+            and self.async_settle_admission_enabled
+            and self.async_settle_pilot_allows(workspace_id)
+            and ("*" in self._fastpath_edge_async_ticket_workspace_ids
+                 or workspace_id in self._fastpath_edge_async_ticket_workspace_ids)
+        )
 
     @model_validator(mode="after")
     def parse_fastpath_overlap_workspaces(self) -> Settings:
