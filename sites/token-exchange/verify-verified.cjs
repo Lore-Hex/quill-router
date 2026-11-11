@@ -187,8 +187,8 @@ const CASES = [
 const scenarioValue = (scenario, key, fallback) => (key in scenario ? scenario[key] : fallback);
 const finished = () => ['live-check', 'gateway-check'].every(id => !['idle', 'running'].includes(document.getElementById(id).dataset.verdict));
 
-async function open(browser, width, scenario) {
-  const context = await browser.newContext({viewport: {width, height: 1000}});
+async function open(browser, width, scenario, height = 1000, options = {}) {
+  const context = await browser.newContext({viewport: {width, height}, ...options});
   const page = await context.newPage();
   const errors = [];
   const requests = [];
@@ -280,14 +280,103 @@ const panel = (page, id) => Promise.all([
       await context.close();
       console.log(`PASS ${width}px: layout, rerun`);
     }
+    // The Ink Band closes the Lime hero inside the first screen at common window sizes,
+    // and the header's Start building is the only orange there.
+    for (const [width, height] of [[1440, 900], [1440, 800], [1280, 720], [1920, 1080], [390, 844], [375, 667], [360, 740]]) {
+      const {context, page, errors} = await open(browser, width, CASES[0], height);
+      await page.evaluate(() => document.fonts.ready);
+      const fold = await page.evaluate(() => {
+        const header = document.querySelector('header').getBoundingClientRect();
+        const hero = document.querySelector('.mv3-hero').getBoundingClientRect();
+        const band = document.querySelector('.mv3-hero .v3-band').getBoundingClientRect();
+        const action = document.querySelector('.mv3-hero .btn').getBoundingClientRect();
+        const orange = [...document.querySelectorAll('.btn')].filter(button => {
+          const box = button.getBoundingClientRect();
+          return box.height && box.top < innerHeight && getComputedStyle(button).backgroundColor === 'rgb(255, 107, 53)';
+        }).map(button => button.textContent.trim());
+        return {header: header.bottom, hero: [hero.top, hero.bottom], band: [band.top, band.bottom, band.height], action: action.bottom, orange,
+          overflow: document.documentElement.scrollWidth > innerWidth};
+      });
+      assert.ok(Math.abs(fold.hero[0] - fold.header) < 1, `hero starts under the header at ${width}x${height}`);
+      assert.ok(Math.abs(fold.hero[1] - height) < 1, `hero is exactly the first screen at ${width}x${height}: ${JSON.stringify(fold)}`);
+      assert.ok(Math.abs(fold.band[1] - fold.hero[1]) < 1, `band on the hero's bottom edge at ${width}x${height}`);
+      assert.equal(fold.band[2], width < 600 ? 96 : 120, `band height at ${width}x${height}`);
+      assert.ok(fold.action <= fold.band[0], `hero button above the band at ${width}x${height}: ${JSON.stringify(fold)}`);
+      assert.deepEqual(fold.orange, ['Start building'], `one orange button in the first screen at ${width}x${height}`);
+      assert.equal(fold.overflow, false, `no sideways scroll at ${width}x${height}`);
+      assert.deepEqual(errors, []);
+      await context.close();
+      console.log(`PASS ${width}x${height}: hero fills the first screen, Band ${fold.band[2]}px in view`);
+    }
+
+    // Each step shows a kit state icon; results stay quiet unless a step did not pass.
+    {
+      const {context, page} = await open(browser, 1440, CASES[2]);
+      const rows = await page.locator('#live-check [data-step]').evaluateAll(list => list.map(row => [
+        row.dataset.state, getComputedStyle(row.querySelector('.step-icon')).opacity,
+        getComputedStyle(row.querySelector('.step-result')).position]));
+      assert.deepEqual(rows, [['ok', '1', 'absolute'], ['ok', '1', 'absolute'], ['bad', '1', 'static'], ['bad', '1', 'static']]);
+      assert.equal(await page.locator('#live-check .verdict-mark, .verdict-mark').count(), 0, 'no animated status mark');
+      await context.close();
+      console.log('PASS step icons: passed steps show the check alone, failed steps say why');
+    }
+
+    // Ways to check: kit Tabs with arrow keys, one Ink panel, copy keeps its icon.
+    for (const width of [1440, 390]) {
+      const {context, page, errors} = await open(browser, width, CASES[0], 900, {permissions: ['clipboard-read', 'clipboard-write']});
+      const shown = () => page.locator('.mv3-panel').evaluateAll(list => list.filter(panel => !panel.hidden).map(panel => panel.id));
+      const selected = () => page.locator('.mv3-tabs [role="tab"]').evaluateAll(list => list.map(tab => tab.getAttribute('aria-selected')));
+      assert.equal(await page.locator('.mv3-tabs').isVisible(), true);
+      assert.deepEqual(await shown(), ['way-agent']);
+      assert.deepEqual(await selected(), ['true', 'false', 'false']);
+      await page.locator('.mv3-hero .btn').click();
+      await page.waitForFunction(() => location.hash === '#manual' && Math.abs(document.getElementById('manual').getBoundingClientRect().top) < 120);
+      assert.equal(await page.locator('#agent-prompt').isVisible(), true, 'the hero button lands on the agent prompt');
+      await page.getByRole('tab', {name: 'Commands'}).click();
+      assert.deepEqual(await shown(), ['way-commands']);
+      assert.deepEqual(await selected(), ['false', 'true', 'false']);
+      if (width < 600) {
+        // Long commands run past the panel: the /confidential arrow slides them along.
+        const next = page.locator('#way-commands .code-next');
+        await next.waitFor({state: 'visible'});
+        await next.click();
+        await page.waitForFunction(() => document.querySelector('#way-commands .code').scrollLeft > 0);
+      }
+      const copy = page.locator('#way-commands [data-copy]');
+      await copy.click();
+      await page.waitForFunction(() => document.querySelector('#way-commands [data-copy]').textContent.trim() !== 'Copy');
+      assert.equal((await copy.textContent()).trim(), 'Copied');
+      assert.equal(await copy.locator('svg').count(), 1, 'copy keeps its icon');
+      const copied = await page.evaluate(() => navigator.clipboard.readText());
+      assert.ok(copied.includes('curl -s https://enclave.trymaple.ai/attestation/') && !copied.includes('\n\n'), 'commands copied, no blank lines');
+      await page.getByRole('tab', {name: 'Commands'}).focus();
+      await page.keyboard.press('ArrowRight');
+      assert.deepEqual(await selected(), ['false', 'false', 'true']);
+      assert.equal(await page.evaluate(() => document.activeElement.id), 'tab-sources');
+      assert.equal(await page.locator('#way-sources a').count(), 7);
+      await page.keyboard.press('ArrowRight');
+      assert.deepEqual(await selected(), ['true', 'false', 'false']);
+      await page.keyboard.press('End');
+      assert.deepEqual(await shown(), ['way-sources']);
+      await page.keyboard.press('Home');
+      assert.deepEqual(await shown(), ['way-agent']);
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `ways overflow at ${width}`);
+      assert.deepEqual(errors, []);
+      await context.close();
+      console.log(`PASS ${width}px: hero button lands on the prompt; tabs, arrow keys, copy and code arrow`);
+    }
+
     const context = await browser.newContext({javaScriptEnabled: false});
     const page = await context.newPage();
     await page.goto(`${base}/verified/maple.html`);
     for (const id of ['live-check', 'gateway-check']) assert.ok((await page.locator(`#${id} .verdict-text`).textContent()).includes('manual check below'));
     const manual = await page.locator('#manual pre').textContent();
     assert.ok(manual.includes('enclave.trymaple.ai/attestation/') && manual.includes('api.trustedrouter.com/attestation'));
+    // Without JavaScript the tab row stays hidden and all three ways show, stacked.
+    assert.equal(await page.locator('.mv3-tabs').isVisible(), false);
+    for (const id of ['way-agent', 'way-commands', 'way-sources']) assert.equal(await page.locator(`#${id}`).isVisible(), true, id);
     await context.close();
-    console.log('PASS without JavaScript: manual check stands on its own');
+    console.log('PASS without JavaScript: manual check stands on its own, all three ways shown');
   } finally {
     await browser.close();
   }
