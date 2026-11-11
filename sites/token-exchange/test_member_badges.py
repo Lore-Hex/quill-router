@@ -53,6 +53,11 @@ class MemberBadgeTests(unittest.TestCase):
         self.assertIn('href="/assets/badges/nyte-verified-secure-white.svg" download', self.page)
         self.assertEqual(self.page.count('alt="NYTE Verified Secure"'), 2)
         self.assertEqual(self.page.count('role="tab"'), 2)
+        # Kit CodeBlock: icon-only copy inside the panel; the settings sit in their own list.
+        self.assertIn('<button class="bv3-copy-btn" id="copy" type="button" aria-label="Copy HTML">', self.page)
+        self.assertIn('aria-label="Scroll code right" hidden', self.page)
+        self.assertIn('enforces one of:</p><ul class="bv3-settings">', self.page)
+        self.assertEqual(self.page.count('<div class="bv3-rule"><h3>'), 4)
         self.assertEqual(self.page.count('class="v3-band" preserveAspectRatio="none"'), 1)
 
     def test_earlier_seals_stay_published_for_existing_embeds(self):

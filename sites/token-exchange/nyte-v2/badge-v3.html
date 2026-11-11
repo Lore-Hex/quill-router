@@ -24,14 +24,13 @@
         <div class="bv3-preview light" id="preview" role="tabpanel" aria-labelledby="tab-light"><img id="badge-preview" src="/assets/badges/nyte-verified-secure-black.svg" width="240" height="104" alt="NYTE Verified Secure"></div>
         <div class="btns bv3-actions">
           <a class="btn btn-primary" id="download" href="/assets/badges/nyte-verified-secure-black.svg" download>Download the SVG <span aria-hidden="true">↓</span></a>
-          <button class="btn btn-secondary" id="copy" type="button"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 9 L20 9 L20 20 L9 20 L9 9"/><path d="M15 7.25 L15 4 L4 4 L4 15 L7.25 15"/></svg>Copy HTML</button>
         </div>
-        <p class="bv3-status" id="copy-status" role="status" aria-live="polite"></p>
-        <div class="code"><pre tabindex="0" aria-label="Badge embed code"><code id="embed-code">&lt;a href=<span class="s">"https://nytokenexchange.com/badge"</span>
+        <div class="code-scroll bv3-code"><div class="code" tabindex="0" role="region" aria-label="Badge embed code"><pre><code id="embed-code">&lt;a href=<span class="s">"https://nytokenexchange.com/badge"</span>
    aria-label=<span class="s">"NYTE Verified Secure: requirements and evidence"</span>&gt;
   &lt;img src=<span class="s">"https://nytokenexchange.com/assets/badges/nyte-verified-secure-black.svg"</span>
        alt=<span class="s">"NYTE Verified Secure"</span> height=<span class="s">"64"</span>&gt;
-&lt;/a&gt;</code></pre></div>
+&lt;/a&gt;</code></pre></div><button class="bv3-copy-btn" id="copy" type="button" aria-label="Copy HTML"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 9 L20 9 L20 20 L9 20 L9 9"/><path d="M15 7.25 L15 4 L4 4 L4 15 L7.25 15"/></svg></button><button class="code-next" type="button" aria-label="Scroll code right" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 5 7 7-7 7"/></svg></button></div>
+        <p class="bv3-status" id="copy-status" role="status" aria-live="polite"></p>
         <noscript><p class="bv3-status">The default embed works without JavaScript. <a href="/assets/badges/nyte-verified-secure-white.svg" download>Download the white SVG</a> for dark backgrounds.</p></noscript>
       </div>
     </div>
@@ -44,10 +43,10 @@
         <h2>The NYTE standard.<br><em>Confidential, by requirement.</em></h2>
       </div>
       <div class="bv3-meaning-text">
-        <p>NYTE requires every AI route to meet its confidential routing standard. This badge is for enterprise buyers to display to their customers on NYTE-powered AI features. A supplier may display it only where NYTE publishes an evidence page for that supplier’s verified route, as it does for <a href="/verified/maple">Maple</a>, and only linked to that page. Downloading the artwork does not verify your product.</p>
-        <p>The required data path uses TrustedRouter’s hardware-attested gateway and enforces <code>model="trustedrouter/confidential"</code>, <code>model="trustedrouter/e2e"</code>, or <code>provider.min_privacy="confidential"</code>. The same route must have verified confidential compute, provider-side E2EE, and explicit zero data retention; requests must fail closed rather than fall back to an ineligible endpoint.</p>
-        <p>The encryption claim is route-specific: client TLS terminates inside the attested gateway, and provider-side end-to-end encryption is a separate verified property. The badge does not claim that the gateway cannot process plaintext, or that unrelated features on your website are end-to-end encrypted. Customer-side logging, processing location, and other systems require their own review.</p>
-        <p>This static image is not a live verification result, an independent security audit, or a product-wide certification. Review the <a href="https://trustedrouter.com/badge">confidential AI routing standard</a> and the <a href="https://trustedrouter.com/trust">route-specific evidence</a>; <a href="https://trust.trustedrouter.com">verify the live gateway</a> to inspect the privacy claim.</p>
+        <div class="bv3-rule"><h3>Who may show it</h3><p>NYTE requires every AI route to meet its confidential routing standard. This badge is for enterprise buyers to display to their customers on NYTE-powered AI features. A supplier may display it only where NYTE publishes an evidence page for that supplier’s verified route, as it does for <a href="/verified/maple">Maple</a>, and only linked to that page. Downloading the artwork does not verify your product.</p></div>
+        <div class="bv3-rule"><h3>What the route must enforce</h3><p>The required data path uses TrustedRouter’s hardware-attested gateway and enforces one of:</p><ul class="bv3-settings"><li><code>model="trustedrouter/confidential"</code></li><li><code>model="trustedrouter/e2e"</code></li><li><code>provider.min_privacy="confidential"</code></li></ul><p>The same route must have verified confidential compute, provider-side E2EE, and explicit zero data retention; requests must fail closed rather than fall back to an ineligible endpoint.</p></div>
+        <div class="bv3-rule"><h3>What the encryption claim covers</h3><p>The encryption claim is route-specific: client TLS terminates inside the attested gateway, and provider-side end-to-end encryption is a separate verified property. The badge does not claim that the gateway cannot process plaintext, or that unrelated features on your website are end-to-end encrypted. Customer-side logging, processing location, and other systems require their own review.</p></div>
+        <div class="bv3-rule"><h3>What the badge is not</h3><p>This static image is not a live verification result, an independent security audit, or a product-wide certification. Review the <a href="https://trustedrouter.com/badge">confidential AI routing standard</a> and the <a href="https://trustedrouter.com/trust">route-specific evidence</a>; <a href="https://trust.trustedrouter.com">verify the live gateway</a> to inspect the privacy claim.</p></div>
       </div>
     </div>
   </section>

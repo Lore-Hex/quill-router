@@ -52,6 +52,29 @@ const output = process.env.NYTE_PREVIEW_DIR || require('node:os').tmpdir();
       assert.ok(Math.abs(band.y + band.height - (hero.y + hero.height)) < 1, `band at hero bottom at ${width}`);
       assert.ok(band.height >= 96 && band.height <= 144, `band height ${band.height} at ${width}`);
       if (width >= 1440) assert.ok(Math.abs(hero.y + hero.height - 1000) < 1, `hero fills the first screen at ${width}`);
+      // Kit CodeBlock: icon-only copy button in the panel's top-right corner, scroll arrow from app.js.
+      const panel = await page.locator('.bv3-code').boundingBox();
+      const copy = await page.locator('.bv3-code #copy').boundingBox();
+      assert.ok(copy.width >= 44 && copy.height >= 44, `copy touch target at ${width}`);
+      assert.ok(Math.abs(copy.x + copy.width - (panel.x + panel.width)) < 1 && Math.abs(copy.y - panel.y) < 1, `copy top-right at ${width}`);
+      assert.equal(await page.locator('.bv3-actions .btn').count(), 1);
+      const overflows = await page.evaluate(() => { const c = document.querySelector('.bv3-code .code'); return c.scrollWidth > c.clientWidth + 2; });
+      assert.equal(await page.locator('.bv3-code .code-next').isVisible(), overflows, `scroll arrow follows overflow at ${width}`);
+      // The three settings never break mid-word.
+      for (const chip of await page.locator('.bv3-settings code').all()) {
+        const box = await chip.boundingBox();
+        assert.ok(box.height < 40, `setting on one line at ${width}`);
+      }
+      assert.deepEqual(await page.locator('.bv3-rule h3').allTextContents(), ['Who may show it', 'What the route must enforce', 'What the encryption claim covers', 'What the badge is not']);
+      if (width <= 600) {
+        // Phones: badge first in the hero; the main buttons take the full content width.
+        const order = await page.evaluate(() => ['.bv3-hero-badge', '.bv3-hero .v3-bar'].map(s => document.querySelector(s).getBoundingClientRect().top));
+        assert.ok(order[0] < order[1], `badge above the eyebrow at ${width}`);
+        const content = await page.locator('.bv3-hero .wrap').evaluate(e => e.clientWidth - parseFloat(getComputedStyle(e).paddingLeft) - parseFloat(getComputedStyle(e).paddingRight));
+        for (const selector of ['.bv3-hero .btn', '#download', '.bv3-join .btn']) {
+          assert.ok(Math.abs((await page.locator(selector).boundingBox()).width - content) < 1, `${selector} full width at ${width}`);
+        }
+      }
       const tabs = page.getByRole('tab');
       assert.deepEqual(await tabs.allTextContents(), ['Light background', 'Dark background']);
       for (const [theme, name, keyed] of [['dark', 'nyte-verified-secure-white.svg', false], ['light', 'nyte-verified-secure-black.svg', true], ['dark', 'nyte-verified-secure-white.svg', true]]) {
