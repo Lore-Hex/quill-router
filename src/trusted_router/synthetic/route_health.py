@@ -159,6 +159,112 @@ def evaluate_route_health(
     return flags
 
 
+# A listed route the provider refuses to serve. These thresholds feed the
+# hourly price refresh's automatic route hold (scripts/pricing/
+# unserved_route_holds.py), so they are deliberately stricter than the
+# route-configuration alert above: at least six consecutive configured-route
+# probes, all answered with a model-not-served class, spanning at least three
+# hours, the newest within two. Transient classes (timeouts, 429/5xx) and
+# probe_config_error break the streak, as does any success.
+UNSERVED_MIN_SAMPLES = 6
+UNSERVED_MIN_SPAN = dt.timedelta(hours=3)
+UNSERVED_MAX_AGE = dt.timedelta(hours=2)
+# provider_auth_config counts only together with the sibling rule below: a 403
+# on one model while the same key serves another model is per-model access,
+# not a broken credential.
+_UNSERVED_ERROR_TYPES = frozenset({"unsupported_route", "provider_auth_config"})
+# The provider must have served a different model recently. Without that proof
+# the failure may be ours (a broken adapter, a revoked key, a blocked egress)
+# and holding routes one by one would hide a provider-wide problem.
+UNSERVED_SIBLING_SUCCESS_WINDOW = dt.timedelta(hours=6)
+
+
+@dataclass(frozen=True)
+class UnservedRoute:
+    provider: str
+    model: str
+    samples: int
+    first_failure_at: str
+    last_failure_at: str
+    error_types: tuple[str, ...]
+
+
+def evaluate_unserved_routes(
+    store: Store,
+    *,
+    routes: list[tuple[str, str]] | None = None,
+    now: dt.datetime | None = None,
+    window_hours: int = 48,
+) -> list[UnservedRoute]:
+    """Routable routes the provider lists but has refused for hours.
+
+    Reads the same bounded per-route sample query as evaluate_route_health.
+    Raises whatever the analytics read raises: callers must treat an error as
+    "no evidence", never as "no unserved routes".
+    """
+    now = now or dt.datetime.now(dt.UTC)
+    cutoff = now - dt.timedelta(hours=window_hours)
+    if routes is None:
+        routes = [
+            (provider, model)
+            for provider, models in rotation_candidates().items()
+            for model in models
+        ]
+    if not routes:
+        return []
+    route_set = set(routes)
+    samples = store.provider_route_benchmark_samples(
+        cutoff=cutoff.isoformat().replace("+00:00", "Z"),
+        per_route_limit=_SAMPLES_PER_ROUTE_LIMIT,
+        limit=min(_BATCH_SAMPLE_LIMIT, len(route_set) * _SAMPLES_PER_ROUTE_LIMIT),
+    )
+    by_route: dict[tuple[str, str], list[tuple[dt.datetime, ProviderBenchmarkSample]]] = {}
+    served_since: dict[str, set[str]] = {}
+    sibling_cutoff = now - UNSERVED_SIBLING_SUCCESS_WINDOW
+    for sample in samples:
+        if sample.source != "synthetic":
+            continue
+        created = _parse_created_at(sample.created_at)
+        if created is None or created < cutoff or created > now:
+            continue
+        if sample.status == "success" and created >= sibling_cutoff:
+            served_since.setdefault(sample.provider, set()).add(sample.model)
+        route = (sample.provider, sample.model)
+        if route in route_set:
+            by_route.setdefault(route, []).append((created, sample))
+
+    unserved: list[UnservedRoute] = []
+    for provider, model in sorted(route_set):
+        recent = sorted(by_route.get((provider, model), []), key=lambda pair: pair[0], reverse=True)
+        streak = []
+        for created, sample in recent:
+            if sample.status not in {"unsupported", "error"} or sample.error_type not in _UNSERVED_ERROR_TYPES:
+                break
+            streak.append((created, sample))
+        if (
+            len(streak) < UNSERVED_MIN_SAMPLES
+            or now - streak[0][0] > UNSERVED_MAX_AGE
+            or streak[0][0] - streak[-1][0] < UNSERVED_MIN_SPAN
+            or not (served_since.get(provider, set()) - {model})
+        ):
+            continue
+        unserved.append(
+            UnservedRoute(
+                provider=provider,
+                model=model,
+                samples=len(streak),
+                first_failure_at=_iso_z(streak[-1][0]),
+                last_failure_at=_iso_z(streak[0][0]),
+                error_types=tuple(sorted({str(sample.error_type) for _, sample in streak})),
+            )
+        )
+    return unserved
+
+
+def _iso_z(value: dt.datetime) -> str:
+    return value.astimezone(dt.UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
 def _configuration_flag(
     provider: str,
     model: str,
