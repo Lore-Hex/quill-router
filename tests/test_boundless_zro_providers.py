@@ -318,7 +318,10 @@ def test_registration_and_published_pricing(client):
             assert endpoint.upstream_id == row["upstream_id"]
             assert module.canonical_model_id(endpoint.upstream_id) == row["id"]
             assert endpoint.usage_type == "Credits"
-            assert endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens > 0
+            cached = endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
+            assert cached is not None and cached > 0
+            # The model's row in the page's price table, not just its header.
+            assert f"<code>{row['id']}</code>" in page.text
         assert not PROVIDERS[slug].provider_e2ee
     assert not PROVIDERS["boundless"].provider_zero_data_retention
     assert PROVIDERS["zro"].provider_zero_data_retention
