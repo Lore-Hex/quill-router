@@ -112,7 +112,13 @@ def test_the_other_deploy_entry_points_apply_it_after_the_outbox() -> None:
         outbox = script.index("migrate_operational_analytics_outbox.sh")
         heartbeat = script.index("migrate_operational_outbox_heartbeat.sh")
         assert outbox < heartbeat, path
-    node_deploy = (ROOT / "scripts/deploy/clickhouse_operational_analytics.sh").read_text()
-    assert node_deploy.index("migrate_operational_outbox_heartbeat.sh") < node_deploy.index(
-        'build_clickhouse_bundle "$ROOT" "$archive"'
-    )
+    # Both node deploys that restart the operational drain create the table
+    # before they ship the writer.
+    for path in (
+        "scripts/deploy/clickhouse_operational_analytics.sh",
+        "scripts/deploy/clickhouse_live_ingestion.sh",
+    ):
+        node_deploy = (ROOT / path).read_text()
+        assert node_deploy.index("migrate_operational_outbox_heartbeat.sh") < node_deploy.index(
+            'build_clickhouse_bundle "$ROOT" "$archive"'
+        ), path
