@@ -10,6 +10,10 @@ evidence scope and social-image workflow.
 For NY Token Exchange navigation additions, follow the page registry instructions
 in [`sites/token-exchange/README.md`](sites/token-exchange/README.md#build-and-test).
 
+For NY Token Exchange design work, the brand kits (V1 and V2) are in
+[`docs/brand/nyte/`](docs/brand/nyte/README.md). The live site is the best
+example; use your judgement where they differ.
+
 ## Read first
 
 **[`docs/storage-portability/HANDOFF.md`](docs/storage-portability/HANDOFF.md)** — current
