@@ -347,9 +347,10 @@ def _finalize_outcome(needs: dict) -> tuple[str, int]:
 
 
 def _needs(**overrides: dict) -> dict:
-    names = ("admit-cloud", "migrate-schema", "sync-runtime-secrets", "confirm-current-main",
-             "confirm-still-on-main", "deploy", "rollout-secondaries", "public-surface-companion",
-             "settle-drain-worker", "verify-cloud-complete")
+    names = ("admit-cloud", "confirm-regions-ready", "migrate-schema", "sync-runtime-secrets",
+             "confirm-current-main", "confirm-still-on-main", "deploy", "rollout-secondaries",
+             "public-surface-companion", "settle-drain-worker", "verify-cloud-complete")
+    assert set(names) == set(_workflow()["jobs"]["finalize-cloud"]["needs"])
     needs = {name: {"result": "success", "outputs": {}} for name in names}
     needs["confirm-current-main"]["outputs"] = {"proceed": "true"}
     needs["confirm-still-on-main"]["outputs"] = {"on_main": "true"}
@@ -388,6 +389,44 @@ def test_finalize_blocks_the_lease_on_any_other_failure() -> None:
         "deploy skipped while on main": _needs(**{"deploy": skipped, "rollout-secondaries": skipped,
                                                   "public-surface-companion": skipped,
                                                   "verify-cloud-complete": skipped}),
+    }
+    for name, needs in cases.items():
+        assert _finalize_outcome(needs) == ("failure", 1), name
+
+
+AFTER_DEPLOY = ("deploy", "rollout-secondaries", "public-surface-companion", "settle-drain-worker",
+                "verify-cloud-complete")
+
+
+def _regions_refused(**overrides: dict) -> dict:
+    skipped = {"result": "skipped", "outputs": {}}
+    return _needs(**{"confirm-regions-ready": {"result": "failure", "outputs": {}},
+                     **{name: skipped for name in AFTER_DEPLOY}, **overrides})
+
+
+@pytest.mark.skipif(shutil.which("jq") is None or shutil.which("bash") is None, reason="the step needs bash and jq")
+def test_finalize_releases_cleanly_when_a_region_was_refused_before_anything_rolled_out() -> None:
+    # confirm-regions-ready failed, so `deploy` and everything behind it was skipped: nothing of this
+    # run is left to verify. The run is still red, on that job.
+    assert _finalize_outcome(_regions_refused()) == ("success", 0)
+    # The ancestry answer does not matter once nothing rolled out.
+    assert _finalize_outcome(_regions_refused(**{
+        "confirm-still-on-main": {"result": "success", "outputs": {"on_main": "false"}}})) == ("success", 0)
+
+
+@pytest.mark.skipif(shutil.which("jq") is None or shutil.which("bash") is None, reason="the step needs bash and jq")
+def test_finalize_blocks_the_lease_when_a_refused_region_is_not_the_whole_story() -> None:
+    failure = {"result": "failure", "outputs": {}}
+    success = {"result": "success", "outputs": {}}
+    skipped = {"result": "skipped", "outputs": {}}
+    cases = {
+        "schema failed too": _regions_refused(**{"migrate-schema": failure}),
+        "secrets failed too": _regions_refused(**{"sync-runtime-secrets": failure}),
+        "schema never ran": _regions_refused(**{"migrate-schema": skipped}),
+        "the check was skipped, not failed": _regions_refused(**{"confirm-regions-ready": skipped}),
+        "the check was cancelled": _regions_refused(**{"confirm-regions-ready": {"result": "cancelled", "outputs": {}}}),
+        **{f"{name} ran anyway": _regions_refused(**{name: success}) for name in AFTER_DEPLOY},
+        **{f"{name} failed": _regions_refused(**{name: failure}) for name in AFTER_DEPLOY},
     }
     for name, needs in cases.items():
         assert _finalize_outcome(needs) == ("failure", 1), name
