@@ -297,20 +297,28 @@ def test_registration_and_published_pricing(client):
         assert OPENAI_COMPATIBLE_PROVIDERS[slug][1] == module.BASE_URL
         assert any(item[0] == slug for item in _DISCOVERABLE_MANIFEST_PROVIDERS)
         assert f"{slug.upper()}_API_KEY:trustedrouter-{slug}-api-key" in (root / ".github/workflows/refresh-prices.yml").read_text()
-        endpoint = MODEL_ENDPOINTS[f"z-ai/glm-5.3-flash@{slug}/prepaid"]
-        # Zro serves the bare ID. Boundless serves the legacy short ID and the
-        # qualified one its rate card names (z-ai/glm-5.3-flash since
-        # 2026-11); discovery prefers the card's, which passed the live PONG
-        # canary in refresh run 42372150892. Either way it is this model.
-        if slug == "zro":
-            assert endpoint.upstream_id == "glm-5.3-flash"
-        else:
-            assert endpoint.upstream_id in {"glm-5.3-flash", "z-ai/glm-5.3-flash"}
-            assert module.canonical_model_id(endpoint.upstream_id) == "z-ai/glm-5.3-flash"
-        assert endpoint.usage_type == "Credits"
-        assert endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens > 0
+        # Check the rows the provider still lists, not a fixed model: upstream
+        # delistings are normal (zro dropped glm-5.3-flash on 2026-11-11) and
+        # the hourly refresh marks those rows unroutable. Catalog policy may
+        # hold other rows back, so require at least one listed row with a
+        # cached price to register as a Credits route with a cached tier.
+        manifest = json.loads(
+            (root / f"src/trusted_router/data/provider_models/{slug}.json").read_text()
+        )
+        registered = [
+            row for row in manifest["models"]
+            if row.get("routable", True) and row.get("cached_input_token_price_per_m")
+            and f"{row['id']}@{slug}/prepaid" in MODEL_ENDPOINTS
+        ]
+        assert registered, f"{slug} has no registered prepaid route with a cached price"
         page = client.get(f"/providers/{slug}")
-        assert page.status_code == 200 and "glm-5.3-flash" in page.text and "Cached" in page.text
+        assert page.status_code == 200 and "Cached" in page.text
+        for row in registered:
+            endpoint = MODEL_ENDPOINTS[f"{row['id']}@{slug}/prepaid"]
+            assert endpoint.upstream_id == row["upstream_id"]
+            assert module.canonical_model_id(endpoint.upstream_id) == row["id"]
+            assert endpoint.usage_type == "Credits"
+            assert endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens > 0
         assert not PROVIDERS[slug].provider_e2ee
     assert not PROVIDERS["boundless"].provider_zero_data_retention
     assert PROVIDERS["zro"].provider_zero_data_retention
