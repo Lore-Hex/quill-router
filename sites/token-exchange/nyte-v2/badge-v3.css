@@ -5,25 +5,31 @@ main p a{color:var(--deep-purple);text-decoration:underline;text-decoration-thic
 main p a:hover{color:var(--ink);text-decoration-thickness:2px}
 .bv3-eyebrow{display:flex;flex-direction:column;align-items:flex-start;gap:16px}
 .bv3-eyebrow .v3-bar{background:var(--lime)}
-[data-nyte-page="badge"] main h2{font-size:56px;line-height:1.02;letter-spacing:-.01em}
+[data-nyte-page="badge"] main h2{font-size:48px;line-height:1.04;letter-spacing:-.01em}
+[data-nyte-page="badge"] main .v3-label{font-size:13px}
 [data-nyte-page="badge"] main .bv3-eyebrow+h2{margin-top:24px}
 .bv3-copy .lede{margin-top:24px}
 
-/* Hero: Cream, centred, the first screen with the lime Band along its bottom edge. */
-[data-nyte-page="badge"] main .bv3-hero{position:relative;display:flex;flex-direction:column;justify-content:center;min-height:calc(100svh - var(--header));padding:64px 0 184px;text-align:center}
+/* Hero: Cream, centred, exactly the first screen below the header with the lime Band
+   pinned to its bottom edge. Sizes and gaps follow the window height so the Band stays
+   in view; the hero grows past the screen only on very short windows. */
+[data-nyte-page="badge"] main .bv3-hero{--band:clamp(96px,14svh,120px);--gap:clamp(16px,4svh,64px);position:relative;display:flex;flex-direction:column;justify-content:center;min-height:calc(100svh - var(--header));padding:var(--gap) 0 calc(var(--band) + var(--gap));text-align:center}
 .bv3-hero .wrap{display:flex;flex-direction:column;align-items:center;width:100%}
 .bv3-hero .bv3-eyebrow{align-items:center}
 .bv3-hero .bv3-eyebrow .v3-bar{background:var(--ink)}
-.bv3-hero-badge{order:-1;display:block;width:auto;height:96px;margin-bottom:40px}
-.bv3-hero h1{margin-top:28px;font-size:104px;line-height:.96;font-weight:300;letter-spacing:-.02em}
-[data-nyte-page="badge"] main .bv3-hero .lede{margin-top:32px;max-width:820px}
-.bv3-hero .btns{margin-top:32px;justify-content:center}
-.bv3-hero .v3-band{position:absolute;left:0;bottom:0;height:120px}
+.bv3-hero-badge{order:-1;display:block;width:auto;height:clamp(64px,10.7svh,96px);margin-bottom:clamp(16px,4.4svh,40px)}
+.bv3-hero h1{margin-top:clamp(12px,3svh,28px);font-size:min(104px,8vw,11svh);line-height:.96;font-weight:300;letter-spacing:-.02em}
+[data-nyte-page="badge"] main .bv3-hero .lede{margin-top:clamp(12px,3.5svh,32px);max-width:820px;font-size:clamp(17px,2.4svh,22px)}
+.bv3-hero .btns{margin-top:clamp(12px,3.5svh,32px);justify-content:center}
+.bv3-hero .v3-band{position:absolute;left:0;bottom:0;height:var(--band)}
 
 /* Make it yours: copy left, builder right. */
-.bv3-studio .wrap,.bv3-meaning .wrap{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;align-items:start}
-.bv3-studio .bv3-copy,.bv3-meaning .bv3-copy{grid-column:1/span 5}
-.bv3-builder,.bv3-meaning-text{grid-column:7/span 6;min-width:0}
+.bv3-studio .wrap,.bv3-meaning .wrap,.bv3-usage .wrap,.bv3-join .wrap{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;align-items:start}
+.bv3-studio .bv3-copy{grid-column:2/span 5}
+.bv3-builder{grid-column:7/span 5;min-width:0}
+/* Meaning, usage and closing: one reading column centred on the grid (columns 3–10). */
+.bv3-meaning .wrap>*,.bv3-usage .wrap>*,.bv3-join .wrap>*{grid-column:3/span 8;min-width:0}
+.bv3-meaning-text{margin-top:24px}
 .bv3-tabs{display:flex;gap:32px;border-bottom:1.5px solid var(--stone)}
 .bv3-tabs [role="tab"]{height:48px;margin:0 0 -1.5px;padding:0;border:0;border-bottom:3px solid transparent;border-radius:0;background:transparent;color:var(--ink);font:500 16px/1 var(--font-sans)}
 .bv3-tabs [role="tab"][aria-selected="true"]{border-bottom-color:var(--lime)}
@@ -63,28 +69,26 @@ main p a:hover{color:var(--ink);text-decoration-thickness:2px}
 .bv3-join-actions>a:not(.btn):hover{text-decoration-thickness:2px}
 
 @media (max-width:1100px){
-  .bv3-hero h1{font-size:clamp(48px,8.4vw,104px)}
-  [data-nyte-page="badge"] main h2{font-size:clamp(36px,5vw,56px)}
+  [data-nyte-page="badge"] main h2{font-size:clamp(32px,4.4vw,48px)}
 }
 @media (max-width:900px){
-  .bv3-studio .wrap,.bv3-meaning .wrap{grid-template-columns:1fr}
-  .bv3-studio .bv3-copy,.bv3-meaning .bv3-copy,.bv3-builder,.bv3-meaning-text{grid-column:1}
+  .bv3-studio .wrap,.bv3-meaning .wrap,.bv3-usage .wrap,.bv3-join .wrap{grid-template-columns:minmax(0,1fr)}
+  .bv3-studio .bv3-copy,.bv3-builder,.bv3-meaning .wrap>*,.bv3-usage .wrap>*,.bv3-join .wrap>*{grid-column:1}
   .bv3-builder,.bv3-meaning-text{margin-top:40px}
   .bv3-pairs{grid-template-columns:1fr;gap:32px;margin-top:40px}
 }
 @media (max-width:600px){
   /* Phone hero: left-aligned, the badge after the headline, the Band kept at 96 px. */
-  [data-nyte-page="badge"] main .bv3-hero{display:block;min-height:0;padding:56px 0 152px;text-align:left}
+  [data-nyte-page="badge"] main .bv3-hero{--band:96px;--gap:clamp(16px,3svh,56px);text-align:left}
   .bv3-hero .wrap,.bv3-hero .bv3-eyebrow{align-items:flex-start}
-  .bv3-hero h1{margin-top:24px;font-size:48px;line-height:.98}
-  .bv3-hero-badge{order:0;height:80px;margin:32px 0 0}
-  [data-nyte-page="badge"] main .bv3-hero .lede{margin-top:28px;font-size:18px}
-  .bv3-hero .btns{margin-top:28px;width:auto}
+  .bv3-hero h1{margin-top:clamp(12px,2.2svh,24px);font-size:min(48px,(100vw - 40px) * .137,6.6svh);line-height:.98}
+  .bv3-hero-badge{order:0;height:clamp(64px,10svh,80px);margin:clamp(16px,3svh,32px) 0 0}
+  [data-nyte-page="badge"] main .bv3-hero .lede{margin-top:clamp(12px,2.6svh,28px);font-size:17px}
+  .bv3-hero .btns{margin-top:clamp(12px,2.6svh,28px);width:auto}
   [data-nyte-page="badge"] main .bv3-hero .btns .btn{width:auto}
-  .bv3-hero .v3-band{height:96px}
-  [data-nyte-page="badge"] main h2{font-size:36px;line-height:1.05}
+  [data-nyte-page="badge"] main h2{font-size:32px;line-height:1.05}
   [data-nyte-page="badge"] main .bv3-eyebrow+h2{margin-top:20px}
-  [data-nyte-page="badge"] main .bv3-copy .lede{margin-top:16px;font-size:18px}
+  [data-nyte-page="badge"] main .bv3-copy .lede{margin-top:16px;font-size:17px}
   .bv3-builder,.bv3-meaning-text{margin-top:32px}
   .bv3-preview{height:200px}
   .bv3-preview img{height:64px}

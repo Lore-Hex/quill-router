@@ -6,6 +6,32 @@ const output = process.env.NYTE_PREVIEW_DIR || require('node:os').tmpdir();
 (async () => {
   const browser = await chromium.launch({headless: true});
   try {
+    // The lime Band closes the hero inside the first screen at common window sizes,
+    // and the nav's Start building is the only orange button there.
+    for (const [width, height] of [[1440, 900], [1440, 800], [1280, 720], [1920, 1080], [390, 844], [375, 667], [360, 740]]) {
+      const context = await browser.newContext({viewport: {width, height}});
+      const page = await context.newPage();
+      await page.goto(`${base}/badge.html`, {waitUntil: 'networkidle'});
+      await page.evaluate(() => document.fonts.ready);
+      const fold = await page.evaluate(() => {
+        const header = document.querySelector('header').getBoundingClientRect();
+        const hero = document.querySelector('.bv3-hero').getBoundingClientRect();
+        const band = document.querySelector('.bv3-hero .v3-band').getBoundingClientRect();
+        const orange = [...document.querySelectorAll('.btn')].filter(button => {
+          const box = button.getBoundingClientRect();
+          return box.height && box.top < innerHeight && getComputedStyle(button).backgroundColor === 'rgb(255, 107, 53)';
+        }).map(button => button.textContent.trim());
+        return {header: header.bottom, hero: [hero.top, hero.bottom], band: [band.top, band.bottom, band.height], orange, innerHeight};
+      });
+      assert.ok(Math.abs(fold.hero[0] - fold.header) < 1, `hero starts under the header at ${width}x${height}`);
+      assert.ok(Math.abs(fold.hero[1] - height) < 1, `hero is exactly the first screen at ${width}x${height}: ${JSON.stringify(fold)}`);
+      assert.ok(Math.abs(fold.band[1] - fold.hero[1]) < 1 && fold.band[1] <= height, `band in the first screen at ${width}x${height}`);
+      assert.ok(fold.band[2] >= 96 && fold.band[2] <= 144, `band height ${fold.band[2]} at ${width}x${height}`);
+      if (width < 600) assert.equal(fold.band[2], 96);
+      assert.deepEqual(fold.orange, ['Start building'], `one orange button in the first screen at ${width}x${height}`);
+      await context.close();
+      console.log(`PASS ${width}x${height}: hero fills the first screen, Band ${fold.band[2]}px in view`);
+    }
     for (const width of [1440, 390, 320]) {
       const context = await browser.newContext({viewport: {width, height: 1000}});
       await context.grantPermissions(['clipboard-read', 'clipboard-write'], {origin: base});

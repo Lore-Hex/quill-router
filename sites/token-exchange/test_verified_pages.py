@@ -1,4 +1,4 @@
-"""A supplier's seal must link to evidence a visitor can check without trusting NYTE."""
+"""A supplier's Verified Secure badge must link to evidence a visitor can check without trusting NYTE."""
 
 import json
 import re
@@ -81,7 +81,7 @@ class VerifiedPageTests(unittest.TestCase):
             "The gateway check proves less",
             "can be up to an hour old",
             "are NYTE’s statements",
-            "The seal is a link, not a result",
+            "The badge is a link, not a result",
             "NYTE sends it nothing rather than fall back",
         ):
             self.assertIn(copy, self.page)
@@ -103,6 +103,12 @@ class VerifiedPageTests(unittest.TestCase):
         fixture = json.loads((HERE / "verified-fixture.json").read_text())
         self.assertEqual(set(fixture), {"comment", "nonce", "now", "pcr0", "attestation_document"})
         self.assertFalse((self.root / "verified-fixture.json").exists(), "test data is not published")
+
+    def test_names_the_verified_secure_badge(self):
+        self.assertNotIn("Privacy Secured", self.page)
+        self.assertIn("NYTE Verified Secure · Evidence for Maple", self.page)
+        self.assertIn('href="/badge">About the Verified Secure badge</a>', self.page)
+        self.assertIn('src="/assets/badges/nyte-verified-secure-white.svg" width="221" height="96" alt="NYTE Verified Secure"', self.page)
 
     def test_seal_page_scopes_supplier_use_to_evidence_pages(self):
         badge = (self.root / "badge").read_text()
