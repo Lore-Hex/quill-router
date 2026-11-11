@@ -38,7 +38,7 @@ from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.routing import chat_route_candidates
 from trusted_router.security import lookup_hash_api_key
-from trusted_router.storage import STORE, SyntheticProbeSample
+from trusted_router.storage import STORE, InMemoryStore, SyntheticProbeSample
 from trusted_router.storage_models import (
     SYNTHETIC_APP_NAME,
     ProviderBenchmarkSample,
@@ -5020,8 +5020,104 @@ def test_internal_route_health_reports_flags_and_requires_token(
 
     assert unauthorized.status_code in (401, 403)
     assert response.status_code == 200
-    assert response.json() == {"data": {"flagged": [asdict(flag)]}}
+    assert response.json() == {"data": {"flagged": [asdict(flag)], "evaluated": True}}
     assert reported == [flag]
+
+
+def test_internal_route_health_is_unevaluated_not_500_when_clickhouse_is_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """QUILL-ROUTER-G2: the provider_route_benchmark_samples read timed out on
+    connect and the pass answered 500. Blind must be explicit, never healthy."""
+    from trusted_router.operational_analytics import OperationalAnalyticsClient
+    from trusted_router.routes.internal import synthetic as synthetic_routes
+    from trusted_router.synthetic import alerts as alerts_module
+
+    def unreachable(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectTimeout("timed out", request=request)
+
+    analytics = OperationalAnalyticsClient(
+        base_url="http://clickhouse-a.internal:8123,http://clickhouse-b.internal:8123",
+        user="reader",
+        password="inert",  # noqa: S106 - inert test credential.
+        transport=httpx.MockTransport(unreachable),
+    )
+
+    def route_samples(_self: Any, **kwargs: Any) -> list[ProviderBenchmarkSample]:
+        return analytics.route_benchmark_samples(**kwargs)
+
+    monkeypatch.setattr(InMemoryStore, "provider_route_benchmark_samples", route_samples)
+    per_route: list[Any] = []
+    monkeypatch.setattr(synthetic_routes, "report_route_health", per_route.append)
+    alerts: list[tuple[str, list[str]]] = []
+    monkeypatch.setattr(
+        alerts_module,
+        "ops_alert",
+        lambda message, *, fingerprint, tags=None: alerts.append((message, fingerprint)) or True,
+    )
+    client = TestClient(create_app(_benchmark_ingest_settings(), init_observability=False))
+
+    response = client.post(
+        "/v1/internal/synthetic/route-health",
+        headers={"x-trustedrouter-internal-token": "test-observer-secret"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "data": {"flagged": [], "evaluated": False, "reason": "analytics_unavailable"}
+    }
+    # No per-route verdict was reached, so none was reported.
+    assert per_route == []
+    route_alerts = [entry for entry in alerts if entry[1][0] == "route-health-unevaluable"]
+    assert len(route_alerts) == 1
+    message, fingerprint = route_alerts[0]
+    assert fingerprint == ["route-health-unevaluable", "analytics_unavailable"]
+    assert "cannot evaluate route health" in message
+    assert "ConnectTimeout" in message
+
+
+def test_internal_route_health_still_raises_on_a_non_availability_defect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router.routes.internal import synthetic as synthetic_routes
+
+    def broken(_store: Any) -> list[RouteHealthFlag]:
+        raise RuntimeError("ClickHouse response did not contain data rows")
+
+    monkeypatch.setattr(synthetic_routes, "evaluate_route_health", broken)
+    client = TestClient(
+        create_app(_benchmark_ingest_settings(), init_observability=False),
+        raise_server_exceptions=False,
+    )
+    response = client.post(
+        "/v1/internal/synthetic/route-health",
+        headers={"x-trustedrouter-internal-token": "test-observer-secret"},
+    )
+    assert response.status_code == 500
+
+
+@pytest.mark.asyncio
+async def test_route_health_caller_reports_an_unevaluated_pass_as_not_evaluated(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from trusted_router.synthetic import cli as cli_module
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"data": {"flagged": [], "evaluated": False, "reason": "analytics_unavailable"}},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        await cli_module._post_route_health(
+            client,
+            url="https://trustedrouter.com/v1/internal/synthetic/route-health",
+            internal_token="internal",  # noqa: S106 - test placeholder.
+        )
+
+    output = capsys.readouterr()
+    assert "route-health flagged" not in output.out
+    assert "route-health not evaluated: analytics_unavailable" in output.err
 
 
 def test_internal_remediator_runs_between_heartbeats_and_requires_token(

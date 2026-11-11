@@ -8,12 +8,14 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import json
+import logging
 import re
 from typing import Any, TypeVar
 
 import httpx
 
 from trusted_router.clickhouse_endpoints import (
+    FAILOVER_STATUS_CODES,
     parse_endpoints,
     request_timeout,
     send_with_failover,
@@ -30,6 +32,47 @@ from trusted_router.types import UsageType
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 T = TypeVar("T")
 PUBLIC_SNAPSHOT_QUERY_TIMEOUT_SECONDS = 2.0
+
+
+def is_analytics_unavailable(exc: BaseException) -> bool:
+    """True when ClickHouse could not answer at all, not when it answered wrongly.
+
+    Covers every transport failure (connect/read timeouts, refused or reset
+    connections, a server disconnect) and the gateway statuses that
+    ``send_with_failover`` treats as "this endpoint is down". A 4xx, a plain
+    500 or a malformed payload is a query, schema or code defect and stays an
+    error. User-facing routes use this to degrade (an honest "unavailable"
+    state or a 503) instead of answering 500 for an analytics outage.
+    """
+    if isinstance(exc, httpx.TransportError):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code in FAILOVER_STATUS_CODES
+    return False
+
+
+def log_analytics_unavailable(
+    logger: logging.Logger, surface: str, exc: BaseException
+) -> None:
+    """One stable WARNING per degraded read.
+
+    The message text is constant so the records group as a single signal in
+    Cloud Logging and Sentry Logs. The outage itself stays visible where it
+    belongs: /status.json reports status as unknown, peer monitors read that
+    as a blind deployment, and the fleet snapshot-freshness check pages on a
+    sustained outage. A per-request error issue would only repeat that.
+    """
+    logger.warning(
+        "operational_analytics.unavailable surface=%s error_class=%s",
+        surface,
+        type(exc).__name__,
+        extra={
+            "surface": surface,
+            "error_class": type(exc).__name__,
+            "error_message": str(exc)[:500],
+            "retryable": True,
+        },
+    )
 
 
 def _identifier(value: str, *, label: str) -> str:

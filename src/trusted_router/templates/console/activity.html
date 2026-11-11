@@ -793,7 +793,9 @@
           <td>{{ a.finish_reason or '' }}</td>
         </tr>
         {% endfor %}
-        {% if not activity %}
+        {% if activity_unavailable %}
+        <tr><td class="empty" colspan="7" role="status" data-activity-unavailable>Activity is temporarily unavailable. Reload in a few minutes.</td></tr>
+        {% elif not activity %}
         <tr><td class="empty" colspan="7">No activity yet. Make a request with your API key to see it here.</td></tr>
         {% endif %}
       </tbody>
