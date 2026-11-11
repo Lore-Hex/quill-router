@@ -32,7 +32,7 @@ FAILOVER_STATUS_CODES = frozenset({502, 503, 504})
 # budget. The single-endpoint form keeps the caller's timeout for every phase.
 FAILOVER_CONNECT_TIMEOUT_SECONDS = 1.0
 
-_CONNECT_FAILURES = (httpx.ConnectError, httpx.ConnectTimeout)
+CONNECT_FAILURES = (httpx.ConnectError, httpx.ConnectTimeout)
 
 log = logging.getLogger(__name__)
 
@@ -72,7 +72,7 @@ def send_with_failover(
     for index, endpoint in enumerate(endpoints):
         try:
             response = client.send(build(endpoint))
-        except _CONNECT_FAILURES as exc:
+        except CONNECT_FAILURES as exc:
             if index == last:
                 raise
             _log_failover(endpoints, index, type(exc).__name__)
@@ -104,7 +104,7 @@ async def send_with_failover_async(
     for index, endpoint in enumerate(endpoints):
         try:
             response = await client.send(build(endpoint), stream=stream)
-        except _CONNECT_FAILURES as exc:
+        except CONNECT_FAILURES as exc:
             if index == last:
                 raise
             _log_failover(endpoints, index, type(exc).__name__)

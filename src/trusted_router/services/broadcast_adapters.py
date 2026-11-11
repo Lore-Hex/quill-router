@@ -10,6 +10,11 @@ from starlette.concurrency import run_in_threadpool
 
 from trusted_router.byok_crypto import decrypt_control_secret
 from trusted_router.config import Settings
+from trusted_router.services.safe_egress import (
+    is_public_ip_literal_or_name,
+    public_egress_async_client,
+    public_egress_client,
+)
 from trusted_router.storage import BroadcastDestination, Generation
 from trusted_router.url_validation import parse_url
 
@@ -23,7 +28,7 @@ class BroadcastAdapter(Protocol):
     def normalize_endpoint(self, endpoint: str | None) -> str:
         ...
 
-    def validate_endpoint(self, endpoint: str) -> str | None:
+    def validate_endpoint(self, endpoint: str, *, allow_local: bool = False) -> str | None:
         ...
 
     async def test(self, destination: BroadcastDestination, settings: Settings) -> tuple[bool, str]:
@@ -47,11 +52,8 @@ class PostHogBroadcastAdapter:
     def normalize_endpoint(self, endpoint: str | None) -> str:
         return (endpoint or POSTHOG_DEFAULT_ENDPOINT).rstrip("/")
 
-    def validate_endpoint(self, endpoint: str) -> str | None:
-        message = _validate_http_endpoint(endpoint)
-        if message is not None:
-            return message
-        return None
+    def validate_endpoint(self, endpoint: str, *, allow_local: bool = False) -> str | None:
+        return _validate_http_endpoint(endpoint, allow_local=allow_local)
 
     async def test(self, destination: BroadcastDestination, settings: Settings) -> tuple[bool, str]:
         # KMS decrypt is a synchronous network call; keep it off the event loop.
@@ -72,7 +74,7 @@ class PostHogBroadcastAdapter:
                 "$ai_total_cost_usd": 0,
             },
         }
-        async with httpx.AsyncClient(timeout=5) as client:
+        async with _async_client(settings) as client:
             response = await client.post(
                 _posthog_capture_url(destination.endpoint),
                 json=payload,
@@ -91,7 +93,7 @@ class PostHogBroadcastAdapter:
         settings: Settings,
     ) -> None:
         payload = posthog_generation_payload(destination, generation, settle_body=settle_body, settings=settings)
-        with httpx.Client(timeout=5) as client:
+        with _client(settings) as client:
             response = client.post(
                 _posthog_capture_url(destination.endpoint),
                 json=payload,
@@ -107,16 +109,16 @@ class WebhookOTLPBroadcastAdapter:
     def normalize_endpoint(self, endpoint: str | None) -> str:
         return (endpoint or "").strip()
 
-    def validate_endpoint(self, endpoint: str) -> str | None:
+    def validate_endpoint(self, endpoint: str, *, allow_local: bool = False) -> str | None:
         if not endpoint:
             return "endpoint is required"
-        return _validate_http_endpoint(endpoint)
+        return _validate_http_endpoint(endpoint, allow_local=allow_local)
 
     async def test(self, destination: BroadcastDestination, settings: Settings) -> tuple[bool, str]:
         headers = await run_in_threadpool(_decrypt_headers, destination, settings)
         headers["X-Test-Connection"] = "true"
         headers.setdefault("content-type", "application/json")
-        async with httpx.AsyncClient(timeout=5) as client:
+        async with _async_client(settings) as client:
             response = await client.request(
                 destination.method,
                 destination.endpoint,
@@ -138,7 +140,7 @@ class WebhookOTLPBroadcastAdapter:
         headers = _decrypt_headers(destination, settings)
         headers.setdefault("content-type", "application/json")
         payload = otlp_generation_payload(generation, settle_body=settle_body, include_content=False)
-        with httpx.Client(timeout=5) as client:
+        with _client(settings) as client:
             response = client.request(destination.method, destination.endpoint, json=payload, headers=headers)
         response.raise_for_status()
 
@@ -332,17 +334,41 @@ def _posthog_capture_url(endpoint: str) -> str:
     return f"{base}/i/v0/e/"
 
 
-def _validate_http_endpoint(endpoint: str) -> str | None:
+def _validate_http_endpoint(endpoint: str, *, allow_local: bool = False) -> str | None:
     parsed = parse_url(endpoint)
     if parsed is None or parsed.scheme not in {"https", "http"} or not parsed.netloc:
         return "endpoint must be an HTTP URL"
-    if parsed.scheme == "http" and not _is_localhost(parsed.hostname or ""):
+    hostname = parsed.hostname or ""
+    if not hostname:
+        return "endpoint must be an HTTP URL"
+    local = allow_local and _is_localhost(hostname)
+    if parsed.scheme == "http" and not local:
         return "endpoint must use https"
+    # An address written out in the URL is checked here so the caller hears
+    # about it on save. A hostname is checked where it matters, at connect
+    # time, by the clients below.
+    if not local and not is_public_ip_literal_or_name(hostname):
+        return "endpoint must be a public address"
     return None
 
 
 def _is_localhost(hostname: str) -> bool:
     return hostname.lower() in {"localhost", "127.0.0.1", "::1"}
+
+
+def allows_local_destinations(settings: Settings) -> bool:
+    """Plain-http loopback collectors are a development convenience only."""
+    return settings.environment.lower() in {"local", "test"}
+
+
+def _client(settings: Settings) -> httpx.Client:
+    return public_egress_client(timeout=5, allow_loopback=allows_local_destinations(settings))
+
+
+def _async_client(settings: Settings) -> httpx.AsyncClient:
+    return public_egress_async_client(
+        timeout=5, allow_loopback=allows_local_destinations(settings)
+    )
 
 
 def _trace(body: dict[str, Any]) -> dict[str, Any]:

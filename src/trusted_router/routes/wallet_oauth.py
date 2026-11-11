@@ -45,7 +45,10 @@ from trusted_router.config import Settings
 from trusted_router.domains import request_control_domain
 from trusted_router.errors import api_error
 from trusted_router.services.email import build_verification_email, get_email_service
-from trusted_router.signup_gate import require_new_account_creation
+from trusted_router.signup_gate import (
+    require_wallet_account_creation,
+    wallet_account_creation_allowed,
+)
 from trusted_router.storage import STORE, AuthSession, User
 from trusted_router.storage_models import (
     EMAIL_ATTACH_ALREADY_VERIFIED,
@@ -96,12 +99,15 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
     ) -> JSONResponse:
         if not ADDRESS_RE.match(body.address):
             raise api_error(400, "Invalid Ethereum address", ErrorType.BAD_REQUEST)
-        if not settings.new_signups_enabled and STORE.find_user_by_wallet(body.address) is None:
-            # The emergency signup brake must stop durable challenge growth as
+        if (
+            not wallet_account_creation_allowed(settings)
+            and STORE.find_user_by_wallet(body.address) is None
+        ):
+            # A closed signup switch must stop durable challenge growth as
             # well as account creation. Returning wallets still receive a
             # challenge; unknown addresses fail after one bounded read and
             # before nonce generation or either challenge write.
-            require_new_account_creation(settings)
+            require_wallet_account_creation(settings)
         request_domain = request_control_domain(request, settings)
         domain = (
             settings.siwe_domain
@@ -155,7 +161,7 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
 
         existing_user = STORE.find_user_by_wallet(body.address)
         if existing_user is None:
-            require_new_account_creation(settings)
+            require_wallet_account_creation(settings)
         user = existing_user or STORE.create_wallet_user(body.address)
         if user.disabled:
             raise api_error(403, "This account is closed. Contact security@trustedrouter.com for assistance.", ErrorType.FORBIDDEN)

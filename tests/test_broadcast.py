@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import base64
 import json
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 from pytest_httpx import HTTPXMock
 
@@ -106,6 +108,96 @@ def test_broadcast_destinations_allow_local_plain_http_for_dev(client: TestClien
         },
     )
     assert response.status_code == 201, response.text
+
+
+_LOCAL_ENDPOINTS = (
+    "http://127.0.0.1:4318/v1/traces",
+    "http://localhost:4318/v1/traces",
+    "https://127.0.0.1:4318/v1/traces",
+)
+
+
+def _serve_as_production(client: TestClient, test_settings: Settings) -> None:
+    """Hand the routes a deployed environment for the requests that follow.
+
+    The app is built, and the caller signed in, under the test settings; only
+    what the routes read per request changes. The envelope key is set because
+    outside local and test nothing is stored encrypted without one, and a
+    save refused for that reason would not be the endpoint being refused.
+    """
+    client.app.state.settings = test_settings.model_copy(  # type: ignore[attr-defined]
+        update={
+            "environment": "production",
+            "byok_envelope_key_b64": base64.b64encode(bytes(range(32))).decode(),
+        }
+    )
+
+
+@pytest.mark.parametrize("endpoint", _LOCAL_ENDPOINTS)
+def test_api_refuses_local_destinations_outside_local_and_test(
+    endpoint: str, client: TestClient, test_settings: Settings
+) -> None:
+    workspace_id, _ = _console_client(client)
+    body = {"type": "webhook", "name": "local collector", "endpoint": endpoint}
+
+    # Control: the same request is accepted while the environment is test.
+    created = client.post("/v1/broadcast/destinations", json=body)
+    assert created.status_code == 201, created.text
+    destination_id = created.json()["data"]["id"]
+    public = "https://collector.example/otlp"
+    patched = client.patch(
+        f"/v1/broadcast/destinations/{destination_id}", json={"endpoint": public}
+    )
+    assert patched.status_code == 200, patched.text
+
+    _serve_as_production(client, test_settings)
+    refused = client.post("/v1/broadcast/destinations", json=body)
+    assert refused.status_code == 400, refused.text
+    assert refused.json()["error"]["message"] in {
+        "endpoint must use https",
+        "endpoint must be a public address",
+    }
+    refused = client.patch(
+        f"/v1/broadcast/destinations/{destination_id}", json={"endpoint": endpoint}
+    )
+    assert refused.status_code == 400, refused.text
+    assert [item.endpoint for item in STORE.list_broadcast_destinations(workspace_id)] == [public]
+
+    # Control: production still saves a public https endpoint, so the
+    # refusals above are about the endpoint and nothing else.
+    saved = client.post(
+        "/v1/broadcast/destinations",
+        json={"type": "webhook", "name": "public", "endpoint": "https://other.example/otlp"},
+    )
+    assert saved.status_code == 201, saved.text
+
+
+@pytest.mark.parametrize("endpoint", _LOCAL_ENDPOINTS)
+def test_console_refuses_local_destinations_outside_local_and_test(
+    endpoint: str, client: TestClient, test_settings: Settings
+) -> None:
+    workspace_id, _ = _console_client(client)
+
+    def save(name: str, value: str) -> str:
+        response = client.post(
+            "/console/broadcast",
+            data={"name": name, "destination_type": "webhook", "endpoint": value},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303, response.text
+        return str(response.headers["location"])
+
+    # Control: the same form is accepted while the environment is test.
+    assert save("local collector", endpoint) == "/console/broadcast"
+    assert [item.endpoint for item in STORE.list_broadcast_destinations(workspace_id)] == [endpoint]
+
+    _serve_as_production(client, test_settings)
+    assert save("local collector again", endpoint) == "/console/broadcast?error=endpoint"
+    assert [item.endpoint for item in STORE.list_broadcast_destinations(workspace_id)] == [endpoint]
+
+    # Control: production still saves a public https endpoint.
+    assert save("public", "https://collector.example/otlp") == "/console/broadcast"
+    assert len(STORE.list_broadcast_destinations(workspace_id)) == 2
 
 
 def test_broadcast_destination_crud_redacts_secrets(

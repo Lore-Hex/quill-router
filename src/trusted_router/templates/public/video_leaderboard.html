@@ -28,11 +28,19 @@
     named provider and never passes through OpenRouter.
   </div>
 
+  {% if snapshot.data_unavailable %}
+  <div class="status-note status-note-warning" role="status">
+    Video benchmark data is temporarily unavailable, so no measurements are shown. This is
+    not a report on any provider; the tables fill in again once the measurements can be read.
+  </div>
+  {% endif %}
   {% if not snapshot.models %}
+  {% if not snapshot.data_unavailable %}
   <div class="status-note status-note-warning">
     Video measurements are warming up. The page will populate as production and synthetic
     jobs complete.
   </div>
+  {% endif %}
   {% else %}
   <section class="status-section">
     <div class="status-section-head">

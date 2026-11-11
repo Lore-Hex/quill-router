@@ -5,8 +5,7 @@ writes each alert as one ERROR entry of the log `fastpath_journal` in
 Cloud Logging, with the alert's kind as the entry's label `fastpath_alert`
 and the lease or authorization it concerns as `subject` (`writeAlert` in
 `fastpath/internal/service`; the node's Ops Agent carries its journal). The
-policies in `infra/fastpath_alerts.tf` notify the on-call email and the ops
-chat:
+policies in `infra/fastpath_alerts.tf` notify the on-call email:
 
 - **TR Fast path: KIND**, one policy for each kind below, on its entries.
   Each notifies at most once per five minutes and, by Cloud Monitoring's

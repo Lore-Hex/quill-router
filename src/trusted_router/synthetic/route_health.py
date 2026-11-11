@@ -310,6 +310,27 @@ def report_route_health(flags: list[RouteHealthFlag]) -> None:
             sentry_sdk.capture_message(message, level="error")
 
 
+ROUTE_HEALTH_UNEVALUABLE_FINGERPRINT = ["route-health-unevaluable", "analytics_unavailable"]
+
+
+def report_route_health_unevaluable(exc: BaseException) -> None:
+    """One grouped alert: route health could not be evaluated at all.
+
+    Distinct from every per-route fingerprint on purpose. While operational
+    analytics is unreachable no route was judged, so silence from the
+    per-route alerts means "blind", never "healthy"; this issue is what says
+    so, and it folds every pass on every monitor into one Sentry issue.
+    """
+    from trusted_router.synthetic.alerts import ops_alert
+
+    ops_alert(
+        "route-health: cannot evaluate route health; operational analytics "
+        f"(ClickHouse) is unavailable ({type(exc).__name__}); no routes were evaluated",
+        fingerprint=list(ROUTE_HEALTH_UNEVALUABLE_FINGERPRINT),
+        tags={"error_class": type(exc).__name__},
+    )
+
+
 def report_catalog_freshness(
     *, endpoints: Iterable[ModelEndpoint] | None = None, now: dt.datetime | None = None,
 ) -> list[str]:

@@ -115,7 +115,10 @@ SECRET_ENVS=(
   "/secrets/async-settle/ticket.pem=trustedrouter-async-settle-ticket-key:latest"
 )
 # Retired environment bindings remain on Cloud Run until explicitly removed.
-REMOVE_SECRET_ENVS=("TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD")
+REMOVE_SECRET_ENVS=(
+  "TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD"
+  "TR_OPS_CHAT_WEBHOOK_SECRET"
+)
 
 # E2 routing snapshot publication, dark (docs/design/routing-snapshot-v1.md,
 # "Publishing"). Literals here, never read from the caller or a previous
@@ -279,9 +282,6 @@ add_secret_env_if_exists \
 # SES email credentials only; not used for AWS hosting or failover.
 add_secret_env_if_exists "TR_AWS_ACCESS_KEY_ID" "trustedrouter-aws-access-key-id"
 add_secret_env_if_exists "TR_AWS_SECRET_ACCESS_KEY" "trustedrouter-aws-secret-access-key"
-add_secret_env_if_exists \
-  "TR_OPS_CHAT_WEBHOOK_SECRET" \
-  "trustedrouter-ops-chat-webhook-secret"
 add_secret_env_if_exists "TR_PAYPAL_CLIENT_ID" "trustedrouter-paypal-client-id"
 add_secret_env_if_exists "TR_PAYPAL_CLIENT_SECRET" "trustedrouter-paypal-client-secret"
 add_secret_env_if_exists "TR_PAYPAL_WEBHOOK_ID" "trustedrouter-paypal-webhook-id"
@@ -610,7 +610,6 @@ ENV_VARS=(
   "TR_ROUTABLE_API_BASE_URL=https://api.routable.com"
   "TR_CHECKOUT_CARD_FEE_MINIMUM_CENTS=80"
   "TR_STRIPE_PAYPAL_FEE_MULTIPLIER_BASIS_POINTS=15000"
-  "TR_OPS_CHAT_WEBHOOK_URLS=https://a.uptimerouter.com,https://b.trustedrouter.com,https://c.allyrouter.com"
   # /trustedos partner-inquiry form leads. Plain env (an address, not a
   # secret); without it the handler falls back to TR_SES_FROM_EMAIL, which
   # is send-only and effectively a black hole.

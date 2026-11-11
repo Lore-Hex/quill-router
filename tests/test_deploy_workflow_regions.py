@@ -93,6 +93,13 @@ def test_prod_smoke_checks_public_origins_and_converges_private_regions() -> Non
     assert 'gcloud run revisions describe "${active_revision}"' in smoke
     assert '[ "${active_release}" != "${SHA}" ]' in smoke
     assert '[ "${retired_secret_count}" != "0" ]' in smoke
+    retired = smoke.split("retired_secret_count=$(jq -r '", 1)[1].split("' <<<", 1)[0]
+    for name in (
+        "TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD",
+        "TR_OPS_CHAT_WEBHOOK_SECRET",
+        "TR_OPS_CHAT_WEBHOOK_URLS",
+    ):
+        assert f'.name == "{name}"' in retired
 
 
 def test_deploy_syncs_the_shared_public_snapshot_worker() -> None:

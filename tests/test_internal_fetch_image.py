@@ -216,6 +216,19 @@ def test_fetch_rejects_too_many_redirects(
     assert "too many redirects" in resp.json()["error"]["message"]
 
 
+def test_fetch_rejects_a_url_httpx_will_not_send(fetch_image_client: TestClient) -> None:
+    """A tab inside the host passes the scheme and resolve checks (the URL
+    parser drops it) and httpx then refuses to build the request. That is
+    the caller's bad URL, so it is a 400, not an unhandled 500."""
+    resp = fetch_image_client.post(
+        "/v1/internal/gateway/fetch-image",
+        headers=_internal_headers(),
+        json={"url": "https://exa\tmple.com/foo.png"},
+    )
+    assert resp.status_code == 400, resp.text
+    assert resp.json()["error"]["message"] == "image fetch: fetch failed"
+
+
 def test_fetch_propagates_upstream_error_status(
     fetch_image_client: TestClient, httpx_mock: HTTPXMock
 ) -> None:

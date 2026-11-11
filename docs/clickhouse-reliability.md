@@ -280,12 +280,13 @@ snapshots until the upgraded fleet is verified. Do not attempt an in-place
 database downgrade if startup fails; preserve the disk and use the documented
 snapshot/replica recovery procedure.
 
-### Node configuration: `/tr_health` and system-log retention
+### Node configuration: `/tr_health`, system-log retention and the lockdown
 
 `scripts/deploy/clickhouse_node_config.sh` installs the files in
 `scripts/deploy/clickhouse-node-config/` on tr-clickhouse-3, -2 and then -1:
 the `/tr_health` handler and its `tr_health` user (G2 in
-`docs/design/clickhouse-high-availability.md`) and the system-log TTLs (G5).
+`docs/design/clickhouse-high-availability.md`), the system-log TTLs (G5) and
+the lockdown below.
 It refuses to restart a node whose replicas or Keeper voter are unhealthy,
 waits after each restart until `/tr_health` answers 200 and the voter has
 rejoined, and stops at the first failure.
@@ -302,6 +303,38 @@ third command drops those copies on every node to free the disk; run it once
 the second has finished cleanly. Check a node by hand with
 `curl -s -o /dev/null -w '%{http_code}' 'http://127.0.0.1:8123/tr_health?user=tr_health'`
 on it, which must print 200.
+
+The lockdown is four files, and a node is not finished until it behaves the
+way they say:
+
+| File | What it does | What the roll checks on the node |
+|---|---|---|
+| `tr-default-user.xml` | Removes the built-in `default` user, which the packages leave with no password. | A query that names no user answers 401. |
+| `tr-egress.xml` | Empties `remote_url_allow_hosts`, so `url()`, `s3()` and `remote()` reach nothing. | `url()` fails with `UNACCEPTABLE_URL`. |
+| `tr-clickhouse-metadata-block.sh` and `tr-metadata-block.conf` | A root-owned rule, re-applied before every server start, that refuses the server's user at the metadata address (DNS excepted). | Root reaches the metadata server; the `clickhouse` user gets curl exit 7. |
+
+`clickhouse_node.sh` ships the same four files to a new node as instance
+attributes, and `clickhouse_startup.sh` installs them before it installs the
+server. It does not mark the node provisioned unless the first and third
+checks pass. Every sign-in is a named user with source ranges, and every one
+has a password except `tr_health`, which is read-only and can only answer the
+health probe; nothing may rely on `default`, which includes
+`clusterAllReplicas` and `remote()` between nodes. Ask each node itself, the
+way `clickhouse_replicated_migrate.sh` does.
+
+The metadata block needs `iptables` on the node. `clickhouse_startup.sh`
+installs it on a new node; on an older node the roll checks first, and
+`--apply` refuses before it changes anything if `iptables` is missing
+(`apt-get install -y iptables`, then run it again). The report-only run says
+so too.
+
+What the block covers: requests the server makes on a caller's behalf, which
+is how the metadata token was read. It does not hold against code running
+inside the server process, because the stock `clickhouse-server.service`
+grants the server `CAP_NET_ADMIN` and a process with that capability can
+delete the rule. The helper and the drop-in are root's files, so the server
+cannot rewrite them, and the rule is put back at every start. Dropping the
+capability from the unit is a follow-up.
 
 ## Health checks
 

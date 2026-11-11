@@ -143,6 +143,10 @@ from trusted_router.mcp_metadata import (
     MCP_SERVER_TITLE,
 )
 from trusted_router.og import OG_PNG_PATH
+from trusted_router.operational_analytics import (
+    is_analytics_unavailable,
+    log_analytics_unavailable,
+)
 from trusted_router.operational_analytics_freshness import (
     ANALYTICS_STATUS_KEY,
     REASON_UNREACHABLE,
@@ -167,7 +171,6 @@ from trusted_router.request_limits import normalized_client_identity
 from trusted_router.routes.mcp import MCP_PROTOCOL_VERSION
 from trusted_router.scopes import KNOWN_SCOPES
 from trusted_router.services.email import EmailMessage, get_email_service
-from trusted_router.services.ops_chat import OpsChatSupportMessage, fanout_support_message
 from trusted_router.services.reserved_tokens import (
     ReservationRequest,
     create_reservation_checkout,
@@ -185,6 +188,7 @@ from trusted_router.services.trust_release import (
 )
 from trusted_router.storage import STORE
 from trusted_router.storage_models import (
+    ProviderBenchmarkSample,
     ReceiptKey,
     SyntheticProbeSample,
     SyntheticRollup,
@@ -740,35 +744,6 @@ async def _handle_support_inquiry(settings: Settings, request: Request) -> JSONR
         return JSONResponse(
             {"ok": False, "error": "delivery_unavailable"},
             status_code=503,
-        )
-
-    ops_message = OpsChatSupportMessage(
-        message_id=f"support:{uuid.uuid4().hex}",
-        name=name,
-        email=email,
-        subject=f"{category_label}: {subject}",
-        message=(f"Request ID: {request_id}\n\n{message}" if request_id else message),
-    )
-    try:
-        fanout = await fanout_support_message(settings, ops_message)
-    except Exception:  # noqa: BLE001 - email delivery remains authoritative
-        fanout = None
-        log.exception(
-            "support_inquiry.ops_fanout_exception category=%s",
-            category,
-        )
-    if fanout is not None and fanout.configured and fanout.accepted == 0:
-        log.error(
-            "support_inquiry.ops_fanout_failed configured=%d category=%s",
-            fanout.configured,
-            category,
-        )
-    elif fanout is not None and fanout.accepted < fanout.configured:
-        log.warning(
-            "support_inquiry.ops_fanout_partial accepted=%d configured=%d category=%s",
-            fanout.accepted,
-            fanout.configured,
-            category,
         )
 
     log.info(
@@ -2279,7 +2254,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             ttl_seconds=LEADERBOARD_RESPONSE_CACHE_SECONDS,
             stale_seconds=LEADERBOARD_RESPONSE_STALE_SECONDS,
             background_tasks=background_tasks,
-            build=lambda: _json_body({"data": _video_leaderboard_snapshot(settings)}),
+            build=lambda: _video_leaderboard_json_body(settings),
         )
 
     @app.get("/fleet.json")
@@ -2983,7 +2958,19 @@ def _json_body(payload: dict[str, Any]) -> bytes:
 
 
 def _status_history_payload(window: str) -> dict[str, Any]:
-    return history_payload(_status_samples(hours=1), window, rollups=_status_rollups(window))
+    try:
+        return history_payload(_status_samples(hours=1), window, rollups=_status_rollups(window))
+    except Exception as exc:
+        if not is_analytics_unavailable(exc):
+            raise
+        # History has no honest partial form, so answer a retryable 503. The
+        # cached-response builder does not cache a raised build.
+        log_analytics_unavailable(log, "status_history", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="Status history is temporarily unavailable; retry shortly.",
+            headers={"Retry-After": "30"},
+        ) from exc
 
 
 def _wants_history_html(request: Request, *, explicit_format: str | None) -> bool:
@@ -3088,31 +3075,53 @@ def _leaderboard_snapshot(settings: Settings, *, window: str = "24h") -> dict[st
             limit=LEADERBOARD_SAMPLE_LIMIT,
             recent_minutes=LEADERBOARD_RECENT_WINDOW_MINUTES,
         )
-        payload = aggregate_leaderboard(
-            samples,
-            min_samples=LEADERBOARD_MIN_SAMPLES,
-            model_rank_min_samples=LEADERBOARD_MODEL_RANK_MIN_SAMPLES,
-            provider_rank_min_samples=LEADERBOARD_PROVIDER_RANK_MIN_SAMPLES,
-            rank_min_ttft_samples=LEADERBOARD_RANK_MIN_TTFT_SAMPLES,
-        )
-        payload["rank_minimums"] = {
-            "model_availability_samples": LEADERBOARD_MODEL_RANK_MIN_SAMPLES,
-            "provider_availability_samples": LEADERBOARD_PROVIDER_RANK_MIN_SAMPLES,
-            "ttft_samples": LEADERBOARD_RANK_MIN_TTFT_SAMPLES,
-        }
-        payload["generated_at"] = utcnow().isoformat().replace("+00:00", "Z")
-        payload["sample_window_count"] = len(samples)
-        payload["sample_limit"] = LEADERBOARD_SAMPLE_LIMIT
-        payload["window_label"] = (
-            f"rolling benchmark set of up to {LEADERBOARD_SAMPLE_LIMIT:,} samples"
-        )
-    except Exception:
+        payload = _leaderboard_payload(samples)
+    except Exception as exc:
+        unavailable = is_analytics_unavailable(exc)
         if settings.environment != "test" and _LEADERBOARD_CACHE is not None:
-            log.exception("leaderboard_live_fallback_failed_serving_stale")
+            if unavailable:
+                log_analytics_unavailable(log, "leaderboard_serving_stale", exc)
+            else:
+                log.exception("leaderboard_live_fallback_failed_serving_stale")
             return _LEADERBOARD_CACHE[1]
-        raise
+        if not unavailable:
+            raise
+        # ClickHouse is unreachable and this instance has nothing to serve.
+        # The page (and the status page, which reads this snapshot for its
+        # provider table) renders with no measurements and says why, rather
+        # than 500. The snapshot is deliberately not cached, so the next
+        # rebuild retries; the rendered page still lives in the response
+        # cache for its usual lifetime.
+        log_analytics_unavailable(log, "leaderboard", exc)
+        # ``data_unavailable`` is what the templates key their notice on: an
+        # empty table alone would read as "no provider has been measured".
+        payload = _leaderboard_payload([])
+        payload["data_unavailable"] = True
+        return payload
     if settings.environment != "test":
         _LEADERBOARD_CACHE = (now, payload)
+    return payload
+
+
+def _leaderboard_payload(samples: list[ProviderBenchmarkSample]) -> dict[str, Any]:
+    payload = aggregate_leaderboard(
+        samples,
+        min_samples=LEADERBOARD_MIN_SAMPLES,
+        model_rank_min_samples=LEADERBOARD_MODEL_RANK_MIN_SAMPLES,
+        provider_rank_min_samples=LEADERBOARD_PROVIDER_RANK_MIN_SAMPLES,
+        rank_min_ttft_samples=LEADERBOARD_RANK_MIN_TTFT_SAMPLES,
+    )
+    payload["rank_minimums"] = {
+        "model_availability_samples": LEADERBOARD_MODEL_RANK_MIN_SAMPLES,
+        "provider_availability_samples": LEADERBOARD_PROVIDER_RANK_MIN_SAMPLES,
+        "ttft_samples": LEADERBOARD_RANK_MIN_TTFT_SAMPLES,
+    }
+    payload["generated_at"] = utcnow().isoformat().replace("+00:00", "Z")
+    payload["sample_window_count"] = len(samples)
+    payload["sample_limit"] = LEADERBOARD_SAMPLE_LIMIT
+    payload["window_label"] = (
+        f"rolling benchmark set of up to {LEADERBOARD_SAMPLE_LIMIT:,} samples"
+    )
     return payload
 
 
@@ -3172,30 +3181,64 @@ def _video_leaderboard_snapshot(settings: Settings) -> dict[str, Any]:
             limit=VIDEO_LEADERBOARD_SAMPLE_LIMIT,
             recent_minutes=VIDEO_LEADERBOARD_RECENT_WINDOW_MINUTES,
         )
-        configured_routes = {
-            (endpoint.provider, model.id)
-            for model in MODELS.values()
-            if model.supports_video
-            for endpoint in endpoints_for_model(model.id)
-        }
-        payload = aggregate_video_leaderboard(
-            samples,
-            configured_routes=configured_routes,
-        )
-        payload["generated_at"] = utcnow().isoformat().replace("+00:00", "Z")
-        payload["sample_window_count"] = len(samples)
-        payload["sample_limit"] = VIDEO_LEADERBOARD_SAMPLE_LIMIT
-        payload["window_label"] = (
-            f"rolling video benchmark set of up to {VIDEO_LEADERBOARD_SAMPLE_LIMIT:,} jobs"
-        )
-    except Exception:
+        payload = _video_leaderboard_payload(samples)
+    except Exception as exc:
+        unavailable = is_analytics_unavailable(exc)
         if settings.environment != "test" and _VIDEO_LEADERBOARD_CACHE is not None:
-            log.exception("video_leaderboard_live_fallback_failed_serving_stale")
+            if unavailable:
+                log_analytics_unavailable(log, "video_leaderboard_serving_stale", exc)
+            else:
+                log.exception("video_leaderboard_live_fallback_failed_serving_stale")
             return _VIDEO_LEADERBOARD_CACHE[1]
-        raise
+        if not unavailable:
+            raise
+        # ClickHouse is unreachable and this instance has nothing to serve:
+        # list the configured routes with no measurements and say why, rather
+        # than 500. The snapshot is deliberately not cached, so the next
+        # rebuild retries; the rendered page still lives in the response
+        # cache for its usual lifetime.
+        log_analytics_unavailable(log, "video_leaderboard", exc)
+        payload = _video_leaderboard_payload([])
+        payload["data_unavailable"] = True
+        return payload
     if settings.environment != "test":
         _VIDEO_LEADERBOARD_CACHE = (now, payload)
     return payload
+
+
+def _video_leaderboard_payload(samples: list[ProviderBenchmarkSample]) -> dict[str, Any]:
+    configured_routes = {
+        (endpoint.provider, model.id)
+        for model in MODELS.values()
+        if model.supports_video
+        for endpoint in endpoints_for_model(model.id)
+    }
+    payload = aggregate_video_leaderboard(
+        samples,
+        configured_routes=configured_routes,
+    )
+    payload["generated_at"] = utcnow().isoformat().replace("+00:00", "Z")
+    payload["sample_window_count"] = len(samples)
+    payload["sample_limit"] = VIDEO_LEADERBOARD_SAMPLE_LIMIT
+    payload["window_label"] = (
+        f"rolling video benchmark set of up to {VIDEO_LEADERBOARD_SAMPLE_LIMIT:,} jobs"
+    )
+    return payload
+
+
+def _video_leaderboard_json_body(settings: Settings) -> bytes:
+    snapshot = _video_leaderboard_snapshot(settings)
+    if snapshot.get("data_unavailable"):
+        # A machine feed has no place for a notice, and a reader that ignores
+        # an extra field would take the empty rows for real ones. Answer a
+        # retryable 503; the cached-response builder does not cache a raised
+        # build.
+        raise HTTPException(
+            status_code=503,
+            detail="Video leaderboard data is temporarily unavailable; retry shortly.",
+            headers={"Retry-After": "30"},
+        )
+    return _json_body({"data": snapshot})
 
 
 def _apps_snapshot(settings: Settings) -> dict[str, Any]:
@@ -3218,10 +3261,24 @@ def _apps_snapshot(settings: Settings) -> dict[str, Any]:
             if precomputed is not None:
                 _APPS_CACHE = (now, precomputed)
                 return precomputed
-    samples = public_benchmark_samples(
-        limit=LEADERBOARD_SAMPLE_LIMIT,
-        recent_minutes=LEADERBOARD_RECENT_WINDOW_MINUTES,
-    )
+    try:
+        samples = public_benchmark_samples(
+            limit=LEADERBOARD_SAMPLE_LIMIT,
+            recent_minutes=LEADERBOARD_RECENT_WINDOW_MINUTES,
+        )
+    except Exception as exc:
+        if not is_analytics_unavailable(exc):
+            raise
+        if settings.environment != "test" and _APPS_CACHE is not None:
+            log_analytics_unavailable(log, "apps_serving_stale", exc)
+            return _APPS_CACHE[1]
+        # ClickHouse is unreachable and this instance has nothing to serve:
+        # an empty directory that says why, rather than 500. Not cached.
+        log_analytics_unavailable(log, "apps", exc)
+        payload = aggregate_apps([])
+        payload["generated_at"] = utcnow().isoformat().replace("+00:00", "Z")
+        payload["data_unavailable"] = True
+        return payload
     payload = aggregate_apps(samples)
     payload["generated_at"] = utcnow().isoformat().replace("+00:00", "Z")
     if settings.environment != "test":
@@ -3482,19 +3539,59 @@ def _status_snapshot(settings: Settings) -> dict[str, Any]:
             rollups=_status_rollups("snapshot"),
             settings=settings,
         )
-    except Exception:
+    except Exception as exc:
+        unavailable = is_analytics_unavailable(exc)
         if settings.environment != "test" and _STATUS_CACHE is not None:
-            log.exception("status_live_fallback_failed_serving_stale")
+            if unavailable:
+                log_analytics_unavailable(log, "status_snapshot_serving_stale", exc)
+            else:
+                log.exception("status_live_fallback_failed_serving_stale")
             # Refresh analytics on its own cadence, as on the precomputed
             # fallback above.
             return _apply_public_client_observed_policy(
                 _merge_analytics_status(_STATUS_CACHE[1]), settings=settings
             )
-        raise
+        if not unavailable:
+            raise
+        # ClickHouse is unreachable and this instance has nothing to serve
+        # (a cold start, or every instance restarted during the outage).
+        # Answer 200 with status explicitly UNKNOWN rather than 500: the page
+        # and the machine feed stay up, and nothing claims health it cannot
+        # see. Deliberately not cached, so the next rebuild retries.
+        log_analytics_unavailable(log, "status_snapshot", exc)
+        payload = _status_data_unavailable_snapshot(settings)
+        payload = _merge_client_observed_status(payload, settings=settings)
+        return _merge_analytics_status(payload)
     payload = _merge_client_observed_status(payload, settings=settings)
     payload = _merge_analytics_status(payload)
     if settings.environment != "test":
         _STATUS_CACHE = (now, payload)
+    return payload
+
+
+STATUS_DATA_UNAVAILABLE_SUMMARY = {
+    "headline": "Status Data Temporarily Unavailable",
+    "detail": (
+        "Synthetic check results could not be read from the analytics store. "
+        "Current status is unknown; this is not a report that systems are healthy."
+    ),
+}
+
+
+def _status_data_unavailable_snapshot(settings: Settings) -> dict[str, Any]:
+    """The status schema with no evidence in it, and saying so.
+
+    Built from zero samples so every section keeps its usual shape (components
+    and windows report no data, monitor freshness reports missing samples), then
+    the banner is pinned to "unknown". With no samples the builder would
+    otherwise lead with "Monitoring coverage incomplete", which blames the
+    probe fleet for what is really an analytics read outage.
+    """
+    payload = status_snapshot([], rollups=[], settings=settings)
+    payload["overall_status"] = "unknown"
+    payload["overall_status_label"] = "Unknown"
+    payload["overall_status_class"] = "unknown"
+    payload["summary"] = dict(STATUS_DATA_UNAVAILABLE_SUMMARY)
     return payload
 
 
