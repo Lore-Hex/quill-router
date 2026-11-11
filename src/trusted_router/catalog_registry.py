@@ -1472,14 +1472,16 @@ MODELS[POLYPHEMUS_MODEL_ID] = Model(
             "Confidential, ZDR and no-store requests are supported. "
             "$0.05 per million selector prompt tokens plus the selected model's "
             "normal token charges; generation is not free. Selector tokens are "
-            "estimated from the classified latest user message only (UTF-8 bytes / 4, "
+            "estimated from the classified first user message only (UTF-8 bytes / 4, "
             "rounded down, minimum one token), not measured selector usage. "
             "Selector charges use normal microdollar rounding, minimum $0.000001. "
+            "Requests with tools go straight to the strong model without a selector fee. "
             "If selection fails, trustedrouter/auto handles the request without a selector fee."
         ),
         input_format=(
             "POST /v1/responses with text input and optional function tools. "
-            "Only the latest user message is classified, up to 16 KiB. "
+            "The conversation's first user message is classified, up to 16 KiB, so "
+            "every turn of a conversation stays on the same model and its prompt cache. "
             "The polyphemus.x_perf and polyphemus.model_zoo options are accepted "
             "but ignored. session_id does not affect selection."
         ),

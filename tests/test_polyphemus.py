@@ -43,7 +43,7 @@ def test_polyphemus_catalog_is_responses_only_with_local_trusted_selector() -> N
     assert tr["selector_pricing_unit"] == "prompt_tokens"
     assert tr["selector_prompt_price_per_million"] == "0.05"
     assert tr["selector_usage_estimated"] is True
-    assert tr["selector_token_basis"] == "latest_user_message_utf8_bytes_div_4"  # noqa: S105 - meter label
+    assert tr["selector_token_basis"] == "first_user_message_utf8_bytes_div_4"  # noqa: S105 - meter label
     assert tr["byok_available"] is False
     assert model.provider == "trustedrouter"
     endpoints = endpoints_for_model(MODEL_ID)
@@ -130,12 +130,14 @@ def test_polyphemus_catalog_documents_local_selection() -> None:
     for model_id in SELECTABLE_MODEL_IDS:
         assert model_id in description
     assert "Confidential, ZDR and no-store requests are supported" in description
-    assert "classified latest user message only" in description
+    assert "classified first user message only" in description
+    assert "Requests with tools go straight to the strong model without a selector fee" in description
     assert "$0.05 per million selector prompt tokens" in description
     assert "without a selector fee" in description
     guidance = documentation["input_format"]
     assert "x_perf and polyphemus.model_zoo options are accepted but ignored" in guidance
     assert "session_id does not affect selection" in guidance
+    assert "every turn of a conversation stays on the same model" in guidance
 
 
 def _admission(key: dict, **extra: object) -> dict:

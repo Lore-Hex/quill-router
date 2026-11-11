@@ -823,7 +823,7 @@ def test_polyphemus_page_uses_routing_neutral_publisher(client: TestClient) -> N
     assert 'href="/providers/trustedrouter"' in response.text
     assert "TrustedRouter selects a model for your task" in response.text
     assert "$0.05 per million selector prompt tokens" in response.text
-    assert "classified latest user message only" in response.text
+    assert "classified first user message only" in response.text
     assert "No third party sees your prompt" in response.text
     assert "Confidential, ZDR and no-store requests are supported" in response.text
     assert "accepted but ignored" in response.text

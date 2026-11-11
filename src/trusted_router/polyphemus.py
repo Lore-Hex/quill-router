@@ -15,7 +15,7 @@ SELECTOR_PROVIDER = "trustedrouter"
 SELECTOR_ENDPOINT_ID = f"{MODEL_ID}@{SELECTOR_PROVIDER}/prepaid"
 # Holds admitted before the provider change still name this route at settle.
 LEGACY_SELECTOR_ENDPOINT_ID = f"{MODEL_ID}@telluvian/prepaid"
-# TrustedRouter's in-gateway selector fee, charged on the classified latest
+# TrustedRouter's in-gateway selector fee, charged on the classified first
 # user message only (UTF-8 bytes / 4, rounded down, minimum one token).
 SELECTOR_PROMPT_MICRODOLLARS_PER_MILLION = 50_000
 LEGACY_SELECTOR_FEE_MICRODOLLARS = 1

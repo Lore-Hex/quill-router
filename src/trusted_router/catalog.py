@@ -919,7 +919,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
             "selector_prompt_price_per_million": microdollars_to_decimal(SELECTOR_PROMPT_MICRODOLLARS_PER_MILLION),
             "selector_prompt_price_microdollars_per_million": SELECTOR_PROMPT_MICRODOLLARS_PER_MILLION,
             "selector_usage_estimated": True,
-            "selector_token_basis": "latest_user_message_utf8_bytes_div_4",
+            "selector_token_basis": "first_user_message_utf8_bytes_div_4",
             "selector_minimum_charge_microdollars": 1,
         }
            if model.id == POLYPHEMUS_MODEL_ID else {}),

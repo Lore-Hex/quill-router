@@ -10,8 +10,10 @@ using its ordinary credits, provider routing, and settlement paths.
 
 ## Local in-gateway selection (2026-11)
 
-- The gateway classifies the latest user message's text, truncated to 16 KiB,
-  with NVIDIA's open prompt task-and-complexity classifier, run locally.
+- The gateway classifies the conversation's first user message, truncated to
+  16 KiB, with NVIDIA's open prompt task-and-complexity classifier, run
+  locally. Every request resends the history, so every turn of a
+  conversation classifies the same text and stays on the same model.
   Nothing leaves the gateway to choose. No third party sees the prompt.
 - Rule: the strong model if the request has tools, the task type is Code
   Generation, or domain knowledge is at least 0.8; otherwise the cheap model.
@@ -24,7 +26,9 @@ using its ordinary credits, provider routing, and settlement paths.
   envelope spans only those models, plus the selector rate.
 - Selector fee: $0.05 per million tokens of the classified text only,
   `max(1, floor(UTF-8 bytes / 4))`, minimum charge $0.000001. Catalog field
-  `selector_token_basis` is `latest_user_message_utf8_bytes_div_4`.
+  `selector_token_basis` is `first_user_message_utf8_bytes_div_4`. Requests
+  with tools go straight to the strong model without classifying and without
+  a selector fee.
 - The selector authorization's provider is `trustedrouter`. The gateway also
   accepts the old `telluvian` value during the transition.
 - No-store, ZDR and confidential requests are admitted. The caller's privacy
