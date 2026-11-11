@@ -372,7 +372,9 @@ def test_an_unavailable_snapshot_is_not_kept_for_the_next_request(
     settings = Settings(environment="local")
     for cache in ("_LEADERBOARD_CACHE", "_VIDEO_LEADERBOARD_CACHE", "_APPS_CACHE"):
         monkeypatch.setattr(public_routes, cache, None)
-    monkeypatch.setattr(public_routes, "_precomputed_public_analytics_snapshot", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        public_routes, "_precomputed_public_analytics_snapshot", lambda *_a, **_k: None
+    )
     monkeypatch.setattr(
         InMemoryStore, "provider_benchmark_samples", _read_through_unreachable_clickhouse
     )
@@ -394,7 +396,9 @@ def test_a_warm_instance_serves_its_last_snapshot_when_clickhouse_is_unreachable
     for cache in ("_LEADERBOARD_CACHE", "_VIDEO_LEADERBOARD_CACHE", "_APPS_CACHE"):
         # Older than every snapshot TTL, so each read goes to the store.
         monkeypatch.setattr(public_routes, cache, (-1e9, {"marker": cache}))
-    monkeypatch.setattr(public_routes, "_precomputed_public_analytics_snapshot", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        public_routes, "_precomputed_public_analytics_snapshot", lambda *_a, **_k: None
+    )
     monkeypatch.setattr(
         InMemoryStore, "provider_benchmark_samples", _read_through_unreachable_clickhouse
     )
