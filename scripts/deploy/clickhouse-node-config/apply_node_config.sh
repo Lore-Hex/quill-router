@@ -247,36 +247,57 @@ if ! cluster_healthy; then
   exit 1
 fi
 
-for entry in "${changed[@]+"${changed[@]}"}"; do
-  IFS='|' read -r source destination needs <<<"$entry"
-  case "$needs" in
-    # Root's own files: this script runs as root, so with no owner named they
-    # are root's and the server's user cannot rewrite them. That protects the
-    # files, not the rule: the stock unit gives the server CAP_NET_ADMIN, so
-    # code running inside the server could still delete the rule itself.
-    run|unit)
-      mode=0644
-      if [ "$needs" = run ]; then
-        mode=0755
-      fi
-      mkdir -p "$(dirname "$destination")"
-      install -m "$mode" "${HERE}/${source}" "$destination"
-      ;;
-    *)
-      install -o "${TR_FILE_OWNER:-clickhouse}" -g "${TR_FILE_GROUP:-clickhouse}" -m 0640 \
-        "${HERE}/${source}" "$destination"
-      ;;
-  esac
-  echo "${node}: installed ${destination}"
-done
-if [ "$units" -eq 1 ]; then
-  systemctl daemon-reload
-fi
+install_changed() {
+  # $1 is "unit" for the systemd drop-in alone, "rest" for everything else.
+  local which="$1" entry source destination needs mode
+  for entry in "${changed[@]+"${changed[@]}"}"; do
+    IFS='|' read -r source destination needs <<<"$entry"
+    if [ "$needs" = unit ] && [ "$which" != unit ]; then
+      continue
+    fi
+    if [ "$needs" != unit ] && [ "$which" = unit ]; then
+      continue
+    fi
+    case "$needs" in
+      # Root's own files: this script runs as root, so with no owner named
+      # they are root's and the server's user cannot rewrite them. That
+      # protects the files, not the rule: the stock unit gives the server
+      # CAP_NET_ADMIN, so code running inside the server could still delete
+      # the rule itself.
+      run|unit)
+        mode=0644
+        if [ "$needs" = run ]; then
+          mode=0755
+        fi
+        mkdir -p "$(dirname "$destination")"
+        install -m "$mode" "${HERE}/${source}" "$destination"
+        ;;
+      *)
+        install -o "${TR_FILE_OWNER:-clickhouse}" -g "${TR_FILE_GROUP:-clickhouse}" -m 0640 \
+          "${HERE}/${source}" "$destination"
+        ;;
+    esac
+    echo "${node}: installed ${destination}"
+  done
+}
+
+install_changed rest
 # The server on this node may never restart in this run, so the rule goes in
 # now. It is a no-op when the rule is already there.
 if ! "$METADATA_BLOCK"; then
-  echo "refusing to continue: could not block the metadata server for the ClickHouse server on ${node}" >&2
+  if [ "$units" -eq 1 ]; then
+    echo "refusing to continue: could not block the metadata server for the ClickHouse server on ${node}; the start step that requires the block was not installed, so the server can still start" >&2
+  else
+    echo "refusing to continue: could not block the metadata server for the ClickHouse server on ${node}; the block is already a step of every server start, so the server will not start again until this is fixed" >&2
+  fi
   exit 1
+fi
+# The drop-in makes the block a step of every server start, so it goes in only
+# once the block has worked here. Installed first, a node where the rule
+# cannot be added would keep running and then fail its next start.
+install_changed unit
+if [ "$units" -eq 1 ]; then
+  systemctl daemon-reload
 fi
 if [ "$restart" -eq 0 ] && [ "${#changed[@]}" -eq 0 ] && ! health_answers; then
   # The files match but the handler is not live: an earlier run installed them
