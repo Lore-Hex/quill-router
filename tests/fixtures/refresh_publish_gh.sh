@@ -18,6 +18,7 @@ workflow_arg=''
 branch_arg=''
 ref_arg=''
 event_arg=''
+failed_arg=''
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --jq) filter=$2; shift ;;
@@ -27,6 +28,7 @@ while [ "$#" -gt 0 ]; do
     --branch) branch_arg=$2; shift ;;
     --ref) ref_arg=$2; shift ;;
     --event) event_arg=$2; shift ;;
+    --failed) failed_arg=1 ;;
     repos/*/statuses/*) endpoint=$1 ;;
   esac
   shift
@@ -123,6 +125,18 @@ elif [ "${command}" = run ] && [ "${subcommand}" = cancel ]; then
   # found it: the scenario's run id, never a guess.
   if [ "${third}" != "$(jq -r '.polls[0][0].databaseId' "${scenario}")" ]; then
     echo "Unexpected run cancel: ${third}" >&2
+    exit 1
+  fi
+elif [ "${command}" = run ] && [ "${subcommand}" = rerun ]; then
+  # Only the failed jobs of the run the poll found, by its id: never a whole
+  # rerun, another run or a fresh dispatch. The scenario's later polls answer
+  # for the rerun's attempt.
+  if [ "${third}" != "$(jq -r '.polls[0][0].databaseId' "${scenario}")" ] || [ -z "${failed_arg}" ]; then
+    echo "Unexpected run rerun: ${third} failed=${failed_arg}" >&2
+    exit 1
+  fi
+  if [ "$(jq -r '.rerun_fault // empty' "${scenario}")" = error ]; then
+    echo 'simulated rerun API failure' >&2
     exit 1
   fi
 elif [ "${command}" = api ] && [ -n "${endpoint}" ]; then

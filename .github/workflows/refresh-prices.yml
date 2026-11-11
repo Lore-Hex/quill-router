@@ -533,6 +533,14 @@ jobs:
 
             ci_passed=""
             ci_run_id=""
+            # One automatic rerun of only the failed jobs per exact-SHA run: a
+            # single timing flake in one shard otherwise discarded the whole
+            # hour's snapshot (2026-11-10). The rerun is the same run and SHA;
+            # the run must still conclude success over every job, and its jobs
+            # rerun unchanged. Polls of the old attempt are ignored until the
+            # rerun's attempt appears. It shares this round's 120-minute poll
+            # budget, so MAX_ROUNDS and the round deadline bound it as before.
+            ci_rerun_attempt=""
             # Keep exact-SHA completion mandatory, but allow the test matrix
             # and runner queue to finish. The Oct 20 matrix passed after 54 minutes.
             for _ in $(seq 1 480); do
@@ -542,7 +550,7 @@ jobs:
                 # read, and on timeout cancelled, in its place.
                 run_json=$(gh run view "${ci_run_id}" \
                   --repo "${GITHUB_REPOSITORY}" \
-                  --json databaseId,headSha,status,conclusion)
+                  --json databaseId,headSha,status,conclusion,attempt)
                 if [ "$(jq -r .headSha <<<"${run_json}")" != "${SNAPSHOT_SHA}" ]; then
                   echo "ci run ${ci_run_id} no longer reports ${SNAPSHOT_SHA}"
                   exit 1
@@ -553,18 +561,35 @@ jobs:
                   --workflow ci.yml \
                   --branch "${BRANCH}" \
                   --event workflow_dispatch \
-                  --json databaseId,headSha,status,conclusion \
+                  --json databaseId,headSha,status,conclusion,attempt \
                   --jq "map(select(.headSha == \"${SNAPSHOT_SHA}\"))[0] // empty")
               fi
               if [ -n "${run_json}" ]; then
                 status=$(jq -r .status <<<"${run_json}")
                 conclusion=$(jq -r .conclusion <<<"${run_json}")
                 ci_run_id=$(jq -r .databaseId <<<"${run_json}")
-                echo "  ci run ${ci_run_id}: status=${status} conclusion=${conclusion:-<pending>}"
+                attempt=$(jq -r '.attempt // 1' <<<"${run_json}")
+                echo "  ci run ${ci_run_id} attempt ${attempt}: status=${status} conclusion=${conclusion:-<pending>}"
+                if [ -n "${ci_rerun_attempt}" ] && [ "${attempt}" -lt "${ci_rerun_attempt}" ]; then
+                  # The rerun was requested; this is still the failed attempt.
+                  sleep 15
+                  continue
+                fi
                 if [ "${status}" = "completed" ]; then
                   if [ "${conclusion}" = "success" ]; then
                     ci_passed=1
                     break
+                  fi
+                  if [ "${conclusion}" = "failure" ] && [ -z "${ci_rerun_attempt}" ]; then
+                    echo "::warning title=Snapshot CI rerun::ci run ${ci_run_id} attempt ${attempt} failed; rerunning its failed jobs once"
+                    if ! gh run rerun "${ci_run_id}" --failed --repo "${GITHUB_REPOSITORY}"; then
+                      echo "could not rerun the failed jobs of ci run ${ci_run_id}"
+                      exit 1
+                    fi
+                    ci_rerun_attempt=$((attempt + 1))
+                    echo "ci_rerun=${ci_run_id}:${ci_rerun_attempt}" >> "$GITHUB_OUTPUT"
+                    sleep 15
+                    continue
                   fi
                   echo "generated snapshot CI concluded '${conclusion}'"
                   exit 1
