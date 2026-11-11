@@ -75,6 +75,7 @@ from trusted_router.provider_manifest_policy import (
 from trusted_router.provider_manifest_policy import (
     EXPIRING_PROVIDER_MANIFEST_SLUGS,
     decision_manifest_price_is_valid,
+    provider_manifest_row_pricing_deadlines,
 )
 from trusted_router.provider_manifest_policy import (
     provider_manifest_valid_until as _provider_manifest_valid_until,
@@ -235,20 +236,47 @@ def provider_manifest_deadlines() -> dict[str, datetime]:
     return deadlines
 
 
+def provider_manifest_model_deadlines() -> dict[tuple[str, str], datetime]:
+    """Row-level price deadlines of the expiring manifests, by (provider, model).
+
+    Like ``provider_manifest_deadlines``, a function of the bundled files
+    alone: the routing snapshot's publisher places windows at these too.
+    """
+    deadlines: dict[tuple[str, str], datetime] = {}
+    for provider_slug in _EXPIRING_PROVIDER_MANIFEST_SLUGS:
+        path = _PROVIDER_MODELS_DIR / f"{provider_slug}.json"
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, TypeError, ValueError):
+            continue  # The provider deadline already fails every route closed.
+        for model_id, deadline in provider_manifest_row_pricing_deadlines(provider_slug, raw).items():
+            deadlines[(provider_slug, model_id)] = deadline
+    return deadlines
+
+
 def _apply_provider_manifest_expiry(
     endpoints: dict[str, ModelEndpoint],
 ) -> dict[str, ModelEndpoint]:
-    """Attach one provider-scoped deadline to every manifest-backed route.
+    """Attach the provider-scoped deadline to every manifest-backed route.
 
     Some media routes are installed statically after supplemental ingestion,
     so applying the policy at the final endpoint boundary is what guarantees
-    chat, image, video, Credits, and BYOK routes all fail closed together.
+    chat, image, video, decide, Credits, and BYOK routes all fail closed
+    together when the provider's manifest expires. A row's own published
+    price deadline (a single model's promotion) ends that model's routes
+    earlier, and only those.
     """
     deadlines = provider_manifest_deadlines()
+    model_deadlines = provider_manifest_model_deadlines()
+
+    def deadline_for(endpoint: ModelEndpoint) -> datetime:
+        deadline = deadlines[endpoint.provider]
+        model_deadline = model_deadlines.get((endpoint.provider, endpoint.model_id))
+        return deadline if model_deadline is None else min(deadline, model_deadline)
 
     return {
         endpoint_id: (
-            replace(endpoint, catalog_valid_until=deadlines[endpoint.provider])
+            replace(endpoint, catalog_valid_until=deadline_for(endpoint))
             if endpoint.provider in deadlines
             else endpoint
         )

@@ -36,7 +36,7 @@
     "slug": "new-york",
     "evidence_snapshot": "evidence.json", "headline_accent": "frontier AI",
     "buyer_copy": "Compare models and provider policies through one API. Confirm processing locations and route requirements before you buy.",
-    "buyer_heading": "Buy capacity. Choose how it is served.", "name": "New York Token Exchange", "region": "New York", "domain": "nytokenexchange.com", "aliases": ["newyorktoken.exchange", "nytoken.exchange"],
+    "buyer_heading": "Buy capacity. Choose how it is served.", "name": "New York Token Exchange", "region": "New York", "domain": "nytokenexchange.com", "aliases": ["newyorktoken.exchange", "nytoken.exchange", "nytex.com"],
     "scope": "city",
     "headline": "Get secure, scalable frontier AI.",
     "lead": "Compare models, pricing and privacy for financial, legal and enterprise teams.",

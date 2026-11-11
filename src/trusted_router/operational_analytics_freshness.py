@@ -173,11 +173,16 @@ PUBLISHABLE_BACKENDS: frozenset[str] = frozenset(
 )
 
 
-#: The Spanner poller's heartbeat row.  A generic ``tr_entities`` entity, so it
-#: needs no DDL: ``(kind, id)`` is the primary key and ``body`` the JSON below.
+#: The Spanner poller's heartbeat row.  It lives in its own table,
+#: ``tr_operational_outbox_heartbeat``, keyed by ``id`` with ``body`` the JSON
+#: below, so the ClickHouse nodes can run under a table-scoped database role.
+#: During the transition the poller also writes the legacy generic
+#: ``tr_entities`` row (``(kind, id)`` primary key, same body) unless it runs
+#: under a role, and the store reads the newer of the two.
 #: MIRRORED by literal in ``clickhouse.ingest_operational_outbox`` (which cannot
 #: import this module on the VM); ``tests/test_outbox_freshness_heartbeat.py``
 #: pins the two copies equal.
+OUTBOX_HEARTBEAT_TABLE = "tr_operational_outbox_heartbeat"
 OUTBOX_HEARTBEAT_KIND = "operational_outbox_heartbeat"
 OUTBOX_HEARTBEAT_ID = "spanner-poller"
 OUTBOX_HEARTBEAT_SCHEMA_VERSION = 1

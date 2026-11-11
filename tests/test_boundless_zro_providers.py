@@ -284,6 +284,92 @@ def test_empty_duplicate_catalog_and_new_versions(module, catalog, html):
     assert "z-ai/glm-5.4" in module.discover(catalog(native), new_html)[0]
 
 
+_MANIFEST_DIR = Path(__file__).resolve().parents[1] / "src/trusted_router/data/provider_models"
+
+
+def _manifest_rows(slug: str) -> list[dict]:
+    rows = json.loads((_MANIFEST_DIR / f"{slug}.json").read_text(encoding="utf-8"))["models"]
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def _published_route_disagreements(module, endpoints, rows) -> list[str]:
+    """The prepaid routes a discovered provider publishes, against its manifest.
+
+    The hourly refresh withholds (canary failure) or delists (two fresh API
+    misses, or an explicit retirement) individual routes, so the check follows
+    whatever the committed manifest marks routable instead of pinning one
+    live model: every published route is a routable manifest row, served by
+    that row's upstream ID, billed in Credits with a cached-input rate, and
+    no withheld or retired row is ever published. At least one route must be
+    published, so the check cannot pass vacuously."""
+    slug = module.SLUG
+    by_id = {row["id"]: row for row in rows if isinstance(row.get("id"), str)}
+    published = [e for e in endpoints if e.provider == slug]
+    problems: list[str] = []
+    if not published:
+        problems.append(f"{slug}: no published prepaid routes")
+    for e in published:
+        row = by_id.get(e.model_id)
+        if row is None:
+            problems.append(f"{slug}: {e.model_id} published without a manifest row")
+            continue
+        if row.get("routable") is False:
+            problems.append(f"{slug}: {e.model_id} published while {row.get('routable_reason')}")
+        if e.upstream_id != row.get("upstream_id"):
+            problems.append(f"{slug}: {e.model_id} upstream {e.upstream_id} != manifest {row.get('upstream_id')}")
+        if module.canonical_model_id(e.upstream_id) != e.model_id:
+            problems.append(f"{slug}: {e.upstream_id} does not canonicalize to {e.model_id}")
+        if slug == "zro" and e.upstream_id.startswith("zro/"):
+            problems.append(f"zro: {e.model_id} must use the bare upstream ID")
+        if e.usage_type != "Credits":
+            problems.append(f"{slug}: {e.model_id} usage {e.usage_type}")
+        if not e.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens > 0:
+            problems.append(f"{slug}: {e.model_id} has no cached-input rate")
+    return problems
+
+
+def test_published_route_check_follows_the_manifest():
+    """A delisted or retired route drops out and the check still holds; it
+    still fails on a real mismatch."""
+    from types import SimpleNamespace
+
+    tier = SimpleNamespace(prompt_cached_price_microdollars_per_million_tokens=40000)
+
+    def endpoint(model_id, upstream_id, usage_type="Credits", cached_tier=tier):
+        return SimpleNamespace(provider="zro", model_id=model_id, upstream_id=upstream_id,
+                               usage_type=usage_type, price_tiers=[cached_tier])
+
+    rows = [{"id": "z-ai/glm-5.3", "upstream_id": "glm-5.3"},
+            {"id": "z-ai/glm-5.3-flash", "upstream_id": "glm-5.3-flash"}]
+    both = [endpoint("z-ai/glm-5.3", "glm-5.3"), endpoint("z-ai/glm-5.3-flash", "glm-5.3-flash")]
+    assert not _published_route_disagreements(zro, both, rows)
+    retired = [rows[0], dict(rows[1], routable=False, routable_reason="provider-retired")]
+    assert not _published_route_disagreements(zro, both[:1], retired)
+    # A retired route that is still published.
+    assert _published_route_disagreements(zro, both, retired)
+    # Nothing published at all.
+    assert _published_route_disagreements(zro, [], rows)
+    # A route with no manifest row, a different upstream, a prefixed upstream,
+    # the wrong billing unit, or no cached-input rate.
+    assert _published_route_disagreements(zro, [*both, endpoint("z-ai/glm-6", "glm-6")], rows)
+    assert _published_route_disagreements(zro, [endpoint("z-ai/glm-5.3", "glm-5.3-flash")], rows)
+    assert _published_route_disagreements(
+        zro, [endpoint("z-ai/glm-5.3", "zro/glm-5.3")], [dict(rows[0], upstream_id="zro/glm-5.3")])
+    assert _published_route_disagreements(zro, [endpoint("z-ai/glm-5.3", "glm-5.3", usage_type="BYOK")], rows)
+    no_cache = SimpleNamespace(prompt_cached_price_microdollars_per_million_tokens=0)
+    assert _published_route_disagreements(zro, [endpoint("z-ai/glm-5.3", "glm-5.3", cached_tier=no_cache)], rows)
+
+
+def test_zro_retired_models_stay_unroutable():
+    """Zro's retired-models page (2026-11-11) lists GLM-5.3 Flash and Dolly 1
+    Security as no longer offered, with no reroute; Dolly 2 Security replaces
+    Dolly 1. The manifest keeps their rows, unroutable."""
+    rows = {row["id"]: row for row in _manifest_rows("zro")}
+    for model_id in ("z-ai/glm-5.3-flash", "zro/dolly1-security"):
+        assert rows[model_id]["routable"] is False
+        assert rows[model_id]["routable_reason"] == "provider-retired"
+
+
 def test_registration_and_published_pricing(client):
     from scripts.check_price_coverage import _DISCOVERABLE_MANIFEST_PROVIDERS
     from trusted_router.catalog import MODEL_ENDPOINTS, PROVIDERS
@@ -297,20 +383,11 @@ def test_registration_and_published_pricing(client):
         assert OPENAI_COMPATIBLE_PROVIDERS[slug][1] == module.BASE_URL
         assert any(item[0] == slug for item in _DISCOVERABLE_MANIFEST_PROVIDERS)
         assert f"{slug.upper()}_API_KEY:trustedrouter-{slug}-api-key" in (root / ".github/workflows/refresh-prices.yml").read_text()
-        endpoint = MODEL_ENDPOINTS[f"z-ai/glm-5.3-flash@{slug}/prepaid"]
-        # Zro serves the bare ID. Boundless serves the legacy short ID and the
-        # qualified one its rate card names (z-ai/glm-5.3-flash since
-        # 2026-11); discovery prefers the card's, which passed the live PONG
-        # canary in refresh run 42372150892. Either way it is this model.
-        if slug == "zro":
-            assert endpoint.upstream_id == "glm-5.3-flash"
-        else:
-            assert endpoint.upstream_id in {"glm-5.3-flash", "z-ai/glm-5.3-flash"}
-            assert module.canonical_model_id(endpoint.upstream_id) == "z-ai/glm-5.3-flash"
-        assert endpoint.usage_type == "Credits"
-        assert endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens > 0
+        endpoints = [e for key, e in MODEL_ENDPOINTS.items() if key.endswith(f"@{slug}/prepaid")]
+        assert not _published_route_disagreements(module, endpoints, _manifest_rows(slug))
         page = client.get(f"/providers/{slug}")
-        assert page.status_code == 200 and "glm-5.3-flash" in page.text and "Cached" in page.text
+        assert page.status_code == 200 and "Cached" in page.text
+        assert all(e.model_id in page.text for e in endpoints)
         assert not PROVIDERS[slug].provider_e2ee
     assert not PROVIDERS["boundless"].provider_zero_data_retention
     assert PROVIDERS["zro"].provider_zero_data_retention

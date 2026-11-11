@@ -322,11 +322,14 @@ def test_contract_holds_cannot_be_made_routable(hold):
     assert not decision_manifest_price_is_valid(row)
 
 
-def test_legacy_rate_manifest_expires_at_cutover(monkeypatch, tmp_path):
-    from datetime import UTC, date, datetime
+def test_legacy_rate_rows_expire_at_cutover_not_the_manifest(monkeypatch, tmp_path):
+    from datetime import UTC, date, datetime, timedelta
 
     from scripts.pricing.providers import _system1models
-    from trusted_router.provider_manifest_policy import provider_manifest_valid_until
+    from trusted_router.provider_manifest_policy import (
+        provider_manifest_row_pricing_deadlines,
+        provider_manifest_valid_until,
+    )
 
     adapter = System1Catalog("eu")
     adapter.manifest_path = tmp_path / "eu.json"
@@ -340,8 +343,32 @@ def test_legacy_rate_manifest_expires_at_cutover(monkeypatch, tmp_path):
     adapter.write_provider_manifest(adapter.fetch())
     raw = json.loads(adapter.manifest_path.read_text())
     raw["generated_at"] = "2026-11-11T00:00:00Z"
-    assert provider_manifest_valid_until(adapter.slug, raw) == datetime(2026, 11, 12, tzinfo=UTC)
+    # The discount ends only the discounted row's routes; a manifest-level
+    # deadline would take every route of the provider down with it.
+    assert "pricing_valid_until" not in raw
+    generated = datetime(2026, 11, 11, tzinfo=UTC)
+    assert provider_manifest_valid_until(adapter.slug, raw) == generated + timedelta(days=14)
+    assert provider_manifest_row_pricing_deadlines(adapter.slug, raw) == {
+        "decisionmodelsio-eu/s1-pro": datetime(2026, 11, 12, tzinfo=UTC)
+    }
     monkeypatch.setattr(adapter, "discover", lambda value: original(value, today=date(2026, 11, 12)))
+    adapter.write_provider_manifest(adapter.fetch())
+    raw = json.loads(adapter.manifest_path.read_text())
+    assert "pricing_valid_until" not in raw
+    assert provider_manifest_row_pricing_deadlines(adapter.slug, raw) == {}
+
+
+def test_refresh_drops_a_stale_manifest_level_deadline(monkeypatch, tmp_path):
+    from scripts.pricing.providers import _system1models
+
+    adapter = System1Catalog("global")
+    adapter.manifest_path = tmp_path / "global.json"
+    monkeypatch.setattr(_system1models, "fetch_json", lambda *_a: catalog("s1-fast"))
+    monkeypatch.setattr(adapter, "probe", lambda *_a: True)
+    monkeypatch.setenv(adapter.key_env, "test")
+    adapter.write_provider_manifest(adapter.fetch())
+    raw = json.loads(adapter.manifest_path.read_text())
+    adapter.manifest_path.write_text(json.dumps({**raw, "pricing_valid_until": "2026-11-12T00:00:00Z"}))
     adapter.write_provider_manifest(adapter.fetch())
     assert "pricing_valid_until" not in json.loads(adapter.manifest_path.read_text())
 

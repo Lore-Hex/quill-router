@@ -190,10 +190,10 @@
   },
   "crusoe": {
     "card_version": 2,
-    "model_count": 9,
+    "model_count": 8,
     "name": "Crusoe",
     "privacy": "Policy documented",
-    "route_count": 18,
+    "route_count": 16,
     "route_mode": "Prepaid + BYOK",
     "slug": "crusoe"
   },
@@ -658,10 +658,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 13,
+    "model_count": 12,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 13,
+    "route_count": 12,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
@@ -1036,10 +1036,10 @@
   },
   "zro": {
     "card_version": 2,
-    "model_count": 6,
+    "model_count": 4,
     "name": "Zro (MoonMath)",
     "privacy": "Zero retention",
-    "route_count": 6,
+    "route_count": 4,
     "route_mode": "Prepaid",
     "slug": "zro"
   }

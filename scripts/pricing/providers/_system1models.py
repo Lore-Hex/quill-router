@@ -270,11 +270,10 @@ class System1Catalog:
             pricing_source_url=URL,
             operator_hold_reasons=holds,
         )
+        # The legacy Pro discount is row-scoped: each discounted row carries
+        # its own pricing_valid_until, which ends only that model's routes.
+        # A manifest-level deadline would end every route of the provider.
         raw = json.loads(self.manifest_path.read_text())
-        deadlines = [row["pricing_valid_until"] for row in self.rows.values() if row["pricing_valid_until"]]
-        if deadlines:
-            raw["pricing_valid_until"] = min(deadlines)
-        else:
-            raw.pop("pricing_valid_until", None)
-        self.manifest_path.write_text(json.dumps(raw, indent=2, ensure_ascii=False) + "\n")
+        if raw.pop("pricing_valid_until", None) is not None:
+            self.manifest_path.write_text(json.dumps(raw, indent=2, ensure_ascii=False) + "\n")
         return notes

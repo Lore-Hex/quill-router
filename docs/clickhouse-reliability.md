@@ -108,6 +108,19 @@ Control-plane operational reads use `tr_control_read`. On GCP,
 table-scoped SELECT grants in `tr`; its password lives in Secret Manager as
 `trustedrouter-clickhouse-control-read-password`.
 
+Operator reporting (daily users, sign-ups, tokens and spend) uses a separate
+account, `tr_operator_read`, so the runtime reader's grants stay pinned to what
+the app queries. `scripts/deploy/clickhouse_operator_reader.sh` installs it on
+`tr-clickhouse-1` with SELECT on `tr.activity_generations`,
+`tr.provider_benchmark_samples` and `tr.workspace_directory`, a read-only
+profile, and loopback-only logins, so it works only through IAP SSH to the
+node. Its password is generated into Secret Manager as
+`trustedrouter-clickhouse-operator-read-password`. The script binds it to no
+service account, but project-wide secretAccessor grants still reach it; the
+boundary is the loopback-only network rule, so the password is useless without
+shell access to the node. Pass the password on stdin, followed by a newline,
+not on a command line; the script's header shows the query command.
+
 The standalone Paris and Azure nodes store their analytics in `default`.
 Their provisioners install the same read-only profile with only
 `GRANT SELECT ON default.*`, restricted to the local VPC/VNet and loopback:
@@ -224,9 +237,11 @@ scripts/deploy/rollout.sh
 not a convention. Since 2026-09-05 the control plane's `/status.json` analytics
 section on Spanner is built from the heartbeat row the VM poller writes (see
 "Public drain-lag signal" below) and publishes `reason: poller_stale` until one
-exists. Deploy the VM first, confirm the row landed —
-`SELECT body FROM tr_entities WHERE kind='operational_outbox_heartbeat'` returns
-one row — and only then roll the control plane. Reversed, gcp's analytics
+exists. Deploy the VM first and confirm the row landed:
+`SELECT body FROM tr_operational_outbox_heartbeat WHERE id='spanner-poller'`
+returns one row (from a poller that predates that table, the legacy
+`SELECT body FROM tr_entities WHERE kind='operational_outbox_heartbeat' AND id='spanner-poller'`
+does). Only then roll the control plane. Reversed, gcp's analytics
 section flips to `poller_stale` until the first heartbeat lands and
 `check_fleet_analytics_freshness` fails, by design: an unobserved lag is not 0.
 
@@ -317,8 +332,8 @@ way they say:
 attributes, and `clickhouse_startup.sh` installs them before it installs the
 server. It does not mark the node provisioned unless the first and third
 checks pass. Every sign-in is a named user with source ranges, and every one
-has a password except `tr_health`, which is read-only and can only answer the
-health probe; nothing may rely on `default`, which includes
+has a password except `tr_health`, which is read-only and granted only what
+the health probe reads; nothing may rely on `default`, which includes
 `clusterAllReplicas` and `remote()` between nodes. Ask each node itself, the
 way `clickhouse_replicated_migrate.sh` does.
 
@@ -326,7 +341,16 @@ The metadata block needs `iptables` on the node. `clickhouse_startup.sh`
 installs it on a new node; on an older node the roll checks first, and
 `--apply` refuses before it changes anything if `iptables` is missing
 (`apt-get install -y iptables`, then run it again). The report-only run says
-so too.
+so too. `iptables` being there does not mean the rule can be added, so the
+roll installs the user files and the helper, adds the rule, and only after
+that worked installs the start step (the systemd drop-in) and the server
+configuration that needs a restart. Where the rule cannot be added the roll
+fails and says so. By then the `default` user is already closed on that node;
+the drop-in and the server configuration are not installed and the server is
+not restarted. A node that had no drop-in can still start its server. A node
+that already had one (from an earlier roll) cannot until the rule can be
+added, and the message says which of the two it is. The next run, once the
+cause is fixed, installs the rest and restarts.
 
 What the block covers: requests the server makes on a caller's behalf, which
 is how the metadata token was read. It does not hold against code running
@@ -335,6 +359,93 @@ grants the server `CAP_NET_ADMIN` and a process with that capability can
 delete the rule. The helper and the drop-in are root's files, so the server
 cannot rewrite them, and the rule is put back at every start. Dropping the
 capability from the unit is a follow-up.
+
+### Rotating the passwords
+
+Every password is a Secret Manager secret, and each script below installs
+whatever the latest version of its secret is. None of them writes a secret.
+Add the new version first, with a value from `A-Z a-z 0-9 _ -` that does not
+start with `-` and has no trailing newline (the `tr` password is also read from
+a shell, a systemd environment file and `clickhouse-client --password`, and a
+new node hashes the secret's exact bytes; the scripts refuse anything else or
+anything under 24 characters):
+
+```bash
+openssl rand -hex 32 | tr -d '\n' | gcloud secrets versions add \
+  trustedrouter-clickhouse-password --data-file=- --project quill-cloud-proxy
+```
+
+| User | Secret | Installed by | Server restart |
+|---|---|---|---|
+| `tr` (workers, migrations, operators) | `trustedrouter-clickhouse-password` | `clickhouse_rotate_password.sh` | No |
+| `tr_ops_ingest` | `trustedrouter-clickhouse-ops-ingest-password` | `clickhouse_operational_writer.sh` | No |
+| `tr_control_read` | `trustedrouter-clickhouse-control-read-password` | `clickhouse_control_reader.sh`, once per node with `NAME` and `ZONE` | Yes, when the file changes |
+| `tr_provider_read` | `trustedrouter-clickhouse-provider-read-password` | `clickhouse_provider_reader.sh`, once per node with `NAME` and `ZONE` | Yes, when the file changes |
+| `tr_growth_read` | `trustedrouter-growth-clickhouse-password` | By hand: `ALTER USER tr_growth_read ON CLUSTER trustedrouter IDENTIFIED WITH sha256_hash BY '<hash>'`, signed in as `tr` | No |
+
+`tr` first, because the others are installed or checked with it:
+
+```bash
+scripts/deploy/clickhouse_rotate_password.sh
+scripts/deploy/clickhouse_rotate_password.sh --apply
+```
+
+The first run reports what each node would change. The second goes to
+tr-clickhouse-3, -2 and then -1. On each node it installs
+`users.d/tr-user.xml` holding only the SHA-256 of the new password, waits
+until the server accepts it (the file is reread in place, the server is not
+restarted), writes the new value to `/etc/tr-clickhouse-ingest.env`, restarts
+the running services that read that file, and then requires that the server
+refuses the old password. If the server does not accept the new password, or
+the run is interrupted (Ctrl-C, a dropped SSH session) before it does, the
+previous user file goes back and the node is as it was. Once the server has
+accepted it, the script records that a rotation is unfinished
+(`/var/lib/tr-clickhouse-rotate/unfinished`, root only, holding the previous
+value), then writes the env file and restarts the services without stopping
+for signals or failed writes; a dropped SSH session is not a signal on the
+node, only a write that fails. The record is removed once the previous value
+is seen refused. A run that stopped before that, for any reason, is finished
+by the next one: it restarts the services and checks the previous value
+again, even though the env file already holds the new one. The password is
+never a command argument or instance metadata; it reaches the node on
+standard input.
+
+What to expect and what to check:
+
+- A node provisioned before the user file was hashed holds its password in
+  plain text. Running the script with the password unchanged replaces that
+  file with the hashed one and touches nothing else, so one `--apply` is
+  worth doing even when the value stays.
+- Between the first node and the last, the nodes hold different `tr`
+  passwords. A timer-driven job that starts in that window and signs in to
+  another node is turned away once; its timer runs it again.
+- The first failure stops the rollout. Run it again to continue: a node that
+  already holds the new password is checked and left alone.
+- Do not run `clickhouse_live_ingestion.sh` or `clickhouse_cluster.sh` during
+  a rotation. They rewrite the env file from the latest secret, so on a node
+  not yet rotated the services would hold the new value while the server still
+  takes the old one, and the rotation would then refuse that node.
+- If the script stops with `is not running after its restart`, the node
+  already has the new password everywhere; only that service is down. Look at
+  `systemctl status` and `journalctl -u` for the unit on that node. A second
+  run of the script does not look at a stopped service.
+- The script proves the sign-in, not the pipeline. Afterwards check
+  `/tr_health` on each node and the drain freshness signal below.
+
+Then the other users. The two reader scripts restart `clickhouse-server` on
+the node they change and do not check the cluster first, so take one node at
+a time and wait for `/tr_health` to answer 200 before the next:
+
+```bash
+scripts/deploy/clickhouse_operational_writer.sh
+NAME=tr-clickhouse-3 ZONE=us-central1-c scripts/deploy/clickhouse_control_reader.sh
+NAME=tr-clickhouse-3 ZONE=us-central1-c scripts/deploy/clickhouse_provider_reader.sh
+```
+
+The control plane reads the reader and writer secrets as `latest` when a
+revision is created, not while it runs. Until the next deploy the running
+revisions still present the old passwords and are refused, so redeploy the
+control plane as soon as the nodes are done.
 
 ## Health checks
 
@@ -812,14 +923,15 @@ Cost: one seek per status-cache miss. Postgres/DSQL uses
 `tr_operational_analytics_outbox_enqueued_at_idx`. Spanner does not read the
 outbox at all: its per-shard head read walks the deleted-row versions the drain
 leaves behind (823-957 ms CPU per call, measured 2026-09-05), so the VM poller
-publishes a heartbeat row into `tr_entities` after each pass — the oldest live
-`commit_ts` it saw, floored by its committed deletes — and the control plane
-point-reads that row, publishing `reason: poller_stale` when it is absent or
+publishes a heartbeat row after each pass (the oldest live `commit_ts` it saw,
+floored by its committed deletes) and the control plane point-reads it
+(see "Spanner access of the node programs" below for where the row lives),
+publishing `reason: poller_stale` when it is absent or
 when its Spanner commit time (`updated_at`, not the poller's own `observed_at`)
 is older than 180 s, rather than scanning. A dead poller therefore shows on
 `/status.json` within 180 s plus the page's 60 s per-process analytics cache.
-The heartbeat needs no DDL, but it does fix the rollout order (VM poller first;
-see Deployment above). `outbox_depth` is deliberately
+The heartbeat fixes the rollout order (VM poller first; see Deployment
+above). `outbox_depth` is deliberately
 optional — `count(*)` over a large backlog is the expensive question and the
 lag already answers the important one.
 
@@ -870,6 +982,58 @@ To ask about one cloud during an incident:
 ```bash
 PYTHONPATH=src python3 -m clickhouse.check_fleet_analytics_freshness --cloud aws
 ```
+
+## Spanner access of the node programs
+
+The node programs that touch Spanner (`ingest_outbox`,
+`ingest_operational_outbox`, `refresh_workspace_directory`,
+`verify_spanner_delivery` and the REST-based `rollup_reservation_overruns`)
+connect to database `trusted-router` with the node service account's
+database-wide access. The plan is to move them to a Spanner fine-grained-access
+database role with table-level privileges. Fine-grained access is granted per
+table, so nothing they run may need `tr_entities`. This is step 1 of that
+change.
+
+**Heartbeat table.** The drain's heartbeat has a table of its own,
+`tr_operational_outbox_heartbeat (id STRING(64), body STRING(MAX),
+updated_at TIMESTAMP allow_commit_timestamp) PRIMARY KEY (id)`, added by
+`scripts/deploy/migrate_operational_outbox_heartbeat.sh` (idempotent; run by
+the production deploy's `migrate-schema` job, by `scripts/deploy-gcp.sh` and by
+`scripts/deploy/clickhouse_operational_analytics.sh` before it ships the node
+code). The row is `id='spanner-poller'` with the same JSON body as before.
+
+- The drain writes the dedicated row first, then the legacy `tr_entities` row
+  (`kind='operational_outbox_heartbeat'`), each in its own transaction, unless
+  `TR_SPANNER_DATABASE_ROLE` is set. Either write may fail without stopping the
+  other or the drain. A failed dedicated write logs
+  `operational_analytics_outbox.heartbeat_failed`; a failed legacy write logs
+  `operational_analytics_outbox.legacy_heartbeat_failed`.
+- The control plane reads both rows in one statement (two primary-key point
+  reads, `UNION ALL`, one snapshot, the same 3 s budget) and judges the one with
+  the newer commit timestamp; a tie goes to the dedicated row. Both rows come
+  from the same poller, so the newest commit is its latest proof of life: the
+  dedicated row once the role is on, the legacy row from a poller that predates
+  the table or was rolled back to one. If the dedicated table does not exist
+  yet (Spanner answers "Table not found"), it logs
+  `spanner.operational_analytics_outbox_heartbeat_table_missing` and reads the
+  legacy row alone with what is left of the same budget.
+
+Rollout order: the migration and the control-plane reader first (the normal
+production deploy does both, migration before any revision serves), then the
+node writer (`clickhouse_operational_analytics.sh`), which dual-writes until
+the role is turned on.
+
+**Role variable.** Every program above reads optional `TR_SPANNER_DATABASE_ROLE`
+(`clickhouse/_spanner_role.py`). Unset or blank, the database is opened exactly
+as before. Set, the client programs open it with `database_role=<role>` and the
+REST rollup creates its session with `{"session": {"creatorRole": "<role>"}}`.
+Nothing sets it yet.
+
+Not in this step, and coming in a follow-up: the database role itself, its
+table grants, a definer-rights view replacing `refresh_workspace_directory`'s
+`tr_entities` workspace read, the IAM bindings that let the node service
+account use the role, setting the variable on the nodes, and retiring the
+legacy heartbeat write and read.
 
 ## Alerts and capacity
 

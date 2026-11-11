@@ -4,8 +4,11 @@
 Developers and coding agents should use that guide to preserve the approved
 shared design, regional copy, evidence scope and social-image process.
 
-Static enterprise acquisition sites for 13 markets and 30 owned domains.
+Static enterprise acquisition sites for 13 markets and 31 owned domains.
 The global site is **thetokenexchange.com**; New York is **nytokenexchange.com**.
+`nytex.com` and `www.nytex.com` permanently redirect to New York, preserving
+the request path and query string. DNS remains in `exchange-nytex-com`;
+retain the Google verification TXT and certificate authorization CNAME there.
 `markets.json` is the source of truth for canonical hosts, aliases and local copy.
 Its `scope` field records a city, region or global audience. The header market
 picker and footer share one ordered directory and highlight the current market.

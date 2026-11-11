@@ -884,17 +884,27 @@ def publication_window(now: int, inputs: CatalogInputs) -> tuple[int, int]:
 def publication_window_as_of(now: int) -> tuple[int, int]:
     """``publication_window`` over events that do not depend on the process.
 
-    The retirements and every expiring provider manifest's deadline, read from
-    the bundled files rather than from this process's registry, which has
-    dropped what was retired when it was imported. A superset of the events
+    The retirements, every expiring provider manifest's deadline and each of
+    its rows' own price deadlines, read from the bundled files rather than
+    from this process's registry, which has dropped what was retired when it
+    was imported. A superset of the events
     any as-of catalog carries, so every window still ends where a compile at
     its start would clamp ``not_after``; an extra event only starts a window
     early. For compiles made as of the window's start
     (``routing_snapshot_worker``).
     """
-    from trusted_router.catalog_ingest import provider_manifest_deadlines
+    from trusted_router.catalog_ingest import (
+        provider_manifest_deadlines,
+        provider_manifest_model_deadlines,
+    )
 
-    deadlines = {_exact_seconds(deadline) for deadline in provider_manifest_deadlines().values()}
+    deadlines = {
+        _exact_seconds(deadline)
+        for deadline in (
+            *provider_manifest_deadlines().values(),
+            *provider_manifest_model_deadlines().values(),
+        )
+    }
     return _window(now, _retirement_instants() | deadlines)
 
 

@@ -180,6 +180,42 @@ def _provider_manifest_row_price_is_valid(row: dict[str, Any]) -> bool:
     return False
 
 
+def _pricing_deadline(value: Any) -> datetime:
+    """Parse a published price deadline; anything not timezone-aware ISO is expired."""
+    try:
+        deadline = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (AttributeError, TypeError, ValueError):
+        return EXPIRED_PROVIDER_MANIFEST
+    if deadline.tzinfo is None:
+        return EXPIRED_PROVIDER_MANIFEST
+    return deadline.astimezone(UTC)
+
+
+def provider_manifest_row_pricing_deadlines(provider_slug: str, raw: Any) -> dict[str, datetime]:
+    """Each row's own published price deadline, keyed by model ID.
+
+    A row-level ``pricing_valid_until`` (for example one model's promotional
+    price) ends only that model's routes, not the provider's. A null value
+    means no row deadline; any other value that is not a timezone-aware ISO
+    instant expires that row (fail closed).
+    """
+
+    if provider_slug not in EXPIRING_PROVIDER_MANIFEST_SLUGS or not isinstance(raw, dict):
+        return {}
+    rows = raw.get("models")
+    if not isinstance(rows, list):
+        return {}
+    deadlines: dict[str, datetime] = {}
+    for row in rows:
+        if not isinstance(row, dict) or row.get("pricing_valid_until") is None:
+            continue
+        model_id = row.get("id")
+        if isinstance(model_id, str) and model_id:
+            deadline = _pricing_deadline(row["pricing_valid_until"])
+            deadlines[model_id] = min(deadlines.get(model_id, deadline), deadline)
+    return deadlines
+
+
 def _provider_manifest_generated_deadline(raw: dict[str, Any], max_age_days: int) -> datetime:
     generated_at = raw.get("generated_at")
     if not isinstance(generated_at, str):
@@ -192,14 +228,10 @@ def _provider_manifest_generated_deadline(raw: dict[str, Any], max_age_days: int
         return EXPIRED_PROVIDER_MANIFEST
     deadline = generated.astimezone(UTC) + timedelta(days=max_age_days)
     # A published promotion may end before the ordinary stale-manifest limit.
+    # A row-level deadline ends only that row's routes; see
+    # provider_manifest_row_pricing_deadlines.
     if "pricing_valid_until" in raw:
-        try:
-            price_deadline = datetime.fromisoformat(raw["pricing_valid_until"].replace("Z", "+00:00"))
-        except (AttributeError, TypeError, ValueError):
-            return EXPIRED_PROVIDER_MANIFEST
-        if price_deadline.tzinfo is None:
-            return EXPIRED_PROVIDER_MANIFEST
-        deadline = min(deadline, price_deadline.astimezone(UTC))
+        deadline = min(deadline, _pricing_deadline(raw["pricing_valid_until"]))
     return deadline
 
 

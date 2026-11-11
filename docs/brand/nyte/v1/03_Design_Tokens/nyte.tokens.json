@@ -1,0 +1,1332 @@
+{
+  "$description": "NY Token Exchange (NYTE) design tokens · V1 (Nov 2026). W3C Design Tokens Format Module 2025.10. Source of truth for the NYTE Brand Guidelines; mirrors the NYTE design system artifact.",
+  "$extensions": {
+    "com.nytokenexchange": {
+      "version": "1.0.0",
+      "generated": "2026-11-03",
+      "fontsNote": "ABC Pelikan trial files are for design; the client licenses the final cuts."
+    }
+  },
+  "color": {
+    "$type": "color",
+    "$description": "NYTE palette, organised in tiers. Text on any colour field is always ink.",
+    "hero": {
+      "$description": "Hero tier (≈80% with Ink and Cream as grounds)",
+      "ink": {
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.0824,
+            0.0745,
+            0.0667
+          ],
+          "hex": "#151311"
+        },
+        "$description": "Text, structural rules, nav, ticker, footer, dark sections, the logo. Ink on Cream 17.5:1.",
+        "$extensions": {
+          "com.nytokenexchange": {
+            "tier": "hero",
+            "usage": "Hero tier. Text, structural rules, nav, ticker, footer, dark sections, the logo. Ink on Cream 17.5:1.",
+            "approvedTextPairs": {
+              "on cream": 17.5,
+              "on gray": 16.0,
+              "on stone": 13.3,
+              "on purple": 7.0,
+              "on lilac": 13.5,
+              "on yellow": 11.9,
+              "on lime": 12.8,
+              "on sky": 13.6,
+              "on orange": 6.5
+            }
+          }
+        }
+      },
+      "cream": {
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.9804,
+            0.9725,
+            0.9569
+          ],
+          "hex": "#FAF8F4"
+        },
+        "$description": "Light page ground and text on Ink. One ground among several, not the default for every section.",
+        "$extensions": {
+          "com.nytokenexchange": {
+            "tier": "hero",
+            "usage": "Hero tier. Light page ground and text on Ink. One ground among several, not the default for every section.",
+            "approvedTextPairs": {
+              "on ink": 17.5
+            }
+          }
+        }
+      },
+      "gray": {
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.9451,
+            0.9333,
+            0.9059
+          ],
+          "hex": "#F1EEE7"
+        },
+        "$description": "Light gray: sunken panels and row hover on Cream.",
+        "$extensions": {
+          "com.nytokenexchange": {
+            "tier": "hero",
+            "usage": "Hero tier. Light gray: sunken panels and row hover on Cream."
+          }
+        }
+      },
+      "stone": {
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.8706,
+            0.8549,
+            0.8157
+          ],
+          "hex": "#DEDAD0"
+        },
+        "$description": "Row rules, photo mats, ineligible chips, ineligible routes in illustration. Ink on Stone 13.3:1.",
+        "$extensions": {
+          "com.nytokenexchange": {
+            "tier": "hero",
+            "usage": "Hero tier. Row rules, photo mats, ineligible chips, ineligible routes in illustration. Ink on Stone 13.3:1."
+          }
+        }
+      },
+      "ink-2": {
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.3412,
+            0.3176,
+            0.2902
+          ],
+          "hex": "#57514A"
+        },
+        "$description": "Secondary text on Cream, Gray and Stone (7.4 / 6.8 / 5.6:1). Never on colour fields.",
+        "$extensions": {
+          "com.nytokenexchange": {
+            "tier": "hero",
+            "usage": "Hero tier. Secondary text on Cream, Gray and Stone (7.4 / 6.8 / 5.6:1). Never on colour fields.",
+            "approvedTextPairs": {
+              "on cream": 7.4,
+              "on gray": 6.8,
+              "on stone": 5.6
+            }
+          }
+        }
+      },
+      "ink-2-dark": {
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.7255,
+            0.698,
+            0.6588
+          ],
+          "hex": "#B9B2A8"
+        },
+        "$description": "Secondary text on Ink (8.8:1).",
+        "$extensions": {
+          "com.nytokenexchange": {
+            "tier": "hero",
+            "usage": "Hero tier. Secondary text on Ink (8.8:1).",
+            "approvedTextPairs": {
+              "on ink": 8.8
+            }
+          }
+        }
+      },
+      "dark-rule": {
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.2275,
+            0.2118,
+            0.1922
+          ],
+          "hex": "#3A3631"
+        },
+        "$description": "Row rules and empty ladder rungs on Ink.",
+        "$extensions": {
+          "com.nytokenexchange": {
+            "tier": "hero",
+            "usage": "Hero tier. Row rules and empty ladder rungs on Ink."
+          }
+        }
+      }
+    },
+    "colour": {
+      "$description": "Colour tier (≈15%: page lead colour + accent hits)",
+      "purple": {
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.6078,
+            0.5765,
+            0.9608
+          ],
+          "hex": "#9B93F5"
+        },
+        "$description": "Lead colour for Home, Models & Providers, Exchange pages; accent elsewhere. Full-strength fields, Band, bars, routes and chart series. Ink text on it 7.0:1. Never text on Cream (2.5:1).",
+        "$extensions": {
+          "com.nytokenexchange": {
+            "tier": "colour",
+            "usage": "Colour tier · Market. Lead colour for Home, Models & Providers, Exchange pages; accent elsewhere. Full-strength fields, Band, bars, routes and chart series. Ink text on it 7.0:1. Never text on Cream (2.5:1).",
+            "pageFamily": "Market",
+            "approvedTextPairs": {
+              "on ink": 7.0
+            },
+            "never": "Never as text on Cream (2.5:1)."
+          }
+        }
+      },
+      "yellow": {
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            1.0,
+            0.7843,
+            0.0
+          ],
+          "hex": "#FFC800"
+        },
+        "$description": "Lead colour for Token Index, Reserved tokens, Buy; CTA fields, story panels, the fresh-trade highlight. Ink on it 11.9:1. Yellow type on Ink is the index figure.",
+        "$extensions": {
+          "com.nytokenexchange": {
+            "tier": "colour",
+            "usage": "Colour tier · Price. Lead colour for Token Index, Reserved tokens, Buy; CTA fields, story panels, the fresh-trade highlight. Ink on it 11.9:1. Yellow type on Ink is the index figure.",
+            "pageFamily": "Price",
+            "approvedTextPairs": {
+              "on ink": 11.9
+            },
+            "never": "Never as text on Cream."
+          }
+        }
+      },
+      "lime": {
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.7882,
+            0.8863,
+            0.3961
+          ],
+          "hex": "#C9E265"
+        },
+        "$description": "Lead colour for Trust, Security, Privacy, Status; verified chips, the badge check, the live dot. Ink on it 12.8:1. Lime type on Ink (12.8:1) for verified and operational. Never text on Cream (1.4:1).",
+        "$extensions": {
+          "com.nytokenexchange": {
+            "tier": "colour",
+            "usage": "Colour tier · Trust. Lead colour for Trust, Security, Privacy, Status; verified chips, the badge check, the live dot. Ink on it 12.8:1. Lime type on Ink (12.8:1) for verified and operational. Never text on Cream (1.4:1).",
+            "pageFamily": "Trust",
+            "approvedTextPairs": {
+              "on ink": 12.8
+            },
+            "never": "Never as text on Cream (1.4:1)."
+          }
+        }
+      },
+      "sky": {
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.749,
+            0.8902,
+            0.9255
+          ],
+          "hex": "#BFE3EC"
+        },
+        "$description": "Lead colour for Docs, Suppliers, Providers, launch stories; the live-globe section. Ink on it 13.6:1. Sky type on Ink for proof figures.",
+        "$extensions": {
+          "com.nytokenexchange": {
+            "tier": "colour",
+            "usage": "Colour tier · Knowledge. Lead colour for Docs, Suppliers, Providers, launch stories; the live-globe section. Ink on it 13.6:1. Sky type on Ink for proof figures.",
+            "pageFamily": "Knowledge",
+            "approvedTextPairs": {
+              "on ink": 13.6
+            }
+          }
+        }
+      }
+    },
+    "functional": {
+      "$description": "Functional tier (≈5%)",
+      "orange": {
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            1.0,
+            0.4196,
+            0.2078
+          ],
+          "hex": "#FF6B35"
+        },
+        "$description": "Primary CTA fill only, one per view. Ink label on it 6.5:1. Never text, never a field, never decoration.",
+        "$extensions": {
+          "com.nytokenexchange": {
+            "tier": "functional",
+            "usage": "Functional · Action. Primary CTA fill only, one per view. Ink label on it 6.5:1. Never text, never a field, never decoration.",
+            "never": "Never as text (2.7:1 on Cream), never a field, never decoration."
+          }
+        }
+      },
+      "deep-purple": {
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.2941,
+            0.2471,
+            0.6588
+          ],
+          "hex": "#4B3FA8"
+        },
+        "$description": "Links, chart labels and headline emphasis on Cream (7.7:1) and Lilac (5.9:1).",
+        "$extensions": {
+          "com.nytokenexchange": {
+            "tier": "functional",
+            "usage": "Functional · Link. Links, chart labels and headline emphasis on Cream (7.7:1) and Lilac (5.9:1).",
+            "approvedTextPairs": {
+              "on cream": 7.7,
+              "on lilac": 5.9
+            }
+          }
+        }
+      },
+      "green": {
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.1804,
+            0.2,
+            0.0745
+          ],
+          "hex": "#2E3313"
+        },
+        "$description": "Verified and operational text and checks on light grounds (12.4:1 on Cream, 9.1:1 on Lime). Not a section ground.",
+        "$extensions": {
+          "com.nytokenexchange": {
+            "tier": "functional",
+            "usage": "Functional · Verified ink. Verified and operational text and checks on light grounds (12.4:1 on Cream, 9.1:1 on Lime). Not a section ground.",
+            "approvedTextPairs": {
+              "on cream": 12.4,
+              "on lime": 9.1
+            }
+          }
+        }
+      }
+    },
+    "tint": {
+      "$description": "Tints (highlights only, never a section ground)",
+      "lilac": {
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.8627,
+            0.8471,
+            0.9843
+          ],
+          "hex": "#DCD8FB"
+        },
+        "$description": "Purple's tint: empty ladder rungs on Purple, a selected row on Cream. Highlights only, never a section ground.",
+        "$extensions": {
+          "com.nytokenexchange": {
+            "tier": "tint",
+            "usage": "Tint. Purple's tint: empty ladder rungs on Purple, a selected row on Cream. Highlights only, never a section ground."
+          }
+        }
+      },
+      "yellow-tint": {
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.9882,
+            0.9059,
+            0.6235
+          ],
+          "hex": "#FCE79F"
+        },
+        "$description": "Selected route row, highlighted table row. Highlights only.",
+        "$extensions": {
+          "com.nytokenexchange": {
+            "tier": "tint",
+            "usage": "Tint. Selected route row, highlighted table row. Highlights only."
+          }
+        }
+      },
+      "lime-tint": {
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.9137,
+            0.9412,
+            0.7608
+          ],
+          "hex": "#E9F0C2"
+        },
+        "$description": "Rare highlight on Trust pages. Highlights only.",
+        "$extensions": {
+          "com.nytokenexchange": {
+            "tier": "tint",
+            "usage": "Tint. Rare highlight on Trust pages. Highlights only."
+          }
+        }
+      },
+      "sky-tint": {
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.898,
+            0.9451,
+            0.9451
+          ],
+          "hex": "#E5F1F1"
+        },
+        "$description": "Rare highlight on Docs pages. Highlights only.",
+        "$extensions": {
+          "com.nytokenexchange": {
+            "tier": "tint",
+            "usage": "Tint. Rare highlight on Docs pages. Highlights only."
+          }
+        }
+      }
+    }
+  },
+  "theme": {
+    "$type": "color",
+    "$description": "Semantic, theme-aware colours. Light = Cream ground; dark = Ink ground (Token Index, product UI, event screens).",
+    "light": {
+      "ground": {
+        "$value": "{color.hero.cream}",
+        "$description": "Default page ground: Cream in the light theme, Ink in the dark theme (Token Index board, product UI, event screens)."
+      },
+      "text": {
+        "$value": "{color.hero.ink}",
+        "$description": "All body and heading text on `ground`, `sunken` and `surface`. 17.5:1 in both themes."
+      },
+      "text-2": {
+        "$value": "{color.hero.ink-2}",
+        "$description": "Captions, metadata, estimates, footnotes on `ground`. 7.4:1 light, 8.8:1 dark. Never on a colour field: use `text` there."
+      },
+      "rule": {
+        "$value": "{color.hero.stone}",
+        "$description": "1.5px row rules and soft dividers on `ground`. Structural rules (table heads, column tops) use `text`."
+      },
+      "sunken": {
+        "$value": "{color.hero.gray}",
+        "$description": "Sunken panels, table row hover, the live-data section ground."
+      },
+      "surface": {
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "hex": "#FFFFFF"
+        },
+        "$description": "Inputs and receipt cards that sit on `ground`, always inside a 1.5px `text` rule."
+      },
+      "link": {
+        "$value": "{color.functional.deep-purple}",
+        "$description": "Links and chart labels in running text; deep-purple headline emphasis on Cream. 7.7:1 light, 9.2:1 dark."
+      },
+      "verified-ink": {
+        "$value": "{color.functional.green}",
+        "$description": "Text and checks that mean verified or operational: Green on light grounds (12.4:1), Lime on Ink (12.8:1)."
+      }
+    },
+    "dark": {
+      "ground": {
+        "$value": "{color.hero.ink}",
+        "$description": "Default page ground: Cream in the light theme, Ink in the dark theme (Token Index board, product UI, event screens)."
+      },
+      "text": {
+        "$value": "{color.hero.cream}",
+        "$description": "All body and heading text on `ground`, `sunken` and `surface`. 17.5:1 in both themes."
+      },
+      "text-2": {
+        "$value": "{color.hero.ink-2-dark}",
+        "$description": "Captions, metadata, estimates, footnotes on `ground`. 7.4:1 light, 8.8:1 dark. Never on a colour field: use `text` there."
+      },
+      "rule": {
+        "$value": "{color.hero.dark-rule}",
+        "$description": "1.5px row rules and soft dividers on `ground`. Structural rules (table heads, column tops) use `text`."
+      },
+      "sunken": {
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.1333,
+            0.1216,
+            0.1098
+          ],
+          "hex": "#221F1C"
+        },
+        "$description": "Sunken panels, table row hover, the live-data section ground."
+      },
+      "surface": {
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.1176,
+            0.1059,
+            0.0941
+          ],
+          "hex": "#1E1B18"
+        },
+        "$description": "Inputs and receipt cards that sit on `ground`, always inside a 1.5px `text` rule."
+      },
+      "link": {
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.7176,
+            0.6824,
+            0.9686
+          ],
+          "hex": "#B7AEF7"
+        },
+        "$description": "Links and chart labels in running text; deep-purple headline emphasis on Cream. 7.7:1 light, 9.2:1 dark."
+      },
+      "verified-ink": {
+        "$value": "{color.colour.lime}",
+        "$description": "Text and checks that mean verified or operational: Green on light grounds (12.4:1), Lime on Ink (12.8:1)."
+      }
+    }
+  },
+  "page-theme": {
+    "$type": "color",
+    "$description": "COL-01. Every page takes its family's lead colour for the hero field or Band, eyebrow bars, selected tabs and one hero-scale element. The other three bright colours appear as accent hits.",
+    "market": {
+      "$value": "{color.colour.purple}",
+      "$description": "Home, Models & Providers, Exchange."
+    },
+    "price": {
+      "$value": "{color.colour.yellow}",
+      "$description": "Token Index, Reserved tokens, Buy."
+    },
+    "trust": {
+      "$value": "{color.colour.lime}",
+      "$description": "Trust, Security, Privacy, Status."
+    },
+    "knowledge": {
+      "$value": "{color.colour.sky}",
+      "$description": "Docs, Suppliers, Providers, launch stories."
+    }
+  },
+  "font": {
+    "family": {
+      "$type": "fontFamily",
+      "sans": {
+        "$value": [
+          "ABC Pelikan",
+          "Helvetica Neue",
+          "Arial",
+          "sans-serif"
+        ],
+        "$description": "Prose: headlines, body, figures. Dinamo. Licensed cuts Light 300, Regular 400, Medium 500."
+      },
+      "condensed": {
+        "$value": [
+          "ABC Pelikan Condensed",
+          "Arial Narrow",
+          "sans-serif"
+        ],
+        "$description": "Wayfinding: labels, eyebrows, table heads, nav family titles. Medium 500, caps, +10% tracking."
+      },
+      "mono": {
+        "$value": [
+          "ABC Pelikan Mono",
+          "Menlo",
+          "monospace"
+        ],
+        "$description": "Facts: prices, ids, hashes, hostnames, timestamps, the ticker. Regular 400, Medium 500, tabular figures."
+      }
+    },
+    "weight": {
+      "$type": "fontWeight",
+      "light": {
+        "$value": 300
+      },
+      "regular": {
+        "$value": 400
+      },
+      "medium": {
+        "$value": 500
+      },
+      "$description": "Bold is reserved for the wordmark; never set type in Bold."
+    }
+  },
+  "typography": {
+    "$type": "typography",
+    "$description": "Type scale for web (desktop). Displays scale with clamp() between 390 and 1440 px. See $extensions for deck and mobile sizes.",
+    "display-1": {
+      "$value": {
+        "fontFamily": "{font.family.sans}",
+        "fontSize": {
+          "value": 104,
+          "unit": "px"
+        },
+        "fontWeight": 300,
+        "lineHeight": 0.96,
+        "letterSpacing": {
+          "value": -2.08,
+          "unit": "px"
+        }
+      },
+      "$description": "One per page: the hero headline. Deck 120 px, mobile 48 px.",
+      "$extensions": {
+        "com.nytokenexchange": {
+          "group": "Display",
+          "letterSpacingEm": -0.02,
+          "deckFontSize": {
+            "value": 120,
+            "unit": "px"
+          },
+          "mobileFontSize": {
+            "value": 48,
+            "unit": "px"
+          }
+        }
+      }
+    },
+    "display-2": {
+      "$value": {
+        "fontFamily": "{font.family.sans}",
+        "fontSize": {
+          "value": 72,
+          "unit": "px"
+        },
+        "fontWeight": 300,
+        "lineHeight": 1.0,
+        "letterSpacing": {
+          "value": -1.08,
+          "unit": "px"
+        }
+      },
+      "$description": "Section headlines; deck 96 px, mobile 40 px.",
+      "$extensions": {
+        "com.nytokenexchange": {
+          "group": "Display",
+          "letterSpacingEm": -0.015,
+          "deckFontSize": {
+            "value": 96,
+            "unit": "px"
+          },
+          "mobileFontSize": {
+            "value": 40,
+            "unit": "px"
+          }
+        }
+      }
+    },
+    "display-3": {
+      "$value": {
+        "fontFamily": "{font.family.sans}",
+        "fontSize": {
+          "value": 48,
+          "unit": "px"
+        },
+        "fontWeight": 300,
+        "lineHeight": 1.05,
+        "letterSpacing": {
+          "value": -0.48,
+          "unit": "px"
+        }
+      },
+      "$description": "Sub-section headlines; deck 64 px, mobile 32 px.",
+      "$extensions": {
+        "com.nytokenexchange": {
+          "group": "Display",
+          "letterSpacingEm": -0.01,
+          "deckFontSize": {
+            "value": 64,
+            "unit": "px"
+          },
+          "mobileFontSize": {
+            "value": 32,
+            "unit": "px"
+          }
+        }
+      }
+    },
+    "heading-1": {
+      "$value": {
+        "fontFamily": "{font.family.sans}",
+        "fontSize": {
+          "value": 32,
+          "unit": "px"
+        },
+        "fontWeight": 500,
+        "lineHeight": 1.15,
+        "letterSpacing": {
+          "value": -0.32,
+          "unit": "px"
+        }
+      },
+      "$description": "Card and panel titles; deck 40 px.",
+      "$extensions": {
+        "com.nytokenexchange": {
+          "group": "Headings",
+          "letterSpacingEm": -0.01,
+          "deckFontSize": {
+            "value": 40,
+            "unit": "px"
+          }
+        }
+      }
+    },
+    "heading-2": {
+      "$value": {
+        "fontFamily": "{font.family.sans}",
+        "fontSize": {
+          "value": 24,
+          "unit": "px"
+        },
+        "fontWeight": 500,
+        "lineHeight": 1.2,
+        "letterSpacing": {
+          "value": 0,
+          "unit": "px"
+        }
+      },
+      "$description": "Group titles.",
+      "$extensions": {
+        "com.nytokenexchange": {
+          "group": "Headings",
+          "letterSpacingEm": 0
+        }
+      }
+    },
+    "heading-3": {
+      "$value": {
+        "fontFamily": "{font.family.sans}",
+        "fontSize": {
+          "value": 19,
+          "unit": "px"
+        },
+        "fontWeight": 500,
+        "lineHeight": 1.3,
+        "letterSpacing": {
+          "value": 0,
+          "unit": "px"
+        }
+      },
+      "$description": "Item titles, nav item names.",
+      "$extensions": {
+        "com.nytokenexchange": {
+          "group": "Headings",
+          "letterSpacingEm": 0
+        }
+      }
+    },
+    "lead": {
+      "$value": {
+        "fontFamily": "{font.family.sans}",
+        "fontSize": {
+          "value": 22,
+          "unit": "px"
+        },
+        "fontWeight": 400,
+        "lineHeight": 1.45,
+        "letterSpacing": {
+          "value": 0,
+          "unit": "px"
+        }
+      },
+      "$description": "Intro paragraph under a headline; deck 30 px. Max width 640 px.",
+      "$extensions": {
+        "com.nytokenexchange": {
+          "group": "Text",
+          "letterSpacingEm": 0,
+          "deckFontSize": {
+            "value": 30,
+            "unit": "px"
+          }
+        }
+      }
+    },
+    "body": {
+      "$value": {
+        "fontFamily": "{font.family.sans}",
+        "fontSize": {
+          "value": 17,
+          "unit": "px"
+        },
+        "fontWeight": 400,
+        "lineHeight": 1.55,
+        "letterSpacing": {
+          "value": 0,
+          "unit": "px"
+        }
+      },
+      "$description": "Running text, 45–75 characters per line; deck 24 px.",
+      "$extensions": {
+        "com.nytokenexchange": {
+          "group": "Text",
+          "letterSpacingEm": 0,
+          "deckFontSize": {
+            "value": 24,
+            "unit": "px"
+          }
+        }
+      }
+    },
+    "small": {
+      "$value": {
+        "fontFamily": "{font.family.sans}",
+        "fontSize": {
+          "value": 14,
+          "unit": "px"
+        },
+        "fontWeight": 400,
+        "lineHeight": 1.5,
+        "letterSpacing": {
+          "value": 0,
+          "unit": "px"
+        }
+      },
+      "$description": "Captions, footnotes, legal.",
+      "$extensions": {
+        "com.nytokenexchange": {
+          "group": "Text",
+          "letterSpacingEm": 0
+        }
+      }
+    },
+    "label": {
+      "$value": {
+        "fontFamily": "{font.family.condensed}",
+        "fontSize": {
+          "value": 13,
+          "unit": "px"
+        },
+        "fontWeight": 500,
+        "lineHeight": 1.2,
+        "letterSpacing": {
+          "value": 1.3,
+          "unit": "px"
+        }
+      },
+      "$description": "Eyebrows, table heads, nav family titles. Condensed caps; deck 16 px.",
+      "$extensions": {
+        "com.nytokenexchange": {
+          "group": "Wayfinding",
+          "letterSpacingEm": 0.1,
+          "deckFontSize": {
+            "value": 16,
+            "unit": "px"
+          },
+          "textTransform": "uppercase"
+        }
+      }
+    },
+    "data": {
+      "$value": {
+        "fontFamily": "{font.family.mono}",
+        "fontSize": {
+          "value": 14,
+          "unit": "px"
+        },
+        "fontWeight": 400,
+        "lineHeight": 1.5,
+        "letterSpacing": {
+          "value": 0,
+          "unit": "px"
+        }
+      },
+      "$description": "Prices, ids, hostnames, timestamps. Tabular figures.",
+      "$extensions": {
+        "com.nytokenexchange": {
+          "group": "Data",
+          "letterSpacingEm": 0,
+          "fontFeatureSettings": "'tnum'"
+        }
+      }
+    },
+    "ticker": {
+      "$value": {
+        "fontFamily": "{font.family.mono}",
+        "fontSize": {
+          "value": 13,
+          "unit": "px"
+        },
+        "fontWeight": 500,
+        "lineHeight": 1.4,
+        "letterSpacing": {
+          "value": 0.26,
+          "unit": "px"
+        }
+      },
+      "$description": "The ticker band and live listings.",
+      "$extensions": {
+        "com.nytokenexchange": {
+          "group": "Data",
+          "letterSpacingEm": 0.02,
+          "fontFeatureSettings": "'tnum'"
+        }
+      }
+    },
+    "figure": {
+      "$value": {
+        "fontFamily": "{font.family.sans}",
+        "fontSize": {
+          "value": 72,
+          "unit": "px"
+        },
+        "fontWeight": 300,
+        "lineHeight": 1.0,
+        "letterSpacing": {
+          "value": -1.44,
+          "unit": "px"
+        }
+      },
+      "$description": "Headline numbers (stats). Tabular figures.",
+      "$extensions": {
+        "com.nytokenexchange": {
+          "group": "Data",
+          "letterSpacingEm": -0.02,
+          "fontFeatureSettings": "'tnum'"
+        }
+      }
+    }
+  },
+  "spacing": {
+    "$type": "dimension",
+    "$description": "Spacing steps. The stripe pitch is space-5 (24 px).",
+    "space-1": {
+      "$value": {
+        "value": 4,
+        "unit": "px"
+      },
+      "$description": "Icon-to-text nudge, chip padding."
+    },
+    "space-2": {
+      "$value": {
+        "value": 8,
+        "unit": "px"
+      },
+      "$description": "Gap inside chips and tight stacks."
+    },
+    "space-3": {
+      "$value": {
+        "value": 12,
+        "unit": "px"
+      },
+      "$description": "Button group gap, label to rule."
+    },
+    "space-4": {
+      "$value": {
+        "value": 16,
+        "unit": "px"
+      },
+      "$description": "Mobile gutter; input padding."
+    },
+    "space-5": {
+      "$value": {
+        "value": 24,
+        "unit": "px"
+      },
+      "$description": "Web gutter; card internal gap; the stripe pitch."
+    },
+    "space-6": {
+      "$value": {
+        "value": 32,
+        "unit": "px"
+      },
+      "$description": "Card padding; deck gutter."
+    },
+    "space-7": {
+      "$value": {
+        "value": 48,
+        "unit": "px"
+      },
+      "$description": "Between a heading block and its content."
+    },
+    "space-8": {
+      "$value": {
+        "value": 64,
+        "unit": "px"
+      },
+      "$description": "Web side margin; inside sections."
+    },
+    "space-9": {
+      "$value": {
+        "value": 96,
+        "unit": "px"
+      },
+      "$description": "Between blocks; deck margin."
+    },
+    "space-10": {
+      "$value": {
+        "value": 128,
+        "unit": "px"
+      },
+      "$description": "Section top and bottom padding on web."
+    }
+  },
+  "radius": {
+    "$type": "dimension",
+    "none": {
+      "$value": {
+        "value": 0,
+        "unit": "px"
+      },
+      "$description": "Everything is square-cornered: buttons, inputs, cards, photos, chips."
+    },
+    "round": {
+      "$type": "number",
+      "$value": 0.5,
+      "$description": "50%. Only the globe, the live dot, illustration circles and diagram nodes.",
+      "$extensions": {
+        "com.nytokenexchange": {
+          "css": "50%"
+        }
+      }
+    }
+  },
+  "stroke": {
+    "$type": "dimension",
+    "$description": "Line weights. The line is the brand's main structural and graphic device.",
+    "rule": {
+      "$value": {
+        "value": 1.5,
+        "unit": "px"
+      },
+      "$description": "Structural rules, borders, card and photo frames, inputs, icon strokes at 24px."
+    },
+    "head": {
+      "$value": {
+        "value": 2.5,
+        "unit": "px"
+      },
+      "$description": "The top rule of a table and the line in a line chart."
+    },
+    "accent": {
+      "$value": {
+        "value": 4,
+        "unit": "px"
+      },
+      "$description": "The eyebrow bar over every section label (40 × 4px), in the page lead colour."
+    },
+    "bar": {
+      "$value": {
+        "value": 10,
+        "unit": "px"
+      },
+      "$description": "Colour bars above stats, columns and guides."
+    },
+    "illustration": {
+      "$value": {
+        "value": 6,
+        "unit": "px"
+      },
+      "$description": "Lines in illustrations on the 480 × 336 artboard (scales with the art)."
+    }
+  },
+  "band": {
+    "$type": "dimension",
+    "$description": "The Band: six stripe groups, thin to thick in the direction of travel, groups touching, on a 24 px pitch.",
+    "weight-1": {
+      "$value": {
+        "value": 2,
+        "unit": "px"
+      }
+    },
+    "weight-2": {
+      "$value": {
+        "value": 5,
+        "unit": "px"
+      }
+    },
+    "weight-3": {
+      "$value": {
+        "value": 8,
+        "unit": "px"
+      }
+    },
+    "weight-4": {
+      "$value": {
+        "value": 12,
+        "unit": "px"
+      }
+    },
+    "weight-5": {
+      "$value": {
+        "value": 17,
+        "unit": "px"
+      }
+    },
+    "weight-6": {
+      "$value": {
+        "value": 22,
+        "unit": "px"
+      }
+    },
+    "pitch": {
+      "$value": {
+        "value": 24,
+        "unit": "px"
+      }
+    }
+  },
+  "elevation": {
+    "$type": "border",
+    "$description": "NYTE has no shadows. Elevation is expressed with a rule, a ground change (sunken / surface) or a full-strength colour field.",
+    "rule": {
+      "$value": {
+        "color": "{theme.light.rule}",
+        "width": "{stroke.rule}",
+        "style": "solid"
+      },
+      "$description": "Row rules and soft dividers."
+    },
+    "frame": {
+      "$value": {
+        "color": "{color.hero.ink}",
+        "width": "{stroke.rule}",
+        "style": "solid"
+      },
+      "$description": "Cards, inputs, photo frames, receipts."
+    },
+    "head": {
+      "$value": {
+        "color": "{color.hero.ink}",
+        "width": "{stroke.head}",
+        "style": "solid"
+      },
+      "$description": "Table head rule, chart line weight."
+    }
+  },
+  "motion": {
+    "duration": {
+      "$type": "duration",
+      "ui": {
+        "$value": {
+          "value": 160,
+          "unit": "ms"
+        },
+        "$description": "Hover and focus changes."
+      },
+      "reveal": {
+        "$value": {
+          "value": 320,
+          "unit": "ms"
+        },
+        "$description": "A Band or section revealing once on scroll."
+      },
+      "data": {
+        "$value": {
+          "value": 800,
+          "unit": "ms"
+        },
+        "$description": "A chart drawing, a figure counting up."
+      }
+    },
+    "easing": {
+      "$type": "cubicBezier",
+      "standard": {
+        "$value": [
+          0.2,
+          0.7,
+          0.2,
+          1
+        ],
+        "$description": "The one easing curve for all motion."
+      }
+    },
+    "ticker-speed": {
+      "$type": "number",
+      "$value": 60,
+      "$description": "Ticker scroll speed in px per second; starts after a 2 s pause. ",
+      "$extensions": {
+        "com.nytokenexchange": {
+          "unit": "px/s",
+          "startDelay": {
+            "value": 2000,
+            "unit": "ms"
+          }
+        }
+      }
+    },
+    "$description": "Only data moves. Under prefers-reduced-motion: static ticker, complete charts, final figures, a still globe, colour-only hovers."
+  },
+  "layout": {
+    "$description": "Grids per medium.",
+    "web": {
+      "columns": {
+        "$type": "number",
+        "$value": 12
+      },
+      "gutter": {
+        "$type": "dimension",
+        "$value": {
+          "value": 24,
+          "unit": "px"
+        }
+      },
+      "margin": {
+        "$type": "dimension",
+        "$value": {
+          "value": 64,
+          "unit": "px"
+        }
+      },
+      "max-width": {
+        "$type": "dimension",
+        "$value": {
+          "value": 1440,
+          "unit": "px"
+        }
+      },
+      "section-padding": {
+        "$type": "dimension",
+        "$value": {
+          "value": 128,
+          "unit": "px"
+        }
+      }
+    },
+    "tablet": {
+      "columns": {
+        "$type": "number",
+        "$value": 8
+      },
+      "gutter": {
+        "$type": "dimension",
+        "$value": {
+          "value": 24,
+          "unit": "px"
+        }
+      },
+      "margin": {
+        "$type": "dimension",
+        "$value": {
+          "value": 40,
+          "unit": "px"
+        }
+      }
+    },
+    "mobile": {
+      "columns": {
+        "$type": "number",
+        "$value": 4
+      },
+      "gutter": {
+        "$type": "dimension",
+        "$value": {
+          "value": 16,
+          "unit": "px"
+        }
+      },
+      "margin": {
+        "$type": "dimension",
+        "$value": {
+          "value": 20,
+          "unit": "px"
+        }
+      }
+    },
+    "deck": {
+      "width": {
+        "$type": "dimension",
+        "$value": {
+          "value": 1920,
+          "unit": "px"
+        }
+      },
+      "height": {
+        "$type": "dimension",
+        "$value": {
+          "value": 1080,
+          "unit": "px"
+        }
+      },
+      "columns": {
+        "$type": "number",
+        "$value": 12
+      },
+      "gutter": {
+        "$type": "dimension",
+        "$value": {
+          "value": 32,
+          "unit": "px"
+        }
+      },
+      "margin": {
+        "$type": "dimension",
+        "$value": {
+          "value": 96,
+          "unit": "px"
+        }
+      }
+    },
+    "illustration": {
+      "width": {
+        "$type": "dimension",
+        "$value": {
+          "value": 480,
+          "unit": "px"
+        }
+      },
+      "height": {
+        "$type": "dimension",
+        "$value": {
+          "value": 336,
+          "unit": "px"
+        }
+      },
+      "grid": {
+        "$type": "dimension",
+        "$value": {
+          "value": 24,
+          "unit": "px"
+        }
+      },
+      "snap": {
+        "$type": "dimension",
+        "$value": {
+          "value": 12,
+          "unit": "px"
+        }
+      },
+      "stroke": {
+        "$type": "dimension",
+        "$value": {
+          "value": 6,
+          "unit": "px"
+        }
+      }
+    },
+    "icon": {
+      "grid": {
+        "$type": "dimension",
+        "$value": {
+          "value": 24,
+          "unit": "px"
+        }
+      },
+      "stroke": {
+        "$type": "dimension",
+        "$value": {
+          "value": 1.5,
+          "unit": "px"
+        }
+      },
+      "rail-pitch": {
+        "$type": "dimension",
+        "$value": {
+          "value": 4,
+          "unit": "px"
+        }
+      }
+    }
+  }
+}
