@@ -338,7 +338,7 @@ dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
 
 /* Code block (NYTE code block standard; kit CodeBlock). Ink panel; a header strip with the
    language label and an icon-only copy button; Mono 14/1.7 at every width; lines never wrap,
-   and the shared .code-next arrow (app.js) scrolls wide code. No gradient fade. */
+   and the shared .code-next arrow (app.js), in the header strip beside copy, scrolls wide code. No gradient fade. */
 .v3-code{position:relative;min-width:0;background:var(--ink);color:var(--cream)}
 .v3-code-head{display:flex;align-items:center;justify-content:space-between;gap:16px;height:48px;padding:0 2px 0 28px;border-bottom:1.5px solid var(--dark-rule)}
 .v3-code-head .v3-label{color:var(--ink-2-dark)}
@@ -359,9 +359,12 @@ dialog::backdrop{background:rgba(21,19,17,.72);backdrop-filter:none}
 .v3-code .s.y{color:var(--yellow)}
 .v3-code .k,.v3-code .c{color:var(--ink-2-dark)}
 .v3-code .chg{background:var(--dark-sunken);box-shadow:none;color:var(--cream)}
-.v3-code .code-next:not([hidden]){display:flex;position:absolute;right:8px;top:50%;z-index:2;align-items:center;justify-content:center;width:40px;height:40px;padding:0;transform:translateY(-50%);border:1.5px solid var(--dark-rule);border-radius:0;background:var(--ink);color:var(--cream);cursor:pointer}
-.v3-code .code-next svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.75}
-.v3-code .code-next:focus-visible{outline:2px solid var(--lime);outline-offset:2px}
+.v3-code-tools{display:flex;flex:none;align-items:center;gap:4px}
+.v3-code .code-next[hidden]{display:none}
+.v3-code .code-next{display:flex;flex:none;align-items:center;justify-content:center;width:44px;height:44px;padding:0;border:0;border-radius:0;background:transparent;color:var(--cream);cursor:pointer}
+.v3-code .code-next svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.5}
+.v3-code .code-next:hover{background:var(--dark-sunken)}
+.v3-code .code-next:focus-visible{outline:2px solid var(--cream);outline-offset:-4px}
 @media (max-width:600px){
   .v3-code-head{padding-left:20px}
   .v3-code pre{padding:20px}

@@ -53,8 +53,9 @@ class MemberBadgeTests(unittest.TestCase):
         self.assertIn('href="/assets/badges/nyte-verified-secure-white.svg" download', self.page)
         self.assertEqual(self.page.count('alt="NYTE Verified Secure"'), 2)
         self.assertEqual(self.page.count('role="tab"'), 2)
-        # Kit CodeBlock: icon-only copy inside the panel; the settings sit in their own list.
-        self.assertIn('<div class="v3-code-head"><span class="v3-label">HTML</span><button class="v3-code-copy" id="copy" type="button" aria-label="Copy HTML" data-status="copy-status"', self.page)
+        # Kit CodeBlock: scroll arrow and icon-only copy in the header strip; the settings sit in their own list.
+        self.assertIn('<div class="v3-code-head"><span class="v3-label">HTML</span><span class="v3-code-tools"><button class="code-next" type="button" aria-label="Scroll code right" hidden>', self.page)
+        self.assertIn('<button class="v3-code-copy" id="copy" type="button" aria-label="Copy HTML" data-status="copy-status"', self.page)
         self.assertIn('aria-label="Scroll code right" hidden', self.page)
         self.assertIn('enforces one of:</p><ul class="bv3-settings">', self.page)
         self.assertEqual(self.page.count('<div class="bv3-rule"><h3>'), 4)

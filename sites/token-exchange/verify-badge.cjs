@@ -67,6 +67,7 @@ const output = process.env.NYTE_PREVIEW_DIR || require('node:os').tmpdir();
       assert.equal(await page.locator('.bv3-actions .btn').count(), 1);
       const overflows = await page.evaluate(() => { const c = document.querySelector('.bv3-code .code'); return c.scrollWidth > c.clientWidth + 2; });
       assert.equal(await page.locator('.bv3-code .code-next').isVisible(), overflows, `scroll arrow follows overflow at ${width}`);
+      assert.equal(await page.locator('.bv3-code .v3-code-head .code-next').count(), 1, `scroll arrow sits in the header strip at ${width}`);
       // The three settings never break mid-word.
       for (const chip of await page.locator('.bv3-settings code').all()) {
         const box = await chip.boundingBox();
