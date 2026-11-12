@@ -19,10 +19,12 @@ from __future__ import annotations
 
 import base64
 import hmac
+import logging
 import secrets
 from dataclasses import dataclass
 from urllib.parse import parse_qsl, quote, urlsplit
 
+import httpx
 from fastapi import APIRouter, BackgroundTasks, FastAPI, Request, Response
 from fastapi.responses import RedirectResponse
 from starlette.concurrency import run_in_threadpool
@@ -53,6 +55,8 @@ from trusted_router.signup_gate import (
 from trusted_router.social_rewards import SIGNUP_MICRODOLLARS, campaign_enabled
 from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
+
+log = logging.getLogger(__name__)
 
 OAUTH_STATE_COOKIE = "tr_oauth_state"
 OAUTH_NEXT_COOKIE = "tr_oauth_next"
@@ -321,9 +325,19 @@ async def _handle_callback(
                 state_domain,
             ),
         )
+        info = await fetch_user(provider=provider, access_token=access_token)
     except OAuthCodeRejected:
         raise api_error(400, "Invalid or expired sign-in code; please sign in again", ErrorType.BAD_REQUEST) from None
-    info = await fetch_user(provider=provider, access_token=access_token)
+    except httpx.TransportError as exc:
+        # A timeout or dropped connection to the provider. The code is single
+        # use and may already be spent, so the user starts over rather than
+        # retrying this callback. The warning keeps a provider outage visible.
+        log.warning("oauth provider unreachable provider=%s error_class=%s", provider.slug, type(exc).__name__)
+        raise api_error(
+            503,
+            f"{provider.slug.title()} did not respond; please sign in again",
+            ErrorType.SERVICE_UNAVAILABLE,
+        ) from None
     if not info.email_verified:
         raise api_error(
             400,

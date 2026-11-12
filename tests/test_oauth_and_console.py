@@ -200,6 +200,49 @@ def test_oauth_invalid_code_is_client_error_without_session(
     assert len(httpx_mock.get_requests()) == 1
 
 
+@pytest.mark.parametrize(
+    ("slug", "failing_url", "exc"),
+    [("google", "token", httpx.ReadTimeout("timed out")),
+     ("google", "user", httpx.ConnectTimeout("timed out")),
+     ("github", "token", httpx.ConnectError("refused")),
+     ("github", "user", httpx.RemoteProtocolError("dropped"))],
+)
+def test_oauth_provider_unreachable_is_retryable_without_session(
+    request: pytest.FixtureRequest, httpx_mock: Any, monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture, slug: str, failing_url: str, exc: Exception,
+) -> None:
+    """QUILL-ROUTER-GB: a provider timeout was an unhandled 500."""
+    from trusted_router.oauth_provider import OAUTH_PROVIDERS
+
+    client = request.getfixturevalue(f"{slug}_client")
+    state = _begin_oauth(client, slug)
+    def no_signup(*args: Any, **kwargs: Any) -> None:
+        pytest.fail("Unreachable provider reached account creation")
+    monkeypatch.setattr(InMemoryStore, "signup", no_signup)
+    token_url = OAUTH_PROVIDERS[slug].token_url
+    user_url = {"google": "https://openidconnect.googleapis.com/v1/userinfo",
+                "github": "https://api.github.com/user"}[slug]
+    if failing_url == "token":
+        httpx_mock.add_exception(exc, method="POST", url=token_url)
+    else:
+        httpx_mock.add_response(method="POST", url=token_url, json={"access_token": "provider-token"})
+        httpx_mock.add_exception(exc, method="GET", url=user_url)
+
+    with caplog.at_level(logging.WARNING, logger="trusted_router.routes.oauth"):
+        response = client.get(f"/{slug}_oauth_callback", params={"code": "spent-code", "state": state},
+                              follow_redirects=False)
+
+    assert response.status_code == 503
+    assert response.json()["error"]["message"] == f"{slug.title()} did not respond; please sign in again"
+    assert response.json()["error"]["type"] == "service_unavailable"
+    assert "tr_session=" not in response.headers.get("set-cookie", "")
+    assert "spent-code" not in response.text
+    assert "provider-token" not in response.text
+    logged = [r.getMessage() for r in caplog.records if r.name == "trusted_router.routes.oauth"]
+    assert logged == [f"oauth provider unreachable provider={slug} error_class={type(exc).__name__}"]
+    assert "spent-code" not in caplog.text and "provider-token" not in caplog.text
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("slug", "status", "error"),
