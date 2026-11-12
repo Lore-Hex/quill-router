@@ -586,11 +586,11 @@
   },
   "near-ai": {
     "card_version": 2,
-    "model_count": 1,
+    "model_count": 0,
     "name": "NEAR AI",
     "privacy": "Confidential + ZDR",
-    "route_count": 1,
-    "route_mode": "Prepaid",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
     "slug": "near-ai"
   },
   "nebius": {
