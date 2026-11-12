@@ -229,7 +229,7 @@
     "model_id_pattern": "^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$",
     "owner_pattern": "^[a-z0-9][a-z0-9._-]*$"
   },
-  "contract_version": "c6d4fe9a1360cc7e8a536faf5b5d966680e9d2e74aa5ddef81acccc61c188d69",
+  "contract_version": "b152ba48b7f1e9723e2fdf5de64dfebfd3d25b47bd24b04e0ce142b3e00d2ce5",
   "decision_tables": [
     {
       "max_tokens": 512,
@@ -1271,6 +1271,21 @@
         "status": "error"
       },
       "name": "account_quota_markers:monthly spend"
+    },
+    {
+      "attribution": {
+        "capacity_rejected": true,
+        "counts_toward_provider_availability": false,
+        "failure_class": "trustedrouter_capacity",
+        "owner": "trustedrouter"
+      },
+      "input": {
+        "error_message": "upstream reported out of credits",
+        "error_status": 429,
+        "error_type": "rate_limit_error",
+        "status": "error"
+      },
+      "name": "account_quota_markers:out of credits"
     },
     {
       "attribution": {
@@ -3228,6 +3243,7 @@
       "insufficient credit",
       "insufficient funds",
       "monthly spend",
+      "out of credits",
       "payment required",
       "quota exceeded for quota metric"
     ],

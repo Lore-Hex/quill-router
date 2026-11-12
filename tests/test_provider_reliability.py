@@ -45,6 +45,22 @@ def test_provider_account_quota_is_owned_by_trustedrouter() -> None:
     assert result.capacity_rejected is True
 
 
+@pytest.mark.parametrize("error_status", [None, 429, 500])
+def test_provider_out_of_credits_is_owned_by_trustedrouter(error_status: int | None) -> None:
+    # SambaNova's wording, seen on QUILL-ROUTER-7P/7V. Our provider account ran
+    # dry; the provider itself was healthy, so its uptime must not drop.
+    result = classify_provider_failure(
+        status="error",
+        error_type="provider_error",
+        error_status=error_status,
+        error_message="You have run out of credits. Add more at the billing page to continue.",
+    )
+
+    assert result.owner is FailureOwner.TRUSTEDROUTER
+    assert result.failure_class is FailureClass.TRUSTEDROUTER_CAPACITY
+    assert result.counts_toward_provider_availability is False
+
+
 def test_monitor_account_unavailable_is_a_router_fault_not_a_capacity_rejection() -> None:
     # The probe never reached the provider: this type is only emitted when the
     # MONITOR's own router account is unusable (probes.py, source == "router"

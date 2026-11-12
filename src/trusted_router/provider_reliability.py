@@ -59,6 +59,7 @@ _ACCOUNT_QUOTA_MARKERS = (
     "insufficient credit",
     "insufficient funds",
     "monthly spend",
+    "out of credits",
     "payment required",
     "quota exceeded for quota metric",
 )
