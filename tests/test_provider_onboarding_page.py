@@ -75,7 +75,10 @@ def test_provider_onboarding_page_has_machine_readable_requirements(
 
     assert response.status_code == 200
     assert "List your models on TrustedRouter." in response.text
-    assert "providers@trustedrouter.com" in response.text
+    assert "provider.ops@nytex.com" in response.text
+    assert "providers@trustedrouter.com" not in response.text
+    soup = BeautifulSoup(response.text, "html.parser")
+    assert len(soup.select('a[href^="mailto:provider.ops@nytex.com"]')) == 4
     assert "Legal company name:" in response.text
     assert "Privacy policy:" in response.text
     assert "DUNS number:" in response.text
@@ -120,7 +123,7 @@ def test_provider_onboarding_page_has_machine_readable_requirements(
     assert "Provider sign in" in response.text
     assert "Exclude account administration, billing, user management" in response.text
     assert (
-        'href="mailto:providers@trustedrouter.com?subject=Provider%20marketplace%20application%20for%20%5Bcompany%5D"'
+        'href="mailto:provider.ops@nytex.com?subject=Provider%20marketplace%20application%20for%20%5Bcompany%5D"'
         in response.text
     )
     assert (
