@@ -77,9 +77,12 @@ irregular scheduled runs, were missing.
 The installer now takes the host as `OBSERVER_HOST` and `OBSERVER_ZONE` and
 defaults to `tr-clickhouse-3`, a ClickHouse standby that runs no worker units.
 It has systemd-resolved with the stub resolver this unit binds, Python 3.11
-(the observer compiles under it), and outbound HTTPS through Cloud NAT. The unit
-keeps every restriction listed above: it runs as a dynamic user with no access
-to the ClickHouse data, credentials or the metadata server.
+(the observer runs under it), and outbound HTTPS through Cloud NAT. The unit
+keeps every restriction listed above. It runs as a dynamic user that cannot read
+the node's ClickHouse password file or reach the metadata server. It can still
+open loopback and VPC addresses, including the local ClickHouse and Keeper
+ports; ClickHouse data needs the password. Denying those addresses as well
+would be a further hardening step, to be tested on the host first.
 
 The cooldown ledger was on the deleted disk. The first run on the new host
 starts with an empty ledger, so an ongoing error class can alert once more;

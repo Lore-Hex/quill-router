@@ -214,3 +214,6 @@ def test_installer_targets_an_existing_cluster_host_by_parameter():
     assert not any("roach" in line for line in commands)
     assert 'compute ssh "$host" --zone="$zone"' in installer
     assert '"$host:$remote/"' in installer
+    assert "sys.exit(sys.version_info < (3, 11))" in installer
+    runbook = (root / "docs/clickhouse-reliability.md").read_text()
+    assert "price-refresh-observer.timer" in runbook

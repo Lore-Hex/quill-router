@@ -36,6 +36,8 @@ set -euo pipefail
 staging=$1
 sha=$2
 tar -xf "$staging/observer.tar" -C "$staging"
+# py_compile accepts imports that only fail at run time (datetime.UTC is 3.11).
+/usr/bin/python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))'
 /usr/bin/python3 -m py_compile "$staging/scripts/price_refresh_alerts.py"
 systemd-analyze verify "$staging/scripts/ops/price-refresh-observer.service" "$staging/scripts/ops/price-refresh-observer.timer"
 systemctl is-active --quiet systemd-resolved.service
