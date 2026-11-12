@@ -278,10 +278,12 @@ def test_lease_that_expires_during_the_wait_is_refused(system):
     [
         ({"health": {"status": "degraded"}}, True),
         ({"health_error": OSError("timed out")}, True),
+        ({"health_error": urllib.error.HTTPError(
+            "https://azure.trustedrouter.com/health", 500, "error", {}, None)}, True),
         ({"api_base_url": "https://api-aws.trustedrouter.com/v1"}, False),
         ({"after_release": "b" * 40}, False),
     ],
-    ids=["health-not-ok", "transport", "wrong-cloud", "release-changing"],
+    ids=["health-not-ok", "transport", "http-500", "wrong-cloud", "release-changing"],
 )
 def test_probe_separates_availability_from_evidence(monkeypatch, responses, unhealthy):
     reads = []

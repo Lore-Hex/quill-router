@@ -35,7 +35,9 @@ PLANES = {
     "azure": ("https://azure.trustedrouter.com", "https://api-azure.trustedrouter.com"),
 }
 SHA = re.compile(r"[a-f0-9]{7,40}")
-# How long one lease check tolerates an unhealthy protected cloud, wall clock.
+# How long one lease check keeps retrying an unhealthy protected cloud, wall
+# clock. The deadline is checked between probes, so the worst case is this
+# plus one in-flight probe (about 3 minutes when every fetch times out).
 PROTECTED_OUTAGE_GRACE_SECONDS = 180
 PROTECTED_RETRY_SECONDS = 15
 MAX_BYTES = 1_048_576
@@ -182,14 +184,15 @@ def probe_cloud(cloud: str) -> str:
     message = f"{cloud} is not a verified healthy holdback"
     try:
         before = fetch(f"{plane}/trust/control-plane.json")
-        plane_ok = fetch(f"{plane}/health").get("status") == "ok"
-        gateway_ok = fetch(f"{gateway}/health").get("status") == "ok"
+        if fetch(f"{plane}/health").get("status") != "ok":
+            raise Unhealthy(message) from Refused("control plane unhealthy")
+        if fetch(f"{gateway}/health").get("status") != "ok":
+            raise Unhealthy(message) from Refused("gateway unhealthy")
         after = fetch(f"{plane}/trust/control-plane.json")
+    except Unhealthy:
+        raise
     except (OSError, ValueError, Refused) as exc:
         raise Unhealthy(message) from exc
-    if not plane_ok or not gateway_ok:
-        raise Unhealthy(message) from Refused(
-            "control plane unhealthy" if not plane_ok else "gateway unhealthy")
     release = before.get("release")
     api_base = before.get("api_base_url")
     if (before != after or not isinstance(release, str)
