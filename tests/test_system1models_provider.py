@@ -358,6 +358,125 @@ def test_legacy_rate_rows_expire_at_cutover_not_the_manifest(monkeypatch, tmp_pa
     assert provider_manifest_row_pricing_deadlines(adapter.slug, raw) == {}
 
 
+def post_cutover_catalog(*models: str) -> dict:
+    """The /v1/models shape Decision Models published at 2026-11-12T00:00Z.
+
+    The top level became the new-account list (S1-LAUNCH-7, $0.097/$0.103 for
+    Pro); the previous list our accounts keep moved to existing_accounts.
+    """
+    payload = catalog(*models)
+    for row in payload["data"]:
+        pro = row["id"].startswith(("s1-pro", "reax-"))
+        row["prices"].update(
+            price_version="S1-LAUNCH-7",
+            USD={"global": "0.097", "eu": "0.103"} if pro else {"global": "0.032", "eu": "0.034"},
+            existing_accounts={
+                "price_version": "S1-LAUNCH-6",
+                "unit": "per_million_input_tokens",
+                "output_tokens": "free",
+                "USD": {"global": "0.08", "eu": "0.084"} if pro else {"global": "0.019", "eu": "0.021"},
+                "accounts_created_before": "2026-11-12T00:00:00Z",
+            },
+        )
+    return payload
+
+
+@pytest.mark.parametrize(
+    "tier,legacy,existing", [("global", 38_000, 80_000), ("eu", 40_000, 84_000)]
+)
+def test_refresh_after_the_cutover_republishes_discount_rows_at_the_approved_tariff(
+    monkeypatch, tmp_path, tier, legacy, existing
+):
+    # 2026-11-12: the 00:37Z refresh priced s1-pro/s1-pro-2 from the new-account
+    # list (38000 -> 97000, an unapproved x2.55 spike), so the gate held the
+    # provider and kept the expired discount rows: four routes went dark.
+    from datetime import date
+
+    from scripts import check_price_spike
+    from scripts.pricing.providers import _system1models
+
+    natives = ("s1-fast", "s1-pro", "s1-pro-2", "s1-pro-3")
+    adapter = System1Catalog(tier)
+    before_dir, after_dir = tmp_path / "before", tmp_path / "after"
+    before_dir.mkdir()
+    after_dir.mkdir()
+    adapter.manifest_path = before_dir / f"{adapter.slug}.json"
+    pre = catalog(*natives)
+    for row in pre["data"]:
+        if row["id"].startswith("s1-pro"):
+            row["prices"]["USD"] = {"global": "0.08", "eu": "0.084"}
+        else:
+            row["prices"]["USD"] = {"global": "0.019", "eu": "0.021"}
+    original = adapter.discover
+    monkeypatch.setattr(adapter, "probe", lambda *_a: True)
+    monkeypatch.setenv(adapter.key_env, "test")
+    monkeypatch.setattr(_system1models, "fetch_json", lambda *_a: pre)
+    monkeypatch.setattr(adapter, "discover", lambda value: original(value, today=date(2026, 11, 11)))
+    adapter.write_provider_manifest(adapter.fetch())
+    committed = {row["id"]: row for row in json.loads(adapter.manifest_path.read_text())["models"]}
+    pro = f"{adapter.slug}/s1-pro"
+    assert committed[pro]["input_token_price_per_m"] == legacy
+    assert committed[pro]["pricing_valid_until"] == "2026-11-12T00:00:00Z"
+
+    after_path = after_dir / f"{adapter.slug}.json"
+    after_path.write_text(adapter.manifest_path.read_text())
+    adapter.manifest_path = after_path
+    monkeypatch.setattr(_system1models, "fetch_json", lambda *_a: post_cutover_catalog(*natives))
+    monkeypatch.setattr(adapter, "discover", lambda value: original(value, today=date(2026, 11, 12)))
+    adapter.write_provider_manifest(adapter.fetch())
+    refreshed = {row["id"]: row for row in json.loads(after_path.read_text())["models"]}
+    for native in ("s1-pro", "s1-pro-2"):
+        row = refreshed[f"{adapter.slug}/{native}"]
+        assert row["input_token_price_per_m"] == existing
+        assert row["output_token_price_per_m"] == 0
+        assert row["pricing_valid_until"] is None
+        assert row.get("routable") is not False
+    # Untouched rows keep the existing-account tariff, not the new-account list.
+    assert refreshed[f"{adapter.slug}/s1-pro-3"]["input_token_price_per_m"] == existing
+    assert refreshed[f"{adapter.slug}/s1-fast"]["input_token_price_per_m"] == committed[
+        f"{adapter.slug}/s1-fast"
+    ]["input_token_price_per_m"]
+    # The refresh's spike gate accepts exactly this reviewed transition, so the
+    # provider is published rather than held at its committed state.
+    pair = (
+        check_price_spike._load_provider_manifests(before_dir),
+        check_price_spike._load_provider_manifests(after_dir),
+    )
+    assert check_price_spike.failing_routes(*pair) == set()
+    assert check_price_spike.check(*pair)[1]
+
+
+@pytest.mark.parametrize(
+    "change", ["not_object", "no_cutoff", "naive_cutoff", "bad_cutoff", "wrong_unit", "float"]
+)
+def test_malformed_existing_account_tariff_fails_closed(change):
+    payload = post_cutover_catalog("s1-pro")
+    existing = payload["data"][0]["prices"]["existing_accounts"]
+    if change == "not_object":
+        payload["data"][0]["prices"]["existing_accounts"] = "S1-LAUNCH-6"
+    elif change == "no_cutoff":
+        del existing["accounts_created_before"]
+    elif change == "naive_cutoff":
+        existing["accounts_created_before"] = "2026-11-12T00:00:00"
+    elif change == "bad_cutoff":
+        existing["accounts_created_before"] = "soon"
+    elif change == "wrong_unit":
+        existing["unit"] = "per_request"
+    elif change == "float":
+        existing["USD"]["eu"] = 0.084
+    with pytest.raises(RuntimeError, match="exact USD"):
+        System1Catalog("eu").discover(payload)
+
+
+def test_existing_account_tariff_applies_only_to_accounts_created_before_its_cutoff():
+    from datetime import date
+
+    payload = post_cutover_catalog("s1-pro")
+    payload["data"][0]["prices"]["existing_accounts"]["accounts_created_before"] = "2026-09-01T00:00:00Z"
+    prices, _ = System1Catalog("global").discover(payload, today=date(2026, 11, 12))
+    assert prices["decisionmodelsio/s1-pro"].prompt_micro_per_m == 97_000
+
+
 def test_refresh_drops_a_stale_manifest_level_deadline(monkeypatch, tmp_path):
     from scripts.pricing.providers import _system1models
 
