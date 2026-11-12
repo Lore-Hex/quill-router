@@ -167,8 +167,8 @@ def test_agrees_with_the_rollouts_own_refusal(
 
 
 def _confirm(tmp_path: Path, documents: dict[str, dict[str, Any]], *regions: str,
-             hold: str | None = None) -> tuple[subprocess.CompletedProcess[str], list[str]]:
-    env = _fake_cloud(tmp_path, documents)
+             hold: str | None = None, **names: str) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    env = {**_fake_cloud(tmp_path, documents), **names}
     if hold is not None:
         env["TR_DEPLOY_HOLD_REGIONS"] = hold
     run = subprocess.run(  # noqa: S603
@@ -199,14 +199,16 @@ def test_a_leftover_tag_fails_and_names_the_region_revision_and_removal(tmp_path
     run, calls = _confirm(tmp_path, documents, *REGIONS)
     assert run.returncode == 1
     errors = [line for line in run.stdout.splitlines() if line.startswith("::error::")]
-    assert len(errors) == 1
-    assert errors[0].startswith(
-        "::error::southamerica-east1: staged-drain is still on sa-old, but southamerica-east1-new serves."
-    )
-    assert errors[0].endswith(
+    # The whole line is pinned: an operator acts on every part of it.
+    assert errors == [
+        "::error::southamerica-east1: staged-drain is still on sa-old, but southamerica-east1-new serves. "
+        "An earlier rollout's drain was interrupted there, and the staged rollout refuses a region in "
+        "this state. Nothing has been rolled out by this run. Confirm southamerica-east1-new is healthy "
+        "at 100%, remove the tag with the command below, then start the deploy again with Re-run all jobs "
+        "(re-running only the failed jobs does not take the reservation again): "
         "gcloud run services update-traffic trusted-router --region southamerica-east1 "
         "--project quill-cloud-proxy --remove-tags staged-drain"
-    )
+    ]
     # It reports; it never removes the tag itself.
     assert len(calls) == 4 and all(call.startswith("run services describe ") for call in calls)
 
@@ -246,6 +248,21 @@ def test_a_region_that_cannot_be_read_fails_on_its_own(tmp_path: Path) -> None:
     assert len(calls) == 4 and run.stdout.count(": ready (") == 3
 
 
+def test_the_service_and_project_asked_are_the_ones_named(tmp_path: Path) -> None:
+    documents = _ready()
+    documents["us-east4"] = service(entry("east-old", 0, "staged-drain"), entry("us-east4-new", 100))
+    run, calls = _confirm(tmp_path, documents, *REGIONS, SERVICE="other-service", PROJECT_ID="other-project")
+    assert run.returncode == 1
+    assert calls == [
+        f"run services describe other-service --region={region} --project=other-project --format=json"
+        for region in REGIONS
+    ]
+    assert run.stdout.rstrip().splitlines()[2].endswith(
+        "gcloud run services update-traffic other-service --region us-east4 "
+        "--project other-project --remove-tags staged-drain"
+    )
+
+
 def test_a_held_region_is_not_asked(tmp_path: Path) -> None:
     documents = _ready()
     documents["us-east4"] = service(entry("east-old", 0, "staged-drain"), entry("us-east4-new", 100))
@@ -255,6 +272,7 @@ def test_a_held_region_is_not_asked(tmp_path: Path) -> None:
     run, calls = _confirm(held, documents, *REGIONS, hold="us-east4")
     assert run.returncode == 0, run.stdout + run.stderr
     assert not any("--region=us-east4" in call for call in calls) and len(calls) == 3
+    assert "::warning::us-east4 held by TR_DEPLOY_HOLD_REGIONS" in run.stdout
     # The same cloud without the hold is refused, so the hold is what passed it.
     refused, _ = _confirm(unheld, documents, *REGIONS)
     assert refused.returncode == 1
@@ -284,6 +302,15 @@ def test_the_workflow_asks_under_the_reservation_and_before_any_revision() -> No
         "bash scripts/deploy/confirm_regions_ready.sh " + " ".join(REGIONS)
     ]
     assert "if" not in runs[0] and "continue-on-error" not in runs[0]
+    # It signs in the way the rollout's own first job does, and it cannot sit on the reservation.
+    def sign_in(name: str) -> list[dict[str, Any]]:
+        return [{key: step[key] for key in ("uses", "with") if key in step}
+                for step in jobs[name]["steps"] if "google-github-actions/" in step.get("uses", "")]
+
+    assert sign_in("confirm-regions-ready") == sign_in("admit-cloud") != []
+    assert [step.get("uses") for step in job["steps"]].index("google-github-actions/setup-gcloud@v3") < (
+        job["steps"].index(runs[0]))
+    assert job["timeout-minutes"] <= 10
 
     # `deploy` waits for the answer, and a refusal skips it: its condition has no
     # status function, so a failed need is never overridden.

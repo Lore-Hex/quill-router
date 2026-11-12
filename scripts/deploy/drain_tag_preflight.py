@@ -8,8 +8,11 @@ rollout of that region, because the tag protects a revision other than the one
 now serving. That refusal is correct, but it arrives late: the primary region
 has already taken the new revision by the time a secondary refuses.
 
-This asks the same question from a service document, before anything rolls
-out. It reads; it never changes a tag.
+This asks the tag question from a service document, before anything rolls
+out. It asks every region, including one the rollout would pass over because
+it already serves the new revision: the next release would be refused there.
+The rollout's other checks of the outgoing revision still run at rollout
+time. It reads; it never changes a tag.
 """
 
 from __future__ import annotations
@@ -67,7 +70,8 @@ def main(argv: list[str] | None = None) -> int:
         f"::error::{args.region}: {DRAIN_TAG} is still on {leftover}, but {serving} serves. "
         "An earlier rollout's drain was interrupted there, and the staged rollout refuses a region in "
         f"this state. Nothing has been rolled out by this run. Confirm {serving} is healthy at 100%, "
-        "then remove the tag and rerun: "
+        "remove the tag with the command below, then start the deploy again with Re-run all jobs "
+        "(re-running only the failed jobs does not take the reservation again): "
         f"gcloud run services update-traffic {args.service} --region {args.region} "
         f"--project {args.project} --remove-tags {DRAIN_TAG}"
     )

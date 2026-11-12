@@ -423,6 +423,10 @@ def test_finalize_blocks_the_lease_when_a_refused_region_is_not_the_whole_story(
         "schema failed too": _regions_refused(**{"migrate-schema": failure}),
         "secrets failed too": _regions_refused(**{"sync-runtime-secrets": failure}),
         "schema never ran": _regions_refused(**{"migrate-schema": skipped}),
+        "secrets never ran": _regions_refused(**{"sync-runtime-secrets": skipped}),
+        "schema was cancelled": _regions_refused(**{"migrate-schema": {"result": "cancelled", "outputs": {}}}),
+        "secrets were cancelled": _regions_refused(
+            **{"sync-runtime-secrets": {"result": "cancelled", "outputs": {}}}),
         "the check was skipped, not failed": _regions_refused(**{"confirm-regions-ready": skipped}),
         "the check was cancelled": _regions_refused(**{"confirm-regions-ready": {"result": "cancelled", "outputs": {}}}),
         **{f"{name} ran anyway": _regions_refused(**{name: success}) for name in AFTER_DEPLOY},

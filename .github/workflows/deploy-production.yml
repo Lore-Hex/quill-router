@@ -233,7 +233,7 @@ jobs:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
       - uses: google-github-actions/setup-gcloud@v3
-      - name: Would the staged rollout accept every region?
+      - name: No region still carries an earlier rollout's drain tag
         run: bash scripts/deploy/confirm_regions_ready.sh us-central1 europe-west4 us-east4 southamerica-east1
 
   migrate-schema:
@@ -1490,8 +1490,8 @@ jobs:
             ."migrate-schema".result == "success" and ."sync-runtime-secrets".result == "success" and
             ([.deploy, ."rollout-secondaries", ."public-surface-companion", ."settle-drain-worker",
               ."verify-cloud-complete"] | all(.result == "skipped"))' <<< "$RESULTS" >/dev/null; then
-            # A region was not in a state the staged rollout accepts, and that
-            # was found before the first revision rolled out: every job that
+            # The read-only region check failed (a region was refused, or could
+            # not be read) before the first revision rolled out: every job that
             # changes a serving revision was skipped. Nothing of this run is
             # left to verify, so the reservation is released for the next run.
             # The run itself still fails, on confirm-regions-ready.
