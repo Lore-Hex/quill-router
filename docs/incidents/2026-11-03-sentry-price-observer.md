@@ -63,3 +63,26 @@ An isolated production-host check resolved GitHub using this mapping and could
 not connect to metadata port 80. A regression test failed on the original unit
 before the mapping was added. Installation checks that the resolver is active
 before replacing any service files.
+
+## Host deleted, 2026-11-11
+
+`roach-gcp` was stopped and then deleted on 2026-11-11 with the rest of the
+retired SREChat hosts. Nothing else on it was needed, and the observer was not
+moved first. The `price-refresh-watchdog` monitor reported its first missed
+check-in at 12:23 that day and one every hour after that.
+The GitHub workflow kept reporting refresh failures, so failed refreshes were
+still alerted. Only the watchdog, and the stale-catalog check between GitHub's
+irregular scheduled runs, were missing.
+
+The installer now takes the host as `OBSERVER_HOST` and `OBSERVER_ZONE` and
+defaults to `tr-clickhouse-3`, a ClickHouse standby that runs no worker units.
+It has systemd-resolved with the stub resolver this unit binds, Python 3.11
+(the observer compiles under it), and outbound HTTPS through Cloud NAT. The unit
+keeps every restriction listed above: it runs as a dynamic user with no access
+to the ClickHouse data, credentials or the metadata server.
+
+The cooldown ledger was on the deleted disk. The first run on the new host
+starts with an empty ledger, so an ongoing error class can alert once more;
+stable event IDs keep that to one event per class.
+
+Before deleting or rebuilding any host, search the repository for its name.

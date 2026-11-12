@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-# Installs only the independent observer on the existing monitoring host.
+# Installs only the independent observer on an existing internal host.
 set -euo pipefail
 export CLOUDSDK_CORE_PROJECT=quill-cloud-proxy
+# roach-gcp, the first host, was deleted on 2026-11-11. tr-clickhouse-3 is a
+# ClickHouse standby with no worker units and the resolver the unit expects.
+host=${OBSERVER_HOST:-tr-clickhouse-3}
+zone=${OBSERVER_ZONE:-us-central1-c}
 sha=${1:?Pass the full tested commit SHA already merged into origin/main}
 [[ "$sha" =~ ^[a-f0-9]{40}$ ]] || exit 2
 if [[ ${CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE:-} == *tr-ops-local.json ]]; then
@@ -13,7 +17,7 @@ cd "$root"
 git merge-base --is-ancestor "$sha" origin/main
 tmp=$(mktemp -d)
 remote="/tmp/tr-price-observer-$(basename "$tmp")"
-ssh_args=(compute ssh roach-gcp --zone=us-central1-a --tunnel-through-iap --quiet)
+ssh_args=(compute ssh "$host" --zone="$zone" --tunnel-through-iap --quiet)
 cleanup() {
   rm -rf "$tmp"
   gcloud "${ssh_args[@]}" --command="rm -rf '$remote'" >/dev/null 2>&1 || true
@@ -25,8 +29,8 @@ git archive "$sha" scripts/price_refresh_alerts.py \
 gcloud secrets versions access latest --secret=trustedrouter-sentry-dsn --out-file="$tmp/ingest.dsn"
 chmod 600 "$tmp/ingest.dsn"
 gcloud "${ssh_args[@]}" --command="umask 077; mkdir '$remote'"
-gcloud compute scp --zone=us-central1-a --tunnel-through-iap --quiet \
-  "$tmp/observer.tar" "$tmp/ingest.dsn" "roach-gcp:$remote/"
+gcloud compute scp --zone="$zone" --tunnel-through-iap --quiet \
+  "$tmp/observer.tar" "$tmp/ingest.dsn" "$host:$remote/"
 gcloud "${ssh_args[@]}" --command="sudo bash -s -- '$remote' '$sha'" <<'REMOTE'
 set -euo pipefail
 staging=$1

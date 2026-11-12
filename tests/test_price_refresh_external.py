@@ -200,3 +200,17 @@ def test_metadata_isolation_uses_loopback_dns_without_changing_host_resolver():
     installer = (root / "scripts/ops/install_price_refresh_observer.sh").read_text()
     assert "systemctl is-active --quiet systemd-resolved.service" in installer
     assert "test -r /run/systemd/resolve/stub-resolv.conf" in installer
+
+
+def test_installer_targets_an_existing_cluster_host_by_parameter():
+    """roach-gcp was deleted with the observer still on it (2026-11-11)."""
+    root = Path(__file__).resolve().parents[1]
+    installer = (root / "scripts/ops/install_price_refresh_observer.sh").read_text()
+    assert "host=${OBSERVER_HOST:-tr-clickhouse-3}" in installer
+    assert "zone=${OBSERVER_ZONE:-us-central1-c}" in installer
+    nodes = (root / "scripts/deploy/_clickhouse_publisher.sh").read_text()
+    assert '"tr-clickhouse-3:us-central1-c"' in nodes
+    commands = [line for line in installer.splitlines() if not line.lstrip().startswith("#")]
+    assert not any("roach" in line for line in commands)
+    assert 'compute ssh "$host" --zone="$zone"' in installer
+    assert '"$host:$remote/"' in installer
