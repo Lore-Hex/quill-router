@@ -635,13 +635,19 @@
     "attribution": "Robot, Robot & Human",
     "attribution_link": "https://trustedrouter.com/customers/robot-robot-human",
     "press": {
-      "label": "Featured in",
-      "source": "Axios",
-      "quote": "In a demo, I was able to use a DeepSeek model in under 30 seconds using TrustedRouter, an open-source routing company.",
-      "quote_style": "Italic",
-      "link": [
-        "Read the story →",
-        "https://www.axios.com/2026/08/25/routing-is-coming-for-the-frontier-ai-labs"
+      "label": "In the press",
+      "lead": {
+        "source": "VentureBeat",
+        "quote": "Challenging the dominance of major AI providers, TrustedRouter clears more than three billion encrypted tokens on a typical day across a catalog of more than 600 models and 100 providers.",
+        "link": [
+          "Read the story",
+          "https://venturebeat.com/technology/trustedrouter-launches-three-new-encrypted-fusion-models-that-combine-multiple-llms-including-one-exclusively-with-u-s-model-providers"
+        ]
+      },
+      "stories": [
+        ["Axios", "I was able to use a DeepSeek model in under 30 seconds.", "https://www.axios.com/2026/08/25/routing-is-coming-for-the-frontier-ai-labs"],
+        ["Semafor", "Neither TrustedRouter nor the data center running the model can read a customer’s prompts or outputs.", "https://semafor.com/article/10/16/2026/openrouter-challenger-closes-seed-round"],
+        ["The Information", "A storefront for businesses wanting to tap any AI model.", "https://www.theinformation.com/newsletters/the-briefing/anthropic-miss-peak-ipo-moment/"]
       ]
     }
   },

@@ -357,8 +357,12 @@ def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None
     assert "GLM" in dashboard.text
     assert "Gemma" in dashboard.text
     assert "Google" in dashboard.text
-    assert "Featured in" in dashboard.text
-    assert "Axios" in dashboard.text
+    # Press coverage has its own section, led by VentureBeat.
+    assert '<section id="press"' in dashboard.text
+    assert "In the press" in dashboard.text
+    assert "Featured in" not in dashboard.text
+    for source in ("VentureBeat", "Axios", "Semafor", "The Information"):
+        assert f'alt="{source}"' in dashboard.text
     assert "DeepSeek model in under 30 seconds" in dashboard.text
     assert (
         'href="https://www.axios.com/2026/08/25/'

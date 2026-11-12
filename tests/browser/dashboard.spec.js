@@ -11,7 +11,6 @@ test("homepage opens sign-in modal and handles missing MetaMask", async ({ page 
   await expect(page.locator("#top .hero .button-primary")).toHaveText("Create my API key");
   await expect(page.locator("#top .cta-note")).toContainText("No card required");
   await expect(page.locator("body")).toHaveCSS("font-size", "16px");
-  await expect(page.locator("#customers .press .action-link")).toHaveCSS("text-decoration-line", "underline");
 
   // The faintest running text (the no-card note under the hero CTA) must still
   // meet AA contrast against the surface it sits on.
@@ -36,7 +35,7 @@ test("homepage opens sign-in modal and handles missing MetaMask", async ({ page 
       return getComputedStyle(document.body).backgroundColor;
     };
     const note = document.querySelector("#top .cta-note");
-    const press = document.querySelector("#customers .press .src");
+    const press = document.querySelector("#press .press-q");
     return {
       note: ratio(getComputedStyle(note).color, surface(note)),
       press: ratio(getComputedStyle(press).color, surface(press)),
@@ -283,17 +282,28 @@ test("homepage exposes confidentiality, free-start, migration and open-source cl
   ).toBeVisible();
 });
 
-test("homepage links the Axios feature and demo result", async ({ page }) => {
+test("homepage press section leads with VentureBeat and links every story", async ({ page }) => {
   await page.goto("/");
 
-  const feature = page.locator("#customers .press");
-  await expect(feature).toBeVisible();
-  await expect(feature).toContainText("Featured in · Axios");
-  await expect(feature).toContainText("DeepSeek model in under 30 seconds");
-  await expect(feature.getByRole("link", { name: "Read the story" })).toHaveAttribute(
+  const press = page.locator("#press");
+  await expect(press).toBeVisible();
+  await expect(press.getByRole("heading", { name: "In the press" })).toBeVisible();
+  await expect(press.getByRole("link", { name: "Read the story" })).toHaveAttribute(
     "href",
-    "https://www.axios.com/2026/08/25/routing-is-coming-for-the-frontier-ai-labs",
+    /^https:\/\/venturebeat\.com\//,
   );
+  for (const href of [
+    "https://www.axios.com/2026/08/25/routing-is-coming-for-the-frontier-ai-labs",
+    "https://semafor.com/article/10/16/2026/openrouter-challenger-closes-seed-round",
+    "https://www.theinformation.com/newsletters/the-briefing/anthropic-miss-peak-ipo-moment/",
+  ]) {
+    await expect(press.locator(`a[href="${href}"]`)).toBeVisible();
+  }
+  for (const link of await press.locator("a").all()) {
+    await expect(link).toHaveAttribute("target", "_blank");
+    await expect(link).toHaveAttribute("rel", "noopener");
+  }
+  await expect(page.locator("#customers .press")).toHaveCount(0);
 });
 
 test("local trust page links the public source repositories and release files", async ({ page }) => {
