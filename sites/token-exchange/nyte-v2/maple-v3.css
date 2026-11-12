@@ -176,3 +176,8 @@ html.mv3-js .mv3-no-js,html:not(.mv3-js) .mv3-js-only{display:none}
 
 /* External links: the kit arrow-up-right icon, in the link colour. */
 .mv3-ext{display:inline-block;width:.75em;height:.75em;margin-left:.3em;vertical-align:-.02em;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:butt;stroke-linejoin:miter}
+/* A step still waiting on a newer NYTE record (data-state="wait") is left out of the list;
+   the verdict above it says where the check stands. */
+.steps li[data-state="wait"]{display:none}
+/* The gateway result stays out of view while it waits on a newer NYTE record; it returns when green. */
+#gateway-check[data-verdict="pending"] .mv3-status{display:none}
