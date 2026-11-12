@@ -8,6 +8,7 @@ SOURCE_DIGESTS = {'scripts/deploy/infra.sh': '259931cd73d94d0f3fc535b5f8a6ef523a
  'scripts/deploy/migrate_analytics_outbox.sh': 'ae244118bf4d3266e286e663f99e4907289be8e24dea76d05f4bc0814fd4167a',
  'scripts/deploy/migrate_async_settle_admission.sh': '1fac3e0df16cfa720f4d385a4018e2b350c08a346d4951cf53ca6d8e863aeb1b',
  'scripts/deploy/migrate_async_settle_drain_health.sh': '588828c2e795532cf485fd3c771bf524a133015d57e0bdfad0d3208fc62bfb61',
+ 'scripts/deploy/migrate_clickhouse_node_role.sh': '64b40b2e2e157229d9d9d8b52f34444396faf9be20488e3c376c8e1522fbb2b3',
  'scripts/deploy/migrate_entity_ttl.sh': 'ad4f59b3608ff39a158244b71405ed427b5e47542665afb85370afd2cbebaa9f',
  'scripts/deploy/migrate_fastpath.sh': '17ece08d96c4ee007ac4d46d0f2c128262fc22bc52c91ed9c9b86e3c6e910099',
  'scripts/deploy/migrate_gateway_request_index.sh': '5b9a4b18007649f3108214ab2274d216b989909a5098cf38944cad7c7ad480f2',
