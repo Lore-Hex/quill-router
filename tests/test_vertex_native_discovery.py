@@ -132,6 +132,47 @@ def test_vertex_argon_live_flat_tables_and_promotion(day: date, expected: int) -
     assert "google/gemini-4-argon-cyber-permissive" not in vertex_prices.parse(html, as_of=day)
 
 
+def _gemini4_cache_write_page() -> str:
+    # Live Gemini 4 section captured 2026-11-12, after Google added Gemini 4
+    # Hydrogen, renamed "Cached input" to "Cache read" and added "Cache write".
+    return (Path(__file__).parent / "fixtures/pricing/vertex_gemini4_cache_write.html").read_text()
+
+
+@pytest.mark.parametrize("model", ["argon", "carbon"])
+@pytest.mark.parametrize(
+    "day,expected",
+    [(date(2026, 11, 12), 2_000_000), (date(2026, 11, 30), 2_000_000),
+     (date(2026, 12, 1), 4_000_000)],
+)
+def test_vertex_gemini4_cache_read_and_write_columns(model: str, day: date, expected: int) -> None:
+    prices = vertex_prices.parse(_gemini4_cache_write_page(), as_of=day)
+    price = prices[f"google/gemini-4-{model}"]
+    assert len(price.tiers) == 1
+    assert price.prompt_micro_per_m == expected
+    assert price.completion_micro_per_m == expected * 5
+    assert price.tiers[0].prompt_cached_micro_per_m == expected // 20
+    assert f"google/gemini-4-{model}-cyber-permissive" not in prices
+    assert not any("hydrogen" in mid for mid in prices)
+
+
+def test_vertex_published_cache_write_tariff_holds_the_model() -> None:
+    # ModelPrice cannot bill cache writes, so a priced cache-write cell is an
+    # incomplete tariff: hold that model, keep its N/A siblings.
+    html = _gemini4_cache_write_page().replace("Gemini 4 Hydrogen", "Gemini 4 Pro")
+    prices = vertex_prices.parse(html, as_of=date(2026, 11, 12))
+    assert "google/gemini-4-pro" not in prices
+    assert {"google/gemini-4-argon", "google/gemini-4-carbon"} <= prices.keys()
+
+
+def test_vertex_misplaced_cache_write_column_fails_closed() -> None:
+    # Swap the standard table's cache read/write headers: positions are part
+    # of the contract, so a moved write column must not be read as cache hits.
+    html = _gemini4_cache_write_page().replace("Cache read", "@@", 1)
+    html = html.replace("Cache write", "Cache read", 1).replace("@@", "Cache write", 1)
+    with pytest.raises(ValueError, match="cache write column moved"):
+        vertex_prices.parse(html, as_of=date(2026, 11, 12))
+
+
 def test_vertex_flat_prices_require_identified_standard_tab() -> None:
     html = (Path(__file__).parent / "fixtures/pricing/vertex_argon.html").read_text()
     # Reordering, selected tabs, and their numeric ids are not billing evidence.
