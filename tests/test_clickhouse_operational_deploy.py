@@ -435,7 +435,9 @@ def test_live_ingestion_restarts_every_daemon_whose_code_it_ships() -> None:
     # The operational drains restart through the guarded loop: both units are
     # named, and the loop both restarts and re-asserts activeness. The guard
     # exists because the postgres variant only exists on the AWS/Azure nodes.
-    loop = script[script.index("for unit in") : script.index("done", script.index("for unit in"))]
+    # The first loop refreshes installed unit files; the restart loop follows.
+    start = script.index("for unit in", script.index("systemctl daemon-reload"))
+    loop = script[start : script.index("done", start)]
     assert "tr-clickhouse-operational-ingest.service" in loop
     assert "tr-clickhouse-operational-ingest-postgres.service" in loop
     assert "systemctl restart" in loop

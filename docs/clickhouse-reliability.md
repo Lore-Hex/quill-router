@@ -1047,9 +1047,19 @@ they ship the node code) creates:
 the latter conditioned on this one role. Neither narrows anything while the
 account also holds `roles/spanner.databaseUser`.
 
-Remaining, in order: set `TR_SPANNER_DATABASE_ROLE=tr_clickhouse_node` in the
-node units and redeploy the nodes; confirm the dedicated heartbeat row is fresh
-and every node job succeeds as the role; then remove the account's
+**The units (step 3).** The five units whose programs open Spanner
+(`tr-clickhouse-ingest`, `-operational-ingest`, `-overrun-rollup`,
+`-spanner-delivery` and `-workspace-directory`) set
+`Environment=TR_SPANNER_DATABASE_ROLE=tr_clickhouse_node` in the unit itself,
+because the deploys rewrite `/etc/tr-clickhouse-ingest.env` with the password
+alone. `scripts/deploy/clickhouse_live_ingestion.sh` installs the first three
+and refreshes the operational drain and delivery verifier units when they are
+already installed, so one live deploy moves every Spanner program to the role.
+To roll back, revert the unit line and run the live deploy again; the
+account's database-wide access is still in place until step 4.
+
+Remaining, in order: run the live deploy; confirm the dedicated heartbeat row
+is fresh and every node job succeeds as the role; then remove the account's
 `roles/spanner.databaseUser` binding (and the grant in
 `scripts/deploy/clickhouse_cluster.sh`), and retire the legacy heartbeat write
 and read.

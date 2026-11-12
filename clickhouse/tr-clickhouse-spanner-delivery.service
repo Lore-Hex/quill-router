@@ -8,6 +8,7 @@ User=tr-clickhouse-ingest
 Group=tr-clickhouse-ingest
 WorkingDirectory=/opt/tr-clickhouse
 Environment=PYTHONPATH=/opt/tr-clickhouse/src
+Environment=TR_SPANNER_DATABASE_ROLE=tr_clickhouse_node
 EnvironmentFile=/etc/tr-clickhouse-ingest.env
 ExecStart=/opt/tr-clickhouse/venv/bin/python -m clickhouse.verify_spanner_delivery
 TimeoutStartSec=5m
