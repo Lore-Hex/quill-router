@@ -1,0 +1,64 @@
+# gitleaks configuration, read by .github/workflows/secret-scan.yml.
+#
+# The default ruleset applies in full. Each allowlist below names the rules it
+# was observed to trip and is scoped to those rules only, so a different kind of
+# credential in the same file (a cloud access key, a private key, a provider
+# token) still fails the scan. Prefer an inline `gitleaks:allow` comment, or a
+# fingerprint in .gitleaksignore, for a one-off known-fake value; add a path
+# here only for files that are regenerated wholesale.
+#
+# Baseline: a full-history scan on 2026-11-12 (gitleaks 8.30.1) found only
+# test vectors, digests, public evidence and fake fixture values; every entry
+# here and in .gitleaksignore comes from that review.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = """Generated, deterministic test vectors. JWS/JWT strings are \
+signed with keys whose seeds are committed beside them; the generic-api-key \
+hits are sha256 digests and hash-shaped ids."""
+targetRules = ["jwt", "generic-api-key"]
+paths = [
+  # Go fast-path parity vectors and signed snapshot/policy manifests.
+  '''^fastpath/testdata/''',
+  # Async-settlement shadow vectors, written by tests/shadow_v2_fixture_generator.py.
+  '''^tests/fixtures/async_settlement/''',
+  # Speculation protocol vectors, written by tests/fixtures/speculation_v1/_generate.py.
+  '''^tests/fixtures/speculation_v1/''',
+  # Stage C admission receipts (placeholder key hashes, fixture-signed JWS).
+  '''^tests/fixtures/stage_c/''',
+  # Written by tests/fixtures/generate_gateway_authorizations.py.
+  '''^tests/fixtures/gateway_authorizations_main\.json$''',
+]
+
+[[allowlists]]
+description = """Source-digest pin manifests: maps of file or statement names \
+to sha256 hex digests, which the entropy rules read as keys."""
+targetRules = ["generic-api-key", "sentry-access-token"]
+paths = [
+  # The sentry-access-token hits are digests of routes/internal/sentry.py.
+  '''^tests/fakes/frozen_main/pins\.json$''',
+  '''^tests/conformance/spanner_sql_manifest\.json$''',
+  '''^tests/conformance/spanner_ddl\.py$''',
+  '''^src/trusted_router/data/provider_check_contract\.json$''',
+]
+
+[[allowlists]]
+description = """pytest duration caches: parametrized test ids embed the JWT \
+shaped settlement-ticket vectors above."""
+targetRules = ["jwt"]
+paths = ['''^\.test_durations[^/]*$''']
+
+[[allowlists]]
+description = """Published gateway attestation evidence: attestation tokens \
+shown on the homepage so anyone can verify them. Not credentials."""
+targetRules = ["jwt"]
+paths = ['''^docs/homepage/evidence/''']
+
+[[allowlists]]
+description = """Saved copies of public provider pricing pages. The hits are \
+the providers' own public browser keys and analytics tokens embedded in their \
+page source, not ours."""
+targetRules = ["gcp-api-key", "jwt"]
+paths = ['''^tests/fixtures/pricing/[^/]+\.html$''']

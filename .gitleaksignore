@@ -1,0 +1,99 @@
+# gitleaks fingerprints (commit:path:rule:line) of reviewed historical findings that are not secrets.
+# See .gitleaks.toml for path-scoped allowlists. Reviewed 2026-11-12 with gitleaks 8.30.1 over the
+# full history of main. CI scans only the commits a PR or push adds, so these entries matter only
+# for a full-history scan; a new finding is never fixed by adding it here without review.
+
+# Test code. Fake provider keys, placeholder key hashes and HMAC keys, sha256 digests of source,
+# and keyword arguments such as idempotency_key=... that the entropy rule reads as an assignment.
+cfd17430fbca20956bc6298def37866a80ad554c:fastpath/internal/edge/async_test.go:jwt:471
+7ebb3f67c6476e2e17a9c85a44d8d83c885915fa:fastpath/internal/edge/shadow_full_test.go:generic-api-key:703
+b2b8815c213a86f1fb94ee35a8c727ae25455018:fastpath/internal/gwauth/request_test.go:generic-api-key:16
+df581a99c704122d0660cc6a0207df0c19872211:tests/conformance/test_gateway_auth_boot_fold.py:generic-api-key:167
+df581a99c704122d0660cc6a0207df0c19872211:tests/conformance/test_gateway_auth_boot_fold.py:generic-api-key:199
+c3457808237001daee39b6a2f3af253d3c2daa49:tests/shadow_v2_fixture_generator.py:generic-api-key:354
+132a6064f964147409be1745a1831c2f6c6aab46:tests/test_acquisition_attribution.py:generic-api-key:106
+97c8a0c3a3b41f5ad9de146b7205fe835bd27143:tests/test_adyen_billing.py:generic-api-key:20
+9aa9058888b48658e8b35ccf2e3aeea671ac82f4:tests/test_async_settle_negotiation_regions.py:generic-api-key:96
+534d5dc5dcb38749f717ca79971bfc5bc6f7a9c5:tests/test_async_settle_pilot_tools.py:generic-api-key:149
+b441ae130af8994233ea37c47e01ed625d23d378:tests/test_authorize_hold_time.py:generic-api-key:25
+f04938d93f26724db1fab9c20d17ba53cdbccb22:tests/test_axiom_config.py:generic-api-key:293
+d99cdc04936a0257fc71c3b64eda12c01c7c8812:tests/test_backfill_leased_key_usage.py:generic-api-key:24
+d0e4c7169c47833cae86c9858fb2a9cf143723bc:tests/test_fastpath_pilot_route.py:generic-api-key:163
+d0e4c7169c47833cae86c9858fb2a9cf143723bc:tests/test_fastpath_pilot_route.py:generic-api-key:175
+d0e4c7169c47833cae86c9858fb2a9cf143723bc:tests/test_fastpath_pilot_route.py:generic-api-key:183
+d0e4c7169c47833cae86c9858fb2a9cf143723bc:tests/test_fastpath_pilot_route.py:generic-api-key:193
+d0e4c7169c47833cae86c9858fb2a9cf143723bc:tests/test_fastpath_pilot_route.py:generic-api-key:199
+d0e4c7169c47833cae86c9858fb2a9cf143723bc:tests/test_fastpath_pilot_route.py:generic-api-key:207
+49ed2fb1447ce85418f2b1f3d80fef1899c6f7e9:tests/test_gateway_authorize_spanner_operations.py:generic-api-key:471
+49ed2fb1447ce85418f2b1f3d80fef1899c6f7e9:tests/test_gateway_authorize_spanner_operations.py:generic-api-key:586
+49ed2fb1447ce85418f2b1f3d80fef1899c6f7e9:tests/test_gateway_authorize_spanner_operations.py:generic-api-key:645
+49ed2fb1447ce85418f2b1f3d80fef1899c6f7e9:tests/test_gateway_authorize_spanner_operations.py:generic-api-key:665
+49ed2fb1447ce85418f2b1f3d80fef1899c6f7e9:tests/test_gateway_authorize_spanner_operations.py:generic-api-key:674
+b441ae130af8994233ea37c47e01ed625d23d378:tests/test_gateway_authorize_spanner_operations.py:generic-api-key:579
+df581a99c704122d0660cc6a0207df0c19872211:tests/test_gateway_authorize_spanner_operations.py:generic-api-key:797
+df581a99c704122d0660cc6a0207df0c19872211:tests/test_gateway_authorize_spanner_operations.py:generic-api-key:828
+df581a99c704122d0660cc6a0207df0c19872211:tests/test_gateway_authorize_spanner_operations.py:generic-api-key:876
+772b974a3eb83e5dff0278afa1b229efb90ad792:tests/test_oauth_and_console.py:generic-api-key:688
+c259781090f8dd770bbaa4a48ac5b6b69cb6d0c1:tests/test_openai_service_tier.py:generic-api-key:112
+c259781090f8dd770bbaa4a48ac5b6b69cb6d0c1:tests/test_openai_service_tier.py:generic-api-key:134
+c259781090f8dd770bbaa4a48ac5b6b69cb6d0c1:tests/test_openai_service_tier.py:generic-api-key:253
+c259781090f8dd770bbaa4a48ac5b6b69cb6d0c1:tests/test_openai_service_tier.py:generic-api-key:270
+c259781090f8dd770bbaa4a48ac5b6b69cb6d0c1:tests/test_openai_service_tier.py:generic-api-key:92
+57c0072f928c351b6fe58ab04ace16ed40e095c8:tests/test_postgres_update_key.py:generic-api-key:538
+c15404149bff512067a31ca5fe993d90603d22ea:tests/test_pricing_discovery_failure_message.py:generic-api-key:26
+c15404149bff512067a31ca5fe993d90603d22ea:tests/test_pricing_discovery_failure_message.py:generic-api-key:27
+c15404149bff512067a31ca5fe993d90603d22ea:tests/test_pricing_discovery_failure_message.py:generic-api-key:28
+a0e42330ce1c048df8970731e02c3469e878320e:tests/test_provider_orchestration.py:generic-api-key:108
+a0e42330ce1c048df8970731e02c3469e878320e:tests/test_provider_orchestration.py:generic-api-key:96
+132a6064f964147409be1745a1831c2f6c6aab46:tests/test_public_surface_deploy.py:generic-api-key:80
+060d61cc0e8a8decaa17c805fe087e6768ca16ff:tests/test_regional_quota_r2a.py:generic-api-key:612
+83e87c026e1f13fef3622de237bcbc43d5a9a057:tests/test_request_tagging.py:generic-api-key:312
+83e87c026e1f13fef3622de237bcbc43d5a9a057:tests/test_request_tagging.py:generic-api-key:320
+a91bf74b3034b5e6daad40e14ceb22749aeab572:tests/test_routable_payouts.py:generic-api-key:374
+132a6064f964147409be1745a1831c2f6c6aab46:tests/test_service_surface_secret_isolation.py:generic-api-key:18
+26780a22c416cdb78d4225cee3726c284161c71a:tests/test_settle_c1_oracle.py:generic-api-key:20
+26780a22c416cdb78d4225cee3726c284161c71a:tests/test_settle_c1_oracle.py:generic-api-key:22
+5c969cd0cc83724393070fb492edefc6e2cd217d:tests/test_settle_lock_order.py:generic-api-key:803
+1858ce6534dc1c29b123456ba1e1d713ca05d701:tests/test_stripe_processing_fees.py:stripe-access-token:123
+a0e42330ce1c048df8970731e02c3469e878320e:tests/test_stubs_and_security.py:generic-api-key:401
+14222515c92e08fa479f7321f7f42cfdc33d52ba:tests/test_token_exchange_evidence.py:generic-api-key:61
+ef04d5b01a3b0734599c5550dd50ce4a06b4a711:tests/test_video_execution_replay.py:generic-api-key:173
+ef04d5b01a3b0734599c5550dd50ce4a06b4a711:tests/test_video_execution_replay.py:generic-api-key:190
+0bf65d4727b85b9597dec9024d2e1aa2fe0d65cb:tests/test_video_generation_control_plane.py:generic-api-key:294
+6e793645b2cb8b634ae942c6e8e75ba8d4861f63:tests/test_video_idempotency.py:generic-api-key:31
+9b57053d06cbd778b77160bc72961474d79ae611:tests/test_wallet_email_attach.py:generic-api-key:109
+f3e33530a06ce87a75dd8f993b93808aadf3da39:tests/test_wallet_only_byok.py:generic-api-key:110
+f3e33530a06ce87a75dd8f993b93808aadf3da39:tests/test_wallet_only_byok.py:generic-api-key:18
+f3e33530a06ce87a75dd8f993b93808aadf3da39:tests/test_wallet_only_byok.py:generic-api-key:45
+f3e33530a06ce87a75dd8f993b93808aadf3da39:tests/test_wallet_only_byok.py:generic-api-key:57
+f3e33530a06ce87a75dd8f993b93808aadf3da39:tests/test_wallet_only_byok.py:generic-api-key:78
+
+# docs/design/async-settle-outbox-v1.md: the JWTs are copies of the signed test vectors in
+# tests/fixtures/async_settlement/; the generic-api-key hit is a prose table row.
+c4c95e0f2a94b33ec3928daa10d769b78859a944:docs/design/async-settle-outbox-v1.md:generic-api-key:1624
+c4c95e0f2a94b33ec3928daa10d769b78859a944:docs/design/async-settle-outbox-v1.md:jwt:247
+f54bd4d56c5f97c7680eb46d8b08dd80d8eba8c4:docs/design/async-settle-outbox-v1.md:jwt:189
+f54bd4d56c5f97c7680eb46d8b08dd80d8eba8c4:docs/design/async-settle-outbox-v1.md:jwt:248
+f83bbaacb3e91271f7bac9ba26d826532f10962f:docs/design/async-settle-outbox-v1.md:jwt:189
+
+# IndexNow key. Public by protocol: it is served at https://trustedrouter.com/<key>.txt.
+8a2e57abd140b5b66f542aee24552a3c49490c0c:docs/marketing/llm-seo-opportunities.md:generic-api-key:44
+8a2e57abd140b5b66f542aee24552a3c49490c0c:docs/runbook.md:generic-api-key:533
+8a2e57abd140b5b66f542aee24552a3c49490c0c:src/trusted_router/routes/public.py:generic-api-key:92
+
+# curl examples in templates: the Authorization header holds a placeholder (sk-tr-v1-...)
+# or a template variable filled in for the signed-in user at render time.
+6491222c77aab569b048500ca3208c624f2c893c:src/trusted_router/templates/console/welcome.html:curl-auth-header:145
+c5889f77f173ca1dd0ea41ac52b08ed20c400b70:src/trusted_router/templates/console/welcome.html:curl-auth-header:144
+9a8a0fbd803b30fa7fbfd707cb3b599488bf02e2:src/trusted_router/templates/public/_decide_example.html:curl-auth-header:5
+
+# scripts/lightning/bitcoin_node.py: a git revision of the Bitcoin Core builder-keys repository.
+8f81dd651c9d33ee3b7789e4257b98dced284c03:scripts/lightning/bitcoin_node.py:generic-api-key:27
+
+# Identifiers, not values: authorization_id=/region= keyword arguments, an Ed25519PrivateKey type
+# annotation, region names, and a fixed signing-namespace label.
+c85e8e939de092980e44b72b357bbbfd4d784b1c:src/trusted_router/regional_billing.py:generic-api-key:55
+b5df8e76e38114cc3beb41eff402841f62173b58:src/trusted_router/services/resale.py:generic-api-key:174
+d053388cacb5f75ef01bf3c027665e89654cf4f3:src/trusted_router/spend_leases.py:generic-api-key:403
+137d594e26c99c1f80073cfe98cbf6d08d312528:src/trusted_router/synthetic/components.py:generic-api-key:194
+2cebf4b8480bdc1319a16e86a4dc09e372dc9fb8:src/trusted_router/synthetic/components.py:generic-api-key:211
