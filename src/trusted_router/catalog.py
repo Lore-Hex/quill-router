@@ -1103,7 +1103,7 @@ def provider_to_openrouter_shape(provider: Provider) -> dict[str, object]:
         "provider_e2ee": provider.provider_e2ee,
         "provider_policy": provider.provider_policy,
         "retention_notice": provider_retention_notice(provider.slug),
-        "retention_requires_model_review": provider.slug in {"openai", "google-vertex"},
+        "retention_requires_model_review": provider.slug in {"openai", "google-vertex", "azure"},
         "trusted_provider": provider_privacy_tier(provider) == PRIVACY_TIER_TRUSTED,
         "provider_policy_url": provider.provider_policy_url,
         "provider_headquarters_country": provider.provider_headquarters_country,
