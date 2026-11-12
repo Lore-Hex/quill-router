@@ -155,8 +155,8 @@ class VerifiedPageTests(unittest.TestCase):
         self.assertTrue((self.root / "assets" / "verified.js").exists())
         for name in ("badge.css", "verified.css", "badge.js"):
             self.assertFalse((self.root / "assets" / name).exists(), name)
-        self.assertIn("maple", json.loads((HERE / "nyte-brand-v3.json").read_text())["pages"])
-        # Removing "maple" from nyte-brand-v3.json restores the pre-v3 page, with its sheets.
+        self.assertNotIn("maple", json.loads((HERE / "nyte-brand-v3.json").read_text())["old_brand_pages"])
+        # Adding "maple" to old_brand_pages in nyte-brand-v3.json restores the pre-v3 page, with its sheets.
         rollback = nyte_v2.BRAND_V3_PAGES - {"maple"}
         with mock.patch.dict(os.environ, {"NYTE_BRAND_V3_PREVIEW": ""}), mock.patch.object(nyte_v2, "BRAND_V3_PAGES", rollback), \
                 tempfile.TemporaryDirectory() as directory:

@@ -1461,9 +1461,11 @@ def test_typed_finalize_releases_hot_rows_last_in_the_same_transaction(
     assert store.get_gateway_authorization(auth.id).settled is True
 
 
-def test_zero_hold_missing_key_rolls_back_finalize_and_preserves_frozen_usage(
+def test_zero_hold_key_row_only_at_another_shard_rolls_back_and_preserves_frozen_usage(
     fake_store: tuple[Any, Any],
 ) -> None:
+    """Counters at another shard only are an inconsistent live set: the settle
+    still raises, nothing commits, and the frozen usage books on a later try."""
     store, db = fake_store
     store.request_record_write_mode = "typed"
     ws = "ws-missing-uncapped-key"
@@ -1473,6 +1475,7 @@ def test_zero_hold_missing_key_rolls_back_finalize_and_preserves_frozen_usage(
     assert db.reservations[auth.credit_reservation_id]["key_reserved_micro"] == 0
     original_row = dict(_typed_key(db, key.hash))
     db.typed[KEY_LIMIT_TABLE].clear()
+    db.typed[KEY_LIMIT_TABLE][(key.hash, 1)] = dict(original_row, shard=1)
     outbox = SpannerSettleOutbox(db, store._param_types)
     outbox.enqueue(_row(auth, cost=777_777))
     [claimed] = outbox.claim(limit=1)
@@ -1487,5 +1490,41 @@ def test_zero_hold_missing_key_rolls_back_finalize_and_preserves_frozen_usage(
     db.typed[KEY_LIMIT_TABLE][(key.hash, 0)] = original_row
     assert apply_frozen_settle(claimed) == ApplyOutcome.SETTLED_NOW
     assert _typed_key(db, key.hash)["usage"] == 777_777
+    assert db.typed[KEY_LIMIT_TABLE][(key.hash, 1)]["usage"] == 0
     assert _typed_credit(db, ws)["total_usage"] == 777_777
     assert apply_frozen_settle(claimed) == ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
+
+
+def test_zero_hold_key_with_no_row_at_any_shard_settles_the_frozen_usage(
+    fake_store: tuple[Any, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No counter row at any shard cannot recover by retrying: the workspace
+    ledger settles as usual, no key counter is written, and one event is logged."""
+    from tests.keyrow_assertions import assert_unbooked
+
+    store, db = fake_store
+    store.request_record_write_mode = "typed"
+    ws = "ws-absent-uncapped-key"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws, limit=None)
+    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+    assert db.reservations[auth.credit_reservation_id]["key_reserved_micro"] == 0
+    db.typed[KEY_LIMIT_TABLE].clear()
+    outbox = SpannerSettleOutbox(db, store._param_types)
+    outbox.enqueue(_row(auth, cost=777_777))
+    [claimed] = outbox.claim(limit=1)
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        assert apply_frozen_settle(claimed) == ApplyOutcome.SETTLED_NOW
+    assert_unbooked(caplog, key.hash, 0, 777_777, False)
+    assert db.typed[KEY_LIMIT_TABLE] == {}
+    assert db.reservations[auth.credit_reservation_id]["settled"] is True
+    assert store.get_gateway_authorization(auth.id).settled is True
+    assert _typed_credit(db, ws)["total_usage"] == 777_777
+    assert _typed_credit(db, ws)["reserved"] == 0
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        assert apply_frozen_settle(claimed) == ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
+    assert db.typed[KEY_LIMIT_TABLE] == {}
+    assert not [r for r in caplog.records if r.name == "trusted_router.storage_gcp_authorize"]

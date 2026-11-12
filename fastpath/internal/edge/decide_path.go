@@ -186,6 +186,7 @@ type decider struct {
 	// slowAtEdge and slowInAll are SlowAtEdge and SlowInAll; a test
 	// shortens them.
 	slowAtEdge, slowInAll time.Duration
+	ticketGrace           time.Duration
 
 	mu sync.Mutex
 	// total is the counts since the edge started, period the period's;
@@ -214,11 +215,13 @@ type decider struct {
 type decideTally struct {
 	answered, readBack, refunded, refundFailed, slowOwn int64
 	unavailable, passed, slow, windows, via             map[string]int64
+	tickets                                             map[string]int64
+	ticketCall, ticketWait, insertCall                  elapsedTotals
 }
 
 func newDecideTally() decideTally {
 	return decideTally{unavailable: map[string]int64{}, passed: map[string]int64{}, slow: map[string]int64{},
-		windows: map[string]int64{}, via: map[string]int64{}}
+		windows: map[string]int64{}, via: map[string]int64{}, tickets: map[string]int64{}}
 }
 
 func newDecider(cfg DecideConfig, logf func(string, ...any), clock func() time.Time, every time.Duration) *decider {
@@ -346,6 +349,16 @@ func (e *Edge) decide(w http.ResponseWriter, r *http.Request, at time.Time, mark
 		return pass(PassBudgetSpent)
 	}
 	detached := context.WithoutCancel(r.Context())
+	call := e.startTicket(detached, d)
+	durable := false
+	if call != nil {
+		defer func() {
+			call.cancel()
+			if !durable {
+				dp.count(func(t *decideTally) { t.tickets["discarded"]++ })
+			}
+		}()
+	}
 	// The Spanner calls the 200 counts: the insert, its read-back, and an
 	// enforcing windowed key's window read.
 	var rpcs int64
@@ -382,8 +395,19 @@ func (e *Edge) decide(w http.ResponseWriter, r *http.Request, at time.Time, mark
 		dp.refund(admitter, got.Envelope)
 		return pass(PassCompose)
 	}
+	insertStarted := time.Now()
 	outcome, code := dp.cfg.Rows.InsertLeasedAuthorization(detached, composed.Authorization, composed.Reservation)
 	committed := time.Now()
+	dp.count(func(t *decideTally) { t.insertCall.add(committed.Sub(insertStarted)) })
+	if outcome == store.Inserted || outcome == store.Landed {
+		durable = true
+		if ticket := dp.awaitTicket(call, committed, budget); ticket != nil {
+			if ticketed, err := composed.WithTicket(*ticket); err == nil {
+				composed = ticketed
+				dp.count(func(t *decideTally) { t.tickets["spliced"]++ })
+			}
+		}
+	}
 	timing := func(n int64) gwauth.Timing {
 		now := time.Now()
 		return gwauth.Timing{TotalMS: now.Sub(arrived).Milliseconds(), SpannerRPCs: n,
@@ -564,6 +588,7 @@ func pauseAnswer(resp *http.Response) bool {
 type DecideCounts struct {
 	Answered, ReadBack, Unavailable, Refunded, RefundFailed int64
 	UnavailableByCode, Passed, Slow, Windows, DecidedVia    map[string]int64
+	Tickets                                                 map[string]int64
 }
 
 // DecideCounts are the counts now; zero with the decide path off.
@@ -578,7 +603,7 @@ func (e *Edge) DecideCounts() DecideCounts {
 	return DecideCounts{Answered: t.answered, ReadBack: t.readBack, Unavailable: sum(t.unavailable),
 		Refunded: t.refunded, RefundFailed: t.refundFailed, UnavailableByCode: maps.Clone(t.unavailable),
 		Passed: maps.Clone(t.passed), Slow: maps.Clone(t.slow), Windows: maps.Clone(t.windows),
-		DecidedVia: maps.Clone(t.via)}
+		DecidedVia: maps.Clone(t.via), Tickets: maps.Clone(t.tickets)}
 }
 
 func sum(m map[string]int64) int64 {
@@ -640,9 +665,12 @@ func (dp *decider) flush() {
 	}
 	dp.mu.Unlock()
 	dp.logf("fastpath edge decide: answered=%d read_back=%d unavailable=%d refunded=%d refund_failed=%d "+
-		"unavailable_by_code=%s passed=%s slow=%s windows=%s decided_via=%s", p.answered, p.readBack, unavailable,
+		"unavailable_by_code=%s passed=%s slow=%s windows=%s decided_via=%s tickets=%s "+
+		"ticket_call_ms_sum=%d ticket_call_ms_max=%d ticket_wait_ms_sum=%d ticket_wait_ms_max=%d "+
+		"insert_call_ms_sum=%d insert_call_ms_max=%d", p.answered, p.readBack, unavailable,
 		p.refunded, p.refundFailed, jsonOf(p.unavailable), jsonOf(p.passed), jsonOf(p.slow), jsonOf(p.windows),
-		jsonOf(p.via))
+		jsonOf(p.via), jsonOf(p.tickets), p.ticketCall.sum, p.ticketCall.max, p.ticketWait.sum, p.ticketWait.max,
+		p.insertCall.sum, p.insertCall.max)
 	if unavailable > 0 {
 		dp.alert(AlertUnavailable, fmt.Sprintf("the edge answered %d authorizes unavailable, their insert's "+
 			"outcome not known; by the insert's gRPC code: %s", unavailable, jsonOf(p.unavailable)))

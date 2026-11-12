@@ -1039,9 +1039,12 @@ class Settings(BaseSettings):
     # (docs/design/fast-admission-widening.md section 9.1). A request the
     # pilot leased takes no ticket (async_settle_admits_request), and the
     # workspaces listed here stay outside admission altogether, so the edge
-    # may answer their async-v1 authorizes: the edge passes every other
-    # workspace's to Python, the one ticket signer. Comma-separated, at most
-    # 32, all mode only, none of them on the overlap list; empty by default.
+    # may answer their async-v1 authorizes. The edge passes every other
+    # workspace's to Python, the one ticket signer, unless the edge ticket
+    # switch covers the workspace (fastpath_edge_async_ticket_workspaces):
+    # then the edge answers and asks Python for the signature. Comma-separated,
+    # at most 32, all mode only, none of them on the overlap list; empty by
+    # default.
     async_settle_fastpath_reserved_workspaces: str = ""
     _async_settle_fastpath_reserved_workspace_ids: frozenset[str] = PrivateAttr(default=frozenset())
     # Optional comma-separated serving-region allowlist for NEW async-v1
@@ -1089,6 +1092,8 @@ class Settings(BaseSettings):
     # edge may answer an async-v1 authorize itself. Off by default; rollout.sh
     # renders it as a literal false until the I4 step.
     fastpath_edge_decide_async: bool = False
+    fastpath_edge_async_ticket_workspaces: str = ""
+    _fastpath_edge_async_ticket_workspace_ids: frozenset[str] = PrivateAttr(default=frozenset())
 
     # Audited break-glass addition to the signed Stage D runtime policy. This
     # is deliberately empty and rollout.sh never inherits it from a revision.
@@ -1739,6 +1744,37 @@ class Settings(BaseSettings):
         return self._async_settle_pilot_workspace_ids
 
     @model_validator(mode="after")
+    def parse_fastpath_edge_async_ticket_workspaces(self) -> Settings:
+        ids = frozenset(
+            part.strip() for part in self.fastpath_edge_async_ticket_workspaces.split(",") if part.strip()
+        )
+        if ids != {"*"} and (len(ids) > 32 or any(
+            re.fullmatch(r"[A-Za-z0-9_./:@+\-]{1,64}", value) is None for value in ids
+        )):
+            raise ValueError("invalid fast path edge async ticket workspace set")
+        if self.fastpath_edge_async_ticket_workspaces and not ids:
+            raise ValueError("empty fast path edge async ticket workspace set")
+        self._fastpath_edge_async_ticket_workspace_ids = ids
+        return self
+
+    @property
+    def fastpath_edge_async_ticket_workspace_ids(self) -> frozenset[str]:
+        return self._fastpath_edge_async_ticket_workspace_ids
+
+    @property
+    def fastpath_edge_async_tickets_enabled(self) -> bool:
+        return bool(self.fastpath_edge_async_ticket_workspaces)
+
+    def fastpath_edge_async_ticket_allows(self, workspace_id: str) -> bool:
+        return (
+            self.fastpath_edge_async_tickets_enabled
+            and self.async_settle_admission_enabled
+            and self.async_settle_pilot_allows(workspace_id)
+            and ("*" in self._fastpath_edge_async_ticket_workspace_ids
+                 or workspace_id in self._fastpath_edge_async_ticket_workspace_ids)
+        )
+
+    @model_validator(mode="after")
     def parse_fastpath_overlap_workspaces(self) -> Settings:
         ids = frozenset(
             part.strip() for part in self.async_settle_fastpath_overlap_workspaces.split(",") if part.strip()
@@ -1891,9 +1927,14 @@ class Settings(BaseSettings):
         nothing, since a leased workspace outside the overlap list is already
         left out; with every workspace admitted (section 9.1 of
         fast-admission-widening.md) it is what keeps the two paths apart.
-        The ticket's issue reads it (async_settle.snapshot_projection); the
-        settle's acceptance has only the ticket's claims and checks the
-        workspace, and a ticketed leased authorization (the overlap list's)
+        Python's own authorize answer reads it at the ticket's issue
+        (async_settle.snapshot_projection). The edge ticket route
+        (async_settle.edge_ticket) does not: every id it signs for is one the
+        edge minted for its own leased commit, the edge releases the ticket
+        only once that leased row is durable, and the route's rule is
+        fastpath_edge_async_ticket_allows. The settle's acceptance has only
+        the ticket's claims and checks the workspace, and a ticketed leased
+        authorization (the overlap list's, or one the edge got a ticket for)
         finishes through its lease in the drain."""
         if leased and workspace_id not in self._async_settle_fastpath_overlap_workspace_ids:
             return False

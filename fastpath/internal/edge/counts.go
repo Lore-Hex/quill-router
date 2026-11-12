@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // The edge's count lines, read back: each period the decide path logs one
@@ -78,4 +79,13 @@ func ParseCountsLine(message string) (line CountsLine, ok bool, err error) {
 	}
 	line.Digest = strings.Join(digest, " ")
 	return line, true, nil
+}
+
+// elapsedTotals records completed calls and waits in milliseconds.
+type elapsedTotals struct{ sum, max int64 }
+
+func (e *elapsedTotals) add(d time.Duration) {
+	ms := d.Milliseconds()
+	e.sum += ms
+	e.max = max(e.max, ms)
 }

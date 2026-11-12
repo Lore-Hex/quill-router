@@ -209,6 +209,33 @@ jobs:
           fence="$(bash scripts/deploy/deploy_mutex.sh acquire)"
           printf '%s\n' "$fence" >> "$GITHUB_OUTPUT"
 
+  confirm-regions-ready:
+    # Would the staged rollout accept every region as it stands? A rollout whose
+    # drain was interrupted leaves the staged-drain tag on a revision that no
+    # longer serves, and the next rollout refuses that region. Without this job
+    # the refusal came from rollout-secondaries, after us-central1 already had
+    # the new revision: the regions ended on different releases and the
+    # reservation was retained (2026-11-11). This asks first.
+    # It runs under the reservation because only the holder can call a tag
+    # leftover, beside migrate-schema so it adds no time, and it reads only.
+    needs: [admit-cloud]
+    if: github.repository == 'Lore-Hex/quill-router'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      PROJECT_ID: quill-cloud-proxy
+      SERVICE: trusted-router
+      TR_DEPLOY_HOLD_REGIONS: ${{ vars.TR_DEPLOY_HOLD_REGIONS }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: No region still carries an earlier rollout's drain tag
+        run: bash scripts/deploy/confirm_regions_ready.sh us-central1 europe-west4 us-east4 southamerica-east1
+
   migrate-schema:
     # Runs inside the same serialized deploy workflow, after CI and before any
     # serving revision changes. The script is idempotent; normally this is only
@@ -279,6 +306,12 @@ jobs:
           SPANNER_INSTANCE_ID: trusted-router-nam6
           SPANNER_DATABASE_ID: trusted-router
         run: scripts/deploy/migrate_analytics_outbox.sh
+      - name: Apply operational outbox heartbeat schema
+        env:
+          GCP_PROJECT_ID: quill-cloud-proxy
+          SPANNER_INSTANCE_ID: trusted-router-nam6
+          SPANNER_DATABASE_ID: trusted-router
+        run: scripts/deploy/migrate_operational_outbox_heartbeat.sh
       - name: Apply operational analytics outbox schema
         env:
           GCP_PROJECT_ID: quill-cloud-proxy
@@ -303,6 +336,12 @@ jobs:
           SPANNER_INSTANCE_ID: trusted-router-nam6
           SPANNER_DATABASE_ID: trusted-router
         run: scripts/deploy/migrate_fastpath.sh
+      - name: Apply the ClickHouse node database role and its directory view
+        env:
+          GCP_PROJECT_ID: quill-cloud-proxy
+          SPANNER_INSTANCE_ID: trusted-router-nam6
+          SPANNER_DATABASE_ID: trusted-router
+        run: scripts/deploy/migrate_clickhouse_node_role.sh
       - name: Sync shared public analytics snapshots
         id: snapshot-sync
         # Publishing the public snapshot builder MUST NOT gate the control
@@ -414,7 +453,7 @@ jobs:
           fi
 
   deploy:
-    needs: [build-image, migrate-schema, sync-runtime-secrets, confirm-current-main, confirm-still-on-main, admit-cloud]
+    needs: [build-image, migrate-schema, sync-runtime-secrets, confirm-current-main, confirm-still-on-main, admit-cloud, confirm-regions-ready]
     if: ${{ github.repository == 'Lore-Hex/quill-router' && needs.confirm-current-main.outputs.proceed == 'true' && needs.confirm-still-on-main.outputs.on_main == 'true' }}
     runs-on: ubuntu-latest
     outputs:
@@ -1423,7 +1462,7 @@ jobs:
         run: bash scripts/deploy/verify_gcp_complete.sh
 
   finalize-cloud:
-    needs: [admit-cloud, migrate-schema, sync-runtime-secrets, confirm-current-main, confirm-still-on-main, deploy, rollout-secondaries, public-surface-companion, settle-drain-worker, verify-cloud-complete]
+    needs: [admit-cloud, confirm-regions-ready, migrate-schema, sync-runtime-secrets, confirm-current-main, confirm-still-on-main, deploy, rollout-secondaries, public-surface-companion, settle-drain-worker, verify-cloud-complete]
     if: ${{ always() && github.repository == 'Lore-Hex/quill-router' && needs.admit-cloud.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -1452,6 +1491,16 @@ jobs:
             # clean skip, so the reservation is released rather than blocked.
             # (A superseded run never holds the lease: confirm-current-main runs
             # before admit-cloud.)
+            TR_DEPLOY_OUTCOME=success
+          elif jq -e '."confirm-regions-ready".result == "failure" and
+            ."migrate-schema".result == "success" and ."sync-runtime-secrets".result == "success" and
+            ([.deploy, ."rollout-secondaries", ."public-surface-companion", ."settle-drain-worker",
+              ."verify-cloud-complete"] | all(.result == "skipped"))' <<< "$RESULTS" >/dev/null; then
+            # The read-only region check failed (a region was refused, or could
+            # not be read) before the first revision rolled out: every job that
+            # changes a serving revision was skipped. Nothing of this run is
+            # left to verify, so the reservation is released for the next run.
+            # The run itself still fails, on confirm-regions-ready.
             TR_DEPLOY_OUTCOME=success
           fi
           bash scripts/deploy/deploy_mutex.sh release

@@ -12,6 +12,10 @@ Citations are against quill-router `origin/main` at `df813de21` and
 quill-cloud-proxy `main` at `3c7270e` (`enclave-go/...` paths are that
 repository's).
 
+The original design and rollout below describe behavior with edge tickets
+off. [Edge tickets](#edge-tickets) extends it: Python can sign for an
+authorization the edge commits and answers itself.
+
 ## 1. Recommendation
 
 1. The edge decides async-v1 requests while Python's async admission is
@@ -393,7 +397,8 @@ because it mixes shape C into the comparison (`async_python_admitted`).
 The edge composes Python's admission-off answer: shape B when every §2.3
 check passes and the policy says `ticket_authority` and `typed_records`,
 else shape A. When the policy says admission covers the request's
-workspace, the request passes (`policy.async_admission`) so Python signs.
+workspace, with edge tickets off the request passes (`policy.async_admission`)
+so Python signs. The Edge tickets section below extends this path.
 
 **Per workspace.** Admission is on for a pilot set
 (`async_settle_pilot_workspaces`, one probe workspace and a pending-cost
@@ -608,7 +613,7 @@ classed by the admission inputs' ages, not as `differ`;
 The batched-settlement design says async settle "takes no request the
 fast path takes" (`fast-admission-and-batched-settlement.md` §4.13). Before
 this rule nothing enforced it: an empty `async_settle_pilot_workspaces`
-admits every workspace, so with async-v1 the default and admission for
+admits every workspace, so with edge tickets off, async-v1 and admission for
 all, `Admits` would be true for every workspace and the edge would pass
 every async-v1 request, answering none. Only Python can sign the ticket
 (option (b) is G16), so the edge can only stay useful by keeping out of
@@ -653,8 +658,9 @@ from before the rule meant.
 All mode (`fast-admission-widening.md` §9) has no bounded fast-path set,
 so with no async pilot set the rule is held per request instead: a leased
 authorization takes no ticket, the excluded member carries a bounded
-reserved list, and the edge passes every other workspace's async-v1
-authorizes (§9.1 there). The limit of §4.1 then applies in full until G16.
+reserved list, and, with edge tickets off, the edge passes every other
+workspace's async-v1 authorizes (§9.1 there). The Edge tickets section
+below describes the sign-only extension.
 
 **The overlap list** exists for the async-settle lane's own test
 workspace, which is in both pilots (R3): `rollout.sh` sets it to that one
@@ -868,7 +874,103 @@ published switch turns it on:
    for a workspace (its async-v1 requests pass `policy.async_admission`;
    with an empty pilot set, every workspace's).
 
-Turning admission on later makes the covered workspaces' async-v1
+With edge tickets off, turning admission on makes covered workspaces' async-v1
 requests pass `policy.async_admission` again, which the watch shows as
 `async.admission` growing; a workspace outside the pilot set keeps being
 decided (§4.1, per workspace). I2 stays valid for what it decides.
+
+## Edge tickets
+
+Edge tickets let the Go edge answer async-v1 authorizations for workspaces
+covered by Python admission while Python keeps the signing key. The edge
+mints its authorization and starts its own leased Spanner commit. In parallel
+it requests a ticket from Python, then includes that ticket in its own 200
+only after the authorization is durable (`store.Inserted` or `store.Landed`).
+A ticket must never reach the caller for any other commit result. If Python
+refuses or the ticket is late, the edge returns shape B and the enclave
+settles synchronously through the lease. No enclave protocol change is needed.
+
+`TR_FASTPATH_EDGE_ASYNC_TICKET_WORKSPACES` defaults to the empty string:
+the route is absent (404), its module is not imported, and policy bytes are
+unchanged. `*` covers every workspace that async admission covers. A comma
+list covers only those workspaces, at most 32 distinct ids matching
+`[A-Za-z0-9_./:@+\-]{1,64}`; mixing `*` with ids is a settings error.
+`fastpath_edge_async_tickets_enabled` reads whether the setting is nonempty.
+`fastpath_edge_async_ticket_allows` additionally requires admission enabled,
+`async_settle_pilot_allows`, and membership in the ticket list or `*`.
+The pilot and reserved-workspace rules still apply under `*`.
+
+Inside the policy's `async_settle`, `edge_tickets: true` is published only
+when both the switch and admission are enabled. It is otherwise absent;
+false and null are refused. `edge_ticket_workspaces` is published only for
+a list setting: sorted, unique, 1–32 valid workspace ids. It requires
+`edge_tickets`, which requires `admission_enabled`. With `edge_tickets`
+and no list, every workspace `Admits` covers is eligible for edge tickets.
+Both Python and Go validate these constraints.
+
+`POST /internal/fastpath/async-ticket` uses `require_internal_gateway`,
+the same authentication as the edge-policy poll, with header
+`X-Trustedrouter-Internal-Token`. The handler runs synchronously because
+admission may block. It accepts exactly one JSON object containing `v: 1`,
+string `authorization_id`, `workspace_id`, `key_hash`, `reservation_id`,
+`invocation_nonce`, `region`, `route_type` (`chat.completions` or `responses`),
+boolean `streamed`, `candidate_endpoint_ids` (1–64 unique strings), integer
+Unix seconds `priced_at`, and `billing_snapshot_hash` (64 lowercase hex).
+Extra or malformed members return 422; missing or incorrect authentication
+returns 401. Successful route responses carry `Cache-Control: no-store`.
+The request's key hash becomes the ticket's `key_id` claim.
+
+The service checks refusals in this order, each returning exactly
+`{"async_eligible": false}` with status 200:
+
+1. `workspace`: the workspace fails the settings predicate.
+2. `region`: negotiation does not allow the authorization's enclave region.
+3. `authority`: no runtime or signer, epoch below one, or no effective journal region.
+4. `records`: no typed billing store writing typed request records, using
+   the same expression as the gateway's async-v1 branch.
+5. `price_instant`: `abs(now - priced_at) > 300` seconds.
+6. `endpoint`: any candidate is unknown to `catalog.endpoint_for_id`.
+7. `snapshot`: eligibility or snapshot construction refuses the facts.
+8. `hash`: Python's reconstructed canonical snapshot hash differs.
+9. `error`: any other exception while building or signing.
+
+Python resolves every candidate from its own catalog, applies
+`effective_endpoint` at `priced_at` as an aware UTC datetime, and calls
+`build_snapshot` with `Eligibility(route_type=..., streamed=...)`. It never
+accepts request prices. The agreed digest is the ticket's `snapshot_hash`.
+One helper owns admission, all 19 claims, signing, and the status URL for
+both this route and `snapshot_projection`. It preserves the existing
+`iat`/`exp` rule, `settle_origin: typed`, and `billing_authority: local`.
+The claims are `authorization_id`, `generation_id`, `workspace_id`, `key_id`,
+`invocation_nonce`, `billing_authority`, `journal_region`, `epoch`,
+`snapshot_version`, `snapshot_hash`, `route_type`, `streamed`,
+`reservation_id`, `settle_origin`, `async_eligible`, `iss`, `aud`, `iat`, and
+`exp`. Generation identity uses `generation_id_for_authorization`, snapshot
+version is 1, and issuer/audience come from the signer. Issue time is
+backdated by 60 seconds; expiration is that time plus the configured ticket
+TTL (300 seconds by default, bounded to at most 300).
+
+On signing, the response has exactly `async_eligible`, `settlement_ticket`
+(compact JWS), and `settlement_status_url`. The last is `/v1/settlements/`
+plus `quote(authorization_id + '.settle', safe='')`. The eligibility boolean
+comes from `timing.eligible(..., projection=True)` and equals the signed
+claim. A ticket may accompany `async_eligible: false`, as in Python's own
+authorize response. Each service call emits one content-free line:
+`metric=async_settle_edge_ticket outcome=<issued|refused> reason=<name|none> eligible=<yes|no|na> elapsed_ms=<int>`.
+It contains no ids, hashes, or request values.
+
+The edge places async members between `stage_d` and `tags`, in this order:
+
+- Shape B: `async_eligible: false`, `billing_snapshot`, `billing_snapshot_hash`.
+- Shape C: `async_eligible`, `billing_snapshot`, `billing_snapshot_hash`,
+  `settlement_ticket`, `settlement_status_url`.
+
+For the same facts, shape C is byte-for-byte Python's own authorize answer.
+The durability rule above applies even when signing succeeds before the
+commit finishes. Earlier descriptions of covered workspaces passing to
+Python describe behavior with edge tickets off.
+
+Activation order: release Go on the nodes first; release Python with the
+switch off; enable one test workspace; measure issue/refusal outcomes,
+eligibility, latency, and commit behavior; then widen deliberately. This
+change set does not activate or deploy the feature.

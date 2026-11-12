@@ -610,8 +610,8 @@ leaf certificate re-keyed by an attacker. Gateway tokens are signed in the test 
 a throwaway RSA key served as the mocked Google key set.
 
 The Maple page is a NYTE shell page (`nyte_v2.PAGES["maple"]`, body
-`nyte-v2/maple-v3.html`, sheet `maple-v3.css`, tabs `maple-v3.js`), switched on by
-`"maple"` in `nyte-brand-v3.json`. Removing it there restores `verified-maple.html`,
+`nyte-v2/maple-v3.html`, sheet `maple-v3.css`, tabs `maple-v3.js`) in brand v3 by
+default. Adding `"maple"` to `old_brand_pages` in `nyte-brand-v3.json` restores `verified-maple.html`,
 and the build then publishes `assets/verified.css` and `assets/badge.css` again.
 
 To publish, upload only `verified/<provider>` (content type `text/html`),

@@ -107,7 +107,14 @@ locals {
   # 51e8fabc1: model/provider/workload ranking with stable speed bands and
   # a ZDR preference (#2436). The reader requires ranking.model_workload;
   # upgrade both nodes before relying on the new routing order in the edge.
-  fastpath_release        = "2be22f1520f5921f33d1afb49d8e4d4354f71532"
+  # d23591a1f: main with edge tickets (#2506, #2510): the edge asks Python
+  # for an async-v1 settlement ticket only for a workspace the policy's
+  # async_settle.edge_tickets member names, which Python publishes only with
+  # TR_FASTPATH_EDGE_ASYNC_TICKET_WORKSPACES set, unset in rollout.sh; so the
+  # nodes answer as the release before until that switch moves. It also
+  # carries every provider's async rules (#2451) and all-mode admission by
+  # request (#2466), both already live on the Python side.
+  fastpath_release        = "d23591a1ff23505fc2700d244d3d52996b6aefd1"
   fastpath_release_bucket = "tr-fastpath-releases-${local.gcp_project_id}"
   fastpath_database       = "projects/${local.gcp_project_id}/instances/trusted-router-nam6/databases/trusted-router"
   fastpath_pubsub_agent   = "serviceAccount:service-${local.gcp_project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"

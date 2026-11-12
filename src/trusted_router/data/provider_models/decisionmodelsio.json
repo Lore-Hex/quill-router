@@ -65,16 +65,15 @@
         "example_output": "{\"model\": \"decisionmodelsio/s1-pro\", \"answers\": {\"color\": {\"type\": \"choice\", \"choice\": \"red\", \"probabilities\": {\"red\": 0.99, \"blue\": 0.01}}}}"
       },
       "routable": true,
-      "input_token_price_per_m": 38000,
+      "input_token_price_per_m": 80000,
       "output_token_price_per_m": 0,
       "decision_contract_hold": null,
       "decision_image_input_price_per_m": null,
-      "pricing_valid_until": "2026-11-12T00:00:00Z",
+      "pricing_valid_until": null,
       "settlement_prices": {
         "input_token_price_per_m": 38000,
         "output_token_price_per_m": 0
-      },
-      "missing_since": "2026-11-11"
+      }
     },
     {
       "display_name": "Decision Models s1-vision (GLOBAL)",
@@ -143,8 +142,7 @@
       "output_token_price_per_m": 0,
       "decision_contract_hold": "decision-fixed-questions-unsupported",
       "decision_image_input_price_per_m": null,
-      "pricing_valid_until": null,
-      "missing_since": "2026-11-07"
+      "pricing_valid_until": null
     },
     {
       "display_name": "Decision Models quyet-1-large (GLOBAL)",
@@ -242,9 +240,9 @@
       },
       "decision_contract_hold": null,
       "decision_image_input_price_per_m": null,
-      "pricing_valid_until": "2026-11-12T00:00:00Z",
+      "pricing_valid_until": null,
       "routable": true,
-      "input_token_price_per_m": 38000,
+      "input_token_price_per_m": 80000,
       "output_token_price_per_m": 0,
       "settlement_prices": {
         "input_token_price_per_m": 38000,
@@ -450,8 +448,7 @@
   ],
   "source": "https://api.decisionmodels.io/v1/models",
   "pricing_source": "https://api.decisionmodels.io/v1/models",
-  "generated_at": "2026-11-11T09:42:34Z",
+  "generated_at": "2026-11-12T09:26:20Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 13,
-  "pricing_valid_until": "2026-11-12T00:00:00Z"
+  "model_count": 13
 }

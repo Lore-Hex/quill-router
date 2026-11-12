@@ -346,7 +346,9 @@ def test_tinfoil_maps_kimi_k31_pro_replacement(monkeypatch) -> None:  # noqa: AN
 # tests/pinned_manifests.py: how a row is priced holds whatever Tinfoil lists
 # today. That it still lists them is a provider_health check.
 @pytest.mark.provider_health
-@pytest.mark.parametrize("model_id", ["deepseek/deepseek-v4.1-flash", "moonshotai/kimi-k3"])
+# kimi-k3 retired on 2026-11-12; Tinfoil serves its replacement, kimi-k3.1-pro
+# (test_tinfoil_maps_kimi_k31_pro_replacement).
+@pytest.mark.parametrize("model_id", ["deepseek/deepseek-v4.1-flash", "moonshotai/kimi-k3.1-pro"])
 def test_tinfoil_still_serves_its_confidential_route(model_id: str) -> None:
     assert f"{model_id}@tinfoil/prepaid" in MODEL_ENDPOINTS
 

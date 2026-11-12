@@ -194,8 +194,8 @@ def admission_workspaces(settings: Settings) -> dict[str, list[str]]:
       (docs/design/fast-admission-widening.md section 9); without one, the
       explicit fast-path set's, at most 32, or in all mode the reserved list
       (``async_settle_fastpath_reserved_workspace_ids``, section 9.1), at
-      most 32: every other workspace is admitted, so the edge passes its
-      async-v1 authorizes to Python.
+      most 32: every other workspace is admitted. Without edge tickets,
+      the edge passes its async-v1 authorizes to Python.
 
     Python answers a workspace they leave out as with admission off
     (``async_settle.snapshot_projection``), which the edge composes itself
@@ -251,6 +251,10 @@ def settings_facts(
             "ticket_authority": ticket_authority,
             "typed_records": typed_records,
             **admission_workspaces(settings),
+            **({"edge_tickets": True, **(
+                {"edge_ticket_workspaces": sorted(settings.fastpath_edge_async_ticket_workspace_ids)}
+                if "*" not in settings.fastpath_edge_async_ticket_workspace_ids else {}
+            )} if settings.fastpath_edge_async_tickets_enabled and settings.async_settle_admission_enabled else {}),
         },
         # Optional, published only when not off (docs/design/
         # fast-admission-e2-key-windows.md section 5): the default body stays

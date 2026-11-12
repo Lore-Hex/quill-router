@@ -716,6 +716,19 @@ def key_limit_exists(
     return bool(rows)
 
 
+def key_limit_any_shard_exists(
+    transaction: Any,
+    param_types: Any,
+    key_hash: str,
+) -> bool:
+    """Distinguish absent counters from an incomplete live shard set."""
+    return bool(list(transaction.execute_sql(
+        "SELECT 1 FROM tr_key_limit WHERE key_hash=@kh LIMIT 1",
+        params={"kh": key_hash},
+        param_types={"kh": param_types.STRING},
+    )))
+
+
 # ── tr_reservation: durable hold record + scoped idempotency + settle claim ──
 # The reservation row records the EXACT holds taken at authorize (so settle
 # releases exactly those, codex#1 #5), the resolved usage types (hold vs settled,

@@ -13,6 +13,7 @@ from trusted_router.catalog_data import Model, ModelEndpoint
 from trusted_router.config import Settings
 from trusted_router.dashboard import public_model_detail_html
 from trusted_router.provider_contracts import provider_route_reviewed_hold
+from trusted_router.provider_lifecycle import provider_model_retired
 from trusted_router.provider_precision import (
     ProviderPrecision,
     endpoint_precision,
@@ -83,7 +84,10 @@ def test_reviewed_route_is_still_served(record) -> None:
     # the price refresh does not wait on it.
     if provider_route_reviewed_hold(record.provider, record.model_id, record.upstream_id):
         pytest.skip(f"{record.provider}/{record.model_id} is on a reviewed hold")
-    assert _endpoint(record.provider, record.model_id) is not None
+    # A route past its scheduled retirement (Tinfoil's kimi-k3 on 2026-11-12)
+    # must be gone; the reviewed record stays as the history of what it served.
+    retired = provider_model_retired(record.provider, record.model_id, record.upstream_id)
+    assert (_endpoint(record.provider, record.model_id) is not None) is not retired
 
 
 def test_provider_and_weight_precision_are_not_inferred_from_model_name_or_tee() -> None:

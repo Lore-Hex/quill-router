@@ -238,12 +238,12 @@ func asyncInputOf(t *testing.T, g asyncGoldens, c asyncCase) (ComposeInput, Requ
 	}
 	policy := c.asyncSettle
 	policy.AdmissionEnabled = policy.Admits(in.WorkspaceID)
-	in.Async = &AsyncInput{Request: r.Async, Policy: policy}
+	in.Async = &AsyncInput{Request: r.Async, Policy: policy, WantTicket: c.asyncSettle.Tickets(in.WorkspaceID)}
 	return in, r
 }
 
 // asyncShapes maps P6's shape names to Go's.
-var asyncShapes = map[string]string{"none": AsyncNone, "A": AsyncFalseOnly, "B": AsyncSnapshot}
+var asyncShapes = map[string]string{"none": AsyncNone, "A": AsyncFalseOnly, "B": AsyncSnapshot, "C": AsyncSnapshot}
 
 // p6Reasons maps the shape-A reason a P6 case names to Go's.
 var p6Reasons = map[string]string{
@@ -337,7 +337,7 @@ func TestEveryAsyncCaseIsPythonsBytes(t *testing.T) {
 				leftOut++
 			}
 		}
-		if in.Async.Policy.AdmissionEnabled {
+		if in.Async.Policy.AdmissionEnabled && !in.Async.WantTicket {
 			// policy.async_admission: Python's ticket (or its shape A for a
 			// missing nonce). Stage refuses, and the caller passes.
 			if _, err := Stage(in); err == nil {
@@ -385,7 +385,27 @@ func TestEveryAsyncCaseIsPythonsBytes(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: Finish: %v", c.Name, err)
 		}
-		body := composed.Render(c.target.timing, false)
+		if c.target.shape == "C" {
+			var expected struct {
+				Data struct {
+					Eligible bool   `json:"async_eligible"`
+					Ticket   string `json:"settlement_ticket"`
+					URL      string `json:"settlement_status_url"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal([]byte(c.target.response), &expected); err != nil {
+				t.Fatal(err)
+			}
+			if !got.WantTicket {
+				t.Fatal("shape C did not request a ticket")
+			}
+			composed, err = composed.WithTicket(Ticket{Eligible: expected.Data.Eligible,
+				SettlementTicket: expected.Data.Ticket, StatusURL: expected.Data.URL})
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		body := composed.Render(c.target.timing, c.Insert == "unknown_landed")
 		if string(body) != c.target.response {
 			t.Errorf("%s: the 200 differs\n got %s\nwant %s", c.Name, body, c.target.response)
 			continue

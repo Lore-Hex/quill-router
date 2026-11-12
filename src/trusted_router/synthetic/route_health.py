@@ -159,6 +159,152 @@ def evaluate_route_health(
     return flags
 
 
+# A listed route the provider refuses to serve. These thresholds feed the
+# hourly price refresh's automatic route hold (scripts/pricing/
+# unserved_route_holds.py), so they are deliberately stricter than the
+# route-configuration alert above: at least six consecutive configured-route
+# probes, all answered with a model-not-served class, spanning at least three
+# hours, the newest within twelve. Transient classes (timeouts, 429/5xx) and
+# probe_config_error break the streak, as does any success.
+#
+# The freshness and gap bounds are sized to the real probe cadence, not to a
+# steady one. Configured-route probes are rotation picks: uniform over ~80
+# providers, then uniform over that provider's models (probes.
+# choose_rotation_target). One route is probed a few times a day at random
+# intervals; gaps of 6-11 hours between two probes of the same route are
+# routine (makora/meta-models/muse-spark-open-816b-a42b-nvfp4, 2026-11-11
+# 19:00Z to 11-12 05:30Z). With a two-hour newest bound and a six-hour gap
+# bound no real streak ever qualified (#2504 held nothing while two routes
+# had failed every probe for over a day). Freshness is still proven: the
+# sibling success must fall within UNSERVED_SIBLING_SUCCESS_WINDOW, so the
+# monitors are probing this provider now and its account serves.
+UNSERVED_MIN_SAMPLES = 6
+UNSERVED_MIN_SPAN = dt.timedelta(hours=3)
+UNSERVED_MAX_AGE = dt.timedelta(hours=12)
+# provider_auth_config counts only together with the sibling rule below: a 403
+# on one model while the same key serves another model is per-model access,
+# not a broken credential.
+_UNSERVED_ERROR_TYPES = frozenset({"unsupported_route", "provider_auth_config"})
+# The provider must have served a different model since this route began
+# failing, within the last six hours. Without that proof
+# the failure may be ours (a broken adapter, a revoked key, a blocked egress)
+# and holding routes one by one would hide a provider-wide problem.
+UNSERVED_SIBLING_SUCCESS_WINDOW = dt.timedelta(hours=6)
+# A held route is not probed for the whole hold (scripts/pricing/
+# unserved_route_holds.HOLD_HOURS, 24h), so a gap this long separates two
+# episodes. It must stay well under the hold length and well over the
+# routine gap between two rotation picks of one route; a test pins both.
+UNSERVED_MAX_PROBE_GAP = dt.timedelta(hours=16)
+
+
+@dataclass(frozen=True)
+class UnservedRoute:
+    provider: str
+    model: str
+    samples: int
+    first_failure_at: str
+    last_failure_at: str
+    error_types: tuple[str, ...]
+
+
+def evaluate_unserved_routes(
+    store: Store,
+    *,
+    routes: list[tuple[str, str]] | None = None,
+    now: dt.datetime | None = None,
+    window_hours: int = 48,
+) -> list[UnservedRoute]:
+    """Routable routes the provider lists but has refused for hours.
+
+    Reads the same bounded per-route sample query as evaluate_route_health.
+    Raises whatever the analytics read raises: callers must treat an error as
+    "no evidence", never as "no unserved routes".
+    """
+    now = now or dt.datetime.now(dt.UTC)
+    cutoff = now - dt.timedelta(hours=window_hours)
+    if routes is None:
+        routes = [
+            (provider, model)
+            for provider, models in rotation_candidates().items()
+            for model in models
+        ]
+    if not routes:
+        return []
+    route_set = set(routes)
+    samples = store.provider_route_benchmark_samples(
+        cutoff=cutoff.isoformat().replace("+00:00", "Z"),
+        per_route_limit=_SAMPLES_PER_ROUTE_LIMIT,
+        limit=min(_BATCH_SAMPLE_LIMIT, len(route_set) * _SAMPLES_PER_ROUTE_LIMIT),
+    )
+    by_route: dict[tuple[str, str], list[tuple[dt.datetime, ProviderBenchmarkSample]]] = {}
+    successes: dict[str, list[tuple[dt.datetime, str]]] = {}
+    sibling_cutoff = now - UNSERVED_SIBLING_SUCCESS_WINDOW
+    for sample in samples:
+        created = _parse_created_at(sample.created_at)
+        if created is None or created < cutoff or created > now:
+            continue
+        if sample.status == "success":
+            # A served probe proves the route (or, for a sibling, the provider
+            # account) works at that moment. Every Store implementation of
+            # provider_route_benchmark_samples returns synthetic probes only;
+            # a non-probe success, should one ever arrive, is kept as the
+            # conservative reading: it breaks this route's streak but is
+            # never sibling proof, which only our own probe credential gives.
+            if created >= sibling_cutoff and sample.source == "synthetic":
+                successes.setdefault(sample.provider, []).append((created, sample.model))
+        elif sample.source != "synthetic":
+            continue
+        route = (sample.provider, sample.model)
+        if route in route_set:
+            by_route.setdefault(route, []).append((created, sample))
+
+    unserved: list[UnservedRoute] = []
+    for provider, model in sorted(route_set):
+        recent = sorted(by_route.get((provider, model), []), key=lambda pair: pair[0], reverse=True)
+        streak: list[tuple[dt.datetime, ProviderBenchmarkSample]] = []
+        for created, sample in recent:
+            if (
+                sample.status not in {"unsupported", "error"}
+                or sample.error_type not in _UNSERVED_ERROR_TYPES
+                # A passed-through 429/5xx keeps its model-ish error type;
+                # it is still capacity, not a refusal to serve.
+                or _is_transient_failure(sample)
+                # Probes stop while a route is held. Failures from before a
+                # gap belong to an earlier episode and must not re-arm a
+                # freshly lifted route on its first new probe.
+                or (streak and streak[-1][0] - created > UNSERVED_MAX_PROBE_GAP)
+            ):
+                break
+            streak.append((created, sample))
+        if (
+            len(streak) < UNSERVED_MIN_SAMPLES
+            or now - streak[0][0] > UNSERVED_MAX_AGE
+            or streak[0][0] - streak[-1][0] < UNSERVED_MIN_SPAN
+            # The sibling success must come after this route began failing:
+            # a success from before a provider-wide break proves nothing.
+            or not any(
+                sibling != model and created >= streak[-1][0]
+                for created, sibling in successes.get(provider, [])
+            )
+        ):
+            continue
+        unserved.append(
+            UnservedRoute(
+                provider=provider,
+                model=model,
+                samples=len(streak),
+                first_failure_at=_iso_z(streak[-1][0]),
+                last_failure_at=_iso_z(streak[0][0]),
+                error_types=tuple(sorted({str(sample.error_type) for _, sample in streak})),
+            )
+        )
+    return unserved
+
+
+def _iso_z(value: dt.datetime) -> str:
+    return value.astimezone(dt.UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
 def _configuration_flag(
     provider: str,
     model: str,
@@ -339,21 +485,35 @@ def report_catalog_freshness(
     from trusted_router.synthetic.alerts import ops_alert
 
     now = now or dt.datetime.now(dt.UTC)
-    deadlines: dict[str, dt.datetime] = {}
+    soon = now + dt.timedelta(hours=48)
+    by_provider: dict[str, list[tuple[dt.datetime, ModelEndpoint]]] = {}
     for endpoint in MODEL_ENDPOINTS.values() if endpoints is None else endpoints:
-        deadline = endpoint.catalog_valid_until
-        if deadline is not None:
-            deadlines[endpoint.provider] = min(deadlines.get(endpoint.provider, deadline), deadline)
+        if endpoint.catalog_valid_until is not None:
+            by_provider.setdefault(endpoint.provider, []).append((endpoint.catalog_valid_until, endpoint))
     flagged = []
-    for provider, deadline in sorted(deadlines.items()):
-        if deadline > now + dt.timedelta(hours=48):
+    for provider, routes in sorted(by_provider.items()):
+        expiring = [route for deadline, route in routes if deadline <= soon]
+        if not expiring:
             continue
-        state = "expired" if deadline <= now else "expires within 48 hours"
-        ops_alert(
-            f"catalog-freshness: {provider} {state}; deadline={deadline.isoformat()}. "
-            "Repair discovery before fail-closed routing removes its models.",
-            fingerprint=["catalog-freshness", provider], tags={"route_provider": provider},
-        )
+        deadline = min(deadline for deadline, _route in routes)
+        expired = deadline <= now
+        if len(expiring) == len(routes):
+            state = "expired" if expired else "expires within 48 hours"
+            message = (
+                f"catalog-freshness: {provider} {state}; deadline={deadline.isoformat()}. "
+                "Repair discovery before fail-closed routing removes its models."
+            )
+        else:
+            # A row-level price deadline (one model's promotion) ends only
+            # that model's routes; the provider's other routes keep serving.
+            models = ", ".join(sorted({route.model_id for route in expiring}))
+            message = (
+                f"catalog-freshness: {provider} models {models} "
+                f"{'expired' if expired else 'expire within 48 hours'}; "
+                f"deadline={deadline.isoformat()}. Only these models' routes are affected; "
+                "the next price refresh after the deadline restores them at the current price."
+            )
+        ops_alert(message, fingerprint=["catalog-freshness", provider], tags={"route_provider": provider})
         flagged.append(provider)
     return flagged
 

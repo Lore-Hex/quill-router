@@ -411,34 +411,11 @@
       ],
       "default_effort": "max"
     },
-    "bytedance-seed/seed-1.6": {
-      "mandatory": false,
-      "default_enabled": false,
-      "supported_efforts": [],
-      "default_effort": null
-    },
-    "bytedance-seed/seed-1.6-flash": {
-      "mandatory": false,
-      "default_enabled": false,
-      "supported_efforts": [],
-      "default_effort": null
-    },
     "bytedance-seed/seed-2-1-turbo": {
       "mandatory": false,
       "default_enabled": false,
       "supported_efforts": [],
       "default_effort": null
-    },
-    "bytedance-seed/seed-2.0-code": {
-      "mandatory": false,
-      "default_enabled": false,
-      "supported_efforts": [
-        "high",
-        "medium",
-        "low",
-        "none"
-      ],
-      "default_effort": "medium"
     },
     "bytedance-seed/seed-2.0-lite": {
       "mandatory": false,
@@ -1308,6 +1285,17 @@
       "default_effort": "max"
     },
     "moonshotai/kimi-k3.1-pro": {
+      "mandatory": false,
+      "default_enabled": true,
+      "supported_efforts": [
+        "max",
+        "high",
+        "low",
+        "none"
+      ],
+      "default_effort": "max"
+    },
+    "moonshotai/kimi-k3.1-pro:batch": {
       "mandatory": false,
       "default_enabled": true,
       "supported_efforts": [

@@ -270,6 +270,13 @@ jobs:
           uv run python -m scripts.pricing.refresh | tee /tmp/refresh-summary.txt
           uv run python -m scripts.pricing.openrouter_reasoning
 
+      - name: Hold listed routes the provider refuses to serve
+        # Applies /route-health/unserved.json (sustained model-not-served
+        # configured-route probes) to the provider manifests and lifts expired
+        # holds. Unavailable evidence holds nothing and cannot block prices.
+        continue-on-error: true
+        run: uv run python -m scripts.pricing.unserved_route_holds | tee -a /tmp/refresh-summary.txt
+
       - name: Sanity-check for price spikes + record deltas
         run: |
           set +e

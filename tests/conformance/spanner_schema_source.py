@@ -70,6 +70,32 @@ REVIEWED_DDL_STATEMENTS = {
     "migrate_trust_reconciliation.sh": {
         "DROP TABLE tr_trust_backfill": "recreate empty legacy marker; retain current CREATE",
     },
+    # Access control for the ClickHouse node programs: a view and a role with
+    # its grants. The fresh-install tables are unchanged, and no node
+    # statement is in the emulator manifest.
+    "migrate_clickhouse_node_role.sh": {
+        r"""CREATE VIEW tr_workspace_directory_source SQL SECURITY DEFINER AS
+    SELECT e.id AS id,
+      JSON_QUERY(e.body, '\$.id') AS workspace_id,
+      JSON_QUERY(e.body, '\$.name') AS name,
+      JSON_QUERY(e.body, '\$.deleted') AS deleted,
+      JSON_QUERY(e.body, '\$.owner_user_id') AS owner_user_id,
+      JSON_QUERY(e.body, '\$.federated_home') AS federated_home,
+      JSON_QUERY(e.body, '\$.created_at') AS created_at
+    FROM tr_entities AS e
+    WHERE e.kind = 'workspace'""": "definer-rights workspace directory view",
+        "CREATE ROLE tr_clickhouse_node": "ClickHouse node role",
+        "GRANT SELECT ON TABLE tr_analytics_outbox TO ROLE tr_clickhouse_node": "ClickHouse node grant",
+        "GRANT DELETE ON TABLE tr_analytics_outbox TO ROLE tr_clickhouse_node": "ClickHouse node grant",
+        "GRANT SELECT ON TABLE tr_operational_analytics_outbox TO ROLE tr_clickhouse_node": "ClickHouse node grant",
+        "GRANT DELETE ON TABLE tr_operational_analytics_outbox TO ROLE tr_clickhouse_node": "ClickHouse node grant",
+        "GRANT SELECT ON TABLE tr_operational_outbox_heartbeat TO ROLE tr_clickhouse_node": "ClickHouse node grant",
+        "GRANT INSERT ON TABLE tr_operational_outbox_heartbeat TO ROLE tr_clickhouse_node": "ClickHouse node grant",
+        "GRANT UPDATE ON TABLE tr_operational_outbox_heartbeat TO ROLE tr_clickhouse_node": "ClickHouse node grant",
+        "GRANT SELECT ON TABLE tr_generation TO ROLE tr_clickhouse_node": "ClickHouse node grant",
+        "GRANT SELECT ON TABLE tr_reservation TO ROLE tr_clickhouse_node": "ClickHouse node grant",
+        "GRANT SELECT ON VIEW tr_workspace_directory_source TO ROLE tr_clickhouse_node": "ClickHouse node grant",
+    },
 }
 for _file in ("migrate_spend_lease.sh", "migrate_typed_counters.sh"):
     REVIEWED_DDL_STATEMENTS.setdefault(_file, {})[

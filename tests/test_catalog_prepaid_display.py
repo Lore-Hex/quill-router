@@ -545,7 +545,8 @@ def test_google_discounts_cached_input_on_its_native_gemini_rows() -> None:
         ("google-ai-studio", "google/gemini-3.5-flash"),
         ("google-ai-studio", "google/gemini-3.6-flash"),
         ("google-ai-studio", "google/gemini-3.1-flash-image-preview"),
-        ("google-vertex", "google/gemini-3.6-flash"),
+        # Vertex retires 3.6 Flash on 2026-11-19; 3.8 Flash replaces it.
+        ("google-vertex", "google/gemini-3.8-flash"),
     ):
         row = _listed_row(provider, model_id)
         if row is None or "cached_input_token_price_per_m" not in row:
