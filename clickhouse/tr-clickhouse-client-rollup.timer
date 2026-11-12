@@ -2,7 +2,7 @@
 Description=Rebuild TrustedRouter client reliability ClickHouse rollups
 
 [Timer]
-OnCalendar=*-*-* *:00/5:00
+OnCalendar=*-*-* *:01/5:00
 RandomizedDelaySec=20s
 Persistent=true
 
