@@ -286,47 +286,35 @@ def test_near_ai_is_attested_prepaid_only_and_its_catalog_follows_the_manifest()
     }
 
 
-def test_near_ai_glm_53_flash_route_is_released_after_attestation_repin() -> None:
-    # Held October 15 while the gateway sidecar refused NEAR's drifted
-    # attestation; quill-cloud-proxy #720 re-pinned both reviewed pool members.
-    assert ("near-ai", "z-ai/glm-5.3-flash") not in provider_contracts.OPERATOR_HELD_PROVIDER_MODELS
-    assert not provider_model_operator_held("near-ai", "z-ai/glm-5.3-flash")
-    endpoint = catalog_vehicles.registry_endpoints().get("z-ai/glm-5.3-flash@near-ai/prepaid")
-    assert endpoint is not None
-    assert endpoint.usage_type == "Credits" and not endpoint.is_byok
-    assert endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL)
-
-
-@pytest.mark.parametrize(
-    "gateway_region",
-    [
-        "us-central1",
-        "us-east4",
-        "europe-west4",
-        "us-west1",
-        "aws-eu-west-1",
-        "aws-eu-west-3",
-        "eu-west-1",
-        "eu-west-3",
-        "azure-uaenorth",
-        "azure-australiaeast",
-        "uaenorth",
-        "australiaeast",
-    ],
-)
-def test_near_ai_glm_53_flash_routes_from_every_gateway(gateway_region: str) -> None:
-    # Every fleet runs the re-pinned NEAR policy (QCP #720, 366ffd91): GCP,
-    # AWS on 45ff2be8 and Azure on 629438f2. No explicit origin is required.
+def test_near_ai_glm_53_flash_route_is_held_while_attestation_drifts() -> None:
+    # Held again November 12: NEAR's live pool member boots compose c900dc73
+    # with 45 deployment actions after the QCP #720 pin, so the gateway
+    # sidecar refuses every report. The route stays dark everywhere until a
+    # reviewed re-pin ships.
+    assert ("near-ai", "z-ai/glm-5.3-flash") in provider_contracts.OPERATOR_HELD_PROVIDER_MODELS
+    assert provider_model_operator_held("near-ai", "z-ai/glm-5.3-flash")
+    assert catalog_vehicles.registry_endpoints().get("z-ai/glm-5.3-flash@near-ai/prepaid") is None
     assert ("near-ai", "z-ai/glm-5.3-flash") not in (
         provider_contracts.EXPLICIT_GATEWAY_REGIONS_BY_PROVIDER_MODEL
     )
-    assert provider_contracts.provider_model_available_from_gateway_region(
-        "near-ai", "z-ai/glm-5.3-flash", gateway_region,
-    ) is True
+
+
+@pytest.fixture
+def near_ai_route_unheld(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Lift only the November 12 operator hold on NEAR AI GLM 5.3 Flash.
+
+    The live catalog keeps that route dark until a reviewed attestation re-pin
+    ships; these tests exercise how a routable NEAR AI row behaves.
+    """
+    monkeypatch.setattr(
+        provider_contracts,
+        "OPERATOR_HELD_PROVIDER_MODELS",
+        provider_contracts.OPERATOR_HELD_PROVIDER_MODELS - {("near-ai", "z-ai/glm-5.3-flash")},
+    )
 
 
 def test_near_ai_routes_are_attested_prepaid_only(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    near_ai_route_unheld: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     # Routes the catalog's own ingestion builds from a pinned NEAR AI row.
     _models, built = build_manifest_rows(monkeypatch, tmp_path, "near-ai", [NEAR_AI_GLM_53_FLASH])
@@ -361,7 +349,7 @@ def test_near_ai_serves_a_verified_model() -> None:
 
 @pytest.mark.parametrize("expired", [False, True])
 def test_near_ai_satisfies_scoped_zdr_and_e2e_only_with_fresh_catalog_evidence(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, expired: bool,
+    near_ai_route_unheld: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, expired: bool,
 ) -> None:
     model_id = "z-ai/glm-5.3-flash"
     # NEAR AI's route built from a pinned row, whatever NEAR AI lists today.
@@ -411,7 +399,7 @@ def test_near_ai_satisfies_scoped_zdr_and_e2e_only_with_fresh_catalog_evidence(
 
 @pytest.mark.parametrize("zdr", [None, False])
 def test_near_ai_attestation_alone_does_not_imply_zdr(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, zdr: bool | None,
+    near_ai_route_unheld: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, zdr: bool | None,
 ) -> None:
     serve_manifest_rows(monkeypatch, tmp_path, "near-ai", [NEAR_AI_GLM_53_FLASH])
     monkeypatch.setitem(PROVIDERS, "near-ai", replace(
@@ -431,7 +419,7 @@ def test_near_ai_attestation_alone_does_not_imply_zdr(
 
 
 def test_near_ai_public_metadata_has_zdr_and_links_to_scoped_evidence(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    near_ai_route_unheld: None, client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     serve_manifest_rows(monkeypatch, tmp_path, "near-ai", [NEAR_AI_GLM_53_FLASH])
     providers = {row["id"]: row for row in client.get("/v1/providers").json()["data"]}
