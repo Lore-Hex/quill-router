@@ -171,3 +171,44 @@ source this module does not write.
 [Issue #1813](https://github.com/Lore-Hex/quill-router/issues/1813) stays
 open. The October 15 and October 22 stalls it tracks had a different shape:
 some calls succeeded during them.
+
+## Second occurrence, 2026-11-12
+
+**TR Gateway: billing path 5xx** fired at 08:53Z for one authorize that
+returned 503 after 20.01 seconds. It was the first stall since the channel and
+credential lines shipped, and it read as the third row of the table above.
+
+- One us-central1 instance (revision `trusted-router-01835-pml`). Its first
+  failed read was at 08:52:37Z (the 500 ms async admission probes), its last at
+  08:53:12Z: about 35 seconds. Every Spanner call on it reached its deadline in
+  that window: the fastpath enabled-copy read every five seconds, the Stage D
+  policy refresh, the auto-refill drain, and the request paths (authorize,
+  heartbeat, video job claim, each `spanner_rpc_elapsed_ms=20002`). Three
+  requests returned 503. A settle at 08:53:17Z took 108 ms.
+- No other instance logged `DeadlineExceeded` in that window.
+- **Channel:** no `spanner channel state` line during the stall or after it.
+  The last transition logged was at 08:42:59Z: `READY` to `IDLE` after
+  3,599,996 ms (consistent with a one-hour connection age limit), then
+  `CONNECTING`, then `READY` within 10 ms. The stall began ten minutes into
+  that connection. The watch samples a few times a second, so a reconnect that
+  completed between two samples would not have been logged.
+- **Credentials:** refresh lines at 08:35:27Z and 09:01:41Z, both
+  `inline=False`, 19 to 21 ms. Nothing in the window.
+
+The refresh is ruled out: it ran off the RPC path and no refresh happened in
+the window. The cause is still not established. The most likely reading is
+that the connection stayed up while its streams stopped answering, and then
+recovered on the same connection; an unlogged fast reconnect is not excluded.
+On that reading a shorter gRPC keepalive is an unlikely fix: keepalive closes a
+connection whose pings go unanswered, and a connection that recovers without a
+transition was probably still answering pings while its streams were stuck.
+
+Two occurrences in three days (85 s on November 10, 35 s here), each on one
+instance, each ending on its own. The follow-up is
+[#2520](https://github.com/Lore-Hex/quill-router/pull/2520): when one
+connection stops answering and a fresh connection answers the same probe, new
+calls move to the fresh connection. It retries nothing, and calls already on
+the stuck connection still run to their deadline. It differs from the
+fleet-wide reset the October 15 report advised against in two ways: each
+instance acts on its own evidence, and a Spanner-wide problem leaves the fresh
+connection silent too, so traffic does not move.
