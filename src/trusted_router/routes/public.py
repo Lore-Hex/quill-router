@@ -250,6 +250,10 @@ LEADERBOARD_RESPONSE_CACHE_SECONDS = 60
 LEADERBOARD_RESPONSE_STALE_SECONDS = 600
 VIDEO_LEADERBOARD_SAMPLE_LIMIT = 5_000
 VIDEO_LEADERBOARD_RECENT_WINDOW_MINUTES = 30 * 24 * 60
+# One bounded analytics read per instance per ten minutes at most. The hourly
+# price refresh is the only intended reader and checks generated_at itself.
+UNSERVED_ROUTES_CACHE_SECONDS = 600
+UNSERVED_ROUTES_STALE_SECONDS = 1_800
 CHOOSE_PAGE_CACHE_SECONDS = 300
 CHOOSE_PAGE_STALE_SECONDS = 86_400
 CHOOSE_CATALOG_CACHE_SECONDS = 300
@@ -2026,6 +2030,29 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             return JSONResponse({"error": "model routing evidence unavailable"}, status_code=503)
         return JSONResponse(payload, headers={"cache-control": "public, max-age=300"})
 
+    @app.get("/route-health/unserved.json", include_in_schema=False)
+    async def unserved_routes_json(background_tasks: BackgroundTasks) -> Response:
+        # Read by the hourly price refresh to hold listed routes the provider
+        # refuses to serve. Any failure is "no evidence" (503), never an empty
+        # list: the refresh must not read a blind evaluation as all-healthy.
+        try:
+            return await _cached_public_response(
+                settings,
+                key="route-health:unserved",
+                media_type="application/json",
+                ttl_seconds=UNSERVED_ROUTES_CACHE_SECONDS,
+                stale_seconds=UNSERVED_ROUTES_STALE_SECONDS,
+                background_tasks=background_tasks,
+                build=lambda: _unserved_routes_json_body(),
+            )
+        except Exception as exc:  # noqa: BLE001 - every failure means no evidence
+            log.warning("unserved_routes_unavailable error=%s", type(exc).__name__)
+            return JSONResponse(
+                {"error": "route health unavailable"},
+                status_code=503,
+                headers={"cache-control": "no-store"},
+            )
+
     @app.api_route("/robots.txt", methods=["GET", "HEAD"], response_class=PlainTextResponse)
     def robots() -> PlainTextResponse:
         return PlainTextResponse(
@@ -2955,6 +2982,40 @@ def _status_cache_control(settings: Settings) -> str:
 
 def _json_body(payload: dict[str, Any]) -> bytes:
     return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
+
+
+def _unserved_routes_json_body() -> bytes:
+    from trusted_router.synthetic.route_health import (
+        UNSERVED_MAX_AGE,
+        UNSERVED_MIN_SAMPLES,
+        UNSERVED_MIN_SPAN,
+        UNSERVED_SIBLING_SUCCESS_WINDOW,
+        evaluate_unserved_routes,
+    )
+
+    now = dt.datetime.now(dt.UTC)
+    routes = evaluate_unserved_routes(STORE, now=now)
+    return _json_body({
+        "version": 1,
+        "generated_at": now.isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "policy": {
+            "min_consecutive_samples": UNSERVED_MIN_SAMPLES,
+            "min_span_seconds": int(UNSERVED_MIN_SPAN.total_seconds()),
+            "max_age_seconds": int(UNSERVED_MAX_AGE.total_seconds()),
+            "sibling_success_window_seconds": int(UNSERVED_SIBLING_SUCCESS_WINDOW.total_seconds()),
+        },
+        "routes": [
+            {
+                "provider": route.provider,
+                "model": route.model,
+                "samples": route.samples,
+                "first_failure_at": route.first_failure_at,
+                "last_failure_at": route.last_failure_at,
+                "error_types": list(route.error_types),
+            }
+            for route in routes
+        ],
+    })
 
 
 def _status_history_payload(window: str) -> dict[str, Any]:

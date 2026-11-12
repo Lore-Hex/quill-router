@@ -69,8 +69,12 @@ EXPIRING_PROVIDER_MANIFEST_SLUGS = frozenset(
 )
 PROVIDER_MANIFEST_MAX_AGE_DAYS = 14
 EXPIRED_PROVIDER_MANIFEST = datetime.min.replace(tzinfo=UTC)
+# The price refresh holds one listed route the provider has refused to serve
+# for hours (scripts/pricing/unserved_route_holds.py) and lifts it on expiry.
+UNSERVED_ROUTE_HOLD_REASON = "provider-route-unserved"
 _CANARY_QUARANTINE_REASONS = frozenset({
     "provider-canary-failed", "upstream-usage-unavailable", "upstream-output-limit-unenforced",
+    UNSERVED_ROUTE_HOLD_REASON,
 })
 DECISION_CONTRACT_HOLDS = frozenset({
     "decision-fixed-questions-unsupported",
@@ -178,6 +182,11 @@ def _provider_manifest_row_price_is_valid(row: dict[str, Any]) -> bool:
     except (TypeError, ValueError):
         return False
     return False
+
+
+def provider_manifest_row_price_is_valid(row: dict[str, Any]) -> bool:
+    """Whether a manifest row carries a complete price for its model type."""
+    return _provider_manifest_row_price_is_valid(row)
 
 
 def _pricing_deadline(value: Any) -> datetime:

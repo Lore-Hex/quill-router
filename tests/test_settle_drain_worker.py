@@ -76,6 +76,13 @@ def inventory(app, retired_route_delta=None, *, abliterated_page=False, manageme
     assert routes.count(evidence_route) == int(routing_evidence)
     if routing_evidence:
         routes.remove(evidence_route)
+    # The unserved-route evidence the price refresh reads is served wherever
+    # the routing evidence is (the public route registry).
+    unserved_route = ["/route-health/unserved.json", ["GET"],
+                      "register_public_routes.<locals>.unserved_routes_json"]
+    assert routes.count(unserved_route) == int(routing_evidence)
+    if routing_evidence:
+        routes.remove(unserved_route)
     # Account for exactly the wallet email-attach link target (and its /v1
     # alias), only on surfaces that serve the wallet auth routes.
     for path in ("/auth/wallet/email/verify", "/v1/auth/wallet/email/verify"):
