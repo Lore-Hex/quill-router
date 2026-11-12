@@ -14,11 +14,14 @@ from trusted_router.catalog import (
     endpoints_for_model,
 )
 from trusted_router.config import Settings
+from trusted_router.dashboard import _short_dollars
 from trusted_router.fortanix_launch import (
+    COMPARISON_MODEL_ID,
     MODEL_ID,
     NATIVE_ID,
     RETAIL_MICRO_PER_M,
     fortanix_launch_offer,
+    launch_lede_prices,
     launch_tariff_matches,
 )
 from trusted_router.internal_model_access import require_internal_model_key
@@ -158,7 +161,7 @@ def test_customer_authorization_locks_introductory_rate_and_bills_once(
     assert STORE.credit_money[workspace_id].total_usage_microdollars - before == 20
 
 
-@pytest.mark.parametrize("path", ["/", "/models"])
+@pytest.mark.parametrize("path", ["/models"])
 def test_public_pages_show_honest_offer_and_keep_legacy_id_private(client, path):
     response = client.get(path)
     assert response.status_code == 200
@@ -176,13 +179,93 @@ def test_public_pages_show_honest_offer_and_keep_legacy_id_private(client, path)
 
 
 @pytest.mark.parametrize(
-    "path", ["/status", "/trust", "/vibe-coders", "/providers/fortanix", f"/models/{MODEL_ID}"]
+    "path",
+    ["/", "/status", "/trust", "/vibe-coders", "/providers/fortanix", f"/models/{MODEL_ID}"],
 )
 def test_promotion_preserves_focused_page_layouts(client, path):
     response = client.get(path)
     assert response.status_code == 200
     assert "data-fortanix-promo" not in response.text
     assert "trustedrouter/fortanix-test" not in response.text
+
+
+def _other_credit_routes():
+    return [
+        route for route in endpoints_for_model(COMPARISON_MODEL_ID) if route.usage_type == "Credits"
+    ]
+
+
+def test_model_page_shows_launch_offer_lede_from_live_prices(client):
+    page = BeautifulSoup(client.get(f"/models/{MODEL_ID}").text, "html.parser")
+    hero = page.select_one("[data-launch-offer]")
+    assert hero is not None
+    assert hero.select_one(".md-offer-tag").get_text(strip=True) == "Launch offer"
+    lead = hero.select_one("[data-launch-offer-lead]")
+    assert lead.get_text(" ", strip=True) == (
+        "The lowest-price way to run GLM 5.3 Flash: basically free, at 1\u00a2 per million tokens."
+    )
+    assert [node.get_text(strip=True) for node in hero.select(".md-stat-value.md-mint")] == [
+        "1\u00a2",
+        "1\u00a2",
+    ]
+    others = _other_credit_routes()
+    low_in = min(route.prompt_price_microdollars_per_million_tokens for route in others)
+    low_out = min(route.completion_price_microdollars_per_million_tokens for route in others)
+    compare = " ".join(hero.select_one("[data-launch-offer-compare]").get_text().split())
+    assert compare == (
+        f"Other GLM 5.3 Flash routes start at {_short_dollars(low_in, digits=2)} in \u00b7 "
+        f"{_short_dollars(low_out, digits=2)} out. Intro price; it may change."
+    )
+
+
+def test_launch_offer_lede_follows_repriced_comparison_routes(client, monkeypatch):
+    for route in _other_credit_routes():
+        monkeypatch.setitem(
+            MODEL_ENDPOINTS,
+            route.id,
+            replace(
+                route,
+                prompt_price_microdollars_per_million_tokens=80_000,
+                completion_price_microdollars_per_million_tokens=300_000,
+            ),
+        )
+    hero = BeautifulSoup(client.get(f"/models/{MODEL_ID}").text, "html.parser")
+    compare = hero.select_one("[data-launch-offer-compare]").get_text()
+    assert "start at $0.08 in \u00b7 $0.30 out." in " ".join(compare.split())
+
+
+def test_lowest_price_claim_needs_a_cheaper_route_than_every_alternative(client, monkeypatch):
+    route = _other_credit_routes()[0]
+    monkeypatch.setitem(
+        MODEL_ENDPOINTS,
+        route.id,
+        replace(route, prompt_price_microdollars_per_million_tokens=RETAIL_MICRO_PER_M),
+    )
+    prices = launch_lede_prices()
+    assert prices is not None and not prices.cheapest
+    page = BeautifulSoup(client.get(f"/models/{MODEL_ID}").text, "html.parser")
+    assert page.select_one("[data-launch-offer]") is not None
+    assert page.select_one("[data-launch-offer-lead]") is None
+    assert "lowest-price" not in page.text
+
+
+def test_launch_offer_lede_disappears_with_the_offer(client, monkeypatch):
+    route = endpoints_for_model(MODEL_ID)[0]
+    monkeypatch.setitem(
+        MODEL_ENDPOINTS,
+        route.id,
+        replace(route, completion_price_microdollars_per_million_tokens=20_000),
+    )
+    assert launch_lede_prices() is None
+    text = client.get(f"/models/{MODEL_ID}").text
+    assert "data-launch-offer" not in text
+    assert "Launch offer" not in text
+    assert "\u00a2" not in text
+
+
+def test_launch_offer_lede_stays_on_its_own_model_page(client):
+    text = client.get(f"/models/{COMPARISON_MODEL_ID}").text
+    assert "data-launch-offer" not in text
 
 
 def test_public_api_lists_exact_customer_prices_and_one_managed_route(client):

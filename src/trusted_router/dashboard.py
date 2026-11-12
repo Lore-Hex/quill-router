@@ -100,7 +100,9 @@ from trusted_router.content.legal import (
 from trusted_router.content.token_index import token_index_context
 from trusted_router.content_handling import CONTENT_HANDLING_CLAIM, VENDOR_EXCLUSION_CLAIM
 from trusted_router.domains import canonical_public_url
-from trusted_router.fortanix_launch import fortanix_launch_offer
+from trusted_router.fortanix_launch import COMPARISON_MODEL_ID as FORTANIX_LAUNCH_COMPARISON_ID
+from trusted_router.fortanix_launch import MODEL_ID as FORTANIX_LAUNCH_MODEL_ID
+from trusted_router.fortanix_launch import fortanix_launch_offer, launch_lede_prices
 from trusted_router.marketing_experiments import GoogleSearchExperimentCell
 from trusted_router.measured import measured_for_model, measured_for_provider
 from trusted_router.middleware import current_csp_nonce
@@ -2393,6 +2395,34 @@ def _short_dollars(microdollars: int, *, digits: int) -> str:
     return f"${Decimal(text):f}"
 
 
+def _cents_label(microdollars: int) -> str:
+    """A whole-cent per-1M price under a dollar as "1¢"; anything else as dollars."""
+    cents, remainder = divmod(microdollars, MICRODOLLARS_PER_DOLLAR // 100)
+    if remainder == 0 and 0 < cents < 100:
+        return f"{cents}\u00a2"
+    return _short_dollars(microdollars, digits=2)
+
+
+def _launch_offer_lede(model: Model) -> dict[str, object] | None:
+    """Fortanix launch-offer hero copy, live only while the offer banner is."""
+    if model.id != FORTANIX_LAUNCH_MODEL_ID:
+        return None
+    prices = launch_lede_prices()
+    if prices is None:
+        return None
+    others_input, others_output = prices.others_input_microdollars, prices.others_output_microdollars
+    comparison = MODELS.get(FORTANIX_LAUNCH_COMPARISON_ID)
+    return {
+        "model_name": _hero_model_name(comparison) if comparison else _hero_model_name(model),
+        "input": _cents_label(prices.input_microdollars),
+        "output": _cents_label(prices.output_microdollars),
+        # One price in the sentence only when both directions bill it.
+        "lowest_claim": prices.cheapest and prices.input_microdollars == prices.output_microdollars,
+        "others_input": None if others_input is None else _short_dollars(others_input, digits=2),
+        "others_output": None if others_output is None else _short_dollars(others_output, digits=2),
+    }
+
+
 def _model_kind_phrase(model: Model, view: Mapping[str, object]) -> str:
     if view["is_meta"]:
         return "orchestration preset"
@@ -2533,6 +2563,7 @@ def _model_page(
             else None
         ),
         "token_priced": token_priced,
+        "launch_offer": _launch_offer_lede(model) if token_priced else None,
         "funded": funded,
         "rows": rows,
         "sort_speed": any(row["sort_throughput"] is not None for row in rows),

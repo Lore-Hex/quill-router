@@ -1,5 +1,7 @@
 """Exact operator-confirmed Fortanix introductory tariff, not a scraped quote."""
 
+from dataclasses import dataclass
+
 from trusted_router.catalog_data import Model, ModelEndpoint
 from trusted_router.pricing import _customer_price, _flat_tier
 
@@ -63,4 +65,63 @@ def launch_tariff_matches(model: Model, endpoint: ModelEndpoint) -> bool:
             and item.price_tiers == item.published_price_tiers == TIERS
             for item in (model, endpoint)
         )
+    )
+
+
+# The same model served by every other provider; the offer page compares
+# against its live Credits routes.
+COMPARISON_MODEL_ID = "z-ai/glm-5.3-flash"
+
+
+@dataclass(frozen=True)
+class LaunchLedePrices:
+    """Live per-1M prices for the offer lede on the Fortanix model page.
+
+    The others are the lowest input and lowest output price among the
+    comparison model's Credits routes, or None when it has none.
+    """
+
+    input_microdollars: int
+    output_microdollars: int
+    others_input_microdollars: int | None
+    others_output_microdollars: int | None
+
+    @property
+    def cheapest(self) -> bool:
+        """The "lowest-price way" claim holds only against real alternatives."""
+        return (
+            self.others_input_microdollars is not None
+            and self.others_output_microdollars is not None
+            and self.input_microdollars < self.others_input_microdollars
+            and self.output_microdollars < self.others_output_microdollars
+        )
+
+
+def launch_lede_prices() -> LaunchLedePrices | None:
+    """None whenever the offer banner would be hidden."""
+    from trusted_router.catalog import MODELS, endpoints_for_model
+
+    if not fortanix_launch_offer():
+        return None
+    route = endpoints_for_model(MODEL_ID)[0]
+    comparison = MODELS.get(COMPARISON_MODEL_ID)
+    others = (
+        [
+            endpoint
+            for endpoint in endpoints_for_model(comparison.id)
+            if endpoint.usage_type == "Credits"
+        ]
+        if comparison is not None and not comparison.internal_only
+        else []
+    )
+    return LaunchLedePrices(
+        input_microdollars=route.prompt_price_microdollars_per_million_tokens,
+        output_microdollars=route.completion_price_microdollars_per_million_tokens,
+        others_input_microdollars=min(
+            (item.prompt_price_microdollars_per_million_tokens for item in others), default=None
+        ),
+        others_output_microdollars=min(
+            (item.completion_price_microdollars_per_million_tokens for item in others),
+            default=None,
+        ),
     )
