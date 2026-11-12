@@ -106,6 +106,15 @@ ssh_node --command="sudo sh -c '
     /etc/systemd/system/tr-clickhouse-rollup-daily.service
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-rollup-daily.timer \
     /etc/systemd/system/tr-clickhouse-rollup-daily.timer
+  # The operational drain and the delivery verifier are installed by
+  # clickhouse_operational_analytics.sh, but their unit files ship in this
+  # bundle too and carry the Spanner database role. Refresh any that are
+  # already installed, so this deploy never leaves a unit older than its code.
+  for unit in tr-clickhouse-operational-ingest.service tr-clickhouse-spanner-delivery.service; do
+    if [ -f \"/etc/systemd/system/\$unit\" ]; then
+      install -m 0644 \"/opt/tr-clickhouse/clickhouse/\$unit\" \"/etc/systemd/system/\$unit\"
+    fi
+  done
   set -a
   . /etc/tr-clickhouse-ingest.env
   set +a

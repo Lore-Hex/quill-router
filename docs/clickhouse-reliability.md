@@ -1047,9 +1047,27 @@ they ship the node code) creates:
 the latter conditioned on this one role. Neither narrows anything while the
 account also holds `roles/spanner.databaseUser`.
 
-Remaining, in order: set `TR_SPANNER_DATABASE_ROLE=tr_clickhouse_node` in the
-node units and redeploy the nodes; confirm the dedicated heartbeat row is fresh
-and every node job succeeds as the role; then remove the account's
+**The units (step 3).** The five units whose programs open Spanner
+(`tr-clickhouse-ingest`, `-operational-ingest`, `-overrun-rollup`,
+`-spanner-delivery` and `-workspace-directory`) set
+`Environment=TR_SPANNER_DATABASE_ROLE=tr_clickhouse_node` in the unit itself,
+because the deploys rewrite `/etc/tr-clickhouse-ingest.env` with the password
+alone. `scripts/deploy/clickhouse_live_ingestion.sh` installs the first three
+and refreshes the operational drain and delivery verifier units when they are
+already installed, so one live deploy moves every Spanner program to the role.
+To roll back, revert the unit line and run the live deploy again; the
+account's database-wide access is still in place until step 4.
+
+The live deploy updates the publisher only. A standby keeps the unit files from
+its own install (`install_standby.sh`), and a takeover starts those, so a
+standby installed before this change runs its programs without the role.
+
+Remaining, in order: run the live deploy; confirm the dedicated heartbeat row
+is fresh and every node job succeeds as the role; reinstall each standby
+(`clickhouse_worker_role.sh standby --node <standby> --apply`) and confirm its
+five installed units carry `TR_SPANNER_DATABASE_ROLE`, since after the next
+step a takeover onto a standby without it would fail every Spanner call; then
+remove the account's
 `roles/spanner.databaseUser` binding (and the grant in
 `scripts/deploy/clickhouse_cluster.sh`), and retire the legacy heartbeat write
 and read.
