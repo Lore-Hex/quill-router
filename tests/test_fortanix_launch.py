@@ -28,7 +28,6 @@ from trusted_router.fortanix_launch import (
     NATIVE_ID,
     RETAIL_MICRO_PER_M,
     fortanix_launch_offer,
-    launch_lede_prices,
     launch_offer_facts,
     launch_tariff_matches,
 )
@@ -198,8 +197,15 @@ def test_promotion_preserves_focused_page_layouts(client, path):
 
 
 def _other_credit_routes():
+    """Credits routes of every other public GLM 5.3 Flash model, as the offer compares."""
     return [
-        route for route in endpoints_for_model(COMPARISON_MODEL_ID) if route.usage_type == "Credits"
+        route
+        for model in MODELS.values()
+        if model.id != MODEL_ID
+        and not model.internal_only
+        and model.id.casefold().endswith("/glm-5.3-flash")
+        for route in endpoints_for_model(model.id)
+        if route.usage_type == "Credits"
     ]
 
 
@@ -249,8 +255,8 @@ def test_lowest_price_claim_needs_a_cheaper_route_than_every_alternative(client,
         route.id,
         replace(route, prompt_price_microdollars_per_million_tokens=RETAIL_MICRO_PER_M),
     )
-    prices = launch_lede_prices()
-    assert prices is not None and not prices.cheapest
+    offer = launch_offer_facts()
+    assert offer is not None and not offer.lowest
     page = BeautifulSoup(client.get(f"/models/{MODEL_ID}").text, "html.parser")
     assert page.select_one("[data-launch-offer]") is not None
     assert page.select_one("[data-launch-offer-lead]") is None
@@ -264,7 +270,7 @@ def test_launch_offer_lede_disappears_with_the_offer(client, monkeypatch):
         route.id,
         replace(route, completion_price_microdollars_per_million_tokens=20_000),
     )
-    assert launch_lede_prices() is None
+    assert launch_offer_facts() is None
     text = client.get(f"/models/{MODEL_ID}").text
     assert "data-launch-offer" not in text
     assert "Launch offer" not in text
@@ -388,7 +394,7 @@ def _llms_texts():
 
 def test_offer_seo_copy_uses_live_route_price_while_gate_is_on():
     offer = launch_offer_facts()
-    assert offer is not None and offer.lowest_glm_flash_price
+    assert offer is not None and offer.lowest
     assert offer.price_label == "1¢ per million tokens"
     page = _model_page_seo(MODEL_ID)
     assert page["title"] == page["og_title"] == "GLM 5.3 Flash for 1¢ per million tokens (Fortanix)"

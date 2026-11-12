@@ -17,14 +17,14 @@
 
 {% block hero %}
 {% set offer = page.launch_offer %}
-<section class="md-hero{% if offer %} md-hero-offer{% endif %}" aria-labelledby="md-title"{% if offer %} data-launch-offer{% endif %}>
+<section class="md-hero" aria-labelledby="md-title"{% if offer %} data-launch-offer{% endif %}>
   {% if offer %}<span class="md-offer-tag">Launch offer</span>{% endif %}
   <div class="md-title-row">
     {% if model.publisher_slug %}<a class="md-publisher-logo" href="/providers/{{ model.publisher_slug }}" title="{{ model.provider }}"><img src="{{ provider_logo_url(model.publisher_slug) }}" alt="{{ model.provider }}" width="60" height="60"></a>{% endif %}
     <h1 id="md-title">{{ name }}</h1>
   </div>
   {% if offer and offer.lowest_claim %}
-  <p class="md-lead md-offer-lead" data-launch-offer-lead>The lowest-price way to run {{ offer.model_name }}: <em>basically free, at {{ offer.input }} per million tokens.</em></p>
+  <p class="md-lead md-offer-lead" data-launch-offer-lead>The lowest-price way to run {{ offer.model_name }}: <em>basically free, at {{ offer.unit_price }} per million tokens.</em></p>
   {% else %}
   <p class="md-lead">{{ page.sentence }}</p>
   {% endif %}

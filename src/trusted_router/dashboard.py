@@ -100,16 +100,14 @@ from trusted_router.content.legal import (
 from trusted_router.content.token_index import token_index_context
 from trusted_router.content_handling import CONTENT_HANDLING_CLAIM, VENDOR_EXCLUSION_CLAIM
 from trusted_router.domains import canonical_public_url
-from trusted_router.fortanix_launch import COMPARISON_MODEL_ID as FORTANIX_LAUNCH_COMPARISON_ID
+from trusted_router.fortanix_launch import COMPARISON_MODEL_ID as LAUNCH_OFFER_BASE_MODEL_ID
+from trusted_router.fortanix_launch import MODEL_ID as LAUNCH_OFFER_MODEL_ID
 from trusted_router.fortanix_launch import (
-    GLM_FLASH_MODEL_ID,
     LaunchOfferFacts,
+    cents_label,
     fortanix_launch_offer,
-    launch_lede_prices,
     launch_offer_facts,
 )
-from trusted_router.fortanix_launch import MODEL_ID as FORTANIX_LAUNCH_MODEL_ID
-from trusted_router.fortanix_launch import MODEL_ID as LAUNCH_OFFER_MODEL_ID
 from trusted_router.marketing_experiments import GoogleSearchExperimentCell
 from trusted_router.measured import measured_for_model, measured_for_provider
 from trusted_router.middleware import current_csp_nonce
@@ -2402,29 +2400,21 @@ def _short_dollars(microdollars: int, *, digits: int) -> str:
     return f"${Decimal(text):f}"
 
 
-def _cents_label(microdollars: int) -> str:
-    """A whole-cent per-1M price under a dollar as "1¢"; anything else as dollars."""
-    cents, remainder = divmod(microdollars, MICRODOLLARS_PER_DOLLAR // 100)
-    if remainder == 0 and 0 < cents < 100:
-        return f"{cents}\u00a2"
-    return _short_dollars(microdollars, digits=2)
-
-
 def _launch_offer_lede(model: Model) -> dict[str, object] | None:
     """Fortanix launch-offer hero copy, live only while the offer banner is."""
-    if model.id != FORTANIX_LAUNCH_MODEL_ID:
+    if model.id != LAUNCH_OFFER_MODEL_ID:
         return None
-    prices = launch_lede_prices()
-    if prices is None:
+    offer = launch_offer_facts()
+    if offer is None:
         return None
-    others_input, others_output = prices.others_input_microdollars, prices.others_output_microdollars
-    comparison = MODELS.get(FORTANIX_LAUNCH_COMPARISON_ID)
+    others_input, others_output = offer.others_input_microdollars, offer.others_output_microdollars
     return {
-        "model_name": _hero_model_name(comparison) if comparison else _hero_model_name(model),
-        "input": _cents_label(prices.input_microdollars),
-        "output": _cents_label(prices.output_microdollars),
-        # One price in the sentence only when both directions bill it.
-        "lowest_claim": prices.cheapest and prices.input_microdollars == prices.output_microdollars,
+        "model_name": offer.model_name,
+        "input": cents_label(offer.input_microdollars),
+        "output": cents_label(offer.output_microdollars),
+        # The sentence names one price, so it needs input and output to match.
+        "lowest_claim": offer.lowest and offer.unit_price is not None,
+        "unit_price": offer.unit_price,
         "others_input": None if others_input is None else _short_dollars(others_input, digits=2),
         "others_output": None if others_output is None else _short_dollars(others_output, digits=2),
     }
@@ -4579,7 +4569,7 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
     )
     offer = launch_offer_facts() if model.id == LAUNCH_OFFER_MODEL_ID else None
     if offer is not None:
-        title, description = _launch_offer_title_description(model, offer)
+        title, description = _launch_offer_title_description(offer)
     related_comparisons = _related_model_comparison_rows(model.id, limit=6)
     compare_chips = []
     for related in related_comparisons:
@@ -4622,18 +4612,14 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
     )
 
 
-def _launch_offer_title_description(
-    model: Model, offer: LaunchOfferFacts
-) -> tuple[str, str]:
+def _launch_offer_title_description(offer: LaunchOfferFacts) -> tuple[str, str]:
     """Search title and snippet for the introductory-offer model page.
 
     Only called while the offer gate is on; every number comes from the live
     route, and the lowest-price claim only appears when it is computed true.
     """
-    provider = PROVIDERS.get(model.provider)
-    provider_name = provider.name if provider is not None else model.provider
-    name = _seo_model_name(model).removesuffix(f" ({provider_name})")
-    lowest = f", the lowest {name} price on TrustedRouter" if offer.lowest_glm_flash_price else ""
+    name, provider_name = offer.model_name, offer.provider_name
+    lowest = f", the lowest {name} price on TrustedRouter" if offer.lowest else ""
     return (
         f"{name} for {offer.price_label} ({provider_name}) | TrustedRouter",
         f"{name} on {provider_name}: {offer.price_phrase}{lowest}. "
@@ -4645,24 +4631,18 @@ def _launch_offer_faq_sentences(
     model: Model, site_domain: str | None
 ) -> tuple[str, str] | None:
     """Provider and cost FAQ sentences pointing the base model at the offer."""
-    if model.id != GLM_FLASH_MODEL_ID:
+    if model.id != LAUNCH_OFFER_BASE_MODEL_ID:
         return None
     offer = launch_offer_facts()
     if offer is None:
         return None
-    name = _hero_model_name(model)
-    offer_model = MODELS.get(offer.model_id)
-    provider = PROVIDERS.get(offer_model.provider) if offer_model is not None else None
-    if provider is None:
-        return None
+    name, provider_name = offer.model_name, offer.provider_name
     url = f"https://{site_domain}{offer.path}" if site_domain else offer.path
-    lowest = (
-        f", the lowest {name} price on TrustedRouter," if offer.lowest_glm_flash_price else ""
-    )
+    lowest = f", the lowest {name} price on TrustedRouter," if offer.lowest else ""
     return (
-        f"{provider.name} also serves {name} under the separate model ID {offer.model_id} "
+        f"{provider_name} also serves {name} under the separate model ID {offer.model_id} "
         f"at an introductory {offer.price_label}: {url}",
-        f"The separate {provider.name} route, {offer.model_id}, costs {offer.price_phrase}"
+        f"The separate {provider_name} route, {offer.model_id}, costs {offer.price_phrase}"
         f"{lowest} as an introductory price that may change: {url}",
     )
 
@@ -5184,12 +5164,8 @@ def _llms_launch_offer_lines(domain: str) -> list[str]:
     offer = launch_offer_facts()
     if offer is None:
         return []
-    model = MODELS[offer.model_id]
-    provider = PROVIDERS.get(model.provider)
-    provider_name = provider.name if provider is not None else model.provider
-    name = _seo_model_name(model).removesuffix(f" ({provider_name})")
     return [
-        f"- Introductory offer: {offer.model_id} ({name} on {provider_name}, zero data "
+        f"- Introductory offer: {offer.model_id} ({offer.model_name} on {offer.provider_name}, zero data "
         f"retention) costs {offer.price_phrase}; pricing may change. "
         f"[Model page](https://{domain}{offer.path})"
     ]

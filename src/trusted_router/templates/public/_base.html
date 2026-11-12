@@ -73,7 +73,7 @@
       <div class="public-hero-metrics" aria-label="TrustedRouter quick facts">
         {% set hero_offer = launch_offer_facts() if hero_offer_metric|default(false) else none %}
         {% if hero_offer and hero_offer.unit_price %}
-        <div class="public-hero-metric-offer" data-launch-offer-metric><strong>{{ hero_offer.unit_price }}</strong><span><a href="{{ hero_offer.path }}">per million tokens on GLM 5.3 Flash</a></span></div>
+        <div class="public-hero-metric-offer" data-launch-offer-metric><strong>{{ hero_offer.unit_price }}</strong><span><a href="{{ hero_offer.path }}">per million tokens on {{ hero_offer.model_name }}</a></span></div>
         {% endif %}
         <div><strong>One</strong><span>base URL to migrate</span></div>
         <div><strong>100s</strong><span>of models and routes</span></div>

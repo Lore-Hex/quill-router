@@ -69,27 +69,53 @@ def launch_tariff_matches(model: Model, endpoint: ModelEndpoint) -> bool:
     )
 
 
-# The same model served by every other provider; the offer page compares
-# against its live Credits routes.
+# The base model page for the same weights; its FAQ points at the offer.
 COMPARISON_MODEL_ID = "z-ai/glm-5.3-flash"
+# Every public model whose ID ends like this serves the same weights, so the
+# lowest-price claim and the "other routes" comparison cover all of them.
+GLM_FLASH_ID_SUFFIX = "/glm-5.3-flash"
+
+
+def cents_label(microdollars_per_million: int) -> str:
+    """A whole-cent per-1M price under a dollar as "1¢"; anything else in dollars."""
+    cents, remainder = divmod(microdollars_per_million, 10_000)
+    if remainder == 0 and 0 < cents < 100:
+        return f"{cents}\u00a2"
+    value = Decimal(microdollars_per_million) / Decimal(1_000_000)
+    return f"${value.normalize():f}"
 
 
 @dataclass(frozen=True)
-class LaunchLedePrices:
-    """Live per-1M prices for the offer lede on the Fortanix model page.
+class LaunchOfferFacts:
+    """Live facts every offer surface may state: page hero, search text, llms files.
 
-    The others are the lowest input and lowest output price among the
-    comparison model's Credits routes, or None when it has none.
+    Built only while the offer gate is on, from the live route and catalog, so a
+    repriced or removed offer stops every claim at once.
     """
 
+    model_id: str
+    model_name: str
+    provider_name: str
     input_microdollars: int
     output_microdollars: int
+    # Lowest prices among the other public GLM 5.3 Flash routes, None when none exist.
     others_input_microdollars: int | None
     others_output_microdollars: int | None
 
     @property
-    def cheapest(self) -> bool:
-        """The "lowest-price way" claim holds only against real alternatives."""
+    def path(self) -> str:
+        return f"/models/{self.model_id}"
+
+    @property
+    def unit_price(self) -> str | None:
+        """One per-1M price when input and output bill the same, else None."""
+        if self.input_microdollars != self.output_microdollars:
+            return None
+        return cents_label(self.input_microdollars)
+
+    @property
+    def lowest(self) -> bool:
+        """Strictly cheaper than every other GLM 5.3 Flash route, both directions."""
         return (
             self.others_input_microdollars is not None
             and self.others_output_microdollars is not None
@@ -97,25 +123,44 @@ class LaunchLedePrices:
             and self.output_microdollars < self.others_output_microdollars
         )
 
+    @property
+    def price_label(self) -> str:
+        if self.unit_price is not None:
+            return f"{self.unit_price} per million tokens"
+        return (
+            f"{cents_label(self.input_microdollars)} input and "
+            f"{cents_label(self.output_microdollars)} output per million tokens"
+        )
 
-def launch_lede_prices() -> LaunchLedePrices | None:
-    """None whenever the offer banner would be hidden."""
-    from trusted_router.catalog import MODELS, endpoints_for_model
+    @property
+    def price_phrase(self) -> str:
+        suffix = " in and out" if self.unit_price is not None else ""
+        return f"{self.price_label}{suffix}"
 
+
+def launch_offer_facts() -> LaunchOfferFacts | None:
+    """Return live offer facts, or None whenever the banner gate is off."""
     if not fortanix_launch_offer():
         return None
+    from trusted_router.catalog import MODELS, PROVIDERS, endpoints_for_model
+
+    model = MODELS[MODEL_ID]
     route = endpoints_for_model(MODEL_ID)[0]
-    comparison = MODELS.get(COMPARISON_MODEL_ID)
-    others = (
-        [
-            endpoint
-            for endpoint in endpoints_for_model(comparison.id)
-            if endpoint.usage_type == "Credits"
-        ]
-        if comparison is not None and not comparison.internal_only
-        else []
-    )
-    return LaunchLedePrices(
+    provider = PROVIDERS.get(model.provider)
+    provider_name = provider.name if provider is not None else model.provider
+    others = [
+        endpoint
+        for other in MODELS.values()
+        if other.id != MODEL_ID
+        and not other.internal_only
+        and other.id.casefold().endswith(GLM_FLASH_ID_SUFFIX)
+        for endpoint in endpoints_for_model(other.id)
+        if endpoint.usage_type == "Credits"
+    ]
+    return LaunchOfferFacts(
+        model_id=MODEL_ID,
+        model_name=model.name.removesuffix(f" ({provider_name})"),
+        provider_name=provider_name,
         input_microdollars=route.prompt_price_microdollars_per_million_tokens,
         output_microdollars=route.completion_price_microdollars_per_million_tokens,
         others_input_microdollars=min(
@@ -125,73 +170,4 @@ def launch_lede_prices() -> LaunchLedePrices | None:
             (item.completion_price_microdollars_per_million_tokens for item in others),
             default=None,
         ),
-    )
-
-
-GLM_FLASH_MODEL_ID = COMPARISON_MODEL_ID
-GLM_FLASH_ID_SUFFIX = "/glm-5.3-flash"
-
-
-@dataclass(frozen=True)
-class LaunchOfferFacts:
-    """Live facts that search and agent-facing copy may state about the offer."""
-
-    model_id: str
-    path: str
-    price_label: str
-    price_phrase: str
-    lowest_glm_flash_price: bool
-    # One per-1M price when input and output bill the same, else None.
-    unit_price: str | None = None
-
-
-def _cents_label(microdollars_per_million: int) -> str:
-    if microdollars_per_million % 10_000 == 0 and microdollars_per_million < 1_000_000:
-        return f"{microdollars_per_million // 10_000}¢"
-    value = Decimal(microdollars_per_million) / Decimal(1_000_000)
-    return f"${value.normalize():f}"
-
-
-def launch_offer_facts() -> LaunchOfferFacts | None:
-    """Return live offer copy facts, or None whenever the banner gate is off.
-
-    Prices come from the public route, so a repriced or removed offer stops
-    every claim at once instead of leaving a stale number in search snippets.
-    """
-    if not fortanix_launch_offer():
-        return None
-    from trusted_router.catalog import MODELS, endpoints_for_model
-
-    route = endpoints_for_model(MODEL_ID)[0]
-    prompt = route.prompt_price_microdollars_per_million_tokens
-    completion = route.completion_price_microdollars_per_million_tokens
-    if prompt == completion:
-        price_label = f"{_cents_label(prompt)} per million tokens"
-        price_phrase = f"{price_label} in and out"
-    else:
-        price_label = price_phrase = (
-            f"{_cents_label(prompt)} input and {_cents_label(completion)} output "
-            "per million tokens"
-        )
-    other_routes = [
-        endpoint
-        for model in MODELS.values()
-        if model.id != MODEL_ID
-        and not model.internal_only
-        and model.id.casefold().endswith(GLM_FLASH_ID_SUFFIX)
-        for endpoint in endpoints_for_model(model.id)
-        if endpoint.usage_type == "Credits"
-    ]
-    lowest = bool(other_routes) and all(
-        prompt < endpoint.prompt_price_microdollars_per_million_tokens
-        and completion < endpoint.completion_price_microdollars_per_million_tokens
-        for endpoint in other_routes
-    )
-    return LaunchOfferFacts(
-        model_id=MODEL_ID,
-        path=f"/models/{MODEL_ID}",
-        price_label=price_label,
-        price_phrase=price_phrase,
-        lowest_glm_flash_price=lowest,
-        unit_price=_cents_label(prompt) if prompt == completion else None,
     )
