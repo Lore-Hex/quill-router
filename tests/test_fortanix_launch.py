@@ -1,3 +1,4 @@
+import json
 from dataclasses import replace
 from datetime import UTC, datetime
 
@@ -14,7 +15,13 @@ from trusted_router.catalog import (
     endpoints_for_model,
 )
 from trusted_router.config import Settings
-from trusted_router.dashboard import _short_dollars
+from trusted_router.dashboard import (
+    _credits_endpoints,
+    _short_dollars,
+    docs_llms_full_txt,
+    llms_txt,
+    public_model_detail_html,
+)
 from trusted_router.fortanix_launch import (
     COMPARISON_MODEL_ID,
     MODEL_ID,
@@ -22,6 +29,7 @@ from trusted_router.fortanix_launch import (
     RETAIL_MICRO_PER_M,
     fortanix_launch_offer,
     launch_lede_prices,
+    launch_offer_facts,
     launch_tariff_matches,
 )
 from trusted_router.internal_model_access import require_internal_model_key
@@ -345,3 +353,109 @@ def test_exact_tariff_coverage_never_exempts_unapproved_public_prices(monkeypatc
         max_age_days=14, now=datetime(2026, 11, 10, tzinfo=UTC), check_model_discovery=False
     )
     assert any("fortanix: public routes differ" in failure for failure in failures)
+
+
+def _model_page_seo(model_id):
+    soup = BeautifulSoup(
+        public_model_detail_html(Settings(environment="test"), model_id), "html.parser"
+    )
+    faq_json: list[tuple[str, str]] = []
+    for script in soup.find_all("script", type="application/ld+json"):
+        data = json.loads(script.string)
+        for node in data.get("@graph", [data]):
+            if node.get("@type") == "FAQPage":
+                faq_json = [
+                    (item["name"], item["acceptedAnswer"]["text"]) for item in node["mainEntity"]
+                ]
+    faq_visible = [
+        (details.summary.get_text(" ", strip=True), details.p.get_text())
+        for details in soup.select(".md-faq-list details")
+    ]
+    return {
+        "title": soup.title.string,
+        "description": soup.find("meta", attrs={"name": "description"})["content"],
+        "og_title": soup.find("meta", property="og:title")["content"],
+        "og_description": soup.find("meta", property="og:description")["content"],
+        "faq_json": dict(faq_json),
+        "faq_visible": dict(faq_visible),
+    }
+
+
+def _llms_texts():
+    settings = Settings(environment="test")
+    return llms_txt(settings), docs_llms_full_txt(settings)
+
+
+def test_offer_seo_copy_uses_live_route_price_while_gate_is_on():
+    offer = launch_offer_facts()
+    assert offer is not None and offer.lowest_glm_flash_price
+    assert offer.price_label == "1¢ per million tokens"
+    page = _model_page_seo(MODEL_ID)
+    assert page["title"] == page["og_title"] == "GLM 5.3 Flash for 1¢ per million tokens (Fortanix)"
+    assert page["description"] == page["og_description"] == (
+        "GLM 5.3 Flash on Fortanix: 1¢ per million tokens in and out, the lowest GLM 5.3 "
+        "Flash price on TrustedRouter. Zero data retention. Intro price, may change."
+    )
+    assert len(page["description"]) <= 155
+
+    base = _model_page_seo("z-ai/glm-5.3-flash")
+    assert base["faq_json"] == base["faq_visible"]
+    url = f"https://trustedrouter.com/models/{MODEL_ID}"
+    providers = base["faq_json"]["Which providers serve GLM 5.3 Flash?"]
+    cost = base["faq_json"]["How much does GLM 5.3 Flash cost through TrustedRouter?"]
+    assert providers.endswith(
+        "Fortanix also serves GLM 5.3 Flash under the separate model ID "
+        f"fortanix/glm-5.3-flash at an introductory 1¢ per million tokens: {url}"
+    )
+    assert cost.endswith(
+        "The separate Fortanix route, fortanix/glm-5.3-flash, costs 1¢ per million tokens "
+        "in and out, the lowest GLM 5.3 Flash price on TrustedRouter, as an introductory "
+        f"price that may change: {url}"
+    )
+    llms, full = _llms_texts()
+    assert (
+        "- Introductory offer: fortanix/glm-5.3-flash (GLM 5.3 Flash on Fortanix, zero data "
+        "retention) costs 1¢ per million tokens in and out; pricing may change. "
+        f"[Model page]({url})"
+    ) in llms.splitlines()
+    assert f"url={url}; offer=introductory price, may change" in full
+    for text in (providers, cost, page["description"], page["title"]):
+        assert "free" not in text.casefold()
+
+
+def test_offer_seo_drops_lowest_claim_when_another_glm_flash_route_is_cheaper(monkeypatch):
+    route = _credits_endpoints(endpoints_for_model("z-ai/glm-5.3-flash"))[0]
+    monkeypatch.setitem(
+        MODEL_ENDPOINTS,
+        route.id,
+        replace(route, prompt_price_microdollars_per_million_tokens=5_000),
+    )
+    page = _model_page_seo(MODEL_ID)
+    assert "lowest" not in page["description"]
+    cost = _model_page_seo("z-ai/glm-5.3-flash")["faq_json"][
+        "How much does GLM 5.3 Flash cost through TrustedRouter?"
+    ]
+    assert "fortanix/glm-5.3-flash, costs 1¢ per million tokens in and out as an" in cost
+    assert "lowest GLM 5.3 Flash price" not in cost
+
+
+def test_offer_seo_reverts_when_gate_turns_off(monkeypatch):
+    route = endpoints_for_model(MODEL_ID)[0]
+    monkeypatch.setitem(
+        MODEL_ENDPOINTS,
+        route.id,
+        replace(route, completion_price_microdollars_per_million_tokens=20_000),
+    )
+    assert not fortanix_launch_offer()
+    assert launch_offer_facts() is None
+    page = _model_page_seo(MODEL_ID)
+    assert page["title"] == "GLM 5.3 Flash (Fortanix) API, Pricing and Providers"
+    assert page["description"].startswith(
+        "Compare every TrustedRouter route for GLM 5.3 Flash (Fortanix), including"
+    )
+    base = _model_page_seo("z-ai/glm-5.3-flash")
+    assert base["faq_json"] == base["faq_visible"]
+    assert not any("fortanix" in answer.casefold() for answer in base["faq_json"].values())
+    llms, full = _llms_texts()
+    assert "Introductory offer" not in llms and MODEL_ID not in llms
+    assert "offer=introductory" not in full
