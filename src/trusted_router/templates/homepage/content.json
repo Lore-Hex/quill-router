@@ -636,12 +636,11 @@
     "attribution_link": "https://trustedrouter.com/customers/robot-robot-human",
     "press": {
       "label": "In the press",
-      "placement": "Own section between Verify and Pricing.",
       "lead": {
         "source": "VentureBeat",
         "quote": "Challenging the dominance of major AI providers, TrustedRouter clears more than three billion encrypted tokens on a typical day across a catalog of more than 600 models and 100 providers.",
         "link": [
-          "Read the story →",
+          "Read the story",
           "https://venturebeat.com/technology/trustedrouter-launches-three-new-encrypted-fusion-models-that-combine-multiple-llms-including-one-exclusively-with-u-s-model-providers"
         ]
       },

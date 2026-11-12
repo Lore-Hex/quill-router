@@ -299,6 +299,10 @@ test("homepage press section leads with VentureBeat and links every story", asyn
   ]) {
     await expect(press.locator(`a[href="${href}"]`)).toBeVisible();
   }
+  for (const link of await press.locator("a").all()) {
+    await expect(link).toHaveAttribute("target", "_blank");
+    await expect(link).toHaveAttribute("rel", "noopener");
+  }
   await expect(page.locator("#customers .press")).toHaveCount(0);
 });
 
