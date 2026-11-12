@@ -51,12 +51,20 @@ def test_azure_approval_is_managed_and_model_scoped() -> None:
     ("openai/gpt-5-mini", "gpt-new", "Credits", False),
     ("openai/gpt-new", "gpt-5-mini", "Credits", False),
     ("openai/gpt-5.4-mini", "gpt-5-4-mini", "Credits", False),
-    ("moonshotai/kimi-k2.5", "kimi-k2-5", "Credits", False),
+    ("cohere/command-a", "cohere-command-a", "Credits", True),
+    ("moonshotai/kimi-k2.5", "kimi-k2-5", "Credits", True),
+    ("moonshotai/kimi-k2.6", "kimi-k2-6", "Credits", True),
+    ("moonshotai/kimi-k2.7-code", "kimi-k2-7-code", "Credits", True),
+    ("x-ai/grok-4.1-fast-reasoning", "grok-4-1-fast-reasoning", "Credits", True),
+    ("x-ai/grok-4.1-fast-non-reasoning", "grok-4-1-fast-non-reasoning", "Credits", True),
+    ("x-ai/grok-4.20-reasoning", "grok-4-20-reasoning", "Credits", True),
+    ("x-ai/grok-4.20-non-reasoning", "grok-4-20-non-reasoning", "Credits", True),
     ("x-ai/grok-4.3", "grok-4-3", "Credits", False),
-    ("microsoft/microsoft-decision-1", "tr-decision-1", "Credits", False),
-    ("microsoft/mai-voice-1", "mai-voice-1", "Credits", False),
+    ("microsoft/microsoft-decision-1", "tr-decision-1", "Credits", True),
+    ("microsoft/mai-voice-2.1", "MAI-Voice-2.1", "Credits", False),
+    ("anthropic/claude-sonnet-4.6", "claude-sonnet-4-6", "Credits", False),
 ])
-def test_only_reviewed_azure_openai_chat_qualifies(
+def test_only_reviewed_azure_hosted_foundry_qualifies(
     model: str, upstream: str, usage: str, eligible: bool,
 ) -> None:
     endpoint = replace(next(iter(MODEL_ENDPOINTS.values())), provider="azure",
@@ -108,7 +116,7 @@ def test_azure_provider_and_model_pages_show_scoped_zdr(client: TestClient) -> N
     detail = client.get("/providers/azure")
     assert detail.status_code == 200
     assert "ContentLogging=false" in detail.text
-    assert "Other Foundry" in detail.text
+    assert "Partner-hosted" in detail.text
     model = client.get("/models/openai/gpt-5-mini")
     assert model.status_code == 200
     azure = BeautifulSoup(model.text, "html.parser").select_one("#provider-azure")

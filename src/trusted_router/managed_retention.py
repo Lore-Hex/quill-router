@@ -117,13 +117,13 @@ BEDROCK_RUNTIME_ZDR = RetentionPolicy(
     "other models. It is policy-backed ZDR, not confidential compute or E2EE.",
     BEDROCK_RETENTION_URL, reviewed_on="2026-10-29",
 )
-AZURE_OPENAI_ZDR = RetentionPolicy(
-    "zero_retention", "ZDR - TR-funded Azure OpenAI",
-    "This reviewed Azure OpenAI chat route uses TrustedRouter's approved managed "
+AZURE_FOUNDRY_ZDR = RetentionPolicy(
+    "zero_retention", "ZDR - TR-funded Azure Foundry",
+    "This reviewed Azure-hosted Foundry route uses TrustedRouter's approved managed "
     "resource, verified with ContentLogging=false on November 12, 2026. Prompts and "
     "completions are not stored for abuse monitoring or reviewed by humans; "
-    "automated real-time safety checks may still run. Stateful services, other "
-    "Foundry publishers, unreviewed models and BYOK are outside this approval.",
+    "automated real-time safety checks may still run. Stateful services, partner-hosted "
+    "models, Azure Speech previews, unreviewed routes and BYOK are outside this approval.",
     AZURE_DATA_URL, maximum_days=0, human_review=False, reviewed_on="2026-11-12",
 )
 
@@ -141,10 +141,26 @@ _OPENAI_REVIEWED_IDS = frozenset({
     "text-embedding-3-small", "text-embedding-3-large", "text-embedding-ada-002",
 })
 
+# Microsoft lists these as Models sold by Azure, governed by the same resource
+# content-logging control. Speech/partner services use different contracts.
+_AZURE_REVIEWED_ROUTES = {
+    "cohere/command-a": "cohere-command-a",
+    "microsoft/microsoft-decision-1": "tr-decision-1",
+    "moonshotai/kimi-k2.5": "kimi-k2-5",
+    "moonshotai/kimi-k2.6": "kimi-k2-6",
+    "moonshotai/kimi-k2.7-code": "kimi-k2-7-code",
+    "openai/gpt-5-mini": "gpt-5-mini",
+    "x-ai/grok-4.1-fast-non-reasoning": "grok-4-1-fast-non-reasoning",
+    "x-ai/grok-4.1-fast-reasoning": "grok-4-1-fast-reasoning",
+    "x-ai/grok-4.20-non-reasoning": "grok-4-20-non-reasoning",
+    "x-ai/grok-4.20-reasoning": "grok-4-20-reasoning",
+}
+
 # Exact canonical/upstream pairs prevent a catalog alias from changing the
 # deployed model while retaining its predecessor's privacy approval.
 REVIEWED_ROUTES: dict[tuple[str, str, str], RetentionPolicy] = {
-    ("azure", "openai/gpt-5-mini", "gpt-5-mini"): AZURE_OPENAI_ZDR,
+    **{("azure", model, upstream): AZURE_FOUNDRY_ZDR
+       for model, upstream in _AZURE_REVIEWED_ROUTES.items()},
     **{("amazon-bedrock", model, profile): BEDROCK_RUNTIME_ZDR
        for model, profile in BEDROCK_RUNTIME_PROFILES.items()},
     **{("openai", f"openai/{name}", name): OPENAI_ZDR for name in _OPENAI_REVIEWED_IDS},
@@ -207,8 +223,8 @@ def provider_retention_notice(provider: str) -> str | None:
         return (
             "Modified abuse monitoring is approved and ContentLogging=false was "
             "verified on the managed Azure resource on November 12, 2026. Only "
-            "the reviewed Azure OpenAI chat routes qualify for ZDR. Other Foundry "
-            "publishers, future models, stateful services and BYOK require separate "
+            "the reviewed Azure-hosted Foundry routes qualify for ZDR. Partner-hosted "
+            "services, Azure Speech previews, future models, stateful services and BYOK require separate "
             "review. Automated real-time safety checks may still run."
         )
     if provider == "amazon-bedrock":

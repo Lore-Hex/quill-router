@@ -1677,9 +1677,9 @@ PROVIDERS: dict[str, Provider] = {
     ),
     # Microsoft Foundry direct deployments in eastus2. Availability and exact
     # regional list prices are synchronized from Azure's account-scoped model,
-    # quota, deployment, and Retail Prices APIs. The approved managed OpenAI
+    # quota, deployment, and Retail Prices APIs. The approved managed Foundry
     # account is scoped further by the exact-route review in managed_retention;
-    # other Foundry publishers and future models never inherit this approval.
+    # partner-hosted services and future models never inherit this approval.
     "azure": Provider(
         slug="azure",
         name="Microsoft Azure AI Foundry",
@@ -1692,11 +1692,11 @@ PROVIDERS: dict[str, Provider] = {
         provider_confidential_compute=False,
         provider_e2ee=False,
         provider_policy=(
-            "ZDR is approved for reviewed TR-funded Azure OpenAI routes. Microsoft "
+            "ZDR is approved for reviewed TR-funded Azure-hosted Foundry routes. Microsoft "
             "approved modified abuse monitoring on November 12, 2026, and "
             "ContentLogging=false was verified on TrustedRouter's serving resource. "
-            "Other Foundry publishers, unreviewed models and customer BYOK credentials "
-            "are not covered. This is policy-backed ZDR, not upstream confidential "
+            "Partner-hosted services, Azure Speech previews, unreviewed models and "
+            "customer BYOK credentials are not covered. This is policy-backed ZDR, not upstream confidential "
             "compute or E2EE."
         ),
         provider_policy_url=(
