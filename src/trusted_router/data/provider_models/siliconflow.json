@@ -2,8 +2,8 @@
   "_about": "Provider-native supplement for SiliconFlow models whose live /v1/models feed is ahead of the shared snapshot. Verified against https://api.siliconflow.com/v1/models on 2026-06-22.",
   "provider": "siliconflow",
   "source": "https://api.siliconflow.com/v1/models",
-  "generated_at": "2026-11-12T07:25:46Z",
-  "model_count": 84,
+  "generated_at": "2026-11-12T09:26:20Z",
+  "model_count": 85,
   "models": [
     {
       "id": "z-ai/glm-5.2",
@@ -1693,6 +1693,26 @@
       "routable": false,
       "routable_reason": "awaiting-price",
       "unresolved_since": "2026-11-06"
+    },
+    {
+      "display_name": "MiniMaxAI/MiniMax-H3",
+      "title": "MiniMaxAI/MiniMax-H3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "minimax/minimax-h3",
+      "upstream_id": "MiniMaxAI/MiniMax-H3",
+      "routable": false,
+      "routable_reason": "awaiting-price",
+      "unresolved_since": "2026-11-12"
     }
   ],
   "price_scale": "microdollars_per_million"
