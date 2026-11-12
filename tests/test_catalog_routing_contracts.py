@@ -2941,7 +2941,8 @@ def test_model_shape_without_routes_uses_its_own_cache_rate(monkeypatch, model_c
             for model_id, provider in (
                 ("anthropic/claude-sonnet-4.6", "anthropic"),
                 ("openai/gpt-4.1-mini", "openai"),
-                ("google/gemini-2.5-flash", "google-ai-studio"),
+                # AI Studio retires 2.5 Flash on 2026-12-01 for 3.5 Flash-Lite.
+                ("google/gemini-3.5-flash-lite", "google-ai-studio"),
                 ("google/gemini-3.6-flash", "google-ai-studio"),
                 ("google/gemini-3.8-flash", "google-ai-studio"),
                 ("deepseek/deepseek-v4-flash", "deepseek"),
